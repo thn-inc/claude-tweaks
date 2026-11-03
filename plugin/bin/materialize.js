@@ -145,19 +145,10 @@ function resolveCheckoutRoot(cwd) {
 // it was read before filing. A non-zero exit is a normal outcome; no exit
 // code at all (ENOENT when no POSIX sh resolves — /bin/sh, or sh from PATH on
 // Windows — or a timeout) re-throws for computePremise's own catch to degrade
-// to null. `env` (optional) is the command's whole environment.
-function runPremiseCheckDefault(command, { cwd, env } = {}) {
-  return runPremiseCommand(command, { cwd, timeoutMs: PREMISE_SELF_CHECK_TIMEOUT_MS, env });
-}
-
-// #4505: the process env minus the GH_HOST this run pinned for an explicit
-// --repo (deps.pinGhHost). The pin is for materialize's own gh calls; the
-// record-authored command gets the env it had before it, where a
-// remote-inferring gh call reaches cwd's host. pinExplicitRepoHost never pins
-// over an exported GH_HOST, so a user's own value is never what is removed.
-function envBeforeGhHostPin() {
-  const { GH_HOST: _pinned, ...env } = process.env;
-  return env;
+// to null. The command inherits the process env as is: the --repo host pin
+// lives only in each gh call's own env (ghOptions), never in process.env (#4795).
+function runPremiseCheckDefault(command, { cwd } = {}) {
+  return runPremiseCommand(command, { cwd, timeoutMs: PREMISE_SELF_CHECK_TIMEOUT_MS });
 }
 
 // command -> { command, exit, satisfiedAtBase } | null. null means "no
@@ -170,15 +161,14 @@ function envBeforeGhHostPin() {
 // contract, the command is written to exit 0 while the premise (the
 // record's Current State claim) still holds, so a non-zero exit means the
 // claim no longer holds at this checkout's base — the record's work may
-// already be done. `pinnedGhHost` (the host deps.pinGhHost exported, or null)
-// keeps that pin out of the command's env.
-function computePremise(command, deps, pinnedGhHost = null) {
+// already be done.
+function computePremise(command, deps) {
   if (!command) return null;
   let exit;
   try {
     const cwd = deps.checkoutRoot(deps.cwd());
     if (!cwd) return null;
-    exit = deps.runPremiseCheck(command, pinnedGhHost ? { cwd, env: envBeforeGhHostPin() } : { cwd });
+    exit = deps.runPremiseCheck(command, { cwd });
   } catch {
     return null;
   }
@@ -381,7 +371,6 @@ function run(argv, deps = realDeps) {
   // Populated only on the gh-backed path below — carries owner/repo/host for
   // the author-association lookup the premise-check gate needs further down.
   let repoSpec = null;
-  let pinnedGhHost = null;
   if (opts.recordJson) {
     // #1459: the gh-absent path — deps.ghAvailable()/deps.ghView() are never
     // consulted here, and no owner/repo resolution is needed since nothing
@@ -407,7 +396,7 @@ function run(argv, deps = realDeps) {
       repoSpec = gated.spec;
     }
     if (!repoSpec) { deps.stderr('materialize.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
-    if (opts.repo && deps.pinGhHost) pinnedGhHost = deps.pinGhHost(repoSpec) || null;
+    if (opts.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
     const { host, owner, repo } = repoSpec;
     // #2538 Deliverable 3 — visible only for a resolved non-github.com host.
     const repoNote = repoResolutionNote(repoSpec);
@@ -493,7 +482,7 @@ function run(argv, deps = realDeps) {
       association = record.authorAssociation;
     }
     if (association && TRUSTED_AUTHOR_ASSOCIATIONS.has(association)) {
-      premise = computePremise(premiseCommand, deps, pinnedGhHost);
+      premise = computePremise(premiseCommand, deps);
     } else {
       deps.stderr(
         `materialize.js: Record #${opts.n} has a Premise-check: line but its author's repo `

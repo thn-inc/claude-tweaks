@@ -312,20 +312,59 @@ test('explicitRepoGhHost AC4: an exported GH_HOST (empty string included) always
     assert.equal(explicitRepoGhHost({ host: 'github.com', owner: 'acme', repo: 'widgets' }, '/r', { ...ghe, env }), null, JSON.stringify(env));
   }
 });
-test('pinExplicitRepoHost: exports the pinned host on deps.env, leaves it alone otherwise, and then ghOptions steps back', () => {
+test('AC1.1 (#4795): pinExplicitRepoHost records the host; ghOptions adds it to each call\'s own env and never touches process env', () => {
   _resetGhHostCache();
+  const before = process.env.GH_HOST;
   const env = { PATH: '/p' };
   assert.equal(pinExplicitRepoHost({ host: 'github.com', owner: 'acme', repo: 'widgets' }, { ...ghe, cwd: '/r', env }), 'github.com');
-  assert.deepEqual(env, { PATH: '/p', GH_HOST: 'github.com' });
-  const opts = { cwd: '/r', env };
-  assert.strictEqual(ghOptions(['api', 'repos/acme/widgets/issues/7'], opts, ghe), opts);
+  assert.deepEqual(env, { PATH: '/p' }, 'the pin never writes the env it was handed');
+  assert.strictEqual(process.env.GH_HOST, before, 'the pin never writes process.env');
+  // a call with no host flag, and one naming --repo, both get the pinned host (Review Focus 2)
+  for (const args of [['api', 'user'], ['issue', 'view', '7', '--repo', 'acme/widgets']]) {
+    assert.equal(ghOptions(args, { cwd: '/r', env }, ghe).env.GH_HOST, 'github.com', args.join(' '));
+  }
+  // a call's own env without GH_HOST still gets it (Review Focus 3)
+  assert.deepEqual(ghOptions(['api', 'user'], { env: { PATH: '/x' } }, ghe).env, { PATH: '/x', GH_HOST: 'github.com' });
+  _resetGhHostCache();
+});
+test('#4795: a GH_HOST already in the call env beats the recorded pin, empty string included (Review Focus 1)', () => {
+  _resetGhHostCache();
+  pinExplicitRepoHost({ host: 'github.com', owner: 'acme', repo: 'widgets' }, { ...ghe, cwd: '/r', env: {} });
+  for (const own of [{ GH_HOST: 'mine.example' }, { GH_HOST: '' }]) {
+    const opts = { cwd: '/r', env: own };
+    assert.strictEqual(ghOptions(['api', 'user'], opts, ghe), opts, JSON.stringify(own));
+  }
+  _resetGhHostCache();
+});
+test('#4795: deps.explicitHost scopes the host to one call; _resetGhHostCache clears a recorded pin (Review Focus 5)', () => {
+  _resetGhHostCache();
+  assert.equal(ghOptions(['api', 'user'], { cwd: '/d' }, { ...dotcom, env: {}, explicitHost: 'github.com' }).env.GH_HOST, 'github.com');
+  const next = { cwd: '/d', env: {} };
+  assert.strictEqual(ghOptions(['api', 'user'], next, dotcom), next, 'a later call without explicitHost gets none');
+  pinExplicitRepoHost({ host: 'other.ghe.com', owner: 'acme', repo: 'widgets' }, { ...dotcom, cwd: '/d', env: {} });
+  _resetGhHostCache();
+  const opts = { cwd: '/d', env: {} };
+  assert.strictEqual(ghOptions(['api', 'user'], opts, dotcom), opts);
+});
+test('#4795: deps.explicitHost takes precedence over a recorded pin for that call', () => {
+  _resetGhHostCache();
+  pinExplicitRepoHost({ host: 'pinned.ghe.com', owner: 'acme', repo: 'widgets' }, { ...dotcom, cwd: '/d', env: {} });
+  assert.equal(ghOptions(['api', 'user'], { cwd: '/d', env: {} }, dotcom).env.GH_HOST, 'pinned.ghe.com');
+  assert.equal(ghOptions(['api', 'user'], { cwd: '/d', env: {} }, { ...dotcom, explicitHost: 'call.ghe.com' }).env.GH_HOST, 'call.ghe.com');
+  _resetGhHostCache();
+});
+test('#4795: a --repo agreeing with the origin host records nothing, so origin injection continues (Review Focus 4)', () => {
+  _resetGhHostCache();
+  assert.equal(pinExplicitRepoHost({ host: 'acme.ghe.com', owner: 'acme', repo: 'widgets' }, { ...ghe, cwd: '/r', env: {} }), null);
+  assert.equal(ghOptions(['api', 'user'], { cwd: '/r', env: {} }, ghe).env.GH_HOST, 'acme.ghe.com');
+  // nothing was recorded: a call from a github.com-origin cwd is left alone (a recorded
+  // acme.ghe.com would be added to it)
+  const plain = { cwd: '/d', env: {} };
+  assert.strictEqual(ghOptions(['api', 'user'], plain, dotcom), plain);
   const mine = { GH_HOST: 'mine.example' };
   assert.equal(pinExplicitRepoHost({ host: 'github.com', owner: 'acme', repo: 'widgets' }, { ...ghe, cwd: '/r', env: mine }), null);
   assert.deepEqual(mine, { GH_HOST: 'mine.example' });
   _resetGhHostCache();
-  const untouched = {};
-  assert.equal(pinExplicitRepoHost({ host: 'github.com', owner: 'acme', repo: 'widgets' }, { ...dotcom, cwd: '/d', env: untouched }), null);
-  assert.deepEqual(untouched, {});
 });
 
 // Final review item 1: an origin URL with an ssh:// scheme, userinfo or a :port

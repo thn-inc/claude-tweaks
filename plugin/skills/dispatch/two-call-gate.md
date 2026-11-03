@@ -40,6 +40,8 @@ via `log-decision.js --status AUTO --step "Artifact check" --text "config.yml mi
 
    Settle has already released this group's claim and adjusted its labels by this point, so `cleanup-only`'s Section E release step may run against an already-released claim. That overlap is accepted and recorded here so a duplicate release comment is not later read as a defect — the alternative is the `[IL-116]` hazard above.
 
+   **Blocker-landing stop (#4792).** When the first call, or its last handoff continuation (section 8), reported `ISSUE #{n}: failed:blocker-landing`, Settle released a claim only when an earlier call of this run had taken one (`settle-and-merge.md`'s Blocker-landing special case), so the paragraph above, on Settle's already-released claim, does not apply. Append the parenthetical `(blocker-landing: skip the claim release)` to the cleanup-only invocation above, in both cases; `wrap-up/cleanup-procedures-execution.md` Section E skips its release when the invocation names that, because `release-claim.js` posts a release comment on an absent blob or a tombstone too (`bin/lib/release-claim/release.js`): a false one when this run never claimed the record, a duplicate when Settle already released it. Unlike a Claim permission stop, the firing goes on to the next group.
+
 Only once that cleanup call returns does this session enter the next group's worktree (none after a Claim permission stop: the firing ends).
 
 ## 6. Terminal path when the second call's status line is missing or malformed
@@ -86,6 +88,8 @@ Settle ran when it didn't leaves the claim, worktree, and run directory stranded
    failure triggered this path — `cleanup-only`'s `cleanup-procedures.md` Section C step 3.5 is
    what performs it correctly either way.
 
+**Blocker-landing stop (#4792).** A second call's handoff continuation (section 8) whose step list includes `test` re-runs `/flow`'s pre-claim checks, and when Step 2.7b stops it, the continuation reports `OUTCOME: blocked` with `ISSUE #{n}: failed:blocker-landing` before reaching wrap-up, so the group's worktree is still up. Make item 1's call for it too, with the parenthetical `(blocker-landing: skip the claim release)` appended, the same phrase section 5's Blocker-landing stop paragraph appends. The first call claimed the record, so the continuation's own Settle already released the claim and closed the draft PR (`settle-and-merge.md`'s Blocker-landing special case, claimed case), and item 2 does not apply: `wrap-up/cleanup-procedures-execution.md` Section E skips its release on that phrase, because `release-claim.js` would post a duplicate release comment on the tombstone (`bin/lib/release-claim/release.js`).
+
 ## 7. Terminal path when the first call reports `already-shipped`
 
 `build/SKILL.md`'s Spec Step 2 "Already-shipped assessment" (#2502): when every Deliverable and
@@ -131,15 +135,21 @@ worktree, before anything else in this file runs for it.
    For the first call that is `parseNextSteps(reply, FIRST_CALL_STEPS)`, the parse
    `resolveFirstCallGate` runs before it returns `handoff`. For the second call it is
    `parseNextSteps(reply, SECOND_CALL_STEPS)`, the steps a second call can still run (`test`,
-   `review`, `polish`, `re-verify`, `wrap-up`). Its `{ ok: true, steps }` is the continuation's step
+   `review`, `polish`, `re-verify`, `wrap-up`). Every group passes its records as
+   `{ targets }`, `#N` strings (`['#12','#34']`), never bare numbers, a single-record group too
+   (`['#12']` stays on the flat path), so no agent judges whether its group is a bundle and a flat
+   `NEXT_STEPS` from a bundle fails closed; `resolveFirstCallGate` also takes `{ targets }`, in the same form, and
+   forwards them to this parse. An `{ ok: true, steps }` result is the continuation's step
    list. A `{ ok: false, reason, message }` result fails closed. That covers
-   NEXT_STEPS missing or empty, a step the call does not run, and a step named twice. Log
+   NEXT_STEPS missing or empty, a step the call does not run, a step named twice, and a per-record
+   value whose records differ from the targets. Log
    `Handoff refused: {message}` via `log-decision.js --status REFUSED --text-file "{text-file}"`
    (`_shared/auto-decision-log.md`'s Text from git or a user paragraph, since `{message}` quotes the
    agent's own text). Then treat the call as `build-test-blocked` (first call, section 5) or
    `blocked` (second call, section 6).
 2. **Continue.** Dispatch `task-prompt.md`'s Continuation call: the same call's template, its step
-   list replaced by `NEXT_STEPS`, with the same `{minted-run-dir}` and the same model profile. Log it
+   list replaced by `NEXT_STEPS`, with the same `{minted-run-dir}` and the same model profile. A
+   per-record result's `stepArg` is the replacement. Log it
    first via `log-decision.js --status AUTO --step "Dispatch group {group}" --text "call {1|2} handed off ({n} of 3 this run); continuing {NEXT_STEPS} in a fresh call" --reversibility n/a`,
    `{n}` counting this run's handoffs across both calls.
    A continuation that reports `handoff` again comes back to item 1 with its own report.
@@ -158,7 +168,7 @@ worktree, before anything else in this file runs for it.
 4. **Gate on the last continuation's report.** It stands as the call's report. For the first call,
    section 2 runs on it as if the first call had returned it: status line, `OUTCOME`, the artifact
    check, the repair branch, the stamp read. For the second call, its `OUTCOME` routes like any
-   second call's (`SKILL.md` Step 6; section 6 for a missing or malformed status line). A handoff
+   second call's (`SKILL.md` Step 6; section 6 for a missing or malformed status line, or for a blocker-landing stop's `blocked`, per its Blocker-landing stop paragraph). A handoff
    report runs neither the artifact check nor the stamp read, because the steps that leave those
    artifacts have not all run yet.
 

@@ -1,17 +1,20 @@
 // plugin/bin/lib/repo-resolve.js — shared owner/repo resolution for the bin/
 // gh CLIs: the one parseRepo (#1177), the injectable `gh --version` probe, and the
 // gh host seam (#4505). ghOptions(args, opts) returns opts itself when GH_HOST is set,
-// args name -R/--repo/--hostname, or origin's host is not a known GHE host; a known
-// one (*.ghe.com or a gh hosts.yml key) gets a copy whose env adds GH_HOST, memoized
-// per cwd. An enterprise token alone admits nothing, because gh sends it to whatever
-// GH_HOST names (#4854). It adds no timeout or windowsHide and there is no seam
-// spawn helper: each wrapped site's own `timeout` carries its bound. The origin-host
-// gate (#4933), gateOriginRepo(remote, deps), is what a CLI's origin-derived repo
-// goes through. Any non-empty exported GH_HOST stops the refusal: one matching the
-// origin host carries that host; another host yields a bare slug (spec host
-// github.com), even for a known GitHub origin. An empty GH_HOST is no opt-in. Without
-// one, a host with no positive GitHub signal (github.com or isKnownGhHost) comes back
-// as a refusal, never as a spec for gh.
+// when args name -R/--repo/--hostname (unless an explicit repo host is recorded, below),
+// or when origin's host is not a known GHE host; a known one (*.ghe.com or a gh
+// hosts.yml key) gets a copy whose env adds GH_HOST, memoized per cwd. An explicit
+// --repo's host (pinExplicitRepoHost, or deps.explicitHost for one call, which takes
+// precedence over the recorded host) is added the same way, to the call's own env and
+// never to process.env (#4795). An enterprise token alone admits nothing, because gh
+// sends it to whatever GH_HOST names (#4854). It adds no timeout or windowsHide and
+// there is no seam spawn helper: each wrapped site's own `timeout` carries its bound.
+// The origin-host gate (#4933), gateOriginRepo(remote, deps), is what a CLI's
+// origin-derived repo goes through. Any non-empty exported GH_HOST stops the refusal:
+// one matching the origin host carries that host; another host yields a bare slug
+// (spec host github.com), even for a known GitHub origin. An empty GH_HOST is no
+// opt-in. Without one, a host with no positive GitHub signal (github.com or
+// isKnownGhHost) comes back as a refusal, never as a spec for gh.
 'use strict';
 const { execFileSync } = require('child_process');
 const fs = require('fs');
@@ -83,10 +86,12 @@ function repoResolutionNote(repoSpec) {
 // object; every key of `deps` is optional and defaults to the real thing.
 const ghHostSpecs = new Map(); // path.resolve(cwd) -> { host, owner, repo } | null
 const notedGhHosts = new Set(); // hosts whose repoResolutionNote this process printed
+let explicitRepoHost = null; // the host pinExplicitRepoHost recorded for this process's explicit --repo (#4795)
 
 function _resetGhHostCache() {
   ghHostSpecs.clear();
   notedGhHosts.clear();
+  explicitRepoHost = null;
 }
 
 function originUrl(cwd) {
@@ -201,7 +206,9 @@ function resolveGhHost(cwd, deps = {}) {
 }
 
 // Decision Q2: any -R/--repo/--hostname (also `--repo=x`, `--hostname=x` and
-// pflag's attached `-Rx`) names the host itself, so the seam stays out of it.
+// pflag's attached `-Rx`) names the host itself, so the seam's origin-host injection
+// stays out of it (an explicit repo host recorded or passed to ghOptions is still
+// added: see ghOptions below).
 // A `-f repo=widgets` value starts with neither flag; nothing after `--` is a flag,
 // and the token after a value-taking flag is its value (a `--body` text that opens
 // `-R`), never a flag. `gh pr review --comment` is gh's one boolean --comment.
@@ -224,15 +231,27 @@ function hasExplicitHostArg(args) {
   return false;
 }
 
-// -> `opts` itself when nothing is injected (an effective env that already has
-// GH_HOST, even empty; an explicit host arg; no known GHE host for opts.cwd), else
-// a copy whose env is opts.env (or process env) plus GH_HOST. The first injection
-// per host prints repoResolutionNote, since GH_HOST also picks gh's auth host.
-// The arg scan runs before the host probe, so an explicit-host call spawns no git.
+// -> `opts` itself when nothing is injected, else a copy whose env is the effective
+// env (opts.env, deps.env, or process env) plus GH_HOST. In order: an effective env
+// that already has GH_HOST, even empty, wins and injects nothing; then the explicit
+// repo host (`deps.explicitHost`, else the one pinExplicitRepoHost recorded) is
+// injected, before the arg check, and prints no note. That order is deliberate (#4795,
+// #4505): a host-less `-R owner/name` call on a pinned CLI must still reach the pinned
+// host, as it did when the pin was an exported GH_HOST (which returned at the first
+// check above, ahead of the arg scan), and a host-qualified flag beats GH_HOST in gh
+// itself; checking args first would reintroduce #4505's split across two hosts.
+// `deps.explicitHost` exists beside the recorded host for a caller that scopes the
+// host to some calls only (backlog-grant-gate.js), and it wins over the recorded one.
+// Then an explicit host arg injects nothing; then a known GHE origin host for
+// opts.cwd is injected and its first injection per host prints repoResolutionNote,
+// since GH_HOST also picks gh's auth host. The arg scan runs before the host probe,
+// so an explicit-host call spawns no git.
 function ghOptions(args, opts, deps = {}) {
   const o = opts || {};
   const base = o.env || deps.env || process.env;
   if ('GH_HOST' in base) return opts;
+  const explicitHost = deps.explicitHost || explicitRepoHost;
+  if (explicitHost) return { ...o, env: { ...base, GH_HOST: explicitHost } };
   if (hasExplicitHostArg(args)) return opts;
   const spec = resolveGhSpec(o.cwd || process.cwd(), deps);
   if (!spec) return opts;
@@ -258,14 +277,14 @@ function explicitRepoGhHost(repoSpec, cwd, deps = {}) {
 }
 
 // For a single-invocation CLI whose every gh call targets its explicit --repo:
-// exports explicitRepoGhHost's answer as GH_HOST on `deps.env` (process.env),
-// so every later gh spawn, ghOptions-wrapped or a library default, reaches
-// that host. -> the host pinned, or null. Called from a CLI's realDeps only.
+// records explicitRepoGhHost's answer (or null) as this module's explicit repo
+// host, which ghOptions adds as GH_HOST to each wrapped call's own env. Writes
+// neither process.env nor `deps.env`, so a gh spawn that skips ghOptions is not
+// reached by it. -> the host recorded, or null. Called from a CLI's realDeps only.
 function pinExplicitRepoHost(repoSpec, deps = {}) {
   const env = deps.env || process.env;
-  const host = explicitRepoGhHost(repoSpec, deps.cwd, { ...deps, env });
-  if (host) env.GH_HOST = host;
-  return host;
+  explicitRepoHost = explicitRepoGhHost(repoSpec, deps.cwd, { ...deps, env });
+  return explicitRepoHost;
 }
 
 module.exports = {
