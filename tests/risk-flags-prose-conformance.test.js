@@ -283,6 +283,7 @@ const CLAUSE_PINS = [
   ['Risk flags paragraph', 'subissues', (t) => subissuesParagraph(t.subissues), "runs in the main thread before `mechanical-handoff.md`'s dispatch"],
   ['Risk flags paragraph', 'subissues', (t) => subissuesParagraph(t.subissues), "passed through that file's input table"],
   ['Risk flags paragraph', 'subissues', (t) => subissuesParagraph(t.subissues), 'Only a run where no human is reachable takes the headless `settle`'],
+  ['Risk flags paragraph', 'subissues', (t) => subissuesParagraph(t.subissues), 'resolves to an existing number is not created, so it is not settled and its held answers are dropped'],
   ['mechanical-handoff.md input row', 'handoff', (t) => handoffRow(t.handoff), 'run in the main thread before this dispatch'],
   ['mechanical-handoff.md input row', 'handoff', (t) => handoffRow(t.handoff), 'the absolute path of its held answers file and its `--add` slugs'],
   ['mechanical-handoff.md input row', 'handoff', (t) => handoffRow(t.handoff), '`--answers-file`'],
