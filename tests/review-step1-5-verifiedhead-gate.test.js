@@ -174,6 +174,9 @@ test('AC2.1: each STOP-row clause goes red on its own (#4395)', () => {
   const withException = CODE_MODE_STEPS.split('\n').map((l) => (l.startsWith(STOP_PREFIX) ? l.replace('name the cause:', 'name the cause: Exception: ') : l)).join('\n');
   assert.notEqual(withException, CODE_MODE_STEPS, 'Exception injection');
   assert.throws(() => assertStopRow(withException), /no exception clause/);
+  const withZeroTest = CODE_MODE_STEPS.split('\n').map((l) => (l.startsWith(STOP_PREFIX) ? l.replace('name the cause:', 'name the cause: zero-test row aside,') : l)).join('\n');
+  assert.notEqual(withZeroTest, CODE_MODE_STEPS, 'zero-test injection');
+  assert.throws(() => assertStopRow(withZeroTest), /no exception clause/);
 });
 
 test('AC2.1: the re-trigger row fires once and the trigger-and-pass row is scoped to standalone (#4395)', () => {
