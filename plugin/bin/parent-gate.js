@@ -396,7 +396,7 @@ function run(argv, deps = realDeps) {
       mergingPr: opts.mergingPr,
       riskFloor,
       slug: owner && repo ? repoSlug({ host, owner, repo }) : null,
-    },{ idempotence: opts.idempotence, readIdempotenceFacts });
+    }, { idempotence: opts.idempotence, readIdempotenceFacts });
   } catch (err) {
     if (err instanceof FactsError) {
       deps.stderr(`parent-gate.js: facts file ${err.key}: ${err.message}\n`);

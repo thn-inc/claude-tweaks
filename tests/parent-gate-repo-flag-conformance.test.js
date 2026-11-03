@@ -67,7 +67,7 @@ function assertStopRuleBeforeGhLines(text) {
   const flat = collapse(text);
   assert.ok(flat.split(STOP_RULE).length - 1 === 1, MSG_PRESENT);
   assert.ok(flat.split(SCOPE).length - 1 === 1, MSG_SCOPE_PRESENT);
-  assert.ok(flat.indexOf(SCOPE) < flat.indexOf(STOP_RULE), MSG_SCOPE_ORDER);
+  assert.ok(flat.includes(`${SCOPE} ${STOP_RULE}`), MSG_SCOPE_ORDER); // adjacent: the sentence introduces the rule, not merely precedes it
   assert.ok(collapse(runSection(text)).includes(STOP_RULE), MSG_PLACED);
   const firstGh = text.split('\n').slice(0, fencedGhIssueLines(text)[0].i).join('\n').length; // raw index of that line's start (less the newline)
   const rule = RULE_RE.exec(text);
@@ -135,10 +135,16 @@ test('empty-value: the stop rule precedes every gh line', () => {
   const scopeAfter = unscoped.replace(RULE_RE, (m) => `${m} ${SCOPE}`);
   assert.notEqual(scopeAfter, unscoped);
   assert.throws(() => assertStopRuleBeforeGhLines(scopeAfter), { message: MSG_SCOPE_ORDER }, 'go-red: the scope sentence after the rule fails order');
+  // go-red: the scope sentence moved to the file's top still precedes the rule, but no longer introduces it.
+  const scopeAtTop = `${SCOPE}\n\n${unscoped}`;
+  assert.notEqual(scopeAtTop, live);
+  const scopeAtTopFlat = collapse(scopeAtTop);
+  assert.ok(scopeAtTopFlat.indexOf(SCOPE) < scopeAtTopFlat.indexOf(STOP_RULE), 'the mutated copy keeps the scope sentence before the rule, so an order-only check would pass it');
+  assert.throws(() => assertStopRuleBeforeGhLines(scopeAtTop), { message: MSG_SCOPE_ORDER }, 'go-red: a scope sentence away from the rule fails adjacency');
   // go-red: moved into the Close section, below its first fence.
   const closeAnchor = 'Close with `--reason completed` only when at least one sub-issue closed `COMPLETED`';
   assert.ok(live.includes(closeAnchor), 'anchor for the placement control');
-  const moved = absent.replace(closeAnchor, `${STOP_RULE}\n\n${closeAnchor}`);
+  const moved = absent.replace(SCOPE_RE, '').replace(closeAnchor, `${SCOPE} ${STOP_RULE}\n\n${closeAnchor}`); // the scope sentence travels with the rule, so only placement is under test
   assert.notEqual(moved, absent);
   assert.throws(() => assertStopRuleBeforeGhLines(moved), { message: MSG_PLACED }, 'go-red: the rule below the first fence fails placement');
   // go-red: the whole Run the gate CLI section (rule included) moved below the Close fences.

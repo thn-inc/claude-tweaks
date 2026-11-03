@@ -2,7 +2,7 @@
 
 Record #4824 found that the Parent-Gate Procedure read a parent through `parent-gate.js`, whose repo resolves from `origin`, then wrote to it with bare `gh issue` commands that land on `gh`'s default repository. In a checkout where those two differ, the reads and the writes split across remotes. #4824 added `--repo "{parent-repo}"` to that procedure only. This inventory classifies every other `gh issue` write under `plugin/skills/`, in fenced lines and in runnable inline spans, so the remaining hazard has a list. It is a snapshot, not a guard: it is re-scanned when a `--repo` sweep runs, and nothing tests it.
 
-Scanned at commit `1ace04e2a0581aa0d23a780cc851a4b99541a3ef`.
+Scanned at main `9b32d13ef` plus #4824's edit to `plugin/skills/wrap-up/verification-brief-parent-gate.md`.
 
 ## How the scan works
 
@@ -843,11 +843,11 @@ Line 118's first span creates a new record from a staged file; nothing reads it 
 | 70 | span | `gh issue comment --repo` | `descriptive` |
 | 70 | span | `gh issue close --repo` | `descriptive` |
 | 71 | span | `gh issue edit --repo --add-label` | `descriptive` |
-| 461 | fence | `gh issue comment $PARENT_NUM --repo "{parent-repo}" --body-file "{parent-close-comment}"` | `repo` |
-| 469 | fence | `gh issue close $PARENT_NUM --repo "{parent-repo}" --reason completed` | `repo` |
-| 477 | fence | `gh issue close $PARENT_NUM --repo "{parent-repo}" --reason "not planned"` | `repo` |
-| 649 | fence | `gh issue edit $PARENT_NUM --repo "{parent-repo}" --add-label demo:pending` | `repo` |
-| 660 | fence | `gh issue comment $PARENT_NUM --repo "{parent-repo}" --body-file "$PARENT_VERIFICATION_BRIEF"` | `repo` |
-| 661 | fence | `gh issue edit $PARENT_NUM --repo "{parent-repo}" --add-label demo:pending` | `repo` |
+| 471 | fence | `gh issue comment $PARENT_NUM --repo "{parent-repo}" --body-file "{parent-close-comment}"` | `repo` |
+| 479 | fence | `gh issue close $PARENT_NUM --repo "{parent-repo}" --reason completed` | `repo` |
+| 487 | fence | `gh issue close $PARENT_NUM --repo "{parent-repo}" --reason "not planned"` | `repo` |
+| 659 | fence | `gh issue edit $PARENT_NUM --repo "{parent-repo}" --add-label demo:pending` | `repo` |
+| 670 | fence | `gh issue comment $PARENT_NUM --repo "{parent-repo}" --body-file "$PARENT_VERIFICATION_BRIEF"` | `repo` |
+| 671 | fence | `gh issue edit $PARENT_NUM --repo "{parent-repo}" --add-label demo:pending` | `repo` |
 
 Lines 70-71 are the Transport paragraph, which only names commands, so `descriptive` wins over their `--repo`.
