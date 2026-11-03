@@ -284,9 +284,10 @@ function checkLedgerStatus(status, resolution, { excludeRecords = [], repo = nul
 // racing. Throws on an unreadable ledger, no table, and LEDGER_UNSAFE (see appendLedgerRow).
 function appendRow({
   runDir, ledgerPath, phase, item, status, resolution,
+  readLedger = (p) => fs.readFileSync(p, 'utf8'), // test seam: lets a test attempt a second append between this call's read and its write
 }) {
   return withLock(ledgerLockPath(runDir), () => {
-    const appended = appendLedgerRow(fs.readFileSync(ledgerPath, 'utf8'), {
+    const appended = appendLedgerRow(readLedger(ledgerPath), {
       phase, item, status, resolution,
     });
     writeFileAtomic(ledgerPath, appended.text);

@@ -540,6 +540,42 @@ test('appendRow refuses a held lock (failClosed)', () => {
   assert.equal(f.text(), before);
 });
 
+test('AC3: a second append attempted between the first call\'s read and its write is refused while the lock is held, and no row is lost', () => {
+  const f = plainFixture();
+  const prior = process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
+  process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = '30';
+  let interleaved = null;
+  let first;
+  try {
+    first = appendRow({
+      runDir: f.runDir,
+      ledgerPath: f.ledgerPath,
+      phase: 'build',
+      item: 'first',
+      status: 'open',
+      // The first call has read the ledger and not yet written: the second writer arrives now.
+      readLedger: (p) => {
+        const text = fs.readFileSync(p, 'utf8');
+        try {
+          appendRow({ runDir: f.runDir, ledgerPath: f.ledgerPath, phase: 'build', item: 'second', status: 'open' });
+        } catch (err) {
+          interleaved = err;
+        }
+        return text;
+      },
+    });
+  } finally {
+    if (prior === undefined) delete process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS; else process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = prior;
+  }
+  assert.ok(interleaved, 'the interleaved append must not get the lock while the first call holds it');
+  assert.equal(interleaved.code, 'LOCK_TIMEOUT');
+  assert.deepEqual(first, { number: 2 });
+  assert.equal(f.text(), LEDGER_HEAD + PRIOR_ROW + '| 2 | build | first | open | — |\n');
+  // The refused writer retries once the lock is free and takes the next row: neither row is lost.
+  assert.deepEqual(appendRow({ runDir: f.runDir, ledgerPath: f.ledgerPath, phase: 'build', item: 'second', status: 'open' }), { number: 3 });
+  assert.equal(f.text(), LEDGER_HEAD + PRIOR_ROW + '| 2 | build | first | open | — |\n| 3 | build | second | open | — |\n');
+});
+
 test('appendRow throws on an unreadable ledger and on a ledger with no table', () => {
   const f = plainFixture();
   assert.throws(() => appendRow({ runDir: f.runDir, ledgerPath: path.join(f.dir, 'nope.md'), phase: 'build', item: 'x', status: 'open' }), /ENOENT/);
