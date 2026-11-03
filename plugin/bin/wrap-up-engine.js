@@ -642,10 +642,11 @@ function validateFinishConsolePayload(payload) {
 // action is `accept` (a settled `Defers: no`). A deferral's ratify files a record (row
 // `deferred`, `ratified → #{n}`); a ruling with no ratify action leaves the row open.
 // stage-item.js --ledger names the pairing twice — the staged file's `Ledger: {ref}#{n}`
-// header and the row's `(staged/{name})` Item suffix — and either maps a file to its row,
-// since an empty or unreadable file has no header to read. The header's number alone
-// suffices: a run stages every ruling against its one active ledger, resolved by the caller.
-// A row naming a staged ruling that is gone reads as unreadable. Returns the refusal or null.
+// header and the row's `(staged/{name})` Item suffix. The Item suffix decides when present
+// (it lives in the ledger the caller resolved, and an empty or unreadable file has no header
+// to read); only a row whose Item names no file falls back to the header's number, and then
+// every ruling carrying that number must be `accept` — list order never picks one. A row
+// naming a staged ruling that is gone reads as unreadable. Returns the refusal or null.
 function rulingAcceptError(runDir, ledgerText, ledgerUpdates) {
   if (!ledgerUpdates.some((l) => l.status === 'accepted')) return null;
   const stagedDir = path.join(runDir, 'staged');
@@ -664,14 +665,16 @@ function rulingAcceptError(runDir, ledgerText, ledgerUpdates) {
     if (l.status !== 'accepted') continue;
     const row = rows.get(String(l.item));
     const named = row ? /\(staged\/(sdd-ruling-[^()\s]+\.md)\)$/.exec(ledgerRowCells(row)[2] || '') : null;
-    const ruling = rulings.find((r) => r.row === l.item || (named && r.name === named[1]))
-      || (named ? { name: named[1], text: null } : null);
-    if (!ruling) continue;
-    const action = sddRulingRatifyAction(ruling.text);
-    if (action === SDD_RULING_RATIFY_ACTIONS.ACCEPT) continue;
-    return action === SDD_RULING_RATIFY_ACTIONS.FILE_RECORD
-      ? `ledger[${i}]: ${ruling.name} is a deferral ruling — its ratify files a record (deferred, ratified → #{n}), never accepted`
-      : `ledger[${i}]: ${ruling.name} is not ratifiable (empty, blank, or unreadable) — its row stays open, never accepted`;
+    const matched = named
+      ? [rulings.find((r) => r.name === named[1]) || { name: named[1], text: null }]
+      : rulings.filter((r) => r.row === l.item);
+    for (const ruling of matched) {
+      const action = sddRulingRatifyAction(ruling.text);
+      if (action === SDD_RULING_RATIFY_ACTIONS.ACCEPT) continue;
+      return action === SDD_RULING_RATIFY_ACTIONS.FILE_RECORD
+        ? `ledger[${i}]: ${ruling.name} is not a settled \`Defers: no\` ruling — its ratify files a record (deferred, ratified → #{n}), never accepted`
+        : `ledger[${i}]: ${ruling.name} is not ratifiable (empty, blank, or unreadable) — its row stays open, never accepted`;
+    }
   }
   return null;
 }
