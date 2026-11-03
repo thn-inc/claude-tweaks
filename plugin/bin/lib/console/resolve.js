@@ -11,12 +11,18 @@ const crypto = require('crypto');
 const path = require('path');
 const { evaluateMaturation } = require('../issues/grant-maturation');
 const { resolveRecords } = require('../wrap-up/pack');
-const { SDD_RULING_REASONS, sddRulingDeferralReason } = require('./sdd-ruling');
+const {
+  SDD_RULING_REASONS, sddRulingDeferralReason, SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction,
+} = require('./sdd-ruling');
 const { REFERENCE_REPAIR_REASONS, referenceRepairHoldReason, referenceFindingsByFile, readableGlobs } = require('./reference-repair');
 const { planFilings } = require('./finding-filing');
 const { FINDING_PATH_CLASS, FINDING_LENS_CLASS, FINDING_PATH, FINDING_LOCATION, FINDING_LENS, parseCoincidence } = require('./finding-path');
 const { FINDINGS_ARTIFACT, VERDICT_LINE_END } = require('../tiebreak');
 const { parseCategory, isApplicableReflect, parseReflectDestination, deferReasonProblem } = require('./reflect-destination');
+
+// #3942: the apply reason on a deferral ruling — its ratify files a backlog record
+// (review-console-appendix.md's sdd-ruling-* bullet), not a bare accepted write-back.
+const RATIFY_FILES_RECORD_REASON = 'ratify files a deferral record (Defer-reason carried) — ledger row deferred once it exists';
 
 // Section names exactly as the console renders them (console-template.md;
 // engine-render.js's SECTION_SPECS for the five curation sections).
@@ -734,9 +740,12 @@ function stagedItems(snapshot) {
     const { section, reason, outcome } = classifyStagedItem(s.name, s.text, siblingText);
     if (outcome) return { id: s.name, section, resolution: SECTION_STANCES[section].resolution, reason: `${outcome} — ${SHADOW_DUP_OUTCOMES[outcome].note}` };
     if (reason) return { id: s.name, section, resolution: 'pending', reason };
+    let ratifyReason = null;
     if (/^sdd-ruling-/.test(s.name)) {
       const r = s.readError ? SDD_RULING_REASONS.UNREADABLE : sddRulingDeferralReason(s.text);
       if (r) return { id: s.name, section, resolution: 'pending', reason: r };
+      // #3942: ratifying a deferral files a record at step 7 — the reason says so.
+      if (sddRulingRatifyAction(s.text) === SDD_RULING_RATIFY_ACTIONS.FILE_RECORD) ratifyReason = RATIFY_FILES_RECORD_REASON;
     }
     if (/^wrap-up-reference-/.test(s.name)) {
       const r = referenceRepairHoldReason(s, referenceFindings.get(s.name) || [], snapshot.sensitivePaths);
@@ -745,6 +754,7 @@ function stagedItems(snapshot) {
     const settled = model.settledFiles.get(s.name);
     if (settled) return { id: s.name, section, ...settledFileResolution(settled) };
     const stance = SECTION_STANCES[section];
+    if (ratifyReason) return { id: s.name, section, resolution: stance.resolution, reason: ratifyReason };
     if (s.name.endsWith('.patch')) {
       const check = snapshot.patchChecks[s.name] || { ok: false, error: 'not checked' };
       if (!check.ok) {
@@ -962,4 +972,4 @@ function resolveAll({ runDir, policy, deps }) {
   return result;
 }
 
-module.exports = { decisionLineHash, SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, REFERENCE_REPAIR_REASONS, classifyStagedItem, readSnapshot, resolveAll, findingItems, refusedStagedNames, runIdOf, cell, renderDroppedBlock, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs };
+module.exports = { decisionLineHash, SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction, RATIFY_FILES_RECORD_REASON, REFERENCE_REPAIR_REASONS, classifyStagedItem, readSnapshot, resolveAll, findingItems, refusedStagedNames, runIdOf, cell, renderDroppedBlock, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs };
