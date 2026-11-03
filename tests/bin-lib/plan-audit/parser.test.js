@@ -793,6 +793,7 @@ test('extractProofLines returns the slug, text and task of each strict proof lin
       { slug: 'irreversible-side-effect', text: 'Run against a sandbox account first.', task: '2' },
     ],
     nearMisses: [],
+    unclosedFences: [],
   });
 });
 
@@ -840,5 +841,55 @@ test('extractProofLines reads a CRLF plan the same as an LF one', () => {
 });
 
 test('extractProofLines on a plan with no tasks finds nothing', () => {
-  assert.deepStrictEqual(extractProofLines('Proof(auth): not inside any task, so not counted.'), { proofs: [], nearMisses: [] });
+  assert.deepStrictEqual(extractProofLines('Proof(auth): not inside any task, so not counted.'), { proofs: [], nearMisses: [], unclosedFences: [] });
+});
+
+const PROOF_TEXT = 'Rehearse the migration on a copy of production data.';
+
+test('extractProofLines keeps a ```-fenced example inside a longer backtick fence fenced', () => {
+  const plan = [
+    '### Task 1: A', '````md', '```', `Proof(auth): ${PROOF_TEXT}`, '```', '````',
+  ].join('\n');
+  assert.deepStrictEqual(extractProofLines(plan), { proofs: [], nearMisses: [], unclosedFences: [] });
+});
+
+test('extractProofLines keeps a ```-fenced example inside a ~~~ fence fenced, and the reverse', () => {
+  const tilde = ['### Task 1: A', '~~~md', '```', `Proof(auth): ${PROOF_TEXT}`, '```', '~~~'].join('\n');
+  assert.deepStrictEqual(extractProofLines(tilde), { proofs: [], nearMisses: [], unclosedFences: [] });
+  const backtick = ['### Task 1: A', '```md', '~~~', `Proof(auth): ${PROOF_TEXT}`, '~~~', '```'].join('\n');
+  assert.deepStrictEqual(extractProofLines(backtick), { proofs: [], nearMisses: [], unclosedFences: [] });
+});
+
+test('extractProofLines closes a fence only on a same-character line at least as long with nothing after it', () => {
+  const plan = [
+    '### Task 1: A',
+    '````', '```', 'not a closer: shorter', '````x', '~~~~', 'not a closer: other character',
+    `Proof(auth): still fenced ${PROOF_TEXT}`,
+    '`````',
+    `Proof(migrations): ${PROOF_TEXT}`,
+    '  ~~~~  ',
+    `Proof(public-contract): fenced again ${PROOF_TEXT}`,
+    '~~~~~~',
+    `Proof(irreversible-side-effect): ${PROOF_TEXT}`,
+  ].join('\n');
+  const { proofs, unclosedFences } = extractProofLines(plan);
+  assert.deepStrictEqual(proofs.map((p) => p.slug), ['migrations', 'irreversible-side-effect']);
+  assert.deepStrictEqual(unclosedFences, []);
+});
+
+test('extractProofLines does not read an inline triple-backtick line as a fence opener', () => {
+  const plan = ['### Task 1: A', '```inline``` text', `Proof(auth): ${PROOF_TEXT}`].join('\n');
+  const { proofs, unclosedFences } = extractProofLines(plan);
+  assert.deepStrictEqual([proofs.map((p) => p.slug), unclosedFences], [['auth'], []]);
+});
+
+test('extractProofLines names each task whose fence never closes, and the open fence does not run into the next task', () => {
+  const plan = [
+    '### Task 1: A', '```', `Proof(auth): ${PROOF_TEXT}`,
+    '### Task 2: B', `Proof(migrations): ${PROOF_TEXT}`, '```', 'x', '```',
+    '### Task 3: C', '~~~',
+  ].join('\n');
+  const { proofs, unclosedFences } = extractProofLines(plan);
+  assert.deepStrictEqual(unclosedFences, ['1', '3']);
+  assert.deepStrictEqual(proofs.map((p) => [p.slug, p.task]), [['migrations', '2']]);
 });

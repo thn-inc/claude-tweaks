@@ -1488,3 +1488,38 @@ test('isSubstantiveProof: under 20 characters is too-short, only category words 
   assert.strictEqual(isSubstantiveProof('auth', 'an anonymous call to /admin returns 401'), null);
   assert.strictEqual(isSubstantiveProof('auth', 'auth: an anonymous call to /admin returns 401'), null);
 });
+
+test('isSubstantiveProof: 20+ characters with no letter or digit is too-short, not a restatement', () => {
+  assert.strictEqual(isSubstantiveProof('auth', '-'.repeat(20)), 'too-short');
+  assert.strictEqual(isSubstantiveProof('auth', '... --- ... --- ... ---'), 'too-short');
+  assert.strictEqual(checkG(G_SPEC('Risk-flags: auth'), G_PLAN(`Proof(auth): ${'-'.repeat(20)}`)).missing[0].reason, 'too-short');
+});
+
+test('a missing slug carries the reason of its first proof line when none is substantive', () => {
+  const r = checkG(G_SPEC('Risk-flags: auth'), G_PLAN('Proof(auth): too short\nProof(auth): auth category proof for this flag'));
+  assert.deepStrictEqual(r.missing, [{ slug: 'auth', plan: null, reason: 'too-short' }]);
+  const swapped = checkG(G_SPEC('Risk-flags: auth'), G_PLAN('Proof(auth): auth category proof for this flag\nProof(auth): too short'));
+  assert.strictEqual(swapped.missing[0].reason, 'restates-category');
+});
+
+test('a later substantive proof satisfies a slug whose first proof line is not', () => {
+  const r = checkG(G_SPEC('Risk-flags: auth'), G_PLAN(`Proof(auth): too short\nProof(auth): ${GOOD}`));
+  assert.deepStrictEqual([r.ok, r.missing], [true, []]);
+});
+
+test('a ```-fenced example nested in a longer backtick fence or a ~~~ fence does not satisfy', () => {
+  const nestedBacktick = `\`\`\`\`md\n\`\`\`\nProof(auth): ${GOOD}\n\`\`\`\n\`\`\`\``;
+  const nestedTilde = `~~~md\n\`\`\`\nProof(auth): ${GOOD}\n\`\`\`\n~~~`;
+  for (const body of [nestedBacktick, nestedTilde]) {
+    const r = checkG(G_SPEC('Risk-flags: auth'), G_PLAN(body));
+    assert.deepStrictEqual([r.ok, r.missing.map((m) => m.slug), r.couldNotParse], [false, ['auth'], []], body);
+  }
+});
+
+test('an unclosed fence is could-not-parse for its task, never only "no proof line"', () => {
+  const r = checkG(G_SPEC('Risk-flags: auth'), G_PLAN(`\`\`\`\nProof(auth): ${GOOD}`));
+  assert.strictEqual(r.ok, false);
+  assert.deepStrictEqual(r.couldNotParse, [{ source: 'plan', raw: 'unclosed code fence in task 1' }]);
+  const second = checkG(G_SPEC('Risk-flags: auth'), `${G_PLAN(`Proof(auth): ${GOOD}`)}\n### Task 2: z\n\n~~~\n`);
+  assert.deepStrictEqual([second.ok, second.missing, second.couldNotParse], [false, [], [{ source: 'plan', raw: 'unclosed code fence in task 2' }]]);
+});

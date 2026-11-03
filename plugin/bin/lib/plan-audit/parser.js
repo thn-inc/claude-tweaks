@@ -111,23 +111,51 @@ function extractTaskBlocks(text) {
 // missing colon, a placeholder slug) is a `nearMisses` entry, so a proof line
 // the author meant but mistyped is never read as "no proof written". CRLF
 // input is normalized to LF here, as extractPathWaivers does.
+//
+// Fences follow CommonMark: an opener is a run of 3+ backticks or tildes (a
+// backtick opener's info string holds no backtick), and only a line of the same
+// character, at least as long, with nothing but whitespace after, closes it. So
+// a ```-fenced example nested inside a four-backtick or `~~~` fence stays
+// fenced. A task whose fence never closes is reported in `unclosedFences`: its
+// later lines were swallowed, which must not read as "no proof line" (Check F
+// reports the same state through hasUnclosedFence). AC_FENCE_RE, which Checks E
+// and F share, toggles on any fence-like line and is deliberately not reused.
 const PROOF_LINE_RE = /^[ \t]*(?:[-*+][ \t]+)?(?:\[[ xX]?\][ \t]+)?(?:\*\*)?Proof\(([a-z0-9][a-z0-9-]*)\):(?:\*\*)?[ \t]*(.*)$/;
 const PROOF_NEAR_MISS_RE = /^[ \t]*(?:[-*+][ \t]+)?(?:\[[ xX]?\][ \t]+)?(?:\*\*)?proof ?\(/i;
+const FENCE_OPEN_RE = /^[ \t]*(`{3,}|~{3,})(.*)$/;
+const FENCE_CLOSE_RE = /^[ \t]*(`{3,}|~{3,})[ \t]*$/;
+
+function fenceOpener(line) {
+  const m = line.match(FENCE_OPEN_RE);
+  if (!m || (m[1][0] === '`' && m[2].includes('`'))) return null;
+  return { char: m[1][0], length: m[1].length };
+}
+
+function closesFence(line, opener) {
+  const m = line.match(FENCE_CLOSE_RE);
+  return m !== null && m[1][0] === opener.char && m[1].length >= opener.length;
+}
 
 function extractProofLines(planText) {
   const proofs = [];
   const nearMisses = [];
+  const unclosedFences = [];
   for (const block of extractTaskBlocks(planText.replace(/\r\n?/g, '\n'))) {
-    let inFence = false;
+    let fence = null;
     for (const line of block.body.split('\n')) {
-      if (AC_FENCE_RE.test(line)) { inFence = !inFence; continue; }
-      if (inFence) continue;
+      if (fence) {
+        if (closesFence(line, fence)) fence = null;
+        continue;
+      }
+      const opener = fenceOpener(line);
+      if (opener) { fence = opener; continue; }
       const m = line.match(PROOF_LINE_RE);
       if (m) proofs.push({ slug: m[1], text: m[2].trim(), task: block.taskNumber });
       else if (PROOF_NEAR_MISS_RE.test(line)) nearMisses.push({ task: block.taskNumber, raw: line.trim() });
     }
+    if (fence) unclosedFences.push(block.taskNumber);
   }
-  return { proofs, nearMisses };
+  return { proofs, nearMisses, unclosedFences };
 }
 
 // Within one task body, extracts the Step 2 Run:/Expected: pair (writing-plans'

@@ -738,8 +738,8 @@ function checkF(specText, planText) {
 // with nothing to prove (`unclassified`: no flag line; `no-flags`: `Risk-flags:
 // none`). `missing` is a readable record whose plan lacks a proof. And
 // `couldNotParse` is an input the check could not read with confidence: a
-// malformed flag line, a plan with no tasks, or a line that resembles a proof
-// but fails the strict form. It gates too, so an unreadable input is never
+// malformed flag line, a plan with no tasks, a task whose code fence never
+// closes, or a line that resembles a proof but fails the strict form. It gates too, so an unreadable input is never
 // read as "no flags" or "proof present". An unknown slug is not a parse
 // failure: its widened flags are all required and a proof can satisfy them.
 // `extraCategories` are the policy slugs the caller resolved under control
@@ -747,14 +747,17 @@ function checkF(specText, planText) {
 const PROOF_MIN_CHARS = 20;
 const PROOF_FILLER_WORDS = new Set(['category', 'proof', 'risk', 'flag', 'the', 'a', 'an', 'for', 'of', 'this', 'is', 'and', 'covered', 'handled']);
 
-// null when the text is a proof; 'too-short' under PROOF_MIN_CHARS characters;
+// null when the text is a proof; 'too-short' under PROOF_MIN_CHARS characters, or
+// when it holds no letter or digit at all (padding such as `--------------------`
+// says nothing, and is not a restatement of the category either);
 // 'restates-category' when nothing is left after the slug's own words and the fillers.
 function isSubstantiveProof(slug, text) {
   const trimmed = String(text).trim();
   if (Array.from(trimmed).length < PROOF_MIN_CHARS) return 'too-short';
+  const words = trimmed.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((word) => word !== '');
+  if (words.length === 0) return 'too-short';
   const slugWords = new Set(slug.split('-'));
-  const rest = trimmed.toLowerCase().split(/[^\p{L}\p{N}]+/u)
-    .filter((word) => word !== '' && !slugWords.has(word) && !PROOF_FILLER_WORDS.has(word));
+  const rest = words.filter((word) => !slugWords.has(word) && !PROOF_FILLER_WORDS.has(word));
   return rest.length === 0 ? 'restates-category' : null;
 }
 
@@ -769,16 +772,19 @@ function checkG(specText, planText, { extraCategories = [], planPath = null } = 
   const couldNotParse = [];
   if (flags.status === 'unknown' && flags.reason === 'malformed') couldNotParse.push({ source: 'flag-line', raw: flags.raw });
   if (countTasks(plan).tasks === 0) couldNotParse.push({ source: 'plan', raw: 'no parseable tasks' });
-  const { proofs, nearMisses } = extractProofLines(plan);
+  const { proofs, nearMisses, unclosedFences } = extractProofLines(plan);
   for (const { raw } of nearMisses) couldNotParse.push({ source: 'proof-line', raw });
+  // A fence left open swallowed the rest of its task, so a proof there reads as absent:
+  // say the plan could not be read, not that the proof is missing.
+  for (const task of unclosedFences) couldNotParse.push({ source: 'plan', raw: `unclosed code fence in task ${task}` });
 
   const found = [];
   const missing = [];
   for (const slug of flags.flags) {
-    const own = proofs.filter((p) => p.slug === slug);
-    const good = own.find((p) => isSubstantiveProof(slug, p.text) === null);
+    const verdicts = proofs.filter((p) => p.slug === slug).map((p) => ({ task: p.task, reason: isSubstantiveProof(slug, p.text) }));
+    const good = verdicts.find((v) => v.reason === null);
     if (good) found.push({ slug, task: good.task });
-    else missing.push({ slug, plan: planPath, reason: own.length === 0 ? 'no-proof-line' : isSubstantiveProof(slug, own[0].text) });
+    else missing.push({ slug, plan: planPath, reason: verdicts.length === 0 ? 'no-proof-line' : verdicts[0].reason });
   }
   return {
     ok: missing.length === 0 && couldNotParse.length === 0,
