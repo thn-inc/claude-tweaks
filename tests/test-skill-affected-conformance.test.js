@@ -197,7 +197,8 @@ function assertMismatchRoute(text) {
   const para = text.slice(at, end === -1 ? text.length : end);
   assert.ok(text.includes(ROW_CLAUSE), 'the VERIFICATION_SHA row says the Mismatch branch runs the scoped verify');
   assert.ok(!text.includes(STALE_ROW), 'the stale VERIFICATION_SHA row text is absent');
-  assert.ok(text.includes(PASSED_ROW_SKIP), 'the VERIFICATION_PASSED row conditions its skip on the SHA check');
+  const passedRow = text.split('\n').find(line => line.startsWith('| `VERIFICATION_PASSED` |'));
+  assert.ok(passedRow !== undefined && passedRow.includes(PASSED_ROW_SKIP), 'the VERIFICATION_PASSED row conditions its skip on the SHA check');
   assert.ok(para.includes(TAIL_CLAUSE), 'the tail clause keeps the rest of the bullet applying as written after the Mismatch branch passes');
   assert.ok(para.includes(NOTE_CLAUSE), 'the paragraph ends with the re-run note replacing a passed-in-build report');
 }
@@ -246,6 +247,14 @@ test('go-red: re-adding the stale re-runs wording to the row fails the stale-tex
 test('go-red: an unconditional VERIFICATION_PASSED row skip fails the row-condition assertion', () => {
   const skill = read('plugin/skills/test/SKILL.md');
   const mutated = skill.replace('Skip types/lint/tests when `VERIFICATION_SHA` equals `HEAD` — they already passed', 'Skip types/lint/tests — they already passed');
+  assert.notEqual(mutated, skill);
+  assert.throws(() => assertMismatchRoute(mutated), /the VERIFICATION_PASSED row conditions its skip on the SHA check/);
+});
+
+test('go-red: an unconditional VERIFICATION_PASSED row with the phrase elsewhere in the file fails the row-condition assertion', () => {
+  const skill = read('plugin/skills/test/SKILL.md');
+  const unconditional = skill.replace('Skip types/lint/tests when `VERIFICATION_SHA` equals `HEAD` — they already passed', 'Skip types/lint/tests — they already passed');
+  const mutated = unconditional + `\n${PASSED_ROW_SKIP}\n`;
   assert.notEqual(mutated, skill);
   assert.throws(() => assertMismatchRoute(mutated), /the VERIFICATION_PASSED row conditions its skip on the SHA check/);
 });
