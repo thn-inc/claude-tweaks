@@ -104,6 +104,7 @@ test('reason: out-of-order', () => {
 test('reason: mixed-none', () => {
   assertReason('#1:none,test', 'mixed-none');
   assertReason('#1:test,none', 'mixed-none');
+  assertReason('#1:none,none', 'mixed-none');
 });
 
 test('reason: nothing-left', () => {

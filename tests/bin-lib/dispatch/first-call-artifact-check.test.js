@@ -687,6 +687,12 @@ test('parseNextSteps: a flat value under more than one target fails next-steps-f
   assert.equal(parseNextSteps(handoffReply('NEXT_STEPS: '), FIRST_CALL_STEPS, { targets }).reason, 'next-steps-empty', 'empty is still empty');
 });
 
+test('parseNextSteps: a flat value under one target keeps the flat refusals', () => {
+  const targets = ['#12'];
+  assert.equal(parseNextSteps(handoffReply('NEXT_STEPS: tset'), FIRST_CALL_STEPS, { targets }).reason, 'next-steps-invalid');
+  assert.equal(parseNextSteps(handoffReply('NEXT_STEPS: test,test'), FIRST_CALL_STEPS, { targets }).reason, 'next-steps-duplicate');
+});
+
 test('parseNextSteps: a per-record line that disagrees with the targets, or is malformed, fails with its grammar reason', () => {
   const targets = ['#12', '#34'];
   for (const [line, reason] of [

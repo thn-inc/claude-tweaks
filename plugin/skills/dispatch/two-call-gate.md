@@ -133,7 +133,8 @@ worktree, before anything else in this file runs for it.
    `parseNextSteps(reply, SECOND_CALL_STEPS)`, the steps a second call can still run (`test`,
    `review`, `polish`, `re-verify`, `wrap-up`). A bundle group also passes its records as
    `{ targets }`, `#N` strings (`['#12','#34']`), never bare numbers, so a flat `NEXT_STEPS` from a
-   bundle fails closed. An `{ ok: true, steps }` result is the continuation's step
+   bundle fails closed; `resolveFirstCallGate` also takes `{ targets }`, in the same form, and
+   forwards them to this parse. An `{ ok: true, steps }` result is the continuation's step
    list. A `{ ok: false, reason, message }` result fails closed. That covers
    NEXT_STEPS missing or empty, a step the call does not run, a step named twice, and a per-record
    value whose records differ from the targets. Log

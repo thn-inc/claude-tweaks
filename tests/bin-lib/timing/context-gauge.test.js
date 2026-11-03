@@ -705,7 +705,32 @@ test('CLI: --keep-going puts its token before the mode token, with no mode token
   }
 });
 
-test('CLI: malformed --record-steps and --keep-going invocations exit 2 and write nothing', async () => {
+test('CLI: --no-stories puts its token after keep-going and before the mode token, with no mode token after it on an interactive run', async () => {
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  const cases = [
+    ['auto', ['--no-stories'], 'record-steps=#12:none;#34:build,test no-stories auto'],
+    ['auto', ['--no-stories', '--keep-going'], 'record-steps=#12:none;#34:build,test keep-going no-stories auto'],
+    ['interactive', ['--no-stories'], 'record-steps=#12:none;#34:build,test no-stories'],
+  ];
+  for (const [mode, flags, tail] of cases) {
+    const fx = multiRun({ mode });
+    const c = cli(fx);
+    assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, ...flags, '--record-steps', RECORD_STEPS], c.deps), 0, c.err.join(''));
+    assert.strictEqual(readHandoff(fx.runDir).resume, `PIPELINE_RUN_DIR="${fx.runDir}" /claude-tweaks:flow "#12,#34" ${tail}`);
+  }
+});
+
+test('CLI: a non-canonical --record-steps value resumes in canonical form', async () => {
+  const fx = multiRun();
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  const c = cli(fx);
+  assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--record-steps', ' #12 : none ; #34: build '], c.deps), 0, c.err.join(''));
+  const h = readHandoff(fx.runDir);
+  assert.deepStrictEqual(h.recordSteps, { '#12': [], '#34': ['build'] });
+  assert.strictEqual(h.resume, `PIPELINE_RUN_DIR="${fx.runDir}" /claude-tweaks:flow "#12,#34" record-steps=#12:none;#34:build auto`);
+});
+
+test('CLI: malformed --record-steps, --keep-going and --no-stories invocations exit 2 and write nothing', async () => {
   const fx = multiRun();
   const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
   const base = ['--run', fx.runDir, '--transcript', t];
@@ -719,6 +744,9 @@ test('CLI: malformed --record-steps and --keep-going invocations exit 2 and writ
     [...base, '--record-steps', '#12:none;#34:review-console'],
     [...base, '--keep-going'],
     [...base, '--keep-going', '--next-steps', 'test'],
+    [...base, '--no-stories'],
+    [...base, '--no-stories', '--next-steps', 'test'],
+    [...base, '--record-steps', '--no-stories'],
   ];
   for (const argv of cases) {
     const c = cli(fx);
@@ -740,6 +768,7 @@ test('manifestRecords: the manifest\'s spec ids as #N in manifest order; null wh
   assert.deepStrictEqual(manifestRecords(fx.runDir, { manifest: { multispec: { parent: 'x', specs: [{ id: 7 }, { id: 9 }] } } }), ['#7', '#9']);
   assert.strictEqual(manifestRecords(fx.runDir, { manifest: null }), null);
   assert.strictEqual(manifestRecords(fx.runDir, { manifest: { multispec: { parent: 'x', specs: [] } } }), null);
+  assert.deepStrictEqual(manifestRecords(fx.runDir, { manifest: { multispec: { parent: 'x', specs: [{ id: 7 }, { id: 9 }, { id: 7 }] } } }), ['#7', '#9'], 'a repeated id is one record');
 });
 
 test('CLI: --run is anchored strictly — outside every checkout and a worktree-local shadow both exit 2', async () => {

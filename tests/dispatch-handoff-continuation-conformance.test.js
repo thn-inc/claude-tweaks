@@ -81,10 +81,18 @@ const RECORD_TOKEN = 'record-steps=#12:none;#34:test';
 const BUNDLE_LINE = '/claude-tweaks:flow "#{n1},#{n2},..."';
 const section8 = (t) => squash(region(t, '## 8. Continuing a handed-off call', null, 'section 8'));
 
+const SECOND_RECORD_TOKEN = 'record-steps=#12:none;#34:review,polish,wrap-up';
+
 // Every way a bundle's continuation could lose a record's own step. The controls below hand it
 // live text with one piece removed, so a gap this cannot see fails there rather than passing here.
-function bundleContinuationGaps({ firstTemplate, continuationDoc, gateDoc }) {
+function bundleContinuationGaps({ firstTemplate, secondTemplate, continuationDoc, gateDoc }) {
   const gaps = [];
+  const continuedSecond = secondTemplate.split('review,polish,wrap-up auto').join(`${SECOND_RECORD_TOKEN} auto`);
+  if (continuedSecond.split(`${SECOND_RECORD_TOKEN} auto`).length - 1 !== 2) gaps.push('second template: the token does not land on both invocation lines');
+  if (continuedSecond.replaceAll(SECOND_RECORD_TOKEN, '').includes('review,polish,wrap-up')) gaps.push('second template: a review,polish,wrap-up step list survives the substitution');
+  if (!continuedSecond.split('\n').some((l) => l.includes(BUNDLE_LINE) && l.includes(`${SECOND_RECORD_TOKEN} auto`))) {
+    gaps.push('second template: the bundle invocation line does not hold the token');
+  }
   const continued = firstTemplate.split('build,test auto').join(`${RECORD_TOKEN} auto`);
   if (continued.includes('build,test')) gaps.push('template: a build,test step list survives the substitution');
   if (!squash(continued).includes(STOP_SENTENCE)) gaps.push('template: the stop sentence is gone');
@@ -107,6 +115,7 @@ function bundleContinuationGaps({ firstTemplate, continuationDoc, gateDoc }) {
 
 const bundleInputs = () => ({
   firstTemplate: fencedBlocks(read('task-prompt.md'))[0],
+  secondTemplate: fencedBlocks(read('task-prompt.md'))[1],
   continuationDoc: read('continuation-call.md'),
   gateDoc: read('two-call-gate.md'),
 });
@@ -121,6 +130,9 @@ test('bundleContinuationGaps goes red on each piece a bundle continuation depend
     ['firstTemplate', (t) => `${t}\nfallback step list: build,test\n`, /a build,test step list survives/],
     ['firstTemplate', (t) => t.split('Stop after the test gate').join('Carry on after the test gate'), /stop sentence is gone/],
     ['firstTemplate', (t) => t.split(BUNDLE_LINE).join('/claude-tweaks:flow #{issue}'), /bundle invocation line/],
+    ['secondTemplate', (t) => `${t}\nfallback step list: review,polish,wrap-up\n`, /review,polish,wrap-up step list survives/],
+    ['secondTemplate', (t) => t.replace('review,polish,wrap-up auto', 'review,polish,wrap-up  auto'), /both invocation lines/],
+    ['secondTemplate', (t) => t.split(BUNDLE_LINE).join('/claude-tweaks:flow #{issue}'), /second template: the bundle invocation line/],
     ['continuationDoc', (t) => t.split('record-steps={NEXT_STEPS}').join('{NEXT_STEPS}'), /no record-steps=/],
     ['continuationDoc', (t) => t.split('`stepArg`').join('value'), /continuation: no stepArg/],
     ['continuationDoc', (t) => t.split('targets unchanged').join('targets recomputed'), /targets not held/],

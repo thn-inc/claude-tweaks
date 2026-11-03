@@ -85,8 +85,10 @@ const CONTEXT_CAP_FACTS = [
   [/never under the `parallel` token or as a `MULTISPEC_PARALLEL_WAVE=1` wave member/, 'the parallel and wave-member exclusion'],
   [/`\{parent\}` the literal parent run dir, never `spec-\{N\}\/`/, 'the literal parent run dir, never spec-{N}/'],
   [/exits 2 on a `spec-` basename/, 'why: the gauge refuses a spec- basename'],
-  [/bin\/context-gauge\.js" --run "\{parent\}" --record-steps "\{value\}" \[--keep-going\]/, 'the gauge call with --record-steps and --keep-going'],
+  [/bin\/context-gauge\.js" --run "\{parent\}" --record-steps "\{value\}" \[--keep-going\] \[--no-stories\]/, 'the gauge call with --record-steps, --keep-going and --no-stories'],
   [/`--keep-going` only under the `keep-going` token/, '--keep-going only under the keep-going token'],
+  [/`--no-stories` only under the `no-stories` token/, '--no-stories only under the no-stories token'],
+  [/a later record's list can still hold `build`/, 'why: a later record can still run build'],
   [/the `dispatched` read targets `\$MULTISPEC_PARENT_DIR`/, 'the dispatched read targets the parent'],
   [/`\{run\}` and `handoff\.json` are the parent's/, '{run} and handoff.json are the parent\'s'],
   [/A read against `spec-\{N\}\/` prints nothing/, 'why: a per-spec read prints nothing'],
@@ -108,7 +110,11 @@ const RESUME_FACTS = [
   [/`build`'s automatic `stories` and `polish`'s bundled re-verify still apply/, 'stories and re-verify still apply'],
   [/`none` runs nothing and the record stays a target/, 'none stays a target'],
   [/A resumed run carrying `keep-going` keeps it/, 'keep-going survives the resume'],
+  [/one carrying `no-stories` keeps that/, 'no-stories survives the resume'],
+  [/Step 2\.4, Step 2\.7b, Step 2\.8/, 'the steps the union feeds, Step 2.4 included'],
   [/is the CLI's `steps` union/, 'the union for {steps}'],
+  [/enters `review` with `TEST_PASSED=true`, because the handing-off agent's test gate passed/, 'a list past test enters review with TEST_PASSED=true'],
+  [/the stamp read is then the real check/, 'the stamp read is the real check'],
   [/`review\/code-mode-steps\.md`'s Step 1\.5 Test Gate/, 'the code-mode-steps.md citation'],
   [/re-triggers `\/claude-tweaks:test` when the stamp does not verify HEAD/, 'the gate re-triggers test on a stale stamp'],
   [/Pre-flight Verify Sweep does not re-run/, 'the sweep does not re-run'],
@@ -117,6 +123,20 @@ const RESUME_FACTS = [
   [/Boundary freshness check runs only before a record that has not started/, 'freshness only before an unstarted record'],
   [/consolidated pass runs when any record's list carries `wrap-up`/, 'the consolidated pass condition'],
   [/otherwise Step 5's partial note applies/, 'the partial note otherwise'],
+  [/leaves the pass to its parent, which runs it even after the child's failure card/, 'a handed-off child leaves the pass to its parent, failure card included'],
+];
+
+// The precondition Per-record resume's TEST_PASSED sentence answers: the gate reads the stamp
+// only when TEST_PASSED is present, and a fresh continuation agent never ran `test`.
+const TEST_GATE_FACTS = [
+  [/Check for `TEST_PASSED=true` in pipeline context\. If present,/, 'the stamp read is conditional on TEST_PASSED in pipeline context'],
+];
+
+const EXECUTION_FACTS = [
+  [/`record-steps=` resume follows `steps-and-gates\.md`'s Per-record resume over this section/, 'the pointer to Per-record resume'],
+  [/no Pre-flight Verify Sweep/, 'no sweep on a resume'],
+  [/no re-scaffold of a record that has a `spec-\{N\}\/config\.yml`/, 'no re-scaffold on a resume'],
+  [/each record runs its own list, not the full pipeline/, 'each record runs its own list'],
 ];
 
 const GAUGE_BULLET_FACTS = [
@@ -139,6 +159,7 @@ const STEPS_COMPLETE_FACTS = [
   [/multi-spec run's note names `\{MULTISPEC_PARENT_DIR\}\/handoff\.json`/, 'the multi-spec note names the parent handoff.json'],
   [/`Run directory: \{MULTISPEC_PARENT_DIR\}`/, 'the multi-spec note names the parent run dir'],
   [/`Handed off: \{next-steps\} continue in a fresh agent from \{PIPELINE_RUN_DIR\}\/handoff\.json\.`/, 'the single-spec line stays'],
+  [/then, when `wrap-up` is in its step list, runs `wrap-up` and Step 5 itself/, 'a top-level run owes wrap-up only when its step list holds it'],
 ];
 
 const REPORT_ITEM_FACTS = [
@@ -152,6 +173,10 @@ const TOP_LEVEL_FACTS = [
   [/when this agent's own step list carries `wrap-up`/, 'only when this agent\'s own step list carries wrap-up'],
   [/A `record-steps=` child's own lists never carry `wrap-up`, so its relayed note is its close/, 'a record-steps= child\'s relayed note is its close'],
   [/runs `wrap-up` in run order for each record whose `manifest\.yml` status is none of `complete`, `failed`, `not-run`, then the consolidated pass/, 'wrap-up per unfinished record, then the consolidated pass'],
+  [/A child that did not report, or that reported `BLOCKED`, stops this agent, because it may still be writing/, 'only a silent or BLOCKED child stops a multi-spec parent'],
+  [/multi-spec failure card under a step list holding `wrap-up`/, 'a multi-spec failure card under a wrap-up list is the exception'],
+  [/requires the console after a HARD-GATE abort/, 'why: the console is owed after a HARD-GATE abort'],
+  [/still takes the status-filtered loop at the end of this item/, 'the failure card still takes the status-filtered loop'],
 ];
 
 // Every position in `markers` must exist and increase. Both messages are matched by the controls.
@@ -190,6 +215,14 @@ test('the cited gate is real: code-mode-steps.md\'s Step 1.5 is the Test Gate, a
   const gate = region(read(CODE_MODE_STEPS), '## Step 1.5: Test Gate', '## Step 1.6', 'Test Gate');
   assert.match(gate, /`verifiedHead: false`[^\n]*re-trigger `\/claude-tweaks:test`/);
   assert.match(gate, /\*\*`verifiedHead: false`\*\* → no recent pass[^\n]*auto-trigger `\/claude-tweaks:test/);
+  assertEachFactGoesRed(TEST_GATE_FACTS, gate);
+});
+
+test('multi-spec.md\'s Execution opens by pointing a record-steps= resume at Per-record resume (each fact goes red)', () => {
+  const [, opening] = read(MULTI_SPEC).split('\n## Execution\n');
+  assert.ok(opening, 'multi-spec.md lost its ## Execution heading');
+  const firstParagraph = opening.trim().split('\n\n')[0];
+  assertEachFactGoesRed(EXECUTION_FACTS, firstParagraph);
 });
 
 test('the example token the prose prints parses through the real record-steps.js, and a mangled one is refused', () => {
@@ -490,10 +523,11 @@ test('a top-level run gauges only with two or more steps before wrap-up: the one
   assert.match(item, /a single step resumes from that step onward/);
   // Final review fix: the two-step rule is the top-level one; a dispatched call gauges with
   // one step left, because its template's stop sentence holds a one-entry `test` to `test`.
-  assert.match(item, /A top-level run gauges only when two or more steps remain before `wrap-up`/);
+  assert.match(item, /A top-level single-spec run gauges only when two or more steps remain before `wrap-up`/);
   assert.match(item, /A dispatched call gauges with any step left, even one: its continuation template's "Stop after the test gate" sentence holds a one-entry `test` list to exactly `test`/);
   const bullet = region(read(HANDOFF), '- **Never `wrap-up` from a top-level run.**', '\n', 'top-level wrap-up bullet');
-  assert.match(bullet, /gauges only when two or more steps remain before `wrap-up`/);
+  assert.match(bullet, /A top-level single-spec run gauges only when two or more steps remain before `wrap-up`/);
+  assert.match(bullet, /A multi-spec run has no such floor, because a one-entry per-record list runs exactly its step/);
   assert.match(bullet, /one step left before `wrap-up`[^.]*does not gauge/);
   assert.match(bullet, /two or more[^.]*always a comma list/);
   assert.match(bullet, /a single step resumes from that step onward/);

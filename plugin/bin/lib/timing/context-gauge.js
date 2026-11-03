@@ -361,8 +361,10 @@ function readHandoffCount(runDir, { fsImpl = fs } = {}) {
 // `recordSteps` ({'#N': [steps]}, targets' order) makes it per-record: the key
 // is added and `resume` carries a record-steps= token instead of the step list.
 // `keepGoing` adds the keep-going token, which lives only in /flow's $ARGUMENTS,
-// so a resumed run would otherwise revert to stop-on-first-failure.
-function buildHandoff({ runDir, nextSteps, contextTokens, cap, targets, mode = null, handoffCount = 1, now, recordSteps = null, keepGoing = false }) {
+// so a resumed run would otherwise revert to stop-on-first-failure. `noStories`
+// adds the no-stories token for the same reason: a later record can resume with
+// `build` in its list.
+function buildHandoff({ runDir, nextSteps, contextTokens, cap, targets, mode = null, handoffCount = 1, now, recordSteps = null, keepGoing = false, noStories = false }) {
   const modeToken = RESUME_AS_AUTO.has(mode) ? ' auto' : '';
   const stepsToken = recordSteps ? `record-steps=${formatRecordSteps(recordSteps)}` : nextSteps.join(',');
   return {
@@ -373,7 +375,7 @@ function buildHandoff({ runDir, nextSteps, contextTokens, cap, targets, mode = n
     mode,
     handoffCount,
     writtenAt: new Date(now).toISOString(),
-    resume: `PIPELINE_RUN_DIR="${runDir}" /claude-tweaks:flow "${targets.join(',')}" ${stepsToken}${keepGoing ? ' keep-going' : ''}${modeToken}`,
+    resume: `PIPELINE_RUN_DIR="${runDir}" /claude-tweaks:flow "${targets.join(',')}" ${stepsToken}${keepGoing ? ' keep-going' : ''}${noStories ? ' no-stories' : ''}${modeToken}`,
   };
 }
 

@@ -54,6 +54,8 @@ The slug convention, the per-spec `config.yml` copy, and `manifest.yml`'s field-
 
 ## Execution
 
+A `record-steps=` resume follows `steps-and-gates.md`'s Per-record resume over this section: no Pre-flight Verify Sweep, no re-scaffold of a record that has a `spec-{N}/config.yml`, and each record runs its own list, not the full pipeline.
+
 **Create `manifest.yml` once, before spec 1's first `spec-status` call** (parent dir and Manifesto `config.yml` exist): `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" manifest-init --run "{parent}" --specs {N1},{N2},{N3}` — a resume re-run keeps every spec's status and `phases[]` (#3035).
 
 ### Pre-flight Verify Sweep (once, before spec 1)
@@ -134,9 +136,9 @@ Why shared, not per-record: sequential records in one run are one logical unit o
 
 The sequential loop gauges after each passing gate of each record (the same boundary units as `context-handoff.md`), with a step left in the run, under `auto`/`confirm`/`hybrid`, never under the `parallel` token or as a `MULTISPEC_PARALLEL_WAVE=1` wave member. One Bash call, with `{parent}` the literal parent run dir, never `spec-{N}/`, because the gauge exits 2 on a `spec-` basename:
 
-`node "${CLAUDE_PLUGIN_ROOT}/bin/context-gauge.js" --run "{parent}" --record-steps "{value}" [--keep-going]`
+`node "${CLAUDE_PLUGIN_ROOT}/bin/context-gauge.js" --run "{parent}" --record-steps "{value}" [--keep-going] [--no-stories]`
 
-`--keep-going` only under the `keep-going` token.
+`--keep-going` only under the `keep-going` token, `--no-stories` only under the `no-stories` token: both live only in `$ARGUMENTS`, so a resume would lose them, and a later record's list can still hold `build`.
 
 Everywhere the handoff procedure reads the run, a multi-spec run uses the parent, because `$PIPELINE_RUN_DIR` is the per-spec `{parent}/spec-{N}/`, which holds no `run-state.json`: the `dispatched` read targets `$MULTISPEC_PARENT_DIR`, and `{run}` and `handoff.json` are the parent's. A read against `spec-{N}/` prints nothing and would misroute a dispatched bundle to the Top-level branch.
 
