@@ -10,7 +10,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { findCredentialInText, checkLink, hasBearerUrl } = require('../plugin/bin/lib/wrap-up/packet-links');
+const { findCredentialInText, checkLink, entryPointHasBearerRoute, hasBearerUrl } = require('../plugin/bin/lib/wrap-up/packet-links');
 const { upsertLocalPacket } = require('../plugin/bin/lib/wrap-up/packet-post');
 
 const BUDGET_MS = 2000;
@@ -63,6 +63,23 @@ test('the URL-token scan stays linear on long adversarial input (#4612), and kee
     [`https://h/a;${';'.repeat(200000)}`, false],
   ]) {
     const { value, ms } = timed(() => hasBearerUrl(input));
+    assert.ok(ms < BUDGET_MS, `took ${ms.toFixed(0)} ms`);
+    assert.strictEqual(value, expected);
+  }
+});
+
+test('the Entry point route scan stays linear on long adversarial input (#4612), and keeps its verdict', () => {
+  const bearer = 'Xk3j9f8s7d6f5g4h3j2k1';
+  for (const [input, expected] of [
+    [`${' '.repeat(200000)}x`, false],
+    [`- ${' '.repeat(200000)}x`, false],
+    ['*'.repeat(200000), false],
+    [`- Entry point: ${' '.repeat(200000)}x`, false],
+    [`- Entry point: ${'/ '.repeat(100000)}`, false],
+    [`- Entry point: ${'/'.repeat(200000)}`, false],
+    [`- Entry point: ${'/a '.repeat(50000)}/reset/${bearer}`, true],
+  ]) {
+    const { value, ms } = timed(() => entryPointHasBearerRoute(input));
     assert.ok(ms < BUDGET_MS, `took ${ms.toFixed(0)} ms`);
     assert.strictEqual(value, expected);
   }

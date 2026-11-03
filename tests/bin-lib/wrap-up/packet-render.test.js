@@ -925,6 +925,27 @@ test('a plan line with a bearer-shaped URL segment is screened, and what it hold
   assert.match(markdown, /^1 entry omitted for credential-shaped content: Observation plan \(path segment\)$/m);
 });
 
+test('a plan Entry point holding a bare route with a bearer-shaped segment is screened, and what it holds goes with it', () => {
+  const plan = `- Entry point: /reset/${BEARER}\n  - under it\n- Other`;
+  const { markdown, screened } = render([], [], { options: { observationPlan: plan } });
+  assert.ok(!markdown.includes(BEARER), markdown);
+  assert.deepEqual(sectionLines(markdown, 'Observation plan'), ['- Other']);
+  assert.deepEqual(screened, [{ section: 'observation-plan', key: 'path segment' }]);
+  assert.match(markdown, /^1 entry omitted for credential-shaped content: Observation plan \(path segment\)$/m);
+});
+
+test('a plan Entry point with the placeholder or an ordinary route renders, and other lines keep the URL rule', () => {
+  for (const plan of [
+    '- Entry point: /reset/{id}',
+    '- Entry point: /orders/new',
+    `- Inspect: /reset/${BEARER}`,
+  ]) {
+    const { markdown, screened } = render([], [], { options: { observationPlan: plan } });
+    assert.deepEqual(screened, [], plan);
+    assert.ok(markdown.includes(plan), plan);
+  }
+});
+
 test('a plan line with an ordinary URL, a placeholder or a bare long word is unchanged', () => {
   for (const plan of [
     '- Entry point: http://localhost:3000/settings',

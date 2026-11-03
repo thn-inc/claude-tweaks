@@ -761,6 +761,8 @@ for (const [heading, label, pattern] of [
   ['## Links and credentials', 'a UUID or dated slug is refused', /A UUID-keyed or dated-slug path on an allowed host therefore renders `\(link refused: credential in path segment\)`/],
   ['## Links and credentials', 'the Try it block still names the route', /the Try it block still names the route/],
   ['## Links and credentials', 'a command or a plan line meets the bearer rule on its URLs', /A `command` or observation-plan line holding a URL with such a segment is refused or screened too, so a route carrying one reaches the Test guide as a command with that segment replaced by `\{id\}`/],
+  ['## Links and credentials', 'a plan Entry point is read as a route', /An observation plan's `Entry point:` field names a route, so a bare path in its value is screened the same way and the plan holds that route with `\{id\}`/],
+  ['## Links and credentials', 'a bare path elsewhere is the writer\'s to replace', /A bare path in a `command` or on any other plan line stays bound by the writer's `\{id\}` rule alone, since code cannot tell it from a local path/],
   ['## Links and credentials', 'a gather refusal states the same reason',/A link the gather refused has no fact, so its refusal reads `\{N\} link\(s\) refused: \{id\} \(credential in path segment\)`/],
   ['## Recording', 'the source of frames', /built from the step screenshots the pipeline's own happy-path stories already wrote[^.]*\. No new browser run/],
   ['## Recording', 'negative stories never enter it', /Negative stories are excluded/],

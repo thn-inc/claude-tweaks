@@ -168,8 +168,13 @@ changed-file list includes UI, route, or rendered-content code: `app-route`/`ren
 precedence there, and choosing `cli`/`flow`/`diff` anyway needs a one-line justification written
 into the plan's own text.
 
-Author the plan's Entry point, Prepare, and Inspect fields per that schema. For a run with no
-UI/route surface, the old non-interactive guidance still applies, folded into the matching kind:
+Author the plan's Entry point, Prepare, and Inspect fields per that schema. An Entry point with a
+credential-shaped path segment (the bearer-segment rule, `_shared/acceptance-packet.md`'s
+`## Links and credentials`) holds the route with that segment replaced by the placeholder `{id}`,
+since render screens the raw value out of the plan. The bearer-shaped value itself is never written.
+
+For a run with no UI/route surface, the old non-interactive guidance still applies, folded into the
+matching kind:
 
 - A changed skill or harness file — pick `flow`; the Inspect pointer names the specific behavior
   to exercise (a step number, a branch, a template section), not "read the skill."

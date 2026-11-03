@@ -23,6 +23,7 @@ const {
 const {
   normalizeKey,
   checkLink,
+  entryPointHasBearerRoute,
   findCredentialInText,
   hasBearerUrl,
   isCredentialRefusal,
@@ -138,6 +139,39 @@ test('a ; parameter does not defeat the bearer segment: each segment is judged u
   }
   assert.deepEqual(check('http://localhost:3000/a;x=1'), { ok: true });
   assert.deepEqual(check('http://localhost:3000/;jsessionid=abc'), { ok: true });
+});
+
+test('an Entry point field names a route, so a bare path in its value meets the bearer rule', () => {
+  const bearer = 'Xk3j9f8s7d6f5g4h3j2k1';
+  for (const line of [
+    `- Entry point: /reset/${bearer}`,
+    `Entry point: /reset/${bearer}`,
+    `  * entry point: /reset/${bearer}`,
+    `1. Entry point: /reset/${bearer}`,
+    `- **Entry point:** /reset/${bearer}`,
+    `- Entry point: \`/reset/${bearer}\``,
+    `- Entry point: /${bearer};x=1`,
+    `- Entry point: /a%2F${bearer}?x=1`,
+    `- Entry point: /reset/${bearer} (the reset page)`,
+    `- Entry point: GET /reset/${bearer}`,
+    `- Entry point: [reset](/reset/${bearer})`,
+  ]) {
+    assert.equal(entryPointHasBearerRoute(line), true, line);
+  }
+  for (const line of [
+    '- Entry point: /reset/{id}',
+    '- Entry point: /orders/new',
+    '- Entry point: npm run demo',
+    '- Entry point: abc123^..def456',
+    `- Entry point: node seed.js ${bearer}`,
+    `- Entry point: specs/2026-11-02-acceptance-recording/w.gif`,
+    `- Entry point: /a?next=/reset/${bearer}`,
+    `- Inspect: /reset/${bearer}`,
+    `- See Entry point: /reset/${bearer}`,
+    '',
+  ]) {
+    assert.equal(entryPointHasBearerRoute(line), false, line);
+  }
 });
 
 test('checkLink accepts an allowed host, and a path that only names a key word', () => {

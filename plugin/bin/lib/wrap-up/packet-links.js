@@ -215,6 +215,21 @@ function hasBearerUrl(text) {
   return false;
 }
 
+const PLAN_LIST_MARKER_RE = /^(?:[-+*]|\d{1,9}[.)])[ \t]+/;
+const ENTRY_POINT_FIELD_RE = /^[*_]{0,2}entry point[*_]{0,2}:/i;
+const ROUTE_WORD_BREAK_RE = /[\s"'`<>([]+/;
+
+// Whether a plan line is an Entry point field with a rooted path that `checkLink` would refuse. That
+// field names a route, not a local file, so a bare path there is read as one; on any other line a
+// bare path is no URL. Every rooted word counts: a miss posts the value, a false positive (a `cli`
+// plan's absolute path holding a dated slug) only omits the line, visibly.
+function entryPointHasBearerRoute(line) {
+  const field = String(line).trimStart().replace(PLAN_LIST_MARKER_RE, '');
+  const label = ENTRY_POINT_FIELD_RE.exec(field);
+  if (label === null) return false;
+  return field.slice(label[0].length).split(ROUTE_WORD_BREAK_RE).some((word) => word.startsWith('/') && tokenHasBearerSegment(word));
+}
+
 // What a server serves the last segment as: trailing slashes and whitespace gone, and a
 // `;` parameter (`r.gif;x=1`) dropped from the final segment only.
 function servedPath(pathname) {
@@ -294,6 +309,7 @@ module.exports = {
   normalizeKey,
   BEARER_SEGMENT_REASON,
   checkLink,
+  entryPointHasBearerRoute,
   hasBearerUrl,
   isCredentialRefusal,
   isImageUrl,

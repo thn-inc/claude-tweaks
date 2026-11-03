@@ -9,7 +9,7 @@ const {
   PACKET_MARKER, SECTIONS, MAX_PACKET_CHARS, COMMANDS_ONLY_SURFACES, WITHHELD_TEXT,
 } = require('./packet-contract');
 const {
-  BEARER_SEGMENT_REASON, checkLink, findCredentialInText, hasBearerUrl, isCredentialRefusal, isImageUrl, normalizeKey,
+  BEARER_SEGMENT_REASON, checkLink, entryPointHasBearerRoute, findCredentialInText, hasBearerUrl, isCredentialRefusal, isImageUrl, normalizeKey,
 } = require('./packet-links');
 const { validatePacket } = require('./packet-validate');
 const { redactText, redactOrWithhold } = require('../walkthrough/redact');
@@ -52,6 +52,7 @@ const PLAN_SECTION = 'observation-plan';
 const PLAN_HEADING = 'Observation plan';
 const PLAN_ALL_SCREENED = 'all lines omitted for credential-shaped content';
 // What the screened line names for a plan line whose URL has a bearer-shaped path segment.
+// An Entry point's bare route counts as that URL.
 const PLAN_BEARER_KEY = 'path segment';
 const PLAN_HEADING_RE = /^#{1,6}[ \t]+observation plan[ \t]*$/i;
 const PLAN_LIST_MARKER_RE = /^(?:[-+*]|\d{1,9}[.)])[ \t]+(?=\S)/;
@@ -420,7 +421,7 @@ function screenPlanLines(lines, screened) {
   return lines.filter((line) => {
     const blank = line.trim() === '';
     const indent = indentWidth(line);
-    const key = findCredentialInText(line) ?? (hasBearerUrl(line) ? PLAN_BEARER_KEY : null);
+    const key = findCredentialInText(line) ?? (hasBearerUrl(line) || entryPointHasBearerRoute(line) ? PLAN_BEARER_KEY : null);
     if (key) screened.push({ section: PLAN_SECTION, key });
     const held = droppedIndent !== null && !blank && indent > droppedIndent;
     const valueLine = awaitsValue && !blank;

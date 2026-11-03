@@ -325,6 +325,14 @@ test('{LINKS} writes a credential-shaped path segment as a command holding {id},
   assert.ok(!linksBullet().includes('or the Entry point has a credential-shaped path segment'));
 });
 
+test('an Entry point with a credential-shaped path segment holds {id} in the plan, in the schema and in the Step that authors it', () => {
+  const sentence = /An Entry point with a credential-shaped path segment \(the bearer-segment rule, `_shared\/acceptance-packet\.md`'s `## Links and credentials`\) holds the route with that segment replaced by the placeholder `\{id\}`, since render screens the raw value out of the plan\. The bearer-shaped value itself is never written/;
+  const schema = flat(section(read('_shared/observation-plan.md'), '## Grammar rules', '## Per-kind semantics'));
+  assertClaimGoesRed(schema, sentence, 'the plan schema replaces a credential-shaped path segment with {id}');
+  const step2 = flat(between(brief(), '## Step 2: Author the observation plan', '## Step 2.5:'));
+  assertClaimGoesRed(step2, sentence, 'Step 2 replaces a credential-shaped path segment with {id}');
+});
+
 test('--local-base-url is keyed to the plan kind as well as the surface', () => {
   const bullet = between(gatherList(), '- `--local-base-url` —', 'Pass no `--scope`');
   assert.ok(bullet.includes('`app-route`/`rendered-page` plans'), bullet);
