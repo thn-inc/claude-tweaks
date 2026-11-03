@@ -668,12 +668,13 @@ gate is `lib/issues/parent-gate.js`, the same code the prose runs through `bin/p
   envelope (`base-unchecked`, or `reopen-failed` with that flag: the PR's base or the default branch
   could not be read, so Step 4.0 closed nothing and printed no closing set, #4549) is a failed read,
   so it is transient too; once its retries are spent its marker entry carries `step40Failed: true`.
-  A `gh-failed` skip for one parent or record in Step 4.0b is that parent's, and the marker is written as usual. A transient failure appends a `SKIP … reconcile
-  post-merge attempt` line (`condition: … (attempt N of 3) → fallback: the next reconcile pass
-  retries …`), never the marker, and the run is deferred. Once three attempt lines exist, the next transient failure
-  writes the marker as a deterministic one does, so the retry is bounded and the parent falls to
-  tidy's backstop. A retry re-runs Step 4.0 too, which is idempotent past the close window: a
-  record it reopened last time reads open and is settled open.
+  A `gh-failed` skip for one parent or record in Step 4.0b is that parent's, and the marker is
+  written as usual. A transient failure appends a `SKIP … reconcile post-merge attempt` line
+  (`condition: … (attempt N of 3) → fallback: the next reconcile pass retries …`), never the
+  marker, and the run is deferred. Once three attempt lines exist, the next transient failure
+  writes the marker as a deterministic one does, so the retry is bounded and the parent falls
+  to tidy's backstop. A retry re-runs Step 4.0 too, which is idempotent past the close window:
+  a record it reopened last time reads open and is settled open.
 - **Budget (`budget-exhausted`).** `index.js` hands `postMerge` the pass's own wall-clock budget as
   `budgetExceeded`. It is checked before each run's steps, never mid-run, so a catch-up or several
   armed merges cannot run the inline 18 s passes (the unscoped CLI, Step 4.2, dispatch's calls) past
