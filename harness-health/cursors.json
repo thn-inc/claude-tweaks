@@ -113,7 +113,7 @@
   },
   "skill:parse-signal-discipline": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793712754269
+    "lastAuditedMs": 1793728659402
   },
   "skill:scratch-worktree": {
     "lastAuditedSha": null,
@@ -197,7 +197,7 @@
   },
   "skill:single-source-constant-guard": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793655265365
+    "lastAuditedMs": 1793728661481
   },
   "skill:mcp-agent-fetch-node-compute": {
     "lastAuditedSha": null,
