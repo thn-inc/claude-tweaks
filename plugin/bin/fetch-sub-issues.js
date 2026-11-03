@@ -17,7 +17,8 @@
 // {"byParent":{},"retry":[]} (exit 0) — the empty envelope. Exit 0 on success; 1 on a malformed
 // invocation (non-positive-integer positional, unknown flag); 2 when `gh`
 // is absent or owner/repo cannot be resolved (no `--repo` and no readable
-// `origin` remote); 3 when the GraphQL call itself throws (network/API
+// `origin` remote, or an origin host with no GitHub signal — refused before any
+// gh call, #4933); 3 when the GraphQL call itself throws (network/API
 // failure, or fetchNativeSubIssues' own missing-repository guard) — or when
 // capabilities-probe.js's probeSchemaStrict call fails outright (runner
 // throw, JSON.parse failure): a transient/network probe failure, distinct
@@ -36,7 +37,7 @@ const { execFileSync } = require('child_process');
 const { fetchNativeSubIssues } = require('./lib/issues/native-dependencies');
 const { probeSchemaStrict } = require('./lib/issues/capabilities-probe');
 const {
-  parseRepo, ghAvailable, remoteUrl, ghOptions, pinExplicitRepoHost,
+  parseRepo, ghAvailable, remoteUrl, ghOptions, pinExplicitRepoHost, gateOriginRepo,
 } = require('./lib/repo-resolve');
 
 const USAGE = 'usage: fetch-sub-issues.js [<n> ...] [--repo owner/name] [--resolve-retries] [--help]\n';
@@ -109,7 +110,13 @@ function run(argv, deps = realDeps) {
 
   let remote = null;
   if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-  const repoSpec = opts.repo ? parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : parseRepo(remote);
+  let repoSpec;
+  if (opts.repo) repoSpec = parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`);
+  else {
+    const gated = gateOriginRepo(remote, deps.gateDeps);
+    if (gated.refusal) { deps.stderr(`fetch-sub-issues.js: ${gated.refusal}\n`); return 2; }
+    repoSpec = gated.spec;
+  }
   if (!repoSpec) { deps.stderr('fetch-sub-issues.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
   if (opts.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
   const { host, owner, repo } = repoSpec;

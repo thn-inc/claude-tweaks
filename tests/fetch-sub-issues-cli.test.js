@@ -176,6 +176,7 @@ test('--resolve-retries: a failing REST retry call exits 3, names the parent, an
 test('#2240: --resolve-retries on a GitHub Enterprise Server remote threads --hostname into the REST retry call', () => {
   const d = deps({
     remoteUrl: () => 'git@ghe.example.com:acme/widget.git',
+    gateDeps: { env: { GH_HOST: 'ghe.example.com' } },
     runner(args) {
       d.calls.push(args);
       const q = args.find((a) => a.startsWith('query='));
@@ -258,6 +259,24 @@ test('--repo owner/.. is rejected before any gh call (review finding: parseRepo 
   assert.deepStrictEqual(d.calls, []);
 });
 
+// #4933: the origin-derived spec passes the host gate and then meets the same guard.
+test('an origin whose owner is ".." is rejected after the host gate, before any gh call', () => {
+  const d = deps({ remoteUrl: () => 'git@github.com:../r.git', runner: () => { throw new Error('should not be called'); } });
+  assert.strictEqual(run(['5'], d), 2);
+  assert.match(d.err.join(''), /invalid --repo value/);
+  assert.deepStrictEqual(d.calls, []);
+});
+
+// #4933: the gate returns {spec: null, refusal: null} for an absent origin and falls through to
+// the CLI's own owner/repo check, not to the host refusal.
+test('no --repo and no readable origin: exit 2 with the owner/repo message, no host refusal, no gh call', () => {
+  const d = deps({ remoteUrl: () => { throw new Error('no remote'); }, runner: () => { throw new Error('should not be called'); } });
+  assert.strictEqual(run(['5'], d), 2);
+  assert.match(d.err.join(''), /could not resolve owner\/repo/);
+  assert.doesNotMatch(d.err.join(''), /is not a known GitHub host/);
+  assert.deepStrictEqual(d.calls, []);
+});
+
 test('--repo ../evil is rejected before any gh call', () => {
   const d = deps({ runner: () => { throw new Error('should not be called'); } });
   assert.strictEqual(run(['5', '--repo', '../evil'], d), 2);
@@ -298,7 +317,10 @@ test('#4806: the schema probe and every GraphQL page carry --hostname right afte
   const rest = viaRepo.calls.filter((a) => a[1] === '--paginate');
   assert.deepStrictEqual(rest, [['api', '--paginate', 'repos/o/r/issues/5/sub_issues', '--jq', '.[].number', '--hostname', 'ghe.example.com']]);
 
-  const viaRemote = deps({ remoteUrl: () => 'git@ghe.example.com:acme/widget.git' });
+  const viaRemote = deps({
+    remoteUrl: () => 'git@ghe.example.com:acme/widget.git',
+    gateDeps: { env: { GH_HOST: 'ghe.example.com' } },
+  });
   assert.strictEqual(run(nums, viaRemote), 0);
   assertHosted(viaRemote);
 

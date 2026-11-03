@@ -69,7 +69,8 @@ function assertAllSyntaxValid(scripts, label) {
   assert.ok(scripts.length > 0, `expected at least one node -e script in ${label}`);
   for (const [i, script] of scripts.entries()) {
     const tmp = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sweep-syntax-')), `script-${i}.js`);
-    fs.writeFileSync(tmp, script);
+    // A scan fence carries the `{resolved-limit}` placeholder an agent substitutes literally (#4820); `node --check` needs a number.
+    fs.writeFileSync(tmp, script.replaceAll('{resolved-limit}', '1000'));
     assert.doesNotThrow(
       () => execFileSync('node', ['--check', tmp], { stdio: 'pipe' }),
       `${label} script #${i} has a syntax error:\n${script}`,
@@ -310,7 +311,9 @@ function runItem10Evaluation({ claimRows, labelled = [], labelledText, prsText =
     const script = scripts[0]
       .split('$PR_SCAN_UNSETTLED_LABELLED').join(toPosix(labelledPath))
       .split('$PR_SCAN_UNSETTLED_CLAIMS').join(toPosix(claimsPath))
-      .split('$PR_SCAN_UNSETTLED_PRS').join(toPosix(prsPath));
+      .split('$PR_SCAN_UNSETTLED_PRS').join(toPosix(prsPath))
+      // The `{resolved-limit}` placeholder an agent substitutes literally (#4820), above every fixture's row count.
+      .split('{resolved-limit}').join('1000');
     const file = path.join(dir, 'item10-eval.js');
     fs.writeFileSync(file, script);
     return execFileSync(process.execPath, [file], { encoding: 'utf8', env: { ...process.env, UNSETTLED_AGE: '24', ...extraEnv } });

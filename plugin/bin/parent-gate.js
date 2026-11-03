@@ -75,13 +75,18 @@
 // read of the gate names them (`--repo` on each `gh issue view`, host-qualified off
 // github.com; the GraphQL variables and the REST path, with `--hostname` on each `gh api`
 // read off github.com), so one gate reads one repository on one host however many remotes
-// the checkout has. On github.com every argv is the bare `owner/repo` one.
+// the checkout has. On github.com every argv is the bare `owner/repo` one. An origin host with
+// no GitHub signal (not github.com, *.ghe.com, a gh hosts.yml key or an exported GH_HOST) is
+// refused on the gh path, exit 2, before any gh call (#4933); the --facts-json path makes no gh
+// call and is never refused.
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { parseRepo, ghAvailable, remoteUrl, ghOptions } = require('./lib/repo-resolve');
+const {
+  parseRepo, ghAvailable, remoteUrl, ghOptions, gateOriginRepo, normalizeHost,
+} = require('./lib/repo-resolve');
 const { POLICY_KEYS, resolvePolicyKeys } = require('./lib/policy-schema');
 const { readWorkBackend } = require('./lib/work-backend');
 const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
@@ -322,7 +327,18 @@ function run(argv, deps = realDeps) {
   if (opts.factsJson === null || tokens.some((token) => !/^\d+$/.test(token))) {
     let remote = null;
     try { remote = deps.remoteUrl(); } catch { remote = null; }
-    const repoSpec = parseRepo(remote);
+    // #4933: only the gh path is gated (an origin host with no GitHub signal is refused before
+    // any gh call). The facts path makes no gh call and reads origin only to judge a qualified
+    // --closing token, so it never refuses; its host is normalized all the same.
+    let repoSpec;
+    if (opts.factsJson === null) {
+      const gated = gateOriginRepo(remote, deps.gateDeps);
+      if (gated.refusal) { deps.stderr(`parent-gate.js: ${gated.refusal}\n`); return 2; }
+      repoSpec = gated.spec;
+    } else {
+      repoSpec = parseRepo(remote);
+      if (repoSpec) repoSpec = { ...repoSpec, host: normalizeHost(repoSpec.host) };
+    }
     if (!repoSpec) { deps.stderr('parent-gate.js: could not resolve owner/repo from the origin remote\n'); return 2; }
     ({ host, owner, repo } = repoSpec);
     // parseRepo accepts any non-'/' segment, '.' and '..' included; the gate's REST paths interpolate
