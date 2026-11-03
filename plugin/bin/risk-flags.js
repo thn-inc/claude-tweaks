@@ -44,8 +44,12 @@
 // facts     Writes nothing to the record. Reads --spec-file's flag line (and --plan-file's
 //           Proof lines) and writes the two JSON arrays the packet gather takes as `--flags`
 //           and `--proofs` (lib/issues/risk-flag-facts.js), then prints { status, flags,
-//           proofs, plan } — the counts, and `plan` 'read' or 'absent' (no --plan-file, or a
-//           file that is gone). The producer never leaves an empty list behind a failure: on
+//           proofs, plan, planParse } — the counts, `plan` 'read' or 'absent' (no --plan-file,
+//           or a file that is gone; 'read' means only that the file was read), and `planParse`
+//           'ok' | 'could-not-parse' (Check G's own reading of the plan: no tasks, a
+//           near-miss proof line or an unclosed fence), null when no plan was read or the
+//           record has no flags to prove, so an empty proof list from a plan that could not
+//           be parsed is never read as "no proof written". The producer never leaves an empty list behind a failure: on
 //           every non-zero exit both outputs are removed if present, so the gather states
 //           "--flags input not read — treated as absent" instead of reading a stale or empty
 //           file as "no flags".
@@ -77,7 +81,8 @@ const USAGE = 'usage: risk-flags.js classify --body-file <f> [--prior-body-file 
   + '  answers file: JSON object { "<slug>": "keep" | "remove" }\n'
   + '  exit 0 done (a refused or unanswered flag is still 0: the fail direction is keep), 1 body, prior-body or spec file unreadable,\n'
   + '       2 malformed invocation or unreadable policy, 3 a named output file (--body-file, --flags-out, --proofs-out) unwritable\n'
-  + '  facts removes both outputs on every non-zero exit\n';
+  + '  facts prints { status, flags, proofs, plan, planParse }, refuses an output that is also an input or the other output,\n'
+  + '       and removes both outputs on every non-zero exit\n';
 
 const FLAG_KEYS = {
   '--body-file': 'bodyFile',
@@ -130,7 +135,15 @@ function parseArgs(argv) {
     for (const [flag, key] of [['--spec-file', 'specFile'], ['--flags-out', 'flagsOut'], ['--proofs-out', 'proofsOut']]) {
       if (o[key] === null) return { error: `${flag} <path> is required` };
     }
-    if (o.flagsOut === o.proofsOut) return { error: '--flags-out and --proofs-out must name different files' };
+    // A later failure removes both outputs, so an output that is also an input would delete the
+    // user's spec or plan; two outputs that are one file would overwrite each other.
+    const named = [['--spec-file', o.specFile], ['--plan-file', o.planFile], ['--flags-out', o.flagsOut], ['--proofs-out', o.proofsOut]]
+      .filter(([, file]) => file !== null)
+      .map(([flag, file]) => [flag, path.resolve(file)]);
+    for (let i = 0; i < named.length; i++) {
+      const clash = named.slice(i + 1).find(([, file]) => file === named[i][1]);
+      if (clash) return { error: `${named[i][0]} and ${clash[0]} must name different files` };
+    }
     return o;
   }
   if (o.bodyFile === null) return { error: '--body-file <path> is required' };
@@ -345,20 +358,26 @@ function removeOutput(deps, file) {
 
 // argv of a rejected `facts` -> the outputs it named, so a usage error still takes away what an
 // earlier run left (the parse stopped before an options object existed). A flag-shaped value
-// is not a path.
+// is not a path, and a file named as an input (the clash the parse refused) is never an output.
 function namedOutputs(argv) {
-  const out = [];
-  argv.forEach((arg, i) => {
-    const value = argv[i + 1];
-    if ((arg === '--flags-out' || arg === '--proofs-out') && typeof value === 'string' && value.trim() && !value.startsWith('--')) out.push(value);
-  });
-  return [...new Set(out)];
+  const values = (flags) => argv
+    .map((arg, i) => (flags.includes(arg) ? argv[i + 1] : undefined))
+    .filter((value) => typeof value === 'string' && value.trim() && !value.startsWith('--'));
+  const inputs = new Set(values(['--spec-file', '--plan-file']).map((file) => path.resolve(file)));
+  return [...new Set(values(['--flags-out', '--proofs-out']).filter((file) => !inputs.has(path.resolve(file))))];
+}
+
+// -> { repoRoot, policy } or { code } (already reported through `fail`): the one place the
+// repo root and the policy resolve, and the one mapping of their failures to exit 2.
+function loadPolicy(o, deps, fail) {
+  let repoRoot;
+  try { repoRoot = resolveRepoRoot(o, deps); } catch (err) { return { code: fail(2, `repo-root-unresolvable: (${errMsg(err)})`) }; }
+  try { return { repoRoot, policy: deps.policy(repoRoot) }; } catch (err) { return { code: fail(2, `policy-unreadable: ${repoRoot} (${errMsg(err)})`) }; }
 }
 
 // The facts verb: spec (+ plan) -> the two JSON arrays the packet gather reads. Exit codes as
 // the header; the caller removes both outputs on any non-zero return.
-function factsVerb(o, deps, read) {
-  const fail = (code, reason) => { deps.stderr(`risk-flags.js: ${reason}\n`); return code; };
+function factsVerb(o, deps, read, fail) {
   let specText;
   try { specText = read(o.specFile); } catch (err) { return fail(1, `spec-unreadable: ${o.specFile} (${errMsg(err)})`); }
   let planText = null;
@@ -370,16 +389,18 @@ function factsVerb(o, deps, read) {
       if (!(err && (err.code === 'ENOENT' || err.code === 'ENOTDIR'))) return fail(1, `plan-unreadable: ${o.planFile} (${errMsg(err)})`);
     }
   }
-  let repoRoot;
-  try { repoRoot = resolveRepoRoot(o, deps); } catch (err) { return fail(2, `repo-root-unresolvable: (${errMsg(err)})`); }
-  let policy;
-  try { policy = deps.policy(repoRoot); } catch (err) { return fail(2, `policy-unreadable: ${repoRoot} (${errMsg(err)})`); }
+  const loaded = loadPolicy(o, deps, fail);
+  if (loaded.code !== undefined) return loaded.code;
 
-  const { status, flags, proofs } = riskFlagEntries(specText, planText, { extraCategories: policy.extraCategories });
+  const {
+    status, flags, proofs, planParse = null,
+  } = riskFlagEntries(specText, planText, { extraCategories: loaded.policy.extraCategories });
   for (const [file, entries] of [[o.flagsOut, flags], [o.proofsOut, proofs]]) {
     try { deps.writeFile(file, `${JSON.stringify(entries)}\n`); } catch (err) { return fail(3, `output-unwritable: ${file} (${errMsg(err)})`); }
   }
-  deps.stdout(`${JSON.stringify({ status, flags: flags.length, proofs: proofs.length, plan: planText === null ? 'absent' : 'read' })}\n`);
+  deps.stdout(`${JSON.stringify({
+    status, flags: flags.length, proofs: proofs.length, plan: planText === null ? 'absent' : 'read', planParse,
+  })}\n`);
   return 0;
 }
 
@@ -401,7 +422,7 @@ function run(argv, overrides = {}) {
     return text;
   };
   if (o.verb === 'facts') {
-    const code = factsVerb(o, deps, read);
+    const code = factsVerb(o, deps, read, fail);
     if (code !== 0) [o.flagsOut, o.proofsOut].forEach((file) => removeOutput(deps, file));
     return code;
   }
@@ -412,10 +433,9 @@ function run(argv, overrides = {}) {
     try { priorBody = read(o.priorBodyFile); } catch (err) { return fail(1, `prior-body-unreadable: ${o.priorBodyFile} (${errMsg(err)})`); }
   }
 
-  let repoRoot;
-  try { repoRoot = resolveRepoRoot(o, deps); } catch (err) { return fail(2, `repo-root-unresolvable: (${errMsg(err)})`); }
-  let policy;
-  try { policy = deps.policy(repoRoot); } catch (err) { return fail(2, `policy-unreadable: ${repoRoot} (${errMsg(err)})`); }
+  const loaded = loadPolicy(o, deps, fail);
+  if (loaded.code !== undefined) return loaded.code;
+  const { repoRoot, policy } = loaded;
   const extraCategories = policy.extraCategories;
   const known = unique([...BUILTIN_RISK_CATEGORIES, ...extraCategories]);
 

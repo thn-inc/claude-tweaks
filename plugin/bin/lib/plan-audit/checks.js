@@ -761,6 +761,21 @@ function isSubstantiveProof(slug, text) {
   return rest.length === 0 ? 'restates-category' : null;
 }
 
+// plan text (already newline-normalized) -> { proofs, problems }: the plan's Proof lines and
+// every reason the plan could not be read with confidence (no tasks, a near-miss proof line,
+// an unclosed fence), in the order Check G reports them. Shared with the packet's
+// risk-flag-facts producer so the two cannot disagree about what a plan parse failure is.
+function readPlanProofs(plan) {
+  const problems = [];
+  if (countTasks(plan).tasks === 0) problems.push({ source: 'plan', raw: 'no parseable tasks' });
+  const { proofs, nearMisses, unclosedFences } = extractProofLines(plan);
+  for (const { raw } of nearMisses) problems.push({ source: 'proof-line', raw });
+  // A fence left open swallowed the rest of its task, so a proof there reads as absent:
+  // say the plan could not be read, not that the proof is missing.
+  for (const task of unclosedFences) problems.push({ source: 'plan', raw: `unclosed code fence in task ${task}` });
+  return { proofs, problems };
+}
+
 function checkG(specText, planText, { extraCategories = [], planPath = null } = {}) {
   // Normalize once, here, so the flag reader and the proof reader see the same text.
   const spec = specText.replace(/\r\n?/g, '\n');
@@ -771,12 +786,8 @@ function checkG(specText, planText, { extraCategories = [], planPath = null } = 
 
   const couldNotParse = [];
   if (flags.status === 'unknown' && flags.reason === 'malformed') couldNotParse.push({ source: 'flag-line', raw: flags.raw });
-  if (countTasks(plan).tasks === 0) couldNotParse.push({ source: 'plan', raw: 'no parseable tasks' });
-  const { proofs, nearMisses, unclosedFences } = extractProofLines(plan);
-  for (const { raw } of nearMisses) couldNotParse.push({ source: 'proof-line', raw });
-  // A fence left open swallowed the rest of its task, so a proof there reads as absent:
-  // say the plan could not be read, not that the proof is missing.
-  for (const task of unclosedFences) couldNotParse.push({ source: 'plan', raw: `unclosed code fence in task ${task}` });
+  const { proofs, problems } = readPlanProofs(plan);
+  couldNotParse.push(...problems);
 
   const found = [];
   const missing = [];
@@ -798,6 +809,6 @@ function checkG(specText, planText, { extraCategories = [], planPath = null } = 
 }
 
 module.exports = {
-  checkA, checkB, checkC, checkD, checkE, checkF, checkG, isSubstantiveProof, headroomCheck, looksPassing, isGovernedMdPath,
+  checkA, checkB, checkC, checkD, checkE, checkF, checkG, readPlanProofs, isSubstantiveProof, headroomCheck, looksPassing, isGovernedMdPath,
   refusedVcsMutation, commandSegments, checkPremiseRefs, checkTaskMarkers,
 };

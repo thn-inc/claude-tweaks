@@ -1,7 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { riskFlagEntries } = require('../../../plugin/bin/lib/issues/risk-flag-facts');
+const { riskFlagEntries, UNREADABLE_FLAG_TEXT } = require('../../../plugin/bin/lib/issues/risk-flag-facts');
 
 test('flag entries carry unconfirmed only when marked, proof entries their neutralized text', () => {
   const r = riskFlagEntries('Risk-flags: auth, migrations\nRisk-flags-unconfirmed: true\n\n## O\n', '### Task 1: x\n\nProof(auth): An unauthenticated request [still](x) returns 401.\n');
@@ -57,4 +57,34 @@ test('an unknown line asks a proof for every widened flag', () => {
   const r = riskFlagEntries('Risk-flags: Bad\n', plan);
   assert.deepStrictEqual(r.proofs.map((p) => p.id), ['migrations']);
   assert.strictEqual(r.flags.length, 4);
+});
+
+test('the unreadable-line text follows the parse reason', () => {
+  const malformed = riskFlagEntries('Risk-flags: Bad\n', null);
+  assert.ok(malformed.flags.every((f) => f.text === 'unreadable flag line'));
+  const unknownSlug = riskFlagEntries('Risk-flags: auth, pii\n', null);
+  assert.strictEqual(unknownSlug.status, 'unknown');
+  assert.ok(unknownSlug.flags.length >= 4);
+  assert.ok(unknownSlug.flags.every((f) => f.text === 'flag line names an unknown category'));
+  assert.notStrictEqual(UNREADABLE_FLAG_TEXT.malformed, UNREADABLE_FLAG_TEXT['unknown-slug']);
+});
+
+test('planParse: a clean plan is ok, an unclosed fence before the proof is could-not-parse, no plan has none', () => {
+  const spec = 'Risk-flags: auth\n';
+  const proof = 'Proof(auth): An unauthenticated request to the route still returns 401.';
+  assert.strictEqual(riskFlagEntries(spec, `### Task 1: x\n\n${proof}\n`).planParse, 'ok');
+  const unclosed = riskFlagEntries(spec, `### Task 1: x\n\n\`\`\`\n${proof}\n`);
+  assert.strictEqual(unclosed.planParse, 'could-not-parse');
+  assert.deepStrictEqual(unclosed.proofs, [], 'the proof inside the swallowed fence is not found');
+  assert.strictEqual(riskFlagEntries(spec, null).planParse, undefined);
+  assert.strictEqual(riskFlagEntries('Risk-flags: none\n', '### Task 1: x\n').planParse, undefined);
+  assert.strictEqual(riskFlagEntries('Surface: x\n', '').planParse, undefined);
+});
+
+test('planParse: a plan with no tasks and a near-miss proof line each read could-not-parse, and keep the proofs they did find', () => {
+  const spec = 'Risk-flags: auth\n';
+  assert.strictEqual(riskFlagEntries(spec, 'just prose\n').planParse, 'could-not-parse');
+  const nearMiss = riskFlagEntries(spec, '### Task 1: x\n\nProof (auth): An unauthenticated request to the route still returns 401.\nProof(auth): The second form is well formed and long enough.\n');
+  assert.strictEqual(nearMiss.planParse, 'could-not-parse');
+  assert.deepStrictEqual(nearMiss.proofs.map((p) => p.id), ['auth']);
 });
