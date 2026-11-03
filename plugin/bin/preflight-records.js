@@ -45,7 +45,8 @@
 // Exit 0 success; 1 any record fetch (or the native dependency GraphQL call)
 // failed — every failing record named, all-at-once — or, with --blocker-landing,
 // the blocker query failed as a whole (never a per-blocker undetermined); 2
-// malformed invocation (no numbers, non-positive, unresolvable owner/repo under
+// malformed invocation (no numbers, non-positive, an origin host with no GitHub signal
+// refused before any gh call (#4933), unresolvable owner/repo under
 // native mode or for --blocker-landing with a non-empty blocker set, a
 // --blocker-landing blocker number that is no valid issue number, a bad
 // --records-json, --blocker-states-json without both --records-json and
@@ -61,7 +62,9 @@ const { fetchBlockerLanding, undeterminedAll, classifyFromState } = require('./l
 const { planMergeGateSplit } = require('./lib/preflight-records/merge-gate');
 const { planParallelWaves } = require('./lib/preflight-records/waves');
 const { resolvePolicyKeys } = require('./lib/policy-schema');
-const { parseRepo, repoResolutionNote, pinExplicitRepoHost } = require('./lib/repo-resolve');
+const {
+  parseRepo, repoResolutionNote, pinExplicitRepoHost, gateOriginRepo,
+} = require('./lib/repo-resolve');
 
 const USAGE = 'usage: preflight-records.js <n> [<n> ...] [--work-links native|body-text] [--repo owner/name] [--merge-gate] [--waves] [--integration-branch <name>] [--records-json <path>] [--blocker-landing] [--blocker-states-json <path>] [--help]\n';
 
@@ -166,7 +169,15 @@ function loadFromGh(opts, numbers, deps) {
   // repo, at its own existing gate below, unchanged.
   let remote = null;
   if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-  const repoSpec = parseRepo(opts.repo ? (opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : remote);
+  // #4933: an origin-derived host with no GitHub signal is refused before any gh call (an
+  // unparseable origin keeps the null-repo tolerance above); a typed --repo skips the gate.
+  let repoSpec;
+  if (opts.repo) repoSpec = parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`);
+  else {
+    const gated = gateOriginRepo(remote, deps.gateDeps);
+    if (gated.refusal) { deps.stderr(`preflight-records.js: ${gated.refusal}\n`); return { code: 2 }; }
+    repoSpec = gated.spec;
+  }
   if (opts.repo && repoSpec && deps.pinGhHost) deps.pinGhHost(repoSpec);
   const repoNote = repoResolutionNote(repoSpec);
   if (repoNote) deps.stderr(`preflight-records.js: ${repoNote}\n`);

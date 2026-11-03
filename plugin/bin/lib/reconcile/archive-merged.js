@@ -238,7 +238,7 @@ function isOrphanedMint(dir, now = Date.now()) {
 // reason — co-locating the recovery story with the detector rather than
 // leaving it to a dispatcher-side `if (reason === '…')` string match that
 // drifts the moment a reason code is renamed. `hooks.js`'s `archive-run`
-// verb reads only `ok`/`reason`/`hint`/`movedEntries` off the result; it no
+// verb reads only `ok`/`reason`/`hint`/`movedEntries`/`commit` off the result; it no
 // longer special-cases any specific reason string.
 // Hints stay `null` for the codes whose one-line reason already says what
 // happened — writing prose for all fourteen-odd reason codes here would be
@@ -261,6 +261,68 @@ function refusal(reason, { hint = null, ...extra } = {}) {
 // PostToolUse hook holding the lock in the same shared main checkout) is
 // retried rather than surfacing as a hard `commit-failed` refusal.
 const commitGit = withIndexLockRetry(runGit);
+
+// #3721: the archive commit's subject, written once so the commit and
+// `readArchiveCommit`'s own-commit check cannot drift apart.
+function archiveCommitSubject(runId) {
+  return `[reconcile] archive run ${runId}`;
+}
+
+// #3721: what the archive commit landed as, read straight after it so
+// `archive-run` can say where it went. `null` in either field means that probe
+// went unanswered — never a stand-in value. `branch` is 'detached' only when
+// `symbolic-ref` answers exit 1 (HEAD is not a symbolic ref); a timeout or any
+// other exit code is an unanswered probe, not a detached HEAD.
+// The sha and subject come from one spawn; a subject that is not this run's own
+// archive commit means a sibling session committed in the window, so the sha is
+// not ours to report.
+function readArchiveCommit(root, runId, git = runGit) {
+  const head = git(['show', '-s', '--format=%h%n%s', 'HEAD'], root);
+  let sha = null;
+  if (!head.failure && head.stdout) {
+    const [short, subject] = head.stdout.split('\n');
+    if (short && subject === archiveCommitSubject(runId)) sha = short;
+  }
+  const ref = git(['symbolic-ref', '--quiet', 'HEAD'], root);
+  let branch = null;
+  if (!ref.failure && ref.stdout) branch = ref.stdout.replace(/^refs\/heads\//, '');
+  else if (ref.failure && ref.exitCode === 1) branch = 'detached';
+  return { sha, branch };
+}
+
+// #3721: the live HEAD's push state, for `archiveCommitLine`. Any unanswered probe is 'push state unknown'.
+function readPushState(root, git) {
+  const ref = git(['symbolic-ref', '--quiet', 'HEAD'], root);
+  if (ref.failure) return ref.exitCode === 1 ? 'no upstream configured' : 'push state unknown';
+  if (!ref.stdout) return 'push state unknown';
+
+  const upstream = git(['for-each-ref', '--format=%(upstream:short)', ref.stdout], root);
+  if (upstream.failure) return 'push state unknown';
+  if (!upstream.stdout) return 'no upstream configured';
+
+  const ahead = git(['rev-list', '--count', '@{upstream}..HEAD'], root);
+  // A zero count means something pushed between the commit and this probe: not "not pushed".
+  if (!ahead.failure && Number(ahead.stdout) > 0) return `not pushed — ${ahead.stdout} ahead of ${upstream.stdout}`;
+  return 'push state unknown';
+}
+
+// #3721: the one stdout line `archive-run` prints for the commit it made.
+// Informational — it never throws and never fails the verb. The push state is
+// re-derived from the live HEAD ref, not `commit.branch`, so a branch literally
+// named "detached" keeps its real upstream.
+function archiveCommitLine(root, commit, git = runGit) {
+  let state;
+  try {
+    state = readPushState(root, git);
+  } catch {
+    state = 'push state unknown';
+  }
+  const { sha, branch } = commit;
+  if (sha && branch) return `claude-tweaks: committed ${sha} on ${branch} (${state})`;
+  if (sha) return `claude-tweaks: committed ${sha} but could not read its branch (${state})`;
+  if (branch) return `claude-tweaks: committed the archive move on ${branch} but could not read its sha (${state})`;
+  return `claude-tweaks: committed the archive move but could not read its sha and branch (${state})`;
+}
 
 // An orphaned mint that reaches this function has nothing to git-mv and
 // nothing to finalize as terminal (no run-state.json, since record-worktree
@@ -1320,6 +1382,10 @@ function archiveRunDir(root, runDir) {
   // function's own enumeration swap (above) exists to eliminate.
   const movedEntries = [];
 
+  // #3721: set once the archive commit lands (see `readArchiveCommit`); a
+  // refusal after that point still carries it, because the commit is real.
+  let archiveCommit = null;
+
   // #2816: every refusal below this point runs after the `archiving`
   // marker (writeRunState above) already created `archiveDir` on disk — a
   // structural/content refusal (audit-untracked, tracked-entry, a
@@ -1349,7 +1415,7 @@ function archiveRunDir(root, runDir) {
     if (!archiveDirPreexisted && movedEntries.length === 0 && !GIT_TIMING_REFUSAL_REASONS.has(reason)) {
       try { fs.rmSync(archiveDir, { recursive: true, force: true }); } catch { /* best-effort */ }
     }
-    return refusal(reason, extra);
+    return archiveCommit ? { ...refusal(reason, extra), commit: archiveCommit } : refusal(reason, extra);
   }
 
   const specDirs = listSpecDirs(runDir);
@@ -1545,7 +1611,7 @@ function archiveRunDir(root, runDir) {
     // rather than sweeping whatever else a human or sibling session happens
     // to have staged in this shared main checkout at the same moment.
     const commitPaths = workMoves.flatMap(([src, dest]) => [src, dest]);
-    const commit = commitGit(['commit', '-m', `[reconcile] archive run ${runId}`, '--', ...commitPaths], root);
+    const commit = commitGit(['commit', '-m', archiveCommitSubject(runId), '--', ...commitPaths], root);
     if (commit.failure) {
       // A partial revert (some ops' `git reset`/`git checkout` or disk move
       // failed) is a distinct outcome from a clean one: the retry guard
@@ -1557,6 +1623,7 @@ function archiveRunDir(root, runDir) {
       const fullyReverted = revertStagedOps(root, stagedOps);
       return refuseAfterMarker(fullyReverted ? 'commit-failed' : 'commit-failed-partial-revert');
     }
+    archiveCommit = readArchiveCommit(root, runId);
   }
 
   // Tracked-entry guard: a git-tracked file in the run dir outside work/
@@ -1746,7 +1813,7 @@ function archiveRunDir(root, runDir) {
     /* best-effort — non-empty for an unexpected reason, or already gone */
   }
 
-  return { ok: true, movedEntries };
+  return { ok: true, movedEntries, ...(archiveCommit ? { commit: archiveCommit } : {}) };
 }
 
 // #1613: how long a run dir can sit in a "structurally stuck" skip reason
@@ -2176,7 +2243,7 @@ function resolveRunPrState(root, state, branch, prStates) {
 // runs (#3668, #3740), the two tiebreak reasons (#3945) and cant-tell-unfiled (#4171) — see
 // iterCleanRunDirs' comment for why that subset, and why the rest stay untracked.
 function archiveMergedRun({
-  root, repoSlug, dir, branch, state, dryRun, onSkip, runner, cacheTarget = root, integration, recordCheck, prStates,
+  root, repoSlug, dir, branch, state, dryRun, onSkip, runner, cacheTarget = root, integration, recordCheck, prStates, archive,
 }) {
   const prState = resolveRunPrState(root, state, branch, prStates);
   const consoleState = readConsoleState(dir);
@@ -2204,7 +2271,7 @@ function archiveMergedRun({
   }
   if (dryRun) return { outcome: 'archived' };
 
-  const result = archiveRunDir(root, dir);
+  const result = archive(root, dir);
   trackArchiveResult(cacheTarget, repoSlug, dir, result, { runner });
   if (!result.ok) return { outcome: 'skipped', reason: result.reason };
   return { outcome: 'archived' };
@@ -2304,10 +2371,17 @@ function archiveMerged({
 } = {}) {
   const archived = [];
   const skipped = [];
+  // #3721: the commit an archive attempt made, keyed by run dir — recorded whether the attempt then archived or refused.
+  const archiveCommits = {};
+  function archive(archiveRoot, runDir) {
+    const result = archiveRunDir(archiveRoot, runDir);
+    if (result.commit) archiveCommits[runDir] = result.commit;
+    return result;
+  }
   const postMergePending = new Set((Array.isArray(postMergeDeferred) ? postMergeDeferred : []).map((d) => path.resolve(d)));
   const start = cwd || process.cwd();
   const root = mainCheckoutRoot(start);
-  if (!root) return { archived, skipped, residuePlan: dryRun ? [] : null, residueErrors: [] };
+  if (!root) return { archived, skipped, archiveCommits, residuePlan: dryRun ? [] : null, residueErrors: [] };
   const repoSlug = repoSlugOf(root);
   // #3503: `work-backend: local-files` records are not GitHub issues, so a PR's
   // closingIssuesReferences can never attest them: the record check stays off.
@@ -2364,7 +2438,7 @@ function archiveMerged({
         });
         continue;
       }
-      finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => archiveRunDir(root, dir));
+      finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => archive(root, dir));
       continue;
     }
 
@@ -2380,7 +2454,7 @@ function archiveMerged({
     // escalation on success (trackArchiveResult's own success branch clears
     // both).
     if (isClosedSlugStuck(root, dir, state)) {
-      finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => archiveRunDir(root, dir));
+      finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => archive(root, dir));
       continue;
     }
 
@@ -2420,7 +2494,7 @@ function archiveMerged({
       // so the result handling below is shared. A bare mint with nothing
       // tracked keeps the fs-only move; see hasTrackedContent above.
       finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => (
-        hasTrackedContent(root, dir) ? archiveRunDir(root, dir) : archiveOrphanedMint(root, dir)
+        hasTrackedContent(root, dir) ? archive(root, dir) : archiveOrphanedMint(root, dir)
       ));
       continue;
     }
@@ -2447,7 +2521,7 @@ function archiveMerged({
       // run non-terminal (still 'interrupted') and retryable next pass, which
       // is the whole point — and only close it once the move has actually
       // landed.
-      const archiveResult = archiveRunDir(root, dir);
+      const archiveResult = archive(root, dir);
       trackArchiveResult(cacheBatch, repoSlug, dir, archiveResult, { runner });
       if (!archiveResult.ok) {
         // Non-'move-failed' reasons (mkdir-failed, git-mv-failed,
@@ -2527,7 +2601,7 @@ function archiveMerged({
       // orphaned-mint branch above makes the same choice per-dir via
       // hasTrackedContent (#2227) — this branch is unconditional because an
       // ad-hoc dir is always a real session, tracked spec or not.
-      finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => archiveRunDir(root, dir));
+      finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => archive(root, dir));
       continue;
     }
 
@@ -2604,7 +2678,7 @@ function archiveMerged({
                 track(dir, guard.reason);
                 continue;
               }
-              finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => archiveRunDir(root, dir));
+              finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => archive(root, dir));
               continue;
             }
             // #2231: a CLOSED (never-merged) PR's console will never
@@ -2632,7 +2706,7 @@ function archiveMerged({
               continue;
             }
           }
-          finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => archiveRunDir(root, dir));
+          finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => archive(root, dir));
           continue;
         }
       }
@@ -2643,7 +2717,7 @@ function archiveMerged({
 
     const runResult = archiveMergedRun({
       root, repoSlug, dir, branch, state, dryRun, runner, cacheTarget: cacheBatch, integration,
-      recordCheck: { records, repoSlug }, prStates,
+      recordCheck: { records, repoSlug }, prStates, archive,
       onSkip: (reason) => track(dir, reason),
     });
     if (runResult.outcome === 'archived') { archived.push(dir); continue; }
@@ -2673,7 +2747,7 @@ function archiveMerged({
     if (!branch) { skipped.push({ runDir: dir, reason: 'no-branch' }); continue; }
 
     const runResult = archiveMergedRun({
-      root, repoSlug, dir, branch, state, dryRun, runner, cacheTarget: cacheBatch, integration, prStates,
+      root, repoSlug, dir, branch, state, dryRun, runner, cacheTarget: cacheBatch, integration, prStates, archive,
       onSkip: (reason) => {
         if (reason === 'console-never-rendered-staged-pending' && consoleReplacedByAutoMerge(dir)) track(dir, reason);
         if (reason === 'tiebreak-coverage-missing' || reason === 'tiebreak-artifact-invalid' || reason === 'cant-tell-unfiled') track(dir, reason);
@@ -2704,11 +2778,11 @@ function archiveMerged({
   // #4421: counted after every archival above, so a dir this pass archived is not in it. Absent
   // (never 0) on a dry run — nothing moved, the count would overstate — and when the dir is unreadable.
   const ownerlessNonClean = dryRun ? null : countOwnerlessNonClean(root);
-  return { archived, skipped, residuePlan, residueErrors, ...(ownerlessNonClean === null ? {} : { ownerlessNonClean }) };
+  return { archived, skipped, archiveCommits, residuePlan, residueErrors, ...(ownerlessNonClean === null ? {} : { ownerlessNonClean }) };
 }
 
 module.exports = {
-  archiveMerged, countOwnerlessNonClean, prefetchArchivePrStates, decideArchive, decideArchiveCore, unclosedRecords, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, consoleResidueHint, archiveRunDir, listSpecDirs,
+  archiveMerged, countOwnerlessNonClean, prefetchArchivePrStates, decideArchive, decideArchiveCore, unclosedRecords, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, consoleResidueHint, archiveRunDir, readArchiveCommit, archiveCommitLine, listSpecDirs,
   isStaleDir, classifyRunDir,
   isOrphanedMint, isAdHocStandaloneMint, isAdHocIntrinsicSkip, ADHOC_INTRINSIC_STUCK_REASONS, archiveOrphanedMint, ORPHAN_MINT_TTL_MS, trackArchiveResult,
   localHasMerge, lastOwnEventMs, ownEventRecency, isAbandonedInterrupted, STALE_INTERRUPTED_TTL_MS,
