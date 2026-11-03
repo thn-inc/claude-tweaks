@@ -1511,17 +1511,17 @@ function hasLoggedPrEarlyStep1(runDir, branch) {
 
 // The dirs whose decisions.md may carry this run's PR-early lines: `runDir`,
 // plus its parent when `runDir` is a `spec-*` dir whose parent is run-id-shaped
-// (RUN_ID_RE) -- the readRunStateWithParent({ requireRunIdParent: true }) rule
-// lib/pr-bookkeeping/precondition.js uses. pr-early-open.js refuses a `spec-`
+// (RUN_ID_RE). The parent is whatever readRunStateWithParent({ requireRunIdParent:
+// true }) -- the rule lib/pr-bookkeeping/precondition.js uses -- reports as
+// `parentRunDir`, so that one function owns the rule; its read is stubbed out
+// because only the directory matters here. pr-early-open.js refuses a `spec-`
 // --run, so in a multi-spec run the Step 1 and FAILED lines land on the parent.
 // A non-string or empty `runDir` is returned as is, so the reads keep their
 // missing-file -> false posture.
 function prEvidenceDirs(runDir) {
   if (typeof runDir !== 'string' || !runDir) return [runDir];
-  const abs = path.resolve(runDir);
-  const parent = path.dirname(abs);
-  if (/^spec-/.test(path.basename(abs)) && ctxLib.RUN_ID_RE.test(path.basename(parent))) return [runDir, parent];
-  return [runDir];
+  const { parentRunDir } = ctxLib.readRunStateWithParent(path.resolve(runDir), { read: () => null, requireRunIdParent: true });
+  return parentRunDir ? [runDir, parentRunDir] : [runDir];
 }
 
 // Whether a pr-first push may go ahead with no recorded PR ([IL-131]) -- the one
@@ -2034,7 +2034,8 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
   // All three stamps already recorded, OR the worktree+claim stamps are
   // recorded and the PR stamp is durably exempt (`prExempt`, memoized by the
   // PR-stamp branch below the first time it proves no further denial is
-  // possible): neither deny branch below can fire, so reach the same `{}`
+  // possible; an all-push call is the one exception, below): neither deny
+  // branch below can fire, so reach the same `{}`
   // here instead of paying for repoInfo's git spawn, hasMaterializeCommit's
   // git spawn, and (on the PR branch) a possible network-touching `gh` call —
   // on EVERY covered tool call of the run, including a `local-merge` run's
@@ -2042,6 +2043,8 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
   // reached this short-circuit at all. `prExempt` short-circuits every call
   // except an all-push one (`allPush`): a first publish still needs its Step 1
   // line (prStampReleased, #4344), so that call reaches the PR branch below.
+  // The test is `allPush`, not `firstPublish`, because `firstPublish` spawns
+  // git per target (hasNoUpstreamYet) -- the cost this short-circuit avoids.
   //
   // `runState.claimExempt` MUST be part of this condition (#2636) — a prior
   // version of this comment argued it was safe to omit because "the

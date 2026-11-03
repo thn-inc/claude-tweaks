@@ -9,7 +9,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { gitRepo: makeGitRepo, linkedWorktreeOf: makeLinkedWorktree, fixtureGit } = require('../../helpers/git-fixtures');
 const pre = require('../../../plugin/bin/lib/hooks/pre-tool-use');
 const { prPushReleased } = require('../../../plugin/bin/lib/phase-exit/phase-exit');
 
@@ -24,19 +24,17 @@ const tmp = (prefix) => {
   return dir;
 };
 
-// Fixture helpers copied from tests/hooks-bookkeeping-stamps-gate.test.js (that file stays unedited).
+// The shared git-fixtures helpers (bounded spawns), with each created dir tracked for the after-hook cleanup.
 function gitRepo() {
-  const dir = tmp('ct-prsr-');
-  execFileSync('git', ['-C', dir, 'init', '-q']);
-  execFileSync('git', ['-C', dir, 'commit', '--allow-empty', '-m', 'init', '-q']);
+  const dir = makeGitRepo();
+  created.push(dir);
   return dir;
 }
 
 function linkedWorktreeOf(main) {
-  const parent = tmp('ct-prsr-wtparent-');
-  const wt = path.join(parent, 'wt');
-  execFileSync('git', ['-C', main, 'worktree', 'add', '-q', wt, '-b', `wt-branch-${path.basename(parent)}`]);
-  return fs.realpathSync(wt);
+  const wt = makeLinkedWorktree(main);
+  created.push(path.dirname(wt));
+  return wt;
 }
 
 const RUN_ID = '2026-08-22T061958-record-991';
@@ -46,8 +44,8 @@ function commitMaterializedSpec(wt, tailPath, runId = RUN_ID) {
   const abs = path.join(wt, relPath);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.writeFileSync(abs, '---\nrecord: 1\n---\nbody\n');
-  execFileSync('git', ['-C', wt, 'add', '-f', relPath]);
-  execFileSync('git', ['-C', wt, 'commit', '-m', 'Materialize spec', '-q']);
+  fixtureGit(['-C', wt, 'add', '-f', relPath]);
+  fixtureGit(['-C', wt, 'commit', '-m', 'Materialize spec', '-q']);
 }
 
 function mkRunDir(project, state) {
@@ -88,12 +86,12 @@ function scenarioFixture(s) {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, s.perSpec ? path.join('spec-991', 'work', '991-spec.md') : path.join('work', '991-spec.md'));
-  const branch = execFileSync('git', ['-C', wt, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
+  const branch = fixtureGit(['-C', wt, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
   if (s.tracked) {
     const bare = tmp('ct-prsr-bare-');
-    execFileSync('git', ['init', '-q', '--bare', bare]);
-    execFileSync('git', ['-C', wt, 'remote', 'add', 'origin', bare]);
-    execFileSync('git', ['-C', wt, 'push', '-q', '-u', 'origin', branch], { stdio: 'ignore' });
+    fixtureGit(['init', '-q', '--bare', bare]);
+    fixtureGit(['-C', wt, 'remote', 'add', 'origin', bare]);
+    fixtureGit(['-C', wt, 'push', '-q', '-u', 'origin', branch], { stdio: 'ignore' });
   }
   const state = { status: 'active', worktree: wt, ...s.state };
   const parentRun = mkRunDir(tmp('ct-prsr-proj-'), state);
@@ -153,6 +151,12 @@ test('prStampReleased: null runState does not throw and reads as nothing recorde
 
 test('prStampReleased: a non-pr-first model releases', () => {
   assert.equal(pre.prStampReleased({ runState: {}, runDir: decisionsDir(null), branch: 'b', model: 'local-merge', hasNoUpstream: true }), true);
+});
+
+test('prStampReleased: a closed run or a pr stamp releases a first publish ahead of its Step 1 rule', () => {
+  for (const runState of [{ status: 'clean' }, { pr: { number: 7, url: 'u', branch: 'b' } }]) {
+    assert.equal(pre.prStampReleased({ runState, runDir: decisionsDir(null), branch: 'b', model: 'pr-first', hasNoUpstream: true }), true, JSON.stringify(runState));
+  }
 });
 
 test('prStampReleased: first publish with a null branch does not release', () => {
