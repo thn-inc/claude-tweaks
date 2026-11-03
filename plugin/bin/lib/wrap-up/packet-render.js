@@ -195,13 +195,14 @@ function testGuideBody(ctx) {
   return body;
 }
 
-// Kept proofs, then planned ones, then each kept flag no surviving claim cites. A flag fact
-// always yields a line, so the placeholder reaches only a packet with no flag fact at all.
+// Kept proofs, then planned ones (both droppable), then each kept flag no surviving claim
+// cites as a note: truncation may drop a proof and never the only trace of a kept flag. A flag
+// fact always yields a line, so the placeholder reaches only a packet with no flag fact at all.
 // The label comes from the cited flag fact, never from a claim's text.
 function riskProofsBody({ keptIn, planned, ofKind, factsById }) {
   const unconfirmed = (refs) => refs.some((id) => {
-    const cited = factsById.get(id);
-    return cited?.kind === 'flag' && cited.unconfirmed === true;
+    const fact = factsById.get(id);
+    return fact?.kind === 'flag' && fact.unconfirmed === true;
   });
   const labelled = (line, refs) => (unconfirmed(refs) ? `${line}${UNCONFIRMED_FLAG_LABEL}` : line);
   const keptClaims = keptIn('risk-proofs');
@@ -209,14 +210,12 @@ function riskProofsBody({ keptIn, planned, ofKind, factsById }) {
   const uncited = ofKind('flag')
     .filter((fact) => !cited.has(fact.id))
     .map((fact) => labelled(`- ${screenedInline(fact.id.replace(/^flag:/, ''), WITHHELD_ID)}: ${NO_PROOF_SHOWN}`, [fact.id]));
-  return itemsOr(
-    [
-      ...keptClaims.map((claim) => labelled(claimLine(claim), claim.refs)),
-      ...planned.map((entry) => labelled(plannedLine(entry), entry.claim.refs)),
-      ...uncited,
-    ],
-    'not applicable: no kept risk flags',
-  );
+  const proofs = [
+    ...keptClaims.map((claim) => labelled(claimLine(claim), claim.refs)),
+    ...planned.map((entry) => labelled(plannedLine(entry), entry.claim.refs)),
+  ].map(item);
+  const body = [...proofs, ...uncited.map(note)];
+  return body.length > 0 ? body : [note('not applicable: no kept risk flags')];
 }
 
 const SECTION_BODIES = Object.freeze({
