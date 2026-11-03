@@ -50,7 +50,7 @@ const { readQaStamp, QA_STAMP_NAME } = require('./lib/verify/qa-stamp');
 const { gitDir } = require('./lib/verify/report');
 const { parseNameStatusZ } = require('./lib/git-z');
 const {
-  CLAIM_SECTIONS, MAX_PACKET_CHARS, PACKET_MARKER, SCHEMA_VERSION,
+  CLAIM_SECTIONS, MAX_PACKET_CHARS, PACKET_MARKER, SCHEMA_VERSION, notReadNote,
 } = require('./lib/wrap-up/packet-contract');
 const {
   gatherPacketFacts,
@@ -116,7 +116,6 @@ const flagKey = (flag) => flag.slice(2).replace(/-([a-z])/g, (_, letter) => lett
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const messageOf = (err) => (err && err.message ? err.message : String(err));
 const isAbsentError = (err) => err?.code === 'ENOENT' || err?.code === 'ENOTDIR';
-const notReadNote = (flag) => `${flag} input not read — treated as absent`;
 
 function parseArgs(argv) {
   const [command, ...rest] = argv;

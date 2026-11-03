@@ -76,6 +76,11 @@ function encodeFactKey(raw) {
   return encoded;
 }
 
+// The `partial` note gather adds for a named input that will not read: written by
+// acceptance-packet.js, and read by the renderer, which tells a lost `--flags` input
+// from "no kept risk flags".
+const notReadNote = (flag) => `${flag} input not read — treated as absent`;
+
 const VERIFICATION_WORDS = Object.freeze(['tested', 'verified', 'works']);
 const VERIFICATION_CLAIM_RE = new RegExp(`\\b(${VERIFICATION_WORDS.join('|')})\\b`, 'i');
 
@@ -95,6 +100,7 @@ module.exports = Object.freeze({
   CREDENTIAL_KEYS,
   FACT_ID_RE,
   encodeFactKey,
+  notReadNote,
   VERIFICATION_WORDS,
   VERIFICATION_CLAIM_RE,
 });

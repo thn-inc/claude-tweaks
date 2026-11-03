@@ -5,7 +5,9 @@
 // Pure: no git, gh or fs.
 'use strict';
 
-const { PACKET_MARKER, SECTIONS, MAX_PACKET_CHARS, COMMANDS_ONLY_SURFACES } = require('./packet-contract');
+const {
+  PACKET_MARKER, SECTIONS, MAX_PACKET_CHARS, COMMANDS_ONLY_SURFACES, notReadNote,
+} = require('./packet-contract');
 const { checkLink, findCredentialInText, normalizeKey } = require('./packet-links');
 const { validatePacket } = require('./packet-validate');
 const { escapeRegExp } = require('../shared-primitives');
@@ -130,6 +132,8 @@ const movedLine = ({ claim, because }) => `- ${inline(claim.text)} (moved: cites
 const plannedLine = ({ claim, because }) => `- ${inline(claim.text)} (planned, not verified: cites ${idSpan(because.id)} — ${statusWithReason(because)})`;
 const UNCONFIRMED_FLAG_LABEL = ' (flag unconfirmed)';
 const NO_PROOF_SHOWN = 'no proof shown';
+const NO_KEPT_FLAGS = 'not applicable: no kept risk flags';
+const FLAGS_NOT_READ = 'risk flags not read: the --flags input did not read, so kept flags are unknown';
 // A pass carries a reason only when it needs one: a verify run adjudicated to a pass.
 const rowLine = (fact) => `- ${idSpan(fact.id)} — ${fact.status === 'passed' && !fact.reason?.trim() ? 'passed' : statusWithReason(fact)}`;
 const factText = (fact) => screenedInline(fact.text ?? '', WITHHELD_TEXT) || idSpan(fact.id);
@@ -198,8 +202,10 @@ function testGuideBody(ctx) {
 // Kept proofs, then planned ones (both droppable), then each kept flag no surviving claim
 // cites as a note: truncation may drop a proof and never the only trace of a kept flag. A flag
 // fact always yields a line, so the placeholder reaches only a packet with no flag fact at all.
-// The label comes from the cited flag fact, never from a claim's text.
-function riskProofsBody({ keptIn, planned, ofKind, factsById }) {
+// The label comes from the cited flag fact, never from a claim's text. An uncited flag widened
+// from an unreadable line carries its fact's `text` (why it was widened) after the note. With
+// `--flags` in `partial`, the placeholder says the flags were not read, never "no kept flags".
+function riskProofsBody({ facts, keptIn, planned, ofKind, factsById }) {
   const unconfirmed = (refs) => refs.some((id) => {
     const fact = factsById.get(id);
     return fact?.kind === 'flag' && fact.unconfirmed === true;
@@ -209,13 +215,17 @@ function riskProofsBody({ keptIn, planned, ofKind, factsById }) {
   const cited = new Set([...keptClaims, ...planned.map(({ claim }) => claim)].flatMap(({ refs }) => refs));
   const uncited = ofKind('flag')
     .filter((fact) => !cited.has(fact.id))
-    .map((fact) => labelled(`- ${screenedInline(fact.id.replace(/^flag:/, ''), WITHHELD_ID)}: ${NO_PROOF_SHOWN}`, [fact.id]));
+    .map((fact) => {
+      const why = screenedInline(fact.text ?? '', WITHHELD_TEXT);
+      return labelled(`- ${screenedInline(fact.id.replace(/^flag:/, ''), WITHHELD_ID)}: ${NO_PROOF_SHOWN}${why ? ` — ${why}` : ''}`, [fact.id]);
+    });
   const proofs = [
     ...keptClaims.map((claim) => labelled(claimLine(claim), claim.refs)),
     ...planned.map((entry) => labelled(plannedLine(entry), entry.claim.refs)),
   ].map(item);
   const body = [...proofs, ...uncited.map(note)];
-  return body.length > 0 ? body : [note('not applicable: no kept risk flags')];
+  if (body.length > 0) return body;
+  return [note(facts.partial.includes(notReadNote('--flags')) ? FLAGS_NOT_READ : NO_KEPT_FLAGS)];
 }
 
 const SECTION_BODIES = Object.freeze({

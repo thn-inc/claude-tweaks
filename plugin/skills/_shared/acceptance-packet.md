@@ -20,7 +20,7 @@ it lands, the section's empty line stands in.
 4. **Couldn't test** — placed rows and moved claims. Empty: `not applicable: every expected check ran`.
 5. **Tried to break** — kept claims, moved claims and placed rows. Empty: `not applicable: no negative stories or failures ran`.
 6. **Least confident** — claims citing `finding` facts. Empty: `not applicable: no low-confidence review findings`.
-7. **Risk proofs** — owner: the risk-flag record. This section always renders, its placeholder standing in when no risk flag was kept (Decision Q10). Lists kept proofs, then `planned, not verified` lines, then `- {slug}: no proof shown` for a kept flag no surviving claim cites (a note, never omitted), with `(flag unconfirmed)` after any line citing an unconfirmed flag. Empty: `not applicable: no kept risk flags`.
+7. **Risk proofs** — owner: the risk-flag record. This section always renders, its placeholder standing in when no risk flag was kept (Decision Q10). Lists kept proofs, then `planned, not verified` lines, then `- {slug}: no proof shown` for a kept flag no surviving claim cites (a note, never omitted, followed by ` — {text}` when the flag fact carries why it was widened), with `(flag unconfirmed)` after any line citing an unconfirmed flag. Empty: `not applicable: no kept risk flags`, or, when `--flags` is in `partial`, `risk flags not read: the --flags input did not read, so kept flags are unknown`.
 8. **Decisions left for you** — owner: the control-mode records. One line per `decision` fact, omitted when empty, heading included.
 9. **Deploy status** — owner: the dev-target record. The deploy fact's text. With no deploy record: `target: local`.
 

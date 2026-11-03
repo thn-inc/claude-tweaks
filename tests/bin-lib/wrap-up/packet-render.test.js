@@ -1376,3 +1376,23 @@ test('the no-kept-flags placeholder renders only when no flag fact exists', () =
   const { markdown } = render([fact('check:unit', 'passed')], []);
   assert.match(markdown, /### Risk proofs\n[^\n]*not applicable: no kept risk flags/);
 });
+test('finding 5: a widened flag\'s text follows its no-proof-shown note, screened, and survives truncation', () => {
+  const widened = (slug, extra = {}) => fact(`flag:${slug}`, 'passed', { text: 'unreadable flag line', ...extra });
+  const { markdown } = render([widened('migrations', { unconfirmed: true }), widened('auth', { text: 'token=ghp_abcdefghijklmnopqrstuvwxyz0123456789' }), fact('flag:public-contract', 'passed')], []);
+  assert.deepEqual(sectionLines(markdown, 'Risk proofs'), [
+    '- migrations: no proof shown — unreadable flag line (flag unconfirmed)',
+    '- auth: no proof shown — (text withheld: credential-shaped)',
+    '- public-contract: no proof shown',
+  ]);
+  const claims = Array.from({ length: 400 }, (_, i) => claim('risk-proofs', `Auth covered ${i} ${'x'.repeat(200)}`, ['flag:auth', 'check:unit']));
+  const big = render([fact('flag:auth', 'passed'), widened('migrations'), fact('check:unit', 'passed')], claims);
+  assert.ok(big.truncated > 0, 'the fixture must overflow the cap');
+  assert.ok(sectionLines(big.markdown, 'Risk proofs').includes('- migrations: no proof shown — unreadable flag line'));
+});
+test('finding 6: with --flags in partial, Risk proofs says the flags were not read, never no kept flags', () => {
+  const { markdown } = render([fact('check:unit', 'passed')], [], { extra: { partial: ['--flags input not read — treated as absent'] } });
+  assert.deepEqual(sectionLines(markdown, 'Risk proofs'), ['risk flags not read: the --flags input did not read, so kept flags are unknown']);
+  assert.doesNotMatch(markdown, /no kept risk flags/);
+  const other = render([fact('check:unit', 'passed')], [], { extra: { partial: ['--proofs input not read — treated as absent'] } });
+  assert.deepEqual(sectionLines(other.markdown, 'Risk proofs'), ['not applicable: no kept risk flags']);
+});
