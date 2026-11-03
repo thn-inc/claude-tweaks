@@ -133,7 +133,7 @@ const ALLOWLIST = [
   ratchet('dispatch/settle-and-merge.md', 'gh-computed-input', 'LIVE_LABELS=$(gh issue view "$ISSUE" --json labels -q \'.labels[].name\')'),
   ratchet('dispatch/settle-and-merge.md', 'gh-computed-input', 'DISPATCH_COMMENTS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value "disp'),
   ratchet('docs-health/SKILL.md', 'gh-computed-input', 'gh issue reopen <issue_number>'),
-  ratchet('flow/multispec-artifact-namespacing.md', 'git-var-operand', 'git -C "$WORKTREE" log --name-status --diff-filter=AM "{EXPECTED_BASE}..HEAD" -- docs/jour'),
+  ratchet('flow/multispec-artifact-namespacing.md', 'git-var-operand', 'git -C "$WORKTREE" log --name-status --diff-filter=AM "{EXPECTED_BASE}..HEAD" "^origin/{in'),
   ratchet('harness-health/filing.md', 'gh-computed-input', 'gh issue reopen <issue_number>'),
   ratchet('journey-health/SKILL.md', 'gh-computed-input', 'gh issue reopen <issue_number>'),
   ratchet('release/SKILL.md', 'git-var-operand', 'git -C "$RUN_ROOT" fetch origin {branch} \\'),

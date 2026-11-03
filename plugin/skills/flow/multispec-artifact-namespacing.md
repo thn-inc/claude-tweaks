@@ -10,12 +10,21 @@ namespacing rule:
 Before the Consolidated Review Console renders, run (once, over the whole run's commit range):
 
 ```bash
-git -C "$WORKTREE" log --name-status --diff-filter=AM "{EXPECTED_BASE}..HEAD" -- docs/journeys/ stories/
+git -C "$WORKTREE" log --name-status --diff-filter=AM "{EXPECTED_BASE}..HEAD" "^origin/{integration-branch}" -- docs/journeys/ stories/
 ```
 
 `{EXPECTED_BASE}` is the same value `worktree-setup.md`'s Step 0 captured when the shared
 worktree was created (the commit before spec 1's materialize commit) — the run's own commit
-range, never the whole repo history. Walk the output: if any path under `docs/journeys/` or
+range, never the whole repo history. `{integration-branch}` resolves per
+`_shared/integration-branch.md`. `^origin/{integration-branch}` drops every commit that branch
+already carries — what a catch-up merge (or a fast-forward catch-up) brought in from upstream —
+so none reads as one of the run's events; the catch-up merge commit itself is not on that branch
+and stays in the range, but this raw walk lists no merge commit because git prints no diff for a
+merge by default (the tool fails a line a merge's own resolution wrote closed, below); `parallel`
+wave members merged back with `--no-ff` are not on that branch and stay run events. A local-only
+commit riding along from a local integration branch ahead of origin is not excluded and can still
+fail closed. With no `origin/{integration-branch}` ref (no remote), drop that token: every commit
+in the range is then a run event. Walk the output: if any path under `docs/journeys/` or
 `stories/` shows status `A` (added) in one commit and status `M` (modified) in a **later** commit
 within this same range, that later commit is a candidate — not yet a confirmed overwrite (see
 "Append vs. overwrite" below) — for "a spec's journey/story artifact was silently overwritten by
@@ -41,7 +50,7 @@ Before treating an `A`-then-`M` path as a HARD-GATE, run the mechanized check in
 hand:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/check-artifact-overwrite.js" --base "{EXPECTED_BASE}" --run "{parent}" --path docs/journeys/ --path stories/
+node "${CLAUDE_PLUGIN_ROOT}/bin/check-artifact-overwrite.js" --base "{EXPECTED_BASE}" --run "{parent}" --integration-ref "origin/{integration-branch}" --path docs/journeys/ --path stories/
 ```
 
 `{parent}` is the multi-spec parent run dir that holds `manifest.yml` (`$MULTISPEC_PARENT_DIR`).
@@ -50,11 +59,22 @@ Omit `--run` only when this run's `parallel` waves actually ran with two or more
 their own worktrees, so their windows overlap and the check stays refs-only. Every other run
 passes `--run`, including each no-op `parallel` case `multispec-parallel-waves.md` lists and a
 run whose waves each had one member; the tool also turns windows off itself when the manifest's
-transitions interleave, the backstop for a parallel run that reaches it with `--run`.
+transitions interleave, the backstop for a parallel run that reaches it with `--run`. Pass `--integration-ref` whenever
+`origin/{integration-branch}` resolves; omit it only when it does not (the same no-remote case as
+the raw walk) — the check then keeps upstream commits as run events and fails closed on them. Run
+the check before any of the run's own commits reach `origin/{integration-branch}`: a run commit
+that branch already carries leaves the walk too, and the check would pass without judging it (a
+squash merge never makes the run's own commits reachable).
 
 It re-runs the same walk and, for every `A`-then-`M` path it finds, judges each later modifying
-commit's own deletions on that path (via `git log --numstat`) by five independent tests — any
-one is enough to call the commit an extension rather than an overwrite:
+commit's own deletions on that path (via `git log --numstat`). First, when `--integration-ref` is
+passed, a deleted line whose blamed commit is not one of the run's own commits
+(`{EXPECTED_BASE}..HEAD` minus `^origin/{integration-branch}`, merges included) is pre-run
+content, from the base or from upstream, and is cleared without a test; with or without it, a
+line blamed to a merge commit inside the run is never cleared by attribution — a merge's own
+lines are a conflict resolution, not a spec's edit — and fails closed. Every other deletion is
+judged by five independent tests — any one is enough to call the commit an extension rather than
+an overwrite:
 
 1. **Same-spec self-edit.** Every deleted line traces, via `git blame` on the commit's parent
    revision, back to a commit of the *same* spec as the deleting commit itself — a spec
@@ -93,7 +113,7 @@ one is enough to call the commit an extension rather than an overwrite:
    lines (plain, `_italic_` or `**bold**`); the template's bulleted `## Origin` section falls under
    test 2's list reflow, which does not check references.
 
-Only a commit that deletes lines failing *all five* tests — non-list content it did not itself
+Only a commit that deletes lines failing *all five* tests (after the run-commit check above) — non-list content it did not itself
 add, a list it shrinks rather than reflows, a step-markup change that also alters step text, a
 renumbered heading whose text changed, or an `Origin:` rewrite that drops a reference —
 is a real overwrite. HARD-GATE: stop before rendering the
@@ -103,7 +123,7 @@ unattributable reason names the side or sides with no attribution; a deleted lin
 commit's attribution). A clean run (exit `0`, `overwrites: []`, or no
 `A`-then-`M` path at all) passes with no manual ruling and the console renders normally. Exit `2`
 is a malformed invocation of the tool itself (never a verdict about the walk); exit `3` means the
-walk could not run at all (an unresolvable `{EXPECTED_BASE}`, or a missing, unreadable,
+walk could not run at all (an unresolvable `{EXPECTED_BASE}`, an unresolvable `--integration-ref`, or a missing, unreadable,
 unparseable or unusable `manifest.yml` named by `--run` — no specs, or a `startedAt`/`phases[].at`
 that is present but not a valid date) — treat both as this check's own
 failure to run, not as a clean result, and fall back to the raw `git log --name-status` walk above
