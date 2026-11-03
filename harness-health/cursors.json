@@ -57,11 +57,11 @@
   },
   "skill:gh-api-module-pattern": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793733981339
+    "lastAuditedMs": 1793735968957
   },
   "skill:skill-prose-conformance-tests": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793733988856
+    "lastAuditedMs": 1793735979175
   },
   "skill:shared-contract-extraction": {
     "lastAuditedSha": null,
@@ -113,7 +113,7 @@
   },
   "skill:parse-signal-discipline": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793728659402
+    "lastAuditedMs": 1793735975169
   },
   "skill:scratch-worktree": {
     "lastAuditedSha": null,
@@ -201,7 +201,7 @@
   },
   "skill:mcp-agent-fetch-node-compute": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793676123060
+    "lastAuditedMs": 1793735967262
   },
   "skill:post-merge-workflow-live-probe": {
     "lastAuditedSha": null,
@@ -254,5 +254,9 @@
   "skill:regex-scan-linearity": {
     "lastAuditedSha": null,
     "lastAuditedMs": 1793707221782
+  },
+  "skill:claim-targets-stop-addition": {
+    "lastAuditedSha": null,
+    "lastAuditedMs": 1793735961837
   }
 }
