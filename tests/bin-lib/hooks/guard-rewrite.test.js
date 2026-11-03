@@ -16,6 +16,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { rewriteForGuard } = require('../../../plugin/bin/lib/hooks/guard-rewrite');
+const { toPosix } = require('../../../plugin/bin/lib/shared-primitives');
 const { gitRepo, linkedWorktreeOf } = require('../../helpers/git-fixtures');
 
 const SANDBOX = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-guard-rewrite-')));
@@ -35,6 +36,26 @@ function pluginRootAt(dir) {
 }
 const ROOT = pluginRootAt(path.join(SANDBOX, 'plugin-root'));
 const linked = { isLinkedWorktree: () => true };
+const POSIX_ROOT = toPosix(ROOT);
+// A win32 session on any host: the fs answers come from the injected deps.
+function win32(extra = {}) {
+  const lstats = [];
+  const shipped = extra.shipped || 'D:\\p\\root\\bin\\x.js';
+  return {
+    lstats,
+    opts: {
+      pathImpl: path.win32,
+      cwd: 'D:\\w\\cwd',
+      pluginRoot: 'D:\\p\\root',
+      deps: {
+        isLinkedWorktree: () => true,
+        lstatType: (p) => { lstats.push(p); return { type: p === shipped ? 'file' : 'missing' }; },
+        canonicalRealpath: (p) => path.win32.resolve(p),
+      },
+      ...extra.opts,
+    },
+  };
+}
 const rw = (command, extra = {}) => rewriteForGuard({ command, cwd: CWD, pluginRoot: ROOT, deps: linked, ...extra });
 
 test('inline-literal-assignment: P=/x/y; node $P/z.js → P=/x/y; node /x/y/z.js', () => {
@@ -117,8 +138,8 @@ test('an unbraced reference followed by a backslash declines (line continuation 
 });
 
 test('plugin-root-placeholder substitutes the injected root and skips when the command assigns it', () => {
-  assert.deepStrictEqual(rw('node "${CLAUDE_PLUGIN_ROOT}/bin/x.js" a'), { command: `node "${ROOT}/bin/x.js" a`, applied: ['plugin-root-placeholder'] });
-  assert.deepStrictEqual(rw('node $CLAUDE_PLUGIN_ROOT/bin/x.js'), { command: `node ${ROOT}/bin/x.js`, applied: ['plugin-root-placeholder'] });
+  assert.deepStrictEqual(rw('node "${CLAUDE_PLUGIN_ROOT}/bin/x.js" a'), { command: `node "${POSIX_ROOT}/bin/x.js" a`, applied: ['plugin-root-placeholder'] });
+  assert.deepStrictEqual(rw('node $CLAUDE_PLUGIN_ROOT/bin/x.js'), { command: `node ${POSIX_ROOT}/bin/x.js`, applied: ['plugin-root-placeholder'] });
   assert.strictEqual(rw("node '${CLAUDE_PLUGIN_ROOT}/bin/x.js'"), null, 'single-quoted stays literal');
   assert.strictEqual(rw('export CLAUDE_PLUGIN_ROOT="$X"; node "$CLAUDE_PLUGIN_ROOT/x.js"'), null, 'assigns it itself');
   assert.strictEqual(rw('unset CLAUDE_PLUGIN_ROOT; node "$CLAUDE_PLUGIN_ROOT/x.js"'), null);
@@ -128,13 +149,35 @@ test('plugin-root-placeholder substitutes the injected root and skips when the c
   });
   const spaced = pluginRootAt(path.join(SANDBOX, 'a b', 'root'));
   assert.strictEqual(rw('node $CLAUDE_PLUGIN_ROOT/bin/x.js', { pluginRoot: spaced }), null, 'unquoted + a root with a space');
-  assert.deepStrictEqual(rw('node "$CLAUDE_PLUGIN_ROOT/bin/x.js"', { pluginRoot: spaced }), { command: `node "${spaced}/bin/x.js"`, applied: ['plugin-root-placeholder'] });
+  assert.deepStrictEqual(rw('node "$CLAUDE_PLUGIN_ROOT/bin/x.js"', { pluginRoot: spaced }), { command: `node "${toPosix(spaced)}/bin/x.js"`, applied: ['plugin-root-placeholder'] });
   assert.strictEqual(rw('node "$CLAUDE_PLUGIN_ROOT/bin/x.js"', { pluginRoot: 'relative/root' }), null, 'a non-absolute root');
   assert.strictEqual(rw('node "$CLAUDE_PLUGIN_ROOT/bin/x.js"', { pluginRoot: '/opt/$x' }), null, 'a root outside the literal class');
   // Another plugin's prose spells the same placeholder for its own root.
   assert.strictEqual(rw('node "${CLAUDE_PLUGIN_ROOT}/scripts/other.js"'), null, 'a path this root does not ship');
   assert.strictEqual(rw('node "${CLAUDE_PLUGIN_ROOT}/bin/x.js" "$CLAUDE_PLUGIN_ROOT"'), null, 'a bare reference names no shipped path');
   assert.strictEqual(rw('node "${CLAUDE_PLUGIN_ROOT}/../plugin-root/bin/x.js"'), null, 'a parent segment');
+});
+
+test('AC2.1, AC2.2: plugin-root-placeholder inlines a win32 root forward-slashed and lstats the native join', () => {
+  const w = win32();
+  assert.deepStrictEqual(rewriteForGuard({ command: 'node "${CLAUDE_PLUGIN_ROOT}/bin/x.js" a', ...w.opts }),
+    { command: 'node "D:/p/root/bin/x.js" a', applied: ['plugin-root-placeholder'] });
+  assert.deepStrictEqual(w.lstats, ['D:\\p\\root\\bin\\x.js']);
+});
+
+test('plugin-root-placeholder under path.win32: bare, spaced, tilde and UNC roots', () => {
+  const run = (command, pluginRoot, shipped) => rewriteForGuard({ command, ...win32({ shipped, opts: { pluginRoot } }).opts });
+  assert.strictEqual(run('node $CLAUDE_PLUGIN_ROOT/bin/x.js', 'D:\\p\\root').command, 'node D:/p/root/bin/x.js');
+  assert.strictEqual(run('node "$CLAUDE_PLUGIN_ROOT/bin/x.js"', 'D:\\a b\\root', 'D:\\a b\\root\\bin\\x.js').command, 'node "D:/a b/root/bin/x.js"');
+  assert.strictEqual(run('node $CLAUDE_PLUGIN_ROOT/bin/x.js', 'D:\\a b\\root', 'D:\\a b\\root\\bin\\x.js'), null, 'unquoted + a space');
+  assert.strictEqual(run('node "$CLAUDE_PLUGIN_ROOT/bin/x.js"', 'C:\\RUNNER~1\\root', 'C:\\RUNNER~1\\root\\bin\\x.js'), null, 'a ~ is outside LITERAL_VALUE');
+  assert.strictEqual(run('node "$CLAUDE_PLUGIN_ROOT/bin/x.js"', '\\\\srv\\share\\root', '\\\\srv\\share\\root\\bin\\x.js').command, 'node "//srv/share/root/bin/x.js"');
+  assert.strictEqual(run('node "$CLAUDE_PLUGIN_ROOT/bin/x.js"', 'relative\\root'), null, 'not absolute under path.win32');
+  assert.strictEqual(run('$CLAUDE_PLUGIN_ROOT/bin/x.js', 'D:\\p\\root'), null, 'a drive colon is outside PLAIN_COMMAND_WORD');
+});
+
+test('pathImpl defaults to the host path: a backslash in a POSIX root still declines', () => {
+  assert.strictEqual(rw('node "${CLAUDE_PLUGIN_ROOT}/bin/x.js"', { pluginRoot: '/opt/a\\b', pathImpl: path.posix }), null);
 });
 
 // Review fix: every plugin ships .claude-plugin/plugin.json, hooks/hooks.json,
@@ -151,7 +194,7 @@ test('plugin-root-placeholder inlines only a file under its own bin/', () => {
   assert.strictEqual(rw('cat "${CLAUDE_PLUGIN_ROOT}/skills/./demo/SKILL.md"'), null);
   assert.strictEqual(rw('node "${CLAUDE_PLUGIN_ROOT}/bin/./x.js"'), null, 'a . segment declines, like skills/./build');
   assert.strictEqual(rw('node "${CLAUDE_PLUGIN_ROOT}/./bin/x.js"'), null);
-  assert.deepStrictEqual(rw('node "${CLAUDE_PLUGIN_ROOT}/bin/x.js"'), { command: `node "${ROOT}/bin/x.js"`, applied: ['plugin-root-placeholder'] });
+  assert.deepStrictEqual(rw('node "${CLAUDE_PLUGIN_ROOT}/bin/x.js"'), { command: `node "${POSIX_ROOT}/bin/x.js"`, applied: ['plugin-root-placeholder'] });
 });
 
 // Fix wave 2: rules 1 and 2 rewrite only when every command-position word is a

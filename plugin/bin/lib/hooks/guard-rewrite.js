@@ -40,6 +40,7 @@
 'use strict';
 const path = require('path');
 const { lstatType, canonicalRealpath } = require('../path-guard');
+const { toPosix } = require('../shared-primitives');
 
 const DEFAULT_PLUGIN_ROOT = path.resolve(__dirname, '..', '..', '..');
 const MAX_COMMAND = 64 * 1024;
@@ -522,19 +523,23 @@ function inlineLiteralAssignment(s) {
 }
 
 // Rule 2: ${CLAUDE_PLUGIN_ROOT} → the running plugin's own root.
-function pluginRootPlaceholder(s, { pluginRoot }) {
+function pluginRootPlaceholder(s, { pluginRoot, pathImpl, lstat }) {
   const name = 'CLAUDE_PLUGIN_ROOT';
   if (!s.includes(name) || s.includes('IFS')) return null;
-  if (typeof pluginRoot !== 'string' || !path.isAbsolute(pluginRoot) || !LITERAL_VALUE.test(pluginRoot)) return null;
+  if (typeof pluginRoot !== 'string' || !pathImpl.isAbsolute(pluginRoot)) return null;
+  // The text names the root forward-slashed (Git Bash and zsh read `D:/p/root`
+  // where `D:\p\root` loses its backslashes); the fs probe keeps the native join.
+  const inlined = toPosix(pluginRoot, pathImpl.sep);
+  if (!LITERAL_VALUE.test(inlined)) return null;
   if (hasBareUse(s, name)) return null; // the command assigns or unsets it itself
   const sc = scan(s);
   if (inDoubt(s, sc) || sc.flags.complexParam) return null;
   const refs = sc.refs.filter((r) => r.name === name);
-  if (!refs.length || !refsInlineSafely(s, sc, refs, () => pluginRoot)) return null;
+  if (!refs.length || !refsInlineSafely(s, sc, refs, () => inlined)) return null;
   // Other plugins' prose spells the same placeholder for THEIR root: inline only
   // a reference that continues into a path this plugin actually ships.
-  if (!refs.every((r) => shippedUnder(pluginRoot, s, r.end))) return null;
-  const out = replaceSpans(s, refs, () => pluginRoot);
+  if (!refs.every((r) => shippedUnder(pluginRoot, s, r.end, { pathImpl, lstat }))) return null;
+  const out = replaceSpans(s, refs, () => inlined);
   return inlineContextSafe(out, leadingAssignments(out).bodyStart) ? out : null;
 }
 
@@ -547,13 +552,13 @@ const PARENT_SEGMENT = /(?:^|\/)\.\.(?:\/|$)/;
 // plugin's `${CLAUDE_PLUGIN_ROOT}/skills/review/SKILL.md` would resolve to a
 // claude-tweaks file of the same name). A `.` segment declines (`bin/./x.js`).
 // Residual: a same-named file under another plugin's bin/.
-function shippedUnder(root, s, at) {
+function shippedUnder(root, s, at, { pathImpl, lstat }) {
   ROOT_CONTINUATION.lastIndex = at;
   const m = ROOT_CONTINUATION.exec(s);
   if (!m || PARENT_SEGMENT.test(m[0])) return false;
   const segments = m[0].split('/').filter(Boolean);
   if (segments[0] !== 'bin' || segments.length < 2 || segments.includes('.')) return false;
-  const { type } = lstatType(path.join(root, ...segments));
+  const { type } = lstat(pathImpl.join(root, ...segments));
   return type === 'file' || type === 'symlink';
 }
 
@@ -695,14 +700,22 @@ function isLinkedWorktree(cwd) {
 // → { command, applied } | null. Never throws.
 function rewriteForGuard(opts) {
   try {
-    const { command, cwd, pluginRoot = DEFAULT_PLUGIN_ROOT } = opts || {};
+    const { command, cwd, pluginRoot = DEFAULT_PLUGIN_ROOT, pathImpl = path } = opts || {};
     const deps = (opts && opts.deps) || {};
     if (typeof command !== 'string' || !command || command.length > MAX_COMMAND) return null;
-    if (typeof cwd !== 'string' || !path.isAbsolute(cwd)) return null;
+    if (typeof cwd !== 'string' || !pathImpl.isAbsolute(cwd)) return null;
+    // Context keys are fixed so the module-level lstatType/canonicalRealpath are never shadowed.
+    const context = {
+      cwd,
+      pluginRoot,
+      pathImpl,
+      lstat: deps.lstatType || lstatType,
+      realpath: deps.canonicalRealpath || canonicalRealpath,
+    };
     let current = command;
     const applied = [];
     for (const [id, rule] of RULES) {
-      const next = rule(current, { cwd, pluginRoot });
+      const next = rule(current, context);
       if (typeof next === 'string' && next && next !== current) {
         current = next;
         applied.push(id);
