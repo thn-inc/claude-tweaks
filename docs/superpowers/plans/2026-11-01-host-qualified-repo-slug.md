@@ -189,7 +189,7 @@ git commit -m "Host-qualify reconcile's residue-escalation --repo on a GHE origi
 - [ ] **Step 2: Run them to verify they fail**
 
 Run: `node --test tests/bin-lib/issues/claim-store.test.js tests/bin-lib/claim-targets/claim-targets.test.js`
-Expected: FAIL on every new GHE and `mine.example` assertion. The AC2.1 argv pins pass before and after.
+Expected: FAIL after Step 1 on every new GHE and `mine.example` assertion. The AC2.1 argv pins pass before and after.
 
 - [ ] **Step 3: Implement** the signatures and wiring from the Interfaces block. Update `tombstoneInFlightPr`'s doc comment: the link is validated as a well-formed `https://{host}/{owner}/{repo}/pull/{number}` url for the same owner/repo, its host compared normalized against the run's PR-url host (github.com by default).
 
@@ -233,7 +233,7 @@ git commit -m "Send claim-store PR listing and in-flight matching to the origin 
 - [ ] **Step 2: Run them to verify they fail**
 
 Run: `node --test tests/stale-claim-pr-cli.test.js tests/gh-host-seam-behavior.test.js`
-Expected: FAIL on every new GHE, `ghe.example.com` and `mine.example` assertion. The AC2.1 argv pin passes before and after.
+Expected: FAIL after Step 1 on every new GHE, `ghe.example.com` and `mine.example` assertion. The AC2.1 argv pin passes before and after.
 
 - [ ] **Step 3: Implement** `run()`, the header paragraph, the conformance roster change and the `issue-claims.md` edit. Then `wc -c plugin/skills/_shared/issue-claims.md` must print at most 50800.
 
@@ -326,4 +326,4 @@ git commit -m "Pin a whole GHE reconcile pass and retire the bare-slug --repo pr
 | AC2.1 | 2, 3, 4, 5 (github.com twins) |
 | AC3.1 | 7 Step 4 |
 | Key File `pr-state.js` | Waived in Task 2, pinned by Task 7's test |
-| Key File `post-merge.js` | No code change (#4933 on main); pinned by Task 6 |
+| Key File `plugin/bin/lib/reconcile/post-merge.js` | No code change (#4933 on main); pinned by Task 6 |
