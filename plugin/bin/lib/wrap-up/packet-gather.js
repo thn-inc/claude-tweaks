@@ -537,7 +537,6 @@ function gatherPacketFacts(inputs) {
     ...linkOutcomes.flatMap(({ fact }) => (fact ? [fact] : [])),
     deployFact(inputs.deploy),
     ...(inputs.recording ? [recordingFact(inputs.recording, inputs.recordingPath)] : []),
-    ...passThroughFacts('recording', 'recordings', inputs.recordings),
     ...passThroughFacts('flag', 'flags', inputs.flags),
     ...passThroughFacts('decision', 'decision-items', inputs.decisions),
   ];

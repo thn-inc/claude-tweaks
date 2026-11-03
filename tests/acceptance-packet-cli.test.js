@@ -381,9 +381,18 @@ test('Q13: a logged selection with no QA record states the gap', (t) => {
 
 // ---- gather: pass-through inputs ----
 
-test('--recordings, --flags, --decision-items, --links, the base urls, --surface, --deploy and --ac-results all reach the facts', (t) => {
+test('--recordings is gone: an unknown argument, with no facts written', (t) => {
   const ws = workspace(t);
+  const h = harness(ws);
+  const out = ws.file('facts.json');
   const recordings = writeJson(ws.file('recordings.json'), [{ id: 'r1', text: 'walkthrough', url: 'https://videos.example/r1' }]);
+  assert.equal(run(['gather', '--record', '7', '--out', out, '--recordings', recordings], h.deps), 2);
+  assert.match(h.stderr(), /unknown argument: --recordings/);
+  assert.throws(() => fs.statSync(out));
+});
+
+test('--flags, --decision-items, --links, the base urls, --surface, --deploy and --ac-results all reach the facts', (t) => {
+  const ws = workspace(t);
   const flags = writeJson(ws.file('flags.json'), [{ id: 'f1', text: 'schema change' }]);
   const decisionItems = writeJson(ws.file('decisions.json'), [{ id: 'd1', text: 'pick one' }]);
   const links = writeJson(ws.file('links.json'), [
@@ -395,11 +404,10 @@ test('--recordings, --flags, --decision-items, --links, the base urls, --surface
   const spec = writeText(ws.file('spec.md'), '## Acceptance Criteria\n\n1. It works.\n');
   const ac = writeJson(ws.file('ac.json'), { 1: 'met' });
   const { facts } = gather(ws, [
-    '--recordings', recordings, '--flags', flags, '--decision-items', decisionItems, '--links', links,
+    '--flags', flags, '--decision-items', decisionItems, '--links', links,
     '--local-base-url', 'http://localhost:3000', '--dev-base-url', 'https://dev.example', '--surface', 'Web',
     '--deploy', deploy, '--spec', spec, '--ac-results', ac,
   ]);
-  assert.equal(factOf(facts, 'recording:r1').url, 'https://videos.example/r1');
   assert.equal(factOf(facts, 'flag:f1').text, 'schema change');
   assert.equal(factOf(facts, 'decision:d1').text, 'pick one');
   assert.ok(factOf(facts, 'link:local'));
@@ -410,7 +418,7 @@ test('--recordings, --flags, --decision-items, --links, the base urls, --surface
   assert.equal(factOf(facts, 'check:ac-1').status, 'passed');
 });
 
-for (const flag of ['--recordings', '--flags', '--decision-items', '--links']) {
+for (const flag of ['--flags', '--decision-items', '--links']) {
   test(`an unparseable or mis-shaped ${flag} file is a stated partial, not a crash`, (t) => {
     const ws = workspace(t);
     const note = `${flag} input not read — treated as absent`;

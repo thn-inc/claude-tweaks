@@ -55,7 +55,6 @@ const inputs = (over = {}) => ({
   localBaseUrl: LOCAL,
   devBaseUrl: null,
   deploy: null,
-  recordings: [],
   flags: [],
   decisions: [],
   ...over,
@@ -124,14 +123,6 @@ test('redactions counts text, captions and failure', () => {
 test('no recording adds no fact', () => {
   assert.deepEqual(idsOf(gather({}), 'recording'), []);
   assert.deepEqual(idsOf(gather({ recording: null }), 'recording'), []);
-});
-
-test('a hand-listed recording with the same id gives way to the gathered one, and says so', () => {
-  const result = gather({
-    recording: PASSED_RECORDING, recordingPath: RECORDING_PATH, recordings: [{ id: 'walkthrough', url: 'https://x.example/a' }],
-  });
-  assert.equal(factOf(result, 'recording:walkthrough').source, 'walkthrough');
-  assert.ok(result.partial.includes('repeated fact ids, first kept: recording:walkthrough'));
 });
 
 // parseAcceptanceCriteria
@@ -1004,12 +995,10 @@ test('deploy defaults to local and states the dev confirmation', () => {
 
 test('pass-through kinds keep their text and url, status passed', () => {
   const result = gather({
-    recordings: [{ id: 'demo', text: 'Demo run', url: 'https://cdn.example/a.mp4' }],
-    flags: [{ id: 'auth', text: 'Touches auth' }],
+    flags: [{ id: 'auth', text: 'Touches auth', url: 'https://x.example/a' }],
     decisions: [{ id: 'merge order', text: 'Pick a merge order' }],
   });
-  assert.deepEqual(factOf(result, 'recording:demo'), { id: 'recording:demo', kind: 'recording', status: 'passed', source: 'recordings', text: 'Demo run', url: 'https://cdn.example/a.mp4' });
-  assert.deepEqual(factOf(result, 'flag:auth'), { id: 'flag:auth', kind: 'flag', status: 'passed', source: 'flags', text: 'Touches auth' });
+  assert.deepEqual(factOf(result, 'flag:auth'), { id: 'flag:auth', kind: 'flag', status: 'passed', source: 'flags', text: 'Touches auth', url: 'https://x.example/a' });
   assert.deepEqual(factOf(result, 'decision:merge%20order'), { id: 'decision:merge%20order', kind: 'decision', status: 'passed', source: 'decision-items', text: 'Pick a merge order' });
   assertShapeOk(result);
 });
@@ -1059,7 +1048,8 @@ test('every gathered fact carries a source', () => {
     commits: [{ sha: 'abcdef0123', subject: 's' }],
     links: [{ id: 'l', label: 'l', url: `${LOCAL}/x` }],
     deploy: { target: 'dev', live: false },
-    recordings: [{ id: 'r', text: 't', url: 'https://cdn.example/a.mp4' }],
+    recording: PASSED_RECORDING,
+    recordingPath: RECORDING_PATH,
     flags: [{ id: 'f', text: 't' }],
     decisions: [{ id: 'd', text: 't' }],
   });
