@@ -471,9 +471,8 @@ function checkArtifactOverwrite(opts) {
   // (refs #2014 review).
   const paths = (rawPaths && rawPaths.length > 0) ? rawPaths : ['docs/journeys/', 'stories/'];
 
-  // `^{integrationRef}` drops everything reachable from the integration branch — the
-  // upstream commits a catch-up merge brought in. Not --first-parent / --no-merges:
-  // a `parallel` wave's members are merged back --no-ff and stay run events.
+  // `^{integrationRef}` drops the upstream commits a catch-up merge brought in (see the
+  // algorithm notes above for why the walk uses neither --first-parent nor --no-merges).
   const exclude = integrationRef ? [`^${integrationRef}`] : [];
 
   const nameStatusOut = git(
