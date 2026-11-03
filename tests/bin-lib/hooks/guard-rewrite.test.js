@@ -159,14 +159,17 @@ test('plugin-root-placeholder substitutes the injected root and skips when the c
 });
 
 // The two declines above end on `/x.js`, which is not under bin/, so shippedUnder alone
-// would earn them. These end on a shipped bin/ file: only hasBareUse (or the shell-word
-// checks) can decline them.
+// would earn them. These end on a shipped bin/ file. The export/unset forms are also
+// caught by the runner allowlist (inlineContextSafe), so they pin the two layers
+// together; the plain assignments are plain command words that only hasBareUse declines.
 test('plugin-root-placeholder declines a command that binds the name itself, on a shipped bin/ path', () => {
   for (const command of [
     'export CLAUDE_PLUGIN_ROOT="$X"; node "$CLAUDE_PLUGIN_ROOT/bin/x.js"',
     'unset CLAUDE_PLUGIN_ROOT; node "$CLAUDE_PLUGIN_ROOT/bin/x.js"',
-    'read CLAUDE_PLUGIN_ROOT < f; node "$CLAUDE_PLUGIN_ROOT/bin/x.js"',
-    'for CLAUDE_PLUGIN_ROOT in a; do node "$CLAUDE_PLUGIN_ROOT/bin/x.js"; done',
+    'CLAUDE_PLUGIN_ROOT=$X; node "$CLAUDE_PLUGIN_ROOT/bin/x.js"',
+    'CLAUDE_PLUGIN_ROOT="$X"; node "$CLAUDE_PLUGIN_ROOT/bin/x.js"',
+    'CLAUDE_PLUGIN_ROOT=$(pwd); node "$CLAUDE_PLUGIN_ROOT/bin/x.js"',
+    'true && CLAUDE_PLUGIN_ROOT=$X; node "$CLAUDE_PLUGIN_ROOT/bin/x.js"',
   ]) assert.strictEqual(rw(command), null, command);
 });
 
