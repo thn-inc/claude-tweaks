@@ -1,5 +1,5 @@
 'use strict';
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
@@ -11,8 +11,12 @@ const { CONSOLE_LOCK, REWRITE_FROM, REWRITE_ONLY_IN, rewriteItemResolution } = r
 const AT = '2026-10-25T12:00:00.000Z';
 const REASON = 'record create failed (exit 1)';
 
+const made = [];
+after(() => { for (const dir of made) fs.rmSync(dir, { recursive: true, force: true }); });
+
 function consoleFile(content) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'item-resolution-'));
+  made.push(dir);
   const consolePath = path.join(dir, 'console.json');
   if (content !== null) fs.writeFileSync(consolePath, typeof content === 'string' ? content : `${JSON.stringify(content, null, 2)}\n`);
   return consolePath;
@@ -76,6 +80,9 @@ test('refuses without writing', () => {
   dup.items.push({ ...dup.items[0] });
   const filed = STORED();
   filed.items[0] = { ...filed.items[0], resolution: 'filed' };
+  // Both guards refuse the Queue writes item above; only the from-check refuses this Reference repairs one.
+  const refApply = STORED();
+  refApply.items[0] = { ...refApply.items[0], section: 'Reference repairs' };
   const cases = [
     ['absent file', null, 'no console.json'],
     ['unparseable', '{not json', /does not parse/],
@@ -86,6 +93,7 @@ test('refuses without writing', () => {
     ['a filed item', filed, /filed.*not rewritable to keep-staged/],
     ['a target outside REWRITE_FROM', STORED(), /not rewritable to filed/, { resolution: 'filed' }],
     ['an apply item to pending', STORED(), /apply, not rewritable to pending/, { resolution: 'pending' }],
+    ['a Reference repairs apply item to pending (only the from-check refuses it)', refApply, /apply, not rewritable to pending \(only approve → pending\)/, { resolution: 'pending' }],
   ];
   for (const [name, content, why, over] of cases) {
     const consolePath = consoleFile(content);
