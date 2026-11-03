@@ -2255,7 +2255,8 @@ for (const fixture of Object.keys(AC3_FIXTURES)) {
       const gh = (args) => parentGateReply(args, world);
       const facts = gatherParentFacts(898, { gh }, process.cwd(), 'native', ORG_REPO);
       assert.strictEqual(facts.ok, true, JSON.stringify(facts));
-      const verdict = JSON.parse(JSON.stringify(evaluateParentGate({ ...facts.facts, closingSet: [900], riskFloor: 'high' })));
+      // The core evaluated as engine-verify's check evaluates it: the run's repository echoed as `repo` (#4824).
+      const verdict = JSON.parse(JSON.stringify(evaluateParentGate({ ...facts.facts, closingSet: [900], riskFloor: 'high', slug: 'org/repo' })));
       const cli = cliGateVerdict(world, ['--sub-issue', '900', '--closing', '900', '--work-links', 'native', '--risk-floor', 'high']);
       assert.deepStrictEqual(verdict, cli);
 

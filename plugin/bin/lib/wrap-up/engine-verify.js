@@ -1036,7 +1036,8 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
       // shared core's, with every run record as the closing set (this run closes them). The parent's
       // labels are this loop's own `labels,comments` read, not the gather's separate one, so the gate
       // state and the `carriesPending`/`dispositionState` decisions below come from one label read.
-      const verdict = evaluateParentGate({ ...parentFacts.get(target), parentLabels: labelNames, closingSet: issues, riskFloor });
+      // `slug` echoes the run's one repository into the verdict's `repo`, as bin/parent-gate.js does (#4824).
+      const verdict = evaluateParentGate({ ...parentFacts.get(target), parentLabels: labelNames, closingSet: issues, riskFloor, slug });
       if (verdict.state === 'incomplete') {
         const openCount = verdict.subIssues.filter((s) => s.state !== 'CLOSED').length;
         skipped.push(`parent gate #${target} not due — ${openCount} sibling sub-issue(s) open`);
