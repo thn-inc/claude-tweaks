@@ -11,6 +11,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
+const { missingFactsOf, assertEveryMatchGoesRed, globalOf } = require('./helpers/conformance-asserts');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
 const RUN_DIR_RESOLUTION = path.join(SKILLS, '_shared', 'run-dir-resolution.md');
@@ -67,19 +68,12 @@ function sliceOf(text, from, to) {
   return text.slice(start, end);
 }
 
-const missingFactsOf = (patterns) => (text) => patterns.filter(([pattern]) => !pattern.test(text)).map(([, fact]) => fact);
-const globally = (pattern) => new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
-
 // Every fact present in `text`; then removing ALL of one pattern's matches turns exactly that fact red.
 function assertFactsAndGoRed(text, patterns, message) {
   const missingOf = missingFactsOf(patterns);
   const missing = missingOf(text);
   assert.deepEqual(missing, [], `${message} — missing: ${missing.join('; ')}`);
-  for (const [pattern, fact] of patterns) {
-    const doctored = text.replace(globally(pattern), '');
-    assert.notEqual(doctored, text, `anchor text for "${fact}" not found — proof cannot discriminate`);
-    assert.deepEqual(missingOf(doctored), [fact], `removing only "${fact}" must turn exactly that assertion red`);
-  }
+  assertEveryMatchGoesRed(text, patterns, missingOf);
 }
 
 // --- Mint-site derivation ---------------------------------------------------------------------------
@@ -233,7 +227,7 @@ for (const [key, pin] of Object.entries(PINS)) {
 test('AC1.1 go-red: removing the statement from release\'s Step 8 trips its pin', () => {
   const { file, from, to, patterns } = PINS.release;
   const live = sliceOf(readText(path.join(SKILLS, file)), from, to);
-  const doctored = live.replace(globally(P_STATEMENT[0]), '');
+  const doctored = live.replace(globalOf(P_STATEMENT[0]), '');
   assert.notEqual(doctored, live, 'the live slice carries no statement to strip');
   assert.throws(() => assertFactsAndGoRed(doctored, patterns, 'release Step 8'), /every exit runs the close-out/);
 });

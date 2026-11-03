@@ -62,9 +62,11 @@
 // deferred: `gh-absent`, `dry-run`, `marker-write-failed` and the definitive lookup failures (`pr-not-found` — confirmed by pr-state.js
 // before it answers, and one of archive's own structurally-stuck reasons —
 // `invalid-arguments`, `no-pr-state`), so archive's stuck-run surfacing for
-// them stays on. `failure` is `not-github-issues`, `no-remote`, or
-// `no-pr-states` (the caller passed no usable PR-state resolver: a bug, never
-// a transient answer).
+// them stays on. `failure` is `not-github-issues`, `no-remote`, `unknown-host`
+// (the origin names a host that is not a known GitHub host, #4933: nothing is sent to gh),
+// or `no-pr-states` (the caller passed no usable PR-state resolver: a bug, never
+// a transient answer). `unknown-host` adds `detail`, the refusal text naming the
+// `GH_HOST=…` opt-in; `postMergeOne`'s entry carries the same `detail`.
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -306,8 +308,10 @@ function setupContext({ cwd, deps }) {
   const root = mainCheckoutRoot(start) || start;
   if (readWorkBackend(root) !== 'github-issues') return { failure: 'not-github-issues' };
   // The host too: off github.com, Step 4.0b's gh calls name it (`--repo host/owner/repo`, `--hostname`).
-  const repoSpec = repoSpecOf(root);
+  // #4933: an origin on an unknown host is refused before any gh call; `detail` carries the opt-in text.
+  const repoSpec = repoSpecOf(root, deps.gateDeps);
   if (!repoSpec) return { failure: 'no-remote' };
+  if (repoSpec.refusal) return { failure: 'unknown-host', detail: repoSpec.refusal };
   const { host, owner, repo } = repoSpec;
 
   const policyFile = readPolicyRaw(root);
@@ -395,7 +399,7 @@ async function postMerge({
   const entries = [];
   const deferred = [];
   const ctx = setupContext({ cwd, deps });
-  if (ctx.failure) return { entries, deferred, failure: ctx.failure };
+  if (ctx.failure) return { entries, deferred, failure: ctx.failure, ...(ctx.detail ? { detail: ctx.detail } : {}) };
   // A missing resolver is a caller bug; the per-run catch must never relabel it a transient network failure.
   if (!prStates || typeof prStates.byNumberAsync !== 'function') return { entries, deferred, failure: 'no-pr-states' };
 
@@ -483,7 +487,11 @@ async function postMergeOne({
   const runDir = path.resolve(cwd || process.cwd(), givenRunDir);
   const classified = (entry, archived = false) => ({ ...entry, ...classifyEntry(entry, { archived }) });
   const ctx = setupContext({ cwd, deps });
-  if (ctx.failure) return classified({ runDir, pr: null, action: 'skipped', reason: ctx.failure });
+  if (ctx.failure) {
+    return classified({
+      runDir, pr: null, action: 'skipped', reason: ctx.failure, ...(ctx.detail ? { detail: ctx.detail } : {}),
+    });
+  }
   if (!prStates || typeof prStates.byNumberAsync !== 'function') return classified({ runDir, pr: null, action: 'skipped', reason: 'no-pr-states' });
   const archived = isArchivedRunDir(runDir, ctx.root);
   const retryHint = archived ? archivedRetryHint(runDir) : RECONCILE_RETRY_HINT;
@@ -626,7 +634,7 @@ function processRun({
 
 module.exports = {
   postMerge, postMergeOne, classifyEntry, isFailedRun, failedRecordNumbers, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim,
-  composeSkipText, composeSummaryText, boundDetail,
+  composeSkipText, composeSummaryText, boundDetail, oneLine,
   CLEAN_CLOSING_LINKS, RERUN_REASONS, RERUN_WHERE_GH_REASONS,
   MARKER_STEP, ATTEMPT_STEP, MAX_ATTEMPTS, CLOSE_WINDOW_MS, MERGE_GRACE_MS, CLAIM_STALE_MS, CLAIM_FILENAME,
 };

@@ -375,6 +375,16 @@ size axis is never evaluated (`#366`): parents carry no scoring of their own
   variant that brief carries to `"$TRY_IT"` too, as on `exceeds: false` — one rule for both
   outcomes, so the run that opens the parent gate shows the end-to-end path in its Pipeline Summary.
 
+**What the `acceptance-labeling` row does with each gate state.** The bullets above say what labeling does on this entry. `wrap-up-engine.js verify`'s `acceptance-labeling` row (`bin/lib/wrap-up/engine-verify.js`) then checks the outcome against the same rule (#3508), with this run's records counted as closed. A `resolved` parent owes nothing more. A `gated` parent owes the brief its gate posted, whatever its risk tier, since the floor decides only whether a `due` parent is gated.
+
+| State | Row | Detail |
+|---|---|---|
+| `incomplete` | `skip` | `parent gate #P not due — N sibling sub-issue(s) open` |
+| `resolved` | `skip` | `parent #P already dispositioned` |
+| `gated` | `fail` with no packet or brief, `pass` with one | `#P: no comment carries a confirmed Verification Brief or an acceptance packet` |
+| `due`, `exceeds: false` | `skip` | `parent #P below oversight floor — closes after the merge lands (Step 4.0b)` |
+| `due`, `exceeds: true` | `fail` with no pending label | `#P: missing demo:pending or accept:pending label` |
+
 ## Close the parent below the floor
 
 Runs only on `due` with `exceeds: false`, from the entries **Evaluate the gate**'s `exceeds: false`
