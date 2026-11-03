@@ -4,11 +4,11 @@
 
 **Goal:** A closed, run-marked PR counts as the record's own prior attempt only with failure-tombstone evidence, so a dispatch retry never silently adopts the branch of a PR a human closed.
 
-**Architecture:** `findPriorAttemptPr` judges only the newest closed PR on the branch (the spec's plan-review decision, Reading A), and that PR gains a final check after its existing ones: a trusted `Attempt {N} failed` comment on a record the PR closes, created in `[closedAt - TOMBSTONE_CLOSE_WINDOW_MS, closedAt]`. Comments come from an injected reader, read at most once per record per call. Every doubt returns no match, so the branch stays `foreign` and the existing stop card fires.
+**Architecture:** `findPriorAttemptPr` judges only the newest closed PR on the branch (the spec's plan-review decision, Reading A), returns no match when a same-repo non-closed PR on the branch is newer than it (round 2, Reading B), and the judged PR gains a final check after its existing ones: a trusted `Attempt {N} failed` comment on a record the PR closes, created in `[closedAt - TOMBSTONE_CLOSE_WINDOW_MS, closedAt]`. Comments come from an injected reader, read at most once per record per call. Every doubt returns no match, so the branch stays `foreign` and the existing stop card fires.
 
 **Tech Stack:** Node 18+, `node --test`, `gh` CLI through the module's injectable seam.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-03T180036-record-4058/work/4058-spec.md` (resume run; amended after plan review: Reading A)
+**Spec:** `.claude-tweaks/pipelines/2026-11-03T184335-record-4058/work/4058-spec.md` (resume run; amended after plan review: Reading A, then round 2: Reading B)
 
 **Scope keywords:** findPriorAttemptPr
 
@@ -20,6 +20,7 @@
 - A failed or partial lookup yields no match. The evidence lookup reads a record's comments at most once per record per check.
 - Export `ATTEMPT_RE` from `retry.js`; never copy the regex.
 - Reading A (spec, Acceptance Criteria): only the newest closed PR on the branch is judged. The candidates are the lookup's `CLOSED` PRs whose `isCrossRepository` is not `true` (a fork PR's head is the fork's branch, not this one; an unknown value stays a candidate and then fails the existing same-repo check). Newest is the latest parseable `closedAt`. Any candidate with an unparseable `closedAt`, or two candidates sharing the newest `closedAt`, yields no match: newest cannot be established, so fail closed. A newest PR that fails any check yields `null` even when an older PR on the branch is a genuine tombstone.
+- Reading B (spec, Acceptance Criteria, round 2): a same-repo (`isCrossRepository !== true`) PR on the branch whose `state` is not `CLOSED` and that is newer than the newest closed PR yields `null`, so live or merged work is never merged into a retry. An `OPEN` PR (draft or not) is live now, so it is always newer than any close and always blocks. Any other non-closed PR (`MERGED`, or a state this code does not know) is newer unless its `closedAt` parses and is strictly earlier than the newest closed PR's `closedAt`; an unparseable `closedAt` or an equal one blocks (fail closed). A fork PR never blocks.
 - A non-object element in `comments` (or in `prs`) is skipped, never thrown on (plan review, low row 2).
 - `gh`-absent behavior is unchanged (no PR lookup; #3915 tracks the MCP-fed one).
 - Scope and edit discipline: Commit tests only where the task asks for them or the repo already keeps tests for this kind of change, sized like the neighboring test files; scratch checks stay scratch. Touch only what the task requires — a pre-existing bug you notice is a follow-up to report, not a fix to fold in, unless the task cannot work without it. Don't reformat or "improve" adjacent code; edit in place rather than rewrite when the result is the same.
@@ -59,6 +60,7 @@ Sole-caller grep: `git grep -n "findPriorAttemptPr(" -- plugin tests` hits only 
 4. Several closed PRs on one branch (Reading A): only the newest closed PR is judged. A newest human-closed (evidence-less) PR makes the result `null` even with an older genuine tombstone on the branch, so rejected commits are never adopted; a newest tombstone still matches over an older evidence-less PR; an older PR's comments are never read: pinned in Task 1.
 5. A `gh` failure or malformed payload during the comment read must stay foreign, with the stop card still naming the closed PR: pinned in Tasks 1 and 2.
 6. A newest closed PR that cannot be established (an unparseable `closedAt` on any candidate, or a tie on the newest one) stays foreign: pinned in Task 1.
+7. Reading B: a same-repo open, draft or merged PR newer than the newest closed PR stays foreign; an older merged PR or a fork's open PR does not block; a merged PR whose `closedAt` is unparseable or equal to the newest close blocks: pinned in Task 1.
 
 ---
 
@@ -119,7 +121,11 @@ Further tests, each isolating one guard:
 - `#4058 AC5.1 AC5.2 AC5.3 Reading A: a newest human-closed PR hides an older genuine tombstone` (the fixture AC5.3 names; with Review Focus 4 above and this test, AC5.4 holds): PR 3 tombstoned (`closedAt: '2026-10-01T00:00:00Z'`, its record's comments include an in-window attempt comment for that time) and PR 9 newest with `CLOSED_AT` and no in-window comment; the reader returns both comments for record 42 (`tombstoneComment({ createdAt: '2026-09-30T23:59:55Z' })` only), result `null`, regardless of the PRs' order in the lookup (run it with both orders).
 - `#4058 Reading A: a newest tombstone matches over an older evidence-less PR, and only the newest PR is read`: PR 3 `closedAt: '2026-10-01T00:00:00Z'` evidence-less, PR 9 with `CLOSED_AT` and the default in-window comment, both orders; result `PR9`, one recording reader, `calls.length === 1`, and the ancestry `git` called only with PR 9's head.
 - `#4058 Reading A: a newest closed PR that fails an existing check is null, never a fallback to an older match`: newest PR 9 for a different record (`closingIssuesReferences: [ref(43)]`, body `Fixes #43`), and separately newest PR 9 with a non-ancestor head; an older PR 3 (`closedAt: '2026-10-01T00:00:00Z'`) that would otherwise match; each `null`.
-- `#4058 Reading A: a fork PR is not a candidate for newest`: newest PR 2 `isCrossRepository: true` with a later `closedAt`, older own PR 9 with evidence: result `PR9`. An OPEN or MERGED newer PR is not a candidate either: result `PR9`.
+- `#4058 Reading A: a fork PR is not a candidate for newest`: newest PR 2 `isCrossRepository: true` with a later `closedAt`, older own PR 9 with evidence: result `PR9`.
+- `#4058 AC Reading B: a newer open, draft or merged same-repo PR blocks adoption`: PR 9 the tombstone (default `CLOSED_AT`, in-window evidence) beside PR 11, in both orders, for each of `{ state: 'OPEN', isDraft: false, closedAt: null }`, `{ state: 'OPEN', isDraft: true, closedAt: null }` and `{ state: 'MERGED', closedAt: '2026-10-21T13:00:00Z' }`: result `null`, and a recording reader shows zero comment reads. This fixture is the spec's Reading B line.
+- `#4058 Reading B: an open PR blocks whatever its age`: PR 11 `{ state: 'OPEN', closedAt: null }` with a `createdAt` long before `CLOSED_AT`: `null`.
+- `#4058 Reading B: an older merged PR or a fork's open PR does not block`: PR 11 `{ state: 'MERGED', closedAt: '2026-10-01T00:00:00Z' }` gives `PR9`; PR 11 `{ state: 'OPEN', closedAt: null, isCrossRepository: true }` gives `PR9`.
+- `#4058 Reading B: a merged PR whose closedAt cannot be compared blocks`: PR 11 `MERGED` with `closedAt` `null`, `'nope'`, and equal to `CLOSED_AT`: each `null`.
 - `#4058 Reading A: newest cannot be established, so foreign`: two candidates where one has `closedAt: null` (and separately `'nope'`), and two candidates sharing `CLOSED_AT`; each `null`.
 - `#4058: a null or non-object comment element is skipped, never thrown on`: `comments: [null, 'x', tombstoneComment()]` gives `PR9`; `comments: [null]` gives `null`.
 - `#4058: a bundle PR matches on any record it closes and never reads a record it does not`: `records: [7, 42, 8]`, `closingIssuesReferences: [ref(7), ref(42)]`, body `Fixes #42`, reader returns evidence only for 42, result `PR9`, called numbers `[7, 42]`, never 8.
@@ -129,11 +135,13 @@ Rewrite the existing `#3887` test `skips non-matching closed PRs ahead of the re
 
 In `tests/bin-lib/issues/retry.test.js` add: `ATTEMPT_RE` matches `attemptFailedCommentBody({ attemptNumber: 2, reason: 'r', ceilingHit: false })`, and is not global (`ATTEMPT_RE.global === false`, so `.test` holds no state across comments).
 
-In `tests/adopted-branch-collision-snippet-fixture.test.js`: `stubPluginRoot(t, result, prs = [], comments = [])` also exports `findPriorAttemptPr: (args) => real.findPriorAttemptPr({ ...args, readComments: () => ({ ok: true, comments: <JSON comments> }) })`. Give the #3887 test's `pr` a `closedAt: '2026-10-21T12:00:00Z'`, and its `run` a trusted in-window attempt comment. Add:
+In `tests/adopted-branch-collision-snippet-fixture.test.js`: `stubPluginRoot(t, result, prs = [], comments = [], readOk = true)` also exports `findPriorAttemptPr: (args) => real.findPriorAttemptPr({ ...args, readComments: () => ({ ok: <JSON readOk>, comments: <JSON comments> }) })`. Give the #3887 test's `pr` a `closedAt: '2026-10-21T12:00:00Z'`, and its `run` a trusted in-window attempt comment. Add:
 
 ```js
 test('#4058 AC1.2: the snippet stops with the foreign card on a closed PR that has no tombstone evidence', ...)
 // same fixture as the #3887 test, comments = []: state 'foreign', card matches /closed PR #9/ and /worktree-record-1/
+test('#4058 AC1.2: a failed comment read stops with the same foreign card', ...)
+// same fixture, the trusted in-window comment present but readOk = false: state 'foreign', card matches /closed PR #9/
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -147,7 +155,7 @@ Expected: FAIL (the new `#4058` tests and the `requests the fields` literal)
 
 `remote-branch-collision.js`: require `ATTEMPT_RE` from `../issues/retry` and `isTrustedComment` from `../issues/comment-trust`. `defaultGh`'s options literal gains `stdio: ['ignore', 'pipe', 'pipe']`. Append `,closedAt` to `findPrsForBranch`'s `--json` list. Add `TOMBSTONE_CLOSE_WINDOW_MS = 15 * 60 * 1000` with a comment naming `settle-and-merge.md` Step 6 step 5's order and that real tombstones land within seconds. Add `readIssueComments` (an `Array.isArray(parsed.comments)` check; any throw or other shape is `{ ok: false, comments: [] }`).
 
-In `findPriorAttemptPr`, replace the `for` loop with Reading A's single judgment. A private `newestClosedPr(prs)` returns the one candidate (`pr` an object, `state === 'CLOSED'`, `isCrossRepository !== true`) with the greatest `Date.parse(closedAt)`, or `null` when there is no candidate, any candidate's `closedAt` parses to NaN, or the greatest value is shared. Then judge that one PR with the existing checks in their current order (same-repo `isCrossRepository === false`, first-line marker, `const linked = wanted.filter((n) => prClosesIssue(pr, n, repo, pr.body) === true)` non-empty, head sha, ancestry `try/catch`), and last `linked.some((n) => hasTombstoneEvidence(pr.closedAt, readComments({ number: n, repo })))` — `some` stops at the first record with evidence, and each linked record is read at most once because only one PR is judged (no memo needed). Any failed check returns `null`. `hasTombstoneEvidence(closedAt, lookup)` is a private helper: false unless `lookup` is an object with `lookup.ok === true` and `lookup.comments` an array; `closed = Date.parse(closedAt)`, and for each comment skip anything that is not a non-null object, then require `ATTEMPT_RE.test(body)` on a string body, `isTrustedComment(comment)`, `created = Date.parse(createdAt)`, `created <= closed && closed - created <= WINDOW`. A NaN compares false, so an unparseable value never matches. Update the function's doc comment (it no longer returns "the first" match; it judges the newest closed PR) and the header's #3887 paragraph with a #4058 sentence naming the evidence and Reading A. Export `TOMBSTONE_CLOSE_WINDOW_MS` and `readIssueComments`.
+In `findPriorAttemptPr`, replace the `for` loop with Reading A's single judgment. A private `newestClosedPr(prs)` returns the one candidate (`pr` an object, `state === 'CLOSED'`, `isCrossRepository !== true`) with the greatest `Date.parse(closedAt)`, or `null` when there is no candidate, any candidate's `closedAt` parses to NaN, or the greatest value is shared. Next, Reading B: a private `newerLivePr(prs, closedMs)` is true when some same-repo object PR (`isCrossRepository !== true`) with `state !== 'CLOSED'` is `OPEN`, or else lacks a `closedAt` that parses strictly below `closedMs` (`!(Date.parse(pr.closedAt) < closedMs)`, so NaN blocks); true returns `null` before any check or comment read. Then judge that one PR with the existing checks in their current order (same-repo `isCrossRepository === false`, first-line marker, `const linked = wanted.filter((n) => prClosesIssue(pr, n, repo, pr.body) === true)` non-empty, head sha, ancestry `try/catch`), and last `linked.some((n) => hasTombstoneEvidence(pr.closedAt, readComments({ number: n, repo })))` — `some` stops at the first record with evidence, and each linked record is read at most once because only one PR is judged (no memo needed). Any failed check returns `null`. `hasTombstoneEvidence(closedAt, lookup)` is a private helper: false unless `lookup` is an object with `lookup.ok === true` and `lookup.comments` an array; `closed = Date.parse(closedAt)`, and for each comment skip anything that is not a non-null object, then require `ATTEMPT_RE.test(body)` on a string body, `isTrustedComment(comment)`, `created = Date.parse(createdAt)`, `created <= closed && closed - created <= WINDOW`. A NaN compares false, so an unparseable value never matches. Update the function's doc comment (it no longer returns "the first" match; it judges the newest closed PR, and a newer open, draft or merged same-repo PR blocks) and the header's #3887 paragraph with a #4058 sentence naming the evidence, Reading A and Reading B. Export `TOMBSTONE_CLOSE_WINDOW_MS` and `readIssueComments`.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -168,6 +176,7 @@ git commit -m "Require tombstone evidence before adopting a closed PR's branch �
 ### Task 2: State the condition in the collision check and its docs
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/skills/build/adopted-branch-collision-check.md`
@@ -197,6 +206,8 @@ function assertTombstoneEvidence(text) {
   assert.match(item5, /the only producer/);
   assert.match(item5, /human/);
   assert.match(item5, /newest closed PR/);
+  assert.match(item5, /open, draft or merged/);
+  assert.match(item5, /never re-runs/);
 }
 test('#4058: item 5 states the tombstone-evidence condition', () => assertTombstoneEvidence(CHECK));
 test('#4058 go-red: the assertion throws once the evidence clause is removed', () => {
@@ -216,13 +227,13 @@ Expected: FAIL (`#4058: item 5 states the tombstone-evidence condition`)
 
 - [ ] **Step 3: Edit the prose**
 
-Item 5 of `adopted-branch-collision-check.md`: keep the existing conditions and add the new one, as a clause after the ancestry one: the record's issue carries a trusted (`isTrustedComment`) `Attempt {N} failed` comment created no more than `TOMBSTONE_CLOSE_WINDOW_MS` before the PR's `closedAt`, and not after it. Name dispatch's failure path (`dispatch/settle-and-merge.md` Step 6 step 5, which posts that comment and then closes the PR) as the only producer of the `prior-attempt` shape. State why: a PR a human closed to reject the approach has every other property, so timing against a fresh attempt comment is the discriminator. Extend "Anything else" with: a closed PR with no such comment, a comment older than the window (an earlier failure, then a retry that reopened the PR, then a human closed it), an untrusted author, or a failed comment lookup. Add that a tombstone from before #1963, with attempt comments only on the PR, stops as `foreign` by design. State Reading A: only the newest closed PR on the branch is judged, so a newer PR a human closed stops the run as `foreign` even when an older PR on the branch is a genuine tombstone. Add one sentence for the transient case (plan review, low row 3): a failed comment read renders the same `foreign` card as a human-closed PR, so when the card names a closed PR whose issue does carry a fresh `Attempt {N} failed` comment, re-run the build once before choosing an option.
+Item 5 of `adopted-branch-collision-check.md`: keep the existing conditions and add the new one, as a clause after the ancestry one: the record's issue carries a trusted (`isTrustedComment`) `Attempt {N} failed` comment created no more than `TOMBSTONE_CLOSE_WINDOW_MS` before the PR's `closedAt`, and not after it. Name dispatch's failure path (`dispatch/settle-and-merge.md` Step 6 step 5, which posts that comment and then closes the PR) as the only producer of the `prior-attempt` shape. State why: a PR a human closed to reject the approach has every other property, so timing against a fresh attempt comment is the discriminator. Extend "Anything else" with: a closed PR with no such comment, a comment older than the window (an earlier failure, then a retry that reopened the PR, then a human closed it), an untrusted author, or a failed comment lookup. Add that a tombstone from before #1963, with attempt comments only on the PR, stops as `foreign` by design. State Reading A: only the newest closed PR on the branch is judged, so a newer PR a human closed stops the run as `foreign` even when an older PR on the branch is a genuine tombstone. State Reading B: a same-repo open, draft or merged PR on the branch that is newer than the newest closed PR also stops the run as `foreign`, so live or merged work is never merged into a retry (an open PR always counts as newer). Add one sentence for the transient case (plan review, low row 3), addressed to the human at the stop: a failed comment read renders the same `foreign` card as a human-closed PR, so when the card names a closed PR whose issue does carry a fresh `Attempt {N} failed` comment, the human may re-run the build once before choosing an option; an `auto` agent stops as for item 4 and never re-runs the check on its own.
 
 Snippet: add one comment line above the `const prior` line, with no `$`, no backtick and no `{`:
 
-`// findPriorAttemptPr judges only the newest closed PR and reads its linked records' comments: without failure-tombstone evidence (item 5), or on a failed read, it returns null.`
+`// findPriorAttemptPr judges only the newest closed PR and reads its linked records' comments: without failure-tombstone evidence (item 5), on a failed read, or with a newer open, draft or merged PR, it returns null.`
 
-`docs/skill-graph.md:268`: extend the shape with "the newest closed PR on the branch, whose record carries a trusted `Attempt {N} failed` issue comment within `TOMBSTONE_CLOSE_WINDOW_MS` before its `closedAt`", and add to the consequence sentence that reordering or dropping Settle's comment-then-close turns every retry into a `foreign` stop.
+`docs/skill-graph.md:268`: extend the shape with "the newest closed PR on the branch, with no newer open, draft or merged PR, whose record carries a trusted `Attempt {N} failed` issue comment within `TOMBSTONE_CLOSE_WINDOW_MS` before its `closedAt`", and add to the consequence sentence that reordering or dropping Settle's comment-then-close turns every retry into a `foreign` stop.
 
 `docs/journeys/retry-a-record-whose-first-attempt-left-a-branch-3887.md:30`: add the same condition to the action, and that a PR without that comment, such as one a human closed, stops as `foreign`.
 
