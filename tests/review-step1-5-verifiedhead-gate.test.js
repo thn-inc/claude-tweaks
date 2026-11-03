@@ -75,7 +75,14 @@ const STOP_PREFIX = '| That re-check still reads `verifiedHead: false` |';
 const ZERO_TEST_LOG = 'AUTO {time} — review Step 1.5: no verification commands configured; zero-test pass accepted without a runner stamp. Reversibility: high.';
 const PIPELINE_CARVE_OUT = '`present: false` with no commands configured takes the zero-test row (Gate table below); any other `verifiedHead: false` with `TEST_PASSED=true` is reported, never silently accepted';
 
-const rowOf = (text, prefix) => text.split('\n').find((l) => l.startsWith(prefix));
+function rowOf(text, prefix) {
+  return text.split('\n').find((l) => l.startsWith(prefix));
+}
+
+// Replace `from` with `to` on the one CODE_MODE_STEPS row that starts with `prefix`.
+function mutateRow(prefix, from, to) {
+  return CODE_MODE_STEPS.split('\n').map((l) => (l.startsWith(prefix) ? l.replace(from, to) : l)).join('\n');
+}
 
 function assertZeroTestRow(text) {
   const row = rowOf(text, ZERO_TEST_PREFIX);
@@ -121,7 +128,7 @@ test('AC2.1: each zero-test-row clause goes red on its own (#4395)', () => {
     ['`verify-scope.json` `checks`', /verify-scope checks/],
   ];
   for (const [clause, message] of cases) {
-    const mutated = CODE_MODE_STEPS.split('\n').map((l) => (l.startsWith(ZERO_TEST_PREFIX) ? l.replace(clause, 'xxx') : l)).join('\n');
+    const mutated = mutateRow(ZERO_TEST_PREFIX, clause, 'xxx');
     assert.notEqual(mutated, CODE_MODE_STEPS, clause);
     assert.throws(() => assertZeroTestRow(mutated), message);
   }
@@ -167,14 +174,14 @@ test('AC2.1: each STOP-row clause goes red on its own (#4395)', () => {
     ['`fullSha`', /stamp-as-read catch-all/],
   ];
   for (const [clause, message] of cases) {
-    const mutated = CODE_MODE_STEPS.split('\n').map((l) => (l.startsWith(STOP_PREFIX) ? l.replace(clause, 'xxx') : l)).join('\n');
+    const mutated = mutateRow(STOP_PREFIX, clause, 'xxx');
     assert.notEqual(mutated, CODE_MODE_STEPS, clause);
     assert.throws(() => assertStopRow(mutated), message);
   }
-  const withException = CODE_MODE_STEPS.split('\n').map((l) => (l.startsWith(STOP_PREFIX) ? l.replace('name the cause:', 'name the cause: Exception: ') : l)).join('\n');
+  const withException = mutateRow(STOP_PREFIX, 'name the cause:', 'name the cause: Exception: ');
   assert.notEqual(withException, CODE_MODE_STEPS, 'Exception injection');
   assert.throws(() => assertStopRow(withException), /no exception clause/);
-  const withZeroTest = CODE_MODE_STEPS.split('\n').map((l) => (l.startsWith(STOP_PREFIX) ? l.replace('name the cause:', 'name the cause: zero-test row aside,') : l)).join('\n');
+  const withZeroTest = mutateRow(STOP_PREFIX, 'name the cause:', 'name the cause: zero-test row aside,');
   assert.notEqual(withZeroTest, CODE_MODE_STEPS, 'zero-test injection');
   assert.throws(() => assertStopRow(withZeroTest), /no exception clause/);
 });
