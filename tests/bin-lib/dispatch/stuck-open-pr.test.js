@@ -11,6 +11,7 @@ const dispatchResume = require('../../../plugin/bin/dispatch-resume');
 const { resumeEligibility, refusalDetail } = require('../../../plugin/bin/lib/dispatch/resume-eligibility');
 const { claimPayload, releasePayload } = require('../../../plugin/bin/lib/issues/claims');
 const { findConflictingSession, findSessionOnWorktree } = require('../../../plugin/bin/lib/hooks/sibling-sessions');
+const { captureGhTimeout } = require('../../helpers/gh-timeout-probe');
 
 const label = (...names) => names.map((name) => ({ name }));
 
@@ -474,35 +475,19 @@ test('realDeps wires the real sibling reads, the claim read and the verdict CLI'
   }
 });
 
-// 45000 is above the 30000 floor (batch == single-call bound); 10000 is below it, so only
-// GH_BATCH_TIMEOUT_MS (not GH_TIMEOUT_MS) yields 30000.
 function linkedGhTimeoutFor(envValue) {
-  const cp = require('node:child_process');
-  const origExec = cp.execFileSync;
-  const envKey = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
-  const hadEnv = Object.prototype.hasOwnProperty.call(process.env, envKey);
-  const origEnv = process.env[envKey];
   const cliPath = require.resolve('../../../plugin/bin/stuck-open-prs');
   const resumePath = require.resolve('../../../plugin/bin/dispatch-resume');
-  const primitivesPath = require.resolve('../../../plugin/bin/lib/shared-primitives');
-  let seen = null;
-  try {
-    // stuck-open-prs reads the getter at require time, so the env var and the stub come first.
-    process.env[envKey] = envValue;
-    cp.execFileSync = (cmd, args, opts) => { if (cmd === 'gh') seen = opts.timeout; return '{}'; };
-    delete require.cache[cliPath];
-    delete require.cache[resumePath];
-    delete require.cache[primitivesPath];
-    const fresh = require(cliPath);
-    try { fresh.realDeps.linked({ numbers: [1], owner: 'o', repo: 'r', host: 'github.com' }); } catch { /* the '{}' reply is not a linked-PR batch; only the captured timeout matters */ }
-    return seen;
-  } finally {
-    cp.execFileSync = origExec;
-    if (hadEnv) process.env[envKey] = origEnv; else delete process.env[envKey];
-    delete require.cache[cliPath];
-    delete require.cache[resumePath];
-    delete require.cache[primitivesPath];
-  }
+  return captureGhTimeout({
+    envValue,
+    modulePaths: [cliPath, resumePath],
+    exercise: (setEnv) => {
+      // stuck-open-prs reads the getter at require time, so the env var comes before the require.
+      setEnv();
+      const fresh = require(cliPath);
+      try { fresh.realDeps.linked({ numbers: [1], owner: 'o', repo: 'r', host: 'github.com' }); } catch { /* the '{}' reply is not a linked-PR batch; only the captured timeout matters */ }
+    },
+  });
 }
 
 test("#4815 AC1.1: realDeps.linked's gh runner passes GH_BATCH_TIMEOUT_MS", () => {

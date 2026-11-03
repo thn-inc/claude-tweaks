@@ -883,7 +883,7 @@ test('resumeContext: no pipeline entries -> null lastPhase and no defects; non-s
   assert.deepStrictEqual(resumeContext(undefined), empty);
 });
 
-test('#4815 AC1.1: worktreePathForHead and the shared primitives have one home', () => {
+test('#4815 AC1.1: worktreePathForHead builds the worktree path, and the exported nonEmptyString and isObject guards hold their contracts', () => {
   assert.equal(worktreePathForHead('/m', HEAD), path.join('/m', '.claude', 'worktrees', 'dispatch-record-4589'));
   assert.equal(worktreePathForHead('/m', 'fix/thing'), path.join('/m', '.claude', 'worktrees', 'fix', 'thing'));
   assert.equal(worktreePathForHead('/m', 'a$(x)'), null);

@@ -10,6 +10,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { makeNumberListCli } = require('../../plugin/bin/lib/number-list-cli');
+const { captureGhTimeout } = require('../helpers/gh-timeout-probe');
 
 function buildCli(overrides = {}) {
   return makeNumberListCli({
@@ -185,34 +186,21 @@ test('#2425 review fix: a bare --repo owner/repo still resolves to host: "github
   assert.equal(seen.repo, 'else');
 });
 
-// 45000 is above the 30000 floor (batch == single-call bound); 10000 is below it, so only
-// GH_BATCH_TIMEOUT_MS (not GH_TIMEOUT_MS) yields 30000.
 function runnerTimeoutFor(envValue) {
-  const cp = require('node:child_process');
-  const origExec = cp.execFileSync;
-  const envKey = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
-  const hadEnv = Object.prototype.hasOwnProperty.call(process.env, envKey);
-  const origEnv = process.env[envKey];
   const cliPath = require.resolve('../../plugin/bin/lib/number-list-cli');
-  const primitivesPath = require.resolve('../../plugin/bin/lib/shared-primitives');
-  let seen = null;
-  try {
-    cp.execFileSync = (cmd, args, opts) => { if (cmd === 'gh') seen = opts.timeout; return ''; };
-    delete require.cache[cliPath];
-    delete require.cache[primitivesPath];
-    // number-list-cli destructures execFileSync at require time, so the stub is installed first.
-    const { makeNumberListCli: freshMake } = require(cliPath);
-    const cli = freshMake({ name: 'x.js', usage: 'usage\n', fetch: () => new Map(), mapResult: () => null });
-    // Set only after the factory call: the timeout must be read per runner call, not at factory time.
-    process.env[envKey] = envValue;
-    cli.realDeps.runner(['api']);
-    return seen;
-  } finally {
-    cp.execFileSync = origExec;
-    if (hadEnv) process.env[envKey] = origEnv; else delete process.env[envKey];
-    delete require.cache[cliPath];
-    delete require.cache[primitivesPath];
-  }
+  return captureGhTimeout({
+    envValue,
+    modulePaths: [cliPath],
+    reply: '',
+    exercise: (setEnv) => {
+      // number-list-cli destructures execFileSync at require time, so the helper's stub is installed first.
+      const { makeNumberListCli: freshMake } = require(cliPath);
+      const cli = freshMake({ name: 'x.js', usage: 'usage\n', fetch: () => new Map(), mapResult: () => null });
+      // Set only after the factory call: the timeout must be read per runner call, not at factory time.
+      setEnv();
+      cli.realDeps.runner(['api']);
+    },
+  });
 }
 
 test('#4815 AC1.1: realDeps.runner passes GH_BATCH_TIMEOUT_MS as its timeout, read at call time', () => {

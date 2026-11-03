@@ -153,7 +153,7 @@ test('parseStatusPorcelainZ: copy and Y-column rename carry origPath; a token sh
   assert.deepEqual(parseStatusPorcelainZ('M a\u0000 M ok.md\u0000'), [{ xy: ' M', path: 'ok.md' }]);
 });
 
-test('#4815 AC1.1: parseStatusPorcelainZ strict: a token shorter than 4 characters throws; well-formed input parses as non-strict', () => {
+test('#4815 AC1.1: parseStatusPorcelainZ strict: a token shorter than 4 characters throws; well-formed input still parses', () => {
   assert.throws(
     () => parseStatusPorcelainZ('M a\u0000 M ok.md\u0000', { strict: true }),
     /shorter than "XY path" \("M a"\)/,
