@@ -657,12 +657,9 @@ function rulingAcceptError(runDir, ledgerText, ledgerUpdates) {
   // symlinked `staged/sdd-ruling-*.md` that leaves the run dir reads as unreadable here too, never
   // as ruling text. Loaded lazily: this runs only for an `accepted` entry on finish-console.
   const { readInsideRunDir } = require('./lib/reconcile/console-execute');
-  const readRuling = (name) => {
-    const read = readInsideRunDir(base, `staged/${name}`);
-    return read.error ? null : read.text;
-  };
   const rulings = names.map((name) => {
-    const text = readRuling(name);
+    const read = readInsideRunDir(base, `staged/${name}`);
+    const text = read.error ? null : read.text;
     const m = text === null ? null : /#(\d+)$/.exec(headerField(text, 'Ledger') || '');
     return { name, text, row: m ? Number(m[1]) : null };
   });
