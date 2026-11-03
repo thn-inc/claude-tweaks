@@ -130,6 +130,18 @@ Why shared, not per-record: sequential records in one run are one logical unit o
 
 > The opt-in `parallel` token (#2677) is the one in-run exception: a wave's independent records build and test in per-spec worktrees, then merge back into the shared branch before their review — `multispec-parallel-waves.md`.
 
+## Context cap (sequential runs)
+
+The sequential loop gauges after each passing gate of each record (the same boundary units as `context-handoff.md`), with a step left in the run, under `auto`/`confirm`/`hybrid`, never under the `parallel` token or as a `MULTISPEC_PARALLEL_WAVE=1` wave member. One Bash call, with `{parent}` the literal parent run dir, never `spec-{N}/`, because the gauge exits 2 on a `spec-` basename:
+
+`node "${CLAUDE_PLUGIN_ROOT}/bin/context-gauge.js" --run "{parent}" --record-steps "{value}" [--keep-going]`
+
+`--keep-going` only under the `keep-going` token.
+
+Everywhere the handoff procedure reads the run, a multi-spec run uses the parent, because `$PIPELINE_RUN_DIR` is the per-spec `{parent}/spec-{N}/`, which holds no `run-state.json`: the `dispatched` read targets `$MULTISPEC_PARENT_DIR`, and `{run}` and `handoff.json` are the parent's. A read against `spec-{N}/` prints nothing and would misroute a dispatched bundle to the Top-level branch.
+
+Compose `{value}` in run order: a record past its list, failed under `keep-going`, or `not-run` is `none`; the current record takes its remaining steps; a later record takes its full list with `test` written out before `review`, since the auto-insert is not applied on resume. A run not bound `dispatched: true` leaves `wrap-up` off every list, and skips the gauge when only `wrap-up` steps remain. Result handling is `context-handoff.md`'s.
+
 ## PR phase-checklist convention (shared PR)
 
 A multi-spec run shares one PR (`_shared/pr-early-run-lifecycle.md`); its checklist rows are **cumulative and run-level, never reset per spec**. The `polish` row in particular is decided at the run level, not from the first spec alone — present from PR creation (#3319), checked by whichever spec first runs it for real, removed only if the whole run never ran polish (#1712). Read `multispec-pr-checklist.md` in this skill's directory for the rationale and the per-spec status source.

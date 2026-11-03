@@ -7,10 +7,12 @@
 // `OUTCOME: handoff` + `NEXT_STEPS:` — the contract Task 9's dispatcher reads;
 // a top-level run hands off to one fresh Agent), the fail-open rule, the
 // template's verbatim copy of dispatch/task-prompt.md's async-wait item, and its
-// worktree shell-constraint item (#4728).
+// worktree shell-constraint item (#4728). #4358 adds the sequential multi-spec
+// form: multi-spec.md's Context cap, steps-and-gates.md's Per-record resume.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
 const { RAIL_BYTES } = require('../plugin/bin/lib/skill-audit/budgets');
 
@@ -20,6 +22,9 @@ const FLOW = 'plugin/skills/flow/SKILL.md';
 const HANDOFF = 'plugin/skills/flow/context-handoff.md';
 const STEPS_AND_GATES = 'plugin/skills/flow/steps-and-gates.md';
 const TASK_PROMPT = 'plugin/skills/dispatch/task-prompt.md';
+const MULTI_SPEC = 'plugin/skills/flow/multi-spec.md';
+const CODE_MODE_STEPS = 'plugin/skills/review/code-mode-steps.md';
+const RECORD_STEPS_CLI = path.join(ROOT, 'plugin', 'bin', 'record-steps.js');
 
 // The text from `start` up to (not including) `end`; fails loudly when either
 // anchor is gone, so a moved heading cannot turn an assertion vacuous.
@@ -54,6 +59,225 @@ function item7Body(text) {
 }
 
 const stepFourItem = () => region(read(FLOW), '3. **Check the gate**', '**Pass context forward**', 'flow Step 4 cap-check item');
+
+// #4358: a region that must state many facts. `missingFacts` is the gaps function; the
+// go-red control strips one fact's own match and requires exactly that fact back, so
+// each pattern must match once in its slice and overlap no other.
+const missingFacts = (facts, text) => facts.filter(([re]) => !re.test(text)).map(([, fact]) => fact);
+
+function assertEachFactGoesRed(facts, text) {
+  assert.deepEqual(missingFacts(facts, text), [], 'the live region must state every fact before its controls mean anything');
+  for (const [re, fact] of facts) {
+    const doctored = text.replace(re, '');
+    assert.notEqual(doctored, text, `anchor text for "${fact}" not found`);
+    assert.deepEqual(missingFacts(facts, doctored), [fact], `removing only "${fact}" must turn exactly that fact red`);
+  }
+}
+
+const contextCap = (t = read(MULTI_SPEC)) => squash(region(t, '## Context cap (sequential runs)', '\n## PR phase-checklist', 'Context cap'));
+const perRecordResume = (t = read(STEPS_AND_GATES)) => squash(region(t, '### Per-record resume (record-steps=)', '### Adopting an inherited run directory', 'Per-record resume'));
+const gaugeBullet = (t) => squash(region(t, '- **A single-spec or sequential run.**', '\n- **Not under `interactive`', 'gauge bullet'));
+
+const CONTEXT_CAP_FACTS = [
+  [/after each passing gate of each record/, 'the boundary: each passing gate of each record'],
+  [/with a step left in the run/, 'the boundary: a step left in the run'],
+  [/under `auto`\/`confirm`\/`hybrid`/, 'the modes it runs under'],
+  [/never under the `parallel` token or as a `MULTISPEC_PARALLEL_WAVE=1` wave member/, 'the parallel and wave-member exclusion'],
+  [/`\{parent\}` the literal parent run dir, never `spec-\{N\}\/`/, 'the literal parent run dir, never spec-{N}/'],
+  [/exits 2 on a `spec-` basename/, 'why: the gauge refuses a spec- basename'],
+  [/bin\/context-gauge\.js" --run "\{parent\}" --record-steps "\{value\}" \[--keep-going\]/, 'the gauge call with --record-steps and --keep-going'],
+  [/`--keep-going` only under the `keep-going` token/, '--keep-going only under the keep-going token'],
+  [/the `dispatched` read targets `\$MULTISPEC_PARENT_DIR`/, 'the dispatched read targets the parent'],
+  [/`\{run\}` and `handoff\.json` are the parent's/, '{run} and handoff.json are the parent\'s'],
+  [/A read against `spec-\{N\}\/` prints nothing/, 'why: a per-spec read prints nothing'],
+  [/a record past its list, failed under `keep-going`, or `not-run` is `none`/, 'none for a finished, failed or not-run record'],
+  [/the current record takes its remaining steps/, 'the current record takes its remaining steps'],
+  [/a later record takes its full list with `test` written out before `review`/, 'a later record writes test out before review'],
+  [/leaves `wrap-up` off every list/, 'a run not bound dispatched leaves wrap-up off every list'],
+  [/skips the gauge when only `wrap-up` steps remain/, 'it skips the gauge when only wrap-up steps remain'],
+  [/Result handling is `context-handoff\.md`'s/, 'result handling is context-handoff.md\'s'],
+];
+
+const RESUME_FACTS = [
+  [/bin\/record-steps\.js" --value "\{value\}" --targets "\{targets\}"/, 'the record-steps.js validation call'],
+  [/a non-zero exit stops before Step 2, as a Step 1 validation failure/, 'a refused value stops before Step 2'],
+  [/A step list beside the token is the same stop/, 'a step list beside the token is the same stop'],
+  [/runs exactly its steps/, 'each list runs exactly its steps'],
+  [/no resume-onward/, 'no resume-onward'],
+  [/no `test` auto-insert before `review`/, 'no test auto-insert'],
+  [/`build`'s automatic `stories` and `polish`'s bundled re-verify still apply/, 'stories and re-verify still apply'],
+  [/`none` runs nothing and the record stays a target/, 'none stays a target'],
+  [/A resumed run carrying `keep-going` keeps it/, 'keep-going survives the resume'],
+  [/is the CLI's `steps` union/, 'the union for {steps}'],
+  [/`review\/code-mode-steps\.md`'s Step 1\.5 Test Gate/, 'the code-mode-steps.md citation'],
+  [/re-triggers `\/claude-tweaks:test` when the stamp does not verify HEAD/, 'the gate re-triggers test on a stale stamp'],
+  [/Pre-flight Verify Sweep does not re-run/, 'the sweep does not re-run'],
+  [/an existing `spec-\{N\}\/config\.yml` is not re-scaffolded/, 'the no-re-scaffold rule'],
+  [/`manifest-init` keeps each spec's status/, 'manifest-init keeps each status'],
+  [/Boundary freshness check runs only before a record that has not started/, 'freshness only before an unstarted record'],
+  [/consolidated pass runs when any record's list carries `wrap-up`/, 'the consolidated pass condition'],
+  [/otherwise Step 5's partial note applies/, 'the partial note otherwise'],
+];
+
+const GAUGE_BULLET_FACTS = [
+  [/single-spec run uses `--next-steps`/, 'a single-spec run uses --next-steps'],
+  [/sequential multi-spec run uses `--record-steps` per `multi-spec\.md`'s Context cap/, 'a sequential multi-spec run uses --record-steps'],
+  [/`parallel` run or a `MULTISPEC_PARALLEL_WAVE=1` wave member does not gauge/, 'parallel and wave members are excluded'],
+];
+
+const STEP_FOUR_FACTS = [
+  [/runs outside `interactive`, never a `MULTISPEC_PARALLEL_WAVE=1` wave member/, 'the opening exclusions'],
+  [/A multi-spec run takes `multi-spec\.md`'s Context cap section instead of this item's `--next-steps` form/, 'the route to the Context cap'],
+];
+
+const PARENT_RUN_FACTS = [
+  [/the `dispatched` read targets `\$MULTISPEC_PARENT_DIR`/, 'the dispatched read targets the parent'],
+  [/`\{run\}` and `handoff\.json` are the parent's/, '{run} and handoff.json are the parent\'s'],
+];
+
+const STEPS_COMPLETE_FACTS = [
+  [/multi-spec run's note names `\{MULTISPEC_PARENT_DIR\}\/handoff\.json`/, 'the multi-spec note names the parent handoff.json'],
+  [/`Run directory: \{MULTISPEC_PARENT_DIR\}`/, 'the multi-spec note names the parent run dir'],
+  [/`Handed off: \{next-steps\} continue in a fresh agent from \{PIPELINE_RUN_DIR\}\/handoff\.json\.`/, 'the single-spec line stays'],
+];
+
+const REPORT_ITEM_FACTS = [
+  [/`NEXT_STEPS: \{comma-joined remaining steps\}`/, 'the flat NEXT_STEPS literal stays'],
+  [/A multi-spec run's line is `NEXT_STEPS: \{the --record-steps value\}`/, 'the multi-spec NEXT_STEPS form'],
+];
+
+const TOP_LEVEL_FACTS = [
+  [/A multi-spec child's lists carry no `wrap-up`/, 'a multi-spec child carries no wrap-up'],
+  [/runs `wrap-up` in run order for each record whose `manifest\.yml` status is none of `complete`, `failed`, `not-run`, then the consolidated pass/, 'wrap-up per unfinished record, then the consolidated pass'],
+];
+
+// Every position in `markers` must exist and increase. Both messages are matched by the controls.
+function requireOrder(text, markers) {
+  let last = -1;
+  for (const marker of markers) {
+    const at = text.indexOf(marker);
+    assert.notEqual(at, -1, `marker missing: ${marker}`);
+    assert.ok(at > last, `${marker} must come after the marker before it`);
+    last = at;
+  }
+}
+
+const EXAMPLE_TOKEN = /`record-steps=(#\d+:[^`\s]+)`/;
+
+// The example the prose prints, through the real parser. Returns the refusal, or null when it parses.
+function exampleTokenRefusal(section) {
+  const m = section.match(EXAMPLE_TOKEN);
+  assert.ok(m, 'Per-record resume must print one concrete record-steps= example');
+  const value = m[1];
+  const targets = value.split(';').map((entry) => entry.split(':')[0]).join(',');
+  const r = spawnSync(process.execPath, [RECORD_STEPS_CLI, '--value', value, '--targets', targets], { encoding: 'utf8', windowsHide: true });
+  if (r.status !== 0) return `exit ${r.status}: ${r.stderr.trim()}`;
+  return JSON.parse(r.stdout).canonical === value ? null : `not canonical: ${r.stdout.trim()}`;
+}
+
+test('AC1.3: multi-spec.md\'s Context cap states the --record-steps call, the literal parent run dir, and how {value} composes (each fact goes red)', () => {
+  assertEachFactGoesRed(CONTEXT_CAP_FACTS, contextCap());
+});
+
+test('steps-and-gates.md\'s Per-record resume states the exact-steps rule, validation, the union, the no-re-scaffold rule (each fact goes red)', () => {
+  assertEachFactGoesRed(RESUME_FACTS, perRecordResume());
+});
+
+test('the cited gate is real: code-mode-steps.md\'s Step 1.5 is the Test Gate, and it re-triggers /test on a stamp that does not verify HEAD', () => {
+  const gate = region(read(CODE_MODE_STEPS), '## Step 1.5: Test Gate', '## Step 1.6', 'Test Gate');
+  assert.match(gate, /`verifiedHead: false`[^\n]*re-trigger `\/claude-tweaks:test`/);
+  assert.match(gate, /\*\*`verifiedHead: false`\*\* → no recent pass[^\n]*auto-trigger `\/claude-tweaks:test/);
+});
+
+test('the example token the prose prints parses through the real record-steps.js, and a mangled one is refused', () => {
+  const section = perRecordResume();
+  assert.equal(exampleTokenRefusal(section), null);
+  const mangled = section.replace(EXAMPLE_TOKEN, '`record-steps=#12:tset`');
+  assert.notEqual(mangled, section);
+  assert.match(exampleTokenRefusal(mangled), /^exit 2: /);
+});
+
+test('the Context cap section sits after ## Execution and before the PR checklist section', () => {
+  const t = read(MULTI_SPEC);
+  const [EXECUTION, CAP, PR] = ['\n## Execution\n', '\n## Context cap (sequential runs)\n', '\n## PR phase-checklist'];
+  const chain = [EXECUTION, CAP, PR];
+  requireOrder(t, chain);
+  const capBlock = t.slice(t.indexOf(CAP), t.indexOf(PR));
+  const withoutCap = t.replace(capBlock, '');
+  assert.notEqual(withoutCap, t);
+  const capFirst = withoutCap.replace(EXECUTION, `${capBlock}${EXECUTION}`);
+  assert.notEqual(capFirst, withoutCap);
+  assert.throws(() => requireOrder(capFirst, chain), /must come after/);
+  const prFirst = t.replace(PR, '').replace(CAP, `${PR}${CAP}`);
+  assert.notEqual(prFirst, t);
+  assert.throws(() => requireOrder(prFirst, chain), /must come after/);
+  assert.throws(() => requireOrder(withoutCap, chain), /marker missing/);
+});
+
+test('context-handoff.md\'s gauge bullet routes each run shape (each fact goes red)', () => {
+  assertEachFactGoesRed(GAUGE_BULLET_FACTS, gaugeBullet(read(HANDOFF)));
+});
+
+test('flow Step 4 item 4 routes a multi-spec run to the Context cap (each fact goes red)', () => {
+  assertEachFactGoesRed(STEP_FOUR_FACTS, squash(stepFourItem()));
+});
+
+test('context-handoff.md\'s Reading the result states the parent-run rule (each fact goes red)', () => {
+  assertEachFactGoesRed(PARENT_RUN_FACTS, squash(region(read(HANDOFF), '## Reading the result', '\n## Dispatched call', 'reading the result')));
+});
+
+test('a multi-spec Steps Complete note names the parent, while the single-spec form stays (each fact goes red)', () => {
+  assertEachFactGoesRed(STEPS_COMPLETE_FACTS, squash(region(read(STEPS_AND_GATES), '**A handed-off run produces this same branch too', '**Auto-insert `test`:**', 'handed-off paragraph')));
+});
+
+test('Dispatched call item 4 keeps the flat NEXT_STEPS literal and adds the --record-steps form (each fact goes red)', () => {
+  const d = region(read(HANDOFF), '\n## Dispatched call', '\n## Top-level run', 'dispatched branch');
+  const item = d.split('\n').find((l) => l.startsWith('4. **Report**'));
+  assert.ok(item, 'Dispatched call lost its item 4');
+  assertEachFactGoesRed(REPORT_ITEM_FACTS, item);
+});
+
+test('Top-level run: a multi-spec agent runs wrap-up per unfinished record, then the consolidated pass (each fact and each status literal goes red)', () => {
+  const n = squash(region(read(HANDOFF), '## Top-level run', '\n```', 'top-level branch'));
+  assertEachFactGoesRed(TOP_LEVEL_FACTS, n);
+  for (const literal of ['`complete`, ', '`failed`, ', ', `not-run`']) {
+    const doctored = n.replace(`none of \`complete\`, \`failed\`, \`not-run\``, (s) => s.replace(literal, ''));
+    assert.notEqual(doctored, n, `status literal ${literal} not found`);
+    assert.deepEqual(missingFacts(TOP_LEVEL_FACTS, doctored), ['wrap-up per unfinished record, then the consolidated pass']);
+  }
+});
+
+function recordStepsTokenGaps(t) {
+  const gaps = [];
+  const bullet = region(t, '\n## Input\n', '\n## Syntax\n', 'Input').split('\n').find((l) => l.startsWith('- `record-steps=#A:{steps};#B:{steps}`')) || '';
+  if (!/^- `[^`]*` \(producer-only\)/.test(bullet)) gaps.push('the producer-only marker right after the code span');
+  if (!bullet.includes("`steps-and-gates.md`'s Per-record resume")) gaps.push('the Per-record resume pointer');
+  if (t.split('\n').find((l) => l.startsWith('argument-hint:')).includes('record-steps')) gaps.push('out of argument-hint');
+  if (region(t, '\n## Syntax\n', '\n### Arguments', 'Syntax').includes('record-steps')) gaps.push('out of Syntax');
+  const item = t.split('\n').find((l) => l.startsWith('4. Validate step list is in lifecycle order')) || '';
+  if (!item.includes('A `record-steps=` token replaces the step list.')) gaps.push('Step 1 item 4 replaces the step list');
+  return gaps;
+}
+
+test('flow SKILL.md: record-steps= is a producer-only ## Input bullet, stays out of the hint and Syntax, and replaces the step list in Step 1', () => {
+  assert.deepEqual(recordStepsTokenGaps(read(FLOW)), []);
+});
+
+test('each record-steps= token check goes red on its own', () => {
+  const t = read(FLOW);
+  const cases = [
+    ['{steps}` (producer-only) —', '{steps}` — (producer-only)', 'the producer-only marker right after the code span'],
+    ["see `steps-and-gates.md`'s Per-record resume", 'see the Step Arguments', 'the Per-record resume pointer'],
+    ['argument-hint: "#N[,#M...]', 'argument-hint: "#N[,#M...] [record-steps=]', 'out of argument-hint'],
+    ['/claude-tweaks:flow #N[,#M...]', '/claude-tweaks:flow #N[,#M...] [record-steps=]', 'out of Syntax'],
+    [' A `record-steps=` token replaces the step list.', '', 'Step 1 item 4 replaces the step list'],
+  ];
+  for (const [anchor, swap, gap] of cases) {
+    const doctored = t.replace(anchor, swap);
+    assert.notEqual(doctored, t, `the anchor ${JSON.stringify(anchor)} is gone`);
+    assert.deepEqual(recordStepsTokenGaps(doctored), [gap]);
+  }
+});
 
 test('flow Step 4 runs context-gauge.js with --next-steps and a literal run dir, only with a step left, and points at context-handoff.md', () => {
   const r = stepFourItem();
@@ -206,17 +430,19 @@ test("steps-and-gates.md's Partial step lists: a handed-off run renders the part
 });
 
 // Fix round 1: the exclusions, the top-level wrap-up rule, the wait bound.
-test('flow Step 4 gauges only single-spec, non-interactive runs, after build\'s automatic stories, and keeps wrap-up off a top-level --next-steps', () => {
+test('flow Step 4 gauges only non-interactive, non-wave runs, after build\'s automatic stories, and keeps wrap-up off a top-level --next-steps', () => {
   const r = stepFourItem();
-  assert.match(r, /single-spec runs outside `interactive` only/);
+  assert.match(r, /runs outside `interactive`, never a `MULTISPEC_PARALLEL_WAVE=1` wave member/);
+  assert.doesNotMatch(r, /no multi-spec handoff/);
   assert.match(r, /after `build`'s automatic `stories`/);
   assert.match(r, /leaves `wrap-up` out of `--next-steps`/);
   assert.match(r, /`wrap-up` is the only step left/);
 });
 
-test('context-handoff.md states the single-spec-only limit and the interactive exclusion explicitly', () => {
+test('context-handoff.md states which runs gauge in which form, and the interactive exclusion explicitly', () => {
   const c = region(read(HANDOFF), '## The check', '## Reading the result', 'the check');
-  assert.match(c, /\*\*A single-spec run\.\*\* Multi-spec handoff is not supported/);
+  assert.deepEqual(missingFacts(GAUGE_BULLET_FACTS, gaugeBullet(read(HANDOFF))), []);
+  assert.doesNotMatch(c, /Multi-spec handoff is not supported/);
   assert.match(c, /\*\*Not under `interactive`\.\*\*/);
 });
 
