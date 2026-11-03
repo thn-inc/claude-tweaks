@@ -115,6 +115,17 @@ test('AC2.1: a remove answer drops the flag and writes the removal entry to deci
   assert.match(log, /\/specify/);
 });
 
+test('a confirm removal is logged under /backlog refine, not /specify, with the same removal text', () => {
+  const runDir = realAnchoredRunDirFixture();
+  const { out, body } = confirm(withUnconfirmed(SPEC_WITH_MIGRATIONS_PATH), answers({ migrations: 'remove' }), ['--run', runDir]);
+  assert.deepStrictEqual([out.removed, out.logged, out.logFailures], [['migrations'], true, []]);
+  assert.match(body, /^Risk-flags: none$/m);
+  const log = readDecisions(runDir);
+  assert.match(log, /^## \/backlog$/m);
+  assert.match(log, /^- KEPT-PROMPT \S+ — Refine risk flags: Risk flag migrations removed by the maintainer during shaping/m);
+  assert.doesNotMatch(log, /\/specify/);
+});
+
 test('log-decision stays quiet: the JSON envelope is the only thing on stdout', () => {
   const runDir = realAnchoredRunDirFixture();
   const r = settle(SPEC_WITH_MIGRATIONS_PATH, ['--answers-file', answers({ migrations: 'remove' }), '--run', runDir]);

@@ -57,7 +57,12 @@ const TESTS_ROOT = path.join(ROOT, 'tests');
 // flagged raw reads the scan reports for the file; `reason` says why each must
 // stay raw. A drift either way fails, so a new raw read cannot hide behind an
 // existing entry.
-const ALLOWLIST = {};
+const ALLOWLIST = {
+  'tests/risk-flags-refine-prose.test.js': {
+    count: 1,
+    reason: 'its bytes() helper reads temp fixture files the refine Step 3.7 snippets wrote, never a tracked file; the behaviour under test is a cmp -s byte compare, so a CR must count and readText would normalize it away (the scan reaches the temp paths only through object-literal taint from the suite\'s LIVE texts)',
+  },
+};
 
 // Repo-rooted text reads the live scan sees (raw + readText) when this landed.
 // Fewer means the taint or the call matcher stopped matching, not that the

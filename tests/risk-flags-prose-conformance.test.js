@@ -237,6 +237,8 @@ function walkSkills() {
 // through confirm, which runs no classifier and adds nothing; settle classifies and widens, so
 // it stays under specify/ (AC6: no batch path reclassifies a record).
 const REFINE_VERBS = new Set(['classify', 'confirm']);
+// refine-mode.md's Step 3.7 stub and the lazy sub-file it reads (#4618 Task 11 fix round 1).
+const REFINE_FILES = new Set([REFINE, 'plugin/skills/backlog/refine-risk-flags.md']);
 function batchClassifyFailures(files) {
   const out = [];
   let specifySettle = 0;
@@ -249,7 +251,7 @@ function batchClassifyFailures(files) {
         if (verb === 'classify') specifyClassify++;
         continue;
       }
-      if (rel === REFINE && REFINE_VERBS.has(verb)) continue;
+      if (REFINE_FILES.has(rel) && REFINE_VERBS.has(verb)) continue;
       out.push(`${rel}: risk-flags.js ${verb}`);
     }
   }
@@ -303,7 +305,8 @@ function clauseFailures(texts) {
 function assertClauses(texts) { fail('Risk flags behaviour clauses', clauseFailures(texts)); }
 
 const TEMPLATE_PINS = [
-  ['spec-template.md metadata block', 'template', (t) => templateHead(t.template), "Risk-flags: {comma-separated slugs, or none — written by /specify's Risk flags step}"],
+  ['spec-template.md metadata block', 'template', (t) => templateHead(t.template), "Risk-flags: {comma-separated slugs, or none — settled by /specify's Risk flags step, confirmed by /backlog refine}"],
+  ['spec-template.md flag paragraph', 'template', (t) => templateParagraph(t.template), '`/claude-tweaks:backlog refine` confirms them with its `confirm` verb'],
   ['spec-template.md metadata block', 'template', (t) => templateHead(t.template), 'Risk-flags-unconfirmed: {true — headless-kept flags awaiting a human; omitted otherwise}'],
   ['spec-template.md flag paragraph', 'template', (t) => templateParagraph(t.template), '`Risk-flags: none`'],
   ['spec-template.md flag paragraph', 'template', (t) => templateParagraph(t.template), 'all four built-in categories flagged'],
@@ -440,6 +443,11 @@ test('go-red (AC6): settle planted in a refine-mode copy fails', () => {
   assert.throws(() => assertNoBatchClassify(plant(walkSkills(), REFINE, HOUSE('settle'))), names(`${REFINE}: risk-flags.js settle`));
 });
 
+test('go-red (AC6): settle planted in the refine-risk-flags.md sub-file fails too', () => {
+  const sub = 'plugin/skills/backlog/refine-risk-flags.md';
+  assert.throws(() => assertNoBatchClassify(plant(walkSkills(), sub, HOUSE('settle'))), names(`${sub}: risk-flags.js settle`));
+});
+
 test('go-red (AC6): classify or confirm planted in a non-specify skill file other than refine-mode fails', () => {
   const rel = 'plugin/skills/backlog/SKILL.md';
   for (const verb of ['classify', 'confirm']) {
@@ -459,7 +467,9 @@ test('go-red (AC6): a backtick- or single-quote-closed script name before the ve
 });
 
 test('control (AC6): classify and confirm in refine-mode are the exemption', () => {
-  for (const verb of ['classify', 'confirm']) assertNoBatchClassify(plant(walkSkills(), REFINE, HOUSE(verb)));
+  for (const rel of REFINE_FILES) {
+    for (const verb of ['classify', 'confirm']) assertNoBatchClassify(plant(walkSkills(), rel, HOUSE(verb)));
+  }
 });
 
 test('go-red (fix 1): the local-files paragraph naming --check before the Risk flags run fails the order check', () => {

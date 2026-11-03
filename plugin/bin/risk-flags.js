@@ -28,7 +28,8 @@
 // applied, the widened set stays, the marker is kept or written, nothing is logged, and
 // `refused` is { reason, raw, answered }; the fail direction is keep, so it still exits 0.
 // Each removal with --run is appended to decisions.md as KEPT-PROMPT (a human answered it
-// inline) through log-decision.js's run. `logged` is null whenever no removal was attempted
+// inline) through log-decision.js's run, under the verb's own LOG_SITE (settle: /specify's
+// Risk flags step; confirm: /backlog's Refine risk flags step). `logged` is null whenever no removal was attempted
 // (no --run, or --run with nothing removed, a Reading A refusal included), so true always
 // means at least one line was written and false that one failed (`logFailures` names the
 // slugs). A failed log never changes the exit.
@@ -261,18 +262,26 @@ function confirmBody({ body, answersFile, deps, extraCategories }) {
   return out;
 }
 
+// The skill and step each writing verb's removals are logged under: settle runs inside
+// /specify's Risk flags step, confirm inside /backlog refine's unconfirmed-flag step.
+const LOG_SITE = {
+  settle: { section: '/specify', step: 'Risk flags' },
+  confirm: { section: '/backlog', step: 'Refine risk flags' },
+};
+
 // Best-effort audit line per removal; a refusal or throw is a logFailures entry, never an exit.
 // `logged` is null when no removal was attempted (no --run, or nothing removed), so true
 // always means at least one decisions.md line was written and false that one failed.
 function logRemovals(o, deps, removed) {
   if (o.run === null || removed.length === 0) return { logged: null, logFailures: [] };
   const logDeps = { now: deps.now, cwd: deps.cwd, mainRoot: deps.mainRoot, stdout: () => {}, stderr: deps.stderr };
+  const { section, step } = LOG_SITE[o.verb];
   const logFailures = [];
   for (const slug of removed) {
     let code;
     try {
       code = logDecision.run([
-        '--run', o.run, '--status', 'KEPT-PROMPT', '--section', '/specify', '--step', 'Risk flags',
+        '--run', o.run, '--status', 'KEPT-PROMPT', '--section', section, '--step', step,
         '--text', `Risk flag ${slug} removed by the maintainer during shaping`, '--reversibility', 'low',
       ], logDeps);
     } catch {
