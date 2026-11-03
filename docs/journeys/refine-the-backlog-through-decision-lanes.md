@@ -1,6 +1,7 @@
 ---
 files:
   - plugin/skills/backlog/refine-mode.md
+  - plugin/skills/backlog/refine-risk-flags.md
   - plugin/skills/backlog/refine-lanes.md
   - plugin/skills/backlog/grant-lane-decision.md
   - plugin/skills/backlog/refine-closing-summary.md
@@ -29,6 +30,12 @@ files:
 - **Should understand:** `refine-mode.md` Step 1 resolves the ceiling once (`resolve-policy.js --values autonomy trust-revert-window-days`). Step 3's "Trust signal" section gates the entire trust-table fetch on that resolved ceiling being `trusted`+ **or** `--trust` being passed; at `supervised` with no `--trust`, `_shared/trust-table.md`'s Fetch section — including its per-parent branches and its own `git log` read — never runs this session, and Trust evidence is omitted from the report. Step 4's footer states the skip plainly: `"Autonomy ceiling: supervised — trust not fetched this run (recorded, never acted on; pass --trust to render it)."` — the skip-case wording, replacing the ceiling-description wording a `trusted`+ (or `--trust`) run would get instead.
 - **Should understand:** `--trust` (`SKILL.md`'s Input) is the opt-in that forces the fetch at any ceiling, including `supervised` — it's the only way to see Trust evidence without raising the project's ceiling.
 - **Red flags:** A `↳ trust:` consequence line rendered under any lane row on a `supervised`, no-`--trust` run; the ceiling-description footer wording appearing instead of the skip-case wording; a visible delay for a trust-table `git log` fetch on this run.
+
+### 1.5. Confirm unconfirmed risk flags — human-present only, before the lanes render
+- **Action:** When a record in the run's snapshot carries `Risk-flags-unconfirmed: true`, answer the one chunked question that comes before the lane report: a lone flag is `Keep {slug} (Recommended)` / `Remove {slug}`, two to four flags are one multiSelect (a selected option means remove), and more are asked in chunks of at most four, each option labelled `#{n} {slug}`.
+- **Should feel:** Like finishing a decision a headless run had to leave open: the flags were kept to be safe, and you now say which were real. Nothing about the label lanes below changes.
+- **Should understand:** `refine-mode.md` Step 3.7 scans every open record in Step 1's snapshot, under both drivers and whatever its lane (`blocked` and `inProgress` records included), and loads `refine-risk-flags.md` only when it finds one, so a run with no unconfirmed flags pays nothing. A record with no flag line is never touched. The write goes through `bin/risk-flags.js confirm`, never a hand edit of the line: it re-reads the live body and skips the record if it changed since Step 1, then writes the body (`gh issue edit`, or `readRecord`/`writeRecord` plus a commit under `local-files`) and logs each removal only after that write lands (`--site backlog`). A `Risk-flags: none` record has no option, only an optional "Confirm no risk flags" question that clears its marker. A record whose flag line is unreadable takes no option: its row says the line must be repaired first, and nothing is removed or logged. A headless refine never runs this step; it leaves every flag kept and unconfirmed.
+- **Red flags:** An unconfirmed flag removed in a headless refine; a removal logged for a record whose body write failed or was skipped as changed; this step touching a record with no flag line; a flag set confirmed with no question asked; a malformed flag line accepted as a removal.
 
 ### 2. Read the lanes — precedence order, one lane per record
 - **Action:** Read the report top to bottom: the one-line count-summary first, then the lanes in fixed order — Re-authorize, Grant, Flag-back, Needs-decision, Priority, Dependency repair, Needs you.
@@ -62,3 +69,6 @@ files:
 - **Should understand:** The answer sticks. A `keep` or `build it myself` resolution is honored by every later refine run, human-present or headless (`refine-headless.md`'s gate-4 path logs `not re-asked` instead of re-stamping), until the record's body is edited or any label other than `needs:decision` changes after the resolution. Re-shaping the record or re-scoring its `risk:*`/`size:*` re-opens the grant question. The resolution instant is the earlier of the start of the `**Resolved:**` date (UTC) and the comment's last-edit time, so a date typed in a timezone east of UTC cannot hide a later change.
 - **Should understand:** Each applied record logs one `decisions.md` line through `refine-closing-summary.md`'s Resolve-lane template (`Backlog refine: resolved decision on #{n} as {choice(s)} — …`), and the closing tally counts it under `resolved` — a run whose only writes are resolutions reads `… · 2 resolved · 0 skipped · 0 failed`, not all zeros. A Resolve-lane write that fails logs the `FAILED` template with `resolve` as its write type instead, so it counts under `failed`, never `resolved`.
 - **Red flags:** The label removed while a second unresolved `needs-decision:*` comment (from a different unit) is still on the record; a resolution with no `**Resolved:** {choice} — {date}` line prepended; a Routine firing `refine #N` on its own (it is human-present-only, exactly like bare `refine`); a resolve-only run whose closing tally reads all zeros, or lists its resolve lines as unclassified.
+
+## Origin
+- Step 1.5 added during build of #4618 (risk flags at intent time: a human-present refine confirms the flag sets headless runs kept unconfirmed). Related journey: `flag-invisible-risk-when-shaping-4618.md`.
