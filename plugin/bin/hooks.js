@@ -1878,7 +1878,9 @@ async function runReconcileBackground(argv) {
   let summary = {};
   try {
     const r = await reconcile({ cwd, checks: BACKGROUND_CHECKS, sessionId, budgetMs: BACKGROUND_BUDGET_MS });
-    const { classifyEntry, isFailedRun, failedRecordNumbers } = require('./lib/reconcile/post-merge');
+    const {
+      classifyEntry, isFailedRun, failedRecordNumbers, parentsLeftOpen, stepSkipsOf,
+    } = require('./lib/reconcile/post-merge');
     const postMergeEntries = r.postMerge || [];
     const failedRanEntries = postMergeEntries.filter(isFailedRun);
     const parentsClosedBy = (counts) => postMergeEntries
@@ -1906,6 +1908,11 @@ async function runReconcileBackground(argv) {
       // (closed on GitHub all the same, only the decisions.md marker is missing).
       postMergeParentsClosed: parentsClosedBy((e) => e.action === 'ran'),
       postMergeUnmarkedParentsClosed: parentsClosedBy((e) => e.reason === 'marker-write-failed'),
+      // The parents Step 4.0b left open and its step-wide skips (#4798): both read every entry carrying
+      // `parentFailures` / `stepSkips`, a `marker-write-failed` one included (Q5) since that run is in no count
+      // above, each element's raw `reason` quoted and its `detail` dropped.
+      postMergeParentsLeftOpen: parentsLeftOpen(postMergeEntries),
+      postMergeStepSkips: stepSkipsOf(postMergeEntries),
       archived: (r.runs || []).filter((x) => x.action === 'archived').length,
       archivedBranches: (r.branches || []).filter((b) => b.kind === 'branch' && (b.action === 'delete' || b.action === 'tag-and-delete')).length,
       prunedRemote: (r.remoteBranches || []).filter((b) => b.action === 'delete').length,

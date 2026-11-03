@@ -362,6 +362,14 @@ async function run(ctx) {
             : '';
           lines.push(`post-merge steps failed for ${s.postMergeFailed} merged run(s) (${failedRecords}tidy's parent-gate backstop recovers the parents)`);
         }
+        // Step 4.0b's parents left open and step-wide skips (#4798) stand on their own lines, independent of
+        // `postMergeFailed` / `postMergeRan`: a `marker-write-failed` entry is in neither count yet its fields
+        // reach here through the two lists. An older status file lacks them and the formatters return null.
+        const { parentsLeftOpenLine, stepSkipsLine } = require('../reconcile/post-merge');
+        const parentsLine = parentsLeftOpenLine(s.postMergeParentsLeftOpen);
+        if (parentsLine) lines.push(parentsLine);
+        const stepSkipsText = stepSkipsLine(s.postMergeStepSkips);
+        if (stepSkipsText) lines.push(stepSkipsText);
         if (s.archived) lines.push(`${s.archived} pipeline run(s) archived`);
         if (s.archivedBranches) lines.push(`${s.archivedBranches} local branch(es) archived/deleted`);
         if (s.prunedRemote) lines.push(`${s.prunedRemote} merged remote branch(es) deleted on origin`);
