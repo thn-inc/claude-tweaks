@@ -1257,7 +1257,7 @@ async function runTeardownRun(argv) {
 
 async function runArchiveRun(argv) {
   const {
-    archiveRunDir, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, listSpecDirs, listStagedItems, consoleReplacedByAutoMerge,
+    archiveRunDir, archiveCommitLine, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, listSpecDirs, listStagedItems, consoleReplacedByAutoMerge,
     TIEBREAK_COVERAGE_HINT, CANT_TELL_UNFILED_HINT, unfiledCantTellFindings,
   } = require('./lib/reconcile/archive-merged');
   const { NON_TERMINAL } = require('./lib/hooks/run-integrity');
@@ -1379,7 +1379,10 @@ async function runArchiveRun(argv) {
       return 0;
     }
   }
-  // Output below is informational human text, never parsed by any caller
+  // Output below is informational human text. The one line a caller reads is
+  // the success line `claude-tweaks: archived {run-id}` (skills/tidy/SKILL.md
+  // and skills/release/SKILL.md key on it); the "moved:" and "committed" lines
+  // are informational only, and any added line must leave that one intact
   // (skills/flow/multispec-review-console.md's parent-dir archival is a
   // future caller of this verb, not a consumer of this stdout format).
   // The "moved:" lines are read from archiveRunDir's own movedEntries
@@ -1393,12 +1396,15 @@ async function runArchiveRun(argv) {
     // `hint`, never a string match against a specific reason code.
     const hintSuffix = typeof result.hint === 'string' && result.hint.length ? ` — ${result.hint}` : '';
     process.stdout.write(`claude-tweaks: archival refused — ${result.reason}${hintSuffix}\n`);
+    // #3721: a refusal after the archive commit landed still reports that commit.
+    if (result.commit) process.stdout.write(`${archiveCommitLine(mainRoot, result.commit)}\n`);
     return 0;
   }
   for (const name of result.movedEntries) {
     process.stdout.write(`moved: ${name}\n`);
   }
   process.stdout.write(`claude-tweaks: archived ${path.basename(runDir)}\n`);
+  if (result.commit) process.stdout.write(`${archiveCommitLine(mainRoot, result.commit)}\n`);
   return 0;
 }
 

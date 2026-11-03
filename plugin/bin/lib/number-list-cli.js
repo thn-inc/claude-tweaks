@@ -33,7 +33,7 @@
 
 const { execFileSync } = require('child_process');
 const {
-  parseRepo, ghAvailable, remoteUrl, repoResolutionNote, ghOptions, pinExplicitRepoHost,
+  parseRepo, ghAvailable, remoteUrl, repoResolutionNote, ghOptions, pinExplicitRepoHost, gateOriginRepo,
 } = require('./repo-resolve');
 const { LARGE_MAX_BUFFER_BYTES } = require('./shared-primitives');
 
@@ -97,9 +97,14 @@ function makeNumberListCli({ name, usage, fetch, mapResult, ghRequiredNote, runn
     // `github.com/` prefix to satisfy parseRepo's 3-segment regex; prefixing
     // an already host-qualified value would produce a 4-segment string that
     // fails to parse at all.
-    const repoSpec = opts.repo
-      ? parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`)
-      : parseRepo(remote);
+    let repoSpec;
+    if (opts.repo) repoSpec = parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`);
+    else {
+      // #4933: an origin host with no GitHub signal is refused, never sent to gh.
+      const gated = gateOriginRepo(remote, deps.gateDeps);
+      if (gated.refusal) { deps.stderr(`${name}: ${gated.refusal}\n`); return 2; }
+      repoSpec = gated.spec;
+    }
     if (!repoSpec) { deps.stderr(`${name}: could not resolve owner/repo — pass --repo owner/name\n`); return 2; }
     if (opts.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
     const { owner, repo, host } = repoSpec;
