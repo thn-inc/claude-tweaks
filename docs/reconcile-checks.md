@@ -691,7 +691,8 @@ unchanged, and every fail-open path below leaves the parent open for it.
   still carries `parentsClosed`: those parents are closed on GitHub, only the marker is missing. It
   also keeps the run's `parentFailures` and `stepSkips` (#4798), so a parent Step 4.0b left open is
   still named although no count includes that run. A `skipped` / `error` entry from a throw after
-  Step 4.0b's closes ran keeps both fields too. If
+  Step 4.0b's closes ran keeps `parentsClosed`, `parentFailures` and `stepSkips` too, for the same
+  reason (its marker is unwritten as well); a throw before Step 4.0b carries none of them. If
   archive archives it in the same pass, archived runs are never walked again and the steps do not
   repeat. If archive leaves the run in place for its own reasons, Steps 4.0 and 4.0b run again on
   each pass while the write keeps failing. That is safe because both are idempotent: a parent
@@ -736,7 +737,8 @@ unchanged, and every fail-open path below leaves the parent open for it.
   whose check threw (`skipped` / `error`: no marker, the run is not deferred)),
   `postMergeFailedRecords` (below), `postMergeParentsClosed` (the parents closed below the floor by
   every `ran` entry, a failed one included) and `postMergeUnmarkedParentsClosed` (the parents closed
-  by `marker-write-failed` runs, a disjoint count). A `ran` entry reads `failed` when its Step 4.0
+  by `marker-write-failed` runs and by `skipped` / `error` runs whose throw came after Step 4.0b's
+  closes ran, both with no marker written; a disjoint count). A `ran` entry reads `failed` when its Step 4.0
   did not finish clean: `step40Failed: true` (a non-zero `closing-links` exit, exit 5 or a
   `base-unchecked` envelope only once its retries are spent), or a
   `closing-links` word outside the clean set (`close-failed`, say). For `step40Failed`, a SKIP
@@ -758,14 +760,14 @@ unchanged, and every fail-open path below leaves the parent open for it.
   every other non-deliberate skip is a `parentFailures` element, a step-wide one on a non-empty
   closing set included. The summary adds `postMergeParentsLeftOpen` (`[{ pr, parent?, issue?,
   reason }]`) and `postMergeStepSkips` (`[{ pr, reason }]`), flattened from every entry that carries
-  the field, a `marker-write-failed` one included (its parents stay open although no count includes
-  that run), whatever the entry's verdict. A step skip alone never makes a run read `failed`. The
+  the field, a `marker-write-failed` one (its parents stay open although no count includes that run)
+  and a `skipped` / `error` one included, whatever the entry's verdict. A step skip alone never makes a run read `failed`. The
   next SessionStart renders them in its prior-pass line (`post-merge steps ran for N merged run(s),
   closing M parent record(s) below the oversight floor`, where M counts every `ran` run's closes, a
   failed run's included; when no run read clean the closes render alone as `post-merge steps closed
   M parent record(s) below the oversight floor`; then `post-merge steps closed M parent record(s)
   below the oversight floor in run(s) whose decisions.md marker could not be written` for the
-  rest). The failed line reads `post-merge steps failed for N merged run(s) (records #101, #102 need a
+  rest: a `marker-write-failed` run, or a `skipped` / `error` run whose throw came after the closes). The failed line reads `post-merge steps failed for N merged run(s) (records #101, #102 need a
   hand reopen or close per _shared/pr-first-merge-post-merge.md Step 4.0, each with its action in the
   run's decisions.md, and no later pass retries them; tidy's parent-gate backstop recovers the
   parents)`: the record clause renders only when `postMergeFailedRecords` is a non-empty array, so

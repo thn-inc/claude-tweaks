@@ -1911,8 +1911,8 @@ async function runReconcileBackground(argv) {
       postMergeParentsClosed: parentsClosedBy((e) => e.action === 'ran'),
       postMergeUnmarkedParentsClosed: parentsClosedBy((e) => e.reason === 'marker-write-failed' || e.reason === 'error'),
       // The parents Step 4.0b left open and its step-wide skips (#4798): both read every entry carrying
-      // `parentFailures` / `stepSkips`, a `marker-write-failed` one included (Q5) since that run is in no count
-      // above, each element's raw `reason` quoted and its `detail` dropped.
+      // `parentFailures` / `stepSkips`, a `marker-write-failed` one included (Q5; that run is in no count above)
+      // and an `error` one thrown after Step 4.0b, each element's raw `reason` quoted and its `detail` dropped.
       postMergeParentsLeftOpen: parentsLeftOpen(postMergeEntries),
       postMergeStepSkips: stepSkipsOf(postMergeEntries),
       archived: (r.runs || []).filter((x) => x.action === 'archived').length,

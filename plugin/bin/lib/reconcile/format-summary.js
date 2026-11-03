@@ -226,7 +226,7 @@ function formatCheckSkipLines(result) {
 }
 
 // #4798: Step 4.0b's parents left open and its step-wide skips, flattened from every post-merge entry
-// whatever its action or verdict — a `marker-write-failed` entry folds into the aggregated `skipped:`
+// whatever its action or verdict — a `marker-write-failed` or `error` entry folds into the aggregated `skipped:`
 // line, so these lines are the only place its fields show. Same two lines SessionStart prints.
 function formatPostMergeStep40bLines(result) {
   const pm = result.postMerge;
