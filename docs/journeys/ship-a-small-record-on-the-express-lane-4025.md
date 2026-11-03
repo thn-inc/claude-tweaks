@@ -43,7 +43,8 @@ files:
   - Protected paths are the same in every project: hook code, `skills/_shared/`, CI and forge config (`.github/`, `.gitlab-ci.yml`, `.circleci/`, git hooks), `CODEOWNERS`, `package.json`, the agent's permission files (`.claude/settings*.json`, `.mcp.json`), and the policy and verify-scope files. A Key File is judged as the path it resolves to, so `a/../skills/_shared/x.md` is protected too.
   - A `Surface:` of `terminal` counts as a frontend, like `web`, `mobile` and `desktop`.
   - Exit 2 means `gh` is absent, so the lane is never taken.
-- **Red flags:** An eligible verdict for a record that touches `hooks/` or a merge-sensitive path; a verdict that lists only the first failure.
+  - A record carrying a kept risk flag (`Risk-flags: migrations`, or any slug) is ineligible, with the reason `record carries a kept risk flag`, because the lane composes no plan to carry the `Proof(<slug>)` line plan-audit Check G requires. A line that cannot be read counts as every category flagged. `Risk-flags: none` and no line at all do not block the lane (#4618).
+- **Red flags:** An eligible verdict for a record that touches `hooks/` or a merge-sensitive path; a verdict that lists only the first failure; an eligible verdict, or an express merge, for a record whose body carries a `Risk-flags:` line naming a slug or one that cannot be read.
 
 ### 3. Dispatch and watch one agent ship it
 - **URL:** `/claude-tweaks:dispatch` (or `/claude-tweaks:flow #{n}` for one record, auto mode, worktree strategy, no step list)
@@ -84,4 +85,5 @@ files:
 
 ## Origin
 - Created during build of #4025: the express lane, a single-agent path for eligible trivial records, with an escalation hand-off to `/flow` and post-merge sampling.
+- Step 2's risk-flag ineligibility clause and red flag added during build of #4618 (risk flags at intent time; see `flag-invisible-risk-when-shaping-4618.md`).
 - Related journeys: `add-a-fast-lane-skip-to-the-roster-1926.md` (the fast-lane ceremony an express-eligible record carries), `pre-authorize-a-flow-runs-merge.md` (the typed merge authorization the `/flow` entry honours), `recover-from-a-dispatch-config-deny-3225.md` (the config gate the express bind avoids by ordering).
