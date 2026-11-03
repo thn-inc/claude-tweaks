@@ -60,3 +60,4 @@ files:
 - Step 5 added during build of #4806 (fetch-sub-issues.js's schema probe and GraphQL pages pass `--hostname` off github.com; parent-gate.js drops its `onHost` wrap of the fetcher), pinned by `tests/fetch-sub-issues-cli.test.js`'s #4806 test and the Enterprise-host tests in `tests/bin-lib/issues/parent-gate.test.js` and `tests/parent-gate-cli.test.js`
 - Updated during build of #4854 (an enterprise token alone admits no host; hosts compared lower-cased with trailing dots stripped): Steps 1 and 4
 - Related: `open-a-run-pr-on-a-slow-gh-host-4554.md` (the same host when `gh` is slow rather than misrouted)
+- Related: `opt-in-an-unknown-origin-host-with-gh-host-4933.md` (#4933: an origin host that is not known — no `*.ghe.com`, no `hosts.yml` key, no exported `GH_HOST` — is now refused by the issue CLIs with the `GH_HOST={host}` opt-in, not sent to gh)
