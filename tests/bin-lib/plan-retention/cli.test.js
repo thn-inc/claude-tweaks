@@ -260,7 +260,8 @@ test('AC1.1: 30 past-cutoff plans and 1 within-cutoff plan under keep-forever', 
 });
 
 // The only test that runs realDeps.lookupDecline against a store on disk: record-decline writes the entry
-// into the fixture repo's cwd-relative store, and the spawned CLI must read it back.
+// into the fixture repo's own store (the main checkout's, resolved from the cwd), and the spawned CLI
+// must read it back.
 test('a decline recorded in the real store keeps all 30 past-cutoff plans, and an empty store archives them', () => {
   const { repo, oldPlans } = planRepo({ old: 30 });
   try {

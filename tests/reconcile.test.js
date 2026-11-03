@@ -24,6 +24,13 @@ const { STUB_SKIP, installStub } = require('./helpers/path-stub');
 const { requireOption } = require('../tools/test-impact/node-options');
 const { toPosix } = require('../plugin/bin/lib/shared-primitives');
 
+// Every non-dry reconcile() pass prunes the declined-learning store (#1399), and that store resolves
+// from process.cwd() to the main checkout (#4360). The in-process passes below pass `cwd: <fixture>`,
+// which does not move process.cwd(), so left real they would lock and rewrite the maintainer's own
+// store whenever the suite runs from a linked worktree. Stub the prune for the whole file; node --test
+// gives each file its own process, and the #4180 prune test installs its own counting stub on top.
+require('../plugin/bin/lib/declined-learning/store').pruneDeclines = () => 0;
+
 const HOOKS =path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
 // #1130: never let an omitted cwd fall through to the spawned subprocess's
@@ -2259,6 +2266,22 @@ test('formatSummary: the failed row names the records the failed runs left, sort
     formatSummary({ ...base, postMerge: [clean, { runDir: 'r4', pr: 14, action: 'ran', closingLinks: 'close-failed', parentsClosed: 0 }] }),
     ['post-merge steps run: 1 merged run', 'post-merge steps failed: 1 merged run'].join('\n'),
   );
+});
+
+test('formatSummary: parents left open and step skips render on their own lines, a marker-write-failed entry\'s included, never dropped (#4798)', () => {
+  const base = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, console: null, skipped: null };
+  const clean = { runDir: 'r1', pr: 12, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 0, stepSkips: [{ reason: 'unreadable-policy', detail: 'x' }] };
+  const failed = { runDir: 'r2', pr: 13, action: 'ran', closingLinks: 'close-failed', parentsClosed: 0, stepSkips: [{ reason: 'internal-error' }] };
+  const unmarked = { runDir: 'r3', pr: 14, action: 'skipped', reason: 'marker-write-failed', parentsClosed: 0, parentFailures: [{ parent: 200, reason: 'gh-failed' }] };
+  const errored = { runDir: 'r5', pr: 16, action: 'skipped', reason: 'error', detail: 'boom', parentsClosed: 1, parentFailures: [{ issue: 300, reason: 'internal-error' }], stepSkips: [{ reason: 'invalid-risk-floor' }] };
+  assert.strictEqual(formatSummary({ ...base, postMerge: [clean, failed, unmarked, errored] }), [
+    'post-merge steps run: 1 merged run',
+    'post-merge steps failed: 1 merged run',
+    "post-merge Step 4.0b left parent record(s) open: #200 (gh-failed, PR #14), the parent of record #300 (internal-error, PR #16) — tidy's parent-gate backstop recovers them",
+    'post-merge Step 4.0b skipped step-wide, leaving no parent open (nothing left to close): unreadable-policy (PR #12), internal-error (PR #13), invalid-risk-floor (PR #16)',
+    'skipped: 2 merged runs (marker-write-failed 1, error 1)',
+  ].join('\n'));
+  assert.strictEqual(formatSummary({ ...base, postMerge: [{ runDir: 'r4', pr: 15, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 0 }] }), 'post-merge steps run: 1 merged run');
 });
 
 test('formatSummary: a repaired origin/HEAD renders inline (#3132)', () => {
