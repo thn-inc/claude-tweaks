@@ -12,6 +12,7 @@ const { runClassified, runClassifiedAsync } = require('../shared-primitives');
 // binding — so a test's `t.mock.method(cp, 'execFileSync', ...)` or
 // `cp.execFile = stub` still reaches them (#381, #872 follow-up); see timing.js.
 const { execFileSyncTimed, execFileAsyncTimed } = require('../reconcile/timing');
+const { gateOriginRepo } = require('../repo-resolve');
 
 // Budget for one git query, sized from measurement rather than intuition (#134).
 //
@@ -211,4 +212,22 @@ function repoSlugOf(repoRoot) {
   return m ? m[1] : null;
 }
 
-module.exports = { runGit, runGitAsync, isIndeterminate, FAILURE, DEFAULT_TIMEOUT_MS, repoSlugOf, repoPinnedEnv };
+// origin remote URL -> { host, owner, repo } (repo-resolve.js's gateOriginRepo), `{ refusal }`
+// when the origin names a host that is not a known GitHub host (#4933: the caller must not send
+// it to gh), or null when unparseable/absent. repoSlugOf's twin for a caller that must keep the
+// host: its bare `owner/repo` sends a GitHub Enterprise origin's gh calls to gh's default host.
+// `gateDeps` is gateOriginRepo's injectable env/readFile seam (undefined in production).
+function repoSpecOf(repoRoot, gateDeps) {
+  const remote = runGit(['remote', 'get-url', 'origin'], repoRoot);
+  if (remote.failure || !remote.stdout) return null;
+  const gated = gateOriginRepo(remote.stdout, gateDeps);
+  if (gated.refusal) return { refusal: gated.refusal };
+  if (gated.spec) return gated.spec;
+  // A remote the gate does not read (an `ssh://` URL, say) still resolved through repoSlugOf's
+  // looser parse before the host was kept; fall back to it, host unknown, so the caller does not
+  // regress to `no-remote` for a remote it used to work with (#4857).
+  const m = /[:/]([^/]+)\/([^/]+?)(\.git)?$/.exec(remote.stdout);
+  return m ? { host: null, owner: m[1], repo: m[2] } : null;
+}
+
+module.exports = { runGit, runGitAsync, isIndeterminate, FAILURE, DEFAULT_TIMEOUT_MS, repoSlugOf, repoSpecOf, repoPinnedEnv };

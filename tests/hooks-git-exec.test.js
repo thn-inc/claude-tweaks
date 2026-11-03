@@ -7,15 +7,25 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { runGit, runGitAsync, isIndeterminate, FAILURE, DEFAULT_TIMEOUT_MS, repoPinnedEnv } = require('../plugin/bin/lib/hooks/git-exec');
+const {
+  runGit, runGitAsync, isIndeterminate, FAILURE, DEFAULT_TIMEOUT_MS, repoPinnedEnv, repoSlugOf, repoSpecOf,
+} = require('../plugin/bin/lib/hooks/git-exec');
 const { gitRepo, fixtureGit } = require('./helpers/git-fixtures');
 const { splitNul } = require('../plugin/bin/lib/git-z');
+
+// git's own answer for `repo`, spelled the way git prints it (forward slashes on Git for
+// Windows), so an expected value matches runGit's stdout on every platform. The pinned env
+// keeps an inherited GIT_DIR from redirecting it to another repo. Shared helper for
+// expected `rev-parse` values in this file (#4299; #4289's --show-toplevel tests reuse it).
+function gitRevParse(repo, flag) {
+  return fixtureGit(['-C', repo, 'rev-parse', flag], { encoding: 'utf8', env: repoPinnedEnv() }).trim();
+}
 
 test('runGit: success returns trimmed stdout and a null failure', () => {
   const dir = gitRepo();
   const { stdout, failure } = runGit(['rev-parse', '--show-toplevel'], dir);
   assert.strictEqual(failure, null);
-  assert.strictEqual(stdout, fs.realpathSync(dir));
+  assert.strictEqual(stdout, gitRevParse(dir, '--show-toplevel'));
   assert.ok(!stdout.endsWith('\n'), 'stdout must be trimmed');
 });
 
@@ -116,7 +126,7 @@ test('runGitAsync: success returns trimmed stdout and a null failure', async () 
   const dir = gitRepo();
   const { stdout, failure, stderr } = await runGitAsync(['rev-parse', '--show-toplevel'], dir);
   assert.strictEqual(failure, null);
-  assert.strictEqual(stdout, fs.realpathSync(dir));
+  assert.strictEqual(stdout, gitRevParse(dir, '--show-toplevel'));
   assert.strictEqual(stderr, null, 'runGitAsync must match runGit\'s success shape: stderr is null, not omitted');
 });
 
@@ -270,7 +280,7 @@ test('runGit: a non-numeric or non-positive CT_HOOKS_GIT_TIMEOUT_MS falls back t
     try {
       const { stdout, failure } = runGit(['rev-parse', '--show-toplevel'], dir);
       assert.strictEqual(failure, null, `bad override ${JSON.stringify(bad)} must not break a normal call`);
-      assert.strictEqual(stdout, fs.realpathSync(dir));
+      assert.strictEqual(stdout, gitRevParse(dir, '--show-toplevel'));
     } finally {
       if (prior === undefined) delete process.env.CT_HOOKS_GIT_TIMEOUT_MS;
       else process.env.CT_HOOKS_GIT_TIMEOUT_MS = prior;
@@ -336,9 +346,9 @@ test('runGit: opts.env is the spawn environment — a pinned env restores -C rep
   const b = gitRepo();
   const foreign = { ...process.env, GIT_DIR: path.join(b, '.git') };
   const redirected = runGit(['rev-parse', '--absolute-git-dir'], a, { env: foreign });
-  assert.strictEqual(redirected.stdout, fs.realpathSync(path.join(b, '.git')), 'opts.env must reach the child');
+  assert.strictEqual(redirected.stdout, gitRevParse(b, '--absolute-git-dir'), 'opts.env must reach the child');
   const pinned = runGit(['rev-parse', '--absolute-git-dir'], a, { env: repoPinnedEnv(foreign) });
-  assert.strictEqual(pinned.stdout, fs.realpathSync(path.join(a, '.git')));
+  assert.strictEqual(pinned.stdout, gitRevParse(a, '--absolute-git-dir'));
 });
 
 test('runGitAsync: opts.env is the spawn environment, same as runGit (#3900)', async () => {
@@ -346,9 +356,9 @@ test('runGitAsync: opts.env is the spawn environment, same as runGit (#3900)', a
   const b = gitRepo();
   const foreign = { ...process.env, GIT_DIR: path.join(b, '.git') };
   const redirected = await runGitAsync(['rev-parse', '--absolute-git-dir'], a, { env: foreign });
-  assert.strictEqual(redirected.stdout, fs.realpathSync(path.join(b, '.git')), 'opts.env must reach the async child');
+  assert.strictEqual(redirected.stdout, gitRevParse(b, '--absolute-git-dir'), 'opts.env must reach the async child');
   const pinned = await runGitAsync(['rev-parse', '--absolute-git-dir'], a, { env: repoPinnedEnv(foreign) });
-  assert.strictEqual(pinned.stdout, fs.realpathSync(path.join(a, '.git')));
+  assert.strictEqual(pinned.stdout, gitRevParse(a, '--absolute-git-dir'));
 });
 
 test('repoPinnedEnv: with no argument it reads process.env, dropping the four vars and keeping the rest (#4178)', () => {
@@ -415,4 +425,63 @@ test('#3900 runGit raw:true leaves the failure shape unchanged', () => {
   assert.strictEqual(failure, FAILURE.GIT_ERROR);
   assert.match(stderr, /not a git repository/);
   assert.strictEqual(exitCode, 128);
+});
+
+test('repoSpecOf: the origin remote parsed with its host — github.com and GitHub Enterprise, SSH and HTTPS; repoSlugOf stays host-less', () => {
+  const repo = gitRepo();
+  fixtureGit(['-C', repo, 'remote', 'add', 'origin', 'git@github.com:acme/w.git']);
+  assert.deepStrictEqual(repoSpecOf(repo), { host: 'github.com', owner: 'acme', repo: 'w' });
+  // #4933: ghe.example.com is a spec only when GH_HOST opts it in.
+  const gateDeps = { env: { GH_HOST: 'ghe.example.com' }, readFile: () => { throw new Error('none'); } };
+  for (const url of ['git@ghe.example.com:acme/w.git', 'https://ghe.example.com/acme/w.git']) {
+    fixtureGit(['-C', repo, 'remote', 'set-url', 'origin', url]);
+    assert.deepStrictEqual(repoSpecOf(repo, gateDeps), { host: 'ghe.example.com', owner: 'acme', repo: 'w' }, url);
+    assert.strictEqual(repoSlugOf(repo), 'acme/w', url);
+  }
+});
+
+test('repoSpecOf (#4933): an origin on an unknown host returns { refusal } naming the host and the GH_HOST opt-in', () => {
+  const repo = gitRepo();
+  const gateDeps = { env: {}, readFile: () => { throw new Error('none'); } };
+  for (const url of ['git@git.corp.invalid:acme/w.git', 'https://git.corp.invalid/acme/w.git']) {
+    fixtureGit(['-C', repo, 'remote', 'add', 'origin', url]);
+    const got = repoSpecOf(repo, gateDeps);
+    assert.deepStrictEqual(Object.keys(got), ['refusal'], url);
+    assert.match(got.refusal, /origin host git\.corp\.invalid is not a known GitHub host/, url);
+    assert.match(got.refusal, /export GH_HOST=git\.corp\.invalid/, url);
+    fixtureGit(['-C', repo, 'remote', 'remove', 'origin']);
+  }
+});
+
+test('repoSpecOf (#4933): a known GitHub host resolves; a *.ghe.com host needs no opt-in', () => {
+  const repo = gitRepo();
+  const gateDeps = { env: {}, readFile: () => { throw new Error('none'); } };
+  fixtureGit(['-C', repo, 'remote', 'add', 'origin', 'https://acme.ghe.com/o/r.git']);
+  assert.deepStrictEqual(repoSpecOf(repo, gateDeps), { host: 'acme.ghe.com', owner: 'o', repo: 'r' });
+});
+
+test('repoSpecOf (#4933): an unreadable hosts.yml (readFile throws) is still a refusal, never a throw', () => {
+  const repo = gitRepo();
+  fixtureGit(['-C', repo, 'remote', 'add', 'origin', 'https://git.corp.invalid/o/r.git']);
+  let got;
+  assert.doesNotThrow(() => { got = repoSpecOf(repo, { env: {}, readFile: () => { throw new Error('EACCES'); } }); });
+  assert.ok(got && typeof got.refusal === 'string' && got.refusal.includes('git.corp.invalid'), JSON.stringify(got));
+});
+
+test('repoSpecOf (#4933): an ssh:// origin on an unknown host still takes the loose fallback — the gate does not read it (#4857)', () => {
+  const repo = gitRepo();
+  fixtureGit(['-C', repo, 'remote', 'add', 'origin', 'ssh://git@git.corp.invalid/acme/w.git']);
+  assert.deepStrictEqual(repoSpecOf(repo, { env: {}, readFile: () => { throw new Error('none'); } }), { host: null, owner: 'acme', repo: 'w' });
+});
+
+test('repoSpecOf: a remote parseRepo does not read (ssh://) still resolves through repoSlugOf\'s parse, host unknown', () => {
+  const repo = gitRepo();
+  fixtureGit(['-C', repo, 'remote', 'add', 'origin', 'ssh://git@github.com/acme/w.git']);
+  assert.strictEqual(repoSlugOf(repo), 'acme/w');
+  assert.deepStrictEqual(repoSpecOf(repo), { host: null, owner: 'acme', repo: 'w' });
+});
+
+test('repoSpecOf: no origin remote, or a directory outside any repo, is null', () => {
+  assert.strictEqual(repoSpecOf(gitRepo()), null);
+  assert.strictEqual(repoSpecOf(fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'ct-ge-spec-nongit-'))), null);
 });

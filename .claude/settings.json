@@ -29,18 +29,11 @@
     ]
   },
   "enabledPlugins": {
-    "claude-tweaks@claude-tweaks-marketplace": true,
     "superpowers@claude-plugins-official": true,
     "code-simplifier@claude-plugins-official": true,
     "impeccable@impeccable": true
   },
   "extraKnownMarketplaces": {
-    "claude-tweaks-marketplace": {
-      "source": {
-        "source": "github",
-        "repo": "thn-inc/claude-tweaks-marketplace"
-      }
-    },
     "impeccable": {
       "source": {
         "source": "github",

@@ -2,11 +2,12 @@
 //
 // Run with: npm run test:perf
 //
-// scanScaleReadiness runs line- and chain-anchored regexes over every source file. Two inputs expose
-// quadratic backtracking: a file opening with a long run of slashes (the "use server" directive
-// check) and a long `a.a.a.` dotted run (the Prisma receiver-chain match). Each must scan under a
+// scanScaleReadiness runs line- and chain-anchored regexes and a brace scan over every source file.
+// Three inputs expose quadratic cost: a file opening with a long run of slashes (the "use server"
+// directive check), one large route file with many client matches (the per-request-client brace
+// scan) and a long `a.a.a.` dotted run (the Prisma receiver-chain match). Each must scan under a
 // generous 1 s bound. Lives outside tests/ because a wall-clock assertion flakes under sibling-suite
-// load; the functional halves of both checks stay in tests/bin-lib/code-health/candidates-scale-readiness.test.js.
+// load; the functional halves of the checks stay in tests/bin-lib/code-health/candidates-scale-readiness.test.js.
 'use strict';
 
 const { test } = require('node:test');
@@ -49,6 +50,17 @@ test('the "use server" check is linear in leading slashes', () => {
   const elapsed = Date.now() - start;
   assert.ok(elapsed < 1000, `scan took ${elapsed} ms`);
   assert.equal(r.notApplicable, true);
+});
+
+test('the per-request-client brace scan is linear in the matches of one large route file', () => {
+  // Thousands of module-scope object-literal clients: a scan restarted from index 0 per match is quadratic.
+  const body = Array.from({ length: 6000 }, (_, i) => `const deps${i} = { db: new PrismaClient(), n: ${i} };`).join('\n');
+  const big = repoWith({ express: '^4', '@prisma/client': '^5' }, { 'routes/big.js': `${body}\n` });
+  const start = Date.now();
+  const r = scanScaleReadiness(big);
+  const elapsed = Date.now() - start;
+  assert.ok(elapsed < 1000, `scan took ${elapsed} ms`);
+  assert.equal(r.candidates.filter((c) => c.kind === 'per-request-db-client').length, 0);
 });
 
 test('the Prisma receiver-chain match is linear in a long dotted run', () => {

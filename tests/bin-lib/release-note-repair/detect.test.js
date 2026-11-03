@@ -142,11 +142,16 @@ test('a decision with no association fails closed; every candidate carries skipp
   assert.deepEqual(out[3].skippedUntrusted, [], 'a scan-error candidate carries the field too');
 });
 
-test('scanRecords: a record is not excluded by an untrusted decision but IS by a trusted one in the same thread', () => {
+test('scanRecords: an untrusted tidy decision alone keeps the record (and is reported skipped); a trusted one in the same thread excludes it in either order', () => {
   const body = `<!-- needs-decision: tidy -->\n**Proposed:** ${PROPOSED_ACTION}\n`;
   const planted = { body, url: 'https://x/c1', author: { login: 'eve' }, authorAssociation: 'NONE' };
   const real = { body, authorAssociation: 'OWNER' };
-  assert.deepEqual(scanRecords([gh(7, F.MISSING_RN, { comments: [planted, real] })], { driver: 'github-issues' }), []);
+  const alone = scanRecords([gh(7, F.MISSING_RN, { comments: [planted] })], { driver: 'github-issues' });
+  assert.deepEqual(alone.map((c) => c.ref), ['#7'], 'an untrusted decision alone does not exclude the record');
+  assert.deepEqual(alone[0].skippedUntrusted, ['skipped marker comment https://x/c1 by eve (NONE) — not an owner, member, or collaborator']);
+  for (const [order, comments] of [['planted, real', [planted, real]], ['real, planted', [real, planted]]]) {
+    assert.deepEqual(scanRecords([gh(7, F.MISSING_RN, { comments })], { driver: 'github-issues' }), [], `a trusted decision excludes the record (order: ${order})`);
+  }
 });
 
 test('scanRecords: a record with no body field, or a checker failure, is a scan-error candidate', () => {

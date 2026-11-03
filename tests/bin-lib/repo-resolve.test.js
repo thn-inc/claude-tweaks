@@ -59,6 +59,27 @@ test('ghAvailable: injected runner throws ENOENT (gh absent) -> false', () => {
   assert.equal(result, false);
 });
 
+test('ghAvailable: a timed-out probe (code ETIMEDOUT) -> true (gh is present, just slow, #4554)', () => {
+  const result = ghAvailable({
+    execFileSync: () => { throw Object.assign(new Error('spawnSync gh ETIMEDOUT'), { code: 'ETIMEDOUT' }); },
+  });
+  assert.equal(result, true);
+});
+
+test('ghAvailable: a killed probe with no code -> true (#4554)', () => {
+  const result = ghAvailable({
+    execFileSync: () => { throw Object.assign(new Error('killed'), { killed: true }); },
+  });
+  assert.equal(result, true);
+});
+
+test('ghAvailable: a SIGTERM-signalled probe -> true (#4554)', () => {
+  const result = ghAvailable({
+    execFileSync: () => { throw Object.assign(new Error('terminated'), { signal: 'SIGTERM' }); },
+  });
+  assert.equal(result, true);
+});
+
 test('ghAvailable: injected runner throws a generic error (non-zero exit) -> false', () => {
   const result = ghAvailable({
     execFileSync: () => { throw new Error('gh: some other failure'); },
@@ -108,7 +129,395 @@ test("'--version' appears in plugin/bin only inside repo-resolve.js's ghAvailabl
     }
   };
   walk(binDir);
-  // #2567 shifted this line by 2 (a shared-primitives require + its updated
-  // comment above GH_TIMEOUT_MS's own former definition).
-  assert.deepEqual(hits, [`lib${pathModule.sep}repo-resolve.js:38`]);
+  // The property is "one literal, in repo-resolve.js", not a line number: #2567,
+  // #4554 and #4505 each shifted the line, and a comment edit must not fail this.
+  assert.equal(hits.length, 1, `expected one '--version' literal, got ${hits.join(', ')}`);
+  assert.ok(hits[0].startsWith(`lib${pathModule.sep}repo-resolve.js:`), hits[0]);
+});
+
+// #4505: the gh host seam. Every test resets the per-process memo first and
+// passes fake deps, so no real `git` probe or hosts.yml read happens.
+const { ghOptions, resolveGhHost, _resetGhHostCache } = require('../../plugin/bin/lib/repo-resolve');
+
+const ghe = { remoteUrl: () => 'https://acme.ghe.com/acme/widgets.git', readFile: () => { throw new Error('ENOENT'); }, env: {}, platform: 'linux', homedir: '/h', stderr: () => {} };
+test('AC1.1 seam: a *.ghe.com origin injects GH_HOST into a copy of opts', () => {
+  _resetGhHostCache();
+  const opts = { cwd: '/r', encoding: 'utf8', windowsHide: true };
+  const out = ghOptions(['pr', 'view', '7', '--json', 'body'], opts, ghe);
+  assert.notStrictEqual(out, opts);
+  assert.equal(out.env.GH_HOST, 'acme.ghe.com');
+  assert.equal(out.encoding, 'utf8');
+  assert.equal(opts.env, undefined); // caller's object untouched
+});
+test('AC2.1: a github.com origin returns the same opts object', () => {
+  _resetGhHostCache();
+  const opts = { cwd: '/r' };
+  assert.strictEqual(ghOptions(['pr', 'view'], opts, { ...ghe, remoteUrl: () => 'git@github.com:acme/widgets.git' }), opts);
+});
+test('AC4.1: an exported GH_HOST is never overwritten (process-style env and opts.env, empty string included)', () => {
+  _resetGhHostCache();
+  const o1 = { cwd: '/r' };
+  assert.strictEqual(ghOptions(['api', 'graphql'], o1, { ...ghe, env: { GH_HOST: 'other.example' } }), o1);
+  const o2 = { cwd: '/r', env: { GH_HOST: '' } };
+  assert.strictEqual(ghOptions(['api', 'graphql'], o2, ghe), o2);
+});
+test('AC5.1, AC5.2 (Decision Q1): an SSH alias host is not injected, even with an enterprise token; a hosts.yml-known GHES host is; a token alone admits no HTTPS host (#4854)', () => {
+  _resetGhHostCache();
+  const alias = { ...ghe, remoteUrl: () => 'git@github.com-work:acme/widgets.git' };
+  const o = { cwd: '/a' };
+  assert.strictEqual(ghOptions(['pr', 'list'], o, alias), o);
+  _resetGhHostCache();
+  const o2 = { cwd: '/t' };
+  assert.strictEqual(ghOptions(['pr', 'list'], o2, { ...alias, env: { GH_ENTERPRISE_TOKEN: 't' } }), o2);
+  _resetGhHostCache();
+  const o4 = { cwd: '/u' };
+  assert.strictEqual(ghOptions(['pr', 'list'], o4, { ...ghe, remoteUrl: () => 'https://git.corp.example/acme/widgets.git', env: { GITHUB_ENTERPRISE_TOKEN: 't' } }), o4);
+  _resetGhHostCache();
+  const o3 = { cwd: '/m' };
+  assert.strictEqual(ghOptions(['pr', 'list'], o3, { ...ghe, remoteUrl: () => 'https://GitHub.com/acme/widgets.git' }), o3); // mixed-case github.com is github.com
+  _resetGhHostCache();
+  const ghes = { ...ghe, remoteUrl: () => 'https://git.corp.example/acme/widgets.git', env: { GH_CONFIG_DIR: '/cfg' },
+    readFile: (p) => { assert.equal(p, pathModule.join('/cfg', 'hosts.yml')); return 'git.corp.example:\n    user: me\n'; } };
+  assert.equal(ghOptions(['pr', 'list'], { cwd: '/b' }, ghes).env.GH_HOST, 'git.corp.example');
+});
+test('AC6.1, AC6.2 (Decision Q2): any explicit -R/--repo/--hostname suppresses injection, agreeing with origin or not', () => {
+  _resetGhHostCache();
+  const o = { cwd: '/r' };
+  for (const args of [['issue', 'view', '1', '--repo', 'thn-inc/claude-tweaks'], ['api', 'graphql', '--hostname', 'github.com'],
+    ['pr', 'list', '-R', 'other.example/acme/widgets'], ['issue', 'list', '--repo=thn-inc/claude-tweaks'],
+    ['issue', 'view', '1', '--repo', 'acme.ghe.com/acme/widgets'], ['issue', 'view', '1', '-R', 'ACME/Widgets'],
+    ['api', 'graphql', '--hostname', 'acme.ghe.com'], ['api', 'graphql', '--hostname=acme.ghe.com'], ['pr', 'list', '-Racme/widgets']]) {
+    assert.strictEqual(ghOptions(args, o, ghe), o, args.join(' '));
+  }
+});
+test('review focus: GraphQL -f owner=/repo= variables are not an explicit repo; args after -- are not scanned', () => {
+  _resetGhHostCache();
+  const o = { cwd: '/r' };
+  for (const args of [['api', 'graphql', '-f', 'query=q', '-f', 'owner=acme', '-f', 'repo=widgets'],
+    ['issue', 'comment', '1', '--body', 'x', '--', '--repo']]) {
+    assert.equal(ghOptions(args, o, ghe).env.GH_HOST, 'acme.ghe.com', args.join(' '));
+  }
+});
+test('review focus: caller opts.env is the merge base', () => {
+  _resetGhHostCache();
+  const out = ghOptions(['pr', 'view'], { cwd: '/r', env: { PATH: '/p', X: '1' } }, ghe);
+  assert.deepEqual(out.env, { PATH: '/p', X: '1', GH_HOST: 'acme.ghe.com' });
+});
+test('review focus: memoized per cwd, probe failure is "no host", note logged once per host', () => {
+  _resetGhHostCache();
+  let probes = 0; const notes = [];
+  const d = { ...ghe, remoteUrl: (cwd) => { probes++; if (cwd === pathModule.resolve('/none')) throw new Error('no origin'); return ghe.remoteUrl(); }, stderr: (s) => notes.push(s) };
+  ghOptions(['a'], { cwd: '/r' }, d); ghOptions(['b'], { cwd: '/r' }, d);
+  const none = { cwd: '/none' };
+  assert.strictEqual(ghOptions(['c'], none, d), none);
+  assert.equal(probes, 2);
+  assert.equal(notes.length, 1);
+  assert.match(notes[0], /resolved repo acme\.ghe\.com\/acme\/widgets \(host: acme\.ghe\.com\) — gh calls get GH_HOST=acme\.ghe\.com/);
+});
+test('#4854: an enterprise token alone admits no host, forge or not, so the token is never sent there; a hosts.yml key still does', () => {
+  for (const url of ['https://gitlab.com/acme/widgets.git', 'https://bitbucket.org/acme/widgets.git', 'https://dev.azure.com/acme/widgets.git',
+    'https://acme.visualstudio.com/acme/widgets.git', 'https://codeberg.org/acme/widgets.git', 'https://git.corp.invalid/o/r.git']) {
+    for (const env of [{ GH_ENTERPRISE_TOKEN: 't' }, { GITHUB_ENTERPRISE_TOKEN: 't' }]) {
+      _resetGhHostCache();
+      const o = { cwd: '/f' }; const notes = [];
+      assert.strictEqual(ghOptions(['pr', 'list'], o, { ...ghe, remoteUrl: () => url, env, stderr: (s) => notes.push(s) }), o, url);
+      assert.deepEqual(notes, [], url); // the silent seam: a token with an unknown origin host prints no note
+    }
+  }
+  _resetGhHostCache();
+  const configured = { ...ghe, remoteUrl: () => 'https://gitlab.com/acme/widgets.git', env: { GH_CONFIG_DIR: '/cfg' }, readFile: () => 'gitlab.com:\n    user: me\n' };
+  assert.equal(ghOptions(['pr', 'list'], { cwd: '/g' }, configured).env.GH_HOST, 'gitlab.com');
+});
+test('review (#4505): an origin probe timeout is noted once and not memoized, so the next call probes again; no origin stays memoized', () => {
+  _resetGhHostCache();
+  let probes = 0; const notes = [];
+  const timeout = Object.assign(new Error('spawnSync git ETIMEDOUT'), { code: 'ETIMEDOUT' });
+  const d = { ...ghe, remoteUrl: () => { probes++; if (probes <= 2) throw timeout; return ghe.remoteUrl(); }, stderr: (s) => notes.push(s) };
+  const o = { cwd: '/s' };
+  assert.strictEqual(ghOptions(['a'], o, d), o);
+  assert.strictEqual(ghOptions(['b'], o, d), o);
+  assert.equal(probes, 2); // a timeout is not memoized
+  assert.equal(notes.filter((n) => /timed out/.test(n)).length, 1); // noted once per cwd
+  assert.equal(ghOptions(['c'], o, d).env.GH_HOST, 'acme.ghe.com'); // the next call probes again and recovers
+});
+test("resolveGhHost: hosts.yml is read from gh's own config-dir order, keys matched case-insensitively", () => {
+  const corp = { ...ghe, remoteUrl: () => 'git@Git.Corp.Example:acme/widgets.git' };
+  const cases = [
+    [{ GH_CONFIG_DIR: '/cfg', XDG_CONFIG_HOME: '/x', AppData: '/ad' }, 'win32', pathModule.join('/cfg', 'hosts.yml')],
+    [{ XDG_CONFIG_HOME: '/x', AppData: '/ad' }, 'win32', pathModule.join('/x', 'gh', 'hosts.yml')],
+    [{ AppData: '/ad' }, 'win32', pathModule.join('/ad', 'GitHub CLI', 'hosts.yml')],
+    [{ AppData: '/ad' }, 'linux', pathModule.join('/h', '.config', 'gh', 'hosts.yml')],
+  ];
+  for (const [env, platform, want] of cases) {
+    _resetGhHostCache();
+    const read = [];
+    const host = resolveGhHost('/r', { ...corp, env, platform, readFile: (p) => { read.push(p); return '# comment:\nGIT.CORP.EXAMPLE:\n    user: me\ngithub.com:\n'; } });
+    assert.deepEqual(read, [want]);
+    assert.equal(host, 'git.corp.example');
+  }
+});
+test('resolveGhHost: a user-less scp-style remote with a token is not admitted; an unknown HTTPS host without a token is null', () => {
+  _resetGhHostCache();
+  assert.equal(resolveGhHost('/s', { ...ghe, remoteUrl: () => 'git.corp.example:acme/widgets.git', env: { GH_ENTERPRISE_TOKEN: 't' } }), null);
+  _resetGhHostCache();
+  assert.equal(resolveGhHost('/n', { ...ghe, remoteUrl: () => 'https://git.corp.example/acme/widgets.git' }), null);
+});
+
+// #4854: the enterprise-token clause is gone, so no spelling of an SSH remote or a
+// non-GitHub forge can sidestep a guard: a token alone admits nothing.
+test('#4854: a token admits no trailing-dot forge or git+ssh/ssh+git alias host', () => {
+  for (const url of ['https://gitlab.com./o/r.git', 'https://GITLAB.COM./o/r.git', 'git+ssh://alias/o/r', 'ssh+git://alias/o/r', 'git+ssh://git@alias/o/r.git']) {
+    _resetGhHostCache();
+    const o = { cwd: '/b' }; const notes = [];
+    assert.strictEqual(ghOptions(['pr', 'list'], o, { ...ghe, remoteUrl: () => url, env: { GH_ENTERPRISE_TOKEN: 't' }, stderr: (s) => notes.push(s) }), o, url);
+    assert.deepEqual(notes, [], url); // the silent seam: an unknown host prints no note
+  }
+});
+test('#4854: the origin host is normalized (case, trailing dots) before the .ghe.com and hosts.yml checks, and GH_HOST carries the normalized host', () => {
+  _resetGhHostCache();
+  assert.equal(ghOptions(['pr', 'list'], { cwd: '/r' }, { ...ghe, remoteUrl: () => 'https://acme.ghe.com./acme/widgets.git' }).env.GH_HOST, 'acme.ghe.com');
+  _resetGhHostCache();
+  assert.equal(ghOptions(['pr', 'list'], { cwd: '/r' }, { ...ghe, remoteUrl: () => 'https://ACME.ghe.com../acme/widgets.git' }).env.GH_HOST, 'acme.ghe.com');
+  _resetGhHostCache();
+  assert.equal(resolveGhHost('/c', { ...ghe, remoteUrl: () => 'https://git.corp.example./acme/widgets.git', readFile: () => 'git.corp.example:\n' }), 'git.corp.example');
+  _resetGhHostCache();
+  assert.equal(resolveGhHost('/c', { ...ghe, remoteUrl: () => 'https://git.corp.example/acme/widgets.git', readFile: () => 'Git.Corp.Example.:\n' }), 'git.corp.example');
+  _resetGhHostCache();
+  assert.equal(ghOptions(['pr', 'list'], { cwd: '/g' }, { ...ghe, remoteUrl: () => 'https://gitlab.com./acme/widgets.git', env: { GH_ENTERPRISE_TOKEN: 't' }, readFile: () => 'gitlab.com:\n' }).env.GH_HOST, 'gitlab.com');
+  _resetGhHostCache();
+  const dot = { cwd: '/d' }; const notes = [];
+  assert.strictEqual(ghOptions(['pr', 'list'], dot, { ...ghe, remoteUrl: () => 'https://github.com./o/r.git', readFile: () => 'github.com:\n', stderr: (s) => notes.push(s) }), dot); // github.com. is github.com
+  assert.deepEqual(notes, []);
+});
+
+// Fix round 1: an explicit --repo's host against the host ghOptions would reach from cwd.
+const { explicitRepoGhHost, pinExplicitRepoHost } = require('../../plugin/bin/lib/repo-resolve');
+const dotcom = { ...ghe, remoteUrl: () => 'https://github.com/acme/widgets.git' };
+test('explicitRepoGhHost: a bare github.com --repo on a GHE origin pins github.com; one agreeing with the seam pins nothing', () => {
+  _resetGhHostCache();
+  assert.equal(explicitRepoGhHost({ host: 'github.com', owner: 'acme', repo: 'widgets' }, '/r', ghe), 'github.com');
+  assert.equal(explicitRepoGhHost({ owner: 'acme', repo: 'widgets' }, '/r', ghe), 'github.com'); // a missing host reads as github.com
+  assert.equal(explicitRepoGhHost({ host: 'ACME.ghe.com', owner: 'acme', repo: 'widgets' }, '/r', ghe), null);
+  assert.equal(explicitRepoGhHost({ host: 'other.ghe.com', owner: 'acme', repo: 'widgets' }, '/r', ghe), 'other.ghe.com');
+  assert.equal(explicitRepoGhHost({ host: 'ACME.ghe.com.', owner: 'acme', repo: 'widgets' }, '/r', ghe), null); // trailing dot: same host, not a new pin
+  _resetGhHostCache();
+  assert.equal(explicitRepoGhHost({ host: 'github.com', owner: 'acme', repo: 'widgets' }, '/d', dotcom), null); // AC2: github.com origin
+  assert.equal(explicitRepoGhHost({ host: 'acme.ghe.com', owner: 'acme', repo: 'widgets' }, '/d', dotcom), 'acme.ghe.com');
+  assert.equal(explicitRepoGhHost({ host: 'github.com.', owner: 'acme', repo: 'widgets' }, '/d', dotcom), null); // trailing dot: still github.com, nothing pinned
+  assert.equal(explicitRepoGhHost(null, '/d', dotcom), null);
+});
+test('explicitRepoGhHost AC4: an exported GH_HOST (empty string included) always wins', () => {
+  _resetGhHostCache();
+  for (const env of [{ GH_HOST: 'mine.example' }, { GH_HOST: '' }]) {
+    assert.equal(explicitRepoGhHost({ host: 'github.com', owner: 'acme', repo: 'widgets' }, '/r', { ...ghe, env }), null, JSON.stringify(env));
+  }
+});
+test('pinExplicitRepoHost: exports the pinned host on deps.env, leaves it alone otherwise, and then ghOptions steps back', () => {
+  _resetGhHostCache();
+  const env = { PATH: '/p' };
+  assert.equal(pinExplicitRepoHost({ host: 'github.com', owner: 'acme', repo: 'widgets' }, { ...ghe, cwd: '/r', env }), 'github.com');
+  assert.deepEqual(env, { PATH: '/p', GH_HOST: 'github.com' });
+  const opts = { cwd: '/r', env };
+  assert.strictEqual(ghOptions(['api', 'repos/acme/widgets/issues/7'], opts, ghe), opts);
+  const mine = { GH_HOST: 'mine.example' };
+  assert.equal(pinExplicitRepoHost({ host: 'github.com', owner: 'acme', repo: 'widgets' }, { ...ghe, cwd: '/r', env: mine }), null);
+  assert.deepEqual(mine, { GH_HOST: 'mine.example' });
+  _resetGhHostCache();
+  const untouched = {};
+  assert.equal(pinExplicitRepoHost({ host: 'github.com', owner: 'acme', repo: 'widgets' }, { ...dotcom, cwd: '/d', env: untouched }), null);
+  assert.deepEqual(untouched, {});
+});
+
+// Final review item 1: an origin URL with an ssh:// scheme, userinfo or a :port
+// still names its host; the stderr note never carries the userinfo.
+test('final review: ssh://, user[:pass]@ and :port origins on *.ghe.com inject GH_HOST, and the note carries no credential', () => {
+  for (const url of ['ssh://git@acme.ghe.com/acme/widgets.git', 'ssh://git@acme.ghe.com:22/acme/widgets.git',
+    'https://user@acme.ghe.com/acme/widgets.git', 'https://x:tok@acme.ghe.com/acme/widgets.git',
+    'https://acme.ghe.com:443/acme/widgets.git', 'HTTPS://x:tok@ACME.ghe.com:8443/acme/widgets']) {
+    _resetGhHostCache();
+    const notes = [];
+    const out = ghOptions(['pr', 'list'], { cwd: '/r' }, { ...ghe, remoteUrl: () => url, stderr: (s) => notes.push(s) });
+    assert.equal(out.env && out.env.GH_HOST, 'acme.ghe.com', url);
+    assert.equal(notes.length, 1, url);
+    assert.match(notes[0], /resolved repo acme\.ghe\.com\/acme\/widgets \(host: acme\.ghe\.com\)/, url);
+    assert.doesNotMatch(notes[0], /tok|user|git@|:443|:8443|:22/, url);
+  }
+});
+test('final review: an ssh:// remote with a token is not admitted; hosts.yml admits it; a token does not admit an https:// remote with userinfo and a port (#4854)', () => {
+  _resetGhHostCache();
+  assert.equal(resolveGhHost('/s', { ...ghe, remoteUrl: () => 'ssh://git@git.corp.example/acme/widgets.git', env: { GH_ENTERPRISE_TOKEN: 't' } }), null);
+  _resetGhHostCache();
+  assert.equal(resolveGhHost('/s', { ...ghe, remoteUrl: () => 'ssh://git@git.corp.example:2222/acme/widgets.git', env: { GITHUB_ENTERPRISE_TOKEN: 't' } }), null);
+  _resetGhHostCache();
+  assert.equal(resolveGhHost('/s', { ...ghe, remoteUrl: () => 'ssh://git@git.corp.example/acme/widgets.git', readFile: () => 'git.corp.example:\n' }), 'git.corp.example');
+  _resetGhHostCache();
+  assert.equal(resolveGhHost('/s', { ...ghe, remoteUrl: () => 'https://x:tok@git.corp.example:8443/acme/widgets.git', env: { GH_ENTERPRISE_TOKEN: 't' } }), null);
+  _resetGhHostCache();
+  assert.equal(resolveGhHost('/s', { ...ghe, remoteUrl: () => 'ssh://git@github.com/acme/widgets.git' }), null); // github.com stays github.com
+});
+
+// Final review item 6: the value of a value-taking flag is never read as a flag.
+test('final review: a value after a value-taking flag is not an explicit host arg, whatever it starts with', () => {
+  _resetGhHostCache();
+  const o = { cwd: '/r' };
+  for (const args of [['issue', 'create', '--title', '-R is broken', '--body', '--repo'], ['pr', 'create', '-t', '-Rfoo', '-b', '--hostname'],
+    ['api', 'graphql', '-f', '--repo', '-F', '-R', '--field', '--hostname=x', '--raw-field', '-Rx'],
+    ['api', 'x', '--jq', '--repo', '-q', '-R', '--template', '--repo=x', '--input', '-R'], ['issue', 'list', '--search', '-Racme']]) {
+    assert.equal(ghOptions(args, o, ghe).env.GH_HOST, 'acme.ghe.com', args.join(' '));
+  }
+  for (const args of [['issue', 'create', '--body', '-R', '--repo', 'acme/widgets'], ['pr', 'create', '-t', 'x', '-Racme/widgets'],
+    ['api', 'graphql', '-f', 'query=q', '--hostname', 'acme.ghe.com']]) {
+    assert.strictEqual(ghOptions(args, o, ghe), o, args.join(' ')); // a real flag after a skipped value still counts
+  }
+});
+
+// Final review item 3: shared-primitives' GH_TIMEOUT_MS is a lazy getter whose first
+// read loads ./policy. Requiring repo-resolve must not trigger that read.
+test('final review: requiring repo-resolve reads no GH_TIMEOUT_MS; ghAvailable reads it at call time', () => {
+  const { execFileSync } = require('child_process');
+  const lib = pathModule.join(__dirname, '..', '..', 'plugin', 'bin', 'lib');
+  const script = [
+    "const p = require('path');",
+    'const rr = require(p.join(process.argv[1], "repo-resolve.js"));',
+    'const policyLoaded = Object.keys(require.cache).some((k) => k === p.join(process.argv[1], "policy.js"));',
+    'let timeout = null;',
+    'rr.ghAvailable({ execFileSync: (c, a, o) => { timeout = o.timeout; } });',
+    'const sp = require(p.join(process.argv[1], "shared-primitives.js"));',
+    'process.stdout.write(JSON.stringify({ policyLoaded, timeout, expected: sp.GH_TIMEOUT_MS }));',
+  ].join('\n');
+  const env = { ...process.env };
+  delete env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
+  const out = JSON.parse(execFileSync(process.execPath, ['-e', script, lib], { cwd: require('os').tmpdir(), env, encoding: 'utf8', windowsHide: true }));
+  assert.equal(out.policyLoaded, false, 'requiring repo-resolve.js read GH_TIMEOUT_MS at load (the getter loads ./policy)');
+  assert.equal(out.timeout, out.expected);
+  // The default alone cannot tell a call-time read from a hardcoded 5000: a non-default
+  // override must reach ghAvailable's spawn.
+  const overridden = JSON.parse(execFileSync(process.execPath, ['-e', script, lib], { cwd: require('os').tmpdir(), env: { ...env, CLAUDE_TWEAKS_GH_TIMEOUT_MS: '7777' }, encoding: 'utf8', windowsHide: true }));
+  assert.equal(overridden.timeout, 7777);
+});
+
+// #4933: the origin-host gate. Every case injects env and readFile, so no real
+// GH_HOST or hosts.yml reaches it.
+const { gateOriginRepo, isKnownGhHost } = require('../../plugin/bin/lib/repo-resolve');
+const noHosts = { env: {}, readFile: () => { throw new Error('ENOENT'); }, platform: 'linux', homedir: '/h' };
+const hostsYml = (text) => ({ ...noHosts, readFile: () => text });
+const refusalOf = (host) => `origin host ${host} is not a known GitHub host (not github.com, not *.ghe.com, not a gh hosts.yml key) — refusing to send it to gh; if it is GitHub Enterprise, export GH_HOST=${host}`;
+
+test('AC1.1: an unknown origin host with only GH_ENTERPRISE_TOKEN set is refused', () => {
+  const out = gateOriginRepo('https://git.corp.invalid/o/r.git', { ...noHosts, env: { GH_ENTERPRISE_TOKEN: 't' } });
+  assert.equal(out.spec, null);
+  assert.equal(out.refusal, refusalOf('git.corp.invalid'));
+  assert.ok(out.refusal.includes('git.corp.invalid'));
+  assert.ok(out.refusal.includes('GH_HOST=git.corp.invalid'));
+});
+test('AC1.2: a *.ghe.com origin passes', () => {
+  assert.deepEqual(gateOriginRepo('https://acme.ghe.com/o/r.git', noHosts), { spec: { host: 'acme.ghe.com', owner: 'o', repo: 'r' }, refusal: null });
+});
+test('AC1.3: a hosts.yml key passes', () => {
+  const out = gateOriginRepo('https://ghes.corp.invalid/o/r.git', hostsYml('ghes.corp.invalid:\n    user: x\n'));
+  assert.deepEqual(out, { spec: { host: 'ghes.corp.invalid', owner: 'o', repo: 'r' }, refusal: null });
+});
+test('AC1.4: GH_HOST matching the origin host passes it through', () => {
+  const out = gateOriginRepo('https://git.corp.invalid/o/r.git', { ...noHosts, env: { GH_HOST: 'git.corp.invalid' } });
+  assert.deepEqual(out, { spec: { host: 'git.corp.invalid', owner: 'o', repo: 'r' }, refusal: null });
+});
+test('AC1.5: github.com with a trailing dot normalizes', () => {
+  assert.deepEqual(gateOriginRepo('https://GitHub.com./o/r.git', noHosts), { spec: { host: 'github.com', owner: 'o', repo: 'r' }, refusal: null });
+});
+test('AC1.6: a mixed-case *.ghe.com with a trailing dot normalizes', () => {
+  assert.deepEqual(gateOriginRepo('https://ACME.ghe.com./o/r.git', noHosts), { spec: { host: 'acme.ghe.com', owner: 'o', repo: 'r' }, refusal: null });
+});
+test('GH_HOST naming another host gives a github.com spec', () => {
+  const out = gateOriginRepo('https://git.corp.invalid/o/r.git', { ...noHosts, env: { GH_HOST: 'github.com' } });
+  assert.deepEqual(out, { spec: { host: 'github.com', owner: 'o', repo: 'r' }, refusal: null });
+});
+test('review focus 1: empty GH_HOST is no opt-in', () => {
+  for (const GH_HOST of ['', '  ']) {
+    const out = gateOriginRepo('https://git.corp.invalid/o/r.git', { ...noHosts, env: { GH_HOST } });
+    assert.deepEqual(out, { spec: null, refusal: refusalOf('git.corp.invalid') }, JSON.stringify(GH_HOST));
+  }
+});
+test('review focus 2: GH_HOST is normalized (case, trailing dot) before it is compared', () => {
+  const out = gateOriginRepo('https://git.corp.invalid/o/r.git', { ...noHosts, env: { GH_HOST: 'Git.Corp.Invalid.' } });
+  assert.deepEqual(out, { spec: { host: 'git.corp.invalid', owner: 'o', repo: 'r' }, refusal: null });
+});
+test('review focus 4: an scp-style origin on an unknown host is refused', () => {
+  assert.deepEqual(gateOriginRepo('git@git.corp.invalid:o/r.git', noHosts), { spec: null, refusal: refusalOf('git.corp.invalid') });
+});
+test('unparseable or absent origin is neither spec nor refusal', () => {
+  for (const remote of [null, undefined, '', 'not a url']) {
+    assert.deepEqual(gateOriginRepo(remote, noHosts), { spec: null, refusal: null }, String(remote));
+  }
+});
+test('gate isolates the .ghe.com branch: no GH_HOST, readFile throwing', () => {
+  assert.equal(gateOriginRepo('https://acme.ghe.com/o/r.git', noHosts).spec.host, 'acme.ghe.com');
+  assert.equal(isKnownGhHost('acme.ghe.com', noHosts), true);
+});
+test('gate isolates the hosts.yml branch: no GH_HOST, the host not *.ghe.com', () => {
+  assert.equal(gateOriginRepo('https://ghes.corp.invalid/o/r.git', hostsYml('ghes.corp.invalid:\n')).spec.host, 'ghes.corp.invalid');
+  assert.equal(isKnownGhHost('ghes.corp.invalid', hostsYml('ghes.corp.invalid:\n')), true);
+  assert.equal(isKnownGhHost('ghes.corp.invalid', noHosts), false);
+});
+test('gate refuses an origin host that is only a substring, prefix or value of a hosts.yml entry', () => {
+  const cases = [
+    ['https://corp.invalid/o/r.git', 'corp.invalid', 'ghes.corp.invalid:\n    user: x\n'], // key contains the host
+    ['https://git.corp.invalid/o/r.git', 'git.corp.invalid', 'git.corp.invalid.evil:\n    user: x\n'], // host is a key prefix
+    ['https://git.corp.invalid/o/r.git', 'git.corp.invalid', 'github.com:\n    user: git.corp.invalid\n'], // host only in a value line
+  ];
+  for (const [remote, host, text] of cases) {
+    const out = gateOriginRepo(remote, hostsYml(text));
+    assert.equal(out.spec, null, remote + ' / ' + JSON.stringify(text));
+    assert.equal(out.refusal, refusalOf(host), remote + ' / ' + JSON.stringify(text));
+    assert.equal(isKnownGhHost(host, hostsYml(text)), false, host + ' / ' + JSON.stringify(text));
+  }
+});
+test('gate isolates the GH_HOST branch: readFile throwing, the host not *.ghe.com', () => {
+  assert.equal(gateOriginRepo('https://ghes.corp.invalid/o/r.git', { ...noHosts, env: { GH_HOST: 'ghes.corp.invalid' } }).spec.host, 'ghes.corp.invalid');
+});
+test('gate defaults env to process.env when deps carries none', () => {
+  const saved = process.env.GH_HOST;
+  process.env.GH_HOST = 'git.corp.invalid';
+  try {
+    const { env, ...rest } = noHosts; // eslint-disable-line no-unused-vars
+    assert.equal(gateOriginRepo('https://git.corp.invalid/o/r.git', rest).spec.host, 'git.corp.invalid');
+  } finally {
+    if (saved === undefined) delete process.env.GH_HOST; else process.env.GH_HOST = saved;
+  }
+});
+test('gate takes a null deps argument without throwing, reading process.env', () => {
+  const saved = process.env.GH_HOST;
+  try {
+    process.env.GH_HOST = 'git.corp.invalid';
+    assert.deepEqual(gateOriginRepo('https://git.corp.invalid/o/r.git', null), { spec: { host: 'git.corp.invalid', owner: 'o', repo: 'r' }, refusal: null });
+    delete process.env.GH_HOST;
+    assert.deepEqual(gateOriginRepo('https://github.com/o/r.git', null), { spec: { host: 'github.com', owner: 'o', repo: 'r' }, refusal: null });
+  } finally {
+    if (saved === undefined) delete process.env.GH_HOST; else process.env.GH_HOST = saved;
+  }
+});
+// The binding order: a non-empty exported GH_HOST is checked first, so one naming
+// another host yields a bare github.com slug even for a known GitHub origin.
+test('gate order: GH_HOST naming another host wins over a *.ghe.com or hosts.yml-key origin', () => {
+  assert.deepEqual(gateOriginRepo('https://acme.ghe.com/o/r.git', { ...noHosts, env: { GH_HOST: 'github.com' } }),
+    { spec: { host: 'github.com', owner: 'o', repo: 'r' }, refusal: null });
+  assert.deepEqual(gateOriginRepo('https://ghes.corp.invalid/o/r.git', { ...hostsYml('ghes.corp.invalid:\n'), env: { GH_HOST: 'other.corp.invalid' } }),
+    { spec: { host: 'github.com', owner: 'o', repo: 'r' }, refusal: null });
+});
+
+// Re-review: the free-text value flags --comment, --subject, --notes and --description
+// are values too. `gh pr review --comment` is gh's one boolean --comment, so there the
+// next token is still scanned.
+test('re-review: --comment/--subject/--notes/--description values are not an explicit host arg; a real one after them is', () => {
+  _resetGhHostCache();
+  const o = { cwd: '/r' };
+  for (const args of [['issue', 'close', '1', '--comment', '-R is wrong'], ['issue', 'reopen', '1', '--comment', '--repo'],
+    ['pr', 'merge', '1', '--subject', '-Rfoo'], ['release', 'create', 'v1', '--notes', '--hostname=x'],
+    ['label', 'create', 'x', '--description', '--repo=x']]) {
+    assert.equal(ghOptions(args, o, ghe).env.GH_HOST, 'acme.ghe.com', args.join(' '));
+  }
+  for (const args of [['issue', 'close', '1', '--comment', '-R', '--repo', 'acme/widgets'], ['pr', 'merge', '1', '--subject', '--repo', '-Racme/widgets'],
+    ['release', 'edit', 'v1', '--notes', '-R', '--hostname', 'acme.ghe.com'], ['label', 'create', 'x', '--description', '--repo', '--repo=acme/widgets'],
+    ['pr', 'review', '1', '--comment', '--repo', 'acme/widgets'], ['pr', 'review', '1', '--comment', '-b', '-R', '-Racme/widgets']]) {
+    assert.strictEqual(ghOptions(args, o, ghe), o, args.join(' '));
+  }
 });

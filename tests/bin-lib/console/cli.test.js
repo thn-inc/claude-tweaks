@@ -764,3 +764,21 @@ test('--set-item with a --run outside the main checkout exits 3 (#4170)', async 
   assert.match(err(), /not anchored|missing/);
   assert.strictEqual(JSON.parse(fs.readFileSync(path.join(shadow, 'console.json'), 'utf8')).items[0].resolution, 'apply');
 });
+
+test('AC1.1: an unattended needs-human-decision ruling lands in console.json as pending and appears in console-residue.js --run output (#4587)', async () => {
+  const ruling = 'Title: ruling\nKind: sdd-ruling\nRuling: Task 2: Ruling: wait on a human — cheaper — costs a re-read\nDefers: yes\nDefer-reason: needs-human-decision\nStaged-at: abc123\nLedger: docs/plans/x-ledger.md#5\n\nratify / reverse\n';
+  const fx = mainCheckoutWithRun({ staged: { 'sdd-ruling-1.md': ruling } });
+  const { d } = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], d), 0);
+  const cj = JSON.parse(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'));
+  const item = cj.items.find((i) => i.id === 'sdd-ruling-1.md');
+  assert.strictEqual(item.resolution, 'pending');
+  assert.strictEqual(item.reason, 'sdd-ruling-needs-human-decision');
+  let residueOut = '';
+  const residueCode = require(path.join(PLUGIN_ROOT, 'bin', 'console-residue.js')).run(['--run', fx.runDir], {
+    cwd: () => fx.root, mainRoot: fx.root, now: () => Date.parse('2026-09-06T12:00:00Z'), pluginRoot: '/plug',
+    stdout: (s) => { residueOut += s; }, stderr: () => {},
+  });
+  assert.strictEqual(residueCode, 0, residueOut);
+  assert.ok(residueOut.includes('  - sdd-ruling-1.md — Pending review: pending (sdd-ruling-needs-human-decision)'), residueOut);
+});

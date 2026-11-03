@@ -518,9 +518,19 @@ test('#3799: a --cwd outside any git checkout exits 2 and says so', async () => 
 test('#3799: a --cwd subdirectory of the invoking checkout still runs and stamps', async () => {
   const a = tmpGitRepo();
   fs.mkdirSync(path.join(a.repo, 'packages', 'app'), { recursive: true });
-  const { code } = await runCli(['--cmd', 'tests=node -e 0', '--cwd', 'packages/app'], { cwd: a.repo });
+  // The probe writes its own process.cwd(), so a --cwd that is silently ignored
+  // leaves it at the checkout root and fails the location assertions below.
+  const probe = nodeCmd("require('fs').writeFileSync('cwd-probe.txt', process.cwd())");
+  const { code } = await runCli(['--cmd', `tests=${probe}`, '--cwd', 'packages/app'], { cwd: a.repo });
   assert.strictEqual(code, 0);
   assert.ok(fs.existsSync(path.join(a.gitDir, 'claude-tweaks-verify-pass.json')));
+  const appProbe = path.join(a.repo, 'packages', 'app', 'cwd-probe.txt');
+  assert.ok(fs.existsSync(appProbe), 'the check ran in packages/app');
+  assert.ok(!fs.existsSync(path.join(a.repo, 'cwd-probe.txt')), 'the check did not run at the checkout root');
+  // Realpath on both sides: macOS temp dirs resolve through /private.
+  const ran = fs.realpathSync(fs.readFileSync(appProbe, 'utf8'));
+  const want = fs.realpathSync(path.join(a.repo, 'packages', 'app'));
+  assert.strictEqual(ran, want, "the check's process.cwd() is packages/app");
 });
 
 test('#3799: the usage text says --cwd must stay inside the checkout verify.js runs from', async () => {

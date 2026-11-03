@@ -8,9 +8,11 @@ files:
   - plugin/bin/lib/issues/record.js
   - plugin/bin/lib/issues/record-vocabulary.js
   - plugin/bin/lib/issues/record-payload.js
+  - plugin/bin/lib/markdown-blocks.js
   - plugin/bin/lib/compose-record/compose.js
   - plugin/skills/_shared/pr-first-merge.md
   - plugin/skills/_shared/local-merge-auto-finish.md
+  - plugin/skills/_shared/local-merge-sequence.md
   - plugin/skills/dispatch/settle-and-merge.md
   - plugin/skills/wrap-up/auto-merge-short-circuit.md
   - plugin/skills/flow/worktree-merge.md
@@ -23,14 +25,14 @@ files:
 
 **Persona:** A claude-tweaks maintainer whose `/claude-tweaks:flow` run has just cleared its last gate and is about to merge — either watching the terminal Review Console click through, or reading `git log` on `main` the next morning to see what landed — and who wants every merge commit to carry a subject the release engines (release-please, the local engine) can parse without a human rewriting it.
 **Goal:** The merge lands on the integration branch as one commit whose subject is `feat|fix|chore[(scope)][!]: {record title} (#N)`, whose body carries a `Release-Note: {line}` paragraph, the `Fixes #N` closing keywords, and (when the record is `breaking`) a trailing `BREAKING CHANGE:` footer — composed by the plugin at merge time, identically on the pr-first and local-merge paths.
-**Entry point:** Any merge site in the plugin: `_shared/pr-first-merge.md` Step 3 (`gh pr merge --squash`), or one of the four `git merge --no-ff` fences (`_shared/local-merge-auto-finish.md`, `wrap-up/auto-merge-short-circuit.md`, `dispatch/settle-and-merge.md`, `flow/worktree-merge.md`).
+**Entry point:** Any merge site in the plugin: `_shared/pr-first-merge.md` Step 3 (`gh pr merge --squash`), or `_shared/local-merge-sequence.md` Step 3's `git merge --no-ff` fence, which `_shared/local-merge-auto-finish.md`, `wrap-up/auto-merge-short-circuit.md`, `dispatch/settle-and-merge.md` and `flow/worktree-merge.md` all run.
 **Success state:** `git log -1 --format=%s` on the integration branch prints `feat: {title} (#N)` (or `fix:`/`chore:`, with `!` when breaking), the body contains a `Release-Note: {line}` paragraph (from the record's own `## Release Note` spec section — required on every record since #2580) and ends with `Fixes #N` (and `BREAKING CHANGE: {note}` last when breaking), the record auto-closes, and `/claude-tweaks:help`'s auto-merged-this-week metric still counts an automated merge because the `[{tag}]` paragraph rides in the body (a `[human-approved]` close-out merge is deliberately left out of that count).
 
 ## Steps
 
 ### 1. The merge site asks the composer for the subject — `bin/compose-subject.js`
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {n} --tag {tag} --range {base}...{head} --out-dir "{subject-dir}"` (the composer line every merge fence carries, no `eval`; the local-merge fences append `|| exit 1` because they run as one multi-line script, while a pr-first fence runs the composer as its own Bash call; `{tag}` is `auto-merge`, `auto-finish`, `fast-lane`, `manifesto-authorized`, or `human-approved` per site; pr-first sites pass `--pr {pr-number}` in place of `--range`)
-- **Action:** The agent runs the fence as written. The CLI reads the record(s) with `gh issue view` (Type from the native issue type, else the `type:*` label; `breaking` from the label; the summary from `## Overview`'s first sentence, falling back to `## Current State`; the release note from the subject record's own `## Release Note` section — never aggregated across a bundle, and cut at a trailing `_Filed by …_` provenance footer, which `specShapedBody` leaves directly under that section when the record has no `### Key Files`), composes the subject and body, and writes `title.txt`, `body.md` and `message.txt` into `{subject-dir}`.
+- **Action:** The agent runs the fence as written. The CLI reads the record(s) with `gh issue view` (Type from the native issue type, else the `type:*` label; `breaking` from the label; the summary from `## Overview`'s first sentence, falling back to `## Current State`; each record's release note from its own `## Release Note` section — one per record, lowest number first, and cut at a trailing `_Filed by …_` provenance footer, which `specShapedBody` leaves directly under that section when the record has no `### Key Files`), composes the subject and body, and writes `title.txt`, `body.md` and `message.txt` into `{subject-dir}`.
 - **Should feel:** Mechanical and boring — no title is typed by hand, no summary is paraphrased, no release note is written from scratch at merge time (it was already authored at spec time).
 - **Should understand:** The exit status is load-bearing: a record with no resolvable Type, a `breaking` label with no `## Breaking Change` section, or **any** record in the batch with no non-empty `## Release Note` section (unconditional — not gated behind `breaking`; a section holding only the `_Filed by …_` footer counts as empty), makes the CLI exit 1. A local-merge fence's `|| exit 1` stops it before the merge runs; a pr-first fence runs the composer as its own Bash call, and the agent stops on the non-zero exit instead of running the `gh pr merge` call. A project whose convention needs `type(scope):` sets the `commit-scope` and/or `commit-scope-paths` policy keys; every fence passes `--range {base}...{head}` (local-merge) or `--pr {pr-number}` (pr-first) so the composer can read the changed paths, an explicit `--scope {token}` overrides both, and `commit-scope-paths` set with neither also exits 1; a scope that is not one `[A-Za-z0-9._/-]+` token, or too long to leave room for the title, also exits 1. On a host that rejects `--json issueType`, the composer's silent retry prints nothing — gh's stderr is captured, so the only stdout is the single-quoted title.
 - **Red flags:** A merge attempted after the composer printed an error; gh error text printed ahead of a composed subject on a successful run; a merge commit with an empty subject or a body missing its `Fixes #N` line or its `Release-Note:` paragraph; a `_Filed by …_` paragraph riding after the `Release-Note:` line.
@@ -44,7 +46,7 @@ files:
 
 ### 3. A bundle merges under its most significant member — `dispatch/settle-and-merge.md`
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {n} {m} --tag auto-merge --range {integration-branch}...{branch} --out-dir "{subject-dir}"`
-- **Action:** A dispatched group of several records merges as one commit: the title and `(#N)` come from the lowest-numbered record, the prefix from the bundle's highest-precedence Type (`feature` > `bug` > `task`), one `Fixes #` line per record, and `breaking` if any member carries it.
+- **Action:** A dispatched group of several records merges as one commit: the title and `(#N)` come from the lowest-numbered record, the prefix from the bundle's highest-precedence Type (`feature` > `bug` > `task`), one `Release-Note:` line per record, one `Fixes #` line per record, and `breaking` if any member carries it.
 - **Should feel:** Nothing is lost — a feature bundled behind a lower-numbered chore still reads `feat:`.
 - **Should understand:** `chore` is invisible to release-please's changelog and bump by default, so aggregating by precedence is what keeps a bundled feature from silently producing no minor bump.
 - **Red flags:** A bundle containing a `type:feature` record that merged as `chore:`.
@@ -74,3 +76,4 @@ files:
 - Updated during build of #3537 (retire --shell): the composer's eval-able --shell output is gone; JSON and --out-dir are the only output forms, and a plugin/skills/** sweep pins that no fence evals composer output
 - Updated during build of #4014 (compose-subject "Filed by" footer): the release note stops at a record's trailing `_Filed by …_` footer, and a footer-only `## Release Note` section counts as empty at the step 1 gate
 - Updated during build of #4199 (pr-first closing-link guard): step 5, where `--keep-open` writes `Refs #{k}` for a deferred bundle member in the pr-first squash body
+- Updated during build of #4634 (bundle release records): a bundle's body carries one `Release-Note:` line per record, lowest number first, instead of only the subject record's note (step 1 Action, step 3 Action)

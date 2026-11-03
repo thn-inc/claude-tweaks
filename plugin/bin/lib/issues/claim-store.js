@@ -11,13 +11,17 @@
 // budget). Both the claim-side preflight CLI and
 // `bin/lib/reconcile/release-merged.js`'s release path delegate their I/O
 // here so there is exactly one code path performing this keyspace's writes,
-// instead of multiple implementations drifting apart.
+// instead of multiple implementations drifting apart. `ensureClaimsBranch`
+// below is the one bootstrap that creates the branch itself when a remote has
+// none (#4495).
 //
 // The `deps.ghApi` seam is injectable (never real `gh` in tests):
 // `ghApi(args)` is invoked as if `gh api ${args.join(' ')}` and returns a
 // non-throwing `{stdout, failure, status}` — the same object shape
 // release-merged.js's own (pre-extraction) ghApi already used, extended
-// with `status` so a 404 can be told apart from a genuine failure.
+// with `status` so a 404 can be told apart from a genuine failure. A failed
+// call may also carry `error`, the thrown error's text (optional; `defaultGhApi`
+// sets it, #4495): a bootstrap refusal is surfaced to the user verbatim.
 // `defaultGhApi` below is the real implementation; release-merged.js keeps
 // supplying its own ghApi (which never sets `status`) and no `gitRunner`,
 // so `readClaimBlob`'s `absent` branch simply never fires there and it stays
@@ -40,8 +44,12 @@
 
 const { execFileSync } = require('child_process');
 const { CLAIMS_BRANCH } = require('./claims');
-const { readClaimBlobGit, writeClaimBlobGit, defaultRunner } = require('./claims-git-cas');
+const {
+  readClaimBlobGit, writeClaimBlobGit, bootstrapClaimsBranchGit, defaultRunner,
+} = require('./claims-git-cas');
 const { GH_TIMEOUT_MS, escapeRegExp } = require('../shared-primitives');
+const { normalizePrListing } = require('./mcp-pr-shape');
+const { ghOptions } = require('../repo-resolve');
 
 // How many times `writeClaimBlob` re-leases and re-pushes a git-CAS write
 // whose rejection a fresh read proves spurious (#787 final-review finding I1 —
@@ -92,10 +100,35 @@ function isWellFormedClaimContent(content) {
   return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed);
 }
 
+// The text of a caught execFileSync error: message, stderr and stdout joined.
+// `classifyGhApiError` matches on it; `defaultGhApi` returns it as `error`.
+function ghErrorText(e) {
+  return [e && e.message, e && e.stderr, e && e.stdout].filter(Boolean).map(String).join(' ');
+}
+
+// (#4899) The text of a refused claim read or write, for `permissionStop`. The
+// store's `error` is the failed command's message plus its stderr, so a real
+// refusal opens with a `Command failed: gh api ... -f content=<base64 claim>`
+// line (the command line and the claim payload, which do not belong in the
+// reason) and then repeats gh's own stderr. Drop that line and any exact
+// duplicate line, leaving GitHub's text; nothing left is the empty string.
+function refusalText(error) {
+  const seen = new Set();
+  const kept = [];
+  for (const line of String(error || '').split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed === '' || trimmed.startsWith('Command failed:') || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    kept.push(trimmed);
+  }
+  return kept.join('\n');
+}
+
 // Pure: classify a caught execFileSync error into {failure, status} — split
 // out from defaultGhApi's catch block so the text-matching regexes below are
-// unit-testable without touching the real `gh` binary. `defaultGhApi` is the
-// only caller.
+// unit-testable without touching the real `gh` binary. Direct callers:
+// `defaultGhApi`, `release-claim/release.js`, `reconcile/preflight.js`,
+// `reconcile/pr-state.js`, `reconcile/release-merged.js`.
 //
 // `_shared/issue-claims.md`'s "The lock" step 1 documents a 404 as a normal
 // outcome ("file does not exist"), not an error — gh reports it as
@@ -134,31 +167,53 @@ function isWellFormedClaimContent(content) {
 // generic network failure (record-697's incident read exactly that way
 // before diagnosis; #787's amendment requires this to classify as its own
 // distinct, transient outcome).
+//
+// An HTTP 401 or 403 that is not a rate limit is `permission-denied` (with
+// `status` the number 401 or 403): the token reached GitHub and was refused,
+// which is a refusal, not transport — folding it into `network-failure` made
+// a permissions problem read as a retryable network one (#4756). A primary
+// rate limit is excluded: "API rate limit exceeded" or `X-RateLimit-Remaining:
+// 0` (a 403 or 429) stays `network-failure`, since waiting clears it and a
+// permission verdict there would be wrong (`_shared/github-rate-limit.md`).
+//
+// Outcomes by retry class (#4756 — the one rule the claims-branch bootstrap
+// applies, via `TRANSIENT_BOOTSTRAP_FAILURES` below): `network-failure` (also
+// the catch-all for any text no pattern here matches, an unrecognised 4xx
+// included) and `secondary-rate-limit` are transient — a later run may
+// succeed. `permission-denied`, `gh-absent` and every `failure: null` status
+// answer (404, 409, 422) are answers a retry will not change.
 function classifyGhApiError(e) {
   if (e && e.code === 'ENOENT') return { failure: 'gh-absent', status: null };
-  const text = [e && e.message, e && e.stderr, e && e.stdout].filter(Boolean).map(String).join(' ');
+  const text = ghErrorText(e);
   if (/secondary rate limit|abuse detection mechanism|Retry-After/i.test(text)) return { failure: 'secondary-rate-limit', status: 403 };
   if (/HTTP 404|Not Found/.test(text)) return { failure: null, status: 404 };
   if (/HTTP 422|Unprocessable|Validation failed/.test(text)) return { failure: null, status: 422 };
   if (/HTTP 409|Conflict|does not match/i.test(text)) return { failure: null, status: 409 };
+  if (/API rate limit exceeded|X-RateLimit-Remaining:\s*0\b/i.test(text)) return { failure: 'network-failure', status: null };
+  const denied = /HTTP (401|403)\b/.exec(text);
+  if (denied) return { failure: 'permission-denied', status: Number(denied[1]) };
   return { failure: 'network-failure', status: null };
 }
 
-// The real ghApi.
+// The real ghApi. A failed call also carries `error`, the thrown error's text
+// (#4495): a bootstrap refusal is surfaced to the user verbatim, and the
+// classified `{failure, status}` alone drops the reason (a 4xx is data, not
+// a throw, on this seam).
 function defaultGhApi(args) {
+  const ghArgs = ['api', ...args];
   try {
-    const stdout = execFileSync('gh', ['api', ...args], {
+    const stdout = execFileSync('gh', ghArgs, ghOptions(ghArgs, {
       encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS,
       windowsHide: true,
-    });
+    }));
     return { stdout, failure: null, status: null };
   } catch (e) {
     const { failure, status } = classifyGhApiError(e);
-    return { stdout: null, failure, status };
+    return { stdout: null, failure, status, error: ghErrorText(e) };
   }
 }
 
-// (ghApi, repoSlug) -> { entries: [{name, sha}], failure: null|'gh-absent'|'network-failure'|'truncated' }
+// (ghApi, repoSlug) -> { entries: [{name, sha}], failure: null|'gh-absent'|'network-failure'|'secondary-rate-limit'|'permission-denied'|'truncated' }
 // #3098: the Contents-API directory listing this used to make caps at 1000
 // entries (GitHub's own documented limit for that endpoint) — silently, with
 // no truncation signal at all. `claims-registry` long since passed that
@@ -210,7 +265,8 @@ function listClaimNames(ghApi, repoSlug) {
   return { names: entries.map((e) => e.name), failure };
 }
 
-// (deps: {ghApi, gitRunner?}, repoSlug, issueNumber, knownTip?) -> { content, sha, failure, absent, via? }
+// (deps: {ghApi, gitRunner?}, repoSlug, issueNumber, knownTip?) -> { content, sha, failure, absent, via?, error? }
+// (`error?` is present on a `permission-denied` failure only, see `permissionErrorField`.)
 // Tries git-CAS first (no `gitRunner` dep = skip straight to contents-API,
 // the gh-absent/MCP-only-sandbox seam #787's amendment requires — see
 // `_shared/issue-claims.md`). A git-CAS transport failure (auth, no remote
@@ -243,6 +299,8 @@ function readClaimBlob(deps, repoSlug, issueNumber, knownTip = null) {
     if (gitResult.failure === null) {
       return {
         content: gitResult.content, sha: gitResult.tipSha, failure: null, absent: gitResult.absent, via: 'git',
+        // (#4495) only when the remote has no claims-registry branch at all
+        ...(gitResult.branchMissing ? { branchMissing: true } : {}),
       };
     }
     // fall through to contents-API on a git-side transport failure
@@ -250,7 +308,15 @@ function readClaimBlob(deps, repoSlug, issueNumber, knownTip = null) {
   return readClaimBlobContentsApi(deps.ghApi, repoSlug, issueNumber);
 }
 
-// (ghApi, repoSlug, issueNumber) -> { content, sha, failure, absent }
+// (#4899) The forge's own refusal text rides on a `permission-denied` result
+// only, so a caller can name why the claim registry refused it. Every other
+// failure keeps its exact shape (no `error` key).
+function permissionErrorField(r) {
+  return r.failure === 'permission-denied' && r.error ? { error: r.error } : {};
+}
+
+// (ghApi, repoSlug, issueNumber) -> { content, sha, failure, absent, error? }
+// (`error?` is present on a `permission-denied` failure only, see `permissionErrorField`.)
 // The contents-API half of `readClaimBlob`, split out so `writeClaimBlob`'s
 // transport-fallback path can re-derive a contents-API-shaped blob sha
 // without re-entering the git-CAS branch. Same return shape (and same single
@@ -259,7 +325,7 @@ function readClaimBlob(deps, repoSlug, issueNumber, knownTip = null) {
 function readClaimBlobContentsApi(ghApi, repoSlug, issueNumber) {
   const r = ghApi([`repos/${repoSlug}/contents/${claimPath(issueNumber)}?ref=${CLAIMS_BRANCH}`, '-q', '{content: (.content | @base64d), sha: .sha}']);
   if (r.status === 404) return { content: null, sha: null, failure: null, absent: true };
-  if (r.failure) return { content: null, sha: null, failure: r.failure, absent: false };
+  if (r.failure) return { content: null, sha: null, failure: r.failure, absent: false, ...permissionErrorField(r) };
   try {
     const parsed = JSON.parse(r.stdout);
     return { content: parsed.content, sha: parsed.sha, failure: null, absent: false };
@@ -269,10 +335,10 @@ function readClaimBlobContentsApi(ghApi, repoSlug, issueNumber) {
 }
 
 function defaultRunGh(args) {
-  return execFileSync('gh', args, {
+  return execFileSync('gh', args, ghOptions(args, {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS,
     windowsHide: true,
-  });
+  }));
 }
 
 // (runGh?) -> string|null. `runGh(args)` returns stdout; a thrown error
@@ -430,6 +496,9 @@ function writeClaimBlob(deps, repoSlug, issueNumber, {
       // fresh git read before deciding.
       const freshGit = readClaimBlobGit({ issueNumber, runner: deps.gitRunner });
       if (freshGit.failure) return { ok: false, failure: 'transport-failure' };
+      // (#4495) the branch vanished between the rejected push and this re-read:
+      // a missing branch, not a claim someone else took.
+      if (freshGit.branchMissing) return { ok: false, branchMissing: true, failure: null };
       const unchanged = createOnly
         ? freshGit.absent
         : (!freshGit.absent && freshGit.content === expectedContent);
@@ -448,7 +517,7 @@ function writeClaimBlob(deps, repoSlug, issueNumber, {
     // re-derive.
     if (!createOnly) {
       const fresh = readClaimBlobContentsApi(deps.ghApi, repoSlug, issueNumber);
-      if (fresh.failure) return { ok: false, failure: fresh.failure };
+      if (fresh.failure) return { ok: false, failure: fresh.failure, ...permissionErrorField(fresh) };
       // This write's own target content is already the live blob — an
       // earlier git-CAS push landed server-side but its local ack was lost
       // to the transport failure that brought us here. Report the success
@@ -486,9 +555,123 @@ function writeClaimBlob(deps, repoSlug, issueNumber, {
     // earlier attempt whose local ack was lost, not a real contest.
     const fresh = readClaimBlobContentsApi(deps.ghApi, repoSlug, issueNumber);
     if (!fresh.failure && !fresh.absent && fresh.content === content) return { ok: true, failure: null };
+    // (#4899) A refused re-read cannot tell a contest from a refusal, and a
+    // refusal is what it most likely is: report it instead of a manufactured
+    // contest. Any other re-read failure keeps today's `conflict: true`.
+    if (fresh.failure === 'permission-denied') return { ok: false, failure: fresh.failure, ...permissionErrorField(fresh) };
+    // (#4495) Nothing there: either a real contest (the claim was released or
+    // swept since) or the claims-registry branch itself does not exist, which
+    // makes the PUT fail the same way. Only the branch lookup tells them
+    // apart; an unanswerable one is never a manufactured contest — it reports
+    // the lookup's own failure kind as-is (a network failure, a rate limit, or
+    // `permission-denied`), and the caller decides what that kind means.
+    if (!fresh.failure && fresh.absent) {
+      const lookup = readClaimsBranch(deps.ghApi, repoSlug);
+      if (lookup.exists === false) return { ok: false, branchMissing: true, failure: null };
+      if (lookup.exists === null) return { ok: false, failure: lookup.result.failure, ...permissionErrorField(lookup.result) };
+    }
     return { ok: false, conflict: true, failure: null };
   }
-  return { ok: r.failure === null, failure: r.failure };
+  return { ok: r.failure === null, failure: r.failure, ...permissionErrorField(r) };
+}
+
+// (ghApi, repoSlug) -> { exists: true | false | null, result }
+// The branch lookup behind `claimsBranchExists`, keeping the raw ghApi answer
+// so a caller that must tell WHY the lookup could not answer (the bootstrap's
+// 422 re-read) can read the failure kind. `exists` is null = could not tell.
+function readClaimsBranch(ghApi, repoSlug) {
+  const result = ghApi([`repos/${repoSlug}/branches/${CLAIMS_BRANCH}`, '-q', '.name']);
+  if (result.status === 404) return { exists: false, result };
+  if (result.failure) return { exists: null, result };
+  return { exists: true, result };
+}
+
+// (ghApi, repoSlug) -> true | false | null   (null = could not tell)
+// Whether the remote has the `CLAIMS_BRANCH` branch, over the same
+// never-throwing seam as every contents-API call here (#4495).
+function claimsBranchExists(ghApi, repoSlug) {
+  return readClaimsBranch(ghApi, repoSlug).exists;
+}
+
+// The one transient-vs-refusal rule for the bootstrap's contents-API leg
+// (#4756): a failure is transient exactly when the classifier called it
+// `network-failure` (no answer worth acting on: a timeout, a 5xx, a primary
+// rate limit) or `secondary-rate-limit` — a later run may succeed. Anything
+// else (permission-denied, gh-absent, a status answer with `failure: null`)
+// is an answer from the remote or the environment that a retry will not change.
+const TRANSIENT_BOOTSTRAP_FAILURES = new Set(['network-failure', 'secondary-rate-limit']);
+
+// A contents-API refusal as a result. The reason is the response text when
+// `defaultGhApi` kept it, cleaned by `refusalText` (the `Command failed:` line
+// and repeated stderr lines dropped), else the classified failure, else the bare
+// status. A transient failure also carries its kind, so the caller can tell a
+// network failure from a rate limit; a refusal carries neither key.
+function apiRefusal(r) {
+  return {
+    ok: false,
+    reason: refusalText(r.error) || r.failure || `HTTP ${r.status}`,
+    ...(TRANSIENT_BOOTSTRAP_FAILURES.has(r.failure) ? { transient: true, failure: r.failure } : {}),
+  };
+}
+
+// The contents-API leg of `ensureClaimsBranch`: create `CLAIMS_BRANCH` at the
+// default branch's tip via `POST git/refs`. A ref-creation 422 is ambiguous
+// (the branch already exists, or a ruleset forbids creating it), so only a
+// re-read of the branch settles it.
+function createClaimsBranchContentsApi(ghApi, repoSlug) {
+  const branchRead = ghApi([`repos/${repoSlug}`, '-q', '.default_branch']);
+  if (branchRead.failure || branchRead.status) return apiRefusal(branchRead);
+  const defaultBranch = String(branchRead.stdout || '').trim();
+  if (!defaultBranch) return { ok: false, reason: 'the repository reported no default branch' };
+  const encoded = defaultBranch.split('/').map(encodeURIComponent).join('/');
+  const tipRead = ghApi([`repos/${repoSlug}/git/ref/heads/${encoded}`, '-q', '.object.sha']);
+  if (tipRead.failure || tipRead.status) return apiRefusal(tipRead);
+  const tipSha = String(tipRead.stdout || '').trim();
+  if (!tipSha) return { ok: false, reason: `the default branch ${defaultBranch} reported no tip sha` };
+  const r = ghApi([
+    '--method', 'POST', `repos/${repoSlug}/git/refs`,
+    '-f', `ref=refs/heads/${CLAIMS_BRANCH}`,
+    '-f', `sha=${tipSha}`,
+  ]);
+  if (r.failure === null && r.status === null) return { ok: true, created: true };
+  if (r.status === 422) {
+    // Branch on the raw re-read, not on `exists` (which counts any failure-free,
+    // non-404 answer as "there"): only a clean answer proves the lost race.
+    const { result } = readClaimsBranch(ghApi, repoSlug);
+    if (result.failure === null && result.status === null) return { ok: true, created: false };
+    const postRefusal = apiRefusal(r);
+    if (result.status === 404) return postRefusal;
+    // The re-read could not settle it: its own failure kind decides transient
+    // vs refusal, and the POST's reason stays in front. A status answer with
+    // `failure: null` (a 409, a 422) is a refusal, never a guessed lost race.
+    const reread = apiRefusal(result);
+    return { ...reread, reason: `${postRefusal.reason}; branch re-read: ${reread.reason}` };
+  }
+  return apiRefusal(r);
+}
+
+// (deps: {ghApi, gitRunner?}, repoSlug)
+// -> { ok: true, created, via: 'git' | 'contents-api' }
+//  | { ok: false, reason }
+//  | { ok: false, reason, transient: true, failure: 'network-failure' | 'secondary-rate-limit' }
+// Creates the missing `CLAIMS_BRANCH` (#4495) — the one bootstrap every
+// caller shares: a git push first (when a `gitRunner` is supplied), the
+// contents API when git cannot. A refusal is never retried; `reason` carries
+// each leg's own text verbatim. `transient: true` marks a contents-API leg
+// whose failure was a network failure or a secondary rate limit (see
+// TRANSIENT_BOOTSTRAP_FAILURES) — a later run may succeed, so it is no refusal
+// to act on; `failure` names which of the two it was.
+function ensureClaimsBranch(deps, repoSlug) {
+  const reasons = [];
+  if (deps.gitRunner) {
+    const g = bootstrapClaimsBranchGit({ runner: deps.gitRunner });
+    if (g.ok) return { ok: true, created: g.created, via: 'git' };
+    reasons.push(`git: ${g.reason}`);
+  }
+  const a = createClaimsBranchContentsApi(deps.ghApi, repoSlug);
+  if (a.ok) return { ok: true, created: a.created, via: 'contents-api' };
+  reasons.push(`contents-api: ${a.reason}`);
+  return { ok: false, reason: reasons.join('; '), ...(a.transient ? { transient: true, failure: a.failure } : {}) };
 }
 
 function isSameRepoPrUrl(link, owner, repo) {
@@ -523,15 +706,105 @@ function tombstoneInFlightPr(content, gh, owner, repo) {
   }
 }
 
+// RUN_ID_SHAPE is the canonical run-id shape (`_shared/run-dir-resolution.md`'s
+// ISO-timestamp + kebab spec-slug convention). Agents no longer run it from
+// prose in `_shared/issue-claims.md` or `tidy/scan-procedures.md` — both call
+// `bin/stale-claim-pr.js` (#4596); only `flow/claim-targets.md` still restates
+// it, and tests/issue-claims-stale-open-pr-conformance.test.js pins every
+// remaining copy to this constant's `.source`.
+const RUN_ID_SHAPE = /^\d{4}-\d{2}-\d{2}T\d{6}-[a-z0-9][a-z0-9-]*$/;
+const OPEN_PR_LIST_LIMIT = 1000;
+
+// The `gh pr list` argv staleClaimInFlightPr runs — exported so the CLI
+// (`bin/stale-claim-pr.js`, #4596) and the agent's MCP fetch name one listing.
+function openPrListArgs(owner, repo) {
+  return ['pr', 'list', '--repo', `${owner}/${repo}`, '--state', 'open',
+    '--json', 'url,body,isCrossRepository', '--limit', String(OPEN_PR_LIST_LIMIT)];
+}
+
+// The run id a stale claim blob names, or null when it is absent or not
+// RUN_ID_SHAPE (untrusted — it must never reach a `gh` call). Throws on
+// malformed JSON, like the staleClaimInFlightPr body it was split from.
+function staleClaimRunId(content) {
+  const parsed = JSON.parse(content);
+  const runId = parsed && parsed.runId;
+  return typeof runId === 'string' && RUN_ID_SHAPE.test(runId) ? runId : null;
+}
+
+// The pure matcher over an already-fetched listing (gh- or MCP-sourced, the
+// latter through `normalizePrListing`). Returns `{ url, body }` of the first
+// matching entry, or null for a clean no-match; throws when the listing is not
+// an array or a no-match listing hit OPEN_PR_LIST_LIMIT (not a clean "no
+// marked PR").
+function matchStaleClaimPr(runId, prs, owner, repo) {
+  if (!Array.isArray(prs)) throw new Error('open-PR listing is not an array');
+  const markers = [`claude-tweaks-run: ${runId}`, `<!-- claude-tweaks-run: ${runId} -->`];
+  for (const pr of prs) {
+    if (!pr || typeof pr.body !== 'string' || pr.isCrossRepository !== false) continue;
+    if (!isSameRepoPrUrl(pr.url, owner, repo)) continue;
+    if (pr.body.split('\n').some((line) => markers.includes(line.trim()))) return { url: pr.url, body: pr.body };
+  }
+  if (prs.length >= OPEN_PR_LIST_LIMIT) {
+    throw new Error(`open-PR listing hit its ${OPEN_PR_LIST_LIMIT}-entry limit — a marked PR may lie past it`);
+  }
+  return null;
+}
+
+// content: the raw TTL-expired ('stale') claim blob text just read. gh: the
+// generic throwing gh runner. owner/repo: the SAME owner/repo as the issue
+// being claimed. The 'stale' counterpart of `tombstoneInFlightPr` (#4423): a
+// claim that outlived its TTL is not necessarily abandoned — the run may still
+// hold an open draft PR (the PR-first integration model makes every worktree
+// run born public), and re-claiming would rebuild finished work. The PR's body
+// carries the run's `claude-tweaks-run: {runId}` marker, bare or as an HTML
+// comment; a match is a trimmed LINE equal to either form, never a substring,
+// so a body merely mentioning a run id does not count. `runId` is untrusted
+// (any session with registry-branch write access can set it) and is shape-
+// checked before it can reach a `gh` call, and the matched PR must be a
+// same-repo PR url from a same-repo branch (`isCrossRepository: false`) — a
+// fork PR can carry any body, but a run's own draft PR is never cross-repo.
+// One `pr list` serves every stale target of a claim run (the caller memoizes
+// `gh`). Fails open like its tombstone twin — a broken check must never block
+// a legitimate reclaim — but a failed check (a thrown `gh`, an unparseable or
+// non-array listing, an entry `normalizePrListing` rejects — the same
+// normalizer the `stale-claim-pr.js` CLI runs — or a no-match listing that
+// hit OPEN_PR_LIST_LIMIT and so may have cut the marked PR off) is not a
+// clean "no marked PR", so the optional trailing `onError(err)` lets the
+// caller surface it (#4423). An `onError` that itself throws is swallowed —
+// this function always returns null on failure.
+function staleClaimInFlightPr(content, gh, owner, repo, onError) {
+  try {
+    const runId = staleClaimRunId(content);
+    if (runId === null) return null;
+    const prs = normalizePrListing(JSON.parse(gh(openPrListArgs(owner, repo))), owner, repo);
+    const m = matchStaleClaimPr(runId, prs, owner, repo);
+    return m ? { link: m.url } : null;
+  } catch (e) {
+    if (typeof onError === 'function') {
+      try { onError(e); } catch { /* a failing reporter must not break the fail-open return */ }
+    }
+    return null; // fail open — a broken check must never block a legitimate reclaim
+  }
+}
+
 module.exports = {
   listClaimEntries,
   listClaimNames,
   readClaimBlob,
   writeClaimBlob,
+  claimsBranchExists,
+  ensureClaimsBranch,
   defaultGhApi,
   claimPath,
   classifyGhApiError,
+  refusalText,
   tombstoneInFlightPr,
+  staleClaimInFlightPr,
+  openPrListArgs,
+  staleClaimRunId,
+  matchStaleClaimPr,
+  RUN_ID_SHAPE,
+  OPEN_PR_LIST_LIMIT,
   isSameRepoPrUrl,
   casBackoffMs,
   defaultSleep,

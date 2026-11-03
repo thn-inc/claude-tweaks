@@ -12,11 +12,14 @@
 // `gh api graphql` call failed, returned GraphQL errors, or the issue is missing
 // (stderr names it; a caller treats this as fail-closed). Exit 2: malformed
 // invocation (missing or non-positive-integer <n>, unknown flag), `gh` absent,
-// or owner/repo could not be resolved (no --repo and no readable `origin` remote).
+// or owner/repo could not be resolved (no --repo and no readable `origin` remote,
+// or an origin host with no GitHub signal — refused before any gh call, #4933).
 'use strict';
 
 const { evaluateResolvedRefusal, fetchResolvedRefusalEvidence, defaultRunner } = require('./lib/issues/resolved-refusal');
-const { parseRepo, ghAvailable, remoteUrl } = require('./lib/repo-resolve');
+const {
+  parseRepo, ghAvailable, remoteUrl, pinExplicitRepoHost, gateOriginRepo,
+} = require('./lib/repo-resolve');
 
 const USAGE = 'usage: resolved-refusal.js <n> [--repo owner/name] [--help]\n';
 
@@ -45,6 +48,9 @@ const realDeps = {
   runner: defaultRunner,
   ghAvailable,
   remoteUrl,
+  // #4505: an explicit --repo's host reaches the GraphQL evidence query, which
+  // threads no --hostname for github.com.
+  pinGhHost: (repoSpec) => pinExplicitRepoHost(repoSpec),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
@@ -61,10 +67,16 @@ function run(argv, deps = realDeps) {
   // A --repo value is either bare `owner/repo` (github.com implied) or host-qualified
   // `host/owner/repo`; only the bare form needs the github.com prefix to reach
   // parseRepo's 3-segment regex (number-list-cli.js's resolution, same rule).
-  const repoSpec = opts.repo
-    ? parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`)
-    : parseRepo(remote);
+  // #4933: an origin-derived host with no GitHub signal is refused before the gh call.
+  let repoSpec;
+  if (opts.repo) repoSpec = parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`);
+  else {
+    const gated = gateOriginRepo(remote, deps.gateDeps);
+    if (gated.refusal) { deps.stderr(`resolved-refusal.js: ${gated.refusal}\n`); return 2; }
+    repoSpec = gated.spec;
+  }
   if (!repoSpec) { deps.stderr('resolved-refusal.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
+  if (opts.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
   const { owner, repo, host } = repoSpec;
 
   let evidence;

@@ -2,6 +2,7 @@
 files:
   - plugin/skills/build/dispatch.md
   - plugin/skills/_shared/deferral-gate.md
+  - plugin/bin/lib/console/sdd-ruling.js
   - plugin/bin/lib/console/resolve.js
   - plugin/bin/lib/reconcile/console-execute.js
   - plugin/skills/wrap-up/review-console-appendix.md
@@ -14,7 +15,7 @@ files:
 **Persona:** The SDD controller running inside `/claude-tweaks:build` decides to defer a finding instead of fixing it. A typical case is "pre-existing, outside the diff, routed to a follow-up record". Later, the maintainer of an `autonomy: unattended` run reads the auto-resolved Review Console and needs to trust that nothing fixable was waved through.
 **Goal:** A deferral that qualifies for an immediate fix is fixed in the build and never reaches the console. A deferral that genuinely can't be fixed now carries exactly one valid `Defer-reason:`. An unattended console never auto-ratifies a deferral without one.
 **Entry point:** The SDD controller is about to write a `Ruling:` line whose decision leaves a finding or a required change unfixed. This can happen at pre-flight, inside a task's fix loop, at the round-5 breaker, or for a residual left after the final fix wave's scoped re-review.
-**Success state:** Either the finding is fixed by a commit in this build, or `staged/sdd-ruling-{N}.md` carries `Defers: yes` plus one valid `Defer-reason:` and resolves `apply` (ratify) at the console. Anything else waits as `pending — sdd-ruling-deferral-no-defer-reason`, `pending — sdd-ruling-unclassified`, or `pending — sdd-ruling-unreadable` for a human.
+**Success state:** Either the finding is fixed by a commit in this build, or `staged/sdd-ruling-{N}.md` carries `Defers: yes` plus one valid `Defer-reason:` other than `needs-human-decision` and resolves `apply` (ratify) at the console. Anything else waits as `pending — sdd-ruling-deferral-no-defer-reason`, `pending — sdd-ruling-needs-human-decision`, `pending — sdd-ruling-unclassified`, or `pending — sdd-ruling-unreadable` for a human.
 
 ## Steps
 
@@ -45,8 +46,9 @@ files:
 ### 4. Watch the unattended console hold an unsafe ruling
 - **URL:** `console-resolve.js --policy console-auto` (the run's `console.json` and the `AUTO-RESOLVED` table). For a console already posted on the PR, the reconciler's `consoleAutoResolve` pass instead (`decisions.md`'s `withheld ratify of {item}` line).
 - **Action:** Read the ruling row's resolution:
-  - `apply` means it ratified: either `Defers: no` with no reason line, or a deferral with exactly one valid reason.
+  - `apply` means it ratified: either `Defers: no` with no reason line, or a deferral with exactly one valid reason other than `needs-human-decision`.
   - `pending — sdd-ruling-deferral-no-defer-reason` means a deferral with a missing, invalid or duplicated reason.
+  - `pending — sdd-ruling-needs-human-decision` means a deferral whose one valid reason, `needs-human-decision`, says a human must decide (#4587).
   - `pending — sdd-ruling-unclassified` means no `Defers:` line, more than one, or a value other than yes/no. This also covers a ruling staged before #3880. `pending — sdd-ruling-unreadable` means the staged file could not be read at all — on the console-resolve path a failed read; on the reconciler path no `stagedPath`, a path rejected for leaving the run dir, a missing file, or a failed read (#4049).
 - **Should feel:** Trustworthy. Unattended means nobody clicked, not that nobody checked.
 - **Should understand:**
@@ -59,5 +61,6 @@ files:
 - Created during the build of #3880 (SDD deferral rulings skip the fix-now test and are auto-ratified at unattended), run `2026-10-22T062405-record-3880`.
 - All steps were built in this session. Step 2's per-site destinations and step 4's reconciler trigger point came from the build's final whole-branch review.
 - Step 4 revised by #4049, run `2026-10-24T110929-spec-4049`: a staged file that cannot be read is now `pending — sdd-ruling-unreadable` (the reconciler names the cause: `no-staged-path`, `path-rejected`, `not-found`, `read-failed`) instead of `sdd-ruling-unclassified`; such rows are still withheld.
+- Step 4 revised by #4587, run `2026-10-30T090414-record-4587`: a deferral whose one `Defer-reason:` is `needs-human-decision` is now `pending — sdd-ruling-needs-human-decision` and held for a human instead of ratified; every other valid reason still ratifies.
 - Updated during the build of #4048 (fail closed when `decideConsoleExecute` runs without its ruling-text or merge-grant context), run `2026-10-24T121146-spec-4048`: step 4 notes the reconciler check's fail-closed default for a missing ruling-text map.
 - Related: `docs/journeys/ratify-or-reverse-an-sdd-ruling-at-the-review-console-3401.md` (what a human does with the ruling row once it reaches the console); `docs/journeys/carry-a-build-review-finding-with-a-defer-reason-3004.md` (the sibling gate for review minors); `docs/journeys/resolve-the-unattended-console-in-one-process-1932.md` (the unattended console this gate sits inside).

@@ -6,6 +6,8 @@ files:
   - plugin/skills/_shared/pr-first-merge.md
   - plugin/skills/flow/summary-template.md
   - plugin/bin/lib/hooks/run-dir-resolve.js
+  - plugin/skills/_shared/pipeline-run-dir.md
+  - plugin/bin/post-merge-run.js
   - tests/wrap-up-merge-mode-conformance.test.js
 ---
 
@@ -43,20 +45,36 @@ When it cannot merge, the outcome is `pending-review` with the PR ready and a st
 - **Should feel:** immediate. One command, no prompts.
 - **Should understand:**
   - **When it routes.** The router fires only when the arguments are nothing but `merge`, at most one record reference, and wrap-up's own tokens. Free text like "fix the merge bug" stays conversation-based work.
-  - **Run adoption.** Merge mode adopts the run the way the explicit `#{n}` re-entry does. That is not `resume`: a parked run stays `status: active`.
+  - **Run adoption.** Merge mode adopts the run the way the explicit `#{n}` re-entry does. That is not `resume`: a parked run is never `interrupted`. When wrap-up already closed it, merge mode adopts it through `resolve-run-dir --archived`, read-only. That covers a run moved to `archive/`, and a `clean` run `archive-run` refused, as long as the run records a PR and no newer run of the same record is still open (#4677).
   - **Whose run it adopts.** `resolve-run-dir --spec-slug "spec-{n}"` matches the slug as a whole `-`-delimited name segment, so `spec-378` adopts `…-spec-378` (or a multi-spec `…-spec-378-379`) and never a `…-spec-3784` neighbour's run (#3865).
-  - **When nothing resolves,** it stops and names the record. It never mints a run dir.
+  - **When neither lookup resolves,** it stops and names the record. It never mints a run dir.
+  - **When a newer run is still open.** If a newer run for the same record is `interrupted`, or `active` but not adoptable, the `--archived` lookup refuses instead of adopting the older closed run. Its message names that newer run and says to resume or close it. The older run's PR is still `OPEN`, so the `OPEN` precondition in step 3 would not catch it, and merging it would skip the newer run.
 - **Red flags:**
   - A bare `merge`, or `merge` with `cleanup-only`, `--dry-run` or `resume`, doing anything but report the tokens and stop.
   - `--dry-run` performing a real merge.
   - Merge mode for `#378` adopting a run dir whose name ends `-spec-3784` or `-spec-3784-3790` — another record's PR and claim.
+  - The command the flow summary recommended stopping with "no pipeline run directory resolved" because wrap-up already archived the parked run (#4437's run, #4677).
+  - The `--archived` fallback adopting a live `interrupted` run, or a run that records no PR.
+  - The `--archived` fallback adopting an older closed run, and merging its PR, while a newer run of the same record is still `interrupted` or `active`.
 
 ### 3. Pass the preconditions
 - **URL:** `merge-mode.md`'s Preconditions
-- **Action:** the agent checks three things: `integration-model: pr-first`, a `pr` object in `run-state.json`, and the PR still `OPEN`.
-- **Should feel:** safe to re-run. A PR a sibling already merged stops the command with no cleanup.
-- **Should understand:** each failed precondition is named, and none of them runs a merge step first.
-- **Red flags:** any merge, label, or teardown step on a closed or merged PR.
+- **Action:** the agent checks three things: `integration-model: pr-first`, a `pr` object in `run-state.json`, and the PR `OPEN` or `MERGED`.
+  - An `OPEN` PR goes on to step 4.
+  - A `MERGED` PR (an armed auto-merge, a merge queue, or a human merged it first) skips steps 4 and 5. It goes to `merge-mode.md`'s `## Already merged` section, which runs the post-merge closes once through `bin/post-merge-run.js` and then step 6's teardown from Step 4.1 on.
+- **Should feel:** safe to re-run. A second invocation on an already-merged PR reports `already done` for each step the first one finished, and changes nothing.
+- **Should understand:**
+  - **Failed preconditions.** Each one is named, and none of them runs a merge step first. A `CLOSED` PR stops with no cleanup.
+  - **Already merged.** The outcome is `merged`, led by an `already merged {mergedAt} by {mergedBy}` line. A post-merge close that failed gets its own `cleanup:` line, never `ran`.
+  - **In flight.** If another process holds the run's post-merge claim, the line reads `in-flight`, never `ran`. For an archived run that holder can only be another merge-mode invocation, so the line also names `/claude-tweaks:wrap-up #{n} merge` again once the claim is past its 10-minute stale window.
+  - **Which step failed.** The CLI's `verdict` and `failedSteps` pick the lines. A Step 4.0 failure names the records it left unsettled, a Step 4.0b failure names each parent it could not close, and a step that ran clean is never reported failed. A CLI crash, or output that will not parse, still reports `cleanup: post-merge closes failed` and names the re-run.
+  - **No retry after a recorded failure.** Once the closes ran, their marker is written, so a re-run reports `already done` and retries nothing. That failure line names `/claude-tweaks:tidy`'s `parent-gate` backstop instead of a re-run.
+  - **What pins this.** `tests/wrap-up-merge-mode-conformance.test.js` reads this journey and fails if this step stops naming the `## Already merged` route. It also pins the merge-mode, Conflict and summary-row prose the other steps cite.
+- **Red flags:**
+  - A merge or acceptance-label step on a closed or merged PR.
+  - An already-merged PR that stops with no cleanup, or reports a failed post-merge close as `ran`.
+  - An `in-flight` result reported as `ran`.
+  - A CLI crash or unparseable output reported as anything but a `cleanup:` failure line naming the re-run.
 
 ### 4. Merge through the shared procedure
 - **URL:** `_shared/pr-first-merge.md` Steps 1-3 (acceptance labeling, curation guard, mark ready, the merge-verification gate, the merge), read through the composed `merge` bundle
@@ -91,10 +109,12 @@ When it cannot merge, the outcome is `pending-review` with the PR ready and a st
 ### 6. Read the outcome and the cleanup
 - **URL:** the closing report (`merged`, `armed`, or `pending-review`) and `{run-dir}/decisions.md`
 - **Action:** on `merged`, the agent works through the cleanup in this order:
-  1. Release-carrier tracking (Step 4.1).
-  2. The worktree teardown, which covers close-run, the containment proof, `ExitWorktree`, and the remote-ref delete.
-  3. The claim release.
-  4. Step 4.2's reconcile, last.
+  1. The post-merge reopen pass (Step 4.0), which reopens any record the merge closed that the PR body kept open.
+  2. The below-floor parent close (Step 4.0b), which closes a decomposition parent whose last sub-issue this merge closed, when no sub-issue exceeds the oversight floor.
+  3. Release-carrier tracking (Step 4.1).
+  4. The worktree teardown, which covers close-run, the containment proof, `ExitWorktree`, and the remote-ref delete.
+  5. The claim release.
+  6. Step 4.2's reconcile, last.
 - **Should feel:** finished. Nothing is left for a later session to tidy.
 - **Should understand:** the reconcile runs last because its archive check moves the run dir, and a `decisions.md` line written after it would recreate it.
 - **Red flags:** a run dir re-created under `.claude-tweaks/pipelines/` after archival, or a worktree removed without the containment proof.
@@ -102,3 +122,6 @@ When it cannot merge, the outcome is `pending-review` with the PR ready and a st
 ## Origin
 - Created during build of #3784. The record adds `wrap-up/merge-mode.md` and the `merge` routing token, an attended Conflict-path branch, and the `consoleAutoResolve` summary row. It was observed on #3712's run (PR #3749): the summary recommended a resume that would have re-parked the PR, and the human's "go ahead" had to be honored by running the merge procedure by hand.
 - Updated during build of #3865: Step 2's run adoption now matches the record's spec slug as a whole name segment, not a substring, so a record never adopts a run belonging to another record whose number starts with the same digits.
+- Updated during build of #4677. Step 2 now falls back to `resolve-run-dir --archived` for a parked run that wrap-up already closed and archived. On #4437's run (PR #4662), the summary's recommended `/claude-tweaks:wrap-up #4437 merge` stopped at resolution, and the run dir had to be bound by hand. The build's review then made the fallback refuse when a newer run of the same record is still open.
+- Updated during build of #4692. Step 3 now finishes a PR that something else already merged: merge mode's `## Already merged` section runs the post-merge closes through `bin/post-merge-run.js`, then the teardown. Before this, such a PR stopped the command with no cleanup.
+- Updated during wrap-up of #4692, after its review's fix wave. Step 3 now covers the `in-flight` result, a failure line per failed step, a CLI crash or unparseable output, and why a failure in closes that already ran is not retried.

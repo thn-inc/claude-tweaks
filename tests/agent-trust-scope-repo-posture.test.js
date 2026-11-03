@@ -51,9 +51,7 @@ test('ADR 0022 records the network-egress accepted risk and the uses that need i
   }
 });
 
-test('the deny list keeps the existing allow entry, plugin wiring, and WebFetch', () => {
+test('the deny list keeps the existing allow entry and WebFetch', () => {
   assert.ok(settings.permissions.allow.includes('Read(node_modules/**)'));
-  assert.ok(settings.enabledPlugins && settings.enabledPlugins['claude-tweaks@claude-tweaks-marketplace'] === true);
-  assert.ok(settings.extraKnownMarketplaces && settings.extraKnownMarketplaces['claude-tweaks-marketplace']);
   assert.ok(!settings.permissions.deny.some((r) => /^WebFetch(\(|$)/.test(r)), 'WebFetch must not be denied while /research needs it');
 });

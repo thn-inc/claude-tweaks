@@ -11,7 +11,7 @@ Bash snippet that implements it. Read there.
 
 ## Resolving it: `resolve-run-dir` (preferred over composing `$RUN_ROOT` by hand)
 
-`node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir [--spec-slug <s>] [--mode auto] [--standalone <name>] [--create] [--root-only]`
+`node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir [--spec-slug <s>] [--mode auto] [--standalone <name>] [--create] [--root-only] [--archived]`
 (`bin/lib/hooks/run-dir-resolve.js`) implements steps 1, 2, and 4 above on top of
 `bin/lib/hooks/worktree-detect.js`'s `mainCheckoutRoot()` — the same anchoring the Bash snippet
 below computes, but as a single command every citing skill step calls instead of restating that
@@ -48,6 +48,7 @@ rather than silently substituted. Never creates a directory unless `--create` is
   call site that only ever needed the main-checkout root (a `find` backstop scoped to the whole
   `pipelines/` tree, the transitional copy-out guard's destination computation), never a specific
   run's directory.
+- `--archived` (#4677): needs `--spec-slug <s>`, and is refused with `--create` or without `--spec-slug`, both checked before step 1. It falls back, only after steps 1-2 resolve nothing, to the newest closed match that records a `pr` object: an `archive/` dir, or a live `clean` dir that `archive-run` refused (a live dir whose run-id also exists under `archive/` is never adopted). That match is refused, exit 1, when a newer live run of the same slug is not closed (`interrupted`, or an `active` run step 2 refused), because merging the older run's still-open PR would skip it. It is read-only, an adoptable step-2 match always wins, and its only caller is `wrap-up/merge-mode.md`.
 
 ## Anchoring
 
@@ -159,8 +160,8 @@ sanctioned-write family, the fourth a single documented exception:
   **before any filesystem write**. `bin/wrap-up-engine.js`, `bin/materialize.js`, and
   `bin/apply-refine-labels.js` do this with exit code 2 (malformed invocation); `bin/hooks.js`'s
   `resolveRunArg` carries the same anchoring check but a different exit-code contract — it prints
-  `--run path rejected: …` and exits 0 for every subcommand except `close-run` (#3025) and
-  `resolve-console` (#2568), which exit 1. `resolveRunArg` also carries the one narrow exception to the anchoring rule itself —
+  `--run path rejected: …` and exits 0 for every subcommand except `close-run` (#3025),
+  `resolve-console` (#2568) and `check-pass-reentry` (#3553), which exit 1. `resolveRunArg` also carries the one narrow exception to the anchoring rule itself —
   see **Worktree-local `--run` fallback (#280)** immediately below. A bare run id (no path
   separator) whose cwd-relative reading is not a directory is retried as
   `<main checkout>/.claude-tweaks/pipelines/<value>` (#3025) — the form

@@ -7,6 +7,7 @@ files:
   - plugin/skills/dispatch/two-call-gate.md
   - plugin/skills/dispatch/sequential-execution.md
   - plugin/skills/dispatch/task-prompt.md
+  - plugin/skills/dispatch/continuation-call.md
   - plugin/skills/flow/context-handoff.md
 ---
 
@@ -78,13 +79,13 @@ files:
   - A `stamp-absent` note logged for a first call whose chunked suite composed complete at HEAD.
 
 ### 6. Dispatching session continues a call that handed off at the context cap
-- **URL:** `plugin/skills/dispatch/two-call-gate.md` §8; `plugin/skills/dispatch/task-prompt.md`'s "Continuation call"; `plugin/skills/flow/context-handoff.md`'s "Dispatched call"; `plugin/bin/lib/dispatch/first-call-artifact-check.js`'s `resolveFirstCallGate` and `parseNextSteps`
-- **Action:** **Dispatched call:** `/flow` Step 4 gauges its own context at a phase boundary (`bin/context-gauge.js`), finds it past the cap with a step left, pushes its branch, keeps its claim and worktree, and reports `OUTCOME: handoff` plus a `NEXT_STEPS:` line, ending `STATUS: DONE`. **Dispatching session:** reads that as neither a pass nor a failure. For a first call, `resolveFirstCallGate` returns `handoff` before any artifact check, only when `NEXT_STEPS` parses within `build`, `stories` and `test`. It then dispatches a fresh Task call in the same worktree: the call's own template, with the step list replaced by `NEXT_STEPS`. The gate (steps 3 to 5 above) runs on the last continuation's report.
+- **URL:** `plugin/skills/dispatch/two-call-gate.md` §8; `plugin/skills/dispatch/continuation-call.md` (`task-prompt.md`'s "Continuation call" heading points at it); `plugin/skills/flow/context-handoff.md`'s "Dispatched call"; `plugin/bin/lib/dispatch/first-call-artifact-check.js`'s `resolveFirstCallGate` and `parseNextSteps`
+- **Action:** **Dispatched call:** `/flow` Step 4 gauges its own context at a phase boundary (`bin/context-gauge.js`), finds it past the cap with a step left, pushes its branch, keeps its claim and worktree, and reports `OUTCOME: handoff` plus a `NEXT_STEPS:` line, ending `STATUS: DONE`. **Dispatching session:** reads that as neither a pass nor a failure. For a first call, `resolveFirstCallGate` returns `handoff` before any artifact check, only when `NEXT_STEPS` parses within `build`, `stories` and `test`. It then dispatches a fresh Task call in the same worktree: the call's own template, with the step list replaced by `NEXT_STEPS`, which a bundle reports per record and continues as a `record-steps=` token (`parseNextSteps`'s `stepArg`), targets unchanged. The gate (steps 3 to 5 above) runs on the last continuation's report.
 - **Should feel:** Invisible when it works. A long build finishes in a few fresh contexts instead of one slow one, and nothing is torn down or re-claimed between them.
 - **Should understand:**
   - The artifact check, claim-log check and stamp read all wait for the report that carries `build-test-ok`. A handoff report has not run every step yet, so none of them can pass or fail on it.
   - A handoff is bounded at three per run (`HANDOFF_BOUND`, counted in `handoff.json`'s `handoffCount`, shared by both calls). At the bound the gauge writes nothing and the call continues in place, so a fourth handoff report is not continued: the call is reported `build-test-blocked` (first call, §5) or `blocked` (second call, §6).
-  - A missing, empty, unknown or duplicated `NEXT_STEPS` entry fails closed to `blocked` rather than becoming a continuation that skips or repeats a step.
+  - A missing, empty, unknown or duplicated `NEXT_STEPS` entry, or a flat list from a bundle (the gate passes the bundle's records as `{ targets }`), fails closed to `blocked` rather than becoming a continuation that skips or repeats a step.
 - **Red flags:**
   - A handoff report routed to §5's teardown, which would release a claim the continuation needs.
   - The artifact check run on a handoff report.
@@ -99,4 +100,5 @@ files:
 - Updated during build of #3661: step 5. The dispatching session reads the first call's `verify.js` pass stamp (`checkFirstCallStamp`) before every call-2 dispatch, as a logged note rather than a gate. The first-call template's artifact is now the runner stamp plus `report.json`, never a raw `npm test` log.
 - Updated during build of #4006: step 5. Bare `verify.js --stamp-status` discovers `.claude-tweaks/verify-scope.json`, and `checkFirstCallStamp` accepts a complete composed per-suite verdict as verified, so a chunked first call no longer logs a degraded stamp note.
 - Updated during build of #4027: step 6. A dispatched call that crosses `/flow`'s context cap reports `OUTCOME: handoff` and is continued in a fresh Task call, bounded at three handoffs per run, instead of being gated as a failure.
+- Updated during build of #4548: step 6. The Continuation call's body moved from `dispatch/task-prompt.md` to `dispatch/continuation-call.md`. The rule did not change.
 - Related: #2837 (introduced the first-call artifact check), #2861 (claim-log line parser), #2391 (worktree-mirror rung of the record-resolution ladder).

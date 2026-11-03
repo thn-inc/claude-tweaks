@@ -1,0 +1,14 @@
+# Open Items — Route claim-targets.md tombstone Resume-line parse through the shared parser
+
+| # | Phase | Item | Status | Resolution |
+|---|-------|------|--------|------------|
+| 1 | build | SDD ruling — final-review Important + journey Minor fixed in-build (github-pr-scan.md item 10, steps-and-gates.md:92), not deferred: ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | accepted | ratified at Review Console — localized, the CLI exists, no human decision (fix-now under the deferral gate) |
+| 2 | build | SDD ruling — AC2.1 prose pin kept as a sentence-scoped clause split: ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | accepted | ratified at Review Console — a prose conformance pin is meant to break on rewording; the clause filter is the middle ground |
+| 3 | build | SDD ruling — pr-resume-line.js keeps parse-error-first argv handling like stale-claim-pr.js: ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | accepted | ratified at Review Console — parse-error-first matches stale-claim-pr.js's parseArgs; diverging one sibling would split the house pattern |
+| 4 | build | SDD ruling — residual final-review Minor fixed with one targeted dispatch past the single fix wave: ratify or reverse at the Review Console (staged/sdd-ruling-4.md) | accepted | ratified at Review Console — authorized by /build's deferral-ruling override of SDD's single fix wave |
+| 5 | review | review: claim-targets.md in-flight route anchors the Resume line to a run-id the same PR body supplies (pre-existing, deferred genuinely-larger; staged/review-followup-1.md) (staged/review-followup-1.md) | deferred | → backlog #4693 (Defer-reason: genuinely-larger); origin: review of #4659; files: plugin/skills/flow/claim-targets.md, plugin/bin/claim-targets.js, plugin/skills/flow/steps-and-gates.md; trigger: next backlog pick-up of the in-flight resume route; staged/review-followup-1.md |
+| 6 | review | review: three low-confidence findings left unfixed (pr-resume-line.js --run-id shape, key-order pin, clause-split pin; staged/review-unconfirmed-1.md) (staged/review-unconfirmed-1.md) | open | — |
+| 7 | review | github-pr-scan.md item 10 put the claim blob's runId into a shell command unvalidated (medium, lenses 3b/3c reproduced) | fixed | d78eb3940 |
+| 8 | review | claim-targets.md in-flight route proceeded on "Otherwise" after a stop list, so a failed gh or non-zero CLI exit fell through (medium, lens 3c reproduced) | fixed | d78eb3940 |
+| 9 | wrap-up | pr — PR #4676 — this run's own pr-first PR; disposition is Phase 4's merge decision | observation | — |
+| 10 | wrap-up | residue sweep suite probe — skipped via --no-suite (a fact pack never re-runs the suite); suite state taken from the runner stamp at 3460c81e0 (npm test: 19907 tests, 0 fail) | observation | — |

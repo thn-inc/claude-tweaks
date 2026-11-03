@@ -8,6 +8,8 @@ const path = require('path');
 const MOD = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'flow', 'preflight');
 const { ADOPTION_NOTES, PR_CONFLICT_NOTE, computeAdoption, parseChecklist, gatherPreflight, LEVER_KEYS, defaultDeps } = require(MOD);
 const { execFileSync } = require('child_process');
+const { STUB_SKIP } = require('../../helpers/path-stub');
+const { fakeGh } = require('../../helpers/fake-gh');
 
 // A fake main checkout with one run dir under .claude-tweaks/pipelines/.
 function mainRoot() {
@@ -334,6 +336,58 @@ test('defaultDeps().resolvePolicy applies computeDerivedDefaults, so merge-verif
   const resolved = defaultDeps(root).resolvePolicy(['merge-verification', 'integration-model'], runDir);
   assert.strictEqual(typeof resolved['merge-verification'].value, 'string', `merge-verification must be derived, got ${JSON.stringify(resolved['merge-verification'])}`);
   assert.strictEqual(typeof resolved['integration-model'].value, 'string', `integration-model must be derived, got ${JSON.stringify(resolved['integration-model'])}`);
+});
+
+test('defaultDeps().resolvePolicy hands the run config to computeDerivedDefaults: a merge-verification-only read under a run-pinned integration-model never spawns gh (#4578 AC13.1)', { skip: STUB_SKIP }, () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'flow-preflight-runpin-')));
+  const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  git('init', '-q'); git('config', 'user.email', 't@example.invalid'); git('config', 'user.name', 't');
+  git('commit', '-q', '--allow-empty', '-m', 'init');
+  git('remote', 'add', 'origin', 'https://github.com/o/n.git');
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-10-31T000000-record-7');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'integration-model: local-merge\n');
+  const KEY = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
+  const savedEnv = process.env[KEY];
+  process.env[KEY] = '1000';
+  const gh = fakeGh({ first: 'hang' });
+  let calls;
+  let resolved;
+  try {
+    resolved = defaultDeps(root).resolvePolicy(['merge-verification'], runDir);
+    calls = gh.count();
+  } finally {
+    gh.restore();
+    if (savedEnv === undefined) delete process.env[KEY]; else process.env[KEY] = savedEnv;
+  }
+  assert.strictEqual(calls, 0, 'the run pin decides merge-verification before any forge detection');
+  assert.strictEqual(resolved['merge-verification'].value, 'off');
+});
+
+test('defaultDeps().resolvePolicy carries a degraded forge detection onto the integration-model entry (#4578 Q10 seam)', { skip: STUB_SKIP }, () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'flow-preflight-degraded-')));
+  const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  git('init', '-q'); git('config', 'user.email', 't@example.invalid'); git('config', 'user.name', 't');
+  git('commit', '-q', '--allow-empty', '-m', 'init');
+  git('remote', 'add', 'origin', 'https://github.com/o/n.git');
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-11-01T000000-record-7');
+  fs.mkdirSync(runDir, { recursive: true });
+  const KEY = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
+  const savedEnv = process.env[KEY];
+  process.env[KEY] = '1000';
+  const gh = fakeGh({ first: 'hang' });
+  let resolved;
+  let calls;
+  try {
+    resolved = defaultDeps(root).resolvePolicy(['integration-model'], runDir);
+    calls = gh.count();
+  } finally {
+    gh.restore();
+    if (savedEnv === undefined) delete process.env[KEY]; else process.env[KEY] = savedEnv;
+  }
+  assert.strictEqual(calls, 2, 'a timeout is retried once, then the detection is degraded');
+  assert.strictEqual(resolved['integration-model'].value, 'local-merge');
+  assert.strictEqual(resolved['integration-model'].degraded, 'timeout', 'the Manifesto reads this field to avoid pinning a guess');
 });
 
 // #2861: /flow Step 2.8 logs its claim to decisions.md BEFORE Step 3 runs this

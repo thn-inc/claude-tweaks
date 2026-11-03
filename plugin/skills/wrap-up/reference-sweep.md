@@ -74,7 +74,12 @@ Resolve the `autonomy` ceiling per `_shared/autonomy-ceiling.md`.
   trailer. Stage every denial with its reason — over budget, over a cap, test file, merge-sensitive
   path.
 
-When staging a candidate, pack the repair (`{old} → {new}`), the `brokenBy` path, and — at
+When staging a candidate, write its full proposal to `staged/wrap-up-reference-{n}.md` and name
+that path in the finding's `stagePath`, so the Review Console files it under Reference repairs.
+When its target is ambiguous (Step 3), or it was denied as a test file or a merge-sensitive path,
+add a `Held: {reason}` line to that file's header (the lines before the first blank line), so
+`console-resolve.js --policy console-auto` leaves it `pending — reference-repair-held` for a human.
+An over-budget or over-cap denial carries no `Held:` line. Pack the repair (`{old} → {new}`), the `brokenBy` path, and — at
 `trusted`/`unattended` — `permittedInitiative`'s own reason string into the finding's `summary`
 field. `engine-render.js`'s Change column is a plain string copy of `summary`; that column is the
 only place this detail can surface on an engine-rendered console.

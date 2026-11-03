@@ -46,7 +46,7 @@ files:
 - **Red flags:**
   - A routine commit, PR or issue body denied because its prose holds `>` or `cd`.
   - A `cp`/`sed -i`/`git push` after a kept body's delimiter going unseen.
-  - A Bash call that stalls: every scan is linear, and a command that changes directory more than 16 distinct ways collapses to the main checkout, so it is denied rather than slowly resolved.
+  - A Bash call that stalls: every scan is linear, and past 16 distinct `cd`s the walk has lost the cwd, so in this worktree-always session a relative write or commit from there is denied rather than slowly resolved (`get-a-disguised-main-checkout-write-denied-4303.md` step 2).
 
 ## Origin
 - Created during build of #3989. A 2026-10-23 `/claude-tweaks:dispatch next` Routine firing was refused while running `queue-pull-script.md`'s own grouping snippet. The redirect scan had read `openIds.length > 0` inside the heredoc as a write to `0)`. The task review closed the fail-closed cases: shell-fed and expanding bodies, unterminated or `$`-quoted delimiters, glued and grouped shell readers, and continuation lines.

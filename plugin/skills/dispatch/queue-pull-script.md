@@ -538,8 +538,8 @@ done
 
 # Second pass: final tier, now with the probed files available for the
 # key-files-covered upgrade. `strong` is excluded from $DISPATCH_GROUPS for
-# this pull and logged for a staged Close proposal (dispatch never closes on
-# GitHub itself — the proposal is the only write path, fingerprint-
+# this pull and logged for a staged Close proposal (dispatch never closes a
+# shipped candidate on GitHub itself — the proposal is its only write path, fingerprint-
 # deduplicated the same way tidy's own Close (GitHub) shape is). `weak`
 # stays eligible, logged for build-time context. `none` is silent.
 if node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_EXCLUSIONS" "$DISPATCH_SHIPPED_PR_FILES" > "${DISPATCH_GROUPS}.tmp" <<NODE_EVAL_EOF

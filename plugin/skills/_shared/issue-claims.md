@@ -38,6 +38,24 @@ the target file's own blob sha, so a rejection there really is per-file and stay
 The MCP transport (`gh` absent) runs the contents-API algorithm as written below, over the MCP
 tools — git-CAS requires a git push credential the MCP-only case doesn't have.
 
+**Missing branch (#4495).** A remote with no `claims-registry` branch is its own outcome on both
+transports — git: the fetch fails `couldn't find remote ref`; contents API: a rejected create-only
+PUT whose re-read is absent and whose `GET repos/{owner}/{repo}/branches/claims-registry` is 404 —
+never contested, never a generic transport failure. `claim-targets.js` bootstraps it once per run
+from the default branch tip (`claim-store.js`'s `ensureClaimsBranch`: a create-only git push, else
+`POST repos/{owner}/{repo}/git/refs`; "already exists" is a lost race and counts as success), then
+retries; a refused creation exits `6` naming the branch and the reason verbatim; a network failure
+or rate limit during it is transient (exit `4`). The MCP transport bootstraps via the **Bootstrap
+the branch** bullet below. `release-claim.js` never creates it: a branchless remote is exit `3` (a
+"nothing to release" note, no comment, on either `gh` transport).
+
+**Permission refusal (#4899).** Under the `gh` transport, a claim read or write that GitHub refuses
+for permissions (`permission-denied`: a plain HTTP 401/403, not a rate limit) stops `claim-targets.js`
+with exit `7`, naming the operation and the reason, with or without `--keep-going`, and releases the
+claims this run already took. It is neither a contest nor transient: a retry under the same token is
+refused again. The gh-absent MCP claim procedure keeps such a refusal transient and never reaches
+exit `7`.
+
 **One keyspace, one classifier, both transports.** `claims/issue-<number>.json`, a blob on the
 `claims-registry` branch, is the *only* lock — checked and written identically whether this run
 has `gh` on PATH or is going through the MCP bridge. `bin/lib/issues/claims.js`'s
@@ -69,7 +87,7 @@ node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
   - **gh CLI:** `gh api "repos/{owner}/{repo}/git/refs/heads/${CLAIMS_BRANCH}"` to check;
     `DEFAULT_SHA=$(gh api "repos/{owner}/{repo}/commits/$(gh api "repos/{owner}/{repo}" -q .default_branch)" -q .sha)`
     then `gh api "repos/{owner}/{repo}/git/refs" -f "ref=refs/heads/${CLAIMS_BRANCH}" -f "sha=${DEFAULT_SHA}"`
-    to create.
+    to create. `claim-targets.js` (so flow Step 2.8) runs this itself — do not hand-run it as well.
 <!-- /when -->
 <!-- when: transport=mcp -->
   - **MCP:** call `create_branch` with name = `CLAIMS_BRANCH` (`claims-registry`,
@@ -164,19 +182,38 @@ node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
      check for an in-flight build (#974) — the MCP-transport equivalent of the in-flight check
      the "In-flight detection at claim time (#315)" section below documents for the `gh`-CLI
      transport (`tombstoneInFlightPr`, run inside `bin/claim-targets.js`, which does not apply
-     here — this manual MCP path has no CLI to delegate to). Parse the tombstone content already
+     here — the tombstone check has no CLI of its own). Parse the tombstone content already
      extracted in step 2: when its `reason` field starts with `pr-opened:` and its `link` field is
      a well-formed `https://github.com/{owner}/{repo}/pull/{number}` URL for the SAME owner/repo
      as the issue being claimed (anything else — missing link, wrong repo, malformed value — skip
      this check and proceed to the write below, the identical fail-open posture
-     `tombstoneInFlightPr` uses), read that PR's state via `mcp__github__pull_request_read`
-     (`get` method) — the one documented PR-read exception to `_shared/github-write-transport.md`'s
-     "Pull requests are not covered by this mapping" note, already used the same way by
-     `_shared/pr-checklist-refresh.md`'s Phase-checklist update section. A still-`OPEN` state
-     means a build for this issue already exists and reclaiming would race it — stop here, do not
-     write, and report it the same way `flow/claim-targets.md`'s in-flight card does. Any other
-     state (closed, merged) or a failed read falls through to the write below unchanged. Otherwise,
-     write **conditionally** (**with** `sha` = the current file's blob sha from step 1):
+     `tombstoneInFlightPr` uses), read that PR's state via `mcp__github__pull_request_read` (`get`
+     method) — one of two documented PR-read exceptions (the other is the stale listing below) to
+     `_shared/github-write-transport.md`'s "Pull requests are not covered by this mapping" note,
+     already used the same way by `_shared/pr-checklist-refresh.md`'s Phase-checklist update
+     section. A still-`OPEN` state means a build for this issue already exists and reclaiming
+     would race it — stop here, do not write, and report it the same way `flow/claim-targets.md`'s
+     in-flight card does. Any other state (closed, merged) or a failed read falls through to the
+     write below unchanged. For a `'stale'` blob, the counterpart (#4423): run
+     `node "${CLAUDE_PLUGIN_ROOT}/bin/stale-claim-pr.js" --claim-file "{CLASSIFY_INPUT path}" --repo "{owner}/{repo}"`
+     — the matcher `bin/claim-targets.js` runs on the `gh` path (`claim-store.js`'s
+     `staleClaimInFlightPr`); it validates the run id first, so a claim with no usable run id never
+     lists PRs. A JSON verdict is the answer. Exit 2 means `gh` is absent: list the repo's open PRs
+     once per claim run via `mcp__github__list_pull_requests` (`state: open`, `perPage: 100`, paging
+     until exhausted), Write every page's entries as one JSON array to the path
+     `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value stale-claim-open-prs.json`
+     prints, and re-run it adding `--listing "{that path}"` (it normalizes the MCP entries itself).
+     `"match": true` stops the claim and writes nothing, as the tombstone case does.
+     **Resume exception (#4588):** when the run carries `RESUME_PR=<url>` (`dispatch resume`) and
+     the verdict is `"match": true` with a `link` exactly equal to it, take the conditional write
+     below instead of stopping, and log the claim with the `resume-pr: {url}` suffix
+     (`flow/claim-targets.md`'s "Log the claim"). A `pr-opened:` tombstone above still stops
+     whatever `RESUME_PR` says, and so does a verdict whose `link` differs. A `failure` verdict
+     keeps its fail-open-with-a-line handling: a non-null
+     `failure`, a non-zero exit other than the exit 2 that triggers the listing, or a listing that
+     could not be fetched or written, falls through to the write (fail open), after one line saying
+     the check failed — never silently, so it is not read as no marked PR.
+     Otherwise, write **conditionally** (**with** `sha` = the current file's blob sha from step 1):
 <!-- when: transport=gh -->
      - **gh CLI:** the same `PUT contents` call as step 3, adding `-f "sha=${CURRENT_SHA}"`. (This
        transport's in-flight check runs inside `bin/claim-targets.js` itself, not this manual
@@ -207,7 +244,8 @@ node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
   label step, #1631 — `--remove-in-progress` is still accepted, now a no-op, and
   `--keep-in-progress-label` is the only way to suppress it); `--remove-grants` (stripping
   `auto:build`/`auto:merge-pending`/`auto:merge`) stays opt-in — see "Grant revocation" below.
-  Exit `0` released / `3` already released or swept / `4` held by another run / `5` claim blob is
+  Exit `0` released / `3` already released or swept (a branchless remote is `3`, with a
+  nothing-to-release note on either `gh` transport) / `4` held by another run / `5` claim blob is
   corrupt/unreadable (nothing written — distinct from `4`, since a corrupt blob can never
   self-resolve the way a live holder's claim eventually expires; do not retry-and-wait on `5` the
   way `4` permits) / `1` failed / `2` malformed or `gh` absent. The MCP path stays the manual
@@ -305,7 +343,8 @@ tombstoned and released like any other, so a later run can reclaim it immediatel
 it absent/unreadable (in which case the release is a no-op and the target is surfaced in
 `releaseFailed`, not silently retried a second time). Either way the target is never left
 invisibly holding a claim until TTL — visible in `released` or `releaseFailed`, never dropped from
-both.
+both. A read-back that GitHub refuses for permissions stays `claim-unverified` (exit `5`): the write
+was accepted and only its confirmation was refused, so exit `7` covers the claim read and write only.
 
 ## The mirror (human visibility only — never identity)
 
@@ -485,13 +524,19 @@ falls through to the reclaim behavior below unchanged (fail open). `link` is unt
 with registry-branch write access can set it), so `tombstoneInFlightPr` validates it — a well-formed
 `https://github.com/{owner}/{repo}/pull/{number}` URL for the SAME owner/repo as the issue being
 claimed — before ever calling `gh pr view`; anything else (wrong repo, malformed, non-string) is
-treated the same as a missing `link` and never reaches `gh` at all.
+treated the same as a missing `link` and never reaches `gh` at all. A `'stale'` claim whose `runId`
+matches an open same-repo PR's `claude-tweaks-run:` marker is in flight too (#4423,
+`staleClaimInFlightPr`) — same `inFlight` envelope, same fail-open (the gh-CLI path also writes
+one stderr warning on a failed check). Under `dispatch resume` (#4588), passing
+`--resume-pr <url>` lets a `'stale'` claim whose in-flight link is exactly `<url>` re-claim; a
+`pr-opened:` tombstone still stops, and so does a stale claim whose link differs — "The lock" step 4
+mirrors this exception.
 `bin/lib/claim-targets/claim-targets.js` — the group-claim loop `/claude-tweaks:flow` Step 2.8 and
 `/claude-tweaks:dispatch` actually call — imports this same `tombstoneInFlightPr` from
 `claim-store.js` and reports the stopped target via `inFlight`/`reason: 'in-flight'` instead of
 `outcome` (`flow/claim-targets.md`'s "Branch on exit code"). That CLI is the `gh`-transport only
 (see "The lock" step 4's MCP note above) — "The lock" step 4's own in-flight check (#974) is
-where the `gh`-absent MCP path gets the equivalent stop, since it has no CLI to delegate to.
+where the `gh`-absent MCP path gets the equivalent stop, since the tombstone check has no CLI of its own.
 
 Every claim, skip, break, and release is logged to the run's `decisions.md` per
 `_shared/auto-decision-log.md` (status `AUTO`, reversible: release overwrites the blob with a
@@ -501,8 +546,15 @@ tombstone) — `bin/release-claim.js` appends its own line; claim-side entries g
 ## Close-via-merge
 
 The agent never runs `gh issue close` (non-reversible network write — see
-`_shared/auto-mode-contract.md`). Issues close through the user's own merge action instead, by
-ensuring the closing keyword already exists in a commit that will reach the default branch:
+`_shared/auto-mode-contract.md`), except for the two record-closing exceptions that contract's
+Never-reversible list names: the Parent-Gate Procedure's **Close the parent below the floor**
+(`wrap-up/verification-brief-parent-gate.md`), which closes a decomposition parent after its
+sub-issues' merge has landed, and `_shared/pr-first-merge-post-merge.md` Step 4.0's post-merge
+pass, which closes a PR's `Fixes` records after a confirmed PR merge into a base that is not the
+default branch (GitHub does not act on the keywords there), each under the restore contract that
+`_shared/auto-mode-contract.md` exception states. Every other issue closes through the user's own
+merge action instead, by ensuring the closing keyword already exists in a commit that will reach
+the default branch:
 
 - **Worktree path (single-spec, the common case):** before handing off to
   `/superpowers:finishing-a-development-branch`, `/wrap-up` cleanup Section C commits an empty
@@ -512,10 +564,11 @@ ensuring the closing keyword already exists in a commit that will reach the defa
   and its "Push and Create PR" option never calls `gh pr create` (no PR body either). A carrier
   commit on the branch itself works across every option that skill offers, because GitHub scans
   every commit reaching the default branch, not just a merge commit or PR body.
-- **Worktree path (multi-terminal parallel):** `flow/worktree-merge.md` merges directly —
-  `git merge --no-ff {branch} -F "{subject-dir}/message.txt"`, the composed message carrying one
-  `Fixes #{issue}` line per issue. The explicit `--no-ff` guarantees a real merge commit to carry
-  the keyword, so no separate carrier commit is needed.
+- **Worktree path (multi-terminal parallel):** `flow/worktree-merge.md` merges through
+  `_shared/local-merge-sequence.md` Step 3
+  (`git merge --no-ff {branch} -F "{subject-dir}/message.txt"`), the composed message carrying
+  one `Fixes #{issue}` line per issue. The explicit `--no-ff` guarantees a real merge commit to
+  carry the keyword, so no separate carrier commit is needed.
 - **Current-branch path:** no merge commit, PR, or branch finish exists — the same
   `Fixes #{issue}` lines go in the final wrap-up commit message (per spec, in multi-spec runs).
 
@@ -570,6 +623,7 @@ Fail-closed on claiming; never block the session.
 | Release fails | Log; TTL is the backstop |
 | Release attempted but the blob's current `runId` is not this run's | Skip the write, log — a successor holds the lock (ownership rule) |
 | Blob listing fails in `/tidy` | Skip the sweep step, note it in the report |
+| Claim read or write refused for permissions (`permission-denied`, `gh` transport) | `claim-targets.js` exits `7`, releasing this run's claims — see the exception below. The gh-absent MCP procedure keeps it transient (the next row) |
 | Any other `gh`/MCP failure during claim | Drop that issue, log, continue — partial batch over hung batch |
 
 **Recognition.** A `gh`/MCP failure in the table above is classified per
@@ -577,7 +631,7 @@ Fail-closed on claiming; never block the session.
 follows that file's taxonomy; every other failure class in this table applies exactly as
 stated.
 
-**Group-claim-all-or-abort exception.** The row above assumes an independent-batch context (dispatch's per-issue loop, `/tidy`'s sweep), where dropping one issue and continuing is safe. A consumer claiming multiple targets under the group-claim-all-or-abort invariant (`flow/claim-targets.md`'s Step 2.8) gets different treatment: any transient `gh`/MCP failure during a claim read or write — not just a classification-based contest — triggers the same all-or-abort release-and-stop (or `keep-going` skip) as a live contest, since silently continuing with one named target unclaimed reopens the double-build race group-claiming exists to prevent.
+**Group-claim-all-or-abort exception.** The row above assumes an independent-batch context (dispatch's per-issue loop, `/tidy`'s sweep), where dropping one issue and continuing is safe. A consumer claiming multiple targets under the group-claim-all-or-abort invariant (`flow/claim-targets.md`'s Step 2.8) gets different treatment: any transient `gh`/MCP failure during a claim read or write — not just a classification-based contest — triggers the same all-or-abort release-and-stop (or `keep-going` skip) as a live contest, since silently continuing with one named target unclaimed reopens the double-build race group-claiming exists to prevent. A `permission-denied` claim read or write is the exception to "transient": under the `gh` transport it stops the run with exit `7`, with or without `keep-going`, and releases the claims this run already took (a retry under the same token is refused again). The gh-absent MCP claim procedure stays transient and does not reach exit `7`.
 
 ## Deliverable-name collisions (bin/ CLIs)
 

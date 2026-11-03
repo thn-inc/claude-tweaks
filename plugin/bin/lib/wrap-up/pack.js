@@ -17,7 +17,7 @@ const { resolvePolicyConfig } = require('../policy-schema');
 const { parseManifestYaml } = require('../flow/manifest');
 const { parseDependencies, DEFER_REASONS } = require('../issues/record');
 const { runWithConcurrency } = require('../reconcile/gh-pool');
-const { parseRepo, repoSlug } = require('../repo-resolve');
+const { gateOriginRepo, repoSlug, ghOptions } = require('../repo-resolve');
 const { readRunStateWithParent } = require('../hooks/context');
 const { ownedPlansFiles } = require('./ledger-ownership');
 const { ledgerRowCells } = require('./ledger-cells');
@@ -32,16 +32,20 @@ const BIN = path.join(__dirname, '..', '..');
 // default and comes back as a truncation error) and a 30 s wall clock, so one
 // hung `gh` can never hold the whole pack open.
 // Merged with `cwd` at each call site; never mutated.
-const EXEC_OPTS = { maxBuffer: 32 * 1024 * 1024, timeout: 30000 };
+const EXEC_OPTS = { maxBuffer: 32 * 1024 * 1024, timeout: 30000, windowsHide: true };
+
+// The default `wrap` of execBounded and execSync: hands the options through unchanged.
+const keepOptions = (_args, opts) => opts;
 
 // Node reports a timeout kill as the generic `Command failed: …`, which reads
 // as a crash and hid #3479's 0.5 s of headroom — so a timeout kill (the
 // shared isTimeoutError check) is rethrown naming the timeout. Every other
 // rejection (ENOENT for gh-absent, a maxBuffer overflow) passes through
-// unchanged.
-async function execBounded(deps, cmd, args, cwd) {
+// unchanged. `wrap` transforms the options per call: identity by default,
+// ghOptions (#4505's GH_HOST seam) for a gh spawn.
+async function execBounded(deps, cmd, args, cwd, wrap = keepOptions) {
   try {
-    return await deps.execFile(cmd, args, { cwd, ...EXEC_OPTS });
+    return await deps.execFile(cmd, args, wrap(args, { cwd, ...EXEC_OPTS }));
   } catch (err) {
     if (isTimeoutError(err)) {
       const target = cmd === 'node' ? path.basename(args[0]) : args[0];
@@ -66,8 +70,10 @@ const POLICY_KEYS = ['integration-branch', 'work-links'];
 // stderr is piped rather than inherited or ignored: a failing call cannot
 // spray the CLI's own stderr, and its diagnostic still survives on
 // `err.stderr` for any consumer module that classifies a failure by message.
-function execSync(bin, args, { cwd } = {}) {
-  return execFileSync(bin, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+// `wrap` transforms the options, as execBounded's does: identity by default,
+// ghOptions (#4505's GH_HOST seam) for a gh spawn.
+function execSync(bin, args, { cwd } = {}, wrap = keepOptions) {
+  return execFileSync(bin, args, wrap(args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }));
 }
 
 function defaultGit(args, opts) {
@@ -77,7 +83,7 @@ function defaultGit(args, opts) {
 // Synchronous sibling of defaultGit, for the one ladder rank (#2385) that
 // needs `gh` before resolveInputs has anything async to await.
 function defaultGhSync(args, opts) {
-  return execSync('gh', args, opts);
+  return execSync('gh', args, opts, ghOptions);
 }
 
 // In-process replacement for `node resolve-policy.js --values <key>` (#1930
@@ -153,7 +159,8 @@ function toSummary(r) {
 // The frontmatter `record:` line wins over the filename when both exist.
 // `parkedAtShaping` is true when any file for that record carries the flag —
 // read only from the leading frontmatter block, so a body line quoting the key
-// never counts (#3399).
+// never counts (#3399). `record:` is read from that block only too, so a quoted
+// body line never wins over the filename (#4814).
 function headerEntries(deps, dir) {
   const byRecord = new Map();
   for (const name of deps.readdir(dir)) {
@@ -161,9 +168,9 @@ function headerEntries(deps, dir) {
     if (!m) continue;
     let text = '';
     try { text = deps.readFile(path.join(dir, name)); } catch { continue; }
-    const rec = /^record:\s*(\d+)\s*$/m.exec(text);
-    const n = Number(rec ? rec[1] : m[1]);
     const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
+    const rec = front !== null ? /^record:\s*(\d+)\s*$/m.exec(front[1]) : null;
+    const n = Number(rec ? rec[1] : m[1]);
     const parked = front !== null && /^parked-at-shaping:\s*true\s*$/m.test(front[1]);
     byRecord.set(n, byRecord.get(n) === true || parked);
   }
@@ -607,7 +614,7 @@ function buildProbes(inputs, deps) {
     if (inputs.records.length === 0) throw new Error('records unresolved — no materialized header or manifest found');
   };
   const gh = async (args) => {
-    try { return await execBounded(deps, 'gh', args, inputs.worktree); } catch (err) {
+    try { return await execBounded(deps, 'gh', args, inputs.worktree, ghOptions); } catch (err) {
       if (err && err.code === 'ENOENT') throw new Error('gh-absent');
       throw err;
     }
@@ -712,11 +719,17 @@ function buildProbes(inputs, deps) {
       // Enterprise remote can't otherwise be inferred by a plain `gh` call
       // the way #2425 already fixed for the child spawn alone. `repoSlug`
       // resolves to bare `owner/repo` on github.com, a true no-op there.
-      let repoArgs = [];
+      let remote = null;
       try {
-        const repoSpec = parseRepo(git(['remote', 'get-url', 'origin']));
-        if (repoSpec) repoArgs = ['--repo', repoSlug(repoSpec)];
+        remote = git(['remote', 'get-url', 'origin']);
       } catch { /* no origin remote — every gh call below falls back to its own cwd-derived default, unchanged */ }
+      // #4933: the origin host must carry a positive GitHub signal before gh is
+      // handed it. The refusal throws OUTSIDE the catch above (inside it, it
+      // would be swallowed and a bare `gh issue list` would hit github.com),
+      // before the first gh call, so wrapProbe reports it as the probe's failure.
+      const { spec: repoSpec, refusal } = gateOriginRepo(remote, deps.gateDeps);
+      if (refusal) throw new Error(refusal);
+      const repoArgs = repoSpec ? ['--repo', repoSlug(repoSpec)] : [];
       const { stdout } = await gh(['issue', 'list', '--state', 'open', '--json', 'number,title,body', '--limit', '200', ...repoArgs]);
       const records = JSON.parse(stdout);
       if (inputs.policy.workLinks === 'native') {

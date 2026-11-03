@@ -33,6 +33,7 @@ const { resolveTarget, writeStagedItem } = require('../stage-item/write');
 const { formatEntry, appendEntry, resolveTarget: resolveDecisionTarget } = require('../log-decision/append');
 const { TURN_CLASSES } = require('./turn-class');
 const { canonicalRealpath, lstatType } = require('../path-guard');
+const { ghOptions } = require('../repo-resolve');
 
 const PROFILES = ['fast-lane', 'standard'];
 const DEFER_REASON = 'needs-human-decision';
@@ -168,7 +169,7 @@ const metricList = (checks) => checks.map((c) => `${c.metric} ${c.value}/${c.cei
 // The real gh runner: an argv array, bounded, quiet (a failed lookup is
 // handled by the caller, so gh's own stderr is piped, never echoed).
 function defaultGh(args, { cwd, timeout }) {
-  return execFileSync('gh', args, { encoding: 'utf8', cwd, timeout, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  return execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', cwd, timeout, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }));
 }
 
 const firstLine = (s) => String(s).split('\n').find((l) => l.trim()) || String(s);

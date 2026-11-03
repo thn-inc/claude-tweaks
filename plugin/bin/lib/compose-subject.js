@@ -8,9 +8,9 @@
 // Overview's first sentence, falling back to ## Current State's first
 // sentence for shaping-mode/specShapedBody records, which carry no ##
 // Overview; migrationNote = the ## Breaking Change section; releaseNote =
-// the subject record's own ## Release Note section, never aggregated across
-// a bundle — every record in the bundle must still carry a non-empty
-// section, but only the subject's text is rendered), and prints
+// every record's own ## Release Note section, one per record, lowest number
+// first (#4634 — formerly only the lowest-numbered record's note reached the
+// commit; every record in the bundle must carry a non-empty section), and prints
 // bin/lib/release/subject.js's composeSubject() output. Skill prose reaches
 // the composer only through this CLI — the pure module has no shell surface.
 //
@@ -35,7 +35,8 @@
 // commit-scope token composeSubject rejects) OR a record that cannot be composed (no resolvable Type, `breaking` label with no
 // ## Breaking Change section — the composer's own usage error, message on
 // stderr); 2 `gh` absent or owner/repo unresolvable (no --repo and no readable
-// origin remote); 3 an external read failed — a `gh issue view` call, the
+// origin remote, or an origin host with no GitHub signal — refused before any gh
+// call, #4933); 3 an external read failed — a `gh issue view` call, the
 // `git diff --name-only -z` behind --range, or the `gh pr diff --name-only`
 // behind --pr, or an `--out-dir` write failed.
 // --range is read with -z and --end-of-options so a C-quoted (non-ASCII) path
@@ -47,11 +48,12 @@
 // malformed invocation and an uncomposable record share one code. A fourth
 // code would only be worth adding if some caller could act differently on
 // "bad CLI invocation" vs. "shaping defect in the record"; today every merge
-// site (pr-first-merge.md's two squash sites, and the four local-merge sites
-// in merge-subject-composer-conformance.test.js's LOCAL_SITES) treats any
+// site (pr-first-merge.md's two squash sites, and the one local-merge fence in
+// _shared/local-merge-sequence.md — merge-subject-composer-conformance.test.js's
+// LOCAL_SEQUENCE — that four callers run) treats any
 // non-zero compose-subject.js exit identically (the composer exiting non-zero stops the fence before any merge), so a fourth
 // code would carry no distinguishable behavior at the only call sites that
-// exist — six merge-site fences would need editing for a distinction nothing
+// exist — three merge-site fences would need editing for a distinction nothing
 // reads. Revisit if a caller ever needs to route "uncomposable" (park the
 // record) differently from "bad invocation" (a caller bug).
 'use strict';
@@ -64,7 +66,7 @@ const {
   parseRecordFacets, typeOf, extractSection: extractSectionShared,
 } = require('./issues/record');
 const {
-  parseRepo, ghAvailable, remoteUrl, repoSlug,
+  parseRepo, ghAvailable, remoteUrl, repoSlug, ghOptions, pinExplicitRepoHost, gateOriginRepo,
 } = require('./repo-resolve');
 const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('./shared-primitives');
 const { readCommitScope, readListKey } = require('./policy');
@@ -249,12 +251,15 @@ function aggregateType(records) {
 const realDeps = {
   ghAvailable,
   remoteUrl,
+  // #4505: an explicit --repo's host reaches the issue-type GraphQL fallback,
+  // which threads no --hostname for github.com.
+  pinGhHost: (repoSpec) => pinExplicitRepoHost(repoSpec),
   // stderr piped, not inherited (#3028): execFileSync's default echoes the
   // child's stderr to ours, so the handled #2561 `Unknown JSON field:
   // "issueType"` rejection printed gh's full field list ahead of a successful
   // compose and read as a failure. err.stderr (isUnknownIssueTypeField) and
   // err.message (the fatal paths) still carry the text.
-  runner: (args) => execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true }),
+  runner: (args) => execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true })),
   fetchIssueType: fetchIssueTypeGraphQL,
   readCommitScope: () => readCommitScope(process.cwd()),
   readCommitScopePaths: () => readListKey(process.cwd(), 'commit-scope-paths'),
@@ -274,8 +279,15 @@ function run(argv, deps = realDeps) {
 
   let remote = null;
   if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-  const repoSpec = opts.repo ? parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : parseRepo(remote);
+  let repoSpec;
+  if (opts.repo) repoSpec = parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`);
+  else {
+    const gated = gateOriginRepo(remote, deps.gateDeps);
+    if (gated.refusal) { deps.stderr(`compose-subject.js: ${gated.refusal}\n`); return 2; }
+    repoSpec = gated.spec;
+  }
   if (!repoSpec) { deps.stderr('compose-subject.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
+  if (opts.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
   const slug = repoSlug(repoSpec);
 
   const records = [];
@@ -333,7 +345,7 @@ function run(argv, deps = realDeps) {
     return 1;
   }
   const migrationNote = breakingRecords.map((r) => extractSection(r.body, 'Breaking Change')).filter(Boolean).join('\n\n');
-  const releaseNote = releaseNoteOf(subjectRecord.body);
+  const releaseNotes = records.map((r) => releaseNoteOf(r.body));
 
   let scope = opts.scope;
   if (scope === null) {
@@ -377,7 +389,7 @@ function run(argv, deps = realDeps) {
       breaking: breakingRecords.length > 0,
       summary: firstSentence(extractSection(subjectRecord.body, 'Overview') || extractSection(subjectRecord.body, 'Current State')),
       migrationNote,
-      releaseNote,
+      releaseNote: releaseNotes,
       fixes: opts.numbers,
       keepOpen: opts.keepOpen,
       tag: opts.tag,

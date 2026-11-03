@@ -347,3 +347,127 @@ test('CLI --run precedence: a run-dir config.yml override wins over the derived 
   const json = JSON.parse(cli(['--run', runDir, 'merge-verification'], dir));
   assert.deepEqual(json['merge-verification'], { value: 'wait', source: 'run-config' });
 });
+
+// --- #4578: a degraded forge detection is surfaced; the merge-verification
+// fallback honours the run's integration-model pin before detecting ---
+
+const { computeDerivedDefaults: computeDerived } = require('../plugin/bin/lib/policy-derived-defaults');
+
+const DEGRADE_TIMEOUT = { reason: 'timeout', timeoutMs: 1000, attempts: 2 };
+const DEGRADE_EXIT = { reason: 'timeout-then-exit', timeoutMs: 1000, attempts: 2 };
+
+test('computeDerivedDefaults: a degraded forge detection adds the reason-code degraded field and reports the degrade object (Q13, AC23.1)', () => {
+  const detect = (root, opts) => { opts.onDegrade({ ...DEGRADE_TIMEOUT }); return 'local-merge'; };
+  const fresh = () => ({ 'integration-model': { value: null, source: 'default' } });
+
+  const seen = [];
+  const out = computeDerived(fresh(), ['integration-model'], '/unused-root', {
+    detectIntegrationModel: detect,
+    onDegrade: (key, d) => seen.push([key, d]),
+  });
+  assert.deepEqual(out['integration-model'], { value: 'local-merge', source: 'default', degraded: 'timeout' });
+  assert.deepEqual(seen, [['integration-model', DEGRADE_TIMEOUT]]);
+
+  // The side channel is opt-in: no deps.onDegrade still adds the field.
+  const noChannel = computeDerived(fresh(), ['integration-model'], '/unused-root', { detectIntegrationModel: detect });
+  assert.deepEqual(noChannel['integration-model'], { value: 'local-merge', source: 'default', degraded: 'timeout' });
+
+  // A throwing deps.onDegrade never escapes.
+  const thrown = computeDerived(fresh(), ['integration-model'], '/unused-root', {
+    detectIntegrationModel: detect,
+    onDegrade: () => { throw new Error('reporter broke'); },
+  });
+  assert.deepEqual(thrown['integration-model'], { value: 'local-merge', source: 'default', degraded: 'timeout' });
+});
+
+test('computeDerivedDefaults: a non-degraded detection keeps the entry shape exactly { value, source }', () => {
+  let called = 0;
+  const out = computeDerived({ 'integration-model': { value: null, source: 'default' } }, ['integration-model'], '/unused-root', {
+    detectIntegrationModel: () => 'local-merge',
+    onDegrade: () => { called++; },
+  });
+  assert.deepEqual(out['integration-model'], { value: 'local-merge', source: 'default' });
+  assert.equal(called, 0, 'deps.onDegrade is never called without a degrade');
+});
+
+test('computeDerivedDefaults: a merge-verification-only request reports a degraded fallback detection (Q7)', () => {
+  const fresh = () => ({ 'merge-verification': { value: null, source: 'default' } });
+  const seen = [];
+  const out = computeDerived(fresh(), ['merge-verification'], '/unused-root', {
+    resolveIntegrationModel: (root, opts) => { opts.onDegrade({ ...DEGRADE_EXIT }); return 'local-merge'; },
+    onDegrade: (key, d) => seen.push([key, d]),
+  });
+  assert.deepEqual(out['merge-verification'], { value: 'off', source: 'default', degraded: 'timeout-then-exit' });
+  assert.deepEqual(seen, [['merge-verification', DEGRADE_EXIT]]);
+
+  const clean = computeDerived(fresh(), ['merge-verification'], '/unused-root', {
+    resolveIntegrationModel: () => 'local-merge',
+    onDegrade: () => { throw new Error('must not be called'); },
+  });
+  assert.deepEqual(clean['merge-verification'], { value: 'off', source: 'default' });
+});
+
+test('computeDerivedDefaults: an invalid integration-model entry requested with merge-verification re-detects with onDegrade attached (Q7)', () => {
+  const seen = [];
+  const out = computeDerived({
+    'integration-model': { value: null, source: 'default', invalid: true },
+    'merge-verification': { value: null, source: 'default' },
+  }, ['integration-model', 'merge-verification'], '/unused-root', {
+    resolveIntegrationModel: (root, opts) => { opts.onDegrade({ ...DEGRADE_TIMEOUT }); return 'local-merge'; },
+    onDegrade: (key, d) => seen.push([key, d]),
+  });
+  assert.deepEqual(out['integration-model'], { value: null, source: 'default', invalid: true });
+  assert.deepEqual(out['merge-verification'], { value: 'off', source: 'default', degraded: 'timeout' });
+  assert.deepEqual(seen, [['merge-verification', DEGRADE_TIMEOUT]]);
+});
+
+test('computeDerivedDefaults: merge-verification reusing a degraded integration-model carries the same degraded reason, with one onDegrade call (plan review)', () => {
+  const fresh = () => ({
+    'integration-model': { value: null, source: 'default' },
+    'merge-verification': { value: null, source: 'default' },
+  });
+  let resolveCalls = 0;
+  const seen = [];
+  const out = computeDerived(fresh(), ['integration-model', 'merge-verification'], '/unused-root', {
+    detectIntegrationModel: (root, opts) => { opts.onDegrade({ ...DEGRADE_TIMEOUT }); return 'local-merge'; },
+    resolveIntegrationModel: () => { resolveCalls++; return 'local-merge'; },
+    onDegrade: (k) => seen.push(k),
+  });
+  assert.deepEqual(out['merge-verification'], { value: 'off', source: 'default', degraded: 'timeout' });
+  assert.deepEqual(seen, ['integration-model']);
+  assert.equal(resolveCalls, 0, 'the reuse path never calls resolveIntegrationModel');
+
+  // control: a clean detection on the same reuse path keeps exactly { value, source }
+  const clean = computeDerived(fresh(), ['integration-model', 'merge-verification'], '/unused-root', {
+    detectIntegrationModel: () => 'local-merge',
+    resolveIntegrationModel: () => { resolveCalls++; return 'local-merge'; },
+  });
+  assert.deepEqual(clean['merge-verification'], { value: 'off', source: 'default' });
+});
+
+test('computeDerivedDefaults: a merge-verification-only request honours the run\'s config.yml integration-model pin before forge detection (Q8, AC18.1, AC18.2)', () => {
+  const fresh = () => ({ 'merge-verification': { value: null, source: 'default' } });
+  const run = (runConfigRaw) => {
+    const probe = { resolveCalls: 0, seenModel: null };
+    const deps = {
+      resolveIntegrationModel: () => { probe.resolveCalls++; return 'local-merge'; },
+      deriveMergeVerification: (root, d) => { probe.seenModel = d.integrationModel(root); return 'merge-when-green'; },
+    };
+    if (runConfigRaw !== undefined) deps.runConfigRaw = runConfigRaw;
+    probe.out = computeDerived(fresh(), ['merge-verification'], '/unused-root', deps);
+    return probe;
+  };
+
+  const pinned = run('integration-model: pr-first\n');
+  assert.equal(pinned.resolveCalls, 0);
+  assert.equal(pinned.seenModel, 'pr-first');
+  assert.deepEqual(pinned.out['merge-verification'], { value: 'merge-when-green', source: 'default' });
+
+  // Controls: an invalid run value is not a pin (Q12, AC22.1); an absent runConfigRaw is no pin.
+  const bogus = run('integration-model: bogus\n');
+  assert.equal(bogus.resolveCalls, 1, 'an invalid run value runs detection');
+  assert.equal(bogus.seenModel, 'local-merge');
+  const absent = run(undefined);
+  assert.equal(absent.resolveCalls, 1, 'no runConfigRaw runs detection');
+  assert.equal(absent.seenModel, 'local-merge');
+});

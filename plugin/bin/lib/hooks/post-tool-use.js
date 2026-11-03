@@ -2,7 +2,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { gitTargets } = require('./git-command');
+const { gitTargets, subjectLine } = require('./git-command');
 const ctxLib = require('./context');
 const runDirResolve = require('./run-dir-resolve');
 const skillInvocation = require('./skill-invocation');
@@ -21,7 +21,7 @@ const { ISSUE_REF_SOURCE } = require('../issue-branch-tracking');
 // Reused rather than reimplemented a third time (CLAUDE.md's don't-duplicate
 // rule) — `resolveIntegrationBranch`'s fallback profile (no explicit arg,
 // policy.yml then origin/HEAD) fits this file's EnterWorktree handler as-is.
-const { resolveIntegrationBranch, bareIntegrationName } = require('./worktree-reap');
+const { resolveIntegrationBranch, bareIntegrationName, parseWorktreeList } = require('./worktree-reap');
 // Session-scoped marker path for the non-EnterWorktree ad-hoc-run-dir rate-limit (#1333) — see
 // stampAdHocRunDir below.
 const { sessionTmpPath } = require('../session-tmp');
@@ -95,13 +95,13 @@ const BARE_ISSUE_REF_RE = /#\d+/g;
 // Harness-wide, not code-health-specific: fires for any bare issue reference,
 // including harness-health-labelled or human-filed issues.
 //
-// Takes `recentByDir` (dir -> that dir's own recentCommits() results, built
-// once in run() and shared with the breadcrumb loop) rather than the raw
-// target list, so each of possibly several commit-action targets sharing one
-// dir is checked against its OWN commit instead of every target re-reading
-// back the same current-HEAD commit.
-function checkClosingKeyword(recentByDir) {
-  for (const commits of recentByDir.values()) {
+// Takes `commitLists` (each dir's own recentCommits() results, built once in
+// run() and shared with the breadcrumb loop, plus the commits run() matched to
+// lost targets, #4303) rather than the raw target list, so each of possibly
+// several commit-action targets sharing one dir is checked against its OWN
+// commit instead of every target re-reading back the same current-HEAD commit.
+function checkClosingKeyword(commitLists) {
+  for (const commits of commitLists) {
     for (const commit of commits) {
       // Guard against a `git commit` that never actually landed — see
       // recentCommits()'s comment. If this commit isn't fresh, skip it
@@ -598,7 +598,36 @@ function run(ctx) {
   const hasCommand = typeof command === 'string' && !!command;
   // Computed once and shared below — the breadcrumb loop and the
   // closing-keyword check both need the same command/cwd's git targets.
-  const targets = hasCommand ? gitTargets(command, ctx.cwd) : [];
+  const resolved = hasCommand ? gitTargets(command, ctx.cwd) : [];
+  // #4303: a git command the scanner resolved from a cwd it lost (`lost: true`, past
+  // git-command.js's CWD_SET_CAP) ran in a repo the walk does not know, and its `dir` is only the
+  // walk's start. Its commit is looked for in every candidate repo instead: that start, the main
+  // checkout pre-tool-use's walk collapses onto, the main checkout of each of the command's readings
+  // (the targets marked `reading`: base d9aa6b82d's own reading of the command, git-command.js's
+  // BASE_VIEW), and each worktree `git worktree list` gives for those (the lost cwd may have been
+  // any of them). A reading is a candidate, never a commit target of its own. None is invented:
+  // each is a real checkout, and only a fresh commit in one counts (lostCommitFor,
+  // checkClosingKeyword).
+  const targets = resolved.filter((t) => !t.reading);
+  const readingDirs = resolved.filter((t) => t.reading).map((t) => t.dir);
+  const checkoutsByMain = new Map();
+  const checkoutsOf = (main) => {
+    if (!checkoutsByMain.has(main)) {
+      const listed = runGit(['worktree', 'list', '--porcelain'], main).stdout;
+      checkoutsByMain.set(main, [main, ...parseWorktreeList(listed).filter((e) => !e.bare && !e.prunable).map((e) => e.path)]);
+    }
+    return checkoutsByMain.get(main);
+  };
+  const mainOf = new Map();
+  const mainCheckoutOf = (d) => {
+    if (!mainOf.has(d)) mainOf.set(d, wtDetect.mainCheckoutRoot(d));
+    return mainOf.get(d);
+  };
+  const candidateDirs = (t) => {
+    if (!t.lost) return [t.dir];
+    const mains = new Set([ctx.cwd || t.dir, ...readingDirs].map(mainCheckoutOf).filter(Boolean));
+    return [...new Set([t.dir, ...[...mains].flatMap(checkoutsOf)].map((d) => path.resolve(d)))];
+  };
 
   // Fetch each dir's own N most recent commits ONCE per dir (a single git
   // spawn returns hash + timestamp + message together), shared by both the
@@ -608,9 +637,10 @@ function run(ctx) {
   // gets each of its own real commits back, not the same current-HEAD
   // commit read N times. Oldest-first, to line up with `targets`' own
   // left-to-right command order (git log itself returns newest-first).
+  // A lost target (#4303) has no dir of its own, so it adds to no count here.
   const commitCountByDir = new Map();
   for (const t of targets) {
-    if (t.action !== 'commit') continue;
+    if (t.action !== 'commit' || t.lost) continue;
     commitCountByDir.set(t.dir, (commitCountByDir.get(t.dir) || 0) + 1);
   }
   const recentByDir = new Map();
@@ -621,6 +651,51 @@ function run(ctx) {
     const idx = dirCursor.get(dir) || 0;
     dirCursor.set(dir, idx + 1);
     return idx < list.length ? list[idx] : null;
+  }
+  // #4303: the commit a lost commit target made. Each candidate offers its fresh commits (inside
+  // COMMIT_FRESHNESS_WINDOW_SECONDS) that no other target's commit list above already holds, read
+  // once per candidate, and the target takes the one whose subject is its own message's (the
+  // scanner's `subject`, from the command's `-m` text; any fresh one when the command's text gives
+  // none): the oldest such in each candidate, when the candidates offer exactly one. Otherwise (the
+  // commit did not land, a fresh commit has another subject, or two checkouts offer one) the target
+  // has no commit (null): the closing-keyword check judges none for it and it leaves no breadcrumb,
+  // since which commit is this command's own is unknowable, and no warning beats one about another
+  // session's commit.
+  const lostCommitFor = new Map();
+  const judgedLostCommits = [];
+  const lostCommitTargets = targets.filter((t) => t.action === 'commit' && t.lost);
+  if (lostCommitTargets.length) {
+    const held = new Set();
+    for (const list of recentByDir.values()) for (const c of list) if (c.hash) held.add(c.hash);
+    const isFresh = (c) => c.ts !== null && Math.abs(Date.now() / 1000 - c.ts) <= COMMIT_FRESHNESS_WINDOW_SECONDS;
+    const offers = new Map();
+    const offerOf = (dir) => {
+      if (!offers.has(dir)) {
+        const recent = recentCommits(dir, (commitCountByDir.get(dir) || 0) + lostCommitTargets.length);
+        offers.set(dir, recent.filter((c) => c.hash && isFresh(c) && !held.has(c.hash)).reverse());
+      }
+      return offers.get(dir);
+    };
+    const taken = new Set();
+    for (const t of lostCommitTargets) {
+      const found = new Map(); // hash -> { dir, commit }
+      // With no readable message (`-F`, an editor, a variable) any fresh commit is a match, so only a
+      // lone one is taken.
+      const matches = (c) => !taken.has(c.hash) && (typeof t.subject !== 'string' || subjectLine(c.message) === t.subject);
+      for (const dir of candidateDirs(t)) {
+        const commit = offerOf(dir).find(matches);
+        // Two candidates can be one checkout (the start a subdirectory of it): one commit offered is one.
+        if (commit && !found.has(commit.hash)) found.set(commit.hash, { dir, commit });
+      }
+      if (found.size === 1) {
+        const [match] = found.values();
+        taken.add(match.commit.hash);
+        lostCommitFor.set(t, match);
+        judgedLostCommits.push(match.commit);
+      } else {
+        lostCommitFor.set(t, null);
+      }
+    }
   }
   // #2553: a 'push' target carries no per-call commit of its own (unlike
   // 'commit', which advances through nextCommitFor above) — it pushes
@@ -661,16 +736,21 @@ function run(ctx) {
       seen.add(`${ev.action}\u0000${ev.hash}\u0000${ev.dir}`);
     }
     for (const target of targets) {
-      const commit = target.action === 'commit' ? nextCommitFor(target.dir) : null;
-      const hash = commit ? commit.hash : (target.action === 'push' ? headHashFor(target.dir) : null);
+      const lostCommit = lostCommitFor.get(target);
+      if (lostCommit === null) continue; // #4303: a lost commit with no commit of its own logs nothing
+      const dir = lostCommit ? lostCommit.dir : target.dir;
+      let commit = null;
+      if (lostCommit) commit = lostCommit.commit;
+      else if (target.action === 'commit') commit = nextCommitFor(dir);
+      const hash = commit ? commit.hash : (target.action === 'push' ? headHashFor(dir) : null);
       if (hash) {
-        const key = `${target.action}\u0000${hash}\u0000${target.dir}`;
+        const key = `${target.action}\u0000${hash}\u0000${dir}`;
         if (seen.has(key)) continue;
         seen.add(key);
       }
       ctxLib.appendEvent(ownedRun.dir, 'commit', {
         action: target.action,
-        dir: target.dir,
+        dir,
         hash: hash || undefined,
       }, ownedRun.attribution);
     }
@@ -678,7 +758,7 @@ function run(ctx) {
 
   // Closing-keyword check (warn tier) — deliberately NOT gated on ctx.runDir.
   if (hasCommand) {
-    const warning = checkClosingKeyword(recentByDir);
+    const warning = checkClosingKeyword([...recentByDir.values(), judgedLostCommits]);
     if (warning) return warning;
   }
 

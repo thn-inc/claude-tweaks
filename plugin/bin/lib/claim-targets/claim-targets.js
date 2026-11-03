@@ -21,12 +21,14 @@
 
 const path = require('path');
 const claimStore = require('../issues/claim-store');
-const { classifyClaimBlob, claimPayload, releasePayload } = require('../issues/claims');
+const {
+  classifyClaimBlob, claimPayload, releasePayload, CLAIMS_BRANCH,
+} = require('../issues/claims');
 const { ensureLabelPayload } = require('../issues/labels');
 const { runClassified, isTimeoutError } = require('../shared-primitives');
 const { appendEntry, formatEntry, resolveTarget } = require('../log-decision/append');
 const { CLAIM_LOG_SECTION, CLAIM_LOG_STEP, claimLogText } = require('../log-decision/claim-log');
-const { tombstoneInFlightPr } = claimStore;
+const { tombstoneInFlightPr, refusalText } = claimStore;
 
 const BOT_IN_PROGRESS = 'bot:in-progress';
 const BOT_IN_PROGRESS_DESC = 'Bot state: an agent currently holds the claim on this record';
@@ -36,20 +38,37 @@ const BOT_IN_PROGRESS_DESC = 'Bot state: an agent currently holds the claim on t
 const BOT_IN_PROGRESS_COLOR = '6A737D';
 const ABORT_REASON = 'never-started: file-overlap group partial claim';
 
-const USAGE = 'usage: claim-targets.js --run-id <id> --targets <n,n,...> [--keep-going] [--run <run-dir>] [--steps <step,step,...>] [--help]\n'
+const USAGE = 'usage: claim-targets.js --run-id <id> --targets <n,n,...> [--keep-going] [--run <run-dir>] [--steps <step,step,...>] [--resume-pr <url>] [--help]\n'
   + '  --steps <step,step,...>: the resolved /flow step list; one with neither build nor test claims\n'
   + '           nothing and exits 0 with {claimed:[],alreadyOwned:[],skipped:[],skipGuard:"no-build-or-test"}\n'
+  + '  --resume-pr <url>: re-claims a stale claim whose in-flight PR is exactly <url> (dispatch resume, #4588);\n'
+  + '           the envelope then carries resumedPr:[{issue,link}] and the claim-log line names the PR\n'
   + '  --run <run-dir>: writes the Step 2.8 claim-log line to that run dir\'s decisions.md for every claimed target\n'
   + '  exit 0 = all claimed (or, with --keep-going, partial; or the --steps skip-guard)\n'
   + '  exit 2 = malformed invocation or missing dependency\n'
-  + '  exit 3 = contested, or a pr-opened tombstone whose linked PR is still open\n'
+  + '  exit 3 = contested, or in flight: a pr-opened tombstone whose linked PR is still open,\n'
+  + '           or a stale claim whose run marker sits on an open same-repo PR\n'
   + '           (contested: {contested:[{issue,holder}], ...}; in-flight: {inFlight:[{issue,link}], ...})\n'
-  + '  exit 4 = transient gh failure\n'
+  + '  exit 4 = transient gh failure (incl. a claims-registry bootstrap that hit a network failure or a rate limit)\n'
   + '  exit 5 = claim write reported success but the post-write read-back did not\n'
-  + '           confirm it (a live claim carrying this runId) — {unverified:[{issue}], ...}\n';
+  + '           confirm it (a live claim carrying this runId) — {unverified:[{issue}], ...}\n'
+  + '  exit 6 = the claims-registry branch is missing on origin and creating it was refused (e.g. permission, ruleset, gh absent) —\n'
+  + '           {branchMissing:{branch,reason}, released, releaseFailed}; with or without --keep-going\n'
+  + '  exit 7 = GitHub refused a claim read or write (a 401/403: the token cannot reach this repository or the claims-registry branch) —\n'
+  + '           {permissionDenied:{issue,operation:"read"|"write",reason}, released, releaseFailed}; with or without --keep-going\n';
 
 function errText(e) {
   return String((e && e.message) || e);
+}
+
+// A bootstrap refusal's reason is git/forge text that travels onto stderr, the
+// exit-6 JSON, the flow card and, under a headless dispatch, a filed issue
+// body (#4495). Flatten it to one bounded line — control characters and line
+// breaks become single spaces — so it reads verbatim but cannot forge extra
+// log lines or run unbounded.
+function oneLineReason(text, max = 500) {
+  const flat = String(text).replace(/[\p{Cc}\s]+/gu, ' ').trim();
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
 
 // Claim blobs are remote data: an unparseable one is classified 'unreadable'
@@ -61,7 +80,7 @@ function parseJsonOrNull(text) {
 
 function parseArgs(argv) {
   const opts = {
-    runId: null, targetsRaw: null, keepGoing: false, help: false, runDir: null, stepsRaw: null,
+    runId: null, targetsRaw: null, keepGoing: false, help: false, runDir: null, stepsRaw: null, resumePr: null,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -72,6 +91,7 @@ function parseArgs(argv) {
     else if (a === '--keep-going') opts.keepGoing = true;
     else if (a === '--run') opts.runDir = next();
     else if (a === '--steps') opts.stepsRaw = next();
+    else if (a === '--resume-pr') opts.resumePr = next();
     else return { error: `unknown argument: ${a}` };
   }
   return opts;
@@ -136,7 +156,7 @@ function parseSteps(raw) {
 // decisions.md the main-checkout bookkeeping-stamps gate never reads. A
 // refusal throws — the caller's existing try/catch (see `run()` below)
 // records it in `claimLogFailures` and never un-claims the target.
-function defaultAppendClaimLog({ runDir, issue, transport }) {
+function defaultAppendClaimLog({ runDir, issue, transport, resumePr }) {
   const target = resolveTarget({ runDir });
   if (!target.ok) {
     throw new Error(`run dir not usable for the claim log (${target.reason})`);
@@ -148,7 +168,7 @@ function defaultAppendClaimLog({ runDir, issue, transport }) {
       status: 'AUTO',
       now: Date.now(),
       step: CLAIM_LOG_STEP,
-      text: claimLogText(issue, transport),
+      text: claimLogText(issue, transport, resumePr),
       reversibility: 'high',
     }),
   });
@@ -195,6 +215,10 @@ function holderFromFreshRead(deps, repoSlug, issue) {
 // guarantees that.
 function verifyClaimLanded(deps, repoSlug, issue, runId, knownTip) {
   const verify = claimStore.readClaimBlob(deps, repoSlug, issue, knownTip);
+  // A refused read-back (`permission-denied` included) deliberately stays `false`,
+  // so the caller reports 'unverified' (exit 5): the write itself was accepted and
+  // only its confirmation was refused, so "unverified" is accurate. #4899's exit 7
+  // covers the claim read and write only.
   if (verify.failure) return false;
   const content = verify.absent ? null : verify.content;
   const classified = classifyClaimBlob(content, deps.now());
@@ -282,6 +306,15 @@ function run(argv, deps) {
     return 2;
   }
 
+  // #4588: `--resume-pr` takes a PR url. A bare trailing flag (`undefined`), a
+  // blank value, or a value that is itself another flag (`--resume-pr
+  // --keep-going`) is malformed — never silently read as "no resume".
+  if (opts.resumePr !== null
+    && (typeof opts.resumePr !== 'string' || opts.resumePr.trim() === '' || opts.resumePr.startsWith('--'))) {
+    deps.stderr(USAGE);
+    return 2;
+  }
+
   // #4027: `flow/claim-targets.md`'s skip-guard — a step list with neither
   // `build` nor `test` (a dispatched group's second call, any wrap-up-only
   // resume) has nothing left to build, so nothing to lock. Checked after all
@@ -343,6 +376,8 @@ function run(argv, deps) {
   const skipped = [];
   const labelFailures = [];
   const transportByIssue = {};
+  // #4588: stale claims `--resume-pr` re-claimed instead of stopping in-flight.
+  const resumedPr = [];
 
   // #1467: amortizes this loop's git-CAS fetch across the whole batch instead
   // of one `git fetch` per issue. `null` means "no trusted tip — fetch fresh
@@ -376,11 +411,13 @@ function run(argv, deps) {
   // fresh per-issue read either finds the write landed (releases it,
   // reclaimable immediately) or still doesn't see it (reports it in
   // `releaseFailed` — visible, not silently dropped). Then report the stop
-  // alongside what was released and what could not be. Called only from
-  // `stopOrSkip()` below, which is in turn the single call site every stop
-  // below shares — so this cannot drift from any of them. `exitCode` is 3 for
+  // alongside what was released and what could not be. Called from
+  // `stopOrSkip()` below (the contested, in-flight, transient and unverified
+  // stops) and directly from `handleBranchMissing` (exit 6) and
+  // `permissionStop` (exit 7), which have their own envelopes. `exitCode` is 3 for
   // a `contested`/`inFlight` envelope, 4 for a `transient` one, 5 for an
-  // `unverified` one.
+  // `unverified` one, 6 for a `branchMissing` one (#4495), 7 for a
+  // `permissionDenied` one (#4899).
   function abort(envelope, exitCode, extraToRelease = []) {
     const { released, releaseFailed } = releaseClaimedThisRun(
       deps, repoSlug, opts.runId, [...claimedThisRun, ...extraToRelease],
@@ -392,7 +429,7 @@ function run(argv, deps) {
   // The one shape every stop site below shares: with `--keep-going`, record
   // `{issue, reason: skipReason, ...extra}` in `skipped` and keep looping
   // (signaled by returning `null` — `abort()`'s exit codes are always 3, 4,
-  // or 5, never null/0, so callers can tell the two outcomes apart with
+  // 5, 6, or 7, never null/0, so callers can tell the two outcomes apart with
   // `!== null`); otherwise abort the whole run via the envelope
   // `{[envelopeKey]: [{issue, ...extra}]}`. `extra` is exactly what differs
   // between call sites (an `error`, a `link`, or a `holder`) and is identical
@@ -407,31 +444,105 @@ function run(argv, deps) {
     return abort({ [envelopeKey]: [{ issue, ...extra }] }, exitCode, releaseThisIssue ? [issue] : []);
   }
 
-  // Per-`$LINK` memoization of `tombstoneInFlightPr`'s `gh pr view` call,
-  // scoped to this one `run()` invocation (a fresh Map every call — never a
+  // Per-argv memoization of the in-flight checks' PR reads, scoped to this
+  // one `run()` invocation (a fresh Map every call — never a
   // cross-invocation cache). Issues released together from one multi-spec
   // build commonly tombstone with the identical `link`, so this collapses
-  // what would otherwise be one `gh pr view` per tombstoned target down to
-  // one per distinct link (#977). Wraps only this call site's `gh`, not
-  // `deps.gh` itself, so every other `deps.gh` call (label list/create, issue
-  // edit, issue comment) is untouched. Only successful calls are cached — a
-  // thrown failure is left uncached and re-thrown so `tombstoneInFlightPr`'s
-  // own fail-open catch still applies per-target, exactly as before.
-  const prViewCache = new Map();
-  function cachedGhForPrView(args) {
+  // what would otherwise be one `tombstoneInFlightPr` `gh pr view` per
+  // tombstoned target down to one per distinct link (#977), and
+  // `staleClaimInFlightPr`'s `gh pr list` — identical for every stale target
+  // of a repo — to one call per run (#4423). Wraps only this call site's
+  // `gh`, not `deps.gh` itself, so every other `deps.gh` call (label
+  // list/create, issue edit, issue comment) is untouched. A thrown failure is
+  // cached too and re-thrown on every hit, so each helper's own fail-open
+  // catch still applies per target, but a hanging `gh` costs one timeout per
+  // run, not one per target.
+  const prReadCache = new Map();
+  function cachedPrReadGh(args) {
     const key = JSON.stringify(args);
-    if (prViewCache.has(key)) return prViewCache.get(key);
-    const result = deps.gh(args);
-    prViewCache.set(key, result);
-    return result;
+    if (!prReadCache.has(key)) {
+      try {
+        prReadCache.set(key, { result: deps.gh(args) });
+      } catch (error) {
+        prReadCache.set(key, { error });
+      }
+    }
+    const hit = prReadCache.get(key);
+    if (hit.error) throw hit.error;
+    return hit.result;
   }
 
-  for (const issue of targets) {
+  // #4495: a remote with no `claims-registry` branch makes every target's read
+  // or create-only write look absent/rejected, which used to read as a
+  // contest. The branch is created at most once per run: a second sighting
+  // after a bootstrap that reported success is transient (the remote has not
+  // caught up yet), never a second bootstrap. A bootstrap that failed
+  // transiently (a network failure or a rate limit — secondary, or primary
+  // reported as network-failure — a later run may succeed) is remembered in
+  // `bootstrapTransientError`: a later target that finds the branch still
+  // missing reports that same name, not `claims-branch-missing`. A refused
+  // bootstrap is run-level — every target would hit it — so it exits 6 even
+  // under `--keep-going`, bypassing `stopOrSkip`. Returns `{retry: true}` (the
+  // caller re-processes the same target) or `{code}` (a `stopOrSkip` result:
+  // `null` means skipped under `--keep-going`, else the exit code to return).
+  let bootstrapAttempted = false;
+  let bootstrapTransientError = null;
+  function handleBranchMissing(issue) {
+    // Whatever tip this run believed is untrustworthy once the branch is
+    // known missing — discard the chain on every path out, a skip included.
+    knownTip = null;
+    if (bootstrapAttempted) {
+      return { code: stopOrSkip(issue, 'transient', 'transient', 4, { error: bootstrapTransientError || 'claims-branch-missing' }) };
+    }
+    bootstrapAttempted = true;
+    const b = claimStore.ensureClaimsBranch(deps, repoSlug);
+    // A transient bootstrap failure is not a refusal: a later run's bootstrap
+    // may succeed, so it is exit 4 (or a --keep-going skip). A secondary rate
+    // limit keeps its own name; every other transient (a network failure, a
+    // primary rate limit) is a network failure.
+    if (!b.ok && b.transient) {
+      bootstrapTransientError = b.failure === 'secondary-rate-limit'
+        ? 'claims-branch-bootstrap-rate-limited'
+        : 'claims-branch-bootstrap-network-failure';
+      // The envelope names the class; the underlying reason goes to stderr,
+      // once, on the attempt itself (later sightings reuse the remembered name).
+      deps.stderr(`claim-targets: ${CLAIMS_BRANCH} bootstrap failed transiently: ${oneLineReason(b.reason)} — re-run later\n`);
+      return { code: stopOrSkip(issue, 'transient', 'transient', 4, { error: bootstrapTransientError }) };
+    }
+    if (!b.ok) {
+      const reason = oneLineReason(b.reason);
+      deps.stderr(`claim-targets: ${CLAIMS_BRANCH} branch missing on origin and could not be created: ${reason} — create it from the default branch\n`);
+      return { code: abort({ branchMissing: { branch: CLAIMS_BRANCH, reason } }, 6) };
+    }
+    return { retry: true };
+  }
+
+  // #4899: GitHub refused a claim read or write — a token without access to the
+  // repository or the claims-registry branch. Every target would meet the same
+  // refusal, so it is run-level like a refused bootstrap: it exits 7 even under
+  // `--keep-going`, bypassing `stopOrSkip`, and the claims this run already took
+  // are released by `abort`. Returns the exit code.
+  function permissionStop(issue, operation, result) {
+    const reason = oneLineReason(refusalText(result.error) || 'permission-denied');
+    deps.stderr(`claim-targets: GitHub refused the claim ${operation} for #${issue}: ${reason} — check the token's access to this repository and the ${CLAIMS_BRANCH} branch\n`);
+    return abort({ permissionDenied: { issue, operation, reason } }, 7);
+  }
+
+  for (let i = 0; i < targets.length; i += 1) {
+    const issue = targets[i];
     const read = claimStore.readClaimBlob(deps, repoSlug, issue, knownTip);
     if (read.failure) {
       knownTip = null;
+      // A refused read is exit 7 (#4899); every other read failure stays exit 4.
+      if (read.failure === 'permission-denied') return permissionStop(issue, 'read', read);
       const stop = stopOrSkip(issue, 'transient', 'transient', 4, { error: read.failure });
       if (stop !== null) return stop;
+      continue;
+    }
+    if (read.branchMissing) {
+      const missing = handleBranchMissing(issue);
+      if (missing.retry) { i -= 1; continue; }
+      if (missing.code !== null) return missing.code;
       continue;
     }
     // A git-CAS success carries a chainable commit-sha tip; anything else
@@ -442,6 +553,7 @@ function run(argv, deps) {
 
     const content = read.absent ? null : read.content;
     const classified = classifyClaimBlob(content, deps.now());
+    let resumeLink = null; // #4588: set only by the 'stale' branch below when `--resume-pr` matches
 
     // A `pr-opened:` tombstone whose linked PR is still open means a build
     // already completed for this issue and is awaiting merge — reclaiming
@@ -451,7 +563,7 @@ function run(argv, deps) {
     // the check itself, falls straight through unchanged (fail open) —
     // see `tombstoneInFlightPr`'s own doc comment in claim-store.js.
     if (classified.state === 'tombstone') {
-      const inFlight = tombstoneInFlightPr(content, cachedGhForPrView, repoOwner, repoName);
+      const inFlight = tombstoneInFlightPr(content, cachedPrReadGh, repoOwner, repoName);
       if (inFlight) {
         const stop = stopOrSkip(issue, 'in-flight', 'inFlight', 3, { link: inFlight.link });
         if (stop !== null) return stop;
@@ -483,6 +595,30 @@ function run(argv, deps) {
       const stop = stopOrSkip(issue, 'contested', 'contested', 3, { holder });
       if (stop !== null) return stop;
       continue;
+    }
+
+    // A 'stale' claim (TTL-expired, not self-owned) whose run's marker still
+    // sits on an open same-repo PR is in flight, not abandoned — reclaiming it
+    // would rebuild finished work (#4423). Same stop/skip path as the
+    // `pr-opened:` tombstone above; fails open the same way. Called through
+    // `claimStore.` so the module-level spy pattern reaches it. A failed check
+    // reclaims but says so on stderr, so it is not mistaken for "no marked PR".
+    if (classified.state === 'stale') {
+      const inFlight = claimStore.staleClaimInFlightPr(content, cachedPrReadGh, repoOwner, repoName, (e) => {
+        deps.stderr(`claim-targets: stale-claim open-PR check failed for #${issue} (reclaiming) — ${errText(e)}\n`);
+      });
+      if (inFlight && opts.resumePr !== null && inFlight.link === opts.resumePr) {
+        // #4588: the one exception — the caller is resuming exactly this PR
+        // (`/dispatch resume`), so the stale claim is re-claimed below instead
+        // of stopping in flight. Exact string equality with the link
+        // `staleClaimInFlightPr` returns; a pr-opened tombstone never reaches here.
+        // Recorded in `resumedPr` only once the claim lands (below).
+        resumeLink = inFlight.link;
+      } else if (inFlight) {
+        const stop = stopOrSkip(issue, 'in-flight', 'inFlight', 3, { link: inFlight.link });
+        if (stop !== null) return stop;
+        continue;
+      }
     }
 
     // Reclaimable: 'absent' (create-only) or 'tombstone'/'stale' not self-owned
@@ -517,16 +653,24 @@ function run(argv, deps) {
     const write = claimStore.writeClaimBlob(deps, repoSlug, issue, writeOpts);
 
     if (write.failure || write.secondaryRateLimit) {
+      if (write.failure === 'permission-denied') return permissionStop(issue, 'write', write);
       // A secondary/abuse rate limit is transient, never contested — a
       // throttle must not masquerade as another agent holding the claim
       // (record-697's incident read exactly that way before diagnosis,
       // #787's amendment). Either way this issue's write never confirmed a
       // git tip — discard the chain (see the `knownTip` comment above
-      // `claimedThisRun`).
+      // `claimedThisRun`). A refused write (`permission-denied`) is exit 7 and
+      // returned above; every other write failure is exit 4 (#4899).
       knownTip = null;
       const reason = write.secondaryRateLimit ? 'secondary-rate-limit' : write.failure;
       const stop = stopOrSkip(issue, 'transient', 'transient', 4, { error: reason });
       if (stop !== null) return stop;
+      continue;
+    }
+    if (write.branchMissing) {
+      const missing = handleBranchMissing(issue);
+      if (missing.retry) { i -= 1; continue; }
+      if (missing.code !== null) return missing.code;
       continue;
     }
     if (!write.ok) {
@@ -581,6 +725,7 @@ function run(argv, deps) {
     }
 
     claimedThisRun.push(issue);
+    if (resumeLink !== null) resumedPr.push({ issue, link: resumeLink });
 
     try {
       ensureAndAddLabel(deps.gh, issue);
@@ -611,7 +756,12 @@ function run(argv, deps) {
   if (opts.runDir !== null) {
     for (const issue of claimedThisRun) {
       try {
-        deps.appendClaimLog({ runDir: opts.runDir, issue, transport: transportByIssue[issue] });
+        // `resumePr` rides along only for an issue `--resume-pr` re-claimed, so
+        // every other call keeps its existing `{runDir, issue, transport}` shape.
+        const resumed = resumedPr.find((r) => r.issue === issue);
+        deps.appendClaimLog({
+          runDir: opts.runDir, issue, transport: transportByIssue[issue], ...(resumed ? { resumePr: resumed.link } : {}),
+        });
       } catch (e) {
         const error = errText(e);
         claimLogFailures.push({ issue, error });
@@ -623,6 +773,7 @@ function run(argv, deps) {
   deps.stdout(JSON.stringify({
     claimed: claimedThisRun, alreadyOwned, skipped, labelFailures, transportByIssue,
     ...(opts.runDir !== null ? { claimLogFailures } : {}),
+    ...(opts.resumePr !== null ? { resumedPr } : {}),
   }));
   return 0;
 }

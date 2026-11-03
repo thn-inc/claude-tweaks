@@ -25,15 +25,18 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { isPathContained } = require('../shared-primitives');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
-const { ghAvailable: sharedGhAvailable, parseRepo } = require('../repo-resolve');
+const {
+  ghAvailable: sharedGhAvailable, parseRepo, repoSlug, ghOptions,
+} = require('../repo-resolve');
 const { fetchNativeParent } = require('../issues/native-dependencies');
 const { fetchLinkedPRs } = require('../issues/linked-prs');
-const { parentGateState } = require('../issues/acceptance');
+const { parentGateState, dispositionState } = require('../issues/acceptance');
 const { exceedsOversightFloor, maxRiskTier } = require('../issues/oversight-floor');
-const { parseRecordFacets } = require('../issues/record');
+const { parseRecordFacets, LABELS, parseParent, parseSubIssues } = require('../issues/record');
 const { resolvePolicyKeys } = require('../policy-schema');
 const { readRunStateWithParent, readRunState } = require('../hooks/context');
 const { resolveRecords, closingRecords } = require('./pack');
+const { readPacket } = require('./packet-gather');
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 const { splitNul, parseStatusPorcelainZ } = require('../git-z');
 const { CLOSING_KEYWORD_ALTERNATION } = require('../issue-branch-tracking');
@@ -41,15 +44,16 @@ const { CLOSING_KEYWORD_ALTERNATION } = require('../issue-branch-tracking');
 // Shared factory (not two hand-duplicated functions) so defaultGit and
 // defaultGh can never again drift on their execFileSync options the way
 // #1230 found them to (defaultGit missing the `timeout` defaultGh already
-// had) -- one options object, reused by construction.
-function makeDefaultRunner(cmd) {
+// had) -- one options object, reused by construction. `wrap` transforms that
+// object per call: identity for git, ghOptions (#4505's GH_HOST seam) for gh.
+function makeDefaultRunner(cmd, wrap = (_args, o) => o) {
   return function run(args, cwd) {
-    return execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000, windowsHide: true });
+    return execFileSync(cmd, args, wrap(args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000, windowsHide: true }));
   };
 }
 
 const defaultGit = makeDefaultRunner('git');
-const defaultGh = makeDefaultRunner('gh');
+const defaultGh = makeDefaultRunner('gh', ghOptions);
 
 // Registry of check functions, populated by Tasks 2-5. Each entry:
 // { name: string, fn: ({runDir, originalRunDir, base, repoRoot, cwd, expectations, deps}) => {result, detail} }.
@@ -677,7 +681,28 @@ function ghAvailable(deps, cwd) {
 // {owner}/{repo} placeholder substitution (gh-api-module-pattern skill) --
 // the repo slug has to be resolved locally first, via the same `deps.git`
 // seam every other check in this file already uses.
-function resolveParent(n, deps, cwd) {
+//
+// #4551: two link models. `native` (the shape above) reads GitHub's native
+// sub-issue relationship; `body-text` reads the record's own `Parent: #N`
+// metadata line (`parseParent`) from `gh issue view N --json body` -- no
+// `git remote` call and no GraphQL call, since a body-text project has no
+// native relationship to query. `workLinks` is the `work-links` policy value
+// (`resolveWorkLinks`); an absent argument means `native`, so a direct caller
+// that predates it keeps its behavior. A record with no `Parent:` line resolves
+// `parent: null` (a collapsed decomposition legitimately produces parentless
+// records), never an error.
+function resolveParent(n, deps, cwd, workLinks) {
+  if (workLinks === 'body-text') {
+    try {
+      const data = JSON.parse(deps.gh(['issue', 'view', String(n), '--json', 'body'], cwd));
+      // A reply with no `body` key, or a non-string one, is a malformed read (unknown), not a record
+      // with no `Parent:` line; an explicit null body is an issue with no body, so it has no parent.
+      if (!data || (data.body !== null && typeof data.body !== 'string')) return { ok: false, error: `could not parse body for #${n}` };
+      return { ok: true, parent: parseParent(data.body) };
+    } catch (err) {
+      return { ok: false, error: `gh issue view (body) failed for #${n} (${err.message})` };
+    }
+  }
   let remote;
   try {
     remote = deps.git(['remote', 'get-url', 'origin'], cwd);
@@ -706,7 +731,15 @@ function resolveParent(n, deps, cwd) {
 // as resolveParent. One JSON object per output line; `state` is upper-cased to
 // the vocabulary parentGateState reads. Zero sub-issues is a gather failure,
 // never a due gate -- an empty answer must not read as "every sub-issue closed".
-function enumerateSubIssues(parent, deps, cwd) {
+//
+// #4551: under `workLinks === 'body-text'` the sub-issues are the parent body's
+// task list (`parseSubIssues`), each one's state and labels read with one
+// `gh issue view {n} --json state,labels` call (per number, not `gh issue
+// list`: its default 30-row limit would silently truncate). An empty task list
+// is the same gather failure, with the same text. A missing `workLinks` means
+// `native`.
+function enumerateSubIssues(parent, deps, cwd, workLinks) {
+  if (workLinks === 'body-text') return enumerateBodyTextSubIssues(parent, deps, cwd);
   let out;
   try {
     const repoSpec = parseRepo(deps.git(['remote', 'get-url', 'origin'], cwd));
@@ -731,14 +764,58 @@ function enumerateSubIssues(parent, deps, cwd) {
   return { ok: true, subIssues };
 }
 
+function enumerateBodyTextSubIssues(parent, deps, cwd) {
+  let numbers;
+  try {
+    const data = JSON.parse(deps.gh(['issue', 'view', String(parent), '--json', 'body'], cwd));
+    numbers = parseSubIssues(data.body);
+  } catch (err) {
+    return { ok: false, error: `gh issue view (body) failed for parent #${parent} (${err.message})` };
+  }
+  if (!numbers.length) return { ok: false, error: `no sub-issues enumerated for parent #${parent}` };
+  const subIssues = [];
+  for (const s of numbers) {
+    try {
+      const data = JSON.parse(deps.gh(['issue', 'view', String(s), '--json', 'state,labels'], cwd));
+      // An absent labels key is an unlabeled issue; any other non-array value is a malformed reply.
+      const rawLabels = data.labels === undefined ? [] : data.labels;
+      if (typeof data.state !== 'string' || !Array.isArray(rawLabels) || !rawLabels.every((l) => l && typeof l === 'object' && typeof l.name === 'string')) {
+        return { ok: false, error: `could not parse state/labels for sub-issue #${s} of parent #${parent}` };
+      }
+      subIssues.push({
+        number: s,
+        state: data.state.toUpperCase(),
+        labels: rawLabels.map((l) => l.name),
+      });
+    } catch (err) {
+      return { ok: false, error: `gh issue view (state,labels) failed for sub-issue #${s} of parent #${parent} (${err.message})` };
+    }
+  }
+  return { ok: true, subIssues };
+}
+
+// The repo root's own policy.yml text, or null when the file is missing -- the
+// null makes resolvePolicyKeys fall back to the schema default. Read from the
+// repo root, never the worktree cwd (a worktree's copy can lag main).
+function readRepoPolicyRaw(repoRoot) {
+  try {
+    return fs.readFileSync(path.join(repoRoot, '.claude-tweaks', 'policy.yml'), 'utf8');
+  } catch {
+    return null;
+  }
+}
+
 // #3222: the risk-floor policy key, from the repo root's own policy.yml (a
 // missing file, or a set-but-invalid value, falls back to the schema default).
 function resolveRiskFloor(repoRoot) {
-  let policyRaw = null;
-  try {
-    policyRaw = fs.readFileSync(path.join(repoRoot, '.claude-tweaks', 'policy.yml'), 'utf8');
-  } catch { /* no policy.yml -- resolvePolicyKeys' schema default applies */ }
-  return resolvePolicyKeys(['risk-floor'], { policyRaw })['risk-floor'].value;
+  return resolvePolicyKeys(['risk-floor'], { policyRaw: readRepoPolicyRaw(repoRoot) })['risk-floor'].value;
+}
+
+// #4551: the work-links policy key (`native` | `body-text`), read the same way
+// as resolveRiskFloor. A missing file falls back to the schema default,
+// `body-text`.
+function resolveWorkLinks(repoRoot) {
+  return resolvePolicyKeys(['work-links'], { policyRaw: readRepoPolicyRaw(repoRoot) })['work-links'].value;
 }
 
 // `verify`'s --run-dir may be the parent pipeline run directory, or (in a
@@ -801,10 +878,29 @@ function scanPrBrief(prComments, target) {
 // contains the brief, never only the most recent one. A last-comment-only
 // test would hard-stop a correctly-gated parent.
 //
-// #3222: the parent path evaluates the Parent-Gate Procedure's gate state and
-// oversight floor first (verification-brief-parent-gate.md's "Evaluate the
-// gate"). An incomplete gate, or a due parent whose sub-issues sit below the
-// oversight floor, skips the parent instead of requiring its demo:pending.
+// #4611: the current form of that comment is the acceptance packet, read by
+// `readPacket` (whole first line equals the marker, trusted authors only). The
+// brief forms below -- a confirmed brief on the issue, or the pr-first pointer
+// plus a brief on the PR -- are legacy readers, reached only when no trusted
+// packet exists. Removal condition: these readers go once no open record carries
+// a Verification Brief without an acceptance packet, to be scheduled by the final
+// contract-cleanup record the human-in-control epic (#4608) names (#4613's
+// non-goals); demo/legacy-brief-compatibility.md records the same test. A trusted
+// packet of an unknown schema version fails rather than falling through, so a
+// brief beside it cannot pass it.
+//
+// #3222, #3508: the parent path evaluates the Parent-Gate Procedure's gate state
+// first (verification-brief-parent-gate.md's "Evaluate the gate"), one branch per
+// state. `incomplete` skips (not due). `resolved` skips (a verdict label means the
+// parent is already dispositioned and owes nothing more). `gated` falls through to
+// the disposition and brief checks whatever its risk tier: the floor decides only
+// whether a `due` parent is gated, so only `due` meets the oversight floor, and a
+// below-floor `due` parent skips instead of requiring its demo:pending. The
+// below-floor skip detail names the post-merge close (#4466): that parent is
+// closed by pr-first-merge-post-merge.md's Step 4.0b once the merge lands, so
+// it never carries an acceptance label. That detail is `github-issues` wording:
+// a `local-files` parent closes in-branch instead, and local-files is out of
+// scope for this check (see the gap note below).
 // The gate input is the parent's enumerated sub-issues with every run record
 // counted as closed, since this run is what closes it.
 //
@@ -834,7 +930,7 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
   }
   const failing = [];
   const passedNotes = []; // {target, ignored[]} for targets that pass but skipped untrusted comments (#3358)
-  const skipped = []; // #3222: parent-gate skip reasons (incomplete gate, below oversight floor)
+  const skipped = []; // #3222, #3508: parent-gate skip reasons (incomplete gate, resolved parent, below oversight floor)
   const closing = new Set(issues); // every run record is being closed by this run (#3222 gate input)
 
   // Resolve each issue's target (its parent, when resolvable; itself
@@ -852,23 +948,64 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
   const seenTargets = new Set();
   const gatherFailures = [];
   const parentSubIssues = new Map(); // parent number -> gate input (its enumerated sub-issues, run records forced CLOSED)
+  // #4551: the link model, once per check run (policy.yml at the repo root).
+  const workLinks = resolveWorkLinks(repoRoot);
+  // Each parent is enumerated once, however many run records name it: every one
+  // of those records is still membership-checked against the same result.
+  const enumerations = new Map(); // parent number -> enumerateSubIssues result
+  // Under `body-text` the parent's task list wins over a record's own `Parent:`
+  // line: a record the named parent does not list has no resolvable parent --
+  // it stays out of that parent's gate, is checked as its OWN target, and the
+  // disagreement is logged here, appended to every row returned below. The
+  // parent's list wins because sub-issues are enumerated from the parent side
+  // (the gate is the parent's). The labeler twins apply the same rule
+  // (`gatherGateFacts` in issues/parent-gate.js, `normalizeMcpFacts` in
+  // issues/mcp-parent-gate-shape.js; prose: wrap-up/verification-brief-parent-gate.md's
+  // "Resolve the parent"). One deliberate difference: an empty task list is a gather
+  // failure here (unknown), while the labeler keeps the parent and reports it incomplete.
+  const mismatches = [];
   for (const n of checkIssues) {
-    const resolved = resolveParent(n, deps, cwd);
+    const resolved = resolveParent(n, deps, cwd, workLinks);
     if (!resolved.ok) {
       gatherFailures.push(`#${n}: ${resolved.error}`);
       continue;
     }
-    const target = resolved.parent || n;
-    if (seenTargets.has(target)) continue;
-    seenTargets.add(target);
-    targets.push({ target, parent: Boolean(resolved.parent) });
-    if (!resolved.parent) continue;
-    const enumerated = enumerateSubIssues(target, deps, cwd);
-    if (!enumerated.ok) {
-      gatherFailures.push(`#${n}: ${enumerated.error}`);
+    let target = n;
+    let isParent = false;
+    if (resolved.parent) {
+      const p = resolved.parent;
+      // Native: dedupe BEFORE enumerating, as before #4551 -- a parent already
+      // seen (even as a standalone run record) issues no sub_issues call and
+      // cannot add a gather failure. Body-text must enumerate first: its
+      // membership check decides whether the record counts toward `p` at all.
+      if (workLinks !== 'body-text' && seenTargets.has(p)) continue;
+      const cached = enumerations.has(p);
+      if (!cached) enumerations.set(p, enumerateSubIssues(p, deps, cwd, workLinks));
+      const enumerated = enumerations.get(p);
+      if (!enumerated.ok) {
+        // A failed enumeration is a gather failure, never a fallback to standalone;
+        // recorded once per parent -- a later record naming it adds no second line.
+        if (!cached) gatherFailures.push(`#${n}: ${enumerated.error}`);
+        continue;
+      }
+      if (workLinks === 'body-text' && !enumerated.subIssues.some((s) => s.number === n)) {
+        mismatches.push(`#${n}: Parent: #${p} line not in #${p}'s task list — mismatch, not counted in #${p}'s gate; checked as its own target`);
+      } else {
+        target = p;
+        isParent = true;
+        parentSubIssues.set(p, enumerated.subIssues.map((s) => ({ ...s, state: closing.has(s.number) ? 'CLOSED' : s.state })));
+      }
+    }
+    if (seenTargets.has(target)) {
+      // Order-independence (body-text): a run record seen earlier as a
+      // standalone target is a parent after all once a later record's task-list
+      // membership gates it. Its gate input is already set above. (Native never
+      // reaches here with isParent: a seen parent `continue`d before enumerating.)
+      if (isParent) targets.find((t) => t.target === target).parent = true;
       continue;
     }
-    parentSubIssues.set(target, enumerated.subIssues.map((s) => ({ ...s, state: closing.has(s.number) ? 'CLOSED' : s.state })));
+    seenTargets.add(target);
+    targets.push({ target, parent: isParent });
   }
   if (gatherFailures.length) return { result: 'unknown', detail: gatherFailures.join('; ') };
 
@@ -901,29 +1038,56 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
         skipped.push(`parent gate #${target} not due — ${openCount} sibling sub-issue(s) open`);
         continue;
       }
-      const { exceeds } = exceedsOversightFloor(
-        { risk: maxRiskTier(gateInput.map((s) => parseRecordFacets(s.labels))) },
-        { riskFloor, sizeFloor: null },
-      );
-      if (!exceeds) {
-        skipped.push(`parent #${target} below oversight floor`);
+      if (gate === 'resolved') {
+        skipped.push(`parent #${target} already dispositioned`);
         continue;
       }
+      if (gate === 'due') {
+        const { exceeds } = exceedsOversightFloor(
+          { risk: maxRiskTier(gateInput.map((s) => parseRecordFacets(s.labels))) },
+          { riskFloor, sizeFloor: null },
+        );
+        if (!exceeds) {
+          skipped.push(`parent #${target} below oversight floor — closes after the merge lands (Step 4.0b)`);
+          continue;
+        }
+      }
     }
-    if (!labels.some((l) => l.name === 'demo:pending')) {
-      failing.push(`#${target}: missing demo:pending label`);
+    // The record's resolved acceptance state (acceptanceOf's precedence over both
+    // label vocabularies), not the mere presence of one pending label: a pending
+    // label a verdict outranks does not gate the record, and says so on its own line.
+    const labelNames = labels.map((l) => l.name);
+    if (dispositionState(labelNames) !== 'pending') {
+      const carriesPending = labelNames.includes(LABELS.DEMO_PENDING) || labelNames.includes(LABELS.ACCEPT_PENDING);
+      failing.push(carriesPending
+        ? `#${target}: pending label outranked by a verdict — run /claude-tweaks:demo #${target}`
+        : `#${target}: missing ${LABELS.DEMO_PENDING} or ${LABELS.ACCEPT_PENDING} label`);
       continue;
     }
     const comments = issueData.comments || [];
     // Skip notes for this target's untrusted marker comments; appended to its
     // failing line, or to `passedNotes` when the target passes.
     const ignored = [];
+    // One untrusted comment can hold more than one marker, and is named once.
+    const noteIgnored = (notes) => {
+      for (const note of notes) if (!ignored.includes(note)) ignored.push(note);
+    };
     const fail = (line) => failing.push(ignored.length ? `${line}; ignored: ${ignored.join('; ')}` : line);
+    const packet = readPacket(comments);
+    noteIgnored(packet.skipped);
+    if (packet.status === 'found') {
+      if (ignored.length) passedNotes.push({ target, ignored });
+      continue;
+    }
+    if (packet.status === 'unreadable') {
+      fail(`#${target}: acceptance packet comment is unreadable (schemaVersion ${packet.version})`);
+      continue;
+    }
     const fullBrief = scanMarkerComments(
       comments,
       (c) => c.body && c.body.includes('## Verification Brief') && c.body.includes('### Confirmed')
     );
-    ignored.push(...fullBrief.ignored);
+    noteIgnored(fullBrief.ignored);
     if (fullBrief.trusted) {
       if (ignored.length) passedNotes.push({ target, ignored });
       continue;
@@ -937,7 +1101,7 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
     // _shared/pr-run-comments.md's "Multi-spec brief and timing comments" read side.
     if (prNumber) {
       const pointer = scanMarkerComments(comments, (c) => c.body && c.body.includes('Verification Brief posted to PR #'));
-      ignored.push(...pointer.ignored);
+      noteIgnored(pointer.ignored);
       if (pointer.trusted) {
         let prCommentsRaw;
         try {
@@ -954,7 +1118,7 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
           continue;
         }
         const prBrief = scanPrBrief(prComments, target);
-        ignored.push(...prBrief.ignored);
+        noteIgnored(prBrief.ignored);
         if (prBrief.trusted) {
           if (ignored.length) passedNotes.push({ target, ignored });
           continue;
@@ -963,20 +1127,20 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
         continue;
       }
     }
-    fail(`#${target}: no comment carries a confirmed Verification Brief`);
+    fail(`#${target}: no comment carries a confirmed Verification Brief or an acceptance packet`);
   }
   // Notes are never dropped: a failing row carries each passing target's skipped
   // comments after the failing lines; an all-pass row's detail is the notes.
   if (failing.length) {
     const passingNotes = passedNotes.flatMap((p) => p.ignored.map((note) => `ignored (#${p.target}): ${note}`));
-    return { result: 'fail', detail: [...failing, ...passingNotes, ...skipped].join('; ') };
+    return { result: 'fail', detail: [...failing, ...passingNotes, ...skipped, ...mismatches].join('; ') };
   }
   // Every target skipped by the parent gate -- nothing was checked, so the row
   // is a skip, not a pass.
-  if (skipped.length === targets.length) return { result: 'skip', detail: skipped.join('; ') };
+  if (skipped.length === targets.length) return { result: 'skip', detail: [...skipped, ...mismatches].join('; ') };
   const notes = passedNotes.flatMap((p) => p.ignored);
   const detailParts = notes.length ? [`ignored: ${notes.join('; ')}`, ...skipped] : skipped;
-  return { result: 'pass', detail: detailParts.join('; ') };
+  return { result: 'pass', detail: [...detailParts, ...mismatches].join('; ') };
 });
 
 // ---- memory updates -----------------------------------------------------------
@@ -1019,7 +1183,7 @@ registerCheck('upstream-feedback', ({ expectations, deps, cwd }) => {
     if (!m) { failing.push(`could not parse issue URL: ${url}`); continue; }
     const [, owner, repo, number] = m;
     try {
-      deps.gh(['issue', 'view', number, '--repo', `${owner}/${repo}`, '--json', 'number'], cwd);
+      deps.gh(['issue', 'view', number, '--repo', repoSlug({ host: 'github.com', owner, repo }), '--json', 'number'], cwd);
     } catch (err) {
       failing.push(`${url}: gh issue view failed (${err.message})`);
     }

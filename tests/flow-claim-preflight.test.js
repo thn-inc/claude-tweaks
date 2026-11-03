@@ -317,3 +317,195 @@ test('parallel waves run on isolated agent worktrees, over the merge-gate kept s
   }
   assert.match(extractArgumentHint(read('plugin/skills/flow/SKILL.md')), /\[parallel\]/);
 });
+
+test('settle-and-merge.md Claim-contest special case covers the exit-6 Claims branch missing stop as a pre-flight stop (#4495)', () => {
+  const content = read('plugin/skills/dispatch/settle-and-merge.md');
+  const sectionStart = content.indexOf('**Claim-contest special case');
+  assert.ok(sectionStart !== -1, 'Claim-contest special case section should exist');
+  // End at the next special case, not at the numbered steps: the span to the numbered steps also
+  // holds the plan-review special case, which carries the same two phrases and would keep the
+  // assertions below green with the exit-6 sentence deleted.
+  const sectionEnd = content.indexOf('\n**Open-linked-PR enrichment', sectionStart);
+  assert.ok(sectionEnd !== -1, 'special-case section should end before the open-linked-PR enrichment paragraph');
+  const section = content.slice(sectionStart, sectionEnd);
+  assert.match(section, /Claims branch missing/);
+  assert.match(section, /flow-step-2\.8-claims-branch-missing/);
+  assert.match(section, /claims-branch-missing stop, skip steps 3-7/);
+  assert.match(section, /dispatch-retry-ceiling/);
+  assert.match(section, /no failure comment/);
+});
+
+function readExit7Bullet() {
+  const content = read('plugin/skills/flow/claim-targets.md');
+  const start = content.indexOf('- **7**');
+  assert.ok(start !== -1, 'exit-7 bullet should exist');
+  const end = content.indexOf('\n- **2**', start);
+  assert.ok(end !== -1, 'exit-7 bullet should end before the exit-2 bullet');
+  return { content, bullet: content.slice(start, end) };
+}
+
+test('AC6.1: flow/claim-targets.md carries the exit-7 card with no retry and no question (#4899)', () => {
+  const { content, bullet } = readExit7Bullet();
+  assert.match(bullet, /## Flow: Claim permission denied/);
+  assert.match(bullet, /\{operation\}/);
+  assert.match(bullet, /\{reason\}/);
+  assert.match(bullet, /token's access/);
+  assert.match(bullet, /claims-registry/);
+  assert.match(bullet, /No `AskUserQuestion`/);
+  const cardStart = bullet.indexOf('```markdown');
+  assert.ok(cardStart !== -1, 'the exit-7 bullet should carry a markdown card fence');
+  const card = bullet.slice(cardStart);
+  assert.doesNotMatch(card, /re-run/i, 'a refused token is not fixed by a re-run');
+  assert.match(content, /On exit 3, 4, 5, 6, or 7/);
+});
+
+test('AC6.1: settle-and-merge.md treats the claim permission denied stop as a pre-flight stop (#4899)', () => {
+  const content = read('plugin/skills/dispatch/settle-and-merge.md');
+  const sectionStart = content.indexOf('**Claim-contest special case');
+  assert.ok(sectionStart !== -1, 'Claim-contest special case section should exist');
+  const sectionEnd = content.indexOf('\n**Open-linked-PR enrichment', sectionStart);
+  assert.ok(sectionEnd !== -1, 'special-case section should end before the open-linked-PR enrichment paragraph');
+  const section = content.slice(sectionStart, sectionEnd);
+  assert.match(section, /Claim permission denied/);
+  assert.match(section, /flow-step-2\.8-claim-permission-denied/);
+  assert.match(section, /failed:claim-permission-denied/);
+  assert.match(section, /since the four are different stop shapes/);
+  assert.match(section, /the claim-permission-denied stop is the exception/);
+  assert.match(section.replace(/\s+/g, ' '), /that is the rendered card, which carries the operation and reason; the first call's report lines do not\)/);
+  // The exit-6 sentence earlier in the section already carries "dispatch-retry-ceiling" and
+  // "no failure comment", so this stop's own sentence is sliced out before asserting on it.
+  const stopStart = section.indexOf('For the claim-permission-denied stop');
+  assert.ok(stopStart !== -1, 'the claim-permission-denied sentence should exist');
+  const stop = section.slice(stopStart);
+  assert.match(stop, /skip steps 1-7/);
+  assert.match(stop, /no release/);
+  assert.match(stop, /dispatch-retry-ceiling/);
+  assert.match(stop, /no failure comment/);
+  assert.match(stop, /no `bot:blocked`/);
+  assert.match(stop, /grants untouched/);
+});
+
+test('the express call reports the claim permission denied line (#4899)', () => {
+  assert.match(read('plugin/skills/dispatch/express-prompt.md'), /ISSUE #\{issue\}: failed:claim-permission-denied/);
+  const lane = read('plugin/skills/_shared/express-lane.md');
+  assert.match(lane, /exit 7/);
+  assert.match(lane, /failed:claim-permission-denied/);
+});
+
+test('flow/claim-targets.md states the MCP claim path is not this stop (#4899)', () => {
+  const { bullet } = readExit7Bullet();
+  assert.match(bullet, /gh-absent[^\n]*this stop/);
+  assert.match(bullet, /MCP[^\n]*transient/);
+  assert.match(bullet.replace(/\s+/g, ' '), /OUTCOME: build-test-blocked` \(`OUTCOME: blocked` on a second call\)/);
+  assert.match(bullet, /ISSUE #\{n\}: failed:claim-permission-denied/);
+  assert.match(bullet, /STATUS: BLOCKED/);
+  assert.match(bullet, /`\{target\}` is `permissionDenied\.issue`/);
+});
+
+test('a dispatched first call learns the exact gate value, and teardown skips the claim release (#4899)', () => {
+  assert.match(read('plugin/skills/dispatch/task-prompt.md'), /exit 7 uses the gate value `claim-permission-denied`, exactly/);
+  const gate = read('plugin/skills/dispatch/two-call-gate.md');
+  const start = gate.indexOf('**Claim permission stop (#4899).**');
+  assert.ok(start !== -1, 'two-call-gate.md should carry the Claim permission stop paragraph');
+  const paragraph = gate.slice(start, gate.indexOf('\n\n', start));
+  assert.match(paragraph, /\(claim-permission-denied: skip the claim release\)/);
+  assert.match(paragraph, /does not apply/);
+  assert.match(gate, /none after a Claim permission stop/);
+  const sectionE = read('plugin/skills/wrap-up/cleanup-procedures-execution.md');
+  assert.match(sectionE, /Skip this whole section when the invocation names `claim-permission-denied: skip the claim release`/);
+  const skipLog = sectionE.replace(/\s+/g, ' ');
+  assert.match(skipLog, /log-decision\.js" --run "\$PIPELINE_RUN_DIR" --status SKIP --section "\/wrap-up" --step "Section E" --text "condition: claim-permission-denied named by the cleanup-only call → fallback: claim release skipped" --reversibility n\/a/);
+  assert.match(skipLog, /production step failed, or this section was skipped\)/);
+  // The receiver: wrap-up's flags.md declares the phrase, so it is not read as a record reference.
+  const flags = read('plugin/skills/wrap-up/flags.md');
+  assert.match(flags, /`\(claim-permission-denied: skip the claim release\)`[^\n]*stripped before input classification[^\n]*never read as a record reference/);
+});
+
+test('the other "move on" sites name the Claim permission stop (#4899)', () => {
+  assert.match(read('plugin/skills/dispatch/sequential-execution.md'), /group N\+1 \(none after a Claim permission stop/);
+  assert.match(read('plugin/skills/dispatch/two-call-gate.md'), /next group's worktree \(none after a Claim permission stop: the firing ends, `SKILL\.md`\)\.\n\n## 8\./);
+  assert.match(read('plugin/skills/_shared/express-lane.md'), /on a Claim permission stop, exit 7, Settle skips steps 1-7/);
+  assert.match(read('plugin/skills/dispatch/SKILL.md'), /the ranking returns `null`, or a Claim permission stop\), close/);
+});
+
+test('dispatch/SKILL.md loop, move-on and close-out sites carve out the Claim permission stop (#4899)', () => {
+  const skill = read('plugin/skills/dispatch/SKILL.md');
+  assert.match(skill, /the ranking returns `null`, or a Claim permission stop ends the firing/);
+  assert.match(skill, /move straight to the next group \(none after a Claim permission stop\)/);
+  assert.match(skill, /the repo-wide infra-outage stop, the Claim permission stop, a queue-pull/);
+});
+
+test('AC7.1: dispatch/SKILL.md stops the firing on a claim permission denied stop, in every selection form (#4899)', () => {
+  const content = read('plugin/skills/dispatch/SKILL.md');
+  const start = content.indexOf('**Claim permission stop (#4899).**');
+  assert.ok(start !== -1, 'Claim permission stop paragraph should exist');
+  const end = content.indexOf('\n\n', start);
+  const paragraph = content.slice(start, end === -1 ? undefined : end);
+  assert.match(paragraph, /failed:claim-permission-denied/);
+  assert.match(paragraph, /every selection form/);
+  assert.match(paragraph, /attempt no further group/);
+  assert.match(paragraph, /same token/);
+  assert.match(paragraph, /named records after it as not attempted and unclaimed/);
+});
+
+test('firing-exclusion.md and next-ranking.md name the stop; reporting.md relays it (#4899)', () => {
+  for (const file of ['firing-exclusion.md', 'next-ranking.md']) {
+    const content = read(`plugin/skills/dispatch/${file}`);
+    assert.match(content, /claim-permission-denied/, `${file} must name the stop`);
+    assert.match(content, /ends the firing/, `${file} must say the stop ends the firing`);
+  }
+  const relayed = read('plugin/skills/dispatch/reporting.md');
+  assert.match(relayed, /claim-permission-denied/);
+  assert.match(relayed, /its report block names the record and the stop, says the firing stopped, lists any named records after it as not attempted and unclaimed/);
+  assert.doesNotMatch(relayed, /names the record and the refusal/);
+});
+
+test('headless-self-report.md files its diagnostic through --body-file, never a shell-quoted --body (#4899)', () => {
+  const template = read('plugin/skills/_shared/headless-self-report.md');
+  assert.equal(template.match(/--body-file "\{body-file\}"/g)?.length, 2);
+  assert.doesNotMatch(template, /--body "/);
+  assert.doesNotMatch(read('plugin/skills/dispatch/settle-and-merge.md'), /template's `--body`/);
+});
+
+test('AC8.1: no prose says a claim read or write 401/403 exits 4 (#4899)', () => {
+  const walk = (dir, ext) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) return walk(full, ext);
+    return entry.name.endsWith(ext) ? [full] : [];
+  });
+  const files = [
+    ...walk(path.join(REPO_ROOT, 'plugin'), '.md'),
+    ...walk(path.join(REPO_ROOT, 'plugin'), '.js'),
+    // The project skills restate the exit table too (batching-failure-posture.md once kept the old exit 4 claim).
+    ...walk(path.join(REPO_ROOT, '.claude/skills'), '.md'),
+    path.join(REPO_ROOT, 'docs/plugin-structure.md'),
+    path.join(REPO_ROOT, 'docs/journeys/act-on-a-contested-claim.md'),
+  ];
+  assert.ok(files.length > 50, 'the sweep should cover the plugin tree');
+  assert.ok(files.some((file) => file.includes(`${path.sep}.claude${path.sep}skills${path.sep}`)), 'the sweep should cover .claude/skills');
+  // Whitespace is collapsed first so a sentence wrapped across lines is seen whole; `refus` covers
+  // refused/refuses/refusal, and the exit code may be backticked. The first branch excludes only the
+  // exact phrase "rate-limited 403 is exit 4": exit 7's own bullet says it, and it is correct.
+  const exit4 = '\\bexits? `?4\\b';
+  const sweep = new RegExp(
+    `(claim read( or write)?|claim write|401/403)[^.]{0,80}(?<!rate-limited 403 is )${exit4}`
+    + `|${exit4}[^.]{0,80}((refus|401/403)[^.]{0,80}claim|claim (read|write)[^.]{0,80}(refus|401|403))`,
+    'gi',
+  );
+  const sweepOffenders = (text) => [...text.replace(/\s+/g, ' ').matchAll(sweep)].map((match) => match[0]);
+  const offenders = [];
+  for (const file of files) {
+    for (const hit of sweepOffenders(readText(file))) {
+      offenders.push(`${path.relative(REPO_ROOT, file)}: ${hit}`);
+    }
+  }
+  assert.deepStrictEqual(offenders, []);
+  // go-red control: the same matcher flags a planted line in each branch's shape. The strings are
+  // built from parts so this file never carries the forbidden sentence whole.
+  const planted = ['A claim read or write', ['401', '403'].join('/'), 'exits', '4.'].join(' ');
+  assert.strictEqual(sweepOffenders(planted).length, 1, 'control: a planted "claim read or write 401/403 exits 4" must be flagged');
+  const plantedReverse = ['It exits', '4 when GitHub', 'refuses a', 'claim read.'].join(' ');
+  assert.strictEqual(sweepOffenders(plantedReverse).length, 1, 'control: a planted "exits 4 when GitHub refuses a claim read" must be flagged');
+  assert.deepStrictEqual(sweepOffenders('Exit 7 covers a claim read or write; a rate-limited 403 is exit 4.'), [], 'control: the exact rate-limited phrase stays allowed');
+  assert.match(read('docs/plugin-structure.md'), /7 GitHub refused a claim read or write/);
+});

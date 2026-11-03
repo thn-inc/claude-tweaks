@@ -113,11 +113,11 @@ test('prepareRepair: a line failing a bound is reported, not weakened', () => {
   assert.deepEqual(out, { outcome: 'bounds', violations: ['record-ref', 'conventional-prefix'] });
 });
 
-test('prepareRepair: a live body that is no longer Release-Note-only is stale; a mid-line AC is a failure', () => {
+test('prepareRepair: a live body that is no longer Release-Note-only is stale; a mid-line AC mention is no AC section, so stale (#4367)', () => {
   assert.equal(prepareRepair({ liveBody: F.MISSING_RN_WITH_TBD, expectSha: bodySha(F.MISSING_RN_WITH_TBD), line: F.LINE }).outcome, 'stale');
   const midline = prepareRepair({ liveBody: F.MIDLINE_AC, expectSha: bodySha(F.MIDLINE_AC), line: F.LINE });
-  assert.equal(midline.outcome, 'failed');
-  assert.match(midline.reason, /Acceptance Criteria/);
+  assert.equal(midline.outcome, 'stale');
+  assert.match(midline.reason, /no longer Release-Note-only/);
 });
 
 test('prepareRepair: a checker scan error on the live body is a failure, not stale', () => {

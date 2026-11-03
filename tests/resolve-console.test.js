@@ -602,7 +602,7 @@ test('a trusted reply is still updated when an untrusted planted one is also pre
 // The final console.json write is the only unguarded I/O in the function
 // (#2568 follow-up review finding): a throw there — after both gh writes
 // already landed — must surface as a distinguishable error status, never
-// propagate uncaught to hooks.js's top-level catch-and-exit-0.
+// propagate uncaught to hooks.js's generic exception exit (#4932).
 test('resolveConsoleExecution: a console.json write failure after both gh writes landed returns console-write-failed, never throws', async () => {
   const dir = makeRunDir();
   writeConsoleJson(dir);

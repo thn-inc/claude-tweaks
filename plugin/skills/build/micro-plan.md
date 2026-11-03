@@ -60,7 +60,7 @@ otherwise (probe with a plain file-existence check, not a guess); a test file fr
 or implied by the Acceptance Criteria is its own `Test:` line; a read-only entry is a
 `Waived {path}: {its Key Files description}` line, never `Modify:`}
 
-- [ ] **Step 1: Failing test** — write the test(s) the spec's `## Acceptance Criteria` describe.
+- [ ] **Step 1: Failing test** — write the test(s) the spec's `## Acceptance Criteria` describe, and run them before Step 2. A test already green at base proves nothing about this fix: add an assertion that goes red, or say in the report why none can.
 - [ ] **Step 2: Implement** — satisfy every `## Deliverables` checkbox against the files above.
 - [ ] **Step 3: Run** the test(s) from Step 1 — PASS.
 - [ ] **Step 4: Commit** — one commit, message drawn from the spec title, `refs #{n}`.
@@ -81,6 +81,8 @@ one-task, one-file plan has nothing for that scaffolding to coordinate; SDD's `t
 only requires a heading matching `^#+\s+Task\s+{n}` to extract the section, which the template
 above satisfies.
 
+**Size headroom:** this path never reaches Spec Step 3's Size-headroom check, so apply it here: when a `Modify:` line names a `plugin/skills/**/*.md` file within ~10% of `RAIL_BYTES`, measure `wc -c` at the merge base and name the remedy in Step 2.
+
 **Skip plan-audit.md too:** Common Step 1.5 already skips when `config.yml`'s `ceremony-profile`
 is `fast-lane` (its own gate, unchanged by this file) — the micro-plan path never needs a separate
 audit-skip rule, since every micro-plan is by definition composed under that same condition.
@@ -96,7 +98,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --sta
 Standalone `/build` (no run dir): list the skip in the Step 7 handoff instead
 (`handoff-template.md`'s inline-skip listing), naming the composed plan's path.
 
-Proceed to **Common Step 2** exactly as Spec Step 3 would after a normal `/superpowers:writing-plans`
+Proceed to **Common Step 1.5** exactly as Spec Step 3 would after a normal `/superpowers:writing-plans`
 invocation.
 
 ## Escape hatch: NEEDS_CONTEXT re-run

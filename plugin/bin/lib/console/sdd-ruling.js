@@ -11,7 +11,9 @@ const { DEFER_REASONS } = require('../issues/record');
 // blank line; a Defer-reason: key anywhere else (the Ruling: line, the body)
 // never counts. Prose twin: wrap-up/review-console-appendix.md's sdd-ruling-*
 // bullet. Returns null when the item may resolve as today, else the reason it
-// resolves pending under.
+// resolves pending under. A deferral whose one reason is `needs-human-decision`
+// resolves pending under that reason, since the reason itself says a human must
+// decide (#4587).
 // `UNREADABLE` is decided by the callers that attempted the read (`stagedItems` in
 // `console/resolve.js`, `decideConsoleExecute` in `reconcile/console-execute.js`), never by
 // `sddRulingDeferralReason`, which only ever sees text (#4049).
@@ -19,6 +21,7 @@ const SDD_RULING_REASONS = Object.freeze({
   NO_DEFER_REASON: 'sdd-ruling-deferral-no-defer-reason',
   UNCLASSIFIED: 'sdd-ruling-unclassified',
   UNREADABLE: 'sdd-ruling-unreadable',
+  NEEDS_HUMAN_DECISION: 'sdd-ruling-needs-human-decision',
 });
 
 // #3942: what ratifying a ruling does. A deferral files the deferred work as a
@@ -53,7 +56,8 @@ function sddRulingDeferralReason(text) {
   if (defersMatches.length > 1) return SDD_RULING_REASONS.UNCLASSIFIED;
   const defers = defersMatches.length ? defersMatches[0][1].toLowerCase() : null;
   if (defers === 'yes' || reasons.length > 0) {
-    return reasons.length === 1 && DEFER_REASONS.includes(reasons[0]) ? null : SDD_RULING_REASONS.NO_DEFER_REASON;
+    if (reasons.length !== 1 || !DEFER_REASONS.includes(reasons[0])) return SDD_RULING_REASONS.NO_DEFER_REASON;
+    return reasons[0] === 'needs-human-decision' ? SDD_RULING_REASONS.NEEDS_HUMAN_DECISION : null;
   }
   if (defers === 'no') return null;
   return SDD_RULING_REASONS.UNCLASSIFIED;
