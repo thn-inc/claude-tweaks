@@ -7,7 +7,7 @@ const os = require('node:os');
 const { readText } = require('../../helpers/read-skill');
 
 const {
-  gatherPack, resolveInputs, resolveWorktreeBase, PROBE_NAMES, resolveRecords, headerRecords, closingRecords, parseLedger, namesRecordReference,
+  gatherPack, resolveInputs, resolveWorktreeBase, PROBE_NAMES, resolveRecords, headerRecords, closingRecords, parseLedger, namesRecordReference, isDeferredUnstaged,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'wrap-up', 'pack.js'));
 
 // A fixture run dir: run-state.json (pr + worktree), one materialized header, config.yml.
@@ -1655,4 +1655,12 @@ test('resolveWorktreeBase returns null when the policy read throws (#3686)', () 
     ghSync: () => { throw new Error('no gh'); },
   };
   assert.strictEqual(resolveWorktreeBase('/w/tree', deps), null);
+});
+
+test('isDeferredUnstaged: the one definition parseLedger counts and the ledger-row terminal-row guard reuses (#4439)', () => {
+  assert.strictEqual(isDeferredUnstaged('later', []), true);
+  assert.strictEqual(isDeferredUnstaged('Defer-reason: tangential', []), true);
+  assert.strictEqual(isDeferredUnstaged('staged/ledger-record-a.md', []), false);
+  assert.strictEqual(isDeferredUnstaged('see #77', []), false);
+  assert.strictEqual(isDeferredUnstaged('see #5', [5]), true);
 });

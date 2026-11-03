@@ -423,6 +423,12 @@ function namesRecordReference(resolution, excludeRecords) {
   return false;
 }
 
+// A `deferred` Resolution naming neither a `staged/` path nor a record reference. The one definition
+// behind parseLedger's deferredUnstaged count and stage-item/ledger.js's incomplete-deferral guard.
+function isDeferredUnstaged(resolution, excludeRecords) {
+  return !LEDGER_DEFERRED_STAGED_RE.test(resolution) && !namesRecordReference(resolution, excludeRecords);
+}
+
 // #3004: /build must not park a review minor without a valid `Defer-reason:`
 // (_shared/deferral-gate.md). The backstop covers rows whose Phase is exactly
 // `build` (case-insensitive) with status `deferred` or `open`. `build/skill`,
@@ -467,9 +473,7 @@ function parseLedger(text, { excludeRecords = [] } = {}) {
     }
     if (status === 'deferred') {
       const resolution = cells.slice(4).join('|');
-      if (!LEDGER_DEFERRED_STAGED_RE.test(resolution) && !namesRecordReference(resolution, excludeRecords)) {
-        deferredUnstagedItems.push(cells[0]);
-      }
+      if (isDeferredUnstaged(resolution, excludeRecords)) deferredUnstagedItems.push(cells[0]);
     }
     if (phase.toLowerCase() === 'build' && (status === 'deferred' || status === 'open')) {
       const item = cells[2] || '';
@@ -788,5 +792,5 @@ function ownRecordNumbers(runDir, worktree) {
 
 module.exports = {
   gatherPack, resolveInputs, resolveWorktreeBase, wrapProbe, withTimeout, parseLedger, PROBE_NAMES, resolveRecords, headerRecords, closingRecords, worktreeMirror,
-  LEDGER_DEFERRED_STAGED_RE, namesRecordReference, hasValidDeferReason, ownRecordNumbers,
+  LEDGER_DEFERRED_STAGED_RE, namesRecordReference, isDeferredUnstaged, hasValidDeferReason, ownRecordNumbers,
 };

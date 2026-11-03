@@ -197,7 +197,7 @@ test('Q1: neither is refused, naming the rule', () => {
 
 test('own record is not a record reference', () => {
   const f = fixture();
-  refused(f, ledgerRow(f, ['--phase', 'build', '--item', 'x', '--status', 'deferred', '--resolution', 'see #1']), /deferred/);
+  refused(f, ledgerRow(f, ['--phase', 'build', '--item', 'x', '--status', 'deferred', '--resolution', 'see #1']), /staged\/.*Defer-reason:/);
   const other = ledgerRow(f, ['--phase', 'build', '--item', 'x', '--status', 'deferred', '--resolution', 'see #2']);
   assert.equal(other.code, 0, other.stderr);
 });
@@ -316,7 +316,7 @@ test('answer 6: fixed with this repo\'s /pull/N URL through the CLI', () => {
   const ok = ledgerRow(f, ['--row', '1', '--status', 'fixed', '--resolution', 'https://github.com/o/r/pull/7']);
   assert.equal(ok.code, 0, ok.stderr);
   f.snapshot = f.before();
-  refused(f, ledgerRow(f, ['--row', '2', '--status', 'fixed', '--resolution', 'https://github.com/o/r/issues/7']), /fixed/);
+  refused(f, ledgerRow(f, ['--row', '2', '--status', 'fixed', '--resolution', 'https://github.com/o/r/issues/7']), /needs a commit sha, file reference, or resolving PR/);
 });
 
 test('rejects a --ledger outside the run and worktree', () => {

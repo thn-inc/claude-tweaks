@@ -1,5 +1,5 @@
 'use strict';
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
@@ -419,9 +419,13 @@ test('M12: --phase and --section are honored: the row\'s Phase cell and the deci
 const REPO = { host: 'github.com', owner: 'thn-inc', repo: 'claude-tweaks' };
 const row = (n, status, resolution = '—', item = `finding ${n}`) => `| ${n} | build | ${item} | ${status} | ${resolution} |\n`;
 
+const plainDirs = [];
+after(() => { for (const dir of plainDirs) fs.rmSync(dir, { recursive: true, force: true }); });
+
 // A ledger in a fresh dir whose `run/` subdir is the runDir.
 function plainFixture(rows = PRIOR_ROW) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'siledger-plain-'));
+  plainDirs.push(dir);
   const runDir = path.join(dir, 'run');
   fs.mkdirSync(runDir);
   const ledgerPath = path.join(dir, 'ledger.md');
@@ -462,7 +466,10 @@ test('checkLedgerStatus fixed accepts a resolving PR, never a bare #N or an issu
   for (const ok of ['fixed — merged in PR #4712', `merged in ${pr}`, `merged in ${pr}/files`, `merged in ${pr.replace('thn-inc', 'THN-Inc')}`]) {
     assert.equal(checkLedgerStatus('fixed', ok, { repo: REPO }).refusal, null, ok);
   }
-  for (const bad of ['fixed — merged in #4712', 'https://github.com/thn-inc/claude-tweaks/issues/4712', 'https://github.com/other/repo/pull/4712']) {
+  // The scheme is matched case-insensitively: an HTTPS:// URL is judged exactly like https://, not left in the bare text where hasPath accepts it.
+  assert.equal(checkLedgerStatus('fixed', pr.replace('https', 'HTTPS'), { repo: REPO }).refusal, null);
+  for (const bad of ['fixed — merged in #4712', 'https://github.com/thn-inc/claude-tweaks/issues/4712', 'https://github.com/other/repo/pull/4712',
+    'HTTPS://github.com/thn-inc/claude-tweaks/issues/4712', 'HTTPS://github.com/other/repo/pull/4712']) {
     const { refusal } = checkLedgerStatus('fixed', bad, { repo: REPO });
     assert.match(refusal, /a commit sha, file reference, or resolving PR/, bad);
     assert.doesNotMatch(refusal, /origin repo unresolvable/, bad);
@@ -586,6 +593,21 @@ test('appendRow refuses a held lock (failClosed)', () => {
     assert.throws(() => appendRow({ runDir: f.runDir, ledgerPath: f.ledgerPath, phase: 'build', item: 'x', status: 'open' }), (e) => e.code === 'LOCK_TIMEOUT');
   });
   assert.equal(f.text(), before);
+});
+
+test('settleRow refuses a held lock (failClosed) and rewrites nothing', () => {
+  const f = plainFixture(row(1, 'open'));
+  const lock = ledgerLockPath(f.runDir);
+  fs.mkdirSync(lock);
+  fs.writeFileSync(path.join(lock, '.owner'), `${process.pid}-held`);
+  const before = f.text();
+  withShortLockWait(() => {
+    assert.throws(() => settleRow({ runDir: f.runDir, ledgerPath: f.ledgerPath, row: 1, status: 'fixed', resolution: 'abc123' }), (e) => e.code === 'LOCK_TIMEOUT');
+  });
+  assert.equal(f.text(), before);
+  // Once the lock is free the same settle goes through.
+  fs.rmSync(lock, { recursive: true });
+  assert.deepEqual(settleRow({ runDir: f.runDir, ledgerPath: f.ledgerPath, row: 1, status: 'fixed', resolution: 'abc123' }), { number: 1 });
 });
 
 test('AC3: a second append attempted between the first call\'s read and its write is refused while the lock is held, and no row is lost', () => {

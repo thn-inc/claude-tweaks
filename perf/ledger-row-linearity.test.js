@@ -75,6 +75,25 @@ for (const [label, input, own, expected] of [
   });
 }
 
+// checkLedgerStatus fixed (the verb's checkFixed path): the adversarial shapes tests/bin-lib/stage-item/ledger.test.js pins by
+// verdict, timed here. Every one is a refusal; the regexes behind them run over an unbounded Resolution.
+const REPO = { host: 'github.com', owner: 'thn-inc', repo: 'claude-tweaks' };
+const OWN = 'https://github.com/thn-inc/claude-tweaks';
+for (const [label, input] of [
+  ['200k `a`', 'a'.repeat(200000)],
+  ['`a`, 200k spaces, `b`', `a${' '.repeat(200000)}b`],
+  ['5000 slashes', '/'.repeat(5000)],
+  ['a 200k-character /blob/ ref', `${OWN}/blob/${'a'.repeat(200000)}`],
+  ['100k path segments before /blob/', `https://github.com/${'a/'.repeat(100000)}blob/x/y`],
+  ['a 200k-character /commit/ hex run', `${OWN}/commit/${'a'.repeat(200000)}`],
+]) {
+  test(`checkLedgerStatus fixed: ${label} stays linear and is refused`, () => {
+    const { value, ms } = timed(() => checkLedgerStatus('fixed', input, { repo: REPO }));
+    assert.ok(value.refusal !== null && /a commit sha, file reference, or resolving PR/.test(value.refusal), 'an adversarial Resolution names no sha, file or resolving PR');
+    assert.ok(ms < BUDGET_MS, `took ${ms.toFixed(0)} ms`);
+  });
+}
+
 test('checkLedgerStatus deferred (the verb\'s path into namesRecordReference): 50k `item #1 ` repeats stays linear and is refused', () => {
   const { value, ms } = timed(() => checkLedgerStatus('deferred', 'item #1 '.repeat(ITEM_REPEATS)));
   assert.ok(value.refusal !== null && /Defer-reason:/.test(value.refusal), 'a row naming only `item #N` cross-references is incomplete and carries no Defer-reason');

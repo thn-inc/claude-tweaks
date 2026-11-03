@@ -129,7 +129,7 @@ const VERBS = {
   'close-run': { usage: 'close-run [--run <dir>]', run: runCloseRun },
   'delete-ledger': { usage: 'delete-ledger --run <dir> [--ledger <path>]', run: runDeleteLedger },
   'resolve-ledger': { usage: 'resolve-ledger --run <dir>', run: runResolveLedger },
-  'ledger-row': { usage: 'ledger-row [--run <dir>] [--ledger <path>] [--phase <phase>] [--item <text> | --item-file <path>] [--row <n>] --status <status> [--resolution <text> | --resolution-file <path>]', run: runLedgerRow },
+  'ledger-row': { usage: 'ledger-row [--run <dir>] [--ledger <path>] (--phase <phase> (--item <text> | --item-file <path>) | --row <n>) --status <status> [--resolution <text> | --resolution-file <path>]', run: runLedgerRow },
   'teardown-run': { usage: 'teardown-run [--run <dir>] [--merged|--abandoned] [--remote-ref-only]', run: runTeardownRun },
   'archive-run': { usage: 'archive-run [--run <dir>]', run: runArchiveRun },
   'resolve-console': { usage: 'resolve-console --run <dir> [--approve <id,id,...>] [--decline <id,id,...>] [--reverse-failed <id,id,...>] [--filing-failed <id,id,...>]', run: runResolveConsole },
