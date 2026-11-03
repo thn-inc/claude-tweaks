@@ -3,7 +3,8 @@
 // Queue-writes item to `apply` before the write runs; when that write then
 // fails, the stored `apply` is a lie that hides the item from console-residue.
 // This rewrites it to `keep-staged` (an unresolved resolution the residue
-// reader already surfaces), recording what it replaced and when.
+// reader already surfaces), recording what it replaced and when. A Reference-repairs
+// `approve` whose staged diff no longer applies at Phase 4 goes to `pending` the same way (#4636).
 //
 // Consumed by bin/console-resolve.js's `--set-item` shape. Run-dir anchoring is
 // the caller's job (resolveTarget). The read-modify-write runs under
@@ -19,7 +20,7 @@ const { withLock } = require('../file-lock');
 
 const CONSOLE_LOCK = '.console.lock';
 // target resolution -> the stored resolutions it may replace.
-const REWRITE_FROM = Object.freeze({ 'keep-staged': Object.freeze(['apply']) });
+const REWRITE_FROM = Object.freeze({ 'keep-staged': Object.freeze(['apply']), pending: Object.freeze(['approve']) });
 
 // { consolePath, id, resolution, reason, at } ->
 //   { status: 'rewrote', from, item } | { status: 'unchanged', item } | { status: 'refused', why }

@@ -8,7 +8,7 @@ const { execFileSync } = require('child_process');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'console-resolve.js');
 const PLUGIN_ROOT = path.resolve(__dirname, '..', '..', '..', 'plugin');
-const { run, ghReadGrants, checkPatchStack } = require(CLI);
+const { run, parseArgs, ghReadGrants, checkPatchStack } = require(CLI);
 const { gitEnv } = require('../../../plugin/bin/lib/staged-patch/stack-check');
 const { chmodDenialSkip } = require('../../helpers/root');
 
@@ -797,4 +797,87 @@ test('#4636: console-resolve.js reads merge-sensitive-paths from policy and hold
   const held = await outcome('merge-sensitive-paths: plugin/**,docs/**\n');
   assert.strictEqual(held.resolution, 'pending');
   assert.strictEqual(held.reason, 'reference-repair-held');
+});
+
+test('#4636: --check-repair runs the floor on a named file, writing nothing', async () => {
+  const fx = mainCheckoutWithRun({ staged: {}, policyExtra: 'merge-sensitive-paths: plugin/**\n' });
+  const file = (name, text) => { const p = path.join(fx.runDir, name); fs.writeFileSync(p, text); return p; };
+  const diff = (p) => `diff --git a/${p} b/${p}\n--- a/${p}\n+++ b/${p}\n@@ -1 +1 @@\n-old\n+new\n`;
+  const check = async (p) => { const { d, out } = baseDeps(fx, []); const code = await run(['--run', fx.runDir, '--check-repair', p], d); return { code, out: out() }; };
+  const clean = await check(file('clean.md', `Hold: no\n\n${diff('docs/a.md')}`));
+  assert.strictEqual(clean.code, 0);
+  assert.match(clean.out, /console-resolve\.js: .*clean\.md clear/);
+  const sensitive = await check(file('sensitive.md', diff('plugin/a.md')));
+  assert.strictEqual(sensitive.code, 5);
+  assert.match(sensitive.out, /reference-repair-held/);
+  assert.match(sensitive.out, /hit plugin\/a\.md \(merge-sensitive\)/, 'names the path and why');
+  const test_ = await check(file('test.md', diff('tests/a.test.js')));
+  assert.strictEqual(test_.code, 5);
+  assert.match(test_.out, /reference-repair-held/);
+  assert.match(test_.out, /hit tests\/a\.test\.js \(test file\)/, 'names the path and why');
+  const none = await check(file('none.md', 'no diff'));
+  assert.strictEqual(none.code, 5);
+  assert.match(none.out, /reference-repair-unclassified/);
+  assert.doesNotMatch(none.out, /\bhit /, 'an unclassified file names no hit');
+  const gone = await check(path.join(fx.runDir, 'absent.md'));
+  assert.strictEqual(gone.code, 5);
+  assert.match(gone.out, /reference-repair-unreadable/);
+  assert.ok(!fs.existsSync(path.join(fx.runDir, 'console.json')), 'writes no console');
+  assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8'), '', 'logs nothing');
+});
+
+test('#4636: --check-repair needs no unattended ceiling', async () => {
+  const fx = mainCheckoutWithRun({ autonomy: 'supervised' });
+  const p = path.join(fx.runDir, 'clean.md');
+  fs.writeFileSync(p, 'diff --git a/docs/a.md b/docs/a.md\n--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1 +1 @@\n-old\n+new\n');
+  assert.strictEqual(await run(['--run', fx.runDir, '--check-repair', p], baseDeps(fx, []).d), 0);
+});
+
+test('#4636: --check-repair --full re-runs the whole hold rule on a staged file', async () => {
+  const fx = mainCheckoutWithRun({ staged: {}, policyExtra: '' });
+  const diff = 'diff --git a/docs/a.md b/docs/a.md\n--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1 +1 @@\n-old\n+new\n';
+  const stagedPath = path.join(fx.runDir, 'staged', 'wrap-up-reference-1.md');
+  fs.mkdirSync(path.dirname(stagedPath), { recursive: true });
+  const state = (hold) => fs.writeFileSync(path.join(fx.runDir, 'engine-state.json'), JSON.stringify({ results: { references: { result: 'findings', findings: [{ targetPath: 'docs/a.md', action: 'staged', stagePath: stagedPath, hold }] } } }));
+  const check = async (args) => { const { d, out } = baseDeps(fx, []); const code = await run(['--run', fx.runDir, '--check-repair', ...args], d); return { code, out: out() }; };
+  state(false);
+  fs.writeFileSync(stagedPath, `Hold: no\n\n${diff}`);
+  assert.strictEqual((await check([stagedPath, '--full'])).code, 0, 'header, JSON and floor all clear');
+  fs.writeFileSync(stagedPath, `Hold: yes\nHeld: causal set\n\n${diff}`);
+  assert.strictEqual((await check([stagedPath])).code, 0, 'the floor alone reads a clean diff as clear');
+  const rewritten = await check([stagedPath, '--full']);
+  assert.strictEqual(rewritten.code, 5, 'a rewrite to Hold: yes over a clean diff is not clear');
+  assert.match(rewritten.out, /reference-repair-held/);
+  fs.writeFileSync(stagedPath, `Hold: no\n\n${diff}`);
+  state(true);
+  assert.strictEqual((await check([stagedPath, '--full'])).code, 5, 'a JSON hold of true holds');
+  fs.rmSync(path.join(fx.runDir, 'engine-state.json'));
+  const noState = await check([stagedPath, '--full']);
+  assert.strictEqual(noState.code, 5);
+  assert.match(noState.out, /reference-repair-unclassified/);
+  fs.writeFileSync(path.join(fx.runDir, 'engine-state.json'), '{not json');
+  const badState = await check([stagedPath, '--full']);
+  assert.strictEqual(badState.code, 5, 'an unparseable engine-state.json reads as absent');
+  assert.match(badState.out, /reference-repair-unclassified/);
+  const outside = path.join(fx.runDir, 'wrap-up-reference-1.md');
+  fs.writeFileSync(outside, `Hold: no\n\n${diff}`);
+  assert.strictEqual((await check([outside, '--full'])).code, 2, '--full reads only a file in the run\'s staged/');
+  assert.throws(() => parseArgs(['--run', 'd', '--full']), /--full/);
+});
+
+test('#4636: --check-repair refuses the other shapes\' flags', () => {
+  for (const extra of [['--policy', 'console-auto'], ['--dry-run'], ['--json'], ['--set-item', 'x'], ['--set-item', 'x', '--resolution', 'pending', '--reason', 'r'], ['--resolution', 'pending'], ['--reason', 'r']]) {
+    assert.throws(() => parseArgs(['--run', 'd', '--check-repair', 'f', ...extra]), /--check-repair/);
+  }
+  assert.throws(() => parseArgs(['--run', 'd', '--check-repair', '']), /--check-repair/);
+});
+
+test('#4636: --check-repair with a --run outside the main checkout exits 3', async () => {
+  const fx = mainCheckoutWithRun();
+  const shadow = fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-shadow-'));
+  const p = path.join(shadow, 'x.md');
+  fs.writeFileSync(p, 'diff --git a/docs/a.md b/docs/a.md\n--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1 +1 @@\n-old\n+new\n');
+  const { d, out } = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', shadow, '--check-repair', p], d), 3);
+  assert.strictEqual(out(), '', 'a refused anchor never prints clear');
 });

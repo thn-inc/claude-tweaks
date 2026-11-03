@@ -79,14 +79,14 @@ When staging a candidate, write its full proposal to `staged/wrap-up-reference-{
 that path in the finding's `stagePath`, so the Review Console files it under Reference repairs.
 Every staged candidate records `permittedInitiative`'s `hold` twice, copied verbatim and never
 judged (the two `hold: true` overrides below, an ambiguous target and a diff that cannot be
-composed, are the only exceptions): as the finding's boolean `hold` field in the row's payload, and as exactly one `Hold: yes`
-or `Hold: no` line in the staged file's header (the lines before the first blank line). Every
-staged file's header also carries `Target: {repo path of the file holding the reference}`, and its
-body a `{old} → {new}` line (for an ambiguous one, `{old} → one of {candidates}`), since a human
-approving a no-diff repair needs both. That line, and any other prose, comes after the header's
-blank line and before the first `diff --git` line, with nothing after the last hunk: the
-resolver's strict parser reads a non-blank line after a hunk as unparseable, so a summary placed
-after the diff holds every repair as `reference-repair-unclassified`.
+composed, are the only exceptions): as the finding's boolean `hold` field in the row's payload, and
+as exactly one `Hold: yes` or `Hold: no` line in the staged file's header (the lines before the
+first blank line). Every staged file's header also carries `Target: {repo path of the file holding
+the reference}`, and its body a `{old} → {new}` line (for an ambiguous one, `{old} → one of
+{candidates}`), since a human approving a no-diff repair needs both. That line, and any other prose,
+comes after the header's blank line and before the first `diff --git` line, with nothing after the
+last hunk: the resolver's strict parser reads a non-blank line after a hunk as unparseable, so a
+summary placed after the diff holds every repair as `reference-repair-unclassified`.
 
 A target Step 3 found ambiguous takes `hold: true`/`Hold: yes` whatever the floor said, plus a
 `Held: {reason}` line naming why, and carries no diff: nothing has been decided to compose one
@@ -106,15 +106,13 @@ git diff --no-index --no-color --no-ext-diff --no-prefix -- a/{path} b/{path}
 
 Its exit 1 is success. Paste its output verbatim under the header, never hand-typed and never
 wrapped in a code fence (a fence line after the last hunk holds the repair as
-`reference-repair-unclassified`), so a staged
-candidate leaves the shared worktree untouched, including under `--dry-run`. Then run
-`_shared/staged-patch.md`'s Staging-time gate on the file
+`reference-repair-unclassified`), so a staged candidate leaves the shared worktree untouched,
+including under `--dry-run`. Then run `_shared/staged-patch.md`'s Staging-time gate on the file
 (`git -C "{worktree root}" apply --check "{stagePath}"`); on its malformed branch, recompose once.
-When the diff cannot be composed at all
-(the recipe exits anything but 1, the repaired text cannot be produced) or the recomposed one still
-fails the gate, stage it held with no diff, the way an ambiguous candidate is: `hold: true`,
-`Hold: yes`, a `Held: {why the diff could not be composed}` line, rather than that gate's
-description-only `.md`, so a human sees it on the console.
+When the diff cannot be composed at all (the recipe exits anything but 1, the repaired text cannot
+be produced) or the recomposed one still fails the gate, stage it held with no diff, the way an
+ambiguous candidate is: `hold: true`, `Hold: yes`, a `Held: {why the diff could not be composed}`
+line, rather than that gate's description-only `.md`, so a human sees it on the console.
 
 A repair with no parseable diff never auto-approves. The resolver reads the repair's paths from a
 strict parse of that diff rather than from `targetPath`, `files` or `summary`: every `---`, `+++`,

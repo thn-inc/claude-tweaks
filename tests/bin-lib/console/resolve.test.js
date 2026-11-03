@@ -600,6 +600,8 @@ test('#4636: every other path line or header the parser cannot square with its s
     'context line past the old count': `${head}--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1 +1,2 @@\n one\n two\n`,
     'removal past the old count': `${head}--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1 +1,2 @@\n-a\n-b\n+c\n+d\n`,
     'addition past the new count': `${head}--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1,2 +1 @@\n+a\n+b\n-c\n-d\n`,
+    'no-newline marker after a blank line past a hunk': `${head}--- a/docs/a.md\n+++ b/docs/a.md\n${HUNK}\n\\ No newline at end of file\n`,
+    'doubled no-newline marker after a hunk': `${head}--- a/docs/a.md\n+++ b/docs/a.md\n${HUNK}\\ No newline at end of file\n\\ No newline at end of file\n`,
   };
   for (const [label, body] of Object.entries(cases)) {
     assert.strictEqual(stagedDiffPaths(`Hold: no\n\n${body}`), null, label);

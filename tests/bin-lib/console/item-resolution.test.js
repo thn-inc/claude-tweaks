@@ -35,8 +35,8 @@ const call = (consolePath, over = {}) => rewriteItemResolution({ consolePath, id
 
 test('exports the lock name and the rewrite table', () => {
   assert.strictEqual(CONSOLE_LOCK, '.console.lock');
-  assert.deepStrictEqual(REWRITE_FROM, { 'keep-staged': ['apply'] });
-  assert.ok(Object.isFrozen(REWRITE_FROM) && Object.isFrozen(REWRITE_FROM['keep-staged']));
+  assert.deepStrictEqual(REWRITE_FROM, { 'keep-staged': ['apply'], pending: ['approve'] });
+  assert.ok(Object.isFrozen(REWRITE_FROM) && Object.isFrozen(REWRITE_FROM['keep-staged']) && Object.isFrozen(REWRITE_FROM.pending));
 });
 
 test('rewrites an apply item to keep-staged, recording rewrittenFrom/rewrittenAt and keeping every other field', () => {
@@ -84,7 +84,8 @@ test('refuses without writing', () => {
     ['unknown id', STORED(), /no item nope\.md/, { id: 'nope.md' }],
     ['two items sharing the id', dup, /2 items with id leftover-1\.md/],
     ['a filed item', filed, /filed.*not rewritable to keep-staged/],
-    ['a target outside REWRITE_FROM', STORED(), /not rewritable to pending/, { resolution: 'pending' }],
+    ['a target outside REWRITE_FROM', STORED(), /not rewritable to filed/, { resolution: 'filed' }],
+    ['an apply item to pending', STORED(), /apply, not rewritable to pending/, { resolution: 'pending' }],
   ];
   for (const [name, content, why, over] of cases) {
     const consolePath = consoleFile(content);
@@ -105,4 +106,17 @@ test('a write failure throws and releases the lock', () => {
   } finally { fs.renameSync = real; }
   assert.ok(!fs.existsSync(path.join(path.dirname(consolePath), CONSOLE_LOCK)), 'lock released');
   assert.strictEqual(JSON.parse(fs.readFileSync(consolePath, 'utf8')).items[0].resolution, 'apply');
+});
+
+test('#4636: rewrites an approve item to pending, recording what it replaced', () => {
+  const before = STORED();
+  before.items[0] = { id: 'wrap-up-reference-1.md', section: 'Reference repairs', resolution: 'approve', reason: 'stance' };
+  const consolePath = consoleFile(before);
+  const r = call(consolePath, { id: 'wrap-up-reference-1.md', resolution: 'pending', reason: 'reference-repair-stale' });
+  assert.strictEqual(r.status, 'rewrote');
+  assert.strictEqual(r.from, 'approve');
+  const after = JSON.parse(fs.readFileSync(consolePath, 'utf8')).items[0];
+  assert.strictEqual(after.resolution, 'pending');
+  assert.strictEqual(after.reason, 'reference-repair-stale');
+  assert.strictEqual(after.rewrittenFrom, 'approve');
 });

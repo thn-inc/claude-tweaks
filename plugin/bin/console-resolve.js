@@ -19,7 +19,20 @@
 // It needs no ceiling (it only records what already happened). Exit 0 rewrote or
 // already there, 2 malformed, 3 --run not anchored or the write failed, 5 refused
 // (no console.json, not this CLI's shape, unknown/duplicate id, resolution not
-// rewritable).
+// rewritable). `--resolution pending` rewrites one stored item `approve` → `pending` (#4636): a
+// Reference-repairs row whose staged diff no longer applies at Phase 4 (`reference-repair-stale`).
+//
+// Third shape (#4636): `--run <dir> --check-repair <file> [--full]` re-runs the reference-repair
+// floor (lib/console/reference-repair.js) on a diff composed after the resolver ran, for Phase 4's
+// execution-and-verification.md Reference repairs bullet. It prints `console-resolve.js: {file}
+// clear` and exits 0, or prints `console-resolve.js: {file} {reason}` (the reason word is the last
+// token: reference-repair-held, -unclassified or -unreadable) followed by one `console-resolve.js:
+// hit {path} ({why})` line per floor hit, and exits 5. `--full` runs the whole hold rule instead
+// of the floor alone (the `Held:` line, the `Hold:` header, the finding's JSON `hold` from
+// engine-state.json, then the floor) and reads only a file directly in `{run}/staged/`. It writes
+// nothing and needs no ceiling. Exit 0 clear, 2 malformed (or `--full` on a file outside staged/),
+// 3 --run not anchored, 5 held, unclassified or unreadable. It takes none of --policy, --dry-run,
+// --json, --set-item.
 'use strict';
 
 const fs = require('fs');
@@ -37,9 +50,12 @@ const { unresolvedItems, splitMissing, formatResidueLines, consoleResidueItems }
 const { REWRITE_FROM, rewriteItemResolution } = require('./lib/console/item-resolution');
 const { ghOptions } = require('./lib/repo-resolve');
 const { sensitivePathsOf } = require('./lib/express/policy');
+const { canonicalRealpath } = require('./lib/path-guard');
+const { REFERENCE_REPAIR_REASONS, stagedDiffPaths, referenceRepairFloorHits, referenceRepairFloorReason, referenceRepairHoldReason, referenceFindingsByFile } = require('./lib/console/reference-repair');
 
 const USAGE = 'usage: console-resolve.js --run <dir> --policy console-auto [--dry-run] [--json]\n'
-  + '       console-resolve.js --run <dir> --set-item <id> --resolution keep-staged --reason <text>';
+  + '       console-resolve.js --run <dir> --set-item <id> --resolution keep-staged|pending --reason <text>\n'
+  + '       console-resolve.js --run <dir> --check-repair <file> [--full]';
 
 class UsageError extends Error {}
 
@@ -57,8 +73,8 @@ function needsAHumanBlock(unresolved, runDir, consolePath) {
 }
 
 function parseArgs(argv) {
-  const out = { run: null, policy: null, dryRun: false, json: false, setItem: null, resolution: null, reason: null };
-  const valued = { '--run': 'run', '--policy': 'policy', '--set-item': 'setItem', '--resolution': 'resolution', '--reason': 'reason' };
+  const out = { run: null, policy: null, dryRun: false, json: false, setItem: null, resolution: null, reason: null, checkRepair: null, full: false };
+  const valued = { '--run': 'run', '--policy': 'policy', '--set-item': 'setItem', '--resolution': 'resolution', '--reason': 'reason', '--check-repair': 'checkRepair' };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
     if (Object.prototype.hasOwnProperty.call(valued, flag)) {
@@ -68,9 +84,16 @@ function parseArgs(argv) {
       i += 1;
     } else if (flag === '--dry-run') out.dryRun = true;
     else if (flag === '--json') out.json = true;
+    else if (flag === '--full') out.full = true;
     else throw new UsageError(`unknown flag: ${flag}`);
   }
   if (!out.run) throw new UsageError('--run <dir> is required');
+  if (out.full && out.checkRepair === null) throw new UsageError('--full requires --check-repair');
+  if (out.checkRepair !== null) {
+    if (out.policy !== null || out.dryRun || out.json || out.setItem !== null || out.resolution !== null || out.reason !== null) throw new UsageError('--check-repair takes none of --policy, --dry-run, --json, --set-item, --resolution, --reason');
+    if (out.checkRepair === '') throw new UsageError('--check-repair requires a non-empty file');
+    return out;
+  }
   if (out.setItem !== null) {
     if (out.policy !== null || out.dryRun || out.json) throw new UsageError('--set-item takes none of --policy, --dry-run, --json');
     if (out.setItem === '') throw new UsageError('--set-item requires a non-empty id');
@@ -186,6 +209,38 @@ function setItem(o, runDir, { stdout, stderr, now }) {
   return 0;
 }
 
+// #4636: the `--check-repair` shape — the reference-repair floor (or, with `--full`, the whole hold
+// rule) over one file, writing nothing. Exit 0 clear, 2 `--full` on a file outside `{run}/staged/`,
+// 5 held, unclassified or unreadable. Runs before the ceiling check: it only reads.
+function checkRepair(o, runDir, { stdout, stderr, execFile, cwd }) {
+  const file = o.checkRepair;
+  const real = (p) => canonicalRealpath(p) || path.resolve(p);
+  if (o.full && real(path.dirname(path.resolve(file))) !== real(path.join(runDir, 'staged'))) {
+    stderr(`console-resolve.js: --full reads only a file directly in ${path.join(runDir, 'staged')} (got ${file})\n${USAGE}\n`);
+    return 2;
+  }
+  let text = null;
+  let readError = false;
+  try { text = fs.readFileSync(file, 'utf8'); } catch { readError = true; }
+  // A policy that cannot be read leaves the merge-sensitive list unreadable (null), which holds.
+  let sensitivePaths = null;
+  try { ({ sensitivePaths } = readPolicy({ execFile, cwd: cwd(), runDir })); } catch { sensitivePaths = null; }
+  let reason;
+  if (o.full) {
+    let engineState = null;
+    try { engineState = JSON.parse(fs.readFileSync(path.join(runDir, 'engine-state.json'), 'utf8')); } catch { engineState = null; }
+    reason = referenceRepairHoldReason({ text, readError }, referenceFindingsByFile(engineState).get(path.basename(file)) || [], sensitivePaths);
+  } else {
+    reason = readError ? REFERENCE_REPAIR_REASONS.UNREADABLE : referenceRepairFloorReason(text, sensitivePaths);
+  }
+  if (reason === null) { stdout(`console-resolve.js: ${file} clear\n`); return 0; }
+  stdout(`console-resolve.js: ${file} ${reason}\n`);
+  if (text !== null) {
+    for (const hit of referenceRepairFloorHits(stagedDiffPaths(text), sensitivePaths)) stdout(`console-resolve.js: hit ${hit.path} (${hit.why})\n`);
+  }
+  return 5;
+}
+
 async function run(argv, deps = {}) {
   const cwd = deps.cwd || (() => process.cwd());
   const stdout = deps.stdout || ((s) => process.stdout.write(s));
@@ -208,6 +263,7 @@ async function run(argv, deps = {}) {
   }
   const runDir = target.dir;
   if (o.setItem !== null) return setItem(o, runDir, { stdout, stderr, now });
+  if (o.checkRepair !== null) return checkRepair(o, runDir, { stdout, stderr, execFile, cwd });
   const { ceiling, vetoWindowHours, sensitivePaths } = readPolicy({ execFile, cwd: cwd(), runDir });
   if (!bookkeepingPermissions(ceiling).consoleAutoResolve) {
     stderr(`console-resolve.js: consoleAutoResolve is not granted at ceiling ${ceiling} (unattended only) — nothing written\n`);
