@@ -261,6 +261,13 @@ test('AC2.2: commit check — a dirty tree logs the uncommitted-paths line and s
   assert.match(fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'), /^## \/review$/m);
 });
 
+test('commit check — a worktree-side rename ( R) counts once, its source path is not a separate dirty entry', () => {
+  const { main, runDir, wt } = fixture();
+  const h = makeDeps(main, wt, { porcelain: ' R new.js\0old.js\0 M a.js\0' });
+  const env = runPhaseExit(opts(runDir, wt, 'review'), h.deps);
+  assert.deepEqual(env.commit, { clean: false, dirty: ['new.js', 'a.js'] });
+});
+
 test('AC2.2: commit check — a throwing git status reports commit.error, logs nothing and still pushes', () => {
   const { main, runDir, wt } = fixture();
   const h = makeDeps(main, wt, { porcelain: Object.assign(new Error('Command failed'), { stderr: 'fatal: index file corrupt\n' }) });

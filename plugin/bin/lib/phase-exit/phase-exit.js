@@ -13,8 +13,10 @@
 //      (integration-branch policy, else origin/HEAD, else main) is refused: no
 //      push, no merge-state read; the commit check and the checklist still run.
 //      So is a --worktree whose real path is not an active run's recorded
-//      `worktree` -- the check hooks/pre-tool-use.js's E1 loop makes for a Bash
-//      push -- which also appends E1's `wd-push-mismatch` event.
+//      `worktree`. hooks/pre-tool-use.js's E1 loop compares the same two paths
+//      for a Bash push, but only logs its `wd-push-mismatch` event and lets the
+//      push through; here the push is refused and the same event is appended.
+//      Both fail open on a path they cannot prove.
 //   3. Commit check. Uncommitted paths are logged and the push goes ahead.
 //   4. Bookkeeping, in worktree mode under either model: a run-state with no
 //      `worktree` runs `hooks.js record-worktree`; under pr-first, one with no
@@ -59,6 +61,7 @@ const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS, GIT_PUSH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYT
 const { GIT_REMOTE_PROBE_TIMEOUT_MS, FORGE_PROBE_ATTEMPTS, resolveForgeProbeTimeoutMs } = require('../policy-schema');
 const { canonicalRealpath } = require('../path-guard');
 const { ghOptions } = require('../repo-resolve');
+const { parseStatusPorcelainZ } = require('../git-z');
 const prChecklist = require('../../pr-checklist');
 const prMergeState = require('../../pr-merge-state');
 
@@ -150,20 +153,6 @@ function isArchivedRun(runDir) {
   return path.basename(archive) === 'archive' && path.basename(path.dirname(archive)) === 'pipelines';
 }
 
-// `git status --porcelain -z` records -> the paths they name. A rename or copy
-// carries its source path as the next NUL-separated record, skipped here.
-function parsePorcelainZ(out) {
-  const recs = String(out || '').split('\0');
-  const paths = [];
-  for (let i = 0; i < recs.length; i++) {
-    const rec = recs[i];
-    if (rec.length < 4) continue;
-    paths.push(rec.slice(3));
-    if (rec[0] === 'R' || rec[0] === 'C') i++;
-  }
-  return paths;
-}
-
 class InvalidWorktreeError extends Error {}
 
 // opts: { run, phase, worktree, fixes?, remove?, summaryFile? } -- already validated by
@@ -241,8 +230,9 @@ function runPhaseExit(opts, overrides = {}) {
     env.push = { state: 'refused', reason: `${label} is not a run branch` };
     log('AUTO', 'Phase-exit push', `refused to push ${label} at ${phase} exit — not a run branch`);
   } else if (!closed && hasWorktree(state)) {
-    // The run's assigned worktree vs --worktree -- the check hooks/pre-tool-use.js's E1
-    // loop makes for a Bash push, which never sees this process's push. Fails open on an
+    // The run's assigned worktree vs --worktree -- the two paths hooks/pre-tool-use.js's E1
+    // loop compares for a Bash push, which never sees this process's push. A mismatch is
+    // refused here, where E1 logs `wd-push-mismatch` and allows the push. Fails open on an
     // unprovable path, as that loop does ("cannot prove the target -> allow", pre-tool-use.js).
     const expected = canonicalRealpath(state.worktree);
     const actual = canonicalRealpath(wt);
@@ -257,7 +247,7 @@ function runPhaseExit(opts, overrides = {}) {
 
   // 3. Commit check -- also on a refused branch, so a dirty tree still leaves its trace.
   try {
-    const dirty = parsePorcelainZ(deps.git(['-C', wt, '--no-optional-locks', 'status', '--porcelain', '-z']));
+    const dirty = parseStatusPorcelainZ(deps.git(['-C', wt, '--no-optional-locks', 'status', '--porcelain', '-z'])).map((r) => r.path);
     env.commit = { clean: dirty.length === 0, dirty };
     if (dirty.length) log('AUTO', 'Phase-exit push', `${dirty.length} uncommitted path(s) at ${phase} exit not included in the push`);
   } catch (e) {
@@ -467,4 +457,4 @@ function backfillPr({ deps, runDir, wt, branch, step, log, result, details }) {
   }
 }
 
-module.exports = { runPhaseExit, prPushReleased, realDeps, policyReadTimeoutMs, policyEntryValue, checklistFlags, parsePorcelainZ, isArchivedRun, InvalidWorktreeError, PHASE_SECTIONS };
+module.exports = { runPhaseExit, prPushReleased, realDeps, policyReadTimeoutMs, policyEntryValue, checklistFlags, isArchivedRun, InvalidWorktreeError, PHASE_SECTIONS };
