@@ -77,7 +77,7 @@ function runBlock(shell, block, { exit, out }) {
     const r = spawnSync(shell, [...flags, '-c', block], {
       encoding: 'utf8',
       env: {
-        PATH: process.env.PATH,
+        ...process.env,
         CLAUDE_PLUGIN_ROOT: pluginRoot.split(path.sep).join('/'),
         DISPATCH_GROUPS: groups,
         DISPATCH_EXCLUSIONS: exclusions,
@@ -113,8 +113,8 @@ for (const [shell] of SHELLS) {
     assert.equal(r.argv[2], '--exclusions');
     assert.deepEqual(r.argv.filter((_, i) => i !== 1 && i !== 3),
       ['--groups', '--exclusions', '--integration-branch', 'main', '--work-links', 'body-text']);
-    assert.equal(path.basename(r.argv[1]), 'dispatch-groups.json');
-    assert.equal(path.basename(r.argv[3]), 'dispatch-exclusions.json');
+    assert.equal(r.argv[1], r.files.groups);
+    assert.equal(r.argv[3], r.files.exclusions);
     const parsed = parseArgs(r.argv);
     assert.equal(parsed.error, undefined, `the shipped CLI's own parseArgs rejects the block's argv: ${parsed.error}`);
   });

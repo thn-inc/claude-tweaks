@@ -11,7 +11,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
-const { missingFactsOf, assertEachPatternGoesRed, lineStartingWith } = require('./helpers/conformance-asserts');
+const { missingFactsOf, assertEachPatternGoesRed, lineStartingWith, sectionOf } = require('./helpers/conformance-asserts');
 const { countFailedAttempts } = require('../plugin/bin/lib/issues/retry');
 
 const ROOT = path.join(__dirname, '..');
@@ -153,9 +153,10 @@ test('AC5.1: the claimed-case pointer never counts as a failed attempt', () => {
 test('skill-graph names the blocker-landing Settle edge (#4792)', () => {
   const PREFIX = '| `flow/failure-cards.md` |';
   const text = readText(SKILL_GRAPH);
+  // The row belongs to `## dispatch`: search that section, not the whole file.
   const rowOf = (t) => {
-    const row = lineStartingWith(t, PREFIX);
-    assert.ok(row, `skill-graph.md has no line starting "${PREFIX}"`);
+    const row = lineStartingWith(sectionOf(t, '## dispatch'), PREFIX);
+    assert.ok(row, `skill-graph.md's dispatch section has no line starting "${PREFIX}"`);
     return row;
   };
   const row = rowOf(text);
@@ -166,7 +167,12 @@ test('skill-graph names the blocker-landing Settle edge (#4792)', () => {
   // Control: a copy with that line removed must fail the existence check.
   const without = text.split('\n').filter((line) => !line.startsWith(PREFIX)).join('\n');
   assert.notEqual(without, text, 'row anchor not found — control cannot discriminate');
-  assert.throws(() => rowOf(without), /skill-graph\.md has no line starting/);
+  assert.throws(() => rowOf(without), /dispatch section has no line starting/);
+
+  // Control: the row moved out of `## dispatch` (to just under `## docs-health`) must fail the same check.
+  const moved = without.replace('\n## docs-health\n', `\n## docs-health\n${row}\n`);
+  assert.notEqual(moved, without, 'the move control must change the text');
+  assert.throws(() => rowOf(moved), /dispatch section has no line starting/);
 });
 
 // --- assess-agent-autonomy's failure-check classifies a stray blocker-landing stop (Task 3) ---
@@ -176,12 +182,17 @@ const BULLET_PREFIX = '- **Blocker-landing stop**:';
 
 // The bullet is hard-wrapped to match its neighbours: its start line up to, not including, the next
 // `- **` bullet or `## ` heading, joined and whitespace-collapsed.
-function bulletOf(text) {
-  const lines = text.split('\n');
+function bulletRange(lines) {
   const start = lines.findIndex((line) => line.startsWith(BULLET_PREFIX));
   assert.notEqual(start, -1, `failure-check.md has no line starting "${BULLET_PREFIX}"`);
   let end = start + 1;
   while (end < lines.length && !lines[end].startsWith('- **') && !lines[end].startsWith('## ')) end += 1;
+  return { start, end };
+}
+
+function bulletOf(text) {
+  const lines = text.split('\n');
+  const { start, end } = bulletRange(lines);
   return lines.slice(start, end).join(' ').replace(/\s+/g, ' ').trim();
 }
 
@@ -219,9 +230,7 @@ test('the bullet sits inside Step 2: Judge', () => {
 
   // Control: the bullet's lines moved to just after the Step 3 heading line must fail the same check.
   const lines = text.split('\n');
-  const start = lines.findIndex((line) => line.startsWith(BULLET_PREFIX));
-  let end = start + 1;
-  while (end < lines.length && !lines[end].startsWith('- **') && !lines[end].startsWith('## ')) end += 1;
+  const { start, end } = bulletRange(lines);
   const bullet = lines.splice(start, end - start);
   const render = lines.findIndex((line) => line.startsWith(RENDER));
   assert.notEqual(render, -1, 'Step 3 heading not found — control cannot discriminate');
@@ -240,7 +249,7 @@ const PACK_JOURNEY = path.join(ROOT, 'docs', 'journeys', 'gather-the-wrap-up-fac
 const TEARDOWN_PREFIX = '   **Blocker-landing stop (#4792).**';
 const SECOND_CALL_PREFIX = '**Blocker-landing stop (#4792).** A second call\'s handoff continuation';
 const SECTION_E_PREFIX = '**Skip it too when the invocation names `blocker-landing: skip the claim release` (#4792)**';
-const PHRASE = /`\((blocker-landing: skip the claim release)\)`/;
+const PHRASE = /`\((blocker-landing:[^)`]*)\)`/;
 
 function requireOrder(text, markers) {
   let last = -1;
@@ -367,7 +376,12 @@ test('AC6.1: the phrase both sections append is the one Section E and flags.md d
   // Control: a §6 copy spelling the phrase differently fails the equality.
   const drifted = secondCallParagraph(text).replace('blocker-landing: skip the claim release', 'blocker-landing: skip claim release');
   assert.notEqual(drifted, secondCallParagraph(text), 'the drift control must change the text');
-  assert.throws(() => samePhrase(teardownParagraph(text), drifted), /both paragraphs must carry the parenthetical phrase/);
+  assert.throws(() => samePhrase(teardownParagraph(text), drifted), /§5 and §6 must append the same phrase/);
+
+  // Control: a §6 copy with the phrase removed fails the existence half.
+  const absent = secondCallParagraph(text).replace(PHRASE, '');
+  assert.notEqual(absent, secondCallParagraph(text), 'the removal control must change the text');
+  assert.throws(() => samePhrase(teardownParagraph(text), absent), /both paragraphs must carry the parenthetical phrase/);
 });
 
 test('AC2.1 AC6.1: Section E skips its release on the blocker-landing phrase and logs the skip (#4792)', () => {

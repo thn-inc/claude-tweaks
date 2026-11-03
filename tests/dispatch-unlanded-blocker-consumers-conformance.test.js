@@ -111,9 +111,14 @@ test('AC4.3: mcp-transport.md runs the unlanded-blocker pass as written on a gh-
   const section = mcpSection(MCP);
   assert.deepEqual(mcpMissing(section), []);
   assertEachPatternGoesRed(section, MCP_FACTS, mcpMissing);
-  assert.ok(!section.includes("skip the pass's"), "the pre-Q4 'skip the pass's' instruction is gone");
-  // The ban can see its own phrase: a copy carrying it is caught.
-  assert.ok(`${section} skip the pass's block`.includes("skip the pass's"));
+  const bansSkip = (s) => /skip the pass's/i.test(s);
+  assert.ok(!bansSkip(section), "the pre-Q4 'skip the pass's' instruction is gone");
+  // Control: the ban goes red on a copy carrying the phrase, capitalized as a sentence start too.
+  for (const phrase of ["skip the pass's block", "Skip the pass's block"]) {
+    const doctored = `${section} ${phrase}`;
+    assert.notEqual(doctored, section);
+    assert.ok(bansSkip(doctored), `the ban must catch "${phrase}"`);
+  }
 });
 
 test('mcp-transport.md places the unlanded-blocker section above the #2523 section it cites (#4792)', () => {
@@ -158,10 +163,19 @@ test('skill-graph names the unlanded-blocker queue-pull edge (#4792)', () => {
 const STRUCTURE_CLAUSE = 'and where the not-spec-shaped, open-linked-PR, named-target and unlanded-blocker passes sit and why (#4792)';
 
 test("plugin-structure.md describes queue-pull-notes.md's pass-placement section", () => {
-  const row = lineStartingWith(PLUGIN_STRUCTURE, '| dispatch |');
-  assert.ok(row, 'the dispatch row exists');
+  const HEADING = '### Skills with sub-files';
+  const dispatchRow = (text) => lineStartingWith(sectionOf(text, HEADING), '| dispatch |');
+  const row = dispatchRow(PLUGIN_STRUCTURE);
+  assert.ok(row, 'the dispatch row exists under the sub-files heading');
   assert.ok(collapse(row).includes(STRUCTURE_CLAUSE), 'the dispatch row carries the pass-placement clause');
   const without = row.replace(STRUCTURE_CLAUSE, '');
   assert.notEqual(without, row);
   assert.ok(!collapse(without).includes(STRUCTURE_CLAUSE));
+
+  // Control: the row moved out of the sub-files section (to just under `## Commands`) is no longer found.
+  const stripped = PLUGIN_STRUCTURE.split('\n').filter((l) => l !== row).join('\n');
+  assert.notEqual(stripped, PLUGIN_STRUCTURE);
+  const moved = stripped.replace('\n## Commands\n', `\n## Commands\n${row}\n`);
+  assert.notEqual(moved, stripped);
+  assert.equal(dispatchRow(moved), '', 'a dispatch row outside the sub-files section is not found');
 });
