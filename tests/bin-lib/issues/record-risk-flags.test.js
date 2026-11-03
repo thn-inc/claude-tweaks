@@ -21,6 +21,61 @@ test('AC5.1: a malformed line reads all four, never no flags', () => {
   }
 });
 
+// Final review finding 1: a hand-edited formatting variant is a flag line read malformed,
+// never an absent one. One case per variant the detection admits.
+const VARIANT_FLAG_LINES = [
+  ['bold', '**Risk-flags:** auth'],
+  ['bold key, colon outside', '**Risk-flags**: auth'],
+  ['italic', '_Risk-flags:_ auth'],
+  ['list', '- Risk-flags: auth'],
+  ['star list', '* Risk-flags: auth'],
+  ['plus list, bold', '+ **Risk-flags:** auth'],
+  ['numbered', '1. Risk-flags: auth'],
+  ['numbered paren', '2) Risk-flags: auth'],
+  ['blockquote', '> Risk-flags: auth'],
+  ['nested blockquote list', '> > - Risk-flags: auth'],
+];
+
+test('finding 1: a bold, list, numbered or blockquoted flag line reads malformed, all four flagged', () => {
+  for (const [name, line] of VARIANT_FLAG_LINES) {
+    const r = parseRiskFlags(`Surface: infra\n${line}\n\n## Overview\n`);
+    assert.deepStrictEqual([r.status, r.reason, r.flags], ['unknown', 'malformed', ALL], name);
+    assert.strictEqual(r.raw, line, name);
+  }
+});
+
+test('finding 1: a variant line keeps a policy slug it named, as any malformed line does', () => {
+  assert.deepStrictEqual(parseRiskFlags('**Risk-flags:** pii\n').flags, [...ALL, 'pii']);
+});
+
+test('finding 1: a variant marker line, nested emphasis included, reads as the marker', () => {
+  for (const line of ['**Risk-flags-unconfirmed:** true', '- Risk-flags-unconfirmed: true', '> Risk-flags-unconfirmed: true', '***Risk-flags-unconfirmed:*** true', '**_Risk-flags-unconfirmed_**: true', '- **Risk-flags-unconfirmed:** false']) {
+    const r = parseRiskFlags(`Risk-flags: auth\n${line}\n`);
+    assert.deepStrictEqual([r.status, r.flags, r.unconfirmed], ['ok', ['auth'], true], line);
+  }
+});
+
+test('finding 1: the writers\' repair rewrites a variant flag line, and a variant marker, in the exact form', () => {
+  for (const [name, line] of VARIANT_FLAG_LINES) {
+    assert.strictEqual(addRiskFlags(`Surface: infra\n${line}\n\n## Overview\n`, []), 'Surface: infra\nRisk-flags: migrations, auth, public-contract, irreversible-side-effect\n\n## Overview\n', name);
+  }
+  assert.strictEqual(addRiskFlags('- Risk-flags: auth\n**Risk-flags-unconfirmed:** true\n', []), 'Risk-flags: migrations, auth, public-contract, irreversible-side-effect\nRisk-flags-unconfirmed: true\n');
+});
+
+test('finding 1: a prose "risk flags:" sentence below a ## heading is out of the preamble and stays unread', () => {
+  for (const line of ['The risk flags: see below', '**Risk flags:** see below', '- Risk flags: none of these apply']) {
+    const body = `Surface: infra\n\n## Overview\n\n${line}\n`;
+    assert.deepStrictEqual(parseRiskFlags(body), { flags: [], status: 'unclassified', reason: null, unconfirmed: false, raw: null }, line);
+    assert.strictEqual(addRiskFlags(body, []), `Surface: infra\nRisk-flags: none\n\n## Overview\n\n${line}\n`, line);
+  }
+});
+
+test('finding 1: a key that only resembles the flag key stays unread', () => {
+  for (const line of ['Risky flags: auth', 'The risk-flags line: auth', '-Risk-flags: auth', '1.Risk-flags: auth']) {
+    assert.strictEqual(parseRiskFlags(`${line}\n\n## O\n`).status, 'unclassified', line);
+  }
+});
+
 test('malformed: an empty slug, a bad character and a trailing comma all read malformed', () => {
   for (const line of ['Risk-flags: auth,,migrations', 'Risk-flags: auth,', 'Risk-flags: auth_x', 'Risk-flags: -auth', 'Risk-flags: none, none', 'Risk-flags:  ']) {
     const r = parseRiskFlags(`${line}\n`);

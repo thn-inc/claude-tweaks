@@ -84,7 +84,7 @@ const REFINE_PINS = [
   ['Step 3.7 stub', 'refine', stub, 'under both drivers'],
   ['Step 3.7 stub', 'refine', stub, '`blocked` and `inProgress` included'],
   ['Step 3.7 stub', 'refine', stub, '`#N[,#M...]` filter'],
-  ['Step 3.7 stub', 'refine', stub, 'the literal `Risk-flags-unconfirmed:`'],
+  ['Step 3.7 stub', 'refine', stub, "detected by `parseRiskFlags`'s own `MARKER_LINE_RE`"],
   ['Step 3.7 stub', 'refine', stub, "only narrows, and `classify`'s `entry` decides"],
   ['Step 3.7 stub', 'refine', stub, HEADLESS_SKIP],
   ['Step 3.7 stub', 'refine', stub, 'never read its sub-file'],
@@ -429,6 +429,46 @@ test('Step 3.7 snippets: the refresh replaces the written record\'s Step 1 body,
     rows = JSON.parse(fs.readFileSync(fx.faceted, 'utf8'));
     assert.equal(rows.find((r) => r.number === 7).body, 'Risk-flags: auth\n\n## Current State\n\nWritten.');
     assert.equal(rows.find((r) => r.path === line.path).body, localRow.body, 'refreshing #7 leaves the local row alone');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+// Final review finding 7: the pre-filter detects a variant marker line as parseRiskFlags does,
+// so a hand-formatted marker never hides a record from refine. The rows carry no exact
+// `Risk-flags-unconfirmed:` literal, which the frozen control below (the old `includes`
+// filter) proves would have missed every one of them.
+const VARIANT_MARKER_ROWS = [
+  { number: 9, title: 'bold marker', body: 'Origin: test\nRisk-flags: auth\n**Risk-flags-unconfirmed**: true\n\n## Current State\n\nx' },
+  { number: 10, title: 'list marker', body: 'Origin: test\nRisk-flags: auth\n- Risk flags unconfirmed: true\n\n## Current State\n\nx' },
+  { number: 11, title: 'quoted marker', body: 'Origin: test\r\nRisk-flags: auth\r\n> _Risk_flags-unconfirmed_: yes\r\n\r\n## Current State\r\n\r\nx' },
+  { number: 12, title: 'prose only', body: 'Origin: test\n\n## Current State\n\nThe word risk-flags-unconfirmed appears mid-sentence.' },
+];
+function prefilterNumbers(fx, prefilter) {
+  const rows = JSON.parse(fs.readFileSync(fx.faceted, 'utf8'));
+  fs.writeFileSync(fx.faceted, JSON.stringify([...rows, ...VARIANT_MARKER_ROWS.map((r) => ({ ...r, facets: {} }))]));
+  return sh(prefilter, fx.env).trim().split('\n').filter(Boolean).map((l) => JSON.parse(l).number);
+}
+
+test('Step 3.7 pre-filter: a bold, list or blockquoted marker line is listed, a mid-sentence mention is not', { skip: SKIP_NO_BASH }, () => {
+  const fx = fixture();
+  try {
+    const numbers = prefilterNumbers(fx, LIVE_SNIPPETS.prefilter);
+    for (const n of [7, 9, 10, 11]) assert.ok(numbers.includes(n), `#${n} listed: ${JSON.stringify(numbers)}`);
+    assert.ok(!numbers.includes(12), `a mid-sentence mention is no marker line: ${JSON.stringify(numbers)}`);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('control: the pre-filter with the old literal includes() misses every variant marker', { skip: SKIP_NO_BASH }, () => {
+  const old = LIVE_SNIPPETS.prefilter.replace(/r\.body\.split\([^\n]*\.some\(\(line\) => MARKER_LINE_RE\.test\(line\)\)/, "r.body.includes('Risk-flags-unconfirmed:')");
+  assert.notEqual(old, LIVE_SNIPPETS.prefilter, 'the frozen mutation must apply');
+  const fx = fixture();
+  try {
+    const numbers = prefilterNumbers(fx, old);
+    for (const n of [9, 10, 11]) assert.ok(!numbers.includes(n), `#${n} missed by the literal filter: ${JSON.stringify(numbers)}`);
+    assert.ok(numbers.includes(7));
   } finally {
     fx.cleanup();
   }

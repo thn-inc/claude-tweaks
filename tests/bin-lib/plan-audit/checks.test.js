@@ -1423,6 +1423,14 @@ test('AC4.1: an unparseable flag line reports could-not-parse, however many proo
   assert.deepStrictEqual(r.couldNotParse, [{ source: 'flag-line', raw: 'Risk-flags: Auth' }]);
 });
 
+test('finding 1: a bold, list or blockquoted flag line is could-not-parse on all four, never skipped as unclassified', () => {
+  for (const line of ['**Risk-flags:** auth', '- Risk-flags: auth', '> Risk-flags: auth']) {
+    const r = checkG(G_SPEC(line), G_PLAN(`Proof(auth): ${GOOD}`));
+    assert.strictEqual(r.skipped, undefined, line);
+    assert.deepStrictEqual([r.ok, r.status, r.required, r.couldNotParse], [false, 'unknown', ['migrations', 'auth', 'public-contract', 'irreversible-side-effect'], [{ source: 'flag-line', raw: line }]], line);
+  }
+});
+
 test('AC4.1: an unparseable plan reports could-not-parse', () => {
   assert.deepStrictEqual(checkG(G_SPEC('Risk-flags: auth'), 'no tasks here').couldNotParse, [{ source: 'plan', raw: 'no parseable tasks' }]);
 });

@@ -17,6 +17,10 @@
 // the lines before the first `## ` heading, fenced lines ignored (a quoted flag line is
 // never the record's own). Detection is wider than the grammar — any preamble line
 // matching FLAG_LINE_RE is a flag line — so a variant spelling is malformed, not absent.
+// That covers a hand-edited formatting variant too: any number of blockquote `>` marks,
+// one list marker (`-`, `*`, `+`, `1.`, `1)`), and `*`/`_` emphasis around the key, so
+// `**Risk-flags:** auth`, `- Risk-flags: auth` and `> Risk-flags: auth` read malformed
+// (all four), never "no flags". The writers' repair rewrites such a line in the exact form.
 //
 // Writers only ever widen unless a human decided otherwise: removeRiskFlag and
 // confirmRiskFlags refuse without `humanConfirmed === true`, and refuse again on an
@@ -33,8 +37,13 @@ const RISK_FLAGS_NONE = 'none';
 // exported so the CLI matches on it rather than on message text.
 const RISK_FLAGS_UNKNOWN = 'RISK_FLAGS_UNKNOWN';
 
-const FLAG_LINE_RE = /^\s*risk[-_ ]?flags\s*:/i;
-const MARKER_LINE_RE = /^\s*risk[-_ ]?flags[-_ ]unconfirmed\s*:/i;
+// The prefix a formatting variant may put before the key: blockquote marks, then one list
+// marker, then emphasis. Each repeat is anchored by a literal, so the scan stays linear.
+const LINE_PREFIX = String.raw`^\s*(?:>\s*)*(?:(?:[-*+]|\d+[.)])\s+)?[*_]*`;
+const FLAG_LINE_RE = new RegExp(String.raw`${LINE_PREFIX}risk[-_ ]?flags[*_]*\s*:`, 'i');
+const MARKER_LINE_RE = new RegExp(String.raw`${LINE_PREFIX}risk[-_ ]?flags[-_ ]unconfirmed[*_]*\s*:`, 'i');
+// The emphasis a variant line may leave right after its colon (`**Risk-flags:** auth`).
+const LEADING_EMPHASIS_RE = /^[*_]+/;
 const EXACT_FLAG_RE = /^Risk-flags: (.*)$/;
 const MARKER_TRUE = 'Risk-flags-unconfirmed: true';
 const MARKER_FALSE = 'Risk-flags-unconfirmed: false';
@@ -154,7 +163,7 @@ function parseRiskFlags(body, opts) {
 
   const flagLines = scan.flagIdx.map((i) => lines[i]);
   const raw = flagLines.join('\n');
-  const named = unique(flagLines.flatMap((line) => line.slice(line.indexOf(':') + 1).split(',')
+  const named = unique(flagLines.flatMap((line) => line.slice(line.indexOf(':') + 1).trim().replace(LEADING_EMPHASIS_RE, '').split(',')
     .map((token) => token.trim())
     .filter((token) => SLUG_RE.test(token) && token !== RISK_FLAGS_NONE)));
   const slugs = readExactLine(flagLines);
@@ -361,5 +370,7 @@ function appendRiskProofGotcha(body, slugs) {
 }
 
 module.exports = {
-  RISK_FLAGS_NONE, RISK_FLAGS_UNKNOWN, parseRiskFlags, addRiskFlags, removeRiskFlag, confirmRiskFlags, appendRiskProofGotcha,
+  // MARKER_LINE_RE is exported for /backlog refine's Step 3.7 pre-filter, so its narrowing
+  // detects the same marker lines parseRiskFlags does.
+  RISK_FLAGS_NONE, RISK_FLAGS_UNKNOWN, MARKER_LINE_RE, parseRiskFlags, addRiskFlags, removeRiskFlag, confirmRiskFlags, appendRiskProofGotcha,
 };
