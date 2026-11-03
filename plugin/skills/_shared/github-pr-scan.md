@@ -88,7 +88,7 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
    Then classify each per the Staleness Thresholds. A PR that is simultaneously not draft, not yet `Stale` (< 4 weeks since `updatedAt` — spans both the `Fresh` and `Review` bands, since neither currently has its own finding for a PR with nothing wrong), has zero unresolved review threads (item 2 below), and has CI `passing` gets its own finding, carrying a per-PR command rather than landing as summary-only: `[pr] PR #{n}: {title} — awaiting review — last updated {age} ago, CI {status}, 0 unresolved threads — gh pr view {n} --web`. This is informational only — see the Severity mapping and `tidy/SKILL.md`'s Step 6 routing below — but "informational" describes the *severity*, not whether the row carries a command: the trailing `gh pr view {n} --web` is what a human runs to actually look at the PR, and its absence was a confirmed gap (a bare summary sentence with zero per-PR follow-up), not a deliberate no-command finding. A PR with CI `failing` or `pending`, or `reviewDecision: CHANGES_REQUESTED`, instead gets its own finding, regardless of staleness (a PR with CI `unavailable` gets neither, since CI is never called passing or failing): `[pr] PR #{n}: {title} — CI failing/pending or changes requested — CI {status}, review {reviewDecision}`. This is `high` severity per the Severity mapping below, not informational — see the Findings and recommendations table below.
 2. **Unresolved threads per open PR** — the same GraphQL query as `current-pr` item 2, once per open PR.
 3. **Code-health issues** — `gh issue list --label by:code-health --state open --json number,title,labels,updatedAt,url --limit {resolved-limit}`.
-4. **Merged/closed PRs with local remnants** — cross-check each merged or closed PR's `headRefName` against the local branches. GitHub's PR `state` is `OPEN`/`CLOSED`/`MERGED` — mutually exclusive — so `--state closed` never overlaps `--state merged`; both queries are needed to cover "merged or closed without merging". `{resolved-limit}` rows per state overrun one Bash result, so each list goes to a session-scoped file (`_shared/session-tmp-root.md`). Resolve the three paths once, substituting the printed literals for `{merged-path}`, `{closed-path}` and `{branches-path}` below:
+4. **Merged/closed PRs with local remnants** — de-duplicate the union of the merged and closed results by `number`, so a PR present in both is one candidate and yields at most one finding; then cross-check each `headRefName` against the local branches. `--state closed` also returns merged PRs, so the two results overlap; both queries are still needed — the merged query reaches merged PRs beyond the closed query's `{resolved-limit}`-row window, and the closed query covers PRs closed without merging. `{resolved-limit}` rows per state overrun one Bash result, so each list goes to a session-scoped file (`_shared/session-tmp-root.md`). Resolve the three paths once, substituting the printed literals for `{merged-path}`, `{closed-path}` and `{branches-path}` below:
 
    `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" MERGED=pr-scan-merged.json CLOSED=pr-scan-closed.json BRANCHES=pr-scan-branches.txt`
 
@@ -104,15 +104,16 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
    git -C "{REPO_ROOT}" branch --list --format='%(refname:short)' > "{branches-path}"
    ```
 
-   The join block prints one `{state} PR #{n} {headRefName}` line per local remnant (a `[pr]` finding, per the Output Contract's merged/closed row) and, for a state whose list returned `{resolved-limit}` rows — older branches went unchecked — the `[pr]` cap row, which you report verbatim:
+   The join block prints one `{state} PR #{n} {headRefName}` line per local remnant, once per `number` (a `[pr]` finding, per the Output Contract's merged/closed row) and, for a state whose list returned `{resolved-limit}` rows — older branches went unchecked — the `[pr]` cap row, which you report verbatim:
 
    ```bash
    node -e "
      const fs = require('fs');
      const local = new Set(fs.readFileSync('{branches-path}', 'utf8').split(/\r?\n/).filter(Boolean));
+     const seen = new Set();
      [['merged', '{merged-path}'], ['closed', '{closed-path}']].forEach(([state, file]) => {
        const prs = JSON.parse(fs.readFileSync(file, 'utf8'));
-       prs.filter((pr) => local.has(pr.headRefName)).forEach((pr) => console.log(state + ' PR #' + pr.number + ' ' + pr.headRefName));
+       prs.filter((pr) => !seen.has(pr.number) && seen.add(pr.number) && local.has(pr.headRefName)).forEach((pr) => console.log(state + ' PR #' + pr.number + ' ' + pr.headRefName));
        if (prs.length >= {resolved-limit}) console.log('[pr] ' + state + ' PR list: {resolved-limit} rows (the cap) — older ' + state + ' branches unchecked — raise backlog-fetch-limit to check them');
      });
    "
