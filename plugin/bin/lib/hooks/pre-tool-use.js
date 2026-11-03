@@ -2266,7 +2266,8 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
     let branch = null;
     if (firstPublish && model === 'pr-first') {
       const branches = commandGitTargets.map((t) => currentBranchName(t.dir));
-      if (branches[0] && branches.every((b) => b === branches[0])) [branch] = branches;
+      const [first] = branches;
+      if (first && branches.every((b) => b === first)) branch = first;
     }
     const released = prStampReleased({ runState, runDir: ctx.runDir, branch, model, hasNoUpstream: firstPublish });
     if (firstPublish) {

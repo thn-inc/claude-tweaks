@@ -327,6 +327,9 @@ test('AC2.2: bookkeeping — missing pr with one open PR records it', () => {
 const NO_PR_SKIP = `- SKIP — Phase-exit push: condition: no recorded PR, prExempt or PR-early run lifecycle FAILED line for ${BRANCH} → fallback: no phase-exit push this phase; open the PR first (_shared/pr-early-run-lifecycle.md). Reversibility: n/a.`;
 // The SKIP line for a first publish (no upstream of its own yet) with no Step 1 line.
 const NO_PR_FIRST_PUBLISH_SKIP = `- SKIP — Phase-exit push: condition: no PR-early run lifecycle Step 1 line for ${BRANCH} → fallback: no phase-exit push this phase; open the PR first (_shared/pr-early-run-lifecycle.md). Reversibility: n/a.`;
+// decisions.md lines the PR-early run lifecycle logs: the FAILED degrade line and the Step 1 line.
+const FAILED_LINE = '- AUTO 10:00:00 — /build: PR-early run lifecycle: push of x FAILED (network); run proceeds local-only, no PR opened. Reversibility: n/a.\n';
+const STEP1_LINE = `- AUTO 10:00:00 — PR-early run lifecycle: no existing PR for ${BRANCH}; creating. Reversibility: n/a.\n`;
 
 test('AC2.2: bookkeeping — missing pr with no open PR reports missing, and the push is skipped ([IL-131])', () => {
   const { main, runDir, wt } = fixture({ worktree: '/wt' });
@@ -385,9 +388,7 @@ test('[IL-131] PR precondition — a first publish without its Step 1 line, or a
 });
 
 test('[IL-131] PR precondition — a throwing hasNoUpstreamYet reads as tracked: only the FAILED line releases, and the SKIP line uses the tracked wording', () => {
-  const failedLine = '- AUTO 10:00:00 — /build: PR-early run lifecycle: push of x FAILED (network); run proceeds local-only, no PR opened. Reversibility: n/a.\n';
-  const step1Line = `- AUTO 10:00:00 — PR-early run lifecycle: no existing PR for ${BRANCH}; creating. Reversibility: n/a.\n`;
-  for (const c of [{ decisions: null, state: 'skipped' }, { decisions: step1Line, state: 'skipped' }, { decisions: failedLine, state: 'pushed' }]) {
+  for (const c of [{ decisions: null, state: 'skipped' }, { decisions: STEP1_LINE, state: 'skipped' }, { decisions: FAILED_LINE, state: 'pushed' }]) {
     const { main, runDir, wt } = fixture({ worktree: '/wt' });
     if (c.decisions) fs.writeFileSync(path.join(runDir, 'decisions.md'), c.decisions);
     const h = makeDeps(main, wt, { prList: [], hasNoUpstreamYet: () => { throw new Error('boom'); } });
@@ -398,26 +399,23 @@ test('[IL-131] PR precondition — a throwing hasNoUpstreamYet reads as tracked:
 });
 
 test('[IL-131] PR precondition — a per-spec first publish whose FAILED and Step 1 lines sit on the parent run dir pushes', () => {
-  const failedLine = '- AUTO 10:00:00 — /build: PR-early run lifecycle: push of x FAILED (network); run proceeds local-only, no PR opened. Reversibility: n/a.\n';
-  const step1Line = `- AUTO 10:00:00 — PR-early run lifecycle: no existing PR for ${BRANCH}; creating. Reversibility: n/a.\n`;
   const { main, runDir, wt } = fixture({ worktree: '/wt' });
   const specDir = path.join(runDir, 'spec-4');
   fs.mkdirSync(specDir);
-  fs.writeFileSync(path.join(runDir, 'decisions.md'), failedLine + step1Line);
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), FAILED_LINE + STEP1_LINE);
   const h = makeDeps(main, wt, { prList: [], hasNoUpstreamYet: () => true });
   const env = runPhaseExit(opts(specDir, wt), h.deps);
   assert.equal(env.push.state, 'pushed');
 });
 
 test('[IL-131] PR precondition — a first publish with only a FAILED line is skipped, and the SKIP line names the missing Step 1 line', () => {
-  const failedLine = '- AUTO 10:00:00 — /build: PR-early run lifecycle: push of x FAILED (network); run proceeds local-only, no PR opened. Reversibility: n/a.\n';
   const { main, runDir, wt } = fixture({ worktree: '/wt' });
-  fs.writeFileSync(path.join(runDir, 'decisions.md'), failedLine);
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), FAILED_LINE);
   const h = makeDeps(main, wt, { prList: [], hasNoUpstreamYet: () => true });
   const env = runPhaseExit(opts(runDir, wt), h.deps);
   assert.equal(env.push.state, 'skipped');
   assert.equal(pushCalls(h.calls).length, 0);
-  assert.deepEqual(entriesOf(runDir).map(stripTime), [stripTime(failedLine.trim()), NO_PR_FIRST_PUBLISH_SKIP]);
+  assert.deepEqual(entriesOf(runDir).map(stripTime), [stripTime(FAILED_LINE.trim()), NO_PR_FIRST_PUBLISH_SKIP]);
 });
 
 test('[IL-131] PR precondition — prExempt does not release a first publish with no Step 1 line', () => {
