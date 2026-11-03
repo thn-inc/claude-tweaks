@@ -365,6 +365,7 @@ test('drop-redundant-cd drops cd "<cwd>" && only when it resolves to cwd', () =>
 test('AC2.3, AC2.4: drop-redundant-cd under path.win32', () => {
   const run = (command, extra) => rewriteForGuard({ command, ...win32({ opts: extra }).opts });
   assert.deepStrictEqual(run('cd "D:\\w\\cwd" && ls x'), { command: 'ls x', applied: ['drop-redundant-cd'] });
+  assert.deepStrictEqual(run('cd "D:\\w\\cwd/" && ls x'), { command: 'ls x', applied: ['drop-redundant-cd'] }, 'a trailing / after an exact spelling is tolerated');
   assert.strictEqual(run('cd D:\\w\\cwd && ls x'), null, 'bash strips an unquoted backslash');
   assert.strictEqual(run('cd "D:\\w\\$X" && ls x'), null, 'a backslash before $');
   assert.strictEqual(run('cd "D:\\w\\cwd\\" && ls x'), null, 'a trailing backslash escapes the quote');
@@ -377,7 +378,13 @@ test('drop-redundant-cd under path.win32 keeps comparing exact spellings: the th
   const run = (command) => rewriteForGuard({ command, ...win32().opts });
   assert.strictEqual(run('cd "D:/w/cwd" && ls x'), null, 'residual: a forward-slashed spelling of the cwd');
   assert.strictEqual(run('cd "/d/w/cwd" && ls x'), null, 'residual: a Git Bash /d/ spelling of the cwd');
-  assert.strictEqual(run('cd "d:\\w\\cwd" && ls x'), null, 'residual: a re-cased drive');
+  // The fixture's realpath keeps the drive letter's case, which would decline this on its own;
+  // a case-folding realpath (the on-disk answer on a real Windows volume) leaves the exact-spelling
+  // compare as the only thing that can decline it.
+  const fixture = win32().opts;
+  const folding = { ...fixture, deps: { ...fixture.deps, canonicalRealpath: (p) => path.win32.resolve(p).toLowerCase() } };
+  assert.strictEqual(rewriteForGuard({ command: 'cd "d:\\w\\cwd" && ls x', ...folding }), null, 'residual: a re-cased drive');
+  assert.deepStrictEqual(rewriteForGuard({ command: 'cd "D:\\w\\cwd" && ls x', ...folding }), { command: 'ls x', applied: ['drop-redundant-cd'] }, 'the exact spelling still drops under the folding realpath');
 });
 
 test('returns null outside a linked worktree', () => {
@@ -675,9 +682,12 @@ test('drop-redundant-cd declines each backslash the shell would consume', BACKSL
 test('drop-redundant-cd declines an unquoted backslash target', BACKSLASH_SKIP, () => {
   const dir = literalDir('unq', 'ba\\c');
   const target = literalDir('unq', 'bac');
-  assert.strictEqual(rw(`cd ${dir} && pwd`, { cwd: dir }), null);
+  // The host prefix is quoted so a TMPDIR with a space or glob character cannot break the
+  // test; the backslash tail stays an unquoted word part.
+  const command = `cd "${path.dirname(dir)}"/ba\\c && pwd`;
+  assert.strictEqual(rw(command, { cwd: dir }), null);
   for (const shell of SHELLS) {
-    assert.strictEqual(runIn(shell, `cd ${dir} && pwd`, {}, dir).stdout, `${target}\n`, shell);
+    assert.strictEqual(runIn(shell, command, {}, dir).stdout, `${target}\n`, shell);
   }
 });
 
