@@ -248,9 +248,11 @@ Write each with the Write tool:
   point already a full URL, which `_shared/observation-plan.md`'s schema allows, is used as is. Write
   `"command"` in place of `"url"`, holding the Entry point as the Try it block states it, for
   `cli`/`flow` plans and a `diff` plan's file path, on an `infra` or `backend` surface, and
-  when no base URL resolves or the host would be refused, or the Entry point has a credential-shaped
-  path segment (the bearer-segment rule, `_shared/acceptance-packet.md`'s `## Links and credentials`):
-  a refused link leaves the Test guide with no step to cite.
+  when no base URL resolves or the host would be refused: a refused link leaves the Test guide with
+  no step to cite. An Entry point with a credential-shaped path segment (the bearer-segment rule,
+  `_shared/acceptance-packet.md`'s `## Links and credentials`) is a `"command"` too, holding the route
+  with that segment replaced by the placeholder `{id}`, since gather refuses the raw value in either
+  form. The bearer-shaped value itself is never written.
 
 **`app-route`/`rendered-page` plans whose Step 2.5 walk completed** (resolved clean with an
 actual walk — not the browser-unavailable fallback):

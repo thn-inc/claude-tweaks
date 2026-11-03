@@ -855,6 +855,49 @@ test('a command carrying a credential is refused at render too, never shown', ()
   assert.ok(!markdown.includes('hunter2'));
 });
 
+const BEARER = 'Xk3j9f8s7d6f5g4h3j2k1';
+
+test('a command with a bearer-shaped URL segment is refused at render, never shown', () => {
+  const { markdown } = render(
+    [fact('link:cmd', 'passed', { command: `curl http://localhost:3000/reset/${BEARER}` })],
+    [claim('test-guide', 'Run', ['link:cmd'])],
+  );
+  assert.ok(markdown.includes('(link refused: credential in path segment)'), markdown);
+  assert.ok(!markdown.includes(BEARER));
+});
+
+test('the {id} form of that command renders', () => {
+  const { markdown } = render(
+    [fact('link:cmd', 'passed', { command: 'curl http://localhost:3000/reset/{id}' })],
+    [claim('test-guide', 'Run', ['link:cmd'])],
+  );
+  assert.ok(markdown.includes('`curl http://localhost:3000/reset/{id}`'), markdown);
+  assert.ok(!markdown.includes('link refused'), markdown);
+});
+
+test('a plan line with a bearer-shaped URL segment is screened, and what it holds goes with it', () => {
+  const plan = `- Entry point: http://localhost:3000/reset/${BEARER}\n  - under it\n- Other`;
+  const { markdown, screened } = render([], [], { options: { observationPlan: plan } });
+  assert.ok(!markdown.includes(BEARER), markdown);
+  assert.deepEqual(sectionLines(markdown, 'Observation plan'), ['- Other']);
+  assert.deepEqual(screened, [{ section: 'observation-plan', key: 'path segment' }]);
+  assert.match(markdown, /^1 entry omitted for credential-shaped content: Observation plan \(path segment\)$/m);
+});
+
+test('a plan line with an ordinary URL, a placeholder or a bare long word is unchanged', () => {
+  for (const plan of [
+    '- Entry point: http://localhost:3000/settings',
+    '- Entry point: http://localhost:3000/reset/{id}',
+    `- run the seed for ${BEARER}`,
+    '- Check .claude-tweaks/pipelines/2026-11-02T223727-record-4612/work/spec.md',
+  ]) {
+    const { markdown, screened } = render([], [], { options: { observationPlan: plan } });
+    assert.deepEqual(screened, [], plan);
+    assert.equal(sectionLines(markdown, 'Observation plan').length, 1, plan);
+    assert.ok(markdown.replaceAll('`', '').includes(plan), plan);
+  }
+});
+
 test('a link that needs no render still cites its id', () => {
   const { markdown } = render(
     [fact('link:web', 'passed', { url: 'http://localhost:3000/x' })],

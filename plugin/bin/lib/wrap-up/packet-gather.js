@@ -12,7 +12,9 @@ const {
   COMMANDS_ONLY_SURFACES,
   encodeFactKey,
 } = require('./packet-contract');
-const { checkLink, findCredentialInText } = require('./packet-links');
+const {
+  BEARER_SEGMENT_REASON, checkLink, findCredentialInText, hasBearerUrl,
+} = require('./packet-links');
 const { redactOrWithhold } = require('../walkthrough/redact');
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 const { SECTIONS: CONSOLE_SECTIONS, decisionLineHash } = require('../console/resolve');
@@ -434,7 +436,8 @@ function linkOutcome({ id, label, url, command }, surface, allowedHosts) {
   });
   if (command) {
     const key = findCredentialInText(command);
-    return key ? refuse(`credential key in command: ${key}`) : accept({ command });
+    if (key) return refuse(`credential key in command: ${key}`);
+    return hasBearerUrl(command) ? refuse(BEARER_SEGMENT_REASON) : accept({ command });
   }
   if (COMMANDS_ONLY_SURFACES.includes(surface)) return refuse('infra surface lists commands, not links');
   const check = checkLink(url, { allowedHosts });

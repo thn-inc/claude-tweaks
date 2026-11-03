@@ -946,6 +946,21 @@ test('a command link carrying a credential flag is refused', () => {
   assert.ok(!JSON.stringify(result).includes('abc123'));
 });
 
+test('a command holding a URL with a bearer-shaped path segment is refused like the url would be', () => {
+  const bearer = 'Xk3j9f8s7d6f5g4h3j2k1';
+  const result = gather({ links: [{ id: 'd', label: 'd', command: `curl ${LOCAL}/reset/${bearer}` }] });
+  assert.deepEqual(result.refused, [{ id: 'link:d', reason: 'credential in path segment' }]);
+  assert.equal(factOf(result, 'link:d'), undefined);
+  assert.ok(!JSON.stringify(result).includes(bearer));
+});
+
+test('the {id} form of that command is a fact, and so is a bare route', () => {
+  const placeholder = gather({ links: [{ id: 'd', label: 'd', command: `curl ${LOCAL}/reset/{id}` }] });
+  assert.deepEqual(placeholder.refused, []);
+  assert.equal(factOf(placeholder, 'link:d').command, `curl ${LOCAL}/reset/{id}`);
+  assert.deepEqual(gather({ links: [{ id: 'd', label: 'd', command: '/reset/{id}' }] }).refused, []);
+});
+
 test('a link naming both a command and a url carries only the command', () => {
   const result = gather({ links: [{ id: 'd', label: 'd', command: 'npm start', url: 'https://evil.example/x?token=abc' }] });
   assert.equal(factOf(result, 'link:d').command, 'npm start');

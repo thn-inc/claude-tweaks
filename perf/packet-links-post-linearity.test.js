@@ -10,7 +10,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { findCredentialInText, checkLink } = require('../plugin/bin/lib/wrap-up/packet-links');
+const { findCredentialInText, checkLink, hasBearerUrl } = require('../plugin/bin/lib/wrap-up/packet-links');
 const { upsertLocalPacket } = require('../plugin/bin/lib/wrap-up/packet-post');
 
 const BUDGET_MS = 2000;
@@ -37,6 +37,24 @@ test('credential screen stays linear on long adversarial input', () => {
     }
   });
   assert.ok(ms < 10000, `took ${ms.toFixed(0)} ms`);
+});
+
+test('the URL-token scan stays linear on long adversarial input (#4612), and keeps its verdict', () => {
+  for (const [input, expected] of [
+    ['a'.repeat(200000), false],
+    ['a.'.repeat(100000), false],
+    ['a:'.repeat(100000), false],
+    ['a:1 '.repeat(50000), false],
+    ['a '.repeat(100000), false],
+    [`https://${'/'.repeat(200000)}`, false],
+    [`https://h/${')'.repeat(100000)}a`, false],
+    ['https://h/a '.repeat(20000), false],
+    [`${'https://h/a '.repeat(20000)}https://h/Xk3j9f8s7d6f5g4h3j2k1`, true],
+  ]) {
+    const { value, ms } = timed(() => hasBearerUrl(input));
+    assert.ok(ms < BUDGET_MS, `took ${ms.toFixed(0)} ms`);
+    assert.strictEqual(value, expected);
+  }
 });
 
 test('local record upsert trims a long newline run in linear time', () => {

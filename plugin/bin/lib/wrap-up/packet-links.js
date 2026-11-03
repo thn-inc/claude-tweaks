@@ -165,6 +165,7 @@ function refusedKey(exactKeys, text) {
 const BEARER_SEGMENT_RE = /^[A-Za-z0-9_-]{20,}$/;
 const HAS_LETTER_RE = /[A-Za-z]/;
 const HAS_DIGIT_RE = /[0-9]/;
+const BEARER_SEGMENT_REASON = 'credential in path segment';
 const IMAGE_PATH_RE = /\.(?:gif|png|jpe?g|webp|svg|avif|bmp)$/i;
 
 function isBearerSegment(segment) {
@@ -183,6 +184,32 @@ function trimTrailing(text, isDropped) {
   return text.slice(0, end);
 }
 const isSlashOrSpace = (char) => char === '/' || /\s/.test(char);
+
+// A URL in free text: a scheme, `www.`, or a `host:port/`, starting a word. The repeats before the
+// tail are bounded, so a long word costs one bounded try. A bare path is no URL: a local run path
+// holds a dated slug, and the bearer rule does not bind it.
+const URL_TOKEN_RE = /(?<![a-z0-9.+-])(?:[a-z][a-z0-9+.-]{0,31}:\/\/|www\.|[a-z0-9.-]{1,253}:\d{1,5}(?=\/))[^\s"'`<>]*/gi;
+const SCHEME_END = '://';
+const QUERY_OR_FRAGMENT_RE = /[?#]/;
+const SENTENCE_CLOSERS = ').,;:!]}';
+const isSentenceCloser = (char) => SENTENCE_CLOSERS.includes(char);
+
+function tokenHasBearerSegment(token) {
+  const afterScheme = token.includes(SCHEME_END) ? token.slice(token.indexOf(SCHEME_END) + SCHEME_END.length) : token;
+  const [hostAndPath] = afterScheme.split(QUERY_OR_FRAGMENT_RE, 1);
+  const slash = hostAndPath.indexOf('/');
+  if (slash === -1) return false;
+  return decodeText(hostAndPath.slice(slash)).split('/').some((segment) => isBearerSegment(trimTrailing(segment, isSentenceCloser)));
+}
+
+// Whether a command or plan line holds a URL `checkLink` would refuse for its path. Only the
+// URL's own path counts: a bare word is not a link. No `new URL`, which throws on `h:99999`.
+function hasBearerUrl(text) {
+  for (const [token] of String(text).matchAll(URL_TOKEN_RE)) {
+    if (tokenHasBearerSegment(token)) return true;
+  }
+  return false;
+}
 
 // What a server serves the last segment as: trailing slashes and whitespace gone, and a
 // `;` parameter (`r.gif;x=1`) dropped from the final segment only.
@@ -231,7 +258,7 @@ function checkLink(url, options) {
   }
   // Decoded before splitting: an encoded slash (`/a%2FXk3...`) is a segment boundary too.
   if (decodeText(parsed.pathname).split('/').some(isBearerSegment)) {
-    return { ok: false, reason: 'credential in path segment' };
+    return { ok: false, reason: BEARER_SEGMENT_REASON };
   }
   // `+` is a space in a query, so `?token+=abc` is the key `token`. Replaced before
   // decoding: an encoded `%2B` is a literal plus.
@@ -261,7 +288,9 @@ function findCredentialInText(text) {
 
 module.exports = {
   normalizeKey,
+  BEARER_SEGMENT_REASON,
   checkLink,
+  hasBearerUrl,
   isCredentialRefusal,
   isImageUrl,
   findCredentialInText,

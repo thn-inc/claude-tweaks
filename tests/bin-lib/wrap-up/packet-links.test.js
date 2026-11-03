@@ -24,12 +24,56 @@ const {
   normalizeKey,
   checkLink,
   findCredentialInText,
+  hasBearerUrl,
   isCredentialRefusal,
   isImageUrl,
 } = require('../../../plugin/bin/lib/wrap-up/packet-links');
 
 const allowedHosts = ['http://localhost:3000', 'https://dev.example.com'];
 const check = (url) => checkLink(url, { allowedHosts });
+
+test('hasBearerUrl reads a URL token with a bearer-shaped path segment, however it is spelled', () => {
+  const bearer = 'Xk3j9f8s7d6f5g4h3j2k1';
+  for (const text of [
+    `http://localhost:3000/reset/${bearer}`,
+    `curl "http://localhost:3000/reset/${bearer}/next"`,
+    `curl 'https://h.example/${bearer}' -s`,
+    `see (https://h.example/${bearer}).`,
+    `see https://h.example/${bearer}, then go on`,
+    `HTTPS://h.example/${bearer}`,
+    `https://h.example:99999/${bearer}`,
+    `https://h.example/a%2F${bearer}`,
+    `https://h.example/${bearer}?x=1`,
+    `https://h.example/${bearer}#x`,
+    `curl localhost:3000/${bearer}`,
+    `www.h.example/${bearer}`,
+    `first https://h.example/a then https://h.example/${bearer}`,
+  ]) {
+    assert.equal(hasBearerUrl(text), true, text);
+  }
+});
+
+test('hasBearerUrl leaves the placeholder, bare words, local paths and every other part of a URL', () => {
+  const bearer = 'Xk3j9f8s7d6f5g4h3j2k1';
+  for (const text of [
+    'http://localhost:3000/reset/{id}',
+    'curl http://localhost:3000/reset/{id}/next',
+    'npm run demo',
+    bearer,
+    `node seed.js ${bearer}`,
+    `.claude-tweaks/pipelines/2026-11-02T223727-record-4612/work/spec.md`,
+    '/tmp/2026-11-02-acceptance-recording/w.gif',
+    'http://localhost:3000/docs/token-guide',
+    `https://h.example/a?x=${bearer}`,
+    `https://h.example/a#${bearer}`,
+    `https://${bearer}.example/a`,
+    'https://h.example/2026-11-02-acceptance-recording.md',
+    'C:/runs/2026-11-02-acceptance-recording/w.gif',
+    '',
+  ]) {
+    assert.equal(hasBearerUrl(text), false, text);
+  }
+});
 
 test('checkLink accepts an allowed host, and a path that only names a key word', () => {
   assert.deepEqual(check('http://localhost:3000/settings?role=admin'), { ok: true });

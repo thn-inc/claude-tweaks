@@ -309,12 +309,15 @@ test('{LINKS} falls back to a command when no base URL resolves or the host woul
   assert.ok(bullet.includes('an `infra` or `backend` surface'), 'a commands-only surface refuses every url');
 });
 
-test('{LINKS} falls back to a command when a path segment is credential-shaped, since gather refuses that url', () => {
+test('{LINKS} writes a credential-shaped path segment as a command holding {id}, since gather refuses the raw value in either form', () => {
   assertClaimGoesRed(
     linksBullet(),
-    /or the Entry point has a credential-shaped path segment \(the bearer-segment rule, `_shared\/acceptance-packet\.md`'s `## Links and credentials`\)/,
-    'the {LINKS} fallback names a credential-shaped path segment',
+    /An Entry point with a credential-shaped path segment \(the bearer-segment rule, `_shared\/acceptance-packet\.md`'s `## Links and credentials`\) is a `"command"` too, holding the route with that segment replaced by the placeholder `\{id\}`/,
+    'the {LINKS} fallback replaces a credential-shaped path segment with {id}',
   );
+  assertClaimGoesRed(linksBullet(), /The bearer-shaped value itself is never written/, 'the {LINKS} bullet never writes the value');
+  // The sentence this one replaced told the writer to hold the Entry point as stated, value included.
+  assert.ok(!linksBullet().includes('or the Entry point has a credential-shaped path segment'));
 });
 
 test('--local-base-url is keyed to the plan kind as well as the surface', () => {
