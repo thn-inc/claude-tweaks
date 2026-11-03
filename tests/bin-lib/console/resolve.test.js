@@ -549,6 +549,10 @@ const BYPASSES = {
   'quoted rename-from side': 'diff --git a/"tests/x.test.js" b/docs/b.md\nsimilarity index 100%\nrename from "tests/x.test.js"\nrename to docs/b.md\n',
   'tab inside a path (git cuts the name there)': `diff --git a/src/x.test.js\tj b/src/x.test.js\tj\n--- a/src/x.test.js\tj\n+++ b/src/x.test.js\tj\n${HUNK}`,
   'trailing tab on a side': `diff --git a/src/x.test.js\t b/src/x.test.js\t\n--- a/src/x.test.js\t\t\n+++ b/src/x.test.js\t\t\n${HUNK}`,
+  'rename from disagrees, rename to agrees': 'diff --git a/docs/a.md b/docs/b.md\nsimilarity index 100%\nrename from tests/x.test.js\nrename to docs/b.md\n',
+  'copy to disagrees, copy from agrees': 'diff --git a/docs/a.md b/docs/b.md\nsimilarity index 100%\ncopy from docs/a.md\ncopy to tests/y.test.js\n',
+  'empty segment in a same-path side (git collapses it)': `diff --git a/docs//a.md b/docs//a.md\n--- a/docs//a.md\n+++ b/docs//a.md\n${HUNK}`,
+  'dot segment in a same-path side': `diff --git a/docs/./a.md b/docs/./a.md\n--- a/docs/./a.md\n+++ b/docs/./a.md\n${HUNK}`,
 };
 
 test('#4636: the proved diff bypasses hold', () => {
