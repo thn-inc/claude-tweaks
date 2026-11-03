@@ -6,7 +6,7 @@
 'use strict';
 
 const {
-  PACKET_MARKER, SECTIONS, MAX_PACKET_CHARS, COMMANDS_ONLY_SURFACES, WITHHELD_TEXT,
+  PACKET_MARKER, SECTIONS, MAX_PACKET_CHARS, COMMANDS_ONLY_SURFACES, WITHHELD_TEXT, EXPOSURE, NOT_RUN_REASON,
 } = require('./packet-contract');
 const {
   BEARER_SEGMENT_REASON, PLAN_LIST_MARKER_RE, checkLink, entryPointHasBearerRoute, findCredentialInText, hasBearerUrl, isCredentialRefusal, isImageUrl,
@@ -45,9 +45,9 @@ const WITHHELD_ID = `(${WITHHELD_ID_NOTE})`;
 const RECORDING_WITHHELD = 'recording withheld: link contained a credential-shaped value';
 const RECORDING_REFUSED = '(recording url refused)';
 const NOT_RECORDED = 'not recorded';
-const NO_STORY = 'no-story';
-const LINKED_PRIVATE = 'linked-private';
-const WITHHELD_EXPOSURE = 'withheld';
+const NO_STORY = NOT_RUN_REASON.NO_STORY;
+const LINKED_PRIVATE = EXPOSURE.LINKED_PRIVATE;
+const WITHHELD_EXPOSURE = EXPOSURE.WITHHELD;
 
 const PLAN_SECTION = 'observation-plan';
 const PLAN_HEADING = 'Observation plan';
@@ -208,6 +208,10 @@ function recordingPlace(fact) {
   const archive = archivePath === undefined ? null : recordingLocation(archivePath, exposure);
   if (archive?.place === RECORDING_WITHHELD) return WITHHELD_PLACE;
   const path = filled(fact.url_or_path);
+  // The link rules judge the head when the fact names a `url` (a hand-built or legacy fact), when
+  // it names no location at all (`new URL(undefined)` throws, which reads as a refused link), and
+  // when the exposure says it is linked, so a location that is not a link fails the link rules
+  // instead of printing as a path. Any other fact holds a local path.
   const main = fact.url !== undefined || path === undefined || exposure === LINKED_PRIVATE
     ? recordingHref(fact.url ?? path, exposure)
     : recordingLocation(path, exposure);

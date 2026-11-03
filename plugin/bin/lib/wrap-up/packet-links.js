@@ -175,6 +175,27 @@ function isBearerSegment(segment) {
 // What a path segment names: a `;` parameter (`/{value};x=1`) must not hide the value before it.
 const beforeParameter = (segment) => segment.split(';', 1)[0];
 
+// A `;` parameter is read as a query pair is: its key against the credential keys (`/a;token=abc`),
+// and its value, or a bare piece (`/a;{value}`), as a segment. The reason, or null.
+function parameterRefusal(segment) {
+  for (const parameter of segment.split(';').slice(1)) {
+    const [key, ...value] = parameter.split('=');
+    const credential = refusedKey([key], parameter);
+    if (credential) return `credential key in path parameter: ${credential}`;
+    if (isBearerSegment(value.length > 0 ? value.join('=') : key)) return BEARER_SEGMENT_REASON;
+  }
+  return null;
+}
+
+// A path's reason for refusal, or null: a bearer segment, or a credential in a `;` parameter.
+// A route held in a fragment or a query value (`#/reset/{value}`, `?next=/reset/{value}`) is read
+// the same way. Decoded before splitting, so an encoded slash is a boundary too.
+function pathRefusal(path) {
+  const segments = decodeText(path).split('/');
+  if (segments.some((segment) => isBearerSegment(beforeParameter(segment)))) return BEARER_SEGMENT_REASON;
+  return segments.map(parameterRefusal).find(Boolean) ?? null;
+}
+
 // Every reason checkLink gives for a credential starts with this word.
 function isCredentialRefusal(reason) {
   return typeof reason === 'string' && reason.startsWith('credential');
@@ -275,21 +296,28 @@ function checkLink(url, options) {
   if (parsed.username || parsed.password) {
     return { ok: false, reason: 'credential in userinfo' };
   }
-  // Decoded before splitting: an encoded slash (`/a%2FXk3...`) is a segment boundary too.
-  if (decodeText(parsed.pathname).split('/').some((segment) => isBearerSegment(beforeParameter(segment)))) {
-    return { ok: false, reason: BEARER_SEGMENT_REASON };
-  }
+  const pathReason = pathRefusal(parsed.pathname);
+  if (pathReason) return { ok: false, reason: pathReason };
   // `+` is a space in a query, so `?token+=abc` is the key `token`. Replaced before
   // decoding: an encoded `%2B` is a literal plus.
   const query = parsed.search.slice(1).replace(/\+/g, ' ');
   const queryKey = refusedKey([...parsed.searchParams.keys()], query);
   if (queryKey) return { ok: false, reason: `credential key in query: ${queryKey}` };
+  // A query value that is a rooted path (`?next=/reset/{value}`) is a route like any other.
+  const queryRoute = [...parsed.searchParams.values()].filter((value) => value.startsWith('/')).map(pathRefusal).find(Boolean);
+  if (queryRoute) return { ok: false, reason: queryRoute };
   // Decoded before splitting, and split on `?` as well as `&`: a hash-router URL
   // carries its own query in the fragment (`#/cb?token=abc`, `#/cb%3Ftoken=abc`).
   const fragment = parsed.hash.slice(1);
   const fragmentKeys = decodeText(fragment).split(/[?&]/).map((part) => part.split('=', 1)[0]);
   const fragmentKey = refusedKey(fragmentKeys, fragment);
   if (fragmentKey) return { ok: false, reason: `credential key in fragment: ${fragmentKey}` };
+  // The route before the fragment's own query is a path too (`#/reset/{value}`, `#!/reset/{value}`).
+  const [fragmentPath] = decodeText(fragment).replace(/^!/, '').split('?', 1);
+  if (fragmentPath.startsWith('/')) {
+    const fragmentRoute = pathRefusal(fragmentPath);
+    if (fragmentRoute) return { ok: false, reason: fragmentRoute };
+  }
   return { ok: true };
 }
 

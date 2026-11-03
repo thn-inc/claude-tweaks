@@ -79,6 +79,9 @@ const PLAIN_JWT = `eyJ${JWT_SEGMENT}*\\.${JWT_SEGMENT}+(?:\\.${JWT_SEGMENT}+)?`;
 // JWT rule, or the guard would hand `bearer EYJa.b` to a rule that does not take it.
 const BEARER = '[Bb][Ee][Aa][Rr][Ee][Rr]';
 
+// Whether the screen flags a name followed by its suffix. A literal `\n`, `\r` or `\t` from
+// stringified text puts the escape's letter at the front of the name (`\ntoken` reads `ntoken`), so
+// a name behind a backslash is screened again without its first letter.
 function nameIsCredential(name, suffix, charBefore) {
   if (findCredentialInText(`${name}${suffix}`) !== null) return true;
   return charBefore === '\\' && /^[nrt]/.test(name) && findCredentialInText(`${name.slice(1)}${suffix}`) !== null;
@@ -91,6 +94,8 @@ function patternRule(pattern, flags, nameSuffix = '') {
   const re = new RegExp(pattern, flags);
   return (text, render) => text.replace(re, (whole, ...rest) => {
     const { key = '', value, close = '', name } = rest.at(-1);
+    // A replace callback ends with (offset, input string, named groups), so the character before
+    // the match is `input[offset - 1]`.
     if (name !== undefined && !nameIsCredential(name, nameSuffix, rest.at(-2)[rest.at(-3) - 1])) return whole;
     return render(whole, key, value, close);
   });
@@ -152,6 +157,8 @@ function redactText(raw) {
     count += 1;
     return `${key}${REDACTED}${close}`;
   };
+  // The second pass drops each match for a space, not nothing, so the text either side of it cannot
+  // fuse into a credential-shaped token the screen then misreads as a leftover.
   const removeWhole = () => ' ';
 
   const text = RULES.reduce((current, rule) => rule(current, keepKey), raw);

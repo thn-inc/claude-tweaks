@@ -141,6 +141,46 @@ test('a ; parameter does not defeat the bearer segment: each segment is judged u
   assert.deepEqual(check('http://localhost:3000/;jsessionid=abc'), { ok: true });
 });
 
+test('a ; parameter is screened as a query pair is: its credential key, and a bearer value in it', () => {
+  const bearer = 'Xk3j9f8s7d6f5g4h3j2k1';
+  for (const [path, reason] of [
+    ['/a;token=abc', 'credential key in path parameter: token'],
+    ['/a;x=1;sessionid=abc/b', 'credential key in path parameter: sessionid'],
+    ['/a%3Bapi_key=abc', 'credential key in path parameter: api_key'],
+    ['/a;TOKEN=abc', 'credential key in path parameter: token'],
+    [`/a;x=${bearer}`, 'credential in path segment'],
+    [`/a;${bearer}`, 'credential in path segment'],
+  ]) {
+    const url = `http://localhost:3000${path}`;
+    assert.deepEqual(check(url), { ok: false, reason }, url);
+    assert.equal(isCredentialRefusal(reason), true, reason);
+  }
+  for (const path of ['/a;x=1', '/a;tokens=1', '/docs;token-guide', '/a;x=short', `/a;v=${'y'.repeat(25)}`]) {
+    assert.deepEqual(check(`http://localhost:3000${path}`), { ok: true }, path);
+  }
+});
+
+test('a route held in the fragment or a query value meets the bearer rule too', () => {
+  const bearer = 'Xk3j9f8s7d6f5g4h3j2k1';
+  const refused = { ok: false, reason: 'credential in path segment' };
+  for (const suffix of [
+    `#/reset/${bearer}`,
+    `#!/reset/${bearer}`,
+    `#/reset/${bearer}?x=1`,
+    `#%2Freset%2F${bearer}`,
+    `?next=/reset/${bearer}`,
+    `?next=%2Freset%2F${bearer}&x=1`,
+  ]) {
+    const url = `http://localhost:3000/app${suffix}`;
+    assert.deepEqual(check(url), refused, url);
+  }
+  assert.deepEqual(check('http://localhost:3000/app#/reset;token=abc'), { ok: false, reason: 'credential key in fragment: token' });
+  // A plain anchor is no route, and a value that is not rooted is no path.
+  for (const suffix of [`#section-${bearer}`, `?ref=${bearer}`, '#/docs/token-guide', '?next=/docs/token-guide']) {
+    assert.deepEqual(check(`http://localhost:3000/app${suffix}`), { ok: true }, suffix);
+  }
+});
+
 test('an Entry point field names a route, so a bare path in its value meets the bearer rule', () => {
   const bearer = 'Xk3j9f8s7d6f5g4h3j2k1';
   for (const line of [

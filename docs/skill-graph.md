@@ -701,6 +701,7 @@ is `plugin/skills/_shared/integration-branch.md`. Paths outside the payload (`do
 | `/browse` | Shares session-naming and the temp-path convention; reuses `playwright-cli-reference.md`'s screenshot/resize/session syntax. |
 | `qa-agent` | Shares `qa-agent.md` Section 4's step-to-command mapping (snapshot → ref-based action) so a walkthrough's frames land on exactly what QA would have clicked. |
 | `/demo` | Name disambiguation only — `/demo` means human acceptance sign-off; this skill produces a shareable artifact. |
+| `/wrap-up` | The acceptance packet's Recording does not come from this skill: `acceptance-packet.js snapshot` (run by `/wrap-up`) builds the GIF through the same `bin/lib/walkthrough/encode.js` `encodeWalkthrough` from the pipeline's own happy-path screenshots, with redaction and the never-embed exposure rules in `_shared/acceptance-packet.md`'s `## Recording`. This skill's standalone path applies no redaction (`#4612`). |
 
 ## wrap-up
 

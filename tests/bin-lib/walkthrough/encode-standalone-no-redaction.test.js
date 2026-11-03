@@ -1,7 +1,8 @@
 'use strict';
 // tests/bin-lib/walkthrough/encode-standalone-no-redaction.test.js — #4612: the packet's recording
 // redacts at its render choke point, and the standalone walkthrough-encode.js path stays out of that:
-// its caption file is the author's own, for a demo they chose to make (AC6).
+// its caption file is the author's own, for a demo they chose to make (AC3a.2; AC6, that the
+// encoder's existing tests pass untouched, is the rest of encode.test.js).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const zlib = require('node:zlib');
@@ -43,7 +44,7 @@ const SECRET_CAPTION = 'log in with api_key=sk_live_123abc as bob@example.com';
 const SECRET_TITLE = 'token=ghp_abc123def';
 const SECRET_FRAME = 'sk_live_frame.png';
 
-test('AC6: a secret-shaped caption reaches the caption file unchanged', () => {
+test('AC3a.2: a secret-shaped caption reaches the caption file unchanged', () => {
   const written = {};
   const read = [];
   const files = {

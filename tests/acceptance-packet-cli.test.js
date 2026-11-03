@@ -58,6 +58,8 @@ function fakeGit({ revParse = {}, diff = null, log = '', mergeBase = null } = {}
       return diff;
     }
     if (args[0] === 'log') return log;
+    // The recording's destination check: exit 0 is ignored, so a stubbed run records as usual.
+    if (args[0] === '-C' && args[2] === 'check-ignore') return '';
     if (args[0] === 'merge-base') {
       if (mergeBase === null) throw new Error('merge-base failed');
       return `${mergeBase}\n`;
@@ -964,6 +966,30 @@ test('a destination git does not ignore gives encoder-failed naming it, with no 
   assert.throws(() => fs.statSync(earlier));
   const fact = gatherRecording(ws);
   assert.equal(fact.failure, recording.failure);
+});
+
+test('a destination git gives no answer for is held with no encode and no GIF, unless git says it is no repository', (t) => {
+  const refs = AHEAD();
+  const answering = (status, stderr) => (args) => {
+    if (args[2] !== 'check-ignore') return refs(args);
+    throw Object.assign(new Error('git could not answer'), { status, stderr });
+  };
+  const noAnswers = [[128, 'fatal: detected dubious ownership in repository'], [null, ''], [undefined, undefined], [2, 'fatal: not a git repository']];
+  for (const [status, stderr] of noAnswers) {
+    const ws = repoWorkspace(t);
+    qaRun(ws);
+    const stub = encoderStub();
+    assert.deepEqual(snapshotRecording(ws, { git: answering(status, stderr), encodeWalkthrough: stub.encodeWalkthrough }), {
+      status: 'not-run', reason: 'encoder-failed', failure: `git could not say whether ${LIVE_GIF} is ignored, so the GIF was not written`,
+    }, String(status));
+    assert.deepEqual(stub.calls, [], String(status));
+    assert.throws(() => fs.statSync(inputs(ws, 'walkthrough.gif')), String(status));
+  }
+  const ws = repoWorkspace(t);
+  qaRun(ws);
+  const stub = encoderStub();
+  const notARepository = answering(128, 'fatal: not a git repository (or any of the parent directories): .git');
+  assert.equal(snapshotRecording(ws, { git: notARepository, encodeWalkthrough: stub.encodeWalkthrough }).status, 'passed');
 });
 
 test('an ignored destination records as usual', (t) => {

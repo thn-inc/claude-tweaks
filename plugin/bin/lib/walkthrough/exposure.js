@@ -5,6 +5,7 @@
 // Pure: the gh runner is injected, and nothing here spawns or reads a file.
 'use strict';
 
+const { EXPOSURE } = require('../wrap-up/packet-contract');
 const { checkLink, isCredentialRefusal, isImageUrl } = require('../wrap-up/packet-links');
 
 const VISIBILITY_ARGS = ['repo', 'view', '--json', 'isPrivate'];
@@ -35,16 +36,16 @@ function hostnameOf(url) {
 // way stays local. An image url is not a landing page. A secret gist is never enough,
 // and an Actions artifact only counts in a repository that reads as exactly `private`.
 function decideExposure({ repoVisibility, storeProbe } = {}) {
-  if (!storeProbe || storeProbe.anonymousFetch !== 'refused') return 'local-only';
+  if (!storeProbe || storeProbe.anonymousFetch !== 'refused') return EXPOSURE.LOCAL_ONLY;
   const { url, store } = storeProbe;
   const hostname = hostnameOf(url);
-  if (hostname === null) return 'local-only';
+  if (hostname === null) return EXPOSURE.LOCAL_ONLY;
   const link = checkLink(url, { allowedHosts: [hostname] });
-  if (!link.ok) return isCredentialRefusal(link.reason) ? 'withheld' : 'local-only';
-  if (isImageUrl(url)) return 'local-only';
-  if (store === 'secret-gist') return 'local-only';
-  if (store === 'actions-artifact' && repoVisibility !== 'private') return 'local-only';
-  return 'linked-private';
+  if (!link.ok) return isCredentialRefusal(link.reason) ? EXPOSURE.WITHHELD : EXPOSURE.LOCAL_ONLY;
+  if (isImageUrl(url)) return EXPOSURE.LOCAL_ONLY;
+  if (store === 'secret-gist') return EXPOSURE.LOCAL_ONLY;
+  if (store === 'actions-artifact' && repoVisibility !== 'private') return EXPOSURE.LOCAL_ONLY;
+  return EXPOSURE.LINKED_PRIVATE;
 }
 
 module.exports = { decideExposure, readRepoVisibility };

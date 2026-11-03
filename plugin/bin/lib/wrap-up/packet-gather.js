@@ -11,6 +11,7 @@ const {
   PACKET_MARKER_RE,
   COMMANDS_ONLY_SURFACES,
   encodeFactKey,
+  NEGATIVE_ID_PREFIX,
 } = require('./packet-contract');
 const {
   BEARER_SEGMENT_REASON, checkLink, findCredentialInText, hasBearerUrl,
@@ -41,7 +42,6 @@ const POSITIONAL_AC_PREFIX = 'AC';
 // code never swallows the rest of the section as a false fence.
 const FENCE_RE = /^ {0,3}(?:(`{3,})([^`]*)|(~{3,})(.*))$/;
 
-const NEGATIVE_ID_PREFIX = 'neg-';
 const NEGATIVE_TAG = 'negative';
 const STORIES_KEY_RE = /^stories:\s*(?:#.*)?$/;
 // A bare `-` opens an item too, its keys on the lines below it.
@@ -595,7 +595,6 @@ function readPacket(comments) {
 }
 
 module.exports = {
-  NEGATIVE_ID_PREFIX,
   parseAcceptanceCriteria,
   lowConfidenceFindings,
   qaSelectionFromDecisions,

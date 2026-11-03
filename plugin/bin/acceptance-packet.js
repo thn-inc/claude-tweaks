@@ -57,7 +57,7 @@ const {
   RECORDING_FILE, planRecording, encodeSpec, scrubPaths, recordingLocations,
 } = require('./lib/walkthrough/record');
 const {
-  CLAIM_SECTIONS, EXPOSURES, MAX_PACKET_CHARS, PACKET_MARKER, RECORDING_NOT_RUN_REASONS, SCHEMA_VERSION,
+  CLAIM_SECTIONS, EXPOSURES, MAX_PACKET_CHARS, NOT_RUN_REASON, PACKET_MARKER, RECORDING_NOT_RUN_REASONS, SCHEMA_VERSION,
 } = require('./lib/wrap-up/packet-contract');
 const {
   gatherPacketFacts,
@@ -115,8 +115,10 @@ const LOG_LINE_RE = /^([0-9a-f]+)\t(.*)$/;
 const GH_ABSENT = "gh absent — follow _shared/acceptance-packet.md's MCP path";
 const FINDINGS_NOT_READ = 'review findings not read — low-confidence findings not listed';
 const RECORDING_NOT_READ = 'manifest recording entry not read — treated as absent';
-const ENCODER_FAILED = 'encoder-failed';
+const ENCODER_FAILED = NOT_RUN_REASON.ENCODER_FAILED;
 const CHECK_IGNORE_NOT_IGNORED = 1;
+const CHECK_IGNORE_FATAL = 128;
+const NOT_A_REPOSITORY = /not a git repository/i;
 const UNKNOWN_SECTION = 'unknown';
 // What --dropped-out says for a dropped claim whose validator entry carries no known
 // `reasonKind`: the free-form `reason` may hold a narrator's value, so it is never written.
@@ -354,25 +356,30 @@ function recordingFailure(err, framePaths) {
   return { status: 'not-run', reason: ENCODER_FAILED, failure: scrubPaths(named) };
 }
 
-// Whether git could commit a GIF written here: the stored pixels are unredacted. check-ignore exits
-// 1 for not ignored. Any other failure, a directory in no repository above all, is no such answer.
+// Why a GIF may not be written here, or null when it may: the stored pixels are unredacted, so
+// git must not be able to commit them. check-ignore exits 1 for not ignored, and exits 128 with
+// "not a git repository" for a `.git` that git itself rejects, where nothing can commit the file.
+// Any other failure (a timeout or missing binary, which carry no exit 128, or a 128 for a reason
+// like a refused checkout) is no answer, and holds the write too: the run dir always has a `.git`
+// above it, so a silent write could leave committable pixels.
 // `-C`, since the run dir sits in the main checkout and the cwd may be a worktree.
-function destinationIsUnignored(dir, deps) {
+function destinationHold(dir, deps) {
+  const shown = () => relativeDisplayId(findGitRoot(dir).dir, path.join(dir, RECORDING_FILE));
   try {
     deps.git(['-C', dir, 'check-ignore', '-q', '--', RECORDING_FILE]);
-    return false;
+    return null;
   } catch (err) {
-    return err?.status === CHECK_IGNORE_NOT_IGNORED;
+    if (err?.status === CHECK_IGNORE_NOT_IGNORED) return `${shown()} is not ignored by git, so the GIF was not written`;
+    if (err?.status === CHECK_IGNORE_FATAL && NOT_A_REPOSITORY.test(String(err.stderr ?? ''))) return null;
+    return `git could not say whether ${shown()} is ignored, so the GIF was not written`;
   }
 }
 
 function snapshotRecording(sources, dir, deps) {
   const plan = planSnapshotRecording(sources, deps);
   if (plan.status !== 'ready') return plan;
-  if (destinationIsUnignored(dir, deps)) {
-    const shown = relativeDisplayId(findGitRoot(dir).dir, path.join(dir, RECORDING_FILE));
-    return { status: 'not-run', reason: ENCODER_FAILED, failure: `${shown} is not ignored by git, so the GIF was not written` };
-  }
+  const hold = destinationHold(dir, deps);
+  if (hold !== null) return { status: 'not-run', reason: ENCODER_FAILED, failure: hold };
   try {
     const { buffer } = deps.encodeWalkthrough(encodeSpec(plan.frames));
     deps.writeAtomic(path.join(dir, RECORDING_FILE), buffer);
@@ -381,6 +388,8 @@ function snapshotRecording(sources, dir, deps) {
       file: RECORDING_FILE,
       text: plan.text,
       captions: plan.captions,
+      // v1 stores the GIF locally and never probes a remote store, so this is `local-only` whatever
+      // the visibility; the read stays so a store probe wired in later decides on a fail-closed answer.
       exposure: decideExposure({ repoVisibility: readRepoVisibility(deps.gh), storeProbe: null }),
       frames: plan.frames.length,
     };

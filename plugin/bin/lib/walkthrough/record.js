@@ -7,15 +7,13 @@
 
 const path = require('path');
 const { planFrames } = require('./encode');
-const { NEGATIVE_ID_PREFIX } = require('../wrap-up/packet-gather');
+const { NEGATIVE_ID_PREFIX, NOT_RUN_REASON } = require('../wrap-up/packet-contract');
 
 const RECORDING_FILE = 'walkthrough.gif';
 const FRAME_WIDTH = 960;
 const GIF_MAX_BYTES = 8 * 1024 * 1024;
 
-const NO_STORY = 'no-story';
-const NO_LOCAL_BASE_URL = 'no-local-base-url';
-const NO_SCREENSHOTS = 'no-happy-path-screenshots';
+const { NO_STORY, NO_LOCAL_BASE_URL, NO_SCREENSHOTS } = NOT_RUN_REASON;
 
 const PASSING_STATUSES = new Set(['PASS', 'PASS_WITH_CAVEATS']);
 const FRAME_NAME_RE = /^\d+_(.+)\.png$/;
@@ -60,6 +58,9 @@ function planRecording({
 }) {
   if (!Array.isArray(report?.stories)) return notRun(report || qaExpected ? NO_SCREENSHOTS : NO_STORY);
   const index = new Map((storyIndex ?? []).map(({ id, negative }) => [id, negative]));
+  // Stricter than gather's `negative` flag, where the index wins over the prefix: a story is out of
+  // the recording when either its prefix or its file says break-it, since an error screen in the GIF
+  // costs more than a missing happy-path frame.
   const isNegative = (story) => typeof story?.id === 'string' && (story.id.startsWith(NEGATIVE_ID_PREFIX) || index.get(story.id) === true);
   const happy = report.stories.filter((story) => !isNegative(story));
   if (happy.length === 0) return notRun(NO_STORY);
