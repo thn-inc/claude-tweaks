@@ -233,7 +233,7 @@ git commit -m "Read pr-state's and sibling-sessions' origin slug through the gat
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `node --test tests/gh-host-seam-conformance.test.js`
-Expected: FAIL naming `lib/hooks/git-exec.js` and `lib/reconcile/release-merged.js`
+Expected: FAIL after Step 1, naming `lib/hooks/git-exec.js` and `lib/reconcile/release-merged.js`
 
 - [ ] **Step 3: Implement** the deletions and the two test-assertion swaps.
 
@@ -357,7 +357,7 @@ git commit -m "Gate stale-claim-pr's origin and trust an explicit host-qualified
 - [ ] **Step 2: Run them to verify they fail**
 
 Run: `node --test tests/tidy-stale-claim-open-pr-conformance.test.js tests/issue-claims-stale-open-pr-conformance.test.js`
-Expected: FAIL on the no-`--repo`, exit-3 and `{host}` assertions
+Expected: FAIL after Step 1 on the no-`--repo`, exit-3 and `{host}` assertions
 
 - [ ] **Step 3: Implement** the prose edits, then `wc -c plugin/skills/_shared/issue-claims.md plugin/skills/tidy/scan-procedures.md` must print at most 50800 and 52447.
 
