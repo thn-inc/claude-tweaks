@@ -160,9 +160,10 @@ async function reconcileInner(opts, state) {
   // Declined-learning store prune (#1399) — local, gitignored bookkeeping unrelated to git/
   // GitHub reachability, so it runs unconditionally on every reconcile pass regardless of
   // `checks`, the integration model, or whether this even resolves to a repo — the store's own
-  // path is process.cwd()-relative (no root param on this module today, matching every existing
-  // caller: /feedback and /reflect never pass one either), so this deliberately does not thread
-  // `root` through. Best-effort: a prune failure never blocks the rest of the pass.
+  // path resolves from process.cwd() to the main checkout (#4360; no root param on this module
+  // today, matching every existing caller: /feedback and /reflect never pass one either), so this
+  // deliberately does not thread `root` through. Best-effort: a prune failure never blocks the
+  // rest of the pass.
   // #4180: skipped on a dry run — the prune rewrites the store file (and takes its lock directory).
   if (!dryRun) {
     try {
@@ -556,7 +557,7 @@ async function reconcileInner(opts, state) {
       return postMerge({ cwd: root, prStates, dryRun, budgetExceeded: () => budget.exceeded() });
     });
     if (r.failure) {
-      result.skipped.push({ check: 'post-merge', reason: r.failure });
+      result.skipped.push({ check: 'post-merge', reason: r.failure, ...(r.detail ? { detail: r.detail } : {}) });
     } else {
       result.postMerge = r.entries;
       postMergeDeferred = Array.isArray(r.deferred) ? r.deferred : [];

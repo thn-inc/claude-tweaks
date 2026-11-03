@@ -195,6 +195,7 @@ test('no parent yields the no-parent verdict', () => {
   const v = evaluateParentGate({ parent: null, parentLabels: [], subIssues: [], riskFloor: 'high' });
   assert.deepEqual(v, {
     parent: null,
+    repo: null,
     state: 'no-parent',
     exceeds: null,
     closeReason: null,
@@ -211,7 +212,7 @@ test('no parent yields the no-parent verdict', () => {
 
 test('the verdict carries VERDICT_FIELDS in order', () => {
   assert.deepEqual(VERDICT_FIELDS, [
-    'parent', 'state', 'exceeds', 'closeReason', 'idempotence', 'maxTier', 'riskFloor', 'parentIssue', 'needs', 'held', 'subIssues', 'skipped',
+    'parent', 'repo', 'state', 'exceeds', 'closeReason', 'idempotence', 'maxTier', 'riskFloor', 'parentIssue', 'needs', 'held', 'subIssues', 'skipped',
   ]);
   const due = evaluateParentGate(facts());
   assert.deepEqual(Object.keys(due), VERDICT_FIELDS);
@@ -220,6 +221,12 @@ test('the verdict carries VERDICT_FIELDS in order', () => {
   assert.equal(due.idempotence, null);
   assert.deepEqual(due.skipped, []);
   assert.equal(due.riskFloor, 'high');
+});
+
+test('evaluateParentGate passes slug through as repo', () => {
+  assert.equal(evaluateParentGate(facts()).repo, null);
+  assert.equal(evaluateParentGate(facts({ slug: 'o/r' })).repo, 'o/r');
+  assert.equal(evaluateParentGate({ parent: null, parentLabels: [], subIssues: [], riskFloor: 'high', slug: 'o/r' }).repo, 'o/r');
 });
 
 test('an invalid risk floor throws', () => {
