@@ -6,6 +6,8 @@ files:
   - plugin/bin/lib/issues/record-risk-flags.js
   - plugin/bin/plan-audit.js
   - plugin/bin/lib/plan-audit/checks.js
+  - plugin/bin/lib/plan-audit/parser.js
+  - plugin/bin/lib/issues/risk-flag-classify.js
   - plugin/skills/build/plan-audit.md
   - plugin/skills/build/micro-plan.md
   - plugin/bin/lib/express/eligibility.js
@@ -105,6 +107,7 @@ files:
   - An unconfirmed flag with no label.
   - A kept flag missing from the section.
   - A missing plan copy reported as "no proof written".
+  - A kept flag reading `no proof shown` when wrap-up read no plan (absent or unparseable). It reads `proofs not read (the --proofs input did not read)` then.
 
 ## Origin
 - Created during build of #4618: risk flags at intent time (classify and keep-or-remove during `/claude-tweaks:specify`, headless keep-and-mark, plan-audit Check G, micro-plan and express-lane exclusion, the packet's Risk proofs section).
