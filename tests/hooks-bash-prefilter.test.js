@@ -39,6 +39,8 @@ const DIFFERENTIAL_CORPUS = [
   'echo foo>tracked.js',
   // #4210: a glued redirect after a quoted span.
   'echo "hi">tracked.js',
+  // #4294: a glued redirect after a $NAME word and an escaped blank.
+  'echo $M\\ >tracked.js',
   // #4281: a bare redirect to a quoted native path.
   'echo x > "D:\\r\\tracked.js"',
   // #4281: a redirect on a cd line.
@@ -213,6 +215,13 @@ test('#4210 F1 F3: hasFileRedirection skips a nested or quoted leading `>`, and 
 test('AC3.1 #4210: the differential corpus lists the quoted-word shape, and it takes the full-handler path', () => {
   assert.ok(DIFFERENTIAL_CORPUS.includes('echo "hi">tracked.js'));
   assert.strictEqual(shouldRunFull('pre-tool-use', bash('echo "hi">tracked.js')), true);
+});
+
+test('AC1.1 #4294: the differential corpus lists the escaped-blank shape, and it takes the full-handler path', () => {
+  assert.ok(DIFFERENTIAL_CORPUS.includes('echo $M\\ >tracked.js'));
+  assert.strictEqual(shouldRunFull('pre-tool-use', bash('echo $M\\ >tracked.js')), true);
+  assert.strictEqual(hasFileRedirection('echo $M\\ >tracked.js'), true);
+  assert.strictEqual(hasFileRedirection('echo $M>tracked.js'), false);
 });
 
 test('shouldRunFull ORs hasFileRedirection into pre-tool-use only, never post-tool-use', () => {
