@@ -80,6 +80,8 @@ A scan that guards against a name nobody has written yet should match the whole 
 
 `assert.deepEqual(offenders, [])` over the walk also passes when the matcher matches nothing. For a scan that matches compliant and non-compliant sites alike, assert a lower bound on matches across the tree, and make the message say what a low count means. The git-status scan uses `assert.ok(total >= 12, …)`, and its comment says that fewer matches means the patterns stopped matching, not that the calls went away. Set the floor to the count at the time the scan lands. Raise it when sites are added. Never lower it to make the suite green.
 
+A floor that counts allow-listed sites drops when a change moves those sites onto the convention, and that drop is not lost recall. Lower it in the same change by exactly the number of sites moved, update the per-file exact count beside it, and name the record and the move in the floor's comment. `tests/gh-host-seam-conformance.test.js`'s origin-read floor went from 9 to 8 (#4951) and from 8 to 6 (#4805), each time because a module's `parseRepo(<origin>)` reads moved onto `gateOriginRepo`. Its exact `NOT_ORIGIN` counts are what show the drop is the move. A floor with no exact per-file count beside it has no such proof, so it stays where it is.
+
 Two scans get the same protection another way. The path-guard scan's exact per-file counts fail when a count drifts either way. The exit-code scan asserts `files.length > 50` over the walk. The windows-hide and path-containment scans have no floor. A scan whose zero-offender result is the expected one needs the planted self-test below to show its matcher can still match.
 
 ### Self-test the matcher
