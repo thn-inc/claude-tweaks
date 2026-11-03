@@ -219,6 +219,16 @@ function formatCheckSkipLines(result) {
   });
 }
 
+// #4798: Step 4.0b's parents left open and its step-wide skips, flattened from every post-merge entry
+// whatever its action or verdict — a `marker-write-failed` entry folds into the aggregated `skipped:`
+// line, so these lines are the only place its fields show. Same two lines SessionStart prints.
+function formatPostMergeStep40bLines(result) {
+  const pm = result.postMerge;
+  if (!Array.isArray(pm)) return [];
+  const { parentsLeftOpen, stepSkipsOf, parentsLeftOpenLine, stepSkipsLine } = require('./post-merge');
+  return [parentsLeftOpenLine(parentsLeftOpen(pm)), stepSkipsLine(stepSkipsOf(pm))].filter(Boolean);
+}
+
 // result -> compact multi-line string (no trailing newline; caller appends
 // one, matching the `--json` branch's own `+ '\n'`). Never returns an empty
 // string — a fully-null/fully-skipped result (no-repo, no-remote, the
@@ -242,6 +252,8 @@ function formatSummary(result) {
     const taken = scopedEntries(cat, arr).filter((e) => cat.takenActions.includes(e.action));
     if (taken.length) lines.push(`${cat.verb}: ${taken.length} ${pluralize(cat.unit, taken.length)}${cat.suffix ? cat.suffix(taken) : ''}`);
   }
+
+  lines.push(...formatPostMergeStep40bLines(result));
 
   const residuePlanLine = formatResiduePlanLine(result.residuePlan);
   if (residuePlanLine) lines.push(residuePlanLine);
