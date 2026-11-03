@@ -63,12 +63,14 @@ files:
   - After a PR merge, a Step 4.0 result with no `closingSet` (a non-zero exit, `not-merged`, `no-fixes-span`, `no-pr`, `gh-absent`, `base-unchecked`) skips the whole step with a logged `SKIP`; tidy's `parent-gate` backstop (step 4) recovers the parent.
   - A gh-absent run that has the GitHub MCP server, such as a cloud Routine on the local-merge path, closes the parent the same way. The gate file's **Transport (#4602).** paragraph routes every call through `_shared/github-write-transport.md`'s MCP rows: `issue_read` for reads, `add_issue_comment` for the comment, and `issue_write` with `state_reason` for the close. The default-branch check reads `git remote show origin`.
   - A token that cannot read its own identity does not stop the close. When `gh api user` fails or prints no login (a GitHub App installation token, say), or the facts file's `get_me` result carries no login, the parent still closes: only a trusted author's `## Closed below the oversight floor` comment counts as already posted. When none does, the step posts the comment before closing, and the verdict's `skipped` names `identity probe failed — close marker matched against trusted authors only`; a trusted comment already there means a plain close with no such note. The accepted cost is one duplicate comment when an earlier attempt posted under an untrusted association and its close then failed.
+  - The comment and the close go to the repository the gate read from. The verdict's `repo` field names the `{owner}/{repo}` slug the CLI's reads used, and each `gh` line of the Close and Apply sections passes it as `--repo "{parent-repo}"`. On a checkout whose `gh` default repository differs from `origin`, the parent is still closed in `origin`'s repository (#4824). A `repo` of `null` (local-files, or a facts file with no qualified token) means none of those `gh` lines runs, and the entry is reported as a failing `gh` call.
   - The close is one of the two named exceptions in `_shared/auto-mode-contract.md`'s never-reversible list (the other is Step 4.0's close of the `Fixes` records after a merge into a non-default base). Its restore contract is a human `gh issue reopen`.
 - **Red flags:**
   - A second listing comment on a re-run.
   - A Try it block or `demo:pending` posted by this post-merge step.
   - A failed `gh` call that falls back to labeling the sub-issue as if it had no parent.
   - A due parent left open, or skipped as `gh-failed`, only because the identity read failed.
+  - A listing comment or close that lands in a different repository than the gate's reads, or a `gh` write run with an empty `--repo ""`, which `gh` sends to its default repository.
   - On the MCP path, a due parent left open because the facts file carried a lowercase `closed` state the CLI did not normalize. Another MCP-path red flag is a close call that passes `labels` and wipes the parent's labels.
 
 ### 3. A merge no session saw land is closed by the reconciler's post-merge check
@@ -129,3 +131,5 @@ Updated by record #4770 (run `2026-11-01T182348-spec-4770`): a failed or empty i
 Updated by record #4799 (run `2026-11-01T205251-record-4799`): the reconciler's late pass decides the parent-level skips before any per-sub-issue read; step 3 notes it.
 
 Updated during wrap-up of #4692 (run `2026-11-01T182340-spec-4692`): step 3 notes that the pass never reaches an archived run, and that merge mode's Already merged section runs Steps 4.0 and 4.0b for one under the same marker and claim.
+
+Updated by record #4824 (run `2026-11-03T082955-record-4824`): the gate verdict carries `repo`, and the Close and Apply sections' `gh` writes pass it as `--repo "{parent-repo}"` behind a stop rule for an empty value; step 2 notes it.
