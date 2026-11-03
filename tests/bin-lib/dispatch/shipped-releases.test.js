@@ -7,6 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { releasePayload, claimPayload, releaseTimeFromClaim } = require('../../../plugin/bin/lib/issues/claims.js');
 const { writeReleaseTimes, readReleaseTimes } = require('../../../plugin/bin/lib/dispatch/shipped-releases.js');
+const { chmodDenialSkip } = require('../../helpers/root.js');
 
 const AT = Date.parse('2026-10-02T13:00:00Z');
 const TOMBSTONE = releasePayload({ issueNumber: 7, runId: 'r', reason: 'merged: x', now: AT }).tombstoneContent;
@@ -111,9 +112,7 @@ test('an unwritable release-times file is logged and the in-memory map still ret
 
 // A read-only file makes the write fail while the directory stays removable; a
 // root user and win32 permission semantics ignore the mode, so those skip.
-test('a failed write removes a stale map an earlier pull left, so the second pass reads no release time', {
-  skip: process.platform === 'win32' || (typeof process.getuid === 'function' && process.getuid() === 0),
-}, () => {
+test('a failed write removes a stale map an earlier pull left, so the second pass reads no release time', chmodDenialSkip('root ignores the read-only mode'), () => {
   const { dir, file } = tmpFile();
   fs.writeFileSync(file, JSON.stringify({ 7: '2026-10-02T13:00:00.000Z' }));
   fs.chmodSync(file, 0o444);
