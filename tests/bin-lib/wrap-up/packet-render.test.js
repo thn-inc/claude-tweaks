@@ -866,6 +866,31 @@ test('a command with a bearer-shaped URL segment is refused at render, never sho
   assert.ok(!markdown.includes(BEARER));
 });
 
+const BEARER_COMMAND_FORMS = [
+  `curl localhost:3000/reset/${BEARER}?next=http://x/y`,
+  `www.h.example/${BEARER}?u=https://x/y`,
+  `www.h.example/${BEARER}#http://x/y`,
+];
+
+test('a command whose bearer URL carries a later URL is refused at render, never shown', () => {
+  for (const command of BEARER_COMMAND_FORMS) {
+    const { markdown } = render(
+      [fact('link:cmd', 'passed', { command })],
+      [claim('test-guide', 'Run', ['link:cmd'])],
+    );
+    assert.ok(markdown.includes('(link refused: credential in path segment)'), command);
+    assert.ok(!markdown.includes(BEARER), command);
+  }
+});
+
+test('a plan line whose bearer URL carries a later URL is screened', () => {
+  for (const line of BEARER_COMMAND_FORMS) {
+    const { markdown, screened } = render([], [], { options: { observationPlan: `- ${line}\n- Other` } });
+    assert.ok(!markdown.includes(BEARER), line);
+    assert.deepEqual(screened, [{ section: 'observation-plan', key: 'path segment' }], line);
+  }
+});
+
 test('the {id} form of that command renders', () => {
   const { markdown } = render(
     [fact('link:cmd', 'passed', { command: 'curl http://localhost:3000/reset/{id}' })],

@@ -75,6 +75,20 @@ test('hasBearerUrl leaves the placeholder, bare words, local paths and every oth
   }
 });
 
+test('hasBearerUrl judges the token\'s own path when a URL sits later in the token', () => {
+  const bearer = 'Xk3j9f8s7d6f5g4h3j2k1';
+  for (const text of [
+    `curl localhost:3000/reset/${bearer}?next=http://x/y`,
+    `www.h.example/${bearer}?u=https://x/y`,
+    `www.h.example/${bearer}#http://x/y`,
+  ]) {
+    assert.equal(hasBearerUrl(text), true, text);
+  }
+  for (const text of ['curl localhost:3000/reset/{id}?next=http://x/y', 'www.h.example/a?u=https://x/y', 'www.h.example/a#http://x/y']) {
+    assert.equal(hasBearerUrl(text), false, text);
+  }
+});
+
 test('checkLink accepts an allowed host, and a path that only names a key word', () => {
   assert.deepEqual(check('http://localhost:3000/settings?role=admin'), { ok: true });
   assert.deepEqual(check('https://dev.example.com/docs/token-guide'), { ok: true });

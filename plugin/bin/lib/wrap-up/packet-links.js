@@ -189,14 +189,13 @@ const isSlashOrSpace = (char) => char === '/' || /\s/.test(char);
 // tail are bounded, so a long word costs one bounded try. A bare path is no URL: a local run path
 // holds a dated slug, and the bearer rule does not bind it.
 const URL_TOKEN_RE = /(?<![a-z0-9.+-])(?:[a-z][a-z0-9+.-]{0,31}:\/\/|www\.|[a-z0-9.-]{1,253}:\d{1,5}(?=\/))[^\s"'`<>]*/gi;
-const SCHEME_END = '://';
+const LEADING_SCHEME_RE = /^[a-z][a-z0-9+.-]{0,31}:\/\//i;
 const QUERY_OR_FRAGMENT_RE = /[?#]/;
 const SENTENCE_CLOSERS = ').,;:!]}';
 const isSentenceCloser = (char) => SENTENCE_CLOSERS.includes(char);
 
 function tokenHasBearerSegment(token) {
-  const afterScheme = token.includes(SCHEME_END) ? token.slice(token.indexOf(SCHEME_END) + SCHEME_END.length) : token;
-  const [hostAndPath] = afterScheme.split(QUERY_OR_FRAGMENT_RE, 1);
+  const [hostAndPath] = token.replace(LEADING_SCHEME_RE, '').split(QUERY_OR_FRAGMENT_RE, 1);
   const slash = hostAndPath.indexOf('/');
   if (slash === -1) return false;
   return decodeText(hostAndPath.slice(slash)).split('/').some((segment) => isBearerSegment(trimTrailing(segment, isSentenceCloser)));

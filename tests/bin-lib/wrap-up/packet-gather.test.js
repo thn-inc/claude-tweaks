@@ -945,6 +945,20 @@ test('a command holding a URL with a bearer-shaped path segment is refused like 
   assert.ok(!JSON.stringify(result).includes(bearer));
 });
 
+const BEARER_COMMAND_FORMS = [
+  `curl localhost:3000/reset/Xk3j9f8s7d6f5g4h3j2k1?next=http://x/y`,
+  `www.h.example/Xk3j9f8s7d6f5g4h3j2k1?u=https://x/y`,
+  `www.h.example/Xk3j9f8s7d6f5g4h3j2k1#http://x/y`,
+];
+
+test('a command whose bearer URL carries a later URL is refused, never a fact', () => {
+  for (const command of BEARER_COMMAND_FORMS) {
+    const result = gather({ links: [{ id: 'd', label: 'd', command }] });
+    assert.deepEqual(result.refused, [{ id: 'link:d', reason: 'credential in path segment' }], command);
+    assert.ok(!JSON.stringify(result).includes('Xk3j9f8s7d6f5g4h3j2k1'), command);
+  }
+});
+
 test('the {id} form of that command is a fact, and so is a bare route', () => {
   const placeholder = gather({ links: [{ id: 'd', label: 'd', command: `curl ${LOCAL}/reset/{id}` }] });
   assert.deepEqual(placeholder.refused, []);
