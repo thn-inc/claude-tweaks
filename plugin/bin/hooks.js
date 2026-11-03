@@ -129,6 +129,7 @@ const VERBS = {
   'close-run': { usage: 'close-run [--run <dir>]', run: runCloseRun },
   'delete-ledger': { usage: 'delete-ledger --run <dir> [--ledger <path>]', run: runDeleteLedger },
   'resolve-ledger': { usage: 'resolve-ledger --run <dir>', run: runResolveLedger },
+  'ledger-row': { usage: 'ledger-row [--run <dir>] [--ledger <path>] [--phase <phase>] [--item <text> | --item-file <path>] [--row <n>] --status <status> [--resolution <text> | --resolution-file <path>]', run: runLedgerRow },
   'teardown-run': { usage: 'teardown-run [--run <dir>] [--merged|--abandoned] [--remote-ref-only]', run: runTeardownRun },
   'archive-run': { usage: 'archive-run [--run <dir>]', run: runArchiveRun },
   'resolve-console': { usage: 'resolve-console --run <dir> [--approve <id,id,...>] [--decline <id,id,...>] [--reverse-failed <id,id,...>] [--filing-failed <id,id,...>]', run: runResolveConsole },
@@ -174,6 +175,7 @@ const KNOWN_FLAGS = {
   'close-run': ['--run'],
   'delete-ledger': ['--run', '--ledger'],
   'resolve-ledger': ['--run'],
+  'ledger-row': ['--run', '--ledger', '--phase', '--item', '--item-file', '--status', '--resolution', '--resolution-file', '--row'],
   'record-worktree': ['--run', '--dispatch'],
   'record-pr': ['--run'],
   'manifest-init': ['--run', '--specs'],
@@ -206,7 +208,7 @@ const KNOWN_FLAGS = {
 // with "--", and the handler would otherwise read the stray flag as the value.
 // One set for every verb: a flag name here takes a value on every verb that
 // declares it, so it must never be a boolean flag on another verb.
-const VALUE_FLAGS = new Set(['--run', '--specs', '--spec', '--status', '--phase', '--now', '--approve', '--decline', '--reverse-failed', '--filing-failed', '--ledger', '--spec-slug', '--mode', '--standalone', '--worktree', '--record', '--checks']);
+const VALUE_FLAGS = new Set(['--run', '--specs', '--spec', '--status', '--phase', '--now', '--approve', '--decline', '--reverse-failed', '--filing-failed', '--ledger', '--spec-slug', '--mode', '--standalone', '--worktree', '--record', '--checks', '--item', '--item-file', '--resolution', '--resolution-file', '--row']);
 
 // Returns the first refused `--*` token in `args`: an undeclared flag, as
 // `{ token, valueFlag: null }`, or any `--*` token sitting in a declared value
@@ -1232,6 +1234,137 @@ async function runResolveLedger(argv) {
     const text = formatLedgerReport(describeRunLedgers({ runDir, worktree }));
     await new Promise((resolve) => process.stdout.write(text, resolve));
   }
+  return 0;
+}
+
+// #4439: the first token of `args` that is neither a `--*` flag nor a declared value flag's value —
+// an unquoted multi-word value would otherwise be silently truncated to its first word.
+function firstStrayArg(args) {
+  for (let i = 0; i < args.length; i += 1) {
+    if (!args[i].startsWith('--')) return args[i];
+    if (VALUE_FLAGS.has(args[i])) i += 1;
+  }
+  return null;
+}
+
+// #4439: one ledger-row text value, from its argv flag or its `--*-file` twin (the file is how a value
+// carrying `|`, a backtick or `$` reaches the row without shell quoting). A text-file usage error comes
+// back as `usageError` (the verb exits 2 on it).
+function ledgerRowText(args, flag, fileFlag) {
+  const fromArgv = args.includes(flag);
+  const fromFile = args.includes(fileFlag);
+  if (fromArgv && fromFile) return { present: true, text: null, usageError: `${flag} and ${fileFlag} cannot be combined` };
+  if (!fromFile) return { present: fromArgv, text: fromArgv ? String(flagVal(args, flag) ?? '') : null, usageError: null };
+  const file = flagVal(args, fileFlag);
+  const fail = (usageError) => ({ present: true, text: null, usageError });
+  if (typeof file !== 'string' || file.trim() === '') return fail(`${fileFlag} needs a path`);
+  let text;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    return fail(`${fileFlag} ${file} is unreadable (${err && err.code ? err.code : err && err.message})`);
+  }
+  let end = text.length;
+  while (end > 0 && (text[end - 1] === '\n' || text[end - 1] === '\r')) end -= 1;
+  text = text.slice(0, end);
+  if (text.trim() === '') return fail(`${fileFlag} ${file} is empty`);
+  if (/[\r\n]/.test(text)) return fail(`${fileFlag} ${file} holds more than one line — a ledger cell is one table line`);
+  return { present: true, text, usageError: null };
+}
+
+async function runLedgerRow(argv) {
+  // #4439: the sanctioned writer for a plain open-items ledger row — append one (`--phase`/`--item`/
+  // `--status`), or settle one by number (`--row`/`--status`/`--resolution`). stdout is exactly one JSON
+  // line; every refusal is one stderr line, exit 1 and nothing written, except a text-file usage error
+  // (exit 2). The status/Resolution rules and the locked write are stage-item/ledger.js's.
+  const callerIdentity = { sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() };
+  const {
+    runDir, invalidRunArg, rest, worktreeLocalFallback, explicit, candidates,
+  } = resolveRunArg(argv.slice(3), process.cwd(), process.env, { unambiguousOnly: true, callerIdentity });
+  reportWorktreeLocalFallback(runDir, worktreeLocalFallback, process.stderr);
+  const fail = async (text, code = 1) => {
+    await new Promise((resolve) => process.stderr.write(`${text}\n`, resolve));
+    return code;
+  };
+  const refuse = (reason, code = 1) => fail(`claude-tweaks: ledger-row: ${reason} — nothing written`, code);
+  if (invalidRunArg) return fail(`claude-tweaks: --run path rejected: ${invalidRunArg} — nothing written`);
+  if (candidates) return fail(`${renderCandidateRefusal('ledger-row', candidates)}\nNothing written.`);
+  if (!runDir) return fail('claude-tweaks: no pipeline run dir found — nothing written');
+  const runState = ctxLib.readRunState(runDir);
+  // Same write-time guard as record-pr's and spec-status's: an implicit resolution (only the env-var arm
+  // can reach a foreign run) never writes against another session's run; an explicit --run bypasses it.
+  if (!explicit && ctxLib.classifyOwnership(callerIdentity, runState) === 'foreign') {
+    return refuse(`run ${path.basename(runDir)} was recorded by another session/worktree — refusing to write a ledger row against it without an explicit --run`);
+  }
+  const stray = firstStrayArg(rest);
+  if (stray !== null) return refuse(`unexpected argument '${stray}' — quote a value that contains spaces, or pass it with --item-file/--resolution-file`);
+
+  const item = ledgerRowText(rest, '--item', '--item-file');
+  const resolution = ledgerRowText(rest, '--resolution', '--resolution-file');
+  for (const source of [item, resolution]) {
+    if (source.usageError) return refuse(source.usageError, 2);
+  }
+
+  const isBlank = (value) => typeof value !== 'string' || value.trim() === '';
+  const status = flagVal(rest, '--status');
+  const phase = flagVal(rest, '--phase');
+  const ledgerArg = flagVal(rest, '--ledger');
+  const settle = rest.includes('--row');
+  const row = settle ? flagVal(rest, '--row') : null;
+  if (isBlank(status)) return refuse('--status is required');
+  if (rest.includes('--ledger') && isBlank(ledgerArg)) return refuse('--ledger needs a path');
+  if (settle) {
+    if (!/^\d+$/.test(row || '')) return refuse(`--row needs a row number, got '${row}'`);
+    if (rest.includes('--phase') || item.present) return refuse('--row settles an existing row — it cannot be combined with --phase, --item or --item-file');
+  } else {
+    if (isBlank(phase)) return refuse('an append needs --phase');
+    if (isBlank(item.text)) return refuse('an append needs --item or --item-file');
+  }
+
+  const { checkLedgerStatus, appendRow, settleRow } = require('./lib/stage-item/ledger');
+  const { ownRecordNumbers } = require('./lib/wrap-up/pack');
+  const { resolveLedgerPath } = require('./lib/wrap-up/ledger-write');
+  const worktree = runState?.worktree || process.cwd();
+  const excludeRecords = ownRecordNumbers(runDir, worktree);
+  // Only a `fixed` row matches its Resolution against the origin repo; unresolvable origin reads as null.
+  let repo = null;
+  if (status === 'fixed') {
+    try {
+      const repoResolve = require('./lib/repo-resolve');
+      repo = repoResolve.parseRepo(repoResolve.originUrl(worktree));
+    } catch { repo = null; }
+  }
+  const verdict = checkLedgerStatus(status, resolution.text, { excludeRecords, repo });
+  if (verdict.refusal) return refuse(verdict.refusal);
+  if (settle && status !== 'observation' && isBlank(resolution.text)) {
+    return refuse(`settling row #${row} to '${status}' needs --resolution or --resolution-file`);
+  }
+
+  const resolved = resolveLedgerPath({ runDir, worktree, explicit: ledgerArg ? path.resolve(process.cwd(), ledgerArg) : null });
+  if (!resolved.ok) {
+    const named = resolved.candidates.length > 0 ? `: ${resolved.candidates.join(', ')}` : '';
+    const hint = resolved.reason === 'rejected' ? '' : ' — pass --ledger <path> to name one';
+    return refuse(`ledger ${resolved.reason}${resolved.detail ? ` (${resolved.detail})` : ''}${named}${hint}`);
+  }
+
+  let written;
+  try {
+    written = settle
+      ? settleRow({
+        runDir, ledgerPath: resolved.path, row, status, resolution: resolution.text, excludeRecords,
+      })
+      : appendRow({
+        runDir, ledgerPath: resolved.path, phase, item: item.text, status, resolution: resolution.text,
+      });
+  } catch (err) {
+    const message = err && err.message ? err.message : String(err);
+    return refuse(err && err.code === 'LOCK_TIMEOUT' ? `the ledger lock is held (LOCK_TIMEOUT: ${message}) — retry once` : message);
+  }
+  const result = {
+    action: settle ? 'settled' : 'appended', row: written.number, status, ledger: resolved.path,
+  };
+  if (verdict.incompleteDeferral) result.incompleteDeferral = true;
+  await new Promise((resolve) => process.stdout.write(`${JSON.stringify(result)}\n`, resolve));
   return 0;
 }
 
