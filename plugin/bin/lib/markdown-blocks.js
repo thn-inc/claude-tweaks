@@ -2,7 +2,8 @@
 // Pure: the one CommonMark fence rule (scanFences, behind fencedLineRanges,
 // fencedLineMask and unfencedText), the backtick-fence writers that match it
 // (fenceFor, fencedBlock), and the heading-section finder (findSection,
-// extractSection) — shared across issues/, preflight-records/, and (through
+// extractSection), plus unclosedFenceLine and hiddenByUnclosedFence, the shared
+// reading of "an unclosed fence hid this heading" (#4350) — shared across issues/, preflight-records/, and (through
 // record.js's re-exports of fenceFor/fencedBlock/extractSection) console/,
 // compose-subject.js and the health-sweep issue-payload.js builders. Moved out
 // of issues/record-payload.js (#4645) so a consumer that needs only the fence
@@ -124,13 +125,15 @@ function unfencedText(body) {
 // `[IL-160]`) could silently fail every heading match; this fixes that as a
 // side effect rather than as its own goal. Headings inside fenced blocks are
 // quoted content and never match (#4169); a fenced line never stops the section.
-function findSection(body, heading, { levelPattern = '2,4', stopPattern = '1,6', trim = false } = {}) {
+//   unclosedAsText: read a trailing unclosed fence as prose instead of a block
+//     swallowing the rest of the body (default false; passed to fencedLineMask).
+function findSection(body, heading, { levelPattern = '2,4', stopPattern = '1,6', trim = false, unclosedAsText = false } = {}) {
   if (typeof body !== 'string') return null;
   const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const headingRe = new RegExp(`^#{${levelPattern}}[ \\t]+${escaped}[ \\t]*$`);
   const stopRe = new RegExp(`^#{${stopPattern}}[ \\t]`);
   const lines = body.replace(/\r\n/g, '\n').split('\n');
-  const fenced = fencedLineMask(lines);
+  const fenced = fencedLineMask(lines, { unclosedAsText });
   const start = lines.findIndex((line, idx) => !fenced[idx] && headingRe.test(line));
   if (start === -1) return null;
   const out = [];
@@ -148,6 +151,26 @@ function extractSection(body, heading, options) {
   return findSection(body, heading, options) ?? '';
 }
 
+// lines -> the 0-based index of the trailing unclosed fence's opener, or -1 when
+// every fence closes (#4350). Read from scanFences, so it shares the one fence rule.
+function unclosedFenceLine(lines) {
+  const { ranges, unclosed } = scanFences(lines);
+  return unclosed ? ranges[ranges.length - 1][0] : -1;
+}
+
+// body, heading text, findSection options -> the 1-based line of the unclosed
+// fence opener that hides `heading`, or null (#4350). Hidden means findSection
+// misses the heading as read, but finds it with `unclosedAsText`; a heading that
+// is found (even empty), absent outright, or in a non-string body returns null.
+// The line is counted over the CRLF-normalized split findSection reads.
+function hiddenByUnclosedFence(body, heading, options) {
+  if (typeof body !== 'string') return null;
+  if (findSection(body, heading, options) !== null) return null;
+  if (findSection(body, heading, { ...options, unclosedAsText: true }) === null) return null;
+  return unclosedFenceLine(body.replace(/\r\n/g, '\n').split('\n')) + 1;
+}
+
 module.exports = {
   fenceFor, fencedBlock, fencedLineRanges, fencedLineMask, unfencedText, findSection, extractSection,
+  unclosedFenceLine, hiddenByUnclosedFence,
 };
