@@ -307,6 +307,13 @@ function writeTicket(dir, seq, pid, slots = 1) {
   return p;
 }
 
+// The names of the ticket files in `dir` that belong to `pid`.
+function ticketNamesOf(dir, pid) {
+  return fs.readdirSync(dir)
+    .filter((n) => /^ticket-\d+\.json$/.test(n))
+    .filter((n) => JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8')).pid === pid);
+}
+
 test('#4333 AC2.1: a later arrival waits behind a live earlier ticket even when a slot is free', () => {
   withTempDir((dir) => {
     const ticket = writeTicket(dir, 1, 222);
@@ -366,9 +373,7 @@ test("#4333 a waiter whose own ticket was removed rejoins at the tail of the que
         writeTicket(dir, 2, 222); // a newcomer arrives while our ticket is gone
         return;
       }
-      const ours = fs.readdirSync(dir)
-        .filter((n) => /^ticket-\d+\.json$/.test(n))
-        .filter((n) => JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8')).pid === 111);
+      const ours = ticketNamesOf(dir, 111);
       assert.deepStrictEqual(ours, ['ticket-3.json'], 'the waiter must rejoin behind the newcomer, not at its old number');
       fs.unlinkSync(path.join(dir, 'ticket-2.json'));
       fs.unlinkSync(lockPath);
@@ -390,9 +395,7 @@ test('#4333 a foreign ticket at our own path makes us rejoin and is left in plac
         writeTicket(dir, 1, 222);
         return;
       }
-      const ours = fs.readdirSync(dir)
-        .filter((n) => /^ticket-\d+\.json$/.test(n))
-        .filter((n) => JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8')).pid === 111);
+      const ours = ticketNamesOf(dir, 111);
       assert.strictEqual(ours.length, 1);
       assert.ok(Number(/^ticket-(\d+)\.json$/.exec(ours[0])[1]) > 1, 'a new ticket is numbered after the foreign one');
       fs.unlinkSync(foreign);
