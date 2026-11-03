@@ -2,3 +2,5 @@
 
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
+| 1 | ops | flow Step 2.5 pre-flight: origin/main was 5 commits ahead of the branch at run start (reason-not-auto: pre-flight note, divergence check runs before the worktree is adopted) | fixed | Post-creation catch-up merged origin/main at 3ebed678f into the branch (ac084413a) before any build task |
+| 2 | ops | flow Step 2.6 shape check: plan Task 1 touches 8 files (more than 5), proceeded under auto (reason-not-auto: shape-check risk note, no action to perform) | observation | Task 1 is one integration change over scope.js, verify.js, derive.js, one skill doc, two journeys and three test files; review should check it as one unit |
