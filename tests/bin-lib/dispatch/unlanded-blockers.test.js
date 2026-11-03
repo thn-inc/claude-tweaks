@@ -227,6 +227,26 @@ test('a bundle keeps its other members; an all-excluded group disappears', (t) =
   assert.deepEqual(r.exclusions, [UNLANDED_11, { ...UNLANDED_11, records: [12] }]);
 });
 
+test('a padded --integration-branch is forwarded to the child trimmed, matching the branch the AUTO lines name', (t) => {
+  const r = exec(t, { groups: [[R10], [R11]], world: unlandedWorld(), branch: ' dev ' });
+  assert.equal(r.code, 0, r.stderr);
+  assert.ok(hasPair(r.pf.calls[0].args, '--integration-branch', 'dev'), JSON.stringify(r.pf.calls[0].args));
+  assert.match(r.stderr, /is not on origin\/dev\n/);
+});
+
+test('a record with two unlanded blockers is one unlanded-blocker entry carrying both, and logs one AUTO line per blocker', (t) => {
+  const R15 = rec(15, 'Blocked by #5\nBlocked by #7\n');
+  const world = makeWorld({ repository: { b5: closedBlocker('sha1'), b7: closedBlocker('sha2') }, compare: { sha1: 'diverged\n', sha2: 'diverged\n' } });
+  const r = exec(t, { groups: [[R10], [R15]], world });
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(r.groups, [[R10]]);
+  assert.deepEqual(r.exclusions, [{ reason: 'unlanded-blocker', records: [15], detail: { blockers: [{ blocker: 5, commit: 'sha1' }, { blocker: 7, commit: 'sha2' }] } }]);
+  const autoLines = r.stderr.split('\n').filter((line) => /^AUTO — dispatch: #15 excluded, blocker #/.test(line));
+  assert.equal(autoLines.length, 2, r.stderr);
+  assert.match(autoLines[0], /blocker #5 closed but its closing commit sha1 is not on origin\/dev$/);
+  assert.match(autoLines[1], /blocker #7 closed but its closing commit sha2 is not on origin\/dev$/);
+});
+
 // --- AC4: the screen --------------------------------------------------------
 
 test('AC4.1 AC4.2 AC4.3: a Blocked by #0 record is excluded as malformed-blocker, the unlanded-blocker record is still excluded, and a clean record is kept, through the real preflight-records run (#4792)', (t) => {
@@ -252,15 +272,16 @@ test('AC4.2: unscreened, the same pool makes the real preflight-records run exit
 });
 
 const FAULTS = [
-  ['a non-integer number', { number: 1.5, body: '', labels: [] }, 'its number is not a positive integer', 1.5],
-  ['a non-string body', { number: 13, body: null, labels: [] }, 'its body is not a string', 13],
-  ['non-array labels', { number: 13, body: '', labels: 'x' }, 'its labels are not an array', 13],
-  ['Blocked by #0', { number: 13, body: 'Blocked by #0\n', labels: [] }, 'a Blocked by line names no valid issue number (#0)', 13],
+  ['a non-integer number', { number: 1.5, body: '', labels: [] }, 'its number is not a positive integer', 1.5, /entry 0 is missing a numeric "number"/],
+  ['a non-string body', { number: 13, body: null, labels: [] }, 'its body is not a string', 13, /missing a string "body"/],
+  ['non-array labels', { number: 13, body: '', labels: 'x' }, 'its labels are not an array', 13, /non-array "labels"/],
+  ['Blocked by #0', { number: 13, body: 'Blocked by #0\n', labels: [] }, 'a Blocked by line names no valid issue number (#0)', 13, /not a valid issue number: 0/],
+  // Blocked by #3000000000: unscreened, the real run exits 0 (undetermined), so it has no stderr regex.
   ['Blocked by #3000000000', { number: 13, body: 'Blocked by #3000000000\n', labels: [] }, 'a Blocked by line names no valid issue number (#3000000000)', 13],
 ];
 
 test('AC4.3: each screened fault, unscreened, fails the whole call or reads undetermined; through the CLI it is a malformed-blocker exclusion and the rest are still checked', (t) => {
-  for (const [label, bad, cause, number] of FAULTS) {
+  for (const [label, bad, cause, number, stderrRe] of FAULTS) {
     const groups = [[R10], [R11], [{ title: 'Bad', ...bad }]];
     const makeWorldFor = () => makeWorld({
       repository: { b5: closedBlocker('sha1'), b3000000000: null },
@@ -279,6 +300,12 @@ test('AC4.3: each screened fault, unscreened, fails the whole call or reads unde
       ], label);
     } else {
       assert.equal(raw.status, 2, `${label}: ${raw.stderr}`);
+      assert.match(raw.stderr, stderrRe, `${label}: exit 2 must come from this row's own fault`);
+      // Discrimination: no other row's message regex matches this stderr, so a swapped or shared regex goes red.
+      for (const other of FAULTS) {
+        const otherRe = other[4];
+        if (otherRe && otherRe !== stderrRe) assert.doesNotMatch(raw.stderr, otherRe, `${label}: row "${other[0]}"'s regex must not match this stderr`);
+      }
     }
 
     // Through the CLI: one malformed-blocker entry with this row's cause; the rest checked.

@@ -157,7 +157,7 @@ function run(argv, deps = realDeps) {
   const callLanding = (records) => {
     const args = [
       ...records.map((r) => String(r.number)), '--prefetched-json', '-', '--blocker-landing',
-      '--integration-branch', opts.integrationBranch, ...(opts.workLinks ? ['--work-links', opts.workLinks] : []),
+      '--integration-branch', branch, ...(opts.workLinks ? ['--work-links', opts.workLinks] : []),
     ];
     let res;
     try {
