@@ -165,6 +165,7 @@ test('run: on a GitHub Enterprise Server remote, --repo is host-qualified', () =
   const deps = fakeDeps({
     readFile: () => JSON.stringify([{ issue: 118, addLabels: ['auto:build'] }]),
     remoteUrl: () => 'git@ghe.example.com:acme/widgets.git',
+    gateDeps: { env: { GH_HOST: 'ghe.example.com' } },
   });
   const code = run(['actions.json'], deps);
   assert.strictEqual(code, 0);

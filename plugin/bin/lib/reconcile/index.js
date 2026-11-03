@@ -556,7 +556,7 @@ async function reconcileInner(opts, state) {
       return postMerge({ cwd: root, prStates, dryRun, budgetExceeded: () => budget.exceeded() });
     });
     if (r.failure) {
-      result.skipped.push({ check: 'post-merge', reason: r.failure });
+      result.skipped.push({ check: 'post-merge', reason: r.failure, ...(r.detail ? { detail: r.detail } : {}) });
     } else {
       result.postMerge = r.entries;
       postMergeDeferred = Array.isArray(r.deferred) ? r.deferred : [];
@@ -572,11 +572,14 @@ async function reconcileInner(opts, state) {
         cache: runIntegrityCache, postMergeDeferred,
       });
     });
-    result.runs = r.archived.map((d) => ({ runDir: d, action: 'archived' }))
+    // #3721: the commit an attempt made, archived or refused (stubbed archiveMergeds return none).
+    const commits = r.archiveCommits || {};
+    result.runs = r.archived.map((d) => ({ runDir: d, action: 'archived', ...(commits[d] ? { commit: commits[d] } : {}) }))
       .concat(r.skipped.map((s) => ({
         runDir: s.runDir,
         action: 'skipped',
         reason: s.reason,
+        ...(commits[s.runDir] ? { commit: commits[s.runDir] } : {}),
         ...(s.unclosed !== undefined ? { unclosed: s.unclosed } : {}),
         ...(s.missing !== undefined ? { missing: s.missing } : {}),
         ...(s.unfiled !== undefined ? { unfiled: s.unfiled } : {}),

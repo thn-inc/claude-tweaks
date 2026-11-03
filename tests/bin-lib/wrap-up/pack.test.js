@@ -485,6 +485,7 @@ test('#2425: unblocked (work-links: native) passes --repo, resolved from `origin
   const calls = [];
   const deps = okDeps({
     git: (args) => (args[0] === 'remote' ? 'git@ghe.example.com:acme/widgets.git\n' : okDeps().git(args)),
+    gateDeps: { env: { GH_HOST: 'ghe.example.com' } }, // #4933: ghe.example.com is no known GitHub host without an opt-in
     execFile: async (cmd, args) => {
       if (cmd === 'node' && String(args[0]).endsWith('resolve-blockers.js')) {
         calls.push(args);
@@ -533,6 +534,7 @@ test('#2538: unblocked (work-links: native) also passes --repo to its own direct
   const listCalls = [];
   const deps = okDeps({
     git: (args) => (args[0] === 'remote' ? 'git@ghe.example.com:acme/widgets.git\n' : okDeps().git(args)),
+    gateDeps: { env: { GH_HOST: 'ghe.example.com' } }, // #4933: ghe.example.com is no known GitHub host without an opt-in
     execFile: async (cmd, args) => {
       if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'list') {
         listCalls.push(args);
@@ -556,6 +558,7 @@ test('#2538: unblocked (work-links: body-text) passes --repo to BOTH of its dire
   const listCalls = [];
   const deps = okDeps({
     git: (args) => (args[0] === 'remote' ? 'git@ghe.example.com:acme/widgets.git\n' : okDeps().git(args)),
+    gateDeps: { env: { GH_HOST: 'ghe.example.com' } }, // #4933: ghe.example.com is no known GitHub host without an opt-in
     resolvePolicy: policyFake({ 'integration-branch': 'main', 'work-links': 'body-text' }),
     execFile: async (cmd, args) => {
       if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'list' && args.includes('open')) {
@@ -594,6 +597,23 @@ test('#2425: no resolvable `origin` remote falls back to calling resolve-blocker
   const pack = await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['unblocked'], deps });
   assert.strictEqual(pack.unblocked.ok, true);
   assert.ok(!calls[0].includes('--repo'), `must not pass --repo when origin can't be resolved: ${JSON.stringify(calls[0])}`);
+});
+
+test('AC8.4 pack unblocked probe: an unknown origin host makes no gh call naming it and reports the refusal', async () => {
+  const execCalls = [];
+  const deps = okDeps({
+    git: (args) => (args[0] === 'remote' ? 'https://git.corp.invalid/o/r.git\n' : okDeps().git(args)),
+    execFile: async (cmd, args) => {
+      execCalls.push([cmd, ...args]);
+      return okDeps().execFile(cmd, args);
+    },
+    gateDeps: { env: {}, readFile: () => { throw new Error('none'); } },
+  });
+  const pack = await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['unblocked'], deps });
+  assert.strictEqual(pack.unblocked.ok, false, 'the refusal is the probe\'s reported failure, not a swallowed empty repoArgs');
+  assert.ok(pack.unblocked.error.includes('GH_HOST=git.corp.invalid'), `refusal text: ${pack.unblocked.error}`);
+  assert.deepStrictEqual(execCalls, [], 'a refused origin runs no gh and no resolve-blockers.js call');
+  assert.ok(!JSON.stringify(execCalls).includes('git.corp.invalid'), 'no call names the refused host');
 });
 
 // The two assertions above compare a probe's value against the fake's own
