@@ -320,6 +320,49 @@ label.
 At `supervised` — the default, and the state of any repo that has not opted in — no record is ever
 born-`ready` by this path and this step does nothing.
 
+## Step 3.7: Unconfirmed risk flags
+
+*(Narration allowance: no "running"/"passed" line for this step — only the run's one opening line and any failure/degradation line.)*
+
+Human-present only: when `SKILL.md`'s Input resolved the headless posture (`--source routine`/`sweep`, or the `grant` alias), skip this step. `refine-headless.md` never runs it: no human is reachable, and the fail direction is keep. Here a human confirms or narrows a flag set a headless run kept (`_shared/work-record.md`'s Risk flag lines). This step applies no classification: it reads only `classify`'s `entry`, never its `flags` or `kept` (they carry the classifier's floor), and writes only through `confirm`, which acts on the flags the body already carries and adds none. A record with no flag line is never touched (#4618, AC6).
+
+**Population.** Every open record in Step 1's `allRows` snapshot (`session-scoped backlog-refine-faceted.json`), under both drivers and whatever its lane, `blocked` and `inProgress` included, narrowed by the `#N[,#M...]` filter when present. Only a body containing the literal `Risk-flags-unconfirmed:` is classified: that pre-filter only narrows, and `classify`'s `entry` decides. This block writes each such body, plus one trailing newline (the form both re-reads below print, so the compare is exact), to its own session-tmp file, and prints one JSON line per record: `key` (the issue number, or a local record's id), `number` (`null` for a local record), `path` (a local record's file, else `null`) and `snapshot` (the file):
+
+```bash
+ST_BACKLOG_REFINE_FACETED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-refine-faceted.json)"
+node -e "
+  const fs = require('fs');
+  const path = require('path');
+  const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
+  for (const r of require(process.argv[1])) {
+    if (typeof r.body === 'string' && r.body.includes('Risk-flags-unconfirmed:')) {
+      const local = r.number === undefined || r.number === null;
+      const key = String(local ? r.id : r.number).replace(/[^A-Za-z0-9_-]/g, '_');
+      const name = 'backlog-refine-risk-snapshot-' + key + '.md';
+      const file = sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, name) || path.join(require('os').tmpdir(), name);
+      fs.writeFileSync(file, r.body + '\n');
+      console.log(JSON.stringify({ key, number: local ? null : r.number, path: local ? r.path : null, snapshot: file.split(path.sep).join('/') }));
+    }
+  }
+" -- "$ST_BACKLOG_REFINE_FACETED"
+```
+
+For each line, run `node "${CLAUDE_PLUGIN_ROOT}/bin/risk-flags.js" classify --body-file "{tmp-risk-snapshot}"`, `{tmp-risk-snapshot}` being its `snapshot`, and read `entry` (`{status, reason, unconfirmed}`). Keep a record only when `entry.unconfirmed` is `true` and `entry.status` is not `unclassified`; drop every other record untouched. A non-zero exit (1 the file unreadable, 2 a malformed call or an unreadable or invalid policy) leaves that record out, reported with stderr verbatim. With no record kept, this step ends here.
+
+**Ask once.** A kept record's flags are the slugs its own `Risk-flags:` line names (an `ok` entry guarantees the exact `Risk-flags: a, b` grammar). Render one batch table and one `AskUserQuestion` for every kept record's flags together, in the shape `shaping-mode-stamping.md`'s `### Risk flags` step 3 and its comma-list batch paragraph give it: options labelled `#{n} {slug}`, a selected option means remove, and every flag left unselected is kept and confirmed; a row's evidence cell reads `already on the record, unconfirmed`. A record whose line reads `Risk-flags: none` has no option, and answering confirms it (its marker clears). A record whose `entry.status` is `unknown` takes no option and no `confirm`: its row reads as a refused `confirm`'s does (below), naming `entry.reason`. An `AskUserQuestion` that errors, times out or is auto-answered writes nothing: every record stays kept and unconfirmed.
+
+**Write each answered record.** Resolve its two files with `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" BODY=backlog-refine-risk-body-{key}.md ANSWERS=backlog-refine-risk-answers-{key}.json` and paste them in literally as `{tmp-risk-body}` and `{tmp-risk-answers}`. Write `{tmp-risk-answers}` as a JSON object giving each of the record's flags `"keep"` or `"remove"` (`{}` for a `none` line; a slug left out stays kept and unconfirmed). Then, in this order, under Step 5's Body pre-write reverify (fail closed):
+
+1. **Re-read** the live body: under `github-issues`, `gh issue view {n} --json body -q .body > "{tmp-risk-body}"`; under `local-files`, and for a `facets.unsynced === true` record under either driver, `node -e "console.log(require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/local-store.js').readRecord(process.argv[1]).body)" -- "{path}" > "{tmp-risk-body}"` (`readRecord`). A non-zero exit skips this record's write, with `{what changed}` = `live-state fetch failed: {error}`.
+2. **Compare** with `cmp -s "{tmp-risk-snapshot}" "{tmp-risk-body}"`: any non-zero exit skips the write, with `{what changed}` = `record body changed since Step 1 fetch`. Both skips are logged with Step 5's `AUTO … skipped …` line, count as `skipped`, and are reported.
+3. **Confirm** with `node "${CLAUDE_PLUGIN_ROOT}/bin/risk-flags.js" confirm --body-file "{tmp-risk-body}" --answers-file "{tmp-risk-answers}" --run "$PIPELINE_RUN_DIR"`, passing `--run` only when this run's run dir resolved. It rewrites the body file and prints `flags`, `removed`, `unconfirmed`, `status`, `refused`, `logged` and `logFailures`. A non-zero exit (1 the body file unreadable, 2 a malformed call or an unreadable or invalid policy, 3 the body file unwritable) writes nothing for this record, reported with stderr verbatim.
+4. **Write**, only when `refused` is `null`: under `github-issues`, `gh issue edit {n} --body-file "{tmp-risk-body}"`; under `local-files`, and for an unsynced record, `writeRecord` on the record's file with its title and `facets` unchanged and the body file less the trailing newline step 1 added, `node -e "const s=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/local-store.js');const r=s.readRecord(process.argv[1]);s.writeRecord(process.argv[1],{title:r.title,body:require('fs').readFileSync(process.argv[2],'utf8').replace(/\n$/,''),facets:r.facets})" -- "{path}" "{tmp-risk-body}"`, then `git add "{path}"` and `git commit -m "Backlog Refine: confirm risk flags on {id}"`.
+5. **Log** each `removed` slug as `shaping-mode-stamping.md`'s `### Risk flags` step 5 states: `logged: true` is done, and its record-comment fallback covers every `removed` slug when no run dir resolved and the slugs in `logFailures` when `logged` is `false`. Under `local-files` its Gotchas bullet goes into the body file before step 4's write.
+
+**When `confirm` returns a non-null `refused` (Reading A),** write nothing for that record and log nothing. Its row says nothing was removed or confirmed: its flag line is unreadable, so every flag stays kept and unconfirmed, and the line must be repaired first. Name `refused.reason` when it is set. For `malformed`, run `/claude-tweaks:specify #{n}`, which rewrites the line as the widened set, then re-run `/claude-tweaks:backlog refine #{n}`. For `unknown-slug`, the slug must become known (add it to policy `risk-categories`, read only with control mode on) or a human must correct the line on the record, then re-run `/claude-tweaks:backlog refine #{n}`. A `null` reason means a writer refused a line that reads ok: say only that the line must be repaired first.
+
+Report each record's outcome (confirmed, the slugs removed, skipped, refused or failed) before Step 4 renders. The read-to-write window left after the re-read is the residual Concurrency (below) accepts.
+
 ## Step 4: Decision lanes
 
 *(Narration allowance: no "running"/"passed" line for this step — only the run's one opening line and any failure/degradation line.)*
