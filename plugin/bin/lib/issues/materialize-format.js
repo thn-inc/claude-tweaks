@@ -72,13 +72,17 @@ function stripCodeSpans(text) {
   return out.join('\n').replace(/(`+)([\s\S]{0,2000}?)\1/g, '');
 }
 
+// The findSection options for a required section, shared by sectionText and shapeGate's
+// hidden-section probe so the two reads cannot drift (#4350).
+const SECTION_OPTIONS = { levelPattern: '2', stopPattern: '2', trim: true };
+
 // body -> the trimmed text of section `## {name}` up to the next `## ` heading, or
 // null when the body has no such heading. The heading must be its own line, whole
 // name (#4367): an inline-code or blockquote mention, or a `## Release Notes` prefix,
 // does not match. Headings inside fenced blocks are quoted content (#4169). Delegates
 // to findSection, the same rule extractSection uses.
 function sectionText(body, name) {
-  return findSection(body, name, { levelPattern: '2', stopPattern: '2', trim: true });
+  return findSection(body, name, SECTION_OPTIONS);
 }
 
 // The parse problem a trailing unclosed fence reports, as `${prefix}${N}` with N the
@@ -101,13 +105,12 @@ function shapeGate(body) {
   const missing = [];
   const originalRequestAt = text.search(ORIGINAL_REQUEST_RE);
   const authored = originalRequestAt === -1 ? text : text.slice(0, originalRequestAt);
-  const sectionOptions = { levelPattern: '2', stopPattern: '2', trim: true };
   let fenceLine = null;
   for (const heading of REQUIRED_SECTIONS) {
     const name = heading.replace('## ', '');
     const section = sectionText(text, name);
     if (section === null) {
-      const hiddenAt = hiddenByUnclosedFence(text, name, sectionOptions);
+      const hiddenAt = hiddenByUnclosedFence(text, name, SECTION_OPTIONS);
       if (hiddenAt === null) missing.push(name);
       else if (fenceLine === null) fenceLine = hiddenAt;
     } else if (section.length === 0) missing.push(name);
