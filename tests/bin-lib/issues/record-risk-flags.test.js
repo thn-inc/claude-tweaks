@@ -196,6 +196,28 @@ test('Reading A: the humanConfirmed refusal still comes first on an unknown line
   assert.throws(() => confirmRiskFlags('Risk-flags: Auth\n', {}), (e) => e.code !== RISK_FLAGS_UNKNOWN && /^confirmRiskFlags refused/.test(e.message));
 });
 
+test('Reading A: the refusal names the way out for its own reason', () => {
+  const messageFor = (body) => {
+    try { removeRiskFlag(body, 'auth', { humanConfirmed: true }); } catch (e) { return e.message; }
+    return '';
+  };
+  const malformed = messageFor('Risk-flags: Auth\n');
+  assert.match(malformed, /\(malformed\)/);
+  assert.match(malformed, /repair it with addRiskFlags first/);
+  const unknownSlug = messageFor('Risk-flags: auth, pii\n');
+  assert.match(unknownSlug, /\(unknown-slug\)/);
+  assert.match(unknownSlug, /risk-categories/);
+  assert.match(unknownSlug, /by hand/);
+  assert.doesNotMatch(unknownSlug, /addRiskFlags/);
+});
+
+test('every entry point takes a null options argument like an absent one', () => {
+  assert.strictEqual(parseRiskFlags('Risk-flags: auth\n', null).status, 'ok');
+  assert.strictEqual(addRiskFlags('Risk-flags: auth\n', ['migrations'], null), 'Risk-flags: migrations, auth\n');
+  assert.throws(() => removeRiskFlag('Risk-flags: auth\n', 'auth', null), /removeRiskFlag refused: humanConfirmed/);
+  assert.throws(() => confirmRiskFlags('Risk-flags: auth\n', null), /confirmRiskFlags refused: humanConfirmed/);
+});
+
 test('Reading A: a policy slug passed in makes the line known, so the removal goes through', () => {
   assert.strictEqual(removeRiskFlag('Risk-flags: auth, pii\n', 'pii', { humanConfirmed: true, extraCategories: ['pii'] }), 'Risk-flags: auth\n');
 });
@@ -291,10 +313,55 @@ test('appendRiskProofGotcha ignores a Gotchas heading and a bullet inside a fenc
   assert.strictEqual(out.startsWith(body), true);
 });
 
-test('appendRiskProofGotcha round-trips: creating then clearing restores the body, a Gotchas section it created included', () => {
-  for (const body of ['## Overview\n\nx\n', '## Overview\n\nx\n\n## Original request\n\nz\n', '## Gotchas\n\n- a\n\n## Original request\n\nz\n', '## Overview\n\nx']) {
-    assert.strictEqual(appendRiskProofGotcha(appendRiskProofGotcha(body, ['auth']), []), body, JSON.stringify(body));
+test('appendRiskProofGotcha round-trips: adding then clearing restores a body that already has a Gotchas section, an empty one included', () => {
+  for (const body of [
+    '## Gotchas\n\n- a\n\n## Original request\n\nz\n',
+    '## Overview\n\nx\n\n## Gotchas\n\n## Original request\n\nz\n',
+    '## Overview\n\nx\n\n## Gotchas\n',
+    '## Overview\n\nx\n\n## Gotchas\n\n- a',
+  ]) {
+    const added = appendRiskProofGotcha(body, ['auth']);
+    assert.match(added, /Risk proof required/, JSON.stringify(body));
+    assert.strictEqual(appendRiskProofGotcha(added, []), body, JSON.stringify(body));
   }
+});
+
+test('appendRiskProofGotcha clearing a section it created leaves the heading, never anything of the rest of the body', () => {
+  assert.strictEqual(appendRiskProofGotcha(appendRiskProofGotcha('## Overview\n\nx\n', ['auth']), []), '## Overview\n\nx\n\n## Gotchas\n');
+});
+
+// _shared/work-record.md: everything from `## Original request` to the end of the body is
+// preserved byte-for-byte, so the bullet scan and the Gotchas lookup stop at that heading.
+test('appendRiskProofGotcha never reads or writes the Original request section: a quoted bullet is not the record\'s own', () => {
+  const quoted = '## Original request\n\n- Risk proof required: quoted\n\nmore\n';
+  const body = `## Overview\n\nx\n\n## Gotchas\n\n- g\n\n${quoted}`;
+  const added = appendRiskProofGotcha(body, ['auth']);
+  assert.match(added, /^## Overview\n\nx\n\n## Gotchas\n\n- g\n- Risk proof required: this record[^\n]*\n\n## Original request\n/);
+  assert.strictEqual(added.slice(added.indexOf('## Original request')), quoted);
+  const cleared = appendRiskProofGotcha(added, []);
+  assert.strictEqual(cleared, body);
+  assert.strictEqual(appendRiskProofGotcha(body, []), body);
+  assert.strictEqual(appendRiskProofGotcha(quoted, []), quoted);
+});
+
+test('appendRiskProofGotcha never reads or writes the Original request section: a quoted Gotchas heading is not the record\'s own', () => {
+  const quoted = '## Original request\n\n## Gotchas\n\n- q\n';
+  const body = `## Overview\n\nx\n\n${quoted}`;
+  const added = appendRiskProofGotcha(body, ['auth']);
+  assert.match(added, /^## Overview\n\nx\n\n## Gotchas\n\n- Risk proof required: [^\n]*\n\n## Original request\n/);
+  assert.strictEqual(added.slice(added.indexOf('## Original request')), quoted);
+  const widened = appendRiskProofGotcha(added, ['auth', 'migrations']);
+  assert.strictEqual(widened.slice(widened.indexOf('## Original request')), quoted);
+  assert.strictEqual(widened.match(/Risk proof required/g).length, 1);
+  // a body with a quoted Gotchas heading and nothing of its own above it
+  const alone = appendRiskProofGotcha(quoted, ['auth']);
+  assert.strictEqual(alone.slice(alone.indexOf('## Original request')), quoted);
+  assert.match(alone, /^## Gotchas\n\n- Risk proof required: [^\n]*\n\n## Original request\n/);
+});
+
+test('appendRiskProofGotcha: a fenced Original request heading does not end the record\'s own sections', () => {
+  const body = '## Overview\n\n```\n## Original request\n```\n\n## Gotchas\n\n- g\n';
+  assert.match(appendRiskProofGotcha(body, ['auth']), /- g\n- Risk proof required: /);
 });
 
 test('appendRiskProofGotcha keeps one bullet when a body already carries two, and orders slugs canonically', () => {

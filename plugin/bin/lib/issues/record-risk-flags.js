@@ -44,7 +44,8 @@ const HEADING_RE = /^#{1,6}[ \t]/;
 
 const GOTCHAS_HEADING_RE = /^## Gotchas[ \t]*$/;
 const GOTCHAS_STOP_RE = /^#{1,2}[ \t]/;
-const SECTION_BEFORE_RE = /^## (?:Breaking Change|Original request)[ \t]*$/;
+const BREAKING_HEADING_RE = /^## Breaking Change[ \t]*$/;
+const ORIGINAL_REQUEST_HEADING_RE = /^## Original request[ \t]*$/;
 const PROOF_BULLET_RE = /^- Risk proof required:/;
 
 const isBlank = (line) => line.trim() === '';
@@ -144,7 +145,8 @@ function readExactLine(flagLines) {
 //   status 'unclassified' no flag line; `flags` is [].
 // extraCategories are the policy `risk-categories` slugs the caller resolved; a slug
 // outside the built-ins and that list reads unknown.
-function parseRiskFlags(body, { extraCategories = [] } = {}) {
+function parseRiskFlags(body, opts) {
+  const { extraCategories = [] } = opts || {};
   const lines = toLines(toText(body));
   const scan = scanPreamble(lines);
   const unconfirmed = scan.markerIdx.some((i) => lines[i] !== MARKER_FALSE);
@@ -206,7 +208,8 @@ function applyFlagLine(lines, flagText, markerMode) {
 // other well-formed slug it named), so a malformed line comes back ok and an unknown
 // slug stays unknown; `none` is never carried. No flags at all writes `Risk-flags: none`.
 // An existing marker stays (adding never confirms); `unconfirmed: true` writes one.
-function addRiskFlags(body, slugs, { unconfirmed = false, extraCategories = [] } = {}) {
+function addRiskFlags(body, slugs, opts) {
+  const { unconfirmed = false, extraCategories = [] } = opts || {};
   assertSlugs('addRiskFlags', slugs);
   const current = parseRiskFlags(body, { extraCategories });
   const merged = canonicalOrder([...current.flags, ...slugs]);
@@ -221,11 +224,17 @@ function refuseWithoutHuman(name, humanConfirmed) {
 }
 
 // Reading A: a line that reads unknown is not the line a human saw, so nothing is
-// removed or confirmed until addRiskFlags has repaired it.
+// removed or confirmed until the line has been repaired. The way out differs by reason:
+// addRiskFlags rewrites a malformed line as the widened set, but it keeps an unknown slug.
+const UNKNOWN_LINE_REMEDY = {
+  malformed: 'repair it with addRiskFlags first, which rewrites it as the widened, readable set',
+  'unknown-slug': 'add the slug to the policy risk-categories (read only with control mode on) or correct the line by hand',
+};
+
 function currentReadableLine(name, body, extraCategories) {
   const current = parseRiskFlags(body, { extraCategories });
   if (current.status === 'unknown') {
-    const error = new Error(`${name} refused: unreadable Risk-flags line (${current.reason}): ${JSON.stringify(current.raw)}; repair it with addRiskFlags first`);
+    const error = new Error(`${name} refused: unreadable Risk-flags line (${current.reason}): ${JSON.stringify(current.raw)}; ${UNKNOWN_LINE_REMEDY[current.reason]}`);
     error.code = RISK_FLAGS_UNKNOWN;
     throw error;
   }
@@ -264,13 +273,13 @@ function proofBullet(slugs) {
   return `- Risk proof required: this record carries kept risk flags, so one plan step must contain, per slug, a line \`Proof(<slug>): <text>\` with a specific proof of at least 20 characters. Lines: ${proofLines}.`;
 }
 
-// lines, fence mask -> { heading, end } of the `## Gotchas` section (it ends at the next
-// h1/h2 or the end of the body), or null.
-function findGotchas(lines, fenced) {
-  const heading = lines.findIndex((line, i) => !fenced[i] && GOTCHAS_HEADING_RE.test(line));
+// lines, fence mask, limit -> { heading, end } of the `## Gotchas` section above `limit`
+// (it ends at the next h1/h2 or `limit`), or null.
+function findGotchas(lines, fenced, limit) {
+  const heading = lines.findIndex((line, i) => i < limit && !fenced[i] && GOTCHAS_HEADING_RE.test(line));
   if (heading === -1) return null;
-  let end = lines.length;
-  for (let i = heading + 1; i < lines.length; i += 1) {
+  let end = limit;
+  for (let i = heading + 1; i < limit; i += 1) {
     if (!fenced[i] && GOTCHAS_STOP_RE.test(lines[i])) {
       end = i;
       break;
@@ -298,20 +307,10 @@ function dropLines(lines, drop) {
   return out;
 }
 
-// Removes the `## Gotchas` section from lines, with the blank lines before it, so a
-// section the bullet alone filled leaves no empty heading behind.
-function dropSection(lines, { heading, end }, endsWithNewline) {
-  let start = heading;
-  while (start > 0 && isBlank(lines[start - 1])) start -= 1;
-  const head = lines.slice(0, start);
-  const tail = lines.slice(end);
-  if (tail.length > 0) return head.length > 0 ? [...head, '', ...tail] : tail;
-  if (head.length === 0) return [''];
-  return endsWithNewline ? [...head, ''] : head;
-}
-
-function insertProofBullet(lines, fenced, bullet, endsWithNewline) {
-  const gotchas = findGotchas(lines, fenced);
+// `limit` is the first line of the verbatim `## Original request` section (or the body
+// length): nothing at or past it is read or written.
+function insertProofBullet(lines, fenced, bullet, endsWithNewline, limit) {
+  const gotchas = findGotchas(lines, fenced, limit);
   if (gotchas) {
     let last = gotchas.heading;
     for (let i = gotchas.heading + 1; i < gotchas.end; i += 1) if (!isBlank(lines[i])) last = i;
@@ -324,8 +323,9 @@ function insertProofBullet(lines, fenced, bullet, endsWithNewline) {
     if (at < lines.length && !isBlank(lines[at])) block.push('');
     return [...lines.slice(0, at), ...block, ...lines.slice(at)];
   }
-  const before = lines.findIndex((line, i) => !fenced[i] && SECTION_BEFORE_RE.test(line));
-  if (before !== -1) return [...lines.slice(0, before), '## Gotchas', '', bullet, '', ...lines.slice(before)];
+  const breaking = lines.findIndex((line, i) => i < limit && !fenced[i] && BREAKING_HEADING_RE.test(line));
+  const before = breaking !== -1 ? breaking : limit;
+  if (before < lines.length) return [...lines.slice(0, before), '## Gotchas', '', bullet, '', ...lines.slice(before)];
   let end = lines.length;
   while (end > 0 && isBlank(lines[end - 1])) end -= 1;
   const head = lines.slice(0, end);
@@ -334,10 +334,13 @@ function insertProofBullet(lines, fenced, bullet, endsWithNewline) {
 
 // body, slugs -> body whose `## Gotchas` section carries exactly one `- Risk proof
 // required:` bullet naming exactly `slugs` (canonical order): created at the end of the
-// section, a new section placed before `## Breaking Change` / `## Original request`
-// else at the end of the body; rewritten in place when it exists, so it widens and
-// narrows with the kept set, byte-identical when already right; removed on `[]`, along
-// with a Gotchas section it leaves empty. `[]` on a body without one is a no-op.
+// section, a new section placed before `## Breaking Change` else before `## Original
+// request` else at the end of the body; rewritten in place when it exists, so it widens
+// and narrows with the kept set, byte-identical when already right; removed on `[]`,
+// leaving the rest of `## Gotchas` (an emptied heading included) as it was. `[]` on a
+// body without one is a no-op. Everything from the first unfenced `## Original request`
+// heading on is the verbatim-preserved capture (`_shared/work-record.md`): never read,
+// never written, so a quoted bullet or Gotchas heading there is not the record's own.
 function appendRiskProofGotcha(body, slugs) {
   assertSlugs('appendRiskProofGotcha', slugs);
   const wanted = canonicalOrder(slugs);
@@ -345,20 +348,15 @@ function appendRiskProofGotcha(body, slugs) {
   return editBody(body, (lines) => {
     const endsWithNewline = lines[lines.length - 1] === '';
     const fenced = fencedLineMask(lines);
-    const bulletIdx = lines.map((line, i) => (!fenced[i] && PROOF_BULLET_RE.test(line) ? i : -1)).filter((i) => i !== -1);
-    if (bulletIdx.length === 0) return bullet === null ? null : insertProofBullet(lines, fenced, bullet, endsWithNewline);
-    if (bullet !== null) {
-      if (bulletIdx.length === 1 && lines[bulletIdx[0]] === bullet) return null;
-      const out = lines.map((line, i) => (i === bulletIdx[0] ? bullet : line));
-      return dropLines(out, new Set(bulletIdx.slice(1)));
-    }
-    const before = findGotchas(lines, fenced);
-    const inGotchas = before !== null && bulletIdx.some((i) => i > before.heading && i < before.end);
-    const out = dropLines(lines, new Set(bulletIdx));
-    if (!inGotchas) return out;
-    const after = findGotchas(out, fencedLineMask(out));
-    const empty = after !== null && out.slice(after.heading + 1, after.end).every(isBlank);
-    return empty ? dropSection(out, after, endsWithNewline) : out;
+    const original = lines.findIndex((line, i) => !fenced[i] && ORIGINAL_REQUEST_HEADING_RE.test(line));
+    const limit = original === -1 ? lines.length : original;
+    const bulletIdx = [];
+    for (let i = 0; i < limit; i += 1) if (!fenced[i] && PROOF_BULLET_RE.test(lines[i])) bulletIdx.push(i);
+    if (bulletIdx.length === 0) return bullet === null ? null : insertProofBullet(lines, fenced, bullet, endsWithNewline, limit);
+    if (bullet === null) return dropLines(lines, new Set(bulletIdx));
+    if (bulletIdx.length === 1 && lines[bulletIdx[0]] === bullet) return null;
+    const out = lines.map((line, i) => (i === bulletIdx[0] ? bullet : line));
+    return dropLines(out, new Set(bulletIdx.slice(1)));
   });
 }
 
