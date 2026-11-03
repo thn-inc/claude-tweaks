@@ -51,7 +51,7 @@
 ### Task 1: Give review Step 1.5 a zero-test row and a terminal STOP row
 
 **Files:**
-- Modify: `plugin/skills/review/code-mode-steps.md:74,111,113`
+- Modify: `plugin/skills/review/code-mode-steps.md:74-113` (lines 74, 111 and 113)
 - Test: `tests/review-step1-5-verifiedhead-gate.test.js`
 
 **Interfaces:**
@@ -190,9 +190,9 @@ git commit -m "Give review Step 1.5 a zero-test row and a terminal STOP — refs
 ### Task 2: Make test/SKILL.md's skip conditional on VERIFICATION_SHA matching HEAD
 
 **Files:**
-- Modify: `plugin/skills/test/SKILL.md:63,67`
+- Modify: `plugin/skills/test/SKILL.md:63-67` (lines 63 and 67)
 - Test: `tests/test-skill-affected-conformance.test.js`
-- Read only: `plugin/skills/test/verification.md`. Its Mismatch branch already carries the runner route. AC3, which requires a non-bookkeeping delta to still run suites, is already pinned by this file's existing `#3284` test ("verification.md Skip-if-recent Mismatch re-stamps HEAD…"), so no new AC3 test is needed.
+- Waived `plugin/skills/test/verification.md`: read only, per Plan-review answer 2. Its Mismatch branch already carries the runner route. AC3, which requires a non-bookkeeping delta to still run suites, is already pinned by the existing `#3284` test ("verification.md Skip-if-recent Mismatch re-stamps HEAD…") in `tests/test-skill-affected-conformance.test.js`, which this task's Step 4 runs. No new AC3 test is needed.
 
 **Interfaces:**
 - Consumes: `test/verification.md`'s `**Mismatch**` bullet (unchanged).
