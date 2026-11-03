@@ -173,10 +173,11 @@ test('plugin-root-placeholder under path.win32: bare, spaced, tilde and UNC root
   assert.strictEqual(run('node "$CLAUDE_PLUGIN_ROOT/bin/x.js"', 'C:\\RUNNER~1\\root', 'C:\\RUNNER~1\\root\\bin\\x.js'), null, 'a ~ is outside LITERAL_VALUE');
   assert.strictEqual(run('node "$CLAUDE_PLUGIN_ROOT/bin/x.js"', '\\\\srv\\share\\root', '\\\\srv\\share\\root\\bin\\x.js').command, 'node "//srv/share/root/bin/x.js"');
   assert.strictEqual(run('node "$CLAUDE_PLUGIN_ROOT/bin/x.js"', 'relative\\root'), null, 'not absolute under path.win32');
+  assert.strictEqual(run('node "$CLAUDE_PLUGIN_ROOT/bin/x.js"', '\\p\\root', '\\p\\root\\bin\\x.js'), null, 'drive-relative: /p/root would be the P: mount under Git Bash');
   assert.strictEqual(run('$CLAUDE_PLUGIN_ROOT/bin/x.js', 'D:\\p\\root'), null, 'a drive colon is outside PLAIN_COMMAND_WORD');
 });
 
-test('pathImpl defaults to the host path: a backslash in a POSIX root still declines', () => {
+test('under path.posix a backslash in the root still declines: toPosix converts only pathImpl.sep', () => {
   assert.strictEqual(rw('node "${CLAUDE_PLUGIN_ROOT}/bin/x.js"', { pluginRoot: '/opt/a\\b', pathImpl: path.posix }), null);
 });
 

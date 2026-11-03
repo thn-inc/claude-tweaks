@@ -531,6 +531,10 @@ function pluginRootPlaceholder(s, { pluginRoot, pathImpl, lstat }) {
   // where `D:\p\root` loses its backslashes); the fs probe keeps the native join.
   const inlined = toPosix(pluginRoot, pathImpl.sep);
   if (!LITERAL_VALUE.test(inlined)) return null;
+  // path.win32.isAbsolute accepts a drive-relative `\p\root`, which resolves on the
+  // current drive while the forward-slashed `/p/root` is MSYS's mount for drive P:,
+  // so the text and the lstat probe would name different files: require a drive or UNC.
+  if (pathImpl.sep === '\\' && !/^(?:[A-Za-z]:\/|\/\/[^/])/.test(inlined)) return null;
   if (hasBareUse(s, name)) return null; // the command assigns or unsets it itself
   const sc = scan(s);
   if (inDoubt(s, sc) || sc.flags.complexParam) return null;
