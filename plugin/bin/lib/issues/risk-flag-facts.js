@@ -1,8 +1,8 @@
 // bin/lib/issues/risk-flag-facts.js
 // Pure: a record body and its plan -> the entries the acceptance packet gather's `--flags`
 // and `--proofs` inputs take (#4618). The flag line is read through parseRiskFlags, the one
-// reader, and a proof through plan-audit's readPlanProofs and isSubstantiveProof, the ones
-// Check G reads, so the packet cannot disagree with the gate about what was kept, what
+// reader, and a proof through plan-audit/parser.js's readPlanProofs and isSubstantiveProof,
+// the ones Check G reads, so the packet cannot disagree with the gate about what was kept, what
 // counts as a proof, or when a plan could not be read. No I/O; `bin/risk-flags.js facts` is
 // the caller.
 //
@@ -20,7 +20,7 @@
 
 const { parseRiskFlags } = require('./record-risk-flags');
 const { inertEvidence } = require('./risk-flag-classify');
-const { readPlanProofs, isSubstantiveProof } = require('../plan-audit/checks');
+const { readPlanProofs, isSubstantiveProof } = require('../plan-audit/parser');
 
 // By the parse reason: `malformed` is a line that does not read at all, `unknown-slug` one
 // that reads but names a category nobody declared.

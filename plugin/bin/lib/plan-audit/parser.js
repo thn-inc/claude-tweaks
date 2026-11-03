@@ -293,6 +293,41 @@ function countTasks(text) {
   return { tasks: blocks.length, batched };
 }
 
+// ── Check G: the plan's proofs and what counts as one (#4618) ──────────────
+// Pure readings shared by Check G (checks.js) and the packet's risk-flag-facts
+// producer, so the gate and the packet cannot disagree about what a proof is
+// or when a plan could not be read.
+const PROOF_MIN_CHARS = 20;
+const PROOF_FILLER_WORDS = new Set(['category', 'proof', 'risk', 'flag', 'the', 'a', 'an', 'for', 'of', 'this', 'is', 'and', 'covered', 'handled']);
+
+// null when the text is a proof; 'too-short' under PROOF_MIN_CHARS characters, or
+// when it holds no letter or digit at all (padding such as `--------------------`
+// says nothing, and is not a restatement of the category either);
+// 'restates-category' when nothing is left after the slug's own words and the fillers.
+function isSubstantiveProof(slug, text) {
+  const trimmed = String(text).trim();
+  if (Array.from(trimmed).length < PROOF_MIN_CHARS) return 'too-short';
+  const words = trimmed.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((word) => word !== '');
+  if (words.length === 0) return 'too-short';
+  const slugWords = new Set(slug.split('-'));
+  const rest = words.filter((word) => !slugWords.has(word) && !PROOF_FILLER_WORDS.has(word));
+  return rest.length === 0 ? 'restates-category' : null;
+}
+
+// plan text (already newline-normalized) -> { proofs, problems }: the plan's Proof lines and
+// every reason the plan could not be read with confidence (no tasks, a near-miss proof line,
+// an unclosed fence), in the order Check G reports them.
+function readPlanProofs(plan) {
+  const problems = [];
+  if (countTasks(plan).tasks === 0) problems.push({ source: 'plan', raw: 'no parseable tasks' });
+  const { proofs, nearMisses, unclosedFences } = extractProofLines(plan);
+  for (const { raw } of nearMisses) problems.push({ source: 'proof-line', raw });
+  // A fence left open swallowed the rest of its task, so a proof there reads as absent:
+  // say the plan could not be read, not that the proof is missing.
+  for (const task of unclosedFences) problems.push({ source: 'plan', raw: `unclosed code fence in task ${task}` });
+  return { proofs, problems };
+}
+
 // ── Check E inputs: the spec's acceptance-criterion clauses (#3099) ────────
 // The spec's `## Acceptance Criteria` section, split into items (one per
 // top-level `-`/`*`/`+`/`1.` list line, a leading `[ ]` checkbox stripped)
@@ -680,6 +715,8 @@ module.exports = {
   extractPremiseRefs,
   extractTaskBlocks,
   extractProofLines,
+  readPlanProofs,
+  isSubstantiveProof,
   extractStep1Text,
   extractStep2Verification,
   extractVerificationChecks,

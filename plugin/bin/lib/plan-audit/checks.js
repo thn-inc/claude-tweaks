@@ -15,7 +15,7 @@ const { RAIL_BYTES } = require('../skill-audit/budgets');
 const { toPosix, relativeDisplayId } = require('../shared-primitives');
 const {
   extractAcceptanceClauses, extractCoverageSources, extractSpecPaths, extractPathWaivers,
-  extractFileEntries, normalizeRepoPath, extractTaskMarkers, extractProofLines, countTasks,
+  extractFileEntries, normalizeRepoPath, extractTaskMarkers, readPlanProofs, isSubstantiveProof,
 } = require('./parser');
 const { parseRiskFlags } = require('../issues/record-risk-flags');
 
@@ -743,39 +743,9 @@ function checkF(specText, planText) {
 // read as "no flags" or "proof present". An unknown slug is not a parse
 // failure: its widened flags are all required and a proof can satisfy them.
 // `extraCategories` are the policy slugs the caller resolved under control
-// mode; without them a policy slug on the line reads unknown.
-const PROOF_MIN_CHARS = 20;
-const PROOF_FILLER_WORDS = new Set(['category', 'proof', 'risk', 'flag', 'the', 'a', 'an', 'for', 'of', 'this', 'is', 'and', 'covered', 'handled']);
-
-// null when the text is a proof; 'too-short' under PROOF_MIN_CHARS characters, or
-// when it holds no letter or digit at all (padding such as `--------------------`
-// says nothing, and is not a restatement of the category either);
-// 'restates-category' when nothing is left after the slug's own words and the fillers.
-function isSubstantiveProof(slug, text) {
-  const trimmed = String(text).trim();
-  if (Array.from(trimmed).length < PROOF_MIN_CHARS) return 'too-short';
-  const words = trimmed.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((word) => word !== '');
-  if (words.length === 0) return 'too-short';
-  const slugWords = new Set(slug.split('-'));
-  const rest = words.filter((word) => !slugWords.has(word) && !PROOF_FILLER_WORDS.has(word));
-  return rest.length === 0 ? 'restates-category' : null;
-}
-
-// plan text (already newline-normalized) -> { proofs, problems }: the plan's Proof lines and
-// every reason the plan could not be read with confidence (no tasks, a near-miss proof line,
-// an unclosed fence), in the order Check G reports them. Shared with the packet's
-// risk-flag-facts producer so the two cannot disagree about what a plan parse failure is.
-function readPlanProofs(plan) {
-  const problems = [];
-  if (countTasks(plan).tasks === 0) problems.push({ source: 'plan', raw: 'no parseable tasks' });
-  const { proofs, nearMisses, unclosedFences } = extractProofLines(plan);
-  for (const { raw } of nearMisses) problems.push({ source: 'proof-line', raw });
-  // A fence left open swallowed the rest of its task, so a proof there reads as absent:
-  // say the plan could not be read, not that the proof is missing.
-  for (const task of unclosedFences) problems.push({ source: 'plan', raw: `unclosed code fence in task ${task}` });
-  return { proofs, problems };
-}
-
+// mode; without them a policy slug on the line reads unknown. The plan's proofs and
+// what counts as one (readPlanProofs, isSubstantiveProof) are parser.js's, shared
+// with the packet's risk-flag-facts producer.
 function checkG(specText, planText, { extraCategories = [], planPath = null } = {}) {
   // Normalize once, here, so the flag reader and the proof reader see the same text.
   const spec = specText.replace(/\r\n?/g, '\n');
@@ -809,6 +779,6 @@ function checkG(specText, planText, { extraCategories = [], planPath = null } = 
 }
 
 module.exports = {
-  checkA, checkB, checkC, checkD, checkE, checkF, checkG, readPlanProofs, isSubstantiveProof, headroomCheck, looksPassing, isGovernedMdPath,
+  checkA, checkB, checkC, checkD, checkE, checkF, checkG, headroomCheck, looksPassing, isGovernedMdPath,
   refusedVcsMutation, commandSegments, checkPremiseRefs, checkTaskMarkers,
 };

@@ -7,8 +7,9 @@ const os = require('node:os');
 const path = require('node:path');
 
 const {
-  checkA, checkB, checkC, checkD, checkG, isSubstantiveProof, headroomCheck, looksPassing, isGovernedMdPath, checkPremiseRefs, checkTaskMarkers,
+  checkA, checkB, checkC, checkD, checkG, headroomCheck, looksPassing, isGovernedMdPath, checkPremiseRefs, checkTaskMarkers,
 } = require('../../../plugin/bin/lib/plan-audit/checks');
+const { isSubstantiveProof } = require('../../../plugin/bin/lib/plan-audit/parser');
 const { composedBytesReport } = require('../../../plugin/bin/lib/skill-audit/context-cost');
 const { RAIL_BYTES } = require('../../../plugin/bin/lib/skill-audit/budgets');
 
@@ -1503,6 +1504,7 @@ test('checkG reports the status the parse read, and the required slugs in canoni
 test('isSubstantiveProof: under 20 characters is too-short, only category words restate, anything else is substantive', () => {
   assert.strictEqual(isSubstantiveProof('auth', 'x'.repeat(19)), 'too-short');
   assert.strictEqual(isSubstantiveProof('auth', `  ${'x'.repeat(19)}  `), 'too-short');
+  assert.strictEqual(isSubstantiveProof('auth', 'x'.repeat(20)), null, 'exactly 20 characters is long enough');
   assert.strictEqual(isSubstantiveProof('auth', 'auth category proof for this flag'), 'restates-category');
   assert.strictEqual(isSubstantiveProof('irreversible-side-effect', 'the irreversible side effect is handled'), 'restates-category');
   assert.strictEqual(isSubstantiveProof('auth', 'an anonymous call to /admin returns 401'), null);
