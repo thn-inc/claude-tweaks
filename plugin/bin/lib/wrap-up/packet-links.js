@@ -314,10 +314,8 @@ function checkLink(url, options) {
   if (fragmentKey) return { ok: false, reason: `credential key in fragment: ${fragmentKey}` };
   // The route before the fragment's own query is a path too (`#/reset/{value}`, `#!/reset/{value}`).
   const [fragmentPath] = decodeText(fragment).replace(/^!/, '').split('?', 1);
-  if (fragmentPath.startsWith('/')) {
-    const fragmentRoute = pathRefusal(fragmentPath);
-    if (fragmentRoute) return { ok: false, reason: fragmentRoute };
-  }
+  const fragmentRoute = fragmentPath.startsWith('/') ? pathRefusal(fragmentPath) : null;
+  if (fragmentRoute) return { ok: false, reason: fragmentRoute };
   return { ok: true };
 }
 
