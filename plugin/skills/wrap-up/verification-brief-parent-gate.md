@@ -67,8 +67,9 @@ its facts file and hand it with `--facts-json`. The native parent read is `issue
 parent's bodies, each sub-issue, the parent's labels, the parent's comments the CLI reads for
 **Close the parent below the floor** (`parentComments`), and **Apply the gate**'s comment read) is
 `issue_read` (`get`, plus `get_comments` for comments, paged per its row). `gh api user` is `get_me`;
-`gh issue comment` is `add_issue_comment`; `gh issue close` and `gh issue edit --add-label` are
-`issue_write` (update mode), the latter under the Full-replace hazard's read-merge-write.
+`gh issue comment --repo` is `add_issue_comment`; `gh issue close --repo` and
+`gh issue edit --repo --add-label` are `issue_write` (update mode), the latter under the Full-replace
+hazard's read-merge-write.
 `_shared/label-bootstrap.md`'s check-then-create loop has no MCP row: on the MCP path skip it, and a
 label write that then fails is a failing call under the paragraph below. The CLI's normalizer
 (`bin/lib/issues/mcp-parent-gate-shape.js`) normalizes the MCP shape before any rule below reads it:
@@ -292,6 +293,13 @@ The verdict carries one field each:
 
 - `parent` — the parent's number (`null` with none): the `$PARENT_NUM` the later Close and Apply
   fences use.
+- `repo` — the repository the CLI's reads used (`owner/repo`, host-qualified off github.com): the
+  `{parent-repo}` every `gh` line below passes as `--repo`, filled in from the verdict, so one gate
+  reads and writes one repository. When `repo` is `null` or empty, run none of the `gh` lines below
+  and report the entry as a failing `gh` call: a `--repo ""` sends the write to `gh`'s default
+  repository. `repo` is `null` under `--backend local-files` and under `--facts-json` without a
+  qualified token; neither path runs a `gh` line, and the `gh`-absent path's MCP calls take no
+  `{parent-repo}`.
 - `state` — `incomplete`, `gated`, `resolved` or `due` (**Evaluate the gate**), or `no-parent`.
 - `exceeds` — the oversight-floor result on `due`; otherwise `null`.
 - `closeReason` — `completed` or `not planned` on `due` with `exceeds: false` (step 3's close
@@ -450,7 +458,7 @@ Write the composed comment to the printed path with the Write tool, then run eac
 its own command, with that literal path in place of `{parent-close-comment}`:
 
 ```bash
-gh issue comment $PARENT_NUM --body-file "{parent-close-comment}"
+gh issue comment $PARENT_NUM --repo "{parent-repo}" --body-file "{parent-close-comment}"
 ```
 
 Close with `--reason completed` only when at least one sub-issue closed `COMPLETED` (its
@@ -458,7 +466,7 @@ Close with `--reason completed` only when at least one sub-issue closed `COMPLET
 as `COMPLETED`, since its merge closes it):
 
 ```bash
-gh issue close $PARENT_NUM --reason completed
+gh issue close $PARENT_NUM --repo "{parent-repo}" --reason completed
 ```
 
 Otherwise every sub-issue closed not planned or duplicate — nothing shipped, which
@@ -466,7 +474,7 @@ Otherwise every sub-issue closed not planned or duplicate — nothing shipped, w
 with:
 
 ```bash
-gh issue close $PARENT_NUM --reason "not planned"
+gh issue close $PARENT_NUM --repo "{parent-repo}" --reason "not planned"
 ```
 
 With `gh` absent, post the same file's text with `add_issue_comment` and close with `issue_write`
@@ -619,7 +627,7 @@ the same way the parent-side one does.
 a parent that may already be partially applied, before even composing it above. A gate whose
 comment landed but whose label add failed still reads `due`, so `/tidy`'s `Open parent gate`
 action re-enters this section for that parent on every future run. Fetch the parent's comments
-(`gh issue view $PARENT_NUM --json comments`, the same lookup `/claude-tweaks:demo`'s Step 1
+(`gh issue view $PARENT_NUM --repo "{parent-repo}" --json comments`, the same lookup `/claude-tweaks:demo`'s Step 1
 already does) and test whether **any** of them contains a `## Verification Brief` heading **with
 a `### Confirmed` section** — counting only a comment from a trusted author
 (`_shared/pr-run-comments.md`'s Trusted authors; an untrusted comment carrying the heading reads as
@@ -638,7 +646,7 @@ If a brief is already present, the recovery is to **skip the comment entirely an
 missing label**:
 
 ```bash
-gh issue edit $PARENT_NUM --add-label demo:pending
+gh issue edit $PARENT_NUM --repo "{parent-repo}" --add-label demo:pending
 ```
 
 That completes the gate — the rest of this subsection is already done for that parent. Never
@@ -649,19 +657,22 @@ session-scoped `parent-verification-brief.md` (`_shared/session-tmp-root.md`), t
 
 ```bash
 PARENT_VERIFICATION_BRIEF="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value parent-verification-brief.md)"
-gh issue comment $PARENT_NUM --body-file "$PARENT_VERIFICATION_BRIEF"
-gh issue edit $PARENT_NUM --add-label demo:pending
+gh issue comment $PARENT_NUM --repo "{parent-repo}" --body-file "$PARENT_VERIFICATION_BRIEF"
+gh issue edit $PARENT_NUM --repo "{parent-repo}" --add-label demo:pending
 ```
 
 Post the brief **before** adding the label — the same order Step 4 (`verification-brief.md`) keeps
 for its own comment, so a reader never sees `demo:pending` without a brief already attached.
 
 **Partial-state note.** These are two independent `gh` calls, not one atomic write: if the comment
-posts and the label add then fails (a transient `gh` error; the bootstrap above should make a
-missing-label failure specifically impossible), report exactly which step failed — don't assume
+posts and the label add then fails (a transient `gh` error, or a missing label: the bootstrap above
+runs against `gh`'s default repository, so on a checkout whose default differs from origin,
+`demo:pending` may exist only there), report exactly which step failed — don't assume
 all-or-nothing, the same rule `tidy/actions-github-issues.md`'s `Defer` action states for its own
 multi-step sequence. The already-posted-brief check above is the recovery path out of exactly that
-state: the next entry finds the brief, skips the comment, and adds the label alone.
+state: the next entry finds the brief, skips the comment, and adds the label alone. A label add that
+fails for a missing label fails again on every re-entry, and is reported as partial state, never
+retried in a loop.
 
 `work-backend: local-files` — append the brief to the parent record's own body and set
 `facets.acceptance = 'pending'` on the parent's file, not this sub-issue's.
