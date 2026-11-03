@@ -147,7 +147,10 @@ const REPORT_ITEM_FACTS = [
 ];
 
 const TOP_LEVEL_FACTS = [
+  [/per-record `wrap-up` exports each record's own `\{parent\}\/spec-\{N\}\/`/, 'a per-record wrap-up exports its own spec dir'],
   [/A multi-spec child's lists carry no `wrap-up`/, 'a multi-spec child carries no wrap-up'],
+  [/when this agent's own step list carries `wrap-up`/, 'only when this agent\'s own step list carries wrap-up'],
+  [/A `record-steps=` child's own lists never carry `wrap-up`, so its relayed note is its close/, 'a record-steps= child\'s relayed note is its close'],
   [/runs `wrap-up` in run order for each record whose `manifest\.yml` status is none of `complete`, `failed`, `not-run`, then the consolidated pass/, 'wrap-up per unfinished record, then the consolidated pass'],
 ];
 
