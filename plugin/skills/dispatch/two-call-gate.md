@@ -131,15 +131,21 @@ worktree, before anything else in this file runs for it.
    For the first call that is `parseNextSteps(reply, FIRST_CALL_STEPS)`, the parse
    `resolveFirstCallGate` runs before it returns `handoff`. For the second call it is
    `parseNextSteps(reply, SECOND_CALL_STEPS)`, the steps a second call can still run (`test`,
-   `review`, `polish`, `re-verify`, `wrap-up`). Its `{ ok: true, steps }` is the continuation's step
+   `review`, `polish`, `re-verify`, `wrap-up`). Every group passes its records as
+   `{ targets }`, `#N` strings (`['#12','#34']`), never bare numbers, a single-record group too
+   (`['#12']` stays on the flat path), so no agent judges whether its group is a bundle and a flat
+   `NEXT_STEPS` from a bundle fails closed; `resolveFirstCallGate` also takes `{ targets }`, in the same form, and
+   forwards them to this parse. An `{ ok: true, steps }` result is the continuation's step
    list. A `{ ok: false, reason, message }` result fails closed. That covers
-   NEXT_STEPS missing or empty, a step the call does not run, and a step named twice. Log
+   NEXT_STEPS missing or empty, a step the call does not run, a step named twice, and a per-record
+   value whose records differ from the targets. Log
    `Handoff refused: {message}` via `log-decision.js --status REFUSED --text-file "{text-file}"`
    (`_shared/auto-decision-log.md`'s Text from git or a user paragraph, since `{message}` quotes the
    agent's own text). Then treat the call as `build-test-blocked` (first call, section 5) or
    `blocked` (second call, section 6).
 2. **Continue.** Dispatch `task-prompt.md`'s Continuation call: the same call's template, its step
-   list replaced by `NEXT_STEPS`, with the same `{minted-run-dir}` and the same model profile. Log it
+   list replaced by `NEXT_STEPS`, with the same `{minted-run-dir}` and the same model profile. A
+   per-record result's `stepArg` is the replacement. Log it
    first via `log-decision.js --status AUTO --step "Dispatch group {group}" --text "call {1|2} handed off ({n} of 3 this run); continuing {NEXT_STEPS} in a fresh call" --reversibility n/a`,
    `{n}` counting this run's handoffs across both calls.
    A continuation that reports `handoff` again comes back to item 1 with its own report.
