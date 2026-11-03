@@ -23,6 +23,7 @@ files:
   - plugin/bin/lib/issues/mcp-parent-gate-shape.js
   - plugin/bin/lib/issues/local-parent-gate-shape.js
   - plugin/bin/lib/hooks/session-start.js
+  - plugin/bin/hooks.js
 ---
 
 # Close a Below-Floor Decomposition Parent
@@ -134,3 +135,5 @@ Updated by record #4799 (run `2026-11-01T205251-record-4799`): the reconciler's 
 Updated during wrap-up of #4692 (run `2026-11-01T182340-spec-4692`): step 3 notes that the pass never reaches an archived run, and that merge mode's Already merged section runs Steps 4.0 and 4.0b for one under the same marker and claim.
 
 Updated by record #4824 (run `2026-11-03T082955-record-4824`): the gate verdict carries `repo`, and the Close and Apply sections' `gh` writes pass it as `--repo "{parent-repo}"` behind a stop rule for an empty value; step 2 notes it.
+
+Updated by record #4798 (run `2026-11-03T201056-record-4798`): a loop entry whose Step 4.0b left a parent open carries `parentFailures`, a parentless skip on an empty effective closing set goes to `stepSkips`, and a failed marker write or a throw after the closes keeps both; step 3 names the SessionStart lines that report them.
