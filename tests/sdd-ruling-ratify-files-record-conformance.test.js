@@ -27,6 +27,8 @@ function assertRatifyRule(text) {
   assert.match(text, ws('stages it as `staged/ledger-record-sdd-ruling-{N}.md`'));
   assert.match(text, ws('never `accepted`, never `deferred` without a record number'));
   assert.match(text, ws("the staged file's own `Defer-reason:`"));
+  assert.match(text, ws("when the header carries exactly one valid one"));
+  assert.match(text, ws("else derived from `_shared/deferral-gate.md`'s Fix-now criteria exactly as `reverse` derives it"));
 }
 
 test('AC1.1 AC2.1 AC3.1: the appendix states the ratify-files-a-record rule for every SDD_RULING_RATIFY_ACTIONS member', () => {
@@ -39,6 +41,12 @@ test('go-red: the rule check fails when the appendix drops the file-record actio
 
 test('go-red: the rule check fails when the appendix drops the ratified → #{new record} outcome', () => {
   assert.throws(() => assertRatifyRule(APPENDIX.split('ratified → #{new record}').join('ratified')));
+});
+
+test('go-red: the rule check fails when the appendix drops the derive-from-the-deferral-gate fallback for a withheld ruling', () => {
+  const dropped = APPENDIX.replace(/else\s+derived\s+from/, 'else left blank from');
+  assert.notStrictEqual(dropped, APPENDIX, 'the fixture must actually change the appendix');
+  assert.throws(() => assertRatifyRule(dropped));
 });
 
 test('AC1.1: a Defers: yes + valid reason header classifies as file-record, a Defers: no header as accept', () => {

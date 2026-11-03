@@ -322,8 +322,9 @@ function decideConsoleExecute(consoleJson, comments, now, ctx = {}) {
 
   const items = Array.isArray(consoleJson.items) ? consoleJson.items : [];
 
-  // #3880: the third exception — a ruling row whose staged text does not show it
-  // safe to ratify. Pure: the texts arrive in ctx (consoleExecuteDetect reads them);
+  // Computed ahead of the #1802 merge-row exception below, because resolvedItems carries each
+  // ruling row's ratifyAction. #3880: a ruling row whose staged text does not show it
+  // safe to ratify is a gap. Pure: the texts arrive in ctx (consoleExecuteDetect reads them);
   // a ruling id missing from ctx.rulingTexts reads as unclassified, and so does
   // every ruling row when the map is absent altogether (#4048).
   // #3942: every ruling row with non-blank ruling text also carries what its ratify does —
@@ -784,6 +785,7 @@ module.exports = {
   readConsoleJson,
   parseFixesMembers,
   readRulingTexts,
+  readInsideRunDir,
   fetchIssueGrant,
   resolveConsoleExecution,
   renderExecutedLines,

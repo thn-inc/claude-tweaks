@@ -1,7 +1,7 @@
 // bin/lib/console/sdd-ruling.js — the sdd-ruling defer-reason check (#3880/#4049),
 // held in its own leaf (#4060): its only require is issues/record, so a caller
 // that needs only these names (reconcile/console-execute.js) does not load
-// console/resolve.js and through it wrap-up/pack.js. resolve.js re-exports both.
+// console/resolve.js and through it wrap-up/pack.js. resolve.js re-exports every name here.
 'use strict';
 
 const { DEFER_REASONS } = require('../issues/record');
@@ -39,8 +39,11 @@ const SDD_RULING_RATIFY_ACTIONS = Object.freeze({
 // The header's two keys, read once for both exports below. Both header keys match
 // case-insensitively; the reason VALUE check stays exact (in sddRulingDeferralReason).
 // Every header line beginning `Defers:` is a line, its value the trimmed rest of the
-// line: an empty or multi-word value counts too (#3942 amendment (h)), so a
-// `Defers: no` plus a stray `Defers:` or `Defers: not sure` is two lines, never one.
+// line: an empty or multi-word value counts too, so a `Defers: no` plus a stray `Defers:`
+// or `Defers: not sure` is two lines, never one. That also tightens the unattended
+// console-auto gate (`sddRulingDeferralReason` reads this parse): such a header is held as
+// `sdd-ruling-unclassified` where it used to auto-ratify as a settled `no` (#3942's spec,
+// Architecture Alignment: a recorded beneficial deviation).
 // Each match is `[line, value]`, the shape both callers index.
 function readHeader(text) {
   const header = [];

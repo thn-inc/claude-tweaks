@@ -649,11 +649,17 @@ function validateFinishConsolePayload(payload) {
 // naming a staged ruling that is gone reads as unreadable. Returns the refusal or null.
 function rulingAcceptError(runDir, ledgerText, ledgerUpdates) {
   if (!ledgerUpdates.some((l) => l.status === 'accepted')) return null;
-  const stagedDir = path.join(runDir, 'staged');
+  const base = path.resolve(runDir);
+  const stagedDir = path.join(base, 'staged');
   let names = [];
   try { names = fs.readdirSync(stagedDir).filter((n) => /^sdd-ruling-.*\.md$/.test(n)); } catch { /* no staged/ — no rulings */ }
+  // IL-161: the same contained read the on-PR console's gate uses (console-execute.js), so a
+  // symlinked `staged/sdd-ruling-*.md` that leaves the run dir reads as unreadable here too, never
+  // as ruling text. Loaded lazily: this runs only for an `accepted` entry on finish-console.
+  const { readInsideRunDir } = require('./lib/reconcile/console-execute');
   const readRuling = (name) => {
-    try { return fs.readFileSync(path.join(stagedDir, name), 'utf8'); } catch { return null; }
+    const read = readInsideRunDir(base, `staged/${name}`);
+    return read.error ? null : read.text;
   };
   const rulings = names.map((name) => {
     const text = readRuling(name);

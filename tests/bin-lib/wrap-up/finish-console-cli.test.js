@@ -276,17 +276,51 @@ test('AC3.1: finish-console rejects an accepted entry for a deferral ruling befo
   assert.deepStrictEqual(snapshotArtifacts(runDir), before, 'nothing written');
 });
 
-test('AC3.1: the ruling a row\'s Item names wins over a stray ruling whose Ledger: header carries the same number (#3942)', () => {
+test('AC3.1: the ruling a row\'s Item names wins over a stray deferral ruling whose Ledger: header carries the same number (#3942)', () => {
+  // The Item-named ruling is a settled `Defers: no`; the stray one is a deferral that a header-number-only
+  // lookup would also match. Only the Item-first rule lets this accepted entry through.
   const runDir = makeRunDir();
   fs.writeFileSync(path.join(runDir, 'ledger.md'), LEDGER_SAMPLE.replace('Needs a memory capture', 'SDD ruling — x: ratify or reverse at the Review Console (staged/sdd-ruling-2.md)'));
   fs.mkdirSync(path.join(runDir, 'staged'));
-  fs.writeFileSync(path.join(runDir, 'staged', 'sdd-ruling-1.md'), rulingHeader('Defers: no\n').replace('Ledger: ledger.md#1', 'Ledger: other-ledger.md#1'));
-  fs.writeFileSync(path.join(runDir, 'staged', 'sdd-ruling-2.md'), rulingHeader('Defers: yes\nDefer-reason: genuinely-larger\n'));
+  fs.writeFileSync(path.join(runDir, 'staged', 'sdd-ruling-1.md'), rulingHeader('Defers: yes\nDefer-reason: genuinely-larger\n').replace('Ledger: ledger.md#1', 'Ledger: other-ledger.md#1'));
+  fs.writeFileSync(path.join(runDir, 'staged', 'sdd-ruling-2.md'), rulingHeader('Defers: no\n'));
+  const payload = JSON.stringify({ ledger: [{ item: 1, status: 'accepted', resolution: 'ratified at Review Console — why' }] });
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: payload });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(fs.readFileSync(path.join(runDir, 'ledger.md'), 'utf8'), /\| 1 \| review \| .* \| accepted \| ratified at Review Console — why \|/);
+});
+
+test('AC3.1: with no Item-named file, every ruling carrying the row\'s Ledger: number must be a settled Defers: no, whatever the list order (#3942)', () => {
+  const deferral = rulingHeader('Defers: yes\nDefer-reason: genuinely-larger\n');
+  const settled = rulingHeader('Defers: no\n');
+  for (const [first, second, refused] of [[settled, deferral, 'sdd-ruling-2'], [deferral, settled, 'sdd-ruling-1']]) {
+    const runDir = makeRunDir();
+    fs.writeFileSync(path.join(runDir, 'ledger.md'), LEDGER_SAMPLE);
+    fs.mkdirSync(path.join(runDir, 'staged'));
+    fs.writeFileSync(path.join(runDir, 'staged', 'sdd-ruling-1.md'), first);
+    fs.writeFileSync(path.join(runDir, 'staged', 'sdd-ruling-2.md'), second);
+    const before = snapshotArtifacts(runDir);
+    const payload = JSON.stringify({ ledger: [{ item: 1, status: 'accepted', resolution: 'ratified at Review Console — why' }] });
+    const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: payload });
+    assert.strictEqual(r.status, 1, r.stderr);
+    assert.match(r.stderr, new RegExp(`ledger\\[0\\]: ${refused}\\.md is not a settled`));
+    assert.deepStrictEqual(snapshotArtifacts(runDir), before, 'nothing written');
+  }
+});
+
+test('AC3.1: a staged ruling symlinked out of the run dir reads as unreadable, never as ruling text (#3942, IL-161)', (t) => {
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'finish-console-outside-'));
+  t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(outside, 'ruling.md'), rulingHeader('Defers: no\n'));
+  const runDir = makeRulingRun(rulingHeader('Defers: no\n'));
+  const link = path.join(runDir, 'staged', 'sdd-ruling-1.md');
+  fs.rmSync(link);
+  try { fs.symlinkSync(path.join(outside, 'ruling.md'), link); } catch (e) { t.skip(`cannot create a symlink here: ${e.code}`); return; }
   const before = snapshotArtifacts(runDir);
   const payload = JSON.stringify({ ledger: [{ item: 1, status: 'accepted', resolution: 'ratified at Review Console — why' }] });
   const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: payload });
   assert.strictEqual(r.status, 1, r.stderr);
-  assert.match(r.stderr, /ledger\[0\]: sdd-ruling-2\.md is not a settled `Defers: no` ruling/);
+  assert.match(r.stderr, /ledger\[0\]: sdd-ruling-1\.md is not ratifiable \(empty, blank, or unreadable\)/);
   assert.deepStrictEqual(snapshotArtifacts(runDir), before, 'nothing written');
 });
 
