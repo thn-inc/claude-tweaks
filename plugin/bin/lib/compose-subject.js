@@ -65,6 +65,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { composeSubject, ComposeSubjectError } = require('./release/subject');
 const { hiddenByUnclosedFence } = require('./markdown-blocks');
+const { UNCLOSED_FENCE_PREFIX } = require('./issues/materialize-format');
 const {
   parseRecordFacets, typeOf, extractSection: extractSectionShared,
 } = require('./issues/record');
@@ -171,7 +172,7 @@ function splitHidden(failing, heading) {
     if (line === null) {
       rest.push(r);
     } else {
-      hidden.push(`#${r.number} (unclosed-fence at line ${line})`);
+      hidden.push(`#${r.number} (${UNCLOSED_FENCE_PREFIX}${line})`);
     }
   }
   return { hidden, rest };

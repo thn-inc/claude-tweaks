@@ -154,6 +154,14 @@ test('applyReleaseNote reads a backtick opener with a backtick in its info strin
   assert.ok(out.body.indexOf('## Release Note') < out.body.indexOf('## Technical Approach'));
 });
 
+test('applyReleaseNote reads a 4-space or tab "closer" as no closer, so the fence stays unterminated and repair refuses, as the gate does (#4350)', () => {
+  for (const pad of ['    ', '\t']) {
+    const body = F.join(F.CS, F.DEL, F.AC, `\`\`\`\ncode\n${pad}\`\`\`\n`, F.TA);
+    assert.notEqual(checkBody(body).verdict, 'release-note-only', JSON.stringify(pad));
+    assert.throws(() => applyReleaseNote(body, F.LINE), RepairError, JSON.stringify(pad));
+  }
+});
+
 test('applyReleaseNote reads a 4-space or tab "opener" as no fence, as the gate does (#4350)', () => {
   for (const pad of ['    ', '\t']) {
     const body = F.join(F.CS, F.DEL, F.AC, `${pad}\`\`\`\n`, F.TA);

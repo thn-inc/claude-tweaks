@@ -86,7 +86,7 @@ function sectionText(body, name) {
 }
 
 // The parse problem a trailing unclosed fence reports, as `${prefix}${N}` with N the
-// 1-based line of the fence opener (#4350). One definition, shared with compose-record.
+// 1-based line of the fence opener (#4350). One definition, shared with compose-record and compose-subject.
 const UNCLOSED_FENCE_PREFIX = 'unclosed-fence at line ';
 
 // body -> { ok: true } | { ok: false, missing: string[] }. `missing` names

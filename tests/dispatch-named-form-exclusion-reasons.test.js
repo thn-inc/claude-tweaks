@@ -16,6 +16,7 @@ const os = require('node:os');
 const { execFileSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
 const { sessionTmpPath } = require('../plugin/bin/lib/session-tmp');
+const { UNCLOSED_FENCE_PREFIX } = require('../plugin/bin/lib/issues/materialize-format');
 
 const DISPATCH = path.join(__dirname, '..', 'plugin', 'skills', 'dispatch');
 const SKILL = readText(path.join(DISPATCH, 'SKILL.md'));
@@ -24,6 +25,7 @@ const BLOCKED_REPORT = readText(path.join(DISPATCH, 'blocked-exclusion-report.md
 
 const QUEUE_PULL = readText(path.join(DISPATCH, 'queue-pull-script.md'));
 const NOT_SPEC_SHAPED_REPORT = readText(path.join(DISPATCH, 'not-spec-shaped-exclusion-report.md'));
+const MATERIALIZE_GATE = readText(path.join(__dirname, '..', 'plugin', 'skills', 'flow', 'materialize.md'));
 
 // Every reason queue-pull-script.md's passes drop a candidate from dispatch-groups.json for, read from
 // its own `- \`reason: '...'\`` bullets (#3087): a bullet whose entries stay IN dispatch-groups.json
@@ -93,6 +95,15 @@ test('not-spec-shaped-exclusion-report.md routes a lone missing Release Note to 
   assert.match(rule, /Any other `missing` set .* gets `` `\/claude-tweaks:specify #\{number\}` ``/);
   assert.ok(NOT_SPEC_SHAPED_REPORT.includes('`#{number} excluded — not spec-shaped (missing: {missing, comma-joined}). Run {remedy}.`'),
     'the per-record line the remedy is spliced into is missing');
+});
+
+test('the prose that quotes the unclosed-fence entry matches the string shapeGate emits (#4350)', () => {
+  const quoted = `${UNCLOSED_FENCE_PREFIX}N`;
+  const start = NOT_SPEC_SHAPED_REPORT.indexOf('**Remedy selection:**');
+  assert.notStrictEqual(start, -1, 'Remedy selection paragraph not found -- anchor out of sync with the live file');
+  const rule = NOT_SPEC_SHAPED_REPORT.slice(start, NOT_SPEC_SHAPED_REPORT.indexOf('\n\n', start)).replace(/\s+/g, ' ');
+  assert.ok(rule.includes(`\`${quoted}\``), 'not-spec-shaped-exclusion-report.md Remedy selection no longer quotes the entry shapeGate emits');
+  assert.ok(MATERIALIZE_GATE.includes(`\`${quoted}\``), 'flow/materialize.md Materialization hard gate no longer quotes the entry shapeGate emits');
 });
 
 test('the #3084 journey names every removing exclusion reason, with a matching count (#3103)', () => {

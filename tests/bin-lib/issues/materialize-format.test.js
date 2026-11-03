@@ -706,6 +706,16 @@ test('shapeGate: a gate that already fails also names an unterminated fence that
   assert.deepEqual(shapeGate(NO_RN_TRAILING_FENCE), { ok: false, missing: ['Release Note', 'unclosed-fence at line 10'] });
 });
 
+test('shapeGate: answer 6 also fires when a required section is present but empty (#4350)', () => {
+  const body = '## Current State\nx\n\n## Deliverables\n- [ ] d\n\n## Acceptance Criteria\n1. a\n\n## Release Note\n\n## Technical Approach\n\n```\nnever closed';
+  assert.deepEqual(shapeGate(body), { ok: false, missing: ['Release Note', 'unclosed-fence at line 14'] });
+});
+
+test('shapeGate: a fence opened on the last authored line, right before Original request, still counts as authored (#4350)', () => {
+  const body = '## Current State\nx\n\n## Deliverables\n- [ ] d\n\n## Acceptance Criteria\n1. a\n\n```\n## Original request\n\n## Release Note\nn';
+  assert.deepEqual(shapeGate(body), { ok: false, missing: ['unclosed-fence at line 10'] });
+});
+
 test('shapeGate: answer 6 reads only the authored region, and a placeholder-only failure does not name the fence (#4350)', () => {
   const afterOriginal = '## Current State\nx\n\n## Deliverables\n- [ ] d\n\n## Acceptance Criteria\n1. a\n\n## Original request\n\n```\nnever closed';
   assert.deepEqual(shapeGate(afterOriginal), { ok: false, missing: ['Release Note'] });
