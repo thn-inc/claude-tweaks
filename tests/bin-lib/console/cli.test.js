@@ -691,6 +691,31 @@ test('--set-item on an item already keep-staged says so, logs nothing, exits 0 (
   assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8'), '');
 });
 
+const REF_ITEM = (over = {}) => `${JSON.stringify({ resolved: true, mode: 'auto-resolve', items: [{ id: 'wrap-up-reference-1.md', section: 'Reference repairs', resolution: 'approve', reason: 'stance', ...over }] })}\n`;
+const SET_PENDING = (runDir, id = 'wrap-up-reference-1.md') => ['--run', runDir, '--set-item', id, '--resolution', 'pending', '--reason', 'reference-repair-stale'];
+
+test('#4636: --set-item rewrites a Reference repairs approve to pending after its diff stopped applying, and logs it', async () => {
+  const fx = mainCheckoutWithRun({ consoleJson: REF_ITEM() });
+  const { d, out } = baseDeps(fx, []);
+  assert.strictEqual(await run(SET_PENDING(fx.runDir), d), 0);
+  assert.match(out(), /^console-resolve\.js: wrap-up-reference-1\.md rewritten approve → pending in .*console\.json$/m);
+  const item = readConsole(fx.runDir).items[0];
+  assert.strictEqual(item.resolution, 'pending');
+  assert.strictEqual(item.reason, 'reference-repair-stale');
+  assert.strictEqual(item.rewrittenFrom, 'approve');
+  assert.match(fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8'), /Console item wrap-up-reference-1\.md \(Reference repairs\): rewritten approve → pending after execution — reference-repair-stale\. Reversibility: n\/a\.$/m);
+});
+
+test('#4636: --set-item refuses pending for an approve item outside Reference repairs, exit 5, console.json untouched', async () => {
+  const fx = mainCheckoutWithRun({ consoleJson: REF_ITEM({ id: 'wrap-up-skill-1.md', section: 'Skill updates' }) });
+  const before = fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8');
+  const { d, err } = baseDeps(fx, []);
+  assert.strictEqual(await run(SET_PENDING(fx.runDir, 'wrap-up-skill-1.md'), d), 5);
+  assert.match(err(), /in section Skill updates, not rewritable to pending \(only a Reference repairs item\) — nothing written/);
+  assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'), before);
+  assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8'), '');
+});
+
 test('--set-item whose decisions.md entry cannot be written exits 3 naming the landed rewrite (#4170)', async () => {
   const fx = mainCheckoutWithRun({ consoleJson: `${JSON.stringify({ resolved: true, mode: 'auto-resolve', items: [{ id: 'leftover-1.md', section: 'Queue writes', resolution: 'apply', reason: 'r' }] })}\n` });
   fs.rmSync(path.join(fx.runDir, 'decisions.md'));
@@ -845,6 +870,8 @@ test('#4636: --check-repair holds a clean diff as unclassified when the policy r
   assert.strictEqual(await run(['--run', fx.runDir, '--check-repair', p], d), 5);
   assert.ok(reads > 1, 'the policy read was reached');
   assert.match(out(), /reference-repair-unclassified/);
+  assert.match(out(), /merge-sensitive-paths policy could not be read/, 'the unreadable policy is named, not left to look like a bad diff');
+  assert.doesNotMatch(control.out(), /could not be read/, 'a readable policy prints no such note');
 });
 
 test('#4636: --check-repair --full re-runs the whole hold rule on a staged file', async () => {

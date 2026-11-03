@@ -29,10 +29,12 @@ const HUNK_HEADER_RE = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/;
 // already hold, so no real repair is lost.
 const UNREADABLE_SIDE_CHAR_RE = /["\\\u0000-\u001f\u007f]/;
 
-// A side with an empty, `.` or `..` segment can name a file outside the one it appears to.
+// A side with an empty, `.` or `..` segment can name a file outside the one it appears to, and so
+// can a segment ending in a space or a dot: NTFS drops that suffix, so `x.test.js.` lands on the
+// test file `x.test.js` the floor's predicates never matched (`.` and `..` end in a dot too).
 function validSide(side) {
   if (side === '' || UNREADABLE_SIDE_CHAR_RE.test(side)) return false;
-  return side.split('/').every((seg) => seg !== '' && seg !== '.' && seg !== '..');
+  return side.split('/').every((seg) => seg !== '' && !/[ .]$/.test(seg));
 }
 
 // The two sides of a `diff --git` line's remainder `s`, or null. The same-path form is recovered
@@ -99,6 +101,8 @@ function stagedDiffPaths(text) {
     while (oldLeft > 0 || newLeft > 0) {
       if (i >= lines.length) return false;
       const line = lines[i];
+      // An empty line counts as an empty context line, as `git apply` counts it (editors strip the
+      // lone space): the hunk's counts stay matched to what git consumes, so it opens no extra path.
       const lead = line === '' ? ' ' : line[0];
       if (lead === ' ') { if (oldLeft <= 0 || newLeft <= 0) return false; oldLeft -= 1; newLeft -= 1; }
       else if (lead === '-') { if (oldLeft <= 0) return false; oldLeft -= 1; }

@@ -215,6 +215,8 @@ function setItem(o, runDir, { stdout, stderr, now }) {
 function checkRepair(o, runDir, { stdout, stderr, execFile, cwd }) {
   const file = o.checkRepair;
   const real = (p) => canonicalRealpath(p) || path.resolve(p);
+  // `--full` pairs the file with its engine-state findings by basename (referenceFindingsByFile), so a
+  // same-named file elsewhere would inherit a real staged file's findings and their `hold: false`.
   if (o.full && real(path.dirname(path.resolve(file))) !== real(path.join(runDir, 'staged'))) {
     stderr(`console-resolve.js: --full reads only a file directly in ${path.join(runDir, 'staged')} (got ${file})\n${USAGE}\n`);
     return 2;
@@ -235,6 +237,9 @@ function checkRepair(o, runDir, { stdout, stderr, execFile, cwd }) {
   }
   if (reason === null) { stdout(`console-resolve.js: ${file} clear\n`); return 0; }
   stdout(`console-resolve.js: ${file} ${reason}\n`);
+  // An unreadable policy holds every repair the same way an unparseable diff does; name it so a human
+  // chasing a repair that holds on every run looks at `merge-sensitive-paths`, not at the diff.
+  if (sensitivePaths === null) stdout('console-resolve.js: note the merge-sensitive-paths policy could not be read, so no repair clears\n');
   if (text !== null) {
     for (const hit of referenceRepairFloorHits(stagedDiffPaths(text), sensitivePaths)) stdout(`console-resolve.js: hit ${hit.path} (${hit.why})\n`);
   }

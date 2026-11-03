@@ -7,6 +7,7 @@ const path = require('path');
 
 const MOD = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'console', 'item-resolution');
 const { CONSOLE_LOCK, REWRITE_FROM, REWRITE_ONLY_IN, rewriteItemResolution } = require(MOD);
+const { SECTIONS } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'console', 'resolve'));
 
 const AT = '2026-10-25T12:00:00.000Z';
 const REASON = 'record create failed (exit 1)';
@@ -102,7 +103,8 @@ test('refuses without writing', () => {
 });
 
 // Its own test, so the loop above cannot stop on an earlier case first. The Queue writes item above is
-// refused by both the section guard and the from-check; only the from-check refuses this one.
+// fails both the from-check and the section guard, but the from-check refuses it first, so the section
+// guard never runs for it; this one sits in the right section, so only the from-check can refuse it.
 test('#4636: a Reference repairs apply item is refused for pending by the from-check alone, file unchanged', () => {
   const stored = STORED();
   stored.items[0] = { ...stored.items[0], section: 'Reference repairs' };
@@ -139,7 +141,8 @@ test('#4636: rewrites an approve item to pending, recording what it replaced', (
 });
 
 test('#4636: an approve item outside Reference repairs is refused for pending and the file is unchanged', () => {
-  assert.deepStrictEqual(REWRITE_ONLY_IN, { pending: 'Reference repairs' });
+  // item-resolution.js holds the section name as a literal (it must not load resolve.js); the resolver owns it.
+  assert.deepStrictEqual(REWRITE_ONLY_IN, { pending: SECTIONS.REF });
   const stored = STORED();
   stored.items[0] = { id: 'wrap-up-skill-1.md', section: 'Skill updates', resolution: 'approve', reason: 'stance' };
   const consolePath = consoleFile(stored);

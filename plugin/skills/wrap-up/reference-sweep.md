@@ -86,7 +86,9 @@ the reference}`, and its body a `{old} → {new}` line (for an ambiguous one, `{
 {candidates}`), since a human approving a no-diff repair needs both. That line, and any other prose,
 comes after the header's blank line and before the first `diff --git` line, with nothing after the
 last hunk: the resolver's strict parser reads a non-blank line after a hunk as unparseable, so a
-summary placed after the diff holds every repair as `reference-repair-unclassified`.
+summary placed after the diff holds every repair as `reference-repair-unclassified`. It reads a line
+before the first `diff --git` line that starts with `---`, `+++` or `@@` (a Markdown rule `---`
+included) as a traditional patch and holds the repair the same way, so no prose line starts with those.
 
 A target Step 3 found ambiguous takes `hold: true`/`Hold: yes` whatever the floor said, plus a
 `Held: {reason}` line naming why, and carries no diff: nothing has been decided to compose one
@@ -98,7 +100,11 @@ block per file, with those lines unindented and at the start of the line. Compos
 temp directory outside the repo holding `a/{path}` (the file as it is) and `b/{path}` (a
 mode-preserving copy, `cp -p`, of it with the repaired text written into the copy; a new file would
 be mode 644 and turn a 100755 file's diff into `old mode`/`new mode` lines, which the resolver
-refuses), then run from that directory:
+refuses). `{path}` is a repo path someone else chose, so it reaches the `mkdir`, `cp -p` and `git`
+commands here only when it matches `[A-Za-z0-9._/-]+` with no `..` segment (quoting is no defense: a
+double-quoted slot still expands `$(…)` and backticks, `docs/skill-authoring.md`'s "Untrusted text
+into a shell or paste command"); any other path takes the cannot-compose branch below. Then run from
+that directory:
 
 ```bash
 git -c core.quotePath=false diff --no-index --no-color --no-ext-diff --no-textconv --no-prefix -- a/{path} b/{path}

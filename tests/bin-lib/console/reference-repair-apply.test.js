@@ -115,6 +115,15 @@ test('#4636: reference-sweep.md Step 4 gives the recipe the tests compose with',
   assert.ok(sweep.includes(`git ${RECIPE_ARGS.join(' ')} -- a/{path} b/{path}\n`), 'the fenced recipe line is the argv compose() runs');
 });
 
+test('#4636: reference-sweep.md Step 4 pins the decided sweep behaviours the resolver relies on', () => {
+  const sweep = readText(path.join(ROOT, 'plugin', 'skills', 'wrap-up', 'reference-sweep.md')).replace(/\s+/g, ' ');
+  assert.ok(sweep.includes("as the finding's boolean `hold` field in the row's payload, and as exactly one `Hold: yes` or `Hold: no` line"), 'the verdict travels as a JSON field and a header line');
+  assert.ok(sweep.includes('an ambiguous target and a diff that cannot be composed, are the only exceptions'), 'the two hold overrides');
+  assert.ok(sweep.includes('so a staged candidate leaves the shared worktree untouched, including under `--dry-run`'), 'the diff is composed on a temp copy');
+  assert.ok(sweep.includes('only when it matches `[A-Za-z0-9._/-]+` with no `..` segment') && sweep.includes('any other path takes the cannot-compose branch'), 'a path off the safe grammar never reaches the shell');
+  assert.ok(sweep.includes('starts with `---`, `+++` or `@@`'), 'prose before the first diff --git line avoids the traditional-patch lead');
+});
+
 test('#4636: a diff that no longer applies is refused and changes nothing', () => {
   const rel = 'docs/a.md';
   const repo = repoWith(rel, 'one\nold\nthree\n');
@@ -154,8 +163,18 @@ test('#4636: the recipe composes under the parser for a clean file, and a test f
   assert.strictEqual(referenceRepairFloorReason(heldText, []), REFERENCE_REPAIR_REASONS.HELD);
 });
 
+// The bullet is one head line plus the indented sub-bullets under it, one per outcome.
+function referenceRepairsBullet() {
+  const lines = EXECUTION.split('\n');
+  const at = lines.findIndex((l) => l.startsWith('- **Reference repairs**'));
+  assert.ok(at >= 0, 'the Reference repairs bullet exists');
+  let end = at + 1;
+  while (end < lines.length && lines[end].startsWith('  - ')) end += 1;
+  return lines.slice(at, end).join('\n');
+}
+
 test('#4636: the Reference repairs bullet applies from the staged diff and routes a stale one to pending', () => {
-  const bullet = EXECUTION.split('\n').find((l) => l.startsWith('- **Reference repairs**'));
+  const bullet = referenceRepairsBullet();
   assert.ok(bullet);
   assert.ok(bullet.includes('apply --check'), 'checks first');
   assert.ok(bullet.includes('--set-item'), 'names the rewrite');
@@ -167,6 +186,8 @@ test('#4636: the Reference repairs bullet applies from the staged diff and route
   assert.ok(!bullet.includes('$PIPELINE_RUN_DIR'), 'not the per-spec variable');
   assert.ok(bullet.includes('--check-repair'), 're-runs the floor on a human-named target');
   assert.ok(bullet.includes('Apply anyway') && bullet.includes('AskUserQuestion'), 'a floor hit on a human-named target is shown and the human may confirm it');
+  assert.ok(bullet.includes('logged as one `AUTO` naming the confirmed hits, via `log-decision.js --text-file`'), 'the confirmed hits are diff text, so they reach the log through a file');
+  assert.ok(bullet.split('\n').length >= 6 && bullet.split('\n').every((l) => l.length < 2500), 'one sub-bullet per outcome, none a wall of prose');
   assert.ok(!/PENDING/.test(bullet), 'the open question is answered, not left pending');
   assert.ok(bullet.includes('auto-resolve'), 're-runs the floor on an auto-resolved row before apply');
   assert.ok(bullet.includes('--check-repair "{staged path}" --full'), 're-runs the whole hold rule, not the floor alone, on an auto-resolved row');
@@ -177,7 +198,7 @@ test('#4636: the Reference repairs bullet applies from the staged diff and route
 });
 
 test('#4636: a human-named target is logged at the console stop and read back by the Phase 4 bullet', () => {
-  const bullet = EXECUTION.split('\n').find((l) => l.startsWith('- **Reference repairs**'));
+  const bullet = referenceRepairsBullet();
   const para = INTERACTIVE.split('\n').find((l) => l.startsWith('**Reference repairs rows'));
   const line = 'repair target {staged file name} → {target}';
   assert.ok(para.includes(line) && bullet.includes(line), 'both sides name the same line shape');
@@ -190,7 +211,7 @@ const between = (text, start, end) => { const i = text.indexOf(start); assert.ok
 test('#4636: every console path reaches the one Phase 4 bullet', () => {
   const approval = between(MULTISPEC, '## On approval', '## On override');
   const stepOne = approval.split('\n').find((l) => l.startsWith('1. '));
-  assert.ok(stepOne.includes('wrap-up-reference-'), 'multi-spec step 1 does not apply a reference repair');
+  assert.ok(stepOne.includes('a `wrap-up-reference-*` file is not applied here (step 6)'), 'multi-spec step 1 does not apply a reference repair');
   const stepSix = approval.split('\n').find((l) => l.startsWith('6. '));
   assert.ok(stepSix.includes('Reference repairs') && stepSix.includes('execution-and-verification.md'), 'multi-spec step 6 cites the bullet');
   const multiOverride = between(MULTISPEC, '## On override', '\n3. ');
@@ -203,7 +224,7 @@ test('#4636: a no-diff repair names its target at the console stop, and modify i
   const para = INTERACTIVE.split('\n').find((l) => l.startsWith('**Reference repairs rows'));
   assert.ok(para);
   assert.ok(para.includes('target {#}'), 'the Override verb');
-  assert.ok(para.includes('modify {#}'), 'refuses modify');
+  assert.ok(para.includes('`modify {#}` on such a row is refused with a one-line notice'), 'refuses modify');
   const drills = INTERACTIVE.split('\n').find((l) => l.startsWith('- **The "drills individually" class**'));
   assert.ok(drills.includes('Reference repairs'), 'the row kind joins the class');
   assert.ok(/no-diff/.test(drills));

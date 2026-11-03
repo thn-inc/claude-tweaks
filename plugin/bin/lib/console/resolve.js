@@ -772,7 +772,10 @@ function engineItems(snapshot, stagedIds) {
       if (f.action === 'staged') {
         // A non-string stagePath counts as no staged file (#4636).
         const base = typeof f.stagePath === 'string' && f.stagePath ? path.basename(f.stagePath) : null;
-        if (base && stagedIds.has(base)) continue; // already an item via staged/
+        // Already an item via staged/ — except a references finding naming a staged file that is not a
+        // wrap-up-reference- repair: only those run the hold rule, so that file's own section would approve
+        // it with the finding's hold never read. That finding stays its own row, held below.
+        if (base && stagedIds.has(base) && !(rowId === 'references' && !/^wrap-up-reference-/.test(base))) continue;
         // A staged repair with no staged file has no header to agree with its JSON verdict, so it holds.
         const stance = rowId === 'references' ? { resolution: 'pending', reason: REFERENCE_REPAIR_REASONS.UNCLASSIFIED } : SECTION_STANCES[section];
         out.push({ id: `${rowId}:${label}`, section, resolution: stance.resolution, reason: stance.reason });

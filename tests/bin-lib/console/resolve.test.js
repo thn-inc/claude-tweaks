@@ -485,6 +485,16 @@ test('#4636: a staged references finding with no staged file holds, whatever its
   }
 });
 
+test('#4636: a references finding naming a staged file that is not a wrap-up-reference- repair still holds as its own row', () => {
+  const engineState = { results: { references: { result: 'findings', findings: [{ targetPath: 'docs/a.md', action: 'staged', stagePath: 'staged/wrap-up-doc-3.md', hold: true }] } } };
+  const r = resolveAll({ runDir: fixture({ engineState, staged: { 'wrap-up-doc-3.md': `# Docs\n\nCategory: Documentation\n` }, headers: [7] }), policy: 'console-auto', deps: deps() });
+  const row = r.items.find((i) => i.id === 'references:docs/a.md');
+  assert.ok(row, 'the finding is its own row, not folded into the staged file');
+  assert.strictEqual(row.section, 'Reference repairs');
+  assert.strictEqual(row.resolution, 'pending');
+  assert.strictEqual(row.reason, 'reference-repair-unclassified');
+});
+
 test('AC1.1 (#4636): the hold survives the real engine writer, matched by an absolute stagePath', () => {
   const { initState, recordResult } = require('../../../plugin/bin/lib/wrap-up/engine-record');
   const run = (hold) => {
@@ -606,6 +616,14 @@ test('#4636: every other path line or header the parser cannot square with its s
   for (const [label, body] of Object.entries(cases)) {
     assert.strictEqual(stagedDiffPaths(`Hold: no\n\n${body}`), null, label);
   }
+});
+
+test('#4636: a side with a segment ending in a space or a dot holds, since NTFS lands it on a file the floor never matched', () => {
+  for (const rel of ['tests/x.test.js.', 'tests/x.test.js ', 'tests./x.md', 'docs /a.md', 'docs/a.md.']) {
+    const diff = `diff --git a/${rel} b/${rel}\n--- a/${rel}\n+++ b/${rel}\n${HUNK}`;
+    assert.strictEqual(stagedDiffPaths(`Hold: no\n\n${diff}`), null, rel);
+  }
+  assert.deepStrictEqual(stagedDiffPaths(`Hold: no\n\ndiff --git a/docs/.hidden.md b/docs/.hidden.md\n--- a/docs/.hidden.md\n+++ b/docs/.hidden.md\n${HUNK}`), ['docs/.hidden.md'], 'a dotfile name is still readable');
 });
 
 test('#4636: a mode line holds, since git apply would strip or add an executable bit under a clean header', () => {
