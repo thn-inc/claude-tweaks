@@ -25,9 +25,15 @@ const { readText } = require('./helpers/read-skill');
 //                 to a removal. `addRiskFlags` and `appendRiskProofGotcha` are open to
 //                 any caller: they only widen.
 // Recall limits, by design: a line key assembled from two literals (`'Risk-' + 'flags: '`)
-// and a remover reached through a computed property name are not seen. The scan
-// reads keep-mode text for both and runs `stripperVerdict` on both modes, so a
-// mis-parse is an offender rather than a clean file.
+// and a remover reached through a computed property name are not seen. The matchers
+// read keep-mode text (the literal-vs-code test also reads blank-mode text at the same
+// offsets), but `stripperVerdict` runs on the blank-mode text only, so a mis-parse is an
+// offender rather than a clean file. Blank mode subsumes keep mode: both modes make the
+// same comment decisions and blank only spaces out literal bodies, so no input has a
+// non-`ok` keep verdict with an `ok` blank verdict (probed over 780k compilable
+// `if (b) /<regex body>/.test(b);` fixtures: 30,144 keep-mode mis-parses, every one
+// also a blank-mode mis-parse, 531,315 blank-mode mis-parses in all). A keep-mode
+// verdict run would therefore never fire alone, and no fixture can pin it.
 const ROOT = path.join(__dirname, '..');
 const BIN_ROOT = path.join(ROOT, 'plugin', 'bin');
 
@@ -48,11 +54,9 @@ function scanSource(rel, raw) {
   const keep = stripComments(raw);
   const blank = stripComments(raw, { literals: 'blank' });
   const offenders = [];
-  for (const [mode, text] of [['keep', keep], ['blank', blank]]) {
-    const verdict = stripperVerdict(raw, text);
-    if (verdict !== 'ok') {
-      offenders.push({ line: 1, reason: `stripper-${verdict}`, text: `${mode} mode: ${STRIPPER_VERDICT_MESSAGES[verdict]}` });
-    }
+  const verdict = stripperVerdict(raw, blank);
+  if (verdict !== 'ok') {
+    offenders.push({ line: 1, reason: `stripper-${verdict}`, text: STRIPPER_VERDICT_MESSAGES[verdict] });
   }
   if (keep.length !== blank.length) {
     offenders.push({ line: 1, reason: 'stripper-offsets', text: 'keep-mode and blank-mode text differ in length, so offsets cannot be compared' });
@@ -101,19 +105,18 @@ function scanTree() {
     removerSites += scanned.removerSites;
     for (const o of scanned.offenders) offenders.push(`${rel}:${o.line} ${o.reason} ${o.text}`);
   }
-  return { offenders, files, sites: lineSites + removerSites, lineSites, removerSites };
+  return { offenders, files, lineSites, removerSites };
 }
 
 const shape = (rel, src) => findWriterOffenders(rel, src).map((o) => [o.line, o.reason]);
 
 test('AC5.6: the tree has one writer of the Risk-flags line', () => {
-  const { offenders, files, sites, lineSites, removerSites } = scanTree();
+  const { offenders, files, lineSites, removerSites } = scanTree();
   assert.deepStrictEqual(offenders, []);
-  assert.ok(files > 500,`walked only ${files} files: the walk broke`);
+  assert.ok(files > 500, `walked only ${files} files: the walk broke`);
   // Floors set to the counts at landing (546 files; 4 line-literal and 13 remover sites,
-  // all inside the three files that may hold them). Fewer matches mean a matcher died, not
+  // all inside the files that may hold them). Fewer matches mean a matcher died, not
   // that the code went away; raise them when sites are added, never lower them.
-  assert.ok(sites >= 17, `matched only ${sites} sites: the matcher stopped matching`);
   assert.ok(lineSites >= 4, `matched only ${lineSites} line-literal sites: the line matcher stopped matching`);
   assert.ok(removerSites >= 13, `matched only ${removerSites} remover sites: the remover matcher stopped matching`);
 });
