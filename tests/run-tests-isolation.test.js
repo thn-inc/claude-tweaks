@@ -887,6 +887,102 @@ test('run-tests.js waits for a slot held by a live pid, naming the holder', asyn
   });
 });
 
+// #4333: real waiter processes against one slot directory. A waiter appends `waiting <name>` from
+// acquireSlot's `log` callback (called the first time it has to wait) and `acquired <name>` once
+// acquireSlot returns, holds the slot until a `release-<name>` file appears beside the out file,
+// then releases it and exits 0. The tests read only that out file, never the slot directory's
+// bookkeeping, so the same tests run against a runner that keeps none.
+const WAITER = `
+const fs = require('fs');
+const path = require('path');
+const [runner, dir, slots, pollMs, name, outFile] = process.argv.slice(1);
+const { acquireSlot, releaseSlot, isPidAlive } = require(runner);
+const cell = new Int32Array(new SharedArrayBuffer(4));
+const sleep = (ms) => Atomics.wait(cell, 0, 0, ms);
+const lockPath = acquireSlot({
+  dir, slots: Number(slots), pid: process.pid, cwd: process.cwd(), isAlive: isPidAlive, now: Date.now,
+  sleep, pollMs: Number(pollMs), log: () => fs.appendFileSync(outFile, 'waiting ' + name + '\\n'),
+});
+fs.appendFileSync(outFile, 'acquired ' + name + '\\n');
+const releaseFile = path.join(path.dirname(outFile), 'release-' + name);
+while (!fs.existsSync(releaseFile)) sleep(20);
+releaseSlot(lockPath, process.pid);
+process.exit(0);
+`;
+
+async function withWaiters(fn) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'run-tests-waiters-'));
+  const children = [];
+  const outFile = path.join(root, 'out.txt');
+  const events = () => (fs.existsSync(outFile) ? fs.readFileSync(outFile, 'utf8').split('\n').filter(Boolean) : []);
+  const start = (name, slots, pollMs) => {
+    const child = spawn(
+      process.execPath, ['-e', WAITER, RUNNER, path.join(root, 'slots'), String(slots), String(pollMs), name, outFile],
+      { stdio: 'ignore' },
+    );
+    const waiter = { name, child, exitCode: undefined };
+    child.on('exit', (code, signal) => { waiter.exitCode = code === null ? signal : code; });
+    children.push(waiter);
+    return waiter;
+  };
+  const release = (name) => fs.writeFileSync(path.join(root, `release-${name}`), '');
+  try {
+    await fn({ root, events, start, release });
+  } finally {
+    for (const { child } of children) child.kill('SIGKILL');
+    await until(() => children.every((w) => w.exitCode !== undefined), 10000, 'every waiter to be gone');
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test('#4333 AC1.1: N+2 waiters against N slots acquire in arrival order', async () => {
+  await withWaiters(async ({ events, start, release }) => {
+    const waiters = [];
+    // A and B take the two free slots. C polls slowly and D fast, so a poll-and-take-first
+    // implementation hands the first freed slot to the later arrival D.
+    for (const [name, pollMs, reported] of [['A', 20, 'acquired A'], ['B', 20, 'acquired B'], ['C', 1000, 'waiting C'], ['D', 20, 'waiting D']]) {
+      waiters.push(start(name, 2, pollMs));
+      await until(() => events().includes(reported), 60000, reported);
+    }
+    release('A');
+    await until(() => events().filter((e) => e.startsWith('acquired ')).length >= 3, 60000, 'a third acquisition');
+    release('B');
+    await until(() => events().filter((e) => e.startsWith('acquired ')).length >= 4, 60000, 'a fourth acquisition');
+    assert.deepStrictEqual(
+      events().filter((e) => e.startsWith('acquired ')).map((e) => e.slice('acquired '.length)),
+      ['A', 'B', 'C', 'D'],
+      events().join(', '),
+    );
+    release('C');
+    release('D');
+    await until(() => waiters.every((w) => w.exitCode !== undefined), 60000, 'every waiter to exit');
+    assert.deepStrictEqual(waiters.map((w) => w.exitCode), [0, 0, 0, 0]);
+  });
+});
+
+test('#4333 AC3.1: a waiter killed in the queue does not block the one behind it', async () => {
+  await withWaiters(async ({ root, events, start, release }) => {
+    const slotDir = path.join(root, 'slots');
+    fs.mkdirSync(slotDir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(
+      path.join(slotDir, 'slot-0.lock'),
+      JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(), cwd: ROOT }),
+    );
+    const a = start('A', 1, 20);
+    await until(() => events().includes('waiting A'), 60000, 'waiting A');
+    const b = start('B', 1, 20);
+    await until(() => events().includes('waiting B'), 60000, 'waiting B');
+    a.child.kill('SIGKILL');
+    await until(() => a.exitCode !== undefined, 60000, 'A to be killed');
+    fs.unlinkSync(path.join(slotDir, 'slot-0.lock'));
+    await until(() => events().includes('acquired B'), 60000, 'acquired B');
+    assert.strictEqual(events().includes('acquired A'), false);
+    release('B');
+    await until(() => b.exitCode !== undefined, 60000, 'B to exit');
+    assert.strictEqual(b.exitCode, 0);
+  });
+});
+
 // The fixture records its own pid once started (written whole, so an empty read means not yet).
 function fixturePid(sb) {
   try {
