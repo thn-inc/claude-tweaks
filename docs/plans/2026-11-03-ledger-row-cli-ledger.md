@@ -16,3 +16,5 @@
 | 12 | build | SDD ruling — Task 3 review Minors fixed in fix round 1: ratify or reverse at the Review Console (staged/sdd-ruling-6.md) | open | — |
 | 13 | build | SDD ruling — firstStrayArg value-flag skip walk left as is: ratify or reverse at the Review Console (staged/sdd-ruling-7.md) | open | — |
 | 14 | build | SDD ruling — fixed accepts this repo /commit/<sha> and /blob/ URLs: ratify or reverse at the Review Console (staged/sdd-ruling-8.md) | open | — |
+| 15 | build/skill | [skill: NEW - lock-race-test-seam] A two-child-process concurrency test never overlaps the microsecond critical section (Node startup dwarfs it), so it stays green with the lock removed; the discriminating test injects a read seam and attempts the second write between the first call's read and write (#4439 appendRow, final review Important 1) | observation | — |
+| 16 | build/skill | hooks-js-verb-registration extension: a CLI test passing an explicit --run to a fixture run dir must initialize it (decisions.md, run-state.json or config.yml) — resolveRunArg refuses a dir holding only work/{n}-spec.md as "not an initialized run dir" (#4439 Task 2 worktree-copy test) | observation | — |
