@@ -168,3 +168,65 @@ test('skill-graph names the blocker-landing Settle edge (#4792)', () => {
   assert.notEqual(without, text, 'row anchor not found — control cannot discriminate');
   assert.throws(() => rowOf(without), /skill-graph\.md has no line starting/);
 });
+
+// --- assess-agent-autonomy's failure-check classifies a stray blocker-landing stop (Task 3) ---
+
+const FAILURE_CHECK = path.join(SKILLS, 'assess-agent-autonomy', 'failure-check.md');
+const BULLET_PREFIX = '- **Blocker-landing stop**:';
+
+// The bullet is hard-wrapped to match its neighbours: its start line up to, not including, the next
+// `- **` bullet or `## ` heading, joined and whitespace-collapsed.
+function bulletOf(text) {
+  const lines = text.split('\n');
+  const start = lines.findIndex((line) => line.startsWith(BULLET_PREFIX));
+  assert.notEqual(start, -1, `failure-check.md has no line starting "${BULLET_PREFIX}"`);
+  let end = start + 1;
+  while (end < lines.length && !lines[end].startsWith('- **') && !lines[end].startsWith('## ')) end += 1;
+  return lines.slice(start, end).join(' ').replace(/\s+/g, ' ').trim();
+}
+
+const FAILURE_CHECK_FACTS = [
+  [/`ISSUE #\{n\}: failed:blocker-landing`/, 'failure-check keys on the gate line'],
+  [/Settle skips this mode for it \(`dispatch\/settle-and-merge\.md`'s Blocker-landing special case\)/, 'failure-check cites the Settle special case'],
+  [/classify it `transient`/, 'AC2.1: a stray stop classifies transient, so auto:merge is preserved'],
+  [/no build or test ran, so no diff is at fault/, 'failure-check states why'],
+];
+const failureCheckMissing = missingFactsOf(FAILURE_CHECK_FACTS);
+
+const assertFailureCheck = (text) => assert.deepEqual(
+  failureCheckMissing(bulletOf(text)),
+  [],
+  'the failure-check bullet must state every fact (#4792)',
+);
+
+test('AC2.1: failure-check.md classifies the blocker-landing stop (#4792)', () => {
+  assertFailureCheck(readText(FAILURE_CHECK));
+});
+
+test('each failure-check blocker-landing fact can go red', () => {
+  assertEachPatternGoesRed(bulletOf(readText(FAILURE_CHECK)), FAILURE_CHECK_FACTS, failureCheckMissing);
+});
+
+test('the bullet sits inside Step 2: Judge', () => {
+  const JUDGE = '## Step 2: Judge';
+  const RENDER = '## Step 3: Render';
+  const placed = (text) => {
+    const at = text.indexOf(BULLET_PREFIX);
+    return text.indexOf(JUDGE) >= 0 && at > text.indexOf(JUDGE) && text.indexOf(RENDER) >= 0 && at < text.indexOf(RENDER);
+  };
+  const text = readText(FAILURE_CHECK);
+  assert.ok(placed(text), 'the Blocker-landing stop bullet must sit between the Step 2 and Step 3 headings');
+
+  // Control: the bullet's lines moved to just after the Step 3 heading line must fail the same check.
+  const lines = text.split('\n');
+  const start = lines.findIndex((line) => line.startsWith(BULLET_PREFIX));
+  let end = start + 1;
+  while (end < lines.length && !lines[end].startsWith('- **') && !lines[end].startsWith('## ')) end += 1;
+  const bullet = lines.splice(start, end - start);
+  const render = lines.findIndex((line) => line.startsWith(RENDER));
+  assert.notEqual(render, -1, 'Step 3 heading not found — control cannot discriminate');
+  lines.splice(render + 1, 0, ...bullet);
+  const moved = lines.join('\n');
+  assert.notEqual(moved, text, 'the move control must change the text');
+  assert.ok(!placed(moved), 'a bullet moved after the Step 3 heading must fail the placement check');
+});
