@@ -32,7 +32,8 @@ Each line's test is in Task 1.
 - A waiter whose own ticket was deleted by hand rejoins the queue at the tail instead of crashing on `ENOENT` (`#4333 a waiter whose own ticket was removed rejoins the queue`).
 - A ticket taken after ours never holds us back; otherwise two waiters deadlock on each other (`#4333 a ticket taken after ours does not hold us back`).
 - The `subset/` directory inside the base lane's directory is never read as a ticket, and a ticket in one lane never blocks the other (`#4333 a ticket in the base lane does not block the subset lane …`).
-- A failed ticket write (`ENOSPC`) leaves nothing behind: the existing test `acquireSlot leaves no empty lock behind when writing its identity fails` keeps pinning this, because the ticket write is now the first write and goes through `createLock`'s own cleanup.
+- A failed write leaves nothing behind: the existing test `acquireSlot leaves no empty lock behind when writing its identity fails` now fails on the ticket write (the first write), and `#4333 a failed slot-lock write after the ticket leaves nothing behind` pins the second write — the empty lock and the ticket are both gone.
+- A ticket at our path that is not ours (ours deleted by hand, then a newcomer numbered into the same seq) is never treated as ours and never deleted by us (`#4333 a foreign ticket at our own path makes us rejoin and is left in place`, `#4333 acquireSlot never deletes a ticket at its path that no longer names it`).
 - `ticket-10` sorts after `ticket-9`: order is numeric, never by string (`#4333 a queued waiter logs once, naming the lowest live ticket ahead`).
 
 ---
@@ -48,7 +49,7 @@ Each line's test is in Task 1.
 
 **Interfaces:**
 - Produces: `acquireSlot({ dir, slots, pid, cwd, isAlive, now, sleep, log, pollMs, staleUnparseableMs, staleReclaimMs, slotsVar })` — same parameters and return value as today, no new option. Ticket files `ticket-<seq>.json` in the lane directory, body `{ pid, startedAt, cwd, slots }`. No new exports.
-- Consumes: the existing `createLock`, `readHolder`, `reclaimSlot`, `unlinkQuiet`, `ensureOwnDir`.
+- Consumes: the existing `createLock`, `readHolder`, `reclaimSlot`, `releaseSlot`, `unlinkQuiet`, `ensureOwnDir`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -69,11 +70,14 @@ Add after the `acquireSlot uses a second slot when slots=2` test, each inside `w
 - `#4333 a live waiter's ticket is never stale by age` — `writeTicket(dir, 1, 222)`, `fs.utimesSync` it to 11 minutes ago, `isAlive: (pid) => pid === 222`. In `sleep`: assert `ticket-1.json` still exists, then unlink it. Assert `sleeps === 1`.
 - `#4333 a ticket naming our own pid is stale` — `writeTicket(dir, 1, 111)`, `isAlive: () => true`, `sleep: noSleep`. Assert the lock is returned.
 - `#4333 a waiter whose own ticket was removed rejoins the queue` — `writeLock(dir, 0, 333)`, `isAlive: (pid) => pid === 333`. On sleep 1, unlink `ticket-1.json`. On sleep 2, assert some `ticket-*.json` exists again and parses with pid 111, then unlink the lock. Assert the lock is returned and `sleeps === 2`.
+- `#4333 a foreign ticket at our own path makes us rejoin and is left in place` — `writeLock(dir, 0, 333)`, `isAlive: (pid) => pid === 333 || pid === 222`. On sleep 1, overwrite `ticket-1.json` (ours) with `{ pid: 222, startedAt: '2026-01-01T00:00:00.000Z', cwd: '/work/other', slots: 1 }`. On sleep 2, assert a ticket naming pid 111 exists at a seq above 1, then unlink `ticket-1.json` and the lock. Assert the lock is returned.
+- `#4333 acquireSlot never deletes a ticket at its path that no longer names it` — `writeLock(dir, 0, 333)`, `sleep: noSleep`, and an `isAlive` that, on its first call, overwrites `ticket-1.json` (ours) with `{ pid: 222, startedAt: '2026-01-01T00:00:00.000Z', cwd: '/work/other', slots: 1 }` and then returns `pid === 222` for every call (so 333's lock reads dead and is reclaimed in the same pass). Assert the lock is `slot-0.lock` and that `ticket-1.json` still exists naming pid 222 after `acquireSlot` returns. (An unconditional unlink in `finally` turns this red.)
+- `#4333 a failed slot-lock write after the ticket leaves nothing behind` — stub `fs.writeSync` so its first call passes through to the original and every later call throws `ENOSPC` (restore it in `finally`). `assert.throws(() => acquireSlot({ dir, slots: 1, pid: 4242, cwd: '/x', isAlive: () => true, now: Date.now, sleep: () => {}, log: () => {} }), /no space left/)`, then `assert.deepStrictEqual(fs.readdirSync(dir), [])`.
 - `#4333 a ticket taken after ours does not hold us back` — `writeLock(dir, 0, 333)`, `isAlive: (pid) => pid === 333 || pid === 222`. On sleep 1, `writeTicket(dir, 2, 222)` (ours is `ticket-1`) and unlink the lock. Assert the lock is `slot-0.lock` and `sleeps === 1`. (Walking tickets past our own seq turns this red.)
 - `#4333 a new arrival numbers its ticket after the highest existing one` — `writeTicket(dir, 7, 222)`, `isAlive: (pid) => pid === 222`. In `sleep`: assert `ticket-8.json` exists and parses with `{ pid: 111, cwd: '/work/a', slots: 1 }` (plus `startedAt`), then unlink `ticket-7.json`.
 - `#4333 acquireSlot leaves only its lock behind once it holds the slot` — no setup. `assert.deepStrictEqual(fs.readdirSync(dir), ['slot-0.lock'])`.
 - `#4333 a queued waiter logs once, naming the lowest live ticket ahead` — `writeTicket(dir, 10, 333)`, `writeTicket(dir, 9, 222)`, both alive. On sleep 1 unlink `ticket-9.json`, on sleep 2 unlink `ticket-10.json`. Assert exactly one log line, equal to `'run-tests.js: waiting for a test-suite slot — queued behind pid 222 (cwd /work/other) since 2026-01-01T00:00:00.000Z; set CT_TEST_SUITE_SLOTS to raise the limit (ticket: ' + path.join(dir, 'ticket-9.json') + ')'`.
-- `#4333 a later arrival with a higher limit takes a slot index the waiters ahead of it cannot use` (plan-review answer 2) — `writeLock(dir, 0, 333)`, `writeTicket(dir, 1, 222, 1)`, `isAlive: (pid) => pid === 222 || pid === 333`. First, `acquireSlot(slotArgs(dir, { slots: 2, sleep: noSleep, isAlive }))` returns `slot-1.lock` at once. Then a third arrival, `acquireSlot(slotArgs(dir, { pid: 444, slots: 1, isAlive, sleep, log }))`, whose `sleep` asserts `slot-0.lock` still names pid 333 and `ticket-1.json` exists, then unlinks both. Assert it returns `slot-0.lock`, `sleeps === 1`, and its one log line starts with `'run-tests.js: waiting for a test-suite slot — queued behind pid 222 '`.
+- `#4333 a later arrival with a higher limit takes a slot index the waiters ahead of it cannot use` (plan-review answer 2) — `writeLock(dir, 0, 333)`, `writeTicket(dir, 1, 222, 1)`, `isAlive: (pid) => pid === 222 || pid === 333`. First, `acquireSlot(slotArgs(dir, { slots: 2, sleep: noSleep, isAlive }))` returns `slot-1.lock` at once. Then a third arrival, `acquireSlot(slotArgs(dir, { pid: 444, slots: 1, isAlive, sleep, log }))`, whose `sleep` asserts `slot-0.lock` still names pid 333 and `ticket-1.json` exists, then unlinks both. Assert it returns `slot-0.lock`, `sleeps === 1`, and its one log line starts with `'run-tests.js: waiting for a test-suite slot — queued behind pid 222 '`. Finally, the queued line names the ticket that actually blocks: `writeTicket(dir, 1, 222, 1)`, `writeTicket(dir, 2, 333, 3)`, both alive, arrival `slots: 2` whose `sleep` unlinks both tickets; assert its one log line ends with `'(ticket: ' + path.join(dir, 'ticket-2.json') + ')'` (ticket-1's limit of 1 leaves index 1 free, so deleting it alone would not unblock us).
 - `#4333 a ticket whose limit cannot be read blocks every slot index` (plan-review answer 2) — write `ticket-1.json` as `{ pid: 222, startedAt: '2026-01-01T00:00:00.000Z', cwd: '/work/other' }` (no `slots`), `isAlive: (pid) => pid === 222`, `slots: 2`. In `sleep`: assert neither `slot-0.lock` nor `slot-1.lock` exists, then unlink the ticket. Assert `sleeps === 1`. (Treating an unreadable limit as 1 turns this red: the arrival would take `slot-1` at once.)
 - `#4333 a ticket in the base lane does not block the subset lane, and the subset directory is not a ticket` — `const { dir: sub } = slotLane(dir, true)`, `fs.mkdirSync(sub)`, `writeTicket(dir, 1, 222)`, `isAlive: (pid) => pid === 222`. `acquireSlot(slotArgs(sub, { sleep: noSleep, isAlive }))` returns `path.join(sub, 'slot-0.lock')` and `ticket-1.json` still exists. Then unlink `ticket-1.json`; `acquireSlot(slotArgs(dir, { sleep: noSleep, isAlive }))` returns `path.join(dir, 'slot-0.lock')` with `subset` still a directory.
 
@@ -88,7 +92,7 @@ Expected: FAIL after Step 1 (before Step 1 the pattern matches no test). The `AC
 - `readHolder`: the live-holder return becomes `{ pid, cwd, startedAt, slots: held.slots }`. Nothing else changes; no `staleAfterMs`.
 - `listTickets(dir)` returns `{ seq, path }[]` for entry names matching `/^ticket-(\d+)\.json$/`, sorted numerically by `seq`.
 - `takeTicket(dir, { pid, cwd, now, slots })` starts at the highest listed `seq` + 1 (1 when none) and calls `createLock(ticketPath, pid, cwd, now, { slots })` on that number, then the next, until one succeeds; returns `{ seq, path }`.
-- `ticketsAhead(dir, seq, holderOpts)` walks `listTickets(dir)` in order, stopping at the first entry whose `seq >= seq`. A `null` holder is skipped; a stale holder is unlinked with `unlinkQuiet` and skipped. Returns `{ floor, first }`: `floor` is the largest limit among the live tickets ahead (0 when none), where a ticket's limit is its `slots` when that is a positive integer and `Infinity` otherwise (so `UNKNOWN_HOLDER` blocks every index); `first` is the lowest live ticket ahead as `{ ...holder, lockPath: ticket.path }`, or `null`.
+- `ticketsAhead(dir, seq, holderOpts)` walks `listTickets(dir)` in order, stopping at the first entry whose `seq >= seq`. A `null` holder is skipped; a stale holder is unlinked with `unlinkQuiet` and skipped. Returns `{ floor, first }`: `floor` is the largest limit among the live tickets ahead (0 when none), where a ticket's limit is its `slots` when that is a positive integer and `Infinity` otherwise (so `UNKNOWN_HOLDER` blocks every index); `first` is the lowest live ticket ahead whose limit is at least the caller's own `slots` (that ticket alone blocks every index the caller can use), as `{ ...holder, lockPath: ticket.path }`, or `null`; `ticketsAhead` takes the caller's `slots` in `holderOpts` for this. Whenever `floor >= slots`, such a ticket exists.
 
 `acquireSlot`'s body becomes the shape below; the per-slot scan is today's loop body unchanged, only its start index moves from `0` to `floor`:
 
@@ -99,7 +103,8 @@ let ticket = takeTicket(dir, { pid, cwd, now, slots });
 let logged = false;
 try {
   for (;;) {
-    // our own ticket deleted by hand (ENOENT on stat): ticket = takeTicket(...) again, at the tail
+    // our ticket must still be ours: missing (deleted by hand), unparseable, or naming another pid
+    // (a newcomer numbered into our deleted seq) → ticket = takeTicket(...) again, at the tail
     const { floor, first } = ticketsAhead(dir, ticket.seq, holderOpts);
     let blocker = null;
     for (let i = floor; i < slots; i++) { /* today's scan body, unchanged */ }
@@ -107,7 +112,7 @@ try {
     sleep(pollMs);
   }
 } finally {
-  unlinkQuiet(ticket.path);
+  releaseSlot(ticket.path, pid); // removes the ticket only while it still names our pid
 }
 ```
 
