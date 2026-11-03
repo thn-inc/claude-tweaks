@@ -268,33 +268,32 @@ session-recall fallback, both above — stated once, run from either.
    substituting gh's literal `{owner}`/`{repo}` placeholder syntax inside a field *value* — a
    different mechanism a GraphQL variable never uses (`gh-api-module-pattern` skill). **No parent
    resolvable** — omit the block entirely; nothing renders.
-2. **Enumerate siblings and their state**, from the parent side — the rule
-   `wrap-up/verification-brief-parent-gate.md`'s "Enumerate the parent's sub-issues" states, which
-   `bin/parent-gate.js` runs for that procedure: `native` —
-   `gh api --paginate "repos/{owner}/{repo}/issues/$PARENT_NUM/sub_issues"`, every page, whose
-   response already carries every sibling's `number`, `title`, and `state`, so no per-sibling
-   fetch is needed here (normalize its lowercase `open`/`closed` to `OPEN`/`CLOSED` —
-   `_shared/github-pr-scan-acceptance.md`); `body-text` — one `gh issue view {n} --json
-   state,title` per `parseSubIssues` number; `local-files` — the `queryRecords` result already
-   carries `facets.closed` and the title. This enumeration is the parent's **full** sub-issue
-   list, the record in hand included — do not filter it down yet. Also fetch the parent's labels
-   (`gh issue view $PARENT_NUM --json labels`, or the parent record's `facets.acceptance`).
+2. **Enumerate siblings and their state**, from the parent side — one call, run as its own Bash
+   call: `node "${CLAUDE_PLUGIN_ROOT}/bin/parent-gate.js" --parent $PARENT_NUM`. It prints one JSON
+   verdict line: `subIssues[]` — `{number, title, state, stateReason, pr}` in number order,
+   `state` already `OPEN`/`CLOSED` — and the verdict's `state`, the parent-gate value
+   (`parentGateState` over those sub-issues and the parent's labels). The CLI reads
+   `work-backend`/`work-links` itself and enumerates per link model, so nothing here composes a
+   `gh` call or fetches the parent's labels. Always `--parent`, never `--sub-issue {n}`: the
+   parent-side call applies no Self-inclusion rule, so the record in hand keeps its live state.
+   `subIssues` is the parent's **full** list, the record in hand included.
 
-   Two different lists are then in play, built from this same enumeration for two different
-   purposes: `Pending:` (Step 3 below) is built with the record in hand **excluded** — it never
-   lists itself as pending. `parentGateState({subIssues, parentLabels})`
-   (`bin/lib/issues/acceptance.js`) must instead be called with the **full** list, record in hand
-   **included**: it returns `'due'` only when every sub-issue in the list it's given is `CLOSED`,
-   so calling it with the record-in-hand excluded would wrongly report `due` whenever every
-   *other* sibling has closed but the record in hand is itself still open — a real case (a
-   session-recall entry may run on one still-open record). Bounded by decomposition size —
-   `/specify`'s sizing keeps a parent to a handful of sub-issues, so nothing here fans out.
+   Two different lists are then in play, built from this one verdict for two different purposes:
+   `Pending:` (Step 3 below) is built from `subIssues` with the record in hand **excluded** — it
+   never lists itself as pending — and `state !== 'CLOSED'` means open. The `parent gate {…}`
+   value in `Pending: none — …` is the verdict's `state`, which was computed over the **full**
+   list, record in hand **included**: never recompute it with `parentGateState` over the
+   filtered list, which would wrongly report `due` whenever every *other* sibling has closed but
+   the record in hand is itself still open — a real case (a session-recall entry may run on one
+   still-open record). Bounded by decomposition size — `/specify`'s sizing keeps a parent to a
+   handful of sub-issues, so nothing here fans out.
 3. **Compose the block** per `_shared/observation-plan.md`'s schema and grammar rules.
 4. **Extend `### Confirmed`** with one sentence — end-to-end behavior was not observable at this
    slice; see the plan's Full verification block — in whichever composer produced this brief:
    the reconstruction's opening reconstruction sentence above, or the no-arguments path's
    `### Confirmed` bullet above, which the `#N`-scoped session-recall fallback reuses.
 
-**Fail open, visibly.** Any `gh` failure in steps 1-2 above omits the block and states so in
-one plain line above the verdict, naming which lookup failed — never a silent omission. `/demo`
+**Fail open, visibly.** Any `gh` failure in step 1, or a non-zero exit of step 2's
+`bin/parent-gate.js` call (its stderr line quoted), omits the block and states so in one plain
+line above the verdict, naming which lookup failed — never a silent omission. `/demo`
 has no run directory and no `decisions.md`, so this one line is the only trace.
