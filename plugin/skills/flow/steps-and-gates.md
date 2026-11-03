@@ -62,7 +62,7 @@ Steps must follow lifecycle order. Invalid orderings are rejected.
 3. **`{steps}`** for Step 2.4, Step 2.7b, Step 2.8 and `flow-preflight.js` is the CLI's `steps` union.
 4. **A list that starts past `test`** enters `review` with `TEST_PASSED=true`, because the handing-off agent's test gate passed, and the stamp read is then the real check: `review/code-mode-steps.md`'s Step 1.5 Test Gate re-triggers `/claude-tweaks:test` when the stamp does not verify HEAD, so omitting the auto-insert loses nothing.
 5. **Setup does not repeat.** Pre-flight Verify Sweep does not re-run. A record with an existing `spec-{N}/config.yml` is not re-scaffolded. `manifest-init` keeps each spec's status (#3035). The Boundary freshness check runs only before a record that has not started.
-6. **Close:** the consolidated pass runs when any record's list carries `wrap-up`; otherwise Step 5's partial note applies. A child of a top-level handoff carries no `wrap-up`, so it leaves the pass to its parent, which runs it even after the child's failure card (`context-handoff.md`'s Top-level run item 4).
+6. **Close:** the consolidated pass runs when any record's list carries `wrap-up`; otherwise Step 5's partial note applies. A child of a top-level handoff carries no `wrap-up`, so it leaves the pass to its parent: a parent with `wrap-up` in its own list runs it even after the child's failure card, and a parent with none closes on the relayed note (`context-handoff.md`'s Top-level run item 4).
 
 ### Adopting an inherited run directory (`PIPELINE_RUN_DIR` already set)
 

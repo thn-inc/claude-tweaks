@@ -123,7 +123,8 @@ const RESUME_FACTS = [
   [/Boundary freshness check runs only before a record that has not started/, 'freshness only before an unstarted record'],
   [/consolidated pass runs when any record's list carries `wrap-up`/, 'the consolidated pass condition'],
   [/otherwise Step 5's partial note applies/, 'the partial note otherwise'],
-  [/leaves the pass to its parent, which runs it even after the child's failure card/, 'a handed-off child leaves the pass to its parent, failure card included'],
+  [/a parent with `wrap-up` in its own list runs it even after the child's failure card/, 'a parent with wrap-up in its own list runs the pass, failure card included'],
+  [/a parent with none closes on the relayed note/, 'a parent with no wrap-up closes on the relayed note'],
 ];
 
 // The precondition Per-record resume's TEST_PASSED sentence answers: the gate reads the stamp
@@ -173,8 +174,8 @@ const TOP_LEVEL_FACTS = [
   [/when this agent's own step list carries `wrap-up`/, 'only when this agent\'s own step list carries wrap-up'],
   [/A `record-steps=` child's own lists never carry `wrap-up`, so its relayed note is its close/, 'a record-steps= child\'s relayed note is its close'],
   [/runs `wrap-up` in run order for each record whose `manifest\.yml` status is none of `complete`, `failed`, `not-run`, then the consolidated pass/, 'wrap-up per unfinished record, then the consolidated pass'],
-  [/A child that did not report, or that reported `BLOCKED`, stops this agent, because it may still be writing/, 'only a silent or BLOCKED child stops a multi-spec parent'],
-  [/multi-spec failure card under a step list holding `wrap-up`/, 'a multi-spec failure card under a wrap-up list is the exception'],
+  [/A child that did not report, or whose report names an abandoned write-capable child \(the template's `STATUS: BLOCKED` naming that child and its unit\), stops this agent, because it may still be writing/, 'only a silent child or a report naming an abandoned write-capable child stops the parent'],
+  [/multi-spec failure card, whatever its status word, under a step list holding `wrap-up`/, 'a multi-spec failure card under a wrap-up list is the exception, whatever its status word'],
   [/requires the console after a HARD-GATE abort/, 'why: the console is owed after a HARD-GATE abort'],
   [/still takes the status-filtered loop at the end of this item/, 'the failure card still takes the status-filtered loop'],
 ];

@@ -801,6 +801,17 @@ test('CLI: --run is anchored strictly — outside every checkout and a worktree-
   assert.strictEqual(ok.json().handoff, path.join(fx.runDir, 'handoff.json'));
 });
 
+test('CLI: a missing --run dir whose basename is a valid run id exits 2, named as missing', async () => {
+  const fx = runFixture();
+  const missing = path.join(fx.root, '.claude-tweaks', 'pipelines', '2026-10-25T162130-record-9999');
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  const c = cli(fx);
+  assert.strictEqual(await run(['--run', missing, '--transcript', t, '--next-steps', 'test'], c.deps), 2);
+  assert.match(c.err.join(''), /--run dir does not exist or is not a directory/);
+  assert.strictEqual(c.out.join(''), '');
+  assert.ok(!fs.existsSync(missing), 'nothing created');
+});
+
 test('CLI: a --run whose basename is not a run id exits 2', async () => {
   const fx = runFixture({ specDirs: [12] });
   const c = cli(fx);

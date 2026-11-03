@@ -5,7 +5,8 @@
 // procedure is lib/timing/context-gauge.js.
 //
 //   node bin/context-gauge.js --run <run-dir> [--transcript <path>] [--cap <n>]
-//     [--next-steps <step,...> | --record-steps <#N:steps;...> [--keep-going] [--no-stories]] [--help]
+//     [--next-steps <step,...>
+//      | --record-steps <#N:steps;...> [--keep-going] [--no-stories]] [--help]
 //
 // The transcript is --transcript when given, else found from
 // CLAUDE_CODE_SESSION_ID (the parent session's id inside a subagent) under
