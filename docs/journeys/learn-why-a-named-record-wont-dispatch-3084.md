@@ -11,6 +11,7 @@ files:
   - plugin/bin/lib/issues/shipped-candidate.js
   - plugin/bin/lib/issues/linked-prs.js
   - plugin/bin/dispatch-resume.js
+  - plugin/bin/lib/dispatch/shipped-releases.js
 ---
 
 # Learn Why a Named Record Won't Dispatch
@@ -57,6 +58,13 @@ files:
 - **Should understand:** The `shipped` reason still fires for a PR opened after the record was filed that mentions it and matches its title or covers its Key Files. The new skip is per mention: a later, independent PR can still mark the same record shipped. The accepted cost is a PR that was already open when the record was filed and fixed it with only `refs #N`. That record now builds, and the build finds the work already done (#2502's already-shipped exit).
 - **Red flags:** `#4135`, or another follow-up from a still-open PR's build, reported as `shipped` by the PR whose build filed it. A Close proposal staged for it. A record genuinely shipped by a later PR now dispatching.
 
+### 2e. A partly shipped record you released is not "shipped"
+- **URL:** `plugin/skills/dispatch/SKILL.md` False-positive posture (#1984, #4432); `plugin/skills/dispatch/queue-pull-script.md` shipped-candidate section; `plugin/bin/lib/dispatch/shipped-releases.js` `writeReleaseTimes`; `plugin/bin/lib/issues/shipped-candidate.js` `classifyShipped` (`lastReleasedAt`)
+- **Action:** Name a record that a pipeline built only half of: an earlier PR matching its title merged, the run released the claim to finish the rest, and the record stayed open. The queue pull reads the record's latest claim release time and sees that the PR merged before it. The record is kept and dispatches, and the firing prints `AUTO — dispatch: #N kept: merged PR #pr predates claim release at {time} — remaining work assumed`. No Close proposal is staged.
+- **Should feel:** Trusted. A record you released to finish keeps its place in the queue, and you no longer drop a false Close proposal by hand at every firing.
+- **Should understand:** The release time comes from the record's claim tombstone. A missing or unreadable one never downgrades, so the record is judged exactly as before. Any release after a merge downgrades, whatever its reason: a shaping-only release, or the wrap-up release of a run whose own merge left the record open. That is the safe direction: the record builds, and the build's already-shipped exit finds work that is truly done. A PR that merged after the release and matches the title or covers the Key Files still marks the record `shipped` (#4432).
+- **Red flags:** A record whose only mention merged before its latest claim release reported as `shipped`, or given a Close proposal. A PR merged after the release that matches the title or covers the Key Files no longer excluding the record as `shipped`. The `kept:` line for a record with no release at all.
+
 ### 3. Name several records at once
 - **URL:** `plugin/skills/dispatch/SKILL.md` `#N[,#M,#O...]` bullet
 - **Action:** Run `/claude-tweaks:dispatch #N,#M` where `#N` is excluded and `#M` is eligible. `#N` appears in the `notFound` report with the same named reason as step 2; `#M`'s group proceeds to Step 4.
@@ -73,3 +81,4 @@ files:
 - Updated during build of #3278: Step 2c covers the non-removing `neighbour-in-flight` reason. `#N` prints the waits line and still dispatches. `neighbour-in-flight-report.md` added to `files:`
 - Updated during build of #4314: Step 2d covers a follow-up record filed during a PR's build, which is no longer read as `shipped` by that PR. `shipped-candidate.js` and `linked-prs.js` added to `files:`
 - Updated during wrap-up of #4588: Step 2 names the open-PR line's `dispatch resume` suffix, appended only when `dispatch-resume.js` exits 0. `dispatch-resume.js` added to `files:`
+- Updated during build of #4432: Step 2e covers a record whose only merged mention predates its latest claim release, which is kept with a `kept:` log line instead of read as `shipped`. `shipped-releases.js` added to `files:`
