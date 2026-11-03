@@ -99,7 +99,8 @@ fences. The check ran only when that file parses to an object with a `rows` arra
 an empty file (the CLI refused its argv or never started) and unparseable JSON all mean it did not (the note's exit code
 reads `unknown` when the file holds none). Exit 2 is a missing `gh` (the MCP-transport case of
 `_shared/github-write-transport.md`, where this CLI has no path), an unresolved repo or main checkout,
-or an unreadable snapshot; exit 4 is a failed linked-PR read.
+an unreadable snapshot, or an origin host with no GitHub signal (`failed.message` names the host and the
+`GH_HOST={host}` opt-in); exit 4 is a failed linked-PR read.
 
 ## Step 2: Merge and dedupe
 
@@ -285,8 +286,8 @@ and showing nothing for.
 
 The two non-record rows from Step 3.5 render first, each on its own line, each independently
 omitted when its own condition doesn't hold. Then, only when Step 1's file shows the stuck check did
-not run, one note line (`{failed.code}` reads `unknown` when the file holds none); the ranked table
-follows:
+not run, one note line (`{failed.code}` reads `unknown` when the file holds none; on exit 2 the
+parenthetical reads `(exit 2: {failed.message})`); the ranked table follows:
 
 ```markdown
 ⚠ Merge-lane circuit breaker tripped {trippedAt} by #{trippedBy.record}: {trippedBy.reason} — run /claude-tweaks:backlog refine --reset-breaker

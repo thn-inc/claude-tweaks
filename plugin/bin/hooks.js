@@ -11,7 +11,9 @@
 // that never actually matched pre-tool-use.js's real behavior. The directly
 // invoked CLI verbs below (record-worktree, resolve-run-dir, close-run, …)
 // are a separate contract and may exit non-zero on malformed or rejected
-// input.
+// input. A VERBS command's unexpected exception exits 1 with
+// `claude-tweaks: {verb}: {message}` on stderr (#4932), while EVENTS keep exit
+// 0 through the entry catch.
 'use strict';
 // #3074: Bash prefilter fast path. hooks.json registers ONE unconditional
 // Bash handler per tool-use event, so every Bash call spawns this process —
@@ -955,11 +957,11 @@ async function runRecordPr(argv) {
     // Best-effort: a run with no recorded worktree, or a derivation that
     // comes back null, simply records {number, url} as before.
     // Guarded because this is the first external-process call in a verb that
-    // previously had none: main()'s own `.catch(() => process.exit(0))` would
-    // swallow a throw here and skip writeRunState entirely, exiting 0 with no
-    // output — the PR silently never recorded, while every other failure
-    // branch in this verb prints a "not recorded" notice. Degrading to the
-    // pre-#1672 {number, url} write is the correct best-effort outcome.
+    // previously had none: without the guard, a throw here would exit 1 with
+    // `claude-tweaks: record-pr: …` (#4932) and still skip writeRunState — the
+    // PR would not be recorded, while every other failure branch in this verb
+    // prints a "not recorded" notice. Degrading to the pre-#1672 {number, url}
+    // write is the correct best-effort outcome.
     let prBranch = null;
     try {
       prBranch = deriveBranch(repoRootOf(runDir), ctxLib.readRunState(runDir)?.worktree || null);
@@ -1255,7 +1257,7 @@ async function runTeardownRun(argv) {
 
 async function runArchiveRun(argv) {
   const {
-    archiveRunDir, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, listSpecDirs, listStagedItems, consoleReplacedByAutoMerge,
+    archiveRunDir, archiveCommitLine, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, listSpecDirs, listStagedItems, consoleReplacedByAutoMerge,
     TIEBREAK_COVERAGE_HINT, CANT_TELL_UNFILED_HINT, unfiledCantTellFindings,
   } = require('./lib/reconcile/archive-merged');
   const { NON_TERMINAL } = require('./lib/hooks/run-integrity');
@@ -1377,7 +1379,10 @@ async function runArchiveRun(argv) {
       return 0;
     }
   }
-  // Output below is informational human text, never parsed by any caller
+  // Output below is informational human text. The one line a caller reads is
+  // the success line `claude-tweaks: archived {run-id}` (skills/tidy/SKILL.md
+  // and skills/release/SKILL.md key on it); the "moved:" and "committed" lines
+  // are informational only, and any added line must leave that one intact
   // (skills/flow/multispec-review-console.md's parent-dir archival is a
   // future caller of this verb, not a consumer of this stdout format).
   // The "moved:" lines are read from archiveRunDir's own movedEntries
@@ -1391,12 +1396,15 @@ async function runArchiveRun(argv) {
     // `hint`, never a string match against a specific reason code.
     const hintSuffix = typeof result.hint === 'string' && result.hint.length ? ` — ${result.hint}` : '';
     process.stdout.write(`claude-tweaks: archival refused — ${result.reason}${hintSuffix}\n`);
+    // #3721: a refusal after the archive commit landed still reports that commit.
+    if (result.commit) process.stdout.write(`${archiveCommitLine(mainRoot, result.commit)}\n`);
     return 0;
   }
   for (const name of result.movedEntries) {
     process.stdout.write(`moved: ${name}\n`);
   }
   process.stdout.write(`claude-tweaks: archived ${path.basename(runDir)}\n`);
+  if (result.commit) process.stdout.write(`${archiveCommitLine(mainRoot, result.commit)}\n`);
   return 0;
 }
 
@@ -1585,16 +1593,10 @@ async function runCheckPassReentry(argv) {
   }
   // Disclosure goes to stderr: stdout is reserved for the verdict JSON alone.
   reportWorktreeLocalFallback(runDir, worktreeLocalFallback, process.stderr);
-  let verdict;
-  try {
-    verdict = require('./lib/flow/consolidated-pass').checkPassReentry(runDir, {
-      online: argv.slice(3).includes('--online'),
-      sessionId: process.env.CLAUDE_CODE_SESSION_ID,
-    });
-  } catch (e) {
-    process.stderr.write(`claude-tweaks: check-pass-reentry failed — ${e.message}\n`);
-    return 1;
-  }
+  const verdict = require('./lib/flow/consolidated-pass').checkPassReentry(runDir, {
+    online: argv.slice(3).includes('--online'),
+    sessionId: process.env.CLAUDE_CODE_SESSION_ID,
+  });
   await new Promise((resolve) => process.stdout.write(`${JSON.stringify(verdict)}\n`, resolve));
   return 0;
 }
@@ -1803,7 +1805,9 @@ async function runReconcileBackground(argv) {
   // blocking failure — this process is detached (spawn'd with
   // `detached: true, stdio: 'ignore'` and unref'd) and nothing reads its
   // exit code or stdout, so every path below returns 0 and best-effort
-  // swallows its own errors rather than surfacing them anywhere.
+  // swallows its own errors rather than surfacing them anywhere. A throw
+  // outside those catches (a require, the lock acquire, its finally release)
+  // exits 1 per #4932, equally unread.
   const cwd = process.cwd();
   const { reconcile } = require('./lib/reconcile');
   const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
@@ -1870,7 +1874,9 @@ async function runReconcileBackground(argv) {
   let summary = {};
   try {
     const r = await reconcile({ cwd, checks: BACKGROUND_CHECKS, sessionId, budgetMs: BACKGROUND_BUDGET_MS });
+    const { classifyEntry, isFailedRun, failedRecordNumbers } = require('./lib/reconcile/post-merge');
     const postMergeEntries = r.postMerge || [];
+    const failedRanEntries = postMergeEntries.filter(isFailedRun);
     const parentsClosedBy = (counts) => postMergeEntries
       .filter(counts)
       .reduce((n, e) => n + (Number.isInteger(e.parentsClosed) ? e.parentsClosed : 0), 0);
@@ -1879,11 +1885,18 @@ async function runReconcileBackground(argv) {
       // Merged runs whose Steps 4.0/4.0b this pass ran late (#4599) and the parents it closed below
       // the oversight floor: the background pass is the only place those closes happen unattended,
       // so without a count the next SessionStart would never mention one.
-      postMergeRan: postMergeEntries.filter((e) => e.action === 'ran' && !e.step40Failed).length,
-      // Runs whose steps did not complete: Step 4.0 itself failed (non-zero exit, unreadable envelope: a SKIP
-      // marker was written, Step 4.0b never ran), or the check threw (no marker, and the run is not deferred).
-      // Either way the parent waits for tidy's backstop, so they are never counted as ran.
-      postMergeFailed: postMergeEntries.filter((e) => (e.action === 'ran' && e.step40Failed) || e.reason === 'error').length,
+      postMergeRan: postMergeEntries.filter((e) => e.action === 'ran' && classifyEntry(e).verdict === 'clean').length,
+      // Runs whose steps did not complete cleanly, judged by post-merge.js's classifyEntry (#4897): Step 4.0
+      // failed (non-zero exit, unreadable envelope, or a non-clean word such as close-failed), Step 4.0b
+      // reported a parent failure, or the check threw (no marker, and the run is not deferred). They are never
+      // counted as ran. A failed Step 4.0 with no closing set skips Step 4.0b, so that parent waits for tidy's
+      // backstop; with a closing set Step 4.0b still runs and the parent stays open only if a record is unsettled.
+      postMergeFailed: failedRanEntries.length + postMergeEntries.filter((e) => e.reason === 'error').length,
+      // The record numbers those failed runs name (Step 4.0's four lists, carried on a loop entry whose Step 4.0
+      // printed a non-clean word), sorted and unique; empty when no failed run carried any.
+      postMergeFailedRecords: failedRecordNumbers(postMergeEntries),
+      // A failed run's Step 4.0 could not append a decisions.md line, so SessionStart must not point there.
+      postMergeFailedLogMissing: failedRanEntries.some((e) => e.logFailed === true),
       // Two disjoint counts, so SessionStart credits each close once and does no arithmetic: the parents
       // closed by runs that wrote their marker, and those closed by runs whose marker write failed
       // (closed on GitHub all the same, only the decisions.md marker is missing).
@@ -1978,7 +1991,19 @@ async function main(argv) {
       return 1;
     }
   }
-  if (verb) return verb.run(argv);
+  // #4932: a VERBS exception exits 1 here; EVENTS still fall through to the entry catch.
+  // The `await` is load-bearing: `return verb.run(argv)` would hand an async
+  // handler's rejection past this catch to the entry catch, exiting 0 again.
+  if (verb) {
+    try {
+      return await verb.run(argv);
+    } catch (err) {
+      try {
+        fs.writeSync(2, `claude-tweaks: ${cmd}: ${err && err.message ? err.message : String(err)}\n`);
+      } catch { /* stderr unusable — the exit code still carries the failure */ }
+      return 1;
+    }
+  }
   if (!EVENTS.includes(cmd)) {
     // #1586: every table verb already dispatched before this point — reaching
     // here means `cmd` is neither a hook event (EVENTS) nor any of the named

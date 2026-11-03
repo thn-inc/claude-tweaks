@@ -486,8 +486,8 @@ test('task-prompt.md: the claim-targets row lists --resume-pr', () => {
   assertPinned(TASK_PROMPT, /\[--run "\{minted-run-dir\}"\] \[--resume-pr "\{pr-url\}"\]/, 'claim-targets --resume-pr');
 });
 
-test('task-prompt.md: the Continuation call paragraph is not edited', () => {
-  assertPinned(TASK_PROMPT, /Every other sentence stays verbatim\./, 'continuation sentence');
+test('continuation-call.md: the Continuation call paragraph is not edited', () => {
+  assertPinned(read('continuation-call.md'), /Every other sentence stays verbatim\./, 'continuation sentence');
 });
 
 test('task-prompt.md: the fenced first-call template carries no RESUME_PR or resume-context', () => {
@@ -537,7 +537,7 @@ for (const [label, re] of FLOW_CLAIMS) {
 
 test('flow SKILL.md Step 2.8: the exit-code branch is unchanged and never reads resumedPr', () => {
   const step = flowStep28(FLOW_SKILL);
-  assertPinned(step, /Exit 0 → Step 3 \(claimed, or already this run's\)\. Exit 3\/4\/5\/6 \(contested or in-flight \/ transient \/ unverified \/ claims branch uncreatable\) → stop before the Config Manifesto\./, 'exit-code branch');
+  assertPinned(step, /Exit 0 → Step 3 \(claimed, or already this run's\)\. Exit 3\/4\/5\/6\/7 \(contested or in-flight \/ transient \/ unverified \/ claims branch uncreatable \/ claim permission denied\) → stop before the Config Manifesto\./, 'exit-code branch');
   assert.doesNotMatch(step, /resumedPr/);
   assert.match(`${step}\nresumedPr`, /resumedPr/, 'control: the ban pattern detects a planted mention');
 });

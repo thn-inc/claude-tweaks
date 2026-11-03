@@ -16,11 +16,12 @@
 //   node plugin/bin/release-notes-publish.js
 //
 // Exit codes: 0 applied, partially applied, or no-op (nothing to do —
-// fewer than 2 published releases, zero Release-Note: trailers in range, or
-// both targets already carry the exact rendered block); 1 a gh/git call
+// fewer than 2 published releases, no Release-Note: trailer left to render in
+// range — none at all, or only "No user-visible change" ones — or both
+// targets already carry the exact rendered block); 1 a gh/git call
 // failed.
 
-const { renderReleaseNotes, RELEASE_NOTE_FOOTER_RE } = require('./release-notes');
+const { renderReleaseNotes, extractReleaseNotes } = require('./release-notes');
 
 const HIGHLIGHTS_HEADING = '### Highlights';
 const FIELD = '\x1f';
@@ -43,16 +44,16 @@ function resolveTagPair(releases) {
 }
 
 // Parse `git log --first-parent --format=%H{FIELD}%B{RECORD}` output into
-// {sha, releaseNote} records — the shape renderReleaseNotes expects.
-// RELEASE_NOTE_FOOTER_RE is imported from release-notes.js, never a second
-// hand-typed copy of the pattern (AC7).
+// {sha, releaseNotes} records — the shape renderReleaseNotes expects.
+// extractReleaseNotes is imported from release-notes.js, never a second
+// hand-typed copy of the pattern (AC7); a bundled merge commit yields one note
+// per bundled record (#4634).
 function parseReleaseNotesFromLog(raw) {
   return String(raw || '').split(RECORD)
     .filter((chunk) => chunk.trim() !== '')
     .map((chunk) => {
       const [sha, body = ''] = chunk.split(FIELD);
-      const m = RELEASE_NOTE_FOOTER_RE.exec(body);
-      return { sha: (sha || '').trim(), releaseNote: m ? m[1].trim() : null };
+      return { sha: (sha || '').trim(), releaseNotes: extractReleaseNotes(body) };
     });
 }
 
@@ -109,7 +110,7 @@ function run(argv, deps) {
     const commits = parseReleaseNotesFromLog(raw);
     const block = renderReleaseNotes(commits);
     if (block === null) {
-      deps.stdout(`release-notes-publish: no Release-Note: trailers between ${pair.previous} and ${pair.current} — no-op\n`);
+      deps.stdout(`release-notes-publish: no Release-Note: trailers to render between ${pair.previous} and ${pair.current} — no-op\n`);
       return 0;
     }
 

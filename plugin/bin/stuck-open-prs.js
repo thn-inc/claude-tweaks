@@ -27,8 +27,9 @@
 // other exit, or output that is not a JSON object, is no verdict and renders an unreadable row.
 // Exit codes (a CLI-specific vocabulary — a row is data on stdout, so there is no exit 1 or 3):
 //   0  rows printed, possibly none
-//   2  malformed invocation, an unreadable or malformed --records file, `gh` absent, or the repo or
-//      the main checkout unresolved
+//   2  malformed invocation, an unreadable or malformed --records file, `gh` absent, the repo or
+//      the main checkout unresolved, or an origin host that is not a known GitHub host (refused before
+//      any gh call, #4933; `GH_HOST={host}` opts in)
 //   4  the batched linked-PR read failed; no row is printed, since no failed read is taken as "no PR"
 'use strict';
 
@@ -39,7 +40,7 @@ const { EXIT_ELIGIBLE, EXIT_REFUSED } = dispatchResume;
 const { fetchLinkedPRs } = require('./lib/issues/linked-prs');
 const { classifyClaimBlob } = require('./lib/issues/claims');
 const {
-  parseRepo, ghAvailable, remoteUrl, ghOptions,
+  gateOriginRepo, ghAvailable, remoteUrl, ghOptions,
 } = require('./lib/repo-resolve');
 const { LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
 const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
@@ -48,7 +49,8 @@ const { stuckCandidates, stuckRow } = require('./lib/dispatch/stuck-open-pr');
 
 const USAGE = 'usage: stuck-open-prs.js --records <path> [--help]\n'
   + '  prints one JSON line: {rows:[{number, pr, remedy, title, createdAt, labels}]} (exit 0)\n'
-  + '  exit 2 malformed invocation / unreadable --records / gh absent / repo or main checkout unresolved;\n'
+  + '  exit 2 malformed invocation / unreadable --records / gh absent / repo or main checkout unresolved /\n'
+  + '    origin host not a known GitHub host (refused; GH_HOST={host} opts in);\n'
   + '  exit 4 the linked-PR read failed; either prints {failed:{code, message}} once the invocation parsed\n';
 
 // ---- real deps ----
@@ -63,10 +65,18 @@ function ghRunner(args) {
   }));
 }
 
+// The origin through the gate (#4933): { host, owner, repo }, { refusal } for an origin host the gate
+// does not know, or null when the origin is absent or unparseable.
+function repoFromOrigin(remote, gateDeps) {
+  const gated = gateOriginRepo(remote, gateDeps);
+  if (gated.refusal) return { refusal: gated.refusal };
+  return gated.spec;
+}
+
 const realDeps = {
   readFile: (p) => fs.readFileSync(p, 'utf8'),
   ghAvailable: () => ghAvailable(),
-  repo: () => parseRepo(remoteUrl()),
+  repo: () => repoFromOrigin(remoteUrl()),
   mainRoot: () => mainCheckoutRoot(process.cwd()),
   linked: ({
     numbers, owner, repo, host,
@@ -144,13 +154,14 @@ function readVerdict(deps, n) {
 function run(argv, deps) {
   const opts = parseArgs(argv);
   if (opts.help) { deps.stdout(USAGE); return 0; }
-  const fail = (code, message) => { deps.stderr(`stuck-open-prs.js: ${message}\n${code === 2 ? USAGE : ''}`); return code; };
+  // `usage` defaults to exit 2's usage text; the origin refusal (#4951) passes false, matching the other gated CLIs.
+  const fail = (code, message, { usage = code === 2 } = {}) => { deps.stderr(`stuck-open-prs.js: ${message}\n${usage ? USAGE : ''}`); return code; };
   if (opts.error) return fail(2, opts.error);
   if (opts.records === null) return fail(2, '--records is required');
   // Past argv, a failure also leaves the could-not-run state on stdout, for a caller that redirects it to a file.
-  const failRun = (code, message) => {
+  const failRun = (code, message, options) => {
     deps.stdout(`${JSON.stringify({ failed: { code, message } })}\n`);
-    return fail(code, message);
+    return fail(code, message, options);
   };
 
   const read = readRecords(deps, opts.records);
@@ -166,6 +177,7 @@ function run(argv, deps) {
   if (!mainRoot) return failRun(2, 'could not resolve the main checkout root');
   let repo = null;
   try { repo = deps.repo(); } catch { /* refused just below */ }
+  if (repo && repo.refusal) return failRun(2, repo.refusal, { usage: false });
   if (!repo || !repo.owner || !repo.repo) return failRun(2, 'could not resolve owner/repo from the origin remote');
 
   const rows = [];
@@ -233,6 +245,6 @@ function stuckRowFor(deps, {
   }
 }
 
-module.exports = { run, parseArgs, realDeps };
+module.exports = { run, parseArgs, realDeps, repoFromOrigin };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

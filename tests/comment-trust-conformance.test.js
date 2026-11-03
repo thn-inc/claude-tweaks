@@ -192,6 +192,8 @@ comments\`) and take the last one carrying that heading — test the heading, ne
 position. A \`.comments[-1]\` shortcut holds only when the brief happens to be the most recent
 comment, which nothing about the record predicts. Go straight to
 Step 2 with it.`;
+const PRE_CHANGE_DEMO_PACKET = `Fetch every comment and take the earliest comment by
+\`createdAt\` whose first line is exactly \`<!-- acceptance-packet: v1 -->\`. Go straight to Step 2 with it.`;
 const PRE_CHANGE_DEMO_POINTER = `**Under \`pr-first\` the brief lives on the PR** (\`wrap-up/verification-brief.md\` Step 4's \`pr\`
 object present branch), and the issue carries only the unmarkered pointer line \`Verification Brief
 posted to PR #{pr-number}: {pr-url}\`. When no issue comment carries the heading but one carries
@@ -228,6 +230,7 @@ const TRUST_CITATION = /Trusted authors/;
 const SKIP_NOTICE = /skipped marker comment|skip notice/;
 
 const DEMO_PASSAGES = [
+  ['issue-side packet read', (t) => paragraphContaining(t, '`createdAt` whose first line is exactly'), PRE_CHANGE_DEMO_PACKET],
   ['issue-side brief scan', (t) => paragraphContaining(t, 'comment **containing** `## Verification Brief`'), PRE_CHANGE_DEMO_BRIEF],
   ['pointer paragraph', (t) => paragraphContaining(t, 'posted to PR #{pr-number}: {pr-url}`. When no issue comment'), PRE_CHANGE_DEMO_POINTER],
   ['PR run-comment lookup step 2', (t) => listItem(t, '2. **Read its comments by marker**', '3. **Fail open, visibly.**'), PRE_CHANGE_DEMO_LOOKUP],

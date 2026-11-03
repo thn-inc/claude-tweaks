@@ -7,6 +7,9 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { checkFirstCallArtifacts, checkFirstCallStamp } = require('../../../plugin/bin/lib/dispatch/first-call-artifact-check');
 const { claimFilePath } = require('../../../plugin/bin/lib/issues/claims');
+const { manifestInit } = require('../../../plugin/bin/lib/flow/manifest');
+const { run: runGauge } = require('../../../plugin/bin/context-gauge');
+const { gitRepo } = require('../../helpers/git-fixtures');
 
 const REPO_SLUG = 'acme/widgets';
 const RUN_ID = '2026-09-29T154722-record-2806';
@@ -596,6 +599,128 @@ test('parseNextSteps with SECOND_CALL_STEPS: the second call\'s steps parse, a f
     assert.equal(parsed.reason, 'next-steps-invalid', step);
     assert.ok(parsed.message.includes(`accepted: ${SECOND_CALL_STEPS.join(', ')}`), parsed.message);
   }
+});
+
+// #4358 characterization: what a flat NEXT_STEPS returns with no targets. Passed before the
+// per-record form existed.
+test('parseNextSteps: a flat value returns exactly { ok, steps }; its refusals are unchanged', () => {
+  const flat = { ok: true, steps: ['test'] };
+  const reply = handoffReply('NEXT_STEPS: test');
+  assert.deepEqual(parseNextSteps(reply), flat);
+  assert.deepEqual(parseNextSteps(reply, FIRST_CALL_STEPS), flat);
+  assert.deepEqual(parseNextSteps('NEXT_STEPS: test\nNEXT_STEPS: build\n', FIRST_CALL_STEPS), flat, 'the first line wins');
+  for (const [line, reason] of [
+    [null, 'next-steps-missing'],
+    ['NEXT_STEPS:  ', 'next-steps-empty'],
+    ['NEXT_STEPS: test,', 'next-steps-invalid'],
+    ['NEXT_STEPS: test,test', 'next-steps-duplicate'],
+  ]) {
+    assert.equal(parseNextSteps(handoffReply(line), FIRST_CALL_STEPS).reason, reason, String(line));
+  }
+  assert.equal(resolveFirstCallGate({ reply, artifact: undefined }), 'handoff');
+});
+
+// ---- #4358: the per-record NEXT_STEPS form of a multi-spec handoff ----
+
+test('AC1.2: a real gauge handoff round-trips through the parse -- same steps per record, the same record-steps= token as its resume', async () => {
+  const root = gitRepo();
+  try {
+    const runDir = path.join(root, '.claude-tweaks', 'pipelines', RUN_ID);
+    fs.mkdirSync(runDir, { recursive: true });
+    fs.writeFileSync(path.join(runDir, 'config.yml'), 'mode: auto\n');
+    assert.equal(manifestInit({ runDir, specs: [12, 34] }).ok, true);
+    const usage = { input_tokens: 2, cache_read_input_tokens: 249998, cache_creation_input_tokens: 0, output_tokens: 10 };
+    const transcript = path.join(root, 'agent-t.jsonl');
+    fs.writeFileSync(transcript, `${[
+      JSON.stringify({ type: 'user', timestamp: '2026-11-03T10:00:00.000Z', message: { role: 'user', content: 'dispatch prompt' } }),
+      JSON.stringify({ type: 'assistant', timestamp: '2026-11-03T10:01:00.000Z', message: { id: 'm1', role: 'assistant', content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn', usage } }),
+    ].join('\n')}\n`);
+    const err = [];
+    const code = await runGauge(['--run', runDir, '--transcript', transcript, '--record-steps', '#12:none;#34:build,test'], {
+      cwd: () => root, mainRoot: root, env: {}, now: () => NOW, stdout: () => {}, stderr: (s) => err.push(s),
+    });
+    assert.equal(code, 0, err.join(''));
+    const handoff = JSON.parse(fs.readFileSync(path.join(runDir, 'handoff.json'), 'utf8'));
+    const token = /(?:^| )(record-steps=\S+)/.exec(handoff.resume)[1];
+
+    const parsed = parseNextSteps(handoffReply(`NEXT_STEPS: ${token.slice('record-steps='.length)}`), FIRST_CALL_STEPS, { targets: ['#12', '#34'] });
+    assert.deepEqual(parsed, {
+      ok: true,
+      steps: handoff.nextSteps,
+      recordSteps: { '#12': [], '#34': ['build', 'test'] },
+      stepArg: token,
+    });
+    assert.deepEqual(parsed.recordSteps, handoff.recordSteps);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('parseNextSteps: a second call\'s per-record value parses under SECOND_CALL_STEPS and fails next-steps-invalid-step under FIRST_CALL_STEPS', () => {
+  const { SECOND_CALL_STEPS } = require('../../../plugin/bin/lib/dispatch/first-call-artifact-check');
+  const reply = handoffReply('NEXT_STEPS: #12:none;#34:test,review,polish,wrap-up');
+  const targets = ['#12', '#34'];
+  assert.deepEqual(parseNextSteps(reply, SECOND_CALL_STEPS, { targets }), {
+    ok: true,
+    steps: ['test', 'review', 'polish', 'wrap-up'],
+    recordSteps: { '#12': [], '#34': ['test', 'review', 'polish', 'wrap-up'] },
+    stepArg: 'record-steps=#12:none;#34:test,review,polish,wrap-up',
+  });
+  const refused = parseNextSteps(reply, FIRST_CALL_STEPS, { targets });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.reason, 'next-steps-invalid-step');
+  assert.match(refused.message, /^handoff NEXT_STEPS: #34: unknown step "review"/);
+});
+
+test('parseNextSteps: stepArg is canonical however the reply spaced the value, and needs no targets', () => {
+  const parsed = parseNextSteps(handoffReply('NEXT_STEPS:  #12 : none ; #34 : build , test '), FIRST_CALL_STEPS);
+  assert.equal(parsed.stepArg, 'record-steps=#12:none;#34:build,test');
+  assert.deepEqual(parsed.recordSteps, { '#12': [], '#34': ['build', 'test'] });
+});
+
+test('parseNextSteps: a flat value under more than one target fails next-steps-flat-multi-record; one target stays flat', () => {
+  const targets = ['#12', '#34'];
+  for (const line of ['NEXT_STEPS: test', 'NEXT_STEPS: test,review', 'NEXT_STEPS: wrapup']) {
+    const refused = parseNextSteps(handoffReply(line), FIRST_CALL_STEPS, { targets });
+    assert.equal(refused.ok, false, line);
+    assert.equal(refused.reason, 'next-steps-flat-multi-record', line);
+    assert.match(refused.message, /#12, #34/, line);
+  }
+  assert.deepEqual(parseNextSteps(handoffReply('NEXT_STEPS: test'), FIRST_CALL_STEPS, { targets: ['#12'] }), { ok: true, steps: ['test'] });
+  assert.deepEqual(parseNextSteps(handoffReply('NEXT_STEPS: test'), FIRST_CALL_STEPS, { targets: null }), { ok: true, steps: ['test'] });
+  assert.equal(parseNextSteps(handoffReply('NEXT_STEPS: '), FIRST_CALL_STEPS, { targets }).reason, 'next-steps-empty', 'empty is still empty');
+});
+
+test('parseNextSteps: a flat value under one target keeps the flat refusals', () => {
+  const targets = ['#12'];
+  assert.equal(parseNextSteps(handoffReply('NEXT_STEPS: tset'), FIRST_CALL_STEPS, { targets }).reason, 'next-steps-invalid');
+  assert.equal(parseNextSteps(handoffReply('NEXT_STEPS: test,test'), FIRST_CALL_STEPS, { targets }).reason, 'next-steps-duplicate');
+});
+
+test('parseNextSteps: a per-record line that disagrees with the targets, or is malformed, fails with its grammar reason', () => {
+  const targets = ['#12', '#34'];
+  for (const [line, reason] of [
+    ['NEXT_STEPS: #34:test', 'next-steps-target-mismatch'],
+    ['NEXT_STEPS: #12:none;#34:test;#56:test', 'next-steps-target-mismatch'],
+    ['NEXT_STEPS: #12:none;#34:none', 'next-steps-nothing-left'],
+    ['NEXT_STEPS: #12:none;#34', 'next-steps-malformed-entry'],
+    ['NEXT_STEPS: #12:none;#34:test,build', 'next-steps-out-of-order'],
+  ]) {
+    const refused = parseNextSteps(handoffReply(line), FIRST_CALL_STEPS, { targets });
+    assert.equal(refused.ok, false, line);
+    assert.equal(refused.reason, reason, line);
+    assert.match(refused.message, /^handoff NEXT_STEPS: /, line);
+  }
+});
+
+test('resolveFirstCallGate forwards targets: flat under several blocks, a valid per-record line hands off, a missing target blocks', () => {
+  const targets = ['#12', '#34'];
+  const gate = (line, over = {}) => resolveFirstCallGate({ reply: handoffReply(line), artifact: UNREAD_ARTIFACT, targets, ...over });
+  assert.equal(gate('NEXT_STEPS: test'), 'blocked');
+  assert.equal(gate('NEXT_STEPS: #12:none;#34:build,test'), 'handoff');
+  assert.equal(gate('NEXT_STEPS: #34:build,test'), 'blocked');
+  assert.equal(gate('NEXT_STEPS: #12:none;#34:review'), 'blocked', 'a step outside the first call blocks');
+  assert.equal(gate('NEXT_STEPS: test', { targets: undefined }), 'handoff', 'absent targets behaves as before');
 });
 
 // ---- #3661: checkFirstCallStamp -- the first call's runner-written pass stamp at HEAD ----
