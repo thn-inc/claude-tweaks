@@ -42,12 +42,11 @@ function writeReleaseTimes(file, candidates, linkedPRs, deps = {}) {
   if (targets.length > 0) {
     const reader = deps.reader || createClaimReader();
     for (const { number } of targets) {
-      let result;
+      let result = null;
       let cause = 'no answer';
       try {
         result = reader.read(number);
       } catch (err) {
-        result = null;
         cause = (err && err.message) || 'read threw';
       }
       if (!result || !Object.prototype.hasOwnProperty.call(result, 'content')) {
