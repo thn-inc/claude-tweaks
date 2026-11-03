@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-03T00:53:03.557Z",
+  "computedAt": "2026-11-03T01:50:25.302Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -555,7 +555,7 @@
       },
       {
         "number": 4360,
-        "updatedAt": "2026-10-31T09:57:35Z",
+        "updatedAt": "2026-11-03T01:26:30Z",
         "state": "OPEN"
       },
       {
@@ -565,7 +565,7 @@
       },
       {
         "number": 4358,
-        "updatedAt": "2026-11-02T23:39:34Z",
+        "updatedAt": "2026-11-03T01:46:13Z",
         "state": "OPEN"
       },
       {
@@ -6409,90 +6409,6 @@
           "grants": {
             "build": true,
             "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: build of #4168 (SDD Task 3 review, parked as pre-existing)\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\n`plugin/bin/lib/declined-learning/store.js` sets `STORE_PATH = path.join('.claude-tweaks', 'declined-learning', 'store.json')` (and `LOCK_PATH` alike) — a cwd-relative path. `storePath()` returns it unchanged, so every `readStore`/`writeStore`/`recordDecline`/`lookupDecline`/`listDeclined` call resolves against whatever directory the calling process runs in.\n\nUnder `integration-model: pr-first` a pipeline runs inside a worktree (`.claude/worktrees/{name}/`). `.claude-tweaks/declined-learning/` is gitignored, so a decline written there lands in the worktree's private copy and is deleted when the reconciler reaps the worktree. The next run, from the main checkout or another worktree, reads an empty store, and the declined insight re-surfaces.\n\nWriters that hit this from a worktree: `bin/declined-learning.js record-decline` (reflect full-mode \"Don't capture\", /feedback) and, since #4168, `bin/reflect-apply.js`'s `decline` destination. Readers: `/feedback` session-evaluation, `reflect/SKILL.md` dismissedSubjects, `reflect/full-mode.md` lookup, and `bin/lib/reconcile/index.js` `pruneDeclines()`.\n\nRun directories already solve the same problem through `$RUN_ROOT` anchoring (`_shared/pipeline-run-dir.md`, [IL-127]): artifacts resolve under the main checkout, never under the cwd worktree.\n\n## Deliverables\n\n- `store.js` resolves `STORE_PATH`/`LOCK_PATH` under the main checkout root (the same `$RUN_ROOT` resolution `_shared/pipeline-run-dir.md` uses — reuse its existing resolver, do not write a second one), so a call from any worktree of the repo reads and writes one store.\n- Every existing caller keeps its current call shape; none needs to pass a root.\n- A test proves a decline recorded with cwd inside a linked worktree is visible to a lookup with cwd at the main checkout.\n\n## Acceptance Criteria\n\n- [ ] With cwd in a linked worktree, `recordDecline` writes `{main-checkout}/.claude-tweaks/declined-learning/store.json`, and no store file appears under the worktree.\n- [ ] `lookupDecline` from the main checkout finds a decline recorded from a worktree (test reverts red against the cwd-relative path).\n- [ ] Outside a git repository, the store keeps today's cwd-relative behavior (degrade-open, never throws).\n- [ ] `npm test` passes.\n\n## Release Note\n\nDeclining a reflect or feedback insight from a worktree now sticks: the decline is remembered after the worktree is cleaned up, so the same insight is not proposed again.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/declined-learning/store.js` — anchor STORE_PATH/LOCK_PATH at the main checkout\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-10-25T23:23:08Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 4360,
-        "state": "OPEN",
-        "title": "Anchor the declined-learning store at the main checkout — a decline recorded from a worktree is lost on reap",
-        "updatedAt": "2026-10-31T09:57:35Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "medium",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
           },
           "bot": {
             "inProgress": false,
