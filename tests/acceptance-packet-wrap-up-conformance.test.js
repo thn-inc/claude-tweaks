@@ -184,6 +184,30 @@ test('wrap-up Phase 1 runs the snapshot', () => {
   }
 });
 
+// #4612: new prose, so each claim is proven red on a copy with only that claim stripped, the
+// throw matched to the claim's own message (skill-prose-conformance-tests).
+function assertClaim(text, pattern, label) {
+  assert.ok(pattern.test(text), label);
+}
+
+function assertClaimGoesRed(text, pattern, label) {
+  assertClaim(text, pattern, label);
+  const mutated = text.replace(pattern, '');
+  assert.notStrictEqual(mutated, text, `${label}: the control stripped nothing`);
+  assert.throws(() => assertClaim(mutated, pattern, label), { message: label });
+}
+
+test('snapshot encodes the recording', () => {
+  const phase1 = section(read('wrap-up/SKILL.md'), '## Phase 1: ESTABLISH — what happened here?', '## Phase 2: ROUTE — where does each learning belong?');
+  const snapshot = flat(between(phase1, '**Snapshot the packet inputs', '\n\n'));
+  assertClaimGoesRed(snapshot, /it also encodes the recording while the QA screenshots are on disk/, 'the snapshot paragraph names the recording');
+});
+
+test('gather reads the recording from the snapshot', () => {
+  const bullet = flat(between(step4(), '- `--run` —', '- `--spec` —'));
+  assertClaimGoesRed(bullet, /The automatic recording arrives through the snapshot, with no flag/, 'the --run bullet says the recording needs no flag');
+});
+
 test('ac-results shape is stated, with one example of each id kind', () => {
   const body = flat(step3());
   assert.ok(body.includes('{ "1": "met", "2a": "not met", "AC1": "partially met" }'), 'a numbered id and a positional id');

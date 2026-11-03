@@ -305,7 +305,7 @@ confirmed live; a `local` target's links carry none. The Deploy status section s
 
 ## Recording
 
-**Source of frames.** The recording is an animated GIF built from the step screenshots the pipeline's own happy-path stories already wrote to their `SCREENSHOT_PATH` directories. No new browser run, and the recording step never starts a server. Negative stories are excluded, so error screens never enter it. Video is out of scope.
+**Source of frames.** The recording is an animated GIF built from the step screenshots the pipeline's own happy-path stories already wrote to their `SCREENSHOT_PATH` directories. No new browser run, and the recording step never starts a server. Negative stories are excluded, so error screens never enter it. A story id missing from a readable index, a `legacy-{slug}` id included, records nothing with no-happy-path-screenshots, since it could be a tag-only negative story. Video is out of scope.
 
 **Local base URL.** A recording needs the base URL the story run itself was given, whose host is `localhost`, `127.0.0.1` or `::1`. Nothing auto-detects a server.
 
