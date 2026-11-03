@@ -138,7 +138,7 @@ const RULES = [
   patternRule(`${TOKEN_START}(?<value>eyJ${JWT_SEGMENT}*(?:\\.${JWT_SEGMENT}+)+)`, 'g'),
   // `_` and `-` count as boundaries, as they do in packet-links.js, so `prefix_sk_live_abc` keeps
   // only `prefix_`. A letter or digit does not, so `task_list` is left alone.
-  patternRule(`(?:(?<![A-Za-z0-9])|${AFTER_ESCAPE})(?<value>(?:sk[-_]|ghp_|gho_)${BARE_VALUE})`, 'gi'),
+  patternRule(`(?:(?<![A-Za-z0-9])|${AFTER_ESCAPE})(?<value>(?:sk[-_]|gh[pousr]_|github_pat_)${BARE_VALUE})`, 'gi'),
   // A local part may hold an apostrophe but not start with one, so `'bob@x.com'` keeps its quotes.
   patternRule(`(?<!${ADDRESS_CHAR})(?<value>(?=${ADDRESS_CHAR})(?:${ADDRESS_CHAR}|'){1,64}@${ADDRESS_HOST_LABEL}(?:\\.${ADDRESS_HOST_LABEL})*)`, 'g'),
 ];

@@ -119,7 +119,11 @@ const SHAPES = [
   ['api_key=sk_live_123abc', ['sk_live_123abc', 'live_123abc', '123abc']],
   ['sk_live_abc', ['sk_live_abc', 'live_abc']],
   ['ghp_abc123def', ['ghp_abc123def', 'abc123def']],
-  ['eyJhbGciOiJIUzI1NiJ9.e30.abc', ['eyJhbGciOiJIUzI1NiJ9.e30.abc', 'eyJhbGciOiJIUzI1NiJ9', 'e30.abc']],
+  ['ghs_abc123def', ['ghs_abc123def', 'abc123def']],
+  ['ghu_abc123def', ['ghu_abc123def', 'abc123def']],
+  ['ghr_abc123def', ['ghr_abc123def', 'abc123def']],
+  ['github_pat_11ABCDE_abc123def', ['github_pat_11ABCDE_abc123def', '11ABCDE_abc123def', 'abc123def']],
+  ['eyJhbGciOiJIUzI1NiJ9.e30.abc',['eyJhbGciOiJIUzI1NiJ9.e30.abc', 'eyJhbGciOiJIUzI1NiJ9', 'e30.abc']],
   ['mail bob.smith+a@example.co.uk now', ['bob.smith+a@example.co.uk', 'bob.smith', 'example.co.uk']],
 ];
 const CHANNELS = [
