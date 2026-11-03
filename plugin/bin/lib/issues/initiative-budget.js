@@ -69,7 +69,10 @@ function permittedInitiative(input) {
   // Budget exhaustion is checked before the per-fix caps so the reason a run stops is the
   // budget itself, not whichever cap the next candidate happened to trip.
   const used = Number.isInteger(spent) && spent >= 0 ? spent : 0;
-  const sensitiveHit = fileStrings.find((f) => isSensitivePath(f, globs));
+  // A second, case-folded match: a case-insensitive filesystem lands `Docs/A.md` on a sensitive
+  // `docs/a.md`, and `isSensitivePath` is case-sensitive. Holds only more.
+  const lowerGlobs = globs.map((g) => g.toLowerCase());
+  const sensitiveHit = fileStrings.find((f) => isSensitivePath(f, globs) || isSensitivePath(f.toLowerCase(), lowerGlobs));
 
   // `hold` is what wrap-up/reference-sweep.md Step 4 writes into the finding's `hold` field and
   // the staged file's `Hold:` header. `floor: true` marks a condition no human click at an

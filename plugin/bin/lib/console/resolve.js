@@ -12,7 +12,7 @@ const path = require('path');
 const { evaluateMaturation } = require('../issues/grant-maturation');
 const { resolveRecords } = require('../wrap-up/pack');
 const { SDD_RULING_REASONS, sddRulingDeferralReason } = require('./sdd-ruling');
-const { REFERENCE_REPAIR_REASONS, referenceRepairHoldReason, referenceFindingsByFile } = require('./reference-repair');
+const { REFERENCE_REPAIR_REASONS, referenceRepairHoldReason, referenceFindingsByFile, readableGlobs } = require('./reference-repair');
 const { planFilings } = require('./finding-filing');
 const { FINDING_PATH_CLASS, FINDING_LENS_CLASS, FINDING_PATH, FINDING_LOCATION, FINDING_LENS, parseCoincidence } = require('./finding-path');
 const { FINDINGS_ARTIFACT, VERDICT_LINE_END } = require('../tiebreak');
@@ -353,8 +353,7 @@ function readSnapshot({ runDir, deps }) {
     : Object.fromEntries(patchItems.map((item) => [item.name, deps.gitApplyCheck(item.path)]));
   // The merge-sensitive globs, for the reference-repair floor (#4636). Anything but a list of strings
   // reads as null, so a caller that omits it holds the repair rather than approves it.
-  const sensitivePaths = Array.isArray(deps.sensitivePaths) && deps.sensitivePaths.every((p) => typeof p === 'string') ? deps.sensitivePaths : null;
-  return { ...files, members, grants, grantsError, patchChecks, sensitivePaths };
+  return { ...files, members, grants, grantsError, patchChecks, sensitivePaths: readableGlobs(deps.sensitivePaths) };
 }
 
 function decisionLines(decisions) {

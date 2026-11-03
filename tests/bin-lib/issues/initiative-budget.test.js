@@ -295,6 +295,14 @@ test('#4636: the reported reason stays the first failing check', () => {
   assert.strictEqual(r.hold, true);
 });
 
+test('#4636: a case variant of a merge-sensitive path holds (a case-insensitive filesystem lands it on the sensitive file)', () => {
+  const r = permittedInitiative({ ...base(), fix: { ...base().fix, files: ['Docs/A.md'] }, sensitivePaths: ['docs/**'] });
+  assert.strictEqual(r.allowed, false);
+  assert.strictEqual(r.hold, true);
+  assert.match(r.reason, /merge-sensitive path "Docs\/A\.md"/);
+  assert.strictEqual(permittedInitiative({ ...base(), fix: { ...base().fix, files: ['Other/A.md'] }, sensitivePaths: ['docs/**'] }).allowed, true);
+});
+
 test('#4636: an unreadable sensitivePaths holds, an empty list does not', () => {
   for (const sensitivePaths of [undefined, 'docs/**', [7], null, {}]) {
     const r = permittedInitiative({ ...base(), sensitivePaths });

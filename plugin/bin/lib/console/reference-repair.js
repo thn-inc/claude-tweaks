@@ -21,9 +21,15 @@ const DIFF_GIT = 'diff --git ';
 const NEUTRAL_HEADERS = ['index ', 'old mode ', 'new mode ', 'similarity index ', 'dissimilarity index '];
 const HUNK_HEADER_RE = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/;
 
+// A side git would quote or cut (a `"`, a backslash, a tab or any other control character) names a
+// file differently to `git apply` than it reads here: a C-quoted `"tests/x.test.js"` or a name cut at
+// a tab lands on a test file the floor never saw. Git's own diff output quotes such paths, which
+// already hold, so no real repair is lost.
+const UNREADABLE_SIDE_CHAR_RE = /["\\\u0000-\u001f\u007f]/;
+
 // A side with an empty, `.` or `..` segment can name a file outside the one it appears to.
 function validSide(side) {
-  if (side === '') return false;
+  if (side === '' || UNREADABLE_SIDE_CHAR_RE.test(side)) return false;
   return side.split('/').every((seg) => seg !== '' && seg !== '.' && seg !== '..');
 }
 
@@ -156,7 +162,9 @@ function referenceRepairFloorHits(paths, sensitivePaths) {
   const hits = [];
   for (const p of paths) {
     if (isTestPath(p)) hits.push({ path: p, why: 'test file' });
-    else if (globs !== null && isSensitivePath(p, globs)) hits.push({ path: p, why: 'merge-sensitive' });
+    // A second, case-folded match: a case-insensitive filesystem lands `PACKAGE-LOCK.JSON` on the
+    // sensitive `package-lock.json`, and `isSensitivePath` is case-sensitive. Holds only more.
+    else if (globs !== null && (isSensitivePath(p, globs) || isSensitivePath(p.toLowerCase(), globs.map((g) => g.toLowerCase())))) hits.push({ path: p, why: 'merge-sensitive' });
   }
   return hits;
 }
@@ -228,4 +236,5 @@ module.exports = {
   stagedDiffPaths,
   referenceRepairFloorHits,
   referenceRepairFloorReason,
+  readableGlobs,
 };

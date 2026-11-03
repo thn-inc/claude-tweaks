@@ -546,6 +546,9 @@ const BYPASSES = {
   'rename from the test file': 'diff --git a/docs/a.md b/docs/a.md\nsimilarity index 100%\nrename from tests/x.test.js\nrename to docs/b.md\n',
   'traditional patch before any section': `--- a/tests/x.test.js\n+++ b/tests/x.test.js\n${HUNK}`,
   'traditional patch ahead of a clean section': `--- a/tests/x.test.js\n+++ b/tests/x.test.js\n${HUNK}${REF_DIFF}`,
+  'quoted rename-from side': 'diff --git a/"tests/x.test.js" b/docs/b.md\nsimilarity index 100%\nrename from "tests/x.test.js"\nrename to docs/b.md\n',
+  'tab inside a path (git cuts the name there)': `diff --git a/src/x.test.js\tj b/src/x.test.js\tj\n--- a/src/x.test.js\tj\n+++ b/src/x.test.js\tj\n${HUNK}`,
+  'trailing tab on a side': `diff --git a/src/x.test.js\t b/src/x.test.js\t\n--- a/src/x.test.js\t\t\n+++ b/src/x.test.js\t\t\n${HUNK}`,
 };
 
 test('#4636: the proved diff bypasses hold', () => {
@@ -555,6 +558,25 @@ test('#4636: the proved diff bypasses hold', () => {
     assert.strictEqual(item.resolution, 'pending', label);
     assert.strictEqual(item.reason, 'reference-repair-unclassified', label);
   }
+});
+
+test('#4636: a side git would quote or cut is unreadable, so the repair holds', () => {
+  const cases = {
+    'quoted rename-to': 'diff --git a/docs/a.md b/"tests/y.test.js"\nsimilarity index 100%\nrename from docs/a.md\nrename to "tests/y.test.js"\n',
+    'quoted copy-to': 'diff --git a/docs/a.md b/"src/y.test.js"\nsimilarity index 100%\ncopy from docs/a.md\ncopy to "src/y.test.js"\n',
+    'octal-escaped rename-from': 'diff --git a/"t\\145sts/x.test.js" b/docs/b.md\nsimilarity index 100%\nrename from "t\\145sts/x.test.js"\nrename to docs/b.md\n',
+    'backslash in a path': 'diff --git a/docs\\a.md b/docs\\a.md\n',
+    'control character in a path': 'diff --git a/docs/\u0001a.md b/docs/\u0001a.md\n',
+    'DEL in a path': 'diff --git a/docs/\u007fa.md b/docs/\u007fa.md\n',
+  };
+  for (const [label, body] of Object.entries(cases)) {
+    assert.strictEqual(stagedDiffPaths(`Hold: no\n\n${body}`), null, label);
+    const item = resolveRef(`Hold: no\n\n${body}`, refState());
+    assert.strictEqual(item.resolution, 'pending', label);
+    assert.strictEqual(item.reason, 'reference-repair-unclassified', label);
+  }
+  // A path with a space still parses, ended by the one trailing tab the recipe emits after it.
+  assert.deepStrictEqual(stagedDiffPaths('diff --git a/docs/my a.md b/docs/my a.md\n--- a/docs/my a.md\t\n+++ b/docs/my a.md\t\n' + HUNK), ['docs/my a.md']);
 });
 
 test('#4636: every other path line or header the parser cannot square with its section holds', () => {
@@ -614,6 +636,21 @@ test('#4636: referenceRepairFloorHits names each hit path and why', () => {
   assert.deepStrictEqual(referenceRepairFloorHits(['tests/a.test.js'], ['tests/**']), [{ path: 'tests/a.test.js', why: 'test file' }], 'one entry per path');
   assert.deepStrictEqual(referenceRepairFloorHits(['plugin/x.md'], null), [], 'no sensitive match without a readable list');
   assert.deepStrictEqual(referenceRepairFloorHits(null, []), []);
+});
+
+test('#4636: a case variant of a merge-sensitive path is a hit (a case-insensitive filesystem lands it on the sensitive file)', () => {
+  assert.deepStrictEqual(referenceRepairFloorHits(['PACKAGE-LOCK.JSON'], ['**/package-lock.json']), [{ path: 'PACKAGE-LOCK.JSON', why: 'merge-sensitive' }]);
+  assert.deepStrictEqual(referenceRepairFloorHits(['docs/a.md'], ['DOCS/**']), [{ path: 'docs/a.md', why: 'merge-sensitive' }]);
+  assert.deepStrictEqual(referenceRepairFloorHits(['plugin/a.md'], ['docs/**']), [], 'a different directory is still no hit');
+  const item = resolveRef('Hold: no\n\ndiff --git a/PACKAGE-LOCK.JSON b/PACKAGE-LOCK.JSON\n', refState(), { sensitivePaths: ['**/package-lock.json'] });
+  assert.strictEqual(item.resolution, 'pending');
+  assert.strictEqual(item.reason, 'reference-repair-held');
+});
+
+test('#4636: a whitespace-only line ends the header, so a Hold: line after it is body', () => {
+  for (const text of [`Hold: no\n   \nHold: yes\n\n${REF_DIFF}`, `Hold: no\n\t\nHeld: quoted\n\n${REF_DIFF}`]) {
+    assert.strictEqual(resolveRef(text, refState()).resolution, 'approve', JSON.stringify(text));
+  }
 });
 
 test('#4636: a path with spaces parses, so a clean one approves and a test one holds', () => {
