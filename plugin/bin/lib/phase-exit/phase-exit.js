@@ -30,13 +30,12 @@
 //      `pr` stamp, prExempt, or a logged `PR-early run lifecycle: … FAILED` line;
 //      a first publish releases only on its Step 1 line. A push from this process
 //      is invisible to that PreToolUse gate, so the gate's rule is applied here.
-//      A failed push is logged and never written
-//      to run-state.json; the next phase exit's push retries. A landed push on a
-//      run that is not closed appends the same `{type:'commit', action:'push',
-//      dir, hash}` events.jsonl line hooks/post-tool-use.js writes for a Bash
-//      `git push` (through the same context.js appendEvent, deduped the same
-//      way): lib/timing/derive.js starts the merge phase at the first push after
-//      wrap-up starts.
+//      A failed push is logged and never written to run-state.json; the next
+//      phase exit's push retries. A landed push on a run that is not closed
+//      appends the same `{type:'commit', action:'push', dir, hash}` events.jsonl
+//      line hooks/post-tool-use.js writes for a Bash `git push` (through the
+//      same context.js appendEvent, deduped the same way): lib/timing/derive.js
+//      starts the merge phase at the first push after wrap-up starts.
 //   6. Checklist: bin/pr-checklist.js in-process, every pr-first route that got
 //      past step 1. Its exit 4/5 lines are its own.
 //   7. Merge state: bin/pr-merge-state.js in-process, only after a push landed.

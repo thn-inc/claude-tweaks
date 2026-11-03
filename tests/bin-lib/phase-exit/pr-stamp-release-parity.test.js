@@ -122,6 +122,11 @@ for (const s of SCENARIOS) {
     const denied = isDenied(gatePush(wt, branch, runDir, state));
     assert.equal(push, s.released, `prPushReleased: ${s.name}`);
     assert.equal(!denied, s.released, `gate: ${s.name}`);
+    if (!s.released) {
+      // Pin the deny to the PR branch: record-pr-step1 for a first publish, record-pr for a tracked branch.
+      const stamps = readEvents(runDir).filter((e) => e.type === 'bookkeeping-stamp-deny').map((e) => e.stamp);
+      assert.deepEqual(stamps, [s.tracked ? 'record-pr' : 'record-pr-step1'], `gate deny stamp: ${s.name}`);
+    }
   });
 }
 

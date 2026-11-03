@@ -1973,8 +1973,10 @@ function stampCheckOutcome(ctx, stamp, wtRoot, warnings, warnText, denyText, isF
 //   3. This run's materialize commit hasn't landed yet (hasMaterializeCommit
 //      above) — Common Step 1 is still legitimately in progress.
 //   4. The two stamp checks themselves — record-worktree unconditionally,
-//      record-pr only under a run pinned `integration-model: pr-first`
-//      (resolveRunPinnedIntegrationModel above) and with no logged degrade.
+//      record-pr whenever prStampReleased (above) does not release the call:
+//      it releases a run not pinned `integration-model: pr-first`
+//      (resolveRunPinnedIntegrationModel above), a first publish only on its
+//      Step 1 line, and anything else on a memoized `prExempt` or a logged degrade.
 //      The first time this branch proves no tracked-branch PR-stamp denial is
 //      possible (model resolved cleanly to non-pr-first, or pr-first with
 //      the degrade already logged), it persists `prExempt: true` to
