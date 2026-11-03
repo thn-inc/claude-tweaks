@@ -85,6 +85,26 @@ Three conventions follow from how this repo works, and all are visible below:
 * Windows: tests expect native paths where git prints… ([#4289](https://github.com/thn-inc/claude-tweaks/issues/4289)) ([da6186a](https://github.com/thn-inc/claude-tweaks/commit/da6186a2f7409148ad2246dc4d9085ca0bee43a4))
 * Windows: tests pin POSIX-literal absolute fixture paths… ([#4286](https://github.com/thn-inc/claude-tweaks/issues/4286)) ([242eca7](https://github.com/thn-inc/claude-tweaks/commit/242eca7b4f9fc7969ebe187045d7f0c85a988628))
 
+### Highlights
+* Settle 12 small deferred findings in dispatch.
+* A dispatched record stopped by an unlanded blocker no longer accrues failed attempts toward `bot:blocked`, and dispatch no longer selects such a record until its blocker lands.
+* A pipeline run no longer stalls at the review test gate after build commits its own ledger: the test step's bookkeeping-only skip now leaves a verification stamp for the new commit. The review test gate also always ends: a project with no verification commands proceeds on a logged decision, and a stamp that still does not verify HEAD after one re-run stops the review and names the cause, instead of re-running the tests again.
+* Internal: post-merge reads closing-links results directly, removing its unreadable-envelope failure mode.
+* Settle 3 small deferred findings in reflect.
+* A record whose unclosed code fence hides later sections is now told to close that fence, instead of to add sections it already has; release-note repair reads fences exactly as the shape gate does.
+* Settle 4 small deferred findings in hooks.
+* Dispatch no longer treats a record as already shipped when a pipeline merged only part of it and released the record to finish the rest.
+* The close procedure for a decomposed feature's parent now comments and closes in the same repository it read from, so a checkout with more than one remote no longer writes to the wrong one.
+* Declining a reflect or feedback insight from a worktree now sticks: the decline is remembered after the worktree is cleaned up, so the same insight is not proposed again.
+* The release gate reviews every merged change in the release, including work that reached main through a merge commit.
+* A review-routing line can no longer be broken by a quote in git error output.
+* On Windows, the Review Console no longer quotes a file from outside the repository into a filed record when a staged copy is a symlink.
+* Settle 15 small deferred findings in tests.
+* A claim read or write that GitHub refuses for permissions now stops the run and says which token access to fix, instead of counting as a failed attempt to retry.
+* A release now lists every record in a bundled merge, carries each one's own release note, and leaves out notes that say there is no user-visible change.
+* Fix a Windows-only failure in the reconcile archival test caused by path separators.
+* Replaced the verification brief with an acceptance packet that lists what changed, how to test it, what could not be tested and where confidence is lowest, with every claim tied to evidence.
+
 ## [6.160.3](https://github.com/thn-inc/claude-tweaks/compare/v6.160.2...v6.160.3) (2026-11-02)
 
 
