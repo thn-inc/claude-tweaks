@@ -823,6 +823,12 @@ function findingKey(line) {
 // Stored ids are opaque to every reader, so a console.json written with the old 58-character id
 // still reads and re-renders unchanged. Old-shape ids are not unique (several stored items can
 // share one), so never join a stored old-shape id to a recomputed one.
+// The 8-hex hash suffix of a coordination item's id, derived from the full decisions line.
+// Exported so a reader that recovers a line from its item id mints the same hash.
+function decisionLineHash(line) {
+  return crypto.createHash('sha256').update(line).digest('hex').slice(0, 8);
+}
+
 function coordinationItems(snapshot, stagedIds) {
   const out = [];
   const model = tiebreakModel(snapshot);
@@ -846,7 +852,7 @@ function coordinationItems(snapshot, stagedIds) {
     if (!section) continue;
     const seen = (occurrences.get(line) || 0) + 1;
     occurrences.set(line, seen);
-    const hash = crypto.createHash('sha256').update(line).digest('hex').slice(0, 8);
+    const hash = decisionLineHash(line);
     const repeatSuffix = seen > 1 ? `-${seen}` : '';
     out.push({ id: `decision:${line.slice(2, 60)}#${hash}${repeatSuffix}`, section, resolution: 'keep-staged', reason: SECTION_STANCES[section].reason });
   }
@@ -960,4 +966,4 @@ function resolveAll({ runDir, policy, deps }) {
   return result;
 }
 
-module.exports = { SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, classifyStagedItem, readSnapshot, resolveAll, findingItems, refusedStagedNames, runIdOf, cell, renderDroppedBlock, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs };
+module.exports = { decisionLineHash, SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, classifyStagedItem, readSnapshot, resolveAll, findingItems, refusedStagedNames, runIdOf, cell, renderDroppedBlock, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs };

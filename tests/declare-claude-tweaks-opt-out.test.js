@@ -39,6 +39,15 @@ test('AC1.2: unset resolves true, false resolves false, malformed resolves true'
   assert.strictEqual(resolveIn('declare-claude-tweaks: off\n'), 'true');
 });
 
+// The kernel prose (routine-template-schema.md) restates these rules for a sandbox with no
+// resolver: pin them against the resolver itself so a parser change cannot leave the prose wrong.
+test('kernel strictness clause matches the resolver: trailing comment opts out; quoted, commented-out and indented keys do not', () => {
+  assert.strictEqual(resolveIn('declare-claude-tweaks: false # opted out\n'), 'false');
+  assert.strictEqual(resolveIn('declare-claude-tweaks: "false"\n'), 'true');
+  assert.strictEqual(resolveIn('# declare-claude-tweaks: false\n'), 'true');
+  assert.strictEqual(resolveIn('  declare-claude-tweaks: false\n'), 'true');
+});
+
 const STEP14 = readText(path.join(ROOT, 'plugin', 'skills', 'init', 'bootstrap', 'step-14-cloud-routine-parity.md'));
 const INIT_SKILL = readText(path.join(ROOT, 'plugin', 'skills', 'init', 'SKILL.md'));
 const collapse = (s) => s.replace(/\s+/g, ' ');
@@ -340,4 +349,176 @@ test('F3c: Step 14 states the Opt-out paragraph before the Detect paragraph', ()
   const kept = paragraphs.filter((p) => !p.startsWith('**Opt-out.**'));
   assert.strictEqual(paragraphs.length - kept.length, 1);
   assert.throws(() => step14OptOutOrder(kept.join('\n\n')), { message: /marker missing/ });
+});
+
+// The routine prompt kernel's cloud self-heal under the opt-out (#4940): with the key at false
+// the kernel names the opt-out and stops, never reading the setup log or running the script.
+const SCHEMA = readText(path.join(ROOT, 'plugin', 'skills', '_shared', 'routine-template-schema.md'));
+const KERNEL_OPT_OUT_IF = "If this checkout's `.claude-tweaks/policy.yml` sets `declare-claude-tweaks: false`";
+// The condition must read exactly as the resolver does (policy-schema.js parseFlatLines): a
+// top-level unquoted false resolves false even with a trailing `# comment`; a commented-out line,
+// an indented key or any other value is the default. A sandbox model applies the same rule.
+const KERNEL_OPT_OUT_STRICT = '(a top-level, unquoted `false`, optionally followed by a `# comment`; a commented-out line, or any other value, a quoted "false" included, means the default)';
+const KERNEL_OPT_OUT_LINE = '`claude-tweaks not installed: this project sets declare-claude-tweaks: false, so its Setup script does not install claude-tweaks — supply claude-tweaks to this environment another way, or set the key back to true`';
+const KERNEL_DEFAULT_READ = 'Otherwise, read `$HOME/claude-cloud-setup.log`';
+const KERNEL_DEFAULT_HEAL = 'run `bash scripts/claude-cloud-setup.sh` to self-heal, and re-run the resolved-build line once before proceeding to the kickoff.';
+
+function kernelSelfHeal(text) {
+  const afterHeading = text.split('## Standard prompt kernel')[1];
+  assert.ok(afterHeading, 'kernel heading missing');
+  const fence = afterHeading.split('```')[1];
+  assert.ok(fence, 'kernel fence missing');
+  const hits = fence.split(/\n\n/).filter((p) => p.startsWith('If all four rungs came up empty'));
+  assert.strictEqual(hits.length, 1, 'kernel self-heal paragraph not found exactly once');
+  return collapse(hits[0]);
+}
+
+function assertKernelOptOut(p) {
+  assert.ok(p.includes(KERNEL_OPT_OUT_IF), 'kernel opt-out condition missing');
+  assert.ok(p.includes(`${KERNEL_OPT_OUT_IF} ${KERNEL_OPT_OUT_STRICT}`), 'kernel opt-out strictness clause missing');
+  assert.ok(p.includes(KERNEL_OPT_OUT_LINE), 'kernel opt-out print line missing');
+  const from = p.indexOf(KERNEL_OPT_OUT_IF);
+  const to = p.indexOf(KERNEL_DEFAULT_READ);
+  assert.ok(from !== -1 && to > from, 'kernel opt-out segment anchors missing');
+  const segment = p.slice(from, to);
+  assert.ok(segment.includes('and stop.'), 'kernel opt-out does not stop');
+  assert.ok(!segment.includes('claude-cloud-setup'), 'kernel opt-out still names the setup script');
+}
+
+const KERNEL_DEFAULT_NEEDLES = [
+  ['log read', KERNEL_DEFAULT_READ],
+  ['self-heal', KERNEL_DEFAULT_HEAL],
+  ['absent print line', 'claude-cloud-setup.log: absent — the environment Setup script left no trace in this container (not executed, or its write failed)'],
+  ['present print line', 'claude-cloud-setup.log: present — tail: {last 5 lines}'],
+];
+
+// Names of the default-path needles the paragraph has lost; [] when every one is present.
+const kernelDefaultMissing = (p) => KERNEL_DEFAULT_NEEDLES.filter(([, needle]) => !p.includes(needle)).map(([name]) => name);
+
+function assertKernelDefault(p) {
+  const missing = kernelDefaultMissing(p);
+  assert.strictEqual(missing.length, 0, `kernel default path lost: ${missing.join(', ')}`);
+  assert.ok(p.indexOf(KERNEL_DEFAULT_READ) < p.indexOf('bash scripts/claude-cloud-setup.sh'), `kernel default path lost: ${KERNEL_DEFAULT_READ} must come before the self-heal`);
+}
+
+test('AC (kernel, false): the self-heal names the opt-out and never runs the setup script on it', () => {
+  assertKernelOptOut(kernelSelfHeal(SCHEMA));
+});
+
+test('AC (kernel, default): the unset/true path still reads the log and self-heals', () => {
+  assertKernelDefault(kernelSelfHeal(SCHEMA));
+});
+
+test('kernel opt-out go-red controls', () => {
+  const original = kernelSelfHeal(SCHEMA);
+  const cases = [
+    ['strip the print line', original.replace(KERNEL_OPT_OUT_LINE, ''), assertKernelOptOut, /kernel opt-out print line missing/],
+    ['strip the condition', original.replace(KERNEL_OPT_OUT_IF, ''), assertKernelOptOut, /kernel opt-out condition missing/],
+    ['drop the stop', original.replace(', and stop.', '.'), assertKernelOptOut, /kernel opt-out does not stop/],
+    ['name the setup script in the opt-out', original.replace(', and stop.', ' run `bash scripts/claude-cloud-setup.sh`, and stop.'), assertKernelOptOut, /kernel opt-out still names the setup script/],
+    ['strip the default self-heal', original.replace(KERNEL_DEFAULT_HEAL, ''), assertKernelDefault, /kernel default path lost/],
+    ['strip the strictness clause', original.replace(KERNEL_OPT_OUT_STRICT, ''), assertKernelOptOut, /kernel opt-out strictness clause missing/],
+    ['loosen the strictness clause', original.replace('unquoted ', ''), assertKernelOptOut, /kernel opt-out strictness clause missing/],
+    ['strip the trailing-comment allowance', original.replace(', optionally followed by a `# comment`', ''), assertKernelOptOut, /kernel opt-out strictness clause missing/],
+    ['strip the commented-out-line exclusion', original.replace('a commented-out line, or ', ''), assertKernelOptOut, /kernel opt-out strictness clause missing/],
+    ['strip the default log-read anchor', original.replace(KERNEL_DEFAULT_READ, ''), assertKernelOptOut, /kernel opt-out segment anchors missing/],
+  ];
+  for (const [name, mutated, check, message] of cases) {
+    assert.notEqual(mutated, original, name);
+    assert.throws(() => check(mutated), { message }, name);
+  }
+});
+
+test('kernel default path go-red: the log read must precede the self-heal', () => {
+  const original = kernelSelfHeal(SCHEMA);
+  const mutated = original.replace(KERNEL_DEFAULT_READ, () => `run \`bash scripts/claude-cloud-setup.sh\`. ${KERNEL_DEFAULT_READ}`);
+  assert.notEqual(mutated, original);
+  assert.deepStrictEqual(kernelDefaultMissing(mutated), []);
+  assert.throws(() => assertKernelDefault(mutated), { message: `kernel default path lost: ${KERNEL_DEFAULT_READ} must come before the self-heal` });
+});
+
+test('kernel default path go-red: stripping any one needle is reported by name, alone', () => {
+  const original = kernelSelfHeal(SCHEMA);
+  assert.deepStrictEqual(kernelDefaultMissing(original), []);
+  for (const [name, needle] of KERNEL_DEFAULT_NEEDLES) {
+    const mutated = original.replace(needle, () => '');
+    assert.notEqual(mutated, original, name);
+    assert.deepStrictEqual(kernelDefaultMissing(mutated), [name]);
+  }
+});
+
+// /init Step 15 and /routine create state the opt-out once (#4940): Step 15 prints the notice
+// before the Setup-script offer, and `create` skips its own copy under `--source init` and for a `fleet on` row.
+const STEP15 = readText(path.join(ROOT, 'plugin', 'skills', 'init', 'bootstrap', 'step-15-routine-installation.md'));
+const CREATE = readText(path.join(ROOT, 'plugin', 'skills', 'routine', 'create-and-update.md'));
+
+function rawSlice(text, from, to, label) {
+  const start = text.indexOf(from);
+  const end = start === -1 ? -1 : text.indexOf(to, start + from.length);
+  assert.ok(start !== -1 && end !== -1, label + ' anchors missing');
+  return text.slice(start, end);
+}
+
+const step15Raw = (text) => rawSlice(text, '**Opt-out notice.**', '**For each selected candidate:**', 'Step 15');
+const createStep7Raw = (text) => rawSlice(text, '**Step 7 — Preview and confirm.**', '**Step 8 — Create.**', 'create Step 7');
+const STEP15_SLICE = collapse(step15Raw(STEP15));
+const CREATE_SLICE = collapse(createStep7Raw(CREATE));
+
+const occursOnce = (slice, literal) => slice.split(literal).length === 2;
+
+const ROUTINE_NOTICE_FACTS = [
+  ['step15 resolves the key once', STEP15_SLICE, '**Opt-out notice.** When at least one candidate was selected, resolve `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values declare-claude-tweaks` once, before making the first bullet\'s `AskUserQuestion` offer.'],
+  ['step15 prints before that offer', STEP15_SLICE, 'At `false`, print this line once, before that offer: `Routines:'],
+  ['step15 notice line', STEP15_SLICE, '`Routines: this project sets declare-claude-tweaks: false, so its Setup script does not install claude-tweaks — a routine fired here needs claude-tweaks supplied to its environment another way, or the key set back to true.`'],
+  ['step15 create calls skip their copy', STEP15_SLICE, 'The `/claude-tweaks:routine create … --source init` calls below then skip their own copy of it.'],
+  ['step15 for-each paragraph points at the offer above', collapse(STEP15), 'by the deferred Setup-script offer above — invoke'],
+  ['step15 default unchanged', STEP15_SLICE, 'At `true` (the default) nothing prints and the offer is unchanged.'],
+  ['create resolves the key', CREATE_SLICE, 'When `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values declare-claude-tweaks` prints `false`, render one more line, once:'],
+  ['create notice line', CREATE_SLICE, '`claude-tweaks: not declared — this project sets declare-claude-tweaks: false, so its Setup script does not install claude-tweaks, and this routine will fire without it unless claude-tweaks is supplied to its environment another way, or the key is set back to true.`'],
+  ['create skips under --source init and for a fleet on row', CREATE_SLICE, 'Skip that line under `--source init` (`/claude-tweaks:init` Step 15 already printed the notice once for its run) and for a `fleet on` row, whose Step 2 parity check already printed its own opt-out line.'],
+  ['create default unchanged', CREATE_SLICE, 'At `true` (the default) the preview is unchanged.'],
+];
+
+test('AC (Step 15 + /routine create): each carries the opt-out notice, once', () => {
+  assert.deepStrictEqual(missingFacts(ROUTINE_NOTICE_FACTS), []);
+  for (const [name, slice, literal] of ROUTINE_NOTICE_FACTS) {
+    assert.ok(occursOnce(slice, literal), `${name}: literal must occur exactly once in its slice`);
+    const doctored = slice.replace(literal, () => '');
+    assert.notEqual(doctored, slice, name);
+    const withDoctoredSlice = ROUTINE_NOTICE_FACTS.map((fact) => (fact[0] === name ? [name, doctored, literal] : fact));
+    assert.deepStrictEqual(missingFacts(withDoctoredSlice), [name]);
+  }
+});
+
+test('go-red: the once-only check reports a literal that appears twice in its slice', () => {
+  for (const [name, slice, literal] of ROUTINE_NOTICE_FACTS) {
+    const duplicated = `${slice} ${literal}`;
+    assert.notEqual(duplicated, slice, name);
+    assert.strictEqual(occursOnce(duplicated, literal), false, name);
+    assert.strictEqual(occursOnce(slice.replace(literal, () => ''), literal), false, `${name} (absent)`);
+  }
+});
+
+const SETUP_OFFER_MARKER = '**Apply the Setup script to a dedicated environment (deferred from Step 14).**';
+const ZERO_CANDIDATES_MARKER = '**Zero candidates were selected**';
+const STEP15_NOTICE_MARKER = '**Opt-out notice.**';
+const step15NoticeOrder = (rawText) => requireOrder(collapse(rawText), [STEP15_NOTICE_MARKER, SETUP_OFFER_MARKER, ZERO_CANDIDATES_MARKER], 'Step 15');
+
+test('the Step 15 notice precedes the Setup-script offer it says it comes before', () => {
+  step15NoticeOrder(STEP15);
+  const slice = step15Raw(STEP15);
+  const paragraphs = slice.split(/\n\n/);
+  const noticeIdx = paragraphs.findIndex((p) => p.startsWith(STEP15_NOTICE_MARKER));
+  const offerIdx = paragraphs.findIndex((p) => p.startsWith(SETUP_OFFER_MARKER));
+  const zeroIdx = paragraphs.findIndex((p) => p.includes(ZERO_CANDIDATES_MARKER));
+  assert.ok(noticeIdx !== -1 && offerIdx > noticeIdx && zeroIdx > offerIdx, 'notice / Setup-script offer / zero-candidates bullet not found in live order');
+  assert.strictEqual(paragraphs.filter((p) => p.startsWith(STEP15_NOTICE_MARKER)).length, 1);
+  // The notice is its own paragraph, so it cannot be a continuation of the offer or its bullets.
+  assert.ok(!paragraphs[zeroIdx].includes(STEP15_NOTICE_MARKER), 'notice shares a paragraph with the zero-candidates bullet');
+  // Permutation control: swap the notice and offer paragraphs, so both markers survive in the wrong order.
+  const permuted = paragraphs.slice();
+  [permuted[noticeIdx], permuted[offerIdx]] = [permuted[offerIdx], permuted[noticeIdx]];
+  const swapped = STEP15.replace(slice, () => permuted.join('\n\n'));
+  assert.notEqual(swapped, STEP15);
+  assert.throws(() => step15NoticeOrder(swapped), { message: /must come after/ });
 });

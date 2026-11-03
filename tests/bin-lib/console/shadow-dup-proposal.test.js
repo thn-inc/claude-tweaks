@@ -248,6 +248,160 @@ test('cli: a symlinked anchor reads as missing — the copy composes as a collis
   assert.ok(!proposal.includes('TOP-SECRET-VALUE'), 'the symlink target leaked into the proposal');
 });
 
+// readNoFollow on a platform without O_NOFOLLOW (win32): the same refusals, by lstat and dev/ino.
+const NO_NOFOLLOW = { constants: { ...fs.constants, O_NOFOLLOW: undefined } };
+const SYMLINK_SKIP = process.platform === 'win32' && 'symlinks need privileges on Windows';
+
+function leafFile(body) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rnf-'));
+  fixtureRoots.push(dir);
+  const leaf = path.join(dir, 'leaf.md');
+  fs.writeFileSync(leaf, body);
+  return leaf;
+}
+
+function victimPair() {
+  const leaf = leafFile('leaf bytes');
+  const victim = path.join(path.dirname(leaf), 'victim.md');
+  fs.writeFileSync(victim, 'VICTIM-BYTES');
+  return { leaf, victim };
+}
+
+function symlinkToVictim({ leaf, victim }) {
+  const link = path.join(path.dirname(leaf), 'link.md');
+  fs.symlinkSync(victim, link);
+  return link;
+}
+
+test('readNoFollow characterization: a regular file reads and a missing leaf surfaces ENOENT on the platform\'s own constants', () => {
+  const leaf = leafFile('plain bytes\n');
+  assert.equal(readNoFollow(leaf), 'plain bytes\n');
+  assert.throws(() => readNoFollow(path.join(path.dirname(leaf), 'gone.md')), { code: 'ENOENT' });
+});
+
+test('readNoFollow characterization: with O_NOFOLLOW a symlinked leaf is refused by the kernel (ELOOP), never read through', { skip: SYMLINK_SKIP }, () => {
+  const link = symlinkToVictim(victimPair());
+  assert.throws(() => readNoFollow(link), { code: 'ELOOP' });
+});
+
+test('readNoFollow fallback: a regular file reads and a missing leaf still surfaces ENOENT from the open', () => {
+  const leaf = leafFile('plain bytes\n');
+  assert.equal(readNoFollow(leaf, NO_NOFOLLOW), 'plain bytes\n');
+  assert.throws(() => readNoFollow(path.join(path.dirname(leaf), 'gone.md'), NO_NOFOLLOW), { code: 'ENOENT' });
+});
+
+test('readNoFollow fallback: a symlinked leaf throws and the target bytes are never returned', { skip: SYMLINK_SKIP }, () => {
+  const link = symlinkToVictim(victimPair());
+  assert.throws(() => readNoFollow(link, NO_NOFOLLOW), /refusing to read .*: it is a symlink/);
+});
+
+test('readNoFollow fallback: a leaf swapped for a symlink between the lstat and the open is refused (still a symlink at the identity lstat)', { skip: SYMLINK_SKIP }, () => {
+  const { leaf, victim } = victimPair();
+  const realOpen = fs.openSync;
+  try {
+    // One-shot: the first open swaps the leaf for a symlink to the victim, then opens it.
+    fs.openSync = (p, ...rest) => {
+      fs.openSync = realOpen;
+      fs.unlinkSync(p);
+      fs.symlinkSync(victim, p);
+      return realOpen(p, ...rest);
+    };
+    assert.throws(() => readNoFollow(leaf, NO_NOFOLLOW), /refusing to read .*: it is a symlink/);
+  } finally {
+    fs.openSync = realOpen;
+  }
+  assert.equal(fs.readFileSync(victim, 'utf8'), 'VICTIM-BYTES');
+});
+
+test('readNoFollow fallback: a leaf swapped back to a fresh regular file before the identity lstat is refused by dev/ino alone', { skip: SYMLINK_SKIP }, () => {
+  const { leaf, victim } = victimPair();
+  const realOpen = fs.openSync;
+  const realFstat = fs.fstatSync;
+  try {
+    fs.openSync = (p, ...rest) => {
+      fs.openSync = realOpen;
+      fs.unlinkSync(p);
+      fs.symlinkSync(victim, p);
+      return realOpen(p, ...rest);
+    };
+    // One-shot: the fstat swaps the symlink back for a fresh regular file, so only dev/ino can tell.
+    fs.fstatSync = (fd, ...rest) => {
+      fs.fstatSync = realFstat;
+      const st = realFstat(fd, ...rest);
+      fs.unlinkSync(leaf);
+      fs.writeFileSync(leaf, 'fresh');
+      return st;
+    };
+    assert.throws(() => readNoFollow(leaf, NO_NOFOLLOW), /refusing to read .*: it was replaced while it was being opened/);
+  } finally {
+    fs.openSync = realOpen;
+    fs.fstatSync = realFstat;
+  }
+  assert.equal(fs.readFileSync(victim, 'utf8'), 'VICTIM-BYTES');
+});
+
+test('readNoFollow fallback: a symlinked leaf is never opened, so the pre-open lstat refusal keeps the link unfollowed', { skip: SYMLINK_SKIP }, () => {
+  const link = symlinkToVictim(victimPair());
+  const realOpen = fs.openSync;
+  const opened = [];
+  try {
+    fs.openSync = (p, ...rest) => { opened.push(p); return realOpen(p, ...rest); };
+    assert.throws(() => readNoFollow(link, NO_NOFOLLOW), /refusing to read .*: it is a symlink/);
+  } finally {
+    fs.openSync = realOpen;
+  }
+  assert.ok(!opened.includes(link), 'the symlink was opened (and so followed) before the refusal');
+});
+
+test('readNoFollow fallback: an unreadable leaf fails closed and is never opened', () => {
+  const leaf = leafFile('leaf bytes');
+  const realLstat = fs.lstatSync;
+  const realOpen = fs.openSync;
+  const opened = [];
+  try {
+    // One-shot: lstatType's lstat fails with EPERM, so the leaf is unreadable.
+    fs.lstatSync = () => {
+      fs.lstatSync = realLstat;
+      const err = new Error('EPERM: operation not permitted');
+      err.code = 'EPERM';
+      throw err;
+    };
+    fs.openSync = (p, ...rest) => { opened.push(p); return realOpen(p, ...rest); };
+    assert.throws(() => readNoFollow(leaf, NO_NOFOLLOW), /refusing to read .*: cannot inspect it \(EPERM\)/);
+  } finally {
+    fs.lstatSync = realLstat;
+    fs.openSync = realOpen;
+  }
+  assert.deepEqual(opened, []);
+});
+
+test('cli: under the no-O_NOFOLLOW fallback a symlinked copy is refused as copy-unreadable and its target is never quoted', { skip: SYMLINK_SKIP }, () => {
+  const f = fixture();
+  const secret = path.join(f.root, 'outside-secret.txt');
+  fs.writeFileSync(secret, 'TOP-SECRET-VALUE\n');
+  stage(f.runDir, { 'a-1.md': 'anchor' });
+  fs.symlinkSync(secret, path.join(f.runDir, 'staged', 'a-1.md.shadow-dup'));
+  const { deps, err } = fakeDeps(f.main, { readFile: (p) => readNoFollow(p, NO_NOFOLLOW) });
+  assert.equal(run(['--run', f.runDir, '--item', 'a-1.md.shadow-dup', '--out', f.out], deps), 2);
+  assert.match(err.join(''), /refused \(copy-unreadable\): could not read staged\/a-1\.md\.shadow-dup \(refusing to read /);
+  assert.ok(!err.join('').includes('TOP-SECRET-VALUE'), 'the symlink target leaked into stderr');
+  assert.equal(fs.existsSync(f.out), false);
+});
+
+// Green at base on POSIX: the base ignores the injected constants and the kernel's O_NOFOLLOW refuses the link; it discriminates only when the fallback is removed.
+test('cli: under the no-O_NOFOLLOW fallback a symlinked anchor reads as missing — the copy composes as a collision with no anchor quote', { skip: SYMLINK_SKIP }, () => {
+  const f = fixture();
+  const secret = path.join(f.root, 'outside-secret.txt');
+  fs.writeFileSync(secret, 'TOP-SECRET-VALUE\n');
+  stage(f.runDir, { 'a-1.md.shadow-dup': 'copy' });
+  fs.symlinkSync(secret, path.join(f.runDir, 'staged', 'a-1.md'));
+  const { deps } = fakeDeps(f.main, { readFile: (p) => readNoFollow(p, NO_NOFOLLOW) });
+  assert.equal(run(['--run', f.runDir, '--item', 'a-1.md.shadow-dup', '--out', f.out], deps), 0);
+  const proposal = fs.readFileSync(f.out, 'utf8');
+  assert.match(proposal, /shadow-dup-collision copy/);
+  assert.ok(!proposal.includes('TOP-SECRET-VALUE'), 'the symlink target leaked into the proposal');
+});
+
 test('cli: exit 2 for malformed invocations, nothing written', () => {
   const f = fixture();
   stage(f.runDir, { 'a-1.md': 'x', 'a-1.md.shadow-dup': 'y' });

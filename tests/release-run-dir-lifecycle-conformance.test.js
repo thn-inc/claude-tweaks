@@ -17,6 +17,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
+const { missingFactsOf, assertEachPatternGoesRed } = require('./helpers/conformance-asserts');
 const { gitRepo, FIXTURE_TIMEOUT_MS } = require('./helpers/git-fixtures');
 const { classifyStagedItem, stagingExemption, CANONICAL_PREFIXES } = require('../plugin/bin/lib/console/resolve');
 const { composeRoutingLine } = require('../plugin/bin/lib/log-decision/review-routing');
@@ -294,16 +295,7 @@ const REQUIRED = [
   [/carried `\{run-dir\}` path[\s\S]{0,200}mint a stray one/, 'later steps use the carried run dir and never re-run the fence'],
   [/could hand back an existing directory, which the `printf` stamp would then overwrite/, 'the mint call omits --spec-slug so step 2 cannot hand back a directory the printf stamp would overwrite'],
 ];
-const missingFactsOf = (patterns) => (text) => patterns.filter(([pattern]) => !pattern.test(text)).map(([, fact]) => fact);
 const missingFacts = missingFactsOf(REQUIRED);
-
-function assertEachPatternGoesRed(text, patterns, missingOf) {
-  for (const [pattern, fact] of patterns) {
-    const doctored = text.replace(pattern, '');
-    assert.notEqual(doctored, text, `anchor text for "${fact}" not found — proof cannot discriminate`);
-    assert.deepEqual(missingOf(doctored), [fact], `removing only "${fact}" must turn exactly that assertion red`);
-  }
-}
 
 // Every fact present in `text`, and each one able to go red on its own.
 function assertFactsAndGoRed(text, patterns, message) {

@@ -1,7 +1,7 @@
 // tests/review-tiebreak-step-conformance.test.js — pins #3947: /review's mandatory tiebreak step
 // (plugin/skills/review/step3-tiebreak.md, wired as Step 3.7 in code-mode-steps.md). Every pin carries a
-// go-red proof built from the live text (missingFactsOf + assertEachPatternGoesRed, the shape
-// tests/review-dispatched-reviewer-degrade-conformance.test.js uses). Later tasks of #3947 append here.
+// go-red proof built from the live text (missingFactsOf + assertEveryMatchGoesRed, from tests/helpers/conformance-asserts.js).
+// Later tasks of #3947 append here.
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -9,6 +9,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
+const { missingFactsOf, assertEveryMatchGoesRed, globalOf, lineStartingWith, sectionOf } = require('./helpers/conformance-asserts');
 const { buildFindingsArtifact, resolveTiebreak, checkTiebreakCoverage, findingId } = require('../plugin/bin/lib/tiebreak');
 const { formatEntry } = require('../plugin/bin/lib/log-decision/append');
 const { RAIL_BYTES } = require('../plugin/bin/lib/skill-audit/budgets');
@@ -20,24 +21,8 @@ const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
 const TIEBREAK = path.join(SKILLS, 'review', 'step3-tiebreak.md');
 const CODE_MODE_STEPS = path.join(SKILLS, 'review', 'code-mode-steps.md');
 
-// A fact-list predicate: the facts whose pattern the text no longer matches.
-const missingFactsOf = (patterns) => (text) => patterns.filter(([pattern]) => !pattern.test(text)).map(([, fact]) => fact);
-
 // The opposite predicate for retired wording: the facts whose pattern the text still matches.
 const leftoverFactsOf = (patterns) => (text) => patterns.filter(([pattern]) => pattern.test(text)).map(([, fact]) => fact);
-
-// The pattern as a global regex, so a phrase a file states twice cannot survive a strip.
-const globalOf = (pattern) => new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
-
-// Per-assertion go-red proof: strip every match of one pattern from the live text, and the shared
-// predicate must report exactly that one fact.
-function assertEachPatternGoesRed(text, patterns, missingOf) {
-  for (const [pattern, fact] of patterns) {
-    const doctored = text.replace(globalOf(pattern), '');
-    assert.notEqual(doctored, text, `anchor text for "${fact}" not found — proof cannot discriminate`);
-    assert.deepEqual(missingOf(doctored), [fact], `removing only "${fact}" must turn exactly that assertion red`);
-  }
-}
 
 // A section-scoped fact list: [pick(texts), pattern, fact]. The go-red proof strips the pattern from the picked
 // region only, then runs the same predicate over the doctored texts.
@@ -71,15 +56,6 @@ function between(text, startAnchor, endAnchor) {
   return text.slice(start, end);
 }
 
-const lineStartingWith = (text, prefix) => text.split('\n').find((line) => line.startsWith(prefix)) || '';
-
-// The body of a `## {heading}` section, up to the next `## ` heading (or the end of the file).
-function sectionOf(text, heading) {
-  const section = sliceSection(text, `\n## ${heading}\n`, '\n## ');
-  assert.notEqual(section, '', `step3-tiebreak.md lost its "## ${heading}" section`);
-  return section.slice(1);
-}
-
 // The first fenced block of a section: the dispatch template.
 function fencedTemplate(section) {
   const found = section.match(/```[a-z]*\n([\s\S]*?)\n```/);
@@ -104,7 +80,7 @@ test('AC1.1 the step names every effort tier and mode', () => {
 });
 
 test('AC1.1 the tier and mode assertion can go red', () => {
-  assertEachPatternGoesRed(tiebreakText(), TIERS_AND_MODES, tiersAndModesMissing);
+  assertEveryMatchGoesRed(tiebreakText(), TIERS_AND_MODES, tiersAndModesMissing);
 });
 
 // --- AC1.2: placement cites every earlier pass, in order ---
@@ -131,12 +107,12 @@ function orderProblems(section, entries) {
 }
 
 test('AC1.2 placement cites every earlier pass in order', () => {
-  const placement = sectionOf(tiebreakText(), 'Placement');
+  const placement = sectionOf(tiebreakText(), '## Placement');
   assert.deepEqual(orderProblems(placement, PLACEMENT_ORDER), [], '## Placement must cite the five earlier passes in order');
 });
 
 test('AC1.2 the order assertion can go red', () => {
-  const placement = sectionOf(tiebreakText(), 'Placement');
+  const placement = sectionOf(tiebreakText(), '## Placement');
   const swapped = [PLACEMENT_ORDER[2], PLACEMENT_ORDER[1], ...PLACEMENT_ORDER.slice(3), PLACEMENT_ORDER[0]];
   assert.notDeepEqual(orderProblems(placement, swapped), [], 'a swapped order must fail the order check');
   const withoutLast = placement.replace(/Step 3\.6/g, '');
@@ -153,11 +129,11 @@ const ENTRY_STATUS = [
 const entryStatusMissing = missingFactsOf(ENTRY_STATUS);
 
 test('AC1.3 entry status includes both sides of a nearLocation pair', () => {
-  assert.deepEqual(entryStatusMissing(sectionOf(tiebreakText(), 'Placement')), [], '## Placement must state both sides of a nearLocation pair enter, each judged on its own');
+  assert.deepEqual(entryStatusMissing(sectionOf(tiebreakText(), '## Placement')), [], '## Placement must state both sides of a nearLocation pair enter, each judged on its own');
 });
 
 test('AC1.3 the entry-status assertion can go red', () => {
-  assertEachPatternGoesRed(sectionOf(tiebreakText(), 'Placement'), ENTRY_STATUS, entryStatusMissing);
+  assertEveryMatchGoesRed(sectionOf(tiebreakText(), '## Placement'), ENTRY_STATUS, entryStatusMissing);
 });
 
 // --- AC2.1 / AC2.2 / AC12.1: the dispatch prompt ---
@@ -182,12 +158,12 @@ const DISPATCH_TEMPLATE = [
 const dispatchTemplateMissing = missingFactsOf(DISPATCH_TEMPLATE);
 
 test('AC2.1 the dispatch prompt satisfies the subagent contract', () => {
-  const template = fencedTemplate(sectionOf(tiebreakText(), 'Dispatch'));
+  const template = fencedTemplate(sectionOf(tiebreakText(), '## Dispatch'));
   assert.deepEqual(dispatchTemplateMissing(template), [], 'the fenced dispatch template must carry every contract element');
 });
 
 test('AC2.1 the dispatch template assertions can go red', () => {
-  assertEachPatternGoesRed(fencedTemplate(sectionOf(tiebreakText(), 'Dispatch')), DISPATCH_TEMPLATE, dispatchTemplateMissing);
+  assertEveryMatchGoesRed(fencedTemplate(sectionOf(tiebreakText(), '## Dispatch')), DISPATCH_TEMPLATE, dispatchTemplateMissing);
 });
 
 // Minor 11 (#3950, ruling R18 moved into the template): a bare filename or another file in Evidence fails
@@ -198,24 +174,24 @@ const EVIDENCE_PATH = [
 const evidencePathMissing = missingFactsOf(EVIDENCE_PATH);
 
 test("minor 11: the tiebreak template tells the judge to cite the Location path exactly as given", () => {
-  const template = fencedTemplate(sectionOf(tiebreakText(), 'Dispatch'));
+  const template = fencedTemplate(sectionOf(tiebreakText(), '## Dispatch'));
   assert.deepEqual(evidencePathMissing(template), []);
   assert.doesNotMatch(template, /the finding's own path/, 'the retired wording is gone');
 });
 
 test('minor 11 the evidence-path assertion can go red', () => {
-  assertEachPatternGoesRed(fencedTemplate(sectionOf(tiebreakText(), 'Dispatch')), EVIDENCE_PATH, evidencePathMissing);
+  assertEveryMatchGoesRed(fencedTemplate(sectionOf(tiebreakText(), '## Dispatch')), EVIDENCE_PATH, evidencePathMissing);
 });
 
 const hasFrontier = (text) => /Frontier/.test(text);
 
 test('AC2.2 no Frontier in the tiebreak fan-out', () => {
-  const dispatch = sectionOf(tiebreakText(), 'Dispatch');
+  const dispatch = sectionOf(tiebreakText(), '## Dispatch');
   assert.ok(!hasFrontier(dispatch), '## Dispatch must not name the Frontier profile — a variable-N fan-out is Capable only');
 });
 
 test('AC2.2 the Frontier assertion can go red', () => {
-  const dispatch = sectionOf(tiebreakText(), 'Dispatch');
+  const dispatch = sectionOf(tiebreakText(), '## Dispatch');
   assert.ok(hasFrontier(`${dispatch}\n[Use: Frontier]`), 'an injected Frontier profile must turn the check red');
 });
 
@@ -231,13 +207,13 @@ const ALLOWLIST_LABELS = ['Finding:', 'Severity:', 'Location:', 'Diff scope:', '
 const leaksReporterContent = (lines) => lines.some((line) => /evidence|reasoning/i.test(line));
 
 test('AC12.1 the prompt input is exactly the allowlist', () => {
-  const input = inputLinesOf(fencedTemplate(sectionOf(tiebreakText(), 'Dispatch')));
+  const input = inputLinesOf(fencedTemplate(sectionOf(tiebreakText(), '## Dispatch')));
   assert.deepEqual(labelsOf(input), ALLOWLIST_LABELS, 'the input block must carry exactly the allowlisted field labels');
   assert.ok(!leaksReporterContent(input), 'the input block must not mention evidence or reasoning');
 });
 
 test('AC12.1 the allowlist assertions can go red', () => {
-  const input = inputLinesOf(fencedTemplate(sectionOf(tiebreakText(), 'Dispatch')));
+  const input = inputLinesOf(fencedTemplate(sectionOf(tiebreakText(), '## Dispatch')));
   assert.notDeepEqual(labelsOf([...input, 'Evidence: {the reporting agent\'s quote}']), ALLOWLIST_LABELS, 'an extra input label must turn the field-list check red');
   assert.notDeepEqual(labelsOf(input.filter((line) => !line.startsWith('Diff scope:'))), ALLOWLIST_LABELS, 'a dropped input label must turn the field-list check red');
   assert.ok(leaksReporterContent([...input, 'Reasoning: {the lens agent\'s reasoning}']), 'reasoning text in the input must turn the leak check red');
@@ -247,22 +223,22 @@ const WAVE = [[/waves of \*{0,2}8\b/, 'the fan-out runs in parallel waves of 8']
 const waveMissing = missingFactsOf(WAVE);
 
 test('Review Focus: the fan-out is bounded to waves of 8', () => {
-  assert.deepEqual(waveMissing(sectionOf(tiebreakText(), 'Dispatch')), [], '## Dispatch must name its wave size');
+  assert.deepEqual(waveMissing(sectionOf(tiebreakText(), '## Dispatch')), [], '## Dispatch must name its wave size');
 });
 
 test('Review Focus: the wave-size assertion can go red', () => {
-  assertEachPatternGoesRed(sectionOf(tiebreakText(), 'Dispatch'), WAVE, waveMissing);
+  assertEveryMatchGoesRed(sectionOf(tiebreakText(), '## Dispatch'), WAVE, waveMissing);
 });
 
 const EMPTY_REPLY = [[/empty reply/, 'a failed dispatch is passed as an empty reply']];
 const emptyReplyMissing = missingFactsOf(EMPTY_REPLY);
 
 test('Review Focus: an unusable dispatch still produces a verdict line', () => {
-  assert.deepEqual(emptyReplyMissing(sectionOf(tiebreakText(), 'Resolve and act')), [], '## Resolve and act must pass a failed dispatch as an empty reply');
+  assert.deepEqual(emptyReplyMissing(sectionOf(tiebreakText(), '## Resolve and act')), [], '## Resolve and act must pass a failed dispatch as an empty reply');
 });
 
 test('Review Focus: the empty-reply assertion can go red', () => {
-  assertEachPatternGoesRed(sectionOf(tiebreakText(), 'Resolve and act'), EMPTY_REPLY, emptyReplyMissing);
+  assertEveryMatchGoesRed(sectionOf(tiebreakText(), '## Resolve and act'), EMPTY_REPLY, emptyReplyMissing);
 });
 
 // --- Fix round 1: logText never rides a shell argument; digest/console are pipeline-run only; the artifact-failure line surfaces ---
@@ -276,14 +252,14 @@ const logTextFileMissing = missingFactsOf(LOG_TEXT_FILE);
 const passesTextOnCommandLine = (text) => /--text "/.test(text);
 
 test('logText goes through --text-file, never a shell argument', () => {
-  const resolveAndAct = sectionOf(tiebreakText(), 'Resolve and act');
+  const resolveAndAct = sectionOf(tiebreakText(), '## Resolve and act');
   assert.deepEqual(logTextFileMissing(resolveAndAct), [], '## Resolve and act must log through --text-file');
   assert.ok(!passesTextOnCommandLine(resolveAndAct), 'no --text "..." argument: a verbatim source line can carry quotes, $() and backticks');
 });
 
 test('the --text-file assertions can go red', () => {
-  const resolveAndAct = sectionOf(tiebreakText(), 'Resolve and act');
-  assertEachPatternGoesRed(resolveAndAct, LOG_TEXT_FILE, logTextFileMissing);
+  const resolveAndAct = sectionOf(tiebreakText(), '## Resolve and act');
+  assertEveryMatchGoesRed(resolveAndAct, LOG_TEXT_FILE, logTextFileMissing);
   assert.ok(passesTextOnCommandLine(resolveAndAct.replace('--text-file "{path-T}"', '--text "{logText}"')), 'reverting to --text must turn the check red');
 });
 
@@ -295,11 +271,11 @@ const PIPELINE_ONLY = [
 const pipelineOnlyMissing = missingFactsOf(PIPELINE_ONLY);
 
 test('the digest and console actions are pipeline-run only', () => {
-  assert.deepEqual(pipelineOnlyMissing(sectionOf(tiebreakText(), 'Resolve and act')), [], 'both bullets must point a standalone review at ## Standalone review');
+  assert.deepEqual(pipelineOnlyMissing(sectionOf(tiebreakText(), '## Resolve and act')), [], 'both bullets must point a standalone review at ## Standalone review');
 });
 
 test('the pipeline-only qualifiers can go red', () => {
-  assertEachPatternGoesRed(sectionOf(tiebreakText(), 'Resolve and act'), PIPELINE_ONLY, pipelineOnlyMissing);
+  assertEveryMatchGoesRed(sectionOf(tiebreakText(), '## Resolve and act'), PIPELINE_ONLY, pipelineOnlyMissing);
 });
 
 const ARTIFACT_FAILURE = [
@@ -312,7 +288,7 @@ const claimsRunHeldOpen = (section) => /holds the run open/.test(section);
 const artifactFailureLine = (section) => documentedTemplate(section, ['findings artifact not written']);
 
 test('the findings-artifact failure line surfaces at the console and states its consequence', () => {
-  const section = sectionOf(tiebreakText(), 'Findings artifact');
+  const section = sectionOf(tiebreakText(), '## Findings artifact');
   assert.deepEqual(artifactFailureMissing(section), [], '## Findings artifact must log a line the console surfaces');
   assert.ok(!claimsRunHeldOpen(section), 'the archive gate does not hold the run open on an absent artifact');
   // Run the real console/resolve.js matcher over the documented line.
@@ -320,8 +296,8 @@ test('the findings-artifact failure line surfaces at the console and states its 
 });
 
 test('the findings-artifact failure assertions can go red', () => {
-  const section = sectionOf(tiebreakText(), 'Findings artifact');
-  assertEachPatternGoesRed(section, ARTIFACT_FAILURE, artifactFailureMissing);
+  const section = sectionOf(tiebreakText(), '## Findings artifact');
+  assertEveryMatchGoesRed(section, ARTIFACT_FAILURE, artifactFailureMissing);
   assert.ok(claimsRunHeldOpen(`${section}\nThe archive gate holds the run open.`), 'a planted "holds the run open" must turn the check red');
   const pending = artifactFailureLine(section).replace('stay unconfirmed', 'stay pending');
   assert.equal(consoleLowItems(`${instantiate(pending)}\n`).length, 0, 'a line without the unconfirmed keyword must not surface');
@@ -338,11 +314,11 @@ const STANDALONE = [
 const standaloneMissing = missingFactsOf(STANDALONE);
 
 test("AC7.1 standalone lists can't-tell >= medium with the recommendation and stages nothing", () => {
-  assert.deepEqual(standaloneMissing(sectionOf(tiebreakText(), 'Standalone review')), [], '## Standalone review must state the listing and the no-staging rule');
+  assert.deepEqual(standaloneMissing(sectionOf(tiebreakText(), '## Standalone review')), [], '## Standalone review must state the listing and the no-staging rule');
 });
 
 test('AC7.1 the standalone assertions can go red', () => {
-  assertEachPatternGoesRed(sectionOf(tiebreakText(), 'Standalone review'), STANDALONE, standaloneMissing);
+  assertEveryMatchGoesRed(sectionOf(tiebreakText(), '## Standalone review'), STANDALONE, standaloneMissing);
 });
 
 // --- AC8.1: dispatched reviewer ---
@@ -356,14 +332,14 @@ const DISPATCHED = [
 const dispatchedMissing = missingFactsOf(DISPATCHED);
 
 test('AC8.1 dispatched reviewer states the mechanism, the ladder and the invariant', () => {
-  const dispatched = sectionOf(tiebreakText(), 'Dispatched reviewer');
+  const dispatched = sectionOf(tiebreakText(), '## Dispatched reviewer');
   assert.deepEqual(dispatchedMissing(dispatched), [], '## Dispatched reviewer must state the mechanism, the fallback ladder and the invariant');
   assert.ok(!/skip dispatch/i.test(dispatched), 'the dispatched-reviewer text must not carry a skip-dispatch carve-out (#3078)');
 });
 
 test('AC8.1 the dispatched-reviewer assertions can go red', () => {
-  const dispatched = sectionOf(tiebreakText(), 'Dispatched reviewer');
-  assertEachPatternGoesRed(dispatched, DISPATCHED, dispatchedMissing);
+  const dispatched = sectionOf(tiebreakText(), '## Dispatched reviewer');
+  assertEveryMatchGoesRed(dispatched, DISPATCHED, dispatchedMissing);
   assert.ok(/skip dispatch/i.test(`${dispatched}\nskip dispatch and judge directly`), 'an injected carve-out must turn the check red');
 });
 
@@ -488,7 +464,7 @@ test('AC4.1 low tier hands findings to the tiebreak', () => {
 
 test('AC4.1 the low-tier assertions can go red', () => {
   const paragraph = lowTierParagraph(readText(STEP3));
-  assertEachPatternGoesRed(paragraph, LOW_TIER_REQUIRED, lowTierMissing);
+  assertEveryMatchGoesRed(paragraph, LOW_TIER_REQUIRED, lowTierMissing);
   assert.deepEqual(lowTierLeftovers(`${paragraph} the only path to \`confirmed\` is the Direct-verification override`), ['the old only-path-to-confirmed sentence']);
   assert.deepEqual(lowTierLeftovers(`${paragraph} confirmed via direct verification`), ['the old direct-verification confirmation log line']);
 });
@@ -581,7 +557,7 @@ test('AC5.1 refutation template replies in the tiebreak fields and drops not-ref
 
 test('AC5.1 the refutation-template assertions can go red', () => {
   const step4 = refutationStep4(debateText());
-  assertEachPatternGoesRed(step4, REFUTATION_TEMPLATE_REQUIRED, refutationTemplateMissing);
+  assertEveryMatchGoesRed(step4, REFUTATION_TEMPLATE_REQUIRED, refutationTemplateMissing);
   assert.deepEqual(refutationTemplateLeftovers(`${step4}\n1. Verdict: refuted / not-refuted`), ['the retired "refuted / not-refuted" verdict line']);
 });
 
@@ -600,7 +576,7 @@ test('AC5.1 the parallel-execution note names the tiebreak verdicts', () => {
 
 test('AC5.1 the parallel-execution-note assertions can go red', () => {
   const note = refutationNote(debateText());
-  assertEachPatternGoesRed(note, NOTE_REQUIRED, noteMissing);
+  assertEveryMatchGoesRed(note, NOTE_REQUIRED, noteMissing);
   assert.deepEqual(noteLeftovers(`${note} and returns a \`refuted\`/\`not-refuted\` verdict`), ['the retired refuted/not-refuted verdict wording']);
 });
 
@@ -634,7 +610,7 @@ test("AC5.2 step 5 feeds the reply to resolve-tiebreak and hands can't-tell to S
 
 test('AC5.2 the refutation-rule assertions can go red', () => {
   const step5 = refutationStep5(debateText());
-  assertEachPatternGoesRed(step5, REFUTATION_RULE, refutationRuleMissing);
+  assertEveryMatchGoesRed(step5, REFUTATION_RULE, refutationRuleMissing);
   assert.deepEqual(refutationRuleLeftovers(`${step5}\nnode review-coordination.js resolve-refutation {verdict}`), ['the retired resolve-refutation verb']);
   assert.deepEqual(refutationRuleLeftovers(`${step5}\nthen apply \`resolveRefutation\``), ['the retired resolveRefutation call']);
   assert.deepEqual(refutationRuleLeftovers(`${step5}\n- \`not-refuted\` → stands`), ['the retired not-refuted verdict']);
@@ -679,7 +655,7 @@ test('gap-sweep hand-off: Step 3.6 sends its single-source findings to the tiebr
 });
 
 test('gap-sweep hand-off: the assertion can go red', () => {
-  assertEachPatternGoesRed(gapSweepSection(debateText()), GAP_SWEEP_HANDOFF, gapSweepHandoffMissing);
+  assertEveryMatchGoesRed(gapSweepSection(debateText()), GAP_SWEEP_HANDOFF, gapSweepHandoffMissing);
 });
 
 // The final-bucket paragraph points at Step 3.7, not at a staging that no longer ends the story.
@@ -697,7 +673,7 @@ test('final bucket: unconfirmed and contested findings go to Step 3.7', () => {
 
 test('final bucket: the assertions can go red', () => {
   const paragraph = finalBucketParagraph(debateText());
-  assertEachPatternGoesRed(paragraph, FINAL_BUCKET_REQUIRED, finalBucketMissing);
+  assertEveryMatchGoesRed(paragraph, FINAL_BUCKET_REQUIRED, finalBucketMissing);
   assert.deepEqual(finalBucketLeftovers(`${paragraph} \`unconfirmed\` and \`contested\` are already staged to the Wrap-Up Console.`), ['the stale already-staged sentence']);
 });
 
@@ -800,7 +776,7 @@ test('AC6.1 step3-routing.md lists tiebreak-confirmed findings among its Inputs'
 });
 
 test('AC6.1 the Inputs assertion can go red', () => {
-  assertEachPatternGoesRed(inputsSection(routingText()), ROUTING_INPUTS, routingInputsMissing);
+  assertEveryMatchGoesRed(inputsSection(routingText()), ROUTING_INPUTS, routingInputsMissing);
 });
 
 // Routing facts are section-scoped over { routing }, so the shared fact-list helpers apply.
@@ -882,7 +858,7 @@ test('AC9.1 multi-agent-coordination.md states the straddle rule and the .md sta
 
 test('AC9.1 the coordination-doc assertions can go red', () => {
   const text = coordinationText();
-  assertEachPatternGoesRed(text, COORDINATION_REQUIRED, coordinationMissing);
+  assertEveryMatchGoesRed(text, COORDINATION_REQUIRED, coordinationMissing);
   assert.deepEqual(coordinationLeftovers(`${text}\nCross-bucket mismatches do not reproduce.`), [COORDINATION_FORBIDDEN[0][1]]);
   assert.deepEqual(coordinationLeftovers(`${text}\nStage path: staged/review-unconfirmed-{n}.patch.`), [COORDINATION_FORBIDDEN[1][1]]);
 });
@@ -933,7 +909,7 @@ test('materiality-floor.md documents Defer-reason: tiebreak-cant-tell, produced 
 });
 
 test('the materiality-floor assertions can go red', () => {
-  assertEachPatternGoesRed(tiebreakValueSection(materialityText()), TIEBREAK_VALUE, tiebreakValueFactsMissing);
+  assertEveryMatchGoesRed(tiebreakValueSection(materialityText()), TIEBREAK_VALUE, tiebreakValueFactsMissing);
   assert.deepEqual(tiebreakValueMissing('## no such subsection'), TIEBREAK_VALUE.map(([, fact]) => fact), 'a floor without the subsection fails every fact');
 });
 
@@ -943,7 +919,7 @@ test('tiebreak-cant-tell is not in DEFER_REASONS', () => {
 });
 
 const RESOLVE_NAMES_VALUE = [[/tiebreak-cant-tell/, 'the Resolve and act section names the tiebreak-cant-tell digest value']];
-const resolveNamesValueMissing = (text) => missingFactsOf(RESOLVE_NAMES_VALUE)(sectionOf(text, 'Resolve and act'));
+const resolveNamesValueMissing = (text) => missingFactsOf(RESOLVE_NAMES_VALUE)(sectionOf(text, '## Resolve and act'));
 
 test("step3-tiebreak.md's Resolve and act section names tiebreak-cant-tell", () => {
   assert.deepEqual(resolveNamesValueMissing(tiebreakText()), []);
@@ -1020,8 +996,8 @@ const liveTexts = () => ({
   debate: debateText(),
   template: readText(SUMMARY_TEMPLATE),
 });
-const tiebreakSection = (heading) => (texts) => sectionOf(texts.tiebreak, heading);
-const tiebreakTemplate = (texts) => fencedTemplate(sectionOf(texts.tiebreak, 'Dispatch'));
+const tiebreakSection = (heading) => (texts) => sectionOf(texts.tiebreak, `## ${heading}`);
+const tiebreakTemplate = (texts) => fencedTemplate(sectionOf(texts.tiebreak, '## Dispatch'));
 const hungParagraph = (texts) => lineStartingWith(texts.step3, '**Hung or non-responsive single-read agent.**');
 const refutationTemplateOf = (texts) => refutationStep4(texts.debate);
 const compactForm = (texts) => between(texts.template, '## Compact form — clean PASS', '```markdown');
@@ -1260,7 +1236,7 @@ test('the console-surfacing assertions can go red', () => {
 });
 
 // F9: the resolver-failure line surfaces and carries no verdict marker.
-const resolverFailureLine = (texts) => documentedTemplate(sectionOf(texts.tiebreak, 'Resolve and act'), ['resolve-tiebreak exited']);
+const resolverFailureLine = (texts) => documentedTemplate(sectionOf(texts.tiebreak, '## Resolve and act'), ['resolve-tiebreak exited']);
 const failureLineProblems = (template) => {
   const problems = [];
   if (consoleLowItems(`${instantiate(template)}\n`).length !== 1) problems.push('does not surface as a Low-confidence item');
@@ -1290,7 +1266,7 @@ function residualProblems(texts) {
   if (!PER_FINDING_LINE.test(partnerDiedParagraph(texts))) problems.push('partner-died findings get no per-finding line');
   if (!/Step 3\.7 re-runs it/.test(texts.step3)) problems.push('step3 sweep says once without the Step 3.7 re-run');
   if (!/exactly once \(Step 3\.7 re-runs it/.test(texts.debate)) problems.push('debate sweep says once without the Step 3.7 re-run');
-  if (!/logging only what the earlier sweep did not already report/.test(sectionOf(texts.tiebreak, 'Dispatch'))) problems.push('Step 3.7 sweep re-logs earlier leftovers');
+  if (!/logging only what the earlier sweep did not already report/.test(sectionOf(texts.tiebreak, '## Dispatch'))) problems.push('Step 3.7 sweep re-logs earlier leftovers');
   return problems;
 }
 
@@ -1398,7 +1374,7 @@ function tiebreakCommandProblems(section) {
   return problems;
 }
 
-const resolveAndAct = () => sectionOf(tiebreakText(), 'Resolve and act');
+const resolveAndAct = () => sectionOf(tiebreakText(), '## Resolve and act');
 
 test('step 2 gives a pipeline-run resolve-tiebreak command with --run and a standalone one without it', () => {
   assert.deepEqual(tiebreakCommandProblems(resolveAndAct()), []);

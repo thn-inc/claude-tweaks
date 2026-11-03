@@ -270,7 +270,7 @@ sweep, `hooks.js archive-run` — skips or refuses `console-residue` too, which 
 `console-residue.js --ack` (an unreadable `console.json` must be repaired or removed instead). The
 skip carries a `hint` naming the open items and any unreadable
 `console.json`, which `reconcile/index.js` passes through to `result.runs` (#4172). Since #4170, when a planned can't-tell filing has no record (`filing-pending`), the hint also names the paste-ready `console-filings.js --only` re-run (`filingRerunRemedy`); the `hooks.js archive-run` refusal prints the same remedy. `console-residue` is
-deliberately not in `STRUCTURALLY_STUCK_REASONS`: an acknowledgement (or, for a `filing-pending` item, logging its filed line), not a reconcile re-run, converges it.
+deliberately not in `STRUCTURALLY_STUCK_REASONS`: an acknowledgement (or, for a `filing-pending` item, logging its filed line), not a reconcile re-run, converges it. A run whose archival attempt committed carries `commit: { sha, branch }` on its `result.runs` entry, archived or skipped, from `archiveMerged`'s `archiveCommits` (#3721).
 
 **Residue pruning.** After every `archive` pass, `cache.js`'s `pruneResidueFailures` drops any
 `residueFailures` entry (reason-agnostic — `move-failed`, `structurally-stuck`, any future reason)
@@ -593,8 +593,12 @@ gate is `lib/issues/parent-gate.js`, the same code the prose runs through `bin/p
   `MERGED` on GitHub. It is not limited to armed merges: whatever merged the PR, an unmarked merged
   run gets the steps once. Only `github-issues` projects take part (`work-backend: github-issues`);
   any other value, or none, skips the whole check as `not-github-issues` and writes nothing. A
-  checkout without an `origin` slug fails as `no-remote`, and a caller that passes no PR-state
-  resolver fails as `no-pr-states` (a programming error, handled like the other two).
+  checkout without an `origin` slug fails as `no-remote`, an `origin` on a host that is not a known
+  GitHub host fails as `unknown-host` (#4933; no gh call is made, and the failure carries a `detail`
+  holding the refusal text, which names the `GH_HOST=<host>` opt-in; `reconcile()` copies it onto
+  the `skipped` entry and `format-summary.js` renders it flattened and bounded as
+  `skipped: post-merge — unknown-host ({detail})`), and a caller that passes no
+  PR-state resolver fails as `no-pr-states` (a programming error, handled like the others).
 - **Marker rule.** A run is done when a `decisions.md` line, read through `parseEntry`, has the
   location `reconcile post-merge` (this check's own summary entry) or one ending in `pr-first-merge
   Step 4.0b` (the merging session's own marker, `(skipped)` form included, and the per-parent
@@ -704,9 +708,12 @@ gate is `lib/issues/parent-gate.js`, the same code the prose runs through `bin/p
   schema default (`high`) is looser than a configured `medium` or `low` floor and would close a
   parent below the floor with no sign-off; Step 4.0 still runs and the marker is still written, so
   the run is not retried and tidy's backstop is the recovery. The origin remote's host is kept
-  (`git-exec.js`'s `repoSpecOf`), so on a GitHub Enterprise origin the gate's reads and the two
-  writes name `host/owner/repo` (`--hostname` on the `gh api` reads); a remote `parseRepo` cannot
-  read (an `ssh://` URL) keeps the bare slug it always resolved to.
+  (`git-exec.js`'s `repoSpecOf`, which runs `repo-resolve.js`'s `gateOriginRepo`), so on a known
+  GitHub Enterprise origin (`*.ghe.com`, a gh `hosts.yml` key, or the exported `GH_HOST`) the gate's
+  reads and the two writes name `host/owner/repo` (`--hostname` on the `gh api` reads); an origin on
+  any other host returns `{ refusal }` and the check fails `unknown-host` before any gh call
+  (`teardown-run.js`'s remote-ref step skips with the same refusal text). A remote the gate cannot
+  read (an `ssh://` URL) keeps the bare slug it always resolved to (#4857).
 - **Accepted residual risk: tidy-approval race.** A human approving a tidy `parent-gate` row for the
   same parent in the seconds while a post-merge pass is mid-close can post a second `## Closed below
   the oversight floor` comment, because the two writers share no lock beyond Step 4.0b's own
