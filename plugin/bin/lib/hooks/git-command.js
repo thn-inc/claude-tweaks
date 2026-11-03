@@ -1483,19 +1483,29 @@ function isBareOrAbsoluteProgram(tok) {
 // Fd digits may follow the `)` (`(ls)2>x` is a subshell with a `2>` redirect).
 const BALANCED_GROUP_RE = /^[$<]?\([^()\\$`<>"']*\)\d*$/;
 
+// The plain-word rule over raw[from, to): every character is quoted (`s`/`d`), escaped (`e`) or bare and
+// not `$`, backtick or `(`. A stray (`x`) character, or a bare `$`, backtick or `(`, makes it not plain.
+function isPlainWordSpan(raw, kinds, from, to) {
+  for (let j = from; j < to; j += 1) {
+    const kind = kinds[j];
+    if (kind === 's' || kind === 'd' || kind === 'e') continue;
+    if (kind === 'b' && !'$`('.includes(raw[j])) continue;
+    return false;
+  }
+  return true;
+}
+
 // #4294: a prefix whose LAST escaped blank (`\ ` or an escaped tab, kind `e`) follows only closed
 // expansions. Before that blank: no bare `(` or `$[`, no stray (`x`) character, every bare `${` closed by a
 // bare `}` (counted, so `${M:-${N}}` closes) and every bare backtick paired. After it: the plain-word
-// rule below (no stray, no bare `$`, backtick or `(`), so `$M\ $N>x` stays out as `$N>x` does (#4328).
+// rule (isPlainWordSpan), so `$M\ $N>x` stays out as `$N>x` does (#4328).
 function escapedBlankPrefixOk(raw, kinds, k) {
   let blank = -1;
   for (let j = 0; j < k; j += 1) {
     if (kinds[j] === 'e' && (raw[j] === ' ' || raw[j] === '\t')) blank = j;
   }
   // No blank (-1): the after-part is the whole prefix, which the caller already found not plain.
-  for (let j = blank + 1; j < k; j += 1) {
-    if (kinds[j] === 'x' || (kinds[j] === 'b' && '$`('.includes(raw[j]))) return false;
-  }
+  if (!isPlainWordSpan(raw, kinds, blank + 1, k)) return false;
   let braces = 0;
   let tick = false;
   for (let j = 0; j < blank; j += 1) {
@@ -1534,15 +1544,7 @@ function gluedRedirectOpEnd(raw, kinds, nest) {
   let k = 0;
   while (k < raw.length && !(raw[k] === '>' && kinds[k] === 'b')) k += 1;
   if (k === 0 || k === raw.length || isNested(advanceNesting(nest, raw, kinds, k))) return null;
-  let plain = true;
-  for (let j = 0; j < k; j += 1) {
-    const kind = kinds[j];
-    if (kind === 's' || kind === 'd' || kind === 'e') continue;
-    if (kind === 'b' && !'$`('.includes(raw[j])) continue;
-    plain = false;
-    break;
-  }
-  if (!plain) {
+  if (!isPlainWordSpan(raw, kinds, 0, k)) {
     const balancedGroup = kinds.slice(0, k) === 'b'.repeat(k) && BALANCED_GROUP_RE.test(raw.slice(0, k));
     if (!balancedGroup && !escapedBlankPrefixOk(raw, kinds, k)) return null;
   }
