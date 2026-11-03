@@ -73,6 +73,11 @@ STAGED 22:05:13 — /tidy Step 6: Rollover digest container #1426 (115 comments)
 STAGED 22:05:13 — /tidy Step 6: Open parent gate (below floor) #3944. Stage path: staged/tidy-open-parent-gate-1.md. needs:decision marker posted.
 AUTO 22:06:20 — /sweep Step 1 tidy complete: applied 43 (42 archived, 1 Release Note filled), staged 18, yours 66, clean 9. Reversibility: n/a.
 AUTO 22:07:32 — /specify drain: claimed #4790 (run 2026-11-02T204755-sweep-standalone, transport git). Reversibility: high.
+- AUTO 10:39:42 — --approve: human approved the full staged set in session; executing. Reversibility: n/a.
+- SKIP 10:39:42 — Open parent gate (skipped): condition: parent-gate.js --parent 3944 re-read idempotence already-closed → fallback: stale — skipped, #3944 already closed below the floor. Reversibility: n/a.
+- SKIP 10:39:43 — Promote (skipped): condition: #4520 and #3381 re-read as ready with no parked label → fallback: stale — skipped, both already promoted. Reversibility: n/a.
+- AUTO 10:39:43 — Registry: added a separate docs/plans/*.html row (visual plan renderings) instead of widening the ledger-only *.md row; PR #5052 (tidy-housekeeping-pr), commit a4dcc595c. Reversibility: high (git revert).
+- AUTO 10:40:40 — --approve: correction: the 09:32-09:38 pass above had already applied every item; this session's 10:39 registry PR #5052 was a duplicate and is closed (branch and worktree removed); the SKIP lines for #3944 and #4520/#3381 at 10:39 record re-reads of that earlier pass's results; merging #5047 as the approved registry item. Reversibility: n/a.
 ## /specify
 - AUTO 22:09:34 — Release: released claim on #4790 (shaped: #4790); labels removed: bot:in-progress. Reversibility: high.
 AUTO 22:09:34 — /specify drain #4790: framing guard open; ceremony-check fast-lane; framing-check open; design-intent n/a (Surface: infra); shaped:headless applied with ready. Reversibility: high.
