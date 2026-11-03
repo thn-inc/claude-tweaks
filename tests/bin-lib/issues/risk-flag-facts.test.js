@@ -1,7 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { riskFlagEntries, UNREADABLE_FLAG_TEXT } = require('../../../plugin/bin/lib/issues/risk-flag-facts');
+const { riskFlagEntries, UNREADABLE_FLAG_TEXT, unreadableText } = require('../../../plugin/bin/lib/issues/risk-flag-facts');
 
 test('flag entries carry unconfirmed only when marked, proof entries their neutralized text', () => {
   const r = riskFlagEntries('Risk-flags: auth, migrations\nRisk-flags-unconfirmed: true\n\n## O\n', '### Task 1: x\n\nProof(auth): An unauthenticated request [still](x) returns 401.\n');
@@ -87,4 +87,12 @@ test('planParse: a plan with no tasks and a near-miss proof line each read could
   const nearMiss = riskFlagEntries(spec, '### Task 1: x\n\nProof (auth): An unauthenticated request to the route still returns 401.\nProof(auth): The second form is well formed and long enough.\n');
   assert.strictEqual(nearMiss.planParse, 'could-not-parse');
   assert.deepStrictEqual(nearMiss.proofs.map((p) => p.id), ['auth']);
+});
+
+test('a parse reason the text table does not know falls back to the malformed wording, never to a missing text', () => {
+  assert.strictEqual(unreadableText('some-future-reason'), UNREADABLE_FLAG_TEXT.malformed);
+  assert.strictEqual(unreadableText(undefined), UNREADABLE_FLAG_TEXT.malformed);
+  assert.strictEqual(unreadableText('constructor'), UNREADABLE_FLAG_TEXT.malformed, 'an inherited property is not a reason');
+  assert.strictEqual(unreadableText('unknown-slug'), UNREADABLE_FLAG_TEXT['unknown-slug']);
+  assert.ok(Object.values(UNREADABLE_FLAG_TEXT).every((text) => typeof text === 'string' && text !== ''));
 });

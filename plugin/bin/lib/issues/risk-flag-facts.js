@@ -29,6 +29,10 @@ const UNREADABLE_FLAG_TEXT = Object.freeze({
   'unknown-slug': 'flag line names an unknown category',
 });
 
+// A reason this table does not know (a future parse reason) reads as the plain malformed
+// wording, never as a missing `text`, which JSON would drop without a trace.
+const unreadableText = (reason) => (Object.hasOwn(UNREADABLE_FLAG_TEXT, reason) ? UNREADABLE_FLAG_TEXT[reason] : UNREADABLE_FLAG_TEXT.malformed);
+
 // specText, planText | null, { extraCategories } -> { status, flags, proofs, planParse? }.
 function riskFlagEntries(specText, planText, { extraCategories = [] } = {}) {
   const parsed = parseRiskFlags(specText, { extraCategories });
@@ -37,7 +41,7 @@ function riskFlagEntries(specText, planText, { extraCategories = [] } = {}) {
   const flags = parsed.flags.map((slug) => ({
     id: slug,
     ...(parsed.unconfirmed ? { unconfirmed: true } : {}),
-    ...(parsed.status === 'unknown' ? { text: UNREADABLE_FLAG_TEXT[parsed.reason] } : {}),
+    ...(parsed.status === 'unknown' ? { text: unreadableText(parsed.reason) } : {}),
   }));
   if (planText === null || planText === undefined) return { status: parsed.status, flags, proofs: [] };
 
@@ -50,4 +54,4 @@ function riskFlagEntries(specText, planText, { extraCategories = [] } = {}) {
   return { status: parsed.status, flags, proofs, planParse: problems.length === 0 ? 'ok' : 'could-not-parse' };
 }
 
-module.exports = { riskFlagEntries, UNREADABLE_FLAG_TEXT };
+module.exports = { riskFlagEntries, UNREADABLE_FLAG_TEXT, unreadableText };

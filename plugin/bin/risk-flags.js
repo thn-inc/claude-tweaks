@@ -52,7 +52,10 @@
 //           be parsed is never read as "no proof written". The producer never leaves an empty list behind a failure: on
 //           every non-zero exit both outputs are removed if present, so the gather states
 //           "--flags input not read — treated as absent" instead of reading a stale or empty
-//           file as "no flags".
+//           file as "no flags". An output that is also --spec-file or --plan-file, or the
+//           other output, exits 2 before anything is read or written; names are compared
+//           through deps.realpath (path-guard's canonicalRealpath: symlinks resolved, OS
+//           casing), and the two inputs may be one file.
 //
 // Exit codes (Payload-1/Invocation-2 as qa-report.js, plus 2 for an unreadable policy):
 //   0  done, including an answer refused or left unanswered
@@ -71,6 +74,7 @@ const record = require('./lib/issues/record');
 const { classifyRiskFlags, readRiskPolicy } = require('./lib/issues/risk-flag-classify');
 const { BUILTIN_RISK_CATEGORIES, LIST_ELEMENT_PATTERNS } = require('./lib/policy-schema');
 const { writeFileAtomic } = require('./lib/atomic-write');
+const { canonicalRealpath } = require('./lib/path-guard');
 const logDecision = require('./log-decision');
 const { riskFlagEntries } = require('./lib/issues/risk-flag-facts');
 
@@ -81,7 +85,7 @@ const USAGE = 'usage: risk-flags.js classify --body-file <f> [--prior-body-file 
   + '  answers file: JSON object { "<slug>": "keep" | "remove" }\n'
   + '  exit 0 done (a refused or unanswered flag is still 0: the fail direction is keep), 1 body, prior-body or spec file unreadable,\n'
   + '       2 malformed invocation or unreadable policy, 3 a named output file (--body-file, --flags-out, --proofs-out) unwritable\n'
-  + '  facts prints { status, flags, proofs, plan, planParse }, refuses an output that is also an input or the other output,\n'
+  + '  facts prints { status, flags, proofs, plan, planParse }, refuses (exit 2) an output that is also an input or the other output, compared on canonical paths,\n'
   + '       and removes both outputs on every non-zero exit\n';
 
 const FLAG_KEYS = {
@@ -135,15 +139,6 @@ function parseArgs(argv) {
     for (const [flag, key] of [['--spec-file', 'specFile'], ['--flags-out', 'flagsOut'], ['--proofs-out', 'proofsOut']]) {
       if (o[key] === null) return { error: `${flag} <path> is required` };
     }
-    // A later failure removes both outputs, so an output that is also an input would delete the
-    // user's spec or plan; two outputs that are one file would overwrite each other.
-    const named = [['--spec-file', o.specFile], ['--plan-file', o.planFile], ['--flags-out', o.flagsOut], ['--proofs-out', o.proofsOut]]
-      .filter(([, file]) => file !== null)
-      .map(([flag, file]) => [flag, path.resolve(file)]);
-    for (let i = 0; i < named.length; i++) {
-      const clash = named.slice(i + 1).find(([, file]) => file === named[i][1]);
-      if (clash) return { error: `${named[i][0]} and ${clash[0]} must name different files` };
-    }
     return o;
   }
   if (o.bodyFile === null) return { error: '--body-file <path> is required' };
@@ -162,6 +157,8 @@ const realDeps = {
   readFile: (p) => fs.readFileSync(p, 'utf8'),
   writeFile: (p, content) => writeFileAtomic(p, content),
   removeFile: (p) => fs.unlinkSync(p),
+  // -> the symlink-resolved, OS-cased path, or null when it does not resolve (path-guard's).
+  realpath: (p) => canonicalRealpath(p),
   cwd: () => process.cwd(),
   now: () => Date.now(),
   mainRoot: undefined,
@@ -356,15 +353,42 @@ function removeOutput(deps, file) {
   }
 }
 
-// argv of a rejected `facts` -> the outputs it named, so a usage error still takes away what an
-// earlier run left (the parse stopped before an options object existed). A flag-shaped value
-// is not a path, and a file named as an input (the clash the parse refused) is never an output.
-function namedOutputs(argv) {
+// path -> the name two spellings of one file share: symlinks resolved and the OS's casing, for a
+// file that exists; for one that does not (an output yet to be written), its directory resolved
+// the same way plus its own name. Fail-open to path.resolve, so an unresolvable name still compares.
+function canonicalName(deps, file) {
+  const abs = path.resolve(file);
+  const real = deps.realpath(abs);
+  if (typeof real === 'string') return real;
+  const dir = path.dirname(abs);
+  const realDir = deps.realpath(dir);
+  return path.join(typeof realDir === 'string' ? realDir : dir, path.basename(abs));
+}
+
+// argv of a `facts` -> the outputs it named, so a usage error or a refused clash still takes away
+// what an earlier run left (a parse failure stopped before an options object existed). A flag-
+// shaped value is not a path, and a file that is also an input, under any spelling, is never
+// an output.
+function namedOutputs(argv, deps) {
   const values = (flags) => argv
     .map((arg, i) => (flags.includes(arg) ? argv[i + 1] : undefined))
     .filter((value) => typeof value === 'string' && value.trim() && !value.startsWith('--'));
-  const inputs = new Set(values(['--spec-file', '--plan-file']).map((file) => path.resolve(file)));
-  return [...new Set(values(['--flags-out', '--proofs-out']).filter((file) => !inputs.has(path.resolve(file))))];
+  const inputs = new Set(values(['--spec-file', '--plan-file']).map((file) => canonicalName(deps, file)));
+  return [...new Set(values(['--flags-out', '--proofs-out']).filter((file) => !inputs.has(canonicalName(deps, file))))];
+}
+
+// o -> an error message when an output is also an input or the other output, else null. Two inputs
+// may be one file: nothing is written to either. Compared on canonicalName, so a symlink or a
+// case-variant spelling of the spec cannot be overwritten (or, on a later failure, removed).
+function outputClash(o, deps) {
+  const named = [['--spec-file', o.specFile, false], ['--plan-file', o.planFile, false], ['--flags-out', o.flagsOut, true], ['--proofs-out', o.proofsOut, true]]
+    .filter(([, file]) => file !== null)
+    .map(([flag, file, isOutput]) => ({ flag, isOutput, name: canonicalName(deps, file) }));
+  for (let i = 0; i < named.length; i++) {
+    const clash = named.slice(i + 1).find((other) => other.name === named[i].name && (other.isOutput || named[i].isOutput));
+    if (clash) return `${named[i].flag} and ${clash.flag} must name different files`;
+  }
+  return null;
 }
 
 // -> { repoRoot, policy } or { code } (already reported through `fail`): the one place the
@@ -410,7 +434,7 @@ function run(argv, overrides = {}) {
   if (o.help) { deps.stdout(USAGE); return 0; }
   if (o.error) {
     deps.stderr(`risk-flags.js: ${o.error}\n${USAGE}`);
-    if (argv[0] === 'facts') namedOutputs(argv).forEach((file) => removeOutput(deps, file));
+    if (argv[0] === 'facts') namedOutputs(argv, deps).forEach((file) => removeOutput(deps, file));
     return 2;
   }
   const fail = (code, reason) => { deps.stderr(`risk-flags.js: ${reason}\n`); return code; };
@@ -422,6 +446,12 @@ function run(argv, overrides = {}) {
     return text;
   };
   if (o.verb === 'facts') {
+    const clash = outputClash(o, deps);
+    if (clash !== null) {
+      // Before anything is read or written: the outputs cleanup would otherwise delete the input.
+      namedOutputs(argv, deps).forEach((file) => removeOutput(deps, file));
+      return fail(2, clash);
+    }
     const code = factsVerb(o, deps, read, fail);
     if (code !== 0) [o.flagsOut, o.proofsOut].forEach((file) => removeOutput(deps, file));
     return code;

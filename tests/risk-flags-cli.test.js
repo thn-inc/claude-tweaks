@@ -788,3 +788,76 @@ test('facts maps a repo-root failure to exit 2 through the same path as classify
   assert.match(fromFacts.stderr, /repo-root-unresolvable/);
   assert.match(fromClassify.stderr, /repo-root-unresolvable/);
 });
+
+// A symlink to the spec, or null where the platform will not make one (an unprivileged Windows checkout).
+function linkTo(target) {
+  const link = path.join(fs.mkdtempSync(path.join(TMP, 'link-')), 'alias.md');
+  try {
+    fs.symlinkSync(target, link);
+    return link;
+  } catch (error) {
+    if (['EPERM', 'EACCES', 'ENOSYS'].includes(error.code)) return null;
+    throw error;
+  }
+}
+
+test('facts refuses an output that is a symlink to an input, or an input that is a symlink to an output, and keeps the spec', (t) => {
+  const spec = rawFile(FACTS_SPEC);
+  const link = linkTo(spec);
+  if (link === null) return t.skip('symlinks are not available here');
+  const o = factsOutputs();
+  const outIsLink = exec(['facts', '--spec-file', spec, '--flags-out', link, '--proofs-out', o.proofs, '--repo-root', NO_POLICY_ROOT]);
+  assert.strictEqual(outIsLink.code, 2);
+  assert.match(outIsLink.stderr, /--spec-file and --flags-out must name different files/);
+  assert.strictEqual(fs.readFileSync(spec, 'utf8'), FACTS_SPEC, 'the spec is not overwritten through the link');
+  const inIsLink = exec(['facts', '--spec-file', link, '--flags-out', spec, '--proofs-out', o.proofs, '--repo-root', NO_POLICY_ROOT]);
+  assert.strictEqual(inIsLink.code, 2);
+  assert.strictEqual(fs.readFileSync(spec, 'utf8'), FACTS_SPEC);
+  const planLink = linkTo(rawFile(FACTS_PLAN));
+  const planOut = exec(['facts', '--spec-file', spec, '--plan-file', planLink, '--flags-out', fs.realpathSync(planLink), '--proofs-out', o.proofs, '--repo-root', NO_POLICY_ROOT]);
+  assert.strictEqual(planOut.code, 2);
+  assert.match(planOut.stderr, /--plan-file and --flags-out/);
+  assert.strictEqual(fs.readFileSync(planLink, 'utf8'), FACTS_PLAN, 'the plan is not overwritten');
+  assert.deepStrictEqual([fs.existsSync(o.flags), fs.existsSync(o.proofs)], [false, false]);
+});
+
+test('facts refuses a case-variant spelling of an input as an output, through an injected realpath', () => {
+  const dir = fs.mkdtempSync(path.join(TMP, 'case-'));
+  const spec = path.join(dir, 'spec.md');
+  fs.writeFileSync(spec, FACTS_SPEC);
+  const proofs = path.join(dir, 'proofs.json');
+  fs.writeFileSync(proofs, '[]');
+  // A case-insensitive volume, modelled: every spelling of a name has the one canonical form.
+  const realpath = (p) => p.toLowerCase();
+  const r = exec(['facts', '--spec-file', path.join(dir, 'Spec.md'), '--flags-out', spec, '--proofs-out', proofs, '--repo-root', NO_POLICY_ROOT], { realpath });
+  assert.strictEqual(r.code, 2);
+  assert.match(r.stderr, /--spec-file and --flags-out must name different files/);
+  assert.strictEqual(fs.readFileSync(spec, 'utf8'), FACTS_SPEC, 'the spec is neither overwritten nor removed by the cleanup');
+  assert.strictEqual(fs.existsSync(proofs), false, 'the real output is still removed');
+  // The same names compared as plain strings are two files: the canonicalizer is what refuses.
+  const o = factsOutputs();
+  const distinct = exec(['facts', '--spec-file', path.join(dir, 'Spec.md'), '--flags-out', o.flags, '--proofs-out', o.proofs, '--repo-root', NO_POLICY_ROOT], { realpath: (p) => p });
+  assert.notStrictEqual(distinct.code, 2);
+});
+
+test('the usage-error cleanup skips an output that is an aliased input', () => {
+  const dir = fs.mkdtempSync(path.join(TMP, 'alias-'));
+  const spec = path.join(dir, 'spec.md');
+  const proofs = path.join(dir, 'proofs.json');
+  fs.writeFileSync(spec, FACTS_SPEC);
+  fs.writeFileSync(proofs, '[]');
+  const realpath = (p) => p.toLowerCase();
+  const r = exec(['facts', '--spec-file', path.join(dir, 'SPEC.md'), '--flags-out', spec, '--proofs-out', proofs, '--bogus'], { realpath });
+  assert.strictEqual(r.code, 2);
+  assert.match(r.stderr, /unknown argument/);
+  assert.strictEqual(fs.readFileSync(spec, 'utf8'), FACTS_SPEC, 'an output that is also an input is not removed');
+  assert.strictEqual(fs.existsSync(proofs), false);
+});
+
+test('facts allows --spec-file and --plan-file to be one file: both are inputs, nothing is written to either', () => {
+  const o = factsOutputs();
+  const both = rawFile(FACTS_SPEC);
+  const r = exec(factsArgv(both, o, ['--plan-file', both]));
+  assert.strictEqual(r.code, 0);
+  assert.strictEqual(fs.readFileSync(both, 'utf8'), FACTS_SPEC);
+});
