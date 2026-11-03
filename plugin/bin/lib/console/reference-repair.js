@@ -17,8 +17,10 @@ const REFERENCE_REPAIR_REASONS = Object.freeze({
 });
 
 const DIFF_GIT = 'diff --git ';
-// Header lines `git apply` accepts that name no path.
-const NEUTRAL_HEADERS = ['index ', 'old mode ', 'new mode ', 'similarity index ', 'dissimilarity index '];
+// Header lines `git apply` accepts that name no path. `old mode `/`new mode ` are deliberately
+// absent: a reference repair edits text and never changes a file's mode, and `git apply` applies a
+// mode line (a 100755 file written back as 100644 loses its executable bit), so one holds.
+const NEUTRAL_HEADERS = ['index ', 'similarity index ', 'dissimilarity index '];
 const HUNK_HEADER_RE = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/;
 
 // A side git would quote or cut (a `"`, a backslash, a tab or any other control character) names a
@@ -60,7 +62,8 @@ function diffGitSides(s) {
 // under a `docs/a.md` header while changing a test file: `---`/`+++` lines naming another path; a
 // second section with no `diff --git` line; and `rename from` another path. A traditional patch
 // (`---`, `+++` or `@@` before the first section) is refused too. `git apply --numstat` is not a
-// sufficient path source, since it lists only the new path of a rename. Hunks are consumed by their
+// sufficient path source, since it lists only the new path of a rename. A mode line is refused too
+// (see NEUTRAL_HEADERS). Hunks are consumed by their
 // `@@` counts so content that resembles a path line stays content. One forward walk, linear: only
 // indexOf/startsWith and the anchored hunk-header regex touch a line.
 function stagedDiffPaths(text) {

@@ -51,7 +51,7 @@ prefix lands in Pending review as `pending — unmapped-prefix`, never auto-appr
 `hold: true`, a header carrying `Hold: yes` or a `Held:` line, or a staged diff naming a test file
 or a merge-sensitive path — `reference-sweep.md` Step 4) lands as `pending — reference-repair-held`;
 one whose finding or header is missing, duplicated or malformed, so the two cannot agree on
-`Hold: no`, or whose staged diff is missing or unparseable, lands as
+`Hold: no`, whose staged diff is missing or unparseable, or whose `merge-sensitive-paths` policy value cannot be read, lands as
 `pending — reference-repair-unclassified`; one whose file cannot be read lands as
 `pending — reference-repair-unreadable`; none is auto-approved; a staged item named by a `REFUSED` line in `decisions.md` is classified under **Refused — no defer reason**
 before any prefix rule runs and resolves to `refused` — those rows are in the CLI's table like

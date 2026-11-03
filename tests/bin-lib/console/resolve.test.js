@@ -606,6 +606,21 @@ test('#4636: every other path line or header the parser cannot square with its s
   }
 });
 
+test('#4636: a mode line holds, since git apply would strip or add an executable bit under a clean header', () => {
+  const head = 'diff --git a/docs/a.md b/docs/a.md\n';
+  const cases = {
+    'old/new mode (a 755 file rewritten as 644)': `${head}old mode 100755\nnew mode 100644\n--- a/docs/a.md\n+++ b/docs/a.md\n${HUNK}`,
+    'new mode alone': `${head}new mode 100755\n--- a/docs/a.md\n+++ b/docs/a.md\n${HUNK}`,
+  };
+  for (const [label, body] of Object.entries(cases)) {
+    assert.strictEqual(stagedDiffPaths(`Hold: no\n\n${body}`), null, label);
+    const item = resolveRef(`Hold: no\n\n${body}`, refState());
+    assert.strictEqual(item.resolution, 'pending', label);
+    assert.strictEqual(item.reason, 'reference-repair-unclassified', label);
+  }
+  assert.deepStrictEqual(stagedDiffPaths(`${head}index d09312f..2ddd079 100644\n--- a/docs/a.md\n+++ b/docs/a.md\n${HUNK}`), ['docs/a.md'], 'an index line stays neutral');
+});
+
 test('#4636: hunk content that looks like a path line is content', () => {
   const lookalike = 'diff --git a/docs/a.md b/docs/a.md\n--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1,3 +1,3 @@\n one\n--- a/tests/x.test.js\n+++ b/tests/x.test.js\n three\n';
   assert.deepStrictEqual(stagedDiffPaths(`Hold: no\n\n${lookalike}`), ['docs/a.md']);

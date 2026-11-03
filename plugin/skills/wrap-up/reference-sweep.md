@@ -78,7 +78,8 @@ Resolve the `autonomy` ceiling per `_shared/autonomy-ceiling.md`.
 When staging a candidate, write its full proposal to `staged/wrap-up-reference-{n}.md` and name
 that path in the finding's `stagePath`, so the Review Console files it under Reference repairs.
 Every staged candidate records `permittedInitiative`'s `hold` twice, copied verbatim and never
-judged: as the finding's boolean `hold` field in the row's payload, and as exactly one `Hold: yes`
+judged (the two `hold: true` overrides below, an ambiguous target and a diff that cannot be
+composed, are the only exceptions): as the finding's boolean `hold` field in the row's payload, and as exactly one `Hold: yes`
 or `Hold: no` line in the staged file's header (the lines before the first blank line). Every
 staged file's header also carries `Target: {repo path of the file holding the reference}`, and its
 body a `{old} → {new}` line (for an ambiguous one, `{old} → one of {candidates}`), since a human
@@ -94,14 +95,18 @@ and `supervised` denials of an otherwise clean fix come back `hold: false`.
 
 Every other staged repair's body carries the repair's real diff, one `diff --git a/{path} b/{path}`
 block per file, with those lines unindented and at the start of the line. Compose it in a fresh
-temp directory outside the repo holding `a/{path}` (the file as it is) and `b/{path}` (the repaired
-text), then run from that directory:
+temp directory outside the repo holding `a/{path}` (the file as it is) and `b/{path}` (a
+mode-preserving copy, `cp -p`, of it with the repaired text written into the copy; a new file would
+be mode 644 and turn a 100755 file's diff into `old mode`/`new mode` lines, which the resolver
+refuses), then run from that directory:
 
 ```bash
-git diff --no-index --no-prefix -- a/{path} b/{path}
+git diff --no-index --no-color --no-ext-diff --no-prefix -- a/{path} b/{path}
 ```
 
-Its exit 1 is success. Paste its output verbatim under the header, never hand-typed, so a staged
+Its exit 1 is success. Paste its output verbatim under the header, never hand-typed and never
+wrapped in a code fence (a fence line after the last hunk holds the repair as
+`reference-repair-unclassified`), so a staged
 candidate leaves the shared worktree untouched, including under `--dry-run`. Then run
 `_shared/staged-patch.md`'s Staging-time gate on the file
 (`git -C "{worktree root}" apply --check "{stagePath}"`); on its malformed branch, recompose once.
@@ -134,7 +139,8 @@ permittedInitiative({
   fix: { kind: 'pointer-repair', files, changedLines, brokenBy },
   changedFiles,                             // git diff --name-only {base}...HEAD
   spent,                                    // fixes already applied this run
-  sensitivePaths,                            // array: merge-sensitive-paths split on ',', entries trimmed, empties dropped ([] when unset), as bin/lib/express/policy.js's sensitivePathsOf parses it; anything else holds every candidate
+  sensitivePaths,                            // array: merge-sensitive-paths split on ',', entries trimmed, empties dropped ([] when unset), as bin/lib/express/policy.js's sensitivePathsOf parses it;
+                                            // null (never []) when resolvePolicyConfig's entry for it carries `error` or is missing; anything else holds every candidate
 });
 ```
 
