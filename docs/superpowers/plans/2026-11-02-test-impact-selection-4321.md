@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+, `node --test`, no dependencies.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-02T202324-record-4321/work/4321-spec.md`
+**Spec:** `.claude-tweaks/pipelines/2026-11-03T083019-record-4321/work/4321-spec.md`
 
 ## Global Constraints
 
@@ -29,6 +29,8 @@
 
 Waived AC4.1: per the spec's `## Plan Review Decisions` (Reading B) the count covers only runs on a released build carrying Deliverable 1, so no build can test it; it stays open for `/claude-tweaks:wrap-up` through the ledger row in Task 2 Step 6, with Deliverable 3.
 Waived AC4.2: same reason as AC4.1.
+
+Round-2 decision (Reading A): a verify run that never reads the declaration (no `--scope`, or `--stamp-suite`) writes no `impact` field and is outside the AC4 count, not a fallback. Deliverable 1 is unchanged for those runs: the field is already absent whenever `sel.impact` is. The Task 2 Step 6 ledger row filters on the field.
 
 ## Review Focus
 
@@ -239,11 +241,11 @@ Expected: PASS, including the `AC2.1` release-reader and `#4024 expand-contract`
 The script and input are scratch, already written, and uncommitted. Run from the worktree root, with the full output going to the evidence log:
 
 ```bash
-mkdir -p "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-02T202324-record-4321/evidence"
+mkdir -p "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-03T083019-record-4321/evidence"
 ```
 
 ```bash
-node "/private/tmp/claude-501/-Users-thomasholknielsen-Code-Workspaces-claude-tweaks--claude-worktrees-dispatch-record-4593/5799247f-6f2c-45e0-9656-5044fb4c1207/scratchpad/replay-4321.js" "$PWD" "/private/tmp/claude-501/-Users-thomasholknielsen-Code-Workspaces-claude-tweaks--claude-worktrees-dispatch-record-4593/5799247f-6f2c-45e0-9656-5044fb4c1207/scratchpad/prs-4321.json" "$PWD/.claude-tweaks/verify-scope.json" > "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-02T202324-record-4321/evidence/replay-59-prs.txt"
+node "/private/tmp/claude-501/-Users-thomasholknielsen-Code-Workspaces-claude-tweaks--claude-worktrees-dispatch-record-4593/5799247f-6f2c-45e0-9656-5044fb4c1207/scratchpad/replay-4321.js" "$PWD" "/private/tmp/claude-501/-Users-thomasholknielsen-Code-Workspaces-claude-tweaks--claude-worktrees-dispatch-record-4593/5799247f-6f2c-45e0-9656-5044fb4c1207/scratchpad/prs-4321.json" "$PWD/.claude-tweaks/verify-scope.json" > "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-03T083019-record-4321/evidence/replay-59-prs.txt"
 ```
 
 Expected: `"prs": 59`, `"supersededByUnmatched"` at most 5. On the rules before Step 3 the same command printed 37 superseded, 35 by unmatched, 20 eligible, 2 with no impact paths, which matches the record's figures.
@@ -252,9 +254,9 @@ Write one `AC evidence` line naming AC2, the command shape and the counts to a s
 
 - [ ] **Step 6: Commit, with the deferred re-measure on the ledger**
 
-Append to the ledger table. The version is unknown until release-please cuts it, so the row names the release by what it must contain:
+Append to the ledger table as the next row number (rows 1 and 2 are flow's pre-flight notes, so this is row 3). The version is unknown until release-please cuts it, so the row names the release by what it must contain. Per the spec's round-2 decision (Reading A), the count filters on the `impact` field: an entry without it (no `--scope`, or `--stamp-suite`) is outside the count and is not a fallback:
 
-`| 1 | ops | Re-measure impact outcomes across 10 or more pipeline runs on a released build carrying Deliverable 1, from timing.json verify entries (AC4, Deliverable 3); fix or file the dominant fallback with counts. (reason-not-auto: requires pipeline runs on a released build) | open | Defer-reason: blocked-dependency — needs the first v* release containing PR #4969's Deliverable 1, then 10 or more pipeline runs on it |`
+`| 3 | ops | Re-measure impact outcomes across 10 or more pipeline runs on a released build carrying Deliverable 1, from timing.json verify entries that carry an impact field (AC4, Deliverable 3; entries with no impact field are outside the count, not fallbacks); fix or file the dominant fallback with counts. (reason-not-auto: requires pipeline runs on a released build) | open | Defer-reason: blocked-dependency — needs the first v* release containing PR #4969's Deliverable 1, then 10 or more pipeline runs on it |`
 
 Stage `.claude-tweaks/verify-scope.json`, `tests/verify-scope-declaration.test.js` and the ledger by explicit path. Message: `Add impact rules for the common superseding paths — refs #4321`, with the `Claude-Session:` trailer.
 
