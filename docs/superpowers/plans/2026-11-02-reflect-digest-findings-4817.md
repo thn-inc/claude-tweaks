@@ -25,7 +25,7 @@
 - **Deliverable 2, workflow half.** `.github/workflows/test.yml` line 39 already runs `sudo apt-get update && sudo apt-get install -y zsh` (added in `10d0ae628`, #4823). Task 2 records the learning in the skill; the workflow needs no edit.
 - **AC2 ("Each promoted entry line in #1426 carries this record's ref").** Each of the three promoted #1426 entry lines already ends with `→ #4817` (live digest comment https://github.com/thn-inc/claude-tweaks/issues/1426#issuecomment-6547466846). No code produces this, so there is no test to write.
 
-Waived AC2: already satisfied on the live digest comment (each of the three promoted lines ends with `→ #4817`); no code path to test.
+Waived AC2.1: already satisfied on the live digest comment (each of the three promoted lines ends with `→ #4817`); no code path to test.
 Waived .github/workflows/test.yml: already installs zsh on base (`10d0ae628`, #4823); no edit owed.
 - **AC1** ("Each deliverable is fixed, or closed out with its reason recorded on this record") is covered by Task 1 (deliverable 1, code half), Task 2 (deliverables 1-3, skill half) and the note above (deliverable 2, workflow half). The record comment is written at wrap-up.
 
