@@ -103,8 +103,8 @@ test('tidy Step 4 keeps the human decline reason off the command line (#4465)', 
   assert.doesNotMatch(s, /"reason":"\{why\}"\}' \|/, 'the reason must not be interpolated into a single-quoted printf argument');
 });
 
-// Executes the prose's own record payload against the real record-decline CLI, in a sandbox cwd (the store is
-// cwd-relative), then reads it back through the same fingerprint and store lookup plan-retention.js makes, so a
+// Executes the prose's own record payload against the real record-decline CLI, in a sandbox cwd (outside a git
+// repository the store is cwd-relative), then reads it back through the same fingerprint and store lookup plan-retention.js makes, so a
 // drift between the prose's description, the verb, the CLI's stdin contract and that lookup fails here. The CLI's
 // own wiring of the lookup is pinned separately, in tests/bin-lib/plan-retention/cli.test.js's spawned test.
 test("tidy Step 4's decline record payload round-trips through the fingerprint and store lookup plan-retention uses (#4594)", () => {
@@ -117,9 +117,9 @@ test("tidy Step 4's decline record payload round-trips through the fingerprint a
 
   const cli = path.join(REPO_ROOT, 'plugin', 'bin', 'declined-learning.js');
   const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'tidy-plan-decline-'));
-  const lookup = () => store.lookupDecline(probe.archiveDeclineFingerprint(), {
-    readFile: (p) => fs.readFileSync(path.join(sandbox, p), 'utf8'),
-  });
+  const lookup = () => store.lookupDecline(probe.archiveDeclineFingerprint());
+  const priorCwd = process.cwd();
+  process.chdir(sandbox);
 
   try {
     assert.equal(lookup(), null);
@@ -133,6 +133,7 @@ test("tidy Step 4's decline record payload round-trips through the fingerprint a
     assert.ok(entry, 'the recorded decline is found by plan-retention\'s fingerprint');
     assert.equal(entry.reason, why);
   } finally {
+    process.chdir(priorCwd);
     fs.rmSync(sandbox, { recursive: true, force: true });
   }
 });
