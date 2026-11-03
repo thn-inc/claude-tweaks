@@ -186,6 +186,7 @@ const TAIL_CLAUSE = 'once it passes, the rest of the bullet (QA selection, `skip
 const NOTE_CLAUSE = `, except that when suites re-ran the Mismatch branch's own note ("Verification re-run — tree changed since build's pass …") replaces a "passed in build" report.`;
 const ROW_CLAUSE = 'so the Mismatch branch runs the scoped verify (the full procedure without a scope declaration) instead of skipping.';
 const STALE_ROW = 'verification re-runs instead of skipping';
+const PASSED_ROW_SKIP = 'Skip types/lint/tests when `VERIFICATION_SHA` equals `HEAD`';
 
 // Each clause is its own assertion with its own message, so a go-red mutation that breaks one clause names that clause.
 function assertMismatchRoute(text) {
@@ -196,6 +197,7 @@ function assertMismatchRoute(text) {
   const para = text.slice(at, end === -1 ? text.length : end);
   assert.ok(text.includes(ROW_CLAUSE), 'the VERIFICATION_SHA row says the Mismatch branch runs the scoped verify');
   assert.ok(!text.includes(STALE_ROW), 'the stale VERIFICATION_SHA row text is absent');
+  assert.ok(text.includes(PASSED_ROW_SKIP), 'the VERIFICATION_PASSED row conditions its skip on the SHA check');
   assert.ok(para.includes(TAIL_CLAUSE), 'the tail clause keeps the rest of the bullet applying as written after the Mismatch branch passes');
   assert.ok(para.includes(NOTE_CLAUSE), 'the paragraph ends with the re-run note replacing a passed-in-build report');
 }
@@ -239,6 +241,13 @@ test('go-red: re-adding the stale re-runs wording to the row fails the stale-tex
   const mutated = skill.replace('so the Mismatch branch runs', 'verification re-runs instead of skipping; so the Mismatch branch runs');
   assert.notEqual(mutated, skill);
   assert.throws(() => assertMismatchRoute(mutated), /the stale VERIFICATION_SHA row text is absent/);
+});
+
+test('go-red: an unconditional VERIFICATION_PASSED row skip fails the row-condition assertion', () => {
+  const skill = read('plugin/skills/test/SKILL.md');
+  const mutated = skill.replace('Skip types/lint/tests when `VERIFICATION_SHA` equals `HEAD` — they already passed', 'Skip types/lint/tests — they already passed');
+  assert.notEqual(mutated, skill);
+  assert.throws(() => assertMismatchRoute(mutated), /the VERIFICATION_PASSED row conditions its skip on the SHA check/);
 });
 
 test('go-red: dropping the tail clause fails the tail assertion', () => {
