@@ -7,12 +7,16 @@ that single task directly from the already-materialized spec instead.
 
 ## Applicability gate
 
-All three must hold, checked in this order (cheapest first):
+All four must hold, checked in this order (cheapest first):
 
 1. The materialized header (`{run-dir}/work/{n}-spec.md`'s frontmatter, `skills/flow/materialize.md`)
    carries `ceremony: fast-lane`.
 2. The same header carries `size: low`.
-3. The spec body's `### Key Files` section (under `## Technical Approach`, spec-template's own
+3. The spec body does not carry a risk flag: `parseRiskFlags` (`bin/lib/issues/record-risk-flags.js`)
+   returns no flags. A `Risk-flags:` line naming any slug, or one that line cannot be read as
+   (it reads as every category flagged), carries a risk flag; `Risk-flags: none` and no line do
+   not. A flagged record falls through, because this path's composed plan has no audited `Proof(<slug>)` step.
+4. The spec body's `### Key Files` section (under `## Technical Approach`, spec-template's own
    heading) names **at most one implementation file** — count every listed path except one under
    `tests/`, matching `*.test.*`/`*.spec.*`, or itself a `*.md` path that is not prompt prose (markdown under `skills/`, `agents/`, or `commands/` counts as implementation; the same test/docs
    exclusion `bin/lib/dispatch/ceremony-derive.js`'s `computeDiffFacts` already applies to a diff,
@@ -24,11 +28,11 @@ All three must hold, checked in this order (cheapest first):
    `check-staged-stack.js — CLI exit path (read only, no change)` was counted as a second file.
 
 **Any other header shape** — `ceremony: standard`, `size: medium`/`high`/absent, or two or more
-implementation files in `### Key Files` — **falls through to today's path unchanged**: proceed to
+implementation files in `### Key Files`, or a spec body that carries a risk flag — **falls through to today's path unchanged**: proceed to
 Spec Step 3's `/superpowers:writing-plans` invocation exactly as before. A `### Key Files` section
 this step cannot parse (missing entirely, or not a plain list) also falls through — never guess a
 count from an absent or malformed section; per `parse-signal-discipline`, "could not parse" and
-"parsed to zero" are distinguishable and only the latter satisfies condition 3.
+"parsed to zero" are distinguishable and only the latter satisfies condition 4.
 
 Standalone `/build` (no `config.yml`) never qualifies — the gate reads `ceremony`/`size` from the
 materialized header regardless of pipeline parent, but a standalone build with no
