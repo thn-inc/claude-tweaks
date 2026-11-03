@@ -40,8 +40,9 @@
 //
 // Anything this module cannot prove declines: a rule that
 // doubts returns nothing, and rewriteForGuard returns null on any throw. It is
-// loaded on every skip-path Bash call (bash-prefilter.js), so it requires only
-// path and ../path-guard, and every scan is linear in the command length.
+// loaded on every skip-path Bash call (bash-prefilter.js), so it
+// requires only path, ../path-guard and ../shared-primitives (whose top level requires only path and ./path-guard),
+// and every scan is linear in the command length.
 'use strict';
 const path = require('path');
 const { lstatType, canonicalRealpath } = require('../path-guard');

@@ -28,8 +28,9 @@
 // push`) is not reached, and the handler cannot resolve it either.
 //
 // Dependency-light by contract: fs, git-command.js (which requires only path)
-// and harness-refusal.js (which requires nothing), plus guard-rewrite.js (path
-// and ../path-guard), loaded only on a pre-tool-use skip. Adding a heavier require here
+// and harness-refusal.js (which requires nothing), plus guard-rewrite.js (path,
+// ../path-guard and ../shared-primitives, whose top level requires only path and
+// ./path-guard), loaded only on a pre-tool-use skip. Adding a heavier require here
 // moves cost onto EVERY Bash call. The same holds for user-prompt-submit: it fires
 // on every human prompt and Claude Code waits for it, so it is governed here too,
 // by a raw substring test on `claude-tweaks:` with no JSON parse.
