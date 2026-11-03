@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   CLOSE_HEADING, VERDICT_FIELDS, IDEMPOTENCE_VALUES, VALID_RISK_FLOORS, GhFailure, ghCaller,
-  enumerateSubIssues, gatherGateFacts, gatherIdempotenceFacts, evaluateParentGate,
+  enumerateSubIssues, readSubIssueFacts, gatherGateFacts, gatherIdempotenceFacts, evaluateParentGate,
   evaluateIdempotence, evaluateGateWithIdempotence, needsIdempotenceReads, parseClosingTokens, positive,
   IDENTITY_PROBE_FAILED_NOTE, readLogin, listOmitsSubIssue,
 } = require('../../../plugin/bin/lib/issues/parent-gate');
@@ -625,6 +625,26 @@ test('shape 5: a closedByPullRequestsReferences that is present, non-null and no
     const { caller } = makeGh({ parentOf: { 11: 10 }, subs: { 10: [11, 12] }, garbled: { 12: text } });
     assert.deepEqual(gatherGateFacts({ subIssue: 11, ...NATIVE, caller }).subIssues[1].closedBy, [], text);
   }
+});
+
+// #4805 Clarification 3: engine-verify renders `unknown` for a malformed sub-issue reply, so the core
+// refuses it rather than reading a missing state as '' or a non-array labels as a TypeError.
+test('shape 5: a malformed state, stateReason or labels is a GhFailure', () => {
+  const answer = (over) => JSON.stringify({ state: 'OPEN', stateReason: '', title: 'T', labels: [], closedByPullRequestsReferences: [], ...over });
+  const read = (text) => readSubIssueFacts({ num: 12, slug: 'o/r', caller: makeGh({ garbled: { 12: text } }).caller });
+  const malformed = [
+    { state: null }, { state: 7 }, { state: 'OPEN', stateReason: 7 },
+    { labels: [null] }, { labels: ['risk:high'] }, { labels: [{ name: 7 }] }, { labels: [{}] }, { labels: null }, { labels: 'x' },
+  ];
+  for (const over of malformed) {
+    assert.throws(() => read(answer(over)), ghFailure(/^gh issue view 12: unexpected output/), JSON.stringify(over));
+  }
+  // An absent labels key is an unlabeled issue; an absent or null stateReason reads ''.
+  const absent = JSON.stringify({ state: 'OPEN', title: 'T' });
+  assert.deepEqual(read(absent).labels, []);
+  assert.equal(read(absent).stateReason, '');
+  assert.equal(read(answer({ stateReason: null })).stateReason, '');
+  assert.deepEqual(read(answer({ labels: [{ name: 'risk:low' }] })).labels, ['risk:low']);
 });
 
 test('shape 6: a parent-labels read that is not a JSON array is a GhFailure', () => {
