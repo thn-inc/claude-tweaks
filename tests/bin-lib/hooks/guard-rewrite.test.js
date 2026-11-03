@@ -682,12 +682,13 @@ test('drop-redundant-cd declines each backslash the shell would consume', BACKSL
 test('drop-redundant-cd declines an unquoted backslash target', BACKSLASH_SKIP, () => {
   const dir = literalDir('unq', 'ba\\c');
   const target = literalDir('unq', 'bac');
-  // The host prefix is quoted so a TMPDIR with a space or glob character cannot break the
-  // test; the backslash tail stays an unquoted word part.
-  const command = `cd "${path.dirname(dir)}"/ba\\c && pwd`;
-  assert.strictEqual(rw(command, { cwd: dir }), null);
+  // rw never runs a shell, so it gets the fully unquoted word, which reaches LEADING_CD's unquoted
+  // branch; the shell half quotes the host prefix so a TMPDIR with a space or glob character
+  // cannot break it, leaving the backslash tail an unquoted word part.
+  assert.strictEqual(rw(`cd ${dir} && pwd`, { cwd: dir }), null);
+  const shellCommand = `cd "${path.dirname(dir)}"/ba\\c && pwd`;
   for (const shell of SHELLS) {
-    assert.strictEqual(runIn(shell, command, {}, dir).stdout, `${target}\n`, shell);
+    assert.strictEqual(runIn(shell, shellCommand, {}, dir).stdout, `${target}\n`, shell);
   }
 });
 
