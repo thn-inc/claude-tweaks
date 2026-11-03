@@ -22,7 +22,8 @@ only when Resolve is ticked — an unresolved console (Resolve unticked) is repo
 `skip: not-resolved-yet`, not surfaced as work. The returned `items` carry each item's `approved`
 boolean (its parsed tick), its declared `kind`, its `stagedHash` from `console.json`, and (for the
 one `isMergeRow: true` item, when present, and each `isRulingRow: true` `sdd-ruling-*` item) that
-flag itself — everything the executing session
+flag itself, plus on a ruling row its `ratifyAction` (`file-record` or `accept`; absent when the
+staged file is empty, blank, or unreadable) — everything the executing session
 needs without re-reading the comment itself. `mergeGrantGap` (#1802, below) is this same
 detection's own mechanized re-fetch of every named record's live grant, not something the
 executing session derives itself.
@@ -55,11 +56,24 @@ since a checkbox has none to read). Every executed or declined item appends its 
 Resolve time, or named in `resolve-console --decline`, it routes to **reverse**, never to a plain
 decline — compose and file the reversal record per `wrap-up/review-console-appendix.md`'s
 `sdd-ruling-*` bullet (ledger row → `deferred`, Resolution `reversed → #{new record}`; the row stays
-`open`, cause logged, when the record is refused or not created). Ticked, it is ratify (ledger row →
-`accepted`, per the same bullet). Log it as an `AUTO` line naming `reversed → #{new record}` only
+`open`, cause logged, when the record is refused or not created). Ticked, it is ratify, per the same
+bullet: the ready item's `ratifyAction` (#3942) says which — `accept` writes the ledger row →
+`accepted`; `file-record` (a deferral) files the deferred work as a record, as a reverse does, and
+writes the row → `deferred`, Resolution `ratified → #{new record}`, once the record exists. A
+ruling row named in `rulingGateGaps` (the Third narrower exception below) carries its
+`ratifyAction` too when its staged text is non-blank — `file-record`, or `accept` for agreeing
+`Defers: no` lines: a human tick ratifies what the gate only withholds from auto-resolution. A
+ticked ruling with no `ratifyAction` (its staged file empty, blank, or unreadable) is not
+ratifiable: name it in `resolve-console --filing-failed` with its cause logged as a `SKIP` line,
+so its reply reads `filing failed — see decisions.md` and the row stays `open`. A ticked
+deferral ruling whose record was refused or not created goes in `resolve-console --filing-failed`
+too: its reply reads `filing failed — see decisions.md`, Resolve stays unticked, and it is never
+recorded `executed`.
+Log either filing as an `AUTO` line naming `reversed → #{new record}` or `ratified → #{new record}` only
 once the record exists; when the record is refused or not created, log that cause instead
 (`REFUSED` when `wrap-up/refused-proposals.md` refuses it, else `SKIP` — `FAILED` is reserved for
-its two refine writers) — never `declined`, and never `reversed` without a record number.
+its two refine writers) — never `declined`, and never `reversed` or `ratified` without a record
+number.
 
 **Except a finding row** (`findingItem` on its item — a can't-tell Low-confidence/Contested row,
 `_shared/console-on-pr.md`'s Row shape, #3949): ticked, it files through `wrap-up/review-console.md`
@@ -92,7 +106,7 @@ when it happens anyway, surface it rather than executing: there is nowhere to ap
 **Reply comment first, then the resolved marker edit** on the console comment itself — never the
 reverse. Post one reply comment (`<!-- console-item: executed -->`) summarizing per-item outcomes
 (executed / declined / reversed / reverse-failed / unexecutable / unexecutable-stale), plus
-dropped / filing-failed for a finding row, then edit the
+dropped for a finding row and filing-failed for a finding or ruling row, then edit the
 console comment's first line to add `<!-- claude-tweaks-console-resolved -->`, then write
 `console.json.executedAt` and `console.json.resolved` (`true` only when every item cleared) together,
 in one write. The same write records each item's `outcome` (and `note`, for a non-executed item)
@@ -141,7 +155,8 @@ just posted to the PR. Two surfaces, one answer: whichever resolves first wins.
   reversal record was filed. When the reverse was refused or never created, also pass that
   ruling's id in `--reverse-failed`: the reply then labels it
   `reverse not filed — see decisions.md` and Resolve stays unticked. Never let such a ruling
-  default to `reversed`.
+  default to `reversed`. When a deferral ratify's record was refused or never created, pass that
+  ruling's id in `--filing-failed` instead, per Execution routing above (#3942).
 - **PR ticks resolve first** (a human ticked boxes on the PR while the chat prompt was still open,
   or a reconciler pass executed it in the interim): before acting on the chat answer, re-check the
   console comment for the resolved marker. If present, do not execute again and do not re-render
@@ -227,6 +242,8 @@ point. `rulingGateGaps: []` — every ruling row's header shows it safe — leav
 floor-clearing, unchanged. An absent ruling-text map (no `rulingTexts` in the call's context)
 withholds every ruling row as `sdd-ruling-unclassified` (#4048), withheld like any other ruling
 gap; a recorded read error for a row still outranks that and names it `sdd-ruling-unreadable`.
+A withheld ruling row still carries its `ratifyAction` (Execution routing above) unless its staged
+file is empty, blank, or unreadable: the exception stops only the auto-tick, never a human's.
 
 **Auto-resolution performs real comment edits.** It ticks the floor-clearing boxes on the PR
 comment (via `_shared/console-on-pr.md`'s post-or-update procedure) *before* executing — the same

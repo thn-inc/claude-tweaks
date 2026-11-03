@@ -8,7 +8,7 @@ Referenced by `skills/dispatch/SKILL.md` Step 2. Run this verbatim — it produc
 - `reason: 'not-spec-shaped'` (`detail: {missing: [...]}`, #2829) — every candidate, right after grouping/bundling completes, whose cached body fails `/flow`'s Materialization hard gate (`shapeGate`, `bin/lib/issues/materialize-format.js`). This one DOES remove excluded candidates from `dispatch-groups.json`, running ahead of the `open-pr`/`target-missing`/`shipped` passes below so an excluded candidate costs none of their `gh` probes and gets no stray Close proposal from them — no bypass: unlike `oversized`, where a human naming a record directly is itself an accepted size-risk signal, a spec-shape failure is not a risk anyone can accept, since `/flow`'s own Materialization gate would stop the named record anyway, after a claim and a spent retry attempt.
 - `reason: 'open-pr'` (`detail: {pr}`, #1224) — every remaining candidate already covered by an open, unmerged PR that will close it (GitHub's own `closedByPullRequestsReferences` connection, a closing keyword in the PR body), via `record.js`'s `partitionByOpenLinkedPR`. Unlike the blocked-by pass above, this one runs unconditionally, independent of `work-links`, and unlike the cross-PR overlap report below it DOES remove excluded candidates from `dispatch-groups.json` before any selection form reads it — a record with an in-flight PR is not a warning, it is not re-dispatch-eligible at all.
 - `reason: 'target-missing'` (`detail: {path}`, #1983) — every remaining candidate whose `namedTarget` (`bin/lib/issues/named-target.js` — today, `by:docs-health` records only) names a file no longer present at the integration tip — a docs-health-filed ledger correction whose target a since-merged tidy sweep already deleted. This one DOES remove excluded candidates from `dispatch-groups.json` too, the same as the open-PR pass: such a record's own Acceptance Criteria is unsatisfiable, so re-dispatching it only burns a build attempt against the retry ceiling for nothing. Also stages one Close proposal in this firing's own run directory (`tidy`'s Close (GitHub) shape) so the next `tidy --approve` closes the record — nothing is written to GitHub by dispatch itself. SKILL.md Step 3's Blocked-exclusion report reads this reason too, under the same non-silent convention.
-- `reason: 'shipped'` (`detail: {pr, signals}`, #1984) — every remaining candidate a merged PR's `strong`-tier mention already ships (see the False-positive posture note in `SKILL.md`). Also stages one Close proposal, exactly like the `target-missing` pass above. A mention from a PR opened before the record was created never counts (#4314).
+- `reason: 'shipped'` (`detail: {pr, signals}`, #1984) — every remaining candidate a merged PR's `strong`-tier mention already ships (see the False-positive posture note in `SKILL.md`). Also stages one Close proposal, exactly like the `target-missing` pass above. A mention from a PR opened before the record was created never counts (#4314); one merged before its last claim release rates `weak` at most (#4432).
 
 One further reason, `firing`, is never written by this script — it is appended incrementally by `SKILL.md`'s Loop between successive re-runs of this script within one firing (`firing-exclusion.md`), which is exactly why this script's own truncation step preserves it rather than dropping it.
 
@@ -37,6 +37,7 @@ DISPATCH_LINKED_PRS_ERR="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.j
 DISPATCH_NAMED_TARGETS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-named-targets.json)"
 DISPATCH_SHIPPED_PROBE_PRS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-shipped-probe-prs.json)"
 DISPATCH_SHIPPED_PR_FILES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-shipped-pr-files.jsonl)"
+DISPATCH_SHIPPED_RELEASES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-shipped-releases.json)"
 DISPATCH_SHAPE_GATE_ERR="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-shape-gate.err)"
 
 # #1752: truncate this run's session-scoped dispatch-exclusions.json, keeping
@@ -499,33 +500,31 @@ done
 
 # #1984: shipped-candidate classification. Runs unconditionally, right after
 # the #1224 open-PR and #1983 target-missing exclusions above (a candidate
-# excluded there is never re-classified here — order matters, see this
-# record's own Gotchas) and before the #1579 cross-PR overlap report below.
+# excluded there is never re-classified here) and before the #1579 cross-PR
+# overlap report below.
 # #4314: when a mention's PR was opened before the record was created,
 # classifyShipped skips it -- a follow-up filed during that PR's build,
 # never its target.
-# Reuses $DISPATCH_LINKED_PRS's `mentions` field — #1984 extended record.js's
-# batched query and linked-prs.js's fetchLinkedPRs to carry every same-repo
-# PR that has ever cross-referenced the candidate, closing keyword or not —
-# so no second network round trip is added for the base signal.
+# #4432: a mention merged before the record's latest claim release rates weak
+# at most (a run saw the merge and left the record open). An unreadable claim
+# never downgrades.
+# Reuses $DISPATCH_LINKED_PRS's mentions (every same-repo PR that ever cross-referenced the candidate, closing keyword or not), so the base signal costs no second network round trip.
 #
-# First pass: classify every remaining candidate with title-only evidence
-# (no changed-files fetch yet) via bin/lib/issues/shipped-candidate.js's
-# classifyShipped. Only a `weak`-tier result (a merged mention whose title
-# didn't already clear `strong`) is a candidate for the files-based upgrade
-# below — a `strong`/`none` result from title evidence alone is final.
-# Capped at 5 live `gh pr view` calls per pull (#1984's own cap).
-node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_SHIPPED_PROBE_PRS" <<NODE_EVAL_EOF
-  const { classifyShipped } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/shipped-candidate.js');
+# First pass: title-only classification (no changed-files fetch yet). Only a
+# `weak` result not predating the claim release is a probe candidate for the files-based upgrade below; a
+# `strong`/`none` result is final. Capped at 5 live `gh pr view` calls per pull.
+node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_SHIPPED_PROBE_PRS" "$DISPATCH_SHIPPED_RELEASES" <<NODE_EVAL_EOF
+  const { classifyShipped, predatesClaimRelease } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/shipped-candidate.js');
   const groups = require(process.argv[1]);
   const linkedPRs = require(process.argv[2]);
+  const releases = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/shipped-releases.js').writeReleaseTimes(process.argv[4], groups.flat(), linkedPRs);
   const toProbe = [];
   for (const c of groups.flat()) {
     const entry = linkedPRs[c.number];
     const mentions = (entry && entry.mentions) || [];
     if (mentions.length === 0) continue;
-    const result = classifyShipped(c, mentions);
-    if (result.tier === 'weak') toProbe.push(result.pr);
+    const result = classifyShipped(c, mentions, { lastReleasedAt: releases[c.number] });
+    if (result.tier === 'weak' && !predatesClaimRelease(result)) toProbe.push(result.pr);
   }
   require('fs').writeFileSync(process.argv[3], JSON.stringify([...new Set(toProbe)].slice(0, 5)));
 NODE_EVAL_EOF
@@ -536,15 +535,13 @@ for PR in $(node -e "console.log(require(process.argv[1]).join(' '))" -- "$DISPA
   node -e "console.log(JSON.stringify({pr: Number(process.argv[1]), files: JSON.parse(process.argv[2])}))" -- "$PR" "$FILES_JSON" >> "$DISPATCH_SHIPPED_PR_FILES"
 done
 
-# Second pass: final tier, now with the probed files available for the
-# key-files-covered upgrade. `strong` is excluded from $DISPATCH_GROUPS for
-# this pull and logged for a staged Close proposal (dispatch never closes a
-# shipped candidate on GitHub itself — the proposal is its only write path, fingerprint-
-# deduplicated the same way tidy's own Close (GitHub) shape is). `weak`
-# stays eligible, logged for build-time context. `none` is silent.
-if node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_EXCLUSIONS" "$DISPATCH_SHIPPED_PR_FILES" > "${DISPATCH_GROUPS}.tmp" <<NODE_EVAL_EOF
+# Second pass: final tier, with the probed files. `strong` is excluded from
+# $DISPATCH_GROUPS for this pull and logged for a staged Close proposal
+# (dispatch never closes on GitHub itself). `weak` stays eligible, logged for
+# build-time context. `none` is silent.
+if node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_EXCLUSIONS" "$DISPATCH_SHIPPED_PR_FILES" "$DISPATCH_SHIPPED_RELEASES" > "${DISPATCH_GROUPS}.tmp" <<NODE_EVAL_EOF
   const fs = require('fs');
-  const { classifyShipped } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/shipped-candidate.js');
+  const { classifyShipped, predatesClaimRelease } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/shipped-candidate.js');
   const { appendExclusion } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
   const groups = require(process.argv[1]);
   const linkedPRs = require(process.argv[2]);
@@ -552,19 +549,22 @@ if node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPA
     ? fs.readFileSync(process.argv[4], 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l))
     : [];
   const prFiles = new Map(prFilesLines.map((e) => [e.pr, e.files]));
+  const releases = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/shipped-releases.js').readReleaseTimes(process.argv[5]);
   const finalGroups = groups
     .map((g) => g.filter((c) => {
       const entry = linkedPRs[c.number];
       const mentions = (entry && entry.mentions) || [];
       if (mentions.length === 0) return true;
-      const result = classifyShipped(c, mentions, { prFiles });
+      const result = classifyShipped(c, mentions, { prFiles, lastReleasedAt: releases[c.number] });
       if (result.tier === 'strong') {
         appendExclusion(process.argv[3], { reason: 'shipped', records: [c.number], detail: { pr: result.pr, signals: result.signals } });
         console.error('AUTO — dispatch: #' + c.number + ' excluded, shipped by merged PR #' + result.pr + ' (' + result.signals.join(', ') + ')');
         return false;
       }
       if (result.tier === 'weak') {
-        console.error('AUTO — dispatch: #' + c.number + ' mentioned by merged PR #' + result.pr + ' without a closing keyword; dispatching anyway');
+        console.error('AUTO — dispatch: #' + c.number + (predatesClaimRelease(result)
+          ? ' kept: merged PR #' + result.pr + ' predates claim release at ' + releases[c.number] + ' — remaining work assumed'
+          : ' mentioned by merged PR #' + result.pr + ' without a closing keyword; dispatching anyway'));
       }
       return true;
     }))
@@ -581,11 +581,9 @@ else
   exit 1
 fi
 
-# Stage one Close proposal per strong-tier exclusion, into this firing's own
-# standalone run dir (Step 1's $RUN_ID — resolved again here since this
-# script has no other reason to carry that path) — never onto GitHub
-# directly, the same non-autonomous posture tidy's own Close (GitHub) shape
-# uses for every outward-facing mutation.
+# Stage one Close proposal per strong-tier exclusion into this firing's own
+# standalone run dir (Step 1's $RUN_ID, resolved again here), never onto
+# GitHub directly -- the same posture as tidy's Close (GitHub) shape.
 DISPATCH_FIRING_RUN_DIR=$(node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --spec-slug dispatch-standalone 2>/dev/null || true)
 if [ -n "$DISPATCH_FIRING_RUN_DIR" ]; then
   node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_EXCLUSIONS" "$(dirname "$DISPATCH_EXCLUSIONS")" <<NODE_EVAL_EOF | while IFS='=' read -r NUM FILE; do
