@@ -129,4 +129,4 @@ function classifyShipped(record, mentions, opts = {}) {
   return best;
 }
 
-module.exports = { classifyShipped, predatesClaimRelease, PREDATES_CLAIM_RELEASE };
+module.exports = { classifyShipped, predatesClaimRelease };

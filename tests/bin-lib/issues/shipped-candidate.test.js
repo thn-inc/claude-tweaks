@@ -349,6 +349,23 @@ test('#4432: a merged mention with no mergedAt is not downgraded', () => {
   assert.strictEqual(classifyShipped(HALF_RECORD, [noMergedAt], { lastReleasedAt: '2026-10-02T13:00:00Z' }).tier, 'strong');
 });
 
+test('#4432: an unparseable mergedAt on a record with no createdAt is not downgraded', () => {
+  const record = { ...HALF_RECORD };
+  delete record.createdAt;
+  const garbled = { ...HALF_MENTION, mergedAt: 'not-a-date' };
+  const r = classifyShipped(record, [garbled], { lastReleasedAt: '2026-10-02T13:00:00Z' });
+  assert.strictEqual(r.tier, 'strong');
+  assert.ok(!r.signals.includes('predates-claim-release'));
+});
+
+test('#4432: two predating mentions classify weak with the signal, the first in array order', () => {
+  const second = { ...HALF_MENTION, number: 501, mergedAt: '2026-10-02T12:30:00Z' };
+  const r = classifyShipped(HALF_RECORD, [HALF_MENTION, second], { lastReleasedAt: '2026-10-02T13:00:00Z' });
+  assert.strictEqual(r.tier, 'weak');
+  assert.strictEqual(r.pr, 500);
+  assert.ok(r.signals.includes('predates-claim-release'));
+});
+
 test('#4432: the downgrade is per mention -- a PR merged after the release still classifies strong', () => {
   const later = { ...HALF_MENTION, number: 501, mergedAt: '2026-10-05T00:00:00Z' };
   const r = classifyShipped(HALF_RECORD, [HALF_MENTION, later], { lastReleasedAt: '2026-10-02T13:00:00Z' });
