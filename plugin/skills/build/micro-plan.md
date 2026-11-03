@@ -24,9 +24,9 @@ All four must hold, checked in this order (cheapest first, except condition 4, a
    `check-staged-stack.js — CLI exit path (read only, no change)` was counted as a second file.
 4. The spec body does not carry a risk flag: `parseRiskFlags` (`bin/lib/issues/record-risk-flags.js`)
    returns no flags. A `Risk-flags:` line naming any slug, or a line that cannot be read (it reads
-   as every category flagged), carries a risk flag; `Risk-flags: none` and no line do not. Any
-   case or separator variant of the key, such as `risk-flags:` or `Risk_flags:`, counts as
-   unreadable. A flagged record falls through, because this path's composed plan has no audited
+   as every category flagged), carries a risk flag; `Risk-flags: none` and no line do not. A
+   variant spelling of the key (any case; `-`, `_`, a space or no separator), such as
+   `risk-flags:` or `Risk_flags:`, counts as unreadable. A flagged record falls through, because this path's composed plan has no audited
    `Proof(<slug>)` step.
 
 **Any other header shape** — `ceremony: standard`, `size: medium`/`high`/absent, or two or more
