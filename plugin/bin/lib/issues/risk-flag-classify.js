@@ -31,9 +31,11 @@ const { isControlModeOn } = require('../policy');
 
 // The floor, per built-in slug. Wider phrasing is the shaping agent's job. Exported so
 // the test can prove one phrase per keyword alternative matches that alternative alone.
+// A bare "migration" is not a keyword: this repo's own "expand-contract migration" names a
+// contract change, not a data one, so only a database, data or schema migration counts.
 const FLOOR = {
   migrations: {
-    keywords: ['migrations?', 'schema changes?', 'alter table', 'drop (?:table|column)', 'database schema'],
+    keywords: ['(?:database|data|schema) migrations?', 'schema changes?', 'alter table', 'drop (?:table|column)', 'database schema'],
     paths: [/(?:^|\/)migrations?\//i, /\.sql$/i],
   },
   auth: {

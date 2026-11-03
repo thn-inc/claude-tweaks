@@ -144,7 +144,7 @@ test('the auth rule reads authenticate and authorize forms, never author or auth
 // One phrase per keyword alternative, in FLOOR order. Each phrase matches its own
 // alternative and no other one in any category, so every rule is exercised alone.
 const FLOOR_PHRASES = [
-  ['migrations', 'migrations?', 'Add a migration'],
+  ['migrations', '(?:database|data|schema) migrations?', 'Add a database migration'],
   ['migrations', 'schema changes?', 'Review the schema changes'],
   ['migrations', 'alter table', 'Run alter table on users'],
   ['migrations', 'drop (?:table|column)', 'Drop column legacy_id'],
@@ -168,6 +168,16 @@ const FLOOR_PHRASES = [
   ['irreversible-side-effect', 'payments?', 'Capture the payment'],
   ['irreversible-side-effect', 'refunds?', 'Issue a refund'],
 ];
+
+test('finding 8: a data, database or schema migration is flagged; a bare or expand-contract migration is not', () => {
+  for (const text of ['Run the data migration', 'Write a database migration', 'Two schema migrations ship together']) {
+    assert.deepStrictEqual(classifyRiskFlags(spec({ a: `1. ${text}` })).flags.map((f) => [f.slug, f.via]), [['migrations', 'keyword']], text);
+  }
+  for (const text of ['Follow the expand-contract migration for the hook payload shape', 'Add a migration note', 'Migrate the callers']) {
+    assert.deepStrictEqual(classifyRiskFlags(spec({ a: `1. ${text}` })).flags.filter((f) => f.slug === 'migrations'), [], text);
+  }
+  assert.deepStrictEqual(classifyRiskFlags(spec({ k: '- `db/migrations/0002_x.sql` — expand-contract migration' })).flags.map((f) => [f.slug, f.via]), [['migrations', 'path']]);
+});
 
 test('every floor keyword rule classifies alone, from a phrase matching only that rule', () => {
   const alternatives = Object.entries(FLOOR).flatMap(([slug, rule]) => rule.keywords.map((alt) => [slug, alt]));
