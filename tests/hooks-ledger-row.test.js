@@ -347,6 +347,25 @@ test('a --ledger that does not exist is refused', () => {
   refused(f, r, /not-found/);
 });
 
+test('a ledger that exists only in the worktree copy is written through an explicit --ledger', () => {
+  // The parallel-wave member shape: its run dir carries decisions.md and work/ but no run-state.json,
+  // so no worktree is recorded and no ledger lives under it.
+  const f = fixture();
+  const runDir3 = path.join(f.root, '.claude-tweaks', 'pipelines', '2026-11-03T000002-record-3');
+  fs.mkdirSync(path.join(runDir3, 'work'), { recursive: true });
+  fs.writeFileSync(path.join(runDir3, 'work', '3-spec.md'), '---\nrecord: 3\n---\n');
+  fs.writeFileSync(path.join(runDir3, 'decisions.md'), '# decisions\n');
+  // A second ledger this branch owns makes implicit resolution ambiguous, so only the explicit --ledger can pick the target.
+  const sibling = path.join(f.wt, 'docs', 'plans', '2026-11-03-y-ledger.md');
+  fs.writeFileSync(sibling, HEAD);
+  const r = runHook(['ledger-row', '--run', runDir3, '--ledger', f.ledger, ...APPEND], { cwd: f.wt });
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(fs.readFileSync(sibling, 'utf8'), HEAD);
+  assert.deepEqual(ledgerRows(f), ['| 1 | build | item | open | — |']);
+  // Nothing new under the run dir, and the lock dir the write took is gone.
+  assert.deepEqual(fs.readdirSync(runDir3, { recursive: true }).sort(), ['decisions.md', 'work', path.join('work', '3-spec.md')]);
+});
+
 test('run resolution: no run dir, an unusable --run and ambiguous candidates each refuse', () => {
   const bare = seedRepo('ct-ledgerrow-bare-');
   const none = runHook(['ledger-row', ...APPEND], { cwd: bare });
