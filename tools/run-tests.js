@@ -369,11 +369,11 @@ function ticketsAhead(dir, seq, holderOpts) {
   return { floor, first };
 }
 
-// Whether the ticket at `ticketPath` still names `pid`: false when it was deleted, is unparseable or
-// not an object (`null` included), or a newcomer was numbered into its seq.
-function ticketIsOurs(ticketPath, pid) {
+// Whether the lock or ticket at `filePath` still names `pid`: false when it was deleted, is
+// unparseable or not an object (`null` included), or a newcomer was numbered into its seq.
+function namesPid(filePath, pid) {
   try {
-    const held = JSON.parse(fs.readFileSync(ticketPath, 'utf8'));
+    const held = JSON.parse(fs.readFileSync(filePath, 'utf8'));
     return !!held && held.pid === pid;
   } catch (err) {
     if (err.code === 'ENOENT' || err instanceof SyntaxError) return false;
@@ -393,9 +393,10 @@ function ticketIsOurs(ticketPath, pid) {
 // while every earlier live waiter's ticket exists), so reaping a stale ticket ahead practically never
 // deletes a newer one. Two races remain: `takeTicket`'s list-then-create is not atomic (P lists none,
 // W1 and W2 create tickets 1 and 2, W1 acquires and removes ticket 1, P creates ticket 1 below live
-// ticket 2), and `ticketsAhead`'s read-then-unlink is not atomic (two reapers judging ticket k stale
-// can delete a fresh ticket reissued at k in between). The affected waiter's own-ticket check
-// (`ticketIsOurs`) fails on its next poll and it rejoins at the tail.
+// ticket 2, so P is served ahead of W2), and `ticketsAhead`'s read-then-unlink is not atomic (two
+// reapers judging ticket k stale can delete a fresh ticket reissued at k in between; the waiter
+// that lost its ticket fails its own-ticket check, `namesPid`, on its next poll and rejoins at the
+// tail).
 // Residual risk: a ticket whose pid was reused by an unrelated process, or whose waiter is stopped
 // rather than dead, blocks the queue until a human deletes the ticket the log line names — the same
 // risk slot locks already accept. The usual source of an orphan ticket is an interrupted wait: a
@@ -416,7 +417,7 @@ function acquireSlot({ dir, slots, pid, cwd, isAlive: isPidLive, now, sleep, log
     for (;;) {
       // Our ticket must still be ours: deleted by hand, unparseable, or naming another pid (a newcomer
       // numbered into our deleted seq). Rejoin at the tail; the file at the old path is not ours to remove.
-      if (!ticketIsOurs(ticket.path, pid)) ticket = takeTicket(dir, { pid, cwd, now, slots });
+      if (!namesPid(ticket.path, pid)) ticket = takeTicket(dir, { pid, cwd, now, slots });
       const { floor, first } = ticketsAhead(dir, ticket.seq, holderOpts);
       let blocker = null;
       for (let i = floor; i < slots; i++) {
@@ -455,8 +456,7 @@ function acquireSlot({ dir, slots, pid, cwd, isAlive: isPidLive, now, sleep, log
 // the suite's own exit code.
 function releaseSlot(lockPath, pid) {
   try {
-    const held = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
-    if (held && held.pid === pid) fs.unlinkSync(lockPath);
+    if (namesPid(lockPath, pid)) fs.unlinkSync(lockPath);
   } catch (_) {
     // missing, unparseable or already gone — nothing to release
   }

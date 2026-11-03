@@ -355,7 +355,7 @@ test('#4333 a ticket naming our own pid is stale', () => {
   });
 });
 
-test("#4333 a waiter whose own ticket was removed rejoins the queue", () => {
+test("#4333 a waiter whose own ticket was removed rejoins at the tail of the queue", () => {
   withTempDir((dir) => {
     const lockPath = writeLock(dir, 0, 333);
     let sleeps = 0;
@@ -363,14 +363,17 @@ test("#4333 a waiter whose own ticket was removed rejoins the queue", () => {
       sleeps += 1;
       if (sleeps === 1) {
         fs.unlinkSync(path.join(dir, 'ticket-1.json'));
+        writeTicket(dir, 2, 222); // a newcomer arrives while our ticket is gone
         return;
       }
-      const tickets = fs.readdirSync(dir).filter((n) => /^ticket-\d+\.json$/.test(n));
-      assert.ok(tickets.length > 0, 'the waiter must hold a ticket again');
-      assert.strictEqual(JSON.parse(fs.readFileSync(path.join(dir, tickets[0]), 'utf8')).pid, 111);
+      const ours = fs.readdirSync(dir)
+        .filter((n) => /^ticket-\d+\.json$/.test(n))
+        .filter((n) => JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8')).pid === 111);
+      assert.deepStrictEqual(ours, ['ticket-3.json'], 'the waiter must rejoin behind the newcomer, not at its old number');
+      fs.unlinkSync(path.join(dir, 'ticket-2.json'));
       fs.unlinkSync(lockPath);
     };
-    const lock = acquireSlot(slotArgs(dir, { sleep, isAlive: (pid) => pid === 333 }));
+    const lock = acquireSlot(slotArgs(dir, { sleep, isAlive: (pid) => pid === 333 || pid === 222 }));
     assert.strictEqual(lock, lockPath);
     assert.strictEqual(sleeps, 2);
   });
@@ -384,7 +387,7 @@ test('#4333 a foreign ticket at our own path makes us rejoin and is left in plac
     const sleep = () => {
       sleeps += 1;
       if (sleeps === 1) {
-        fs.writeFileSync(foreign, JSON.stringify({ pid: 222, startedAt: '2026-01-01T00:00:00.000Z', cwd: '/work/other', slots: 1 }));
+        writeTicket(dir, 1, 222);
         return;
       }
       const ours = fs.readdirSync(dir)
@@ -409,11 +412,12 @@ test('#4333 a ticket of ours overwritten with JSON null makes us rejoin instead 
       sleeps += 1;
       if (sleeps === 1) {
         fs.writeFileSync(nulled, 'null');
+        // The slot is free from here on, so only the `null` file can still hold us back: a fresh one
+        // counts as an unidentified holder ahead of the new ticket and blocks every slot index.
+        fs.unlinkSync(lockPath);
         return;
       }
-      // The fresh `null` file counts as an unidentified holder ahead of the new ticket; clear it with the lock.
       fs.unlinkSync(nulled);
-      fs.unlinkSync(lockPath);
     };
     const lock = acquireSlot(slotArgs(dir, { sleep, isAlive: (pid) => pid === 333 }));
     assert.strictEqual(lock, lockPath);
@@ -428,10 +432,7 @@ test('#4333 acquireSlot never deletes a ticket at its path that no longer names 
     const isAlive = (pid) => {
       if (first) {
         first = false;
-        fs.writeFileSync(
-          path.join(dir, 'ticket-1.json'),
-          JSON.stringify({ pid: 222, startedAt: '2026-01-01T00:00:00.000Z', cwd: '/work/other', slots: 1 }),
-        );
+        writeTicket(dir, 1, 222);
       }
       return pid === 222;
     };
@@ -495,7 +496,7 @@ test('#4333 a new arrival numbers its ticket after the highest existing one', ()
 
 test('#4333 acquireSlot leaves only its lock behind once it holds the slot', () => {
   withTempDir((dir) => {
-    acquireSlot(slotArgs(dir));
+    acquireSlot(slotArgs(dir, { sleep: noSleep }));
     assert.deepStrictEqual(fs.readdirSync(dir), ['slot-0.lock']);
   });
 });
@@ -571,6 +572,34 @@ test('#4333 a ticket whose limit cannot be read blocks every slot index', () => 
     };
     acquireSlot(slotArgs(dir, { slots: 2, sleep, isAlive: (pid) => pid === 222 }));
     assert.strictEqual(sleeps, 1);
+  });
+});
+
+test('#4333 a fresh ticket that cannot be parsed blocks every slot index', () => {
+  withTempDir((dir) => {
+    const ticket = path.join(dir, 'ticket-1.json');
+    fs.writeFileSync(ticket, 'not json');
+    let sleeps = 0;
+    const sleep = () => {
+      sleeps += 1;
+      assert.ok(!fs.existsSync(path.join(dir, 'slot-0.lock')));
+      assert.ok(!fs.existsSync(path.join(dir, 'slot-1.lock')));
+      fs.unlinkSync(ticket);
+    };
+    acquireSlot(slotArgs(dir, { slots: 2, sleep }));
+    assert.strictEqual(sleeps, 1);
+  });
+});
+
+test('#4333 a ticket that cannot be parsed and is older than staleUnparseableMs is removed', () => {
+  withTempDir((dir) => {
+    const ticket = path.join(dir, 'ticket-1.json');
+    fs.writeFileSync(ticket, 'not json');
+    const old = new Date(Date.now() - 11 * 60 * 1000);
+    fs.utimesSync(ticket, old, old);
+    const lock = acquireSlot(slotArgs(dir, { sleep: noSleep }));
+    assert.strictEqual(lock, path.join(dir, 'slot-0.lock'));
+    assert.ok(!fs.existsSync(ticket));
   });
 });
 
