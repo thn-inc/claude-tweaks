@@ -41,8 +41,9 @@ const WRITER_MODULE = 'plugin/bin/lib/issues/record-risk-flags.js';
 const REMOVER_ALLOWED = new Set([WRITER_MODULE, 'plugin/bin/lib/issues/record.js', 'plugin/bin/risk-flags.js']);
 // `risk` must not continue an identifier (`classifyRiskFlags: bad input` is an error
 // prefix naming a function, not the line), but it may follow a `\n`, `\r` or `\t` escape
-// as written in source (`'...\nRisk-flags: x'`), where the escape's letter is glued to it.
-const RISK_LINE = /(?:(?<![A-Za-z0-9_$])|(?<=\\[nrt]))risk[-_ ]?flags(?:[-_ ]unconfirmed)?\s*:/gi;
+// as written in source (`'...\nRisk-flags: x'`), where the escape's letter is glued to it,
+// or the hex and unicode spellings of a line break (`\x0a`, `\u000a`, `\u{a}`, and `d` for `\r`).
+const RISK_LINE = /(?:(?<![A-Za-z0-9_$])|(?<=\\(?:[nrt]|x0[ad]|u000[ad]|u\{[ad]\})))risk[-_ ]?flags(?:[-_ ]unconfirmed)?\s*:/gi;
 const REMOVER = /\b(?:removeRiskFlags?|confirmRiskFlags?)\b/g;
 
 function lineAt(text, offset) {
@@ -213,6 +214,21 @@ test('a real key after a space, quote, newline, escape or punctuation is still f
   assert.deepStrictEqual(
     shape('plugin/bin/lib/x.js', src),
     [[1, 'line-literal'], [2, 'line-literal'], [3, 'line-literal'], [5, 'line-literal'], [6, 'line-literal']],
+  );
+});
+
+test('a key after a hex or unicode line-break escape is still flagged', () => {
+  const src = [
+    "const a = '\\x0aRisk-flags: auth';",
+    "const b = '\\u000ARisk-flags: auth';",
+    "const c = `\\u{a}Risk-flags-unconfirmed: true`;",
+    "const d = '\\x0dRisk-flags: auth';",
+    "const e = '\\x0bRisk-flags: auth';",
+    '',
+  ].join('\n');
+  assert.deepStrictEqual(
+    shape('plugin/bin/lib/x.js', src),
+    [[1, 'line-literal'], [2, 'line-literal'], [3, 'line-literal'], [4, 'line-literal']],
   );
 });
 
