@@ -2244,12 +2244,13 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
     // `onDegrade` too, so it never persists `prExempt` either.
     if (degraded) modelResolved = false;
     // #989: exempt an in-flight initial publish (see hasNoUpstreamYet above)
-    // before doing anything else in this branch — this is a narrow, one-shot
-    // allowance for THIS call only, never persisted as `prExempt`, so a push
-    // to an already-tracked branch (Step 2 already ran once, `gh pr create`
-    // never followed it) still falls through to the deny below, preserving
-    // the "keep pushing forever, never open the PR" case IL-131 exists to
-    // close. Applies only to the Bash/git branch (`commandGitTargets`) — an
+    // once the model is resolved — prStampReleased decides it, and this is a narrow,
+    // one-shot allowance for THIS call only, never persisted as `prExempt`, so a
+    // push to an already-tracked branch (Step 2 already ran once, `gh pr create`
+    // never followed it) goes to prStampReleased's tracked rules (`prExempt` or a
+    // logged FAILED line can release it) and otherwise gets the `record-pr` deny
+    // below, preserving the "keep pushing forever, never open the PR" case IL-131
+    // exists to close. Applies only to the Bash/git branch (`commandGitTargets`) — an
     // Edit/Write/NotebookEdit call (`commandGitTargets` null) is never a
     // push and always continues past this check.
     const firstPublish = Array.isArray(commandGitTargets) && commandGitTargets.length > 0
