@@ -4,3 +4,4 @@
 |---|-------|------|--------|------------|
 | 1 | build/ops | Pre-flight branch-divergence-check: origin/main was 23 commits ahead of the resumed branch | fixed | Caught up by the post-creation merge, `3de03cdf4` |
 | 2 | build/ops | Pre-flight branch-divergence-check (run 2026-11-03T104639): origin/main was 20 commits ahead of the resumed branch, including #3508's change to the same `acceptance-labeling` gate branches | fixed | Caught up by the post-creation merge, `50b30e2a7`; the plan is amended against the merged tree |
+| 3 | build/ops | Shape check (flow Step 2.6): amended Task 1 touches 7 files (> 5) | accepted | Proceeded under `auto`: the 7 are one change — `engine-verify.js`, the core it consumes, their two test suites, and the three prose twins (procedure table, journey, structure index) the change makes stale; splitting them would leave a red twin pin between tasks |
