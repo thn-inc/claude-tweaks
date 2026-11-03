@@ -1,7 +1,8 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { classifyRiskFlags, inertEvidence, readRiskPolicy } = require('../../../plugin/bin/lib/issues/risk-flag-classify');
+const { FLOOR, classifyRiskFlags, inertEvidence, readRiskPolicy } = require('../../../plugin/bin/lib/issues/risk-flag-classify');
+const { LIST_ELEMENT_PATTERNS } = require('../../../plugin/bin/lib/policy-schema');
 
 const spec = (o) => `Surface: infra\n\n## Deliverables\n\n${o.d || '- [ ] x'}\n\n## Acceptance Criteria\n\n${o.a || '1. y'}\n\n## Technical Approach\n\n### Key Files\n\n${o.k || '- `a/b.js` — z'}\n`;
 
@@ -62,8 +63,9 @@ test('readRiskPolicy: an absent file is control mode off, another error throws',
   assert.throws(() => readRiskPolicy('/r', { readFile: err('EACCES') }), /EACCES/);
 });
 
-// Controller ruling C3: Key Files keyword matching skips backticked spans, so a path
-// that also spells a keyword is reported by the path rule, never as a keyword.
+// Controller ruling C3 (amended): Key Files keyword matching skips path-like backticked
+// spans (holding `/` or `.`), so a path that also spells a keyword is reported by the
+// path rule, never as a keyword; a backticked word stays keyword text.
 test('C3: a backticked Key Files path is matched as a path, never as a keyword', () => {
   const r = classifyRiskFlags(spec({ k: '- `src/migrations/auth/login.js` — z' }));
   assert.deepStrictEqual(r.flags.map((f) => [f.slug, f.via]), [['migrations', 'path']]);
@@ -76,6 +78,15 @@ test('C3: a Key Files heading nested under Acceptance Criteria is still read as 
   const body = '## Deliverables\n\n- a\n\n## Acceptance Criteria\n\n1. b\n\n### Key Files\n\n- `src/auth/a.js`\n';
   assert.deepStrictEqual(classifyRiskFlags(body).flags, []);
   assert.deepStrictEqual(classifyRiskFlags(body).missingSections, []);
+});
+
+test('C3: a nested Key Files migrations path reports via path, not as an Acceptance Criteria keyword', () => {
+  const migrations = '## Deliverables\n\n- a\n\n## Acceptance Criteria\n\n1. b\n\n### Key Files\n\n- `db/migrations/a.sql`\n';
+  assert.deepStrictEqual(classifyRiskFlags(migrations).flags.map((f) => [f.slug, f.via]), [['migrations', 'path']]);
+});
+
+test('C3 amended: a backticked non-path token on a Key Files line stays keyword-visible', () => {
+  assert.deepStrictEqual(classifyRiskFlags(spec({ k: '- `src/x.js` — the `login` handler' })).flags.map((f) => [f.slug, f.via]), [['auth', 'keyword']]);
 });
 
 // Controller ruling C4: an absent heading is missing; a present, empty one is not.
@@ -114,4 +125,66 @@ test('inertEvidence: a pre-existing backslash cannot unescape a bracket, and a c
   const capped = inertEvidence(`${'z'.repeat(298)}[[[`);
   assert.ok(capped.length <= 300);
   assert.ok(!/(^|[^\\])(\\\\)*\\$/.test(capped.replace(/…$/, '')), capped.slice(-6));
+});
+
+test('inertEvidence drops a control byte before collapsing, so it leaves no double space', () => {
+  assert.strictEqual(inertEvidence('a \u0000 b'), 'a b');
+  assert.strictEqual(inertEvidence('a\t\u0001\r\nb'), 'a b');
+});
+
+test('the auth rule reads authenticate and authorize forms, never author or authority', () => {
+  for (const text of ['Authenticate via OAuth', 'Only authenticated users may read', 'Authorize the caller', 'An authorized caller may write', 'Authorise the caller']) {
+    assert.deepStrictEqual(classifyRiskFlags(spec({ a: `1. ${text}` })).flags.map((f) => f.slug), ['auth'], text);
+  }
+  for (const text of ['The author signs it', 'Ask the authority', 'Two authors reviewed']) {
+    assert.deepStrictEqual(classifyRiskFlags(spec({ a: `1. ${text}` })).flags, [], text);
+  }
+});
+
+// One phrase per keyword alternative, in FLOOR order. Each phrase matches its own
+// alternative and no other one in any category, so every rule is exercised alone.
+const FLOOR_PHRASES = [
+  ['migrations', 'migrations?', 'Add a migration'],
+  ['migrations', 'schema changes?', 'Review the schema changes'],
+  ['migrations', 'alter table', 'Run alter table on users'],
+  ['migrations', 'drop (?:table|column)', 'Drop column legacy_id'],
+  ['migrations', 'database schema', 'Document the database schema'],
+  ['auth', 'auth(?:n|z|enticat\\w*|ori[sz]\\w*)?', 'Add auth to the route'],
+  ['auth', 'permissions?', 'Check permissions first'],
+  ['auth', 'access control', 'Add access control'],
+  ['auth', 'rbac', 'Use RBAC roles'],
+  ['auth', 'login', 'Fix the login page'],
+  ['auth', 'session tokens?', 'Rotate the session token'],
+  ['public-contract', 'public (?:api|contract)s?', 'Version the public API'],
+  ['public-contract', 'hook payloads?', 'Change a hook payload'],
+  ['public-contract', 'file formats?', 'Change the file format'],
+  ['public-contract', 'wire format', 'Keep the wire format'],
+  ['public-contract', 'breaking changes?', 'Note a breaking change'],
+  ['public-contract', 'openapi', 'Update the OpenAPI spec'],
+  ['irreversible-side-effect', 'irreversibl\\w*', 'This is irreversible'],
+  ['irreversible-side-effect', 'permanently delet\\w*', 'Records are permanently deleted'],
+  ['irreversible-side-effect', 'outbound (?:sends?|emails?|messages?)', 'Queue outbound messages'],
+  ['irreversible-side-effect', 'sends? (?:an? )?(?:emails?|sms|notifications?)', 'It sends SMS'],
+  ['irreversible-side-effect', 'payments?', 'Capture the payment'],
+  ['irreversible-side-effect', 'refunds?', 'Issue a refund'],
+];
+
+test('every floor keyword rule classifies alone, from a phrase matching only that rule', () => {
+  const alternatives = Object.entries(FLOOR).flatMap(([slug, rule]) => rule.keywords.map((alt) => [slug, alt]));
+  assert.deepStrictEqual(FLOOR_PHRASES.map(([slug, alt]) => [slug, alt]), alternatives);
+  for (const [slug, alt, phrase] of FLOOR_PHRASES) {
+    const hits = alternatives.filter(([, a]) => new RegExp(`\\b(?:${a})\\b`, 'i').test(phrase)).map(([, a]) => a);
+    assert.deepStrictEqual(hits, [alt], phrase);
+    assert.deepStrictEqual(classifyRiskFlags(spec({ a: `1. ${phrase}` })).flags.map((f) => [f.slug, f.via]), [[slug, 'keyword']], phrase);
+  }
+});
+
+test('extra slugs are checked by the policy schema slug rule itself, not a copy', () => {
+  const original = LIST_ELEMENT_PATTERNS.slug;
+  LIST_ELEMENT_PATTERNS.slug = /^[a-z0-9][a-z0-9_-]*$/;
+  try {
+    assert.deepStrictEqual(classifyRiskFlags(spec({ a: '1. Run the data_export job' }), { extraCategories: ['data_export'] }).flags.map((f) => f.slug), ['data_export']);
+  } finally {
+    LIST_ELEMENT_PATTERNS.slug = original;
+  }
 });

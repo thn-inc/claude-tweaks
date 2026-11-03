@@ -1012,7 +1012,7 @@ function auditPolicy(repoRoot) {
 }
 
 module.exports = {
-  POLICY_KEYS, POLICY_CATEGORIES, BUILTIN_RISK_CATEGORIES, RENAMED_KEYS, auditPolicy, resolveValue, parseFlatLines, resolvePolicyKeys,
+  POLICY_KEYS, POLICY_CATEGORIES, BUILTIN_RISK_CATEGORIES, LIST_ELEMENT_PATTERNS, RENAMED_KEYS, auditPolicy, resolveValue, parseFlatLines, resolvePolicyKeys,
   detectIntegrationModel, resolveIntegrationModel, resolvePolicyConfig,
   GIT_REMOTE_PROBE_TIMEOUT_MS, FORGE_PROBE_ATTEMPTS, HOOK_FORGE_PROBE_TIMEOUT_MS, resolveForgeProbeTimeoutMs, formatForgeDegrade,
   FORGE_DEGRADE_REASONS, FORGE_DEGRADE_MEMO_TTL_MS,
