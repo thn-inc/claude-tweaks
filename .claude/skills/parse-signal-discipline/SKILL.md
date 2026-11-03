@@ -190,6 +190,15 @@ When mechanizing a prose heuristic into a deterministic check:
    "no citation" result, with any other non-zero exit keeping the plan as cited-unverified.
    Branch on the exit code, not the output, and on a destructive path make the failure arm fail
    closed.
+   A write gate owes the same split, and there the harm is a leak. `destinationHold` in
+   `plugin/bin/acceptance-packet.js` (#4612) asks `git check-ignore -q` whether an unredacted GIF's
+   destination is ignored before writing it. Its first version held the write only on exit 1, so
+   any other failure (a timeout, a missing binary, a 128 for dubious ownership) wrote the GIF where
+   git could commit it. Review caught it. The write now goes ahead only on exit 0, or on an exit 128
+   whose stderr says `not a git repository`, where nothing can commit the file; every other answer
+   holds it. When a benign answer shares the fatal exit code, require the code and the message
+   together, and pin each half alone: `tests/acceptance-packet-cli.test.js` feeds 128 with another
+   message and exit 2 with the benign message, and both must hold the write.
 9. **A probe that skill prose tells the agent to run owes the same split, and two things break it
    that a code check never meets.** Each Bash tool call starts a fresh shell, so a variable an
    earlier call set is unset in the probe's call: the probe reads an empty path and reports the
