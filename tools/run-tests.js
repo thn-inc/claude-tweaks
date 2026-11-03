@@ -399,9 +399,10 @@ function ticketIsOurs(ticketPath, pid) {
 // Residual risk: a ticket whose pid was reused by an unrelated process, or whose waiter is stopped
 // rather than dead, blocks the queue until a human deletes the ticket the log line names — the same
 // risk slot locks already accept. The usual source of an orphan ticket is an interrupted wait: a
-// default SIGINT/SIGTERM during the synchronous `Atomics.wait` skips `finally`, and such a ticket is
-// reaped once its pid is dead unless the pid has been reused (the case above). A lock held by a dead pid is reclaimed immediately, so a crashed
-// run never wedges the queue. The wait message is logged once per call.
+// default SIGINT/SIGTERM during the synchronous `Atomics.wait` skips `finally`, and such a ticket
+// is reaped once its pid is dead unless the pid has been reused (the case above). A lock held by a
+// dead pid is reclaimed immediately, so a crashed run never wedges the queue. The wait message is
+// logged once per call.
 // `isAlive`, `now`, `sleep` and `log` are parameters so tests never touch real processes or time.
 // A lock or ticket naming our own `pid` is stale by definition — a prior run that crashed and whose
 // pid the OS then reused for this one — so it is reclaimed rather than waited on forever.
@@ -594,8 +595,8 @@ if (require.main === module) {
   // From here the slot is held, so a signal must forward to the child and let the cleanup below
   // run rather than kill the runner with the lock and run root left behind. (While waiting for a
   // slot nothing is held yet, so the default exit is right; it leaves only the waiter's ticket,
-  // which reads as stale once the pid is gone.) A signal that lands before the child
-  // exists is applied as soon as it does.
+  // which reads as stale once the pid is gone.) A signal that lands before the child exists is
+  // applied as soon as it does.
   let child = null;
   let forwarded = null;
   // `node --test` dies on SIGHUP by default, orphaning its workers, but shuts them down on SIGTERM —
