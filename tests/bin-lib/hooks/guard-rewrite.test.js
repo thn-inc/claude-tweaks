@@ -173,6 +173,18 @@ test('plugin-root-placeholder declines a command that binds the name itself, on 
   ]) assert.strictEqual(rw(command), null, command);
 });
 
+// A `${NAME:=word}` / `${NAME:-word}` form is one scan() cannot read as a plain reference
+// (complexParam). `:=` assigns the name when unset, so the later bare reference does not
+// hold the injected root; an unrelated `${X:-y}` pins the flag on its own, with the
+// root name appearing only in the plain bare use that would otherwise inline.
+test('plugin-root-placeholder declines a complex ${...} parameter expansion: complexParam', () => {
+  for (const command of [
+    'node "${CLAUDE_PLUGIN_ROOT:=/a}" "$CLAUDE_PLUGIN_ROOT/bin/x.js"',
+    'echo "${CLAUDE_PLUGIN_ROOT:-/a}"; node "$CLAUDE_PLUGIN_ROOT/bin/x.js"',
+    'echo "${X:-y}"; node "$CLAUDE_PLUGIN_ROOT/bin/x.js"',
+  ]) assert.strictEqual(rw(command), null, `complexParam: ${command}`);
+});
+
 test('plugin-root-placeholder declines a backtick or an ANSI-C quote: inDoubt', () => {
   assert.strictEqual(rw('node "$CLAUDE_PLUGIN_ROOT/bin/x.js" `id`'), null, 'a backtick');
   assert.strictEqual(rw('node "$CLAUDE_PLUGIN_ROOT/bin/x.js" $\'a\''), null, 'ANSI-C quoting');
