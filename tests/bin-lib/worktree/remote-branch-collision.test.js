@@ -11,6 +11,8 @@ const {
   findPrsForBranch,
   findPriorAttemptPr,
   formatStopCard,
+  readIssueComments,
+  TOMBSTONE_CLOSE_WINDOW_MS,
 } = require('../../../plugin/bin/lib/worktree/remote-branch-collision');
 
 // #2844: a run that ADOPTS its worktree (dispatch, multi-spec shared worktree)
@@ -196,11 +198,23 @@ test('real git: an unreachable origin is unreachable, never absent', (t) => {
 
 const SHA_B = 'b'.repeat(40);
 const ref = (number, slug = 'o/r') => ({ number, repository: { name: slug.split('/')[1], owner: { login: slug.split('/')[0] } } });
+// #4058: dispatch/settle-and-merge.md Step 6 step 5 posts the `Attempt N failed` comment, then closes
+// the PR, so a real tombstone's comment lands seconds before `closedAt`.
+const CLOSED_AT = '2026-10-21T12:00:00Z';
+const tombstoneComment = (over) => ({
+  body: 'Attempt 1 failed: tests red. Claim released, will retry.',
+  authorAssociation: 'MEMBER',
+  createdAt: '2026-10-21T11:59:55Z',
+  ...over,
+});
+const withComments = (comments) => ({ readComments: () => ({ ok: true, comments }) });
+const PR9 = { number: 9, url: 'https://example.test/pr/9' };
 const closedPr = (over) => ({
   number: 9,
   url: 'https://example.test/pr/9',
   state: 'CLOSED',
   isCrossRepository: false,
+  closedAt: CLOSED_AT,
   headRefOid: SHA_B,
   closingIssuesReferences: [ref(42)],
   body: '<!-- claude-tweaks-run: 2026-10-21T000000-record-42 -->\nclaude-tweaks-run: 2026-10-21T000000-record-42\n\nFixes #42\n',
@@ -217,6 +231,7 @@ const priorAttempt = (over) => findPriorAttemptPr({
   records: [42],
   repo: 'o/r',
   git: ancestorGit(),
+  readComments: () => ({ ok: true, comments: [tombstoneComment()] }),
   ...over,
 });
 
@@ -290,14 +305,14 @@ test('findPriorAttemptPr: links by closingIssuesReferences alone when the body h
   assert.deepEqual(priorAttempt({ prLookup }), { number: 9, url: 'https://example.test/pr/9' });
 });
 
-test('findPriorAttemptPr: skips non-matching closed PRs ahead of the record\'s own and returns the own one', () => {
+test('findPriorAttemptPr: judges the newest closed PR, ignoring older non-matching ones and fork PRs', () => {
   const OTHER_HEAD = 'c'.repeat(40);
   const prLookup = {
     ok: true,
     prs: [
-      closedPr({ number: 1, closingIssuesReferences: [ref(43)], body: closedPr().body.replace('#42', '#43') }),
+      closedPr({ number: 1, closedAt: '2026-10-01T00:00:00Z', closingIssuesReferences: [ref(43)], body: closedPr().body.replace('#42', '#43') }),
       closedPr({ number: 2, isCrossRepository: true }),
-      closedPr({ number: 3, headRefOid: OTHER_HEAD }),
+      closedPr({ number: 3, closedAt: '2026-10-02T00:00:00Z', headRefOid: OTHER_HEAD }),
       closedPr({ number: 9, url: 'https://example.test/pr/9' }),
     ],
   };
@@ -311,7 +326,179 @@ test('findPriorAttemptPr: skips non-matching closed PRs ahead of the record\'s o
 test('findPrsForBranch: requests the fields findPriorAttemptPr reads', () => {
   let seen;
   findPrsForBranch({ branch: 'b', repo: 'o/r', gh: (args) => { seen = args; return '[]'; } });
-  assert.equal(seen[seen.indexOf('--json') + 1], 'number,url,state,isDraft,headRefOid,closingIssuesReferences,body,isCrossRepository');
+  assert.equal(seen[seen.indexOf('--json') + 1], 'number,url,state,isDraft,headRefOid,closingIssuesReferences,body,isCrossRepository,closedAt');
+});
+
+// --- #4058: a closed PR is a tombstone only with a failure comment just before its closedAt ---
+
+test('#4058 AC2.1: a tombstone PR (attempt comment just before closedAt) matches, read from the record it closes', () => {
+  const calls = [];
+  const readComments = (a) => { calls.push(a); return { ok: true, comments: [tombstoneComment()] }; };
+  assert.deepEqual(priorAttempt({ readComments }), PR9);
+  assert.deepEqual(calls, [{ number: 42, repo: 'o/r' }]);
+});
+
+test('#4058 AC1.1: a PR with no attempt comment stays foreign', () => {
+  assert.equal(priorAttempt(withComments([])), null);
+  assert.equal(priorAttempt(withComments([tombstoneComment({ body: 'Rejected, wrong approach.' })])), null);
+});
+
+test('#4058 AC1.1: a PR whose only attempt comment is older than the window stays foreign (stale marker)', () => {
+  const edge = new Date(Date.parse(CLOSED_AT) - TOMBSTONE_CLOSE_WINDOW_MS).toISOString();
+  const justOutside = new Date(Date.parse(CLOSED_AT) - TOMBSTONE_CLOSE_WINDOW_MS - 1000).toISOString();
+  assert.equal(priorAttempt(withComments([tombstoneComment({ createdAt: justOutside })])), null);
+  assert.deepEqual(priorAttempt(withComments([tombstoneComment({ createdAt: edge })])), PR9);
+});
+
+test('#4058 AC1.1: a failed or partial issue-comment lookup stays foreign', () => {
+  assert.equal(priorAttempt({ readComments: () => ({ ok: false, comments: [] }) }), null);
+  assert.equal(priorAttempt({ readComments: () => ({ ok: false, comments: [tombstoneComment()] }) }), null);
+});
+
+test('#4058 AC3.1: an attempt comment from an untrusted author never counts', () => {
+  for (const authorAssociation of ['CONTRIBUTOR', 'NONE', undefined]) {
+    assert.equal(priorAttempt(withComments([tombstoneComment({ authorAssociation })])), null, String(authorAssociation));
+  }
+  for (const authorAssociation of ['OWNER', 'MEMBER', 'COLLABORATOR']) {
+    assert.deepEqual(priorAttempt(withComments([tombstoneComment({ authorAssociation })])), PR9, authorAssociation);
+  }
+});
+
+test('#4058: a comment after closedAt stays foreign; one at closedAt counts', () => {
+  assert.equal(priorAttempt(withComments([tombstoneComment({ createdAt: '2026-10-21T12:00:01Z' })])), null);
+  assert.deepEqual(priorAttempt(withComments([tombstoneComment({ createdAt: CLOSED_AT })])), PR9);
+});
+
+test('#4058: an unparseable closedAt or createdAt stays foreign', () => {
+  for (const closedAt of [null, 'nope']) {
+    assert.equal(priorAttempt({ prLookup: { ok: true, prs: [closedPr({ closedAt })] } }), null, String(closedAt));
+  }
+  assert.equal(priorAttempt(withComments([tombstoneComment({ createdAt: 'nope' })])), null);
+  assert.deepEqual(priorAttempt(), PR9);
+});
+
+test('#4058: ancestry failure never reads the comments', () => {
+  const calls = [];
+  const git = () => { throw exitWith(1); };
+  assert.equal(priorAttempt({ git, readComments: (a) => { calls.push(a); return { ok: true, comments: [tombstoneComment()] }; } }), null);
+  assert.equal(calls.length, 0);
+});
+
+const OLDER = '2026-10-01T00:00:00Z';
+const lookupOf = (prs, order) => ({ prLookup: { ok: true, prs: order === 'reversed' ? [...prs].reverse() : prs } });
+
+test('#4058 AC5.1 AC5.2 AC5.3 Reading A: a newest human-closed PR hides an older genuine tombstone', () => {
+  const prs = [closedPr({ number: 3, url: 'https://example.test/pr/3', closedAt: OLDER }), closedPr()];
+  const readComments = () => ({ ok: true, comments: [tombstoneComment({ createdAt: '2026-09-30T23:59:55Z' })] });
+  for (const order of ['listed', 'reversed']) {
+    assert.equal(priorAttempt({ ...lookupOf(prs, order), readComments }), null, order);
+  }
+});
+
+test('#4058 Reading A: a newest tombstone matches over an older evidence-less PR, and only the newest PR is read', () => {
+  const prs = [closedPr({ number: 3, url: 'https://example.test/pr/3', closedAt: OLDER, headRefOid: 'c'.repeat(40) }), closedPr()];
+  for (const order of ['listed', 'reversed']) {
+    const reads = [];
+    const gitCalls = [];
+    const git = (args) => { gitCalls.push(args); return ''; };
+    const readComments = (a) => { reads.push(a); return { ok: true, comments: [tombstoneComment()] }; };
+    assert.deepEqual(priorAttempt({ ...lookupOf(prs, order), git, readComments }), PR9, order);
+    assert.equal(reads.length, 1, order);
+    assert.deepEqual(gitCalls, [['merge-base', '--is-ancestor', SHA_B, SHA_A]], order);
+  }
+});
+
+test('#4058 Reading A: a newest closed PR that fails an existing check is null, never a fallback to an older match', () => {
+  const older = closedPr({ number: 3, url: 'https://example.test/pr/3', closedAt: OLDER });
+  const otherRecord = closedPr({ closingIssuesReferences: [ref(43)], body: closedPr().body.replace('#42', '#43') });
+  assert.equal(priorAttempt(lookupOf([older, otherRecord])), null);
+  assert.equal(priorAttempt(lookupOf([otherRecord, older])), null);
+  // Newest PR 9's head (SHA_B) is not an ancestor; the older PR's head is.
+  const git = (args) => { if (args[2] === SHA_B) throw exitWith(1); return ''; };
+  const olderOtherHead = closedPr({ number: 3, url: 'https://example.test/pr/3', closedAt: OLDER, headRefOid: 'c'.repeat(40) });
+  assert.equal(priorAttempt({ ...lookupOf([olderOtherHead, closedPr()]), git }), null);
+  assert.equal(priorAttempt({ ...lookupOf([closedPr(), olderOtherHead]), git }), null);
+});
+
+test('#4058 Reading A: a fork PR is not a candidate for newest', () => {
+  const fork = closedPr({ number: 2, url: 'https://example.test/pr/2', isCrossRepository: true, closedAt: '2026-10-22T00:00:00Z' });
+  for (const order of ['listed', 'reversed']) {
+    assert.deepEqual(priorAttempt(lookupOf([fork, closedPr()], order)), PR9, order);
+  }
+});
+
+const PR11 = (over) => closedPr({ number: 11, url: 'https://example.test/pr/11', ...over });
+
+test('#4058 AC6.1 AC6.2 Reading B: a newer open, draft or merged same-repo PR blocks adoption', () => {
+  const live = [
+    { state: 'OPEN', isDraft: false, closedAt: null },
+    { state: 'OPEN', isDraft: true, closedAt: null },
+    { state: 'MERGED', closedAt: '2026-10-21T13:00:00Z' },
+  ];
+  for (const over of live) {
+    for (const order of ['listed', 'reversed']) {
+      const reads = [];
+      const readComments = (a) => { reads.push(a); return { ok: true, comments: [tombstoneComment()] }; };
+      assert.equal(priorAttempt({ ...lookupOf([closedPr(), PR11(over)], order), readComments }), null, `${JSON.stringify(over)} ${order}`);
+      assert.equal(reads.length, 0, `${JSON.stringify(over)} ${order}`);
+    }
+  }
+});
+
+test('#4058 Reading B: an open PR blocks whatever its age', () => {
+  const open = PR11({ state: 'OPEN', closedAt: null, createdAt: '2026-01-01T00:00:00Z' });
+  assert.equal(priorAttempt(lookupOf([closedPr(), open])), null);
+});
+
+test('#4058 Reading B: an older merged PR or a fork\'s open PR does not block', () => {
+  assert.deepEqual(priorAttempt(lookupOf([closedPr(), PR11({ state: 'MERGED', closedAt: OLDER })])), PR9);
+  assert.deepEqual(priorAttempt(lookupOf([closedPr(), PR11({ state: 'OPEN', closedAt: null, isCrossRepository: true })])), PR9);
+});
+
+test('#4058 Reading B: a merged PR whose closedAt cannot be compared blocks', () => {
+  for (const closedAt of [null, 'nope', CLOSED_AT]) {
+    assert.equal(priorAttempt(lookupOf([closedPr(), PR11({ state: 'MERGED', closedAt })])), null, String(closedAt));
+  }
+});
+
+test('#4058 Reading A: newest cannot be established, so foreign', () => {
+  const other = (over) => closedPr({ number: 3, url: 'https://example.test/pr/3', ...over });
+  for (const closedAt of [null, 'nope']) {
+    assert.equal(priorAttempt(lookupOf([closedPr(), other({ closedAt })])), null, String(closedAt));
+  }
+  assert.equal(priorAttempt(lookupOf([closedPr(), other({ closedAt: CLOSED_AT })])), null);
+});
+
+test('#4058: a null or non-object comment element is skipped, never thrown on', () => {
+  assert.deepEqual(priorAttempt(withComments([null, 'x', tombstoneComment()])), PR9);
+  assert.equal(priorAttempt(withComments([null])), null);
+  assert.deepEqual(priorAttempt(lookupOf([null, 'x', closedPr()])), PR9);
+});
+
+test('#4058: a bundle PR matches on any record it closes and never reads a record it does not', () => {
+  const reads = [];
+  const readComments = ({ number }) => { reads.push(number); return { ok: true, comments: number === 42 ? [tombstoneComment()] : [] }; };
+  const prLookup = { ok: true, prs: [closedPr({ closingIssuesReferences: [ref(7), ref(42)] })] };
+  assert.deepEqual(priorAttempt({ records: [7, 42, 8], prLookup, readComments }), PR9);
+  assert.deepEqual(reads, [7, 42]);
+});
+
+test('#4058: readIssueComments reads the record\'s issue comments through gh', () => {
+  const comments = [tombstoneComment()];
+  let seen;
+  const ok = readIssueComments({ number: 42, repo: 'o/r', gh: (args) => { seen = args; return JSON.stringify({ comments }); } });
+  assert.deepEqual(seen, ['issue', 'view', '42', '--repo', 'o/r', '--json', 'comments']);
+  assert.deepEqual(ok, { ok: true, comments });
+});
+
+test('#4058: readIssueComments reports ok:false when gh throws, or returns non-json or the wrong shape', () => {
+  const answer = (out) => readIssueComments({ number: 42, repo: 'o/r', gh: () => out });
+  assert.equal(readIssueComments({ number: 42, repo: 'o/r', gh: () => { throw Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' }); } }).ok, false);
+  for (const out of ['not json', '{}', '{"comments":"x"}', 'null']) {
+    const result = answer(out);
+    assert.equal(result.ok, false, out);
+    assert.deepEqual(result.comments, [], out);
+  }
 });
 
 test('AC1.1: a retry\'s fresh branch is foreign by ancestry but prior-attempt by PR, and adopting it lets the push fast-forward', (t) => {
@@ -339,6 +526,7 @@ test('AC1.1: a retry\'s fresh branch is foreign by ancestry but prior-attempt by
     records: [42],
     repo: 'o/r',
     git,
+    readComments: () => ({ ok: true, comments: [tombstoneComment()] }),
   });
   assert.deepEqual(prior, { number: 9, url: 'https://example.test/pr/9' });
 

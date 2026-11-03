@@ -68,5 +68,5 @@ function hasHitRetryCeiling(comments, ceiling = 3) {
 }
 
 module.exports = {
-  attemptFailedCommentBody, countFailedAttempts, hasHitRetryCeiling, hasNegativeEvidenceMarker,
+  ATTEMPT_RE, attemptFailedCommentBody, countFailedAttempts, hasHitRetryCeiling, hasNegativeEvidenceMarker,
 };

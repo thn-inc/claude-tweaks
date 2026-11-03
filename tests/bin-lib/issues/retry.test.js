@@ -2,8 +2,13 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const {
-  attemptFailedCommentBody, countFailedAttempts, hasHitRetryCeiling, hasNegativeEvidenceMarker,
+  ATTEMPT_RE, attemptFailedCommentBody, countFailedAttempts, hasHitRetryCeiling, hasNegativeEvidenceMarker,
 } = require('../../../plugin/bin/lib/issues/retry');
+
+test('#4058: ATTEMPT_RE is exported, matches the body attemptFailedCommentBody writes, and is not global', () => {
+  assert.ok(ATTEMPT_RE.test(attemptFailedCommentBody({ attemptNumber: 2, reason: 'r', ceilingHit: false })));
+  assert.strictEqual(ATTEMPT_RE.global, false, 'a global regex keeps lastIndex state across .test calls');
+});
 
 test('attemptFailedCommentBody formats the human-readable retry comment', () => {
   const body = attemptFailedCommentBody({ attemptNumber: 2, reason: 'test gate failed (3 type errors)' });

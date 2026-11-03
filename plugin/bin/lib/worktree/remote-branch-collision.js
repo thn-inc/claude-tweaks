@@ -24,6 +24,15 @@
 // `findPriorAttemptPr` recognizes it by PR identity, and checks that the closed
 // PR's head is an ancestor of origin's tip (not that the tip equals it): commits
 // pushed after the PR closed must still count as the same attempt (Review Focus 1).
+//
+// #4058: PR identity alone also matched a PR a human closed to reject the branch, so a
+// retry silently merged the rejected commits. A closed PR is now this record's own
+// tombstone only with evidence: a trusted `Attempt N failed` issue comment within
+// TOMBSTONE_CLOSE_WINDOW_MS before its `closedAt` (what settle-and-merge.md Step 6 step 5
+// leaves). Reading A: only the newest closed same-repo PR on the branch is judged, so
+// an older tombstone never legitimizes a newer human close. Reading B: a newer
+// same-repo OPEN/draft/MERGED PR blocks adoption, so live or merged work is never
+// merged into a retry.
 'use strict';
 
 const { execFileSync } = require('child_process');
@@ -32,6 +41,8 @@ const { ghOptions } = require('../repo-resolve');
 const { firstLineRunId } = require('../flow/pr-checklist');
 const { prClosesIssue } = require('../reconcile/release-merged');
 const { isValidBranchName } = require('../branch-name');
+const { ATTEMPT_RE } = require('../issues/retry');
+const { isTrustedComment } = require('../issues/comment-trust');
 
 // Throws on a non-zero exit; the thrown error carries `.status`.
 function defaultGit(args) {
@@ -44,8 +55,16 @@ function defaultGit(args) {
 }
 
 function defaultGh(args) {
-  return execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', timeout: GH_TIMEOUT_MS, windowsHide: true }));
+  return execFileSync('gh', args, ghOptions(args, {
+    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true,
+  }));
 }
+
+// settle-and-merge.md Step 6 step 5 posts the `Attempt N failed` comment, then closes the
+// PR, so a real tombstone's comment lands within seconds of its `closedAt`. The window is
+// generous slack for clock skew and a slow close; a comment older than it is a stale marker
+// from an earlier attempt, not evidence about this close.
+const TOMBSTONE_CLOSE_WINDOW_MS = 15 * 60 * 1000;
 
 const SHA_RE = /^[0-9a-f]{40,64}$/;
 
@@ -124,7 +143,7 @@ function findPrsForBranch({ branch, repo, gh = defaultGh }) {
   try {
     const out = gh([
       'pr', 'list', '--repo', repo, '--head', branch, '--state', 'all',
-      '--json', 'number,url,state,isDraft,headRefOid,closingIssuesReferences,body,isCrossRepository',
+      '--json', 'number,url,state,isDraft,headRefOid,closingIssuesReferences,body,isCrossRepository,closedAt',
     ]);
     return { ok: true, prs: JSON.parse(out || '[]') };
   } catch (err) {
@@ -132,30 +151,88 @@ function findPrsForBranch({ branch, repo, gh = defaultGh }) {
   }
 }
 
-// The first CLOSED claude-tweaks PR (run marker on its body's first line) that
-// closes one of `records` in `repo` (`owner/name`) and whose head is an ancestor
-// of `remoteSha` — the record's own earlier attempt — as `{ number, url }`, else
-// null. "Closes" is `prClosesIssue`'s three-valued verdict (closing references
+// A record's issue comments (the tombstone's `Attempt N failed` lives on the issue, not the
+// PR). Never throws: a failed or malformed read is `ok: false`, which yields no evidence.
+function readIssueComments({ number, repo, gh = defaultGh }) {
+  try {
+    const parsed = JSON.parse(gh(['issue', 'view', String(number), '--repo', repo, '--json', 'comments']));
+    if (!Array.isArray(parsed.comments)) return { ok: false, comments: [] };
+    return { ok: true, comments: parsed.comments };
+  } catch (err) {
+    return { ok: false, error: err, comments: [] };
+  }
+}
+
+// True when `lookup` is a complete read holding a trusted `Attempt N failed` comment created
+// in [closedAt - TOMBSTONE_CLOSE_WINDOW_MS, closedAt]. An unparseable time compares false.
+function hasTombstoneEvidence(closedAt, lookup) {
+  if (!lookup || typeof lookup !== 'object' || lookup.ok !== true || !Array.isArray(lookup.comments)) return false;
+  const closed = Date.parse(closedAt);
+  return lookup.comments.some((comment) => {
+    if (!comment || typeof comment !== 'object' || typeof comment.body !== 'string') return false;
+    if (!ATTEMPT_RE.test(comment.body) || !isTrustedComment(comment)) return false;
+    const created = Date.parse(comment.createdAt);
+    return created <= closed && closed - created <= TOMBSTONE_CLOSE_WINDOW_MS;
+  });
+}
+
+// The one closed same-repo PR with the greatest `closedAt` (Reading A), or null when there is
+// none, any candidate's `closedAt` is unparseable, or the greatest is shared (newest unknown).
+function newestClosedPr(prs) {
+  let newest = null;
+  let newestMs = -Infinity;
+  let tied = false;
+  for (const pr of prs) {
+    if (!pr || typeof pr !== 'object' || pr.state !== 'CLOSED' || pr.isCrossRepository === true) continue;
+    const ms = Date.parse(pr.closedAt);
+    if (Number.isNaN(ms)) return null;
+    if (ms > newestMs) { newest = pr; newestMs = ms; tied = false; } else if (ms === newestMs) tied = true;
+  }
+  return tied ? null : newest;
+}
+
+// Reading B: true when a same-repo PR that is not CLOSED is OPEN (draft included), or else
+// lacks a `closedAt` strictly before the newest closed PR's (a NaN compares false, so an
+// unknown time blocks). Such a PR is live or merged work the retry must not merge in.
+function newerLivePr(prs, closedMs) {
+  return prs.some((pr) => {
+    if (!pr || typeof pr !== 'object' || pr.state === 'CLOSED' || pr.isCrossRepository === true) return false;
+    return pr.state === 'OPEN' || !(Date.parse(pr.closedAt) < closedMs);
+  });
+}
+
+// The newest CLOSED same-repo PR on the branch (Reading A, by `closedAt`) when it is a
+// claude-tweaks PR (run marker on its body's first line) that closes one of `records`
+// in `repo` (`owner/name`), whose head is an ancestor of `remoteSha`, and that carries
+// tombstone evidence (a trusted `Attempt N failed` comment on a record it closes, in the
+// window before its `closedAt`) — the record's own failed earlier attempt — as
+// `{ number, url }`, else null. Only the newest closed PR is judged: failing any check, it
+// is null, never a fallback to an older PR, so commits a human rejected are not adopted.
+// A newer same-repo OPEN, draft or MERGED PR (Reading B) also yields null, before any check
+// or comment read. "Closes" is `prClosesIssue`'s three-valued verdict (closing references
 // matched on number and repository, else a closing-keyword line of the PR body);
 // only `true` links, so a PR read without `closingIssuesReferences` stays foreign.
-// Any doubt (failed lookup, bad sha, ancestry error) is null: the branch stays foreign.
-function findPriorAttemptPr({ remoteSha, prLookup, records, repo, git = defaultGit }) {
+// Any doubt (failed lookup, bad sha, ancestry error, unreadable comments, newest unknown)
+// is null: the branch stays foreign. `readComments({ number, repo })` is injectable.
+function findPriorAttemptPr({ remoteSha, prLookup, records, repo, git = defaultGit, readComments = readIssueComments }) {
   const wanted = (Array.isArray(records) ? records : []).filter(Number.isInteger);
   if (!SHA_RE.test(remoteSha || '') || wanted.length === 0 || !repo) return null;
   if (!prLookup || !prLookup.ok || !Array.isArray(prLookup.prs)) return null;
-  for (const pr of prLookup.prs) {
-    // `gh pr list --head` also matches fork PRs; only a same-repo PR is this record's own.
-    if (!pr || pr.state !== 'CLOSED' || pr.isCrossRepository !== false || !firstLineRunId(pr.body)) continue;
-    if (!wanted.some((n) => prClosesIssue(pr, n, repo, pr.body) === true)) continue;
-    if (!SHA_RE.test(pr.headRefOid || '')) continue;
-    try {
-      git(['merge-base', '--is-ancestor', pr.headRefOid, remoteSha]);
-    } catch {
-      continue;
-    }
-    return { number: pr.number, url: pr.url };
+  const pr = newestClosedPr(prLookup.prs);
+  if (!pr || newerLivePr(prLookup.prs, Date.parse(pr.closedAt))) return null;
+  // `gh pr list --head` also matches fork PRs; only a same-repo PR is this record's own.
+  if (pr.isCrossRepository !== false || !firstLineRunId(pr.body)) return null;
+  const linked = wanted.filter((n) => prClosesIssue(pr, n, repo, pr.body) === true);
+  if (linked.length === 0 || !SHA_RE.test(pr.headRefOid || '')) return null;
+  try {
+    git(['merge-base', '--is-ancestor', pr.headRefOid, remoteSha]);
+  } catch {
+    return null;
   }
-  return null;
+  // `some` stops at the first record with evidence; only this one PR is judged, so a
+  // record's comments are read at most once.
+  if (!linked.some((n) => hasTombstoneEvidence(pr.closedAt, readComments({ number: n, repo })))) return null;
+  return { number: pr.number, url: pr.url };
 }
 
 function describePrs(prLookup) {
@@ -194,5 +271,7 @@ module.exports = {
   classifyRemoteBranch,
   findPrsForBranch,
   findPriorAttemptPr,
+  readIssueComments,
+  TOMBSTONE_CLOSE_WINDOW_MS,
   formatStopCard,
 };
