@@ -467,10 +467,51 @@ test('checkLedgerStatus fixed accepts a resolving PR, never a bare #N or an issu
   assert.equal(checkLedgerStatus('fixed', 'fixed — merged in PR #4712', { repo: null }).refusal, null);
 });
 
+test("checkLedgerStatus fixed accepts this repo's own /commit/<sha> and /blob/<ref>/<path> URLs, as it does /pull/N", () => {
+  const own = 'https://github.com/thn-inc/claude-tweaks';
+  const sha = '1d3757a5a9c75ded39a8544affe52fc3fc91cd40';
+  const ok = [
+    `${own}/commit/${sha}`, `${own}/commit/${sha.slice(0, 7)}`, `${own}/commit/${sha}/files`, `${own}/commit/${sha}#diff`,
+    `${own}/commit/${sha.toUpperCase()}`, `${own}/blob/main/plugin/bin/hooks.js`, `${own}/blob/${sha}/plugin/bin/hooks.js#L10-L20`,
+    `${own}/blob/main/README`, `${own}/blob/main/docs/a.md?plain=1`,
+    `merged in ${own}/commit/${sha}`, `\`${own}/commit/${sha}\``, `(${own}/blob/main/plugin/bin/hooks.js)`, `see ${own}/commit/${sha}.`,
+    `${own.replace('thn-inc', 'THN-Inc')}/commit/${sha}`, `${own.replace('github.com', 'GitHub.com')}/blob/main/x/y`, `http://github.com/thn-inc/claude-tweaks/commit/${sha}`,
+    // Each URL span is matched on its own: the other repo's URL beside it does not decide the verdict.
+    `https://github.com/other/repo/commit/${sha} and ${own}/commit/${sha}`, `${own}/commit/${sha} and https://github.com/other/repo/blob/main/x/y`,
+  ];
+  for (const text of ok) assert.equal(checkLedgerStatus('fixed', text, { repo: REPO }).refusal, null, text);
+  // Each refusal fixture turns red when its owner, repo, host or shape check is dropped: another repo, another host, a
+  // sibling repo name sharing the prefix, a non-hex or too-short sha, and the URL shapes that name no commit or file.
+  const other = 'https://github.com/other/repo';
+  const bad = [
+    `${other}/commit/${sha}`, `${other}/blob/main/plugin/bin/hooks.js`, `https://github.com/thn-inc/other/commit/${sha}`, `https://github.com/other/claude-tweaks/blob/main/x/y`,
+    `https://github.com/thn-inc/claude-tweaks-fork/commit/${sha}`, `https://gitlab.com/thn-inc/claude-tweaks/commit/${sha}`, `https://github.com.evil.io/thn-inc/claude-tweaks/blob/main/x/y`,
+    `${own}/commit/${'z'.repeat(40)}`, `${own}/commit/abc12`, `${own}/commit/${sha}0000000000`, `${own}/commit/`, `${own}/commits/${sha}`,
+    `${own}/blob/main`, `${own}/blob/main/`, `${own}/tree/main/plugin/bin`, `${own}/issues/12`, `${own}/compare/main...x`,
+    `${other}/commit/${sha} and ${other}/blob/main/x/y`, `merged in ${other}/commit/${sha}.`,
+  ];
+  for (const text of bad) {
+    const { refusal } = checkLedgerStatus('fixed', text, { repo: REPO });
+    assert.match(refusal, /a commit sha, file reference, or resolving PR/, text);
+    assert.doesNotMatch(refusal, /origin repo unresolvable/, text);
+  }
+  // origin unresolvable: no URL can be matched to it, and the refusal says so.
+  for (const text of [`${own}/commit/${sha}`, `${own}/blob/main/plugin/bin/hooks.js`]) {
+    const { refusal } = checkLedgerStatus('fixed', text, { repo: null });
+    assert.match(refusal, /origin repo unresolvable/, text);
+    assert.match(refusal, /PR #N/, text);
+  }
+});
+
 test('checkLedgerStatus fixed refuses adversarial resolutions (verdict only; timing belongs in perf/)', () => {
   assert.match(checkLedgerStatus('fixed', 'a'.repeat(200000)).refusal, /commit sha/);
   assert.match(checkLedgerStatus('fixed', `a${' '.repeat(200000)}b`).refusal, /commit sha/);
   assert.match(checkLedgerStatus('fixed', '/'.repeat(5000)).refusal, /commit sha/);
+  // The /commit/ and /blob/ URL shapes: a long ref, a long segment run before the shape, a long hex run.
+  const own = 'https://github.com/thn-inc/claude-tweaks';
+  assert.match(checkLedgerStatus('fixed', `${own}/blob/${'a'.repeat(200000)}`, { repo: REPO }).refusal, /commit sha/);
+  assert.match(checkLedgerStatus('fixed', `https://github.com/${'a/'.repeat(100000)}blob/x/y`, { repo: REPO }).refusal, /commit sha/);
+  assert.match(checkLedgerStatus('fixed', `${own}/commit/${'a'.repeat(200000)}`, { repo: REPO }).refusal, /commit sha/);
 });
 
 test('checkLedgerStatus deferred: staged path or record reference is complete', () => {

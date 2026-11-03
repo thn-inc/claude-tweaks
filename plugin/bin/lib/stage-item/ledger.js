@@ -206,7 +206,11 @@ const URL_SPAN_RE = /https?:\/\/\S+/g;
 const SHA_RE = /\b(?=[0-9a-f]{0,39}[0-9])[0-9a-f]{6,40}\b/g; // a digit-free run ("facade") is a word
 const FILENAME_RE = /\w\.[A-Za-z]{2}[A-Za-z0-9]{0,4}\b/; // two or more letters: "e.g." is not a file
 const PR_REF_RE = /\bPR #\d+\b/;
+// The three URL shapes a `fixed` Resolution may point at, each run on one URL span with the host, owner and
+// repo captured as groups 1-3: a resolving PR, a commit, a file at a ref.
 const PULL_URL_RE = /^https?:\/\/([A-Za-z0-9.-]+)\/([^/\s]+)\/([^/\s]+)\/pull\/(\d+)(?:[/?#]\S*)?$/;
+const COMMIT_URL_RE = /^https?:\/\/([A-Za-z0-9.-]+)\/([^/\s]+)\/([^/\s]+)\/commit\/[0-9A-Fa-f]{6,40}(?:[/?#]\S*)?$/;
+const BLOB_URL_RE = /^https?:\/\/([A-Za-z0-9.-]+)\/([^/\s]+)\/([^/\s]+)\/blob\/[^/\s]+\/\S+$/;
 
 // A sha not immediately preceded by `#` (a bare `#123456` is an item number). Checked by hand, not a
 // lookbehind, so the regex keeps one shape.
@@ -242,11 +246,14 @@ function checkFixed(resolution, repo) {
   const urls = resolution.match(URL_SPAN_RE) || [];
   const bare = resolution.replace(URL_SPAN_RE, ' ');
   if (hasSha(bare) || hasPath(bare) || FILENAME_RE.test(bare) || PR_REF_RE.test(resolution)) return null;
-  const pulls = urls.map((url) => PULL_URL_RE.exec(trimUrlTail(url))).filter(Boolean);
-  if (repo && pulls.some((m) => sameText(m[1], repo.host) && sameText(m[2], repo.owner) && sameText(m[3], repo.repo))) return null;
-  const accepted = 'a commit sha, file reference, or resolving PR (`PR #N` or this repo\'s /pull/N URL)';
-  if (!repo && pulls.length > 0) {
-    return `status 'fixed' needs ${accepted}; origin repo unresolvable, so a /pull/N URL cannot be matched to it — name the PR as \`PR #N\``;
+  const repoUrls = urls.map((url) => {
+    const span = trimUrlTail(url);
+    return PULL_URL_RE.exec(span) || COMMIT_URL_RE.exec(span) || BLOB_URL_RE.exec(span);
+  }).filter(Boolean);
+  if (repo && repoUrls.some((m) => sameText(m[1], repo.host) && sameText(m[2], repo.owner) && sameText(m[3], repo.repo))) return null;
+  const accepted = 'a commit sha, file reference, or resolving PR (`PR #N`, or this repo\'s /pull/N, /commit/<sha> or /blob/… URL)';
+  if (!repo && repoUrls.length > 0) {
+    return `status 'fixed' needs ${accepted}; origin repo unresolvable, so a /pull/N, /commit/ or /blob/ URL cannot be matched to it — name the PR as \`PR #N\`, or give the commit sha or file path itself`;
   }
   return `status 'fixed' needs ${accepted} in the Resolution`;
 }
