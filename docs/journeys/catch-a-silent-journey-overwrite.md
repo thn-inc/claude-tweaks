@@ -18,8 +18,8 @@ files:
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/check-artifact-overwrite.js" --base "$EXPECTED_BASE" --run "$MULTISPEC_PARENT_DIR" --integration-ref "origin/$INTEGRATION_BRANCH" --path docs/journeys/ --path stories/`
 - **Action:** Run it once, after every spec in the shared worktree has committed, before the Consolidated Review Console renders. `--run` is omitted only when the run's `parallel` waves ran with two or more members, and `--integration-ref` only when `origin/$INTEGRATION_BRANCH` does not resolve (see `plugin/skills/flow/multispec-artifact-namespacing.md`).
 - **Should feel:** One command, one verdict — no manual `git log --numstat` reading required for the common case.
-- **Should understand:** Exit `0` means clean — stdout is `{"clean":true,"overwrites":[]}` — and the console renders normally. A path that was only ever added once, with no later modification, never even appears in the walk.
-- **Red flags:** A nonzero exit read as "clean" without checking it; a caller that greps stdout for a substring instead of parsing the JSON envelope.
+- **Should understand:** Exit `0` means clean — stdout is `{"clean":true,"overwrites":[]}` — and the console renders normally. A path that was only ever added once, with no later modification, never even appears in the walk. With `--integration-ref`, exit `3` also covers a run that already reached `origin/$INTEGRATION_BRANCH`: every commit in the range is reachable from it, the walk comes back empty, and nothing was judged.
+- **Red flags:** A nonzero exit read as "clean" without checking it; a caller that greps stdout for a substring instead of parsing the JSON envelope; running it after any of the run's own commits reached `origin/$INTEGRATION_BRANCH` — a fully landed run exits `3`, but a partly landed one passes without its landed commits ever being judged.
 
 ### 2. Read a clean append-only run — the #1988-#1997 case
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/check-artifact-overwrite.js" --base 4c6e76733 --head b247a02d3 --path docs/journeys/compose-a-per-run-context-bundle-1988.md` (this repo's own history)
