@@ -546,6 +546,14 @@ test('Reading B: a planned proof beside a passed check is kept on the check, bes
 test('Reading B: a proof outside risk-proofs is an incompatible fact', () => {
   assertDropped(validate([claim('what-changed', 'x', ['proof:auth'])], {}, [PROOF_PLANNED]), 'incompatible fact proof:auth (proof) for what-changed');
 });
+test('Reading B: a cited failed proof outranks a cited not-run proof, whichever comes first', () => {
+  const added = [fact('proof:a', 'failed'), fact('proof:b', 'not-run')];
+  assertMoved(validate([claim('risk-proofs', 'x', ['flag:auth', 'proof:a', 'proof:b'])], {}, added), 'tried-to-break', 'proof:a');
+  assertMoved(validate([claim('risk-proofs', 'x', ['flag:auth', 'proof:b', 'proof:a'])], {}, added), 'tried-to-break', 'proof:a');
+});
+test('Reading B: a failed proof beside a passed check stays kept, proof refs do not route beside other evidence', () => {
+  assertOnly(validate([claim('risk-proofs', 'x', ['flag:auth', 'proof:auth', 'check:unit-tests'])], {}, [fact('proof:auth', 'failed')]), 'kept');
+});
 test('Reading B: a proof fact passes the facts shape check', () => {
   assert.equal(validateFactsShape({ schemaVersion: 1, record: 1, partial: [], facts: [PROOF_PLANNED] }).ok, true);
 });

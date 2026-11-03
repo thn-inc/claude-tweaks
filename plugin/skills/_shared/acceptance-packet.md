@@ -139,7 +139,10 @@ A Tried to break claim must cite a failed fact or a negative story that ran and 
 skipped or not-run negative stories moves to Couldn't test whatever its wording (Decision Q12): the
 plain-wording exemption covers Test-guide manual steps only. One citing neither is dropped.
 
-A risk proof citing no proof fact is dropped. A risk proof citing only `proof` facts besides its flags routes on them: a failed one moves it to Tried to break, a skipped or not-run one keeps it in Risk proofs labelled `planned, not verified`, and only passed ones keep it as proved. A risk proof citing a failed or skipped `check` or `story`
+A risk proof citing no proof fact is dropped. A risk proof citing only `proof` facts besides its flags
+routes on them: a failed one moves it to Tried to break, a skipped or not-run one keeps it in Risk proofs
+labelled `planned, not verified`, and only passed ones keep it as proved. A risk proof citing a failed or
+skipped `check` or `story`
 proof routes to Tried to break or Couldn't test whatever its wording, because a proof asserts itself.
 
 ## The expected check set
