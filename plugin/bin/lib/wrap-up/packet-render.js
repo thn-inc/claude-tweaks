@@ -132,6 +132,7 @@ const movedLine = ({ claim, because }) => `- ${inline(claim.text)} (moved: cites
 const plannedLine = ({ claim, because }) => `- ${inline(claim.text)} (planned, not verified: cites ${idSpan(because.id)} — ${statusWithReason(because)})`;
 const UNCONFIRMED_FLAG_LABEL = ' (flag unconfirmed)';
 const NO_PROOF_SHOWN = 'no proof shown';
+const PROOFS_NOT_READ = 'proofs not read (the --proofs input did not read)';
 const NO_KEPT_FLAGS = 'not applicable: no kept risk flags';
 const FLAGS_NOT_READ = 'risk flags not read: the --flags input did not read, so kept flags are unknown';
 // A pass carries a reason only when it needs one: a verify run adjudicated to a pass.
@@ -204,7 +205,8 @@ function testGuideBody(ctx) {
 // fact always yields a line, so the placeholder reaches only a packet with no flag fact at all.
 // The label comes from the cited flag fact, never from a claim's text. An uncited flag widened
 // from an unreadable line carries its fact's `text` (why it was widened) after the note. With
-// `--flags` in `partial`, the placeholder says the flags were not read, never "no kept flags".
+// `--flags` in `partial`, the placeholder says the flags were not read, never "no kept flags";
+// with `--proofs` there, an uncited flag's note says its proofs were not read, never "no proof shown".
 function riskProofsBody({ facts, keptIn, planned, ofKind, factsById }) {
   const unconfirmed = (refs) => refs.some((id) => {
     const fact = factsById.get(id);
@@ -213,11 +215,12 @@ function riskProofsBody({ facts, keptIn, planned, ofKind, factsById }) {
   const labelled = (line, refs) => (unconfirmed(refs) ? `${line}${UNCONFIRMED_FLAG_LABEL}` : line);
   const keptClaims = keptIn('risk-proofs');
   const cited = new Set([...keptClaims, ...planned.map(({ claim }) => claim)].flatMap(({ refs }) => refs));
+  const noProof = facts.partial.includes(notReadNote('--proofs')) ? PROOFS_NOT_READ : NO_PROOF_SHOWN;
   const uncited = ofKind('flag')
     .filter((fact) => !cited.has(fact.id))
     .map((fact) => {
       const why = screenedInline(fact.text ?? '', WITHHELD_TEXT);
-      return labelled(`- ${screenedInline(fact.id.replace(/^flag:/, ''), WITHHELD_ID)}: ${NO_PROOF_SHOWN}${why ? ` — ${why}` : ''}`, [fact.id]);
+      return labelled(`- ${screenedInline(fact.id.replace(/^flag:/, ''), WITHHELD_ID)}: ${noProof}${why ? ` — ${why}` : ''}`, [fact.id]);
     });
   const proofs = [
     ...keptClaims.map((claim) => labelled(claimLine(claim), claim.refs)),

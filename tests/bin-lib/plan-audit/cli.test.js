@@ -1010,6 +1010,20 @@ test('#4618: without --spec the policy is never read, so an unreadable one does 
   }
 });
 
+test('#4618: a spec with no flag line never reads the policy, so an unreadable one does not exit 2', () => {
+  const repo = makeERepo();
+  try {
+    fs.mkdirSync(path.join(repo, '.claude-tweaks', 'policy.yml'), { recursive: true });
+    const r = runG(repo, 'x', '');
+    assert.strictEqual(r.exitCode, 0, r.stderr);
+    assert.doesNotMatch(r.stderr, /cannot read policy/);
+    assert.deepStrictEqual(r.report.checkG, { ok: true, skipped: 'unclassified' });
+    assert.ok(r.report.checkE && r.report.checkF, 'Checks E and F still ran on the spec');
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test('#4618: Check G reads a CRLF plan and spec the same as LF', () => {
   const repo = makeERepo();
   try {

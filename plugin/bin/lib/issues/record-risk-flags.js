@@ -29,7 +29,7 @@
 // uniformly CRLF.
 'use strict';
 
-const { BUILTIN_RISK_CATEGORIES } = require('../policy-schema');
+const { BUILTIN_RISK_CATEGORIES, LIST_ELEMENT_PATTERNS } = require('../policy-schema');
 const { fencedLineMask } = require('../markdown-blocks');
 
 const RISK_FLAGS_NONE = 'none';
@@ -47,7 +47,8 @@ const LEADING_EMPHASIS_RE = /^[*_]+/;
 const EXACT_FLAG_RE = /^Risk-flags: (.*)$/;
 const MARKER_TRUE = 'Risk-flags-unconfirmed: true';
 const MARKER_FALSE = 'Risk-flags-unconfirmed: false';
-const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/;
+// The policy schema's own slug rule, so a `risk-categories` entry the resolver accepts reads here.
+const SLUG_RE = LIST_ELEMENT_PATTERNS.slug;
 const PREAMBLE_END_RE = /^## /;
 const HEADING_RE = /^#{1,6}[ \t]/;
 

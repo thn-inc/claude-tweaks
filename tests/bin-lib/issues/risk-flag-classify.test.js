@@ -1,7 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { FLOOR, classifyRiskFlags, inertEvidence, readRiskPolicy } = require('../../../plugin/bin/lib/issues/risk-flag-classify');
+const { FLOOR, classifyRiskFlags, inertEvidence } = require('../../../plugin/bin/lib/issues/risk-flag-classify');
 const { LIST_ELEMENT_PATTERNS } = require('../../../plugin/bin/lib/policy-schema');
 
 const spec = (o) => `Surface: infra\n\n## Deliverables\n\n${o.d || '- [ ] x'}\n\n## Acceptance Criteria\n\n${o.a || '1. y'}\n\n## Technical Approach\n\n### Key Files\n\n${o.k || '- `a/b.js` — z'}\n`;
@@ -43,24 +43,6 @@ test('inertEvidence neutralizes hostile text', () => {
   assert.match(out, /\\\[x\\\]/);
   assert.match(out, /\\<!-- m --\\>/);
   assert.ok(inertEvidence('z'.repeat(500)).length <= 300);
-});
-
-test('readRiskPolicy: control mode off consults neither extra key', () => {
-  const read = () => 'risk-categories: pii\nrisk-path-globs:\n  auth: [a/**]\n';
-  assert.deepStrictEqual(readRiskPolicy('/r', { readFile: read }), { controlMode: false, extraCategories: [], pathGlobs: {}, globsInvalid: false });
-});
-
-test('readRiskPolicy: control mode on resolves both, a malformed block is flagged', () => {
-  const on = (rest) => () => `control-mode: on\n${rest}`;
-  assert.deepStrictEqual(readRiskPolicy('/r', { readFile: on('risk-categories: pii\nrisk-path-globs:\n  pii: [a/**]\n') }), { controlMode: true, extraCategories: ['pii'], pathGlobs: { pii: ['a/**'] }, globsInvalid: false });
-  assert.strictEqual(readRiskPolicy('/r', { readFile: on('risk-path-globs: x\n') }).globsInvalid, true);
-});
-
-test('readRiskPolicy: an absent file is control mode off, another error throws', () => {
-  const err = (code) => () => { throw Object.assign(new Error(code), { code }); };
-  assert.strictEqual(readRiskPolicy('/r', { readFile: err('ENOENT') }).controlMode, false);
-  assert.strictEqual(readRiskPolicy('/r', { readFile: err('ENOTDIR') }).controlMode, false);
-  assert.throws(() => readRiskPolicy('/r', { readFile: err('EACCES') }), /EACCES/);
 });
 
 // Controller ruling C3 (amended): Key Files keyword matching skips path-like backticked
@@ -119,6 +101,11 @@ test('null opts read as no extras, and an invalid extra slug throws', () => {
   assert.throws(() => classifyRiskFlags(spec({}), { pathGlobs: { pii: ['a/**'] } }), /pii/);
 });
 
+test('an extra category named none throws the same TypeError, so the writers never meet it', () => {
+  assert.throws(() => classifyRiskFlags(spec({ a: '1. none of this' }), { extraCategories: ['none'] }), (error) => error instanceof TypeError && /invalid extra category "none"/.test(error.message));
+  assert.throws(() => classifyRiskFlags(spec({}), { extraCategories: ['pii', 'none'] }), TypeError);
+});
+
 test('inertEvidence: a pre-existing backslash cannot unescape a bracket, and a cap never ends mid-escape', () => {
   assert.strictEqual(inertEvidence('\\[x](u)'), '\\\\\\[x\\](u)');
   assert.strictEqual(inertEvidence('a\u0000b\u001b[1mc\u007f'), 'ab\\[1mc');
@@ -130,6 +117,15 @@ test('inertEvidence: a pre-existing backslash cannot unescape a bracket, and a c
 test('inertEvidence drops a control byte before collapsing, so it leaves no double space', () => {
   assert.strictEqual(inertEvidence('a \u0000 b'), 'a b');
   assert.strictEqual(inertEvidence('a\t\u0001\r\nb'), 'a b');
+});
+
+test('inertEvidence drops zero-width and bidi format characters, and escapes a table pipe', () => {
+  for (const ch of ['\u200b', '\u200c', '\u200d', '\u200e', '\u200f', '\u202a', '\u202b', '\u202c', '\u202d', '\u202e', '\u2066', '\u2067', '\u2068', '\u2069', '\ufeff']) {
+    assert.strictEqual(inertEvidence(`ad${ch}min`), 'admin', `U+${ch.codePointAt(0).toString(16).toUpperCase()}`);
+  }
+  assert.strictEqual(inertEvidence('a | b'), 'a \\| b');
+  assert.strictEqual(inertEvidence('\\|'), '\\\\\\|', 'a backslash already there cannot cancel the pipe escape');
+  assert.strictEqual(inertEvidence('a\u202e | \u2066b'), 'a \\| b');
 });
 
 test('the auth rule reads authenticate and authorize forms, never author or authority', () => {

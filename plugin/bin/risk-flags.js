@@ -53,7 +53,11 @@
 //           'ok' | 'could-not-parse' (Check G's own reading of the plan: no tasks, a
 //           near-miss proof line or an unclosed fence), null when no plan was read or the
 //           record has no flags to prove, so an empty proof list from a plan that could not
-//           be parsed is never read as "no proof written". The producer never leaves an empty list behind a failure: on
+//           be parsed is never read as "no proof written". With flags to prove and either plan
+//           case ('absent', or planParse 'could-not-parse'), --proofs-out is not written (an
+//           earlier file there is removed), so the gather states "--proofs input not read —
+//           treated as absent" and Risk proofs says the proofs were not read; exit 0.
+//           The producer never leaves an empty list behind a failure: on
 //           every non-zero exit both outputs are removed if present, so the gather states
 //           "--flags input not read — treated as absent" instead of reading a stale or empty
 //           file as "no flags". An output that is also --spec-file or --plan-file, or the
@@ -75,7 +79,8 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const record = require('./lib/issues/record');
-const { classifyRiskFlags, readRiskPolicy } = require('./lib/issues/risk-flag-classify');
+const { classifyRiskFlags } = require('./lib/issues/risk-flag-classify');
+const { readRiskPolicy } = require('./lib/policy');
 const { BUILTIN_RISK_CATEGORIES, LIST_ELEMENT_PATTERNS } = require('./lib/policy-schema');
 const { writeFileAtomic } = require('./lib/atomic-write');
 const { canonicalRealpath } = require('./lib/path-guard');
@@ -92,7 +97,7 @@ const USAGE = 'usage: risk-flags.js classify --body-file <f> [--prior-body-file 
   + '  exit 0 done (a refused or unanswered flag, or a failed log line, is still 0: the fail direction is keep), 1 body, prior-body or spec file unreadable,\n'
   + '       2 malformed invocation or unreadable policy, 3 a named output file (--body-file, --flags-out, --proofs-out) unwritable\n'
   + '  facts prints { status, flags, proofs, plan, planParse }, refuses (exit 2) an output that is also an input or the other output, compared on canonical paths,\n'
-  + '       and removes both outputs on every non-zero exit\n';
+  + '       and removes both outputs on every non-zero exit; with flags to prove and no plan read (absent or could-not-parse) it leaves --proofs-out unwritten\n';
 
 const FLAG_KEYS = {
   '--body-file': 'bodyFile',
@@ -245,14 +250,17 @@ const answerFor = (answers, slug) => {
 
 // body, kept, answers -> { body, removed, unanswered }. A remove is a human's decision
 // (humanConfirmed); a flag with no keep/remove answer stays. The marker is cleared only
-// when every flag was answered, and restored after a removal cleared it otherwise.
+// when every flag was answered, and restored after a removal cleared it otherwise. An
+// answers file that did not read or validate (`answers` null) is no human decision, so it
+// never confirms: on an empty kept set (a `none` line) a marker already there stays.
 function applyAnswers(body, kept, answers, extraCategories) {
   const human = { humanConfirmed: true, extraCategories };
   const unanswered = kept.filter((slug) => answerFor(answers, slug) === null);
   const removed = kept.filter((slug) => answerFor(answers, slug) === 'remove');
   let next = body;
   for (const slug of removed) next = record.removeRiskFlag(next, slug, human);
-  next = unanswered.length === 0 ? record.confirmRiskFlags(next, human) : record.addRiskFlags(next, [], { unconfirmed: true, extraCategories });
+  if (unanswered.length > 0) next = record.addRiskFlags(next, [], { unconfirmed: true, extraCategories });
+  else if (answers !== null) next = record.confirmRiskFlags(next, human);
   return { body: next, removed, unanswered };
 }
 
@@ -444,9 +452,15 @@ function factsVerb(o, deps, read, fail) {
   const {
     status, flags, proofs, planParse = null,
   } = riskFlagEntries(specText, planText, { extraCategories: loaded.policy.extraCategories });
-  for (const [file, entries] of [[o.flagsOut, flags], [o.proofsOut, proofs]]) {
+  // Flags to prove and no plan read (absent, or Check G could not parse it): the proofs were not
+  // read, so --proofs-out is left unwritten (an earlier file removed) and the gather states
+  // "--proofs input not read" rather than reading an empty list as "no proof written".
+  const proofsUnread = flags.length > 0 && (planText === null || planParse === 'could-not-parse');
+  const outputs = proofsUnread ? [[o.flagsOut, flags]] : [[o.flagsOut, flags], [o.proofsOut, proofs]];
+  for (const [file, entries] of outputs) {
     try { deps.writeFile(file, `${JSON.stringify(entries)}\n`); } catch (err) { return fail(3, `output-unwritable: ${file} (${errMsg(err)})`); }
   }
+  if (proofsUnread) removeOutput(deps, o.proofsOut);
   deps.stdout(`${JSON.stringify({
     status, flags: flags.length, proofs: proofs.length, plan: planText === null ? 'absent' : 'read', planParse,
   })}\n`);

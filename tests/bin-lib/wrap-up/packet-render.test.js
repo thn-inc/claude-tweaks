@@ -1396,3 +1396,14 @@ test('finding 6: with --flags in partial, Risk proofs says the flags were not re
   const other = render([fact('check:unit', 'passed')], [], { extra: { partial: ['--proofs input not read — treated as absent'] } });
   assert.deepEqual(sectionLines(other.markdown, 'Risk proofs'), ['not applicable: no kept risk flags']);
 });
+test('with --proofs in partial, an uncited kept flag says its proofs were not read, never no proof shown', () => {
+  const flags = [fact('flag:auth', 'passed', { unconfirmed: true }), fact('flag:migrations', 'passed', { text: 'unreadable flag line' })];
+  const { markdown } = render(flags, [], { extra: { partial: ['--proofs input not read — treated as absent'] } });
+  assert.deepEqual(sectionLines(markdown, 'Risk proofs'), [
+    '- auth: proofs not read (the --proofs input did not read) (flag unconfirmed)',
+    '- migrations: proofs not read (the --proofs input did not read) — unreadable flag line',
+  ]);
+  assert.doesNotMatch(markdown, /no proof shown/);
+  const unrelated = render(flags, [], { extra: { partial: ['--flags input not read — treated as absent'] } });
+  assert.ok(sectionLines(unrelated.markdown, 'Risk proofs').every((line) => line.includes(': no proof shown')));
+});

@@ -458,6 +458,7 @@ function passThroughFacts(kind, source, entries, { status = 'passed', reason } =
     ...(reason === undefined ? {} : { reason }),
     source,
     ...(text === undefined ? {} : { text }),
+    // A proof fact is plan text with status not-run, so it carries no link.
     ...(url === undefined || kind === 'proof' ? {} : { url }),
     ...(kind === 'flag' && unconfirmed === true ? { unconfirmed: true } : {}),
   }));

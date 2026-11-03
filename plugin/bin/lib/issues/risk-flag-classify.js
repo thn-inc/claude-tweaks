@@ -3,7 +3,8 @@
 // invisible-risk categories its Deliverables, Acceptance Criteria and Key Files name.
 // The floor is what a deterministic reading always finds; the shaping agent may add
 // flags beyond it, never fewer. The body line itself is written only by
-// record-risk-flags.js. Pure, except readRiskPolicy's one read through `readFile`.
+// record-risk-flags.js. Pure: the policy extras it takes are read by policy.js's
+// readRiskPolicy.
 //
 // Sections. `## Deliverables` and `## Acceptance Criteria` run to the next h1/h2 (so a
 // subsection stays inside) or to a Key Files heading nested under them; Key Files is
@@ -22,12 +23,11 @@
 // order, then policy extras, each matching its own slug spelled with a hyphen or a space.
 'use strict';
 
-const fs = require('fs');
-const path = require('path');
 const { findSection, fencedLineMask } = require('../markdown-blocks');
 const { isSensitivePath } = require('./blast-radius');
-const { BUILTIN_RISK_CATEGORIES, LIST_ELEMENT_PATTERNS, resolvePolicyKeys } = require('../policy-schema');
-const { isControlModeOn } = require('../policy');
+const { BUILTIN_RISK_CATEGORIES, LIST_ELEMENT_PATTERNS } = require('../policy-schema');
+const { escapeRegExp } = require('../shared-primitives');
+const { RISK_FLAGS_NONE } = require('./record-risk-flags');
 
 // The floor, per built-in slug. Wider phrasing is the shaping agent's job. Exported so
 // the test can prove one phrase per keyword alternative matches that alternative alone.
@@ -66,17 +66,21 @@ const PATH_LIKE_RE = /[/.]/;
 const LIST_MARKER_RE = /^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s*)?/;
 
 const EVIDENCE_CAP = 300;
-// C0 (except the whitespace controls \t \n \v \f \r, which the collapse handles), DEL, C1.
-const CONTROL_RE = /[\u0000-\u0008\u000e-\u001f\u007f-\u009f]/g;
-const ESCAPE_RE = new RegExp('[\\\\[\\]`<>]', 'g');
+// C0 (except the whitespace controls \t \n \v \f \r, which the collapse handles), DEL, C1,
+// and the invisible format characters that can hide or reorder quoted text: zero-width and
+// directional marks (U+200B-U+200F), bidi embeddings and overrides (U+202A-U+202E), bidi
+// isolates (U+2066-U+2069) and the BOM / zero-width no-break space (U+FEFF).
+const CONTROL_RE = /[\u0000-\u0008\u000e-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g;
+// `|` too: evidence lands in a cell of the markdown table /specify renders for the keep/remove batch.
+const ESCAPE_RE = new RegExp('[\\\\[\\]`<>|]', 'g');
 const ELLIPSIS = '…';
 
 const unique = (items) => [...new Set(items)];
-const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-// text -> one line safe to quote in a record or a packet: C0/DEL/C1 control bytes
-// dropped, then whitespace (newlines included) collapsed to single spaces, `\`, `[`,
-// `]`, a backtick, `<` and `>` escaped with a backslash (the backslash too, so a
+// text -> one line safe to quote in a record, a packet or a table cell: C0/DEL/C1 control
+// bytes and the zero-width/bidi format characters dropped, then whitespace (newlines
+// included) collapsed to single spaces, `\`, `[`, `]`, a backtick, `<`, `>` and `|`
+// escaped with a backslash (the backslash too, so a
 // backslash already in the text cannot cancel an escape), and capped at
 // EVIDENCE_CAP characters, an ellipsis marking the cut. A cut never leaves half an
 // escape pair or half a surrogate pair at the end.
@@ -130,8 +134,10 @@ function checkExtras(extraCategories) {
   if (!Array.isArray(extras)) throw new TypeError(`classifyRiskFlags(): extraCategories must be an array of slugs, got ${JSON.stringify(extras)}`);
   for (const slug of extras) {
     // The schema's own slug rule, read at call time, so this module accepts every
-    // `risk-categories` entry the resolver accepts.
+    // `risk-categories` entry the resolver accepts — except `none`, the flag line's own
+    // "nothing flagged" value, which the writers refuse as a slug.
     if (typeof slug !== 'string' || !LIST_ELEMENT_PATTERNS.slug.test(slug)) throw new TypeError(`classifyRiskFlags(): invalid extra category ${JSON.stringify(slug)}: not a policy slug`);
+    if (slug === RISK_FLAGS_NONE) throw new TypeError(`classifyRiskFlags(): invalid extra category ${JSON.stringify(slug)}: "${RISK_FLAGS_NONE}" is the flag line's no-flags value, never a category`);
   }
   return extras;
 }
@@ -185,30 +191,4 @@ function classifyRiskFlags(body, opts) {
   return { flags, missingSections: SECTION_NAMES.filter((name) => sections[name] === null) };
 }
 
-const controlModeOff = () => ({ controlMode: false, extraCategories: [], pathGlobs: {}, globsInvalid: false });
-
-// repoRoot, { readFile } -> { controlMode, extraCategories, pathGlobs, globsInvalid }.
-// `.claude-tweaks/policy.yml` under repoRoot; an absent file (ENOENT/ENOTDIR) is control
-// mode off and any other read error throws. `risk-categories` and `risk-path-globs` are
-// consulted only with control mode on, each through resolvePolicyKeys; a rejected
-// `risk-path-globs` block reads `globsInvalid: true` with no globs.
-function readRiskPolicy(repoRoot, deps) {
-  const { readFile = fs.readFileSync } = deps || {};
-  let policyRaw;
-  try {
-    policyRaw = readFile(path.join(repoRoot, '.claude-tweaks', 'policy.yml'), 'utf8');
-  } catch (error) {
-    if (error && (error.code === 'ENOENT' || error.code === 'ENOTDIR')) return controlModeOff();
-    throw error;
-  }
-  const mode = resolvePolicyKeys(['control-mode'], { policyRaw })['control-mode'];
-  if (!isControlModeOn(mode.value)) return controlModeOff();
-  const resolved = resolvePolicyKeys(['risk-categories', 'risk-path-globs'], { policyRaw });
-  const categories = resolved['risk-categories'].value;
-  const extraCategories = Array.isArray(categories) ? categories : String(categories).split(',').map((slug) => slug.trim()).filter(Boolean);
-  const globs = resolved['risk-path-globs'];
-  const globsInvalid = globs.invalid === true;
-  return { controlMode: true, extraCategories, pathGlobs: globsInvalid || globs.value === null ? {} : globs.value, globsInvalid };
-}
-
-module.exports = { FLOOR, classifyRiskFlags, inertEvidence, readRiskPolicy };
+module.exports = { FLOOR, classifyRiskFlags, inertEvidence };

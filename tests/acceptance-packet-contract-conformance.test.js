@@ -154,6 +154,15 @@ test('go-red (Risk proofs not-read line): the Sections item without that line fa
   assert.ok(!statesLine(item.text.split(`\`${unread}\``).join(''), unread));
 });
 
+test('Risk proofs states the note the renderer prints for an uncited flag when the --proofs input did not read', () => {
+  const unread = riskProofsLine(renderPacket(facts([fact('flag:auth', 'flag')], { partial: [notReadNote('--proofs')] }), narrative([])).markdown);
+  assert.match(unread, /^- auth: /);
+  const note = unread.slice('- auth: '.length);
+  assert.doesNotMatch(note, /no proof shown/);
+  const item = sectionItems().find(({ heading }) => heading === 'Risk proofs');
+  assert.ok(statesLine(item.text, note), `Risk proofs must state its proofs-not-read note: ${note}`);
+});
+
 test('Decisions left for you is omitted when empty, heading included', () => {
   const { markdown } = renderPacket(facts([]), narrative([]));
   assert.ok(!markdown.includes('### Decisions left for you'), 'the renderer omits the heading');

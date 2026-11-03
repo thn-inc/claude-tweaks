@@ -44,6 +44,23 @@ test('end to end: unconfirmed and a planned proof survive the producer files, th
   assert.match(renderPacket(facts, narrative).markdown, /### Risk proofs\n- Auth verified \(planned, not verified: cites `proof:auth` — not run: planned in the plan, not yet run\) \(flag unconfirmed\)/);
 });
 
+test('end to end: an absent or unparseable plan reaches the packet as proofs not read, never as no proof written', () => {
+  const spec = writeText(dir, 'spec3.md', 'Surface: infra\nRisk-flags: auth\n\n## Acceptance Criteria\n\n1. x\n');
+  const unclosed = writeText(dir, 'plan3.md', '### Task 1: x\n\n```\nProof(auth): An unauthenticated request to the route still returns 401.\n');
+  for (const extra of [[], ['--plan-file', unclosed]]) {
+    const out = path.join(dir, 'facts3.json');
+    const flags = path.join(dir, 'flags3.json');
+    const proofs = path.join(dir, 'proofs3.json');
+    riskFlags(['facts', '--spec-file', spec, ...extra, '--flags-out', flags, '--proofs-out', proofs, '--repo-root', dir]);
+    packet(['gather', '--record', '4618', '--out', out, '--spec', spec, '--flags', flags, '--proofs', proofs]);
+    const facts = JSON.parse(fs.readFileSync(out, 'utf8'));
+    assert.ok(facts.partial.includes('--proofs input not read — treated as absent'), JSON.stringify(facts.partial));
+    assert.ok(!facts.partial.includes('--flags input not read — treated as absent'), JSON.stringify(facts.partial));
+    const lines = renderPacket(facts, { schemaVersion: 1, claims: [] }).markdown.split('\n');
+    assert.ok(lines.includes('- auth: proofs not read (the --proofs input did not read)'), extra.join(' ') || 'no --plan-file');
+  }
+});
+
 test('end to end: a failed producer makes the gather state the lost input, never an empty flag list', () => {
   const spec = writeText(dir, 'spec2.md', 'Surface: infra\nRisk-flags: auth\n\n## Acceptance Criteria\n\n1. x\n');
   const out = path.join(dir, 'facts2.json');

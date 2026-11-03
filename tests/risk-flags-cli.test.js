@@ -9,7 +9,7 @@ const { run } = require('../plugin/bin/risk-flags');
 const record = require('../plugin/bin/lib/issues/record');
 const { parseRiskFlags } = record;
 const { gitRepo } = require('./helpers/git-fixtures');
-const { readRiskPolicy } = require('../plugin/bin/lib/issues/risk-flag-classify');
+const { readRiskPolicy } = require('../plugin/bin/lib/policy');
 
 // #4618 Task 4: bin/risk-flags.js classify | settle | confirm, in-process over tmp files.
 const BIN = path.join(__dirname, '..', 'plugin', 'bin', 'risk-flags.js');
@@ -390,6 +390,22 @@ test('a hand-written marker beside an empty kept set survives a headless settle'
   assert.strictEqual(body, stray);
 });
 
+test('an answers file that does not read never confirms a none line: the marker stays, a valid {} clears it', () => {
+  const stray = CLEAN_SPEC.replace('Surface: infra\n', 'Surface: infra\nRisk-flags: none\nRisk-flags-unconfirmed: true\n');
+  for (const verb of [settle, (body, args) => confirm(body, args[1])]) {
+    for (const bad of ['/nope/missing.json', rawFile('not json'), rawFile('[]')]) {
+      const { out, body, code, stderr } = verb(stray, ['--answers-file', bad]);
+      assert.strictEqual(code, 0, bad);
+      assert.deepStrictEqual([out.flags, out.unconfirmed, out.removed, out.refused], [[], true, [], null], bad);
+      assert.strictEqual(body, stray, `${bad}: the body is left as it was`);
+      assert.match(stderr, /answers file .* (unreadable|not valid JSON|not a JSON object)/, bad);
+    }
+    const cleared = verb(stray, ['--answers-file', answers({})]);
+    assert.deepStrictEqual([cleared.code, cleared.out.flags, cleared.out.unconfirmed], [0, [], false]);
+    assert.doesNotMatch(cleared.body, /Risk-flags-unconfirmed/);
+  }
+});
+
 test('settle needs exactly one of --headless and --answers-file; a missing body exits 1', () => {
   const tmp = rawFile(CLEAN_SPEC);
   assert.strictEqual(runCli(['settle', '--body-file', tmp]).code, 2);
@@ -606,13 +622,14 @@ test('facts writes both files and prints the counts', () => {
   assert.strictEqual(r.stdout.trim().split('\n').length, 1);
 });
 
-test('facts with no --plan-file, or a plan file that is gone, is plan absent with no proofs', () => {
+test('facts with no --plan-file, or a plan file that is gone, is plan absent and leaves the proofs output unwritten', () => {
   for (const extra of [[], ['--plan-file', path.join(TMP, 'no-such-plan.md')], ['--plan-file', path.join(rawFile('x'), 'under')]]) {
     const o = factsOutputs();
+    fs.writeFileSync(o.proofs, '[{"id":"stale","text":"an earlier run left this proof"}]');
     const r = exec(factsArgv(rawFile(FACTS_SPEC), o, extra));
     assert.strictEqual(r.code, 0, extra.join(' '));
     assert.deepStrictEqual(r.out, { status: 'ok', flags: 1, proofs: 0, plan: 'absent', planParse: null }, extra.join(' '));
-    assert.deepStrictEqual(readJson(o.proofs), []);
+    assert.strictEqual(fs.existsSync(o.proofs), false, `${extra.join(' ')}: proofs not read, so no list (and no stale one) for the gather`);
     assert.deepStrictEqual(readJson(o.flags), [{ id: 'auth', unconfirmed: true }]);
   }
 });
@@ -724,7 +741,7 @@ test('facts with an unwritable output exits 3 and leaves neither output', () => 
   assert.strictEqual(unwritableFlags.code, 3);
   assert.match(unwritableFlags.stderr, /output-unwritable/);
   assert.strictEqual(fs.existsSync(o.proofs), false);
-  const unwritableProofs = exec(['facts', '--spec-file', rawFile(FACTS_SPEC), '--flags-out', o.flags, '--proofs-out', path.join(missingDir, 'proofs.json'), '--repo-root', NO_POLICY_ROOT]);
+  const unwritableProofs = exec(['facts', '--spec-file', rawFile(FACTS_SPEC), '--plan-file', rawFile(FACTS_PLAN), '--flags-out', o.flags, '--proofs-out', path.join(missingDir, 'proofs.json'), '--repo-root', NO_POLICY_ROOT]);
   assert.strictEqual(unwritableProofs.code, 3);
   assert.strictEqual(fs.existsSync(o.flags), false, 'the flags file written before the failure is removed');
 });
@@ -732,7 +749,7 @@ test('facts with an unwritable output exits 3 and leaves neither output', () => 
 test('facts never touches the body-writing seam and the other verbs still print their envelope unchanged', () => {
   const o = factsOutputs();
   const written = [];
-  const r = exec(factsArgv(rawFile(FACTS_SPEC), o), { writeFile: (file, content) => { written.push(file); fs.writeFileSync(file, content); } });
+  const r = exec(factsArgv(rawFile(FACTS_SPEC), o, ['--plan-file', rawFile(FACTS_PLAN)]), { writeFile: (file, content) => { written.push(file); fs.writeFileSync(file, content); } });
   assert.strictEqual(r.code, 0);
   assert.deepStrictEqual(written.sort(), [o.flags, o.proofs].sort());
   assert.deepStrictEqual(Object.keys(classify(SPEC_WITH_MIGRATIONS_PATH).out), ['flags', 'kept', 'entry', 'missingSections', 'controlMode', 'extraCategories', 'globsInvalid', 'known']);
@@ -755,7 +772,8 @@ test('facts says a plan it could not parse is not "no proof written": plan read,
   const r = exec(factsArgv(rawFile(FACTS_SPEC), o, ['--plan-file', rawFile(unclosed)]));
   assert.strictEqual(r.code, 0);
   assert.deepStrictEqual(r.out, { status: 'ok', flags: 1, proofs: 0, plan: 'read', planParse: 'could-not-parse' });
-  assert.deepStrictEqual(readJson(o.proofs), []);
+  assert.strictEqual(fs.existsSync(o.proofs), false, 'proofs not read: no empty list for the gather to read as no proof written');
+  assert.deepStrictEqual(readJson(o.flags), [{ id: 'auth', unconfirmed: true }]);
 });
 
 test('facts reports planParse null for a plan on a record with nothing to prove', () => {
@@ -854,10 +872,15 @@ test('facts refuses a case-variant spelling of an input as an output, through an
   assert.match(r.stderr, /--spec-file and --flags-out must name different files/);
   assert.strictEqual(fs.readFileSync(spec, 'utf8'), FACTS_SPEC, 'the spec is neither overwritten nor removed by the cleanup');
   assert.strictEqual(fs.existsSync(proofs), false, 'the real output is still removed');
-  // The same names compared as plain strings are two files: the canonicalizer is what refuses.
+  // Control: the same canonicalizer and the same output with a genuinely distinct input, present on
+  // every filesystem, is no clash, so the refusal above is the name equivalence and nothing else.
+  const other = path.join(dir, 'other.md');
+  fs.writeFileSync(other, FACTS_SPEC);
   const o = factsOutputs();
-  const distinct = exec(['facts', '--spec-file', path.join(dir, 'Spec.md'), '--flags-out', o.flags, '--proofs-out', o.proofs, '--repo-root', NO_POLICY_ROOT], { realpath: (p) => p });
-  assert.notStrictEqual(distinct.code, 2);
+  const distinct = exec(['facts', '--spec-file', other, '--plan-file', rawFile(FACTS_PLAN), '--flags-out', spec, '--proofs-out', o.proofs, '--repo-root', NO_POLICY_ROOT], { realpath });
+  assert.strictEqual(distinct.code, 0, distinct.stderr);
+  assert.deepStrictEqual(readJson(spec), [{ id: 'auth', unconfirmed: true }]);
+  assert.deepStrictEqual(readJson(o.proofs), [{ id: 'auth', text: 'An unauthenticated request to the route still returns 401.' }]);
 });
 
 test('the usage-error cleanup skips an output that is an aliased input', () => {

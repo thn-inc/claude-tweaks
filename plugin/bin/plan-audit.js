@@ -27,7 +27,8 @@ const {
 const {
   checkA, checkB, checkC, checkD, checkE, checkF, checkG, headroomCheck, checkPremiseRefs, checkTaskMarkers,
 } = require('./lib/plan-audit/checks');
-const { readRiskPolicy } = require('./lib/issues/risk-flag-classify');
+const { readRiskPolicy } = require('./lib/policy');
+const { parseRiskFlags } = require('./lib/issues/record-risk-flags');
 
 function resolveRepoRoot(explicit, cwd) {
   if (explicit) return path.resolve(explicit);
@@ -170,11 +171,12 @@ function main() {
 
   const repoRoot = resolveRepoRoot(parsed.repoRoot, process.cwd());
   // #4618: Check G needs the policy's `risk-categories` (read only with control mode
-  // on) to know a policy slug on the spec's flag line. Read only when a spec is present
-  // (Check G skips without one), and a policy that cannot be read exits 2 — never
+  // on) to know a policy slug on the spec's flag line. Read only when the spec carries a
+  // flag line (no spec, or no line, is a Check G skip that needs no extras, so Checks A-F
+  // never depend on the policy), and a policy that cannot be read exits 2 — never
   // "no extra categories", which would read a policy slug as unknown.
   let extraCategories = [];
-  if (specText !== null) {
+  if (specText !== null && parseRiskFlags(specText).status !== 'unclassified') {
     try {
       ({ extraCategories } = readRiskPolicy(repoRoot));
     } catch (err) {
