@@ -4,15 +4,16 @@
 
 **Goal:** A ledger-only commit after build's verify never stalls `/review` Step 1.5. `/test` always routes a moved HEAD through the runner. A zero-test project proceeds on its own logged Gate row. A stamp still unverified after the one re-trigger is a named-cause STOP.
 
-**Architecture:** This is a prose-only change to two shipped skill files, pinned by two existing conformance suites. `test/verification.md`'s Mismatch branch already runs the scoped verify (#3284, `09ae64fa0`, PR #3650), so per the record's Plan-review answer 2 it is not edited. `test/SKILL.md` still reads as an unconditional skip on `VERIFICATION_PASSED=true`, so Task 2 aligns it. Task 1 applies Plan-review answer 1 to `review/code-mode-steps.md`'s Step 1.5 Gate table.
+**Architecture:** This is a prose-only change to two shipped skill files, pinned by two existing conformance suites. `test/verification.md`'s Mismatch branch already runs the scoped verify (#3284, `09ae64fa0`, PR #3650), so per the record's Plan-review answer 2 it is not edited. `test/SKILL.md` still reads as an unconditional skip on `VERIFICATION_PASSED=true`, so Task 2 aligns it. Task 1 applies Plan-review answers 1 and 3 to `review/code-mode-steps.md`'s Step 1.5 Gate table.
 
 **Tech Stack:** Markdown skill files, `node --test`.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-03T141126-record-4395/work/4395-spec.md`
+**Spec:** `.claude-tweaks/pipelines/2026-11-03T180924-record-4395/work/4395-spec.md`
 
 ## Global Constraints
 
-- `plugin/skills/review/code-mode-steps.md` is 51,796 B at base against `RAIL_BYTES` 52,500 B. Task 1's exact text below was measured in a scratch copy at +657 B, landing at 52,453 B (47 B headroom). Use the text verbatim. Any addition beyond it must be offset by cuts within Step 1.5.
+- `plugin/skills/review/code-mode-steps.md` is 51,796 B at base against `RAIL_BYTES` 52,500 B. Task 1's exact text below was measured in a scratch copy at +687 B, landing at 52,483 B (17 B headroom). Use the text verbatim. Any addition beyond it must be offset by cuts within Step 1.5. Never raise the rail (Plan-review answer 3).
+- To fit answer 3's catch-all, Task 1 drops the round-1 plan's line-74 ` (Gate table below)` addition (19 B). Line 74 already reads `then re-trigger `/claude-tweaks:test` once and re-check.` at base, so the prose still says "once". The STOP row also drops the `or` before its last listed cause (3 B), since the catch-all now ends the list.
 - `plugin/skills/test/SKILL.md` is 24,147 B and is not near the rail.
 - Do not edit `plugin/skills/test/verification.md` (Plan-review answer 2).
 - Keep the literal `**Pipeline behavior:**` in `test/SKILL.md`: `tests/test-skill-affected-conformance.test.js` slices on it.
@@ -30,18 +31,20 @@
 ## Plan-authoring check results
 
 - **Behavior-change prose sweep:** ran `git grep -n -i -e "re-trigger.\{0,40\}re-check" -e "verification re-runs instead of skipping" -e "triggered and passes" -e "skip verification, report \"passed in build" -- plugin docs tests ':!docs/superpowers/plans' ':!docs/plans/*-ledger.md'`. Hits:
-  - `review/code-mode-steps.md:74,111,113` (Task 1)
+  - `review/code-mode-steps.md:111,113` (Task 1); line 74 already says "once" and stays unedited
   - `test/SKILL.md:63,69` (Task 2; line 69's bullet is governed by the new paragraph above it)
   - `tests/review-step1-5-verifiedhead-gate.test.js:24`, a frozen pre-#1923 fixture: no change.
   - `docs/skill-graph.md` and `flow/multispec-parallel-waves.md` say a stamp mismatch re-triggers `/test`, which stays true: no change.
 - **Trust-vs-existing-distrust:** the zero-test row lets review proceed with no stamp. `dispatch/task-prompt.md:255-257` tells the first call to re-run `/test` once and report `DONE_WITH_CONCERNS` when no stamp verifies HEAD. That is the producer's own report rule and does not contradict a review-side row keyed on no commands being configured: no change.
-- **Byte-pin:** measured as above (52,453 B after Task 1, 47 B under the rail).
-- **Inline self-consistency and go-red:** ran in a scratch tree. With both tasks' inlined edits applied, all 6 new tests passed and the edited `code-mode-steps.md` was 52,453 B. Against the unedited skill text, all 6 failed.
+- **Byte-pin:** measured as above (52,483 B after Task 1, 17 B under the rail).
+- **Inline self-consistency and go-red:** to be re-run by the implementer per each task's Steps 2 and 4: every new test fails against the unedited skill text and passes after the edit.
+- **`fullSha` is a real stamp field:** `verify.js --stamp-status` prints `fullSha: present ? anchorOf(stamp) : null` (`plugin/bin/verify.js:322`), and line 74 already lists it in the printed field set.
 
 ## Review Focus
 
 - **Zero-test project.** A project with no verification commands has no stamp. It must take the zero-test row at the first stamp read, before any re-trigger, and never the STOP. Task 1 pins that the row is separate and comes before the re-trigger row.
 - **Dirty tree.** A tree dirty outside declared `generated` paths never verifies. The STOP must name `dirty: true` with the paths, and there must be no bookkeeping-only dirty exemption. Task 1 pins the cause list and that "Exception" is absent from the STOP row.
+- **Unlisted cause.** A `verifiedHead: false` state outside the four named causes (a stamp at HEAD written while the tree was dirty, a scoped stamp whose anchor a history rewrite stranded) must still name a cause. Task 1 pins the catch-all `else the stamp as read (`sha`, `scope`, `fullSha`)` as the STOP row's last clause.
 - **No loop.** A second `/test` re-trigger is the loop the record forbids. Task 1 pins "never a second re-trigger" and "once".
 - **Standalone branch.** With no `TEST_PASSED` (a dispatched second call), the Standalone branch keeps its trigger-and-pass row. Task 1 pins the row's `(standalone)` qualifier so the pipeline STOP cannot be bypassed by it.
 - **Stale `VERIFICATION_SHA`.** A reader of `test/SKILL.md` alone must not skip on a stale `VERIFICATION_SHA`. Task 2 pins it.
@@ -51,7 +54,7 @@
 ### Task 1: Give review Step 1.5 a zero-test row and a terminal STOP row
 
 **Files:**
-- Modify: `plugin/skills/review/code-mode-steps.md:74-113` (lines 74, 111 and 113)
+- Modify: `plugin/skills/review/code-mode-steps.md:111-113` (lines 111 and 113)
 - Test: `tests/review-step1-5-verifiedhead-gate.test.js`
 
 **Interfaces:**
@@ -92,6 +95,7 @@ function assertStopRow(text) {
   assert.ok(row.includes('a `scopeError`'), 'terminal row must name scopeError');
   assert.ok(row.includes('`{sha} ({scope}) ≠ {head}`'), 'terminal row must name a stamp/HEAD mismatch');
   assert.ok(row.includes('`present: false` with commands configured'), 'terminal row must name a missing stamp with commands configured');
+  assert.ok(row.endsWith(', else the stamp as read (`sha`, `scope`, `fullSha`) |'), 'terminal row must end with the stamp-as-read catch-all');
   assert.ok(!/Exception|zero-test/.test(row), 'terminal row must carry no exception clause');
 }
 
@@ -127,6 +131,8 @@ test('AC2.1: each STOP-row clause goes red on its own (#4395)', () => {
     ['a `scopeError`', /name scopeError/],
     ['`{sha} ({scope}) ≠ {head}`', /stamp\/HEAD mismatch/],
     ['`present: false` with commands configured', /missing stamp with commands configured/],
+    ['the stamp as read', /stamp-as-read catch-all/],
+    ['`fullSha`', /stamp-as-read catch-all/],
   ];
   for (const [clause, message] of cases) {
     const mutated = CODE_MODE_STEPS.split('\n').map((l) => (l.startsWith(STOP_PREFIX) ? l.replace(clause, 'xxx') : l)).join('\n');
@@ -141,7 +147,6 @@ test('AC2.1: the re-trigger row fires once and the trigger-and-pass row is scope
   assert.ok(CODE_MODE_STEPS.includes('| `/claude-tweaks:test` triggered (standalone) and passes | Proceed to Step 2 |'));
   assert.ok(!CODE_MODE_STEPS.includes('| `/claude-tweaks:test` triggered and passes |'));
   assert.ok(PRE_4395_GATE_ROWS.includes('| `/claude-tweaks:test` triggered and passes |'));
-  assert.ok(CODE_MODE_STEPS.includes('then re-trigger `/claude-tweaks:test` once and re-check (Gate table below).'));
 });
 ```
 
@@ -150,20 +155,14 @@ test('AC2.1: the re-trigger row fires once and the trigger-and-pass row is scope
 Run: `node --test tests/review-step1-5-verifiedhead-gate.test.js`
 Expected: FAIL. All five new tests fail: "zero-test row missing", "terminal row missing", and the per-clause and once/standalone assertions. The existing tests pass.
 
-- [ ] **Step 3: Edit `plugin/skills/review/code-mode-steps.md`** with three exact replacements.
-
-Line 74: replace `then re-trigger `/claude-tweaks:test` once and re-check.` with:
-
-```
-then re-trigger `/claude-tweaks:test` once and re-check (Gate table below).
-```
+- [ ] **Step 3: Edit `plugin/skills/review/code-mode-steps.md`** with two exact replacements. Do not edit line 74.
 
 Replace the line-111 row with these three rows:
 
 ```
 | `TEST_PASSED=true` (pipeline) + stamp `present: false` + no verification commands (none in CLAUDE.md, stack manifests or `verify-scope.json` `checks`) | No re-trigger: log `AUTO {time} — review Step 1.5: no verification commands configured; zero-test pass accepted without a runner stamp. Reversibility: high.`, run the `pr-checks.js` read, proceed as for `verifiedHead: true` |
 | `TEST_PASSED=true` (pipeline) + runner stamp `verifiedHead: false` | Report it (stamp sha/scope vs HEAD), re-trigger `/claude-tweaks:test` once, re-check |
-| That re-check still reads `verifiedHead: false` | **STOP**, never a second re-trigger — name the cause: `dirty: true` with the dirty paths, a `scopeError`, `{sha} ({scope}) ≠ {head}`, or `present: false` with commands configured |
+| That re-check still reads `verifiedHead: false` | **STOP**, never a second re-trigger — name the cause: `dirty: true` with the dirty paths, a `scopeError`, `{sha} ({scope}) ≠ {head}`, `present: false` with commands configured, else the stamp as read (`sha`, `scope`, `fullSha`) |
 ```
 
 Replace the line-113 row `| `/claude-tweaks:test` triggered and passes | Proceed to Step 2 |` with:
@@ -178,7 +177,7 @@ Run: `node --test tests/review-step1-5-verifiedhead-gate.test.js tests/review-te
 Expected: PASS.
 
 Run: `wc -c plugin/skills/review/code-mode-steps.md`
-Expected: `52453`. Report the number.
+Expected: `52483`. Report the number. It must not exceed `52500`.
 
 - [ ] **Step 5: Commit**
 
@@ -256,7 +255,7 @@ git commit -m "Make /test's verification skip conditional on the SHA check — r
 | Clause | Covered by |
 |---|---|
 | Deliverable 1 (remainder, per Plan-review answer 2) | Task 2 |
-| Deliverable 2 + Plan-review answer 1 | Task 1 |
+| Deliverable 2 + Plan-review answers 1 and 3 | Task 1 |
 | AC1.1 | Task 2's `AC1.1` test (prose route) plus the live run evidence below (runner behavior) |
 | AC2.1 | Task 1's `AC2.1` tests (terminal rows); the live evidence below shows the stamp `/review` will read |
 | AC3.1 | Existing `#3284` test in `tests/test-skill-affected-conformance.test.js` (unchanged Mismatch bullet) |
