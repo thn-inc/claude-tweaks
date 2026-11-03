@@ -502,7 +502,7 @@ function parentsLeftOpenLine(items) {
     return `${who} (${item.reason}, PR #${item.pr})`;
   });
   return rendered.length > 0
-    ? `post-merge Step 4.0b left parent record(s) open: ${rendered.join(', ')}; tidy's parent-gate backstop recovers them`
+    ? `post-merge Step 4.0b left parent record(s) open: ${rendered.join(', ')} — tidy's parent-gate backstop recovers them`
     : null;
 }
 
@@ -541,7 +541,7 @@ async function postMergeOne({
 // Steps 4.0 and 4.0b for one claimed run; the one place the marker is written.
 // `params` is { settleMs, closeWindowMs, selfInclude } (see LATE_MERGE_PARAMS); `retryHint` the retry clause
 // of an attempt line; `includeRecords` adds Step 4.0's record lists and `logFailed` to a `ran` entry, and makes
-// its `parentFailures` always present (postMergeOne only). A loop `ran` entry whose Step 4.0 word is not clean
+// its `parentFailures` always present on an entry that reached Step 4.0b (postMergeOne only). A loop `ran` entry whose Step 4.0 word is not clean
 // carries the record lists and `logFailed` too (#4897); a clean one keeps its short shape. Step 4.0b's
 // `parentFailures` rides on a loop entry whenever it is non-empty, and `stepSkips` on either path when non-empty.
 function processRun({
@@ -674,7 +674,10 @@ function processRun({
     }, closed.length, stepFields);
   } catch (e) {
     // A throw after closeParents returned must not drop the split fields: processCandidate's catch would (Q5).
-    return { runDir: dir, pr, action: 'skipped', reason: 'error', detail: oneLine(e && e.message ? e.message : e), ...stepFields };
+    // The closes already happened on GitHub, so the entry still reports them.
+    return {
+      runDir: dir, pr, action: 'skipped', reason: 'error', detail: oneLine(e && e.message ? e.message : e), parentsClosed: closed.length, ...stepFields,
+    };
   }
 }
 

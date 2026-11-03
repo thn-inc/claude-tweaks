@@ -2273,12 +2273,13 @@ test('formatSummary: parents left open and step skips render on their own lines,
   const clean = { runDir: 'r1', pr: 12, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 0, stepSkips: [{ reason: 'unreadable-policy', detail: 'x' }] };
   const failed = { runDir: 'r2', pr: 13, action: 'ran', closingLinks: 'close-failed', parentsClosed: 0, stepSkips: [{ reason: 'internal-error' }] };
   const unmarked = { runDir: 'r3', pr: 14, action: 'skipped', reason: 'marker-write-failed', parentsClosed: 0, parentFailures: [{ parent: 200, reason: 'gh-failed' }] };
-  assert.strictEqual(formatSummary({ ...base, postMerge: [clean, failed, unmarked] }), [
+  const errored = { runDir: 'r5', pr: 16, action: 'skipped', reason: 'error', detail: 'boom', parentsClosed: 1, parentFailures: [{ issue: 300, reason: 'internal-error' }], stepSkips: [{ reason: 'invalid-risk-floor' }] };
+  assert.strictEqual(formatSummary({ ...base, postMerge: [clean, failed, unmarked, errored] }), [
     'post-merge steps run: 1 merged run',
     'post-merge steps failed: 1 merged run',
-    "post-merge Step 4.0b left parent record(s) open: #200 (gh-failed, PR #14); tidy's parent-gate backstop recovers them",
-    'post-merge Step 4.0b skipped step-wide, leaving no parent open (nothing left to close): unreadable-policy (PR #12), internal-error (PR #13)',
-    'skipped: 1 merged run (marker-write-failed 1)',
+    "post-merge Step 4.0b left parent record(s) open: #200 (gh-failed, PR #14), the parent of record #300 (internal-error, PR #16) — tidy's parent-gate backstop recovers them",
+    'post-merge Step 4.0b skipped step-wide, leaving no parent open (nothing left to close): unreadable-policy (PR #12), internal-error (PR #13), invalid-risk-floor (PR #16)',
+    'skipped: 2 merged runs (marker-write-failed 1, error 1)',
   ].join('\n'));
   assert.strictEqual(formatSummary({ ...base, postMerge: [{ runDir: 'r4', pr: 15, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 0 }] }), 'post-merge steps run: 1 merged run');
 });

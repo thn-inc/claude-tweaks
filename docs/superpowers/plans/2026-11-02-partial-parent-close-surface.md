@@ -56,7 +56,7 @@ Scope keywords: parentFailures, stepSkips, postMergeParentsLeftOpen
 - Produces (exported pure helpers, consumed by Tasks 3 and 4):
   - `parentsLeftOpen(entries) -> Array<{ pr, parent?, issue?, reason }>`: over every entry with an array `parentFailures`, whatever its `action`, in entry order, one element per `parentFailures` element, `detail` dropped. Non-array input → `[]`.
   - `stepSkipsOf(entries) -> Array<{ pr, reason }>`: the same shape over `stepSkips`, whatever the entry's action or verdict.
-  - `parentsLeftOpenLine(items) -> string | null`: `post-merge Step 4.0b left parent record(s) open: {item}, …; tidy's parent-gate backstop recovers them`. A valid item is an object with an integer `pr` and a string `reason`; it renders `#${parent} (${reason}, PR #${pr})` when `parent` is an integer, else `the parent of record #${issue} (${reason}, PR #${pr})` when `issue` is an integer, else `every parent (${reason}, PR #${pr})`. Invalid items are skipped. `null` when the input is not an array or no item is valid.
+  - `parentsLeftOpenLine(items) -> string | null`: `post-merge Step 4.0b left parent record(s) open: {item}, … — tidy's parent-gate backstop recovers them`. A valid item is an object with an integer `pr` and a string `reason`; it renders `#${parent} (${reason}, PR #${pr})` when `parent` is an integer, else `the parent of record #${issue} (${reason}, PR #${pr})` when `issue` is an integer, else `every parent (${reason}, PR #${pr})`. Invalid items are skipped. `null` when the input is not an array or no item is valid.
   - `stepSkipsLine(items) -> string | null`: `post-merge Step 4.0b skipped step-wide, leaving no parent open (nothing left to close): ${reason} (PR #${pr}), …`, under the same validity rule, `null` likewise.
 - `classifyEntry` is unchanged. A `stepSkips`-only entry with a clean Step 4.0 word reads `clean` because it has no `parentFailures` element; a `marker-write-failed` entry reads `failed` / `rerun` as today.
 
@@ -154,7 +154,7 @@ test('parentsLeftOpen and stepSkipsOf flatten every entry carrying the fields, i
 test('parentsLeftOpenLine and stepSkipsLine render the valid items and nothing for none (#4798)', () => {
   assert.equal(
     parentsLeftOpenLine([{ pr: 11, parent: 100, reason: 'gh-failed' }, { pr: 11, issue: 103, reason: 'internal-error' }, { pr: 12, reason: 'unreadable-policy' }, 'x', { pr: 'x', parent: 1, reason: 'gh-failed' }]),
-    "post-merge Step 4.0b left parent record(s) open: #100 (gh-failed, PR #11), the parent of record #103 (internal-error, PR #11), every parent (unreadable-policy, PR #12); tidy's parent-gate backstop recovers them",
+    "post-merge Step 4.0b left parent record(s) open: #100 (gh-failed, PR #11), the parent of record #103 (internal-error, PR #11), every parent (unreadable-policy, PR #12) — tidy's parent-gate backstop recovers them",
   );
   assert.equal(
     stepSkipsLine([{ pr: 13, reason: 'invalid-risk-floor' }, { pr: 14, reason: 5 }]),
@@ -300,7 +300,7 @@ test('AC1.1 + Q5: SessionStart names the parents a prior pass\'s Step 4.0b left 
   ], postMergeStepSkips: [{ pr: 13, reason: 'invalid-risk-floor' }] });
   const named = await contextOf();
   assert.match(named, /post-merge steps failed for 2 merged run\(s\) \(records #101 need a hand reopen or close/);
-  assert.match(named, /post-merge Step 4\.0b left parent record\(s\) open: #100 \(gh-failed, PR #11\), the parent of record #103 \(internal-error, PR #11\), every parent \(unreadable-policy, PR #12\); tidy's parent-gate backstop recovers them/);
+  assert.match(named, /post-merge Step 4\.0b left parent record\(s\) open: #100 \(gh-failed, PR #11\), the parent of record #103 \(internal-error, PR #11\), every parent \(unreadable-policy, PR #12\) — tidy's parent-gate backstop recovers them/);
   assert.match(named, /post-merge Step 4\.0b skipped step-wide, leaving no parent open \(nothing left to close\): invalid-risk-floor \(PR #13\)/);
 
   // Q5: a marker-write-failed entry's parent is named although no count includes that run.
@@ -373,7 +373,7 @@ test('formatSummary: parents left open and step skips render on their own lines,
   assert.strictEqual(formatSummary({ ...base, postMerge: [clean, failed, unmarked] }), [
     'post-merge steps run: 1 merged run',
     'post-merge steps failed: 1 merged run',
-    "post-merge Step 4.0b left parent record(s) open: #200 (gh-failed, PR #14); tidy's parent-gate backstop recovers them",
+    "post-merge Step 4.0b left parent record(s) open: #200 (gh-failed, PR #14) — tidy's parent-gate backstop recovers them",
     'post-merge Step 4.0b skipped step-wide, leaving no parent open (nothing left to close): unreadable-policy (PR #12), internal-error (PR #13)',
     'skipped: 1 merged run (marker-write-failed 1)',
   ].join('\n'));
@@ -426,7 +426,7 @@ git commit -m "Report Step 4.0b parents left open and step skips in the reconcil
     - `deepEqual(entries[0].parentFailures, [{ parent: 100, reason: 'gh-failed', detail: 'HTTP 502' }])`
     - `classifyEntry(entries[0]).verdict === 'failed'`
     - the status file's `summary.postMergeRan === 0`, `summary.postMergeFailed === 1`, and `deepEqual(summary.postMergeParentsLeftOpen, [{ pr: 11, parent: 100, reason: 'gh-failed' }])`
-    - `additionalContext` matches `/post-merge steps failed for 1 merged run\(s\)/` and `/post-merge Step 4\.0b left parent record\(s\) open: #100 \(gh-failed, PR #11\); tidy's parent-gate backstop recovers them/`, and does not match `/post-merge steps ran for/`
+    - `additionalContext` matches `/post-merge steps failed for 1 merged run\(s\)/` and `/post-merge Step 4\.0b left parent record\(s\) open: #100 \(gh-failed, PR #11\) — tidy's parent-gate backstop recovers them/`, and does not match `/post-merge steps ran for/`
   - Remove the temp dir in `test.after`.
 
 - [ ] **Step 2: Run it to verify it passes** (Tasks 1 and 3 already landed the behavior. The test's red state is proven by reverting: with Task 1's `processRun` change reverted it fails on `parentFailures`.)
@@ -435,11 +435,11 @@ Run: `node --test tests/post-merge-parent-left-open-e2e.test.js`
 Expected: PASS, 0 failures.
 
 - [ ] **Step 3: Update `docs/reconcile-checks.md`**
-  - Surfacing bullet: replace `(`parentFailures`; #4798 adds that field to loop entries, …)` with a sentence stating that a loop entry carries `parentFailures` when non-empty. Describe `postMergeParentsLeftOpen` and `postMergeStepSkips` (both read every entry carrying the fields, a `marker-write-failed` one included), then SessionStart's and the reconcile CLI's two lines, `post-merge Step 4.0b left parent record(s) open: #100 (gh-failed, PR #11), …; tidy's parent-gate backstop recovers them` with its three item forms and `post-merge Step 4.0b skipped step-wide, leaving no parent open (nothing left to close): …`, each printed whatever the entry's verdict. State the rule that routes any skip naming no parent and no record to `stepSkips` when the effective closing set (`closingSet` minus `closedAfterWindow`) is empty.
+  - Surfacing bullet: replace `(`parentFailures`; #4798 adds that field to loop entries, …)` with a sentence stating that a loop entry carries `parentFailures` when non-empty. Describe `postMergeParentsLeftOpen` and `postMergeStepSkips` (both read every entry carrying the fields, a `marker-write-failed` one included), then SessionStart's and the reconcile CLI's two lines, `post-merge Step 4.0b left parent record(s) open: #100 (gh-failed, PR #11), … — tidy's parent-gate backstop recovers them` with its three item forms and `post-merge Step 4.0b skipped step-wide, leaving no parent open (nothing left to close): …`, each printed whatever the entry's verdict. State the rule that routes any skip naming no parent and no record to `stepSkips` when the effective closing set (`closingSet` minus `closedAfterWindow`) is empty.
   - Marker-write bullet: add that a `marker-write-failed` entry from a Step 4.0b run keeps `parentFailures` and `stepSkips` (Q5).
   - Single-run bullet: replace `and `parentFailures`, `verdict`, `next` and `failedSteps` stay single-run` with a statement that a loop entry carries `parentFailures` only when non-empty and `stepSkips` (either path) only when non-empty, while `verdict`, `next` and `failedSteps` stay single-run.
 
-- [ ] **Step 4: Update both journeys.** Add the Step 4.0b parent line after each quoted failed line (`post-merge Step 4.0b left parent record(s) open: #100 (gh-failed, PR #11); tidy's parent-gate backstop recovers them`, "only when Step 4.0b left a parent open, a run whose marker write failed included"). Add the step-skip line, citing `#4798` beside the existing `#4599, #4897` citations.
+- [ ] **Step 4: Update both journeys.** Add the Step 4.0b parent line after each quoted failed line (`post-merge Step 4.0b left parent record(s) open: #100 (gh-failed, PR #11) — tidy's parent-gate backstop recovers them`, "only when Step 4.0b left a parent open, a run whose marker write failed included"). Add the step-skip line, citing `#4798` beside the existing `#4599, #4897` citations.
 
 - [ ] **Step 5: Verify the doc sweep**
   - `git grep -n -F "#4798 adds that field" -- docs plugin` → no output. Control: `git grep -n -F "#4798 adds that field" HEAD -- docs/reconcile-checks.md` matches line ~744 at plan time.

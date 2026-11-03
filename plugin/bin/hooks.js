@@ -1905,9 +1905,11 @@ async function runReconcileBackground(argv) {
       postMergeFailedLogMissing: failedRanEntries.some((e) => e.logFailed === true),
       // Two disjoint counts, so SessionStart credits each close once and does no arithmetic: the parents
       // closed by runs that wrote their marker, and those closed by runs whose marker write failed
-      // (closed on GitHub all the same, only the decisions.md marker is missing).
+      // (closed on GitHub all the same, only the decisions.md marker is missing). A Step 4.0b tail that threw
+      // (`reason: 'error'`) wrote no marker either, so its `parentsClosed` is counted with the unmarked ones; an
+      // `error` entry thrown before Step 4.0b carries none, which parentsClosedBy treats as 0.
       postMergeParentsClosed: parentsClosedBy((e) => e.action === 'ran'),
-      postMergeUnmarkedParentsClosed: parentsClosedBy((e) => e.reason === 'marker-write-failed'),
+      postMergeUnmarkedParentsClosed: parentsClosedBy((e) => e.reason === 'marker-write-failed' || e.reason === 'error'),
       // The parents Step 4.0b left open and its step-wide skips (#4798): both read every entry carrying
       // `parentFailures` / `stepSkips`, a `marker-write-failed` one included (Q5) since that run is in no count
       // above, each element's raw `reason` quoted and its `detail` dropped.

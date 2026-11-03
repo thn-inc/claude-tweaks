@@ -745,7 +745,7 @@ unchanged, and every fail-open path below leaves the parent open for it.
   could not settle (`failed`, `closeFailed`, `pendingClose`) hold their parent open, the summary
   marker is written as for a clean run, and the entry still reads `failed`. It also reads `failed`
   when Step 4.0b reported a parent failure: a loop entry carries `parentFailures` whenever it is
-  non-empty (#4798), one element per parent Step 4.0b left open. An envelope that merely carries no
+  non-empty (#4798), one element per non-deliberate Step 4.0b skip that may have left a parent open. An envelope that merely carries no
   closing set, such as `not-merged`, is not a failure. A failure is never counted in `postMergeRan`, and a
   `transient-failure` retry is in none of them. `postMergeFailedRecords` is the sorted, unique
   record numbers of Step 4.0's `failed`, `closeFailed`, `pendingClose` and `unchecked` lists across
@@ -778,7 +778,7 @@ unchanged, and every fail-open path below leaves the parent open for it.
   the line never points at an entry that may not exist. Right after it, two lines of their own
   (#4798), each printed whatever the entry's verdict and each absent for an older status file or a
   value that is not a list: `post-merge Step 4.0b left parent record(s) open: #100 (gh-failed, PR
-  #11), the parent of record #103 (internal-error, PR #11), every parent (unreadable-policy, PR #12);
+  #11), the parent of record #103 (internal-error, PR #11), every parent (unreadable-policy, PR #12) —
   tidy's parent-gate backstop recovers them` (an item reads `#N` for an element naming a `parent`,
   `the parent of record #N` for one naming an `issue`, and `every parent` for one naming neither),
   and `post-merge Step 4.0b skipped step-wide, leaving no parent open (nothing left to close):
@@ -803,7 +803,7 @@ unchanged, and every fail-open path below leaves the parent open for it.
   merge mode reports only the step that failed. A `postMergeOne` `ran` entry carries `records`
   whenever Step 4.0 returned an envelope, and `logFailed` when set; a loop entry whose
   Step 4.0 printed a non-clean word carries them too. A loop entry carries `parentFailures` only when
-  it is non-empty (a `postMergeOne` entry always carries it) and `stepSkips`, on either path, only
+  it is non-empty (a `postMergeOne` entry that reached Step 4.0b always carries it) and `stepSkips`, on either path, only
   when it is non-empty, while `verdict`, `next` and `failedSteps` stay single-run.
 
 ## Timing contract (#4032)

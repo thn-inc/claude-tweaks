@@ -8,7 +8,7 @@ const path = require('path');
 const {
   postMerge, postMergeOne, classifyEntry, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim, MARKER_STEP, ATTEMPT_STEP, MAX_ATTEMPTS, CLOSE_WINDOW_MS, MERGE_GRACE_MS, CLAIM_STALE_MS, CLAIM_FILENAME,
   parentsLeftOpen, stepSkipsOf, parentsLeftOpenLine, stepSkipsLine,
-} =require('../../../plugin/bin/lib/reconcile/post-merge');
+} = require('../../../plugin/bin/lib/reconcile/post-merge');
 const { formatEntry, parseEntry } = require('../../../plugin/bin/lib/log-decision/append');
 const { DELIBERATE_SKIP_REASONS } = require('../../../plugin/bin/lib/issues/below-floor-parent-close');
 
@@ -1468,6 +1468,7 @@ test('Q5: a throw after closeParents returns keeps the run\'s parentFailures on 
   assert.equal(entry.reason, 'error');
   assert.equal(typeof entry.detail, 'string');
   assert.deepEqual(entry.parentFailures, [{ parent: 100, reason: 'gh-failed', detail: 'HTTP 502' }]);
+  assert.equal(entry.parentsClosed, 1, 'the closes already happened on GitHub, so the error entry still counts them');
   assert.deepEqual(r.deferred, [], 'an error entry is not deferred, as for a thrown error today');
   assert.ok(!fs.existsSync(lockOf(dir)));
 });
@@ -1491,7 +1492,7 @@ test('parentsLeftOpen and stepSkipsOf flatten every entry carrying the fields, i
 test('parentsLeftOpenLine and stepSkipsLine render the valid items and nothing for none (#4798)', () => {
   assert.equal(
     parentsLeftOpenLine([{ pr: 11, parent: 100, reason: 'gh-failed' }, { pr: 11, issue: 103, reason: 'internal-error' }, { pr: 12, reason: 'unreadable-policy' }, 'x', null, { pr: 'x', parent: 1, reason: 'gh-failed' }]),
-    "post-merge Step 4.0b left parent record(s) open: #100 (gh-failed, PR #11), the parent of record #103 (internal-error, PR #11), every parent (unreadable-policy, PR #12); tidy's parent-gate backstop recovers them",
+    "post-merge Step 4.0b left parent record(s) open: #100 (gh-failed, PR #11), the parent of record #103 (internal-error, PR #11), every parent (unreadable-policy, PR #12) — tidy's parent-gate backstop recovers them",
   );
   assert.equal(
     stepSkipsLine([{ pr: 13, reason: 'invalid-risk-floor' }, null, { pr: 14, reason: 5 }]),

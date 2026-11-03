@@ -824,7 +824,7 @@ test('AC1.1 + Q5: SessionStart names the parents a prior pass\'s Step 4.0b left 
   ], postMergeStepSkips: [{ pr: 13, reason: 'invalid-risk-floor' }] });
   const named = await contextOf();
   assert.match(named, /post-merge steps failed for 2 merged run\(s\) \(records #101 need a hand reopen or close/);
-  assert.match(named, /post-merge Step 4\.0b left parent record\(s\) open: #100 \(gh-failed, PR #11\), the parent of record #103 \(internal-error, PR #11\), every parent \(unreadable-policy, PR #12\); tidy's parent-gate backstop recovers them/);
+  assert.match(named, /post-merge Step 4\.0b left parent record\(s\) open: #100 \(gh-failed, PR #11\), the parent of record #103 \(internal-error, PR #11\), every parent \(unreadable-policy, PR #12\) — tidy's parent-gate backstop recovers them/);
   assert.match(named, /post-merge Step 4\.0b skipped step-wide, leaving no parent open \(nothing left to close\): invalid-risk-floor \(PR #13\)/);
 
   // Q5: a marker-write-failed entry's parent is named although no count includes that run.

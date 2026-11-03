@@ -5,13 +5,17 @@
 // layer — takes exactly the object reconcile() already returns; no changes
 // to reconcile()/its per-check modules, and no I/O of its own.
 //
-// Three kinds of line:
+// Four kinds of line:
 //   - one per non-empty action category, naming what was actually DONE
 //     (e.g. "archived: 1 run dir", "released: 3 claims", "reaped: 1
 //     worktree") — drawn from the taken-action entries in each of
 //     reconcile()'s array-shaped fields, plus mirror/redTip/console's own
 //     single-object shapes, and the archive pass's own count lines
 //     ("residue (dry run): ...", "ownerless non-clean: N run dirs");
+//   - up to two post-merge Step 4.0b lines, right after those category
+//     lines (#4798): the parent record(s) it left open and its step-wide
+//     skips that left no parent open, each flattened from every post-merge
+//     entry whatever its action or verdict;
 //   - one aggregated "skipped: N {unit} (reason count, reason count, ...)"
 //     line, folding together every PER-ITEM skip across every category
 //     (archive's per-run-dir skip reasons, reap's per-worktree reasons,
@@ -35,9 +39,11 @@
 //     clean no-op.
 'use strict';
 
-// post-merge.js's classifyEntry judges a post-merge entry, and its
-// failedRecordNumbers names the records a failed run left. Both are
-// loaded on first use, never at module load: `bin/hooks.js reconcile`
+// post-merge.js's classifyEntry judges a post-merge entry, its
+// failedRecordNumbers names the records a failed run left, and
+// formatPostMergeStep40bLines loads parentsLeftOpen, stepSkipsOf,
+// parentsLeftOpenLine and stepSkipsLine to render Step 4.0b's two lines.
+// All are loaded on first use, never at module load: `bin/hooks.js reconcile`
 // requires this file outside the try that turns a module-load fault
 // into the `reconcile-threw` fallback, so a module-level require of
 // post-merge.js would make that fault silent. The fallback result

@@ -82,6 +82,6 @@ test('AC1.1: a real postMerge run whose Step 4.0b hit gh-failed reaches SessionS
   });
   const context = out.json.hookSpecificOutput.additionalContext;
   assert.match(context, /post-merge steps failed for 1 merged run\(s\)/);
-  assert.match(context, /post-merge Step 4\.0b left parent record\(s\) open: #100 \(gh-failed, PR #11\); tidy's parent-gate backstop recovers them/);
+  assert.match(context, /post-merge Step 4\.0b left parent record\(s\) open: #100 \(gh-failed, PR #11\) — tidy's parent-gate backstop recovers them/);
   assert.doesNotMatch(context, /post-merge steps ran for/);
 });
