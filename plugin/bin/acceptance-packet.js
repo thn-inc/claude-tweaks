@@ -65,6 +65,7 @@ const {
   qaSelectionFromDecisions,
   expectedChecksFromDeclaration,
   parseStoryFile,
+  redactedRecordingStrings,
   storyResultsFromQaReport,
   storiesFromQaStamp,
 } = require('./lib/wrap-up/packet-gather');
@@ -371,6 +372,13 @@ function snapshotRecording(sources, dir, deps) {
   }
 }
 
+// The manifest on disk stays raw, as local input. Stdout reaches the transcript, so it prints
+// the form a fact would hold.
+function printableManifest(manifest) {
+  const { redactions: _count, ...strings } = redactedRecordingStrings(manifest.recording);
+  return { ...manifest, recording: { ...manifest.recording, ...strings } };
+}
+
 function runSnapshot(opts, deps) {
   const target = anchoredRun(opts.run, deps);
   if (!target) return 3;
@@ -420,7 +428,7 @@ function runSnapshot(opts, deps) {
     deps.stderr(`acceptance-packet.js: could not write ${dir} (${messageOf(err)})\n`);
     return 3;
   }
-  deps.stdout(`${JSON.stringify(manifest)}\n`);
+  deps.stdout(`${JSON.stringify(printableManifest(manifest))}\n`);
   return 0;
 }
 

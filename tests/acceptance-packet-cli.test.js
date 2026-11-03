@@ -825,6 +825,35 @@ test('AC1.2: snapshot encodes and gather links the path', (t) => {
   assert.ok(section.includes(`once archived: \`${ARCHIVED_GIF}\``), section);
 });
 
+test("A1: snapshot's stdout carries the redacted strings, and the manifest on disk stays raw", (t) => {
+  const ws = workspace(t);
+  qaRun(ws, {
+    stories: [{ id: 'sign-in', name: 'Sign in as bob@example.com', status: 'PASS', frames: ['00_sk_live_abc.png', '01_ghs_abc123def.png'] }],
+  });
+  const raws = ['bob@example.com', 'sk_live_abc', 'ghs_abc123def'];
+  const passed = snapshot(ws, { git: AHEAD(), gh: PRIVATE_REPO, encodeWalkthrough: encoderStub().encodeWalkthrough });
+  assert.equal(passed.code, 0, passed.stderr);
+  for (const raw of raws) assert.ok(!passed.stdout.includes(raw), raw);
+  assert.deepEqual(JSON.parse(passed.stdout).recording.captions, ['[redacted]', '[redacted]']);
+  const manifest = readJson(inputs(ws, 'manifest.json')).recording;
+  assert.deepEqual(manifest.captions, ['sk_live_abc', 'ghs_abc123def'], 'local input stays raw');
+  assert.equal(manifest.text, 'Walkthrough of Sign in as bob@example.com');
+  assert.ok(!Object.hasOwn(JSON.parse(passed.stdout).recording, 'redactions'), 'stdout mirrors the manifest entry');
+});
+
+test("A1: snapshot's stdout carries a redacted failure, and the manifest on disk stays raw", (t) => {
+  const ws = workspace(t);
+  qaRun(ws);
+  const secret = 'eyJhbGciOiJIUzI1NiJ9.e30.abc';
+  const failed = snapshot(ws, {
+    git: AHEAD(), gh: PRIVATE_REPO, encodeWalkthrough: encoderStub(() => { throw new Error(`bad ${secret}`); }).encodeWalkthrough,
+  });
+  assert.equal(failed.code, 0, failed.stderr);
+  assert.ok(!failed.stdout.includes(secret));
+  assert.equal(JSON.parse(failed.stdout).recording.failure, 'bad [redacted]');
+  assert.equal(readJson(inputs(ws, 'manifest.json')).recording.failure, `bad ${secret}`);
+});
+
 test('a relative screenshot_dir resolves against the cwd, not the process', (t) => {
   const ws = workspace(t);
   const qaDir = qaRun(ws);

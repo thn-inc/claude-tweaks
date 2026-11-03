@@ -3,6 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { EXPOSURES } = require('../../../plugin/bin/lib/wrap-up/packet-contract');
+const { gatherPacketFacts } = require('../../../plugin/bin/lib/wrap-up/packet-gather');
 const { renderPacket, renderRecordingSection } = require('../../../plugin/bin/lib/wrap-up/packet-render');
 
 const fact = (id, status, extra = {}) => ({
@@ -41,7 +42,6 @@ const passed = (extra) => fact(REC, 'passed', {
   archive_path: ARCHIVE_PATH,
   captions: ['sign-in'],
   exposure: 'local-only',
-  redactions: 0,
   ...extra,
 });
 const notRun = (reason, extra) => fact(REC, 'not-run', { reason, ...extra });
@@ -174,13 +174,80 @@ test('a non-zero redaction count is reported and does not change exposure', () =
   assert.ok(lines[0].endsWith('(local-only)'), lines[0]);
 });
 
-test('the reported count is the one the section computed, across every channel it rendered', () => {
+test('with no integer redactions the count is the one the section computed, across every channel it rendered', () => {
   const all = passed({ text: 'password=a', captions: ['token=b', 'sk_live_c'] });
   assert.equal(recordingLines(all).at(-1), '  redacted values: 3');
   const failed = notRun('encoder-failed', { failure: 'token=b' });
   assert.deepEqual(recordingLines(failed), ['not recorded: encoder-failed', '  failure: token=\\[redacted]', '  redacted values: 1']);
-  assert.ok(!recordingLines(passed({ redactions: 5 })).some((line) => line.includes('redacted values')), 'the field is data');
   assert.ok(!recordingLines(passed({ text: 'tok%65n=abc token=b' })).some((line) => line.includes('redacted values')), 'nothing replaced was rendered');
+});
+
+test('an integer redactions is the count shown, and the section still redacts', () => {
+  assert.equal(recordingLines(passed({ redactions: 5 })).at(-1), '  redacted values: 5');
+  const zero = recordingLines(passed({ redactions: 0, captions: ['token=b'] }));
+  assert.ok(zero.includes('  1. token=\\[redacted]'), zero.join('\n'));
+  assert.ok(!zero.some((line) => line.includes('redacted values')), zero.join('\n'));
+  assert.ok(!recordingLines(passed({ redactions: 5, captions: ['token=b'] })).join('\n').includes('token=b'));
+});
+
+// The narrator reads the facts, so a raw value on a fact is one copy away from the packet.
+const gatheredFact = (recording) => gatherPacketFacts({
+  record: 4612, specText: null, changes: null, recording, recordingPath: { live: LOCAL_PATH, archived: ARCHIVE_PATH },
+}).facts.find(({ id }) => id === REC);
+const gatheredPassed = (extra) => ({
+  status: 'passed', file: 'walkthrough.gif', text: 'Walkthrough of Sign in', captions: ['sign-in'], exposure: 'local-only', ...extra,
+});
+const GATHER_CHANNELS = [
+  ['text', (shape) => gatheredPassed({ text: shape }), (entry) => entry.text],
+  ['caption', (shape) => gatheredPassed({ captions: [shape] }), (entry) => entry.captions[0]],
+  ['failure', (shape) => ({ status: 'not-run', reason: 'encoder-failed', failure: shape }), (entry) => entry.failure],
+];
+const leakIn = (text, leaks) => leaks.find((leak) => text.replaceAll('`', '').includes(leak));
+
+test('A1: a gathered fact holds no raw shape in any channel, and redactions is the sum', () => {
+  for (const [channel, build] of GATHER_CHANNELS) {
+    for (const [shape, leaks] of SHAPES) {
+      const built = gatheredFact(build(shape));
+      assert.equal(leakIn(JSON.stringify(built), leaks), undefined, `${channel}: ${shape}`);
+      assert.ok(built.redactions >= 1, `${channel}: ${shape}`);
+    }
+  }
+  assert.equal(gatheredFact(gatheredPassed({ text: 'password=a', captions: ['token=b', 'sk_live_c'] })).redactions, 3);
+});
+
+test('A1: a risk proof copying a gathered string renders no raw shape', () => {
+  const flag = fact('flag:f', 'passed', { text: 'a flag' });
+  for (const [channel, build, stringOf] of GATHER_CHANNELS) {
+    for (const [shape, leaks] of SHAPES) {
+      const gathered = gatheredFact(build(shape));
+      const { markdown } = renderPacket(
+        { schemaVersion: 1, record: 4612, partial: [], surface: null, allowedHosts: [], refused: [], facts: [flag, gathered] },
+        { schemaVersion: 1, claims: [{ section: 'risk-proofs', text: `proof: ${stringOf(gathered)}`, refs: ['flag:f', REC] }] },
+      );
+      assert.equal(leakIn(markdown, leaks), undefined, `${channel}: ${shape}`);
+    }
+  }
+});
+
+test('A1: a value whose residual hits the screen is withheld at gather, whole, and counts nothing', () => {
+  for (const [channel, build, stringOf] of GATHER_CHANNELS) {
+    const gathered = gatheredFact(build('tok%65n=abc token=b'));
+    assert.equal(stringOf(gathered), WITHHELD_TEXT, channel);
+    assert.equal(gathered.redactions, 0, channel);
+  }
+  const lines = sectionLines(render([gatheredFact(gatheredPassed({ text: 'tok%65n=abc' }))]).markdown, 'Recording');
+  assert.equal(lines[0], `- ${WITHHELD_TEXT}: \`${LOCAL_PATH}\` (local-only)`);
+});
+
+test('A1: a gathered fact renders unchanged by a second pass, with gather\'s count', () => {
+  const gathered = gatheredFact(gatheredPassed({ text: 'password=a', captions: ['token=b', 'sk_live_c'] }));
+  assert.deepEqual(sectionLines(render([gathered]).markdown, 'Recording'), [
+    `- password=\\[redacted]: \`${LOCAL_PATH}\` (local-only)`,
+    `  once archived: \`${ARCHIVE_PATH}\``,
+    '  1. token=\\[redacted]',
+    '  2. \\[redacted]',
+    '  redacted values: 3',
+  ]);
 });
 
 test('AC4.1: a credential recording link states why', () => {

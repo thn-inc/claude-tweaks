@@ -84,6 +84,9 @@ const EXPOSURES = Object.freeze(['local-only', 'linked-private', 'withheld']);
 // render under Couldn't test.
 const RECORDING_NOT_RUN_REASONS = Object.freeze(['no-story', 'no-local-base-url', 'no-happy-path-screenshots', 'encoder-failed']);
 
+// What renders in place of free text the credential screen refuses.
+const WITHHELD_TEXT = '(text withheld: credential-shaped)';
+
 const VERIFICATION_WORDS = Object.freeze(['tested', 'verified', 'works']);
 const VERIFICATION_CLAIM_RE = new RegExp(`\\b(${VERIFICATION_WORDS.join('|')})\\b`, 'i');
 
@@ -105,6 +108,7 @@ module.exports = Object.freeze({
   encodeFactKey,
   EXPOSURES,
   RECORDING_NOT_RUN_REASONS,
+  WITHHELD_TEXT,
   VERIFICATION_WORDS,
   VERIFICATION_CLAIM_RE,
 });

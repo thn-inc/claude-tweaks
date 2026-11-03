@@ -5,10 +5,12 @@
 // Pure: no git, gh or fs.
 'use strict';
 
-const { PACKET_MARKER, SECTIONS, MAX_PACKET_CHARS, COMMANDS_ONLY_SURFACES } = require('./packet-contract');
+const {
+  PACKET_MARKER, SECTIONS, MAX_PACKET_CHARS, COMMANDS_ONLY_SURFACES, WITHHELD_TEXT,
+} = require('./packet-contract');
 const { checkLink, findCredentialInText, isCredentialRefusal, isImageUrl, normalizeKey } = require('./packet-links');
 const { validatePacket } = require('./packet-validate');
-const { redactText } = require('../walkthrough/redact');
+const { redactText, redactOrWithhold } = require('../walkthrough/redact');
 const { escapeRegExp } = require('../shared-primitives');
 
 // Every shape GitHub can turn into a link or a notification. A plain `word:value` is
@@ -35,7 +37,6 @@ const CHECKS_PASSED_LABEL = 'Checks that passed:';
 const ROW_KINDS = Object.freeze(['check', 'story']);
 
 const WITHHELD_REASON = '(reason withheld: credential-shaped)';
-const WITHHELD_TEXT = '(text withheld: credential-shaped)';
 const WITHHELD_ID_NOTE = 'id withheld: credential-shaped';
 const WITHHELD_ID = `(${WITHHELD_ID_NOTE})`;
 const RECORDING_WITHHELD = 'recording withheld: link contained a credential-shaped value';
@@ -150,11 +151,10 @@ function rowPlace(fact) {
 const ESCAPED_PLACEHOLDER = '\\[redacted\\]';
 const RENDERED_PLACEHOLDER = '\\[redacted]';
 
-// Every free string of the section comes through here. The text keeps a shape left for the
-// screen, so the screen reads `residual`, where the placeholders that would trip it are gone.
+// Every free string of the section comes through here. Gather has already redacted a gathered
+// fact, and a second pass changes nothing; a hand-built fact still must not leak.
 function recordingText(raw, tally) {
-  const { text, count, residual } = redactText(raw ?? '');
-  if (findCredentialInText(residual)) return WITHHELD_TEXT;
+  const { text, count } = redactOrWithhold(raw ?? '');
   tally.redacted += count;
   return inline(text).replaceAll(ESCAPED_PLACEHOLDER, RENDERED_PLACEHOLDER);
 }
@@ -233,7 +233,9 @@ function recordingItem(fact) {
     lines.push(`  ${index + 1}. ${recordingText(caption, tally)}`);
   });
   if (fact.status === 'not-run' && filled(fact.failure)) lines.push(`  failure: ${recordingText(fact.failure, tally)}`);
-  if (tally.redacted > 0) lines.push(`  redacted values: ${tally.redacted}`);
+  // Gather's count, since a second pass over its strings finds nothing left to count.
+  const redacted = Number.isInteger(fact.redactions) ? fact.redactions : tally.redacted;
+  if (redacted > 0) lines.push(`  redacted values: ${redacted}`);
   return lines.join('\n');
 }
 

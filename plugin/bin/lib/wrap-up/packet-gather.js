@@ -13,7 +13,7 @@ const {
   encodeFactKey,
 } = require('./packet-contract');
 const { checkLink, findCredentialInText } = require('./packet-links');
-const { redactText } = require('../walkthrough/redact');
+const { redactOrWithhold } = require('../walkthrough/redact');
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 const { SECTIONS: CONSOLE_SECTIONS, decisionLineHash } = require('../console/resolve');
 
@@ -461,13 +461,23 @@ function passThroughFacts(kind, source, entries) {
   }));
 }
 
-// The snapshot's outcome as a fact. The strings stay raw here: the renderer redacts them, and
-// `redactions` counts what it will find. A not-run one has no GIF, so no location.
+// A recording's free strings as a narrator may read them, with the sum of what went from them.
+// A claim's text meets only the credential screen, which misses a bare token or an address.
+function redactedRecordingStrings({ text, captions, failure }) {
+  let redactions = 0;
+  const redacted = (value) => {
+    if (typeof value !== 'string') return value;
+    const result = redactOrWithhold(value);
+    redactions += result.count;
+    return result.text;
+  };
+  return { text: redacted(text), captions: captions?.map(redacted), failure: redacted(failure), redactions };
+}
+
+// The snapshot's outcome as a fact. A not-run one has no GIF, so no location.
 function recordingFact(recording, recordingPath) {
-  const { status, text, captions, failure, reason, exposure } = recording;
-  const redactions = [text, ...(captions ?? []), failure]
-    .filter((value) => typeof value === 'string')
-    .reduce((sum, value) => sum + redactText(value).count, 0);
+  const { status, reason, exposure } = recording;
+  const { text, captions, failure, redactions } = redactedRecordingStrings(recording);
   const common = { id: 'recording:walkthrough', kind: 'recording', status, source: 'walkthrough' };
   if (status === 'not-run') return { ...common, reason, ...(failure === undefined ? {} : { failure }), redactions };
   return {
@@ -592,6 +602,7 @@ module.exports = {
   parseStoryFile,
   storyResultsFromQaReport,
   storiesFromQaStamp,
+  redactedRecordingStrings,
   gatherPacketFacts,
   readPacket,
 };

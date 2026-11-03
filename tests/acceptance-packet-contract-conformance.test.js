@@ -766,6 +766,8 @@ for (const [heading, label, pattern] of [
   ['## Recording', 'never uploaded', /stored in the run's local directory and never uploaded, in any repository visibility/],
   ['## Recording', 'never embedded', /never embeds the recording or any screenshot/],
   ['## Recording', 'one choke point', /applied at one choke point/],
+  ['## Recording', 'a fact holds the redacted form', /Gather writes the same redacted form into the fact and the sum into `redactions`, so a narrator never reads a raw value/],
+  ['## Recording', 'snapshot prints the redacted form', /`snapshot`'s stdout prints that form while the manifest on disk stays raw/],
   ['## Recording', 'key names stay, the whole value goes', /keeps the key name and replaces the whole value/],
   ['## Recording', 'the placeholder escape', /renders `\[redacted\]`, the raw comment holds the fixed token, and its escaped opener means a line can never become a link reference definition/],
   ['## Recording', 'what the redactor misses is withheld', /a shape the redactor misses renders `\(text withheld: credential-shaped\)`/],

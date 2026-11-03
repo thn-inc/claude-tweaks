@@ -1,11 +1,12 @@
 // bin/lib/walkthrough/redact.js — replaces secret-shaped text with a fixed placeholder (#4612).
 // Best-effort text defense: it never scans pixels, so a screenshot can still show a secret.
-// Its reader is `renderRecordingSection`, which also screens `residual`: whatever no rule
+// Its readers go through `redactOrWithhold`, which also screens `residual`: whatever no rule
 // removed stays there, so a shape this file misses is that screen's to refuse.
 //
 // Pure: no git, gh or fs.
 'use strict';
 
+const { WITHHELD_TEXT } = require('../wrap-up/packet-contract');
 const { findCredentialInText } = require('../wrap-up/packet-links');
 const { escapeRegExp } = require('../shared-primitives');
 
@@ -158,4 +159,12 @@ function redactText(raw) {
   return { text, count, residual };
 }
 
-module.exports = { redactText, REDACTED };
+// The text a recording string may carry onward, and how many values went from it. The text keeps
+// a shape left for the screen, so the screen reads `residual`, where the placeholders that would
+// trip it are gone. A value it flags is withheld whole, and nothing of it counts as replaced.
+function redactOrWithhold(raw) {
+  const { text, count, residual } = redactText(raw);
+  return findCredentialInText(residual) ? { text: WITHHELD_TEXT, count: 0 } : { text, count };
+}
+
+module.exports = { redactText, redactOrWithhold, REDACTED };
