@@ -58,8 +58,17 @@ decline — compose and file the reversal record per `wrap-up/review-console-app
 `open`, cause logged, when the record is refused or not created). Ticked, it is ratify, per the same
 bullet: the ready item's `ratifyAction` (#3942) says which — `accept` writes the ledger row →
 `accepted`; `file-record` (a deferral) files the deferred work as a record, as a reverse does, and
-writes the row → `deferred`, Resolution `ratified → #{new record}`, once the record exists. Log
-either filing as an `AUTO` line naming `reversed → #{new record}` or `ratified → #{new record}` only
+writes the row → `deferred`, Resolution `ratified → #{new record}`, once the record exists. A
+ruling row named in `rulingGateGaps` (the Third narrower exception below) carries its
+`ratifyAction` too when its staged text is readable — `file-record`, or `accept` for agreeing
+`Defers: no` lines: a human tick ratifies what the gate only withholds from auto-resolution. A
+ticked ruling with no `ratifyAction` (its staged file empty or unreadable — not ratifiable) is
+unexecutable: name it in
+`resolve-console --filing-failed` with its cause logged as a `SKIP` line, so its reply reads
+`filing failed — see decisions.md` and the row stays `open`. A ticked deferral ruling whose record
+was refused or not created goes in `resolve-console --filing-failed` too: its reply reads
+`filing failed — see decisions.md`, Resolve stays unticked, and it is never recorded `executed`.
+Log either filing as an `AUTO` line naming `reversed → #{new record}` or `ratified → #{new record}` only
 once the record exists; when the record is refused or not created, log that cause instead
 (`REFUSED` when `wrap-up/refused-proposals.md` refuses it, else `SKIP` — `FAILED` is reserved for
 its two refine writers) — never `declined`, and never `reversed` or `ratified` without a record
@@ -96,7 +105,7 @@ when it happens anyway, surface it rather than executing: there is nowhere to ap
 **Reply comment first, then the resolved marker edit** on the console comment itself — never the
 reverse. Post one reply comment (`<!-- console-item: executed -->`) summarizing per-item outcomes
 (executed / declined / reversed / reverse-failed / unexecutable / unexecutable-stale), plus
-dropped / filing-failed for a finding row, then edit the
+dropped for a finding row and filing-failed for a finding or ruling row, then edit the
 console comment's first line to add `<!-- claude-tweaks-console-resolved -->`, then write
 `console.json.executedAt` and `console.json.resolved` (`true` only when every item cleared) together,
 in one write. The same write records each item's `outcome` (and `note`, for a non-executed item)
@@ -233,6 +242,8 @@ point. `rulingGateGaps: []` — every ruling row's header shows it safe — leav
 floor-clearing, unchanged. An absent ruling-text map (no `rulingTexts` in the call's context)
 withholds every ruling row as `sdd-ruling-unclassified` (#4048), withheld like any other ruling
 gap; a recorded read error for a row still outranks that and names it `sdd-ruling-unreadable`.
+A withheld ruling row still carries its `ratifyAction` (Execution routing above) unless its staged
+file is empty or unreadable: the exception stops only the auto-tick, never a human's.
 
 **Auto-resolution performs real comment edits.** It ticks the floor-clearing boxes on the PR
 comment (via `_shared/console-on-pr.md`'s post-or-update procedure) *before* executing — the same
