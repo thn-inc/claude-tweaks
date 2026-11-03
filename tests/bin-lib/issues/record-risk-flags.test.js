@@ -359,6 +359,37 @@ test('appendRiskProofGotcha never reads or writes the Original request section: 
   assert.match(alone, /^## Gotchas\n\n- Risk proof required: [^\n]*\n\n## Original request\n/);
 });
 
+test('appendRiskProofGotcha: a Gotchas section ends at the next h2, so the bullet lands before Breaking Change', () => {
+  const body = '## Overview\n\nx\n\n## Gotchas\n\n- g\n\n## Breaking Change\n\nb\n';
+  assert.strictEqual(
+    appendRiskProofGotcha(body, ['auth']).replace(/- Risk proof required: [^\n]*/, '- BULLET'),
+    '## Overview\n\nx\n\n## Gotchas\n\n- g\n- BULLET\n\n## Breaking Change\n\nb\n',
+  );
+});
+
+test('appendRiskProofGotcha: a fenced heading inside Gotchas does not end the section', () => {
+  const body = '## Gotchas\n\n- g\n\n```\n## Something\n```\n\n- h\n\n## Original request\n\nz\n';
+  assert.strictEqual(
+    appendRiskProofGotcha(body, ['auth']).replace(/- Risk proof required: [^\n]*/, '- BULLET'),
+    '## Gotchas\n\n- g\n\n```\n## Something\n```\n\n- h\n- BULLET\n\n## Original request\n\nz\n',
+  );
+});
+
+test('appendRiskProofGotcha: a Breaking Change heading quoted in Original request is not a placement anchor', () => {
+  const quoted = '## Original request\n\n## Breaking Change\n\nq\n';
+  const body = `## Overview\n\nx\n\n${quoted}`;
+  const added = appendRiskProofGotcha(body, ['auth']);
+  assert.strictEqual(added.slice(added.indexOf('## Original request')), quoted);
+  assert.match(added, /^## Overview\n\nx\n\n## Gotchas\n\n- Risk proof required: [^\n]*\n\n## Original request\n/);
+});
+
+test('appendRiskProofGotcha: a fenced Breaking Change line is not a placement anchor', () => {
+  const body = '## Overview\n\n```\n## Breaking Change\n```\n\nx\n';
+  const added = appendRiskProofGotcha(body, ['auth']);
+  assert.strictEqual(added.startsWith(body), true);
+  assert.match(added, /\n\nx\n\n## Gotchas\n\n- Risk proof required: [^\n]*\n$/);
+});
+
 test('appendRiskProofGotcha: a fenced Original request heading does not end the record\'s own sections', () => {
   const body = '## Overview\n\n```\n## Original request\n```\n\n## Gotchas\n\n- g\n';
   assert.match(appendRiskProofGotcha(body, ['auth']), /- g\n- Risk proof required: /);
