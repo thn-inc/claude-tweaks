@@ -59,14 +59,18 @@
 // branch that cannot be read closes nothing: the envelope adds
 // baseUnchecked: true and unchecked[] (the Fixes records it did not check,
 // sorted -- the numbers a caller names for a hand close) and omits closingSet.
-// Before any reopen or close on a base known to be non-default it proves the PR is this run's, as pre-merge does (exit 4, #4817); a default or unreadable base skips that proof.
+// Before any reopen or close on a base known to be non-default it proves the
+// PR is this run's, as pre-merge does (exit 4, #4817); a default or unreadable
+// base skips that proof.
 // The default base keeps the envelope above unchanged.
 //
 // Status is data: exit 0 for every action above, a failed reopen included.
 // 2 malformed invocation.
 // 3 run dir missing or not anchored under the main checkout (a worktree-local
 //   shadow -- _shared/pipeline-run-dir.md, [IL-127]).
-// 4 run-marker mismatch (pre-merge; post-merge on a base known to differ from the default branch, before any reopen or close): the PR body's first line names a different run (or none) -- refused, nothing written.
+// 4 run-marker mismatch (pre-merge; post-merge on a base known to differ from
+//   the default branch, before any reopen or close): the PR body's first line
+//   names a different run (or none) -- refused, nothing written to the PR.
 // 5 `gh pr view` / `gh pr edit` failed, or a required read came back
 //   malformed (non-string body, non-array links, links with no repository,
 //   missing/unparseable url or mergedAt).
@@ -384,7 +388,9 @@ function run(argv, overrides = {}) {
 
   // 7c. GitHub closes nothing on a non-default base, so this pass writes there:
   // its reopens and the 9b closes. Prove the PR is this run's first, as 7a does
-  // (#4817). A default or unreadable base skips the proof (Reading A).
+  // (#4817). A default or unreadable base skips the proof: an unreadable base
+  // is usually a transient gh failure, and the reconciler reads exit 4 as
+  // deterministic.
   if (nonDefaultBase) {
     const refused = refuseForeignPr(pr.body);
     if (refused !== null) return refused;

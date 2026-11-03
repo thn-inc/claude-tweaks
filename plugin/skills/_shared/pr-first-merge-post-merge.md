@@ -30,7 +30,7 @@ none of the PR's closing keywords, so the CLI also closes each still-open `Fixes
 hand if it closed) in the closing summary, never as anything but `merged`. A `baseUnchecked: true`
 envelope means the PR's base or the default branch could not be read, so nothing was closed and the
 `Fixes` records were not checked: name the envelope's `unchecked[]` records in the closing summary. Exit 4
-(run-marker mismatch: the PR body names another run, so nothing was reopened or closed): name the mismatch and PR #{n} in the closing summary, and ask for no hand close of its `Fixes` records, which may belong to that run. Exit 4, exit 5 or `gh-absent`: the CLI logged its own `SKIP` line; exit 3: the run dir is untrusted and `log-decision.js` refuses it too, so name the gap in the closing summary. Then continue to Step 4.0b. An `armed` outcome never reaches
+(run-marker mismatch: the PR body names another run, or none, so nothing was reopened or closed): name the mismatch and PR #{n} in the closing summary, and ask for no hand close of its `Fixes` records, which may belong to another run. Exit 4, exit 5 or `gh-absent`: the CLI logged its own `SKIP` line; exit 3: the run dir is untrusted and `log-decision.js` refuses it too, so name the gap in the closing summary. Then continue to Step 4.0b. An `armed` outcome never reaches
 this step in-session: the reconciler's `post-merge` check (`gh` only) runs the CLI for that run once GitHub has merged the PR for 10 minutes (the merge grace),
 with no settle poll and reopens bounded to 10 minutes after `mergedAt`; with `--keep-open` on the composer, only a
 Development-sidebar link can still close a kept-open record there, a gap tracked in the run's ledger.
