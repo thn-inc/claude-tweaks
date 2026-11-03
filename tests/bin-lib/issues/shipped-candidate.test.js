@@ -283,3 +283,85 @@ test('#4314: the exclusion is per mention — an opened-before follow-up mention
   assert.strictEqual(result.tier, 'strong');
   assert.strictEqual(result.pr, 4400);
 });
+
+// ── #4432: a merged PR that predates the record's latest claim release ─────
+const HALF_RECORD = {
+  number: 4432,
+  title: 'dispatch pre-build check for shipped records',
+  createdAt: '2026-10-01T00:00:00Z',
+  body: withKeyFiles(['a.js']),
+};
+const HALF_MENTION = {
+  number: 500,
+  title: 'dispatch pre-build check for shipped records',
+  state: 'MERGED',
+  merged: true,
+  mergedAt: '2026-10-02T12:00:00Z',
+};
+
+test('AC1.1: title-similar merged mention with a claim release after its merge classifies weak', () => {
+  const r = classifyShipped(HALF_RECORD, [HALF_MENTION], { lastReleasedAt: '2026-10-02T13:00:00Z' });
+  assert.strictEqual(r.tier, 'weak');
+  assert.strictEqual(r.pr, 500);
+  assert.ok(r.signals.includes('predates-claim-release'));
+  assert.ok(r.signals.includes('title-similarity'));
+});
+
+test('#4432: key-files coverage with a release after the merge also classifies weak', () => {
+  const record = { ...HALF_RECORD, title: 'Completely different wording' };
+  const prFiles = new Map([[500, ['a.js']]]);
+  const r = classifyShipped(record, [HALF_MENTION], { prFiles, lastReleasedAt: '2026-10-02T13:00:00Z' });
+  assert.strictEqual(r.tier, 'weak');
+  assert.ok(r.signals.includes('key-files-covered'));
+});
+
+test('AC2.1: the same record with no release after the merge still classifies strong', () => {
+  assert.strictEqual(classifyShipped(HALF_RECORD, [HALF_MENTION]).tier, 'strong');
+  assert.strictEqual(classifyShipped(HALF_RECORD, [HALF_MENTION], { lastReleasedAt: null }).tier, 'strong');
+});
+
+test('AC3.1: a release before the PR merged does not downgrade', () => {
+  const r = classifyShipped(HALF_RECORD, [HALF_MENTION], { lastReleasedAt: '2026-10-02T11:00:00Z' });
+  assert.strictEqual(r.tier, 'strong');
+  assert.ok(!r.signals.includes('predates-claim-release'));
+});
+
+test('AC4.1: an unparseable release time never downgrades and never upgrades', () => {
+  assert.strictEqual(classifyShipped(HALF_RECORD, [HALF_MENTION], { lastReleasedAt: 'not-a-date' }).tier, 'strong');
+  const plain = { ...HALF_MENTION, title: 'totally unrelated wording' };
+  const r = classifyShipped(HALF_RECORD, [plain], { lastReleasedAt: 'not-a-date' });
+  assert.strictEqual(r.tier, 'weak');
+  assert.deepStrictEqual(r.signals, ['merged-pr-mention-after-created']);
+});
+
+test('#4432: a release at the exact merge instant is not after it, so no downgrade', () => {
+  assert.strictEqual(classifyShipped(HALF_RECORD, [HALF_MENTION], { lastReleasedAt: '2026-10-02T12:00:00.000Z' }).tier, 'strong');
+});
+
+test('#4432: instants are compared, not strings (a timezone offset that sorts the other way)', () => {
+  // 13:00+02:00 is 11:00Z, before the 12:00Z merge; as strings it sorts after it.
+  assert.strictEqual(classifyShipped(HALF_RECORD, [HALF_MENTION], { lastReleasedAt: '2026-10-02T13:00:00+02:00' }).tier, 'strong');
+});
+
+test('#4432: a merged mention with no mergedAt is not downgraded', () => {
+  const noMergedAt = { ...HALF_MENTION };
+  delete noMergedAt.mergedAt;
+  assert.strictEqual(classifyShipped(HALF_RECORD, [noMergedAt], { lastReleasedAt: '2026-10-02T13:00:00Z' }).tier, 'strong');
+});
+
+test('#4432: the downgrade is per mention -- a PR merged after the release still classifies strong', () => {
+  const later = { ...HALF_MENTION, number: 501, mergedAt: '2026-10-05T00:00:00Z' };
+  const r = classifyShipped(HALF_RECORD, [HALF_MENTION, later], { lastReleasedAt: '2026-10-02T13:00:00Z' });
+  assert.strictEqual(r.tier, 'strong');
+  assert.strictEqual(r.pr, 501);
+});
+
+test('#4432: a plain weak mention merged after the release outranks a downgraded one, whatever the order', () => {
+  const later = { ...HALF_MENTION, number: 501, title: 'totally unrelated wording', mergedAt: '2026-10-05T00:00:00Z' };
+  for (const mentions of [[HALF_MENTION, later], [later, HALF_MENTION]]) {
+    const r = classifyShipped(HALF_RECORD, mentions, { lastReleasedAt: '2026-10-02T13:00:00Z' });
+    assert.strictEqual(r.tier, 'weak');
+    assert.strictEqual(r.pr, 501);
+    assert.ok(!r.signals.includes('predates-claim-release'));
+  }
+});
