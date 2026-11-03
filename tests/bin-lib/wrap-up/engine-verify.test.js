@@ -10,8 +10,20 @@ const { resolveRecords } = require('../../../plugin/bin/lib/wrap-up/pack');
 const { gitRepo, linkedWorktreeOf } = require('../../helpers/git-fixtures');
 const { readText } = require('../../helpers/read-skill');
 
+// Every tmp root this file creates is registered here and removed once, after the
+// file's last test: the per-test try/finally removals cover only some call sites,
+// and a test that throws before its cleanup would otherwise leak its roots.
+const tmpRoots = [];
+test.after(() => {
+  for (const root of tmpRoots) fs.rmSync(root, { recursive: true, force: true });
+});
+function trackTmp(dir) {
+  tmpRoots.push(dir);
+  return dir;
+}
+
 function makeTmpDir(prefix) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  return trackTmp(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 }
 
 // plans-ledger's sdd-leftover check reads `cwd`'s own filesystem directly
@@ -941,7 +953,7 @@ test('design-caches check catches an untracked *-audit.json inside a WHOLLY-untr
   // actually prevents that collapse, so this proves it against real git
   // output rather than a hand-written fixture that could just as easily
   // encode the wrong (collapsed) shape.
-  const repo = gitRepo();
+  const repo = trackTmp(gitRepo());
   try {
     fs.mkdirSync(path.join(repo, 'docs', 'plans'), { recursive: true });
     fs.writeFileSync(path.join(repo, 'docs', 'plans', 'some-topic-audit.json'), '{}');
@@ -964,7 +976,7 @@ test('design-caches check catches an untracked *-audit.json inside a WHOLLY-untr
 // fixture so a machine whose global config says `false` cannot make these
 // pass vacuously.
 function nonAsciiRepo() {
-  const repo = gitRepo();
+  const repo = trackTmp(gitRepo());
   realExecFileSync('git', ['config', 'core.quotepath', 'true'], { cwd: repo });
   return repo;
 }
@@ -1091,8 +1103,9 @@ test('design-caches check scans `cwd`, not `repoRoot`, for untracked cache-file 
 });
 
 test('AC1 (live git): a plans-ledger leftover created in a worktree is caught by a verify run invoked from that same worktree, and is invisible from the main checkout', () => {
-  const main = gitRepo();
-  const wt = linkedWorktreeOf(main);
+  const main = trackTmp(gitRepo());
+  const wt = trackTmp(linkedWorktreeOf(main));
+  trackTmp(path.dirname(wt)); // linkedWorktreeOf's ct-wtd-parent-* dir
   try {
     const realGit = (args, cwd) => realExecFileSync('git', args, { cwd, encoding: 'utf8' });
     // #3168: create the run dir before the leftover, with a real mtime margin
@@ -1654,17 +1667,24 @@ test('AC1.1: accept:pending satisfies the pending-label check', () => {
 // precedence), not the mere presence of one pending label.
 function acceptanceLabelingRow(labelNames, dirPrefix) {
   const runDir = makeTmpDir(dirPrefix);
-  writeSpecFile(runDir, '900', 900);
-  const fakeGh = (args) => {
-    if (args[0] === '--version') return 'gh version 2.0.0';
-    if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
-    if (args.includes('labels,comments')) {
-      return JSON.stringify({ labels: labelNames.map((name) => ({ name })), comments: [{ body: '## Verification Brief\n### Confirmed\n', authorAssociation: 'MEMBER' }] });
-    }
-    return '';
-  };
-  const result = runVerify({ runDir, base: 'main', repoRoot: makeNativeRepoRoot(), deps: { git: fakeOriginGit(), gh: fakeGh } });
-  return result.rows.find((r) => r.check === 'acceptance-labeling');
+  let repoRoot;
+  try {
+    repoRoot = makeNativeRepoRoot();
+    writeSpecFile(runDir, '900', 900);
+    const fakeGh = (args) => {
+      if (args[0] === '--version') return 'gh version 2.0.0';
+      if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
+      if (args.includes('labels,comments')) {
+        return JSON.stringify({ labels: labelNames.map((name) => ({ name })), comments: [{ body: '## Verification Brief\n### Confirmed\n', authorAssociation: 'MEMBER' }] });
+      }
+      return '';
+    };
+    const result = runVerify({ runDir, base: 'main', repoRoot, deps: { git: fakeOriginGit(), gh: fakeGh } });
+    return result.rows.find((r) => r.check === 'acceptance-labeling');
+  } finally {
+    fs.rmSync(runDir, { recursive: true, force: true });
+    if (repoRoot) fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
 }
 
 test('AC3.1: engine-verify agrees on mixed labels', () => {
@@ -1817,7 +1837,7 @@ test('acceptance-labeling check queries a shared parent exactly once for two sub
 // #3222: a resolvable-parent record's gate is read from the parent's sub-issues
 // (parentGateState) and the oversight floor, not from the parent's demo:pending
 // label alone. Every case resolves its parent to #898.
-function parentGateRow({ records, subIssues, parentLabels = [], subIssuesReply, policyRaw }) {
+function parentGateRow({ records, subIssues, parentLabels = [], parentComments = [], subIssuesReply, policyRaw }) {
   const runDir = makeTmpDir('verify-acceptance-parentgate-');
   const repoRoot = makeCleanRepoRoot();
   writePolicy(repoRoot, 'work-links: native\n' + (policyRaw || ''));
@@ -1828,7 +1848,7 @@ function parentGateRow({ records, subIssues, parentLabels = [], subIssuesReply, 
     if (args[0] === '--version') return 'gh version 2.0.0';
     if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), 898);
     if (isSubIssuesCall(args)) return subIssuesReply ? subIssuesReply() : subIssuesGh(subIssues);
-    if (args.includes('labels,comments')) return JSON.stringify({ labels: parentLabels.map((name) => ({ name })), comments: [] });
+    if (args.includes('labels,comments')) return JSON.stringify({ labels: parentLabels.map((name) => ({ name })), comments: parentComments });
     return '';
   };
   const result = runVerify({ runDir, base: 'main', repoRoot, deps: { git: fakeOriginGit(), gh: fakeGh } });
@@ -1954,10 +1974,11 @@ test('acceptance-labeling falls back to the default high floor when policy.yml s
   assert.match(row.detail, /parent #898 below oversight floor — closes after the merge lands \(Step 4\.0b\)/);
 });
 
-// Two run records under different parents: #898 stays incomplete (open
-// sibling #901) while #899 is due, so each row's detail must carry the not-due
-// skip reason alongside the due parent's outcome.
-function twoParentRow({ dueParentLabels, dueParentComments }) {
+// Two run records under different parents: #898 is not due (open sibling #901)
+// or, when otherParentLabels carries a verdict, already dispositioned, while
+// #899 is due, so each row's detail must carry #898's skip reason alongside the
+// due parent's outcome.
+function twoParentRow({ dueParentLabels, dueParentComments, otherParentLabels = [] }) {
   const runDir = makeTmpDir('verify-acceptance-twoparents-');
   writeSpecFile(runDir, '900', 900);
   writeSpecFile(runDir, '910', 910);
@@ -1981,7 +2002,7 @@ function twoParentRow({ dueParentLabels, dueParentComments }) {
     if (isSubIssuesCall(args)) return subIssuesGh(subsOf[Number(args[2].match(/issues\/(\d+)\/sub_issues$/)[1])]);
     if (args.includes('labels,comments')) {
       if (args[2] === '899') return JSON.stringify({ labels: dueParentLabels.map((name) => ({ name })), comments: dueParentComments });
-      return JSON.stringify({ labels: [], comments: [] });
+      return JSON.stringify({ labels: otherParentLabels.map((name) => ({ name })), comments: [] });
     }
     return '';
   };
@@ -2005,6 +2026,154 @@ test('acceptance-labeling fail detail carries the not-due skip reason alongside 
   assert.strictEqual(row.result, 'fail', row.detail);
   assert.match(row.detail, /#899: missing demo:pending or accept:pending label/);
   assert.match(row.detail, /parent gate #898 not due — 1 sibling sub-issue\(s\) open/);
+});
+
+// #3508: the parent path follows the Parent-Gate Procedure's four gate states.
+// A resolved parent (a verdict label) owes nothing more; a gated parent owes the
+// brief its gate posted whatever its risk tier -- only a `due` parent meets the floor.
+const BRIEF_3508 = { body: '## Verification Brief\n### Confirmed\n', authorAssociation: 'MEMBER' };
+// Sub-issues for a parent whose siblings are all done: #900 reads `open` on GitHub but is the
+// run's own record (parentGateRow's `records: [900]`), which the check counts as closed.
+function closedSubs3508(risk) {
+  return [
+    { number: 900, state: 'open', labels: [risk] },
+    { number: 901, state: 'closed', labels: [risk] },
+  ];
+}
+// Sub-issues with an open sibling beside the run's own record: the parent gate is not complete.
+function openSubs3508(risk) {
+  return [
+    { number: 900, state: 'open', labels: [risk] },
+    { number: 901, state: 'open', labels: [risk] },
+  ];
+}
+
+test('AC1.1: #3508 a demo:approved parent with every sibling closed skips as already dispositioned', () => {
+  const { row } = parentGateRow({ records: [900], parentLabels: ['demo:approved'], subIssues: closedSubs3508('risk:high') });
+  assert.strictEqual(row.result, 'skip', row.detail);
+  assert.match(row.detail, /parent #898 already dispositioned/);
+  assert.doesNotMatch(row.detail, /missing demo:pending/);
+});
+
+test('#3508 a below-floor resolved parent skips as dispositioned, not below the floor', () => {
+  const { row } = parentGateRow({ records: [900], parentLabels: ['demo:approved'], subIssues: closedSubs3508('risk:medium') });
+  assert.strictEqual(row.result, 'skip', row.detail);
+  assert.match(row.detail, /already dispositioned/);
+  assert.doesNotMatch(row.detail, /below oversight floor/);
+});
+
+test('#3508 every verdict spelling and an outranked pending label skip as dispositioned', () => {
+  for (const parentLabels of [['accept:approved'], ['demo:changes-requested'], ['accept:changes-requested'], ['demo:pending', 'demo:changes-requested']]) {
+    const { row } = parentGateRow({ records: [900], parentLabels, subIssues: closedSubs3508('risk:high') });
+    assert.strictEqual(row.result, 'skip', `${parentLabels}: ${row.detail}`);
+    assert.match(row.detail, /already dispositioned/, parentLabels.join());
+    assert.doesNotMatch(row.detail, /outranked/, parentLabels.join());
+  }
+});
+
+test('#3508 a reopened sub-issue under a resolved parent reads dispositioned, not not due', () => {
+  const { row } = parentGateRow({ records: [900], parentLabels: ['demo:approved'], subIssues: openSubs3508('risk:high') });
+  assert.strictEqual(row.result, 'skip', row.detail);
+  assert.match(row.detail, /already dispositioned/);
+  assert.doesNotMatch(row.detail, /not due/);
+});
+
+test('AC2.1: #3508 a below-floor gated parent with no brief fails', () => {
+  const { row } = parentGateRow({ records: [900], parentLabels: ['demo:pending'], subIssues: closedSubs3508('risk:medium') });
+  assert.strictEqual(row.result, 'fail', row.detail);
+  assert.match(row.detail, /#898: no comment carries a confirmed Verification Brief or an acceptance packet/);
+  assert.doesNotMatch(row.detail, /below oversight floor/);
+});
+
+test('#3508 a below-floor gated parent with a brief passes, never skips', () => {
+  const { row } = parentGateRow({
+    records: [900],
+    parentLabels: ['demo:pending'],
+    parentComments: [BRIEF_3508],
+    subIssues: closedSubs3508('risk:medium'),
+  });
+  assert.strictEqual(row.result, 'pass', row.detail);
+});
+
+test('#3508 a gated parent with an open sibling still has its brief checked', () => {
+  const { row } = parentGateRow({ records: [900], parentLabels: ['demo:pending'], subIssues: openSubs3508('risk:medium') });
+  assert.strictEqual(row.result, 'fail', row.detail);
+  assert.doesNotMatch(row.detail, /not due/);
+  assert.doesNotMatch(row.detail, /below oversight floor/);
+});
+
+test('#3508 a resolved parent\'s skip reason rides a failing row', () => {
+  const row = twoParentRow({ otherParentLabels: ['demo:approved'], dueParentLabels: [], dueParentComments: [] });
+  assert.strictEqual(row.result, 'fail', row.detail);
+  assert.match(row.detail, /#899: missing demo:pending or accept:pending label/);
+  assert.match(row.detail, /parent #898 already dispositioned/);
+});
+
+test('#3508 a resolved parent\'s skip reason rides a passing row', () => {
+  const row = twoParentRow({ otherParentLabels: ['demo:approved'], dueParentLabels: ['demo:pending'], dueParentComments: [BRIEF_3508] });
+  assert.strictEqual(row.result, 'pass', row.detail);
+  assert.match(row.detail, /parent #898 already dispositioned/);
+});
+
+// The procedure's gate-state table is the prose twin of this check's parent path.
+// It compares each row's quoted result and detail with the row the check emits for
+// that state, rather than asserting the literals are merely present.
+const GATE_TABLE_HEADING = '**What the `acceptance-labeling` row does with each gate state.**';
+const GATE_TABLE_END = '## Close the parent below the floor';
+const GATE_TABLE_STATES = ['`incomplete`', '`resolved`', '`gated`', '`due`, `exceeds: false`', '`due`, `exceeds: true`'];
+function gateTableFixture3508(state) {
+  switch (state) {
+    case '`incomplete`':
+      return parentGateRow({ records: [900], subIssues: openSubs3508('risk:high') });
+    case '`resolved`':
+      return parentGateRow({ records: [900], parentLabels: ['demo:approved'], subIssues: closedSubs3508('risk:high') });
+    case '`gated`':
+      return parentGateRow({ records: [900], parentLabels: ['demo:pending'], subIssues: closedSubs3508('risk:medium') });
+    case '`due`, `exceeds: false`':
+      return parentGateRow({ records: [900], subIssues: closedSubs3508('risk:medium') });
+    case '`due`, `exceeds: true`':
+      return parentGateRow({ records: [900], subIssues: closedSubs3508('risk:high') });
+    default:
+      throw new Error(`no fixture for gate state ${state}`);
+  }
+}
+function assertGateTableTwin(doc) {
+  const start = doc.indexOf(GATE_TABLE_HEADING);
+  assert.ok(start >= 0, 'the gate-state table heading is missing');
+  const end = doc.indexOf(GATE_TABLE_END, start);
+  assert.ok(end > start, 'the gate-state table is not followed by the close-below-the-floor section');
+  const rows = doc.slice(start, end).split('\n').filter((l) => l.startsWith('| `')).map((l) => {
+    const cells = l.split('|').slice(1, -1).map((c) => c.trim());
+    return { state: cells[0], results: [...cells[1].matchAll(/`([^`]+)`/g)].map((m) => m[1]), detail: cells[2].match(/`([^`]+)`/)[1] };
+  });
+  assert.deepStrictEqual(rows.map((r) => r.state), GATE_TABLE_STATES);
+  for (const r of rows) {
+    const { row } = gateTableFixture3508(r.state);
+    const emitted = row.detail.replace(/#898/g, '#P').replace('1 sibling', 'N sibling');
+    // Only the gated row names a second outcome (the brief present); every other row names one.
+    assert.strictEqual(r.results.length, r.state === '`gated`' ? 2 : 1, `${r.state}: result words ${r.results}`);
+    assert.strictEqual(row.result, r.results[0], `${r.state}: result`);
+    assert.strictEqual(emitted, r.detail, `${r.state}: detail`);
+    if (r.state === '`gated`') {
+      const { row: withBrief } = parentGateRow({ records: [900], parentLabels: ['demo:pending'], parentComments: [BRIEF_3508], subIssues: closedSubs3508('risk:medium') });
+      assert.strictEqual(withBrief.result, r.results[1], `${r.state}: result with a brief`);
+    }
+  }
+}
+const PARENT_GATE_DOC_3508 = readText(path.join(__dirname, '../../../plugin/skills/wrap-up/verification-brief-parent-gate.md'));
+
+// The go-red control rides the positive test, so a restored old condition in engine-verify.js
+// fails this test on its first assertion rather than leaving a doc-only control green.
+test('AC3.1: #3508 the procedure\'s gate-state table matches the row the check emits', () => {
+  assertGateTableTwin(PARENT_GATE_DOC_3508);
+  // Each mutant must differ from the doc, or the control would pass vacuously on an input it never changed.
+  const reworded = PARENT_GATE_DOC_3508.replace('already dispositioned', 'already accepted');
+  const dropped = PARENT_GATE_DOC_3508.split('\n').filter((l) => !l.startsWith('| `gated` |')).join('\n');
+  const briefHalf = PARENT_GATE_DOC_3508.replace('`pass` with one', '`warn` with one');
+  for (const [name, mutant] of [['reworded detail', reworded], ['dropped row', dropped], ['reworded brief half', briefHalf]]) {
+    assert.notStrictEqual(mutant, PARENT_GATE_DOC_3508, `the ${name} mutant must differ from the doc`);
+    assert.throws(() => assertGateTableTwin(mutant), undefined, `the ${name} mutant must fail the pin`);
+  }
 });
 
 // #4551: work-links body-text fixture. bodies: { [n]: body string | null };
@@ -2506,6 +2675,140 @@ test('AC2.2: the same PR brief authored COLLABORATOR satisfies a trusted pointer
   assert.strictEqual(row.result, 'pass');
 });
 
+// #4611: the acceptance packet is the current form of the comment this check
+// looks for; the brief forms above stay readable for records that predate it.
+const PACKET_BODY = '<!-- acceptance-packet: v1 -->\n## Acceptance packet — #900';
+const PACKET_V2_BODY = '<!-- acceptance-packet: v2 -->\n## Acceptance packet — #900';
+const packetComment = (body, authorAssociation) => ({ body, url: 'https://x/ap1', author: { login: 'eve' }, authorAssociation });
+
+test('#4611: a trusted acceptance packet under demo:pending passes', () => {
+  const { row } = acceptanceTrustRow({ issueComments: [packetComment(PACKET_BODY, 'MEMBER')] });
+  assert.strictEqual(row.result, 'pass');
+  assert.strictEqual(row.detail, '');
+});
+
+test('#4611: a trusted packet on a pr-first run passes without reading the PR', () => {
+  const { row, prViews } = acceptanceTrustRow({ withPr: true, issueComments: [packetComment(PACKET_BODY, 'MEMBER')] });
+  assert.strictEqual(row.result, 'pass');
+  assert.deepStrictEqual(prViews, []);
+});
+
+test('#4611: a packet authored NONE fails and names the skipped comment', () => {
+  const { row } = acceptanceTrustRow({ issueComments: [packetComment(PACKET_BODY, 'NONE')] });
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /#900: no comment carries a confirmed Verification Brief/);
+  assert.match(row.detail, /ignored: skipped marker comment https:\/\/x\/ap1 by eve \(NONE\)/);
+});
+
+test('#4611: a trusted packet keeps the skip note of an untrusted one on the passing row', () => {
+  const { row } = acceptanceTrustRow({
+    issueComments: [
+      packetComment(PACKET_BODY, 'NONE'),
+      { ...packetComment(PACKET_BODY, 'MEMBER'), url: 'https://x/ap2' },
+    ],
+  });
+  assert.strictEqual(row.result, 'pass');
+  assert.match(row.detail, /ignored: skipped marker comment https:\/\/x\/ap1 by eve \(NONE\)/);
+});
+
+test('#4611: a trusted packet of an unknown schema version fails as unreadable, naming the version', () => {
+  const { row } = acceptanceTrustRow({ issueComments: [packetComment(PACKET_V2_BODY, 'MEMBER')] });
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /#900: acceptance packet comment is unreadable \(schemaVersion 2\)/);
+});
+
+test('#4611: an unreadable packet is not rescued by a legacy brief beside it', () => {
+  const { row } = acceptanceTrustRow({
+    issueComments: [packetComment(PACKET_V2_BODY, 'MEMBER'), packetComment(TRUST_BRIEF_BODY, 'MEMBER')],
+  });
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /unreadable \(schemaVersion 2\)/);
+});
+
+test('#4611: a legacy brief still passes beside an untrusted packet, with the skip note', () => {
+  const { row } = acceptanceTrustRow({
+    issueComments: [packetComment(PACKET_BODY, 'NONE'), { ...packetComment(TRUST_BRIEF_BODY, 'MEMBER'), url: 'https://x/b1' }],
+  });
+  assert.strictEqual(row.result, 'pass');
+  assert.match(row.detail, /ignored: skipped marker comment https:\/\/x\/ap1 by eve \(NONE\)/);
+});
+
+test('#4611: the marker counts only as the whole first line', () => {
+  for (const body of [`see ${PACKET_BODY}`, `${PACKET_BODY.split('\n')[0]} trailing\n## Acceptance packet — #900`, `\n${PACKET_BODY}`]) {
+    const { row } = acceptanceTrustRow({ issueComments: [packetComment(body, 'MEMBER')] });
+    assert.strictEqual(row.result, 'fail', body);
+    assert.match(row.detail, /no comment carries a confirmed Verification Brief/, body);
+  }
+});
+
+test('#4611: the none failure names both forms it looked for', () => {
+  const { row } = acceptanceTrustRow({ issueComments: [] });
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /#900: no comment carries a confirmed Verification Brief or an acceptance packet/);
+});
+
+test('#4611: an untrusted comment holding the marker and the brief is named once', () => {
+  const both = `${PACKET_BODY}\n${TRUST_BRIEF_BODY}`;
+  const note = 'skipped marker comment https://x/ap1 by eve (NONE)';
+  const failing = acceptanceTrustRow({ issueComments: [packetComment(both, 'NONE')] }).row;
+  assert.strictEqual(failing.result, 'fail');
+  assert.strictEqual(failing.detail.split(note).length - 1, 1, failing.detail);
+
+  const passing = acceptanceTrustRow({
+    issueComments: [packetComment(both, 'NONE'), { ...packetComment(TRUST_BRIEF_BODY, 'MEMBER'), url: 'https://x/b1' }],
+  }).row;
+  assert.strictEqual(passing.result, 'pass');
+  assert.strictEqual(passing.detail.split(note).length - 1, 1, passing.detail);
+});
+
+// Decision Q1's parent gate posts a legacy brief, and a record with sub-issues and no
+// parent takes the no-parent path with a packet, so a resolved parent reads both forms.
+function parentTargetRow(comments) {
+  const runDir = makeTmpDir('verify-acceptance-parent-target-');
+  const repoRoot = makeCleanRepoRoot();
+  writePolicy(repoRoot, 'work-links: native\n');
+  writeSpecFile(runDir, '900', 900);
+  const fakeGh = (args) => {
+    if (args[0] === '--version') return 'gh version 2.0.0';
+    if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), 898);
+    if (isSubIssuesCall(args)) return subIssuesGh([{ number: 900, state: 'closed', labels: ['risk:high'] }]);
+    if (args.includes('labels,comments')) return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments });
+    return '';
+  };
+  const result = runVerify({ runDir, base: 'main', repoRoot, deps: { git: fakeOriginGit(), gh: fakeGh } });
+  return result.rows.find((r) => r.check === 'acceptance-labeling');
+}
+
+test('#4611: a parent target passes on a v1 packet with no legacy brief', () => {
+  const row = parentTargetRow([packetComment(PACKET_BODY, 'MEMBER')]);
+  assert.strictEqual(row.result, 'pass', row.detail);
+});
+
+test('#4611: a parent target with a v2 packet beside a legacy brief fails as unreadable', () => {
+  const row = parentTargetRow([packetComment(PACKET_V2_BODY, 'MEMBER'), packetComment(TRUST_BRIEF_BODY, 'MEMBER')]);
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /#898: acceptance packet comment is unreadable \(schemaVersion 2\)/);
+});
+
+test('#4611: a parent target still passes on a legacy brief alone', () => {
+  assert.strictEqual(parentTargetRow([packetComment(TRUST_BRIEF_BODY, 'MEMBER')]).result, 'pass');
+});
+
+test('#4611: a packet does not stand in for the pending label', () => {
+  const runDir = makeTmpDir('verify-acceptance-packet-nolabel-');
+  writeSpecFile(runDir, '900', 900);
+  const fakeGh = (args) => {
+    if (args[0] === '--version') return 'gh version 2.0.0';
+    if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
+    if (args.includes('labels,comments')) return JSON.stringify({ labels: [], comments: [packetComment(PACKET_BODY, 'MEMBER')] });
+    return '';
+  };
+  const result = runVerify({ runDir, base: 'main', repoRoot: makeNativeRepoRoot(), deps: { git: fakeOriginGit(), gh: fakeGh } });
+  const row = result.rows.find((r) => r.check === 'acceptance-labeling');
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /#900: missing demo:pending or accept:pending label/);
+});
+
 // #3333: in a multi-spec run the Verification Brief lands on the shared PR as
 // `<!-- run-comment: brief:{n} -->`; acceptance-labeling reads that marker
 // first and falls back to the plain `brief` marker (single-spec / pre-change).
@@ -2852,7 +3155,7 @@ test('runVerify short-circuits to an all-unknown row set when runDir is null, ne
 // invocation is wrapped to recover stdout from the thrown error either way.
 test('wrap-up-engine.js verify prints a check table for a real, anchored run dir', () => {
   const cliPath = path.join(__dirname, '../../../plugin/bin/wrap-up-engine.js');
-  const repo = gitRepo();
+  const repo = trackTmp(gitRepo());
   const runDir = fs.mkdtempSync(path.join(repo, 'verify-rundir-'));
   let out;
   try {

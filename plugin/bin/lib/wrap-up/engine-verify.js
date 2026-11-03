@@ -36,6 +36,7 @@ const { parseRecordFacets, LABELS, parseParent, parseSubIssues } = require('../i
 const { resolvePolicyKeys } = require('../policy-schema');
 const { readRunStateWithParent, readRunState } = require('../hooks/context');
 const { resolveRecords, closingRecords } = require('./pack');
+const { readPacket } = require('./packet-gather');
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 const { splitNul, parseStatusPorcelainZ } = require('../git-z');
 const { CLOSING_KEYWORD_ALTERNATION } = require('../issue-branch-tracking');
@@ -877,10 +878,24 @@ function scanPrBrief(prComments, target) {
 // contains the brief, never only the most recent one. A last-comment-only
 // test would hard-stop a correctly-gated parent.
 //
-// #3222: the parent path evaluates the Parent-Gate Procedure's gate state and
-// oversight floor first (verification-brief-parent-gate.md's "Evaluate the
-// gate"). An incomplete gate, or a due parent whose sub-issues sit below the
-// oversight floor, skips the parent instead of requiring its demo:pending. The
+// #4611: the current form of that comment is the acceptance packet, read by
+// `readPacket` (whole first line equals the marker, trusted authors only). The
+// brief forms below -- a confirmed brief on the issue, or the pr-first pointer
+// plus a brief on the PR -- are legacy readers, reached only when no trusted
+// packet exists. Removal condition: these readers go once no open record carries
+// a Verification Brief without an acceptance packet, to be scheduled by the final
+// contract-cleanup record the human-in-control epic (#4608) names (#4613's
+// non-goals); demo/legacy-brief-compatibility.md records the same test. A trusted
+// packet of an unknown schema version fails rather than falling through, so a
+// brief beside it cannot pass it.
+//
+// #3222, #3508: the parent path evaluates the Parent-Gate Procedure's gate state
+// first (verification-brief-parent-gate.md's "Evaluate the gate"), one branch per
+// state. `incomplete` skips (not due). `resolved` skips (a verdict label means the
+// parent is already dispositioned and owes nothing more). `gated` falls through to
+// the disposition and brief checks whatever its risk tier: the floor decides only
+// whether a `due` parent is gated, so only `due` meets the oversight floor, and a
+// below-floor `due` parent skips instead of requiring its demo:pending. The
 // below-floor skip detail names the post-merge close (#4466): that parent is
 // closed by pr-first-merge-post-merge.md's Step 4.0b once the merge lands, so
 // it never carries an acceptance label. That detail is `github-issues` wording:
@@ -915,7 +930,7 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
   }
   const failing = [];
   const passedNotes = []; // {target, ignored[]} for targets that pass but skipped untrusted comments (#3358)
-  const skipped = []; // #3222: parent-gate skip reasons (incomplete gate, below oversight floor)
+  const skipped = []; // #3222, #3508: parent-gate skip reasons (incomplete gate, resolved parent, below oversight floor)
   const closing = new Set(issues); // every run record is being closed by this run (#3222 gate input)
 
   // Resolve each issue's target (its parent, when resolvable; itself
@@ -1023,13 +1038,19 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
         skipped.push(`parent gate #${target} not due — ${openCount} sibling sub-issue(s) open`);
         continue;
       }
-      const { exceeds } = exceedsOversightFloor(
-        { risk: maxRiskTier(gateInput.map((s) => parseRecordFacets(s.labels))) },
-        { riskFloor, sizeFloor: null },
-      );
-      if (!exceeds) {
-        skipped.push(`parent #${target} below oversight floor — closes after the merge lands (Step 4.0b)`);
+      if (gate === 'resolved') {
+        skipped.push(`parent #${target} already dispositioned`);
         continue;
+      }
+      if (gate === 'due') {
+        const { exceeds } = exceedsOversightFloor(
+          { risk: maxRiskTier(gateInput.map((s) => parseRecordFacets(s.labels))) },
+          { riskFloor, sizeFloor: null },
+        );
+        if (!exceeds) {
+          skipped.push(`parent #${target} below oversight floor — closes after the merge lands (Step 4.0b)`);
+          continue;
+        }
       }
     }
     // The record's resolved acceptance state (acceptanceOf's precedence over both
@@ -1047,12 +1068,26 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
     // Skip notes for this target's untrusted marker comments; appended to its
     // failing line, or to `passedNotes` when the target passes.
     const ignored = [];
+    // One untrusted comment can hold more than one marker, and is named once.
+    const noteIgnored = (notes) => {
+      for (const note of notes) if (!ignored.includes(note)) ignored.push(note);
+    };
     const fail = (line) => failing.push(ignored.length ? `${line}; ignored: ${ignored.join('; ')}` : line);
+    const packet = readPacket(comments);
+    noteIgnored(packet.skipped);
+    if (packet.status === 'found') {
+      if (ignored.length) passedNotes.push({ target, ignored });
+      continue;
+    }
+    if (packet.status === 'unreadable') {
+      fail(`#${target}: acceptance packet comment is unreadable (schemaVersion ${packet.version})`);
+      continue;
+    }
     const fullBrief = scanMarkerComments(
       comments,
       (c) => c.body && c.body.includes('## Verification Brief') && c.body.includes('### Confirmed')
     );
-    ignored.push(...fullBrief.ignored);
+    noteIgnored(fullBrief.ignored);
     if (fullBrief.trusted) {
       if (ignored.length) passedNotes.push({ target, ignored });
       continue;
@@ -1066,7 +1101,7 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
     // _shared/pr-run-comments.md's "Multi-spec brief and timing comments" read side.
     if (prNumber) {
       const pointer = scanMarkerComments(comments, (c) => c.body && c.body.includes('Verification Brief posted to PR #'));
-      ignored.push(...pointer.ignored);
+      noteIgnored(pointer.ignored);
       if (pointer.trusted) {
         let prCommentsRaw;
         try {
@@ -1083,7 +1118,7 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
           continue;
         }
         const prBrief = scanPrBrief(prComments, target);
-        ignored.push(...prBrief.ignored);
+        noteIgnored(prBrief.ignored);
         if (prBrief.trusted) {
           if (ignored.length) passedNotes.push({ target, ignored });
           continue;
@@ -1092,7 +1127,7 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
         continue;
       }
     }
-    fail(`#${target}: no comment carries a confirmed Verification Brief`);
+    fail(`#${target}: no comment carries a confirmed Verification Brief or an acceptance packet`);
   }
   // Notes are never dropped: a failing row carries each passing target's skipped
   // comments after the failing lines; an all-pass row's detail is the notes.
