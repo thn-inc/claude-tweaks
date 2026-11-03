@@ -305,15 +305,17 @@ for (const shell of ['bash', 'zsh']) {
         .replaceAll('{branches-path}', forwardSlashes(path.join(tmp, 'branches.txt')))
         .replaceAll('{REPO_ROOT}', forwardSlashes(repo));
       const run = (limit, rows, text = fence) => runFence(withPaths(`${fetches}\n${text}`), { limit, ghRows: prRows(rows), shell });
-      const remnants = ['merged PR #2 branch-2', 'merged PR #4 branch-4', 'closed PR #2 branch-2', 'closed PR #4 branch-4'];
-      // A limit above the list: the remnants of both states, no cap row.
+      // The stub serves the same rows to both states, as `--state closed` also returns merged PRs (#4819):
+      // the block de-duplicates by `number`, so each remnant prints once, under the first state that holds it.
+      const remnants = ['merged PR #2 branch-2', 'merged PR #4 branch-4'];
+      // A limit above the list: each remnant once, no cap row.
       const whole = run(1000, 5);
       assert.equal(whole.status, 0, `item 4: the high-limit run must exit 0: ${whole.stderr}`);
       assert.deepEqual(whole.stdout.trim().split('\n'), remnants);
       // The list truncated at the limit: both states say their older branches went unchecked, once each.
       const capped = run(5, 8);
       assert.equal(capped.status, 0, `item 4: the capped run must exit 0: ${capped.stderr}`);
-      assert.deepEqual(capped.stdout.trim().split('\n'), [remnants[0], remnants[1], capRow('merged', 5), remnants[2], remnants[3], capRow('closed', 5)]);
+      assert.deepEqual(capped.stdout.trim().split('\n'), [remnants[0], remnants[1], capRow('merged', 5), capRow('closed', 5)]);
       // A list exactly the size of the limit cannot be told from a truncated one: it says so too.
       assert.ok(run(5, 5).stdout.includes(capRow('merged', 5)), 'item 4: the exact-limit run must print the cap row');
       // One row under the limit is a whole list: no cap row.
@@ -331,6 +333,10 @@ for (const shell of ['bash', 'zsh']) {
       const strict = fence.replace('prs.length >= {resolved-limit}', 'prs.length > {resolved-limit}');
       assert.notEqual(strict, fence);
       assert.ok(!run(5, 5, strict).stdout.includes('(the cap)'));
+      // Go-red: a block without the de-duplication prints a PR held by both lists twice.
+      const noDedup = fence.replace('!seen.has(pr.number) && seen.add(pr.number) && ', '');
+      assert.notEqual(noDedup, fence, 'item 4: the de-duplication must be present to remove');
+      assert.ok(run(1000, 5, noDedup).stdout.includes('closed PR #2 branch-2'));
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
       fs.rmSync(tmp, { recursive: true, force: true });
