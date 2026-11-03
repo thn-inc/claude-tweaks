@@ -188,6 +188,18 @@ test('the Already merged section routes on exactly the verdict and next values c
   for (const next of nexts) assert.ok(section.includes(`\`${next}\``), `the section names next \`${next}\``);
 });
 
+test('#4798: the Already merged section reports stepSkips on every ran and skipped line that carries them, and a skipped line\'s parentFailures; the CLI docs name the fields', () => {
+  assert.match(alreadyMergedSection(), /Any line reporting an entry that carries `stepSkips` — a `ran` entry, clean or a failure, or a `skipped` one — also adds `, Step 4\.0b skipped — \{reason\}` per element/);
+  assert.match(alreadyMergedSection(), /A `skipped` entry that carries `parentFailures` also adds `, Step 4\.0b \{reason\} on #\{parent\}` per element/);
+  assert.doesNotMatch(alreadyMergedSection(), /stepSkips[^\n]*`unreadable-policy` or `invalid-risk-floor`/, 'Q4: stepSkips are not limited to the two policy reasons');
+  for (const file of [['plugin', 'bin', 'post-merge-run.js'], ['docs', 'plugin-structure.md']]) {
+    const text = flat(read(...file));
+    assert.match(text, /stepSkips\?/, `${file.join('/')}: the entry shape carries stepSkips`);
+    assert.match(text, /closing set was empty/, `${file.join('/')}: states when a parentless skip is a stepSkips element`);
+    assert.match(text, /marker-write-failed[^.]*keeps/, `${file.join('/')}: a failed marker write keeps the Step 4.0b fields`);
+  }
+});
+
 test('AC1.1 AC1.2: merge-mode.md names cleanup-only only in its Token rules rejection', () => {
   const text = flat(read('plugin', 'skills', 'wrap-up', 'merge-mode.md'));
   assert.strictEqual((text.match(/cleanup-only/g) || []).length, 1);
