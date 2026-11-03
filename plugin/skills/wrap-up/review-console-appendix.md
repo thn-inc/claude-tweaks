@@ -47,9 +47,13 @@ no longer applies, never applied blind, per `_shared/staged-patch.md`; an unreco
 prefix lands in Pending review as `pending — unmapped-prefix`, never auto-approved; an
 `sdd-ruling-*` item whose staged header does not show it safe lands as
 `pending — sdd-ruling-deferral-no-defer-reason`, `pending — sdd-ruling-needs-human-decision`,
-`pending — sdd-ruling-unclassified`, or `pending — sdd-ruling-unreadable` (the `sdd-ruling-*` bullet below); a `wrap-up-reference-*` item whose header
-carries a `Held:` line (`reference-sweep.md` Step 4), or whose file cannot be read, lands as
-`pending — reference-repair-held` or `pending — reference-repair-unreadable`, never auto-approved; a staged item named by a `REFUSED` line in `decisions.md` is classified under **Refused — no defer reason**
+`pending — sdd-ruling-unclassified`, or `pending — sdd-ruling-unreadable` (the `sdd-ruling-*` bullet below); a `wrap-up-reference-*` item the initiative floor held (a `references` finding with
+`hold: true`, a header carrying `Hold: yes` or a `Held:` line, or a staged diff naming a test file
+or a merge-sensitive path — `reference-sweep.md` Step 4) lands as `pending — reference-repair-held`;
+one whose finding or header is missing, duplicated or malformed, so the two cannot agree on
+`Hold: no`, whose staged diff is missing or unparseable, or whose `merge-sensitive-paths` policy value cannot be read, lands as
+`pending — reference-repair-unclassified`; one whose file cannot be read lands as
+`pending — reference-repair-unreadable`; none is auto-approved; a staged item named by a `REFUSED` line in `decisions.md` is classified under **Refused — no defer reason**
 before any prefix rule runs and resolves to `refused` — those rows are in the CLI's table like
 every other row, and a `refused` item is never applied, at any tier, per `refused-proposals.md`.
 The CLI also computes the merge half with both carve-outs (`merge.resolution` = `merge` |
@@ -60,7 +64,7 @@ The CLI also computes the merge half with both carve-outs (`merge.resolution` = 
 the write the reconciler's archival needs, #1854; `droppedByTiebreak` holds the read-only Dropped
 by tiebreak block's rows, `filings` one `{item, fingerprint, title}` per planned can't-tell
 filing, with no proposal text, #3949). That file may later gain an optional
-`residueAcknowledgedAt`, written only by `console-residue.js --ack`/`--ack-all` (#3370); an item's stored resolution may later be rewritten by `console-resolve.js --set-item` (`refused-proposals.md`'s failed-execution rewrite — `apply` → `keep-staged`, adding `rewrittenFrom`/`rewrittenAt`, and dropping a stale `residueAcknowledgedAt`), and a `filings` entry whose fingerprint has no filed line in that dir's `decisions.md` reads as `filing-pending` residue (#4170); and
+`residueAcknowledgedAt`, written only by `console-residue.js --ack`/`--ack-all` (#3370); an item's stored resolution may later be rewritten by `console-resolve.js --set-item` (`refused-proposals.md`'s failed-execution rewrite — `apply` → `keep-staged`, adding `rewrittenFrom`/`rewrittenAt`, and dropping a stale `residueAcknowledgedAt`; a reference repair whose diff no longer applies at Phase 4 is rewritten `approve` → `pending — reference-repair-stale` the same way, per `execution-and-verification.md`'s Reference repairs bullet), and a `filings` entry whose fingerprint has no filed line in that dir's `decisions.md` reads as `filing-pending` residue (#4170); and
 `console-resolve.js --json` on a fresh resolution carries an `unresolved` array (the
 `pending`/`keep-staged` items, `[]` when none); the idempotent re-render of an already-resolved
 console prints the stored table and the `Needs a human` block as text whatever the flags.
