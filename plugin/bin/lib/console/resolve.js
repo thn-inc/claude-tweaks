@@ -14,14 +14,14 @@ const { resolveRecords } = require('../wrap-up/pack');
 const {
   SDD_RULING_REASONS, sddRulingDeferralReason, SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction,
 } = require('./sdd-ruling');
-
-// #3942: the apply reason on a deferral ruling — its ratify files a backlog record
-// (review-console-appendix.md's sdd-ruling-* bullet), not a bare accepted write-back.
-const RATIFY_FILES_RECORD_REASON = 'ratify files a deferral record (Defer-reason carried) — ledger row deferred once it exists';
 const { planFilings } = require('./finding-filing');
 const { FINDING_PATH_CLASS, FINDING_LENS_CLASS, FINDING_PATH, FINDING_LOCATION, FINDING_LENS, parseCoincidence } = require('./finding-path');
 const { FINDINGS_ARTIFACT, VERDICT_LINE_END } = require('../tiebreak');
 const { parseCategory, isApplicableReflect, parseReflectDestination, deferReasonProblem } = require('./reflect-destination');
+
+// #3942: the apply reason on a deferral ruling — its ratify files a backlog record
+// (review-console-appendix.md's sdd-ruling-* bullet), not a bare accepted write-back.
+const RATIFY_FILES_RECORD_REASON = 'ratify files a deferral record (Defer-reason carried) — ledger row deferred once it exists';
 
 // Section names exactly as the console renders them (console-template.md;
 // engine-render.js's SECTION_SPECS for the five curation sections).

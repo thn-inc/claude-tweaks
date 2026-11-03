@@ -69,6 +69,34 @@ test('resolve-console --filing-failed on a non-finding item is refused by the CL
   assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'console.json'), 'utf8')).executedAt, undefined, 'a refused call writes nothing');
 });
 
+// #3942: a ruling id named in both --reverse-failed and --filing-failed; the CLI renders the refusal.
+test('resolve-console naming one ruling in both --reverse-failed and --filing-failed is refused by the CLI with the conflicting-failure-ids message', { skip: process.platform === 'win32' }, () => {
+  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-resolve-console-cf-')));
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  const runDir = path.join(repo, '.claude-tweaks', 'pipelines', '2026-11-03T000000-cf');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'mode: auto\n');
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({
+    commentIds: ['IC_primary'], prNumber: 42, items: [{ id: 'r1', kind: 'batch', summary: 'ruling', isRulingRow: true }],
+  }));
+  const binDir = path.join(repo, 'stub-bin');
+  fs.mkdirSync(binDir);
+  const comment = { id: 'IC_primary', body: '<!-- console-item: resolve -->\n- [ ] **Resolve console**\n<!-- console-item: r1 -->\n- [ ] ruling r1' };
+  fs.writeFileSync(path.join(binDir, 'gh'), `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(JSON.stringify({ comments: [comment], body: 'Fixes #42' }))});\n`, { mode: 0o755 });
+  let result;
+  try {
+    const stdout = execFileSync('node', [HOOKS, 'resolve-console', '--run', runDir, '--reverse-failed', 'r1', '--filing-failed', 'r1'], {
+      cwd: repo, encoding: 'utf8', env: { ...process.env, PIPELINE_RUN_DIR: '', PATH: `${binDir}${path.delimiter}${process.env.PATH}` },
+    });
+    result = { code: 0, stdout };
+  } catch (e) {
+    result = { code: e.status, stdout: e.stdout || '' };
+  }
+  assert.equal(result.code, 1);
+  assert.match(result.stdout, /id\(s\) r1 named in both --reverse-failed and --filing-failed, console not resolved/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'console.json'), 'utf8')).executedAt, undefined, 'a refused call writes nothing');
+});
+
 // --reverse-failed is a declared flag: accepted rather than intercepted as unknown.
 test('resolve-console accepts --reverse-failed as a declared flag', () => {
   const result = runHook(['resolve-console', '--run', '/definitely/not/a/real/path/xyz', '--reverse-failed', 'r1']);

@@ -23,7 +23,7 @@
 // whose staged file does not show it safe to ratify (`console/sdd-ruling.js`'s
 // `sddRulingDeferralReason`) is named in `rulingGateGaps` and withheld the
 // same way; `readRulingTexts` reads those staged files for detect.
-// #3942: a ruling item with readable text carries `ratifyAction` (`sddRulingRatifyAction`),
+// #3942: a ruling item with non-blank ruling text carries `ratifyAction` (`sddRulingRatifyAction`),
 // a gapped row included: it is named in `rulingGateGaps` and withheld from auto-ticking,
 // but a human's tick still ratifies it. `file-record` tells the executing session its
 // ratify files a deferral record; a filing that failed goes back through
@@ -326,7 +326,7 @@ function decideConsoleExecute(consoleJson, comments, now, ctx = {}) {
   // safe to ratify. Pure: the texts arrive in ctx (consoleExecuteDetect reads them);
   // a ruling id missing from ctx.rulingTexts reads as unclassified, and so does
   // every ruling row when the map is absent altogether (#4048).
-  // #3942: every ruling row with readable text also carries what its ratify does —
+  // #3942: every ruling row with non-blank ruling text also carries what its ratify does —
   // file-record (a deferral: the executing session files its record) or accept — gapped
   // rows too: the gap withholds auto-ticking, a human tick still ratifies.
   const rulingGateGaps = [];
