@@ -12,6 +12,7 @@ const path = require('path');
 const { evaluateMaturation } = require('../issues/grant-maturation');
 const { resolveRecords } = require('../wrap-up/pack');
 const { SDD_RULING_REASONS, sddRulingDeferralReason } = require('./sdd-ruling');
+const { REFERENCE_REPAIR_REASONS, referenceRepairHoldReason, referenceFindingsByFile } = require('./reference-repair');
 const { planFilings } = require('./finding-filing');
 const { FINDING_PATH_CLASS, FINDING_LENS_CLASS, FINDING_PATH, FINDING_LOCATION, FINDING_LENS, parseCoincidence } = require('./finding-path');
 const { FINDINGS_ARTIFACT, VERDICT_LINE_END } = require('../tiebreak');
@@ -350,7 +351,10 @@ function readSnapshot({ runDir, deps }) {
   const patchChecks = deps.checkPatchStack
     ? deps.checkPatchStack(patchItems.map((item) => item.path))
     : Object.fromEntries(patchItems.map((item) => [item.name, deps.gitApplyCheck(item.path)]));
-  return { ...files, members, grants, grantsError, patchChecks };
+  // The merge-sensitive globs, for the reference-repair floor (#4636). Anything but a list of strings
+  // reads as null, so a caller that omits it holds the repair rather than approves it.
+  const sensitivePaths = Array.isArray(deps.sensitivePaths) && deps.sensitivePaths.every((p) => typeof p === 'string') ? deps.sensitivePaths : null;
+  return { ...files, members, grants, grantsError, patchChecks, sensitivePaths };
 }
 
 function decisionLines(decisions) {
@@ -713,23 +717,10 @@ function settledFileResolution(v) {
   return consoleVerdictResolution(v);
 }
 
-// #4585: approving a reference repair at `unattended` applies it with no click,
-// so one the initiative budget's floor keeps from running unapproved (a test
-// file, a merge-sensitive path) or whose target is ambiguous stays pending. The
-// sweep marks those with a `Held:` line in the header — the lines before the
-// first blank line — and a file that could not be read proves nothing either.
-// Prose twin: wrap-up/reference-sweep.md Step 4.
-function referenceRepairHoldReason(item) {
-  if (item.readError || item.text === null) return 'reference-repair-unreadable';
-  for (const line of item.text.split(/\r?\n/)) {
-    if (line.trim() === '') return null;
-    if (/^held:/i.test(line)) return 'reference-repair-held';
-  }
-  return null;
-}
-
 function stagedItems(snapshot) {
   const model = tiebreakModel(snapshot);
+  // The `references` findings grouped by staged file: each repair's JSON `hold` must agree with its header (#4636).
+  const referenceFindings = referenceFindingsByFile(snapshot.engineState);
   // Refusal is a decisions.md fact about the item, not a fact about its name —
   // so it is decided before SECTION_MAP ever runs and outranks every stance.
   const refused = refusedStagedNames(snapshot.decisions);
@@ -749,7 +740,7 @@ function stagedItems(snapshot) {
       if (r) return { id: s.name, section, resolution: 'pending', reason: r };
     }
     if (/^wrap-up-reference-/.test(s.name)) {
-      const r = referenceRepairHoldReason(s);
+      const r = referenceRepairHoldReason(s, referenceFindings.get(s.name) || [], snapshot.sensitivePaths);
       if (r) return { id: s.name, section, resolution: 'pending', reason: r };
     }
     const settled = model.settledFiles.get(s.name);
@@ -780,9 +771,12 @@ function engineItems(snapshot, stagedIds) {
     for (const f of entry.findings || []) {
       const label = f.targetPath || f.target || entry.target;
       if (f.action === 'staged') {
-        const base = f.stagePath ? path.basename(f.stagePath) : null;
+        // A non-string stagePath counts as no staged file (#4636).
+        const base = typeof f.stagePath === 'string' && f.stagePath ? path.basename(f.stagePath) : null;
         if (base && stagedIds.has(base)) continue; // already an item via staged/
-        out.push({ id: `${rowId}:${label}`, section, resolution: SECTION_STANCES[section].resolution, reason: SECTION_STANCES[section].reason });
+        // A staged repair with no staged file has no header to agree with its JSON verdict, so it holds.
+        const stance = rowId === 'references' ? { resolution: 'pending', reason: REFERENCE_REPAIR_REASONS.UNCLASSIFIED } : SECTION_STANCES[section];
+        out.push({ id: `${rowId}:${label}`, section, resolution: stance.resolution, reason: stance.reason });
       } else if (f.action === 'applied') {
         out.push({ id: `${rowId}:${label}`, section, resolution: 'applied', reason: `applied (${f.commit || 'commit unknown'})` });
       }
@@ -966,4 +960,4 @@ function resolveAll({ runDir, policy, deps }) {
   return result;
 }
 
-module.exports = { decisionLineHash, SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, classifyStagedItem, readSnapshot, resolveAll, findingItems, refusedStagedNames, runIdOf, cell, renderDroppedBlock, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs };
+module.exports = { decisionLineHash, SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, REFERENCE_REPAIR_REASONS, classifyStagedItem, readSnapshot, resolveAll, findingItems, refusedStagedNames, runIdOf, cell, renderDroppedBlock, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs };

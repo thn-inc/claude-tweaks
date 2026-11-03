@@ -782,3 +782,19 @@ test('AC1.1: an unattended needs-human-decision ruling lands in console.json as 
   assert.strictEqual(residueCode, 0, residueOut);
   assert.ok(residueOut.includes('  - sdd-ruling-1.md — Pending review: pending (sdd-ruling-needs-human-decision)'), residueOut);
 });
+
+test('#4636: console-resolve.js reads merge-sensitive-paths from policy and holds a repair the diff shows on one', async () => {
+  const text = 'Hold: no\n\ndiff --git a/docs/a.md b/docs/a.md\n--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1 +1 @@\n-old\n+new\n';
+  const outcome = async (policyExtra) => {
+    const fx = mainCheckoutWithRun({ staged: { 'wrap-up-reference-1.md': text }, policyExtra });
+    fs.writeFileSync(path.join(fx.runDir, 'engine-state.json'), JSON.stringify({ results: { references: { result: 'findings', findings: [{ targetPath: 'docs/a.md', action: 'staged', stagePath: path.join(fx.runDir, 'staged', 'wrap-up-reference-1.md'), hold: false }] } } }));
+    const { d } = baseDeps(fx, []);
+    assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], d), 0);
+    return JSON.parse(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8')).items.find((i) => i.id === 'wrap-up-reference-1.md');
+  };
+  assert.strictEqual((await outcome('')).resolution, 'approve');
+  assert.strictEqual((await outcome('merge-sensitive-paths: plugin/**\n')).resolution, 'approve');
+  const held = await outcome('merge-sensitive-paths: plugin/**,docs/**\n');
+  assert.strictEqual(held.resolution, 'pending');
+  assert.strictEqual(held.reason, 'reference-repair-held');
+});

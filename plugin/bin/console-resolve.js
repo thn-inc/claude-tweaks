@@ -36,6 +36,7 @@ const { writeFileAtomic } = require('./lib/atomic-write');
 const { unresolvedItems, splitMissing, formatResidueLines, consoleResidueItems } = require('./lib/console/residue');
 const { REWRITE_FROM, rewriteItemResolution } = require('./lib/console/item-resolution');
 const { ghOptions } = require('./lib/repo-resolve');
+const { sensitivePathsOf } = require('./lib/express/policy');
 
 const USAGE = 'usage: console-resolve.js --run <dir> --policy console-auto [--dry-run] [--json]\n'
   + '       console-resolve.js --run <dir> --set-item <id> --resolution keep-staged --reason <text>';
@@ -95,11 +96,14 @@ function defaultExecFile(cmd, args, opts = {}) {
 function readPolicy({ execFile, cwd, runDir }) {
   const git = (args) => execFile('git', args, { cwd });
   const readFile = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
-  const { result } = resolvePolicyConfig({ git, readFile, runDir, keys: ['autonomy', 'grant-veto-window-hours'] });
+  const { result } = resolvePolicyConfig({ git, readFile, runDir, keys: ['autonomy', 'grant-veto-window-hours', 'merge-sensitive-paths'] });
   const valueOf = (key) => { const entry = result[key]; return entry && entry.error === undefined ? entry.value : null; };
   const raw = valueOf('grant-veto-window-hours');
   const veto = raw === null || raw === undefined ? NaN : Number(raw);
-  return { ceiling: resolveCeiling({ runConfig: valueOf('autonomy') }), vetoWindowHours: Number.isFinite(veto) ? veto : undefined };
+  // An unreadable `merge-sensitive-paths` is null, never []: the reference-repair floor holds on it (#4636).
+  const sensitiveEntry = result['merge-sensitive-paths'];
+  const sensitivePaths = sensitiveEntry && sensitiveEntry.error === undefined ? sensitivePathsOf(sensitiveEntry) : null;
+  return { ceiling: resolveCeiling({ runConfig: valueOf('autonomy') }), vetoWindowHours: Number.isFinite(veto) ? veto : undefined, sensitivePaths };
 }
 
 // Live grants per member — the Authorization read is never a snapshot
@@ -204,7 +208,7 @@ async function run(argv, deps = {}) {
   }
   const runDir = target.dir;
   if (o.setItem !== null) return setItem(o, runDir, { stdout, stderr, now });
-  const { ceiling, vetoWindowHours } = readPolicy({ execFile, cwd: cwd(), runDir });
+  const { ceiling, vetoWindowHours, sensitivePaths } = readPolicy({ execFile, cwd: cwd(), runDir });
   if (!bookkeepingPermissions(ceiling).consoleAutoResolve) {
     stderr(`console-resolve.js: consoleAutoResolve is not granted at ceiling ${ceiling} (unattended only) — nothing written\n`);
     return 4;
@@ -262,6 +266,7 @@ async function run(argv, deps = {}) {
     readGrants: ghReadGrants(execFile, cwd()),
     checkPrState: ghCheckPrState(execFile, cwd()),
     vetoWindowHours,
+    sensitivePaths,
     now,
     ...(deps.resolverDeps || {}),
   };

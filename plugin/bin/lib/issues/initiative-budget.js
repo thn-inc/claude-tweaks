@@ -43,7 +43,8 @@ function isTestPath(p) {
  * @param {object} input.fix                { kind, files: string[], changedLines: number, brokenBy: string }
  * @param {string[]} input.changedFiles     paths this run changed (the causal set)
  * @param {number} input.spent              initiative fixes already applied this run
- * @param {string[]} [input.sensitivePaths] merge-sensitive globs; any match denies
+ * @param {string[]} input.sensitivePaths   merge-sensitive globs; any match denies. Required: anything
+ *                                          but an array of strings (undefined, a comma-separated string) holds
  * @param {object} [input.budget]           overrides for DEFAULT_BUDGET
  * @returns {{allowed: boolean, reason: string, hold: boolean}}
  */
@@ -61,7 +62,10 @@ function permittedInitiative(input) {
   const brokenBy = fix ? fix.brokenBy : undefined;
   const brokenByNamed = typeof brokenBy === 'string' && brokenBy.trim() !== '';
   const changed = Array.isArray(changedFiles) ? changedFiles.filter((f) => typeof f === 'string') : [];
-  const globs = Array.isArray(sensitivePaths) ? sensitivePaths.filter((g) => typeof g === 'string') : [];
+  // An unreadable list holds, never reads as "no sensitive paths" (#4636): a comma-separated policy
+  // string passed through unparsed, or an omitted argument, must not switch the floor off.
+  const sensitiveReadable = Array.isArray(sensitivePaths) && sensitivePaths.every((g) => typeof g === 'string');
+  const globs = sensitiveReadable ? sensitivePaths : [];
   // Budget exhaustion is checked before the per-fix caps so the reason a run stops is the
   // budget itself, not whichever cap the next candidate happened to trip.
   const used = Number.isInteger(spent) && spent >= 0 ? spent : 0;
@@ -127,8 +131,10 @@ function permittedInitiative(input) {
     },
     {
       floor: true,
-      fails: sensitiveHit !== undefined,
-      reason: `fix touches merge-sensitive path ${JSON.stringify(sensitiveHit)}`,
+      fails: !sensitiveReadable || sensitiveHit !== undefined,
+      reason: sensitiveReadable
+        ? `fix touches merge-sensitive path ${JSON.stringify(sensitiveHit)}`
+        : 'merge-sensitive-paths unreadable (not a list of glob strings)',
     },
   ];
 

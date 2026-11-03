@@ -294,3 +294,15 @@ test('#4636: the reported reason stays the first failing check', () => {
   assert.match(r.reason, /budget exhausted/);
   assert.strictEqual(r.hold, true);
 });
+
+test('#4636: an unreadable sensitivePaths holds, an empty list does not', () => {
+  for (const sensitivePaths of [undefined, 'docs/**', [7], null, {}]) {
+    const r = permittedInitiative({ ...base(), sensitivePaths });
+    assert.strictEqual(r.allowed, false, String(sensitivePaths));
+    assert.strictEqual(r.hold, true, String(sensitivePaths));
+    assert.match(r.reason, /merge-sensitive-paths unreadable/, String(sensitivePaths));
+  }
+  const { sensitivePaths: _omitted, ...withoutKey } = base();
+  assert.strictEqual(permittedInitiative(withoutKey).hold, true, 'an omitted key');
+  assert.strictEqual(permittedInitiative({ ...base(), sensitivePaths: [] }).allowed, true);
+});
