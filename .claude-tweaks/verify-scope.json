@@ -2,7 +2,7 @@
   "checks": {
     "tests": {
       "tests": "npm test",
-      "journeys": "node --test tests/argument-hint-mirrors.test.js tests/dispatch-named-form-exclusion-reasons.test.js tests/impeccable-retired-scripts-sweep.test.js tests/plan-citations-resolve.test.js tests/tidy-release-note-repair-conformance.test.js tests/tidy-report-rules.test.js tests/timing-prose-conformance.test.js"
+      "journeys": "node --test tests/argument-hint-mirrors.test.js tests/dispatch-named-form-exclusion-reasons.test.js tests/impeccable-retired-scripts-sweep.test.js tests/plan-citations-resolve.test.js tests/settle-blocker-landing-stop-conformance.test.js tests/tidy-release-note-repair-conformance.test.js tests/tidy-report-rules.test.js tests/timing-prose-conformance.test.js"
     }
   },
   "retry": { "tests": "node --test {file}", "journeys": "node --test {file}" },

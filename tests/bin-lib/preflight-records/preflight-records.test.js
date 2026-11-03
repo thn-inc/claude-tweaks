@@ -225,7 +225,7 @@ test('buildOverlapGroups: records sharing a key file union into one group; items
 const { run } = require('../../../plugin/bin/preflight-records');
 
 function cliDeps({
-  runner, workLinks = 'body-text', remoteUrl = 'https://github.com/acme/w.git', files = {},
+  runner, workLinks = 'body-text', remoteUrl = 'https://github.com/acme/w.git', files = {}, stdin,
 } = {}) {
   const out = [];
   const err = [];
@@ -235,6 +235,7 @@ function cliDeps({
       resolveWorkLinks: () => workLinks,
       remoteUrl: () => remoteUrl,
       readFile: (p) => { if (!(p in files)) throw new Error(`ENOENT: ${p}`); return files[p]; },
+      readStdin: () => { if (stdin === undefined) throw new Error('EAGAIN: no stdin'); return stdin; },
       stdout: (s) => out.push(s),
       stderr: (s) => err.push(s),
     },
@@ -1130,4 +1131,191 @@ test('outOfRunBlockers: no out-of-run blockers → empty union', () => {
   const { byRecord, union } = outOfRunBlockers({ 10: { blockedBy: [] }, 11: { blockedBy: [10] } }, [10, 11]);
   assert.deepEqual(union, []);
   assert.deepEqual([...byRecord.entries()], [[10, []], [11, []]]);
+});
+
+// --- CLI: --prefetched-json (#4792) -----------------------------------------
+// Records the caller already fetched over gh: only fetchIssues is skipped.
+
+const prefetchedIssues = () => [
+  issue({ number: 10, title: 'Ten', body: specBody(['a.js']) }),
+  issue({ number: 11, title: 'Eleven', body: `Blocked by #10\nBlocked by #5\n\n${specBody(['b.js'])}` }),
+];
+const issueViewCalls = (calls) => calls.filter((a) => a[0] === 'issue' && a[1] === 'view');
+
+test('AC3.1: --prefetched-json - reads the records from stdin and makes no gh issue view call; the envelope equals the gh-fetched one', () => {
+  const viaGh = landingFixture({ repository: {} });
+  const gh = cliDeps({ runner: viaGh.runner, workLinks: 'body-text' });
+  assert.equal(run(['10', '11'], gh.deps), 0);
+  assert.equal(issueViewCalls(viaGh.calls).length, 2, 'control: the plain gh path fetches each record');
+
+  const prefetched = landingFixture({ repository: {} });
+  const pre = cliDeps({ runner: prefetched.runner, workLinks: 'body-text', stdin: JSON.stringify(prefetchedIssues()) });
+  assert.equal(run(['10', '11', '--prefetched-json', '-'], pre.deps), 0);
+  assert.equal(issueViewCalls(prefetched.calls).length, 0);
+  assert.equal(prefetched.calls.length, 0);
+  assert.equal(pre.out.join(''), gh.out.join(''));
+});
+
+test('AC3.1: --prefetched-json with --blocker-landing still judges landing over gh', () => {
+  const { runner, calls } = landingFixture({ repository: { b5: closedBlocker('eee555') }, statuses: { eee555: 'diverged\n' } });
+  const { deps, out } = cliDeps({ runner, workLinks: 'body-text', stdin: JSON.stringify(prefetchedIssues()) });
+  assert.equal(run(['10', '11', '--prefetched-json', '-', '--blocker-landing', '--integration-branch', 'dev'], deps), 0);
+  const env = JSON.parse(out.join(''));
+  assert.deepEqual(env.records['11'].blockerLanding, [{ blocker: 5, verdict: 'unlanded', commit: 'eee555', via: 'closer-pr' }]);
+  assert.equal(calls.filter(isGraphQL).length, 1);
+  const compares = calls.filter(isCompare);
+  assert.equal(compares.length, 1);
+  assert.match(compares[0][1], /compare\/dev\.\.\.eee555/);
+  assert.equal(issueViewCalls(calls).length, 0);
+});
+
+test('--prefetched-json <path> reads the named file', () => {
+  const viaStdin = landingFixture({ repository: {} });
+  const a = cliDeps({ runner: viaStdin.runner, stdin: JSON.stringify(prefetchedIssues()) });
+  assert.equal(run(['10', '11', '--prefetched-json', '-'], a.deps), 0);
+
+  const viaFile = landingFixture({ repository: {} });
+  const b = cliDeps({ runner: viaFile.runner, files: { '/p.json': JSON.stringify(prefetchedIssues()) } });
+  assert.equal(run(['10', '11', '--prefetched-json', '/p.json'], b.deps), 0);
+  assert.equal(viaFile.calls.length, 0);
+  assert.equal(b.out.join(''), a.out.join(''));
+});
+
+test('--prefetched-json under work-links: native still makes the native dependency call', () => {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args);
+    if (isGraphQL(args) && !/CLOSED_EVENT/.test(gqlQuery(args))) {
+      return JSON.stringify({ data: { repository: { i10: { number: 10, blockedBy: { nodes: [] } }, i11: { number: 11, blockedBy: { nodes: [{ number: 5, state: 'OPEN' }] } } } } });
+    }
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  const { deps, out } = cliDeps({ runner, workLinks: 'native', stdin: JSON.stringify(prefetchedIssues()) });
+  assert.equal(run(['10', '11', '--repo', 'acme/w', '--prefetched-json', '-'], deps), 0);
+  assert.equal(calls.filter(isGraphQL).length, 1);
+  assert.equal(issueViewCalls(calls).length, 0);
+  const env = JSON.parse(out.join(''));
+  assert.equal(env.workLinks, 'native');
+  assert.equal('nativeLinksUnchecked' in env, false);
+  assert.deepEqual(env.records['11'].blockedBy, [5]);
+  assert.equal(env.records['11'].openBlocker, true);
+});
+
+test('--prefetched-json input problems are exit 2, naming the flag', () => {
+  const [ten, eleven] = prefetchedIssues();
+  const cases = [
+    ['an unreadable path', { files: {} }, /cannot read --prefetched-json \/p\.json/],
+    ['stdin that cannot be read', { argvValue: '-' }, /cannot read --prefetched-json -/],
+    ['not JSON', { files: { '/p.json': '{' } }, /--prefetched-json \/p\.json is not valid JSON/],
+    ['not an array', { files: { '/p.json': '{}' } }, /--prefetched-json must be a JSON array/],
+    ['a requested number missing', { files: { '/p.json': JSON.stringify([ten]) } }, /--prefetched-json is missing requested #11/],
+    ['an extra number', { files: { '/p.json': JSON.stringify([ten, eleven, issue({ number: 12, title: 'x', body: '' })]) } }, /--prefetched-json lists #12, which was not requested/],
+    ['a duplicated number', { files: { '/p.json': JSON.stringify([ten, ten, eleven]) } }, /--prefetched-json lists #10 more than once/],
+  ];
+  for (const [label, { files = {}, argvValue = '/p.json' }, pattern] of cases) {
+    const { deps, out, err } = cliDeps({ runner: noGh, files });
+    assert.equal(run(['10', '11', '--prefetched-json', argvValue], deps), 2, label);
+    assert.equal(out.length, 0, label);
+    const text = err.join('');
+    assert.match(text, pattern, label);
+    assert.match(text, /--prefetched-json/, label);
+    assert.doesNotMatch(text, /--records-json/, label);
+  }
+});
+
+test('--prefetched-json and --records-json together are a malformed invocation', () => {
+  let calls = 0;
+  const { deps, out, err } = cliDeps({
+    runner: () => { calls++; throw new Error('must not call gh'); },
+    files: { '/r.json': JSON.stringify(prefetchedIssues()) },
+    stdin: JSON.stringify(prefetchedIssues()),
+  });
+  assert.equal(run(['10', '11', '--records-json', '/r.json', '--prefetched-json', '-'], deps), 2);
+  assert.equal(out.length, 0);
+  assert.equal(calls, 0);
+  assert.match(err.join(''), /--prefetched-json and --records-json are mutually exclusive/);
+});
+
+test('--prefetched-json with no value is a malformed invocation', () => {
+  for (const argv of [['10', '--prefetched-json'], ['10', '--prefetched-json', '--waves']]) {
+    const { deps, out, err } = cliDeps({ runner: noGh, stdin: '[]' });
+    assert.equal(run(argv, deps), 2, argv.join(' '));
+    assert.equal(out.length, 0);
+    assert.match(err.join(''), /missing value for --prefetched-json/);
+  }
+});
+
+test('--help usage names --prefetched-json', () => {
+  const { deps, out } = cliDeps({ runner: noGh });
+  assert.equal(run(['--help'], deps), 0);
+  assert.match(out.join(''), /\[--records-json <path>\] \[--prefetched-json <path>\]/);
+  assert.match(out.join(''), /\[--blocker-landing\] \[--blocker-states-json <path>\]/);
+});
+
+test('issuesFromRecordsJson keeps its --records-json messages by default and names the given flag', () => {
+  const { issuesFromRecordsJson } = require('../../../plugin/bin/lib/preflight-records/preflight-records');
+  assert.equal(issuesFromRecordsJson({}, [1]).error, '--records-json must be a JSON array');
+  assert.equal(issuesFromRecordsJson({}, [1], '--prefetched-json').error, '--prefetched-json must be a JSON array');
+  const bad = [[{ body: '' }], [{ number: 1 }], [{ number: 1, body: '', labels: 'x' }], [{ number: 1, body: '' }, { number: 1, body: '' }], [{ number: 2, body: '' }]];
+  for (const raw of bad) {
+    const named = issuesFromRecordsJson(raw, [1], '--prefetched-json').error;
+    assert.match(named, /^--prefetched-json /);
+    assert.equal(named, issuesFromRecordsJson(raw, [1]).error.replace('--records-json', '--prefetched-json'));
+  }
+  assert.match(issuesFromRecordsJson([], [1], '--prefetched-json').error, /^--prefetched-json is missing requested #1$/);
+});
+
+// --- native-missing naming (#4792) ------------------------------------------
+
+const nativeNotFound = (alias, message) => JSON.stringify({
+  data: { repository: { i720: { number: 720, blockedBy: { nodes: [] } }, [alias]: null } },
+  errors: [{ type: 'NOT_FOUND', path: ['repository', alias], message }],
+});
+
+function nativeThrowFixture(throwOnNative) {
+  const runner = (args) => {
+    if (isIssueView(args, 720)) return JSON.stringify(issue({ number: 720, title: 'A', body: specBody(['a.js']) }));
+    if (isIssueView(args, 721)) return JSON.stringify(issue({ number: 721, title: 'B', body: specBody(['b.js']) }));
+    if (isGraphQL(args)) throw throwOnNative;
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  return cliDeps({ runner, workLinks: 'native' });
+}
+
+test('AC4.3: native mode names a candidate gh reported NOT_FOUND (exit 1 with partial data) as missing dependency data (#4792)', () => {
+  const thrown = Object.assign(new Error('Command failed: gh api graphql -f query=…'), {
+    stdout: nativeNotFound('i721', 'Could not resolve to an Issue with the number of 721.'),
+  });
+  const { deps, out, err } = nativeThrowFixture(thrown);
+  assert.equal(run(['720', '721'], deps), 1);
+  assert.equal(out.length, 0);
+  assert.match(err.join(''), /^preflight-records\.js: missing dependency data for #721 \(GraphQL: Could not resolve to an Issue with the number of 721\.\)$/m);
+});
+
+test('a native-call throw that is not NOT_FOUND-only is rethrown unchanged', () => {
+  const cases = [
+    ['an error with no stdout', new Error('Command failed: boom-no-stdout')],
+    ['a non-NOT_FOUND error', Object.assign(new Error('Command failed: boom-forbidden'), {
+      stdout: JSON.stringify({ data: { repository: { i720: { number: 720, blockedBy: { nodes: [] } }, i721: null } }, errors: [{ type: 'FORBIDDEN', path: ['repository', 'i721'] }] }),
+    })],
+    ['a NOT_FOUND on an alias outside the request', Object.assign(new Error('Command failed: boom-outside'), {
+      stdout: nativeNotFound('i999', 'Could not resolve to an Issue with the number of 999.'),
+    })],
+  ];
+  for (const [label, thrown] of cases) {
+    const { deps, out, err } = nativeThrowFixture(thrown);
+    assert.equal(run(['720', '721'], deps), 1, label);
+    assert.equal(out.length, 0, label);
+    assert.ok(err.join('').includes(thrown.message), label);
+    assert.doesNotMatch(err.join(''), /missing dependency data/, label);
+  }
+});
+
+test('blocker-landing NOT_FOUND recovery returns the parsed response for a b{n} alias and null for an i{n} alias', () => {
+  const { recoveredResponse } = require('../../../plugin/bin/lib/preflight-records/blocker-landing');
+  const err = Object.assign(new Error('Command failed'), {
+    stdout: JSON.stringify({ data: { repository: { b5: null } }, errors: [{ type: 'NOT_FOUND', path: ['repository', 'b5'] }] }),
+  });
+  assert.deepEqual(recoveredResponse(err, ['b5']), JSON.parse(err.stdout));
+  assert.equal(recoveredResponse(err, ['i5']), null);
 });

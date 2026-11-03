@@ -82,30 +82,32 @@ function fetchIssues({
 // Strict by design: a record the file lacks, repeats, or adds beyond the
 // request is a caller bug, never silently reconciled (a missing record would
 // otherwise shrink the cross-spec checks without a trace).
-function issuesFromRecordsJson(raw, numbers) {
-  if (!Array.isArray(raw)) return { error: '--records-json must be a JSON array' };
+// `flag` (#4792) is the CLI flag the input arrived under, named in every
+// message: '--records-json' (default) or '--prefetched-json'.
+function issuesFromRecordsJson(raw, numbers, flag = '--records-json') {
+  if (!Array.isArray(raw)) return { error: `${flag} must be a JSON array` };
   const ok = new Map();
   for (let i = 0; i < raw.length; i++) {
     const entry = raw[i];
     if (!entry || typeof entry !== 'object' || !Number.isInteger(entry.number)) {
-      return { error: `--records-json entry ${i} is missing a numeric "number"` };
+      return { error: `${flag} entry ${i} is missing a numeric "number"` };
     }
     if (typeof entry.body !== 'string') {
-      return { error: `--records-json entry #${entry.number} is missing a string "body"` };
+      return { error: `${flag} entry #${entry.number} is missing a string "body"` };
     }
     // A missing (or null) labels is an unlabelled issue, as gh reports it; any
     // other non-array would crash parseRecordFacets downstream.
     if (entry.labels != null && !Array.isArray(entry.labels)) {
-      return { error: `--records-json entry #${entry.number} has non-array "labels"` };
+      return { error: `${flag} entry #${entry.number} has non-array "labels"` };
     }
-    if (ok.has(entry.number)) return { error: `--records-json lists #${entry.number} more than once` };
+    if (ok.has(entry.number)) return { error: `${flag} lists #${entry.number} more than once` };
     ok.set(entry.number, entry);
   }
   for (const n of numbers) {
-    if (!ok.has(n)) return { error: `--records-json is missing requested #${n}` };
+    if (!ok.has(n)) return { error: `${flag} is missing requested #${n}` };
   }
   for (const n of ok.keys()) {
-    if (!numbers.includes(n)) return { error: `--records-json lists #${n}, which was not requested` };
+    if (!numbers.includes(n)) return { error: `${flag} lists #${n}, which was not requested` };
   }
   return { ok };
 }
