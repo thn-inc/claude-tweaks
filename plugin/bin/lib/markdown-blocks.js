@@ -3,12 +3,13 @@
 // fencedLineMask and unfencedText), the backtick-fence writers that match it
 // (fenceFor, fencedBlock), and the heading-section finder (findSection,
 // extractSection), plus unclosedFenceLine and hiddenByUnclosedFence, the shared
-// reading of "an unclosed fence hid this heading" (#4350) — shared across issues/, preflight-records/, and (through
-// record.js's re-exports of fenceFor/fencedBlock/extractSection) console/,
-// compose-subject.js and the health-sweep issue-payload.js builders. Moved out
-// of issues/record-payload.js (#4645) so a consumer that needs only the fence
-// rule no longer reaches through the record-payload builder. It requires no
-// module, so any lib module can import it without a cycle. No I/O.
+// reading of "an unclosed fence hid this heading" (#4350) — shared across issues/,
+// preflight-records/, and (through record.js's re-exports of
+// fenceFor/fencedBlock/extractSection) console/, compose-subject.js and the
+// health-sweep issue-payload.js builders. Moved out of issues/record-payload.js
+// (#4645) so a consumer that needs only the fence rule no longer reaches through
+// the record-payload builder. It requires no module, so any lib module can import
+// it without a cycle. No I/O.
 'use strict';
 
 // Returns a backtick fence at least one character longer than the longest run
@@ -36,18 +37,32 @@ function fencedBlock(text) {
 // only the last block can be unclosed, since an unclosed block consumes every
 // line after it. fencedLineRanges returns `ranges` alone; fencedLineMask reads
 // `unclosed` for its `unclosedAsText` option.
-// The one fence rule shared by stripCodeSpans (materialize-format.js), sectionText
-// and extractSection (#4169), mergeStateDemands (merge-gate.js) and
-// extractCurrentStateAnchors (near-duplicate.js) (#4369), and the three
-// body-metadata extractors extractVerifiedAsOf / extractPremiseCheck /
-// extractTemplateStamp (#4368): an opener is an optional U+FEFF byte-order mark,
-// 0-3 leading spaces (CommonMark), then a run of 3+ backticks or tildes — a
-// backtick run only when no backtick follows it on the line, since CommonMark
-// reads "```a`b" as an inline code span, not a fence; the closer is 0-3 leading
-// spaces, then the same character, at least the opener's length, and nothing
-// else on its line but trailing spaces/tabs (plus the CR a LF-only split leaves
-// on a CRLF body). Four or more leading spaces is an indented code block, not a
-// fence. Matches what fenceFor and fencedBlock write (column-0 fences).
+// The one fence rule. Its callers, from a grep of plugin/bin for this file's exports
+// followed to the function that reads fences (the function, not just the file):
+//   - fencedLineRanges: stripCodeSpans (materialize-format.js) and unfencedText;
+//   - fencedLineMask: findSection, mergeStateDemands (merge-gate.js) and
+//     extractCurrentStateAnchors (near-duplicate.js) (#4369), and applyReleaseNote
+//     (release-note-repair/apply.js) through its fenceInfo (#4350);
+//   - unfencedText: recordPayload's Defer-reason: contradiction check and the three
+//     body-metadata extractors extractVerifiedAsOf / extractPremiseCheck /
+//     extractTemplateStamp (all record-payload.js, #4368);
+//   - findSection / extractSection (#4169): sectionText (materialize-format.js),
+//     read by shapeGate, validateShaped (compose-record/compose.js), scanRecords
+//     (release-note-repair/detect.js) and verifyWritten (release-note-repair/apply.js);
+//     compose-subject.js's extractSection (releaseNoteOf, the Breaking Change
+//     refusal, the Overview/Current State summary fallback); crossReferenceKeyFiles
+//     (issues/decomposition-crossref.js); extractKeyFilesSection (issues/grouping.js);
+//   - unclosedFenceLine: shapeGate, applyReleaseNote's fenceInfo, hiddenByUnclosedFence;
+//   - hiddenByUnclosedFence: shapeGate and compose-subject.js's hiddenLine (the
+//     `## Release Note` and `## Breaking Change` refusals, via splitHidden) (#4350).
+// An opener is an optional U+FEFF byte-order mark, 0-3 leading spaces (CommonMark),
+// then a run of 3+ backticks or tildes — a backtick run only when no backtick follows
+// it on the line, since CommonMark reads "```a`b" as an inline code span, not a fence;
+// the closer is 0-3 leading spaces, then the same character, at least the opener's
+// length, and nothing else on its line but trailing spaces/tabs (plus the CR a
+// LF-only split leaves on a CRLF body). Four or more leading spaces is an indented
+// code block, not a fence. Matches what fenceFor and fencedBlock write (column-0
+// fences).
 function scanFences(lines) {
   const ranges = [];
   let unclosed = false;

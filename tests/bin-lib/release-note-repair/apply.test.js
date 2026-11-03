@@ -146,3 +146,19 @@ test('verifyWritten: a body that drifted beyond the Release Note section (e.g. T
   const problems = verifyWritten({ before, after: { body: drifted, labels: before.labels }, line: F.LINE });
   assert.ok(problems.some((p) => /more than the Release Note section changed/.test(p)), problems.join('; '));
 });
+
+test('applyReleaseNote reads a backtick opener with a backtick in its info string as prose, as the gate does (#4350)', () => {
+  const body = F.join(F.CS, F.DEL, F.AC, '```foo``` is the command\n', F.TA);
+  const out = applyReleaseNote(body, F.LINE);
+  assert.equal(checkBody(out.body).verdict, 'conforming');
+  assert.ok(out.body.indexOf('## Release Note') < out.body.indexOf('## Technical Approach'));
+});
+
+test('applyReleaseNote reads a 4-space or tab "opener" as no fence, as the gate does (#4350)', () => {
+  for (const pad of ['    ', '\t']) {
+    const body = F.join(F.CS, F.DEL, F.AC, `${pad}\`\`\`\n`, F.TA);
+    const out = applyReleaseNote(body, F.LINE);
+    assert.equal(checkBody(out.body).verdict, 'conforming', JSON.stringify(pad));
+    assert.ok(out.body.indexOf('## Release Note') < out.body.indexOf('## Technical Approach'));
+  }
+});

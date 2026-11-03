@@ -5,6 +5,9 @@ const path = require('path');
 const { readText } = require('../helpers/read-skill');
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('../helpers/strip-comments');
 const FILE = path.join(__dirname, '../../plugin/bin/lib/markdown-blocks.js');
+const { hiddenByUnclosedFence, unclosedFenceLine, findSection } = require(FILE);
+const H2 = { levelPattern: '2', stopPattern: '2', trim: true };
+const HIDING = '## Current State\nx\n\n```\nnever closed\n\n## Deliverables\n- [ ] d';
 
 test('markdown-blocks.js is a leaf module: it requires nothing, so any lib module can require it without a cycle (#4645)', () => {
   const raw = readText(FILE);
@@ -15,10 +18,6 @@ test('markdown-blocks.js is a leaf module: it requires nothing, so any lib modul
   const m = require(FILE);
   assert.deepStrictEqual(Object.keys(m).sort(), ['extractSection', 'fenceFor', 'fencedBlock', 'fencedLineMask', 'fencedLineRanges', 'findSection', 'hiddenByUnclosedFence', 'unclosedFenceLine', 'unfencedText']);
 });
-
-const { hiddenByUnclosedFence, unclosedFenceLine, findSection } = require(FILE);
-const H2 = { levelPattern: '2', stopPattern: '2', trim: true };
-const HIDING = '## Current State\nx\n\n```\nnever closed\n\n## Deliverables\n- [ ] d';
 
 test('unclosedFenceLine: 0-based index of a trailing unclosed opener, -1 when every fence closes (#4350)', () => {
   assert.strictEqual(unclosedFenceLine(HIDING.split('\n')), 3);
