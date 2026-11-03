@@ -7,7 +7,7 @@ that single task directly from the already-materialized spec instead.
 
 ## Applicability gate
 
-All four must hold, checked in this order (cheapest first):
+All four must hold, checked in this order (cheapest first, except condition 4, appended last so the numbers other files cite stay stable):
 
 1. The materialized header (`{run-dir}/work/{n}-spec.md`'s frontmatter, `skills/flow/materialize.md`)
    carries `ceremony: fast-lane`.
