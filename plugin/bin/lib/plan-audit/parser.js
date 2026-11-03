@@ -108,7 +108,8 @@ function extractTaskBlocks(text) {
 // list (parse-signal-discipline): a `proofs` entry matches the strict form
 // (an optional list bullet, checkbox and bold wrapper around a lowercase slug),
 // and a line whose start only resembles one (`proof (`, `Proof(Auth):`, a
-// missing colon, a placeholder slug) is a `nearMisses` entry, so a proof line
+// missing colon, a placeholder slug, or a numbered or blockquoted line the
+// strict form does not admit) is a `nearMisses` entry, so a proof line
 // the author meant but mistyped is never read as "no proof written". CRLF
 // input is normalized to LF here, as extractPathWaivers does.
 //
@@ -124,7 +125,7 @@ function extractTaskBlocks(text) {
 // reports the same state through hasUnclosedFence). AC_FENCE_RE, which Checks E
 // and F share, toggles on any fence-like line and is deliberately not reused.
 const PROOF_LINE_RE = /^[ \t]*(?:[-*+][ \t]+)?(?:\[[ xX]?\][ \t]+)?(?:\*\*)?Proof\(([a-z0-9][a-z0-9-]*)\):(?:\*\*)?[ \t]*(.*)$/;
-const PROOF_NEAR_MISS_RE = /^[ \t]*(?:[-*+][ \t]+)?(?:\[[ xX]?\][ \t]+)?(?:\*\*)?proof ?\(/i;
+const PROOF_NEAR_MISS_RE = /^[ \t]*(?:>[ \t]*)*(?:(?:[-*+]|\d+[.)])[ \t]+)?(?:\[[ xX]?\][ \t]+)?(?:\*\*)?proof ?\(/i;
 const FENCE_OPEN_RE = /^[ \t]*(`{3,}|~{3,})(.*)$/;
 const FENCE_CLOSE_RE = /^[ \t]*(`{3,}|~{3,})[ \t]*$/;
 

@@ -1439,6 +1439,15 @@ test('AC4.1: a near-miss proof line reports could-not-parse', () => {
   assert.strictEqual(checkG(G_SPEC('Risk-flags: auth'), G_PLAN(`proof (auth): ${GOOD}`)).couldNotParse[0].source, 'proof-line');
 });
 
+test('finding 4: a numbered or blockquoted proof line reports could-not-parse, as any near-miss does', () => {
+  for (const line of [`1. Proof(auth): ${GOOD}`, `> Proof(auth): ${GOOD}`]) {
+    const r = checkG(G_SPEC('Risk-flags: auth'), G_PLAN(line));
+    assert.deepStrictEqual([r.ok, r.couldNotParse], [false, [{ source: 'proof-line', raw: line }]], line);
+    const nearMiss = checkG(G_SPEC('Risk-flags: auth'), G_PLAN(`proof (auth): ${GOOD}`));
+    assert.deepStrictEqual({ ...r, couldNotParse: [] }, { ...nearMiss, couldNotParse: [] }, 'the rest of the result is the existing near-miss shape');
+  }
+});
+
 test('AC4.1: a near-miss proof line fails the audit even when a valid proof satisfies the slug', () => {
   const r = checkG(G_SPEC('Risk-flags: auth'), G_PLAN(`Proof(auth): ${GOOD}\nProof(Auth): ${GOOD}`));
   assert.deepStrictEqual([r.ok, r.missing, r.couldNotParse], [false, [], [{ source: 'proof-line', raw: `Proof(Auth): ${GOOD}` }]]);

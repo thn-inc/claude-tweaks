@@ -835,6 +835,24 @@ test('extractProofLines reports a line that resembles a proof but fails the stri
   ]);
 });
 
+test('finding 4: a numbered or blockquoted proof line is a near-miss, never a proof and never silently absent', () => {
+  const lines = [
+    `1. Proof(auth): An anonymous call to the route returns 401.`,
+    `2) Proof(auth): An anonymous call to the route returns 401.`,
+    `> Proof(auth): An anonymous call to the route returns 401.`,
+    `> > - [ ] **Proof(auth):** An anonymous call to the route returns 401.`,
+    `10. proof (auth): spaced and lowercase`,
+  ];
+  const { proofs, nearMisses } = extractProofLines(['### Task 1: A', ...lines].join('\n'));
+  assert.deepStrictEqual(proofs, []);
+  assert.deepStrictEqual(nearMisses, lines.map((raw) => ({ task: '1', raw })));
+});
+
+test('finding 4: a numbered or quoted line that names no proof stays out of both lists', () => {
+  const { proofs, nearMisses } = extractProofLines('### Task 1: A\n1. Proofread the copy.\n> A quoted note about proofs (auth).\n');
+  assert.deepStrictEqual([proofs, nearMisses], [[], []]);
+});
+
 test('extractProofLines reads a CRLF plan the same as an LF one', () => {
   const plan = '### Task 1: A\nProof(auth): An anonymous call to the route returns 401.\nproof (auth): near\n';
   assert.deepStrictEqual(extractProofLines(plan.replace(/\n/g, '\r\n')), extractProofLines(plan));
