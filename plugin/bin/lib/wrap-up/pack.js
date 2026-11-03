@@ -17,7 +17,7 @@ const { resolvePolicyConfig } = require('../policy-schema');
 const { parseManifestYaml } = require('../flow/manifest');
 const { parseDependencies, DEFER_REASONS } = require('../issues/record');
 const { runWithConcurrency } = require('../reconcile/gh-pool');
-const { parseRepo, repoSlug, ghOptions } = require('../repo-resolve');
+const { gateOriginRepo, repoSlug, ghOptions } = require('../repo-resolve');
 const { readRunStateWithParent } = require('../hooks/context');
 const { ownedPlansFiles } = require('./ledger-ownership');
 const { ledgerRowCells } = require('./ledger-cells');
@@ -719,11 +719,17 @@ function buildProbes(inputs, deps) {
       // Enterprise remote can't otherwise be inferred by a plain `gh` call
       // the way #2425 already fixed for the child spawn alone. `repoSlug`
       // resolves to bare `owner/repo` on github.com, a true no-op there.
-      let repoArgs = [];
+      let remote = null;
       try {
-        const repoSpec = parseRepo(git(['remote', 'get-url', 'origin']));
-        if (repoSpec) repoArgs = ['--repo', repoSlug(repoSpec)];
+        remote = git(['remote', 'get-url', 'origin']);
       } catch { /* no origin remote — every gh call below falls back to its own cwd-derived default, unchanged */ }
+      // #4933: the origin host must carry a positive GitHub signal before gh is
+      // handed it. The refusal throws OUTSIDE the catch above (inside it, it
+      // would be swallowed and a bare `gh issue list` would hit github.com),
+      // before the first gh call, so wrapProbe reports it as the probe's failure.
+      const { spec: repoSpec, refusal } = gateOriginRepo(remote, deps.gateDeps);
+      if (refusal) throw new Error(refusal);
+      const repoArgs = repoSpec ? ['--repo', repoSlug(repoSpec)] : [];
       const { stdout } = await gh(['issue', 'list', '--state', 'open', '--json', 'number,title,body', '--limit', '200', ...repoArgs]);
       const records = JSON.parse(stdout);
       if (inputs.policy.workLinks === 'native') {

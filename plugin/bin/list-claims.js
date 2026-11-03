@@ -17,7 +17,8 @@
 // Exit 0 on success (including zero claims — an empty registry is not an
 // error); 1 on a malformed invocation (unknown flag, bad --format value);
 // 2 when `gh` is absent or owner/repo cannot be resolved (no `--repo` and
-// no readable `origin` remote); 3 when the underlying call itself fails —
+// no readable `origin` remote, or an origin host with no GitHub signal —
+// refused before any gh call, #4933); 3 when the underlying call itself fails —
 // `gh-absent` (environment changed between the availability probe and the
 // call), `network-failure`, `secondary-rate-limit`, `permission-denied`, or
 // `truncated` (the Git Trees API itself reports `truncated: true` — the one
@@ -30,7 +31,7 @@
 
 const { listClaimEntries, defaultGhApi } = require('./lib/issues/claim-store');
 const {
-  parseRepo, ghAvailable, remoteUrl, repoSlug, pinExplicitRepoHost,
+  parseRepo, ghAvailable, remoteUrl, repoSlug, pinExplicitRepoHost, gateOriginRepo,
 } = require('./lib/repo-resolve');
 
 const USAGE = 'usage: list-claims.js [--repo owner/name] [--format names|json] [--help]\n';
@@ -69,9 +70,13 @@ function run(argv, deps) {
 
   let remote = null;
   if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-  const repoSpec = opts.repo
-    ? deps.parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`)
-    : deps.parseRepo(remote);
+  let repoSpec;
+  if (opts.repo) repoSpec = deps.parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`);
+  else {
+    const gated = gateOriginRepo(remote, deps.gateDeps);
+    if (gated.refusal) { deps.stderr(`list-claims.js: ${gated.refusal}\n`); return 2; }
+    repoSpec = gated.spec;
+  }
   if (!repoSpec) { deps.stderr('list-claims.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
   if (opts.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
 

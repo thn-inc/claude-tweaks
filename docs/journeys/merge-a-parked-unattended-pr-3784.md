@@ -69,6 +69,7 @@ When it cannot merge, the outcome is `pending-review` with the PR ready and a st
   - **In flight.** If another process holds the run's post-merge claim, the line reads `in-flight`, never `ran`. For an archived run that holder can only be another merge-mode invocation, so the line also names `/claude-tweaks:wrap-up #{n} merge` again once the claim is past its 10-minute stale window.
   - **Which step failed.** The CLI's `verdict` and `failedSteps` pick the lines. A Step 4.0 failure names the records it left unsettled, a Step 4.0b failure names each parent it could not close, and a step that ran clean is never reported failed. A CLI crash, or output that will not parse, still reports `cleanup: post-merge closes failed` and names the re-run.
   - **No retry after a recorded failure.** Once the closes ran, their marker is written, so a re-run reports `already done` and retries nothing. That failure line names `/claude-tweaks:tidy`'s `parent-gate` backstop instead of a re-run.
+  - **What pins this.** `tests/wrap-up-merge-mode-conformance.test.js` reads this journey and fails if this step stops naming the `## Already merged` route. It also pins the merge-mode, Conflict and summary-row prose the other steps cite.
 - **Red flags:**
   - A merge or acceptance-label step on a closed or merged PR.
   - An already-merged PR that stops with no cleanup, or reports a failed post-merge close as `ran`.

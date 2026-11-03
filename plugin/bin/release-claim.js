@@ -36,7 +36,8 @@
 // the claim is STILL held by this run (an unrelated commit on `claims-registry` lost us
 // the compare-and-swap: nothing was released, retry) or a re-read that itself failed, so
 // the outcome could not be verified; 2 malformed
-// invocation or `gh` absent — the MCP path in _shared/github-write-transport.md is the
+// invocation, an origin host that is not a known GitHub host (refused before any gh
+// call, #4933; `GH_HOST={host}` opts in), or `gh` absent — the MCP path in _shared/github-write-transport.md is the
 // documented fallback there, deliberately not grown into this CLI. Logging is
 // bookkeeping, never a gate: the exit code always reflects the release outcome, never
 // whether decisions.md was written.
@@ -48,7 +49,7 @@ const release = require('./lib/release-claim/release');
 const { formatEntry, appendEntry, resolveTarget } = require('./lib/log-decision/append');
 const { defaultRunner: gitDefaultRunner } = require('./lib/issues/claims-git-cas');
 const {
-  parseRepo, ghAvailable, repoSlug, pinExplicitRepoHost,
+  parseRepo, ghAvailable, repoSlug, pinExplicitRepoHost, gateOriginRepo,
 } = require('./lib/repo-resolve');
 
 const USAGE = 'usage: release-claim.js <issue> --run <run-dir> --reason <reason> [--link <url>] [--remove-grants] [--remove-in-progress] [--keep-in-progress-label] [--repo owner/name] [--sweep] [--section "/<skill>"] [--step <text>] [--help]\n';
@@ -140,7 +141,13 @@ function run(argv, deps = realDeps) {
   }
   let remote = null;
   if (!o.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-  const repoSpec = o.repo ? parseRepo(o.repo.split('/').length >= 3 ? o.repo : `github.com/${o.repo}`) : parseRepo(remote);
+  let repoSpec;
+  if (o.repo) repoSpec = parseRepo(o.repo.split('/').length >= 3 ? o.repo : `github.com/${o.repo}`);
+  else {
+    const gated = gateOriginRepo(remote, deps.gateDeps);
+    if (gated.refusal) { deps.stderr(`release-claim.js: ${gated.refusal}\n`); return 2; }
+    repoSpec = gated.spec;
+  }
   if (!repoSpec) { deps.stderr('release-claim.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
   if (o.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
   // #1443: parseRepo's regex accepts any non-'/' owner/repo segment, including '.'/'..'
