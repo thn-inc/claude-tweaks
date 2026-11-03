@@ -238,7 +238,7 @@ function assertRefused({ out, body, code, stderr }, runDir, reason) {
   assert.deepStrictEqual(parseRiskFlags(body, { extraCategories: [] }).flags.slice(0, 4), ALL);
   assert.match(body, /^Risk-flags-unconfirmed: true$/m);
   assert.doesNotMatch(readDecisions(runDir), /removed by the maintainer during shaping/);
-  assert.strictEqual(out.logged, true);
+  assert.strictEqual(out.logged, null, 'nothing was removed, so no log was attempted');
   assert.deepStrictEqual(out.logFailures, []);
   assert.strictEqual(stderr.trim().split('\n').length, 1, 'one stderr warning');
   assert.match(stderr, /unreadable/);
@@ -303,21 +303,69 @@ test('Reading A: confirm writes the marker on an unknown line that lacks one', (
   assertRefused(confirm('Risk-flags: Auth\n', answers({ auth: 'remove' }), ['--run', runDir]), runDir, 'malformed');
 });
 
-test('Reading A: a RISK_FLAGS_UNKNOWN throw from a writer is caught into the same refusal, not exit 1', () => {
-  const runDir = realAnchoredRunDirFixture();
+// A writer refusing a line the entry read as ok cannot happen with real inputs, so the
+// branch is driven by replacing the writer on the shared record module for one call.
+function withThrowingRemover(fn) {
   const original = record.removeRiskFlag;
   record.removeRiskFlag = () => { throw Object.assign(new Error('refused'), { code: record.RISK_FLAGS_UNKNOWN }); };
-  let r;
   try {
-    r = settle(SPEC_WITH_MIGRATIONS_PATH, ['--answers-file', answers({ migrations: 'remove' }), '--run', runDir]);
+    return fn();
   } finally {
     record.removeRiskFlag = original;
   }
+}
+function assertWriterRefused(r, runDir) {
   assert.strictEqual(r.code, 0);
-  assert.deepStrictEqual([r.out.removed, r.out.flags, r.out.unconfirmed, r.out.refused.answered], [[], ['migrations'], true, ['migrations']]);
-  assert.match(r.body, /^Risk-flags: migrations$/m);
+  assert.deepStrictEqual([r.out.status, r.out.removed, r.out.unconfirmed, r.out.refused.reason], ['unknown', [], true, null]);
+  assert.deepStrictEqual([r.out.logged, r.out.logFailures], [null, []]);
   assert.match(r.body, /^Risk-flags-unconfirmed: true$/m);
   assert.strictEqual(readDecisions(runDir), '');
+  assert.strictEqual(r.stderr.trim().split('\n').length, 1, 'one stderr warning');
+  assert.match(r.stderr, /writer refused/);
+  assert.doesNotMatch(r.stderr, /unreadable|risk[-_ ]?flags\s*:/i);
+}
+
+test('Reading A: a RISK_FLAGS_UNKNOWN throw in settle is caught into the same refusal, status unknown, no invented reason', () => {
+  const runDir = realAnchoredRunDirFixture();
+  const r = withThrowingRemover(() => settle(SPEC_WITH_MIGRATIONS_PATH, ['--answers-file', answers({ migrations: 'remove' }), '--run', runDir]));
+  assertWriterRefused(r, runDir);
+  assert.deepStrictEqual([r.out.flags, r.out.refused.answered], [['migrations'], ['migrations']]);
+  assert.match(r.body, /^Risk-flags: migrations$/m);
+  assert.match(r.body, /Proof\(migrations\):/);
+});
+
+test('Reading A: a RISK_FLAGS_UNKNOWN throw in confirm is caught likewise and writes the missing marker', () => {
+  const runDir = realAnchoredRunDirFixture();
+  const r = withThrowingRemover(() => confirm('Risk-flags: auth\n', answers({ auth: 'remove' }), ['--run', runDir]));
+  assertWriterRefused(r, runDir);
+  assert.deepStrictEqual([r.out.flags, r.out.refused.answered], [['auth'], ['auth']]);
+  assert.match(r.body, /^Risk-flags: auth$/m);
+  const marked = 'Risk-flags: auth\nRisk-flags-unconfirmed: true\n';
+  const again = withThrowingRemover(() => confirm(marked, answers({ auth: 'remove' }), ['--run', runDir]));
+  assert.strictEqual(again.body, marked, 'a body that already carries the marker stays byte-identical');
+});
+
+test('logged is null whenever no removal was attempted, true once a line was written', () => {
+  const runDir = realAnchoredRunDirFixture();
+  const headless = settle(SPEC_WITH_MIGRATIONS_PATH, ['--headless', '--run', runDir]);
+  const keep = settle(SPEC_WITH_MIGRATIONS_PATH, ['--answers-file', answers({ migrations: 'keep' }), '--run', runDir]);
+  const unanswered = settle(SPEC_WITH_MIGRATIONS_PATH, ['--answers-file', answers({}), '--run', runDir]);
+  const clean = settle(CLEAN_SPEC, ['--answers-file', answers({}), '--run', runDir]);
+  for (const r of [headless, keep, unanswered, clean]) assert.deepStrictEqual([r.out.logged, r.out.logFailures], [null, []]);
+  assert.strictEqual(readDecisions(runDir), '');
+  assert.strictEqual(settle(SPEC_WITH_MIGRATIONS_PATH, ['--answers-file', answers({ migrations: 'remove' }), '--run', runDir]).out.logged, true);
+  assert.strictEqual(confirm('Risk-flags: auth\n', answers({ auth: 'keep' }), ['--run', runDir]).out.logged, null);
+});
+
+test('a hand-written marker beside an empty kept set survives a headless settle', () => {
+  const stray = CLEAN_SPEC.replace('Surface: infra\n', 'Surface: infra\nRisk-flags: none\nRisk-flags-unconfirmed: true\n');
+  const { out, body, code } = settle(stray, ['--headless']);
+  assert.strictEqual(code, 0);
+  assert.deepStrictEqual([out.flags, out.unconfirmed, out.status, out.removed], [[], true, 'ok', []]);
+  assert.match(body, /^Risk-flags: none$/m);
+  assert.match(body, /^Risk-flags-unconfirmed: true$/m);
+  assert.doesNotMatch(body, /Risk proof required/);
+  assert.strictEqual(body, stray);
 });
 
 test('settle needs exactly one of --headless and --answers-file; a missing body exits 1', () => {

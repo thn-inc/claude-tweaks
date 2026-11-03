@@ -28,8 +28,16 @@
 // applied, the widened set stays, the marker is kept or written, nothing is logged, and
 // `refused` is { reason, raw, answered }; the fail direction is keep, so it still exits 0.
 // Each removal with --run is appended to decisions.md as KEPT-PROMPT (a human answered it
-// inline) through log-decision.js's run; `logged` is null with no --run, else false once any
-// removal failed to log (`logFailures` names the slugs). A failed log never changes the exit.
+// inline) through log-decision.js's run. `logged` is null whenever no removal was attempted
+// (no --run, or --run with nothing removed, a Reading A refusal included), so true always
+// means at least one line was written and false that one failed (`logFailures` names the
+// slugs). A failed log never changes the exit.
+// An empty kept set writes the none line and no marker, but a hand-written unconfirmed marker
+// already on the body survives a headless settle: clearing it would need humanConfirmed with
+// no human, the marker is the cautious side, and the next human confirm clears it.
+// A writer that refuses a line the entry read as ok (RISK_FLAGS_UNKNOWN thrown mid-answer)
+// takes the Reading A path too: status `unknown`, nothing applied, marker kept or written,
+// and `refused.reason` is the error's own, else what the line reads, else null.
 //
 // Exit codes (Payload-1/Invocation-2 as qa-report.js, plus 2 for an unreadable policy):
 //   0  done, including an answer refused or left unanswered
@@ -181,9 +189,83 @@ function refusal(reason, raw, answers) {
   return { reason, raw, answered: answers === null ? [] : Object.keys(answers) };
 }
 
+// base body, flags, answers -> { applied } | { refused }. A writer that throws
+// RISK_FLAGS_UNKNOWN has judged the line unreadable although the entry read it ok (the
+// entry status screens this out, so it is a writer/CLI disagreement): nothing is applied.
+// `reason` is the error's own when it carries one, else what the line reads as when that
+// is unknown, else null: a line that reads ok is never relabelled malformed.
+function tryAnswers(base, flags, answers, extraCategories) {
+  try {
+    return { applied: applyAnswers(base, flags, answers, extraCategories) };
+  } catch (err) {
+    if (!isUnreadableLine(err)) throw err;
+    const line = record.parseRiskFlags(base, { extraCategories });
+    return { refused: refusal(err.reason || (line.status === 'unknown' ? line.reason : null), line.raw, answers) };
+  }
+}
+
+const unansweredNote = (flags) => (flags.length > 0 ? `no keep or remove answer for ${flags.join(', ')}` : null);
+
+// The settle body, one place for both the Reading A refusals and the answer application.
+// -> { next, status, removed, remaining, refused, problem }
+function settleBody({ body, kept, entry, raw, answersFile, deps, extraCategories }) {
+  const seeded = record.addRiskFlags(body, kept, { unconfirmed: kept.length > 0, extraCategories });
+  const out = { next: seeded, status: entry.status, removed: [], remaining: kept, refused: null, problem: null };
+  if (answersFile !== null) {
+    const { answers, problem } = readAnswers(deps, answersFile);
+    out.problem = problem;
+    if (entry.status === 'unknown') {
+      out.refused = refusal(entry.reason, raw, answers);
+    } else {
+      const attempt = tryAnswers(seeded, kept, answers, extraCategories);
+      if (attempt.refused) {
+        out.refused = attempt.refused;
+        out.status = 'unknown';
+      } else {
+        out.next = attempt.applied.body;
+        out.removed = attempt.applied.removed;
+        out.remaining = kept.filter((slug) => !out.removed.includes(slug));
+        if (problem === null) out.problem = unansweredNote(attempt.applied.unanswered);
+      }
+    }
+  }
+  out.next = record.appendRiskProofGotcha(out.next, out.remaining);
+  return out;
+}
+
+// The confirm body: the body's existing flags only. An unreadable line takes Reading A and
+// stays byte-identical when it already carries the marker; no flag line is left as it is.
+// -> { next, status, removed, refused, problem }
+function confirmBody({ body, answersFile, deps, extraCategories }) {
+  const own = record.parseRiskFlags(body, { extraCategories });
+  const out = { next: body, status: own.status, removed: [], refused: null, problem: null };
+  if (own.status === 'unclassified') return out;
+  const { answers, problem } = readAnswers(deps, answersFile);
+  const marked = () => (own.unconfirmed ? body : record.addRiskFlags(body, [], { unconfirmed: true, extraCategories }));
+  if (own.status === 'unknown') {
+    out.refused = refusal(own.reason, own.raw, answers);
+    out.next = marked();
+    return out;
+  }
+  out.problem = problem;
+  const attempt = tryAnswers(body, own.flags, answers, extraCategories);
+  if (attempt.refused) {
+    out.refused = attempt.refused;
+    out.status = 'unknown';
+    out.next = marked();
+    return out;
+  }
+  out.removed = attempt.applied.removed;
+  out.next = record.appendRiskProofGotcha(attempt.applied.body, own.flags.filter((slug) => !out.removed.includes(slug)));
+  if (problem === null) out.problem = unansweredNote(attempt.applied.unanswered);
+  return out;
+}
+
 // Best-effort audit line per removal; a refusal or throw is a logFailures entry, never an exit.
+// `logged` is null when no removal was attempted (no --run, or nothing removed), so true
+// always means at least one decisions.md line was written and false that one failed.
 function logRemovals(o, deps, removed) {
-  if (o.run === null) return { logged: null, logFailures: [] };
+  if (o.run === null || removed.length === 0) return { logged: null, logFailures: [] };
   const logDeps = { now: deps.now, cwd: deps.cwd, mainRoot: deps.mainRoot, stdout: () => {}, stderr: deps.stderr };
   const logFailures = [];
   for (const slug of removed) {
@@ -263,66 +345,19 @@ function run(argv, overrides = {}) {
     });
   }
 
-  // settle and confirm: work out `next`, then write, log, report.
-  let next = body;
-  let status;
-  let removed = [];
-  let refused = null;
-  let answersProblem = null;
-
+  // settle and confirm: work out the new body, then write, log, report.
+  let shaped;
   if (o.verb === 'settle') {
     const { kept, entry, raw } = keptSet({ body, priorBody, add: o.add, floor: floor.flags, extraCategories });
-    status = entry.status;
-    const seeded = record.addRiskFlags(body, kept, { unconfirmed: kept.length > 0, extraCategories });
-    next = seeded;
-    let remaining = kept;
-    if (o.answersFile !== null) {
-      const { answers, problem } = readAnswers(deps, o.answersFile);
-      answersProblem = problem;
-      if (entry.status === 'unknown') {
-        refused = refusal(entry.reason, raw, answers);
-      } else {
-        try {
-          const applied = applyAnswers(seeded, kept, answers, extraCategories);
-          next = applied.body;
-          removed = applied.removed;
-          remaining = kept.filter((slug) => !removed.includes(slug));
-          if (answersProblem === null && applied.unanswered.length > 0) answersProblem = `no keep or remove answer for ${applied.unanswered.join(', ')}`;
-        } catch (err) {
-          if (!isUnreadableLine(err)) throw err;
-          const line = record.parseRiskFlags(seeded, { extraCategories });
-          refused = refusal(line.reason || entry.reason || 'malformed', line.raw, answers);
-          next = seeded;
-        }
-      }
-    }
-    next = record.appendRiskProofGotcha(next, remaining);
+    shaped = settleBody({ body, kept, entry, raw, answersFile: o.answersFile, deps, extraCategories });
   } else {
-    const own = record.parseRiskFlags(body, { extraCategories });
-    status = own.status;
-    if (own.status === 'unknown') {
-      const { answers } = readAnswers(deps, o.answersFile);
-      refused = refusal(own.reason, own.raw, answers);
-      if (!own.unconfirmed) next = record.addRiskFlags(body, [], { unconfirmed: true, extraCategories });
-    } else if (own.status === 'ok') {
-      const { answers, problem } = readAnswers(deps, o.answersFile);
-      answersProblem = problem;
-      try {
-        const result = applyAnswers(body, own.flags, answers, extraCategories);
-        removed = result.removed;
-        next = record.appendRiskProofGotcha(result.body, own.flags.filter((slug) => !removed.includes(slug)));
-        if (answersProblem === null && result.unanswered.length > 0) answersProblem = `no keep or remove answer for ${result.unanswered.join(', ')}`;
-      } catch (err) {
-        if (!isUnreadableLine(err)) throw err;
-        refused = refusal(own.reason || 'malformed', own.raw, answers);
-        removed = [];
-        next = body;
-      }
-    }
+    shaped = confirmBody({ body, answersFile: o.answersFile, deps, extraCategories });
   }
+  const { next, status, removed, refused, problem } = shaped;
 
-  if (refused !== null) warn(`the record's flag line is unreadable (${refused.reason}): no answer was applied; the widened set is kept and marked unconfirmed`);
-  else if (answersProblem !== null) warn(`${answersProblem}; every flag without a valid answer is kept and marked unconfirmed`);
+  if (refused !== null && refused.reason !== null) warn(`the record's flag line is unreadable (${refused.reason}): no answer was applied; the widened set is kept and marked unconfirmed`);
+  else if (refused !== null) warn('a writer refused the record\'s flag line: no answer was applied; the kept set stays and is marked unconfirmed');
+  else if (problem !== null) warn(`${problem}; every flag without a valid answer is kept and marked unconfirmed`);
 
   if (next !== body) {
     try { deps.writeFile(o.bodyFile, next); } catch (err) { return fail(3, `body-unwritable: ${o.bodyFile} (${errMsg(err)})`); }
