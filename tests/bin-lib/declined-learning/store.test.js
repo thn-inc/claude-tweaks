@@ -447,9 +447,9 @@ test('#4360 outside a git repository storePath() stays the relative path and rec
 // Windows refuses to remove a directory that is a process's cwd (EBUSY/EPERM), so the removal in the
 // child below cannot happen there; the case is POSIX-only.
 test('#4360 a process whose cwd was deleted keeps the relative path and degrades open on read', { skip: process.platform === 'win32' }, () => {
-  // Outside the checkout, and not under the per-user temp dir on darwin: in this sandbox
+  // Outside the checkout, and not under the per-user temp dir on darwin. Observed on darwin:
   // process.cwd() on a deleted cwd under /var/folders (os.tmpdir()) blocked instead of throwing
-  // ENOENT, while the same call returned ENOENT under /private/tmp and inside the worktree (observed).
+  // ENOENT, while the same call threw ENOENT under /private/tmp.
   const base = process.platform === 'darwin' ? '/private/tmp' : os.tmpdir();
   const doomed = fs.realpathSync(fs.mkdtempSync(path.join(base, 'declined-store-gone-')));
   try {

@@ -68,10 +68,6 @@ function anchored(relPath) {
   return root ? path.join(root, relPath) : relPath;
 }
 
-function lockPath() {
-  return anchored(LOCK_REL);
-}
-
 // Age-based pruning default (#1399): the store has no expiry, so every decline ever recorded
 // (across /feedback and /wrap-up reflect) accumulates forever. 180 days is a generous window —
 // long enough that an active decline never lapses mid-project, short enough to bound growth for
@@ -137,7 +133,7 @@ function writeStore(data, { mkdirSync = fs.mkdirSync, writeFile = fs.writeFileSy
 function recordDecline(fingerprint, {
   reason = null, source, subject, declinedAt = new Date().toISOString(),
 } = {}, deps = {}) {
-  return withLock(lockPath(), () => {
+  return withLock(anchored(LOCK_REL), () => {
     const current = readStore(deps);
     const entry = { declinedAt, reason, source };
     if (subject !== undefined) entry.subject = truncateSubject(subject);
@@ -186,7 +182,7 @@ function listDeclined({ source } = {}, deps = {}) {
 // staying annotated forever). No-op (no write) when the fingerprint has no entry, so an
 // idempotent clear never touches disk twice. Returns whether an entry was actually removed.
 function clearDecline(fingerprint, deps = {}) {
-  return withLock(lockPath(), () => {
+  return withLock(anchored(LOCK_REL), () => {
     const current = readStore(deps);
     if (!Object.prototype.hasOwnProperty.call(current, fingerprint)) return false;
     delete current[fingerprint];
@@ -203,7 +199,7 @@ function clearDecline(fingerprint, deps = {}) {
 // discards data it can't judge the age of. Mirrors clearDecline's idempotent-no-write behavior:
 // a clean sweep (nothing to remove) never touches disk. Returns the number of entries removed.
 function pruneDeclines({ maxAgeDays = DEFAULT_PRUNE_MAX_AGE_DAYS, now = Date.now() } = {}, deps = {}) {
-  return withLock(lockPath(), () => {
+  return withLock(anchored(LOCK_REL), () => {
     const current = readStore(deps);
     const cutoffMs = now - maxAgeDays * 24 * 60 * 60 * 1000;
     const next = {};
