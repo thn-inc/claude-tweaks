@@ -66,7 +66,8 @@ edits themselves from landing in the tree; the rule has to live here, at the poi
 Resolve the `autonomy` ceiling per `_shared/autonomy-ceiling.md`.
 
 - **`supervised`** (the default, and any project that has not opted in) — stage every candidate as a
-  `[ref] {file} — {old} → {new}` row for the Review Console. Nothing is applied.
+  `[ref] {file} — {old} → {new}` row for the Review Console. Each candidate still goes through
+  `permittedInitiative`, which denies it on the ceiling; nothing is applied and its `hold` is still recorded.
 - **`trusted` / `unattended`** — pass each candidate through
   `bin/lib/issues/initiative-budget.js`'s `permittedInitiative` and apply those that clear it, up to
   the budget, as a working-tree edit only — never a judge-side commit. The controller's serial-commit
@@ -76,13 +77,55 @@ Resolve the `autonomy` ceiling per `_shared/autonomy-ceiling.md`.
 
 When staging a candidate, write its full proposal to `staged/wrap-up-reference-{n}.md` and name
 that path in the finding's `stagePath`, so the Review Console files it under Reference repairs.
-When its target is ambiguous (Step 3), or it was denied as a test file or a merge-sensitive path,
-add a `Held: {reason}` line to that file's header (the lines before the first blank line), so
-`console-resolve.js --policy console-auto` leaves it `pending — reference-repair-held` for a human.
-An over-budget or over-cap denial carries no `Held:` line. Pack the repair (`{old} → {new}`), the `brokenBy` path, and — at
-`trusted`/`unattended` — `permittedInitiative`'s own reason string into the finding's `summary`
-field. `engine-render.js`'s Change column is a plain string copy of `summary`; that column is the
-only place this detail can surface on an engine-rendered console.
+Every staged candidate records `permittedInitiative`'s `hold` twice, copied verbatim and never
+judged: as the finding's boolean `hold` field in the row's payload, and as exactly one `Hold: yes`
+or `Hold: no` line in the staged file's header (the lines before the first blank line). Every
+staged file's header also carries `Target: {repo path of the file holding the reference}`, and its
+body a `{old} → {new}` line (for an ambiguous one, `{old} → one of {candidates}`), since a human
+approving a no-diff repair needs both. That line, and any other prose, comes after the header's
+blank line and before the first `diff --git` line, with nothing after the last hunk: the
+resolver's strict parser reads a non-blank line after a hunk as unparseable, so a summary placed
+after the diff holds every repair as `reference-repair-unclassified`.
+
+A target Step 3 found ambiguous takes `hold: true`/`Hold: yes` whatever the floor said, plus a
+`Held: {reason}` line naming why, and carries no diff: nothing has been decided to compose one
+from. On any other `Hold: yes`, also add a `Held: {reason}` line naming why. Over-budget, over-cap
+and `supervised` denials of an otherwise clean fix come back `hold: false`.
+
+Every other staged repair's body carries the repair's real diff, one `diff --git a/{path} b/{path}`
+block per file, with those lines unindented and at the start of the line. Compose it in a fresh
+temp directory outside the repo holding `a/{path}` (the file as it is) and `b/{path}` (the repaired
+text), then run from that directory:
+
+```bash
+git diff --no-index --no-prefix -- a/{path} b/{path}
+```
+
+Its exit 1 is success. Paste its output verbatim under the header, never hand-typed, so a staged
+candidate leaves the shared worktree untouched, including under `--dry-run`. Then run
+`_shared/staged-patch.md`'s Staging-time gate on the file
+(`git -C "{worktree root}" apply --check "{stagePath}"`); on its malformed branch, recompose once.
+When the diff cannot be composed at all
+(the recipe exits anything but 1, the repaired text cannot be produced) or the recomposed one still
+fails the gate, stage it held with no diff, the way an ambiguous candidate is: `hold: true`,
+`Hold: yes`, a `Held: {why the diff could not be composed}` line, rather than that gate's
+description-only `.md`, so a human sees it on the console.
+
+A repair with no parseable diff never auto-approves. The resolver reads the repair's paths from a
+strict parse of that diff rather than from `targetPath`, `files` or `summary`: every `---`, `+++`,
+`rename` and `copy` line must agree with its section's `diff --git` line and every section must
+have one, so the pasted output is never edited. `console-resolve.js --policy console-auto`
+approves only when the finding's `hold` is `false`, the header says `Hold: no`, and no path in the
+diff is a test file or matches `merge-sensitive-paths`; a true value on either side, a `Held:` line
+or such a path resolves `pending — reference-repair-held`, and a missing, duplicated, misplaced or
+malformed value on either side, or a missing or unparseable diff, resolves
+`pending — reference-repair-unclassified`. Under `--dry-run` the same records are written, since
+everything stages there.
+
+Pack the repair (`{old} → {new}`), the `brokenBy` path, and — at `trusted`/`unattended` —
+`permittedInitiative`'s own reason string into the finding's `summary` field.
+`engine-render.js`'s Change column is a plain string copy of `summary`; that column is the only
+place this detail can surface on an engine-rendered console.
 
 ```js
 const { permittedInitiative } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/initiative-budget.js');
@@ -91,7 +134,7 @@ permittedInitiative({
   fix: { kind: 'pointer-repair', files, changedLines, brokenBy },
   changedFiles,                             // git diff --name-only {base}...HEAD
   spent,                                    // fixes already applied this run
-  sensitivePaths,                            // merge-sensitive-paths from policy.yml
+  sensitivePaths,                            // array: merge-sensitive-paths split on ',', entries trimmed, empties dropped ([] when unset), as bin/lib/express/policy.js's sensitivePathsOf parses it; anything else holds every candidate
 });
 ```
 

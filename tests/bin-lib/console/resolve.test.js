@@ -16,7 +16,7 @@ const { formatEntry } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'log-dec
 const { aggregateReproductionProblem } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'log-decision', 'aggregate-reproduction'));
 const { readText } = require('../../helpers/read-skill');
 const { DEFER_REASONS } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'issues', 'record'));
-const { stagedDiffPaths, referenceRepairFloorReason, referenceRepairFloorHits } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'reference-repair'));
+const { stagedDiffPaths, referenceRepairFloorReason, referenceRepairFloorHits, REFERENCE_REPAIR_REASONS } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'reference-repair'));
 
 function fixture({
   decisions = '', staged = {}, engineState = null, pack = null, headers = [], manifest = null, specHeaders = {},
@@ -2256,4 +2256,11 @@ test('#3488: resolveAll never auto-files an upstream-draft hand-off — it resol
   const item = resolveAll({ runDir, policy: 'console-auto', deps: deps() }).items.find((i) => i.id === 'upstream-draft-1.md');
   assert.ok(item, 'the draft is an item');
   assert.strictEqual(item.resolution, 'pending');
+});
+
+test('#4636: review-console-appendix.md names every reference-repair pending reason', () => {
+  const reasons = Object.values(REFERENCE_REPAIR_REASONS);
+  assert.ok(reasons.length >= 4);
+  const text = APPENDIX.replace(/\s+/g, ' ');
+  for (const reason of reasons) assert.ok(text.includes('pending — ' + reason), reason);
 });
