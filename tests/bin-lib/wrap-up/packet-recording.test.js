@@ -62,6 +62,7 @@ test('AC2.1: no image syntax for any exposure', () => {
       const { markdown } = render([passed({ exposure, ...extra })]);
       assert.ok(!markdown.includes('!['), `${exposure} ${JSON.stringify(extra)}`);
       assert.ok(!markdown.includes('<img'), `${exposure} ${JSON.stringify(extra)}`);
+      assert.ok(!markdown.includes('r.png'), `${exposure} ${JSON.stringify(extra)}`);
     }
   }
 });
@@ -112,13 +113,14 @@ test('an encoder failure renders on its own line', () => {
   assert.deepEqual(sectionLines(markdown, "Couldn't test"), [`- \`${REC}\` — not run: encoder-failed`]);
 });
 
+// Each shape with its whole value, then each fragment that alone would still leak.
 const SHAPES = [
-  ['Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.e30.abc', 'eyJhbGciOiJIUzI1NiJ9'],
-  ['api_key=sk_live_123abc', 'sk_live_123abc'],
-  ['sk_live_abc', 'sk_live_abc'],
-  ['ghp_abc123def', 'ghp_abc123def'],
-  ['eyJhbGciOiJIUzI1NiJ9.e30.abc', 'eyJhbGciOiJIUzI1NiJ9'],
-  ['mail bob.smith+a@example.co.uk now', 'bob.smith'],
+  ['Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.e30.abc', ['Bearer eyJhbGciOiJIUzI1NiJ9.e30.abc', 'eyJhbGciOiJIUzI1NiJ9', 'e30.abc']],
+  ['api_key=sk_live_123abc', ['sk_live_123abc', 'live_123abc', '123abc']],
+  ['sk_live_abc', ['sk_live_abc', 'live_abc']],
+  ['ghp_abc123def', ['ghp_abc123def', 'abc123def']],
+  ['eyJhbGciOiJIUzI1NiJ9.e30.abc', ['eyJhbGciOiJIUzI1NiJ9.e30.abc', 'eyJhbGciOiJIUzI1NiJ9', 'e30.abc']],
+  ['mail bob.smith+a@example.co.uk now', ['bob.smith+a@example.co.uk', 'bob.smith', 'example.co.uk']],
 ];
 const CHANNELS = [
   ['text', (shape) => passed({ text: shape })],
@@ -129,9 +131,9 @@ const CHANNELS = [
 
 test('AC3.1: every secret shape is replaced in all four channels', () => {
   for (const [channel, build] of CHANNELS) {
-    for (const [shape, value] of SHAPES) {
+    for (const [shape, leaks] of SHAPES) {
       const { markdown } = render([build(shape)]);
-      assert.ok(!markdown.includes(value), `${channel}: ${shape}`);
+      for (const leak of leaks) assert.ok(!markdown.includes(leak), `${channel}: ${shape} leaked ${leak}`);
       assert.ok(sectionLines(markdown, 'Recording').join('\n').includes('[redacted]'), `${channel}: ${shape}`);
     }
   }
@@ -256,6 +258,89 @@ test('AC5.2: each impossible recording states its reason twice', () => {
 test('a legacy recording beside no-story drops the placeholder', () => {
   const lines = recordingLines(notRun('no-story'), fact('recording:legacy', 'passed', { text: 'Rec', url: STORE_URL, exposure: 'linked-private' }));
   assert.deepEqual(lines, [`- Rec: <${STORE_URL}>`]);
+});
+
+const BEARER_URL = 'https://h.example/Xk3j9f8s7d6f5g4h3j2k1/a';
+
+test('a remote url_or_path off linked-private meets the link rules', () => {
+  const rec = (extra) => passed({ text: 'Rec', captions: undefined, archive_path: undefined, ...extra });
+  const bearer = render([rec({ url_or_path: BEARER_URL })]).markdown;
+  assert.deepEqual(sectionLines(bearer, 'Recording'), [`- Rec: ${WITHHELD_LINK}`]);
+  assert.ok(!bearer.includes('Xk3j9f8s7d6f5g4h3j2k1'));
+  const image = render([rec({ url_or_path: 'https://h.example/r.png' })]).markdown;
+  assert.deepEqual(sectionLines(image, 'Recording'), [`- Rec: ${REFUSED}`]);
+  assert.ok(!image.includes('h.example'));
+  for (const url_or_path of ['HTTPS://h.example/page', 's3://bucket/page', 'ftp://h.example/page', ' https://h.example/page']) {
+    const { markdown } = render([rec({ url_or_path })]);
+    assert.deepEqual(sectionLines(markdown, 'Recording'), [`- Rec: ${REFUSED}`], url_or_path);
+    assert.ok(!/h\.example|bucket/i.test(markdown), url_or_path);
+  }
+  assert.deepEqual(recordingLines(rec({ exposure: undefined, url_or_path: BEARER_URL })), [`- Rec: ${WITHHELD_LINK}`]);
+});
+
+test('a remote archive_path meets the link rules too', () => {
+  const live = `- Rec: <${STORE_URL}>`;
+  const withBearer = render([linked({ url: STORE_URL, archive_path: BEARER_URL })]).markdown;
+  assert.deepEqual(sectionLines(withBearer, 'Recording'), [`- Rec: ${WITHHELD_LINK}`]);
+  assert.ok(!withBearer.includes('Xk3j9f8s7d6f5g4h3j2k1'));
+  assert.deepEqual(recordingLines(linked({ url: STORE_URL, archive_path: 'https://h.example/r.png' })), [live, `  once archived: ${REFUSED}`]);
+  assert.deepEqual(recordingLines(linked({ url: STORE_URL, archive_path: 'https://h.example/a' })), [live, '  once archived: <https://h.example/a>']);
+  const offLinked = recordingLines(passed({ captions: undefined, archive_path: 'https://h.example/a' }));
+  assert.deepEqual(offLinked, [`- Walkthrough of Sign in: \`${LOCAL_PATH}\` (local-only)`, `  once archived: ${REFUSED}`]);
+  assert.deepEqual(recordingLines(passed({ captions: undefined, archive_path: BEARER_URL })), [`- Walkthrough of Sign in: ${WITHHELD_LINK}`]);
+});
+
+test('a plain local path keeps to the path screen, never the link rules', () => {
+  const real = '.claude-tweaks/pipelines/2026-11-02T223727-record-4612/packet-inputs/walkthrough.gif';
+  for (const path of [real, 'runs/Xk3j9f8s7d6f5g4h3j2k1/w.gif', 'C:\\runs\\w.gif', '/tmp/2026-11-02-acceptance-recording/w.gif']) {
+    assert.deepEqual(
+      recordingLines(passed({ url_or_path: path, archive_path: path, captions: undefined })),
+      [`- Walkthrough of Sign in: \`${path}\` (local-only)`, `  once archived: \`${path}\``],
+      path,
+    );
+  }
+});
+
+test('a local path holding a secret shape is withheld, not shown', () => {
+  // The last is the screen's alone: the redactor leaves a percent-encoded key for it.
+  for (const path of ['runs/sk_live_abc/w.gif', 'runs/bob@example.com/w.gif', 'runs/ghp_abc123def/w.gif', 'runs/tok%65n=abc/w.gif']) {
+    for (const field of ['url_or_path', 'archive_path']) {
+      const { markdown } = render([passed({ [field]: path, captions: undefined })]);
+      assert.deepEqual(sectionLines(markdown, 'Recording'), [`- Walkthrough of Sign in: ${WITHHELD_LINK}`], path);
+      assert.ok(!markdown.includes(path), path);
+    }
+  }
+});
+
+test('a blank-text fallback withholds an id the redactor would change', () => {
+  for (const id of ['recording:sk_live_abc', 'recording:ghp_abc123def', 'recording:bob@example.com', 'recording:eyJhbGciOiJIUzI1NiJ9.e30.abc']) {
+    const { markdown } = render([passed({ id, text: undefined, captions: undefined })]);
+    assert.equal(sectionLines(markdown, 'Recording')[0], `- (id withheld: credential-shaped): \`${LOCAL_PATH}\` (local-only)`, id);
+    assert.ok(!markdown.includes(id), id);
+    const row = render([notRun('encoder-failed', { id })]).markdown;
+    assert.deepEqual(sectionLines(row, "Couldn't test"), ['- (id withheld: credential-shaped) — not run: encoder-failed'], id);
+    assert.ok(!row.includes(id), id);
+  }
+});
+
+test('a not-run recording with any other reason fails validation, so no site can print it', () => {
+  for (const reason of ['sk_live_abc', 'bogus', '', undefined]) {
+    assert.throws(() => render([notRun(reason)]), { name: 'SchemaError' }, String(reason));
+  }
+});
+
+test('blank values render nothing, and a blank label falls to the text', () => {
+  for (const blank of ['', '  ']) {
+    const base = { captions: undefined };
+    assert.deepEqual(recordingLines(passed({ ...base, url_or_path: blank, archive_path: undefined })), [`- Walkthrough of Sign in: ${REFUSED}`]);
+    assert.deepEqual(recordingLines(passed({ ...base, archive_path: blank })), [`- Walkthrough of Sign in: \`${LOCAL_PATH}\` (local-only)`]);
+    assert.deepEqual(recordingLines(notRun('encoder-failed', { failure: blank })), ['not recorded: encoder-failed']);
+    assert.deepEqual(recordingLines(linked({ url: STORE_URL, label: blank })), [`- Rec: <${STORE_URL}>`]);
+    assert.deepEqual(
+      recordingLines(passed({ archive_path: undefined, captions: [blank, 'second'] })),
+      [`- Walkthrough of Sign in: \`${LOCAL_PATH}\` (local-only)`, '  2. second'],
+    );
+  }
 });
 
 test('renderRecordingSection makes one droppable item per fact, and a note when there are none', () => {

@@ -80,6 +80,10 @@ function encodeFactKey(raw) {
 // anonymous-fetch probe, `withheld` a link the credential rule refused.
 const EXPOSURES = Object.freeze(['local-only', 'linked-private', 'withheld']);
 
+// Why a `recording` fact has status `not-run`. Only the first is no gap: the rest also
+// render under Couldn't test.
+const RECORDING_NOT_RUN_REASONS = Object.freeze(['no-story', 'no-local-base-url', 'no-happy-path-screenshots', 'encoder-failed']);
+
 const VERIFICATION_WORDS = Object.freeze(['tested', 'verified', 'works']);
 const VERIFICATION_CLAIM_RE = new RegExp(`\\b(${VERIFICATION_WORDS.join('|')})\\b`, 'i');
 
@@ -100,6 +104,7 @@ module.exports = Object.freeze({
   FACT_ID_RE,
   encodeFactKey,
   EXPOSURES,
+  RECORDING_NOT_RUN_REASONS,
   VERIFICATION_WORDS,
   VERIFICATION_CLAIM_RE,
 });

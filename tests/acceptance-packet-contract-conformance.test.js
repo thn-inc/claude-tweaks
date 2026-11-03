@@ -30,6 +30,7 @@ const {
   COMMANDS_ONLY_SURFACES,
   CREDENTIAL_KEYS,
   EXPOSURES,
+  RECORDING_NOT_RUN_REASONS,
   VERIFICATION_WORDS,
 } = require('../plugin/bin/lib/wrap-up/packet-contract');
 const { checkLink, findCredentialInText } = require('../plugin/bin/lib/wrap-up/packet-links');
@@ -725,6 +726,14 @@ test('the exposure values are the three the code decides between', () => {
   assert.deepStrictEqual([...EXPOSURES], ['local-only', 'linked-private', 'withheld']);
 });
 
+test('the not-recorded reasons the contract names are the ones validation accepts', () => {
+  assert.deepStrictEqual(
+    [...RECORDING_NOT_RUN_REASONS],
+    ['no-story', 'no-local-base-url', 'no-happy-path-screenshots', 'encoder-failed'],
+  );
+  for (const reason of RECORDING_NOT_RUN_REASONS) assert.ok(RECORDING_VOCABULARY.includes(reason), reason);
+});
+
 for (const literal of RECORDING_VOCABULARY) {
   test(`## Recording names ${literal}`, () => {
     const body = sectionOf(CONTRACT, '## Recording');
@@ -766,6 +775,13 @@ for (const [heading, label, pattern] of [
   ['## Recording', 'no-story is plain', /The first renders plain `not recorded` only/],
   ['## Recording', 'the other three are also under Couldn\'t test', /other three also appear under Couldn't test/],
   ['## Recording', 'an image link is refused', /a link to an image is refused/],
+  ['## Recording', 'a remote path meets the link rules', /A `url_or_path` or `archive_path` opening with a `scheme:\/\/` meets those link rules whatever its exposure/],
+  ['## Recording', 'a local path holding a secret shape is withheld', /A local path the credential screen or the redactor would change renders the withheld line/],
+  ['## Recording', 'the bearer rule stays off a local path', /the bearer-segment rule does not bind a plain local path, so a run id or a dated slug stays/],
+  ['## Recording', 'an id is screened', /A fact id the redactor would change renders `\(id withheld: credential-shaped\)` in the section and in its Couldn't test row/],
+  ['## Recording', 'an unknown reason fails validation', /`checkFact` refuses a `not-run` recording with any other reason/],
+  ['## Recording', 'blank values render nothing', /A blank value renders nothing, and a blank `label` falls to `text`/],
+  ['## Untrusted content', 'an archive path can be a link', /or its `url_or_path` or `archive_path` on a `linked-private` fact/],
 ]) {
   recordingClauseTest(heading, label, pattern);
 }

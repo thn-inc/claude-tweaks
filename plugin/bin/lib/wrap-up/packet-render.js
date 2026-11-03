@@ -174,44 +174,68 @@ function recordingHref(url, exposure) {
   return { place: liveLink(url), live: true };
 }
 
-const isScreenedPath = (path) => path !== undefined && findCredentialInText(path) !== null;
+// A blank value is an absent one.
+const filled = (value) => (value?.trim() ? value : undefined);
 
-// Where the head line points. A withheld place drops the archive line with it, since either
-// path may be what the screen refused.
-function recordingPlace(fact) {
-  if (fact.exposure === WITHHELD_EXPOSURE || isScreenedPath(fact.archive_path)) return { place: RECORDING_WITHHELD, live: false };
-  if (fact.url !== undefined || fact.url_or_path === undefined || fact.exposure === LINKED_PRIVATE) {
-    return recordingHref(fact.url ?? fact.url_or_path, fact.exposure);
-  }
-  if (isScreenedPath(fact.url_or_path)) return { place: RECORDING_WITHHELD, live: false };
-  const exposure = fact.exposure === undefined ? '' : ` (${fact.exposure})`;
-  return { place: `${codeSpan(fact.url_or_path)}${exposure}`, live: false };
+// Not `new URL`, which reads a Windows `C:\` path as a scheme.
+const REMOTE_PATH_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
+const WITHHELD_PLACE = Object.freeze({ place: RECORDING_WITHHELD, live: false });
+
+// A remote location meets the link rules. A local one meets the credential screen and the
+// redactor, and never the bearer rule, which a run id or a dated slug would trip.
+function recordingLocation(path, exposure) {
+  if (REMOTE_PATH_RE.test(path.trimStart())) return recordingHref(path, exposure);
+  if (findCredentialInText(path) || redactText(path).count > 0) return WITHHELD_PLACE;
+  return { place: codeSpan(path), live: false, local: true };
 }
+
+// Where the head line points, and what its archive line says. Either location being withheld
+// withholds both, since the line would otherwise point at what the screen refused.
+function recordingPlace(fact) {
+  const { exposure } = fact;
+  if (exposure === WITHHELD_EXPOSURE) return WITHHELD_PLACE;
+  const archivePath = filled(fact.archive_path);
+  const archive = archivePath === undefined ? null : recordingLocation(archivePath, exposure);
+  if (archive?.place === RECORDING_WITHHELD) return WITHHELD_PLACE;
+  const path = filled(fact.url_or_path);
+  const main = fact.url !== undefined || path === undefined || exposure === LINKED_PRIVATE
+    ? recordingHref(fact.url ?? path, exposure)
+    : recordingLocation(path, exposure);
+  if (main.place === RECORDING_WITHHELD) return WITHHELD_PLACE;
+  const tag = main.local && exposure !== undefined ? ` (${exposure})` : '';
+  return { place: `${main.place}${tag}`, live: main.live, archived: archive?.place };
+}
+
+// An id the redactor would change is withheld wherever this section's facts print one.
+const recordingIdSpan = (id) => (redactText(id).count > 0 ? WITHHELD_ID : idSpan(id));
 
 function recordingHeadLines(fact, tally) {
   if (fact.status === 'not-run') {
     const reason = recordingText(fact.reason, tally);
     return [reason ? `${NOT_RECORDED}: ${reason}` : NOT_RECORDED];
   }
-  const { place, live } = recordingPlace(fact);
-  const text = recordingText(live ? fact.label ?? fact.text : fact.text, tally) || idSpan(fact.id);
+  const { place, live, archived } = recordingPlace(fact);
+  const text = recordingText(live ? filled(fact.label) ?? fact.text : fact.text, tally) || recordingIdSpan(fact.id);
   const head = `- ${text}: ${place}`;
-  return place === RECORDING_WITHHELD || fact.archive_path === undefined
-    ? [head]
-    : [head, `  once archived: ${codeSpan(fact.archive_path)}`];
+  return archived === undefined ? [head] : [head, `  once archived: ${archived}`];
 }
 
 function recordingItem(fact) {
   const tally = { redacted: 0 };
   const lines = recordingHeadLines(fact, tally);
-  (fact.captions ?? []).forEach((caption, index) => lines.push(`  ${index + 1}. ${recordingText(caption, tally)}`));
-  if (fact.status === 'not-run' && fact.failure !== undefined) lines.push(`  failure: ${recordingText(fact.failure, tally)}`);
+  // Numbered by position, so a caption keeps its frame's number when a neighbour is blank.
+  (fact.captions ?? []).forEach((caption, index) => {
+    if (filled(caption)) lines.push(`  ${index + 1}. ${recordingText(caption, tally)}`);
+  });
+  if (fact.status === 'not-run' && filled(fact.failure)) lines.push(`  failure: ${recordingText(fact.failure, tally)}`);
   if (tally.redacted > 0) lines.push(`  redacted values: ${tally.redacted}`);
   return lines.join('\n');
 }
 
 // A recording that was expected and could not be made also renders a Couldn't test row.
 const recordingCouldNotRun = (fact) => fact.status === 'not-run' && fact.reason !== NO_STORY;
+// Validation holds its reason to the vocabulary, so only the id needs more than rowLine gives.
+const recordingRow = (fact) => `- ${recordingIdSpan(fact.id)} — ${statusWithReason(fact)}`;
 
 function renderLinkFact(fact, facts, deploy) {
   if (fact.command) {
@@ -270,7 +294,7 @@ const SECTION_BODIES = Object.freeze({
   'couldnt-test': ({ ofKind, rowsIn, movedTo }) => itemsOr(
     [
       ...rowsIn('couldnt-test').map(rowLine),
-      ...ofKind('recording').filter(recordingCouldNotRun).map(rowLine),
+      ...ofKind('recording').filter(recordingCouldNotRun).map(recordingRow),
       ...movedTo('couldnt-test').map(movedLine),
     ],
     'not applicable: every expected check ran',

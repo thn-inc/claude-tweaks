@@ -217,7 +217,7 @@ test('only check and story facts route', () => {
     const recording = validate(
       [claim('risk-proofs', 'Auth verified', ['flag:auth', 'recording:demo'])],
       {},
-      [fact('recording:demo', status)],
+      [fact('recording:demo', status, { reason: 'encoder-failed' })],
     );
     assertOnly(recording, 'kept');
   }
@@ -525,6 +525,18 @@ test('validateFactsShape checks the recording fields', () => {
   ]) {
     assert.deepEqual(one(extra), [`facts.facts[0].${at}`], JSON.stringify(extra));
   }
+});
+
+test('validateFactsShape holds a not-run recording to its four reasons', () => {
+  const one = (entry) => factsErrorPaths({ ...factsDoc(), facts: [entry] });
+  for (const reason of ['no-story', 'no-local-base-url', 'no-happy-path-screenshots', 'encoder-failed']) {
+    assert.deepEqual(one(fact('recording:r', 'not-run', { reason })), [], reason);
+  }
+  for (const reason of ['sk_live_abc', 'bogus', '', undefined]) {
+    assert.deepEqual(one(fact('recording:r', 'not-run', { reason })), ['facts.facts[0].reason'], String(reason));
+  }
+  assert.deepEqual(one(fact('recording:r', 'passed', { reason: 'adjudicated' })), [], 'another status');
+  assert.deepEqual(one(fact('check:r', 'not-run', { reason: 'no result recorded' })), [], 'another kind');
 });
 
 test('validateFactsShape refuses a repeated id', () => {
