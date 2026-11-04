@@ -6,7 +6,7 @@
 // the record's own stalled build and may be restarted. No I/O here -- bin/dispatch-resume.js
 // gathers the PR listing, claim blob, labels and run-dir/worktree state and passes them in.
 //
-// The Closed rule (spec D1): the eligible states are exhaustive. Every other state returns one
+// The Closed rule: the eligible states are exhaustive. Every other state returns one
 // `line` naming the state and a manual remedy, evaluated in the order resumeEligibility lists, and
 // a `disposition` saying what that line tells the human to do with the PR: `resume` (fix or wait,
 // then resume), `close-out` (it awaits review), `close` (rebuild it fresh, or take it by hand), or
@@ -16,6 +16,7 @@ const path = require('path');
 const { classifyClaimBlob } = require('../issues/claims');
 const { RUN_ID_SHAPE } = require('../issues/claim-store');
 const { parseEntry } = require('../log-decision/append');
+const { HARNESS_WORKTREE_DIR } = require('../hooks/worktree-reap');
 
 // The vocabulary has one home. `concurrent-resume` and `stale-bound-run` are produced only by
 // bin/dispatch-resume.js's run-dir scan (one this pure function cannot make).
@@ -53,6 +54,8 @@ function nonEmptyString(v) {
   return typeof v === 'string' && v !== '' ? v : null;
 }
 
+const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
 // The run id a claim blob names: `sweptFrom` for a `swept:` tombstone (its `runId` is the sweeping
 // /tidy run's), `runId` otherwise. null when that field is not a non-empty string.
 function claimRunId(parsedBlob) {
@@ -77,6 +80,12 @@ function worktreeNameForHead(head) {
   const rest = head.startsWith('worktree-') ? head.slice('worktree-'.length) : head;
   if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(rest)) return null;
   return rest.split('/').every((seg) => seg !== '' && !seg.startsWith('.')) ? rest : null;
+}
+
+// The native fs path of the worktree a head's build lives in, or null when worktreeNameForHead is.
+function worktreePathForHead(mainRoot, head) {
+  const name = worktreeNameForHead(head);
+  return name === null ? null : path.join(mainRoot, HARNESS_WORKTREE_DIR, ...name.split('/'));
 }
 
 // Does the PR's run marker name this record? The slug check, exactly: `record-{issue}`.
@@ -196,11 +205,10 @@ function ownMarkerRunId(issue, prs) {
 function closeRedispatchRemedy({
   issue, prNumber, headRefName, mainRoot, forks = [],
 }) {
-  const name = worktreeNameForHead(headRefName);
+  const worktree = worktreePathForHead(mainRoot, headRefName);
   const closePr = `close PR #${prNumber} (gh pr close ${prNumber})`;
   const redispatch = redispatchStep(issue, forks);
-  if (name === null || !headRefName.startsWith('worktree-')) return `${closePr}, remove any worktree holding its branch and delete the local and remote branch by hand, ${redispatch}`;
-  const worktree = path.join(mainRoot, '.claude', 'worktrees', ...name.split('/'));
+  if (worktree === null || !headRefName.startsWith('worktree-')) return `${closePr}, remove any worktree holding its branch and delete the local and remote branch by hand, ${redispatch}`;
   return `${closePr}, unlock and remove its worktree if one exists (git worktree unlock "${worktree}"; git worktree remove "${worktree}"), delete the local and remote branch (git branch -D ${headRefName}; git push origin --delete ${headRefName}), ${redispatch}`;
 }
 
@@ -241,7 +249,7 @@ function parseClaim(content) {
   if (typeof content !== 'string') return null;
   try {
     const parsed = JSON.parse(content);
-    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+    return isObject(parsed) ? parsed : null;
   } catch {
     return null;
   }
@@ -250,6 +258,8 @@ function parseClaim(content) {
 // The inputs that guard a refusal (siblingLive, issueState, openBlockers, worktreeDirty,
 // worktreeBranch) must be the type the gatherer promises: a missing or mistyped one is never read
 // as "nothing to refuse", nor named in a refusal line as if it were a real state.
+// `openBlockers` holds this repository's numbers and may also carry `owner/name#N` strings (a foreign
+// blocker), optionally suffixed ` (state unreadable)`; the refusal line prints a string verbatim.
 function invalidInput(n, what, value) {
   let kind = typeof value;
   if (value === null) kind = 'null';
@@ -261,7 +271,12 @@ function sha7(sha) {
   return typeof sha === 'string' && sha !== '' ? sha.slice(0, 7) : 'unknown';
 }
 
-// `reason` is a claim tombstone's release reason, '' when it carries none.
+// `reason` is a claim tombstone's release reason, '' when it carries none. These three end a build
+// without finishing it while its PR stays open: `failed:` (a gate stopped the run; a `failed: shaping`
+// release matches too, but shaping opens no PR), `abandoned:` (the run was discarded unmerged) and
+// `swept: stale claim` (/tidy cleared a dead run's claim). `merged:` and `pr-opened:` finished the
+// build, `shaped:`/`routed:`/`never-started:` ran none, and `swept: issue closed` closed the record,
+// so none of those is a resumable stall (_shared/issue-claims.md's Release triggers).
 function resumableTombstoneReason(reason) {
   return reason.startsWith('failed:') || reason.startsWith('abandoned:') || reason.startsWith('swept: stale claim');
 }
@@ -319,7 +334,7 @@ function resumeEligibility(input) {
   }
   if (!Array.isArray(openBlockers)) return invalidInput(n, 'open-blocker list', openBlockers);
   if (openBlockers.length > 0) {
-    return refuse('blocked-by', `#${n} is blocked by open ${openBlockers.map((b) => `#${b}`).join(', ')} — not resumable until they close; then run ${resumeCmd}`);
+    return refuse('blocked-by', `#${n} is blocked by open ${openBlockers.map((b) => (typeof b === 'string' ? b : `#${b}`)).join(', ')} — not resumable until they close; then run ${resumeCmd}`);
   }
 
   const labelList = Array.isArray(labels) ? labels : [];
@@ -387,7 +402,7 @@ function resumeEligibility(input) {
   };
 }
 
-// ---- resume context (deliverable 4) ----
+// ---- resume context ----
 
 // /dispatch and /wrap-up record settle/teardown, not build progress.
 const PIPELINE_SECTIONS = new Set(['/flow', '/build', '/test', '/review', '/design-wrapper']);
@@ -433,5 +448,6 @@ function resumeContext(decisionsText) {
 
 module.exports = {
   REFUSAL_REASONS, RUN_ID_PREFIX_LENGTH, runIdFromPrBody, claimRunId, openPrLine, selectResumePr, resumeEligibility, resumeContext,
-  worktreeNameForHead, closeRedispatchRemedy, refusalDetail, closeOutCannotResolve, ownMarkerRunId,
+  worktreeNameForHead, worktreePathForHead, isObject, nonEmptyString, closeRedispatchRemedy, refusalDetail, closeOutCannotResolve,
+  ownMarkerRunId,
 };

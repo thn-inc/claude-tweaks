@@ -8,6 +8,7 @@ files:
   - plugin/bin/log-decision.js
   - plugin/bin/check-pr-bookkeeping.js
   - plugin/bin/lib/pr-bookkeeping/precondition.js
+  - plugin/bin/lib/phase-exit/phase-exit.js
   - plugin/skills/test/SKILL.md
 ---
 
@@ -31,6 +32,8 @@ files:
 
   A line that is negated, hypothetical, another actor's, `contested`, or `FAILED` still denies, as does a branch that is only a prefix of the logged one.
 
+  Since #4344, a `record-pr-step1` deny on a run that already memoized `prExempt` is correct behavior, not a misfire. A memoized `prExempt` no longer short-circuits a call whose every git target is a push, so a first publish still needs its Step 1 line, even when `prExempt` was memoized from a hand-logged FAILED line. Every other covered call on a `prExempt` run still short-circuits as before. The gate and phase exit now apply one rule, `prStampReleased`; its order is in `docs/hooks.md`'s Bookkeeping-stamps gate bullet.
+
 ### 2. Read the deny — same terminal
 - **URL:** the tool call's own denial message (`hookSpecificOutput.permissionDecisionReason`)
 - **Action:** read which stamp is missing and the exact remediation command the message names — `record-worktree --run "{run-dir}" "{worktree}"` for the worktree stamp, or a pointer to log the PR-early degrade line via `bin/log-decision.js` for the PR stamp.
@@ -50,7 +53,7 @@ files:
 - **Action:** run exactly the command the deny named, from the session that actually owns this run.
 - **Should feel:** a one-line unblock, not a debugging session — the command is paste-ready and idempotent (`record-worktree` is documented as a safe restamp).
 - **Should understand:** the PR-stamp path is a graceful degrade, not a second enforcement layer — a genuinely failed push/PR-create is meant to be logged and moved past, never forced into existing anyway.
-- **Red flags:** inventing a different command; retrying the original call without running either remediation first; running `record-worktree` from inside a `/flow` `parallel` wave member (`MULTISPEC_PARALLEL_WAVE=1`) — `build/worktree-setup.md` skips Step 4.5 there by design, because the parent run's stamp must stay the shared worktree and `CLAUDE_CODE_SESSION_ID` is shared across subagents, so a member restamp would rebind the parent run's owner session. Whether this gate denies a wave member at all is not yet proven by a live `parallel` run; a deny inside a member is something to report, not a stamp to write.
+- **Red flags:** answering a `record-pr-step1` deny (a first publish) by logging a FAILED line — that line never releases a first publish (#1800, #4344); run Step 1's reuse/reopen check and log its outcome instead; inventing a different command; retrying the original call without running either remediation first; running `record-worktree` from inside a `/flow` `parallel` wave member (`MULTISPEC_PARALLEL_WAVE=1`) — `build/worktree-setup.md` skips Step 4.5 there by design, because the parent run's stamp must stay the shared worktree and `CLAUDE_CODE_SESSION_ID` is shared across subagents, so a member restamp would rebind the parent run's owner session. Whether this gate denies a wave member at all is not yet proven by a live `parallel` run; a deny inside a member is something to report, not a stamp to write.
 
 ### 5. Retry the original call — same terminal
 - **URL:** the exact same `Edit`/`Write`/`git commit`/`git push` call from Step 1
@@ -79,3 +82,4 @@ Since #2472, the identical missing-stamp story can also surface at `/claude-twea
 - Updated during build of #2664 — the `/test` Step 0 check's per-spec-to-parent run-state fallback for multi-spec runs, after it falsely exited 4 on a correctly stamped multi-spec run (2026-09-30T190052-spec-2633-2664).
 - Updated during build of #2920 — the gate's file-tool branch (`isStampsGateExemptTarget`) gained a third exemption: a target `isUntrackedOrIgnored` proves gitignored in its own repo is now exempt, mirroring the sibling worktree-required gate's existing #1395 exemption, since a gitignored write cannot land on the branch this gate's stamps protect. This is what lets a draft PR body composed in a gitignored scratch path stay writable before the PR exists. Entry point's carve-out list and Step 1's Red Flags updated accordingly.
 - Updated during build of #3012 — the claim-log and PR-early Step 1 recognitions now accept a paraphrased, semantically equivalent `decisions.md` line, not only the exact template. This closes the two-call dispatch handoff gap where a real claim logged in different prose denied the second call's first push. Step 1's Red Flags updated accordingly.
+- Updated during build of #4344 — the PR-stamp release rule is one predicate, `prStampReleased`, called by both this gate and `phase-exit.js`'s `prPushReleased`. The gate's `prExempt` short-circuit no longer skips an all-push call, so a first publish under a memoized `prExempt` still needs its Step 1 line. Step 1's and Step 4's Red Flags updated accordingly.

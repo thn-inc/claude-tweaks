@@ -10,6 +10,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { makeNumberListCli } = require('../../plugin/bin/lib/number-list-cli');
+const { captureGhTimeout } = require('../helpers/gh-timeout-probe');
 
 function buildCli(overrides = {}) {
   return makeNumberListCli({
@@ -183,4 +184,29 @@ test('#2425 review fix: a bare --repo owner/repo still resolves to host: "github
   assert.equal(seen.host, 'github.com');
   assert.equal(seen.owner, 'someone');
   assert.equal(seen.repo, 'else');
+});
+
+function runnerTimeoutFor(envValue) {
+  const cliPath = require.resolve('../../plugin/bin/lib/number-list-cli');
+  return captureGhTimeout({
+    envValue,
+    modulePaths: [cliPath],
+    reply: '',
+    exercise: (setEnv) => {
+      // number-list-cli destructures execFileSync at require time, so the helper's stub is installed first.
+      const { makeNumberListCli: freshMake } = require(cliPath);
+      const cli = freshMake({ name: 'x.js', usage: 'usage\n', fetch: () => new Map(), mapResult: () => null });
+      // Set only after the factory call: the timeout must be read per runner call, not at factory time.
+      setEnv();
+      cli.realDeps.runner(['api']);
+    },
+  });
+}
+
+test('#4815 AC1.1: realDeps.runner passes GH_BATCH_TIMEOUT_MS as its timeout, read at call time', () => {
+  assert.equal(runnerTimeoutFor('45000'), 45000);
+});
+
+test('#4815 AC1.1: a gh-timeout-ms below the floor leaves the batched runner at 30000', () => {
+  assert.equal(runnerTimeoutFor('10000'), 30000);
 });

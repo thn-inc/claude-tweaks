@@ -22,7 +22,7 @@ A verb is not shipped until every row lands in the same change.
 | 7 | `docs/hooks.md`'s implicit-resolution sentence ("The five mutating run-state verbs … plus `delete-ledger` …") | Only for a verb that resolves an omitted `--run` through `resolveRunArg`'s `unambiguousOnly` path: name it there. The row-5 anchored-`--run` list does not cover this sentence, and a verb can land in one and miss the other (#3897's `resolve-ledger` did). |
 | 8 | The comment block above `KNOWN_FLAGS` in `plugin/bin/hooks.js` | It states the membership rule (every `VERBS` verb) without enumerating verbs, so it needs an edit only when that rule changes. |
 
-Then add a dedicated `tests/hooks-{verb}.test.js` (spawn the CLI, assert stdout, stderr and the exit code separately) and, if a skill calls the verb, a conformance pin on the call text.
+Then add a dedicated `tests/hooks-{verb}.test.js` (spawn the CLI, assert stdout, stderr and the exit code separately) and, if a skill calls the verb, a conformance pin on the call text. A spawn test that passes an explicit `--run` to a fixture dir must initialize it first (write a `decisions.md`, `run-state.json` or `config.yml`): `resolveRunArg` refuses a dir holding only `work/{n}-spec.md` as "not an initialized run dir" (`tests/hooks-ledger-row.test.js`'s worktree-copy case, #4439).
 
 ## Decisions each verb owes
 

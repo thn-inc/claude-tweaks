@@ -4,9 +4,9 @@
 // merged AFTER its session ended — an armed auto-merge, a merge-queue merge —
 // so no session ever ran the steps (#4599). Step 4.0b runs
 // lib/issues/below-floor-parent-close.js over lib/issues/parent-gate.js, the
-// gate code the prose's bin/parent-gate.js CLI runs. Step 4.0 stays a
-// bin/closing-links.js run. This file only decides WHEN they run and records
-// that they did.
+// gate code the prose's bin/parent-gate.js CLI runs. Step 4.0 runs through
+// bin/closing-links.js's closingLinks() core, in-process. This file only decides
+// WHEN they run and records that they did.
 //
 // Exactly once per run: a `decisions.md` entry (the marker) is the done-signal,
 // whether the merging session's own Step 4.0b wrote it or this check did. Two
@@ -29,8 +29,8 @@
 // location the marker rule never matches — and defer the run as
 // `transient-failure`. Once MAX_ATTEMPTS attempt lines exist, the next such
 // failure writes the marker as any other failure does. Every other exit is
-// deterministic (2 malformed invocation, 3 run dir not anchored, 4 pre-merge
-// only), as is an unreadable exit-0 envelope: those write the marker at once.
+// deterministic (3 run dir not anchored, 4 run marker mismatch): those write
+// the marker at once.
 //
 // Step 4.0b's after-a-PR-merge rules, from Step 4.0's envelope (#4549): there is
 // no default-branch check (on a non-default base Step 4.0 closes the `Fixes`
@@ -81,7 +81,7 @@ const { GH_TIMEOUT_MS } = require('../shared-primitives');
 const { resolveWithin } = require('../path-guard');
 const { ghOptions } = require('../repo-resolve');
 const { closeBelowFloorParents, DELIBERATE_SKIP_REASONS } = require('../issues/below-floor-parent-close');
-const { run: closingLinksRun, EXIT_GH_FAILURE, ERR_TEXT_MAX } = require('../../closing-links');
+const { closingLinks, EXIT_GH_FAILURE, ERR_TEXT_MAX } = require('../../closing-links');
 
 const MARKER_STEP = 'reconcile post-merge';
 const PARENT_STEP = 'reconcile post-merge parent-close';
@@ -105,8 +105,8 @@ const DELIBERATE_PARENT_SKIPS = new Set(DELIBERATE_SKIP_REASONS);
 // The routing of a `postMerge` or `postMergeOne` entry (postMergeOne's `verdict` and `next`, which
 // wrap-up/merge-mode.md reads; the verdict hooks.js's background summary and format-summary.js read off a loop
 // entry): classified here, never in the prose ([IL-168]). Both lists run in the deny direction, like
-// DELIBERATE_PARENT_SKIPS: a Step 4.0 action word not in CLEAN_CLOSING_LINKS — a failure word, the `exit {n}` /
-// `an unreadable envelope` stand-ins, a word closing-links.js adds later — is a `failed` run, and a skip reason
+// DELIBERATE_PARENT_SKIPS: a Step 4.0 action word not in CLEAN_CLOSING_LINKS — a failure word, the `exit {n}`
+// stand-in, a word closing-links.js adds later — is a `failed` run, and a skip reason
 // not named below gets `next: none`.
 // closing-links.js's post-merge action words a clean run carries.
 const CLEAN_CLOSING_LINKS = new Set(['nothing-closed', 'closed', 'reopened', 'no-fixes-span', 'not-merged', 'no-pr']);
@@ -260,16 +260,6 @@ function releaseClaim(runDir) {
   try { fs.unlinkSync(path.join(runDir, CLAIM_FILENAME)); } catch { /* already gone */ }
 }
 
-// Pure: Step 4.0's JSON envelope from the CLI's captured stdout, or null.
-function parseEnvelope(stdoutText) {
-  const lines = String(stdoutText).split('\n').map((l) => l.trim()).filter(Boolean);
-  if (!lines.length) return null;
-  try {
-    const parsed = JSON.parse(lines[lines.length - 1]);
-    return parsed && typeof parsed === 'object' ? parsed : null;
-  } catch { return null; }
-}
-
 const numbers = (values) => (Array.isArray(values) ? values : []).map(Number).filter(Number.isInteger);
 const issuesOf = (list) => (Array.isArray(list) ? list : []).map((f) => f && f.issue).filter(Number.isInteger);
 
@@ -298,8 +288,9 @@ async function prefetchPostMergePrStates(root, prStates) {
 
 // Steps 4.0 / 4.0b parameters. The loop runs more than MERGE_GRACE_MS after the merge, so closing-links
 // settles with no poll and a human's later reopen counts (#4599); the in-session run is within seconds of
-// the merge, with closing-links' default settle poll and the merging PR itself counted (null = flag omitted).
-const LATE_MERGE_PARAMS = { settleMs: '0', closeWindowMs: CLOSE_WINDOW_MS, selfInclude: false };
+// the merge, with closing-links' default settle poll and the merging PR itself counted (null = option omitted:
+// closingLinks()'s own default).
+const LATE_MERGE_PARAMS = { settleMs: 0, closeWindowMs: CLOSE_WINDOW_MS, selfInclude: false };
 const IN_SESSION_PARAMS = { settleMs: null, closeWindowMs: null, selfInclude: true };
 
 // -> { failure } when this project or caller cannot run the check, else the context both paths share.
@@ -328,7 +319,7 @@ function setupContext({ cwd, deps }) {
   const timedGh = deps.gh || ((args, input) => execFileSyncTimed('gh', args, ghOptions(args, {
     cwd: root, input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true,
   })));
-  const runClosingLinks = deps.closingLinksRun || closingLinksRun;
+  const runClosingLinks = deps.closingLinks || closingLinks;
   const closeParents = deps.closeParents || closeBelowFloorParents;
   const writeEntries = deps.appendEntries || appendEntries;
 
@@ -477,9 +468,64 @@ function failedRecordNumbers(entries) {
     .flatMap(numbersOf))].sort((a, b) => a - b);
 }
 
+// Pure: entries -> one `{ pr, ...}` element per element of each entry's array `field`, in entry order, whatever the
+// entry's action or verdict. `keys` names the element fields kept; `detail` is never one: it is forge-supplied text
+// (a gh error body, a policy path), and these elements become lines in SessionStart's model-facing context, so only
+// the fixed `reason` word and the numeric ids travel; the bounded `detail` stays in `decisions.md` and the CLI JSON.
+// A missing or non-array input, a non-array field and a non-object element contribute nothing.
+function flattenStepFields(entries, field, keys) {
+  if (!Array.isArray(entries)) return [];
+  return entries.flatMap((e) => {
+    const items = e && Array.isArray(e[field]) ? e[field] : [];
+    return items
+      .filter((item) => item && typeof item === 'object')
+      .map((item) => ({
+        pr: e.pr,
+        ...Object.fromEntries(keys.filter((k) => item[k] !== undefined && item[k] !== null).map((k) => [k, item[k]])),
+      }));
+  });
+}
+
+// Pure: entries -> the parents Step 4.0b left open, `{ pr, parent?, issue?, reason }` per `parentFailures` element.
+function parentsLeftOpen(entries) {
+  return flattenStepFields(entries, 'parentFailures', ['parent', 'issue', 'reason']);
+}
+
+// Pure: entries -> the step-wide skips of Step 4.0b (nothing left to close), `{ pr, reason }` per `stepSkips` element.
+function stepSkipsOf(entries) {
+  return flattenStepFields(entries, 'stepSkips', ['reason']);
+}
+
+// A line item is a non-null object with an integer `pr` and a string `reason`; anything else is skipped.
+const isLineItem = (item) => item !== null && typeof item === 'object' && Number.isInteger(item.pr) && typeof item.reason === 'string';
+
+// Who a parentsLeftOpen item names: its parent, the parent of its record, or (naming neither) every parent.
+function parentSubject(item) {
+  if (Number.isInteger(item.parent)) return `#${item.parent}`;
+  if (Number.isInteger(item.issue)) return `the parent of record #${item.issue}`;
+  return 'every parent';
+}
+
+// Pure: parentsLeftOpen's items -> the one report line, or null when the input is not an array or holds no valid item.
+function parentsLeftOpenLine(items) {
+  const rendered = (Array.isArray(items) ? items : []).filter(isLineItem)
+    .map((item) => `${parentSubject(item)} (${item.reason}, PR #${item.pr})`);
+  return rendered.length > 0
+    ? `post-merge Step 4.0b left parent record(s) open: ${rendered.join(', ')} — tidy's parent-gate backstop recovers them`
+    : null;
+}
+
+// Pure: stepSkipsOf's items -> the one report line, or null likewise.
+function stepSkipsLine(items) {
+  const rendered = (Array.isArray(items) ? items : []).filter(isLineItem).map((item) => `${item.reason} (PR #${item.pr})`);
+  return rendered.length > 0
+    ? `post-merge Step 4.0b skipped step-wide, leaving no parent open (nothing left to close): ${rendered.join(', ')}`
+    : null;
+}
+
 // The single-run path (see the header): one named run dir, archived included. -> one entry:
 // { runDir, pr, action, reason?, detail?, closingLinks?, parentsClosed?, attempt?, step40Failed?, records?,
-//   logFailed?, parentFailures?, verdict, next } (classifyEntry's two fields close every entry).
+//   logFailed?, parentFailures?, stepSkips?, verdict, next } (classifyEntry's two fields close every entry).
 async function postMergeOne({
   runDir: givenRunDir, cwd, prStates, now = Date.now, deps = {},
 } = {}) {
@@ -503,30 +549,29 @@ async function postMergeOne({
 
 // Steps 4.0 and 4.0b for one claimed run; the one place the marker is written.
 // `params` is { settleMs, closeWindowMs, selfInclude } (see LATE_MERGE_PARAMS); `retryHint` the retry clause
-// of an attempt line; `includeRecords` adds Step 4.0's record lists and `logFailed`, and Step 4.0b's
-// `parentFailures`, to a `ran` entry (postMergeOne only). A loop `ran` entry whose Step 4.0 word is not clean
-// carries the record lists and `logFailed` too (#4897); a clean one keeps its short shape.
+// of an attempt line; `includeRecords` adds Step 4.0's record lists and `logFailed` to a `ran` entry, and makes
+// its `parentFailures` always present on an entry that reached Step 4.0b (postMergeOne only). A loop `ran` entry
+// whose Step 4.0 word is not clean carries the record lists and `logFailed` too (#4897); a clean one keeps its
+// short shape. Step 4.0b's `parentFailures` rides on a loop entry whenever it is non-empty, and `stepSkips` on
+// either path when non-empty.
 function processRun({
   dir, pr, root, owner, repo, host, workLinks, riskFloor, policySkip, timedGh, runClosingLinks, closeParents, writeEntries, now,
   params = LATE_MERGE_PARAMS, retryHint = RECONCILE_RETRY_HINT, includeRecords = false,
 }) {
-  let out = '';
-  const code = runClosingLinks(
-    [
-      '--run', dir, '--mode', 'post-merge',
-      ...(params.settleMs !== null ? ['--settle-ms', params.settleMs] : []),
-      ...(params.closeWindowMs !== null ? ['--close-window-ms', String(params.closeWindowMs)] : []),
-    ],
+  const { code, envelope } = runClosingLinks(
     {
-      cwd: () => root, mainRoot: root, ghAvailable: () => true, gh: timedGh, stdout: (s) => { out += s; }, stderr: () => {},
+      run: dir, mode: 'post-merge',
+      ...(params.settleMs !== null ? { settleMs: params.settleMs } : {}),
+      ...(params.closeWindowMs !== null ? { closeWindowMs: params.closeWindowMs } : {}),
+    },
+    {
+      cwd: () => root, mainRoot: root, ghAvailable: () => true, gh: timedGh, stderr: () => {},
     },
   );
-  const envelope = code === 0 ? parseEnvelope(out) : null;
   // Step 4.0's record lists (issue numbers) and its `logFailed` flag (a decisions.md line it could not
-  // append), for a caller that surfaces them. Emitted when the caller asked (`includeRecords`: any parsed
-  // envelope, a JSON object with no `action` included, which gets empty lists) or when the envelope's word is
-  // not clean, so the background summary can name the records a failed close left (#4897); omitted with no
-  // envelope (a non-zero exit or unparseable output).
+  // append), for a caller that surfaces them. Emitted when the caller asked (`includeRecords`: any
+  // envelope) or when the envelope's word is not clean, so the background summary can name the records a
+  // failed close left (#4897); omitted with no envelope (a non-zero exit).
   const wantsRecords = (env) => includeRecords || (env.action && !CLEAN_CLOSING_LINKS.has(env.action));
   const recordsOf = (env) => (env && wantsRecords(env) ? {
     records: {
@@ -538,12 +583,13 @@ function processRun({
     ...(env.logFailed === true ? { logFailed: true } : {}),
   } : {});
   const stamp = now();
-  // A failed write still reports the parents Step 4.0b closed: they are closed on GitHub either way.
-  const write = (items, ran, parentsClosed = 0) => {
+  // A failed write still reports the parents Step 4.0b closed (they are closed on GitHub either way) and keeps
+  // its `extra` fields (parentFailures, stepSkips): the failure is real whether or not the marker landed (#4798).
+  const write = (items, ran, parentsClosed = 0, extra = {}) => {
     try {
       writeEntries({ runDir: dir, items });
     } catch {
-      return { runDir: dir, pr, action: 'skipped', reason: 'marker-write-failed', parentsClosed };
+      return { runDir: dir, pr, action: 'skipped', reason: 'marker-write-failed', parentsClosed, ...extra };
     }
     return ran;
   };
@@ -560,13 +606,9 @@ function processRun({
   };
 
   if (!envelope || !Array.isArray(envelope.closingSet)) {
-    const unreadable = code === 0 && !(envelope && envelope.action);
-    let returned;
-    if (code !== 0) returned = `exit ${code}`;
-    else if (unreadable) returned = 'an unreadable envelope';
-    else returned = envelope.action;
+    const returned = code !== 0 ? `exit ${code}` : envelope.action;
     // An unread base or default branch: Step 4.0 closed nothing and carries no closing set (#4549).
-    const baseUnchecked = code === 0 && Boolean(envelope && envelope.baseUnchecked === true);
+    const baseUnchecked = code === 0 && envelope.baseUnchecked === true;
     if (code === TRANSIENT_CLOSING_LINKS_EXIT) {
       const retried = retry(`Step 4.0 returned exit ${code} (a gh failure)`);
       if (retried) return retried;
@@ -576,10 +618,10 @@ function processRun({
       if (retried) return retried;
     }
     const item = { entry: formatEntry({ status: 'SKIP', now: stamp, step: MARKER_STEP, text: composeSkipText(returned), reversibility: 'n/a' }) };
-    // `step40Failed` is the structured signal that Step 4.0 itself failed (non-zero exit, an unreadable
-    // envelope, or an unread base), as opposed to an envelope that legitimately carries no closing set (`not-merged`, …).
+    // `step40Failed` is the structured signal that Step 4.0 itself failed (non-zero exit or an unread base),
+    // as opposed to an envelope that legitimately carries no closing set (`not-merged`, …).
     return write([item], {
-      runDir: dir, pr, action: 'ran', closingLinks: returned, parentsClosed: 0, ...(code !== 0 || unreadable || baseUnchecked ? { step40Failed: true } : {}), ...recordsOf(envelope),
+      runDir: dir, pr, action: 'ran', closingLinks: returned, parentsClosed: 0, ...(code !== 0 || baseUnchecked ? { step40Failed: true } : {}), ...recordsOf(envelope),
     });
   }
 
@@ -600,40 +642,57 @@ function processRun({
     closingSet, unsettled, mergingPr: pr, owner, repo, host, workLinks, riskFloor, gh: timedGh,
     selfInclude: params.selfInclude,
   });
-  const items = closed.map((c) => ({
-    entry: formatEntry({
-      status: 'AUTO',
-      now: stamp,
-      step: PARENT_STEP,
-      text: `closed parent #${c.parent} below the oversight floor (risk:${c.maxTier}, risk-floor ${riskFloor})`,
-      reversibility: 'high (gh issue reopen)',
-    }),
+  // Step 4.0b's failed closes, for a caller that must not report them as a clean run. With an empty effective
+  // closing set there is no parent to leave open, so a failure naming neither `parent` nor `issue` (a step-wide
+  // skip, whatever its reason) is a `stepSkips` element instead; every other failure is a `parentFailures` one.
+  // `parentFailures` rides on a loop entry only when non-empty (always present under `includeRecords`);
+  // `stepSkips` only when non-empty. Both ride on the `marker-write-failed` entry and on the error entry below.
+  const failures = skipped.filter((s) => !DELIBERATE_PARENT_SKIPS.has(s.reason)).map((s) => ({
+    ...(s.parent !== undefined && s.parent !== null ? { parent: s.parent } : {}),
+    ...(s.issue !== undefined && s.issue !== null ? { issue: s.issue } : {}),
+    reason: s.reason,
+    ...(s.detail ? { detail: boundDetail(oneLine(s.detail)) } : {}),
   }));
-  items.push({
-    entry: formatEntry({
-      status: 'AUTO',
-      now: stamp,
-      step: MARKER_STEP,
-      text: composeSummaryText({ pr, action: envelope.action, closed, skipped }),
-      reversibility: 'n/a',
-    }),
-  });
-  // Step 4.0b's failed closes, for a caller that must not report them as a clean run (postMergeOne only).
-  const parentFailures = includeRecords ? {
-    parentFailures: skipped.filter((s) => !DELIBERATE_PARENT_SKIPS.has(s.reason)).map((s) => ({
-      ...(s.parent !== undefined && s.parent !== null ? { parent: s.parent } : {}),
-      ...(s.issue !== undefined && s.issue !== null ? { issue: s.issue } : {}),
-      reason: s.reason,
-      ...(s.detail ? { detail: boundDetail(oneLine(s.detail)) } : {}),
-    })),
-  } : {};
-  return write(items, {
-    runDir: dir, pr, action: 'ran', closingLinks: envelope.action, parentsClosed: closed.length, ...recordsOf(envelope), ...parentFailures,
-  }, closed.length);
+  const isStepWide = (f) => closingSet.length === 0 && !('parent' in f) && !('issue' in f);
+  const parentFailures = failures.filter((f) => !isStepWide(f));
+  const stepSkips = failures.filter(isStepWide).map((f) => ({ reason: f.reason, ...('detail' in f ? { detail: f.detail } : {}) }));
+  const stepFields = {
+    ...(includeRecords || parentFailures.length > 0 ? { parentFailures } : {}),
+    ...(stepSkips.length > 0 ? { stepSkips } : {}),
+  };
+  try {
+    const items = closed.map((c) => ({
+      entry: formatEntry({
+        status: 'AUTO',
+        now: stamp,
+        step: PARENT_STEP,
+        text: `closed parent #${c.parent} below the oversight floor (risk:${c.maxTier}, risk-floor ${riskFloor})`,
+        reversibility: 'high (gh issue reopen)',
+      }),
+    }));
+    items.push({
+      entry: formatEntry({
+        status: 'AUTO',
+        now: stamp,
+        step: MARKER_STEP,
+        text: composeSummaryText({ pr, action: envelope.action, closed, skipped }),
+        reversibility: 'n/a',
+      }),
+    });
+    return write(items, {
+      runDir: dir, pr, action: 'ran', closingLinks: envelope.action, parentsClosed: closed.length, ...recordsOf(envelope), ...stepFields,
+    }, closed.length, stepFields);
+  } catch (e) {
+    // A throw after closeParents returned must not drop the split fields: processCandidate's catch would (#4798 Decision Q5).
+    // The closes already happened on GitHub, so the entry still reports them.
+    return {
+      runDir: dir, pr, action: 'skipped', reason: 'error', detail: oneLine(e && e.message ? e.message : e), parentsClosed: closed.length, ...stepFields,
+    };
+  }
 }
 
 module.exports = {
-  postMerge, postMergeOne, classifyEntry, isFailedRun, failedRecordNumbers, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim,
+  postMerge, postMergeOne, classifyEntry, isFailedRun, failedRecordNumbers, parentsLeftOpen, stepSkipsOf, parentsLeftOpenLine, stepSkipsLine, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim,
   composeSkipText, composeSummaryText, boundDetail, oneLine,
   CLEAN_CLOSING_LINKS, RERUN_REASONS, RERUN_WHERE_GH_REASONS,
   MARKER_STEP, ATTEMPT_STEP, MAX_ATTEMPTS, CLOSE_WINDOW_MS, MERGE_GRACE_MS, CLAIM_STALE_MS, CLAIM_FILENAME,

@@ -31,15 +31,23 @@
 // (`*(e/fn/)`, `*(+fn)`), which runs it in the current shell. Code run from the command text
 // itself (`source`, `.`, `eval`, `trap`, an expansion as the command word) makes
 // rules 1 and 2 decline: every command word must be a plain literal outside the
-// runner set (commandWordsPlain).
+// runner set (commandWordsPlain). On Windows, drop-redundant-cd still compares
+// exact spellings: with cwd `D:\w\cwd`, `cd "D:/w/cwd"`, `cd "/d/w/cwd"` and
+// `cd "d:\w\cwd"` all decline, because the literal must spell the cwd and how
+// Git Bash sets $PWD for those spellings is unmeasured (a trailing `/` after an
+// otherwise exact spelling stays tolerated, trimSlashes, so only those three
+// spellings are the listed residuals).
 //
 // Anything this module cannot prove declines: a rule that
 // doubts returns nothing, and rewriteForGuard returns null on any throw. It is
-// loaded on every skip-path Bash call (bash-prefilter.js), so it requires only
-// path and ../path-guard, and every scan is linear in the command length.
+// loaded on every skip-path Bash call (bash-prefilter.js), so it
+// requires only path, ../path-guard and ../shared-primitives (its top level
+// loads only path and ./path-guard), and every scan is linear in the command
+// length.
 'use strict';
 const path = require('path');
 const { lstatType, canonicalRealpath } = require('../path-guard');
+const { toPosix } = require('../shared-primitives');
 
 const DEFAULT_PLUGIN_ROOT = path.resolve(__dirname, '..', '..', '..');
 const MAX_COMMAND = 64 * 1024;
@@ -522,19 +530,32 @@ function inlineLiteralAssignment(s) {
 }
 
 // Rule 2: ${CLAUDE_PLUGIN_ROOT} → the running plugin's own root.
-function pluginRootPlaceholder(s, { pluginRoot }) {
+function pluginRootPlaceholder(s, { pluginRoot, pathImpl, lstat }) {
   const name = 'CLAUDE_PLUGIN_ROOT';
   if (!s.includes(name) || s.includes('IFS')) return null;
-  if (typeof pluginRoot !== 'string' || !path.isAbsolute(pluginRoot) || !LITERAL_VALUE.test(pluginRoot)) return null;
+  if (typeof pluginRoot !== 'string' || !pathImpl.isAbsolute(pluginRoot)) return null;
+  // The text names the root forward-slashed (Git Bash and zsh read `D:/p/root`
+  // where `D:\p\root` loses its backslashes); the fs probe keeps the native join.
+  // Only this form is inlined, by ruling (#4292, Reading B): there is no native-root
+  // fallback, and whether the harness guard accepts `D:/…` like a native root is
+  // unprobed (docs/reference/pretooluse-updatedinput-worktree-guard.md, Not measured).
+  const inlined = toPosix(pluginRoot, pathImpl.sep);
+  if (!LITERAL_VALUE.test(inlined)) return null;
+  // path.win32.isAbsolute accepts a drive-relative `\p\root`, which resolves on the
+  // current drive while the forward-slashed `/p/root` is MSYS's mount for drive P:,
+  // so the text and the lstat probe would name different files: require a drive or UNC.
+  // A UNC root `\\srv\share\root` is fully qualified and stays `//srv/share/root`; the
+  // `[^/]` keeps a `///x` root, which path.win32 reads as drive-relative, on the decline side.
+  if (pathImpl.sep === '\\' && !/^(?:[A-Za-z]:\/|\/\/[^/])/.test(inlined)) return null;
   if (hasBareUse(s, name)) return null; // the command assigns or unsets it itself
   const sc = scan(s);
   if (inDoubt(s, sc) || sc.flags.complexParam) return null;
   const refs = sc.refs.filter((r) => r.name === name);
-  if (!refs.length || !refsInlineSafely(s, sc, refs, () => pluginRoot)) return null;
+  if (!refs.length || !refsInlineSafely(s, sc, refs, () => inlined)) return null;
   // Other plugins' prose spells the same placeholder for THEIR root: inline only
   // a reference that continues into a path this plugin actually ships.
-  if (!refs.every((r) => shippedUnder(pluginRoot, s, r.end))) return null;
-  const out = replaceSpans(s, refs, () => pluginRoot);
+  if (!refs.every((r) => shippedUnder(pluginRoot, s, r.end, { pathImpl, lstat }))) return null;
+  const out = replaceSpans(s, refs, () => inlined);
   return inlineContextSafe(out, leadingAssignments(out).bodyStart) ? out : null;
 }
 
@@ -547,13 +568,13 @@ const PARENT_SEGMENT = /(?:^|\/)\.\.(?:\/|$)/;
 // plugin's `${CLAUDE_PLUGIN_ROOT}/skills/review/SKILL.md` would resolve to a
 // claude-tweaks file of the same name). A `.` segment declines (`bin/./x.js`).
 // Residual: a same-named file under another plugin's bin/.
-function shippedUnder(root, s, at) {
+function shippedUnder(root, s, at, { pathImpl, lstat }) {
   ROOT_CONTINUATION.lastIndex = at;
   const m = ROOT_CONTINUATION.exec(s);
   if (!m || PARENT_SEGMENT.test(m[0])) return false;
   const segments = m[0].split('/').filter(Boolean);
   if (segments[0] !== 'bin' || segments.length < 2 || segments.includes('.')) return false;
-  const { type } = lstatType(path.join(root, ...segments));
+  const { type } = lstat(pathImpl.join(root, ...segments));
   return type === 'file' || type === 'symlink';
 }
 
@@ -639,7 +660,7 @@ function quoteEscapedSpace(s) {
   return replaceSpans(s, edits, (edit) => edit.text);
 }
 
-const LEADING_CD = /^[ \t]*cd[ \t]+(?:'([^']*)'|"([^"$`\\]*)"|([A-Za-z0-9_.\/:@%+,=-]+))[ \t]*&&[ \t\n]*/;
+const LEADING_CD = /^[ \t]*cd[ \t]+(?:'([^']*)'|"((?:[^"$`\\]|\\[^$`"\\\n])*)"|([A-Za-z0-9_.\/:@%+,=-]+))[ \t]*&&[ \t\n]*/;
 const OLDPWD_USE = /OLDPWD|~-|(?:^|[^A-Za-z0-9_])cd[ \t]+-(?:[\s;&|)]|$)/;
 
 function trimSlashes(p) {
@@ -650,17 +671,22 @@ function trimSlashes(p) {
 // Rule 5: a leading `cd <the cwd> && ` changes nothing but OLDPWD → dropped.
 // The literal must spell the cwd itself, not merely resolve to it: a symlinked
 // or re-cased spelling would change $PWD and `pwd`.
-function dropRedundantCd(s, { cwd }) {
+// A backslash is admitted only inside "…" (LEADING_CD's second branch): there the
+// shell keeps it literal unless it precedes $, `, ", \ or a newline, which the
+// pattern excludes, so a Windows `D:\w\cwd` spelling means exactly its text. An
+// unquoted backslash is stripped by the shell, so that branch stays backslash-free,
+// and the single-quoted branch already took any text.
+function dropRedundantCd(s, { cwd, pathImpl, realpath }) {
   const m = LEADING_CD.exec(s);
   if (!m) return null;
   const target = m[1] ?? m[2] ?? m[3];
   const rest = s.slice(m[0].length);
   // `cd X && # note` is a syntax error; `# note` alone is not.
   if (!/\S/.test(rest) || rest[0] === '#' || OLDPWD_USE.test(rest)) return null;
-  if (!path.isAbsolute(target) || target.includes('~') || target.includes('$')) return null;
+  if (!pathImpl.isAbsolute(target) || target.includes('~') || target.includes('$')) return null;
   if (trimSlashes(target) !== trimSlashes(cwd)) return null;
-  const real = canonicalRealpath(target);
-  if (real === null || real !== canonicalRealpath(cwd)) return null;
+  const real = realpath(target);
+  if (real === null || real !== realpath(cwd)) return null;
   return rest;
 }
 
@@ -695,14 +721,22 @@ function isLinkedWorktree(cwd) {
 // → { command, applied } | null. Never throws.
 function rewriteForGuard(opts) {
   try {
-    const { command, cwd, pluginRoot = DEFAULT_PLUGIN_ROOT } = opts || {};
+    const { command, cwd, pluginRoot = DEFAULT_PLUGIN_ROOT, pathImpl = path } = opts || {};
     const deps = (opts && opts.deps) || {};
     if (typeof command !== 'string' || !command || command.length > MAX_COMMAND) return null;
-    if (typeof cwd !== 'string' || !path.isAbsolute(cwd)) return null;
+    if (typeof cwd !== 'string' || !pathImpl.isAbsolute(cwd)) return null;
+    // Context keys are fixed so the module-level lstatType/canonicalRealpath are never shadowed.
+    const context = {
+      cwd,
+      pluginRoot,
+      pathImpl,
+      lstat: deps.lstatType || lstatType,
+      realpath: deps.canonicalRealpath || canonicalRealpath,
+    };
     let current = command;
     const applied = [];
     for (const [id, rule] of RULES) {
-      const next = rule(current, { cwd, pluginRoot });
+      const next = rule(current, context);
       if (typeof next === 'string' && next && next !== current) {
         current = next;
         applied.push(id);

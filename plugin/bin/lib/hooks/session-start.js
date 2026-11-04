@@ -337,8 +337,9 @@ async function run(ctx) {
         // Post-merge Steps 4.0/4.0b run late for a PR that merged after its session (#4599); a status file
         // from before that lacks these fields, and the Number.isInteger guards render nothing for it.
         // postMergeParentsClosed and postMergeUnmarkedParentsClosed are disjoint: the closes by runs that
-        // wrote their marker, and by runs whose marker write failed. postMergeParentsClosed counts every
-        // `ran` run's closes, a run whose Step 4.0 failed included (its Step 4.0b can still close one).
+        // wrote their marker, and by runs with none: a failed marker write, or a throw after Step 4.0b's
+        // closes ran (`skipped` / `error`). postMergeParentsClosed counts every `ran` run's closes, a run
+        // whose Step 4.0 failed included (its Step 4.0b can still close one).
         const unmarkedClosed = Number.isInteger(s.postMergeUnmarkedParentsClosed) ? s.postMergeUnmarkedParentsClosed : 0;
         const ranClosed = Number.isInteger(s.postMergeParentsClosed) ? s.postMergeParentsClosed : 0;
         if (s.postMergeRan) {
@@ -362,6 +363,14 @@ async function run(ctx) {
             : '';
           lines.push(`post-merge steps failed for ${s.postMergeFailed} merged run(s) (${failedRecords}tidy's parent-gate backstop recovers the parents)`);
         }
+        // Step 4.0b's parents left open and step-wide skips (#4798) stand on their own lines, independent of
+        // `postMergeFailed` / `postMergeRan`: a `marker-write-failed` entry is in neither count yet its fields
+        // reach here through the two lists. An older status file lacks them and the formatters return null.
+        const { parentsLeftOpenLine, stepSkipsLine } = require('../reconcile/post-merge');
+        const parentsLine = parentsLeftOpenLine(s.postMergeParentsLeftOpen);
+        if (parentsLine) lines.push(parentsLine);
+        const stepSkipsText = stepSkipsLine(s.postMergeStepSkips);
+        if (stepSkipsText) lines.push(stepSkipsText);
         if (s.archived) lines.push(`${s.archived} pipeline run(s) archived`);
         if (s.archivedBranches) lines.push(`${s.archivedBranches} local branch(es) archived/deleted`);
         if (s.prunedRemote) lines.push(`${s.prunedRemote} merged remote branch(es) deleted on origin`);

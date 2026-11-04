@@ -15,8 +15,8 @@ sections differ per record, and each needs its own remedy:
 
 **Remedy selection:** when `missing` is exactly `["Release Note"]`, the remedy is
 `` `/claude-tweaks:tidy` `` — #2828's Shape 4.5 repairs a missing Release Note in place. Any other
-`missing` set (one of the other three required sections, `unresolved-placeholder`, alone or
-combined with a missing Release Note) gets `` `/claude-tweaks:specify #{number}` ``.
+`missing` set (one of the other three required sections, `unresolved-placeholder`, or
+`unclosed-fence at line N`, alone or combined with a missing Release Note) gets `` `/claude-tweaks:specify #{number}` ``.
 
 Same drain+zero-eligible silence exception as the Blocked-exclusion report (`SKILL.md` Step 3);
 omit this block entirely when the filtered entry list is empty. Like the Open-PR and Shipped-
