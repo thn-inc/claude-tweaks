@@ -199,8 +199,9 @@ function mergeNarrowing({ anchor, integrationBranch, files, execImpl = execFileS
   const ahead = tryGit(execImpl, ['rev-list', '--count', '--end-of-options', `${ref}..HEAD`]);
   if (ahead === null || ahead.trim() === '0') return null;
   const differs = tryGit(execImpl, ['diff', '--name-only', '-z', '--no-renames', '--end-of-options', ref, 'HEAD']);
-  if (differs === null || parseNameOnlyZ(differs).length === 0) return null;
-  const own = new Set(parseNameOnlyZ(differs));
+  const differing = differs === null ? null : parseNameOnlyZ(differs);
+  if (differing === null || differing.length === 0) return null;
+  const own = new Set(differing);
   const status = tryGit(execImpl, ['--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=all']);
   if (status === null) return null;
   for (const f of statusPorcelainPaths(status)) own.add(f);

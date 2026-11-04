@@ -378,7 +378,7 @@ test('mergeNarrowing: a failing working-tree status read degrades to null, never
   mergeTrunkWith(r, [['ui/a.js', 'a']]);
   r.commit('src/own.py', 'own');
   const files = changedSince(r, r.anchor);
-  const statusFails =(cmd, args, opts) => {
+  const statusFails = (cmd, args, opts) => {
     if (args[1] === 'status') { const e = new Error('index.lock: File exists'); e.status = 128; throw e; }
     return r.exec(cmd, args, opts);
   };
@@ -390,7 +390,7 @@ test('mergeNarrowing: a failing anchor merge-base or pre-anchor diff degrades to
   mergeTrunkWith(r, [['ui/a.js', 'a']]);
   r.commit('src/own.py', 'own');
   const files = changedSince(r, r.anchor);
-  const fail =() => { const e = new Error('fatal: bad object'); e.status = 128; throw e; };
+  const fail = () => { const e = new Error('fatal: bad object'); e.status = 128; throw e; };
   const mergeBaseFails = (cmd, args, opts) => (args[0] === 'merge-base' && !args.includes('--is-ancestor') ? fail() : r.exec(cmd, args, opts));
   const preAnchorDiffFails = (cmd, args, opts) => (args[0] === 'diff' && args[args.length - 1] === r.anchor ? fail() : r.exec(cmd, args, opts));
   assert.strictEqual(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: mergeBaseFails }), null);

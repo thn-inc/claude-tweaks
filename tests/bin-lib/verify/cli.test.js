@@ -3529,6 +3529,56 @@ test('--scope --integration-branch: AC1.2 (Reading B): a bookkeeping-only delta 
   assert.strictEqual(report.scope.mergeNarrowing, null);
 });
 
+test('--scope --integration-branch: AC1.2 (Reading B): a static-checked bookkeeping-only delta still stamps static-only, unnarrowed (#4638)', async () => {
+  const r = zeroSuiteRepo();
+  await anchorFullPass(r);
+  mergeTrunk(r, ['cfg/b.json']);
+  commitFile(r, 'docs/a.md', 'docs');
+  const { run, stamp, report } = await runScoped(r);
+  assert.strictEqual(report.scope.mode, 'static-only');
+  assert.strictEqual(stamp.scope, 'static-only');
+  assert.deepStrictEqual(stamp.suitesRun, []);
+  assert.strictEqual(report.scope.mergeNarrowing, null);
+  assert.deepStrictEqual(report.scope.changedFiles, ['cfg/b.json', 'docs/a.md']);
+  assert.doesNotMatch(run.stdout, /merge-narrowed/);
+});
+
+test('--scope --integration-branch: a tool-scoped declaration whose merge-narrowed set went empty re-selects tool-scoped over the full set (#4638)', async () => {
+  const r = tmpGitRepo();
+  const out = path.join(r.gitDir, 'base-seen.marker');
+  const decl = {
+    checks: { tests: nodeCmd("require('fs').writeFileSync(process.argv[1], process.argv[2])", out, '{base}') },
+    rules: [{ match: 'src/**', suites: [], static: true }, { match: 'docs/**', suites: [], static: false }],
+  };
+  fs.mkdirSync(path.join(r.repo, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(r.repo, '.claude-tweaks', 'verify-scope.json'), JSON.stringify(decl));
+  r.git('add', '.claude-tweaks/verify-scope.json');
+  r.git('commit', '-q', '-m', 'declare');
+  const trunk = r.git('symbolic-ref', '--short', 'HEAD').trim();
+  r.git('checkout', '-q', '-b', 'feat');
+  // A pre-anchor bookkeeping commit: the tree differs from trunk's, yet the
+  // merge below leaves no changed path of the branch's own since the anchor.
+  commitFile(r, 'docs/pre.md', 'pre');
+  const args = ['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', trunk, '--cmd', 'tests=node -e 0'];
+  const run1 = await runCli(args, { cwd: r.repo });
+  assert.strictEqual(run1.code, 0, run1.stderr);
+  const anchor = stampOf(r.gitDir).fullSha;
+  assert.ok(!fs.existsSync(out), 'the anchoring full run uses --cmd, so the {base} command has not run yet');
+  mergeTrunk({ ...r, trunk }, ['ui/a.js']);
+  const run2 = await runCli(args, { cwd: r.repo });
+  assert.strictEqual(run2.code, 0, run2.stderr);
+  assert.match(run2.stdout, /^Scope: tool-scoped/m);
+  assert.doesNotMatch(run2.stdout, /merge-narrowed/);
+  assert.ok(fs.existsSync(out), 'the tool-scoped tests command must actually have run');
+  assert.strictEqual(fs.readFileSync(out, 'utf8'), anchor, 'the resolved base replaced {base}');
+  const s2 = stampOf(r.gitDir);
+  assert.strictEqual(s2.scope, 'tool-scoped');
+  assert.deepStrictEqual(s2.suitesRun, ['tests']);
+  const report = JSON.parse(fs.readFileSync(s2.reportPath, 'utf8'));
+  assert.strictEqual(report.scope.mergeNarrowing, null);
+  assert.deepStrictEqual(report.scope.changedFiles, ['ui/a.js']);
+});
+
 test('--scope --integration-branch: AC1.2 (Reading A): narrowing that leaves a suite still narrows (#3072 stays) (#4638)', async () => {
   const r = zeroSuiteRepo();
   await anchorFullPass(r);

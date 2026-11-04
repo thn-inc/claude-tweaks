@@ -632,7 +632,7 @@ async function main() {
       const select = (impact) => selectScope({ decl, files, stamp: anchorSha ? priorStamp : null, statuses, impact, fallbackBase });
       sel = select(impactCtx);
       // #4638: narrowing never earns a zero-suite stamp. Re-select over the full set;
-      // a delta whose paths map to no suite still reads none there and still stamps.
+      // a delta whose paths map to no suite still reads none (or static-only) there and still stamps.
       if (narrowing && sel.suites.length === 0) {
         ({ files, statuses } = unnarrowed);
         narrowing = null;
