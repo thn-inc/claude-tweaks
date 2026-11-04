@@ -44,6 +44,9 @@ test('stripCrossRepoRefs strips only refs the parser accepts', () => {
 });
 test('foreignEntries throws a TypeError on misuse instead of dropping or nulling silently', () => {
   assert.throws(() => foreignEntries('other/repo#5', new Map()), TypeError);
+  // Inputs only the array / Map guards catch: an iterable of valid refs, and a Map look-alike that would answer.
+  assert.throws(() => foreignEntries(new Set(['other/repo#5']), new Map()), TypeError);
+  assert.throws(() => foreignEntries(['other/repo#5'], { get: () => 'OPEN' }), TypeError);
   assert.throws(() => foreignEntries(['other/repo#5'], {}), TypeError);
   assert.throws(() => foreignEntries(['other/repo#5'], undefined), TypeError);
   assert.throws(() => foreignEntries(['not a ref'], new Map()), TypeError);
