@@ -2236,6 +2236,27 @@ test('formatSummary: a skipped entry\'s detail renders in parentheses after the 
   assert.strictEqual(formatSummary({ ...base, skipped: [{ check: 'post-merge', reason: 'not-github-issues' }] }), 'skipped: post-merge — not-github-issues');
 });
 
+test('#4794: formatSummary renders an unknown-host detail whole — a real SSH-origin refusal is over 300 chars and keeps its Enterprise advice', () => {
+  const { gateOriginRepo } = require('../plugin/bin/lib/repo-resolve');
+  const base = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, console: null };
+  const detail = gateOriginRepo('git@git.corp.invalid:o/r.git', { env: {}, readFile: () => { throw new Error('ENOENT'); } }).refusal;
+  assert.ok(detail.length > 300, `the SSH refusal must exceed the 300-char bound, got ${detail.length}`);
+  const oneLineDetail = detail.replace(/\s+/g, ' ').trim();
+  for (const check of ['release', 'post-merge', 'remote-prune']) {
+    const line = formatSummary({ ...base, skipped: [{ check, reason: 'unknown-host', detail }] });
+    assert.strictEqual(line, `skipped: ${check} — unknown-host (${oneLineDetail})`);
+    assert.ok(!line.includes('…'), line);
+  }
+});
+
+test('#4794: formatSummary still truncates a long detail whose reason is not unknown-host', () => {
+  const base = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, console: null };
+  const detail = 'x'.repeat(400);
+  const line = formatSummary({ ...base, skipped: [{ check: 'release', reason: 'gh-failure', detail }] });
+  assert.ok(line.includes('…'), line);
+  assert.ok(!line.includes(detail), line);
+});
+
 test('formatSummary: a skipped entry\'s multi-line detail renders flattened on one line (#4933)', () => {
   const base = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, console: null };
   const detail = 'origin host git.corp.invalid is not known\n  export GH_HOST=git.corp.invalid\r\nthen re-run';
