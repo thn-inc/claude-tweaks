@@ -31,7 +31,11 @@ Refuse. An origin-derived host passes only on a positive GitHub signal, checked 
    the seam uses — one function, not a second copy).
 
 Anything else returns a refusal: the CLI writes `{cli}: {refusal}` to stderr — naming the host and
-the `export GH_HOST={host}` opt-in — and exits with the code it already uses for an unresolvable
+the `export GH_HOST={host}` opt-in. An SSH origin (scp-style, or an `ssh://`, `git+ssh://` or
+`ssh+git://` URL) is instead told to export `GH_HOST` as the real host an SSH alias maps to (e.g.
+`GH_HOST=github.com`), not the alias name, or, if it is GitHub Enterprise, as that server's host: it
+never names its own host as a value, since an SSH host may be an alias that resolves only through
+`~/.ssh/config` (#4794). The CLI exits with the code it already uses for an unresolvable
 owner/repo, before any gh call that names a repo or host. Hook-side callers never exit: teardown
 prints a `remote ref: skipped` line and post-merge returns the `unknown-host` failure word. A token
 in the environment is never a signal. A user-typed `--repo` is not gated.
@@ -73,8 +77,11 @@ Two further rulings from #4933's plan review:
   where the CLIs ran before — that is the decision, not a regression.
 - Every new producer that derives a host from origin must call `gateOriginRepo`; the conformance
   roster makes forgetting it a test failure rather than a review catch.
-- A null host from a remote `parseRepo` cannot read (e.g. `ssh://`) is not turned into a refusal
-  here; #4857 owns that case.
+- The gate judges the normalized host (`parseRepo(hostPathOf(remote))`: userinfo, port and scheme
+  dropped, #4794), so a credentialed, ported or `ssh://` origin is admitted or refused exactly as its
+  plain spelling is. A remote that read does not parse (a cloud sandbox's
+  `http://local_proxy@127.0.0.1:{port}/git/{owner}/{repo}` proxy remote, a local path) is neither;
+  #4857 owns that case.
 - Revisit if gh itself starts admitting hosts by another positive signal (the gate should follow
   gh's notion of a known host), or if a forge-agnostic work backend makes non-GitHub origins a
   supported configuration rather than a misconfiguration.

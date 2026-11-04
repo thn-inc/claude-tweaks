@@ -441,6 +441,8 @@ const { gateOriginRepo, isKnownGhHost } = require('../../plugin/bin/lib/repo-res
 const noHosts = { env: {}, readFile: () => { throw new Error('ENOENT'); }, platform: 'linux', homedir: '/h' };
 const hostsYml = (text) => ({ ...noHosts, readFile: () => text });
 const refusalOf = (host) => `origin host ${host} is not a known GitHub host (not github.com, not *.ghe.com, not a gh hosts.yml key) — refusing to send it to gh; if it is GitHub Enterprise, export GH_HOST=${host}`;
+// #4794: an SSH origin's refusal never interpolates its host after GH_HOST=.
+const sshRefusalOf = (host) => `origin host ${host} is not a known GitHub host (not github.com, not *.ghe.com, not a gh hosts.yml key) — refusing to send it to gh; if it is an SSH host alias, export GH_HOST as the real host it maps to (e.g. export GH_HOST=github.com), not the alias name; if it is GitHub Enterprise, export GH_HOST as that server's host`;
 
 test('AC1.1: an unknown origin host with only GH_ENTERPRISE_TOKEN set is refused', () => {
   const out = gateOriginRepo('https://git.corp.invalid/o/r.git', { ...noHosts, env: { GH_ENTERPRISE_TOKEN: 't' } });
@@ -481,7 +483,77 @@ test('review focus 2: GH_HOST is normalized (case, trailing dot) before it is co
   assert.deepEqual(out, { spec: { host: 'git.corp.invalid', owner: 'o', repo: 'r' }, refusal: null });
 });
 test('review focus 4: an scp-style origin on an unknown host is refused', () => {
-  assert.deepEqual(gateOriginRepo('git@git.corp.invalid:o/r.git', noHosts), { spec: null, refusal: refusalOf('git.corp.invalid') });
+  assert.deepEqual(gateOriginRepo('git@git.corp.invalid:o/r.git', noHosts), { spec: null, refusal: sshRefusalOf('git.corp.invalid') });
+});
+
+// #4794: an SSH origin's refusal names no host value; the gate judges the normalized host alone.
+test('#4794: an SSH origin gets the alias advice and the generic GHE opt-in, never its own host as a GH_HOST value', () => {
+  const cases = [
+    ['git@github-work:o/r.git', 'github-work'], ['github-work:o/r.git', 'github-work'],
+    ['git@github.com-work:o/r.git', 'github.com-work'], ['git@git.corp.invalid:o/r.git', 'git.corp.invalid'],
+    ['git@10.0.0.5:o/r.git', '10.0.0.5'], ['ssh://git@github-work/o/r.git', 'github-work'],
+    ['ssh://git@git.corp.invalid:2222/o/r.git', 'git.corp.invalid'], ['git+ssh://git@github-work/o/r.git', 'github-work'],
+    ['ssh+git://github-work/o/r', 'github-work'],
+  ];
+  for (const [remote, host] of cases) {
+    const out = gateOriginRepo(remote, noHosts);
+    assert.deepEqual(out, { spec: null, refusal: sshRefusalOf(host) }, remote);
+    assert.match(out.refusal, /export GH_HOST=github\.com/, remote);
+    assert.match(out.refusal, /export GH_HOST as that server's host/, remote);
+    assert.doesNotMatch(out.refusal, new RegExp('GH_HOST=' + host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), remote);
+  }
+});
+test('#4794: a non-SSH origin keeps the refusal text byte-identical, credentials, ports and a dotless host included', () => {
+  for (const remote of ['https://git.corp.invalid/o/r.git', 'https://oauth2@git.corp.invalid/o/r.git',
+    'https://x:tok@git.corp.invalid:8443/o/r.git', 'http://git.corp.invalid/o/r.git']) {
+    const out = gateOriginRepo(remote, noHosts);
+    assert.deepEqual(out, { spec: null, refusal: refusalOf('git.corp.invalid') }, remote);
+    for (const leak of ['oauth2', 'tok', '8443']) assert.ok(!out.refusal.includes(leak), `${remote} leaks ${leak}`);
+  }
+  assert.deepEqual(gateOriginRepo('https://github-work/o/r.git', noHosts), { spec: null, refusal: refusalOf('github-work') });
+});
+test('#4794 blanket rule 1: every spelling of one origin gets its plain spelling\'s verdict', () => {
+  const groups = [
+    ['git@git.corp.invalid:acme/w.git', 'ssh://git@git.corp.invalid/acme/w.git', 'ssh://git@git.corp.invalid:22/acme/w.git', 'git+ssh://git@git.corp.invalid/acme/w.git'],
+    ['https://git.corp.invalid/acme/w.git', 'https://oauth2@git.corp.invalid/acme/w.git', 'https://git.corp.invalid:8443/acme/w.git'],
+    ['git@github-work:acme/w.git', 'ssh://git@github-work/acme/w.git'],
+    ['git@acme.ghe.com:acme/w.git', 'ssh://git@acme.ghe.com/acme/w.git', 'https://oauth2@acme.ghe.com/acme/w.git'],
+  ];
+  const withGhHost = { ...noHosts, env: { GH_HOST: 'git.corp.invalid' } };
+  for (const deps of [noHosts, withGhHost]) {
+    for (const group of groups) {
+      for (const member of group) assert.deepEqual(gateOriginRepo(member, deps), gateOriginRepo(group[0], deps), member);
+    }
+  }
+  for (const group of groups.slice(0, 3)) assert.equal(gateOriginRepo(group[0], noHosts).spec, null);
+  for (const group of groups.slice(0, 3)) assert.equal(typeof gateOriginRepo(group[0], noHosts).refusal, 'string');
+  assert.deepEqual(gateOriginRepo(groups[3][0], noHosts), { spec: { host: 'acme.ghe.com', owner: 'acme', repo: 'w' }, refusal: null });
+  for (const group of groups.slice(0, 2)) {
+    assert.deepEqual(gateOriginRepo(group[0], withGhHost), { spec: { host: 'git.corp.invalid', owner: 'acme', repo: 'w' }, refusal: null });
+  }
+});
+test('#4794: no cloud sandbox proxy remote parses under the normalized read — the gate neither admits nor refuses it', () => {
+  const proxies = ['http://local_proxy@127.0.0.1:43210/git/thn-inc/claude-tweaks', 'http://local_proxy@127.0.0.1:43215/git/acme/w',
+    'http://local_proxy@127.0.0.1:43215/git/acme/w.git', 'http://local_proxy@127.0.0.1:43215/git/acme/w/',
+    'http://127.0.0.1:43215/git/acme/w', 'http://local_proxy@localhost:43215/git/acme/w'];
+  for (const url of proxies) {
+    for (const deps of [noHosts, { ...noHosts, env: { GH_HOST: 'github.com' } }]) {
+      assert.deepEqual(gateOriginRepo(url, deps), { spec: null, refusal: null }, url);
+    }
+  }
+  // Contrast: without the /git/ segment the shape parses, so the null verdict above comes from that segment, not the loopback host.
+  assert.deepEqual(gateOriginRepo('http://local_proxy@127.0.0.1:43215/acme/w', noHosts), { spec: null, refusal: refusalOf('127.0.0.1') });
+});
+test('#4794: the gate reads a credentialed, ported or ssh:// origin the way the seam does', () => {
+  const urls = ['https://oauth2@acme.ghe.com/acme/w.git', 'https://x:tok@acme.ghe.com/acme/w.git', 'https://acme.ghe.com:8443/acme/w.git',
+    'ssh://git@acme.ghe.com/acme/w.git', 'ssh://git@acme.ghe.com:22/acme/w.git'];
+  urls.forEach((url, i) => {
+    assert.deepEqual(gateOriginRepo(url, noHosts), { spec: { host: 'acme.ghe.com', owner: 'acme', repo: 'w' }, refusal: null }, url);
+    _resetGhHostCache();
+    assert.equal(gateOriginRepo(url, noHosts).spec.host, resolveGhHost('/n-' + i, { ...ghe, remoteUrl: () => url }), url);
+    _resetGhHostCache();
+  });
+  assert.equal(gateOriginRepo('ssh://git@github.com/acme/w.git', noHosts).spec.host, 'github.com');
 });
 test('unparseable or absent origin is neither spec nor refusal', () => {
   for (const remote of [null, undefined, '', 'not a url']) {

@@ -14,7 +14,10 @@
 // one matching the origin host carries that host; another host yields a bare slug
 // (spec host github.com), even for a known GitHub origin. An empty GH_HOST is no
 // opt-in. Without one, a host with no positive GitHub signal (github.com or
-// isKnownGhHost) comes back as a refusal, never as a spec for gh.
+// isKnownGhHost) comes back as a refusal, never as a spec for gh. The gate judges
+// parseRepo(hostPathOf(remote)) alone (userinfo, port and scheme dropped), so its verdict
+// depends only on the host; a remote that read does not parse, such as a cloud sandbox's
+// `http://local_proxy@127.0.0.1:{port}/git/{owner}/{repo}` proxy remote, is neither admitted nor refused.
 'use strict';
 const { execFileSync } = require('child_process');
 const fs = require('fs');
@@ -140,9 +143,18 @@ function isKnownGhHost(host, deps = {}) {
 // Unlike ghOptions, an exported but empty (or whitespace-only) GH_HOST is no opt-in
 // here, so an unknown origin host is still refused (decided at #4933's plan review).
 // Then github.com or isKnownGhHost passes; any other host is refused. Never throws.
+// #4794: the gate judges `parseRepo(hostPathOf(remote))` alone (userinfo, port and scheme
+// dropped, the read the seam makes), so its verdict depends only on the host; a remote that
+// read does not parse, such as a cloud sandbox's `http://local_proxy@127.0.0.1:{port}/git/{owner}/{repo}`
+// proxy remote, is neither admitted nor refused. Two refusal texts: an SSH host may be an
+// alias that resolves only through ~/.ssh/config, whatever its shape (`github.com-work` and
+// `git.corp.invalid` look alike), so an SSH remote is told to export GH_HOST as the real host
+// the alias maps to (or, for GitHub Enterprise, that server's host) and its own name is never
+// offered as a GH_HOST value; an HTTPS host is a real DNS name the remote already reaches, so
+// it keeps `export GH_HOST=${host}`.
 function gateOriginRepo(remote, deps) {
   const d = deps || {};
-  const parsed = parseRepo(remote);
+  const parsed = parseRepo(hostPathOf(remote));
   if (!parsed) return { spec: null, refusal: null };
   const host = normalizeHost(parsed.host);
   const ghHost = String((d.env || process.env).GH_HOST || '').trim();
@@ -150,10 +162,20 @@ function gateOriginRepo(remote, deps) {
     return { spec: { ...parsed, host: normalizeHost(ghHost) === host ? host : 'github.com' }, refusal: null };
   }
   if (host === 'github.com' || isKnownGhHost(host, d)) return { spec: { ...parsed, host }, refusal: null };
+  const prefix = `origin host ${host} is not a known GitHub host (not github.com, not *.ghe.com, not a gh hosts.yml key) — refusing to send it to gh`;
   return {
     spec: null,
-    refusal: `origin host ${host} is not a known GitHub host (not github.com, not *.ghe.com, not a gh hosts.yml key) — refusing to send it to gh; if it is GitHub Enterprise, export GH_HOST=${host}`,
+    refusal: isSshRemote(remote)
+      ? `${prefix}; if it is an SSH host alias, export GH_HOST as the real host it maps to (e.g. export GH_HOST=github.com), not the alias name; if it is GitHub Enterprise, export GH_HOST as that server's host`
+      : `${prefix}; if it is GitHub Enterprise, export GH_HOST=${host}`,
   };
+}
+
+// An scp-style (`[user@]host:path`, no `//` after the colon) or `ssh://`, `git+ssh://`,
+// `ssh+git://` remote: its host resolves through ~/.ssh/config, so it may be an alias.
+function isSshRemote(remote) {
+  const r = String(remote || '').trim();
+  return /^(?:[^@\s/:]+@)?[^@\s/:]+:(?!\/)/.test(r) || /^(?:ssh|git\+ssh|ssh\+git):\/\//i.test(r);
 }
 
 // A `scheme://[user[:pass]@]host[:port]/path` URL -> `host/path`, the shape

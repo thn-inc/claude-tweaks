@@ -10,6 +10,7 @@ const path = require('path');
 const {
   runGit, runGitAsync, isIndeterminate, FAILURE, DEFAULT_TIMEOUT_MS, repoPinnedEnv, repoSlugOf, repoSpecOf,
 } = require('../plugin/bin/lib/hooks/git-exec');
+const { gateOriginRepo } = require('../plugin/bin/lib/repo-resolve');
 const { gitRepo, fixtureGit } = require('./helpers/git-fixtures');
 const { splitNul } = require('../plugin/bin/lib/git-z');
 
@@ -440,7 +441,7 @@ test('repoSpecOf: the origin remote parsed with its host — github.com and GitH
   }
 });
 
-test('repoSpecOf (#4933): an origin on an unknown host returns { refusal } naming the host and the GH_HOST opt-in', () => {
+test('repoSpecOf (#4933): an origin on an unknown host returns { refusal } naming the host and the GH_HOST opt-in (#4794: an scp origin\'s names no host value)', () => {
   const repo = gitRepo();
   const gateDeps = { env: {}, readFile: () => { throw new Error('none'); } };
   for (const url of ['git@git.corp.invalid:acme/w.git', 'https://git.corp.invalid/acme/w.git']) {
@@ -448,9 +449,27 @@ test('repoSpecOf (#4933): an origin on an unknown host returns { refusal } namin
     const got = repoSpecOf(repo, gateDeps);
     assert.deepStrictEqual(Object.keys(got), ['refusal'], url);
     assert.match(got.refusal, /origin host git\.corp\.invalid is not a known GitHub host/, url);
-    assert.match(got.refusal, /export GH_HOST=git\.corp\.invalid/, url);
+    if (url.startsWith('https:')) {
+      assert.match(got.refusal, /export GH_HOST=git\.corp\.invalid/, url);
+    } else {
+      assert.strictEqual(got.refusal, gateOriginRepo(url, gateDeps).refusal, url);
+      assert.match(got.refusal, /export GH_HOST as that server's host/, url);
+      assert.doesNotMatch(got.refusal, /GH_HOST=git\.corp\.invalid/, url);
+    }
     fixtureGit(['-C', repo, 'remote', 'remove', 'origin']);
   }
+});
+
+test('repoSpecOf (#4794): an SSH-alias origin returns { refusal } advising the real host, never the alias', () => {
+  const repo = gitRepo();
+  const gateDeps = { env: {}, readFile: () => { throw new Error('none'); } };
+  fixtureGit(['-C', repo, 'remote', 'add', 'origin', 'git@github-work:acme/w.git']);
+  const got = repoSpecOf(repo, gateDeps);
+  assert.deepStrictEqual(Object.keys(got), ['refusal']);
+  assert.match(got.refusal, /origin host github-work is not a known GitHub host/);
+  assert.match(got.refusal, /export GH_HOST=github\.com/);
+  assert.match(got.refusal, /export GH_HOST as that server's host/);
+  assert.doesNotMatch(got.refusal, /GH_HOST=github-work/);
 });
 
 test('repoSpecOf (#4933): a known GitHub host resolves; a *.ghe.com host needs no opt-in', () => {
@@ -468,17 +487,21 @@ test('repoSpecOf (#4933): an unreadable hosts.yml (readFile throws) is still a r
   assert.ok(got && typeof got.refusal === 'string' && got.refusal.includes('git.corp.invalid'), JSON.stringify(got));
 });
 
-test('repoSpecOf (#4933): an ssh:// origin on an unknown host still takes the loose fallback — the gate does not read it (#4857)', () => {
+test('repoSpecOf (#4794): an ssh:// origin on an unknown host is refused exactly as its scp spelling is', () => {
   const repo = gitRepo();
+  const gateDeps = { env: {}, readFile: () => { throw new Error('none'); } };
   fixtureGit(['-C', repo, 'remote', 'add', 'origin', 'ssh://git@git.corp.invalid/acme/w.git']);
-  assert.deepStrictEqual(repoSpecOf(repo, { env: {}, readFile: () => { throw new Error('none'); } }), { host: null, owner: 'acme', repo: 'w' });
+  const got = repoSpecOf(repo, gateDeps);
+  assert.deepStrictEqual(Object.keys(got), ['refusal']);
+  assert.strictEqual(got.refusal, gateOriginRepo('git@git.corp.invalid:acme/w.git', gateDeps).refusal);
+  assert.doesNotMatch(got.refusal, /GH_HOST=git\.corp\.invalid/);
 });
 
-test('repoSpecOf: a remote parseRepo does not read (ssh://) still resolves through repoSlugOf\'s parse, host unknown', () => {
+test('repoSpecOf (#4794): an ssh:// github.com origin is read by the gate, host github.com', () => {
   const repo = gitRepo();
   fixtureGit(['-C', repo, 'remote', 'add', 'origin', 'ssh://git@github.com/acme/w.git']);
   assert.strictEqual(repoSlugOf(repo), 'acme/w');
-  assert.deepStrictEqual(repoSpecOf(repo), { host: null, owner: 'acme', repo: 'w' });
+  assert.deepStrictEqual(repoSpecOf(repo), { host: 'github.com', owner: 'acme', repo: 'w' });
 });
 
 test('repoSpecOf: no origin remote, or a directory outside any repo, is null', () => {

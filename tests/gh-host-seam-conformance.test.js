@@ -396,7 +396,7 @@ function originReads(raw) {
 // was settled by reading the lines. activity-gather.js is not listed: it reads the origin in two
 // lines (the recall gap above), so it has 0 sites, and it stops on any host but github.com anyway.
 const NOT_ORIGIN = {
-  'lib/repo-resolve.js': { count: 1, reason: "defines the gate: gateOriginRepo's own `parseRepo(remote)` is the parse the gate judges. resolveGhSpec's second parse, `parseRepo(hostPathOf(url))`, names no token and is unmatched; harmless, since this file is the seam" },
+  'lib/repo-resolve.js': { count: 1, reason: "defines the gate: gateOriginRepo's own `parseRepo(hostPathOf(remote))` is the one parse the gate judges. resolveGhSpec's `parseRepo(hostPathOf(url))` names no token and is unmatched; harmless, since this file is the seam" },
   'stale-claim-pr.js': { count: 1, reason: "`deps.parseRepo(remote)` is followed by a stop on any host but github.com ('stale-claim matching supports github.com only'), so no other origin host reaches gh" },
   'parent-gate.js': { count: 1, reason: "decided by the user at #4933's plan review: the --facts-json path makes no gh call and keeps a raw `parseRepo(remote)`, host normalized, only to judge a qualified --closing token; its gh path calls the gate (ORIGIN_GATED)" },
   'lib/wrap-up/engine-verify.js': { count: 2, reason: "carrier-commit's and reference-repairs' `parseRepo(<origin>)` pass only owner/repo to deps.gh, a ghOptions-wrapped runner, so the host is the seam's choice, never the parsed one. The acceptance-labeling check's origin goes through the gate (resolveCheckRepo, #4805), which ORIGIN_GATED lists" },
