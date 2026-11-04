@@ -33,7 +33,7 @@ test('a verify row keeps the impact outcome only when the event carries one (#43
 });
 
 test('a verify row drops an impact that is not an object (#4321)', () => {
-  for (const bad of ['map-missing', 7, true, null]) {
+  for (const bad of ['map-missing', 7, true, null, []]) {
     const events = fixtureEvents().map((e) => (e.type === 'verify' && e.mode === 'full' ? { ...e, impact: bad } : e));
     const p = byName(derivePhases({ events, manifest: fixtureManifest(), now: new Date('2026-09-05T14:13:00.000Z') }));
     assert.equal(Object.hasOwn(p.test.verify[0], 'impact'), false, JSON.stringify(bad));
