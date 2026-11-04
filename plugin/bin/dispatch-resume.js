@@ -61,7 +61,9 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const claimStore = require('./lib/issues/claim-store');
 const { defaultRunner: gitCasRunner } = require('./lib/issues/claims-git-cas');
-const { parseDependencies, openBlockerRefs } = require('./lib/issues/record');
+const { parseDependencies, openBlockerRefs, foreignBlockerBlocks, foreignBlockerRef } = require('./lib/issues/record');
+const { parseCrossRepoDependencies, foreignEntries, bodyOnlyForeign } = require('./lib/issues/cross-repo-refs');
+const { fetchCrossRepoStates } = require('./lib/issues/cross-repo-states');
 const { parseStatusPorcelainZ } = require('./lib/git-z');
 const { fetchNativeDependencies } = require('./lib/issues/native-dependencies');
 const { resolvePolicyConfig } = require('./lib/policy-schema');
@@ -275,6 +277,10 @@ function readRecord(ctx) {
 // native only, exactly as the queue gates it — the native open blockers. This repository's come first
 // as numbers (ascending, deduplicated), then each foreign blocker still blocking as an `owner/name#N`
 // string, with ` (state unreadable)` when its native state is neither OPEN nor CLOSED (#4793, Q5).
+// A body-declared `Blocked by owner/name#N` line (another repository, either work-links value) joins
+// the foreign blockers: refs already linked natively are dropped first (named once, no lookup), the
+// rest are looked up in one batched call through ctx.deps.gh. A failed lookup leaves every state
+// unknown, so each ref is named `(state unreadable)` and one stderr line says why (fail closed, Q5).
 function readOpenBlockers(ctx, body) {
   const open = new Set();
   const foreign = [];
@@ -288,6 +294,7 @@ function readOpenBlockers(ctx, body) {
     if (dep.state === 'OPEN') open.add(m);
   }
   const workLinks = read('work-links policy', () => ctx.deps.workLinks());
+  let nativeCross = [];
   if (workLinks === 'native') {
     const [owner, repo] = ctx.slug.split('/').slice(-2);
     const map = read('native dependency read', () => ctx.deps.fetchNative({ numbers: [ctx.issue], owner, repo }));
@@ -299,8 +306,27 @@ function readOpenBlockers(ctx, body) {
       if (typeof ref === 'string') foreign.push(ref);
       else open.add(ref);
     }
+    if (Array.isArray(entry.crossRepoBlockers)) nativeCross = entry.crossRepoBlockers.filter((b) => b && typeof b === 'object');
   }
+  foreign.push(...bodyForeignBlockerRefs(ctx, body, nativeCross));
   return [...[...open].sort((a, b) => a - b), ...foreign];
+}
+
+// The body-declared foreign blockers still blocking, as `owner/name#N` strings (see readOpenBlockers).
+// `nativeCross` is the native entry's crossRepoBlockers: those refs are dropped before the lookup.
+function bodyForeignBlockerRefs(ctx, body, nativeCross) {
+  const declared = foreignEntries(parseCrossRepoDependencies(body), new Map());
+  const refs = bodyOnlyForeign(nativeCross, declared).map((e) => `${e.repository}#${e.number}`);
+  if (refs.length === 0) return [];
+  const slugParts = ctx.slug.split('/');
+  const host = slugParts.length === 3 ? slugParts[0] : undefined;
+  let states = new Map();
+  try {
+    states = fetchCrossRepoStates({ refs, host, runner: ctx.deps.gh });
+  } catch (e) {
+    ctx.deps.stderr(`dispatch-resume: foreign blocker state lookup failed (${errText(e).replace(/\s+/g, ' ').trim()})\n`);
+  }
+  return foreignEntries(refs, states).filter(foreignBlockerBlocks).map(foreignBlockerRef);
 }
 
 // One direct read, never an existence check first ([IL-146]): a missing file (ENOENT/ENOTDIR) is

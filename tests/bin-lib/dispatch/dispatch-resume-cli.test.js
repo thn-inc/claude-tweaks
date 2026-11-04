@@ -105,6 +105,10 @@ function makeEnv(over = {}) {
     gh: (args) => {
       calls.gh.push(args);
       if (args[0] === 'repo') return `${SLUG}\n`;
+      if (args[0] === 'api' && args[1] === 'graphql' && args.some((a) => /^query=[\s\S]*c0: repository\(/.test(a))) {
+        if (cfg.foreignThrows) throw new Error('foreign boom');
+        return JSON.stringify({ data: cfg.foreignData || {} });
+      }
       if (args[0] === 'api' && args[1] === 'graphql') {
         if (cfg.prListThrows) throw new Error('boom pr read');
         if (typeof cfg.prs === 'string') return cfg.prs;
@@ -793,6 +797,57 @@ test('Q5: a foreign native blocker with no readable state refuses resume, naming
   const r = exec(env);
   assert.equal(r.json.reason, 'blocked-by');
   assert.match(r.json.line, /open other\/repo#5 \(state unreadable\) —/);
+});
+
+// #4793: a body-declared `Blocked by owner/name#N` line names a blocker in another repository.
+const foreignCalls = (env) => env.calls.gh.filter((a) => a.some((x) => /^query=[\s\S]*c0: repository\(/.test(x)));
+
+test('a body-declared OPEN foreign blocker refuses resume, named owner/name#N', () => {
+  const env = makeEnv();
+  env.cfg.issue.body = 'Blocked by other/repo#5\n';
+  env.cfg.foreignData = { c0: { issue: { state: 'OPEN' } } };
+  const r = exec(env);
+  assert.equal(r.code, 3);
+  assert.equal(r.json.reason, 'blocked-by');
+  assert.match(r.json.line, /open other\/repo#5 —/);
+  assert.equal(foreignCalls(env).length, 1);
+});
+
+test('a body-declared CLOSED foreign blocker does not block resume', () => {
+  const env = makeEnv();
+  env.cfg.issue.body = 'Blocked by other/repo#5\n';
+  env.cfg.foreignData = { c0: { issue: { state: 'CLOSED' } } };
+  assert.equal(exec(env).code, 0);
+});
+
+test('a failed foreign state lookup refuses resume, naming it state unreadable, with one diagnosable stderr line', () => {
+  const env = makeEnv();
+  env.cfg.issue.body = 'Blocked by other/repo#5\n';
+  env.cfg.foreignThrows = true;
+  const r = exec(env);
+  assert.equal(r.code, 3);
+  assert.equal(r.json.reason, 'blocked-by');
+  assert.match(r.json.line, /other\/repo#5 \(state unreadable\) —/);
+  assert.match(r.err, /dispatch-resume: foreign blocker state lookup failed \(foreign boom\)\n/);
+});
+
+test('a foreign blocker both linked natively and declared in the body is named once, with no state query', () => {
+  const env = makeEnv();
+  env.cfg.workLinks = 'native';
+  env.cfg.issue.body = 'Blocked by other/repo#5\n';
+  env.cfg.native = new Map([[N, { blockedBy: [5], openBlocker: true, openBlockerIds: [5], crossRepoBlockers: [{ number: 5, repository: 'other/repo', state: 'OPEN' }] }]]);
+  const r = exec(env);
+  assert.equal(r.json.reason, 'blocked-by');
+  assert.equal(r.json.line.split('other/repo#5').length - 1, 1);
+  assert.deepStrictEqual(foreignCalls(env), []);
+});
+
+test('a body without a qualified blocker makes no foreign state query', () => {
+  const env = makeEnv();
+  env.cfg.issue.body = 'Blocked by #5\n';
+  env.cfg.depStates[5] = 'CLOSED';
+  assert.equal(exec(env).code, 0);
+  assert.deepStrictEqual(foreignCalls(env), []);
 });
 
 test('workLinks resolution throwing -> exit 4', () => {
