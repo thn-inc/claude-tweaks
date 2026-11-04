@@ -117,6 +117,61 @@ test('#4793 Q2 go-red: each native-snippet check throws with its own message on 
   }
 });
 
+// #4793: the body-declared half. Both snippets that decide dependents in a node
+// body keep a dependent blocked by a `Blocked by owner/name#N` foreign blocker that
+// is open or unreadable. A fact list (conformance-asserts.js) gives each check its
+// own name, and assertEachPatternGoesRed proves each one by stripping only it.
+const { missingFactsOf, assertEachPatternGoesRed } = require('./helpers/conformance-asserts');
+
+const collapsed = (text) => text.replace(/\s+/g, ' ');
+const REFS_JS = "require\\('\\$\\{CLAUDE_PLUGIN_ROOT\\}/bin/lib/issues/cross-repo-refs\\.js'\\)";
+const STATES_JS = "require\\('\\$\\{CLAUDE_PLUGIN_ROOT\\}/bin/lib/issues/cross-repo-states\\.js'\\)";
+
+// From the body-text paragraph to the native one: pass 1, the sentence, pass 2.
+function bodyTextRegionOf(text) {
+  const start = text.indexOf('`work-links: body-text`');
+  const end = text.indexOf('`work-links: native`');
+  assert.ok(start !== -1 && end > start, 'the work-links: body-text region is present in unblocked-records.md');
+  return collapsed(text.slice(start, end));
+}
+
+const BODY_TEXT_FACTS = [
+  [new RegExp(`const \\{ parseCrossRepoDependencies \\} = ${REFS_JS}`), 'body-text pass 1 requires parseCrossRepoDependencies from cross-repo-refs.js'],
+  [/foreignRefs: parseCrossRepoDependencies\(r\.body\)/, 'body-text pass 1 maps foreignRefs: parseCrossRepoDependencies(r.body)'],
+  [new RegExp(`const \\{ resolveForeignStates \\} = ${STATES_JS}`), 'body-text pass 2 requires resolveForeignStates from cross-repo-states.js'],
+  [new RegExp(`const \\{ foreignEntries \\} = ${REFS_JS}`), 'body-text pass 2 requires foreignEntries from cross-repo-refs.js'],
+  [/const \{ foreignBlockerBlocks \} = require\('\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/lib\/issues\/record\.js'\)/, 'body-text pass 2 requires foreignBlockerBlocks from record.js'],
+  [/const states = resolveForeignStates\(dependents\.flatMap\(\(d\) => d\.foreignRefs\)\)/, 'body-text pass 2 resolves every dependent foreignRefs in one resolveForeignStates call'],
+  [/!foreignEntries\(d\.foreignRefs, states\)\.some\(foreignBlockerBlocks\)/, 'body-text pass 2 keeps a dependent blocked by a foreign blocker that is not CLOSED'],
+];
+
+const NATIVE_BODY_FACTS = [
+  [new RegExp(`const \\{ parseCrossRepoDependencies, foreignEntries, bodyOnlyForeign \\} = ${REFS_JS}`), 'native snippet requires parseCrossRepoDependencies, foreignEntries, bodyOnlyForeign from cross-repo-refs.js'],
+  [new RegExp(`const \\{ resolveForeignStates \\} = ${STATES_JS}`), 'native snippet requires resolveForeignStates from cross-repo-states.js'],
+  [/bodyOnlyForeign\(byNumber\[r\.number\]\.crossRepoBlockers \|\| \[\], foreignEntries\(parseCrossRepoDependencies\(r\.body\), new Map\(\)\)\)/, 'native snippet drops body refs already natively linked before the lookup'],
+  [/const states = resolveForeignStates\(candidates\.flatMap\(bodyRefs\)\)/, 'native snippet resolves every candidate body ref in one resolveForeignStates call'],
+  [/!foreignEntries\(bodyRefs\(r\), states\)\.some\(foreignBlockerBlocks\)/, 'native snippet keeps a dependent blocked by a body-declared foreign blocker that is not CLOSED'],
+];
+
+test('#4793: both unblocked-records.md snippets keep a dependent blocked by a body-declared foreign blocker', () => {
+  const text = read('plugin/skills/wrap-up/unblocked-records.md');
+  assert.deepStrictEqual(missingFactsOf(BODY_TEXT_FACTS)(bodyTextRegionOf(text)), []);
+  assert.deepStrictEqual(missingFactsOf(NATIVE_BODY_FACTS)(collapsed(nativeSnippetOf(text))), []);
+});
+
+test('#4793 go-red: stripping any one body-declared foreign check turns exactly that check red', () => {
+  const text = read('plugin/skills/wrap-up/unblocked-records.md');
+  assertEachPatternGoesRed(bodyTextRegionOf(text), BODY_TEXT_FACTS, missingFactsOf(BODY_TEXT_FACTS));
+  assertEachPatternGoesRed(collapsed(nativeSnippetOf(text)), NATIVE_BODY_FACTS, missingFactsOf(NATIVE_BODY_FACTS));
+});
+
+test('#4793: the body-text sentence names the foreign check and the native paragraph speaks of this repository\'s blockers', () => {
+  const text = collapsed(read('plugin/skills/wrap-up/unblocked-records.md'));
+  assert.ok(text.includes('no `Blocked by owner/name#N` line names another repository\'s blocker that is still open or whose state is unreadable'), 'body-text sentence names the foreign check');
+  assert.ok(text.includes('every one of this repository\'s blockers'), 'native paragraph no longer claims every blocker is resolved');
+  assert.ok(!text.includes('every one of the record\'s blockers'), 'the contradictory wording is gone');
+});
+
 test('every inputs field a closing-keyword reader relies on is produced by resolveInputs and read by prose (#3399)', () => {
   const { resolveInputs } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'wrap-up', 'pack.js'));
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-3399-'));

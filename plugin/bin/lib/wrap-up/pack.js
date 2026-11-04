@@ -16,6 +16,7 @@ const { promisify } = require('util');
 const { resolvePolicyConfig } = require('../policy-schema');
 const { parseManifestYaml } = require('../flow/manifest');
 const { parseDependencies, withoutCrossRepoBlockers, foreignBlockerBlocks, DEFER_REASONS } = require('../issues/record');
+const { parseCrossRepoDependencies, foreignEntries, bodyOnlyForeign, distinctCrossRepoRefs } = require('../issues/cross-repo-refs');
 const { runWithConcurrency } = require('../reconcile/gh-pool');
 const { gateOriginRepo, repoSlug, ghOptions } = require('../repo-resolve');
 const { readRunStateWithParent } = require('../hooks/context');
@@ -592,6 +593,30 @@ function unblockedLocal(inputs, deps, closed) {
     .map(toSummary);
 }
 
+// #4793: the 'owner/name#N' strings of foreignEntries-shaped entries.
+const foreignRefStrings = (entries) => entries.map((e) => `${e.repository}#${e.number}`);
+
+// candidates [{ item, refs }] -> the items none of whose foreign refs blocks. ONE
+// resolve-foreign-blockers.js call covers every distinct ref (none, no call). The CLI
+// answers OPEN, CLOSED or null per ref; foreignBlockerBlocks blocks on anything but
+// CLOSED. A failed or unreadable lookup throws, so the probe reports ok:false with
+// the cause and nothing is reported unblocked (fail closed, never a silent pass).
+async function dropForeignBlocked(deps, inputs, repoArgs, candidates) {
+  const all = candidates.flatMap((c) => c.refs);
+  if (!all.length) return candidates.map((c) => c.item);
+  const keys = distinctCrossRepoRefs(all).distinct.map(({ key }) => key);
+  let answer;
+  try {
+    const res = await execBounded(deps, 'node', [path.join(BIN, 'resolve-foreign-blockers.js'), keys.join(','), ...repoArgs], inputs.worktree);
+    answer = JSON.parse(String(res.stdout).trim());
+  } catch (err) {
+    throw new Error(`foreign blocker state lookup failed (${String((err && err.message) || err).split('\n')[0]}) — a body-declared foreign blocker keeps its dependent blocked`);
+  }
+  if (!answer || typeof answer !== 'object' || Array.isArray(answer)) throw new Error('foreign blocker state lookup failed (unparseable output) — a body-declared foreign blocker keeps its dependent blocked');
+  const states = new Map(Object.entries(answer));
+  return candidates.filter((c) => !foreignEntries(c.refs, states).some(foreignBlockerBlocks)).map((c) => c.item);
+}
+
 // The eight probes. Module probes call the exported functions the CLIs already
 // compute from; subprocess probes go through deps.execFile.
 function buildProbes(inputs, deps) {
@@ -736,25 +761,38 @@ function buildProbes(inputs, deps) {
         if (!records.length) return [];
         const res = await execBounded(deps, 'node', [path.join(BIN, 'resolve-blockers.js'), records.map((r) => r.number).join(','), ...repoArgs], inputs.worktree);
         const byNumber = JSON.parse(res.stdout.trim());
-        // #4793 Decisions Q2/Q5: a foreign blocker's number is another repository's, so it never matches `closed`, and a foreign blocker that is not CLOSED keeps the dependent blocked.
-        return records.filter((r) => {
+        // #4793 Decisions Q2/Q5: a foreign ref is stripped before the closed
+        // test, and a foreign blocker that is not CLOSED keeps the dependent
+        // blocked. A body-declared foreign blocker (`Blocked by owner/name#N`)
+        // counts under this mode too; a ref already natively linked is not
+        // looked up twice.
+        const candidates = records.filter((r) => {
           const e = byNumber[r.number];
           return e && withoutCrossRepoBlockers(e.blockedBy, e.crossRepoBlockers).includes(closed) && !e.openBlocker && !(e.crossRepoBlockers || []).some(foreignBlockerBlocks);
-        }).map(toSummary);
+        }).map((r) => ({
+          item: r,
+          refs: foreignRefStrings(bodyOnlyForeign(byNumber[r.number].crossRepoBlockers || [], foreignEntries(parseCrossRepoDependencies(r.body || ''), new Map()))),
+        }));
+        return (await dropForeignBlocked(deps, inputs, repoArgs, candidates)).map(toSummary);
       }
-      // work-links: body-text — the same two passes unblocked-records.md runs.
+      // work-links: body-text — the same passes unblocked-records.md runs.
       // Pass 1 is `parseDependencies` (the canonical line-anchored `Blocked by
       // #N` parse), pass 2 checks every OTHER blocker is closed too: a
-      // dependent still held by a second open blocker is not unblocked.
+      // dependent still held by a second open blocker is not unblocked, and
+      // pass 3 keeps a dependent blocked while a body-declared foreign
+      // blocker is open or unreadable (#4793). The foreign ref is stripped
+      // before the closed test, because `parseDependencies` only reads
+      // `Blocked by #N`.
       const dependents = records
-        .map((r) => ({ number: r.number, title: r.title, blockedBy: parseDependencies(r.body || '') }))
+        .map((r) => ({ number: r.number, title: r.title, blockedBy: parseDependencies(r.body || ''), foreignRefs: parseCrossRepoDependencies(r.body || '') }))
         .filter((r) => r.blockedBy.includes(closed));
       if (!dependents.length) return [];
       const states = await gh(['issue', 'list', '--state', 'all', '--json', 'number,state', '--limit', '200', ...repoArgs]);
       const stateOf = new Map(JSON.parse(states.stdout).map((i) => [i.number, i.state]));
-      return dependents
+      const candidates = dependents
         .filter((d) => d.blockedBy.every((b) => b === closed || stateOf.get(b) === 'CLOSED'))
-        .map(toSummary);
+        .map((d) => ({ item: d, refs: d.foreignRefs }));
+      return (await dropForeignBlocked(deps, inputs, repoArgs, candidates)).map(toSummary);
     },
   };
 }
