@@ -234,12 +234,19 @@ function partitionByOpenBlockers(candidates, openBlockerIdsFn) {
   return { eligible, excluded };
 }
 
-// candidates[] (each with .number and .body), openNumbers: Set<number> -> { eligible, excluded }.
+// candidates[] (each with .number and .body), openNumbers: Set<number>,
+// foreignByRecord: Map<number, crossRepoBlockers-shaped entries> -> { eligible, excluded }.
 // The same open-body-text-dependency predicate dispatch/queue-pull-script.md's own
 // eligibility filter already applies (parseDependencies + an open id), via
-// partitionByOpenBlockers above.
-function partitionByOpenBodyBlockers(candidates, openNumbers) {
-  return partitionByOpenBlockers(candidates, (c) => parseDependencies(c.body).filter((dep) => openNumbers.has(dep)));
+// partitionByOpenBlockers above. #4793 (Plan Review Clarifications): a body-declared
+// `Blocked by owner/repo#N` is another repository's issue, so each candidate's blocker
+// list is its open local numbers, then foreignBlockerRef for each foreignByRecord entry
+// that foreignBlockerBlocks (open or unreadable, never CLOSED).
+function partitionByOpenBodyBlockers(candidates, openNumbers, foreignByRecord = new Map()) {
+  return partitionByOpenBlockers(candidates, (c) => [
+    ...parseDependencies(c.body).filter((dep) => openNumbers.has(dep)),
+    ...(foreignByRecord.get(c.number) || []).filter(foreignBlockerBlocks).map(foreignBlockerRef),
+  ]);
 }
 
 // candidates[] (each with .number), repoData: the native GraphQL response's

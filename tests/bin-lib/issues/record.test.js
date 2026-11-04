@@ -567,6 +567,20 @@ test('partitionByOpenNativeBlockers fails safe (never throws) when blockedBy.nod
   assert.deepStrictEqual(excluded, []);
 });
 
+test('Plan Review Clarifications: partitionByOpenBodyBlockers excludes an open or unreadable body-declared foreign blocker, never a CLOSED one', () => {
+  const foreign = new Map([
+    [11, [{ number: 5, repository: 'other/repo', state: 'OPEN' }]],
+    [12, [{ number: 6, repository: 'other/repo', state: null }]],
+    [13, [{ number: 7, repository: 'other/repo', state: 'CLOSED' }]],
+  ]);
+  const candidates = [11, 12, 13, 14].map((number) => ({ number, body: number === 14 ? 'Blocked by #40' : '' }));
+  const { eligible, excluded } = partitionByOpenBodyBlockers(candidates, new Set([40]), foreign);
+  assert.deepStrictEqual(eligible.map((c) => c.number), [13]);
+  assert.deepStrictEqual(excluded, [
+    { number: 11, blockedBy: ['other/repo#5'] }, { number: 12, blockedBy: ['other/repo#6 (state unreadable)'] }, { number: 14, blockedBy: [40] },
+  ]);
+});
+
 test('partitionByOpenLinkedPR excludes a candidate with an OPEN linked PR, naming the PR number', () => {
   const candidates = [{ number: 1224 }, { number: 257 }];
   const repoData = {

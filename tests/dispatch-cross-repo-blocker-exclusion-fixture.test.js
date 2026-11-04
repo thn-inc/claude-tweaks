@@ -12,7 +12,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawnSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
 const { missingFactsOf, assertEachPatternGoesRed, sectionOf } = require('./helpers/conformance-asserts');
 
@@ -79,7 +79,57 @@ test('a foreign open or unreadable-state native blocker excludes its record and 
 
   const groupedNumbers = JSON.parse(fs.readFileSync(file('groups.json'), 'utf8')).flat().map((r) => r.number);
   assert.ok(groupedNumbers.includes(13), 'the record whose foreign blocker is CLOSED stays eligible');
-  assert.ok(!groupedNumbers.includes(11) && !groupedNumbers.includes(12), 'the foreign-blocked records are out of the groups');
+  assert.ok(
+    ![11, 12, 14, 15].some((n) => groupedNumbers.includes(n)),
+    'every blocked record (foreign-blocked or local) is out of the groups',
+  );
+});
+
+const BODY_START_ANCHOR = 'node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_ELIGIBLE_PRE_DEP" "$DISPATCH_OPEN_NUMBERS" "$DISPATCH_VERIFIED_OPEN_DEPS"';
+
+function extractBodyPartitionSnippet() {
+  const startIdx = QUEUE_PULL_SCRIPT.indexOf(BODY_START_ANCHOR);
+  assert.notStrictEqual(startIdx, -1, 'body-text partition start anchor not found in queue-pull-script.md -- extraction is out of sync with the live file');
+  const endIdx = QUEUE_PULL_SCRIPT.indexOf(END_ANCHOR, startIdx);
+  assert.notStrictEqual(endIdx, -1, 'body-text partition end anchor not found in queue-pull-script.md -- extraction is out of sync with the live file');
+  return QUEUE_PULL_SCRIPT.slice(startIdx, endIdx + END_ANCHOR.length);
+}
+
+// PATH holds only a `node` symlink, so `gh` is absent and bin/resolve-foreign-blockers.js exits 2:
+// the deterministic fail-closed case. A symlink to node.exe needs privileges on a Windows checkout.
+test('a body-declared foreign blocker whose state cannot be read excludes its record, naming it (state unreadable) (#4793)', { skip: process.platform === 'win32' && 'needs a node symlink' }, () => {
+  const snippet = extractBodyPartitionSnippet();
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-body-foreign-blocker-'));
+  const file = (name) => path.join(scratch, name);
+  fs.mkdirSync(file('bin'));
+  fs.symlinkSync(process.execPath, path.join(file('bin'), 'node'));
+
+  fs.writeFileSync(file('pre-dep.json'), JSON.stringify([
+    { number: 21, body: 'Blocked by other/repo#5' },
+    { number: 22, body: 'nothing' },
+  ]));
+  fs.writeFileSync(file('open.json'), '[]');
+  fs.writeFileSync(file('verified-open.txt'), '');
+
+  const res = spawnSync('/bin/bash', ['-c', snippet], {
+    encoding: 'utf8',
+    env: {
+      PATH: file('bin'),
+      CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT,
+      DISPATCH_ELIGIBLE_PRE_DEP: file('pre-dep.json'),
+      DISPATCH_OPEN_NUMBERS: file('open.json'),
+      DISPATCH_VERIFIED_OPEN_DEPS: file('verified-open.txt'),
+      DISPATCH_ELIGIBLE: file('eligible.json'),
+      DISPATCH_BLOCKED_EXCLUDED_BODY: file('excluded.json'),
+    },
+  });
+  assert.strictEqual(res.status, 0, res.stderr);
+
+  assert.deepEqual(JSON.parse(fs.readFileSync(file('excluded.json'), 'utf8')), [
+    { number: 21, blockedBy: ['other/repo#5 (state unreadable)'] },
+  ]);
+  assert.deepEqual(JSON.parse(fs.readFileSync(file('eligible.json'), 'utf8')).map((r) => r.number), [22]);
+  assert.match(res.stderr, /foreign blocker state lookup failed/);
 });
 
 // The report and the MCP section hard-wrap at about 100 columns, so whitespace is collapsed first.
@@ -96,6 +146,10 @@ const MCP_FACTS = [
 ];
 const NOTES_FACTS = [
   [/suffixed ` \(state unreadable\)` when its state could not be read/, 'the queue notes name an unreadable foreign state with the suffix'],
+  [/`bodyForeignBlockers` \(`bin\/lib\/issues\/cross-repo-states\.js`\) looks up every such ref in one batched call/, 'the body-text pass looks up every Blocked by owner/name#N ref in one batched call'],
+  [/`partitionByOpenBodyBlockers` drops the candidate while that blocker is open or its state is unreadable/, 'the body-text pass drops a candidate whose body-declared foreign blocker is open or unreadable'],
+  [/a failed lookup reads unreadable \(fail closed, one `Warning:` line\)/, 'a failed body-text lookup fails closed with one Warning line'],
+  [/a CLOSED one does not block/, 'a CLOSED body-declared foreign blocker does not block'],
 ];
 
 test('the report and the MCP workaround name a foreign blocker owner/name#N (#4793)', () => {

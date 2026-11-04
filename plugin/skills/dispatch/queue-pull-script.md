@@ -179,13 +179,14 @@ done
 node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_ELIGIBLE_PRE_DEP" "$DISPATCH_OPEN_NUMBERS" "$DISPATCH_VERIFIED_OPEN_DEPS" "$DISPATCH_ELIGIBLE" "$DISPATCH_BLOCKED_EXCLUDED_BODY" <<NODE_EVAL_EOF
   const fs = require('fs');
   const { partitionByOpenBodyBlockers } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
+  const { bodyForeignBlockers } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/cross-repo-states.js');
   const eligiblePreDep = require(process.argv[1]);
   const openNumbers = new Set(require(process.argv[2]).map((i) => i.number));
   const verifiedOpen = fs.existsSync(process.argv[3])
     ? fs.readFileSync(process.argv[3], 'utf8').trim().split('\n').filter(Boolean).map(Number)
     : [];
   for (const dep of verifiedOpen) openNumbers.add(dep);
-  const { eligible, excluded } = partitionByOpenBodyBlockers(eligiblePreDep, openNumbers);
+  const { eligible, excluded } = partitionByOpenBodyBlockers(eligiblePreDep, openNumbers, bodyForeignBlockers(eligiblePreDep));
   fs.writeFileSync(process.argv[4], JSON.stringify(eligible));
   fs.writeFileSync(process.argv[5], JSON.stringify(excluded));
 NODE_EVAL_EOF
