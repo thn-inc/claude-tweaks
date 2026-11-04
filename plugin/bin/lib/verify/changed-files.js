@@ -197,7 +197,7 @@ function mergeNarrowing({ anchor, integrationBranch, files, execImpl = execFileS
   });
   if (!hasMergedRef) return null;
   const ahead = tryGit(execImpl, ['rev-list', '--count', '--end-of-options', `${ref}..HEAD`]);
-  if (ahead === null || ahead.trim() === '0') return null;
+  if (ahead === null || !/^[1-9]\d*$/.test(ahead.trim())) return null;
   const differs = tryGit(execImpl, ['diff', '--name-only', '-z', '--no-renames', '--end-of-options', ref, 'HEAD']);
   if (differs === null) return null;
   const differing = parseNameOnlyZ(differs);

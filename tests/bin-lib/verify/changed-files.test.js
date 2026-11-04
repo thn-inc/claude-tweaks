@@ -518,6 +518,22 @@ test('a failing ahead-count read degrades to null (#4638)', () => {
   assert.ok(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: r.exec }), 'control: the same repo narrows when git succeeds');
 });
 
+test('an unparseable ahead-count or a failing ref..HEAD diff read degrades to null (#4638)', () => {
+  const r = mergeRepo();
+  mergeTrunkWith(r, [['ui/a.js', 'a']]);
+  r.commit('src/own.py', 'own');
+  const files = changedSince(r, r.anchor);
+  const countIs = (out) => (cmd, args, opts) => (args[0] === 'rev-list' && args.includes('--count') ? out : r.exec(cmd, args, opts));
+  const refDiffFails = (cmd, args, opts) => {
+    if (args[0] === 'diff' && args[args.length - 1] === 'HEAD') { const e = new Error('fatal: bad object'); e.status = 128; throw e; }
+    return r.exec(cmd, args, opts);
+  };
+  assert.strictEqual(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: countIs('') }), null);
+  assert.strictEqual(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: countIs('not-a-number') }), null);
+  assert.strictEqual(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: refDiffFails }), null);
+  assert.ok(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: r.exec }), 'control: the same repo narrows when git succeeds');
+});
+
 // #4638 round 4, Reading B: the tree defines the tip. mergeTrunkWith alone
 // leaves feat 1 commit ahead of trunk with a tree identical to trunk's.
 test('round-4 Reading B: a no-own-commit --no-ff merge of the ref declines even with a dirty mapped path (#4638)', () => {
