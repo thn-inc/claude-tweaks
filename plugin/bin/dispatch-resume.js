@@ -61,7 +61,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const claimStore = require('./lib/issues/claim-store');
 const { defaultRunner: gitCasRunner } = require('./lib/issues/claims-git-cas');
-const { parseDependencies } = require('./lib/issues/record');
+const { parseDependencies, openBlockerRefs } = require('./lib/issues/record');
 const { parseStatusPorcelainZ } = require('./lib/git-z');
 const { fetchNativeDependencies } = require('./lib/issues/native-dependencies');
 const { resolvePolicyConfig } = require('./lib/policy-schema');
@@ -272,9 +272,12 @@ function readRecord(ctx) {
 }
 
 // The open blockers: body `Blocked by` records whose own state reads OPEN, plus — under work-links
-// native only, exactly as the queue gates it — the native openBlockerIds. Ascending, deduplicated.
+// native only, exactly as the queue gates it — the native open blockers. This repository's come first
+// as numbers (ascending, deduplicated), then each foreign blocker still blocking as an `owner/name#N`
+// string, with ` (state unreadable)` when its native state is neither OPEN nor CLOSED (#4793, Q5).
 function readOpenBlockers(ctx, body) {
   const open = new Set();
+  const foreign = [];
   // One gh issue view per body-declared blocker, serially: a record's Blocked-by list is a handful
   // of entries and this runs once per manual resume, so batching them into one aliased query would
   // add a second query shape and its partial-result handling for no measured cost (#4815 closed
@@ -292,9 +295,12 @@ function readOpenBlockers(ctx, body) {
     if (!entry || !Array.isArray(entry.openBlockerIds)) {
       throw new Exit(4, `native dependency read: no usable entry for #${ctx.issue}`);
     }
-    for (const id of entry.openBlockerIds) open.add(id);
+    for (const ref of openBlockerRefs(entry)) {
+      if (typeof ref === 'string') foreign.push(ref);
+      else open.add(ref);
+    }
   }
-  return [...open].sort((a, b) => a - b);
+  return [...[...open].sort((a, b) => a - b), ...foreign];
 }
 
 // One direct read, never an existence check first ([IL-146]): a missing file (ENOENT/ENOTDIR) is

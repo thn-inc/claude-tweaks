@@ -317,6 +317,8 @@ const REFUSALS = [
     '#4589 is closed — not resumable; reopen it first if the work is still wanted, or close PR #4604', 'close'],
   ['open blockers', { openBlockers: [4500, 4501] }, 'blocked-by',
     '#4589 is blocked by open #4500, #4501 — not resumable until they close; then run /claude-tweaks:dispatch resume #4589', 'resume'],
+  ['open blockers with a foreign one', { openBlockers: [4500, 'other/repo#5', 'other/repo#6 (state unreadable)'] }, 'blocked-by',
+    '#4589 is blocked by open #4500, other/repo#5, other/repo#6 (state unreadable) — not resumable until they close; then run /claude-tweaks:dispatch resume #4589', 'resume'],
   ['bot:blocked', { labels: ['auto:build', 'bot:blocked'] }, 'not-granted',
     '#4589 carries bot:blocked — re-grant it with /claude-tweaks:backlog refine #4589, then run /claude-tweaks:dispatch resume #4589', 'resume'],
   ['no auto:build', { labels: ['ready', 'type:task'] }, 'not-granted',

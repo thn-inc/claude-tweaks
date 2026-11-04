@@ -758,6 +758,33 @@ test('openBlockers reaching the verdict are deduplicated and ascending (body and
   assert.match(r.json.line, /open #4300, #4500, #4700 —/);
 });
 
+test('a foreign open native blocker is named by its repository, never as this repository\'s #N', () => {
+  const env = makeEnv();
+  env.cfg.workLinks = 'native';
+  env.cfg.issue.body = 'Blocked by #5\n';
+  env.cfg.depStates[5] = 'OPEN';
+  env.cfg.native = new Map([[N, { blockedBy: [5, 5], openBlocker: true, openBlockerIds: [5, 5], crossRepoBlockers: [{ number: 5, repository: 'other/repo', state: 'OPEN' }] }]]);
+  const r = exec(env);
+  assert.equal(r.json.reason, 'blocked-by');
+  assert.match(r.json.line, /open #5, other\/repo#5 —/);
+});
+
+test('a CLOSED foreign native blocker does not block resume', () => {
+  const env = makeEnv();
+  env.cfg.workLinks = 'native';
+  env.cfg.native = new Map([[N, { blockedBy: [5], openBlocker: false, openBlockerIds: [], crossRepoBlockers: [{ number: 5, repository: 'other/repo', state: 'CLOSED' }] }]]);
+  assert.equal(exec(env).code, 0);
+});
+
+test('Q5: a foreign native blocker with no readable state refuses resume, naming it as state unreadable', () => {
+  const env = makeEnv();
+  env.cfg.workLinks = 'native';
+  env.cfg.native = new Map([[N, { blockedBy: [5], openBlocker: false, openBlockerIds: [], crossRepoBlockers: [{ number: 5, repository: 'other/repo', state: null }] }]]);
+  const r = exec(env);
+  assert.equal(r.json.reason, 'blocked-by');
+  assert.match(r.json.line, /open other\/repo#5 \(state unreadable\) —/);
+});
+
 test('workLinks resolution throwing -> exit 4', () => {
   const env = makeEnv();
   env.deps.workLinks = () => { throw new Error('policy unreadable'); };
