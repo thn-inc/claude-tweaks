@@ -2,23 +2,25 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make the reconcile post-merge pass's per-run `.post-merge.lock` claim reclaim only a dead holder, an idle one, or an ownerless stale one. Keep a live holder's claim fresh with a heartbeat on every `gh` call, and stop a holder whose claim was taken over before its next `gh` call or `decisions.md` write, while it still logs the GitHub changes it already made. Release only when the caller still owns the claim.
+**Goal:** Make the reconcile post-merge pass's per-run `.post-merge.lock` claim reclaim only a dead holder, an idle one, or an ownerless stale one. Keep a live holder's claim fresh with a heartbeat on every `gh` call, and stop a holder whose claim was taken over before its next `gh` call or `decisions.md` write, while it still logs, returns and reports the GitHub changes it already made. Release only when the caller still owns the claim.
 
-**Architecture:** Keep the existing exclusive-create file claim and its atomic rename-aside takeover in `plugin/bin/lib/reconcile/post-merge.js`, and write an owner token (`{pid}-{random}`) into the claim file. A token-carrying claim is judged by holder liveness (`plugin/bin/lib/file-lock.js`'s `isAlive`, newly exported) plus an idle backstop (`CLAIM_MAX_IDLE_MS`). An ownerless claim (an empty or unreadable file) keeps the `CLAIM_STALE_MS` mtime rule. `processCandidate` builds one compare-and-refresh ownership check and wraps the run's one shared `gh` function in it; `processRun` runs the same check before every `decisions.md` write. Once the claim has been taken over, every later `gh` call is refused, the run marker, attempt line and degraded SKIP lines are dropped, and the lines recording GitHub changes the holder already made (closed parents, reopened or closed records) are still written, their location marked `(superseded holder)`. The run returns `in-flight`, deferred, and the background summary counts the parents it closed. `releaseClaim` becomes a compare-and-delete on the caller's token.
+**Architecture:** Keep the existing exclusive-create file claim and its atomic rename-aside takeover in `plugin/bin/lib/reconcile/post-merge.js`, and write an owner token (`{pid}-{random}`) into the claim file. A token-carrying claim is judged by holder liveness (`plugin/bin/lib/file-lock.js`'s `isAlive`, newly exported) plus an idle backstop (`CLAIM_MAX_IDLE_MS`). An ownerless claim (an empty or unreadable file) keeps the `CLAIM_STALE_MS` mtime rule. `processCandidate` builds one compare-and-refresh ownership check and wraps the run's one shared `gh` function in it; `processRun` runs the same check before every `decisions.md` write. Once the claim has been taken over, every later `gh` call is refused, the run marker, attempt line and degraded SKIP lines are dropped, and the lines recording GitHub changes the holder already made (closed parents, reopened or closed records) are still written, their location marked `(superseded holder)`. The run returns `in-flight`, deferred, carrying the parents it closed and the records Step 4.0 reopened or closed; merge mode's `in-flight` line, the reconcile CLI summary and SessionStart each name those changes. A claim file that is briefly missing (a takeover's move-aside-and-restore) is re-checked before it is read as a takeover. `releaseClaim` becomes a compare-and-delete on the caller's token.
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`, `node:assert/strict`.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-04T055411-record-4797/work/4797-spec.md`. Its `## Decisions` carries four rounds of answers; round 4 (Q4 Reading B, plus the reviewer's three no-decision fixes) supersedes this file's previous version.
+**Spec:** `.claude-tweaks/pipelines/2026-11-04T064811-record-4797/work/4797-spec.md`. Its `## Decisions` carries five rounds of answers; round 5 (Q5 Reading B, the blanket rule for every surface that reports a superseded pass, and the reviewer's two no-decision fixes) supersedes this file's previous version.
 
 ## Decision: the idle backstop and the heartbeat stop
 
 - **Heartbeat site.** Every Step 4.0 and Step 4.0b `gh` call goes through the one function `setupContext` builds, `ctx.timedGh` (`deps.gh` in tests). `processRun` passes it to `closing-links.js`'s `closingLinks` as `deps.gh` and to `closeBelowFloorParents` as `gh`. `parent-gate.js` routes every read through `ghCaller(gh)`, including its in-process `fetch-sub-issues.js` runner (`runner: (args) => caller.call(args)`). Wrapping that one function in `processCandidate`, after the claim is taken, covers every current and future loop in both steps. The Decisions require that placement.
-- **Stop (round 3 Q2).** The ownership check is a compare-and-refresh (`ownsClaim()`, built once per claimed run in `processCandidate`). If the claim no longer carries our token (a successor wrote its own, or the file is gone or cannot be read), it sets a sticky `lost` flag and returns `false`. The `gh` wrapper calls it before each call and throws without calling `gh` once it is `false`; every later call throws the same way. `closing-links.js` and `below-floor-parent-close.js` already catch a throwing `gh` and turn it into an exit code, a per-issue `failed` entry or a per-parent `gh-failed` skip, so neither module changes. `processRun` returns `in-flight` straight after Step 4.0 when `ownsClaim()` is `false`, so Step 4.0b never starts.
+- **Stop (round 3 Q2).** The ownership check is a compare-and-refresh (`ownsClaim()`, built once per claimed run in `processCandidate`). If the claim no longer carries our token (a successor wrote its own, the file cannot be read, or it is gone after the missing-file re-check below), it sets a sticky `lost` flag and returns `false`. The `gh` wrapper calls it before each call and throws without calling `gh` once it is `false`; every later call throws the same way. `closing-links.js` and `below-floor-parent-close.js` already catch a throwing `gh` and turn it into an exit code, a per-issue `failed` entry or a per-parent `gh-failed` skip, so neither module changes. `processRun` returns `in-flight` straight after Step 4.0 when `ownsClaim()` is `false`, so Step 4.0b never starts.
 - **What a taken-over holder still writes (round 4 Q4, Reading B).** `processRun` calls `ownsClaim()` before every `decisions.md` write, not only before `gh` calls, so a takeover after the last `gh` call (a suspension between Step 4.0b and the marker write, or the policy-skip path, which makes no `gh` call) still stops the write. When it reads `false`:
   - the `appendDecision` it hands `closingLinks` keeps an `AUTO` line and drops every other status. In post-merge mode `closing-links.js` writes `AUTO` only for a GitHub change it made (`reopened #N`, `closed #N` on a non-default base); its `SKIP` lines are the degraded / unchecked trace, which belong to the successor's run;
   - the write helper writes only the `closed parent #N below the oversight floor` lines, never the summary marker, the attempt line or the SKIP marker;
   - every kept line has its location suffixed `SUPERSEDED_LOCATION_SUFFIX` (`' (superseded holder)'`), so `Closing links (superseded holder)` and `reconcile post-merge parent-close (superseded holder)`. Neither location equals `MARKER_STEP` or matches `STEP_4_0B_LOCATION_RE`, so a superseded line is never read as the run's marker and the successor still writes the one marker;
-  - a failed superseded-line write is swallowed: the returned entry still reports `parentsClosed`.
+  - a failed superseded-line write is swallowed: the returned entry still reports the changes.
+- **A briefly missing claim is not a takeover (round 5 reviewer fix).** Another pass judging our claim renames it aside (`{lock}.stale-{pid}-{ms}`), re-judges the aside, and, finding it live, links it back before unlinking the aside. During that sequence the claim path is missing, but the path or the aside always exists: the link-back lands before the aside's unlink. So `heartbeatClaim`, on an `ENOENT` read of the claim path, (1) lists the run dir for a `{CLAIM_FILENAME}.stale-` entry whose content `=== token` and, finding one, returns `true` without refreshing (the judger links it back); otherwise (2) re-reads the claim path once, which finds the restored claim when the link-back finished between the first read and the listing. Only a claim missing on both reads with no aside carrying our token is gone. No sleep, no poll: the ordering of the judger's own steps makes the three reads decisive. Residual, stated: a judger that found our aside stale (dead pid or idle past `CLAIM_MAX_IDLE_MS`) deletes it, so a holder reading during that window counts as owning for that one check; its next check sees the successor's token.
+- **The returned entry and every report name the changes (round 5 Q5 and blanket rule).** A taken-over run's entry carries `parentsClosed` (Step 4.0b closes, when non-zero) and `recordsReopened` / `recordsClosed` (Step 4.0's envelope `reopened` and, on a non-default base, `closed`, each only when non-empty). `closing-links.js` finishes its reopen loop and its non-default-base close loop even when later `gh` calls throw, so the envelope is the authoritative list; a non-zero exit (no envelope) only happens before either loop, when nothing was changed. Every surface that reports a superseded pass names those changes: merge mode's `in-flight` line (Task 5), the reconcile CLI summary (Task 3) and SessionStart (Task 4), the last two through one shared line renderer. A superseded pass that changed nothing keeps today's reporting (an `in-flight` skip).
 - **Value (round 3 Q3).** `CLAIM_MAX_IDLE_MS = Math.max(5 * 60 * 1000, 2.5 * GH_TIMEOUT_CEILING_MS)` = 300 000 ms today. `GH_TIMEOUT_CEILING_MS` is the `gh-timeout-ms` schema `max`, read from `POLICY_KEYS` (60 000 ms). In this path a `gh` call runs once and is never retried: `timedGh` is one `execFileSyncTimed` with `timeout: GH_TIMEOUT_MS`. 2.5 × the ceiling (150 s, `background-lock.js`'s `STALE_LOCK_MS` / `BACKGROUND_BUDGET_MS` ratio) is the floor. It is rounded up to 5 minutes to cover non-`gh` work between calls, because reclaiming a live holder by mistake costs more than reclaiming a dead one a few minutes late. If the ceiling is ever raised, the backstop follows it.
 - **Limit (non-`gh` stretches).** Work between `gh` calls is not heartbeated. In this path that work is `closing-links.js`'s settle sleep (`POLL_STEP_MS`, 3 s, between re-reads that are themselves `gh` calls), JSON parsing, and the `decisions.md` append, each seconds at most. None approaches the backstop, so no stretch needs its own refresh.
 - **Residual windows, stated rather than fixed.**
@@ -36,7 +38,7 @@
 - No new dependency. Never block or poll.
 - Every `fs` call inside `takeClaim`, `heartbeatClaim` and `releaseClaim` goes through the `fsApi` parameter. The `R3` tests inject racing wrappers through it.
 - Commit subjects use `{Verb} {what} — {detail}` and reference the record as `refs #4797`, never `closes`/`fixes`.
-- Governing project skill, quoted verbatim from `.claude/skills/gh-api-module-pattern/cli-wrapper-contract.md`: "Decide the shape before writing the file, and reuse `withLock` rather than hand-rolling a second mutex." This plan keeps the existing hand-rolled claim, so the call site states why `file-lock.js` cannot serve (Task 1). That is also the record's second Deliverable. `caching-and-locks.md`'s `file-lock.js` bullet covers holding `file-lock.js` across a long call, which this plan does not do. `prose-code-twin-pin`'s "*A number the prose states* is an exported constant" governs `merge-mode.md`'s "10-minute stale window (`CLAIM_STALE_MS`)", which `tests/wrap-up-merge-mode-conformance.test.js` already pins and Task 4 keeps. `bin-source-scan-conformance` and `driver-skill-outcome-taxonomy` cite `post-merge.js` and its test only for the closing-links producer-coverage test and `classifyEntry`, neither of which changes behavior here.
+- Governing project skill, quoted verbatim from `.claude/skills/gh-api-module-pattern/cli-wrapper-contract.md`: "Decide the shape before writing the file, and reuse `withLock` rather than hand-rolling a second mutex." This plan keeps the existing hand-rolled claim, so the call site states why `file-lock.js` cannot serve (Task 1). That is also the record's second Deliverable. `caching-and-locks.md`'s `file-lock.js` bullet covers holding `file-lock.js` across a long call, which this plan does not do. `prose-code-twin-pin`'s "*A number the prose states* is an exported constant" governs `merge-mode.md`'s "10-minute stale window (`CLAIM_STALE_MS`)", which `tests/wrap-up-merge-mode-conformance.test.js` already pins and Task 5 keeps. `bin-source-scan-conformance` and `driver-skill-outcome-taxonomy` cite `post-merge.js` and its test only for the closing-links producer-coverage test and `classifyEntry`, neither of which changes behavior here.
 - Source-scan lint: no `fs.existsSync`/`fs.realpathSync` in `plugin/bin/` (`tests/path-guard-conformance.test.js`). The new code needs neither. Tests may use them.
 - Locate code by function and constant name, not line number.
 
@@ -44,11 +46,12 @@
 
 - A live, refreshing holder past `CLAIM_STALE_MS` total hold time reads `in-flight`, and its claim file is byte-for-byte unchanged (AC1.1). This is tested at unit level and through `postMerge` (Task 1).
 - A holder whose claim was taken over mid-run never makes another `gh` call. It writes no marker, no attempt line and no degraded SKIP, still writes each GitHub change it already made as a `(superseded holder)` line, deletes nothing, and returns `in-flight`, deferred (Task 2). If it resumes and releases, the release leaves the successor's claim in place (AC2.1, Task 1). Each owner check has a test that only that check decides.
-- A takeover after the last `gh` call (between Step 4.0b and the marker write) still stops the marker write (Task 2), and the parents that holder closed reach the SessionStart summary (Task 3).
+- A takeover after the last `gh` call (between Step 4.0b and the marker write) still stops the marker write (Task 2). The parents that holder closed and the records its Step 4.0 reopened or closed ride on its returned entry (Task 2) and reach the reconcile CLI summary (Task 3), SessionStart (Task 4) and merge mode's `in-flight` line (Task 5); none of them reports that pass as having done nothing.
+- A claim that is missing only because another pass moved it aside to judge it, and then restored it, is still ours: no `gh` call is refused and no write dropped on that account (Task 1).
 - A claim file that exists but cannot be read is ownerless: in flight while fresh, taken over past `CLAIM_STALE_MS`, never `claim-failed` on every pass (Task 1).
 - A dead holder's claim is reclaimed at once, even with a fresh mtime. Only the liveness check decides that test (Task 1).
 - Reused pid: a claim whose pid reads alive but has been idle longer than `CLAIM_MAX_IDLE_MS` is reclaimed, and one just under it is not. Both edges are tested (Task 1).
-- Mixed-version interop: an empty (old-format) claim is still honored for `CLAIM_STALE_MS`. The existing tests `claim: a fresh lock file means in-flight…`, `claim: a lock 11 minutes old is taken over…` and the three `R3` tests write `''`, so they pin this unchanged. The reverse direction cannot be fixed here: an older reconciler still takes over a claim idle past `CLAIM_STALE_MS` by mtime alone, and still releases unconditionally. The heartbeat narrows that race, because a progressing new holder's mtime stays fresh to an old reader too. The call-site comment and `docs/reconcile-checks.md` say so (Tasks 1 and 4).
+- Mixed-version interop: an empty (old-format) claim is still honored for `CLAIM_STALE_MS`. The existing tests `claim: a fresh lock file means in-flight…`, `claim: a lock 11 minutes old is taken over…` and the three `R3` tests write `''`, so they pin this unchanged. The reverse direction cannot be fixed here: an older reconciler still takes over a claim idle past `CLAIM_STALE_MS` by mtime alone, and still releases unconditionally. The heartbeat narrows that race, because a progressing new holder's mtime stays fresh to an old reader too. The call-site comment and `docs/reconcile-checks.md` say so (Tasks 1 and 6).
 
 ---
 
@@ -60,7 +63,7 @@
 **Files:**
 - Modify: `plugin/bin/lib/file-lock.js` (add `isAlive` to `module.exports`, nothing else)
 - Modify: `plugin/bin/lib/reconcile/post-merge.js` (constants beside `CLAIM_STALE_MS`, `takeClaim`, new `heartbeatClaim`, `releaseClaim`, the `releaseClaim` call in `processCandidate`'s `finally`, the `takeClaim` and `classifyEntry` comments, `module.exports`)
-- Modify: `.claude-tweaks/pipelines/2026-11-04T055411-record-4797/work/4797-spec.md` (record the chosen value under `## Decisions`)
+- Modify: `.claude-tweaks/pipelines/2026-11-04T064811-record-4797/work/4797-spec.md` (record the chosen value under `## Decisions`)
 - Test: `tests/bin-lib/reconcile/post-merge.test.js`
 - Test: `tests/bin-lib/file-lock.test.js`
 
@@ -68,7 +71,7 @@
 - Consumes: `require('../file-lock').isAlive(pid: number) -> boolean`, which already exists and is only being exported. `require('../policy-schema').POLICY_KEYS`: `post-merge.js` already requires `../policy-schema` for `resolvePolicyKeys`, so add `POLICY_KEYS` to that destructure.
 - Produces (all exported from `post-merge.js`):
   - `takeClaim(runDir: string, nowMs: number, fsApi = fs, { isAlive = pidAlive } = {}) -> { ok: true, token: string } | { ok: false, reason: 'in-flight' | 'claim-failed' }`
-  - `heartbeatClaim(runDir: string, token: string | undefined, nowMs: number, fsApi = fs) -> boolean`. Returns `true` when the lock's content `=== token`, which means we still own it, and then sets its atime and mtime to `nowMs` (a `utimesSync` failure is swallowed; ownership is still `true`). A falsy token, a mismatched, missing or unreadable file returns `false`. Never throws.
+  - `heartbeatClaim(runDir: string, token: string | undefined, nowMs: number, fsApi = fs) -> boolean`. Returns `true` when the lock's content `=== token`, which means we still own it, and then sets its atime and mtime to `nowMs` (a `utimesSync` failure is swallowed; ownership is still `true`). A falsy token, a mismatched or unreadable file returns `false`. An `ENOENT` read runs the Decision section's missing-claim re-check through `fsApi.readdirSync` and `fsApi.readFileSync`: an aside named `{CLAIM_FILENAME}.stale-…` whose content `=== token` returns `true` with no refresh; else a second read of the claim path decides (ours → refresh and `true`; anything else → `false`). Never throws.
   - `releaseClaim(runDir: string, token: string | undefined, fsApi = fs) -> void`. Unlinks the lock only when its content `=== token`. A falsy token is a no-op. Never throws.
   - `CLAIM_MAX_IDLE_MS` (300 000) and `GH_TIMEOUT_CEILING_MS` (60 000).
 
@@ -160,6 +163,35 @@ test('heartbeatClaim: refreshes only a claim still carrying our token', () => {
   assert.equal(heartbeatClaim(dir, mine.token, NOW), false, 'a missing claim is not ours');
 });
 
+test('heartbeatClaim: a claim moved aside by a judging pass, carrying our token, is still ours and is not refreshed', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const mine = takeClaim(dir, NOW);
+  const aside = `${lockOf(dir)}.stale-99999-1`;
+  fs.renameSync(lockOf(dir), aside); // mid-takeover: the judger has renamed it and not yet linked it back
+  const old = NOW - 4 * 60 * 1000;
+  fs.utimesSync(aside, old / 1000, old / 1000);
+  assert.equal(heartbeatClaim(dir, mine.token, NOW), true);
+  assert.ok(Math.abs(fs.statSync(aside).mtimeMs - old) < 1000, 'the aside is not touched');
+  assert.ok(!fs.existsSync(lockOf(dir)), 'the heartbeat creates nothing at the claim path');
+  fs.writeFileSync(aside, `${process.pid}-other`);
+  assert.equal(heartbeatClaim(dir, mine.token, NOW), false, "another holder's aside is not ours");
+});
+
+test('heartbeatClaim: a claim restored by a link-back between the first read and the listing is found by the re-read', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const mine = takeClaim(dir, NOW);
+  let reads = 0;
+  const linkBackRace = {
+    ...fs,
+    readFileSync: (p, ...rest) => {
+      if (p === lockOf(dir) && reads++ === 0) throw Object.assign(new Error('gone'), { code: 'ENOENT' });
+      return fs.readFileSync(p, ...rest);
+    },
+  };
+  assert.equal(heartbeatClaim(dir, mine.token, NOW, linkBackRace), true);
+  assert.equal(reads, 2, 'the claim path was read twice');
+});
+
 test('AC2.1 releaseClaim: a caller whose claim was taken over leaves the successor claim in place', () => {
   const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
   const first = takeClaim(dir, NOW);
@@ -247,7 +279,7 @@ Expected: FAIL after Step 1. `heartbeatClaim`, `releaseClaim` (as an export), `C
   - On `EEXIST`: stat first (`statSync`): `ENOENT` means `in-flight`, any other error means `claim-failed`. Then read the content (`readFileSync(lock, 'utf8')`): `ENOENT` means `in-flight`; any other read error leaves the content `''`, so the claim is judged ownerless under `CLAIM_STALE_MS` (round 4: an unreadable claim file is never a permanent `claim-failed`). If not stale, return `in-flight`.
   - Otherwise rename aside exactly as today. Then re-judge the aside's own content and mtime with the same helper, replacing today's mtime-only re-check; an unreadable aside keeps the first reading. If the aside is not stale, link it back, unlink the aside and return `in-flight`. Otherwise unlink the aside and retry the create once, with the same `EEXIST` → `in-flight` mapping as today.
 - Restate the "Residual window" comment in the link-back branch under the new rule. The holder may release between our rename and this link. The link then re-creates a claim that carries the holder's token but that nobody holds. The next pass judges that token's pid. Once the holder process has exited, it reads dead and is taken over at once. While the process still runs, nothing refreshes the orphan, so it is taken over once idle past `CLAIM_MAX_IDLE_MS`. An ownerless aside that is linked back keeps the `CLAIM_STALE_MS` rule.
-- `heartbeatClaim` and `releaseClaim`, per the Interfaces block. `releaseClaim` reads the content and unlinks only on `=== token`. Comment the read-then-unlink gap: only a takeover could fill it, and a holder that refreshed moments ago is neither dead nor idle.
+- `heartbeatClaim` and `releaseClaim`, per the Interfaces block. `heartbeatClaim`'s `ENOENT` branch follows the Decision section's missing-claim bullet in that order (listing, then one re-read); a comment beside it states why the three reads are decisive without polling (the judger's link-back lands before its aside unlink) and the one residual. `releaseClaim` reads the content and unlinks only on `=== token`. Comment the read-then-unlink gap: only a takeover could fill it, and a holder that refreshed moments ago is neither dead nor idle.
 - `processCandidate`'s `finally`: `releaseClaim(dir, claim.token)`.
 - Rewrite the comment above `takeClaim`. It must:
   - State the owner-token, liveness and idle-backstop rule, and that the holder refreshes the claim before every `gh` call (Task 2 wires that).
@@ -261,7 +293,7 @@ Expected: FAIL after Step 1. `heartbeatClaim`, `releaseClaim` (as an export), `C
 - `classifyEntry`'s comment currently says "so a re-run past CLAIM_STALE_MS recovers a dead one". Change it to: a re-run takes over a dead holder's claim at once, and a claim naming no holder past `CLAIM_STALE_MS`.
 - Add `heartbeatClaim, releaseClaim, CLAIM_MAX_IDLE_MS, GH_TIMEOUT_CEILING_MS` to `module.exports`.
 
-Spec: append to `## Decisions` in `.claude-tweaks/pipelines/2026-11-04T055411-record-4797/work/4797-spec.md` one bullet: `**Chosen value:** CLAIM_MAX_IDLE_MS = Math.max(5 min, 2.5 × GH_TIMEOUT_CEILING_MS) = 5 min today, GH_TIMEOUT_CEILING_MS being the gh-timeout-ms schema max (60 s) read from POLICY_KEYS. This corrects the round-2 Sizing bullet's "(120 s)": a gh call on this path runs once, with no retry.` Follow it with one sentence: the heartbeat wraps the shared `timedGh` in `processCandidate`, so every Step 4.0/4.0b `gh` call refreshes the claim, and the only non-`gh` stretches (the 3 s settle sleep, parsing, the `decisions.md` append) are seconds long.
+Spec: append to `## Decisions` in `.claude-tweaks/pipelines/2026-11-04T064811-record-4797/work/4797-spec.md` one bullet: `**Chosen value:** CLAIM_MAX_IDLE_MS = Math.max(5 min, 2.5 × GH_TIMEOUT_CEILING_MS) = 5 min today, GH_TIMEOUT_CEILING_MS being the gh-timeout-ms schema max (60 s) read from POLICY_KEYS. This corrects the round-2 Sizing bullet's "(120 s)": a gh call on this path runs once, with no retry.` Follow it with one sentence: the heartbeat wraps the shared `timedGh` in `processCandidate`, so every Step 4.0/4.0b `gh` call refreshes the claim, and the only non-`gh` stretches (the 3 s settle sleep, parsing, the `decisions.md` append) are seconds long.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -270,6 +302,8 @@ Expected: PASS. Every test passes, including the existing `R3`, `claim:` and `po
 
 Guard discrimination: delete each guard once, re-run, and confirm the named test turns red:
 - `heartbeatClaim`'s `=== token` compare: `heartbeatClaim: refreshes only a claim still carrying our token`.
+- The aside listing (return `false` straight after the first `ENOENT`): `a claim moved aside by a judging pass…`. The aside's `=== token` compare: that test's last assertion.
+- The second read (return `false` when the listing finds no aside): `a claim restored by a link-back…`.
 - `releaseClaim`'s compare: `AC2.1 releaseClaim`.
 - `!isAlive(pid)`: `takeClaim: a dead holder is reclaimed at once`.
 - The `CLAIM_MAX_IDLE_MS` clause: `a live-reading holder idle past CLAIM_MAX_IDLE_MS (a reused pid) is reclaimed`.
@@ -281,7 +315,7 @@ Guard discrimination: delete each guard once, re-run, and confirm the named test
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/bin/lib/file-lock.js plugin/bin/lib/reconcile/post-merge.js tests/bin-lib/reconcile/post-merge.test.js tests/bin-lib/file-lock.test.js .claude-tweaks/pipelines/2026-11-04T055411-record-4797/work/4797-spec.md
+git add plugin/bin/lib/file-lock.js plugin/bin/lib/reconcile/post-merge.js tests/bin-lib/reconcile/post-merge.test.js tests/bin-lib/file-lock.test.js .claude-tweaks/pipelines/2026-11-04T064811-record-4797/work/4797-spec.md
 git commit -m "Check post-merge claim holder liveness — owner token, idle backstop, compare-and-delete release (refs #4797)"
 ```
 
@@ -301,7 +335,7 @@ git commit -m "Check post-merge claim holder liveness — owner token, idle back
   - `SUPERSEDED_LOCATION_SUFFIX`: `' (superseded holder)'`.
   - `markSuperseded(entry: string) -> string`: pure. For a line `parseEntry` reads, returns `- {status} {time} — {location}{SUPERSEDED_LOCATION_SUFFIX}: {action}`; any other string is returned unchanged.
   - `processRun({ …, ownsClaim = () => true, appendDecision = appendEntry })`.
-  - A taken-over run's entry is `{ runDir, pr, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL }`, plus `parentsClosed: n` when Step 4.0b had already closed `n > 0` parents. It is deferred. Task 3 counts its `parentsClosed`.
+  - A taken-over run's entry is `{ runDir, pr, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL }`, plus `parentsClosed: n` when Step 4.0b had already closed `n > 0` parents, `recordsReopened: number[]` when Step 4.0's envelope `reopened` is non-empty, and `recordsClosed: number[]` when its `closed` (non-default base) is non-empty, in that key order. It is deferred. Tasks 3-5 report those three fields.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -347,11 +381,11 @@ test('Q2 + Q4: a holder taken over during Step 4.0 makes no further gh call, kee
     assert.throws(() => d.gh(['issue', 'view', '103']), 'every later call throws too');
     d.appendDecision({ runDir: opts.run, entry: '- AUTO 09:00:00 — Closing links: reopened #101 after PR #11\'s merge closed it (closing link or merge-commit keyword). Reversibility: high.' });
     d.appendDecision({ runDir: opts.run, entry: '- SKIP 09:00:00 — Closing links (degraded): condition: could not read #102 → fallback: x. Reversibility: n/a.' });
-    return { code: 0, envelope: ENVELOPE };
+    return { code: 0, envelope: { ...ENVELOPE, action: 'reopen-failed', reopened: [101], failed: [{ issue: 102 }, { issue: 103 }] } };
   };
   const r = await run(root, { prs: { 11: merged() }, links, close, extra: { gh: (args) => { ghCalls.push(args.join(' ')); return '{}'; } } });
   assert.deepEqual(ghCalls, ['issue reopen 101'], 'only the call made before the takeover ran');
-  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL }]);
+  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL, recordsReopened: [101] }]);
   assert.deepEqual(r.deferred, [dir]);
   assert.equal(close.calls.length, 0, 'Step 4.0b never starts');
   const log = decisionsOf(dir);
@@ -371,8 +405,10 @@ test('Q2 + Q4: a takeover during Step 4.0b stops the pass before its marker; eac
     assert.throws(() => args.gh(['issue', 'close', '200']));
     return { closed: [{ parent: 100, maxTier: 'low' }], skipped: [{ parent: 200, reason: 'gh-failed', detail: CLAIM_LOST_DETAIL }] };
   };
-  const r = await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close });
-  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL, parentsClosed: 1 }]);
+  // A non-default base: Step 4.0 closed #101 itself before Step 4.0b ran.
+  const links = fakeClosingLinks({ ...ENVELOPE, action: 'closed', nonDefaultBase: true, closed: [101], closeFailed: [], closingSet: [101] });
+  const r = await run(root, { prs: { 11: merged() }, links, close });
+  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL, parentsClosed: 1, recordsClosed: [101] }]);
   assert.deepEqual(r.deferred, [dir]);
   const log = decisionsOf(dir);
   assert.match(log, /— reconcile post-merge parent-close \(superseded holder\): closed parent #100 below the oversight floor/);
@@ -426,10 +462,10 @@ Expected: FAIL after Step 1. `CLAIM_LOST_DETAIL`, `SUPERSEDED_LOCATION_SUFFIX` a
   - One comment: the ownership check lives on the shared `gh` function and before every `decisions.md` write, so every loop in Steps 4.0 and 4.0b is covered and a taken-over holder stops before its next call or write. State the in-flight-call residual from this plan's Decision section in one sentence.
 - `processRun`:
   - New parameters `ownsClaim = () => true` and `appendDecision = appendEntry`.
-  - `lostEntry(parentsClosed)` returns the Interfaces block's entry.
+  - `lostEntry(parentsClosed, env)` returns the Interfaces block's entry; `recordsReopened` is `numbers(env && env.reopened)` and `recordsClosed` is `numbers(env && env.closed)`, each added only when non-empty.
   - Add to `runClosingLinks`'s deps: `appendDecision: (args) => { if (ownsClaim()) return appendDecision(args); const e = parseEntry(args.entry); if (e && e.status === 'AUTO') return appendDecision({ ...args, entry: markSuperseded(args.entry) }); return undefined; }`. One comment: in post-merge mode `closing-links.js` writes `AUTO` only for a GitHub change it made.
-  - Right after `runClosingLinks` returns: `if (!ownsClaim()) return lostEntry(0);`.
-  - `write(items, ran, parentsClosed = 0, extra = {}, githubChanges = [])`: before `writeEntries`, `if (!ownsClaim()) { … return lostEntry(parentsClosed); }`, where `…` writes `githubChanges.map((i) => ({ ...i, entry: markSuperseded(i.entry) }))` through `writeEntries` when non-empty, inside a `try` whose failure is swallowed.
+  - Right after `runClosingLinks` returns: `if (!ownsClaim()) return lostEntry(0, envelope);`.
+  - `write(items, ran, parentsClosed = 0, extra = {}, githubChanges = [])`: before `writeEntries`, `if (!ownsClaim()) { … return lostEntry(parentsClosed, envelope); }`, where `…` writes `githubChanges.map((i) => ({ ...i, entry: markSuperseded(i.entry) }))` through `writeEntries` when non-empty, inside a `try` whose failure is swallowed.
   - The Step 4.0b path builds its parent lines as `parentItems`, then calls `write([...parentItems, markerItem], ran, closed.length, stepFields, parentItems)`. The attempt-line and SKIP-marker paths pass no `githubChanges`.
 - Add `CLAIM_LOST_DETAIL, SUPERSEDED_LOCATION_SUFFIX, markSuperseded` to `module.exports`.
 
@@ -447,152 +483,301 @@ Guard discrimination: delete each guard once, re-run, and confirm the named test
 - The `write` guard: `a takeover after the last gh call still stops the marker write`.
 - Writing `githubChanges` when lost (write nothing instead): the second `Q2 + Q4` test's parent-close match.
 - The `in-flight` defer: both `Q2 + Q4` tests' `r.deferred`.
+- `lostEntry`'s `recordsReopened` (drop it): the first `Q2 + Q4` test's entry `deepEqual`. Its `recordsClosed`: the second's.
 - The `claim.token &&` clause: `a claim with no token…`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add plugin/bin/lib/reconcile/post-merge.js tests/bin-lib/reconcile/post-merge.test.js
-git commit -m "Heartbeat the post-merge claim on every gh call and write — a taken-over holder stops, logging only its GitHub changes as superseded (refs #4797)"
+git commit -m "Heartbeat the post-merge claim on every gh call and write — a taken-over holder stops, logging and returning only its GitHub changes (refs #4797)"
 ```
 
-### Task 3: Count a taken-over holder's parent closes in the SessionStart summary
+### Task 3: Shared superseded-changes helpers and the reconcile CLI summary line
+
+**Role:** integration
+
+**Files:**
+- Modify: `plugin/bin/lib/reconcile/post-merge.js` (new pure helpers `isSupersededEntry`, `supersededChanges`, `supersededChangesLine`; `module.exports`)
+- Modify: `plugin/bin/lib/reconcile/format-summary.js` (one new line after the Step 4.0b lines; the header comment's line-kind list)
+- Test: `tests/bin-lib/reconcile/post-merge.test.js`
+- Test: `tests/reconcile.test.js`
+
+One list and one renderer, shared by the reconcile CLI summary (this task) and SessionStart (Task 4), as `parentsLeftOpen` / `parentsLeftOpenLine` already are. The line carries numbers only (PRs, counts, record numbers): it reaches SessionStart's model-facing context, so no forge text travels, the rule `flattenStepFields`' comment states.
+
+**Interfaces:**
+- Consumes: Task 2's `CLAIM_LOST_DETAIL` and the taken-over entry shape (`action: 'skipped'`, `reason: 'in-flight'`, `detail: CLAIM_LOST_DETAIL`, optional `parentsClosed`, `recordsReopened`, `recordsClosed`).
+- Produces (exported from `post-merge.js`):
+  - `isSupersededEntry(entry) -> boolean`: `action === 'skipped' && reason === 'in-flight' && detail === CLAIM_LOST_DETAIL`.
+  - `supersededChanges(entries) -> Array<{ pr, parentsClosed?, recordsReopened?, recordsClosed? }>`: one element per superseded entry that changed anything, in entry order; `parentsClosed` kept only as an integer above 0, each record list only as a non-empty array of its integer elements. A non-array input gives `[]`.
+  - `supersededChangesLine(items) -> string | null`: null for a non-array or an input with no element carrying an integer `pr` and at least one change; else `post-merge steps in run(s) whose claim another pass took over had already changed GitHub: {item}; {item}…`, each item `PR #{pr} {parts joined ', '}`, parts in order `closed {n} parent record(s) below the oversight floor`, `reopened #{a}, #{b}`, `closed #{c}`.
+
+- [ ] **Step 1: Write the failing tests**
+
+In `tests/bin-lib/reconcile/post-merge.test.js`, add `isSupersededEntry, supersededChanges, supersededChangesLine` to the top-level require and append:
+
+```js
+test('supersededChanges + supersededChangesLine: name every GitHub change of a taken-over holder, numbers only', () => {
+  const lost = { action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL };
+  const entries = [
+    { runDir: '/r/a', pr: 12, ...lost, parentsClosed: 2, recordsReopened: [7, 9], recordsClosed: [8] },
+    { runDir: '/r/b', pr: 13, ...lost, recordsReopened: [10] },
+    { runDir: '/r/c', pr: 14, ...lost }, // superseded, changed nothing: today's in-flight skip
+    { runDir: '/r/d', pr: 15, action: 'skipped', reason: 'in-flight', parentsClosed: 1 }, // a plain in-flight skip
+    { runDir: '/r/e', pr: 16, action: 'ran', closingLinks: 'reopened', parentsClosed: 1 },
+  ];
+  assert.equal(isSupersededEntry(entries[2]), true);
+  assert.equal(isSupersededEntry(entries[3]), false);
+  const items = supersededChanges(entries);
+  assert.deepEqual(items, [
+    { pr: 12, parentsClosed: 2, recordsReopened: [7, 9], recordsClosed: [8] },
+    { pr: 13, recordsReopened: [10] },
+  ]);
+  assert.equal(
+    supersededChangesLine(items),
+    'post-merge steps in run(s) whose claim another pass took over had already changed GitHub: PR #12 closed 2 parent record(s) below the oversight floor, reopened #7, #9, closed #8; PR #13 reopened #10',
+  );
+  assert.equal(supersededChangesLine([]), null);
+  assert.equal(supersededChangesLine(undefined), null);
+  assert.deepEqual(supersededChanges(null), []);
+});
+```
+
+In `tests/reconcile.test.js`, append after `formatSummary: parents left open and step skips render on their own lines…`:
+
+```js
+test('formatSummary: a taken-over holder\'s GitHub changes render on their own line; its run still folds into the in-flight skip (#4797)', () => {
+  const { CLAIM_LOST_DETAIL } = require('../plugin/bin/lib/reconcile/post-merge');
+  const base = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, console: null, skipped: null };
+  const lost = { runDir: 'r1', pr: 12, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL, parentsClosed: 1, recordsClosed: [8] };
+  assert.strictEqual(formatSummary({ ...base, postMerge: [lost] }), [
+    'post-merge steps in run(s) whose claim another pass took over had already changed GitHub: PR #12 closed 1 parent record(s) below the oversight floor, closed #8',
+    'skipped: 1 merged run (in-flight 1)',
+  ].join('\n'));
+  // A superseded holder that changed nothing keeps today's single skip line.
+  assert.strictEqual(formatSummary({ ...base, postMerge: [{ runDir: 'r2', pr: 13, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL }] }), 'skipped: 1 merged run (in-flight 1)');
+});
+```
+
+Match `require` paths to each file's existing ones (`tests/reconcile.test.js` already requires `formatSummary`).
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `node --test tests/bin-lib/reconcile/post-merge.test.js tests/reconcile.test.js`
+Expected: FAIL after Step 1. The three helpers are undefined and the CLI summary renders no superseded line.
+
+- [ ] **Step 3: Implement**
+
+- `post-merge.js`: the three helpers per the Interfaces block, beside `parentsLeftOpen` / `parentsLeftOpenLine`, with the numbers-only comment; add them to `module.exports`.
+- `format-summary.js`: after `formatPostMergeStep40bLines(result)`, push `supersededChangesLine(supersededChanges(result.postMerge))` when non-null, behind an `Array.isArray(result.postMerge)` guard and loaded on first use like the neighbouring helpers (the header comment says why). Add the line to the header's list of line kinds.
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `node --test tests/bin-lib/reconcile/post-merge.test.js tests/reconcile.test.js`
+Expected: PASS.
+
+Guard discrimination: delete each once and confirm the named test turns red:
+- `isSupersededEntry`'s `detail === CLAIM_LOST_DETAIL` clause: the unit test's `isSupersededEntry(entries[3])`.
+- `supersededChanges`' "changed anything" filter: that test's `items` `deepEqual` (PR #14 would appear).
+- The format-summary push: the `formatSummary` test's first `strictEqual`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add plugin/bin/lib/reconcile/post-merge.js plugin/bin/lib/reconcile/format-summary.js tests/bin-lib/reconcile/post-merge.test.js tests/reconcile.test.js
+git commit -m "Name a taken-over post-merge holder's GitHub changes in the reconcile CLI summary (refs #4797)"
+```
+
+### Task 4: Carry the superseded changes to SessionStart
 
 **Role:** integration
 
 **Files:**
 - Modify: `plugin/bin/hooks.js` (`reconcile-background`'s summary object: one new field and its comment)
-- Modify: `plugin/bin/lib/hooks/session-start.js` (the post-merge summary lines: one new line beside the `unmarkedClosed` one)
+- Modify: `plugin/bin/lib/hooks/session-start.js` (one new line beside the `parentsLeftOpenLine` one)
 - Test: `tests/bin-lib/hooks/reconcile-background.test.js`
 - Test: `tests/hooks-session-start.test.js`
 
-A separate, disjoint count rather than folding into `postMergeUnmarkedParentsClosed`: that field's SessionStart line says the run's "decisions.md marker could not be written", which is false for a superseded holder — the successor owns the marker, and the holder's own close lines are in `decisions.md`.
+A separate field rather than folding into `postMergeUnmarkedParentsClosed`: that field's SessionStart line says the run's "decisions.md marker could not be written", which is false for a superseded holder (the successor owns the marker).
 
 **Interfaces:**
-- Consumes: Task 2's `CLAIM_LOST_DETAIL` and the taken-over entry shape (`reason: 'in-flight'`, `detail: CLAIM_LOST_DETAIL`, optional `parentsClosed`).
-- Produces: summary field `postMergeSupersededParentsClosed` (integer), rendered by SessionStart as `post-merge steps closed {n} parent record(s) below the oversight floor in run(s) whose claim another pass then took over (each close logged in the run's decisions.md as a superseded-holder line)`.
+- Consumes: Task 3's `supersededChanges(entries)` and `supersededChangesLine(items)`.
+- Produces: background summary field `postMergeSuperseded`: `supersededChanges(postMergeEntries)`.
 
 - [ ] **Step 1: Write the failing tests**
 
-In `tests/bin-lib/hooks/reconcile-background.test.js`, append:
+In `tests/bin-lib/hooks/reconcile-background.test.js`, append (match the require depth of its neighbours):
 
 ```js
-test('Q4 fix: a taken-over holder\'s parent closes are counted on their own, in no other count (#4797)', async () => {
+test('round 5: a taken-over holder\'s GitHub changes reach the summary on their own, in no other count (#4797)', async () => {
   const { CLAIM_LOST_DETAIL } = require('../../../plugin/bin/lib/reconcile/post-merge');
   const summary = await backgroundSummaryFor({ postMerge: [
     { runDir: '/r/a', pr: 11, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 1 },
-    { runDir: '/r/b', pr: 12, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL, parentsClosed: 2 },
+    { runDir: '/r/b', pr: 12, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL, parentsClosed: 2, recordsReopened: [7] },
     { runDir: '/r/c', pr: 13, action: 'skipped', reason: 'in-flight' },
     { runDir: '/r/d', pr: 14, action: 'skipped', reason: 'marker-write-failed', parentsClosed: 3 },
   ] });
-  assert.equal(summary.postMergeSupersededParentsClosed, 2);
+  assert.deepEqual(summary.postMergeSuperseded, [{ pr: 12, parentsClosed: 2, recordsReopened: [7] }]);
   assert.equal(summary.postMergeParentsClosed, 1);
   assert.equal(summary.postMergeUnmarkedParentsClosed, 3);
   assert.equal(summary.postMergeFailed, 0, 'a taken-over holder is not a failed run');
-  assert.equal((await backgroundSummaryFor({})).postMergeSupersededParentsClosed, 0);
+  assert.deepEqual((await backgroundSummaryFor({})).postMergeSuperseded, []);
 });
 ```
 
-Match the file's require path depth to its neighbours.
-
-In `tests/hooks-session-start.test.js`, append a test in the shape of the post-merge summary test that seeds through the same `seed` helper:
+In `tests/hooks-session-start.test.js`, add to the end of the post-merge summary test that seeds `postMergeUnmarkedParentsClosed: 3` (the test ending in the `quiet` case), before its `quiet` case:
 
 ```js
-  seed({ postMergeRan: 0, postMergeParentsClosed: 0, postMergeSupersededParentsClosed: 2 });
+  seed({ postMergeRan: 0, postMergeParentsClosed: 0, postMergeSuperseded: [{ pr: 12, parentsClosed: 2, recordsReopened: [7] }] });
   const superseded = (await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project })).json.hookSpecificOutput.additionalContext;
-  assert.match(superseded, /post-merge steps closed 2 parent record\(s\) below the oversight floor in run\(s\) whose claim another pass then took over/);
+  assert.match(superseded, /post-merge steps in run\(s\) whose claim another pass took over had already changed GitHub: PR #12 closed 2 parent record\(s\) below the oversight floor, reopened #7/);
   assert.doesNotMatch(superseded, /marker could not be written/);
 ```
-
-Reuse that test's `project` and `seed` setup (copy the setup lines it uses, or add these assertions to the end of that test before its `quiet` case).
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `node --test tests/bin-lib/hooks/reconcile-background.test.js tests/hooks-session-start.test.js`
-Expected: FAIL. `postMergeSupersededParentsClosed` is undefined and SessionStart renders no such line.
+Expected: FAIL after Step 1. `postMergeSuperseded` is absent and SessionStart renders no superseded line.
 
 - [ ] **Step 3: Implement**
 
-- `hooks.js`: add `CLAIM_LOST_DETAIL` to the `require('./lib/reconcile/post-merge')` destructure in `reconcile-background`, and the field `postMergeSupersededParentsClosed: parentsClosedBy((e) => e.reason === 'in-flight' && e.detail === CLAIM_LOST_DETAIL)` beside `postMergeUnmarkedParentsClosed`. Extend the "Two disjoint counts" comment to three: the third is the parents closed by a holder whose claim another pass took over before its marker write.
-- `session-start.js`: beside the `unmarkedClosed` line, read the field with the same `Number.isInteger` guard (an older status file lacks it and renders nothing) and push the Interfaces block's line when non-zero. Extend the disjointness comment to name it.
+- `hooks.js`: add `supersededChanges` to the `require('./lib/reconcile/post-merge')` destructure in `reconcile-background` and the field `postMergeSuperseded: supersededChanges(postMergeEntries)` beside `postMergeParentsLeftOpen`. Extend the "Two disjoint counts" comment: a holder whose claim another pass took over is in neither count; its changes travel in `postMergeSuperseded`.
+- `session-start.js`: load `supersededChangesLine` with `parentsLeftOpenLine` and push `supersededChangesLine(s.postMergeSuperseded)` when non-null (an older status file lacks the field and the helper returns null). Extend the disjointness comment to name it.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `node --test tests/bin-lib/hooks/reconcile-background.test.js tests/hooks-session-start.test.js tests/hooks-help-guard.test.js`
 Expected: PASS.
 
+Guard discrimination: removing the SessionStart push turns the session-start assertion red; removing the summary field turns the reconcile-background `deepEqual` red.
+
 - [ ] **Step 5: Commit**
 
 ```bash
 git add plugin/bin/hooks.js plugin/bin/lib/hooks/session-start.js tests/bin-lib/hooks/reconcile-background.test.js tests/hooks-session-start.test.js
-git commit -m "Count a taken-over post-merge holder's parent closes in the SessionStart summary (refs #4797)"
+git commit -m "Carry a taken-over post-merge holder's GitHub changes to SessionStart (refs #4797)"
 ```
 
-### Task 4: Sweep the prose that describes the old age-only claim
+### Task 5: Merge mode's superseded line and the CLI entry docs
 
 **Role:** integration
 
 **Files:**
-- Modify: `plugin/skills/wrap-up/merge-mode.md` (the `verdict` `in-flight` bullet; 14,466 B against the 52,500 B rail, ample headroom)
-- Modify: `docs/reconcile-checks.md` (the *Per-run claim file* bullet under "Two concurrency guards", and the **Surfacing** bullet)
-- Modify: `docs/journeys/merge-a-parked-unattended-pr-3784.md` (the **In flight.** bullet; no test pins this sentence)
-- Test: `tests/wrap-up-merge-mode-conformance.test.js` (the `'already-in-flight-archived'` pin)
+- Modify: `plugin/skills/wrap-up/merge-mode.md` (the `verdict` `in-flight` bullet: the archived clause, and one new sentence for a superseded pass; 14,466 B against the 52,500 B rail, ample headroom)
+- Modify: `plugin/bin/post-merge-run.js` (header comment and `USAGE`: the entry shape and the `in-flight` description; no code change)
+- Modify: `docs/plugin-structure.md` (the `post-merge-run.js` command line's entry shape)
+- Test: `tests/wrap-up-merge-mode-conformance.test.js` (the `'already-in-flight-archived'` pin, one new pin, one new field test)
 
-No-change classification of the sweep's other hits: `docs/plugin-structure.md`'s `post-merge-run.js` row, `plugin/bin/post-merge-run.js`'s header and `merge-mode.md` line 31 describe `in-flight` as "another process holds the run's claim". That stays true for a taken-over holder, whose successor now holds it.
+No-change classification: `merge-mode.md` line 31 and the `in-flight` bullet's opening describe `in-flight` as "another process holds the run's claim". That stays true for a taken-over holder, whose successor now holds it.
 
 **Interfaces:**
-- Consumes the rule from Tasks 1-3:
-  - A dead holder is taken over at once.
-  - A live holder is taken over only after it has not refreshed its claim for `CLAIM_MAX_IDLE_MS`.
-  - A claim naming no holder (empty or unreadable) is taken over past `CLAIM_STALE_MS` (10 min).
-  - A taken-over holder stops before its next `gh` call or `decisions.md` write, still logging the GitHub changes it already made as `(superseded holder)` lines.
-  - The background summary counts that holder's parent closes as `postMergeSupersededParentsClosed`.
-  - Release is owner-checked.
+- Consumes: Task 2's taken-over entry (`verdict` `in-flight`, with `parentsClosed`, `recordsReopened`, `recordsClosed` each only when non-empty); Task 1's takeover rule (a dead holder at once; a claim naming no holder past `CLAIM_STALE_MS`).
 - Produces: nothing code-facing.
 
-Sweep grep, already run for this plan. Its hits are this task's file list, the no-change rows above, unrelated claim-registry prose, and `post-merge.js`'s own comments, which are Tasks 1 and 2's. Run from the worktree root: `git grep -n -i -e "post-merge.lock" -e "CLAIM_STALE_MS" -e "per-run claim" -e "stale window" -e "post-merge claim" -e "run's claim" -e "UnmarkedParentsClosed" -- plugin docs .claude/skills ':!docs/superpowers/plans' ':!docs/plans/*-ledger.md'`. `console-execute.js`'s `RECLAIM_STALE_MS` is an unrelated constant.
+- [ ] **Step 1: Update the conformance test**
 
-- [ ] **Step 1: Update the conformance pin `'already-in-flight-archived'` in `tests/wrap-up-merge-mode-conformance.test.js`**
+In `tests/wrap-up-merge-mode-conformance.test.js`:
 
-Replace the regex with one matching this exact sentence tail, regex-escaped as the neighbouring entries are:
+- Replace the `'already-in-flight-archived'` regex with one matching this exact sentence tail, regex-escaped as the neighbouring entries are:
 
-`` `next` `rerun-after-stale-claim` marks an archived run (the adopted path is under `archive/`), whose holder is another merge-mode invocation, because the reconciler never walks `archive/`: the line also names `/claude-tweaks:wrap-up #{n} merge` again, in case that holder died — a re-run takes over a dead holder's claim at once, and a claim naming no holder once it is past its 10-minute stale window (`CLAIM_STALE_MS`) ``
+  `` `next` `rerun-after-stale-claim` marks an archived run (the adopted path is under `archive/`), whose holder is another merge-mode invocation, because the reconciler never walks `archive/`: the line also names `/claude-tweaks:wrap-up #{n} merge` again, in case that holder died — a re-run takes over a dead holder's claim at once, and a claim naming no holder once it is past its 10-minute stale window (`CLAIM_STALE_MS`) ``
 
-The separate `merge-mode.md states the claim stale window as post-merge.js has it` test must keep matching `` past its (\d+)-minute stale window \(`CLAIM_STALE_MS`\) `` unchanged.
+  The separate `merge-mode.md states the claim stale window as post-merge.js has it` test must keep matching `` past its (\d+)-minute stale window \(`CLAIM_STALE_MS`\) `` unchanged.
+- Add to `MERGE_MODE_FACTS`, after `'already-in-flight-archived'`, a pin `'already-in-flight-superseded'` matching this exact sentence, regex-escaped:
+
+  `` An `in-flight` entry that carries `parentsClosed`, `recordsReopened` or `recordsClosed` is this invocation's own pass, whose claim another pass took over after it had changed GitHub: the line also states each of those it carries — `before another pass took over the claim, this run closed {parentsClosed} parent record(s) below the oversight floor, reopened #{recordsReopened} and closed #{recordsClosed}` — so it never reads as a pass that did nothing ``
+
+  It shares no text with another fact (`assertEachFactGoesRed` strips only a pattern's first match).
+- Append a test:
+
+```js
+test('#4797 round 5: post-merge-run.js and plugin-structure.md name a superseded pass\'s change fields', () => {
+  for (const file of [['plugin', 'bin', 'post-merge-run.js'], ['docs', 'plugin-structure.md']]) {
+    const text = flat(read(...file).replace(/^\/\/ ?/gm, ''));
+    assert.match(text, /recordsReopened\?/, `${file.join('/')}: the entry shape carries recordsReopened`);
+    assert.match(text, /recordsClosed\?/, `${file.join('/')}: the entry shape carries recordsClosed`);
+    assert.match(text, /claim another pass took over/, `${file.join('/')}: states when an in-flight entry carries them`);
+  }
+});
+```
 
 - [ ] **Step 2: Run the conformance test to verify it fails**
 
 Run: `node --test tests/wrap-up-merge-mode-conformance.test.js`
-Expected: FAIL after Step 1. `merge-mode.md` still carries the old "again once the claim is past its 10-minute stale window" wording.
+Expected: FAIL after Step 1. `merge-mode.md` still carries the old "again once the claim is past its 10-minute stale window" wording and no superseded sentence; neither CLI doc names the new fields.
 
 - [ ] **Step 3: Rewrite the prose**
 
-- `plugin/skills/wrap-up/merge-mode.md`, the `verdict` `in-flight` bullet: replace the clause from `the line also names` to `in case that holder died.` with the Step 1 tail, ending with a full stop.
-- `docs/journeys/merge-a-parked-unattended-pr-3784.md`, the **In flight.** bullet: replace "once the claim is past its 10-minute stale window." with "in case that holder died: a re-run takes over a dead holder's claim at once, and a claim naming no holder once it is past its 10-minute stale window."
-- `docs/reconcile-checks.md`, the *Per-run claim file* bullet. Keep its first two sentences (the `wx` create; background vs inline passes) and its last sentence (the dotfile name). Replace the middle with these facts:
-  - The claim file holds its owner's `{pid}-{token}`.
-  - While a run holds the claim, every `gh` call it makes and every `decisions.md` write first checks that the claim still names it and refreshes the claim's mtime (the heartbeat).
-  - A claim whose holder pid is alive skips `in-flight` unless it has gone unrefreshed for `CLAIM_MAX_IDLE_MS` (a reused pid or a suspended holder; the derivation sits beside the constant). Name the constant only, never its value: no test pins a number in this doc.
-  - A dead holder's claim is taken over at once.
-  - A claim naming no holder (an older reconciler's empty file, or a file that cannot be read) keeps the `CLAIM_STALE_MS` (10 minutes) rule.
-  - A takeover is still atomic: renamed aside, re-judged, and only the rename winner retries the create. Any other I/O error skips `claim-failed`.
-  - A holder whose claim was taken over refuses its next `gh` call and every later one, and skips `in-flight`, deferred. It writes no marker, attempt line or degraded SKIP; each GitHub change it already made (a parent closed below the floor, a record reopened or closed) is still logged, its location suffixed `(superseded holder)`, which is never read as the marker. A call already in flight when it was suspended still completes.
-  - The lock is removed after the marker write, and only by its owner (a compare-and-delete on the token), so a taken-over pass never deletes its successor's claim.
-  - Until every installed build upgrades, an older reconciler still takes over by age alone and releases unconditionally, so a mixed-version pair keeps the old race for a claim idle past `CLAIM_STALE_MS`.
-- `docs/reconcile-checks.md`, the **Surfacing** bullet: after the `postMergeUnmarkedParentsClosed` clause, add `postMergeSupersededParentsClosed` (the parents closed by a holder whose claim another pass took over before its marker write; a third disjoint count, its closes logged as superseded-holder lines).
+- `plugin/skills/wrap-up/merge-mode.md`, the `verdict` `in-flight` bullet: replace the clause from `the line also names` to `in case that holder died.` with the Step 1 archived tail, ending with a full stop, then append the Step 1 superseded sentence, ending with a full stop.
+- `plugin/bin/post-merge-run.js`: in the header's entry shape and in `USAGE`'s one-line shape, add `recordsReopened?, recordsClosed?` after `parentsClosed?`. Extend the header's `in-flight:` line and `USAGE`'s `in-flight (another process holds the claim)` with: when this invocation's own pass had its claim another pass took over after changing GitHub, the entry also carries `parentsClosed` (parents Step 4.0b closed) and `recordsReopened` / `recordsClosed` (records Step 4.0 reopened or closed), each only when non-empty.
+- `docs/plugin-structure.md`, the `node plugin/bin/post-merge-run.js` line: the same two fields in its entry shape and the same "claim another pass took over" clause after `in-flight` (another process holds the run's claim).
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `node --test tests/wrap-up-merge-mode-conformance.test.js tests/bin-lib/reconcile/post-merge.test.js`
+Run: `node --test tests/wrap-up-merge-mode-conformance.test.js tests/post-merge-run-cli.test.js`
 Expected: PASS.
 
-Then re-run the sweep grep from this task's header. Expected: no hit still says that a live claim is judged by mtime alone, that a re-run waits out the stale window for a dead holder, or that a taken-over holder writes nothing. Absence control: the same grep against the pre-change base (`git grep -n -i -e "stale window" {base} -- plugin/skills/wrap-up/merge-mode.md docs/journeys/merge-a-parked-unattended-pr-3784.md`) matches both files' old sentences. After the change, it matches only the new "naming no holder" clause.
+Guard discrimination: deleting the superseded sentence from `merge-mode.md` turns `merge-mode.md facts each go red when stripped` and the facts-present test red; deleting `recordsClosed?` from either doc turns the new field test red.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/skills/wrap-up/merge-mode.md docs/reconcile-checks.md docs/journeys/merge-a-parked-unattended-pr-3784.md tests/wrap-up-merge-mode-conformance.test.js
-git commit -m "Describe the liveness-checked, heartbeated post-merge claim — merge-mode, journey and reconcile-checks prose (refs #4797)"
+git add plugin/skills/wrap-up/merge-mode.md plugin/bin/post-merge-run.js docs/plugin-structure.md tests/wrap-up-merge-mode-conformance.test.js
+git commit -m "State a superseded merge-mode pass's GitHub changes on its in-flight line and in the CLI entry docs (refs #4797)"
+```
+
+### Task 6: Sweep the docs that describe the old age-only claim
+
+**Role:** integration
+
+**Files:**
+- Modify: `docs/reconcile-checks.md` (the *Per-run claim file* bullet under "Two concurrency guards", and the **Surfacing** bullet)
+- Modify: `docs/journeys/merge-a-parked-unattended-pr-3784.md` (the **In flight.** bullet; no test pins this sentence)
+- Modify: `docs/journeys/session-start-fast-background-reconcile.md` (the Step 3 **Action** that lists SessionStart's post-merge lines, and one history line; no test pins it)
+
+**Interfaces:**
+- Consumes the rule from Tasks 1-5:
+  - A dead holder is taken over at once.
+  - A live holder is taken over only after it has not refreshed its claim for `CLAIM_MAX_IDLE_MS`; a claim moved aside and restored by a judging pass is not a takeover.
+  - A claim naming no holder (empty or unreadable) is taken over past `CLAIM_STALE_MS` (10 min).
+  - A taken-over holder stops before its next `gh` call or `decisions.md` write, still logging the GitHub changes it already made as `(superseded holder)` lines, and returns `in-flight` with `parentsClosed`, `recordsReopened`, `recordsClosed`.
+  - The background summary carries those changes as `postMergeSuperseded`; the reconcile CLI summary and SessionStart render them.
+  - Release is owner-checked.
+- Produces: nothing code-facing.
+
+Sweep grep, already run for this plan. Its hits are Tasks 5 and 6's files, the no-change rows in Task 5, unrelated claim-registry prose, and `post-merge.js`'s own comments, which are Tasks 1 and 2's. Run from the worktree root: `git grep -n -i -e "post-merge.lock" -e "CLAIM_STALE_MS" -e "per-run claim" -e "stale window" -e "post-merge claim" -e "run's claim" -e "UnmarkedParentsClosed" -e "parentsClosed?" -- plugin docs .claude/skills ':!docs/superpowers/plans' ':!docs/plans/*-ledger.md'`. `console-execute.js`'s `RECLAIM_STALE_MS` is an unrelated constant.
+
+- [ ] **Step 1: Run the absence control**
+
+Run: `git grep -n -i -e "stale window" -- docs/journeys/merge-a-parked-unattended-pr-3784.md docs/reconcile-checks.md`
+Expected: matches the journey's "once the claim is past its 10-minute stale window." sentence (the old wording this task replaces).
+
+- [ ] **Step 2: Rewrite the docs**
+
+- `docs/journeys/merge-a-parked-unattended-pr-3784.md`, the **In flight.** bullet: replace "once the claim is past its 10-minute stale window." with "in case that holder died: a re-run takes over a dead holder's claim at once, and a claim naming no holder once it is past its 10-minute stale window."
+- `docs/journeys/session-start-fast-background-reconcile.md`: in the Step 3 **Action**, after the `skipped step-wide` example and before its `(#4599, …)` citation, add: a pass in which another pass took over a run's claim after that run had changed GitHub adds `post-merge steps in run(s) whose claim another pass took over had already changed GitHub: PR #12 closed 1 parent record(s) below the oversight floor, reopened #7`, rendered from the summary's `postMergeSuperseded` list; add `#4797` to the citation. Append a history line: `- Updated during build of #4797 (liveness-checked post-merge claim, run 2026-11-04T064811-record-4797). Step 3 names the superseded-pass line, which post-merge.js's supersededChangesLine renders from the summary's postMergeSuperseded list.`
+- `docs/reconcile-checks.md`, the *Per-run claim file* bullet. Keep its first two sentences (the `wx` create; background vs inline passes) and its last sentence (the dotfile name). Replace the middle with these facts:
+  - The claim file holds its owner's `{pid}-{token}`.
+  - While a run holds the claim, every `gh` call it makes and every `decisions.md` write first checks that the claim still names it and refreshes the claim's mtime (the heartbeat). A claim missing only because another pass moved it aside to judge it is re-checked (the aside, then the path once more), never read as a takeover.
+  - A claim whose holder pid is alive skips `in-flight` unless it has gone unrefreshed for `CLAIM_MAX_IDLE_MS` (a reused pid or a suspended holder; the derivation sits beside the constant). Name the constant only, never its value: no test pins a number in this doc.
+  - A dead holder's claim is taken over at once.
+  - A claim naming no holder (an older reconciler's empty file, or a file that cannot be read) keeps the `CLAIM_STALE_MS` (10 minutes) rule.
+  - A takeover is still atomic: renamed aside, re-judged, and only the rename winner retries the create. Any other I/O error skips `claim-failed`.
+  - A holder whose claim was taken over refuses its next `gh` call and every later one, and skips `in-flight`, deferred. It writes no marker, attempt line or degraded SKIP; each GitHub change it already made (a parent closed below the floor, a record reopened or closed) is still logged, its location suffixed `(superseded holder)`, which is never read as the marker, and rides on its entry as `parentsClosed`, `recordsReopened`, `recordsClosed`. A call already in flight when it was suspended still completes.
+  - The lock is removed after the marker write, and only by its owner (a compare-and-delete on the token), so a taken-over pass never deletes its successor's claim.
+  - Until every installed build upgrades, an older reconciler still takes over by age alone and releases unconditionally, so a mixed-version pair keeps the old race for a claim idle past `CLAIM_STALE_MS`.
+- `docs/reconcile-checks.md`, the **Surfacing** bullet: after the `postMergeUnmarkedParentsClosed` clause, add `postMergeSuperseded` (per run whose claim another pass took over after it changed GitHub: its PR, parents closed, records reopened and closed; rendered by SessionStart and the reconcile CLI summary as one line, so no surface reports such a pass as having done nothing).
+
+- [ ] **Step 3: Verify the sweep**
+
+Run the sweep grep from this task's header, then `node --test tests/wrap-up-merge-mode-conformance.test.js tests/reconcile.test.js tests/below-floor-parent-close-conformance.test.js` (the suites that read `docs/reconcile-checks.md`).
+Expected: the suites PASS, and no hit still says that a live claim is judged by mtime alone, that a re-run waits out the stale window for a dead holder, or that a taken-over holder writes or reports nothing. The Step 1 grep now matches only the new "naming no holder" clause in the journey.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add docs/reconcile-checks.md docs/journeys/merge-a-parked-unattended-pr-3784.md docs/journeys/session-start-fast-background-reconcile.md
+git commit -m "Describe the liveness-checked, heartbeated post-merge claim in reconcile-checks and the two journeys (refs #4797)"
 ```
 
 Waived AC3.1: `npm test` passing is verified by `/claude-tweaks:build`'s Common Step 5 final verification and the `/claude-tweaks:test` gate, not by a plan task.
