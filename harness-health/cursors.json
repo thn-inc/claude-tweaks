@@ -57,7 +57,7 @@
   },
   "skill:gh-api-module-pattern": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793748317128
+    "lastAuditedMs": 1793784415861
   },
   "skill:skill-prose-conformance-tests": {
     "lastAuditedSha": null,
@@ -129,7 +129,7 @@
   },
   "skill:driver-skill-outcome-taxonomy": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793744322281
+    "lastAuditedMs": 1793784420151
   },
   "skill:release": {
     "lastAuditedSha": null,
@@ -258,5 +258,9 @@
   "skill:claim-targets-stop-addition": {
     "lastAuditedSha": null,
     "lastAuditedMs": 1793735961837
+  },
+  "skill:lock-race-test-seam": {
+    "lastAuditedSha": null,
+    "lastAuditedMs": 1793784417950
   }
 }
