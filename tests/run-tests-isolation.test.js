@@ -299,6 +299,327 @@ test('acquireSlot uses a second slot when slots=2', () => {
   });
 });
 
+// ---- #4333: waiters are served in arrival order through ticket files. ----
+
+function writeTicket(dir, seq, pid, slots = 1) {
+  const p = path.join(dir, `ticket-${seq}.json`);
+  fs.writeFileSync(p, JSON.stringify({ pid, startedAt: '2026-01-01T00:00:00.000Z', cwd: '/work/other', slots }));
+  return p;
+}
+
+// The names of the ticket files in `dir` that belong to `pid`.
+function ticketNamesOf(dir, pid) {
+  return fs.readdirSync(dir)
+    .filter((n) => /^ticket-\d+\.json$/.test(n))
+    .filter((n) => JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8')).pid === pid);
+}
+
+test('#4333 AC2.1: a later arrival waits behind a live earlier ticket even when a slot is free', () => {
+  withTempDir((dir) => {
+    const ticket = writeTicket(dir, 1, 222);
+    let sleeps = 0;
+    const sleep = () => {
+      sleeps += 1;
+      assert.ok(!fs.existsSync(path.join(dir, 'slot-0.lock')), 'the free slot must not be taken past an earlier ticket');
+      fs.unlinkSync(ticket);
+    };
+    const lock = acquireSlot(slotArgs(dir, { sleep, isAlive: (pid) => pid === 222 }));
+    assert.strictEqual(lock, path.join(dir, 'slot-0.lock'));
+    assert.strictEqual(sleeps, 1);
+  });
+});
+
+test('#4333 AC3.1: a ticket left by a dead waiter is removed and does not block the queue', () => {
+  withTempDir((dir) => {
+    const ticket = writeTicket(dir, 1, 222);
+    const lock = acquireSlot(slotArgs(dir, { sleep: noSleep, isAlive: () => false }));
+    assert.strictEqual(lock, path.join(dir, 'slot-0.lock'));
+    assert.ok(!fs.existsSync(ticket));
+  });
+});
+
+test("#4333 a live waiter's ticket is never stale by age", () => {
+  withTempDir((dir) => {
+    const ticket = writeTicket(dir, 1, 222);
+    const old = new Date(Date.now() - 11 * 60 * 1000);
+    fs.utimesSync(ticket, old, old);
+    let sleeps = 0;
+    const sleep = () => {
+      sleeps += 1;
+      assert.ok(fs.existsSync(ticket), 'an old ticket of a live pid must stay');
+      fs.unlinkSync(ticket);
+    };
+    acquireSlot(slotArgs(dir, { sleep, isAlive: (pid) => pid === 222 }));
+    assert.strictEqual(sleeps, 1);
+  });
+});
+
+test('#4333 a ticket naming our own pid is stale', () => {
+  withTempDir((dir) => {
+    writeTicket(dir, 1, 111);
+    const lock = acquireSlot(slotArgs(dir, { sleep: noSleep, isAlive: () => true }));
+    assert.strictEqual(lock, path.join(dir, 'slot-0.lock'));
+  });
+});
+
+test("#4333 a waiter whose own ticket was removed rejoins at the tail of the queue", () => {
+  withTempDir((dir) => {
+    const lockPath = writeLock(dir, 0, 333);
+    let sleeps = 0;
+    const sleep = () => {
+      sleeps += 1;
+      if (sleeps === 1) {
+        fs.unlinkSync(path.join(dir, 'ticket-1.json'));
+        writeTicket(dir, 2, 222); // a newcomer arrives while our ticket is gone
+        return;
+      }
+      const ours = ticketNamesOf(dir, 111);
+      assert.deepStrictEqual(ours, ['ticket-3.json'], 'the waiter must rejoin behind the newcomer, not at its old number');
+      fs.unlinkSync(path.join(dir, 'ticket-2.json'));
+      fs.unlinkSync(lockPath);
+    };
+    const lock = acquireSlot(slotArgs(dir, { sleep, isAlive: (pid) => pid === 333 || pid === 222 }));
+    assert.strictEqual(lock, lockPath);
+    assert.strictEqual(sleeps, 2);
+  });
+});
+
+test('#4333 a foreign ticket at our own path makes us rejoin and is left in place', () => {
+  withTempDir((dir) => {
+    const lockPath = writeLock(dir, 0, 333);
+    const foreign = path.join(dir, 'ticket-1.json');
+    let sleeps = 0;
+    const sleep = () => {
+      sleeps += 1;
+      if (sleeps === 1) {
+        writeTicket(dir, 1, 222);
+        return;
+      }
+      const ours = ticketNamesOf(dir, 111);
+      assert.strictEqual(ours.length, 1);
+      assert.ok(Number(/^ticket-(\d+)\.json$/.exec(ours[0])[1]) > 1, 'a new ticket is numbered after the foreign one');
+      fs.unlinkSync(foreign);
+      fs.unlinkSync(lockPath);
+    };
+    const lock = acquireSlot(slotArgs(dir, { sleep, isAlive: (pid) => pid === 333 || pid === 222 }));
+    assert.strictEqual(lock, lockPath);
+  });
+});
+
+test('#4333 a ticket of ours overwritten with JSON null makes us rejoin instead of crashing', () => {
+  withTempDir((dir) => {
+    const lockPath = writeLock(dir, 0, 333);
+    const nulled = path.join(dir, 'ticket-1.json');
+    let sleeps = 0;
+    const sleep = () => {
+      sleeps += 1;
+      if (sleeps === 1) {
+        fs.writeFileSync(nulled, 'null');
+        // The slot is free from here on, so only the `null` file can still hold us back: a fresh one
+        // counts as an unidentified holder ahead of the new ticket and blocks every slot index.
+        fs.unlinkSync(lockPath);
+        return;
+      }
+      fs.unlinkSync(nulled);
+    };
+    const lock = acquireSlot(slotArgs(dir, { sleep, isAlive: (pid) => pid === 333 }));
+    assert.strictEqual(lock, lockPath);
+    assert.strictEqual(sleeps, 2);
+  });
+});
+
+test('#4333 acquireSlot never deletes a ticket at its path that no longer names it', () => {
+  withTempDir((dir) => {
+    writeLock(dir, 0, 333);
+    let first = true;
+    const isAlive = (pid) => {
+      if (first) {
+        first = false;
+        writeTicket(dir, 1, 222);
+      }
+      return pid === 222;
+    };
+    const lock = acquireSlot(slotArgs(dir, { sleep: noSleep, isAlive }));
+    assert.strictEqual(lock, path.join(dir, 'slot-0.lock'));
+    assert.strictEqual(JSON.parse(fs.readFileSync(path.join(dir, 'ticket-1.json'), 'utf8')).pid, 222);
+  });
+});
+
+test('#4333 a failed slot-lock write after the ticket leaves nothing behind', () => {
+  withTempDir((dir) => {
+    const origWrite = fs.writeSync;
+    let calls = 0;
+    fs.writeSync = (...args) => {
+      calls += 1;
+      if (calls === 1) return origWrite(...args);
+      throw Object.assign(new Error('no space left on device'), { code: 'ENOSPC' });
+    };
+    try {
+      assert.throws(
+        () => acquireSlot({ dir, slots: 1, pid: 4242, cwd: '/x', isAlive: () => true, now: Date.now, sleep: () => {}, log: () => {} }),
+        /no space left/,
+      );
+    } finally {
+      fs.writeSync = origWrite;
+    }
+    assert.deepStrictEqual(fs.readdirSync(dir), []);
+  });
+});
+
+test('#4333 a ticket taken after ours does not hold us back', () => {
+  withTempDir((dir) => {
+    const lockPath = writeLock(dir, 0, 333);
+    let sleeps = 0;
+    const sleep = () => {
+      sleeps += 1;
+      writeTicket(dir, 2, 222); // ours is ticket-1
+      fs.unlinkSync(lockPath);
+    };
+    const lock = acquireSlot(slotArgs(dir, { sleep, isAlive: (pid) => pid === 333 || pid === 222 }));
+    assert.strictEqual(lock, lockPath);
+    assert.strictEqual(sleeps, 1);
+  });
+});
+
+test('#4333 a new arrival numbers its ticket after the highest existing one', () => {
+  withTempDir((dir) => {
+    const earlier = writeTicket(dir, 7, 222);
+    let sleeps = 0;
+    const sleep = () => {
+      sleeps += 1;
+      const mine = JSON.parse(fs.readFileSync(path.join(dir, 'ticket-8.json'), 'utf8'));
+      assert.deepStrictEqual({ pid: mine.pid, cwd: mine.cwd, slots: mine.slots }, { pid: 111, cwd: '/work/a', slots: 1 });
+      assert.strictEqual(typeof mine.startedAt, 'string');
+      fs.unlinkSync(earlier);
+    };
+    acquireSlot(slotArgs(dir, { sleep, isAlive: (pid) => pid === 222 }));
+    assert.strictEqual(sleeps, 1);
+  });
+});
+
+test('#4333 acquireSlot leaves only its lock behind once it holds the slot', () => {
+  withTempDir((dir) => {
+    acquireSlot(slotArgs(dir, { sleep: noSleep }));
+    assert.deepStrictEqual(fs.readdirSync(dir), ['slot-0.lock']);
+  });
+});
+
+test('#4333 a queued waiter logs once, naming the lowest live ticket ahead', () => {
+  withTempDir((dir) => {
+    writeTicket(dir, 10, 333);
+    writeTicket(dir, 9, 222);
+    const lines = [];
+    let sleeps = 0;
+    const sleep = () => {
+      sleeps += 1;
+      fs.unlinkSync(path.join(dir, sleeps === 1 ? 'ticket-9.json' : 'ticket-10.json'));
+    };
+    acquireSlot(slotArgs(dir, { sleep, log: (l) => lines.push(l), isAlive: (pid) => pid === 333 || pid === 222 }));
+    assert.deepStrictEqual(lines, [
+      'run-tests.js: waiting for a test-suite slot — queued behind pid 222 (cwd /work/other) since 2026-01-01T00:00:00.000Z; set CT_TEST_SUITE_SLOTS to raise the limit (ticket: ' +
+        path.join(dir, 'ticket-9.json') + ')',
+    ]);
+  });
+});
+
+test('#4333 a later arrival with a higher limit takes a slot index the waiters ahead of it cannot use', () => {
+  withTempDir((dir) => {
+    writeLock(dir, 0, 333);
+    writeTicket(dir, 1, 222, 1);
+    const isAlive = (pid) => pid === 222 || pid === 333;
+    assert.strictEqual(
+      acquireSlot(slotArgs(dir, { slots: 2, sleep: noSleep, isAlive })),
+      path.join(dir, 'slot-1.lock'),
+    );
+    const lines = [];
+    let sleeps = 0;
+    const sleep = () => {
+      sleeps += 1;
+      assert.strictEqual(JSON.parse(fs.readFileSync(path.join(dir, 'slot-0.lock'), 'utf8')).pid, 333);
+      assert.ok(fs.existsSync(path.join(dir, 'ticket-1.json')));
+      fs.unlinkSync(path.join(dir, 'slot-0.lock'));
+      fs.unlinkSync(path.join(dir, 'ticket-1.json'));
+    };
+    const lock = acquireSlot(slotArgs(dir, { pid: 444, slots: 1, isAlive, sleep, log: (l) => lines.push(l) }));
+    assert.strictEqual(lock, path.join(dir, 'slot-0.lock'));
+    assert.strictEqual(sleeps, 1);
+    assert.strictEqual(lines.length, 1);
+    assert.ok(lines[0].startsWith('run-tests.js: waiting for a test-suite slot — queued behind pid 222 '), lines[0]);
+  });
+  // The queued line names the ticket that actually blocks: ticket-1's limit of 1 leaves index 1 free,
+  // so deleting it alone would not unblock a slots=2 arrival.
+  withTempDir((dir) => {
+    writeTicket(dir, 1, 222, 1);
+    writeTicket(dir, 2, 333, 3);
+    const lines = [];
+    const sleep = () => {
+      fs.unlinkSync(path.join(dir, 'ticket-1.json'));
+      fs.unlinkSync(path.join(dir, 'ticket-2.json'));
+    };
+    acquireSlot(slotArgs(dir, { slots: 2, sleep, log: (l) => lines.push(l), isAlive: (pid) => pid === 222 || pid === 333 }));
+    assert.strictEqual(lines.length, 1);
+    assert.ok(lines[0].endsWith('(ticket: ' + path.join(dir, 'ticket-2.json') + ')'), lines[0]);
+  });
+});
+
+test('#4333 a ticket whose limit cannot be read blocks every slot index', () => {
+  withTempDir((dir) => {
+    const ticket = path.join(dir, 'ticket-1.json');
+    fs.writeFileSync(ticket, JSON.stringify({ pid: 222, startedAt: '2026-01-01T00:00:00.000Z', cwd: '/work/other' }));
+    let sleeps = 0;
+    const sleep = () => {
+      sleeps += 1;
+      assert.ok(!fs.existsSync(path.join(dir, 'slot-0.lock')));
+      assert.ok(!fs.existsSync(path.join(dir, 'slot-1.lock')));
+      fs.unlinkSync(ticket);
+    };
+    acquireSlot(slotArgs(dir, { slots: 2, sleep, isAlive: (pid) => pid === 222 }));
+    assert.strictEqual(sleeps, 1);
+  });
+});
+
+test('#4333 a fresh ticket that cannot be parsed blocks every slot index', () => {
+  withTempDir((dir) => {
+    const ticket = path.join(dir, 'ticket-1.json');
+    fs.writeFileSync(ticket, 'not json');
+    let sleeps = 0;
+    const sleep = () => {
+      sleeps += 1;
+      assert.ok(!fs.existsSync(path.join(dir, 'slot-0.lock')));
+      assert.ok(!fs.existsSync(path.join(dir, 'slot-1.lock')));
+      fs.unlinkSync(ticket);
+    };
+    acquireSlot(slotArgs(dir, { slots: 2, sleep }));
+    assert.strictEqual(sleeps, 1);
+  });
+});
+
+test('#4333 a ticket that cannot be parsed and is older than staleUnparseableMs is removed', () => {
+  withTempDir((dir) => {
+    const ticket = path.join(dir, 'ticket-1.json');
+    fs.writeFileSync(ticket, 'not json');
+    const old = new Date(Date.now() - 11 * 60 * 1000);
+    fs.utimesSync(ticket, old, old);
+    const lock = acquireSlot(slotArgs(dir, { sleep: noSleep }));
+    assert.strictEqual(lock, path.join(dir, 'slot-0.lock'));
+    assert.ok(!fs.existsSync(ticket));
+  });
+});
+
+test('#4333 a ticket in the base lane does not block the subset lane, and the subset directory is not a ticket', () => {
+  withTempDir((dir) => {
+    const { dir: sub } = slotLane(dir, true);
+    fs.mkdirSync(sub);
+    const ticket = writeTicket(dir, 1, 222);
+    const isAlive = (pid) => pid === 222;
+    assert.strictEqual(acquireSlot(slotArgs(sub, { sleep: noSleep, isAlive })), path.join(sub, 'slot-0.lock'));
+    assert.ok(fs.existsSync(ticket));
+    fs.unlinkSync(ticket);
+    assert.strictEqual(acquireSlot(slotArgs(dir, { sleep: noSleep, isAlive })), path.join(dir, 'slot-0.lock'));
+    assert.ok(fs.statSync(sub).isDirectory());
+  });
+});
+
 test("releaseSlot leaves another pid's lock alone", () => {
   withTempDir((dir) => {
     const p = writeLock(dir, 0, 444);
@@ -616,6 +937,141 @@ test('run-tests.js waits for a slot held by a live pid, naming the holder', asyn
     } finally {
       child.kill('SIGKILL');
     }
+  });
+});
+
+// #4333: real waiter processes against one slot directory. A waiter appends `waiting <name>` from
+// acquireSlot's `log` callback (called the first time it has to wait) and `acquired <name>` once
+// acquireSlot returns, holds the slot until a `release-<name>` file appears beside the out file,
+// then releases it and exits 0. The tests read only that out file, never the slot directory's
+// bookkeeping, so the same tests run against a runner that keeps none.
+const WAITER = `
+const fs = require('fs');
+const path = require('path');
+const [runner, dir, slots, pollMs, name, outFile] = process.argv.slice(1);
+const { acquireSlot, releaseSlot, isPidAlive } = require(runner);
+const cell = new Int32Array(new SharedArrayBuffer(4));
+const sleep = (ms) => Atomics.wait(cell, 0, 0, ms);
+const lockPath = acquireSlot({
+  dir, slots: Number(slots), pid: process.pid, cwd: process.cwd(), isAlive: isPidAlive, now: Date.now,
+  sleep, pollMs: Number(pollMs), log: () => fs.appendFileSync(outFile, 'waiting ' + name + '\\n'),
+});
+fs.appendFileSync(outFile, 'acquired ' + name + '\\n');
+const releaseFile = path.join(path.dirname(outFile), 'release-' + name);
+while (!fs.existsSync(releaseFile)) sleep(20);
+releaseSlot(lockPath, process.pid);
+process.exit(0);
+`;
+
+async function withWaiters(fn) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'run-tests-waiters-'));
+  const children = [];
+  const outFile = path.join(root, 'out.txt');
+  const events = () => (fs.existsSync(outFile) ? fs.readFileSync(outFile, 'utf8').split('\n').filter(Boolean) : []);
+  const start = (name, slots, pollMs) => {
+    // stderr goes to a file so a crashing waiter can be quoted instead of timing out naming nothing.
+    const stderrPath = path.join(root, `stderr-${name}.txt`);
+    const stderrFd = fs.openSync(stderrPath, 'w');
+    let child;
+    try {
+      child = spawn(
+        process.execPath, ['-e', WAITER, RUNNER, path.join(root, 'slots'), String(slots), String(pollMs), name, outFile],
+        { stdio: ['ignore', 'ignore', stderrFd] },
+      );
+    } finally {
+      fs.closeSync(stderrFd);
+    }
+    const waiter = { name, child, exitCode: undefined, stderrPath };
+    child.on('exit', (code, signal) => { waiter.exitCode = code === null ? signal : code; });
+    children.push(waiter);
+    return waiter;
+  };
+  const release = (name) => fs.writeFileSync(path.join(root, `release-${name}`), '');
+  const stderrOf = (waiter) => {
+    try {
+      return fs.readFileSync(waiter.stderrPath, 'utf8').trim() || '(empty)';
+    } catch (_) {
+      return '(unreadable)';
+    }
+  };
+  // Like `until`, but fails at once, quoting its stderr, when a watched waiter exits before the
+  // predicate holds. Watch only waiters that are not expected to exit in the meantime.
+  const waitFor = async (predicate, timeoutMs, what, watched = []) => {
+    await until(() => predicate() || watched.some((w) => w.exitCode !== undefined), timeoutMs, what);
+    if (predicate()) return;
+    const gone = watched.find((w) => w.exitCode !== undefined);
+    throw new Error(`waiter ${gone.name} exited (${gone.exitCode}) before ${what}; its stderr: ${stderrOf(gone)}`);
+  };
+  let failed = false;
+  try {
+    await fn({ root, events, start, release, waitFor });
+  } catch (err) {
+    failed = true;
+    throw err;
+  } finally {
+    let waitError = null;
+    try {
+      for (const { child } of children) child.kill('SIGKILL');
+      await until(() => children.every((w) => w.exitCode !== undefined), 10000, 'every waiter to be gone');
+    } catch (err) {
+      waitError = err; // never replaces the test's own error; rmSync below still runs
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+    if (waitError && !failed) throw waitError;
+  }
+}
+
+test('#4333 AC1.1: N+2 waiters against N slots acquire in arrival order', async () => {
+  await withWaiters(async ({ events, start, release, waitFor }) => {
+    const waiters = [];
+    // A and B take the two free slots. C polls slowly and D fast, so a poll-and-take-first
+    // implementation hands the first freed slot to the later arrival D. That discrimination is
+    // probabilistic: against the pre-change runner D (20 ms poll) beats C (1000 ms poll) only most of
+    // the time (~2% of reverted runs come out green), so one green run of the reverted runner does
+    // not show this test fails to discriminate.
+    for (const [name, pollMs, reported] of [['A', 20, 'acquired A'], ['B', 20, 'acquired B'], ['C', 1000, 'waiting C'], ['D', 20, 'waiting D']]) {
+      const waiter = start(name, 2, pollMs);
+      waiters.push(waiter);
+      await waitFor(() => events().includes(reported), 60000, reported, [waiter]);
+    }
+    const [, b, c, d] = waiters;
+    release('A');
+    await waitFor(() => events().filter((e) => e.startsWith('acquired ')).length >= 3, 60000, 'a third acquisition', [b, c, d]);
+    release('B');
+    await waitFor(() => events().filter((e) => e.startsWith('acquired ')).length >= 4, 60000, 'a fourth acquisition', [c, d]);
+    assert.deepStrictEqual(
+      events().filter((e) => e.startsWith('acquired ')).map((e) => e.slice('acquired '.length)),
+      ['A', 'B', 'C', 'D'],
+      events().join(', '),
+    );
+    release('C');
+    release('D');
+    await until(() => waiters.every((w) => w.exitCode !== undefined), 60000, 'every waiter to exit');
+    assert.deepStrictEqual(waiters.map((w) => w.exitCode), [0, 0, 0, 0]);
+  });
+});
+
+test('#4333 AC3.1: a waiter killed in the queue does not block the one behind it', async () => {
+  await withWaiters(async ({ root, events, start, release, waitFor }) => {
+    const slotDir = path.join(root, 'slots');
+    fs.mkdirSync(slotDir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(
+      path.join(slotDir, 'slot-0.lock'),
+      JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(), cwd: ROOT }),
+    );
+    const a = start('A', 1, 20);
+    await waitFor(() => events().includes('waiting A'), 60000, 'waiting A', [a]);
+    const b = start('B', 1, 20);
+    await waitFor(() => events().includes('waiting B'), 60000, 'waiting B', [b]);
+    a.child.kill('SIGKILL');
+    await until(() => a.exitCode !== undefined, 60000, 'A to be killed');
+    fs.unlinkSync(path.join(slotDir, 'slot-0.lock'));
+    await waitFor(() => events().includes('acquired B'), 60000, 'acquired B', [b]);
+    assert.strictEqual(events().includes('acquired A'), false);
+    release('B');
+    await until(() => b.exitCode !== undefined, 60000, 'B to exit');
+    assert.strictEqual(b.exitCode, 0);
   });
 });
 
