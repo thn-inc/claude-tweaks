@@ -2268,6 +2268,41 @@ test('formatSummary: the failed row names the records the failed runs left, sort
   );
 });
 
+test('formatSummary: parents left open and step skips render on their own lines, a marker-write-failed entry\'s included, never dropped (#4798)', () => {
+  const base = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, console: null, skipped: null };
+  const clean = { runDir: 'r1', pr: 12, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 0, stepSkips: [{ reason: 'unreadable-policy', detail: 'x' }] };
+  const failed = { runDir: 'r2', pr: 13, action: 'ran', closingLinks: 'close-failed', parentsClosed: 0, stepSkips: [{ reason: 'internal-error' }] };
+  const unmarked = { runDir: 'r3', pr: 14, action: 'skipped', reason: 'marker-write-failed', parentsClosed: 0, parentFailures: [{ parent: 200, reason: 'gh-failed' }] };
+  const errored = { runDir: 'r5', pr: 16, action: 'skipped', reason: 'error', detail: 'boom', parentsClosed: 1, parentFailures: [{ issue: 300, reason: 'internal-error' }], stepSkips: [{ reason: 'invalid-risk-floor' }] };
+  assert.strictEqual(formatSummary({ ...base, postMerge: [clean, failed, unmarked, errored] }), [
+    'post-merge steps run: 1 merged run',
+    'post-merge steps failed: 1 merged run',
+    "post-merge Step 4.0b left parent record(s) open: #200 (gh-failed, PR #14), the parent of record #300 (internal-error, PR #16) — tidy's parent-gate backstop recovers them",
+    'post-merge Step 4.0b skipped step-wide, leaving no parent open (nothing left to close): unreadable-policy (PR #12), internal-error (PR #13), invalid-risk-floor (PR #16)',
+    'skipped: 2 merged runs (marker-write-failed 1, error 1)',
+  ].join('\n'));
+  assert.strictEqual(formatSummary({ ...base, postMerge: [{ runDir: 'r4', pr: 15, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 0 }] }), 'post-merge steps run: 1 merged run');
+});
+
+test('formatSummary: a taken-over holder\'s GitHub changes render on their own line; its run still folds into the in-flight skip (#4797)', () => {
+  const { CLAIM_LOST_DETAIL } = require('../plugin/bin/lib/reconcile/post-merge');
+  const base = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, console: null, skipped: null };
+  const lost = { runDir: 'r1', pr: 12, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL, parentsClosed: 1, recordsClosed: [8] };
+  assert.strictEqual(formatSummary({ ...base, postMerge: [lost] }), [
+    'post-merge steps in run(s) whose claim another pass took over had already changed GitHub: PR #12 closed 1 parent record(s) below the oversight floor, closed #8',
+    'skipped: 1 merged run (in-flight 1)',
+  ].join('\n'));
+  // The line sits after Step 4.0b's lines and before the aggregated skip line.
+  const open = { runDir: 'r3', pr: 14, action: 'skipped', reason: 'marker-write-failed', parentsClosed: 0, parentFailures: [{ parent: 200, reason: 'gh-failed' }] };
+  assert.strictEqual(formatSummary({ ...base, postMerge: [lost, open] }), [
+    "post-merge Step 4.0b left parent record(s) open: #200 (gh-failed, PR #14) — tidy's parent-gate backstop recovers them",
+    'post-merge steps in run(s) whose claim another pass took over had already changed GitHub: PR #12 closed 1 parent record(s) below the oversight floor, closed #8',
+    'skipped: 2 merged runs (in-flight 1, marker-write-failed 1)',
+  ].join('\n'));
+  // A superseded holder that changed nothing keeps today's single skip line.
+  assert.strictEqual(formatSummary({ ...base, postMerge: [{ runDir: 'r2', pr: 13, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL }] }), 'skipped: 1 merged run (in-flight 1)');
+});
+
 test('formatSummary: a repaired origin/HEAD renders inline (#3132)', () => {
   const result = {
     mirror: null, redTip: null, worktrees: null, claims: null, runs: null,

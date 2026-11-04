@@ -93,8 +93,11 @@ const malformedExclusion = ({ number, cause }) => ({ reason: MALFORMED_REASON, r
 // One `unlanded-blocker` exclusion per requested record with an `unlanded` verdict
 // (blockers in blockerLanding order); `undetermined` lists every undetermined
 // verdict, which the CLI keeps and logs. `open` is the blocked pass's, and `landed`
-// and `not-applicable` contribute nothing. Throws a TypeError naming the record when
-// its blockerLanding is not an array: the call printed an envelope it did not mean.
+// and `not-applicable` contribute nothing. A cross-repository `undetermined` is a
+// CLOSED foreign blocker, which /dispatch does not count as blocking (#4793); its
+// entry carries the verdict's `repository` so the CLI names it owner/name#N. Throws a
+// TypeError naming the record when its blockerLanding is not an array: the call
+// printed an envelope it did not mean.
 function landingExclusions(envelope, numbers) {
   const exclusions = [];
   const undetermined = [];
@@ -105,7 +108,7 @@ function landingExclusions(envelope, numbers) {
     const blockers = [];
     for (const v of landing) {
       if (v.verdict === 'unlanded') blockers.push({ blocker: v.blocker, commit: v.commit });
-      else if (v.verdict === 'undetermined') undetermined.push({ record: n, blocker: v.blocker, via: v.via });
+      else if (v.verdict === 'undetermined') undetermined.push({ record: n, blocker: v.blocker, via: v.via, ...(v.repository ? { repository: v.repository } : {}) });
     }
     if (blockers.length) exclusions.push({ reason: UNLANDED_REASON, records: [n], detail: { blockers } });
   }

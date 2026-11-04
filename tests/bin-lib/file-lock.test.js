@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
-const { acquireLock, releaseLock, withLock } = require('../../plugin/bin/lib/file-lock');
+const { acquireLock, releaseLock, withLock, isAlive } = require('../../plugin/bin/lib/file-lock');
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-file-lock-'));
@@ -159,4 +159,11 @@ test('withLock: a second acquirer waits for the first to release, under real cro
   for (let i = 0; i < WORKERS; i++) {
     assert.equal(final[`w${i}`], true, `worker ${i}'s key must not be lost to a concurrent writer's stale snapshot`);
   }
+});
+
+test('isAlive: this process is alive; a non-positive or non-integer pid is not', () => {
+  assert.equal(isAlive(process.pid), true);
+  assert.equal(isAlive(0), false);
+  assert.equal(isAlive(-1), false);
+  assert.equal(isAlive(1.5), false);
 });

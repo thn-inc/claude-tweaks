@@ -53,6 +53,25 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.162.0](https://github.com/thn-inc/claude-tweaks/compare/v6.161.0...v6.162.0) (2026-11-04)
+
+
+### Features
+
+* Give the open-items ledger a sanctioned append/settle CLI ([#4439](https://github.com/thn-inc/claude-tweaks/issues/4439)) ([027c337](https://github.com/thn-inc/claude-tweaks/commit/027c337e69d6bc76fd83d299000157e447f6a94d))
+
+
+### Bug Fixes
+
+* Surface a partial Step 4.0b parent-close instead of… ([#4798](https://github.com/thn-inc/claude-tweaks/issues/4798)) ([f156150](https://github.com/thn-inc/claude-tweaks/commit/f1561500bfe301c998668ace20519557da729702))
+* Windows: the guard-rewrite normalizer declines a native… ([#4292](https://github.com/thn-inc/claude-tweaks/issues/4292)) ([81fbb3c](https://github.com/thn-inc/claude-tweaks/commit/81fbb3c09d164775b5f278fc637b102102520aa3))
+
+### Highlights
+* Queued test-suite runs now take their slot in the order they arrived, so a run no longer starves behind newer arrivals.
+* Windows: the Bash-command normalizer now drops a redundant leading `cd "<cwd>" &&` on a backslash-spelled cwd, and inlines `${CLAUDE_PLUGIN_ROOT}` forward-slashed (`D:/…`). Whether Claude Code's Windows worktree guard accepts the inlined root has not been tested in a live Windows session.
+* Pipeline phases record and settle open-items ledger rows through one safe command instead of hand-edited table lines.
+* A cross-repository native blocker no longer causes a false stop or a false landed verdict in the blocker-landing check.
+
 ## [6.161.0](https://github.com/thn-inc/claude-tweaks/compare/v6.160.3...v6.161.0) (2026-11-03)
 
 
@@ -84,6 +103,26 @@ Three conventions follow from how this repo works, and all are visible below:
 * Windows: shadow-dup-proposal reads a staged symlink… ([#4355](https://github.com/thn-inc/claude-tweaks/issues/4355)) ([a9b1f9b](https://github.com/thn-inc/claude-tweaks/commit/a9b1f9b4bc0a1ba5da353954e62686616e3aea8b))
 * Windows: tests expect native paths where git prints… ([#4289](https://github.com/thn-inc/claude-tweaks/issues/4289)) ([da6186a](https://github.com/thn-inc/claude-tweaks/commit/da6186a2f7409148ad2246dc4d9085ca0bee43a4))
 * Windows: tests pin POSIX-literal absolute fixture paths… ([#4286](https://github.com/thn-inc/claude-tweaks/issues/4286)) ([242eca7](https://github.com/thn-inc/claude-tweaks/commit/242eca7b4f9fc7969ebe187045d7f0c85a988628))
+
+### Highlights
+* Settle 12 small deferred findings in dispatch.
+* A dispatched record stopped by an unlanded blocker no longer accrues failed attempts toward `bot:blocked`, and dispatch no longer selects such a record until its blocker lands.
+* A pipeline run no longer stalls at the review test gate after build commits its own ledger: the test step's bookkeeping-only skip now leaves a verification stamp for the new commit. The review test gate also always ends: a project with no verification commands proceeds on a logged decision, and a stamp that still does not verify HEAD after one re-run stops the review and names the cause, instead of re-running the tests again.
+* Internal: post-merge reads closing-links results directly, removing its unreadable-envelope failure mode.
+* Settle 3 small deferred findings in reflect.
+* A record whose unclosed code fence hides later sections is now told to close that fence, instead of to add sections it already has; release-note repair reads fences exactly as the shape gate does.
+* Settle 4 small deferred findings in hooks.
+* Dispatch no longer treats a record as already shipped when a pipeline merged only part of it and released the record to finish the rest.
+* The close procedure for a decomposed feature's parent now comments and closes in the same repository it read from, so a checkout with more than one remote no longer writes to the wrong one.
+* Declining a reflect or feedback insight from a worktree now sticks: the decline is remembered after the worktree is cleaned up, so the same insight is not proposed again.
+* The release gate reviews every merged change in the release, including work that reached main through a merge commit.
+* A review-routing line can no longer be broken by a quote in git error output.
+* On Windows, the Review Console no longer quotes a file from outside the repository into a filed record when a staged copy is a symlink.
+* Settle 15 small deferred findings in tests.
+* A claim read or write that GitHub refuses for permissions now stops the run and says which token access to fix, instead of counting as a failed attempt to retry.
+* A release now lists every record in a bundled merge, carries each one's own release note, and leaves out notes that say there is no user-visible change.
+* Fix a Windows-only failure in the reconcile archival test caused by path separators.
+* Replaced the verification brief with an acceptance packet that lists what changed, how to test it, what could not be tested and where confidence is lowest, with every claim tied to evidence.
 
 ## [6.160.3](https://github.com/thn-inc/claude-tweaks/compare/v6.160.2...v6.160.3) (2026-11-02)
 
