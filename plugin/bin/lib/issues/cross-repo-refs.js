@@ -25,7 +25,10 @@ const GRAPHQL_INT_MAX = 2147483647;
 
 const CROSS_REPO_DEP_RE = /^Blocked by ([A-Za-z0-9-]+\/[A-Za-z0-9._-]+)#(\d+)\b/gm;
 const CROSS_REPO_REF_RE = /^([A-Za-z0-9-]+\/[A-Za-z0-9._-]+)#(\d+)$/;
-const CROSS_REPO_STRIP_RE = /(?<![A-Za-z0-9-])[A-Za-z0-9-]+\/[A-Za-z0-9._-]+#\d+/g;
+// Strips only what the parser accepts: the lookbehind covers the repository class too (so a
+// '_' or '.' before the owner means the token is not an owner/name ref), and the trailing \b
+// mirrors CROSS_REPO_DEP_RE's (so '#5abc' is left alone).
+const CROSS_REPO_STRIP_RE = /(?<![A-Za-z0-9._-])[A-Za-z0-9-]+\/[A-Za-z0-9._-]+#\d+\b/g;
 
 // {repository, number} -> the case-insensitive identity two spellings of one blocker share.
 function crossRepoKey({ repository, number }) {
@@ -59,17 +62,20 @@ function parseCrossRepoDependencies(body) {
 
 // refs + Map(crossRepoKey -> state) -> one {number, repository, state} entry per ref, deduped by
 // key. `state` is the map's value when that is a string, else null (unread reads as unknown).
+// Misuse throws a TypeError (non-array refs, non-Map states, an unparseable ref): callers pass
+// parseCrossRepoDependencies output and a Map, so anything else is a bug to surface.
 function foreignEntries(refs, states) {
-  if (!Array.isArray(refs)) return [];
+  if (!Array.isArray(refs)) throw new TypeError('foreignEntries: refs must be an array');
+  if (!(states instanceof Map)) throw new TypeError('foreignEntries: states must be a Map');
   const seen = new Set();
   const entries = [];
   for (const ref of refs) {
     const parsed = parseCrossRepoRef(ref);
-    if (!parsed) continue;
+    if (!parsed) throw new TypeError(`foreignEntries: not an owner/name#N ref: ${ref}`);
     const key = crossRepoKey(parsed);
     if (seen.has(key)) continue;
     seen.add(key);
-    const state = states instanceof Map ? states.get(key) : undefined;
+    const state = states.get(key);
     entries.push({ number: parsed.number, repository: parsed.repository, state: typeof state === 'string' ? state : null });
   }
   return entries;
@@ -112,7 +118,7 @@ function buildCrossRepoStateQuery(keys) {
 }
 
 module.exports = {
-  GRAPHQL_INT_MAX, CROSS_REPO_DEP_RE,
+  GRAPHQL_INT_MAX,
   parseCrossRepoDependencies, parseCrossRepoRef, crossRepoKey,
   foreignEntries, bodyOnlyForeign, mergeForeignBlockers,
   stripCrossRepoRefs, buildCrossRepoStateQuery,

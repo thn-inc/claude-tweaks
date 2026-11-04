@@ -35,6 +35,20 @@ test('stripCrossRepoRefs removes qualified refs only', () => {
   assert.equal(stripCrossRepoRefs('blocked by other/repo#5 and #7'), 'blocked by  and #7');
   assert.equal(stripCrossRepoRefs('Blocked by #7'), 'Blocked by #7');
 });
+test('stripCrossRepoRefs strips only refs the parser accepts', () => {
+  for (const line of ['Blocked by other/repo#5abc', 'Blocked by foo_bar/baz#5', 'Blocked by my.org/repo#5']) {
+    assert.deepStrictEqual(parseCrossRepoDependencies(line), [], `${line}: the parser rejects it`);
+    assert.equal(stripCrossRepoRefs(line), line, `${line}: so the strip leaves it`);
+  }
+  assert.ok(!stripCrossRepoRefs('see github.com/other/repo#5 now').includes('other/repo#5'));
+});
+test('foreignEntries throws a TypeError on misuse instead of dropping or nulling silently', () => {
+  assert.throws(() => foreignEntries('other/repo#5', new Map()), TypeError);
+  assert.throws(() => foreignEntries(['other/repo#5'], {}), TypeError);
+  assert.throws(() => foreignEntries(['other/repo#5'], undefined), TypeError);
+  assert.throws(() => foreignEntries(['not a ref'], new Map()), TypeError);
+  assert.deepStrictEqual(foreignEntries([], new Map()), []);
+});
 test('buildCrossRepoStateQuery: one aliased repository/issue lookup per key, owner and name as String! variables', () => {
   const { query, fields } = buildCrossRepoStateQuery(['other/repo#5', 'acme/w.js#7']);
   assert.match(query, /^query\(\$o0:String!,\$n0:String!,\$o1:String!,\$n1:String!\)\{/);
