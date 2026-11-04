@@ -257,14 +257,15 @@ test('--scope --integration-branch: round-4 Reading B: a no-own-commit merge of 
   fs.writeFileSync(path.join(r.repo, 'src', 'dirty.js'), 'dirty');
   const { run, stamp, report } = await runScoped(r);
   assert.doesNotMatch(run.stdout, /merge-narrowed/);
+  assert.match(run.stdout, /^Scope: full/m);
   assert.ok(fs.existsSync(r.marker), 'the unit suite must actually have run');
-  assert.deepStrictEqual(stamp.suitesRun, ['other', 'unit']);
+  assert.deepStrictEqual([...stamp.suitesRun].sort(), ['other', 'unit']);
   assert.strictEqual(report.scope.mergeNarrowing, null);
   assert.deepStrictEqual(report.scope.changedFiles, ['src/dirty.js', 'ui/a.js']);
 });
 ```
 
-Before round 4, the dirty `src/dirty.js` selected `unit`, so the outcome guard never fired. Narrowing then excluded `ui/a.js` and ran `unit` alone. That is the case this test pins.
+Before round 4, the dirty `src/dirty.js` selected `unit`, so the outcome guard never fired. Narrowing then excluded `ui/a.js` and ran `unit` alone. That is the case this test pins. Once narrowing declines, the full set selects both declared suites over `static: true` rules, so `selectScope` reports mode `full` and the suites run in declaration order (`unit`, then `other`). The test compares the sorted list and checks the `Scope: full` line instead of pinning that order.
 
 In `tests/bin-lib/verify/impact-cli.test.js`, at the end of the file. `impactRepo`, `writeMap`, `runCli` and `ARGS` already exist there. The base map traces `tests/a.test.js` reading `src/x.js` and `tests/b.test.js` reading `src/y.js`, so nothing reads `tests/b.test.js` itself:
 
