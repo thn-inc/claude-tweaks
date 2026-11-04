@@ -634,7 +634,7 @@ unchanged, and every fail-open path below leaves the parent open for it.
   - *Per-run claim file* (`{runDir}/.post-merge.lock`, created `wx`). Background passes serialize on
     `background-lock.js`, but inline passes (Step 4.2's `--checks mirror,release,archive`, tidy's
     explicit list) do not.
-    - *Heartbeat.* The claim file holds its owner's `{pid}-{token}`. While a run holds the
+    - *Heartbeat.* The claim file holds its owner token, `{pid}-{random}`. While a run holds the
       claim, every `gh` call it makes and every `decisions.md` write first checks that the claim still
       names it and refreshes the claim's mtime (the heartbeat). A claim missing only because another pass
       moved it aside to judge it is re-checked (the aside, then the path once more), never read as a
