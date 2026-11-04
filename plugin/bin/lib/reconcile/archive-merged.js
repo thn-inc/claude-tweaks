@@ -2263,8 +2263,8 @@ function archiveMergedRun({
   // routes through classifyRunDir without a `dir`, so the staged-items
   // exception (hasStagedPending) could never fire on this, the ordinary
   // production path pr-first-merge-post-merge.md Step 4.2's reconcile hits.
-  // #3503: `recordCheck` (the run's required records) is omitted by the clean
-  // sweep on purpose — see iterCleanRunDirs.
+  // #3503: `recordCheck`'s `records` (the run's required records) is omitted by the clean
+  // sweep on purpose — see iterCleanRunDirs; it passes only `repoRefusal` (#4794).
   const coverage = runTiebreakCoverage(dir);
   const decision = settleMergedPartial(
     root, dir, prState, decideArchiveCore(prState, consoleState, hasStagedItems(dir), recordCheck, coverage), coverage,
@@ -2663,6 +2663,9 @@ function archiveMerged({
         // #3543: a stamped pr.number GitHub confirms names no PR is a stale
         // stamp, not an absent branch/worktree — report the real cause.
         if (byNumber === 'pr-not-found') skipReason = 'pr-not-found';
+        // #4794: the primary read failed and the gate refuses origin — the same reason the
+        // branch-joined path reports, so the refusal text reaches the skip as its hint.
+        if (byNumber === 'unknown-host') skipReason = 'unknown-host';
         if (byNumber && typeof byNumber === 'object' && (byNumber.state === 'CLOSED' || byNumber.state === 'MERGED')) {
           if (byNumber.state === 'MERGED') {
             const hasMerge = localHasMerge(root, byNumber.mergeCommit, integration, { dryRun });
@@ -2728,7 +2731,7 @@ function archiveMerged({
           continue;
         }
       }
-      skipped.push({ runDir: dir, reason: skipReason });
+      skipped.push({ runDir: dir, reason: skipReason, ...(skipReason === 'unknown-host' && repoRefusal ? { hint: repoRefusal } : {}) });
       track(dir, skipReason);
       continue;
     }
@@ -2766,6 +2769,8 @@ function archiveMerged({
 
     const runResult = archiveMergedRun({
       root, residueRepo, dir, branch, state, dryRun, runner, cacheTarget: cacheBatch, integration, prStates, archive,
+      // #4794: no `records` (the sweep's record check stays off), only the refusal, so an `unknown-host` skip carries its hint.
+      recordCheck: { repoRefusal },
       onSkip: (reason) => {
         if (reason === 'console-never-rendered-staged-pending' && consoleReplacedByAutoMerge(dir)) track(dir, reason);
         if (reason === 'tiebreak-coverage-missing' || reason === 'tiebreak-artifact-invalid' || reason === 'cant-tell-unfiled') track(dir, reason);

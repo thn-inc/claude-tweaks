@@ -119,9 +119,8 @@ function run(argv, deps = realDeps) {
     // depends on the host alone, never on how the URL is spelled.
     const spec = parseRepo(hostPathOf(url));
     if (!spec) { deps.stderr(`activity-gather.js: no --repo and origin remote is not a GitHub URL: ${String(url).trim()}\n`); return 2; }
-    // normalizeHost(null) is the string 'null', so a host-less parse stays out of it.
-    const host = spec.host ? normalizeHost(spec.host) : null;
-    if (host && host !== 'github.com') {
+    const host = normalizeHost(spec.host);
+    if (host !== 'github.com') {
       deps.stderr(`activity-gather.js: origin remote is on ${host}, not github.com — pass --repo <owner/name> for a github.com repository; other hosts are not supported\n`);
       return 2;
     }

@@ -183,6 +183,12 @@ test('#4794: an ssh://, credentialed or ported github.com origin is read like it
   const upper = gathered('ssh://git@ACME.ghe.com/o/r.git');
   assert.equal(upper.code, 2);
   assert.equal(upper.stderr, plain.stderr);
+  // An all-dot host normalizes to nothing: it is no github.com origin, so it stops before any gh call.
+  for (const url of ['git@...:o/r.git', 'https://./o/r.git']) {
+    const r = gathered(url);
+    assert.equal(r.code, 2, url);
+    assert.deepEqual(r.calls, [], url);
+  }
 });
 
 test('exit 2: an origin-derived slug with a leading-hyphen owner is rejected rather than reaching gh positionally', () => {

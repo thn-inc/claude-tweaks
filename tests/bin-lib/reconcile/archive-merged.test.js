@@ -4797,6 +4797,27 @@ test('#4794: an SSH-alias origin skips the record check unknown-host with the re
   );
 });
 
+test('#4794: a run with a stamped pr.number and no branch, whose by-number read says unknown-host on an SSH-alias origin, skips unknown-host with the refusal as hint', { skip: STUB_SKIP }, () => {
+  const origin = 'git@github-work:acme/w.git';
+  const branch = 'feat-4794-bynumber';
+  const { root } = mergedFeatureBranchRepo(branch);
+  git(root, 'remote', 'add', 'origin', origin);
+  git(root, 'branch', '-D', branch); // branch ref gone too — only the stamped number can name the PR
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-10-17T062549-record-4794');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active', worktree: path.join(root, '.claude', 'worktrees', 'gone-4794'), pr: { number: 4794001 },
+  }));
+  const prStates = createPrStateResolver({ root, deps: { byNumber: () => 'unknown-host', byBranch: () => null } });
+  const result = archiveMerged({ cwd: root, prStates, gateDeps: ORIGIN_GATE_DEPS });
+  assert.ok(!result.archived.includes(runDir), JSON.stringify(result));
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  const refusal = gateOriginRepo(origin, ORIGIN_GATE_DEPS).refusal;
+  assert.ok(refusal, 'the fixture origin must be refused');
+  assert.deepStrictEqual(skip, { runDir, reason: 'unknown-host', hint: refusal });
+});
+
 test('#4794 decideArchiveCore: a refused origin skips unknown-host ahead of no-repo-slug', () => {
   const pr = { state: 'MERGED', closingIssuesReferences: [ref(1)] };
   assert.deepStrictEqual(decideArchiveCore(pr, 'resolved', false, { records: [1], repoSlug: null, repoRefusal: 'R' }),
