@@ -12,7 +12,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
 const { STUB_SKIP, installStub } = require('./helpers/path-stub');
-const { _resetGhHostCache } = require('../plugin/bin/lib/repo-resolve');
+const { _resetGhHostCache, gateOriginRepo } = require('../plugin/bin/lib/repo-resolve');
 const { composePrEarlyBody } = require('../plugin/bin/lib/flow/pr-body');
 
 const REPO_ROOT = path.join(__dirname, '..');
@@ -850,4 +850,68 @@ test('#4794: sibling-sessions on an SSH-alias origin sends no gh call', { skip: 
   const { stdout, lines } = siblingClaimRead(t, 'git@github-work:acme/widgets.git');
   assert.deepEqual(networkLines(lines), []);
   assert.equal(stdout, 'null');
+});
+
+// #4794 Task 12: claim-targets.js gates its origin to refuse only; its repo still comes from
+// `gh repo view`, so it joins ORIGIN_GATED but not CLI_TABLE (no origin-derived slug in its
+// argv). The fake gh answers the repo, one TTL-expired claim blob for RUN_ID (the contents
+// read, through the nested key) and a marked same-repo PR on the case's host. GIT_ALLOW_PROTOCOL=file
+// (gatedEnv) makes the git-CAS leg fail fast, so the read takes the contents API.
+const GATE_DEPS = { env: {}, readFile: () => { throw new Error('ENOENT'); } };
+const CT_STALE_CLAIM = JSON.stringify({ runId: RUN_ID, sessionId: 's1', claimedAt: new Date(Date.now() - 100 * 3600 * 1000).toISOString(), ttlHours: 72, host: 'h' });
+const CT_PR_LIST_ARGV = 'pr list --repo acme/widgets --state open --json url,body,isCrossRepository --limit 1000';
+
+function claimTargetsRow(prHost) {
+  const pr = { url: `https://${prHost}/acme/widgets/pull/12`, body: `## Spec\n<!-- claude-tweaks-run: ${RUN_ID} -->\n`, isCrossRepository: false };
+  return {
+    cli: 'claim-targets.js',
+    argv: ['--run-id', '2026-11-04T000002-record-7', '--targets', '7'],
+    canned: {
+      'repo-view': 'acme/widgets',
+      [CLAIM_CONTENTS_KEY]: JSON.stringify({ content: CT_STALE_CLAIM, sha: 's1' }),
+      'pr-list': JSON.stringify([pr]),
+    },
+  };
+}
+
+test('AC1.1: claim-targets.js on a *.ghe.com origin lists open PRs on the origin host and stops the stale claim in flight', { skip: STUB_SKIP }, (t) => {
+  const r = runGated(t, claimTargetsRow('acme.ghe.com'), { origin: GHE_ORIGIN });
+  assert.equal(r.status, 3, `expected exit 3 (in flight); stderr:\n${r.stderr}`);
+  assertEveryLineReaches(r.lines, 'acme.ghe.com');
+  const list = r.lines.filter((l) => / ARGS=pr list /.test(l));
+  assert.equal(list.length, 1, `expected one pr list call, log:\n${r.lines.join('\n')}`);
+  assert.match(argsOf(list[0]), /^pr list --repo acme\.ghe\.com\/acme\/widgets /);
+  assert.deepEqual(repoValues(list), ['acme.ghe.com/acme/widgets']);
+});
+
+test('AC2.1: claim-targets.js on a github.com origin keeps today\'s pr list argv', { skip: STUB_SKIP }, (t) => {
+  const r = runGated(t, claimTargetsRow('github.com'), { origin: DOTCOM_ORIGIN });
+  assert.equal(r.status, 3, `expected exit 3 (in flight); stderr:\n${r.stderr}`);
+  for (const line of r.lines) assert.ok(line.startsWith('GH_HOST=unset '), `GH_HOST injected on github.com: ${line}`);
+  const list = r.lines.filter((l) => / ARGS=pr list /.test(l));
+  assert.deepEqual(list.map(argsOf), [CT_PR_LIST_ARGV]);
+
+  // Review Focus 7: a GH_HOST naming github.com keeps the bare --repo and the same match.
+  const exported = runGated(t, claimTargetsRow('github.com'), { origin: DOTCOM_ORIGIN, ghHost: 'github.com' });
+  assert.equal(exported.status, 3, `GH_HOST=github.com: expected exit 3; stderr:\n${exported.stderr}`);
+  assert.deepEqual(exported.lines.filter((l) => / ARGS=pr list /.test(l)).map(argsOf), [CT_PR_LIST_ARGV]);
+});
+
+test('#4794: claim-targets.js on an unknown or SSH-alias origin exits 2 unknown-host and calls no gh', { skip: STUB_SKIP }, (t) => {
+  for (const origin of [`https://${UNKNOWN_HOST}/o/r.git`, 'git@github-work:acme/widgets.git']) {
+    const refusal = gateOriginRepo(origin, GATE_DEPS).refusal;
+    assert.ok(refusal, `${origin}: the gate must refuse it`);
+    const r = runGated(t, claimTargetsRow('github.com'), { origin });
+    assert.equal(r.status, 2, `${origin}: expected exit 2; stderr:\n${r.stderr}`);
+    assert.deepEqual(networkLines(r.lines), [], `${origin}: gh was called beyond --version (not even repo view):\n${r.lines.join('\n')}`);
+    assert.ok(r.stderr.startsWith('claim-targets: unknown-host — '), `${origin}: stderr:\n${r.stderr}`);
+    assert.ok(r.stderr.includes(refusal), `${origin}: stderr lacks the gate's refusal text:\n${r.stderr}`);
+    if (origin.startsWith('git@')) {
+      assert.match(r.stderr, /GH_HOST=github\.com/);
+      assert.doesNotMatch(r.stderr, /GH_HOST=github-work/);
+    }
+  }
+  const opted = runGated(t, claimTargetsRow(UNKNOWN_HOST), { origin: `https://${UNKNOWN_HOST}/o/r.git`, ghHost: UNKNOWN_HOST });
+  assert.ok(!opted.stderr.includes(NOT_KNOWN_MSG), `an exported GH_HOST opts in, but it was refused:\n${opted.stderr}`);
+  assert.equal(opted.status, 3, `GH_HOST=${UNKNOWN_HOST}: expected exit 3 (in flight on that host); stderr:\n${opted.stderr}`);
 });
