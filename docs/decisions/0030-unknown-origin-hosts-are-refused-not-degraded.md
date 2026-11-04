@@ -43,8 +43,8 @@ in the environment is never a signal. A user-typed `--repo` is not gated.
 Two further rulings from #4933's plan review:
 
 - An exported but **empty** (or whitespace-only) `GH_HOST` is not an opt-in, so an unknown origin
-  host is still refused. This deliberately diverges from `ghOptions`, which treats a present-but-empty
-  `GH_HOST` as set and steps aside.
+  host is still refused. Since #4794 `ghOptions` reads an empty value as unset too, so the gate and
+  the seam agree.
 - `parent-gate.js --facts-json` stays ungated: it makes no gh call and reads the origin only to judge
   a qualified `--closing` token. The `ORIGIN_GATED` conformance scan carries a named carve-out for
   that one site; its gh path goes through the gate.
@@ -57,7 +57,7 @@ Two further rulings from #4933's plan review:
   review-time draft, #4952's planned skill rewrite); both were superseded.
 - **Fall back to `github.com` explicitly** (`resolveGhHost(...) || 'github.com'`). The same failure
   as dropping, spelled out.
-- **Treat an empty `GH_HOST` as an opt-in, matching the seam.** Rejected by the user at plan
+- **Treat an empty `GH_HOST` as an opt-in, matching the seam (the seam's behavior before #4794).** Rejected by the user at plan
   review: `GH_HOST` stops a refusal only as an explicit choice of host, and an empty value names
   none — so on this path, where a wrong guess sends a token to a non-GitHub host, it does not count.
 - **One shared helper for the CLI-side refusal handling.** Rejected for the shape kept: each of the

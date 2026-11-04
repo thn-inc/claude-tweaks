@@ -1078,6 +1078,11 @@ test('AC1.1: a whole reconcile pass (hooks.js reconcile) on a *.ghe.com origin s
   assertPassReaches(reconcilePassLines(t, { origin: GHE_ORIGIN }), 'acme.ghe.com');
 });
 
+test('#4794: a whole reconcile pass on a *.ghe.com origin with GH_HOST exported empty sends every gh call to the origin host', { skip: STUB_SKIP }, (t) => {
+  // An empty GH_HOST is no opt-in: release-merged's seam-wrapped calls and the host-qualified residue --repo agree.
+  assertPassReaches(reconcilePassLines(t, { origin: 'https://acme.ghe.com/acme/widgets.git', env: { GH_HOST: '' } }), 'acme.ghe.com');
+});
+
 test('AC1.1: a whole reconcile pass on a credentialed https://oauth2@acme.ghe.com origin sends every gh call to the origin host', { skip: STUB_SKIP }, (t) => {
   assertPassReaches(reconcilePassLines(t, { origin: 'https://oauth2@acme.ghe.com/acme/widgets.git' }), 'acme.ghe.com');
 });

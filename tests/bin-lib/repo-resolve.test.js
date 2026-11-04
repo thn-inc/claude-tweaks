@@ -154,12 +154,31 @@ test('AC2.1: a github.com origin returns the same opts object', () => {
   const opts = { cwd: '/r' };
   assert.strictEqual(ghOptions(['pr', 'view'], opts, { ...ghe, remoteUrl: () => 'git@github.com:acme/widgets.git' }), opts);
 });
-test('AC4.1: an exported GH_HOST is never overwritten (process-style env and opts.env, empty string included)', () => {
+test('AC4.1: an exported non-empty GH_HOST is never overwritten; an empty one is unset (#4794)', () => {
   _resetGhHostCache();
   const o1 = { cwd: '/r' };
   assert.strictEqual(ghOptions(['api', 'graphql'], o1, { ...ghe, env: { GH_HOST: 'other.example' } }), o1);
-  const o2 = { cwd: '/r', env: { GH_HOST: '' } };
-  assert.strictEqual(ghOptions(['api', 'graphql'], o2, ghe), o2);
+  for (const GH_HOST of ['', '  ']) {
+    _resetGhHostCache();
+    const out = ghOptions(['api', 'graphql'], { cwd: '/r', env: { GH_HOST } }, ghe);
+    assert.equal(out.env.GH_HOST, 'acme.ghe.com', JSON.stringify(GH_HOST)); // the origin host replaces the empty value
+  }
+});
+test('#4794 AC2.1: a github.com origin with GH_HOST exported empty keeps its env untouched', () => {
+  _resetGhHostCache();
+  const dotcomOrigin = { ...ghe, remoteUrl: () => 'https://github.com/acme/widgets.git' };
+  for (const GH_HOST of ['', '  ']) {
+    const o = { cwd: '/d', env: { GH_HOST } };
+    assert.strictEqual(ghOptions(['pr', 'list'], o, dotcomOrigin), o, JSON.stringify(GH_HOST));
+    assert.equal(o.env.GH_HOST, GH_HOST);
+  }
+});
+test('#4794: a GH_HOST that normalizes to nothing ("." or whitespace) is unset in the seam too, and the injection is on the call\'s own env copy', () => {
+  _resetGhHostCache();
+  const env = { PATH: '/p', GH_HOST: '.' };
+  const out = ghOptions(['pr', 'list'], { cwd: '/r', env }, ghe);
+  assert.equal(out.env.GH_HOST, 'acme.ghe.com');
+  assert.equal(env.GH_HOST, '.', 'the caller\'s env is never written');
 });
 test('AC5.1, AC5.2 (Decision Q1): an SSH alias host is not injected, even with an enterprise token; a hosts.yml-known GHES host is; a token alone admits no HTTPS host (#4854)', () => {
   _resetGhHostCache();
@@ -306,10 +325,12 @@ test('explicitRepoGhHost: a bare github.com --repo on a GHE origin pins github.c
   assert.equal(explicitRepoGhHost({ host: 'github.com.', owner: 'acme', repo: 'widgets' }, '/d', dotcom), null); // trailing dot: still github.com, nothing pinned
   assert.equal(explicitRepoGhHost(null, '/d', dotcom), null);
 });
-test('explicitRepoGhHost AC4: an exported GH_HOST (empty string included) always wins', () => {
+test('explicitRepoGhHost AC4: an exported non-empty GH_HOST wins; an empty or whitespace-only one is unset and the explicit host still pins (#4794)', () => {
   _resetGhHostCache();
-  for (const env of [{ GH_HOST: 'mine.example' }, { GH_HOST: '' }]) {
-    assert.equal(explicitRepoGhHost({ host: 'github.com', owner: 'acme', repo: 'widgets' }, '/r', { ...ghe, env }), null, JSON.stringify(env));
+  const spec = { host: 'github.com', owner: 'acme', repo: 'widgets' };
+  assert.equal(explicitRepoGhHost(spec, '/r', { ...ghe, env: { GH_HOST: 'mine.example' } }), null);
+  for (const GH_HOST of ['', '  ', '.']) {
+    assert.equal(explicitRepoGhHost(spec, '/r', { ...ghe, env: { GH_HOST } }), 'github.com', JSON.stringify(GH_HOST));
   }
 });
 test('AC1.1 (#4795): pinExplicitRepoHost records the host; ghOptions adds it to each call\'s own env and never touches process env', () => {
@@ -327,12 +348,13 @@ test('AC1.1 (#4795): pinExplicitRepoHost records the host; ghOptions adds it to 
   assert.deepEqual(ghOptions(['api', 'user'], { env: { PATH: '/x' } }, ghe).env, { PATH: '/x', GH_HOST: 'github.com' });
   _resetGhHostCache();
 });
-test('#4795: a GH_HOST already in the call env beats the recorded pin, empty string included (Review Focus 1)', () => {
+test('#4795: a non-empty GH_HOST already in the call env beats the recorded pin; an empty one gets the pin (Review Focus 1, #4794)', () => {
   _resetGhHostCache();
   pinExplicitRepoHost({ host: 'github.com', owner: 'acme', repo: 'widgets' }, { ...ghe, cwd: '/r', env: {} });
-  for (const own of [{ GH_HOST: 'mine.example' }, { GH_HOST: '' }]) {
-    const opts = { cwd: '/r', env: own };
-    assert.strictEqual(ghOptions(['api', 'user'], opts, ghe), opts, JSON.stringify(own));
+  const mine = { cwd: '/r', env: { GH_HOST: 'mine.example' } };
+  assert.strictEqual(ghOptions(['api', 'user'], mine, ghe), mine);
+  for (const GH_HOST of ['', '  ']) {
+    assert.equal(ghOptions(['api', 'user'], { cwd: '/r', env: { GH_HOST } }, ghe).env.GH_HOST, 'github.com', JSON.stringify(GH_HOST));
   }
   _resetGhHostCache();
 });
@@ -473,7 +495,7 @@ test('GH_HOST naming another host gives a github.com spec', () => {
   assert.deepEqual(out, { spec: { host: 'github.com', owner: 'o', repo: 'r' }, refusal: null });
 });
 test('review focus 1: empty GH_HOST is no opt-in', () => {
-  for (const GH_HOST of ['', '  ']) {
+  for (const GH_HOST of ['', '  ', '.']) { // '.' normalizes to nothing: the one reader (ghHostIn) treats it as unset (#4794)
     const out = gateOriginRepo('https://git.corp.invalid/o/r.git', { ...noHosts, env: { GH_HOST } });
     assert.deepEqual(out, { spec: null, refusal: refusalOf('git.corp.invalid') }, JSON.stringify(GH_HOST));
   }
@@ -675,4 +697,5 @@ test('#4794: ghHostIn — the one GH_HOST reader: trimmed and normalized, empty 
   assert.equal(ghHostIn({ GH_HOST: '   ' }), null);
   assert.equal(ghHostIn({ GH_HOST: ' MINE.example. ' }), 'mine.example');
   assert.equal(ghHostIn({ GH_HOST: 'github.com' }), 'github.com');
+  assert.equal(ghHostIn({ GH_HOST: '.' }), null); // normalizes to nothing: unset
 });
