@@ -5,7 +5,7 @@
 // USAGE string, error-message prefix, and per-number result shape (#1981).
 // Zero runtime npm deps.
 //
-// makeNumberListCli({ name, usage, fetch, mapResult, ghRequiredNote })
+// makeNumberListCli({ name, usage, fetch, mapResult, ghRequiredNote, parseList, malformedMessage })
 //   -> { run, parseArgs, parseNumbers, realDeps }
 //
 // - name: the CLI's own filename (e.g. "resolve-blockers.js"), used as the
@@ -22,6 +22,12 @@
 // - ghRequiredNote (optional): a trailing note appended to the "`gh` is
 //   required" exit-2 message (resolve-blockers.js's own
 //   "(work-links: native)" qualifier; resolve-linked-prs.js passes none).
+// - parseList (optional): parseList(raw) -> Array|null (null = malformed),
+//   defaulting to parseNumbers. bin/resolve-foreign-blockers.js (#4793) passes
+//   its own: its list is owner/name#N refs rather than numbers. fetch still
+//   receives the parsed list as `numbers`, and mapResult is called once per entry.
+// - malformedMessage (optional): the exit-1 message for a null parseList,
+//   defaulting to the numbers wording.
 // realDeps.runner's timeout is shared-primitives' GH_BATCH_TIMEOUT_MS, read per call.
 'use strict';
 
@@ -45,7 +51,11 @@ function parseNumbers(raw) {
   return numbers;
 }
 
-function makeNumberListCli({ name, usage, fetch, mapResult, ghRequiredNote }) {
+const NUMBERS_MALFORMED_MESSAGE = 'malformed <n> — every entry must be a positive integer';
+
+function makeNumberListCli({
+  name, usage, fetch, mapResult, ghRequiredNote, parseList = parseNumbers, malformedMessage = NUMBERS_MALFORMED_MESSAGE,
+}) {
   function parseArgs(argv) {
     const opts = { numbersRaw: null, repo: null, help: false };
     if (argv[0] === '--help' || argv[0] === '-h') { opts.help = true; return opts; }
@@ -81,8 +91,8 @@ function makeNumberListCli({ name, usage, fetch, mapResult, ghRequiredNote }) {
     const opts = parseArgs(argv);
     if (opts.error) { deps.stderr(opts.error + '\n' + usage); return 1; }
     if (opts.help) { deps.stdout(usage); return 0; }
-    const numbers = parseNumbers(opts.numbersRaw);
-    if (!numbers) { deps.stderr('malformed <n> — every entry must be a positive integer\n' + usage); return 1; }
+    const numbers = parseList(opts.numbersRaw);
+    if (!numbers) { deps.stderr(malformedMessage + '\n' + usage); return 1; }
     if (!deps.ghAvailable()) { deps.stderr(`${name}: \`gh\` is required${ghRequiredNote ? ' ' + ghRequiredNote : ''}\n`); return 2; }
 
     let remote = null;
