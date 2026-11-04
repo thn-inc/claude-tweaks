@@ -71,7 +71,11 @@ function makeWorld({ repository = {}, compare = {}, native = null } = {}) {
             errors.push({ type: 'NOT_FOUND', path: ['repository', `i${n}`], message: `Could not resolve to an Issue with the number of ${n}.` });
             continue;
           }
-          repo[`i${n}`] = { number: n, blockedBy: { nodes: (native.edges && native.edges[n]) || [] } };
+          repo[`i${n}`] = {
+            number: n,
+            ...(native.home ? { repository: { nameWithOwner: native.home } } : {}),
+            blockedBy: { nodes: (native.edges && native.edges[n]) || [] },
+          };
         }
         if (errors.length) throw notFoundError(repo, errors);
         return JSON.stringify({ data: { repository: repo } });
@@ -210,6 +214,16 @@ test('AC3.1: an undetermined verdict keeps the candidate and logs one AUTO line'
   assert.deepEqual(r.groups, [[R10], [R11]]);
   assert.equal(r.exclusions, null);
   assert.match(r.stderr, /AUTO — dispatch: #11 kept — blocker #5 landing undetermined \(via probe-failed\)/);
+});
+
+test('a CLOSED foreign native blocker keeps the candidate, its AUTO line names owner/name#N, and no landing query is made (#4793)', (t) => {
+  const world = makeWorld({ native: { home: 'acme/w', edges: { 11: [{ number: 5, state: 'CLOSED', repository: { nameWithOwner: 'other/repo' } }] } } });
+  const r = exec(t, { groups: [[R10], [rec(11)]], world, workLinks: 'native' });
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(r.groups, [[R10], [rec(11)]]);
+  assert.equal(r.exclusions, null);
+  assert.match(r.stderr, /AUTO — dispatch: #11 kept — blocker other\/repo#5 landing undetermined \(via cross-repository\)/);
+  assert.equal(world.calls.filter((a) => isGraphQL(a) && /CLOSED_EVENT/.test(queryOf(a))).length, 0);
 });
 
 test('an open blocker is left to the blocked pass', (t) => {
@@ -659,6 +673,16 @@ test('landingExclusions: unlanded per requested record, undetermined listed; a m
   });
   assert.throws(() => landingExclusions({ records: { 10: { blockerLanding: [] }, 11: {} } }, [10, 11]), (err) => err instanceof TypeError && /#11/.test(err.message));
   assert.throws(() => landingExclusions(null, [11]), TypeError);
+});
+
+test('landingExclusions carries a cross-repository verdict\'s repository on its undetermined entry (#4793)', () => {
+  const envelope = { records: { 11: { blockerLanding: [
+    { blocker: 5, verdict: 'undetermined', commit: null, via: 'cross-repository', repository: 'other/repo' },
+    { blocker: 6, verdict: 'open', commit: null, via: 'cross-repository-state-unreadable', repository: 'other/repo' },
+  ] } } };
+  assert.deepEqual(landingExclusions(envelope, [11]), {
+    exclusions: [], undetermined: [{ record: 11, blocker: 5, via: 'cross-repository', repository: 'other/repo' }],
+  });
 });
 
 test('withoutExcluded leaves the input arrays unmutated', () => {

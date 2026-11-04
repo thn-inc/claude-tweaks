@@ -560,3 +560,82 @@ test('AC1.1: the out-of-run section names the open and unlanded stops as gate bl
   assert.notEqual(permuted, text);
   assert.throws(() => assertRoutesToGate(permuted), /must come after the previous marker/);
 });
+
+// ---- #4793: a blocker in another repository, linked natively or declared by a body line ----
+const collapseWs = (s) => s.replace(/\s+/g, ' ');
+
+function assertCrossRepositoryNaming(text) {
+  const section = collapseWs(outOfRunSection(text));
+  assert.ok(section.includes('`{repository}#{blocker}`'), 'the section names a cross-repository blocker as `{repository}#{blocker}`');
+  assert.ok(section.includes('`via: cross-repository`'), 'the section names the plain cross-repository via value');
+  assert.ok(section.includes('`via: cross-repository-state-unreadable`'), 'the section names the state-unreadable cross-repository via value');
+  assert.ok(
+    section.includes('is a blocker in another repository, linked natively or declared by a `Blocked by owner/name#N` body line'),
+    'the section says a cross-repository entry is linked natively or declared by a body line',
+  );
+  assert.ok(
+    section.includes("`condition: {repository}#{blocker} lives in another repository (via cross-repository) → fallback: proceeded without judging its landing — blocker landing reads only this repository's integration branch`"),
+    'the section carries the cross-repository SKIP line',
+  );
+  assert.ok(
+    section.includes('"159 depends on {repository}#{blocker} (state unreadable) — read as open (fail closed)"'),
+    'the section carries the state-unreadable stop line',
+  );
+}
+
+function dagStep(text) {
+  const at = text.indexOf('1. **Build the DAG**');
+  if (at === -1) return '';
+  const next = text.indexOf('\n2. **', at);
+  return collapseWs(text.slice(at, next === -1 ? text.length : next));
+}
+
+function assertDagSkipsQualified(text) {
+  const step = dagStep(text);
+  assert.ok(step, 'the DAG step is present');
+  assert.ok(step.includes('`owner/name#N`'), 'the DAG step names a qualified `owner/name#N` blocked-by entry');
+  assert.ok(step.includes('never adds an edge'), 'the DAG step says a qualified entry never adds an edge');
+}
+
+test('cross-repository entries are named {repository}#{blocker} in the stop line and the SKIP text, and a qualified blocked-by entry adds no DAG edge (#4793)', () => {
+  const text = readText(ORDERING);
+  assertCrossRepositoryNaming(text);
+  assertUndeterminedSkip(text);
+  assertDagSkipsQualified(text);
+  assert.throws(
+    () => assertCrossRepositoryNaming(mutate(text, /\{repository\}#\{blocker\}/g, '#{blocker}')),
+    { message: 'the section names a cross-repository blocker as `{repository}#{blocker}`' },
+  );
+  assert.throws(
+    () => assertCrossRepositoryNaming(mutate(text, /`via: cross-repository-state-unreadable`/g, '`via: unreadable`')),
+    { message: 'the section names the state-unreadable cross-repository via value' },
+  );
+  assert.throws(
+    () => assertCrossRepositoryNaming(mutate(text, /`via: cross-repository`/g, '`via: elsewhere`')),
+    { message: 'the section names the plain cross-repository via value' },
+  );
+  assert.throws(
+    () => assertCrossRepositoryNaming(mutate(text, ', linked natively or declared by a `Blocked by owner/name#N` body line', '')),
+    { message: 'the section says a cross-repository entry is linked natively or declared by a body line' },
+  );
+  assert.throws(
+    () => assertDagSkipsQualified(mutate(text, '1. **Build the DAG**', '1. **Build the graph**')),
+    { message: 'the DAG step is present' },
+  );
+  assert.throws(
+    () => assertCrossRepositoryNaming(mutate(text, 'lives in another repository (via cross-repository)', 'is undetermined')),
+    { message: 'the section carries the cross-repository SKIP line' },
+  );
+  assert.throws(
+    () => assertCrossRepositoryNaming(mutate(text, '(state unreadable) — read as open (fail closed)', 'which is still open')),
+    { message: 'the section carries the state-unreadable stop line' },
+  );
+  assert.throws(
+    () => assertDagSkipsQualified(mutate(text, 'never adds an edge', 'adds an edge')),
+    { message: 'the DAG step says a qualified entry never adds an edge' },
+  );
+  assert.throws(
+    () => assertDagSkipsQualified(mutate(text, '`owner/name#N`', '`#N`')),
+    { message: 'the DAG step names a qualified `owner/name#N` blocked-by entry' },
+  );
+});
