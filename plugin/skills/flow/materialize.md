@@ -69,7 +69,7 @@ size: {low|medium|high}            # omitted when unscored
 ceremony: {fast-lane|standard}      # always present — see ceremony-check mode below
 grants: [build, merge]             # as held at materialization time; may be [build] or []
 fingerprint: {fp}                  # omitted when none
-blocked-by: [n1, owner/name#N]       # omitted when none — see Populating the header
+blocked-by: [n1, owner/name#N]     # omitted when none — see Populating the header
 surface: {web|mobile|desktop|backend|infra|terminal}
 design-intent: {value}             # omitted for backend/infra
 ui-stack: {value}                  # omitted for backend/infra, and whenever the body carries no Ui-stack: line — double-quoted when the value contains `:`/`#` or leading/trailing whitespace, since it's the one free-form field in this header (materialize-format.js's yamlSafeScalar)

@@ -97,7 +97,7 @@ test("AC4.3: the malformed-blocker report line's cause is a cause the CLI writes
 
 const NOTES_PASS_PREFIX = '**Unlanded-blocker pass (#4792).**';
 const NOTES_FACTS = [
-  [/A blocker linked natively from another repository is never in-run, whatever its number/i, '#4793: a foreign number is never in-run'],
+  [/A blocker linked natively or declared by a `Blocked by owner\/name#N` body line in another repository is never in-run, whatever its number/i, '#4793: a foreign number is never in-run'],
   [/its `AUTO` line naming it `owner\/name#N`/, '#4793: the kept line names a CLOSED foreign blocker owner/name#N'],
 ];
 const notesMissing = missingFactsOf(NOTES_FACTS);

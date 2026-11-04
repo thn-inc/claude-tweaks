@@ -35,7 +35,7 @@
 // problem is exit 2, as for --records-json, and the two flags are mutually
 // exclusive (exit 2).
 // --blocker-landing (#4553) adds records[n].blockerLanding [{blocker, verdict,
-// commit, via}] — for each record, the landing verdict of every blocker that is
+// commit, via}, plus `repository` (`owner/name`) on a cross-repository entry] — for each record, the landing verdict of every blocker that is
 // NOT one of the positional numbers (an in-run blocker is ordered by the DAG,
 // never judged here), in blockedBy order, [] when none; the verdicts are
 // bin/lib/preflight-records/blocker-landing.js's. One batched GraphQL call plus
@@ -57,7 +57,14 @@
 // cross-repository for OPEN, undetermined/cross-repository for CLOSED, open/
 // cross-repository-state-unreadable for any other state (fail closed) — each
 // with an extra `repository` (owner/name) key. --records-json degrades native to
-// body-text, so it never carries them.
+// body-text, so it never carries a native one.
+// A blocker declared only in a record body (`Blocked by owner/name#N`, #4793) is foreign
+// under either work-links value: --blocker-landing appends it to the record's
+// crossRepoBlockers (after the native ones; one already linked natively is judged once)
+// and judges it the same way. Its state comes from ONE batched GraphQL call over every
+// record's non-native refs (bin/lib/issues/cross-repo-states.js). Fail closed: under
+// --records-json (no gh call) or when that call fails, no state is known, so each reads
+// open/cross-repository-state-unreadable and one stderr line names the refs and the cause.
 // The key is absent without the flag, and the rest of the envelope is unchanged.
 // Exit 0 success; 1 any record fetch (or the native dependency GraphQL call)
 // failed — every failing record named, all-at-once; under native, a candidate gh
@@ -81,7 +88,11 @@ const preflight = require('./lib/preflight-records/preflight-records');
 const {
   fetchBlockerLanding, undeterminedAll, classifyFromState, classifyCrossRepository, recoveredResponse,
 } = require('./lib/preflight-records/blocker-landing');
-const { planMergeGateSplit } = require('./lib/preflight-records/merge-gate');
+const { fetchCrossRepoStates } = require('./lib/issues/cross-repo-states');
+const {
+  parseCrossRepoDependencies, parseCrossRepoRef, crossRepoKey, distinctCrossRepoRefs, foreignEntries, mergeForeignBlockers,
+} = require('./lib/issues/cross-repo-refs');
+const { planMergeGateSplit } =require('./lib/preflight-records/merge-gate');
 const { planParallelWaves } = require('./lib/preflight-records/waves');
 const { resolvePolicyKeys } = require('./lib/policy-schema');
 const {
@@ -408,6 +419,44 @@ function blockerLandingFromGh(opts, union, repoSpec, deps) {
   return { results };
 }
 
+// #4793: a `Blocked by owner/name#N` body line names a blocker in ANOTHER repository, under either
+// work-links value. Each record's body-declared foreign blockers join its crossRepoBlockers, so
+// --blocker-landing judges them like the native ones. A ref already linked natively is dropped
+// before the lookup (judged and named once); the rest are looked up in ONE batched call. Fails
+// closed: under --records-json (no gh) or when the call throws, no state is known, so every ref
+// reads state unreadable (open) and one stderr line says why (spec Q5).
+function addBodyForeignBlockers(records, issues, numbers, opts, loaded, deps) {
+  const perRecord = new Map();
+  for (const n of numbers) {
+    const issue = issues.get(n);
+    const native = new Set(((records[String(n)] || {}).crossRepoBlockers || []).map(crossRepoKey));
+    const refs = parseCrossRepoDependencies(issue && issue.body).filter((ref) => !native.has(crossRepoKey(parseCrossRepoRef(ref))));
+    if (refs.length) perRecord.set(n, refs);
+  }
+  if (perRecord.size === 0) return;
+
+  const refs = [...perRecord.values()].flat();
+  let states = new Map();
+  let failure = null;
+  if (opts.recordsJson) {
+    failure = 'skipped under --records-json';
+  } else {
+    try {
+      states = fetchCrossRepoStates({ refs, host: loaded.repoSpec && loaded.repoSpec.host, runner: deps.runner });
+    } catch (err) {
+      failure = `failed: ${oneLine(preflight.errorText(err))}`;
+    }
+  }
+  if (failure) {
+    const names = distinctCrossRepoRefs(refs).distinct.map(({ parsed }) => `${parsed.repository}#${parsed.digits}`).join(', ');
+    deps.stderr(`preflight-records.js: foreign blocker state lookup ${failure} — ${names} read as state unreadable (fail closed)\n`);
+  }
+  for (const [n, nRefs] of perRecord) {
+    const record = records[String(n)];
+    record.crossRepoBlockers = mergeForeignBlockers(record.crossRepoBlockers, foreignEntries(nRefs, states));
+  }
+}
+
 // argv -> exit code. All I/O through deps so tests never touch gh or git.
 function run(argv, deps = realDeps) {
   const opts = parseArgs(argv);
@@ -460,6 +509,7 @@ function run(argv, deps = realDeps) {
       ? blockerLandingFromRecordsJson(opts, union, deps)
       : blockerLandingFromGh(opts, union, loaded.repoSpec, deps);
     if (landing.code !== undefined) return landing.code;
+    addBodyForeignBlockers(records, issues, numbers, opts, loaded, deps);
     for (const n of numbers) {
       records[String(n)].blockerLanding = [
         ...byRecord.get(n).map((b) => landing.results.get(b)),
