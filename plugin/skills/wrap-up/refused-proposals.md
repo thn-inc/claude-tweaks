@@ -45,10 +45,11 @@ origin, below).
 When a `deferred` row in the run's active ledger (`_shared/ledger-format.md`'s Location section's
 resolution rule) names the refused proposal's staged path in its Resolution — the exact path,
 spec-qualified in a multi-spec run (`spec-{N}/staged/{name}`): set that row's status back to `open`
-with note `proposal refused — no defer reason`, so the ledger's own nothing-left-behind gate
+with `ledger-row --row {N} --status open`, its `--resolution` carrying the note
+`proposal refused — no defer reason`, so the ledger's own nothing-left-behind gate
 resurfaces it on the next resolve; delete the staged file (the ledger item is the durable trace).
 Delete it only once the status write has landed: when the active ledger does not resolve to one
-file, or the write fails, change neither the row nor the staged file — the proposal stays staged as
+file, or the write fails (a non-zero `ledger-row` exit, under `_shared/ledger-format.md`'s Writer section refusal rule), change neither the row nor the staged file — the proposal stays staged as
 if no row named it (below), and its `REFUSED` line keeps the `kept staged.` ending. Today's producers are `staged/ledger-record-*.md` (the ledger resolve gate's Defer/Keep) and
 `staged/review-followup-*.md` (`/review` Step 3's record proposal). This is the one reopen
 `_shared/ledger-format.md`'s Resolution-text requirements allow. A refused proposal that no
