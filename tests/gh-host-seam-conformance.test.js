@@ -486,3 +486,31 @@ test('AC9.3: ORIGIN_GATED is exactly the set of files calling gateOriginRepo', (
     .sort();
   assert.deepEqual(gated, [...ORIGIN_GATED].sort(), 'a file calls gateOriginRepo that ORIGIN_GATED does not list, or one stopped: settle the roster');
 });
+
+// #4794: repoSlugOf (the host-less origin slug) is retired; every origin slug goes through the gate
+// (git-exec.js's repoTargetOf). Blank mode leaves a name in a string or comment unseen, and a
+// stripper mis-parse is an offender, never a clean read.
+const REPO_SLUG_OF = /(?<![\w$])repoSlugOf(?![\w$])/;
+function repoSlugOfNames(raw) {
+  const blank = stripComments(raw, BLANK);
+  const verdict = stripperVerdict(raw, blank);
+  if (verdict !== 'ok') return [STRIPPER_VERDICT_MESSAGES[verdict]];
+  return blank.split('\n').map((l, i) => (REPO_SLUG_OF.test(l) ? `line ${i + 1}` : null)).filter(Boolean);
+}
+test('#4794: the repoSlugOf matcher flags a code mention, and not a comment, a string or a longer name', () => {
+  assert.equal(repoSlugOfNames("const { repoSlugOf } = require('./git-exec');").length, 1);
+  assert.equal(repoSlugOfNames('const slug = repoSlugOf(repoRoot);').length, 1);
+  assert.equal(repoSlugOfNames('module.exports = { repoSlugOf, repoSpecOf };').length, 1);
+  assert.deepEqual(repoSlugOfNames("// repoSlugOf is retired\nconst s = 'repoSlugOf'; /* repoSlugOf */ const a = myrepoSlugOf + repoSlugOfX + $repoSlugOf;"), []);
+  assert.deepEqual(repoSlugOfNames("if (b) /'/.test(b); const c = 'x'; repoSlugOf(c);"), [STRIPPER_VERDICT_MESSAGES.misparsed]);
+});
+test('#4794: no plugin/bin file names repoSlugOf — origin slugs go through the gate (repoTargetOf)', () => {
+  const files = walk(BIN_ROOT);
+  assert.ok(files.length >= 523, `walked only ${files.length} .js files under plugin/bin/ (floor 523): the walk is broken`);
+  const offenders = [];
+  for (const file of files) {
+    const rel = path.relative(BIN_ROOT, file).replace(/\\/g, '/');
+    for (const where of repoSlugOfNames(readText(file))) offenders.push(`${rel}: ${where}`);
+  }
+  assert.deepEqual(offenders, [], 'repoSlugOf dropped the origin host; resolve the origin through git-exec.js\'s repoTargetOf (slug, ghRepo, host) so the #4933 gate decides the host');
+});

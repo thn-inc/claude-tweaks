@@ -8,7 +8,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {
-  runGit, runGitAsync, isIndeterminate, FAILURE, DEFAULT_TIMEOUT_MS, repoPinnedEnv, repoSlugOf, repoSpecOf, repoTargetOf,
+  runGit, runGitAsync, isIndeterminate, FAILURE, DEFAULT_TIMEOUT_MS, repoPinnedEnv, repoSpecOf, repoTargetOf,
 } = require('../plugin/bin/lib/hooks/git-exec');
 const { gateOriginRepo } = require('../plugin/bin/lib/repo-resolve');
 const { gitRepo, fixtureGit } = require('./helpers/git-fixtures');
@@ -428,7 +428,7 @@ test('#3900 runGit raw:true leaves the failure shape unchanged', () => {
   assert.strictEqual(exitCode, 128);
 });
 
-test('repoSpecOf: the origin remote parsed with its host — github.com and GitHub Enterprise, SSH and HTTPS; repoSlugOf stays host-less', () => {
+test('repoSpecOf: the origin remote parsed with its host — github.com and GitHub Enterprise, SSH and HTTPS; repoTargetOf keeps the bare slug', () => {
   const repo = gitRepo();
   fixtureGit(['-C', repo, 'remote', 'add', 'origin', 'git@github.com:acme/w.git']);
   assert.deepStrictEqual(repoSpecOf(repo), { host: 'github.com', owner: 'acme', repo: 'w' });
@@ -437,7 +437,7 @@ test('repoSpecOf: the origin remote parsed with its host — github.com and GitH
   for (const url of ['git@ghe.example.com:acme/w.git', 'https://ghe.example.com/acme/w.git']) {
     fixtureGit(['-C', repo, 'remote', 'set-url', 'origin', url]);
     assert.deepStrictEqual(repoSpecOf(repo, gateDeps), { host: 'ghe.example.com', owner: 'acme', repo: 'w' }, url);
-    assert.strictEqual(repoSlugOf(repo), 'acme/w', url);
+    assert.strictEqual(repoTargetOf(repo, gateDeps).slug, 'acme/w', url);
   }
 });
 
@@ -500,7 +500,7 @@ test('repoSpecOf (#4794): an ssh:// origin on an unknown host is refused exactly
 test('repoSpecOf (#4794): an ssh:// github.com origin is read by the gate, host github.com', () => {
   const repo = gitRepo();
   fixtureGit(['-C', repo, 'remote', 'add', 'origin', 'ssh://git@github.com/acme/w.git']);
-  assert.strictEqual(repoSlugOf(repo), 'acme/w');
+  assert.strictEqual(repoTargetOf(repo).slug, 'acme/w');
   assert.deepStrictEqual(repoSpecOf(repo), { host: 'github.com', owner: 'acme', repo: 'w' });
 });
 
@@ -542,7 +542,6 @@ test('repoTargetOf (#4794): the gated origin host and its --repo slug — GHE qu
     set(url);
     const got = repoTargetOf(repo, gateDeps());
     assert.deepStrictEqual(got, { owner: 'acme', repo: 'widgets', slug: 'acme/widgets', host: 'github.com', ghRepo: 'acme/widgets' }, url);
-    assert.strictEqual(got.slug, repoSlugOf(repo), url);
   }
 
   // Review Focus 1 / blanket rule 1: an SSH alias is refused in both spellings, with one text.

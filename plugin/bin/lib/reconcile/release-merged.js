@@ -12,7 +12,7 @@
 'use strict';
 const path = require('path');
 const { execFileSyncTimed, execFileAsyncTimed } = require('./timing');
-const { runGit, repoSlugOf, repoTargetOf } = require('../hooks/git-exec');
+const { runGit, repoTargetOf } = require('../hooks/git-exec');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
 const { readRunState } = require('../hooks/context');
 const { fallbackBranch } = require('../hooks/run-integrity');
@@ -626,6 +626,6 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride, prStates: prStateResol
 }
 
 module.exports = {
-  releaseMerged, decideRelease, releasedEntry, repoSlugOf, writeTombstone, shouldSkipClaimRead,
+  releaseMerged, decideRelease, releasedEntry, writeTombstone, shouldSkipClaimRead,
   prClosesIssue, needsIssueEvidence,
 };
