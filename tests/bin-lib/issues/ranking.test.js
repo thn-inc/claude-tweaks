@@ -239,3 +239,13 @@ test('priorityBandOf: an out-of-vocabulary priority value falls back to band 3 i
   assert.equal(priorityBandOf({ facets: { priority: 'urgent' } }), 3);
   assert.ok(Number.isFinite(priorityBandOf({ facets: { priority: 'urgent' } })));
 });
+
+test('a qualified foreign blocker ref (#4793) never credits this repository\'s same-numbered record, yet counts as wired', () => {
+  const foreign = candidate({ id: 9, body: 'Blocked by other/repo#5', blockedBy: ['other/repo#5'] });
+  const five = candidate({ id: 5 });
+  assert.deepStrictEqual(rankNextToBuild([foreign, five]).map((c) => c.id), [9, 5]);
+  assert.deepStrictEqual(findUnresolvedDependencyProse([foreign, five]), []);
+  // Control: a bare number does credit #5 and moves it first.
+  const local = candidate({ id: 9, blockedBy: [5] });
+  assert.deepStrictEqual(rankNextToBuild([local, five]).map((c) => c.id), [5, 9]);
+});

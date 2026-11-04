@@ -22,7 +22,7 @@ const SIZE_ORDER = { low: 0, medium: 1, high: 2 };
 const priorityBandOf = (c) => (c.facets.priority && PRIORITIES.includes(c.facets.priority) ? RANK[c.facets.priority] : 3);
 const sizeBandOf = (c) => (c.facets.size && TIERS.includes(c.facets.size) ? SIZE_ORDER[c.facets.size] : 3);
 
-// candidate -> number[]. THE single blocker-precedence decision, shared by
+// candidate -> Array<number|string>. THE single blocker-precedence decision, shared by
 // computeUnblocksCount here, funnelBuckets (backlog.js), and #515's import —
 // never re-implement it at a call site. Precedence: an unsynced fallback
 // record (`facets.unsynced === true`) short-circuits to `[]` FIRST — its
@@ -36,7 +36,10 @@ const sizeBandOf = (c) => (c.facets.size && TIERS.includes(c.facets.size) ? SIZE
 // the body (work-links: body-text). Both explicit tiers are authoritative
 // even when empty — `[]` means "confirmed no blockers", never "fall through
 // to prose". Callers must not mutate the returned array — the two explicit
-// tiers return live references into the candidate's own data.
+// tiers return live references into the candidate's own data. A string is a
+// foreign blocker's qualified `owner/name#N` ref (#4793): it never equals a
+// candidate id, so `computeUnblocksCount` credits nothing for it, and it
+// still makes the list non-empty for `findUnresolvedDependencyProse`.
 function blockersOf(candidate) {
   if (candidate.facets && candidate.facets.unsynced === true) return [];
   if (Array.isArray(candidate.blockedBy)) return candidate.blockedBy;

@@ -184,7 +184,11 @@ function readyGrantedSubset(records) {
 // body-text `parseDependencies` fallback), shared with rankNextToBuild so
 // both consumers agree on the same blocker for the same record (refs #514).
 // Only ids within the open input set count as blockers, since an out-of-set
-// blocker cannot be acted on from this report. `prioritized` keys on
+// blocker cannot be acted on from this report. A string entry is a blocker
+// linked from another repository (`owner/name#N`, #4793), attached only while
+// it is open or its state is unreadable — exactly the blockers
+// `/claude-tweaks:dispatch` refuses on (Decisions Q6) — so it counts although
+// it is never an id in this set. `prioritized` keys on
 // f.priority ALONE — priority is refine's triage verdict, and the stage is
 // named for it. A record carrying only risk/size with no priority and no
 // `ready` stage is an anomaly (specify stamps risk/size and `ready` in one
@@ -204,13 +208,13 @@ function funnelBuckets(records) {
     // Blocker precedence, INCLUDING the unsynced-namespace short-circuit, is
     // owned by ranking.js's blockersOf — one decision, shared with
     // rankNextToBuild (refs #514).
-    const inSetBlockers = blockersOf(r).filter((id) => openIds.has(id));
+    const blockers = blockersOf(r).filter((id) => typeof id === 'string' || openIds.has(id));
     if (f.bot.inProgress) buckets.inFlight.push(r);
     else if (isBotParked(r)) buckets.botParked.push(r);
     else if (f.stage === 'parked') buckets.parked.push(r);
     else if (f.notPlanned) buckets.notPlanned.push(r);
     else if (f.isParentIssue) buckets.parents.push(r);
-    else if (f.stage === 'ready' && granted && inSetBlockers.length > 0) buckets.granted.push(r);
+    else if (f.stage === 'ready' && granted && blockers.length > 0) buckets.granted.push(r);
     else if (f.stage === 'ready' && granted) buckets.dispatchable.push(r);
     else if (f.stage === 'ready') buckets.specified.push(r);
     else if (f.priority) buckets.prioritized.push(r);

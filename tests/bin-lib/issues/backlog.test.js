@@ -367,6 +367,14 @@ test('funnelBuckets: blockedBy ids outside the open input set do not demote to g
   assert.deepEqual(b.granted, []);
 });
 
+test('Q6 (#4793): a ready+granted record blocked only by a still-blocking foreign ref is granted, not dispatchable — the records /dispatch refuses', () => {
+  for (const ref of ['other/repo#5', 'other/repo#6 (state unreadable)']) {
+    const b = funnelBuckets([rec(1, { stage: 'ready', grants: { build: true, merge: false } }, { blockedBy: [ref] })]);
+    assert.deepEqual(b.granted.map((r) => r.number), [1], ref);
+    assert.deepEqual(b.dispatchable, [], ref);
+  }
+});
+
 test('funnelBuckets: blockedBy absent means every granted record is dispatchable (pre-#514 dormancy)', () => {
   const b = funnelBuckets([rec(1, { stage: 'ready', grants: { build: true, merge: true } })]);
   assert.deepEqual(b.dispatchable.map((r) => r.number), [1]);
