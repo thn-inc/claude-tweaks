@@ -11,6 +11,7 @@ const os = require('os');
 const path = require('path');
 const { teardownRun, defaultGhApiDelete, findWorktreeEntry, branchOfWorktree } = require('../plugin/bin/lib/hooks/teardown-run');
 const { parseWorktreeList } = require('../plugin/bin/lib/hooks/worktree-reap');
+const { gateOriginRepo } = require('../plugin/bin/lib/repo-resolve');
 const { readText } = require('./helpers/read-skill');
 
 function git(root, ...args) {
@@ -402,11 +403,33 @@ test('AC8.1 teardown (#4933): an unknown origin host issues no gh DELETE and ski
   });
 
   assert.deepStrictEqual(calls, [], 'no gh DELETE is issued for an unknown host');
-  const refLines = result.lines.filter((l) => l.startsWith('remote ref: skipped —'));
+  const refLines = result.lines.filter((l) => l.startsWith('remote ref: skipped (unknown-host) —'));
   assert.strictEqual(refLines.length, 1, result.lines.join('\n'));
   assert.match(refLines[0], /git\.corp\.invalid/);
   assert.match(refLines[0], /GH_HOST=git\.corp\.invalid/);
   assert.ok(!result.lines.some((l) => l.startsWith('remote ref: deleted')));
+});
+
+test('#4794: teardown-run on an SSH-alias origin issues no gh DELETE and skips with the alias advice', (t) => {
+  const origin = 'git@github-work:acme/widgets.git';
+  const { root, wt, runDir } = fixtureRepo();
+  git(root, 'remote', 'set-url', 'origin', origin);
+  writeRunState(runDir, { status: 'active', worktree: wt, sessionId: 'me' });
+
+  const emptyGhConfig = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-td-ghcfg-')));
+  t.after(() => fs.rmSync(emptyGhConfig, { recursive: true, force: true }));
+  const refusal = gateOriginRepo(origin, { env: {}, readFile: () => { throw new Error('ENOENT'); } }).refusal;
+  assert.ok(refusal, 'the gate refuses an SSH-alias origin');
+  const calls = [];
+  const result = withEnv({ GH_HOST: undefined, GH_CONFIG_DIR: emptyGhConfig }, () => teardownRun(runDir, {
+    mode: 'merged', sessionId: 'me', deps: { ghApiDelete: fakeGhApiDelete(calls, { ok: true }) },
+  }));
+
+  assert.deepStrictEqual(calls, [], 'no gh DELETE is issued for an SSH-alias origin');
+  const refLines = result.lines.filter((l) => l.startsWith('remote ref:'));
+  assert.deepStrictEqual(refLines, [`remote ref: skipped (unknown-host) — ${refusal}`]);
+  assert.match(refLines[0], /GH_HOST=github\.com/);
+  assert.doesNotMatch(refLines[0], /GH_HOST=github-work/);
 });
 
 test('AC16 (#3088): own-worktree teardown — no worktree recorded, local branch already deleted (ExitWorktree), but run-state.json pr.branch is set -> remote ref delete is still attempted', () => {

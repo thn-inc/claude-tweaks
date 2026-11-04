@@ -852,6 +852,34 @@ test('#4794: sibling-sessions on an SSH-alias origin sends no gh call', { skip: 
   assert.equal(stdout, 'null');
 });
 
+// #4794 Task 15: teardown-run's remote-ref delete through the real defaultGhApiDelete, after
+// hooks-teardown-run.test.js's AC16 shape (run-state pr.branch set, no worktree recorded). It
+// takes its host from the gate's spec, so the one DELETE carries `--hostname` for the origin host.
+function teardownRemoteRef(t, origin) {
+  const { teardownRun } = require('../plugin/bin/lib/hooks/teardown-run');
+  const readLog = installFakeGh(t);
+  const { repo, runDir } = makeRepo(t, origin);
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active', worktree: null, sessionId: 'me',
+    pr: { number: 7, url: 'https://github.com/acme/widgets/pull/7', branch: 'feat-branch' },
+  }));
+  withoutGhHost(t);
+  captureSeamNotes(t);
+  const result = teardownRun(runDir, { mode: 'merged', sessionId: 'me' });
+  assert.ok(fs.existsSync(repo));
+  return { result, lines: readLog() };
+}
+
+test('AC1.1 (#4794): teardown-run on a *.ghe.com origin sends its remote-ref delete to the origin host', { skip: STUB_SKIP }, (t) => {
+  const { result, lines } = teardownRemoteRef(t, GHE_ORIGIN);
+  assert.match(result.lines.join('\n'), /remote ref: deleted refs\/heads\/feat-branch/);
+  const net = networkLines(lines);
+  assert.equal(net.length, 1, lines.join('\n'));
+  assert.ok(reachesHost(net[0], 'acme.ghe.com'), net[0]);
+  assert.equal(argsOf(net[0]).split(' --hostname acme.ghe.com').length - 1, 1, `--hostname acme.ghe.com exactly once: ${net[0]}`);
+  assert.match(argsOf(net[0]), /^api --method DELETE repos\/acme\/widgets\/git\/refs\/heads\/feat-branch /);
+});
+
 // #4794 Task 12: claim-targets.js gates its origin to refuse only; its repo still comes from
 // `gh repo view`, so it joins ORIGIN_GATED but not CLI_TABLE (no origin-derived slug in its
 // argv). The fake gh answers the repo, one TTL-expired claim blob for RUN_ID (the contents

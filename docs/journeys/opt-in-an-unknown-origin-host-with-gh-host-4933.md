@@ -65,7 +65,7 @@ files:
 ### 4. Hooks and background passes skip instead of breaking — `plugin/bin/lib/hooks/teardown-run.js`, `plugin/bin/lib/reconcile/post-merge.js`, `plugin/bin/lib/reconcile/format-summary.js`, `plugin/bin/lib/wrap-up/pack.js`
 - **URL:** —
 - **Action:** Without the opt-in:
-  - A run teardown prints `remote ref: skipped — origin host git.corp.example is not a known GitHub host …` and deletes no remote ref.
+  - A run teardown prints `remote ref: skipped (unknown-host) — origin host git.corp.example is not a known GitHub host …` and deletes no remote ref.
   - The reconcile pass reports `skipped: post-merge — unknown-host (origin host git.corp.example is not a known GitHub host … export GH_HOST=git.corp.example)`.
   - `post-merge-run.js` returns the same `detail` on its entry.
   - The wrap-up pack's unblocked probe reports the refusal as its failure.
