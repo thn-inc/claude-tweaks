@@ -22,7 +22,7 @@
 const path = require('path');
 const { spawnSync } = require('child_process');
 const {
-  GRAPHQL_INT_MAX, parseCrossRepoDependencies, parseCrossRepoRef, crossRepoKey, buildCrossRepoStateQuery, foreignEntries,
+  GRAPHQL_INT_MAX, parseCrossRepoDependencies, distinctCrossRepoRefs, buildCrossRepoStateQuery, foreignEntries,
 } = require('./cross-repo-refs');
 const sharedPrimitives = require('../shared-primitives');
 
@@ -34,22 +34,18 @@ const SPAWN_TIMEOUT_MARGIN_MS = 5000;
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
-// refs -> [{ key, parsed }], one per distinct crossRepoKey in first-seen order. Misuse throws a
-// TypeError (non-array refs, an unparseable ref), like foreignEntries.
+// refs -> [{ key, parsed }] (distinctCrossRepoRefs). Misuse throws a TypeError (non-array refs, an
+// unparseable ref), like foreignEntries.
 function distinctRefs(refs, who) {
-  if (!Array.isArray(refs)) throw new TypeError(`${who}: refs must be an array`);
-  const seen = new Set();
-  const out = [];
-  for (const ref of refs) {
-    const parsed = parseCrossRepoRef(ref);
-    if (!parsed) throw new TypeError(`${who}: not an owner/name#N ref: ${ref}`);
-    const key = crossRepoKey(parsed);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push({ key, parsed });
-  }
-  return out;
+  const distinct = distinctCrossRepoRefs(refs);
+  if (!distinct) throw new TypeError(`${who}: refs must be an array of owner/name#N refs`);
+  return distinct;
 }
+
+// A state is readable only when it is exactly 'OPEN' or 'CLOSED' (spec Q5); anything else reads null.
+const readableState = (state) => (state === 'OPEN' || state === 'CLOSED' ? state : null);
+
+const sendable = ({ parsed }) => parsed.number <= GRAPHQL_INT_MAX;
 
 // A thrown gh call -> its stdout's `data` object when that parses to one; else null (a whole-call failure).
 function recoveredData(err) {
@@ -59,19 +55,19 @@ function recoveredData(err) {
   return parsed && isObject(parsed.data) ? parsed.data : null;
 }
 
-// { refs, host, runner } -> Map<crossRepoKey, 'OPEN'|'CLOSED'|string|null>, one entry per distinct ref.
+// { refs, host, runner } -> Map<crossRepoKey, 'OPEN'|'CLOSED'|null>, one entry per distinct ref.
 // ONE `gh api graphql` call carrying every sendable ref; owner and name travel as String! variables
 // (-f, never interpolated), the validated issue number is the only literal. A ref above GRAPHQL_INT_MAX
 // is never sent and reads null (it must not fail the others). No sendable ref, no call. `host`
 // (omitted / 'github.com' = no flag) threads --hostname for a GitHub Enterprise Server host.
-// An alias that is missing, null, or has no string issue.state reads null. A thrown runner whose
+// An alias that is missing, null, or whose issue.state is not exactly OPEN or CLOSED reads null. A thrown runner whose
 // stdout carries a `data` object reads that data; any other throw (and a response with no `data`)
 // propagates as a whole-call failure.
 function fetchCrossRepoStates({ refs, host, runner } = {}) {
   const distinct = distinctRefs(refs, 'fetchCrossRepoStates');
   const states = new Map(distinct.map(({ key }) => [key, null]));
-  const sendable = distinct.filter(({ parsed }) => parsed.number <= GRAPHQL_INT_MAX).map(({ key }) => key);
-  const built = buildCrossRepoStateQuery(sendable);
+  const keys = distinct.filter(sendable).map(({ key }) => key);
+  const built = buildCrossRepoStateQuery(keys);
   if (!built) return states;
 
   const args = ['api', 'graphql', '-f', `query=${built.query}`];
@@ -91,10 +87,9 @@ function fetchCrossRepoStates({ refs, host, runner } = {}) {
     if (!data) throw err;
   }
 
-  sendable.forEach((key, i) => {
+  keys.forEach((key, i) => {
     const node = data[`c${i}`];
-    const state = node && node.issue && node.issue.state;
-    states.set(key, typeof state === 'string' ? state : null);
+    states.set(key, readableState(node && node.issue && node.issue.state));
   });
   return states;
 }
@@ -120,20 +115,23 @@ function failureCause(res) {
 }
 
 // refs + { spawn, stderr } -> Map<crossRepoKey, string|null>. Runs
-// `node resolve-foreign-blockers.js <distinct keys, comma-joined>` through deps.spawn(argv) (default:
+// `node resolve-foreign-blockers.js <distinct sendable keys, comma-joined>` through deps.spawn(argv) (default:
 // spawnSync(process.execPath, argv, …)) and maps its JSON line; a key the CLI does not answer, or
-// answers with a non-string, reads null. Fails closed: a non-zero status, a spawn error, a signal or
+// answers with anything but OPEN or CLOSED, reads null; a ref above GRAPHQL_INT_MAX is not asked and reads null. Fails closed: a non-zero status, a spawn error, a signal or
 // unparseable stdout reads EVERY ref null and prints one Warning line to deps.stderr. No refs, no spawn.
 function resolveForeignStates(refs, deps = {}) {
   const { spawn = realSpawn, stderr = realStderr } = deps;
   const distinct = distinctRefs(refs, 'resolveForeignStates');
   const states = new Map(distinct.map(({ key }) => [key, null]));
-  if (distinct.length === 0) return states;
+  // An oversized ref stays null and is never spawned, like fetchCrossRepoStates: it must not
+  // reach the CLI, where it would only add a no-op entry.
+  const asked = distinct.filter(sendable);
+  if (asked.length === 0) return states;
 
   let cause;
   let answer;
   try {
-    const res = spawn([RESOLVE_CLI, distinct.map(({ key }) => key).join(',')]);
+    const res = spawn([RESOLVE_CLI, asked.map(({ key }) => key).join(',')]);
     cause = failureCause(res);
     if (!cause) {
       try { answer = JSON.parse(String(res.stdout || '').trim()); } catch { answer = null; }
@@ -146,9 +144,7 @@ function resolveForeignStates(refs, deps = {}) {
     stderr(`Warning: foreign blocker state lookup failed (${cause}) — every body-declared foreign blocker reads state unreadable (fail closed)\n`);
     return states;
   }
-  for (const { key } of distinct) {
-    if (typeof answer[key] === 'string') states.set(key, answer[key]);
-  }
+  for (const { key } of asked) states.set(key, readableState(answer[key]));
   return states;
 }
 

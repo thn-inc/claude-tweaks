@@ -1,11 +1,12 @@
-// plugin/bin/lib/number-list-cli.js — shared scaffold for the two
-// single-invocation "comma-joined number list -> one aliased GraphQL call"
-// CLIs (bin/resolve-blockers.js, bin/resolve-linked-prs.js), factored out
-// after a diff showed the two files identical outside their fetch function,
-// USAGE string, error-message prefix, and per-number result shape (#1981).
+// plugin/bin/lib/number-list-cli.js — shared scaffold for the
+// single-invocation "comma-joined list -> one aliased GraphQL call" CLIs
+// (bin/resolve-blockers.js, bin/resolve-linked-prs.js, and since #4793
+// bin/resolve-foreign-blockers.js, whose list is owner/name#N refs), factored
+// out after a diff showed the first two files identical outside their fetch
+// function, USAGE string, error-message prefix, and per-number result shape (#1981).
 // Zero runtime npm deps.
 //
-// makeNumberListCli({ name, usage, fetch, mapResult, ghRequiredNote, parseList, malformedMessage })
+// makeNumberListCli({ name, usage, fetch, mapResult, ghRequiredNote, parseList, malformedMessage, missingMessage })
 //   -> { run, parseArgs, parseNumbers, realDeps }
 //
 // - name: the CLI's own filename (e.g. "resolve-blockers.js"), used as the
@@ -28,6 +29,8 @@
 //   receives the parsed list as `numbers`, and mapResult is called once per entry.
 // - malformedMessage (optional): the exit-1 message for a null parseList,
 //   defaulting to the numbers wording.
+// - missingMessage (optional): the exit-1 message when the positional list is
+//   absent, defaulting to the numbers wording.
 // realDeps.runner's timeout is shared-primitives' GH_BATCH_TIMEOUT_MS, read per call.
 'use strict';
 
@@ -54,12 +57,12 @@ function parseNumbers(raw) {
 const NUMBERS_MALFORMED_MESSAGE = 'malformed <n> — every entry must be a positive integer';
 
 function makeNumberListCli({
-  name, usage, fetch, mapResult, ghRequiredNote, parseList = parseNumbers, malformedMessage = NUMBERS_MALFORMED_MESSAGE,
+  name, usage, fetch, mapResult, ghRequiredNote, parseList = parseNumbers, malformedMessage = NUMBERS_MALFORMED_MESSAGE, missingMessage = 'missing <n> argument',
 }) {
   function parseArgs(argv) {
     const opts = { numbersRaw: null, repo: null, help: false };
     if (argv[0] === '--help' || argv[0] === '-h') { opts.help = true; return opts; }
-    if (argv[0] === undefined || argv[0].startsWith('--')) return { error: 'missing <n> argument' };
+    if (argv[0] === undefined || argv[0].startsWith('--')) return { error: missingMessage };
     opts.numbersRaw = argv[0];
     for (let i = 1; i < argv.length; i++) {
       const a = argv[i];

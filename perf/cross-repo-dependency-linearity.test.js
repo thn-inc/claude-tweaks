@@ -19,6 +19,8 @@ const INPUTS = [
   ['a long token with no slash', `Blocked by ${'a'.repeat(200000)}`],
   ['a long repository name with no hash', `Blocked by a/${'a'.repeat(200000)}`],
   ['many unterminated qualified lines', 'Blocked by a/a\n'.repeat(20000)],
+  ['a long hyphen run with no slash', `Blocked by a${'-'.repeat(200000)}`],
+  ['a long hyphen-led token', `Blocked by ${'-'.repeat(200000)}/a#1`],
   ['a long run of newlines', '\n'.repeat(40000)],
 ];
 

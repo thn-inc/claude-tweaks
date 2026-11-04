@@ -31,11 +31,12 @@ test('fetchCrossRepoStates reads each alias\'s state and a missing, null or stat
   assert.ok(!calls[0].includes('--hostname'));
 });
 
-test('fetchCrossRepoStates reads a non-OPEN/CLOSED string verbatim as a string and a non-string state as null', () => {
-  const { runner } = recorder(JSON.stringify({ data: { c0: { issue: { state: 'CLOSED' } }, c1: { issue: { state: 7 } } } }));
-  const states = fetchCrossRepoStates({ refs: ['a/b#1', 'a/b#2'], runner });
-  assert.strictEqual(states.get('a/b#1'), 'CLOSED');
-  assert.strictEqual(states.get('a/b#2'), null);
+test('fetchCrossRepoStates reads exactly OPEN or CLOSED; any other string, a lowercase one and a non-string read null', () => {
+  const { runner } = recorder(JSON.stringify({ data: {
+    c0: { issue: { state: 'CLOSED' } }, c1: { issue: { state: 7 } }, c2: { issue: { state: 'MERGED' } }, c3: { issue: { state: 'open' } },
+  } }));
+  const states = fetchCrossRepoStates({ refs: ['a/b#1', 'a/b#2', 'a/b#3', 'a/b#4'], runner });
+  assert.deepStrictEqual([...states.values()], ['CLOSED', null, null, null]);
 });
 
 test('fetchCrossRepoStates recovers the data of a thrown NOT_FOUND or FORBIDDEN response, and rethrows a whole-call failure', () => {
@@ -108,6 +109,31 @@ test('resolveForeignStates fails closed on a spawn error, a signal and unparseab
   }
 });
 
+test('resolveForeignStates asks the CLI only for sendable refs; an oversized ref (22 digits too) stays null and spawns nothing alone', () => {
+  const spawned = [];
+  const spawn = (argv) => { spawned.push(argv); return { status: 0, stdout: '{"other/repo#5":"CLOSED","huge/repo#1000000000000000000000":"OPEN","mid/repo#3000000000":"OPEN"}\n' }; };
+  const stderr = [];
+  const states = resolveForeignStates(
+    ['huge/repo#1000000000000000000000', 'other/repo#5', 'mid/repo#3000000000'],
+    { spawn, stderr: (s) => stderr.push(s) },
+  );
+  assert.deepStrictEqual(states, new Map([['huge/repo#1000000000000000000000', null], ['other/repo#5', 'CLOSED'], ['mid/repo#3000000000', null]]));
+  assert.deepStrictEqual(stderr, []);
+  assert.strictEqual(spawned.length, 1);
+  assert.deepStrictEqual(spawned[0].slice(1), ['other/repo#5']);
+
+  const none = [];
+  const alone = resolveForeignStates(['huge/repo#1000000000000000000000'], { spawn: (a) => { none.push(a); return {}; } });
+  assert.deepStrictEqual(alone, new Map([['huge/repo#1000000000000000000000', null]]));
+  assert.deepStrictEqual(none, []);
+});
+
+test('resolveForeignStates reads only OPEN or CLOSED from the CLI answer', () => {
+  const spawn = () => ({ status: 0, stdout: '{"a/b#1":"MERGED","a/b#2":"closed","a/b#3":"OPEN"}\n' });
+  const states = resolveForeignStates(['a/b#1', 'a/b#2', 'a/b#3'], { spawn, stderr: () => {} });
+  assert.deepStrictEqual([...states.values()], [null, null, 'OPEN']);
+});
+
 test('resolveForeignStates maps the CLI\'s JSON line, reads an absent or non-string key as null, and spawns nothing for no refs', () => {
   const spawned = [];
   const spawn = (argv) => { spawned.push(argv); return { status: 0, stdout: '{"other/repo#5":"OPEN","acme/x#7":3}\n' }; };
@@ -137,6 +163,20 @@ test('one oversized ref reads null while the other refs keep their real state', 
   });
   assert.strictEqual(code, 0);
   assert.deepStrictEqual(JSON.parse(out.join('')), { 'huge/repo#99999999999': null, 'other/repo#5': 'CLOSED' });
+  assert.strictEqual(calls.length, 1);
+
+  // A 22-digit number (formatted '1e+21' by Number) must key, parse and answer the same way.
+  calls.length = 0;
+  out.length = 0;
+  const code22 = run(['huge/repo#1000000000000000000000,other/repo#5'], {
+    ghAvailable: () => true,
+    remoteUrl: () => 'https://github.com/acme/widgets.git',
+    runner,
+    stdout: (s) => out.push(s),
+    stderr: () => {},
+  });
+  assert.strictEqual(code22, 0);
+  assert.deepStrictEqual(JSON.parse(out.join('')), { 'huge/repo#1000000000000000000000': null, 'other/repo#5': 'CLOSED' });
   assert.strictEqual(calls.length, 1);
 });
 
@@ -204,6 +244,13 @@ test('the CLI exits 1 on a malformed ref, naming refs rather than numbers', () =
     assert.match(deps.calls.stderr.join(''), /usage: resolve-foreign-blockers\.js/);
     assert.strictEqual(deps.calls.runner.length, 0);
   }
+});
+
+test('the CLI names refs, not numbers, when the argument is missing', () => {
+  const deps = fakeDeps();
+  assert.strictEqual(run([], deps), 1);
+  assert.match(deps.calls.stderr.join(''), /missing <owner\/name#N> argument/);
+  assert.doesNotMatch(deps.calls.stderr.join(''), /<n>/);
 });
 
 test('the CLI exits 3 on a throwing runner', () => {

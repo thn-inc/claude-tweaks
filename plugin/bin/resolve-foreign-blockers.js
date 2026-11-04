@@ -27,7 +27,7 @@
 'use strict';
 
 const { fetchCrossRepoStates } = require('./lib/issues/cross-repo-states');
-const { parseCrossRepoRef, crossRepoKey } = require('./lib/issues/cross-repo-refs');
+const { distinctCrossRepoRefs } = require('./lib/issues/cross-repo-refs');
 const { makeNumberListCli } = require('./lib/number-list-cli');
 
 const USAGE = 'usage: resolve-foreign-blockers.js <owner/name#N>[,<owner/name#N2>,...] [--repo owner/name] [--help]\n';
@@ -35,19 +35,15 @@ const USAGE = 'usage: resolve-foreign-blockers.js <owner/name#N>[,<owner/name#N2
 // 'a/b#1,A/B#1,c/d#2' -> ['a/b#1', 'c/d#2'] (distinct crossRepoKeys), or null on any entry that is
 // not a well-formed owner/name#N. The number's range is checked by fetchCrossRepoStates, not here.
 function parseRefs(raw) {
-  const keys = new Set();
-  for (const part of raw.split(',')) {
-    const parsed = parseCrossRepoRef(part);
-    if (!parsed) return null;
-    keys.add(crossRepoKey(parsed));
-  }
-  return [...keys];
+  const distinct = distinctCrossRepoRefs(raw.split(','));
+  return distinct && distinct.map(({ key }) => key);
 }
 
 const { run, parseArgs, realDeps } = makeNumberListCli({
   name: 'resolve-foreign-blockers.js',
   usage: USAGE,
   parseList: parseRefs,
+  missingMessage: 'missing <owner/name#N> argument',
   malformedMessage: 'malformed <owner/name#N> — every entry must be owner/name#N',
   fetch: ({ numbers, host, runner }) => fetchCrossRepoStates({ refs: numbers, host, runner }),
   mapResult: (key, states) => states.get(key) ?? null,

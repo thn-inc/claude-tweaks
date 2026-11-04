@@ -23,24 +23,52 @@
 // GraphQL Int is a signed 32-bit integer; issue(number:) rejects anything above it.
 const GRAPHQL_INT_MAX = 2147483647;
 
-const CROSS_REPO_DEP_RE = /^Blocked by ([A-Za-z0-9-]+\/[A-Za-z0-9._-]+)#(\d+)\b/gm;
-const CROSS_REPO_REF_RE = /^([A-Za-z0-9-]+\/[A-Za-z0-9._-]+)#(\d+)$/;
+// The owner class starts with an alphanumeric (GitHub's rule), so no ref can begin with '-' and
+// become a leading-'--' argv element when a key is passed to a CLI.
+const CROSS_REPO_DEP_RE = /^Blocked by ([A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9._-]+)#(\d+)\b/gm;
+const CROSS_REPO_REF_RE = /^([A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9._-]+)#(\d+)$/;
 // Strips only what the parser accepts: the lookbehind covers the repository class too (so a
 // '_' or '.' before the owner means the token is not an owner/name ref), and the trailing \b
 // mirrors CROSS_REPO_DEP_RE's (so '#5abc' is left alone).
-const CROSS_REPO_STRIP_RE = /(?<![A-Za-z0-9._-])[A-Za-z0-9-]+\/[A-Za-z0-9._-]+#\d+\b/g;
+const CROSS_REPO_STRIP_RE = /(?<![A-Za-z0-9._-])[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9._-]+#\d+\b/g;
 
-// {repository, number} -> the case-insensitive identity two spellings of one blocker share.
-function crossRepoKey({ repository, number }) {
-  return `${repository.toLowerCase()}#${number}`;
+// A matched digit string without leading zeros ('007' -> '7', '0' -> '0'). Keys are built from
+// this, never from Number(digits): a number above 2^53 would collapse with its neighbours, and
+// one at 10^21 or more would format as '1e+21', which parseCrossRepoRef rejects.
+const canonicalDigits = (digits) => digits.replace(/^0+(?=\d)/, '');
+
+// {repository, number, digits?} -> the case-insensitive identity two spellings of one blocker
+// share. `digits` (parseCrossRepoRef's canonical digit string) wins over `number`, which an entry
+// shaped like crossRepoBlockers carries as a Number only.
+function crossRepoKey({ repository, number, digits }) {
+  return `${repository.toLowerCase()}#${digits !== undefined ? digits : number}`;
 }
 
-// 'owner/name#N' (the whole string) -> {repository, number}, or null when it is not that
-// grammar. The range is not checked here — buildCrossRepoStateQuery owns that.
+// 'owner/name#N' (the whole string) -> {repository, number, digits}, or null when it is not that
+// grammar. `digits` is the canonical digit string crossRepoKey builds from. The range is not checked here — buildCrossRepoStateQuery owns that.
 function parseCrossRepoRef(ref) {
   if (typeof ref !== 'string') return null;
   const m = CROSS_REPO_REF_RE.exec(ref);
-  return m ? { repository: m[1], number: Number(m[2]) } : null;
+  return m ? { repository: m[1], number: Number(m[2]), digits: canonicalDigits(m[2]) } : null;
+}
+
+// refs -> [{ key, parsed }], one per distinct crossRepoKey in first-seen order; null when refs is
+// not an array or any entry is not an owner/name#N ref (callers choose between throwing and a
+// malformed-input answer). The one parse-and-dedupe that fetchCrossRepoStates,
+// resolveForeignStates and bin/resolve-foreign-blockers.js share.
+function distinctCrossRepoRefs(refs) {
+  if (!Array.isArray(refs)) return null;
+  const seen = new Set();
+  const out = [];
+  for (const ref of refs) {
+    const parsed = parseCrossRepoRef(ref);
+    if (!parsed) return null;
+    const key = crossRepoKey(parsed);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ key, parsed });
+  }
+  return out;
 }
 
 // body -> the qualified refs from line-anchored 'Blocked by owner/name#N' lines, in order of
@@ -52,7 +80,7 @@ function parseCrossRepoDependencies(body) {
   const seen = new Set();
   const refs = [];
   for (const m of body.matchAll(CROSS_REPO_DEP_RE)) {
-    const key = crossRepoKey({ repository: m[1], number: Number(m[2]) });
+    const key = crossRepoKey({ repository: m[1], digits: canonicalDigits(m[2]) });
     if (seen.has(key)) continue;
     seen.add(key);
     refs.push(`${m[1]}#${m[2]}`);
@@ -119,7 +147,7 @@ function buildCrossRepoStateQuery(keys) {
 
 module.exports = {
   GRAPHQL_INT_MAX,
-  parseCrossRepoDependencies, parseCrossRepoRef, crossRepoKey,
+  parseCrossRepoDependencies, parseCrossRepoRef, crossRepoKey, distinctCrossRepoRefs,
   foreignEntries, bodyOnlyForeign, mergeForeignBlockers,
   stripCrossRepoRefs, buildCrossRepoStateQuery,
 };
