@@ -240,3 +240,89 @@ test('computeOutlook: a sub-issue is excluded from trustRows\' cell totals (neve
   assert.strictEqual(row.verdict, 'clean');
   assert.deepStrictEqual(out.eligible, [1]);
 });
+
+// --- #4793: a body-declared foreign blocker ('Blocked by owner/name#N') blocks the pre-pass ---
+
+const FOREIGN_LABELS = ['by:code-health', 'ready'];
+
+test('#4793: filterCandidates drops a candidate whose foreign blocker is OPEN or unreadable, keeps a CLOSED one, and is unchanged without the map', () => {
+  const issues = [
+    issue(7, { labels: FOREIGN_LABELS, body: 'Blocked by other/repo#7' }),
+    issue(8, { labels: FOREIGN_LABELS, body: 'Blocked by other/repo#8' }),
+    issue(9, { labels: FOREIGN_LABELS, body: 'Blocked by other/repo#9' }),
+  ];
+  const foreign = new Map([
+    [7, [{ number: 7, repository: 'other/repo', state: 'OPEN' }]],
+    [8, [{ number: 8, repository: 'other/repo', state: null }]],
+    [9, [{ number: 9, repository: 'other/repo', state: 'CLOSED' }]],
+  ]);
+  assert.deepStrictEqual(filterCandidates(issues, new Set(), foreign).map((c) => c.number), [9]);
+  assert.deepStrictEqual(filterCandidates(issues, new Set()).map((c) => c.number), [7, 8, 9]);
+});
+
+test('#4793: a foreign blocker never collides with this repository\'s same bare number', () => {
+  const rec = issue(1, { labels: FOREIGN_LABELS, body: 'Blocked by #7\nBlocked by other/repo#7' });
+  const closed = new Map([[1, [{ number: 7, repository: 'other/repo', state: 'CLOSED' }]]]);
+  const open = new Map([[1, [{ number: 7, repository: 'other/repo', state: 'OPEN' }]]]);
+  // This-repo #7 open, foreign other/repo#7 CLOSED: blocked by the local one only.
+  assert.deepStrictEqual(filterCandidates([rec], new Set([7]), closed), []);
+  // This-repo #7 not open, foreign other/repo#7 OPEN: blocked by the foreign one only.
+  assert.deepStrictEqual(filterCandidates([rec], new Set(), open), []);
+  // Neither blocks: this-repo #7 not open, foreign other/repo#7 CLOSED.
+  assert.deepStrictEqual(filterCandidates([rec], new Set(), closed).map((c) => c.number), [1]);
+});
+
+function foreignOutlook(candidates, foreignDeps) {
+  return computeOutlook(
+    { ceiling: 'unattended', grantOriginationEnabled: true, windowDays: 14 },
+    {
+      limit: 100, workLinks: 'body-text', integrationBranch: 'main', runner: ghRunner({ candidates }), gitRunner: () => '', foreignDeps,
+    },
+  );
+}
+
+test('#4793: computeOutlook makes one batched foreign state lookup for several candidates, and none when no candidate declares a foreign ref', () => {
+  const spawned = [];
+  const spawn = (argv) => {
+    spawned.push(argv);
+    return { status: 0, stdout: '{"other/repo#1":"OPEN","acme/x#2":"CLOSED"}\n' };
+  };
+  const out = foreignOutlook([
+    issue(1, { labels: FOREIGN_LABELS, body: 'Blocked by other/repo#1' }),
+    issue(2, { labels: FOREIGN_LABELS, body: 'Blocked by acme/x#2' }),
+    issue(3, { labels: FOREIGN_LABELS, body: 'Blocked by #50' }),
+  ], { spawn, stderr: () => {} });
+  assert.strictEqual(spawned.length, 1);
+  assert.deepStrictEqual(out.candidates.map((c) => c.number), [2, 3]);
+
+  const none = [];
+  const plain = foreignOutlook([issue(1, { labels: FOREIGN_LABELS }), issue(2, { labels: FOREIGN_LABELS, body: 'Blocked by #50' })], {
+    spawn: (argv) => { none.push(argv); return { status: 0, stdout: '{}\n' }; },
+    stderr: () => {},
+  });
+  assert.strictEqual(none.length, 0);
+  assert.deepStrictEqual(plain.candidates.map((c) => c.number), [1, 2]);
+});
+
+test('#4793: computeOutlook looks up only the foreign refs of candidates that survive the cheap label filters', () => {
+  const spawned = [];
+  const out = foreignOutlook([
+    issue(1, { labels: ['ready'], body: 'Blocked by dropped/human#1' }), // human-filed, dropped before the lookup
+    issue(2, { labels: [...FOREIGN_LABELS, 'auto:build'], body: 'Blocked by dropped/granted#2' }), // already granted
+    issue(3, { labels: FOREIGN_LABELS, body: 'Blocked by kept/repo#3' }),
+  ], { spawn: (argv) => { spawned.push(argv); return { status: 0, stdout: '{"kept/repo#3":"CLOSED"}\n' }; }, stderr: () => {} });
+  assert.strictEqual(spawned.length, 1);
+  assert.strictEqual(spawned[0][1], 'kept/repo#3');
+  assert.deepStrictEqual(out.candidates.map((c) => c.number), [3]);
+});
+
+test('#4793: computeOutlook fails closed on a failing lookup: the candidate is excluded and one Warning line reaches stderr', () => {
+  const warnings = [];
+  const out = foreignOutlook(
+    [issue(1, { labels: FOREIGN_LABELS, body: 'Blocked by other/repo#1' })],
+    { spawn: () => ({ status: 1, stdout: '', stderr: 'boom' }), stderr: (s) => warnings.push(s) },
+  );
+  assert.deepStrictEqual(out.candidates, []);
+  assert.strictEqual(warnings.length, 1);
+  assert.match(warnings[0], /^Warning: /);
+});
