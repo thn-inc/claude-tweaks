@@ -45,9 +45,10 @@
 //                qualified; otherwise no remote is read. Refused with --backend local-files.
 //
 // Output: one JSON line on stdout, the verdict in the order of VERDICT_FIELDS
-// (bin/lib/issues/parent-gate.js): {parent, state, exceeds, closeReason, idempotence,
-// maxTier, riskFloor, parentIssue, needs, held, subIssues, skipped}. The verdict is data,
-// never an exit code: every `state`, `no-parent` included, is exit 0.
+// (bin/lib/issues/parent-gate.js): {parent, repo, state, exceeds, closeReason, idempotence,
+// maxTier, riskFloor, parentIssue, needs, held, subIssues, skipped}. `repo` is the slug its
+// reads used (`owner/repo`, host-qualified off github.com), null where no remote was read.
+// The verdict is data, never an exit code: every `state`, `no-parent` included, is exit 0.
 //
 // Exit codes (Split-1/2, fetch-sub-issues.js's vocabulary): 0 a verdict was printed;
 // 1 a malformed invocation; 2 `gh` is absent, owner/repo or the repo root cannot be
@@ -85,7 +86,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const {
-  parseRepo, ghAvailable, remoteUrl, ghOptions, gateOriginRepo, normalizeHost,
+  parseRepo, ghAvailable, remoteUrl, ghOptions, gateOriginRepo, normalizeHost, repoSlug,
 } = require('./lib/repo-resolve');
 const { POLICY_KEYS, resolvePolicyKeys } = require('./lib/policy-schema');
 const { readWorkBackend } = require('./lib/work-backend');
@@ -389,7 +390,12 @@ function run(argv, deps = realDeps) {
       ? withIdempotenceReads(mcp.raw, mcp.idempotence)
       : gatherIdempotenceFacts({ parent: gate.parent, owner, repo, host, caller }));
     verdict = evaluateGateWithIdempotence({
-      ...facts, closingSet: closing.numbers, held: opts.held, mergingPr: opts.mergingPr, riskFloor,
+      ...facts,
+      closingSet: closing.numbers,
+      held: opts.held,
+      mergingPr: opts.mergingPr,
+      riskFloor,
+      slug: owner && repo ? repoSlug({ host, owner, repo }) : null,
     }, { idempotence: opts.idempotence, readIdempotenceFacts });
   } catch (err) {
     if (err instanceof FactsError) {

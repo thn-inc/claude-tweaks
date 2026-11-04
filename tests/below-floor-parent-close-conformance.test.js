@@ -96,8 +96,8 @@ test('AC1.1: the close section excludes pre-merge github entries, lists sub-issu
   assert.ok(close.includes('## Closed below the oversight floor'), 'marker heading');
   assert.ok(close.includes('closed by PR #{pr}'), 'listing line suffix');
   assert.match(close, /Never[^.]*merge SHA/);
-  const comment = close.indexOf('gh issue comment $PARENT_NUM --body-file');
-  const shut = close.indexOf('gh issue close $PARENT_NUM --reason completed');
+  const comment = close.indexOf('gh issue comment $PARENT_NUM --repo "{parent-repo}" --body-file');
+  const shut = close.indexOf('gh issue close $PARENT_NUM --repo "{parent-repo}" --reason completed');
   assert.ok(comment !== -1 && shut > comment, `comment (${comment}) before close (${shut})`);
   const write = close.indexOf('writeRecord(parentPath');
   const closeRec = close.indexOf('closeRecord(parentPath)');
@@ -148,7 +148,7 @@ test('AC1.1: the close reason follows the sub-issues\' stateReason', () => {
   const gate = read(GATE_REL);
   const close = collapse(closeSection(gate));
   assert.ok(close.includes('Close with `--reason completed` only when at least one sub-issue closed `COMPLETED`'), 'completed only with a completed sub-issue');
-  assert.ok(close.includes('gh issue close $PARENT_NUM --reason "not planned"'), 'not planned otherwise');
+  assert.ok(close.includes('gh issue close $PARENT_NUM --repo "{parent-repo}" --reason "not planned"'), 'not planned otherwise');
   assert.ok(close.includes('No sub-issue closed as completed, so this parent closes as not planned.'), 'the comment says so');
   // #4603: the per-sub-issue read and the paginated native enumeration are the CLI's now, pinned by
   // tests/bin-lib/issues/parent-gate.test.js's `gatherGateFacts (native, from a sub-issue) makes the
@@ -964,8 +964,8 @@ test('#4602 AC2.1: every gh call in the Parent-Gate Procedure and Step 4.0b has 
     '`get_comments` for comments, paged per its row',
     'every `gh issue view` read',
     '`gh api user` is `get_me`',
-    '`gh issue comment` is `add_issue_comment`',
-    '`gh issue close` and `gh issue edit --add-label` are `issue_write`',
+    '`gh issue comment --repo` is `add_issue_comment`',
+    '`gh issue close --repo` and `gh issue edit --repo --add-label` are `issue_write`',
   ];
   for (const lit of pairings) assert.ok(transport.includes(lit), `Transport paragraph states the pairing: ${lit}`);
   for (const lit of ['uppercase', '`CLOSED`', '`COMPLETED`', '`REOPENED`', 'label names', 'the last of the references']) assert.ok(transport.includes(lit), `Transport paragraph normalizes the MCP shape: ${lit}`);
@@ -1137,7 +1137,7 @@ test('#4603: the prose names only the CLI\'s own flags, verdict fields and facts
   assert.deepEqual(unknownCliFlags(cliLines(withRepo)), ['--repo'], 'go-red: --repo on a command line is unknown');
   const proseRepo = `${cli}\nThere is no \`--repo\` flag.\n`;
   assert.deepEqual(unknownCliFlags(cliLines(proseRepo)), [], 'a prose line naming --repo is not a command line');
-  assert.equal(VERDICT_FIELDS.length, 12);
+  assert.equal(VERDICT_FIELDS.length, 13);
   assert.equal(FACTS_KEYS.length, 7);
   assert.deepEqual(missingSpans(cli, [...VERDICT_FIELDS, ...FACTS_KEYS]), [], 'every verdict field and facts key is a code span in the section');
   for (const name of ['skipped', 'parentComments']) {

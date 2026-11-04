@@ -812,6 +812,45 @@ test('SessionStart renders a prior background pass\'s post-merge runs and parent
   assert.doesNotMatch(quiet.json.hookSpecificOutput.additionalContext || '', /post-merge/);
 });
 
+test('AC1.1 + Q5: SessionStart names the parents a prior pass\'s Step 4.0b left open, and the step skips, each as its own clause (#4798)', async () => {
+  const project = gitProject();
+  fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });
+  const statusPath = path.join(project, '.claude-tweaks', 'reconcile-background-status.json');
+  const seed = (summary) => fs.writeFileSync(statusPath, JSON.stringify({ completedAt: Date.now(), surfaced: false, summary }));
+  const contextOf = async () => (await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project })).json.hookSpecificOutput.additionalContext;
+
+  seed({ postMergeRan: 0, postMergeFailed: 2, postMergeFailedRecords: [101], postMergeParentsLeftOpen: [
+    { pr: 11, parent: 100, reason: 'gh-failed' }, { pr: 11, issue: 103, reason: 'internal-error' }, { pr: 12, reason: 'unreadable-policy' },
+  ], postMergeStepSkips: [{ pr: 13, reason: 'invalid-risk-floor' }] });
+  const named = await contextOf();
+  assert.match(named, /post-merge steps failed for 2 merged run\(s\) \(records #101 need a hand reopen or close/);
+  assert.match(named, /post-merge Step 4\.0b left parent record\(s\) open: #100 \(gh-failed, PR #11\), the parent of record #103 \(internal-error, PR #11\), every parent \(unreadable-policy, PR #12\) — tidy's parent-gate backstop recovers them/);
+  assert.match(named, /post-merge Step 4\.0b skipped step-wide, leaving no parent open \(nothing left to close\): invalid-risk-floor \(PR #13\)/);
+
+  // Q5: a marker-write-failed entry's parent is named although no count includes that run.
+  seed({ postMergeRan: 0, postMergeFailed: 0, postMergeParentsLeftOpen: [{ pr: 14, parent: 200, reason: 'gh-failed' }] });
+  const unmarked = await contextOf();
+  assert.match(unmarked, /post-merge Step 4\.0b left parent record\(s\) open: #200 \(gh-failed, PR #14\)/);
+  assert.doesNotMatch(unmarked, /post-merge steps failed/);
+
+  // Step skips alone never read as a parent left open.
+  seed({ postMergeRan: 1, postMergeStepSkips: [{ pr: 12, reason: 'unreadable-policy' }] });
+  const skipsOnly = await contextOf();
+  assert.doesNotMatch(skipsOnly, /left parent record/);
+  assert.match(skipsOnly, /skipped step-wide, leaving no parent open \(nothing left to close\): unreadable-policy \(PR #12\)/);
+
+  // An older status file, and junk values: nothing new renders.
+  for (const summary of [
+    { postMergeRan: 0, postMergeFailed: 1 },
+    { postMergeRan: 0, postMergeFailed: 1, postMergeParentsLeftOpen: ['x', null, { pr: 11, reason: 5 }, { pr: 'x', parent: 1, reason: 'gh-failed' }], postMergeStepSkips: 'x' },
+  ]) {
+    seed(summary);
+    const legacy = await contextOf();
+    assert.match(legacy, /post-merge steps failed for 1 merged run\(s\) \(tidy's parent-gate backstop recovers the parents\)/);
+    assert.doesNotMatch(legacy, /left parent record|skipped step-wide/);
+  }
+});
+
 test('SessionStart renders a prior background pass\'s ledger-residue PR count and notable residue (#3812)', async () => {
   const project = gitProject();
   fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });
