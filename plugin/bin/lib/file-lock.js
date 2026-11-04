@@ -178,4 +178,4 @@ function withLock(lockPath, fn, opts = {}) {
   return result;
 }
 
-module.exports = { acquireLock, releaseLock, withLock };
+module.exports = { acquireLock, releaseLock, withLock, isAlive };
