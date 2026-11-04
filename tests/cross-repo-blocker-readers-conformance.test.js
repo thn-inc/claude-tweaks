@@ -111,7 +111,7 @@ const MCP_FOREIGN_FACTS = [
   [/`backlog overview` hard-gates on `gh`, so it has no `gh`-absent funnel to supply states to/, 'backlog overview hard-gates on gh, so it has no gh-absent funnel to supply states to'],
 ];
 
-test('backlog mcp-transport.md reads body-declared foreign blockers with issue_read and passes them to the pre-pass and the overview funnel (#4793)', () => {
+test('backlog mcp-transport.md reads body-declared foreign blockers with issue_read and passes them to the pre-pass (#4793)', () => {
   const missing = missingFactsOf(MCP_FOREIGN_FACTS);
   assert.deepEqual(missing(MCP_TRANSPORT), [], 'mcp-transport.md states every fact');
   assertEachPatternGoesRed(MCP_TRANSPORT, MCP_FOREIGN_FACTS, missing);

@@ -42,6 +42,13 @@ function fetchReadyCandidates({ limit, runner }) {
   return jsonOut(runner, ['issue', 'list', '--label', 'ready', '--state', 'open', '--json', CANDIDATE_FIELDS, '--limit', String(limit)]);
 }
 
+// (candidates, foreignByRecord) -> the candidates with no open-or-unreadable
+// body-declared foreign blocker. The one definition of that rule, shared by
+// filterCandidates and computeOutlook's second step.
+function withoutForeignBlockers(candidates, foreignByRecord) {
+  return candidates.filter((c) => !(foreignByRecord.get(c.number) || []).some(foreignBlockerBlocks));
+}
+
 // (issues, openNumbers, foreignByRecord?) -> candidates surviving refine-headless.md
 // Step 1's cheap pre-pass: agent-filed origin, no existing grant, not already
 // claimed, no open 'Blocked by #N', and no open-or-unreadable body-declared
@@ -53,13 +60,13 @@ function fetchReadyCandidates({ limit, runner }) {
 // Each candidate carries its own parsed `facets`.
 function filterCandidates(issues, openNumbers, foreignByRecord) {
   if (!(foreignByRecord instanceof Map)) throw new TypeError('filterCandidates: foreignByRecord must be a Map (pass new Map() for none)');
-  return issues
+  const cheapSurvivors = issues
     .map((i) => ({ ...i, facets: parseRecordFacets(i.labels) }))
     .filter((i) => i.facets.origin !== null)
     .filter((i) => !i.facets.grants.build && !i.facets.grants.merge)
     .filter((i) => !i.facets.bot.inProgress)
-    .filter((i) => parseDependencies(i.body).every((d) => !openNumbers.has(d)))
-    .filter((i) => !(foreignByRecord.get(i.number) || []).some(foreignBlockerBlocks));
+    .filter((i) => parseDependencies(i.body).every((d) => !openNumbers.has(d)));
+  return withoutForeignBlockers(cheapSurvivors, foreignByRecord);
 }
 
 // { limit, runner, sessionId, ttlSeconds, now? } -> the whole historical
@@ -210,9 +217,9 @@ function computeOutlook(policy, fetch) {
   const readyIssues = fetchReadyCandidates({ limit, runner });
   // The foreign-blocker state lookup is one batched call over the cheap-filter
   // survivors' body refs (none at all when no survivor declares one), then the
-  // blocker filter runs again with its result.
+  // foreign-blocker filter runs on those survivors with its result.
   const cheapSurvivors = filterCandidates(readyIssues, openNumbers, new Map());
-  const candidates = filterCandidates(cheapSurvivors, openNumbers, bodyForeignBlockers(cheapSurvivors, foreignDeps));
+  const candidates = withoutForeignBlockers(cheapSurvivors, bodyForeignBlockers(cheapSurvivors, foreignDeps));
 
   const subIssueNumbers = resolveSubIssueNumbers({
     workLinks, limit, runner, nativeRunner: nativeRunner || runner, owner, repo, host, probeFn,
