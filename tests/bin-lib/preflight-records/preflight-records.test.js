@@ -863,7 +863,7 @@ const nativeArgs = (...nums) => [...nums, '--blocker-landing', '--repo', 'acme/w
 const landingQueries = (calls) => calls.filter((a) => isGraphQL(a) && /CLOSED_EVENT/.test(gqlQuery(a))).map(gqlQuery);
 
 test('AC1.1: a CLOSED native blocker in another repository is never queried by number here — undetermined cross-repository; this repository\'s blocker is still judged', () => {
-  const { runner, calls } = nativeLandingFixture({ 11: [[5, 'other/repo', 'CLOSED'], [6, 'acme/w', 'CLOSED']] }, { repository: { b6: closedBlocker('fff666') }, statuses: { fff666: 'behind\n' } });
+  const { runner, calls } = nativeLandingFixture({ 11: [[5, 'other/repo', 'CLOSED'], [6, 'acme/w', 'CLOSED']] }, { repository: { b5: closedBlocker('eee555'), b6: closedBlocker('fff666') }, statuses: { eee555: 'behind\n', fff666: 'behind\n' } });
   const d = cliDeps({ runner, workLinks: 'native' });
   assert.equal(run(nativeArgs('11'), d.deps), 0);
   const env = JSON.parse(d.out.join(''));
