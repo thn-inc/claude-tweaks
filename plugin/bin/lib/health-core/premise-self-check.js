@@ -30,11 +30,9 @@ function posixShell(platform = process.platform) {
 // re-throws. An omitted cwd runs in the process cwd. `platform` picks the
 // shell (posixShell) and `exec` is the spawn seam — both injectable so the
 // platform split is testable without stubbing process.platform (#3563).
-// `env`, when given, is the command's whole environment; omitted, it inherits
-// the process env (materialize.js passes one without the GH_HOST it pinned, #4505).
-function defaultRunner(command, { cwd, timeoutMs, platform = process.platform, exec = execFileSync, env }) {
+function defaultRunner(command, { cwd, timeoutMs, platform = process.platform, exec = execFileSync }) {
   try {
-    exec(posixShell(platform), ['-c', command], { cwd, stdio: 'ignore', timeout: timeoutMs, windowsHide: true, ...(env ? { env } : {}) });
+    exec(posixShell(platform), ['-c', command], { cwd, stdio: 'ignore', timeout: timeoutMs, windowsHide: true });
     return 0;
   } catch (err) {
     if (typeof err.status === 'number') return err.status;

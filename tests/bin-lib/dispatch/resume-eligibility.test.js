@@ -8,7 +8,7 @@ const path = require('node:path');
 const { readText, crlfCheckoutRead } = require('../../helpers/read-skill');
 const {
   REFUSAL_REASONS, runIdFromPrBody, claimRunId, openPrLine, selectResumePr, resumeEligibility, resumeContext,
-  worktreeNameForHead, closeRedispatchRemedy, refusalDetail,
+  worktreeNameForHead, closeRedispatchRemedy, refusalDetail, worktreePathForHead, isObject, nonEmptyString,
 } = require('../../../plugin/bin/lib/dispatch/resume-eligibility');
 const { claimPayload, releasePayload } = require('../../../plugin/bin/lib/issues/claims');
 
@@ -317,6 +317,8 @@ const REFUSALS = [
     '#4589 is closed — not resumable; reopen it first if the work is still wanted, or close PR #4604', 'close'],
   ['open blockers', { openBlockers: [4500, 4501] }, 'blocked-by',
     '#4589 is blocked by open #4500, #4501 — not resumable until they close; then run /claude-tweaks:dispatch resume #4589', 'resume'],
+  ['open blockers with a foreign one', { openBlockers: [4500, 'other/repo#5', 'other/repo#6 (state unreadable)'] }, 'blocked-by',
+    '#4589 is blocked by open #4500, other/repo#5, other/repo#6 (state unreadable) — not resumable until they close; then run /claude-tweaks:dispatch resume #4589', 'resume'],
   ['bot:blocked', { labels: ['auto:build', 'bot:blocked'] }, 'not-granted',
     '#4589 carries bot:blocked — re-grant it with /claude-tweaks:backlog refine #4589, then run /claude-tweaks:dispatch resume #4589', 'resume'],
   ['no auto:build', { labels: ['ready', 'type:task'] }, 'not-granted',
@@ -665,6 +667,12 @@ test('closeRedispatchRemedy prints no command for a head that is unsafe to paste
   assert.match(s, /close PR #70 \(gh pr close 70\)/);
   assert.match(s, /then run \/claude-tweaks:dispatch #7$/);
 });
+test('#4815: closeRedispatchRemedy takes the by-hand wording for a worktree- head that is unsafe to compose', () => {
+  const s = closeRedispatchRemedy({ issue: 7, prNumber: 70, headRefName: 'worktree-a$(x)', mainRoot: '/repo' });
+  assert.ok(s.includes('remove any worktree holding its branch and delete the local and remote branch by hand'), s);
+  assert.ok(!s.includes('git branch -D'), s);
+  assert.ok(!s.includes('"null"'), s);
+});
 test('closeRedispatchRemedy prints no branch-delete command for a bare head, only for a worktree- head', () => {
   for (const head of ['develop', 'release/2.0', 'fix/thing']) {
     const s = closeRedispatchRemedy({ issue: 7, prNumber: 70, headRefName: head, mainRoot: '/repo' });
@@ -875,4 +883,17 @@ test('resumeContext: no pipeline entries -> null lastPhase and no defects; non-s
   assert.deepStrictEqual(resumeContext('## /build\n'), empty);
   assert.deepStrictEqual(resumeContext(null), empty);
   assert.deepStrictEqual(resumeContext(undefined), empty);
+});
+
+test('#4815 AC1.1: worktreePathForHead builds the worktree path, and the exported nonEmptyString and isObject guards hold their contracts', () => {
+  assert.equal(worktreePathForHead('/m', HEAD), path.join('/m', '.claude', 'worktrees', 'dispatch-record-4589'));
+  assert.equal(worktreePathForHead('/m', 'fix/thing'), path.join('/m', '.claude', 'worktrees', 'fix', 'thing'));
+  assert.equal(worktreePathForHead('/m', 'a$(x)'), null);
+  assert.equal(nonEmptyString('x'), 'x');
+  assert.equal(nonEmptyString(''), null);
+  assert.equal(nonEmptyString(3), null);
+  assert.equal(isObject({}), true);
+  assert.equal(isObject([]), false);
+  assert.equal(isObject(null), false);
+  assert.equal(isObject('s'), false);
 });

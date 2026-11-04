@@ -1,4 +1,4 @@
-# Parse-Signal Discipline — fix shape, items 17-26
+# Parse-Signal Discipline — fix shape, items 17-27
 
 Lazy-loaded from `SKILL.md`'s "The fix shape" section; the numbering continues that list.
 
@@ -244,3 +244,23 @@ Lazy-loaded from `SKILL.md`'s "The fix shape" section; the numbering continues t
     that ends the comment, and the parser rejects a raw `<` or `>`. Pin each hiding place with its
     own case (`tests/bin-lib/issues/accept-verdict.test.js`: a block that does not own its line,
     fence text before the block, and a note holding `-->`).
+27. **A parse problem that hides content owes its own report, found by a second read under the
+    relaxed reading and credited only to a cause the author can edit.** A fence that never closes
+    swallows every heading after it. Before #4350, `plugin/bin/lib/issues/materialize-format.js`'s
+    `shapeGate` named those swallowed sections missing, so the author looked for sections that
+    were there. `plugin/bin/lib/markdown-blocks.js`'s `hiddenByUnclosedFence` now reads the body
+    twice through the same `findSection`: a heading absent as read but found with
+    `unclosedAsText: true` is hidden, and the probe returns the opener's 1-based line, so the gate
+    reports `unclosed-fence at line N` (`UNCLOSED_FENCE_PREFIX`) in place of the section's name.
+    A heading found under the strict reading (even empty), or absent under both, returns `null`
+    and keeps its own answer (item 3). The report never changes the verdict (item 2). The first
+    cut also fired on a fence inside the verbatim `## Original request`, text no author may edit,
+    so the report pointed at a fence nobody could close. The final review caught it, and
+    `7e4820dc5` credits the fence only when its opener lies in the authored lines before that
+    heading; otherwise the section stays missing by name. Take the second read through the same
+    reader with one option flipped, never through a second model of the format (item 26), and
+    credit the report only to a cause inside the region the author can edit. Pin a hidden
+    section, a section absent under both reads, an opener in the uneditable region, and an opener
+    on the editable region's last line (`tests/bin-lib/markdown-blocks.test.js`'s
+    `hiddenByUnclosedFence` cases, `tests/bin-lib/issues/materialize-format.test.js`'s two #4350
+    Original request cases).

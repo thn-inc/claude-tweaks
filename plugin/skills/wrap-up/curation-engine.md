@@ -82,6 +82,7 @@ One payload per open row, on stdin:
       "targetPath": "skills/upstream-drift/SKILL.md",
       "action": "applied",
       "stagePath": null,
+      "hold": false,
       "commit": "a1b2c3d"
     }
   ],
@@ -99,6 +100,7 @@ One payload per open row, on stdin:
 | `findings` | when `result` is `findings` | Non-empty array. Every entry is validated: `action` is `applied` or `staged`, `kind` is a non-empty string, `summary` is a non-empty string. |
 | `findings[].targetPath` | in practice | The file the finding is about. Not validated, but rendered into the console table — omit it and the cell prints `undefined`. |
 | `findings[].stagePath` | staged findings | The **absolute** anchored path of the `staged/` file holding the proposal, per the staged-file invariant whose single owner is `_shared/pipeline-run-dir.md`'s Anchoring section, exactly as the judge verified it with `test -f` (section 4). A relative value is a contract violation the controller rejects before `record` — see section 4. Same rendering caveat. The engine renders it as given — the console's Disposition cell shows the absolute path, deliberately, so a reader can open it from any cwd. |
+| `findings[].hold` | `references` staged findings | Boolean: `permittedInitiative`'s verdict, copied verbatim (`reference-sweep.md` Step 4). Not validated at record time and stored as given; the console resolver reads it and holds the repair on anything but `false`. The resolver reads the repair's paths from the staged file's own diff, never from this payload. |
 | `findings[].commit` | applied findings | Short hash of the finding's own commit, written by the **controller's serial-commit pass** (section 4) after the payload returns — a judge never commits and never fills this field, and a judge-filled value is a payload violation the serial-commit pass rejects. Same rendering caveat. |
 | `gapDetection` | yes | `run` or `not-run` — did this row run its missing-artifact detection, as opposed to only judging what already exists. |
 | `detail` | no | One short reader-facing phrase for the trace's Detail column. Subject to section 5. |

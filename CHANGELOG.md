@@ -53,6 +53,58 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.161.0](https://github.com/thn-inc/claude-tweaks/compare/v6.160.3...v6.161.0) (2026-11-03)
+
+
+### Features
+
+* Acceptance packet: schema, canonical marker comment, new… ([#4611](https://github.com/thn-inc/claude-tweaks/issues/4611)) ([1df0b20](https://github.com/thn-inc/claude-tweaks/commit/1df0b2049fde4b27b5315d0d8890ad03e21179bc))
+* archive-run: commits the archive move on the current… ([#3721](https://github.com/thn-inc/claude-tweaks/issues/3721)) ([dc02e27](https://github.com/thn-inc/claude-tweaks/commit/dc02e270013c9ce0bb5d7ac4bdb78272822dcaa1))
+
+
+### Bug Fixes
+
+* A bundled merge under-reports in a release: only its… ([#4634](https://github.com/thn-inc/claude-tweaks/issues/4634)) ([48bcbda](https://github.com/thn-inc/claude-tweaks/commit/48bcbda814b63c8223f2b653af39a7442b0d413f))
+* Align the shared fence rule with CommonMark indentation… ([#4350](https://github.com/thn-inc/claude-tweaks/issues/4350)) ([336a14d](https://github.com/thn-inc/claude-tweaks/commit/336a14de0610b195c384cbad25669fbfe66abba5))
+* Anchor the declined-learning store at the main checkout… ([#4360](https://github.com/thn-inc/claude-tweaks/issues/4360)) ([2e1039b](https://github.com/thn-inc/claude-tweaks/commit/2e1039b15e280f774c877a8e8b3c1148f9a69ab6))
+* claim-targets: a permission-denied claim read or write… ([#4899](https://github.com/thn-inc/claude-tweaks/issues/4899)) ([a8d1067](https://github.com/thn-inc/claude-tweaks/commit/a8d1067f14eab4e1e27557628749dc26743a98cc))
+* dispatch: shipped-candidate exclusion treats an API-first… ([#4432](https://github.com/thn-inc/claude-tweaks/issues/4432)) ([5edceca](https://github.com/thn-inc/claude-tweaks/commit/5edceca8c3e7b0a6498fd25cb51b3c3019ab14f3))
+* engine-verify.js: acceptance-labeling's gated/resolved… ([#3508](https://github.com/thn-inc/claude-tweaks/issues/3508)) ([6df94c4](https://github.com/thn-inc/claude-tweaks/commit/6df94c407158fc51fb679e3b9ca5c9bbd61cb295))
+* Gate origin-derived --repo/--hostname hosts on a positive… ([#4933](https://github.com/thn-inc/claude-tweaks/issues/4933)) ([d255552](https://github.com/thn-inc/claude-tweaks/commit/d255552fa7b949c988b6d18a3de33bebbaaeb84c)), closes [#4951](https://github.com/thn-inc/claude-tweaks/issues/4951)
+* Leave a verification stamp on /test's bookkeeping-only… ([#4395](https://github.com/thn-inc/claude-tweaks/issues/4395)) ([138846c](https://github.com/thn-inc/claude-tweaks/commit/138846c314a84f7d6d280d74f17df812918374d0))
+* pr-scan fixed limits truncate results here ([#4820](https://github.com/thn-inc/claude-tweaks/issues/4820)) ([3ebed67](https://github.com/thn-inc/claude-tweaks/commit/3ebed678f0a22fb21be9d433031c732d6ccf9c9c))
+* pr-scan item 10 drops claims on API errors ([#4818](https://github.com/thn-inc/claude-tweaks/issues/4818)) ([02f25d8](https://github.com/thn-inc/claude-tweaks/commit/02f25d8c94c8428cc9a53331305400771c25a517))
+* pr-scan item 4 wrongly calls PR states exclusive ([#4819](https://github.com/thn-inc/claude-tweaks/issues/4819)) ([3999088](https://github.com/thn-inc/claude-tweaks/commit/399908890881259c72a1e937dcd021a656deba11))
+* Quote --stack-stderr on the review-routing-line call: raw… ([#4637](https://github.com/thn-inc/claude-tweaks/issues/4637)) ([b2fb48d](https://github.com/thn-inc/claude-tweaks/commit/b2fb48d5a574d455ace3703bedc834a8ef096152))
+* Ratifying a deferral SDD ruling at the Review Console… ([#3942](https://github.com/thn-inc/claude-tweaks/issues/3942)) ([1bf23b3](https://github.com/thn-inc/claude-tweaks/commit/1bf23b338c9ad8c0928193348d6695a45f9a5017))
+* Reference-repair hold fails open when the agent-written… ([#4636](https://github.com/thn-inc/claude-tweaks/issues/4636)) ([8975c05](https://github.com/thn-inc/claude-tweaks/commit/8975c0538469d11e06fc227465f2b7ad96723252))
+* Resolve escaped-blank, line-continuation and `$word\ >`… ([#4294](https://github.com/thn-inc/claude-tweaks/issues/4294)) ([7a749d8](https://github.com/thn-inc/claude-tweaks/commit/7a749d83b57f833c5f767fd521662dc82e6a6c57))
+* The merge-provenance own-work filter drops shipping work… ([#4639](https://github.com/thn-inc/claude-tweaks/issues/4639)) ([bc95c8a](https://github.com/thn-inc/claude-tweaks/commit/bc95c8a9f775a7d97f8204ba7b182f1e064cfdfb))
+* Windows regression: 1 test file(s) newly failing after… ([#3982](https://github.com/thn-inc/claude-tweaks/issues/3982)) ([31d8c81](https://github.com/thn-inc/claude-tweaks/commit/31d8c81e7f7006547f22b320f519a0a1fde71196)), closes [#4164](https://github.com/thn-inc/claude-tweaks/issues/4164)
+* Windows: shadow-dup-proposal reads a staged symlink… ([#4355](https://github.com/thn-inc/claude-tweaks/issues/4355)) ([a9b1f9b](https://github.com/thn-inc/claude-tweaks/commit/a9b1f9b4bc0a1ba5da353954e62686616e3aea8b))
+* Windows: tests expect native paths where git prints… ([#4289](https://github.com/thn-inc/claude-tweaks/issues/4289)) ([da6186a](https://github.com/thn-inc/claude-tweaks/commit/da6186a2f7409148ad2246dc4d9085ca0bee43a4))
+* Windows: tests pin POSIX-literal absolute fixture paths… ([#4286](https://github.com/thn-inc/claude-tweaks/issues/4286)) ([242eca7](https://github.com/thn-inc/claude-tweaks/commit/242eca7b4f9fc7969ebe187045d7f0c85a988628))
+
+### Highlights
+* Settle 12 small deferred findings in dispatch.
+* A dispatched record stopped by an unlanded blocker no longer accrues failed attempts toward `bot:blocked`, and dispatch no longer selects such a record until its blocker lands.
+* A pipeline run no longer stalls at the review test gate after build commits its own ledger: the test step's bookkeeping-only skip now leaves a verification stamp for the new commit. The review test gate also always ends: a project with no verification commands proceeds on a logged decision, and a stamp that still does not verify HEAD after one re-run stops the review and names the cause, instead of re-running the tests again.
+* Internal: post-merge reads closing-links results directly, removing its unreadable-envelope failure mode.
+* Settle 3 small deferred findings in reflect.
+* A record whose unclosed code fence hides later sections is now told to close that fence, instead of to add sections it already has; release-note repair reads fences exactly as the shape gate does.
+* Settle 4 small deferred findings in hooks.
+* Dispatch no longer treats a record as already shipped when a pipeline merged only part of it and released the record to finish the rest.
+* The close procedure for a decomposed feature's parent now comments and closes in the same repository it read from, so a checkout with more than one remote no longer writes to the wrong one.
+* Declining a reflect or feedback insight from a worktree now sticks: the decline is remembered after the worktree is cleaned up, so the same insight is not proposed again.
+* The release gate reviews every merged change in the release, including work that reached main through a merge commit.
+* A review-routing line can no longer be broken by a quote in git error output.
+* On Windows, the Review Console no longer quotes a file from outside the repository into a filed record when a staged copy is a symlink.
+* Settle 15 small deferred findings in tests.
+* A claim read or write that GitHub refuses for permissions now stops the run and says which token access to fix, instead of counting as a failed attempt to retry.
+* A release now lists every record in a bundled merge, carries each one's own release note, and leaves out notes that say there is no user-visible change.
+* Fix a Windows-only failure in the reconcile archival test caused by path separators.
+* Replaced the verification brief with an acceptance packet that lists what changed, how to test it, what could not be tested and where confidence is lowest, with every claim tied to evidence.
+
 ## [6.160.3](https://github.com/thn-inc/claude-tweaks/compare/v6.160.2...v6.160.3) (2026-11-02)
 
 

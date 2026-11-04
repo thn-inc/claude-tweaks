@@ -39,6 +39,7 @@ const { probeSchemaStrict } = require('./lib/issues/capabilities-probe');
 const {
   parseRepo, ghAvailable, remoteUrl, ghOptions, pinExplicitRepoHost, gateOriginRepo,
 } = require('./lib/repo-resolve');
+const sharedPrimitives = require('./lib/shared-primitives');
 
 const USAGE = 'usage: fetch-sub-issues.js [<n> ...] [--repo owner/name] [--resolve-retries] [--help]\n';
 
@@ -75,9 +76,9 @@ const realDeps = {
   // #4505: an explicit --repo's host reaches the github.com case of the schema probe, GraphQL
   // batch and REST retry; off github.com the probe and batch carry their own --hostname (#4806).
   pinGhHost: (repoSpec) => pinExplicitRepoHost(repoSpec),
-  // 30s bound: a 50-alias GraphQL batch outweighs the 5s single-call convention
-  // (gh-api-module-pattern's "bound every remote-contacting call" rule).
-  runner: (args) => execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', timeout: 30000, windowsHide: true })),
+  // One aliased batch (50 aliases) outweighs the 5s single-call convention, so it gets the shared
+  // batched bound (gh-api-module-pattern's "bound every remote-contacting call" rule), read per call.
+  runner: (args) => execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', timeout: sharedPrimitives.GH_BATCH_TIMEOUT_MS, windowsHide: true })),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };

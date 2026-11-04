@@ -7,8 +7,8 @@
 
 const { recordPayload } = require('../issues/record');
 const {
-  REQUIRED_SECTIONS: GATE_SECTIONS, PLACEHOLDER_PATTERNS, ORIGINAL_REQUEST_RE, sectionText, shapeGate, stripCodeSpans,
-  liftMetadata, describeDesignIntentError,
+  REQUIRED_SECTIONS: GATE_SECTIONS, PLACEHOLDER_PATTERNS, ORIGINAL_REQUEST_RE, UNCLOSED_FENCE_PREFIX, sectionText, shapeGate,
+  stripCodeSpans, liftMetadata, describeDesignIntentError,
 } = require('../issues/materialize-format');
 
 // Derived from the gate's own lists — never a locally declared copy (#2827). Exported under
@@ -40,7 +40,7 @@ function splitSections(body) {
 // body -> { ok, gaps: string[] } — ok is shapeGate's verdict plus the Design-intent: line check
 // (#3018: materialization rejects an invalid line, so a record must not be written ready with
 // one); gaps names every failing check at once (never just the first), in REQUIRED_SECTIONS
-// order, then marker order, then the Design-intent line.
+// order, then the unclosed-fence entry (#4350), then marker order, then the Design-intent line.
 function validateShaped(body) {
   const text = String(body || '');
   const gate = shapeGate(text);
@@ -50,6 +50,9 @@ function validateShaped(body) {
   for (const name of SECTION_NAMES) {
     if (!gate.missing.includes(name)) continue;
     gaps.push(sectionText(text, name) === null ? `missing section: ## ${name}` : `empty section: ## ${name}`);
+  }
+  for (const entry of gate.missing) {
+    if (entry.startsWith(UNCLOSED_FENCE_PREFIX)) gaps.push(entry);
   }
   if (gate.missing.includes('unresolved-placeholder')) {
     const at = text.search(ORIGINAL_REQUEST_RE);
