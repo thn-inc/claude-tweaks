@@ -1186,7 +1186,7 @@ registerCheck('upstream-feedback', ({ expectations, deps, cwd }) => {
   const env = (deps.gateDeps && deps.gateDeps.env) || process.env;
   const ghHost = ghHostIn(env);
   if (ghHost && ghHost !== 'github.com') {
-    return { result: 'unknown', detail: `GH_HOST is ${ghHost}, but upstream-feedback issue URLs are on github.com — check not run, so this command keeps one host (#4794)` };
+    return { result: 'unknown', detail: `GH_HOST is ${ghHost}, but upstream-feedback issue URLs are on github.com — check not run; re-run with GH_HOST unset to check them (#4794)` };
   }
   if (!ghAvailable(deps, cwd)) return { result: 'unknown', detail: 'gh absent' };
   const failing = [];

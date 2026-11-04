@@ -373,7 +373,8 @@ function defaultBulkRunner(args, cwd) {
 // 'unknown-host' is an origin the #4933 host gate refuses (an SSH alias, an
 // unknown host) — nothing is spawned, and it is not an outage. No origin at all
 // stays 'network-failure'. `opts.repoSlug` (a caller that gated the origin
-// itself) skips the read; `opts.gateDeps` is the gate's injectable env/readFile.
+// itself) skips the read, and must be a `repoTargetOf` result's bare `.slug`, never
+// its `.ghRepo`; `opts.gateDeps` is the gate's injectable env/readFile.
 // The GraphQL owner/name pair is the bare split of the slug, never host-qualified.
 function resolvePrStatesBulk(repoRoot, branches, opts = {}) {
   const runner = opts.runner || ((args) => defaultBulkRunner(args, repoRoot));

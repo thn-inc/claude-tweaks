@@ -32,8 +32,9 @@
 // tie-break to prune-remote — archive's deletes are local-only and
 // recoverable from origin.
 //
-// A screen failure degrades to per-branch gh-absent/network-failure skips
-// (the pre-#1083 shape) rather than a check-level failure: the archive-tag
+// A screen failure, or an origin the #4933 gate refuses, degrades to per-branch
+// gh-absent/network-failure/unknown-host skips (the pre-#1083 shape; an unknown-host
+// skip carries the refusal as `detail`) rather than a check-level failure: the archive-tag
 // aging sweep is wholly gh-independent and keeps running — a permanently
 // gh-absent environment must not lose tag GC (#1083 review). prune-remote's
 // check-level pr-screen-failed differs deliberately: it guards no secondary

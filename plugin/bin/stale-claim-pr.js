@@ -53,7 +53,7 @@
 // the refusal also on stderr, with no claim read and no `gh` call (#4794). The open-PR
 // listing and the PR-url match share one host (resolveRepoTarget, one result):
 // the typed `--repo` host, else an exported non-empty GH_HOST, else the origin's
-// host, else github.com. A bare `--repo owner/name` is github.com unless GH_HOST is exported.
+// host, else github.com. A bare `--repo owner/name` is github.com unless a non-empty GH_HOST is exported.
 // Exit codes (a CLI-specific vocabulary — verdicts are data on stdout, so the
 // codes only cover what stops a verdict being reached; no JSON on 1-3):
 //   1  malformed invocation (unknown flag, a flag missing its value, an
@@ -181,7 +181,7 @@ function noMatch(failure = null) {
 
 // -> { owner, repo, target } (target a resolveRepoTarget result, { host, ghRepo }), { refusal } for an
 // origin the gate refuses, or { target: null } when owner/repo cannot be resolved. A typed
-// host-qualified --repo is trusted and not gated; a bare one is github.com unless GH_HOST is exported;
+// host-qualified --repo is trusted and not gated; a bare one is github.com unless a non-empty GH_HOST is exported;
 // an origin goes through the gate and its host decides only after an exported GH_HOST and a typed host.
 function resolveTarget(opts, deps) {
   const gateDeps = deps.gateDeps || {};

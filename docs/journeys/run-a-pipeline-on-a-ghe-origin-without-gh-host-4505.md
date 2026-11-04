@@ -42,10 +42,10 @@ files:
 
 ### 4. An explicit choice still wins — `plugin/bin/materialize.js` with `--repo`, or an exported `GH_HOST`
 - **URL:** —
-- **Action:** The maintainer either exports `GH_HOST=other.example` or runs `materialize.js N --repo owner/name`. With the export, no claude-tweaks call overwrites it. With `--repo owner/name`, every `gh` call that run makes (the issue view and the author-association lookup) goes to github.com, the host the bare slug names.
+- **Action:** The maintainer either exports `GH_HOST=other.example` or runs `materialize.js N --repo owner/name`. With a non-empty export, no claude-tweaks call overwrites it (an empty `GH_HOST` is unset, so a GHE origin's host is injected over it, #4794). With `--repo owner/name`, every `gh` call that run makes (the issue view and the author-association lookup) goes to github.com, the host the bare slug names.
 - **Should feel:** In control: the plugin defers to what the maintainer said.
 - **Should understand:** An explicit `--repo` pins its own host for that CLI's calls, so one record is never read from two hosts. The pin is recorded inside the plugin and added only to each `gh` call's own environment; the process environment is never changed, so the record's own Premise-check command inherits the maintainer's environment as is, an exported `GH_HOST` included. An SSH host alias remote (`git@github-work:acme/widgets.git`) gets no injection, because an alias is neither `*.ghe.com` nor a `hosts.yml` key. For a GHES host that is neither, this export is the opt-in (or unset the enterprise token and run `gh auth login --hostname {host}`, which gh refuses while the token is exported): an enterprise token alone no longer admits the host. A `--repo` host is compared the same normalized way, so `github.com./owner/name` pins nothing on a github.com origin.
-- **Red flags:** An exported `GH_HOST` replaced by the origin host; `materialize --repo owner/name` reading the issue on github.com but its author on the GHE host; `none of the git remotes correspond to the GH_HOST environment variable` on an SSH-alias checkout.
+- **Red flags:** An exported non-empty `GH_HOST` replaced by the origin host; `materialize --repo owner/name` reading the issue on github.com but its author on the GHE host; `none of the git remotes correspond to the GH_HOST environment variable` on an SSH-alias checkout.
 
 ### 5. Sub-issue lookups name their host — `plugin/bin/fetch-sub-issues.js`, `plugin/bin/lib/issues/parent-gate.js`
 - **URL:** —

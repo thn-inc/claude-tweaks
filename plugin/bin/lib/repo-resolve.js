@@ -10,7 +10,7 @@
 // sends it to whatever GH_HOST names (#4854). It adds no timeout or windowsHide and
 // there is no seam spawn helper: each wrapped site's own `timeout` carries its bound.
 // The origin-host gate (#4933), gateOriginRepo(remote, deps), is what a CLI's
-// origin-derived repo goes through. Any non-empty exported GH_HOST stops the refusal:
+// origin-derived repo goes through. An exported GH_HOST that normalizes to a host (ghHostIn) stops the refusal:
 // one matching the origin host carries that host; another host yields a bare slug
 // (spec host github.com), even for a known GitHub origin. An empty (or whitespace-only) GH_HOST
 // is no opt-in, here and in ghOptions alike (#4794: both read it through ghHostIn). Without one,
@@ -139,8 +139,8 @@ function isKnownGhHost(host, deps = {}) {
 }
 
 // #4933: an origin remote -> { spec, refusal }. An absent or unparseable remote is
-// { spec: null, refusal: null } (the caller's own no-repo path). A non-empty exported
-// GH_HOST decides first: the origin host when it names that host, else github.com.
+// { spec: null, refusal: null } (the caller's own no-repo path). An exported GH_HOST
+// that normalizes to a host (ghHostIn) decides first: the origin host when it names that host, else github.com.
 // An exported but empty (or whitespace-only) GH_HOST is no opt-in here, so an unknown origin
 // host is still refused (decided at #4933's plan review); since #4794 ghOptions reads it the
 // same way, through ghHostIn.
@@ -289,9 +289,9 @@ function ghOptions(args, opts, deps = {}) {
   return { ...o, env: { ...base, GH_HOST: spec.host } };
 }
 
-// #4794: the exported GH_HOST as a normalized host, or null when it is unset, empty or
-// whitespace-only (an empty GH_HOST is no opt-in anywhere). The one reader of GH_HOST for
-// resolveRepoTarget and the callers that compare a host against it.
+// #4794: the exported GH_HOST as a normalized host, or null when it is unset or normalizes to
+// nothing (empty, whitespace-only, all dots). The one GH_HOST reader: gateOriginRepo, ghOptions,
+// explicitRepoGhHost, resolveRepoTarget and every caller comparing a host against it.
 function ghHostIn(env) {
   return normalizeHost(String((env || {}).GH_HOST || '').trim()) || null;
 }
@@ -316,7 +316,7 @@ function resolveRepoTarget({ owner, repo, explicitHost = null, originHost = null
 // spec threads no --hostname; a GraphQL owner/repo pair; `gh api user`) would
 // otherwise get ghOptions's origin host. -> the host those calls must reach,
 // or null when ghOptions already reaches it from `cwd` (github.com when it
-// injects nothing) or GH_HOST is exported (AC4: the user's value wins).
+// injects nothing) or a non-empty GH_HOST is exported (AC4: the user's value wins).
 function explicitRepoGhHost(repoSpec, cwd, deps = {}) {
   const env = deps.env || process.env;
   if (!repoSpec || ghHostIn(env)) return null;

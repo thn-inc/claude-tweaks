@@ -22,6 +22,8 @@ files:
   - plugin/bin/list-claims.js
   - plugin/bin/lib/number-list-cli.js
   - plugin/bin/stuck-open-prs.js
+  - plugin/bin/claim-targets.js
+  - plugin/bin/stale-claim-pr.js
   - plugin/skills/backlog/attention-mode.md
 ---
 
@@ -38,7 +40,7 @@ files:
 - **URL:** —
 - **Action:** `materialize.js 4933` reads `origin` and finds `git.corp.example`. That host is not `github.com`, does not end in `.ghe.com`, is not a `hosts.yml` key, and no `GH_HOST` is exported. The CLI writes `materialize.js: origin host git.corp.example is not a known GitHub host (not github.com, not *.ghe.com, not a gh hosts.yml key) — refusing to send it to gh; if it is GitHub Enterprise, export GH_HOST=git.corp.example` to stderr and exits 2. It makes no `gh` call besides the `gh --version` probe.
 - **Should feel:** Stopped at the door with the key in hand: one line, the host named, the exact export to run.
-- **Should understand:** Eighteen CLIs share this gate: materialize, compose-subject, release-claim, repair-claim, preflight-records, parent-gate's gh path, resolved-refusal, link-records, fetch-sub-issues, backlog-grant-gate, apply-refine-labels, file-feedback, list-claims, resolve-blockers, resolve-linked-prs, stuck-open-prs (#4951), claim-targets (#4794, which refuses only: its repo still comes from gh) and stale-claim-pr (#4794). Each one but the last exits 2, its usual "could not resolve owner/repo" code; stale-claim-pr always exits 0, with an `unknown-host: {refusal}` verdict whose `match` is false, as it does for every verdict. `/claude-tweaks:backlog attention` runs stuck-open-prs and shows its refusal in the `stuck:open-pr` note line as `(exit 2: {refusal})`. None of them falls back to a bare `owner/repo`, which gh would send to github.com, possibly to a stranger's repo of the same name. An enterprise token alone is not a signal. An exported but empty `GH_HOST` is not an opt-in either; the gh host seam reads an empty value the same way (#4794). `parent-gate.js --facts-json` makes no gh call, so it still parses the origin without refusing.
+- **Should understand:** Eighteen CLIs share this gate: materialize, compose-subject, release-claim, repair-claim, preflight-records, parent-gate's gh path, resolved-refusal, link-records, fetch-sub-issues, backlog-grant-gate, apply-refine-labels, file-feedback, list-claims, resolve-blockers, resolve-linked-prs, stuck-open-prs (#4951), claim-targets (#4794, which refuses only: its repo still comes from gh) and stale-claim-pr (#4794). Each one but the last exits 2, its usual "could not resolve owner/repo" code; stale-claim-pr exits 0 with an `unknown-host: {refusal}` verdict whose `match` is false, as it does for every verdict. `/claude-tweaks:backlog attention` runs stuck-open-prs and shows its refusal in the `stuck:open-pr` note line as `(exit 2: {refusal})`. None of them falls back to a bare `owner/repo`, which gh would send to github.com, possibly to a stranger's repo of the same name. An enterprise token alone is not a signal. An exported but empty `GH_HOST` is not an opt-in either; the gh host seam reads an empty value the same way (#4794). `parent-gate.js --facts-json` makes no gh call, so it still parses the origin without refusing.
 - **Red flags:**
   - A recorded `gh` argv carrying `--repo git.corp.example/…` or `--hostname git.corp.example`.
   - A bare `--repo acme/widgets` on a refused run.
@@ -83,5 +85,5 @@ files:
 ## Origin
 - Created during the build of #4933 (origin host gated before reaching gh; refuse, never drop), run 2026-11-02T074712-spec-4933-4951.
 - Updated during the build of #4951 (stuck-open-prs.js moved onto the gate; its refusal surfaces in `/claude-tweaks:backlog attention`), same run; pinned by `tests/bin-lib/dispatch/stuck-open-pr.test.js`.
-- Pinned by `tests/bin-lib/repo-resolve.test.js` (gate unit cases), `tests/gh-host-seam-behavior.test.js` (refusal, pass-through and normalization for each of the 16 CLIs), `tests/gh-host-seam-conformance.test.js` (the `ORIGIN_GATED` roster), `tests/hooks-teardown-run.test.js`, `tests/bin-lib/reconcile/post-merge.test.js`, `tests/reconcile.test.js` and `tests/bin-lib/wrap-up/pack.test.js`.
+- Pinned by `tests/bin-lib/repo-resolve.test.js` (gate unit cases), `tests/gh-host-seam-behavior.test.js` (refusal, pass-through and normalization for each of the 16 `CLI_TABLE` CLIs, plus dedicated refusal cases for claim-targets and stale-claim-pr), `tests/gh-host-seam-conformance.test.js` (the `ORIGIN_GATED` roster), `tests/hooks-teardown-run.test.js`, `tests/bin-lib/reconcile/post-merge.test.js`, `tests/reconcile.test.js` and `tests/bin-lib/wrap-up/pack.test.js`.
 - Related: `run-a-pipeline-on-a-ghe-origin-without-gh-host-4505.md` covers the known-host path, where the same origin rules admit the host with no export.
