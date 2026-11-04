@@ -100,7 +100,7 @@ an empty file (the CLI refused its argv or never started) and unparseable JSON a
 reads `unknown` when the file holds none). Exit 2 is a missing `gh` (the MCP-transport case of
 `_shared/github-write-transport.md`, where this CLI has no path), an unresolved repo or main checkout,
 an unreadable snapshot, or an origin host with no GitHub signal (`failed.message` names the host and the
-`GH_HOST={host}` opt-in); exit 4 is a failed linked-PR read.
+`GH_HOST` opt-in); exit 4 is a failed linked-PR read.
 
 ## Step 2: Merge and dedupe
 

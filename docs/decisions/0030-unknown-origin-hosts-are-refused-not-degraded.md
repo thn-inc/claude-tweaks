@@ -30,7 +30,7 @@ Refuse. An origin-derived host passes only on a positive GitHub signal, checked 
 3. A host ending in `.ghe.com`, or an exact key in gh's `hosts.yml` (the same `isKnownGhHost` test
    the seam uses — one function, not a second copy).
 
-Anything else returns a refusal: the CLI writes `{cli}: {refusal}` to stderr — naming the host and
+Anything else returns a refusal: the CLI writes `{cli}: {refusal}` to stderr, naming the host and
 the `export GH_HOST={host}` opt-in. An SSH origin (scp-style, or an `ssh://`, `git+ssh://` or
 `ssh+git://` URL) is instead told to export `GH_HOST` as the real host an SSH alias maps to (e.g.
 `GH_HOST=github.com`), not the alias name, or, if it is GitHub Enterprise, as that server's host: it

@@ -62,4 +62,4 @@ files:
 - Updated during build of #4795 (one explicit `--repo` host mechanism: the pin rides each `gh` call's own env and never touches the process env, so materialize no longer restores an environment for the Premise-check command): Steps 2 and 4
 - Updated during wrap-up of #4805 (acceptance-labeling resolves its one repository through `gateOriginRepo` and names the host on each read, so the seam steps back for it): Step 3
 - Related: `open-a-run-pr-on-a-slow-gh-host-4554.md` (the same host when `gh` is slow rather than misrouted)
-- Related: `opt-in-an-unknown-origin-host-with-gh-host-4933.md` (#4933: an origin host that is not known — no `*.ghe.com`, no `hosts.yml` key, no exported `GH_HOST` — is now refused by the issue CLIs with the `GH_HOST={host}` opt-in, not sent to gh)
+- Related: `opt-in-an-unknown-origin-host-with-gh-host-4933.md` (#4933: an origin host that is not known — no `*.ghe.com`, no `hosts.yml` key, no exported `GH_HOST` — is now refused by the issue CLIs with the `GH_HOST` opt-in, not sent to gh)

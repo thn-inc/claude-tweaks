@@ -690,7 +690,7 @@ test('#4794: a refused residue repo records unknown-host (refusal) on the escala
 });
 
 // The 200-character cap bounds a gh failure's text, not the gate's refusal: real refusals run 215-340
-// characters and end in the remedy (the alias advice, `export GH_HOST=<host>`), so a cut would lose it.
+// characters and end in the remedy (the alias advice, `export GH_HOST` as the real host), so a cut would lose it.
 const realRefusal = (remote) => gateOriginRepo(remote, { env: {}, readFile: () => { throw new Error('ENOENT'); } }).refusal;
 
 for (const remote of ['git@github-work:acme/widgets.git', 'https://git.corp.invalid/acme/w.git']) {
