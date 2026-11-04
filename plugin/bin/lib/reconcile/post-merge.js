@@ -75,7 +75,8 @@ const { listRunDirsWithState, readRunState } = require('../hooks/context');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { repoSpecOf } = require('../hooks/git-exec');
 const { readWorkBackend } = require('../work-backend');
-const { resolvePolicyKeys } = require('../policy-schema');
+const { resolvePolicyKeys, POLICY_KEYS } = require('../policy-schema');
+const { isAlive: pidAlive } = require('../file-lock');
 const { appendEntries, formatEntry, parseEntry } = require('../log-decision/append');
 const { GH_TIMEOUT_MS } = require('../shared-primitives');
 const { resolveWithin } = require('../path-guard');
@@ -95,6 +96,16 @@ const CLOSE_WINDOW_MS = 10 * 60 * 1000;
 const MERGE_GRACE_MS = 10 * 60 * 1000;
 const CLAIM_STALE_MS = 10 * 60 * 1000;
 const CLAIM_FILENAME = '.post-merge.lock';
+// The holder refreshes its claim before every `gh` call, so its idle time is at most one call plus seconds of
+// non-`gh` work. A call on this path runs once, with no retry, bounded by the 60 s gh-timeout-ms schema ceiling.
+// The backstop is at least 2.5x that ceiling (150 s, background-lock.js's ratio), rounded up to 5 minutes:
+// reclaiming a live holder costs more than reclaiming a dead one late. A claim whose pid reads live but that
+// has sat idle past it belongs to a reused pid or a suspended holder.
+const GH_TIMEOUT_CEILING_MS = POLICY_KEYS.find((k) => k.key === 'gh-timeout-ms').max;
+const CLAIM_MAX_IDLE_MS = Math.max(5 * 60 * 1000, 2.5 * GH_TIMEOUT_CEILING_MS);
+// The bound on a judging pass's rename-to-link-back sequence (a few synchronous fs calls). A `.stale-` aside
+// older than this is an orphan, never proof that its content's holder still owns the claim.
+const CLAIM_ASIDE_MAX_AGE_MS = 60 * 1000;
 // The one prStates failure string worth retrying; every other string is final (see the header).
 const TRANSIENT_PR_FAILURE = 'network-failure';
 // Step 4.0b skips that are deliberate gate outcomes, not failures: below-floor-parent-close.js's own list,
@@ -208,19 +219,61 @@ function policySkipOf(policyFile, riskFloorEntry, rejectedRiskFloor) {
   return null;
 }
 
-// Take the per-run claim: `{runDir}/.post-merge.lock`, created exclusively. A
-// live claim (mtime under CLAIM_STALE_MS) is in flight; a stale one is taken over
-// ATOMICALLY — renamed aside first, so of two takeovers only the rename winner
-// goes on to retry the create, once. Returns { ok: true } | { ok: false, reason }.
-function takeClaim(runDir, nowMs, fsApi = fs) {
+// Pure: is this claim reclaimable? `content` is the claim file's text, `mtimeMs` its last refresh. A claim
+// naming an owner pid (`{pid}-{random}`) is stale once that pid is dead, or once it has sat idle past
+// CLAIM_MAX_IDLE_MS (a reused pid, a suspended holder). A claim naming no owner (an empty file: an older
+// reconciler's claim, or a new one between its create and its token write; or one whose content could not be
+// read) keeps the mtime-only CLAIM_STALE_MS rule.
+function claimIsStale(content, mtimeMs, nowMs, isAlive) {
+  const m = /^(\d+)-/.exec(content);
+  if (!m) return nowMs - mtimeMs >= CLAIM_STALE_MS;
+  return !isAlive(Number(m[1])) || nowMs - mtimeMs > CLAIM_MAX_IDLE_MS;
+}
+
+// Take the per-run claim: `{runDir}/.post-merge.lock`, a plain file created exclusively and holding the
+// owner token `{pid}-{random}`. A claim is in flight while its holder is alive and has refreshed it within
+// CLAIM_MAX_IDLE_MS (the holder refreshes it before every `gh` call, via heartbeatClaim); a dead holder's
+// claim, one idle past that backstop, or one naming no holder past CLAIM_STALE_MS is taken over ATOMICALLY —
+// renamed aside first, so of two takeovers only the rename winner goes on to retry the create, once. Returns
+// { ok: true, token } | { ok: false, reason: 'in-flight' | 'claim-failed' }; releaseClaim and heartbeatClaim
+// act only on a claim that still carries the returned token.
+//
+// file-lock.js's acquireLock cannot serve here: (a) its reclaim is rm-then-mkdir, so two reclaimers of one
+// dead lock can both win — the rename-aside takeover below is what the R3 tests pin; (b) it polls up to
+// LOCK_WAIT_MS and returns null both for "held" and for an I/O error, while this pass needs a non-blocking
+// take with distinct in-flight / claim-failed reasons that drive archive deferral; (c) its lock is a
+// directory with a 5 s ownerless fallback, but older installed reconcilers create and respect
+// .post-merge.lock as a plain empty file, so that fallback would steal their live claim after 5 seconds;
+// (d) it has no refresh, so a long hold cannot stay fresh to a reader that judges by age. Hence only its
+// isAlive probe is reused.
+//
+// Interop: until every installed build upgrades, an older reconciler still takes over a claim idle past
+// CLAIM_STALE_MS by mtime alone and releases unconditionally. The refresh keeps a progressing holder fresh
+// to it too.
+function takeClaim(runDir, nowMs, fsApi = fs, { isAlive = pidAlive } = {}) {
   const lock = path.join(runDir, CLAIM_FILENAME);
-  const create = () => { fsApi.closeSync(fsApi.openSync(lock, 'wx')); };
-  try {
-    create();
-    return { ok: true };
-  } catch (e) {
-    if (!e || e.code !== 'EEXIST') return { ok: false, reason: 'claim-failed' };
-  }
+  const token = `${process.pid}-${Math.random().toString(36).slice(2)}`;
+  // -> 'ok' | 'exists' | 'failed'. A token that cannot be written leaves no half-made (ownerless) claim behind.
+  const create = () => {
+    let fd;
+    try {
+      fd = fsApi.openSync(lock, 'wx');
+    } catch (e) {
+      return e && e.code === 'EEXIST' ? 'exists' : 'failed';
+    }
+    try {
+      fsApi.writeSync(fd, token);
+      fsApi.closeSync(fd);
+      return 'ok';
+    } catch {
+      try { fsApi.closeSync(fd); } catch { /* already closed or never opened */ }
+      try { fsApi.unlinkSync(lock); } catch { /* nothing to remove */ }
+      return 'failed';
+    }
+  };
+  const created = create();
+  if (created === 'ok') return { ok: true, token };
+  if (created === 'failed') return { ok: false, reason: 'claim-failed' };
   let mtimeMs;
   try {
     mtimeMs = fsApi.statSync(lock).mtimeMs;
@@ -228,7 +281,15 @@ function takeClaim(runDir, nowMs, fsApi = fs) {
     // The holder released it between our create and this stat: it is in flight, retry next pass.
     return { ok: false, reason: e && e.code === 'ENOENT' ? 'in-flight' : 'claim-failed' };
   }
-  if (nowMs - mtimeMs < CLAIM_STALE_MS) return { ok: false, reason: 'in-flight' };
+  // A claim file that exists but cannot be read is ownerless, never claim-failed: it would otherwise be
+  // unreclaimable forever.
+  let content = '';
+  try {
+    content = fsApi.readFileSync(lock, 'utf8');
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return { ok: false, reason: 'in-flight' }; // released between the stat and the read
+  }
+  if (!claimIsStale(content, mtimeMs, nowMs, isAlive)) return { ok: false, reason: 'in-flight' };
   const aside = `${lock}.stale-${process.pid}-${Date.now()}`;
   try {
     fsApi.renameSync(lock, aside);
@@ -236,28 +297,86 @@ function takeClaim(runDir, nowMs, fsApi = fs) {
     return { ok: false, reason: e && e.code === 'ENOENT' ? 'in-flight' : 'claim-failed' }; // another taker won the rename
   }
   // The rename moves whatever sits at the path NOW. If another taker finished its whole takeover
-  // between our stat and our rename, that is its fresh claim, not the stale one: put it back.
+  // between our stat and our rename, that is its fresh claim, not the stale one: re-judge the aside's
+  // own content and mtime, and put a live one back.
   let asideMtimeMs = mtimeMs;
-  try { asideMtimeMs = fsApi.statSync(aside).mtimeMs; } catch { /* keep the stale reading */ }
-  if (nowMs - asideMtimeMs < CLAIM_STALE_MS) {
-    // Residual window, bounded: the holder may release between our rename and this link, and the
-    // link then re-creates a lock nobody holds. The run reads `in-flight` and defers until that
-    // lock ages past CLAIM_STALE_MS, then the next pass takes it over.
+  let asideContent = content;
+  try { asideMtimeMs = fsApi.statSync(aside).mtimeMs; } catch { /* keep the first reading */ }
+  try { asideContent = fsApi.readFileSync(aside, 'utf8'); } catch { /* keep the first reading */ }
+  if (!claimIsStale(asideContent, asideMtimeMs, nowMs, isAlive)) {
+    // Residual window, bounded: the holder may release between our rename and this link, and the link
+    // then re-creates a claim that carries the holder's token but that nobody holds. The next pass judges
+    // that token's pid: once the holder process has exited it reads dead and is taken over at once; while
+    // the process still runs, nothing refreshes the orphan, so it is taken over once idle past
+    // CLAIM_MAX_IDLE_MS. An ownerless aside that is linked back keeps the CLAIM_STALE_MS rule.
     try { fsApi.linkSync(aside, lock); } catch { /* a third taker already created one */ }
+    // An orphaned aside is ignored by heartbeatClaim once older than CLAIM_ASIDE_MAX_AGE_MS, so it never proves ownership.
     try { fsApi.unlinkSync(aside); } catch { /* an orphaned .stale- file is harmless */ }
     return { ok: false, reason: 'in-flight' };
   }
+  // Same: an orphaned aside is ignored by heartbeatClaim once older than CLAIM_ASIDE_MAX_AGE_MS.
   try { fsApi.unlinkSync(aside); } catch { /* an orphaned .stale- file is harmless */ }
-  try {
-    create();
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, reason: e && e.code === 'EEXIST' ? 'in-flight' : 'claim-failed' };
-  }
+  const retried = create();
+  if (retried === 'ok') return { ok: true, token };
+  return { ok: false, reason: retried === 'exists' ? 'in-flight' : 'claim-failed' };
 }
 
-function releaseClaim(runDir) {
-  try { fs.unlinkSync(path.join(runDir, CLAIM_FILENAME)); } catch { /* already gone */ }
+// Refresh the claim's mtime while it still carries our token -> true when we still own it, else false. A
+// falsy token (a `deps.takeClaim` fake's `{ ok: true }`) owns nothing. Never throws; a failed refresh is
+// swallowed, ownership still reads true.
+//
+// A claim missing at its path is not yet a lost one. A pass judging our claim renames it aside
+// (`{lock}.stale-{pid}-{ms}`), re-judges the aside, and, finding it live, links it back before unlinking the
+// aside: the link-back lands before the aside's unlink, so the claim path or the aside always exists. Three
+// reads are therefore decisive without polling: the claim path (missing), the run dir's young asides, then
+// the claim path again (it finds a link-back that finished between the first read and the listing). Only a
+// young aside counts: a judger's rename-to-link-back is a few synchronous fs calls, so one older than
+// CLAIM_ASIDE_MAX_AGE_MS is an orphan (a swallowed aside unlink, or a judger that died before its
+// link-back) and proves nothing. Residual: a judger that found our aside stale (a dead pid or idle past
+// CLAIM_MAX_IDLE_MS) deletes it, so a holder reading in that window counts as owning for that one check; its
+// next check sees the successor's token.
+function heartbeatClaim(runDir, token, nowMs, fsApi = fs) {
+  if (!token) return false;
+  const lock = path.join(runDir, CLAIM_FILENAME);
+  const refresh = () => {
+    try { fsApi.utimesSync(lock, nowMs / 1000, nowMs / 1000); } catch { /* ownership is still ours */ }
+  };
+  const readClaim = () => {
+    try { return { content: fsApi.readFileSync(lock, 'utf8') }; } catch (e) { return { code: e && e.code }; }
+  };
+  const first = readClaim();
+  if (first.content !== undefined) {
+    if (first.content !== token) return false;
+    refresh();
+    return true;
+  }
+  if (first.code !== 'ENOENT') return false;
+  const asidePrefix = `${CLAIM_FILENAME}.stale-`;
+  let names = [];
+  try { names = fsApi.readdirSync(runDir); } catch { /* fall through to the re-read */ }
+  for (const name of names) {
+    if (!name.startsWith(asidePrefix)) continue;
+    const m = /^\d+-(\d+)$/.exec(name.slice(asidePrefix.length));
+    if (!m || nowMs - Number(m[1]) > CLAIM_ASIDE_MAX_AGE_MS) continue;
+    try {
+      if (fsApi.readFileSync(path.join(runDir, name), 'utf8') === token) return true; // the judger links it back
+    } catch { /* gone: the link-back or the unlink finished */ }
+  }
+  const second = readClaim();
+  if (second.content !== token) return false;
+  refresh();
+  return true;
+}
+
+// Remove the claim only while it still carries our token, so a holder whose claim was taken over never
+// deletes its successor's. A falsy token is a no-op. Never throws. The read-then-unlink gap can only be
+// filled by a takeover, and a holder that refreshed moments ago is neither dead nor idle.
+function releaseClaim(runDir, token, fsApi = fs) {
+  if (!token) return;
+  const lock = path.join(runDir, CLAIM_FILENAME);
+  try {
+    if (fsApi.readFileSync(lock, 'utf8') === token) fsApi.unlinkSync(lock);
+  } catch { /* already gone, or unreadable: nothing of ours to remove */ }
 }
 
 const numbers = (values) => (Array.isArray(values) ? values : []).map(Number).filter(Number.isInteger);
@@ -380,7 +499,7 @@ async function processCandidate({
   } catch (e) {
     return { entry: skipped('error', { detail: oneLine(e && e.message ? e.message : e) }), defer: false };
   } finally {
-    releaseClaim(dir);
+    releaseClaim(dir, claim.token);
   }
 }
 
@@ -431,7 +550,7 @@ function archivedRetryHint(runDir) {
 // `4.0` when `step40Failed` is set or its word is not clean, `4.0b` when `parentFailures` is non-empty —
 // so a caller reports only the step that failed. `next`: `rerun` (a marker-less skip a re-run retries),
 // `rerun-where-gh`, `rerun-after-stale-claim` (an archived run's `in-flight`: its holder can only be another
-// merge-mode invocation, so a re-run past CLAIM_STALE_MS recovers a dead one), or `none` — a `ran` entry's
+// merge-mode invocation, so a re-run takes over a dead holder's claim at once, and a claim naming no holder past CLAIM_STALE_MS), or `none` — a `ran` entry's
 // marker is already written, and every other skip fails the same way again.
 function classifyEntry(entry, { archived = false } = {}) {
   if (entry.action === 'ran') {
@@ -692,8 +811,9 @@ function processRun({
 }
 
 module.exports = {
-  postMerge, postMergeOne, classifyEntry, isFailedRun, failedRecordNumbers, parentsLeftOpen, stepSkipsOf, parentsLeftOpenLine, stepSkipsLine, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim,
+  postMerge, postMergeOne, classifyEntry, isFailedRun, failedRecordNumbers, parentsLeftOpen, stepSkipsOf, parentsLeftOpenLine, stepSkipsLine, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim, heartbeatClaim, releaseClaim,
   composeSkipText, composeSummaryText, boundDetail, oneLine,
   CLEAN_CLOSING_LINKS, RERUN_REASONS, RERUN_WHERE_GH_REASONS,
   MARKER_STEP, ATTEMPT_STEP, MAX_ATTEMPTS, CLOSE_WINDOW_MS, MERGE_GRACE_MS, CLAIM_STALE_MS, CLAIM_FILENAME,
+  CLAIM_MAX_IDLE_MS, GH_TIMEOUT_CEILING_MS, CLAIM_ASIDE_MAX_AGE_MS,
 };

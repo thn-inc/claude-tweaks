@@ -7,6 +7,7 @@ const os = require('os');
 const path = require('path');
 const {
   postMerge, postMergeOne, classifyEntry, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim, MARKER_STEP, ATTEMPT_STEP, MAX_ATTEMPTS, CLOSE_WINDOW_MS, MERGE_GRACE_MS, CLAIM_STALE_MS, CLAIM_FILENAME,
+  heartbeatClaim, releaseClaim, CLAIM_MAX_IDLE_MS, GH_TIMEOUT_CEILING_MS, CLAIM_ASIDE_MAX_AGE_MS,
   parentsLeftOpen, stepSkipsOf, parentsLeftOpenLine, stepSkipsLine,
 } = require('../../../plugin/bin/lib/reconcile/post-merge');
 const { formatEntry, parseEntry } = require('../../../plugin/bin/lib/log-decision/append');
@@ -911,7 +912,7 @@ test('R3 two takeovers: the taker that loses the rename skips in-flight and leav
     },
   });
   const loser = takeClaim(dir, NOW, fsApi);
-  assert.deepEqual(winner, { ok: true });
+  assert.equal(winner.ok, true);
   assert.deepEqual(loser, { ok: false, reason: 'in-flight' });
   assert.ok(fs.existsSync(lockOf(dir)), 'the winner still holds the lock');
   assert.deepEqual(fs.readdirSync(dir).filter((f) => f.includes('.stale-')), []);
@@ -956,6 +957,173 @@ test('takeClaim: a non-EEXIST create error is claim-failed', () => {
   const root = mainCheckout();
   const missing = path.join(root, 'no-such-run-dir');
   assert.deepEqual(takeClaim(missing, NOW), { ok: false, reason: 'claim-failed' });
+});
+
+const setMtime = (dir, ms) => fs.utimesSync(lockOf(dir), ms / 1000, ms / 1000);
+const mtimeOf = (dir) => fs.statSync(lockOf(dir)).mtimeMs;
+
+test('AC1.1 takeClaim: a live holder that took the claim past CLAIM_STALE_MS ago and refreshes it is in-flight, its claim untouched', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const takenAt = NOW - CLAIM_STALE_MS - 60 * 1000;
+  const holder = takeClaim(dir, takenAt);
+  assert.equal(holder.ok, true);
+  setMtime(dir, takenAt); // the claim's create time; without the refresh below it is idle and taken over
+  assert.equal(heartbeatClaim(dir, holder.token, NOW - 60 * 1000), true);
+  assert.deepEqual(takeClaim(dir, NOW), { ok: false, reason: 'in-flight' });
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), holder.token);
+  assert.deepEqual(fs.readdirSync(dir).filter((f) => f.includes('.stale-')), []);
+});
+
+test('AC1.1 postMerge: a live, refreshing holder past CLAIM_STALE_MS skips in-flight, defers, and calls no fake', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const takenAt = NOW - CLAIM_STALE_MS - 60 * 1000;
+  const holder = takeClaim(dir, takenAt);
+  setMtime(dir, takenAt);
+  heartbeatClaim(dir, holder.token, NOW - 60 * 1000);
+  const links = fakeClosingLinks(ENVELOPE);
+  const r = await run(root, { prs: { 11: merged() }, links, close: fakeCloseParents() });
+  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'in-flight' }]);
+  assert.deepEqual(r.deferred, [dir]);
+  assert.equal(links.calls.length, 0);
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), holder.token);
+});
+
+test('takeClaim: a dead holder is reclaimed at once, fresh mtime or not, and the new claim carries our token', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  fs.writeFileSync(lockOf(dir), '424242-dead');
+  setMtime(dir, NOW - 1000);
+  const r = takeClaim(dir, NOW, fs, { isAlive: (pid) => pid !== 424242 });
+  assert.equal(r.ok, true);
+  assert.match(r.token, new RegExp(`^${process.pid}-`));
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), r.token);
+});
+
+test('takeClaim: a live holder idle just under CLAIM_MAX_IDLE_MS is still in-flight', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const held = `${process.pid}-held`;
+  fs.writeFileSync(lockOf(dir), held);
+  setMtime(dir, NOW - CLAIM_MAX_IDLE_MS + 60 * 1000);
+  assert.deepEqual(takeClaim(dir, NOW), { ok: false, reason: 'in-flight' });
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), held);
+});
+
+test('takeClaim: a live-reading holder idle past CLAIM_MAX_IDLE_MS (a reused pid) is reclaimed', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  fs.writeFileSync(lockOf(dir), `${process.pid}-held`);
+  setMtime(dir, NOW - CLAIM_MAX_IDLE_MS - 60 * 1000);
+  const r = takeClaim(dir, NOW);
+  assert.equal(r.ok, true);
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), r.token);
+});
+
+test('CLAIM_MAX_IDLE_MS is 5 minutes, at least 2.5 x the gh-timeout-ms schema ceiling', () => {
+  const { POLICY_KEYS } = require('../../../plugin/bin/lib/policy-schema');
+  assert.equal(GH_TIMEOUT_CEILING_MS, POLICY_KEYS.find((k) => k.key === 'gh-timeout-ms').max);
+  assert.equal(GH_TIMEOUT_CEILING_MS, 60 * 1000);
+  assert.ok(CLAIM_MAX_IDLE_MS >= 2.5 * GH_TIMEOUT_CEILING_MS);
+  assert.equal(CLAIM_MAX_IDLE_MS, 5 * 60 * 1000);
+});
+
+test('heartbeatClaim: refreshes only a claim still carrying our token', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const mine = takeClaim(dir, NOW);
+  const old = NOW - 4 * 60 * 1000;
+  setMtime(dir, old);
+  assert.equal(heartbeatClaim(dir, mine.token, NOW), true);
+  assert.ok(Math.abs(mtimeOf(dir) - NOW) < 1000, 'our claim was refreshed');
+  fs.writeFileSync(lockOf(dir), `${process.pid}-successor`);
+  setMtime(dir, old);
+  assert.equal(heartbeatClaim(dir, mine.token, NOW), false);
+  assert.ok(Math.abs(mtimeOf(dir) - old) < 1000, "the successor's mtime is untouched");
+  assert.equal(heartbeatClaim(dir, undefined, NOW), false);
+  fs.unlinkSync(lockOf(dir));
+  assert.equal(heartbeatClaim(dir, mine.token, NOW), false, 'a missing claim is not ours');
+});
+
+test('heartbeatClaim: a claim moved aside by a judging pass, carrying our token, is still ours and is not refreshed', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const mine = takeClaim(dir, NOW);
+  const aside = `${lockOf(dir)}.stale-99999-${NOW - 1000}`;
+  fs.renameSync(lockOf(dir), aside); // mid-takeover: the judger has renamed it and not yet linked it back
+  const old = NOW - 4 * 60 * 1000;
+  fs.utimesSync(aside, old / 1000, old / 1000);
+  assert.equal(heartbeatClaim(dir, mine.token, NOW), true);
+  assert.ok(Math.abs(fs.statSync(aside).mtimeMs - old) < 1000, 'the aside is not touched');
+  assert.ok(!fs.existsSync(lockOf(dir)), 'the heartbeat creates nothing at the claim path');
+  fs.writeFileSync(aside, `${process.pid}-other`);
+  assert.equal(heartbeatClaim(dir, mine.token, NOW), false, "another holder's aside is not ours");
+});
+
+test('heartbeatClaim: an orphaned aside older than CLAIM_ASIDE_MAX_AGE_MS proves nothing, even carrying our token', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const mine = takeClaim(dir, NOW);
+  const orphan = `${lockOf(dir)}.stale-99999-${NOW - CLAIM_ASIDE_MAX_AGE_MS - 60 * 1000}`;
+  fs.renameSync(lockOf(dir), orphan); // a judger died before its link-back, or its aside unlink failed
+  assert.equal(heartbeatClaim(dir, mine.token, NOW), false);
+  fs.renameSync(orphan, `${lockOf(dir)}.stale-99999-notanumber`);
+  assert.equal(heartbeatClaim(dir, mine.token, NOW), false, 'a name with no parseable ms is not young');
+});
+
+test('heartbeatClaim: a claim restored by a link-back between the first read and the listing is found by the re-read', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const mine = takeClaim(dir, NOW);
+  let reads = 0;
+  const linkBackRace = {
+    ...fs,
+    readFileSync: (p, ...rest) => {
+      if (p === lockOf(dir) && reads++ === 0) throw Object.assign(new Error('gone'), { code: 'ENOENT' });
+      return fs.readFileSync(p, ...rest);
+    },
+  };
+  assert.equal(heartbeatClaim(dir, mine.token, NOW, linkBackRace), true);
+  assert.equal(reads, 2, 'the claim path was read twice');
+});
+
+test('AC2.1 releaseClaim: a caller whose claim was taken over leaves the successor claim in place', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const first = takeClaim(dir, NOW);
+  assert.equal(first.ok, true);
+  // The first holder is judged dead: a successor takes the claim over.
+  const second = takeClaim(dir, NOW, fs, { isAlive: () => false });
+  assert.equal(second.ok, true);
+  assert.notEqual(second.token, first.token);
+  releaseClaim(dir, first.token);
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), second.token, 'the stale release left the successor claim');
+  releaseClaim(dir, second.token);
+  assert.ok(!fs.existsSync(lockOf(dir)), 'the owner release removes it');
+});
+
+test('releaseClaim: no token removes nothing', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const r = takeClaim(dir, NOW);
+  releaseClaim(dir, undefined);
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), r.token);
+});
+
+test('takeClaim: a claim file that exists but cannot be read is ownerless — in flight while fresh, taken over past CLAIM_STALE_MS, never claim-failed', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  fs.writeFileSync(lockOf(dir), `${process.pid}-held`);
+  const unreadable = {
+    ...fs,
+    readFileSync: (p, ...rest) => {
+      if (p === lockOf(dir)) throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+      return fs.readFileSync(p, ...rest);
+    },
+  };
+  setMtime(dir, NOW - 60 * 1000);
+  assert.deepEqual(takeClaim(dir, NOW, unreadable), { ok: false, reason: 'in-flight' });
+  setMtime(dir, NOW - CLAIM_STALE_MS - 60 * 1000);
+  const r = takeClaim(dir, NOW, unreadable);
+  assert.equal(r.ok, true);
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), r.token);
+});
+
+test('takeClaim: a token write that fails removes the half-made claim and is claim-failed', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const fsApi = { ...fs, writeSync: () => { throw Object.assign(new Error('disk full'), { code: 'ENOSPC' }); } };
+  assert.deepEqual(takeClaim(dir, NOW, fsApi), { ok: false, reason: 'claim-failed' });
+  assert.ok(!fs.existsSync(lockOf(dir)));
 });
 
 // #4032's batched lookup: postMerge dispatches ahead of archive's own warm-up, so without this
