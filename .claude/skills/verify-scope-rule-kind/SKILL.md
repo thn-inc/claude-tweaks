@@ -41,6 +41,28 @@ Before calling a new rule kind or key done, confirm each of these:
 4. **Every unreadable or unprovable input falls back to the full command with a named reason.**
    Add the reason to the `fallback` vocabulary and to the doc's reason table in the same change.
 
+## Adding an impact rule over a new path prefix
+
+A rule of an existing kind adds no site, but an `impact: true` rule over a prefix outside the
+source tree (#4321 added `.claude/**`, `.github/workflows/**`, `perf/**`) owes three checks:
+
+1. **The map records reads under the prefix.** `selectImpactTests` in `plugin/bin/lib/verify/impact.js`
+   falls back to the full suite as `untraced-path: {p}` for a changed path no traced read selects,
+   so a rule over a prefix no test reads fails closed and saves nothing. Name the tests that read
+   it before adding the rule (#4321's plan names `perf/`'s readers, such as
+   `tests/wall-clock-budget-conformance.test.js`). A modified path is selected only by an `f` read
+   or a covering `c` prefix; `s` and `d` select only an added or deleted one.
+2. **The glob stays clear of a neighbouring prefix.** `.claude/**` does not match
+   `.claude-tweaks/verify-scope.json`, but `.claude*/**` does, and rules match first-wins: the
+   looser glob would turn a change to the declaration itself into an impact run instead of a full
+   one, and shadow the `.claude-tweaks/pipelines/**` rule below it. Keep a neighbouring path in
+   `tests/verify-scope-declaration.test.js`'s fail-closed list (it holds
+   `.claude-tweaks/verify-scope.json` for this) and run that file before committing.
+3. **An engine-level pin, not only a rule-shape pin.** A check that the rule exists stays green
+   when an earlier rule shadows its glob. Run `selectScope` over a fixture map whose one test reads
+   the new path and assert `mode: 'scoped'`, no `unmatched`, and `superseded: false`
+   (`selectTracedBy` in `tests/verify-scope-declaration.test.js`).
+
 ## Anti-Patterns
 
 | Pattern | Why It Fails |
