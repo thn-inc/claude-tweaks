@@ -147,6 +147,40 @@ test('exit 2: a non-github.com origin is rejected rather than silently mis-slugg
   assert.match(out.stderr.join(''), /ghe\.example\.com/);
 });
 
+test('#4794: an ssh://, credentialed or ported github.com origin is read like its scp spelling, and an ssh:// GHE origin gets the same off-host stop', () => {
+  const gathered = (url) => {
+    const calls = [];
+    const { d, out } = deps({
+      remoteUrl: () => `${url}\n`,
+      runner: (args) => {
+        calls.push(args);
+        if (args[0] === 'repo' && args[1] === 'view') return args[2] + '\n';
+        if (args[0] === 'api' && args[1] === 'user') return 'octocat\n';
+        if (args[0] === 'api') return '[[]]';
+        return '[]';
+      },
+    });
+    const code = run(['--period', '7d', '--out', 'f.json'], d);
+    return { code, calls, stderr: out.stderr.join('') };
+  };
+  const scp = gathered('git@github.com:o/r.git');
+  assert.equal(scp.code, 0);
+  assert.deepEqual(scp.calls.find((a) => a[0] === 'repo' && a[1] === 'view'), ['repo', 'view', 'o/r', '--json', 'nameWithOwner', '-q', '.nameWithOwner']);
+  for (const url of ['ssh://git@github.com/o/r.git', 'https://oauth2@github.com/o/r.git', 'https://github.com:443/o/r.git']) {
+    const r = gathered(url);
+    assert.equal(r.code, 0, `${url}: ${r.stderr}`);
+    assert.doesNotMatch(r.stderr, /not a GitHub URL/, url);
+    assert.deepEqual(r.calls, scp.calls, url);
+  }
+  const plain = gathered('git@acme.ghe.com:o/r.git');
+  assert.equal(plain.code, 2);
+  assert.match(plain.stderr, /origin remote is on acme\.ghe\.com, not github\.com/);
+  const ssh = gathered('ssh://git@acme.ghe.com/o/r.git');
+  assert.equal(ssh.code, 2);
+  assert.match(ssh.stderr, /origin remote is on acme\.ghe\.com, not github\.com/);
+  assert.equal(ssh.stderr, plain.stderr);
+});
+
 test('exit 2: an origin-derived slug with a leading-hyphen owner is rejected rather than reaching gh positionally', () => {
   const { d, out } = deps({ remoteUrl: () => 'https://github.com/-evil/widgets.git\n' });
   assert.equal(run(['--period', '7d', '--out', 'f.json'], d), 2);

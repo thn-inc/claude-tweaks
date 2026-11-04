@@ -338,5 +338,5 @@ function pinExplicitRepoHost(repoSpec, deps = {}) {
 module.exports = {
   parseRepo, ghAvailable, remoteUrl, repoSlug, repoResolutionNote,
   ghOptions, resolveGhHost, explicitRepoGhHost, pinExplicitRepoHost, _resetGhHostCache,
-  isKnownGhHost, gateOriginRepo, normalizeHost, originUrl, ghHostIn, resolveRepoTarget,
+  isKnownGhHost, gateOriginRepo, normalizeHost, originUrl, ghHostIn, resolveRepoTarget, hostPathOf,
 };
