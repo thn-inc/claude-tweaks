@@ -366,8 +366,7 @@ function heartbeatClaim(runDir, token, nowMs, fsApi = fs, { isAlive = pidAlive }
     refresh();
     return true;
   }
-  // Fails closed: an unreadable own claim (not ENOENT) is reported with CLAIM_LOST_DETAIL's takeover wording
-  // though no one took it over — an accepted mislabel, the safe stop being the point.
+  // Fails closed: an unreadable own claim (not ENOENT) is not owned (the CLAIM_LOST_DETAIL mislabel, accepted).
   if (first.code !== 'ENOENT') return false;
   const asidePrefix = `${CLAIM_FILENAME}.stale-`;
   let names = [];

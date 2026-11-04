@@ -2028,7 +2028,7 @@ test('Q2: a holder taken over between the Step 4.0 ownership check and the attem
   const dir = addRun(root, '2026-10-30T090000-spec-1');
   const successor = `${process.pid}-successor`;
   const takeover = takeoverBeforeTheWrite(dir, successor);
-  const links = (opts, d) => { takeover.arm(); return { code: 5, envelope: null }; };
+  const links = () => { takeover.arm(); return { code: 5, envelope: null }; };
   const r = await postMerge({
     cwd: root, prStates: fakePrStates({ 11: merged() }), now: takeover.now,
     deps: { gh: fakeGh, closingLinks: links, closeParents: fakeCloseParents() },
@@ -2045,7 +2045,7 @@ test('Q2: a holder taken over between the Step 4.0 ownership check and the SKIP-
   const dir = addRun(root, '2026-10-30T090000-spec-1');
   const successor = `${process.pid}-successor`;
   const takeover = takeoverBeforeTheWrite(dir, successor);
-  const links = (opts, d) => { takeover.arm(); return { code: 0, envelope: { action: 'not-merged', state: 'OPEN' } }; };
+  const links = () => { takeover.arm(); return { code: 0, envelope: { action: 'not-merged', state: 'OPEN' } }; };
   const r = await postMerge({
     cwd: root, prStates: fakePrStates({ 11: merged() }), now: takeover.now,
     deps: { gh: fakeGh, closingLinks: links, closeParents: fakeCloseParents() },
