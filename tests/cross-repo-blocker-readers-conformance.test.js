@@ -11,11 +11,12 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
-const { missingFactsOf, assertEachPatternGoesRed, lineStartingWith } = require('./helpers/conformance-asserts');
+const { missingFactsOf, assertEachPatternGoesRed, lineStartingWith, sectionOf } = require('./helpers/conformance-asserts');
 
 const BACKLOG_DIR = path.join(__dirname, '..', 'plugin', 'skills', 'backlog');
 const OVERVIEW = readText(path.join(BACKLOG_DIR, 'overview-mode.md'));
 const REFINE = readText(path.join(BACKLOG_DIR, 'refine-mode.md'));
+const REFINE_LANES = readText(path.join(BACKLOG_DIR, 'refine-lanes.md'));
 
 // The prose hard-wraps in places and capitalises some mandated sentences, so regions are
 // whitespace-collapsed and the patterns that match a sentence start are case-insensitive.
@@ -53,6 +54,12 @@ const REFINE_FACTS = [
   [/attaching `openNativeBlockerRefs\(node\)` per candidate/, 'refine attaches openNativeBlockerRefs(node) per candidate'],
   [/`owner\/name#N \(state unreadable\)` when its state is unreadable/, 'refine names an unreadable foreign state with the suffix'],
 ];
+// The unresolved-dependency check and refine's repair read a qualified line as wired (#4793, Plan
+// Review Clarifications): the detection line and the repair lane's population paragraph both say so.
+const WIRED_FOREIGN_FACTS = [
+  [/a qualified `owner\/name#N` line is a wired foreign blocker/i, 'a qualified owner/name#N line is a wired foreign blocker'],
+  [/never takes a bare `#N` from a qualified `owner\/name#N` mention/i, 'a repair never takes a bare #N from a qualified owner/name#N mention'],
+];
 
 const region = (text, prefix) => {
   const line = lineStartingWith(text, prefix);
@@ -67,6 +74,8 @@ const REGIONS = [
   ['overview Step 3', region(OVERVIEW, '  - **`work-links: native`**'), STEP3_FACTS],
   ['overview Step 3 body-text', region(OVERVIEW, '  - **`work-links: body-text`**'), BODY_TEXT_FACTS],
   ['refine detection', region(REFINE, '- Refine runs the detection itself'), REFINE_FACTS],
+  ['refine detection wired-foreign', region(REFINE, '- Refine runs the detection itself'), WIRED_FOREIGN_FACTS],
+  ['refine-lanes Dependency repair', collapse(sectionOf(REFINE_LANES, '## Dependency repair')), WIRED_FOREIGN_FACTS],
 ];
 
 for (const [name, text, facts] of REGIONS) {

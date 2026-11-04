@@ -249,3 +249,13 @@ test('a qualified foreign blocker ref (#4793) never credits this repository\'s s
   const local = candidate({ id: 9, blockedBy: [5] });
   assert.deepStrictEqual(rankNextToBuild([local, five]).map((c) => c.id), [5, 9]);
 });
+
+test('Plan Review Clarifications: a canonical Blocked by owner/name#N line is wired — never flagged as unwired prose', () => {
+  assert.deepStrictEqual(findUnresolvedDependencyProse([candidate({ id: 9, body: 'Blocked by other/repo#5' })]), []);
+  assert.deepStrictEqual(findUnresolvedDependencyProse([candidate({ id: 9, body: 'Blocked by other/repo#5\nalso blocked by #7 upstream' })]), []);
+});
+
+test('a mid-line qualified mention is never read as this repository\'s #N; a bare #N beside it still flags', () => {
+  assert.deepStrictEqual(findUnresolvedDependencyProse([candidate({ id: 9, body: 'This is blocked by other/repo#5 upstream' })]), []);
+  assert.deepStrictEqual(findUnresolvedDependencyProse([candidate({ id: 9, body: 'blocked by other/repo#5 and #7' })]), [{ id: 9, mention: 'blocked by other/repo#5 and #7' }]);
+});
