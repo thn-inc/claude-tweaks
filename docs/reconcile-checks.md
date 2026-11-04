@@ -655,7 +655,9 @@ unchanged, and every fail-open path below leaves the parent open for it.
       comment with no close and no `decisions.md` line from the superseded holder; the successor's own
       pass then finds the comment already posted and finishes the close.
     - *Release.* The lock is removed after the marker write, and only by its owner (a compare-and-delete
-      on the token), so a taken-over pass never deletes its successor's claim.
+      on the token), so a taken-over pass does not delete its successor's claim. Known residual: the compare
+      and the delete are two calls, so a holder suspended past the idle backstop exactly between them is
+      taken over in that gap and still deletes its successor's claim.
     - *Mixed versions.* Until every installed build upgrades, an older reconciler still takes over by age
       alone and releases unconditionally, so a mixed-version pair keeps the old race for a claim idle past
       `CLAIM_STALE_MS`.

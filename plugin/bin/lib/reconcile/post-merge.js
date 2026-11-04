@@ -325,8 +325,22 @@ function takeClaim(runDir, nowMs, fsApi = fs, { isAlive = pidAlive } = {}) {
     // that token's pid: once the holder process has exited it reads dead and is taken over at once; while
     // the process still runs, nothing refreshes the orphan, so it is taken over once idle past
     // CLAIM_MAX_IDLE_MS. An ownerless aside that is linked back keeps the CLAIM_STALE_MS rule.
-    try { fsApi.linkSync(aside, lock); } catch { /* a third taker already created one */ }
-    try { fsApi.unlinkSync(aside); } catch { /* orphan left behind: heartbeatClaim ignores it past CLAIM_ASIDE_MAX_AGE_MS */ }
+    // The aside is the only copy of a live holder's claim until it is back at the path (or a third taker's
+    // claim is: EEXIST), so it is deleted only then. A link that fails otherwise (a filesystem without hard
+    // links) falls back to renaming it back; if that fails too, the aside is left for heartbeatClaim to find.
+    let restored = false;
+    try {
+      fsApi.linkSync(aside, lock);
+      restored = true;
+    } catch (e) {
+      if (e && e.code === 'EEXIST') restored = true; // a third taker already created one
+      else {
+        try { fsApi.renameSync(aside, lock); restored = true; } catch { /* leave the aside */ }
+      }
+    }
+    if (restored) {
+      try { fsApi.unlinkSync(aside); } catch { /* orphan left behind, or renamed away: heartbeatClaim ignores it past CLAIM_ASIDE_MAX_AGE_MS */ }
+    }
     return { ok: false, reason: 'in-flight' };
   }
   try { fsApi.unlinkSync(aside); } catch { /* orphan left behind: heartbeatClaim ignores it past CLAIM_ASIDE_MAX_AGE_MS */ }

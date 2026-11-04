@@ -373,6 +373,20 @@ test('claim: a fresh lock file means in-flight, no fake is called and the lock s
   assert.ok(fs.existsSync(lockOf(dir)));
 });
 
+test('claim: an ownerless lock idle between CLAIM_MAX_IDLE_MS and CLAIM_STALE_MS is still in-flight', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  fs.writeFileSync(lockOf(dir), '');
+  const idle = (NOW - 7 * 60 * 1000) / 1000; // past the 5-minute idle backstop, under the 10-minute ownerless rule
+  fs.utimesSync(lockOf(dir), idle, idle);
+  assert.ok(CLAIM_MAX_IDLE_MS < 7 * 60 * 1000 && 7 * 60 * 1000 < CLAIM_STALE_MS);
+  const links = fakeClosingLinks(ENVELOPE);
+  const r = await run(root, { prs: { 11: merged() }, links, close: fakeCloseParents() });
+  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'in-flight' }]);
+  assert.equal(links.calls.length, 0);
+  assert.ok(fs.existsSync(lockOf(dir)));
+});
+
 test('claim: a lock 11 minutes old is taken over, the run proceeds and no lock remains', async () => {
   const root = mainCheckout();
   const dir = addRun(root, '2026-10-30T090000-spec-1');
@@ -920,6 +934,44 @@ test('R3 two takeovers: the taker that loses the rename skips in-flight and leav
   assert.deepEqual(fs.readdirSync(dir).filter((f) => f.includes('.stale-')), []);
 });
 
+// The winner's whole takeover lands between the loser's stat and rename, so the rename moves the winner's live
+// claim aside; the loser must not delete that aside unless the claim is back at its path.
+function loserWithFailingLink(dir, { failRenameBack }) {
+  let winner;
+  let renames = 0;
+  const fsApi = {
+    ...fs,
+    linkSync: () => { throw Object.assign(new Error('hard links unsupported'), { code: 'EPERM' }); },
+    renameSync: (from, to) => {
+      renames += 1;
+      if (renames === 1) winner = takeClaim(dir, NOW); // the other taker completes its whole takeover first
+      else if (failRenameBack) throw Object.assign(new Error('rename refused'), { code: 'EPERM' });
+      return fs.renameSync(from, to);
+    },
+  };
+  return { winner: () => winner, loser: takeClaim(dir, NOW, fsApi) };
+}
+
+test('R3 link-back: a link that fails for a reason other than EEXIST renames the live claim back, never deleting it', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  staleLock(dir);
+  const { winner, loser } = loserWithFailingLink(dir, { failRenameBack: false });
+  assert.equal(winner().ok, true);
+  assert.deepEqual(loser, { ok: false, reason: 'in-flight' });
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), winner().token, "the winner's claim is back at its path");
+  assert.deepEqual(fs.readdirSync(dir).filter((f) => f.includes('.stale-')), []);
+});
+
+test('R3 link-back: when the link and the rename back both fail, the live claim stays in its aside', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  staleLock(dir);
+  const { winner, loser } = loserWithFailingLink(dir, { failRenameBack: true });
+  assert.deepEqual(loser, { ok: false, reason: 'in-flight' });
+  const asides = fs.readdirSync(dir).filter((f) => f.includes('.stale-'));
+  assert.equal(asides.length, 1, 'the only copy of the live claim is not deleted');
+  assert.equal(fs.readFileSync(path.join(dir, asides[0]), 'utf8'), winner().token);
+});
+
 test('R3 two takeovers: a taker whose retry create hits EEXIST skips in-flight and leaves the other lock alone', () => {
   const root = mainCheckout();
   const dir = addRun(root, '2026-10-30T090000-spec-1');
@@ -1024,7 +1076,6 @@ test('takeClaim: a live-reading holder idle past CLAIM_MAX_IDLE_MS (a reused pid
 test('CLAIM_MAX_IDLE_MS is 5 minutes, at least 2.5 x the gh-timeout-ms schema ceiling', () => {
   const { POLICY_KEYS } = require('../../../plugin/bin/lib/policy-schema');
   assert.equal(GH_TIMEOUT_CEILING_MS, POLICY_KEYS.find((k) => k.key === 'gh-timeout-ms').max);
-  assert.equal(GH_TIMEOUT_CEILING_MS, 60 * 1000);
   assert.ok(CLAIM_MAX_IDLE_MS >= 2.5 * GH_TIMEOUT_CEILING_MS);
   assert.equal(CLAIM_MAX_IDLE_MS, 5 * 60 * 1000);
 });
