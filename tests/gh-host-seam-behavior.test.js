@@ -312,6 +312,82 @@ test('AC1.1 (#4794): pr-state\'s bulk PR screen on a *.ghe.com origin reaches th
   assert.match(argsOf(lines[0]), /^api graphql -f owner=acme -f name=widgets -f query=/);
 });
 
+// #4794 Task 7: prune-remote and archive-branches gate their origin, then screen their in-scope
+// branches in one `gh api graphql` call that follows the repo root's origin host (the GraphQL
+// owner/name pair is the bare split, never the host-qualified slug). The fake gh answers the
+// graphql key with an empty result, which is enough: only the spawn's host and argv are asserted.
+const SCREEN_GATE_DEPS = { env: {}, readFile: () => { throw new Error('ENOENT'); } };
+
+function screenFixture(t, origin) {
+  const readLog = installFakeGh(t);
+  const { repo } = makeRepo(t, origin);
+  withoutGhHost(t);
+  git(repo, ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '--allow-empty', '-q', '-m', 'init']);
+  return { repo, readLog };
+}
+
+function screenCalls(lines) {
+  return lines.filter((l) => / ARGS=api graphql /.test(l));
+}
+
+function pruneRemoteLines(t, origin) {
+  const { repo, readLog } = screenFixture(t, origin);
+  git(repo, ['update-ref', 'refs/remotes/origin/worktree-x', 'HEAD']);
+  const stderr = captureSeamNotes(t);
+  const { pruneRemote } = require('../plugin/bin/lib/reconcile/prune-remote');
+  const result = pruneRemote({ cwd: repo, integration: 'main', skipFetch: true, dryRun: true, gateDeps: SCREEN_GATE_DEPS });
+  stderr.restore();
+  assert.notEqual(result.failure, 'unknown-host', JSON.stringify(result));
+  return readLog();
+}
+
+function archiveBranchesLines(t, origin) {
+  const { repo, readLog } = screenFixture(t, origin);
+  git(repo, ['branch', 'worktree-x']);
+  const stderr = captureSeamNotes(t);
+  const { archiveBranches } = require('../plugin/bin/lib/reconcile/archive-branches');
+  const result = archiveBranches({ cwd: repo, integration: 'main', dryRun: true, gateDeps: SCREEN_GATE_DEPS });
+  stderr.restore();
+  assert.equal(result.failure, null, JSON.stringify(result));
+  assert.ok(!result.entries.some((e) => e.reason === 'unknown-host'), JSON.stringify(result));
+  return readLog();
+}
+
+function assertBareScreen(lines) {
+  const screens = screenCalls(lines);
+  assert.equal(screens.length, 1, `expected one bulk screen call, log:\n${lines.join('\n')}`);
+  assert.match(argsOf(screens[0]), /^api graphql -f owner=acme -f name=widgets /);
+  assert.doesNotMatch(screens[0], /acme\.ghe\.com\/acme\/widgets/);
+}
+
+test('AC1.1: prune-remote on a *.ghe.com origin screens its in-scope remote branches on the origin host with a bare owner/name pair', { skip: STUB_SKIP }, (t) => {
+  const lines = pruneRemoteLines(t, GHE_ORIGIN);
+  assertEveryLineReaches(lines, 'acme.ghe.com');
+  assertBareScreen(lines);
+});
+
+test('AC2.1: prune-remote on a github.com origin leaves GH_HOST unset and its screen argv unchanged', { skip: STUB_SKIP }, (t) => {
+  const lines = pruneRemoteLines(t, 'git@github.com:acme/widgets.git');
+  const net = networkLines(lines);
+  assert.ok(net.length >= 1, `expected the screen call, log:\n${lines.join('\n')}`);
+  for (const line of net) assert.ok(line.startsWith('GH_HOST=unset '), `GH_HOST injected on github.com: ${line}`);
+  assertBareScreen(lines);
+});
+
+test('AC1.1: archive-branches on a *.ghe.com origin screens its candidate branches on the origin host with a bare owner/name pair', { skip: STUB_SKIP }, (t) => {
+  const lines = archiveBranchesLines(t, GHE_ORIGIN);
+  assertEveryLineReaches(lines, 'acme.ghe.com');
+  assertBareScreen(lines);
+});
+
+test('AC2.1: archive-branches on a github.com origin leaves GH_HOST unset and its screen argv unchanged', { skip: STUB_SKIP }, (t) => {
+  const lines = archiveBranchesLines(t, 'git@github.com:acme/widgets.git');
+  const net = networkLines(lines);
+  assert.ok(net.length >= 1, `expected the screen call, log:\n${lines.join('\n')}`);
+  for (const line of net) assert.ok(line.startsWith('GH_HOST=unset '), `GH_HOST injected on github.com: ${line}`);
+  assertBareScreen(lines);
+});
+
 // Fix round 1: a bare `--repo owner/name` means github.com (Decision Q2). The
 // author-association lookup threads no --hostname for github.com, so on a GHE
 // origin the seam used to send it to the origin host while `issue view --repo`
