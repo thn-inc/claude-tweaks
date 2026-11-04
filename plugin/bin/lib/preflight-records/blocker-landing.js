@@ -10,7 +10,13 @@
 // first:10 with nothing reachable). Each result is exactly
 // `{ blocker, verdict, commit, via }`; `via` says why — closer-pr, closer-commit
 // or closing-pr-ref (where the deciding commit came from), state, state-reason,
-// no-candidate, probe-failed, references-truncated, not-found, or records-json.
+// no-candidate, probe-failed, references-truncated, not-found, records-json,
+// cross-repository, or cross-repository-state-unreadable. The last two (#4793)
+// belong to a native blocker that lives in ANOTHER repository
+// (classifyCrossRepository): its result adds a fifth key, `repository`
+// (`owner/name`), present only there, and its `open` verdict can come from them
+// too — its number names that repository's issue, so it is never queried or
+// probed here.
 //
 // Candidate commits are the UNION of the recorded closer (a merged PR's
 // mergeCommit, or a closing Commit) and every merged closedByPullRequests
@@ -145,6 +151,18 @@ function classifyBlocker(blocker, node, reach) {
   return result(blocker, 'unlanded', candidates[0].sha, candidates[0].via);
 }
 
+// One crossRepoBlockers entry {number, repository, state} -> a result judged from
+// the native node's state alone (#4793, Decisions Q1 and Q5). The number names
+// another repository's issue, so it is never queried or probed here: a GraphQL
+// lookup or compare call against this repository would read an unrelated issue.
+// OPEN reads open; CLOSED reads undetermined (landing in the other repository is
+// not checkable from here); any other state is unreadable and fails closed as open.
+function classifyCrossRepository({ number, repository, state }) {
+  if (state === 'OPEN') return { ...result(number, 'open', null, 'cross-repository'), repository };
+  if (state === 'CLOSED') return { ...result(number, 'undetermined', null, 'cross-repository'), repository };
+  return { ...result(number, 'open', null, 'cross-repository-state-unreadable'), repository };
+}
+
 function undeterminedAll(blockers, via) {
   return blockers.map((n) => result(n, 'undetermined', null, via));
 }
@@ -272,5 +290,5 @@ function fetchBlockerLanding({ blockers, owner, repo, host, integrationBranch, r
 
 module.exports = {
   buildBlockerLandingQuery, candidateCommits, reachabilityFromStatus, compareArgs,
-  classifyBlocker, undeterminedAll, classifyFromState, fetchBlockerLanding, recoveredResponse,
+  classifyBlocker, classifyCrossRepository, undeterminedAll, classifyFromState, fetchBlockerLanding, recoveredResponse,
 };

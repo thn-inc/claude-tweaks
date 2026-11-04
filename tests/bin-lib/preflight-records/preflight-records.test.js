@@ -207,6 +207,18 @@ test('buildRecords: native mode — blockedBy/openBlocker come from the resolved
   assert.equal(records['720'].openBlocker, true);
 });
 
+test('buildRecords: native mode — a cross-repository blocker leaves blockedBy and rides on crossRepoBlockers', () => {
+  const issues = new Map([[11, issue({ number: 11, title: 'E' })], [12, issue({ number: 12, title: 'T' })]]);
+  const dependencies = new Map([
+    [11, { blockedBy: [5, 6, 5], openBlocker: false, openBlockerIds: [], crossRepoBlockers: [{ number: 5, repository: 'other/repo', state: 'CLOSED' }] }],
+    [12, { blockedBy: [6], openBlocker: false, openBlockerIds: [] }],
+  ]);
+  const records = buildRecords({ issues, dependencies });
+  assert.deepEqual(records['11'].blockedBy, [6, 5]);
+  assert.deepEqual(records['11'].crossRepoBlockers, [{ number: 5, repository: 'other/repo', state: 'CLOSED' }]);
+  assert.equal('crossRepoBlockers' in records['12'], false);
+});
+
 test('buildOverlapGroups: records sharing a key file union into one group; items keyed on numeric item.id', () => {
   const records = {
     720: { keyFiles: ['a.js'] },
@@ -820,6 +832,90 @@ function landingFixture({ repository, statuses = { eee555: 'behind\n' }, extra =
   };
   return { runner, calls };
 }
+
+// Native-mode landing fixture: each record's native blockers given as [number, repo, state].
+// `bodies` (record number -> body text) overrides a record's default body.
+function nativeLandingFixture(blockersByRecord, { repository = {}, statuses = {}, bodies = {} } = {}) {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args);
+    for (const n of Object.keys(blockersByRecord)) {
+      if (isIssueView(args, Number(n))) return JSON.stringify(issue({ number: Number(n), title: `R${n}`, body: bodies[n] ?? specBody([`f${n}.js`]) }));
+    }
+    if (isGraphQL(args) && /CLOSED_EVENT/.test(gqlQuery(args))) return JSON.stringify({ data: { repository } });
+    if (isGraphQL(args)) {
+      const repo = {};
+      for (const [n, blockers] of Object.entries(blockersByRecord)) {
+        repo[`i${n}`] = { number: Number(n), repository: { nameWithOwner: 'acme/w' }, blockedBy: { nodes: blockers.map(([number, r, state]) => ({ number, state, repository: { nameWithOwner: r } })) } };
+      }
+      return JSON.stringify({ data: { repository: repo } });
+    }
+    if (isCompare(args)) {
+      const sha = args[1].split('...').pop();
+      if (!(sha in statuses)) throw new Error(`unexpected compare ${sha}`);
+      return statuses[sha];
+    }
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  return { runner, calls };
+}
+const nativeArgs = (...nums) => [...nums, '--blocker-landing', '--repo', 'acme/w'];
+const landingQueries = (calls) => calls.filter((a) => isGraphQL(a) && /CLOSED_EVENT/.test(gqlQuery(a))).map(gqlQuery);
+
+test('AC1.1: a CLOSED native blocker in another repository is never queried by number here — undetermined cross-repository; this repository\'s blocker is still judged', () => {
+  const { runner, calls } = nativeLandingFixture({ 11: [[5, 'other/repo', 'CLOSED'], [6, 'acme/w', 'CLOSED']] }, { repository: { b6: closedBlocker('fff666') }, statuses: { fff666: 'behind\n' } });
+  const d = cliDeps({ runner, workLinks: 'native' });
+  assert.equal(run(nativeArgs('11'), d.deps), 0);
+  const env = JSON.parse(d.out.join(''));
+  assert.deepEqual(env.records['11'].blockerLanding, [
+    { blocker: 6, verdict: 'landed', commit: 'fff666', via: 'closer-pr' },
+    { blocker: 5, verdict: 'undetermined', commit: null, via: 'cross-repository', repository: 'other/repo' },
+  ]);
+  assert.deepEqual(env.records['11'].blockedBy, [6]);
+  const queries = landingQueries(calls);
+  assert.equal(queries.length, 1);
+  assert.match(queries[0], /b6: issue\(number:6\)/);
+  assert.doesNotMatch(queries[0], /b5: issue/);
+});
+
+test('AC1.1: an OPEN native blocker in another repository reads open from its native state — no blocker-landing query and no compare call', () => {
+  const { runner, calls } = nativeLandingFixture({ 11: [[5, 'other/repo', 'OPEN']] });
+  const d = cliDeps({ runner, workLinks: 'native' });
+  assert.equal(run(nativeArgs('11'), d.deps), 0);
+  const env = JSON.parse(d.out.join(''));
+  assert.deepEqual(env.records['11'].blockerLanding, [{ blocker: 5, verdict: 'open', commit: null, via: 'cross-repository', repository: 'other/repo' }]);
+  assert.equal(landingQueries(calls).length, 0);
+  assert.equal(calls.filter(isCompare).length, 0);
+});
+
+test('Q5: a native blocker in another repository with no readable state reads open — fail closed, no lookup', () => {
+  const { runner, calls } = nativeLandingFixture({ 11: [[5, 'other/repo', null]] });
+  const d = cliDeps({ runner, workLinks: 'native' });
+  assert.equal(run(nativeArgs('11'), d.deps), 0);
+  const env = JSON.parse(d.out.join(''));
+  assert.deepEqual(env.records['11'].blockerLanding, [{ blocker: 5, verdict: 'open', commit: null, via: 'cross-repository-state-unreadable', repository: 'other/repo' }]);
+  assert.equal(landingQueries(calls).length, 0);
+});
+
+test('this repository\'s #5 and another repository\'s #5 both blocking: the local one is judged, the foreign one is reported apart', () => {
+  const { runner } = nativeLandingFixture({ 11: [[5, 'acme/w', 'CLOSED'], [5, 'other/repo', 'OPEN']] }, { repository: { b5: closedBlocker('eee555') }, statuses: { eee555: 'diverged\n' } });
+  const d = cliDeps({ runner, workLinks: 'native' });
+  assert.equal(run(nativeArgs('11'), d.deps), 0);
+  const env = JSON.parse(d.out.join(''));
+  assert.deepEqual(env.records['11'].blockerLanding, [
+    { blocker: 5, verdict: 'unlanded', commit: 'eee555', via: 'closer-pr' },
+    { blocker: 5, verdict: 'open', commit: null, via: 'cross-repository', repository: 'other/repo' },
+  ]);
+});
+
+test('a foreign blocker whose number is an in-run record is judged as foreign, not dropped as in-run', () => {
+  const { runner } = nativeLandingFixture({ 10: [], 11: [[10, 'other/repo', 'OPEN']] });
+  const d = cliDeps({ runner, workLinks: 'native' });
+  assert.equal(run(nativeArgs('10', '11'), d.deps), 0);
+  const env = JSON.parse(d.out.join(''));
+  assert.deepEqual(env.records['11'].blockedBy, []);
+  assert.deepEqual(env.records['11'].blockerLanding, [{ blocker: 10, verdict: 'open', commit: null, via: 'cross-repository', repository: 'other/repo' }]);
+});
 
 test('AC4.1: without --blocker-landing the envelope is byte-identical and no extra call is made', () => {
   const { runner, calls } = landingFixture({ repository: { b5: closedBlocker('eee555') } });

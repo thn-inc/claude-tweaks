@@ -48,6 +48,16 @@
 // not-applicable, any other closed undetermined. A compare call that throws
 // leaves that blocker undetermined/probe-failed and prints one stderr line (the
 // cause — a wrong integration branch, a 403, a rate limit — is otherwise lost).
+// Under work-links: native (--prefetched-json included, which runs the native
+// call as the gh path does) a blocker the native read found in ANOTHER repository
+// (#4793) is not in blockedBy and is never queried or compared by number here:
+// the record carries it as crossRepoBlockers [{number, repository, state}] (key
+// present only when non-empty), and blockerLanding ends with one entry per such
+// blocker, in that order, judged from its native state alone — open/
+// cross-repository for OPEN, undetermined/cross-repository for CLOSED, open/
+// cross-repository-state-unreadable for any other state (fail closed) — each
+// with an extra `repository` (owner/name) key. --records-json degrades native to
+// body-text, so it never carries them.
 // The key is absent without the flag, and the rest of the envelope is unchanged.
 // Exit 0 success; 1 any record fetch (or the native dependency GraphQL call)
 // failed — every failing record named, all-at-once; under native, a candidate gh
@@ -69,7 +79,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const preflight = require('./lib/preflight-records/preflight-records');
 const {
-  fetchBlockerLanding, undeterminedAll, classifyFromState, recoveredResponse,
+  fetchBlockerLanding, undeterminedAll, classifyFromState, classifyCrossRepository, recoveredResponse,
 } = require('./lib/preflight-records/blocker-landing');
 const { planMergeGateSplit } = require('./lib/preflight-records/merge-gate');
 const { planParallelWaves } = require('./lib/preflight-records/waves');
@@ -450,7 +460,12 @@ function run(argv, deps = realDeps) {
       ? blockerLandingFromRecordsJson(opts, union, deps)
       : blockerLandingFromGh(opts, union, loaded.repoSpec, deps);
     if (landing.code !== undefined) return landing.code;
-    for (const n of numbers) records[String(n)].blockerLanding = byRecord.get(n).map((b) => landing.results.get(b));
+    for (const n of numbers) {
+      records[String(n)].blockerLanding = [
+        ...byRecord.get(n).map((b) => landing.results.get(b)),
+        ...(records[String(n)].crossRepoBlockers || []).map(classifyCrossRepository),
+      ];
+    }
   }
   deps.stdout(`${JSON.stringify(envelope, null, 2)}\n`);
   return 0;
