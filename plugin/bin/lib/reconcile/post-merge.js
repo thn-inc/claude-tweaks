@@ -593,9 +593,9 @@ function archivedRetryHint(runDir) {
 // `4.0` when `step40Failed` is set or its word is not clean, `4.0b` when `parentFailures` is non-empty —
 // so a caller reports only the step that failed. `next`: `rerun` (a marker-less skip a re-run retries),
 // `rerun-where-gh`, `rerun-after-stale-claim` (an archived run's `in-flight`: its holder can only be another
-// merge-mode invocation, so a re-run takes over a dead holder's claim at once; a claim naming no holder is
-// taken over once past CLAIM_STALE_MS), or `none` — a `ran` entry's marker is already written, and every
-// other skip fails the same way again.
+// merge-mode invocation, so a re-run takes over a dead holder's claim at once, a live holder's claim it has not
+// refreshed for CLAIM_MAX_IDLE_MS, and a claim naming no holder once past CLAIM_STALE_MS), or `none` — a `ran`
+// entry's marker is already written, and every other skip fails the same way again.
 function classifyEntry(entry, { archived = false } = {}) {
   if (entry.action === 'ran') {
     const step40Failed = entry.step40Failed === true || !CLEAN_CLOSING_LINKS.has(entry.closingLinks);

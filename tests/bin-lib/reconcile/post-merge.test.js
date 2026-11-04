@@ -980,7 +980,7 @@ test('AC1.1 postMerge: a live, refreshing holder past CLAIM_STALE_MS skips in-fl
   const root = mainCheckout();
   const dir = addRun(root, '2026-10-30T090000-spec-1');
   const takenAt = NOW - CLAIM_STALE_MS - 60 * 1000;
-  const holder = takeClaim(dir, takenAt);
+  const holder = takeClaim(dir, NOW);
   setMtime(dir, takenAt);
   heartbeatClaim(dir, holder.token, NOW - 60 * 1000);
   const links = fakeClosingLinks(ENVELOPE);
@@ -2002,14 +2002,22 @@ test('Q4 fix: a takeover after the last gh call still stops the marker write', a
 
 // A `now` that installs the successor on the second read after the closing-links fake returns: the first is the
 // ownership check right after Step 4.0, the second is `stamp = now()`, so the takeover lands between that check and
-// the write guard's own check.
+// the write guard's own check. Pinned to that point: `arm` ages the claim's mtime, a passing ownership check
+// refreshes it to NOW, and the helper records whether the refresh had happened when it fired. If processRun gains
+// a `now()` call ahead of the post-Step-4.0 check, the takeover lands on that check instead and `ownedAtTakeover`
+// reads false, so the tests fail rather than pass on the wrong check.
 function takeoverBeforeTheWrite(dir, successor) {
   let armed = false;
   let reads = 0;
+  let owned = null;
   return {
-    arm: () => { armed = true; },
+    arm: () => { armed = true; setMtime(dir, NOW - 60 * 1000); },
+    ownedAtTakeover: () => owned,
     now: () => {
-      if (armed && ++reads === 2) fs.writeFileSync(lockOf(dir), successor);
+      if (armed && ++reads === 2) {
+        owned = Math.abs(mtimeOf(dir) - NOW) < 1000;
+        fs.writeFileSync(lockOf(dir), successor);
+      }
       return NOW;
     },
   };
@@ -2027,6 +2035,7 @@ test('Q2: a holder taken over between the Step 4.0 ownership check and the attem
   });
   assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL }]);
   assert.deepEqual(r.deferred, [dir]);
+  assert.equal(takeover.ownedAtTakeover(), true, 'the post-Step-4.0 check read owned; the takeover landed after it');
   assert.equal(decisionsOf(dir), '', 'no attempt line');
   assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), successor, 'the successor claim stays');
 });
@@ -2043,6 +2052,7 @@ test('Q2: a holder taken over between the Step 4.0 ownership check and the SKIP-
   });
   assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL }]);
   assert.deepEqual(r.deferred, [dir]);
+  assert.equal(takeover.ownedAtTakeover(), true, 'the post-Step-4.0 check read owned; the takeover landed after it');
   assert.equal(decisionsOf(dir), '', 'no SKIP marker');
   assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), successor, 'the successor claim stays');
 });
