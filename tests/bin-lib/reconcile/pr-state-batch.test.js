@@ -199,7 +199,7 @@ test('fetchBatch: 120 keys make 3 chunks, pass typed -f variables, and a failed 
     if (calls.length === 2) throw new Error('chunk 2 exploded');
     return JSON.stringify({ data: { repository: repo } });
   };
-  const out = await fetchBatch(SLUG_REPO, { numbers, heads }, { runner });
+  const out = await fetchBatch(SLUG_REPO, { numbers, heads }, { runner, env: {} });
   assert.equal(calls.length, 3);
   for (const args of calls) {
     assert.deepEqual(args.slice(0, 4), ['api', 'graphql', '--hostname', 'github.com'], 'pinned to github.com so GH_HOST cannot redirect the query');
@@ -218,7 +218,7 @@ test('fetchBatch: reads the body off a rejection that carries stdout (gh exits 1
     e.stdout = body({ n0: null, n1: OPEN_4145 }, [{ type: 'NOT_FOUND', path: ['repository', 'n0'] }]);
     throw e;
   };
-  const out = await fetchBatch(SLUG_REPO, { numbers: [4032, 4145], heads: [] }, { runner });
+  const out = await fetchBatch(SLUG_REPO, { numbers: [4032, 4145], heads: [] }, { runner, env: {} });
   assert.equal(out.byNumber.has(4032), false);
   assert.equal(out.byNumber.get(4145).state, 'OPEN');
 });
@@ -250,15 +250,35 @@ test('fetchBatch: an origin off github.com (or unparseable) makes zero runner ca
   execFileSync('git', ['init', '-q'], { cwd: dir, windowsHide: true });
   execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: dir, windowsHide: true });
   const seen = [];
-  await fetchBatch(dir, { numbers: [1], heads: [] }, { runner: async (args) => { seen.push(args); return '{}'; } });
+  await fetchBatch(dir, { numbers: [1], heads: [] }, { runner: async (args) => { seen.push(args); return '{}'; }, env: {} });
   assert.equal(seen.length, 1);
   assert.ok(seen[0].includes('owner=acme') && seen[0].includes('name=w'));
 });
 
+test('#4794: a non-empty GH_HOST naming another host skips the batch; unset, empty and github.com still batch with today\'s argv', async () => {
+  const skipped = {};
+  for (const GH_HOST of ['mine.example', ' ACME.ghe.com ']) {
+    const calls = [];
+    const out = await fetchBatch(SLUG_REPO, { numbers: [1], heads: ['b'] }, { runner: async (args) => { calls.push(args); return '{}'; }, env: { GH_HOST } });
+    skipped[GH_HOST] = { runnerCalls: calls.length, keysAnswered: out.byNumber.size + out.byHead.size };
+  }
+  assert.deepEqual(skipped, {
+    'mine.example': { runnerCalls: 0, keysAnswered: 0 },
+    ' ACME.ghe.com ': { runnerCalls: 0, keysAnswered: 0 },
+  }, 'a GH_HOST naming another host spawns nothing and every key is left to the per-item path');
+  const expected = ['api', 'graphql', '--hostname', 'github.com', '-f', 'owner=thn-inc', '-f', 'name=claude-tweaks', '-f', `query=${buildBatchQuery({ numbers: [1], heads: ['b'] })}`];
+  for (const env of [{}, { GH_HOST: '' }, { GH_HOST: '  ' }, { GH_HOST: 'GitHub.com.' }]) {
+    const calls = [];
+    await fetchBatch(SLUG_REPO, { numbers: [1], heads: ['b'] }, { runner: async (args) => { calls.push(args); return '{}'; }, env });
+    assert.equal(calls.length, 1, JSON.stringify(env));
+    assert.deepEqual(calls[0], expected, JSON.stringify(env));
+  }
+});
+
 test('fetchBatch: never throws, even when the runner throws synchronously or returns garbage', async () => {
-  const sync = await fetchBatch(SLUG_REPO, { numbers: [1], heads: [] }, { runner: () => { throw new Error('sync'); } });
+  const sync = await fetchBatch(SLUG_REPO, { numbers: [1], heads: [] }, { runner: () => { throw new Error('sync'); }, env: {} });
   assert.equal(sync.byNumber.size, 0);
-  const garbage = await fetchBatch(SLUG_REPO, { numbers: [1], heads: [] }, { runner: async () => 'garbage' });
+  const garbage = await fetchBatch(SLUG_REPO, { numbers: [1], heads: [] }, { runner: async () => 'garbage', env: {} });
   assert.equal(garbage.byNumber.size, 0);
 });
 
@@ -273,6 +293,6 @@ test('fetchBatch: at most 4 chunks run at once', async () => {
     inFlight -= 1;
     return '{}';
   };
-  await fetchBatch(SLUG_REPO, { numbers, heads: [] }, { runner });
+  await fetchBatch(SLUG_REPO, { numbers, heads: [] }, { runner, env: {} });
   assert.equal(peak, 4);
 });
