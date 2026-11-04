@@ -73,7 +73,7 @@ files:
 - **Should understand:**
   - Hook-side code never throws or exits on a refused host.
   - A post-merge run that was skipped is retried on a later pass once the opt-in is set.
-  - An `ssh://` origin the gate cannot parse falls back to the loose reader (#4857), which never names an unknown host either.
+  - An `ssh://`, credentialed or ported origin is judged on its host like its plain spelling (#4794), so an `ssh://` alias is refused with the same text. A remote the gate cannot read at all (a cloud sandbox's proxy remote, a local path) falls back to the loose reader (#4857), which never names an unknown host either.
 - **Red flags:**
   - A SessionStart error.
   - A `gh api -X DELETE` to an unknown host.

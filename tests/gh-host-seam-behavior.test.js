@@ -989,3 +989,95 @@ test('#4794: stale-claim-pr.js on an unknown or SSH-alias origin reports unknown
     assert.deepEqual(networkLines(r.lines), [], `${origin}: gh was called beyond --version:\n${r.lines.join('\n')}`);
   }
 });
+
+// #4794 Task 16: a whole reconcile pass (`hooks.js reconcile`, the unscoped CLI call) on a GHE origin
+// with no GH_HOST exported. The fake gh answers the claims tree listing with an empty registry, `pr view`
+// with a failure and the PR-state confirm's GraphQL probe with a NOT_FOUND body, and anything else with
+// `[]`. The fixture drives one call of every kind whose host the pass derives itself: release-merged's
+// tree listing (a `repos/…` path, host from the cwd binding), archive's by-number PR-state confirm (a
+// GraphQL pair, host from the call's cwd), and the structurally-stuck run dir's residue escalation,
+// whose host rides `--repo` (the host-qualified slug), not the environment: it is the call a bare-slug
+// pass leaves on github.com even from the repo's own cwd. GIT_ALLOW_PROTOCOL=file makes the pass's
+// `git fetch` of the https origin fail at once instead of prompting or reaching the network.
+const PR_NOT_FOUND_BODY = JSON.stringify({ data: { repository: { pullRequest: null } }, errors: [{ type: 'NOT_FOUND', path: ['repository', 'pullRequest'], message: 'no PR' }] });
+
+function installReconcileGh(t) {
+  const dir = tmp(t, 'ct-gh-seam-pass-');
+  const log = path.join(dir, 'gh.log');
+  const restore = installStub('gh', [
+    '#!/bin/sh',
+    `printf 'GH_HOST=%s ARGS=%s\\n' "\${GH_HOST-unset}" "$*" >> '${log}'`,
+    'case "$*" in',
+    '  --version*) echo "gh version 2.0.0" ;;',
+    '  "api repos/"*"/git/trees/claims-registry"*) echo \'{"truncated":false,"entries":[]}\' ;;',
+    '  "pr view"*) exit 1 ;;',
+    `  "api graphql"*) echo '${PR_NOT_FOUND_BODY}'; exit 1 ;;`,
+    '  *) echo "[]" ;;',
+    'esac',
+    'exit 0',
+    '',
+  ].join('\n'));
+  t.after(restore);
+  return () => joinSpawnLines(fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean) : []);
+}
+
+function reconcilePassFixture(t, origin) {
+  const { RESIDUE_ESCALATE_THRESHOLD, recordResidueFailure } = require('../plugin/bin/lib/reconcile/cache');
+  const { STRUCTURALLY_STUCK_TTL_MS } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const { STATUS_FILENAME } = require('../plugin/bin/lib/reconcile/background-spawn');
+  const repo = fs.realpathSync(tmp(t, 'ct-gh-seam-pass-repo-'));
+  git(repo, ['init', '-q']);
+  git(repo, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
+  git(repo, ['remote', 'add', 'origin', origin]);
+  fs.writeFileSync(path.join(repo, 'CLAUDE.md'), '## Work records\n\nwork-backend: github-issues\nwork-types: labels\n');
+  git(repo, ['add', 'CLAUDE.md']);
+  git(repo, ['-c', 'user.email=t@example.invalid', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'init']);
+  // The pass resolves its integration branch from origin/HEAD (a fetch of the https origin cannot supply it).
+  git(repo, ['update-ref', 'refs/remotes/origin/main', 'HEAD']);
+  git(repo, ['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main']);
+  // reap's PR screen: a worktree branch to look up.
+  git(repo, ['worktree', 'add', '-q', '-b', 'worktree-issue-1', path.join(repo, '.claude', 'worktrees', 'issue-1')]);
+  // archive's by-number PR confirm and escalation: a stuck run dir (worktree gone, no branch, a stamped
+  // PR the fake gh does not know), one failure short of the threshold.
+  const dir = path.join(repo, '.claude-tweaks', 'pipelines', '2026-01-01T000000-stuck-a-4794');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'config.yml'), 'x: 1\n');
+  fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ status: 'active', worktree: path.join(repo, 'long-gone'), sessionId: 'sess-1', pr: { number: 7 } }));
+  const backdated = new Date(Date.now() - STRUCTURALLY_STUCK_TTL_MS * 2);
+  fs.utimesSync(dir, backdated, backdated);
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD - 1; i++) recordResidueFailure(repo, 'structurally-stuck', dir, { lastError: 'stuck at pr-not-found' });
+  // A fresh background-status stamp keeps the CLI from spawning its detached janitorial pass.
+  fs.writeFileSync(path.join(repo, '.claude-tweaks', STATUS_FILENAME), JSON.stringify({ completedAt: Date.now() }));
+  return repo;
+}
+
+// Returns the fake gh's log lines for one `hooks.js reconcile` child run from the repo.
+function reconcilePassLines(t, { origin, env = {} }) {
+  const readLog = installReconcileGh(t);
+  const repo = reconcilePassFixture(t, origin);
+  const passEnv = { ...gatedEnv(t, {}), GIT_TERMINAL_PROMPT: '0', ...env };
+  const r = spawnSync(process.execPath, [path.join(BIN, 'hooks.js'), 'reconcile', '--json'], { cwd: repo, env: passEnv, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  assert.equal(r.status, 0, `reconcile exited ${r.status}\nstdout:\n${r.stdout}\nstderr:\n${r.stderr}`);
+  return readLog();
+}
+
+// Every gh call on a GHE origin reaches the host; the calls whose host rides `--repo` (the residue
+// escalation's issue list and create) carry the host-qualified slug rather than a bare one that only
+// an injected GH_HOST would route.
+function assertPassReaches(lines, host) {
+  assertEveryLineReaches(lines, host);
+  const has = (re) => networkLines(lines).some((l) => re.test(argsOf(l)));
+  assert.ok(has(/^api repos\/acme\/widgets\/git\/trees\/claims-registry/), `no release-merged tree listing, log:\n${lines.join('\n')}`);
+  assert.ok(has(/^api graphql -f owner=acme -f name=widgets -F number=7 /), `no PR-state confirm, log:\n${lines.join('\n')}`);
+  const repoFlagged = networkLines(lines).filter((l) => /(?:^| )(?:-R|--repo)[ =]/.test(argsOf(l)));
+  assert.ok(repoFlagged.length >= 1, `no residue-escalation call carried --repo, log:\n${lines.join('\n')}`);
+  for (const line of repoFlagged) assert.ok(argvReachesHost(line, host), `--repo value is not host-qualified: ${line}`);
+}
+
+test('AC1.1: a whole reconcile pass (hooks.js reconcile) on a *.ghe.com origin sends every gh call to the origin host', { skip: STUB_SKIP }, (t) => {
+  assertPassReaches(reconcilePassLines(t, { origin: GHE_ORIGIN }), 'acme.ghe.com');
+});
+
+test('AC1.1: a whole reconcile pass on a credentialed https://oauth2@acme.ghe.com origin sends every gh call to the origin host', { skip: STUB_SKIP }, (t) => {
+  assertPassReaches(reconcilePassLines(t, { origin: 'https://oauth2@acme.ghe.com/acme/widgets.git' }), 'acme.ghe.com');
+});
