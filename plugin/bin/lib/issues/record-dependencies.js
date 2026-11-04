@@ -87,8 +87,12 @@ function buildAliasedIssueQuery(numbers, fieldExpr) {
 // can't start with a digit, hence the 'i' prefix. Returns null for an empty or
 // non-array input — nothing to query, and an empty repository{} selection set
 // would be invalid GraphQL.
+// #4793: also selects the dependent issue's and each blocker node's
+// repository{ nameWithOwner } — a native blockedBy link can point at an issue
+// in another repository, and `number` alone then reads as this repository's
+// same-numbered issue. crossRepositoryBlockers below compares the two names.
 function buildNativeDependencyQuery(numbers) {
-  return buildAliasedIssueQuery(numbers, (n) => `issue(number:${n}){ number blockedBy(first:25){ nodes{ number state } } }`);
+  return buildAliasedIssueQuery(numbers, (n) => `issue(number:${n}){ number repository{ nameWithOwner } blockedBy(first:25){ nodes{ number state repository{ nameWithOwner } } } }`);
 }
 
 // candidate parent-issue numbers -> one batched, aliased GraphQL query requesting
@@ -123,6 +127,87 @@ function hasOpenNativeBlocker(issueNode) {
   const nodes = issueNode && issueNode.blockedBy && issueNode.blockedBy.nodes;
   if (!Array.isArray(nodes)) return false;
   return nodes.some((n) => n && n.state === 'OPEN');
+}
+
+// A readable repository name is a non-empty string; anything else is unreadable.
+function readableRepoName(repository) {
+  const name = repository && repository.nameWithOwner;
+  return typeof name === 'string' && name ? name : null;
+}
+
+// one candidate's parsed aliased response value -> [{ number, repository, state }]
+// for each blockedBy node living in another repository (#4793). Compared against
+// the DEPENDENT node's own repository.nameWithOwner, case-insensitively — never
+// the caller's owner/repo, so an `origin` left on a pre-transfer name cannot make
+// every blocker read as foreign. A name is readable only when it is a non-empty
+// string; a node with no readable name on either side is never foreign, so a
+// response without the field keeps the old same-repository behavior. `state` is
+// the node's state when a string, else null (the caller fails closed on it, see
+// foreignBlockerBlocks). A malformed or missing blockedBy.nodes gives [].
+function crossRepositoryBlockers(issueNode) {
+  const home = readableRepoName(issueNode && issueNode.repository);
+  const nodes = issueNode && issueNode.blockedBy && issueNode.blockedBy.nodes;
+  if (!home || !Array.isArray(nodes)) return [];
+  const result = [];
+  for (const n of nodes) {
+    const repository = readableRepoName(n && n.repository);
+    if (!repository || repository.toLowerCase() === home.toLowerCase()) continue;
+    result.push({ number: n.number, repository, state: typeof n.state === 'string' ? n.state : null });
+  }
+  return result;
+}
+
+// (numbers, crossRepoBlockers?) -> a copy of `numbers` with one occurrence removed
+// per crossRepoBlockers entry's `number`, order kept. fetchNativeDependencies'
+// blockedBy/openBlockerIds still carry a foreign blocker's bare number (existing
+// consumers' shape is unchanged, #4793); a reader that names this repository's
+// own blockers strips them with this first. A non-array `numbers` gives [] and a
+// non-array `crossRepoBlockers` a plain copy.
+function withoutCrossRepoBlockers(numbers, crossRepoBlockers) {
+  if (!Array.isArray(numbers)) return [];
+  const result = numbers.slice();
+  if (!Array.isArray(crossRepoBlockers)) return result;
+  for (const b of crossRepoBlockers) {
+    const i = result.indexOf(b && b.number);
+    if (i !== -1) result.splice(i, 1);
+  }
+  return result;
+}
+
+// Decisions Q5 (#4793): a foreign blocker blocks unless its native state is
+// exactly CLOSED — an OPEN, missing, null or unrecognised state all fail closed,
+// so an unreadable state can never read as landed.
+function foreignBlockerBlocks(entry) {
+  return entry.state !== 'CLOSED';
+}
+
+// A foreign blocker's qualified `owner/repo#N` name; a state that is neither
+// OPEN nor CLOSED adds ' (state unreadable)' (Decisions Q5), so the stop it
+// causes can be diagnosed instead of reading as a silent fallback.
+function foreignBlockerRef(entry) {
+  const ref = `${entry.repository}#${entry.number}`;
+  return entry.state === 'OPEN' || entry.state === 'CLOSED' ? ref : `${ref} (state unreadable)`;
+}
+
+// { openBlockerIds, crossRepoBlockers } (a fetchNativeDependencies entry's fields)
+// -> this repository's open blocker numbers (foreign OPEN ones stripped,
+// deduplicated in first-appearance order), then each still-blocking foreign
+// blocker's qualified ref in entry order.
+function openBlockerRefs({ openBlockerIds, crossRepoBlockers } = {}) {
+  const foreign = Array.isArray(crossRepoBlockers) ? crossRepoBlockers : [];
+  const local = withoutCrossRepoBlockers(openBlockerIds, foreign.filter((b) => b.state === 'OPEN'));
+  return [...new Set(local), ...foreign.filter(foreignBlockerBlocks).map(foreignBlockerRef)];
+}
+
+// one candidate's parsed aliased response value -> the same list openBlockerRefs
+// builds, straight from the raw node (partitionByOpenNativeBlockers' reader).
+function openNativeBlockerRefs(issueNode) {
+  const rawNodes = issueNode && issueNode.blockedBy && issueNode.blockedBy.nodes;
+  const nodes = Array.isArray(rawNodes) ? rawNodes : [];
+  return openBlockerRefs({
+    openBlockerIds: nodes.filter((n) => n && n.state === 'OPEN').map((n) => n.number),
+    crossRepoBlockers: crossRepositoryBlockers(issueNode),
+  });
 }
 
 // candidates[] (each with .number), openBlockerIdsFn: candidate -> number[] of
@@ -165,13 +250,11 @@ function partitionByOpenBodyBlockers(candidates, openNumbers) {
 // no-array-of-nodes -> false behavior. Same fails-safe guard as hasOpenNativeBlocker:
 // a malformed response (nodes present but not an array, e.g. a schema mismatch)
 // degrades to "no blockers resolved", never throws .filter-is-not-a-function.
+// #4793: each candidate's blocker list is openNativeBlockerRefs(node) — this
+// repository's open numbers, then a still-blocking foreign blocker by its
+// qualified `owner/repo#N` name (Decisions Q3), never as a bare `#N`.
 function partitionByOpenNativeBlockers(candidates, repoData) {
-  return partitionByOpenBlockers(candidates, (c) => {
-    const node = repoData && repoData['i' + c.number];
-    const rawNodes = node && node.blockedBy && node.blockedBy.nodes;
-    const nodes = Array.isArray(rawNodes) ? rawNodes : [];
-    return nodes.filter((n) => n && n.state === 'OPEN').map((n) => n.number);
-  });
+  return partitionByOpenBlockers(candidates, (c) => openNativeBlockerRefs(repoData && repoData['i' + c.number]));
 }
 
 // candidate issue numbers -> one batched, aliased GraphQL query requesting
@@ -267,4 +350,5 @@ module.exports = {
   parseDependencies, parseDependencyAssumptions, buildNativeDependencyQuery,
   hasOpenNativeBlocker, parseSubIssues, parseParent, buildNativeSubIssuesQuery, buildNativeParentQuery,
   partitionByOpenBodyBlockers, partitionByOpenNativeBlockers, buildLinkedPRQuery, partitionByOpenLinkedPR,
+  crossRepositoryBlockers, withoutCrossRepoBlockers, foreignBlockerBlocks, foreignBlockerRef, openBlockerRefs, openNativeBlockerRefs,
 };

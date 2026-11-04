@@ -8,6 +8,7 @@ const {
   buildNativeParentQuery,
   partitionByOpenBodyBlockers, partitionByOpenNativeBlockers,
   buildLinkedPRQuery, partitionByOpenLinkedPR, extractSection, isRepoRelativeKeyFilePath,
+  crossRepositoryBlockers, withoutCrossRepoBlockers, foreignBlockerBlocks, foreignBlockerRef, openBlockerRefs, openNativeBlockerRefs,
 } = require('../../../plugin/bin/lib/issues/record');
 
 test('recordPayload assembles labels for a born-ready health record', () => {
@@ -642,7 +643,7 @@ test('buildNativeDependencyQuery aliases each number and requests blockedBy stat
   const q = buildNativeDependencyQuery([39, 37]);
   assert.match(q, /i39: issue\(number:39\)/);
   assert.match(q, /i37: issue\(number:37\)/);
-  assert.match(q, /i39: issue\(number:39\)\{ number blockedBy\(first:25\)\{ nodes\{ number state \} \} \}/);
+  assert.match(q, /i39: issue\(number:39\)\{ number repository\{ nameWithOwner \} blockedBy\(first:25\)\{ nodes\{ number state repository\{ nameWithOwner \} \} \} \}/);
   assert.match(q, /repository\(owner:\$owner,name:\$repo\)/);
 });
 
@@ -1499,4 +1500,55 @@ test('extractSection: 1- to 3-space-indented fences hide a heading; a 4-space pa
   const four = extractSection(bodyFor('    '), 'Deliverables');
   assert.ok(four.length > 0);
   assert.ok(four.startsWith('quoted'));
+});
+
+const depNode = (home, blockers) => ({ number: 1, repository: home === null ? undefined : { nameWithOwner: home }, blockedBy: { nodes: blockers } });
+const blk = (number, repo, state = 'CLOSED') => ({ number, state, ...(repo === undefined ? {} : { repository: { nameWithOwner: repo } }) });
+
+test('AC1.1/AC1.2 (#4793): a native blocker in another repository is listed foreign with its state, so it is never read as this repository\'s same-numbered issue', () => {
+  assert.deepStrictEqual(crossRepositoryBlockers(depNode('acme/w', [blk(5, 'other/repo', 'OPEN'), blk(6, 'acme/w')])), [{ number: 5, repository: 'other/repo', state: 'OPEN' }]);
+});
+test('crossRepositoryBlockers treats a name differing only in case as the same repository', () => {
+  assert.deepStrictEqual(crossRepositoryBlockers(depNode('Acme/W', [blk(6, 'acme/w')])), []);
+});
+test('crossRepositoryBlockers calls nothing foreign when either name is unreadable', () => {
+  assert.deepStrictEqual(crossRepositoryBlockers(depNode(null, [blk(5, 'other/repo')])), []);
+  assert.deepStrictEqual(crossRepositoryBlockers(depNode('acme/w', [blk(5)])), []);
+  assert.deepStrictEqual(crossRepositoryBlockers(depNode('acme/w', [blk(5, '')])), []);
+  assert.deepStrictEqual(crossRepositoryBlockers(null), []);
+  assert.deepStrictEqual(crossRepositoryBlockers({ number: 1, repository: { nameWithOwner: 'acme/w' }, blockedBy: { nodes: 'x' } }), []);
+});
+test('crossRepositoryBlockers keeps a same-number pair apart and records a non-string state as null', () => {
+  assert.deepStrictEqual(crossRepositoryBlockers(depNode('acme/w', [blk(5, 'acme/w'), blk(5, 'other/repo', null)])), [{ number: 5, repository: 'other/repo', state: null }]);
+});
+test('withoutCrossRepoBlockers removes one occurrence per foreign entry, keeping order', () => {
+  assert.deepStrictEqual(withoutCrossRepoBlockers([5, 6, 5], [{ number: 5 }]), [6, 5]);
+  assert.deepStrictEqual(withoutCrossRepoBlockers([5, 6], undefined), [5, 6]);
+  assert.deepStrictEqual(withoutCrossRepoBlockers(undefined, [{ number: 5 }]), []);
+  assert.deepStrictEqual(withoutCrossRepoBlockers([6], [{ number: 5 }]), [6]);
+});
+test('Q5: foreignBlockerBlocks is false only for CLOSED; foreignBlockerRef names owner/name#N and marks an unreadable state', () => {
+  assert.equal(foreignBlockerBlocks({ number: 5, repository: 'o/r', state: 'CLOSED' }), false);
+  assert.equal(foreignBlockerBlocks({ number: 5, repository: 'o/r', state: 'OPEN' }), true);
+  assert.equal(foreignBlockerBlocks({ number: 5, repository: 'o/r', state: null }), true);
+  assert.equal(foreignBlockerRef({ number: 5, repository: 'o/r', state: 'OPEN' }), 'o/r#5');
+  assert.equal(foreignBlockerRef({ number: 5, repository: 'o/r', state: 'CLOSED' }), 'o/r#5');
+  assert.equal(foreignBlockerRef({ number: 5, repository: 'o/r', state: null }), 'o/r#5 (state unreadable)');
+  assert.equal(foreignBlockerRef({ number: 5, repository: 'o/r', state: 'WEIRD' }), 'o/r#5 (state unreadable)');
+});
+test('openBlockerRefs lists this repository\'s open numbers, then each still-blocking foreign blocker by its qualified name', () => {
+  const cross = [{ number: 5, repository: 'o/r', state: 'OPEN' }, { number: 7, repository: 'o/r', state: 'CLOSED' }, { number: 8, repository: 'o/r', state: null }];
+  assert.deepStrictEqual(openBlockerRefs({ openBlockerIds: [5, 4, 5, 4], crossRepoBlockers: cross }), [4, 5, 'o/r#5', 'o/r#8 (state unreadable)']);
+  assert.deepStrictEqual(openBlockerRefs({ openBlockerIds: [4] }), [4]);
+  assert.deepStrictEqual(openBlockerRefs({ crossRepoBlockers: [{ number: 8, repository: 'o/r', state: null }] }), ['o/r#8 (state unreadable)']);
+  assert.deepStrictEqual(openBlockerRefs({}), []);
+});
+test('openNativeBlockerRefs reads a raw node: local OPEN numbers, foreign refs, legacy nodes unchanged', () => {
+  assert.deepStrictEqual(openNativeBlockerRefs(depNode('acme/w', [blk(4, 'acme/w', 'OPEN'), blk(5, 'other/repo', 'OPEN'), blk(6, 'other/repo'), blk(9, 'acme/w')])), [4, 'other/repo#5']);
+  assert.deepStrictEqual(openNativeBlockerRefs({ number: 1, blockedBy: { nodes: [{ number: 4, state: 'OPEN' }, { number: 9, state: 'CLOSED' }] } }), [4]);
+  assert.deepStrictEqual(openNativeBlockerRefs({ number: 1, blockedBy: { nodes: 'x' } }), []);
+});
+test('partitionByOpenNativeBlockers names a foreign open blocker by its qualified name (#4793)', () => {
+  const { excluded } = partitionByOpenNativeBlockers([{ number: 12 }], { i12: depNode('acme/w', [blk(5, 'other/repo', 'OPEN')]) });
+  assert.deepStrictEqual(excluded, [{ number: 12, blockedBy: ['other/repo#5'] }]);
 });
