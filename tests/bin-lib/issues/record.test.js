@@ -1531,6 +1531,9 @@ test('Q5: foreignBlockerBlocks is false only for CLOSED; foreignBlockerRef names
   assert.equal(foreignBlockerBlocks({ number: 5, repository: 'o/r', state: 'CLOSED' }), false);
   assert.equal(foreignBlockerBlocks({ number: 5, repository: 'o/r', state: 'OPEN' }), true);
   assert.equal(foreignBlockerBlocks({ number: 5, repository: 'o/r', state: null }), true);
+  assert.equal(foreignBlockerBlocks({ number: 5, repository: 'o/r', state: 'WEIRD' }), true);
+  assert.equal(foreignBlockerBlocks({ number: 5, repository: 'o/r', state: 'closed' }), true);
+  assert.equal(foreignBlockerRef({ number: 5, repository: 'o/r', state: 'closed' }), 'o/r#5 (state unreadable)');
   assert.equal(foreignBlockerRef({ number: 5, repository: 'o/r', state: 'OPEN' }), 'o/r#5');
   assert.equal(foreignBlockerRef({ number: 5, repository: 'o/r', state: 'CLOSED' }), 'o/r#5');
   assert.equal(foreignBlockerRef({ number: 5, repository: 'o/r', state: null }), 'o/r#5 (state unreadable)');
@@ -1542,6 +1545,11 @@ test('openBlockerRefs lists this repository\'s open numbers, then each still-blo
   assert.deepStrictEqual(openBlockerRefs({ openBlockerIds: [4] }), [4]);
   assert.deepStrictEqual(openBlockerRefs({ crossRepoBlockers: [{ number: 8, repository: 'o/r', state: null }] }), ['o/r#8 (state unreadable)']);
   assert.deepStrictEqual(openBlockerRefs({}), []);
+});
+test('openBlockerRefs skips non-object crossRepoBlockers entries instead of throwing', () => {
+  const cross = [null, undefined, 'x', { number: 5, repository: 'o/r', state: 'OPEN' }];
+  assert.deepStrictEqual(openBlockerRefs({ openBlockerIds: [4, 5], crossRepoBlockers: cross }), [4, 'o/r#5']);
+  assert.deepStrictEqual(openBlockerRefs({ openBlockerIds: [4], crossRepoBlockers: [null] }), [4]);
 });
 test('openNativeBlockerRefs reads a raw node: local OPEN numbers, foreign refs, legacy nodes unchanged', () => {
   assert.deepStrictEqual(openNativeBlockerRefs(depNode('acme/w', [blk(4, 'acme/w', 'OPEN'), blk(5, 'other/repo', 'OPEN'), blk(6, 'other/repo'), blk(9, 'acme/w')])), [4, 'other/repo#5']);

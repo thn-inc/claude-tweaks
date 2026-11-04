@@ -63,10 +63,15 @@ function fetchNativeDependencies({
     const entry = {
       blockedBy: nodes.map((b) => b && b.number).filter((v) => v !== undefined),
       openBlocker: hasOpenNativeBlocker(node),
-      // The identical OPEN-state filter partitionByOpenNativeBlockers
-      // (bin/lib/issues/record.js) applies, precomputed here so a caller holding
+      // Every OPEN blockedBy node's number, foreign ones included (#4793), so
+      // existing consumers keep their values. Precomputed here so a caller holding
       // only this output — dispatch/queue-pull-script.md via resolve-blockers.js
-      // — names the blocker ids without a raw GraphQL response (#1309).
+      // — names the blocker ids without a raw GraphQL response (#1309). Unlike
+      // partitionByOpenNativeBlockers (bin/lib/issues/record.js), this list is
+      // not foreign-aware: that partition strips foreign OPEN numbers,
+      // deduplicates, appends qualified refs and blocks on an unreadable foreign
+      // state, so a foreign-aware reader combines this with crossRepoBlockers
+      // through openBlockerRefs.
       openBlockerIds: nodes.filter((b) => b && b.state === 'OPEN').map((b) => b.number),
     };
     // Present only when a blocker lives in another repository (#4793); the three

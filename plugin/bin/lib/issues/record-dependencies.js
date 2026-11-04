@@ -192,9 +192,10 @@ function foreignBlockerRef(entry) {
 // { openBlockerIds, crossRepoBlockers } (a fetchNativeDependencies entry's fields)
 // -> this repository's open blocker numbers (foreign OPEN ones stripped,
 // deduplicated in first-appearance order), then each still-blocking foreign
-// blocker's qualified ref in entry order.
+// blocker's qualified ref in entry order. A non-object entry in
+// crossRepoBlockers contributes nothing, as in withoutCrossRepoBlockers.
 function openBlockerRefs({ openBlockerIds, crossRepoBlockers } = {}) {
-  const foreign = Array.isArray(crossRepoBlockers) ? crossRepoBlockers : [];
+  const foreign = Array.isArray(crossRepoBlockers) ? crossRepoBlockers.filter((b) => b && typeof b === 'object') : [];
   const local = withoutCrossRepoBlockers(openBlockerIds, foreign.filter((b) => b.state === 'OPEN'));
   return [...new Set(local), ...foreign.filter(foreignBlockerBlocks).map(foreignBlockerRef)];
 }
@@ -210,8 +211,10 @@ function openNativeBlockerRefs(issueNode) {
   });
 }
 
-// candidates[] (each with .number), openBlockerIdsFn: candidate -> number[] of
-// the open blocker ids excluding it (empty when none) -> { eligible, excluded }.
+// candidates[] (each with .number), openBlockerIdsFn: candidate ->
+// Array<number|string> of the open blockers excluding it (empty when none; a
+// number is this repository's issue, a string a qualified foreign ref, #4793)
+// -> { eligible, excluded }.
 // The shared partition shape both blocked-by checks below need: split on
 // whether the candidate has any open blocker, carrying the actual blocker
 // id(s) for whichever candidates get dropped instead of discarding them
