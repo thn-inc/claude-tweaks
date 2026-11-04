@@ -1025,6 +1025,23 @@ test('under --records-json an owner/name#N key in --blocker-states-json supplies
   assert.doesNotMatch(d.err.join(''), /other\/repo#5|acme\/x#7|third\/y#9/i, 'the line names only the refs the file left out');
 });
 
+test('under --records-json issue_read\'s lowercase state supplies a foreign blocker: closed reads undetermined, open reads open, garbage fails closed', () => {
+  const d = cliDeps({
+    runner: () => { throw new Error('must not call gh'); },
+    workLinks: 'body-text',
+    files: {
+      '/r.json': JSON.stringify([issue({ number: 11, title: 'Eleven', body: `Blocked by other/repo#7\nBlocked by other/repo#8\nBlocked by other/repo#9\n\n${specBody(['b.js'])}` })]),
+      '/s.json': JSON.stringify({ 'other/repo#7': { state: 'closed' }, 'other/repo#8': 'open', 'other/repo#9': { state: 'merged' } }),
+    },
+  });
+  assert.equal(run(['11', '--blocker-landing', '--records-json', '/r.json', '--blocker-states-json', '/s.json'], d.deps), 0);
+  assert.deepEqual(JSON.parse(d.out.join('')).records['11'].blockerLanding, [
+    { blocker: 7, verdict: 'undetermined', commit: null, via: 'cross-repository', repository: 'other/repo' },
+    { blocker: 8, verdict: 'open', commit: null, via: 'cross-repository', repository: 'other/repo' },
+    { blocker: 9, verdict: 'open', commit: null, via: 'cross-repository-state-unreadable', repository: 'other/repo' },
+  ]);
+});
+
 test('under --records-json a --blocker-states-json that answers every body-declared foreign blocker prints no lookup line', () => {
   const d = cliDeps({
     runner: () => { throw new Error('must not call gh'); },

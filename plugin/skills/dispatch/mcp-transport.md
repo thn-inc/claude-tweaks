@@ -196,10 +196,11 @@ Supply those foreign states to the queue pull instead of leaving the body-text p
 before `queue-pull-script.md` runs it, collect each eligible candidate's body-declared foreign refs
 (`Blocked by owner/name#N` lines), read each with `issue_read` (`get` method; its `owner`, `repo`
 and `issue_number`), and write the states as one JSON object keyed by `owner/name#N`, each value
-`"OPEN"`, `"CLOSED"` or `null` (`null` for a ref `issue_read` cannot read), with the Write tool to a
-session-scoped temp file (`_shared/session-tmp-root.md`). Export its path as `DISPATCH_FOREIGN_STATES`
-for the pass: a `CLOSED` ref no longer blocks, and an `OPEN` one excludes the record as
-`owner/name#N`. A ref left out of the file, or `null`, still excludes the record as
+copied from `issue_read`'s `state` (any case) or `null` for a ref `issue_read` cannot read, with the
+Write tool to a session-scoped temp file (`_shared/session-tmp-root.md`). Set its path as
+`DISPATCH_FOREIGN_STATES={path}` prefixed to the same Bash call that runs the pass, because shell
+state does not persist between calls: a closed ref no longer blocks, and an open one excludes the
+record as `owner/name#N`. A ref left out of the file, or `null`, still excludes the record as
 `owner/name#N (state unreadable)` (fail closed), and an unset or unreadable file changes nothing.
 
 Re-open this section if the GitHub MCP server ever adds a generic GraphQL passthrough tool or

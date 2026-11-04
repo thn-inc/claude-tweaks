@@ -123,7 +123,7 @@ test('AC10.1: docs/plugin-structure.md\'s preflight-records CLI line names --rec
 // --records-json unless the caller supplies its state. The paragraph is one long line.
 const FOREIGN_STATES_FACTS = [
   [/read each such ref with MCP `issue_read` on that owner and repository/, 'the caller reads each body-declared foreign ref with issue_read on its own repository'],
-  [/add it to that states file under the key `owner\/name#N` with the value `"OPEN"` or `"CLOSED"`/, 'the foreign state goes into the states file under an owner/name#N key'],
+  [/add it to that states file under the key `owner\/name#N` with the value copied from `issue_read`'s `state` \(any case; an unreadable ref is left out\)/, 'the foreign state goes into the states file under an owner/name#N key'],
   [/an `OPEN` one stops the run, named `owner\/name#N`, and a `CLOSED` one reads `undetermined` and proceeds/, 'an OPEN supplied foreign state stops the run and a CLOSED one proceeds'],
   [/A ref the file leaves out stays unreadable and stops the run/i, 'a foreign ref the file leaves out stays unreadable and stops the run'],
 ];

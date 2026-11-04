@@ -219,12 +219,13 @@ test('bodyForeignBlockers keys by id when a record has no number, reads an overs
 
 const noSpawn = () => { throw new Error('must not spawn'); };
 
-test('suppliedStates keys canonically and reads only exact OPEN or CLOSED, a string or a {state} object; anything else reads null', () => {
+test('suppliedStates keys canonically and reads OPEN or CLOSED in any case, a string or a {state} object; anything else reads null', () => {
   const m = suppliedStates({
-    'Other/Repo#5': 'OPEN', 'acme/x#007': { state: 'CLOSED' }, 'a/b#1': 'closed', 'a/b#2': null, 'a/b#3': 7, 'a/b#4': { state: 'merged' },
+    'Other/Repo#5': 'OPEN', 'acme/x#007': { state: 'CLOSED' }, 'a/b#1': 'closed', 'a/b#2': null, 'a/b#3': 7, 'a/b#4': { state: 'merged' }, 'a/b#5': 'Open', 'a/b#6': { state: 'open' }, 'a/b#7': 'merged',
     '12': { state: 'OPEN' }, 'not a ref': 'OPEN',
   });
-  assert.deepStrictEqual([...m], [['other/repo#5', 'OPEN'], ['acme/x#7', 'CLOSED'], ['a/b#1', null], ['a/b#2', null], ['a/b#3', null], ['a/b#4', null]]);
+  assert.deepStrictEqual([...m], [['other/repo#5', 'OPEN'], ['acme/x#7', 'CLOSED'], ['a/b#1', 'CLOSED'], ['a/b#2', null], ['a/b#3', null], ['a/b#4', null],
+    ['a/b#5', 'OPEN'], ['a/b#6', 'OPEN'], ['a/b#7', null]]);
   assert.deepStrictEqual(suppliedStates(null), new Map());
   assert.deepStrictEqual(suppliedStates(['other/repo#5']), new Map());
   assert.deepStrictEqual([...suppliedStates(new Map([['Other/Repo#5', 'CLOSED']]))], [['other/repo#5', 'CLOSED']]);

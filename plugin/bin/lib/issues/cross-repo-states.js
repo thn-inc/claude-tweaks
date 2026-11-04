@@ -57,13 +57,18 @@ const readableState = (state) => (state === 'OPEN' || state === 'CLOSED' ? state
 const sendable = ({ parsed }) => parsed.number <= GRAPHQL_INT_MAX;
 
 // A supplied value -> its state: a string, or an object's `state` (the shape --blocker-states-json
-// carries for this repository's numeric keys). readableState decides; anything else reads null.
-const suppliedValue = (v) => readableState(isObject(v) ? v.state : v);
+// carries for this repository's numeric keys). MCP issue_read returns a lowercase state, so a string
+// is case-folded here (the supplied path only; the GraphQL path's readableState stays exact) before
+// readableState decides; anything else ('merged', a number) reads null.
+const suppliedValue = (v) => {
+  const state = isObject(v) ? v.state : v;
+  return readableState(typeof state === 'string' ? state.toUpperCase() : state);
+};
 
 // A states object (or Map) keyed by 'owner/name#N' -> Map<crossRepoKey, 'OPEN'|'CLOSED'|null>. Keys
 // are canonicalised like every other foreign key (case-insensitive owner/name, no leading zeros); a
 // key that is not an owner/name#N ref (this repository's numeric keys share --blocker-states-json)
-// is ignored. A value other than exactly 'OPEN' or 'CLOSED' reads null: present, so the ref is not
+// is ignored. A value other than 'OPEN' or 'CLOSED' (any case) reads null: present, so the ref is not
 // looked up, and unreadable, so it still blocks. Anything but an object or Map is no states.
 function suppliedStates(input) {
   const out = new Map();

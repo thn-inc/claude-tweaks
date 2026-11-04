@@ -158,7 +158,7 @@ function runBodyPass(statesFile) {
 
 test('a supplied DISPATCH_FOREIGN_STATES file lets a CLOSED foreign blocker group, excludes an OPEN one by name, and leaves an absent key unreadable (#4793)', () => {
   const { res, excluded, eligible } = runBodyPass((file) => {
-    fs.writeFileSync(file('states.json'), JSON.stringify({ 'other/repo#5': 'CLOSED', 'OTHER/REPO#6': 'OPEN' }));
+    fs.writeFileSync(file('states.json'), JSON.stringify({ 'other/repo#5': 'closed', 'OTHER/REPO#6': 'open' }));
     return file('states.json');
   });
   assert.deepEqual(excluded, [
@@ -173,7 +173,9 @@ test('a DISPATCH_FOREIGN_STATES that is unset behaves as before, and one that na
   const unset = runBodyPass(null);
   assert.deepEqual(unset.eligible, [34]);
   assert.deepEqual(unset.excluded.map((e) => e.blockedBy), [
-    ['other/repo#5 (state unreadable)'], ['Other/Repo#6 (state unreadable)'], ['other/repo#7 (state unreadable)'],
+    ['other/repo#5 (state unreadable)'],
+    ['Other/Repo#6 (state unreadable)'],
+    ['other/repo#7 (state unreadable)'],
   ]);
 
   const missing = runBodyPass((file) => file('no-such-states.json'));
@@ -194,8 +196,8 @@ const MCP_FACTS = [
   [/a mention naming another repository \(`owner\/name#N`\)/i, 'a mention naming another repository is owner/name#N'],
   [/open or unreadable, it blocks/, 'a foreign blocker that is open or unreadable blocks'],
   [/suffixed ` \(state unreadable\)` when `issue_read` cannot read its state/, 'an unreadable foreign state is suffixed (state unreadable)'],  [/read each with `issue_read` \(`get` method; its `owner`, `repo` and `issue_number`\)/, 'the MCP agent reads each body-declared foreign ref with issue_read'],
-  [/write the states as one JSON object keyed by `owner\/name#N`, each value `"OPEN"`, `"CLOSED"` or `null`/, 'the MCP agent writes the states as a JSON object keyed by owner/name#N'],
-  [/Export its path as `DISPATCH_FOREIGN_STATES` for the pass/i, 'the MCP agent exports the states file path as DISPATCH_FOREIGN_STATES'],
+  [/write the states as one JSON object keyed by `owner\/name#N`, each value copied from `issue_read`'s `state` \(any case\) or `null`/, 'the MCP agent writes the states as a JSON object keyed by owner/name#N, copying issue_read\'s state in any case'],
+  [/Set its path as `DISPATCH_FOREIGN_STATES=\{path\}` prefixed to the same Bash call that runs the pass, because shell state does not persist between calls/i, 'the MCP agent prefixes DISPATCH_FOREIGN_STATES={path} to the Bash call that runs the pass'],
   [/A ref left out of the file, or `null`, still excludes the record as `owner\/name#N \(state unreadable\)` \(fail closed\)/i, 'a ref left out or null still excludes the record (state unreadable)'],
 ];
 const NOTES_FACTS = [

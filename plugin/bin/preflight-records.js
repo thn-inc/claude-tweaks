@@ -47,7 +47,8 @@
 // to the {state, stateReason|state_reason} the caller fetched over another
 // transport — supplies the state: open reads open, closed NOT_PLANNED/DUPLICATE
 // not-applicable, any other closed undetermined. The same file may also carry
-// `owner/name#N` keys (any case), each 'OPEN' | 'CLOSED' or {state}, for the
+// `owner/name#N` keys (any case), each {state} or a bare state string (issue_read's
+// lowercase `open`/`closed` is fine; anything else reads unreadable), for the
 // body-declared foreign blockers below (#4793). A compare call that throws
 // leaves that blocker undetermined/probe-failed and prints one stderr line (the
 // cause — a wrong integration branch, a 403, a rate limit — is otherwise lost).
