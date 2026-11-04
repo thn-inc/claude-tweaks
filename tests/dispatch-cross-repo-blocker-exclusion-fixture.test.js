@@ -41,11 +41,13 @@ test('a foreign open or unreadable-state native blocker excludes its record and 
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-cross-repo-blocker-'));
   const file = (name) => path.join(scratch, name);
 
-  fs.writeFileSync(file('eligible.json'), JSON.stringify([11, 12, 13].map(candidate)));
+  fs.writeFileSync(file('eligible.json'), JSON.stringify([11, 12, 13, 14, 15].map(candidate)));
   fs.writeFileSync(file('native-deps.json'), JSON.stringify({
     11: { blockedBy: [5], openBlocker: true, openBlockerIds: [5], crossRepoBlockers: [{ number: 5, repository: 'other/repo', state: 'OPEN' }] },
     12: { blockedBy: [6], openBlocker: false, openBlockerIds: [], crossRepoBlockers: [{ number: 6, repository: 'other/repo', state: null }] },
     13: { blockedBy: [7], openBlocker: false, openBlockerIds: [], crossRepoBlockers: [{ number: 7, repository: 'other/repo', state: 'CLOSED' }] },
+    14: { blockedBy: [8], openBlocker: true, openBlockerIds: [8] },
+    15: { blockedBy: [4, 5], openBlocker: true, openBlockerIds: [4, 5], crossRepoBlockers: [{ number: 5, repository: 'other/repo', state: 'OPEN' }] },
   }));
   fs.writeFileSync(file('body-excluded.json'), '[]');
 
@@ -71,6 +73,8 @@ test('a foreign open or unreadable-state native blocker excludes its record and 
   assert.deepEqual(blocked, [
     { reason: 'blocked', records: [11], detail: { blockedBy: ['other/repo#5'] } },
     { reason: 'blocked', records: [12], detail: { blockedBy: ['other/repo#6 (state unreadable)'] } },
+    { reason: 'blocked', records: [14], detail: { blockedBy: [8] } },
+    { reason: 'blocked', records: [15], detail: { blockedBy: [4, 'other/repo#5'] } },
   ]);
 
   const groupedNumbers = JSON.parse(fs.readFileSync(file('groups.json'), 'utf8')).flat().map((r) => r.number);
@@ -88,6 +92,10 @@ const REPORT_FACTS = [
 const MCP_FACTS = [
   [/a mention naming another repository \(`owner\/name#N`\)/i, 'a mention naming another repository is owner/name#N'],
   [/open or unreadable, it blocks/, 'a foreign blocker that is open or unreadable blocks'],
+  [/suffixed ` \(state unreadable\)` when `issue_read` cannot read its state/, 'an unreadable foreign state is suffixed (state unreadable)'],
+];
+const NOTES_FACTS = [
+  [/suffixed ` \(state unreadable\)` when its state could not be read/, 'the queue notes name an unreadable foreign state with the suffix'],
 ];
 
 test('the report and the MCP workaround name a foreign blocker owner/name#N (#4793)', () => {
@@ -97,10 +105,15 @@ test('the report and the MCP workaround name a foreign blocker owner/name#N (#47
     '## Step 2 — native blocked-by / linked-PR batching: no generic GraphQL bridge (#2523)',
   ));
 
+  const notes = collapse(readText(path.join(DISPATCH_DIR, 'queue-pull-notes.md')));
+
   const missingFromReport = missingFactsOf(REPORT_FACTS);
   const missingFromMcp = missingFactsOf(MCP_FACTS);
+  const missingFromNotes = missingFactsOf(NOTES_FACTS);
   assert.deepEqual(missingFromReport(report), [], 'blocked-exclusion-report.md states every fact');
   assert.deepEqual(missingFromMcp(mcpSection), [], 'mcp-transport.md states every fact');
+  assert.deepEqual(missingFromNotes(notes), [], 'queue-pull-notes.md states every fact');
   assertEachPatternGoesRed(report, REPORT_FACTS, missingFromReport);
   assertEachPatternGoesRed(mcpSection, MCP_FACTS, missingFromMcp);
+  assertEachPatternGoesRed(notes, NOTES_FACTS, missingFromNotes);
 });
