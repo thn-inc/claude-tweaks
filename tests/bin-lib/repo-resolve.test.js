@@ -632,3 +632,47 @@ test('re-review: --comment/--subject/--notes/--description values are not an exp
     assert.strictEqual(ghOptions(args, o, ghe), o, args.join(' '));
   }
 });
+
+// #4794: the one host resolver. Precedence: a typed --repo host, then a non-empty
+// (after trim) exported GH_HOST, then the origin host, then github.com; the slug is
+// host-qualified only when that host differs from gh's own default host.
+const { resolveRepoTarget, ghHostIn } = require('../../plugin/bin/lib/repo-resolve');
+
+test('#4794: resolveRepoTarget — one host: typed --repo host, then GH_HOST, then the origin host, then github.com', () => {
+  const T = (o, env) => resolveRepoTarget({ owner: 'acme', repo: 'w', ...o }, { env });
+  assert.deepEqual(T({}, {}), { host: 'github.com', ghRepo: 'acme/w' });
+  assert.deepEqual(T({ originHost: 'ACME.ghe.com.' }, {}), { host: 'acme.ghe.com', ghRepo: 'acme.ghe.com/acme/w' });
+  // The host is GH_HOST, gh's default, so the slug stays bare (round 5 Q1).
+  assert.deepEqual(T({ originHost: 'acme.ghe.com' }, { GH_HOST: ' MINE.example. ' }), { host: 'mine.example', ghRepo: 'acme/w' });
+  // An empty (whitespace-only) GH_HOST is unset.
+  assert.deepEqual(T({ originHost: 'acme.ghe.com' }, { GH_HOST: '  ' }), { host: 'acme.ghe.com', ghRepo: 'acme.ghe.com/acme/w' });
+  // A qualified -R beats GH_HOST in gh, so it must stay qualified.
+  assert.deepEqual(T({ explicitHost: 'github.com' }, { GH_HOST: 'mine.example' }), { host: 'github.com', ghRepo: 'github.com/acme/w' });
+  assert.deepEqual(T({ explicitHost: 'mine.example' }, { GH_HOST: 'MINE.example' }), { host: 'mine.example', ghRepo: 'acme/w' });
+  // A bare typed --repo follows GH_HOST (spec round 4 Q2) and keeps today's bare argv.
+  assert.deepEqual(T({}, { GH_HOST: 'mine.example' }), { host: 'mine.example', ghRepo: 'acme/w' });
+  // AC2 with GH_HOST exported: today's bare argv (round 5 Q1).
+  assert.deepEqual(T({ originHost: 'github.com' }, { GH_HOST: 'mine.example' }), { host: 'mine.example', ghRepo: 'acme/w' });
+  assert.deepEqual(T({ originHost: 'github.com' }, { GH_HOST: 'github.com' }), { host: 'github.com', ghRepo: 'acme/w' });
+  assert.deepEqual(T({ explicitHost: 'GHE.Example.com' }, {}), { host: 'ghe.example.com', ghRepo: 'ghe.example.com/acme/w' });
+});
+
+test('#4794: resolveRepoTarget reads the process env when no deps.env is given', () => {
+  const saved = process.env.GH_HOST;
+  try {
+    process.env.GH_HOST = 'mine.example';
+    assert.deepEqual(resolveRepoTarget({ owner: 'acme', repo: 'w', originHost: 'acme.ghe.com' }), { host: 'mine.example', ghRepo: 'acme/w' });
+    delete process.env.GH_HOST;
+    assert.deepEqual(resolveRepoTarget({ owner: 'acme', repo: 'w', originHost: 'acme.ghe.com' }), { host: 'acme.ghe.com', ghRepo: 'acme.ghe.com/acme/w' });
+  } finally {
+    if (saved === undefined) delete process.env.GH_HOST; else process.env.GH_HOST = saved;
+  }
+});
+
+test('#4794: ghHostIn — the one GH_HOST reader: trimmed and normalized, empty or whitespace-only is unset', () => {
+  assert.equal(ghHostIn({}), null);
+  assert.equal(ghHostIn({ GH_HOST: '' }), null);
+  assert.equal(ghHostIn({ GH_HOST: '   ' }), null);
+  assert.equal(ghHostIn({ GH_HOST: ' MINE.example. ' }), 'mine.example');
+  assert.equal(ghHostIn({ GH_HOST: 'github.com' }), 'github.com');
+});

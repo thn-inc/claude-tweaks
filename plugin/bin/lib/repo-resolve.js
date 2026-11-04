@@ -285,6 +285,29 @@ function ghOptions(args, opts, deps = {}) {
   return { ...o, env: { ...base, GH_HOST: spec.host } };
 }
 
+// #4794: the exported GH_HOST as a normalized host, or null when it is unset, empty or
+// whitespace-only (an empty GH_HOST is no opt-in anywhere). The one reader of GH_HOST for
+// resolveRepoTarget and the callers that compare a host against it.
+function ghHostIn(env) {
+  const raw = String((env || {}).GH_HOST || '').trim();
+  return raw ? normalizeHost(raw) : null;
+}
+
+// #4794: the one host a command's gh calls and host comparisons use, and the `--repo` slug
+// for it. The host is, in order: a typed host-qualified --repo (`explicitHost`), a non-empty
+// exported GH_HOST (gh itself sends a bare -R there), the caller's gated origin host
+// (`originHost`), then github.com. The slug is bare `owner/repo` when that host is gh's own
+// default host for a bare -R (GH_HOST, else github.com), else `host/owner/repo`: qualifying a
+// slug gh already routes to the host would change a github.com origin's argv under an exported
+// GH_HOST for no change in the host reached. Never reads origin: the caller passes the host
+// the #4933 gate admitted (repoTargetOf), or none for a bare typed --repo.
+function resolveRepoTarget({ owner, repo, explicitHost = null, originHost = null }, deps = {}) {
+  const ghHost = ghHostIn(deps.env || process.env);
+  const defaultHost = ghHost || 'github.com';
+  const host = (explicitHost && normalizeHost(explicitHost)) || ghHost || (originHost && normalizeHost(originHost)) || 'github.com';
+  return { host, ghRepo: host === defaultHost ? `${owner}/${repo}` : `${host}/${owner}/${repo}` };
+}
+
 // A CLI's explicit --repo names its own host, and a bare `owner/name` means
 // github.com (Decision Q2). Its calls that carry no host flag (a github.com
 // spec threads no --hostname; a GraphQL owner/repo pair; `gh api user`) would
@@ -312,5 +335,5 @@ function pinExplicitRepoHost(repoSpec, deps = {}) {
 module.exports = {
   parseRepo, ghAvailable, remoteUrl, repoSlug, repoResolutionNote,
   ghOptions, resolveGhHost, explicitRepoGhHost, pinExplicitRepoHost, _resetGhHostCache,
-  isKnownGhHost, gateOriginRepo, normalizeHost, originUrl,
+  isKnownGhHost, gateOriginRepo, normalizeHost, originUrl, ghHostIn, resolveRepoTarget,
 };

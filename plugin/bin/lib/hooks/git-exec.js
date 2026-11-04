@@ -12,7 +12,7 @@ const { runClassified, runClassifiedAsync } = require('../shared-primitives');
 // binding — so a test's `t.mock.method(cp, 'execFileSync', ...)` or
 // `cp.execFile = stub` still reaches them (#381, #872 follow-up); see timing.js.
 const { execFileSyncTimed, execFileAsyncTimed } = require('../reconcile/timing');
-const { gateOriginRepo } = require('../repo-resolve');
+const { gateOriginRepo, resolveRepoTarget } = require('../repo-resolve');
 
 // Budget for one git query, sized from measurement rather than intuition (#134).
 //
@@ -230,4 +230,18 @@ function repoSpecOf(repoRoot, gateDeps) {
   return m ? { host: null, owner: m[1], repo: m[2] } : null;
 }
 
-module.exports = { runGit, runGitAsync, isIndeterminate, FAILURE, DEFAULT_TIMEOUT_MS, repoSlugOf, repoSpecOf, repoPinnedEnv };
+// #4794: origin remote URL -> { owner, repo, slug, host, ghRepo }, `{ refusal }` (the gate's text,
+// unchanged) or null, repoSpecOf's gated answer plus the one resolved host and the `--repo` slug for
+// it (repo-resolve.js's resolveRepoTarget). `slug` is the bare `owner/repo` (a path, a comparison, a
+// GraphQL owner/name pair); `ghRepo` is what `gh --repo` takes. The host comes only from the #4933
+// gate (or an exported GH_HOST), so an SSH alias or an unknown host is a refusal, never a bare slug.
+function repoTargetOf(repoRoot, gateDeps) {
+  const spec = repoSpecOf(repoRoot, gateDeps);
+  if (!spec) return null;
+  if (spec.refusal) return { refusal: spec.refusal };
+  const { owner, repo } = spec;
+  const { host, ghRepo } = resolveRepoTarget({ owner, repo, originHost: spec.host }, gateDeps || {});
+  return { owner, repo, slug: `${owner}/${repo}`, host, ghRepo };
+}
+
+module.exports = { runGit, runGitAsync, isIndeterminate, FAILURE, DEFAULT_TIMEOUT_MS, repoSlugOf, repoSpecOf, repoTargetOf, repoPinnedEnv };
