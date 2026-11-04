@@ -10,6 +10,7 @@ const {
   trackResidue, pruneResidueFailures, clearResidue, beginCacheBatch, commitCacheBatch, recordResidueError, planClear,
   applyOwnerlessNonClean,
 } = require('../../../plugin/bin/lib/reconcile/cache');
+const { gateOriginRepo } = require('../../../plugin/bin/lib/repo-resolve');
 
 function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-cache-'));
@@ -688,14 +689,64 @@ test('#4794: a refused residue repo records unknown-host (refusal) on the escala
   assert.deepEqual(calls, [], 'a refused origin makes no gh call');
 });
 
-test('#4794: a long failure detail is still capped at 200 characters', () => {
+// The 200-character cap bounds a gh failure's text, not the gate's refusal: real refusals run 215-340
+// characters and end in the remedy (the alias advice, `export GH_HOST=<host>`), so a cut would lose it.
+const realRefusal = (remote) => gateOriginRepo(remote, { env: {}, readFile: () => { throw new Error('ENOENT'); } }).refusal;
+
+for (const remote of ['git@github-work:acme/widgets.git', 'https://git.corp.invalid/acme/w.git']) {
+  test(`#4794: the full gate refusal for ${remote} survives on the escalate and the resolve paths`, () => {
+    const refusal = realRefusal(remote);
+    assert.ok(typeof refusal === 'string' && `unknown-host (${refusal})`.length > 200, `fixture must outgrow the cap: ${refusal}`);
+    const repo = { refusal };
+    const calls = [];
+    const runner = (argv) => { calls.push(argv); return '[]'; };
+
+    const trackRoot = tmpRoot();
+    for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
+      trackResidue(trackRoot, repo, 'move-failed', '/x/a', { failed: true, lastError: 'e' }, { runner });
+    }
+    assert.equal(listResidueFailures(trackRoot)[0].lastResidueError.reason, `unknown-host (${refusal})`);
+
+    const pruneRoot = tmpRoot();
+    const gonePath = path.join(pruneRoot, 'gone');
+    for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) recordResidueFailure(pruneRoot, 'move-failed', gonePath, { lastError: 'e' });
+    assert.deepEqual(
+      pruneResidueFailures(pruneRoot, repo, { runner }),
+      { failures: [{ reason: 'move-failed', path: gonePath, op: 'resolve', error: `unknown-host (${refusal})` }] },
+    );
+
+    const clearRoot = escalatedStuckRoot();
+    clearResidue(clearRoot, repo, 'structurally-stuck', '/x/p', { runner });
+    assert.equal(listResidueFailures(clearRoot)[0].lastResidueError.reason, `unknown-host (${refusal})`);
+    assert.deepEqual(calls, [], 'a refused origin makes no gh call');
+  });
+}
+
+test('#4794: a long non-refusal reason (gh stderr) is still capped at 200 characters on both paths', () => {
+  const long = 'y'.repeat(300);
   const root = almostEscalatedRoot();
   trackResidue(root, 'o/r', 'move-failed', '/x/m', { failed: true, lastError: 'EBUSY' }, {
-    escalate: () => ({ status: 'escalation-failed', reason: 'unknown-host', detail: 'x'.repeat(300) }),
+    escalate: () => ({ status: 'escalation-failed', reason: long }),
   });
-  const { reason } = listResidueFailures(root)[0].lastResidueError;
-  assert.equal(reason.length, 200);
-  assert.ok(reason.startsWith('unknown-host (xxx'));
+  assert.equal(listResidueFailures(root)[0].lastResidueError.reason, long.slice(0, 200));
+
+  const clearRoot = escalatedStuckRoot();
+  clearResidue(clearRoot, 'o/r', 'structurally-stuck', '/x/p', { resolve: () => ({ status: 'resolution-failed', reason: long }) });
+  assert.equal(listResidueFailures(clearRoot)[0].lastResidueError.reason, long.slice(0, 200));
+
+  const pruneRoot = tmpRoot();
+  const gonePath = path.join(pruneRoot, 'gone');
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) recordResidueFailure(pruneRoot, 'move-failed', gonePath, { lastError: 'e' });
+  const out = pruneResidueFailures(pruneRoot, 'o/r', { resolve: () => ({ status: 'resolution-failed', reason: long }) });
+  assert.equal(out.failures[0].error, long.slice(0, 200));
+});
+
+test('#4794: only the reason is capped — a detail is appended whole, whitespace collapsed', () => {
+  const root = almostEscalatedRoot();
+  trackResidue(root, 'o/r', 'move-failed', '/x/m', { failed: true, lastError: 'EBUSY' }, {
+    escalate: () => ({ status: 'escalation-failed', reason: 'r'.repeat(300), detail: 'line one\n  line   two' }),
+  });
+  assert.equal(listResidueFailures(root)[0].lastResidueError.reason, `${'r'.repeat(200)} (line one line two)`);
 });
 
 test('#4180 recordResidueError: a no-op when the entry does not exist', () => {

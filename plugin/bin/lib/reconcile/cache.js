@@ -266,9 +266,15 @@ function ownedPathExists(target) {
 // #4180: a failed `gh` call's text (message + stderr + stdout) is multi-line and unbounded, and it
 // reaches one-line surfaces — the residue summary and SessionStart's model context. Collapse it to
 // one line and cap it at the same 200 characters the background status file's failure message uses.
+// #4794: the cap bounds `error` (a gh failure's text) only. The optional `detail` is a gate refusal
+// (`unknown-host`), 215-340 characters ending in its remedy, so it is appended whole (whitespace
+// collapsed): cut at 200 it loses the alias advice or leaves `export GH_HOST=gi`.
 const RESIDUE_ERROR_MAX_CHARS = 200;
-function boundedError(error) {
-  return String(error).replace(/\s+/g, ' ').trim().slice(0, RESIDUE_ERROR_MAX_CHARS);
+const oneLine = (text) => String(text).replace(/\s+/g, ' ').trim();
+function boundedError(error, detail) {
+  const head = oneLine(error).slice(0, RESIDUE_ERROR_MAX_CHARS);
+  const tail = detail ? oneLine(detail) : '';
+  return tail ? `${head} (${tail})` : head;
 }
 
 // #4180: the one channel for a swallowed escalate/resolve failure — the reason sits on the
@@ -277,27 +283,25 @@ function boundedError(error) {
 // carries the field forward unchanged (escalation is one-shot, so the reason must survive later
 // failing passes); it is dropped only when the entry itself is dropped (recordResidueSuccess /
 // prune), so it never outlives the streak. Batch-aware like its siblings.
-function recordResidueError(target, reason, targetPath, { op, error, now = Date.now() } = {}) {
+function recordResidueError(target, reason, targetPath, {
+  op, error, detail, now = Date.now(),
+} = {}) {
   const batch = isCacheBatch(target);
   const cache = batch ? target.cache : readCache(target);
   const key = residueKey(reason, targetPath);
   const existing = cache.residueFailures[key];
   if (!existing) return;
-  const failures = { ...cache.residueFailures, [key]: { ...existing, lastResidueError: { op, reason: boundedError(error), at: now } } };
+  const failures = { ...cache.residueFailures, [key]: { ...existing, lastResidueError: { op, reason: boundedError(error, detail), at: now } } };
   const nextCache = { ...cache, residueFailures: failures };
   if (batch) { target.cache = nextCache; target.dirty = true; } else { writeCache(target, nextCache); }
 }
 
-// #4794: a failed escalate/resolve result's text — its reason, with the `detail` a refused origin
-// carries (`unknown-host (<refusal>)`) so the recorded error says why. boundedError still caps it.
-function failureText(result) {
-  return result.detail ? `${result.reason} (${result.detail})` : result.reason;
-}
-
-// Why a resolve result is not a landed resolution: its own reason, else the unexpected status.
-function unresolvedReason(resolved) {
-  if (!resolved) return 'no result';
-  return failureText(resolved) || `status ${resolved.status}`;
+// Why a resolve result is not a landed resolution: its own reason, else the unexpected status, as
+// `{ error, detail? }` — #4794: the `detail` a refused origin carries rides beside the reason so
+// the recorded text is `unknown-host (<refusal>)` and only the reason is capped.
+function unresolvedError(resolved) {
+  if (!resolved) return { error: 'no result' };
+  return { error: resolved.reason || `status ${resolved.status}`, detail: resolved.detail };
 }
 
 // #2724: drop a tracked entry for a path that is no longer stuck, and — only
@@ -335,7 +339,7 @@ function clearResidue(target, repoSlug, reason, targetPath, { resolve = resolveR
     return { cleared: false, resolved: null };
   }
   if (!resolved || !RESIDUE_RESOLVED_STATUSES.has(resolved.status)) {
-    recordResidueError(target, reason, targetPath, { op: 'resolve', error: unresolvedReason(resolved) });
+    recordResidueError(target, reason, targetPath, { op: 'resolve', ...unresolvedError(resolved) });
     return { cleared: false, resolved };
   }
   recordResidueSuccess(target, reason, targetPath);
@@ -375,7 +379,7 @@ function trackResidue(target, repoSlug, reason, targetPath, { failed, lastError,
       count: streak.count, firstFailedAt: streak.firstFailedAt, lastError, dirtyFiles, runner, pathExists: ownedPathExists(target),
     });
     if (result && result.status === 'escalation-failed') {
-      recordResidueError(target, reason, targetPath, { op: 'escalate', error: failureText(result) || 'status escalation-failed' });
+      recordResidueError(target, reason, targetPath, { op: 'escalate', error: result.reason || 'status escalation-failed', detail: result.detail });
     }
   } catch (err) {
     // best-effort — never let escalation turn a residue-tracking call into a thrown error
@@ -425,12 +429,12 @@ function pruneResidueFailures(root, repoSlug, { resolve = resolveResidue, runner
     delete failures[key];
     changed = true;
     if (entry && entry.escalated) {
-      let error = null;
+      let failure = null;
       try {
         const resolved = resolve({ repo: repoSlug, reason, targetPath, runner, pathExists: ownedPathExists(root) });
-        if (!resolved || !RESIDUE_RESOLVED_STATUSES.has(resolved.status)) error = unresolvedReason(resolved);
-      } catch (err) { error = errorText(err); }
-      if (error !== null) resolveFailures.push({ reason, path: targetPath, op: 'resolve', error: boundedError(error) });
+        if (!resolved || !RESIDUE_RESOLVED_STATUSES.has(resolved.status)) failure = unresolvedError(resolved);
+      } catch (err) { failure = { error: errorText(err) }; }
+      if (failure !== null) resolveFailures.push({ reason, path: targetPath, op: 'resolve', error: boundedError(failure.error, failure.detail) });
     }
   }
   if (changed) writeCache(root, { ...cache, residueFailures: failures });

@@ -319,7 +319,7 @@ function findHitForResolve({
 // #4202: `pathExists` is opt-in — when supplied, a listed path it reports gone is dropped
 // from the edited body and noted in the comment; omitted means no convergence.
 // -> { status: 'filed'|'dedup-hit'|'appended'|'reopened', number } |
-//    { status: 'escalation-failed', reason, number? }
+//    { status: 'escalation-failed', reason, detail?, number? }
 function escalateStructurallyStuck({
   repo, targetPath, runner = defaultRunner, pathExists,
 }) {
@@ -412,7 +412,7 @@ function escalateResidue({
 // path it reports gone is dropped alongside targetPath, and the record closes only once the
 // converged list is empty.
 // -> { status: 'closed'|'path-removed'|'already-closed'|'not-found', number? } |
-//    { status: 'resolution-failed', reason, number? }
+//    { status: 'resolution-failed', reason, detail?, number? }
 function resolveStructurallyStuck({
   repo, targetPath, runner = defaultRunner, why, pathExists,
 }) {
@@ -464,7 +464,7 @@ function resolveStructurallyStuck({
 // default "no longer exists on disk" clause in the structurally-stuck comment; every
 // other reason ignores it and its comment is unchanged.
 // -> { status: 'closed'|'already-closed'|'not-found', number? } |
-//    { status: 'resolution-failed', reason, number? }
+//    { status: 'resolution-failed', reason, detail?, number? }
 function resolveResidue({
   repo, reason, targetPath, runner = defaultRunner, why, pathExists,
 }) {
