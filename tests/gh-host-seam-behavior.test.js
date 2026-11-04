@@ -538,6 +538,7 @@ const CLI_TABLE = [
   // resolve-blockers.js / resolve-linked-prs.js (lib/number-list-cli.js): both print a
   // repoResolutionNote.
   { cli: 'resolve-blockers.js', argv: ['7'], acceptsRepo: true, printsResolutionNote: true },
+  { cli: 'resolve-foreign-blockers.js', argv: ['other/repo#5'], acceptsRepo: true, printsResolutionNote: true },
   { cli: 'resolve-linked-prs.js', argv: ['7'], acceptsRepo: true, printsResolutionNote: true },
   // stuck-open-prs.js (#4951): one granted candidate whose batched linked-PR read finds no
   // open PR, so the read is its one network-bound gh call and no per-record read follows.

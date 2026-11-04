@@ -16,6 +16,7 @@ const { missingFactsOf, assertEachPatternGoesRed, lineStartingWith, sectionOf } 
 const { NATIVE_MISSING_CAUSE, malformedRecords } = require('../plugin/bin/lib/dispatch/unlanded-blockers');
 
 const ROOT = path.join(__dirname, '..');
+const NOTES = readText(path.join(ROOT, 'plugin', 'skills', 'dispatch', 'queue-pull-notes.md'));
 const REPORT = readText(path.join(ROOT, 'plugin', 'skills', 'dispatch', 'blocked-exclusion-report.md'));
 const MCP = readText(path.join(ROOT, 'plugin', 'skills', 'dispatch', 'mcp-transport.md'));
 const SKILL_GRAPH = readText(path.join(ROOT, 'docs', 'skill-graph.md'));
@@ -90,6 +91,22 @@ test("AC4.3: the malformed-blocker report line's cause is a cause the CLI writes
   const renamed = line.replace('{cause}', '{reason}');
   assert.notEqual(renamed, line);
   assert.ok(fill(renamed, causes[0]).includes('{'), 'a renamed placeholder survives filling');
+});
+
+// --- queue-pull-notes.md ------------------------------------------------------------------------------
+
+const NOTES_PASS_PREFIX = '**Unlanded-blocker pass (#4792).**';
+const NOTES_FACTS = [
+  [/A blocker linked natively or declared by a `Blocked by owner\/name#N` body line in another repository is never in-run, whatever its number/i, '#4793: a foreign number is never in-run'],
+  [/its `AUTO` line naming it `owner\/name#N`/, '#4793: the kept line names a CLOSED foreign blocker owner/name#N'],
+];
+const notesMissing = missingFactsOf(NOTES_FACTS);
+
+test('#4793: queue-pull-notes.md says a foreign blocker (native or body-declared) is never in-run and a CLOSED one is named owner/name#N', () => {
+  const paragraph = collapse(lineStartingWith(NOTES, NOTES_PASS_PREFIX));
+  assert.ok(paragraph, 'the unlanded-blocker pass paragraph exists');
+  assert.deepEqual(notesMissing(paragraph), []);
+  assertEachPatternGoesRed(paragraph, NOTES_FACTS, notesMissing);
 });
 
 // --- mcp-transport.md ---------------------------------------------------------------------------------

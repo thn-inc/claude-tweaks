@@ -481,6 +481,35 @@ test('recordLabels: gh issue view calls are concurrency-capped, not fired all at
   assert.ok(peak > 0, 'sanity: calls actually happened');
 });
 
+// #4793: resolve-blockers.js entries carry `crossRepoBlockers` ([{number,
+// repository, state}]) for a native blocker linked from another repository. Its
+// number is only another repository's issue number, never this repository's.
+function unblockedWithResolved(entry) {
+  const deps = okDeps({
+    execFile: async (cmd, args) => {
+      if (cmd === 'node' && String(args[0]).endsWith('resolve-blockers.js')) return { stdout: JSON.stringify({ 1600: entry }), stderr: '' };
+      return okDeps().execFile(cmd, args);
+    },
+  });
+  return gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['unblocked'], deps });
+}
+
+test('#4793 Q2: a dependent blocked only by another repository\'s #1535 is not reported unblocked when this repository closes #1535', async () => {
+  const pack = await unblockedWithResolved({ blockedBy: [1535], openBlocker: false, openBlockerIds: [], crossRepoBlockers: [{ number: 1535, repository: 'other/repo', state: 'CLOSED' }] });
+  assert.strictEqual(pack.unblocked.ok, true);
+  assert.deepStrictEqual(pack.unblocked.value, []);
+});
+
+test('#4793 Q2: this repository\'s #1535 beside another repository\'s #1535 still reports the dependent unblocked', async () => {
+  const pack = await unblockedWithResolved({ blockedBy: [1535, 1535], openBlocker: false, openBlockerIds: [], crossRepoBlockers: [{ number: 1535, repository: 'other/repo', state: 'CLOSED' }] });
+  assert.deepStrictEqual(pack.unblocked.value, [{ number: 1600, title: 'Dependent' }]);
+});
+
+test('#4793 Q5: a foreign blocker with no readable state keeps the dependent blocked', async () => {
+  const pack = await unblockedWithResolved({ blockedBy: [1535, 7], openBlocker: false, openBlockerIds: [], crossRepoBlockers: [{ number: 7, repository: 'other/repo', state: null }] });
+  assert.deepStrictEqual(pack.unblocked.value, []);
+});
+
 test('#2425: unblocked (work-links: native) passes --repo, resolved from `origin`, to resolve-blockers.js — including on a GitHub Enterprise remote', async () => {
   const calls = [];
   const deps = okDeps({
@@ -580,6 +609,127 @@ test('#2538: unblocked (work-links: body-text) passes --repo to BOTH of its dire
     assert.notStrictEqual(repoIdx, -1, `every gh issue list call must carry --repo on a GHE remote: ${JSON.stringify(call)}`);
     assert.strictEqual(call[repoIdx + 1], 'ghe.example.com/acme/widgets');
   }
+});
+
+// #4793 Plan Review Clarifications: a body-declared `Blocked by owner/name#N`
+// foreign blocker keeps the dependent blocked while it is OPEN or unreadable,
+// under either work-links value. One batched resolve-foreign-blockers.js call.
+function foreignBodyDeps({ links, body, nativeEntry, foreign, remote, gateDeps, calls = [] }) {
+  return okDeps({
+    ...(remote ? { git: (args) => (args[0] === 'remote' ? remote : okDeps().git(args)) } : {}),
+    ...(gateDeps ? { gateDeps } : {}),
+    resolvePolicy: policyFake({ 'integration-branch': 'main', 'work-links': links }),
+    execFile: async (cmd, args) => {
+      if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'list' && args.includes('open')) {
+        return { stdout: JSON.stringify([{ number: 1600, title: 'Dependent', body }]), stderr: '' };
+      }
+      if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'list' && args.includes('all')) {
+        return { stdout: JSON.stringify([{ number: 1535, state: 'CLOSED' }]), stderr: '' };
+      }
+      if (cmd === 'node' && String(args[0]).endsWith('resolve-blockers.js')) return { stdout: JSON.stringify({ 1600: nativeEntry }), stderr: '' };
+      if (cmd === 'node' && String(args[0]).endsWith('resolve-foreign-blockers.js')) {
+        calls.push(args);
+        if (foreign instanceof Error) throw foreign;
+        return { stdout: foreign, stderr: '' };
+      }
+      return okDeps().execFile(cmd, args);
+    },
+  });
+}
+const runUnblocked = (deps) => gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['unblocked'], deps });
+const BODY_TEXT_BODY = 'Blocked by #1535\nBlocked by other/repo#7\n';
+
+test('#4793 Plan Review Clarifications: a body-declared OPEN foreign blocker keeps the dependent blocked (body-text)', async () => {
+  const calls = [];
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'body-text', body: BODY_TEXT_BODY, foreign: '{"other/repo#7":"OPEN"}', calls }));
+  assert.strictEqual(pack.unblocked.ok, true);
+  assert.deepStrictEqual(pack.unblocked.value, []);
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0][1], 'other/repo#7');
+});
+
+test('#4793 Plan Review Clarifications: a body-declared CLOSED foreign blocker lets the dependent report unblocked (body-text)', async () => {
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'body-text', body: BODY_TEXT_BODY, foreign: '{"other/repo#7":"CLOSED"}' }));
+  assert.deepStrictEqual(pack.unblocked.value, [{ number: 1600, title: 'Dependent' }]);
+});
+
+test('#4793 Q5: a body-declared foreign blocker whose state is null (unreadable) keeps the dependent blocked (body-text)', async () => {
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'body-text', body: BODY_TEXT_BODY, foreign: '{"other/repo#7":null}' }));
+  assert.deepStrictEqual(pack.unblocked.value, []);
+});
+
+// A promisified execFile rejection: the message is only `Command failed: ...` plus the stderr
+// text; the exit code and the CLI's own stderr live on `code` and `stderr`.
+const execFileFailure = (code, stderr) => Object.assign(new Error(`Command failed: node /bin/resolve-foreign-blockers.js other/repo#7\n${stderr}`), { code, stderr });
+
+test('#4793 Q5: a failed foreign lookup reports the probe failed with the exit code and stderr cause and no dependent unblocked (fail closed, body-text)', async () => {
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'body-text', body: BODY_TEXT_BODY, foreign: execFileFailure(3, 'Warning: boom\nstack\n') }));
+  assert.strictEqual(pack.unblocked.ok, false);
+  assert.strictEqual(pack.unblocked.value, undefined);
+  assert.match(pack.unblocked.error, /foreign blocker state lookup failed \(exit 3: Warning: boom\)/);
+  assert.doesNotMatch(pack.unblocked.error, /stack/);
+});
+
+test('#4793 Q5: a message-only failure (a timeout, no code or stderr) keeps its first message line as the cause (body-text)', async () => {
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'body-text', body: BODY_TEXT_BODY, foreign: new Error('timeout after 30000ms: node resolve-foreign-blockers.js (killed by SIGTERM)\nmore') }));
+  assert.strictEqual(pack.unblocked.ok, false);
+  assert.match(pack.unblocked.error, /foreign blocker state lookup failed \(timeout after 30000ms: node resolve-foreign-blockers\.js \(killed by SIGTERM\)\)/);
+  assert.doesNotMatch(pack.unblocked.error, /more/);
+});
+
+test('#4793 Q5: unparseable foreign lookup output also fails the probe closed (body-text)', async () => {
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'body-text', body: BODY_TEXT_BODY, foreign: 'not json' }));
+  assert.strictEqual(pack.unblocked.ok, false);
+  assert.match(pack.unblocked.error, /foreign blocker state lookup failed/);
+});
+
+test('#4793: a dependent with no body-declared foreign blocker makes no foreign lookup (body-text)', async () => {
+  const calls = [];
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'body-text', body: 'Blocked by #1535\n', foreign: '{}', calls }));
+  assert.deepStrictEqual(pack.unblocked.value, [{ number: 1600, title: 'Dependent' }]);
+  assert.strictEqual(calls.length, 0);
+});
+
+test('#4793: the foreign lookup carries --repo on a GitHub Enterprise remote (body-text)', async () => {
+  const calls = [];
+  const pack = await runUnblocked(foreignBodyDeps({
+    links: 'body-text', body: BODY_TEXT_BODY, foreign: '{"other/repo#7":"CLOSED"}', calls,
+    remote: 'git@ghe.example.com:acme/widgets.git\n', gateDeps: { env: { GH_HOST: 'ghe.example.com' } },
+  }));
+  assert.strictEqual(pack.unblocked.ok, true);
+  assert.strictEqual(calls.length, 1);
+  const repoIdx = calls[0].indexOf('--repo');
+  assert.notStrictEqual(repoIdx, -1, `the foreign lookup must carry --repo: ${JSON.stringify(calls[0])}`);
+  assert.strictEqual(calls[0][repoIdx + 1], 'ghe.example.com/acme/widgets');
+});
+
+const NATIVE_CLEAR = { blockedBy: [1535], openBlocker: false, openBlockerIds: [] };
+
+test('#4793 Plan Review Clarifications: a body-declared OPEN foreign blocker keeps the dependent blocked (native)', async () => {
+  const calls = [];
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'native', body: 'Blocked by other/repo#7\n', nativeEntry: NATIVE_CLEAR, foreign: '{"other/repo#7":"OPEN"}', calls }));
+  assert.strictEqual(pack.unblocked.ok, true);
+  assert.deepStrictEqual(pack.unblocked.value, []);
+  assert.strictEqual(calls.length, 1);
+});
+
+test('#4793 Plan Review Clarifications: a body-declared CLOSED foreign blocker lets the dependent report unblocked (native)', async () => {
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'native', body: 'Blocked by other/repo#7\n', nativeEntry: NATIVE_CLEAR, foreign: '{"other/repo#7":"CLOSED"}' }));
+  assert.deepStrictEqual(pack.unblocked.value, [{ number: 1600, title: 'Dependent' }]);
+});
+
+test('#4793 Q5: a failed foreign lookup fails the probe closed (native)', async () => {
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'native', body: 'Blocked by other/repo#7\n', nativeEntry: NATIVE_CLEAR, foreign: execFileFailure(3, 'Warning: boom\n') }));
+  assert.strictEqual(pack.unblocked.ok, false);
+  assert.match(pack.unblocked.error, /foreign blocker state lookup failed \(exit 3: Warning: boom\)/);
+});
+
+test('#4793: a ref both natively linked and declared in the body makes no extra foreign lookup (native)', async () => {
+  const calls = [];
+  const nativeEntry = { ...NATIVE_CLEAR, crossRepoBlockers: [{ number: 7, repository: 'Other/Repo', state: 'CLOSED' }] };
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'native', body: 'Blocked by other/repo#7\n', nativeEntry, foreign: '{"other/repo#7":"OPEN"}', calls }));
+  assert.strictEqual(calls.length, 0);
+  assert.deepStrictEqual(pack.unblocked.value, [{ number: 1600, title: 'Dependent' }]);
 });
 
 test('#2425: no resolvable `origin` remote falls back to calling resolve-blockers.js without --repo (additive, never a hard failure)', async () => {
