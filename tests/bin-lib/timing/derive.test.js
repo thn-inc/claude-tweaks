@@ -24,6 +24,14 @@ test('a verify row carries the adjudication verdict beside the raw pass (#3043)'
   assert.equal(p.tasks.verify[0].baselineAdjudicated, null, 'an event without the field reads null');
 });
 
+test('a verify row keeps the impact outcome only when the event carries one (#4321)', () => {
+  const impact = { suite: 'tests', fallback: 'map-missing', superseded: false, selected: null, supersedingPaths: [] };
+  const events = fixtureEvents().map((e) => (e.type === 'verify' && e.mode === 'full' ? { ...e, impact } : e));
+  const p = byName(derivePhases({ events, manifest: fixtureManifest(), now: new Date('2026-09-05T14:13:00.000Z') }));
+  assert.deepEqual(p.test.verify[0].impact, impact);
+  assert.equal(Object.hasOwn(p.tasks.verify[0], 'impact'), false);
+});
+
 test('#1928 AC3: the frozen fixture reproduces the reference boundaries within ±1 minute', () => {
   const out = derivePhases({ events: fixtureEvents(), manifest: fixtureManifest(), now: new Date('2026-09-05T14:13:00.000Z') });
   assert.deepEqual(out.phases.map((p) => p.phase), PHASES);
