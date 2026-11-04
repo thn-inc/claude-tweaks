@@ -471,6 +471,22 @@ test('#4794: a cloud sandbox proxy remote is not an origin the gate reads: exit 
   assert.deepEqual(deps.calls.gh, []);
 });
 
+// #4794: a bare `--repo owner/name` means github.com, so the exit-3 hint must never offer one — an
+// agent on a GHE sandbox-proxy origin that followed it would re-run against the wrong host.
+test('#4794: the exit-3 stderr hint asks for a host-qualified --repo, never a bare owner/name', () => {
+  const deps = fakeDeps(claimFile(), { remoteUrl: () => 'http://local_proxy@127.0.0.1:43215/git/acme/w' });
+  assert.equal(run(['--claim-file', CLAIM], deps), 3);
+  assert.equal(deps.calls.stderr.join(''), 'stale-claim-pr.js: could not resolve owner/repo — pass --repo host/owner/name\n');
+  assert.doesNotMatch(deps.calls.stderr.join(''), /--repo owner\/name/);
+});
+
+test('#4794: the usage line advertises --repo as [host/]owner/name', () => {
+  const deps = fakeDeps(claimFile());
+  assert.equal(run(['--help'], deps), 0);
+  assert.ok(out(deps).includes('[--repo [host/]owner/name]'), 'a host-qualified --repo is the form the prose passes');
+  assert.doesNotMatch(out(deps), /\[--repo owner\/name\]/);
+});
+
 test('--repo owner/name is the repo the same-repo check runs against', () => {
   const body = MARKED;
   const deps = fakeDeps({ ...claimFile(), [LISTING]: JSON.stringify([ghEntry({ url: 'https://github.com/other/x/pull/3', body })]) },

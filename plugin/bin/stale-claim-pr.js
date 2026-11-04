@@ -8,13 +8,13 @@
 // listing on both transports, so the verdict cannot differ between them.
 //
 // Usage: stale-claim-pr.js --claim-file <path> [--listing <path>]
-//        [--repo owner/name] [--resume [--issue <n>]] [--help]
+//        [--repo [host/]owner/name] [--resume [--issue <n>]] [--help]
 //   --claim-file  the stale claim blob's raw JSON text, read from this file.
 //   --listing     a JSON array of open PRs the agent already fetched (the
 //                 GitHub MCP `list_pull_requests` shape, or the
 //                 `gh pr list --json url,body,isCrossRepository` shape). Without
 //                 it the CLI lists open PRs itself with `gh pr list`.
-//   --repo        owner/name; without it, the `origin` remote of the cwd.
+//   --repo        [host/]owner/name; without it, the `origin` remote of the cwd.
 //   --resume      on a match, also print the PR body's Resume line (`resume`) or
 //                 why none is usable (`resolve`: `no-resume-line` — no Resume
 //                 line under the PR's last `### Resume` heading; `resume-line-
@@ -79,7 +79,7 @@ const { lstatType } = require('./lib/path-guard');
 const { RUN_ID_PREFIX_LENGTH } = require('./lib/dispatch/resume-eligibility');
 const { GH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
 
-const USAGE = 'usage: stale-claim-pr.js --claim-file <path> [--listing <path>] [--repo owner/name] [--resume [--issue <n>]] [--help]\n';
+const USAGE = 'usage: stale-claim-pr.js --claim-file <path> [--listing <path>] [--repo [host/]owner/name] [--resume [--issue <n>]] [--help]\n';
 
 function parseArgs(argv) {
   const o = { claimFile: null, listing: null, repo: null, resume: false, issue: null, help: false };
@@ -214,7 +214,7 @@ function run(argv, deps) {
     deps.stdout(`${JSON.stringify(noMatch(`unknown-host: ${resolved.refusal}`))}\n`);
     return 0;
   }
-  if (!resolved.target) { deps.stderr('stale-claim-pr.js: could not resolve owner/repo — pass --repo owner/name\n'); return 3; }
+  if (!resolved.target) { deps.stderr('stale-claim-pr.js: could not resolve owner/repo — pass --repo host/owner/name\n'); return 3; }
   const { owner, repo, target } = resolved;
 
   let verdict;

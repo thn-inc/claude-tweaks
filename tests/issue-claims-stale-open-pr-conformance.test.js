@@ -89,14 +89,21 @@ test('AC1.2 (#4794): exit 3 (origin does not parse) re-runs with a host-qualifie
   assert.ok(step4.includes('never a bare `owner/repo`'), 'a bare slug is ruled out');
 });
 
-test('AC1.2 (#4794): the --listing re-run adds --repo "github.com/{owner}/{repo}" (the MCP host), and only it does', () => {
-  const step4 = lockStep4().replace(/\s+/g, ' ');
+function listingLegProblems(step4) {
+  const problems = [];
   const at = step4.indexOf(MCP_LISTING_REPO);
-  assert.notEqual(at, -1, 'the listing re-run names the MCP host');
-  assert.equal(step4.indexOf(MCP_LISTING_REPO, at + 1), -1, 'exactly one listing sentence carries it');
-  assert.ok(at > step4.indexOf('mcp__github__list_pull_requests'), 'it follows the MCP listing');
-  assert.equal(step4.split('"github.com/{owner}/{repo}"').length - 1, 1, 'the first call and the exit-3 re-run do not carry it');
-  assert.match(step4, /the MCP's host, so listing and match share one host/, 'the reason is stated');
+  if (at === -1) problems.push('missing');
+  else {
+    if (step4.indexOf(MCP_LISTING_REPO, at + 1) !== -1) problems.push('twice');
+    if (at < step4.indexOf('mcp__github__list_pull_requests')) problems.push('before the MCP listing');
+  }
+  if (step4.split('"github.com/{owner}/{repo}"').length - 1 !== 1) problems.push('host carried by a call other than the listing leg');
+  if (!/the MCP's host, so listing and match share one host/.test(step4)) problems.push('reason');
+  return problems;
+}
+
+test('AC1.2 (#4794): the --listing re-run adds --repo "github.com/{owner}/{repo}" (the MCP host), and only it does', () => {
+  assert.deepEqual(listingLegProblems(lockStep4().replace(/\s+/g, ' ')), []);
 });
 
 test('AC1.2 (#4794): `{host}` is defined once, and both tombstone sentences compare on it, not on github.com', () => {
@@ -121,9 +128,12 @@ test('AC1.2 (#4794): the gh-path tombstone sentence refers back to the step-4 de
 test('AC1.2 (#4794) control: each retargeted clause goes red alone', () => {
   const step4 = lockStep4().replace(/\s+/g, ' ');
   const flat = flatFile();
-  const noListingRepo = step4.replace(MCP_LISTING_REPO, '`--listing "{that path}"`');
-  assert.notEqual(noListingRepo, step4);
-  assert.ok(!noListingRepo.includes(MCP_LISTING_REPO));
+  const wrongHost = step4.replace('--repo "github.com/{owner}/{repo}"', '--repo "{host}/{owner}/{repo}"');
+  assert.notEqual(wrongHost, step4);
+  assert.ok(listingLegProblems(wrongHost).includes('missing'), 'the listing-leg check sees a changed host inside the span');
+  const noReason = step4.replace("the MCP's host,", 'the host,');
+  assert.notEqual(noReason, step4);
+  assert.deepEqual(listingLegProblems(noReason), ['reason'], 'the listing-leg check sees a reworded reason');
   const bare = step4.replace('--claim-file "{CLASSIFY_INPUT path}"', '--claim-file "{CLASSIFY_INPUT path}" --repo "{owner}/{repo}"');
   assert.notEqual(bare, step4);
   assert.ok(firstInvocation(bare).includes('--repo'), 'the no---repo check sees a re-added bare --repo');
@@ -138,7 +148,7 @@ test('AC1.2 (#4794) control: each retargeted clause goes red alone', () => {
   assert.ok(!refersBack(noRefer), 'the back-reference check sees a reworded citation');
   const twice = step4.replace('and match share one host)', 'and match share one host) --repo "github.com/{owner}/{repo}"');
   assert.notEqual(twice, step4);
-  assert.equal(twice.split('"github.com/{owner}/{repo}"').length - 1, 2, 'the only-the-listing-leg count sees a second carrier');
+  assert.deepEqual(listingLegProblems(twice), ['host carried by a call other than the listing leg'], 'the only-the-listing-leg check sees a second carrier');
   const github = flat.replace(TOMBSTONE_URL, 'https://github.com/{owner}/{repo}/pull/{number}');
   assert.notEqual(github, flat);
   assert.equal(github.split(TOMBSTONE_URL).length - 1, 1, 'the {host} count sees a reverted tombstone sentence');

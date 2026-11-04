@@ -93,35 +93,56 @@ test('AC1.2 (#4794): exit 3 (origin does not parse) re-runs with a host-qualifie
   assert.ok(flat.includes('never a bare `owner/repo`'), 'a bare slug is ruled out');
 });
 
+// The `{host}` problems the real assertions check, named so the controls can mutate one word and expect exactly one.
+function citationProblems(flat) {
+  const problems = [];
+  if (!flat.includes(HOST_CITATION)) problems.push('citation');
+  if (flat.includes(HOST_DEFINITION)) problems.push('restated');
+  return problems;
+}
+
 test('AC1.2 (#4794): `{host}` is cited from _shared/issue-claims.md, not restated', () => {
-  const flat = claimAuditSection().replace(/\s+/g, ' ');
-  assert.ok(flat.includes(HOST_CITATION), 'the exit-3 sentence cites the one definition');
-  assert.ok(!flat.includes(HOST_DEFINITION), 'the definition lives once, in _shared/issue-claims.md');
+  assert.deepEqual(citationProblems(claimAuditSection().replace(/\s+/g, ' ')), []);
 });
 
-test('AC1.2 (#4794): the MCP listing leg adds --repo "github.com/{owner}/{repo}" and only that leg does', () => {
-  const flat = claimAuditSection().replace(/\s+/g, ' ');
+function listingLegProblems(flat) {
+  const problems = [];
   const at = flat.indexOf(MCP_LISTING_REPO);
-  assert.notEqual(at, -1, 'the listing re-run names the MCP host');
-  assert.equal(flat.indexOf(MCP_LISTING_REPO, at + 1), -1, 'exactly one listing sentence carries it');
-  assert.ok(at > flat.indexOf('mcp__github__list_pull_requests'), 'it follows the MCP listing');
-  assert.equal(flat.split('"github.com/{owner}/{repo}"').length - 1, 1, 'no gh-path call carries it');
+  if (at === -1) problems.push('missing');
+  else {
+    if (flat.indexOf(MCP_LISTING_REPO, at + 1) !== -1) problems.push('twice');
+    if (at < flat.indexOf('mcp__github__list_pull_requests')) problems.push('before the MCP listing');
+  }
+  if (flat.split('"github.com/{owner}/{repo}"').length - 1 !== 1) problems.push('host carried by a call other than the listing leg');
+  return problems;
+}
+
+test('AC1.2 (#4794): the MCP listing leg adds --repo "github.com/{owner}/{repo}" and only that leg does', () => {
+  assert.deepEqual(listingLegProblems(claimAuditSection().replace(/\s+/g, ' ')), []);
+});
+
+test('AC1.2 (#4794): an exit 3 that survives the host-qualified re-run is Manual review, not another retry', () => {
+  assert.ok(claimAuditSection().replace(/\s+/g, ' ').includes('so does any other non-zero exit (1, or 3 after that re-run)'));
 });
 
 test('AC1.2 (#4794) control: each retargeted clause goes red alone', () => {
   const flat = claimAuditSection().replace(/\s+/g, ' ');
-  const dropListingRepo = flat.replace(MCP_LISTING_REPO, '`--listing "{that path}"`');
-  assert.notEqual(dropListingRepo, flat);
-  assert.ok(!dropListingRepo.includes(MCP_LISTING_REPO));
+  const wrongHost = flat.replace('--repo "github.com/{owner}/{repo}"', '--repo "{host}/{owner}/{repo}"');
+  assert.notEqual(wrongHost, flat);
+  assert.ok(listingLegProblems(wrongHost).includes('missing'), 'the listing-leg check sees a changed host inside the span');
+  const oldExit = flat.replace('(1, or 3 after that re-run)', '(1 or 3)');
+  assert.notEqual(oldExit, flat);
+  assert.ok(!oldExit.includes('so does any other non-zero exit (1, or 3 after that re-run)'), 'the exit-wording pin sees the old wording');
   const withBareRepo = flat.replace('--claim-file "{CLASSIFY_INPUT path}"', '--claim-file "{CLASSIFY_INPUT path}" --repo "{owner}/{repo}"');
   assert.notEqual(withBareRepo, flat);
   assert.ok(firstInvocation(withBareRepo).includes('--repo'), 'the no---repo check sees a re-added bare --repo');
-  const noCitation = flat.replace(HOST_CITATION, '`{host}`');
-  assert.notEqual(noCitation, flat);
-  assert.ok(!noCitation.includes(HOST_CITATION));
+  const reworded = flat.replace('defines it', 'restates it');
+  assert.notEqual(reworded, flat);
+  assert.deepEqual(citationProblems(reworded), ['citation'], 'the citation check sees one reworded word');
+  assert.deepEqual(citationProblems(`${flat} ${HOST_DEFINITION}`), ['restated'], 'the citation check sees a restated definition');
   const twice = flat.replace(' to each call.', ' to each call --repo "github.com/{owner}/{repo}".');
   assert.notEqual(twice, flat);
-  assert.equal(twice.split('"github.com/{owner}/{repo}"').length - 1, 2, 'the only-the-listing-leg count sees a second carrier');
+  assert.deepEqual(listingLegProblems(twice), ['host carried by a call other than the listing leg'], 'the only-the-listing-leg check sees a second carrier');
   const noExit3 = flat.replace('Exit 3', 'Exit 4');
   assert.notEqual(noExit3, flat);
   assert.throws(() => assert.match(exit3Sentence(noExit3), /[Ee]xit 3/), 'the exit-3 attribution sees a missing exit 3');
