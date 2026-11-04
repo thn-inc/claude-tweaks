@@ -1859,6 +1859,41 @@ test('#4933: a post-merge unknown-host failure carries its refusal detail into s
   assert.deepEqual(bare.skipped.filter((s) => s.check === 'post-merge'), [{ check: 'post-merge', reason: 'not-github-issues' }]);
 });
 
+test('#4794: a release unknown-host failure carries its refusal detail into skipped and the summary line', async () => {
+  const detail = 'origin host git.corp.invalid is not a known GitHub host — if it is GitHub Enterprise, export GH_HOST=git.corp.invalid';
+  const releaseMod = require('../plugin/bin/lib/reconcile/release-merged');
+  const { r } = await reconcileWithAsyncMerge(['release'], {
+    afterStubs: () => { releaseMod.releaseMerged = () => ({ released: [], skipped: [], failure: 'unknown-host', detail }); },
+  });
+  assert.deepEqual(r.skipped.filter((s) => s.check === 'release'), [{ check: 'release', reason: 'unknown-host', detail }]);
+  const line = formatSummary(r).split('\n').find((l) => l.startsWith('skipped: release'));
+  assert.equal(line, `skipped: release — unknown-host (${detail})`);
+  const { r: bare } = await reconcileWithAsyncMerge(['release'], {
+    afterStubs: () => { releaseMod.releaseMerged = () => ({ released: [], skipped: [], failure: 'no-repo-slug' }); },
+  });
+  assert.deepEqual(bare.skipped.filter((s) => s.check === 'release'), [{ check: 'release', reason: 'no-repo-slug' }]);
+});
+
+test('#4794: a remote-prune unknown-host failure carries its refusal detail into skipped', async () => {
+  const detail = 'origin host git.corp.invalid is not a known GitHub host — if it is GitHub Enterprise, export GH_HOST=git.corp.invalid';
+  const pruneMod = require('../plugin/bin/lib/reconcile/prune-remote');
+  const originalPrune = pruneMod.pruneRemote;
+  try {
+    const { r } = await reconcileWithAsyncMerge(['remote-prune'], {
+      afterStubs: () => { pruneMod.pruneRemote = () => ({ entries: [], failure: 'unknown-host', detail }); },
+    });
+    assert.deepEqual(r.skipped.filter((s) => s.check === 'remote-prune'), [{ check: 'remote-prune', reason: 'unknown-host', detail }]);
+    assert.equal(formatSummary(r).split('\n').find((l) => l.startsWith('skipped: remote-prune')), `skipped: remote-prune — unknown-host (${detail})`);
+    // The defensive string-screen path returns the reason with no detail: the entry stays { check, reason }.
+    const { r: bare } = await reconcileWithAsyncMerge(['remote-prune'], {
+      afterStubs: () => { pruneMod.pruneRemote = () => ({ entries: [], failure: 'unknown-host' }); },
+    });
+    assert.deepEqual(bare.skipped.filter((s) => s.check === 'remote-prune'), [{ check: 'remote-prune', reason: 'unknown-host' }]);
+  } finally {
+    pruneMod.pruneRemote = originalPrune;
+  }
+});
+
 test('AC1 (#4599): a pass that does not request post-merge or archive leaves postMerge null and does not run it', async () => {
   const { r, order } = await reconcileWithAsyncMerge(['reap']);
   assert.deepEqual(order, []);
