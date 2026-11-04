@@ -22,7 +22,9 @@
 // passed (#1174).
 // Output: one JSON line, an object keyed by each requested number (as a
 // string, JSON's own key convention) to its {"blockedBy":[...],
-// "openBlocker":bool,"openBlockerIds":[...]} — the same per-record shape
+// "openBlocker":bool,"openBlockerIds":[...]} plus crossRepoBlockers:
+// [{number, repository, state}] when a blocker lives in another repository
+// (#4793) — the same per-record shape
 // fetchNativeDependencies' Map values already carry (and preflight-records.js's
 // buildRecords `dep` entries expose), not a new shape invented here. A
 // single-number invocation still returns a one-key object — no special-cased

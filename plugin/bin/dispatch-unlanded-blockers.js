@@ -10,7 +10,9 @@
 // (`detail: {blockers: [{blocker, commit}]}`) through exclusions.js's appendExclusion,
 // the one sanctioned writer, and one `AUTO — dispatch:` line on stderr. `open` is the
 // `blocked` pass's; an `undetermined` verdict keeps the candidate (one `kept` line),
-// because /flow Step 2.7b proceeds on `undetermined` too.
+// because /flow Step 2.7b proceeds on `undetermined` too. A cross-repository
+// `undetermined` is a CLOSED foreign blocker: it keeps the candidate as well, and the
+// `kept` line names it `owner/name#N` (#4793).
 //
 // Order: (1) a malformed invocation is exit 2; (2) an unreadable or ill-shaped --groups
 // is exit 1; (3) an empty pool is printed unchanged, with no call and no write;
@@ -222,7 +224,7 @@ function run(argv, deps = realDeps) {
   }
 
   for (const u of undetermined) {
-    deps.stderr(`AUTO — dispatch: #${u.record} kept — blocker #${u.blocker} landing undetermined (via ${u.via})\n`);
+    deps.stderr(`AUTO — dispatch: #${u.record} kept — blocker ${u.repository ? `${u.repository}#${u.blocker}` : `#${u.blocker}`} landing undetermined (via ${u.via})\n`);
   }
 
   const excluded = new Set([...malformed.map((m) => m.number), ...unlanded.flatMap((e) => e.records)]);

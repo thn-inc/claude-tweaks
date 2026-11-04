@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
   buildBlockerLandingQuery, candidateCommits, reachabilityFromStatus, compareArgs,
-  classifyBlocker, undeterminedAll, classifyFromState, fetchBlockerLanding,
+  classifyBlocker, classifyCrossRepository, undeterminedAll, classifyFromState, fetchBlockerLanding,
 } = require('../../../plugin/bin/lib/preflight-records/blocker-landing');
 
 const isGraphQL = (a) => a[0] === 'api' && a[1] === 'graphql';
@@ -415,6 +415,13 @@ test('undeterminedAll: one undetermined result per blocker with the given via', 
     { blocker: 5, verdict: 'undetermined', commit: null, via: 'records-json' },
     { blocker: 6, verdict: 'undetermined', commit: null, via: 'records-json' },
   ]);
+});
+
+test('AC1.1 + Q5: classifyCrossRepository — OPEN reads open, CLOSED undetermined, an unreadable state open (fail closed), with no lookup', () => {
+  assert.deepEqual(classifyCrossRepository({ number: 5, repository: 'other/repo', state: 'OPEN' }), { blocker: 5, verdict: 'open', commit: null, via: 'cross-repository', repository: 'other/repo' });
+  assert.deepEqual(classifyCrossRepository({ number: 5, repository: 'other/repo', state: 'CLOSED' }), { blocker: 5, verdict: 'undetermined', commit: null, via: 'cross-repository', repository: 'other/repo' });
+  assert.deepEqual(classifyCrossRepository({ number: 5, repository: 'other/repo', state: null }), { blocker: 5, verdict: 'open', commit: null, via: 'cross-repository-state-unreadable', repository: 'other/repo' });
+  assert.deepEqual(classifyCrossRepository({ number: 5, repository: 'other/repo', state: 'WEIRD' }), { blocker: 5, verdict: 'open', commit: null, via: 'cross-repository-state-unreadable', repository: 'other/repo' });
 });
 
 test('AC6.1 (gh-absent): classifyFromState — open/OPEN → open; closed not_planned/DUPLICATE (either key spelling) → not-applicable; closed completed/null → undetermined; non-object or unknown state → null', () => {
