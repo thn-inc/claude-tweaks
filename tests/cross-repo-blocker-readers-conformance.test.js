@@ -24,15 +24,19 @@ const collapse = (text) => text.replace(/\s+/g, ' ');
 const PRE_ATTACH_FACTS = [
   [/r\.blockedBy = openNativeBlockerRefs\(node\)/, 'the pre-attach sets r.blockedBy from openNativeBlockerRefs(node)'],
   [/qualified `owner\/name#N` string \(#4793\)/i, 'the pre-attach names a foreign blocker as its qualified owner/name#N string'],
+  [/`owner\/name#N \(state unreadable\)` when its state is unreadable/, 'the pre-attach names an unreadable foreign state with the suffix'],
 ];
 const FUNNEL_NOTE_FACTS = [
   [/A qualified `owner\/name#N` entry counts too \(#4793, Decisions Q6\)/i, 'the funnel note says a qualified entry counts as a blocker'],
+  [/as `owner\/name#N \(state unreadable\)` in the latter case/, 'the funnel note names an unreadable foreign state with the suffix'],
 ];
 const STEP3_FACTS = [
   [/attach `blockedBy: openNativeBlockerRefs\(node\)`/, 'Step 3 attaches blockedBy from openNativeBlockerRefs(node)'],
+  [/`owner\/name#N \(state unreadable\)` when its state is unreadable/, 'Step 3 names an unreadable foreign state with the suffix'],
 ];
 const REFINE_FACTS = [
   [/attaching `openNativeBlockerRefs\(node\)` per candidate/, 'refine attaches openNativeBlockerRefs(node) per candidate'],
+  [/`owner\/name#N \(state unreadable\)` when its state is unreadable/, 'refine names an unreadable foreign state with the suffix'],
 ];
 
 const region = (text, prefix) => {
