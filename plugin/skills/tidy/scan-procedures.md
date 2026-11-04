@@ -241,23 +241,24 @@ instead of `gh api`.)
 Releasing (#2090): `node "${CLAUDE_PLUGIN_ROOT}/bin/release-claim.js" <n> --run <tidy-run-dir> --sweep --reason "swept: stale claim"` (or `--reason "swept: issue closed"` for the closed-issue row) — the `--sweep` flag is what lets a tidy run release a claim it does not itself own: without it, `release-claim.js`'s ordinary ownership check refuses every one of these as `skipped-not-owner`, since a tidy run's `--run` basename is never the crashed dispatcher's `runId`. The flag performs the same read → classify → tombstone `PUT` → conflict re-verify → comment → label-removal sequence as an ordinary release, resolving the issue's own open/closed state itself for the `'live'`-on-a-closed-issue row (never sweeping a `'live'` claim on an issue that is still open). Releases execute only after Step 6 batch approval — the flag makes an approved release executable, it does not make the decision autonomous.
 
 **Stale claim with an open PR (#4423).** Before recommending Release for a `'stale'` blob (`claims/issue-{n}.json`), run
-`node "${CLAUDE_PLUGIN_ROOT}/bin/stale-claim-pr.js" --claim-file "{CLASSIFY_INPUT path}" --repo "{owner}/{repo}" --resume --issue {n}`
-— the matcher `/claude-tweaks:flow`'s claim step runs (`claim-store.js`'s `staleClaimInFlightPr`); on
-the `gh` path each call lists open PRs itself, one listing per stale claim (stale claims are few).
-With `gh` absent (exit 2), list open PRs once per tidy run via `mcp__github__list_pull_requests`
-(`state: open`, paged), Write them as one JSON array to the path
+`node "${CLAUDE_PLUGIN_ROOT}/bin/stale-claim-pr.js" --claim-file "{CLASSIFY_INPUT path}" --resume --issue {n}`
+— the matcher `/claude-tweaks:flow`'s claim step runs; on the `gh` path each call lists open PRs
+itself. Exit 3 (origin does not parse): re-run
+adding `--repo "{host}/{owner}/{repo}"` (`{host}` as `_shared/issue-claims.md` defines it), never a
+bare `owner/repo`. With `gh` absent (exit 2), list open PRs once per tidy run via
+`mcp__github__list_pull_requests` (`state: open`, paged), Write them as one JSON array to the path
 `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value stale-claim-open-prs.json`
-prints, and add `--listing "{that path}"` to each call. `"match": false` with a null `failure`
+prints, and add `--listing "{that path}"` and `--repo "github.com/{owner}/{repo}"` to each call. `"match": false` with a null `failure`
 means Release plus `issue-claims-backstops.md`'s PR disposition.
 `"match": true` recommends Resume instead and routes as `step-6-auto.md`'s **Unsettled run** row:
 Auto (no-op, always surfaced), rendered in **Yours** as "Resume open PR {number} — {resume}" when
-the output carries `resume` (the PR body's resume line, already validated as a
-paste-safe command naming this same run — or, for a dispatched run (`record-{n}`),
+the output carries `resume` (the PR body's resume line, validated as paste-safe
+for this same run — or, for a dispatched run (`record-{n}`),
 `/claude-tweaks:dispatch resume #{n}` when its directory is absent or archived; `{resume}` takes its
 own command line), otherwise — it carries `resolve` — "Resolve open PR {number} before
-release"; `{number}` is `link`'s trailing `/pull/` number. It is never staged, so it gets no needs-decision comment, and the claim is never released.
-A non-null `failure` — a failed listing (on whichever transport ran — the MCP listing applies only
-when `gh` is absent, never after a `gh` failure) or a 1000-entry listing with no match, which may
+release"; `{number}` is `link`'s trailing `/pull/` number. It is never staged and the claim is never released.
+A non-null `failure` — a failed listing (on either transport — the MCP listing runs only
+when `gh` is absent) or a 1000-entry listing with no match, which may
 have cut the PR off — degrades to **Manual review** with one SKIP note, never an unchecked
 Release; so does any other non-zero exit (1 or 3).
 

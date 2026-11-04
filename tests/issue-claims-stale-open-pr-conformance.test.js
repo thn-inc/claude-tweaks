@@ -48,6 +48,102 @@ test('The lock step 4 runs the CLI first, lists PRs only on its exit 2 (gh absen
   assert.match(step4, /re-run it adding `--listing "\{that path\}"`/);
 });
 
+// #4794: the agent-composed call takes its host from origin through the seam. A bare --repo owner/repo
+// means github.com, so the first call drops it; only the exit-3 re-run (an origin that does not parse,
+// such as a sandbox proxy remote) and the MCP listing leg (the MCP's host is github.com, so listing and
+// match share one host) pass one. `{host}` is defined once, here, at its first use in step 4.
+const HOST_DEFINITION = '`{host}` is the GitHub host the record lives on: `github.com` on the GitHub MCP path; on the `gh` path an exported non-empty `GH_HOST`, else the origin\'s host when it is `github.com` or a known GitHub Enterprise host, else `github.com`.';
+const MCP_LISTING_REPO = '`--listing "{that path}"` and `--repo "github.com/{owner}/{repo}"`';
+const EXIT3_REPO = '--repo "{host}/{owner}/{repo}"';
+const TOMBSTONE_URL = 'https://{host}/{owner}/{repo}/pull/{number}';
+const flatFile = () => ISSUE_CLAIMS.replace(/\s+/g, ' ');
+
+// The first inline span that runs bin/stale-claim-pr.js, whitespace-flattened.
+function firstInvocation(flat) {
+  const at = flat.indexOf('bin/stale-claim-pr.js');
+  assert.notEqual(at, -1, 'step 4 names the CLI');
+  const open = flat.lastIndexOf('`', at);
+  const close = flat.indexOf('`', at);
+  assert.ok(open !== -1 && close !== -1, 'the invocation is an inline code span');
+  return flat.slice(open + 1, close);
+}
+
+// The sentence (text from the previous ". " to the pin) that carries the exit-3 re-run's --repo.
+function exit3Sentence(flat) {
+  const at = flat.indexOf(EXIT3_REPO);
+  assert.notEqual(at, -1, 'the exit-3 re-run adds a host-qualified --repo');
+  return flat.slice(flat.lastIndexOf('. ', at) + 2, at);
+}
+
+test('AC1.2 (#4794): The lock step 4 first call carries no --repo; origin supplies the host', () => {
+  const step4 = lockStep4().replace(/\s+/g, ' ');
+  const call = firstInvocation(step4);
+  assert.ok(call.includes('--claim-file "{CLASSIFY_INPUT path}"'), 'the invocation is the matcher call');
+  assert.ok(!call.includes('--repo'), 'a bare --repo owner/repo would mean github.com');
+  assert.ok(!step4.includes('--repo "{owner}/{repo}"'), 'no step-4 call passes a bare slug');
+});
+
+test('AC1.2 (#4794): exit 3 (origin does not parse) re-runs with a host-qualified --repo, never a bare owner/repo', () => {
+  const step4 = lockStep4().replace(/\s+/g, ' ');
+  assert.match(exit3Sentence(step4), /[Ee]xit 3/, 'the --repo sits in the exit-3 sentence');
+  assert.ok(step4.includes('never a bare `owner/repo`'), 'a bare slug is ruled out');
+});
+
+test('AC1.2 (#4794): the --listing re-run adds --repo "github.com/{owner}/{repo}" (the MCP host), and only it does', () => {
+  const step4 = lockStep4().replace(/\s+/g, ' ');
+  const at = step4.indexOf(MCP_LISTING_REPO);
+  assert.notEqual(at, -1, 'the listing re-run names the MCP host');
+  assert.equal(step4.indexOf(MCP_LISTING_REPO, at + 1), -1, 'exactly one listing sentence carries it');
+  assert.ok(at > step4.indexOf('mcp__github__list_pull_requests'), 'it follows the MCP listing');
+  assert.equal(step4.split('"github.com/{owner}/{repo}"').length - 1, 1, 'the first call and the exit-3 re-run do not carry it');
+  assert.match(step4, /the MCP's host, so listing and match share one host/, 'the reason is stated');
+});
+
+test('AC1.2 (#4794): `{host}` is defined once, and both tombstone sentences compare on it, not on github.com', () => {
+  const flat = flatFile();
+  const at = flat.indexOf(HOST_DEFINITION);
+  assert.notEqual(at, -1, 'the definition is in the file, with its closing "else github.com"');
+  assert.equal(flat.indexOf(HOST_DEFINITION, at + 1), -1, 'defined exactly once');
+  assert.ok(lockStep4().replace(/\s+/g, ' ').includes(HOST_DEFINITION), 'defined in step 4, at its first use');
+  assert.ok(!flat.includes('https://github.com/{owner}/{repo}/pull/{number}'), 'neither tombstone sentence pins github.com');
+  assert.equal(flat.split(TOMBSTONE_URL).length - 1, 2, 'the step-4 and gh-path sentences both read {host}');
+  assert.ok(flat.indexOf(HOST_DEFINITION) < flat.indexOf(TOMBSTONE_URL), 'the definition precedes the first use');
+  assert.match(flat, /pull\/\{number\}`? URL[^.]*compared case-insensitively[^.]*trailing dots ignored/, 'the compare rule is stated');
+});
+
+// The gh-path tombstone sentence (the last `{host}` URL in the file) cites step 4's definition.
+const refersBack = (flat) => flat.slice(flat.lastIndexOf(TOMBSTONE_URL)).slice(0, 200).includes('as defined in "The lock" step 4');
+
+test('AC1.2 (#4794): the gh-path tombstone sentence refers back to the step-4 definition', () => {
+  assert.ok(refersBack(flatFile()), 'it cites, not restates');
+});
+
+test('AC1.2 (#4794) control: each retargeted clause goes red alone', () => {
+  const step4 = lockStep4().replace(/\s+/g, ' ');
+  const flat = flatFile();
+  const noListingRepo = step4.replace(MCP_LISTING_REPO, '`--listing "{that path}"`');
+  assert.notEqual(noListingRepo, step4);
+  assert.ok(!noListingRepo.includes(MCP_LISTING_REPO));
+  const bare = step4.replace('--claim-file "{CLASSIFY_INPUT path}"', '--claim-file "{CLASSIFY_INPUT path}" --repo "{owner}/{repo}"');
+  assert.notEqual(bare, step4);
+  assert.ok(firstInvocation(bare).includes('--repo'), 'the no---repo check sees a re-added bare --repo');
+  const noClosing = flat.replace(', else `github.com`.', '.');
+  assert.notEqual(noClosing, flat);
+  assert.ok(!noClosing.includes(HOST_DEFINITION), 'trimming the closing fallback reds the definition pin');
+  const noExit3 = step4.replace('Exit 3', 'Exit 4');
+  assert.notEqual(noExit3, step4);
+  assert.throws(() => assert.match(exit3Sentence(noExit3), /[Ee]xit 3/), 'the exit-3 attribution sees a missing exit 3');
+  const noRefer = flat.replace('as defined in "The lock" step 4', 'as above');
+  assert.notEqual(noRefer, flat);
+  assert.ok(!refersBack(noRefer), 'the back-reference check sees a reworded citation');
+  const twice = step4.replace('and match share one host)', 'and match share one host) --repo "github.com/{owner}/{repo}"');
+  assert.notEqual(twice, step4);
+  assert.equal(twice.split('"github.com/{owner}/{repo}"').length - 1, 2, 'the only-the-listing-leg count sees a second carrier');
+  const github = flat.replace(TOMBSTONE_URL, 'https://github.com/{owner}/{repo}/pull/{number}');
+  assert.notEqual(github, flat);
+  assert.equal(github.split(TOMBSTONE_URL).length - 1, 1, 'the {host} count sees a reverted tombstone sentence');
+});
+
 test('AC1.1: The lock step 4 no longer restates the marker-match rule (#4596)', () => {
   const step4 = lockStep4().replace(/\s+/g, ' '); // prose wraps at ~98 columns
   for (const retired of [
