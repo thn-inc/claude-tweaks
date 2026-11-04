@@ -596,11 +596,22 @@ function unblockedLocal(inputs, deps, closed) {
 // #4793: the 'owner/name#N' strings of foreignEntries-shaped entries.
 const foreignRefStrings = (entries) => entries.map((e) => `${e.repository}#${e.number}`);
 
+// A rejected execFile -> its cause, as cross-repo-states.js's failureCause words it:
+// `exit {code}: {first stderr line}` when those fields exist (a promisified execFile error's
+// message is only `Command failed: ...`), else the first message line (a timeout has no code).
+const firstLine = (v) => String(v || '').split('\n').map((l) => l.trim()).find(Boolean) || '';
+function lookupCause(err) {
+  const stderr = firstLine(err && err.stderr);
+  const head = err && typeof err.code === 'number' ? `exit ${err.code}` : firstLine((err && err.message) || err);
+  return stderr ? `${head}: ${stderr}` : head;
+}
+
 // candidates [{ item, refs }] -> the items none of whose foreign refs blocks. ONE
 // resolve-foreign-blockers.js call covers every distinct ref (none, no call). The CLI
 // answers OPEN, CLOSED or null per ref; foreignBlockerBlocks blocks on anything but
-// CLOSED. A failed or unreadable lookup throws, so the probe reports ok:false with
-// the cause and nothing is reported unblocked (fail closed, never a silent pass).
+// CLOSED. A failed call or unparseable output throws (a per-ref null state does not:
+// it reads as blocking), so the probe reports ok:false with the cause and nothing is
+// reported unblocked (fail closed, never a silent pass).
 async function dropForeignBlocked(deps, inputs, repoArgs, candidates) {
   const all = candidates.flatMap((c) => c.refs);
   if (!all.length) return candidates.map((c) => c.item);
@@ -610,7 +621,7 @@ async function dropForeignBlocked(deps, inputs, repoArgs, candidates) {
     const res = await execBounded(deps, 'node', [path.join(BIN, 'resolve-foreign-blockers.js'), keys.join(','), ...repoArgs], inputs.worktree);
     answer = JSON.parse(String(res.stdout).trim());
   } catch (err) {
-    throw new Error(`foreign blocker state lookup failed (${String((err && err.message) || err).split('\n')[0]}) — a body-declared foreign blocker keeps its dependent blocked`);
+    throw new Error(`foreign blocker state lookup failed (${lookupCause(err)}) — a body-declared foreign blocker keeps its dependent blocked`);
   }
   if (!answer || typeof answer !== 'object' || Array.isArray(answer)) throw new Error('foreign blocker state lookup failed (unparseable output) — a body-declared foreign blocker keeps its dependent blocked');
   const states = new Map(Object.entries(answer));

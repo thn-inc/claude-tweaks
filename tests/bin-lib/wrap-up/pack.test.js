@@ -658,12 +658,23 @@ test('#4793 Q5: a body-declared foreign blocker whose state is null (unreadable)
   assert.deepStrictEqual(pack.unblocked.value, []);
 });
 
-test('#4793 Q5: a failed foreign lookup reports the probe failed with the cause and no dependent unblocked (fail closed, body-text)', async () => {
-  const pack = await runUnblocked(foreignBodyDeps({ links: 'body-text', body: BODY_TEXT_BODY, foreign: new Error('Command failed: exit 3 gh: boom\nstack') }));
+// A promisified execFile rejection: the message is only `Command failed: ...` plus the stderr
+// text; the exit code and the CLI's own stderr live on `code` and `stderr`.
+const execFileFailure = (code, stderr) => Object.assign(new Error(`Command failed: node /bin/resolve-foreign-blockers.js other/repo#7\n${stderr}`), { code, stderr });
+
+test('#4793 Q5: a failed foreign lookup reports the probe failed with the exit code and stderr cause and no dependent unblocked (fail closed, body-text)', async () => {
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'body-text', body: BODY_TEXT_BODY, foreign: execFileFailure(3, 'Warning: boom\nstack\n') }));
   assert.strictEqual(pack.unblocked.ok, false);
   assert.strictEqual(pack.unblocked.value, undefined);
-  assert.match(pack.unblocked.error, /foreign blocker state lookup failed \(Command failed: exit 3 gh: boom\)/);
+  assert.match(pack.unblocked.error, /foreign blocker state lookup failed \(exit 3: Warning: boom\)/);
   assert.doesNotMatch(pack.unblocked.error, /stack/);
+});
+
+test('#4793 Q5: a message-only failure (a timeout, no code or stderr) keeps its first message line as the cause (body-text)', async () => {
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'body-text', body: BODY_TEXT_BODY, foreign: new Error('timeout after 30000ms: node resolve-foreign-blockers.js (killed by SIGTERM)\nmore') }));
+  assert.strictEqual(pack.unblocked.ok, false);
+  assert.match(pack.unblocked.error, /foreign blocker state lookup failed \(timeout after 30000ms: node resolve-foreign-blockers\.js \(killed by SIGTERM\)\)/);
+  assert.doesNotMatch(pack.unblocked.error, /more/);
 });
 
 test('#4793 Q5: unparseable foreign lookup output also fails the probe closed (body-text)', async () => {
@@ -708,9 +719,9 @@ test('#4793 Plan Review Clarifications: a body-declared CLOSED foreign blocker l
 });
 
 test('#4793 Q5: a failed foreign lookup fails the probe closed (native)', async () => {
-  const pack = await runUnblocked(foreignBodyDeps({ links: 'native', body: 'Blocked by other/repo#7\n', nativeEntry: NATIVE_CLEAR, foreign: new Error('Command failed: exit 3') }));
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'native', body: 'Blocked by other/repo#7\n', nativeEntry: NATIVE_CLEAR, foreign: execFileFailure(3, 'Warning: boom\n') }));
   assert.strictEqual(pack.unblocked.ok, false);
-  assert.match(pack.unblocked.error, /foreign blocker state lookup failed \(Command failed: exit 3\)/);
+  assert.match(pack.unblocked.error, /foreign blocker state lookup failed \(exit 3: Warning: boom\)/);
 });
 
 test('#4793: a ref both natively linked and declared in the body makes no extra foreign lookup (native)', async () => {
