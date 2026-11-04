@@ -288,10 +288,16 @@ function recordResidueError(target, reason, targetPath, { op, error, now = Date.
   if (batch) { target.cache = nextCache; target.dirty = true; } else { writeCache(target, nextCache); }
 }
 
+// #4794: a failed escalate/resolve result's text — its reason, with the `detail` a refused origin
+// carries (`unknown-host (<refusal>)`) so the recorded error says why. boundedError still caps it.
+function failureText(result) {
+  return result.detail ? `${result.reason} (${result.detail})` : result.reason;
+}
+
 // Why a resolve result is not a landed resolution: its own reason, else the unexpected status.
 function unresolvedReason(resolved) {
   if (!resolved) return 'no result';
-  return resolved.reason || `status ${resolved.status}`;
+  return failureText(resolved) || `status ${resolved.status}`;
 }
 
 // #2724: drop a tracked entry for a path that is no longer stuck, and — only
@@ -369,7 +375,7 @@ function trackResidue(target, repoSlug, reason, targetPath, { failed, lastError,
       count: streak.count, firstFailedAt: streak.firstFailedAt, lastError, dirtyFiles, runner, pathExists: ownedPathExists(target),
     });
     if (result && result.status === 'escalation-failed') {
-      recordResidueError(target, reason, targetPath, { op: 'escalate', error: result.reason || 'status escalation-failed' });
+      recordResidueError(target, reason, targetPath, { op: 'escalate', error: failureText(result) || 'status escalation-failed' });
     }
   } catch (err) {
     // best-effort — never let escalation turn a residue-tracking call into a thrown error

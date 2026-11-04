@@ -655,6 +655,49 @@ test('#4180 pruneResidueFailures: nothing to prune returns an empty failures lis
   assert.deepEqual(pruneResidueFailures(root, 'o/r', { resolve: () => { throw new Error('must not run'); } }), { failures: [] });
 });
 
+test('#4794: a refused residue repo records unknown-host (refusal) on the escalate and resolve failures', () => {
+  const calls = [];
+  const runner = (argv) => { calls.push(argv); return '[]'; };
+  const repo = { refusal: 'R' };
+
+  // trackResidue -> the real escalateResidue, to the threshold.
+  const trackRoot = tmpRoot();
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
+    trackResidue(trackRoot, repo, 'move-failed', '/x/a', { failed: true, lastError: 'e' }, { runner });
+  }
+  const [tracked] = listResidueFailures(trackRoot);
+  assert.equal(tracked.escalated, true);
+  assert.equal(tracked.lastResidueError.op, 'escalate');
+  assert.equal(tracked.lastResidueError.reason, 'unknown-host (R)');
+
+  // pruneResidueFailures -> the real resolveResidue, on an escalated entry whose path is gone.
+  const pruneRoot = tmpRoot();
+  const gonePath = path.join(pruneRoot, 'gone');
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) recordResidueFailure(pruneRoot, 'move-failed', gonePath, { lastError: 'e' });
+  assert.deepEqual(
+    pruneResidueFailures(pruneRoot, repo, { runner }),
+    { failures: [{ reason: 'move-failed', path: gonePath, op: 'resolve', error: 'unknown-host (R)' }] },
+  );
+
+  // clearResidue -> the real resolveResidue, on an escalated entry that stays tracked.
+  const clearRoot = escalatedStuckRoot();
+  const cleared = clearResidue(clearRoot, repo, 'structurally-stuck', '/x/p', { runner });
+  assert.equal(cleared.cleared, false);
+  assert.equal(listResidueFailures(clearRoot)[0].lastResidueError.reason, 'unknown-host (R)');
+
+  assert.deepEqual(calls, [], 'a refused origin makes no gh call');
+});
+
+test('#4794: a long failure detail is still capped at 200 characters', () => {
+  const root = almostEscalatedRoot();
+  trackResidue(root, 'o/r', 'move-failed', '/x/m', { failed: true, lastError: 'EBUSY' }, {
+    escalate: () => ({ status: 'escalation-failed', reason: 'unknown-host', detail: 'x'.repeat(300) }),
+  });
+  const { reason } = listResidueFailures(root)[0].lastResidueError;
+  assert.equal(reason.length, 200);
+  assert.ok(reason.startsWith('unknown-host (xxx'));
+});
+
 test('#4180 recordResidueError: a no-op when the entry does not exist', () => {
   const root = tmpRoot();
   recordResidueError(root, 'move-failed', '/x/none', { op: 'resolve', error: 'x' });

@@ -221,6 +221,31 @@ test('resolveResidue: no repo slug -> resolution-failed without calling the runn
   assert.equal(called, false);
 });
 
+test('#4794: a refused residue repo escalates and resolves nothing — unknown-host with the refusal, runner never called', () => {
+  const calls = [];
+  const runner = (argv) => { calls.push(argv); return '[]'; };
+  const repo = { refusal: 'R' };
+  for (const reason of ['move-failed', 'structurally-stuck']) {
+    assert.deepEqual(
+      escalateResidue({ repo, reason, targetPath: '/x/a', count: 3, runner }),
+      { status: 'escalation-failed', reason: 'unknown-host', detail: 'R' },
+      `escalate ${reason}`,
+    );
+    assert.deepEqual(
+      resolveResidue({ repo, reason, targetPath: '/x/a', runner }),
+      { status: 'resolution-failed', reason: 'unknown-host', detail: 'R' },
+      `resolve ${reason}`,
+    );
+  }
+  assert.deepEqual(calls, [], 'a refused origin makes no gh call');
+  // The null residue repo (no origin at all) is unchanged.
+  for (const reason of ['move-failed', 'structurally-stuck']) {
+    assert.equal(escalateResidue({ repo: null, reason, targetPath: '/x/a', count: 3, runner }).reason, 'no-repo-slug');
+    assert.equal(resolveResidue({ repo: null, reason, targetPath: '/x/a', runner }).reason, 'no-repo-slug');
+  }
+  assert.deepEqual(calls, []);
+});
+
 // --- #1811 Deliverable 4: structurally-stuck escalates as ONE consolidated
 // record per sweep pass naming every stuck path, dedup'd by a path-less
 // fingerprint marker — not one record per directory. ---
@@ -300,7 +325,9 @@ test('structurallyStuckBody: names every feeding skip reason, the cache lastErro
 // record. With no repo slug, escalate-residue's findOrCreateIssue returns
 // 'escalation-failed', so the consolidated issue is never filed and this body is
 // never written; that reason only shows in the residue summary's stuck count.
-const UNFILEABLE_STUCK_REASONS = new Set(['no-repo-slug']);
+// #4794: a refused origin's escalation files nothing either (`unknown-host`, a `{ refusal }`
+// residue repo), so that reason never reaches the record's body.
+const UNFILEABLE_STUCK_REASONS = new Set(['no-repo-slug', 'unknown-host']);
 
 test('structurallyStuckBody: the reason list names every STRUCTURALLY_STUCK_REASONS member except the unfileable ones (#3705)', () => {
   const body = structurallyStuckBody([]);
