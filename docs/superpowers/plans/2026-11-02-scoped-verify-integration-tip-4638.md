@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+, `node --test`, git plumbing through the injectable `execImpl` seam.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-03T093004-record-4638/work/4638-spec.md`. Its `## Plan Review Decisions` section overrides the Acceptance Criterion where they conflict: Reading A on scope, Reading B on bookkeeping-only deltas, and (round 2) Reading A on test-impact selection.
+**Spec:** `.claude-tweaks/pipelines/2026-11-03T235706-record-4638/work/4638-spec.md`. Its `## Plan Review Decisions` section overrides the Acceptance Criterion where they conflict: Reading A on scope, Reading B on bookkeeping-only deltas, (round 2) Reading A on test-impact selection, and (round 3) Reading A on how a declined narrowing is reported.
 
 ## Global Constraints
 
@@ -16,8 +16,10 @@
 - Decision, verbatim: "\"Never\" is universal: any narrowing that leaves zero suites over a non-empty delta declines or does not stamp."
 - Decision, verbatim: "They are exempt: \"the suites its changed paths map to\" being none is a legitimate zero, and `none` still stamps."
 - Decision (round 2), verbatim: "\"Any narrowing\" means merge narrowing only. An empty impact subset still stamps, because the traced map says no test reads the path. The plan says so explicitly and adds a test pinning it."
+- Decision (round 3), verbatim: "Every decline reports `scope.mergeNarrowing: null` in `report.json`: no qualifying merge, HEAD with no commit ahead of the integration ref, and a narrowing the guard dropped because it selected no suite. The report shape does not change and no stdout line is added. A decline always runs the suites in full, so nothing is skipped silently." The outcome guard sets `narrowing = null`, so the existing report composition (`plugin/bin/verify.js:1029`) writes `null` and the `merge-narrowed:` line (`plugin/bin/verify.js:1252`) is not printed; neither line changes. Every Task 1 decline test asserts `report.scope.mergeNarrowing === null`, and the CLI tests assert no `merge-narrowed` line.
 - Out of scope, by that decision: test-impact selection. An empty impact subset with no merge narrowing still drops the impact suite (`plugin/bin/lib/verify/scope.js:100`) and still stamps `none`/`static-only`. The outcome guard keys on `narrowing` alone and never fires for it. Task 1's `impact-cli.test.js` test pins this.
-- Commit style: `{Verb} {what} — {detail}`, imperative, no conventional prefix; reference the record as `refs #4638`, never `closes`/`fixes`. End each commit message with `Claude-Session: https://claude.ai/code/session_01X7gPFCrtkzanEVAkLgp6fP`.
+- Commit style: `{Verb} {what} — {detail}`, imperative, no conventional prefix; reference the record as `refs #4638`, never `closes`/`fixes`. End each commit message with `Claude-Session: https://claude.ai/code/session_01CcCLFuLCQBjY7tgBC4aiZJ`.
+- `plugin/bin/lib/verify/declaration.js:186` rejects a rule whose `static` is not a boolean, so every rule in a test fixture's declaration states `static` explicitly.
 - `.claude/skills/gh-api-module-pattern/SKILL.md`, quoted: "A seam whose calls are *probes* runs quiet" — the new git read goes through the existing `tryGit(execImpl, …)`.
 - `.claude/skills/gh-api-module-pattern/SKILL.md`, quoted: "A module that parses git's output pins that output's format against the user's and the repo's git config." The new read is `rev-list --count`, a bare integer no diff or color config rewrites.
 - `changed-files.js`'s own header rule, quoted: "the fallback over-verifies, never under-verifies." A failed read in the new guard returns `null`, never a narrowed set.
@@ -50,7 +52,7 @@ Each line is pinned by a named test in Task 1.
 - Test: `tests/bin-lib/verify/impact-cli.test.js`
 - Modify: `plugin/skills/test/verification.md:94`
 - Modify: `docs/plugin-structure.md:58`
-- Modify: `docs/plugin-structure.md:197`
+- Modify: `docs/plugin-structure.md:198`
 
 `Waived docs/journeys/run-a-deterministic-verification-check.md: Common Step 6 (/claude-tweaks:journeys) owns journey edits; its step 14 "Should understand" and "Red flags" lines need the new decline rule.`
 
@@ -125,7 +127,7 @@ function zeroSuiteRepo() {
   const r = scopedRepo([
     { match: 'src/**', suites: ['unit'], static: true },
     { match: 'ui/**', suites: ['other'], static: true },
-    { match: 'docs/**', suites: [] },
+    { match: 'docs/**', suites: [], static: false },
     { match: 'cfg/**', suites: [], static: true },
   ]);
   const trunk = r.branch;
@@ -317,7 +319,7 @@ In `plugin/skills/test/verification.md:94`, insert directly after the sentence e
 
 In the same paragraph, change "`null` when no qualifying merge was found" to "`null` when no qualifying merge was found or narrowing declined".
 
-In `docs/plugin-structure.md:58`, in the `#3072 mergeNarrowing` clause, after "keeping working-tree edits and every path the branch touched before its anchor, `--no-renames` throughout —", add: "declining when HEAD has no commit ahead of the ref (#4638) —". In `docs/plugin-structure.md:197`, change "null when no qualifying merge)" to "null when no qualifying merge or when narrowing declined — HEAD has no commit ahead of that branch, or the narrowed set selects no suite, #4638)".
+In `docs/plugin-structure.md:58`, in the `#3072 mergeNarrowing` clause, after "keeping working-tree edits and every path the branch touched before its anchor, `--no-renames` throughout —", add: "declining when HEAD has no commit ahead of the ref (#4638) —". In `docs/plugin-structure.md:198`, change "null when no qualifying merge)" to "null when no qualifying merge or when narrowing declined — HEAD has no commit ahead of that branch, or the narrowed set selects no suite, #4638)".
 
 Headroom: `verification.md` is about 42,300 B against the 52,500 B rail; this adds about 430 B.
 
