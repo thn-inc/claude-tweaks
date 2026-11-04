@@ -963,6 +963,8 @@ test('takeClaim: a non-EEXIST create error is claim-failed', () => {
 
 const setMtime = (dir, ms) => fs.utimesSync(lockOf(dir), ms / 1000, ms / 1000);
 const mtimeOf = (dir) => fs.statSync(lockOf(dir)).mtimeMs;
+// A file mtime equals an injected time to within filesystem timestamp precision. Not a wall-clock budget: both sides are times the test set.
+const mtimeNear = (actualMs, expectedMs) => Math.abs(actualMs - expectedMs) < 1000;
 
 test('AC1.1 takeClaim: a live holder that took the claim past CLAIM_STALE_MS ago and refreshes it is in-flight, its claim untouched', () => {
   const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
@@ -1033,11 +1035,11 @@ test('heartbeatClaim: refreshes only a claim still carrying our token', () => {
   const old = NOW - 4 * 60 * 1000;
   setMtime(dir, old);
   assert.equal(heartbeatClaim(dir, mine.token, NOW), true);
-  assert.ok(Math.abs(mtimeOf(dir) - NOW) < 1000, 'our claim was refreshed');
+  assert.ok(mtimeNear(mtimeOf(dir), NOW), 'our claim was refreshed');
   fs.writeFileSync(lockOf(dir), `${process.pid}-successor`);
   setMtime(dir, old);
   assert.equal(heartbeatClaim(dir, mine.token, NOW), false);
-  assert.ok(Math.abs(mtimeOf(dir) - old) < 1000, "the successor's mtime is untouched");
+  assert.ok(mtimeNear(mtimeOf(dir), old), "the successor's mtime is untouched");
   assert.equal(heartbeatClaim(dir, undefined, NOW), false);
   fs.unlinkSync(lockOf(dir));
   assert.equal(heartbeatClaim(dir, mine.token, NOW), false, 'a missing claim is not ours');
@@ -1051,7 +1053,7 @@ test('heartbeatClaim: a claim moved aside by a judging pass, carrying our token,
   const old = NOW - 4 * 60 * 1000;
   fs.utimesSync(aside, old / 1000, old / 1000);
   assert.equal(heartbeatClaim(dir, mine.token, NOW), true);
-  assert.ok(Math.abs(fs.statSync(aside).mtimeMs - old) < 1000, 'the aside is not touched');
+  assert.ok(mtimeNear(fs.statSync(aside).mtimeMs, old), 'the aside is not touched');
   assert.ok(!fs.existsSync(lockOf(dir)), 'the heartbeat creates nothing at the claim path');
   fs.writeFileSync(aside, `${process.pid}-other`);
   assert.equal(heartbeatClaim(dir, mine.token, NOW), false, "another holder's aside is not ours");
@@ -1927,7 +1929,7 @@ test('heartbeat: every gh call through the shared path refreshes the held claim,
   const r = await run(root, { prs: { 11: merged() }, links, close });
   assert.equal(r.entries[0].action, 'ran');
   assert.deepEqual(seen.map(([label]) => label), ['4.0', '4.0b']);
-  for (const [label, m] of seen) assert.ok(Math.abs(m - NOW) < 1000, `the ${label} gh call refreshed the claim`);
+  for (const [label, m] of seen) assert.ok(mtimeNear(m, NOW), `the ${label} gh call refreshed the claim`);
   assert.ok(!fs.existsSync(lockOf(dir)), 'the owner release removed the claim');
 });
 
@@ -2015,7 +2017,7 @@ function takeoverBeforeTheWrite(dir, successor) {
     ownedAtTakeover: () => owned,
     now: () => {
       if (armed && ++reads === 2) {
-        owned = Math.abs(mtimeOf(dir) - NOW) < 1000;
+        owned = mtimeNear(mtimeOf(dir), NOW);
         fs.writeFileSync(lockOf(dir), successor);
       }
       return NOW;
