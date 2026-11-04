@@ -26,7 +26,7 @@ const { execFileSync } = require('node:child_process');
 const { isPathContained } = require('../shared-primitives');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
 const {
-  ghAvailable: sharedGhAvailable, parseRepo, repoSlug, ghOptions, gateOriginRepo,
+  ghAvailable: sharedGhAvailable, parseRepo, repoSlug, ghOptions, gateOriginRepo, ghHostIn,
 } = require('../repo-resolve');
 const { fetchNativeParent } = require('../issues/native-dependencies');
 const { fetchLinkedPRs } = require('../issues/linked-prs');
@@ -1180,6 +1180,14 @@ registerCheck('upstream-feedback', ({ expectations, deps, cwd }) => {
   if (!expectations.ok) return { result: 'unknown', detail: expectationsUnknownDetail(expectations) };
   const entries = expectations.data.upstream || [];
   if (!entries.length) return { result: 'skip', detail: 'nothing recorded' };
+  // The URL regex below matches github.com alone, but the bare slug it passes reaches whichever host
+  // an exported GH_HOST names. Under another host the check does not run, so no gh call (not even
+  // the --version probe) splits one command across two hosts (#4794).
+  const env = (deps.gateDeps && deps.gateDeps.env) || process.env;
+  const ghHost = ghHostIn(env);
+  if (ghHost && ghHost !== 'github.com') {
+    return { result: 'unknown', detail: `GH_HOST is ${ghHost}, but upstream-feedback issue URLs are on github.com — check not run, so this command keeps one host (#4794)` };
+  }
   if (!ghAvailable(deps, cwd)) return { result: 'unknown', detail: 'gh absent' };
   const failing = [];
   for (const { url } of entries) {
