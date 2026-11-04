@@ -769,6 +769,16 @@ test('a foreign open native blocker is named by its repository, never as this re
   assert.match(r.json.line, /open #5, other\/repo#5 —/);
 });
 
+test('a foreign-only open native blocker is never read as this repository\'s #N (no body-declared blocker)', () => {
+  const env = makeEnv();
+  env.cfg.workLinks = 'native';
+  env.cfg.native = new Map([[N, { blockedBy: [5], openBlocker: true, openBlockerIds: [5], crossRepoBlockers: [{ number: 5, repository: 'other/repo', state: 'OPEN' }] }]]);
+  const r = exec(env);
+  assert.equal(r.json.reason, 'blocked-by');
+  assert.match(r.json.line, /open other\/repo#5 —/);
+  assert.doesNotMatch(r.json.line, /#5,/);
+});
+
 test('a CLOSED foreign native blocker does not block resume', () => {
   const env = makeEnv();
   env.cfg.workLinks = 'native';
