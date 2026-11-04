@@ -35,7 +35,8 @@
 // problem is exit 2, as for --records-json, and the two flags are mutually
 // exclusive (exit 2).
 // --blocker-landing (#4553) adds records[n].blockerLanding [{blocker, verdict,
-// commit, via}, plus `repository` (`owner/name`) on a cross-repository entry] — for each record, the landing verdict of every blocker that is
+// commit, via}, plus `repository` (`owner/name`) on a cross-repository entry] —
+// for each record, the landing verdict of every blocker that is
 // NOT one of the positional numbers (an in-run blocker is ordered by the DAG,
 // never judged here), in blockedBy order, [] when none; the verdicts are
 // bin/lib/preflight-records/blocker-landing.js's. One batched GraphQL call plus
@@ -58,13 +59,16 @@
 // cross-repository-state-unreadable for any other state (fail closed) — each
 // with an extra `repository` (owner/name) key. --records-json degrades native to
 // body-text, so it never carries a native one.
-// A blocker declared only in a record body (`Blocked by owner/name#N`, #4793) is foreign
-// under either work-links value: --blocker-landing appends it to the record's
-// crossRepoBlockers (after the native ones; one already linked natively is judged once)
-// and judges it the same way. Its state comes from ONE batched GraphQL call over every
-// record's non-native refs (bin/lib/issues/cross-repo-states.js). Fail closed: under
-// --records-json (no gh call) or when that call fails, no state is known, so each reads
-// open/cross-repository-state-unreadable and one stderr line names the refs and the cause.
+// A blocker declared only in a record body (`Blocked by owner/name#N`, #4793) is
+// foreign under either work-links value: --blocker-landing appends it to the
+// record's crossRepoBlockers (after the native ones; one already linked natively
+// is judged once) and judges it the same way. Its state comes from ONE batched
+// GraphQL call over every record's non-native refs
+// (bin/lib/issues/cross-repo-states.js). Fail closed: under --records-json (no gh
+// call) or when that call fails (still exit 0), no state is known, so each reads
+// open/cross-repository-state-unreadable and one stderr line names the refs and
+// the cause. A ref the call answers without a readable state (a missing alias, a
+// null issue) reads unreadable too, with no stderr line.
 // The key is absent without the flag, and the rest of the envelope is unchanged.
 // Exit 0 success; 1 any record fetch (or the native dependency GraphQL call)
 // failed — every failing record named, all-at-once; under native, a candidate gh
@@ -92,7 +96,7 @@ const { fetchCrossRepoStates } = require('./lib/issues/cross-repo-states');
 const {
   parseCrossRepoDependencies, parseCrossRepoRef, crossRepoKey, distinctCrossRepoRefs, foreignEntries, mergeForeignBlockers,
 } = require('./lib/issues/cross-repo-refs');
-const { planMergeGateSplit } =require('./lib/preflight-records/merge-gate');
+const { planMergeGateSplit } = require('./lib/preflight-records/merge-gate');
 const { planParallelWaves } = require('./lib/preflight-records/waves');
 const { resolvePolicyKeys } = require('./lib/policy-schema');
 const {

@@ -102,7 +102,7 @@ const NOTES_FACTS = [
 ];
 const notesMissing = missingFactsOf(NOTES_FACTS);
 
-test('#4793: queue-pull-notes.md says a foreign native blocker is never in-run and a CLOSED one is named owner/name#N', () => {
+test('#4793: queue-pull-notes.md says a foreign blocker (native or body-declared) is never in-run and a CLOSED one is named owner/name#N', () => {
   const paragraph = collapse(lineStartingWith(NOTES, NOTES_PASS_PREFIX));
   assert.ok(paragraph, 'the unlanded-blocker pass paragraph exists');
   assert.deepEqual(notesMissing(paragraph), []);

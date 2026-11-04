@@ -561,7 +561,7 @@ test('AC1.1: the out-of-run section names the open and unlanded stops as gate bl
   assert.throws(() => assertRoutesToGate(permuted), /must come after the previous marker/);
 });
 
-// ---- #4793: a blocker linked natively from another repository ----
+// ---- #4793: a blocker in another repository, linked natively or declared by a body line ----
 const collapseWs = (s) => s.replace(/\s+/g, ' ');
 
 function assertCrossRepositoryNaming(text) {
@@ -569,6 +569,10 @@ function assertCrossRepositoryNaming(text) {
   assert.ok(section.includes('`{repository}#{blocker}`'), 'the section names a cross-repository blocker as `{repository}#{blocker}`');
   assert.ok(section.includes('`via: cross-repository`'), 'the section names the plain cross-repository via value');
   assert.ok(section.includes('`via: cross-repository-state-unreadable`'), 'the section names the state-unreadable cross-repository via value');
+  assert.ok(
+    section.includes('is a blocker in another repository, linked natively or declared by a `Blocked by owner/name#N` body line'),
+    'the section says a cross-repository entry is linked natively or declared by a body line',
+  );
   assert.ok(
     section.includes("`condition: {repository}#{blocker} lives in another repository (via cross-repository) → fallback: proceeded without judging its landing — blocker landing reads only this repository's integration branch`"),
     'the section carries the cross-repository SKIP line',
@@ -609,6 +613,10 @@ test('cross-repository entries are named {repository}#{blocker} in the stop line
   assert.throws(
     () => assertCrossRepositoryNaming(mutate(text, /`via: cross-repository`/g, '`via: elsewhere`')),
     { message: 'the section names the plain cross-repository via value' },
+  );
+  assert.throws(
+    () => assertCrossRepositoryNaming(mutate(text, ', linked natively or declared by a `Blocked by owner/name#N` body line', '')),
+    { message: 'the section says a cross-repository entry is linked natively or declared by a body line' },
   );
   assert.throws(
     () => assertDagSkipsQualified(mutate(text, '1. **Build the DAG**', '1. **Build the graph**')),

@@ -43,7 +43,7 @@ const CHECK_FACTS = [
 // Task 13: multi-spec's Prerequisites reader and the preflight-failure paragraph judge a
 // body-declared foreign blocker under either work-links value, and fail it closed without gh.
 const PREREQUISITES_FACTS = [
-  [/A qualified `owner\/name#N` entry is another repository's issue — never an in-run edge and never this repository's `#N`/, 'Prerequisites: a qualified entry is never an in-run edge and never this repository\'s #N'],
+  [/A qualified `owner\/name#N` entry is another repository's issue — never an in-run edge and never this repository's `#N`/i, 'Prerequisites: a qualified entry is never an in-run edge and never this repository\'s #N'],
   [/under either `work-links` value/, 'Prerequisites: the cross-repository verdict holds under either work-links value'],
 ];
 const LANDING_FACTS = [
@@ -52,6 +52,7 @@ const LANDING_FACTS = [
 // preflight-records.js's header comment says the same; it is a source file, so it is not read here.
 const STRUCTURE_FACTS = [
   [/plus `repository` \(`owner\/name`\) on a cross-repository entry/, 'plugin-structure.md: a cross-repository landing entry carries a repository key'],
+  [/a failed or `--records-json` lookup exits 0 with a stderr line, every such ref reading `open`\/`cross-repository-state-unreadable`, never exit 1/, 'plugin-structure.md: a failed body-declared state lookup exits 0 with a stderr line, never exit 1'],
 ];
 
 const REGIONS = [
@@ -63,7 +64,7 @@ const REGIONS = [
 ];
 
 for (const [file, name, text, facts] of REGIONS) {
-  test(`${file} ${name} names a foreign blocker as owner/name#N (#4793)`, () => {
+  test(`${file} ${name} states its cross-repository blocker facts (#4793)`, () => {
     const missing = missingFactsOf(facts);
     assert.deepEqual(missing(text), [], `${name} states every fact`);
     assertEachPatternGoesRed(text, facts, missing);

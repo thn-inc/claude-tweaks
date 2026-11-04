@@ -974,6 +974,8 @@ test('a body-declared foreign blocker the lookup cannot read reads open, state u
   assert.equal(run(bodyArgs('11'), d.deps), 0);
   const env = JSON.parse(d.out.join(''));
   assert.deepEqual(env.records['11'].blockerLanding, [{ blocker: 5, verdict: 'open', commit: null, via: 'cross-repository-state-unreadable', repository: 'other/repo' }]);
+  // Only a whole-call failure prints the fail-closed line; the ref's own `via` diagnoses a missing alias.
+  assert.doesNotMatch(d.err.join(''), /foreign blocker state lookup/);
 });
 
 test('a failed state lookup fails closed and says so', () => {
@@ -997,6 +999,25 @@ test('under --records-json a body-declared foreign blocker reads state unreadabl
   const env = JSON.parse(d.out.join(''));
   assert.deepEqual(env.records['11'].blockerLanding, [{ blocker: 5, verdict: 'open', commit: null, via: 'cross-repository-state-unreadable', repository: 'other/repo' }]);
   assert.match(d.err.join(''), /foreign blocker state lookup skipped under --records-json — other\/repo#5 read as state unreadable \(fail closed\)/);
+});
+
+test('--prefetched-json (the dispatch unlanded-blocker path) runs the gh lookup, reads a body-declared foreign blocker, and fails closed with the diagnostic line', () => {
+  const prefetched = JSON.stringify([issue({ number: 11, title: 'Eleven', body: `Blocked by other/repo#5\n\n${specBody(['b.js'])}` })]);
+  const args = [...bodyArgs('11'), '--prefetched-json', '/p.json'];
+
+  const ok = bodyForeignFixture({}, { states: { 'other/repo#5': 'OPEN' } });
+  const read = cliDeps({ runner: ok.runner, workLinks: 'body-text', files: { '/p.json': prefetched } });
+  assert.equal(run(args, read.deps), 0);
+  assert.deepEqual(JSON.parse(read.out.join('')).records['11'].blockerLanding, [{ blocker: 5, verdict: 'open', commit: null, via: 'cross-repository', repository: 'other/repo' }]);
+  assert.equal(stateQueries(ok.calls).length, 1);
+  assert.equal(ok.calls.filter((a) => a[0] === 'issue').length, 0, 'the records are prefetched — no gh issue view');
+  assert.equal(read.err.join(''), '');
+
+  const down = bodyForeignFixture({}, { stateAnswer: () => { throw new Error('HTTP 502: bad gateway'); } });
+  const failed = cliDeps({ runner: down.runner, workLinks: 'body-text', files: { '/p.json': prefetched } });
+  assert.equal(run(args, failed.deps), 0);
+  assert.deepEqual(JSON.parse(failed.out.join('')).records['11'].blockerLanding, [{ blocker: 5, verdict: 'open', commit: null, via: 'cross-repository-state-unreadable', repository: 'other/repo' }]);
+  assert.match(failed.err.join(''), /foreign blocker state lookup failed: .* — other\/repo#5 read as state unreadable \(fail closed\)/);
 });
 
 test('a foreign blocker linked natively and declared in the body is judged once, with no state query', () => {
