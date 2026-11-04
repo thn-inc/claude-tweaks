@@ -241,7 +241,8 @@ test('AC2.1: on a github.com origin the fake gh sees GH_HOST unset', { skip: STU
 // stub answers one live issue-7 claim, a CLOSED issue and the release writes, so the pass
 // reaches every runner: the tree listing and label DELETE (ghApi), the issue-state read
 // (ghApiAsync) and the tombstone PUT (ghRunner).
-const RELEASE_GATE_DEPS = { env: {}, readFile: () => { throw new Error('ENOENT'); } };
+// The shared gate deps: no exported GH_HOST and no readable gh hosts.yml, so the origin alone decides the gate's verdict.
+const GATE_DEPS = { env: {}, readFile: () => { throw new Error('ENOENT'); } };
 const CLAIMS_TREE_ARGV = 'api repos/acme/widgets/git/trees/claims-registry?recursive=1 -q {truncated: .truncated, entries: [.tree[] | select(.type == "blob" and (.path | startswith("claims/"))) | {name: (.path | split("/") | last), sha: .sha}]}';
 
 function installReleaseGh(t) {
@@ -273,7 +274,7 @@ async function releaseLines(t, origin) {
   withoutGhHost(t);
   const stderr = captureSeamNotes(t);
   const { releaseMerged } = require('../plugin/bin/lib/reconcile/release-merged');
-  const result = await releaseMerged({ cwd: repo, gateDeps: RELEASE_GATE_DEPS });
+  const result = await releaseMerged({ cwd: repo, gateDeps: GATE_DEPS });
   stderr.restore();
   assert.equal(result.failure, undefined, JSON.stringify(result));
   assert.equal(result.released.length, 1, `expected the issue-closed release, got ${JSON.stringify(result)}`);
@@ -307,7 +308,7 @@ test('AC1.1 (#4794): pr-state\'s bulk PR screen on a *.ghe.com origin reaches th
   withoutGhHost(t);
   const stderr = captureSeamNotes(t);
   const { resolvePrStatesBulk } = require('../plugin/bin/lib/reconcile/pr-state');
-  const result = resolvePrStatesBulk(repo, ['feature'], { gateDeps: RELEASE_GATE_DEPS });
+  const result = resolvePrStatesBulk(repo, ['feature'], { gateDeps: GATE_DEPS });
   stderr.restore();
   assert.ok(result instanceof Map, `expected the screen's Map, got ${JSON.stringify(result)}`);
   const lines = networkLines(readLog());
@@ -320,7 +321,6 @@ test('AC1.1 (#4794): pr-state\'s bulk PR screen on a *.ghe.com origin reaches th
 // branches in one `gh api graphql` call that follows the repo root's origin host (the GraphQL
 // owner/name pair is the bare split, never the host-qualified slug). The fake gh answers the
 // graphql key with an empty result, which is enough: only the spawn's host and argv are asserted.
-const SCREEN_GATE_DEPS = { env: {}, readFile: () => { throw new Error('ENOENT'); } };
 
 function screenFixture(t, origin) {
   const readLog = installFakeGh(t);
@@ -339,7 +339,7 @@ function pruneRemoteLines(t, origin) {
   git(repo, ['update-ref', 'refs/remotes/origin/worktree-x', 'HEAD']);
   const stderr = captureSeamNotes(t);
   const { pruneRemote } = require('../plugin/bin/lib/reconcile/prune-remote');
-  const result = pruneRemote({ cwd: repo, integration: 'main', skipFetch: true, dryRun: true, gateDeps: SCREEN_GATE_DEPS });
+  const result = pruneRemote({ cwd: repo, integration: 'main', skipFetch: true, dryRun: true, gateDeps: GATE_DEPS });
   stderr.restore();
   assert.notEqual(result.failure, 'unknown-host', JSON.stringify(result));
   return readLog();
@@ -350,7 +350,7 @@ function archiveBranchesLines(t, origin) {
   git(repo, ['branch', 'worktree-x']);
   const stderr = captureSeamNotes(t);
   const { archiveBranches } = require('../plugin/bin/lib/reconcile/archive-branches');
-  const result = archiveBranches({ cwd: repo, integration: 'main', dryRun: true, gateDeps: SCREEN_GATE_DEPS });
+  const result = archiveBranches({ cwd: repo, integration: 'main', dryRun: true, gateDeps: GATE_DEPS });
   stderr.restore();
   assert.equal(result.failure, null, JSON.stringify(result));
   assert.ok(!result.entries.some((e) => e.reason === 'unknown-host'), JSON.stringify(result));
@@ -716,7 +716,6 @@ for (const row of CLI_TABLE) describeOriginGate(row);
 // origin-derived repo. The runner is injected, so the argv it records is what `gh` would
 // have been sent: a host-qualified --repo off github.com, the bare slug on it, and nothing
 // at all through a refused origin (an SSH alias).
-const RESIDUE_GATE_DEPS = { env: {}, readFile: () => { throw new Error('ENOENT'); } };
 const ESCALATION_ISSUE_URL = 'https://acme.ghe.com/acme/widgets/issues/101';
 
 function recordingRunner() {
@@ -762,7 +761,7 @@ function archiveEscalation(t, origin) {
   fs.utimesSync(dir, backdated, backdated);
   for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD - 1; i++) recordResidueFailure(root, 'structurally-stuck', dir, { lastError: 'stuck at no-branch' });
   const { calls, runner } = recordingRunner();
-  const result = archiveMerged({ cwd: root, runner, gateDeps: RESIDUE_GATE_DEPS });
+  const result = archiveMerged({ cwd: root, runner, gateDeps: GATE_DEPS });
   assert.ok(result.skipped.some((s) => s.runDir === dir && s.reason === 'no-branch'), JSON.stringify(result));
   return { calls, root, dir };
 }
@@ -778,8 +777,11 @@ test('AC2.1: archiveMerged on a github.com origin escalates with --repo acme/wid
 });
 
 test('#4794: archiveMerged on an SSH-alias origin escalates nothing — the runner sees no call', { skip: STUB_SKIP }, (t) => {
-  const { calls } = archiveEscalation(t, 'git@github-work:acme/widgets.git');
+  const { listResidueFailures } = require('../plugin/bin/lib/reconcile/cache');
+  const { calls, root } = archiveEscalation(t, 'git@github-work:acme/widgets.git');
   assert.deepEqual(calls, []);
+  const entry = listResidueFailures(root).find((f) => f.reason === 'structurally-stuck');
+  assert.ok(entry && entry.lastResidueError && entry.lastResidueError.reason.startsWith('unknown-host ('), JSON.stringify(entry));
 });
 
 // A merged-PR worktree locked so `git worktree remove` refuses it, RESIDUE_ESCALATE_THRESHOLD passes.
@@ -794,7 +796,7 @@ function reapEscalation(t, origin) {
   const prStates = { byBranch: () => ({ number: 9, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }) };
   const { calls, runner } = recordingRunner();
   for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
-    const result = reapMerged({ cwd: root, runner, prStates, gateDeps: RESIDUE_GATE_DEPS });
+    const result = reapMerged({ cwd: root, runner, prStates, gateDeps: GATE_DEPS });
     assert.equal(result.skipped[0] && result.skipped[0].reason, 'removal-failed', `pass ${i + 1}: ${JSON.stringify(result)}`);
   }
   return { calls, root };
@@ -846,6 +848,13 @@ test('AC1.1 (#4794): sibling-sessions\' claim read on a *.ghe.com origin reaches
   assert.match(stdout, /"runId":"run-live-7"/, stdout);
 });
 
+test('AC2.1 (#4794): sibling-sessions\' claim read on a github.com origin is today\'s contents read, GH_HOST unset', { skip: STUB_SKIP }, (t) => {
+  const { stdout, lines } = siblingClaimRead(t, DOTCOM_ORIGIN);
+  for (const line of networkLines(lines)) assert.ok(line.startsWith('GH_HOST=unset '), `GH_HOST injected on github.com: ${line}`);
+  assert.ok(networkLines(lines).some((l) => /^api repos\/acme\/widgets\/contents\/claims\/issue-7\.json\?ref=claims-registry/.test(argsOf(l))), JSON.stringify(lines));
+  assert.match(stdout, /"runId":"run-live-7"/, stdout);
+});
+
 test('#4794: sibling-sessions on an SSH-alias origin sends no gh call', { skip: STUB_SKIP }, (t) => {
   const { stdout, lines } = siblingClaimRead(t, 'git@github-work:acme/widgets.git');
   assert.deepEqual(networkLines(lines), []);
@@ -885,7 +894,6 @@ test('AC1.1 (#4794): teardown-run on a *.ghe.com origin sends its remote-ref del
 // argv). The fake gh answers the repo, one TTL-expired claim blob for RUN_ID (the contents
 // read, through the nested key) and a marked same-repo PR on the case's host. GIT_ALLOW_PROTOCOL=file
 // (gatedEnv) makes the git-CAS leg fail fast, so the read takes the contents API.
-const GATE_DEPS = { env: {}, readFile: () => { throw new Error('ENOENT'); } };
 const CT_STALE_CLAIM = JSON.stringify({ runId: RUN_ID, sessionId: 's1', claimedAt: new Date(Date.now() - 100 * 3600 * 1000).toISOString(), ttlHours: 72, host: 'h' });
 const CT_PR_LIST_ARGV = 'pr list --repo acme/widgets --state open --json url,body,isCrossRepository --limit 1000';
 
@@ -947,7 +955,7 @@ test('#4794: claim-targets.js on an unknown or SSH-alias origin exits 2 unknown-
 // #4794 Task 13: stale-claim-pr.js calls the gate directly (no repo-resolve helper in between). Its
 // one open-PR listing and its PR-url match share one host. The claim file is a stale claim blob for
 // RUN_ID; the fake gh answers the listing with a marked PR on the case's host.
-const SCP_PR_LIST_ARGV = 'pr list --repo acme/widgets --state open --json url,body,isCrossRepository --limit 1000';
+const STALE_CLAIM_PR_LIST_ARGV = 'pr list --repo acme/widgets --state open --json url,body,isCrossRepository --limit 1000';
 
 function staleClaimPrRow(prHost) {
   const pr = { url: `https://${prHost}/acme/widgets/pull/12`, body: `## Spec\n<!-- claude-tweaks-run: ${RUN_ID} -->\n`, isCrossRepository: false };
@@ -974,7 +982,7 @@ test('AC1.1: stale-claim-pr.js on a *.ghe.com origin lists open PRs on the origi
 test('AC2.1: stale-claim-pr.js on a github.com origin keeps today\'s pr list argv', { skip: STUB_SKIP }, (t) => {
   const r = runStaleClaimPr(t, 'github.com', { origin: DOTCOM_ORIGIN });
   assert.equal(r.status, 0, `stderr:\n${r.stderr}`);
-  assert.deepEqual(networkLines(r.lines), [`GH_HOST=unset ARGS=${SCP_PR_LIST_ARGV}`]);
+  assert.deepEqual(networkLines(r.lines), [`GH_HOST=unset ARGS=${STALE_CLAIM_PR_LIST_ARGV}`]);
   assert.equal(JSON.parse(r.stdout).match, true, r.stdout);
 });
 

@@ -1032,6 +1032,8 @@ test('#4794: isSameRepoPrUrl compares the url host, normalized, against the one 
   assert.equal(isSameRepoPrUrl('https://GitHub.com./acme/w/pull/7', 'acme', 'w'), true);
   assert.equal(isSameRepoPrUrl('https://acme.ghe.com/acme/other/pull/7', 'acme', 'w', 'acme.ghe.com'), false, 'owner/repo stay exact');
   assert.equal(isSameRepoPrUrl('http://acme.ghe.com/acme/w/pull/7', 'acme', 'w', 'acme.ghe.com'), false, 'https only');
+  assert.equal(isSameRepoPrUrl('https://x@github.com/acme/w/pull/7', 'acme', 'w'), false, 'userinfo look-alike');
+  assert.equal(isSameRepoPrUrl('https://github.com:443/acme/w/pull/7', 'acme', 'w'), false, 'port look-alike');
 });
 
 test('#4794: matchStaleClaimPr and tombstoneInFlightPr thread the host into the url match', () => {

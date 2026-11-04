@@ -2973,6 +2973,8 @@ test('#4794: a refused origin exits 2 unknown-host before any gh call, with or w
 test('#4794: the --steps skip guard answers before the origin gate is consulted', () => {
   const r = recordingRefusers();
   const { deps, io } = baseDeps({ ghApi: r.ghApi, gh: r.gh });
+  deps.gitRunner = r.gitRunner;
+  deps.appendClaimLog = r.appendClaimLog;
   deps.gateOrigin = () => { throw new Error('gateOrigin must not be called'); };
 
   const code = run(['--run-id', 'r1', '--targets', '720', '--steps', 'review,wrap-up'], deps);

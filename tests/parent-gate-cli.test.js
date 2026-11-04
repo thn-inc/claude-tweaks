@@ -634,6 +634,7 @@ test('#4794: the facts path reads an ssh:// or credentialed origin like its scp 
     assert.doesNotMatch(r.stderr, /could not resolve owner\/repo/, remote);
     assert.equal(r.code, scp.code, `${remote}: ${r.stderr}`);
     assert.equal(r.stdout, scp.stdout, remote);
+    assert.doesNotMatch(r.stdout + r.stderr, /tok/, remote);
   }
 });
 

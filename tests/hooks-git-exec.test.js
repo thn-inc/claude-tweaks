@@ -500,8 +500,9 @@ test('repoSpecOf (#4794): an ssh:// origin on an unknown host is refused exactly
 test('repoSpecOf (#4794): an ssh:// github.com origin is read by the gate, host github.com', () => {
   const repo = gitRepo();
   fixtureGit(['-C', repo, 'remote', 'add', 'origin', 'ssh://git@github.com/acme/w.git']);
-  assert.strictEqual(repoTargetOf(repo).slug, 'acme/w');
-  assert.deepStrictEqual(repoSpecOf(repo), { host: 'github.com', owner: 'acme', repo: 'w' });
+  const gateDeps = { env: {}, readFile: () => { throw new Error('none'); } };
+  assert.strictEqual(repoTargetOf(repo, gateDeps).slug, 'acme/w');
+  assert.deepStrictEqual(repoSpecOf(repo, gateDeps), { host: 'github.com', owner: 'acme', repo: 'w' });
 });
 
 test('repoSpecOf: no origin remote, or a directory outside any repo, is null', () => {
@@ -532,7 +533,7 @@ test('repoTargetOf (#4794): the gated origin host and its --repo slug — GHE qu
 
   // A gh hosts.yml key admits a non-.ghe.com host; without it the target is the gate's refusal.
   set('https://ghe.example.com/acme/widgets.git');
-  assert.strictEqual(repoTargetOf(repo, gateDeps({}, () => 'ghe.example.com:\n    user: x\n')).host, 'ghe.example.com');
+  assert.deepStrictEqual(repoTargetOf(repo, gateDeps({}, () => 'ghe.example.com:\n    user: x\n')), { owner: 'acme', repo: 'widgets', slug: 'acme/widgets', host: 'ghe.example.com', ghRepo: 'ghe.example.com/acme/widgets' });
   assert.deepStrictEqual(repoTargetOf(repo, gateDeps()), { refusal: gateOriginRepo('https://ghe.example.com/acme/widgets.git', gateDeps()).refusal });
   // An exported but empty GH_HOST is no opt-in.
   assert.deepStrictEqual(Object.keys(repoTargetOf(repo, gateDeps({ GH_HOST: '  ' }))), ['refusal']);

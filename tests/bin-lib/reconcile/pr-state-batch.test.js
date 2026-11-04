@@ -226,11 +226,11 @@ test('fetchBatch: reads the body off a rejection that carries stdout (gh exits 1
 test('fetchBatch: no keys spawns nothing; no origin slug returns empty maps without spawning', async () => {
   let spawned = 0;
   const runner = async () => { spawned += 1; return '{}'; };
-  const none = await fetchBatch(SLUG_REPO, { numbers: [], heads: [] }, { runner });
+  const none = await fetchBatch(SLUG_REPO, { numbers: [], heads: [] }, { runner, env: {} });
   assert.equal(none.byNumber.size + none.byHead.size, 0);
   const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-pr-state-batch-bare-'));
   execFileSync('git', ['init', '-q'], { cwd: bare, windowsHide: true });
-  const noSlug = await fetchBatch(bare, { numbers: [1], heads: ['b'] }, { runner });
+  const noSlug = await fetchBatch(bare, { numbers: [1], heads: ['b'] }, { runner, env: {} });
   assert.equal(noSlug.byNumber.size + noSlug.byHead.size, 0);
   assert.equal(spawned, 0);
 });
@@ -241,7 +241,7 @@ test('fetchBatch: an origin off github.com (or unparseable) makes zero runner ca
     execFileSync('git', ['init', '-q'], { cwd: dir, windowsHide: true });
     execFileSync('git', ['remote', 'add', 'origin', url], { cwd: dir, windowsHide: true });
     let spawned = 0;
-    const out = await fetchBatch(dir, { numbers: [1], heads: ['b'] }, { runner: async () => { spawned += 1; return '{}'; } });
+    const out = await fetchBatch(dir, { numbers: [1], heads: ['b'] }, { runner: async () => { spawned += 1; return '{}'; }, env: {} });
     assert.equal(spawned, 0, url);
     assert.equal(out.byNumber.size + out.byHead.size, 0, url);
   }
