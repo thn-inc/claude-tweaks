@@ -19,16 +19,17 @@ WRAPUP_OPEN_RECORDS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" -
 WRAPUP_DEPENDENTS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value wrapup-dependents.json)"
 node -e "
   const { parseDependencies } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
+  const { parseCrossRepoDependencies } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/cross-repo-refs.js');
   const records = require('$WRAPUP_OPEN_RECORDS');
   const closedNum = ${CLOSED_NUM};
   const dependents = records
-    .map((r) => ({ number: r.number, title: r.title, blockedBy: parseDependencies(r.body) }))
+    .map((r) => ({ number: r.number, title: r.title, blockedBy: parseDependencies(r.body), foreignRefs: parseCrossRepoDependencies(r.body) }))
     .filter((r) => r.blockedBy.includes(closedNum));
   require('fs').writeFileSync('$WRAPUP_DEPENDENTS', JSON.stringify(dependents));
 "
 ```
 
-If `dependents` is non-empty, check whether **every other** blocker (excluding the record that just closed) is also already resolved — one batch call, not one query per blocker id. Re-resolve this fence's session-scoped paths:
+If `dependents` is non-empty, check whether **every other** blocker (excluding the record that just closed) is also already resolved — one batch call, not one query per blocker id — and that no `Blocked by owner/name#N` line names another repository's blocker that is still open or whose state is unreadable (one batched lookup, fail closed, #4793). Re-resolve this fence's session-scoped paths:
 
 ```bash
 WRAPUP_DEPENDENTS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value wrapup-dependents.json)"
@@ -36,11 +37,15 @@ WRAPUP_ALL_STATES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --v
 WRAPUP_UNBLOCKED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value wrapup-unblocked.json)"
 gh issue list --state all --json number,state --limit 200 > "$WRAPUP_ALL_STATES"
 node -e "
+  const { resolveForeignStates } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/cross-repo-states.js');
+  const { foreignEntries } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/cross-repo-refs.js');
+  const { foreignBlockerBlocks } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
   const dependents = require('$WRAPUP_DEPENDENTS');
   const allStates = require('$WRAPUP_ALL_STATES');
   const stateOf = new Map(allStates.map((i) => [i.number, i.state]));
   const closedNum = ${CLOSED_NUM};
-  const unblocked = dependents.filter((d) => d.blockedBy.every((b) => b === closedNum || stateOf.get(b) === 'CLOSED'));
+  const states = resolveForeignStates(dependents.flatMap((d) => d.foreignRefs));
+  const unblocked = dependents.filter((d) => d.blockedBy.every((b) => b === closedNum || stateOf.get(b) === 'CLOSED') && !foreignEntries(d.foreignRefs, states).some(foreignBlockerBlocks));
   require('fs').writeFileSync('$WRAPUP_UNBLOCKED', JSON.stringify(unblocked));
 "
 ```
@@ -52,6 +57,9 @@ WRAPUP_OPEN_RECORDS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" -
 WRAPUP_UNBLOCKED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value wrapup-unblocked.json)"
 node -e "
   const { execFileSync } = require('child_process');
+  const { withoutCrossRepoBlockers, foreignBlockerBlocks } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
+  const { parseCrossRepoDependencies, foreignEntries, bodyOnlyForeign } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/cross-repo-refs.js');
+  const { resolveForeignStates } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/cross-repo-states.js');
   const records = require('$WRAPUP_OPEN_RECORDS');
   const closedNum = ${CLOSED_NUM};
   let byNumber = {};
@@ -63,14 +71,18 @@ node -e "
       console.error('Warning: native dependency query failed — skipping newly-unblocked check this run:', e.message);
     }
   }
-  const unblocked = records
-    .filter((r) => byNumber[r.number] && byNumber[r.number].blockedBy.includes(closedNum) && !byNumber[r.number].openBlocker)
+  const candidates = records
+    .filter((r) => byNumber[r.number] && withoutCrossRepoBlockers(byNumber[r.number].blockedBy, byNumber[r.number].crossRepoBlockers).includes(closedNum) && !byNumber[r.number].openBlocker && !(byNumber[r.number].crossRepoBlockers || []).some(foreignBlockerBlocks));
+  const bodyRefs = (r) => bodyOnlyForeign(byNumber[r.number].crossRepoBlockers || [], foreignEntries(parseCrossRepoDependencies(r.body), new Map())).map((e) => e.repository + '#' + e.number);
+  const states = resolveForeignStates(candidates.flatMap(bodyRefs));
+  const unblocked = candidates
+    .filter((r) => !foreignEntries(bodyRefs(r), states).some(foreignBlockerBlocks))
     .map((r) => ({ number: r.number, title: r.title }));
   require('fs').writeFileSync('$WRAPUP_UNBLOCKED', JSON.stringify(unblocked));
 "
 ```
 
-`byNumber[r.number].openBlocker` reflects LIVE blocker state at query time, run after this session already closed `${CLOSED_NUM}` — so a `false` here means every one of the record's blockers, `${CLOSED_NUM}` included, is now resolved, without needing to special-case `closedNum` out of the check. On any error this fails safe — skip the check for this run (an empty `wrapup-unblocked.json`) rather than blocking wrap-up, matching this section's own "must never gate, block, or delay the wrap-up" rule above and dispatch's identical native-mode fallback.
+`byNumber[r.number].openBlocker` reflects LIVE blocker state at query time, run after this session already closed `${CLOSED_NUM}` — so a `false` here means every one of this repository's blockers, `${CLOSED_NUM}` included, is now resolved, without needing to special-case `closedNum` out of the check. On any error this fails safe — skip the check for this run (an empty `wrapup-unblocked.json`) rather than blocking wrap-up, matching this section's own "must never gate, block, or delay the wrap-up" rule above and dispatch's identical native-mode fallback. A blocker linked from another repository shares only its number with this repository's issues, so `crossRepoBlockers` numbers are removed before the `includes(closedNum)` test, and a foreign blocker that is not CLOSED (OPEN, or state unreadable) keeps its dependent blocked (#4793) — closing this repository's #N never reports a record blocked by `other/repo#N` as unblocked. A `Blocked by owner/name#N` body line holds the dependent the same way under this mode (the same batched lookup; a ref already natively linked is not looked up twice).
 
 **`work-backend: local-files`:** read `pack.unblocked` from `{run-dir}/wrap-up-pack.json` first (#1930) — on this backend its `value` is the same `[{number, title}]` list the snippet below computes, `number` being the record id; write it to `$WRAPUP_UNBLOCKED` and skip the snippet. Run the snippet only when the pack file is absent; an `ok: false` field is this file's opening "on any error, log and continue" path — skip the newly-unblocked check this run, never an empty list read as "nothing unblocked". Otherwise resolve this run's session-scoped path first (`_shared/session-tmp-root.md`):
 

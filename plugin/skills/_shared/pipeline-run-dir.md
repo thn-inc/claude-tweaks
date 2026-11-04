@@ -37,13 +37,14 @@ rather than silently substituted. Never creates a directory unless `--create` is
   4), and `flow/claim-targets.md`'s direct-invocation mint use — `config.yml`/`decisions.md` are
   written later, by whichever step actually initializes the run.
 - `--create` with `--standalone <name>`: `_shared/run-dir-resolution.md`'s step 4
-  standalone-auto-fallback shape — `{ISO-timestamp}-{name}-standalone/`, pre-populated with
-  `decisions.md` and `staged/`. Pass `--mode auto` too when the caller is on that step's
-  standalone-auto allowlist (the command then
-  refuses to create outside auto mode); omit `--mode` entirely for a caller that creates in every
-  mode regardless — the two documented exceptions, `/claude-tweaks:wrap-up` and
-  `/claude-tweaks:release`, each with its own clause above. Combined with `--spec-slug` (wrap-up's
-  mint), step 2 still runs first, so the same adoption refusal applies before anything is created.
+  standalone-auto-fallback shape — `{ISO-timestamp}-{name}-standalone/` (a `{name}` already
+  ending in `-standalone` is not suffixed twice), pre-populated with `decisions.md`
+  and `staged/`. Pass `--mode auto` too when the caller is on that step's standalone-auto
+  allowlist (the command then refuses to create outside auto mode); omit `--mode` entirely for a
+  caller that creates in every mode regardless — the two documented exceptions,
+  `/claude-tweaks:wrap-up` and `/claude-tweaks:release`, each with its own clause above. Combined
+  with `--spec-slug` (wrap-up's mint), step 2 still runs first, so the same adoption refusal
+  applies before anything is created.
 - `--root-only`: skips run resolution entirely and prints the anchored `$RUN_ROOT` itself — for a
   call site that only ever needed the main-checkout root (a `find` backstop scoped to the whole
   `pipelines/` tree, the transitional copy-out guard's destination computation), never a specific

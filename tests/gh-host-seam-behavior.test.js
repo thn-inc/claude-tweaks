@@ -269,7 +269,7 @@ function materializeLines(t, origin) {
   return lines;
 }
 
-test('fix round 1: materialize.js --repo owner/name on a *.ghe.com origin sends every gh call to github.com', { skip: STUB_SKIP }, (t) => {
+test('AC1.1 (#4795): materialize.js --repo owner/name on a *.ghe.com origin sends every gh call to github.com', { skip: STUB_SKIP }, (t) => {
   const lines = materializeLines(t, GHE_ORIGIN);
   for (const line of lines) assert.ok(line.startsWith('GH_HOST=github.com '), `gh call did not reach github.com: ${line}`);
 });
@@ -280,10 +280,11 @@ test('fix round 1: materialize.js --repo owner/name on a github.com origin leave
 });
 
 // Final review item 7: backlog-grant-gate.js's nativeRunnerFor. A bare `--repo
-// owner/name` means github.com, so its owner/repo-addressed native calls (the
+// owner/name` means github.com, and nativeRunnerFor hands that host to ghOptions's
+// per-call `explicitHost` (#4795), so its owner/repo-addressed native calls (the
 // schema probe, the REST sub-issue retry) carry GH_HOST=github.com, while the
-// issue lists read cwd's own repo and keep the origin host. An exported GH_HOST
-// reaches every call unchanged (AC4).
+// issue lists read cwd's own repo, take no `explicitHost`, and keep the origin
+// host. An exported GH_HOST reaches every call unchanged (AC4).
 function grantGateLines(t, extraEnv = {}) {
   const dir = tmp(t, 'ct-gh-seam-fake-');
   const log = path.join(dir, 'gh.log');
@@ -537,6 +538,7 @@ const CLI_TABLE = [
   // resolve-blockers.js / resolve-linked-prs.js (lib/number-list-cli.js): both print a
   // repoResolutionNote.
   { cli: 'resolve-blockers.js', argv: ['7'], acceptsRepo: true, printsResolutionNote: true },
+  { cli: 'resolve-foreign-blockers.js', argv: ['other/repo#5'], acceptsRepo: true, printsResolutionNote: true },
   { cli: 'resolve-linked-prs.js', argv: ['7'], acceptsRepo: true, printsResolutionNote: true },
   // stuck-open-prs.js (#4951): one granted candidate whose batched linked-PR read finds no
   // open PR, so the read is its one network-bound gh call and no per-record read follows.

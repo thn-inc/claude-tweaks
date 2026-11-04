@@ -207,6 +207,18 @@ test('buildRecords: native mode — blockedBy/openBlocker come from the resolved
   assert.equal(records['720'].openBlocker, true);
 });
 
+test('buildRecords: native mode — a cross-repository blocker leaves blockedBy and rides on crossRepoBlockers', () => {
+  const issues = new Map([[11, issue({ number: 11, title: 'E' })], [12, issue({ number: 12, title: 'T' })]]);
+  const dependencies = new Map([
+    [11, { blockedBy: [5, 6, 5], openBlocker: false, openBlockerIds: [], crossRepoBlockers: [{ number: 5, repository: 'other/repo', state: 'CLOSED' }] }],
+    [12, { blockedBy: [6], openBlocker: false, openBlockerIds: [] }],
+  ]);
+  const records = buildRecords({ issues, dependencies });
+  assert.deepEqual(records['11'].blockedBy, [6, 5]);
+  assert.deepEqual(records['11'].crossRepoBlockers, [{ number: 5, repository: 'other/repo', state: 'CLOSED' }]);
+  assert.equal('crossRepoBlockers' in records['12'], false);
+});
+
 test('buildOverlapGroups: records sharing a key file union into one group; items keyed on numeric item.id', () => {
   const records = {
     720: { keyFiles: ['a.js'] },
@@ -225,7 +237,7 @@ test('buildOverlapGroups: records sharing a key file union into one group; items
 const { run } = require('../../../plugin/bin/preflight-records');
 
 function cliDeps({
-  runner, workLinks = 'body-text', remoteUrl = 'https://github.com/acme/w.git', files = {},
+  runner, workLinks = 'body-text', remoteUrl = 'https://github.com/acme/w.git', files = {}, stdin,
 } = {}) {
   const out = [];
   const err = [];
@@ -235,6 +247,7 @@ function cliDeps({
       resolveWorkLinks: () => workLinks,
       remoteUrl: () => remoteUrl,
       readFile: (p) => { if (!(p in files)) throw new Error(`ENOENT: ${p}`); return files[p]; },
+      readStdin: () => { if (stdin === undefined) throw new Error('EAGAIN: no stdin'); return stdin; },
       stdout: (s) => out.push(s),
       stderr: (s) => err.push(s),
     },
@@ -781,8 +794,9 @@ test('--records-json with a --waves dependency cycle exits 2', () => {
 test('defaultRunner bounds its gh call (the compare fan-out and the batched GraphQL reads run through it) — source pin, an unbounded execFileSync hangs pre-flight', () => {
   const src = require('node:fs').readFileSync(require.resolve('../../../plugin/bin/lib/preflight-records/preflight-records'), 'utf8');
   const body = (src.match(/function defaultRunner\(args\) \{([\s\S]*?)\n\}/) || [])[1] || '';
-  assert.match(body, /execFileSync\('gh', args, (?:ghOptions\(args, )?\{[^}]*timeout: GH_CALL_TIMEOUT_MS[^}]*\}\)?\)/);
-  assert.match(src, /const GH_CALL_TIMEOUT_MS = \d{5,};/, 'a stated bound, wider than the 5s single-call default');
+  assert.match(body, /execFileSync\('gh', args, (?:ghOptions\(args, )?\{[^}]*timeout: sharedPrimitives\.GH_BATCH_TIMEOUT_MS[^}]*\}\)?\)/);
+  assert.doesNotMatch(src, /timeout: \d+/, 'no retyped literal bound');
+  assert.ok(require('../../../plugin/bin/lib/shared-primitives').GH_BATCH_TIMEOUT_MS >= 30000, 'a stated bound, wider than the 5s single-call default');
 });
 
 const isCompare = (args) => args[0] === 'api' && /\/compare\//.test(args[1]);
@@ -818,6 +832,283 @@ function landingFixture({ repository, statuses = { eee555: 'behind\n' }, extra =
   };
   return { runner, calls };
 }
+
+// Native-mode landing fixture: each record's native blockers given as [number, repo, state].
+// `bodies` (record number -> body text) overrides a record's default body.
+function nativeLandingFixture(blockersByRecord, { repository = {}, statuses = {}, bodies = {} } = {}) {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args);
+    for (const n of Object.keys(blockersByRecord)) {
+      if (isIssueView(args, Number(n))) return JSON.stringify(issue({ number: Number(n), title: `R${n}`, body: bodies[n] ?? specBody([`f${n}.js`]) }));
+    }
+    if (isGraphQL(args) && /CLOSED_EVENT/.test(gqlQuery(args))) return JSON.stringify({ data: { repository } });
+    if (isGraphQL(args)) {
+      const repo = {};
+      for (const [n, blockers] of Object.entries(blockersByRecord)) {
+        repo[`i${n}`] = { number: Number(n), repository: { nameWithOwner: 'acme/w' }, blockedBy: { nodes: blockers.map(([number, r, state]) => ({ number, state, repository: { nameWithOwner: r } })) } };
+      }
+      return JSON.stringify({ data: { repository: repo } });
+    }
+    if (isCompare(args)) {
+      const sha = args[1].split('...').pop();
+      if (!(sha in statuses)) throw new Error(`unexpected compare ${sha}`);
+      return statuses[sha];
+    }
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  return { runner, calls };
+}
+const nativeArgs = (...nums) => [...nums, '--blocker-landing', '--repo', 'acme/w'];
+const landingQueries = (calls) => calls.filter((a) => isGraphQL(a) && /CLOSED_EVENT/.test(gqlQuery(a))).map(gqlQuery);
+
+test('AC1.1: a CLOSED native blocker in another repository is never queried by number here — undetermined cross-repository; this repository\'s blocker is still judged', () => {
+  const { runner, calls } = nativeLandingFixture({ 11: [[5, 'other/repo', 'CLOSED'], [6, 'acme/w', 'CLOSED']] }, { repository: { b5: closedBlocker('eee555'), b6: closedBlocker('fff666') }, statuses: { eee555: 'behind\n', fff666: 'behind\n' } });
+  const d = cliDeps({ runner, workLinks: 'native' });
+  assert.equal(run(nativeArgs('11'), d.deps), 0);
+  const env = JSON.parse(d.out.join(''));
+  assert.deepEqual(env.records['11'].blockerLanding, [
+    { blocker: 6, verdict: 'landed', commit: 'fff666', via: 'closer-pr' },
+    { blocker: 5, verdict: 'undetermined', commit: null, via: 'cross-repository', repository: 'other/repo' },
+  ]);
+  assert.deepEqual(env.records['11'].blockedBy, [6]);
+  const queries = landingQueries(calls);
+  assert.equal(queries.length, 1);
+  assert.match(queries[0], /b6: issue\(number:6\)/);
+  assert.doesNotMatch(queries[0], /b5: issue/);
+});
+
+test('AC1.1: an OPEN native blocker in another repository reads open from its native state — no blocker-landing query and no compare call', () => {
+  const { runner, calls } = nativeLandingFixture({ 11: [[5, 'other/repo', 'OPEN']] });
+  const d = cliDeps({ runner, workLinks: 'native' });
+  assert.equal(run(nativeArgs('11'), d.deps), 0);
+  const env = JSON.parse(d.out.join(''));
+  assert.deepEqual(env.records['11'].blockerLanding, [{ blocker: 5, verdict: 'open', commit: null, via: 'cross-repository', repository: 'other/repo' }]);
+  assert.equal(landingQueries(calls).length, 0);
+  assert.equal(calls.filter(isCompare).length, 0);
+});
+
+test('Q5: a native blocker in another repository with no readable state reads open — fail closed, no lookup', () => {
+  const { runner, calls } = nativeLandingFixture({ 11: [[5, 'other/repo', null]] });
+  const d = cliDeps({ runner, workLinks: 'native' });
+  assert.equal(run(nativeArgs('11'), d.deps), 0);
+  const env = JSON.parse(d.out.join(''));
+  assert.deepEqual(env.records['11'].blockerLanding, [{ blocker: 5, verdict: 'open', commit: null, via: 'cross-repository-state-unreadable', repository: 'other/repo' }]);
+  assert.equal(landingQueries(calls).length, 0);
+});
+
+test('this repository\'s #5 and another repository\'s #5 both blocking: the local one is judged, the foreign one is reported apart', () => {
+  const { runner } = nativeLandingFixture({ 11: [[5, 'acme/w', 'CLOSED'], [5, 'other/repo', 'OPEN']] }, { repository: { b5: closedBlocker('eee555') }, statuses: { eee555: 'diverged\n' } });
+  const d = cliDeps({ runner, workLinks: 'native' });
+  assert.equal(run(nativeArgs('11'), d.deps), 0);
+  const env = JSON.parse(d.out.join(''));
+  assert.deepEqual(env.records['11'].blockerLanding, [
+    { blocker: 5, verdict: 'unlanded', commit: 'eee555', via: 'closer-pr' },
+    { blocker: 5, verdict: 'open', commit: null, via: 'cross-repository', repository: 'other/repo' },
+  ]);
+});
+
+test('a foreign blocker whose number is an in-run record is judged as foreign, not dropped as in-run', () => {
+  const { runner } = nativeLandingFixture({ 10: [], 11: [[10, 'other/repo', 'OPEN']] });
+  const d = cliDeps({ runner, workLinks: 'native' });
+  assert.equal(run(nativeArgs('10', '11'), d.deps), 0);
+  const env = JSON.parse(d.out.join(''));
+  assert.deepEqual(env.records['11'].blockedBy, []);
+  assert.deepEqual(env.records['11'].blockerLanding, [{ blocker: 10, verdict: 'open', commit: null, via: 'cross-repository', repository: 'other/repo' }]);
+});
+
+// --- body-declared foreign blockers (#4793, Plan Review Clarifications) ---------------------------
+
+const isStateQuery = (args) => isGraphQL(args) && /c0: repository\(owner:\$o0,name:\$n0\)/.test(gqlQuery(args));
+const stateQueries = (calls) => calls.filter(isStateQuery);
+const flagValue = (args, name) => { const a = args.find((x) => x.startsWith(`${name}=`)); return a && a.slice(name.length + 1); };
+
+// Records keyed by number -> body; `states` maps 'owner/name#N' -> 'OPEN'|'CLOSED' (absent = no readable issue).
+// `stateAnswer(args)` overrides the state query's answer (return a JSON string, or throw).
+function bodyForeignFixture(bodies, { states = {}, stateAnswer } = {}) {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args);
+    for (const [n, body] of Object.entries(bodies)) {
+      if (isIssueView(args, Number(n))) return JSON.stringify(issue({ number: Number(n), title: `R${n}`, body: `${body}\n\n${specBody([`f${n}.js`])}` }));
+    }
+    if (isStateQuery(args)) {
+      if (stateAnswer) return stateAnswer(args);
+      const data = {};
+      for (const [, i, num] of gqlQuery(args).matchAll(/c(\d+): repository\(owner:\$o\d+,name:\$n\d+\)\{ issue\(number:(\d+)\)/g)) {
+        const state = states[`${flagValue(args, `o${i}`)}/${flagValue(args, `n${i}`)}#${num}`];
+        data[`c${i}`] = state ? { issue: { state } } : null;
+      }
+      return JSON.stringify({ data });
+    }
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  return { runner, calls };
+}
+const bodyArgs = (...nums) => [...nums, '--blocker-landing', '--repo', 'acme/w'];
+
+test('Plan Review Clarifications: a body-declared OPEN foreign blocker reads open under body-text — no landing query, no compare call', () => {
+  const { runner, calls } = bodyForeignFixture({ 11: 'Blocked by other/repo#5' }, { states: { 'other/repo#5': 'OPEN' } });
+  const d = cliDeps({ runner, workLinks: 'body-text' });
+  assert.equal(run(bodyArgs('11'), d.deps), 0);
+  const env = JSON.parse(d.out.join(''));
+  assert.deepEqual(env.records['11'].blockerLanding, [{ blocker: 5, verdict: 'open', commit: null, via: 'cross-repository', repository: 'other/repo' }]);
+  assert.deepEqual(env.records['11'].blockedBy, []);
+  assert.equal(landingQueries(calls).length, 0);
+  assert.equal(calls.filter(isCompare).length, 0);
+  assert.equal(stateQueries(calls).length, 1);
+  assert.equal(d.err.join(''), '');
+});
+
+test('a body-declared CLOSED foreign blocker reads undetermined cross-repository', () => {
+  const { runner } = bodyForeignFixture({ 11: 'Blocked by other/repo#5' }, { states: { 'other/repo#5': 'CLOSED' } });
+  const d = cliDeps({ runner, workLinks: 'body-text' });
+  assert.equal(run(bodyArgs('11'), d.deps), 0);
+  const env = JSON.parse(d.out.join(''));
+  assert.deepEqual(env.records['11'].blockerLanding, [{ blocker: 5, verdict: 'undetermined', commit: null, via: 'cross-repository', repository: 'other/repo' }]);
+});
+
+test('a body-declared foreign blocker the lookup cannot read reads open, state unreadable', () => {
+  const { runner } = bodyForeignFixture({ 11: 'Blocked by other/repo#5' }, { stateAnswer: () => JSON.stringify({ data: {} }) });
+  const d = cliDeps({ runner, workLinks: 'body-text' });
+  assert.equal(run(bodyArgs('11'), d.deps), 0);
+  const env = JSON.parse(d.out.join(''));
+  assert.deepEqual(env.records['11'].blockerLanding, [{ blocker: 5, verdict: 'open', commit: null, via: 'cross-repository-state-unreadable', repository: 'other/repo' }]);
+  // Only a whole-call failure prints the fail-closed line; the ref's own `via` diagnoses a missing alias.
+  assert.doesNotMatch(d.err.join(''), /foreign blocker state lookup/);
+});
+
+test('a failed state lookup fails closed and says so', () => {
+  const { runner } = bodyForeignFixture({ 11: 'Blocked by other/repo#5' }, { stateAnswer: () => { throw new Error('HTTP 502: bad gateway'); } });
+  const d = cliDeps({ runner, workLinks: 'body-text' });
+  assert.equal(run(bodyArgs('11'), d.deps), 0);
+  const env = JSON.parse(d.out.join(''));
+  assert.deepEqual(env.records['11'].blockerLanding, [{ blocker: 5, verdict: 'open', commit: null, via: 'cross-repository-state-unreadable', repository: 'other/repo' }]);
+  assert.match(d.err.join(''), /foreign blocker state lookup failed: .* other\/repo#5 read as state unreadable \(fail closed\)/);
+});
+
+test('under --records-json a body-declared foreign blocker reads state unreadable with no gh call', () => {
+  let calls = 0;
+  const d = cliDeps({
+    runner: () => { calls++; throw new Error('must not call gh'); },
+    workLinks: 'body-text',
+    files: { '/r.json': JSON.stringify([issue({ number: 11, title: 'Eleven', body: `Blocked by other/repo#5\n\n${specBody(['b.js'])}` })]) },
+  });
+  assert.equal(run(['11', '--blocker-landing', '--records-json', '/r.json'], d.deps), 0);
+  assert.equal(calls, 0);
+  const env = JSON.parse(d.out.join(''));
+  assert.deepEqual(env.records['11'].blockerLanding, [{ blocker: 5, verdict: 'open', commit: null, via: 'cross-repository-state-unreadable', repository: 'other/repo' }]);
+  assert.match(d.err.join(''), /foreign blocker state lookup skipped under --records-json — other\/repo#5 read as state unreadable \(fail closed\)/);
+});
+
+test('under --records-json an owner/name#N key in --blocker-states-json supplies a body-declared foreign blocker\'s state with no gh call', () => {
+  let calls = 0;
+  const body = `Blocked by Other/Repo#5\nBlocked by acme/x#7\nBlocked by third/y#9\nBlocked by fourth/z#2\n\n${specBody(['b.js'])}`;
+  const d = cliDeps({
+    runner: () => { calls++; throw new Error('must not call gh'); },
+    workLinks: 'body-text',
+    files: {
+      '/r.json': JSON.stringify([issue({ number: 11, title: 'Eleven', body })]),
+      '/s.json': JSON.stringify({ 'other/repo#5': 'OPEN', 'acme/x#7': { state: 'CLOSED' }, 'third/y#9': 'bogus', 99: { state: 'OPEN' } }),
+    },
+  });
+  assert.equal(run(['11', '--blocker-landing', '--records-json', '/r.json', '--blocker-states-json', '/s.json'], d.deps), 0);
+  assert.equal(calls, 0);
+  const env = JSON.parse(d.out.join(''));
+  assert.deepEqual(env.records['11'].blockerLanding, [
+    { blocker: 5, verdict: 'open', commit: null, via: 'cross-repository', repository: 'Other/Repo' },
+    { blocker: 7, verdict: 'undetermined', commit: null, via: 'cross-repository', repository: 'acme/x' },
+    { blocker: 9, verdict: 'open', commit: null, via: 'cross-repository-state-unreadable', repository: 'third/y' },
+    { blocker: 2, verdict: 'open', commit: null, via: 'cross-repository-state-unreadable', repository: 'fourth/z' },
+  ]);
+  assert.match(d.err.join(''), /foreign blocker state lookup skipped under --records-json — fourth\/z#2 read as state unreadable \(fail closed\)/);
+  assert.doesNotMatch(d.err.join(''), /other\/repo#5|acme\/x#7|third\/y#9/i, 'the line names only the refs the file left out');
+});
+
+test('under --records-json issue_read\'s lowercase state supplies a foreign blocker: closed reads undetermined, open reads open, garbage fails closed', () => {
+  const d = cliDeps({
+    runner: () => { throw new Error('must not call gh'); },
+    workLinks: 'body-text',
+    files: {
+      '/r.json': JSON.stringify([issue({ number: 11, title: 'Eleven', body: `Blocked by other/repo#7\nBlocked by other/repo#8\nBlocked by other/repo#9\n\n${specBody(['b.js'])}` })]),
+      '/s.json': JSON.stringify({ 'other/repo#7': { state: 'closed' }, 'other/repo#8': 'open', 'other/repo#9': { state: 'merged' } }),
+    },
+  });
+  assert.equal(run(['11', '--blocker-landing', '--records-json', '/r.json', '--blocker-states-json', '/s.json'], d.deps), 0);
+  assert.deepEqual(JSON.parse(d.out.join('')).records['11'].blockerLanding, [
+    { blocker: 7, verdict: 'undetermined', commit: null, via: 'cross-repository', repository: 'other/repo' },
+    { blocker: 8, verdict: 'open', commit: null, via: 'cross-repository', repository: 'other/repo' },
+    { blocker: 9, verdict: 'open', commit: null, via: 'cross-repository-state-unreadable', repository: 'other/repo' },
+  ]);
+});
+
+test('under --records-json a --blocker-states-json that answers every body-declared foreign blocker prints no lookup line', () => {
+  const d = cliDeps({
+    runner: () => { throw new Error('must not call gh'); },
+    workLinks: 'body-text',
+    files: {
+      '/r.json': JSON.stringify([issue({ number: 11, title: 'Eleven', body: `Blocked by other/repo#5\n\n${specBody(['b.js'])}` })]),
+      '/s.json': JSON.stringify({ 'other/repo#5': 'OPEN' }),
+    },
+  });
+  assert.equal(run(['11', '--blocker-landing', '--records-json', '/r.json', '--blocker-states-json', '/s.json'], d.deps), 0);
+  assert.equal(d.err.join(''), '');
+});
+
+test('--prefetched-json (the dispatch unlanded-blocker path) runs the gh lookup, reads a body-declared foreign blocker, and fails closed with the diagnostic line', () => {
+  const prefetched = JSON.stringify([issue({ number: 11, title: 'Eleven', body: `Blocked by other/repo#5\n\n${specBody(['b.js'])}` })]);
+  const args = [...bodyArgs('11'), '--prefetched-json', '/p.json'];
+
+  const ok = bodyForeignFixture({}, { states: { 'other/repo#5': 'OPEN' } });
+  const read = cliDeps({ runner: ok.runner, workLinks: 'body-text', files: { '/p.json': prefetched } });
+  assert.equal(run(args, read.deps), 0);
+  assert.deepEqual(JSON.parse(read.out.join('')).records['11'].blockerLanding, [{ blocker: 5, verdict: 'open', commit: null, via: 'cross-repository', repository: 'other/repo' }]);
+  assert.equal(stateQueries(ok.calls).length, 1);
+  assert.equal(ok.calls.filter((a) => a[0] === 'issue').length, 0, 'the records are prefetched — no gh issue view');
+  assert.equal(read.err.join(''), '');
+
+  const down = bodyForeignFixture({}, { stateAnswer: () => { throw new Error('HTTP 502: bad gateway'); } });
+  const failed = cliDeps({ runner: down.runner, workLinks: 'body-text', files: { '/p.json': prefetched } });
+  assert.equal(run(args, failed.deps), 0);
+  assert.deepEqual(JSON.parse(failed.out.join('')).records['11'].blockerLanding, [{ blocker: 5, verdict: 'open', commit: null, via: 'cross-repository-state-unreadable', repository: 'other/repo' }]);
+  assert.match(failed.err.join(''), /foreign blocker state lookup failed: .* — other\/repo#5 read as state unreadable \(fail closed\)/);
+});
+
+test('a foreign blocker linked natively and declared in the body is judged once, with no state query', () => {
+  const { runner, calls } = nativeLandingFixture({ 11: [[5, 'other/repo', 'OPEN']] }, { bodies: { 11: `Blocked by Other/Repo#5\n\n${specBody(['f11.js'])}` } });
+  const d = cliDeps({ runner, workLinks: 'native' });
+  assert.equal(run(nativeArgs('11'), d.deps), 0);
+  const env = JSON.parse(d.out.join(''));
+  assert.deepEqual(env.records['11'].blockerLanding, [{ blocker: 5, verdict: 'open', commit: null, via: 'cross-repository', repository: 'other/repo' }]);
+  assert.equal(stateQueries(calls).length, 0);
+});
+
+test('under native a body-declared foreign blocker is judged after the native ones, and one state call covers every record', () => {
+  const { runner, calls } = nativeLandingFixture({ 10: [], 11: [[5, 'other/repo', 'OPEN']] }, { bodies: { 10: `Blocked by third/repo#7\n\n${specBody(['f10.js'])}`, 11: `Blocked by third/repo#7\nBlocked by other/repo#5\n\n${specBody(['f11.js'])}` } });
+  const d = cliDeps({
+    runner: (args) => {
+      if (!isStateQuery(args)) return runner(args);
+      calls.push(args);
+      return JSON.stringify({ data: { c0: { issue: { state: 'CLOSED' } } } });
+    },
+    workLinks: 'native',
+  });
+  assert.equal(run(nativeArgs('10', '11'), d.deps), 0);
+  const env = JSON.parse(d.out.join(''));
+  assert.deepEqual(env.records['10'].blockerLanding, [{ blocker: 7, verdict: 'undetermined', commit: null, via: 'cross-repository', repository: 'third/repo' }]);
+  assert.deepEqual(env.records['11'].blockerLanding.map((e) => `${e.repository}#${e.blocker}:${e.verdict}`), ['other/repo#5:open', 'third/repo#7:undetermined']);
+  assert.equal(stateQueries(calls).length, 1);
+  assert.match(gqlQuery(stateQueries(calls)[0]), /c0: repository/);
+  assert.doesNotMatch(gqlQuery(stateQueries(calls)[0]), /c1:/);
+});
+
+test('without --blocker-landing a body-declared foreign blocker triggers no state lookup and no new key', () => {
+  const { runner, calls } = bodyForeignFixture({ 11: 'Blocked by other/repo#5' }, { states: { 'other/repo#5': 'OPEN' } });
+  const d = cliDeps({ runner, workLinks: 'body-text' });
+  assert.equal(run(['11', '--repo', 'acme/w'], d.deps), 0);
+  assert.equal(stateQueries(calls).length, 0);
+  assert.doesNotMatch(d.out.join(''), /crossRepoBlockers|blockerLanding/);
+});
 
 test('AC4.1: without --blocker-landing the envelope is byte-identical and no extra call is made', () => {
   const { runner, calls } = landingFixture({ repository: { b5: closedBlocker('eee555') } });
@@ -1130,4 +1421,191 @@ test('outOfRunBlockers: no out-of-run blockers → empty union', () => {
   const { byRecord, union } = outOfRunBlockers({ 10: { blockedBy: [] }, 11: { blockedBy: [10] } }, [10, 11]);
   assert.deepEqual(union, []);
   assert.deepEqual([...byRecord.entries()], [[10, []], [11, []]]);
+});
+
+// --- CLI: --prefetched-json (#4792) -----------------------------------------
+// Records the caller already fetched over gh: only fetchIssues is skipped.
+
+const prefetchedIssues = () => [
+  issue({ number: 10, title: 'Ten', body: specBody(['a.js']) }),
+  issue({ number: 11, title: 'Eleven', body: `Blocked by #10\nBlocked by #5\n\n${specBody(['b.js'])}` }),
+];
+const issueViewCalls = (calls) => calls.filter((a) => a[0] === 'issue' && a[1] === 'view');
+
+test('AC3.1: --prefetched-json - reads the records from stdin and makes no gh issue view call; the envelope equals the gh-fetched one', () => {
+  const viaGh = landingFixture({ repository: {} });
+  const gh = cliDeps({ runner: viaGh.runner, workLinks: 'body-text' });
+  assert.equal(run(['10', '11'], gh.deps), 0);
+  assert.equal(issueViewCalls(viaGh.calls).length, 2, 'control: the plain gh path fetches each record');
+
+  const prefetched = landingFixture({ repository: {} });
+  const pre = cliDeps({ runner: prefetched.runner, workLinks: 'body-text', stdin: JSON.stringify(prefetchedIssues()) });
+  assert.equal(run(['10', '11', '--prefetched-json', '-'], pre.deps), 0);
+  assert.equal(issueViewCalls(prefetched.calls).length, 0);
+  assert.equal(prefetched.calls.length, 0);
+  assert.equal(pre.out.join(''), gh.out.join(''));
+});
+
+test('AC3.1: --prefetched-json with --blocker-landing still judges landing over gh', () => {
+  const { runner, calls } = landingFixture({ repository: { b5: closedBlocker('eee555') }, statuses: { eee555: 'diverged\n' } });
+  const { deps, out } = cliDeps({ runner, workLinks: 'body-text', stdin: JSON.stringify(prefetchedIssues()) });
+  assert.equal(run(['10', '11', '--prefetched-json', '-', '--blocker-landing', '--integration-branch', 'dev'], deps), 0);
+  const env = JSON.parse(out.join(''));
+  assert.deepEqual(env.records['11'].blockerLanding, [{ blocker: 5, verdict: 'unlanded', commit: 'eee555', via: 'closer-pr' }]);
+  assert.equal(calls.filter(isGraphQL).length, 1);
+  const compares = calls.filter(isCompare);
+  assert.equal(compares.length, 1);
+  assert.match(compares[0][1], /compare\/dev\.\.\.eee555/);
+  assert.equal(issueViewCalls(calls).length, 0);
+});
+
+test('--prefetched-json <path> reads the named file', () => {
+  const viaStdin = landingFixture({ repository: {} });
+  const a = cliDeps({ runner: viaStdin.runner, stdin: JSON.stringify(prefetchedIssues()) });
+  assert.equal(run(['10', '11', '--prefetched-json', '-'], a.deps), 0);
+
+  const viaFile = landingFixture({ repository: {} });
+  const b = cliDeps({ runner: viaFile.runner, files: { '/p.json': JSON.stringify(prefetchedIssues()) } });
+  assert.equal(run(['10', '11', '--prefetched-json', '/p.json'], b.deps), 0);
+  assert.equal(viaFile.calls.length, 0);
+  assert.equal(b.out.join(''), a.out.join(''));
+});
+
+test('--prefetched-json under work-links: native still makes the native dependency call', () => {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args);
+    if (isGraphQL(args) && !/CLOSED_EVENT/.test(gqlQuery(args))) {
+      return JSON.stringify({ data: { repository: { i10: { number: 10, blockedBy: { nodes: [] } }, i11: { number: 11, blockedBy: { nodes: [{ number: 5, state: 'OPEN' }] } } } } });
+    }
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  const { deps, out } = cliDeps({ runner, workLinks: 'native', stdin: JSON.stringify(prefetchedIssues()) });
+  assert.equal(run(['10', '11', '--repo', 'acme/w', '--prefetched-json', '-'], deps), 0);
+  assert.equal(calls.filter(isGraphQL).length, 1);
+  assert.equal(issueViewCalls(calls).length, 0);
+  const env = JSON.parse(out.join(''));
+  assert.equal(env.workLinks, 'native');
+  assert.equal('nativeLinksUnchecked' in env, false);
+  assert.deepEqual(env.records['11'].blockedBy, [5]);
+  assert.equal(env.records['11'].openBlocker, true);
+});
+
+test('--prefetched-json input problems are exit 2, naming the flag', () => {
+  const [ten, eleven] = prefetchedIssues();
+  const cases = [
+    ['an unreadable path', { files: {} }, /cannot read --prefetched-json \/p\.json/],
+    ['stdin that cannot be read', { argvValue: '-' }, /cannot read --prefetched-json -/],
+    ['not JSON', { files: { '/p.json': '{' } }, /--prefetched-json \/p\.json is not valid JSON/],
+    ['not an array', { files: { '/p.json': '{}' } }, /--prefetched-json must be a JSON array/],
+    ['a requested number missing', { files: { '/p.json': JSON.stringify([ten]) } }, /--prefetched-json is missing requested #11/],
+    ['an extra number', { files: { '/p.json': JSON.stringify([ten, eleven, issue({ number: 12, title: 'x', body: '' })]) } }, /--prefetched-json lists #12, which was not requested/],
+    ['a duplicated number', { files: { '/p.json': JSON.stringify([ten, ten, eleven]) } }, /--prefetched-json lists #10 more than once/],
+  ];
+  for (const [label, { files = {}, argvValue = '/p.json' }, pattern] of cases) {
+    const { deps, out, err } = cliDeps({ runner: noGh, files });
+    assert.equal(run(['10', '11', '--prefetched-json', argvValue], deps), 2, label);
+    assert.equal(out.length, 0, label);
+    const text = err.join('');
+    assert.match(text, pattern, label);
+    assert.match(text, /--prefetched-json/, label);
+    assert.doesNotMatch(text, /--records-json/, label);
+  }
+});
+
+test('--prefetched-json and --records-json together are a malformed invocation', () => {
+  let calls = 0;
+  const { deps, out, err } = cliDeps({
+    runner: () => { calls++; throw new Error('must not call gh'); },
+    files: { '/r.json': JSON.stringify(prefetchedIssues()) },
+    stdin: JSON.stringify(prefetchedIssues()),
+  });
+  assert.equal(run(['10', '11', '--records-json', '/r.json', '--prefetched-json', '-'], deps), 2);
+  assert.equal(out.length, 0);
+  assert.equal(calls, 0);
+  assert.match(err.join(''), /--prefetched-json and --records-json are mutually exclusive/);
+});
+
+test('--prefetched-json with no value is a malformed invocation', () => {
+  for (const argv of [['10', '--prefetched-json'], ['10', '--prefetched-json', '--waves']]) {
+    const { deps, out, err } = cliDeps({ runner: noGh, stdin: '[]' });
+    assert.equal(run(argv, deps), 2, argv.join(' '));
+    assert.equal(out.length, 0);
+    assert.match(err.join(''), /missing value for --prefetched-json/);
+  }
+});
+
+test('--help usage names --prefetched-json', () => {
+  const { deps, out } = cliDeps({ runner: noGh });
+  assert.equal(run(['--help'], deps), 0);
+  assert.match(out.join(''), /\[--records-json <path>\] \[--prefetched-json <path>\]/);
+  assert.match(out.join(''), /\[--blocker-landing\] \[--blocker-states-json <path>\]/);
+});
+
+test('issuesFromRecordsJson keeps its --records-json messages by default and names the given flag', () => {
+  const { issuesFromRecordsJson } = require('../../../plugin/bin/lib/preflight-records/preflight-records');
+  assert.equal(issuesFromRecordsJson({}, [1]).error, '--records-json must be a JSON array');
+  assert.equal(issuesFromRecordsJson({}, [1], '--prefetched-json').error, '--prefetched-json must be a JSON array');
+  const bad = [[{ body: '' }], [{ number: 1 }], [{ number: 1, body: '', labels: 'x' }], [{ number: 1, body: '' }, { number: 1, body: '' }], [{ number: 2, body: '' }]];
+  for (const raw of bad) {
+    const named = issuesFromRecordsJson(raw, [1], '--prefetched-json').error;
+    assert.match(named, /^--prefetched-json /);
+    assert.equal(named, issuesFromRecordsJson(raw, [1]).error.replace('--records-json', '--prefetched-json'));
+  }
+  assert.match(issuesFromRecordsJson([], [1], '--prefetched-json').error, /^--prefetched-json is missing requested #1$/);
+});
+
+// --- native-missing naming (#4792) ------------------------------------------
+
+const nativeNotFound = (alias, message) => JSON.stringify({
+  data: { repository: { i720: { number: 720, blockedBy: { nodes: [] } }, [alias]: null } },
+  errors: [{ type: 'NOT_FOUND', path: ['repository', alias], message }],
+});
+
+function nativeThrowFixture(throwOnNative) {
+  const runner = (args) => {
+    if (isIssueView(args, 720)) return JSON.stringify(issue({ number: 720, title: 'A', body: specBody(['a.js']) }));
+    if (isIssueView(args, 721)) return JSON.stringify(issue({ number: 721, title: 'B', body: specBody(['b.js']) }));
+    if (isGraphQL(args)) throw throwOnNative;
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  return cliDeps({ runner, workLinks: 'native' });
+}
+
+test('AC4.3: native mode names a candidate gh reported NOT_FOUND (exit 1 with partial data) as missing dependency data (#4792)', () => {
+  const thrown = Object.assign(new Error('Command failed: gh api graphql -f query=…'), {
+    stdout: nativeNotFound('i721', 'Could not resolve to an Issue with the number of 721.'),
+  });
+  const { deps, out, err } = nativeThrowFixture(thrown);
+  assert.equal(run(['720', '721'], deps), 1);
+  assert.equal(out.length, 0);
+  assert.match(err.join(''), /^preflight-records\.js: missing dependency data for #721 \(GraphQL: Could not resolve to an Issue with the number of 721\.\)$/m);
+});
+
+test('a native-call throw that is not NOT_FOUND-only is rethrown unchanged', () => {
+  const cases = [
+    ['an error with no stdout', new Error('Command failed: boom-no-stdout')],
+    ['a non-NOT_FOUND error', Object.assign(new Error('Command failed: boom-forbidden'), {
+      stdout: JSON.stringify({ data: { repository: { i720: { number: 720, blockedBy: { nodes: [] } }, i721: null } }, errors: [{ type: 'FORBIDDEN', path: ['repository', 'i721'] }] }),
+    })],
+    ['a NOT_FOUND on an alias outside the request', Object.assign(new Error('Command failed: boom-outside'), {
+      stdout: nativeNotFound('i999', 'Could not resolve to an Issue with the number of 999.'),
+    })],
+  ];
+  for (const [label, thrown] of cases) {
+    const { deps, out, err } = nativeThrowFixture(thrown);
+    assert.equal(run(['720', '721'], deps), 1, label);
+    assert.equal(out.length, 0, label);
+    assert.ok(err.join('').includes(thrown.message), label);
+    assert.doesNotMatch(err.join(''), /missing dependency data/, label);
+  }
+});
+
+test('blocker-landing NOT_FOUND recovery returns the parsed response for a b{n} alias and null for an i{n} alias', () => {
+  const { recoveredResponse } = require('../../../plugin/bin/lib/preflight-records/blocker-landing');
+  const err = Object.assign(new Error('Command failed'), {
+    stdout: JSON.stringify({ data: { repository: { b5: null } }, errors: [{ type: 'NOT_FOUND', path: ['repository', 'b5'] }] }),
+  });
+  assert.deepEqual(recoveredResponse(err, ['b5']), JSON.parse(err.stdout));
+  assert.equal(recoveredResponse(err, ['i5']), null);
 });

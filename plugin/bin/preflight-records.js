@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // bin/preflight-records.js — record pre-flight JSON in one command.
-//   node bin/preflight-records.js <n> [<n> ...] [--work-links native|body-text] [--repo owner/name] [--merge-gate] [--waves] [--integration-branch <name>] [--records-json <path>] [--blocker-landing] [--blocker-states-json <path>] [--help]
+//   node bin/preflight-records.js <n> [<n> ...] [--work-links native|body-text] [--repo owner/name] [--merge-gate] [--waves] [--integration-branch <name>] [--records-json <path>] [--prefetched-json <path>] [--blocker-landing] [--blocker-states-json <path>] [--help]
 // Fetches every record (`gh issue view`), derives facets/keyFiles/fingerprint
 // (bin/lib/issues/record.js, bin/lib/issues/grouping.js), resolves blockedBy
 // either from the body (work-links: body-text, no extra call) or one batched
@@ -27,8 +27,16 @@
 // nativeLinksUnchecked: true (the key is absent on every other run). Every
 // --records-json input problem (unreadable, not JSON, wrong shape, a requested
 // number missing/duplicated/extra) is exit 2 — this path never exits 1.
+// --prefetched-json <path|-> (#4792) is the other input: the same record shape,
+// read from the file or, for `-`, from stdin, but the records were fetched over
+// gh by the caller, so everything else runs as on the plain gh path — repo
+// resolution, the origin-host gate, work-links: native's dependency GraphQL call
+// and --blocker-landing's query. Only fetchIssues is skipped. Every input
+// problem is exit 2, as for --records-json, and the two flags are mutually
+// exclusive (exit 2).
 // --blocker-landing (#4553) adds records[n].blockerLanding [{blocker, verdict,
-// commit, via}] — for each record, the landing verdict of every blocker that is
+// commit, via}, plus `repository` (`owner/name`) on a cross-repository entry] —
+// for each record, the landing verdict of every blocker that is
 // NOT one of the positional numbers (an in-run blocker is ordered by the DAG,
 // never judged here), in blockedBy order, [] when none; the verdicts are
 // bin/lib/preflight-records/blocker-landing.js's. One batched GraphQL call plus
@@ -38,18 +46,48 @@
 // unless --blocker-states-json <path> — a JSON object keyed by blocker number
 // to the {state, stateReason|state_reason} the caller fetched over another
 // transport — supplies the state: open reads open, closed NOT_PLANNED/DUPLICATE
-// not-applicable, any other closed undetermined. A compare call that throws
+// not-applicable, any other closed undetermined. The same file may also carry
+// `owner/name#N` keys (any case), each {state} or a bare state string (issue_read's
+// lowercase `open`/`closed` is fine; anything else reads unreadable), for the
+// body-declared foreign blockers below (#4793). A compare call that throws
 // leaves that blocker undetermined/probe-failed and prints one stderr line (the
 // cause — a wrong integration branch, a 403, a rate limit — is otherwise lost).
+// Under work-links: native (--prefetched-json included, which runs the native
+// call as the gh path does) a blocker the native read found in ANOTHER repository
+// (#4793) is not in blockedBy and is never queried or compared by number here:
+// the record carries it as crossRepoBlockers [{number, repository, state}] (key
+// present only when non-empty), and blockerLanding ends with one entry per such
+// blocker, in that order, judged from its native state alone — open/
+// cross-repository for OPEN, undetermined/cross-repository for CLOSED, open/
+// cross-repository-state-unreadable for any other state (fail closed) — each
+// with an extra `repository` (owner/name) key. --records-json degrades native to
+// body-text, so it never carries a native one.
+// A blocker declared only in a record body (`Blocked by owner/name#N`, #4793) is
+// foreign under either work-links value: --blocker-landing appends it to the
+// record's crossRepoBlockers (after the native ones; one already linked natively
+// is judged once) and judges it the same way. Its state comes from ONE batched
+// GraphQL call over every record's non-native refs
+// (bin/lib/issues/cross-repo-states.js). Fail closed: under --records-json (no gh
+// call) or when that call fails (still exit 0), no state is known, so each reads
+// open/cross-repository-state-unreadable and one stderr line names the refs and
+// the cause. A ref the call answers without a readable state (a missing alias, a
+// null issue) reads unreadable too, with no stderr line. Under --records-json a
+// ref whose `owner/name#N` key is in --blocker-states-json takes that state
+// (OPEN -> open/cross-repository, CLOSED -> undetermined/cross-repository, any
+// other value -> open/cross-repository-state-unreadable); only the refs the file
+// leaves out are named on the stderr line, and none is printed when it answers all.
 // The key is absent without the flag, and the rest of the envelope is unchanged.
 // Exit 0 success; 1 any record fetch (or the native dependency GraphQL call)
-// failed — every failing record named, all-at-once — or, with --blocker-landing,
+// failed — every failing record named, all-at-once; under native, a candidate gh
+// reports NOT_FOUND is named as `missing dependency data for #n` (still exit 1),
+// the line `bin/dispatch-unlanded-blockers.js` reads (#4792) — or, with --blocker-landing,
 // the blocker query failed as a whole (never a per-blocker undetermined); 2
 // malformed invocation (no numbers, non-positive, an origin host with no GitHub signal
 // refused before any gh call (#4933), unresolvable owner/repo under
 // native mode or for --blocker-landing with a non-empty blocker set, a
 // --blocker-landing blocker number that is no valid issue number, a bad
-// --records-json, --blocker-states-json without both --records-json and
+// --records-json or --prefetched-json, both of those flags together,
+// --blocker-states-json without both --records-json and
 // --blocker-landing, or a bad/incomplete --blocker-states-json), or a --waves
 // dependency cycle among the requested records.
 'use strict';
@@ -58,7 +96,13 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const preflight = require('./lib/preflight-records/preflight-records');
-const { fetchBlockerLanding, undeterminedAll, classifyFromState } = require('./lib/preflight-records/blocker-landing');
+const {
+  fetchBlockerLanding, undeterminedAll, classifyFromState, classifyCrossRepository, recoveredResponse,
+} = require('./lib/preflight-records/blocker-landing');
+const { fetchCrossRepoStates, suppliedStates } = require('./lib/issues/cross-repo-states');
+const {
+  parseCrossRepoDependencies, parseCrossRepoRef, crossRepoKey, distinctCrossRepoRefs, foreignEntries, mergeForeignBlockers,
+} = require('./lib/issues/cross-repo-refs');
 const { planMergeGateSplit } = require('./lib/preflight-records/merge-gate');
 const { planParallelWaves } = require('./lib/preflight-records/waves');
 const { resolvePolicyKeys } = require('./lib/policy-schema');
@@ -66,11 +110,11 @@ const {
   parseRepo, repoResolutionNote, pinExplicitRepoHost, gateOriginRepo,
 } = require('./lib/repo-resolve');
 
-const USAGE = 'usage: preflight-records.js <n> [<n> ...] [--work-links native|body-text] [--repo owner/name] [--merge-gate] [--waves] [--integration-branch <name>] [--records-json <path>] [--blocker-landing] [--blocker-states-json <path>] [--help]\n';
+const USAGE = 'usage: preflight-records.js <n> [<n> ...] [--work-links native|body-text] [--repo owner/name] [--merge-gate] [--waves] [--integration-branch <name>] [--records-json <path>] [--prefetched-json <path>] [--blocker-landing] [--blocker-states-json <path>] [--help]\n';
 
 function parseArgs(argv) {
   const opts = {
-    numbers: [], workLinks: null, repo: null, mergeGate: false, waves: false, integrationBranch: null, recordsJson: null, blockerLanding: false, blockerStatesJson: null, help: false,
+    numbers: [], workLinks: null, repo: null, mergeGate: false, waves: false, integrationBranch: null, recordsJson: null, prefetchedJson: null, blockerLanding: false, blockerStatesJson: null, help: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -97,6 +141,10 @@ function parseArgs(argv) {
       const v = next();
       if (typeof v !== 'string' || !v.trim() || v.startsWith('--')) return { error: 'missing value for --records-json' };
       opts.recordsJson = v;
+    } else if (a === '--prefetched-json') {
+      const v = next();
+      if (typeof v !== 'string' || !v.trim() || v.startsWith('--')) return { error: 'missing value for --prefetched-json' };
+      opts.prefetchedJson = v;
     } else if (a === '--blocker-landing') {
       opts.blockerLanding = true;
     } else if (a === '--blocker-states-json') {
@@ -135,6 +183,7 @@ const realDeps = {
   pinGhHost: (repoSpec) => pinExplicitRepoHost(repoSpec),
   remoteUrl: () => execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8', windowsHide: true }),
   readFile: (p) => fs.readFileSync(p, 'utf8'),
+  readStdin: () => fs.readFileSync(0, 'utf8'),
   // The deps-resolved work-links policy value (--work-links overrides this).
   // Never throws: readFileSafe swallows a missing/unreadable policy.yml,
   // repoRoot falls back to cwd outside a git repo, and resolvePolicyKeys is
@@ -158,8 +207,25 @@ function resolveWorkLinks(opts, deps) {
   }
 }
 
-// The gh path: fetch every record, then (work-links: native) one batched
-// GraphQL call. -> { issues, workLinks, dependencies } | { code }.
+// #4792: `gh api graphql` exits 1 on a NOT_FOUND alias yet prints the partial
+// data on stdout. Handing that stdout on lets fetchNativeDependencies name the
+// candidate (`missing dependency data for #n`) instead of the raw exec error
+// reaching stderr. Any other throw is rethrown unchanged.
+function nativeRecoveringRunner(runner, numbers) {
+  const aliases = numbers.map((n) => `i${n}`);
+  return (args) => {
+    try {
+      return runner(args);
+    } catch (err) {
+      if (recoveredResponse(err, aliases)) return String(err.stdout);
+      throw err;
+    }
+  };
+}
+
+// The gh path: fetch every record (or take --prefetched-json's), then
+// (work-links: native) one batched GraphQL call.
+// -> { issues, workLinks, dependencies } | { code }.
 function loadFromGh(opts, numbers, deps) {
   // #2538: derive repo/host ONCE, before any gh call — both fetchIssues
   // (unconditional, every mode) and the native-mode dependency check below
@@ -182,17 +248,27 @@ function loadFromGh(opts, numbers, deps) {
   const repoNote = repoResolutionNote(repoSpec);
   if (repoNote) deps.stderr(`preflight-records.js: ${repoNote}\n`);
 
-  const { ok: issues, failed } = preflight.fetchIssues({
-    numbers,
-    owner: repoSpec && repoSpec.owner,
-    repo: repoSpec && repoSpec.repo,
-    host: repoSpec && repoSpec.host,
-    runner: deps.runner,
-  });
-  if (failed.length > 0) {
-    const names = failed.map((f) => `#${f.number} (${f.error})`).join(', ');
-    deps.stderr(`preflight-records.js: record fetch failed for ${names}\n`);
-    return { code: 1 };
+  // #4792: --prefetched-json hands over the records the caller already fetched
+  // over gh, so only this fetch is skipped.
+  let issues;
+  if (opts.prefetchedJson) {
+    const read = readRecordsInput(opts.prefetchedJson, '--prefetched-json', numbers, deps);
+    if (read.code !== undefined) return read;
+    issues = read.ok;
+  } else {
+    const { ok, failed } = preflight.fetchIssues({
+      numbers,
+      owner: repoSpec && repoSpec.owner,
+      repo: repoSpec && repoSpec.repo,
+      host: repoSpec && repoSpec.host,
+      runner: deps.runner,
+    });
+    if (failed.length > 0) {
+      const names = failed.map((f) => `#${f.number} (${f.error})`).join(', ');
+      deps.stderr(`preflight-records.js: record fetch failed for ${names}\n`);
+      return { code: 1 };
+    }
+    issues = ok;
   }
 
   const workLinks = resolveWorkLinks(opts, deps);
@@ -202,7 +278,7 @@ function loadFromGh(opts, numbers, deps) {
     if (!repoSpec) { deps.stderr('preflight-records.js: could not resolve owner/repo — pass --repo owner/name\n'); return { code: 2 }; }
     try {
       dependencies = preflight.fetchNativeDependencies({
-        numbers, owner: repoSpec.owner, repo: repoSpec.repo, host: repoSpec.host, runner: deps.runner,
+        numbers, owner: repoSpec.owner, repo: repoSpec.repo, host: repoSpec.host, runner: nativeRecoveringRunner(deps.runner, numbers),
       });
     } catch (err) {
       deps.stderr(`preflight-records.js: ${preflight.errorText(err)}\n`);
@@ -214,31 +290,40 @@ function loadFromGh(opts, numbers, deps) {
   };
 }
 
-// #3351: the gh-free path — no repo resolution, no fetch, no GraphQL. Every
-// input problem is exit 2, never 1. Under work-links: native the dependency
-// call cannot run, so it degrades to body-text and says so (stderr line plus
-// nativeLinksUnchecked on the envelope).
-// -> { issues, workLinks, dependencies, nativeLinksUnchecked } | { code }.
-function loadFromRecordsJson(opts, numbers, deps) {
+// The records input shared by --records-json and --prefetched-json (#4792), so
+// the two flags cannot drift: read (`-` = stdin, else the file), parse, validate.
+// -> { ok: Map<number, issue> } | { code: 2 } — every problem is exit 2, naming `flag`.
+function readRecordsInput(value, flag, numbers, deps) {
   let text;
   try {
-    text = deps.readFile(opts.recordsJson);
+    text = value === '-' ? deps.readStdin() : deps.readFile(value);
   } catch (err) {
-    deps.stderr(`preflight-records.js: cannot read --records-json ${opts.recordsJson}: ${preflight.errorText(err)}\n`);
+    deps.stderr(`preflight-records.js: cannot read ${flag} ${value}: ${preflight.errorText(err)}\n`);
     return { code: 2 };
   }
   let raw;
   try {
     raw = JSON.parse(text);
   } catch (err) {
-    deps.stderr(`preflight-records.js: --records-json ${opts.recordsJson} is not valid JSON: ${preflight.errorText(err)}\n`);
+    deps.stderr(`preflight-records.js: ${flag} ${value} is not valid JSON: ${preflight.errorText(err)}\n`);
     return { code: 2 };
   }
-  const parsed = preflight.issuesFromRecordsJson(raw, numbers);
+  const parsed = preflight.issuesFromRecordsJson(raw, numbers, flag);
   if (parsed.error) {
     deps.stderr(`preflight-records.js: ${parsed.error}\n`);
     return { code: 2 };
   }
+  return { ok: parsed.ok };
+}
+
+// #3351: the gh-free path — no repo resolution, no fetch, no GraphQL. Every
+// input problem is exit 2, never 1. Under work-links: native the dependency
+// call cannot run, so it degrades to body-text and says so (stderr line plus
+// nativeLinksUnchecked on the envelope).
+// -> { issues, workLinks, dependencies, nativeLinksUnchecked } | { code }.
+function loadFromRecordsJson(opts, numbers, deps) {
+  const read = readRecordsInput(opts.recordsJson, '--records-json', numbers, deps);
+  if (read.code !== undefined) return read;
 
   let workLinks = resolveWorkLinks(opts, deps);
   const nativeLinksUnchecked = workLinks === 'native';
@@ -247,7 +332,7 @@ function loadFromRecordsJson(opts, numbers, deps) {
     workLinks = 'body-text';
   }
   return {
-    issues: parsed.ok, workLinks, dependencies: null, nativeLinksUnchecked,
+    issues: read.ok, workLinks, dependencies: null, nativeLinksUnchecked,
   };
 }
 
@@ -305,7 +390,7 @@ function blockerLandingFromRecordsJson(opts, union, deps) {
     deps.stderr(`preflight-records.js: --blocker-states-json has no usable state for ${listBlockers(unusable)}\n`);
     return { code: 2 };
   }
-  return { results };
+  return { results, states };
 }
 
 // #4553, gh path: -> { results } | { code }. An empty blocker set needs no
@@ -345,11 +430,58 @@ function blockerLandingFromGh(opts, union, repoSpec, deps) {
   return { results };
 }
 
+// #4793: a `Blocked by owner/name#N` body line names a blocker in ANOTHER repository, under either
+// work-links value. Each record's body-declared foreign blockers join its crossRepoBlockers, so
+// --blocker-landing judges them like the native ones. A ref already linked natively is dropped
+// before the lookup (judged and named once); the rest are looked up in ONE batched call. Fails
+// closed: under --records-json (no gh) or when the call throws, no state is known, so every ref
+// reads state unreadable (open) and one stderr line says why (spec Q5). Under --records-json the
+// --blocker-states-json file may carry an `owner/name#N` key per such ref (suppliedStates): a ref it
+// answers takes that state, and only the refs it leaves out are fail-closed unreadable.
+function addBodyForeignBlockers(records, issues, numbers, opts, loaded, deps, supplied = new Map()) {
+  const perRecord = new Map();
+  for (const n of numbers) {
+    const issue = issues.get(n);
+    const native = new Set(((records[String(n)] || {}).crossRepoBlockers || []).map(crossRepoKey));
+    const refs = parseCrossRepoDependencies(issue && issue.body).filter((ref) => !native.has(crossRepoKey(parseCrossRepoRef(ref))));
+    if (refs.length) perRecord.set(n, refs);
+  }
+  if (perRecord.size === 0) return;
+
+  const refs = [...perRecord.values()].flat();
+  let states = new Map();
+  let failure = null;
+  let unanswered = refs;
+  if (opts.recordsJson) {
+    states = supplied;
+    unanswered = refs.filter((ref) => !supplied.has(crossRepoKey(parseCrossRepoRef(ref))));
+    if (unanswered.length) failure = 'skipped under --records-json';
+  } else {
+    try {
+      states = fetchCrossRepoStates({ refs, host: loaded.repoSpec && loaded.repoSpec.host, runner: deps.runner });
+    } catch (err) {
+      failure = `failed: ${oneLine(preflight.errorText(err))}`;
+    }
+  }
+  if (failure) {
+    const names = distinctCrossRepoRefs(unanswered).distinct.map(({ parsed }) => `${parsed.repository}#${parsed.digits}`).join(', ');
+    deps.stderr(`preflight-records.js: foreign blocker state lookup ${failure} — ${names} read as state unreadable (fail closed)\n`);
+  }
+  for (const [n, nRefs] of perRecord) {
+    const record = records[String(n)];
+    record.crossRepoBlockers = mergeForeignBlockers(record.crossRepoBlockers, foreignEntries(nRefs, states));
+  }
+}
+
 // argv -> exit code. All I/O through deps so tests never touch gh or git.
 function run(argv, deps = realDeps) {
   const opts = parseArgs(argv);
   if (opts.error) { deps.stderr(opts.error + '\n' + USAGE); return 2; }
   if (opts.help) { deps.stdout(USAGE); return 0; }
+  if (opts.prefetchedJson && opts.recordsJson) {
+    deps.stderr(`preflight-records.js: --prefetched-json and --records-json are mutually exclusive\n${USAGE}`);
+    return 2;
+  }
   if (opts.blockerStatesJson && !(opts.recordsJson && opts.blockerLanding)) {
     deps.stderr(`preflight-records.js: --blocker-states-json is valid only with both --records-json and --blocker-landing\n${USAGE}`);
     return 2;
@@ -393,7 +525,13 @@ function run(argv, deps = realDeps) {
       ? blockerLandingFromRecordsJson(opts, union, deps)
       : blockerLandingFromGh(opts, union, loaded.repoSpec, deps);
     if (landing.code !== undefined) return landing.code;
-    for (const n of numbers) records[String(n)].blockerLanding = byRecord.get(n).map((b) => landing.results.get(b));
+    addBodyForeignBlockers(records, issues, numbers, opts, loaded, deps, suppliedStates(landing.states));
+    for (const n of numbers) {
+      records[String(n)].blockerLanding = [
+        ...byRecord.get(n).map((b) => landing.results.get(b)),
+        ...(records[String(n)].crossRepoBlockers || []).map(classifyCrossRepository),
+      ];
+    }
   }
   deps.stdout(`${JSON.stringify(envelope, null, 2)}\n`);
   return 0;

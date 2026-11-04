@@ -7,7 +7,7 @@ When multiple records are provided (e.g., `#42,#45,#48`), flow runs each one's p
 Before starting, validate the list:
 
 1. **Parse** — split on commas, resolve each to a record (`materialize.md`)
-2. **Prerequisites** — check that each target's `blocked-by:` dependency (`materialize.md`'s Populating the header — sourced from `record.js`'s `parseDependencies`, `facets.blockedBy`, or the native dependency API depending on driver/`work-links`) is satisfied. Reject any target with unmet prerequisites.
+2. **Prerequisites** — check that each target's `blocked-by:` dependency (`materialize.md`'s Populating the header — sourced from `record.js`'s `parseDependencies`, `facets.blockedBy`, or the native dependency API depending on driver/`work-links`) is satisfied. A qualified `owner/name#N` entry is another repository's issue — never an in-run edge and never this repository's `#N`; its verdict is Validation step 3's cross-repository `--blocker-landing` entry under either `work-links` value, whether it was linked natively or declared by a `Blocked by owner/name#N` body line (`multispec-dependency-ordering.md`). Reject any target with unmet prerequisites.
 
 > A record-reference target's dependency data (`blocked-by:`) is read via `materialize.md`'s Resolution step — read-only, safe before any run dir or worktree exists — or the materialized header once composed; see Steps 3-4 below. Cross-spec conflict detection (Step 5) reads the record body's `### Key Files` subsection, via the same `groupByFileOverlap` primitive `/claude-tweaks:help`'s and `/claude-tweaks:specify`'s own conflict detection already use — see "Cross-spec conflict detection" below.
 
