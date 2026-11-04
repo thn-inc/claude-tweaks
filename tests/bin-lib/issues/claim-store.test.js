@@ -1007,6 +1007,47 @@ test('openPrListArgs builds the gh pr list argv staleClaimInFlightPr uses', () =
   ]);
 });
 
+test('#4794: openPrListArgs takes one { host, ghRepo } target for --repo; no target keeps the bare owner/repo argv (AC2.1)', () => {
+  const { openPrListArgs } = require('../../../plugin/bin/lib/issues/claim-store');
+  const bare = ['pr', 'list', '--repo', 'acme/w', '--state', 'open', '--json', 'url,body,isCrossRepository', '--limit', '1000'];
+  assert.deepEqual(openPrListArgs('acme', 'w', { host: 'acme.ghe.com', ghRepo: 'acme.ghe.com/acme/w' }), [
+    'pr', 'list', '--repo', 'acme.ghe.com/acme/w', '--state', 'open', '--json', 'url,body,isCrossRepository', '--limit', '1000',
+  ]);
+  assert.deepEqual(openPrListArgs('acme', 'w'), bare);
+  assert.deepEqual(openPrListArgs('acme', 'w', null), bare);
+  // A github.com target whose ghRepo is bare (gh's default host) stays byte-identical.
+  assert.deepEqual(openPrListArgs('acme', 'w', { host: 'github.com', ghRepo: 'acme/w' }), bare);
+});
+
+test('#4794: isSameRepoPrUrl compares the url host, normalized, against the one resolved host (Review Focus 5)', () => {
+  const { isSameRepoPrUrl } = require('../../../plugin/bin/lib/issues/claim-store');
+  assert.equal(isSameRepoPrUrl('https://acme.ghe.com/acme/w/pull/7', 'acme', 'w', 'acme.ghe.com'), true);
+  assert.equal(isSameRepoPrUrl('https://ACME.ghe.com./acme/w/pull/7', 'acme', 'w', 'acme.ghe.com'), true, 'case and trailing dot in the url');
+  assert.equal(isSameRepoPrUrl('https://acme.ghe.com/acme/w/pull/7', 'acme', 'w', 'ACME.ghe.com.'), true, 'case and trailing dot in the host argument');
+  assert.equal(isSameRepoPrUrl('https://github.com/acme/w/pull/7', 'acme', 'w', 'acme.ghe.com'), false, 'cross-host');
+  assert.equal(isSameRepoPrUrl('https://acmeXghe.com/acme/w/pull/7', 'acme', 'w', 'acme.ghe.com'), false, 'look-alike host');
+  assert.equal(isSameRepoPrUrl('https://acme.ghe.com/acme/w/pull/7', 'acme', 'w'), false, 'a GHE url with no host reads as github.com');
+  assert.equal(isSameRepoPrUrl('https://acme.ghe.com/acme/w/pull/7', 'acme', 'w', null), false);
+  assert.equal(isSameRepoPrUrl('https://github.com/acme/w/pull/7', 'acme', 'w'), true, 'no host: today\'s github.com match');
+  assert.equal(isSameRepoPrUrl('https://GitHub.com./acme/w/pull/7', 'acme', 'w'), true);
+  assert.equal(isSameRepoPrUrl('https://acme.ghe.com/acme/other/pull/7', 'acme', 'w', 'acme.ghe.com'), false, 'owner/repo stay exact');
+  assert.equal(isSameRepoPrUrl('http://acme.ghe.com/acme/w/pull/7', 'acme', 'w', 'acme.ghe.com'), false, 'https only');
+});
+
+test('#4794: matchStaleClaimPr and tombstoneInFlightPr thread the host into the url match', () => {
+  const { matchStaleClaimPr, tombstoneInFlightPr } = require('../../../plugin/bin/lib/issues/claim-store');
+  const url = 'https://acme.ghe.com/acme/w/pull/7';
+  assert.equal(matchStaleClaimPr(SC_RUN, [scListed({ url })], 'acme', 'w', 'acme.ghe.com').url, url);
+  assert.equal(matchStaleClaimPr(SC_RUN, [scListed({ url })], 'acme', 'w'), null, 'no host: a GHE url is not a github.com match');
+  assert.equal(matchStaleClaimPr(SC_RUN, [scListed()], 'acme', 'w', 'acme.ghe.com'), null, 'a github.com url under a GHE host');
+  const tomb = (link) => JSON.stringify({ reason: 'pr-opened: x', link });
+  const gh = () => 'OPEN\n';
+  assert.deepEqual(tombstoneInFlightPr(tomb(url), gh, 'acme', 'w', 'acme.ghe.com'), { link: url });
+  assert.equal(tombstoneInFlightPr(tomb(url), gh, 'acme', 'w'), null);
+  assert.equal(tombstoneInFlightPr(tomb('https://github.com/acme/w/pull/7'), gh, 'acme', 'w', 'acme.ghe.com'), null);
+  assert.deepEqual(tombstoneInFlightPr(tomb('https://github.com/acme/w/pull/7'), gh, 'acme', 'w'), { link: 'https://github.com/acme/w/pull/7' });
+});
+
 test('staleClaimRunId returns a shaped runId, null for a bad shape, and throws on malformed JSON', () => {
   const { staleClaimRunId } = require('../../../plugin/bin/lib/issues/claim-store');
   assert.equal(staleClaimRunId(JSON.stringify({ runId: SC_RUN })), SC_RUN);

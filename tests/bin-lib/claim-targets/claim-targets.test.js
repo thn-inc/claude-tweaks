@@ -736,6 +736,29 @@ test('staleClaimInFlightPr: a no-match listing at the 1000-entry limit reaches o
   assert.equal(errors.length, 1, 'a no-match listing under the limit is a clean no-match');
 });
 
+test('#4794: staleClaimInFlightPr lists and matches on one target host', () => {
+  const target = { host: 'mine.example', ghRepo: 'mine.example/acme/w' };
+  const marked = (url) => [{ url, body: `claude-tweaks-run: ${RUN}`, isCrossRepository: false }];
+  const record = (listing) => {
+    const argvs = [];
+    const gh = (args) => { argvs.push(args); return JSON.stringify(listing); };
+    return { argvs, gh };
+  };
+  const same = 'https://mine.example/acme/w/pull/3';
+  const a = record(marked(same));
+  assert.deepEqual(claimStore.staleClaimInFlightPr(staleMarker(RUN), a.gh, 'acme', 'w', undefined, target), { link: same });
+  assert.equal(a.argvs.length, 1);
+  assert.equal(a.argvs[0][a.argvs[0].indexOf('--repo') + 1], 'mine.example/acme/w', 'the listing carries the target ghRepo');
+  assert.equal(a.argvs[0].filter((x) => x === '--repo').length, 1);
+  const b = record(marked('https://github.com/acme/w/pull/3'));
+  assert.equal(claimStore.staleClaimInFlightPr(staleMarker(RUN), b.gh, 'acme', 'w', undefined, target), null, 'a github.com url under the mine.example target is not a match');
+  assert.equal(b.argvs[0][b.argvs[0].indexOf('--repo') + 1], 'mine.example/acme/w');
+  // No target: today's bare listing and github.com match.
+  const c = record(marked('https://github.com/acme/w/pull/3'));
+  assert.deepEqual(claimStore.staleClaimInFlightPr(staleMarker(RUN), c.gh, 'acme', 'w'), { link: 'https://github.com/acme/w/pull/3' });
+  assert.equal(c.argvs[0][c.argvs[0].indexOf('--repo') + 1], 'acme/w');
+});
+
 test('staleClaimInFlightPr: a throwing onError is swallowed — the check still returns null (fail open)', () => {
   const throwingOnError = () => { throw new Error('reporter broke'); };
   assert.equal(
