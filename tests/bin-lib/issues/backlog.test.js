@@ -12,6 +12,7 @@ const {
   funnelBuckets,
   machineGrantOutlook,
   readyGrantedSubset,
+  attachBodyForeignBlockers,
 } = require('../../../plugin/bin/lib/issues/backlog');
 const { parseRecordFacets } = require('../../../plugin/bin/lib/issues/record');
 
@@ -373,6 +374,45 @@ test('Q6 (#4793): a ready+granted record blocked only by a still-blocking foreig
     assert.deepEqual(b.granted.map((r) => r.number), [1], ref);
     assert.deepEqual(b.dispatchable, [], ref);
   }
+});
+
+test('Plan Review Clarifications: attachBodyForeignBlockers adds a body-declared foreign blocker that still blocks, so funnelBuckets files the record under granted', () => {
+  const g = { stage: 'ready', grants: { build: true, merge: false } };
+  const body = 'Blocked by #3\nBlocked by other/repo#5';
+  const records = [rec(1, g, { body }), rec(2, g, { body }), rec(4, g, { body, blockedBy: [] }), rec(6, { ...g, unsynced: true }, { body })];
+  const foreign = new Map([
+    [1, [{ number: 5, repository: 'other/repo', state: 'OPEN' }]],
+    [2, [{ number: 5, repository: 'other/repo', state: 'CLOSED' }]],
+    [4, [{ number: 5, repository: 'other/repo', state: 'OPEN' }]],
+    [6, [{ number: 5, repository: 'other/repo', state: null }]],
+  ]);
+  const out = attachBodyForeignBlockers(records, foreign);
+  assert.deepStrictEqual(out.map((r) => r.blockedBy), [[3, 'other/repo#5'], [3], ['other/repo#5'], undefined]);
+  assert.equal('blockedBy' in records[0], false, 'the input records are not mutated');
+  const b = funnelBuckets(out);
+  assert.deepEqual(b.granted.map((r) => r.number).sort(), [1, 4]);
+  assert.deepEqual(b.dispatchable.map((r) => r.number).sort(), [2, 6]);
+});
+
+test('Plan Review Clarifications: attachBodyForeignBlockers merges into an already-attached tier, once per owner/name#N key', () => {
+  const g = { stage: 'ready', grants: { build: true, merge: false } };
+  const body = 'Blocked by Other/Repo#5';
+  const open5 = { number: 5, repository: 'Other/Repo', state: 'OPEN' };
+  const records = [
+    rec(1, g, { body, blockedBy: ['other/repo#5'] }),
+    rec(2, g, { body, blockedBy: ['other/repo#5 (state unreadable)'] }),
+    rec(3, { ...g, blockedBy: [9] }, { body }),
+    rec(4, { ...g, blockedBy: ['other/repo#5'] }, { body }),
+  ];
+  const foreign = new Map([1, 2, 3, 4].map((n) => [n, [open5]]));
+  const out = attachBodyForeignBlockers(records, foreign);
+  assert.deepStrictEqual(out[0].blockedBy, ['other/repo#5'], 'a natively linked ref is not listed twice, case-insensitively');
+  assert.deepStrictEqual(out[1].blockedBy, ['other/repo#5 (state unreadable)'], 'an unreadable-suffixed native ref counts as the same key');
+  assert.deepStrictEqual(out[2].facets.blockedBy, [9, 'Other/Repo#5'], 'facets.blockedBy tier gets the ref appended');
+  assert.equal('blockedBy' in out[2], false, 'no top-level tier is invented when facets.blockedBy holds the blockers');
+  assert.deepStrictEqual(out[3].facets.blockedBy, ['other/repo#5']);
+  assert.deepStrictEqual(records[2].facets.blockedBy, [9], 'the input facets are not mutated');
+  assert.deepEqual(funnelBuckets(out).granted.map((r) => r.number).sort(), [1, 2, 3, 4]);
 });
 
 test('funnelBuckets: blockedBy absent means every granted record is dispatchable (pre-#514 dormancy)', () => {

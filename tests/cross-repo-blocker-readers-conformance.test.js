@@ -29,6 +29,17 @@ const PRE_ATTACH_FACTS = [
 const FUNNEL_NOTE_FACTS = [
   [/A qualified `owner\/name#N` entry counts too \(#4793, Decisions Q6\)/i, 'the funnel note says a qualified entry counts as a blocker'],
   [/as `owner\/name#N \(state unreadable\)` in the latter case/, 'the funnel note names an unreadable foreign state with the suffix'],
+  [/body-declared foreign blockers/, 'the funnel note says the script attaches body-declared foreign blockers'],
+  [/to any ready\+granted record/, 'the funnel note covers every ready+granted record, not only those with nothing attached'],
+  [/merges each one that is open or unreadable/, 'the funnel note says attachBodyForeignBlockers merges rather than skips'],
+];
+const FUNNEL_SNIPPET_FACTS = [
+  [/bl\.attachBodyForeignBlockers\(/, 'the funnel snippet attaches the body-declared foreign blockers'],
+  [/bodyForeignBlockers\(bl\.readyGrantedSubset\(/, 'the funnel snippet looks up the ready+granted subset in one bodyForeignBlockers call'],
+];
+const BODY_TEXT_FACTS = [
+  [/attachBodyForeignBlockers/, 'Step 3 body-text bullet attaches attachBodyForeignBlockers'],
+  [/same `bodyForeignBlockers` call as Step 2's funnel script/, 'Step 3 body-text bullet reuses Step 2\'s bodyForeignBlockers call'],
 ];
 const STEP3_FACTS = [
   [/attach `blockedBy: openNativeBlockerRefs\(node\)`/, 'Step 3 attaches blockedBy from openNativeBlockerRefs(node)'],
@@ -48,7 +59,9 @@ const region = (text, prefix) => {
 const REGIONS = [
   ['overview pre-attach', region(OVERVIEW, 'On `work-links: native`: check field availability'), PRE_ATTACH_FACTS],
   ['overview funnel note', region(OVERVIEW, 'The funnel-computation script below then reads'), FUNNEL_NOTE_FACTS],
+  ['overview funnel snippet', region(OVERVIEW, '  const all = bl.attachBodyForeignBlockers('), FUNNEL_SNIPPET_FACTS],
   ['overview Step 3', region(OVERVIEW, '  - **`work-links: native`**'), STEP3_FACTS],
+  ['overview Step 3 body-text', region(OVERVIEW, '  - **`work-links: body-text`**'), BODY_TEXT_FACTS],
   ['refine detection', region(REFINE, '- Refine runs the detection itself'), REFINE_FACTS],
 ];
 
@@ -69,4 +82,15 @@ test('overview no longer attaches the open-filter that drops a foreign blocker (
   const mutated = `${OVERVIEW}\nr.blockedBy = ${LEGACY_FILTER}\n`;
   assert.notEqual(mutated, OVERVIEW);
   assert.throws(() => assertNoLegacyFilter(mutated), { message: NO_LEGACY_MESSAGE });
+});
+
+const LEGACY_BODY_TEXT = "attach nothing — `blockersOf`'s `parseDependencies` fallback stands.";
+const NO_LEGACY_BODY_TEXT_MESSAGE = 'overview-mode.md Step 3 still says a body-text record attaches nothing, which drops a body-declared foreign blocker';
+const assertNoLegacyBodyText = (text) => assert.ok(!text.includes(LEGACY_BODY_TEXT), NO_LEGACY_BODY_TEXT_MESSAGE);
+
+test('overview Step 3 no longer says a body-text record attaches nothing (#4793)', () => {
+  assertNoLegacyBodyText(OVERVIEW);
+  const mutated = `${OVERVIEW}\n  - **\`work-links: body-text\`**: ${LEGACY_BODY_TEXT}\n`;
+  assert.notEqual(mutated, OVERVIEW);
+  assert.throws(() => assertNoLegacyBodyText(mutated), { message: NO_LEGACY_BODY_TEXT_MESSAGE });
 });

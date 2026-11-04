@@ -18,7 +18,8 @@
 const { execSync } = require('child_process');
 const { LARGE_MAX_BUFFER_BYTES } = require('../shared-primitives');
 const { splitLogZ } = require('../git-z');
-const { PRIORITIES, TIERS, parseRecordFacets } = require('./record');
+const { PRIORITIES, TIERS, parseRecordFacets, parseDependencies, foreignBlockerBlocks, foreignBlockerRef } = require('./record');
+const { parseCrossRepoRef, crossRepoKey } = require('./cross-repo-refs');
 const { blockersOf } = require('./ranking');
 const { evaluateGrantGate } = require('./grant-gate');
 const { isBotParked } = require('./record-buckets');
@@ -161,6 +162,33 @@ function deriveCreatedAtFromGit(records, { execFn = execSync } = {}) {
 // buildable candidate set on any conforming repo.
 function readyGrantedSubset(records) {
   return records.filter((r) => r.facets.stage === 'ready' && (r.facets.grants.build || r.facets.grants.merge));
+}
+
+// (records[], Map<r.number ?? r.id, {number, repository, state}[]>) -> records[]. Adds each
+// body-declared foreign blocker that still blocks (open or unreadable, never CLOSED) to the
+// tier `blockersOf` reads for that record, so `funnelBuckets` files the record under
+// `granted` as `/claude-tweaks:dispatch` refuses it (#4793 Plan Review Clarifications).
+// A top-level `blockedBy` array, else a `facets.blockedBy` array, receives the refs not
+// already in it (deduplicated by crossRepoKey, case-insensitive; a native ref's
+// ' (state unreadable)' suffix is ignored for the key). A record with neither tier gets
+// `blockedBy: [...parseDependencies(body), ...refs]`, so `blockersOf`'s body-text
+// fallback result survives. An `unsynced` record, and a record absent from the map, is
+// returned as is. Returns a new array of shallow copies; never mutates its input.
+function attachBodyForeignBlockers(records, foreignByRecord) {
+  return records.map((r) => {
+    const entries = foreignByRecord.get(r.number ?? r.id);
+    if (!entries || entries.length === 0 || (r.facets && r.facets.unsynced === true)) return r;
+    const refs = entries.filter(foreignBlockerBlocks);
+    const tier = Array.isArray(r.blockedBy) ? r.blockedBy : r.facets && Array.isArray(r.facets.blockedBy) ? r.facets.blockedBy : null;
+    if (!tier) return { ...r, blockedBy: [...parseDependencies(r.body || ''), ...refs.map(foreignBlockerRef)] };
+    const known = new Set(
+      tier.map((b) => (typeof b === 'string' ? parseCrossRepoRef(b.replace(/ \(state unreadable\)$/, '')) : null)).filter(Boolean).map(crossRepoKey),
+    );
+    const added = refs.filter((e) => !known.has(crossRepoKey(e))).map(foreignBlockerRef);
+    if (added.length === 0) return r;
+    const merged = [...tier, ...added];
+    return Array.isArray(r.blockedBy) ? { ...r, blockedBy: merged } : { ...r, facets: { ...r.facets, blockedBy: merged } };
+  });
 }
 
 // records[] -> { captured, prioritized, specified, granted, dispatchable,
@@ -364,5 +392,6 @@ module.exports = {
   funnelBuckets,
   machineGrantOutlook,
   readyGrantedSubset,
+  attachBodyForeignBlockers,
   refineWorklist,
 };
