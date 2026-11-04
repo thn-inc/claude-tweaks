@@ -16,3 +16,4 @@
 | 12 | build | SDD ruling — keep supersedingPaths unbounded: ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | open | — |
 | 13 | build | SDD ruling — close the Task 2 process-deviation parked line: ratify or reverse at the Review Console (staged/sdd-ruling-4.md) | open | — |
 | 14 | build | SDD ruling — accept the final reviewer's six declined-to-judge lines: ratify or reverse at the Review Console (staged/sdd-ruling-5.md) | open | — |
+| 15 | build/skill | verify-scope-rule-kind extends: adding an impact rule (not a new kind) over a non-source prefix (.claude/**, .github/workflows/**, perf/**) is only useful when the traced map records reads under that prefix, and `.claude/**` must stay clear of `.claude-tweaks/` — check both against the map and the fail-closed test before committing the rule (#4321) | observation | Head start for /wrap-up's Skills curation row |
