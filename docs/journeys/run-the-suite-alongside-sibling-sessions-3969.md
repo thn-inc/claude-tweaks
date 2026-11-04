@@ -11,7 +11,7 @@ files:
 **Persona:** A claude-tweaks maintainer with several Claude sessions open on this repo. Each session's pipeline runs `npm test` through `plugin/bin/verify.js`, and the maintainer also runs it by hand.
 **Goal:** Every session gets a trustworthy suite result without the machine becoming unusable or `$TMPDIR` filling with leaked fixtures.
 **Entry point:** `npm test` (`node tools/run-tests.js`), run directly or as a `verify.js --cmd tests="npm test"` check.
-**Success state:** One full suite runs at a time machine-wide, at about half the cores. Any other run says plainly that it is waiting and for whom, then runs. Each run's temp files live under one per-run directory that is gone when the run ends, whether by exit, Ctrl-C, or a kill.
+**Success state:** One full suite runs at a time machine-wide, at about half the cores. Any other run says plainly that it is waiting and for whom, then runs in the order it arrived. Each run's temp files live under one per-run directory that is gone when the run ends, whether by exit, Ctrl-C, or a kill.
 
 ## Steps
 
@@ -30,10 +30,15 @@ files:
 - **URL:** the second session's output.
 - **Action:** Run `npm test` again from another session or terminal.
 - **Should feel:** Told, not stuck. One line explains the wait.
-- **Should understand:** The line reads `run-tests.js: waiting for a test-suite slot — held by pid N (cwd …) since …; set CT_TEST_SUITE_SLOTS to raise the limit`, followed by the lock path. The run starts on its own once the holder finishes. A `verify.js --cmd-timeout` counts the wait against its bound.
+- **Should understand:**
+  - When it is first in line, the line reads `run-tests.js: waiting for a test-suite slot — held by pid N (cwd …) since …; set CT_TEST_SUITE_SLOTS to raise the limit`, followed by the lock path.
+  - When an earlier run is already waiting, it reads `… — queued behind pid N (cwd …) since …; set CT_TEST_SUITE_SLOTS to raise the limit`, followed by that run's ticket path (`ticket-<n>.json` in the slot directory).
+  - Waiting runs take the slot in the order they arrived, never by whichever polls first. A run with a higher `CT_TEST_SUITE_SLOTS` limit may still take a slot that the runs ahead of it are not allowed to use.
+  - The run starts on its own once its turn comes. A `verify.js --cmd-timeout` counts the wait against its bound.
 - **Red flags:**
   - Two full suites running at once with the default settings.
-  - A wait that never ends while the named pid is gone. A holder already dead when the run starts loses its lock at once; one that dies mid-wait loses it on the next 2-second poll.
+  - A run that started later taking the slot ahead of one already waiting.
+  - A wait that never ends while the named pid is gone. A holder or queued run already dead when the run starts loses its place at once; one that dies mid-wait loses it on the next 2-second poll. A ticket whose pid was reused by another process, or whose run is stopped (not dead), blocks the queue until someone deletes the ticket file the line names.
 
 ### 3. Stop a run early
 - **URL:** the terminal, or a CI cancel or `timeout` wrapper.
@@ -72,4 +77,5 @@ files:
 ## Origin
 - Created during build of #3969. The trigger was a Mac made unusable by stacked concurrent suites (load average 98–176 on 12 cores) and about 3.9 million leaked fixture entries in `$TMPDIR`.
 - Updated during build of #4336: step 4 now covers the slot tests passing under a raised slot knob.
+- Updated during build of #4333: step 2 now covers arrival-order waiting and the queued form of the wait line. A waiter stopped with Ctrl-C leaves only its ticket, and the next waiter removes it once the pid is gone. A `run-tests.js` checkout older than this change ignores tickets and can still jump the queue until it catches up.
 - Related: `act-on-a-red-wall-clock-budget-scan-3491.md` (another constraint on tests that run under load).
