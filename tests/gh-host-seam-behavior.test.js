@@ -530,7 +530,7 @@ function runGated(t, row, { origin, extraArgs = [], ghHost, hostsYml }) {
   const env = gatedEnv(t, { ghHost, hostsYml });
   const argv = [...row.argv.map((a) => a.replace('{runDir}', runDir)), ...extraArgs];
   const r = spawnSync(process.execPath, [path.join(BIN, row.cli), ...argv], { cwd: repo, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
-  return { status: r.status, stderr: r.stderr || '', lines: readLog() };
+  return { status: r.status, stdout: r.stdout || '', stderr: r.stderr || '', lines: readLog() };
 }
 
 // Every `--repo`/`-R` value in the recorded gh argv.
@@ -914,4 +914,50 @@ test('#4794: claim-targets.js on an unknown or SSH-alias origin exits 2 unknown-
   const opted = runGated(t, claimTargetsRow(UNKNOWN_HOST), { origin: `https://${UNKNOWN_HOST}/o/r.git`, ghHost: UNKNOWN_HOST });
   assert.ok(!opted.stderr.includes(NOT_KNOWN_MSG), `an exported GH_HOST opts in, but it was refused:\n${opted.stderr}`);
   assert.equal(opted.status, 3, `GH_HOST=${UNKNOWN_HOST}: expected exit 3 (in flight on that host); stderr:\n${opted.stderr}`);
+});
+
+// #4794 Task 13: stale-claim-pr.js calls the gate directly (no repo-resolve helper in between). Its
+// one open-PR listing and its PR-url match share one host. The claim file is a stale claim blob for
+// RUN_ID; the fake gh answers the listing with a marked PR on the case's host.
+const SCP_PR_LIST_ARGV = 'pr list --repo acme/widgets --state open --json url,body,isCrossRepository --limit 1000';
+
+function staleClaimPrRow(prHost) {
+  const pr = { url: `https://${prHost}/acme/widgets/pull/12`, body: `## Spec\n<!-- claude-tweaks-run: ${RUN_ID} -->\n`, isCrossRepository: false };
+  return {
+    cli: 'stale-claim-pr.js',
+    argv: ['--claim-file', 'claim.json'],
+    setup: writeJsonFile('claim.json', { runId: RUN_ID, claimedAt: '2026-10-31T00:00:00Z' }),
+    canned: { 'pr-list': JSON.stringify([pr]) },
+  };
+}
+
+const runStaleClaimPr = (t, prHost, caseOpts) => runGated(t, staleClaimPrRow(prHost), caseOpts);
+
+test('AC1.1: stale-claim-pr.js on a *.ghe.com origin lists open PRs on the origin host and matches its marked PR', { skip: STUB_SKIP }, (t) => {
+  const r = runStaleClaimPr(t, 'acme.ghe.com', { origin: GHE_ORIGIN });
+  assert.equal(r.status, 0, `stderr:\n${r.stderr}`);
+  assertEveryLineReaches(r.lines, 'acme.ghe.com');
+  const list = r.lines.filter((l) => / ARGS=pr list /.test(l));
+  assert.deepEqual(repoValues(list), ['acme.ghe.com/acme/widgets']);
+  assert.equal(JSON.parse(r.stdout).match, true, r.stdout);
+  assert.equal(JSON.parse(r.stdout).link, 'https://acme.ghe.com/acme/widgets/pull/12');
+});
+
+test('AC2.1: stale-claim-pr.js on a github.com origin keeps today\'s pr list argv', { skip: STUB_SKIP }, (t) => {
+  const r = runStaleClaimPr(t, 'github.com', { origin: DOTCOM_ORIGIN });
+  assert.equal(r.status, 0, `stderr:\n${r.stderr}`);
+  assert.deepEqual(networkLines(r.lines), [`GH_HOST=unset ARGS=${SCP_PR_LIST_ARGV}`]);
+  assert.equal(JSON.parse(r.stdout).match, true, r.stdout);
+});
+
+test('#4794: stale-claim-pr.js on an unknown or SSH-alias origin reports unknown-host at exit 0 and calls no gh', { skip: STUB_SKIP }, (t) => {
+  for (const origin of [`https://${UNKNOWN_HOST}/o/r.git`, 'git@github-work:acme/widgets.git']) {
+    const refusal = gateOriginRepo(origin, GATE_DEPS).refusal;
+    assert.ok(refusal, `${origin}: the gate must refuse it`);
+    const r = runStaleClaimPr(t, 'github.com', { origin });
+    assert.equal(r.status, 0, `${origin}: stderr:\n${r.stderr}`);
+    assert.deepEqual(JSON.parse(r.stdout), { match: false, link: null, failure: `unknown-host: ${refusal}` }, origin);
+    assert.equal(r.stderr, `stale-claim-pr.js: ${refusal}\n`, origin);
+    assert.deepEqual(networkLines(r.lines), [], `${origin}: gh was called beyond --version:\n${r.lines.join('\n')}`);
+  }
 });
