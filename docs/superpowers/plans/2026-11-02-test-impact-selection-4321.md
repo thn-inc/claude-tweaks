@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+, `node --test`, no dependencies.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-03T233957-record-4321/work/4321-spec.md`
+**Spec:** `.claude-tweaks/pipelines/2026-11-04T064945-record-4321/work/4321-spec.md`
 
 ## Global Constraints
 
@@ -34,6 +34,8 @@ Round-2 decision (Reading A): a verify run that never reads the declaration (no 
 
 Round-3 decisions (Reading A): only a `tests` entry with `impact.fallback: null`, `impact.superseded: false` and `impact.selected >= 1` is an AC4 impact subset; `selected: 0` is not, and the Task 2 Step 6 ledger row says so. `supersedingPaths` keeps array-rule files that name the impact suite, as Task 1 Step 5 has it.
 
+Round-4 decision (Reading B): AC3's check runs `node plugin/bin/verify.js --scope .claude-tweaks/verify-scope.json --integration-branch main` on a branch whose only change is a `.claude/skills/<x>/SKILL.md` edit; the flagless AC3 command exits with a usage error on a branch with no pass stamp. The AC3.1 live controller check below runs exactly that command.
+
 ## Review Focus
 
 1. A rule selecting only another suite (`docs/**` → `['docs']`) beside an unmatched path: it must stay out of `supersedingPaths`, or the measurement blames the wrong rule. Task 1 Step 1 pins it.
@@ -47,6 +49,7 @@ Round-3 decisions (Reading A): only a `tests` entry with `impact.fallback: null`
 ### Task 1: Carry the impact outcome into `timing.json`
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/verify/scope.js` (`impactResult`, `selectScope`)
@@ -174,11 +177,12 @@ Expected: PASS, 0 failures.
 
 - [ ] **Step 7: Commit**
 
-Stage the eight files above by explicit path. Message: `Carry the impact outcome into timing.json — refs #4321`, ending with the `Claude-Session:` trailer the brief gives.
+Stage the nine files above by explicit path. Message: `Carry the impact outcome into timing.json — refs #4321`, ending with the `Claude-Session:` trailer the brief gives.
 
 ### Task 2: Add the impact rules for the common superseding paths
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `.claude-tweaks/verify-scope.json`
@@ -243,11 +247,11 @@ Expected: PASS, including the `AC2.1` release-reader and `#4024 expand-contract`
 The script and input are scratch, already written, and uncommitted. Run from the worktree root, with the full output going to the evidence log:
 
 ```bash
-mkdir -p "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-03T233957-record-4321/evidence"
+mkdir -p "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-04T064945-record-4321/evidence"
 ```
 
 ```bash
-node "/private/tmp/claude-501/-Users-thomasholknielsen-Code-Workspaces-claude-tweaks--claude-worktrees-dispatch-record-4593/5799247f-6f2c-45e0-9656-5044fb4c1207/scratchpad/replay-4321.js" "$PWD" "/private/tmp/claude-501/-Users-thomasholknielsen-Code-Workspaces-claude-tweaks--claude-worktrees-dispatch-record-4593/5799247f-6f2c-45e0-9656-5044fb4c1207/scratchpad/prs-4321.json" "$PWD/.claude-tweaks/verify-scope.json" > "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-03T233957-record-4321/evidence/replay-59-prs.txt"
+node "/private/tmp/claude-501/-Users-thomasholknielsen-Code-Workspaces-claude-tweaks--claude-worktrees-dispatch-record-4593/5799247f-6f2c-45e0-9656-5044fb4c1207/scratchpad/replay-4321.js" "$PWD" "/private/tmp/claude-501/-Users-thomasholknielsen-Code-Workspaces-claude-tweaks--claude-worktrees-dispatch-record-4593/5799247f-6f2c-45e0-9656-5044fb4c1207/scratchpad/prs-4321.json" "$PWD/.claude-tweaks/verify-scope.json" > "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-04T064945-record-4321/evidence/replay-59-prs.txt"
 ```
 
 Expected: `"prs": 59`, `"supersededByUnmatched"` at most 5. On the rules before Step 3 the same command printed 37 superseded, 35 by unmatched, 20 eligible, 2 with no impact paths, which matches the record's figures.
@@ -256,13 +260,13 @@ Write one `AC evidence` line naming AC2, the command shape and the counts to a s
 
 - [ ] **Step 6: Commit, with the deferred re-measure on the ledger**
 
-Append to the ledger table as the next row number (rows 1 to 4 are flow's pre-flight notes from the two runs, so this is row 5). The version is unknown until release-please cuts it, so the row names the release by what it must contain. Per the spec's round-2 decision (Reading A), the count filters on the `impact` field: an entry without it (no `--scope`, or `--stamp-suite`) is outside the count and is not a fallback. Per the round-3 decision (Reading A), only a `tests` entry with `impact.fallback: null`, `impact.superseded: false` and `impact.selected >= 1` counts as an impact subset; `selected: 0` does not:
+Append to the ledger table as the next row number (rows 1 to 6 are flow's pre-flight notes from the three runs, so this is row 7). The version is unknown until release-please cuts it, so the row names the release by what it must contain. Per the spec's round-2 decision (Reading A), the count filters on the `impact` field: an entry without it (no `--scope`, or `--stamp-suite`) is outside the count and is not a fallback. Per the round-3 decision (Reading A), only a `tests` entry with `impact.fallback: null`, `impact.superseded: false` and `impact.selected >= 1` counts as an impact subset; `selected: 0` does not:
 
-`| 5 | ops | Re-measure impact outcomes across 10 or more pipeline runs on a released build carrying Deliverable 1, from timing.json verify entries that carry an impact field (AC4, Deliverable 3; entries with no impact field are outside the count, not fallbacks); AC4 holds only if a tests entry has impact.fallback null, impact.superseded false and impact.selected >= 1 (selected 0 does not count); otherwise fix or file the dominant fallback with counts. (reason-not-auto: requires pipeline runs on a released build) | open | Defer-reason: blocked-dependency — needs the first v* release containing PR #4969's Deliverable 1, then 10 or more pipeline runs on it |`
+`| 7 | ops | Re-measure impact outcomes across 10 or more pipeline runs on a released build carrying Deliverable 1, from timing.json verify entries that carry an impact field (AC4, Deliverable 3; entries with no impact field are outside the count, not fallbacks); AC4 holds only if a tests entry has impact.fallback null, impact.superseded false and impact.selected >= 1 (selected 0 does not count); otherwise fix or file the dominant fallback with counts. (reason-not-auto: requires pipeline runs on a released build) | open | Defer-reason: blocked-dependency — needs the first v* release containing PR #4969's Deliverable 1, then 10 or more pipeline runs on it |`
 
 Stage `.claude-tweaks/verify-scope.json`, `tests/verify-scope-declaration.test.js` and the ledger by explicit path. Message: `Add impact rules for the common superseding paths — refs #4321`, with the `Claude-Session:` trailer.
 
 ## Controller checks after the tasks
 
-- **AC3.1 live:** in a scratch clone under the session scratchpad whose `main` is this branch's tip, with this repo's map copied into its `.git/`, commit a one-line edit to a `.claude/skills/*/SKILL.md` on a feature branch and run `node plugin/bin/verify.js --scope .claude-tweaks/verify-scope.json --integration-branch main --no-stamp`. Expected: an `Impact: N of M test file(s) selected` line, or a named fallback, never `superseded`. Keep the output at `evidence/ac3-live.txt` and log an `AC evidence` line.
-- **Real input (Task 1):** after Common Step 5's verify, run `node plugin/bin/phase-timing.js` over this run's directory and confirm its own `timing.json` verify entry carries `impact`, compared with `events.jsonl`'s `verify` line (the independent count).
+- **AC3.1 live:** in a scratch clone under the session scratchpad whose `main` is this branch's tip, with this repo's map copied into its `.git/`, commit a one-line edit to a `.claude/skills/*/SKILL.md` on a feature branch and run `node plugin/bin/verify.js --scope .claude-tweaks/verify-scope.json --integration-branch main` (the round-4 command). Expected: an `Impact: N of M test file(s) selected` line, or a named fallback, never `superseded`. Keep the output at `evidence/ac3-live.txt` and log an `AC evidence` line.
+- **Real input (Task 1):** Common Step 5's verify runs the installed `verify.js`, which predates Task 1, so its event carries no `impact`. After Task 2, run the worktree's own CLI from the worktree root: `node plugin/bin/verify.js --run "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-04T064945-record-4321" --scope .claude-tweaks/verify-scope.json --integration-branch main`, then `node plugin/bin/phase-timing.js` over that run directory, and confirm the `timing.json` verify entry it writes carries `impact`, compared with `events.jsonl`'s last `verify` line (the independent count).
