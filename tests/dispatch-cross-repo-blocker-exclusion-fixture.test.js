@@ -14,6 +14,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
+const { pathWithOnly } = require('./helpers/path-stub');
 const { missingFactsOf, assertEachPatternGoesRed, sectionOf } = require('./helpers/conformance-asserts');
 
 const ROOT = path.join(__dirname, '..');
@@ -26,18 +27,18 @@ const PLUGIN_ROOT = path.join(ROOT, 'plugin').split(path.sep).join('/');
 const START_ANCHOR = 'node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_ELIGIBLE" "$DISPATCH_NATIVE_DEPS"';
 const END_ANCHOR = '\nNODE_EVAL_EOF';
 
-function extractGroupingSnippet() {
-  const startIdx = QUEUE_PULL_SCRIPT.indexOf(START_ANCHOR);
-  assert.notStrictEqual(startIdx, -1, 'extraction start anchor not found in queue-pull-script.md -- extraction is out of sync with the live file');
+function extractSnippet(startAnchor, label) {
+  const startIdx = QUEUE_PULL_SCRIPT.indexOf(startAnchor);
+  assert.notStrictEqual(startIdx, -1, `${label} start anchor not found in queue-pull-script.md -- extraction is out of sync with the live file`);
   const endIdx = QUEUE_PULL_SCRIPT.indexOf(END_ANCHOR, startIdx);
-  assert.notStrictEqual(endIdx, -1, 'extraction end anchor not found in queue-pull-script.md -- extraction is out of sync with the live file');
+  assert.notStrictEqual(endIdx, -1, `${label} end anchor not found in queue-pull-script.md -- extraction is out of sync with the live file`);
   return QUEUE_PULL_SCRIPT.slice(startIdx, endIdx + END_ANCHOR.length);
 }
 
 const candidate = (number) => ({ number, labels: ['ready', 'auto:build'], body: `### Key Files\n\n- \`f${number}.js\` (modify)` });
 
 test('a foreign open or unreadable-state native blocker excludes its record and is named owner/name#N in the exclusion (#4793)', () => {
-  const snippet = extractGroupingSnippet();
+  const snippet = extractSnippet(START_ANCHOR, 'grouping snippet');
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-cross-repo-blocker-'));
   const file = (name) => path.join(scratch, name);
 
@@ -87,22 +88,12 @@ test('a foreign open or unreadable-state native blocker excludes its record and 
 
 const BODY_START_ANCHOR = 'node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_ELIGIBLE_PRE_DEP" "$DISPATCH_OPEN_NUMBERS" "$DISPATCH_VERIFIED_OPEN_DEPS"';
 
-function extractBodyPartitionSnippet() {
-  const startIdx = QUEUE_PULL_SCRIPT.indexOf(BODY_START_ANCHOR);
-  assert.notStrictEqual(startIdx, -1, 'body-text partition start anchor not found in queue-pull-script.md -- extraction is out of sync with the live file');
-  const endIdx = QUEUE_PULL_SCRIPT.indexOf(END_ANCHOR, startIdx);
-  assert.notStrictEqual(endIdx, -1, 'body-text partition end anchor not found in queue-pull-script.md -- extraction is out of sync with the live file');
-  return QUEUE_PULL_SCRIPT.slice(startIdx, endIdx + END_ANCHOR.length);
-}
-
-// PATH holds only a `node` symlink, so `gh` is absent and bin/resolve-foreign-blockers.js exits 2:
-// the deterministic fail-closed case. A symlink to node.exe needs privileges on a Windows checkout.
-test('a body-declared foreign blocker whose state cannot be read excludes its record, naming it (state unreadable) (#4793)', { skip: process.platform === 'win32' && 'needs a node symlink' }, () => {
-  const snippet = extractBodyPartitionSnippet();
+// PATH holds node and bash but never gh (pathWithOnly), so bin/resolve-foreign-blockers.js exits 2:
+// the deterministic fail-closed case.
+test('a body-declared foreign blocker whose state cannot be read excludes its record, naming it (state unreadable) (#4793)', () => {
+  const snippet = extractSnippet(BODY_START_ANCHOR, 'body-text partition snippet');
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-body-foreign-blocker-'));
   const file = (name) => path.join(scratch, name);
-  fs.mkdirSync(file('bin'));
-  fs.symlinkSync(process.execPath, path.join(file('bin'), 'node'));
 
   fs.writeFileSync(file('pre-dep.json'), JSON.stringify([
     { number: 21, body: 'Blocked by other/repo#5' },
@@ -111,10 +102,10 @@ test('a body-declared foreign blocker whose state cannot be read excludes its re
   fs.writeFileSync(file('open.json'), '[]');
   fs.writeFileSync(file('verified-open.txt'), '');
 
-  const res = spawnSync('/bin/bash', ['-c', snippet], {
+  const res = spawnSync('bash', ['-c', snippet], {
     encoding: 'utf8',
     env: {
-      PATH: file('bin'),
+      PATH: pathWithOnly(['node', 'bash'], { exclude: ['gh'] }),
       CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT,
       DISPATCH_ELIGIBLE_PRE_DEP: file('pre-dep.json'),
       DISPATCH_OPEN_NUMBERS: file('open.json'),
@@ -129,7 +120,7 @@ test('a body-declared foreign blocker whose state cannot be read excludes its re
     { number: 21, blockedBy: ['other/repo#5 (state unreadable)'] },
   ]);
   assert.deepEqual(JSON.parse(fs.readFileSync(file('eligible.json'), 'utf8')).map((r) => r.number), [22]);
-  assert.match(res.stderr, /foreign blocker state lookup failed/);
+  assert.match(res.stderr, /foreign blocker state lookup failed \(exit 2: resolve-foreign-blockers\.js: `gh` is required\)/);
 });
 
 // The report and the MCP section hard-wrap at about 100 columns, so whitespace is collapsed first.
@@ -149,6 +140,7 @@ const NOTES_FACTS = [
   [/`bodyForeignBlockers` \(`bin\/lib\/issues\/cross-repo-states\.js`\) looks up every such ref in one batched call/, 'the body-text pass looks up every Blocked by owner/name#N ref in one batched call'],
   [/`partitionByOpenBodyBlockers` drops the candidate while that blocker is open or its state is unreadable/, 'the body-text pass drops a candidate whose body-declared foreign blocker is open or unreadable'],
   [/a failed lookup reads unreadable \(fail closed, one `Warning:` line\)/, 'a failed body-text lookup fails closed with one Warning line'],
+  [/naming it `owner\/name#N` or `owner\/name#N \(state unreadable\)`/, 'the body-text pass names a blocker owner/name#N or owner/name#N (state unreadable)'],
   [/a CLOSED one does not block/, 'a CLOSED body-declared foreign blocker does not block'],
 ];
 
