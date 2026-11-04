@@ -74,8 +74,6 @@ const REGIONS = [
   ['overview Step 3', region(OVERVIEW, '  - **`work-links: native`**'), STEP3_FACTS],
   ['overview Step 3 body-text', region(OVERVIEW, '  - **`work-links: body-text`**'), BODY_TEXT_FACTS],
   ['refine detection', region(REFINE, '- Refine runs the detection itself'), REFINE_FACTS],
-  ['refine detection wired-foreign', region(REFINE, '- Refine runs the detection itself'), WIRED_FOREIGN_FACTS],
-  ['refine-lanes Dependency repair', collapse(sectionOf(REFINE_LANES, '## Dependency repair')), WIRED_FOREIGN_FACTS],
 ];
 
 for (const [name, text, facts] of REGIONS) {
@@ -83,6 +81,19 @@ for (const [name, text, facts] of REGIONS) {
     const missing = missingFactsOf(facts);
     assert.deepEqual(missing(text), [], `${name} states every fact`);
     assertEachPatternGoesRed(text, facts, missing);
+  });
+}
+
+const WIRED_FOREIGN_REGIONS = [
+  ['refine detection', region(REFINE, '- Refine runs the detection itself')],
+  ['refine-lanes Dependency repair', collapse(sectionOf(REFINE_LANES, '## Dependency repair'))],
+];
+
+for (const [name, text] of WIRED_FOREIGN_REGIONS) {
+  test(`${name}: a qualified owner/name#N line is wired, and a repair never takes a bare #N from a qualified mention (#4793)`, () => {
+    const missing = missingFactsOf(WIRED_FOREIGN_FACTS);
+    assert.deepEqual(missing(text), [], `${name} states every fact`);
+    assertEachPatternGoesRed(text, WIRED_FOREIGN_FACTS, missing);
   });
 }
 

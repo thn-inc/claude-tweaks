@@ -259,3 +259,10 @@ test('a mid-line qualified mention is never read as this repository\'s #N; a bar
   assert.deepStrictEqual(findUnresolvedDependencyProse([candidate({ id: 9, body: 'This is blocked by other/repo#5 upstream' })]), []);
   assert.deepStrictEqual(findUnresolvedDependencyProse([candidate({ id: 9, body: 'blocked by other/repo#5 and #7' })]), [{ id: 9, mention: 'blocked by other/repo#5 and #7' }]);
 });
+
+test('mention is the first line whose stripped form matches — a qualified-only line before it is skipped', () => {
+  assert.deepStrictEqual(
+    findUnresolvedDependencyProse([candidate({ id: 9, body: 'This is blocked by other/repo#5 upstream\nblocked by #7' })]),
+    [{ id: 9, mention: 'blocked by #7' }],
+  );
+});
