@@ -32,6 +32,14 @@ test('a verify row keeps the impact outcome only when the event carries one (#43
   assert.equal(Object.hasOwn(p.tasks.verify[0], 'impact'), false);
 });
 
+test('a verify row drops an impact that is not an object (#4321)', () => {
+  for (const bad of ['map-missing', 7, true, null]) {
+    const events = fixtureEvents().map((e) => (e.type === 'verify' && e.mode === 'full' ? { ...e, impact: bad } : e));
+    const p = byName(derivePhases({ events, manifest: fixtureManifest(), now: new Date('2026-09-05T14:13:00.000Z') }));
+    assert.equal(Object.hasOwn(p.test.verify[0], 'impact'), false, JSON.stringify(bad));
+  }
+});
+
 test('#1928 AC3: the frozen fixture reproduces the reference boundaries within ±1 minute', () => {
   const out = derivePhases({ events: fixtureEvents(), manifest: fixtureManifest(), now: new Date('2026-09-05T14:13:00.000Z') });
   assert.deepEqual(out.phases.map((p) => p.phase), PHASES);

@@ -522,4 +522,18 @@ test('no impact block leaves the impact field off the event and the timing entry
   const run = await runCli([...ARGS, '--run', runDir], r.repo);
   assert.strictEqual(run.code, 0, run.stderr + run.stdout);
   assert.strictEqual(Object.hasOwn(timingEntry(runDir), 'impact'), false);
+  const lines = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  const verifyEvents = lines.filter((e) => e.type === 'verify');
+  assert.strictEqual(verifyEvents.length, 1, 'only the --run invocation wrote an event');
+  assert.strictEqual(Object.hasOwn(verifyEvents[0], 'impact'), false, 'the event itself carries no impact key');
+});
+
+test('an untraced changed path records its named reason in the timing entry (#4321)', async () => {
+  const r = impactRepo();
+  const runDir = runDirOf(r);
+  writeMap(r);
+  commitFile(r, 'src/z.js', 'z\n');
+  const run = await runCli([...ARGS, '--run', runDir], r.repo);
+  assert.strictEqual(run.code, 0, run.stderr + run.stdout);
+  assert.deepStrictEqual(timingEntry(runDir).impact, { suite: 'tests', fallback: 'untraced-path: src/z.js', superseded: false, selected: null, supersedingPaths: [] });
 });
