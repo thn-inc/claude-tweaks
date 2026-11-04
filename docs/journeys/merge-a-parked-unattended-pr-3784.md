@@ -8,6 +8,7 @@ files:
   - plugin/bin/lib/hooks/run-dir-resolve.js
   - plugin/skills/_shared/pipeline-run-dir.md
   - plugin/bin/post-merge-run.js
+  - plugin/bin/lib/reconcile/post-merge.js
   - tests/wrap-up-merge-mode-conformance.test.js
 ---
 
@@ -128,3 +129,4 @@ When it cannot merge, the outcome is `pending-review` with the PR ready and a st
 - Updated during build of #4692. Step 3 now finishes a PR that something else already merged: merge mode's `## Already merged` section runs the post-merge closes through `bin/post-merge-run.js`, then the teardown. Before this, such a PR stopped the command with no cleanup.
 - Updated during wrap-up of #4692, after its review's fix wave. Step 3 now covers the `in-flight` result, a failure line per failed step, a CLI crash or unparseable output, and why a failure in closes that already ran is not retried.
 - Updated during wrap-up of #4798 (run `2026-11-03T201056-record-4798`). Step 3 now covers a failed marker write that names the parents Step 4.0b left open, and a step-wide Step 4.0b skip with nothing left to close, which reads `ran` with a note instead of a failure.
+- Updated during build of #4797 (run `2026-11-04T064811-record-4797`). Step 3's **In flight.** case now names all three takeovers a re-run makes (a dead holder at once, a live holder idle past `CLAIM_MAX_IDLE_MS`, an ownerless claim past the 10-minute stale window) and states the GitHub changes this invocation's own pass made before another pass took its claim over.
