@@ -9,6 +9,7 @@ const {
   postMerge, postMergeOne, classifyEntry, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim, MARKER_STEP, ATTEMPT_STEP, MAX_ATTEMPTS, CLOSE_WINDOW_MS, MERGE_GRACE_MS, CLAIM_STALE_MS, CLAIM_FILENAME,
   heartbeatClaim, releaseClaim, CLAIM_MAX_IDLE_MS, GH_TIMEOUT_CEILING_MS, CLAIM_ASIDE_MAX_AGE_MS,
   parentsLeftOpen, stepSkipsOf, parentsLeftOpenLine, stepSkipsLine,
+  CLAIM_LOST_DETAIL, SUPERSEDED_LOCATION_SUFFIX, markSuperseded,
 } = require('../../../plugin/bin/lib/reconcile/post-merge');
 const { formatEntry, parseEntry } = require('../../../plugin/bin/lib/log-decision/append');
 const { DELIBERATE_SKIP_REASONS } = require('../../../plugin/bin/lib/issues/below-floor-parent-close');
@@ -1824,4 +1825,105 @@ test('M8: postMergeOne carries Step 4.0\'s logFailed on a ran entry; a postMerge
     prs: { 11: merged() }, links: fakeClosingLinks({ ...ENVELOPE, action: 'reopen-failed', logFailed: true }), close: fakeCloseParents(),
   });
   assert.equal(failingLoop.entries[0].logFailed, true, 'a non-clean word: the loop entry carries logFailed');
+});
+
+test('heartbeat: every gh call through the shared path refreshes the held claim, in Step 4.0 and in Step 4.0b', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const seen = [];
+  const probe = (gh, label) => {
+    setMtime(dir, NOW - 4 * 60 * 1000);
+    gh(['api', 'user']);
+    seen.push([label, mtimeOf(dir)]);
+  };
+  const links = (argv, d) => { probe(d.gh, '4.0'); return { code: 0, envelope: ENVELOPE }; };
+  const close = (args) => { probe(args.gh, '4.0b'); return { closed: [], skipped: [] }; };
+  const r = await run(root, { prs: { 11: merged() }, links, close });
+  assert.equal(r.entries[0].action, 'ran');
+  assert.deepEqual(seen.map(([label]) => label), ['4.0', '4.0b']);
+  for (const [label, m] of seen) assert.ok(Math.abs(m - NOW) < 1000, `the ${label} gh call refreshed the claim`);
+  assert.ok(!fs.existsSync(lockOf(dir)), 'the owner release removed the claim');
+});
+
+test('markSuperseded: suffixes the location of an entry line and leaves any other string alone', () => {
+  assert.equal(
+    markSuperseded('- AUTO 09:00:00 — Closing links: reopened #7 after PR #11\'s merge closed it. Reversibility: high.'),
+    `- AUTO 09:00:00 — Closing links${SUPERSEDED_LOCATION_SUFFIX}: reopened #7 after PR #11's merge closed it. Reversibility: high.`,
+  );
+  assert.equal(markSuperseded('## /wrap-up'), '## /wrap-up');
+});
+
+test('Q2 + Q4: a holder taken over during Step 4.0 makes no further gh call, keeps only its GitHub-change lines (marked superseded), and skips in-flight, deferred', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const ghCalls = [];
+  const successor = `${process.pid}-successor`;
+  const close = fakeCloseParents();
+  const links = (opts, d) => {
+    d.gh(['issue', 'reopen', '101']);
+    fs.writeFileSync(lockOf(dir), successor); // a successor takes the claim over
+    assert.throws(() => d.gh(['issue', 'view', '102']), 'the call after the takeover throws');
+    assert.throws(() => d.gh(['issue', 'view', '103']), 'every later call throws too');
+    d.appendDecision({ runDir: opts.run, entry: '- AUTO 09:00:00 — Closing links: reopened #101 after PR #11\'s merge closed it (closing link or merge-commit keyword). Reversibility: high.' });
+    d.appendDecision({ runDir: opts.run, entry: '- SKIP 09:00:00 — Closing links (degraded): condition: could not read #102 → fallback: x. Reversibility: n/a.' });
+    return { code: 0, envelope: { ...ENVELOPE, action: 'reopen-failed', reopened: [101], failed: [{ issue: 102 }, { issue: 103 }] } };
+  };
+  const r = await run(root, { prs: { 11: merged() }, links, close, extra: { gh: (args) => { ghCalls.push(args.join(' ')); return '{}'; } } });
+  assert.deepEqual(ghCalls, ['issue reopen 101'], 'only the call made before the takeover ran');
+  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL, recordsReopened: [101] }]);
+  assert.deepEqual(r.deferred, [dir]);
+  assert.equal(close.calls.length, 0, 'Step 4.0b never starts');
+  const log = decisionsOf(dir);
+  assert.match(log, /— Closing links \(superseded holder\): reopened #101 /, 'the reopen it made is logged, marked');
+  assert.doesNotMatch(log, /SKIP/, 'no degraded line, no attempt line, no SKIP marker');
+  assert.equal(hasPostMergeMarker(log), false, 'the successor still owns the marker');
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), successor, 'the successor claim stays');
+});
+
+test('Q2 + Q4: a takeover during Step 4.0b stops the pass before its marker; each parent it closed is logged as a superseded line and reported', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const successor = `${process.pid}-successor`;
+  const close = (args) => {
+    args.gh(['issue', 'close', '100']);
+    fs.writeFileSync(lockOf(dir), successor);
+    assert.throws(() => args.gh(['issue', 'close', '200']));
+    return { closed: [{ parent: 100, maxTier: 'low' }], skipped: [{ parent: 200, reason: 'gh-failed', detail: CLAIM_LOST_DETAIL }] };
+  };
+  // A non-default base: Step 4.0 closed #101 itself before Step 4.0b ran.
+  const links = fakeClosingLinks({ ...ENVELOPE, action: 'closed', nonDefaultBase: true, closed: [101], closeFailed: [], closingSet: [101] });
+  const r = await run(root, { prs: { 11: merged() }, links, close });
+  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL, parentsClosed: 1, recordsClosed: [101] }]);
+  assert.deepEqual(r.deferred, [dir]);
+  const log = decisionsOf(dir);
+  assert.match(log, /— reconcile post-merge parent-close \(superseded holder\): closed parent #100 below the oversight floor/);
+  assert.doesNotMatch(log, /#200/);
+  assert.equal(hasPostMergeMarker(log), false, 'no summary marker');
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), successor);
+});
+
+test('Q4 fix: a takeover after the last gh call still stops the marker write', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const successor = `${process.pid}-successor`;
+  // Step 4.0b makes no gh call (as on the policy-skip path); the takeover lands before the marker write.
+  const close = () => { fs.writeFileSync(lockOf(dir), successor); return { closed: [], skipped: [] }; };
+  const r = await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close });
+  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL }]);
+  assert.equal(decisionsOf(dir), '', 'no marker, nothing else to log');
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), successor);
+});
+
+test('a claim with no token (a takeClaim fake) never refuses a gh call or a write', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const ghCalls = [];
+  const links = (opts, d) => { d.gh(['pr', 'view', '11']); d.gh(['issue', 'view', '101']); return { code: 0, envelope: ENVELOPE }; };
+  const r = await run(root, {
+    prs: { 11: merged() }, links, close: fakeCloseParents(),
+    extra: { takeClaim: () => ({ ok: true }), gh: (args) => { ghCalls.push(args.join(' ')); return '{}'; } },
+  });
+  assert.equal(r.entries[0].action, 'ran');
+  assert.deepEqual(ghCalls, ['pr view 11', 'issue view 101']);
+  assert.equal(hasPostMergeMarker(decisionsOf(dir)), true);
 });

@@ -77,7 +77,7 @@ const { repoSpecOf } = require('../hooks/git-exec');
 const { readWorkBackend } = require('../work-backend');
 const { resolvePolicyKeys, POLICY_KEYS } = require('../policy-schema');
 const { isAlive: pidAlive } = require('../file-lock');
-const { appendEntries, formatEntry, parseEntry } = require('../log-decision/append');
+const { appendEntries, appendEntry, formatEntry, parseEntry } = require('../log-decision/append');
 const { GH_TIMEOUT_MS } = require('../shared-primitives');
 const { resolveWithin } = require('../path-guard');
 const { ghOptions } = require('../repo-resolve');
@@ -89,6 +89,11 @@ const PARENT_STEP = 'reconcile post-merge parent-close';
 // A transient failure's retry line: a different location from MARKER_STEP, so it is never a marker.
 const ATTEMPT_STEP = 'reconcile post-merge attempt';
 const MAX_ATTEMPTS = 3;
+// A holder whose claim another pass took over (heartbeatClaim found a different token): its entry's `detail`.
+const CLAIM_LOST_DETAIL = 'claim taken over by another pass; stopped before the next gh call or decisions.md write';
+// Appended to the location of a decisions.md line a taken-over holder still writes, so the line records the
+// GitHub change it made without reading as the run's marker (neither MARKER_STEP nor STEP_4_0B_LOCATION_RE matches).
+const SUPERSEDED_LOCATION_SUFFIX = ' (superseded holder)';
 // closing-links.js's one transient exit: `gh pr view` / `gh pr edit` failed, or a required read was malformed.
 const TRANSIENT_CLOSING_LINKS_EXIT = EXIT_GH_FAILURE;
 const TRANSIENT_REASON = 'transient-failure';
@@ -142,6 +147,15 @@ function hasPostMergeMarker(decisionsText) {
     const entry = parseEntry(line);
     return Boolean(entry) && (entry.location === MARKER_STEP || STEP_4_0B_LOCATION_RE.test(entry.location));
   });
+}
+
+// Pure: a decisions.md entry line -> the same line with SUPERSEDED_LOCATION_SUFFIX on its location (time, status
+// and action byte-for-byte); any string parseEntry does not read as an entry comes back unchanged.
+function markSuperseded(entry) {
+  const parsed = parseEntry(entry);
+  return parsed
+    ? `- ${parsed.status} ${parsed.time} — ${parsed.location}${SUPERSEDED_LOCATION_SUFFIX}: ${parsed.action}`
+    : entry;
 }
 
 const oneLine = (text) => String(text).replace(/\s+/g, ' ').trim();
@@ -492,10 +506,26 @@ async function processCandidate({
   try {
     // A pass that finished between the first read and the claim wrote its marker already.
     if (runHasMarker(dir)) return { entry: silentSkip('already-done'), defer: false };
+    // The ownership check lives on the shared `gh` function and before every decisions.md write, so every loop
+    // in Steps 4.0 and 4.0b is covered and a taken-over holder stops before its next call or write. Residual: a
+    // `gh` call already in flight when the holder is suspended still completes on wake; the check decides
+    // before a call, never during one. A falsy token (a `deps.takeClaim` fake) never loses.
+    const guard = { lost: false };
+    const ownsClaim = () => {
+      if (!guard.lost && claim.token && !heartbeatClaim(dir, claim.token, now())) guard.lost = true;
+      return !guard.lost;
+    };
+    const runCtx = {
+      ...ctx,
+      timedGh: (args, input) => {
+        if (!ownsClaim()) throw Object.assign(new Error(CLAIM_LOST_DETAIL), { code: 'ECLAIMLOST' });
+        return ctx.timedGh(args, input);
+      },
+    };
     const entry = processRun({
-      dir, pr, ...ctx, now, params: inGrace ? IN_SESSION_PARAMS : LATE_MERGE_PARAMS, retryHint, includeRecords,
+      dir, pr, ...runCtx, ownsClaim, now, params: inGrace ? IN_SESSION_PARAMS : LATE_MERGE_PARAMS, retryHint, includeRecords,
     });
-    return { entry, defer: entry.reason === TRANSIENT_REASON };
+    return { entry, defer: entry.reason === TRANSIENT_REASON || entry.reason === 'in-flight' };
   } catch (e) {
     return { entry: skipped('error', { detail: oneLine(e && e.message ? e.message : e) }), defer: false };
   } finally {
@@ -676,7 +706,25 @@ async function postMergeOne({
 function processRun({
   dir, pr, root, owner, repo, host, workLinks, riskFloor, policySkip, timedGh, runClosingLinks, closeParents, writeEntries, now,
   params = LATE_MERGE_PARAMS, retryHint = RECONCILE_RETRY_HINT, includeRecords = false,
+  ownsClaim = () => true, appendDecision = appendEntry,
 }) {
+  // A holder whose claim another pass took over: in-flight and deferred (the successor owns the run). The entry
+  // names what this pass already changed on GitHub, so no report reads it as a no-op: Step 4.0b's closed
+  // parents, and Step 4.0's reopened / (non-default base) closed records from its envelope.
+  const lostEntry = (parentsClosed, env) => {
+    const reopened = numbers(env && env.reopened);
+    const closedRecords = numbers(env && env.closed);
+    return {
+      runDir: dir,
+      pr,
+      action: 'skipped',
+      reason: 'in-flight',
+      detail: CLAIM_LOST_DETAIL,
+      ...(parentsClosed > 0 ? { parentsClosed } : {}),
+      ...(reopened.length > 0 ? { recordsReopened: reopened } : {}),
+      ...(closedRecords.length > 0 ? { recordsClosed: closedRecords } : {}),
+    };
+  };
   const { code, envelope } = runClosingLinks(
     {
       run: dir, mode: 'post-merge',
@@ -684,9 +732,22 @@ function processRun({
       ...(params.closeWindowMs !== null ? { closeWindowMs: params.closeWindowMs } : {}),
     },
     {
-      cwd: () => root, mainRoot: root, ghAvailable: () => true, gh: timedGh, stderr: () => {},
+      cwd: () => root,
+      mainRoot: root,
+      ghAvailable: () => true,
+      gh: timedGh,
+      stderr: () => {},
+      // In post-merge mode closing-links.js writes an `AUTO` line only for a GitHub change it made; its `SKIP`
+      // lines are the degraded / unchecked trace, which belong to the successor's run once ours is taken over.
+      appendDecision: (args) => {
+        if (ownsClaim()) return appendDecision(args);
+        const e = parseEntry(args.entry);
+        if (e && e.status === 'AUTO') return appendDecision({ ...args, entry: markSuperseded(args.entry) });
+        return undefined;
+      },
     },
   );
+  if (!ownsClaim()) return lostEntry(0, envelope);
   // Step 4.0's record lists (issue numbers) and its `logFailed` flag (a decisions.md line it could not
   // append), for a caller that surfaces them. Emitted when the caller asked (`includeRecords`: any
   // envelope) or when the envelope's word is not clean, so the background summary can name the records a
@@ -704,7 +765,17 @@ function processRun({
   const stamp = now();
   // A failed write still reports the parents Step 4.0b closed (they are closed on GitHub either way) and keeps
   // its `extra` fields (parentFailures, stepSkips): the failure is real whether or not the marker landed (#4798).
-  const write = (items, ran, parentsClosed = 0, extra = {}) => {
+  // `githubChanges`: the items that record a GitHub change this pass made; a taken-over holder still logs
+  // those (marked superseded), and nothing else, so the successor owns the marker and every trace line.
+  const write = (items, ran, parentsClosed = 0, extra = {}, githubChanges = []) => {
+    if (!ownsClaim()) {
+      if (githubChanges.length > 0) {
+        try {
+          writeEntries({ runDir: dir, items: githubChanges.map((i) => ({ ...i, entry: markSuperseded(i.entry) })) });
+        } catch { /* the returned entry still reports the changes */ }
+      }
+      return lostEntry(parentsClosed, envelope);
+    }
     try {
       writeEntries({ runDir: dir, items });
     } catch {
@@ -780,7 +851,7 @@ function processRun({
     ...(stepSkips.length > 0 ? { stepSkips } : {}),
   };
   try {
-    const items = closed.map((c) => ({
+    const parentItems = closed.map((c) => ({
       entry: formatEntry({
         status: 'AUTO',
         now: stamp,
@@ -789,7 +860,7 @@ function processRun({
         reversibility: 'high (gh issue reopen)',
       }),
     }));
-    items.push({
+    const markerItem = {
       entry: formatEntry({
         status: 'AUTO',
         now: stamp,
@@ -797,10 +868,10 @@ function processRun({
         text: composeSummaryText({ pr, action: envelope.action, closed, skipped }),
         reversibility: 'n/a',
       }),
-    });
-    return write(items, {
+    };
+    return write([...parentItems, markerItem], {
       runDir: dir, pr, action: 'ran', closingLinks: envelope.action, parentsClosed: closed.length, ...recordsOf(envelope), ...stepFields,
-    }, closed.length, stepFields);
+    }, closed.length, stepFields, parentItems);
   } catch (e) {
     // A throw after closeParents returned must not drop the split fields: processCandidate's catch would (#4798 Decision Q5).
     // The closes already happened on GitHub, so the entry still reports them.
@@ -811,9 +882,9 @@ function processRun({
 }
 
 module.exports = {
-  postMerge, postMergeOne, classifyEntry, isFailedRun, failedRecordNumbers, parentsLeftOpen, stepSkipsOf, parentsLeftOpenLine, stepSkipsLine, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim, heartbeatClaim, releaseClaim,
+  postMerge, postMergeOne, classifyEntry, markSuperseded, isFailedRun, failedRecordNumbers, parentsLeftOpen, stepSkipsOf, parentsLeftOpenLine, stepSkipsLine, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim, heartbeatClaim, releaseClaim,
   composeSkipText, composeSummaryText, boundDetail, oneLine,
   CLEAN_CLOSING_LINKS, RERUN_REASONS, RERUN_WHERE_GH_REASONS,
   MARKER_STEP, ATTEMPT_STEP, MAX_ATTEMPTS, CLOSE_WINDOW_MS, MERGE_GRACE_MS, CLAIM_STALE_MS, CLAIM_FILENAME,
-  CLAIM_MAX_IDLE_MS, GH_TIMEOUT_CEILING_MS, CLAIM_ASIDE_MAX_AGE_MS,
+  CLAIM_MAX_IDLE_MS, GH_TIMEOUT_CEILING_MS, CLAIM_ASIDE_MAX_AGE_MS, CLAIM_LOST_DETAIL, SUPERSEDED_LOCATION_SUFFIX,
 };
