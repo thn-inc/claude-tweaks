@@ -232,6 +232,68 @@ test('AC2.1: on a github.com origin the fake gh sees GH_HOST unset', { skip: STU
   for (const line of lines) assert.ok(line.startsWith('GH_HOST=unset '), `GH_HOST injected on github.com: ${line}`);
 });
 
+// #4794 Task 4: releaseMerged gates its origin and binds all three of its gh runners
+// (ghApi, ghApiAsync, ghRunner) to the repo root, so process.cwd() decides nothing. The
+// stub answers one live issue-7 claim, a CLOSED issue and the release writes, so the pass
+// reaches every runner: the tree listing and label DELETE (ghApi), the issue-state read
+// (ghApiAsync) and the tombstone PUT (ghRunner).
+const RELEASE_GATE_DEPS = { env: {}, readFile: () => { throw new Error('ENOENT'); } };
+const CLAIMS_TREE_ARGV = 'api repos/acme/widgets/git/trees/claims-registry?recursive=1 -q {truncated: .truncated, entries: [.tree[] | select(.type == "blob" and (.path | startswith("claims/"))) | {name: (.path | split("/") | last), sha: .sha}]}';
+
+function installReleaseGh(t) {
+  const dir = tmp(t, 'ct-gh-seam-release-');
+  const log = path.join(dir, 'gh.log');
+  const claim = JSON.stringify({ runId: 'run-x', sessionId: 's1', claimedAt: new Date().toISOString(), ttlHours: 72, host: 'h' });
+  fs.writeFileSync(path.join(dir, 'tree.json'), JSON.stringify({ truncated: false, entries: [{ name: 'issue-7.json', sha: 'live-sha' }] }));
+  fs.writeFileSync(path.join(dir, 'blob.json'), JSON.stringify({ content: claim, sha: 'live-sha' }));
+  const restore = installStub('gh', [
+    '#!/bin/sh',
+    `printf 'GH_HOST=%s ARGS=%s\\n' "\${GH_HOST-unset}" "$*" >> '${log}'`,
+    'case "$*" in',
+    '  --version*) echo "gh version 2.0.0" ;;',
+    `  "api repos/"*"/git/trees/claims-registry"*) cat '${path.join(dir, 'tree.json')}' ;;`,
+    `  "api repos/"*"/contents/claims/issue-7.json?ref="*) cat '${path.join(dir, 'blob.json')}' ;;`,
+    '  "api repos/"*"/issues/7 "*) echo CLOSED ;;',
+    '  "api --method "*) echo "{}" ;;',
+    'esac',
+    'exit 0',
+    '',
+  ].join('\n'));
+  t.after(restore);
+  return () => joinSpawnLines(fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean) : []);
+}
+
+async function releaseLines(t, origin) {
+  const readLog = installReleaseGh(t);
+  const { repo } = makeRepo(t, origin);
+  withoutGhHost(t);
+  const stderr = captureSeamNotes(t);
+  const { releaseMerged } = require('../plugin/bin/lib/reconcile/release-merged');
+  const result = await releaseMerged({ cwd: repo, gateDeps: RELEASE_GATE_DEPS });
+  stderr.restore();
+  assert.equal(result.failure, undefined, JSON.stringify(result));
+  assert.equal(result.released.length, 1, `expected the issue-closed release, got ${JSON.stringify(result)}`);
+  return readLog();
+}
+
+test('AC1.1 (#4794): releaseMerged on a *.ghe.com origin sends every gh call to the origin host, whatever process.cwd() is', { skip: STUB_SKIP }, async (t) => {
+  const lines = await releaseLines(t, GHE_ORIGIN);
+  assertEveryLineReaches(lines, 'acme.ghe.com');
+  const has = (re) => lines.some((l) => re.test(argsOf(l)));
+  assert.ok(has(/^api repos\/acme\/widgets\/git\/trees\/claims-registry/), `no tree listing (ghApi), log:\n${lines.join('\n')}`);
+  assert.ok(has(/^api repos\/acme\/widgets\/issues\/7 /), `no issue-state read (ghApiAsync), log:\n${lines.join('\n')}`);
+  assert.ok(has(/^api --method PUT repos\/acme\/widgets\/contents\/claims\/issue-7\.json /), `no tombstone PUT (ghRunner), log:\n${lines.join('\n')}`);
+  assert.ok(has(/^api --method DELETE repos\/acme\/widgets\/issues\/7\/labels\/bot%3Ain-progress/), `no label DELETE, log:\n${lines.join('\n')}`);
+});
+
+test('AC2.1 (#4794): releaseMerged on a github.com origin leaves GH_HOST unset and argv unchanged', { skip: STUB_SKIP }, async (t) => {
+  const lines = await releaseLines(t, DOTCOM_ORIGIN);
+  const net = networkLines(lines);
+  assert.ok(net.length >= 4, `expected the release's gh calls, log:\n${lines.join('\n')}`);
+  for (const line of net) assert.ok(line.startsWith('GH_HOST=unset '), `GH_HOST injected on github.com: ${line}`);
+  assert.deepEqual(net.filter((l) => /^api repos\/acme\/widgets\/git\/trees\//.test(argsOf(l))).map(argsOf), [CLAIMS_TREE_ARGV]);
+});
+
 // Fix round 1: a bare `--repo owner/name` means github.com (Decision Q2). The
 // author-association lookup threads no --hostname for github.com, so on a GHE
 // origin the seam used to send it to the origin host while `issue view --repo`
