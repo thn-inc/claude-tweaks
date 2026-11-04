@@ -1001,6 +1001,43 @@ test('under --records-json a body-declared foreign blocker reads state unreadabl
   assert.match(d.err.join(''), /foreign blocker state lookup skipped under --records-json — other\/repo#5 read as state unreadable \(fail closed\)/);
 });
 
+test('under --records-json an owner/name#N key in --blocker-states-json supplies a body-declared foreign blocker\'s state with no gh call', () => {
+  let calls = 0;
+  const body = `Blocked by Other/Repo#5\nBlocked by acme/x#7\nBlocked by third/y#9\nBlocked by fourth/z#2\n\n${specBody(['b.js'])}`;
+  const d = cliDeps({
+    runner: () => { calls++; throw new Error('must not call gh'); },
+    workLinks: 'body-text',
+    files: {
+      '/r.json': JSON.stringify([issue({ number: 11, title: 'Eleven', body })]),
+      '/s.json': JSON.stringify({ 'other/repo#5': 'OPEN', 'acme/x#7': { state: 'CLOSED' }, 'third/y#9': 'bogus', 99: { state: 'OPEN' } }),
+    },
+  });
+  assert.equal(run(['11', '--blocker-landing', '--records-json', '/r.json', '--blocker-states-json', '/s.json'], d.deps), 0);
+  assert.equal(calls, 0);
+  const env = JSON.parse(d.out.join(''));
+  assert.deepEqual(env.records['11'].blockerLanding, [
+    { blocker: 5, verdict: 'open', commit: null, via: 'cross-repository', repository: 'Other/Repo' },
+    { blocker: 7, verdict: 'undetermined', commit: null, via: 'cross-repository', repository: 'acme/x' },
+    { blocker: 9, verdict: 'open', commit: null, via: 'cross-repository-state-unreadable', repository: 'third/y' },
+    { blocker: 2, verdict: 'open', commit: null, via: 'cross-repository-state-unreadable', repository: 'fourth/z' },
+  ]);
+  assert.match(d.err.join(''), /foreign blocker state lookup skipped under --records-json — fourth\/z#2 read as state unreadable \(fail closed\)/);
+  assert.doesNotMatch(d.err.join(''), /other\/repo#5|acme\/x#7|third\/y#9/i, 'the line names only the refs the file left out');
+});
+
+test('under --records-json a --blocker-states-json that answers every body-declared foreign blocker prints no lookup line', () => {
+  const d = cliDeps({
+    runner: () => { throw new Error('must not call gh'); },
+    workLinks: 'body-text',
+    files: {
+      '/r.json': JSON.stringify([issue({ number: 11, title: 'Eleven', body: `Blocked by other/repo#5\n\n${specBody(['b.js'])}` })]),
+      '/s.json': JSON.stringify({ 'other/repo#5': 'OPEN' }),
+    },
+  });
+  assert.equal(run(['11', '--blocker-landing', '--records-json', '/r.json', '--blocker-states-json', '/s.json'], d.deps), 0);
+  assert.equal(d.err.join(''), '');
+});
+
 test('--prefetched-json (the dispatch unlanded-blocker path) runs the gh lookup, reads a body-declared foreign blocker, and fails closed with the diagnostic line', () => {
   const prefetched = JSON.stringify([issue({ number: 11, title: 'Eleven', body: `Blocked by other/repo#5\n\n${specBody(['b.js'])}` })]);
   const args = [...bodyArgs('11'), '--prefetched-json', '/p.json'];

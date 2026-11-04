@@ -1,8 +1,11 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const {
-  fetchCrossRepoStates, resolveForeignStates, bodyForeignBlockers,
+  fetchCrossRepoStates, resolveForeignStates, bodyForeignBlockers, suppliedStates,
 } = require('../../../plugin/bin/lib/issues/cross-repo-states');
 const { run } = require('../../../plugin/bin/resolve-foreign-blockers');
 
@@ -210,6 +213,92 @@ test('bodyForeignBlockers keys by id when a record has no number, reads an overs
   const noSpawn = () => { throw new Error('must not spawn'); };
   assert.deepStrictEqual(bodyForeignBlockers([{ number: 1, body: 'Blocked by #4' }, { number: 2, body: null }], { spawn: noSpawn }), new Map());
   assert.deepStrictEqual(bodyForeignBlockers([], { spawn: noSpawn }), new Map());
+});
+
+// --- a pre-resolved states input (gh-absent transports, #4793) ---------------
+
+const noSpawn = () => { throw new Error('must not spawn'); };
+
+test('suppliedStates keys canonically and reads only exact OPEN or CLOSED, a string or a {state} object; anything else reads null', () => {
+  const m = suppliedStates({
+    'Other/Repo#5': 'OPEN', 'acme/x#007': { state: 'CLOSED' }, 'a/b#1': 'closed', 'a/b#2': null, 'a/b#3': 7, 'a/b#4': { state: 'merged' },
+    '12': { state: 'OPEN' }, 'not a ref': 'OPEN',
+  });
+  assert.deepStrictEqual([...m], [['other/repo#5', 'OPEN'], ['acme/x#7', 'CLOSED'], ['a/b#1', null], ['a/b#2', null], ['a/b#3', null], ['a/b#4', null]]);
+  assert.deepStrictEqual(suppliedStates(null), new Map());
+  assert.deepStrictEqual(suppliedStates(['other/repo#5']), new Map());
+  assert.deepStrictEqual([...suppliedStates(new Map([['Other/Repo#5', 'CLOSED']]))], [['other/repo#5', 'CLOSED']]);
+});
+
+test('resolveForeignStates answers a supplied ref without spawning, and asks the CLI only for the rest', () => {
+  const err = [];
+  const states = resolveForeignStates(['Other/Repo#5', 'acme/x#7'], { spawn: noSpawn, stderr: (s) => err.push(s), states: { 'other/repo#5': 'CLOSED', 'acme/x#7': 'OPEN' } });
+  assert.deepStrictEqual([...states], [['other/repo#5', 'CLOSED'], ['acme/x#7', 'OPEN']]);
+  assert.deepStrictEqual(err, [], 'a fully supplied call prints no Warning');
+
+  const spawned = [];
+  const spawn = (argv) => { spawned.push(argv); return { status: 0, stdout: '{"acme/x#7":"OPEN"}\n' }; };
+  const mixed = resolveForeignStates(['other/repo#5', 'acme/x#7', 'big/repo#9'], { spawn, stderr: () => {}, states: new Map([['other/repo#5', 'CLOSED'], ['big/repo#9', null]]) });
+  assert.deepStrictEqual([...mixed], [['other/repo#5', 'CLOSED'], ['acme/x#7', 'OPEN'], ['big/repo#9', null]]);
+  assert.strictEqual(spawned.length, 1);
+  assert.match(spawned[0][1], /^acme\/x#7$/, 'only the unsupplied ref reaches the CLI');
+});
+
+test('a supplied null or unreadable value fails closed and a ref left out still follows the gh-absent path', () => {
+  const err = [];
+  const failing = () => ({ status: 2, stdout: '', stderr: 'resolve-foreign-blockers.js: `gh` is required' });
+  const states = resolveForeignStates(['other/repo#5', 'acme/x#7', 'c/d#1'], { spawn: failing, stderr: (s) => err.push(s), states: { 'other/repo#5': 'OPEN', 'acme/x#7': 'bogus' } });
+  assert.deepStrictEqual([...states], [['other/repo#5', 'OPEN'], ['acme/x#7', null], ['c/d#1', null]]);
+  assert.strictEqual(err.length, 1, 'only the left-out ref triggers the lookup failure Warning');
+  assert.match(err[0], /^Warning: foreign blocker state lookup failed/);
+});
+
+function withStatesFile(content, fn) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreign-states-'));
+  const file = path.join(dir, 'states.json');
+  if (content !== null) fs.writeFileSync(file, content);
+  try { return fn(file); } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+}
+
+test('deps.statesFile reads the supplied states; a missing, unparseable or non-object file is no states, with one Warning line', () => {
+  withStatesFile('{"other/repo#5":"CLOSED"}', (file) => {
+    const err = [];
+    const s = resolveForeignStates(['other/repo#5'], { spawn: noSpawn, stderr: (m) => err.push(m), statesFile: file });
+    assert.deepStrictEqual([...s], [['other/repo#5', 'CLOSED']]);
+    assert.deepStrictEqual(err, []);
+  });
+  const failing = () => ({ status: 2, stdout: '', stderr: 'no gh' });
+  const bad = [['a missing file', null], ['unparseable JSON', '{'], ['a JSON array', '["other/repo#5"]'], ['a JSON string', '"OPEN"'], ['JSON null', 'null']];
+  for (const [label, content] of bad) {
+    withStatesFile(content, (file) => {
+      const err = [];
+      const s = resolveForeignStates(['other/repo#5'], { spawn: failing, stderr: (m) => err.push(m), statesFile: file });
+      assert.deepStrictEqual([...s], [['other/repo#5', null]], label);
+      assert.strictEqual(err.length, 2, `${label}: one Warning for the states file, one for the lookup`);
+      assert.match(err[0], /^Warning: foreign blocker states file .* ignored \(/, label);
+      assert.ok(err[0].endsWith('\n') && err[0].split('\n').length === 2, `${label}: one line`);
+    });
+  }
+});
+
+test('deps.statesFile unset or empty changes nothing (no Warning, no read)', () => {
+  const spawn = () => ({ status: 0, stdout: '{"other/repo#5":"OPEN"}\n' });
+  for (const statesFile of [undefined, '']) {
+    const err = [];
+    const s = resolveForeignStates(['other/repo#5'], { spawn, stderr: (m) => err.push(m), statesFile });
+    assert.deepStrictEqual([...s], [['other/repo#5', 'OPEN']]);
+    assert.deepStrictEqual(err, []);
+  }
+});
+
+test('bodyForeignBlockers builds its entries from supplied states and spawns nothing when they answer every ref', () => {
+  const records = [{ number: 11, body: 'Blocked by other/repo#5' }, { number: 13, body: 'Blocked by other/repo#5\nBlocked by acme/x#7' }];
+  const out = bodyForeignBlockers(records, { spawn: noSpawn, stderr: () => {}, states: { 'Other/Repo#5': 'CLOSED', 'acme/x#7': 'OPEN' } });
+  assert.deepStrictEqual(out.get(11), [{ number: 5, repository: 'other/repo', state: 'CLOSED' }]);
+  assert.deepStrictEqual(out.get(13), [
+    { number: 5, repository: 'other/repo', state: 'CLOSED' },
+    { number: 7, repository: 'acme/x', state: 'OPEN' },
+  ]);
 });
 
 // --- resolve-foreign-blockers.js through run(argv, deps) ---------------------

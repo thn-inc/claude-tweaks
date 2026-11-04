@@ -192,5 +192,15 @@ own filing session did live (2026-09-16T14:19Z firing): the automated top-ranked
 already had an open PR (#2450), and #2051, #2329, #1135, plus the #2267/#2268/#2269 family
 (natively blocked by open #2265) were all falsely eligible until this manual check caught them.
 
+Supply those foreign states to the queue pull instead of leaving the body-text pass blind (#4793):
+before `queue-pull-script.md` runs it, collect each eligible candidate's body-declared foreign refs
+(`Blocked by owner/name#N` lines), read each with `issue_read` (`get` method; its `owner`, `repo`
+and `issue_number`), and write the states as one JSON object keyed by `owner/name#N`, each value
+`"OPEN"`, `"CLOSED"` or `null` (`null` for a ref `issue_read` cannot read), with the Write tool to a
+session-scoped temp file (`_shared/session-tmp-root.md`). Export its path as `DISPATCH_FOREIGN_STATES`
+for the pass: a `CLOSED` ref no longer blocks, and an `OPEN` one excludes the record as
+`owner/name#N`. A ref left out of the file, or `null`, still excludes the record as
+`owner/name#N (state unreadable)` (fail closed), and an unset or unreadable file changes nothing.
+
 Re-open this section if the GitHub MCP server ever adds a generic GraphQL passthrough tool or
 batched equivalents of `buildNativeDependencyQuery`/`buildLinkedPRQuery`.

@@ -12,6 +12,13 @@
 // exit, or gh being absent. A whole-call failure also prints one 'Warning:' stderr line naming the
 // cause, so a fail-closed stop is diagnosable rather than a silent fallback.
 //
+// A gh-absent transport (MCP, typically a cloud Routine) can supply the states itself: it reads each
+// ref with issue_read and hands the answers to resolveForeignStates / bodyForeignBlockers as
+// deps.states (a Map or a plain object) or deps.statesFile (a path to that JSON object) — see
+// suppliedStates. A supplied ref is answered from there and never asked of the CLI; a ref left out
+// follows the path above (so it still fails closed with gh absent). The input is an explicit option,
+// never an ambient env var: the caller that wants the file (the dispatch queue pull) passes it.
+//
 // Partial data is always usable here: a missing alias can only make a record more blocked, never report
 // a blocker landed. So fetchCrossRepoStates recovers ANY parseable `data` from a thrown
 // `gh api graphql` call (gh exits non-zero when any alias errors, with the response on stdout). That is
@@ -19,10 +26,11 @@
 // that could otherwise read 'landed'.
 'use strict';
 
+const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const {
-  GRAPHQL_INT_MAX, parseCrossRepoDependencies, distinctCrossRepoRefs, buildCrossRepoStateQuery, foreignEntries,
+  GRAPHQL_INT_MAX, parseCrossRepoDependencies, parseCrossRepoRef, crossRepoKey, distinctCrossRepoRefs, buildCrossRepoStateQuery, foreignEntries,
 } = require('./cross-repo-refs');
 const sharedPrimitives = require('../shared-primitives');
 
@@ -47,6 +55,46 @@ function distinctRefs(refs, who) {
 const readableState = (state) => (state === 'OPEN' || state === 'CLOSED' ? state : null);
 
 const sendable = ({ parsed }) => parsed.number <= GRAPHQL_INT_MAX;
+
+// A supplied value -> its state: a string, or an object's `state` (the shape --blocker-states-json
+// carries for this repository's numeric keys). readableState decides; anything else reads null.
+const suppliedValue = (v) => readableState(isObject(v) ? v.state : v);
+
+// A states object (or Map) keyed by 'owner/name#N' -> Map<crossRepoKey, 'OPEN'|'CLOSED'|null>. Keys
+// are canonicalised like every other foreign key (case-insensitive owner/name, no leading zeros); a
+// key that is not an owner/name#N ref (this repository's numeric keys share --blocker-states-json)
+// is ignored. A value other than exactly 'OPEN' or 'CLOSED' reads null: present, so the ref is not
+// looked up, and unreadable, so it still blocks. Anything but an object or Map is no states.
+function suppliedStates(input) {
+  const out = new Map();
+  const entries = input instanceof Map ? [...input] : isObject(input) ? Object.entries(input) : [];
+  for (const [key, value] of entries) {
+    const parsed = parseCrossRepoRef(key);
+    if (parsed) out.set(crossRepoKey(parsed), suppliedValue(value));
+  }
+  return out;
+}
+
+// deps.states + deps.statesFile -> the supplied Map. A statesFile that is unset or empty is not
+// asked for; one that is set but unreadable, unparseable or not a JSON object is no states and
+// prints one Warning line, so a fail-closed stop that a missing file caused is diagnosable.
+function loadedSupplied({ states, statesFile }, stderr) {
+  const out = suppliedStates(states);
+  if (typeof statesFile !== 'string' || !statesFile) return out;
+  let why = null;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(statesFile, 'utf8'));
+    if (isObject(parsed)) {
+      for (const [key, value] of suppliedStates(parsed)) out.set(key, value);
+    } else {
+      why = 'not a JSON object';
+    }
+  } catch (err) {
+    why = err instanceof SyntaxError ? 'not valid JSON' : oneLine(err && err.message ? err.message : err);
+  }
+  if (why) stderr(`Warning: foreign blocker states file ${statesFile} ignored (${why}) — supplied states not used (fail closed)\n`);
+  return out;
+}
 
 // A thrown gh call -> its stdout's `data` object when that parses to one; else null (a whole-call failure).
 function recoveredData(err) {
@@ -115,7 +163,8 @@ function failureCause(res) {
   return detail ? `${how}: ${detail}` : how;
 }
 
-// refs + { spawn, stderr } -> Map<crossRepoKey, string|null>. Runs
+// refs + { spawn, stderr, states, statesFile } -> Map<crossRepoKey, string|null>. A ref in the supplied
+// states (suppliedStates; deps.states / deps.statesFile) takes that state and is not asked of the CLI. Runs
 // `node resolve-foreign-blockers.js <distinct sendable keys, comma-joined>` through deps.spawn(argv) (default:
 // spawnSync(process.execPath, argv, …)) and maps its JSON line; a key the CLI does not answer, or
 // answers with anything but OPEN or CLOSED, reads null; a ref above GRAPHQL_INT_MAX is not asked and reads null. Fails closed: a non-zero status, a spawn error, a signal or
@@ -124,9 +173,11 @@ function resolveForeignStates(refs, deps = {}) {
   const { spawn = realSpawn, stderr = realStderr } = deps;
   const distinct = distinctRefs(refs, 'resolveForeignStates');
   const states = new Map(distinct.map(({ key }) => [key, null]));
+  const supplied = loadedSupplied(deps, stderr);
   // An oversized ref stays null and is never spawned, like fetchCrossRepoStates: it must not
-  // reach the CLI, where it would only add a no-op entry.
-  const asked = distinct.filter(sendable);
+  // reach the CLI, where it would only add a no-op entry. A supplied ref is answered, not asked.
+  const asked = distinct.filter((d) => sendable(d) && !supplied.has(d.key));
+  for (const { key } of distinct.filter(sendable)) if (supplied.has(key)) states.set(key, supplied.get(key));
   if (asked.length === 0) return states;
 
   let cause;
@@ -165,4 +216,4 @@ function bodyForeignBlockers(records, deps = {}) {
   return out;
 }
 
-module.exports = { fetchCrossRepoStates, resolveForeignStates, bodyForeignBlockers };
+module.exports = { fetchCrossRepoStates, resolveForeignStates, bodyForeignBlockers, suppliedStates };

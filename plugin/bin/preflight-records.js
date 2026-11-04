@@ -46,7 +46,9 @@
 // unless --blocker-states-json <path> — a JSON object keyed by blocker number
 // to the {state, stateReason|state_reason} the caller fetched over another
 // transport — supplies the state: open reads open, closed NOT_PLANNED/DUPLICATE
-// not-applicable, any other closed undetermined. A compare call that throws
+// not-applicable, any other closed undetermined. The same file may also carry
+// `owner/name#N` keys (any case), each 'OPEN' | 'CLOSED' or {state}, for the
+// body-declared foreign blockers below (#4793). A compare call that throws
 // leaves that blocker undetermined/probe-failed and prints one stderr line (the
 // cause — a wrong integration branch, a 403, a rate limit — is otherwise lost).
 // Under work-links: native (--prefetched-json included, which runs the native
@@ -68,7 +70,11 @@
 // call) or when that call fails (still exit 0), no state is known, so each reads
 // open/cross-repository-state-unreadable and one stderr line names the refs and
 // the cause. A ref the call answers without a readable state (a missing alias, a
-// null issue) reads unreadable too, with no stderr line.
+// null issue) reads unreadable too, with no stderr line. Under --records-json a
+// ref whose `owner/name#N` key is in --blocker-states-json takes that state
+// (OPEN -> open/cross-repository, CLOSED -> undetermined/cross-repository, any
+// other value -> open/cross-repository-state-unreadable); only the refs the file
+// leaves out are named on the stderr line, and none is printed when it answers all.
 // The key is absent without the flag, and the rest of the envelope is unchanged.
 // Exit 0 success; 1 any record fetch (or the native dependency GraphQL call)
 // failed — every failing record named, all-at-once; under native, a candidate gh
@@ -92,7 +98,7 @@ const preflight = require('./lib/preflight-records/preflight-records');
 const {
   fetchBlockerLanding, undeterminedAll, classifyFromState, classifyCrossRepository, recoveredResponse,
 } = require('./lib/preflight-records/blocker-landing');
-const { fetchCrossRepoStates } = require('./lib/issues/cross-repo-states');
+const { fetchCrossRepoStates, suppliedStates } = require('./lib/issues/cross-repo-states');
 const {
   parseCrossRepoDependencies, parseCrossRepoRef, crossRepoKey, distinctCrossRepoRefs, foreignEntries, mergeForeignBlockers,
 } = require('./lib/issues/cross-repo-refs');
@@ -383,7 +389,7 @@ function blockerLandingFromRecordsJson(opts, union, deps) {
     deps.stderr(`preflight-records.js: --blocker-states-json has no usable state for ${listBlockers(unusable)}\n`);
     return { code: 2 };
   }
-  return { results };
+  return { results, states };
 }
 
 // #4553, gh path: -> { results } | { code }. An empty blocker set needs no
@@ -428,8 +434,10 @@ function blockerLandingFromGh(opts, union, repoSpec, deps) {
 // --blocker-landing judges them like the native ones. A ref already linked natively is dropped
 // before the lookup (judged and named once); the rest are looked up in ONE batched call. Fails
 // closed: under --records-json (no gh) or when the call throws, no state is known, so every ref
-// reads state unreadable (open) and one stderr line says why (spec Q5).
-function addBodyForeignBlockers(records, issues, numbers, opts, loaded, deps) {
+// reads state unreadable (open) and one stderr line says why (spec Q5). Under --records-json the
+// --blocker-states-json file may carry an `owner/name#N` key per such ref (suppliedStates): a ref it
+// answers takes that state, and only the refs it leaves out are fail-closed unreadable.
+function addBodyForeignBlockers(records, issues, numbers, opts, loaded, deps, supplied = new Map()) {
   const perRecord = new Map();
   for (const n of numbers) {
     const issue = issues.get(n);
@@ -442,8 +450,11 @@ function addBodyForeignBlockers(records, issues, numbers, opts, loaded, deps) {
   const refs = [...perRecord.values()].flat();
   let states = new Map();
   let failure = null;
+  let unanswered = refs;
   if (opts.recordsJson) {
-    failure = 'skipped under --records-json';
+    states = supplied;
+    unanswered = refs.filter((ref) => !supplied.has(crossRepoKey(parseCrossRepoRef(ref))));
+    if (unanswered.length) failure = 'skipped under --records-json';
   } else {
     try {
       states = fetchCrossRepoStates({ refs, host: loaded.repoSpec && loaded.repoSpec.host, runner: deps.runner });
@@ -452,7 +463,7 @@ function addBodyForeignBlockers(records, issues, numbers, opts, loaded, deps) {
     }
   }
   if (failure) {
-    const names = distinctCrossRepoRefs(refs).distinct.map(({ parsed }) => `${parsed.repository}#${parsed.digits}`).join(', ');
+    const names = distinctCrossRepoRefs(unanswered).distinct.map(({ parsed }) => `${parsed.repository}#${parsed.digits}`).join(', ');
     deps.stderr(`preflight-records.js: foreign blocker state lookup ${failure} — ${names} read as state unreadable (fail closed)\n`);
   }
   for (const [n, nRefs] of perRecord) {
@@ -513,7 +524,7 @@ function run(argv, deps = realDeps) {
       ? blockerLandingFromRecordsJson(opts, union, deps)
       : blockerLandingFromGh(opts, union, loaded.repoSpec, deps);
     if (landing.code !== undefined) return landing.code;
-    addBodyForeignBlockers(records, issues, numbers, opts, loaded, deps);
+    addBodyForeignBlockers(records, issues, numbers, opts, loaded, deps, suppliedStates(landing.states));
     for (const n of numbers) {
       records[String(n)].blockerLanding = [
         ...byRecord.get(n).map((b) => landing.results.get(b)),

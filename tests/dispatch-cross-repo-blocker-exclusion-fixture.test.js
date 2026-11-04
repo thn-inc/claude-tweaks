@@ -123,6 +123,66 @@ test('a body-declared foreign blocker whose state cannot be read excludes its re
   assert.match(res.stderr, /foreign blocker state lookup failed \(exit 2: resolve-foreign-blockers\.js: `gh` is required\)/);
 });
 
+// The gh-absent MCP firing: the agent reads each foreign ref with issue_read and exports the states
+// file as DISPATCH_FOREIGN_STATES. PATH still holds no gh, so only a supplied state can answer.
+function runBodyPass(statesFile) {
+  const snippet = extractSnippet(BODY_START_ANCHOR, 'body-text partition snippet');
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-body-foreign-states-'));
+  const file = (name) => path.join(scratch, name);
+  fs.writeFileSync(file('pre-dep.json'), JSON.stringify([
+    { number: 31, body: 'Blocked by other/repo#5' },
+    { number: 32, body: 'Blocked by Other/Repo#6' },
+    { number: 33, body: 'Blocked by other/repo#7' },
+    { number: 34, body: 'nothing' },
+  ]));
+  fs.writeFileSync(file('open.json'), '[]');
+  fs.writeFileSync(file('verified-open.txt'), '');
+  const env = {
+    PATH: pathWithOnly(['node', 'bash'], { exclude: ['gh'] }),
+    CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT,
+    DISPATCH_ELIGIBLE_PRE_DEP: file('pre-dep.json'),
+    DISPATCH_OPEN_NUMBERS: file('open.json'),
+    DISPATCH_VERIFIED_OPEN_DEPS: file('verified-open.txt'),
+    DISPATCH_ELIGIBLE: file('eligible.json'),
+    DISPATCH_BLOCKED_EXCLUDED_BODY: file('excluded.json'),
+  };
+  if (statesFile) env.DISPATCH_FOREIGN_STATES = statesFile(file);
+  const res = spawnSync('bash', ['-c', snippet], { encoding: 'utf8', env });
+  assert.strictEqual(res.status, 0, res.stderr);
+  return {
+    res,
+    excluded: JSON.parse(fs.readFileSync(file('excluded.json'), 'utf8')),
+    eligible: JSON.parse(fs.readFileSync(file('eligible.json'), 'utf8')).map((r) => r.number),
+  };
+}
+
+test('a supplied DISPATCH_FOREIGN_STATES file lets a CLOSED foreign blocker group, excludes an OPEN one by name, and leaves an absent key unreadable (#4793)', () => {
+  const { res, excluded, eligible } = runBodyPass((file) => {
+    fs.writeFileSync(file('states.json'), JSON.stringify({ 'other/repo#5': 'CLOSED', 'OTHER/REPO#6': 'OPEN' }));
+    return file('states.json');
+  });
+  assert.deepEqual(excluded, [
+    { number: 32, blockedBy: ['Other/Repo#6'] },
+    { number: 33, blockedBy: ['other/repo#7 (state unreadable)'] },
+  ]);
+  assert.deepEqual(eligible, [31, 34]);
+  assert.match(res.stderr, /foreign blocker state lookup failed \(exit 2: resolve-foreign-blockers\.js: `gh` is required\)/, 'the left-out ref still takes the gh-absent path');
+});
+
+test('a DISPATCH_FOREIGN_STATES that is unset behaves as before, and one that names an unreadable file warns once and fails closed (#4793)', () => {
+  const unset = runBodyPass(null);
+  assert.deepEqual(unset.eligible, [34]);
+  assert.deepEqual(unset.excluded.map((e) => e.blockedBy), [
+    ['other/repo#5 (state unreadable)'], ['Other/Repo#6 (state unreadable)'], ['other/repo#7 (state unreadable)'],
+  ]);
+
+  const missing = runBodyPass((file) => file('no-such-states.json'));
+  assert.deepEqual(missing.eligible, [34]);
+  assert.strictEqual(missing.excluded.length, 3);
+  const warnings = missing.res.stderr.split('\n').filter((l) => /^Warning: foreign blocker states file /.test(l));
+  assert.strictEqual(warnings.length, 1, missing.res.stderr);
+});
+
 // The report and the MCP section hard-wrap at about 100 columns, so whitespace is collapsed first.
 const collapse = (text) => text.replace(/\s+/g, ' ');
 
@@ -133,7 +193,10 @@ const REPORT_FACTS = [
 const MCP_FACTS = [
   [/a mention naming another repository \(`owner\/name#N`\)/i, 'a mention naming another repository is owner/name#N'],
   [/open or unreadable, it blocks/, 'a foreign blocker that is open or unreadable blocks'],
-  [/suffixed ` \(state unreadable\)` when `issue_read` cannot read its state/, 'an unreadable foreign state is suffixed (state unreadable)'],
+  [/suffixed ` \(state unreadable\)` when `issue_read` cannot read its state/, 'an unreadable foreign state is suffixed (state unreadable)'],  [/read each with `issue_read` \(`get` method; its `owner`, `repo` and `issue_number`\)/, 'the MCP agent reads each body-declared foreign ref with issue_read'],
+  [/write the states as one JSON object keyed by `owner\/name#N`, each value `"OPEN"`, `"CLOSED"` or `null`/, 'the MCP agent writes the states as a JSON object keyed by owner/name#N'],
+  [/Export its path as `DISPATCH_FOREIGN_STATES` for the pass/i, 'the MCP agent exports the states file path as DISPATCH_FOREIGN_STATES'],
+  [/A ref left out of the file, or `null`, still excludes the record as `owner\/name#N \(state unreadable\)` \(fail closed\)/i, 'a ref left out or null still excludes the record (state unreadable)'],
 ];
 const NOTES_FACTS = [
   [/suffixed ` \(state unreadable\)` when its state could not be read/, 'the queue notes name an unreadable foreign state with the suffix'],
