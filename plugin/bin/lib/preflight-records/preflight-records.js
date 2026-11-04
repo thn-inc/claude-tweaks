@@ -16,7 +16,7 @@
 
 const { execFileSync } = require('child_process');
 const {
-  parseRecordFacets, parseDependencies, extractFingerprint,
+  parseRecordFacets, parseDependencies, extractFingerprint, withoutCrossRepoBlockers,
 } = require('../issues/record');
 const { extractKeyFiles, groupByFileOverlap, directOverlaps } = require('../issues/grouping');
 const { fetchNativeDependencies: sharedFetchNativeDependencies } = require('../issues/native-dependencies');
@@ -112,7 +112,9 @@ function issuesFromRecordsJson(raw, numbers, flag = '--records-json') {
 }
 
 // fetchNativeDependencies({ numbers, owner, repo, runner }) -> Map<number,
-// {blockedBy: number[], openBlocker: boolean, openBlockerIds: number[]}>.
+// {blockedBy: number[], openBlocker: boolean, openBlockerIds: number[],
+// crossRepoBlockers?: [{number, repository, state}]}> (crossRepoBlockers only
+// when a blocker lives in another repository, #4793).
 // Executes the batched, aliased GraphQL call (bin/lib/issues/record.js's
 // buildNativeDependencyQuery) and parses the response — moved to
 // bin/lib/issues/native-dependencies.js (#538) so this CLI's call site and
@@ -132,12 +134,18 @@ function fetchNativeDependencies({
 }
 
 // issues: Map<number, issue>, dependencies: Map<number, {blockedBy, openBlocker}> | null
-// -> { "<n>": { title, facets, blockedBy, openBlocker, keyFiles, fingerprint } }.
+// -> { "<n>": { title, facets, blockedBy, openBlocker, keyFiles, fingerprint,
+// crossRepoBlockers? } }.
 // dependencies is null under work-links: body-text — blockedBy is read straight
 // off the record's own body (parseDependencies) instead, with no extra call;
 // that driver has no open/closed signal for a blocker (parseDependencies only
 // ever returns blocker *numbers*, never state), so openBlocker is null there —
 // "undetermined by this driver", never a false claim of "checked, not open".
+// Under native, blockedBy is this repository's blockers only (#4793): a blocker
+// the native read found in ANOTHER repository (dep.crossRepoBlockers, [{number,
+// repository, state}]) leaves it, so merge-gate.js and waves.js never see a
+// foreign number as an in-run edge, and rides on the record's `crossRepoBlockers`
+// instead — a key present only when non-empty, after fingerprint.
 function buildRecords({ issues, dependencies = null } = {}) {
   const records = {};
   for (const [n, issue] of issues) {
@@ -145,11 +153,14 @@ function buildRecords({ issues, dependencies = null } = {}) {
     records[String(n)] = {
       title: issue.title,
       facets: parseRecordFacets(issue.labels),
-      blockedBy: dep ? dep.blockedBy : parseDependencies(issue.body),
+      blockedBy: dep ? withoutCrossRepoBlockers(dep.blockedBy, dep.crossRepoBlockers) : parseDependencies(issue.body),
       openBlocker: dep ? dep.openBlocker : null,
       keyFiles: extractKeyFiles(issue),
       fingerprint: extractFingerprint(issue.body),
     };
+    if (dep && Array.isArray(dep.crossRepoBlockers) && dep.crossRepoBlockers.length) {
+      records[String(n)].crossRepoBlockers = dep.crossRepoBlockers;
+    }
   }
   return records;
 }
@@ -184,7 +195,10 @@ function buildDirectOverlaps(records) {
 // blockedBy minus every positional number (order kept) — a blocker that is
 // itself in the run is ordered by the wave/DAG logic, never judged for
 // landing — and the union of those, deduped and ascending, which is the one
-// batch the blocker query takes.
+// batch the blocker query takes. A cross-repository blocker (#4793) is already
+// gone from blockedBy (buildRecords), so it never reaches this batch: its
+// number names another repository's issue and is judged from its native state
+// (blocker-landing.js's classifyCrossRepository), never queried here.
 function outOfRunBlockers(records, numbers) {
   const inRun = new Set(numbers);
   const byRecord = new Map();
