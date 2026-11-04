@@ -61,6 +61,62 @@ test('every pack field the pack produces has a prose consumer that reads it (#19
   for (const n of PROBE_NAMES) assert.ok(corpus.includes(`pack.${n}`), `no prose consumer reads pack.${n}`);
 });
 
+// #4793 Q2: the `work-links: native` snippet in unblocked-records.md carries the
+// same cross-repository filter pack.js applies. Each check has its own message,
+// so a control can prove the check it targets (not whichever fails first).
+const NATIVE_SNIPPET_MESSAGES = {
+  require: 'native snippet requires { withoutCrossRepoBlockers, foreignBlockerBlocks } from bin/lib/issues/record.js',
+  strip: 'native snippet removes crossRepoBlockers numbers before the includes(closedNum) test',
+  foreign: 'native snippet keeps a dependent blocked by a foreign blocker that is not CLOSED',
+  legacy: 'native snippet no longer tests the raw blockedBy.includes(closedNum)',
+};
+
+function nativeSnippetOf(text) {
+  const at = text.indexOf("bin/resolve-blockers.js', records");
+  assert.notStrictEqual(at, -1, 'the work-links: native snippet is present in unblocked-records.md');
+  const start = text.lastIndexOf('```bash', at);
+  const end = text.indexOf('\n```', at);
+  assert.ok(start !== -1 && end !== -1, 'the native snippet sits in a bash fence');
+  return text.slice(start, end);
+}
+
+function assertNativeSnippetSkipsCrossRepo(text) {
+  // Collapse whitespace so a hard-wrapped snippet still matches.
+  const snippet = nativeSnippetOf(text).replace(/\s+/g, ' ');
+  assert.ok(
+    snippet.includes("const { withoutCrossRepoBlockers, foreignBlockerBlocks } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js')"),
+    NATIVE_SNIPPET_MESSAGES.require,
+  );
+  assert.ok(
+    snippet.includes('withoutCrossRepoBlockers(byNumber[r.number].blockedBy, byNumber[r.number].crossRepoBlockers).includes(closedNum)'),
+    NATIVE_SNIPPET_MESSAGES.strip,
+  );
+  assert.ok(
+    snippet.includes('!(byNumber[r.number].crossRepoBlockers || []).some(foreignBlockerBlocks)'),
+    NATIVE_SNIPPET_MESSAGES.foreign,
+  );
+  assert.ok(!snippet.includes('byNumber[r.number].blockedBy.includes(closedNum)'), NATIVE_SNIPPET_MESSAGES.legacy);
+}
+
+test('#4793 Q2: the unblocked-records.md native snippet skips cross-repository blocker numbers', () => {
+  assertNativeSnippetSkipsCrossRepo(read('plugin/skills/wrap-up/unblocked-records.md'));
+});
+
+test('#4793 Q2 go-red: each native-snippet check throws with its own message on a mutated copy', () => {
+  const original = read('plugin/skills/wrap-up/unblocked-records.md');
+  const call = 'withoutCrossRepoBlockers(byNumber[r.number].blockedBy, byNumber[r.number].crossRepoBlockers)';
+  const mutations = {
+    require: original.replace('const { withoutCrossRepoBlockers, foreignBlockerBlocks } = require(', 'const { withoutCrossRepoBlockers } = require('),
+    strip: original.replace(call, 'byNumber[r.number].blockedBy'),
+    foreign: original.replace(' && !(byNumber[r.number].crossRepoBlockers || []).some(foreignBlockerBlocks)', ''),
+    legacy: original.replace('.map((r) => ({ number: r.number, title: r.title }));', '.map((r) => ({ number: r.number, title: r.title })); /* byNumber[r.number].blockedBy.includes(closedNum) */'),
+  };
+  for (const [key, mutated] of Object.entries(mutations)) {
+    assert.notEqual(mutated, original, `${key}: the mutation matched nothing`);
+    assert.throws(() => assertNativeSnippetSkipsCrossRepo(mutated), { message: NATIVE_SNIPPET_MESSAGES[key] }, key);
+  }
+});
+
 test('every inputs field a closing-keyword reader relies on is produced by resolveInputs and read by prose (#3399)', () => {
   const { resolveInputs } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'wrap-up', 'pack.js'));
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-3399-'));

@@ -481,6 +481,35 @@ test('recordLabels: gh issue view calls are concurrency-capped, not fired all at
   assert.ok(peak > 0, 'sanity: calls actually happened');
 });
 
+// #4793: resolve-blockers.js entries carry `crossRepoBlockers` ([{number,
+// repository, state}]) for a native blocker linked from another repository. Its
+// number is only another repository's issue number, never this repository's.
+function unblockedWithResolved(entry) {
+  const deps = okDeps({
+    execFile: async (cmd, args) => {
+      if (cmd === 'node' && String(args[0]).endsWith('resolve-blockers.js')) return { stdout: JSON.stringify({ 1600: entry }), stderr: '' };
+      return okDeps().execFile(cmd, args);
+    },
+  });
+  return gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['unblocked'], deps });
+}
+
+test('#4793 Q2: a dependent blocked only by another repository\'s #1535 is not reported unblocked when this repository closes #1535', async () => {
+  const pack = await unblockedWithResolved({ blockedBy: [1535], openBlocker: false, openBlockerIds: [], crossRepoBlockers: [{ number: 1535, repository: 'other/repo', state: 'CLOSED' }] });
+  assert.strictEqual(pack.unblocked.ok, true);
+  assert.deepStrictEqual(pack.unblocked.value, []);
+});
+
+test('#4793 Q2: this repository\'s #1535 beside another repository\'s #1535 still reports the dependent unblocked', async () => {
+  const pack = await unblockedWithResolved({ blockedBy: [1535, 1535], openBlocker: false, openBlockerIds: [], crossRepoBlockers: [{ number: 1535, repository: 'other/repo', state: 'CLOSED' }] });
+  assert.deepStrictEqual(pack.unblocked.value, [{ number: 1600, title: 'Dependent' }]);
+});
+
+test('#4793 Q5: a foreign blocker with no readable state keeps the dependent blocked', async () => {
+  const pack = await unblockedWithResolved({ blockedBy: [1535, 7], openBlocker: false, openBlockerIds: [], crossRepoBlockers: [{ number: 7, repository: 'other/repo', state: null }] });
+  assert.deepStrictEqual(pack.unblocked.value, []);
+});
+
 test('#2425: unblocked (work-links: native) passes --repo, resolved from `origin`, to resolve-blockers.js — including on a GitHub Enterprise remote', async () => {
   const calls = [];
   const deps = okDeps({

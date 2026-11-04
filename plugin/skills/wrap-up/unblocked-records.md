@@ -52,6 +52,7 @@ WRAPUP_OPEN_RECORDS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" -
 WRAPUP_UNBLOCKED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value wrapup-unblocked.json)"
 node -e "
   const { execFileSync } = require('child_process');
+  const { withoutCrossRepoBlockers, foreignBlockerBlocks } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
   const records = require('$WRAPUP_OPEN_RECORDS');
   const closedNum = ${CLOSED_NUM};
   let byNumber = {};
@@ -64,13 +65,13 @@ node -e "
     }
   }
   const unblocked = records
-    .filter((r) => byNumber[r.number] && byNumber[r.number].blockedBy.includes(closedNum) && !byNumber[r.number].openBlocker)
+    .filter((r) => byNumber[r.number] && withoutCrossRepoBlockers(byNumber[r.number].blockedBy, byNumber[r.number].crossRepoBlockers).includes(closedNum) && !byNumber[r.number].openBlocker && !(byNumber[r.number].crossRepoBlockers || []).some(foreignBlockerBlocks))
     .map((r) => ({ number: r.number, title: r.title }));
   require('fs').writeFileSync('$WRAPUP_UNBLOCKED', JSON.stringify(unblocked));
 "
 ```
 
-`byNumber[r.number].openBlocker` reflects LIVE blocker state at query time, run after this session already closed `${CLOSED_NUM}` — so a `false` here means every one of the record's blockers, `${CLOSED_NUM}` included, is now resolved, without needing to special-case `closedNum` out of the check. On any error this fails safe — skip the check for this run (an empty `wrapup-unblocked.json`) rather than blocking wrap-up, matching this section's own "must never gate, block, or delay the wrap-up" rule above and dispatch's identical native-mode fallback.
+`byNumber[r.number].openBlocker` reflects LIVE blocker state at query time, run after this session already closed `${CLOSED_NUM}` — so a `false` here means every one of the record's blockers, `${CLOSED_NUM}` included, is now resolved, without needing to special-case `closedNum` out of the check. On any error this fails safe — skip the check for this run (an empty `wrapup-unblocked.json`) rather than blocking wrap-up, matching this section's own "must never gate, block, or delay the wrap-up" rule above and dispatch's identical native-mode fallback. A blocker linked from another repository shares only its number with this repository's issues, so `crossRepoBlockers` numbers are removed before the `includes(closedNum)` test, and a foreign blocker that is not CLOSED (OPEN, or state unreadable) keeps its dependent blocked (#4793) — closing this repository's #N never reports a record blocked by `other/repo#N` as unblocked.
 
 **`work-backend: local-files`:** read `pack.unblocked` from `{run-dir}/wrap-up-pack.json` first (#1930) — on this backend its `value` is the same `[{number, title}]` list the snippet below computes, `number` being the record id; write it to `$WRAPUP_UNBLOCKED` and skip the snippet. Run the snippet only when the pack file is absent; an `ok: false` field is this file's opening "on any error, log and continue" path — skip the newly-unblocked check this run, never an empty list read as "nothing unblocked". Otherwise resolve this run's session-scoped path first (`_shared/session-tmp-root.md`):
 

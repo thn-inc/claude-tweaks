@@ -15,7 +15,7 @@ const { execFile: execFileCb, execFileSync } = require('child_process');
 const { promisify } = require('util');
 const { resolvePolicyConfig } = require('../policy-schema');
 const { parseManifestYaml } = require('../flow/manifest');
-const { parseDependencies, DEFER_REASONS } = require('../issues/record');
+const { parseDependencies, withoutCrossRepoBlockers, foreignBlockerBlocks, DEFER_REASONS } = require('../issues/record');
 const { runWithConcurrency } = require('../reconcile/gh-pool');
 const { gateOriginRepo, repoSlug, ghOptions } = require('../repo-resolve');
 const { readRunStateWithParent } = require('../hooks/context');
@@ -736,7 +736,11 @@ function buildProbes(inputs, deps) {
         if (!records.length) return [];
         const res = await execBounded(deps, 'node', [path.join(BIN, 'resolve-blockers.js'), records.map((r) => r.number).join(','), ...repoArgs], inputs.worktree);
         const byNumber = JSON.parse(res.stdout.trim());
-        return records.filter((r) => byNumber[r.number] && byNumber[r.number].blockedBy.includes(closed) && !byNumber[r.number].openBlocker).map(toSummary);
+        // #4793 Decisions Q2/Q5: a foreign blocker's number is another repository's, so it never matches `closed`, and a foreign blocker that is not CLOSED keeps the dependent blocked.
+        return records.filter((r) => {
+          const e = byNumber[r.number];
+          return e && withoutCrossRepoBlockers(e.blockedBy, e.crossRepoBlockers).includes(closed) && !e.openBlocker && !(e.crossRepoBlockers || []).some(foreignBlockerBlocks);
+        }).map(toSummary);
       }
       // work-links: body-text — the same two passes unblocked-records.md runs.
       // Pass 1 is `parseDependencies` (the canonical line-anchored `Blocked by
