@@ -181,12 +181,20 @@ function foreignBlockerBlocks(entry) {
   return entry.state !== 'CLOSED';
 }
 
+const UNREADABLE_SUFFIX = ' (state unreadable)';
+
 // A foreign blocker's qualified `owner/repo#N` name; a state that is neither
 // OPEN nor CLOSED adds ' (state unreadable)' (Decisions Q5), so the stop it
 // causes can be diagnosed instead of reading as a silent fallback.
 function foreignBlockerRef(entry) {
   const ref = `${entry.repository}#${entry.number}`;
-  return entry.state === 'OPEN' || entry.state === 'CLOSED' ? ref : `${ref} (state unreadable)`;
+  return entry.state === 'OPEN' || entry.state === 'CLOSED' ? ref : `${ref}${UNREADABLE_SUFFIX}`;
+}
+
+// foreignBlockerRef's inverse for the suffix: a qualified ref string without the
+// ' (state unreadable)' it may carry, so two spellings of one blocker share a key.
+function withoutUnreadableSuffix(ref) {
+  return ref.endsWith(UNREADABLE_SUFFIX) ? ref.slice(0, -UNREADABLE_SUFFIX.length) : ref;
 }
 
 // { openBlockerIds, crossRepoBlockers } (a fetchNativeDependencies entry's fields)
@@ -360,5 +368,5 @@ module.exports = {
   parseDependencies, parseDependencyAssumptions, buildNativeDependencyQuery,
   hasOpenNativeBlocker, parseSubIssues, parseParent, buildNativeSubIssuesQuery, buildNativeParentQuery,
   partitionByOpenBodyBlockers, partitionByOpenNativeBlockers, buildLinkedPRQuery, partitionByOpenLinkedPR,
-  crossRepositoryBlockers, withoutCrossRepoBlockers, foreignBlockerBlocks, foreignBlockerRef, openBlockerRefs, openNativeBlockerRefs,
+  crossRepositoryBlockers, withoutCrossRepoBlockers, foreignBlockerBlocks, foreignBlockerRef, withoutUnreadableSuffix, openBlockerRefs, openNativeBlockerRefs,
 };

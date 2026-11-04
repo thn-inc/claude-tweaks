@@ -18,7 +18,7 @@
 const { execSync } = require('child_process');
 const { LARGE_MAX_BUFFER_BYTES } = require('../shared-primitives');
 const { splitLogZ } = require('../git-z');
-const { PRIORITIES, TIERS, parseRecordFacets, parseDependencies, foreignBlockerBlocks, foreignBlockerRef } = require('./record');
+const { PRIORITIES, TIERS, parseRecordFacets, parseDependencies, foreignBlockerBlocks, foreignBlockerRef, withoutUnreadableSuffix } = require('./record');
 const { parseCrossRepoRef, crossRepoKey } = require('./cross-repo-refs');
 const { blockersOf } = require('./ranking');
 const { evaluateGrantGate } = require('./grant-gate');
@@ -164,6 +164,15 @@ function readyGrantedSubset(records) {
   return records.filter((r) => r.facets.stage === 'ready' && (r.facets.grants.build || r.facets.grants.merge));
 }
 
+// records[] -> the records whose body-declared foreign blockers may be looked up: every record
+// but an `unsynced` local one. Their ids are local-record numbers, a different namespace from
+// the GitHub numbers in the merged set (#512 promise F1), and `bodyForeignBlockers` keys its
+// Map by `r.number ?? r.id`, so an unsynced id 12 would otherwise collide with GitHub #12 and
+// one record's refs would be attached to the other. Every caller filters through here.
+function foreignLookupSet(records) {
+  return records.filter((r) => !(r.facets && r.facets.unsynced === true));
+}
+
 // (records[], Map<r.number ?? r.id, {number, repository, state}[]>) -> records[]. Adds each
 // body-declared foreign blocker that still blocks (open or unreadable, never CLOSED) to the
 // tier `blockersOf` reads for that record, so `funnelBuckets` files the record under
@@ -182,7 +191,7 @@ function attachBodyForeignBlockers(records, foreignByRecord) {
     const tier = Array.isArray(r.blockedBy) ? r.blockedBy : r.facets && Array.isArray(r.facets.blockedBy) ? r.facets.blockedBy : null;
     if (!tier) return { ...r, blockedBy: [...parseDependencies(r.body || ''), ...refs.map(foreignBlockerRef)] };
     const known = new Set(
-      tier.map((b) => (typeof b === 'string' ? parseCrossRepoRef(b.replace(/ \(state unreadable\)$/, '')) : null)).filter(Boolean).map(crossRepoKey),
+      tier.map((b) => (typeof b === 'string' ? parseCrossRepoRef(withoutUnreadableSuffix(b)) : null)).filter(Boolean).map(crossRepoKey),
     );
     const added = refs.filter((e) => !known.has(crossRepoKey(e))).map(foreignBlockerRef);
     if (added.length === 0) return r;
@@ -393,5 +402,6 @@ module.exports = {
   machineGrantOutlook,
   readyGrantedSubset,
   attachBodyForeignBlockers,
+  foreignLookupSet,
   refineWorklist,
 };

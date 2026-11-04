@@ -13,8 +13,10 @@ const {
   machineGrantOutlook,
   readyGrantedSubset,
   attachBodyForeignBlockers,
+  foreignLookupSet,
 } = require('../../../plugin/bin/lib/issues/backlog');
-const { parseRecordFacets } = require('../../../plugin/bin/lib/issues/record');
+const { parseRecordFacets, foreignBlockerRef } = require('../../../plugin/bin/lib/issues/record');
+const { bodyForeignBlockers } = require('../../../plugin/bin/lib/issues/cross-repo-states');
 
 function record(overrides) {
   return {
@@ -400,19 +402,48 @@ test('Plan Review Clarifications: attachBodyForeignBlockers merges into an alrea
   const open5 = { number: 5, repository: 'Other/Repo', state: 'OPEN' };
   const records = [
     rec(1, g, { body, blockedBy: ['other/repo#5'] }),
-    rec(2, g, { body, blockedBy: ['other/repo#5 (state unreadable)'] }),
+    rec(2, g, { body, blockedBy: [foreignBlockerRef({ repository: 'other/repo', number: 5, state: null })] }),
     rec(3, { ...g, blockedBy: [9] }, { body }),
     rec(4, { ...g, blockedBy: ['other/repo#5'] }, { body }),
   ];
   const foreign = new Map([1, 2, 3, 4].map((n) => [n, [open5]]));
   const out = attachBodyForeignBlockers(records, foreign);
   assert.deepStrictEqual(out[0].blockedBy, ['other/repo#5'], 'a natively linked ref is not listed twice, case-insensitively');
-  assert.deepStrictEqual(out[1].blockedBy, ['other/repo#5 (state unreadable)'], 'an unreadable-suffixed native ref counts as the same key');
+  assert.deepStrictEqual(out[1].blockedBy, [foreignBlockerRef({ repository: 'other/repo', number: 5, state: null })], 'an unreadable-suffixed native ref counts as the same key');
   assert.deepStrictEqual(out[2].facets.blockedBy, [9, 'Other/Repo#5'], 'facets.blockedBy tier gets the ref appended');
   assert.equal('blockedBy' in out[2], false, 'no top-level tier is invented when facets.blockedBy holds the blockers');
   assert.deepStrictEqual(out[3].facets.blockedBy, ['other/repo#5']);
   assert.deepStrictEqual(records[2].facets.blockedBy, [9], 'the input facets are not mutated');
   assert.deepEqual(funnelBuckets(out).granted.map((r) => r.number).sort(), [1, 2, 3, 4]);
+});
+
+test('Plan Review Clarifications: foreignLookupSet keeps an unsynced local id out of the lookup, so it never collides with the GitHub record of the same number (#512 namespace rule)', () => {
+  const g = { stage: 'ready', grants: { build: true, merge: false } };
+  const local = (body) => {
+    const { number, ...r } = rec(12, { ...g, unsynced: true }, { body });
+    return { ...r, id: number };
+  };
+  const spawn = () => ({ status: 0, stdout: JSON.stringify({ 'other/repo#7': 'OPEN', 'other/repo#8': 'CLOSED' }) });
+  const run = (records, filter) => {
+    const candidates = filter ? foreignLookupSet(records) : records;
+    const attached = attachBodyForeignBlockers(records, bodyForeignBlockers(candidates, { spawn, stderr: () => {} }));
+    return funnelBuckets(attached);
+  };
+  const cases = [
+    ['an unsynced ref must not attach to GitHub #12', 'plain', 'Blocked by other/repo#7', []],
+    ['a later unsynced CLOSED ref must not replace GitHub #12\'s OPEN one', 'Blocked by other/repo#7', 'Blocked by other/repo#8', [12]],
+  ];
+  for (const [label, githubBody, localBody, grantedNumbers] of cases) {
+    for (const order of ['github-first', 'local-first']) {
+      const github = rec(12, g, { body: githubBody });
+      const records = order === 'github-first' ? [github, local(localBody)] : [local(localBody), github];
+      const b = run(records, true);
+      assert.deepEqual(b.granted.map((r) => r.number), grantedNumbers, `${label} (${order})`);
+    }
+    // go-red control: without the filter the ids collide and the verdict flips.
+    const collided = run([rec(12, g, { body: githubBody }), local(localBody)], false);
+    assert.notDeepEqual(collided.granted.map((r) => r.number), grantedNumbers, `${label}: the unfiltered lookup collides`);
+  }
 });
 
 test('funnelBuckets: blockedBy absent means every granted record is dispatchable (pre-#514 dormancy)', () => {

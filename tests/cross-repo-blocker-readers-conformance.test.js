@@ -31,21 +31,22 @@ const FUNNEL_NOTE_FACTS = [
   [/as `owner\/name#N \(state unreadable\)` in the latter case/, 'the funnel note names an unreadable foreign state with the suffix'],
   [/body-declared foreign blockers/, 'the funnel note says the script attaches body-declared foreign blockers'],
   [/to any ready\+granted record/, 'the funnel note covers every ready+granted record, not only those with nothing attached'],
+  [/`foreignLookupSet` leaves `unsynced` local records out/, 'the funnel note says unsynced local records stay out of the lookup'],
   [/merges each one that is open or unreadable/, 'the funnel note says attachBodyForeignBlockers merges rather than skips'],
 ];
 const FUNNEL_SNIPPET_FACTS = [
-  [/bl\.attachBodyForeignBlockers\(/, 'the funnel snippet attaches the body-declared foreign blockers'],
-  [/bodyForeignBlockers\(bl\.readyGrantedSubset\(/, 'the funnel snippet looks up the ready+granted subset in one bodyForeignBlockers call'],
+  // The region anchor already pins `bl.attachBodyForeignBlockers(`; these facts carry what it does not.
+  [/bodyForeignBlockers\(bl\.foreignLookupSet\(bl\.readyGrantedSubset\(raw\)\)\)\)/, 'the funnel snippet looks up the ready+granted subset, minus unsynced records, in one bodyForeignBlockers call'],
 ];
 const BODY_TEXT_FACTS = [
   [/attachBodyForeignBlockers/, 'Step 3 body-text bullet attaches attachBodyForeignBlockers'],
-  [/same `bodyForeignBlockers` call as Step 2's funnel script/, 'Step 3 body-text bullet reuses Step 2\'s bodyForeignBlockers call'],
+  [/`bodyForeignBlockers\(bl\.foreignLookupSet\(candidates\)\)` called again over it \(not Step 2's result map/, 'Step 3 body-text bullet calls bodyForeignBlockers again over its own candidate set, unsynced records excluded'],
 ];
 const STEP3_FACTS = [
   [/attach `blockedBy: openNativeBlockerRefs\(node\)`/, 'Step 3 attaches blockedBy from openNativeBlockerRefs(node)'],
   [/`owner\/name#N \(state unreadable\)` when its state is unreadable/, 'Step 3 names an unreadable foreign state with the suffix'],
   [/After the attachment \(and on a degraded run too\), apply `bl\.attachBodyForeignBlockers` over this candidate set/, 'Step 3 re-applies attachBodyForeignBlockers after the native attachment'],
-  [/same `bodyForeignBlockers` call as Step 2's funnel script/, "Step 3's native bullet reuses Step 2's bodyForeignBlockers call"],
+  [/`bodyForeignBlockers\(bl\.foreignLookupSet\(candidates\)\)` called again over it \(not Step 2's result map/, "Step 3's native bullet calls bodyForeignBlockers again over its own candidate set, unsynced records excluded"],
   [/merged \(once per `owner\/name#N`\) into the `blockedBy` just attached/, 'Step 3 says the body-declared blocker merges into the native blockedBy once per key'],
 ];
 const REFINE_FACTS = [
