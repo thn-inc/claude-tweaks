@@ -168,6 +168,8 @@ const realDeps = {
   sessionId: process.env.CLAUDE_CODE_SESSION_ID || '',
   now: () => Date.now(),
   workLinks: resolveWorkLinks,
+  // The aliased foreign-state lookup: one batched GraphQL call, so it runs on the batched bound.
+  ghBatch: nativeGh,
   fetchNative: ({ numbers, owner, repo }) => fetchNativeDependencies({ numbers, owner, repo, runner: nativeGh }),
   resolveTarget,
   stdout: (s) => process.stdout.write(s),
@@ -279,7 +281,7 @@ function readRecord(ctx) {
 // string, with ` (state unreadable)` when its native state is neither OPEN nor CLOSED (#4793, Q5).
 // A body-declared `Blocked by owner/name#N` line (another repository, either work-links value) joins
 // the foreign blockers: refs already linked natively are dropped first (named once, no lookup), the
-// rest are looked up in one batched call through ctx.deps.gh. A failed lookup leaves every state
+// rest are looked up in one batched call through ctx.deps.ghBatch. A failed lookup leaves every state
 // unknown, so each ref is named `(state unreadable)` and one stderr line says why (fail closed, Q5).
 function readOpenBlockers(ctx, body) {
   const open = new Set();
@@ -322,9 +324,9 @@ function bodyForeignBlockerRefs(ctx, body, nativeCross) {
   const host = slugParts.length === 3 ? slugParts[0] : undefined;
   let states = new Map();
   try {
-    states = fetchCrossRepoStates({ refs, host, runner: ctx.deps.gh });
+    states = fetchCrossRepoStates({ refs, host, runner: ctx.deps.ghBatch });
   } catch (e) {
-    ctx.deps.stderr(`dispatch-resume: foreign blocker state lookup failed (${errText(e).replace(/\s+/g, ' ').trim()})\n`);
+    ctx.deps.stderr(`dispatch-resume: foreign blocker state lookup failed (${errText(e).replace(/\s+/g, ' ').trim()}) — ${refs.join(', ')} read as state unreadable (fail closed)\n`);
   }
   return foreignEntries(refs, states).filter(foreignBlockerBlocks).map(foreignBlockerRef);
 }
