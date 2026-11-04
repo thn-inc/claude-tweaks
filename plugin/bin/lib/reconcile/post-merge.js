@@ -90,6 +90,8 @@ const PARENT_STEP = 'reconcile post-merge parent-close';
 const ATTEMPT_STEP = 'reconcile post-merge attempt';
 const MAX_ATTEMPTS = 3;
 // A holder whose claim another pass took over (heartbeatClaim found a different token): its entry's `detail`.
+// An unreadable own claim (a non-ENOENT read error in heartbeatClaim) is reported with it too: an accepted
+// mislabel, the safe stop being the point.
 const CLAIM_LOST_DETAIL = 'claim taken over by another pass; stopped before the next gh call or decisions.md write';
 // Appended to the location of a decisions.md line a taken-over holder still writes, so the line records the
 // GitHub change it made without reading as the run's marker (neither MARKER_STEP nor STEP_4_0B_LOCATION_RE matches).
@@ -324,12 +326,10 @@ function takeClaim(runDir, nowMs, fsApi = fs, { isAlive = pidAlive } = {}) {
     // the process still runs, nothing refreshes the orphan, so it is taken over once idle past
     // CLAIM_MAX_IDLE_MS. An ownerless aside that is linked back keeps the CLAIM_STALE_MS rule.
     try { fsApi.linkSync(aside, lock); } catch { /* a third taker already created one */ }
-    // An orphaned aside is ignored by heartbeatClaim once older than CLAIM_ASIDE_MAX_AGE_MS, so it never proves ownership.
-    try { fsApi.unlinkSync(aside); } catch { /* an orphaned .stale- file is harmless */ }
+    try { fsApi.unlinkSync(aside); } catch { /* orphan left behind: heartbeatClaim ignores it past CLAIM_ASIDE_MAX_AGE_MS */ }
     return { ok: false, reason: 'in-flight' };
   }
-  // Same: an orphaned aside is ignored by heartbeatClaim once older than CLAIM_ASIDE_MAX_AGE_MS.
-  try { fsApi.unlinkSync(aside); } catch { /* an orphaned .stale- file is harmless */ }
+  try { fsApi.unlinkSync(aside); } catch { /* orphan left behind: heartbeatClaim ignores it past CLAIM_ASIDE_MAX_AGE_MS */ }
   const retried = create();
   if (retried === 'ok') return { ok: true, token };
   return { ok: false, reason: retried === 'exists' ? 'in-flight' : 'claim-failed' };
@@ -341,15 +341,17 @@ function takeClaim(runDir, nowMs, fsApi = fs, { isAlive = pidAlive } = {}) {
 //
 // A claim missing at its path is not yet a lost one. A pass judging our claim renames it aside
 // (`{lock}.stale-{pid}-{ms}`), re-judges the aside, and, finding it live, links it back before unlinking the
-// aside: the link-back lands before the aside's unlink, so the claim path or the aside always exists. Three
-// reads are therefore decisive without polling: the claim path (missing), the run dir's young asides, then
-// the claim path again (it finds a link-back that finished between the first read and the listing). Only a
-// young aside counts: a judger's rename-to-link-back is a few synchronous fs calls, so one older than
-// CLAIM_ASIDE_MAX_AGE_MS is an orphan (a swallowed aside unlink, or a judger that died before its
-// link-back) and proves nothing. Residual: a judger that found our aside stale (a dead pid or idle past
-// CLAIM_MAX_IDLE_MS) deletes it, so a holder reading in that window counts as owning for that one check; its
-// next check sees the successor's token.
-function heartbeatClaim(runDir, token, nowMs, fsApi = fs) {
+// aside: the link-back lands before the aside's unlink, so a live claim is at its path or in an aside. Three
+// reads cover that without polling: the claim path (missing), the run dir's young asides, then the claim path
+// again (it finds a link-back that finished between the first read and the listing). Only a young aside counts:
+// a judger's rename-to-link-back is a few synchronous fs calls, so one more than CLAIM_ASIDE_MAX_AGE_MS from
+// `nowMs` in either direction (an old orphan, or a future-dated name) proves nothing. A young aside carrying our
+// token is owned only if the judger would find it live on its second look (`claimIsStale`, the same verdict
+// takeClaim uses; `isAlive` is the seam): a holder idle past CLAIM_MAX_IDLE_MS has its aside deleted, not
+// linked back, and a stat failure on the aside is not owned. No refresh on that path. Residual: a third
+// taker's create between the judger's rename and its link-back makes the link-back fail with EEXIST, so a
+// live aside can still be deleted; the holder's next check then sees the successor's token.
+function heartbeatClaim(runDir, token, nowMs, fsApi = fs, { isAlive = pidAlive } = {}) {
   if (!token) return false;
   const lock = path.join(runDir, CLAIM_FILENAME);
   const refresh = () => {
@@ -364,6 +366,8 @@ function heartbeatClaim(runDir, token, nowMs, fsApi = fs) {
     refresh();
     return true;
   }
+  // Fails closed: an unreadable own claim (not ENOENT) is reported with CLAIM_LOST_DETAIL's takeover wording
+  // though no one took it over — an accepted mislabel, the safe stop being the point.
   if (first.code !== 'ENOENT') return false;
   const asidePrefix = `${CLAIM_FILENAME}.stale-`;
   let names = [];
@@ -371,10 +375,14 @@ function heartbeatClaim(runDir, token, nowMs, fsApi = fs) {
   for (const name of names) {
     if (!name.startsWith(asidePrefix)) continue;
     const m = /^\d+-(\d+)$/.exec(name.slice(asidePrefix.length));
-    if (!m || nowMs - Number(m[1]) > CLAIM_ASIDE_MAX_AGE_MS) continue;
+    if (!m || Math.abs(nowMs - Number(m[1])) > CLAIM_ASIDE_MAX_AGE_MS) continue;
     try {
-      if (fsApi.readFileSync(path.join(runDir, name), 'utf8') === token) return true; // the judger links it back
-    } catch { /* gone: the link-back or the unlink finished */ }
+      const asidePath = path.join(runDir, name);
+      if (fsApi.readFileSync(asidePath, 'utf8') === token) {
+        // The judger's own verdict on this aside: owned only if it would link it back.
+        return !claimIsStale(token, fsApi.statSync(asidePath).mtimeMs, nowMs, isAlive);
+      }
+    } catch { /* gone, or unstattable: the link-back or the unlink finished, or not owned */ }
   }
   const second = readClaim();
   if (second.content !== token) return false;
@@ -383,8 +391,9 @@ function heartbeatClaim(runDir, token, nowMs, fsApi = fs) {
 }
 
 // Remove the claim only while it still carries our token, so a holder whose claim was taken over never
-// deletes its successor's. A falsy token is a no-op. Never throws. The read-then-unlink gap can only be
-// filled by a takeover, and a holder that refreshed moments ago is neither dead nor idle.
+// deletes its successor's. A falsy token is a no-op. Never throws. Residual: a holder suspended past
+// CLAIM_MAX_IDLE_MS exactly between the read and the unlink is taken over in that gap and still deletes its
+// successor's claim.
 function releaseClaim(runDir, token, fsApi = fs) {
   if (!token) return;
   const lock = path.join(runDir, CLAIM_FILENAME);
@@ -509,7 +518,11 @@ async function processCandidate({
     // The ownership check lives on the shared `gh` function and before every decisions.md write, so every loop
     // in Steps 4.0 and 4.0b is covered and a taken-over holder stops before its next call or write. Residual: a
     // `gh` call already in flight when the holder is suspended still completes on wake; the check decides
-    // before a call, never during one. A falsy token (a `deps.takeClaim` fake) never loses.
+    // before a call, never during one. A takeover between the write guard's ownership check and `writeEntries`
+    // likewise lets that one write through (the accepted guard-to-call window). Step 4.0b posts a parent's close
+    // comment and closes it with a separate gh call, so a takeover between them leaves a posted comment with no
+    // close and no superseded line; the successor's pass finds it (close-only) and finishes the close. A falsy
+    // token (a `deps.takeClaim` fake) never loses.
     const guard = { lost: false };
     const ownsClaim = () => {
       if (!guard.lost && claim.token && !heartbeatClaim(dir, claim.token, now())) guard.lost = true;
@@ -580,8 +593,9 @@ function archivedRetryHint(runDir) {
 // `4.0` when `step40Failed` is set or its word is not clean, `4.0b` when `parentFailures` is non-empty —
 // so a caller reports only the step that failed. `next`: `rerun` (a marker-less skip a re-run retries),
 // `rerun-where-gh`, `rerun-after-stale-claim` (an archived run's `in-flight`: its holder can only be another
-// merge-mode invocation, so a re-run takes over a dead holder's claim at once, and a claim naming no holder past CLAIM_STALE_MS), or `none` — a `ran` entry's
-// marker is already written, and every other skip fails the same way again.
+// merge-mode invocation, so a re-run takes over a dead holder's claim at once; a claim naming no holder is
+// taken over once past CLAIM_STALE_MS), or `none` — a `ran` entry's marker is already written, and every
+// other skip fails the same way again.
 function classifyEntry(entry, { archived = false } = {}) {
   if (entry.action === 'ran') {
     const step40Failed = entry.step40Failed === true || !CLEAN_CLOSING_LINKS.has(entry.closingLinks);
@@ -686,7 +700,7 @@ const recordNumbers = (list) => {
 // forge text travels (the rule flattenStepFields states). A non-array input gives [].
 function supersededChanges(entries) {
   if (!Array.isArray(entries)) return [];
-  return entries.filter(isSupersededEntry).map((e) => {
+  return entries.filter((e) => isSupersededEntry(e) && Number.isInteger(e.pr)).map((e) => {
     const reopened = recordNumbers(e.recordsReopened);
     const closed = recordNumbers(e.recordsClosed);
     return {
@@ -717,8 +731,9 @@ function supersededChangesLine(items) {
 }
 
 // The single-run path (see the header): one named run dir, archived included. -> one entry:
-// { runDir, pr, action, reason?, detail?, closingLinks?, parentsClosed?, attempt?, step40Failed?, records?,
-//   logFailed?, parentFailures?, stepSkips?, verdict, next } (classifyEntry's two fields close every entry).
+// { runDir, pr, action, reason?, detail?, closingLinks?, parentsClosed?, recordsReopened?, recordsClosed?,
+//   attempt?, step40Failed?, records?, logFailed?, parentFailures?, stepSkips?, verdict, next }
+//   (classifyEntry's two fields close every entry).
 async function postMergeOne({
   runDir: givenRunDir, cwd, prStates, now = Date.now, deps = {},
 } = {}) {

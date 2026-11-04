@@ -498,11 +498,23 @@ test('summary-template.md Next Actions list line backticks consoleAutoResolve', 
   assert.match(region, /grants `consoleAutoResolve`/);
 });
 
-test('#4797 round 5: post-merge-run.js and plugin-structure.md name a superseded pass\'s change fields', () => {
-  for (const file of [['plugin', 'bin', 'post-merge-run.js'], ['docs', 'plugin-structure.md']]) {
-    const text = flat(read(...file).replace(/^\/\/ ?/gm, ''));
-    assert.match(text, /recordsReopened\?/, `${file.join('/')}: the entry shape carries recordsReopened`);
-    assert.match(text, /recordsClosed\?/, `${file.join('/')}: the entry shape carries recordsClosed`);
-    assert.match(text, /claim another pass took over/, `${file.join('/')}: states when an in-flight entry carries them`);
+test('#4797 round 5: post-merge-run.js (header and USAGE separately) and plugin-structure.md name a superseded pass\'s change fields', () => {
+  const cli = read('plugin', 'bin', 'post-merge-run.js');
+  const usageStart = cli.indexOf('const USAGE =');
+  assert.ok(usageStart > 0, 'post-merge-run.js declares USAGE');
+  const usageEnd = usageStart + cli.slice(usageStart).search(/;\r?\n/); // CRLF checkouts end the statement with ;\r\n
+  assert.ok(usageEnd > usageStart, 'USAGE is one statement');
+  const headerEnd = cli.indexOf("'use strict'");
+  assert.ok(headerEnd > 0 && headerEnd < usageStart, "post-merge-run.js has a header before 'use strict'");
+  const surfaces = [
+    ['plugin/bin/post-merge-run.js header', cli.slice(0, headerEnd).replace(/^\/\/ ?/gm, '')],
+    ['plugin/bin/post-merge-run.js USAGE', cli.slice(usageStart, usageEnd)],
+    ['docs/plugin-structure.md', read('docs', 'plugin-structure.md')],
+  ];
+  for (const [name, raw] of surfaces) {
+    const text = flat(raw);
+    assert.match(text, /recordsReopened\?/, `${name}: the entry shape carries recordsReopened`);
+    assert.match(text, /recordsClosed\?/, `${name}: the entry shape carries recordsClosed`);
+    assert.match(text, /claim another pass took over/, `${name}: states when an in-flight entry carries them`);
   }
 });

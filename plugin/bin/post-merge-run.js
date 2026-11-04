@@ -13,8 +13,8 @@
 //
 // Prints exactly one JSON line, `postMergeOne`'s entry:
 //   {runDir, pr, action: ran | skipped, reason?, detail?, closingLinks?,
-//    parentsClosed?, recordsReopened?, recordsClosed?, attempt?, step40Failed?, records?, logFailed?, parentFailures?,
-//    stepSkips?, verdict, next, failedSteps?}
+//    parentsClosed?, recordsReopened?, recordsClosed?, attempt?, step40Failed?, records?,
+//    logFailed?, parentFailures?, stepSkips?, verdict, next, failedSteps?}
 // ran: Steps 4.0 and 4.0b ran and the marker is written; `closingLinks` is Step
 //   4.0's action. `step40Failed` marks a Step 4.0 that itself failed. `records`
 //   ({failed, closeFailed, pendingClose, unchecked}, issue numbers) is on every
@@ -33,10 +33,11 @@
 //   clean-word entry `clean`. A `marker-write-failed` or `error` entry keeps
 //   both fields when Step 4.0b ran: the closes ran, only the marker is missing.
 //   already-done: a marker is already in the run's decisions.md.
-//   in-flight: another process holds the run's claim. When this invocation's own pass had its
-//   claim another pass took over after changing GitHub, the entry also carries `parentsClosed`
-//   (parents Step 4.0b closed) and `recordsReopened` / `recordsClosed` (records Step 4.0
-//   reopened or closed), each only when non-empty. Any other reason (no-pr,
+//   in-flight: another process holds the run's claim. When this invocation's own
+//   pass had its claim another pass took over after changing GitHub, the entry also
+//   carries `parentsClosed` (parents Step 4.0b closed) and `recordsReopened` /
+//   `recordsClosed` (records Step 4.0 reopened or closed), each only when non-empty.
+//   Any other reason (no-pr,
 //   not-merged, claim-failed, transient-failure, network-failure,
 //   marker-write-failed, error, not-github-issues, no-remote, unknown-host (the origin
 //   names a host that is not a known GitHub host, #4933: nothing was sent to gh; `detail`

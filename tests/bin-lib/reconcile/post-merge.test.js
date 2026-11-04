@@ -967,7 +967,7 @@ const mtimeOf = (dir) => fs.statSync(lockOf(dir)).mtimeMs;
 test('AC1.1 takeClaim: a live holder that took the claim past CLAIM_STALE_MS ago and refreshes it is in-flight, its claim untouched', () => {
   const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
   const takenAt = NOW - CLAIM_STALE_MS - 60 * 1000;
-  const holder = takeClaim(dir, takenAt);
+  const holder = takeClaim(dir, NOW);
   assert.equal(holder.ok, true);
   setMtime(dir, takenAt); // the claim's create time; without the refresh below it is idle and taken over
   assert.equal(heartbeatClaim(dir, holder.token, NOW - 60 * 1000), true);
@@ -1065,6 +1065,50 @@ test('heartbeatClaim: an orphaned aside older than CLAIM_ASIDE_MAX_AGE_MS proves
   assert.equal(heartbeatClaim(dir, mine.token, NOW), false);
   fs.renameSync(orphan, `${lockOf(dir)}.stale-99999-notanumber`);
   assert.equal(heartbeatClaim(dir, mine.token, NOW), false, 'a name with no parseable ms is not young');
+});
+
+test('heartbeatClaim: a young aside carrying our token is owned only if the judger would find it live', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const mine = takeClaim(dir, NOW);
+  const aside = `${lockOf(dir)}.stale-99999-${NOW - 1000}`;
+  fs.renameSync(lockOf(dir), aside); // mid-takeover: renamed, not yet linked back
+  const idle = NOW - CLAIM_MAX_IDLE_MS - 60 * 1000;
+  fs.utimesSync(aside, idle / 1000, idle / 1000);
+  assert.equal(heartbeatClaim(dir, mine.token, NOW), false, 'idle past CLAIM_MAX_IDLE_MS: the judger deletes it, not links it back');
+  const fresh = NOW - 60 * 1000;
+  fs.utimesSync(aside, fresh / 1000, fresh / 1000);
+  assert.equal(heartbeatClaim(dir, mine.token, NOW), true, 'fresh mtime: the judger links it back');
+  assert.equal(heartbeatClaim(dir, mine.token, NOW, fs, { isAlive: () => false }), false, 'a dead pid: the judger deletes it');
+  const unstattable = { ...fs, statSync: () => { throw Object.assign(new Error('gone'), { code: 'ENOENT' }); } };
+  assert.equal(heartbeatClaim(dir, mine.token, NOW, unstattable), false, 'a stat failure on the aside is not owned');
+});
+
+test('heartbeatClaim: an aside named with a future ms is not young, even carrying our token', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const mine = takeClaim(dir, NOW);
+  fs.renameSync(lockOf(dir), `${lockOf(dir)}.stale-99999-${NOW + CLAIM_ASIDE_MAX_AGE_MS + 60 * 1000}`);
+  assert.equal(heartbeatClaim(dir, mine.token, NOW), false);
+});
+
+test('heartbeatClaim: a failed refresh still reports our claim as owned', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const mine = takeClaim(dir, NOW);
+  const noUtimes = { ...fs, utimesSync: () => { throw Object.assign(new Error('denied'), { code: 'EPERM' }); } };
+  assert.equal(heartbeatClaim(dir, mine.token, NOW, noUtimes), true);
+});
+
+test('heartbeatClaim: a non-ENOENT first read is not owned, even with a young aside carrying our token', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const mine = takeClaim(dir, NOW);
+  fs.writeFileSync(`${lockOf(dir)}.stale-99999-${NOW - 1000}`, mine.token);
+  const unreadable = {
+    ...fs,
+    readFileSync: (p, ...rest) => {
+      if (p === lockOf(dir)) throw Object.assign(new Error('denied'), { code: 'EACCES' });
+      return fs.readFileSync(p, ...rest);
+    },
+  };
+  assert.equal(heartbeatClaim(dir, mine.token, NOW, unreadable), false);
 });
 
 test('heartbeatClaim: a claim restored by a link-back between the first read and the listing is found by the re-read', () => {
@@ -1708,8 +1752,10 @@ test('isSupersededEntry + supersededChanges + supersededChangesLine: all three e
   assert.deepEqual(supersededChanges([
     { pr: 1, ...lost, parentsClosed: 0, recordsReopened: [], recordsClosed: ['x', null] },
     { pr: 2, ...lost, parentsClosed: '3', recordsReopened: [5, 'x', 6] },
+    { pr: 'x', ...lost, recordsReopened: [7] },
+    { ...lost, recordsReopened: [8] },
     null,
-  ]), [{ pr: 2, recordsReopened: [5, 6] }]);
+  ]), [{ pr: 2, recordsReopened: [5, 6] }], 'an entry whose pr is not an integer is dropped');
   assert.equal(supersededChangesLine([{ pr: 'x', parentsClosed: 1 }, null, { pr: 3 }]), null);
 });
 
@@ -1952,6 +1998,53 @@ test('Q4 fix: a takeover after the last gh call still stops the marker write', a
   assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL }]);
   assert.equal(decisionsOf(dir), '', 'no marker, nothing else to log');
   assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), successor);
+});
+
+// A `now` that installs the successor on the second read after the closing-links fake returns: the first is the
+// ownership check right after Step 4.0, the second is `stamp = now()`, so the takeover lands between that check and
+// the write guard's own check.
+function takeoverBeforeTheWrite(dir, successor) {
+  let armed = false;
+  let reads = 0;
+  return {
+    arm: () => { armed = true; },
+    now: () => {
+      if (armed && ++reads === 2) fs.writeFileSync(lockOf(dir), successor);
+      return NOW;
+    },
+  };
+}
+
+test('Q2: a holder taken over between the Step 4.0 ownership check and the attempt-line write returns the lost entry and writes no attempt line', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const successor = `${process.pid}-successor`;
+  const takeover = takeoverBeforeTheWrite(dir, successor);
+  const links = (opts, d) => { takeover.arm(); return { code: 5, envelope: null }; };
+  const r = await postMerge({
+    cwd: root, prStates: fakePrStates({ 11: merged() }), now: takeover.now,
+    deps: { gh: fakeGh, closingLinks: links, closeParents: fakeCloseParents() },
+  });
+  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL }]);
+  assert.deepEqual(r.deferred, [dir]);
+  assert.equal(decisionsOf(dir), '', 'no attempt line');
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), successor, 'the successor claim stays');
+});
+
+test('Q2: a holder taken over between the Step 4.0 ownership check and the SKIP-marker write returns the lost entry and writes no marker', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const successor = `${process.pid}-successor`;
+  const takeover = takeoverBeforeTheWrite(dir, successor);
+  const links = (opts, d) => { takeover.arm(); return { code: 0, envelope: { action: 'not-merged', state: 'OPEN' } }; };
+  const r = await postMerge({
+    cwd: root, prStates: fakePrStates({ 11: merged() }), now: takeover.now,
+    deps: { gh: fakeGh, closingLinks: links, closeParents: fakeCloseParents() },
+  });
+  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL }]);
+  assert.deepEqual(r.deferred, [dir]);
+  assert.equal(decisionsOf(dir), '', 'no SKIP marker');
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), successor, 'the successor claim stays');
 });
 
 test('a claim with no token (a takeClaim fake) never refuses a gh call or a write', async () => {

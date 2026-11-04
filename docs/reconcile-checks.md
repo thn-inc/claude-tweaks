@@ -633,29 +633,34 @@ unchanged, and every fail-open path below leaves the parent open for it.
     a still-open record (`settledOpen`) instead of logging it pending.
   - *Per-run claim file* (`{runDir}/.post-merge.lock`, created `wx`). Background passes serialize on
     `background-lock.js`, but inline passes (Step 4.2's `--checks mirror,release,archive`, tidy's
-    explicit list) do not. The claim file holds its owner's `{pid}-{token}`. While a run holds the
-    claim, every `gh` call it makes and every `decisions.md` write first checks that the claim still
-    names it and refreshes the claim's mtime (the heartbeat). A claim missing only because another pass
-    moved it aside to judge it is re-checked (the aside, then the path once more), never read as a
-    takeover. A claim whose holder pid is alive skips `in-flight` unless it has gone unrefreshed for
-    `CLAIM_MAX_IDLE_MS` (a reused pid or a suspended holder; the derivation sits beside the constant).
-    A dead holder's claim is taken over at once. A claim naming no holder (an older reconciler's empty
-    file, or a file that cannot be read) keeps the `CLAIM_STALE_MS` (10 minutes) rule. A takeover is
-    still atomic: renamed aside, re-judged, and only the rename winner retries the create. Any other
-    I/O error skips `claim-failed`. A holder whose claim was taken over refuses its next `gh` call and
-    every later one, and skips `in-flight`, deferred. It writes no marker, attempt line or degraded
-    SKIP; each GitHub change it already made (a parent closed below the floor, a record reopened or
-    closed) is still logged, its location suffixed `(superseded holder)`, which is never read as the
-    marker, and rides on its entry as `parentsClosed`, `recordsReopened`, `recordsClosed`. A call
-    already in flight when it was suspended still completes. Known residual: Step 4.0b posts a
-    parent's close comment and then closes it with a separate `gh` call, so a takeover landing between
-    the two leaves a posted comment with no close and no `decisions.md` line from the superseded
-    holder; the successor's own pass then finds the comment already posted and finishes the close. The
-    lock is removed after the marker write, and only by its owner (a compare-and-delete on the token),
-    so a taken-over pass never deletes its successor's claim. Until every installed build upgrades, an
-    older reconciler still takes over by age alone and releases unconditionally, so a mixed-version
-    pair keeps the old race for a claim idle past `CLAIM_STALE_MS`. The dotfile name keeps it out of
-    archive's `staged/` checks.
+    explicit list) do not.
+    - *Heartbeat.* The claim file holds its owner's `{pid}-{token}`. While a run holds the
+      claim, every `gh` call it makes and every `decisions.md` write first checks that the claim still
+      names it and refreshes the claim's mtime (the heartbeat). A claim missing only because another pass
+      moved it aside to judge it is re-checked (the aside, then the path once more), never read as a
+      takeover.
+    - *Judging a held claim.* A claim whose holder pid is alive skips `in-flight` unless it has gone
+      unrefreshed for `CLAIM_MAX_IDLE_MS` (a reused pid or a suspended holder; the derivation sits beside
+      the constant). A dead holder's claim is taken over at once. A claim naming no holder (an older
+      reconciler's empty file, or a file that cannot be read) keeps the `CLAIM_STALE_MS` (10 minutes)
+      rule. A takeover is still atomic: renamed aside, re-judged, and only the rename winner retries the
+      create. Any other I/O error skips `claim-failed`.
+    - *A holder taken over.* A holder whose claim was taken over refuses its next `gh` call and every
+      later one, and skips `in-flight`, deferred. It writes no marker, attempt line or degraded SKIP; each
+      GitHub change it already made (a parent closed below the floor, a record reopened or closed) is
+      still logged, its location suffixed `(superseded holder)`, which is never read as the marker, and
+      rides on its entry as `parentsClosed`, `recordsReopened`, `recordsClosed`. A call already in flight
+      when it was suspended still completes. Known residual: Step 4.0b posts a parent's close comment and
+      then closes it with a separate `gh` call, so a takeover landing between the two leaves a posted
+      comment with no close and no `decisions.md` line from the superseded holder; the successor's own
+      pass then finds the comment already posted and finishes the close.
+    - *Release.* The lock is removed after the marker write, and only by its owner (a compare-and-delete
+      on the token), so a taken-over pass never deletes its successor's claim.
+    - *Mixed versions.* Until every installed build upgrades, an older reconciler still takes over by age
+      alone and releases unconditionally, so a mixed-version pair keeps the old race for a claim idle past
+      `CLAIM_STALE_MS`.
+
+    The dotfile name keeps it out of archive's `staged/` checks.
 - **Archive defers what post-merge deferred.** An archived run is never walked again, so a run
   skipped for a retryable reason must not be archived in the same pass, or the "later pass" never
   comes. `postMerge` returns `deferred`, `index.js` hands it to `archiveMerged` as
