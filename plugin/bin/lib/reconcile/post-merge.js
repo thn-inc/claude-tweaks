@@ -672,6 +672,50 @@ function stepSkipsLine(items) {
     : null;
 }
 
+// A holder whose claim another pass took over: the in-flight skip processRun returns with CLAIM_LOST_DETAIL.
+const isSupersededEntry = (entry) => !!entry && entry.action === 'skipped' && entry.reason === 'in-flight' && entry.detail === CLAIM_LOST_DETAIL;
+
+// The integer elements of a record list, or null when none remain.
+const recordNumbers = (list) => {
+  const numbers = Array.isArray(list) ? list.filter(Number.isInteger) : [];
+  return numbers.length > 0 ? numbers : null;
+};
+
+// Pure: entries -> `{ pr, parentsClosed?, recordsReopened?, recordsClosed? }` per superseded entry that changed
+// anything on GitHub, in entry order. Numbers only: the list reaches SessionStart's model-facing context, so no
+// forge text travels (the rule flattenStepFields states). A non-array input gives [].
+function supersededChanges(entries) {
+  if (!Array.isArray(entries)) return [];
+  return entries.filter(isSupersededEntry).map((e) => {
+    const reopened = recordNumbers(e.recordsReopened);
+    const closed = recordNumbers(e.recordsClosed);
+    return {
+      pr: e.pr,
+      ...(Number.isInteger(e.parentsClosed) && e.parentsClosed > 0 ? { parentsClosed: e.parentsClosed } : {}),
+      ...(reopened ? { recordsReopened: reopened } : {}),
+      ...(closed ? { recordsClosed: closed } : {}),
+    };
+  }).filter((item) => item.parentsClosed !== undefined || item.recordsReopened !== undefined || item.recordsClosed !== undefined);
+}
+
+// Pure: supersededChanges' items -> the one report line, or null when the input is not an array or no element
+// carries an integer `pr` and at least one change. Shared by the reconcile CLI summary and SessionStart.
+function supersededChangesLine(items) {
+  const rendered = (Array.isArray(items) ? items : []).filter((item) => item !== null && typeof item === 'object' && Number.isInteger(item.pr)).map((item) => {
+    const reopened = recordNumbers(item.recordsReopened);
+    const closed = recordNumbers(item.recordsClosed);
+    const parts = [
+      ...(Number.isInteger(item.parentsClosed) && item.parentsClosed > 0 ? [`closed ${item.parentsClosed} parent record(s) below the oversight floor`] : []),
+      ...(reopened ? [`reopened ${reopened.map((n) => `#${n}`).join(', ')}`] : []),
+      ...(closed ? [`closed ${closed.map((n) => `#${n}`).join(', ')}`] : []),
+    ];
+    return parts.length > 0 ? `PR #${item.pr} ${parts.join(', ')}` : null;
+  }).filter(Boolean);
+  return rendered.length > 0
+    ? `post-merge steps in run(s) whose claim another pass took over had already changed GitHub: ${rendered.join('; ')}`
+    : null;
+}
+
 // The single-run path (see the header): one named run dir, archived included. -> one entry:
 // { runDir, pr, action, reason?, detail?, closingLinks?, parentsClosed?, attempt?, step40Failed?, records?,
 //   logFailed?, parentFailures?, stepSkips?, verdict, next } (classifyEntry's two fields close every entry).
@@ -882,7 +926,7 @@ function processRun({
 }
 
 module.exports = {
-  postMerge, postMergeOne, classifyEntry, markSuperseded, isFailedRun, failedRecordNumbers, parentsLeftOpen, stepSkipsOf, parentsLeftOpenLine, stepSkipsLine, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim, heartbeatClaim, releaseClaim,
+  postMerge, postMergeOne, classifyEntry, markSuperseded, isFailedRun, failedRecordNumbers, parentsLeftOpen, stepSkipsOf, parentsLeftOpenLine, stepSkipsLine, isSupersededEntry, supersededChanges, supersededChangesLine, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim, heartbeatClaim, releaseClaim,
   composeSkipText, composeSummaryText, boundDetail, oneLine,
   CLEAN_CLOSING_LINKS, RERUN_REASONS, RERUN_WHERE_GH_REASONS,
   MARKER_STEP, ATTEMPT_STEP, MAX_ATTEMPTS, CLOSE_WINDOW_MS, MERGE_GRACE_MS, CLAIM_STALE_MS, CLAIM_FILENAME,

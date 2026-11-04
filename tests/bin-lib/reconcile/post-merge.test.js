@@ -9,6 +9,7 @@ const {
   postMerge, postMergeOne, classifyEntry, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim, MARKER_STEP, ATTEMPT_STEP, MAX_ATTEMPTS, CLOSE_WINDOW_MS, MERGE_GRACE_MS, CLAIM_STALE_MS, CLAIM_FILENAME,
   heartbeatClaim, releaseClaim, CLAIM_MAX_IDLE_MS, GH_TIMEOUT_CEILING_MS, CLAIM_ASIDE_MAX_AGE_MS,
   parentsLeftOpen, stepSkipsOf, parentsLeftOpenLine, stepSkipsLine,
+  isSupersededEntry, supersededChanges, supersededChangesLine,
   CLAIM_LOST_DETAIL, SUPERSEDED_LOCATION_SUFFIX, markSuperseded,
 } = require('../../../plugin/bin/lib/reconcile/post-merge');
 const { formatEntry, parseEntry } = require('../../../plugin/bin/lib/log-decision/append');
@@ -1671,6 +1672,45 @@ test('parentsLeftOpenLine and stepSkipsLine render the valid items and nothing f
     assert.equal(parentsLeftOpenLine(junk), null);
     assert.equal(stepSkipsLine(junk), null);
   }
+});
+
+test('supersededChanges + supersededChangesLine: name every GitHub change of a taken-over holder, numbers only', () => {
+  const lost = { action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL };
+  const entries = [
+    { runDir: '/r/a', pr: 12, ...lost, parentsClosed: 2, recordsReopened: [7, 9], recordsClosed: [8] },
+    { runDir: '/r/b', pr: 13, ...lost, recordsReopened: [10] },
+    { runDir: '/r/c', pr: 14, ...lost }, // superseded, changed nothing: today's in-flight skip
+    { runDir: '/r/d', pr: 15, action: 'skipped', reason: 'in-flight', parentsClosed: 1 }, // a plain in-flight skip
+    { runDir: '/r/e', pr: 16, action: 'ran', closingLinks: 'reopened', parentsClosed: 1 },
+  ];
+  assert.equal(isSupersededEntry(entries[2]), true);
+  assert.equal(isSupersededEntry(entries[3]), false);
+  const items = supersededChanges(entries);
+  assert.deepEqual(items, [
+    { pr: 12, parentsClosed: 2, recordsReopened: [7, 9], recordsClosed: [8] },
+    { pr: 13, recordsReopened: [10] },
+  ]);
+  assert.equal(
+    supersededChangesLine(items),
+    'post-merge steps in run(s) whose claim another pass took over had already changed GitHub: PR #12 closed 2 parent record(s) below the oversight floor, reopened #7, #9, closed #8; PR #13 reopened #10',
+  );
+  assert.equal(supersededChangesLine([]), null);
+  assert.equal(supersededChangesLine(undefined), null);
+  assert.deepEqual(supersededChanges(null), []);
+});
+
+test('isSupersededEntry + supersededChanges + supersededChangesLine: all three entry fields must match; malformed counts and numbers are dropped (#4797)', () => {
+  const lostDetail = { detail: CLAIM_LOST_DETAIL };
+  assert.equal(isSupersededEntry({ action: 'skipped', reason: 'error', ...lostDetail }), false);
+  assert.equal(isSupersededEntry({ action: 'ran', reason: 'in-flight', ...lostDetail }), false);
+  assert.equal(isSupersededEntry(null), false);
+  const lost = { action: 'skipped', reason: 'in-flight', ...lostDetail };
+  assert.deepEqual(supersededChanges([
+    { pr: 1, ...lost, parentsClosed: 0, recordsReopened: [], recordsClosed: ['x', null] },
+    { pr: 2, ...lost, parentsClosed: '3', recordsReopened: [5, 'x', 6] },
+    null,
+  ]), [{ pr: 2, recordsReopened: [5, 6] }]);
+  assert.equal(supersededChangesLine([{ pr: 'x', parentsClosed: 1 }, null, { pr: 3 }]), null);
 });
 
 // Driven from the producer's own list, so a member added there is covered here with no edit.
