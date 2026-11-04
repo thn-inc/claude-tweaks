@@ -2013,7 +2013,7 @@ async function runReconcileBackground(argv) {
   try {
     const r = await reconcile({ cwd, checks: BACKGROUND_CHECKS, sessionId, budgetMs: BACKGROUND_BUDGET_MS });
     const {
-      classifyEntry, isFailedRun, failedRecordNumbers, parentsLeftOpen, stepSkipsOf,
+      classifyEntry, isFailedRun, failedRecordNumbers, parentsLeftOpen, stepSkipsOf, supersededChanges,
     } = require('./lib/reconcile/post-merge');
     const postMergeEntries = r.postMerge || [];
     const failedRanEntries = postMergeEntries.filter(isFailedRun);
@@ -2041,7 +2041,10 @@ async function runReconcileBackground(argv) {
       // closed by runs that wrote their marker, and those closed by runs whose marker write failed
       // (closed on GitHub all the same, only the decisions.md marker is missing). A Step 4.0b tail that threw
       // (`reason: 'error'`) wrote no marker either, so its `parentsClosed` is counted with the unmarked ones; an
-      // `error` entry thrown before Step 4.0b carries none, which parentsClosedBy treats as 0.
+      // `error` entry thrown before Step 4.0b carries none, which parentsClosedBy treats as 0. A holder whose
+      // claim another pass took over (#4797) is in neither count (it is an `in-flight` skip, not `ran` or
+      // `marker-write-failed`/`error`): the successor owns the marker, so the "marker could not be written"
+      // line would be false for it. Its GitHub changes travel in `postMergeSuperseded` below.
       postMergeParentsClosed: parentsClosedBy((e) => e.action === 'ran'),
       postMergeUnmarkedParentsClosed: parentsClosedBy((e) => e.reason === 'marker-write-failed' || e.reason === 'error'),
       // The parents Step 4.0b left open and its step-wide skips (#4798): both read every entry carrying
@@ -2049,6 +2052,9 @@ async function runReconcileBackground(argv) {
       // and an `error` one thrown after Step 4.0b, each element's raw `reason` quoted and its `detail` dropped.
       postMergeParentsLeftOpen: parentsLeftOpen(postMergeEntries),
       postMergeStepSkips: stepSkipsOf(postMergeEntries),
+      // What a holder whose claim another pass took over had already changed on GitHub before it stopped
+      // (#4797): [{ pr, parentsClosed?, recordsReopened?, recordsClosed? }], empty when none did.
+      postMergeSuperseded: supersededChanges(postMergeEntries),
       archived: (r.runs || []).filter((x) => x.action === 'archived').length,
       archivedBranches: (r.branches || []).filter((b) => b.kind === 'branch' && (b.action === 'delete' || b.action === 'tag-and-delete')).length,
       prunedRemote: (r.remoteBranches || []).filter((b) => b.action === 'delete').length,

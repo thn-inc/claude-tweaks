@@ -807,6 +807,18 @@ test('SessionStart renders a prior background pass\'s post-merge runs and parent
     /post-merge steps ran for 2 merged run\(s\), closing 2 parent record\(s\) below the oversight floor; post-merge steps closed 1 parent record\(s\) below the oversight floor in run\(s\) whose decisions\.md marker could not be written\./,
   );
 
+  seed({ postMergeRan: 0, postMergeParentsClosed: 0, postMergeSuperseded: [{ pr: 12, parentsClosed: 2, recordsReopened: [7] }] });
+  const superseded = (await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project })).json.hookSpecificOutput.additionalContext;
+  assert.match(superseded, /post-merge steps in run\(s\) whose claim another pass took over had already changed GitHub: PR #12 closed 2 parent record\(s\) below the oversight floor, reopened #7/);
+  assert.doesNotMatch(superseded, /marker could not be written/);
+
+  // The superseded line beside a nonzero ran count and a nonzero unmarked-close count: all three render.
+  seed({ postMergeRan: 2, postMergeParentsClosed: 2, postMergeUnmarkedParentsClosed: 1, postMergeSuperseded: [{ pr: 12, parentsClosed: 2, recordsReopened: [7] }] });
+  const allThree = (await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project })).json.hookSpecificOutput.additionalContext;
+  assert.match(allThree, /post-merge steps ran for 2 merged run\(s\), closing 2 parent record\(s\) below the oversight floor/);
+  assert.match(allThree, /post-merge steps closed 1 parent record\(s\) below the oversight floor in run\(s\) whose decisions\.md marker could not be written/);
+  assert.match(allThree, /post-merge steps in run\(s\) whose claim another pass took over had already changed GitHub: PR #12 closed 2 parent record\(s\) below the oversight floor, reopened #7/);
+
   seed({ postMergeRan: 0, postMergeParentsClosed: 0 });
   const quiet = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   assert.doesNotMatch(quiet.json.hookSpecificOutput.additionalContext || '', /post-merge/);
