@@ -44,6 +44,9 @@ const BODY_TEXT_FACTS = [
 const STEP3_FACTS = [
   [/attach `blockedBy: openNativeBlockerRefs\(node\)`/, 'Step 3 attaches blockedBy from openNativeBlockerRefs(node)'],
   [/`owner\/name#N \(state unreadable\)` when its state is unreadable/, 'Step 3 names an unreadable foreign state with the suffix'],
+  [/After the attachment \(and on a degraded run too\), apply `bl\.attachBodyForeignBlockers` over this candidate set/, 'Step 3 re-applies attachBodyForeignBlockers after the native attachment'],
+  [/same `bodyForeignBlockers` call as Step 2's funnel script/, "Step 3's native bullet reuses Step 2's bodyForeignBlockers call"],
+  [/merged \(once per `owner\/name#N`\) into the `blockedBy` just attached/, 'Step 3 says the body-declared blocker merges into the native blockedBy once per key'],
 ];
 const REFINE_FACTS = [
   [/attaching `openNativeBlockerRefs\(node\)` per candidate/, 'refine attaches openNativeBlockerRefs(node) per candidate'],
