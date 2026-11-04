@@ -118,15 +118,20 @@ test('the common superseding paths are static impact rules (#4321)', () => {
   }
 });
 
-test('AC3.1: a project-skill-only delta is impact-selected, not superseded (#4321)', () => {
-  const { decl } = readDeclaration(DECL);
+// Selects `file` as the only change, against a map where tests/a.test.js alone traces it.
+function selectTracedBy(decl, file) {
   const parsed = parseImpactMap(JSON.stringify(encodeImpactMap({
     commit: 'b'.repeat(40), tracedAt: '2026-11-02T00:00:00Z', exitCode: 0, node: 'v20.0.0',
-    tests: { 'tests/a.test.js': { f: ['.claude/skills/x/SKILL.md'] }, 'tests/b.test.js': { f: ['plugin/bin/verify.js'] } },
+    tests: { 'tests/a.test.js': { f: [file] }, 'tests/b.test.js': { f: ['plugin/bin/verify.js'] } },
   })));
   assert.strictEqual(parsed.ok, true);
   const ctx = { map: parsed.map, problem: null, headTests: ['tests/a.test.js', 'tests/b.test.js'] };
-  const sel = selectScope({ decl, files: ['.claude/skills/x/SKILL.md'], stamp: STAMP, statuses: { '.claude/skills/x/SKILL.md': 'M' }, impact: ctx });
+  return selectScope({ decl, files: [file], stamp: STAMP, statuses: { [file]: 'M' }, impact: ctx });
+}
+
+test('AC3.1: a project-skill-only delta is impact-selected, not superseded (#4321)', () => {
+  const { decl } = readDeclaration(DECL);
+  const sel = selectTracedBy(decl, '.claude/skills/x/SKILL.md');
   assert.strictEqual(sel.mode, 'scoped');
   assert.deepStrictEqual(sel.unmatched, []);
   assert.strictEqual(sel.impact.superseded, false);
@@ -138,13 +143,7 @@ test('AC3.1: a project-skill-only delta is impact-selected, not superseded (#432
 test('each common superseding path reaches the impact path, matched and not superseded (#4321)', () => {
   const { decl } = readDeclaration(DECL);
   for (const p of ['.github/workflows/x.yml', 'perf/x.test.js', '.release-please-manifest.json']) {
-    const parsed = parseImpactMap(JSON.stringify(encodeImpactMap({
-      commit: 'b'.repeat(40), tracedAt: '2026-11-02T00:00:00Z', exitCode: 0, node: 'v20.0.0',
-      tests: { 'tests/a.test.js': { f: [p] }, 'tests/b.test.js': { f: ['plugin/bin/verify.js'] } },
-    })));
-    assert.strictEqual(parsed.ok, true);
-    const ctx = { map: parsed.map, problem: null, headTests: ['tests/a.test.js', 'tests/b.test.js'] };
-    const sel = selectScope({ decl, files: [p], stamp: STAMP, statuses: { [p]: 'M' }, impact: ctx });
+    const sel = selectTracedBy(decl, p);
     assert.strictEqual(sel.mode, 'scoped', p);
     assert.deepStrictEqual(sel.unmatched, [], p);
     assert.strictEqual(sel.impact.superseded, false, p);

@@ -132,11 +132,14 @@ function runDirOf(r) {
   return runDir;
 }
 
+function readEvents(runDir) {
+  return fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+}
+
 // The test-phase verify entry timing.json would hold for the run, derived from
 // the real writer's events.jsonl behind a synthetic /test invocation.
 function timingEntry(runDir) {
-  const lines = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
-  const events = [{ type: 'skill_invoked', skill: 'claude-tweaks:test', ts: '2000-01-01T00:00:00.000Z' }, ...lines];
+  const events = [{ type: 'skill_invoked', skill: 'claude-tweaks:test', ts: '2000-01-01T00:00:00.000Z' }, ...readEvents(runDir)];
   const out = derivePhases({ events, now: new Date(Date.now() + 60000) });
   return out.phases.find((p) => p.phase === 'test').verify[0];
 }
@@ -522,8 +525,7 @@ test('no impact block leaves the impact field off the event and the timing entry
   const run = await runCli([...ARGS, '--run', runDir], r.repo);
   assert.strictEqual(run.code, 0, run.stderr + run.stdout);
   assert.strictEqual(Object.hasOwn(timingEntry(runDir), 'impact'), false);
-  const lines = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
-  const verifyEvents = lines.filter((e) => e.type === 'verify');
+  const verifyEvents = readEvents(runDir).filter((e) => e.type === 'verify');
   assert.strictEqual(verifyEvents.length, 1, 'only the --run invocation wrote an event');
   assert.strictEqual(Object.hasOwn(verifyEvents[0], 'impact'), false, 'the event itself carries no impact key');
 });
