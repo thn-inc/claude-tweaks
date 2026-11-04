@@ -246,6 +246,23 @@ function claimIsStale(content, mtimeMs, nowMs, isAlive) {
   return !isAlive(Number(m[1])) || nowMs - mtimeMs > CLAIM_MAX_IDLE_MS;
 }
 
+// Put a live claim's aside back at the claim path -> true once the claim is there (ours, or a third taker's:
+// EEXIST). A link that fails otherwise (a filesystem without hard links) falls back to renaming the aside back.
+function restoreAside(aside, lock, fsApi) {
+  try {
+    fsApi.linkSync(aside, lock);
+    return true;
+  } catch (e) {
+    if (e && e.code === 'EEXIST') return true;
+  }
+  try {
+    fsApi.renameSync(aside, lock);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Take the per-run claim: `{runDir}/.post-merge.lock`, a plain file created exclusively and holding the
 // owner token `{pid}-{random}`. A claim is in flight while its holder is alive and has refreshed it within
 // CLAIM_MAX_IDLE_MS (the holder refreshes it before every `gh` call, via heartbeatClaim); a dead holder's
@@ -325,20 +342,9 @@ function takeClaim(runDir, nowMs, fsApi = fs, { isAlive = pidAlive } = {}) {
     // that token's pid: once the holder process has exited it reads dead and is taken over at once; while
     // the process still runs, nothing refreshes the orphan, so it is taken over once idle past
     // CLAIM_MAX_IDLE_MS. An ownerless aside that is linked back keeps the CLAIM_STALE_MS rule.
-    // The aside is the only copy of a live holder's claim until it is back at the path (or a third taker's
-    // claim is: EEXIST), so it is deleted only then. A link that fails otherwise (a filesystem without hard
-    // links) falls back to renaming it back; if that fails too, the aside is left for heartbeatClaim to find.
-    let restored = false;
-    try {
-      fsApi.linkSync(aside, lock);
-      restored = true;
-    } catch (e) {
-      if (e && e.code === 'EEXIST') restored = true; // a third taker already created one
-      else {
-        try { fsApi.renameSync(aside, lock); restored = true; } catch { /* leave the aside */ }
-      }
-    }
-    if (restored) {
+    // The aside is the only copy of a live holder's claim until it is back at the path, so it is deleted only
+    // then; if it cannot be restored, the aside is left for heartbeatClaim to find.
+    if (restoreAside(aside, lock, fsApi)) {
       try { fsApi.unlinkSync(aside); } catch { /* orphan left behind, or renamed away: heartbeatClaim ignores it past CLAIM_ASIDE_MAX_AGE_MS */ }
     }
     return { ok: false, reason: 'in-flight' };
