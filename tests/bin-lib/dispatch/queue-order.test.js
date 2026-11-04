@@ -186,6 +186,26 @@ test('cacheUsable(null, x) is false and never throws on malformed input', () => 
   assert.equal(cacheUsable({ grouping: 'per-record', freshnessSignal: SIGNAL }, null), false);
 });
 
+// #4793: a foreign issue closing changes nothing in the freshness signal, so a hit would replay a
+// stale foreign verdict. A queue whose body declares 'Blocked by owner/name#N' is never a hit.
+test('#4793: the same queue is a cache hit without a qualified foreign Blocked by line, and a miss with one', () => {
+  const queue = (body) => [{ number: 1, updatedAt: 'a', state: 'OPEN', body }];
+  const persistedFor = (issues) => composeOrderBlob({
+    computedAt: 'x', runId: 'y', freshnessSignal: buildFreshnessSignal(issues), groups: [], excluded: [],
+  });
+  for (const body of ['Blocked by #7', 'see other/repo#5 for context', '', undefined]) {
+    assert.equal(cacheUsable(persistedFor(queue(body)), buildFreshnessSignal(queue(body))), true, `body ${JSON.stringify(body)}`);
+  }
+  for (const body of ['Blocked by other/repo#5', 'intro\nBlocked by Other/Repo#5\n']) {
+    const foreign = queue(body);
+    assert.equal(cacheUsable(persistedFor(foreign), buildFreshnessSignal(foreign)), false, `body ${JSON.stringify(body)}`);
+  }
+  // Any one candidate declaring it is enough, and the flag is the only extra key on the signal.
+  const mixed = [...queue(''), { number: 2, updatedAt: 'b', state: 'OPEN', body: 'Blocked by acme/x#2' }];
+  assert.deepStrictEqual(buildFreshnessSignal(mixed).foreignDeclared, true);
+  assert.equal('foreignDeclared' in buildFreshnessSignal(queue('')), false, 'absent when no body declares one');
+});
+
 // --- readOrder / writeOrder wiring ---
 
 test('readOrder: resolves null against a genuinely never-written namespace (missing ref)', () => {

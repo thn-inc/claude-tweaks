@@ -77,7 +77,7 @@ test('crossRepoKey is built from the digit string: every key round-trips through
   // An entry shaped like crossRepoBlockers (a Number only) still keys.
   assert.strictEqual(crossRepoKey({ repository: 'Other/Repo', number: 5 }), 'other/repo#5');
 });
-test('distinctCrossRepoRefs dedupes by key and answers null for a non-array or any unparseable entry', () => {
+test('distinctCrossRepoRefs dedupes by key, throws a TypeError for a non-array, and answers { distinct: null, invalid } naming the first unparseable entry', () => {
   assert.deepStrictEqual(distinctCrossRepoRefs(['a/b#1', 'A/B#1', 'c/d#2']).distinct.map(({ key }) => key), ['a/b#1', 'c/d#2']);
   assert.deepStrictEqual(distinctCrossRepoRefs([]), { distinct: [] });
   assert.throws(() => distinctCrossRepoRefs('a/b#1'), TypeError);

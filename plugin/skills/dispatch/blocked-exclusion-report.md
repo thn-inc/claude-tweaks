@@ -12,8 +12,8 @@ one line before the rest of this step's own output:
 
 `{n} excluded — blocked by an open dependency: #{a} (blocked by #{x}), #{b} (blocked by #{y}, #{z})`
 
-A `blockedBy` entry that is a string — `owner/name#N`, a blocker linked natively from another
-repository, optionally suffixed ` (state unreadable)` when its state could not be read (#4793) —
+A `blockedBy` entry that is a string — `owner/name#N`, a blocker linked natively or declared by a
+`Blocked by owner/name#N` line, optionally suffixed ` (state unreadable)` when its state could not be read (#4793) —
 renders verbatim, never with a `#` prefix; a number renders as `#N`.
 
 Then read the same file's `reason: 'target-missing'` entries (`records: [number], detail: {path}`

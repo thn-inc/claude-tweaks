@@ -19,6 +19,7 @@
 // valid for its own firing regardless of whether its write landed.
 
 const { createNamespacedState } = require('../health-core/durable-state');
+const { parseCrossRepoDependencies } = require('../issues/cross-repo-refs');
 
 const NAMESPACE = 'queue-order';
 
@@ -63,13 +64,20 @@ function writeOrder(root, blob, opts) {
 // blob's freshnessSignal.issues shape, deduped by number (last write wins —
 // callers are expected to pass each number once, but this normalizes rather
 // than trusting that).
+//
+// #4793: `foreignDeclared: true` is set (and the key is absent otherwise) when any issue's body
+// declares a qualified 'Blocked by owner/name#N' line. A foreign issue closing changes nothing in
+// this signal, so a hit would replay a stale foreign verdict (a record excluded as "state
+// unreadable" would stay excluded in a quiet queue); cacheUsable treats the flag as a miss.
 function buildFreshnessSignal(issues) {
   const byNumber = new Map();
+  let foreignDeclared = false;
   for (const i of Array.isArray(issues) ? issues : []) {
     if (!i || typeof i.number !== 'number') continue;
     byNumber.set(i.number, { number: i.number, updatedAt: i.updatedAt, state: i.state });
+    if (parseCrossRepoDependencies(i.body).length > 0) foreignDeclared = true;
   }
-  return { issues: [...byNumber.values()] };
+  return { issues: [...byNumber.values()], ...(foreignDeclared ? { foreignDeclared: true } : {}) };
 }
 
 // Exact-match comparison per AC1/AC2/AC3: same set of issue numbers, and for
@@ -114,9 +122,11 @@ function composeOrderBlob({
 // A persisted blob is reusable only when stamped with the caller's current
 // grouping rule (default GROUPING_MODE) AND its freshness signal still
 // matches. A blob without `grouping` (any older plugin install's write) fails
-// closed. Never throws.
+// closed, and so does a current signal flagged `foreignDeclared` (buildFreshnessSignal, #4793).
+// Never throws.
 function cacheUsable(persisted, current, grouping = GROUPING_MODE) {
   return !!persisted && persisted.grouping === grouping
+    && !(current && current.foreignDeclared)
     && signalsMatch(persisted.freshnessSignal, current);
 }
 

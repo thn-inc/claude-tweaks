@@ -1,10 +1,12 @@
 // tests/dispatch-cross-repo-blocker-exclusion-fixture.test.js — #4793.
 //
-// A blocker linked natively from another repository blocks its dependent exactly when its state is
+// A blocker linked natively or declared in the body from another repository blocks its dependent exactly when its state is
 // not CLOSED (open or unreadable), and the Blocked-exclusion report names it `owner/name#N`, never
 // as this repository's `#N`. The grouping snippet is extracted from queue-pull-script.md and run
-// as shipped (extract-and-run, per skill-prose-conformance-tests); the two prose clauses are pinned
-// with the shared fact-list helpers, each proven to go red on its own.
+// as shipped (extract-and-run, per skill-prose-conformance-tests), and so is the body-text partition
+// snippet (a body-declared `Blocked by owner/name#N` line: unreadable gh, supplied states, an exported
+// states file). The report, the MCP section and the queue notes are pinned with the shared fact-list
+// helpers, each fact proven to go red on its own.
 'use strict';
 
 const { test } = require('node:test');
@@ -125,7 +127,10 @@ test('a body-declared foreign blocker whose state cannot be read excludes its re
 
 // The gh-absent MCP firing: the agent reads each foreign ref with issue_read and exports the states
 // file as DISPATCH_FOREIGN_STATES. PATH still holds no gh, so only a supplied state can answer.
-function runBodyPass(statesFile) {
+// `prelude` (optional) -> { line, mode }: statesFile's path becomes the line `prelude(path)` at the top of the
+// bash script that runs the snippet inside an `if` block, never an env entry, so shell scoping decides
+// whether node sees it (the MCP section's prescribed call shape).
+function runBodyPass(statesFile, prelude) {
   const snippet = extractSnippet(BODY_START_ANCHOR, 'body-text partition snippet');
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-body-foreign-states-'));
   const file = (name) => path.join(scratch, name);
@@ -146,8 +151,10 @@ function runBodyPass(statesFile) {
     DISPATCH_ELIGIBLE: file('eligible.json'),
     DISPATCH_BLOCKED_EXCLUDED_BODY: file('excluded.json'),
   };
-  if (statesFile) env.DISPATCH_FOREIGN_STATES = statesFile(file);
-  const res = spawnSync('bash', ['-c', snippet], { encoding: 'utf8', env });
+  let script = snippet;
+  if (statesFile && prelude) script = `${prelude(statesFile(file))}\nif true; then\n${snippet}\nfi\n`;
+  else if (statesFile) env.DISPATCH_FOREIGN_STATES = statesFile(file);
+  const res = spawnSync('bash', ['-c', script], { encoding: 'utf8', env });
   assert.strictEqual(res.status, 0, res.stderr);
   return {
     res,
@@ -185,19 +192,40 @@ test('a DISPATCH_FOREIGN_STATES that is unset behaves as before, and one that na
   assert.strictEqual(warnings.length, 1, missing.res.stderr);
 });
 
+// The MCP section tells the agent to `export DISPATCH_FOREIGN_STATES={path}` at the top of the Bash call that
+// runs the pass. A bare `VAR=path` line (or a prefix on another command) never reaches the node child, so the
+// same script without `export` must read the states as unset and fail closed.
+test('the states file is exported at the top of the pass\'s own Bash call: with export it supplies the states, as a bare VAR=path line it does not (#4793)', () => {
+  const writeStates = (file) => {
+    fs.writeFileSync(file('states.json'), JSON.stringify({ 'other/repo#5': 'closed', 'OTHER/REPO#6': 'open' }));
+    return file('states.json');
+  };
+  const exported = runBodyPass(writeStates, (p) => `export DISPATCH_FOREIGN_STATES='${p}'`);
+  assert.deepEqual(exported.eligible, [31, 34]);
+  assert.deepEqual(exported.excluded.map((e) => e.blockedBy), [['Other/Repo#6'], ['other/repo#7 (state unreadable)']]);
+
+  const bare = runBodyPass(writeStates, (p) => `DISPATCH_FOREIGN_STATES='${p}'`);
+  assert.deepEqual(bare.eligible, [34], 'without export the variable is shell-local, so node sees no states');
+  assert.deepEqual(bare.excluded.map((e) => e.blockedBy), [
+    ['other/repo#5 (state unreadable)'], ['Other/Repo#6 (state unreadable)'], ['other/repo#7 (state unreadable)'],
+  ]);
+});
+
 // The report and the MCP section hard-wrap at about 100 columns, so whitespace is collapsed first.
 const collapse = (text) => text.replace(/\s+/g, ' ');
 
 const REPORT_FACTS = [
   [/A `blockedBy` entry that is a string — `owner\/name#N`/, 'a string blockedBy entry is an owner/name#N foreign blocker'],
+  [/a blocker linked natively or declared by a `Blocked by owner\/name#N` line, optionally suffixed ` \(state unreadable\)` when its state could not be read/, 'a string entry covers a native link and a body-declared Blocked by owner/name#N line'],
   [/renders verbatim, never with a `#` prefix/, 'a string entry renders verbatim, never with a # prefix'],
 ];
 const MCP_FACTS = [
   [/a mention naming another repository \(`owner\/name#N`\)/i, 'a mention naming another repository is owner/name#N'],
   [/open or unreadable, it blocks/, 'a foreign blocker that is open or unreadable blocks'],
-  [/suffixed ` \(state unreadable\)` when `issue_read` cannot read its state/, 'an unreadable foreign state is suffixed (state unreadable)'],  [/read each with `issue_read` \(`get` method; its `owner`, `repo` and `issue_number`\)/, 'the MCP agent reads each body-declared foreign ref with issue_read'],
+  [/suffixed ` \(state unreadable\)` when `issue_read` cannot read its state/, 'an unreadable foreign state is suffixed (state unreadable)'],
+  [/read each with `issue_read` \(`get` method; its `owner`, `repo` and `issue_number`\)/, 'the MCP agent reads each body-declared foreign ref with issue_read'],
   [/write the states as one JSON object keyed by `owner\/name#N`, each value copied from `issue_read`'s `state` \(any case\) or `null`/, 'the MCP agent writes the states as a JSON object keyed by owner/name#N, copying issue_read\'s state in any case'],
-  [/Set its path as `DISPATCH_FOREIGN_STATES=\{path\}` prefixed to the same Bash call that runs the pass, because shell state does not persist between calls/i, 'the MCP agent prefixes DISPATCH_FOREIGN_STATES={path} to the Bash call that runs the pass'],
+  [/Set its path with `export DISPATCH_FOREIGN_STATES=\{path\}` at the top of the same Bash call that runs the pass \(shell state does not persist between calls, and a `VAR=value` prefix reaches only the command it sits on\)/i, 'the MCP agent exports DISPATCH_FOREIGN_STATES={path} at the top of the Bash call that runs the pass, because a VAR=value prefix reaches only its own command'],
   [/A ref left out of the file, or `null`, still excludes the record as `owner\/name#N \(state unreadable\)` \(fail closed\)/i, 'a ref left out or null still excludes the record (state unreadable)'],
 ];
 const NOTES_FACTS = [
@@ -207,6 +235,7 @@ const NOTES_FACTS = [
   [/a failed lookup reads unreadable \(fail closed, one `Warning:` line\)/, 'a failed body-text lookup fails closed with one Warning line'],
   [/naming it `owner\/name#N` or `owner\/name#N \(state unreadable\)`/, 'the body-text pass names a blocker owner/name#N or owner/name#N (state unreadable)'],
   [/a CLOSED one does not block/, 'a CLOSED body-declared foreign blocker does not block'],
+  [/The queue-order cache \(#1571\) is never a hit while any `auto:build` body declares such a line \(`queue-order\.js`'s `cacheUsable`\), because a foreign issue closing changes nothing in its freshness signal/i, 'the queue-order cache is never a hit while an auto:build body declares a qualified foreign Blocked by line'],
 ];
 
 test('the report and the MCP workaround name a foreign blocker owner/name#N (#4793)', () => {

@@ -513,14 +513,14 @@ test('partitionByOpenBodyBlockers excludes a candidate with an open body-text bl
     { number: 12, body: 'Blocked by #40' },
     { number: 15, body: 'no deps' },
   ];
-  const { eligible, excluded } = partitionByOpenBodyBlockers(candidates, new Set([40]));
+  const { eligible, excluded } = partitionByOpenBodyBlockers(candidates, new Set([40]), new Map());
   assert.deepStrictEqual(eligible.map((c) => c.number), [15]);
   assert.deepStrictEqual(excluded, [{ number: 12, blockedBy: [40] }]);
 });
 
 test('partitionByOpenBodyBlockers keeps a candidate whose blocker is not in openNumbers (already closed)', () => {
   const candidates = [{ number: 12, body: 'Blocked by #40' }];
-  const { eligible, excluded } = partitionByOpenBodyBlockers(candidates, new Set());
+  const { eligible, excluded } = partitionByOpenBodyBlockers(candidates, new Set(), new Map());
   assert.deepStrictEqual(eligible.map((c) => c.number), [12]);
   assert.deepStrictEqual(excluded, []);
 });
@@ -532,7 +532,7 @@ test('partitionByOpenBodyBlockers reports a two-member dependency cycle as two e
     { number: 10, body: 'Blocked by #11' },
     { number: 11, body: 'Blocked by #10' },
   ];
-  const { eligible, excluded } = partitionByOpenBodyBlockers(candidates, new Set([10, 11]));
+  const { eligible, excluded } = partitionByOpenBodyBlockers(candidates, new Set([10, 11]), new Map());
   assert.deepStrictEqual(eligible, []);
   assert.deepStrictEqual(excluded, [
     { number: 10, blockedBy: [11] },
@@ -579,6 +579,12 @@ test('Plan Review Clarifications: partitionByOpenBodyBlockers excludes an open o
   assert.deepStrictEqual(excluded, [
     { number: 11, blockedBy: ['other/repo#5'] }, { number: 12, blockedBy: ['other/repo#6 (state unreadable)'] }, { number: 14, blockedBy: [40] },
   ]);
+});
+
+test('partitionByOpenBodyBlockers requires its foreign map: a missing or non-Map third argument throws, because a default of no rule would fail open', () => {
+  const candidates = [{ number: 11, body: '' }];
+  assert.throws(() => partitionByOpenBodyBlockers(candidates, new Set()), { name: 'TypeError', message: /foreignByRecord must be a Map/ });
+  assert.throws(() => partitionByOpenBodyBlockers(candidates, new Set(), {}), { name: 'TypeError', message: /foreignByRecord must be a Map/ });
 });
 
 test('partitionByOpenLinkedPR excludes a candidate with an OPEN linked PR, naming the PR number', () => {

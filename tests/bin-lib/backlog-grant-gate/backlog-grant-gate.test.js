@@ -25,7 +25,7 @@ test('filterCandidates drops human-filed, already-granted, in-progress, and bloc
     issue(4, { labels: ['by:code-health', 'ready', 'bot:in-progress'] }), // claimed, dropped
     issue(5, { labels: ['by:code-health', 'ready'], body: 'Blocked by #50' }), // open blocker, dropped
     issue(6, { labels: ['by:code-health', 'ready'], body: 'Blocked by #999' }), // closed/unknown blocker, survives
-  ], openNumbers);
+  ], openNumbers, new Map());
   assert.deepStrictEqual(candidates.map((c) => c.number), [1, 6]);
 });
 
@@ -245,7 +245,7 @@ test('computeOutlook: a sub-issue is excluded from trustRows\' cell totals (neve
 
 const FOREIGN_LABELS = ['by:code-health', 'ready'];
 
-test('#4793: filterCandidates drops a candidate whose foreign blocker is OPEN or unreadable, keeps a CLOSED one, and is unchanged without the map', () => {
+test('#4793: filterCandidates drops a candidate whose foreign blocker is OPEN or unreadable, keeps a CLOSED one, and and rejects a missing map', () => {
   const issues = [
     issue(7, { labels: FOREIGN_LABELS, body: 'Blocked by other/repo#7' }),
     issue(8, { labels: FOREIGN_LABELS, body: 'Blocked by other/repo#8' }),
@@ -257,7 +257,9 @@ test('#4793: filterCandidates drops a candidate whose foreign blocker is OPEN or
     [9, [{ number: 9, repository: 'other/repo', state: 'CLOSED' }]],
   ]);
   assert.deepStrictEqual(filterCandidates(issues, new Set(), foreign).map((c) => c.number), [9]);
-  assert.deepStrictEqual(filterCandidates(issues, new Set()).map((c) => c.number), [7, 8, 9]);
+  assert.deepStrictEqual(filterCandidates(issues, new Set(), new Map()).map((c) => c.number), [7, 8, 9]);
+  assert.throws(() => filterCandidates(issues, new Set()), { name: 'TypeError', message: /foreignByRecord must be a Map/ });
+  assert.throws(() => filterCandidates(issues, new Set(), {}), { name: 'TypeError', message: /foreignByRecord must be a Map/ });
 });
 
 test('#4793: a foreign blocker never collides with this repository\'s same bare number', () => {
@@ -314,6 +316,26 @@ test('#4793: computeOutlook looks up only the foreign refs of candidates that su
   assert.strictEqual(spawned.length, 1);
   assert.strictEqual(spawned[0][1], 'kept/repo#3');
   assert.deepStrictEqual(out.candidates.map((c) => c.number), [3]);
+});
+
+test('#4793: a candidate already blocked by an open this-repository #N makes no foreign lookup, even when its body also declares a foreign ref', () => {
+  const spawned = [];
+  const out = computeOutlook(
+    { ceiling: 'unattended', grantOriginationEnabled: true, windowDays: 14 },
+    {
+      limit: 100,
+      workLinks: 'body-text',
+      integrationBranch: 'main',
+      runner: ghRunner({
+        candidates: [issue(1, { labels: FOREIGN_LABELS, body: 'Blocked by #50\nBlocked by other/repo#9' })],
+        records: [issue(50, { state: 'OPEN' })],
+      }),
+      gitRunner: () => '',
+      foreignDeps: { spawn: (argv) => { spawned.push(argv); return { status: 0, stdout: '{}\n' }; }, stderr: () => {} },
+    },
+  );
+  assert.deepStrictEqual(out.candidates, []);
+  assert.strictEqual(spawned.length, 0);
 });
 
 test('#4793: computeOutlook fails closed on a failing lookup: the candidate is excluded and one Warning line reaches stderr', () => {

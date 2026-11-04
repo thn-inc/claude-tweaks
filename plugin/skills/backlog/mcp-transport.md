@@ -52,7 +52,17 @@ exported):
      it needs no extra call beyond the fetch above.
    - Git log → unaffected by `gh` presence at all: `fetchGitLog` shells `git`, not `gh`, so it runs
      identically on both transports. No MCP mapping needed here.
-2. **Compute, locally, no MCP call:** feed the fetched JSON into `filterCandidates` →
+2. **Foreign blockers, via MCP (#4793):** `filterCandidates`' third argument is required, so the
+   `gh`-absent path computes it the way the CLI does. Run `filterCandidates(issues, openNumbers,
+   new Map())` for the cheap survivors, read each survivor's body-declared foreign refs (`Blocked by
+   owner/name#N` lines) with `issue_read` (`get` method), and build one states object keyed
+   `owner/name#N`, each value copied from `issue_read`'s `state` (any case) or `null` for a ref it
+   cannot read. Build the Map with `bodyForeignBlockers(cheapSurvivors, { states })`
+   (`bin/lib/issues/cross-repo-states.js`) and pass it as the third argument of the second
+   `filterCandidates` call. A ref left out, or `null`, still blocks (fail closed).
+   `overview-mode.md`'s funnel on this transport passes the same `{ states }` to its
+   `bodyForeignBlockers` call.
+3. **Compute, locally, no MCP call:** feed the fetched JSON into `filterCandidates` →
    `computePhaseA` / `machineGrantOutlook` / `trustRows` directly, via a `node -e` snippet
    `require`-ing `bin/lib/backlog-grant-gate/backlog-grant-gate.js` and `bin/lib/issues/backlog.js`
    — the same pure logic `bin/backlog-grant-gate.js` runs, called with MCP-sourced data instead of

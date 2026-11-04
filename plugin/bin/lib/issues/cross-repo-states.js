@@ -65,6 +65,14 @@ const suppliedValue = (v) => {
   return readableState(typeof state === 'string' ? state.toUpperCase() : state);
 };
 
+// Sets key in out, merging with what is already there: two spellings of one ref that differ only in
+// case ('other/repo#5', 'OTHER/REPO#5') are one blocker, and a CLOSED must never override an OPEN or
+// unreadable one, so the result is CLOSED only when every spelling says CLOSED (fail closed).
+function setSupplied(out, key, value) {
+  const prior = out.has(key) ? out.get(key) : 'CLOSED';
+  out.set(key, prior === 'CLOSED' ? value : prior);
+}
+
 // A states object (or Map) keyed by 'owner/name#N' -> Map<crossRepoKey, 'OPEN'|'CLOSED'|null>. Keys
 // are canonicalised like every other foreign key (case-insensitive owner/name, no leading zeros); a
 // key that is not an owner/name#N ref (this repository's numeric keys share --blocker-states-json)
@@ -75,7 +83,7 @@ function suppliedStates(input) {
   const entries = input instanceof Map ? [...input] : isObject(input) ? Object.entries(input) : [];
   for (const [key, value] of entries) {
     const parsed = parseCrossRepoRef(key);
-    if (parsed) out.set(crossRepoKey(parsed), suppliedValue(value));
+    if (parsed) setSupplied(out, crossRepoKey(parsed), suppliedValue(value));
   }
   return out;
 }
@@ -90,7 +98,7 @@ function loadedSupplied({ states, statesFile }, stderr) {
   try {
     const parsed = JSON.parse(fs.readFileSync(statesFile, 'utf8'));
     if (isObject(parsed)) {
-      for (const [key, value] of suppliedStates(parsed)) out.set(key, value);
+      for (const [key, value] of suppliedStates(parsed)) setSupplied(out, key, value);
     } else {
       why = 'not a JSON object';
     }

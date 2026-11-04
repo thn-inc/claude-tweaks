@@ -249,8 +249,11 @@ function partitionByOpenBlockers(candidates, openBlockerIdsFn) {
 // partitionByOpenBlockers above. #4793 (Plan Review Clarifications): a body-declared
 // `Blocked by owner/repo#N` is another repository's issue, so each candidate's blocker
 // list is its open local numbers, then foreignBlockerRef for each foreignByRecord entry
-// that foreignBlockerBlocks (open or unreadable, never CLOSED).
-function partitionByOpenBodyBlockers(candidates, openNumbers, foreignByRecord = new Map()) {
+// that foreignBlockerBlocks (open or unreadable, never CLOSED). `foreignByRecord` is required
+// (pass `new Map()` for "no foreign refs"): a default of "no rule" would fail open for a caller
+// that forgot it, so a missing or non-Map value throws a TypeError.
+function partitionByOpenBodyBlockers(candidates, openNumbers, foreignByRecord) {
+  if (!(foreignByRecord instanceof Map)) throw new TypeError('partitionByOpenBodyBlockers: foreignByRecord must be a Map (pass new Map() for none)');
   return partitionByOpenBlockers(candidates, (c) => [
     ...parseDependencies(c.body).filter((dep) => openNumbers.has(dep)),
     ...(foreignByRecord.get(c.number) || []).filter(foreignBlockerBlocks).map(foreignBlockerRef),

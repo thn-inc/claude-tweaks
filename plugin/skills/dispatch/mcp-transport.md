@@ -197,9 +197,10 @@ before `queue-pull-script.md` runs it, collect each eligible candidate's body-de
 (`Blocked by owner/name#N` lines), read each with `issue_read` (`get` method; its `owner`, `repo`
 and `issue_number`), and write the states as one JSON object keyed by `owner/name#N`, each value
 copied from `issue_read`'s `state` (any case) or `null` for a ref `issue_read` cannot read, with the
-Write tool to a session-scoped temp file (`_shared/session-tmp-root.md`). Set its path as
-`DISPATCH_FOREIGN_STATES={path}` prefixed to the same Bash call that runs the pass, because shell
-state does not persist between calls: a closed ref no longer blocks, and an open one excludes the
+Write tool to a session-scoped temp file (`_shared/session-tmp-root.md`). Set its path with
+`export DISPATCH_FOREIGN_STATES={path}` at the top of the same Bash call that runs the pass (shell
+state does not persist between calls, and a `VAR=value` prefix reaches only the command it sits
+on): a closed ref no longer blocks, and an open one excludes the
 record as `owner/name#N`. A ref left out of the file, or `null`, still excludes the record as
 `owner/name#N (state unreadable)` (fail closed), and an unset or unreadable file changes nothing.
 

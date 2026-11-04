@@ -231,6 +231,27 @@ test('suppliedStates keys canonically and reads OPEN or CLOSED in any case, a st
   assert.deepStrictEqual([...suppliedStates(new Map([['Other/Repo#5', 'CLOSED']]))], [['other/repo#5', 'CLOSED']]);
 });
 
+test('suppliedStates merges two spellings of one ref that differ only in case: any non-CLOSED value wins, in either order, so a CLOSED never overrides an OPEN or unreadable one', () => {
+  const key = ['other/repo#5'];
+  for (const [first, second, want] of [
+    ['closed', 'open', 'OPEN'], ['open', 'closed', 'OPEN'], ['closed', 'merged', null], ['merged', 'closed', null],
+    ['closed', 'CLOSED', 'CLOSED'],
+  ]) {
+    const merged = suppliedStates({ 'other/repo#5': first, 'OTHER/REPO#5': second });
+    assert.deepStrictEqual([...merged.keys()], key);
+    assert.strictEqual(merged.get('other/repo#5'), want, `${first} then ${second}`);
+  }
+  // An unreadable spelling beside an OPEN one stays non-CLOSED (which of the two is kept does not matter: both block).
+  for (const pair of [[null, 'open'], ['open', null]]) {
+    assert.notStrictEqual(suppliedStates({ 'other/repo#5': pair[0], 'OTHER/REPO#5': pair[1] }).get('other/repo#5'), 'CLOSED');
+  }
+  // A states Map and a statesFile spelling the same ref differently merge the same way.
+  const fromBoth = withStatesFile(JSON.stringify({ 'OTHER/REPO#5': 'closed' }), (statesFile) => resolveForeignStates(['other/repo#5'], {
+    spawn: noSpawn, stderr: () => {}, states: { 'other/repo#5': 'open' }, statesFile,
+  }));
+  assert.strictEqual(fromBoth.get('other/repo#5'), 'OPEN');
+});
+
 test('resolveForeignStates answers a supplied ref without spawning, and asks the CLI only for the rest', () => {
   const err = [];
   const states = resolveForeignStates(['Other/Repo#5', 'acme/x#7'], { spawn: noSpawn, stderr: (s) => err.push(s), states: { 'other/repo#5': 'CLOSED', 'acme/x#7': 'OPEN' } });

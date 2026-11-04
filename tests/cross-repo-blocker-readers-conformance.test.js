@@ -97,6 +97,26 @@ for (const [name, text] of WIRED_FOREIGN_REGIONS) {
   });
 }
 
+// The gh-absent headless grant pre-pass (backlog/mcp-transport.md) has no CLI to look the foreign states up,
+// so its prose reads them with issue_read and hands them over; filterCandidates' third argument is required.
+const MCP_TRANSPORT = collapse(sectionOf(readText(path.join(BACKLOG_DIR, 'mcp-transport.md')), '## Step 1 + Step 2 Phase A — ready-queue fetch and gates 1-3'));
+const MCP_FOREIGN_FACTS = [
+  [/`filterCandidates`' third argument is required/, 'the MCP path says filterCandidates takes a required third argument'],
+  [/Run `filterCandidates\(issues, openNumbers, new Map\(\)\)` for the cheap survivors/, 'the MCP path runs the cheap filter with an explicit empty Map'],
+  [/read each survivor's body-declared foreign refs \(`Blocked by owner\/name#N` lines\) with `issue_read` \(`get` method\)/i, 'the MCP path reads each survivor\'s body-declared foreign refs with issue_read'],
+  [/one states object keyed `owner\/name#N`, each value copied from `issue_read`'s `state` \(any case\) or `null` for a ref it cannot read/, 'the MCP path builds a states object keyed owner/name#N from issue_read\'s state, null when unreadable'],
+  [/`bodyForeignBlockers\(cheapSurvivors, \{ states \}\)`/, 'the MCP path computes bodyForeignBlockers(cheapSurvivors, { states })'],
+  [/pass it as the third argument of the second `filterCandidates` call/, 'the MCP path passes the Map as the second filterCandidates call\'s third argument'],
+  [/A ref left out, or `null`, still blocks \(fail closed\)/, 'a ref left out or null still blocks'],
+  [/`overview-mode\.md`'s funnel on this transport passes the same `\{ states \}` to its `bodyForeignBlockers` call/, 'the overview funnel on this transport passes the same states to bodyForeignBlockers'],
+];
+
+test('backlog mcp-transport.md reads body-declared foreign blockers with issue_read and passes them to the pre-pass and the overview funnel (#4793)', () => {
+  const missing = missingFactsOf(MCP_FOREIGN_FACTS);
+  assert.deepEqual(missing(MCP_TRANSPORT), [], 'mcp-transport.md states every fact');
+  assertEachPatternGoesRed(MCP_TRANSPORT, MCP_FOREIGN_FACTS, missing);
+});
+
 const LEGACY_FILTER = 'nodes.filter(open).map(number)';
 const NO_LEGACY_MESSAGE = 'overview-mode.md still attaches nodes.filter(open).map(number), which drops a foreign blocker';
 const assertNoLegacyFilter = (text) => assert.ok(!text.includes(LEGACY_FILTER), NO_LEGACY_MESSAGE);

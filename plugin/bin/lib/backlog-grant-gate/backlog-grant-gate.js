@@ -47,9 +47,12 @@ function fetchReadyCandidates({ limit, runner }) {
 // claimed, no open 'Blocked by #N', and no open-or-unreadable body-declared
 // foreign blocker ('Blocked by owner/name#N'). `foreignByRecord` is the
 // precomputed Map<number, [{number, repository, state}]> from
-// bodyForeignBlockers (computeOutlook builds it, keeping this function pure);
-// absent, no foreign rule applies. Each candidate carries its own parsed `facets`.
-function filterCandidates(issues, openNumbers, foreignByRecord = new Map()) {
+// bodyForeignBlockers (computeOutlook builds it, keeping this function pure).
+// It is required (pass `new Map()` for "no foreign refs yet"): a default of "no rule"
+// would fail open for a caller that forgot it, so a missing or non-Map value throws.
+// Each candidate carries its own parsed `facets`.
+function filterCandidates(issues, openNumbers, foreignByRecord) {
+  if (!(foreignByRecord instanceof Map)) throw new TypeError('filterCandidates: foreignByRecord must be a Map (pass new Map() for none)');
   return issues
     .map((i) => ({ ...i, facets: parseRecordFacets(i.labels) }))
     .filter((i) => i.facets.origin !== null)
@@ -208,7 +211,7 @@ function computeOutlook(policy, fetch) {
   // The foreign-blocker state lookup is one batched call over the cheap-filter
   // survivors' body refs (none at all when no survivor declares one), then the
   // blocker filter runs again with its result.
-  const cheapSurvivors = filterCandidates(readyIssues, openNumbers);
+  const cheapSurvivors = filterCandidates(readyIssues, openNumbers, new Map());
   const candidates = filterCandidates(cheapSurvivors, openNumbers, bodyForeignBlockers(cheapSurvivors, foreignDeps));
 
   const subIssueNumbers = resolveSubIssueNumbers({
