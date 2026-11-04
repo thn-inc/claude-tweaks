@@ -37,8 +37,9 @@ const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
 // refs -> [{ key, parsed }] (distinctCrossRepoRefs). Misuse throws a TypeError (non-array refs, an
 // unparseable ref), like foreignEntries.
 function distinctRefs(refs, who) {
-  const distinct = distinctCrossRepoRefs(refs);
-  if (!distinct) throw new TypeError(`${who}: refs must be an array of owner/name#N refs`);
+  if (!Array.isArray(refs)) throw new TypeError(`${who}: refs must be an array`);
+  const { distinct, invalid } = distinctCrossRepoRefs(refs);
+  if (!distinct) throw new TypeError(`${who}: not an owner/name#N ref: ${invalid}`);
   return distinct;
 }
 

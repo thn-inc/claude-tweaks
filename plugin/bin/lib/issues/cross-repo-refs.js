@@ -52,23 +52,24 @@ function parseCrossRepoRef(ref) {
   return m ? { repository: m[1], number: Number(m[2]), digits: canonicalDigits(m[2]) } : null;
 }
 
-// refs -> [{ key, parsed }], one per distinct crossRepoKey in first-seen order; null when refs is
-// not an array or any entry is not an owner/name#N ref (callers choose between throwing and a
-// malformed-input answer). The one parse-and-dedupe that fetchCrossRepoStates,
-// resolveForeignStates and bin/resolve-foreign-blockers.js share.
+// refs -> { distinct: [{ key, parsed }] } (one per distinct crossRepoKey, first-seen order), or
+// { distinct: null, invalid } naming the first entry that is not an owner/name#N ref (callers
+// choose between throwing and a malformed-input answer). A non-array throws a TypeError. The one
+// parse-and-dedupe that fetchCrossRepoStates, resolveForeignStates and
+// bin/resolve-foreign-blockers.js share.
 function distinctCrossRepoRefs(refs) {
-  if (!Array.isArray(refs)) return null;
+  if (!Array.isArray(refs)) throw new TypeError('distinctCrossRepoRefs: refs must be an array');
   const seen = new Set();
   const out = [];
   for (const ref of refs) {
     const parsed = parseCrossRepoRef(ref);
-    if (!parsed) return null;
+    if (!parsed) return { distinct: null, invalid: ref };
     const key = crossRepoKey(parsed);
     if (seen.has(key)) continue;
     seen.add(key);
     out.push({ key, parsed });
   }
-  return out;
+  return { distinct: out };
 }
 
 // body -> the qualified refs from line-anchored 'Blocked by owner/name#N' lines, in order of
@@ -90,6 +91,11 @@ function parseCrossRepoDependencies(body) {
 
 // refs + Map(crossRepoKey -> state) -> one {number, repository, state} entry per ref, deduped by
 // key. `state` is the map's value when that is a string, else null (unread reads as unknown).
+// `number` is a Number when the ref's number is at most GRAPHQL_INT_MAX. A larger one (never
+// sent, never a real issue of this tool's reach) keeps its canonical digit string instead, so a
+// renderer prints it exactly and two refs above 2^53 stay two entries; such an entry always reads
+// state null and is never subtracted from blockedBy, since only native numbers (GraphQL Int) are.
+// crossRepoKey keys it by that string, so bodyOnlyForeign / mergeForeignBlockers need no special case.
 // Misuse throws a TypeError (non-array refs, non-Map states, an unparseable ref): callers pass
 // parseCrossRepoDependencies output and a Map, so anything else is a bug to surface.
 function foreignEntries(refs, states) {
@@ -103,8 +109,13 @@ function foreignEntries(refs, states) {
     const key = crossRepoKey(parsed);
     if (seen.has(key)) continue;
     seen.add(key);
-    const state = states.get(key);
-    entries.push({ number: parsed.number, repository: parsed.repository, state: typeof state === 'string' ? state : null });
+    const oversized = parsed.number > GRAPHQL_INT_MAX;
+    const state = oversized ? null : states.get(key);
+    entries.push({
+      number: oversized ? parsed.digits : parsed.number,
+      repository: parsed.repository,
+      state: typeof state === 'string' ? state : null,
+    });
   }
   return entries;
 }

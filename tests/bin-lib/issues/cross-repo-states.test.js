@@ -80,7 +80,8 @@ test('fetchCrossRepoStates sends no ref above 2147483647, makes no call for none
 
 test('fetchCrossRepoStates rejects misuse: a non-array refs and an unparseable ref', () => {
   assert.throws(() => fetchCrossRepoStates({ refs: 'a/b#1', runner: () => '{}' }), TypeError);
-  assert.throws(() => fetchCrossRepoStates({ refs: ['nope'], runner: () => '{}' }), TypeError);
+  assert.throws(() => fetchCrossRepoStates({ refs: ['a/b#1', 'nope'], runner: () => '{}' }), { name: 'TypeError', message: 'fetchCrossRepoStates: not an owner/name#N ref: nope' });
+  assert.throws(() => resolveForeignStates(['a/b#1', 'worse'], { spawn: () => ({}) }), { name: 'TypeError', message: 'resolveForeignStates: not an owner/name#N ref: worse' });
 });
 
 test('resolveForeignStates fails closed: a non-zero CLI exit reads every ref null and prints one Warning line', () => {
@@ -203,7 +204,7 @@ test('bodyForeignBlockers keys by id when a record has no number, reads an overs
   const out = bodyForeignBlockers([{ id: 'local-1', body: 'Blocked by other/repo#5\nBlocked by big/repo#99999999999' }], { spawn, stderr: () => {} });
   assert.deepStrictEqual(out.get('local-1'), [
     { number: 5, repository: 'other/repo', state: 'OPEN' },
-    { number: 99999999999, repository: 'big/repo', state: null },
+    { number: '99999999999', repository: 'big/repo', state: null },
   ]);
 
   const noSpawn = () => { throw new Error('must not spawn'); };

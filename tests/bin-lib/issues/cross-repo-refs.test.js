@@ -5,7 +5,7 @@ const {
   parseCrossRepoDependencies, parseCrossRepoRef, crossRepoKey, distinctCrossRepoRefs, foreignEntries, bodyOnlyForeign, mergeForeignBlockers,
   stripCrossRepoRefs, buildCrossRepoStateQuery,
 } = require('../../../plugin/bin/lib/issues/cross-repo-refs');
-const { parseDependencies } = require('../../../plugin/bin/lib/issues/record');
+const { parseDependencies, foreignBlockerRef } = require('../../../plugin/bin/lib/issues/record');
 
 test('Q7 (#4793): parseCrossRepoDependencies lists line-anchored Blocked by owner/name#N refs, qualified, deduped, in order', () => {
   assert.deepStrictEqual(parseCrossRepoDependencies('Blocked by other/repo#5\nBlocked by #6\nBlocked by Other/Repo#5\nBlocked by acme/w.js#7\n'), ['other/repo#5', 'acme/w.js#7']);
@@ -78,11 +78,11 @@ test('crossRepoKey is built from the digit string: every key round-trips through
   assert.strictEqual(crossRepoKey({ repository: 'Other/Repo', number: 5 }), 'other/repo#5');
 });
 test('distinctCrossRepoRefs dedupes by key and answers null for a non-array or any unparseable entry', () => {
-  assert.deepStrictEqual(distinctCrossRepoRefs(['a/b#1', 'A/B#1', 'c/d#2']).map(({ key }) => key), ['a/b#1', 'c/d#2']);
-  assert.deepStrictEqual(distinctCrossRepoRefs([]), []);
-  assert.strictEqual(distinctCrossRepoRefs('a/b#1'), null);
-  assert.strictEqual(distinctCrossRepoRefs(['a/b#1', 'nope']), null);
-  assert.strictEqual(distinctCrossRepoRefs(['a/b#1', '']), null);
+  assert.deepStrictEqual(distinctCrossRepoRefs(['a/b#1', 'A/B#1', 'c/d#2']).distinct.map(({ key }) => key), ['a/b#1', 'c/d#2']);
+  assert.deepStrictEqual(distinctCrossRepoRefs([]), { distinct: [] });
+  assert.throws(() => distinctCrossRepoRefs('a/b#1'), TypeError);
+  assert.deepStrictEqual(distinctCrossRepoRefs(['a/b#1', 'nope', 'worse']), { distinct: null, invalid: 'nope' });
+  assert.deepStrictEqual(distinctCrossRepoRefs(['a/b#1', '']), { distinct: null, invalid: '' });
 });
 test('an owner starting with a hyphen neither parses nor strips, so it can never become a leading-- argv element', () => {
   for (const ref of ['--x/y#1', '-x/y#1']) {
@@ -93,5 +93,19 @@ test('an owner starting with a hyphen neither parses nor strips, so it can never
   }
   assert.deepStrictEqual(parseCrossRepoDependencies('Blocked by x-y/z#1'), ['x-y/z#1']);
   assert.strictEqual(stripCrossRepoRefs('Blocked by x-y/z#1'), 'Blocked by ');
-  assert.deepStrictEqual(distinctCrossRepoRefs(['--x/y#1']), null);
+  assert.strictEqual(distinctCrossRepoRefs(['--x/y#1']).distinct, null);
+});
+test('an oversized body ref keeps its exact digits: a number is a Number only up to 2147483647, the state is always null', () => {
+  const [entry] = foreignEntries(['o/r#1000000000000000000000'], new Map([['o/r#1000000000000000000000', 'CLOSED']]));
+  assert.deepStrictEqual(entry, { number: '1000000000000000000000', repository: 'o/r', state: null });
+  assert.strictEqual(foreignBlockerRef(entry), 'o/r#1000000000000000000000 (state unreadable)');
+  // At the boundary the number stays a Number, and its state is read.
+  assert.deepStrictEqual(foreignEntries(['o/r#2147483647', 'o/r#2147483648'], new Map([['o/r#2147483647', 'OPEN'], ['o/r#2147483648', 'OPEN']])), [
+    { number: 2147483647, repository: 'o/r', state: 'OPEN' }, { number: '2147483648', repository: 'o/r', state: null },
+  ]);
+  // Two refs above 2^53 are one Number apart but stay two entries, and merge keys them by digits.
+  const two = foreignEntries(['o/r#9007199254740993', 'o/r#9007199254740992'], new Map());
+  assert.deepStrictEqual(two.map((e) => e.number), ['9007199254740993', '9007199254740992']);
+  assert.deepStrictEqual(mergeForeignBlockers([{ number: 5, repository: 'o/r', state: 'OPEN' }], two), [{ number: 5, repository: 'o/r', state: 'OPEN' }, ...two]);
+  assert.deepStrictEqual(bodyOnlyForeign(two.slice(0, 1), two), two.slice(1));
 });

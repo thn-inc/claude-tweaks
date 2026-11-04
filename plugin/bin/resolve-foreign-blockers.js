@@ -35,7 +35,7 @@ const USAGE = 'usage: resolve-foreign-blockers.js <owner/name#N>[,<owner/name#N2
 // 'a/b#1,A/B#1,c/d#2' -> ['a/b#1', 'c/d#2'] (distinct crossRepoKeys), or null on any entry that is
 // not a well-formed owner/name#N. The number's range is checked by fetchCrossRepoStates, not here.
 function parseRefs(raw) {
-  const distinct = distinctCrossRepoRefs(raw.split(','));
+  const { distinct } = distinctCrossRepoRefs(raw.split(','));
   return distinct && distinct.map(({ key }) => key);
 }
 
