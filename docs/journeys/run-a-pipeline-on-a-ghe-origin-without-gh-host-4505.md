@@ -8,6 +8,14 @@ files:
   - plugin/bin/materialize.js
   - plugin/bin/fetch-sub-issues.js
   - plugin/bin/lib/issues/parent-gate.js
+  - plugin/bin/lib/hooks/git-exec.js
+  - plugin/bin/lib/reconcile/release-merged.js
+  - plugin/bin/lib/reconcile/archive-merged.js
+  - plugin/bin/lib/reconcile/pr-state.js
+  - plugin/bin/lib/reconcile/pr-state-batch.js
+  - plugin/bin/lib/reconcile/escalate-residue.js
+  - plugin/bin/lib/issues/claim-store.js
+  - plugin/bin/stale-claim-pr.js
 ---
 
 # Run a Pipeline on a GitHub Enterprise Origin Without Exporting GH_HOST
@@ -37,7 +45,7 @@ files:
 - **URL:** —
 - **Action:** `wrap-up-engine.js verify`'s acceptance-labeling check resolves `origin` once, through the same `gateOriginRepo` gate `bin/parent-gate.js` uses, and every read it makes names that host itself: the parent lookup runs as `gh api graphql -f owner=acme -f repo=widgets … --hostname acme.ghe.com`, and the issue and PR reads pass `--repo acme.ghe.com/acme/widgets`. The wrap-up pack's `gh` probes run with `GH_HOST=acme.ghe.com`. Acceptance-labeling reports pass or fail instead of `unknown`.
 - **Should feel:** The verify table reads like it does on github.com.
-- **Should understand:** The pack's calls carry no explicit repo, so the seam gives them the host. Acceptance-labeling's calls already name it, so the seam steps back for them (step 2's rule), and a parent's sub-issue reads go through step 5's path (#4805). An origin host the gate refuses (not `*.ghe.com`, not a `hosts.yml` key, no exported `GH_HOST`) renders acceptance-labeling `unknown` with the refusal text, never a read against github.com (`opt-in-an-unknown-origin-host-with-gh-host-4933.md`). The upstream-feedback check still reads github.com, because it names its repo with an explicit bare `--repo`.
+- **Should understand:** The pack's calls carry no explicit repo, so the seam gives them the host. Acceptance-labeling's calls already name it, so the seam steps back for them (step 2's rule), and a parent's sub-issue reads go through step 5's path (#4805). An origin host the gate refuses (not `*.ghe.com`, not a `hosts.yml` key, no exported `GH_HOST`) renders acceptance-labeling `unknown` with the refusal text, never a read against github.com (`opt-in-an-unknown-origin-host-with-gh-host-4933.md`). The upstream-feedback check still reads github.com, because it names its repo with an explicit bare `--repo`; when an exported `GH_HOST` names another host it renders `unknown` ("check not run") without calling gh at all, since gh would send that bare slug there (#4794).
 - **Red flags:** `Could not resolve to a Repository with the name 'acme/widgets'`; acceptance-labeling `unknown` with a GHE origin the gate accepts; an acceptance-labeling read with no `--hostname` or host-qualified `--repo` on a GHE origin.
 
 ### 4. An explicit choice still wins — `plugin/bin/materialize.js` with `--repo`, or an exported `GH_HOST`
@@ -54,6 +62,13 @@ files:
 - **Should understand:** Each GraphQL call names its own host right after `graphql`, so the result never depends on which `GH_HOST` the process inherited (#4806). A github.com repo sends no `--hostname` at all. The parent gate no longer adds the host to the fetcher's calls itself, because the fetcher already sends it. The gate still adds it to its own parent lookup, REST fallback, and `api user` reads.
 - **Red flags:** A sub-issue list that is empty, or that names github.com issues, for an enterprise parent. A `gh api graphql` argv carrying `--hostname` twice. Any `--hostname` on a github.com run.
 
+### 6. The session-start reconcile and the stale-claim check reach the origin host — `plugin/bin/lib/hooks/git-exec.js` `repoTargetOf`, `plugin/bin/stale-claim-pr.js`
+- **URL:** —
+- **Action:** A new session starts in the GHE checkout and `hooks.js reconcile` runs. Release, archive, reap and the PR-state reads resolve the repo once through `repoTargetOf`, which runs `origin` through the #4933 gate and returns `{ slug: 'acme/widgets', ghRepo: 'acme.ghe.com/acme/widgets', host: 'acme.ghe.com' }`. Every `--repo` the pass sends (a residue escalation's issue search, the claim store's open-PR listing) carries `acme.ghe.com/acme/widgets`, and every `repos/acme/widgets/…` path runs with `GH_HOST=acme.ghe.com`. Later, `/claude-tweaks:tidy` or the MCP claim path runs `stale-claim-pr.js --claim-file …`, and its `gh pr list` and its PR-url match use that same host.
+- **Should feel:** Invisible: the reconcile summary reads as it does on github.com, and a stale claim's in-flight PR is found on the enterprise server.
+- **Should understand:** `slug` (always the bare `owner/repo`) feeds `repos/…` paths, GraphQL owner/name pairs and slug comparisons; `ghRepo` feeds `--repo`. A github.com origin's `ghRepo` is the bare slug, so its argv and env stay byte-identical. The github.com-pinned PR-state batch query does not run when a non-empty `GH_HOST` names another host, so one pass never reads PR state from two hosts; the per-item reads answer instead. An origin the gate refuses (an unknown host, an SSH alias) is reported as `unknown-host` with the gate's whole refusal text — a structurally stuck skip in the reconcile summary, `unknown-host: {refusal}` in stale-claim-pr's verdict — and is never sent to gh as a bare slug.
+- **Red flags:** A reconcile `gh` call carrying a bare `--repo acme/widgets` on the GHE origin; `pr-merge-state` or the archive step reporting `network-failure` or `no-repo-slug` for a refused origin; a refusal text cut short or telling the user to `export GH_HOST` as an SSH alias name.
+
 ## Origin
 - Created during build of #4505 (bin/ gh calls: GitHub Enterprise host dropped again, regression of #2538)
 - Steps 1-4 built in this session: the `ghOptions` seam, its migration across every `plugin/bin` `gh` spawn, the explicit-`--repo` pin, and `tests/gh-host-seam-behavior.test.js` / `tests/gh-host-seam-conformance.test.js`
@@ -61,5 +76,6 @@ files:
 - Updated during build of #4854 (an enterprise token alone admits no host; hosts compared lower-cased with trailing dots stripped): Steps 1 and 4
 - Updated during build of #4795 (one explicit `--repo` host mechanism: the pin rides each `gh` call's own env and never touches the process env, so materialize no longer restores an environment for the Premise-check command): Steps 2 and 4
 - Updated during wrap-up of #4805 (acceptance-labeling resolves its one repository through `gateOriginRepo` and names the host on each read, so the seam steps back for it): Step 3
+- Updated during build of #4794 (the origin-derived repo slug is host-qualified through `repoTargetOf`; reconcile, the claim store and stale-claim-pr reach the origin host; an empty `GH_HOST` is unset; upstream-feedback and the PR-state batch do not run under a `GH_HOST` naming another host): Steps 3, 4 and 6, pinned by `tests/gh-host-seam-behavior.test.js`'s #4794 cases
 - Related: `open-a-run-pr-on-a-slow-gh-host-4554.md` (the same host when `gh` is slow rather than misrouted)
 - Related: `opt-in-an-unknown-origin-host-with-gh-host-4933.md` (#4933: an origin host that is not known — no `*.ghe.com`, no `hosts.yml` key, no exported `GH_HOST` — is now refused by the issue CLIs with the `GH_HOST` opt-in, not sent to gh)
