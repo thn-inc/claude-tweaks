@@ -62,7 +62,11 @@ function makeRepo(t, origin) {
 // replaces CANNED entries by key for one case).
 function installFakeGh(t, canned = {}) {
   const dir = tmp(t, 'ct-gh-seam-fake-');
-  for (const [key, text] of Object.entries({ ...CANNED, ...canned })) fs.writeFileSync(path.join(dir, `${key}.json`), text);
+  for (const [key, text] of Object.entries({ ...CANNED, ...canned })) {
+    const file = path.join(dir, `${key}.json`);
+    fs.mkdirSync(path.dirname(file), { recursive: true }); // a key can name a `gh api repos/…` path
+    fs.writeFileSync(file, text);
+  }
   const log = path.join(dir, 'gh.log');
   const restore = installStub('gh', [
     '#!/bin/sh',
@@ -506,10 +510,7 @@ const NOT_KNOWN_MSG = 'is not a known GitHub host';
 // GH_HOST unless `ghHost` sets one, carries an enterprise token (which admits no
 // host by itself), and an empty per-case gh config dir (`hostsYml` writes its
 // hosts.yml). GIT_ALLOW_PROTOCOL=file keeps git-CAS fetches off the network.
-function runGated(t, row, { origin, extraArgs = [], ghHost, hostsYml }) {
-  const readLog = installFakeGh(t, row.canned);
-  const { repo, runDir } = makeRepo(t, origin);
-  if (row.setup) row.setup(repo);
+function gatedEnv(t, { ghHost, hostsYml }) {
   const cfgDir = tmp(t, 'ct-gh-seam-cfg-');
   if (hostsYml !== undefined) fs.writeFileSync(path.join(cfgDir, 'hosts.yml'), hostsYml);
   const env = childEnv();
@@ -519,6 +520,14 @@ function runGated(t, row, { origin, extraArgs = [], ghHost, hostsYml }) {
   env.GH_CONFIG_DIR = cfgDir;
   env.GIT_ALLOW_PROTOCOL = 'file';
   if (ghHost !== undefined) env.GH_HOST = ghHost;
+  return env;
+}
+
+function runGated(t, row, { origin, extraArgs = [], ghHost, hostsYml }) {
+  const readLog = installFakeGh(t, row.canned);
+  const { repo, runDir } = makeRepo(t, origin);
+  if (row.setup) row.setup(repo);
+  const env = gatedEnv(t, { ghHost, hostsYml });
   const argv = [...row.argv.map((a) => a.replace('{runDir}', runDir)), ...extraArgs];
   const r = spawnSync(process.execPath, [path.join(BIN, row.cli), ...argv], { cwd: repo, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
   return { status: r.status, stderr: r.stderr || '', lines: readLog() };
@@ -808,4 +817,37 @@ test('#4794: reapMerged on an SSH-alias origin escalates nothing and records unk
   const entry = listResidueFailures(root).find((f) => f.reason === 'removal-failed');
   assert.ok(entry, 'expected a removal-failed residue entry');
   assert.ok(entry.lastResidueError && entry.lastResidueError.reason.startsWith('unknown-host ('), JSON.stringify(entry));
+});
+
+// #4794 Task 9: sibling-sessions' claim reader reads its origin through the gate and binds the
+// contents-API read to the hook's `cwd`, not process.cwd(). The child's own cwd is a fresh
+// directory outside the repo (no origin), so a reader that follows process.cwd() reaches the
+// wrong host. The fake gh answers the contents read with one live claim.
+const SIBLING_SESSIONS = path.join(BIN, 'lib', 'hooks', 'sibling-sessions.js');
+const CLAIM_CONTENTS_KEY = 'api-repos/acme/widgets/contents/claims/issue-7.json?ref=claims-registry';
+
+function nodeEval(t, cwd, script, envOpts = {}) {
+  return execFileSync(process.execPath, ['-e', script], { cwd, env: gatedEnv(t, envOpts), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+}
+
+function siblingClaimRead(t, origin) {
+  const live = JSON.stringify({ runId: 'run-live-7', sessionId: 's1', claimedAt: new Date().toISOString(), ttlHours: 72, host: 'h' });
+  const readLog = installFakeGh(t, { [CLAIM_CONTENTS_KEY]: JSON.stringify({ content: live, sha: 's1' }) });
+  const { repo } = makeRepo(t, origin);
+  const outside = fs.realpathSync(tmp(t, 'ct-gh-seam-outside-'));
+  const script = `process.stdout.write(JSON.stringify(require(${JSON.stringify(SIBLING_SESSIONS)}).findLiveClaim('#7', { cwd: ${JSON.stringify(repo)}, sessionId: 'other' })))`;
+  const stdout = nodeEval(t, outside, script);
+  return { stdout, lines: readLog() };
+}
+
+test('AC1.1 (#4794): sibling-sessions\' claim read on a *.ghe.com origin reaches the origin host from any process.cwd()', { skip: STUB_SKIP }, (t) => {
+  const { stdout, lines } = siblingClaimRead(t, GHE_ORIGIN);
+  assertEveryLineReaches(lines, 'acme.ghe.com');
+  assert.match(stdout, /"runId":"run-live-7"/, stdout);
+});
+
+test('#4794: sibling-sessions on an SSH-alias origin sends no gh call', { skip: STUB_SKIP }, (t) => {
+  const { stdout, lines } = siblingClaimRead(t, 'git@github-work:acme/widgets.git');
+  assert.deepEqual(networkLines(lines), []);
+  assert.equal(stdout, 'null');
 });

@@ -198,11 +198,13 @@ function classifyGhApiError(e) {
 // The real ghApi. A failed call also carries `error`, the thrown error's text
 // (#4495): a bootstrap refusal is surfaced to the user verbatim, and the
 // classified `{failure, status}` alone drops the reason (a 4xx is data, not
-// a throw, on this seam).
-function defaultGhApi(args) {
+// a throw, on this seam). `opts.cwd` (#4794) is the repo the call is about, so
+// the seam reads its origin rather than process.cwd()'s; with none, unchanged.
+function defaultGhApi(args, opts = {}) {
   const ghArgs = ['api', ...args];
   try {
     const stdout = execFileSync('gh', ghArgs, ghOptions(ghArgs, {
+      ...(opts.cwd ? { cwd: opts.cwd } : {}),
       encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS,
       windowsHide: true,
     }));
@@ -363,6 +365,12 @@ function unresolvedSlugGhApi() {
   return { stdout: null, failure: 'repo-slug-unresolved', status: null };
 }
 
+// (#4794) The contents-API leg for an origin the #4933 gate refused: no request, and the
+// `unknown-host` failure `createClaimReader` pairs with the refusal text.
+function refusedOriginGhApi() {
+  return { stdout: null, failure: 'unknown-host', status: null };
+}
+
 // (#3393) `repos/null/contents/...` is never a valid request: an unresolved
 // repo slug used to reach the contents API as the literal `null` and 404,
 // which read as "claim absent" — a false "no claim" for a claim that may
@@ -370,18 +378,23 @@ function unresolvedSlugGhApi() {
 // build on: an unresolved slug makes the contents-API leg a `repo-slug-
 // unresolved` failure instead of a request, so the git leg's answer stands
 // and a git failure stays a failure, never absent.
-// ({gitRunner?, ghApi?, repoSlug?, runGh?}) -> {repoSlug, read(issueNumber)}
+// ({gitRunner?, ghApi?, repoSlug?, repoRefusal?, runGh?}) -> {repoSlug, read(issueNumber)}
 // `repoSlug` is used as given when the key is present (including `null`);
-// otherwise it is resolved through `runGh`. `read` returns `{content}` (null
+// otherwise it is resolved through `runGh`. `repoRefusal` (#4794) is the #4933
+// gate's refusal text for a refused origin: the contents-API leg then makes no
+// request and `read` returns `{failure: 'unknown-host', detail: repoRefusal}`
+// where it would return `repo-slug-unresolved`. `read` returns `{content}` (null
 // content = absent) or `{failure}`, and chains the git tip across calls so a
 // batch of reads costs one fetch.
 function createClaimReader(opts = {}) {
-  const { gitRunner = defaultRunner, ghApi = defaultGhApi, runGh } = opts;
+  const { gitRunner = defaultRunner, ghApi = defaultGhApi, runGh, repoRefusal } = opts;
   const slug = Object.prototype.hasOwnProperty.call(opts, 'repoSlug') ? opts.repoSlug : resolveRepoSlug(runGh);
-  const deps = { gitRunner, ghApi: slug ? ghApi : unresolvedSlugGhApi };
+  const noSlugGhApi = repoRefusal ? refusedOriginGhApi : unresolvedSlugGhApi;
+  const deps = { gitRunner, ghApi: slug ? ghApi : noSlugGhApi };
   let tip = null;
   function read(issueNumber) {
     const r = readClaimBlob(deps, slug, issueNumber, tip);
+    if (r.failure === 'unknown-host' && repoRefusal) return { failure: r.failure, detail: repoRefusal };
     if (r.failure) return { failure: r.failure };
     if (r.via === 'git') tip = r.sha;
     return { content: r.absent ? null : r.content };

@@ -6,6 +6,7 @@ const {
   isWellFormedClaimContent, createClaimReader, resolveRepoSlug, resolveRepoSlugOrThrow,
   ensureClaimsBranch, claimsBranchExists,
 } = require('../../../plugin/bin/lib/issues/claim-store');
+const { STUB_SKIP, installStub } = require('../../helpers/path-stub');
 
 // Fake ghApi functions mirror release-merged.js's own ghApi shape: a
 // non-throwing function returning {stdout, failure, status} — never the
@@ -949,6 +950,24 @@ test('AC1.1: createClaimReader: unresolved slug with a failing git read is a fai
   assert.deepEqual(reader.read(42), { failure: 'repo-slug-unresolved' });
 });
 
+test('#4794: createClaimReader with a repoRefusal fails the contents leg unknown-host with the refusal and makes no request', () => {
+  const calls = [];
+  const ghApi = (args) => { calls.push(args); return { stdout: null, failure: null, status: 404 }; };
+  const reader = createClaimReader({ gitRunner: fakeGitRunnerAlwaysFails(), ghApi, repoSlug: null, repoRefusal: 'R' });
+  assert.deepEqual(reader.read(7), { failure: 'unknown-host', detail: 'R' });
+  assert.deepEqual(calls, []);
+  // no refusal: an unresolved slug keeps its own failure word
+  const bare = createClaimReader({ gitRunner: fakeGitRunnerAlwaysFails(), ghApi, repoSlug: null });
+  assert.deepEqual(bare.read(7), { failure: 'repo-slug-unresolved' });
+  assert.deepEqual(calls, []);
+});
+
+test('#4794: createClaimReader with a repoRefusal still answers from the git leg when git succeeds', () => {
+  const ghApi = (args) => { throw new Error(`no request on a refused origin: ${args[0]}`); };
+  const gitRunner = fakeGitRunnerAlwaysWorks('a'.repeat(40), '{"runId":"r1"}');
+  assert.deepEqual(createClaimReader({ gitRunner, ghApi, repoSlug: null, repoRefusal: 'R' }).read(42), { content: '{"runId":"r1"}' });
+});
+
 test('createClaimReader: a contents-API transport failure propagates as {failure}', () => {
   const ghApi = () => ({ stdout: null, failure: 'network-failure', status: null });
   assert.deepEqual(createClaimReader({ gitRunner: fakeGitRunnerAlwaysFails(), ghApi, repoSlug: 'acme/w' }).read(42), { failure: 'network-failure' });
@@ -1165,6 +1184,55 @@ test('defaultGhApi: a failed call carries the thrown error text as `error` (gh a
   assert.equal(r.status, null);
   assert.equal(typeof r.error, 'string');
   assert.match(r.error, /ENOENT/);
+});
+
+// #4794: defaultGhApi's optional `cwd` rides into the seam's options, so the gh host follows the
+// caller's repo (the sibling-sessions hook's cwd), not process.cwd(). A PATH-stub gh logs what it saw.
+test('#4794: defaultGhApi passes a given cwd to the seam and none otherwise', { skip: STUB_SKIP }, (t) => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { execFileSync } = require('node:child_process');
+  const { _resetGhHostCache } = require('../../../plugin/bin/lib/repo-resolve');
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'claim-store-cwd-')));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const repo = path.join(dir, 'repo');
+  fs.mkdirSync(repo);
+  execFileSync('git', ['init', '-q'], { cwd: repo, stdio: 'ignore', windowsHide: true });
+  execFileSync('git', ['remote', 'add', 'origin', 'https://acme.ghe.com/acme/widgets.git'], { cwd: repo, stdio: 'ignore', windowsHide: true });
+  const log = path.join(dir, 'gh.log');
+  const restoreGh = installStub('gh', [
+    '#!/bin/sh',
+    `printf 'GH_HOST=%s PWD=%s\\n' "\${GH_HOST-unset}" "$(pwd -P)" >> '${log}'`,
+    'echo "{}"',
+    '',
+  ].join('\n'));
+  const had = Object.prototype.hasOwnProperty.call(process.env, 'GH_HOST');
+  const saved = process.env.GH_HOST;
+  delete process.env.GH_HOST;
+  _resetGhHostCache();
+  const write = process.stderr.write;
+  process.stderr.write = function capture(chunk, ...rest) {
+    if (String(chunk).startsWith('claude-tweaks: resolved repo ')) return true; // the seam's once-per-host note
+    return write.call(this, chunk, ...rest);
+  };
+  t.after(() => {
+    process.stderr.write = write;
+    restoreGh();
+    if (had) process.env.GH_HOST = saved;
+    else delete process.env.GH_HOST;
+    _resetGhHostCache();
+  });
+  const lines = () => fs.readFileSync(log, 'utf8').split('\n').filter(Boolean);
+
+  defaultGhApi(['repos/acme/widgets'], { cwd: repo });
+  assert.deepEqual(lines(), [`GH_HOST=acme.ghe.com PWD=${repo}`]);
+
+  fs.rmSync(log);
+  defaultGhApi(['repos/acme/widgets']);
+  assert.equal(lines().length, 1);
+  assert.match(lines()[0], /^GH_HOST=unset PWD=/);
+  assert.notEqual(lines()[0], `GH_HOST=unset PWD=${repo}`);
 });
 
 test('claimsBranchExists: 404 → false, any failure → null, a name → true', () => {
