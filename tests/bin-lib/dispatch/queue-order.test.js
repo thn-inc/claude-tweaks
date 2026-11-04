@@ -206,6 +206,29 @@ test('#4793: the same queue is a cache hit without a qualified foreign Blocked b
   assert.equal('foreignDeclared' in buildFreshnessSignal(queue('')), false, 'absent when no body declares one');
 });
 
+// signalsMatch pairs entries by issue number: two signals of the same length that differ only in one
+// number must not match (an absent number is a mismatch, not "compare against itself").
+test('signalsMatch and cacheUsable reject two same-length signals with one issue number swapped', () => {
+  const persisted = { issues: [{ number: 1, updatedAt: 'a', state: 'OPEN' }, { number: 2, updatedAt: 'b', state: 'OPEN' }] };
+  const current = { issues: [{ number: 1, updatedAt: 'a', state: 'OPEN' }, { number: 3, updatedAt: 'b', state: 'OPEN' }] };
+  assert.equal(signalsMatch(persisted, current), false);
+  const blob = composeOrderBlob({ computedAt: 'x', runId: 'y', freshnessSignal: persisted, groups: [], excluded: [] });
+  assert.equal(cacheUsable(blob, current), false);
+  assert.equal(cacheUsable(blob, persisted), true, 'the identical signal is still a hit');
+});
+
+// #4793: a native or body-declared foreign blocker closing changes nothing in the freshness signal, so
+// a hit must not replay a persisted exclusion that names one.
+test('#4793: cacheUsable misses when a persisted exclusion names a foreign blocker, and hits when it names only this repository\'s #N', () => {
+  const blobWith = (excluded) => composeOrderBlob({ computedAt: 'x', runId: 'y', freshnessSignal: SIGNAL, groups: [], excluded });
+  assert.equal(cacheUsable(blobWith([{ number: 1, blockedBy: ['other/repo#5'] }]), SIGNAL), false);
+  assert.equal(cacheUsable(blobWith([{ number: 1, blockedBy: ['other/repo#5 (state unreadable)'] }]), SIGNAL), false);
+  assert.equal(cacheUsable(blobWith([{ number: 2, blockedBy: [4, 'Other/Repo#5'] }]), SIGNAL), false, 'one foreign entry among local ones');
+  assert.equal(cacheUsable(blobWith([{ number: 1, blockedBy: [5] }]), SIGNAL), true);
+  assert.equal(cacheUsable(blobWith([{ number: 1, blockedBy: ['#5', 'not a ref'] }]), SIGNAL), true, 'strings that are not owner/name#N are not foreign');
+  assert.equal(cacheUsable(blobWith([]), SIGNAL), true);
+});
+
 // --- readOrder / writeOrder wiring ---
 
 test('readOrder: resolves null against a genuinely never-written namespace (missing ref)', () => {

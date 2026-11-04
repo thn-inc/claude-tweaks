@@ -108,7 +108,7 @@ const MCP_FOREIGN_FACTS = [
   [/`bodyForeignBlockers\(cheapSurvivors, \{ states \}\)`/, 'the MCP path computes bodyForeignBlockers(cheapSurvivors, { states })'],
   [/pass it as the third argument of the second `filterCandidates` call/, 'the MCP path passes the Map as the second filterCandidates call\'s third argument'],
   [/A ref left out, or `null`, still blocks \(fail closed\)/, 'a ref left out or null still blocks'],
-  [/`overview-mode\.md`'s funnel on this transport passes the same `\{ states \}` to its `bodyForeignBlockers` call/, 'the overview funnel on this transport passes the same states to bodyForeignBlockers'],
+  [/`backlog overview` hard-gates on `gh`, so it has no `gh`-absent funnel to supply states to/, 'backlog overview hard-gates on gh, so it has no gh-absent funnel to supply states to'],
 ];
 
 test('backlog mcp-transport.md reads body-declared foreign blockers with issue_read and passes them to the pre-pass and the overview funnel (#4793)', () => {

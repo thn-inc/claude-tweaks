@@ -59,10 +59,9 @@ exported):
    `owner/name#N`, each value copied from `issue_read`'s `state` (any case) or `null` for a ref it
    cannot read. Build the Map with `bodyForeignBlockers(cheapSurvivors, { states })`
    (`bin/lib/issues/cross-repo-states.js`) and pass it as the third argument of the second
-   `filterCandidates` call. A ref left out, or `null`, still blocks (fail closed).
-   `overview-mode.md`'s funnel on this transport passes the same `{ states }` to its
-   `bodyForeignBlockers` call.
-3. **Compute, locally, no MCP call:** feed the fetched JSON into `filterCandidates` →
+   `filterCandidates` call. A ref left out, or `null`, still blocks (fail closed). `backlog overview`
+   hard-gates on `gh`, so it has no `gh`-absent funnel to supply states to.
+3. **Compute, locally, no MCP call:** continue from step 2's `filterCandidates` result →
    `computePhaseA` / `machineGrantOutlook` / `trustRows` directly, via a `node -e` snippet
    `require`-ing `bin/lib/backlog-grant-gate/backlog-grant-gate.js` and `bin/lib/issues/backlog.js`
    — the same pure logic `bin/backlog-grant-gate.js` runs, called with MCP-sourced data instead of

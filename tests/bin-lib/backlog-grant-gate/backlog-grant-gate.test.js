@@ -245,7 +245,7 @@ test('computeOutlook: a sub-issue is excluded from trustRows\' cell totals (neve
 
 const FOREIGN_LABELS = ['by:code-health', 'ready'];
 
-test('#4793: filterCandidates drops a candidate whose foreign blocker is OPEN or unreadable, keeps a CLOSED one, and and rejects a missing map', () => {
+test('#4793: filterCandidates drops a candidate whose foreign blocker is OPEN or unreadable, keeps a CLOSED one, and rejects a missing map', () => {
   const issues = [
     issue(7, { labels: FOREIGN_LABELS, body: 'Blocked by other/repo#7' }),
     issue(8, { labels: FOREIGN_LABELS, body: 'Blocked by other/repo#8' }),

@@ -19,7 +19,8 @@
 // valid for its own firing regardless of whether its write landed.
 
 const { createNamespacedState } = require('../health-core/durable-state');
-const { parseCrossRepoDependencies } = require('../issues/cross-repo-refs');
+const { parseCrossRepoDependencies, parseCrossRepoRef } = require('../issues/cross-repo-refs');
+const { withoutUnreadableSuffix } = require('../issues/record-dependencies');
 
 const NAMESPACE = 'queue-order';
 
@@ -119,14 +120,24 @@ function composeOrderBlob({
   };
 }
 
+// #4793: true when a persisted exclusion ({number, blockedBy}[]) names a foreign blocker, i.e. a
+// blockedBy entry that is an 'owner/name#N' string (optionally suffixed ' (state unreadable)'). A
+// native or body-declared foreign blocker closing changes nothing in the freshness signal, so a
+// hit would replay that exclusion after the blocker closed. Matched with cross-repo-refs.js's grammar.
+function namesForeignBlocker(excluded) {
+  return Array.isArray(excluded) && excluded.some((e) => e && Array.isArray(e.blockedBy)
+    && e.blockedBy.some((b) => typeof b === 'string' && parseCrossRepoRef(withoutUnreadableSuffix(b)) !== null));
+}
+
 // A persisted blob is reusable only when stamped with the caller's current
 // grouping rule (default GROUPING_MODE) AND its freshness signal still
 // matches. A blob without `grouping` (any older plugin install's write) fails
-// closed, and so does a current signal flagged `foreignDeclared` (buildFreshnessSignal, #4793).
-// Never throws.
+// closed, and so does a current signal flagged `foreignDeclared` (buildFreshnessSignal, #4793)
+// or a blob whose exclusions name a foreign blocker (namesForeignBlocker). Never throws.
 function cacheUsable(persisted, current, grouping = GROUPING_MODE) {
   return !!persisted && persisted.grouping === grouping
     && !(current && current.foreignDeclared)
+    && !namesForeignBlocker(persisted.excluded)
     && signalsMatch(persisted.freshnessSignal, current);
 }
 
