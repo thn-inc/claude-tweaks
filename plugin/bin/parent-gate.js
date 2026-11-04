@@ -87,7 +87,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const {
   parseRepo, ghAvailable, remoteUrl, ghOptions, gateOriginRepo, normalizeHost, repoSlug, hostPathOf,
-} =require('./lib/repo-resolve');
+} = require('./lib/repo-resolve');
 const { POLICY_KEYS, resolvePolicyKeys } = require('./lib/policy-schema');
 const { readWorkBackend } = require('./lib/work-backend');
 const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
