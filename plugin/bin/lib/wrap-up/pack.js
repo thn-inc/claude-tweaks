@@ -782,9 +782,8 @@ function buildProbes(inputs, deps) {
           return e && withoutCrossRepoBlockers(e.blockedBy, e.crossRepoBlockers).includes(closed) && !e.openBlocker && !(e.crossRepoBlockers || []).some(foreignBlockerBlocks);
         }).map((r) => ({
           item: r,
-          // The empty Map is deliberate: no state is looked up here, foreignEntries only reshapes the body's
-          // refs into entries so bodyOnlyForeign can drop those already linked natively; dropForeignBlocked
-          // below asks for the states.
+          // The empty Map is deliberate: foreignEntries only reshapes the body's refs into entries so
+          // bodyOnlyForeign can drop the natively linked ones; dropForeignBlocked looks up the states.
           refs: foreignRefStrings(bodyOnlyForeign(byNumber[r.number].crossRepoBlockers || [], foreignEntries(parseCrossRepoDependencies(r.body || ''), new Map()))),
         }));
         return (await dropForeignBlocked(deps, inputs, repoArgs, candidates)).map(toSummary);

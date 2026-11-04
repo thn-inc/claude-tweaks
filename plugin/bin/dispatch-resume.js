@@ -317,8 +317,8 @@ function readOpenBlockers(ctx, body) {
 // The body-declared foreign blockers still blocking, as `owner/name#N` strings (see readOpenBlockers).
 // `nativeCross` is the native entry's crossRepoBlockers: those refs are dropped before the lookup.
 function bodyForeignBlockerRefs(ctx, body, nativeCross) {
-  // The empty Map is deliberate: no state is looked up yet, foreignEntries only reshapes the refs into entries
-  // so bodyOnlyForeign can drop the natively linked ones; the lookup below asks for the states.
+  // The empty Map is deliberate: foreignEntries only reshapes the refs into entries so bodyOnlyForeign can
+  // drop the natively linked ones; the states are looked up below.
   const declared = foreignEntries(parseCrossRepoDependencies(body), new Map());
   const refs = bodyOnlyForeign(nativeCross, declared).map((e) => `${e.repository}#${e.number}`);
   if (refs.length === 0) return [];

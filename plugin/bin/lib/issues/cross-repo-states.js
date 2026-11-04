@@ -156,10 +156,9 @@ function fetchCrossRepoStates({ refs, host, runner } = {}) {
   return states;
 }
 
-// A cause text -> one bounded line (preflight-records.js's oneLine, same head and tail). A failed
-// `gh api graphql` spawn embeds the whole aliased query in its message, so the Warning line would
-// otherwise grow with the number of refs and bury gh's own diagnostic at the tail: keep the head
-// (the command) and the tail (the diagnostic), drop the middle.
+// A cause text -> one bounded line (same head and tail as preflight-records.js's oneLine). A failed
+// `gh api graphql` spawn embeds the whole aliased query, which would grow the Warning with the ref
+// count and bury gh's diagnostic at the tail: keep the head and the tail, drop the middle.
 function oneLine(s, max = 400) {
   const flat = String(s).replace(/\s+/g, ' ').trim();
   if (flat.length <= max) return flat;
