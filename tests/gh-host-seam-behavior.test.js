@@ -294,6 +294,24 @@ test('AC2.1 (#4794): releaseMerged on a github.com origin leaves GH_HOST unset a
   assert.deepEqual(net.filter((l) => /^api repos\/acme\/widgets\/git\/trees\//.test(argsOf(l))).map(argsOf), [CLAIMS_TREE_ARGV]);
 });
 
+// #4794 Task 6: pr-state's bulk screen reads origin through the gate. Its GraphQL pair stays the
+// bare owner/name split (a host-qualified slug would put the host in `owner`), and the host comes
+// from the call's cwd binding, so the screen reaches the origin host whatever process.cwd() is.
+test('AC1.1 (#4794): pr-state\'s bulk PR screen on a *.ghe.com origin reaches the origin host with a bare owner/name pair', { skip: STUB_SKIP }, (t) => {
+  const readLog = installFakeGh(t, { 'api-graphql': JSON.stringify({ data: { repository: { b0: null } } }) });
+  const { repo } = makeRepo(t, GHE_ORIGIN);
+  withoutGhHost(t);
+  const stderr = captureSeamNotes(t);
+  const { resolvePrStatesBulk } = require('../plugin/bin/lib/reconcile/pr-state');
+  const result = resolvePrStatesBulk(repo, ['feature'], { gateDeps: RELEASE_GATE_DEPS });
+  stderr.restore();
+  assert.ok(result instanceof Map, `expected the screen's Map, got ${JSON.stringify(result)}`);
+  const lines = networkLines(readLog());
+  assert.equal(lines.length, 1, `expected one network-bound gh call, log:\n${lines.join('\n')}`);
+  assert.ok(lines[0].startsWith('GH_HOST=acme.ghe.com '), `bulk screen did not reach acme.ghe.com: ${lines[0]}`);
+  assert.match(argsOf(lines[0]), /^api graphql -f owner=acme -f name=widgets -f query=/);
+});
+
 // Fix round 1: a bare `--repo owner/name` means github.com (Decision Q2). The
 // author-association lookup threads no --hostname for github.com, so on a GHE
 // origin the seam used to send it to the origin host while `issue view --repo`
