@@ -172,11 +172,14 @@ function archiveBranches({ cwd, integration, dryRun, now, resolvePr, resolvePrBu
   // host-qualified `--repo` form.
   const target = candidates.length > 0 ? repoTargetOf(root, gateDeps) : null;
   const refusal = target && target.refusal;
-  const screen = candidates.length === 0
-    ? new Map()
-    : refusal
-      ? 'unknown-host'
-      : resolveBulk(root, candidates.map((c) => c.branch), target ? { repoSlug: target.slug } : undefined);
+  let screen;
+  if (candidates.length === 0) {
+    screen = new Map();
+  } else if (refusal) {
+    screen = 'unknown-host';
+  } else {
+    screen = resolveBulk(root, candidates.map((c) => c.branch), target ? { repoSlug: target.slug } : undefined);
+  }
 
   if (typeof screen === 'string') {
     // Degrade to per-branch skips (the pre-#1083 shape) rather than a
