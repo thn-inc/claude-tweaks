@@ -238,6 +238,14 @@ function refusalOf(repo) {
   return repo && typeof repo === 'object' && typeof repo.refusal === 'string' ? repo.refusal : null;
 }
 
+// #4794: the residue repo `repoTargetOf`'s result stands for in the escalate/resolve calls: null when
+// origin did not resolve, `{ refusal }` for a refused origin (files nothing, calls no gh), else the
+// `--repo` value for the origin's one host (bare on gh's default host).
+function residueRepoOf(target) {
+  if (!target) return null;
+  return target.refusal ? { refusal: target.refusal } : target.ghRepo;
+}
+
 // Shared find-hit skeleton for the two escalate* functions below: resolve
 // the no-repo guard and the findResidueDuplicate try/catch once, then either
 // create a fresh issue (no hit) or hand the found hit to the caller's onHit
@@ -490,5 +498,5 @@ function resolveResidue({
 module.exports = {
   escalateResidue, resolveResidue, residueFingerprint, residueBody, findResidueDuplicate, defaultRunner, errorText,
   parseStuckPaths, renderStuckPathsBlock, withStuckPaths, structurallyStuckBody, structurallyStuckMarker,
-  capDirtyFiles, DIRTY_FILES_CAP,
+  capDirtyFiles, DIRTY_FILES_CAP, residueRepoOf,
 };

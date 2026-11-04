@@ -323,7 +323,7 @@ function planClear(target, reason, targetPath) {
   return { action: entry.escalated ? 'would-resolve' : 'would-clear', reason, path: targetPath };
 }
 
-function clearResidue(target, repoSlug, reason, targetPath, { resolve = resolveResidue, runner, why } = {}) {
+function clearResidue(target, residueRepo, reason, targetPath, { resolve = resolveResidue, runner, why } = {}) {
   const cache = isCacheBatch(target) ? target.cache : readCache(target);
   const entry = cache.residueFailures[residueKey(reason, targetPath)];
   if (!entry) return { cleared: false, resolved: null };
@@ -333,7 +333,7 @@ function clearResidue(target, repoSlug, reason, targetPath, { resolve = resolveR
   }
   let resolved;
   try {
-    resolved = resolve({ repo: repoSlug, reason, targetPath, runner, why, pathExists: ownedPathExists(target) });
+    resolved = resolve({ repo: residueRepo, reason, targetPath, runner, why, pathExists: ownedPathExists(target) });
   } catch (err) {
     recordResidueError(target, reason, targetPath, { op: 'resolve', error: errorText(err) });
     return { cleared: false, resolved: null };
@@ -358,7 +358,7 @@ function clearResidue(target, repoSlug, reason, targetPath, { resolve = resolveR
 // #4180: with `dryRun` it returns before any cache write, `escalate` call, or `target.dirty`
 // change, and returns the plan it would have executed (`{ action, reason, path[, count] }`); a
 // real run returns undefined.
-function trackResidue(target, repoSlug, reason, targetPath, { failed, lastError, dirtyFiles }, { escalate = escalateResidue, runner, dryRun = false } = {}) {
+function trackResidue(target, residueRepo, reason, targetPath, { failed, lastError, dirtyFiles }, { escalate = escalateResidue, runner, dryRun = false } = {}) {
   if (dryRun) {
     const cache = isCacheBatch(target) ? target.cache : readCache(target);
     const existing = cache.residueFailures[residueKey(reason, targetPath)];
@@ -375,7 +375,7 @@ function trackResidue(target, repoSlug, reason, targetPath, { failed, lastError,
   if (!streak.shouldEscalate) return;
   try {
     const result = escalate({
-      repo: repoSlug, reason, targetPath,
+      repo: residueRepo, reason, targetPath,
       count: streak.count, firstFailedAt: streak.firstFailedAt, lastError, dirtyFiles, runner, pathExists: ownedPathExists(target),
     });
     if (result && result.status === 'escalation-failed') {
@@ -416,7 +416,7 @@ function listResidueFailures(root) {
 // human to close manually later, same posture as escalateResidue's own
 // never-breaks-a-session contract. #4180: the entry is gone, so a failed resolve cannot ride on
 // it — the failures come back as `{ failures: [{ reason, path, op: 'resolve', error }] }` instead.
-function pruneResidueFailures(root, repoSlug, { resolve = resolveResidue, runner } = {}) {
+function pruneResidueFailures(root, residueRepo, { resolve = resolveResidue, runner } = {}) {
   const cache = readCache(root);
   const failures = { ...cache.residueFailures };
   let changed = false;
@@ -431,7 +431,7 @@ function pruneResidueFailures(root, repoSlug, { resolve = resolveResidue, runner
     if (entry && entry.escalated) {
       let failure = null;
       try {
-        const resolved = resolve({ repo: repoSlug, reason, targetPath, runner, pathExists: ownedPathExists(root) });
+        const resolved = resolve({ repo: residueRepo, reason, targetPath, runner, pathExists: ownedPathExists(root) });
         if (!resolved || !RESIDUE_RESOLVED_STATUSES.has(resolved.status)) failure = unresolvedError(resolved);
       } catch (err) { failure = { error: errorText(err) }; }
       if (failure !== null) resolveFailures.push({ reason, path: targetPath, op: 'resolve', error: boundedError(failure.error, failure.detail) });

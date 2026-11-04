@@ -24,7 +24,7 @@ const { resolvePrState } = require('./pr-state');
 const { findRunByWorktreePath, appendEvent } = require('../hooks/context');
 const { release: releasePortsDefault } = require('../ports/registry');
 const { trackResidue, beginCacheBatch, commitCacheBatch } = require('./cache');
-const { escalateResidue, capDirtyFiles } = require('./escalate-residue');
+const { escalateResidue, capDirtyFiles, residueRepoOf } = require('./escalate-residue');
 const { readPorcelainStatus } = require('../residue/probes/worktrees');
 
 // Best-effort audit-trail write to the OWNING run's own events.jsonl, so
@@ -79,8 +79,8 @@ function decideReap(prState) {
 // `gh`. `cacheTarget` is either a plain root string (single-call behavior,
 // unchanged) or a `beginCacheBatch` handle (#1235 — batched across
 // `reapMerged`'s item loop); see cache.js's own comment on the two shapes.
-function trackReapResidue(cacheTarget, repoSlug, real, { failed, lastError, dirtyFiles }, { escalate = escalateResidue, runner } = {}) {
-  trackResidue(cacheTarget, repoSlug, 'removal-failed', real, { failed, lastError, dirtyFiles }, { escalate, runner });
+function trackReapResidue(cacheTarget, residueRepo, real, { failed, lastError, dirtyFiles }, { escalate = escalateResidue, runner } = {}) {
+  trackResidue(cacheTarget, residueRepo, 'removal-failed', real, { failed, lastError, dirtyFiles }, { escalate, runner });
 }
 
 // #2566 — Windows's MAX_PATH limit frequently makes `git worktree remove`
@@ -208,8 +208,7 @@ function reapMerged({
   const here = safeReal(start);
   // #4794: the residue repo is the --repo value for the origin's one host (bare on gh's default host),
   // or `{ refusal }` for a refused origin, which files nothing and calls no gh.
-  const target = repoTargetOf(root, gateDeps);
-  const residueRepo = target && target.refusal ? { refusal: target.refusal } : (target ? target.ghRepo : null);
+  const residueRepo = residueRepoOf(repoTargetOf(root, gateDeps));
 
   const list = runGit(['worktree', 'list', '--porcelain'], root);
   if (list.failure) return { reaped, skipped, portsRelease, failure: list.failure };
