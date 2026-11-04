@@ -34,7 +34,7 @@ A target may declare prerequisite records — `blocked-by:` on the record (mater
 
 ## Targets with a dependency on a target NOT in the run
 
-If record 159 depends on record 142 (not in the run list) — via `blocked-by:` — Validation step 3's `--blocker-landing` call has already judged 142: each record's `blockerLanding` lists `{blocker, verdict, commit, via}` for every blocker that is not one of the run's targets. A closed blocker is not enough — its closing commit must have reached `origin/{integration-branch}`, or the run builds on code the integration branch never received. Read the verdict (a call that carried no `--blocker-landing` — a multi-record resume whose step list has neither `build` nor `test`, as `validation.md`'s 2.7b skips — leaves no `blockerLanding` to read, and nothing here applies):
+If record 159 depends on record 142 (not in the run list) — via `blocked-by:` — Validation step 3's `--blocker-landing` call has already judged 142: each record's `blockerLanding` lists `{blocker, verdict, commit, via}` (plus `repository` (`owner/name`) on a cross-repository entry) for every blocker that is not one of the run's targets. A closed blocker is not enough — its closing commit must have reached `origin/{integration-branch}`, or the run builds on code the integration branch never received. Read the verdict (a call that carried no `--blocker-landing` — a multi-record resume whose step list has neither `build` nor `test`, as `validation.md`'s 2.7b skips — leaves no `blockerLanding` to read, and nothing here applies):
 
 | Verdict | Outcome |
 |---|---|
@@ -52,7 +52,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --sec
 
 An `open` or `unlanded` verdict's stop is gate `blocker-landing`; under `/claude-tweaks:dispatch` report it per `failure-cards.md`'s blocker-landing row.
 
-An entry with `via: cross-repository` or `via: cross-repository-state-unreadable` is a blocker linked natively from another repository; its `repository` key holds `owner/name`, and its number names that repository's issue, so write it as `{repository}#{blocker}`. An `open` entry stops as the table says, its stop line naming `{repository}#{blocker}`; with `via: cross-repository-state-unreadable` the stop line reads "159 depends on {repository}#{blocker}, whose state was unreadable — read as open (fail closed)". An `undetermined` entry writes the SKIP line `condition: {repository}#{blocker} lives in another repository (via cross-repository) → fallback: proceeded without judging its landing — blocker landing reads only this repository's integration branch` (#4793, Decisions Q1 and Q5).
+An entry with `via: cross-repository` or `via: cross-repository-state-unreadable` is a blocker linked natively from another repository; its `repository` key holds `owner/name`, and its number names that repository's issue, so write it as `{repository}#{blocker}`. An `open` entry stops as the table says, its stop line naming `{repository}#{blocker}`; with `via: cross-repository-state-unreadable` the stop line reads "159 depends on {repository}#{blocker} (state unreadable) — read as open (fail closed)". An `undetermined` entry writes the SKIP line `condition: {repository}#{blocker} lives in another repository (via cross-repository) → fallback: proceeded without judging its landing — blocker landing reads only this repository's integration branch` (#4793, Decisions Q1 and Q5).
 
 A failed blocker query is not `undetermined` — the call exits non-zero and the run stops before claiming (`multispec-preflight-failure.md`).
 

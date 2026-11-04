@@ -567,13 +567,14 @@ const collapseWs = (s) => s.replace(/\s+/g, ' ');
 function assertCrossRepositoryNaming(text) {
   const section = collapseWs(outOfRunSection(text));
   assert.ok(section.includes('`{repository}#{blocker}`'), 'the section names a cross-repository blocker as `{repository}#{blocker}`');
-  assert.ok(section.includes('`via: cross-repository`') && section.includes('`via: cross-repository-state-unreadable`'), 'the section names both cross-repository via values');
+  assert.ok(section.includes('`via: cross-repository`'), 'the section names the plain cross-repository via value');
+  assert.ok(section.includes('`via: cross-repository-state-unreadable`'), 'the section names the state-unreadable cross-repository via value');
   assert.ok(
     section.includes("`condition: {repository}#{blocker} lives in another repository (via cross-repository) → fallback: proceeded without judging its landing — blocker landing reads only this repository's integration branch`"),
     'the section carries the cross-repository SKIP line',
   );
   assert.ok(
-    section.includes('"159 depends on {repository}#{blocker}, whose state was unreadable — read as open (fail closed)"'),
+    section.includes('"159 depends on {repository}#{blocker} (state unreadable) — read as open (fail closed)"'),
     'the section carries the state-unreadable stop line',
   );
 }
@@ -603,14 +604,22 @@ test('cross-repository entries are named {repository}#{blocker} in the stop line
   );
   assert.throws(
     () => assertCrossRepositoryNaming(mutate(text, /`via: cross-repository-state-unreadable`/g, '`via: unreadable`')),
-    { message: 'the section names both cross-repository via values' },
+    { message: 'the section names the state-unreadable cross-repository via value' },
+  );
+  assert.throws(
+    () => assertCrossRepositoryNaming(mutate(text, /`via: cross-repository`/g, '`via: elsewhere`')),
+    { message: 'the section names the plain cross-repository via value' },
+  );
+  assert.throws(
+    () => assertDagSkipsQualified(mutate(text, '1. **Build the DAG**', '1. **Build the graph**')),
+    { message: 'the DAG step is present' },
   );
   assert.throws(
     () => assertCrossRepositoryNaming(mutate(text, 'lives in another repository (via cross-repository)', 'is undetermined')),
     { message: 'the section carries the cross-repository SKIP line' },
   );
   assert.throws(
-    () => assertCrossRepositoryNaming(mutate(text, 'whose state was unreadable — read as open (fail closed)', 'which is still open')),
+    () => assertCrossRepositoryNaming(mutate(text, '(state unreadable) — read as open (fail closed)', 'which is still open')),
     { message: 'the section carries the state-unreadable stop line' },
   );
   assert.throws(
