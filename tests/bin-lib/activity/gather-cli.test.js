@@ -166,7 +166,8 @@ test('#4794: an ssh://, credentialed or ported github.com origin is read like it
   const scp = gathered('git@github.com:o/r.git');
   assert.equal(scp.code, 0);
   assert.deepEqual(scp.calls.find((a) => a[0] === 'repo' && a[1] === 'view'), ['repo', 'view', 'o/r', '--json', 'nameWithOwner', '-q', '.nameWithOwner']);
-  for (const url of ['ssh://git@github.com/o/r.git', 'https://oauth2@github.com/o/r.git', 'https://github.com:443/o/r.git']) {
+  for (const url of ['ssh://git@github.com/o/r.git', 'https://oauth2@github.com/o/r.git', 'https://github.com:443/o/r.git',
+    'https://GitHub.com/o/r.git', 'git@github.com.:o/r.git']) {
     const r = gathered(url);
     assert.equal(r.code, 0, `${url}: ${r.stderr}`);
     assert.doesNotMatch(r.stderr, /not a GitHub URL/, url);
@@ -179,6 +180,9 @@ test('#4794: an ssh://, credentialed or ported github.com origin is read like it
   assert.equal(ssh.code, 2);
   assert.match(ssh.stderr, /origin remote is on acme\.ghe\.com, not github\.com/);
   assert.equal(ssh.stderr, plain.stderr);
+  const upper = gathered('ssh://git@ACME.ghe.com/o/r.git');
+  assert.equal(upper.code, 2);
+  assert.equal(upper.stderr, plain.stderr);
 });
 
 test('exit 2: an origin-derived slug with a leading-hyphen owner is rejected rather than reaching gh positionally', () => {

@@ -394,7 +394,8 @@ function originReads(raw) {
 
 // Files that may read the origin through parseRepo, keyed file -> exact site count. Each count
 // was settled by reading the lines. activity-gather.js is not listed: it reads the origin in two
-// lines (the recall gap above; `parseRepo(hostPathOf(url))`), so it has 0 sites, and it stops on any host but github.com anyway.
+// lines (the recall gap above; `parseRepo(hostPathOf(url))`), so it has 0 sites, and it stops on
+// any host but github.com anyway.
 const NOT_ORIGIN = {
   'lib/repo-resolve.js': { count: 1, reason: "defines the gate: gateOriginRepo's own `parseRepo(hostPathOf(remote))` is the one parse the gate judges. resolveGhSpec's `parseRepo(hostPathOf(url))` names no token and is unmatched; harmless, since this file is the seam" },
   'parent-gate.js': { count: 1, reason: "decided by the user at #4933's plan review: the --facts-json path makes no gh call and keeps a raw `parseRepo(remote)`, host normalized, only to judge a qualified --closing token; its gh path calls the gate (ORIGIN_GATED)" },
