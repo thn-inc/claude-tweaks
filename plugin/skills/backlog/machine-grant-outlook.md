@@ -26,7 +26,8 @@ headless posture's own candidate fetch drops it before the chain; excluded recor
 separately via the returned `excludedOrigin` field rather than folded into `refused` (#1387).
 Origin is the only axis the pre-filter aligns: `funnel.specified` still keeps a `ready` record with
 an open `Blocked by #N` that `refine-headless.md`'s Step 1 drops
-(`deps.every((d) => !openNumbers.has(d))`), so `eligible` can exceed the headless posture's
+(`deps.every((d) => !openNumbers.has(d))`; the pre-pass also drops a candidate whose body-declared
+foreign blocker is open or unreadable, #4793), so `eligible` can exceed the headless posture's
 candidate count by that population — one more reason it means "reaches the grant unit's own
 grant-check on a future firing", never "is on the headless posture's list this run".
 

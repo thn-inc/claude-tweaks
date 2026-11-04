@@ -258,6 +258,8 @@ function parseClaim(content) {
 // The inputs that guard a refusal (siblingLive, issueState, openBlockers, worktreeDirty,
 // worktreeBranch) must be the type the gatherer promises: a missing or mistyped one is never read
 // as "nothing to refuse", nor named in a refusal line as if it were a real state.
+// `openBlockers` holds this repository's numbers and may also carry `owner/name#N` strings (a foreign
+// blocker), optionally suffixed ` (state unreadable)`; the refusal line prints a string verbatim.
 function invalidInput(n, what, value) {
   let kind = typeof value;
   if (value === null) kind = 'null';
@@ -332,7 +334,7 @@ function resumeEligibility(input) {
   }
   if (!Array.isArray(openBlockers)) return invalidInput(n, 'open-blocker list', openBlockers);
   if (openBlockers.length > 0) {
-    return refuse('blocked-by', `#${n} is blocked by open ${openBlockers.map((b) => `#${b}`).join(', ')} — not resumable until they close; then run ${resumeCmd}`);
+    return refuse('blocked-by', `#${n} is blocked by open ${openBlockers.map((b) => (typeof b === 'string' ? b : `#${b}`)).join(', ')} — not resumable until they close; then run ${resumeCmd}`);
   }
 
   const labelList = Array.isArray(labels) ? labels : [];
