@@ -53,6 +53,25 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.162.0](https://github.com/thn-inc/claude-tweaks/compare/v6.161.0...v6.162.0) (2026-11-04)
+
+
+### Features
+
+* Give the open-items ledger a sanctioned append/settle CLI ([#4439](https://github.com/thn-inc/claude-tweaks/issues/4439)) ([027c337](https://github.com/thn-inc/claude-tweaks/commit/027c337e69d6bc76fd83d299000157e447f6a94d))
+
+
+### Bug Fixes
+
+* Surface a partial Step 4.0b parent-close instead of… ([#4798](https://github.com/thn-inc/claude-tweaks/issues/4798)) ([f156150](https://github.com/thn-inc/claude-tweaks/commit/f1561500bfe301c998668ace20519557da729702))
+* Windows: the guard-rewrite normalizer declines a native… ([#4292](https://github.com/thn-inc/claude-tweaks/issues/4292)) ([81fbb3c](https://github.com/thn-inc/claude-tweaks/commit/81fbb3c09d164775b5f278fc637b102102520aa3))
+
+### Highlights
+* Queued test-suite runs now take their slot in the order they arrived, so a run no longer starves behind newer arrivals.
+* Windows: the Bash-command normalizer now drops a redundant leading `cd "<cwd>" &&` on a backslash-spelled cwd, and inlines `${CLAUDE_PLUGIN_ROOT}` forward-slashed (`D:/…`). Whether Claude Code's Windows worktree guard accepts the inlined root has not been tested in a live Windows session.
+* Pipeline phases record and settle open-items ledger rows through one safe command instead of hand-edited table lines.
+* A cross-repository native blocker no longer causes a false stop or a false landed verdict in the blocker-landing check.
+
 ## [6.161.0](https://github.com/thn-inc/claude-tweaks/compare/v6.160.3...v6.161.0) (2026-11-03)
 
 
