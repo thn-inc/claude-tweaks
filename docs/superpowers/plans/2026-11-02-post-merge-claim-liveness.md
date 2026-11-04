@@ -19,7 +19,7 @@
   - the write helper writes only the `closed parent #N below the oversight floor` lines, never the summary marker, the attempt line or the SKIP marker;
   - every kept line has its location suffixed `SUPERSEDED_LOCATION_SUFFIX` (`' (superseded holder)'`), so `Closing links (superseded holder)` and `reconcile post-merge parent-close (superseded holder)`. Neither location equals `MARKER_STEP` or matches `STEP_4_0B_LOCATION_RE`, so a superseded line is never read as the run's marker and the successor still writes the one marker;
   - a failed superseded-line write is swallowed: the returned entry still reports the changes.
-- **A briefly missing claim is not a takeover (round 5 reviewer fix).** Another pass judging our claim renames it aside (`{lock}.stale-{pid}-{ms}`), re-judges the aside, and, finding it live, links it back before unlinking the aside. During that sequence the claim path is missing, but the path or the aside always exists: the link-back lands before the aside's unlink. So `heartbeatClaim`, on an `ENOENT` read of the claim path, (1) lists the run dir for a `{CLAIM_FILENAME}.stale-` entry whose content `=== token` and, finding one, returns `true` without refreshing (the judger links it back); otherwise (2) re-reads the claim path once, which finds the restored claim when the link-back finished between the first read and the listing. Only a claim missing on both reads with no aside carrying our token is gone. No sleep, no poll: the ordering of the judger's own steps makes the three reads decisive. Residual, stated: a judger that found our aside stale (dead pid or idle past `CLAIM_MAX_IDLE_MS`) deletes it, so a holder reading during that window counts as owning for that one check; its next check sees the successor's token.
+- **A briefly missing claim is not a takeover (round 5 reviewer fix).** Another pass judging our claim renames it aside (`{lock}.stale-{pid}-{ms}`), re-judges the aside, and, finding it live, links it back before unlinking the aside. During that sequence the claim path is missing, but the path or the aside always exists: the link-back lands before the aside's unlink. So `heartbeatClaim`, on an `ENOENT` read of the claim path, (1) lists the run dir for a young `{CLAIM_FILENAME}.stale-{pid}-{ms}` entry whose content `=== token` and, finding one, returns `true` without refreshing (the judger links it back). Young means `nowMs - ms <= CLAIM_ASIDE_MAX_AGE_MS` (60 000 ms), `{ms}` read from the name's last numeric segment: a judger's rename, re-judge and link-back are a few synchronous fs calls, while an older aside is an orphan (a swallowed aside `unlinkSync` failure, or a judger that died before its link-back) and never proves ownership; a name with no parseable `{ms}` is not young; otherwise (2) re-reads the claim path once, which finds the restored claim when the link-back finished between the first read and the listing. Only a claim missing on both reads with no aside carrying our token is gone. No sleep, no poll: the ordering of the judger's own steps makes the three reads decisive. Residual, stated: a judger that found our aside stale (dead pid or idle past `CLAIM_MAX_IDLE_MS`) deletes it, so a holder reading during that window counts as owning for that one check; its next check sees the successor's token.
 - **The returned entry and every report name the changes (round 5 Q5 and blanket rule).** A taken-over run's entry carries `parentsClosed` (Step 4.0b closes, when non-zero) and `recordsReopened` / `recordsClosed` (Step 4.0's envelope `reopened` and, on a non-default base, `closed`, each only when non-empty). `closing-links.js` finishes its reopen loop and its non-default-base close loop even when later `gh` calls throw, so the envelope is the authoritative list; a non-zero exit (no envelope) only happens before either loop, when nothing was changed. Every surface that reports a superseded pass names those changes: merge mode's `in-flight` line (Task 5), the reconcile CLI summary (Task 3) and SessionStart (Task 4), the last two through one shared line renderer. A superseded pass that changed nothing keeps today's reporting (an `in-flight` skip).
 - **Value (round 3 Q3).** `CLAIM_MAX_IDLE_MS = Math.max(5 * 60 * 1000, 2.5 * GH_TIMEOUT_CEILING_MS)` = 300 000 ms today. `GH_TIMEOUT_CEILING_MS` is the `gh-timeout-ms` schema `max`, read from `POLICY_KEYS` (60 000 ms). In this path a `gh` call runs once and is never retried: `timedGh` is one `execFileSyncTimed` with `timeout: GH_TIMEOUT_MS`. 2.5 × the ceiling (150 s, `background-lock.js`'s `STALE_LOCK_MS` / `BACKGROUND_BUDGET_MS` ratio) is the floor. It is rounded up to 5 minutes to cover non-`gh` work between calls, because reclaiming a live holder by mistake costs more than reclaiming a dead one a few minutes late. If the ceiling is ever raised, the backstop follows it.
 - **Limit (non-`gh` stretches).** Work between `gh` calls is not heartbeated. In this path that work is `closing-links.js`'s settle sleep (`POLL_STEP_MS`, 3 s, between re-reads that are themselves `gh` calls), JSON parsing, and the `decisions.md` append, each seconds at most. None approaches the backstop, so no stretch needs its own refresh.
@@ -71,15 +71,15 @@
 - Consumes: `require('../file-lock').isAlive(pid: number) -> boolean`, which already exists and is only being exported. `require('../policy-schema').POLICY_KEYS`: `post-merge.js` already requires `../policy-schema` for `resolvePolicyKeys`, so add `POLICY_KEYS` to that destructure.
 - Produces (all exported from `post-merge.js`):
   - `takeClaim(runDir: string, nowMs: number, fsApi = fs, { isAlive = pidAlive } = {}) -> { ok: true, token: string } | { ok: false, reason: 'in-flight' | 'claim-failed' }`
-  - `heartbeatClaim(runDir: string, token: string | undefined, nowMs: number, fsApi = fs) -> boolean`. Returns `true` when the lock's content `=== token`, which means we still own it, and then sets its atime and mtime to `nowMs` (a `utimesSync` failure is swallowed; ownership is still `true`). A falsy token, a mismatched or unreadable file returns `false`. An `ENOENT` read runs the Decision section's missing-claim re-check through `fsApi.readdirSync` and `fsApi.readFileSync`: an aside named `{CLAIM_FILENAME}.stale-…` whose content `=== token` returns `true` with no refresh; else a second read of the claim path decides (ours → refresh and `true`; anything else → `false`). Never throws.
+  - `heartbeatClaim(runDir: string, token: string | undefined, nowMs: number, fsApi = fs) -> boolean`. Returns `true` when the lock's content `=== token`, which means we still own it, and then sets its atime and mtime to `nowMs` (a `utimesSync` failure is swallowed; ownership is still `true`). A falsy token, a mismatched or unreadable file returns `false`. An `ENOENT` read runs the Decision section's missing-claim re-check through `fsApi.readdirSync` and `fsApi.readFileSync`: a young aside (`{CLAIM_FILENAME}.stale-{pid}-{ms}` with `nowMs - ms <= CLAIM_ASIDE_MAX_AGE_MS`) whose content `=== token` returns `true` with no refresh; else a second read of the claim path decides (ours → refresh and `true`; anything else → `false`). Never throws.
   - `releaseClaim(runDir: string, token: string | undefined, fsApi = fs) -> void`. Unlinks the lock only when its content `=== token`. A falsy token is a no-op. Never throws.
-  - `CLAIM_MAX_IDLE_MS` (300 000) and `GH_TIMEOUT_CEILING_MS` (60 000).
+  - `CLAIM_MAX_IDLE_MS` (300 000), `GH_TIMEOUT_CEILING_MS` (60 000) and `CLAIM_ASIDE_MAX_AGE_MS` (60 000).
 
 - [ ] **Step 1: Write the failing tests**
 
 In `tests/bin-lib/reconcile/post-merge.test.js`:
 
-- Add `heartbeatClaim, releaseClaim, CLAIM_MAX_IDLE_MS, GH_TIMEOUT_CEILING_MS` to the top-level destructured require of `post-merge`.
+- Add `heartbeatClaim, releaseClaim, CLAIM_MAX_IDLE_MS, GH_TIMEOUT_CEILING_MS, CLAIM_ASIDE_MAX_AGE_MS` to the top-level destructured require of `post-merge`.
 - Return-shape widening: in `R3 two takeovers: the taker that loses the rename…`, change `assert.deepEqual(winner, { ok: true });` to `assert.equal(winner.ok, true);`. It is the only test that `deepEqual`s a successful `takeClaim` result (grep `deepEqual(.*{ ok: true }` over `tests/` shows that one hit).
 - After `takeClaim: a non-EEXIST create error is claim-failed`, add a helper `setMtime(dir, ms)` that runs `fs.utimesSync(lockOf(dir), ms / 1000, ms / 1000)` and a helper `mtimeOf(dir)` returning `fs.statSync(lockOf(dir)).mtimeMs`. Then append:
 
@@ -166,7 +166,7 @@ test('heartbeatClaim: refreshes only a claim still carrying our token', () => {
 test('heartbeatClaim: a claim moved aside by a judging pass, carrying our token, is still ours and is not refreshed', () => {
   const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
   const mine = takeClaim(dir, NOW);
-  const aside = `${lockOf(dir)}.stale-99999-1`;
+  const aside = `${lockOf(dir)}.stale-99999-${NOW - 1000}`;
   fs.renameSync(lockOf(dir), aside); // mid-takeover: the judger has renamed it and not yet linked it back
   const old = NOW - 4 * 60 * 1000;
   fs.utimesSync(aside, old / 1000, old / 1000);
@@ -175,6 +175,16 @@ test('heartbeatClaim: a claim moved aside by a judging pass, carrying our token,
   assert.ok(!fs.existsSync(lockOf(dir)), 'the heartbeat creates nothing at the claim path');
   fs.writeFileSync(aside, `${process.pid}-other`);
   assert.equal(heartbeatClaim(dir, mine.token, NOW), false, "another holder's aside is not ours");
+});
+
+test('heartbeatClaim: an orphaned aside older than CLAIM_ASIDE_MAX_AGE_MS proves nothing, even carrying our token', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const mine = takeClaim(dir, NOW);
+  const orphan = `${lockOf(dir)}.stale-99999-${NOW - CLAIM_ASIDE_MAX_AGE_MS - 60 * 1000}`;
+  fs.renameSync(lockOf(dir), orphan); // a judger died before its link-back, or its aside unlink failed
+  assert.equal(heartbeatClaim(dir, mine.token, NOW), false);
+  fs.renameSync(orphan, `${lockOf(dir)}.stale-99999-notanumber`);
+  assert.equal(heartbeatClaim(dir, mine.token, NOW), false, 'a name with no parseable ms is not young');
 });
 
 test('heartbeatClaim: a claim restored by a link-back between the first read and the listing is found by the re-read', () => {
@@ -279,7 +289,7 @@ Expected: FAIL after Step 1. `heartbeatClaim`, `releaseClaim` (as an export), `C
   - On `EEXIST`: stat first (`statSync`): `ENOENT` means `in-flight`, any other error means `claim-failed`. Then read the content (`readFileSync(lock, 'utf8')`): `ENOENT` means `in-flight`; any other read error leaves the content `''`, so the claim is judged ownerless under `CLAIM_STALE_MS` (round 4: an unreadable claim file is never a permanent `claim-failed`). If not stale, return `in-flight`.
   - Otherwise rename aside exactly as today. Then re-judge the aside's own content and mtime with the same helper, replacing today's mtime-only re-check; an unreadable aside keeps the first reading. If the aside is not stale, link it back, unlink the aside and return `in-flight`. Otherwise unlink the aside and retry the create once, with the same `EEXIST` → `in-flight` mapping as today.
 - Restate the "Residual window" comment in the link-back branch under the new rule. The holder may release between our rename and this link. The link then re-creates a claim that carries the holder's token but that nobody holds. The next pass judges that token's pid. Once the holder process has exited, it reads dead and is taken over at once. While the process still runs, nothing refreshes the orphan, so it is taken over once idle past `CLAIM_MAX_IDLE_MS`. An ownerless aside that is linked back keeps the `CLAIM_STALE_MS` rule.
-- `heartbeatClaim` and `releaseClaim`, per the Interfaces block. `heartbeatClaim`'s `ENOENT` branch follows the Decision section's missing-claim bullet in that order (listing, then one re-read); a comment beside it states why the three reads are decisive without polling (the judger's link-back lands before its aside unlink) and the one residual. `releaseClaim` reads the content and unlinks only on `=== token`. Comment the read-then-unlink gap: only a takeover could fill it, and a holder that refreshed moments ago is neither dead nor idle.
+- `heartbeatClaim` and `releaseClaim`, per the Interfaces block. `heartbeatClaim`'s `ENOENT` branch follows the Decision section's missing-claim bullet in that order (listing, then one re-read); a comment beside it states why the three reads are decisive without polling (the judger's link-back lands before its aside unlink), why only a young aside counts, and the one residual. Declare `const CLAIM_ASIDE_MAX_AGE_MS = 60 * 1000;` beside `CLAIM_MAX_IDLE_MS`, commented as the bound on a judger's rename-to-link-back sequence. In `takeClaim`, reword the two `/* an orphaned .stale- file is harmless */` comments: an orphaned aside is ignored by the heartbeat once older than `CLAIM_ASIDE_MAX_AGE_MS`, so it never proves ownership. `releaseClaim` reads the content and unlinks only on `=== token`. Comment the read-then-unlink gap: only a takeover could fill it, and a holder that refreshed moments ago is neither dead nor idle.
 - `processCandidate`'s `finally`: `releaseClaim(dir, claim.token)`.
 - Rewrite the comment above `takeClaim`. It must:
   - State the owner-token, liveness and idle-backstop rule, and that the holder refreshes the claim before every `gh` call (Task 2 wires that).
@@ -291,7 +301,7 @@ Expected: FAIL after Step 1. `heartbeatClaim`, `releaseClaim` (as an export), `C
   - Close with: hence only its `isAlive` probe is reused.
   - Add the interop note: until every installed build upgrades, an older reconciler still takes over a claim idle past `CLAIM_STALE_MS` by mtime alone and releases unconditionally. The refresh keeps a progressing holder fresh to it too.
 - `classifyEntry`'s comment currently says "so a re-run past CLAIM_STALE_MS recovers a dead one". Change it to: a re-run takes over a dead holder's claim at once, and a claim naming no holder past `CLAIM_STALE_MS`.
-- Add `heartbeatClaim, releaseClaim, CLAIM_MAX_IDLE_MS, GH_TIMEOUT_CEILING_MS` to `module.exports`.
+- Add `heartbeatClaim, releaseClaim, CLAIM_MAX_IDLE_MS, GH_TIMEOUT_CEILING_MS, CLAIM_ASIDE_MAX_AGE_MS` to `module.exports`.
 
 Spec: append to `## Decisions` in `.claude-tweaks/pipelines/2026-11-04T064811-record-4797/work/4797-spec.md` one bullet: `**Chosen value:** CLAIM_MAX_IDLE_MS = Math.max(5 min, 2.5 × GH_TIMEOUT_CEILING_MS) = 5 min today, GH_TIMEOUT_CEILING_MS being the gh-timeout-ms schema max (60 s) read from POLICY_KEYS. This corrects the round-2 Sizing bullet's "(120 s)": a gh call on this path runs once, with no retry.` Follow it with one sentence: the heartbeat wraps the shared `timedGh` in `processCandidate`, so every Step 4.0/4.0b `gh` call refreshes the claim, and the only non-`gh` stretches (the 3 s settle sleep, parsing, the `decisions.md` append) are seconds long.
 
@@ -304,6 +314,7 @@ Guard discrimination: delete each guard once, re-run, and confirm the named test
 - `heartbeatClaim`'s `=== token` compare: `heartbeatClaim: refreshes only a claim still carrying our token`.
 - The aside listing (return `false` straight after the first `ENOENT`): `a claim moved aside by a judging pass…`. The aside's `=== token` compare: that test's last assertion.
 - The second read (return `false` when the listing finds no aside): `a claim restored by a link-back…`.
+- The aside age check (accept any aside carrying our token): `an orphaned aside older than CLAIM_ASIDE_MAX_AGE_MS proves nothing…`.
 - `releaseClaim`'s compare: `AC2.1 releaseClaim`.
 - `!isAlive(pid)`: `takeClaim: a dead holder is reclaimed at once`.
 - The `CLAIM_MAX_IDLE_MS` clause: `a live-reading holder idle past CLAIM_MAX_IDLE_MS (a reused pid) is reclaimed`.
@@ -663,12 +674,12 @@ git commit -m "Carry a taken-over post-merge holder's GitHub changes to SessionS
 **Role:** integration
 
 **Files:**
-- Modify: `plugin/skills/wrap-up/merge-mode.md` (the `verdict` `in-flight` bullet: the archived clause, and one new sentence for a superseded pass; 14,466 B against the 52,500 B rail, ample headroom)
+- Modify: `plugin/skills/wrap-up/merge-mode.md` (the `verdict` `in-flight` bullet: the live-run sentence, the archived clause, and one new sentence for a superseded pass; 14,466 B against the 52,500 B rail, ample headroom)
 - Modify: `plugin/bin/post-merge-run.js` (header comment and `USAGE`: the entry shape and the `in-flight` description; no code change)
 - Modify: `docs/plugin-structure.md` (the `post-merge-run.js` command line's entry shape)
 - Test: `tests/wrap-up-merge-mode-conformance.test.js` (the `'already-in-flight-archived'` pin, one new pin, one new field test)
 
-No-change classification: `merge-mode.md` line 31 and the `in-flight` bullet's opening describe `in-flight` as "another process holds the run's claim". That stays true for a taken-over holder, whose successor now holds it.
+No-change classification: `merge-mode.md` line 31 and the `in-flight` bullet's opening describe `in-flight` as "another process holds the run's claim". That stays true for a taken-over holder, whose successor now holds it. The bullet's "With `next` `none`, a live run, that is the whole line." does change: a superseded pass on a live run also gets `next` `none` (`classifyEntry`), and its line is not the whole line.
 
 **Interfaces:**
 - Consumes: Task 2's taken-over entry (`verdict` `in-flight`, with `parentsClosed`, `recordsReopened`, `recordsClosed` each only when non-empty); Task 1's takeover rule (a dead holder at once; a claim naming no holder past `CLAIM_STALE_MS`).
@@ -677,6 +688,10 @@ No-change classification: `merge-mode.md` line 31 and the `in-flight` bullet's o
 - [ ] **Step 1: Update the conformance test**
 
 In `tests/wrap-up-merge-mode-conformance.test.js`:
+
+- Replace the `'already-in-flight-live'` regex with one matching this exact sentence, regex-escaped:
+
+  `` With `next` `none`, a live run, that is the whole line unless the entry carries `parentsClosed`, `recordsReopened` or `recordsClosed` (below) ``
 
 - Replace the `'already-in-flight-archived'` regex with one matching this exact sentence tail, regex-escaped as the neighbouring entries are:
 
@@ -704,11 +719,11 @@ test('#4797 round 5: post-merge-run.js and plugin-structure.md name a superseded
 - [ ] **Step 2: Run the conformance test to verify it fails**
 
 Run: `node --test tests/wrap-up-merge-mode-conformance.test.js`
-Expected: FAIL after Step 1. `merge-mode.md` still carries the old "again once the claim is past its 10-minute stale window" wording and no superseded sentence; neither CLI doc names the new fields.
+Expected: FAIL after Step 1. `merge-mode.md` still carries the old "that is the whole line." and "again once the claim is past its 10-minute stale window" wording and no superseded sentence; neither CLI doc names the new fields.
 
 - [ ] **Step 3: Rewrite the prose**
 
-- `plugin/skills/wrap-up/merge-mode.md`, the `verdict` `in-flight` bullet: replace the clause from `the line also names` to `in case that holder died.` with the Step 1 archived tail, ending with a full stop, then append the Step 1 superseded sentence, ending with a full stop.
+- `plugin/skills/wrap-up/merge-mode.md`, the `verdict` `in-flight` bullet: replace "With `next` `none`, a live run, that is the whole line." with the Step 1 live-run sentence, ending with a full stop; replace the clause from `the line also names` to `in case that holder died.` with the Step 1 archived tail, ending with a full stop, then append the Step 1 superseded sentence, ending with a full stop.
 - `plugin/bin/post-merge-run.js`: in the header's entry shape and in `USAGE`'s one-line shape, add `recordsReopened?, recordsClosed?` after `parentsClosed?`. Extend the header's `in-flight:` line and `USAGE`'s `in-flight (another process holds the claim)` with: when this invocation's own pass had its claim another pass took over after changing GitHub, the entry also carries `parentsClosed` (parents Step 4.0b closed) and `recordsReopened` / `recordsClosed` (records Step 4.0 reopened or closed), each only when non-empty.
 - `docs/plugin-structure.md`, the `node plugin/bin/post-merge-run.js` line: the same two fields in its entry shape and the same "claim another pass took over" clause after `in-flight` (another process holds the run's claim).
 
