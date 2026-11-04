@@ -66,6 +66,12 @@ Three conventions follow from how this repo works, and all are visible below:
 * Surface a partial Step 4.0b parent-close instead of… ([#4798](https://github.com/thn-inc/claude-tweaks/issues/4798)) ([f156150](https://github.com/thn-inc/claude-tweaks/commit/f1561500bfe301c998668ace20519557da729702))
 * Windows: the guard-rewrite normalizer declines a native… ([#4292](https://github.com/thn-inc/claude-tweaks/issues/4292)) ([81fbb3c](https://github.com/thn-inc/claude-tweaks/commit/81fbb3c09d164775b5f278fc637b102102520aa3))
 
+### Highlights
+* Queued test-suite runs now take their slot in the order they arrived, so a run no longer starves behind newer arrivals.
+* Windows: the Bash-command normalizer now drops a redundant leading `cd "<cwd>" &&` on a backslash-spelled cwd, and inlines `${CLAUDE_PLUGIN_ROOT}` forward-slashed (`D:/…`). Whether Claude Code's Windows worktree guard accepts the inlined root has not been tested in a live Windows session.
+* Pipeline phases record and settle open-items ledger rows through one safe command instead of hand-edited table lines.
+* A cross-repository native blocker no longer causes a false stop or a false landed verdict in the blocker-landing check.
+
 ## [6.161.0](https://github.com/thn-inc/claude-tweaks/compare/v6.160.3...v6.161.0) (2026-11-03)
 
 
