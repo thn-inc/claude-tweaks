@@ -86,8 +86,8 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const {
-  parseRepo, ghAvailable, remoteUrl, ghOptions, gateOriginRepo, normalizeHost, repoSlug,
-} = require('./lib/repo-resolve');
+  parseRepo, ghAvailable, remoteUrl, ghOptions, gateOriginRepo, normalizeHost, repoSlug, hostPathOf,
+} =require('./lib/repo-resolve');
 const { POLICY_KEYS, resolvePolicyKeys } = require('./lib/policy-schema');
 const { readWorkBackend } = require('./lib/work-backend');
 const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
@@ -337,7 +337,7 @@ function run(argv, deps = realDeps) {
       if (gated.refusal) { deps.stderr(`parent-gate.js: ${gated.refusal}\n`); return 2; }
       repoSpec = gated.spec;
     } else {
-      repoSpec = parseRepo(remote);
+      repoSpec = parseRepo(hostPathOf(remote));
       if (repoSpec) repoSpec = { ...repoSpec, host: normalizeHost(repoSpec.host) };
     }
     if (!repoSpec) { deps.stderr('parent-gate.js: could not resolve owner/repo from the origin remote\n'); return 2; }
