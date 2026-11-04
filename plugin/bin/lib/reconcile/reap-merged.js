@@ -16,7 +16,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { runGit } = require('../hooks/git-exec');
+const { runGit, repoTargetOf } = require('../hooks/git-exec');
 const { mainCheckoutRoot, safeReal } = require('../hooks/worktree-detect');
 const { parseWorktreeList, isWorktreeLocked, HARNESS_WORKTREE_DIR, QUIET_SKIP_REASONS } = require('../hooks/worktree-reap');
 const { isPathContained } = require('../shared-primitives');
@@ -26,7 +26,6 @@ const { release: releasePortsDefault } = require('../ports/registry');
 const { trackResidue, beginCacheBatch, commitCacheBatch } = require('./cache');
 const { escalateResidue, capDirtyFiles } = require('./escalate-residue');
 const { readPorcelainStatus } = require('../residue/probes/worktrees');
-const { repoSlugOf } = require('./release-merged');
 
 // Best-effort audit-trail write to the OWNING run's own events.jsonl, so
 // wrap-up/residue tooling that reads a run's events can see that the
@@ -196,7 +195,7 @@ async function prefetchReapPrStates(root, prStates) {
 }
 
 function reapMerged({
-  cwd, dryRun = false, releasePorts = releasePortsDefault, runner, fsRmSync, platform, prStates,
+  cwd, dryRun = false, releasePorts = releasePortsDefault, runner, fsRmSync, platform, prStates, gateDeps,
 } = {}) {
   const reaped = [];
   const skipped = [];
@@ -207,7 +206,10 @@ function reapMerged({
   const root = mainCheckoutRoot(start);
   if (!root) return { reaped, skipped, portsRelease };
   const here = safeReal(start);
-  const repoSlug = repoSlugOf(root);
+  // #4794: the residue repo is the --repo value for the origin's one host (bare on gh's default host),
+  // or `{ refusal }` for a refused origin, which files nothing and calls no gh.
+  const target = repoTargetOf(root, gateDeps);
+  const residueRepo = target && target.refusal ? { refusal: target.refusal } : (target ? target.ghRepo : null);
 
   const list = runGit(['worktree', 'list', '--porcelain'], root);
   if (list.failure) return { reaped, skipped, portsRelease, failure: list.failure };
@@ -256,7 +258,7 @@ function reapMerged({
       // (e.g. a genuine permissions error still falls through below).
       const fallback = attemptLongPathRemoval(real, root, { fsRmSync, platform });
       if (fallback.succeeded) {
-        trackReapResidue(cacheBatch, repoSlug, real, { failed: false }, { runner });
+        trackReapResidue(cacheBatch, residueRepo, real, { failed: false }, { runner });
         logReapEvent(owningRunDir, 'worktree-reaped', { prNumber: prState.number });
         reaped.push(real);
         try {
@@ -282,13 +284,13 @@ function reapMerged({
       // indeterminate timeout/spawn failure with nothing to say). The
       // long-path fallback's own lastError (above) takes precedence when it
       // ran and still failed — it is the more specific, more recent signal.
-      trackReapResidue(cacheBatch, repoSlug, real, { failed: true, lastError: fallback.lastError || rm.stderr || rm.failure, dirtyFiles }, { runner });
+      trackReapResidue(cacheBatch, residueRepo, real, { failed: true, lastError: fallback.lastError || rm.stderr || rm.failure, dirtyFiles }, { runner });
       continue;
     }
     // A path that just succeeded has no more residue to track (#644) — clear
     // any streak so a later failure on this same path (re-created worktree,
     // reused path) starts counting fresh rather than resuming a stale one.
-    trackReapResidue(cacheBatch, repoSlug, real, { failed: false }, { runner });
+    trackReapResidue(cacheBatch, residueRepo, real, { failed: false }, { runner });
     logReapEvent(owningRunDir, 'worktree-reaped', { prNumber: prState.number });
     reaped.push(real);
     try {

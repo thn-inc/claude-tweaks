@@ -608,3 +608,110 @@ const CLI_TABLE = [
 ];
 
 for (const row of CLI_TABLE) describeOriginGate(row);
+
+// #4794 Task 5: archive-merged and reap-merged file their residue escalation against the
+// origin-derived repo. The runner is injected, so the argv it records is what `gh` would
+// have been sent: a host-qualified --repo off github.com, the bare slug on it, and nothing
+// at all through a refused origin (an SSH alias).
+const RESIDUE_GATE_DEPS = { env: {}, readFile: () => { throw new Error('ENOENT'); } };
+const ESCALATION_ISSUE_URL = 'https://acme.ghe.com/acme/widgets/issues/101';
+
+function recordingRunner() {
+  const calls = [];
+  const runner = (argv) => {
+    calls.push(argv);
+    if (argv[0] === 'issue' && argv[1] === 'list') return '[]';
+    if (argv[0] === 'issue' && argv[1] === 'create') return ESCALATION_ISSUE_URL;
+    return '';
+  };
+  return { calls, runner };
+}
+
+function committedRepo(t, origin) {
+  const { repo } = makeRepo(t, origin);
+  fs.rmSync(path.join(repo, '.claude-tweaks'), { recursive: true, force: true });
+  git(repo, ['-c', 'user.email=t@example.invalid', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-q', '-m', 'init']);
+  return repo;
+}
+
+// Every argv carries `--repo <slug>` as adjacent elements, exactly once.
+function assertRepoFlag(calls, slug) {
+  assert.ok(calls.length >= 1, 'expected at least one gh call through the runner');
+  for (const argv of calls) {
+    const hits = argv.map((a, i) => (a === '--repo' && argv[i + 1] === slug ? i : -1)).filter((i) => i >= 0);
+    assert.equal(hits.length, 1, `expected exactly one adjacent "--repo ${slug}" in ${JSON.stringify(argv)}`);
+    assert.equal(argv.filter((a) => a === '--repo').length, 1, `more than one --repo in ${JSON.stringify(argv)}`);
+  }
+}
+
+// One structurally-stuck run dir (worktree gone, no branch) one failure short of the
+// escalation threshold, so the pass's own trackStuckSkip crosses it.
+function archiveEscalation(t, origin) {
+  const { archiveMerged, STRUCTURALLY_STUCK_TTL_MS } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const { RESIDUE_ESCALATE_THRESHOLD, recordResidueFailure } = require('../plugin/bin/lib/reconcile/cache');
+  const root = fs.realpathSync(committedRepo(t, origin));
+  withoutGhHost(t);
+  const dir = path.join(root, '.claude-tweaks', 'pipelines', '2026-01-01T000000-stuck-a-4794');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'config.yml'), 'x: 1\n');
+  fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ status: 'active', worktree: path.join(root, 'long-gone'), sessionId: 'sess-1' }));
+  const backdated = new Date(Date.now() - STRUCTURALLY_STUCK_TTL_MS * 2);
+  fs.utimesSync(dir, backdated, backdated);
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD - 1; i++) recordResidueFailure(root, 'structurally-stuck', dir, { lastError: 'stuck at no-branch' });
+  const { calls, runner } = recordingRunner();
+  const result = archiveMerged({ cwd: root, runner, gateDeps: RESIDUE_GATE_DEPS });
+  assert.ok(result.skipped.some((s) => s.runDir === dir && s.reason === 'no-branch'), JSON.stringify(result));
+  return { calls, root, dir };
+}
+
+test('AC1.1: archiveMerged on a *.ghe.com origin escalates structurally-stuck residue with --repo acme.ghe.com/acme/widgets', { skip: STUB_SKIP }, (t) => {
+  const { calls } = archiveEscalation(t, GHE_ORIGIN);
+  assertRepoFlag(calls, 'acme.ghe.com/acme/widgets');
+});
+
+test('AC2.1: archiveMerged on a github.com origin escalates with --repo acme/widgets', { skip: STUB_SKIP }, (t) => {
+  const { calls } = archiveEscalation(t, DOTCOM_ORIGIN);
+  assertRepoFlag(calls, 'acme/widgets');
+});
+
+test('#4794: archiveMerged on an SSH-alias origin escalates nothing — the runner sees no call', { skip: STUB_SKIP }, (t) => {
+  const { calls } = archiveEscalation(t, 'git@github-work:acme/widgets.git');
+  assert.deepEqual(calls, []);
+});
+
+// A merged-PR worktree locked so `git worktree remove` refuses it, RESIDUE_ESCALATE_THRESHOLD passes.
+function reapEscalation(t, origin) {
+  const { reapMerged } = require('../plugin/bin/lib/reconcile/reap-merged');
+  const { RESIDUE_ESCALATE_THRESHOLD } = require('../plugin/bin/lib/reconcile/cache');
+  const root = fs.realpathSync(committedRepo(t, origin));
+  withoutGhHost(t);
+  const wtPath = path.join(root, '.claude', 'worktrees', 'issue-1');
+  git(root, ['worktree', 'add', '-q', '-b', 'worktree-issue-1', wtPath]);
+  git(root, ['worktree', 'lock', wtPath, '--reason', 'stuck']);
+  const prStates = { byBranch: () => ({ number: 9, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }) };
+  const { calls, runner } = recordingRunner();
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
+    const result = reapMerged({ cwd: root, runner, prStates, gateDeps: RESIDUE_GATE_DEPS });
+    assert.equal(result.skipped[0] && result.skipped[0].reason, 'removal-failed', `pass ${i + 1}: ${JSON.stringify(result)}`);
+  }
+  return { calls, root };
+}
+
+test('AC1.1: reapMerged on a *.ghe.com origin escalates removal-failed residue with the host-qualified --repo', { skip: STUB_SKIP }, (t) => {
+  const { calls } = reapEscalation(t, GHE_ORIGIN);
+  assertRepoFlag(calls, 'acme.ghe.com/acme/widgets');
+});
+
+test('AC2.1: reapMerged on a github.com origin escalates removal-failed residue with --repo acme/widgets', { skip: STUB_SKIP }, (t) => {
+  const { calls } = reapEscalation(t, DOTCOM_ORIGIN);
+  assertRepoFlag(calls, 'acme/widgets');
+});
+
+test('#4794: reapMerged on an SSH-alias origin escalates nothing and records unknown-host', { skip: STUB_SKIP }, (t) => {
+  const { listResidueFailures } = require('../plugin/bin/lib/reconcile/cache');
+  const { calls, root } = reapEscalation(t, 'git@github-work:acme/widgets.git');
+  assert.deepEqual(calls, []);
+  const entry = listResidueFailures(root).find((f) => f.reason === 'removal-failed');
+  assert.ok(entry, 'expected a removal-failed residue entry');
+  assert.ok(entry.lastResidueError && entry.lastResidueError.reason.startsWith('unknown-host ('), JSON.stringify(entry));
+});

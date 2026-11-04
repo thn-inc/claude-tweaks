@@ -25,6 +25,7 @@ const { unfiledCantTell } = require('../../../plugin/bin/lib/console/finding-out
 const { formatEntry } = require('../../../plugin/bin/lib/log-decision/append');
 const { RESIDUE_ESCALATE_THRESHOLD, listResidueFailures, recordResidueFailure, cachePath, beginCacheBatch, commitCacheBatch } = require('../../../plugin/bin/lib/reconcile/cache');
 const { structurallyStuckBody, parseStuckPaths } = require('../../../plugin/bin/lib/reconcile/escalate-residue');
+const { gateOriginRepo } = require('../../../plugin/bin/lib/repo-resolve');
 const { createIssueListCache } = require('../../../plugin/bin/lib/reconcile/issue-list-cache');
 const { createPrStateResolver } = require('../../../plugin/bin/lib/reconcile/pr-state-cache');
 const { createTimings, withTimings, summarizeTimings } = require('../../../plugin/bin/lib/reconcile/timing');
@@ -2413,7 +2414,7 @@ test('archiveMerged: still skips in place on a single pass, but only starts trac
 test('archiveMerged: two dirs crossing the structurally-stuck threshold in one call share one injected runner — only one underlying issue-list call fires', { skip: STUB_SKIP }, () => {
   const root = fs.realpathSync(makeRepo());
   // escalateStructurallyStuck bails out at 'no-repo-slug' (never calling
-  // `runner` at all) unless repoSlugOf(root) resolves — makeRepo()'s bare
+  // `runner` at all) unless repoTargetOf(root) resolves — makeRepo()'s bare
   // fixture has no origin remote, so one is stamped here (same shape
   // release-merged.test.js's own fixtures use).
   git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
@@ -3958,7 +3959,8 @@ test('AC3.1: archiveMerged: a MERGED PR reached via the by-number fallback with 
 // pr-first-merge-post-merge.md Step 4.2's reconcile call hits; the
 // staged-items exception must apply here too. `stagedFiles` seeds staged/
 // (absent when empty).
-// #3503 options: `origin` stamps the remote repoSlugOf reads; `closes` (record
+// #3503 options: `origin` stamps the remote repoTargetOf reads (a URL string, or `true` for
+// git@github.com:acme/w.git); `gateDeps` is forwarded to archiveMerged; `closes` (record
 // numbers) puts closingIssuesReferences on the PR; `manifestSpecs` writes
 // manifest.yml; `staleMs` backdates the run dir past the structurally-stuck TTL.
 // `runStateBefore` is run-state.json's bytes read just before archiveMerged.
@@ -3966,9 +3968,10 @@ test('AC3.1: archiveMerged: a MERGED PR reached via the by-number fallback with 
 // main checkout's CLAUDE.md.
 function fixtureOrdinaryMergedNoConsole(branch, runId, stagedFiles = [], specStaged = {}, {
   origin = false, closes = null, manifestSpecs = null, staleMs = null, issueStates = null, claudeMd = null, findings = null, decisions = null,
+  gateDeps = undefined,
 } = {}) {
   const { root, featureSha } = mergedFeatureBranchRepo(branch); // branch ref stays — fallbackBranch recovers it
-  if (origin) git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
+  if (origin) git(root, 'remote', 'add', 'origin', typeof origin === 'string' ? origin : 'git@github.com:acme/w.git');
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
   fs.mkdirSync(runDir, { recursive: true });
   fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n'); // adopted — keeps isOrphanedMint out of the way
@@ -4011,7 +4014,7 @@ function fixtureOrdinaryMergedNoConsole(branch, runId, stagedFiles = [], specSta
   if (claudeMd !== null) fs.writeFileSync(path.join(root, 'CLAUDE.md'), claudeMd);
   const wrapper = installGhWrapper([pr], issueStates);
   try {
-    return { root, runDir, runStateBefore, result: archiveMerged({ cwd: root }) };
+    return { root, runDir, runStateBefore, result: archiveMerged({ cwd: root, gateDeps }) };
   } finally {
     wrapper.restore();
   }
@@ -4416,6 +4419,7 @@ test('decideArchiveCore: existing skip reasons keep precedence over the record c
 test('STRUCTURALLY_STUCK_REASONS includes merged-partial and no-repo-slug but not closing-issues-unknown', () => {
   assert.ok(STRUCTURALLY_STUCK_REASONS.has('merged-partial'));
   assert.ok(STRUCTURALLY_STUCK_REASONS.has('no-repo-slug'));
+  assert.ok(STRUCTURALLY_STUCK_REASONS.has('unknown-host'));
   assert.ok(!STRUCTURALLY_STUCK_REASONS.has('closing-issues-unknown'));
 });
 
@@ -4745,6 +4749,44 @@ test('F3: a no-repo-slug skip past the TTL enters the structurally-stuck residue
     failures.some((f) => f.reason === 'structurally-stuck' && f.path === runDir),
     `expected ${runDir} to accumulate a structurally-stuck count, got ${JSON.stringify(failures)}`,
   );
+});
+
+// --- #4794: the record check and the residue repo follow the origin gate. ---
+// gateDeps keeps a developer's own GH_HOST and ~/.config/gh/hosts.yml out of the verdict.
+const ORIGIN_GATE_DEPS = { env: {}, readFile: () => { throw new Error('ENOENT'); } };
+
+test('#4794 Review Focus 3: on a *.ghe.com origin a merged run whose PR closes its record still archives (record check compares the bare slug)', { skip: STUB_SKIP }, () => {
+  const { runDir, result } = fixtureOrdinaryMergedNoConsole(
+    'feat-4794-ghe', '2026-10-19T090000-record-3503', [], {},
+    { origin: 'https://acme.ghe.com/acme/w.git', closes: [3503], gateDeps: ORIGIN_GATE_DEPS },
+  );
+  assert.ok(result.archived.includes(runDir), `expected ${runDir} archived, got ${JSON.stringify(result)}`);
+  assert.equal(fs.existsSync(runDir), false, 'the run dir must have been archived away');
+});
+
+test('#4794: an SSH-alias origin skips the record check unknown-host with the refusal as hint, never no-repo-slug', { skip: STUB_SKIP }, () => {
+  const origin = 'git@github-work:acme/w.git';
+  const { root, runDir, result } = fixtureOrdinaryMergedNoConsole(
+    'feat-4794-alias', '2026-10-17T062549-record-3503', [], {},
+    { origin, closes: [3503], staleMs: STRUCTURALLY_STUCK_TTL_MS * 2, gateDeps: ORIGIN_GATE_DEPS },
+  );
+  assert.ok(!result.archived.includes(runDir));
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.equal(skip?.reason, 'unknown-host', JSON.stringify(result));
+  const refusal = gateOriginRepo(origin, ORIGIN_GATE_DEPS).refusal;
+  assert.ok(refusal, 'the fixture origin must be refused');
+  assert.equal(skip.hint, refusal);
+  const failures = listResidueFailures(root);
+  assert.ok(
+    failures.some((f) => f.reason === 'structurally-stuck' && f.path === runDir),
+    `expected ${runDir} to accumulate a structurally-stuck count, got ${JSON.stringify(failures)}`,
+  );
+});
+
+test('#4794 decideArchiveCore: a refused origin skips unknown-host ahead of no-repo-slug', () => {
+  const pr = { state: 'MERGED', closingIssuesReferences: [ref(1)] };
+  assert.deepStrictEqual(decideArchiveCore(pr, 'resolved', false, { records: [1], repoSlug: null, repoRefusal: 'R' }),
+    { action: 'skip', reason: 'unknown-host', hint: 'R' });
 });
 
 // --- #3503 F4: the by-number path's resolved-console guard. ---
