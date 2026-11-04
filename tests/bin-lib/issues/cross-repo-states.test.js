@@ -97,6 +97,18 @@ test('resolveForeignStates fails closed: a non-zero CLI exit reads every ref nul
   assert.strictEqual(stderr[0].split('\n').length, 2, 'one line');
 });
 
+test('resolveForeignStates bounds the Warning cause: a long child stderr keeps its head and its tail (gh\'s own diagnostic), not the whole embedded query', () => {
+  const stderr = [];
+  const longStderr = `Command failed: gh api graphql -f query=${'c0: repository(owner:$o0, name:$n0){ issue(number:5){ state } } '.repeat(40)}\nHTTP 502: Bad Gateway (https://api.github.com/graphql)`;
+  const states = resolveForeignStates(['other/repo#5'], { spawn: () => ({ status: 3, stdout: '', stderr: longStderr }), stderr: (s) => stderr.push(s) });
+  assert.deepStrictEqual(states, new Map([['other/repo#5', null]]));
+  assert.strictEqual(stderr.length, 1);
+  assert.ok(stderr[0].length < 700, `Warning line is bounded, got ${stderr[0].length} chars`);
+  assert.match(stderr[0], /Command failed: gh api graphql/, 'head kept');
+  assert.match(stderr[0], /HTTP 502: Bad Gateway/, 'tail (gh\'s diagnostic) kept');
+  assert.match(stderr[0], / … /, 'middle elided');
+});
+
 test('resolveForeignStates fails closed on a spawn error, a signal and unparseable stdout', () => {
   for (const res of [
     { error: new Error('spawn ETIMEDOUT'), status: null, stdout: '' },

@@ -186,6 +186,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_ELIGIBLE_PRE_DEP" 
     ? fs.readFileSync(process.argv[3], 'utf8').trim().split('\n').filter(Boolean).map(Number)
     : [];
   for (const dep of verifiedOpen) openNumbers.add(dep);
+  // #4793: DISPATCH_FOREIGN_STATES is set only on the MCP path (mcp-transport.md); unset asks gh.
   const { eligible, excluded } = partitionByOpenBodyBlockers(eligiblePreDep, openNumbers, bodyForeignBlockers(eligiblePreDep, { statesFile: process.env.DISPATCH_FOREIGN_STATES }));
   fs.writeFileSync(process.argv[4], JSON.stringify(eligible));
   fs.writeFileSync(process.argv[5], JSON.stringify(excluded));

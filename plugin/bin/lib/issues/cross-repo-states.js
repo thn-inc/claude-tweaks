@@ -156,7 +156,16 @@ function fetchCrossRepoStates({ refs, host, runner } = {}) {
   return states;
 }
 
-const oneLine = (s) => String(s).replace(/\s+/g, ' ').trim();
+// A cause text -> one bounded line (preflight-records.js's oneLine, same head and tail). A failed
+// `gh api graphql` spawn embeds the whole aliased query in its message, so the Warning line would
+// otherwise grow with the number of refs and bury gh's own diagnostic at the tail: keep the head
+// (the command) and the tail (the diagnostic), drop the middle.
+function oneLine(s, max = 400) {
+  const flat = String(s).replace(/\s+/g, ' ').trim();
+  if (flat.length <= max) return flat;
+  const keep = Math.floor((max - 3) / 2);
+  return `${flat.slice(0, keep)} … ${flat.slice(-keep)}`;
+}
 
 const realSpawn = (argv) => spawnSync(process.execPath, argv, {
   encoding: 'utf8',
