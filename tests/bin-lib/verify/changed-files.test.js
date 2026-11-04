@@ -348,10 +348,11 @@ test('mergeNarrowing: a merged-in path the branch then edited stays selected (#3
 test('mergeNarrowing: an uncommitted edit to a merge-identical path stays selected (#3072 Review Focus)', () => {
   const r = mergeRepo();
   mergeTrunkWith(r, [['ui/a.js', 'a'], ['ui/b.js', 'b']]);
+  r.commit('src/own.py', 'own');
   r.write('ui/b.js', 'b — uncommitted edit');
   const files = changedSince(r, r.anchor);
   const n = mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: r.exec });
-  assert.deepStrictEqual(n.files, ['ui/b.js']);
+  assert.deepStrictEqual(n.files, ['src/own.py', 'ui/b.js']);
   assert.deepStrictEqual(n.excluded, ['ui/a.js']);
 });
 
@@ -375,8 +376,9 @@ test('mergeNarrowing: an unresolvable integration branch degrades to null, never
 test('mergeNarrowing: a failing working-tree status read degrades to null, never a throw (#3072 review)', () => {
   const r = mergeRepo();
   mergeTrunkWith(r, [['ui/a.js', 'a']]);
+  r.commit('src/own.py', 'own');
   const files = changedSince(r, r.anchor);
-  const statusFails = (cmd, args, opts) => {
+  const statusFails =(cmd, args, opts) => {
     if (args[1] === 'status') { const e = new Error('index.lock: File exists'); e.status = 128; throw e; }
     return r.exec(cmd, args, opts);
   };
@@ -386,8 +388,9 @@ test('mergeNarrowing: a failing working-tree status read degrades to null, never
 test('mergeNarrowing: a failing anchor merge-base or pre-anchor diff degrades to null, never a throw (#3072)', () => {
   const r = mergeRepo();
   mergeTrunkWith(r, [['ui/a.js', 'a']]);
+  r.commit('src/own.py', 'own');
   const files = changedSince(r, r.anchor);
-  const fail = () => { const e = new Error('fatal: bad object'); e.status = 128; throw e; };
+  const fail =() => { const e = new Error('fatal: bad object'); e.status = 128; throw e; };
   const mergeBaseFails = (cmd, args, opts) => (args[0] === 'merge-base' && !args.includes('--is-ancestor') ? fail() : r.exec(cmd, args, opts));
   const preAnchorDiffFails = (cmd, args, opts) => (args[0] === 'diff' && args[args.length - 1] === r.anchor ? fail() : r.exec(cmd, args, opts));
   assert.strictEqual(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: mergeBaseFails }), null);
@@ -456,10 +459,75 @@ test('mergeNarrowing: a conflict resolved in the integration branch\'s favour ke
   r.exec('git', ['checkout', '--theirs', 'src/x.py'], { encoding: 'utf8' });
   r.git('add', 'src/x.py');
   r.git('commit', '-q', '--no-edit');
+  r.commit('src/own.py', 'own');
   const files = changedSince(r, anchor);
   assert.ok(files.includes('src/x.py'), `expected src/x.py among changed files, got ${JSON.stringify(files)}`);
   const n = mergeNarrowing({ anchor, integrationBranch: 'trunk', files, execImpl: r.exec });
   assert.ok(n, 'expected mergeNarrowing to engage (a real merge of trunk happened)');
   assert.ok(n.files.includes('src/x.py'), `src/x.py must stay selected even though HEAD now matches trunk; files=${JSON.stringify(n.files)}`);
   assert.ok(!n.excluded.includes('src/x.py'), `src/x.py must not be excluded; excluded=${JSON.stringify(n.excluded)}`);
+});
+
+// #4638: the anchor is on trunk's line; a side branch merges into trunk with a
+// real merge commit; feat fast-forwards onto trunk, so HEAD is trunk's tip.
+function tipRepo() {
+  const r = mergeRepo();
+  r.git('checkout', '-q', 'trunk');
+  r.git('checkout', '-q', '-b', 'side');
+  r.commit('src/merged.js', 'merged');
+  r.git('checkout', '-q', 'trunk');
+  r.git('merge', '-q', '--no-ff', '--no-edit', 'side');
+  r.git('checkout', '-q', 'feat');
+  r.git('merge', '-q', '--ff-only', 'trunk');
+  return r;
+}
+
+test('AC1.1: at the integration tip narrowing declines, so the changed paths stay selected (#4638)', () => {
+  const r = tipRepo();
+  const files = changedSince(r, r.anchor);
+  assert.deepStrictEqual(files, ['src/merged.js']);
+  assert.strictEqual(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: r.exec }), null);
+});
+
+test('AC1.1: at the tip with a dirty tree narrowing still declines (#4638)', () => {
+  const r = tipRepo();
+  r.write('README.md', 'dirty');
+  const files = changedSince(r, r.anchor);
+  assert.strictEqual(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: r.exec }), null);
+});
+
+test('AC1.1: behind the tip on the integration line narrowing declines (#4638)', () => {
+  const r = tipRepo();
+  r.git('checkout', '-q', 'trunk');
+  r.commit('src/later.js', 'later');
+  r.git('checkout', '-q', 'feat');
+  const files = changedSince(r, r.anchor);
+  assert.strictEqual(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: r.exec }), null);
+});
+
+test('a failing ahead-count read degrades to null (#4638)', () => {
+  const r = mergeRepo();
+  mergeTrunkWith(r, [['ui/a.js', 'a']]);
+  r.commit('src/own.py', 'own');
+  const files = changedSince(r, r.anchor);
+  const countFails = (cmd, args, opts) => {
+    if (args[0] === 'rev-list' && args.includes('--count')) { const e = new Error('fatal: bad object'); e.status = 128; throw e; }
+    return r.exec(cmd, args, opts);
+  };
+  assert.strictEqual(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: countFails }), null);
+  assert.ok(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: r.exec }), 'control: the same repo narrows when git succeeds');
+});
+
+// #4638 round 4, Reading B: the tree defines the tip. mergeTrunkWith alone
+// leaves feat 1 commit ahead of trunk with a tree identical to trunk's.
+test('round-4 Reading B: a no-own-commit --no-ff merge of the ref declines even with a dirty mapped path (#4638)', () => {
+  const r = mergeRepo();
+  mergeTrunkWith(r, [['ui/a.js', 'a']]);
+  assert.strictEqual(r.git('rev-list', '--count', 'trunk..HEAD'), '1', 'fixture: exactly the merge commit is ahead');
+  r.write('src/dirty.js', 'dirty');
+  const files = changedSince(r, r.anchor);
+  assert.deepStrictEqual(files, ['src/dirty.js', 'ui/a.js']);
+  assert.strictEqual(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: r.exec }), null);
+  r.commit('src/own.py', 'own');
+  assert.ok(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files: changedSince(r, r.anchor), execImpl: r.exec }), 'control: one own commit makes the tree differ, so narrowing engages');
 });
