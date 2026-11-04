@@ -4374,6 +4374,20 @@ test('decideArchiveCore: invalid-arguments skips with reason invalid-arguments (
   assert.deepStrictEqual(decideArchiveCore('invalid-arguments', 'resolved'), { action: 'skip', reason: 'invalid-arguments' });
 });
 
+// #4794: pr-state's by-number lookup answers 'unknown-host' for a refused origin; the closed
+// PR-state vocabulary here must skip it under its own reason, never as a closed-unmerged PR.
+test('decideArchiveCore (#4794): an unknown-host PR state skips unknown-host, carrying the record check\'s refusal as the hint', () => {
+  assert.deepStrictEqual(decideArchiveCore('unknown-host', 'resolved'), { action: 'skip', reason: 'unknown-host' });
+  assert.deepStrictEqual(
+    decideArchiveCore('unknown-host', 'resolved', false, { records: [5], repoSlug: null, repoRefusal: 'the gate refusal' }),
+    { action: 'skip', reason: 'unknown-host', hint: 'the gate refusal' },
+  );
+  assert.deepStrictEqual(
+    decideArchiveCore('unknown-host', 'none', false, { records: [], repoSlug: null, repoRefusal: null }),
+    { action: 'skip', reason: 'unknown-host' },
+  );
+});
+
 // Shape of one `closingIssuesReferences` entry from `gh pr view --json`.
 function ref(n, owner = 'acme', name = 'w') {
   return { number: n, repository: { name, owner: { login: owner } } };

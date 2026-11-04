@@ -472,6 +472,13 @@ function decideArchiveCore(prState, consoleState, hasStagedPending, recordCheck,
   if (prState === 'network-failure') return { action: 'skip', reason: 'network-failure' };
   if (prState === 'invalid-arguments') return { action: 'skip', reason: 'invalid-arguments' };
   if (prState === 'pr-not-found') return { action: 'skip', reason: 'pr-not-found' };
+  // #4794: pr-state's by-number lookup says 'unknown-host' when the primary call failed and the gate
+  // refuses origin. It never reaches the repoRefusal skip below (that needs a MERGED PR object), so it
+  // gets its own skip, with the refusal as the remedy `hint` when the caller's record check carries it.
+  if (prState === 'unknown-host') {
+    const refusal = recordCheck && recordCheck.repoRefusal;
+    return refusal ? { action: 'skip', reason: 'unknown-host', hint: refusal } : { action: 'skip', reason: 'unknown-host' };
+  }
   if (!prState) return { action: 'skip', reason: 'no-pr' };
   if (prState.state !== 'MERGED') {
     return { action: 'skip', reason: prState.state === 'OPEN' ? 'pr-open' : 'pr-closed-unmerged' };
