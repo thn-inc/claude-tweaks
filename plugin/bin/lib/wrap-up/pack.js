@@ -404,14 +404,30 @@ const LEDGER_DEFERRED_STAGED_RE = /\bstaged\//;
 const LEDGER_DEFERRED_URL_RE = /\/(?:issues|pull)\/\d+/;
 const LEDGER_DEFERRED_HASH_RE = /#(\d+)/g;
 
+// Whether `text` up to `index` ends in the word `item` and any whitespace — `/\bitem\s*$/i` over
+// `text.slice(0, index)`, walked back by hand: that regex retried at every `item` and rescanned the
+// whole prefix once per `#N` match (quadratic on `'item #1 '.repeat(n)`, .claude/skills/regex-scan-linearity).
+function endsWithItemWord(text, index) {
+  let end = index;
+  while (end > 0 && /\s/.test(text[end - 1])) end -= 1;
+  if (end < 4 || !/^item$/i.test(text.slice(end - 4, end))) return false;
+  return end === 4 || !/\w/.test(text[end - 5]); // the `\b` before `item`
+}
+
 function namesRecordReference(resolution, excludeRecords) {
   if (LEDGER_DEFERRED_URL_RE.test(resolution)) return true;
   for (const m of resolution.matchAll(LEDGER_DEFERRED_HASH_RE)) {
     if (excludeRecords.includes(Number(m[1]))) continue;
-    if (/\bitem\s*$/i.test(resolution.slice(0, m.index))) continue;
+    if (endsWithItemWord(resolution, m.index)) continue;
     return true;
   }
   return false;
+}
+
+// A `deferred` Resolution naming neither a `staged/` path nor a record reference. The one definition
+// behind parseLedger's deferredUnstaged count and stage-item/ledger.js's incomplete-deferral guard.
+function isDeferredUnstaged(resolution, excludeRecords) {
+  return !LEDGER_DEFERRED_STAGED_RE.test(resolution) && !namesRecordReference(resolution, excludeRecords);
 }
 
 // #3004: /build must not park a review minor without a valid `Defer-reason:`
@@ -458,9 +474,7 @@ function parseLedger(text, { excludeRecords = [] } = {}) {
     }
     if (status === 'deferred') {
       const resolution = cells.slice(4).join('|');
-      if (!LEDGER_DEFERRED_STAGED_RE.test(resolution) && !namesRecordReference(resolution, excludeRecords)) {
-        deferredUnstagedItems.push(cells[0]);
-      }
+      if (isDeferredUnstaged(resolution, excludeRecords)) deferredUnstagedItems.push(cells[0]);
     }
     if (phase.toLowerCase() === 'build' && (status === 'deferred' || status === 'open')) {
       const item = cells[2] || '';
@@ -824,6 +838,14 @@ async function gatherPack({ runDir, cwd = process.cwd(), only = null, deps: over
   return pack;
 }
 
+// The run's own record numbers — the `excludeRecords` input the ledger
+// predicates above take (`stage-item/ledger.js`'s checkLedgerStatus/settleRow):
+// the resolveRecords ladder's records, empty when it is `unavailable`.
+function ownRecordNumbers(runDir, worktree) {
+  return resolveRecords(defaultDeps(worktree || process.cwd()), runDir, worktree).records;
+}
+
 module.exports = {
   gatherPack, resolveInputs, resolveWorktreeBase, wrapProbe, withTimeout, parseLedger, PROBE_NAMES, resolveRecords, headerRecords, closingRecords, worktreeMirror,
+  LEDGER_DEFERRED_STAGED_RE, namesRecordReference, isDeferredUnstaged, hasValidDeferReason, ownRecordNumbers,
 };
