@@ -79,8 +79,8 @@ test('a ledger-row delta resolves to none; a skill-prose delta is impact-selecte
   const sel = (files, impact = null) => selectScope({ decl, files, stamp: STAMP, impact });
   assert.strictEqual(sel(['docs/plans/2026-09-05-spec-1921-ledger.md']).mode, 'none');
   assert.strictEqual(sel(['.claude-tweaks/pipelines/2026-09-05T193518-x/spec-1/work/1-spec.md']).mode, 'none');
-  // No catch-all: a path no rule names (a workflow, package.json) fails closed to full.
-  for (const p of ['.github/workflows/x.yml', 'package.json', '.claude-tweaks/verify-scope.json']) {
+  // No catch-all: a path no rule names (package.json, .gitignore) fails closed to full.
+  for (const p of ['package.json', '.gitignore', '.claude-tweaks/verify-scope.json']) {
     assert.strictEqual(sel([p]).mode, 'full', p);
     assert.deepStrictEqual(sel([p]).unmatched, [p]);
   }
@@ -107,6 +107,29 @@ test('a ledger-row delta resolves to none; a skill-prose delta is impact-selecte
   // A changed test runner is never impact-selected: every suite runs.
   assert.strictEqual(sel(['tools/run-tests.js'], ctx).mode, 'full');
   assert.strictEqual(sel(['tools/test-impact/tracer.js'], ctx).mode, 'full');
+});
+
+test('the common superseding paths are impact rules, never a full run (#4321)', () => {
+  const { decl } = readDeclaration(DECL);
+  for (const m of ['.claude/**', '.github/workflows/**', 'perf/**', '.release-please-manifest.json']) {
+    const rule = decl.rules.find((x) => x.match === m);
+    assert.ok(rule && rule.impact === true, `${m} must be an impact rule`);
+    assert.strictEqual(rule.static, true, `${m} keeps the static checks`);
+  }
+});
+
+test('AC3.1: a project-skill-only delta is impact-selected, not superseded (#4321)', () => {
+  const { decl } = readDeclaration(DECL);
+  const parsed = parseImpactMap(JSON.stringify(encodeImpactMap({
+    commit: 'b'.repeat(40), tracedAt: '2026-11-02T00:00:00Z', exitCode: 0, node: 'v20.0.0',
+    tests: { 'tests/a.test.js': { f: ['.claude/skills/x/SKILL.md'] }, 'tests/b.test.js': { f: ['plugin/bin/verify.js'] } },
+  })));
+  const ctx = { map: parsed.map, problem: null, headTests: ['tests/a.test.js', 'tests/b.test.js'] };
+  const sel = selectScope({ decl, files: ['.claude/skills/x/SKILL.md'], stamp: STAMP, statuses: { '.claude/skills/x/SKILL.md': 'M' }, impact: ctx });
+  assert.strictEqual(sel.mode, 'scoped');
+  assert.deepStrictEqual(sel.unmatched, []);
+  assert.strictEqual(sel.impact.superseded, false);
+  assert.deepStrictEqual(sel.impact.files, ['tests/a.test.js']);
 });
 
 test('the spec AC1 pair — a skill template plus root CLAUDE.md — is impact-selected, not forced full (#4024)', () => {
