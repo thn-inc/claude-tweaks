@@ -61,6 +61,10 @@ Three conventions follow from how this repo works, and all are visible below:
 * Host-qualify the origin-derived repo slug so a GHE… ([#4794](https://github.com/thn-inc/claude-tweaks/issues/4794)) ([fb75da2](https://github.com/thn-inc/claude-tweaks/commit/fb75da2c63da7192bc5e8c94e366457728e24f69))
 * Replace post-merge.js hand-rolled takeClaim with a… ([#4797](https://github.com/thn-inc/claude-tweaks/issues/4797)) ([bf3ac1e](https://github.com/thn-inc/claude-tweaks/commit/bf3ac1ef8cddc4393537edf08c4db7d2f9738ffe))
 
+### Highlights
+* Reconcile and claim-store `gh` calls now reach the right host when your origin is a GitHub Enterprise server.
+* Two background post-merge passes can no longer run the same parent-close step at once when one of them stalls.
+
 ## [6.162.0](https://github.com/thn-inc/claude-tweaks/compare/v6.161.0...v6.162.0) (2026-11-04)
 
 
