@@ -53,6 +53,14 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.162.1](https://github.com/thn-inc/claude-tweaks/compare/v6.162.0...v6.162.1) (2026-11-05)
+
+
+### Bug Fixes
+
+* Host-qualify the origin-derived repo slug so a GHE… ([#4794](https://github.com/thn-inc/claude-tweaks/issues/4794)) ([fb75da2](https://github.com/thn-inc/claude-tweaks/commit/fb75da2c63da7192bc5e8c94e366457728e24f69))
+* Replace post-merge.js hand-rolled takeClaim with a… ([#4797](https://github.com/thn-inc/claude-tweaks/issues/4797)) ([bf3ac1e](https://github.com/thn-inc/claude-tweaks/commit/bf3ac1ef8cddc4393537edf08c4db7d2f9738ffe))
+
 ## [6.162.0](https://github.com/thn-inc/claude-tweaks/compare/v6.161.0...v6.162.0) (2026-11-04)
 
 
