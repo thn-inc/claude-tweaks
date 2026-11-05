@@ -5,6 +5,7 @@ files:
   - plugin/bin/lib/policy-schema.js
   - plugin/bin/lib/policy.js
   - plugin/bin/lib/risk-path-globs.js
+  - plugin/bin/lib/model-profiles/policy-fragment.js
   - plugin/bin/lib/merge-verification.js
   - plugin/bin/lib/shared-primitives.js
   - plugin/skills/_shared/policy-schema.md
@@ -45,8 +46,8 @@ files:
 - **URL:** `node plugin/bin/resolve-policy.js --all`
 - **Action:** Run with no key arguments.
 - **Should feel:** One call replacing key-by-key enumeration — the whole config, self-describing.
-- **Should understand:** Every schema key returns its `{value, source}` envelope decorated with `summary`/`category`/`tier`/`type`/`default` — a JSON `null` default means no default. `--all` composes with `--run`. `--all --values` and `--all <key>` are invocation errors.
-- **Red flags:** A registered key missing from the output; a row missing `summary`/`category`/`tier`; `--all` accepting key arguments.
+- **Should understand:** Every schema key returns its `{value, source}` envelope decorated with `summary`/`category`/`tier`/`type`/`default` — a JSON `null` default means no default. `--all` composes with `--run`. `--all --values` and `--all <key>` are invocation errors. The control-mode keys (`control-mode`, the deploy/dev/acceptance levers, `owned-owners`, `trusted-authors`, `risk-categories`, `risk-path-globs`) resolve and validate today, but nothing in the plugin acts on them yet. Their summaries open "Not yet used" until the #4608 record that wires each one drops the marker (#4816).
+- **Red flags:** A registered key missing from the output; a row missing `summary`/`category`/`tier`; `--all` accepting key arguments; a control-mode key's summary reading as live behavior (no "Not yet used" opener) while no plugin code consumes it.
 
 ### 5. Confirm the enforcement hook honors the same alias — `plugin/bin/lib/policy.js`
 - **URL:** `node -e "console.log(require('./plugin/bin/lib/policy.js').isWorktreeAlwaysOn(process.cwd()))"`
@@ -63,6 +64,7 @@ files:
 - **Red flags:** A malformed block resolving `{}`, which would silently switch off a safety check; a key after the block (`autonomy: trusted`) swallowed into it.
 
 ## Origin
+- Step 4 updated during build of #4816 (settle 3 policy digest findings): the control-mode key summaries now carry a "Not yet used" marker; `plugin/bin/lib/model-profiles/policy-fragment.js` joins `files:` because `auditPolicy`'s `model-profiles` view now shares its `stripComment`
 - Step 1 updated during build of #4578 (forge detection honours `gh-timeout-ms`). A computed integration-model entry can now carry an additive `degraded` reason code and a stderr degrade line. The full flow is in `resolve-the-integration-model-on-a-slow-gh-host-4578.md`.
 - Step 2, step 6 and the success state updated during build of #4609 (control-mode keys) — `risk-path-globs` is the second block-style key, parsed by `plugin/bin/lib/risk-path-globs.js`
 - Created during build of #329 (policy resolver CLI); step 3 and the alias red-flag in step 2 updated during build of #332 (policy-key naming convention + rename program — `review-severity-floor` → `review-auto-apply-ceiling`, seven identity aliases); step 5 added during build of #602, when the hook's own read path (`isWorktreeAlwaysOn`/`rawValue` in `plugin/bin/lib/policy.js`) became alias-aware
