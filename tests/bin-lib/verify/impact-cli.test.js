@@ -432,3 +432,55 @@ test('no impact block → no scope.impact key', async () => {
   assert.doesNotMatch(run.stdout, /^Impact:/m);
   assert.strictEqual(fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify', 'impact-files.txt')), false);
 });
+
+// #4638 round 2, Reading A: "any narrowing" means merge narrowing only. Deleting a
+// test file no other test reads gives an empty impact subset with no merge
+// involved; the suite drops, nothing runs, and the run still stamps `none`.
+test('#4638 round-2 Reading A: an empty impact subset with no merge narrowing still stamps none', async () => {
+  const r = impactRepo();
+  writeMap(r);
+  r.git('rm', '-q', 'tests/b.test.js');
+  r.git('commit', '-q', '-m', 'delete b');
+  const run = await runCli(ARGS, r.repo);
+  assert.strictEqual(run.code, 0, run.stderr + run.stdout);
+  assert.strictEqual(fs.existsSync(path.join(r.gitDir, 'impact-marker')), false, 'no test command ran');
+  const report = r.report();
+  assert.strictEqual(report.scope.mode, 'none');
+  assert.deepStrictEqual(report.scope.suites, []);
+  assert.deepStrictEqual(report.scope.changedFiles, ['tests/b.test.js']);
+  assert.strictEqual(report.scope.mergeNarrowing, null);
+  assert.deepStrictEqual(report.scope.impact.files, []);
+  const stamp = r.stamp();
+  assert.strictEqual(stamp.scope, 'none');
+  assert.deepStrictEqual(stamp.suitesRun, []);
+});
+
+// #4638: the outcome guard drops a narrowing that selects no suite and
+// re-selects over the full set; under an impact declaration it must restore
+// each path's A/M/D status too, or a restored M path reads as A and also
+// reaches tests that only stat it.
+test('#4638: a merge narrowing the zero-suite guard drops restores each path\'s status for impact selection', async () => {
+  const r = impactRepo(declOf({}, { rules: [...RULES, { match: 'docs/**', suites: [], static: false }] }));
+  fs.writeFileSync(path.join(r.gitDir, DEFAULT_MAP_NAME), mapJson(r.base, {
+    tests: { 'tests/a.test.js': { f: ['src/x.js'] }, 'tests/b.test.js': { f: ['src/y.js'], s: ['src/x.js'] } },
+  }));
+  // Anchor: a first run on the unchanged branch is a `none` run whose stamp
+  // carries fullSha = the merge-base, so the second run is anchored there.
+  const first = await runCli(ARGS, r.repo);
+  assert.strictEqual(first.code, 0, first.stderr + first.stdout);
+  assert.strictEqual(r.stamp().fullSha, r.base, 'fixture: the first run anchors at the base');
+  r.git('checkout', '-q', 'main');
+  commitFile(r, 'src/x.js', 'x2\n');
+  r.git('checkout', '-q', 'feature');
+  r.git('merge', '-q', '--no-ff', '--no-edit', 'main');
+  fs.mkdirSync(path.join(r.repo, 'docs'), { recursive: true });
+  commitFile(r, 'docs/a.md', 'docs\n');
+  const run = await runCli(ARGS, r.repo);
+  assert.strictEqual(run.code, 0, run.stderr + run.stdout);
+  assert.doesNotMatch(run.stdout, /merge-narrowed/);
+  assert.strictEqual(r.marker(), 'tests/a.test.js\n', 'M status reaches only the content reader');
+  const report = r.report();
+  assert.strictEqual(report.scope.mergeNarrowing, null);
+  assert.deepStrictEqual(report.scope.changedFiles, ['docs/a.md', 'src/x.js']);
+  assert.deepStrictEqual(report.scope.impact.files, ['tests/a.test.js']);
+});
