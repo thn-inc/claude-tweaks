@@ -41,7 +41,7 @@ is `plugin/skills/_shared/integration-branch.md`. Paths outside the payload (`do
 |---|---|
 | `/help` | `/help` lists `/activity` as a utility skill (reference card, context flow). `/help` is state-now; `/activity` is what-shipped over a period — neither replaces the other. |
 | `_shared/session-tmp-root.md` | Step 1 resolves `activity-facts.json`, `activity-narratives.json`, and `activity-report.md` under the session-scoped temp root via `bin/session-tmp-resolve.js` — never a literal `/tmp/` path. |
-| `bin/lib/repo-resolve.js` | `bin/activity-gather.js` reuses `parseRepo`/`ghAvailable`/`remoteUrl`/`repoSlug` for its default-repo resolution and `gh` probe — read-only reuse, no change to the module. |
+| `bin/lib/repo-resolve.js` | `bin/activity-gather.js` reuses `originSpecOf`/`ghAvailable`/`remoteUrl`/`repoSlug` for its default-repo resolution and `gh` probe — read-only reuse, no change to the module. |
 
 ## assess-agent-autonomy
 
