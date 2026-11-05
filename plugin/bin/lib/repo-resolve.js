@@ -10,15 +10,8 @@
 // sends it to whatever GH_HOST names (#4854). It adds no timeout or windowsHide and
 // there is no seam spawn helper: each wrapped site's own `timeout` carries its bound.
 // The origin-host gate (#4933), gateOriginRepo(remote, deps), is what a CLI's
-// origin-derived repo goes through. An exported GH_HOST that normalizes to a host (ghHostIn) stops the refusal:
-// one matching the origin host carries that host; another host yields a bare slug
-// (spec host github.com), even for a known GitHub origin. An empty (or whitespace-only) GH_HOST
-// is no opt-in, here and in ghOptions alike (#4794: both read it through ghHostIn). Without one,
-// a host with no positive GitHub signal (github.com or isKnownGhHost) comes back as a
-// refusal, never as a spec for gh. The gate judges
-// parseRepo(hostPathOf(remote)) alone (userinfo, port and scheme dropped), so its verdict
-// depends only on the host; a remote that read does not parse, such as a cloud sandbox's
-// `http://local_proxy@127.0.0.1:{port}/git/{owner}/{repo}` proxy remote, is neither admitted nor refused.
+// origin-derived repo goes through; the comment above it is the one statement of its rules.
+// originSpecOf(remote) (#4794) is the one origin read every gate and reader shares.
 'use strict';
 const { execFileSync } = require('child_process');
 const fs = require('fs');
@@ -145,7 +138,7 @@ function isKnownGhHost(host, deps = {}) {
 // host is still refused (decided at #4933's plan review); since #4794 ghOptions reads it the
 // same way, through ghHostIn.
 // Then github.com or isKnownGhHost passes; any other host is refused. Never throws.
-// #4794: the gate judges `parseRepo(hostPathOf(remote))` alone (userinfo, port and scheme
+// #4794: the gate judges `originSpecOf(remote)` alone (parseRepo of hostPathOf: userinfo, port and scheme
 // dropped, the read the seam makes), so its verdict depends only on the host; a remote that
 // read does not parse, such as a cloud sandbox's `http://local_proxy@127.0.0.1:{port}/git/{owner}/{repo}`
 // proxy remote, is neither admitted nor refused. Two refusal texts: an SSH host may be an
@@ -156,14 +149,14 @@ function isKnownGhHost(host, deps = {}) {
 // it keeps `export GH_HOST=${host}`.
 function gateOriginRepo(remote, deps) {
   const d = deps || {};
-  const parsed = parseRepo(hostPathOf(remote));
+  const parsed = originSpecOf(remote);
   if (!parsed) return { spec: null, refusal: null };
-  const host = normalizeHost(parsed.host);
+  const host = parsed.host;
   const ghHost = ghHostIn(d.env || process.env);
   if (ghHost) {
     return { spec: { ...parsed, host: ghHost === host ? host : 'github.com' }, refusal: null };
   }
-  if (host === 'github.com' || isKnownGhHost(host, d)) return { spec: { ...parsed, host }, refusal: null };
+  if (host === 'github.com' || isKnownGhHost(host, d)) return { spec: parsed, refusal: null };
   const prefix = `origin host ${host} is not a known GitHub host (not github.com, not *.ghe.com, not a gh hosts.yml key) — refusing to send it to gh`;
   return {
     spec: null,
@@ -191,19 +184,27 @@ function hostPathOf(url) {
   return `${authority}${m[2]}`;
 }
 
+// #4794: the one origin read. An origin remote URL -> { host, owner, repo } with the host
+// normalized (hostPathOf drops userinfo, port and scheme; normalizeHost lower-cases and strips
+// trailing dots), or null when the remote does not parse. Every reader of an origin remote goes
+// through it, so a verdict depends only on the normalized host, never on how the URL is spelled.
+function originSpecOf(remote) {
+  const parsed = parseRepo(hostPathOf(remote));
+  return parsed && { ...parsed, host: normalizeHost(parsed.host) };
+}
+
 function resolveGhSpec(cwd, deps = {}) {
   const key = path.resolve(cwd);
   if (ghHostSpecs.has(key)) return ghHostSpecs.get(key);
   let spec = null;
   try {
     const url = (deps.remoteUrl || originUrl)(key);
-    const parsed = parseRepo(hostPathOf(url));
-    const host = parsed && normalizeHost(parsed.host);
-    if (host && host !== 'github.com') {
+    const parsed = originSpecOf(url);
+    if (parsed && parsed.host && parsed.host !== 'github.com') {
       // Positive signals only. Any other host stays silent (no note), token or not,
       // decided at #4854's plan review; its opt-in is an exported GH_HOST, or a
       // hosts.yml key from `gh auth login --hostname` (run with the token unset).
-      if (isKnownGhHost(host, deps)) spec = { ...parsed, host };
+      if (isKnownGhHost(parsed.host, deps)) spec = parsed;
     }
   } catch (err) {
     // No origin or no git is an answer (no host), remembered below. A probe timeout
@@ -338,5 +339,5 @@ function pinExplicitRepoHost(repoSpec, deps = {}) {
 module.exports = {
   parseRepo, ghAvailable, remoteUrl, repoSlug, repoResolutionNote,
   ghOptions, resolveGhHost, explicitRepoGhHost, pinExplicitRepoHost, _resetGhHostCache,
-  isKnownGhHost, gateOriginRepo, normalizeHost, originUrl, ghHostIn, resolveRepoTarget, hostPathOf,
+  isKnownGhHost, gateOriginRepo, normalizeHost, originUrl, ghHostIn, resolveRepoTarget, hostPathOf, originSpecOf,
 };

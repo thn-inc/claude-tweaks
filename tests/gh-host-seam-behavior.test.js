@@ -357,10 +357,24 @@ function archiveBranchesLines(t, origin) {
   return readLog();
 }
 
+// The argv pr-state.js's resolvePrStatesBulk hands its runner for one chunk of `branches`, as the
+// fake gh logs it: the recorded line is `"$*"`, so elements are space-joined and a newline inside
+// the GraphQL query rejoins as a space (joinSpawnLines). Taken from the real function through an
+// injected runner, so AC2.1 compares the spawned argv whole against what the code builds, never
+// a restated copy of the query.
+function expectedScreenLogArgs(branches) {
+  const { resolvePrStatesBulk } = require('../plugin/bin/lib/reconcile/pr-state');
+  let built = null;
+  resolvePrStatesBulk(process.cwd(), branches, { repoSlug: 'acme/widgets', runner: (args) => { built = args; return '{}'; } });
+  assert.ok(Array.isArray(built), 'resolvePrStatesBulk handed its runner no argv');
+  return built.join(' ').replace(/\n/g, ' ');
+}
+
+// Both callers screen exactly the one in-scope branch their fixture creates (`worktree-x`).
 function assertBareScreen(lines) {
   const screens = screenCalls(lines);
   assert.equal(screens.length, 1, `expected one bulk screen call, log:\n${lines.join('\n')}`);
-  assert.match(argsOf(screens[0]), /^api graphql -f owner=acme -f name=widgets /);
+  assert.deepStrictEqual(argsOf(screens[0]), expectedScreenLogArgs(['worktree-x']));
   assert.doesNotMatch(screens[0], /acme\.ghe\.com\/acme\/widgets/);
 }
 
@@ -736,15 +750,32 @@ function committedRepo(t, origin) {
   return repo;
 }
 
-// Every argv carries `--repo <slug>` as adjacent elements, exactly once.
-function assertRepoFlag(calls, slug) {
+// AC2.1 pins today's argv, so each recorded call is compared whole, not for one flag: the dedup
+// search is the exact argv escalate-residue.js's findResidueDuplicate sends, and the create call is
+// its `issue create --repo <slug> --title <title> --body <body> --label bug` -- ten elements, so a
+// flag the seam adds anywhere (`--hostname github.com`) fails. A body the caller cannot derive
+// (reap's carries a timestamp and the removal's error text) is only required to be one string.
+function assertEscalationArgv(calls, slug, { title, body }) {
   assert.ok(calls.length >= 1, 'expected at least one gh call through the runner');
   for (const argv of calls) {
-    const hits = argv.map((a, i) => (a === '--repo' && argv[i + 1] === slug ? i : -1)).filter((i) => i >= 0);
-    assert.equal(hits.length, 1, `expected exactly one adjacent "--repo ${slug}" in ${JSON.stringify(argv)}`);
-    assert.equal(argv.filter((a) => a === '--repo').length, 1, `more than one --repo in ${JSON.stringify(argv)}`);
+    if (argv[1] === 'list') {
+      assert.deepStrictEqual(argv, ['issue', 'list', '--repo', slug, '--state', 'all', '--json', 'number,title,body,createdAt,state', '--limit', '10000']);
+      continue;
+    }
+    assert.equal(argv[1], 'create', `unexpected gh call ${JSON.stringify(argv)}`);
+    assert.equal(argv.length, 10, `unexpected issue create argv ${JSON.stringify(argv)}`);
+    assert.deepStrictEqual(argv.slice(0, 7), ['issue', 'create', '--repo', slug, '--title', title, '--body']);
+    if (body === undefined) assert.equal(typeof argv[7], 'string');
+    else assert.deepStrictEqual(argv[7], body);
+    assert.deepStrictEqual(argv.slice(8), ['--label', 'bug']);
   }
+  assert.ok(calls.some((argv) => argv[1] === 'create'), 'expected the escalation to file an issue');
 }
+
+const { structurallyStuckBody } = require('../plugin/bin/lib/reconcile/escalate-residue');
+const STUCK_TITLE = 'reconcile: structurally-stuck run directories';
+// The title escalateResidue files for the locked worktree reapEscalation sets up (its realpath is the target).
+const reapTitle = (root) => `reconcile: removal-failed stuck on ${fs.realpathSync(path.join(root, '.claude', 'worktrees', 'issue-1'))}`;
 
 // One structurally-stuck run dir (worktree gone, no branch) one failure short of the
 // escalation threshold, so the pass's own trackStuckSkip crosses it.
@@ -767,13 +798,13 @@ function archiveEscalation(t, origin) {
 }
 
 test('AC1.1: archiveMerged on a *.ghe.com origin escalates structurally-stuck residue with --repo acme.ghe.com/acme/widgets', { skip: STUB_SKIP }, (t) => {
-  const { calls } = archiveEscalation(t, GHE_ORIGIN);
-  assertRepoFlag(calls, 'acme.ghe.com/acme/widgets');
+  const { calls, dir } = archiveEscalation(t, GHE_ORIGIN);
+  assertEscalationArgv(calls, 'acme.ghe.com/acme/widgets', { title: STUCK_TITLE, body: structurallyStuckBody([dir]) });
 });
 
 test('AC2.1: archiveMerged on a github.com origin escalates with --repo acme/widgets', { skip: STUB_SKIP }, (t) => {
-  const { calls } = archiveEscalation(t, DOTCOM_ORIGIN);
-  assertRepoFlag(calls, 'acme/widgets');
+  const { calls, dir } = archiveEscalation(t, DOTCOM_ORIGIN);
+  assertEscalationArgv(calls, 'acme/widgets', { title: STUCK_TITLE, body: structurallyStuckBody([dir]) });
 });
 
 test('#4794: archiveMerged on an SSH-alias origin escalates nothing — the runner sees no call', { skip: STUB_SKIP }, (t) => {
@@ -803,13 +834,13 @@ function reapEscalation(t, origin) {
 }
 
 test('AC1.1: reapMerged on a *.ghe.com origin escalates removal-failed residue with the host-qualified --repo', { skip: STUB_SKIP }, (t) => {
-  const { calls } = reapEscalation(t, GHE_ORIGIN);
-  assertRepoFlag(calls, 'acme.ghe.com/acme/widgets');
+  const { calls, root } = reapEscalation(t, GHE_ORIGIN);
+  assertEscalationArgv(calls, 'acme.ghe.com/acme/widgets', { title: reapTitle(root) });
 });
 
 test('AC2.1: reapMerged on a github.com origin escalates removal-failed residue with --repo acme/widgets', { skip: STUB_SKIP }, (t) => {
-  const { calls } = reapEscalation(t, DOTCOM_ORIGIN);
-  assertRepoFlag(calls, 'acme/widgets');
+  const { calls, root } = reapEscalation(t, DOTCOM_ORIGIN);
+  assertEscalationArgv(calls, 'acme/widgets', { title: reapTitle(root) });
 });
 
 test('#4794: reapMerged on an SSH-alias origin escalates nothing and records unknown-host', { skip: STUB_SKIP }, (t) => {

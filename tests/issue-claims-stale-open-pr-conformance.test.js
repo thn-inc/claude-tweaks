@@ -13,6 +13,7 @@ const fs = require('fs');
 const path = require('path');
 
 const { readText } = require('./helpers/read-skill');
+const { HOST_DEFINITION, firstInvocation, exit3Sentence, listingLegProblems } = require('./helpers/stale-claim-host-pins');
 const { RUN_ID_SHAPE } = require('../plugin/bin/lib/issues/claim-store');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
@@ -52,32 +53,14 @@ test('The lock step 4 runs the CLI first, lists PRs only on its exit 2 (gh absen
 // means github.com, so the first call drops it; only the exit-3 re-run (an origin that does not parse,
 // such as a sandbox proxy remote) and the MCP listing leg (the MCP's host is github.com, so listing and
 // match share one host) pass one. `{host}` is defined once, here, at its first use in step 4.
-const HOST_DEFINITION = '`{host}` is the GitHub host the record lives on: `github.com` on the GitHub MCP path; on the `gh` path an exported non-empty `GH_HOST`, else the origin\'s host when it is `github.com` or a known GitHub Enterprise host, else `github.com`.';
-const MCP_LISTING_REPO = '`--listing "{that path}"` and `--repo "github.com/{owner}/{repo}"`';
-const EXIT3_REPO = '--repo "{host}/{owner}/{repo}"';
+// Step 4 also pins the sentence saying why the listing leg carries the MCP's host.
+const WITH_REASON = { checkReason: true };
 const TOMBSTONE_URL = 'https://{host}/{owner}/{repo}/pull/{number}';
 const flatFile = () => ISSUE_CLAIMS.replace(/\s+/g, ' ');
 
-// The first inline span that runs bin/stale-claim-pr.js, whitespace-flattened.
-function firstInvocation(flat) {
-  const at = flat.indexOf('bin/stale-claim-pr.js');
-  assert.notEqual(at, -1, 'step 4 names the CLI');
-  const open = flat.lastIndexOf('`', at);
-  const close = flat.indexOf('`', at);
-  assert.ok(open !== -1 && close !== -1, 'the invocation is an inline code span');
-  return flat.slice(open + 1, close);
-}
-
-// The sentence (text from the previous ". " to the pin) that carries the exit-3 re-run's --repo.
-function exit3Sentence(flat) {
-  const at = flat.indexOf(EXIT3_REPO);
-  assert.notEqual(at, -1, 'the exit-3 re-run adds a host-qualified --repo');
-  return flat.slice(flat.lastIndexOf('. ', at) + 2, at);
-}
-
 test('AC1.2 (#4794): The lock step 4 first call carries no --repo; origin supplies the host', () => {
   const step4 = lockStep4().replace(/\s+/g, ' ');
-  const call = firstInvocation(step4);
+  const call = firstInvocation(step4, 'step 4');
   assert.ok(call.includes('--claim-file "{CLASSIFY_INPUT path}"'), 'the invocation is the matcher call');
   assert.ok(!call.includes('--repo'), 'a bare --repo owner/repo would mean github.com');
   assert.ok(!step4.includes('--repo "{owner}/{repo}"'), 'no step-4 call passes a bare slug');
@@ -89,21 +72,8 @@ test('AC1.2 (#4794): exit 3 (origin does not parse) re-runs with a host-qualifie
   assert.ok(step4.includes('never a bare `owner/repo`'), 'a bare slug is ruled out');
 });
 
-function listingLegProblems(step4) {
-  const problems = [];
-  const at = step4.indexOf(MCP_LISTING_REPO);
-  if (at === -1) problems.push('missing');
-  else {
-    if (step4.indexOf(MCP_LISTING_REPO, at + 1) !== -1) problems.push('twice');
-    if (at < step4.indexOf('mcp__github__list_pull_requests')) problems.push('before the MCP listing');
-  }
-  if (step4.split('"github.com/{owner}/{repo}"').length - 1 !== 1) problems.push('host carried by a call other than the listing leg');
-  if (!/the MCP's host, so listing and match share one host/.test(step4)) problems.push('reason');
-  return problems;
-}
-
 test('AC1.2 (#4794): the --listing re-run adds --repo "github.com/{owner}/{repo}" (the MCP host), and only it does', () => {
-  assert.deepEqual(listingLegProblems(lockStep4().replace(/\s+/g, ' ')), []);
+  assert.deepEqual(listingLegProblems(lockStep4().replace(/\s+/g, ' '), WITH_REASON), []);
 });
 
 test('AC1.2 (#4794): `{host}` is defined once, and both tombstone sentences compare on it, not on github.com', () => {
@@ -130,13 +100,13 @@ test('AC1.2 (#4794) control: each retargeted clause goes red alone', () => {
   const flat = flatFile();
   const wrongHost = step4.replace('--repo "github.com/{owner}/{repo}"', '--repo "{host}/{owner}/{repo}"');
   assert.notEqual(wrongHost, step4);
-  assert.ok(listingLegProblems(wrongHost).includes('missing'), 'the listing-leg check sees a changed host inside the span');
+  assert.ok(listingLegProblems(wrongHost, WITH_REASON).includes('missing'), 'the listing-leg check sees a changed host inside the span');
   const noReason = step4.replace("the MCP's host,", 'the host,');
   assert.notEqual(noReason, step4);
-  assert.deepEqual(listingLegProblems(noReason), ['reason'], 'the listing-leg check sees a reworded reason');
+  assert.deepEqual(listingLegProblems(noReason, WITH_REASON), ['reason'], 'the listing-leg check sees a reworded reason');
   const bare = step4.replace('--claim-file "{CLASSIFY_INPUT path}"', '--claim-file "{CLASSIFY_INPUT path}" --repo "{owner}/{repo}"');
   assert.notEqual(bare, step4);
-  assert.ok(firstInvocation(bare).includes('--repo'), 'the no---repo check sees a re-added bare --repo');
+  assert.ok(firstInvocation(bare, 'step 4').includes('--repo'), 'the no---repo check sees a re-added bare --repo');
   const noClosing = flat.replace(', else `github.com`.', '.');
   assert.notEqual(noClosing, flat);
   assert.ok(!noClosing.includes(HOST_DEFINITION), 'trimming the closing fallback reds the definition pin');
@@ -148,7 +118,7 @@ test('AC1.2 (#4794) control: each retargeted clause goes red alone', () => {
   assert.ok(!refersBack(noRefer), 'the back-reference check sees a reworded citation');
   const twice = step4.replace('and match share one host)', 'and match share one host) --repo "github.com/{owner}/{repo}"');
   assert.notEqual(twice, step4);
-  assert.deepEqual(listingLegProblems(twice), ['host carried by a call other than the listing leg'], 'the only-the-listing-leg check sees a second carrier');
+  assert.deepEqual(listingLegProblems(twice, WITH_REASON), ['host carried by a call other than the listing leg'], 'the only-the-listing-leg check sees a second carrier');
   const github = flat.replace(TOMBSTONE_URL, 'https://github.com/{owner}/{repo}/pull/{number}');
   assert.notEqual(github, flat);
   assert.equal(github.split(TOMBSTONE_URL).length - 1, 1, 'the {host} count sees a reverted tombstone sentence');

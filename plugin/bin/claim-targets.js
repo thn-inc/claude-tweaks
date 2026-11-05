@@ -58,9 +58,14 @@ const realDeps = {
   },
   // #4794: the run's one repo target. The host is the gh seam's (`resolveGhHost`, positive
   // signals only): the one `defaultGh`'s inferred calls (`gh repo view`, `gh pr view`) already
-  // reach, so the stale listing, the tombstone check and the stale match share it. For an
-  // admitted origin it equals the gate's host (both read `hostPathOf`).
-  repoTarget: (owner, repo) => resolveRepoTarget({ owner, repo, originHost: resolveGhHost(process.cwd()) }),
+  // reach, so the stale listing, the tombstone check and the stale match share it. When the gate
+  // admitted a spec, run() passes its host (`gateHost`) so the one origin read decides: a second
+  // `resolveGhHost` read could time out alone and send the run's calls to github.com although the
+  // gate admitted a GHE origin. With no spec (an unparseable sandbox proxy remote) the seam's own
+  // read stays the fallback.
+  repoTarget: (owner, repo, gateHost) => resolveRepoTarget({
+    owner, repo, originHost: gateHost || resolveGhHost(process.cwd()),
+  }),
 };
 
 // `realDeps` is exported so the CLI's own wiring is testable — specifically

@@ -384,8 +384,12 @@ function run(argv, deps) {
   const [repoOwner, repoName] = repoSlug.split('/');
   // #4794: the run's one `{ host, ghRepo }` target, resolved once. The stale-claim
   // listing's `--repo` and both PR-url matches (the tombstone's and the stale
-  // claim's) take it, so no path lists on one host and matches urls on another.
-  const repoTarget = typeof deps.repoTarget === 'function' ? deps.repoTarget(repoOwner, repoName) : null;
+  // claim's) take it, so no path lists on one host and matches urls on another. The gate's
+  // admitted host rides along as the third argument: one origin read decides (never a second
+  // read of its own), and a gate with no spec passes null so the seam falls back to its own read.
+  const repoTarget = typeof deps.repoTarget === 'function'
+    ? deps.repoTarget(repoOwner, repoName, gate && gate.spec ? gate.spec.host : null)
+    : null;
 
   const claimedThisRun = [];
   const alreadyOwned = [];

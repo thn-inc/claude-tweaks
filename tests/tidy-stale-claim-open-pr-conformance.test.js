@@ -9,6 +9,7 @@ const assert = require('node:assert/strict');
 const path = require('path');
 
 const { readText } = require('./helpers/read-skill');
+const { HOST_DEFINITION, firstInvocation, exit3Sentence, listingLegProblems } = require('./helpers/stale-claim-host-pins');
 const { lintReport } = require('../plugin/bin/lib/tidy-report-lint/rules');
 
 const REPO_ROOT = path.join(__dirname, '..');
@@ -55,30 +56,10 @@ test('AC1.2: the stale-claim paragraph calls the CLI on both transports (#4596)'
 // owner/repo means github.com, so the call drops it; only the exit-3 re-run (an origin that does not
 // parse, such as a sandbox proxy remote) and the MCP listing leg (the MCP's host is github.com) pass one.
 // The `{host}` definition lives once, in _shared/issue-claims.md (P7); this file cites it.
-const HOST_DEFINITION = '`{host}` is the GitHub host the record lives on: `github.com` on the GitHub MCP path; on the `gh` path an exported non-empty `GH_HOST`, else the origin\'s host when it is `github.com` or a known GitHub Enterprise host, else `github.com`.';
 const HOST_CITATION = '`{host}` as `_shared/issue-claims.md` defines it';
-const MCP_LISTING_REPO = '`--listing "{that path}"` and `--repo "github.com/{owner}/{repo}"`';
-const EXIT3_REPO = '--repo "{host}/{owner}/{repo}"';
-
-// The first inline span that runs bin/stale-claim-pr.js, whitespace-flattened.
-function firstInvocation(flat) {
-  const at = flat.indexOf('bin/stale-claim-pr.js');
-  assert.notEqual(at, -1, 'the section names the CLI');
-  const open = flat.lastIndexOf('`', at);
-  const close = flat.indexOf('`', at);
-  assert.ok(open !== -1 && close !== -1, 'the invocation is an inline code span');
-  return flat.slice(open + 1, close);
-}
-
-// The sentence (text from the previous ". " to the pin) that carries the exit-3 re-run's --repo.
-function exit3Sentence(flat) {
-  const at = flat.indexOf(EXIT3_REPO);
-  assert.notEqual(at, -1, 'the exit-3 re-run adds a host-qualified --repo');
-  return flat.slice(flat.lastIndexOf('. ', at) + 2, at);
-}
 
 test('AC1.2 (#4794): the first stale-claim-pr.js invocation carries no --repo; origin supplies the host', () => {
-  const call = firstInvocation(claimAuditSection().replace(/\s+/g, ' '));
+  const call = firstInvocation(claimAuditSection().replace(/\s+/g, ' '), 'the section');
   assert.ok(call.includes('--claim-file "{CLASSIFY_INPUT path}"'), 'the invocation is the matcher call');
   assert.ok(!call.includes('--repo'), 'a bare --repo owner/repo would mean github.com');
 });
@@ -105,18 +86,6 @@ test('AC1.2 (#4794): `{host}` is cited from _shared/issue-claims.md, not restate
   assert.deepEqual(citationProblems(claimAuditSection().replace(/\s+/g, ' ')), []);
 });
 
-function listingLegProblems(flat) {
-  const problems = [];
-  const at = flat.indexOf(MCP_LISTING_REPO);
-  if (at === -1) problems.push('missing');
-  else {
-    if (flat.indexOf(MCP_LISTING_REPO, at + 1) !== -1) problems.push('twice');
-    if (at < flat.indexOf('mcp__github__list_pull_requests')) problems.push('before the MCP listing');
-  }
-  if (flat.split('"github.com/{owner}/{repo}"').length - 1 !== 1) problems.push('host carried by a call other than the listing leg');
-  return problems;
-}
-
 test('AC1.2 (#4794): the MCP listing leg adds --repo "github.com/{owner}/{repo}" and only that leg does', () => {
   assert.deepEqual(listingLegProblems(claimAuditSection().replace(/\s+/g, ' ')), []);
 });
@@ -135,7 +104,7 @@ test('AC1.2 (#4794) control: each retargeted clause goes red alone', () => {
   assert.ok(!oldExit.includes('so does any other non-zero exit (1, or 3 after that re-run)'), 'the exit-wording pin sees the old wording');
   const withBareRepo = flat.replace('--claim-file "{CLASSIFY_INPUT path}"', '--claim-file "{CLASSIFY_INPUT path}" --repo "{owner}/{repo}"');
   assert.notEqual(withBareRepo, flat);
-  assert.ok(firstInvocation(withBareRepo).includes('--repo'), 'the no---repo check sees a re-added bare --repo');
+  assert.ok(firstInvocation(withBareRepo, 'the section').includes('--repo'), 'the no---repo check sees a re-added bare --repo');
   const reworded = flat.replace('defines it', 'restates it');
   assert.notEqual(reworded, flat);
   assert.deepEqual(citationProblems(reworded), ['citation'], 'the citation check sees one reworded word');

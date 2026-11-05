@@ -180,7 +180,7 @@ node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
      retry.
   4. **`state: 'tombstone'` or `'stale'`** — a legitimate re-claim, not a contest, EXCEPT: first
      check for an in-flight build (#974) — the MCP twin of the "In-flight detection at claim time
-     (#315)" check below (`tombstoneInFlightPr`, which runs inside `bin/claim-targets.js`, not here). `{host}` is the GitHub host the record lives on: `github.com` on the GitHub MCP path; on the `gh` path an exported non-empty `GH_HOST`, else the origin's host when it is `github.com` or a known GitHub Enterprise host, else `github.com`. Parse the tombstone content already
+     (#315)" check below (`tombstoneInFlightPr`, which runs inside `bin/claim-targets.js`, not here). `{host}` is the GitHub host the record lives on: `github.com` on the GitHub MCP path; on the `gh` path an exported non-empty `GH_HOST`, else the origin's host when it is `github.com` or a known GitHub Enterprise host (a `*.ghe.com` host, or a host key in `gh`'s `hosts.yml`), else `github.com`. Parse the tombstone content already
      extracted in step 2: when its `reason` field starts with `pr-opened:` and its `link` field is
      a well-formed `https://{host}/{owner}/{repo}/pull/{number}` URL for the SAME owner/repo
      as the issue being claimed, its host compared case-insensitively, trailing dots ignored

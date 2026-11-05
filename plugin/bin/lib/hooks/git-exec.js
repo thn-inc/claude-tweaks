@@ -227,7 +227,9 @@ function repoSpecOf(repoRoot, gateDeps) {
 // unchanged) or null, repoSpecOf's gated answer plus the one resolved host and the `--repo` slug for
 // it (repo-resolve.js's resolveRepoTarget). `slug` is the bare `owner/repo` (a path, a comparison, a
 // GraphQL owner/name pair); `ghRepo` is what `gh --repo` takes. The host comes only from the #4933
-// gate (or an exported GH_HOST), so an SSH alias or an unknown host is a refusal, never a bare slug.
+// gate (or an exported GH_HOST), so an SSH alias or an unknown host is a refusal, never a bare slug;
+// a remote the gate cannot read (the cloud proxy remote, a local path, a `file://` URL) has no host
+// (repoSpecOf's `host: null`), so it falls back to github.com with a bare slug.
 function repoTargetOf(repoRoot, gateDeps) {
   const spec = repoSpecOf(repoRoot, gateDeps);
   if (!spec) return null;

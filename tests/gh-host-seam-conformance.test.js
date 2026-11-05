@@ -363,15 +363,16 @@ test('AC3.1 (#4795): no file under plugin/bin but repo-resolve.js builds or assi
 // `parseRepo(<origin>)` hands gh a spec for whatever host the remote names, so this scan flags one
 // outside NOT_ORIGIN.
 //
-// A site is a `parseRepo(` call, bare or member (`deps.parseRepo(`), whose balanced argument text
-// matches ORIGIN_ARG. Blank-mode text locates the call and its argument boundaries: a `parseRepo(`
-// in a string or comment is blanked there, and a paren inside a literal moves no boundary.
+// A site is a `parseRepo(` or `originSpecOf(` call (#4794's one origin read, which wraps parseRepo),
+// bare or member (`deps.parseRepo(`), whose balanced argument text matches ORIGIN_ARG. A
+// `function originSpecOf(` definition is no call. Blank-mode text locates the call and its argument
+// boundaries: a `parseRepo(` in a string or comment is blanked there, and a paren inside a literal moves no boundary.
 // Keep-mode text over the same span supplies the argument's literals (`'get-url'`, `'origin'`). An
 // explicit --repo parse (`parseRepo(opts.repo.split('/')…)`) names none of the tokens and is no site.
 //
 // Recall limits: only the argument's own text is read. A local assigned from `remoteUrl()` or
 // `get-url` under another name and parsed on a later line (`url = deps.remoteUrl(); …
-// parseRepo(hostPathOf(url))`, activity-gather.js's shape) is not a site; that two-line shape is an accepted
+// originSpecOf(url)`, activity-gather.js's shape) is not a site; that two-line shape is an accepted
 // gap. Nor is a parse reached through an alias (`const p = parseRepo; p(remote)`). Nor is a
 // single-expression origin read whose argument avoids the tokens by its naming alone
 // (`parseRepo(remoteOut)`, `parseRepo(originUrl)`, `parseRepo(remoteURL())`): recall rests on
@@ -382,7 +383,8 @@ const ORIGIN_ARG = /\bremote\b|remoteUrl|get-url|['"]origin['"]/;
 function originReads(raw) {
   const { keep, blank, verdict } = stripBoth(raw);
   const sites = [];
-  for (const m of blank.matchAll(/(?<![\w$])parseRepo\s*\(/g)) {
+  for (const m of blank.matchAll(/(?<![\w$])(?:parseRepo|originSpecOf)\s*\(/g)) {
+    if (/\bfunction\s+$/.test(blank.slice(Math.max(0, m.index - 40), m.index))) continue; // a definition, not a call
     const open = m.index + m[0].length - 1;
     const end = open + 1 + balanced(blank, open).length;
     if (!ORIGIN_ARG.test(keep.slice(open + 1, end))) continue;
@@ -394,11 +396,11 @@ function originReads(raw) {
 
 // Files that may read the origin through parseRepo, keyed file -> exact site count. Each count
 // was settled by reading the lines. activity-gather.js is not listed: it reads the origin in two
-// lines (the recall gap above; `parseRepo(hostPathOf(url))`), so it has 0 sites, and it stops on
+// lines (the recall gap above; `originSpecOf(url)`), so it has 0 sites, and it stops on
 // any host but github.com anyway.
 const NOT_ORIGIN = {
-  'lib/repo-resolve.js': { count: 1, reason: "defines the gate: gateOriginRepo's own `parseRepo(hostPathOf(remote))` is the one parse the gate judges. resolveGhSpec's `parseRepo(hostPathOf(url))` names no token and is unmatched; harmless, since this file is the seam" },
-  'parent-gate.js': { count: 1, reason: "decided by the user at #4933's plan review: the --facts-json path makes no gh call and keeps an ungated `parseRepo(hostPathOf(remote))` (the seam's normalized read, #4794), host normalized, only to judge a qualified --closing token; its gh path calls the gate (ORIGIN_GATED)" },
+  'lib/repo-resolve.js': { count: 2, reason: "defines the gate: originSpecOf's own `parseRepo(hostPathOf(remote))` is the one parse, and gateOriginRepo's `originSpecOf(remote)` is the one origin read the gate judges. resolveGhSpec's `originSpecOf(url)` names no token and is unmatched; harmless, since this file is the seam" },
+  'parent-gate.js': { count: 1, reason: "decided by the user at #4933's plan review: the --facts-json path makes no gh call and keeps an ungated `originSpecOf(remote)` (the seam's normalized read, #4794), only to judge a qualified --closing token; its gh path calls the gate (ORIGIN_GATED)" },
   'lib/wrap-up/engine-verify.js': { count: 2, reason: "carrier-commit's and reference-repairs' `parseRepo(<origin>)` pass only owner/repo to deps.gh, a ghOptions-wrapped runner, so the host is the seam's choice, never the parsed one. The acceptance-labeling check's origin goes through the gate (resolveCheckRepo, #4805), which ORIGIN_GATED lists" },
   'lib/reconcile/pr-state-batch.js': { count: 1, reason: "githubOrigin keeps the parse only when its host is github.com, and the batch query pins `--hostname github.com`" },
 };
@@ -427,8 +429,12 @@ test('AC9.1: the origin-read matcher flags a fresh parseRepo(remote) and ignores
     "parseRepo(x || ')', remote);",                                                  // 12: flagged, a paren in a literal moves no boundary
     'parseRepo(url); remote();',                                                     // ok: the token is past the call
     'const r = gateOriginRepo(remote, deps.gateDeps);',                              // ok: the gate
+    'const o = originSpecOf(remote);',                                               // 15: flagged (#4794's wrapper of parseRepo)
+    'function originSpecOf(remote) {}',                                              // ok: a definition, not a call
+    'const m = deps.originSpecOf(remoteUrl());',                                     // 17: flagged (member)
+    'const u = originSpecOf(url);',                                                  // ok: no origin token
   ].join('\n');
-  assert.deepEqual(offendersOf(originReads(src)).map((o) => o.line), [2, 3, 4, 5, 10, 12]);
+  assert.deepEqual(offendersOf(originReads(src)).map((o) => o.line), [2, 3, 4, 5, 10, 12, 15, 17]);
   // A mis-parse is an offender: both modes mis-parse the first line, only blank mode the second.
   assert.deepEqual(offendersOf(originReads("if (cp) /'/.test(cp); const b = 'p//q'; parseRepo(remote);")),
     [{ line: 0, text: STRIPPER_VERDICT_MESSAGES.misparsed }]);

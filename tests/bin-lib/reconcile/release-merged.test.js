@@ -84,6 +84,11 @@ test('decideRelease: transport failures still skip even with closed issue', () =
 test('decideRelease: invalid-arguments skips with reason invalid-arguments (#3416)', () => {
   assert.deepStrictEqual(decideRelease('live', 'invalid-arguments', undefined, undefined), { action: 'skip', reason: 'invalid-arguments' });
 });
+test('decideRelease: unknown-host skips with reason unknown-host, even with a closed issue — never pr-closed-unmerged (#4794)', () => {
+  assert.deepStrictEqual(decideRelease('live', 'unknown-host', 'CLOSED', undefined), { action: 'skip', reason: 'unknown-host' });
+  assert.deepStrictEqual(decideRelease('stale', 'unknown-host', undefined, undefined), { action: 'skip', reason: 'unknown-host' });
+  assert.equal(needsIssueEvidence('unknown-host'), false);
+});
 
 test('decideRelease: tombstone/absent/unreadable never release on issue-closed', () => {
   assert.strictEqual(decideRelease('tombstone', null, 'CLOSED').action, 'skip');

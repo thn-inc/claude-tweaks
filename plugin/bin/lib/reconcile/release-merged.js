@@ -76,6 +76,8 @@ function prClosesIssue(prState, issueNumber, repoSlug, mergeCommitMessage) {
 //                                       cannot legitimately still be in progress
 //   MERGED + closesIssue false       -> skip pr-merged-not-closing
 //   MERGED + closesIssue undefined   -> skip pr-merged-closing-unknown
+//   gh-absent / network-failure / invalid-arguments / pr-not-found / unknown-host
+//                                    -> skip, the failure string as the reason (no PR read)
 // A merged PR is release evidence only when it closes THIS issue: a PR that
 // merely touches the branch's work (a sibling, a partial) leaves the record
 // open, and unknown closing data fails closed — never "does not close" and
@@ -90,6 +92,7 @@ function decideRelease(classifiedState, prState, issueState, closesIssue) {
   if (prState === 'network-failure') return { action: 'skip', reason: 'network-failure' };
   if (prState === 'invalid-arguments') return { action: 'skip', reason: 'invalid-arguments' };
   if (prState === 'pr-not-found') return { action: 'skip', reason: 'pr-not-found' }; // stamped number names no PR (#3543)
+  if (prState === 'unknown-host') return { action: 'skip', reason: 'unknown-host' }; // origin host the gate refuses (#4933): no PR was read, never "closed unmerged"
   if (prState && prState.state === 'MERGED') {
     if (closesIssue === true) return { action: 'release', reason: `merged: reconciled from PR #${prState.number}` };
     if (issueState === 'CLOSED') return { action: 'release', reason: 'issue-closed' };
@@ -110,7 +113,7 @@ function decideRelease(classifiedState, prState, issueState, closesIssue) {
 // all, a PR closed unmerged, or a MERGED PR not confirmed to close the issue
 // (`closesIssue` false or unknown: the issue's own state is the only remaining
 // release evidence, #3412). Everything else (OPEN, MERGED + closesIssue true,
-// gh-absent, network-failure, invalid-arguments, pr-not-found) is decided
+// gh-absent, network-failure, invalid-arguments, pr-not-found, unknown-host) is decided
 // without an issue lookup, so this is what gates the extra gh api call at the
 // call site.
 function needsIssueEvidence(prState, closesIssue) {

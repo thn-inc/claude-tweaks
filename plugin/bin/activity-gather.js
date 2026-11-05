@@ -27,7 +27,7 @@ const fs = require('fs');
 const { execFileSync } = require('child_process');
 const { gather, PeriodError, ACTIVITY_GH_TIMEOUT_MS, resolvePeriod, QUERY_KEYS } = require('./lib/activity/gather');
 const {
-  parseRepo, ghAvailable, remoteUrl, repoSlug, ghOptions, pinExplicitRepoHost, hostPathOf, normalizeHost,
+  ghAvailable, remoteUrl, repoSlug, ghOptions, pinExplicitRepoHost, originSpecOf,
 } = require('./lib/repo-resolve');
 
 const USAGE = 'usage: activity-gather.js --period <1d|7d|14d|month|quarter|<from>..<to>> [--repo <owner/name>[,<owner/name>...]] [--actor <login>] --out <facts.json path> [--help]\n';
@@ -117,9 +117,9 @@ function run(argv, deps = realDeps) {
     try { url = deps.remoteUrl(); } catch (err) { deps.stderr(`activity-gather.js: no --repo and origin remote unreadable: ${errorText(err)}\n`); return 2; }
     // #4794: the seam's origin read (userinfo, port and scheme dropped), so the stop below
     // depends on the host alone, never on how the URL is spelled.
-    const spec = parseRepo(hostPathOf(url));
+    const spec = originSpecOf(url);
     if (!spec) { deps.stderr(`activity-gather.js: no --repo and origin remote is not a GitHub URL: ${String(url).trim()}\n`); return 2; }
-    const host = normalizeHost(spec.host);
+    const host = spec.host;
     if (host !== 'github.com') {
       deps.stderr(`activity-gather.js: origin remote is on ${host}, not github.com — pass --repo <owner/name> for a github.com repository; other hosts are not supported\n`);
       return 2;

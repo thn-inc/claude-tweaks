@@ -3108,3 +3108,68 @@ test('#4794: with no repo target the listing is today\'s bare --repo acme/w and 
   assert.equal(code, 3, io.err.join(''));
   assert.deepEqual(ghCalls.filter(isPrList)[0], ['pr', 'list', '--repo', 'acme/w', '--state', 'open', '--json', 'url,body,isCrossRepository', '--limit', '1000']);
 });
+
+// The one host rule: the gate's admitted host decides, never a second origin read. `seamTarget`
+// models bin/claim-targets.js's realDeps.repoTarget with its own fallback read simulated as
+// timing out (`fallbackHost` null = resolveGhHost answers github.com): the gate's host, when it
+// passes one, must win over it.
+const { resolveRepoTarget } = require('../../../plugin/bin/lib/repo-resolve');
+const seamTarget = (argsSeen, fallbackHost = null) => (owner, repo, gateHost) => {
+  argsSeen.push([owner, repo, gateHost]);
+  return resolveRepoTarget({ owner, repo, originHost: gateHost || fallbackHost }, { env: {} });
+};
+const gheGate = () => ({ spec: { host: 'acme.ghe.com', owner: 'acme', repo: 'w' }, refusal: null });
+
+test('#4794: the gate\'s admitted GHE host reaches the repo target, so the stale listing and its PR-url match use it although a second origin read would answer github.com', () => {
+  const { ghApi, calls } = makeGhApi({ reads: { 770: [readOk(staleMarker(RUN), 'sha770')] }, writes: {} });
+  const { gh, calls: ghCalls } = makeGh({ openPrs: [markedPrAt(GHE_PR_URL)] });
+  const { deps, io } = baseDeps({ ghApi, gh });
+  const seen = [];
+  deps.gateOrigin = gheGate;
+  deps.repoTarget = seamTarget(seen);
+
+  const code = run(['--run-id', 'r1', '--targets', '770'], deps);
+
+  assert.equal(code, 3, io.err.join(''));
+  assert.deepEqual(seen, [['acme', 'w', 'acme.ghe.com']], 'the gate host is the third argument');
+  assert.deepEqual(JSON.parse(io.out[0]).inFlight, [{ issue: 770, link: GHE_PR_URL }]);
+  assert.deepEqual(ghCalls.filter(isPrList)[0].slice(0, 4), ['pr', 'list', '--repo', 'acme.ghe.com/acme/w']);
+  assert.ok(!calls.some((a) => isWrite(a, '770')));
+});
+
+test('#4794: the gate\'s admitted GHE host also decides the tombstone\'s PR-url match', () => {
+  const { ghApi, calls } = makeGhApi({
+    reads: { 760: [readOk(prOpenedTombstoneMarker('otherRun', GHE_PR_URL), 'sha760')] },
+    writes: {},
+  });
+  const { gh, calls: ghCalls } = makeGh({ prState: 'OPEN' });
+  const { deps, io } = baseDeps({ ghApi, gh });
+  deps.gateOrigin = gheGate;
+  deps.repoTarget = seamTarget([]);
+
+  const code = run(['--run-id', 'r1', '--targets', '760'], deps);
+
+  assert.equal(code, 3, io.err.join(''));
+  assert.deepEqual(JSON.parse(io.out[0]).inFlight, [{ issue: 760, link: GHE_PR_URL }]);
+  assert.ok(ghCalls.some((a) => a[0] === 'pr' && a[1] === 'view' && a[2] === GHE_PR_URL));
+  assert.ok(!calls.some((a) => isWrite(a, '760')));
+});
+
+test('#4794: a gate with no spec passes a null host so the seam keeps its own fallback read; a github.com spec passes github.com', () => {
+  for (const [gate, expected, listed, prUrl] of [
+    [() => ({ spec: null, refusal: null }), null, 'acme.ghe.com/acme/w', GHE_PR_URL],
+    [() => ({ spec: { host: 'github.com', owner: 'acme', repo: 'w' }, refusal: null }), 'github.com', 'acme/w', PR_URL],
+  ]) {
+    const { ghApi } = makeGhApi({ reads: { 770: [readOk(staleMarker(RUN), 'sha770')] }, writes: {} });
+    const { gh, calls: ghCalls } = makeGh({ openPrs: [markedPrAt(prUrl)] });
+    const { deps, io } = baseDeps({ ghApi, gh });
+    const seen = [];
+    deps.gateOrigin = gate;
+    deps.repoTarget = seamTarget(seen, expected === null ? 'acme.ghe.com' : null);
+
+    run(['--run-id', 'r1', '--targets', '770'], deps);
+
+    assert.deepEqual(seen, [['acme', 'w', expected]], io.err.join(''));
+    assert.equal(ghCalls.filter(isPrList)[0][3], listed);
+  }
+});

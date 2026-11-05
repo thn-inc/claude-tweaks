@@ -658,7 +658,28 @@ test('re-review: --comment/--subject/--notes/--description values are not an exp
 // #4794: the one host resolver. Precedence: a typed --repo host, then a non-empty
 // (after trim) exported GH_HOST, then the origin host, then github.com; the slug is
 // host-qualified only when that host differs from gh's own default host.
-const { resolveRepoTarget, ghHostIn } = require('../../plugin/bin/lib/repo-resolve');
+const { resolveRepoTarget, ghHostIn, originSpecOf } = require('../../plugin/bin/lib/repo-resolve');
+
+// #4794: the one origin read. Every spelling of one origin reads as the same
+// { host, owner, repo } with the host normalized; a remote that read does not parse is null.
+test('#4794: originSpecOf — every spelling of one origin reads the same, host normalized', () => {
+  const want = { host: 'acme.ghe.com', owner: 'acme', repo: 'w' };
+  assert.deepEqual(originSpecOf('https://oauth2:s3cret@ACME.ghe.com/acme/w.git'), want); // credentialed https, credential dropped
+  assert.deepEqual(originSpecOf('ssh://git@acme.ghe.com:2222/acme/w.git'), want);        // ssh:// with a port
+  assert.deepEqual(originSpecOf('git@acme.ghe.com:acme/w.git'), want);                   // scp-style
+  assert.deepEqual(originSpecOf('https://ACME.ghe.com./acme/w'), want);                  // trailing-dot FQDN host
+  assert.deepEqual(originSpecOf('  https://acme.ghe.com:8443/acme/w.git\n'), want);      // a port and the newline `git remote get-url` adds
+  assert.deepEqual(originSpecOf('git@GitHub.com.:o/r.git'), { host: 'github.com', owner: 'o', repo: 'r' });
+});
+
+test('#4794: originSpecOf — a remote the seam read does not parse is null (a sandbox proxy remote, a path, nothing)', () => {
+  assert.equal(originSpecOf('http://local_proxy@127.0.0.1:8080/git/acme/w'), null);
+  assert.equal(originSpecOf('/srv/git/w.git'), null);
+  assert.equal(originSpecOf('not a url'), null);
+  assert.equal(originSpecOf(''), null);
+  assert.equal(originSpecOf(null), null);
+  assert.equal(originSpecOf(undefined), null);
+});
 
 test('#4794: resolveRepoTarget — one host: typed --repo host, then GH_HOST, then the origin host, then github.com', () => {
   const T = (o, env) => resolveRepoTarget({ owner: 'acme', repo: 'w', ...o }, { env });
