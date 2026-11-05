@@ -41,7 +41,7 @@
 //   not-merged, claim-failed, transient-failure, network-failure,
 //   marker-write-failed, error, not-github-issues, no-remote, unknown-host (the origin
 //   names a host that is not a known GitHub host, #4933: nothing was sent to gh; `detail`
-//   is the refusal text, which names the `GH_HOST=<host>` opt-in), no-pr-states,
+//   is the refusal text, which names the `GH_HOST` opt-in), no-pr-states,
 //   merged-at-unreadable (a MERGED PR whose mergedAt does not parse: its age is
 //   unknown, so nothing runs),
 //   no-pr-state, pr-not-found, invalid-arguments -- the last three are the PR-state

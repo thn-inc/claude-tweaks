@@ -467,6 +467,17 @@ test('headless-self-report.md files its diagnostic through --body-file, never a 
   assert.doesNotMatch(read('plugin/skills/dispatch/settle-and-merge.md'), /template's `--body`/);
 });
 
+test('#4794: the exit-2 bullet names the unknown-host refusal and its transport limit', () => {
+  const content = read('plugin/skills/flow/claim-targets.md');
+  const start = content.indexOf('- **2** —');
+  assert.ok(start !== -1, 'exit-2 bullet should exist');
+  const end = content.indexOf('**On exit', start);
+  assert.ok(end !== -1, 'exit-2 bullet should end before the On-exit paragraph');
+  const bullet = content.slice(start, end).replace(/\s+/g, ' ');
+  assert.match(bullet, /unknown-host/);
+  assert.match(bullet, /does not reach that refusal/);
+});
+
 test('AC8.1: no prose says a claim read or write 401/403 exits 4 (#4899)', () => {
   const walk = (dir, ext) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const full = path.join(dir, entry.name);

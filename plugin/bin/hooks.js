@@ -1331,7 +1331,8 @@ async function runLedgerRow(argv) {
   if (status === 'fixed') {
     try {
       const repoResolve = require('./lib/repo-resolve');
-      repo = repoResolve.parseRepo(repoResolve.originUrl(worktree));
+      // #4794: read the origin the gate's way (userinfo, port and scheme dropped), so the verdict never depends on the URL's spelling.
+      repo = repoResolve.originSpecOf(repoResolve.originUrl(worktree));
     } catch { repo = null; }
   }
   const verdict = checkLedgerStatus(status, resolution.text, { excludeRecords, repo });

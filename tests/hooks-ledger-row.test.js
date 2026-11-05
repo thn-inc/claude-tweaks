@@ -319,6 +319,15 @@ test('answer 6: fixed with this repo\'s /pull/N URL through the CLI', () => {
   refused(f, ledgerRow(f, ['--row', '2', '--status', 'fixed', '--resolution', 'https://github.com/o/r/issues/7']), /needs a commit sha, file reference, or resolving PR/);
 });
 
+test('answer 6: fixed with this repo\'s /pull/N URL reads an ssh:// or credentialed-https origin the way the gate does (#4794)', () => {
+  for (const origin of ['ssh://git@github.com/o/r.git', 'https://x:tok@github.com/o/r.git']) {
+    const f = fixture({ rows: '| 1 | build | x | open | — |\n' });
+    git(['remote', 'add', 'origin', origin], f.root);
+    const ok = ledgerRow(f, ['--row', '1', '--status', 'fixed', '--resolution', 'https://github.com/o/r/pull/7']);
+    assert.equal(ok.code, 0, `${origin}: ${ok.stderr}`);
+  }
+});
+
 test('rejects a --ledger outside the run and worktree', () => {
   const f = fixture();
   const outside = path.join(tmp('ct-ledgerrow-out-'), 'x-ledger.md');

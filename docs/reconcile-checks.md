@@ -207,7 +207,7 @@ later by a second PR or at `/release`. When the PR's `closingIssuesReferences` i
 as on a non-default integration base where GitHub never links closing keywords, only a manifest
 spec still `pending`/`running` blocks (`inFlightRecords`).
 
-Three skip reasons come out of this check:
+Four skip reasons come out of this check:
 
 - **`merged-partial`**: carries `unclosed: number[]`, which `reconcile/index.js` passes through to
   `result.runs`. It is in `STRUCTURALLY_STUCK_REASONS`, so a run left waiting escalates after the
@@ -217,6 +217,10 @@ Three skip reasons come out of this check:
 - **`no-repo-slug`**: there is no resolvable `origin` slug. This reason is tracked, so it shows in
   the residue summary's stuck count. With no slug there is no repo to file the escalation issue in,
   so it never escalates.
+- **`unknown-host`**: the `origin` host is one the #4933 gate refuses (an SSH alias, an unknown
+  host), so the check makes no gh call. The gate's refusal text rides as the skip's `hint`. It is
+  tracked like `no-repo-slug`: it shows in the residue summary's stuck count, and its escalation
+  files nothing, because the residue repo is a refusal and there is no repo to file in.
 
 Run-state is never written on any of these skips. The `status: clean` sweep is exempt from this
 check: wrap-up already closed that run.
@@ -402,10 +406,10 @@ main loop, landed via #1962/#2226/#2228/#2231):
   `missing` ids and a `hint`, which `reconcile/index.js` passes through to `result.runs`, and the body
   carries their remedy line after the `merged-partial` one), and #4171's `cant-tell-unfiled` (an
   auto-merge run holding a can't-tell finding with no filed record, carried as `unfiled` on the
-  skip, with its own remedy line after the tiebreak one). `no-repo-slug` is also in
-  `STRUCTURALLY_STUCK_REASONS` but is not listed here: it can never be filed into this record, because
-  with no repo slug `findOrCreateIssue` returns `escalation-failed`, so it shows only in the residue
-  summary's stuck count. Each path's own reason is its
+  skip, with its own remedy line after the tiebreak one). `no-repo-slug` and `unknown-host` are also in
+  `STRUCTURALLY_STUCK_REASONS` but are not listed here: neither can ever be filed into this record, because
+  with no repo slug, or a refused origin, `findOrCreateIssue` returns `escalation-failed`, so they show only
+  in the residue summary's stuck count. Each path's own reason is its
   residue entry's `lastError` (`stuck at {reason}`), not rendered per path. The body also carries
   a fixed remedy line for `console-never-rendered-staged-pending` — a merged run that never
   rendered a Review Console (an auto-merge path — the fast-lane short-circuit or the dispatch bundle Auto-merge gate — writes no `console.json`) while
@@ -596,8 +600,8 @@ unchanged, and every fail-open path below leaves the parent open for it.
   any other value, or none, skips the whole check as `not-github-issues` and writes nothing. A
   checkout without an `origin` slug fails as `no-remote`, an `origin` on a host that is not a known
   GitHub host fails as `unknown-host` (#4933; no gh call is made, and the failure carries a `detail`
-  holding the refusal text, which names the `GH_HOST=<host>` opt-in; `reconcile()` copies it onto
-  the `skipped` entry and `format-summary.js` renders it flattened and bounded as
+  holding the refusal text, which names the `GH_HOST` opt-in; `reconcile()` copies it onto
+  the `skipped` entry and `format-summary.js` renders it flattened (bounded, except an `unknown-host` detail, which renders whole, #4794) as
   `skipped: post-merge — unknown-host ({detail})`), and a caller that passes no
   PR-state resolver fails as `no-pr-states` (a programming error, handled like the others).
 - **Marker rule.** A run is done when a `decisions.md` line, read through `parseEntry`, has the
@@ -748,8 +752,10 @@ unchanged, and every fail-open path below leaves the parent open for it.
   GitHub Enterprise origin (`*.ghe.com`, a gh `hosts.yml` key, or the exported `GH_HOST`) the gate's
   reads and the two writes name `host/owner/repo` (`--hostname` on the `gh api` reads); an origin on
   any other host returns `{ refusal }` and the check fails `unknown-host` before any gh call
-  (`teardown-run.js`'s remote-ref step skips with the same refusal text). A remote the gate cannot
-  read (an `ssh://` URL) keeps the bare slug it always resolved to (#4857).
+  (`teardown-run.js`'s remote-ref step skips with the same refusal text). An `ssh://`,
+  credentialed or ported origin is judged on its host like its plain spelling (#4794); a remote the gate
+  cannot read at all (a cloud sandbox's proxy remote, a local path) keeps the bare slug it always resolved
+  to (#4857).
 - **Accepted residual risk: tidy-approval race.** A human approving a tidy `parent-gate` row for the
   same parent in the seconds while a post-merge pass is mid-close can post a second `## Closed below
   the oversight floor` comment, because the two writers share no lock beyond Step 4.0b's own
@@ -867,7 +873,7 @@ An unscoped `hooks.js reconcile` call took about 52.5 s; the contract below is w
   | `MERGED` PR | number or branch | `PR_STATE_RETENTION_MS` (30 days) |
   | `pr-not-found` | number | `PR_STATE_RETENTION_MS` |
   | no PR (`null`) | branch | `NO_PR_TTL_MS` (5 min) — a PR can be opened at any time |
-  | `OPEN` / `CLOSED` PR, any failure string (`gh-absent`, `network-failure`, `invalid-arguments`) | either | never persisted; failures are not memoized either, so a transient failure is never replayed as an answer |
+  | `OPEN` / `CLOSED` PR, any failure string (`gh-absent`, `network-failure`, `invalid-arguments`, `unknown-host`) | either | never persisted; failures are not memoized either, so a transient failure is never replayed as an answer |
 
   `release` alone never consumes a persisted by-branch `null`: it passes `{ freshNull: true }`
   to `byBranchAsync` and `prefetch`, which re-query such a key live (a PR opened inside the
@@ -888,7 +894,9 @@ An unscoped `hooks.js reconcile` call took about 52.5 s; the contract below is w
   page, a malformed node or any other error leaves that key out, and the per-item `gh` twins
   resolve it, so they stay the sole owner of `pr-not-found` and every failure string. It runs only
   when `origin` is provably on `github.com`, and the query is pinned there with `--hostname
-  github.com` so a `GH_HOST` cannot redirect it; any other host takes the per-item path.
+  github.com` so a `GH_HOST` cannot redirect it; any other host takes the per-item path. It also
+  does not run when a non-empty exported `GH_HOST` names another host (#4794): the per-item calls
+  follow `GH_HOST`, so one pass would otherwise read PR state from two hosts.
   `post-merge` dispatches ahead of `archive`'s warm-up, so it prefetches the recorded PR number of
   every unmarked run itself (`prefetchPostMergePrStates`, clean runs included) before its per-run
   lookups; otherwise each active run would cost one live `gh pr view` per pass.

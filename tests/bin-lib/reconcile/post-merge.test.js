@@ -12,6 +12,7 @@ const {
   isSupersededEntry, supersededChanges, supersededChangesLine,
   CLAIM_LOST_DETAIL, SUPERSEDED_LOCATION_SUFFIX, markSuperseded,
 } = require('../../../plugin/bin/lib/reconcile/post-merge');
+const { gateOriginRepo } = require('../../../plugin/bin/lib/repo-resolve');
 const { formatEntry, parseEntry } = require('../../../plugin/bin/lib/log-decision/append');
 const { DELIBERATE_SKIP_REASONS } = require('../../../plugin/bin/lib/issues/below-floor-parent-close');
 
@@ -867,6 +868,34 @@ test('AC8.2 post-merge setupContext (#4933): unknown origin host → failure unk
   assert.equal(one.next, 'none');
   assert.match(one.detail, /GH_HOST=git\.corp\.invalid/);
   assert.equal(links.calls.length, 0);
+});
+
+test('#4794: an SSH-alias origin refuses Step 4.0b — failure unknown-host, the alias advice, no gh call', async () => {
+  const origin = 'git@github-work:acme/w.git';
+  const root = mainCheckout({ origin });
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const links = fakeClosingLinks(ENVELOPE);
+  const close = fakeCloseParents();
+  const ghCalls = [];
+  const gh = (...args) => { ghCalls.push(args); throw new Error('unexpected gh call'); };
+  const deps = { gh, closingLinks: links, closeParents: close, gateDeps: NO_GH_HOSTS };
+  const refusal = gateOriginRepo(origin, NO_GH_HOSTS).refusal;
+  assert.ok(refusal, 'the gate refuses an SSH-alias origin');
+
+  const r = await postMerge({ cwd: root, prStates: fakePrStates({ 11: merged() }), now, deps });
+  assert.equal(r.failure, 'unknown-host');
+  assert.equal(r.detail, refusal);
+  assert.match(r.detail, /GH_HOST=github\.com/);
+  assert.doesNotMatch(r.detail, /GH_HOST=github-work/);
+  assert.deepEqual(r.entries, []);
+
+  const one = await postMergeOne({ runDir: dir, cwd: root, prStates: fakePrStates({ 11: merged() }), now, deps });
+  assert.equal(one.reason, 'unknown-host');
+  assert.equal(one.detail, refusal);
+  assert.equal(ghCalls.length, 0, 'no gh call');
+  assert.equal(links.calls.length, 0);
+  assert.equal(close.calls.length, 0);
+  assert.equal(decisionsOf(dir), '', 'no marker is written');
 });
 
 test('AC8.3 post-merge (#4933): a failure with no detail (no-remote, not-github-issues) adds no detail key; an exported GH_HOST opts the host in', async () => {

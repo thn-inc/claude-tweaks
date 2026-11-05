@@ -45,7 +45,7 @@ const USAGE = 'usage: claim-targets.js --run-id <id> --targets <n,n,...> [--keep
   + '           the envelope then carries resumedPr:[{issue,link}] and the claim-log line names the PR\n'
   + '  --run <run-dir>: writes the Step 2.8 claim-log line to that run dir\'s decisions.md for every claimed target\n'
   + '  exit 0 = all claimed (or, with --keep-going, partial; or the --steps skip-guard)\n'
-  + '  exit 2 = malformed invocation or missing dependency\n'
+  + '  exit 2 = malformed invocation or missing dependency (an origin host the origin-host gate refuses, `unknown-host`, included)\n'
   + '  exit 3 = contested, or in flight: a pr-opened tombstone whose linked PR is still open,\n'
   + '           or a stale claim whose run marker sits on an open same-repo PR\n'
   + '           (contested: {contested:[{issue,holder}], ...}; in-flight: {inFlight:[{issue,link}], ...})\n'
@@ -332,6 +332,18 @@ function run(argv, deps) {
     }
   }
 
+  // #4794: the origin-host gate, run-level like a refused bootstrap: a refused
+  // origin (an unknown host, an SSH alias) exits 2 with or without `--keep-going`,
+  // before the first `gh` call — no claim read or write, no label, no claim-log
+  // line, so "never claimed" holds for every target. A `null` verdict or one with
+  // no refusal (no origin, an unparseable one such as a cloud sandbox's proxy
+  // remote) changes nothing: `gh repo view` resolves the repo as before.
+  const gate = typeof deps.gateOrigin === 'function' ? deps.gateOrigin() : null;
+  if (gate && gate.refusal) {
+    deps.stderr(`claim-targets: unknown-host — ${gate.refusal}\n`);
+    return 2;
+  }
+
   // #3065: a `gh` timeout resolving the repo slug is retried once (same
   // shape as reconcile's release-merged.js/preflight.js/pr-state.js), then
   // classified as the CLI's existing transient class (exit 4) rather than
@@ -370,6 +382,14 @@ function run(argv, deps) {
   // `link` against this exact owner/repo before ever calling `deps.gh` —
   // split once here rather than re-parsing `repoSlug` per target.
   const [repoOwner, repoName] = repoSlug.split('/');
+  // #4794: the run's one `{ host, ghRepo }` target, resolved once. The stale-claim
+  // listing's `--repo` and both PR-url matches (the tombstone's and the stale
+  // claim's) take it, so no path lists on one host and matches urls on another. The gate's
+  // admitted host rides along as the third argument: one origin read decides (never a second
+  // read of its own), and a gate with no spec passes null so the seam falls back to its own read.
+  const repoTarget = typeof deps.repoTarget === 'function'
+    ? deps.repoTarget(repoOwner, repoName, gate && gate.spec ? gate.spec.host : null)
+    : null;
 
   const claimedThisRun = [];
   const alreadyOwned = [];
@@ -563,7 +583,7 @@ function run(argv, deps) {
     // the check itself, falls straight through unchanged (fail open) —
     // see `tombstoneInFlightPr`'s own doc comment in claim-store.js.
     if (classified.state === 'tombstone') {
-      const inFlight = tombstoneInFlightPr(content, cachedPrReadGh, repoOwner, repoName);
+      const inFlight = tombstoneInFlightPr(content, cachedPrReadGh, repoOwner, repoName, repoTarget ? repoTarget.host : null);
       if (inFlight) {
         const stop = stopOrSkip(issue, 'in-flight', 'inFlight', 3, { link: inFlight.link });
         if (stop !== null) return stop;
@@ -606,7 +626,7 @@ function run(argv, deps) {
     if (classified.state === 'stale') {
       const inFlight = claimStore.staleClaimInFlightPr(content, cachedPrReadGh, repoOwner, repoName, (e) => {
         deps.stderr(`claim-targets: stale-claim open-PR check failed for #${issue} (reclaiming) — ${errText(e)}\n`);
-      });
+      }, repoTarget);
       if (inFlight && opts.resumePr !== null && inFlight.link === opts.resumePr) {
         // #4588: the one exception — the caller is resuming exactly this PR
         // (`/dispatch resume`), so the stale claim is re-claimed below instead

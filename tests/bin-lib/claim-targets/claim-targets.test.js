@@ -736,6 +736,29 @@ test('staleClaimInFlightPr: a no-match listing at the 1000-entry limit reaches o
   assert.equal(errors.length, 1, 'a no-match listing under the limit is a clean no-match');
 });
 
+test('#4794: staleClaimInFlightPr lists and matches on one target host', () => {
+  const target = { host: 'mine.example', ghRepo: 'mine.example/acme/w' };
+  const marked = (url) => [{ url, body: `claude-tweaks-run: ${RUN}`, isCrossRepository: false }];
+  const record = (listing) => {
+    const argvs = [];
+    const gh = (args) => { argvs.push(args); return JSON.stringify(listing); };
+    return { argvs, gh };
+  };
+  const same = 'https://mine.example/acme/w/pull/3';
+  const a = record(marked(same));
+  assert.deepEqual(claimStore.staleClaimInFlightPr(staleMarker(RUN), a.gh, 'acme', 'w', undefined, target), { link: same });
+  assert.equal(a.argvs.length, 1);
+  assert.equal(a.argvs[0][a.argvs[0].indexOf('--repo') + 1], 'mine.example/acme/w', 'the listing carries the target ghRepo');
+  assert.equal(a.argvs[0].filter((x) => x === '--repo').length, 1);
+  const b = record(marked('https://github.com/acme/w/pull/3'));
+  assert.equal(claimStore.staleClaimInFlightPr(staleMarker(RUN), b.gh, 'acme', 'w', undefined, target), null, 'a github.com url under the mine.example target is not a match');
+  assert.equal(b.argvs[0][b.argvs[0].indexOf('--repo') + 1], 'mine.example/acme/w');
+  // No target: today's bare listing and github.com match.
+  const c = record(marked('https://github.com/acme/w/pull/3'));
+  assert.deepEqual(claimStore.staleClaimInFlightPr(staleMarker(RUN), c.gh, 'acme', 'w'), { link: 'https://github.com/acme/w/pull/3' });
+  assert.equal(c.argvs[0][c.argvs[0].indexOf('--repo') + 1], 'acme/w');
+});
+
 test('staleClaimInFlightPr: a throwing onError is swallowed — the check still returns null (fail open)', () => {
   const throwingOnError = () => { throw new Error('reporter broke'); };
   assert.equal(
@@ -2920,4 +2943,233 @@ test('(bm9) write-site second sighting under --keep-going discards the git tip c
   ]);
   assert.equal(bootstrapPushes(remote).length, 1, 'bootstrap is attempted once per run');
   assert.equal(claimsFetches.length, 3, '720 fetches twice (missing, then after the bootstrap); 721 fetches fresh instead of reusing 720\'s tip');
+});
+
+// ---- #4794: the origin gate and the run's one repo target ----------------------------------------
+// `deps.gateOrigin` is the origin-host gate's verdict (bin/claim-targets.js's realDeps); a refusal
+// is run-level, so it stops before the first gh call, claim read or write, label or claim-log line.
+// `deps.repoTarget(owner, repo)` is the gh seam's one `resolveRepoTarget` result, which the stale
+// listing, the stale match and the tombstone's PR-url check all share.
+
+const GATE_REFUSAL = 'origin host git.corp.invalid is not a known GitHub host (test refusal text)';
+
+test('#4794: a refused origin exits 2 unknown-host before any gh call, with or without --keep-going', () => {
+  for (const extra of [[], ['--keep-going'], ['--keep-going', '--run', '/some/run/r1']]) {
+    const r = recordingRefusers();
+    const { deps, io } = baseDeps({ ghApi: r.ghApi, gh: r.gh });
+    deps.gitRunner = r.gitRunner;
+    deps.appendClaimLog = r.appendClaimLog;
+    deps.gateOrigin = () => ({ spec: null, refusal: GATE_REFUSAL });
+
+    const code = run(['--run-id', 'r1', '--targets', '720,721', ...extra], deps);
+
+    assert.equal(code, 2, extra.join(' '));
+    assert.deepEqual(io.err, [`claim-targets: unknown-host — ${GATE_REFUSAL}\n`], extra.join(' '));
+    assert.deepEqual(io.out, [], 'a refusal prints no envelope');
+    assert.deepEqual(r.calls, { ghApi: [], gh: [], gitRunner: [], appendClaimLog: [] }, `${extra.join(' ')}: no gh call, claim read or write, label or claim-log line`);
+  }
+});
+
+test('#4794: the --steps skip guard answers before the origin gate is consulted', () => {
+  const r = recordingRefusers();
+  const { deps, io } = baseDeps({ ghApi: r.ghApi, gh: r.gh });
+  deps.gitRunner = r.gitRunner;
+  deps.appendClaimLog = r.appendClaimLog;
+  deps.gateOrigin = () => { throw new Error('gateOrigin must not be called'); };
+
+  const code = run(['--run-id', 'r1', '--targets', '720', '--steps', 'review,wrap-up'], deps);
+
+  assert.equal(code, 0);
+  assert.deepEqual(io.out, [SKIP_GUARD_ENVELOPE]);
+  assert.deepEqual(r.calls, { ghApi: [], gh: [], gitRunner: [], appendClaimLog: [] });
+});
+
+test('#4794: a gate verdict with no refusal (an unparseable or absent origin) claims as today', () => {
+  for (const gateOrigin of [() => ({ spec: null, refusal: null }), () => null, undefined]) {
+    const { ghApi, calls: apiCalls } = makeGhApi({
+      reads: { 720: [readAbsent, confirmRead()] },
+      writes: { 720: [writeOk] },
+    });
+    const { gh, calls: ghCalls } = makeGh({});
+    const { deps, io } = baseDeps({ ghApi, gh });
+    if (gateOrigin) deps.gateOrigin = gateOrigin;
+
+    const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+    assert.equal(code, 0, io.err.join(''));
+    assert.deepEqual(JSON.parse(io.out[0]).claimed, [720]);
+    assert.ok(ghCalls.some((a) => a[0] === 'repo' && a[1] === 'view'), 'the repo still comes from gh repo view');
+    assert.ok(apiCalls.some((a) => isWrite(a, '720')));
+  }
+});
+
+// A same-repo PR url on `acme.ghe.com`, marked with the stale claim's run.
+const GHE_PR_URL = 'https://acme.ghe.com/acme/w/pull/12';
+const GHE_TARGET = { host: 'acme.ghe.com', ghRepo: 'acme.ghe.com/acme/w' };
+const markedPrAt = (url) => ({ url, body: `<!-- claude-tweaks-run: ${RUN} -->\n`, isCrossRepository: false });
+
+test('#4794: under a GHE repo target the stale-claim listing carries the host-qualified --repo once and a same-host PR url is in flight', () => {
+  const { ghApi, calls } = makeGhApi({ reads: { 770: [readOk(staleMarker(RUN), 'sha770')] }, writes: {} });
+  const { gh, calls: ghCalls } = makeGh({ openPrs: [markedPrAt(GHE_PR_URL)] });
+  const { deps, io } = baseDeps({ ghApi, gh });
+  const targetArgs = [];
+  deps.repoTarget = (owner, repo) => { targetArgs.push([owner, repo]); return GHE_TARGET; };
+
+  const code = run(['--run-id', 'r1', '--targets', '770'], deps);
+
+  assert.equal(code, 3, io.err.join(''));
+  assert.deepEqual(JSON.parse(io.out[0]).inFlight, [{ issue: 770, link: GHE_PR_URL }]);
+  assert.deepEqual(targetArgs, [['acme', 'w']], 'the target is resolved once, from the gh-resolved slug');
+  const list = ghCalls.filter(isPrList);
+  assert.equal(list.length, 1);
+  assert.deepEqual(list[0], ['pr', 'list', '--repo', 'acme.ghe.com/acme/w', '--state', 'open', '--json', 'url,body,isCrossRepository', '--limit', '1000']);
+  assert.equal(list[0].filter((a) => a === '--repo').length, 1);
+  assert.ok(!calls.some((a) => isWrite(a, '770')));
+});
+
+test('#4794: under a GHE repo target a marked github.com PR url is not in flight', () => {
+  const { ghApi, calls } = makeGhApi({
+    reads: { 770: [readOk(staleMarker(RUN), 'sha770'), confirmRead()] },
+    writes: { 770: [writeOk] },
+  });
+  const { gh } = makeGh({ openPrs: [markedPrAt(PR_URL)] });
+  const { deps, io } = baseDeps({ ghApi, gh });
+  deps.repoTarget = () => GHE_TARGET;
+
+  const code = run(['--run-id', 'r1', '--targets', '770'], deps);
+
+  assert.equal(code, 0, io.err.join(''));
+  assert.deepEqual(JSON.parse(io.out[0]).claimed, [770]);
+  assert.ok(calls.some((a) => isWrite(a, '770')), 'the github.com url is not the origin host, so the stale claim is reclaimed');
+});
+
+test('#4794: a pr-opened tombstone is matched against the same target host as the stale listing', () => {
+  const { ghApi, calls } = makeGhApi({
+    reads: { 760: [readOk(prOpenedTombstoneMarker('otherRun', GHE_PR_URL), 'sha760')] },
+    writes: {},
+  });
+  const { gh, calls: ghCalls } = makeGh({ prState: 'OPEN' });
+  const { deps, io } = baseDeps({ ghApi, gh });
+  deps.repoTarget = () => GHE_TARGET;
+
+  const code = run(['--run-id', 'r1', '--targets', '760'], deps);
+
+  assert.equal(code, 3, io.err.join(''));
+  assert.deepEqual(JSON.parse(io.out[0]).inFlight, [{ issue: 760, link: GHE_PR_URL }]);
+  assert.ok(ghCalls.some((a) => a[0] === 'pr' && a[1] === 'view' && a[2] === GHE_PR_URL), 'the tombstone link reached gh pr view');
+  assert.ok(!calls.some((a) => isWrite(a, '760')));
+});
+
+test('#4794: under a GHE repo target a github.com tombstone link is never sent to gh pr view', () => {
+  const { ghApi } = makeGhApi({
+    reads: { 760: [readOk(prOpenedTombstoneMarker('otherRun', 'https://github.com/acme/w/pull/304'), 'sha760'), confirmRead()] },
+    writes: { 760: [writeOk] },
+  });
+  const { gh, calls: ghCalls } = makeGh({ prState: 'OPEN' });
+  const { deps, io } = baseDeps({ ghApi, gh });
+  deps.repoTarget = () => GHE_TARGET;
+
+  const code = run(['--run-id', 'r1', '--targets', '760'], deps);
+
+  assert.equal(code, 0, io.err.join(''));
+  assert.deepEqual(JSON.parse(io.out[0]).claimed, [760]);
+  assert.ok(!ghCalls.some((a) => a[0] === 'pr' && a[1] === 'view'), 'a link off the target host is rejected before any gh call');
+});
+
+test('#4794: under GH_HOST=mine.example on a bare slug the listing stays bare while the PR-url match follows mine.example', () => {
+  const MINE = { host: 'mine.example', ghRepo: 'acme/w' };
+  const listing = (url) => {
+    const { ghApi } = makeGhApi({
+      reads: { 770: [readOk(staleMarker(RUN), 'sha770'), confirmRead()] },
+      writes: { 770: [writeOk] },
+    });
+    const { gh, calls: ghCalls } = makeGh({ openPrs: [markedPrAt(url)] });
+    const { deps, io } = baseDeps({ ghApi, gh });
+    deps.repoTarget = () => MINE;
+    return { code: run(['--run-id', 'r1', '--targets', '770'], deps), io, ghCalls };
+  };
+
+  const hit = listing('https://mine.example/acme/w/pull/12');
+  assert.equal(hit.code, 3, hit.io.err.join(''));
+  assert.deepEqual(hit.ghCalls.filter(isPrList)[0].slice(0, 4), ['pr', 'list', '--repo', 'acme/w']);
+
+  const miss = listing(PR_URL);
+  assert.equal(miss.code, 0, miss.io.err.join(''));
+  assert.deepEqual(JSON.parse(miss.io.out[0]).claimed, [770], 'a github.com url is not the GH_HOST host');
+});
+
+test('#4794: with no repo target the listing is today\'s bare --repo acme/w and the match is github.com', () => {
+  const { ghApi } = makeGhApi({ reads: { 770: [readOk(staleMarker(RUN), 'sha770')] }, writes: {} });
+  const { gh, calls: ghCalls } = makeGh({ openPrs: [markedPr] });
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '770'], deps);
+
+  assert.equal(code, 3, io.err.join(''));
+  assert.deepEqual(ghCalls.filter(isPrList)[0], ['pr', 'list', '--repo', 'acme/w', '--state', 'open', '--json', 'url,body,isCrossRepository', '--limit', '1000']);
+});
+
+// The one host rule: the gate's admitted host decides, never a second origin read. `seamTarget`
+// models bin/claim-targets.js's realDeps.repoTarget with its own fallback read simulated as
+// timing out (`fallbackHost` null = resolveGhHost answers github.com): the gate's host, when it
+// passes one, must win over it.
+const { resolveRepoTarget } = require('../../../plugin/bin/lib/repo-resolve');
+const seamTarget = (argsSeen, fallbackHost = null) => (owner, repo, gateHost) => {
+  argsSeen.push([owner, repo, gateHost]);
+  return resolveRepoTarget({ owner, repo, originHost: gateHost || fallbackHost }, { env: {} });
+};
+const gheGate = () => ({ spec: { host: 'acme.ghe.com', owner: 'acme', repo: 'w' }, refusal: null });
+
+test('#4794: the gate\'s admitted GHE host reaches the repo target, so the stale listing and its PR-url match use it although a second origin read would answer github.com', () => {
+  const { ghApi, calls } = makeGhApi({ reads: { 770: [readOk(staleMarker(RUN), 'sha770')] }, writes: {} });
+  const { gh, calls: ghCalls } = makeGh({ openPrs: [markedPrAt(GHE_PR_URL)] });
+  const { deps, io } = baseDeps({ ghApi, gh });
+  const seen = [];
+  deps.gateOrigin = gheGate;
+  deps.repoTarget = seamTarget(seen);
+
+  const code = run(['--run-id', 'r1', '--targets', '770'], deps);
+
+  assert.equal(code, 3, io.err.join(''));
+  assert.deepEqual(seen, [['acme', 'w', 'acme.ghe.com']], 'the gate host is the third argument');
+  assert.deepEqual(JSON.parse(io.out[0]).inFlight, [{ issue: 770, link: GHE_PR_URL }]);
+  assert.deepEqual(ghCalls.filter(isPrList)[0].slice(0, 4), ['pr', 'list', '--repo', 'acme.ghe.com/acme/w']);
+  assert.ok(!calls.some((a) => isWrite(a, '770')));
+});
+
+test('#4794: the gate\'s admitted GHE host also decides the tombstone\'s PR-url match', () => {
+  const { ghApi, calls } = makeGhApi({
+    reads: { 760: [readOk(prOpenedTombstoneMarker('otherRun', GHE_PR_URL), 'sha760')] },
+    writes: {},
+  });
+  const { gh, calls: ghCalls } = makeGh({ prState: 'OPEN' });
+  const { deps, io } = baseDeps({ ghApi, gh });
+  deps.gateOrigin = gheGate;
+  deps.repoTarget = seamTarget([]);
+
+  const code = run(['--run-id', 'r1', '--targets', '760'], deps);
+
+  assert.equal(code, 3, io.err.join(''));
+  assert.deepEqual(JSON.parse(io.out[0]).inFlight, [{ issue: 760, link: GHE_PR_URL }]);
+  assert.ok(ghCalls.some((a) => a[0] === 'pr' && a[1] === 'view' && a[2] === GHE_PR_URL));
+  assert.ok(!calls.some((a) => isWrite(a, '760')));
+});
+
+test('#4794: a gate with no spec passes a null host so the seam keeps its own fallback read; a github.com spec passes github.com', () => {
+  for (const [gate, expected, listed, prUrl] of [
+    [() => ({ spec: null, refusal: null }), null, 'acme.ghe.com/acme/w', GHE_PR_URL],
+    [() => ({ spec: { host: 'github.com', owner: 'acme', repo: 'w' }, refusal: null }), 'github.com', 'acme/w', PR_URL],
+  ]) {
+    const { ghApi } = makeGhApi({ reads: { 770: [readOk(staleMarker(RUN), 'sha770')] }, writes: {} });
+    const { gh, calls: ghCalls } = makeGh({ openPrs: [markedPrAt(prUrl)] });
+    const { deps, io } = baseDeps({ ghApi, gh });
+    const seen = [];
+    deps.gateOrigin = gate;
+    deps.repoTarget = seamTarget(seen, expected === null ? 'acme.ghe.com' : null);
+
+    run(['--run-id', 'r1', '--targets', '770'], deps);
+
+    assert.deepEqual(seen, [['acme', 'w', expected]], io.err.join(''));
+    assert.equal(ghCalls.filter(isPrList)[0][3], listed);
+  }
 });

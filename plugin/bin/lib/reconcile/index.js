@@ -534,7 +534,7 @@ async function reconcileInner(opts, state) {
     } else {
       const r = await timePhase('release', () => releaseMerged({ cwd: root, prStates }));
       if (r.failure) {
-        result.skipped.push({ check: 'release', reason: r.failure });
+        result.skipped.push({ check: 'release', reason: r.failure, ...(r.detail ? { detail: r.detail } : {}) });
       } else {
         result.claims = r.released.map((c) => ({ ...c, action: 'released' }))
           .concat(r.skipped.map((s) => ({ ...s, action: 'skipped' })));
@@ -613,7 +613,7 @@ async function reconcileInner(opts, state) {
   if (checks.includes('remote-prune') && sharedFetchOk) {
     const r = timePhaseSync('remote-prune', () => pruneRemote({ cwd: root, integration, dryRun, skipFetch: true }));
     if (r.failure) {
-      result.skipped.push({ check: 'remote-prune', reason: r.failure });
+      result.skipped.push({ check: 'remote-prune', reason: r.failure, ...(r.detail ? { detail: r.detail } : {}) });
     } else {
       result.remoteBranches = r.entries;
     }

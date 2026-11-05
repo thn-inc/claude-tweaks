@@ -37,7 +37,7 @@
 // the compare-and-swap: nothing was released, retry) or a re-read that itself failed, so
 // the outcome could not be verified; 2 malformed
 // invocation, an origin host that is not a known GitHub host (refused before any gh
-// call, #4933; `GH_HOST={host}` opts in), or `gh` absent — the MCP path in _shared/github-write-transport.md is the
+// call, #4933; an exported `GH_HOST` opts in), or `gh` absent — the MCP path in _shared/github-write-transport.md is the
 // documented fallback there, deliberately not grown into this CLI. Logging is
 // bookkeeping, never a gate: the exit code always reflects the release outcome, never
 // whether decisions.md was written.
