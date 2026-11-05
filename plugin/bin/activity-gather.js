@@ -119,9 +119,8 @@ function run(argv, deps = realDeps) {
     // depends on the host alone, never on how the URL is spelled.
     const spec = originSpecOf(url);
     if (!spec) { deps.stderr(`activity-gather.js: no --repo and origin remote is not a GitHub URL: ${String(url).trim()}\n`); return 2; }
-    const host = spec.host;
-    if (host !== 'github.com') {
-      deps.stderr(`activity-gather.js: origin remote is on ${host}, not github.com — pass --repo <owner/name> for a github.com repository; other hosts are not supported\n`);
+    if (spec.host !== 'github.com') {
+      deps.stderr(`activity-gather.js: origin remote is on ${spec.host}, not github.com — pass --repo <owner/name> for a github.com repository; other hosts are not supported\n`);
       return 2;
     }
     repos = [repoSlug({ owner: spec.owner, repo: spec.repo })];
