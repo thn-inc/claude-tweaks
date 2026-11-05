@@ -1312,3 +1312,99 @@ test('the return reports every field', () => {
   assert.equal(result.truncated, 0);
   assert.ok(!result.markdown.includes('truncated:'));
 });
+
+const PLANNED = fact('proof:auth', 'not-run', { reason: 'planned in the plan, not yet run' });
+test('Reading B: a planned risk proof renders in Risk proofs as not verified, after the kept claims', () => {
+  const { markdown } = render([fact('flag:auth', 'passed'), fact('check:unit', 'passed'), PLANNED], [
+    claim('risk-proofs', 'Auth verified', ['flag:auth', 'proof:auth']),
+    claim('risk-proofs', 'Auth covered', ['flag:auth', 'check:unit']),
+  ]);
+  assert.match(markdown, /### Risk proofs\n- Auth covered \([^\n]*\)\n- Auth verified \(planned, not verified: cites `proof:auth` — not run: planned in the plan, not yet run\)/);
+});
+test('Reading B: one planned claim and no kept one does not render the no-kept-flags placeholder', () => {
+  const { markdown } = render([fact('flag:auth', 'passed'), PLANNED], [claim('risk-proofs', 'Auth verified', ['flag:auth', 'proof:auth'])]);
+  assert.doesNotMatch(markdown, /not applicable: no kept risk flags/);
+});
+test('Round 3 Reading A: a Risk-proofs line citing an unconfirmed flag is labelled, kept and planned alike', () => {
+  const UNCONFIRMED = fact('flag:auth', 'passed', { unconfirmed: true });
+  const { markdown } = render([UNCONFIRMED, fact('check:unit', 'passed'), PLANNED], [
+    claim('risk-proofs', 'Auth covered', ['flag:auth', 'check:unit']),
+    claim('risk-proofs', 'Auth verified', ['flag:auth', 'proof:auth']),
+  ]);
+  assert.match(markdown, /### Risk proofs\n- Auth covered \([^\n]*\) \(flag unconfirmed\)\n- Auth verified \(planned, not verified: [^\n]*\) \(flag unconfirmed\)\n/);
+});
+test('Round 3 Reading A: a confirmed flag gets no label, and claim text cannot forge one', () => {
+  const { markdown } = render([fact('flag:auth', 'passed'), fact('check:unit', 'passed')], [
+    claim('risk-proofs', 'Auth covered (flag unconfirmed)', ['flag:auth', 'check:unit']),
+  ]);
+  const line = markdown.split('\n').find((l) => l.startsWith('- Auth covered'));
+  assert.ok(line && !/\) \(flag unconfirmed\)$/.test(line), line);
+});
+test('a kept flag no claim cites is listed, labelled when unconfirmed, and never hidden behind the placeholder', () => {
+  const { markdown } = render([fact('flag:auth', 'passed', { unconfirmed: true }), fact('flag:migrations', 'passed')], []);
+  assert.match(markdown, /### Risk proofs\n- auth: no proof shown \(flag unconfirmed\)\n- migrations: no proof shown\n/);
+  assert.doesNotMatch(markdown, /not applicable: no kept risk flags/);
+});
+test('truncation drops kept Risk-proofs items and never a kept flag no claim cites', () => {
+  const claims = Array.from({ length: 400 }, (_, i) => claim('risk-proofs', `Auth covered ${i} ${'x'.repeat(200)}`, ['flag:auth', 'check:unit']));
+  const { markdown, truncated } = render(
+    [fact('flag:auth', 'passed'), fact('flag:migrations', 'passed', { unconfirmed: true }), fact('check:unit', 'passed')],
+    claims,
+  );
+  assert.ok(truncated > 0, 'the fixture must overflow the cap');
+  const lines = sectionLines(markdown, 'Risk proofs');
+  assert.ok(lines.length < 400, `kept items were dropped: ${lines.length}`);
+  assert.ok(lines.includes('- migrations: no proof shown (flag unconfirmed)'), lines.slice(-3).join('\n'));
+});
+test('a flag cited only by a claim that moved to Couldn\'t test is listed in Risk proofs, labelled, and the moved line is not', () => {
+  const { markdown } = render(
+    [fact('flag:auth', 'passed', { unconfirmed: true }), fact('story:login', 'skipped', { reason: 'no browser' })],
+    [claim('risk-proofs', 'Auth verified', ['flag:auth', 'story:login'])],
+  );
+  assert.deepEqual(sectionLines(markdown, 'Risk proofs'), ['- auth: no proof shown (flag unconfirmed)']);
+  assert.ok(sectionLines(markdown, "Couldn't test").includes('- Auth verified (moved: cites `story:login` — skipped: no browser)'));
+});
+test('a flag cited only by a claim that moved to Tried to break is listed in Risk proofs, labelled, and the moved line is not', () => {
+  const { markdown } = render(
+    [fact('flag:auth', 'passed', { unconfirmed: true }), fact('story:login', 'failed', { reason: 'bad token' })],
+    [claim('risk-proofs', 'Auth verified', ['flag:auth', 'story:login'])],
+  );
+  assert.deepEqual(sectionLines(markdown, 'Risk proofs'), ['- auth: no proof shown (flag unconfirmed)']);
+  assert.ok(sectionLines(markdown, 'Tried to break').includes('- Auth verified (moved: cites `story:login` — failed: bad token)'));
+});
+test('the no-kept-flags placeholder renders only when no flag fact exists', () => {
+  const { markdown } = render([fact('check:unit', 'passed')], []);
+  assert.match(markdown, /### Risk proofs\n[^\n]*not applicable: no kept risk flags/);
+});
+test('finding 5: a widened flag\'s text follows its no-proof-shown note, screened, and survives truncation', () => {
+  const widened = (slug, extra = {}) => fact(`flag:${slug}`, 'passed', { text: 'unreadable flag line', ...extra });
+  const { markdown } = render([widened('migrations', { unconfirmed: true }), widened('auth', { text: 'token=ghp_abcdefghijklmnopqrstuvwxyz0123456789' }), fact('flag:public-contract', 'passed')], []);
+  assert.deepEqual(sectionLines(markdown, 'Risk proofs'), [
+    '- migrations: no proof shown — unreadable flag line (flag unconfirmed)',
+    '- auth: no proof shown — (text withheld: credential-shaped)',
+    '- public-contract: no proof shown',
+  ]);
+  const claims = Array.from({ length: 400 }, (_, i) => claim('risk-proofs', `Auth covered ${i} ${'x'.repeat(200)}`, ['flag:auth', 'check:unit']));
+  const big = render([fact('flag:auth', 'passed'), widened('migrations'), fact('check:unit', 'passed')], claims);
+  assert.ok(big.truncated > 0, 'the fixture must overflow the cap');
+  assert.ok(sectionLines(big.markdown, 'Risk proofs').includes('- migrations: no proof shown — unreadable flag line'));
+});
+test('finding 6: with --flags in partial, Risk proofs says the flags were not read, never no kept flags', () => {
+  const { markdown } = render([fact('check:unit', 'passed')], [], { extra: { partial: ['--flags input not read — treated as absent'] } });
+  assert.deepEqual(sectionLines(markdown, 'Risk proofs'), ['risk flags not read: the --flags input did not read, so kept flags are unknown']);
+  assert.doesNotMatch(markdown, /no kept risk flags/);
+  const other = render([fact('check:unit', 'passed')], [], { extra: { partial: ['--proofs input not read — treated as absent'] } });
+  assert.deepEqual(sectionLines(other.markdown, 'Risk proofs'), ['not applicable: no kept risk flags']);
+});
+
+test('with --proofs in partial, an uncited kept flag says its proofs were not read, never no proof shown', () => {
+  const flags = [fact('flag:auth', 'passed', { unconfirmed: true }), fact('flag:migrations', 'passed', { text: 'unreadable flag line' })];
+  const { markdown } = render(flags, [], { extra: { partial: ['--proofs input not read — treated as absent'] } });
+  assert.deepEqual(sectionLines(markdown, 'Risk proofs'), [
+    '- auth: proofs not read (the --proofs input did not read) (flag unconfirmed)',
+    '- migrations: proofs not read (the --proofs input did not read) — unreadable flag line',
+  ]);
+  assert.doesNotMatch(markdown, /no proof shown/);
+  const unrelated = render(flags, [], { extra: { partial: ['--flags input not read — treated as absent'] } });
+  assert.ok(sectionLines(unrelated.markdown, 'Risk proofs').every((line) => line.includes(': no proof shown')));
+});

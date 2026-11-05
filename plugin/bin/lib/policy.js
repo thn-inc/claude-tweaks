@@ -10,7 +10,9 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { parseFlatLines, RENAMED_KEYS, resolveValue } = require('./policy-schema');
+const {
+  parseFlatLines, RENAMED_KEYS, resolveValue, resolvePolicyKeys,
+} = require('./policy-schema');
 
 function readPolicyFile(repoRoot) {
   try {
@@ -103,6 +105,35 @@ function isControlModeOn(value) {
   return value === 'on';
 }
 
+const controlModeOff = () => ({ controlMode: false, extraCategories: [], pathGlobs: {}, globsInvalid: false });
+
+// The risk-flag policy (#4618): repoRoot, { readFile } -> { controlMode, extraCategories,
+// pathGlobs, globsInvalid }, the extras bin/lib/issues/risk-flag-classify.js and Check G
+// take. `.claude-tweaks/policy.yml` under repoRoot; an absent file (ENOENT/ENOTDIR) is
+// control mode off and any other read error throws — unlike readPolicyFile's null, since
+// "no extra categories" would read a policy slug as unknown. `risk-categories` and
+// `risk-path-globs` are consulted only with control mode on (isControlModeOn), each
+// through resolvePolicyKeys; a rejected `risk-path-globs` block reads `globsInvalid: true`
+// with no globs.
+function readRiskPolicy(repoRoot, deps) {
+  const { readFile = fs.readFileSync } = deps || {};
+  let policyRaw;
+  try {
+    policyRaw = readFile(path.join(repoRoot, '.claude-tweaks', 'policy.yml'), 'utf8');
+  } catch (error) {
+    if (error && (error.code === 'ENOENT' || error.code === 'ENOTDIR')) return controlModeOff();
+    throw error;
+  }
+  const mode = resolvePolicyKeys(['control-mode'], { policyRaw })['control-mode'];
+  if (!isControlModeOn(mode.value)) return controlModeOff();
+  const resolved = resolvePolicyKeys(['risk-categories', 'risk-path-globs'], { policyRaw });
+  const categories = resolved['risk-categories'].value;
+  const extraCategories = Array.isArray(categories) ? categories : String(categories).split(',').map((slug) => slug.trim()).filter(Boolean);
+  const globs = resolved['risk-path-globs'];
+  const globsInvalid = globs.invalid === true;
+  return { controlMode: true, extraCategories, pathGlobs: globsInvalid || globs.value === null ? {} : globs.value, globsInvalid };
+}
+
 // `commit-scope` (#3298): the constant Conventional-Commits scope token
 // bin/compose-subject.js falls back to. Read raw (trimmed; blank -> null),
 // deliberately not through resolveValue — that would silently turn a bad
@@ -184,5 +215,5 @@ function resolvePortServices(repoRoot) {
 
 module.exports = {
   isWorktreeAlwaysOn, resolveWorktreeAlways, readIntegrationBranch, readListKey, readCommitScope, resolvePortServices, readGhTimeoutMs,
-  readGitTimeoutMs, readEfficiencyCeilings, isControlModeOn,
+  readGitTimeoutMs, readEfficiencyCeilings, isControlModeOn, readRiskPolicy,
 };

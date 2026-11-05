@@ -13,7 +13,7 @@ const LOCAL_START = '<!-- acceptance-packet:start -->';
 const LOCAL_END = '<!-- acceptance-packet:end -->';
 
 const FACT_KINDS = Object.freeze([
-  'change', 'check', 'story', 'finding', 'link', 'recording', 'flag', 'decision', 'deploy',
+  'change', 'check', 'story', 'finding', 'link', 'recording', 'flag', 'decision', 'deploy', 'proof',
 ]);
 const FACT_STATUSES = Object.freeze(['passed', 'failed', 'skipped', 'not-run']);
 const CLAIM_SECTIONS = Object.freeze([
@@ -22,13 +22,14 @@ const CLAIM_SECTIONS = Object.freeze([
 
 // The kinds a claim in each section may cite. risk-proofs also needs at least
 // one `flag` and at least one proof fact among its refs; those rules belong to the
-// validator.
+// validator. `proof` is the planned-proof kind (#4618): a proof a plan promised for a risk flag,
+// carrying its own status, so a risk proof citing only proofs is filed by it, not asserted.
 const SECTION_KINDS = Object.freeze({
   'what-changed': Object.freeze(['change']),
   'test-guide': Object.freeze(['story', 'link']),
   'tried-to-break': Object.freeze(['story', 'check']),
   'least-confident': Object.freeze(['finding']),
-  'risk-proofs': Object.freeze(['flag', 'check', 'story', 'recording', 'link']),
+  'risk-proofs': Object.freeze(['flag', 'check', 'story', 'recording', 'link', 'proof']),
 });
 
 // Render order.
@@ -75,6 +76,11 @@ function encodeFactKey(raw) {
   return encoded;
 }
 
+// The `partial` note gather adds for a named input that will not read: written by
+// acceptance-packet.js, and read by the renderer, which tells a lost `--flags` input
+// from "no kept risk flags".
+const notReadNote = (flag) => `${flag} input not read — treated as absent`;
+
 const VERIFICATION_WORDS = Object.freeze(['tested', 'verified', 'works']);
 const VERIFICATION_CLAIM_RE = new RegExp(`\\b(${VERIFICATION_WORDS.join('|')})\\b`, 'i');
 
@@ -94,6 +100,7 @@ module.exports = Object.freeze({
   CREDENTIAL_KEYS,
   FACT_ID_RE,
   encodeFactKey,
+  notReadNote,
   VERIFICATION_WORDS,
   VERIFICATION_CLAIM_RE,
 });

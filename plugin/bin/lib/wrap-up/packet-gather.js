@@ -447,18 +447,24 @@ function deployFact(deploy) {
   return { id: 'deploy:status', kind: 'deploy', status: 'passed', source: 'deploy', text, target, live };
 }
 
-// A pass-through record may already spell its id with the kind.
-function passThroughFacts(kind, source, entries) {
+// A pass-through record may already spell its id with the kind. The status and reason come
+// from the call, never from the entry. Only a flag entry's `unconfirmed: true` is carried on.
+function passThroughFacts(kind, source, entries, { status = 'passed', reason } = {}) {
   const prefix = `${kind}:`;
-  return (entries ?? []).map(({ id, text, url }) => ({
+  return (entries ?? []).map(({ id, text, url, unconfirmed }) => ({
     id: `${prefix}${encodeFactKey(id.startsWith(prefix) ? id.slice(prefix.length) : id)}`,
     kind,
-    status: 'passed',
+    status,
+    ...(reason === undefined ? {} : { reason }),
     source,
     ...(text === undefined ? {} : { text }),
-    ...(url === undefined ? {} : { url }),
+    // A proof fact is plan text with status not-run, so it carries no link.
+    ...(url === undefined || kind === 'proof' ? {} : { url }),
+    ...(kind === 'flag' && unconfirmed === true ? { unconfirmed: true } : {}),
   }));
 }
+
+const PROOF_NOT_RUN_REASON = 'planned in the plan, not yet run';
 
 function unmatchedAcKeys(acResults, criteria) {
   if (!isObject(acResults)) return [];
@@ -510,6 +516,7 @@ function gatherPacketFacts(inputs) {
     deployFact(inputs.deploy),
     ...passThroughFacts('recording', 'recordings', inputs.recordings),
     ...passThroughFacts('flag', 'flags', inputs.flags),
+    ...passThroughFacts('proof', 'proofs', inputs.proofs, { status: 'not-run', reason: PROOF_NOT_RUN_REASON }),
     ...passThroughFacts('decision', 'decision-items', inputs.decisions),
   ];
 

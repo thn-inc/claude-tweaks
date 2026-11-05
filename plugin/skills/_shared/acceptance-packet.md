@@ -20,7 +20,7 @@ it lands, the section's empty line stands in.
 4. **Couldn't test** — placed rows and moved claims. Empty: `not applicable: every expected check ran`.
 5. **Tried to break** — kept claims, moved claims and placed rows. Empty: `not applicable: no negative stories or failures ran`.
 6. **Least confident** — claims citing `finding` facts. Empty: `not applicable: no low-confidence review findings`.
-7. **Risk proofs** — owner: the risk-flag record. This section always renders, its placeholder standing in when no risk flag was kept (Decision Q10). Empty: `not applicable: no kept risk flags`.
+7. **Risk proofs** — owner: the risk-flag record. This section always renders, its placeholder standing in when no risk flag was kept (Decision Q10). Lists kept proofs, then `planned, not verified` lines, then `- {slug}: no proof shown` for a kept flag no surviving claim cites (a note, never omitted, followed by ` — {text}` when the flag fact carries why it was widened; `proofs not read (the --proofs input did not read)` in place of `no proof shown` when `--proofs` is in `partial`, as when `risk-flags.js facts` read no plan), with `(flag unconfirmed)` after any line citing an unconfirmed flag. Empty: `not applicable: no kept risk flags`, or, when `--flags` is in `partial`, `risk flags not read: the --flags input did not read, so kept flags are unknown`.
 8. **Decisions left for you** — owner: the control-mode records. One line per `decision` fact, omitted when empty, heading included.
 9. **Deploy status** — owner: the dev-target record. The deploy fact's text. With no deploy record: `target: local`.
 
@@ -88,9 +88,9 @@ negative stories and failures only, and a routine pass never renders there.
 
 **The facts document** is `{ schemaVersion, record, surface, allowedHosts, partial[], refused[], facts[] }`.
 A fact is `{ id, kind, status, reason?, source }` plus the optional render fields `text`, `url`,
-`command`, `label`, `negative`, `live` and `target`.
+`command`, `label`, `negative`, `live` and `target`, plus `unconfirmed` on a `flag` fact (carried only when `true`).
 
-**Fact kinds:** `change`, `check`, `story`, `finding`, `link`, `recording`, `flag`, `decision`, `deploy`.
+**Fact kinds:** `change`, `check`, `story`, `finding`, `link`, `recording`, `flag`, `decision`, `deploy`, `proof`.
 
 **Fact statuses:** `passed`, `failed`, `skipped`, `not-run`.
 
@@ -108,7 +108,7 @@ limits the kinds it may cite:
 | `test-guide` | `story`, `link` |
 | `tried-to-break` | `story`, `check` |
 | `least-confident` | `finding` |
-| `risk-proofs` | `flag`, `check`, `story`, `recording`, `link` |
+| `risk-proofs` | `flag`, `check`, `story`, `recording`, `link`, `proof` |
 
 A `risk-proofs` claim also needs at least one `flag` and at least one proof fact among its refs. Later
 records extend the schema only by adding rows to the table.
@@ -139,7 +139,10 @@ A Tried to break claim must cite a failed fact or a negative story that ran and 
 skipped or not-run negative stories moves to Couldn't test whatever its wording (Decision Q12): the
 plain-wording exemption covers Test-guide manual steps only. One citing neither is dropped.
 
-A risk proof citing no proof fact is dropped. A risk proof citing a failed or skipped `check` or `story`
+A risk proof citing no proof fact is dropped. A risk proof citing only `proof` facts besides its flags
+routes on them: a failed one moves it to Tried to break, a skipped or not-run one keeps it in Risk proofs
+labelled `planned, not verified`, and only passed ones keep it as proved. A risk proof citing a failed or
+skipped `check` or `story`
 proof routes to Tried to break or Couldn't test whatever its wording, because a proof asserts itself.
 
 ## The expected check set
@@ -196,7 +199,9 @@ copied from the facts file and inventing none.
 
 The snapshot exists because the verify and QA reports are not in the run dir, and Step 4 can run after
 the worktree holding them is gone. It copies them, the QA pass stamp, `head` and `mergeBase` to
-`{run-dir}/packet-inputs/` under a `manifest.json`; it is an input to gather, never a packet copy any
+`{run-dir}/packet-inputs/` under a `manifest.json` and, given `--plan`, the run's plan, which
+`risk-flags.js facts` reads at Step 4 for the `--proofs` input, only when the manifest's `files.plan` is
+`copied`; it is an input to gather, never a packet copy any
 reader consults. The working copy lives in session temp and is never read after the run: the facts,
 narrative, rendered markdown and dropped list are session-temp paths (`_shared/session-tmp-root.md`)
 passed to the CLI.

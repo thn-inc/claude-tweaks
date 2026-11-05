@@ -314,7 +314,7 @@ When mechanizing a prose heuristic into a deterministic check:
     blanks comments to spaces before its callers' scans count tokens. Its
     callers, by test-file stem: `accept-label-reader`, `backfill-cli`, `below-floor-parent-close`, `cli`, `exit-code`, `gh-host-seam`, `git-status-optional-locks`,
     `hooks-harness-refusal`, `hooks-pre-tool-use`, `markdown-blocks`, `owner-pid-probe`, `path-containment`, `path-guard`, `phase-exit`, `phase-exit-call-sites`, `porcelain-cwd-compare`, `post-merge`,
-    `precondition`, `raw-markdown-read`, `release-notes`, `run-liveness-callers`, `staged-id-producers`, `subprocess-timing`, `wall-clock-budget` and
+    `precondition`, `raw-markdown-read`, `release-notes`, `risk-flags-writer`, `run-liveness-callers`, `staged-id-producers`, `subprocess-timing`, `wall-clock-budget` and
     `windows-hide-spawn`.
     `tests/strip-comments-callers-twin.test.js` pins this list and the helper header's to the
     tree. It models regex literals (#3585); its residual
@@ -367,7 +367,7 @@ When mechanizing a prose heuristic into a deterministic check:
     arm, classified by the thrown error's shape, and pin "main probe times out, precondition probe
     succeeds" with its own assertion (`tests/verify-run-bookends.test.js`'s
     `catFileTimeoutRevParseOk`).
-Items 17-27 live in `fix-shape-late-items.md` in this skill's directory, with their numbers
+Items 17-28 live in `fix-shape-late-items.md` in this skill's directory, with their numbers
 kept. Read it when your case matches one of these:
 
 17. **A start/end snapshot guard sees only the window between its two reads, and each value it records has an unsafe direction.**
@@ -381,6 +381,7 @@ kept. Read it when your case matches one of these:
 25. **An unanchored extractor with a narrow character class truncates instead of failing, so an out-of-class input yields a confident wrong value, not "no match".**
 26. **A recogniser that must ignore a marker shown as code owes a rule the host format guarantees, not a home-made model of that format.**
 27. **A parse problem that hides content owes its own report, found by a second read under the relaxed reading and credited only to a cause the author can edit.**
+28. **A producer handing a file to another tool owes its parse verdict across that boundary, because the consumer reads the file, not the producer's envelope.**
 
 ## When to use
 

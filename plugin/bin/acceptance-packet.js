@@ -25,6 +25,10 @@
 // `{flag} input not read` note this file adds, so a lost input is never read as an
 // empty one. Snapshot copies live in `{run}/packet-inputs/`, and gather reads a copy
 // only when the manifest says `copied`, since a later snapshot leaves earlier files.
+// Given --plan, snapshot also copies the run's plan there as `plan.md` (text, not JSON)
+// for `risk-flags.js facts`, which gather itself never reads. A later snapshot without a
+// plan copy leaves an earlier `plan.md`, so read it only when the manifest's `files.plan`
+// is `copied`.
 'use strict';
 
 const { execFileSync } = require('child_process');
@@ -46,7 +50,7 @@ const { readQaStamp, QA_STAMP_NAME } = require('./lib/verify/qa-stamp');
 const { gitDir } = require('./lib/verify/report');
 const { parseNameStatusZ } = require('./lib/git-z');
 const {
-  CLAIM_SECTIONS, MAX_PACKET_CHARS, PACKET_MARKER, SCHEMA_VERSION,
+  CLAIM_SECTIONS, MAX_PACKET_CHARS, PACKET_MARKER, SCHEMA_VERSION, notReadNote,
 } = require('./lib/wrap-up/packet-contract');
 const {
   gatherPacketFacts,
@@ -62,10 +66,10 @@ const { renderPacket } = require('./lib/wrap-up/packet-render');
 const { REASON_KINDS } = require('./lib/wrap-up/packet-validate');
 
 const USAGE = [
-  'usage: acceptance-packet.js snapshot --run <dir> --base <ref>',
+  'usage: acceptance-packet.js snapshot --run <dir> --base <ref> [--plan <file>]',
   '       acceptance-packet.js gather --record <n> --out <file> [--run <dir>] [--spec <file>] [--report <file>] [--scope <file>]',
   '         [--stories-dir <dir>] [--story-results <file>] [--ac-results <file>] [--base <ref>] [--head <ref>] [--links <file>]',
-  '         [--surface <s>] [--local-base-url <u>] [--dev-base-url <u>] [--deploy <file>] [--recordings <file>] [--flags <file>] [--decision-items <file>]',
+  '         [--surface <s>] [--local-base-url <u>] [--dev-base-url <u>] [--deploy <file>] [--recordings <file>] [--flags <file>] [--proofs <file>] [--decision-items <file>]',
   '       acceptance-packet.js render --facts <file> --narrative <file> --out <file> [--dropped-out <file>] [--observation-plan <file>] [--poster <text>]',
   '       acceptance-packet.js post --record <n> --body-file <file> [--pr <n>] [--label <name>] [--repo <owner/name>]',
   '       acceptance-packet.js local --record-file <file> --body-file <file> [--pending]',
@@ -75,12 +79,12 @@ const USAGE = [
 ].join('\n');
 
 const SUBCOMMANDS = Object.freeze({
-  snapshot: { required: ['--run', '--base'], optional: [] },
+  snapshot: { required: ['--run', '--base'], optional: ['--plan'] },
   gather: {
     required: ['--record', '--out'],
     optional: [
       '--run', '--spec', '--report', '--scope', '--stories-dir', '--story-results', '--ac-results', '--base', '--head', '--links',
-      '--surface', '--local-base-url', '--dev-base-url', '--deploy', '--recordings', '--flags', '--decision-items',
+      '--surface', '--local-base-url', '--dev-base-url', '--deploy', '--recordings', '--flags', '--proofs', '--decision-items',
     ],
   },
   render: { required: ['--facts', '--narrative', '--out'], optional: ['--dropped-out', '--observation-plan', '--poster'] },
@@ -94,6 +98,7 @@ const MANIFEST = 'manifest.json';
 const VERIFY_REPORT_COPY = 'verify-report.json';
 const QA_REPORT_COPY = 'qa-report.json';
 const QA_STAMP_COPY = 'qa-stamp.json';
+const PLAN_COPY = 'plan.md';
 const VERIFY_REPORT_SOURCE = path.join('claude-tweaks-verify', 'report.json');
 const QA_REPORTS_DIR = path.join('.claude-tweaks', 'artifacts', 'screenshots', 'qa');
 const QA_REPORT_NAME = 'report.json';
@@ -111,7 +116,6 @@ const flagKey = (flag) => flag.slice(2).replace(/-([a-z])/g, (_, letter) => lett
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const messageOf = (err) => (err && err.message ? err.message : String(err));
 const isAbsentError = (err) => err?.code === 'ENOENT' || err?.code === 'ENOTDIR';
-const notReadNote = (flag) => `${flag} input not read — treated as absent`;
 
 function parseArgs(argv) {
   const [command, ...rest] = argv;
@@ -259,6 +263,15 @@ function readSource(deps, file) {
   }
 }
 
+// A text source (the plan): any text copies as it is read, so a plan is never judged by its content.
+function readTextSource(deps, file) {
+  try {
+    return { status: 'copied', text: deps.readFile(file) };
+  } catch (err) {
+    return { status: isAbsentError(err) ? 'absent' : 'unreadable' };
+  }
+}
+
 function stampSource(gitDirPath, head, deps) {
   if (!gitDirPath) return { status: 'absent' };
   const stamp = readQaStamp(gitDirPath, readerOf(deps));
@@ -330,17 +343,25 @@ function runSnapshot(opts, deps) {
   const verifyReport = gitDirPath ? readSource(deps, path.join(gitDirPath, VERIFY_REPORT_SOURCE)) : { status: 'absent' };
   const qaStamp = stampSource(gitDirPath, head, deps);
   const qaReport = qaReportSource(qaStamp.stamp, target.dir, deps);
+  const plan = opts.plan === undefined ? null : readTextSource(deps, opts.plan);
   const manifest = {
     schemaVersion: SCHEMA_VERSION,
     head,
     mergeBase,
-    files: { verifyReport: verifyReport.status, qaReport: qaReport.status, qaStamp: qaStamp.status },
+    files: {
+      verifyReport: verifyReport.status,
+      qaReport: qaReport.status,
+      qaStamp: qaStamp.status,
+      ...(plan === null ? {} : { plan: plan.status }),
+    },
   };
 
   const dir = path.join(target.dir, PACKET_INPUTS);
   try {
     deps.mkdir(dir);
-    for (const [name, source] of [[VERIFY_REPORT_COPY, verifyReport], [QA_REPORT_COPY, qaReport], [QA_STAMP_COPY, qaStamp]]) {
+    const copies = [[VERIFY_REPORT_COPY, verifyReport], [QA_REPORT_COPY, qaReport], [QA_STAMP_COPY, qaStamp]];
+    if (plan !== null) copies.push([PLAN_COPY, plan]);
+    for (const [name, source] of copies) {
       if (source.status === 'copied') deps.writeAtomic(path.join(dir, name), source.text);
     }
     deps.writeAtomic(path.join(dir, MANIFEST), `${JSON.stringify(manifest, null, 2)}\n`);
@@ -455,6 +476,8 @@ const isEntryList = (value) => Array.isArray(value) && value.every((entry) => (
   isObject(entry) && typeof entry.id === 'string' && entry.id !== ''
   && ['text', 'url', 'command', 'label'].every((field) => optionalString(entry[field]))
 ));
+const isFlagEntryList = (value) => isEntryList(value)
+  && value.every((entry) => entry.unconfirmed === undefined || typeof entry.unconfirmed === 'boolean');
 const isDeploy = (value) => isObject(value) && typeof value.target === 'string';
 
 function runGather(opts, deps) {
@@ -511,7 +534,8 @@ function gatherToFile(opts, deps) {
       links: optionalJson('--links', isEntryList),
       deploy: optionalJson('--deploy', isDeploy),
       recordings: optionalJson('--recordings', isEntryList),
-      flags: optionalJson('--flags', isEntryList),
+      flags: optionalJson('--flags', isFlagEntryList),
+      proofs: optionalJson('--proofs', isEntryList),
       decisions: optionalJson('--decision-items', isEntryList),
       decisionsText: runDir === null ? null : readTextOrNull(deps, path.join(runDir, 'decisions.md')),
       lowConfidence: runDir === null ? null : readLowConfidence(runDir, deps, notes),
