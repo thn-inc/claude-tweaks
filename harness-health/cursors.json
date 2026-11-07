@@ -262,5 +262,9 @@
   "skill:lock-race-test-seam": {
     "lastAuditedSha": null,
     "lastAuditedMs": 1793784417950
+  },
+  "skill:blocker-surface-parity": {
+    "lastAuditedSha": null,
+    "lastAuditedMs": 1794028490451
   }
 }
