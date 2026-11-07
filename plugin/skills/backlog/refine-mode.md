@@ -1,4 +1,4 @@
-# Backlog — Refine Mode
+﻿# Backlog — Refine Mode
 
 The comprehensive "ensure every issue has the right labels" sweep: `priority:*`/`**Related:**` suggestions plus `auto:build`/`auto:merge` grants, presented together and confirmed once.
 
@@ -80,8 +80,8 @@ gh issue list --label ready --state open --json number,title,labels,updatedAt --
 node -e "
   const { parseRecordFacets } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
   const issues = require('$ST_BACKLOG_REFINE_READY');
-  if (issues.length === Number(process.env.FETCH_LIMIT)) {
-    console.error('WARNING: fetched exactly ' + issues.length + ' ready-labeled issues (backlog-fetch-limit) — there may be more. See .claude-tweaks/policy.yml.');
+  if (issues.length >= Math.min(Number(process.env.FETCH_LIMIT), 1000)) {
+    console.error('WARNING: fetched exactly ' + issues.length + ' ready-labeled issues (backlog-fetch-limit or GitHub's 1000-result ceiling) — there may be more. See .claude-tweaks/policy.yml.');
   }
   const originFilter = process.env.BACKLOG_ORIGIN || '';
   let rows = issues.map((i) => ({ ...i, facets: parseRecordFacets(i.labels) }));
