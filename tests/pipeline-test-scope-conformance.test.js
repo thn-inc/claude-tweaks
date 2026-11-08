@@ -105,7 +105,7 @@ test('worktree-adopt-freshness.md no longer quotes the retired baseline verifica
 
 const TASK_PROMPT = path.join(PLUGIN, 'skills', 'dispatch', 'task-prompt.md');
 const EXPRESS_PROMPT = path.join(PLUGIN, 'skills', 'dispatch', 'express-prompt.md');
-const NPM_TEST_SPAN = /`npm test`/;
+const NPM_TEST_SPAN = /\bnpm test\b/;
 const PROJECT_TEST_CMD = /run the project's test command and every other long-running command/;
 // Frozen pre-change bytes (the replaced Foreground paragraph head) — the checks' go-red control.
 const PRE_CHANGE_FOREGROUND = 'Foreground execution (required): run `npm test` and every other long-running command in the\nforeground of this turn';
@@ -138,4 +138,26 @@ test("the Foreground project-test-command fact can go red (#5117)", () => {
 
 test("task-prompt.md's stamp-versus-raw-log sentence names a test-command log (#5117)", () => {
   assert.match(readText(TASK_PROMPT).replace(/\s+/g, ' '), /A raw test-command log is not that artifact/);
+});
+
+const MANIFEST = path.join(__dirname, '..', 'tools', 'upstream-drift', 'manifest.yml');
+const SUPERPOWERS_PINS = [
+  ['skills/subagent-driven-development/implementer-prompt.md', 'full suite once before committing, not after every edit.'],
+  ['skills/test-driven-development/SKILL.md', "means the project's suite, not just your file."],
+  ['skills/using-git-worktrees/SKILL.md', '## Step 3: Verify Clean Baseline'],
+  ['skills/executing-plans/SKILL.md', 'make it pass, then run the whole suite.'],
+];
+
+test('manifest.yml pins every superpowers line #5117 overrides', () => {
+  const lines = readText(MANIFEST).split('\n').map((l) => l.trimEnd());
+  for (const [upstream, mustMatch] of SUPERPOWERS_PINS) {
+    const hits = lines.map((l, i) => (l.includes(`must-match: "${mustMatch}"`) ? i : -1)).filter((i) => i !== -1);
+    assert.equal(hits.length, 1, `must-match "${mustMatch}" should appear exactly once`);
+    assert.equal(lines[hits[0] - 1].trim(), `upstream-path: "${upstream}"`, `"${mustMatch}" must follow upstream-path ${upstream}`);
+  }
+  const sp = lines.findIndex((l) => l === '  - name: superpowers');
+  const block = lines.slice(sp, sp + 140).join('\n');
+  for (const p of ['skills/test-driven-development/SKILL.md', 'skills/executing-plans/SKILL.md']) {
+    assert.ok(block.includes(`      - "${p}"`), `contract-paths lists ${p}`);
+  }
 });
