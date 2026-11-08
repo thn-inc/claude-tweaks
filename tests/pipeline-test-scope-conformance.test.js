@@ -86,7 +86,12 @@ test('the baseline-skip facts can go red', () => {
 
 test("worktree-setup.md step 2 names the invocation's baseline-less scope (#5117)", () => {
   const proc = procedureOf();
-  const step2 = proc.slice(proc.indexOf('\n2. '), proc.indexOf('\n3. '));
+  const from = proc.indexOf('\n2. ');
+  const to = proc.indexOf('\n3. ');
+  assert.notEqual(from, -1, 'Procedure step 2 ("\\n2. ") was not found');
+  assert.notEqual(to, -1, 'Procedure step 3 ("\\n3. ") was not found');
+  assert.ok(to > from, 'Procedure step 3 must come after step 2');
+  const step2 = proc.slice(from, to);
   assert.match(step2, /in a pipeline, minus its baseline run \(step 3\)/);
 });
 
@@ -96,4 +101,41 @@ test("build-options.md's Git row says the baseline run is skipped inside a pipel
 
 test('worktree-adopt-freshness.md no longer quotes the retired baseline verification (#5117)', () => {
   assert.doesNotMatch(readText(ADOPT_FRESHNESS), /baseline\s+test verification/);
+});
+
+const TASK_PROMPT = path.join(PLUGIN, 'skills', 'dispatch', 'task-prompt.md');
+const EXPRESS_PROMPT = path.join(PLUGIN, 'skills', 'dispatch', 'express-prompt.md');
+const NPM_TEST_SPAN = /`npm test`/;
+const PROJECT_TEST_CMD = /run the project's test command and every other long-running command/;
+// Frozen pre-change bytes (the replaced Foreground paragraph head) — the checks' go-red control.
+const PRE_CHANGE_FOREGROUND = 'Foreground execution (required): run `npm test` and every other long-running command in the\nforeground of this turn';
+
+test('no shipped dispatch prompt instructs a literal npm test (#5117)', () => {
+  for (const file of [BUILD_DISPATCH, TASK_PROMPT, EXPRESS_PROMPT]) {
+    assert.doesNotMatch(readText(file), NPM_TEST_SPAN, `${path.basename(file)} still names a literal \`npm test\``);
+  }
+});
+
+test('the npm test absence check can go red (#5117)', () => {
+  assert.match(PRE_CHANGE_FOREGROUND, NPM_TEST_SPAN);
+});
+
+const foregroundParagraphs = (file) => readText(file).split(/\n\s*\n/)
+  .filter((p) => p.startsWith('Foreground execution (required):'))
+  .map((p) => p.replace(/\s+/g, ' '));
+
+test("every dispatch prompt Foreground paragraph names the project's test command (#5117)", () => {
+  for (const file of [TASK_PROMPT, EXPRESS_PROMPT]) {
+    const paras = foregroundParagraphs(file);
+    assert.equal(paras.length, 2, `${path.basename(file)} Foreground paragraph count`);
+    for (const p of paras) assert.match(p, PROJECT_TEST_CMD);
+  }
+});
+
+test("the Foreground project-test-command fact can go red (#5117)", () => {
+  assert.doesNotMatch(PRE_CHANGE_FOREGROUND.replace(/\s+/g, ' '), PROJECT_TEST_CMD);
+});
+
+test("task-prompt.md's stamp-versus-raw-log sentence names a test-command log (#5117)", () => {
+  assert.match(readText(TASK_PROMPT).replace(/\s+/g, ' '), /A raw test-command log is not that artifact/);
 });

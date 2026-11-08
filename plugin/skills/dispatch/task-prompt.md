@@ -154,7 +154,7 @@ once, comma-joined. Stop after the test gate -- do not proceed to review, polish
 a separate Task call handles those. If you reference any of these issue numbers in an
 intermediate commit message, write "refs #N" -- never "closes #N" or "fixes #N".
 
-Foreground execution (required): run `npm test` and every other long-running command in the
+Foreground execution (required): run the project's test command and every other long-running command in the
 foreground of this turn, output redirected to a file if it's long -- never with `run_in_background`.
 Never end this turn waiting on a background test run or fix-round you started this way -- you cannot
 count on being re-woken by either, and the run stalls silently when you are not (#1965). A nested
@@ -252,7 +252,7 @@ The actual artifact is the runner-written pass stamp verifying HEAD (`verify.js 
 reports `verifiedHead: true`) and its `report.json` -- or a complete composed verdict
 (`suiteComposed.complete: true`), whose per-suite records carry their own report paths and are
 the same artifact. Both exist only when the test phase runs through `/claude-tweaks:test`. A raw
-`npm test` log is not that artifact: it leaves no stamp, and the second call then re-runs the
+test-command log is not that artifact: it leaves no stamp, and the second call then re-runs the
 full suite (#3661). Never report a result from narrative or memory of an earlier pass in this same
 call -- if `--stamp-status` does not report `verifiedHead: true` (no stamp, no complete
 composition, or neither verifies HEAD), re-run the test phase through `/claude-tweaks:test` once
@@ -344,7 +344,7 @@ _shared/run-dir-resolution.md's resolution order step 1 (the env var, its docume
 path) feeding flow/SKILL.md Step 3's adopt-if-set branch. You need no other input about what
 the prior call did or found.
 
-Foreground execution (required): run `npm test` and every other long-running command in the
+Foreground execution (required): run the project's test command and every other long-running command in the
 foreground of this turn, output redirected to a file if it's long -- never with `run_in_background`.
 Never end this turn waiting on a background test run or fix-round you started this way -- you cannot
 count on being re-woken by either, and the run stalls silently when you are not (#1965). A nested
