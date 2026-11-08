@@ -20,7 +20,12 @@ const AFFECTED_SET_FACTS = [
   [/\*\*Affected-set testing \(#5117\)\.\*\*/, 'the rule is labeled'],
   [/per-task implementer, fix-wave and whole-branch-fix dispatch run the affected test set/, 'covers implementers and the fix wave'],
   [/run the full suite once before committing/, "names the SDD line it replaces"],
-  [/declares `impact`, what `node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/verify\.js" --scope/, 'impact-map selection when declared'],
+  [/declares \`impact\`, what \`node "\{plugin-root\}\/bin\/verify\.js" --scope/, 'impact-map selection when declared, via the plugin-root placeholder'],
+  [/--integration-branch \{integration-branch\} --no-stamp\` selects/, 'the call is a targeted run that never stamps'],
+  [/\`\/build\` fills \`\{plugin-root\}\` and \`\{integration-branch\}\`/, 'the placeholders are filled by /build'],
+  [/the project's \`--cmd\` flags \(\`test\/verification\.md\` Step 2/, 'the call passes the project --cmd flags'],
+  [/prints \`Scope: full\` or \`Impact: full …\`.{0,200}?or exits 2/, 'the full-mode trigger clause'],
+  [/runs the fallback set for itself/, 'the triggering task runs the fallback itself'],
   [/scoped to the touched packages or paths, plus any test that reads or imports a touched file/, 'the judgment fallback'],
   [/directs every later task's dispatch to the fallback/, 'a full-mode run carries the switch to later tasks'],
   [/Under `batched` the same rule covers the controller's own per-task runs/, 'the batched strategy'],
@@ -50,7 +55,7 @@ test('the foreground fact can go red', () => {
 });
 
 const BATCHED_FACTS = [
-  [/affected-set rule \(#5117\)/, 'the batched line folds in the affected-set rule'],
+  [/Read `dispatch\.md`'s \*\*Affected-set testing \(#5117\)\*\* rule and fold it in/, 'the batched line directs reading dispatch.md and folding in the rule'],
   [/covers this strategy's per-task and final whole-suite runs/, 'the pointer says what the rule covers'],
 ];
 const batchedMissing = missingFactsOf(BATCHED_FACTS);
@@ -65,43 +70,72 @@ test('the batched fact can go red', () => {
   assertEachPatternGoesRed(lineStartingWith(readText(BUILD_SKILL), '**batched**: Invoke'), BATCHED_FACTS, batchedMissing);
 });
 
-const BASELINE_FACTS = [
+// Step 2 is the invocation: the imperative that directs the skill. Step 3 describes what the skill then handles.
+const STEP2_FACTS = [
   [/Verify Clean Baseline/, 'names the upstream step'],
-  [/\$PIPELINE_RUN_DIR` is set/, 'pipeline-scoped'],
+  [/`\$PIPELINE_RUN_DIR` is set/, 'pipeline-scoped'],
+  [/tell it to skip/, 'the directive verb'],
+  [/\(#5117\)/, 'tagged'],
+];
+const STEP3_FACTS = [
   [/predates Step 4's catch-up/, 'the stale-tree reason'],
   [/baseline adjudication and CI own base health/, 'who owns base health'],
   [/Standalone `\/build` keeps it\./, 'standalone carve-out'],
 ];
-const baselineMissing = missingFactsOf(BASELINE_FACTS);
+const step2Missing = missingFactsOf(STEP2_FACTS);
+const step3Missing = missingFactsOf(STEP3_FACTS);
 const procedureOf = () => sectionOf(readText(WORKTREE_SETUP), '## Procedure');
-
-test('build/worktree-setup.md skips the baseline run inside a pipeline (#5117)', () => {
-  const line = lineStartingWith(procedureOf(), '3. ');
-  assert.notEqual(line, '', 'Procedure step 3 was not found');
-  assert.deepEqual(baselineMissing(line), []);
-});
-
-test('the baseline-skip facts can go red', () => {
-  assertEachPatternGoesRed(lineStartingWith(procedureOf(), '3. '), BASELINE_FACTS, baselineMissing);
-});
-
-test("worktree-setup.md step 2 names the invocation's baseline-less scope (#5117)", () => {
+const step2Of = () => {
   const proc = procedureOf();
   const from = proc.indexOf('\n2. ');
   const to = proc.indexOf('\n3. ');
   assert.notEqual(from, -1, 'Procedure step 2 ("\\n2. ") was not found');
   assert.notEqual(to, -1, 'Procedure step 3 ("\\n3. ") was not found');
   assert.ok(to > from, 'Procedure step 3 must come after step 2');
-  const step2 = proc.slice(from, to);
-  assert.match(step2, /pipeline: no baseline \(step 3\)/);
+  return proc.slice(from, to);
+};
+
+test("worktree-setup.md step 2 directs the skill to skip its baseline run inside a pipeline (#5117)", () => {
+  assert.deepEqual(step2Missing(step2Of()), []);
 });
+
+test('the step-2 directive facts can go red', () => {
+  assertEachPatternGoesRed(step2Of(), STEP2_FACTS, step2Missing);
+});
+
+test('build/worktree-setup.md step 3 states why the baseline run is skipped (#5117)', () => {
+  const line = lineStartingWith(procedureOf(), '3. ');
+  assert.notEqual(line, '', 'Procedure step 3 was not found');
+  assert.deepEqual(step3Missing(line), []);
+});
+
+test('the step-3 baseline-skip facts can go red', () => {
+  assertEachPatternGoesRed(lineStartingWith(procedureOf(), '3. '), STEP3_FACTS, step3Missing);
+});
+
+const BUILD_OPTIONS_FACTS = [
+  [/baseline test run \(skipped inside a pipeline\)/, 'the Git row names the baseline run as skipped inside a pipeline'],
+];
+const buildOptionsMissing = missingFactsOf(BUILD_OPTIONS_FACTS);
 
 test("build-options.md's Git row says the baseline run is skipped inside a pipeline (#5117)", () => {
-  assert.match(readText(BUILD_OPTIONS), /baseline test run \(skipped inside a pipeline\)/);
+  assert.deepEqual(buildOptionsMissing(readText(BUILD_OPTIONS)), []);
 });
 
+test("the build-options Git-row fact can go red", () => {
+  assertEachPatternGoesRed(readText(BUILD_OPTIONS), BUILD_OPTIONS_FACTS, buildOptionsMissing);
+});
+
+const BASELINE_VERIFICATION_ABSENT = /baseline\s+test\s+verification/;
+// Frozen pre-change bytes (origin/main's adopt-freshness text, which spans a newline) — the absence check's go-red control.
+const PRE_CHANGE_FRESHNESS = 'branch creation, dependency install, baseline\ntest verification';
+
 test('worktree-adopt-freshness.md no longer quotes the retired baseline verification (#5117)', () => {
-  assert.doesNotMatch(readText(ADOPT_FRESHNESS), /baseline\s+test verification/);
+  assert.doesNotMatch(readText(ADOPT_FRESHNESS), BASELINE_VERIFICATION_ABSENT);
+});
+
+test('the baseline-verification absence check can go red (#5117)', () => {
+  assert.match(PRE_CHANGE_FRESHNESS, BASELINE_VERIFICATION_ABSENT);
 });
 
 const TASK_PROMPT = path.join(PLUGIN, 'skills', 'dispatch', 'task-prompt.md');
