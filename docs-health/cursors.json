@@ -238,5 +238,8 @@
   },
   "doc:decisions/0026-ledger-residue-converges-in-reconcile": {
     "lastAuditedMs": 1793340992319
+  },
+  "doc:decisions/0027-heredoc-stripping-is-a-data-reader-allowlist": {
+    "lastAuditedMs": 1794118412573
   }
 }
