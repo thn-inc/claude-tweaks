@@ -22,6 +22,7 @@ const AFFECTED_SET_FACTS = [
   [/run the full suite once before committing/, "names the SDD line it replaces"],
   [/declares `impact`, what `node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/verify\.js" --scope/, 'impact-map selection when declared'],
   [/scoped to the touched packages or paths, plus any test that reads or imports a touched file/, 'the judgment fallback'],
+  [/directs every later task's dispatch to the fallback/, 'a full-mode run carries the switch to later tasks'],
   [/Under `batched` the same rule covers the controller's own per-task runs/, 'the batched strategy'],
   [/Common Step 5's verification run \(full, or impact-selected when declared\) is the branch's one suite run/, 'one suite run'],
 ];
@@ -92,7 +93,7 @@ test("worktree-setup.md step 2 names the invocation's baseline-less scope (#5117
   assert.notEqual(to, -1, 'Procedure step 3 ("\\n3. ") was not found');
   assert.ok(to > from, 'Procedure step 3 must come after step 2');
   const step2 = proc.slice(from, to);
-  assert.match(step2, /in a pipeline, minus its baseline run \(step 3\)/);
+  assert.match(step2, /pipeline: no baseline \(step 3\)/);
 });
 
 test("build-options.md's Git row says the baseline run is skipped inside a pipeline (#5117)", () => {
@@ -112,7 +113,7 @@ const PRE_CHANGE_FOREGROUND = 'Foreground execution (required): run `npm test` a
 
 test('no shipped dispatch prompt instructs a literal npm test (#5117)', () => {
   for (const file of [BUILD_DISPATCH, TASK_PROMPT, EXPRESS_PROMPT]) {
-    assert.doesNotMatch(readText(file), NPM_TEST_SPAN, `${path.basename(file)} still names a literal \`npm test\``);
+    assert.doesNotMatch(readText(file), NPM_TEST_SPAN, `${path.basename(file)} still holds a literal npm test instruction`);
   }
 });
 
@@ -142,21 +143,40 @@ test("task-prompt.md's stamp-versus-raw-log sentence names a test-command log (#
 
 const MANIFEST = path.join(__dirname, '..', 'tools', 'upstream-drift', 'manifest.yml');
 const SUPERPOWERS_PINS = [
-  ['skills/subagent-driven-development/implementer-prompt.md', 'full suite once before committing, not after every edit.'],
-  ['skills/test-driven-development/SKILL.md', "means the project's suite, not just your file."],
-  ['skills/using-git-worktrees/SKILL.md', '## Step 3: Verify Clean Baseline'],
-  ['skills/executing-plans/SKILL.md', 'make it pass, then run the whole suite.'],
+  ['skills/subagent-driven-development/implementer-prompt.md', 'full suite once before committing, not after every edit.', 'plugin/skills/build/dispatch.md'],
+  ['skills/test-driven-development/SKILL.md', "means the project's suite, not just your file.", 'plugin/skills/build/dispatch.md'],
+  ['skills/using-git-worktrees/SKILL.md', '## Step 3: Verify Clean Baseline', 'plugin/skills/build/worktree-setup.md'],
+  ['skills/executing-plans/SKILL.md', 'make it pass, then run the whole suite.', 'plugin/skills/build/dispatch.md'],
 ];
+
+// The superpowers entry's `contract-paths:` block: from its key to the entry's next `assertions:`.
+const contractPathsBlock = (lines) => {
+  const sp = lines.findIndex((l) => l === '  - name: superpowers');
+  assert.notEqual(sp, -1, 'the superpowers manifest entry was not found');
+  const from = lines.findIndex((l, i) => i > sp && l === '    contract-paths:');
+  const to = lines.findIndex((l, i) => i > from && l === '    assertions:');
+  assert.ok(from !== -1 && to !== -1, "the superpowers entry's contract-paths block was not found");
+  return lines.slice(from, to).join('\n');
+};
+
+// The `- file:` value of the assertion a `must-match` line at index i belongs to.
+const assertionFile = (lines, i) => {
+  for (let j = i; j >= 0; j--) {
+    const m = /^\s*- file: "(.*)"$/.exec(lines[j]);
+    if (m) return m[1];
+  }
+  return null;
+};
 
 test('manifest.yml pins every superpowers line #5117 overrides', () => {
   const lines = readText(MANIFEST).split('\n').map((l) => l.trimEnd());
-  for (const [upstream, mustMatch] of SUPERPOWERS_PINS) {
+  for (const [upstream, mustMatch, file] of SUPERPOWERS_PINS) {
     const hits = lines.map((l, i) => (l.includes(`must-match: "${mustMatch}"`) ? i : -1)).filter((i) => i !== -1);
     assert.equal(hits.length, 1, `must-match "${mustMatch}" should appear exactly once`);
     assert.equal(lines[hits[0] - 1].trim(), `upstream-path: "${upstream}"`, `"${mustMatch}" must follow upstream-path ${upstream}`);
+    assert.equal(assertionFile(lines, hits[0]), file, `"${mustMatch}" must be pinned against ${file}`);
   }
-  const sp = lines.findIndex((l) => l === '  - name: superpowers');
-  const block = lines.slice(sp, sp + 140).join('\n');
+  const block = contractPathsBlock(lines);
   for (const p of ['skills/test-driven-development/SKILL.md', 'skills/executing-plans/SKILL.md']) {
     assert.ok(block.includes(`      - "${p}"`), `contract-paths lists ${p}`);
   }
