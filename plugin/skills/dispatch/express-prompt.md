@@ -28,7 +28,7 @@ special case (a `DISPATCH_HEADLESS=1` first line on this prompt is the marker it
 otherwise its numbered steps 1-7, with `--reason "failed: express-{step}"`, where `{step}` is the
 bold name of the Procedure step that stopped, lowercased and hyphenated (e.g. `check`, `pr`).
 
-Foreground execution (required): run `npm test` and every other long-running command in the
+Foreground execution (required): run the project's test command and every other long-running command in the
 foreground of this turn, output redirected to a file if it's long -- never with `run_in_background`.
 Never end this turn waiting on a background test run or fix-round you started this way -- you cannot
 count on being re-woken by either, and the run stalls silently when you are not (#1965). A nested
@@ -128,7 +128,7 @@ last paragraph says.
 Of its last bullet, log the posted review's `AUTO` line but do not run `close-run`: the
 dispatching session closes the run dir after you report.
 
-Foreground execution (required): run `npm test` and every other long-running command in the
+Foreground execution (required): run the project's test command and every other long-running command in the
 foreground of this turn, output redirected to a file if it's long -- never with `run_in_background`.
 Never end this turn waiting on a background test run or fix-round you started this way -- you cannot
 count on being re-woken by either, and the run stalls silently when you are not (#1965). A nested
