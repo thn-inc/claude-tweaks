@@ -42,7 +42,7 @@ Scope keywords: `baseline test verification`, `Verify Clean Baseline`, `full sui
 **Interfaces:**
 - Produces: `tests/pipeline-test-scope-conformance.test.js` with constants `PLUGIN`, `BUILD_DISPATCH`, `BUILD_SKILL`, reading via `tests/helpers/read-skill.js`'s `readText`; Tasks 2-4 append their own `test(...)` blocks to this file.
 
-- [ ] **Step 1: Write the failing tests** in `tests/pipeline-test-scope-conformance.test.js` (header comment naming #5117 and the K+3 → 1 full-run motivation). Use `missingFactsOf` + `assertEachPatternGoesRed` from `tests/helpers/conformance-asserts.js`. Test `build/dispatch.md carries the affected-set rule (#5117)` with facts (each `\s+` absorbs wrapping; each must match exactly once in dispatch.md):
+- [ ] **Step 1: Write the failing tests (AC1.1, AC2.1, AC6.1)** in `tests/pipeline-test-scope-conformance.test.js` (header comment naming #5117 and the K+3 → 1 full-run motivation). Use `missingFactsOf` + `assertEachPatternGoesRed` from `tests/helpers/conformance-asserts.js`. Test `build/dispatch.md carries the affected-set rule (#5117)` with facts (each `\s+` absorbs wrapping; each must match exactly once in dispatch.md):
   - `/\*\*Affected-set testing \(#5117\)\.\*\*/` — the rule is labeled
   - `/per-task implementer, fix-wave and whole-branch-fix dispatch run the affected test set/` — covers implementers and the fix wave
   - `/run the full suite once before committing/` — names the SDD line it replaces
@@ -71,7 +71,7 @@ Scope keywords: `baseline test verification`, `Verify Clean Baseline`, `full sui
 **Interfaces:**
 - Consumes: Task 1's test file and its read helper.
 
-- [ ] **Step 1: Write the failing test** `build/worktree-setup.md skips the baseline run inside a pipeline (#5117)` over the Procedure's step 3 line (`lineStartingWith(sectionOf(text, '## Procedure'), '3. ')`), facts:
+- [ ] **Step 1: Write the failing test (AC3.1, AC6.1)** `build/worktree-setup.md skips the baseline run inside a pipeline (#5117)` over the Procedure's step 3 line (`lineStartingWith(sectionOf(text, '## Procedure'), '3. ')`), facts:
   - `/Verify Clean Baseline/` — names the upstream step
   - `/\$PIPELINE_RUN_DIR` is set/` — pipeline-scoped
   - `/before Step 4's catch-up/` — the stale-tree reason
@@ -80,7 +80,7 @@ Scope keywords: `baseline test verification`, `Verify Clean Baseline`, `full sui
 - [ ] **Step 2: Run to verify it fails**
   Run: `node --test tests/pipeline-test-scope-conformance.test.js`
   Expected: FAIL on the worktree-setup facts.
-- [ ] **Step 3: Rewrite step 3** to: ``3. The skill handles branch creation and dependency install. **Skip its baseline test run inside a pipeline (#5117):** when `$PIPELINE_RUN_DIR` is set, direct it in the same invocation to skip its "Step 3: Verify Clean Baseline" — that run lands before Step 4's catch-up, so it tests a tree Common Step 5 re-verifies after catch-up, and Common Step 5's `verify.js` run with baseline adjudication owns pre-existing failures. Standalone `/build` keeps the baseline run.`` In `build-options.md:13` replace `with dependency install and baseline test verification` with `with dependency install and a baseline test run (skipped inside a pipeline)`.
+- [ ] **Step 3: Rewrite step 3** to (net growth must stay under 240 bytes — the composed worktree-setup bundle has 249 bytes of headroom): ``3. The skill handles branch creation, dependency install and its "Step 3: Verify Clean Baseline" run — skip that run when `$PIPELINE_RUN_DIR` is set (#5117): it lands before Step 4's catch-up, and Common Step 5 owns baseline failures. Standalone `/build` keeps the baseline run.`` In `build-options.md:13` replace `with dependency install and baseline test verification` with `with dependency install and a baseline test run (skipped inside a pipeline)`.
 - [ ] **Step 4: Run to verify it passes**
   Run: `node --test tests/pipeline-test-scope-conformance.test.js`
   Expected: PASS.
@@ -96,7 +96,7 @@ Scope keywords: `baseline test verification`, `Verify Clean Baseline`, `full sui
 **Interfaces:**
 - Consumes: Task 1's test file.
 
-- [ ] **Step 1: Write the failing test** `no shipped dispatch prompt instructs a literal npm test (#5117)`: for each of `build/dispatch.md`, `dispatch/task-prompt.md`, `dispatch/express-prompt.md`, assert the text contains no `` `npm test` `` span; and each `Foreground execution (required):` paragraph in task-prompt.md and express-prompt.md matches `/run the project's test command and every other long-running command/` after whitespace normalization. Go-red: substituting the old phrase back into the read text makes the absence assertion fail.
+- [ ] **Step 1: Write the failing test (AC4.1, AC4.2, AC6.1)** `no shipped dispatch prompt instructs a literal npm test (#5117)`: for each of `build/dispatch.md`, `dispatch/task-prompt.md`, `dispatch/express-prompt.md`, assert the text contains no `` `npm test` `` span; and each `Foreground execution (required):` paragraph in task-prompt.md and express-prompt.md matches `/run the project's test command and every other long-running command/` after whitespace normalization. Go-red: substituting the old phrase back into the read text makes the absence assertion fail.
 - [ ] **Step 2: Run to verify it fails**
   Run: `node --test tests/pipeline-test-scope-conformance.test.js`
   Expected: FAIL — task-prompt.md still contains `npm test`.
@@ -115,7 +115,7 @@ Scope keywords: `baseline test verification`, `Verify Clean Baseline`, `full sui
 **Interfaces:**
 - Consumes: Task 1's test file.
 
-- [ ] **Step 1: Write the failing test** `manifest.yml pins every superpowers line #5117 overrides`: read `tools/upstream-drift/manifest.yml` and assert each `must-match` value below appears exactly once, on the line after its `upstream-path`:
+- [ ] **Step 1: Write the failing test (AC5.1)** `manifest.yml pins every superpowers line #5117 overrides`: read `tools/upstream-drift/manifest.yml` and assert each `must-match` value below appears exactly once, on the line after its `upstream-path`:
   - `skills/subagent-driven-development/implementer-prompt.md` — `full suite once before committing, not after every edit.`
   - `skills/test-driven-development/SKILL.md` — `means the project's suite, not just your file.`
   - `skills/using-git-worktrees/SKILL.md` — `## Step 3: Verify Clean Baseline`
