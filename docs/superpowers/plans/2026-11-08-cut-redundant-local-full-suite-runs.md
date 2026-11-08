@@ -16,7 +16,7 @@ Scope keywords: `baseline test verification`, `Verify Clean Baseline`, `full sui
 
 - Standalone `/claude-tweaks:build` (no `$PIPELINE_RUN_DIR`) keeps the superpowers worktree baseline run — only pipeline runs skip it.
 - TDD red/green focused runs are unchanged; only the per-task *full-suite* run becomes the affected set.
-- Common Step 5 (`verify.js`) stays the single full-suite run and the only pass-stamp producer.
+- Common Step 5 (`verify.js`) stays the branch's one suite run (full, or impact-selected when declared) and the only pass-stamp producer; any per-task `verify.js` call the rule names passes `--no-stamp`.
 - The Foreground execution paragraph in `dispatch/task-prompt.md`'s first-call template and both `dispatch/express-prompt.md` templates must stay equal after whitespace normalization (`tests/dispatch-express-routing-prose.test.js`).
 - `plugin/skills/dispatch/task-prompt.md` is 52,394 LF bytes against the 52,500-byte Read rail (`RAIL_BYTES`, `plugin/bin/lib/skill-audit/budgets.js`): net growth there must stay under 100 bytes. `plugin/skills/build/SKILL.md` is 52,274 LF bytes: net growth under 200 bytes. Rule text goes in `build/dispatch.md` (46,784 bytes); the two near-rail files get only pointers.
 - Hand-written commit subjects follow `{Verb} {what} — {detail}`; every commit message ends with `refs #5117` and the `Claude-Session:` trailer line from the run.
@@ -46,16 +46,18 @@ Scope keywords: `baseline test verification`, `Verify Clean Baseline`, `full sui
   - `/\*\*Affected-set testing \(#5117\)\.\*\*/` — the rule is labeled
   - `/per-task implementer, fix-wave and whole-branch-fix dispatch run the affected test set/` — covers implementers and the fix wave
   - `/run the full suite once before committing/` — names the SDD line it replaces
-  - `/scoped to the touched packages or paths/` — the cross-cutting fallback
-  - `/Common Step 5 runs the full suite once for the branch/` — single full run
-  Test `build/dispatch.md's foreground instruction names the project's test command`: matches `/run the project's test command and every other long-running command in the foreground of that turn/`.
+  - `/declares `impact`, what `verify\.js --scope/` — impact-map selection when declared (plan-review decision 2)
+  - `/scoped to the touched packages or paths, plus any test that reads or imports a touched file/` — the judgment fallback (plan-review decision 2)
+  - `/Under `batched` the same rule covers the controller's own per-task runs/` — batched strategy
+  - `/Common Step 5's verification run \(full, or impact-selected when declared\) is the branch's one suite run/` — single suite run (plan-review decision 1)
+  Test `build/dispatch.md's foreground instruction names the project's test command`: matches `/run the project's test command \(test\/verification\.md Step 1\) and every other long-running command in the foreground of that turn/`.
   Test `build/SKILL.md's batched line folds in the affected-set rule`: the line starting `**batched**: Invoke` matches `/affected-set rule \(#5117\)/`.
   Each fact-list test gets a go-red proof (`assertEachPatternGoesRed(text, FACTS, missingFactsOf(FACTS))`).
 - [ ] **Step 2: Run to verify it fails**
   Run: `node --test tests/pipeline-test-scope-conformance.test.js`
   Expected: FAIL — `**Affected-set testing (#5117).**` not found.
-- [ ] **Step 3: Edit `plugin/skills/build/dispatch.md` line 14.** (a) Replace ``run `npm test` and every other long-running command`` with `run the project's test command and every other long-running command`. (b) Insert, immediately after the `**Source-scan suites for plugin/bin/ work (#4421):**` group's last sentence ("…surfaces only at Common Step 5's full run."): `**Affected-set testing (#5117).** In the same invocation instruction, also direct it to have every per-task implementer, fix-wave and whole-branch-fix dispatch run the affected test set — the tests covering the files it changed, scoped to the touched packages or paths (e.g. one test file, or one Go package tree) — in place of SDD's "run the full suite once before committing" and test-driven-development's "Other tests means the project's suite"; TDD's red/green runs are unchanged. Common Step 5 runs the full suite once for the branch, through verify.js: a per-task full run duplicates it, and with several pipelines on one machine each one is another machine-sized worker pool.` (c) In `tests/plan-task-markers-conformance.test.js:78`, change the regex to `/run the project's test command and every other long-running command in the foreground of that turn/`.
-- [ ] **Step 4: Edit `plugin/skills/build/SKILL.md`'s `**batched**:` line** — after ``Invoke `/superpowers:executing-plans`.`` insert ` Fold in dispatch.md's affected-set rule (#5117) — it replaces executing-plans' per-task and final whole-suite runs.` (≤120 bytes).
+- [ ] **Step 3: Edit `plugin/skills/build/dispatch.md` line 14.** (a) Replace ``run `npm test` and every other long-running command`` with `run the project's test command (test/verification.md Step 1) and every other long-running command` — the citation lives here only; the two near-rail dispatch prompts in Task 3 omit it for byte budget. (b) Insert, immediately after the `**Source-scan suites for plugin/bin/ work (#4421):**` group's last sentence ("…surfaces only at Common Step 5's full run."): `**Affected-set testing (#5117).** In the same invocation instruction, also direct it to have every per-task implementer, fix-wave and whole-branch-fix dispatch run the affected test set in place of SDD's "run the full suite once before committing" and test-driven-development's "Other tests means the project's suite"; TDD's red/green runs are unchanged. The affected set: when `.claude-tweaks/verify-scope.json` declares `impact`, what `verify.js --scope .claude-tweaks/verify-scope.json --integration-branch {integration-branch} --no-stamp` selects (`test/impact-selection.md`; a report naming an unusable map ran the full suite, so later tasks use the fallback); otherwise the tests scoped to the touched packages or paths, plus any test that reads or imports a touched file (search for its path). Under `batched` the same rule covers the controller's own per-task runs and executing-plans' "run the whole suite". Common Step 5's verification run (full, or impact-selected when declared) is the branch's one suite run: a per-task full run duplicates it, and with several pipelines on one machine each one is another machine-sized worker pool.` Substitute `${CLAUDE_PLUGIN_ROOT}/bin/` before `verify.js` as the file's other CLI references do. (c) In `tests/plan-task-markers-conformance.test.js:78`, change the regex to `/run the project's test command \(test\/verification\.md Step 1\) and every other long-running command in the foreground of that turn/`.
+- [ ] **Step 4: Edit `plugin/skills/build/SKILL.md`'s `**batched**:` line** — after ``Invoke `/superpowers:executing-plans`.`` insert ` Fold in dispatch.md's affected-set rule (#5117), which covers this strategy's per-task and final whole-suite runs.` (≤120 bytes).
 - [ ] **Step 5: Run to verify it passes**
   Run: `node --test tests/pipeline-test-scope-conformance.test.js tests/plan-task-markers-conformance.test.js tests/foreground-execution-instruction.test.js`
   Expected: PASS, 0 failures.
@@ -65,7 +67,9 @@ Scope keywords: `baseline test verification`, `Verify Clean Baseline`, `full sui
 
 **Files:**
 - Modify: `plugin/skills/build/worktree-setup.md:148` (Procedure step 3)
+- Modify: `plugin/skills/build/worktree-setup.md:147` (Procedure step 2, the invocation)
 - Modify: `plugin/skills/build/build-options.md:13` (Git row)
+- Modify: `plugin/skills/_shared/worktree-adopt-freshness.md:7-8` (quotes the old step-3 text)
 - Test: `tests/pipeline-test-scope-conformance.test.js`
 
 **Interfaces:**
@@ -74,17 +78,18 @@ Scope keywords: `baseline test verification`, `Verify Clean Baseline`, `full sui
 - [ ] **Step 1: Write the failing test (AC3.1, AC6.1)** `build/worktree-setup.md skips the baseline run inside a pipeline (#5117)` over the Procedure's step 3 line (`lineStartingWith(sectionOf(text, '## Procedure'), '3. ')`), facts:
   - `/Verify Clean Baseline/` — names the upstream step
   - `/\$PIPELINE_RUN_DIR` is set/` — pipeline-scoped
-  - `/before Step 4's catch-up/` — the stale-tree reason
-  - `/Standalone `\/build` keeps the baseline run/` — standalone carve-out
-  plus a go-red proof; and `build-options.md`'s Git row matches `/baseline test run \(skipped inside a pipeline\)/`.
+  - `/predates Step 4's catch-up/` — the stale-tree reason
+  - `/baseline adjudication and CI own base health/` — who owns base health
+  - `/Standalone `\/build` keeps it\./` — standalone carve-out
+  plus a go-red proof; the step 2 line (`lineStartingWith(sectionOf(text, '## Procedure'), '2. ')` through its continuation lines — slice the Procedure section from `2. ` to `3. `) matches `/in a pipeline, minus its baseline run \(step 3\)/`; `build-options.md`'s Git row matches `/baseline test run \(skipped inside a pipeline\)/`; and `_shared/worktree-adopt-freshness.md` no longer contains `baseline test verification`.
 - [ ] **Step 2: Run to verify it fails**
   Run: `node --test tests/pipeline-test-scope-conformance.test.js`
   Expected: FAIL on the worktree-setup facts.
-- [ ] **Step 3: Rewrite step 3** to (net growth must stay under 240 bytes — the composed worktree-setup bundle has 249 bytes of headroom): ``3. The skill handles branch creation, dependency install and its "Step 3: Verify Clean Baseline" run — skip that run when `$PIPELINE_RUN_DIR` is set (#5117): it lands before Step 4's catch-up, and Common Step 5 owns baseline failures. Standalone `/build` keeps the baseline run.`` In `build-options.md:13` replace `with dependency install and baseline test verification` with `with dependency install and a baseline test run (skipped inside a pipeline)`.
+- [ ] **Step 3: Rewrite step 3** to (with step 2's clause, net growth is 240 bytes — the composed worktree-setup bundle has 249 bytes of headroom; do not add more): ``3. The skill handles branch creation, dependency install and its "Step 3: Verify Clean Baseline" run, skipped when `$PIPELINE_RUN_DIR` is set (#5117): it predates Step 4's catch-up, and Common Step 5's baseline adjudication and CI own base health. Standalone `/build` keeps it.`` Append `; in a pipeline, minus its baseline run (step 3)` to step 2's last line (after `never the raw branch/record slug`). In `_shared/worktree-adopt-freshness.md:7-8` change the quote `"branch creation, dependency install, baseline test verification"` to `"branch creation, dependency install"` (re-wrap the paragraph's lines only as needed). In `build-options.md:13` replace `with dependency install and baseline test verification` with `with dependency install and a baseline test run (skipped inside a pipeline)`.
 - [ ] **Step 4: Run to verify it passes**
   Run: `node --test tests/pipeline-test-scope-conformance.test.js`
   Expected: PASS.
-- [ ] **Step 5: Commit** the three files; subject `Skip the superpowers worktree baseline run inside pipelines — Common Step 5 owns it`.
+- [ ] **Step 5: Commit** the four files; subject `Skip the superpowers worktree baseline run inside pipelines — Common Step 5 owns it`.
 
 ### Task 3: Project test command in shipped dispatch prompts
 
@@ -100,7 +105,7 @@ Scope keywords: `baseline test verification`, `Verify Clean Baseline`, `full sui
 - [ ] **Step 2: Run to verify it fails**
   Run: `node --test tests/pipeline-test-scope-conformance.test.js`
   Expected: FAIL — task-prompt.md still contains `npm test`.
-- [ ] **Step 3: Edit the prompts.** In all four Foreground execution paragraphs replace ``run `npm test` and every other long-running command in the`` with `run the project's test command and every other long-running command in the` (re-wrap only if needed; whitespace-normalized equality between templates must hold). In `task-prompt.md:254-255` replace ``A raw`` / `` `npm test` log`` with `A raw` / `test-command log`. Confirm `task-prompt.md` stays under 52,500 LF bytes.
+- [ ] **Step 3: Edit the prompts.** In all four Foreground execution paragraphs replace ``run `npm test` and every other long-running command in the`` with `run the project's test command and every other long-running command in the` (no `(test/verification.md Step 1)` citation here, deliberately: task-prompt.md has 106 bytes of headroom and two Foreground paragraphs; the dispatched agent runs `/claude-tweaks:flow`, whose verification already resolves the command) (re-wrap only if needed; whitespace-normalized equality between templates must hold). In `task-prompt.md:254-255` replace ``A raw`` / `` `npm test` log`` with `A raw` / `test-command log`. Confirm `task-prompt.md` stays under 52,500 LF bytes.
 - [ ] **Step 4: Run to verify it passes**
   Run: `node --test tests/pipeline-test-scope-conformance.test.js tests/foreground-execution-instruction.test.js tests/dispatch-express-routing-prose.test.js`
   Expected: PASS.
@@ -124,7 +129,7 @@ Scope keywords: `baseline test verification`, `Verify Clean Baseline`, `full sui
 - [ ] **Step 2: Run to verify it fails**
   Run: `node --test tests/pipeline-test-scope-conformance.test.js`
   Expected: FAIL — pins absent.
-- [ ] **Step 3: Add the pins.** Append `skills/test-driven-development/SKILL.md` and `skills/executing-plans/SKILL.md` to the superpowers `contract-paths`. Append four assertions after the last superpowers assertion, each `claims:` starting `will rely on (record #5117):` — files: `plugin/skills/build/dispatch.md` (implementer-prompt line; and the TDD line), `plugin/skills/build/worktree-setup.md` (baseline heading), `plugin/skills/build/SKILL.md` (executing-plans line). Must-match strings exactly as in Step 1; the TDD one contains an apostrophe — double-quote it.
+- [ ] **Step 3: Add the pins.** Append `skills/test-driven-development/SKILL.md` and `skills/executing-plans/SKILL.md` to the superpowers `contract-paths`. Append four assertions after the last superpowers assertion, each `claims:` starting `will rely on (record #5117):` — files: `plugin/skills/build/dispatch.md` (implementer-prompt line; and the TDD line), `plugin/skills/build/worktree-setup.md` (baseline heading), `plugin/skills/build/dispatch.md` (executing-plans line — the affected-set rule names it). Must-match strings exactly as in Step 1; the TDD one contains an apostrophe — double-quote it.
 - [ ] **Step 4: Run to verify it passes**
   Run: `node --test tests/pipeline-test-scope-conformance.test.js tools/upstream-drift/tests/manifest.test.js`, then the upstream-drift runner's read-only assertion mode (`node tools/upstream-drift/run.js --help` names it) for superpowers.
   Expected: tests PASS; every superpowers assertion reports its must-match found in the installed 7.0.0.
@@ -134,7 +139,7 @@ Scope keywords: `baseline test verification`, `Verify Clean Baseline`, `full sui
 
 ## Acceptance-criterion coverage
 
-- AC1 (dispatch.md affected-set rule, Common Step 5 as single full run) — Task 1 Step 1.
+- AC1 (dispatch.md affected-set rule, Common Step 5's verification run as the branch's one suite run — per the spec's Plan Review Clarifications) — Task 1 Step 1.
 - AC2 (batched executing-plans carries the rule) — Task 1 Step 1 (SKILL.md pointer test).
 - AC3 (worktree-setup skips the baseline when `$PIPELINE_RUN_DIR` is set; standalone unchanged) — Task 2 Step 1.
 - AC4 (no literal `npm test` instruction in shipped dispatch prompts) — Task 3 Step 1.
