@@ -19,21 +19,21 @@ files:
 
 ### 1. The worktree is created without a baseline suite run — `build/worktree-setup.md`
 - **URL:** —
-- **Action:** Common Step 1 invokes `/superpowers:using-git-worktrees` as before. Because `$PIPELINE_RUN_DIR` is set, step 2 carries "; pipeline: no baseline (step 3)". Step 3 tells the skill to skip its "Step 3: Verify Clean Baseline" run. Branch creation and dependency install still happen.
+- **Action:** Common Step 1 invokes `/superpowers:using-git-worktrees` as before. Because `$PIPELINE_RUN_DIR` is set, the Procedure's step 2 tells the skill to skip its "Step 3: Verify Clean Baseline" run; step 3 gives the reasons. Branch creation and dependency install still happen.
 - **Should feel:** Fast: the worktree is ready as soon as dependencies install, with no 16-minute wait before the plan starts.
 - **Should understand:** The baseline run would test a tree that Step 4's catch-up is about to move. Common Step 5's baseline adjudication and CI own base health. A standalone `/claude-tweaks:build` with no run directory keeps the baseline run.
 - **Red flags:** A full-suite run right after `EnterWorktree` inside a `/flow` run; a standalone build that skips the baseline; the skill stopping to ask whether to proceed past baseline failures.
 
 ### 2. Each task's implementer runs the affected test set — `build/dispatch.md`
 - **URL:** —
-- **Action:** `/build` instructs subagent-driven development to have every per-task implementer, fix-wave and whole-branch-fix dispatch run the affected test set. This replaces superpowers' "run the full suite once before committing" and test-driven-development's "Other tests means the project's suite". When the project declares `impact`, the affected set is what `node "{plugin-root}/bin/verify.js" --scope .claude-tweaks/verify-scope.json --integration-branch {integration-branch} --no-stamp` selects, passing the project's `--cmd` flags (`test/verification.md` Step 2; a map-form `checks.tests` needs none). `/build` fills the plugin root and the branch through `_shared/integration-branch.md`. A task whose run shows a full mode or exits 2 runs the fallback set for itself. Otherwise it is the tests scoped to the touched packages or paths, plus any test that reads or imports a touched file (search for its path or module/package name).
+- **Action:** `/build` instructs subagent-driven development to have every per-task implementer, fix-wave and whole-branch-fix dispatch run the affected test set. This replaces superpowers' "run the full suite once before committing" and test-driven-development's "Other tests means the project's suite". When the project declares `impact`, the affected set is what `node "{plugin-root}/bin/verify.js" --scope .claude-tweaks/verify-scope.json --integration-branch {integration-branch} --no-stamp` selects, passing the project's `--cmd` flags (`test/verification.md` Step 2; a map-form `checks.tests` needs none). `/build` fills the plugin root and the branch through `_shared/integration-branch.md`. Without `impact`, the affected set is the fallback: the tests scoped to the touched packages or paths, plus any test that reads or imports a touched file (search for its path or module/package name). A task whose impact run shows a full mode or exits 2 runs that fallback set for itself.
 - **Should feel:** Proportionate: a one-file change runs the tests near that file, not the whole repository.
 - **Should understand:** TDD's red/green runs are unchanged. `--no-stamp` keeps per-task runs from writing the pass stamp, so Common Step 5 stays the only producer. Under `batched`, the same rule covers the controller's own per-task runs and executing-plans' "run the whole suite".
 - **Red flags:** An implementer report showing a full `npm test` (or `go test ./...`) per task; a per-task run that writes a pass stamp; an affected set that misses a test reading the changed file.
 
 ### 3. A full-mode selection switches later tasks to the fallback — `build/dispatch.md`
 - **URL:** —
-- **Action:** **The implementer** runs the impact selection and sees `Scope: full` or `Impact: full …`, or the call exits 2. The cause can be an unusable map, a full-suite rule, an unmatched path such as `package.json` or `.github/**`, or a missing `--cmd`. The implementer says so in its report. **The SDD controller** then directs every later task's dispatch to the path/package fallback.
+- **Action:** **The implementer** runs the impact selection and sees `Scope: full` or `Impact: full …`, or the call exits 2. The cause can be an unusable map, a full-suite rule, an unmatched path such as `package.json` or `.github/**`, or a missing `--cmd`. The implementer runs the fallback set itself and says so in its report. **The SDD controller** then directs every later task's dispatch to the path/package fallback.
 - **Should feel:** Self-correcting: one surprise full run, then the pipeline stops paying for it.
 - **Should understand:** The selection is cumulative from the merge base, so once one task touches a full-mode path, every later selection would be full too. That is why the switch is carried forward instead of re-tried. A branch therefore has at most one per-task full run.
 - **Red flags:** Several tasks in a row each reporting a full-mode selection; a controller dispatch that never mentions the switch after one is reported.
@@ -47,7 +47,7 @@ files:
 
 ### 5. Dispatched agents name the project's test command — `dispatch/task-prompt.md`, `dispatch/express-prompt.md`
 - **URL:** —
-- **Action:** `/claude-tweaks:dispatch`'s first-call, second-call and express prompts tell the dispatched agent to "run the project's test command and every other long-running command in the foreground of that turn". `build/dispatch.md`'s copy adds "(test/verification.md Step 1)". The handoff evidence line reads "A raw test-command log is not that artifact".
+- **Action:** `/claude-tweaks:dispatch`'s first-call, second-call and express prompts tell the dispatched agent to "run the project's test command and every other long-running command in the foreground of this turn". `build/dispatch.md`'s copy, addressed to the agents SDD dispatches, reads "of that turn" and adds "(test/verification.md Step 1)". The handoff evidence line reads "A raw test-command log is not that artifact".
 - **Should feel:** Correct in any language: a Go or Python consumer is never told to run `npm test`.
 - **Should understand:** The Foreground paragraph stays identical across the prompt templates. The citation is kept out of the near-rail dispatch prompts on purpose, because `/flow`'s verification already resolves the command.
 - **Red flags:** Any shipped dispatch prompt containing a literal `npm test` instruction; the express and first-call Foreground paragraphs drifting apart.
