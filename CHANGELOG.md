@@ -53,6 +53,19 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.163.0](https://github.com/thn-inc/claude-tweaks/compare/v6.162.1...v6.163.0) (2026-11-09)
+
+
+### Features
+
+* Cut redundant local full-suite runs in pipelines… ([#5117](https://github.com/thn-inc/claude-tweaks/issues/5117)) ([2dc5e6d](https://github.com/thn-inc/claude-tweaks/commit/2dc5e6dd62db89a002f2d70ff215b4c9362e0877))
+* Render a per-session segment file in the statusline ([#5126](https://github.com/thn-inc/claude-tweaks/issues/5126)) ([bf3ed43](https://github.com/thn-inc/claude-tweaks/commit/bf3ed434892b9f84eff444c04886cac91142b37b))
+
+
+### Bug Fixes
+
+* Refuse controls inside a session segment's OSC 8 link ([#5129](https://github.com/thn-inc/claude-tweaks/issues/5129)) ([dde61cb](https://github.com/thn-inc/claude-tweaks/commit/dde61cb9686e4be9161a0cb91d8e8c410fe0fe3c))
+
 ## [6.162.1](https://github.com/thn-inc/claude-tweaks/compare/v6.162.0...v6.162.1) (2026-11-05)
 
 
