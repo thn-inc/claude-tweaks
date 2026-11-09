@@ -66,6 +66,9 @@ Three conventions follow from how this repo works, and all are visible below:
 
 * Refuse controls inside a session segment's OSC 8 link ([#5129](https://github.com/thn-inc/claude-tweaks/issues/5129)) ([dde61cb](https://github.com/thn-inc/claude-tweaks/commit/dde61cb9686e4be9161a0cb91d8e8c410fe0fe3c))
 
+### Highlights
+* Pipelines now run the full test suite once per branch instead of once per plan task plus a worktree baseline run, which cuts local CPU and memory load when several sessions run in parallel.
+
 ## [6.162.1](https://github.com/thn-inc/claude-tweaks/compare/v6.162.0...v6.162.1) (2026-11-05)
 
 
