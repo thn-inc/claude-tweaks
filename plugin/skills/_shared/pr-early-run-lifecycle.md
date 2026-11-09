@@ -85,7 +85,7 @@ No recorded `pr` field: check GitHub directly before creating anything, so a res
 run against the same branch never duplicates:
 
 ```bash
-gh pr list --repo {host}/{owner}/{repo} --head {branch} --state all --json number,url,state,isDraft
+gh pr list --repo {host}/{owner}/{repo} --head {branch} --state all --json number,url,state,isDraft,body
 ```
 
 - **A match with `state: OPEN`** (draft or not): reuse it. Record via `record-pr` (below) and
@@ -95,6 +95,21 @@ gh pr list --repo {host}/{owner}/{repo} --head {branch} --state all --json numbe
   from "Step 1 never ran").** Log to `decisions.md`:
 
   `AUTO {time} — PR-early run lifecycle: reusing open PR #{number} for {branch}. Reversibility: high.`
+
+  **Rebind a reused body (#4580).** When the reused PR's body names a run other than this one (the
+  run adopted a prior attempt's branch, or resumed against a PR an earlier run opened), so that
+  `bin/pr-checklist.js` would refuse it with exit 4, rebind it before Step 2's push, as the
+  reopened-PR rebind below (#3887) does: compose this run's body per Step 3 (that step's "Skipped
+  when Step 1 found a reusable open PR" header does not apply to this compose) and write it with
+  `gh pr edit {number} --repo {host}/{owner}/{repo} --body-file "$PR_EARLY_BODY"` (with `gh`
+  absent, `mcp__github__update_pull_request`, per the same `_shared/github-write-transport.md`
+  section that paragraph cites). Log
+  `AUTO {time} — PR-early run lifecycle: rebound reused PR #{number} to run {run-id}. Reversibility: high.`
+  A failed rebind is a degrade, never a stop: keep the PR, record it via `record-pr` (already
+  recorded on the Resume path), and log `SKIP {time} — PR-early run lifecycle: rebind of reused PR
+  #{number} failed ({error}); phase-checklist updates will exit 4 until its body names run
+  {run-id}. Reversibility: n/a.` A body that already names this run, or that carries no run
+  marker at all (pr-checklist's own repair adds this run's), is left untouched.
 - **A match with `state: CLOSED`**: this is a retry — by construction, nothing else in this
   design closes a run's PR except `_shared/pr-run-comments.md`'s failure tombstone (a prior
   attempt's HARD-GATE failure). Reopen it rather than starting fresh, so the new attempt's
@@ -105,6 +120,9 @@ gh pr list --repo {host}/{owner}/{repo} --head {branch} --state all --json numbe
   ```bash
   gh pr reopen {number} --repo {host}/{owner}/{repo}
   ```
+
+  A zero exit is not proof (#4833): re-run Step 1's `gh pr list` and require the picked PR to read
+  `state: OPEN`.
 
   **Reopen succeeds:** record via `record-pr` and skip creation, same as the OPEN branch above.
   **This log line is mandatory, not optional, for the same reason the reuse-open and no-match
@@ -129,14 +147,23 @@ gh pr list --repo {host}/{owner}/{repo} --head {branch} --state all --json numbe
   {run-id}. Reversibility: n/a.`
 
   **Reopen fails** (the branch was force-pushed out from under it, or some other state GitHub
-  rejects): fall through to creation below. The fresh PR reuses the same title/body template;
-  its new number/url overwrites the stale one via `record-pr` (Step 4), and — only if a pointer
-  comment already exists on the issue from an earlier attempt that reached far enough to post one
-  (Verification Brief routing, `_shared/pr-run-comments.md`) — update that pointer comment to the
-  new PR via the same find-and-update-by-marker shape, since it would otherwise link to a closed,
-  now-orphaned PR. A failed HARD-GATE run never reaches the brief, so this update is usually a
-  no-op — stated for the rare case a later phase's own failure follows an earlier phase's partial
-  progress.
+  rejects, or the re-list does not read `state: OPEN`): fall through to creation below. A rejected
+  reopen logs the first line; a zero exit whose re-list reads otherwise, or fails, logs the second
+  or third instead (`{error}` writes `failed` as `errored`, so it never reads as a degrade):
+
+  `AUTO {time} — PR-early run lifecycle: reopen of closed PR #{number} for {branch} was rejected; creating. Reversibility: n/a.`
+
+  `AUTO {time} — PR-early run lifecycle: reopen of closed PR #{number} for {branch} exited 0 but the PR still reads {state}; creating. Reversibility: n/a.`
+
+  `AUTO {time} — PR-early run lifecycle: could not confirm reopen of closed PR #{number} for {branch} ({error}); creating. Reversibility: n/a.`
+
+  An adopted picked PR is rebound as above. The fresh PR reuses the same title/body template;
+  its new number/url overwrites the stale one via `record-pr` (Step 4), and — only if a legacy
+  pointer comment already exists on the issue, left by a run from before the acceptance packet
+  (new runs post none: the packet sits on the record, `_shared/acceptance-packet.md`) — update that
+  pointer comment to the new PR via the same find-and-update-by-marker shape, since it would
+  otherwise link to a closed, now-orphaned PR. This update is usually a no-op — stated for the
+  rare record that carries one.
 - **A match with `state: MERGED`**: this branch's PR already merged — the record is done. Treat
   as no match and fall through to creation; a fresh run against an already-merged branch is an
   unexpected precondition this file does not need to specially handle beyond not erroring.
@@ -444,10 +471,11 @@ before trusting the recorded value — the PR could have been closed or the bran
 out from under it since:
 
 ```bash
-gh pr view {recorded-number} --repo {host}/{owner}/{repo} --json state,isDraft,url
+gh pr view {recorded-number} --repo {host}/{owner}/{repo} --json state,isDraft,url,body
 ```
 
-- **Still open**: nothing to do — proceed to whichever phase this resume targets.
+- **Still open**: when its body names another run, rebind it per Step 1's
+  **Rebind a reused body (#4580)**; then proceed to whichever phase this resume targets.
 - **Closed or gone** (404): the recorded PR is stale. Fall through to Step 1's `gh pr list --head`
   check above — reuse a different open PR for the branch if one exists, otherwise create a fresh
   one (Step 3) and re-`record-pr` (Step 4) to overwrite the stale value. Log:

@@ -1,0 +1,33 @@
+## /review
+
+- STAGED 18:47:02 — Reproduction: lens "3a" finding plugin/skills/_shared/pre-review-catchup.md:19 not reproduced. Staged to Review Console as low-confidence. Reversibility: high.
+- STAGED 18:47:02 — Reproduction: lens "3a" findings plugin/bin/lib/worktree/pre-review-catchup.js:83 / plugin/bin/lib/worktree/pre-review-catchup.js:83 share a location but not substance; both staged unconfirmed. Reversibility: high.
+- STAGED 18:47:02 — Reproduction: lens "3a" finding tests/bin-lib/pre-review-catchup/cli.test.js:580 not reproduced. Staged to Review Console as low-confidence. Reversibility: high.
+- STAGED 18:47:02 — Reproduction: lens "3a" finding plugin/skills/_shared/pre-review-catchup.md:15 not reproduced. Staged to Review Console as low-confidence. Reversibility: high.
+- STAGED 18:47:02 — Reproduction: lens "3a" finding plugin/skills/_shared/pre-review-catchup.md:13 not reproduced. Staged to Review Console as low-confidence. Reversibility: high.
+- STAGED 18:47:02 — Reproduction: lens "3a" finding plugin/skills/_shared/pre-review-catchup.md:5 not reproduced. Staged to Review Console as low-confidence. Reversibility: high.
+- STAGED 18:47:02 — Reproduction: lens "3a" finding .claude/skills/gh-api-module-pattern/cli-wrapper-contract.md:43 not reproduced. Staged to Review Console as low-confidence. Reversibility: high.
+- STAGED 18:47:02 — Reproduction: lens "3a" finding plugin/bin/pre-review-catchup.js:27 not reproduced. Staged to Review Console as low-confidence. Reversibility: high.
+- STAGED 18:47:02 — Reproduction: lens "3c" finding plugin/bin/lib/worktree/pre-review-catchup.js:161 not reproduced. Staged to Review Console as low-confidence. Reversibility: high.
+- STAGED 18:47:02 — Reproduction: lens "3e" finding plugin/skills/build/dispatch.md:19 not reproduced. Staged to Review Console as low-confidence. Reversibility: high.
+- STAGED 18:47:02 — Reproduction: lens "3e" finding plugin/skills/_shared/pre-review-catchup.md:9 not reproduced. Staged to Review Console as low-confidence. Reversibility: high.
+- STAGED 18:47:02 — Reproduction: lens "3e" finding plugin/bin/lib/worktree/pre-review-catchup.js:59 not reproduced. Staged to Review Console as low-confidence. Reversibility: high.
+- STAGED 18:47:02 — Reproduction: lens "3f" finding plugin/bin/lib/worktree/pre-review-catchup.js:157 not reproduced. Staged to Review Console as low-confidence. Reversibility: high.
+- STAGED 18:47:02 — Reproduction: lens "3f" finding tests/bin-lib/pre-review-catchup/cli.test.js:275 not reproduced. Staged to Review Console as low-confidence. Reversibility: high.
+- STAGED 18:47:02 — Reproduction: lens "3g" finding plugin/bin/lib/worktree/pre-review-catchup.js:175 not reproduced. Staged to Review Console as low-confidence. Reversibility: high.
+- AUTO 18:49:24 — Debate: cross-lens disagreement on plugin/skills/_shared/pre-review-catchup.md:5 converged positive after 1 round (lens 3a :5 incident narrative, low; lens 3e :9 dispatch.md/_shared procedure duplication, medium — both confirmed). Reversibility: high.
+- STAGED 18:49:24 — Debate: lens "3a" cross-lens disagreement on plugin/skills/_shared/pre-review-catchup.md:13 inconclusive (partial, agree). Both verdicts staged. Stage path: staged/review-contested-1.md. Reversibility: high.
+- STAGED 18:49:24 — Debate: lens "3c" cross-lens disagreement on plugin/bin/lib/worktree/pre-review-catchup.js:161 inconclusive (partial, partial). Both verdicts staged. Stage path: staged/review-contested-2.md. Reversibility: high.
+- AUTO 18:52:23 — Reproduction: lens "3a" finding plugin/skills/_shared/pre-review-catchup.md:19 confirmed by tiebreak:a428bc73da2a. Confirmed. Reversibility: high.
+- AUTO 18:52:23 — Reproduction: lens "3a" finding plugin/bin/lib/worktree/pre-review-catchup.js:83 confirmed by tiebreak:c03145497759. Confirmed. Reversibility: high.
+- AUTO 18:52:23 — Reproduction: lens "3a" finding plugin/bin/lib/worktree/pre-review-catchup.js:83 confirmed by tiebreak:a582164b829a. Confirmed. Reversibility: high.
+- AUTO 18:52:23 — Reproduction: lens "3a" finding tests/bin-lib/pre-review-catchup/cli.test.js:580 confirmed by tiebreak:ddc7abb90b7a. Confirmed. Reversibility: high.
+- AUTO 18:52:23 — Reproduction: lens "3a" finding plugin/skills/_shared/pre-review-catchup.md:15 confirmed by tiebreak:a09861714ebb. Confirmed. Reversibility: high.
+- AUTO 18:52:23 — Reproduction: lens "3a" finding .claude/skills/gh-api-module-pattern/cli-wrapper-contract.md:43 confirmed by tiebreak:457d26ab02a5. Confirmed. Reversibility: high.
+- AUTO 18:52:23 — Tiebreak tiebreak:58ac924483fa: lens "3a" finding plugin/bin/pre-review-catchup.js:27 dropped: refuted by tiebreak. Evidence: plugin/bin/pre-review-catchup.js:28 "// an undecided crash -- a git error outside the fetch, or a failed merge with no". Severity: info. Reversibility: high.
+- AUTO 18:52:23 — Reproduction: lens "3e" finding plugin/skills/build/dispatch.md:19 confirmed by tiebreak:2c87fd59905e. Confirmed. Reversibility: high.
+- AUTO 18:53:44 — Reproduction: lens "3e" finding plugin/bin/lib/worktree/pre-review-catchup.js:59 confirmed by tiebreak:0a293c3b470f. Confirmed. Reversibility: high.
+- AUTO 18:53:44 — Tiebreak tiebreak:fbd16e622f8e: lens "3f" finding tests/bin-lib/pre-review-catchup/cli.test.js:275 digested: evidence-unverified. Severity: low. Reversibility: high.
+- AUTO 18:53:44 — Tiebreak tiebreak:ba47ad797a76: lens "3g" finding plugin/bin/lib/worktree/pre-review-catchup.js:175 dropped: refuted by tiebreak. Evidence: plugin/bin/lib/worktree/pre-review-catchup.js:175 " git(['merge', '--no-edit', upstream]);". Severity: low. Reversibility: high.
+- AUTO 18:53:44 — Reproduction: lens "3a" finding plugin/skills/_shared/pre-review-catchup.md:13 confirmed by tiebreak:25ab700ef550. Confirmed. Reversibility: high.
+- AUTO 18:53:44 — Reproduction: lens "3c" finding plugin/bin/lib/worktree/pre-review-catchup.js:161 confirmed by tiebreak:169506958e32. Confirmed. Reversibility: high.

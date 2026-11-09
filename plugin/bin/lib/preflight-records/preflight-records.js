@@ -16,14 +16,19 @@
 
 const { execFileSync } = require('child_process');
 const {
-  parseRecordFacets, parseDependencies, extractFingerprint,
+  parseRecordFacets, parseDependencies, extractFingerprint, withoutCrossRepoBlockers,
 } = require('../issues/record');
 const { extractKeyFiles, groupByFileOverlap, directOverlaps } = require('../issues/grouping');
 const { fetchNativeDependencies: sharedFetchNativeDependencies } = require('../issues/native-dependencies');
-const { repoSlug } = require('../repo-resolve');
+const { repoSlug, ghOptions } = require('../repo-resolve');
+const sharedPrimitives = require('../shared-primitives');
 
+// Every call here contacts GitHub, so each is bounded (an unbounded execFileSync
+// hangs pre-flight on a black-holed remote). The batched bound (GH_BATCH_TIMEOUT_MS,
+// read per call), not the 5s single-call default: the same runner carries the
+// batched alias GraphQL reads and --blocker-landing's compare fan-out.
 function defaultRunner(args) {
-  return execFileSync('gh', args, { encoding: 'utf8', windowsHide: true });
+  return execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', timeout: sharedPrimitives.GH_BATCH_TIMEOUT_MS, windowsHide: true }));
 }
 
 // A runner may throw a non-Error (string, object, undefined) — never let a
@@ -76,36 +81,40 @@ function fetchIssues({
 // Strict by design: a record the file lacks, repeats, or adds beyond the
 // request is a caller bug, never silently reconciled (a missing record would
 // otherwise shrink the cross-spec checks without a trace).
-function issuesFromRecordsJson(raw, numbers) {
-  if (!Array.isArray(raw)) return { error: '--records-json must be a JSON array' };
+// `flag` (#4792) is the CLI flag the input arrived under, named in every
+// message: '--records-json' (default) or '--prefetched-json'.
+function issuesFromRecordsJson(raw, numbers, flag = '--records-json') {
+  if (!Array.isArray(raw)) return { error: `${flag} must be a JSON array` };
   const ok = new Map();
   for (let i = 0; i < raw.length; i++) {
     const entry = raw[i];
     if (!entry || typeof entry !== 'object' || !Number.isInteger(entry.number)) {
-      return { error: `--records-json entry ${i} is missing a numeric "number"` };
+      return { error: `${flag} entry ${i} is missing a numeric "number"` };
     }
     if (typeof entry.body !== 'string') {
-      return { error: `--records-json entry #${entry.number} is missing a string "body"` };
+      return { error: `${flag} entry #${entry.number} is missing a string "body"` };
     }
     // A missing (or null) labels is an unlabelled issue, as gh reports it; any
     // other non-array would crash parseRecordFacets downstream.
     if (entry.labels != null && !Array.isArray(entry.labels)) {
-      return { error: `--records-json entry #${entry.number} has non-array "labels"` };
+      return { error: `${flag} entry #${entry.number} has non-array "labels"` };
     }
-    if (ok.has(entry.number)) return { error: `--records-json lists #${entry.number} more than once` };
+    if (ok.has(entry.number)) return { error: `${flag} lists #${entry.number} more than once` };
     ok.set(entry.number, entry);
   }
   for (const n of numbers) {
-    if (!ok.has(n)) return { error: `--records-json is missing requested #${n}` };
+    if (!ok.has(n)) return { error: `${flag} is missing requested #${n}` };
   }
   for (const n of ok.keys()) {
-    if (!numbers.includes(n)) return { error: `--records-json lists #${n}, which was not requested` };
+    if (!numbers.includes(n)) return { error: `${flag} lists #${n}, which was not requested` };
   }
   return { ok };
 }
 
 // fetchNativeDependencies({ numbers, owner, repo, runner }) -> Map<number,
-// {blockedBy: number[], openBlocker: boolean, openBlockerIds: number[]}>.
+// {blockedBy: number[], openBlocker: boolean, openBlockerIds: number[],
+// crossRepoBlockers?: [{number, repository, state}]}> (crossRepoBlockers only
+// when a blocker lives in another repository, #4793).
 // Executes the batched, aliased GraphQL call (bin/lib/issues/record.js's
 // buildNativeDependencyQuery) and parses the response — moved to
 // bin/lib/issues/native-dependencies.js (#538) so this CLI's call site and
@@ -125,12 +134,18 @@ function fetchNativeDependencies({
 }
 
 // issues: Map<number, issue>, dependencies: Map<number, {blockedBy, openBlocker}> | null
-// -> { "<n>": { title, facets, blockedBy, openBlocker, keyFiles, fingerprint } }.
+// -> { "<n>": { title, facets, blockedBy, openBlocker, keyFiles, fingerprint,
+// crossRepoBlockers? } }.
 // dependencies is null under work-links: body-text — blockedBy is read straight
 // off the record's own body (parseDependencies) instead, with no extra call;
 // that driver has no open/closed signal for a blocker (parseDependencies only
 // ever returns blocker *numbers*, never state), so openBlocker is null there —
 // "undetermined by this driver", never a false claim of "checked, not open".
+// Under native, blockedBy is this repository's blockers only (#4793): a blocker
+// the native read found in ANOTHER repository (dep.crossRepoBlockers, [{number,
+// repository, state}]) leaves it, so merge-gate.js and waves.js never see a
+// foreign number as an in-run edge, and rides on the record's `crossRepoBlockers`
+// instead — a key present only when non-empty, after fingerprint.
 function buildRecords({ issues, dependencies = null } = {}) {
   const records = {};
   for (const [n, issue] of issues) {
@@ -138,11 +153,14 @@ function buildRecords({ issues, dependencies = null } = {}) {
     records[String(n)] = {
       title: issue.title,
       facets: parseRecordFacets(issue.labels),
-      blockedBy: dep ? dep.blockedBy : parseDependencies(issue.body),
+      blockedBy: dep ? withoutCrossRepoBlockers(dep.blockedBy, dep.crossRepoBlockers) : parseDependencies(issue.body),
       openBlocker: dep ? dep.openBlocker : null,
       keyFiles: extractKeyFiles(issue),
       fingerprint: extractFingerprint(issue.body),
     };
+    if (dep && Array.isArray(dep.crossRepoBlockers) && dep.crossRepoBlockers.length) {
+      records[String(n)].crossRepoBlockers = dep.crossRepoBlockers;
+    }
   }
   return records;
 }
@@ -171,6 +189,29 @@ function buildDirectOverlaps(records) {
   return pairs.sort((x, y) => x.a - y.a || x.b - y.b);
 }
 
+// #4553: the out-of-run blockers behind --blocker-landing. records (the
+// buildRecords output), numbers (the run's positional record numbers) ->
+// { byRecord: Map<number, number[]>, union: number[] }. Per record its
+// blockedBy minus every positional number (order kept) — a blocker that is
+// itself in the run is ordered by the wave/DAG logic, never judged for
+// landing — and the union of those, deduped and ascending, which is the one
+// batch the blocker query takes. A cross-repository blocker (#4793) is already
+// gone from blockedBy (buildRecords), so it never reaches this batch: its
+// number names another repository's issue and is judged from its native state
+// (blocker-landing.js's classifyCrossRepository), never queried here.
+function outOfRunBlockers(records, numbers) {
+  const inRun = new Set(numbers);
+  const byRecord = new Map();
+  const union = new Set();
+  for (const n of numbers) {
+    const rec = records[String(n)];
+    const out = ((rec && rec.blockedBy) || []).filter((b) => !inRun.has(b));
+    byRecord.set(n, out);
+    for (const b of out) union.add(b);
+  }
+  return { byRecord, union: [...union].sort((a, b) => a - b) };
+}
+
 module.exports = {
-  defaultRunner, errorText, fetchIssues, issuesFromRecordsJson, fetchNativeDependencies, buildRecords, buildOverlapGroups, buildDirectOverlaps,
+  defaultRunner, errorText, fetchIssues, issuesFromRecordsJson, fetchNativeDependencies, buildRecords, buildOverlapGroups, buildDirectOverlaps, outOfRunBlockers,
 };

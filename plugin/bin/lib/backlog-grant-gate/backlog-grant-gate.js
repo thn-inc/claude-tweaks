@@ -24,6 +24,8 @@ const { machineGrantOutlook } = require('../issues/backlog');
 const { fetchNativeSubIssues } = require('../issues/native-dependencies');
 const { probeSchemaStrict } = require('../issues/capabilities-probe');
 const recordSnapshot = require('../issues/record-snapshot');
+const { foreignBlockerBlocks } = require('../issues/record-dependencies');
+const { bodyForeignBlockers } = require('../issues/cross-repo-states');
 
 const CANDIDATE_FIELDS = 'number,title,body,labels,createdAt';
 
@@ -40,16 +42,31 @@ function fetchReadyCandidates({ limit, runner }) {
   return jsonOut(runner, ['issue', 'list', '--label', 'ready', '--state', 'open', '--json', CANDIDATE_FIELDS, '--limit', String(limit)]);
 }
 
-// (issues, openNumbers) -> candidates surviving refine-headless.md Step 1's cheap
-// pre-pass: agent-filed origin, no existing grant, not already claimed, no
-// open 'Blocked by #N'. Each candidate carries its own parsed `facets`.
-function filterCandidates(issues, openNumbers) {
-  return issues
+// (candidates, foreignByRecord) -> the candidates with no open-or-unreadable
+// body-declared foreign blocker. The one definition of that rule, shared by
+// filterCandidates and computeOutlook's second step.
+function withoutForeignBlockers(candidates, foreignByRecord) {
+  return candidates.filter((c) => !(foreignByRecord.get(c.number) || []).some(foreignBlockerBlocks));
+}
+
+// (issues, openNumbers, foreignByRecord?) -> candidates surviving refine-headless.md
+// Step 1's cheap pre-pass: agent-filed origin, no existing grant, not already
+// claimed, no open 'Blocked by #N', and no open-or-unreadable body-declared
+// foreign blocker ('Blocked by owner/name#N'). `foreignByRecord` is the
+// precomputed Map<number, [{number, repository, state}]> from
+// bodyForeignBlockers (computeOutlook builds it, keeping this function pure).
+// It is required (pass `new Map()` for "no foreign refs yet"): a default of "no rule"
+// would fail open for a caller that forgot it, so a missing or non-Map value throws.
+// Each candidate carries its own parsed `facets`.
+function filterCandidates(issues, openNumbers, foreignByRecord) {
+  if (!(foreignByRecord instanceof Map)) throw new TypeError('filterCandidates: foreignByRecord must be a Map (pass new Map() for none)');
+  const cheapSurvivors = issues
     .map((i) => ({ ...i, facets: parseRecordFacets(i.labels) }))
     .filter((i) => i.facets.origin !== null)
     .filter((i) => !i.facets.grants.build && !i.facets.grants.merge)
     .filter((i) => !i.facets.bot.inProgress)
     .filter((i) => parseDependencies(i.body).every((d) => !openNumbers.has(d)));
+  return withoutForeignBlockers(cheapSurvivors, foreignByRecord);
 }
 
 // { limit, runner, sessionId, ttlSeconds, now? } -> the whole historical
@@ -83,20 +100,24 @@ function fetchAllRecords({ limit, runner, sessionId, ttlSeconds, now = Date.now(
 // REST retry's `gh api` call — #2240, the same GitHub Enterprise Server
 // pattern fetch-sub-issues.js's own REST retry loop already applies; the
 // batched GraphQL probe above is unchanged, matching that file's scope.
+// `nativeRunner` (default `runner`) makes the owner/repo-addressed calls (the
+// schema probe, the batch, the REST retry); the parent-issue list stays on
+// `runner`, which reads cwd's own repo (#4505: the CLI pins an explicit
+// --repo's host onto nativeRunner only).
 function resolveSubIssueNumbers({
-  workLinks, limit, runner, owner, repo, host, probeFn = probeSchemaStrict,
+  workLinks, limit, runner, nativeRunner = runner, owner, repo, host, probeFn = probeSchemaStrict,
 }) {
   if (workLinks === 'native') {
     const parents = jsonOut(runner, ['issue', 'list', '--label', 'parent-issue', '--state', 'all', '--json', 'number', '--limit', String(limit)]);
     const numbers = parents.map((p) => p.number);
     if (numbers.length === 0) return new Set();
-    const schema = probeFn(runner);
+    const schema = probeFn(nativeRunner);
     const all = new Set();
     const retryParents = [];
     if (schema.subIssues) {
       for (let i = 0; i < numbers.length; i += 50) {
         const chunk = numbers.slice(i, i + 50);
-        const res = fetchNativeSubIssues({ numbers: chunk, owner, repo, runner });
+        const res = fetchNativeSubIssues({ numbers: chunk, owner, repo, runner: nativeRunner });
         for (const subs of res.byParent.values()) subs.forEach((n) => all.add(n));
         retryParents.push(...res.retry);
       }
@@ -106,7 +127,7 @@ function resolveSubIssueNumbers({
     for (const parentNumber of retryParents) {
       const apiArgs = ['api', '--paginate', `repos/${owner}/${repo}/issues/${parentNumber}/sub_issues`, '--jq', '.[].number'];
       if (host && host !== 'github.com') apiArgs.push('--hostname', host);
-      const out = runner(apiArgs);
+      const out = nativeRunner(apiArgs);
       out.trim().split('\n').filter(Boolean).forEach((n) => all.add(Number(n)));
     }
     return all;
@@ -147,10 +168,14 @@ function computePhaseA({ candidates, policy, trustRowsArray }) {
 // already resolved by the caller (the CLI resolves it from
 // .claude-tweaks/policy.yml before calling in). `fetch` bundles every
 // injectable I/O dependency: { limit, workLinks, integrationBranch, owner,
-//   repo, runner, gitRunner, probeFn?, sessionId?, ttlSeconds? } — the last
-//   two feed the session-scoped record-snapshot cache (fetchAllRecords
-//   above); omitted or unresolvable, the cache is simply never fresh and
-//   every call fetches live, same as before this cache existed.
+//   repo, runner, nativeRunner?, gitRunner, probeFn?, sessionId?, ttlSeconds?,
+//   foreignDeps? }
+//   — sessionId/ttlSeconds feed the session-scoped record-snapshot cache
+//   (fetchAllRecords above); omitted or unresolvable, the cache is simply
+//   never fresh and every call fetches live, same as before this cache
+//   existed. nativeRunner: see resolveSubIssueNumbers. foreignDeps:
+//   { spawn?, stderr? } for the body-declared foreign blocker state lookup
+//   (cross-repo-states.js's resolveForeignStates); omitted, the real spawn.
 //
 // Returns the full envelope the CLI prints, and the exact shape
 // skills/backlog/refine-headless.md's Step 1 / Step 2 Phase A tmp files need
@@ -178,7 +203,7 @@ function computeOutlook(policy, fetch) {
   }
 
   const {
-    limit, workLinks, integrationBranch, owner, repo, host, runner, gitRunner, probeFn, sessionId, ttlSeconds,
+    limit, workLinks, integrationBranch, owner, repo, host, runner, nativeRunner, gitRunner, probeFn, sessionId, ttlSeconds, foreignDeps,
   } = fetch;
 
   // One `--state all` fetch (session-cached) supplies both this run's
@@ -190,10 +215,14 @@ function computeOutlook(policy, fetch) {
   const openNumbers = new Set(allRecords.filter((r) => r.state === 'OPEN').map((r) => r.number));
 
   const readyIssues = fetchReadyCandidates({ limit, runner });
-  const candidates = filterCandidates(readyIssues, openNumbers);
+  // The foreign-blocker state lookup is one batched call over the cheap-filter
+  // survivors' body refs (none at all when no survivor declares one), then the
+  // foreign-blocker filter runs on those survivors with its result.
+  const cheapSurvivors = filterCandidates(readyIssues, openNumbers, new Map());
+  const candidates = withoutForeignBlockers(cheapSurvivors, bodyForeignBlockers(cheapSurvivors, foreignDeps));
 
   const subIssueNumbers = resolveSubIssueNumbers({
-    workLinks, limit, runner, owner, repo, host, probeFn,
+    workLinks, limit, runner, nativeRunner: nativeRunner || runner, owner, repo, host, probeFn,
   });
   const gitLog = fetchGitLog({ integrationBranch, gitRunner });
   const records = allRecords.map((r) => ({

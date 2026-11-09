@@ -26,10 +26,11 @@ AUTO {time} — Backlog refine: skipped #{n} — premise changed since confirmat
 AUTO {time} — Backlog refine: skipped #{n} — premise changed since confirmation (concurrent grant DIVERGED: live {live grant}, this run discarded RECOMMEND_MERGE={true|false} — {grant-check RATIONALE}); dropped without writing.
 AUTO {time} — Backlog refine: skipped #{n} — premise changed since confirmation (flag-back concurrent grant agreed: live {live grant}, this run RECOMMEND_BUILD=true); dropped without writing.
 AUTO {time} — Backlog refine: skipped #{n} — premise changed since confirmation (flag-back concurrent grant DIVERGED: live {live grant}, this run discarded RECOMMEND_BUILD=false — {grant-check RATIONALE}); dropped without writing.
-FAILED {time} — Backlog refine: {priority | Related | grant | dependency-repair | flag-back | needs-decision} write failed on #{n}: {error}.
+AUTO {time} — Backlog refine: resolved decision on #{n} as {choice(s)} — {labels/state changed}.
+FAILED {time} — Backlog refine: {priority | Related | grant | dependency-repair | flag-back | needs-decision | resolve} write failed on #{n}: {error}.
 ```
 
-The closing summary below counts these lines by type — `FAILED` feeds the tally's `failed` count and per-failure lines; `AUTO … skipped …` (including a reverify-fetch failure) feeds `skipped` and its per-skip lines; a write with no matching line was never attempted and counts toward neither.
+The closing summary below counts these lines by type — `FAILED` feeds the tally's `failed` count and per-failure lines; `AUTO … skipped …` (including a reverify-fetch failure) feeds `skipped` and its per-skip lines; a write with no matching line was never attempted and counts toward neither. The `resolved decision` line is written by `refine-record.md`'s Step 4 (the Resolve lane), not this file's apply pass, and feeds the tally's `resolved` count.
 
 **Concurrent-grant comparison (#2719).** When Step 5's pre-write reverify drops a grant row because the record's live labels gained `auto:build` and/or `auto:merge`/`auto:merge-pending` since Step 1, compare that live grant (`{live grant}`: `auto:build`, `auto:build + auto:merge`, `auto:build + auto:merge-pending`, or `auto:merge`/`auto:merge-pending` alone — the headless grant chain (`refine-headless.md`'s Grant rows) writes `auto:build` + `auto:merge-pending`, never `auto:merge` directly, so both count as merge-present here) against this run's own `RECOMMEND_MERGE` verdict for the row before logging — the grant-check verdict itself, not the session-wide "Grant auto:build only, hold merge" override, which changes only what this run would have written. A re-authorize row (`bot:blocked`; Step 3 skips its grant-check call entirely, so no `RECOMMEND_MERGE`/RATIONALE exists to compare) keeps the generic skip line instead, with `{what changed}` = `concurrent grant: live {live grant}; re-authorize row, no grant-check verdict to compare` — never "agreed"/"DIVERGED" for these rows. For every other grant row, it **agreed** when live carries `auto:build` and live `auto:merge`-or-`auto:merge-pending` presence equals `RECOMMEND_MERGE`; anything else **diverged**. Log the matching line above: the DIVERGED form carries this run's discarded `RECOMMEND_MERGE` value and its grant-check RATIONALE verbatim, so a reader of `decisions.md` sees the live grant differs from this run's own verdict instead of assuming they repeated each other — this compares this run's verdict against the other actor's *write*, not necessarily its own verdict (a concurrent hold-merge choice or human override writes `auto:build` only). A grant row skipped for any other reason (lost `ready`, a live-state fetch failure) keeps the generic line, as does every non-grant row except the flag-back case below. Both forms count as `skipped`. Every divergence of one sweep is listed by `grep 'concurrent grant DIVERGED' "$PIPELINE_RUN_DIR/decisions.md"`, and the closing summary's per-skip lines (item 3) carry the same text.
 
@@ -47,7 +48,7 @@ second bookkeeping channel:
    present, even at zero:
 
    ```
-   34 priority set · 2 Related updated · 7 granted · 5 flagged back · 1 dependency-repair · 1 needs-decision · 0 skipped · 0 failed
+   34 priority set · 2 Related updated · 7 granted · 5 flagged back · 1 dependency-repair · 1 needs-decision · 0 resolved · 0 skipped · 0 failed
    ```
 
    The CLI's field set (`plugin/bin/lib/closing-tally/closing-tally.js`'s `FIELDS`/`LABELS`) is the
@@ -101,7 +102,9 @@ second bookkeeping channel:
    label remains — safe when the removal already landed and only the add failed; before any
    removal it leaves two contradictory labels, exactly what the swap above exists to prevent.
    Grant rows (up to four chained `gh` calls) and Related/Flag-back rows (a `--body-file` edit)
-   retry as the single failed call from that row's own mechanics, not the whole row.
+   retry as the single failed call from that row's own mechanics, not the whole row. A `resolve`
+   failure (the Resolve lane's writes live in `refine-record.md` Step 4, not this file's apply
+   pass) retries the same way, as the single failed call from that step's items 2-4.
 
 3. **One line per skipped write** — the record ref and what changed, informational only (no retry command needed — the human re-runs refine to pick it up fresh next time):
 

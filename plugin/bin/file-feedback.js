@@ -17,7 +17,8 @@
 // resolved without a filing-failure); 1 any draft returned filing-failure
 // (other drafts still get processed — this is a summary exit code, not
 // stop-on-first-failure); 2 malformed invocation (missing --drafts, unreadable
-// drafts file, malformed draft entry) or `gh` unavailable — `gh issue
+// drafts file, malformed draft entry), an origin host with no GitHub signal
+// (refused before any gh call, #4933) or `gh` unavailable — `gh issue
 // create`/`issue view`/`issue list` have no GitHub MCP equivalent wired here;
 // the fallback is manual filing per skills/feedback/SKILL.md's existing Step 8
 // recipe, or skills/_shared/github-write-transport.md's MCP path in a
@@ -28,7 +29,7 @@ const fs = require('fs');
 const os = require('os');
 const { execFileSync } = require('child_process');
 const feedback = require('./lib/feedback/file-feedback');
-const { parseRepo, ghAvailable, repoSlug } = require('./lib/repo-resolve');
+const { parseRepo, ghAvailable, repoSlug, gateOriginRepo } = require('./lib/repo-resolve');
 
 const USAGE = 'usage: file-feedback.js --drafts <path.json> [--repo owner/name] [--dry-run] [--help]\n';
 
@@ -109,7 +110,13 @@ function run(argv, deps = realDeps) {
 
   let remote = null;
   if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-  const repoSpec = opts.repo ? parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : parseRepo(remote);
+  let repoSpec;
+  if (opts.repo) repoSpec = parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`);
+  else {
+    const gated = gateOriginRepo(remote, deps.gateDeps);
+    if (gated.refusal) { deps.stderr(`file-feedback.js: ${gated.refusal}\n`); return 2; }
+    repoSpec = gated.spec;
+  }
   if (!repoSpec) { deps.stderr('file-feedback.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
   // #2240: repoSlug host-qualifies a non-github.com host (`{host}/{owner}/{repo}`) for
   // gh's `-R/--repo` flag, which accepts that form directly — a bare `owner/repo` here

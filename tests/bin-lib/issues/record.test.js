@@ -4,10 +4,11 @@ const assert = require('node:assert');
 const {
   recordPayload, TYPE_LABELS, CLASSIFICATION_SCORING, LABELS, DEFER_REASONS,
   extractFingerprint, checkFingerprint, recordFingerprint, extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, parseRecordFacets, parseDependencies, parseDependencyAssumptions, specShapedBody,
-  buildNativeDependencyQuery, hasOpenNativeBlocker, parseSubIssues, buildNativeSubIssuesQuery,
+  buildNativeDependencyQuery, hasOpenNativeBlocker, parseSubIssues, parseParent, buildNativeSubIssuesQuery,
   buildNativeParentQuery,
   partitionByOpenBodyBlockers, partitionByOpenNativeBlockers,
   buildLinkedPRQuery, partitionByOpenLinkedPR, extractSection, isRepoRelativeKeyFilePath,
+  crossRepositoryBlockers, withoutCrossRepoBlockers, foreignBlockerBlocks, foreignBlockerRef, openBlockerRefs, openNativeBlockerRefs,
 } = require('../../../plugin/bin/lib/issues/record');
 
 test('recordPayload assembles labels for a born-ready health record', () => {
@@ -402,6 +403,25 @@ test('parseRecordFacets: LABELS exposes the three demo:* acceptance label string
   assert.strictEqual(LABELS.DEMO_CHANGES_REQUESTED, 'demo:changes-requested');
 });
 
+test('parseRecordFacets: accept:* labels set acceptance, and LABELS exposes the three accept:* strings', () => {
+  assert.strictEqual(LABELS.ACCEPT_PENDING, 'accept:pending');
+  assert.strictEqual(LABELS.ACCEPT_APPROVED, 'accept:approved');
+  assert.strictEqual(LABELS.ACCEPT_CHANGES_REQUESTED, 'accept:changes-requested');
+  assert.strictEqual(parseRecordFacets(['accept:pending']).acceptance, 'pending');
+  assert.strictEqual(parseRecordFacets(['accept:approved']).acceptance, 'approved');
+  assert.strictEqual(parseRecordFacets(['accept:changes-requested']).acceptance, 'changes-requested');
+});
+
+test('acceptanceOf: changes-requested beats pending beats approved beats null, across both vocabularies', () => {
+  const { acceptanceOf } = require('../../../plugin/bin/lib/issues/record-vocabulary');
+  assert.strictEqual(acceptanceOf([]), null);
+  assert.strictEqual(acceptanceOf(['ready', 'accept:approved-batch']), null);
+  assert.strictEqual(acceptanceOf(['demo:approved', 'accept:pending']), 'pending');
+  assert.strictEqual(acceptanceOf(['accept:pending', 'demo:changes-requested', 'accept:approved']), 'changes-requested');
+  // Orthogonal category: an unrelated label alongside does not disturb the verdict.
+  assert.strictEqual(acceptanceOf(['ready', 'accept:approved', 'type:bug']), 'approved');
+});
+
 test('parseRecordFacets: ceremony:fast-lane sets facets.ceremony', () => {
   assert.strictEqual(parseRecordFacets(['ceremony:fast-lane']).ceremony, 'fast-lane');
 });
@@ -493,14 +513,14 @@ test('partitionByOpenBodyBlockers excludes a candidate with an open body-text bl
     { number: 12, body: 'Blocked by #40' },
     { number: 15, body: 'no deps' },
   ];
-  const { eligible, excluded } = partitionByOpenBodyBlockers(candidates, new Set([40]));
+  const { eligible, excluded } = partitionByOpenBodyBlockers(candidates, new Set([40]), new Map());
   assert.deepStrictEqual(eligible.map((c) => c.number), [15]);
   assert.deepStrictEqual(excluded, [{ number: 12, blockedBy: [40] }]);
 });
 
 test('partitionByOpenBodyBlockers keeps a candidate whose blocker is not in openNumbers (already closed)', () => {
   const candidates = [{ number: 12, body: 'Blocked by #40' }];
-  const { eligible, excluded } = partitionByOpenBodyBlockers(candidates, new Set());
+  const { eligible, excluded } = partitionByOpenBodyBlockers(candidates, new Set(), new Map());
   assert.deepStrictEqual(eligible.map((c) => c.number), [12]);
   assert.deepStrictEqual(excluded, []);
 });
@@ -512,7 +532,7 @@ test('partitionByOpenBodyBlockers reports a two-member dependency cycle as two e
     { number: 10, body: 'Blocked by #11' },
     { number: 11, body: 'Blocked by #10' },
   ];
-  const { eligible, excluded } = partitionByOpenBodyBlockers(candidates, new Set([10, 11]));
+  const { eligible, excluded } = partitionByOpenBodyBlockers(candidates, new Set([10, 11]), new Map());
   assert.deepStrictEqual(eligible, []);
   assert.deepStrictEqual(excluded, [
     { number: 10, blockedBy: [11] },
@@ -545,6 +565,26 @@ test('partitionByOpenNativeBlockers fails safe (never throws) when blockedBy.nod
   const { eligible, excluded } = partitionByOpenNativeBlockers(candidates, repoData);
   assert.deepStrictEqual(eligible.map((c) => c.number), [12]);
   assert.deepStrictEqual(excluded, []);
+});
+
+test('Plan Review Clarifications: partitionByOpenBodyBlockers excludes an open or unreadable body-declared foreign blocker, never a CLOSED one', () => {
+  const foreign = new Map([
+    [11, [{ number: 5, repository: 'other/repo', state: 'OPEN' }]],
+    [12, [{ number: 6, repository: 'other/repo', state: null }]],
+    [13, [{ number: 7, repository: 'other/repo', state: 'CLOSED' }]],
+  ]);
+  const candidates = [11, 12, 13, 14].map((number) => ({ number, body: number === 14 ? 'Blocked by #40' : '' }));
+  const { eligible, excluded } = partitionByOpenBodyBlockers(candidates, new Set([40]), foreign);
+  assert.deepStrictEqual(eligible.map((c) => c.number), [13]);
+  assert.deepStrictEqual(excluded, [
+    { number: 11, blockedBy: ['other/repo#5'] }, { number: 12, blockedBy: ['other/repo#6 (state unreadable)'] }, { number: 14, blockedBy: [40] },
+  ]);
+});
+
+test('partitionByOpenBodyBlockers requires its foreign map: a missing or non-Map third argument throws, because a default of no rule would fail open', () => {
+  const candidates = [{ number: 11, body: '' }];
+  assert.throws(() => partitionByOpenBodyBlockers(candidates, new Set()), { name: 'TypeError', message: /foreignByRecord must be a Map/ });
+  assert.throws(() => partitionByOpenBodyBlockers(candidates, new Set(), {}), { name: 'TypeError', message: /foreignByRecord must be a Map/ });
 });
 
 test('partitionByOpenLinkedPR excludes a candidate with an OPEN linked PR, naming the PR number', () => {
@@ -623,8 +663,7 @@ test('buildNativeDependencyQuery aliases each number and requests blockedBy stat
   const q = buildNativeDependencyQuery([39, 37]);
   assert.match(q, /i39: issue\(number:39\)/);
   assert.match(q, /i37: issue\(number:37\)/);
-  assert.match(q, /blockedBy\(first:25\)/);
-  assert.match(q, /state/);
+  assert.match(q, /i39: issue\(number:39\)\{ number repository\{ nameWithOwner \} blockedBy\(first:25\)\{ nodes\{ number state repository\{ nameWithOwner \} \} \} \}/);
   assert.match(q, /repository\(owner:\$owner,name:\$repo\)/);
 });
 
@@ -783,6 +822,23 @@ test('parseSubIssues returns empty for absent or non-string bodies', () => {
   assert.deepEqual(parseSubIssues(''), []);
   assert.deepEqual(parseSubIssues(undefined), []);
   assert.deepEqual(parseSubIssues('no task list here'), []);
+});
+
+test('AC1.1: parseParent reads a line-anchored Parent line', () => {
+  assert.strictEqual(parseParent('Surface: backend\nParent: #12\n\n## Current State'), 12);
+  assert.strictEqual(parseParent('Parent: #12\r\nSurface: backend'), 12);
+  assert.strictEqual(parseParent('Parent: #12\nParent: #34\n'), 12);
+});
+
+test('AC1.2: parseParent ignores a mid-line mention and a body with no Parent line', () => {
+  assert.strictEqual(parseParent('see Parent: #12'), null);
+  assert.strictEqual(parseParent('Surface: backend\n\n## Current State'), null);
+});
+
+test('AC1.3: parseParent returns null for a null or empty body', () => {
+  assert.strictEqual(parseParent(null), null);
+  assert.strictEqual(parseParent(undefined), null);
+  assert.strictEqual(parseParent(''), null);
 });
 
 test('parseRecordFacets sets isParentIssue from the parent-issue label', () => {
@@ -1136,6 +1192,113 @@ test('extractTemplateStamp: null when absent, when body is empty, and for non-st
   assert.strictEqual(extractTemplateStamp(undefined), null);
 });
 
+// --- fence-blind metadata (#4368) ---
+
+const fenced = (line, fence = '```') => [fence, line, fence].join('\n');
+
+test('AC1.1: extractPremiseCheck — fenced command before the record\'s own yields the unfenced one', () => {
+  const body = [fenced('Premise-check: echo QUOTED'), '', 'Premise-check: echo REAL', '', '## Current State', 'x'].join('\n');
+  assert.strictEqual(extractPremiseCheck(body), 'echo REAL');
+});
+
+test('AC2.1: extractPremiseCheck — a body whose only command line is fenced yields null', () => {
+  const body = ['## Current State', fenced('Premise-check: echo QUOTED'), 'x'].join('\n');
+  assert.strictEqual(extractPremiseCheck(body), null);
+});
+
+test('extractPremiseCheck — real-only body is unchanged', () => {
+  assert.strictEqual(extractPremiseCheck('Premise-check: echo REAL\n\n## Current State\nx'), 'echo REAL');
+});
+
+test('AC3.1: extractVerifiedAsOf — fenced-before-real, fenced-only, real-only', () => {
+  assert.strictEqual(extractVerifiedAsOf([fenced('Verified-as-of: aaaaaaa'), 'Verified-as-of: bbbbbbb'].join('\n')), 'bbbbbbb');
+  assert.strictEqual(extractVerifiedAsOf(['## Current State', fenced('Verified-as-of: aaaaaaa')].join('\n')), null);
+  assert.strictEqual(extractVerifiedAsOf('Verified-as-of: bbbbbbb\n\n## Current State'), 'bbbbbbb');
+});
+
+test('AC3.1: extractTemplateStamp — fenced-before-real, fenced-only, real-only', () => {
+  assert.deepStrictEqual(
+    extractTemplateStamp([fenced('Template: quoted.md @ 1.0.0'), 'Template: real.md @ 2.0.0'].join('\n')),
+    { path: 'real.md', version: '2.0.0' },
+  );
+  assert.strictEqual(extractTemplateStamp(['## Current State', fenced('Template: quoted.md @ 1.0.0')].join('\n')), null);
+  assert.deepStrictEqual(extractTemplateStamp('Template: real.md @ 2.0.0\n'), { path: 'real.md', version: '2.0.0' });
+});
+
+test('fence-blind metadata (#4368): tilde and longer backtick fences hide the line too', () => {
+  assert.strictEqual(extractPremiseCheck(fenced('Premise-check: echo QUOTED', '~~~')), null);
+  assert.strictEqual(extractPremiseCheck(fenced('Premise-check: echo QUOTED', '````')), null);
+});
+
+test('fence-blind metadata (#4368): an unclosed fence hides every later metadata line', () => {
+  assert.strictEqual(extractPremiseCheck('```\nquoted\n\nPremise-check: echo REAL'), null);
+});
+
+test('fence-blind metadata (#4368): CRLF body — fenced line skipped, real command read and trimmed', () => {
+  const body = ['```', 'Premise-check: echo QUOTED', '```', 'Premise-check: echo REAL', '## Current State'].join('\r\n');
+  assert.strictEqual(extractPremiseCheck(body), 'echo REAL');
+});
+
+test('fence-blind metadata (#4368): bare-CR line endings — a CR-separated fence hides its line too', () => {
+  assert.strictEqual(extractPremiseCheck('intro\r```\rPremise-check: echo QUOTED\r```'), null);
+  assert.strictEqual(extractPremiseCheck('```\rPremise-check: echo QUOTED\r```\rPremise-check: echo REAL\r'), 'echo REAL');
+  assert.strictEqual(extractVerifiedAsOf('```\rVerified-as-of: aaaaaaa\r```'), null);
+});
+
+test('fence-blind metadata (#4368): a fence indented 1–3 spaces hides its line; 4 spaces is not a fence', () => {
+  for (const pad of [' ', '  ', '   ']) {
+    assert.strictEqual(extractPremiseCheck(`${pad}\`\`\`\nPremise-check: echo QUOTED\n${pad}\`\`\``), null, `pad ${pad.length}`);
+  }
+  // An indented opener closed by a column-0 closer still pairs.
+  assert.strictEqual(extractPremiseCheck('  ```\nPremise-check: echo QUOTED\n```\nPremise-check: echo REAL'), 'echo REAL');
+  // A column-0 opener closed by an indented closer still pairs (pins the closer's indent allowance).
+  assert.strictEqual(extractPremiseCheck('```\nPremise-check: echo QUOTED\n  ```\nPremise-check: echo REAL'), 'echo REAL');
+  // Four spaces is an indented code block, not a fence opener — the following column-0 line is read.
+  assert.strictEqual(extractPremiseCheck('    ```\nPremise-check: echo REAL'), 'echo REAL');
+  // A 4-space-indented ``` inside a fence is content, not a closer — the closer's upper bound.
+  assert.strictEqual(extractPremiseCheck('```\n    ```\nPremise-check: echo QUOTED\n```'), null);
+  // Indented tilde fences hide their line too.
+  assert.strictEqual(extractPremiseCheck('  ~~~\nPremise-check: echo QUOTED\n  ~~~'), null);
+});
+
+test('fence-blind metadata (#4368): a closer trailed by a non-space/tab character is not a closer', () => {
+  // NBSP after the backticks: GitHub keeps the fence open, so the line after it is still quoted.
+  assert.strictEqual(extractPremiseCheck('```\nx\n```\u00a0\nPremise-check: echo QUOTED\n```'), null);
+  assert.strictEqual(extractPremiseCheck('```\nx\n```\u000b\nPremise-check: echo QUOTED\n```'), null);
+  // A trailing space/tab still closes.
+  assert.strictEqual(extractPremiseCheck('```\nx\n``` \t\nPremise-check: echo REAL'), 'echo REAL');
+});
+
+test('fence-blind metadata (#4368): a backtick opener whose info string holds a backtick is an inline code span, not a fence', () => {
+  // CommonMark: "```a`b" is a paragraph, so the real fence opens at the third line and the
+  // line after it is quoted. Reading the first line as an opener pairs the fences wrongly
+  // and would run the quoted command.
+  const body = ['```a`b', 'Premise-check: echo REAL', '```', 'Premise-check: echo QUOTED', '```'].join('\n');
+  assert.strictEqual(extractPremiseCheck(body), 'echo REAL');
+  // A backtick-free info string still opens a fence, and tilde fences take any info string.
+  assert.strictEqual(extractPremiseCheck(['```js', 'Premise-check: echo QUOTED', '```'].join('\n')), null);
+  assert.strictEqual(extractPremiseCheck(['~~~a`b', 'Premise-check: echo QUOTED', '~~~'].join('\n')), null);
+});
+
+test('fence-blind metadata (#4368): a leading byte-order mark does not hide a fence opener', () => {
+  assert.strictEqual(extractPremiseCheck('\uFEFF```\nPremise-check: echo QUOTED\n```'), null);
+  assert.strictEqual(extractPremiseCheck('\uFEFF```\nPremise-check: echo QUOTED\n```\nPremise-check: echo REAL'), 'echo REAL');
+});
+
+test('recordPayload (#4368): a Defer-reason: line quoted inside a fenced block is not the body\'s own', () => {
+  // A different fenced value neither throws nor suppresses the insert of the real first line.
+  const fencedOther = recordPayload({ title: 't', body: fenced('Defer-reason: genuinely-larger'), type: 'task', deferReason: 'tangential' });
+  assert.ok(fencedOther.body.startsWith('Defer-reason: tangential\n\n'));
+  // A fenced value equal to deferReason still gets the real line inserted ahead of it.
+  const fencedSame = recordPayload({ title: 't', body: fenced('Defer-reason: tangential'), type: 'task', deferReason: 'tangential' });
+  assert.ok(fencedSame.body.startsWith('Defer-reason: tangential\n\n'));
+  // An unfenced contradicting line still throws.
+  assert.throws(
+    () => recordPayload({ title: 't', body: 'Defer-reason: genuinely-larger\n\n## Current State\nx', type: 'task', deferReason: 'tangential' }),
+    /already carries/,
+  );
+});
+
 test('parseRecordFacets: breaking label sets facets.breaking to true (presence-only Compatibility axis, #2251)', () => {
   assert.strictEqual(parseRecordFacets(['breaking']).breaking, true);
   assert.strictEqual(parseRecordFacets([{ name: 'breaking' }]).breaking, true);
@@ -1317,8 +1480,103 @@ test('extractSection: a fence is closed only by its own character, at least as l
   assert.strictEqual(section('```md', '## Acceptance Criteria', 'quoted', '```', '## Deliverables', 'x'), '');
 });
 
+test('fencedLineMask marks exactly the lines inside fenced blocks, fence lines included (#4369)', () => {
+  const { fencedLineMask, fencedLineRanges } = require('../../../plugin/bin/lib/markdown-blocks');
+  const lines = ['a', '```md', '## in', '```', 'b', '~~~', 'open-ended', 'c'];
+  assert.deepStrictEqual(fencedLineMask(lines), [false, true, true, true, false, true, true, true]);
+  assert.deepStrictEqual(fencedLineRanges(lines), [[1, 3], [5, 7]]);
+  assert.deepStrictEqual(fencedLineMask(['no fence', '## h']), [false, false]);
+  assert.deepStrictEqual(fencedLineMask([]), []);
+});
+
+test('fencedLineRanges: a backtick line whose info string holds a backtick is an inline span, not a fence (#4369)', () => {
+  const { fencedLineRanges } = require('../../../plugin/bin/lib/markdown-blocks');
+  assert.deepStrictEqual(fencedLineRanges(['```a``` inline span', '## Current State']), []);
+  assert.deepStrictEqual(fencedLineRanges(['```js', 'x', '```']), [[0, 2]]);
+  assert.deepStrictEqual(fencedLineRanges(['~~~a`b', 'x', '~~~']), [[0, 2]]);
+});
+
+test('fencedLineMask unclosedAsText leaves only a trailing unclosed fence out of the mask (#4369)', () => {
+  const { fencedLineMask } = require('../../../plugin/bin/lib/markdown-blocks');
+  const unclosed = ['a', '```', '## h', 'b'];
+  assert.deepStrictEqual(fencedLineMask(unclosed), [false, true, true, true]);
+  assert.deepStrictEqual(fencedLineMask(unclosed, { unclosedAsText: true }), [false, false, false, false]);
+  const closedThenUnclosed = ['```', 'in', '```', '~~~', '## h'];
+  assert.deepStrictEqual(fencedLineMask(closedThenUnclosed, { unclosedAsText: true }), [true, true, true, false, false]);
+  assert.deepStrictEqual(fencedLineMask(['```', 'in', '```'], { unclosedAsText: true }), [true, true, true]);
+});
+
 test('extractSection: an unclosed fence hides every later heading (CommonMark: it runs to end of text)', () => {
   const body = '## Current State\nx\n\n```\nnever closed\n\n## Deliverables\n- [ ] d';
   assert.strictEqual(extractSection(body, 'Deliverables'), '');
   assert.ok(extractSection(body, 'Current State').endsWith('- [ ] d'));
+});
+
+test('extractSection: 1- to 3-space-indented fences hide a heading; a 4-space pad is not a fence (#4368)', () => {
+  const bodyFor = (pad) => ['## Current State', 'x', `${pad}\`\`\``, '## Deliverables', 'quoted', `${pad}\`\`\``, '', '## Release Note', 'n'].join('\n');
+  for (const pad of [' ', '  ', '   ']) {
+    assert.strictEqual(extractSection(bodyFor(pad), 'Deliverables'), '', `pad ${pad.length}`);
+  }
+  const four = extractSection(bodyFor('    '), 'Deliverables');
+  assert.ok(four.length > 0);
+  assert.ok(four.startsWith('quoted'));
+});
+
+const depNode = (home, blockers) => ({ number: 1, repository: home === null ? undefined : { nameWithOwner: home }, blockedBy: { nodes: blockers } });
+const blk = (number, repo, state = 'CLOSED') => ({ number, state, ...(repo === undefined ? {} : { repository: { nameWithOwner: repo } }) });
+
+test('AC1.1/AC1.2 (#4793): a native blocker in another repository is listed foreign with its state, so it is never read as this repository\'s same-numbered issue', () => {
+  assert.deepStrictEqual(crossRepositoryBlockers(depNode('acme/w', [blk(5, 'other/repo', 'OPEN'), blk(6, 'acme/w')])), [{ number: 5, repository: 'other/repo', state: 'OPEN' }]);
+});
+test('crossRepositoryBlockers treats a name differing only in case as the same repository', () => {
+  assert.deepStrictEqual(crossRepositoryBlockers(depNode('Acme/W', [blk(6, 'acme/w')])), []);
+});
+test('crossRepositoryBlockers calls nothing foreign when either name is unreadable', () => {
+  assert.deepStrictEqual(crossRepositoryBlockers(depNode(null, [blk(5, 'other/repo')])), []);
+  assert.deepStrictEqual(crossRepositoryBlockers(depNode('acme/w', [blk(5)])), []);
+  assert.deepStrictEqual(crossRepositoryBlockers(depNode('acme/w', [blk(5, '')])), []);
+  assert.deepStrictEqual(crossRepositoryBlockers(null), []);
+  assert.deepStrictEqual(crossRepositoryBlockers({ number: 1, repository: { nameWithOwner: 'acme/w' }, blockedBy: { nodes: 'x' } }), []);
+});
+test('crossRepositoryBlockers keeps a same-number pair apart and records a non-string state as null', () => {
+  assert.deepStrictEqual(crossRepositoryBlockers(depNode('acme/w', [blk(5, 'acme/w'), blk(5, 'other/repo', null)])), [{ number: 5, repository: 'other/repo', state: null }]);
+});
+test('withoutCrossRepoBlockers removes one occurrence per foreign entry, keeping order', () => {
+  assert.deepStrictEqual(withoutCrossRepoBlockers([5, 6, 5], [{ number: 5 }]), [6, 5]);
+  assert.deepStrictEqual(withoutCrossRepoBlockers([5, 6], undefined), [5, 6]);
+  assert.deepStrictEqual(withoutCrossRepoBlockers(undefined, [{ number: 5 }]), []);
+  assert.deepStrictEqual(withoutCrossRepoBlockers([6], [{ number: 5 }]), [6]);
+});
+test('Q5: foreignBlockerBlocks is false only for CLOSED; foreignBlockerRef names owner/name#N and marks an unreadable state', () => {
+  assert.equal(foreignBlockerBlocks({ number: 5, repository: 'o/r', state: 'CLOSED' }), false);
+  assert.equal(foreignBlockerBlocks({ number: 5, repository: 'o/r', state: 'OPEN' }), true);
+  assert.equal(foreignBlockerBlocks({ number: 5, repository: 'o/r', state: null }), true);
+  assert.equal(foreignBlockerBlocks({ number: 5, repository: 'o/r', state: 'WEIRD' }), true);
+  assert.equal(foreignBlockerBlocks({ number: 5, repository: 'o/r', state: 'closed' }), true);
+  assert.equal(foreignBlockerRef({ number: 5, repository: 'o/r', state: 'closed' }), 'o/r#5 (state unreadable)');
+  assert.equal(foreignBlockerRef({ number: 5, repository: 'o/r', state: 'OPEN' }), 'o/r#5');
+  assert.equal(foreignBlockerRef({ number: 5, repository: 'o/r', state: 'CLOSED' }), 'o/r#5');
+  assert.equal(foreignBlockerRef({ number: 5, repository: 'o/r', state: null }), 'o/r#5 (state unreadable)');
+  assert.equal(foreignBlockerRef({ number: 5, repository: 'o/r', state: 'WEIRD' }), 'o/r#5 (state unreadable)');
+});
+test('openBlockerRefs lists this repository\'s open numbers, then each still-blocking foreign blocker by its qualified name', () => {
+  const cross = [{ number: 5, repository: 'o/r', state: 'OPEN' }, { number: 7, repository: 'o/r', state: 'CLOSED' }, { number: 8, repository: 'o/r', state: null }];
+  assert.deepStrictEqual(openBlockerRefs({ openBlockerIds: [5, 4, 5, 4], crossRepoBlockers: cross }), [4, 5, 'o/r#5', 'o/r#8 (state unreadable)']);
+  assert.deepStrictEqual(openBlockerRefs({ openBlockerIds: [4] }), [4]);
+  assert.deepStrictEqual(openBlockerRefs({ crossRepoBlockers: [{ number: 8, repository: 'o/r', state: null }] }), ['o/r#8 (state unreadable)']);
+  assert.deepStrictEqual(openBlockerRefs({}), []);
+});
+test('openBlockerRefs skips non-object crossRepoBlockers entries instead of throwing', () => {
+  const cross = [null, undefined, 'x', { number: 5, repository: 'o/r', state: 'OPEN' }];
+  assert.deepStrictEqual(openBlockerRefs({ openBlockerIds: [4, 5], crossRepoBlockers: cross }), [4, 'o/r#5']);
+  assert.deepStrictEqual(openBlockerRefs({ openBlockerIds: [4], crossRepoBlockers: [null] }), [4]);
+});
+test('openNativeBlockerRefs reads a raw node: local OPEN numbers, foreign refs, legacy nodes unchanged', () => {
+  assert.deepStrictEqual(openNativeBlockerRefs(depNode('acme/w', [blk(4, 'acme/w', 'OPEN'), blk(5, 'other/repo', 'OPEN'), blk(6, 'other/repo'), blk(9, 'acme/w')])), [4, 'other/repo#5']);
+  assert.deepStrictEqual(openNativeBlockerRefs({ number: 1, blockedBy: { nodes: [{ number: 4, state: 'OPEN' }, { number: 9, state: 'CLOSED' }] } }), [4]);
+  assert.deepStrictEqual(openNativeBlockerRefs({ number: 1, blockedBy: { nodes: 'x' } }), []);
+});
+test('partitionByOpenNativeBlockers names a foreign open blocker by its qualified name (#4793)', () => {
+  const { excluded } = partitionByOpenNativeBlockers([{ number: 12 }], { i12: depNode('acme/w', [blk(5, 'other/repo', 'OPEN')]) });
+  assert.deepStrictEqual(excluded, [{ number: 12, blockedBy: ['other/repo#5'] }]);
 });

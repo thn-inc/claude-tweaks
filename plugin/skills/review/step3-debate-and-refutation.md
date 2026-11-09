@@ -35,15 +35,16 @@ After per-lens reproduction completes, scan for contradictions across lenses bef
 >    [Use: Frontier — debate agent. Independent run; do not see the other judge's reasoning.
 >    Degrades per the resolver's preconditions (contract § Model Selection).]
 >    [... READ-ONLY REVIEW line, verbatim from the review-dispatch bundle's Read-only Reviewer Discipline section ...]
+>    [... SHELL DISCIPLINE line, verbatim from the review-dispatch bundle's Working Directory Discipline section ...]
 >    ```
 
 4. **Resolve.** Apply `resolveDebate`:
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/bin/review-coordination.js" resolve-debate {verdictA} {verdictB}
    ```
-   - Both `agree` → finding upgraded to `confirmed`. Write `AUTO {HH:MM:SS} — Debate: cross-lens disagreement on {path}:{line} converged positive after 1 round. Reversibility: high.`
+   - Both `agree` → finding upgraded to `confirmed`. Write `AUTO {HH:MM:SS} — Debate: cross-lens disagreement on {path}:{line} converged positive after 1 round (lens "{lensA}" finding {pathA}:{lineA}; lens "{lensB}" finding {pathB}:{lineB} — both confirmed). Reversibility: high.` The Review Console supersedes each finding this line names (`console/resolve.js`'s `tiebreakModel`), so name both: a finding the line omits keeps its STAGED line open (`step3-tiebreak.md`'s settlement paragraph).
    - Both `disagree` → finding downgraded to `unconfirmed`, for Step 3.7 (`step3-tiebreak.md`). Write `STAGED {HH:MM:SS} — Debate: lens "{lensA}" finding {path}:{line} — cross-lens disagreement converged negative after 1 round; unconfirmed. Reversibility: high.`
-   - Mixed / partial → finding becomes `contested`. Write `STAGED {HH:MM:SS} — Debate: lens "{lensA}" cross-lens disagreement on {path}:{line} inconclusive ({verdicts}). Both verdicts staged. Stage path: staged/review-contested-{N}.md. Reversibility: high.` Stage the side-by-side verdicts to that file. `{lensA}` is Finding A's lens, and Finding A is the contested entry's first position — the lens Step 3.7's verdict carries (`step3-tiebreak.md`'s Findings artifact), so the verdict supersedes this line and its file.
+   - Mixed / partial → finding becomes `contested`. Write `STAGED {HH:MM:SS} — Debate: lens "{lensA}" cross-lens disagreement on {path}:{line} inconclusive ({verdicts}). Both verdicts staged. Stage path: staged/review-contested-{N}.md. Reversibility: high.` Stage the side-by-side verdicts to that file. `{lensA}` is Finding A's lens, and Finding A is the contested entry's first position — the lens Step 3.7's verdict carries (`step3-tiebreak.md`'s Findings artifact), so the verdict supersedes this line and its file. The region `{path}:{line}` in this line is Finding A's `{pathA}:{lineA}`, never another line in the overlap band: the verdict settles only the key it names. Write the file's `## Positions` section as one bullet per finding, `- **Finding A (lens {lensA}, {severity})** — {pathA}:{lineA}: {claim}` and `- **Finding B (lens {lensB}, {severity})** — {pathB}:{lineB}: {claim}`; the Console applies the verdict on the contested entry (keyed to Finding A) to every finding listed there.
 
 5. **Skip debate** when no overlap is detected, or when only one lens covered a region. Avoid running debate on every `Path:Line` where any two lenses touched — that explodes the token budget for no value.
 
@@ -90,7 +91,7 @@ This pass is the only place in the skill where an unbounded fan-out would meet t
 >    Recommendation: file | drop — {one-line reason}
 >
 >    confirmed means the finding still stands after your attempt to break it; refuted means you broke it; cant-tell means you could not decide.
->    Evidence is required for confirmed and refuted: cite {path} exactly as given (the full repo-relative path, never a bare filename or another file) and a line within 5 of {line} in the current file, and quote the whole cited source line verbatim — a token or fragment of the line is not a quote. cant-tell needs no Evidence line.
+>    Evidence is required for confirmed and refuted: cite {path} exactly as given (the full repo-relative path, never a bare filename or another file) and a line within 5 of {line} in the current file, and quote the whole cited source line verbatim — a token or fragment of the line is not a quote. The cited line must carry a run of at least 3 letters, digits or underscores (an identifier or keyword that long): a line with none, such as `});` or `if (fd === 2) {`, is rejected as unverified however exact the quote, so cite a neighbouring line within that range that has one. cant-tell needs no Evidence line.
 >    Recommendation file means the finding is worth a fix or a work record; drop means it is not worth acting on.
 >    Produce your response first; the last non-empty line of your reply must then read exactly one of: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED, labeled `STATUS: {WORD}`.
 >
@@ -100,6 +101,7 @@ This pass is the only place in the skill where an unbounded fan-out would meet t
 >    Diff scope: {base}...{branch}, or the own-work file list path when the Merge-Provenance Check found merge commits
 >
 >    [... READ-ONLY REVIEW line, verbatim from the review-dispatch bundle's Read-only Reviewer Discipline section ...]
+>    [... SHELL DISCIPLINE line, verbatim from the review-dispatch bundle's Working Directory Discipline section ...]
 >
 >    SCRATCH: {ctx-dir}/agent-scratch/{agent-id} — any probe script or fixture you create to verify this finding goes there (never in the repository tree) and must be deleted before your status word (`_shared/subagent-output-contract.md`'s Scratch rule). If this path lies outside your own worktree (`worktree-always`, or any `EnterWorktree`-isolated dispatch), create and delete it via Bash, one plain command per call — `mkdir -p` as its own call, the file written by one plain `printf` redirect or `node -e` call, `rm` as its own call; never a heredoc or an `&&` chain, which the harness Bash guard refuses by shape, nor a `;` sequence, and no shell variable carried between calls: spell the scratch path out as a literal absolute path in every call — never `Write`/`Edit`, which the worktree-pinning guard refuses for a path outside your worktree.
 >
@@ -133,6 +135,7 @@ already cover. If you find nothing beyond what's already flagged, return "No fin
 in step3-lens-dispatch.md ...]
 
 [... READ-ONLY REVIEW line, verbatim from the review-dispatch bundle's Read-only Reviewer Discipline section ...]
+[... SHELL DISCIPLINE line, verbatim from the review-dispatch bundle's Working Directory Discipline section ...]
 
 SCRATCH: {ctx-dir}/agent-scratch/gap-sweep — any probe script or fixture you create to verify a finding goes there (never in the repository tree) and must be deleted before your status word (`_shared/subagent-output-contract.md`'s Scratch rule). If this path lies outside your own worktree (`worktree-always`, or any `EnterWorktree`-isolated dispatch), create and delete it via Bash, one plain command per call — `mkdir -p` as its own call, the file written by one plain `printf` redirect or `node -e` call, `rm` as its own call; never a heredoc or an `&&` chain, which the harness Bash guard refuses by shape, nor a `;` sequence, and no shell variable carried between calls: spell the scratch path out as a literal absolute path in every call — never `Write`/`Edit`, which the worktree-pinning guard refuses for a path outside your worktree.
 

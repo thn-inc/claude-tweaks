@@ -25,15 +25,18 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { isPathContained } = require('../shared-primitives');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
-const { ghAvailable: sharedGhAvailable, parseRepo } = require('../repo-resolve');
+const {
+  ghAvailable: sharedGhAvailable, parseRepo, repoSlug, ghOptions, gateOriginRepo, ghHostIn,
+} = require('../repo-resolve');
 const { fetchNativeParent } = require('../issues/native-dependencies');
 const { fetchLinkedPRs } = require('../issues/linked-prs');
-const { parentGateState } = require('../issues/acceptance');
-const { exceedsOversightFloor, maxRiskTier } = require('../issues/oversight-floor');
-const { parseRecordFacets } = require('../issues/record');
+const { dispositionState } = require('../issues/acceptance');
+const { LABELS, parseParent } = require('../issues/record');
+const { GhFailure, ghCaller, gatherGateFacts, evaluateParentGate, onHost } = require('../issues/parent-gate');
 const { resolvePolicyKeys } = require('../policy-schema');
 const { readRunStateWithParent, readRunState } = require('../hooks/context');
 const { resolveRecords, closingRecords } = require('./pack');
+const { readPacket } = require('./packet-gather');
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 const { splitNul, parseStatusPorcelainZ } = require('../git-z');
 const { CLOSING_KEYWORD_ALTERNATION } = require('../issue-branch-tracking');
@@ -41,15 +44,16 @@ const { CLOSING_KEYWORD_ALTERNATION } = require('../issue-branch-tracking');
 // Shared factory (not two hand-duplicated functions) so defaultGit and
 // defaultGh can never again drift on their execFileSync options the way
 // #1230 found them to (defaultGit missing the `timeout` defaultGh already
-// had) -- one options object, reused by construction.
-function makeDefaultRunner(cmd) {
+// had) -- one options object, reused by construction. `wrap` transforms that
+// object per call: identity for git, ghOptions (#4505's GH_HOST seam) for gh.
+function makeDefaultRunner(cmd, wrap = (_args, o) => o) {
   return function run(args, cwd) {
-    return execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000, windowsHide: true });
+    return execFileSync(cmd, args, wrap(args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000, windowsHide: true }));
   };
 }
 
 const defaultGit = makeDefaultRunner('git');
-const defaultGh = makeDefaultRunner('gh');
+const defaultGh = makeDefaultRunner('gh', ghOptions);
 
 // Registry of check functions, populated by Tasks 2-5. Each entry:
 // { name: string, fn: ({runDir, originalRunDir, base, repoRoot, cwd, expectations, deps}) => {result, detail} }.
@@ -675,25 +679,39 @@ function ghAvailable(deps, cwd) {
 // gh <2.96 (#1841), while Issue.parent via GraphQL works on every gh version
 // that can run GraphQL at all. A GraphQL variable can't be filled by gh's
 // {owner}/{repo} placeholder substitution (gh-api-module-pattern skill) --
-// the repo slug has to be resolved locally first, via the same `deps.git`
-// seam every other check in this file already uses.
-function resolveParent(n, deps, cwd) {
-  let remote;
-  try {
-    remote = deps.git(['remote', 'get-url', 'origin'], cwd);
-  } catch (err) {
-    return { ok: false, error: `git remote get-url failed for #${n} (${err.message})` };
-  }
-  const repoSpec = parseRepo(remote);
-  if (!repoSpec) {
-    return { ok: false, error: `could not resolve owner/repo for #${n}` };
+// the repo has to be resolved first. The check resolves it once per run
+// (`resolveCheckRepo`) and passes it in as `spec`, so every read for one
+// gate evaluation targets the same repository (#4805 Clarification 7): this
+// function never reads the origin itself.
+//
+// #4551: two link models. `native` (the shape above) reads GitHub's native
+// sub-issue relationship; `body-text` reads the record's own `Parent: #N`
+// metadata line (`parseParent`) from `gh issue view N --repo {spec} --json
+// body` -- no GraphQL call, since a body-text project has no native
+// relationship to query. `workLinks` is the `work-links` policy value
+// (`readParentGatePolicy`); any value but `body-text` reads the native
+// relationship. `spec` is required: every read targets it. A record with no `Parent:` line
+// resolves `parent: null` (a collapsed decomposition legitimately produces
+// parentless records), never an error.
+function resolveParent(n, deps, cwd, workLinks, spec) {
+  if (workLinks === 'body-text') {
+    try {
+      const data = JSON.parse(deps.gh(['issue', 'view', String(n), '--repo', repoSlug(spec), '--json', 'body'], cwd));
+      // A reply with no `body` key, or a non-string one, is a malformed read (unknown), not a record
+      // with no `Parent:` line; an explicit null body is an issue with no body, so it has no parent.
+      if (!data || (data.body !== null && typeof data.body !== 'string')) return { ok: false, error: `could not parse body for #${n}` };
+      return { ok: true, parent: parseParent(data.body) };
+    } catch (err) {
+      return { ok: false, error: `gh issue view (body) failed for #${n} (${err.message})` };
+    }
   }
   try {
     const parent = fetchNativeParent({
       number: n,
-      owner: repoSpec.owner,
-      repo: repoSpec.repo,
-      runner: (args) => deps.gh(args, cwd),
+      owner: spec.owner,
+      repo: spec.repo,
+      // The one --hostname rule (parent-gate.js's onHost): a bare `gh api` argv is aimed at the origin's host.
+      runner: (args) => deps.gh(onHost(args, spec.host), cwd),
     });
     return { ok: true, parent };
   } catch (err) {
@@ -701,44 +719,80 @@ function resolveParent(n, deps, cwd) {
   }
 }
 
-// #3222: a parent's direct sub-issues, enumerated so acceptance-labeling can
-// read the parent gate from them (parentGateState). Same owner/repo resolution
-// as resolveParent. One JSON object per output line; `state` is upper-cased to
-// the vocabulary parentGateState reads. Zero sub-issues is a gather failure,
-// never a due gate -- an empty answer must not read as "every sub-issue closed".
-function enumerateSubIssues(parent, deps, cwd) {
-  let out;
+// #4805: the parent path reads the Parent-Gate Procedure's gate through the shared core
+// (issues/parent-gate.js's gatherGateFacts and evaluateParentGate, the same code
+// bin/parent-gate.js runs), so a verdict here cannot drift from the CLI's on a cancelled
+// sub-issue, the oversight floor or the self-inclusion rule. What follows is what the core does
+// not hold: the check's one repository, the policy keys, and the gather's mapping onto this
+// file's { ok, error } results. Any input the CLI refuses or cannot read renders `unknown` here,
+// never `skip` or a default (Clarification 5).
+
+// The check's one repository: the origin remote, gated like bin/parent-gate.js (#4933)
+// -> { ok: true, spec: { host, owner, repo } } | { ok: false, error }. Resolved once per check run
+// and passed to every read for the run's gates (Clarification 7: one repository per gate
+// evaluation), for every target, parent or not. `deps.gateDeps` is undefined in production, so
+// gateOriginRepo reads process.env and gh's real hosts.yml, as the CLI does; a test injects it to
+// keep the result independent of the machine.
+function resolveCheckRepo(deps, cwd) {
+  let remote;
   try {
-    const repoSpec = parseRepo(deps.git(['remote', 'get-url', 'origin'], cwd));
-    if (!repoSpec) return { ok: false, error: `could not resolve owner/repo for parent #${parent}` };
-    out = deps.gh(['api', '--paginate', `repos/${repoSpec.owner}/${repoSpec.repo}/issues/${parent}/sub_issues`, '--jq', '.[] | {number, state, labels: [.labels[].name]} | @json'], cwd);
+    remote = deps.git(['remote', 'get-url', 'origin'], cwd);
   } catch (err) {
-    return { ok: false, error: `gh api sub_issues failed for parent #${parent} (${err.message})` };
+    return { ok: false, error: `git remote get-url failed (${err.message})` };
   }
-  const subIssues = [];
-  for (const line of (out || '').split('\n')) {
-    if (!line.trim()) continue;
-    let obj = null;
-    try {
-      obj = JSON.parse(line);
-    } catch { /* obj stays null -- rejected by the shape check below */ }
-    if (!obj || !Number.isInteger(obj.number) || typeof obj.state !== 'string') {
-      return { ok: false, error: `could not parse sub_issues output for parent #${parent}` };
-    }
-    subIssues.push({ number: obj.number, state: obj.state.toUpperCase(), labels: Array.isArray(obj.labels) ? obj.labels : [] });
+  const gated = gateOriginRepo(remote, deps.gateDeps);
+  if (gated.refusal) return { ok: false, error: gated.refusal };
+  const { spec } = gated;
+  // parseRepo accepts any non-'/' segment, '.' and '..' included; the core's REST path interpolates
+  // owner/repo (the guard bin/parent-gate.js applies).
+  if (!spec || spec.owner === '.' || spec.owner === '..' || spec.repo === '.' || spec.repo === '..') {
+    return { ok: false, error: 'could not resolve owner/repo' };
   }
-  if (!subIssues.length) return { ok: false, error: `no sub-issues enumerated for parent #${parent}` };
-  return { ok: true, subIssues };
+  return { ok: true, spec };
 }
 
-// #3222: the risk-floor policy key, from the repo root's own policy.yml (a
-// missing file, or a set-but-invalid value, falls back to the schema default).
-function resolveRiskFloor(repoRoot) {
+// The repo root's own policy.yml, read for `keys` -> { ok: true, values: { key: value } } |
+// { ok: false, error }. Read from the repo root, never the worktree cwd (a worktree's copy can lag
+// main). Fails closed, as bin/parent-gate.js does (Clarifications 4 and 5): a missing file
+// (ENOENT or ENOTDIR) is no policy, so the schema defaults apply; a file that will not read, or an
+// invalid value for a key asked for, is { ok: false }, never the schema default.
+function readParentGatePolicy(repoRoot, keys) {
   let policyRaw = null;
   try {
     policyRaw = fs.readFileSync(path.join(repoRoot, '.claude-tweaks', 'policy.yml'), 'utf8');
-  } catch { /* no policy.yml -- resolvePolicyKeys' schema default applies */ }
-  return resolvePolicyKeys(['risk-floor'], { policyRaw })['risk-floor'].value;
+  } catch (err) {
+    if (!err || (err.code !== 'ENOENT' && err.code !== 'ENOTDIR')) {
+      return { ok: false, error: `cannot read .claude-tweaks/policy.yml: ${err && err.message}` };
+    }
+  }
+  const rejected = {};
+  const policy = resolvePolicyKeys(keys, { policyRaw, onInvalid: (key, raw) => { rejected[key] = raw; } });
+  const bad = keys.find((key) => policy[key].invalid);
+  if (bad) return { ok: false, error: `.claude-tweaks/policy.yml: invalid ${bad} ${JSON.stringify(rejected[bad])}` };
+  return { ok: true, values: Object.fromEntries(keys.map((key) => [key, policy[key].value])) };
+}
+
+// #3222, #4805: a parent's gate facts -- its direct sub-issues (each one's live state, state reason
+// and labels), its own labels -- gathered by the shared core. The core's `workLinks` picks the
+// source of the sub-issue numbers: the parent's task list under `body-text` (#4551), GitHub's
+// native sub-issues (paginated) otherwise; a missing `workLinks` means `native`. Zero sub-issues is a
+// gather failure, never a due gate -- an empty answer must not read as "every sub-issue closed".
+// -> { ok: true, facts } | { ok: false, error }, `facts` being evaluateParentGate's gathered input.
+function gatherParentFacts(parent, deps, cwd, workLinks, spec) {
+  let facts;
+  try {
+    facts = gatherGateFacts({
+      parent, owner: spec.owner, repo: spec.repo, host: spec.host, workLinks, caller: ghCaller((args) => deps.gh(args, cwd)),
+    });
+  } catch (err) {
+    // Only the core's GhFailure (a failing or unreadable read) is a tooling gap, which the check
+    // renders `unknown`. Any other throw is a bug, not a gather failure: it propagates to
+    // runVerify's catch, which renders the row `fail`, rather than hiding behind `unknown`.
+    if (!(err instanceof GhFailure)) throw err;
+    return { ok: false, error: `parent-gate gather failed for parent #${parent} (${err.message})` };
+  }
+  if (!facts.subIssues.length) return { ok: false, error: `no sub-issues enumerated for parent #${parent}` };
+  return { ok: true, facts };
 }
 
 // `verify`'s --run-dir may be the parent pipeline run directory, or (in a
@@ -801,12 +855,40 @@ function scanPrBrief(prComments, target) {
 // contains the brief, never only the most recent one. A last-comment-only
 // test would hard-stop a correctly-gated parent.
 //
-// #3222: the parent path evaluates the Parent-Gate Procedure's gate state and
-// oversight floor first (verification-brief-parent-gate.md's "Evaluate the
-// gate"). An incomplete gate, or a due parent whose sub-issues sit below the
-// oversight floor, skips the parent instead of requiring its demo:pending.
-// The gate input is the parent's enumerated sub-issues with every run record
-// counted as closed, since this run is what closes it.
+// #4611: the current form of that comment is the acceptance packet, read by
+// `readPacket` (whole first line equals the marker, trusted authors only). The
+// brief forms below -- a confirmed brief on the issue, or the pr-first pointer
+// plus a brief on the PR -- are legacy readers, reached only when no trusted
+// packet exists. Removal condition: these readers go once no open record carries
+// a Verification Brief without an acceptance packet, to be scheduled by the final
+// contract-cleanup record the human-in-control epic (#4608) names (#4613's
+// non-goals); demo/legacy-brief-compatibility.md records the same test. A trusted
+// packet of an unknown schema version fails rather than falling through, so a
+// brief beside it cannot pass it.
+//
+// #3222, #3508, #4805: the parent path evaluates the Parent-Gate Procedure's gate state
+// first (verification-brief-parent-gate.md's "Evaluate the gate"), one branch per
+// state, through the shared core (issues/parent-gate.js, the code bin/parent-gate.js
+// runs). `incomplete` skips (not due). `resolved` skips when the parent carries no
+// pending label (a verdict label means the parent is already dispositioned and owes
+// nothing more); one that still carries a pending label falls through and fails as
+// outranked, so a requested change stays visible at wrap-up (Clarification 6, a
+// deliberate divergence from the CLI, which calls every `resolved` parent a no-op).
+// `gated` falls through to the disposition and brief checks whatever its risk tier:
+// the floor decides only whether a `due` parent is gated, so only `due` meets the
+// oversight floor, and a below-floor `due` parent skips instead of requiring its
+// demo:pending. The below-floor skip detail names the post-merge close (#4466): that
+// parent is closed by pr-first-merge-post-merge.md's Step 4.0b once the merge lands,
+// so it never carries an acceptance label. That detail is `github-issues` wording:
+// a `local-files` parent closes in-branch instead, and local-files is out of
+// scope for this check (see the gap note below).
+// The gate's closing set is every run record, since this run is what closes them
+// (the core's self-inclusion rule counts each listed one CLOSED).
+//
+// One repository per check run (Clarification 7): the origin, gated like the CLI
+// (`resolveCheckRepo`), is resolved once, before any parent is known. Every read
+// for one gate evaluation names it, and an origin the CLI refuses or cannot read
+// renders `unknown` for every target, parent or not (Clarifications 5 and 8).
 //
 // Known, deliberate gap (not reproduced here -- said honestly rather than
 // implied by omission): the `local-files` backend's different acceptance
@@ -832,10 +914,19 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
   if (!checkIssues.length) {
     return { result: 'skip', detail: `oversight floor not cleared for #${issues.join(', #')}` };
   }
+  // #4551: the link model, once per check run (policy.yml at the repo root); an unreadable file or
+  // an invalid value is `unknown`, never the schema default (the CLI exits 2 on the same file).
+  const workLinksPolicy = readParentGatePolicy(repoRoot, ['work-links']);
+  if (!workLinksPolicy.ok) return { result: 'unknown', detail: workLinksPolicy.error };
+  const workLinks = workLinksPolicy.values['work-links'];
+  // #4805: the one repository every read of this run names (Clarification 7).
+  const repo = resolveCheckRepo(deps, cwd);
+  if (!repo.ok) return { result: 'unknown', detail: `#${checkIssues.join(', #')}: ${repo.error}` };
+  const { spec } = repo;
+  const slug = repoSlug(spec);
   const failing = [];
   const passedNotes = []; // {target, ignored[]} for targets that pass but skipped untrusted comments (#3358)
-  const skipped = []; // #3222: parent-gate skip reasons (incomplete gate, below oversight floor)
-  const closing = new Set(issues); // every run record is being closed by this run (#3222 gate input)
+  const skipped = []; // #3222, #3508: parent-gate skip reasons (incomplete gate, resolved parent, below oversight floor)
 
   // Resolve each issue's target (its parent, when resolvable; itself
   // otherwise), deduping by target -- two sub-issues sharing one parent
@@ -851,35 +942,81 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
   const targets = []; // {target, parent} -- parent is true when the target is a resolved parent
   const seenTargets = new Set();
   const gatherFailures = [];
-  const parentSubIssues = new Map(); // parent number -> gate input (its enumerated sub-issues, run records forced CLOSED)
+  const parentFacts = new Map(); // parent number -> the core's gathered gate facts (evaluateParentGate's input)
+  // Each parent is gathered once, however many run records name it: every one
+  // of those records is still membership-checked against the same result.
+  const gathers = new Map(); // parent number -> gatherParentFacts result
+  // Under `body-text` the parent's task list wins over a record's own `Parent:`
+  // line: a record the named parent does not list has no resolvable parent --
+  // it stays out of that parent's gate, is checked as its OWN target, and the
+  // disagreement is logged here, appended to every row returned below. The
+  // parent's list wins because sub-issues are enumerated from the parent side
+  // (the gate is the parent's). The labeler twins apply the same rule
+  // (`gatherGateFacts` in issues/parent-gate.js, `normalizeMcpFacts` in
+  // issues/mcp-parent-gate-shape.js; prose: wrap-up/verification-brief-parent-gate.md's
+  // "Resolve the parent"). One deliberate difference: an empty task list is a gather
+  // failure here (unknown), while the labeler keeps the parent and reports it incomplete.
+  const mismatches = [];
   for (const n of checkIssues) {
-    const resolved = resolveParent(n, deps, cwd);
+    const resolved = resolveParent(n, deps, cwd, workLinks, spec);
     if (!resolved.ok) {
       gatherFailures.push(`#${n}: ${resolved.error}`);
       continue;
     }
-    const target = resolved.parent || n;
-    if (seenTargets.has(target)) continue;
-    seenTargets.add(target);
-    targets.push({ target, parent: Boolean(resolved.parent) });
-    if (!resolved.parent) continue;
-    const enumerated = enumerateSubIssues(target, deps, cwd);
-    if (!enumerated.ok) {
-      gatherFailures.push(`#${n}: ${enumerated.error}`);
+    let target = n;
+    let isParent = false;
+    if (resolved.parent) {
+      const p = resolved.parent;
+      // Native: dedupe BEFORE gathering, as before #4551 -- a parent already
+      // seen (even as a standalone run record) issues no sub-issue read and
+      // cannot add a gather failure. Body-text must gather first: its
+      // membership check decides whether the record counts toward `p` at all.
+      if (workLinks !== 'body-text' && seenTargets.has(p)) continue;
+      const cached = gathers.has(p);
+      if (!cached) gathers.set(p, gatherParentFacts(p, deps, cwd, workLinks, spec));
+      const gathered = gathers.get(p);
+      if (!gathered.ok) {
+        // A failed gather is a gather failure, never a fallback to standalone;
+        // recorded once per parent -- a later record naming it adds no second line.
+        if (!cached) gatherFailures.push(`#${n}: ${gathered.error}`);
+        continue;
+      }
+      if (workLinks === 'body-text' && !gathered.facts.subIssues.some((s) => s.number === n)) {
+        mismatches.push(`#${n}: Parent: #${p} line not in #${p}'s task list — mismatch, not counted in #${p}'s gate; checked as its own target`);
+      } else {
+        target = p;
+        isParent = true;
+        parentFacts.set(p, gathered.facts);
+      }
+    }
+    if (seenTargets.has(target)) {
+      // Order-independence (body-text): a run record seen earlier as a
+      // standalone target is a parent after all once a later record's task-list
+      // membership gates it. Its gate facts are already set above. (Native never
+      // reaches here with isParent: a seen parent `continue`d before gathering.)
+      if (isParent) targets.find((t) => t.target === target).parent = true;
       continue;
     }
-    parentSubIssues.set(target, enumerated.subIssues.map((s) => ({ ...s, state: closing.has(s.number) ? 'CLOSED' : s.state })));
+    seenTargets.add(target);
+    targets.push({ target, parent: isParent });
   }
   if (gatherFailures.length) return { result: 'unknown', detail: gatherFailures.join('; ') };
 
   const prNumber = resolvePrNumber(runDir);
-  // Once per check run, not per parent target -- and only when a parent target exists.
-  const riskFloor = targets.some((t) => t.parent) ? resolveRiskFloor(repoRoot) : undefined;
+  // Once per check run, not per parent target -- and only when a parent target exists. An invalid
+  // value or an unreadable file is `unknown` before any labels/comments read, never a default
+  // (Clarification 4): the CLI exits 2 on the same file.
+  let riskFloor;
+  if (targets.some((t) => t.parent)) {
+    const floorPolicy = readParentGatePolicy(repoRoot, ['risk-floor']);
+    if (!floorPolicy.ok) return { result: 'unknown', detail: floorPolicy.error };
+    riskFloor = floorPolicy.values['risk-floor'];
+  }
 
   for (const { target, parent } of targets) {
     let issueRaw;
     try {
-      issueRaw = deps.gh(['issue', 'view', String(target), '--json', 'labels,comments'], cwd);
+      issueRaw = deps.gh(['issue', 'view', String(target), '--repo', slug, '--json', 'labels,comments'], cwd);
     } catch (err) {
       failing.push(`#${target}: gh issue view failed (${err.message})`);
       continue;
@@ -892,38 +1029,69 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
       continue;
     }
     const labels = issueData.labels || [];
+    const labelNames = labels.map((l) => l.name);
+    const carriesPending = labelNames.includes(LABELS.DEMO_PENDING) || labelNames.includes(LABELS.ACCEPT_PENDING);
     if (parent) {
-      // #3222: the parent gate decides whether this parent is checked at all.
-      const gateInput = parentSubIssues.get(target);
-      const gate = parentGateState({ subIssues: gateInput, parentLabels: labels.map((l) => l.name) });
-      if (gate === 'incomplete') {
-        const openCount = gateInput.filter((s) => s.state !== 'CLOSED').length;
+      // #3222, #4805: the parent gate decides whether this parent is checked at all. The verdict is the
+      // shared core's, with every run record as the closing set (this run closes them). The parent's
+      // labels are this loop's own `labels,comments` read, not the gather's separate one, so the gate
+      // state and the `carriesPending`/`dispositionState` decisions below come from one label read.
+      // `slug` echoes the run's one repository into the verdict's `repo`, as bin/parent-gate.js does (#4824).
+      const verdict = evaluateParentGate({ ...parentFacts.get(target), parentLabels: labelNames, closingSet: issues, riskFloor, slug });
+      if (verdict.state === 'incomplete') {
+        const openCount = verdict.subIssues.filter((s) => s.state !== 'CLOSED').length;
         skipped.push(`parent gate #${target} not due — ${openCount} sibling sub-issue(s) open`);
         continue;
       }
-      const { exceeds } = exceedsOversightFloor(
-        { risk: maxRiskTier(gateInput.map((s) => parseRecordFacets(s.labels))) },
-        { riskFloor, sizeFloor: null },
-      );
-      if (!exceeds) {
-        skipped.push(`parent #${target} below oversight floor`);
+      // Clarification 6 (#4805): a `resolved` parent skips only when it carries no pending label. One that
+      // still carries a pending label a verdict outranks falls through to the disposition check below,
+      // which fails it as outranked, so a requested change stays visible at wrap-up. This is a deliberate
+      // divergence from bin/parent-gate.js, which calls every `resolved` parent a no-op.
+      if (verdict.state === 'resolved' && !carriesPending) {
+        skipped.push(`parent #${target} already dispositioned`);
+        continue;
+      }
+      // `exceeds` is null on every state but `due`, and a null must never read as below the floor: only an
+      // explicit `false` skips, so a `gated` parent (or a `resolved` one carrying a pending label) falls
+      // through to the label and brief check.
+      if (verdict.exceeds === false) {
+        skipped.push(`parent #${target} below oversight floor — closes after the merge lands (Step 4.0b)`);
         continue;
       }
     }
-    if (!labels.some((l) => l.name === 'demo:pending')) {
-      failing.push(`#${target}: missing demo:pending label`);
+    // The record's resolved acceptance state (acceptanceOf's precedence over both
+    // label vocabularies), not the mere presence of one pending label: a pending
+    // label a verdict outranks does not gate the record, and says so on its own line.
+    if (dispositionState(labelNames) !== 'pending') {
+      failing.push(carriesPending
+        ? `#${target}: pending label outranked by a verdict — run /claude-tweaks:demo #${target}`
+        : `#${target}: missing ${LABELS.DEMO_PENDING} or ${LABELS.ACCEPT_PENDING} label`);
       continue;
     }
     const comments = issueData.comments || [];
     // Skip notes for this target's untrusted marker comments; appended to its
     // failing line, or to `passedNotes` when the target passes.
     const ignored = [];
+    // One untrusted comment can hold more than one marker, and is named once.
+    const noteIgnored = (notes) => {
+      for (const note of notes) if (!ignored.includes(note)) ignored.push(note);
+    };
     const fail = (line) => failing.push(ignored.length ? `${line}; ignored: ${ignored.join('; ')}` : line);
+    const packet = readPacket(comments);
+    noteIgnored(packet.skipped);
+    if (packet.status === 'found') {
+      if (ignored.length) passedNotes.push({ target, ignored });
+      continue;
+    }
+    if (packet.status === 'unreadable') {
+      fail(`#${target}: acceptance packet comment is unreadable (schemaVersion ${packet.version})`);
+      continue;
+    }
     const fullBrief = scanMarkerComments(
       comments,
       (c) => c.body && c.body.includes('## Verification Brief') && c.body.includes('### Confirmed')
     );
-    ignored.push(...fullBrief.ignored);
+    noteIgnored(fullBrief.ignored);
     if (fullBrief.trusted) {
       if (ignored.length) passedNotes.push({ target, ignored });
       continue;
@@ -937,11 +1105,11 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
     // _shared/pr-run-comments.md's "Multi-spec brief and timing comments" read side.
     if (prNumber) {
       const pointer = scanMarkerComments(comments, (c) => c.body && c.body.includes('Verification Brief posted to PR #'));
-      ignored.push(...pointer.ignored);
+      noteIgnored(pointer.ignored);
       if (pointer.trusted) {
         let prCommentsRaw;
         try {
-          prCommentsRaw = deps.gh(['pr', 'view', String(prNumber), '--json', 'comments'], cwd);
+          prCommentsRaw = deps.gh(['pr', 'view', String(prNumber), '--repo', slug, '--json', 'comments'], cwd);
         } catch (err) {
           fail(`#${target}: gh pr view failed for PR #${prNumber} (${err.message})`);
           continue;
@@ -954,7 +1122,7 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
           continue;
         }
         const prBrief = scanPrBrief(prComments, target);
-        ignored.push(...prBrief.ignored);
+        noteIgnored(prBrief.ignored);
         if (prBrief.trusted) {
           if (ignored.length) passedNotes.push({ target, ignored });
           continue;
@@ -963,20 +1131,20 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
         continue;
       }
     }
-    fail(`#${target}: no comment carries a confirmed Verification Brief`);
+    fail(`#${target}: no comment carries a confirmed Verification Brief or an acceptance packet`);
   }
   // Notes are never dropped: a failing row carries each passing target's skipped
   // comments after the failing lines; an all-pass row's detail is the notes.
   if (failing.length) {
     const passingNotes = passedNotes.flatMap((p) => p.ignored.map((note) => `ignored (#${p.target}): ${note}`));
-    return { result: 'fail', detail: [...failing, ...passingNotes, ...skipped].join('; ') };
+    return { result: 'fail', detail: [...failing, ...passingNotes, ...skipped, ...mismatches].join('; ') };
   }
   // Every target skipped by the parent gate -- nothing was checked, so the row
   // is a skip, not a pass.
-  if (skipped.length === targets.length) return { result: 'skip', detail: skipped.join('; ') };
+  if (skipped.length === targets.length) return { result: 'skip', detail: [...skipped, ...mismatches].join('; ') };
   const notes = passedNotes.flatMap((p) => p.ignored);
   const detailParts = notes.length ? [`ignored: ${notes.join('; ')}`, ...skipped] : skipped;
-  return { result: 'pass', detail: detailParts.join('; ') };
+  return { result: 'pass', detail: [...detailParts, ...mismatches].join('; ') };
 });
 
 // ---- memory updates -----------------------------------------------------------
@@ -1012,6 +1180,14 @@ registerCheck('upstream-feedback', ({ expectations, deps, cwd }) => {
   if (!expectations.ok) return { result: 'unknown', detail: expectationsUnknownDetail(expectations) };
   const entries = expectations.data.upstream || [];
   if (!entries.length) return { result: 'skip', detail: 'nothing recorded' };
+  // The URL regex below matches github.com alone, but the bare slug it passes reaches whichever host
+  // an exported GH_HOST names. Under another host the check does not run, so no gh call (not even
+  // the --version probe) splits one command across two hosts (#4794).
+  const env = (deps.gateDeps && deps.gateDeps.env) || process.env;
+  const ghHost = ghHostIn(env);
+  if (ghHost && ghHost !== 'github.com') {
+    return { result: 'unknown', detail: `GH_HOST is ${ghHost}, but upstream-feedback issue URLs are on github.com — check not run; re-run with GH_HOST unset to check them (#4794)` };
+  }
   if (!ghAvailable(deps, cwd)) return { result: 'unknown', detail: 'gh absent' };
   const failing = [];
   for (const { url } of entries) {
@@ -1019,7 +1195,7 @@ registerCheck('upstream-feedback', ({ expectations, deps, cwd }) => {
     if (!m) { failing.push(`could not parse issue URL: ${url}`); continue; }
     const [, owner, repo, number] = m;
     try {
-      deps.gh(['issue', 'view', number, '--repo', `${owner}/${repo}`, '--json', 'number'], cwd);
+      deps.gh(['issue', 'view', number, '--repo', repoSlug({ host: 'github.com', owner, repo }), '--json', 'number'], cwd);
     } catch (err) {
       failing.push(`${url}: gh issue view failed (${err.message})`);
     }
@@ -1058,7 +1234,9 @@ function runVerify({ runDir, originalRunDir, base, repoRoot, cwd, deps = {} }) {
         try {
           const { result, detail } = fn({
             runDir, originalRunDir: resolvedOriginalRunDir, base, repoRoot: resolvedRepoRoot,
-            cwd: resolvedCwd, expectations, deps: { git, gh },
+            // gateDeps stays undefined in production (the origin gate reads process.env and gh's
+            // hosts.yml); a test injects it so the origin gate's verdict is independent of the machine.
+            cwd: resolvedCwd, expectations, deps: { git, gh, gateDeps: deps.gateDeps },
           });
           return { check: name, result, detail: detail || '' };
         } catch (err) {
@@ -1100,7 +1278,8 @@ module.exports = {
   defaultGit,
   defaultGh,
   resolveParent,
-  enumerateSubIssues,
+  resolveCheckRepo,
+  gatherParentFacts,
   resolvePrNumber,
   resolvedIssueNumbers,
   consoleMergeResolution,

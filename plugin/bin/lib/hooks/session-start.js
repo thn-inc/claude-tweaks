@@ -10,6 +10,7 @@ const wtDetect = require('./worktree-detect');
 const ctxLib = require('./context');
 const sessionResidue = require('./session-residue');
 const { reconcile } = require('../reconcile');
+const { HOOK_FORGE_PROBE_TIMEOUT_MS } = require('../policy-schema');
 const { DEFAULT_TTL_MS } = require('../reconcile/cache');
 const { STATUS_FILENAME } = require('../reconcile/background-spawn');
 const portsEnsure = require('../ports/ensure');
@@ -29,7 +30,7 @@ function advisoryBanner(header, lines, trailer) {
 }
 // The fast/background split (#820, D8, corrected): SessionStart's own
 // process runs only the cheap read/detect checks inline — everything
-// write-only and janitorial (release/archive/archive-branches/remote-prune/
+// write-only and janitorial (release/post-merge/archive/archive-branches/remote-prune/
 // ledger-residue/reap) is deferred to a detached `reconcile-background` child process (see
 // bin/hooks.js's `reconcile-background` subcommand), whose result is
 // surfaced on a LATER SessionStart firing via the status-file read below.
@@ -228,7 +229,7 @@ async function run(ctx) {
     // anti-pattern for why a linked worktree's own HEAD must never stand in
     // for the shared trunk). FAST_CHECKS restricts this inline call to the
     // cheap read/detect checks only (mirror, red-tip, console) — the
-    // write-only janitorial checks (release/archive/archive-branches/
+    // write-only janitorial checks (release/post-merge/archive/archive-branches/
     // remote-prune/ledger-residue/reap) run in a detached background process instead (see
     // the spawn block below), and their results are surfaced on a LATER
     // SessionStart firing via the status-file read below, not here (#820,
@@ -256,8 +257,10 @@ async function run(ctx) {
     // having none to thread through at all (#1687). Passed here anyway for
     // correctness: this is the one call site in this file that actually calls
     // reconcile() inline, and a real session id is genuinely reachable at it.
+    // forgeProbeTimeoutMs: the same hook bound the PreToolUse PR-stamp gate passes (#4578 Decision Q1).
     const result = await reconcile({
       cwd: ctx.cwd, checks: FAST_CHECKS, skipIfFresh: true, ttlMs: DEFAULT_TTL_MS, cache, sessionId,
+      forgeProbeTimeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS,
     });
 
     // One added summary line for what the fast path did — today just mirror
@@ -331,6 +334,48 @@ async function run(ctx) {
         if (s.failed) lines.push(`the pass failed${typeof s.error === 'string' && s.error ? ` (${s.error})` : ''}`);
         if (s.reaped) lines.push(`${s.reaped} finished worktree(s) removed (already merged)`);
         if (s.released) lines.push(`${s.released} issue claim(s) released`);
+        // Post-merge Steps 4.0/4.0b run late for a PR that merged after its session (#4599); a status file
+        // from before that lacks these fields, and the Number.isInteger guards render nothing for it.
+        // postMergeParentsClosed and postMergeUnmarkedParentsClosed are disjoint: the closes by runs that
+        // wrote their marker, and by runs with none: a failed marker write, or a throw after Step 4.0b's
+        // closes ran (`skipped` / `error`). postMergeParentsClosed counts every `ran` run's closes, a run
+        // whose Step 4.0 failed included (its Step 4.0b can still close one). A holder whose claim another pass
+        // took over is in neither: its changes arrive as `postMergeSuperseded`, rendered further down.
+        const unmarkedClosed = Number.isInteger(s.postMergeUnmarkedParentsClosed) ? s.postMergeUnmarkedParentsClosed : 0;
+        const ranClosed = Number.isInteger(s.postMergeParentsClosed) ? s.postMergeParentsClosed : 0;
+        if (s.postMergeRan) {
+          lines.push(`post-merge steps ran for ${s.postMergeRan} merged run(s)${ranClosed ? `, closing ${ranClosed} parent record(s) below the oversight floor` : ''}`);
+        } else if (ranClosed) {
+          // Every run that closed a parent read failed: the closes still happened and are not dropped.
+          lines.push(`post-merge steps closed ${ranClosed} parent record(s) below the oversight floor`);
+        }
+        // The parents are closed on GitHub; only the run's decisions.md marker is missing.
+        if (unmarkedClosed) lines.push(`post-merge steps closed ${unmarkedClosed} parent record(s) below the oversight floor in run(s) whose decisions.md marker could not be written`);
+        // A step failed, or the check threw, for these (counted apart from `postMergeRan`). Tidy's
+        // parent-gate backstop recovers the parents; the records Step 4.0 listed (`postMergeFailedRecords`,
+        // absent from an older status file) get no retry, so they are named for a hand reopen or close; closing-links
+        // logged each one's hand action to the run's decisions.md, unless that append failed
+        // (`postMergeFailedLogMissing`), when the pointer is left out rather than sending the reader to no entry.
+        if (s.postMergeFailed) {
+          const failedNumbers = Array.isArray(s.postMergeFailedRecords) ? s.postMergeFailedRecords.filter(Number.isInteger) : [];
+          const logPointer = s.postMergeFailedLogMissing === true ? '' : ", each with its action in the run's decisions.md";
+          const failedRecords = failedNumbers.length
+            ? `records ${failedNumbers.map((n) => `#${n}`).join(', ')} need a hand reopen or close per _shared/pr-first-merge-post-merge.md Step 4.0${logPointer}, and no later pass retries them; `
+            : '';
+          lines.push(`post-merge steps failed for ${s.postMergeFailed} merged run(s) (${failedRecords}tidy's parent-gate backstop recovers the parents)`);
+        }
+        // Step 4.0b's parents left open and step-wide skips (#4798) stand on their own lines, independent of
+        // `postMergeFailed` / `postMergeRan`: a `marker-write-failed` entry is in neither count yet its fields
+        // reach here through the two lists. An older status file lacks them and the formatters return null.
+        const { parentsLeftOpenLine, stepSkipsLine, supersededChangesLine } = require('../reconcile/post-merge');
+        const parentsLine = parentsLeftOpenLine(s.postMergeParentsLeftOpen);
+        if (parentsLine) lines.push(parentsLine);
+        const stepSkipsText = stepSkipsLine(s.postMergeStepSkips);
+        if (stepSkipsText) lines.push(stepSkipsText);
+        // The successor owns a taken-over holder's marker, so the "marker could not be written" wording does not
+        // apply to it. An older status file lacks the field and the formatter returns null.
+        const supersededText = supersededChangesLine(s.postMergeSuperseded);
+        if (supersededText) lines.push(supersededText);
         if (s.archived) lines.push(`${s.archived} pipeline run(s) archived`);
         if (s.archivedBranches) lines.push(`${s.archivedBranches} local branch(es) archived/deleted`);
         if (s.prunedRemote) lines.push(`${s.prunedRemote} merged remote branch(es) deleted on origin`);

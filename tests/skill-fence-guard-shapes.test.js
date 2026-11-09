@@ -9,8 +9,9 @@
 // is a parameter, so the go-red controls below run the same walk, extraction
 // and match over a temp tree. Four regions are scanned:
 //   1. shell-labelled fences (bash/sh/shell/zsh/console), every detector;
-//   2. every unlabelled fence, every detector except complete-token (a prose
-//      "complete" in a prompt template or report skeleton is not a command).
+//   2. every unlabelled fence, every detector except complete-token and
+//      source-token (a prose "complete" or "source" in a prompt template or
+//      report skeleton is not a command).
 //      shellFences skips unlabelled fences by design; a first-line command-word
 //      filter missed fences that open with a `#` comment or a `recover:` label;
 //   3. unterminated fences (malformed-fence), which would otherwise swallow or
@@ -53,7 +54,7 @@ const NEW_SHAPE_IDS = new Set(['gh-computed-input', 'git-text-redirect-var', 'gi
 const RATCHET_ORIGINAL_EXCEPTIONS = [{ file: 'dispatch/queue-pull-script.md', detector: 'git-in-substitution' }];
 
 // Detectors not run over unlabelled fences: they fire on prose.
-const PROSE_DETECTORS = new Set(['complete-token']);
+const PROSE_DETECTORS = new Set(['complete-token', 'source-token']);
 const INLINE_EVAL_SUBST = /(?<![\w./-])eval\s+"?\$\(/;
 
 const ratchet = (file, detector, anchor) => ({ kind: 'ratchet', file, detector, anchor, followUp: FOLLOW_UP });
@@ -93,8 +94,7 @@ const ALLOWLIST = [
   ratchet('_shared/github-pr-scan-acceptance.md', 'gh-computed-input', 'SUB_ISSUES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-sub-iss'),
   ratchet('_shared/github-pr-scan.md', 'gh-computed-input', ': > "$PR_SCAN_UNARMED_LINKS"'),
   ratchet('_shared/github-pr-scan.md', 'git-text-redirect-var', 'UNSETTLED_AGE=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values unsettled-age-'),
-  ratchet('_shared/github-pr-scan.md', 'gh-computed-input', 'UNSETTLED_AGE=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values unsettled-age-'),
-  ratchet('_shared/github-pr-scan.md', 'gh-computed-input', 'SINCE=$(node -e "console.log(new Date(Date.now() - 7*24*60*60*1000).toISOString())")'),
+  ratchet('_shared/github-pr-scan-triage.md', 'gh-computed-input', 'SINCE=$(node -e "console.log(new Date(Date.now() - 7*24*60*60*1000).toISOString())")'),
   ratchet('_shared/health-filing-mechanics.md', 'gh-computed-input', 'gh issue reopen <issue_number>'),
   ratchet('_shared/issue-claims.md', 'gh-computed-input', 'if RAW=$(gh api "repos/{owner}/{repo}/contents/${CLAIM_PATH}?ref=${CLAIMS_BRANCH}" \\'),
   ratchet('_shared/label-bootstrap.md', 'gh-computed-input', 'LABEL_BOOTSTRAP_PAYLOADS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --valu'),
@@ -153,7 +153,6 @@ const ALLOWLIST = [
   ratchet('wrap-up/auto-merge-short-circuit.md', 'git-var-operand', 'git -C "$WORKTREE_PATH" rm "$LEDGER_FILE"'),
   ratchet('wrap-up/auto-merge-short-circuit.md', 'git-var-operand', 'git -C "$WORKTREE_PATH" push origin {branch}'),
   ratchet('wrap-up/cleanup-procedures-execution.md', 'git-var-operand', 'PACK="${RUN_DIR}/wrap-up-pack.json"'),
-  ratchet('wrap-up/verification-brief-parent-gate.md', 'gh-computed-input', '# work-links: native'),
   ratchet('wrap-up/verification-brief-parent-gate.md', 'gh-computed-input', 'PARENT_VERIFICATION_BRIEF="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --val'),
 ];
 

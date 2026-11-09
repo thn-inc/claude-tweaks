@@ -11,10 +11,18 @@ const crypto = require('crypto');
 const path = require('path');
 const { evaluateMaturation } = require('../issues/grant-maturation');
 const { resolveRecords } = require('../wrap-up/pack');
-const { SDD_RULING_REASONS, sddRulingDeferralReason } = require('./sdd-ruling');
+const {
+  SDD_RULING_REASONS, sddRulingDeferralReason, SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction,
+} = require('./sdd-ruling');
+const { REFERENCE_REPAIR_REASONS, referenceRepairHoldReason, referenceFindingsByFile, readableGlobs } = require('./reference-repair');
 const { planFilings } = require('./finding-filing');
-const { FINDINGS_ARTIFACT } = require('../tiebreak');
+const { FINDING_PATH_CLASS, FINDING_LENS_CLASS, FINDING_PATH, FINDING_LOCATION, FINDING_LENS, parseCoincidence } = require('./finding-path');
+const { FINDINGS_ARTIFACT, VERDICT_LINE_END } = require('../tiebreak');
 const { parseCategory, isApplicableReflect, parseReflectDestination, deferReasonProblem } = require('./reflect-destination');
+
+// #3942: the apply reason on a deferral ruling — its ratify files a backlog record
+// (review-console-appendix.md's sdd-ruling-* bullet), not a bare accepted write-back.
+const RATIFY_FILES_RECORD_REASON = 'ratify files a deferral record (Defer-reason carried) — ledger row deferred once it exists';
 
 // Section names exactly as the console renders them (console-template.md;
 // engine-render.js's SECTION_SPECS for the five curation sections).
@@ -76,6 +84,11 @@ const SECTION_MAP = [
   // SECTIONS.CONFIG the engine-row path (ENGINE_ROW_SECTIONS below) already
   // uses for an `applied` finding from either registry row.
   [/^(wrap-up-claude-md|wrap-up-adr)-/, SECTIONS.CONFIG],
+  // wrap-up-reference- (#4585): the curation engine's `references` registry row
+  // stages each reference repair under this prefix — reference-sweep.md Step 4
+  // names the exact filename. Routes to SECTIONS.REF, the same section the
+  // engine-row path (ENGINE_ROW_SECTIONS below) uses for a `references` finding.
+  [/^wrap-up-reference-/, SECTIONS.REF],
   [/^(wrap-up-journey|journeys)(-|\b)/, SECTIONS.JOURNEY],
   // premise-satisfied- (#3488): bin/materialize.js stages a proposal to close a record
   // whose premise check already passes; closing is a human call, so it resolves pending.
@@ -108,6 +121,7 @@ const CANONICAL_PREFIXES = [
   'wrap-up-skill-', 'skills-',
   'wrap-up-doc-', 'tidy-doc-', 'docs-',
   'wrap-up-claude-md-', 'wrap-up-adr-',
+  'wrap-up-reference-',
   'wrap-up-journey-', 'journeys-',
   'reflect-', 'digest-promotion-', 'leftover-', 'ledger-record-', 'upstream-unfiled-', 'red-team-',
   'specify-overlap-', 'specify-redteam-', 'flaky-allowlist-', 'efficiency-budget-', 'tidy-', 'plan-retention-', 'feedback-drafts-',
@@ -343,11 +357,13 @@ function readSnapshot({ runDir, deps }) {
   const patchChecks = deps.checkPatchStack
     ? deps.checkPatchStack(patchItems.map((item) => item.path))
     : Object.fromEntries(patchItems.map((item) => [item.name, deps.gitApplyCheck(item.path)]));
-  return { ...files, members, grants, grantsError, patchChecks };
+  // The merge-sensitive globs, for the reference-repair floor (#4636). Anything but a list of strings
+  // reads as null, so a caller that omits it holds the repair rather than approves it.
+  return { ...files, members, grants, grantsError, patchChecks, sensitivePaths: readableGlobs(deps.sensitivePaths) };
 }
 
 function decisionLines(decisions) {
-  return decisions.split('\n').filter((l) => /^- (AUTO|STAGED|SKIP|KEPT-PROMPT|SCANNED|REFUSED|FAILED) /.test(l));
+  return decisions.split(/\r?\n/).filter((l) => /^- (AUTO|STAGED|SKIP|KEPT-PROMPT|SCANNED|REFUSED|FAILED) /.test(l));
 }
 
 // `refused-proposals.md`'s refused row, logged as
@@ -447,25 +463,33 @@ function mergeResolution(snapshot, deps) {
 //   AUTO   … Tiebreak tiebreak:{id}: lens "L" finding P:N digested: {reason}. Severity: {s}.
 //   AUTO   … Tiebreak tiebreak:{id}: lens "L" finding P:N dropped: refuted by tiebreak. Evidence: {e}. Severity: {s}.
 //   AUTO   … Reproduction: lens "L" finding P:N confirmed by tiebreak:{id}. Confirmed.
-// Anchored on the verdict line's own shape, mirroring tiebreak.js's verdictLineRe, so a marker quoted
+// Anchored on the verdict line's own shape, mirroring tiebreak.js's verdictLineRe (whose confirmed
+// alternative ends on the same imported VERDICT_LINE_END anchor, #4632), so a marker quoted
 // inside another line's text never parses as a verdict. The finding path is producer-supplied and may
 // hold spaces, so everything after it is matched against the resolver-written rest of the line, anchored
 // on the line's end: a path can never forge the kind, severity or recommendation (#3949 review).
 const VERDICT_LINE_HEAD = '^- (?:AUTO|STAGED) \\d{2}:\\d{2}:\\d{2} — ';
 const VERDICT_SEV = '(critical|high|medium|low|info)';
-const VERDICT_LINE_END = '(?: Mode: inline\\.)?(?: Reversibility: \\S+\\.)?\\s*$';
 const TIEBREAK_STEP_HEAD = `${VERDICT_LINE_HEAD}Tiebreak tiebreak:([0-9a-f]{12}): lens "([^"]*)" finding (.+):([^\\s:]+) `;
 // The reason is one of resolveTiebreak's own tokens (`verdict:cant-tell`, `status:BLOCKED`, …), never free text.
 const TIEBREAK_CANT_TELL_RE = new RegExp(`${TIEBREAK_STEP_HEAD}(console|digested): ([A-Za-z0-9:_-]+)\\. Severity: ${VERDICT_SEV}\\.(?: Recommendation: (file|drop|none)\\.)?${VERDICT_LINE_END}`);
 // The evidence path always equals the finding path (tiebreak.js's evidenceProblem), so it is a backreference.
 const TIEBREAK_DROPPED_RE = new RegExp(`${TIEBREAK_STEP_HEAD}dropped: refuted by tiebreak\\. Evidence: (\\3:\\d+ .*)\\. Severity: ${VERDICT_SEV}\\.${VERDICT_LINE_END}`);
-const TIEBREAK_CONFIRMED_RE = new RegExp(`${VERDICT_LINE_HEAD}Reproduction: lens "([^"]*)" finding (\\S+):([^\\s:]+) confirmed by tiebreak:([0-9a-f]{12})\\. Confirmed\\.`);
+// The path may hold a space (#4632): the greedy group is anchored on the resolver-written tail.
+const TIEBREAK_CONFIRMED_RE = new RegExp(`${VERDICT_LINE_HEAD}Reproduction: lens "([^"]*)" finding (.+):([^\\s:]+) confirmed by tiebreak:([0-9a-f]{12})\\. Confirmed\\.${VERDICT_LINE_END}`);
 const STAGED_FILE_RE = /staged\/([A-Za-z0-9_-]+\.(?:md|patch))/;
+
+// A verdict's path is resolver-written, so it keys whole, never FINDING_PATH-truncated (#4632).
+// The lens goes through findingKey's own class, so a quoted `"3a b"` keys `3a` on both sides.
+function verdictKey(lens, file, lineNo) {
+  const l = VERDICT_LENS_RE.exec(lens);
+  return l && /^\d+$/.test(lineNo) ? `${l[0]}|${file}:${lineNo}` : null;
+}
 
 function parseTiebreakLine(line) {
   if (!/^- (STAGED|AUTO) /.test(line)) return null;
   const verdict = (kind, [id, lens, file, lineNo], rest) => ({
-    kind, id, key: findingKey(line), lens, path: file, line: /^\d+$/.test(lineNo) ? Number(lineNo) : lineNo,
+    kind, id, key: verdictKey(lens, file, lineNo), lens, path: file, line: /^\d+$/.test(lineNo) ? Number(lineNo) : lineNo,
     severity: null, recommendation: null, reason: null, evidence: null, ...rest,
   });
   const c = TIEBREAK_CONFIRMED_RE.exec(line);
@@ -486,17 +510,85 @@ function approveAllDefault(recommendation) {
 }
 
 // A STAGED line's finding keys: its first location's, plus the second location of a
-// two-finding coincidence line (step3-lens-dispatch.md: `lens "L" findings P:A / P:B share a location …`).
-function lineKeys(line) {
-  const keys = [findingKey(line)];
-  const co = /\blens\s+"?([A-Za-z0-9_-]+)"?\s+findings\s+\S+?:\d+\s+\/\s+(\S+?):(\d+)\s+share a location/.exec(line);
-  if (co) keys.push(`${co[1]}|${co[2]}:${co[3]}`);
-  return keys.filter(Boolean);
+// two-finding coincidence line (finding-path.js parseCoincidence, the clause the aggregate detector exempts).
+// Each location takes its longest candidate (locationCandidates) a settler's key names, else the
+// FINDING_PATH match (#4632). The second location's candidates start after the ` / `. A second
+// location FINDING_PATH cannot read keys as its raw text, which no settler names, so the line stays open.
+// With no `known`, the keys are each location's shortest candidate (prose settlers' keys).
+function lineKeys(line, known = new Set()) {
+  const keys = [];
+  const lens = FINDING_LENS_RE.exec(line);
+  const loc = FINDING_LOC_RE.exec(line);
+  if (lens && loc) keys.push(namedCandidate(locationCandidates(line, loc, lens[1]), known));
+  const co = parseCoincidence(line);
+  const second = co && FINDING_LOC_RE.exec(co.second);
+  if (second) keys.push(namedCandidate(locationCandidates(co.second, second, co.lens), known));
+  else if (co) keys.push(`${co.lens}|${co.second}`);
+  return keys;
+}
+
+// A converged-positive cross-lens debate (review step 3: `AUTO … Debate: cross-lens disagreement on P:N
+// converged positive after R round(s) (lens "L" finding P:N; lens "M" finding P:M — both confirmed)`) settles
+// every finding its lens list names (#4563). A list entry's path defaults to the region path P (the
+// as-recorded `lens 3a :5` shape); a quoted multi-word lens keys on its first token (FINDING_LENS, #4581).
+// A line with no lens list, or any other debate outcome, names nothing.
+// The optional `Step N: ` prefix is the shape log-decision.js writes when the line is logged with `--step`.
+const DEBATE_CONVERGED_RE = new RegExp(String.raw`^- AUTO \d{2}:\d{2}:\d{2} — (?:Step [\d.]+: )?Debate: cross-lens disagreement on (${FINDING_PATH}):(\d+) converged positive\b(.*)$`);
+const DEBATE_ENTRY_RE = new RegExp(String.raw`\b${FINDING_LENS}\s+(?:finding\s+)?(${FINDING_PATH})?:(\d+)`, 'gi');
+const FINDING_LOC_RE = new RegExp(FINDING_LOCATION);
+const FINDING_LENS_RE = new RegExp(String.raw`\blens\s+"?([${FINDING_LENS_CLASS}]+)"?`, 'i');
+const VERDICT_LENS_RE = new RegExp(`^[${FINDING_LENS_CLASS}]+`);
+const FINDING_PATH_CHAR = new RegExp(`[${FINDING_PATH_CLASS}]`);
+
+// The candidate keys of one FINDING_LOC_RE match in `text`, shortest first (#4632). The first is
+// the FINDING_PATH match, which stops at a space. Each longer one starts right after another
+// character outside FINDING_PATH_CHAR further left, so `[a dir/x.ts:3]` also yields `a dir/x.ts`.
+// The scan stops at a `"`, an em dash or the text start, which bounds a prose lead-in.
+function locationCandidates(text, match, lens) {
+  const end = match.index + match[1].length;
+  const keys = [`${lens}|${match[1]}:${match[2]}`];
+  for (let j = match.index - 1; j >= 0 && text[j] !== '"' && text[j] !== '—'; j--) {
+    if (j === 0 || !FINDING_PATH_CHAR.test(text[j - 1])) keys.push(`${lens}|${text.slice(j, end)}:${match[2]}`);
+  }
+  return keys;
+}
+
+// A STAGED location's key: its longest candidate some settler's key names, else the shortest (#4632).
+// That fallback lets drifted prose (`finding at src/a.ts:4`) settle, so a space path with no verdict
+// of its own (`b dir/x.ts:3`) still settles on a plain-path verdict at its suffix (`dir/x.ts:3`), as before.
+function namedCandidate(candidates, known) {
+  for (let i = candidates.length - 1; i > 0; i--) if (known.has(candidates[i])) return candidates[i];
+  return candidates[0];
+}
+
+function debateConvergedKeys(line) {
+  const m = DEBATE_CONVERGED_RE.exec(line);
+  if (!m) return [];
+  return Array.from(m[3].matchAll(DEBATE_ENTRY_RE), (e) => `${e[1] ?? e[2]}|${e[3] || m[1]}:${e[4]}`);
 }
 
 const FINDING_SECTIONS = [SECTIONS.LOW, SECTIONS.CONTESTED];
 // Which verdict decides a staged file settled by several: the one needing a human first.
 const VERDICT_PRECEDENCE = ['console', 'confirmed', 'digested', 'dropped'];
+
+// The findings a staged contested file's `## Positions` section names: one locationCandidates list per
+// `- **Finding X (lens …)**` bullet (step3-debate-and-refutation.md's Mixed / partial shape), up to
+// the next `## ` heading (#4563, #4632). Any other list line there — one inside a quoted claim — names
+// nothing. Null text or no such section names none.
+function contestedPositionCandidates(text) {
+  if (typeof text !== 'string') return [];
+  const out = [];
+  let inPositions = false;
+  for (const line of text.split(/\r?\n/)) {
+    if (/^## /.test(line)) inPositions = /^## Positions\s*$/.test(line);
+    else if (inPositions && /^- \*\*Finding [A-Z]\b/.test(line)) {
+      const lens = FINDING_LENS_RE.exec(line);
+      const loc = FINDING_LOC_RE.exec(line);
+      if (lens && loc) out.push(locationCandidates(line, loc, lens[1]));
+    }
+  }
+  return out;
+}
 
 // Every tiebreak verdict in decisions.md, indexed by the finding key it settles (latest wins) and by
 // its id, plus which staged review-* files those verdicts settle. A key is settled for a STAGED line
@@ -504,19 +596,37 @@ const VERDICT_PRECEDENCE = ['console', 'confirmed', 'digested', 'dropped'];
 function tiebreakModel(snapshot) {
   const lines = decisionLines(snapshot.decisions);
   const settledByKey = new Map();
+  const proseByKey = new Map(); // the latest prose settler (debate, #3772) per key, at its shortest key (#4632)
   const latestById = new Map();
+  const setProse = (key, v) => { settledByKey.set(key, v); proseByKey.set(key, v); };
   lines.forEach((line, index) => {
     const t = parseTiebreakLine(line);
+    const debateKeys = debateConvergedKeys(line);
     if (t) {
       const v = { index, ...t };
       latestById.set(v.id, v);
       if (v.key) settledByKey.set(v.key, v);
+    } else if (debateKeys.length > 0) { // #4563: a converged-positive debate confirms every finding it names
+      for (const key of debateKeys) setProse(key, { index, kind: 'confirmed', id: null, key, via: 'debate' });
     } else if (/^- AUTO /.test(line) && /\bConfirmed\b/.test(line)) { // #3772: the producer's own elevation sentence
       const key = findingKey(line);
-      if (key) settledByKey.set(key, { index, kind: 'confirmed', id: null, key });
+      if (key) setProse(key, { index, kind: 'confirmed', id: null, key });
     }
   });
-  const settledAfter = (index, keys) => keys.length > 0 && keys.every((k) => settledByKey.has(k) && settledByKey.get(k).index > index);
+  // The verdict settling one STAGED location after `index`, else null: its resolved key's, or a prose
+  // settler's at its shortest key (#4632) — prose settlers key there, so a location a whole-path verdict
+  // resolved (`a dir/x.ts`) still settles on a later one, as before. A tiebreak verdict settles only
+  // through the resolved key, which is the shortest key only on namedCandidate's fallback.
+  const settlerAfter = (index, key, short) => {
+    const v = settledByKey.get(key);
+    if (v && v.index > index) return v;
+    const p = proseByKey.get(short);
+    return p && p.index > index ? p : null;
+  };
+  const settledAfter = (index, keys, shorts = keys) => keys.length > 0 && keys.every((k, i) => settlerAfter(index, k, shorts[i]) !== null);
+  // The keys some settler names: a STAGED location resolves to its longest candidate among them (#4632).
+  const known = new Set(settledByKey.keys());
+  const keysOf = (line) => lineKeys(line, known);
 
   const stagedNames = new Set(snapshot.staged.map((s) => s.name));
   const refused = refusedStagedNames(snapshot.decisions);
@@ -525,27 +635,71 @@ function tiebreakModel(snapshot) {
     if (!/^- STAGED /.test(line) || parseTiebreakLine(line)) return;
     const m = STAGED_FILE_RE.exec(line);
     if (!m || !stagedNames.has(m[1])) return;
-    naming.set(m[1], [...(naming.get(m[1]) || []), { index, keys: lineKeys(line) }]);
+    naming.set(m[1], [...(naming.get(m[1]) || []), { index, keys: keysOf(line), shorts: lineKeys(line) }]);
   });
-  const settledFiles = new Map();
-  const absorbed = new Set();
-  for (const [name, refs] of naming) {
-    const cls = classifyStagedItem(name);
-    if (refused.has(name) || cls.outcome || cls.reason || !FINDING_SECTIONS.includes(cls.section)) continue;
-    // A console verdict a linked file carries is never its own item, settled file or not: an
-    // unsettled file stays keep-staged until all its keys settle, so the finding is not lost.
-    for (const r of refs) {
-      for (const k of r.keys) {
-        const v = settledByKey.get(k);
-        if (v && v.kind === 'console' && v.index > r.index) absorbed.add(v.id);
+  function computeSettledFiles() {
+    const settledFiles = new Map();
+    const absorbed = new Set();
+    for (const [name, refs] of naming) {
+      const cls = classifyStagedItem(name);
+      if (refused.has(name) || cls.outcome || cls.reason || !FINDING_SECTIONS.includes(cls.section)) continue;
+      // A console verdict a linked file carries is never its own item, settled file or not: an
+      // unsettled file stays keep-staged until all its keys settle, so the finding is not lost.
+      for (const r of refs) {
+        for (const k of r.keys) {
+          const v = settledByKey.get(k);
+          if (v && v.kind === 'console' && v.index > r.index) absorbed.add(v.id);
+        }
+      }
+      if (!refs.every((r) => settledAfter(r.index, r.keys, r.shorts))) continue;
+      const verdicts = refs.flatMap((r) => r.keys.map((k, i) => settlerAfter(r.index, k, r.shorts[i])));
+      // A contested file settles only on a verdict judged for it: an inherited one leaves its own
+      // pair (and the partner it names) unjudged, so the file stays keep-staged.
+      if (/^review-contested-/.test(name) && verdicts.some((v) => v.inheritedFrom)) continue;
+      const chosen = VERDICT_PRECEDENCE.map((kind) => verdicts.find((v) => v.kind === kind)).find(Boolean);
+      settledFiles.set(name, chosen);
+    }
+    return { settledFiles, absorbed };
+  }
+  // #4563: a settled contested file settles its partner finding too. The partner's key comes from the
+  // staged file's `## Positions` text, not from tiebreak.js's verdict line, whose one-key-per-id shape
+  // stays unchanged on purpose: only the staged file also covers runs already on disk (decided at
+  // #4563's plan review). The partner takes the pair's verdict (and its index) where no verdict
+  // names its key at all, or where its own verdict predates its latest STAGED line (#4583: a
+  // re-stage) and the pair's verdict follows that line: one tiebreak wave logs in arbitrary order,
+  // so a direct verdict wins whatever its position relative to the pair's, except that a verdict
+  // the re-stage outdated settles nothing, and a pair verdict that also predates it settles nothing
+  // either, so it must not replace the partner's own.
+  // Inheritance is one hop: only a contested file settled by its own tiebreak verdict passes it on,
+  // and computeSettledFiles never settles a contested file on an inherited verdict, so a pair whose
+  // own tiebreak logged nothing stays keep-staged instead of taking a neighbouring pair's outcome.
+  // The second pass settles the partners' own staged files. Only `review-contested-*` files carry a
+  // Positions section (SECTIONS.CONTESTED also holds `review-debate-*`).
+  const stagedText = new Map(snapshot.staged.map((s) => [s.name, s.text]));
+  // key -> index of its latest STAGED line: `naming`'s STAGED filter, but no named staged file is
+  // required, so a keyless-file re-flag counts too.
+  const latestStaged = new Map();
+  lines.forEach((line, index) => {
+    if (!/^- STAGED /.test(line) || parseTiebreakLine(line)) return;
+    for (const key of keysOf(line)) latestStaged.set(key, index);
+  });
+  const superseded = new Set(); // ids of console verdicts a re-stage outdated and a pair's verdict replaced
+  for (const [name, chosen] of computeSettledFiles().settledFiles) {
+    if (!/^review-contested-/.test(name)) continue;
+    for (const candidates of contestedPositionCandidates(stagedText.get(name))) {
+      // The bullet's key is the one its STAGED lines resolve to (#4632): its own verdict names it.
+      const key = namedCandidate(candidates, known);
+      const own = settledByKey.get(key);
+      const stagedAt = latestStaged.get(key);
+      if (!own || (own.index < stagedAt && chosen.index > stagedAt)) {
+        if (own && own.kind === 'console') superseded.add(own.id);
+        settledByKey.set(key, { ...chosen, key, inheritedFrom: name });
       }
     }
-    if (!refs.every((r) => settledAfter(r.index, r.keys))) continue;
-    const verdicts = refs.flatMap((r) => r.keys.map((k) => settledByKey.get(k)));
-    const chosen = VERDICT_PRECEDENCE.map((kind) => verdicts.find((v) => v.kind === kind)).find(Boolean);
-    settledFiles.set(name, chosen);
   }
-  return { lines, latestById, settledAfter, settledFiles, absorbed };
+  const result = computeSettledFiles();
+  for (const id of superseded) result.absorbed.add(id);
+  return { lines, latestById, settledAfter, keysOf, settledFiles: result.settledFiles, absorbed: result.absorbed };
 }
 
 const tiebreakField = (v) => ({ id: v.id, key: v.key, lens: v.lens, path: v.path, line: v.line, severity: v.severity, recommendation: v.recommendation, reason: v.reason });
@@ -557,14 +711,21 @@ function consoleVerdictResolution(v) {
 
 // The final outcome a settled staged file takes instead of keep-staged.
 function settledFileResolution(v) {
-  if (v.kind === 'confirmed') return { resolution: 'dismissed', reason: 'superseded — tiebreak confirmed it; routed through Step 3 Routing' };
-  if (v.kind === 'dropped') return { resolution: 'dropped', reason: 'refuted by tiebreak' };
-  if (v.kind === 'digested') return { resolution: 'dismissed', reason: 'can\'t-tell below medium — logged to the materiality digest' };
+  // An inherited can't-tell verdict files once, on the contested file that carries it (#4563).
+  if (v.inheritedFrom && v.kind === 'console') return { resolution: 'dismissed', reason: `covered by ${v.inheritedFrom} — its contested pair's tiebreak item carries the verdict` };
+  // An inherited verdict was judged under the carrier's key, so its reason names the pair.
+  const via = v.inheritedFrom ? ` (via contested pair ${v.inheritedFrom})` : '';
+  if (v.kind === 'confirmed' && v.via === 'debate') return { resolution: 'dismissed', reason: `superseded — cross-lens debate confirmed it; routed through Step 3 Routing${via}` };
+  if (v.kind === 'confirmed') return { resolution: 'dismissed', reason: `superseded — tiebreak confirmed it; routed through Step 3 Routing${via}` };
+  if (v.kind === 'dropped') return { resolution: 'dropped', reason: `refuted by tiebreak${via}` };
+  if (v.kind === 'digested') return { resolution: 'dismissed', reason: `can't-tell below medium — logged to the materiality digest${via}` };
   return consoleVerdictResolution(v);
 }
 
 function stagedItems(snapshot) {
   const model = tiebreakModel(snapshot);
+  // The `references` findings grouped by staged file: each repair's JSON `hold` must agree with its header (#4636).
+  const referenceFindings = referenceFindingsByFile(snapshot.engineState);
   // Refusal is a decisions.md fact about the item, not a fact about its name —
   // so it is decided before SECTION_MAP ever runs and outranks every stance.
   const refused = refusedStagedNames(snapshot.decisions);
@@ -579,13 +740,21 @@ function stagedItems(snapshot) {
     const { section, reason, outcome } = classifyStagedItem(s.name, s.text, siblingText);
     if (outcome) return { id: s.name, section, resolution: SECTION_STANCES[section].resolution, reason: `${outcome} — ${SHADOW_DUP_OUTCOMES[outcome].note}` };
     if (reason) return { id: s.name, section, resolution: 'pending', reason };
+    let ratifyReason = null;
     if (/^sdd-ruling-/.test(s.name)) {
       const r = s.readError ? SDD_RULING_REASONS.UNREADABLE : sddRulingDeferralReason(s.text);
+      if (r) return { id: s.name, section, resolution: 'pending', reason: r };
+      // #3942: ratifying a deferral files a record at step 7 — the reason says so.
+      if (sddRulingRatifyAction(s.text) === SDD_RULING_RATIFY_ACTIONS.FILE_RECORD) ratifyReason = RATIFY_FILES_RECORD_REASON;
+    }
+    if (/^wrap-up-reference-/.test(s.name)) {
+      const r = referenceRepairHoldReason(s, referenceFindings.get(s.name) || [], snapshot.sensitivePaths);
       if (r) return { id: s.name, section, resolution: 'pending', reason: r };
     }
     const settled = model.settledFiles.get(s.name);
     if (settled) return { id: s.name, section, ...settledFileResolution(settled) };
     const stance = SECTION_STANCES[section];
+    if (ratifyReason) return { id: s.name, section, resolution: stance.resolution, reason: ratifyReason };
     if (s.name.endsWith('.patch')) {
       const check = snapshot.patchChecks[s.name] || { ok: false, error: 'not checked' };
       if (!check.ok) {
@@ -611,9 +780,15 @@ function engineItems(snapshot, stagedIds) {
     for (const f of entry.findings || []) {
       const label = f.targetPath || f.target || entry.target;
       if (f.action === 'staged') {
-        const base = f.stagePath ? path.basename(f.stagePath) : null;
-        if (base && stagedIds.has(base)) continue; // already an item via staged/
-        out.push({ id: `${rowId}:${label}`, section, resolution: SECTION_STANCES[section].resolution, reason: SECTION_STANCES[section].reason });
+        // A non-string stagePath counts as no staged file (#4636).
+        const base = typeof f.stagePath === 'string' && f.stagePath ? path.basename(f.stagePath) : null;
+        // Already an item via staged/ — except a references finding naming a staged file that is not a
+        // wrap-up-reference- repair: only those run the hold rule, so that file's own section would approve
+        // it with the finding's hold never read. That finding stays its own row, held below.
+        if (base && stagedIds.has(base) && !(rowId === 'references' && !/^wrap-up-reference-/.test(base))) continue;
+        // A staged repair with no staged file has no header to agree with its JSON verdict, so it holds.
+        const stance = rowId === 'references' ? { resolution: 'pending', reason: REFERENCE_REPAIR_REASONS.UNCLASSIFIED } : SECTION_STANCES[section];
+        out.push({ id: `${rowId}:${label}`, section, resolution: stance.resolution, reason: stance.reason });
       } else if (f.action === 'applied') {
         out.push({ id: `${rowId}:${label}`, section, resolution: 'applied', reason: `applied (${f.commit || 'commit unknown'})` });
       }
@@ -628,14 +803,21 @@ function engineItems(snapshot, stagedIds) {
 //
 // A STAGED line is superseded (no item) when every one of its finding keys
 // (lens + path:line; tiebreakModel's lineKeys) is settled by a LATER tiebreak
-// verdict line, or by the producer's own `Confirmed` AUTO sentence — review
+// verdict line, by the producer's own `Confirmed` AUTO sentence — review
 // step 3 stages a finding as low-confidence, then logs the elevation as AUTO
-// once reproduced (#3772). Case-sensitive so `not confirmed` never matches; a
-// keyless line is never superseded. A can't-tell `console` verdict supersedes
-// its STAGED line too, and re-enters as one `tiebreak:{id}` item (#3949).
+// once reproduced (#3772; case-sensitive so `not confirmed` never matches) —
+// or by a converged-positive debate AUTO line that names it in its lens list
+// (debateConvergedKeys, #4563), or by the verdict of a settled
+// review-contested file that lists it in its `## Positions` section (partner
+// inheritance in tiebreakModel, #4563). A keyless line is never superseded. A
+// can't-tell `console` verdict supersedes its STAGED line too, and re-enters
+// as one `tiebreak:{id}` item (#3949). A verdict line keys its whole
+// resolver-written path; a STAGED location takes its longest candidate
+// (locationCandidates) some settler's key names, else the FINDING_PATH match
+// findingKey returns, which the prose settlers above still key on (#4632).
 function findingKey(line) {
-  const lens = /\blens\s+"?([A-Za-z0-9_-]+)"?/i.exec(line);
-  const loc = /([A-Za-z0-9_./-]+\.[A-Za-z0-9]+):(\d+)/.exec(line);
+  const lens = FINDING_LENS_RE.exec(line);
+  const loc = FINDING_LOC_RE.exec(line);
   return lens && loc ? `${lens[1]}|${loc[1]}:${loc[2]}` : null;
 }
 
@@ -647,6 +829,12 @@ function findingKey(line) {
 // Stored ids are opaque to every reader, so a console.json written with the old 58-character id
 // still reads and re-renders unchanged. Old-shape ids are not unique (several stored items can
 // share one), so never join a stored old-shape id to a recomputed one.
+// The 8-hex hash suffix of a coordination item's id, derived from the full decisions line.
+// Exported so a reader that recovers a line from its item id mints the same hash.
+function decisionLineHash(line) {
+  return crypto.createHash('sha256').update(line).digest('hex').slice(0, 8);
+}
+
 function coordinationItems(snapshot, stagedIds) {
   const out = [];
   const model = tiebreakModel(snapshot);
@@ -660,7 +848,7 @@ function coordinationItems(snapshot, stagedIds) {
   const occurrences = new Map();
   for (const [i, line] of model.lines.entries()) {
     if (!/^- STAGED /.test(line) || parseTiebreakLine(line)) continue;
-    if (model.settledAfter(i, lineKeys(line))) continue;
+    if (model.settledAfter(i, model.keysOf(line), lineKeys(line))) continue;
     // Extension-anchored so trailing sentence punctuation (a period ending
     // the decisions.md line right after ".md") is never captured into the
     // filename — `.` is deliberately excluded from the body class.
@@ -670,7 +858,7 @@ function coordinationItems(snapshot, stagedIds) {
     if (!section) continue;
     const seen = (occurrences.get(line) || 0) + 1;
     occurrences.set(line, seen);
-    const hash = crypto.createHash('sha256').update(line).digest('hex').slice(0, 8);
+    const hash = decisionLineHash(line);
     const repeatSuffix = seen > 1 ? `-${seen}` : '';
     out.push({ id: `decision:${line.slice(2, 60)}#${hash}${repeatSuffix}`, section, resolution: 'keep-staged', reason: SECTION_STANCES[section].reason });
   }
@@ -679,7 +867,7 @@ function coordinationItems(snapshot, stagedIds) {
   for (const v of model.latestById.values()) {
     if (v.kind !== 'console' || model.absorbed.has(v.id)) continue;
     const contested = model.lines.some((line, i) => i < v.index && /^- STAGED /.test(line) && !parseTiebreakLine(line)
-      && lineKeys(line).includes(v.key) && lineSection(line) === SECTIONS.CONTESTED);
+      && model.keysOf(line).includes(v.key) && lineSection(line) === SECTIONS.CONTESTED);
     out.push({ id: `tiebreak:${v.id}`, section: contested ? SECTIONS.CONTESTED : SECTIONS.LOW, ...consoleVerdictResolution(v) });
   }
   return out;
@@ -784,4 +972,4 @@ function resolveAll({ runDir, policy, deps }) {
   return result;
 }
 
-module.exports = { SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, classifyStagedItem, readSnapshot, resolveAll, findingItems, refusedStagedNames, runIdOf, cell, renderDroppedBlock, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs };
+module.exports = { decisionLineHash, SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction, RATIFY_FILES_RECORD_REASON, REFERENCE_REPAIR_REASONS, classifyStagedItem, readSnapshot, resolveAll, findingItems, refusedStagedNames, runIdOf, cell, renderDroppedBlock, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs };

@@ -51,7 +51,7 @@ under the title:
 | Type | Text badge | `[bug]` / `[feature]` / `[task]` — native Issue Type wins over a `type:*` label; an unrecognized type omits the badge rather than guessing |
 | Scoring | Text badge | `R:{risk} S:{size}`, with `?` for whichever side is unset; omitted entirely when both are unset |
 | Authorization | Text badge | `AUTO-BUILD`, `AUTO-MERGE` — both shown when both are granted, omitted when neither is |
-| Acceptance | Text badge | `demo:pending` / `demo:approved` / `demo:changes-requested` — omitted when unset |
+| Acceptance | Text badge | rendered as `accept:{state}` (`pending` / `approved` / `changes-requested`) for a record carrying either label spelling (`_shared/work-record.md`) — omitted when unset |
 
 Each node's first label line is `#{number} {title, truncated to 40 chars}` — the
 `#N` prefix is what makes the dependency edges below readable, so it is never

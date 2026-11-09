@@ -25,7 +25,8 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, WRITE_SHAPES, forEachCommandSegment, resolveGitCommand, resolveWriteTarget, powershellOpaqueCommand,
+  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, WRITE_SHAPES, forEachCommandSegment, resolveGitCommand, resolveWriteTarget, powershellOpaqueCommand, processKillByName, keepLost,
+  PIPELINE_STATE_DIR, namesPipelinesSegment,
 } = require('./git-command');
 const ctxLib = require('./context');
 const policy = require('../policy');
@@ -33,7 +34,7 @@ const wtDetect = require('./worktree-detect');
 const { resolveIntegrationBranch, preferRemoteTrackingRef, bareIntegrationName } = require('./worktree-reap');
 const { runGit, FAILURE } = require('./git-exec');
 const { parseNameStatusZ } = require('../git-z');
-const { detectIntegrationModel, resolvePolicyConfig } = require('../policy-schema');
+const { detectIntegrationModel, resolvePolicyConfig, HOOK_FORGE_PROBE_TIMEOUT_MS, FORGE_DEGRADE_MEMO_TTL_MS } = require('../policy-schema');
 const { resolveCeiling, bookkeepingPermissions } = require('../issues/autonomy');
 // toPosix: git always reports/accepts forward-slash paths regardless of
 // platform — used for GATE_COVERAGE's prose-facing rendering and for comparing
@@ -44,13 +45,17 @@ const { readWorkBackend } = require('../work-backend');
 // Every realpath resolution in this file goes through canonicalRealpath (#3682); lexical containment checks (isPipelineBookkeeping) resolve nothing.
 const { resolveLeaf, canonicalRealpath, lstatType } = require('../path-guard');
 
-// #4149: the options the worktree-required, E1 and teardown walks pass the shell scanner. A walk that
-// carries more distinct cwds than its cap (brace groups and substitution tails whose scope end it
-// cannot place) collapses them, failing closed, to this repo's main checkout plus the walk's own
-// cwd: a relative write, a git target or a `worktree remove` path then resolves in the main
-// checkout too, where checkWorktreeRequired denies it. checkPipelineShadowGuard passes none: the
-// walk's own cwd, which the collapse always keeps, is where it denies a shadow run dir. Resolved
-// only when a walk overflows (wtDetect.mainCheckoutRoot walks the fs).
+// #4149, #4303: the options the worktree-required, E1 and teardown walks pass the shell scanner. A
+// walk that carries more distinct cwds than its cap (brace groups and substitution tails whose scope
+// end it cannot place) has lost the cwd bash is in, and collapses, failing closed, to a lost cwd
+// rooted at this repo's main checkout and one at the walk's own cwd. Every target resolved from
+// there carries `lost: true` beside a stand-in path (a relative target from the main-checkout root
+// resolves to that root): the teardown gate denies on the marker, checkWorktreeRequired denies on it
+// in a session whose own repo has worktree-always on and otherwise checks base's readings of the
+// command (the known targets the scanner reports beside it), and E1 checks the stand-in and the
+// readings as ordinary targets, as base checked its collapsed paths. checkPipelineShadowGuard passes
+// none, so its collapse keeps the lost cwd at the walk's own cwd alone. Resolved only when a walk
+// overflows (wtDetect.mainCheckoutRoot walks the fs).
 function walkOptions(cwd) {
   return { overflowCwd: () => (cwd ? wtDetect.mainCheckoutRoot(cwd) || cwd : null) };
 }
@@ -85,8 +90,8 @@ function pluginRoot() {
 // removing it, and that copy-out needed to write into the main checkout. That
 // step was deleted once anchoring made it unnecessary. The reason changed;
 // the exemption did not — do not read the dead justification as evidence this
-// can be removed.
-const PIPELINE_STATE_DIR = path.join('.claude-tweaks', 'pipelines');
+// can be removed. PIPELINE_STATE_DIR itself is defined in git-command.js
+// (imported above), whose lost-cwd trail spells the same directory (#4303).
 
 const POLICY_FILE = path.join('.claude-tweaks', 'policy.yml');
 
@@ -142,8 +147,10 @@ const GATE_COVERAGE = Object.freeze({
   // fileWriteTargets for every segment, not gated by WRITE_SHAPES) and
   // bash-prefilter.js's hasFileRedirection both recognize these operator
   // spellings (fd-prefixed forms like `2>`/`1>>` are the same operators with
-  // a leading file-descriptor number, not a separate spelling).
-  bashRedirections: Object.freeze(['>', '>>', '>|', '&>', '&>>']),
+  // a leading file-descriptor number, not a separate spelling). `>&` (#4303)
+  // is the csh form `>& file`, which writes the file; `>&2` and `2>&1`, the
+  // same characters with a descriptor after them, write nothing.
+  bashRedirections: Object.freeze(['>', '>>', '>|', '&>', '&>>', '>&']),
   // These have their own prose-binding block — skills/_shared/policy-schema-coverage.md's
   // "Teardown gate coverage" section (tests/hooks-gate-coverage.test.js pins
   // the two) — deliberately separate from the worktree-always block above,
@@ -530,7 +537,7 @@ function teardownTargets(ctx, { pathImpl } = {}) {
     // `git -c foo=bar worktree remove <path>` past the gate.
     const resolved = resolveGitCommand(toks, effCwd, quoting.pathImpl);
     if (!resolved) return; // not git, or unprovable, or cwd unknown with no provable -C
-    const { index: i, dir } = resolved;
+    const { index: i, dir, lost } = resolved;
     // Derived from GATE_COVERAGE.teardownGitCommands rather than a hardcoded
     // comparison, so the constant stays load-bearing (see tools/gitActions
     // above) instead of a parallel hand-kept list nothing reads (#hooks-gate-coverage).
@@ -543,8 +550,14 @@ function teardownTargets(ctx, { pathImpl } = {}) {
     // The same resolver as every write target (#4281): an unprovable value ($VAR, ~, a
     // cross-drive D:wt under win32) is no target, never a literal child of `dir`.
     const target = resolveWriteTarget(dir, rest[0], quoting.pathImpl);
-    if (target) out.push({ path: target, source: 'bash' });
-  }, { ...walkOptions(cwd), pathImpl });
+    if (!target) return;
+    // #4303: a relative path from a cwd the walk lost (past git-command.js's CWD_SET_CAP) names
+    // no directory the gate can place; `path` is the lost cwd's stand-in and `lost` says so. An
+    // absolute path does not depend on the cwd and keeps the ordinary checks.
+    const entry = { path: target, source: 'bash' };
+    if (lost && !quoting.pathImpl.isAbsolute(rest[0])) entry.lost = true;
+    out.push(entry);
+  }, keepLost({ ...walkOptions(cwd), pathImpl })); // keepLost: the walk's lost cwd reaches resolveGitCommand, which reports it
   return out;
 }
 
@@ -576,7 +589,24 @@ function checkTeardownGate(ctx, teardownWarnings = [], deps = {}) {
   const mainRoot = canonicalRealpath(wtDetect.mainCheckoutRoot(ctx.cwd || process.cwd()), { fsImpl });
   // Own-cwd guard (#693): resolved once per call, reused across targets.
   const cwdReal = canonicalRealpath(ctx.cwd || process.cwd(), { fsImpl });
-  for (const { path: target, source } of targets) {
+  for (const { path: target, source, lost } of targets) {
+    // #4303: a relative remove from a cwd the shell scanner lost (teardownTargets' `lost`) cannot
+    // be shown not to be the session's own working directory, so the own-cwd guard below cannot
+    // clear it: deny, before any check that would read the stand-in path as a real one.
+    if (lost) {
+      const { dir: lostDenialRunDir, attribution: lostAttribution } = ctxLib.resolveDenialRunDir(ctx);
+      const lostTestTag = process.env.CT_HOOKS_TEST_MODE === '1' ? { test: true } : null;
+      ctxLib.appendEvent(
+        lostDenialRunDir, 'wd-guard-refusal', { path: target, reason: 'own-cwd-removal', lost: true, ...lostTestTag }, lostAttribution,
+      );
+      return denyResult(
+        `claude-tweaks teardown gate: this \`git worktree remove\` names a relative path after the command ` +
+        `has changed directory more ways than the hook's shell scanner follows, so it cannot tell which ` +
+        `worktree the path names, nor show it is not the current session's own working directory. Pass the ` +
+        `worktree's absolute path (or split the command), or use \`ExitWorktree\` to remove the worktree the ` +
+        `session is standing in (skills/wrap-up/cleanup-procedures.md Section C's Teardown ordering invariant).`,
+      );
+    }
     if (mainRoot && canonicalRealpath(target, { fsImpl }) === mainRoot) continue;
 
     // A raw Bash `git worktree remove` (never ExitWorktree — see teardownTargets'
@@ -696,18 +726,22 @@ function checkTeardownGate(ctx, teardownWarnings = [], deps = {}) {
 function shadowPipelineRunDir(targetPath, { fsImpl } = {}) {
   if (typeof targetPath !== 'string' || !targetPath || !path.isAbsolute(targetPath)) return null;
   const resolved = path.resolve(targetPath);
-  const { repoRoot, isLinkedWorktree, indeterminate } = wtDetect.repoInfo(resolved);
-  if (indeterminate || !repoRoot || !isLinkedWorktree) return null;
-  // realTarget (below) now returns path-guard's case-canonical (.native) form,
-  // so the root it is compared against is canonicalised the same way (#3495);
-  // repoRoot is the JS form, which echoes casing on a case-insensitive volume.
-  // Both operands resolve through the same fsImpl so they land on one filesystem.
-  const pipelinesDir = path.join(canonicalRealpath(repoRoot, { fsImpl }) || repoRoot, PIPELINE_STATE_DIR);
   // realTarget follows an existing symlink chain the same way the policy.yml
   // exemption does; falls back to the literal resolved path when nothing
   // exists yet (a brand-new mkdir target has no leaf, sometimes not even a
   // parent, to realpath).
   const real = realTarget(resolved, { fsImpl }) || resolved;
+  // #4303: a path that lies inside a pipelines dir names a `.claude-tweaks/pipelines` segment (in
+  // any case), so one that names none is no shadow and needs no git spawn: base's readings of a
+  // command whose walk lost its cwd (git-command.js's BASE_VIEW) add candidates, and most name none.
+  if (!real.toLowerCase().includes((path.sep + PIPELINE_STATE_DIR).toLowerCase())) return null;
+  const { repoRoot, isLinkedWorktree, indeterminate } = wtDetect.repoInfo(resolved);
+  if (indeterminate || !repoRoot || !isLinkedWorktree) return null;
+  // realTarget (above) now returns path-guard's case-canonical (.native) form,
+  // so the root it is compared against is canonicalised the same way (#3495);
+  // repoRoot is the JS form, which echoes casing on a case-insensitive volume.
+  // Both operands resolve through the same fsImpl so they land on one filesystem.
+  const pipelinesDir = path.join(canonicalRealpath(repoRoot, { fsImpl }) || repoRoot, PIPELINE_STATE_DIR);
   if (!isPathContained(real, pipelinesDir)) return null;
   const relFromPipelines = path.relative(pipelinesDir, real);
   const relParts = relFromPipelines.split(path.sep);
@@ -726,13 +760,35 @@ function checkPipelineShadowGuard(ctx, deps = {}) {
   const toolName = ctx.input && ctx.input.tool_name;
   const toolInput = ctx.input && ctx.input.tool_input;
   const candidates = [];
+  const lostRels = [];
   if (GATE_COVERAGE.tools.includes(toolName)) {
     const target = fileToolTargetPath(toolName, toolInput);
     if (target !== null) candidates.push(target);
   } else if (toolName === 'Bash' && toolInput && typeof toolInput.command === 'string') {
     const command = toolInput.command;
-    for (const t of fileWriteTargets(command, ctx.cwd)) candidates.push(t.file);
-    for (const t of mkdirTargets(command, ctx.cwd)) candidates.push(t.file);
+    for (const t of [...fileWriteTargets(command, ctx.cwd), ...mkdirTargets(command, ctx.cwd)]) {
+      candidates.push(t.file);
+      if (t.lost) lostRels.push(t.rel);
+    }
+  }
+  // #4303: a target resolved from a cwd the shell scanner lost has no known directory, so whether
+  // it creates a run dir inside a linked worktree is unknowable: one whose text names a
+  // `.claude-tweaks/pipelines` segment is denied outright. One that names none is not this
+  // guard's concern.
+  const lostShadow = lostRels.find(namesPipelinesSegment);
+  if (lostShadow !== undefined) {
+    const { dir: denialRunDir, attribution: denialAttribution } = ctxLib.resolveDenialRunDir(ctx);
+    const testTag = process.env.CT_HOOKS_TEST_MODE === '1' ? { test: true } : null;
+    ctxLib.appendEvent(
+      denialRunDir, 'wd-guard-refusal', { tool: toolName, path: lostShadow, reason: 'shadow-run-dir', lost: true, ...testTag }, denialAttribution,
+    );
+    return denyResult(
+      `claude-tweaks: refusing ${lostShadow} — the command has changed directory more ways than the hook's ` +
+      `shell scanner follows, so it cannot tell whether this relative path creates a NEW pipeline run directory ` +
+      `inside a linked worktree. Run directories are anchored to the main checkout (_shared/pipeline-run-dir.md's ` +
+      `Anchoring section); use the absolute path that resolves: ` +
+      `node "${pluginRoot()}/bin/hooks.js" resolve-run-dir --create (see pipeline-run-dir.md for the full flag set).`,
+    );
   }
   for (const candidate of candidates) {
     const shadow = shadowPipelineRunDir(candidate, { fsImpl: deps.fsImpl });
@@ -841,11 +897,17 @@ function checkReviewConsoleAskGate(ctx, deps = {}) {
 // call proved this by popping a sibling worktree's WIP stash while comparing
 // test discrimination against a baseline; #2065 closed the gap where only
 // the bare/`pop` spellings were covered — the exact hazard, reachable
-// through the equally common explicit `stash push`/`-u`/`-m` forms. This is
-// a WARN, never a deny: unlike E1/worktree-required, there is no provable
-// "whose stash entry is this" signal to gate on — only a heads-up pointing
-// at a non-mutating alternative. `list`/`show`/`apply`/`drop`/`clear`/
-// `branch` stay silent — mirroring git-command.js's own
+// through the equally common explicit `stash push`/`-u`/`-m` forms. #4559
+// added `drop` and `clear`, which destroy stack entries — a sibling
+// worktree's in-flight WIP stash included — and `branch`, which drops the
+// entry it applies (stash@{0} when bare), so all three warn like `pop`; and
+// `store` and `import`, which write onto the stack like `push`. This is a
+// WARN, never a deny: unlike E1/worktree-required, there is no provable "whose
+// stash entry is this" signal to gate on — only a heads-up pointing at a
+// non-mutating alternative. Subcommands that leave the stack untouched stay
+// silent — `list`, `show`, `apply` (which changes the worktree, not the stack),
+// `create` and `export` (/review relies on `git stash create`), and any
+// unrecognized token — mirroring git-command.js's own
 // PLUMBING_WRITE_SUBCOMMANDS comment on why `stash` was deliberately
 // excluded from its one-level subcommand check: a second token has to be
 // resolved to tell the mutating shape from a read-only one; `next.startsWith('-')`
@@ -866,19 +928,48 @@ function checkGitStashWarn(segments, warnings) {
     if (t[index] !== 'stash') continue;
     const next = t[index + 1];
     const mutatesStack = next === undefined || next === 'pop' || next === 'push'
-      || next === 'save' || (typeof next === 'string' && next.startsWith('-'));
+      || next === 'save' || next === 'drop' || next === 'clear' || next === 'branch'
+      || next === 'store' || next === 'import'
+      || (typeof next === 'string' && next.startsWith('-'));
     if (!mutatesStack) continue;
     if (!dir) continue;
     const { isLinkedWorktree, indeterminate } = wtDetect.repoInfo(dir);
     if (indeterminate || !isLinkedWorktree) continue;
     warnings.push(
       'claude-tweaks: git stash is repository-wide, shared by every linked worktree of this '
-      + "checkout — running it here can push onto or pop a SIBLING worktree's stash entry. "
+      + "checkout — running it here can push onto, pop, or drop a SIBLING worktree's stash entry. "
       + 'Compare against a baseline without mutating the tree instead: `git show <rev>:<path>`, '
       + 'or set your own work aside with a temporary WIP commit (`git commit -m wip`, then apply '
-      + 'it elsewhere by SHA — `git show <sha>` / `git cherry-pick <sha>`) rather than stash.',
+      + 'it elsewhere by SHA — `git show <sha>` / `git cherry-pick <sha>`) rather than stash. '
+      + 'Exception: putting back a stash entry that `stash-guard.js` reported lost, with the '
+      + '`git stash store -m "<subject>" <sha>` command it printed, is the intended recovery.',
     );
   }
+}
+
+// #4548: warn-only heads-up for a Bash command that kills processes by image or name
+// (`pkill`, `killall`, `taskkill /IM`, `Stop-Process -Name`, a `pgrep`-fed `kill`, also
+// inside `sh -c`/`cmd /c`/`powershell -Command`). Unlike checkGitStashWarn's linked-worktree
+// condition, the hazard is machine-wide — every sibling session and worktree shares the
+// process table — so this is run- and location-independent: it needs no run state and no
+// repo. It is reachable only because GUARDED_PROGRAM_WORDS.processKill feeds the bash
+// prefilter, which matches those words case-insensitively (`TASKKILL`). The parser is
+// git-command.js's processKillByName; a PID-scoped kill is never reported. Fail-open: any
+// parser throw swallows to silence, never to a block.
+function checkProcessKillWarn(command, cwd, warnings) {
+  if (!command) return;
+  try {
+    if (processKillByName(command, cwd).length) {
+      warnings.push(
+        'claude-tweaks: killing a process by image or name (`taskkill /IM`, `pkill`, `killall`, '
+        + '`Stop-Process -Name`, a `pgrep`-fed `kill`, also inside `sh -c`/`cmd /c`/`powershell -Command`) '
+        + 'matches every process of that name on this machine — the process table is shared with every '
+        + 'sibling session and worktree, so it can take down their dev servers and tooling. Kill only a '
+        + 'PID you captured when you started the process, or the listener on a port you own '
+        + '(`lsof -nP -iTCP:{port} -sTCP:LISTEN -t`, then `kill {pid}`; win32: `taskkill /PID {pid} /T /F`).',
+      );
+    }
+  } catch (_) { /* best-effort heads-up: a parser failure is silence, never a block */ }
 }
 
 // worktree-required policy gate: unlike E1 below, this needs no pipeline run
@@ -986,16 +1077,62 @@ function checkWorktreeRequired(ctx, precomputedGitTargets, indeterminateTargets 
       const targets = precomputedGitTargets || gitTargets(command, ctx.cwd, walkOptions(ctx.cwd));
       const gitTargetPaths = targets
         .filter((t) => GATE_COVERAGE.gitActions.includes(t.action))
-        .map((t) => ({ path: t.dir, exemptible: false, action: t.action }));
+        .map((t) => ({ path: t.dir, exemptible: false, action: t.action, lost: t.lost }));
       // Non-git direct file writes (tee, cp, mv) — best-effort,
       // not exhaustive (see fileWriteTargets' own header comment).
-      const writeTargetPaths = fileWriteTargets(command, ctx.cwd, walkOptions(ctx.cwd)).map((t) => ({ path: t.file, exemptible: true }));
+      const writeTargetPaths = fileWriteTargets(command, ctx.cwd, walkOptions(ctx.cwd))
+        .map((t) => ({ path: t.file, exemptible: true, lost: t.lost, rel: t.rel }));
       targetPaths = [...gitTargetPaths, ...writeTargetPaths];
     }
   }
   if (!targetPaths.length) return {};
 
-  for (const { path: targetPath, exemptible, fileTool, action } of targetPaths) {
+  // #4303: whether the session's own repo has worktree-always on: the main checkout of its start
+  // cwd (as walkOptions resolves it) has the policy on. Read once, for the first lost target; a
+  // main checkout whose policy is off or absent needs no git spawn.
+  let sessionPolicy = null;
+  const sessionWorktreeAlways = () => {
+    if (sessionPolicy === null) {
+      const main = ctx.cwd ? wtDetect.mainCheckoutRoot(ctx.cwd) : null;
+      if (!ctx.cwd || (main && !policy.isWorktreeAlwaysOn(main))) sessionPolicy = 'off';
+      else {
+        const info = wtDetect.repoInfo(ctx.cwd);
+        const root = info.repoRoot ? (main || info.repoRoot) : null;
+        if (info.indeterminate) sessionPolicy = 'indeterminate';
+        else sessionPolicy = root && policy.isWorktreeAlwaysOn(root) ? 'on' : 'off';
+      }
+    }
+    return sessionPolicy;
+  };
+
+  for (const { path: targetPath, exemptible, fileTool, action, lost, rel } of targetPaths) {
+    // #4303: a relative write target, or a git command, resolved from a cwd the shell scanner lost
+    // (past git-command.js's CWD_SET_CAP) lands in a directory the walk does not know: `targetPath`
+    // is only a stand-in (the session's main checkout or its own cwd), so no exemption below can be
+    // read off it. In a session whose own repo has worktree-always on, deny before any of them,
+    // failing closed. In any other session (no repo, or the policy off or absent) the marker never
+    // denies: base d9aa6b82d's own readings of the command (git-command.js's BASE_VIEW, reported
+    // beside the lost targets as known ones; that walk keeps this branch's other scanner fixes, which
+    // add targets base missed and drop ones it invented) are checked as ordinary targets, as base
+    // checked them.
+    // An indeterminate repo status allows, as below, so a load spike never freezes a run.
+    if (lost) {
+      const session = sessionWorktreeAlways();
+      if (session === 'indeterminate') {
+        indeterminateTargets.push(targetPath);
+        continue;
+      }
+      if (session !== 'on') continue;
+      const { dir: denialRunDir, attribution: denialAttribution } = ctxLib.resolveDenialRunDir(ctx);
+      const testTag = process.env.CT_HOOKS_TEST_MODE === '1' ? { test: true } : null;
+      ctxLib.appendEvent(denialRunDir, 'gate-denial', { tool: toolName, path: rel || targetPath, gate: 'lost-cwd', ...testTag }, denialAttribution);
+      return denyResult(
+        `claude-tweaks: this command changes directory more ways than the hook's shell scanner follows, so it ` +
+        `cannot tell where ${action ? `its git ${action}` : `its relative write to ${rel}`} lands, nor show that it ` +
+        `stays out of a non-isolated checkout under a worktree-always policy (.claude-tweaks/policy.yml). Use ` +
+        `absolute paths (\`git -C <absolute path>\` for git), or split the command into smaller ones.`,
+      );
+    }
     // Cheap fs-only pre-check: if no policy.yml exists anywhere in the
     // ancestor chain, there is definitely nothing to enforce for THIS
     // target — skip forking git entirely for the overwhelming majority of
@@ -1372,6 +1509,41 @@ function hasLoggedPrEarlyStep1(runDir, branch) {
   }
 }
 
+// The dirs whose decisions.md may carry this run's PR-early lines: `runDir`,
+// plus its parent when `runDir` is a `spec-*` dir whose parent is run-id-shaped
+// (RUN_ID_RE). The parent is whatever readRunStateWithParent({ requireRunIdParent:
+// true }) -- the rule lib/pr-bookkeeping/precondition.js uses -- reports as
+// `parentRunDir`, so that one function owns the rule; its read is stubbed out
+// because only the directory matters here. pr-early-open.js refuses a `spec-`
+// --run, so in a multi-spec run the Step 1 and FAILED lines land on the parent.
+// A non-string or empty `runDir` is returned as is, so the reads keep their
+// missing-file -> false posture.
+function prEvidenceDirs(runDir) {
+  if (typeof runDir !== 'string' || !runDir) return [runDir];
+  const { parentRunDir } = ctxLib.readRunStateWithParent(path.resolve(runDir), { read: () => null, requireRunIdParent: true });
+  return parentRunDir ? [runDir, parentRunDir] : [runDir];
+}
+
+// Whether a pr-first push may go ahead with no recorded PR ([IL-131]) -- the one
+// rule checkBookkeepingStampsGate's PR-stamp branch and lib/phase-exit/phase-exit.js's
+// prPushReleased both call (#4344). In order: a closed run; any truthy `pr` stamp;
+// a model other than pr-first; a first publish (`hasNoUpstream`), released only by
+// this branch's Step 1 line (#989/#1800) -- never by prExempt or a FAILED line,
+// since the gate's record-pr deny text tells agents to hand-log a FAILED line, so
+// a memoized prExempt can precede a first publish that never ran Step 1 (#903);
+// then prExempt; then a logged `PR-early run lifecycle: ... FAILED` line. Only
+// reads decisions.md (through prEvidenceDirs); a null `runState` reads as `{}`.
+function prStampReleased({ runState, runDir, branch, model, hasNoUpstream }) {
+  const state = runState || {};
+  if (state.status === 'clean') return true;
+  if (state.pr) return true;
+  if (model !== 'pr-first') return true;
+  const dirs = prEvidenceDirs(runDir);
+  if (hasNoUpstream) return Boolean(branch) && dirs.some((d) => hasLoggedPrEarlyStep1(d, branch));
+  if (state.prExempt) return true;
+  return dirs.some((d) => hasLoggedPrDegrade(d));
+}
+
 // #3012: pure form of hasLoggedPrEarlyStep1's check over a decisions.md body.
 // True when the exact three-shape regex matches, or when a single AUTO line
 // (no FAILED) mentions PR-early, states a Step 1 outcome before its Reversibility
@@ -1516,6 +1688,16 @@ function hasNoUpstreamYet(dir) {
   return upstream !== `origin/${branch}`;
 }
 
+// Freshness of a run-scoped forge degrade memo (#4830): `at` is the epoch-ms stamp
+// the memo was written at, `now` the current epoch ms, `ttlMs` the window
+// (FORGE_DEGRADE_MEMO_TTL_MS at the call site). Fresh only for a finite stamp no
+// later than `now` and strictly younger than the TTL; absent, non-numeric, NaN,
+// Infinity, or a future stamp (a clock step) is stale.
+function isFreshForgeDegradeMemo(at, now, ttlMs) {
+  const age = now - at;
+  return Number.isFinite(at) && age >= 0 && age < ttlMs;
+}
+
 // The PRODUCTION integration-model read for the PR-stamp branch below.
 // `_shared/integration-model.md`'s contract (and its "Re-detecting mid-run
 // instead of reading the run's pin" anti-pattern) is that a run resolves the
@@ -1543,7 +1725,40 @@ function hasNoUpstreamYet(dir) {
 // runs with no agent turn active, so there is no MCP call this gate could
 // ever source a reachability signal from. This is a permanent, structural
 // gap, not an oversight (docs/incident-log.md IL-63).
-function resolveRunPinnedIntegrationModel(mainRoot, runDir) {
+//
+// `opts.timeoutMs` / `opts.onDegrade` (#4578) are forwarded to
+// detectIntegrationModel, each only when set (an absent opt adds no key), and
+// only the fresh-detection fallback uses them: a pin returns first and never
+// calls `onDegrade`. With the #4830 memo opted in (below), `onDegrade` is
+// instead always wrapped, so the memo can see the degrade, and is also called
+// on a memo hit with no detection at all. This gate passes `timeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS`
+// rather than inheriting `gh-timeout-ms` (up to 60 s, retried once = 120 s)
+// because it runs inside a PreToolUse lifecycle hook (no per-hook timeout in
+// hooks.json, so Claude Code's default command-hook timeout applies) and must
+// keep docs/hooks.md's never-break-a-session invariant. 5000 ms per attempt
+// gives a 15 s worst case (git 5 s + two 5 s attempts, record #4578 Decision
+// Q2). `check-pr-bookkeeping.js` (via pr-bookkeeping/precondition.js) runs as a
+// CLI, not a hook, passes no `timeoutMs`, and so follows the ladder.
+//
+// `opts.degradeMemoTtlMs` (#4830) is an opt-in run-scoped degrade memo, and only
+// this gate opts in (precondition.js passes `{ onDegrade }` alone and gets
+// today's behavior, byte for byte). Without it, a hung `gh` costs the full ~15 s
+// forge probe on every hooked call. With a positive-integer TTL and a non-empty
+// `runDir`, a degraded detection stamps `forgeDegradedAt` into run-state.json and
+// a call inside the TTL returns 'local-merge' without spawning `gh` or `git`. A
+// memo hit is still reported through `onDegrade` — as `{ memoized: true,
+// degradedAt }`, deliberately with no `reason` key so nothing mistakes it for a
+// FORGE_DEGRADE_REASON code — so the gate's Q5 rule still withholds `prExempt`.
+// The memo expires after the TTL and is cleared by the next clean detection. It
+// is read only after the pin check, so an explicit pin always wins. `opts.now`
+// (default Date.now) is a test seam.
+//
+// Concurrency: no compare-and-set. A degraded detection that began before a
+// concurrent clean one still writes `forgeDegradedAt: now()` after its probe,
+// which can re-arm a just-cleared memo; a recovered forge then goes unnoticed
+// for at most one more TTL — accepted, inside "recovery is noticed within one
+// TTL".
+function resolveRunPinnedIntegrationModel(mainRoot, runDir, opts = {}) {
   const git = () => mainRoot;
   const readFile = (p) => {
     try { return fs.readFileSync(p, 'utf8'); } catch { return null; }
@@ -1554,7 +1769,39 @@ function resolveRunPinnedIntegrationModel(mainRoot, runDir) {
   // 'default' (absent, or set-but-invalid) falls through to detection, the
   // same posture resolveIntegrationModel itself documents.
   if (entry && entry.source !== 'default') return entry.value;
-  return detectIntegrationModel(root);
+  const detectOpts = {};
+  if (opts.timeoutMs !== undefined) detectOpts.timeoutMs = opts.timeoutMs;
+  if (opts.onDegrade !== undefined) detectOpts.onDegrade = opts.onDegrade;
+  const ttl = opts.degradeMemoTtlMs;
+  if (!(Number.isInteger(ttl) && ttl > 0 && typeof runDir === 'string' && runDir !== '')) {
+    return detectIntegrationModel(root, detectOpts);
+  }
+  const now = typeof opts.now === 'function' ? opts.now : Date.now;
+  const state = ctxLib.readRunState(runDir);
+  const memoAt = state && state.forgeDegradedAt;
+  if (isFreshForgeDegradeMemo(memoAt, now(), ttl)) {
+    if (typeof opts.onDegrade === 'function') {
+      try { opts.onDegrade({ memoized: true, degradedAt: memoAt }); } catch { /* a reporting callback never breaks the resolver */ }
+    }
+    return 'local-merge';
+  }
+  let degraded = false;
+  detectOpts.onDegrade = (d) => {
+    degraded = true;
+    // detectIntegrationModel guards and swallows a throwing callback itself.
+    if (typeof opts.onDegrade === 'function') opts.onDegrade(d);
+  };
+  const model = detectIntegrationModel(root, detectOpts);
+  if (degraded) {
+    ctxLib.writeRunState(runDir, { forgeDegradedAt: now() });
+  } else if (memoAt != null) {
+    // Clear on a clean detection. The outer `memoAt != null` check keeps the
+    // common no-memo path free of the run-state lock and write. The updater
+    // re-checks under the lock and returns null when a concurrent call already
+    // cleared it, which writeRunState treats as "write nothing, keep updatedAt".
+    ctxLib.writeRunState(runDir, (s) => (s.forgeDegradedAt == null ? null : { forgeDegradedAt: null }));
+  }
+  return model;
 }
 
 // True only on a PROVABLE ownership mismatch: this run's run-state.json was
@@ -1726,12 +1973,16 @@ function stampCheckOutcome(ctx, stamp, wtRoot, warnings, warnText, denyText, isF
 //   3. This run's materialize commit hasn't landed yet (hasMaterializeCommit
 //      above) — Common Step 1 is still legitimately in progress.
 //   4. The two stamp checks themselves — record-worktree unconditionally,
-//      record-pr only under a run pinned `integration-model: pr-first`
-//      (resolveRunPinnedIntegrationModel above) and with no logged degrade.
-//      The first time this branch proves no further PR-stamp denial is
+//      record-pr whenever prStampReleased (above) does not release the call:
+//      it releases a run not pinned `integration-model: pr-first`
+//      (resolveRunPinnedIntegrationModel above), a first publish only on its
+//      Step 1 line, and anything else on a memoized `prExempt` or a logged degrade.
+//      The first time this branch proves no tracked-branch PR-stamp denial is
 //      possible (model resolved cleanly to non-pr-first, or pr-first with
 //      the degrade already logged), it persists `prExempt: true` to
 //      run-state.json so every later covered call short-circuits at check 1
+//      -- except an all-push call, which still reaches the PR branch because
+//      a first publish needs its Step 1 line (prStampReleased) --
 //      instead of re-paying repoInfo + hasMaterializeCommit + this
 //      resolution — each hook invocation is a fresh process, so an in-memory
 //      cache would not survive between calls; run-state.json is the durable
@@ -1740,8 +1991,9 @@ function stampCheckOutcome(ctx, stamp, wtRoot, warnings, warnText, denyText, isF
 //      pinned once at run start per `_shared/integration-model.md` and never
 //      re-derived mid-run; decisions.md is append-only, so a logged degrade
 //      line never disappears), so the cache can never produce a false allow
-//      later. See the PR-stamp branch below for the one case that must NOT
-//      be cached (a caught resolution exception).
+//      later. See the PR-stamp branch below for the two cases that must NOT
+//      be cached as `prExempt`: a caught resolution exception, and a degraded
+//      detection (#4578; memoized run-scoped instead, #4830).
 // Ambiguity resolves to allow throughout, same posture as E1.
 //
 // A provably foreign-owned run (isForeignSessionCall above) downgrades either
@@ -1782,13 +2034,17 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
   // All three stamps already recorded, OR the worktree+claim stamps are
   // recorded and the PR stamp is durably exempt (`prExempt`, memoized by the
   // PR-stamp branch below the first time it proves no further denial is
-  // possible): neither deny branch below can fire, so reach the same `{}`
+  // possible; an all-push call is the one exception, below): neither deny
+  // branch below can fire, so reach the same `{}`
   // here instead of paying for repoInfo's git spawn, hasMaterializeCommit's
   // git spawn, and (on the PR branch) a possible network-touching `gh` call —
   // on EVERY covered tool call of the run, including a `local-merge` run's
   // steady state, which never sets `runState.pr` and previously never
-  // reached this short-circuit at all. Purely an optimization; it changes no
-  // deny/allow outcome.
+  // reached this short-circuit at all. `prExempt` short-circuits every call
+  // except an all-push one (`allPush`): a first publish still needs its Step 1
+  // line (prStampReleased, #4344), so that call reaches the PR branch below.
+  // The test is `allPush`, not `firstPublish`, because `firstPublish` spawns
+  // git per target (hasNoUpstreamYet) -- the cost this short-circuit avoids.
   //
   // `runState.claimExempt` MUST be part of this condition (#2636) — a prior
   // version of this comment argued it was safe to omit because "the
@@ -1808,7 +2064,8 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
   // `hasLoggedClaim()` against that run's own `decisions.md` shows every one
   // of its 13 record numbers would have classified as "missing claim" had
   // the branch ever executed.
-  if (runState.worktree && (runState.pr || runState.prExempt) && runState.claimExempt) return {};
+  const allPush = isGitWrite && commandGitTargets.every((t) => t.action === 'push');
+  if (runState.worktree && (runState.pr || (runState.prExempt && !allPush)) && runState.claimExempt) return {};
 
   const { repoRoot: wtRoot, isLinkedWorktree, indeterminate } = wtDetect.repoInfo(ctx.cwd || process.cwd());
   if (indeterminate || !wtRoot || !isLinkedWorktree) return {};
@@ -1951,8 +2208,9 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
   }
 
   if (!runState.pr) {
-    // lib/phase-exit/phase-exit.js prPushReleased applies this branch's release rules to the
-    // push phase-exit.js makes itself (#4026) -- a change to them here belongs there too.
+    // The release rule is prStampReleased above, which lib/phase-exit/phase-exit.js's
+    // prPushReleased also calls for the push phase-exit.js makes itself (#4026, #4344);
+    // a new release condition goes in that one function.
     // Model resolution moved ahead of the #989 exemption below (#1800) — the
     // exemption's own precondition now depends on `model` (a resolved
     // `local-merge` run never runs pr-early-run-lifecycle.md's Step 1 at all,
@@ -1965,39 +2223,58 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
     // fail-open fallback — only a genuine resolution is a provable verdict
     // safe to cache below; a caught exception is a transient failure (e.g. a
     // flaky `gh` call) that a later, unmemoized call might resolve
-    // differently, including to `pr-first`.
+    // differently, including to `pr-first`. A detection that degraded (#4578
+    // Decision Q5: the forge probe timed out, then failed on retry, so the
+    // `local-merge` it returned is a fallback, not a verdict) is the same kind
+    // of transient failure and clears `modelResolved` too.
     let modelResolved = true;
+    let degraded = false;
+    const onDegrade = () => { degraded = true; };
+    // Hook-bounded, never gh-timeout-ms — see resolveRunPinnedIntegrationModel's
+    // comment (#4578 Q2).
     try {
-      model = override ? override(mainRoot) : resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir);
+      model = override
+        ? override(mainRoot, { onDegrade })
+        : resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir, { timeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS, degradeMemoTtlMs: FORGE_DEGRADE_MEMO_TTL_MS, onDegrade });
     } catch {
       model = 'local-merge'; // fail open: an unresolvable model is not provably pr-first
       modelResolved = false;
     }
+    // Decision Q5: a degraded detection is never cached as `prExempt`, exactly
+    // like the catch branch above. After a degrade the next covered call detects
+    // again once the run's degrade memo expires (#4830); after a catch it detects
+    // at once, since the catch branch writes no memo. A memo hit arrives through
+    // `onDegrade` too, so it never persists `prExempt` either.
+    if (degraded) modelResolved = false;
     // #989: exempt an in-flight initial publish (see hasNoUpstreamYet above)
-    // before doing anything else in this branch — this is a narrow, one-shot
-    // allowance for THIS call only, never persisted as `prExempt`, so a push
-    // to an already-tracked branch (Step 2 already ran once, `gh pr create`
-    // never followed it) still falls through to the deny below, preserving
-    // the "keep pushing forever, never open the PR" case IL-131 exists to
-    // close. Applies only to the Bash/git branch (`commandGitTargets`) — an
+    // once the model is resolved — prStampReleased decides it, and this is a narrow,
+    // one-shot allowance for THIS call only, never persisted as `prExempt`, so a
+    // push to an already-tracked branch (Step 2 already ran once, `gh pr create`
+    // never followed it) goes to prStampReleased's tracked rules (`prExempt` or a
+    // logged FAILED line can release it) and otherwise gets the `record-pr` deny
+    // below, preserving the "keep pushing forever, never open the PR" case IL-131
+    // exists to close. Applies only to the Bash/git branch (`commandGitTargets`) — an
     // Edit/Write/NotebookEdit call (`commandGitTargets` null) is never a
     // push and always continues past this check.
-    if (Array.isArray(commandGitTargets) && commandGitTargets.length > 0
-      && commandGitTargets.every((t) => t.action === 'push' && hasNoUpstreamYet(t.dir))) {
-      // #1800: a resolved `local-merge` model never runs Step 1 (the whole
-      // file is skipped for it), so it stays exempt exactly as before —
-      // only `pr-first` gains the added precondition below. The exemption
-      // above answers "is this the branch's first publish push?" — it does
-      // not answer "did Step 1 run first?". A `pr-first` push additionally
-      // requires every target's branch to carry a Step 1 outcome line in
-      // decisions.md before the push it precedes is let through.
-      if (model !== 'pr-first') return {};
+    const firstPublish = Array.isArray(commandGitTargets) && commandGitTargets.length > 0
+      && commandGitTargets.every((t) => t.action === 'push' && hasNoUpstreamYet(t.dir));
+    // #1800: a resolved `local-merge` model never runs Step 1 (the whole
+    // file is skipped for it), so it stays exempt exactly as before —
+    // only `pr-first` gains the added precondition. `firstPublish` answers
+    // "is this the branch's first publish push?" — it does not answer "did
+    // Step 1 run first?". A `pr-first` push additionally requires every
+    // target's branch to carry a Step 1 outcome line in decisions.md before
+    // the push it precedes is let through, so the branch name is read (and
+    // `currentBranchName` spawns) only under `pr-first`.
+    let branch = null;
+    if (firstPublish && model === 'pr-first') {
       const branches = commandGitTargets.map((t) => currentBranchName(t.dir));
-      const [branch] = branches;
-      if (branch && branches.every((b) => b === branch)
-        && hasLoggedPrEarlyStep1(ctx.runDir, branch)) {
-        return {};
-      }
+      const [first] = branches;
+      if (first && branches.every((b) => b === first)) branch = first;
+    }
+    const released = prStampReleased({ runState, runDir: ctx.runDir, branch, model, hasNoUpstream: firstPublish });
+    if (firstPublish) {
+      if (released) return {}; // one-shot: never persisted as prExempt
       return stampCheckOutcome(
         ctx, 'record-pr-step1', wtRoot, warnings,
         `claude-tweaks: pipeline run ${path.basename(ctx.runDir)} resolves integration-model: pr-first and this ` +
@@ -2014,7 +2291,7 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
         isForeignSessionCall(ctx),
       );
     }
-    if (model === 'pr-first' && !hasLoggedPrDegrade(ctx.runDir)) {
+    if (!released) {
       return stampCheckOutcome(
         ctx, 'record-pr', wtRoot, warnings,
         `claude-tweaks: pipeline run ${path.basename(ctx.runDir)} resolves integration-model: pr-first and has a ` +
@@ -2032,15 +2309,18 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
         isForeignSessionCall(ctx),
       );
     }
-    // No further PR-stamp denial is possible for the rest of this run: model
+    // No further tracked-branch PR-stamp denial is possible for the rest of this run: model
     // resolved cleanly to something other than pr-first (the run's pin is
     // fixed at run start and never re-derived — `_shared/integration-model.md`
     // — so it cannot later flip to pr-first), or it resolved pr-first but the
     // degrade line already landed in decisions.md (append-only — once present
     // it is permanent). Persist the verdict so every later covered call for
-    // this run hits the check-1 short-circuit above instead of re-paying
+    // this run — except an all-push call, which still reaches this branch
+    // because a first publish needs its Step 1 line — hits the check-1
+    // short-circuit above instead of re-paying
     // repoInfo + hasMaterializeCommit + this same resolution. Skipped when
-    // `modelResolved` is false (the catch above fired) — see its comment.
+    // `modelResolved` is false (the catch above fired, or the forge detection
+    // itself degraded — #4578 Q5) — see its comment.
     if (modelResolved) {
       ctxLib.writeRunState(ctx.runDir, { prExempt: true });
     }
@@ -2143,6 +2423,7 @@ function runInner(ctx, indeterminateTargets, warnings, deps) {
   // three times per invocation (once per consumer) was pure repeated work.
   const segments = command ? resolvedGitSegments(command, ctx.cwd, walkOptions(ctx.cwd)) : null;
   checkGitStashWarn(segments, warnings);
+  checkProcessKillWarn(command, ctx.cwd, warnings);
   const commandGitTargets = segments ? gitTargetsFrom(segments) : null;
 
   const gate = checkWorktreeRequired(ctx, commandGitTargets, indeterminateTargets);
@@ -2190,6 +2471,10 @@ function runInner(ctx, indeterminateTargets, warnings, deps) {
   // it denied one in the wrong in-project checkout.
   const mainRoot = canonicalRealpath(wtDetect.mainCheckoutRoot(assigned), { fsImpl });
 
+  // #4303: E1 never reads the scanner's `lost` marker. A lost target's stand-in and the readings
+  // beside it are checked here as ordinary targets, as base checked its collapsed paths
+  // (policy-schema-coverage.md's "Where a relative target resolves").
+  //
   // #1431 audit: every appendEvent call in this loop (wd-ambiguous,
   // wd-push-mismatch, wd-foreign-session, wd-deny below) deliberately uses
   // ctx.runDir, not ctx.ownedRun. E1 is, by this whole function's own header
@@ -2367,12 +2652,18 @@ module.exports = {
   checkDispatchConfigGate,
   hasLoggedPrDegrade,
   hasPrEarlyStep1LineFor,
-  // Exported for bin/lib/phase-exit/phase-exit.js (#4026), whose push applies the
-  // same pr-first no-PR release conditions as checkBookkeepingStampsGate's PR-stamp branch.
-  hasLoggedPrEarlyStep1,
+  // The one pr-first no-PR release rule (#4344): called by checkBookkeepingStampsGate's
+  // PR-stamp branch above and by bin/lib/phase-exit/phase-exit.js's prPushReleased (#4026).
+  prStampReleased,
+  // phase-exit.js's hasNoUpstreamYet seam.
   hasNoUpstreamYet,
   // Exported for check-pr-bookkeeping.js's phase-boundary precondition check
   // (#2472) to reuse rather than reimplement — the same integration-model
   // resolution checkBookkeepingStampsGate's own PR-stamp branch already uses.
   resolveRunPinnedIntegrationModel,
+  // Exported only for its unit test (#4830): the one place the degrade memo's
+  // boundary cases (age equal to the TTL, a future stamp, a non-finite or
+  // non-numeric stamp) are pinned directly. Its sole production caller is
+  // resolveRunPinnedIntegrationModel above.
+  isFreshForgeDegradeMemo,
 };

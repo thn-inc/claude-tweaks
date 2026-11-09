@@ -21,6 +21,7 @@ const {
   RECLAIM_STALE_MS,
 } = require('../plugin/bin/lib/reconcile/console-execute');
 const { reconcile } = require('../plugin/bin/lib/reconcile');
+const { DEFER_REASONS } = require('../plugin/bin/lib/issues/record');
 
 function git(args, cwd) {
   return execFileSync('git', args, { cwd, encoding: 'utf8' });
@@ -552,6 +553,7 @@ function tickedComment(ids) {
 const RULING_TEXT_DEFERS_NO = 'Title: r\nKind: sdd-ruling\nDefers: no\nStaged-at: abc\n\nbody\n';
 const RULING_TEXT_DEFERS_YES = 'Title: r\nKind: sdd-ruling\nDefers: yes\nStaged-at: abc\n\nbody\n';
 const RULING_TEXT_DEFERS_YES_REASONED = 'Title: r\nKind: sdd-ruling\nDefers: yes\nDefer-reason: genuinely-larger\nStaged-at: abc\n\nbody\n';
+const RULING_TEXT_NEEDS_HUMAN = 'Title: r\nKind: sdd-ruling\nDefers: yes\nDefer-reason: needs-human-decision\nStaged-at: abc\n\nbody\n';
 
 test('decideConsoleExecute: no ctx.rulingTexts -> every ruling row withheld as sdd-ruling-unclassified, fails closed', () => {
   const cj = rulingConsoleJson([{ id: 'staged-1', kind: 'staged', summary: 'r', isRulingRow: true }]);
@@ -585,6 +587,39 @@ test('decideConsoleExecute: a null / missing ruling text is a gap (sdd-ruling-un
   ]);
 });
 
+test('AC5.1 AC5.2: decideConsoleExecute attaches ratifyAction to every readable ruling item, gapped ones included; rulingGateGaps unchanged (#3942)', () => {
+  const cj = rulingConsoleJson([
+    { id: 'r-yes', kind: 'staged', summary: 'r', isRulingRow: true },
+    { id: 'r-no', kind: 'staged', summary: 'r', isRulingRow: true },
+    { id: 'r-gap', kind: 'staged', summary: 'r', isRulingRow: true },
+    { id: 'r-nhd', kind: 'staged', summary: 'r', isRulingRow: true },
+    { id: 'r-unread', kind: 'staged', summary: 'r', isRulingRow: true },
+    { id: 'r-absent', kind: 'staged', summary: 'r', isRulingRow: true },
+    { id: 'plain', kind: 'staged', summary: 'plain' },
+  ]);
+  const result = decideConsoleExecute(cj, tickedComment(['r-yes', 'r-no', 'r-gap', 'r-nhd', 'r-unread', 'r-absent', 'plain']), Date.now(), {
+    rulingTexts: {
+      'r-yes': RULING_TEXT_DEFERS_YES_REASONED, 'r-no': RULING_TEXT_DEFERS_NO, 'r-gap': RULING_TEXT_DEFERS_YES,
+      'r-nhd': RULING_TEXT_NEEDS_HUMAN, 'r-unread': RULING_TEXT_DEFERS_YES_REASONED,
+    },
+    rulingReadErrors: { 'r-unread': 'read-failed' },
+  });
+  const byId = Object.fromEntries(result.items.map((i) => [i.id, i]));
+  assert.strictEqual(byId['r-yes'].ratifyAction, 'file-record');
+  assert.strictEqual(byId['r-no'].ratifyAction, 'accept');
+  assert.strictEqual(byId['r-gap'].ratifyAction, 'file-record');
+  assert.strictEqual(byId['r-nhd'].ratifyAction, 'file-record');
+  assert.ok(!('ratifyAction' in byId['r-unread']));
+  assert.ok(!('ratifyAction' in byId['r-absent']));
+  assert.ok(!('ratifyAction' in byId.plain));
+  assert.deepStrictEqual(result.rulingGateGaps, [
+    { id: 'r-gap', reason: 'sdd-ruling-deferral-no-defer-reason' },
+    { id: 'r-nhd', reason: 'sdd-ruling-needs-human-decision' },
+    { id: 'r-unread', reason: 'sdd-ruling-unreadable', detail: 'read-failed' },
+    { id: 'r-absent', reason: 'sdd-ruling-unclassified' },
+  ]);
+});
+
 test('decideConsoleExecute: Defers: no and a reasoned deferral are not gaps; non-ruling items are never gated', () => {
   const cj = rulingConsoleJson([
     { id: 'staged-1', kind: 'staged', summary: 'r', isRulingRow: true },
@@ -596,6 +631,22 @@ test('decideConsoleExecute: Defers: no and a reasoned deferral are not gaps; non
     rulingTexts: { 'staged-1': RULING_TEXT_DEFERS_NO, 'staged-2': RULING_TEXT_DEFERS_YES_REASONED, 'staged-3': null, 'staged-4': null },
   });
   assert.deepStrictEqual(result.rulingGateGaps, []);
+});
+
+test('AC1.1: decideConsoleExecute withholds a needs-human-decision ruling as a gap (sdd-ruling-needs-human-decision) (#4587)', () => {
+  const cj = rulingConsoleJson([{ id: 'staged-1', kind: 'staged', summary: 'r', isRulingRow: true }]);
+  const result = decideConsoleExecute(cj, tickedComment(['staged-1']), Date.now(), { rulingTexts: { 'staged-1': RULING_TEXT_NEEDS_HUMAN } });
+  assert.deepStrictEqual(result.rulingGateGaps, [{ id: 'staged-1', reason: 'sdd-ruling-needs-human-decision' }]);
+});
+
+test('AC2.1: decideConsoleExecute leaves every other valid Defer-reason ruling floor-clearing, tangential included (#4587)', () => {
+  const others = DEFER_REASONS.filter((x) => x !== 'needs-human-decision');
+  assert.ok(others.includes('tangential') && others.length === DEFER_REASONS.length - 1);
+  for (const r of others) {
+    const text = `Title: r\nKind: sdd-ruling\nDefers: yes\nDefer-reason: ${r}\nStaged-at: abc\n\nbody\n`;
+    const cj = rulingConsoleJson([{ id: 'staged-1', kind: 'staged', summary: 'r', isRulingRow: true }]);
+    assert.deepStrictEqual(decideConsoleExecute(cj, tickedComment(['staged-1']), Date.now(), { rulingTexts: { 'staged-1': text } }).rulingGateGaps, [], r);
+  }
 });
 
 function makeRulingRepo(items, stagedFiles) {
@@ -648,6 +699,14 @@ test('AC3.1 AC3.3: consoleExecuteDetect reads each ruling row\'s staged file and
     { id: 'staged-4', reason: 'sdd-ruling-unreadable', detail: 'not-found' },
     { id: 'staged-5', reason: 'sdd-ruling-unreadable', detail: 'no-staged-path' },
   ]);
+});
+
+test('AC1.1: consoleExecuteDetect reads a needs-human-decision ruling row\'s staged file and returns it as a sdd-ruling-needs-human-decision gap (#4587)', { skip: process.platform === 'win32' }, async () => {
+  const items = [{ id: 'staged-1', kind: 'staged', summary: 'needs a human', isRulingRow: true, stagedPath: 'staged/sdd-ruling-1.md' }];
+  const { dir } = makeRulingRepo(items, { 'staged/sdd-ruling-1.md': RULING_TEXT_NEEDS_HUMAN });
+  const result = await detectWithFakePr(dir, { comments: tickedComment(items.map((i) => i.id)), body: '' });
+  assert.strictEqual(result.ready.length, 1, JSON.stringify(result));
+  assert.deepStrictEqual(result.ready[0].rulingGateGaps, [{ id: 'staged-1', reason: 'sdd-ruling-needs-human-decision' }]);
 });
 
 test('AC3.1 AC3.2: consoleExecuteDetect never reads a stagedPath that escapes the run dir (../, absolute, non-string) -> unreadable gap', { skip: process.platform === 'win32' }, async () => {
@@ -892,7 +951,7 @@ test('reconcile(): local-merge skips the console check under the same combined s
 
   const r = await reconcile({ cwd: dir });
   assert.strictEqual(r.console, null);
-  assert.deepStrictEqual(r.skipped, [{ check: 'mirror,release,archive,archive-branches,remote-prune,ledger-residue,console', reason: 'local-merge-model' }]);
+  assert.deepStrictEqual(r.skipped, [{ check: 'mirror,release,post-merge,archive,archive-branches,remote-prune,ledger-residue,console', reason: 'local-merge-model' }]);
 });
 
 test('AC1.1 AC2.1: loading reconcile/index.js in a fresh process does not load wrap-up/pack.js (#4060)', () => {

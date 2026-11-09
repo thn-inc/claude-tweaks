@@ -1072,14 +1072,15 @@ test('debate: returns a `profile` field (not `tier`) and the bare [Use: {Profile
 
 test('debate: both agree → confirmed with AUTO entry matching the documented schema', () => {
   assert.strictEqual(c.resolveDebate('agree', 'agree'), 'confirmed');
-  const entry = `- AUTO 14:41:02 — /review debate: src/auth.ts:42 confirmed (both agreed). Reversibility: high.`;
-  assert.match(entry, decisionLogPattern(PRIMITIVE_DOC, ['confirmed (both agreed)']));
+  const entry =
+    `- AUTO 14:41:02 — Debate: cross-lens disagreement on src/auth.ts:42 converged positive after 1 round (lens "security" finding src/auth.ts:42; lens "quality" finding src/auth.ts:44 — both confirmed). Reversibility: high.`;
+  assert.match(entry, decisionLogPattern(PRIMITIVE_DOC, ['converged positive after 1 round']));
 });
 
-test('debate: both disagree → unconfirmed with AUTO entry matching the documented schema', () => {
+test('debate: both disagree → unconfirmed with STAGED entry matching the documented schema', () => {
   assert.strictEqual(c.resolveDebate('disagree', 'disagree'), 'unconfirmed');
-  const entry = `- AUTO 14:41:05 — /review debate: src/auth.ts:42 unconfirmed (both disagreed). Reversibility: high.`;
-  assert.match(entry, decisionLogPattern(PRIMITIVE_DOC, ['unconfirmed (both disagreed)']));
+  const entry = `- STAGED 14:41:05 — Debate: lens "security" finding src/auth.ts:42 — cross-lens disagreement converged negative after 1 round; unconfirmed. Reversibility: high.`;
+  assert.match(entry, decisionLogPattern(PRIMITIVE_DOC, ['converged negative after 1 round']));
 });
 
 test('debate: mixed/partial verdicts → contested with STAGED entry matching the documented schema', () => {
@@ -1087,8 +1088,16 @@ test('debate: mixed/partial verdicts → contested with STAGED entry matching th
   assert.strictEqual(c.resolveDebate('agree', 'partial'), 'contested');
   assert.strictEqual(c.resolveDebate('disagree', 'partial'), 'contested');
   assert.strictEqual(c.resolveDebate('partial', 'partial'), 'contested');
-  const entry = `- STAGED 14:41:08 — /review debate: lens "security" src/auth.ts:42 contested (mixed verdicts). Stage path: staged/review-debate-1.md.`;
-  assert.match(entry, decisionLogPattern(PRIMITIVE_DOC, ['contested (mixed verdicts)']));
+  const entry = `- STAGED 14:41:08 — Debate: lens "security" cross-lens disagreement on src/auth.ts:42 inconclusive (agree, partial). Both verdicts staged. Stage path: staged/review-contested-1.md. Reversibility: high.`;
+  assert.match(entry, decisionLogPattern(PRIMITIVE_DOC, ['inconclusive ({verdicts})']));
+});
+
+test('debate: Mode 2 restates the three lines /review writes, so the guide cannot drift from them', () => {
+  for (const marker of ['Both `agree`', 'Both `disagree`', 'Mixed / partial']) {
+    const producerLine = REVIEW_SKILL.split('\n').find((line) => line.includes(marker));
+    const template = producerLine.match(/`([^`]*\{HH:MM:SS\}[^`]*)`/)[1];
+    assert.ok(PRIMITIVE_DOC.split('\n').includes(`- ${template}`), `Mode 2 does not carry: ${template}`);
+  }
 });
 
 // ============================================================
@@ -1264,7 +1273,7 @@ test('/review debate integration: cross-lens overlap with contradicting verdicts
   assert.strictEqual(c.resolveDebate('disagree', 'disagree'), 'unconfirmed');
   assert.strictEqual(c.resolveDebate('agree', 'partial'), 'contested');
 
-  const confirmedEntry = `- AUTO 14:41:02 — Debate: cross-lens disagreement on src/auth.ts:42 converged positive after 1 round. Reversibility: high.`;
+  const confirmedEntry = `- AUTO 14:41:02 — Debate: cross-lens disagreement on src/auth.ts:42 converged positive after 1 round (lens "security" finding src/auth.ts:42; lens "architecture" finding src/auth.ts:45 — both confirmed). Reversibility: high.`;
   assert.match(confirmedEntry, decisionLogPattern(REVIEW_SKILL, ['Both `agree`']));
   const unconfirmedEntry = `- STAGED 14:41:05 — Debate: lens "security" finding src/auth.ts:42 — cross-lens disagreement converged negative after 1 round; unconfirmed. Reversibility: high.`;
   assert.match(unconfirmedEntry, decisionLogPattern(REVIEW_SKILL, ['Both `disagree`']));
@@ -1640,4 +1649,61 @@ test('multi-agent: the paragraph search still finds its break under CRLF line en
   assert.strictEqual(text, readText(FILE));
   const at = text.indexOf('**Post-dispatch diff audit (mandatory).**');
   assert.match(text.slice(at, text.indexOf('\n\n', at)), /post-fan-out (untracked-file )?sweep/i);
+});
+
+// ============================================================
+// Mode 2 Auto-resolution agrees with the Comparison rule table (#4810)
+// ============================================================
+
+function mode2Section(text) {
+  return text.slice(text.indexOf('## Mode 2 — Debate'), text.indexOf('## Mode 3'));
+}
+
+function mode2AutoResolutionParagraph(text) {
+  const mode2 = mode2Section(text);
+  const at = mode2.indexOf('### Auto-resolution');
+  return mode2.slice(at + '### Auto-resolution'.length, mode2.indexOf('\n###', at + 1)).trim();
+}
+
+function assertMode2AutoResolutionMatchesTable(text) {
+  const mode2 = mode2Section(text);
+  const comparison = mode2.slice(mode2.indexOf('### Comparison rule'), mode2.indexOf('### Auto-resolution'));
+  const pairs = [...comparison.matchAll(/^\| .+ \| .+ \| `(\w+)` \| (AUTO|STAGED) \|$/gm)].map((m) => [m[1], m[2]]);
+  assert.strictEqual(pairs.length, 3, `expected 3 Mode 2 outcome rows, found ${pairs.length}`);
+  const paragraph = mode2AutoResolutionParagraph(text);
+  const sentences = paragraph.split('. ');
+  for (const [outcome, status] of pairs) {
+    const sentence = sentences.find((s) => s.includes(`\`${outcome}\``));
+    assert.ok(sentence, `Auto-resolution does not name \`${outcome}\``);
+    assert.ok(sentence.includes(status), `Auto-resolution names \`${outcome}\` without ${status} in its sentence: ${sentence}`);
+  }
+  assert.doesNotMatch(paragraph, /all three outcomes auto-resolve/i, 'Mode 2 Auto-resolution restates "all three outcomes auto-resolve"');
+  assert.ok(paragraph.includes('ask the user inline'), 'Mode 2 Auto-resolution still states no outcome is "ask the user inline"');
+}
+
+test('AC1.1: Mode 2 Auto-resolution names each outcome with the status its table gives', () => {
+  assertMode2AutoResolutionMatchesTable(PRIMITIVE_DOC);
+});
+
+test('go-red: Mode 2 Auto-resolution check fails on the pre-#4810 sentence', () => {
+  const PRE_4810 = 'All three outcomes auto-resolve. No "ask the user inline."';
+  const broken = PRIMITIVE_DOC.replace(mode2AutoResolutionParagraph(PRIMITIVE_DOC), PRE_4810);
+  // Control: the fixture's Mode 2 paragraph is the pre-#4810 sentence, so the throw below tests that sentence.
+  assert.strictEqual(mode2AutoResolutionParagraph(broken), PRE_4810);
+  assert.throws(() => assertMode2AutoResolutionMatchesTable(broken), { name: 'AssertionError', message: /does not name `confirmed`/ });
+});
+
+test('go-red: Mode 2 Auto-resolution check fails on a restated auto-resolve claim or a dropped inline rule', () => {
+  const LIVE = mode2AutoResolutionParagraph(PRIMITIVE_DOC);
+  // (a) the live paragraph plus a restated auto-resolve claim
+  const SUFFIX = ' All three outcomes auto-resolve.';
+  const restated = PRIMITIVE_DOC.replace(LIVE, LIVE + SUFFIX);
+  // Control: the fixture's Mode 2 paragraph is the live paragraph plus the restated claim, so the throw below tests that claim.
+  assert.strictEqual(mode2AutoResolutionParagraph(restated), LIVE + SUFFIX);
+  assert.throws(() => assertMode2AutoResolutionMatchesTable(restated), { name: 'AssertionError', message: /restates "all three outcomes auto-resolve"/ });
+  // (b) the live paragraph with the inline rule replaced
+  const dropped = PRIMITIVE_DOC.replace(LIVE, LIVE.replace('ask the user inline', 'prompt anyone'));
+  // Control: the fixture's Mode 2 paragraph no longer includes the inline rule, so the throw below tests its absence.
+  assert.ok(!mode2AutoResolutionParagraph(dropped).includes('ask the user inline'));
+  assert.throws(() => assertMode2AutoResolutionMatchesTable(dropped), { name: 'AssertionError', message: /still states no outcome is "ask the user inline"/ });
 });

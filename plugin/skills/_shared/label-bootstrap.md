@@ -42,7 +42,7 @@ gh label list --search "claude-tweaks:bootstrapped-v{LABEL_BOOTSTRAP_VERSION}" -
   | grep -qx "claude-tweaks:bootstrapped-v{LABEL_BOOTSTRAP_VERSION}" && SKIP_BOOTSTRAP=true || SKIP_BOOTSTRAP=false
 ```
 
-`{LABEL_BOOTSTRAP_VERSION}` is the literal integer below — **current value: `9`**. Bump it (and
+`{LABEL_BOOTSTRAP_VERSION}` is the literal integer below — **current value: `10`**. Bump it (and
 this literal) whenever a label is added to or removed from the canonical `LABELS_JSON` array
 below, **or whenever an existing label's description or color changes** (#1873 — a color-only
 convention update is exactly this case). A marker stamped under the old version no longer matches
@@ -99,7 +99,8 @@ families plus the optional `priority:*` family — see that table for the curren
 and total counts, rather than a count restated here), with descriptions pre-checked against
 GitHub's 100-character cap. **Consumers bootstrap only the labels they are about to apply** —
 copy the relevant pairs, don't create the full array below speculatively (except `/init`'s
-one-time provision-now offer, which uses this list whole):
+one-time provision-now offer, which uses this list whole, and the acceptance consumers' `accept:*`
+rows, per the note below the array):
 
 ```js
 [
@@ -129,6 +130,10 @@ one-time provision-now offer, which uses this list whole):
   ["demo:approved",          "Acceptance: a human verified this record does what was asked", "006B75"],
   ["demo:approved-batch",    "Acceptance: approved via /demo's #N,#M batch — no per-record walkthrough", "006B75"],
   ["demo:changes-requested", "Acceptance: a human found a gap during sign-off — see the linked follow-up record", "006B75"],
+  ["accept:pending",           "Acceptance: built and verified — awaiting the human's acceptance verdict", "006B75"],
+  ["accept:approved",          "Acceptance: a human verified this record does what was asked", "006B75"],
+  ["accept:approved-batch",    "Acceptance: approved in one batch verdict — no per-record walkthrough", "006B75"],
+  ["accept:changes-requested", "Acceptance: a human found a gap — see the linked follow-up record", "006B75"],
   ["wontfix",           "Closed as not-planned; health skills will not re-file findings with this fingerprint", "CCCCCC"],
   ["upstream-candidate", "A headless health-sweep finding about claude-tweaks — forward via /claude-tweaks:feedback", "0052CC"],
   ["parent-issue",      "Structure: parent issue — carries the acceptance gate for its sub-issues", "E99695"],
@@ -143,3 +148,5 @@ one-time provision-now offer, which uses this list whole):
   ["digest",            "Container: rolling digest for below-floor deferred findings (see _shared/materiality-floor.md)", "EEEEEE"]
 ]
 ```
+
+The `accept:*` rows are provisioned alongside the `demo:*` acceptance rows while both spellings are read (`_shared/work-record.md`, Acceptance axis): the acceptance consumers, `wrap-up/verification-brief.md` Step 1, `wrap-up/verification-brief-parent-gate.md`'s Apply the gate and `demo/SKILL.md` Step 3, each list all four, and `/init`'s provision-now offer takes the whole array. This is the one exception to "only the labels they are about to apply", and it applies nothing: bootstrapping creates the labels in the repo and never puts one on a record. No skill adds an `accept:*` label yet; `/demo` removes them when a verdict replaces them (`_shared/work-record-permission-matrix.md`).

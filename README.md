@@ -80,12 +80,14 @@ a way to wrap an existing marketplace plugin instead of requiring a rewrite.
   wrap-up ──────────────►  Done               ◄───  finishing-a-dev-branch ⚙
      │  calls: reflect
      │         (full)
-                           (deletes plans, ledger, design caches; legacy spec file
-                            deleted too — a record-mode build's materialized file
+                           (deletes ledger, design caches, and plans only under
+                            superpowers-plans-retention: prune-after-wrapup;
+                            legacy spec file deleted too — a record-mode build's materialized file
                             stays on the branch as committed audit trail instead;
-                            applies demo:pending + posts a Verification Brief on
-                            the record — or, for a sub-issue of a /specify
-                            decomposition, on the parent once the last
+                            posts an acceptance packet on the record, with
+                            demo:pending above the oversight floor — or, for a
+                            sub-issue of a /specify decomposition, demo:pending +
+                            a Verification Brief on the parent once the last
                             sub-issue closes; record mode only)
      │
   release ──────────────►  Tag + Release      (on demand, suggested when unreleased commits exist, or the train)
@@ -113,7 +115,7 @@ BACKLOG ──/specify shapes──► READY ──human grants──► AUTHORI
 - **ready** — spec-shaped and agent-sized. `/claude-tweaks:specify` gets a record here, either by shaping it in place or by decomposing a design doc into ready sub-issues (plus a parent record, when the decomposition's collapse decision keeps one).
 - **authorized** — carries a human-granted `auto:build` (optionally `+ auto:merge`). `/claude-tweaks:backlog refine` is the interactive gate that grants this — machinery can only strip or downgrade a grant, never originate one. The `autonomy` ceiling defines one machine-origination exception at its `unattended` tier, gated behind a second, explicit opt-in (`grant-origination-enabled` in `policy.yml`, off by default): `/claude-tweaks:backlog refine`'s headless posture (a Routine or `/claude-tweaks:sweep` firing, or the deprecated `grant` alias), is the one path that reads both keys and acts on them, itself narrowed by a per-record gate chain (clean trust verdict, agent-filed origin, content-aware review, no floor trip).
 - **building** — an agent holds the claim. `/claude-tweaks:dispatch` selects an authorized record's group (the record, or its fast-lane bundle) and mints its run directory; `/claude-tweaks:flow` claims the group at its own Step 2.8, whether dispatched or run directly.
-- **closed** — completed via your own merge (close-via-merge — the pipeline never runs `gh issue close`), or not-planned (wontfix, duplicate, absorbed into another record).
+- **closed** — completed via your own merge (close-via-merge — the merge path runs `gh issue close` itself only for a below-the-floor decomposition parent and for a `pr-first` PR's `Fixes` records after a merge into a non-default base), or not-planned (wontfix, duplicate, absorbed into another record).
 
 A record can also **park** at any pre-authorized stage (on hold, with a wake trigger — a date or a watched file path) via `/claude-tweaks:tidy`'s Defer action, and can close as not-planned at any point.
 

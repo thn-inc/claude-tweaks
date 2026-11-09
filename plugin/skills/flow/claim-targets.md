@@ -134,12 +134,13 @@ to Step 3 for any of them. One invocation claims the whole list:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/claim-targets.js" --run-id "$(basename "$PIPELINE_RUN_DIR")" \
-  --targets {n}[,{m}…] --steps {steps} [--keep-going] --run "$PIPELINE_RUN_DIR"
+  --targets {n}[,{m}…] --steps {steps} [--keep-going] --run "$PIPELINE_RUN_DIR" [--resume-pr "$RESUME_PR"]
 ```
 
 `{steps}` is the resolved step list (`SKILL.md` Step 1, item 4), comma-joined. Pass `--keep-going`
 only when this run is in `keep-going` mode (below); a default-mode run (single- or multi-target)
-omits the flag. The CLI implements `_shared/issue-claims.md`'s "The
+omits the flag. Pass `--resume-pr` only for `RESUME_PR=<url>` — exit 3's in-flight variant below
+states what it changes. The CLI implements `_shared/issue-claims.md`'s "The
 lock" steps 1-6 — read, classify, and the create-only/conditional/contested branch — via
 `bin/lib/issues/claim-store.js`, the one contents-API implementation this CLI and
 `reconcile/release-merged.js`'s release path both delegate to: the absent branch that
@@ -149,7 +150,8 @@ mechanism — and the `@base64d`+sha single-read (one `gh api` call decoding Git
 newline-embedded base64 and keeping the blob sha the conditional write needs) live inside that
 one module, not restated here. It classifies each
 read exactly per `_shared/issue-claims.md`'s "Failure posture" table: `'absent'` → create-only
-write; `'tombstone'`/`'stale'` → conditional write (a legitimate re-claim, not a contest);
+write; `'tombstone'`/`'stale'` → conditional write (a legitimate re-claim, not a contest) unless
+the in-flight check below finds an open PR (exit 3);
 `'live'` → contested, holder identity attached; `'unreadable'` → fails closed to contested with no
 holder identity (`null`). It also applies the per-target self-owned check first, scoped to
 `'live'`/`'stale'` blobs: a target whose live or stale claim blob already reads
@@ -181,6 +183,11 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --sta
 On the `gh` path, `claim-targets.js` itself already writes this exact line — via `--run` on the
 invocation above — for every target in its `claimed` array (#2775), so the `log-decision.js` call
 just shown is required only for the `gh`-absent MCP procedure's own successful writes.
+
+For a target the MCP procedure reclaimed through `_shared/issue-claims.md`'s resume exception
+(`RESUME_PR`, #4588), the hand-logged `--text` carries the suffix the CLI writes for it —
+`claimed #{n} (bin/claim-targets.js, transport: mcp, resume-pr: {url})`, `{url}` being the
+`RESUME_PR` value.
 
 This does not itself guarantee the CLI/procedure was invoked — an agent that skips the claim call
 above skips this log line too, for the same reason. It exists so a **later** phase (`/wrap-up`'s
@@ -231,7 +238,8 @@ stays best-effort and the claim read stays the authoritative hold check:
 **Branch on exit code:**
 
 - **0** — every target claimed (default mode), or every non-skipped target claimed
-  (`--keep-going` — see below). Proceed to Step 3.
+  (`--keep-going` — see below). Proceed to Step 3. A failed stale-claim open-PR check (#4423)
+  does not change this: that target reclaims, with one stderr warning.
 - **3** — contested. The CLI ran without `--keep-going` and stopped at the first target it could
   not claim; stdout carries `{contested: [{issue, holder}], released, releaseFailed}` —
   `released` lists every target *this invocation* had already claimed and successfully released
@@ -244,9 +252,10 @@ stays best-effort and the claim read stays the authoritative hold check:
 - **3 (in-flight variant, #315)** — stdout instead carries `{inFlight: [{issue, link}], released,
   releaseFailed}` when the stopped target's blob was a `pr-opened:` tombstone whose linked PR
   `gh pr view` still reports `OPEN` (`_shared/issue-claims.md`'s in-flight detection, moved from
-  `claim-engine.js` into `claim-store.js`'s `tombstoneInFlightPr` — see #787) — a build for this
-  issue already exists, not a competing claim. There is no `holder` to report; skip the
-  liveness-evidence steps below and render instead:
+  `claim-engine.js` into `claim-store.js`'s `tombstoneInFlightPr` — see #787), or a `'stale'`
+  claim whose run's marker sits on an open PR (#4423, `claim-store.js`'s `staleClaimInFlightPr`)
+  — a build for this issue already exists, not a competing claim. There is no `holder` to
+  report; skip the liveness-evidence steps below and render instead:
 
   ```markdown
   ## Flow: Claim in-flight
@@ -257,45 +266,63 @@ stays best-effort and the claim read stays the authoritative hold check:
 
   No `AskUserQuestion` from this card itself — same as the contest card, this file never asks.
 
+  **Resume exception (#4588).** Only an invocation carrying `RESUME_PR=<url>` (`dispatch resume`)
+  forwards `--resume-pr "$RESUME_PR"`; without it this stop is unchanged (#4423). With it, a
+  `'stale'` claim whose in-flight link is exactly `<url>` is re-claimed by the ordinary conditional
+  write instead of stopping here, and the envelope gains `resumedPr: [{issue, link}]` — branch on
+  the exit code, never on `resumedPr`. A `pr-opened:` tombstone still stops (close-out owns it); a
+  `'stale'` claim whose link differs from `<url>` still stops too (another build's PR). Both
+  render the card above.
+
   **Route into the existing build's resume/merge-decision machinery (#958), when a human can act
   on it.** Skip this routing entirely when `DISPATCH_HEADLESS=1` was set on this Task call's
   invocation (`dispatch/settle-and-merge.md`'s Claim-contest special case already self-reports and
   stops for this exact stop shape — nobody headless is present to answer a resume confirmation);
   the card above is the terminal output for that form. Otherwise, parse the PR number from the
   trailing path segment of `link` (already validated same-repo-PR-URL-shaped by
-  `tombstoneInFlightPr` before this branch is ever reached) and `gh pr view {number} --json body`,
-  reading the body for both the `claude-tweaks-run: {run-id}` marker
+  `tombstoneInFlightPr` or `staleClaimInFlightPr` before this branch is ever reached) and save
+  the body with `gh pr view {number} --json body --jq .body > "{body-file}"` (its own Bash call),
+  `{body-file}` being what `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value
+  pr-body-{number}.md` prints. Read the `claude-tweaks-run: {run-id}` marker from that file
   (`_shared/pr-early-run-lifecycle.md`'s dual-marker scheme — the plain-text form, since this read
-  has no preference for the HTML-comment one) and, on the same read, that file's `### Resume`
-  section — the exact command line `` `PIPELINE_RUN_DIR="{run-dir}" /claude-tweaks:flow "{target}"
-  {next-step}` `` composed once at PR-open time (that file's Step 3), carrying the found run's
-  *actual* record composition — single- or multi-spec (`flow/multi-spec.md`'s "Multi-spec runs
-  share one PR"). **Validate `{run-id}` before using it for anything**: a PR body is editable by
+  has no preference for the HTML-comment one). **Validate `{run-id}` before using it for anything**: a PR body is editable by
   anyone with write access to it, so this value is exactly as untrusted as `link`, and gets the
   same reject-rather-than-sanitize treatment `tombstoneInFlightPr` already applies there — require
   it to match `^\d{4}-\d{2}-\d{2}T\d{6}-[a-z0-9][a-z0-9-]*$` (the canonical run-id shape,
   `_shared/run-dir-resolution.md`'s ISO-timestamp + spec-slug convention) with no `/` or `..`
-  anywhere in it; a value that doesn't match is treated identically to no marker found. No marker
-  found, the marker fails that validation, `gh` unavailable, the `### Resume` line is missing or
-  doesn't parse, or the resolved `$RUN_ROOT/.claude-tweaks/pipelines/{run-id}` directory absent (a
-  foreign PR, or one whose run dir was already reaped) — the card above is the terminal output;
-  there is nothing safe to route into. Otherwise: follow `dispatch/resume-confirmation.md`'s full
-  "Confirm before resuming" procedure now, passing the parsed `### Resume` line's own `{target}`
-  (the found run's actual record composition — never substitute this claim loop's own single
-  stopped target for it; the two coincide only in the common single-record case) and the
-  validated `{run-id}`'s resolved directory as `{run-dir}`. That file's own freshness probe
-  (`check-resume-freshness`) is what tells a genuinely still-running build (`BLOCKED` — report the
-  line verbatim and stay stopped, exactly as an unresolved run-id would) apart from one that only
-  looks in-flight because its tombstone hasn't caught up yet (`OK` — its own `AskUserQuestion`
-  offers Resume); this call site makes no freshness judgment of its own, and asks nothing directly
-  — either the headless skip above or `resume-confirmation.md`'s own gate owns every user-facing
-  decision here.
+  anywhere in it; a value that doesn't match is treated identically to no marker found. Once
+  `{run-id}` validates, run `node "${CLAUDE_PLUGIN_ROOT}/bin/pr-resume-line.js" --body-file
+  "{body-file}" --run-id "{run-id}"`. It parses the line under the PR body's last `### Resume`
+  heading with `pr-body.js`'s `parseResumeLine`, the parser twin of the composer
+  `_shared/pr-early-run-lifecycle.md` Step 3 uses, so this file states no grammar of its own, and
+  prints one JSON line: a `resume` verdict, a `resolve` of `no-resume-line` or
+  `resume-line-shape`, or a `failure`. No marker found, the marker fails that validation, `gh`
+  unavailable, the resolved `$RUN_ROOT/.claude-tweaks/pipelines/{run-id}` directory absent (a
+  foreign PR, or one whose run dir was already reaped), or a `resolve` verdict or a `failure` from
+  the CLI — the card above is the terminal output; there is nothing safe to route into. A failed
+  `gh pr view`, a non-zero CLI exit, or stdout that is not one JSON line also leaves that card
+  standing. Route onward only on a `resume` verdict: follow
+  `dispatch/resume-confirmation.md`'s full "Confirm before resuming" procedure now, passing the
+  `resume` verdict's own `target` (the found run's actual record composition, single- or
+  multi-spec, `flow/multi-spec.md`'s "Multi-spec runs share one PR" — never substitute this claim
+  loop's own single stopped target for it; the two coincide only in the common single-record
+  case) and the validated `{run-id}`'s resolved directory as `{run-dir}`. That file's own
+  freshness probe (`check-resume-freshness`) is what tells a genuinely still-running build
+  (`BLOCKED` — report the line verbatim and stay stopped, exactly as an unresolved run-id would)
+  apart from one that only looks in-flight because its tombstone hasn't caught up yet (`OK` — its
+  own `AskUserQuestion` offers Resume); this call site makes no freshness judgment of its own, and
+  asks nothing directly — either the headless skip above or `resume-confirmation.md`'s own gate
+  owns every user-facing decision here.
 - **4** — transient `gh` failure, same fail-fast/all-or-abort shape as exit 3: stdout carries
   `{transient: [{issue, error}], released, releaseFailed}`, release already attempted. Render the
   transient-failure card below. Also covers a pre-claim repo-slug resolution timeout (#3065) — a
   `gh repo view` timeout is retried once, then, if it still fails, reported here with every
   requested target listed in `transient` and empty `released`/`releaseFailed` (nothing was claimed
   yet); stderr names the timeout and the `gh-timeout-ms`/`CLAUDE_TWEAKS_GH_TIMEOUT_MS` override.
+  Also covers a `claims-registry` branch still missing after a successful bootstrap (#4495) —
+  `error: 'claims-branch-missing'`, or a bootstrap that hit a secondary rate limit,
+  `error: 'claims-branch-bootstrap-rate-limited'`, or a network failure (a primary rate limit included),
+  `error: 'claims-branch-bootstrap-network-failure'` — all rendered on the same transient-failure card.
 - **5** (#2073) — a claim write reported success but the post-write read-back never confirmed it
   (a live claim carrying this run's `runId`) — same fail-fast/all-or-abort shape as exit 3/4: stdout
   carries `{unverified: [{issue}], released, releaseFailed}`. The unverified target itself is never
@@ -312,12 +339,46 @@ stays best-effort and the claim read stays the authoritative hold check:
   ```
 
   No `AskUserQuestion` — same as the contest and transient cards, nothing to choose between.
+- **6** (#4495) — the `claims-registry` branch was missing on origin and creating it was refused
+  — a permission error, a ruleset, `gh` absent; a network failure is exit 4 instead — also under
+  `--keep-going`: stdout carries `{branchMissing: {branch, reason}, released, releaseFailed}`,
+  stderr carries the remedy. Render:
+
+  ```markdown
+  ## Flow: Claims branch missing
+
+  The `claims-registry` branch is missing on origin and could not be created: {reason}.
+  Next: create `claims-registry` on origin from the default branch, then re-run.
+  ```
+
+  No `AskUserQuestion` — nothing to choose between.
+- **7** (#4899) — GitHub refused a claim read or write for permissions (a plain HTTP 401/403 — a
+  rate-limited 403 is exit 4), also under `--keep-going`: stdout carries
+  `{permissionDenied: {issue, operation, reason}, released, releaseFailed}`, stderr carries the
+  remedy. Render:
+
+  ```markdown
+  ## Flow: Claim permission denied
+
+  GitHub refused the claim {operation} for #{target}: {reason}.
+  Next: check the token's access to this repository and the `claims-registry` branch.
+  ```
+
+  `{target}` is `permissionDenied.issue`; `{operation}` and `{reason}` are the same-named fields.
+  No `AskUserQuestion` — nothing to choose between. A dispatched run (`dispatched: true`) also
+  reports `OUTCOME: build-test-blocked` (`OUTCOME: blocked` on a second call), `ISSUE #{n}: failed:claim-permission-denied` and
+  `STATUS: BLOCKED`, which stops the dispatching firing (`dispatch/SKILL.md`'s Claim permission stop). This is the `gh` transport only:
+  the gh-absent MCP claim procedure does not reach this stop, and a refused claim there stays the transient `## Flow: Claim failed` card (#4899).
 - **2** — malformed invocation or missing dependency (a bad `--run-id`/`--targets` value, `gh`
   absent, or a non-timeout repo-slug resolution failure — a real auth error or 404, never a
-  timeout, which is exit 4 instead per #3065) — a bug in this call, not a claim outcome. Treat as
-  a hard stop.
+  timeout, which is exit 4 instead per #3065) — a bug in this call, not a claim outcome. The
+  exception is an origin host the origin-host gate refuses (`claim-targets: unknown-host —
+  {refusal}`, #4794): that is an environment stop, not a bug in the call — the refusal text names
+  its remedy (export `GH_HOST` as the host the origin really reaches, per the refusal), and nothing
+  was claimed. Treat as a hard stop. The gh-absent MCP claim procedure does not reach that refusal; it claims
+  on the GitHub MCP's host.
 
-**On exit 3, 4, or 5** — release nothing further (the CLI's `released`/`releaseFailed` already covers
+**On exit 3, 4, 5, 6, or 7** — release nothing further (the CLI's `released`/`releaseFailed` already covers
 the attempt; a non-empty `releaseFailed` is not this step's problem to retry — the named claim
 simply rides out its TTL). When this
 invocation minted the run dir itself (`PIPELINE_RUN_DIR` was unset on entry) and it still holds no
@@ -385,11 +446,14 @@ The `released` array's write (default mode, no `--keep-going`) uses the reason
 `never-started: file-overlap group partial claim` internally, per `_shared/issue-claims.md`'s
 Failure-posture table — the CLI's own `ABORT_REASON`, not something this flow step writes itself.
 
-**`--keep-going`** — the CLI never exits 3, 4, or 5; a per-target contest, transient failure, or
-unverified write is downgraded to a `skipped` entry in the exit-0 JSON envelope
+**`--keep-going`** — the CLI never exits 3, 4, or 5 (it still exits 6 — a missing, uncreatable
+claims branch fails every target alike — and 7 — a refused claim read or write, with the same token
+for every target); a per-target contest, transient failure, or unverified
+write is downgraded to a `skipped` entry in the exit-0 JSON envelope
 (`{issue, reason: 'contested', holder}`, `{issue, reason: 'transient', error}`,
 `{issue, reason: 'unverified'}` (#2073), or, for a pr-opened tombstone whose linked PR is still open
-(#315), `{issue, reason: 'in-flight', link}`) and the CLI proceeds to the remaining targets rather
+(#315) or a stale claim whose run marker sits on an open PR (#4423), `{issue, reason: 'in-flight',
+link}`) and the CLI proceeds to the remaining targets rather
 than releasing and aborting — consistent with `--keep-going`'s existing meaning elsewhere in flow
 (`multi-spec.md`): continue past a per-target failure rather than aborting the whole run. Drop each
 skipped target from the target list for Step 3 onward. For a `reason: 'contested'` entry, gather

@@ -28,7 +28,7 @@ test('renderD2 emits a node per record with title + badges joined by \\n, and or
   const output = renderD2(graph, { generatedAt: GENERATED_AT });
   assert.match(output, /n10: "#10 Backlog record with no scoring" \{/);
   assert.match(output, /n20: "#20 Ready record blocked by #10\\nR:low S:medium" \{/);
-  assert.match(output, /n30: "#30 Parked record with grants\\n\[bug\]\\nAUTO-BUILD\\nAUTO-MERGE\\ndemo:pending" \{/);
+  assert.match(output, /n30: "#30 Parked record with grants\\n\[bug\]\\nAUTO-BUILD\\nAUTO-MERGE\\naccept:pending" \{/);
   assert.ok(output.includes(`style.fill: "${ORIGIN_COLORS['code-health']}"`));
   assert.ok(output.includes(`style.stroke: "${BORDER_COLORS.blocked}"`));
   assert.match(output, /style\.stroke-dash: 3/);

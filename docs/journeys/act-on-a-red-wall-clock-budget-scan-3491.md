@@ -2,6 +2,7 @@
 files:
   - tests/wall-clock-budget-conformance.test.js
   - tests/helpers/strip-comments.js
+  - plugin/bin/lib/strip-comments.js
   - docs/plugin-structure.md
   - perf/closing-keyword-linearity.test.js
 ---
@@ -34,6 +35,7 @@ files:
 - **Should feel:** Like a relocation rather than a rewrite. The perf file keeps the same input and the same bound.
 - **Should understand:** `npm test` never runs `perf/` (`tools/run-tests.js`'s default roots are `tests/` and `tools/upstream-drift/tests/`). `npm run test:perf` runs it, alone and without a competing suite, so its bound can stay tight.
   - A concurrency bound (the probes must overlap) leaves a deterministic remainder in `tests/`: wrap the slowed call in an in-flight counter (increment, record the max, await, decrement in `finally`) and assert the max. A serial run reads 1. Example: `tests/bin-lib/wrap-up/pack.test.js`'s `gatherPack` test.
+  - Adding a budget to a `perf/` file the conformance suite's `MOVED_TO_PERF` map already lists means adding its comparison text to that file's entry, in file order. Otherwise the map's exact-match test goes red. #3903 did this for its brace-tracker budget in `perf/scale-readiness-linearity.test.js`, so the map now also pins budgets written straight into `perf/`, not only moved ones.
 - **Red flags:**
   - Deleting the timing assertion outright when it was the only proof of a linearity or non-blocking property.
   - Loosening the bound to an arbitrary large number and keeping it in `tests/`. That is still a budget, still flagged, and still flaky under enough load.
@@ -62,4 +64,5 @@ files:
 
 ## Origin
 - Created during build of #3491. That build added the conformance scan and the stripper's opt-in `literals: 'blank'` mode it reads. It pinned the 12 pre-existing budgets in 9 `tests/` files on the allow-list. #3939 then moved those 12 to `perf/`, emptied `ALLOWLIST`, and added the `MOVED_TO_PERF` map as the scan's floor.
+- Updated during build of #3903. That build added a budget straight into `perf/scale-readiness-linearity.test.js` and listed it in `MOVED_TO_PERF`. Step 2 now says a budget added to a file the map already lists must be added to the map too.
 - Related: `act-on-a-red-path-containment-scan-3498.md` and `act-on-a-red-path-guard-lint-3417.md` (sibling source-scan conformance tests over the same shared stripper).

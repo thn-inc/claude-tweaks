@@ -8,7 +8,7 @@
 // tests/hooks-pre-tool-use.test.js rather than imported across test files —
 // see the dispatch note on that convention.
 'use strict';
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
@@ -25,8 +25,19 @@ const { isPolicyOnlyCommit, POLICY_COMMIT_ALLOWLIST, isDeleteOnlyPush, DELETE_ON
 // already) — matches tests/hooks-git-exec.test.js's own override pattern.
 if (!process.env.CT_HOOKS_GIT_TIMEOUT_MS) process.env.CT_HOOKS_GIT_TIMEOUT_MS = '60000';
 
+// Every tmp root a test creates is registered here and removed once, after the
+// file's last test (a test that throws mid-body would otherwise leak its dir).
+const tmpRoots = [];
+after(() => {
+  for (const root of tmpRoots) fs.rmSync(root, { recursive: true, force: true });
+});
+function trackTmp(dir) {
+  tmpRoots.push(dir);
+  return dir;
+}
+
 function gitRepoWithCommit() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-polexempt-'));
+  const dir = trackTmp(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-polexempt-')));
   execFileSync('git', ['-C', dir, 'init', '-q']);
   execFileSync('git', ['-C', dir, 'config', 'user.email', 'test@example.com']);
   execFileSync('git', ['-C', dir, 'config', 'user.name', 'Test']);
@@ -101,7 +112,7 @@ test('policy.yml SWAPPED for a symlink escaping elsewhere resolves to denied', (
   // Content matches so isWorktreeAlwaysOn still reads true through the
   // symlink — the only thing under test here is isPolicyFile's leaf-symlink
   // handling, not an accidental policy-off side effect from the swap.
-  const elsewhereDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-polexempt-else-'));
+  const elsewhereDir = trackTmp(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-polexempt-else-')));
   const elsewhere = path.join(elsewhereDir, 'elsewhere.yml');
   fs.writeFileSync(elsewhere, 'worktree-always: true\n');
   fs.unlinkSync(path.join(repo, '.claude-tweaks', 'policy.yml'));
@@ -185,34 +196,44 @@ test('git push origin :my-branch (refspec-delete form) from a non-isolated check
   assertAllowed(out);
 });
 
-test('#3900 AC1.1: git -C "<repo>" push origin --delete feature-x from a non-isolated checkout is allowed', () => {
+test("#3900 AC1.1: git -C '<repo>' push origin --delete feature-x from a non-isolated checkout is allowed", () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
-  const out = pre.run({ input: bashInput(`git -C "${repo}" push origin --delete feature-x`, repo), runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ input: bashInput(`git -C ${shellQuote(repo)} push origin --delete feature-x`, repo), runDir: null, runState: null, cwd: repo });
   assertAllowed(out);
 });
 
-test('#3900 AC1.1: git -C "<repo>" push origin feature-x (a content push) stays denied', () => {
+test('#3900 AC1.1: git -C "<repo>" (double-quoted) push origin --delete feature-x from a non-isolated checkout is allowed',
+  { skip: process.platform === 'win32' && 'win32: a native path holds backslashes, which CQ_DOUBLE refuses by design (#4385)' },
+  () => {
+    const repo = gitRepoWithCommit();
+    withPolicy(repo, 'worktree-always: true\n');
+    assert.ok(!/["$`\\]/.test(repo), `fixture path must be double-quote-safe: ${repo}`);
+    const out = pre.run({ input: bashInput(`git -C "${repo}" push origin --delete feature-x`, repo), runDir: null, runState: null, cwd: repo });
+    assertAllowed(out);
+  });
+
+test("#3900 AC1.1: git -C '<repo>' push origin feature-x (a content push) stays denied", () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
-  const out = pre.run({ input: bashInput(`git -C "${repo}" push origin feature-x`, repo), runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ input: bashInput(`git -C ${shellQuote(repo)} push origin feature-x`, repo), runDir: null, runState: null, cwd: repo });
   assertDenied(out);
 });
 
-test('#3900 AC1.1: git -C "<repo>" push origin --delete a && rm -rf x stays denied, fail-closed', () => {
+test("#3900 AC1.1: git -C '<repo>' push origin --delete a && rm -rf x stays denied, fail-closed", () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
-  const out = pre.run({ input: bashInput(`git -C "${repo}" push origin --delete a && rm -rf x`, repo), runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ input: bashInput(`git -C ${shellQuote(repo)} push origin --delete a && rm -rf x`, repo), runDir: null, runState: null, cwd: repo });
   assertDenied(out);
 });
 
 test('#3900 AC1.1: the -C target, not the cwd, is the repo — a delete-only push is allowed and a content push denied from an unrelated non-repo cwd', () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
-  const elsewhere = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'ct-pe-elsewhere-'));
-  const allowed = pre.run({ input: bashInput(`git -C "${repo}" push origin --delete feature-x`, elsewhere), runDir: null, runState: null, cwd: elsewhere });
+  const elsewhere = trackTmp(fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'ct-pe-elsewhere-')));
+  const allowed = pre.run({ input: bashInput(`git -C ${shellQuote(repo)} push origin --delete feature-x`, elsewhere), runDir: null, runState: null, cwd: elsewhere });
   assertAllowed(allowed);
-  const denied = pre.run({ input: bashInput(`git -C "${repo}" push origin feature-x`, elsewhere), runDir: null, runState: null, cwd: elsewhere });
+  const denied = pre.run({ input: bashInput(`git -C ${shellQuote(repo)} push origin feature-x`, elsewhere), runDir: null, runState: null, cwd: elsewhere });
   assertDenied(denied);
 });
 
@@ -258,6 +279,7 @@ test('DELETE_ONLY_PUSH_ALLOWLIST matches exactly the admitted shapes', () => {
     "git -C '/a b/wt' push origin --delete feature-x",
     'git -C /p push origin :feature-x',
     'git -C "/Users/x/Code Workspaces/repo" push origin --delete feature-x',
+    "git -C 'D:\\a\\_temp\\wt' push origin --delete feature-x",
   ];
   for (const command of shouldMatch) {
     assert.ok(DELETE_ONLY_PUSH_ALLOWLIST.test(command), `expected a match: ${JSON.stringify(command)}`);
@@ -279,6 +301,7 @@ test('DELETE_ONLY_PUSH_ALLOWLIST matches exactly the admitted shapes', () => {
     'git -C "$WT" push origin --delete x',
     'git -C /p push origin --delete x --force',
     'git -C push origin --delete x',
+    'git -C "D:\\a\\_temp\\wt" push origin --delete feature-x',
   ];
   for (const command of shouldNotMatch) {
     assert.ok(!DELETE_ONLY_PUSH_ALLOWLIST.test(command), `expected no match: ${JSON.stringify(command)}`);
@@ -403,7 +426,7 @@ test('POLICY_COMMIT_ALLOWLIST matches exactly the admitted shapes', () => {
 // ─── git-spawn-failure fails closed ────────────────────────────────────────
 
 test('isPolicyOnlyCommit fails closed when git cannot answer (non-repo cwd)', () => {
-  const nonRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-polexempt-norepo-'));
+  const nonRepo = trackTmp(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-polexempt-norepo-')));
   assert.strictEqual(isPolicyOnlyCommit('git commit -m x', nonRepo), false);
 });
 

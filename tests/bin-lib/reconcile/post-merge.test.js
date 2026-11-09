@@ -1,0 +1,2154 @@
+'use strict';
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const cp = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const {
+  postMerge, postMergeOne, classifyEntry, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim, MARKER_STEP, ATTEMPT_STEP, MAX_ATTEMPTS, CLOSE_WINDOW_MS, MERGE_GRACE_MS, CLAIM_STALE_MS, CLAIM_FILENAME,
+  heartbeatClaim, releaseClaim, CLAIM_MAX_IDLE_MS, GH_TIMEOUT_CEILING_MS, CLAIM_ASIDE_MAX_AGE_MS,
+  parentsLeftOpen, stepSkipsOf, parentsLeftOpenLine, stepSkipsLine,
+  isSupersededEntry, supersededChanges, supersededChangesLine,
+  CLAIM_LOST_DETAIL, SUPERSEDED_LOCATION_SUFFIX, markSuperseded,
+} = require('../../../plugin/bin/lib/reconcile/post-merge');
+const { gateOriginRepo } = require('../../../plugin/bin/lib/repo-resolve');
+const { formatEntry, parseEntry } = require('../../../plugin/bin/lib/log-decision/append');
+const { DELIBERATE_SKIP_REASONS } = require('../../../plugin/bin/lib/issues/below-floor-parent-close');
+
+// The real clock at load: claim-file mtimes the code writes are real, so `now` must agree with them.
+const NOW = Date.now();
+// Every temp checkout this file makes, removed once the file's tests are done.
+const tempRoots = [];
+test.after(() => { for (const dir of tempRoots) fs.rmSync(dir, { recursive: true, force: true }); });
+const now = () => NOW;
+const MERGED_AT = new Date(NOW - 60 * 60 * 1000).toISOString();
+const merged = (mergedAt = MERGED_AT) => ({ number: 0, state: 'MERGED', mergedAt });
+
+function git(root, ...args) {
+  cp.execFileSync('git', args, { cwd: root, stdio: 'ignore', windowsHide: true });
+}
+
+// A temp main checkout: a real git repo with an origin, a CLAUDE.md, and no run dirs yet.
+// `origin`: true for the github.com default, a string for that URL, false for none.
+function mainCheckout({ claudeMd = '## Work records\n\nwork-backend: github-issues\n', origin = true } = {}) {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'post-merge-')));
+  tempRoots.push(root);
+  git(root, 'init', '-q');
+  if (origin) git(root, 'remote', 'add', 'origin', origin === true ? 'git@github.com:acme/w.git' : origin);
+  if (claudeMd !== null) fs.writeFileSync(path.join(root, 'CLAUDE.md'), claudeMd);
+  return root;
+}
+
+function addRun(root, runId, { pr = 11, status = 'in-progress', decisions } = {}) {
+  const dir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(dir, { recursive: true });
+  const state = { status };
+  if (pr !== null) state.pr = { number: pr };
+  fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify(state));
+  if (decisions !== undefined) fs.writeFileSync(path.join(dir, 'decisions.md'), decisions);
+  return dir;
+}
+
+const decisionsOf = (dir) => {
+  try { return fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8'); } catch { return ''; }
+};
+const lockOf = (dir) => path.join(dir, CLAIM_FILENAME);
+
+// prStates fake: `table` maps a PR number to its answer (object or failure string).
+function fakePrStates(table) {
+  return { byNumberAsync: async (n) => table[n] };
+}
+
+// A closing-links fake standing in for the exported core: it returns `{ code, envelope }`, the envelope
+// object only on exit 0 (the real core's contract).
+function fakeClosingLinks(envelope, code = 0) {
+  const calls = [];
+  const fn = (opts, d) => {
+    calls.push({ opts, deps: d });
+    return { code, envelope: code === 0 ? envelope : null };
+  };
+  fn.calls = calls;
+  return fn;
+}
+
+function fakeCloseParents(result = { closed: [], skipped: [] }) {
+  const calls = [];
+  const fn = (args) => { calls.push(args); return result; };
+  fn.calls = calls;
+  return fn;
+}
+
+const ENVELOPE = {
+  action: 'nothing-closed', pr: 11, closingSet: [101, 102], reopened: [], pendingClose: [], failed: [],
+};
+const fakeGh = () => '';
+
+function run(root, { prs, links, close, dryRun = false, extra = {} } = {}) {
+  return postMerge({
+    cwd: root,
+    prStates: fakePrStates(prs),
+    dryRun,
+    now,
+    deps: { gh: fakeGh, closingLinks: links, closeParents: close, ...extra },
+  });
+}
+
+test('merged unmarked run: Step 4.0 options, Step 4.0b arguments, parent line plus summary marker, entry ran', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const links = fakeClosingLinks({ ...ENVELOPE, action: 'reopened', reopened: [103], pendingClose: [104], failed: [{ issue: 105 }] });
+  const close = fakeCloseParents({
+    closed: [{ parent: 77, maxTier: 'low' }],
+    skipped: [{ parent: 88, reason: 'above-floor' }, { issue: 102, reason: 'gh-failed', detail: 'boom' }],
+  });
+  const r = await run(root, { prs: { 11: merged() }, links, close });
+
+  assert.deepEqual(r, {
+    entries: [{
+      runDir: dir, pr: 11, action: 'ran', closingLinks: 'reopened', parentsClosed: 1, parentFailures: [{ issue: 102, reason: 'gh-failed', detail: 'boom' }],
+    }],
+    deferred: [],
+  });
+  assert.equal(links.calls.length, 1);
+  assert.deepEqual(links.calls[0].opts, { run: dir, mode: 'post-merge', settleMs: 0, closeWindowMs: CLOSE_WINDOW_MS });
+  const d = links.calls[0].deps;
+  assert.ok(!('stdout' in d), 'the core prints nothing, so post-merge passes no stdout');
+  assert.equal(d.cwd(), root);
+  assert.equal(d.mainRoot, root);
+  assert.equal(d.ghAvailable(), true);
+  assert.equal(typeof d.gh, 'function');
+
+  assert.equal(close.calls.length, 1);
+  assert.deepEqual(close.calls[0], {
+    closingSet: [101, 102],
+    unsettled: [103, 104, 105],
+    mergingPr: 11,
+    owner: 'acme',
+    repo: 'w',
+    host: 'github.com',
+    workLinks: 'body-text',
+    riskFloor: 'high',
+    gh: d.gh,
+    selfInclude: false,
+  });
+
+  const lines = decisionsOf(dir).trim().split('\n').map(parseEntry);
+  assert.equal(lines.length, 2);
+  assert.equal(lines[0].status, 'AUTO');
+  assert.match(lines[0].action, /^closed parent #77 below the oversight floor \(risk:low, risk-floor high\)\. Reversibility: high \(gh issue reopen\)\.$/);
+  assert.equal(lines[1].location, MARKER_STEP);
+  assert.equal(lines[1].status, 'AUTO');
+  assert.match(lines[1].action, /^ran Steps 4\.0 and 4\.0b for PR #11, merged after its session: closing links reopened; 1 parent\(s\) closed; skipped #88 \(above-floor\); skipped record #102 \(gh-failed: boom\)\. Reversibility: n\/a\.$/);
+  assert.ok(!fs.existsSync(lockOf(dir)));
+});
+
+test('summary marker names every closed parent untrusted-comment note and a step-wide skip', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const close = fakeCloseParents({
+    closed: [{ parent: 77, maxTier: 'low', notes: ['skipped untrusted comment by mallory'] }],
+    skipped: [{ reason: 'invalid-risk-floor' }],
+  });
+  await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close });
+  const marker = decisionsOf(dir).trim().split('\n').map(parseEntry).find((e) => e.location === MARKER_STEP);
+  assert.match(marker.action, /; notes on #77: skipped untrusted comment by mallory; skipped step \(invalid-risk-floor\)\./);
+});
+
+test('summary marker bounds a skip detail that carries a whole gh stderr', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const close = fakeCloseParents({ closed: [], skipped: [{ parent: 5, reason: 'gh-failed', detail: `gh issue view 5: ${'502 Bad Gateway '.repeat(200)}` }] });
+  await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close });
+  const marker = decisionsOf(dir).trim().split('\n').map(parseEntry).find((e) => e.location === MARKER_STEP);
+  assert.ok(marker.action.length < 700, `the marker line stays short (${marker.action.length} chars)`);
+  assert.match(marker.action, /skipped #5 \(gh-failed: gh issue view 5: 502 Bad Gateway/);
+  assert.match(marker.action, /…\)/);
+});
+
+test('#4549: a closeFailed[] record holds its parent — it reaches Step 4.0b in unsettled, beside reopened, pendingClose and failed', async () => {
+  const root = mainCheckout();
+  addRun(root, '2026-10-30T090000-spec-1');
+  // A PR merged into a non-default base: Step 4.0 closed #101 itself, could not close #106.
+  const links = fakeClosingLinks({
+    ...ENVELOPE, action: 'close-failed', closingSet: [101], nonDefaultBase: true, closed: [101],
+    closeFailed: [{ issue: 106, error: 'boom' }, { issue: 107, error: 'no state field', stage: 'read' }],
+  });
+  const close = fakeCloseParents({ closed: [], skipped: [{ parent: 77, reason: 'sibling-unsettled' }] });
+  await run(root, { prs: { 11: merged() }, links, close });
+  assert.equal(close.calls.length, 1);
+  assert.deepEqual(close.calls[0].closingSet, [101]);
+  assert.deepEqual(close.calls[0].unsettled, [106, 107], 'both closeFailed[] entries (a failed close and a failed read) hold their parent');
+});
+
+test('a second postMerge call on the same fixture calls neither fake again', async () => {
+  const root = mainCheckout();
+  addRun(root, '2026-10-30T090000-spec-1');
+  const links = fakeClosingLinks(ENVELOPE);
+  const close = fakeCloseParents();
+  const first = await run(root, { prs: { 11: merged() }, links, close });
+  const second = await run(root, { prs: { 11: merged() }, links, close });
+  assert.equal(first.entries.length, 1);
+  assert.deepEqual(second, { entries: [], deferred: [] });
+  assert.equal(links.calls.length, 1);
+  assert.equal(close.calls.length, 1);
+});
+
+test('a run that already holds a Step 4.0b entry (AUTO or the skipped SKIP line) is left alone', async () => {
+  const root = mainCheckout();
+  const auto = formatEntry({ status: 'AUTO', now: NOW, step: 'pr-first-merge Step 4.0b', spec: 5, text: 'closed parent #9', reversibility: 'high' });
+  const skip = formatEntry({ status: 'SKIP', now: NOW, step: 'pr-first-merge Step 4.0b (skipped)', text: 'condition: no parent', reversibility: 'n/a' });
+  const a = addRun(root, '2026-10-30T090000-spec-1', { pr: 11, decisions: `${auto}\n` });
+  const b = addRun(root, '2026-10-30T090001-spec-2', { pr: 12, decisions: `${skip}\n` });
+  const links = fakeClosingLinks(ENVELOPE);
+  const close = fakeCloseParents();
+  const r = await run(root, { prs: { 11: merged(), 12: merged() }, links, close });
+  assert.deepEqual(r, { entries: [], deferred: [] });
+  assert.equal(links.calls.length + close.calls.length, 0);
+  assert.equal(decisionsOf(a), `${auto}\n`);
+  assert.equal(decisionsOf(b), `${skip}\n`);
+});
+
+test('a clean-status run is processed too', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1', { status: 'clean' });
+  const links = fakeClosingLinks(ENVELOPE);
+  const r = await run(root, { prs: { 11: merged() }, links, close: fakeCloseParents() });
+  assert.equal(r.entries.length, 1);
+  assert.equal(r.entries[0].runDir, dir);
+  assert.equal(r.entries[0].action, 'ran');
+  assert.equal(links.calls.length, 1);
+});
+
+test('a run without a PR number is skipped silently', async () => {
+  const root = mainCheckout();
+  addRun(root, '2026-10-30T090000-spec-1', { pr: null });
+  const links = fakeClosingLinks(ENVELOPE);
+  const r = await run(root, { prs: {}, links, close: fakeCloseParents() });
+  assert.deepEqual(r, { entries: [], deferred: [] });
+  assert.equal(links.calls.length, 0);
+});
+
+test('an OPEN or CLOSED PR gives no entry and no call', async () => {
+  const root = mainCheckout();
+  addRun(root, '2026-10-30T090000-spec-1', { pr: 11 });
+  addRun(root, '2026-10-30T090001-spec-2', { pr: 12 });
+  const links = fakeClosingLinks(ENVELOPE);
+  const r = await run(root, { prs: { 11: { number: 11, state: 'OPEN' }, 12: { number: 12, state: 'CLOSED' } }, links, close: fakeCloseParents() });
+  assert.deepEqual(r, { entries: [], deferred: [] });
+  assert.equal(links.calls.length, 0);
+});
+
+test('a prStates failure string gives a skipped entry with that reason and no marker', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const links = fakeClosingLinks(ENVELOPE);
+  const r = await run(root, { prs: { 11: 'network-failure' }, links, close: fakeCloseParents() });
+  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'network-failure' }]);
+  assert.equal(links.calls.length, 0);
+  assert.equal(decisionsOf(dir), '');
+});
+
+test('a prStates call that throws is a transient network-failure, never a crash', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const r = await postMerge({
+    cwd: root, now, prStates: { byNumberAsync: async () => { throw new Error('boom'); } },
+    deps: { gh: fakeGh, closingLinks: fakeClosingLinks(ENVELOPE), closeParents: fakeCloseParents() },
+  });
+  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'network-failure' }]);
+  assert.deepEqual(r.deferred, [dir]);
+});
+
+test('a missing or malformed prStates is a caller bug: failure no-pr-states up front, never a per-run network-failure', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const links = fakeClosingLinks(ENVELOPE);
+  for (const prStates of [undefined, null, {}, { byNumberAsync: 'nope' }]) {
+    const r = await postMerge({ cwd: root, now, prStates, deps: { gh: fakeGh, closingLinks: links, closeParents: fakeCloseParents() } });
+    assert.deepEqual(r, { entries: [], deferred: [], failure: 'no-pr-states' });
+  }
+  assert.equal(links.calls.length, 0);
+  assert.equal(decisionsOf(dir), '');
+});
+
+test('merge grace: a merge 2 minutes old, or with no mergedAt, is skipped, untouched and deferred; 11 minutes runs', async () => {
+  const root = mainCheckout();
+  const fresh = addRun(root, '2026-10-30T090000-spec-1', { pr: 11 });
+  const noStamp = addRun(root, '2026-10-30T090001-spec-2', { pr: 12 });
+  const garbled = addRun(root, '2026-10-30T090002-spec-3', { pr: 13 });
+  const old = addRun(root, '2026-10-30T090003-spec-4', { pr: 14 });
+  const links = fakeClosingLinks(ENVELOPE);
+  const r = await run(root, {
+    prs: {
+      11: merged(new Date(NOW - 2 * 60 * 1000).toISOString()),
+      12: { number: 12, state: 'MERGED' },
+      13: merged('not-a-date'),
+      14: merged(new Date(NOW - 11 * 60 * 1000).toISOString()),
+    },
+    links,
+    close: fakeCloseParents(),
+  });
+  const byPr = Object.fromEntries(r.entries.map((e) => [e.pr, e]));
+  for (const pr of [11, 12, 13]) assert.deepEqual([byPr[pr].action, byPr[pr].reason], ['skipped', 'merge-grace']);
+  assert.equal(byPr[14].action, 'ran');
+  assert.equal(links.calls.length, 1);
+  assert.equal(links.calls[0].opts.run, old);
+  for (const dir of [fresh, noStamp, garbled]) assert.equal(decisionsOf(dir), '');
+  assert.deepEqual(new Set(r.deferred), new Set([fresh, noStamp, garbled]));
+  assert.equal(MERGE_GRACE_MS, 10 * 60 * 1000);
+});
+
+test('merge grace boundary: a merge exactly MERGE_GRACE_MS old is still in grace; 1 ms later runs, strictly past the close window', async () => {
+  const root = mainCheckout();
+  const edge = addRun(root, '2026-10-30T090000-spec-1', { pr: 11 });
+  const past = addRun(root, '2026-10-30T090001-spec-2', { pr: 12 });
+  const links = fakeClosingLinks(ENVELOPE);
+  const r = await run(root, {
+    prs: {
+      11: merged(new Date(NOW - MERGE_GRACE_MS).toISOString()),
+      12: merged(new Date(NOW - MERGE_GRACE_MS - 1).toISOString()),
+    },
+    links,
+    close: fakeCloseParents(),
+  });
+  const byPr = Object.fromEntries(r.entries.map((e) => [e.pr, e]));
+  assert.deepEqual([byPr[11].action, byPr[11].reason], ['skipped', 'merge-grace']);
+  assert.deepEqual(r.deferred, [edge]);
+  assert.equal(byPr[12].action, 'ran');
+  assert.deepEqual(links.calls.map((c) => c.opts.run), [past]);
+  // closing-links settles a still-open record only once now > mergedAt + window, so the window must
+  // never outlast the grace: every run that gets here is strictly past it.
+  assert.ok(CLOSE_WINDOW_MS <= MERGE_GRACE_MS);
+});
+
+test('deferred holds in-flight, claim-failed and network-failure runs only; marker-write-failed, gh-absent, dry-run, marked and OPEN are not', async () => {
+  const root = mainCheckout();
+  const inFlight = addRun(root, '2026-10-30T090000-spec-1', { pr: 11 });
+  fs.writeFileSync(lockOf(inFlight), '');
+  fs.utimesSync(lockOf(inFlight), NOW / 1000, NOW / 1000);
+  const network = addRun(root, '2026-10-30T090001-spec-2', { pr: 12 });
+  const markerFail = addRun(root, '2026-10-30T090002-spec-3', { pr: 13 });
+  const ghAbsent = addRun(root, '2026-10-30T090003-spec-4', { pr: 14 });
+  const marked = addRun(root, '2026-10-30T090004-spec-5', { pr: 15, decisions: `${formatEntry({ status: 'AUTO', now: NOW, step: MARKER_STEP, text: 'ran', reversibility: 'n/a' })}\n` });
+  const open = addRun(root, '2026-10-30T090005-spec-6', { pr: 16 });
+  // Definitive lookup failures stay visible to archive's stuck-run surfacing: skipped, never deferred (R5).
+  const notFound = addRun(root, '2026-10-30T090006-spec-7', { pr: 17 });
+  const invalidArgs = addRun(root, '2026-10-30T090007-spec-8', { pr: 18 });
+  const noState = addRun(root, '2026-10-30T090008-spec-9', { pr: 19 });
+  const claimFail = addRun(root, '2026-10-30T090009-spec-10', { pr: 20 });
+  const failingWrite = (args) => {
+    if (args.runDir === markerFail) throw new Error('disk full');
+    return { file: '', created: false };
+  };
+  const r = await run(root, {
+    prs: { 11: merged(), 12: 'network-failure', 13: merged(), 14: 'gh-absent', 15: merged(), 16: { number: 16, state: 'OPEN' }, 17: 'pr-not-found', 18: 'invalid-arguments', 20: merged() },
+    links: fakeClosingLinks(ENVELOPE),
+    close: fakeCloseParents(),
+    extra: {
+      appendEntries: failingWrite,
+      takeClaim: (dir, nowMs) => (dir === claimFail ? { ok: false, reason: 'claim-failed' } : takeClaim(dir, nowMs)),
+    },
+  });
+  const reasons = Object.fromEntries(r.entries.map((e) => [e.pr, e.reason || e.action]));
+  assert.deepEqual(reasons, {
+    11: 'in-flight', 12: 'network-failure', 13: 'marker-write-failed', 14: 'gh-absent', 17: 'pr-not-found', 18: 'invalid-arguments', 19: 'no-pr-state', 20: 'claim-failed',
+  });
+  assert.deepEqual(new Set(r.deferred), new Set([inFlight, network, claimFail]));
+  assert.ok(![ghAbsent, marked, open, notFound, invalidArgs, noState].some((d) => r.deferred.includes(d)));
+
+  const dry = await run(root, { prs: { 12: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents(), dryRun: true });
+  assert.deepEqual(dry.entries.find((e) => e.runDir === network).reason, 'dry-run');
+  assert.ok(!dry.deferred.includes(network));
+});
+
+test('claim: a fresh lock file means in-flight, no fake is called and the lock stays', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  fs.writeFileSync(lockOf(dir), '');
+  fs.utimesSync(lockOf(dir), (NOW - 60 * 1000) / 1000, (NOW - 60 * 1000) / 1000);
+  const links = fakeClosingLinks(ENVELOPE);
+  const r = await run(root, { prs: { 11: merged() }, links, close: fakeCloseParents() });
+  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'in-flight' }]);
+  assert.equal(links.calls.length, 0);
+  assert.ok(fs.existsSync(lockOf(dir)));
+});
+
+test('claim: an ownerless lock idle between CLAIM_MAX_IDLE_MS and CLAIM_STALE_MS is still in-flight', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  fs.writeFileSync(lockOf(dir), '');
+  const idle = (NOW - 7 * 60 * 1000) / 1000; // past the 5-minute idle backstop, under the 10-minute ownerless rule
+  fs.utimesSync(lockOf(dir), idle, idle);
+  assert.ok(CLAIM_MAX_IDLE_MS < 7 * 60 * 1000 && 7 * 60 * 1000 < CLAIM_STALE_MS);
+  const links = fakeClosingLinks(ENVELOPE);
+  const r = await run(root, { prs: { 11: merged() }, links, close: fakeCloseParents() });
+  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'in-flight' }]);
+  assert.equal(links.calls.length, 0);
+  assert.ok(fs.existsSync(lockOf(dir)));
+});
+
+test('claim: a lock 11 minutes old is taken over, the run proceeds and no lock remains', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  fs.writeFileSync(lockOf(dir), '');
+  const stale = (NOW - 11 * 60 * 1000) / 1000;
+  fs.utimesSync(lockOf(dir), stale, stale);
+  const links = fakeClosingLinks(ENVELOPE);
+  const r = await run(root, { prs: { 11: merged() }, links, close: fakeCloseParents() });
+  assert.equal(r.entries[0].action, 'ran');
+  assert.equal(links.calls.length, 1);
+  assert.ok(!fs.existsSync(lockOf(dir)));
+  assert.deepEqual(fs.readdirSync(dir).filter((f) => f.includes('.stale-')), []);
+  assert.equal(CLAIM_STALE_MS, 10 * 60 * 1000);
+});
+
+test('claim: a closing-links runner that throws leaves no lock, no marker, and later runs still process', async () => {
+  const root = mainCheckout();
+  const bad = addRun(root, '2026-10-30T090000-spec-1', { pr: 11 });
+  const good = addRun(root, '2026-10-30T090001-spec-2', { pr: 12 });
+  let n = 0;
+  const links = (opts) => {
+    n += 1;
+    if (opts.run === bad) throw new Error('kaboom');
+    return { code: 0, envelope: ENVELOPE };
+  };
+  const r = await run(root, { prs: { 11: merged(), 12: merged() }, links, close: fakeCloseParents() });
+  const byPr = Object.fromEntries(r.entries.map((e) => [e.pr, e]));
+  assert.deepEqual([byPr[11].action, byPr[11].reason, byPr[11].detail], ['skipped', 'error', 'kaboom']);
+  assert.equal(byPr[12].action, 'ran');
+  assert.equal(n, 2);
+  assert.ok(!fs.existsSync(lockOf(bad)));
+  assert.ok(!fs.existsSync(lockOf(good)));
+  assert.equal(decisionsOf(bad), '');
+  assert.ok(!r.deferred.includes(bad));
+});
+
+test('marker re-read under the claim: a marker appended after the first read stops the run before any fake', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const links = fakeClosingLinks(ENVELOPE);
+  const close = fakeCloseParents();
+  const marker = formatEntry({ status: 'AUTO', now: NOW, step: MARKER_STEP, text: 'ran elsewhere', reversibility: 'n/a' });
+  const r = await run(root, {
+    prs: { 11: merged() },
+    links,
+    close,
+    extra: { beforeClaim: (d) => fs.appendFileSync(path.join(d, 'decisions.md'), `${marker}\n`) },
+  });
+  assert.deepEqual(r, { entries: [], deferred: [] });
+  assert.equal(links.calls.length + close.calls.length, 0);
+  assert.equal(decisionsOf(dir), `${marker}\n`);
+  assert.ok(!fs.existsSync(lockOf(dir)));
+});
+
+const entriesOf = (dir) => decisionsOf(dir).trim().split('\n').filter(Boolean).map(parseEntry);
+
+test('M7: closing-links exit 5 (a gh failure) retries: an attempt line, never a marker, the run deferred; the bound then writes the marker', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const close = fakeCloseParents();
+  const links = fakeClosingLinks(null, 5);
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const r = await run(root, { prs: { 11: merged() }, links, close });
+    assert.deepEqual(r.entries, [{
+      runDir: dir, pr: 11, action: 'skipped', reason: 'transient-failure', detail: 'Step 4.0 returned exit 5 (a gh failure)', attempt,
+    }]);
+    assert.deepEqual(r.deferred, [dir]);
+    const lines = entriesOf(dir);
+    assert.equal(lines.length, attempt);
+    assert.ok(lines.every((e) => e.status === 'SKIP' && e.location === ATTEMPT_STEP));
+    assert.match(lines[attempt - 1].action, new RegExp(`^condition: Step 4\\.0 returned exit 5 \\(a gh failure\\) \\(attempt ${attempt} of 3\\) → fallback: the next reconcile pass retries`));
+    assert.equal(hasPostMergeMarker(decisionsOf(dir)), false, 'an attempt line is never a marker');
+  }
+  assert.equal(MAX_ATTEMPTS, 3);
+  // The bound: with 3 attempt lines, the next failure writes the SKIP marker as any other failure does.
+  const last = await run(root, { prs: { 11: merged() }, links, close });
+  assert.deepEqual(last, { entries: [{ runDir: dir, pr: 11, action: 'ran', closingLinks: 'exit 5', parentsClosed: 0, step40Failed: true }], deferred: [] });
+  const marker = entriesOf(dir).at(-1);
+  assert.equal(marker.status, 'SKIP');
+  assert.equal(marker.location, MARKER_STEP);
+  assert.match(marker.action, /^condition: Step 4\.0 returned exit 5, no closingSet → fallback: no parent closed; the tidy parent-gate backstop recovers them\./);
+  assert.ok(hasPostMergeMarker(decisionsOf(dir)));
+  // Done: a further pass calls nothing.
+  assert.deepEqual(await run(root, { prs: { 11: merged() }, links, close }), { entries: [], deferred: [] });
+  assert.equal(links.calls.length, MAX_ATTEMPTS + 1);
+  assert.equal(close.calls.length, 0);
+});
+
+test('M7: a deterministic closing-links exit (3, 4) writes the marker at once and is not deferred', async () => {
+  for (const code of [3, 4]) {
+    const root = mainCheckout();
+    const dir = addRun(root, '2026-10-30T090000-spec-1');
+    const r = await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(null, code), close: fakeCloseParents() });
+    assert.deepEqual(r, { entries: [{ runDir: dir, pr: 11, action: 'ran', closingLinks: `exit ${code}`, parentsClosed: 0, step40Failed: true }], deferred: [] });
+    assert.ok(hasPostMergeMarker(decisionsOf(dir)));
+    assert.equal(entriesOf(dir).filter((e) => e.location === ATTEMPT_STEP).length, 0);
+  }
+});
+
+// Step 4.0's envelope when the PR's base or the default branch could not be read (#4549): no closingSet.
+const BASE_UNCHECKED = {
+  action: 'base-unchecked', pr: 11, candidates: [], willClose: [], reopened: [], failed: [], stillOpen: [], pendingClose: [],
+  closedBefore: [], baseUnchecked: true, unchecked: [101, 102],
+};
+
+test('#4549: a base-unchecked envelope carries no closing set — Step 4.0b never runs, and the run retries like a gh failure; the bound then writes the SKIP marker', async () => {
+  for (const envelope of [BASE_UNCHECKED, { ...BASE_UNCHECKED, action: 'reopen-failed', failed: [{ issue: 103, error: 'x' }] }]) {
+    const root = mainCheckout();
+    const dir = addRun(root, '2026-10-30T090000-spec-1');
+    const close = fakeCloseParents();
+    const links = fakeClosingLinks(envelope);
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      const r = await run(root, { prs: { 11: merged() }, links, close });
+      assert.deepEqual(r.entries, [{
+        runDir: dir, pr: 11, action: 'skipped', reason: 'transient-failure',
+        detail: `Step 4.0 returned ${envelope.action} (the PR's base or the default branch could not be read)`, attempt,
+      }]);
+      assert.deepEqual(r.deferred, [dir]);
+      assert.equal(hasPostMergeMarker(decisionsOf(dir)), false, 'an attempt line is never a marker');
+    }
+    const last = await run(root, { prs: { 11: merged() }, links, close });
+    // The loop entry carries the records because its word is non-clean (#4897): BASE_UNCHECKED names 101 and 102 as
+    // unchecked; the reopen-failed variant adds 103 to failed.
+    const records = { failed: envelope.failed.map((f) => f.issue), closeFailed: [], pendingClose: [], unchecked: [101, 102] };
+    assert.deepEqual(last, { entries: [{ runDir: dir, pr: 11, action: 'ran', closingLinks: envelope.action, parentsClosed: 0, step40Failed: true, records }], deferred: [] });
+    assert.deepEqual(records.failed, envelope.action === 'base-unchecked' ? [] : [103], 'the literal per variant');
+    const marker = entriesOf(dir).at(-1);
+    assert.equal(marker.status, 'SKIP');
+    assert.equal(marker.location, MARKER_STEP);
+    assert.match(marker.action, new RegExp(`^condition: Step 4\\.0 returned ${envelope.action}, no closingSet → fallback: no parent closed`));
+    assert.equal(close.calls.length, 0, `${envelope.action}: Step 4.0b never runs without a closing set`);
+  }
+});
+
+test('a gh failure on one parent or one record in Step 4.0b is that parent\'s skip: the marker is written and the run is not deferred', async () => {
+  for (const skip of [{ parent: 88, reason: 'gh-failed', detail: 'x' }, { issue: 102, reason: 'gh-failed', detail: 'x' }]) {
+    const root = mainCheckout();
+    const dir = addRun(root, '2026-10-30T090000-spec-1');
+    const r = await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents({ closed: [], skipped: [skip] }) });
+    assert.equal(r.entries[0].action, 'ran');
+    assert.deepEqual(r.deferred, []);
+    assert.ok(hasPostMergeMarker(decisionsOf(dir)));
+  }
+});
+
+test('M7: hasPostMergeMarker never reads an attempt line as a marker', () => {
+  const attempt = formatEntry({ status: 'SKIP', now: NOW, step: ATTEMPT_STEP, text: 'condition: x (attempt 1 of 3)', reversibility: 'n/a' });
+  assert.equal(parseEntry(attempt).location, ATTEMPT_STEP);
+  assert.equal(hasPostMergeMarker(attempt), false);
+  assert.equal(hasPostMergeMarker(`${attempt}\n${attempt}\n${attempt}\n`), false);
+});
+
+test('M3: a multi-spec run whose Step 4.0b logged its marker in spec-N/decisions.md is done: no lookup, no call, not prefetched', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  fs.mkdirSync(path.join(dir, 'spec-2'));
+  const marker = formatEntry({ status: 'AUTO', now: NOW, step: 'pr-first-merge Step 4.0b', spec: 2, text: 'closed parent #9', reversibility: 'high' });
+  fs.writeFileSync(path.join(dir, 'spec-2', 'decisions.md'), `${marker}\n`);
+  // A non-spec directory beside it carries the same marker; root2 below shows that one alone never counts.
+  fs.mkdirSync(path.join(dir, 'staged'));
+  fs.writeFileSync(path.join(dir, 'staged', 'decisions.md'), `${marker}\n`);
+  const looked = [];
+  const links = fakeClosingLinks(ENVELOPE);
+  const r = await postMerge({
+    cwd: root, now, prStates: { byNumberAsync: async (n) => { looked.push(n); return merged(); } },
+    deps: { gh: fakeGh, closingLinks: links, closeParents: fakeCloseParents() },
+  });
+  assert.deepEqual(r, { entries: [], deferred: [] });
+  assert.deepEqual(looked, []);
+  assert.equal(links.calls.length, 0);
+  const calls = [];
+  await prefetchPostMergePrStates(root, { prefetch: async (arg) => { calls.push(arg); } });
+  assert.deepEqual(calls[0].numbers, []);
+
+  // The same marker in a non-spec directory does not mark the run.
+  const root2 = mainCheckout();
+  const dir2 = addRun(root2, '2026-10-30T090000-spec-1');
+  fs.mkdirSync(path.join(dir2, 'staged'));
+  fs.writeFileSync(path.join(dir2, 'staged', 'decisions.md'), `${marker}\n`);
+  const r2 = await run(root2, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents() });
+  assert.equal(r2.entries[0].action, 'ran');
+});
+
+test('M3: a spec-N marker appended between the first read and the claim stops the run under the claim', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  fs.mkdirSync(path.join(dir, 'spec-1'));
+  const links = fakeClosingLinks(ENVELOPE);
+  const marker = formatEntry({ status: 'SKIP', now: NOW, step: 'pr-first-merge Step 4.0b (skipped)', spec: 1, text: 'condition: no parent', reversibility: 'n/a' });
+  const r = await run(root, {
+    prs: { 11: merged() },
+    links,
+    close: fakeCloseParents(),
+    extra: { beforeClaim: (d) => fs.writeFileSync(path.join(d, 'spec-1', 'decisions.md'), `${marker}\n`) },
+  });
+  assert.deepEqual(r, { entries: [], deferred: [] });
+  assert.equal(links.calls.length, 0);
+  assert.equal(decisionsOf(dir), '');
+});
+
+test('M4: once the pass budget reads exceeded, every remaining run that would run skips budget-exhausted and is deferred', async () => {
+  const root = mainCheckout();
+  const first = addRun(root, '2026-10-30T090000-spec-1', { pr: 11 });
+  const open = addRun(root, '2026-10-30T090001-spec-2', { pr: 12 });
+  const second = addRun(root, '2026-10-30T090002-spec-3', { pr: 13 });
+  const third = addRun(root, '2026-10-30T090003-spec-4', { pr: 14 });
+  const links = fakeClosingLinks(ENVELOPE);
+  const checks = [];
+  // Exceeded as soon as one run's steps have run.
+  const budgetExceeded = () => { checks.push(links.calls.length); return links.calls.length >= 1; };
+  const r = await postMerge({
+    cwd: root, now, budgetExceeded,
+    prStates: fakePrStates({ 11: merged(), 12: { number: 12, state: 'OPEN' }, 13: merged(), 14: merged() }),
+    deps: { gh: fakeGh, closingLinks: links, closeParents: fakeCloseParents() },
+  });
+  // The walk order is the run listing's, so which merged run goes first is not pinned: exactly one runs.
+  const ran = r.entries.filter((e) => e.action === 'ran').map((e) => e.runDir);
+  assert.equal(ran.length, 1);
+  assert.equal(links.calls[0].opts.run, ran[0]);
+  const exhausted = r.entries.filter((e) => e.reason === 'budget-exhausted').map((e) => e.runDir);
+  assert.deepEqual(new Set([...ran, ...exhausted]), new Set([first, second, third]));
+  assert.equal(r.entries.length, 3, 'an OPEN PR is not a run that would have run: no entry');
+  assert.ok(!r.entries.some((e) => e.runDir === open));
+  assert.deepEqual(new Set(r.deferred), new Set(exhausted));
+  assert.equal(links.calls.length, 1);
+  assert.deepEqual(checks, [0, 1, 1], 'checked before each run that would run, never mid-run');
+  for (const dir of exhausted) assert.equal(decisionsOf(dir), '');
+
+  // No predicate, or one that never trips: every run runs.
+  const root2 = mainCheckout();
+  addRun(root2, '2026-10-30T090000-spec-1', { pr: 11 });
+  addRun(root2, '2026-10-30T090001-spec-2', { pr: 13 });
+  const r2 = await run(root2, { prs: { 11: merged(), 13: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents() });
+  assert.deepEqual(r2.entries.map((e) => e.action), ['ran', 'ran']);
+});
+
+test('step40Failed marks a non-zero exit, never a readable envelope without a closing set', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const failed = await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(null, 3), close: fakeCloseParents() });
+  assert.deepEqual(failed.entries, [{
+    runDir: dir, pr: 11, action: 'ran', closingLinks: 'exit 3', parentsClosed: 0, step40Failed: true,
+  }]);
+  const root2 = mainCheckout();
+  const dir2 = addRun(root2, '2026-10-30T090000-spec-1');
+  const notMerged = await run(root2, { prs: { 11: merged() }, links: fakeClosingLinks({ action: 'not-merged', state: 'OPEN' }), close: fakeCloseParents() });
+  assert.deepEqual(notMerged.entries, [{ runDir: dir2, pr: 11, action: 'ran', closingLinks: 'not-merged', parentsClosed: 0 }]);
+  // A fully successful run carries no flag either.
+  const root3 = mainCheckout();
+  addRun(root3, '2026-10-30T090000-spec-1');
+  const ok = await run(root3, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents() });
+  assert.ok(!('step40Failed' in ok.entries[0]));
+});
+
+test('postMerge without deps.closingLinks falls back to the exported closingLinks core', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  // Production calls postMerge with no deps, so it reaches the default binding the injected fakes above
+  // never do. The real core, with a gh that answers '', cannot parse `gh pr view` and returns exit 5; a
+  // default naming an unbound identifier would instead throw a ReferenceError out of postMerge itself, since
+  // the default is read before the per-run try.
+  const r = await postMerge({
+    cwd: root, now, prStates: fakePrStates({ 11: merged() }),
+    deps: { gh: fakeGh, closeParents: fakeCloseParents() },
+  });
+  assert.deepEqual(r.entries, [{
+    runDir: dir, pr: 11, action: 'skipped', reason: 'transient-failure', detail: 'Step 4.0 returned exit 5 (a gh failure)', attempt: 1,
+  }]);
+});
+
+test('an exit-0 envelope with no closingSet (not-merged) is a SKIP marker naming its action', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const close = fakeCloseParents();
+  await run(root, { prs: { 11: merged() }, links: fakeClosingLinks({ action: 'not-merged', state: 'OPEN' }), close });
+  assert.equal(close.calls.length, 0);
+  assert.match(decisionsOf(dir), /Step 4\.0 returned not-merged, no closingSet/);
+});
+
+test('R1: closedAfterWindow records are subtracted from the set closeParents receives', async () => {
+  const root = mainCheckout();
+  addRun(root, '2026-10-30T090000-spec-1');
+  const close = fakeCloseParents();
+  const links = fakeClosingLinks({ ...ENVELOPE, closingSet: [101, 102, 103], closedAfterWindow: [102] });
+  await run(root, { prs: { 11: merged() }, links, close });
+  assert.deepEqual(close.calls[0].closingSet, [101, 103]);
+});
+
+test('R2: the default gh runs through the timed wrapper with cwd at the main checkout, and risk-floor/work-links come from policy.yml', async (t) => {
+  const root = mainCheckout();
+  addRun(root, '2026-10-30T090000-spec-1');
+  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'risk-floor: medium\nwork-links: native\n');
+  const seen = [];
+  const realExec = cp.execFileSync;
+  // Only `gh` is faked; the git probes (remote slug, main checkout) keep running for real.
+  t.mock.method(cp, 'execFileSync', (file, args, opts) => {
+    if (file !== 'gh') return realExec(file, args, opts);
+    seen.push({ file, args, opts });
+    return 'out';
+  });
+  let received;
+  const close = (args) => { received = args; args.gh(['issue', 'view', '7'], 'body'); return { closed: [], skipped: [] }; };
+  await postMerge({
+    cwd: root, now, prStates: fakePrStates({ 11: merged() }),
+    deps: { closingLinks: fakeClosingLinks(ENVELOPE), closeParents: close },
+  });
+  assert.equal(received.riskFloor, 'medium');
+  assert.equal(received.workLinks, 'native');
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].file, 'gh');
+  assert.deepEqual(seen[0].args, ['issue', 'view', '7']);
+  assert.equal(seen[0].opts.cwd, root);
+  assert.equal(seen[0].opts.input, 'body');
+  assert.equal(seen[0].opts.windowsHide, true);
+  assert.equal(typeof seen[0].opts.timeout, 'number');
+});
+
+test('a GitHub Enterprise origin hands Step 4.0b its host; a github.com origin hands it github.com', async () => {
+  for (const [origin, host] of [
+    ['git@ghe.example.com:acme/w.git', 'ghe.example.com'],
+    ['https://ghe.example.com/acme/w.git', 'ghe.example.com'],
+    ['https://github.com/acme/w.git', 'github.com'],
+  ]) {
+    const root = mainCheckout({ origin });
+    addRun(root, '2026-10-30T090000-spec-1');
+    const close = fakeCloseParents();
+    // #4933: ghe.example.com is a known GitHub host only through the GH_HOST opt-in.
+    const gateDeps = { env: host === 'github.com' ? {} : { GH_HOST: host }, readFile: () => { throw new Error('none'); } };
+    await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close, extra: { gateDeps } });
+    assert.equal(close.calls.length, 1, origin);
+    assert.deepEqual([close.calls[0].host, close.calls[0].owner, close.calls[0].repo], [host, 'acme', 'w'], origin);
+  }
+});
+
+// A fresh checkout with one unmarked run and `policyText` as its policy.yml (null: no file).
+function policyCheckout(policyText) {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  if (policyText !== null) fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), policyText);
+  return { root, dir };
+}
+
+test('an unreadable policy.yml skips Step 4.0b fail-closed: no close attempted, the skip named on the marker', async () => {
+  const { root, dir } = policyCheckout(null);
+  // A directory where the file belongs: the read fails EISDIR, an error that is not "no policy file".
+  fs.mkdirSync(path.join(root, '.claude-tweaks', 'policy.yml'));
+  const links = fakeClosingLinks(ENVELOPE);
+  const close = fakeCloseParents({ closed: [{ parent: 77, maxTier: 'low' }], skipped: [] });
+  const r = await run(root, { prs: { 11: merged() }, links, close });
+  assert.equal(links.calls.length, 1, 'Step 4.0 still runs');
+  assert.equal(close.calls.length, 0, 'no below-floor close is attempted');
+  assert.deepEqual(r.entries, [{
+    runDir: dir, pr: 11, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 0,
+    parentFailures: [{ reason: 'unreadable-policy', detail: '.claude-tweaks/policy.yml: EISDIR' }],
+  }]); // AC4.2
+  const lines = entriesOf(dir);
+  assert.deepEqual(lines.map((e) => e.location), [MARKER_STEP], 'the marker only, no parent line');
+  assert.match(lines[0].action, /; 0 parent\(s\) closed; skipped step \(unreadable-policy: \.claude-tweaks\/policy\.yml: EISDIR\)\./);
+});
+
+test('a risk-floor value policy.yml rejects skips Step 4.0b fail-closed, never the looser schema default', async () => {
+  const { root, dir } = policyCheckout('risk-floor: hgih\nwork-links: native\n');
+  const close = fakeCloseParents({ closed: [{ parent: 77, maxTier: 'low' }], skipped: [] });
+  await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close });
+  assert.equal(close.calls.length, 0, 'no below-floor close is attempted');
+  const lines = entriesOf(dir);
+  assert.deepEqual(lines.map((e) => e.location), [MARKER_STEP]);
+  assert.match(lines[0].action, /; skipped step \(invalid-risk-floor: \.claude-tweaks\/policy\.yml risk-floor: "hgih"\)\./);
+});
+
+test('no policy.yml at all (and a policy.yml without risk-floor) keeps the schema default: the close runs with risk-floor high', async () => {
+  for (const policyText of [null, 'work-links: native\n']) {
+    const { root } = policyCheckout(policyText);
+    const close = fakeCloseParents();
+    await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close });
+    assert.equal(close.calls.length, 1, String(policyText));
+    assert.equal(close.calls[0].riskFloor, 'high', String(policyText));
+  }
+});
+
+test('dryRun: a merged unmarked run past the grace window gives dry-run and writes nothing, the claim included', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1', { decisions: '# Decisions\n' });
+  const before = fs.readFileSync(path.join(dir, 'decisions.md'));
+  const links = fakeClosingLinks(ENVELOPE);
+  const r = await run(root, { prs: { 11: merged() }, links, close: fakeCloseParents(), dryRun: true });
+  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'dry-run' }]);
+  assert.equal(links.calls.length, 0);
+  assert.ok(before.equals(fs.readFileSync(path.join(dir, 'decisions.md'))));
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['decisions.md', 'run-state.json']);
+});
+
+test('marker-write-failed: the entry says so and the run is not deferred', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const r = await run(root, {
+    prs: { 11: merged() },
+    links: fakeClosingLinks(ENVELOPE),
+    close: fakeCloseParents(),
+    extra: { appendEntries: () => { throw new Error('read-only'); } },
+  });
+  assert.deepEqual(r, { entries: [{ runDir: dir, pr: 11, action: 'skipped', reason: 'marker-write-failed', parentsClosed: 0 }], deferred: [] });
+  assert.ok(!fs.existsSync(lockOf(dir)));
+});
+
+test('M8: a marker-write-failed entry still carries the parents Step 4.0b closed on GitHub', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const close = fakeCloseParents({ closed: [{ parent: 77, maxTier: 'low' }, { parent: 78, maxTier: 'medium' }], skipped: [] });
+  const r = await run(root, {
+    prs: { 11: merged() },
+    links: fakeClosingLinks(ENVELOPE),
+    close,
+    extra: { appendEntries: () => { throw new Error('read-only'); } },
+  });
+  assert.deepEqual(r, { entries: [{ runDir: dir, pr: 11, action: 'skipped', reason: 'marker-write-failed', parentsClosed: 2 }], deferred: [] });
+});
+
+test('gh-absent from prStates: skipped/gh-absent, no marker, not deferred', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const r = await run(root, { prs: { 11: 'gh-absent' }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents() });
+  assert.deepEqual(r, { entries: [{ runDir: dir, pr: 11, action: 'skipped', reason: 'gh-absent' }], deferred: [] });
+  assert.equal(decisionsOf(dir), '');
+});
+
+test('no CLAUDE.md, or another work-backend: not-github-issues, no calls', async () => {
+  for (const claudeMd of [null, '## Work records\n\nwork-backend: local-files\n']) {
+    const root = mainCheckout({ claudeMd });
+    addRun(root, '2026-10-30T090000-spec-1');
+    const links = fakeClosingLinks(ENVELOPE);
+    const r = await run(root, { prs: { 11: merged() }, links, close: fakeCloseParents() });
+    assert.deepEqual(r, { entries: [], deferred: [], failure: 'not-github-issues' });
+    assert.equal(links.calls.length, 0);
+  }
+});
+
+test('no origin remote: failure no-remote, deferred still an empty array', async () => {
+  const root = mainCheckout({ origin: false });
+  addRun(root, '2026-10-30T090000-spec-1');
+  const r = await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents() });
+  assert.deepEqual(r, { entries: [], deferred: [], failure: 'no-remote' });
+});
+
+// #4933: gateDeps isolates the case from the machine's GH_HOST and gh hosts.yml.
+const NO_GH_HOSTS = { env: {}, readFile: () => { throw new Error('none'); } };
+const unexpectedGh = () => { throw new Error('unexpected gh call'); };
+
+test('AC8.2 post-merge setupContext (#4933): unknown origin host → failure unknown-host, no gh call, detail names the GH_HOST opt-in', async () => {
+  const root = mainCheckout({ origin: 'https://git.corp.invalid/o/r.git' });
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const links = fakeClosingLinks(ENVELOPE);
+  const close = fakeCloseParents();
+  const deps = { gh: unexpectedGh, closingLinks: links, closeParents: close, gateDeps: NO_GH_HOSTS };
+
+  let r;
+  await assert.doesNotReject(async () => {
+    r = await postMerge({ cwd: root, prStates: fakePrStates({ 11: merged() }), now, deps });
+  });
+  assert.deepEqual(r.entries, []);
+  assert.deepEqual(r.deferred, []);
+  assert.equal(r.failure, 'unknown-host');
+  assert.match(r.detail, /GH_HOST=git\.corp\.invalid/);
+  assert.match(r.detail, /origin host git\.corp\.invalid is not a known GitHub host/);
+  assert.equal(links.calls.length, 0);
+  assert.equal(close.calls.length, 0);
+  assert.equal(decisionsOf(dir), '', 'no marker is written');
+
+  let one;
+  await assert.doesNotReject(async () => {
+    one = await postMergeOne({ runDir: dir, cwd: root, prStates: fakePrStates({ 11: merged() }), now, deps });
+  });
+  assert.equal(one.action, 'skipped');
+  assert.equal(one.reason, 'unknown-host');
+  assert.equal(one.pr, null);
+  assert.equal(one.verdict, 'failed');
+  assert.equal(one.next, 'none');
+  assert.match(one.detail, /GH_HOST=git\.corp\.invalid/);
+  assert.equal(links.calls.length, 0);
+});
+
+test('#4794: an SSH-alias origin refuses Step 4.0b — failure unknown-host, the alias advice, no gh call', async () => {
+  const origin = 'git@github-work:acme/w.git';
+  const root = mainCheckout({ origin });
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const links = fakeClosingLinks(ENVELOPE);
+  const close = fakeCloseParents();
+  const ghCalls = [];
+  const gh = (...args) => { ghCalls.push(args); throw new Error('unexpected gh call'); };
+  const deps = { gh, closingLinks: links, closeParents: close, gateDeps: NO_GH_HOSTS };
+  const refusal = gateOriginRepo(origin, NO_GH_HOSTS).refusal;
+  assert.ok(refusal, 'the gate refuses an SSH-alias origin');
+
+  const r = await postMerge({ cwd: root, prStates: fakePrStates({ 11: merged() }), now, deps });
+  assert.equal(r.failure, 'unknown-host');
+  assert.equal(r.detail, refusal);
+  assert.match(r.detail, /GH_HOST=github\.com/);
+  assert.doesNotMatch(r.detail, /GH_HOST=github-work/);
+  assert.deepEqual(r.entries, []);
+
+  const one = await postMergeOne({ runDir: dir, cwd: root, prStates: fakePrStates({ 11: merged() }), now, deps });
+  assert.equal(one.reason, 'unknown-host');
+  assert.equal(one.detail, refusal);
+  assert.equal(ghCalls.length, 0, 'no gh call');
+  assert.equal(links.calls.length, 0);
+  assert.equal(close.calls.length, 0);
+  assert.equal(decisionsOf(dir), '', 'no marker is written');
+});
+
+test('AC8.3 post-merge (#4933): a failure with no detail (no-remote, not-github-issues) adds no detail key; an exported GH_HOST opts the host in', async () => {
+  const noRemote = mainCheckout({ origin: false });
+  const r = await postMerge({ cwd: noRemote, prStates: fakePrStates({}), now, deps: { gh: unexpectedGh, gateDeps: NO_GH_HOSTS } });
+  assert.ok(!('detail' in r), JSON.stringify(r));
+  const one = await postMergeOne({ runDir: 'x', cwd: noRemote, prStates: fakePrStates({}), now, deps: { gh: unexpectedGh, gateDeps: NO_GH_HOSTS } });
+  assert.ok(!('detail' in one), JSON.stringify(one));
+
+  const root = mainCheckout({ origin: 'https://git.corp.invalid/o/r.git' });
+  addRun(root, '2026-10-30T090000-spec-1');
+  const close = fakeCloseParents();
+  const optedIn = await postMerge({
+    cwd: root,
+    prStates: fakePrStates({ 11: merged() }),
+    now,
+    deps: { gh: fakeGh, closingLinks: fakeClosingLinks(ENVELOPE), closeParents: close, gateDeps: { ...NO_GH_HOSTS, env: { GH_HOST: 'git.corp.invalid' } } },
+  });
+  assert.equal(optedIn.failure, undefined);
+  assert.deepEqual([close.calls[0].host, close.calls[0].owner, close.calls[0].repo], ['git.corp.invalid', 'o', 'r']);
+});
+
+test('hasPostMergeMarker: the merging session location and this check match; other steps and prose do not', () => {
+  const line = (step, spec) => formatEntry({ status: 'AUTO', now: NOW, step, spec, text: 'x', reversibility: 'n/a' });
+  assert.equal(hasPostMergeMarker(line('pr-first-merge Step 4.0b', 4599)), true);
+  assert.equal(hasPostMergeMarker(line('pr-first-merge Step 4.0b (skipped)')), true);
+  assert.equal(hasPostMergeMarker(line(MARKER_STEP)), true);
+  assert.equal(hasPostMergeMarker(line('pr-first-merge Step 4.1', 4599)), false);
+  assert.equal(hasPostMergeMarker(line('reconcile post-merge parent-close')), false);
+  assert.equal(hasPostMergeMarker('## reconcile post-merge\nreconcile post-merge: a note\n'), false);
+  assert.equal(hasPostMergeMarker(''), false);
+  assert.equal(hasPostMergeMarker(undefined), false);
+});
+
+// takeClaim with fs wrappers: each hook runs just before the real call, simulating a second taker.
+function racingFs(hooks) {
+  const wrapped = { ...fs };
+  for (const [name, hook] of Object.entries(hooks)) {
+    wrapped[name] = (...args) => { hook(...args); return fs[name](...args); };
+  }
+  return wrapped;
+}
+
+function staleLock(dir) {
+  fs.writeFileSync(lockOf(dir), '');
+  const old = (NOW - 11 * 60 * 1000) / 1000;
+  fs.utimesSync(lockOf(dir), old, old);
+}
+
+test('R3 two takeovers: the taker that loses the rename skips in-flight and leaves the winner lock alone', () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  staleLock(dir);
+  let winner;
+  const fsApi = racingFs({
+    renameSync: () => {
+      // The other taker completes its whole takeover first.
+      winner = takeClaim(dir, NOW);
+    },
+  });
+  const loser = takeClaim(dir, NOW, fsApi);
+  assert.equal(winner.ok, true);
+  assert.deepEqual(loser, { ok: false, reason: 'in-flight' });
+  assert.ok(fs.existsSync(lockOf(dir)), 'the winner still holds the lock');
+  assert.deepEqual(fs.readdirSync(dir).filter((f) => f.includes('.stale-')), []);
+});
+
+// The winner's whole takeover lands between the loser's stat and rename, so the rename moves the winner's live
+// claim aside; the loser must not delete that aside unless the claim is back at its path.
+function loserWithFailingLink(dir, { failRenameBack }) {
+  let winner;
+  let renames = 0;
+  const fsApi = {
+    ...fs,
+    linkSync: () => { throw Object.assign(new Error('hard links unsupported'), { code: 'EPERM' }); },
+    renameSync: (from, to) => {
+      renames += 1;
+      if (renames === 1) winner = takeClaim(dir, NOW); // the other taker completes its whole takeover first
+      else if (failRenameBack) throw Object.assign(new Error('rename refused'), { code: 'EPERM' });
+      return fs.renameSync(from, to);
+    },
+  };
+  return { winner: () => winner, loser: takeClaim(dir, NOW, fsApi) };
+}
+
+test('R3 link-back: a link that fails for a reason other than EEXIST renames the live claim back, never deleting it', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  staleLock(dir);
+  const { winner, loser } = loserWithFailingLink(dir, { failRenameBack: false });
+  assert.equal(winner().ok, true);
+  assert.deepEqual(loser, { ok: false, reason: 'in-flight' });
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), winner().token, "the winner's claim is back at its path");
+  assert.deepEqual(fs.readdirSync(dir).filter((f) => f.includes('.stale-')), []);
+});
+
+test('R3 link-back: when the link and the rename back both fail, the live claim stays in its aside', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  staleLock(dir);
+  const { winner, loser } = loserWithFailingLink(dir, { failRenameBack: true });
+  assert.deepEqual(loser, { ok: false, reason: 'in-flight' });
+  const asides = fs.readdirSync(dir).filter((f) => f.includes('.stale-'));
+  assert.equal(asides.length, 1, 'the only copy of the live claim is not deleted');
+  assert.equal(fs.readFileSync(path.join(dir, asides[0]), 'utf8'), winner().token);
+});
+
+test('R3 two takeovers: a taker whose retry create hits EEXIST skips in-flight and leaves the other lock alone', () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  staleLock(dir);
+  let unlinked = false;
+  const fsApi = racingFs({
+    unlinkSync: () => { unlinked = true; },
+    openSync: (p, flags) => {
+      // After our rename and unlink, another taker creates the lock before our single retry.
+      if (unlinked && flags === 'wx') fs.closeSync(fs.openSync(p, 'wx'));
+    },
+  });
+  const r = takeClaim(dir, NOW, fsApi);
+  assert.deepEqual(r, { ok: false, reason: 'in-flight' });
+  assert.ok(fs.existsSync(lockOf(dir)));
+});
+
+test('R3: another taker renamed the stale lock aside but has not recreated it yet: our rename hits ENOENT, in-flight', () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  staleLock(dir);
+  const elsewhere = path.join(dir, 'taken.aside');
+  const fsApi = racingFs({ renameSync: (from) => fs.renameSync(from, elsewhere) });
+  assert.deepEqual(takeClaim(dir, NOW, fsApi), { ok: false, reason: 'in-flight' });
+  assert.ok(!fs.existsSync(lockOf(dir)), 'we created nothing of our own');
+});
+
+test('takeClaim: the holder released the lock between our create and our stat: in-flight', () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  fs.writeFileSync(lockOf(dir), '');
+  const fsApi = racingFs({ statSync: (p) => { if (p === lockOf(dir)) fs.unlinkSync(p); } });
+  assert.deepEqual(takeClaim(dir, NOW, fsApi), { ok: false, reason: 'in-flight' });
+});
+
+test('takeClaim: a non-EEXIST create error is claim-failed', () => {
+  const root = mainCheckout();
+  const missing = path.join(root, 'no-such-run-dir');
+  assert.deepEqual(takeClaim(missing, NOW), { ok: false, reason: 'claim-failed' });
+});
+
+const setMtime = (dir, ms) => fs.utimesSync(lockOf(dir), ms / 1000, ms / 1000);
+const mtimeOf = (dir) => fs.statSync(lockOf(dir)).mtimeMs;
+// A file mtime equals an injected time to within filesystem timestamp precision. Not a wall-clock budget: both sides are times the test set.
+const mtimeNear = (actualMs, expectedMs) => Math.abs(actualMs - expectedMs) < 1000;
+
+test('AC1.1 takeClaim: a live holder that took the claim past CLAIM_STALE_MS ago and refreshes it is in-flight, its claim untouched', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const takenAt = NOW - CLAIM_STALE_MS - 60 * 1000;
+  const holder = takeClaim(dir, NOW);
+  assert.equal(holder.ok, true);
+  setMtime(dir, takenAt); // the claim's create time; without the refresh below it is idle and taken over
+  assert.equal(heartbeatClaim(dir, holder.token, NOW - 60 * 1000), true);
+  assert.deepEqual(takeClaim(dir, NOW), { ok: false, reason: 'in-flight' });
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), holder.token);
+  assert.deepEqual(fs.readdirSync(dir).filter((f) => f.includes('.stale-')), []);
+});
+
+test('AC1.1 postMerge: a live, refreshing holder past CLAIM_STALE_MS skips in-flight, defers, and calls no fake', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const takenAt = NOW - CLAIM_STALE_MS - 60 * 1000;
+  const holder = takeClaim(dir, NOW);
+  setMtime(dir, takenAt);
+  heartbeatClaim(dir, holder.token, NOW - 60 * 1000);
+  const links = fakeClosingLinks(ENVELOPE);
+  const r = await run(root, { prs: { 11: merged() }, links, close: fakeCloseParents() });
+  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'in-flight' }]);
+  assert.deepEqual(r.deferred, [dir]);
+  assert.equal(links.calls.length, 0);
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), holder.token);
+});
+
+test('takeClaim: a dead holder is reclaimed at once, fresh mtime or not, and the new claim carries our token', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  fs.writeFileSync(lockOf(dir), '424242-dead');
+  setMtime(dir, NOW - 1000);
+  const r = takeClaim(dir, NOW, fs, { isAlive: (pid) => pid !== 424242 });
+  assert.equal(r.ok, true);
+  assert.match(r.token, new RegExp(`^${process.pid}-`));
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), r.token);
+});
+
+test('takeClaim: a live holder idle just under CLAIM_MAX_IDLE_MS is still in-flight', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const held = `${process.pid}-held`;
+  fs.writeFileSync(lockOf(dir), held);
+  setMtime(dir, NOW - CLAIM_MAX_IDLE_MS + 60 * 1000);
+  assert.deepEqual(takeClaim(dir, NOW), { ok: false, reason: 'in-flight' });
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), held);
+});
+
+test('takeClaim: a live-reading holder idle past CLAIM_MAX_IDLE_MS (a reused pid) is reclaimed', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  fs.writeFileSync(lockOf(dir), `${process.pid}-held`);
+  setMtime(dir, NOW - CLAIM_MAX_IDLE_MS - 60 * 1000);
+  const r = takeClaim(dir, NOW);
+  assert.equal(r.ok, true);
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), r.token);
+});
+
+test('CLAIM_MAX_IDLE_MS is 5 minutes, at least 2.5 x the gh-timeout-ms schema ceiling', () => {
+  const { POLICY_KEYS } = require('../../../plugin/bin/lib/policy-schema');
+  assert.equal(GH_TIMEOUT_CEILING_MS, POLICY_KEYS.find((k) => k.key === 'gh-timeout-ms').max);
+  assert.ok(CLAIM_MAX_IDLE_MS >= 2.5 * GH_TIMEOUT_CEILING_MS);
+  assert.equal(CLAIM_MAX_IDLE_MS, 5 * 60 * 1000);
+});
+
+test('heartbeatClaim: refreshes only a claim still carrying our token', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const mine = takeClaim(dir, NOW);
+  const old = NOW - 4 * 60 * 1000;
+  setMtime(dir, old);
+  assert.equal(heartbeatClaim(dir, mine.token, NOW), true);
+  assert.ok(mtimeNear(mtimeOf(dir), NOW), 'our claim was refreshed');
+  fs.writeFileSync(lockOf(dir), `${process.pid}-successor`);
+  setMtime(dir, old);
+  assert.equal(heartbeatClaim(dir, mine.token, NOW), false);
+  assert.ok(mtimeNear(mtimeOf(dir), old), "the successor's mtime is untouched");
+  assert.equal(heartbeatClaim(dir, undefined, NOW), false);
+  fs.unlinkSync(lockOf(dir));
+  assert.equal(heartbeatClaim(dir, mine.token, NOW), false, 'a missing claim is not ours');
+});
+
+test('heartbeatClaim: a claim moved aside by a judging pass, carrying our token, is still ours and is not refreshed', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const mine = takeClaim(dir, NOW);
+  const aside = `${lockOf(dir)}.stale-99999-${NOW - 1000}`;
+  fs.renameSync(lockOf(dir), aside); // mid-takeover: the judger has renamed it and not yet linked it back
+  const old = NOW - 4 * 60 * 1000;
+  fs.utimesSync(aside, old / 1000, old / 1000);
+  assert.equal(heartbeatClaim(dir, mine.token, NOW), true);
+  assert.ok(mtimeNear(fs.statSync(aside).mtimeMs, old), 'the aside is not touched');
+  assert.ok(!fs.existsSync(lockOf(dir)), 'the heartbeat creates nothing at the claim path');
+  fs.writeFileSync(aside, `${process.pid}-other`);
+  assert.equal(heartbeatClaim(dir, mine.token, NOW), false, "another holder's aside is not ours");
+});
+
+test('heartbeatClaim: an orphaned aside older than CLAIM_ASIDE_MAX_AGE_MS proves nothing, even carrying our token', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const mine = takeClaim(dir, NOW);
+  const orphan = `${lockOf(dir)}.stale-99999-${NOW - CLAIM_ASIDE_MAX_AGE_MS - 60 * 1000}`;
+  fs.renameSync(lockOf(dir), orphan); // a judger died before its link-back, or its aside unlink failed
+  assert.equal(heartbeatClaim(dir, mine.token, NOW), false);
+  fs.renameSync(orphan, `${lockOf(dir)}.stale-99999-notanumber`);
+  assert.equal(heartbeatClaim(dir, mine.token, NOW), false, 'a name with no parseable ms is not young');
+});
+
+test('heartbeatClaim: a young aside carrying our token is owned only if the judger would find it live', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const mine = takeClaim(dir, NOW);
+  const aside = `${lockOf(dir)}.stale-99999-${NOW - 1000}`;
+  fs.renameSync(lockOf(dir), aside); // mid-takeover: renamed, not yet linked back
+  const idle = NOW - CLAIM_MAX_IDLE_MS - 60 * 1000;
+  fs.utimesSync(aside, idle / 1000, idle / 1000);
+  assert.equal(heartbeatClaim(dir, mine.token, NOW), false, 'idle past CLAIM_MAX_IDLE_MS: the judger deletes it, not links it back');
+  const fresh = NOW - 60 * 1000;
+  fs.utimesSync(aside, fresh / 1000, fresh / 1000);
+  assert.equal(heartbeatClaim(dir, mine.token, NOW), true, 'fresh mtime: the judger links it back');
+  assert.equal(heartbeatClaim(dir, mine.token, NOW, fs, { isAlive: () => false }), false, 'a dead pid: the judger deletes it');
+  const unstattable = { ...fs, statSync: () => { throw Object.assign(new Error('gone'), { code: 'ENOENT' }); } };
+  assert.equal(heartbeatClaim(dir, mine.token, NOW, unstattable), false, 'a stat failure on the aside is not owned');
+});
+
+test('heartbeatClaim: an aside named with a future ms is not young, even carrying our token', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const mine = takeClaim(dir, NOW);
+  fs.renameSync(lockOf(dir), `${lockOf(dir)}.stale-99999-${NOW + CLAIM_ASIDE_MAX_AGE_MS + 60 * 1000}`);
+  assert.equal(heartbeatClaim(dir, mine.token, NOW), false);
+});
+
+test('heartbeatClaim: a failed refresh still reports our claim as owned', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const mine = takeClaim(dir, NOW);
+  const noUtimes = { ...fs, utimesSync: () => { throw Object.assign(new Error('denied'), { code: 'EPERM' }); } };
+  assert.equal(heartbeatClaim(dir, mine.token, NOW, noUtimes), true);
+});
+
+test('heartbeatClaim: a non-ENOENT first read is not owned, even with a young aside carrying our token', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const mine = takeClaim(dir, NOW);
+  fs.writeFileSync(`${lockOf(dir)}.stale-99999-${NOW - 1000}`, mine.token);
+  const unreadable = {
+    ...fs,
+    readFileSync: (p, ...rest) => {
+      if (p === lockOf(dir)) throw Object.assign(new Error('denied'), { code: 'EACCES' });
+      return fs.readFileSync(p, ...rest);
+    },
+  };
+  assert.equal(heartbeatClaim(dir, mine.token, NOW, unreadable), false);
+});
+
+test('heartbeatClaim: a claim restored by a link-back between the first read and the listing is found by the re-read', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const mine = takeClaim(dir, NOW);
+  let reads = 0;
+  const linkBackRace = {
+    ...fs,
+    readFileSync: (p, ...rest) => {
+      if (p === lockOf(dir) && reads++ === 0) throw Object.assign(new Error('gone'), { code: 'ENOENT' });
+      return fs.readFileSync(p, ...rest);
+    },
+  };
+  assert.equal(heartbeatClaim(dir, mine.token, NOW, linkBackRace), true);
+  assert.equal(reads, 2, 'the claim path was read twice');
+});
+
+test('AC2.1 releaseClaim: a caller whose claim was taken over leaves the successor claim in place', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const first = takeClaim(dir, NOW);
+  assert.equal(first.ok, true);
+  // The first holder is judged dead: a successor takes the claim over.
+  const second = takeClaim(dir, NOW, fs, { isAlive: () => false });
+  assert.equal(second.ok, true);
+  assert.notEqual(second.token, first.token);
+  releaseClaim(dir, first.token);
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), second.token, 'the stale release left the successor claim');
+  releaseClaim(dir, second.token);
+  assert.ok(!fs.existsSync(lockOf(dir)), 'the owner release removes it');
+});
+
+test('releaseClaim: no token removes nothing', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const r = takeClaim(dir, NOW);
+  releaseClaim(dir, undefined);
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), r.token);
+});
+
+test('takeClaim: a claim file that exists but cannot be read is ownerless — in flight while fresh, taken over past CLAIM_STALE_MS, never claim-failed', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  fs.writeFileSync(lockOf(dir), `${process.pid}-held`);
+  const unreadable = {
+    ...fs,
+    readFileSync: (p, ...rest) => {
+      if (p === lockOf(dir)) throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+      return fs.readFileSync(p, ...rest);
+    },
+  };
+  setMtime(dir, NOW - 60 * 1000);
+  assert.deepEqual(takeClaim(dir, NOW, unreadable), { ok: false, reason: 'in-flight' });
+  setMtime(dir, NOW - CLAIM_STALE_MS - 60 * 1000);
+  const r = takeClaim(dir, NOW, unreadable);
+  assert.equal(r.ok, true);
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), r.token);
+});
+
+test('takeClaim: a token write that fails removes the half-made claim and is claim-failed', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const fsApi = { ...fs, writeSync: () => { throw Object.assign(new Error('disk full'), { code: 'ENOSPC' }); } };
+  assert.deepEqual(takeClaim(dir, NOW, fsApi), { ok: false, reason: 'claim-failed' });
+  assert.ok(!fs.existsSync(lockOf(dir)));
+});
+
+// #4032's batched lookup: postMerge dispatches ahead of archive's own warm-up, so without this
+// prefetch every active run would cost one live `gh pr view` per pass.
+test('prefetchPostMergePrStates: warms exactly the PR numbers postMerge would probe — unmarked, clean included, deduplicated', async () => {
+  const root = mainCheckout();
+  addRun(root, '2026-10-30T090001-spec-1', { pr: 11 });
+  addRun(root, '2026-10-30T090002-spec-2', { pr: 12, status: 'clean' });
+  addRun(root, '2026-10-30T090003-spec-3', { pr: 13, decisions: `${formatEntry({ status: 'AUTO', now: NOW, step: MARKER_STEP, text: 'done', reversibility: 'n/a' })}\n` });
+  addRun(root, '2026-10-30T090004-spec-4', { pr: null });
+  addRun(root, '2026-10-30T090005-spec-5', { pr: 11 });
+  const calls = [];
+  await prefetchPostMergePrStates(root, { prefetch: async (arg) => { calls.push(arg); } });
+  assert.equal(calls.length, 1, 'one batched prefetch call');
+  assert.deepEqual([...calls[0].numbers].sort(), [11, 12]);
+});
+
+test('prefetchPostMergePrStates: nothing is looked up for a project postMerge would skip, and a resolver without prefetch is tolerated', async () => {
+  const other = mainCheckout({ claudeMd: '## Work records\n\nwork-backend: local-files\n' });
+  addRun(other, '2026-10-30T090001-spec-1', { pr: 11 });
+  const calls = [];
+  await prefetchPostMergePrStates(other, { prefetch: async (arg) => { calls.push(arg); } });
+  assert.deepEqual(calls, []);
+
+  const root = mainCheckout();
+  addRun(root, '2026-10-30T090001-spec-1', { pr: 11 });
+  await assert.doesNotReject(prefetchPostMergePrStates(root, {}));
+  await assert.doesNotReject(prefetchPostMergePrStates(root, null));
+});
+
+// ---- M6: end to end — the real postMerge, closing-links' closingLinks() core and closeBelowFloorParents; only gh is faked ----
+
+// A merged PR #11 whose Fixes block names `fixes` (default #101); #101 and #102 are the sub-issues of parent
+// #100 (native links). `live` is each sub-issue's state as GitHub reports it now, an hour after the merge.
+// `base` is the PR's baseRefName against the default branch `main`: on another base Step 4.0 closes each
+// still-open Fixes record itself (#4549), and a closed record then reads CLOSED/COMPLETED. A record in
+// `closeErrors` makes that close call throw although the close landed (its live state still turns CLOSED).
+function e2eWorld(live, { base = 'main', fixes = [101], closeErrors = [] } = {}) {
+  const mergedAt = new Date(NOW - 60 * 60 * 1000).toISOString();
+  const repository = { name: 'w', owner: { login: 'acme' } };
+  const calls = [];
+  const closedBy = new Set();
+  const liveOf = (n) => (closedBy.has(n) ? { state: 'CLOSED', stateReason: 'COMPLETED' } : live[n]);
+  const fixesBlock = fixes.map((n) => `Fixes #${n}`).join('\n');
+  const gh = (args, input) => {
+    const key = args.join(' ');
+    calls.push({ key, input });
+    if (key === 'pr view 11 --json state,mergedAt,body,closingIssuesReferences,url,mergeCommit,baseRefName') {
+      return JSON.stringify({
+        state: 'MERGED', mergedAt, url: 'https://github.com/acme/w/pull/11', mergeCommit: { oid: 'abcdef1' }, baseRefName: base,
+        body: `<!-- claude-tweaks-run: 2026-10-30T090000-spec-101 -->\n\n<!-- fixes-start -->\n${fixesBlock}\n<!-- fixes-end -->\n`,
+        closingIssuesReferences: base === 'main' ? fixes.map((number) => ({ number, repository })) : [],
+      });
+    }
+    if (key === 'api repos/{owner}/{repo}/commits/abcdef1 --jq .commit.message') return `fix (#11)\n\n${fixesBlock}\n`;
+    if (key === 'repo view github.com/acme/w --json defaultBranchRef -q .defaultBranchRef.name') return 'main\n';
+    let m = /^issue view (10[12]) --json state,closedAt$/.exec(key);
+    if (m) return JSON.stringify({ state: liveOf(Number(m[1])).state, closedAt: null });
+    m = /^issue close (10[12]) --reason completed --comment /.exec(key);
+    if (m) {
+      closedBy.add(Number(m[1]));
+      if (closeErrors.includes(Number(m[1]))) throw new Error('HTTP 502 after the close landed');
+      return '';
+    }
+    if (args[0] === 'api' && args[1] === 'graphql') {
+      if (args[3].startsWith('query={ __type')) return JSON.stringify({ data: { __type: { fields: [{ name: 'subIssues' }] } } });
+      if (args[3].includes('subIssues(first:100)')) return JSON.stringify({ data: { repository: { i100: { number: 100, subIssues: { nodes: [{ number: 101 }, { number: 102 }], pageInfo: { hasNextPage: false } } } } } });
+      const n = Number(/i(\d+):/.exec(args[3])[1]);
+      return JSON.stringify({ data: { repository: { [`i${n}`]: { number: n, parent: { number: 100 } } } } });
+    }
+    if (key === 'api --paginate repos/acme/w/issues/100/sub_issues --jq .[].number') return '101\n102\n';
+    m = /^issue view (10[12]) --repo acme\/w --json state,stateReason,labels,title,closedByPullRequestsReferences$/.exec(key);
+    if (m) return JSON.stringify({ ...liveOf(Number(m[1])), title: `T${m[1]}`, labels: [{ name: 'risk:low' }], closedByPullRequestsReferences: [] });
+    if (key === 'issue view 100 --repo acme/w --json labels -q [.labels[].name]') return JSON.stringify(['parent-issue']);
+    if (key === 'issue view 100 --repo acme/w --json state,stateReason,comments') {
+      const closedYet = calls.some((c) => c.key.startsWith('issue close 100'));
+      return JSON.stringify({ state: closedYet ? 'CLOSED' : 'OPEN', stateReason: closedYet ? 'COMPLETED' : '', comments: [] });
+    }
+    if (key === 'api user --jq .login') return 'bot\n';
+    if (key === 'issue comment 100 --repo acme/w --body-file -' || /^issue close 100 --repo acme\/w --reason /.test(key)) return '';
+    throw new Error(`unexpected gh call: ${key}`);
+  };
+  return { gh, calls, mergedAt };
+}
+
+async function e2ePass(root, world) {
+  return postMerge({
+    cwd: root, now,
+    prStates: { byNumberAsync: async () => ({ number: 11, state: 'MERGED', mergedAt: world.mergedAt }) },
+    deps: { gh: world.gh },
+  });
+}
+
+function e2eCheckout() {
+  const root = mainCheckout();
+  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'risk-floor: high\nwork-links: native\n');
+  const dir = addRun(root, '2026-10-30T090000-spec-101', { status: 'clean' });
+  return { root, dir };
+}
+
+const writesOf = (calls) => calls.filter((c) => /^issue (comment|close|reopen) /.test(c.key));
+const parentWritesOf = (calls) => writesOf(calls).filter((c) => / 100 /.test(c.key));
+
+test('M6 end to end: an armed merge\'s last sub-issue closes its below-floor parent once — one comment, one close, the parent line and the marker; a second pass does nothing', async () => {
+  const { root, dir } = e2eCheckout();
+  const world = e2eWorld({ 101: { state: 'CLOSED', stateReason: 'COMPLETED' }, 102: { state: 'CLOSED', stateReason: 'COMPLETED' } });
+  const first = await e2ePass(root, world);
+  assert.deepEqual(first, { entries: [{ runDir: dir, pr: 11, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 1 }], deferred: [] });
+  const writes = writesOf(world.calls);
+  assert.deepEqual(writes.map((c) => c.key), ['issue comment 100 --repo acme/w --body-file -', 'issue close 100 --repo acme/w --reason completed']);
+  assert.ok(writes[0].input.startsWith('## Closed below the oversight floor\n'));
+  assert.ok(writes[0].input.includes('- #101 T101 — closed by PR #11'), 'the merging PR names the closing record on the listing');
+  const lines = entriesOf(dir);
+  assert.deepEqual(lines.map((e) => [e.status, e.location]), [['AUTO', 'reconcile post-merge parent-close'], ['AUTO', MARKER_STEP]]);
+  assert.match(lines[0].action, /^closed parent #100 below the oversight floor \(risk:low, risk-floor high\)\./);
+  assert.match(lines[1].action, /^ran Steps 4\.0 and 4\.0b for PR #11, merged after its session: closing links nothing-closed; 1 parent\(s\) closed\./);
+  assert.ok(!fs.existsSync(lockOf(dir)));
+
+  const before = world.calls.length;
+  const second = await e2ePass(root, world);
+  assert.deepEqual(second, { entries: [], deferred: [] });
+  assert.equal(world.calls.length, before, 'the second pass makes no gh call at all');
+});
+
+test('M6 end to end (I1): a closing record a human reopened after the merge keeps its parent open — no comment, no close', async () => {
+  const { root, dir } = e2eCheckout();
+  const world = e2eWorld({ 101: { state: 'OPEN', stateReason: 'REOPENED' }, 102: { state: 'CLOSED', stateReason: 'COMPLETED' } });
+  const r = await e2ePass(root, world);
+  assert.deepEqual(r, { entries: [{ runDir: dir, pr: 11, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 0 }], deferred: [] });
+  assert.deepEqual(writesOf(world.calls), []);
+  const lines = entriesOf(dir);
+  assert.deepEqual(lines.map((e) => e.location), [MARKER_STEP]);
+  assert.match(lines[0].action, /0 parent\(s\) closed; skipped #100 \(incomplete\)\./);
+});
+
+test('#4549 end to end: an armed merge into a non-default base — the late Step 4.0 closes the Fixes record itself and Step 4.0b closes the parent, with no default-branch gate', async () => {
+  const { root, dir } = e2eCheckout();
+  const world = e2eWorld({ 101: { state: 'OPEN', stateReason: '' }, 102: { state: 'CLOSED', stateReason: 'COMPLETED' } }, { base: 'develop' });
+  const r = await e2ePass(root, world);
+  assert.deepEqual(r, { entries: [{ runDir: dir, pr: 11, action: 'ran', closingLinks: 'closed', parentsClosed: 1 }], deferred: [] });
+  const writes = writesOf(world.calls).map((c) => c.key);
+  assert.match(writes[0], /^issue close 101 --reason completed --comment /, 'Step 4.0 closes the Fixes record itself');
+  assert.deepEqual(writes.slice(1), ['issue comment 100 --repo acme/w --body-file -', 'issue close 100 --repo acme/w --reason completed']);
+  assert.ok(!world.calls.some((c) => c.key === 'repo view --json defaultBranchRef -q .defaultBranchRef.name'), 'Step 4.0b reads no default branch');
+  const locations = entriesOf(dir).map((e) => e.location);
+  assert.ok(locations.includes('reconcile post-merge parent-close'), `the parent line is logged: ${locations.join(' | ')}`);
+  assert.equal(locations.at(-1), MARKER_STEP, 'the marker is written last');
+});
+
+test('AC4.1 #4549 end to end: a Fixes record Step 4.0 could not close (closeFailed[]) keeps its parent open even when its close landed', async () => {
+  const { root, dir } = e2eCheckout();
+  const world = e2eWorld(
+    { 101: { state: 'OPEN', stateReason: '' }, 102: { state: 'OPEN', stateReason: '' } },
+    { base: 'develop', fixes: [101, 102], closeErrors: [102] },
+  );
+  const r = await e2ePass(root, world);
+  assert.deepEqual(r, { entries: [{
+    runDir: dir, pr: 11, action: 'ran', closingLinks: 'close-failed', parentsClosed: 0,
+    records: { failed: [], closeFailed: [102], pendingClose: [], unchecked: [] },
+  }], deferred: [] });
+  assert.deepEqual(parentWritesOf(world.calls), [], 'no comment and no close on the parent');
+  const marker = entriesOf(dir).find((e) => e.location === MARKER_STEP);
+  assert.match(marker.action, /0 parent\(s\) closed; skipped #100 \(sibling-unsettled\)\./);
+});
+
+// postMergeOne (#4692): the one guarded single-run path merge mode's already-merged route drives.
+const oneArgs = (root, dir, { prs, links, close, takeClaimFn, extra = {} } = {}) => ({
+  runDir: dir,
+  cwd: root,
+  prStates: fakePrStates(prs),
+  now,
+  deps: {
+    gh: fakeGh, closingLinks: links, closeParents: close, ...(takeClaimFn ? { takeClaim: takeClaimFn } : {}), ...extra,
+  },
+});
+
+// A run dir under archive/, the place postMerge never walks.
+function addArchivedRun(root, runId, { pr = 11, config } = {}) {
+  const dir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ status: 'clean', worktree: null, pr: { number: pr } }));
+  if (config !== undefined) fs.writeFileSync(path.join(dir, 'config.yml'), config);
+  return dir;
+}
+
+test('postMergeOne processes an archive/{run-id} dir postMerge never walks', async () => {
+  const root = mainCheckout();
+  const dir = addArchivedRun(root, '2026-01-01T000000-spec-9');
+  // The loop first, while the archived dir holds no marker: it must not walk archive/ at all.
+  const loopLinks = fakeClosingLinks(ENVELOPE);
+  const loop = await run(root, { prs: { 11: merged() }, links: loopLinks, close: fakeCloseParents() });
+  assert.deepEqual(loop, { entries: [], deferred: [] });
+  assert.equal(loopLinks.calls.length, 0);
+  assert.equal(decisionsOf(dir), '');
+
+  const links = fakeClosingLinks(ENVELOPE);
+  const close = fakeCloseParents();
+  // A relative runDir resolves against `cwd`, not the process cwd.
+  const entry = await postMergeOne(oneArgs(root, path.relative(root, dir), { prs: { 11: merged() }, links, close }));
+  assert.equal(entry.action, 'ran');
+  assert.equal(entry.runDir, dir);
+  assert.deepEqual(links.calls[0].opts, { run: dir, mode: 'post-merge', settleMs: 0, closeWindowMs: CLOSE_WINDOW_MS });
+  assert.equal(close.calls[0].selfInclude, false, 'past the grace: the late-merge parameters');
+  assert.ok(hasPostMergeMarker(decisionsOf(dir)));
+  assert.ok(!fs.existsSync(lockOf(dir)), 'the claim is released');
+});
+
+test('AC5.1: postMergeOne returns already-done when the marker is present', async () => {
+  const root = mainCheckout();
+  const marker = formatEntry({ status: 'AUTO', now: NOW, step: MARKER_STEP, text: 'ran Steps 4.0 and 4.0b', reversibility: 'n/a' });
+  const dir = addRun(root, '2026-10-30T090000-spec-1', { decisions: `${marker}\n` });
+  const links = fakeClosingLinks(ENVELOPE);
+  const entry = await postMergeOne(oneArgs(root, dir, { prs: { 11: merged() }, links, close: fakeCloseParents() }));
+  assert.deepEqual(entry, { runDir: dir, pr: 11, action: 'skipped', reason: 'already-done', verdict: 'already-done', next: 'none' });
+  assert.equal(links.calls.length, 0);
+});
+
+test('postMergeOne reads a multi-spec spec-*/decisions.md marker', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  fs.mkdirSync(path.join(dir, 'spec-4'));
+  const marker = formatEntry({ status: 'AUTO', now: NOW, step: 'pr-first-merge Step 4.0b', spec: 4, text: 'closed parent #9', reversibility: 'high' });
+  fs.writeFileSync(path.join(dir, 'spec-4', 'decisions.md'), `${marker}\n`);
+  const links = fakeClosingLinks(ENVELOPE);
+  const entry = await postMergeOne(oneArgs(root, dir, { prs: { 11: merged() }, links, close: fakeCloseParents() }));
+  assert.equal(entry.reason, 'already-done');
+  assert.equal(links.calls.length, 0);
+});
+
+test('postMergeOne re-reads the marker under the claim: one written after the first read gives already-done, no call', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const marker = formatEntry({ status: 'AUTO', now: NOW, step: MARKER_STEP, text: 'ran Steps 4.0 and 4.0b', reversibility: 'n/a' });
+  const links = fakeClosingLinks(ENVELOPE);
+  const entry = await postMergeOne(oneArgs(root, dir, {
+    prs: { 11: merged() }, links, close: fakeCloseParents(), extra: { beforeClaim: (d) => fs.writeFileSync(path.join(d, 'decisions.md'), `${marker}\n`) },
+  }));
+  assert.deepEqual(entry, { runDir: dir, pr: 11, action: 'skipped', reason: 'already-done', verdict: 'already-done', next: 'none' });
+  assert.equal(links.calls.length, 0);
+  assert.ok(!fs.existsSync(lockOf(dir)), 'the claim is released');
+});
+
+test('postMergeOne runs inside MERGE_GRACE_MS under the claim with the in-session parameters', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const links = fakeClosingLinks(ENVELOPE);
+  const close = fakeCloseParents();
+  let claims = 0;
+  const takeClaimFn = (d, nowMs) => { claims += 1; return takeClaim(d, nowMs); };
+  const entry = await postMergeOne(oneArgs(root, dir, {
+    prs: { 11: merged(new Date(NOW - 60 * 1000).toISOString()) }, links, close, takeClaimFn,
+  }));
+  assert.equal(entry.action, 'ran');
+  assert.equal(claims, 1);
+  assert.deepEqual(links.calls[0].opts, { run: dir, mode: 'post-merge' });
+  assert.equal(close.calls[0].selfInclude, true);
+  assert.ok(hasPostMergeMarker(decisionsOf(dir)));
+  assert.ok(!fs.existsSync(lockOf(dir)));
+});
+
+test('postMergeOne fails closed on an unreadable mergedAt: merged-at-unreadable, no claim, no call, no marker; the loop still defers it as merge-grace', async () => {
+  // `merged(undefined)` would take the default mergedAt: build the no-mergedAt state by hand.
+  for (const prState of [{ number: 11, state: 'MERGED' }, merged('not-a-date')]) {
+    const mergedAt = prState.mergedAt;
+    const root = mainCheckout();
+    const dir = addRun(root, '2026-10-30T090000-spec-1');
+    const links = fakeClosingLinks(ENVELOPE);
+    let claims = 0;
+    const entry = await postMergeOne(oneArgs(root, dir, {
+      prs: { 11: prState }, links, close: fakeCloseParents(), takeClaimFn: () => { claims += 1; return { ok: true }; },
+    }));
+    assert.deepEqual(entry, { runDir: dir, pr: 11, action: 'skipped', reason: 'merged-at-unreadable', verdict: 'failed', next: 'none' }, String(mergedAt));
+    assert.equal(claims, 0, 'no claim taken');
+    assert.equal(links.calls.length, 0);
+    assert.equal(decisionsOf(dir), '');
+    assert.ok(!fs.existsSync(lockOf(dir)));
+
+    const loop = await run(root, { prs: { 11: prState }, links, close: fakeCloseParents() });
+    assert.deepEqual(loop, { entries: [{ runDir: dir, pr: 11, action: 'skipped', reason: 'merge-grace' }], deferred: [dir] });
+  }
+});
+
+test('postMergeOne surfaces Step 4.0\'s record lists; a postMerge entry carries them only for a non-clean word (#4897)', async () => {
+  const envelope = {
+    action: 'reopen-failed', closingSet: [101], failed: [{ issue: 105, error: 'x' }], closeFailed: [], pendingClose: [106], reopened: [],
+  };
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const entry = await postMergeOne(oneArgs(root, dir, { prs: { 11: merged() }, links: fakeClosingLinks(envelope), close: fakeCloseParents() }));
+  assert.deepEqual(entry.records, { failed: [105], closeFailed: [], pendingClose: [106], unchecked: [] });
+  const other = mainCheckout();
+  addRun(other, '2026-10-30T090000-spec-1');
+  const loop = await run(other, { prs: { 11: merged() }, links: fakeClosingLinks(envelope), close: fakeCloseParents() });
+  assert.equal(loop.entries.length, 1);
+  assert.deepEqual(loop.entries[0].records, entry.records, 'a non-clean word: the loop entry names the same records');
+  const clean = mainCheckout();
+  addRun(clean, '2026-10-30T090000-spec-1');
+  const cleanLoop = await run(clean, { prs: { 11: merged() }, links: fakeClosingLinks({ ...envelope, action: 'nothing-closed' }), close: fakeCloseParents() });
+  assert.equal(cleanLoop.entries.length, 1);
+  assert.ok(!('records' in cleanLoop.entries[0]), 'a clean word: the loop entry stays short');
+});
+
+test('postMergeOne maps a non-empty closeFailed (non-default base) and unchecked (base unread, past the retry bound) into records', async () => {
+  const root = mainCheckout();
+  // A non-default base: Step 4.0 closes the Fixes records itself, and one close failed.
+  const nonDefault = addRun(root, '2026-10-30T090000-spec-1');
+  const closeFailedEnvelope = {
+    action: 'close-failed', closingSet: [101], failed: [], pendingClose: [], reopened: [],
+    nonDefaultBase: true, closed: [101], closeFailed: [{ issue: 107, error: 'HTTP 502' }, { issue: 108, error: 'x', stage: 'read' }],
+  };
+  const a = await postMergeOne(oneArgs(root, nonDefault, { prs: { 11: merged() }, links: fakeClosingLinks(closeFailedEnvelope), close: fakeCloseParents() }));
+  assert.equal(a.action, 'ran');
+  assert.deepEqual(a.records, { failed: [], closeFailed: [107, 108], pendingClose: [], unchecked: [] });
+
+  // An unread base: the bound's last attempt writes the marker, and the entry names the unchecked records.
+  const unread = addRun(root, '2026-10-30T090001-spec-2');
+  const links = fakeClosingLinks(BASE_UNCHECKED);
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    assert.equal((await postMergeOne(oneArgs(root, unread, { prs: { 11: merged() }, links, close: fakeCloseParents() }))).reason, 'transient-failure');
+  }
+  const b = await postMergeOne(oneArgs(root, unread, { prs: { 11: merged() }, links, close: fakeCloseParents() }));
+  assert.equal(b.action, 'ran');
+  assert.equal(b.step40Failed, true);
+  assert.deepEqual(b.records, { failed: [], closeFailed: [], pendingClose: [], unchecked: [101, 102] });
+});
+
+test('postMergeOne names the merge re-run in an archived run\'s retry line, the reconcile pass in a live one\'s', async () => {
+  const root = mainCheckout();
+  const archived = addArchivedRun(root, '2026-01-01T000000-spec-9', { config: 'mode: auto\nspec: 9\n' });
+  const entry = await postMergeOne(oneArgs(root, archived, { prs: { 11: merged() }, links: fakeClosingLinks(null, 5), close: fakeCloseParents() }));
+  assert.equal(entry.reason, 'transient-failure');
+  const line = entriesOf(archived).find((e) => e.location === ATTEMPT_STEP).action;
+  assert.match(line, /the next \/claude-tweaks:wrap-up #9 merge retries Steps 4\.0 and 4\.0b; after 3 attempts the tidy parent-gate backstop recovers the parent/);
+  assert.doesNotMatch(line, /reconcile pass/);
+
+  const noSpec = addArchivedRun(root, '2026-01-02T000000-spec-8');
+  await postMergeOne(oneArgs(root, noSpec, { prs: { 11: merged() }, links: fakeClosingLinks(null, 5), close: fakeCloseParents() }));
+  const bare = entriesOf(noSpec).find((e) => e.location === ATTEMPT_STEP).action;
+  assert.match(bare, /the next \/claude-tweaks:wrap-up merge retries Steps 4\.0 and 4\.0b/);
+
+  const live = addRun(root, '2026-10-30T090000-spec-1');
+  await postMergeOne(oneArgs(root, live, { prs: { 11: merged() }, links: fakeClosingLinks(null, 5), close: fakeCloseParents() }));
+  assert.match(entriesOf(live).find((e) => e.location === ATTEMPT_STEP).action, /the next reconcile pass retries Steps 4\.0 and 4\.0b/);
+});
+
+test('postMergeOne returns in-flight when the claim is held', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const links = fakeClosingLinks(ENVELOPE);
+  const entry = await postMergeOne(oneArgs(root, dir, {
+    prs: { 11: merged() }, links, close: fakeCloseParents(), takeClaimFn: () => ({ ok: false, reason: 'in-flight' }),
+  }));
+  assert.deepEqual(entry, { runDir: dir, pr: 11, action: 'skipped', reason: 'in-flight', verdict: 'in-flight', next: 'none' });
+  assert.equal(links.calls.length, 0);
+});
+
+test('postMergeOne returns no-pr and not-merged', async () => {
+  const root = mainCheckout();
+  const noPr = addRun(root, '2026-10-30T090000-spec-1', { pr: null });
+  const open = addRun(root, '2026-10-30T090001-spec-2', { pr: 12 });
+  const links = fakeClosingLinks(ENVELOPE);
+  const a = await postMergeOne(oneArgs(root, noPr, { prs: {}, links, close: fakeCloseParents() }));
+  assert.deepEqual(a, { runDir: noPr, pr: null, action: 'skipped', reason: 'no-pr', verdict: 'failed', next: 'none' });
+  const b = await postMergeOne(oneArgs(root, open, { prs: { 12: { number: 12, state: 'OPEN' } }, links, close: fakeCloseParents() }));
+  assert.deepEqual(b, { runDir: open, pr: 12, action: 'skipped', reason: 'not-merged', detail: 'OPEN', verdict: 'failed', next: 'none' });
+  assert.equal(links.calls.length, 0);
+});
+
+test('postMergeOne reports setup failures with pr null', async () => {
+  const dir = '/nonexistent/run';
+  const base = { runDir: dir, now, deps: {} };
+  // postMergeOne resolves runDir against cwd, which drive-prefixes a POSIX-absolute path on win32.
+  const wrongBackend = mainCheckout({ claudeMd: '## Work records\n\nwork-backend: local\n' });
+  assert.deepEqual(await postMergeOne({ ...base, cwd: wrongBackend, prStates: fakePrStates({}) }), { runDir: path.resolve(wrongBackend, dir), pr: null, action: 'skipped', reason: 'not-github-issues', verdict: 'failed', next: 'none' });
+  const noRemote = mainCheckout({ origin: false });
+  assert.deepEqual(await postMergeOne({ ...base, cwd: noRemote, prStates: fakePrStates({}) }), { runDir: path.resolve(noRemote, dir), pr: null, action: 'skipped', reason: 'no-remote', verdict: 'failed', next: 'none' });
+  const ok = mainCheckout();
+  assert.deepEqual(await postMergeOne({ ...base, cwd: ok, prStates: null }), { runDir: path.resolve(ok, dir), pr: null, action: 'skipped', reason: 'no-pr-states', verdict: 'failed', next: 'none' });
+});
+
+test('I1: postMergeOne and postMerge entries list the same Step 4.0b failures; a deliberate policy skip is not one', async () => {
+  const skipped = [
+    { parent: 100, reason: 'gh-failed', detail: 'HTTP 502' },
+    { issue: 103, reason: 'internal-error', detail: 'boom' },
+    { reason: 'invalid-risk-floor' },
+    { parent: 88, reason: 'above-floor' },
+    { parent: 89, reason: 'sibling-unsettled' },
+    { parent: 90, reason: 'incomplete' },
+    { parent: 91, reason: 'some-future-reason' },
+  ];
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const entry = await postMergeOne(oneArgs(root, dir, {
+    prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents({ closed: [], skipped }),
+  }));
+  assert.equal(entry.action, 'ran');
+  assert.deepEqual(entry.parentFailures, [
+    { parent: 100, reason: 'gh-failed', detail: 'HTTP 502' },
+    { issue: 103, reason: 'internal-error', detail: 'boom' },
+    { reason: 'invalid-risk-floor' },
+    // An unlisted reason is a failure, never silently deliberate.
+    { parent: 91, reason: 'some-future-reason' },
+  ]);
+
+  // Only policy skips: an empty list, a clean `ran`.
+  const quiet = addRun(root, '2026-10-30T090001-spec-2');
+  const clean = await postMergeOne(oneArgs(root, quiet, {
+    prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents({ closed: [], skipped: [{ parent: 88, reason: 'above-floor' }] }),
+  }));
+  assert.deepEqual(clean.parentFailures, []);
+
+  // The step-wide unreadable-policy skip is a failure too.
+  const { root: badPolicy, dir: badDir } = policyCheckout(null);
+  fs.mkdirSync(path.join(badPolicy, '.claude-tweaks', 'policy.yml'));
+  const unreadable = await postMergeOne(oneArgs(badPolicy, badDir, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents() }));
+  assert.deepEqual(unreadable.parentFailures, [{ reason: 'unreadable-policy', detail: '.claude-tweaks/policy.yml: EISDIR' }]);
+
+  const other = mainCheckout();
+  addRun(other, '2026-10-30T090000-spec-1');
+  const loop = await run(other, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents({ closed: [], skipped }) });
+  assert.equal(loop.entries.length, 1);
+  assert.deepEqual(loop.entries[0].parentFailures, entry.parentFailures);
+});
+
+test('AC1.1: a gh-failed Step 4.0b skip in the reconcile loop rides on the entry, which is not a clean ran (#4798)', async () => {
+  const root = mainCheckout();
+  addRun(root, '2026-10-30T090000-spec-1');
+  const r = await run(root, {
+    prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE),
+    close: fakeCloseParents({ closed: [], skipped: [{ parent: 100, reason: 'gh-failed', detail: 'HTTP 502' }, { parent: 88, reason: 'above-floor' }] }),
+  });
+  assert.equal(r.entries[0].action, 'ran');
+  assert.deepEqual(r.entries[0].parentFailures, [{ parent: 100, reason: 'gh-failed', detail: 'HTTP 502' }]);
+  assert.ok(!('stepSkips' in r.entries[0]));
+  assert.deepEqual(classifyEntry(r.entries[0]), { verdict: 'failed', next: 'none', failedSteps: ['4.0b'] });
+});
+
+test('Q2-Q4: a parentless Step 4.0b skip on an empty effective closing set is a stepSkips element, never a parent left open, on both paths (#4798)', async () => {
+  const EISDIR = { reason: 'unreadable-policy', detail: '.claude-tweaks/policy.yml: EISDIR' };
+  const emptySet = { ...ENVELOPE, closingSet: [] };
+  // Loop path, policySkipOf's skip.
+  const { root, dir } = policyCheckout(null);
+  fs.mkdirSync(path.join(root, '.claude-tweaks', 'policy.yml'));
+  const loop = await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(emptySet), close: fakeCloseParents() });
+  assert.deepEqual(loop.entries, [{ runDir: dir, pr: 11, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 0, stepSkips: [EISDIR] }]);
+  assert.equal(classifyEntry(loop.entries[0]).verdict, 'clean');
+  // Single-run path: same split, parentFailures still present and empty.
+  const { root: oneRoot, dir: oneDir } = policyCheckout(null);
+  fs.mkdirSync(path.join(oneRoot, '.claude-tweaks', 'policy.yml'));
+  const one = await postMergeOne(oneArgs(oneRoot, oneDir, { prs: { 11: merged() }, links: fakeClosingLinks(emptySet), close: fakeCloseParents() }));
+  assert.deepEqual(one.parentFailures, []);
+  assert.deepEqual(one.stepSkips, [EISDIR]);
+  assert.equal(one.verdict, 'clean');
+  // Q3 + Q4: closeParents' own parentless skips (any reason) on a closing set the close window emptied.
+  const winRoot = mainCheckout();
+  addRun(winRoot, '2026-10-30T090000-spec-1');
+  const windowed = await run(winRoot, {
+    prs: { 11: merged() }, links: fakeClosingLinks({ ...ENVELOPE, closingSet: [101], closedAfterWindow: [101] }),
+    close: fakeCloseParents({ closed: [], skipped: [{ reason: 'invalid-risk-floor' }, { reason: 'internal-error', detail: 'boom' }] }),
+  });
+  assert.deepEqual(windowed.entries[0].stepSkips, [{ reason: 'invalid-risk-floor' }, { reason: 'internal-error', detail: 'boom' }]);
+  assert.ok(!('parentFailures' in windowed.entries[0]));
+  // A non-empty effective closing set: the same skip is a parent left open.
+  const { root: setRoot } = policyCheckout(null);
+  fs.mkdirSync(path.join(setRoot, '.claude-tweaks', 'policy.yml'));
+  const withSet = await run(setRoot, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents() });
+  assert.deepEqual(withSet.entries[0].parentFailures, [EISDIR]);
+  assert.ok(!('stepSkips' in withSet.entries[0]));
+});
+
+test('Q5: a marker-write-failed entry keeps the run\'s parentFailures and stepSkips, on both paths (#4798)', async () => {
+  const readOnly = { appendEntries: () => { throw new Error('read-only'); } };
+  // Loop path: a parent left open.
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const loop = await run(root, {
+    prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE),
+    close: fakeCloseParents({ closed: [], skipped: [{ parent: 100, reason: 'gh-failed', detail: 'HTTP 502' }] }),
+    extra: readOnly,
+  });
+  assert.deepEqual(loop.entries, [{
+    runDir: dir, pr: 11, action: 'skipped', reason: 'marker-write-failed', parentsClosed: 0,
+    parentFailures: [{ parent: 100, reason: 'gh-failed', detail: 'HTTP 502' }],
+  }]);
+  // Single-run path: a step skip on an empty effective closing set.
+  const { root: oneRoot, dir: oneDir } = policyCheckout(null);
+  fs.mkdirSync(path.join(oneRoot, '.claude-tweaks', 'policy.yml'));
+  const one = await postMergeOne(oneArgs(oneRoot, oneDir, {
+    prs: { 11: merged() }, links: fakeClosingLinks({ ...ENVELOPE, closingSet: [] }), close: fakeCloseParents(), extra: readOnly,
+  }));
+  assert.equal(one.reason, 'marker-write-failed');
+  assert.deepEqual(one.parentFailures, []);
+  assert.deepEqual(one.stepSkips, [{ reason: 'unreadable-policy', detail: '.claude-tweaks/policy.yml: EISDIR' }]);
+  assert.deepEqual([one.verdict, one.next], ['failed', 'rerun']);
+});
+
+test('Q5: a throw after closeParents returns keeps the run\'s parentFailures on the error entry, which is not deferred (#4798)', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  // The null in `closed` makes the parent-line map throw after the split has run.
+  const r = await run(root, {
+    prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE),
+    close: fakeCloseParents({ closed: [null], skipped: [{ parent: 100, reason: 'gh-failed', detail: 'HTTP 502' }] }),
+  });
+  assert.equal(r.entries.length, 1);
+  const entry = r.entries[0];
+  assert.equal(entry.runDir, dir);
+  assert.equal(entry.action, 'skipped');
+  assert.equal(entry.reason, 'error');
+  assert.equal(typeof entry.detail, 'string');
+  assert.deepEqual(entry.parentFailures, [{ parent: 100, reason: 'gh-failed', detail: 'HTTP 502' }]);
+  assert.equal(entry.parentsClosed, 1, 'the closes already happened on GitHub, so the error entry still counts them');
+  assert.deepEqual(r.deferred, [], 'an error entry is not deferred, as for a thrown error today');
+  assert.ok(!fs.existsSync(lockOf(dir)));
+});
+
+test('parentsLeftOpen and stepSkipsOf flatten every entry carrying the fields, in order, any action or verdict, detail dropped (#4798)', () => {
+  const entries = [
+    { pr: 11, action: 'ran', parentFailures: [{ parent: 100, reason: 'gh-failed', detail: 'x' }, { issue: 103, reason: 'internal-error' }] },
+    { pr: 12, action: 'ran', parentFailures: [], stepSkips: [{ reason: 'unreadable-policy', detail: 'y' }] },
+    { pr: 13, action: 'skipped', reason: 'marker-write-failed', parentFailures: [{ parent: 9, reason: 'gh-failed' }], stepSkips: [{ reason: 'invalid-risk-floor' }] },
+    { pr: 14, action: 'ran', parentFailures: 'junk', stepSkips: 'junk' },
+    { pr: 15, action: 'ran', closingLinks: 'close-failed', stepSkips: [{ reason: 'internal-error' }] },
+  ];
+  assert.deepEqual(parentsLeftOpen(entries), [
+    { pr: 11, parent: 100, reason: 'gh-failed' }, { pr: 11, issue: 103, reason: 'internal-error' }, { pr: 13, parent: 9, reason: 'gh-failed' },
+  ]);
+  assert.deepEqual(stepSkipsOf(entries), [{ pr: 12, reason: 'unreadable-policy' }, { pr: 13, reason: 'invalid-risk-floor' }, { pr: 15, reason: 'internal-error' }]);
+  assert.deepEqual(parentsLeftOpen(null), []);
+  assert.deepEqual(stepSkipsOf(undefined), []);
+});
+
+test('parentsLeftOpenLine and stepSkipsLine render the valid items and nothing for none (#4798)', () => {
+  assert.equal(
+    parentsLeftOpenLine([{ pr: 11, parent: 100, reason: 'gh-failed' }, { pr: 11, issue: 103, reason: 'internal-error' }, { pr: 12, reason: 'unreadable-policy' }, 'x', null, { pr: 'x', parent: 1, reason: 'gh-failed' }]),
+    "post-merge Step 4.0b left parent record(s) open: #100 (gh-failed, PR #11), the parent of record #103 (internal-error, PR #11), every parent (unreadable-policy, PR #12) — tidy's parent-gate backstop recovers them",
+  );
+  assert.equal(
+    stepSkipsLine([{ pr: 13, reason: 'invalid-risk-floor' }, null, { pr: 14, reason: 5 }]),
+    'post-merge Step 4.0b skipped step-wide, leaving no parent open (nothing left to close): invalid-risk-floor (PR #13)',
+  );
+  for (const junk of [undefined, null, 'x', [], [null], [{ pr: 11, reason: 5 }]]) {
+    assert.equal(parentsLeftOpenLine(junk), null);
+    assert.equal(stepSkipsLine(junk), null);
+  }
+});
+
+test('supersededChanges + supersededChangesLine: name every GitHub change of a taken-over holder, numbers only', () => {
+  const lost = { action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL };
+  const entries = [
+    { runDir: '/r/a', pr: 12, ...lost, parentsClosed: 2, recordsReopened: [7, 9], recordsClosed: [8] },
+    { runDir: '/r/b', pr: 13, ...lost, recordsReopened: [10] },
+    { runDir: '/r/c', pr: 14, ...lost }, // superseded, changed nothing: today's in-flight skip
+    { runDir: '/r/d', pr: 15, action: 'skipped', reason: 'in-flight', parentsClosed: 1 }, // a plain in-flight skip
+    { runDir: '/r/e', pr: 16, action: 'ran', closingLinks: 'reopened', parentsClosed: 1 },
+  ];
+  assert.equal(isSupersededEntry(entries[2]), true);
+  assert.equal(isSupersededEntry(entries[3]), false);
+  const items = supersededChanges(entries);
+  assert.deepEqual(items, [
+    { pr: 12, parentsClosed: 2, recordsReopened: [7, 9], recordsClosed: [8] },
+    { pr: 13, recordsReopened: [10] },
+  ]);
+  assert.equal(
+    supersededChangesLine(items),
+    'post-merge steps in run(s) whose claim another pass took over had already changed GitHub: PR #12 closed 2 parent record(s) below the oversight floor, reopened #7, #9, closed #8; PR #13 reopened #10',
+  );
+  assert.equal(supersededChangesLine([]), null);
+  assert.equal(supersededChangesLine(undefined), null);
+  assert.deepEqual(supersededChanges(null), []);
+});
+
+test('isSupersededEntry + supersededChanges + supersededChangesLine: all three entry fields must match; malformed counts and numbers are dropped (#4797)', () => {
+  const lostDetail = { detail: CLAIM_LOST_DETAIL };
+  assert.equal(isSupersededEntry({ action: 'skipped', reason: 'error', ...lostDetail }), false);
+  assert.equal(isSupersededEntry({ action: 'ran', reason: 'in-flight', ...lostDetail }), false);
+  assert.equal(isSupersededEntry(null), false);
+  const lost = { action: 'skipped', reason: 'in-flight', ...lostDetail };
+  assert.deepEqual(supersededChanges([
+    { pr: 1, ...lost, parentsClosed: 0, recordsReopened: [], recordsClosed: ['x', null] },
+    { pr: 2, ...lost, parentsClosed: '3', recordsReopened: [5, 'x', 6] },
+    { pr: 'x', ...lost, recordsReopened: [7] },
+    { ...lost, recordsReopened: [8] },
+    null,
+  ]), [{ pr: 2, recordsReopened: [5, 6] }], 'an entry whose pr is not an integer is dropped');
+  assert.equal(supersededChangesLine([{ pr: 'x', parentsClosed: 1 }, null, { pr: 3 }]), null);
+});
+
+// Driven from the producer's own list, so a member added there is covered here with no edit.
+test('I1: every reason below-floor-parent-close.js exports as deliberate leaves parentFailures empty', async () => {
+  assert.ok(DELIBERATE_SKIP_REASONS.length > 0, 'the producer exports a non-empty list');
+  const root = mainCheckout();
+  for (const [i, reason] of DELIBERATE_SKIP_REASONS.entries()) {
+    const dir = addRun(root, `2026-10-30T09${String(i).padStart(4, '0')}-spec-${i + 1}`);
+    const entry = await postMergeOne(oneArgs(root, dir, {
+      prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents({ closed: [], skipped: [{ parent: 88, reason }] }),
+    }));
+    assert.equal(entry.action, 'ran', reason);
+    assert.deepEqual(entry.parentFailures, [], reason);
+  }
+});
+
+// A8 ([IL-168]): postMergeOne classifies its own outcome; merge-mode.md routes on `verdict` and `next`.
+test('classifyEntry: every verdict — clean, failed (a failure word, step40Failed, a parentFailures element), already-done, in-flight', () => {
+  const ran = (over) => ({ runDir: '/r', pr: 11, action: 'ran', closingLinks: 'closed', parentsClosed: 1, parentFailures: [], ...over });
+  assert.deepEqual(classifyEntry(ran()), { verdict: 'clean', next: 'none' });
+  assert.deepEqual(classifyEntry(ran({ parentFailures: undefined })), { verdict: 'clean', next: 'none' }, 'no Step 4.0b ran');
+  // A failed `ran` entry names the steps that failed: 4.0 alone, 4.0b alone, or both.
+  const step40 = { verdict: 'failed', next: 'none', failedSteps: ['4.0'] };
+  assert.deepEqual(classifyEntry(ran({ closingLinks: 'close-pending' })), step40);
+  assert.deepEqual(classifyEntry(ran({ closingLinks: 'some-future-word' })), step40, 'deny direction');
+  assert.deepEqual(classifyEntry(ran({ closingLinks: 'exit 2', step40Failed: true })), step40);
+  assert.deepEqual(classifyEntry(ran({ closingLinks: 'nothing-closed', step40Failed: true })), step40, 'step40Failed beats a clean word');
+  const gateFailure = [{ parent: 9, reason: 'gh-failed' }];
+  assert.deepEqual(classifyEntry(ran({ parentFailures: gateFailure })), { verdict: 'failed', next: 'none', failedSteps: ['4.0b'] }, 'a clean Step 4.0 is not reported failed');
+  assert.deepEqual(classifyEntry(ran({ closingLinks: 'reopen-failed', parentFailures: gateFailure })), { verdict: 'failed', next: 'none', failedSteps: ['4.0', '4.0b'] });
+  assert.ok(!('failedSteps' in classifyEntry(ran())), 'a clean entry carries no failedSteps');
+  assert.ok(!('failedSteps' in classifyEntry({ action: 'skipped', reason: 'error' })), 'a skipped entry carries no failedSteps');
+  const skip = (reason) => ({ runDir: '/r', pr: 11, action: 'skipped', reason });
+  assert.deepEqual(classifyEntry(skip('already-done')), { verdict: 'already-done', next: 'none' });
+  assert.deepEqual(classifyEntry(skip('already-done'), { archived: true }), { verdict: 'already-done', next: 'none' });
+  assert.deepEqual(classifyEntry(skip('in-flight')), { verdict: 'in-flight', next: 'none' });
+});
+
+test('classifyEntry: every next — rerun, rerun-where-gh, rerun-after-stale-claim, none', () => {
+  const skip = (reason) => ({ runDir: '/r', pr: 11, action: 'skipped', reason });
+  for (const reason of ['transient-failure', 'network-failure', 'claim-failed', 'marker-write-failed', 'error']) {
+    assert.deepEqual(classifyEntry(skip(reason)), { verdict: 'failed', next: 'rerun' }, reason);
+  }
+  assert.deepEqual(classifyEntry(skip('gh-absent')), { verdict: 'failed', next: 'rerun-where-gh' });
+  assert.deepEqual(classifyEntry(skip('in-flight'), { archived: true }), { verdict: 'in-flight', next: 'rerun-after-stale-claim' });
+  for (const reason of ['not-github-issues', 'no-remote', 'unknown-host', 'no-pr', 'no-pr-states', 'no-pr-state', 'pr-not-found', 'invalid-arguments', 'merged-at-unreadable', 'not-merged', 'some-future-reason']) {
+    assert.deepEqual(classifyEntry(skip(reason)), { verdict: 'failed', next: 'none' }, reason);
+  }
+});
+
+// Producer coverage: every action word closing-links.js can print, read from its source, has a decided
+// verdict here. A word added there fails this test until it is classified (deny direction: `failed`).
+test('classifyEntry classifies every action word closing-links.js emits', () => {
+  const { stripComments, stripperVerdict } = require('../../helpers/strip-comments');
+  const { readText } = require('../../helpers/read-skill');
+  const raw = readText(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'closing-links.js'));
+  const src = stripComments(raw);
+  assert.equal(stripperVerdict(raw, src), 'ok');
+  const words = new Set();
+  for (const m of src.matchAll(/\baction(?::|\s*=)\s*'([a-z-]+)'/g)) words.add(m[1]);
+  for (const m of src.matchAll(/\baction:\s*[\w.]+\s*\?\s*'([a-z-]+)'\s*:\s*'([a-z-]+)'/g)) { words.add(m[1]); words.add(m[2]); }
+  // Post-merge mode's words, then pre-merge mode's (never on this path; denied like any unknown word).
+  const EXPECTED = {
+    'nothing-closed': 'clean', closed: 'clean', reopened: 'clean', 'no-fixes-span': 'clean', 'not-merged': 'clean', 'no-pr': 'clean',
+    'reopen-failed': 'failed', 'close-failed': 'failed', 'base-unchecked': 'failed', 'close-pending': 'failed', 'gh-absent': 'failed',
+    clean: 'failed', unlinked: 'failed', 'still-linked': 'failed',
+  };
+  assert.ok(words.size >= 14, `the scan found every producer site (${[...words].join(', ')})`);
+  assert.deepEqual([...words].sort(), Object.keys(EXPECTED).sort());
+  for (const [word, verdict] of Object.entries(EXPECTED)) {
+    assert.equal(classifyEntry({ action: 'ran', closingLinks: word, parentsClosed: 0 }).verdict, verdict, word);
+  }
+});
+
+test('postMergeOne closes every entry with verdict and next; postMerge entries carry neither', async () => {
+  const root = mainCheckout();
+  const clean = await postMergeOne(oneArgs(root, addRun(root, '2026-10-30T090000-spec-1'), {
+    prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents(),
+  }));
+  assert.equal(clean.verdict, 'clean');
+  assert.equal(clean.next, 'none');
+  const failedParent = await postMergeOne(oneArgs(root, addRun(root, '2026-10-30T090001-spec-2'), {
+    prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents({ closed: [], skipped: [{ parent: 9, reason: 'gh-failed' }] }),
+  }));
+  assert.deepEqual([failedParent.verdict, failedParent.next, failedParent.failedSteps], ['failed', 'none', ['4.0b']]);
+  assert.ok(!('failedSteps' in clean));
+  const transient = await postMergeOne(oneArgs(root, addRun(root, '2026-10-30T090002-spec-3'), {
+    prs: { 11: merged() }, links: fakeClosingLinks(null, 5), close: fakeCloseParents(),
+  }));
+  assert.deepEqual([transient.reason, transient.verdict, transient.next], ['transient-failure', 'failed', 'rerun']);
+  // An archived run's held claim: the stale-window re-run.
+  const archived = addArchivedRun(root, '2026-01-01T000000-spec-9');
+  const held = await postMergeOne(oneArgs(root, archived, {
+    prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents(), takeClaimFn: () => ({ ok: false, reason: 'in-flight' }),
+  }));
+  assert.deepEqual([held.verdict, held.next], ['in-flight', 'rerun-after-stale-claim']);
+
+  const other = mainCheckout();
+  addRun(other, '2026-10-30T090000-spec-1');
+  const loop = await run(other, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents() });
+  assert.equal(loop.entries.length, 1);
+  assert.ok(!('verdict' in loop.entries[0]) && !('next' in loop.entries[0]) && !('failedSteps' in loop.entries[0]));
+  // The loop's own Step 4.0b failure carries no failedSteps either.
+  const parentLoop = mainCheckout();
+  addRun(parentLoop, '2026-10-30T090000-spec-1');
+  const loopFailed = await run(parentLoop, {
+    prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents({ closed: [], skipped: [{ parent: 9, reason: 'gh-failed' }] }),
+  });
+  assert.ok(!('failedSteps' in loopFailed.entries[0]));
+});
+
+test('M6: a multi-spec config.yml spec value gives the bare merge retry hint, never a garbled #{n}', async () => {
+  const root = mainCheckout();
+  for (const [i, config] of [
+    'mode: auto\nspec: 1068,1103\n',
+    'mode: auto\nspec: [1486, 1501]\n',
+    'mode: auto\nspec: record-3672\n',
+  ].entries()) {
+    const archived = addArchivedRun(root, `2026-01-0${i + 1}T000000-spec-multi`, { config });
+    await postMergeOne(oneArgs(root, archived, { prs: { 11: merged() }, links: fakeClosingLinks(null, 5), close: fakeCloseParents() }));
+    const line = entriesOf(archived).find((e) => e.location === ATTEMPT_STEP).action;
+    assert.match(line, /the next \/claude-tweaks:wrap-up merge retries Steps 4\.0 and 4\.0b/, config);
+  }
+});
+
+test('M8: postMergeOne carries Step 4.0\'s logFailed on a ran entry; a postMerge entry carries it only for a non-clean word (#4897)', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const entry = await postMergeOne(oneArgs(root, dir, {
+    prs: { 11: merged() }, links: fakeClosingLinks({ ...ENVELOPE, logFailed: true }), close: fakeCloseParents(),
+  }));
+  assert.equal(entry.action, 'ran');
+  assert.equal(entry.logFailed, true);
+  // The no-closing-set path carries it too.
+  const notMerged = addRun(root, '2026-10-30T090001-spec-2');
+  const bare = await postMergeOne(oneArgs(root, notMerged, {
+    prs: { 11: merged() }, links: fakeClosingLinks({ action: 'not-merged', pr: 11, state: 'OPEN', logFailed: true }), close: fakeCloseParents(),
+  }));
+  assert.equal(bare.logFailed, true);
+  const quiet = addRun(root, '2026-10-30T090002-spec-3');
+  const clean = await postMergeOne(oneArgs(root, quiet, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents() }));
+  assert.ok(!('logFailed' in clean));
+
+  const other = mainCheckout();
+  addRun(other, '2026-10-30T090000-spec-1');
+  const loop = await run(other, { prs: { 11: merged() }, links: fakeClosingLinks({ ...ENVELOPE, logFailed: true }), close: fakeCloseParents() });
+  assert.ok(!('logFailed' in loop.entries[0]), 'a clean word: the loop entry stays short');
+
+  const failing = mainCheckout();
+  addRun(failing, '2026-10-30T090000-spec-1');
+  const failingLoop = await run(failing, {
+    prs: { 11: merged() }, links: fakeClosingLinks({ ...ENVELOPE, action: 'reopen-failed', logFailed: true }), close: fakeCloseParents(),
+  });
+  assert.equal(failingLoop.entries[0].logFailed, true, 'a non-clean word: the loop entry carries logFailed');
+});
+
+test('heartbeat: every gh call through the shared path refreshes the held claim, in Step 4.0 and in Step 4.0b', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const seen = [];
+  const probe = (gh, label) => {
+    setMtime(dir, NOW - 4 * 60 * 1000);
+    gh(['api', 'user']);
+    seen.push([label, mtimeOf(dir)]);
+  };
+  const links = (argv, d) => { probe(d.gh, '4.0'); return { code: 0, envelope: ENVELOPE }; };
+  const close = (args) => { probe(args.gh, '4.0b'); return { closed: [], skipped: [] }; };
+  const r = await run(root, { prs: { 11: merged() }, links, close });
+  assert.equal(r.entries[0].action, 'ran');
+  assert.deepEqual(seen.map(([label]) => label), ['4.0', '4.0b']);
+  for (const [label, m] of seen) assert.ok(mtimeNear(m, NOW), `the ${label} gh call refreshed the claim`);
+  assert.ok(!fs.existsSync(lockOf(dir)), 'the owner release removed the claim');
+});
+
+test('markSuperseded: suffixes the location of an entry line and leaves any other string alone', () => {
+  assert.equal(
+    markSuperseded('- AUTO 09:00:00 — Closing links: reopened #7 after PR #11\'s merge closed it. Reversibility: high.'),
+    `- AUTO 09:00:00 — Closing links${SUPERSEDED_LOCATION_SUFFIX}: reopened #7 after PR #11's merge closed it. Reversibility: high.`,
+  );
+  assert.equal(markSuperseded('## /wrap-up'), '## /wrap-up');
+});
+
+test('Q2 + Q4: a holder taken over during Step 4.0 makes no further gh call, keeps only its GitHub-change lines (marked superseded), and skips in-flight, deferred', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const ghCalls = [];
+  const successor = `${process.pid}-successor`;
+  const close = fakeCloseParents();
+  const links = (opts, d) => {
+    d.gh(['issue', 'reopen', '101']);
+    fs.writeFileSync(lockOf(dir), successor); // a successor takes the claim over
+    assert.throws(() => d.gh(['issue', 'view', '102']), 'the call after the takeover throws');
+    assert.throws(() => d.gh(['issue', 'view', '103']), 'every later call throws too');
+    d.appendDecision({ runDir: opts.run, entry: '- AUTO 09:00:00 — Closing links: reopened #101 after PR #11\'s merge closed it (closing link or merge-commit keyword). Reversibility: high.' });
+    d.appendDecision({ runDir: opts.run, entry: '- SKIP 09:00:00 — Closing links (degraded): condition: could not read #102 → fallback: x. Reversibility: n/a.' });
+    return { code: 0, envelope: { ...ENVELOPE, action: 'reopen-failed', reopened: [101], failed: [{ issue: 102 }, { issue: 103 }] } };
+  };
+  const r = await run(root, { prs: { 11: merged() }, links, close, extra: { gh: (args) => { ghCalls.push(args.join(' ')); return '{}'; } } });
+  assert.deepEqual(ghCalls, ['issue reopen 101'], 'only the call made before the takeover ran');
+  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL, recordsReopened: [101] }]);
+  assert.deepEqual(r.deferred, [dir]);
+  assert.equal(close.calls.length, 0, 'Step 4.0b never starts');
+  const log = decisionsOf(dir);
+  assert.match(log, /— Closing links \(superseded holder\): reopened #101 /, 'the reopen it made is logged, marked');
+  assert.doesNotMatch(log, /SKIP/, 'no degraded line, no attempt line, no SKIP marker');
+  assert.equal(hasPostMergeMarker(log), false, 'the successor still owns the marker');
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), successor, 'the successor claim stays');
+});
+
+test('Q2 + Q4: a takeover during Step 4.0b stops the pass before its marker; each parent it closed is logged as a superseded line and reported', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const successor = `${process.pid}-successor`;
+  const close = (args) => {
+    args.gh(['issue', 'close', '100']);
+    fs.writeFileSync(lockOf(dir), successor);
+    assert.throws(() => args.gh(['issue', 'close', '200']));
+    return { closed: [{ parent: 100, maxTier: 'low' }], skipped: [{ parent: 200, reason: 'gh-failed', detail: CLAIM_LOST_DETAIL }] };
+  };
+  // A non-default base: Step 4.0 closed #101 itself before Step 4.0b ran.
+  const links = fakeClosingLinks({ ...ENVELOPE, action: 'closed', nonDefaultBase: true, closed: [101], closeFailed: [], closingSet: [101] });
+  const r = await run(root, { prs: { 11: merged() }, links, close });
+  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL, parentsClosed: 1, recordsClosed: [101] }]);
+  assert.deepEqual(r.deferred, [dir]);
+  const log = decisionsOf(dir);
+  assert.match(log, /— reconcile post-merge parent-close \(superseded holder\): closed parent #100 below the oversight floor/);
+  assert.doesNotMatch(log, /#200/);
+  assert.equal(hasPostMergeMarker(log), false, 'no summary marker');
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), successor);
+});
+
+test('Q4 fix: a takeover after the last gh call still stops the marker write', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const successor = `${process.pid}-successor`;
+  // Step 4.0b makes no gh call (as on the policy-skip path); the takeover lands before the marker write.
+  const close = () => { fs.writeFileSync(lockOf(dir), successor); return { closed: [], skipped: [] }; };
+  const r = await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close });
+  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL }]);
+  assert.equal(decisionsOf(dir), '', 'no marker, nothing else to log');
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), successor);
+});
+
+// A `now` that installs the successor on the second read after the closing-links fake returns: the first is the
+// ownership check right after Step 4.0, the second is `stamp = now()`, so the takeover lands between that check and
+// the write guard's own check. Pinned to that point: `arm` ages the claim's mtime, a passing ownership check
+// refreshes it to NOW, and the helper records whether the refresh had happened when it fired. If processRun gains
+// a `now()` call ahead of the post-Step-4.0 check, the takeover lands on that check instead and `ownedAtTakeover`
+// reads false, so the tests fail rather than pass on the wrong check.
+function takeoverBeforeTheWrite(dir, successor) {
+  let armed = false;
+  let reads = 0;
+  let owned = null;
+  return {
+    arm: () => { armed = true; setMtime(dir, NOW - 60 * 1000); },
+    ownedAtTakeover: () => owned,
+    now: () => {
+      if (armed && ++reads === 2) {
+        owned = mtimeNear(mtimeOf(dir), NOW);
+        fs.writeFileSync(lockOf(dir), successor);
+      }
+      return NOW;
+    },
+  };
+}
+
+test('Q2: a holder taken over between the Step 4.0 ownership check and the attempt-line write returns the lost entry and writes no attempt line', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const successor = `${process.pid}-successor`;
+  const takeover = takeoverBeforeTheWrite(dir, successor);
+  const links = () => { takeover.arm(); return { code: 5, envelope: null }; };
+  const r = await postMerge({
+    cwd: root, prStates: fakePrStates({ 11: merged() }), now: takeover.now,
+    deps: { gh: fakeGh, closingLinks: links, closeParents: fakeCloseParents() },
+  });
+  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL }]);
+  assert.deepEqual(r.deferred, [dir]);
+  assert.equal(takeover.ownedAtTakeover(), true, 'the post-Step-4.0 check read owned; the takeover landed after it');
+  assert.equal(decisionsOf(dir), '', 'no attempt line');
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), successor, 'the successor claim stays');
+});
+
+test('Q2: a holder taken over between the Step 4.0 ownership check and the SKIP-marker write returns the lost entry and writes no marker', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const successor = `${process.pid}-successor`;
+  const takeover = takeoverBeforeTheWrite(dir, successor);
+  const links = () => { takeover.arm(); return { code: 0, envelope: { action: 'not-merged', state: 'OPEN' } }; };
+  const r = await postMerge({
+    cwd: root, prStates: fakePrStates({ 11: merged() }), now: takeover.now,
+    deps: { gh: fakeGh, closingLinks: links, closeParents: fakeCloseParents() },
+  });
+  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL }]);
+  assert.deepEqual(r.deferred, [dir]);
+  assert.equal(takeover.ownedAtTakeover(), true, 'the post-Step-4.0 check read owned; the takeover landed after it');
+  assert.equal(decisionsOf(dir), '', 'no SKIP marker');
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), successor, 'the successor claim stays');
+});
+
+test('a claim with no token (a takeClaim fake) never refuses a gh call or a write', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const ghCalls = [];
+  const links = (opts, d) => { d.gh(['pr', 'view', '11']); d.gh(['issue', 'view', '101']); return { code: 0, envelope: ENVELOPE }; };
+  const r = await run(root, {
+    prs: { 11: merged() }, links, close: fakeCloseParents(),
+    extra: { takeClaim: () => ({ ok: true }), gh: (args) => { ghCalls.push(args.join(' ')); return '{}'; } },
+  });
+  assert.equal(r.entries[0].action, 'ran');
+  assert.deepEqual(ghCalls, ['pr view 11', 'issue view 101']);
+  assert.equal(hasPostMergeMarker(decisionsOf(dir)), true);
+});

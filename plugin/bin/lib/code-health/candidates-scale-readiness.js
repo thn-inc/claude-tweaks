@@ -104,7 +104,10 @@
 //     matches, so a loop or an unbounded-list flag on an in-memory constant is
 //     a possible false positive. A `findMany(args)` whose argument is a
 //     variable rather than an object literal reads as unbounded, because a
-//     `take` set elsewhere is not visible. A Mongoose `.find(…)` is bounded
+//     `take` set elsewhere is not visible. A `take`/`limit` key spelled as a
+//     computed string literal (`{ ['take']: 10 }`) bounds the call; one
+//     arriving through a spread (`{ ...opts }`) or a computed variable key
+//     (`{ [key]: 10 }`) does not. A Mongoose `.find(…)` is bounded
 //     only by a `.limit(` among its own chained `.x(…)` continuations: a
 //     `.limit` applied later to a query held in a variable reads as
 //     unbounded, and a chain whose brackets do not balance is skipped.
@@ -130,15 +133,46 @@
 //     variable, is invisible.
 //   - `per-request-db-client` scans route files for `new PrismaClient(`,
 //     `new Pool(`, `new Client(`, `new MongoClient(`, `mysql.createConnection(`,
-//     `mysql.createPool(` and `postgres(` at brace depth above zero. Depth is a
-//     `{`/`}` count from the start of the file with no string or comment
-//     awareness, and `new Client(` matches any class of that name. A client
-//     built in a module-scope factory called per request is not seen.
+//     `mysql.createPool(` and `postgres(` inside a block brace. A `{` is an
+//     object-literal brace when the previous non-whitespace character is one
+//     of `= ( , : [ ? | & .` or the previous word is `default`; every other
+//     `{` (after `)`, `=>`, an identifier) is a block brace. One exception: an
+//     arrow function's expression body is evaluated per call, so a `=>`
+//     followed by anything other than `{` marks its enclosing group (or the
+//     file level) as an arrow expression body, and every `{` opened while a
+//     mark is active is a block brace (`context: () => ({ db: new X() })`,
+//     `=> [{ db: new X() }]`, `=> handle(req, { db: new X() })`,
+//     `=> (cond ? { db: new X() } : null)`). A mark clears when its group
+//     closes or at a `,` or `;` at its own level. A client held in a
+//     module-scope object literal is therefore skipped, including one directly
+//     after a spread (`...{ db: new X() }`), but a module-scope arrow factory
+//     called only once (`const make = () => ({ db: new X() })`) reads as
+//     per-request, and so does everything after a semicolon-less module-scope
+//     arrow expression (`const f = x => x` then a newline) until the next `;`
+//     or `,` at that level. Any `=>` counts, including a TypeScript function
+//     type (`const r: Record<string, (q: Req) => Res> = { db: new X() };`, or
+//     a semicolon-less `type H = (r: Req) => Res` before a module-scope
+//     object), so a module-scope object after one reads as per-request; and
+//     commas inside TypeScript generic arguments `<…>` are not told apart
+//     from commas at the marked level, so `=> handle<A, B>(req, { db: … })`
+//     is missed. The scan runs from the start of the file over the text with
+//     comments and string, template-text and regex bodies blanked, so a brace
+//     inside one is not counted (a stray closer is ignored); a module-scope
+//     `if`/`try` block or IIFE reads as a handler, and a parameter-default
+//     object (`function f(o = { db: new X() })`) reads as module scope.
+//     `new Client(` matches any class of that name. A client built in a
+//     module-scope factory called per request is not seen, and neither is
+//     one built directly in an arrow expression body with no `{` around it
+//     (`app.get('/', (req, res) => new Pool().query(…))`).
 //   - `unbounded-pool` scans all source for `new Pool(` without a `max`
 //     option, `createPool(` without `connectionLimit` and `new MongoClient(`
 //     without `maxPoolSize`, and names the driver default in its evidence. It
 //     inspects only the literal call arguments: a config held in a variable
-//     reads as uncapped.
+//     reads as uncapped. It runs only when a dependency in `DATA_DEPS` is
+//     declared, a repo-level gate: with one declared, a non-database `Pool`
+//     class (`generic-pool`, `undici`) still matches, and a pool from a
+//     database driver that list does not name (`mariadb`, `pg-pool`,
+//     `oracledb`) is skipped as non-database.
 //   - `no-cache-layer` is a presence check, not a quality check. It applies
 //     when at least one route file contains a query call (the same shapes as
 //     the query checks), and passes if any of `redis`, `ioredis`,
@@ -163,6 +197,7 @@ const fs = require('fs');
 const path = require('path');
 const { registerGenerator } = require('./focus-generators');
 const { listTrackedFiles } = require('./source-scan');
+const { stripComments } = require('../strip-comments');
 
 // Directory segments whose contents never ship as the app itself — the
 // prelaunch vertical's NON_SITE_SEGMENT_RE plus mocks and framework build
@@ -577,14 +612,17 @@ function scanQueryInLoop(ctx, candidates) {
 }
 
 // True when the call's args are an object literal with a top-level `take` or
-// `limit` key (`key: v` or bare shorthand). A nested `include: { x: { take } }`
-// or a `limit` used as a value inside `where` does not bound the outer call.
+// `limit` key (`key: v` or bare shorthand, or a computed string-literal key
+// `['take']: v`, the same quote on both sides). A nested
+// `include: { x: { take } }` or a `limit` used as a value inside `where` does
+// not bound the outer call, and a computed variable key (`[key]: v`) stays
+// unbounded because its name is not visible.
 function hasTopLevelLimit(args) {
   const trimmed = args.trim();
   if (!trimmed.startsWith('{')) return false;
   const inner = braceInner(trimmed, 0);
   if (inner === null) return false;
-  return splitTopLevel(inner).some((seg) => /^['"]?(?:take|limit)['"]?\s*(?::|$)/.test(seg));
+  return splitTopLevel(inner).some((seg) => /^(?:['"]?(?:take|limit)['"]?\s*(?::|$)|\[\s*(['"`])(?:take|limit)\1\s*\]\s*:)/.test(seg));
 }
 
 // For a Mongoose `.find(…)` whose `)` is at `closeIdx`: true when a `.limit(`
@@ -791,16 +829,123 @@ function scanInlineSlowWork(ctx, candidates) {
 
 const REQUEST_CLIENT_RE = /\bnew\s+(?:PrismaClient|Pool|Client|MongoClient)\s*\(|\bmysql2?\.create(?:Connection|Pool)\s*\(|(?<![\w$.])postgres\s*\(/g;
 
-// `{` minus `}` in text[0, idx). Counted from the start of the file, not a
-// window before the match: a handler longer than MAX_SCAN_CHARS would
-// otherwise lose its opening brace and read as module scope.
-function braceDepthAt(text, idx) {
-  let depth = 0;
-  for (let i = 0; i < idx; i++) {
-    if (text[i] === '{') depth++;
-    else if (text[i] === '}') depth--;
-  }
-  return depth;
+// Whitespace by char code, not a regex per character: the brace scan is a hot loop.
+function isSpaceCode(c) {
+  return c === 32 || (c >= 9 && c <= 13) || c === 0xA0 || c === 0x1680 || (c >= 0x2000 && c <= 0x200A) || c === 0x2028 || c === 0x2029 || c === 0x202F || c === 0x205F || c === 0x3000 || c === 0xFEFF;
+}
+
+function isWordCode(c) {
+  return (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95 || c === 36;
+}
+
+// Characters after which a `{` opens an object literal, never a block.
+const OBJECT_BRACE_PREFIX = '=(,:[?|&.';
+
+// Returns insideNonObjectBrace(idx): true when text[0, idx) leaves a block
+// brace open — a function or control body, not an object literal. A `{` is an
+// object-literal brace when the previous non-whitespace character is one of
+// `= ( , : [ ? | & .` or the previous word is `default` (`export default {`);
+// every other `{` (after `)`, `=>`, an identifier, `}`) is a block brace. One
+// exception: an arrow function's expression body is evaluated per call, so a
+// `=>` followed (after whitespace) by anything other than `{` marks the
+// innermost open `(`, `[` or `{` group (or the file level) as inside an arrow
+// expression body, and any `{` opened while a mark is active is a block brace.
+// A mark clears when its group closes, or at a `,` or `;` at its own level.
+// Closers match their own opener within the current `{` scope: a stray or
+// mismatched `)`, `]` or `}` is ignored, and a `}` discards any unclosed `(` or
+// `[` above its `{`. The caller passes the file text with comments and string,
+// template-text and regex bodies blanked (`stripComments`, same offsets), so a
+// brace inside one is never counted. One left-to-right pass from the start of
+// the file, not a window before the match: a handler longer than
+// MAX_SCAN_CHARS would otherwise lose its opening brace and read as module
+// scope. The scan position persists across calls, so the per-file cost is
+// linear in the file, not in matches times file length; idx must be
+// non-decreasing (a smaller idx restarts the scan).
+function braceTracker(text) {
+  const root = { t: 'root', block: false, marked: false, p: 0, b: 0 };
+  let stack; // open groups, innermost last; frames: { t: '(' | '[' | '{', block, marked, p, b }
+  let scopes; // the root and every open `{` frame: p and b count the `(` and `[` open directly inside
+  let blockBraces;
+  let activeMarks; // marked frames currently open
+  let pos;
+  let prev; // index of the last non-whitespace character before pos
+  const reset = () => {
+    stack = [];
+    scopes = [root];
+    root.marked = false;
+    root.p = 0;
+    root.b = 0;
+    blockBraces = 0;
+    activeMarks = 0;
+    pos = 0;
+    prev = -1;
+  };
+  const innermostFrame = () => (stack.length > 0 ? stack[stack.length - 1] : root);
+  const discard = (f) => {
+    if (f.marked) activeMarks--;
+    if (f.block) blockBraces--;
+  };
+  // Pops frames through the innermost `(` or `[`; ignored when none is open in this scope.
+  const closeGroup = (t) => {
+    const scope = scopes[scopes.length - 1];
+    if ((t === '(' ? scope.p : scope.b) === 0) return;
+    let f;
+    do {
+      f = stack.pop();
+      discard(f);
+      if (f.t === '(') scope.p--;
+      else scope.b--;
+    } while (f.t !== t);
+  };
+  reset();
+  return function insideNonObjectBrace(idx) {
+    if (idx < pos) reset();
+    for (; pos < idx; pos++) {
+      const code = text.charCodeAt(pos);
+      if (code === 123) { // {
+        const p = prev === -1 ? '' : text[prev];
+        let isObject = p !== '' && OBJECT_BRACE_PREFIX.includes(p);
+        if (!isObject && prev >= 6 && text.startsWith('default', prev - 6) && (prev === 6 || !isWordCode(text.charCodeAt(prev - 7)))) isObject = true;
+        const frame = { t: '{', block: !isObject || activeMarks > 0, marked: false, p: 0, b: 0 };
+        if (frame.block) blockBraces++;
+        stack.push(frame);
+        scopes.push(frame);
+      } else if (code === 40 || code === 91) { // ( [
+        stack.push({ t: code === 40 ? '(' : '[', block: false, marked: false, p: 0, b: 0 });
+        if (code === 40) scopes[scopes.length - 1].p++;
+        else scopes[scopes.length - 1].b++;
+      } else if (code === 41) { // )
+        closeGroup('(');
+      } else if (code === 93) { // ]
+        closeGroup('[');
+      } else if (code === 125) { // } — a stray one is ignored
+        if (scopes.length > 1) {
+          let f;
+          do {
+            f = stack.pop();
+            discard(f);
+          } while (f.t !== '{');
+          scopes.pop();
+        }
+      } else if (code === 44 || code === 59) { // , ;
+        const top = innermostFrame();
+        if (top.marked) {
+          top.marked = false;
+          activeMarks--;
+        }
+      } else if (code === 62 && pos > 0 && text.charCodeAt(pos - 1) === 61) { // =>
+        let k = pos + 1;
+        while (k < text.length && isSpaceCode(text.charCodeAt(k))) k++;
+        const top = innermostFrame();
+        if (k < text.length && text.charCodeAt(k) !== 123 && !top.marked) {
+          top.marked = true;
+          activeMarks++;
+        }
+      }
+      if (!isSpaceCode(code)) prev = pos;
+    }
+    return blockBraces > 0;
+  };
 }
 
 // [call regex, option that caps the pool, driver default named in the evidence]
@@ -811,21 +956,24 @@ const POOL_CHECKS = [
 ];
 
 function scanPooling(ctx, candidates) {
+  const dbDep = [...ctx.deps].some((d) => DATA_DEPS.has(d));
   let routeChecked = 0;
   for (const { rel, text } of ctx.sourceTexts) {
     if (ctx.routeFiles.has(rel)) {
       routeChecked++;
       const seen = new Set();
       const calls = new RegExp(REQUEST_CLIENT_RE.source, 'g');
+      const insideNonObjectBrace = braceTracker(stripComments(text, { literals: 'blank' }));
       let m;
       while ((m = calls.exec(text)) !== null) {
-        if (braceDepthAt(text, m.index) <= 0) continue;
+        if (!insideNonObjectBrace(m.index)) continue;
         const line = lineOf(text, m.index);
         if (seen.has(line)) continue;
         seen.add(line);
         candidates.push({ file: rel, kind: 'per-request-db-client', evidence: `${rel}:${line} ${m[0].replace(/\s*\($/, '').replace(/\s+/g, ' ')} created inside a handler — a new client or pool per request instead of one shared at module scope` });
       }
     }
+    if (!dbDep) continue;
     for (const { re, capped, name, note } of POOL_CHECKS) {
       const calls = new RegExp(re.source, 'g');
       let m;
@@ -838,7 +986,11 @@ function scanPooling(ctx, candidates) {
       }
     }
   }
-  return { pooling: `${routeChecked} route file(s) checked for per-request clients, ${ctx.sourceTexts.length} source file(s) checked for uncapped pools` };
+  return {
+    pooling: dbDep
+      ? `${routeChecked} route file(s) checked for per-request clients, ${ctx.sourceTexts.length} source file(s) checked for uncapped pools`
+      : `${routeChecked} route file(s) checked for per-request clients; uncapped-pool check skipped — no database dependency declared`,
+  };
 }
 
 const CACHE_DEPS = new Set(['redis', 'ioredis', '@upstash/redis', '@vercel/kv', 'lru-cache', 'node-cache', 'keyv', 'cache-manager', 'memcached']);

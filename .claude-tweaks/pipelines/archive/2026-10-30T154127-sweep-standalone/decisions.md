@@ -1,0 +1,126 @@
+## /tidy
+- AUTO 17:01:47 — Step 4.5: reconcile (all nine checks, --json): 0 actions applied. mirror dirty (ff declined); worktrees 8 skipped (3 in-use, 5 pr-open); claims 9 skipped (7 no-run-state, 2 pr-open); runs 108 skipped; branches 11 skipped (too-young); remote-prune 168 skipped; ledger-residue 32 skipped (29 open rows, 3 run-live); console 0 ready; archive 0 archived, 2 stuck (oldest 3d). Reversibility: n/a.
+- AUTO 17:01:47 — Step 6: archived 10 clean pipeline run dirs (2026-10-28T070053-dispatch-standalone, 2026-10-28T172247-dispatch-standalone, 2026-10-30T042121-backlog-standalone, 2026-10-30T043043-backlog-standalone, 2026-10-30T084853-backlog-standalone-standalone, 2026-10-30T090255-dispatch-standalone, 2026-10-30T123626-backlog-standalone, 2026-10-30T123731-dispatch-standalone, 2026-10-30T134558-backlog-standalone, 2026-10-30T154102-backlog-standalone) via archive-run. Reversibility: high (moved under archive/, nothing deleted).
+- SKIP 17:01:47 — Step 6: archive-run refused 4 runs on console-residue (unreviewed Review Console items): 2026-10-25T143627-spec-4303 (48), 2026-10-27T184830-spec-4481 (1), 2026-10-28T172234-spec-4468-4465-4423 (2), 2026-10-30T061610-spec-4563 (1) — surfaced to the human. Reversibility: n/a.
+- SKIP 17:01:47 — Step 4: 35 superpowers plans kept: repo canon #4465 (unreleased in installed 6.156.1) defaults superpowers-plans-retention to keep-forever; 1 plan past the 7-day cutoff, below the 30-plan archive threshold. 32 ledgers kept (29 open rows, 3 live run dirs). Reversibility: n/a.
+- SKIP 17:01:47 — Step 4.5: detached clean worktree basewt in another session's scratchpad (2f77026a…) not removed — owner session unknown, sibling mutwt is dirty; surfaced to the human. Reversibility: n/a.
+- SKIP 17:01:47 — Step 4.7: stale claims #3942, #3977, #4347 not released — each has an open PR (#4444, #4445, #4476); surfaced as unsettled runs. Reversibility: n/a.
+- STAGED 17:01:47 — Step 6: Promote parked #4437 (trigger met). Stage path: staged/tidy-promote-1.md. needs:decision marker posted. Reversibility: n/a.
+- STAGED 17:01:47 — Step 6: Promote parked #4127 (trigger likely met). Stage path: staged/tidy-promote-2.md. needs:decision marker posted. Reversibility: n/a.
+- STAGED 17:01:47 — Step 5.6: Propose digest cluster [issues] (5 entries). Stage path: staged/digest-promotion-1.md. Reversibility: n/a.
+- STAGED 17:01:47 — Step 5.6: Propose digest cluster [wrap-up] (4 entries). Stage path: staged/digest-promotion-2.md. Reversibility: n/a.
+- STAGED 17:01:47 — Step 5.6: Propose digest cluster [tests] (4 entries). Stage path: staged/digest-promotion-3.md. Reversibility: n/a.
+- STAGED 17:01:47 — Step 5.6: Propose digest cluster [worktree] (3 entries). Stage path: staged/digest-promotion-4.md. Reversibility: n/a.
+- STAGED 17:01:47 — Step 5.6: Propose digest cluster [review] (3 entries). Stage path: staged/digest-promotion-5.md. Reversibility: n/a.
+## /flow
+- AUTO 17:04:27 — Step 2.8: claimed #4548 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 17:04:40 — Step 2.8: claimed #4550 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 17:04:53 — Step 2.8: claimed #4559 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 17:05:09 — Step 2.8: claimed #4549 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 17:05:24 — Step 2.8: claimed #4551 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 17:09:19 — Step 2.8: claimed #4553 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 17:09:46 — Step 2.8: claimed #4554 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 17:10:24 — Step 2.8: claimed #4555 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 17:10:41 — Step 2.8: claimed #4556 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 17:10:49 — Step 2.8: claimed #4557 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 17:14:21 — Step 2.8: claimed #4534 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 17:15:23 — Step 2.8: claimed #4558 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 17:15:44 — Step 2.8: claimed #4560 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 17:15:57 — Step 2.8: claimed #4578 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 17:16:12 — Step 2.8: claimed #4579 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 17:18:09 — Step 2.8: claimed #4593 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 17:19:57 — Step 2.8: claimed #4594 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 17:20:07 — Step 2.8: claimed #4606 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 17:20:51 — Step 2.8: claimed #4626 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 17:21:08 — Step 2.8: claimed #4640 (bin/claim-targets.js, transport: git). Reversibility: high.
+## /specify
+- AUTO 17:04:48 — Framing Guard: #4548 Framing Guard: FRAMING: open — mechanism grounded in observed taskkill incident + existing no-stash analogue; proceeding to shape. Reversibility: n/a.
+- AUTO 17:05:15 — Framing Guard: #4559 Framing Guard: FRAMING: open — observed incident (dropped autostash), two alternative directions offered; proceed to shaping. Reversibility: n/a.
+- AUTO 17:08:25 — Shape: #4548 shaped headlessly: Surface infra (no Design-intent/Ui-stack lines — non-frontend), risk:low size:medium ceremony:standard type:feature, shaping framing-check open (no solution:unjustified), near-dup screen 19 candidates none title-similar (no refusal, appended to Related), shaped:headless+ready in one write; read-back verified. Reversibility: n/a.
+- AUTO 17:08:37 — Release: released claim on #4548 (shaped: #4548); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 17:08:51 — Framing Guard: framing-check #4550 (raw body): FRAMING: open — defect report with observed repro (pending-CI immediate merge on a develop integration branch); proceeding to Shape. Reversibility: high. Reversibility: n/a.
+- AUTO 17:08:51 — Shape: Shaped #4550 headlessly: Surface: infra (no Design-intent/Ui-stack lines — non-frontend); ceremony-check -> ceremony:standard; shaping framing-check -> open (no solution:unjustified); stamped ready, shaped:headless, risk:medium, size:medium, type:bug; near-duplicate screen: 25 candidates, none title-similar, no refusal; read-back verified. Reversibility: high. Reversibility: n/a.
+- STAGED 17:08:51 — Diagram suggestion: diagram-suggestion (flowchart) for #4550. Reversibility: high. Reversibility: n/a.
+- AUTO 17:09:06 — Release: released claim on #4550 (shaped: #4550); labels removed: bot:in-progress. Reversibility: high.
+- STAGED 17:09:19 — Diagram suggestion: diagram-suggestion (flowchart) for #4559. Reversibility: n/a.
+- AUTO 17:09:19 — Shape: #4559 shaped headless: Surface: infra (no Design-intent/Ui-stack — non-frontend; ui-stack policy empty); risk:medium size:medium ceremony:standard type:bug; shaping framing-check open (no solution:unjustified); near-dup screen: 30 candidates, 0 refusal-eligible (no title-similarity) → appended to Related. Reversibility: n/a.
+- AUTO 17:09:39 — Release: released claim on #4559 (shaped: #4559); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 17:09:42 — Framing Guard: #4549 framing-check (guard, raw body): FRAMING: open — observed defect with reproduced symptom; proceeded to shape. Reversibility: n/a.
+- AUTO 17:09:42 — Shape: #4549 shaped headless: Surface: infra (no Design-intent/Ui-stack — non-frontend); risk:medium size:medium ceremony:standard type:bug; shaping framing-check open (no solution:unjustified); near-dup screen 27 candidates, none title-similar, no refusal; ready + shaped:headless in one write, read-back passed. Reversibility: high (gh issue edit).
+- STAGED 17:09:42 — Diagram suggestion: diagram-suggestion (flowchart) for #4549. Reversibility: high.
+- AUTO 17:09:53 — Framing Guard: #4551 framing-check guard: FRAMING: open — defect with observed symptom; proceeding to shape. Reversibility: high. Reversibility: n/a.
+- AUTO 17:09:53 — Shape: #4551 shaped headless: Surface backend (Design-intent/Ui-stack n/a), stamped ready+shaped:headless, risk:medium, size:medium, ceremony:standard, type:bug; shaping framing-check open (no solution:unjustified); near-dup screen refuse:false, 15 score-1/2 candidates appended to Related. Reversibility: high. Reversibility: n/a.
+- AUTO 17:09:55 — Release: released claim on #4549 (shaped: #4549); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 17:10:05 — Framing Guard: #4554 Framing Guard: FRAMING: open — observed-defect record with measured repro; expected outcome stated, mechanism not prescribed. Reversibility: n/a.
+- AUTO 17:10:07 — Release: released claim on #4551 (shaped: #4551); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 17:10:49 — Framing Guard: #4555 framing guard: FRAMING: open — evidence-grounded gap, alternatives offered; proceed to shape. Reversibility: n/a.
+- AUTO 17:11:07 — Framing Guard: #4556 Framing Guard: FRAMING: open — evidence (25 wd-guard-refusal events, refused shapes) selects the inline brief constraint; proceed to Shape. Reversibility: n/a.
+- AUTO 17:13:28 — Metadata block: #4554 Surface: infra (bin CLI, no rendered UI) — Design-intent/Ui-stack omitted (non-frontend; ui-stack policy empty). Reversibility: n/a.
+- AUTO 17:13:28 — Shape: #4554 shaped headless — risk:low size:low ceremony:fast-lane type:bug, shaping framing-check FRAMING: open (no solution:unjustified), near-duplicate screen 0 candidates, shaped:headless+ready in one write, read-back OK. Reversibility: n/a.
+- AUTO 17:13:38 — Release: released claim on #4554 (shaped: #4554); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 17:14:37 — Shape: #4556 shaped headless — Surface: infra (Design-intent/Ui-stack omitted: non-frontend); near-dup screen 0 candidates; ceremony-check fast-lane; shaping framing-check open (no solution:unjustified); stamped ready, shaped:headless, risk:low, size:low, ceremony:fast-lane, type:bug; read-back verified; diagram-suggestion: no signal. Reversibility: n/a.
+- AUTO 17:14:47 — Release: released claim on #4556 (shaped: #4556); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 17:14:51 — Framing Guard: #4553 framing-check guard -> FRAMING: open (incident-grounded symptom selects the ancestry check). Proceeded to shape. Reversibility: n/a.
+- AUTO 17:14:51 — Shape: #4553 shaped headless: Surface infra (no Design-intent/Ui-stack lines), FRAMING open (no solution:unjustified), CEREMONY standard, stamped ready+shaped:headless risk:medium size:medium ceremony:standard type:feature; near-dup: 24 score-1 body-anchor hits appended to Related, no refusal. Read-back verified. Reversibility: n/a.
+- STAGED 17:14:51 — Diagram suggestion: diagram-suggestion (flowchart) for #4553 — five blocker-landing verdicts branching to stop/satisfied/proceed. Reversibility: high. Reversibility: n/a.
+- STAGED 17:14:59 — Diagram suggestion: diagram-suggestion (flowchart) for #4555. Reversibility: n/a.
+- AUTO 17:14:59 — Shape: #4555 shaped headless: Surface infra (no Design-intent/Ui-stack — non-frontend); risk:medium size:medium ceremony:standard type:feature; shaping framing-check open (no solution:unjustified); not breaking; shaped:headless + ready in one write. Reversibility: n/a.
+- AUTO 17:15:02 — Release: released claim on #4553 (shaped: #4553); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 17:15:05 — Claim: #4557 claimed via claim-targets.js (transport git); bot:in-progress present. Reversibility: high.
+- AUTO 17:15:05 — Framing Guard: #4557 framing-check guard -> FRAMING: open (observed false-BLOCKED symptom; report names alternatives). Proceeded to shape. Reversibility: n/a.
+- AUTO 17:15:05 — Shape: #4557 shaped headless: Surface infra (Design-intent/Ui-stack omitted: non-frontend; ui-stack policy empty); premise probe located the fixed 60x20s budget in _shared/subagent-dispatch-core.md:70 plus six restated copies; near-dup screen 12 candidates (0 title-similarity) appended to Related, shapingRefusal refuse:false; ceremony-check standard; shaping framing-check open (no solution:unjustified); not breaking; stamped ready, shaped:headless, risk:medium, size:medium, ceremony:standard, type:bug; read-back verified. Reversibility: n/a.
+- STAGED 17:15:05 — Diagram suggestion: diagram-suggestion (flowchart) for #4557 — at-bound branches: progress->extend window, no-change window->BLOCKED, ceiling->BLOCKED, read-only child->self-judge. Reversibility: high.
+- AUTO 17:15:17 — Release: released claim on #4557 (shaped: #4557); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 17:15:20 — Release: released claim on #4555 (shaped: #4555); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 17:16:31 — Framing Guard: #4579 framing-check verdict: open — observed symptom (SDD ruling + pending console item per record) cited, two alternative directions offered; proceeding to shape. Reversibility: n/a.
+- AUTO 17:17:14 — Framing Guard: #4534 framing guard: FRAMING: open (measured 433 vs 420 round trips; two alternative deliverables) — proceed to shape. Reversibility: n/a.
+- AUTO 17:17:14 — Shape: #4534 shaped headless: live body passed compose-record.js --check (exit 0) so body left as-is; Surface infra (no Design-intent/Ui-stack; ui-stack policy empty); near-dup candidates #4473 (score 2, title-similarity+body-anchor-overlap, not in flight) and #4321 (score 1) — no refusal; ceremony-check standard; framing-check open; stamped ready, shaped:headless, risk:low, size:medium, ceremony:standard (type:task already present). Reversibility: n/a.
+- AUTO 17:17:27 — Release: released claim on #4534 (shaped: #4534); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 17:19:09 — Framing Guard: #4558 framing guard: FRAMING: open (defect report with observed symptom; two candidate fixes offered, cause stated as inference) — proceed to shape. Reversibility: high. Reversibility: n/a.
+- AUTO 17:19:09 — Shape: #4558 shaped headlessly: Surface infra (no Design-intent/Ui-stack — non-frontend); risk:low size:low ceremony:fast-lane type:bug; shaping framing-check open (no solution:unjustified); near-duplicate screen 11 score-1 body-anchor hits (no refusal, appended to Related); ready+shaped:headless in one write, read-back passed. Reversibility: high. Reversibility: n/a.
+- AUTO 17:19:15 — Framing Guard: #4560 framing-check guard verdict open — three file-cited findings, ACs accept fix-or-drop; proceeding to shape. Reversibility: high. Reversibility: n/a.
+- AUTO 17:19:15 — Metadata block: #4560 Surface: backend (no rendered UI); headless posture Design-intent: none, ui-stack policy empty → sentinel; both lines omitted for a backend record. Reversibility: high. Reversibility: n/a.
+- AUTO 17:19:15 — Shape: #4560 shaped headless — risk:medium, size:low, ceremony:standard, framing open (no solution:unjustified), type:task kept; added ready + shaped:headless in one write; read-back verified; 20 score-1 near-dup candidates appended to Related, shapingRefusal refuse:false. Reversibility: high. Reversibility: n/a.
+- AUTO 17:19:17 — Release: released claim on #4558 (shaped: #4558); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 17:19:28 — Release: released claim on #4560 (shaped: #4560); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 17:19:59 — Shape: #4579 shaped headless: Surface infra (non-frontend — Design-intent/Ui-stack lines omitted, ui-stack policy empty); risk:low size:low ceremony:fast-lane type:feature; shaping framing-check open (no solution:unjustified); near-dup screen 12 score-1 candidates appended to Related, no refusal; ready + shaped:headless in one write; read-back verified. Reversibility: n/a.
+- AUTO 17:20:14 — Release: released claim on #4579 (shaped: #4579); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 17:20:17 — Framing Guard: #4578 framing-check (guard, raw body): FRAMING: open — defect report with repro, observed flip and cited policy-schema.js:644; proceeding to Shape. Reversibility: high. Reversibility: n/a.
+- AUTO 17:20:17 — Shape: #4578 shaped headlessly: Surface infra (Design-intent/Ui-stack omitted, non-frontend); near-duplicate screen 0 candidates over 322 open records; ceremony-check standard; shaping framing-check open (no solution:unjustified); stamped risk:medium size:medium ceremony:standard type:bug + ready + shaped:headless in one write; read-back passed. Reversibility: high. Reversibility: n/a.
+- STAGED 17:20:17 — Diagram suggestion: diagram-suggestion (flowchart) for #4578 — gh-probe error classification (timeout→retry / ENOENT→detected local-merge / non-zero→detected local-merge / success→pr-first): /claude-tweaks:visualize flowchart 4578 --source specify. Reversibility: high. Reversibility: n/a.
+- AUTO 17:20:18 — Framing Guard: #4594 Framing Guard: FRAMING: open — deliverable CLI justified by #4465 review evidence (12/22 findings on the prose paragraph) and residue.js precedent. Reversibility: n/a.
+- AUTO 17:20:30 — Release: released claim on #4578 (shaped: #4578); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 17:21:27 — Framing Guard: Framing Guard #4640: FRAMING: open — defect report with repro and observed symptom; multiple acceptable fixes named. Reversibility: n/a.
+- AUTO 17:21:50 — Release: released claim on #4606 (routed: needs:definition #4606); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 17:21:51 — Framing Guard #4606: framing-check #4606 = open (not solution-baked); record self-declares an undecided product call (Defer-reason: needs-human-decision; 3 candidate contracts, 'Not yet decided'). Shaping withheld — routed to needs:definition via needsDecisionMarker (ceiling unattended) + explanatory comment, rather than fabricating the human call into a ready spec. Reversibility: high. Reversibility: n/a.
+- AUTO 17:22:15 — Framing Guard: #4593 framing-check (guard) -> FRAMING: open; proceeding to shape. Reversibility: high. Reversibility: n/a.
+- AUTO 17:22:15 — Shape: #4593 shaped headless: Surface backend (Design-intent/Ui-stack not applicable), risk:medium size:medium ceremony:standard type:bug, framing open (no solution:unjustified), near-dup screen no refusal (score-2 #4590 key-files+anchor; Related appended), ready + shaped:headless in one write, read-back passed. Reversibility: high. Reversibility: n/a.
+- STAGED 17:22:15 — Diagram suggestion: Diagram suggestion: diagram-suggestion (flowchart) for #4593. Reversibility: high. Reversibility: n/a.
+- AUTO 17:22:27 — Release: released claim on #4593 (shaped: #4593); labels removed: bot:in-progress. Reversibility: high.
+- STAGED 17:23:25 — Diagram suggestion: diagram-suggestion (flowchart) for #4594 — retention routing branches prune-after-wrapup/ask/keep-forever → delete/prune-ask/keep/prune-archive. Reversibility: n/a.
+- AUTO 17:23:37 — Shape: #4594 shaped headless: Surface infra (Design-intent/Ui-stack omitted, non-frontend; ui-stack policy empty), risk:medium size:medium ceremony:standard, shaping framing open (no solution:unjustified), shaped:headless+ready in one write; near-dup screen 8 candidates, no refusal. Reversibility: n/a.
+- AUTO 17:23:46 — Release: released claim on #4594 (shaped: #4594); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 17:24:09 — Framing Guard: #4626 framing guard: FRAMING: open (decision record with three named options, count-first approach) — proceed to shape. Reversibility: n/a.
+- AUTO 17:24:09 — Dependency-narration check: #4626 builds on #4610's not-yet-merged accept:* migration — added native blocked-by: #4610. Reversibility: n/a.
+- AUTO 17:24:09 — Shape: #4626 shaped headless: live body already passed compose-record --check (kept verbatim; appended near-duplicate Related line #4502,#4564,#4577,#4620,#4621,#4623,#4624 and ## Original request); stamped ready, shaped:headless, risk:medium, size:medium, ceremony:standard; type:task already present; Surface: infra (no Design-intent/Ui-stack); shaping framing-check open, no solution:unjustified; near-duplicate refusal: none. Reversibility: n/a.
+- AUTO 17:24:21 — Release: released claim on #4626 (shaped: #4626); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 17:24:29 — Shape: Shaped #4640 headless: Surface: infra (no Design-intent/Ui-stack — non-frontend); stamped ready, shaped:headless, risk:low, size:medium, ceremony:standard (ceremony-check: CLI stderr + dispatch.md prose change spans parser/CLI/build skill), type:bug; shaping framing-check: open (no solution:unjustified); near-dup screen: #3986,#4618,#4549,#4559 surfaced as Related, no refusal (no title-similarity). Reversibility: n/a.
+- AUTO 17:24:39 — Release: released claim on #4640 (shaped: #4640); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 17:25:23 — Close-out: bare drain (--source sweep --budget all) {shaped: 19, routed: 1, failed: 0}; shaped #4548 #4550 #4559 #4549 #4551 #4553 #4554 #4555 #4556 #4557 #4534 #4558 #4560 #4578 #4579 #4593 #4594 #4626 #4640; routed #4606 (needs:definition, off-procedure: framing open but body defers a human decision); eligible set empty; dispatched as one single-record agent per iteration (5 concurrent), each verified centrally against live labels. Reversibility: n/a.
+## /backlog
+- AUTO 17:27:07 — Grant chain: Backlog grant: zero-eligible short-circuit — 37 candidate(s), 0 needing grant-check: trust: 37 (merge-lane breaker not tripped, watched set empty). Reversibility: n/a.
+- AUTO 17:28:49 — apply-refine-labels: #4626: applied +priority:medium. Reversibility: high.
+- AUTO 17:28:54 — apply-refine-labels: #4632: applied +priority:low. Reversibility: high.
+- AUTO 17:28:58 — apply-refine-labels: #4640: applied +priority:medium. Reversibility: high.
+- AUTO 17:29:02 — apply-refine-labels: #4644: applied +priority:low. Reversibility: high.
+- SKIP 17:29:03 — Dependency repair: 3 prose-dependency flags dismissed as false positives, no needs:decision stamped: #4571 (parent; table row names other records' blockers), #4553 (AC example fixture '#11 is blocked by #10 and by out-of-run #5'), #3944 (parent; describes its sub-issues' chain). Priority rationale: #4626 medium (blocks on #4610, policy call for #4608), #4632 low (space-in-path collision, tangential, needs:definition), #4640 medium (high-risk review tier silently dropped), #4644 low (verification, blocked-external). Reversibility: n/a.
+- AUTO 17:29:13 — Report: refine --source sweep: granted 0, re-authorized 0, needs-decision 0, not re-asked 0, skipped 37 (trust: 37); priority set on 4; dependency-repair 0 (3 false positives dismissed); Resolve lane unresolved this run (human decision only): #4343 bot:blocked plus open needs:* records. Reversibility: n/a.
+## /sweep
+- AUTO 17:30:12 — Close-out: sweep summary — tidy: applied 10, staged 7, yours 32, clean 7 scans; specify: shaped 19, routed 1, failed 0; refine: granted 0, re-authorized 0, needs-decision 0, skipped 37 (trust), priority 4; attention: 97 rows. Reversibility: n/a.
+## /tidy --approve
+- AUTO 21:04:55 — Step 7 (--approve): user approved all 7 staged items (option: approve all, dedupe); re-verified live first — digest #1426 open, all 19 entries un-promoted, #4437/#4127 still parked. Reversibility: n/a.
+- AUTO 21:04:55 — Step 7 (--approve): digest-promotion-1..5 filed via capture's write path (specShapedBody + recordPayload + gh issue create, type:task added for work-types: labels): #4645 issues (5), #4646 wrap-up (4), #4647 tests (4), #4648 worktree (3), #4649 review (2 — duplicate 508-line suite finding materiality-55c09c3b dropped, filed once in #4647). Reversibility: med (close the issues).
+- AUTO 21:04:55 — Step 7 (--approve): marked 19 digest #1426 entry lines with → #N across 8 trusted comments (materiality-55c09c3b → #4647); older entry without fingerprint matched by text → #4645. Reversibility: med (edit the comments).
+- AUTO 21:04:55 — Step 7 (--approve): overlap screens posted heuristic triage comments: recent-commit on #4645 (2), #4646 (7), #4647 (5), #4648 (2); open-PR on #4649 (#4643) — generic cluster titles make these low-signal. Reversibility: n/a.
+- AUTO 21:04:55 — Step 7 (--approve): tidy-promote-1/2 (Promote, no mutation): recommended /claude-tweaks:specify #4437 and /claude-tweaks:specify #4127; records unchanged. Reversibility: n/a.
+- AUTO 21:04:55 — Step 7.5 (--approve): verified: 5 records OPEN with ready,risk,size,by:capture,type:task; 19/19 digest lines carry a promotion marker; no working-tree writes, so no worktree or commit. Reversibility: n/a.

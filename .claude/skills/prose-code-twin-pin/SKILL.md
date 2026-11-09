@@ -36,6 +36,38 @@ No such test → flag it: either the vocabulary needs a pinning test (model it o
 examples below), or the "table" isn't actually a closed vocabulary and the prose should say so
 plainly instead of reading like one.
 
+When one vocabulary lives in three or more hand-kept places, list every pair. Pin each pair a real
+failure can travel along, or say why that pair cannot drift. #4484 keeps review staging names in
+three places:
+
+- the release roster (`plugin/skills/release/disposition.md`);
+- the console's `SECTION_MAP`/`CANONICAL_PREFIXES` (`plugin/bin/lib/console/resolve.js`);
+- the composer's `STAGE_PATH_RE` (`plugin/bin/lib/log-decision/review-routing.js`).
+
+The build pinned only roster↔SECTION_MAP. Review then found roster↔composer unpinned, the same drift
+the record itself fixed. The fix (`9a22084c2`) added `unloggableReviewExamples` in
+`tests/release-run-dir-lifecycle-conformance.test.js`.
+
+The roster↔SECTION_MAP edge is neither full set equality nor the containment-only exemption in the
+Anti-Patterns one-direction row below. Full equality is wrong because `SECTION_MAP` is a superset
+router. Containment of one producer is not enough either, because the console can map a `review-*`
+prefix that the roster omits. The pin works in both directions, with each side filtered first:
+
+- Every roster Example on a row a review producer stages goes through the live
+  `classifyStagedItem`, and must not come back `unmapped-prefix`.
+- Every `review-*` entry in `CANONICAL_PREFIXES` must have a roster row
+  (`assertRosterMatchesSectionMap`).
+
+When the code side routes more than one vocabulary, restrict it to the prefix namespace the prose
+owns, and assert equality inside that namespace.
+
+When the extractor expands brace alternatives (`staged/review-{n}.{md,patch}`), the go-red control
+must put the offending alternative second (`{patch,md}`). The roster's own `stagedNamesIn` keeps only
+the first alternative. If a regression made the new expander do the same, an offender in first
+position would still be caught, so the control would pass and prove nothing about the expander.
+#4484 recorded the plan override as SDD ruling ledger row 25. Pin the expander's cross product
+directly as well: `exampleNames('`staged/x-{a,b}.{c,d}`')` must give all four names.
+
 ## Worked examples
 
 The first two instances below are the two records the originating reflect finding named — one
@@ -153,6 +185,47 @@ bullet with `includes`). Step 1's key/case/array-literal grep misses this twin; 
 a property value (`grep -rn "state: 'no-pr'" plugin/bin/`). The fix is the one above: export a
 frozen list from the CLI and `deepEqual` it against the words parsed from the prose.
 
+**Projected-twin instance (#4488):** the code side need not be a row-for-row copy of the table. It
+can be a per-cell projection of it. `plugin/bin/lib/log-decision/review-routing.js`'s
+`ALLOWED_SEVERITIES` maps each route (`auto`, `staged`, `kept-prompt`) to the severities that route
+takes across all three ceiling columns of `plugin/skills/review/step3-routing.md`'s ceiling-keyed
+routing table. No table row equals any map entry, so step 2's "parsed row-for-row" reading finds
+nothing to compare. `tests/bin-lib/log-decision/review-routing.test.js`'s "the composer allows
+exactly the route/severity pairings step3-routing.md's ceiling-keyed table produces" test
+(`b5669aa6f`) builds the projection from the prose instead:
+
+1. It parses the four severity rows.
+2. It takes each cell's first word as the route. The Low row's `STAGED (unless …)` cell reads as
+   `staged`.
+3. It collects `{route → Set(severity)}`.
+4. It `deepEqual`s that, sorted, against the imported map.
+
+It went red under an `auto: ['low','medium','high']` mutant. When the code side is a projection,
+apply the same projection to the prose, and compare at that level.
+
+**Regex-constant and detector-over-composer instance (#4423):** two twin shapes that are neither a
+table nor a vocabulary.
+
+- *A validation regex that agents run from prose.* `plugin/bin/lib/issues/claim-store.js`'s
+  `RUN_ID_SHAPE` was restated verbatim in three skill files, and on the gh-absent MCP path that prose
+  copy was the implementation. Export the constant. Build the copy list by `grep -rlF` on a
+  distinctive fragment, never by memory. Assert every copy `includes(RUN_ID_SHAPE.source)`.
+  Since #4596 it is restated in one skill file, `flow/claim-targets.md`; the gh-absent MCP path and
+  `/tidy` call `plugin/bin/stale-claim-pr.js` instead, so there is no prose copy left to drift.
+  `tests/issue-claims-stale-open-pr-conformance.test.js`'s "the run-id shape is restated only in
+  flow/claim-targets.md" test asserts the copy list both ways: the one copy matches, the two retired
+  copies are absent.
+- *A code detector whose input line is produced by a code composer.* `staleClaimInFlightPr` matches
+  a run marker that `plugin/bin/lib/flow/pr-body.js` writes. It shipped pinned only against
+  hand-typed markers, which agree with the detector by construction. Pin the detector to the
+  composer instead: run `composePrEarlyBody`/`composeExpressBody` output through it, each marker
+  form alone, including the body with every HTML comment stripped (what a gh-absent MCP read
+  returns): `tests/bin-lib/claim-targets/claim-targets.test.js`'s "matches the run marker
+  pr-body.js composes, in either form alone" test.
+
+Both pins were proven red by mutation (a reworded prose copy; a reworded composer marker) before
+they landed.
+
 **Candidate instance (a live, currently-unpinned gap this check surfaces today):**
 `plugin/bin/lib/compose-subject.js:69`'s `TYPE_PRECEDENCE = ['feature', 'bug', 'task']` is a
 *third* copy of the same closed vocabulary `TYPES`/`TYPE_PREFIX` above already key off — used to
@@ -176,6 +249,80 @@ selected by a `startsWith` literal the test retypes instead of importing `MARKER
 step's hand-written `close-out-update: cleared ({reason})` line has the detector-twin shape of the
 `consoleReplacedByAutoMerge` row below, since `CLEARED_RE` reads it. Walk the fence line by line,
 and name the constant or regex each line must match before you call the pin complete.
+
+**Behavior-twin instance (#4599, narrowed by #4603):** the code side can drive a whole prose
+procedure, not one table. `plugin/bin/lib/issues/below-floor-parent-close.js` is the reconciler's
+Step 4.0b driver (`_shared/pr-first-merge-post-merge.md`) for `wrap-up/verification-brief-parent-gate.md`,
+from **Resolve the parent** through **Close the parent below the floor**. The gate's evaluation
+(Resolve through Evaluate, and the idempotence check) is one shared module,
+`plugin/bin/lib/issues/parent-gate.js`, that the prose's CLI (`bin/parent-gate.js`) and the reconciler
+both run, so those parts cannot drift apart. What stays a twin is the close's composer, the comment text it
+writes, and the marker line the prose writes and the reconciler reads. No vocabulary spans the
+prose and those, so step 1's grep finds nothing. Split what is left into the parts that can drift, and pin each the way
+its shape owes:
+
+- *Fixed text* is a composer twin. `tests/bin-lib/issues/below-floor-parent-close.test.js` compares
+  `composeCloseComment` with the prose's closing-comment fence, substituted, and does the same for
+  the listing line, the bare listing line and the not-planned line.
+- *A number the prose states* is an exported constant. `tests/below-floor-parent-close-conformance.test.js`
+  pins the prose's "10 minutes" and asserts `MERGE_GRACE_MS` and `CLOSE_WINDOW_MS` equal it.
+- *A string the shared module emits and the prose quotes* is a twin too, even though sharing the
+  code already keeps the CLI and the reconciler together: sharing binds code to code, never the
+  prose to either. The same suite's #4770 case pulls the backticked `identity probe failed …` note
+  out of **Close the parent below the floor** step 1 and asserts it equals `parent-gate.js`'s
+  exported `IDENTITY_PROBE_FAILED_NOTE`, with the note stripped from the prose as its go-red control.
+- *A marker line the prose writes and the code reads* is the writer/reader row in Anti-Patterns. The
+  same suite parses `--step` and `--text` out of Step 4.0b's summary command, runs them through
+  `formatEntry`, and asserts `hasPostMergeMarker` reads the result, with a renamed `--step` as the
+  go-red control. The `(skipped)` SKIP line, which the prose also calls the marker, reaches the
+  reader only through a step string `tests/bin-lib/reconcile/post-merge.test.js` retypes.
+- *A declared divergence* is stated on both sides: the prose's "except that it skips the
+  **Self-inclusion rule**" clause, and the `selfInclude: false` the check passes, pinned by running it.
+- *Skip rules* are pinned by the #4800 block of the same suite. A table classifies every Step 4.0b
+  skip sentence, failing on a sentence no row matches and on a row no sentence matches; the gate's
+  no-op states and close step 1's no-op values join the prose set. That set must equal
+  `DELIBERATE_SKIP_REASONS`, and, less the gate's pass-through states (the module emits those as
+  `verdict.state`, never as a literal), the quoted literals the module source names. A rule added
+  as a clause inside a sentence a row already matches is the one shape it does not see.
+
+Walk the procedure section by section, and name the shape each part takes, before you call the
+mirror pinned.
+
+**Driver-emitted line instance (#4812):** the code side can build a log line inline in a driver's
+branches, with no composer to call with the prose's placeholders. `plugin/bin/lib/flow/pr-early-open.js`
+writes four rebind lines (`rebound`/`rebind of` a reused/reopened PR) through one `log` closure, and
+`_shared/pr-early-run-lifecycle.md` states them as backticked `AUTO {time} — …`/`SKIP {time} — …`
+templates. Each side was pinned only against itself. `tests/bin-lib/flow/pr-early-open.test.js`'s
+"the four rebind log lines pr-early-open.js writes equal pr-early-run-lifecycle.md's templates" test
+runs the composer row's substitution in reverse:
+
+1. It drives every emitting branch through the injected harness, one scripted run per branch.
+2. It maps each run's concrete values back to placeholders (`#7` → `#{number}`, the run id →
+   `{run-id}`, `HTTP 422` → `{error}`). Pick fixture values that occur nowhere else in the line, or
+   the map rewrites text that is not a placeholder.
+3. It extracts the templates with one regex over the whitespace-collapsed doc, asserts their exact
+   count, and `deepEqual`s the two sorted lists, so a branch with no template and a template with
+   no branch both fail.
+4. Its go-red controls run through the same helper, each matched to its own message: a reworded
+   template, and a dropped one.
+
+The map also drops the `- ` bullet and `formatEntry`'s default `log-decision:` step, which the
+templates leave out. Keep it to placeholders plus such known differences, so a real drift is not
+normalized away.
+
+**Prose-parser instance (#4940):** the prose side can restate a parser's acceptance rule for a
+reader that has no code to run. The routine kernel in `_shared/routine-template-schema.md` reads
+`declare-claude-tweaks` only on its empty-plugin-cache branch, where `bin/resolve-policy.js` is not
+installed, so its clause (a top-level, unquoted `false`, optionally followed by a `# comment`) is a
+hand copy of `parseFlatLines` in `plugin/bin/lib/policy-schema.js`. No word of the clause is a key,
+case or array literal there, so step 1's grep finds nothing. The build shipped it unpinned; #4940's
+review caught that, and accepted the prose parser because the resolver cannot run on that branch.
+`tests/declare-claude-tweaks-opt-out.test.js` now pins it two ways: one `resolve-policy.js --values`
+run per clause (a trailing comment, a quoted `"false"`, a commented-out line, an indented key), and
+a byte-pin of the clause with a strip control per clause. The two halves sit in separate tests
+joined only by a comment, so a parser change turns the resolver test red and leaves the clause pin
+green. Keep each clause and its input on one table row, asserting both, so the red row names the
+clause to edit.
 
 ## Existing coverage, checked
 
@@ -206,13 +353,15 @@ dependency's code.
 | Skipping the composer check because the prose side is one quoted line beside the command that writes it, not a fenced template | That line is the same twin as the fenced example in the composer row above, and it is easier to type from memory. #3224's `plugin/skills/dispatch/task-prompt.md` Context pack tells the reader to run `log-decision.js --status AUTO --step "Dispatch group {group}" ... --reversibility n/a`, then quotes the `decisions.md` line that call "produces". The record's first draft of that line ended `Reversibility: n/a (informational).`, which `plugin/bin/lib/log-decision/append.js`'s `formatEntry` can never emit. The plan pinned the draft in a test without running the CLI, and only the whole-branch review caught it. The shipped `tests/dispatch-model-profile-conformance.test.js` still pins the corrected line as a literal checked only against the prose, so a format change in `formatEntry` leaves the prose stale and every suite green. The fix is one assertion: call the exported composer with the invocation's own placeholders (`formatEntry({ status: 'AUTO', now, step: 'Dispatch group {group}', text: 'first-call model resolved to {model} (source: {source})', reversibility: 'n/a' })`), replace its `HH:MM:SS` with the prose's `{time}`, and `assert.strictEqual` the two. When step 1 greps for a twin, treat any "which produces" or "writes" sentence followed by a quoted line as a template too |
 | Pinning a prose rule about what a composer emits by its wording, or skipping it under step 1's "only in prose, no twin" exit | A rule that says the composed output omits or adds something has a twin: the composer the rule describes. If the composer has no input that could trigger the rule, the rule has no implementation, and a wording pin makes that look shipped. #1712's creation rule (omit the `polish` row only when every record in the run has `surface: backend`) is restated in `_shared/pr-early-run-lifecycle.md`, `flow/steps-and-gates.md`, and `flow/multispec-pr-checklist.md`. `tests/pr-early-run-lifecycle.test.js` has five `#1712` tests that match the wording, and none of them calls `composePrEarlyBody`. Neither that composer nor `plugin/bin/compose-pr-body.js` takes a `surface:` value, so every body they compose includes the `polish` row. #2877's ledger found this after it removed the composer's unused `phases` parameter, which no caller had ever used to omit the row. The check is to call the composer with the rule's triggering input and assert the shape the rule promises. If there is no argument to pass that input through, report the rule as unimplemented and file it. Don't add another wording assertion |
 | Retyping a module constant as a literal inside a `node -e` fence that already `require`s that module | The fence becomes a third copy of the value, beside the code and the prose sentence, and a pin on the fence's literal stays green when the constant moves. #3366's refusal fence in `plugin/skills/specify/shaping-mode.md` prefilters which candidates get claim and linked-PR reads. It first shipped `h.signals.length >= 2` beside `shapingRefusal`'s `MIN_REFUSAL_SCORE` check, pinned by `code.includes('h.signals.length >= 2')`. `buildShapingState` builds state only for the prefiltered numbers, so a change that lowers the constant to 1 and updates its own pin and the prose would leave the fence skipping the reads for score-1 candidates, and `shapingRefusal` would never refuse them, while the fence's literal pin stays green. The final review (`1b86a3afd`) destructured `MIN_REFUSAL_SCORE` from the fence's existing `require` and retargeted the pin to `h.signals.length >= MIN_REFUSAL_SCORE`. When the fence can `require` the module, which #3358's jq filter above cannot, import the constant rather than generating or pinning its text. Keep the prose sentence's number a literal pin plus a `strictEqual` on the constant, as `tests/specify-near-duplicate-prose.test.js` does. When step 1 greps for a twin, also grep the `node -e` fences under `plugin/skills/` that `require` the module for the constant's literal value |
+| Telling the model in prose to apply an exported predicate or threshold to data a fence already holds, without calling it in that fence | The model re-derives the rule by eye, and nothing ties the sentence to the predicate. #4701 exported `deepOverlapHits` from `plugin/bin/lib/issues/near-duplicate.js` and named it in a `plugin/skills/specify/shaping-mode.md` sentence. The refusal fence there already held `hits` but never called it, so the shaper applied the 3-anchor floor by hand. Review lens 3a caught it, and the fix (`8eb900008`) destructured `deepOverlapHits` from the fence's existing `require` and printed its result as `deep`, which the prose now names. `tests/specify-near-duplicate-prose.test.js` pins the call in the fence, and runs the fence on a hit at the anchor floor so the printed `deep` list is checked too. When a sentence names a `plugin/bin/lib` predicate over data a fence holds, call it in the fence, print the result, have the prose read that output, and pin the call with `assert.match(fenceBody, /predicate\(/)` |
 | Pinning a prose command string only by executing it through the CLI it names | Running the prose through the real `run()` proves one direction: every key the prose names is one the CLI accepts. A key *dropped* from the prose still passes, because a shorter batch writes fine. #3350's Manifesto `--set` batch is the prose twin of `MANIFESTO_LEVERS` plus `RUN_PINS`; the first `tests/flow-manifesto-integration-model-pin.test.js` executed it with a value per key, and removing `merge-authorization={v}` from `plugin/skills/flow/manifesto.md` left it green. The wrap-up fix added the reverse direction, `assert.deepEqual(keys.filter((k) => !RUN_PINS.includes(k)), [...MANIFESTO_LEVERS])`, and removing the pair then fails it. An executing pin and a set-equality pin cover opposite halves of the same twin: write both |
 | Treating a code-side test of an emitted free-text label as a pin on the prose that restates it | `plugin/bin/lib/reconcile/console-execute.js`'s `resolveConsoleExecution` hardcodes `note: 'declined, no reason given'` for any item named in neither list, and `tests/resolve-console.test.js` asserts that string through the CLI. `_shared/console-execution.md` restates the label as fact (its unticked-at-Resolve rule, and since #3513 the accelerator note that a `--decline` id is recorded `declined`), and no test compares the prose to the literal, so a reworded note leaves the prose wrong with every suite green. The label is neither a table row nor a status word, so step 1's key/case/array-literal grep misses it. Grep the quoted phrase across both trees (`grep -rn 'no reason given' plugin/bin/ plugin/skills/`) and, when a twin turns up, export the label from the module and `includes()` it against the prose. Pinned since #3636: `console-execute.js` exports `DECLINED_NOTE`/`REVERSED_LABEL`/`REVERSE_FAILED_NOTE`, and `tests/build-sdd-ledger-residue-carryforward.test.js` `includes()` each against the prose |
 | Writing a detector regex in `plugin/bin/` over a log line that skill prose tells the agent to type, and treating it as code-only because no composer produces the line | The detector is the code twin, and the prose template is the line's only producer, so a reworded template switches the detector off with every suite green. #3668's `consoleReplacedByAutoMerge` (`plugin/bin/lib/reconcile/archive-merged.js`) hand-copies `(?:Fast-lane\|Manifesto-authorized) auto-merge: issue #\d+, assess-agent-autonomy verdict auto-merge` from the `AUTO {time} — …` templates in `wrap-up/auto-merge-short-circuit.md` (two) and `wrap-up/manifesto-authorized-merge.md` (one). It was first written unpinned, and only the review fixes added the pin. `tests/bin-lib/reconcile/archive-merged.test.js` now extracts every backticked template from the live prose, collapses whitespace, fills `{n}`, runs each through the real detector, asserts the exact template count per file so an added producer fails too, and goes red on a mutated template through the same helper. That scope still missed a third producer: #3740 found `dispatch/settle-and-merge.md`'s bundle Auto-merge gate, which also merges with no console and writes two passing templates (the per-member `Auto-merge gate: #{n} assess-agent-autonomy verdict auto-merge.` line and the local-merge `Auto-merge: group [{issues}], …` line) beside a `verdict needs-human` fall-back that is not a producer, because a Review Console renders after it. The same suite now pins that file's three templates by count, asserting the fall-back stays undetected, and the gate pattern is built from `plugin/bin/lib/dispatch/merge-verdict.js`'s `verdictMarker(VERDICT_STEPS.gate, …)` rather than retyped. Find every producer by grepping the canonical continuation across the tree (`grep -rln 'assess-agent-autonomy verdict auto-merge' plugin/skills/`, whose fourth hit, `_shared/auto-decision-log.md`, is a worked example, not a producer), not only the files the detector was modeled on. Two things that pin needs. Agents reuse the bare phrase in free-form text, so the regex anchors on the template's canonical continuation and the suite carries a free-form negative fixture. And the template's code span must be one line: the Manifesto one was first hard-wrapped between `verdict` and `auto-merge`, which the test's whitespace collapse hides while an agent copying it across lines writes a line the literal-space regex misses (the guard then stays off and the run archives unguarded). Unwrap the span rather than relying on the collapse |
 | Taking step 1's no-code-twin exit when one skill's prose tells the agent to write a log line and another skill's prose tells it which lines to select | Both sides are prose, so the `plugin/bin/` grep finds nothing, yet a reworded marker, prefix, or heading on either side makes the reader select nothing with every suite green. Parse the reader's selector parameters out of its prose, build fixture lines from the writer's template (every shape it can emit, plus near-miss negatives under the same and other headings), and assert the selection equals the writer lines. Prove go-red by rewording each selector parameter in turn, not only the marker (`tests/review-build-not-run-conformance.test.js`, #3767). When the writer's prose is a `log-decision.js` invocation with no quoted line, a hand-built fixture line restates `plugin/bin/lib/log-decision/append.js`'s `formatEntry` (the `## {section}` heading and the `{step}: {text}` join), which is the very span a selector such as `Common Step 3: simplify: scope simplified at {sha}` matches. Parse `--section`, `--status`, `--step` and `--text` out of the writer's prose, fill the placeholders, run them through the real `run()` against an anchored temp run dir (`{root}/main/.git` plus `{root}/main/.claude-tweaks/pipelines/{run-id}/`, with `now`, `cwd` and `mainRoot` injected), and apply the reader's backticked selector to the `decisions.md` it wrote. Go red by rewording the phrase in the writer and in the reader in turn, by moving the line under another heading, and by appending a second writer line to prove the last one wins (`tests/review-skip-build-handled-work-conformance.test.js`, #4137) |
 | Pinning a code vocabulary into prose by naming each member (`SDD_RULING_REASONS.NO_DEFER_REASON`, then `.UNCLASSIFIED`) | One assertion per named field stays green when a third member is added to the frozen object and never reaches the prose. #3880's first `tests/build-sdd-ruling-deferral-gate.test.js` named both reasons, and the fix (`28c2b18cc`) iterates `Object.values(SDD_RULING_REASONS)` against `review-console-appendix.md`'s `pending — {reason}` text, with a non-empty floor so an emptied export cannot pass vacuously. Iterating closes code→prose only. The reverse direction (an `sdd-ruling-*` reason stated in the appendix that the code never emits) is still unpinned, and pinning it means scoping the parse to the `sdd-ruling-` prefix, because `pending — unmapped-prefix` in the same file shares the shape. Iterate the export by default, and decide the reverse direction explicitly per the one-direction row above |
-| Accepting an extract-and-run test of a reference snippet as its pin when a `bin/` function implements the same rule | Running the snippet proves it executes, not that it agrees with the code, so a rule changed on one side leaves both suites green. `_shared/run-dir-resolution.md`'s "Bash snippet (resolution)" is the reference implementation that `bin/lib/hooks/run-dir-resolve.js` mirrors. #3865 narrowed `newestMatch` from a substring to a whole-segment slug match (`hasSegment`), and the snippet's Step-2 `find -name "*${SPEC_SLUG}*"` glob stayed a substring match with every suite green. The build deferred the snippet to its ledger, and `/claude-tweaks:review` then fixed it and found `wrap-up/merge-mode.md` still calling `--spec-slug` a substring match. The pair is still unpinned: `tests/pipeline-run-dir-adoption-anchoring.test.js` runs the extracted snippet and `tests/hooks-run-dir-resolve.test.js` calls `resolve()`, each over its own fixtures. The pin is one table of directory names and slugs run through both (`runResolutionWith(extractSnippet(), …)` and `resolve(…)`), asserting the same basename. Leave out of the table the cases where the code diverges on purpose (the dead-candidate skip, #1962) and name them in the test. When either side changes, also grep the flag or function name across `plugin/skills/` and `docs/` for sentences that restate the old rule |
+| Accepting an extract-and-run test of a reference snippet as its pin when a `bin/` function implements the same rule | Running the snippet proves it executes, not that it agrees with the code, so a rule changed on one side leaves both suites green. `_shared/run-dir-resolution.md`'s "Bash snippet (resolution)" is the reference implementation that `bin/lib/hooks/run-dir-resolve.js` mirrors. #3865 narrowed `newestMatch` from a substring to a whole-segment slug match (`hasSegment`), and the snippet's Step-2 `find -name "*${SPEC_SLUG}*"` glob stayed a substring match with every suite green. The build deferred the snippet to its ledger, and `/claude-tweaks:review` then fixed it and found `wrap-up/merge-mode.md` still calling `--spec-slug` a substring match. The pair is still unpinned: `tests/pipeline-run-dir-adoption-anchoring.test.js` runs the extracted snippet and `tests/hooks-run-dir-resolve.test.js` calls `resolve()`, each over its own fixtures. The pin is one table of directory names and slugs run through both (`runResolutionWith(extractSnippet(), …)` and `resolve(…)`), asserting the same basename. Leave out of the table the cases where the code diverges on purpose (the dead-candidate skip, #1962) and name them in the test. The table has to reach every branch the snippet carries, not only Step 2: `runResolutionWith` hardcodes `MODE: ''` and `STANDALONE_SKILL: ''`, so the step-4 standalone mint never runs. #4807 stopped `resolve({ standalone })` doubling a trailing `-standalone`, and the snippet kept doubling it with every suite green until a review commit aligned it by hand (`caa61fbd6`). Add standalone-name rows (`backlog`, `backlog-standalone`, bare `standalone`) run with `MODE=auto` against `resolve({ standalone, create: true })`. When either side changes, also grep the flag or function name across `plugin/skills/` and `docs/` for sentences that restate the old rule |
 | Taking step 1's no-twin exit because the prose table lives in a maintainer doc (`docs/*.md`), not a skill | A procedure doc that every editor of a module must read before changing it is the same twin: the next editor follows the doc's table, not the code. #3630 added a Check / Prerequisite / Satisfied by table to `docs/reconcile-checks.md`'s "expanded with its prerequisites" bullet, restating `plugin/bin/lib/reconcile/index.js`'s `PREREQUISITES`, and step 2 of that doc's add-a-check procedure now tells the editor to add an entry, so the two sides are edited together by design. It first merged with `tests/reconcile.test.js` importing `PREREQUISITES` but never reading the doc, so a third entry or a changed `satisfiedBy` would have left the doc table wrong with every suite green. Answer step 2 for a docs table the same way as for skill prose: parse the rows out of the doc and `deepEqual` the check, prerequisite and satisfied-by columns against the imported object. Pinned since #3630 that way, and shown red by changing a column and by removing a row |
 | Taking step 1's no-twin exit because the code side is a chain of early `return 'reason'` guards, not a key, case or array, and its terms differ from the prose's | A comment claiming parity with a skill's table (`follows tidy's orphan-ledger rule`) marks the twin. `plugin/bin/lib/reconcile/ledger-residue.js`'s `classifyLedgerCandidate` claimed parity with `tidy/scan-procedures.md`'s Orphaned-ledger table and lacked its referencing-record keep until a release review (#4061); its `tidy alignment:` tests never read the prose. Grep `plugin/bin/` for such comments, map each Keep row to its reason string, pin both ways |
 | Searching only `plugin/skills/` for the producers of a line a `plugin/bin/` detector reads | A recovery hint in code is a producer too. #4171 pins `review-console.md`'s two `filed as #{number} (work-fingerprint {fingerprint})` templates against `FILED_LINE_RE` (`plugin/bin/lib/console/finding-outcomes.js`), but `archive-merged.js`'s `CANT_TELL_UNFILED_HINT` and `escalate-residue.js`'s `cant-tell-unfiled` paragraph restate the line unpinned, so a template and regex reworded together leave the unstick instructions stale with every suite green. Grep both trees (`grep -rn 'filed as #' plugin/bin/ plugin/skills/`) and run each hint's filled template through the detector |
 | Leaving a vocabulary unpinned because the prose restates it as a comma-run inside one sentence, not a table or list | A sentence has no rows for a parser to walk, so it reads as plain prose, yet it is the same twin. #4149's build restated `plugin/bin/lib/hooks/git-command.js`'s four heredoc reader vocabularies (`DATA_READER_WORDS`, `READER_WRAPPER_WORDS`, `GIT_DATA_SUBCOMMANDS`, `INERT_NEIGHBOUR_WORDS`, the Sets its reader check decides by) inside one paragraph of `_shared/policy-schema-coverage.md`, and only the review pinned them (`fdaf34850`). `tests/hooks-gate-coverage.test.js`'s `proseList` slices each list between two anchor phrases: the opening phrase must occur exactly once and the closing one must follow it, so a reworded sentence fails loud instead of parsing nothing. It takes the backtick-quoted words in between, requires at least one and no duplicates, and `deepStrictEqual`s them sorted against the exported Set. Pick anchors that leave every non-member backticked token outside the slice: the data-reader slice ends at ` given a data subcommand (`, so the git subcommand list after it is not swept in. Export the Sets the decision reads, never a display copy (the decoy row above) |
+| Finding a detector's producers only by grepping the template's canonical continuation | A shared contract can restate the same event in older words, and a test can pin that copy against its own prose, so it stays green while contradicting the reader. When #4563 taught `plugin/bin/lib/console/resolve.js`'s `DEBATE_CONVERGED_RE` to read `review/step3-debate-and-refutation.md`'s converged-positive template, `grep -rn 'converged positive' plugin/skills/` found only that producer, while `_shared/multi-agent-coordination.md`'s Mode 2 "Decision-log entry format" still documented a lens-less `/review debate: {path}:{line} confirmed (both agreed)` line the reader could never settle, and `tests/multi-agent-coordination.test.js` checked a hand-typed instance of it, never through the reader. Only the whole-branch review found it. Grep the event's noun too (`grep -rn -i 'debate:' plugin/skills/`), then grep `tests/` for each hit's distinctive phrase: run every copy's filled template through the real detector, pin the copy byte for byte against its producer (that suite's "Mode 2 restates the three lines" test, #4584), or make the copy cite the canonical producer instead of restating the line |

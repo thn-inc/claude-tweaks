@@ -4,7 +4,8 @@
 // One GraphQL databaseId batch (every number appearing in --parent/--subs/--blocked-by),
 // then the sub_issues + blocked_by POSTs via bin/lib/issues/link.js. Prints one JSON
 // envelope. Exit 0 on success or partial-with-`failed` (the caller reads `failed`);
-// 1 when databaseId resolution fails; 2 on a malformed invocation or when `gh` is
+// 1 when databaseId resolution fails; 2 on a malformed invocation, an origin host
+// with no GitHub signal (refused before any gh call, #4933), or when `gh` is
 // absent — these two endpoints have no GitHub MCP equivalent, so the fallback is
 // `work-links: body-text` (record-creation.md Step 4's text-based linking).
 'use strict';
@@ -12,7 +13,9 @@
 const { execFileSync } = require('child_process');
 const link = require('./lib/issues/link');
 const { invalidateSnapshot } = require('./lib/issues/record-snapshot');
-const { parseRepo, ghAvailable } = require('./lib/repo-resolve');
+const {
+  parseRepo, ghAvailable, pinExplicitRepoHost, gateOriginRepo,
+} = require('./lib/repo-resolve');
 
 const USAGE = 'usage: link-records.js [--parent <n> --subs <n,n,...>] [--blocked-by "<dependent:blocker>,..."] [--repo owner/name] [--help]\n       at least one of --parent+--subs or --blocked-by is required\n';
 
@@ -48,6 +51,9 @@ function parseArgs(argv) {
 const realDeps = {
   runner: link.defaultRunner,
   ghAvailable,
+  // #4505: an explicit --repo's host reaches the database-id GraphQL batch and
+  // the REST link writes, which thread no --hostname for github.com.
+  pinGhHost: (repoSpec) => pinExplicitRepoHost(repoSpec),
   remoteUrl: () => execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8', windowsHide: true }),
   invalidateSnapshot,
   stdout: (s) => process.stdout.write(s),
@@ -74,8 +80,16 @@ function run(argv, deps = realDeps) {
   // instead of an uncaught stack trace colliding with the exit-1 contract.
   let remote = null;
   if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-  const repoSpec = opts.repo ? parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : parseRepo(remote);
+  // #4933: an origin-derived host with no GitHub signal is refused before any gh call.
+  let repoSpec;
+  if (opts.repo) repoSpec = parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`);
+  else {
+    const gated = gateOriginRepo(remote, deps.gateDeps);
+    if (gated.refusal) { deps.stderr(`link-records.js: ${gated.refusal}\n`); return 2; }
+    repoSpec = gated.spec;
+  }
   if (!repoSpec) { deps.stderr('link-records.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
+  if (opts.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
   const { host, owner, repo } = repoSpec;
   // #1443: parseRepo's regex accepts any non-'/' owner/repo segment, including '.'/'..'
   // (#1153 review finding). link.linkSubIssues/linkBlockedBy build a `repos/${owner}/${repo}/

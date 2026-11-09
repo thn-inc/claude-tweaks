@@ -94,6 +94,15 @@ function readListKey(repoRoot, key) {
   return value.split(',').map((s) => s.trim()).filter(Boolean);
 }
 
+// `control-mode` (#4609): the one comparison site every consumer of the control-
+// mode keys goes through, so "is it on" is decided in exactly one place. Takes the
+// resolved value (e.g. from resolve-policy.js --values), strictly the exact string
+// `on` — `ON`, `yes`, an absent value and a boolean are all off, so a typo can
+// never switch the mode on.
+function isControlModeOn(value) {
+  return value === 'on';
+}
+
 // `commit-scope` (#3298): the constant Conventional-Commits scope token
 // bin/compose-subject.js falls back to. Read raw (trimmed; blank -> null),
 // deliberately not through resolveValue — that would silently turn a bad
@@ -175,5 +184,5 @@ function resolvePortServices(repoRoot) {
 
 module.exports = {
   isWorktreeAlwaysOn, resolveWorktreeAlways, readIntegrationBranch, readListKey, readCommitScope, resolvePortServices, readGhTimeoutMs,
-  readGitTimeoutMs, readEfficiencyCeilings,
+  readGitTimeoutMs, readEfficiencyCeilings, isControlModeOn,
 };

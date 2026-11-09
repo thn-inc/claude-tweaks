@@ -156,6 +156,11 @@ check (no phase-exit push), and a run with no `pr` in `run-state.json` reads `no
 Like the push itself, this degrades per attempt and never persists — nothing is written to
 `run-state.json`, so the next phase exit's check runs regardless.
 
+At the build phase's exit this read normally prints `no-conflict`: a `pr-first` `/claude-tweaks:build`
+outside a multi-spec run already merged the integration branch in before its final verification
+(`_shared/pre-verification-catchup.md`), so a conflict found there is the residual case of a base
+that moved during that verification.
+
 **Catch-up (`auto`).** Merge the integration branch in; never rebase — the run branch is already
 public behind its PR, and a rebase would need the force push the Git Rules forbid. Merging into
 a PR branch does not invert `main`'s first-parent chain the way "Catching a branch up with

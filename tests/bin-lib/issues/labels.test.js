@@ -135,6 +135,39 @@ function canonicalLabelsFromBootstrapDoc() {
   return extractCanonicalLabels(readText(BOOTSTRAP_DOC));
 }
 
+test('AC5.1: LABELS_JSON holds the three accept labels and accept:approved-batch', () => {
+  const byName = Object.fromEntries(canonicalLabelsFromBootstrapDoc().map(([n, d, c]) => [n, { description: d, color: c }]));
+  for (const name of ['accept:pending', 'accept:approved', 'accept:changes-requested', 'accept:approved-batch']) {
+    assert.ok(byName[name], `${name} must be a canonical LABELS_JSON row`);
+    // Same hue as the demo:* twin it will replace.
+    assert.strictEqual(byName[name].color, byName[name.replace('accept:', 'demo:')].color, `${name} shares its demo:* twin's colour`);
+    assert.ok(byName[name].description.length < 100, `${name}: description must stay under 100 characters`);
+  }
+  // Expand step: the demo:* rows stay.
+  for (const name of ['demo:pending', 'demo:approved', 'demo:approved-batch', 'demo:changes-requested']) {
+    assert.ok(byName[name], `${name} stays a canonical row until the contract step`);
+  }
+});
+
+test('AC5.1: LABEL_BOOTSTRAP_VERSION is bumped past 9 in the same edit that added the accept rows', () => {
+  const m = readText(BOOTSTRAP_DOC).match(/current value: `(\d+)`/);
+  assert.ok(m, 'LABEL_BOOTSTRAP_VERSION current-value literal not found');
+  assert.ok(Number(m[1]) >= 10, `expected LABEL_BOOTSTRAP_VERSION >= 10, got ${m[1]}`);
+});
+
+test('AC5.1: work-record.md states the precedence rule, the marker and the trust limit; the matrix reserves accept:*', () => {
+  const sharedDir = path.join(__dirname, '..', '..', '..', 'plugin', 'skills', '_shared');
+  const wr = readText(path.join(sharedDir, 'work-record.md')).replace(/\s+/g, ' ');
+  assert.ok(wr.includes('`accept:pending`') && wr.includes('`accept:approved-batch`'), 'work-record.md lists both spellings');
+  assert.ok(!wr.includes('mutually exclusive by construction'), 'the by-construction claim is replaced by the precedence rule');
+  assert.match(wr, /`changes-requested` beats `pending` beats `approved` beats no verdict/);
+  assert.match(wr, /accept-verdict/);
+  assert.match(wr, /verdict label and comment disagree/);
+  assert.match(wr, /#3358/);
+  const matrix = readText(path.join(sharedDir, 'work-record-permission-matrix.md')).replace(/\s+/g, ' ');
+  assert.match(matrix, /reserved until the accept-skill record switches the writers/);
+});
+
 // Every real label description this plan introduces or keeps must pass — a single place
 // that would have caught the bot:in-progress (commit 54ab897) and code-health:*
 // criterion (this plan's Task 3) 100-char overruns before they shipped.

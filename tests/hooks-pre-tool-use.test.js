@@ -8,6 +8,10 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const pre = require('../plugin/bin/lib/hooks/pre-tool-use');
 const { shellQuote } = require('./helpers/shell-quote');
+const { STUB_SKIP } = require('./helpers/path-stub');
+const { fakeGh } = require('./helpers/fake-gh');
+const { readText } = require('./helpers/read-skill');
+const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('./helpers/strip-comments');
 
 function gitRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-'));
@@ -413,6 +417,28 @@ test('worktree-required: a DEFINITIVE non-repo answer allows silently, with no w
   }
   assert.ok(!out.json || !out.json.systemMessage,
     'git answering "not a repo" is a real answer — nothing to warn about');
+});
+
+// #4303: a target resolved from a cwd the shell scanner lost (past its cwd cap) follows the same
+// rule. From a worktree-always repo, `G16 echo x > out.txt` (16 groups `{ cd /tmp/ct-4303-nK; }`,
+// every cd failing): bash 3.2 and 5 write out.txt in the repo. With git's answer indeterminate,
+// an earlier revision of this branch denied the lost target; base d9aa6b82d allows and warns, as
+// the gate does for every other indeterminate target, so a load spike never freezes a run.
+test('worktree-required #4303: a lost target with an indeterminate repo status ALLOWS but says so out loud', () => {
+  const wtDetect = require('../plugin/bin/lib/hooks/worktree-detect');
+  const repo = gitRepoWithCommit();
+  withPolicy(repo, 'worktree-always: true\n');
+  const groups = Array.from({ length: 16 }, (_, i) => `{ cd /tmp/ct-4303-n${i}; }; `).join('');
+  const real = wtDetect.repoInfo;
+  wtDetect.repoInfo = () => ({ repoRoot: null, isLinkedWorktree: false, indeterminate: true });
+  let out;
+  try {
+    out = pre.run({ input: bashInput(`${groups}echo x > out.txt`, repo), runDir: null, runState: null, ownedRun: {}, cwd: repo });
+  } finally {
+    wtDetect.repoInfo = real;
+  }
+  assert.ok(!out.json || !out.json.hookSpecificOutput || out.json.hookSpecificOutput.permissionDecision !== 'deny', JSON.stringify(out));
+  assert.match(out.json.systemMessage, /could not determine/i);
 });
 
 test('worktree-required: policy on allows Edit inside a linked worktree', () => {
@@ -1233,6 +1259,347 @@ test('resolveRunPinnedIntegrationModel: exported for reuse by the phase-boundary
   assert.strictEqual(pre.resolveRunPinnedIntegrationModel(repo, runDir), 'local-merge');
 });
 
+// --- #4578: timeout + degrade parameters on resolveRunPinnedIntegrationModel ---
+
+const GH_TIMEOUT_ENV = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
+
+// Runs fn with CLAUDE_TWEAKS_GH_TIMEOUT_MS deleted so detection's ladder falls
+// to policy / the 5000 ms default, then restores the original value.
+function withoutGhTimeoutEnv(fn) {
+  const original = process.env[GH_TIMEOUT_ENV];
+  delete process.env[GH_TIMEOUT_ENV];
+  try {
+    return fn();
+  } finally {
+    if (original !== undefined) process.env[GH_TIMEOUT_ENV] = original;
+  }
+}
+
+// An unpinned repo whose origin looks like a GitHub remote, so detection reaches the fake `gh`.
+function unpinnedRepoWithOrigin() {
+  const repo = gitRepoWithCommit();
+  execFileSync('git', ['-C', repo, 'remote', 'add', 'origin', 'https://github.com/o/n.git']);
+  return repo;
+}
+
+test('resolveRunPinnedIntegrationModel forwards opts.timeoutMs to forge detection (#4578 AC8.1, AC13.1)', { skip: STUB_SKIP }, () => {
+  const repo = unpinnedRepoWithOrigin();
+  const runDir = runDirForId('2026-10-31T000000-spec-4578');
+  const gh = fakeGh({ first: 'hang' });
+  const seen = [];
+  try {
+    withoutGhTimeoutEnv(() => {
+      const result = pre.resolveRunPinnedIntegrationModel(repo, runDir, { timeoutMs: 1000, onDegrade: (d) => seen.push(d) });
+      assert.strictEqual(result, 'local-merge');
+      assert.strictEqual(gh.count(), 2);
+    });
+    // The recorded timeoutMs proves which bound reached detection (no wall-clock assertion).
+    assert.deepStrictEqual(seen, [{ reason: 'timeout', timeoutMs: 1000, attempts: 2 }]);
+  } finally {
+    gh.restore();
+  }
+});
+
+const GATE_CALL_SHAPE = /resolveRunPinnedIntegrationModel\(mainRoot,\s*ctx\.runDir,\s*\{\s*timeoutMs:\s*HOOK_FORGE_PROBE_TIMEOUT_MS,\s*degradeMemoTtlMs:\s*FORGE_DEGRADE_MEMO_TTL_MS,\s*onDegrade\s*\}\)/;
+
+test('the PreToolUse gate passes HOOK_FORGE_PROBE_TIMEOUT_MS within the 15 s hook budget (#4578 AC8.1, AC12.1, AC12.2)', () => {
+  const { HOOK_FORGE_PROBE_TIMEOUT_MS, GIT_REMOTE_PROBE_TIMEOUT_MS, FORGE_PROBE_ATTEMPTS } = require('../plugin/bin/lib/policy-schema');
+  assert.strictEqual(HOOK_FORGE_PROBE_TIMEOUT_MS, 5000);
+  assert.ok(GIT_REMOTE_PROBE_TIMEOUT_MS + FORGE_PROBE_ATTEMPTS * HOOK_FORGE_PROBE_TIMEOUT_MS <= 15000,
+    'git probe + all gh attempts must fit the 15 s hook budget');
+  // Scan LIVE code only: comments and literals are blanked, so a commented-out or quoted copy of the
+  // call shape cannot satisfy the match, and the verdict is taken on the same text the matcher reads.
+  const raw = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'pre-tool-use.js'));
+  const code = stripComments(raw, { literals: 'blank' });
+  const verdict = stripperVerdict(raw, code);
+  assert.strictEqual(verdict, 'ok', STRIPPER_VERDICT_MESSAGES[verdict]);
+  assert.match(
+    code,
+    GATE_CALL_SHAPE,
+    'the gate must bound its forge probe with the hook constant and report degrades (Decision Q3, Q5)',
+  );
+});
+
+test('the gate call-shape matcher sees live code only (#4578 go-red self-test)', () => {
+  const live = 'x = o ? o(m, { onDegrade }) : resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir, { timeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS, degradeMemoTtlMs: FORGE_DEGRADE_MEMO_TTL_MS, onDegrade });';
+  const scan = (src) => GATE_CALL_SHAPE.test(stripComments(src, { literals: 'blank' }));
+  assert.strictEqual(scan(live), true);
+  // The same text only in a line comment, a block comment, or a string: the live call is gone.
+  assert.strictEqual(scan(`// ${live}\nx = resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir);`), false);
+  assert.strictEqual(scan(`/* ${live} */\nx = resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir);`), false);
+  assert.strictEqual(scan(`x = '${live}'; y = resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir);`), false);
+  // A changed live call shape (no timeoutMs) is not matched even with a comment holding the old one after it.
+  assert.strictEqual(scan(`x = resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir, { onDegrade }); // ${live}`), false);
+  // The scan still sees the live call after a literal holding a comment opener.
+  assert.strictEqual(scan(`s = '/*'; ${live}`), true);
+  // A mis-parse is an offender, not a clean scan: a regex after ")" blanks the live call into a string.
+  const misparsed = `if (b) /'/.test(b); const c = 'x'; ${live}`;
+  assert.strictEqual(stripperVerdict(misparsed, stripComments(misparsed, { literals: 'blank' })), 'misparsed');
+});
+
+test('resolveRunPinnedIntegrationModel forwards opts.onDegrade to forge detection (#4578 Q5, AC15.1)', { skip: STUB_SKIP }, () => {
+  const repo = unpinnedRepoWithOrigin();
+  const runDir = runDirForId('2026-10-31T000000-spec-4578');
+  const gh = fakeGh({ first: 'hang' });
+  const seen = [];
+  try {
+    withoutGhTimeoutEnv(() => {
+      const result = pre.resolveRunPinnedIntegrationModel(repo, runDir, { timeoutMs: 1000, onDegrade: (d) => seen.push(d) });
+      assert.strictEqual(result, 'local-merge');
+    });
+    assert.deepStrictEqual(seen, [{ reason: 'timeout', timeoutMs: 1000, attempts: 2 }]);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('resolveRunPinnedIntegrationModel: a pinned model returns before detection — no gh spawn, onDegrade never called (#4578 Q5)', { skip: STUB_SKIP }, () => {
+  const repo = unpinnedRepoWithOrigin();
+  fs.mkdirSync(path.join(repo, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(repo, '.claude-tweaks', 'policy.yml'), 'integration-model: local-merge\n');
+  const runDir = runDirForId('2026-10-31T000000-spec-4578');
+  const gh = fakeGh({ first: 'hang' });
+  const seen = [];
+  try {
+    const result = pre.resolveRunPinnedIntegrationModel(repo, runDir, { timeoutMs: 1000, onDegrade: (d) => seen.push(d) });
+    assert.strictEqual(result, 'local-merge');
+    assert.strictEqual(gh.count(), 0);
+    assert.deepStrictEqual(seen, []);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('FORGE_DEGRADE_MEMO_TTL_MS is 60 s (#4830)', () => {
+  const { FORGE_DEGRADE_MEMO_TTL_MS } = require('../plugin/bin/lib/policy-schema');
+  assert.strictEqual(FORGE_DEGRADE_MEMO_TTL_MS, 60000);
+});
+
+test('isFreshForgeDegradeMemo: fresh only for a finite past timestamp younger than the TTL (#4830)', () => {
+  const f = pre.isFreshForgeDegradeMemo;
+  assert.strictEqual(f(1000, 1000, 60000), true);        // age 0
+  assert.strictEqual(f(1000, 60999, 60000), true);       // age TTL-1
+  assert.strictEqual(f(1000, 61000, 60000), false);      // age === TTL -> expired
+  assert.strictEqual(f(5000, 1000, 60000), false);       // future
+  for (const bad of [undefined, null, '1000', NaN, Infinity, {}]) assert.strictEqual(f(bad, 1000, 60000), false);
+});
+
+// --- #4830: opt-in run-scoped degrade memo in resolveRunPinnedIntegrationModel ---
+
+const MEMO_T = 1700000000000;
+const MEMO_TTL = 60000;
+const memoRunDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'ct-4830-run-'));
+const memoState = (run) => JSON.parse(fs.readFileSync(path.join(run, 'run-state.json'), 'utf8'));
+
+test('#4830 memo: a degrade stamps the memo; a second call inside the TTL spawns no gh and reports a memoized degrade', { skip: STUB_SKIP }, () => {
+  const repo = unpinnedRepoWithOrigin();
+  const run = memoRunDir();
+  const gh = fakeGh({ first: 'hang' });
+  const seen = [];
+  try {
+    withoutGhTimeoutEnv(() => {
+      const opts = (now) => ({ timeoutMs: 1000, degradeMemoTtlMs: MEMO_TTL, now, onDegrade: (d) => seen.push(d) });
+      assert.strictEqual(pre.resolveRunPinnedIntegrationModel(repo, run, opts(() => MEMO_T)), 'local-merge');
+      assert.strictEqual(gh.count(), 2);
+      assert.strictEqual(memoState(run).forgeDegradedAt, MEMO_T);
+      assert.strictEqual(seen[0].reason, 'timeout');
+      assert.strictEqual(pre.resolveRunPinnedIntegrationModel(repo, run, opts(() => MEMO_T + 59999)), 'local-merge');
+      assert.strictEqual(gh.count(), 2);
+      assert.deepStrictEqual(seen[1], { memoized: true, degradedAt: MEMO_T });
+    });
+  } finally {
+    gh.restore();
+  }
+});
+
+test('#4830 memo: an expired memo re-probes and refreshes the stamp', { skip: STUB_SKIP }, () => {
+  const repo = unpinnedRepoWithOrigin();
+  const run = memoRunDir();
+  fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ forgeDegradedAt: MEMO_T }));
+  const gh = fakeGh({ first: 'hang' });
+  try {
+    withoutGhTimeoutEnv(() => {
+      const result = pre.resolveRunPinnedIntegrationModel(repo, run, { timeoutMs: 1000, degradeMemoTtlMs: MEMO_TTL, now: () => MEMO_T + MEMO_TTL });
+      assert.strictEqual(result, 'local-merge');
+      assert.strictEqual(gh.count(), 2);
+      assert.strictEqual(memoState(run).forgeDegradedAt, MEMO_T + MEMO_TTL);
+    });
+  } finally {
+    gh.restore();
+  }
+});
+
+test('#4830 memo: a future memo and a numeric-string memo both probe, then re-stamp', { skip: STUB_SKIP }, () => {
+  const repo = unpinnedRepoWithOrigin();
+  const gh = fakeGh({ first: 'hang' });
+  try {
+    withoutGhTimeoutEnv(() => {
+      const opts = { timeoutMs: 1000, degradeMemoTtlMs: MEMO_TTL, now: () => MEMO_T };
+      const futureRun = memoRunDir();
+      fs.writeFileSync(path.join(futureRun, 'run-state.json'), JSON.stringify({ forgeDegradedAt: MEMO_T + 1000 }));
+      pre.resolveRunPinnedIntegrationModel(repo, futureRun, opts);
+      assert.strictEqual(gh.count(), 2);
+      assert.strictEqual(memoState(futureRun).forgeDegradedAt, MEMO_T);
+      // A numeric string coerces under `-`, so only the isFinite clause rejects it.
+      const stringRun = memoRunDir();
+      fs.writeFileSync(path.join(stringRun, 'run-state.json'), JSON.stringify({ forgeDegradedAt: String(MEMO_T) }));
+      pre.resolveRunPinnedIntegrationModel(repo, stringRun, opts);
+      assert.strictEqual(gh.count(), 4);
+      assert.strictEqual(memoState(stringRun).forgeDegradedAt, MEMO_T);
+    });
+  } finally {
+    gh.restore();
+  }
+});
+
+test('#4830 memo: a garbled run-state.json probes and does not throw', { skip: STUB_SKIP }, () => {
+  const repo = unpinnedRepoWithOrigin();
+  const run = memoRunDir();
+  fs.writeFileSync(path.join(run, 'run-state.json'), 'not json');
+  const gh = fakeGh({ first: 'hang' });
+  try {
+    withoutGhTimeoutEnv(() => {
+      const result = pre.resolveRunPinnedIntegrationModel(repo, run, { timeoutMs: 1000, degradeMemoTtlMs: MEMO_TTL, now: () => MEMO_T });
+      assert.strictEqual(result, 'local-merge');
+      assert.strictEqual(gh.count(), 2);
+      assert.strictEqual(memoState(run).forgeDegradedAt, MEMO_T);
+    });
+  } finally {
+    gh.restore();
+  }
+});
+
+test('#4830 memo: a clean detection clears a stale memo', { skip: STUB_SKIP }, () => {
+  const repo = unpinnedRepoWithOrigin();
+  const run = memoRunDir();
+  fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ forgeDegradedAt: MEMO_T - MEMO_TTL }));
+  const gh = fakeGh({ first: 'fail' });
+  const seen = [];
+  try {
+    withoutGhTimeoutEnv(() => {
+      const result = pre.resolveRunPinnedIntegrationModel(repo, run, { timeoutMs: 1000, degradeMemoTtlMs: MEMO_TTL, now: () => MEMO_T, onDegrade: (d) => seen.push(d) });
+      assert.strictEqual(result, 'local-merge');
+      assert.strictEqual(memoState(run).forgeDegradedAt, null);
+      assert.deepStrictEqual(seen, []);
+    });
+  } finally {
+    gh.restore();
+  }
+});
+
+test('#4830 memo: a run-config pin ignores a fresh memo', { skip: STUB_SKIP }, () => {
+  const repo = unpinnedRepoWithOrigin();
+  const run = memoRunDir();
+  fs.writeFileSync(path.join(run, 'config.yml'), 'integration-model: pr-first\n');
+  fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ forgeDegradedAt: MEMO_T }));
+  const gh = fakeGh({ first: 'hang' });
+  const seen = [];
+  try {
+    withoutGhTimeoutEnv(() => {
+      const result = pre.resolveRunPinnedIntegrationModel(repo, run, { timeoutMs: 1000, degradeMemoTtlMs: MEMO_TTL, now: () => MEMO_T, onDegrade: (d) => seen.push(d) });
+      assert.strictEqual(result, 'pr-first');
+      assert.strictEqual(gh.count(), 0);
+      assert.deepStrictEqual(seen, []);
+    });
+  } finally {
+    gh.restore();
+  }
+});
+
+test('#4830 memo: without degradeMemoTtlMs (precondition.js call shape) a fresh memo is ignored and nothing is written', { skip: STUB_SKIP }, () => {
+  const repo = unpinnedRepoWithOrigin();
+  const run = memoRunDir();
+  const stateFile = path.join(run, 'run-state.json');
+  fs.writeFileSync(stateFile, JSON.stringify({ forgeDegradedAt: MEMO_T }));
+  const before = fs.readFileSync(stateFile);
+  const gh = fakeGh({ first: 'hang' });
+  try {
+    withoutGhTimeoutEnv(() => {
+      const result = pre.resolveRunPinnedIntegrationModel(repo, run, { timeoutMs: 1000, onDegrade: () => {}, now: () => MEMO_T });
+      assert.strictEqual(result, 'local-merge');
+      assert.strictEqual(gh.count(), 2);
+      assert.ok(fs.readFileSync(stateFile).equals(before), 'run-state.json must be byte-identical');
+    });
+  } finally {
+    gh.restore();
+  }
+});
+
+test('#4830 memo: a throwing onDegrade on a memo hit neither throws nor spawns gh', { skip: STUB_SKIP }, () => {
+  const repo = unpinnedRepoWithOrigin();
+  const run = memoRunDir();
+  fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ forgeDegradedAt: MEMO_T }));
+  const gh = fakeGh({ first: 'hang' });
+  try {
+    withoutGhTimeoutEnv(() => {
+      const before = gh.count();
+      const result = pre.resolveRunPinnedIntegrationModel(repo, run, {
+        timeoutMs: 1000, degradeMemoTtlMs: MEMO_TTL, now: () => MEMO_T, onDegrade: () => { throw new Error('reporter broke'); },
+      });
+      assert.strictEqual(result, 'local-merge');
+      assert.strictEqual(gh.count(), before);
+    });
+  } finally {
+    gh.restore();
+  }
+});
+
+// Regression guard (pre-change code already writes nothing). Red against the
+// mutation that replaces the guarded clear with an unconditional plain patch,
+// `else ctxLib.writeRunState(runDir, { forgeDegradedAt: null })`.
+test('#4830 memo: a clean detection with no run-state.json writes nothing', { skip: STUB_SKIP }, () => {
+  const repo = unpinnedRepoWithOrigin();
+  const run = memoRunDir();
+  const gh = fakeGh({ first: 'fail' });
+  try {
+    withoutGhTimeoutEnv(() => {
+      const result = pre.resolveRunPinnedIntegrationModel(repo, run, { timeoutMs: 1000, degradeMemoTtlMs: MEMO_TTL, now: () => MEMO_T });
+      assert.strictEqual(result, 'local-merge');
+    });
+    assert.strictEqual(fs.existsSync(path.join(run, 'run-state.json')), false);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('#4830 memo: a null runDir with the option set probes and writes nothing', { skip: STUB_SKIP }, () => {
+  const repo = unpinnedRepoWithOrigin();
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-4830-cwd-'));
+  const gh = fakeGh({ first: 'hang' });
+  const cwd = process.cwd();
+  try {
+    process.chdir(scratch);
+    withoutGhTimeoutEnv(() => {
+      const result = pre.resolveRunPinnedIntegrationModel(repo, null, { timeoutMs: 1000, degradeMemoTtlMs: MEMO_TTL, now: () => MEMO_T });
+      assert.strictEqual(result, 'local-merge');
+      assert.strictEqual(gh.count(), 2);
+    });
+    assert.strictEqual(fs.existsSync(path.join(scratch, 'run-state.json')), false);
+  } finally {
+    process.chdir(cwd);
+    gh.restore();
+  }
+});
+
+test('#4830 memo: an empty runDir with the option set probes and writes nothing', { skip: STUB_SKIP }, () => {
+  const repo = unpinnedRepoWithOrigin();
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-4830-cwd-'));
+  const gh = fakeGh({ first: 'hang' });
+  const cwd = process.cwd();
+  try {
+    process.chdir(scratch);
+    withoutGhTimeoutEnv(() => {
+      const result = pre.resolveRunPinnedIntegrationModel(repo, '', { timeoutMs: 1000, degradeMemoTtlMs: MEMO_TTL, now: () => MEMO_T });
+      assert.strictEqual(result, 'local-merge');
+      assert.strictEqual(gh.count(), 2);
+    });
+    assert.strictEqual(fs.existsSync(path.join(scratch, 'run-state.json')), false);
+  } finally {
+    process.chdir(cwd);
+    gh.restore();
+  }
+});
+
 // #1967: git-stash worktree-hazard warn — the stash stack is repository-wide,
 // shared by every linked worktree of the same main checkout, so a bare
 // `git stash`/`git stash pop` from a linked worktree can push onto or pop a
@@ -1291,11 +1658,88 @@ test('#2065: `git stash -u`, `git stash -m "wip"`, and `git stash save wip` from
   }
 });
 
-test('#2065: `git stash apply` and `git stash drop` from a linked worktree stay silent', () => {
+// #4559: `drop` and `clear` destroy stack entries — a sibling worktree's
+// in-flight WIP stash included — and `branch` drops the entry it applies,
+// while `store` and `import` write onto the stack; all of them warn like
+// push/pop. Only the subcommands that leave the stack alone stay silent.
+// These are command strings fed to the hook — nothing here runs git stash.
+const STASH_SHA = 'a'.repeat(40);
+test('AC7.1/AC7.3: `git stash drop`, `drop stash@{0}`, `clear`, `branch`, `store`, `import`, and a compound `git status && git stash drop` from a linked worktree warn', () => {
   const { wt } = mainAndWorktree();
-  assert.deepStrictEqual(pre.run({ input: bashInput('git stash apply', wt), runDir: null, runState: null, cwd: wt }), {});
-  assert.deepStrictEqual(pre.run({ input: bashInput('git stash drop', wt), runDir: null, runState: null, cwd: wt }), {});
+  const cmds = [
+    'git stash drop', 'git stash drop stash@{0}', 'git stash clear', 'git status && git stash drop',
+    'git stash branch fix-wip', `git stash store -m x ${STASH_SHA}`, `git stash import ${STASH_SHA}`,
+  ];
+  for (const cmd of cmds) {
+    const out = pre.run({ input: bashInput(cmd, wt), runDir: null, runState: null, cwd: wt });
+    assert.match(out.json.systemMessage, /git stash is repository-wide/, `expected a warning for: ${cmd}`);
+    assert.notStrictEqual(out.json.hookSpecificOutput?.permissionDecision, 'deny', `must warn, never deny: ${cmd}`);
+  }
 });
+
+test('#4559: the stash warning names the stash-guard recovery `git stash store` as the one intended exception', () => {
+  const { wt } = mainAndWorktree();
+  const out = pre.run({ input: bashInput(`git stash store -m "On main: autostash" ${STASH_SHA}`, wt), runDir: null, runState: null, cwd: wt });
+  assert.match(out.json.systemMessage, /Exception: putting back a stash entry that `stash-guard\.js` reported lost/);
+  assert.match(out.json.systemMessage, /git stash store -m "<subject>" <sha>/);
+});
+
+test('AC7.2: `git stash list`, `show` and `apply` from a linked worktree stay silent', () => {
+  const { wt } = mainAndWorktree();
+  for (const cmd of ['git stash list', 'git stash show', 'git stash apply']) {
+    assert.deepStrictEqual(pre.run({ input: bashInput(cmd, wt), runDir: null, runState: null, cwd: wt }), {}, `expected silence for: ${cmd}`);
+  }
+});
+
+test('#4559: `git stash drop` from the main checkout is silent', () => {
+  const { main } = mainAndWorktree();
+  const out = pre.run({ input: bashInput('git stash drop', main), runDir: null, runState: null, cwd: main });
+  assert.deepStrictEqual(out, {});
+});
+
+// #4548: killing a process by image or name matches every process of that name on the
+// machine, sibling sessions' dev servers included. The warning is run- and
+// location-independent, so every fixture runs in a plain temp dir (no git repo, no
+// policy file — which also keeps checkPowershellOpaqueCommand's deny out of the way).
+const killDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-4548-'));
+const runKill = (cmd) => pre.run({ input: bashInput(cmd, killDir), runDir: null, runState: null, cwd: killDir });
+const assertKillWarning = (out) => {
+  assert.ok(out.json, 'expected a hook response');
+  assert.match(out.json.systemMessage, /by image or name/);
+  assert.match(out.json.systemMessage, /-sTCP:LISTEN/);
+  assert.ok(!(out.json.hookSpecificOutput && out.json.hookSpecificOutput.permissionDecision), 'a warning must not decide permission');
+};
+const silentKill = (out) => !out.json || (!out.json.systemMessage && !out.json.hookSpecificOutput);
+
+for (const cmd of [
+  'pkill node', 'killall node', 'taskkill /F /IM node.exe', 'taskkill /im node.exe /f',
+  'Stop-Process -Name node', 'kill $(pgrep node)', 'pgrep -f x | xargs kill',
+  'taskkill /FI "IMAGENAME eq node.exe"', 'taskkill /FI "WINDOWTITLE eq dev*"',
+  'Get-Process node | Stop-Process', 'TASKKILL /IM node.exe',
+  'powershell -Command "Stop-Process -Name node"', 'powershell -c "Stop-Process -Name node"',
+  'pwsh -Command "Get-Process node | Stop-Process"', 'pwsh -c "Stop-Process -Name node"',
+  'cmd /c taskkill /IM node.exe', "sh -c 'pkill node'", 'bash -c "killall node"',
+]) {
+  test(`#4548: \`${cmd}\` warns about killing by image or name`, () => {
+    assertKillWarning(runKill(cmd));
+  });
+}
+
+test('#4548: a compound command with several name kills warns once', () => {
+  const out = runKill('npm run dev & sleep 1; pkill -f vite; killall node');
+  assertKillWarning(out);
+  assert.strictEqual(out.json.systemMessage.split('by image or name').length - 1, 1);
+});
+
+for (const cmd of [
+  'kill 12345', 'taskkill /PID 12345 /T /F', 'kill -- -12345', 'taskkill /FI "PID eq 123"',
+  'lsof -nP -iTCP:3000 -sTCP:LISTEN -t | xargs kill',
+]) {
+  test(`#4548: \`${cmd}\` is PID-scoped and stays silent`, () => {
+    const out = runKill(cmd);
+    assert.ok(silentKill(out), `expected no warning for: ${cmd}, got ${JSON.stringify(out)}`);
+  });
+}
 
 // #3225: checkDispatchConfigGate — a dispatched run (record-worktree
 // --dispatch) bound to a REAL linked worktree denies git writes there until

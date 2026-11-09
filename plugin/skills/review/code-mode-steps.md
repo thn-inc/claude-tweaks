@@ -63,15 +63,15 @@ If blocked, skip the rest of the review. Present the gap analysis so the user kn
 
 ## Step 1.5: Test Gate
 
-Verify that `/claude-tweaks:test` has passed before proceeding to analytical review. Reviewing code quality on code that doesn't work is wasted effort.
+Verify that `/claude-tweaks:test` has passed before proceeding to analytical review.
 
 **Under a `base:{ref}` scope the tree this gate verifies must be `origin/{integration-branch}`** — the gate runs from a checkout already standing at that tip (the caller asserts it before invoking), never from a feature-branch worktree's HEAD, whose stamp would verify a tree the reviewed range does not contain.
 
-`PASS_WITH_CAVEATS` counts as passed — caveats are informational observations (e.g., minor UX roughness, non-blocking warnings) and do not block review. QA caveats are included in the findings table (Step 3 Routing) for visibility but have status `observation`, not `open`.
+`PASS_WITH_CAVEATS` counts as passed — caveats are informational observations and do not block review. QA caveats are included in the findings table (Step 3 Routing) for visibility but have status `observation`, not `open`.
 
 ### In `/claude-tweaks:flow` pipeline:
 
-Check for `TEST_PASSED=true` in pipeline context. If present, add one belt-and-braces read of the runner's own artifact (#1921) — `node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --stamp-status` (one plain command; prints `{present, sha, head, dirty, scope, fullSha, match, verifiedHead, baselineAdjudicated, preExistingAdjudicated, reportPath, legacy, suiteComposed, generatedExempt, liveGeneratedExempt, scopeError}`, exit 0 always). `verifiedHead: true` (a clean HEAD covered by a full pass — a baseline-adjudicated one included, `test/verification.md`'s Baseline adjudication — or by a passing scoped run anchored on a still-valid `fullSha` — `match` alone would re-trigger a scoped run forever, #1923 — or by complete per-suite records, `suiteComposed`, `test/stamp-composition.md`; a tree dirty only in declared `generated` paths, `liveGeneratedExempt`, still counts) → run `_shared/pr-check-gate.md`'s read (catches a check that went red after `/test` ran), then proceed to Step 2 unless it is `red`. `verifiedHead: false` with `TEST_PASSED=true` is reported, never silently accepted: "TEST_PASSED set but the runner stamp does not verify HEAD ({stamp-sha}, {scope} vs {head}) — re-running `/claude-tweaks:test`", then re-trigger `/claude-tweaks:test` once and re-check.
+Check for `TEST_PASSED=true` in pipeline context. If present, add one belt-and-braces read of the runner's own artifact (#1921) — `node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --stamp-status` (one plain command; prints `{present, sha, head, dirty, scope, fullSha, match, verifiedHead, baselineAdjudicated, preExistingAdjudicated, reportPath, legacy, suiteComposed, generatedExempt, liveGeneratedExempt, scopeError}`, exit 0 always). `verifiedHead: true` (a clean HEAD covered by a full pass — a baseline-adjudicated one included, `test/verification.md`'s Baseline adjudication — or by a passing scoped run anchored on a still-valid `fullSha` — `match` alone would re-trigger a scoped run forever, #1923 — or by complete per-suite records, `suiteComposed`, `test/stamp-composition.md`; a tree dirty only in declared `generated` paths, `liveGeneratedExempt`, still counts) → run `_shared/pr-check-gate.md`'s read, then proceed to Step 2 unless it is `red` and `merge-verification` is not an explicit `off` (Gate table below). `present: false` with no commands configured takes the zero-test row (Gate table below); any other `verifiedHead: false` with `TEST_PASSED=true` is reported, never silently accepted: "TEST_PASSED set but the runner stamp does not verify HEAD ({stamp-sha}, {scope} vs {head}) — re-running `/claude-tweaks:test`", then re-trigger `/claude-tweaks:test` once and re-check. An unparseable read is `verifiedHead: false`.
 
 ### Standalone (outside `/claude-tweaks:flow`):
 
@@ -106,13 +106,16 @@ After confirming `TEST_PASSED`, read this run's open items ledger (per `_shared/
 | Result | Action |
 |--------|--------|
 | `TEST_PASSED=true` (pipeline) + runner stamp `verifiedHead: true` + `pr-checks.js` not `red` | Proceed to Step 2 |
-| `pr-checks.js` reports `red` (`_shared/pr-check-gate.md`) | **STOP** — name each failing check not flagged `inherited` (the attributable ones) and its URL; fix forward and re-run `/claude-tweaks:test` |
-| `TEST_PASSED=true` (pipeline) + runner stamp `verifiedHead: false` | Report it (stamp sha/scope vs HEAD), re-trigger `/claude-tweaks:test`, re-check |
+| `pr-checks.js` reports `red` and `merge-verification` is not an explicit `off` (`_shared/pr-check-gate.md`'s `red` bullet) | **STOP** — name each failing check not flagged `inherited` (the attributable ones) and its URL; fix forward and re-run `/claude-tweaks:test` |
+| `TEST_PASSED=true` (pipeline) + runner stamp `verifiedHead: true` + `pr-checks.js` reports `red` under an explicit `merge-verification: off` (same bullet) | Proceed to Step 2 — with the caveat naming the failing checks, logged as that bullet's `AUTO` line |
+| `TEST_PASSED=true` (pipeline) + stamp `present: false` + no verification commands (none in CLAUDE.md, stack manifests or `verify-scope.json` `checks`) + `scopeError` null | No re-trigger: log to `decisions.md` `AUTO {time} — review Step 1.5: no verification commands configured; zero-test pass accepted without a runner stamp. Reversibility: high.` via `log-decision.js --section "/review"`, run the `pr-checks.js` read, proceed as for `verifiedHead: true` |
+| `TEST_PASSED=true` (pipeline) + runner stamp `verifiedHead: false` | Report it (stamp sha/scope vs HEAD), re-trigger `/claude-tweaks:test` once, re-check |
+| That re-check still reads `verifiedHead: false` | **STOP**, never a second re-trigger — name the cause: `dirty: true` with the dirty paths, a `scopeError`, `{sha} ({scope}) ≠ {head}`, `present: false` with commands configured, else the stamp as read (`sha`, `scope`, `fullSha`) |
 | Runner stamp `verifiedHead: true` (standalone) | Proceed to Step 2 |
-| `/claude-tweaks:test` triggered and passes | Proceed to Step 2 |
+| `/claude-tweaks:test` triggered (standalone) and passes | Proceed to Step 2 |
 | `/claude-tweaks:test` triggered and fails | **STOP** — present test failures. Fix before continuing. Run `/claude-tweaks:test` to re-verify. |
 
-> **Why this gates review:** Mechanical correctness is a prerequisite for analytical quality judgment. Code review on broken code wastes effort.
+> **Why this gates review:** Mechanical correctness is a prerequisite for analytical quality judgment.
 
 ## Step 1.6: Cross-Spec Promise Check (parent-linked records only)
 
@@ -127,16 +130,17 @@ read `cross-spec-promise-check.md` in this skill's directory.
 
 **Resolving `{base}`:** never trust a bare local branch name for `{base}` — a long-lived worktree's local tracking branch (commonly `main`) routinely drifts behind its remote. Resolve it via `git fetch origin {base}` then use `origin/{base}` in every command below, or otherwise confirm `git log -1 {base}` matches `git log -1 origin/{base}` before trusting the diff scope.
 
-On a `base:{ref}` scope, `{base}` is the given ref and `{branch}` is `origin/{integration-branch}`. **This paragraph overrides the `origin/{base}` rule above it**: a `base:{ref}` ref is a tag (`v6.48.0`) or a sha, neither of which has an `origin/` form, so it is used exactly as given — after `git fetch --tags origin`, so the tag resolves locally. Only `{branch}` takes the `origin/` prefix on this scope. The change set is `git log --first-parent {base}..{branch}` / `git diff {base}..{branch}` — the first-parent line of the integration branch, so each squash-merged PR is one commit and a `--no-ff` merge counts once.
+On a `base:{ref}` scope, `{base}` is the given ref and `{branch}` is `origin/{integration-branch}`. **This paragraph overrides the `origin/{base}` rule above it**: a `base:{ref}` ref is a tag (`v6.48.0`) or a sha, neither of which has an `origin/` form, so it is used exactly as given — after `git fetch --tags origin`, so the tag resolves locally. Only `{branch}` takes the `origin/` prefix on this scope. The change set is `git log --first-parent {base}..{branch}` / `git diff {base}...{branch}` — the first-parent line of the integration branch, so each squash-merged PR is one commit and a `--no-ff` merge counts once.
 
 ### Merge-Provenance Check
 
-Before analyzing the diff, detect whether the base branch was merged into this branch mid-history — content that arrived that way is not work this branch introduced and must not be reviewed as such. `{base}`/`{branch}` reuse whatever base-branch resolution the rest of this step already uses.
+Before analyzing the diff, detect whether the integration branch was merged into this branch mid-history — content that arrived that way is not work this branch introduced and must not be reviewed as such. `{base}`/`{branch}` reuse whatever base-branch resolution the rest of this step already uses.
 
 ```bash
 git log --merges {base}..{branch} --oneline # detect
 ```
 
+- **A `base:{ref}` scope** — skip the detect and count it as no merge commits detected, in every later step that asks: `{ref}` is a fixed point on the integration branch, so a merge in this range is how a PR shipped, never base content arriving. Every path in the diff stays in scope.
 - **No merge commits detected** (the common case) — this check is a no-op: no further computation, no new output section. The rest of Step 2 proceeds exactly as before, against the full diff.
 - **Merge commits detected** — read `merge-provenance-check.md` in this skill's directory: the own-work file-set computation, how to report the excluded files, and the own-work scope that replaces the raw `git diff` scope for Steps 3, 3.5, and 5.
 
@@ -174,7 +178,7 @@ The one exception is the dependency question, which needs manifest *content* rat
 
 Full diff *content* belongs to Step 3's dispatched lens agents, which have their own context windows. See Step 3's dispatch note. It lives in `step3-lens-dispatch.md`.
 
-If infrastructure or deployment changes are detected (Terraform, CDK, Docker, CI/CD, database migrations, new environment variables) that aren't already in the ledger as `ops` items, triage each for auto-executability first — most "outside the codebase" tasks have a CLI and get executed, not appended. Append only what survives triage, with phase `ops`, status `open`, and a `(reason-not-auto: {value})` qualifier embedded in the item description per `_shared/ledger-format.md`'s ops-item rule — an ops item without one is a classification error. This catches ops requirements introduced during review fixes that weren't present in the original build.
+If infrastructure or deployment changes are detected (Terraform, CDK, Docker, CI/CD, database migrations, new environment variables) that aren't already in the ledger as `ops` items, triage each for auto-executability first — most "outside the codebase" tasks have a CLI and get executed, not appended. Append only what survives triage (`hooks.js ledger-row`, `_shared/ledger-format.md`'s Writer section), with phase `ops`, status `open`, and a `(reason-not-auto: {value})` qualifier in the item description per the ops-item rule — an ops item without one is a classification error.
 
 This classification guides which review lenses to apply — a pure UI change doesn't need a database review.
 
@@ -388,7 +392,7 @@ multi-spec `/claude-tweaks:flow` run sharing one PR across specs — `flow/multi
 `<!-- run-comment: verdict:{spec} -->` where `{spec}` is this spec's record id (the numeric
 suffix of `basename($PIPELINE_RUN_DIR)`, which is this spec's own `spec-{N}/` subdirectory —
 `_shared/pr-run-comments.md`'s "Multi-spec verdict comments" section). Then the verdict, then
-the QA status exactly as the summary's QA Validation line renders it (stale-QA qualifier included — no separate wording), then the summary's **Coverage caveat:** line verbatim when it rendered, then the
+the QA status exactly as the summary's QA Validation line renders it (stale-QA qualifier included — no separate wording), then the summary's **Coverage caveat:** line verbatim when it rendered, then its **Independence: degraded** line verbatim when it rendered, then the
 top findings by severity (max 5), reusing `review-summary-template.md`'s own
 `Category | Finding | Severity | Action` findings-table shape — and post-or-update it on the PR
 per that file's canonical procedure, using the same marker as `{kind}` (`verdict` or

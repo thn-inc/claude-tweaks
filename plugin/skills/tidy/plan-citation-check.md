@@ -1,7 +1,7 @@
 # Tidy Step 4 — Plan Citation Check (#3101)
 
-Read by `scan-procedures.md` Step 4 before recommending any plan Delete, and re-run by
-`step-6-auto.md`'s pre-delete re-verify (both Delete rows). Split out of `scan-procedures.md` while that file
+Read by `scan-procedures.md` Step 4 before recommending any plan Delete or `Prune plan`, and re-run by
+`step-6-auto.md`'s pre-delete re-verify (both Delete rows) and `SKILL.md`'s `Prune plan` execution re-verify. Split out of `scan-procedures.md` while that file
 carried a per-file byte cap (retired by #3311). A third reader: `/wrap-up`'s
 `cleanup-procedures.md` item 1 runs this same check before a `prune-after-wrapup` plan delete (#3109).
 

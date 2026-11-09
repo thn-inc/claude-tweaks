@@ -17,7 +17,7 @@ own text names as acting on what it flags, an action item 11 itself, being flag-
 | Form | Behavior |
 |---|---|
 | `close-out` (bare) | Discover every open, plugin-created PR carrying the `claude-tweaks-run` marker (the same marker `_shared/github-pr-scan.md` item 9/11 detect), excluding housekeeping-marker PRs (mechanical, never a parked record) — no draft-status filter, unlike item 9's own arm-ready scope, since a still-draft `pending-review` PR is exactly one of this mode's target cases (AC2). Run the per-candidate procedure below, one PR at a time. |
-| `close-out #N[,#M,...]` | Direct — resolve `#N`'s (or the named group's) own `pending-review` PR from its still-held claim (`_shared/issue-claims.md`; parking never releases a claim) rather than searching the whole open-PR list, then run the same per-candidate procedure against just that one. |
+| `close-out #N[,#M,...]` | Direct — resolve `#N`'s (or the named group's) own `pending-review` PR rather than searching the whole open-PR list: from its still-held claim (`_shared/issue-claims.md`; parking never releases a claim); with no claim held (a stuck record's released claim), take the PR from `bin/dispatch-resume.js --issue {N}` — `prNumber` when eligible, else its single `prNumbers` entry only when the refused verdict's `remedy` names `/claude-tweaks:dispatch close-out #{N}`; any other verdict (several PRs, a by-hand or close remedy, no PR, a failed read) prints the verdict's `remedy`, or its `line` when `remedy` is null, and stops for that record. Then run the same per-candidate procedure against just that one. |
 
 **Preflight.** Same Detection Ladder as the rest of dispatch (`_shared/forge-detection.md` checks
 1-3). `work-backend: local-files` stops the same way `SKILL.md`'s own Preflight does — there is no
@@ -96,7 +96,7 @@ touching shared state runs one member at a time.
    covered by the confirmation gate above (a project whose deploy step needs its own confirmation
    should say so in its own docs; this mode does not add a second gate on top of step 4's).
 7. **On `merged` — release the claim and clean up.** First run
-   `_shared/pr-first-merge-post-merge.md`'s Step 4.0, with `PIPELINE_RUN_DIR` = step 3's resolved run dir. Then reuse
+   `_shared/pr-first-merge-post-merge.md`'s Step 4.0, then Step 4.0b (`{pr-number}` = `{number}`), with `PIPELINE_RUN_DIR` = step 3's resolved run dir. Then reuse
    `wrap-up/cleanup-procedures-execution.md` Section E (claim release, `bot:in-progress` removal)
    and Section B (run-dir archival) exactly as they are cited elsewhere in this skill — never
    hand-roll the bookkeeping a canonical procedure already owns. Worktree removal (Section C, if

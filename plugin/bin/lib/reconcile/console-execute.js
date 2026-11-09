@@ -23,6 +23,11 @@
 // whose staged file does not show it safe to ratify (`console/sdd-ruling.js`'s
 // `sddRulingDeferralReason`) is named in `rulingGateGaps` and withheld the
 // same way; `readRulingTexts` reads those staged files for detect.
+// #3942: a ruling item with non-blank ruling text carries `ratifyAction` (`sddRulingRatifyAction`),
+// a gapped row included: it is named in `rulingGateGaps` and withheld from auto-ticking,
+// but a human's tick still ratifies it. `file-record` tells the executing session its
+// ratify files a deferral record; a filing that failed goes back through
+// resolveConsoleExecution's `filingFailed`.
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -33,8 +38,9 @@ const { runWithConcurrency } = require('./gh-pool');
 const { evaluateMaturation, extractPendingGrantedAt, partitionGrantComments } = require('../issues/grant-maturation');
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 const { resolvePolicyConfig } = require('../policy-schema');
-const { sddRulingDeferralReason, SDD_RULING_REASONS } = require('../console/sdd-ruling');
+const { sddRulingDeferralReason, SDD_RULING_REASONS, sddRulingRatifyAction } = require('../console/sdd-ruling');
 const { canonicalRealpath, resolveLeaf, isAncestorOrSelf } = require('../path-guard');
+const { ghOptions } = require('../repo-resolve');
 
 const FETCH_TIMEOUT_MS = 5000;
 // _shared/console-execution.md's Pre-execution claim section — a claim older
@@ -144,7 +150,7 @@ async function ghJson(repoRoot, args) {
     ({ stdout } = await execFileAsyncTimed(
       'gh',
       args,
-      { cwd: repoRoot, encoding: 'utf8', timeout: FETCH_TIMEOUT_MS, windowsHide: true },
+      ghOptions(args, { cwd: repoRoot, encoding: 'utf8', timeout: FETCH_TIMEOUT_MS, windowsHide: true }),
     ));
   } catch (e) {
     if (e && e.code === 'ENOENT') return { ok: false, reason: 'gh-absent' };
@@ -289,6 +295,8 @@ function preFetchSkipReason(consoleJson, now) {
 // without a rulingTexts object withholds as sdd-ruling-unclassified. A console with neither
 // row kind needs no ctx (mergeGrantGap: null, rulingGateGaps: []). rulingGateGaps elements
 // are { id, reason } or, for an unreadable ruling row (#4049), { id, reason: 'sdd-ruling-unreadable', detail: cause }.
+// A ruling gap's reason is any SDD_RULING_REASONS value sddRulingDeferralReason returns,
+// sdd-ruling-needs-human-decision included (#4587).
 function decideConsoleExecute(consoleJson, comments, now, ctx = {}) {
   const skipReason = preFetchSkipReason(consoleJson, now);
   if (skipReason) return { action: 'skip', reason: skipReason };
@@ -313,11 +321,39 @@ function decideConsoleExecute(consoleJson, comments, now, ctx = {}) {
   }
 
   const items = Array.isArray(consoleJson.items) ? consoleJson.items : [];
+
+  // Computed ahead of the #1802 merge-row exception below, because resolvedItems carries each
+  // ruling row's ratifyAction. #3880: a ruling row whose staged text does not show it
+  // safe to ratify is a gap. Pure: the texts arrive in ctx (consoleExecuteDetect reads them);
+  // a ruling id missing from ctx.rulingTexts reads as unclassified, and so does
+  // every ruling row when the map is absent altogether (#4048).
+  // #3942: every ruling row with non-blank ruling text also carries what its ratify does —
+  // file-record (a deferral: the executing session files its record) or accept — gapped
+  // rows too: the gap withholds auto-ticking, a human tick still ratifies.
+  const rulingGateGaps = [];
+  const ratifyActions = {};
+  const rulingTexts = ctx.rulingTexts && typeof ctx.rulingTexts === 'object' ? ctx.rulingTexts : null;
+  const readErrors = ctx.rulingReadErrors && typeof ctx.rulingReadErrors === 'object' ? ctx.rulingReadErrors : {};
+  for (const item of items) {
+    if (item.isRulingRow !== true) continue;
+    // #4049: a read that failed names its cause and outranks any text -- the
+    // unreadable row is a gap whether or not a null text also came back.
+    if (Object.prototype.hasOwnProperty.call(readErrors, item.id) && typeof readErrors[item.id] === 'string') {
+      rulingGateGaps.push({ id: item.id, reason: SDD_RULING_REASONS.UNREADABLE, detail: readErrors[item.id] });
+      continue;
+    }
+    const text = rulingTexts ? rulingTexts[item.id] : null;
+    const reason = sddRulingDeferralReason(text);
+    if (reason) rulingGateGaps.push({ id: item.id, reason });
+    ratifyActions[item.id] = sddRulingRatifyAction(text);
+  }
+
   const resolvedItems = items.map((item) => {
     const commentId = item.commentId && commentIds.includes(item.commentId) ? item.commentId : commentIds[0];
     const ticks = ticksByComment.get(commentId) || {};
+    const ratifyAction = item.isRulingRow === true && Object.prototype.hasOwnProperty.call(ratifyActions, item.id) ? ratifyActions[item.id] : null;
     return {
-      id: item.id, kind: item.kind, summary: item.summary, stagedHash: item.stagedHash, approved: ticks[item.id] === true, ...(item.isMergeRow === true ? { isMergeRow: true } : {}), ...(item.isRulingRow === true ? { isRulingRow: true } : {}), ...(isFindingRow(item) ? { findingItem: item.findingItem } : {}),
+      id: item.id, kind: item.kind, summary: item.summary, stagedHash: item.stagedHash, approved: ticks[item.id] === true, ...(item.isMergeRow === true ? { isMergeRow: true } : {}), ...(item.isRulingRow === true ? { isRulingRow: true } : {}), ...(ratifyAction ? { ratifyAction } : {}), ...(isFindingRow(item) ? { findingItem: item.findingItem } : {}),
     };
   });
 
@@ -370,25 +406,6 @@ function decideConsoleExecute(consoleJson, comments, now, ctx = {}) {
         }
       }
     }
-  }
-
-  // #3880: the third exception — a ruling row whose staged text does not show it
-  // safe to ratify. Pure: the texts arrive in ctx (consoleExecuteDetect reads them);
-  // a ruling id missing from ctx.rulingTexts reads as unclassified, and so does
-  // every ruling row when the map is absent altogether (#4048).
-  const rulingGateGaps = [];
-  const rulingTexts = ctx.rulingTexts && typeof ctx.rulingTexts === 'object' ? ctx.rulingTexts : null;
-  const readErrors = ctx.rulingReadErrors && typeof ctx.rulingReadErrors === 'object' ? ctx.rulingReadErrors : {};
-  for (const item of items) {
-    if (item.isRulingRow !== true) continue;
-    // #4049: a read that failed names its cause and outranks any text -- the
-    // unreadable row is a gap whether or not a null text also came back.
-    if (Object.prototype.hasOwnProperty.call(readErrors, item.id) && typeof readErrors[item.id] === 'string') {
-      rulingGateGaps.push({ id: item.id, reason: SDD_RULING_REASONS.UNREADABLE, detail: readErrors[item.id] });
-      continue;
-    }
-    const reason = sddRulingDeferralReason(rulingTexts ? rulingTexts[item.id] : null);
-    if (reason) rulingGateGaps.push({ id: item.id, reason });
   }
 
   return {
@@ -495,7 +512,7 @@ async function consoleExecuteDetect(opts = {}) {
 //   { status: 'noop', reason: 'already-resolved' | 'claimed', executingSession? }
 //   { status: 'error', reason: 'no-console' | 'unparseable-console-json' |
 //       'no-comment-ids' | 'no-pr-number' | 'network-failure' |
-//       'comment-not-found' | 'unknown-item-ids' | 'not-ruling-items' | 'not-finding-items' |
+//       'comment-not-found' | 'unknown-item-ids' | 'not-ruling-items' | 'not-finding-items' | 'conflicting-failure-ids' |
 //       'reply-comment-failed' | 'marker-edit-failed' | 'console-write-failed', ids?, error? }
 async function resolveConsoleExecution(runDir, {
   approve = [], decline = [], reverseFailed = [], filingFailed = [],
@@ -555,10 +572,15 @@ async function resolveConsoleExecution(runDir, {
   const rulingIds = new Set(items.filter((item) => item.isRulingRow === true).map((item) => item.id));
   const notRulingIds = [...new Set(reverseFailed)].filter((id) => !rulingIds.has(id));
   if (notRulingIds.length) return { status: 'error', reason: 'not-ruling-items', ids: notRulingIds };
-  // --filing-failed, likewise, only for a finding row.
+  // --filing-failed, likewise, only for a finding row — or (#3942) a flagged
+  // ruling whose ratify filed a deferral record that failed to land.
   const findingIds = new Set(items.filter(isFindingRow).map((item) => item.id));
-  const notFindingIds = [...new Set(filingFailed)].filter((id) => !findingIds.has(id));
+  const notFindingIds = [...new Set(filingFailed)].filter((id) => !findingIds.has(id) && !rulingIds.has(id));
   if (notFindingIds.length) return { status: 'error', reason: 'not-finding-items', ids: notFindingIds };
+  // A ruling cannot have both failed to reverse and failed to ratify: the caller
+  // contradicts itself, so nothing is written.
+  const conflictingIds = [...new Set(reverseFailed)].filter((id) => filingFailed.includes(id));
+  if (conflictingIds.length) return { status: 'error', reason: 'conflicting-failure-ids', ids: conflictingIds };
   const approveSet = new Set(approve);
   const declineSet = new Set(decline);
   const reverseFailedSet = new Set(reverseFailed);
@@ -573,7 +595,9 @@ async function resolveConsoleExecution(runDir, {
   // item) that is not ratified routes to reversed instead, whether unticked
   // or named in --decline (`_shared/console-execution.md`). A flagged ruling
   // named in --reverse-failed outranks all of it: its reverse was refused or
-  // never created, so it reads reverse-failed and is not cleared. A finding
+  // never created, so it reads reverse-failed and is not cleared; one named in
+  // --filing-failed (#3942) ratified a deferral whose record was refused or never
+  // created, so it reads filing-failed and is not cleared either. A finding
   // row follows the same shape: unticked or declined it is dropped (cleared),
   // named in --filing-failed it reads filing-failed (not cleared), and a row
   // whose tick no comment carries is declined (not cleared) — a drop needs
@@ -588,6 +612,12 @@ async function resolveConsoleExecution(runDir, {
     if (isFindingRow(item) && filingFailedSet.has(item.id)) {
       return {
         id: item.id, kind: item.kind, outcome: 'filing-failed', note: FILING_FAILED_NOTE, isMergeRow: item.isMergeRow === true, findingItem: item.findingItem,
+      };
+    }
+    // #3942: a ratify whose deferral record failed to land — never executed.
+    if (item.isRulingRow === true && filingFailedSet.has(item.id)) {
+      return {
+        id: item.id, kind: item.kind, outcome: 'filing-failed', note: FILING_FAILED_NOTE, isMergeRow: item.isMergeRow === true, isRulingRow: true,
       };
     }
     if (!declineSet.has(item.id) && (approveSet.has(item.id) || ticks[item.id] === true)) {
@@ -665,10 +695,11 @@ async function resolveConsoleExecution(runDir, {
   // Guarded (unlike the two gh calls above, this is the only I/O in the
   // function with no injected-failure return shape of its own): by this
   // point both gh writes have already landed for real, so an uncaught throw
-  // here would propagate to hooks.js's main()'s top-level
-  // `.catch(() => process.exit(0))` and exit silently successful — this
-  // module's own header names that exact hazard as one a sibling code path
-  // was already patched to avoid.
+  // here would propagate to hooks.js's main() and surface only as the
+  // generic `claude-tweaks: resolve-console: {message}` exit 1 (#4932), not
+  // the distinguishable console-write-failed status, so the caller could not
+  // tell that both gh writes already landed — this module's own header names
+  // that exact hazard as one a sibling code path was already patched to avoid.
   const nextConsoleJson = {
     ...consoleJson,
     ...(Array.isArray(consoleJson.items) ? {
@@ -754,6 +785,7 @@ module.exports = {
   readConsoleJson,
   parseFixesMembers,
   readRulingTexts,
+  readInsideRunDir,
   fetchIssueGrant,
   resolveConsoleExecution,
   renderExecutedLines,

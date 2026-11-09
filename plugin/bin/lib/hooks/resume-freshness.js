@@ -28,8 +28,8 @@
 // section: "A normal turn end is not a session end, so the hooks layer's
 // interruption stamp... never runs, and run-state.json stays status: active".
 'use strict';
-const fs = require('fs');
 const ctxLib = require('./context');
+const { lstatType } = require('../path-guard');
 const { runLiveness, blocksResume, resumeEntries } = require('../run-liveness');
 const { DEFAULT_PROBES } = require('../run-liveness/probes');
 const { LIVE_WINDOW_MS } = require('../run-liveness/constants');
@@ -70,7 +70,12 @@ function checkResumeFreshness(runDir, opts = {}) {
 
   const worktree = typeof state.worktree === 'string' ? state.worktree : null;
   if (!worktree) return { safe: true, verdict: 'no-worktree' };
-  if (!fs.existsSync(worktree)) return { safe: true, verdict: 'worktree-gone' };
+  // `missing` here is path-guard's ENOENT/ENOTDIR only — do not simplify back to
+  // `fs.existsSync`, which also returns false on EACCES/ELOOP/EIO and would read an
+  // unreadable worktree path as `worktree-gone`, resuming an interrupted run over a
+  // possibly live one (#4435). An unreadable path falls through to `runLiveness`,
+  // whose `error` entry blocks as `indeterminate`.
+  if (lstatType(worktree).type === 'missing') return { safe: true, verdict: 'worktree-gone' };
 
   // The worktree lock and last-commit answers come from run-liveness's
   // `worktree-lock` and `last-commit` evidence, read through `blocksResume`

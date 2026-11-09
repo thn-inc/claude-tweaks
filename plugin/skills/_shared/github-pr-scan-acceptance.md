@@ -11,20 +11,26 @@ canonical contract two files deep is worse than one extra `Read` at dispatch tim
 file: subagents cannot read this file directly, the dispatcher inlines the relevant scope section
 whole into the scan agent's prompt.
 
-Every `gh issue list`/`gh pr list` call below carries an explicit `--limit` — see
-`github-pr-scan.md`'s own opening note for why.
+Every `gh issue list`/`gh pr list` call below carries an explicit `--limit`, sized from
+`backlog-fetch-limit` except the acceptance-queue fetch's fixed cap (follow-up #4906).
 
 ## Scope: `acceptance-queue` (consumed by /help Stage 4.7)
 
 One cheap list for the dashboard's Acceptance Queue section — deliberately `--state all`, unlike
-every other count in this file, since `demo:pending` persists independent of open/closed state
+every other count in this file, since a pending acceptance persists independent of open/closed state
 (an `auto:merge`'d record's issue can already be closed while still awaiting sign-off). `/demo`
 no longer sweeps this backlog itself (it resolves only the items you name — a bare ref or an
 explicit `#N,#M` list, never a scan), so this is the sole place the outstanding set is enumerated.
 
 ```bash
-gh issue list --label demo:pending --state all --json number,title --limit 200
+gh issue list --search "label:demo:pending,accept:pending" --state all --json number,title --limit 200
 ```
+
+The comma is an OR across the two pending spellings (`_shared/work-record.md`, Acceptance axis).
+A record carrying a pending label is listed regardless of any resolution label it also carries;
+this scope enumerates pending labels and does not apply the precedence rule. The query is a search,
+so a record labelled seconds before the run can be missing while the search index lags — unwarned,
+and picked up by the next run.
 
 Render as one line listing every matching record: `Awaiting sign-off: **{N} records** — #{n1}
 ({title1}), #{n2} ({title2}), ... — run /demo #{n1},#{n2},... to review them all` (a single ref
@@ -33,8 +39,8 @@ when `{N}` is 1: `run /demo #{n1}`) — omit entirely when the count is 0.
 ## Scope: `acceptance-gap` (consumed by /tidy Step 4.8)
 
 Finds closed records that carry no acceptance label at all — the case `acceptance-queue` above
-cannot see, since that scope only lists records already flagged `demo:pending`. A record closed
-without ever receiving a `demo:*` label is invisible to `acceptance-queue` and would otherwise
+cannot see, since that scope only lists records already flagged pending. A record closed
+without ever receiving an acceptance label is invisible to `acceptance-queue` and would otherwise
 disappear from the backlog with no disposition on record. A record closed with GitHub's own
 `stateReason` of `NOT_PLANNED` or `DUPLICATE` is excluded from this scope entirely — a not-planned
 or duplicate closure has nothing to accept, so it is never a gap. Classification is entirely
@@ -45,37 +51,67 @@ label taxonomy; see that module or `_shared/work-record.md` for what the labels 
 `parent-gate` scope below does: it reads GitHub labels, and the Detection Ladder above skips this
 whole file whenever `gh` is unreachable — it checks remote/install/auth, never `work-backend`. The
 `local-files` twin of this sweep is `tidy/step-1-records.md`'s Shape 8, reading the record store
-through `queryRecords` and translating `facets.closed`/`facets.acceptance`/`facets.parent`/`facets.notPlanned` into
+through `queryRecords` and translating `facets.closed`/`facets.acceptance`/`facets.parent`/`facets.isParentIssue`/`facets.notPlanned` into
 the same `needsBackstop` call. It emits the identical `[acceptance-gap]` row at the identical
 severity and recommends the identical `/claude-tweaks:demo` invocation, so no consumer
 distinguishes the two.
 
-Record set: closed records from the last 30 days, computed as `Date.now() - 30 days` in the
-`node` step below — cross-platform, no shell `date` variant needed.
+Record set: closed records from the last 30 days. The fetch splits that window into two date slices — `closed:$SINCE..$MID` and `closed:>$MID` — and applies the disposition, not-planned and duplicate exclusions server-side through `--search` on each slice; the client-side `closedAt` cutoff, `needsBackstop` and the oversight floor still run on the merged set, unchanged. Negated
+`-reason:` qualifiers are used rather than `reason:completed`, so a closed record with a null
+`stateReason` stays in. The oversight floor stays client-side: it passes a record meeting either
+the risk or the size axis and fails closed on unscored records, which negated `-label:` qualifiers
+cannot express.
+
+Resolve `{since-date}` first, as its own call, with `node -e "console.log(new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10))"` (cross-platform, no shell `date` variant needed), and substitute its `YYYY-MM-DD` output literally. The server date is one date wider than the 30-day client cutoff below, on purpose: the `closed:` qualifier's timezone is unprobed, so the extra day keeps the server set a superset. Resolve `{mid-date}` the same way, as its own call, with `node -e "console.log(new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10))"`, and substitute its `YYYY-MM-DD` output literally: it is the split point between the two date slices below, 15 days back and so inside the window.
 
 Resolve session-scoped paths first (`_shared/session-tmp-root.md`, cited throughout this file rather than restated), then resolve `backlog-fetch-limit` and substitute it into the fetch below (per this file's "Fetch limit" section):
 
 ```bash
-RAW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-closed-records-raw.json)"
+RAW_OLD="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-closed-records-raw-old.json)"
+RAW_NEW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-closed-records-raw-new.json)"
 CLOSED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-closed-records.json)"
+: > "$CLOSED"
 LIMIT="{resolved-limit}"
+SINCE="{since-date}"
+MID="{mid-date}"
+export SINCE MID
 gh issue list --state closed --limit "$LIMIT" \
+  --search "closed:$SINCE..$MID -reason:\"not planned\" -reason:duplicate -label:demo:approved -label:demo:changes-requested -label:demo:pending -label:accept:approved -label:accept:changes-requested -label:accept:pending" \
   --json number,title,state,labels,closedAt,stateReason \
-  > "$RAW"
+  > "$RAW_OLD"
+gh issue list --state closed --limit "$LIMIT" \
+  --search "closed:>$MID -reason:\"not planned\" -reason:duplicate -label:demo:approved -label:demo:changes-requested -label:demo:pending -label:accept:approved -label:accept:changes-requested -label:accept:pending" \
+  --json number,title,state,labels,closedAt,stateReason \
+  > "$RAW_NEW"
 node -e "
   const fs = require('fs');
-  const raw = require('$RAW');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(process.env.SINCE || '') || Number.isNaN(Date.parse(process.env.SINCE)) || new Date(process.env.SINCE).toISOString().slice(0, 10) !== process.env.SINCE || new Date(process.env.SINCE) > new Date(Date.now() - 30 * 864e5)) throw new Error('SINCE is not a YYYY-MM-DD date over 30 days back — the since-date placeholder was not substituted or was resolved wrong; an empty date returns zero rows, a later one drops records.');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(process.env.MID || '') || Number.isNaN(Date.parse(process.env.MID)) || new Date(process.env.MID).toISOString().slice(0, 10) !== process.env.MID || process.env.MID <= process.env.SINCE || process.env.MID >= new Date().toISOString().slice(0, 10)) throw new Error('MID is not a YYYY-MM-DD date later than SINCE and earlier than today — the mid-date placeholder was not substituted or was resolved wrong; an empty or inverted slice silently drops its records.');
   const LIMIT = $LIMIT;
-  if (raw.length === LIMIT) {
-    console.error('WARNING: the closed-record fetch returned exactly ' + LIMIT + ' records (the configured backlog-fetch-limit) — closed records older than the newest ' + LIMIT + ' are invisible to this scope, even within the 30-day window. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before treating this scope as complete.');
+  const CAP = Math.min(LIMIT, 1000);
+  const slices = [
+    ['closed:' + process.env.SINCE + '..' + process.env.MID, require('$RAW_OLD')],
+    ['closed:>' + process.env.MID, require('$RAW_NEW')],
+  ];
+  for (const [qualifier, rows] of slices) {
+    if (rows.length >= CAP) {
+      console.error('WARNING: the closed-record slice ' + qualifier + ' returned ' + rows.length + ' records, reaching its cap of ' + CAP + ' (the smaller of backlog-fetch-limit and the 1000-result search ceiling) — records past it are invisible to this scope. With a cap below 1000, raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run; at a cap of 1000, that slice alone reaches the search ceiling and the scope cannot be complete.');
+    }
   }
+  const byNumber = new Map(slices.flatMap(([, rows]) => rows).map((r) => [r.number, r]));
   const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-  fs.writeFileSync('$CLOSED', JSON.stringify(raw.filter((r) => r.closedAt > cutoff)));
+  fs.writeFileSync('$CLOSED', JSON.stringify([...byNumber.values()].filter((r) => r.closedAt > cutoff)));
 "
 ```
 
+When this block fails — the since-date or mid-date guard throws, or a failed `gh` call leaves `$RAW_OLD` or `$RAW_NEW` unreadable —
+the scope stops: report no `[acceptance-gap]` rows at all and quote the error verbatim, as for an
+exit-3 sub-issue fetch below. `$CLOSED` is emptied first, so a later block never reads a stale one.
+
 A closed record whose acceptance lives on a `/claude-tweaks:specify` decomposition parent must
-not count as a gap — `needsBackstop`'s `hasParent` field exists precisely to suppress it. Resolving
+not count as a gap — `needsBackstop`'s `hasParent` field exists precisely to suppress it, and its
+`isParent` field excludes every parent here (only `parent-gate`'s closed branch passes `parentExceedsFloor`) — its acceptance is the parent gate's: the below-floor close
+(#4466) or `/claude-tweaks:demo` above it (a hand-closed one: `parent-gate` below). Resolving
 which closed records are sub-issues reuses the same parent-side enumeration the `parent-gate` scope
 below already documents in full — never the sub-issue side, which works under one `work-links` mode
 and silently returns nothing under the other. This step only needs sub-issue *existence*, not
@@ -116,14 +152,22 @@ block and never carry it across blocks in a shell variable — shell environment
 between Bash calls and never reaches a subagent, so a cross-block `export` silently resolves
 empty (the same discipline `_shared/trust-table.md` states for its own identical fetches).
 
-A 30-day window does not bound the closed-record fetch the way it might seem to: a busy repo can
-close far more than any reasonable hardcoded cap within 30 days (971 closed issues in 30 days was
-observed on this repo alone), so a fixed limit silently drops the **oldest** closed records first —
-exactly the quiet-failure a backstop scope must never have. The parent fetches share the same
+The closed-record fetch is bounded on the server by the window (one date wider than the 30-day cutoff) and the disposition filter,
+which is why it no longer fills the cap with already-dispositioned records: a busy repo can close
+far more than any reasonable hardcoded cap within 30 days (971 closed issues in 30 days was
+observed on this repo alone), and a cap on that unfiltered stream silently dropped the **oldest**
+closed records first — exactly the quiet-failure a backstop scope must never have. The closed-record
+fetch is split into two date slices, `closed:$SINCE..$MID` and `closed:>$MID`, because one query is
+capped at GitHub search's 1000 results and the undisposed set can exceed that: each slice is capped
+at the smaller of the limit and 1000 and warns on its own when it reaches that cap (naming its date
+range, row count and remedy), and the two slices merge number-keyed before the cutoff. The
+closed-record fetch is a search too: a record closed or relabelled seconds before the run can be missing while the search index lags — unwarned, and picked up by the next run. The parent fetches share the same
 exposure for a different reason — they are `--state all` over the repo's entire history, and
 `gh issue list` returns newest-first, so a fixed cap drops the **oldest** parents first. Those are
 precisely the parents whose sub-issues have already closed, so truncation silently re-floods this
-scope with exactly the rows the filter exists to remove.
+scope with exactly the rows the filter exists to remove. A label-filtered
+`gh issue list` is capped at 1000 by GitHub whatever `--limit` says (`--label risk:low --limit 1500` returned 1000 of
+1513), so raising `backlog-fetch-limit` past 1000 does not widen these fetches.
 
 **`work-links: body-text`** — every parent's task list comes back in the same fetch:
 
@@ -149,8 +193,8 @@ node -e "
   const fetched = ['$PFG_NEW', '$PFG_LEG'].map(require);
   // Number-keyed dedup across the two label fetches — identical rows, either fetch may win.
   const parents = [...new Map(fetched.flat().map((p) => [p.number, p])).values()];
-  if (fetched.some((f) => f.length === LIMIT)) {
-    console.error('WARNING: a parent fetch returned exactly ' + LIMIT + ' records (the configured backlog-fetch-limit) — older parents were dropped, so their sub-issues re-enter this scope as false acceptance-gap rows. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before acting on any row below.');
+  if (fetched.some((f) => f.length >= Math.min(LIMIT, 1000))) {
+    console.error('WARNING: a parent fetch reached its cap of ' + Math.min(LIMIT, 1000) + ' records (the smaller of backlog-fetch-limit and the 1000-result ceiling) — older parents were dropped, so their sub-issues re-enter this scope as false acceptance-gap rows. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before acting on any row below (raising it past 1000 does not help).');
   }
   const subIssueNumbers = parents.flatMap((p) => parseSubIssues(p.body));
   fs.writeFileSync('$GAP_SUBS', JSON.stringify(subIssueNumbers));
@@ -180,8 +224,8 @@ node -e "
   const fetched = ['$PFG_NEW', '$PFG_LEG'].map(require);
   // Number-keyed dedup across the two label fetches — identical rows, either fetch may win.
   const parents = [...new Map(fetched.flat().map((p) => [p.number, p])).values()];
-  if (fetched.some((f) => f.length === Number(process.env.FETCH_LIMIT))) {
-    console.error('WARNING: a parent fetch returned exactly ' + process.env.FETCH_LIMIT + ' records (the configured backlog-fetch-limit) — older parents were dropped, so their sub-issues re-enter this scope as false acceptance-gap rows. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before acting on any row below.');
+  if (fetched.some((f) => f.length >= Math.min(Number(process.env.FETCH_LIMIT), 1000))) {
+    console.error('WARNING: a parent fetch reached its cap of ' + Math.min(Number(process.env.FETCH_LIMIT), 1000) + ' records (the smaller of backlog-fetch-limit and the 1000-result ceiling) — older parents were dropped, so their sub-issues re-enter this scope as false acceptance-gap rows. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before acting on any row below (raising it past 1000 does not help).');
   }
   fs.writeFileSync('$PFG', JSON.stringify(parents));
 "
@@ -303,6 +347,7 @@ node -e "
       state: 'CLOSED',
       labels: r.labels,
       hasParent: r.hasParent,
+      isParent: parseRecordFacets(r.labels).isParentIssue,
       stateReason: r.stateReason,
     }));
   gaps.forEach(r => console.log('[acceptance-gap] #' + r.number + ': ' + r.title + ' — closed with no acceptance disposition — recommend /claude-tweaks:demo #' + r.number));
@@ -323,10 +368,10 @@ Emit `[acceptance-gap]` rows per the Output Contract, at severity `info` — not
 not `low`. This is the one finding in this file whose row count is a standing backlog rather
 than a defect count: on a repo that closes records ad hoc it returns a three-digit set on every
 run, indefinitely. `/claude-tweaks:tidy` runs this scope in the same agent as `repo-wide`
-(`tidy/scan-procedures.md` Step 4.8) under one 15-row, highest-severity-first cap, so any tier
-above `info` would permanently evict every actionable `repo-wide` finding beneath it. `info` is
-also where its behavioural sibling already sits — "Open PR awaiting review", the other
-no-mutation, always-surfaced row (`tidy/step-6-auto.md`).
+(`tidy/scan-procedures.md` Step 4.8), and tidy reads a row's severity as recommendation urgency
+(`tidy/scan-execution.md`'s column semantics), so any tier above `info` would rank a standing
+backlog as more urgent than it is beside every actionable `repo-wide` finding. `info` is also where its behavioural sibling already sits — "Open PR awaiting review", the
+other no-mutation, always-surfaced row (`tidy/step-6-auto.md`).
 
 ## Scope: `parent-gate` (consumed by /tidy Step 4.8)
 
@@ -358,68 +403,7 @@ this sweep lives in `tidy/step-1-records.md` (Shape 7), reading the record store
 
 Record set: open records carrying `parent-issue` (`/claude-tweaks:specify` labels every
 decomposition parent this way — see `specify/record-creation.md`'s Parent record section),
-plus every issue's current state, fetched once.
-
-### Fetch limit
-
-**Every fetch below is bounded by `{resolved-limit}`, never a hardcoded cap.** Resolve
-`backlog-fetch-limit` with
-`node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values backlog-fetch-limit`
-(`_shared/work-record-config.md`'s key table; the resolver applies the schema default when the
-key is absent) and substitute the literal number into **every**
-block below that names it. Substitute it independently per
-block and never carry it across blocks in a shell variable — shell environment does not survive
-between Bash calls and never reaches a subagent, so a cross-block `export` silently resolves
-empty (the same discipline `_shared/trust-table.md` states for its own identical fetches). The
-state map in particular is `--state all` over the repo's entire lifetime with no recency bound,
-which is why it cannot carry a fixed cap: past that cap every truncated sub-issue defaults to
-`OPEN`, so every parent containing one reads `incomplete` and this backstop stops firing —
-permanently, and with nothing on the output to say it did.
-
-Resolve session-scoped paths first (`_shared/session-tmp-root.md`):
-
-```bash
-PI_NEW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parent-issues-new.json)"
-PI_LEG="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parent-issues-legacy.json)"
-ALL_STATES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-all-issue-states.json)"
-PARENTS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parent-issues.json)"
-LIMIT="{resolved-limit}"
-export FETCH_LIMIT="$LIMIT"
-gh issue list --label parent-issue --state open --json number,title,body,labels --limit "$LIMIT" \
-  > "$PI_NEW"
-# Legacy-label fetch — PERMANENT cross-project support for adopter repos that haven't migrated;
-# removable only at a major version dropping pre-rename repo support. [IL-85]
-gh issue list --label family:parent --state open --json number,title,body,labels --limit "$LIMIT" \
-  > "$PI_LEG"
-
-gh issue list --state all --json number,state,labels --limit "$LIMIT" \
-  > "$ALL_STATES"
-
-node -e "
-  const fs = require('fs');
-  const LIMIT = Number(process.env.FETCH_LIMIT);
-  const fetched = ['$PI_NEW', '$PI_LEG'].map(require);
-  // Number-keyed dedup across the two label fetches — identical rows, either fetch may win.
-  const parents = [...new Map(fetched.flat().map((p) => [p.number, p])).values()];
-  fs.writeFileSync('$PARENTS', JSON.stringify(parents));
-  const states = require('$ALL_STATES');
-  if (fetched.some((f) => f.length === LIMIT)) {
-    console.error('WARNING: a parent fetch returned exactly ' + LIMIT + ' records (the configured backlog-fetch-limit) — older parents were dropped and are invisible to this scope entirely. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before treating this scope as complete.');
-  }
-  if (states.length === LIMIT) {
-    console.error('WARNING: fetched exactly ' + states.length + ' issue states (the configured backlog-fetch-limit) — every sub-issue beyond this cap defaults to OPEN, so any parent containing one reads incomplete and this backstop silently never fires for it. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before treating this scope as complete.');
-  }
-"
-```
-
-The state map's `labels` field (added alongside `number`/`state`) is what lets the oversight-floor
-pre-filter below read each sub-issue's `risk:*` label from data already fetched here — no second
-`gh` round-trip per parent or per sub-issue.
-
-**Report every warning emitted above verbatim beside this scope's rows, and never suppress
-either of them.** Both truncations fail in the *quiet* direction — fewer rows, not wrong ones —
-which is exactly the direction a backstop must never fail in silently, since a scope that emits
-nothing is indistinguishable from a repo with no un-gated parents.
+plus those closed in the last 30 days, plus the state map, fetched once (every issue under `body-text`, every native sub-issue under `native`).
 
 ### `work-links` resolution
 
@@ -439,7 +423,98 @@ is not a degraded read but a silent total failure: a native parent's body carrie
 construction, so `parseSubIssues` returns `[]` for every parent, every parent reads
 `incomplete` (`parentGateState` never reports `due` for a parent with no discoverable sub-issues),
 and this backstop emits nothing at all — on a repo where it is the only thing that gates a
-parent whose last sub-issue closed outside `/claude-tweaks:wrap-up`.
+parent whose last sub-issue closed outside `/claude-tweaks:wrap-up`. Its value also selects the
+state map's `{state-map-search}` below.
+
+### Fetch limit
+
+**Every fetch below is bounded by `{resolved-limit}`, never a hardcoded cap.** Resolve
+`backlog-fetch-limit` with
+`node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values backlog-fetch-limit`
+(`_shared/work-record-config.md`'s key table; the resolver applies the schema default when the
+key is absent) and substitute the literal number into **every**
+block below that names it. Substitute it independently per
+block and never carry it across blocks in a shell variable — shell environment does not survive
+between Bash calls and never reaches a subagent, so a cross-block `export` silently resolves
+empty (the same discipline `_shared/trust-table.md` states for its own identical fetches). Under
+`body-text` the state map is `--state all` over the repo's entire lifetime with no recency bound,
+which is why it cannot carry a fixed cap: past that cap every truncated sub-issue defaults to
+`OPEN`, so every parent containing one reads `incomplete` and this backstop stops firing —
+permanently, and with nothing on the output to say it did. Under `native` the map is searched,
+so GitHub search's 1000-result ceiling also applies.
+
+Substitute `{state-map-search}`: `has:parent-issue` under `native` (the native sub-issue
+population; a just-linked one the search index lags on defaults to `OPEN`), the empty string under
+`body-text` (task-list children are not native links, and an empty `--search` keeps `gh issue list`
+off the search API, so no 1000 ceiling applies).
+
+Resolve session-scoped paths first (`_shared/session-tmp-root.md`):
+
+```bash
+PI_NEW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parent-issues-new.json)"
+PI_LEG="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parent-issues-legacy.json)"
+ALL_STATES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-all-issue-states.json)"
+PC_NEW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-closed-parent-issues-new.json)"
+PC_LEG="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-closed-parent-issues-legacy.json)"
+PARENTS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parent-issues.json)"
+: > "$PARENTS"
+gh api user --jq .login > "$PARENTS.login"
+LIMIT="{resolved-limit}"
+export FETCH_LIMIT="$LIMIT"
+STATE_SEARCH='{state-map-search}'
+export STATE_SEARCH
+gh issue list --label parent-issue --state open --json number,title,body,labels --limit "$LIMIT" \
+  > "$PI_NEW"
+# Legacy-label fetch — PERMANENT cross-project support for adopter repos that haven't migrated;
+# removable only at a major version dropping pre-rename repo support. [IL-85]
+gh issue list --label family:parent --state open --json number,title,body,labels --limit "$LIMIT" \
+  > "$PI_LEG"
+gh issue list --label parent-issue --state closed --search "closed:>=$(node -p "new Date(Date.now() - 31 * 864e5).toISOString().slice(0, 10)")" --json number,title,body,labels,state,stateReason,closedAt,comments --limit "$LIMIT" \
+  > "$PC_NEW"
+gh issue list --label family:parent --state closed --search "closed:>=$(node -p "new Date(Date.now() - 31 * 864e5).toISOString().slice(0, 10)")" --json number,title,body,labels,state,stateReason,closedAt,comments --limit "$LIMIT" \
+  > "$PC_LEG"
+
+gh issue list --state all --search "$STATE_SEARCH" --json number,state,labels --limit "$LIMIT" \
+  > "$ALL_STATES"
+
+node -e "
+  const fs = require('fs');
+  if (!['', 'has:parent-issue'].includes(process.env.STATE_SEARCH)) throw new Error('STATE_SEARCH is not a known value — the state-map-search placeholder was not substituted.');
+  const LIMIT = Number(process.env.FETCH_LIMIT);
+  const { isCloseMarkerComment } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/below-floor-parent-close.js');
+  const { IDENTITY_PROBE_FAILED_NOTE } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/parent-gate.js');
+  const fetched = ['$PI_NEW', '$PI_LEG', '$PC_NEW', '$PC_LEG'].map(require);
+  const login = fs.readFileSync('$PARENTS.login', 'utf8').trim();
+  if (!login) console.error('WARNING: ' + IDENTITY_PROBE_FAILED_NOTE + ' — gh api user printed no login; open-parent rows are unaffected, an [acceptance-gap] row may be a false positive.');
+  const parents = [...new Map(fetched.flat().filter((p) => p.state !== 'CLOSED' || Date.now() - Date.parse(p.closedAt) < 30 * 864e5).map((p) => [p.number, { ...p, comments: undefined, belowFloorClose: (p.comments || []).some((c) => isCloseMarkerComment(c, login)) }])).values()];
+  fs.writeFileSync('$PARENTS', JSON.stringify(parents));
+  const states = require('$ALL_STATES');
+  if (fetched.some((f) => f.length >= Math.min(LIMIT, 1000))) {
+    console.error('WARNING: a parent fetch reached its cap of ' + Math.min(LIMIT, 1000) + ' records (the smaller of backlog-fetch-limit and the 1000-result ceiling) — older parents were dropped and are invisible to this scope entirely. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before treating this scope as complete (raising it past 1000 does not help).');
+  }
+  const STATE_CAP = process.env.STATE_SEARCH ? Math.min(LIMIT, 1000) : LIMIT;
+  if (states.length >= STATE_CAP) {
+    console.error('WARNING: fetched ' + states.length + ' issue states, reaching the state-map cap of ' + STATE_CAP + ' — every sub-issue beyond it defaults to OPEN, so any parent containing one reads incomplete and this backstop silently never fires for it. Raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run before treating this scope as complete (raising it past 1000 does not help a searched map).');
+  }
+  if (process.env.STATE_SEARCH && !states.length && parents.length) {
+    console.error('WARNING: the searched state map is empty while ' + parents.length + ' parents exist — every sub-issue reads OPEN, so this backstop cannot fire. Check that work-links resolved native (task-list children are not native links) and re-run.');
+  }
+"
+```
+
+When this block fails — the state-map-search guard throws, or a failed
+`gh` call leaves a fetch file unreadable — the scope stops: report no `[parent-gate]` rows at all and quote the error verbatim.
+`$PARENTS` is emptied first; never read it or `$ALL_STATES` afterwards — a 0-row state map would
+read every sub-issue as `OPEN`. An empty login is not a stop: report its WARNING verbatim with the rows.
+
+The state map's `labels` field (added alongside `number`/`state`) is what lets the oversight-floor
+pre-filter below read each sub-issue's `risk:*` label from data already fetched here — no second
+`gh` round-trip per parent or per sub-issue.
+
+**Report every warning emitted above verbatim beside this scope's rows, and never suppress
+any of them.** Both truncations fail in the *quiet* direction — fewer rows, not wrong ones —
+which is exactly the direction a backstop must never fail in silently, since a scope that emits
+nothing is indistinguishable from a repo with no un-gated parents.
 
 ### Sub-issue enumeration
 
@@ -450,10 +525,10 @@ a sub-issue's own `state` field wherever one happens to already be present in a 
 REST responses (the `sub_issues` endpoint included) report lowercase `open`/`closed`, while
 `parentGateState` and the state map both use the `gh issue list --json state` uppercase
 `OPEN`/`CLOSED` form; reading from one source only avoids a silent casing mismatch. A sub-issue
-number absent from the state map (the fetch above truncated before reaching it — the warning
-above fires when that is possible) defaults to `OPEN`, the fail-safe direction — an unresolved
-sub-issue must never let a parent read as `due` (mirrors `parentGateState`'s own "never reports
-`due` for a parent with no discoverable sub-issues" rule).
+number absent from the state map (the fetch above truncated before reaching it, warned above; or,
+under `native`, the search index lagged a just-linked one, unwarned) defaults to `OPEN`, the
+fail-safe direction — an unresolved sub-issue must never let a parent read as `due` (mirrors
+`parentGateState`'s own "never reports `due` for a parent with no discoverable sub-issues" rule).
 
 **`work-links: body-text`** — every parent's task list is already in hand from the first fetch
 above; no further `gh` calls. Resolve session-scoped paths first (`_shared/session-tmp-root.md`):
@@ -471,9 +546,10 @@ node -e "
     number: p.number,
     title: p.title,
     parentLabels: p.labels.map(l => l.name),
+    state: p.state || 'OPEN', stateReason: p.stateReason || null, belowFloorClose: p.belowFloorClose === true,
     subIssues: parseSubIssues(p.body).map(n => {
       const info = infoOf.get(n);
-      return { number: n, state: (info && info.state) || 'OPEN', labels: (info && info.labels) || [] };
+      return { number: n, state: (info && info.state) || 'OPEN', labels: (info && info.labels) || [], unread: !info };
     }),
   }));
   fs.writeFileSync('$GATES', JSON.stringify(gates));
@@ -522,9 +598,10 @@ node -e "
     number: p.number,
     title: p.title,
     parentLabels: p.labels.map(l => l.name),
+    state: p.state || 'OPEN', stateReason: p.stateReason || null, belowFloorClose: p.belowFloorClose === true,
     subIssues: (byParent[p.number] || []).map(n => {
       const info = infoOf.get(n);
-      return { number: n, state: (info && info.state) || 'OPEN', labels: (info && info.labels) || [] };
+      return { number: n, state: (info && info.state) || 'OPEN', labels: (info && info.labels) || [], unread: !info };
     }),
   }));
   fs.writeFileSync('$GATES', JSON.stringify(gates));
@@ -578,9 +655,10 @@ node -e "
       number,
       title: p.title,
       parentLabels: p.labels.map(l => l.name),
+      state: p.state || 'OPEN', stateReason: p.stateReason || null, belowFloorClose: p.belowFloorClose === true,
       subIssues: subIssueNumbers.map(n => {
         const info = infoOf.get(n);
-        return { number: n, state: (info && info.state) || 'OPEN', labels: (info && info.labels) || [] };
+        return { number: n, state: (info && info.state) || 'OPEN', labels: (info && info.labels) || [], unread: !info };
       }),
     };
   });
@@ -589,8 +667,8 @@ node -e "
 ```
 
 Both the primary path and the Fallback path converge on the same session-scoped
-`tidy-parent-gates.json` shape — `{number, title, parentLabels, subIssues:[{number,state,labels}]}`
-per parent.
+`tidy-parent-gates.json` shape — `{number, title, parentLabels, state, stateReason, belowFloorClose,
+subIssues:[{number,state,labels,unread}]}` per parent.
 
 ### Oversight-floor pre-filter
 
@@ -604,7 +682,7 @@ no `size:*` label of its own (`specify/record-creation.md`'s Parent record secti
 size at this level would mean gating on a fact that does not exist.
 
 With this run's session-scoped `tidy-parent-gates.json` assembled by whichever branch above
-applies, filter to parents that both exceed the floor and whose gate is due. A parent's aggregate
+applies, filter to parents whose gate is due; a due parent below the floor is surfaced, not filtered out. A parent's aggregate
 risk is the **max** risk tier across its `subIssues` — never a size read at the parent level, and
 never omitted or defaulted to the resolved `size-floor` value, which would silently fail every
 sub-issue's missing `size` facet closed and gate every parent regardless of risk. Any single
@@ -616,10 +694,10 @@ session-scoped paths first (`_shared/session-tmp-root.md`):
 GATES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parent-gates.json)"
 RISK_FLOOR=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values risk-floor)
 node -e "
-  const { parentGateState } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/acceptance.js');
+  const { parentGateState, closedParentGap } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/acceptance.js');
   const { exceedsOversightFloor } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/oversight-floor.js');
   const { parseRecordFacets, TIERS } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
-  const gates = require('$GATES'); // [{number, title, subIssues, parentLabels}]
+  const gates = require('$GATES');
   const [riskFloor] = process.argv.slice(1);
   function maxRiskTier(subIssues) {
     let hasUnscored = false;
@@ -632,12 +710,25 @@ node -e "
     }
     return hasUnscored ? undefined : TIERS[maxIndex];
   }
-  gates
-    .filter(f => exceedsOversightFloor({ risk: maxRiskTier(f.subIssues) }, { riskFloor, sizeFloor: null }).exceeds)
-    .filter(f => parentGateState({ subIssues: f.subIssues, parentLabels: f.parentLabels }) === 'due')
-    .forEach(f => console.log('[parent-gate] #' + f.number + ': ' + f.title + ' — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo #' + f.number));
+  const bad = {};
+  gates.forEach((f) => {
+    if (f.state === 'CLOSED') {
+      const v = closedParentGap({ ...f, subIssues: f.subIssues.map((s) => ({ risk: parseRecordFacets(s.labels).risk, unread: s.unread })), riskFloor });
+      if (v === 'gap') console.log('[acceptance-gap] #' + f.number + ': ' + f.title + ' — closed with no acceptance disposition — recommend /claude-tweaks:demo #' + f.number);
+      else if (v !== 'none') bad[v] = (bad[v] || 0) + 1;
+      return;
+    }
+    if (parentGateState({ subIssues: f.subIssues, parentLabels: f.parentLabels }) !== 'due') return;
+    console.log('[parent-gate] #' + f.number + ': ' + f.title + (exceedsOversightFloor({ risk: maxRiskTier(f.subIssues) }, { riskFloor, sizeFloor: null }).exceeds
+      ? ' — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo #' + f.number
+      : ' — parent complete below the oversight floor, still open — Open parent gate (closes it; no brief owed)'));
+  });
+  for (const v in bad) console.error('WARNING: ' + bad[v] + ' closed parent(s) print no [acceptance-gap] row (' + v + ') — risk unreadable; check work-links and backlog-fetch-limit, then re-run.');
 " -- "$RISK_FLOOR"
 ```
+
+A `CLOSED` gate's row is `closedParentGap`'s verdict: a `gap` prints `acceptance-gap`'s row, severity and
+routing (`/claude-tweaks:demo #{n}`), mutating nothing. Report its two `WARNING:` lines verbatim beside the rows; never suppress them.
 
 Un-gated parents recommend the `Open parent gate` action (`tidy/SKILL.md`'s Action Vocabulary,
 executed for this scope's rows via `tidy/actions-github-issues.md`'s `## Open parent gate`) — never applied without
@@ -652,13 +743,15 @@ this write, however mechanical or precondition-only it is; `/claude-tweaks:wrap-
 identical write with zero staging is not a counter-example, since that write is an unconditional
 step of a pipeline a human already launched against one named record and sits in no tier table at
 all, unlike this action. Separately, and independent of the write-level reasoning above, this
-scope and the `Open parent gate` action it feeds never write `demo:approved` or
-`demo:changes-requested` under any circumstance — that disposition stays exclusively
-`/claude-tweaks:demo`'s job, staged and human-only, which is why the recommendation always still
-ends with "then `/claude-tweaks:demo #{n}`" even once the gate is open.
+scope and the `Open parent gate` action it feeds never write an approved or changes-requested
+Acceptance label (`_shared/work-record.md`) under any circumstance — that disposition stays exclusively
+`/claude-tweaks:demo`'s job, staged and human-only, which is why an above-floor recommendation still
+ends with "then `/claude-tweaks:demo #{n}`" even once the gate is open. Approving a below-floor row
+closes the parent through `wrap-up/verification-brief-parent-gate.md`'s **Close the parent below the
+floor**, with no `/claude-tweaks:demo` step.
 
 Emit `[parent-gate]` rows per the Output Contract, at severity `info` — the same severity
 `acceptance-gap` uses and for the same reason: `/claude-tweaks:tidy` runs this scope in the same
-agent as `repo-wide` and `acceptance-gap` under one 15-row, highest-severity-first cap
+agent as `repo-wide` and `acceptance-gap` in one highest-severity-first table
 (`tidy/scan-procedures.md` Step 4.8), and this can be a standing backlog on a repo with several
 open decompositions, not a one-off defect count.

@@ -7,6 +7,7 @@ const path = require('path');
 const {
   shapeGate, liftMetadata, composeHeader, composeFile, sectionText, stripCodeSpans, normalizeDesignIntent,
 } = require('../../../plugin/bin/lib/issues/materialize-format');
+const { extractSection } = require('../../../plugin/bin/lib/markdown-blocks');
 const wtDetect = require('../../../plugin/bin/lib/hooks/worktree-detect');
 
 const SHAPED_BODY = [
@@ -97,6 +98,14 @@ test('stripCodeSpans: removes a fenced code block, any info string', () => {
   assert.ok(!stripped.includes('some quoted content'));
   assert.ok(stripped.includes('before'));
   assert.ok(stripped.includes('after'));
+});
+
+test('stripCodeSpans: a fence indented 1-3 spaces hides its quoted content too (#4368)', () => {
+  for (const pad of [' ', '  ', '   ']) {
+    const stripped = stripCodeSpans(`before\n${pad}\`\`\`md\nquoted TODO\n${pad}\`\`\`\nafter`);
+    assert.ok(!stripped.includes('quoted TODO'), `pad ${pad.length}`);
+    assert.ok(stripped.includes('before') && stripped.includes('after'), `pad ${pad.length}`);
+  }
 });
 
 test('stripCodeSpans: removes an inline code span, matching exact backtick-run length', () => {
@@ -549,4 +558,167 @@ test('sectionText: an unclosed fence hides every later heading (CommonMark: it r
   const body = '## Current State\nx\n\n```\nnever closed\n\n## Deliverables\n- [ ] d';
   assert.equal(sectionText(body, 'Deliverables'), null);
   assert.ok(sectionText(body, 'Current State').endsWith('- [ ] d'));
+});
+
+// ---- line-anchored, whole-name headings (#4367) ----
+const INLINE_MENTION_BODY = [
+  '## Current State',
+  'Mentions the `## Acceptance Criteria` and `## Release Note` headings.',
+  '',
+  '## Deliverables',
+  '- [ ] d',
+].join('\n');
+
+const BLOCKQUOTE_MENTION_BODY = [
+  '## Current State',
+  'Some current state text.',
+  '',
+  '> ## Acceptance Criteria',
+  '> 1. It works',
+  '',
+  '## Deliverables',
+  '- [ ] d',
+  '',
+  '## Release Note',
+  'Fixed the thing.',
+].join('\n');
+
+const RELEASE_NOTES_PREFIX_BODY = SHAPED_BODY.replace('## Release Note\n', '## Release Notes\n');
+assert.notEqual(RELEASE_NOTES_PREFIX_BODY, SHAPED_BODY);
+
+test('shapeGate: an inline-code mention of Acceptance Criteria and Release Note in Current State reports both missing (#4367)', () => {
+  assert.deepEqual(shapeGate(INLINE_MENTION_BODY), { ok: false, missing: ['Acceptance Criteria', 'Release Note'] });
+});
+
+test('shapeGate: a blockquote line naming Acceptance Criteria does not supply that section (#4367)', () => {
+  assert.deepEqual(shapeGate(BLOCKQUOTE_MENTION_BODY), { ok: false, missing: ['Acceptance Criteria'] });
+});
+
+test('shapeGate: a Release Notes heading does not satisfy Release Note (#4367)', () => {
+  const gate = shapeGate(RELEASE_NOTES_PREFIX_BODY);
+  assert.equal(gate.ok, false);
+  assert.ok(gate.missing.includes('Release Note'));
+  assert.equal(sectionText(RELEASE_NOTES_PREFIX_BODY, 'Release Note'), null);
+});
+
+test('sectionText and extractSection agree on absent (null vs empty) and present (same text) headings (#4367)', () => {
+  const bodies = [INLINE_MENTION_BODY, BLOCKQUOTE_MENTION_BODY, RELEASE_NOTES_PREFIX_BODY, SHAPED_BODY];
+  const names = ['Current State', 'Deliverables', 'Acceptance Criteria', 'Release Note', 'Nonexistent'];
+  for (const body of bodies) {
+    for (const name of names) {
+      const text = sectionText(body, name);
+      const viaExtract = extractSection(body, name, { levelPattern: '2', stopPattern: '2', trim: true });
+      if (text === null) assert.equal(viaExtract, '', `${name} absent in sectionText but extractSection returned text`);
+      else assert.equal(viaExtract, text, `${name} present: sectionText and extractSection disagree`);
+    }
+  }
+});
+
+test('shapeGate: a heading with trailing spaces and a tab is still the whole heading (#4367)', () => {
+  const body = SHAPED_BODY.replace('## Release Note\n', '## Release Note \t\n');
+  assert.notEqual(body, SHAPED_BODY);
+  assert.deepEqual(shapeGate(body), { ok: true, missing: [] });
+  assert.equal(sectionText(body, 'Release Note'), 'Fixed the thing.');
+});
+
+test('shapeGate: a CRLF inline-code mention still reports both sections missing (#4367)', () => {
+  const crlf = INLINE_MENTION_BODY.replace(/\n/g, '\r\n');
+  assert.notEqual(crlf, INLINE_MENTION_BODY);
+  assert.deepEqual(shapeGate(crlf), { ok: false, missing: ['Acceptance Criteria', 'Release Note'] });
+});
+
+test('sectionText: a CRLF body with a real Release Note heading line is found, text without a trailing CR (#4367)', () => {
+  const crlf = SHAPED_BODY.replace(/\n/g, '\r\n');
+  assert.notEqual(crlf, SHAPED_BODY);
+  assert.equal(sectionText(crlf, 'Release Note'), 'Fixed the thing.');
+  assert.equal(shapeGate(crlf).ok, true);
+});
+
+test('shapeGate: a level-3 Release Note heading is not the level-2 section (#4367)', () => {
+  const level3 = SHAPED_BODY.replace('## Release Note\n', '### Release Note\n');
+  assert.notEqual(level3, SHAPED_BODY);
+  assert.deepEqual(shapeGate(level3), { ok: false, missing: ['Release Note'] });
+  assert.equal(sectionText(level3, 'Release Note'), null);
+});
+
+test('shapeGate: a closed-ATX Acceptance Criteria heading is not the whole heading (#4367)', () => {
+  const closed = SHAPED_BODY.replace('## Acceptance Criteria\n', '## Acceptance Criteria ##\n');
+  assert.notEqual(closed, SHAPED_BODY);
+  assert.deepEqual(shapeGate(closed), { ok: false, missing: ['Acceptance Criteria'] });
+  assert.equal(sectionText(closed, 'Acceptance Criteria'), null);
+});
+
+test('sectionText returns null and extractSection returns an empty string for a non-string body (#4367)', () => {
+  for (const body of [undefined, null, 42, {}]) {
+    assert.equal(sectionText(body, 'Release Note'), null);
+    assert.equal(extractSection(body, 'Release Note', { levelPattern: '2', stopPattern: '2', trim: true }), '');
+  }
+});
+
+test('sectionText: an indented (1–3 space) fence hides quoted headings; a 4-space one does not (#4368)', () => {
+  const bodyFor = (pad) => ['## Current State', 'x', `${pad}\`\`\``, '## Deliverables', 'quoted', `${pad}\`\`\``, '', '## Release Note', 'n'].join('\n');
+  for (const pad of [' ', '  ', '   ']) {
+    assert.equal(sectionText(bodyFor(pad), 'Deliverables'), null, `pad ${pad.length}`);
+  }
+  // Four spaces is an indented code block, not a fence: the heading is the record's own.
+  const four = sectionText(bodyFor('    '), 'Deliverables');
+  assert.notEqual(four, null);
+  assert.ok(four.startsWith('quoted'));
+});
+
+const HIDDEN = '## Current State\nx\n\n```\nnever closed\n\n## Deliverables\n- [ ] d\n\n## Acceptance Criteria\n1. a\n\n## Release Note\nn';
+
+test('AC1.1: a column-0 fence closed by a closer indented 1-3 spaces ends at that closer (#4350)', () => {
+  for (const pad of [' ', '  ', '   ']) {
+    const body = `## Current State\nx\n\n\`\`\`\ncode\n${pad}\`\`\`\n\n## Deliverables\n- [ ] d`;
+    assert.equal(sectionText(body, 'Deliverables'), '- [ ] d', `pad ${pad.length}`);
+  }
+});
+
+test('AC2.1: a line starting with a triple-backtick inline span does not open a fence (#4350)', () => {
+  assert.equal(sectionText('## Current State\n```foo``` is the command\n\n## Deliverables\n- [ ] d', 'Deliverables'), '- [ ] d');
+});
+
+test('shapeGate: an unclosed fence before required sections reports the fence, not the sections it hides (#4350)', () => {
+  assert.deepEqual(shapeGate(HIDDEN), { ok: false, missing: ['unclosed-fence at line 4'] });
+});
+
+test('shapeGate: a CRLF body reports the same line (#4350)', () => {
+  assert.deepEqual(shapeGate(HIDDEN.replace(/\n/g, '\r\n')), { ok: false, missing: ['unclosed-fence at line 4'] });
+});
+
+test('shapeGate: a section absent beside a hidden one stays missing by name (#4350)', () => {
+  assert.deepEqual(shapeGate(HIDDEN.replace('\n\n## Release Note\nn', '')), { ok: false, missing: ['Release Note', 'unclosed-fence at line 4'] });
+});
+
+test('shapeGate: the fence entry sits before unresolved-placeholder (#4350)', () => {
+  assert.deepEqual(shapeGate(HIDDEN.replace('\nx\n', '\nTODO x\n')), { ok: false, missing: ['unclosed-fence at line 4', 'unresolved-placeholder'] });
+});
+
+test('shapeGate: a section hidden by a fence inside the verbatim Original request stays missing by name (#4350)', () => {
+  const body = '## Current State\nx\n\n## Deliverables\n- [ ] d\n\n## Acceptance Criteria\n1. a\n\n## Original request\n\n```\nnever closed\n## Release Note\nn';
+  assert.deepEqual(shapeGate(body), { ok: false, missing: ['Release Note'] });
+});
+
+const NO_RN_TRAILING_FENCE = '## Current State\nx\n\n## Deliverables\n- [ ] d\n\n## Acceptance Criteria\n1. a\n\n```\nnever closed\n## Technical Approach\nt';
+
+test('shapeGate: a gate that already fails also names an unterminated fence that hides nothing required (#4350 answer 6)', () => {
+  assert.deepEqual(shapeGate(NO_RN_TRAILING_FENCE), { ok: false, missing: ['Release Note', 'unclosed-fence at line 10'] });
+});
+
+test('shapeGate: answer 6 also fires when a required section is present but empty (#4350)', () => {
+  const body = '## Current State\nx\n\n## Deliverables\n- [ ] d\n\n## Acceptance Criteria\n1. a\n\n## Release Note\n\n## Technical Approach\n\n```\nnever closed';
+  assert.deepEqual(shapeGate(body), { ok: false, missing: ['Release Note', 'unclosed-fence at line 14'] });
+});
+
+test('shapeGate: a fence opened on the last authored line, right before Original request, still counts as authored (#4350)', () => {
+  const body = '## Current State\nx\n\n## Deliverables\n- [ ] d\n\n## Acceptance Criteria\n1. a\n\n```\n## Original request\n\n## Release Note\nn';
+  assert.deepEqual(shapeGate(body), { ok: false, missing: ['unclosed-fence at line 10'] });
+});
+
+test('shapeGate: answer 6 reads only the authored region, and a placeholder-only failure does not name the fence (#4350)', () => {
+  const afterOriginal = '## Current State\nx\n\n## Deliverables\n- [ ] d\n\n## Acceptance Criteria\n1. a\n\n## Original request\n\n```\nnever closed';
+  assert.deepEqual(shapeGate(afterOriginal), { ok: false, missing: ['Release Note'] });
+  const placeholderOnly = SHAPED_BODY.replace('Fixed the thing.', 'Fixed the thing. TODO\n\n```\nnever closed');
+  assert.deepEqual(shapeGate(placeholderOnly), { ok: false, missing: ['unresolved-placeholder'] });
 });

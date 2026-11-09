@@ -205,6 +205,19 @@ test('.gitignore contains the literal line .claude-tweaks/wrap-up-outcomes.tsv',
   assert.match(GITIGNORE, /^\.claude-tweaks\/wrap-up-outcomes\.tsv$/m);
 });
 
+// #4387: reconcile writes these two state files into the main checkout every pass; an
+// untracked copy makes mirror's `git status --porcelain` dirty check block the fast-forward
+// that integration-branch archiving now waits for. Consumers get them from this template.
+for (const name of ['reconcile-cache.json', 'reconcile-background-status.json']) {
+  const lineRe = new RegExp(`^\\.claude-tweaks/${name.replace(/\./g, '\\.')}$`, 'm');
+  test(`step-04-gitignore-suggestions.md's fenced suggestion block contains the ${name} line (#4387)`, () => {
+    assert.match(gitignoreSuggestionBlock(), lineRe);
+  });
+  test(`.gitignore contains the literal line .claude-tweaks/${name}`, () => {
+    assert.match(GITIGNORE, lineRe);
+  });
+}
+
 // #856 deliberately makes these two lines diverge: root .gitignore keeps the
 // feedback-specific blanket line (existing on-disk state, unmigrated), while
 // step-04's suggestion for *new* projects is generalized to cover every

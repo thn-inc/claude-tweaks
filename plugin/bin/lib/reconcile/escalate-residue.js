@@ -25,6 +25,11 @@
 // and `/backlog` grants route it to an autonomous build. No `by:reconcile`
 // origin value, no scoring heuristic — closed #1216 is the recorded
 // decision.
+//
+// #4794: the `repo` every function below takes is a *residue repo* — a `--repo`
+// string, `null` (no origin), or `{ refusal: string }` (an origin the gh host
+// gate refused). A refused origin reports `unknown-host` with the refusal text
+// as `detail` and never reaches a runner call; `null` keeps `no-repo-slug`.
 'use strict';
 const { fingerprintFromBasis, normalizeText } = require('../health-core/fingerprint');
 // #644 review fix — defaultRunner/errorText were a byte-for-byte duplicate
@@ -228,6 +233,19 @@ function residueBody({
   return { body: lines.filter((l) => l !== null).join('\n'), marker };
 }
 
+// #4794: the refusal text of a `{ refusal }` residue repo, else null.
+function refusalOf(repo) {
+  return repo && typeof repo === 'object' && typeof repo.refusal === 'string' ? repo.refusal : null;
+}
+
+// #4794: the residue repo `repoTargetOf`'s result stands for in the escalate/resolve calls: null when
+// origin did not resolve, `{ refusal }` for a refused origin (files nothing, calls no gh), else the
+// `--repo` value for the origin's one host (bare on gh's default host).
+function residueRepoOf(target) {
+  if (!target) return null;
+  return target.refusal ? { refusal: target.refusal } : target.ghRepo;
+}
+
 // Shared find-hit skeleton for the two escalate* functions below: resolve
 // the no-repo guard and the findResidueDuplicate try/catch once, then either
 // create a fresh issue (no hit) or hand the found hit to the caller's onHit
@@ -242,6 +260,8 @@ function residueBody({
 function findOrCreateIssue({
   repo, marker, runner, createArgs, onHit,
 }) {
+  const refusal = refusalOf(repo);
+  if (refusal !== null) return { status: 'escalation-failed', reason: 'unknown-host', detail: refusal };
   if (!repo) return { status: 'escalation-failed', reason: 'no-repo-slug' };
   let hit;
   try {
@@ -268,6 +288,8 @@ function findOrCreateIssue({
 function findHitForResolve({
   repo, marker, runner, onHit,
 }) {
+  const refusal = refusalOf(repo);
+  if (refusal !== null) return { status: 'resolution-failed', reason: 'unknown-host', detail: refusal };
   if (!repo) return { status: 'resolution-failed', reason: 'no-repo-slug' };
   let hit;
   try {
@@ -280,7 +302,7 @@ function findHitForResolve({
 }
 
 // { repo, reason, targetPath, count, firstFailedAt, lastError, runner } ->
-// { status: 'filed'|'dedup-hit'|'reopened', number } | { status: 'escalation-failed', reason }
+// { status: 'filed'|'dedup-hit'|'reopened', number } | { status: 'escalation-failed', reason, detail? }
 // Never throws — every branch below is try/caught, mirroring every other
 // best-effort write in this module family (logReapEvent in reap-merged.js,
 // writeCache here).
@@ -305,7 +327,7 @@ function findHitForResolve({
 // #4202: `pathExists` is opt-in — when supplied, a listed path it reports gone is dropped
 // from the edited body and noted in the comment; omitted means no convergence.
 // -> { status: 'filed'|'dedup-hit'|'appended'|'reopened', number } |
-//    { status: 'escalation-failed', reason, number? }
+//    { status: 'escalation-failed', reason, detail?, number? }
 function escalateStructurallyStuck({
   repo, targetPath, runner = defaultRunner, pathExists,
 }) {
@@ -350,6 +372,8 @@ function escalateResidue({
   repo, reason, targetPath, count, firstFailedAt, lastError, dirtyFiles, runner = defaultRunner, pathExists,
 }) {
   if (reason === 'structurally-stuck') return escalateStructurallyStuck({ repo, targetPath, runner, pathExists });
+  const refusal = refusalOf(repo);
+  if (refusal !== null) return { status: 'escalation-failed', reason: 'unknown-host', detail: refusal };
   if (!repo) return { status: 'escalation-failed', reason: 'no-repo-slug' };
   const { body, marker } = residueBody({
     reason, targetPath, count, firstFailedAt, lastError, dirtyFiles,
@@ -396,7 +420,7 @@ function escalateResidue({
 // path it reports gone is dropped alongside targetPath, and the record closes only once the
 // converged list is empty.
 // -> { status: 'closed'|'path-removed'|'already-closed'|'not-found', number? } |
-//    { status: 'resolution-failed', reason, number? }
+//    { status: 'resolution-failed', reason, detail?, number? }
 function resolveStructurallyStuck({
   repo, targetPath, runner = defaultRunner, why, pathExists,
 }) {
@@ -448,7 +472,7 @@ function resolveStructurallyStuck({
 // default "no longer exists on disk" clause in the structurally-stuck comment; every
 // other reason ignores it and its comment is unchanged.
 // -> { status: 'closed'|'already-closed'|'not-found', number? } |
-//    { status: 'resolution-failed', reason, number? }
+//    { status: 'resolution-failed', reason, detail?, number? }
 function resolveResidue({
   repo, reason, targetPath, runner = defaultRunner, why, pathExists,
 }) {
@@ -474,5 +498,5 @@ function resolveResidue({
 module.exports = {
   escalateResidue, resolveResidue, residueFingerprint, residueBody, findResidueDuplicate, defaultRunner, errorText,
   parseStuckPaths, renderStuckPathsBlock, withStuckPaths, structurallyStuckBody, structurallyStuckMarker,
-  capDirtyFiles, DIRTY_FILES_CAP,
+  capDirtyFiles, DIRTY_FILES_CAP, residueRepoOf,
 };

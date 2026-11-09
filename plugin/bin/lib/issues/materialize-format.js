@@ -7,7 +7,7 @@
 'use strict';
 
 const { POLICY_KEYS } = require('../policy-schema');
-const { fencedLineRanges } = require('./record-payload');
+const { fencedLineRanges, findSection, hiddenByUnclosedFence, unclosedFenceLine } = require('../markdown-blocks');
 
 const REQUIRED_SECTIONS = ['## Current State', '## Deliverables', '## Acceptance Criteria', '## Release Note'];
 // The Design-intent enum, read once from the policy schema (never restated here).
@@ -68,67 +68,61 @@ function stripCodeSpans(text) {
   // and removes the open-ended shape as a defensive measure. A span whose
   // content exceeds the cap degrades to being left as literal text instead
   // of stripped — the same safe direction stripCodeSpans already takes for
-  // an unclosed fence (fencedLineRanges, record-payload.js) — never to a longer scan.
+  // an unclosed fence (fencedLineRanges, markdown-blocks.js) — never to a longer scan.
   return out.join('\n').replace(/(`+)([\s\S]{0,2000}?)\1/g, '');
 }
 
-// body -> the text of section `## {name}` up to the next `## ` heading outside a
-// fenced block (or end of body). null when the heading is absent outside fences.
-// Fenced blocks are skipped as quoted content (#4169): a body whose Current State
-// quotes a spec-shaped copy must not have that copy's headings read as its own.
+// The findSection options for a required section, shared by sectionText and shapeGate's
+// hidden-section probe so the two reads cannot drift (#4350).
+const SECTION_OPTIONS = { levelPattern: '2', stopPattern: '2', trim: true };
+
+// body -> the trimmed text of section `## {name}` up to the next `## ` heading, or
+// null when the body has no such heading. The heading must be its own line, whole
+// name (#4367): an inline-code or blockquote mention, or a `## Release Notes` prefix,
+// does not match. Headings inside fenced blocks are quoted content (#4169). Delegates
+// to findSection, the same rule extractSection uses.
 function sectionText(body, name) {
-  const heading = `## ${name}`;
-  const lines = body.split('\n');
-  const lineStarts = [];
-  let offset = 0;
-  for (const line of lines) {
-    lineStarts.push(offset);
-    offset += line.length + 1;
-  }
-  const fencedSpans = fencedLineRanges(lines).map(([s, e]) => [lineStarts[s], lineStarts[e] + lines[e].length]);
-  // Spans are sorted and disjoint, so a binary search keeps a body packed with fences linear-ish.
-  function inFence(pos) {
-    let lo = 0;
-    let hi = fencedSpans.length - 1;
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      const [from, to] = fencedSpans[mid];
-      if (pos < from) hi = mid - 1;
-      else if (pos >= to) lo = mid + 1;
-      else return true;
-    }
-    return false;
-  }
-  let start = body.indexOf(heading);
-  while (start !== -1 && inFence(start)) start = body.indexOf(heading, start + 1);
-  if (start === -1) return null;
-  const afterHeading = start + heading.length;
-  let end = body.length;
-  for (let nl = body.indexOf('\n## ', afterHeading); nl !== -1; nl = body.indexOf('\n## ', nl + 1)) {
-    if (!inFence(nl + 1)) {
-      end = nl;
-      break;
-    }
-  }
-  return body.slice(afterHeading, end).trim();
+  return findSection(body, name, SECTION_OPTIONS);
 }
+
+// The parse problem a trailing unclosed fence reports, as `${prefix}${N}` with N the
+// 1-based line of the fence opener (#4350). One definition, shared with compose-record and compose-subject.
+const UNCLOSED_FENCE_PREFIX = 'unclosed-fence at line ';
 
 // body -> { ok: true } | { ok: false, missing: string[] }. `missing` names
 // every failing section by its plain name ("Current State", not "## Current
 // State") plus, when present, the string 'unresolved-placeholder' — the same
 // gate materialize.md's "Materialization hard gate" describes: every
 // section present and non-empty, no TBD/TODO/<!-- ambiguity: marker anywhere
-// outside the verbatim-preserved `## Original request` section.
+// outside the verbatim-preserved `## Original request` section. Between the two
+// sits at most one `unclosed-fence at line N` entry (#4350), pushed when an
+// unclosed fence in the authored region hides a required section (that section
+// is not also named missing), or, failing that, when a required section is
+// already missing or empty and the authored region holds an unterminated fence
+// (even one hiding nothing required). The verdict (ok) is never changed by it.
 function shapeGate(body) {
   const text = typeof body === 'string' ? body : '';
   const missing = [];
+  const originalRequestAt = text.search(ORIGINAL_REQUEST_RE);
+  const authored = originalRequestAt === -1 ? text : text.slice(0, originalRequestAt);
+  const authoredLines = authored.replace(/\r\n/g, '\n').split('\n');
+  let fenceLine = null;
   for (const heading of REQUIRED_SECTIONS) {
     const name = heading.replace('## ', '');
     const section = sectionText(text, name);
-    if (section === null || section.length === 0) missing.push(name);
+    if (section === null) {
+      const hiddenAt = hiddenByUnclosedFence(text, name, SECTION_OPTIONS);
+      // An opener inside the verbatim Original request is text no author may edit: the
+      // section stays missing by name, not credited to a fence the author cannot close.
+      if (hiddenAt === null || hiddenAt > authoredLines.length) missing.push(name);
+      else if (fenceLine === null) fenceLine = hiddenAt;
+    } else if (section.length === 0) missing.push(name);
   }
-  const originalRequestAt = text.search(ORIGINAL_REQUEST_RE);
-  const authored = originalRequestAt === -1 ? text : text.slice(0, originalRequestAt);
+  if (fenceLine === null && missing.length) {
+    const opener = unclosedFenceLine(authoredLines);
+    if (opener !== -1) fenceLine = opener + 1;
+  }
+  if (fenceLine !== null) missing.push(`${UNCLOSED_FENCE_PREFIX}${fenceLine}`);
   if (PLACEHOLDER_RE.test(stripCodeSpans(authored))) missing.push('unresolved-placeholder');
   return missing.length ? { ok: false, missing } : { ok: true, missing: [] };
 }
@@ -236,5 +230,5 @@ function composeFile({ header, n, title, body }) {
 }
 
 module.exports = {
-  REQUIRED_SECTIONS, PLACEHOLDER_PATTERNS, ORIGINAL_REQUEST_RE, DESIGN_INTENT_VALUES, sectionText, shapeGate, normalizeDesignIntent, describeDesignIntentError, liftMetadata, composeHeader, composeFile, stripCodeSpans,
+  REQUIRED_SECTIONS, PLACEHOLDER_PATTERNS, ORIGINAL_REQUEST_RE, UNCLOSED_FENCE_PREFIX, DESIGN_INTENT_VALUES, sectionText, shapeGate, normalizeDesignIntent, describeDesignIntentError, liftMetadata, composeHeader, composeFile, stripCodeSpans,
 };

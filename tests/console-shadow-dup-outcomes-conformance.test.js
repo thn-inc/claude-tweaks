@@ -289,7 +289,7 @@ function missingStep7Facts(line) {
   return STEP7_FACTS.filter(([, pattern]) => !pattern.test(line)).map(([label]) => label);
 }
 
-// `FAILED` is a hand-composed status only two named writers may use (_shared/auto-decision-log.md),
+// `FAILED` is a hand-composed status only its named writers may use (_shared/auto-decision-log.md),
 // and log-decision.js exits 2 on it, so step 7 must route a composer failure to `SKIP` instead.
 function assertStep7Composer(consoleText) {
   const line = step7(consoleText);

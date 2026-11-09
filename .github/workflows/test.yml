@@ -33,5 +33,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      # No install step: the plugin ships zero npm deps, and node --test is built in.
+      # ubuntu-latest ships no zsh, and the zsh cases (the zsh-only word-split
+      # defect in wrap-up-closing-records-array-fill.test.js, #4107) skip
+      # when it is absent from PATH.
+      - run: sudo apt-get update && sudo apt-get install -y zsh
+      # No npm install step: the plugin ships zero npm deps, and node --test is built in.
       - run: npm test

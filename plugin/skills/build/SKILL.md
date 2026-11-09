@@ -138,7 +138,7 @@ The plan will be written to `docs/superpowers/plans/YYYY-MM-DD-{feature}.md`.
 
 **Size-headroom check:** when a plan task appends to a `plugin/skills/**/*.md` file already within ~10% of `RAIL_BYTES` (the Read-limit rail, `plugin/bin/lib/skill-audit/budgets.js`), measure `wc -c` on the merge base and name the remedy up front in the plan — cut bytes, or move a genuinely lazy section (one some runs never read) into its own cited file; `when:` fencing is the remedy only for a composed bundle near the rail, and does not help a raw file, since the rail measures it with only the marker lines stripped. Never a "read X now" split every run follows; the `rail:` tests fail CI for a file or composed bundle over the rail. (Same check applies in Design Step 3 below.)
 
-Proceed to **Common Step 2**.
+Proceed to **Common Step 1.5**.
 
 ---
 
@@ -168,7 +168,7 @@ Because design mode has no spec with structured acceptance criteria, extract tes
 
 The plan will be written to `docs/superpowers/plans/YYYY-MM-DD-{feature}.md`. Same plan-header artifact rule and plan-authoring check as Spec Step 3 apply (ignore the "For agentic workers" boilerplate).
 
-Proceed to **Common Step 2**.
+Proceed to **Common Step 1.5**.
 
 ---
 
@@ -183,6 +183,8 @@ For the full procedure (pre-flight branch-divergence check with auto-mode behavi
 If the user did not specify `worktree`, skip this step.
 
 ### Common Step 1.5: Plan Audit
+
+**Dispatch-capability preflight (#4555), first, whatever this step's skip gate decides:** under `subagent`, probe for an `Agent`/`Task` tool with `_shared/subagent-dispatch-core.md`'s no-`Agent` probe, before Common Step 1.6's plan reviewer and Common Step 2's `subagent` execution. None found → stop BLOCKED per `execution-mode-policy.md`'s No-dispatch host section — never implement the plan's tasks inline, and never switch to `batched` on the run's behalf.
 
 Audit the plan against the actual repo before dispatching execution, via `node "${CLAUDE_PLUGIN_ROOT}/bin/plan-audit.js" {plan-file} [--repo-root {dir}] [--spec {spec-file}] [--count-tasks] [--bytes] [--task-markers]` — a mechanized CLI (#903), not hand-run greps. When a materialized spec exists (record mode), pass it as `--spec {spec-file}` — in worktree mode the worktree's copy of `work/{n}-spec.md`, since `$PIPELINE_RUN_DIR` holds no `work/` — to add the warn-only Check E (AC-clause coverage) and Check F (spec-named path coverage) (`plan-audit.md`). Five checks:
 - **Check A (always):** verify every path in the plan's Files: sections exists (or its parent directory exists for Create/Test, or is created by another Create/Test entry in the same plan).
@@ -217,7 +219,7 @@ Execution depends on the chosen execution strategy (see Build Options). **These 
 
 **subagent** (default): read `dispatch.md` in this skill's directory and follow its full dispatch procedure — profile resolution, `tier=` alias handling, AC-forwarding, and review-model pinning. After the final code review completes, **stop the skill and return here** — do not let it invoke `/superpowers:finishing-a-development-branch`.
 
-**batched**: Invoke `/superpowers:executing-plans`. After the last batch completes, **stop the skill and return here** — do not let it invoke `/superpowers:finishing-a-development-branch`. `/build` handles post-execution steps before any branch finishing.
+**batched**: Invoke `/superpowers:executing-plans`. Read `dispatch.md`'s **Affected-set testing (#5117)** rule and fold it in; it covers this strategy's per-task and final whole-suite runs. After the last batch completes, **stop the skill and return here** — do not let it invoke `/superpowers:finishing-a-development-branch`. `/build` handles post-execution steps before any branch finishing.
 
 **Maturity-scaled test discipline (both strategies, all modes):** resolve `project-maturity` once per build — `MATURITY=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values project-maturity)`. The resolver's schema default is `greenfield`, and a value outside the four-item enum also resolves to `greenfield` — either way, add nothing. Fold one additional instruction into whichever execution skill was invoked above:
 
@@ -259,7 +261,7 @@ If any part of the plan is blocked (missing infrastructure, unresolved dependenc
    - **Record mode:** add to the materialized spec file under a "Blocked / Future Work" section
    - **Design mode:** file a backlog work record via `/claude-tweaks:capture`
 2. Note what unblocks them
-3. Append blocked items to the open items ledger (see `/claude-tweaks:ledger`) with phase `build` and status `open`, naming `Defer-reason: blocked-dependency` or `blocked-external` in the Resolution text. A review finding carried to the ledger (any execution strategy) takes a `build`-phase row (`open`, or `deferred` for SDD's carried `minor (deferred):` lines) only after `_shared/deferral-gate.md`'s fix-now check with exactly one `Defer-reason:` from that file's vocabulary, inline in the Resolution text — otherwise fix it in this build. Severity alone ("minor", "fine to defer") is never a reason.
+3. Append blocked items to the open items ledger (`hooks.js ledger-row`, `_shared/ledger-format.md`'s Writer section) with phase `build` and status `open`, naming `Defer-reason: blocked-dependency` or `blocked-external` in the Resolution text. A review finding carried to the ledger (any execution strategy) takes a `build`-phase row (`open`, or `deferred` for SDD's carried `minor (deferred):` lines) only after `_shared/deferral-gate.md`'s fix-now check with exactly one `Defer-reason:` from that file's vocabulary, inline in the Resolution text — otherwise fix it in this build. Severity alone ("minor", "fine to defer") is never a reason.
 4. These are resolved by the ledger resolve gate (`/claude-tweaks:ledger resolve`), run by `/claude-tweaks:wrap-up`'s Phase 3 ledger gate or `/claude-tweaks:flow` Step 5 — not by `/claude-tweaks:help`, which does not scan ledger files
 
 **Follow-up ideas (independent of blocking).** If, while implementing, you notice an opportunistic improvement or idea outside the current spec/design's scope — not blocking the current work, just observed in passing — file it via `/claude-tweaks:capture` as a fresh backlog work record before it's lost, rather than inflating this build's scope. This applies in both spec and design mode, and runs regardless of whether any part of the plan is actually blocked.
@@ -292,15 +294,19 @@ If `docs/REGISTRY.md` exists, read `docs-sync.md` in this skill's directory for 
 
 After Common Steps 6 and 6.5, so the verified tree includes the journeys and synced docs, run the shared verification procedure (`skills/test/verification.md`). This runs type checking, linting, and tests using the project's commands from CLAUDE.md. **Folded plan tasks:** a plan task folded into this step contributes only its runner checks — every other step it names runs before Common Step 7 or writes a `SKIP` entry — read `dispatch.md`'s "Folded verification task" rule for the exact entry; it applies under `batched` too. **CI source (#4347):** when the declaration has a `ci` block, push first (`worktree` under `pr-first`, `git push origin {branch}` as its own call) so the runner can take the suite from the PR's CI job on HEAD (`test/ci-source.md`).
 
+**Operational fixes first (#3489).** Before that run, when the build's diff matches `operational-checklist.md`'s Category A triggers (schema/migration files, a changed shared-constant value, new env access, a changed `package.json` `exports`), read that file's Category A section in this skill's directory, then apply that file's Category A fixes and commit them with `Category A` in the subject, so the verified tree includes them and no fix moves HEAD past `VERIFICATION_SHA`; re-check those triggers against any fix commit below before re-running verification. A Category A action that fails or cannot complete (a rejected schema push, a broken `exports` build) is not `fixed`: resolve it like any failure in this step, or leave it `open` for Common Step 5.5's ledger row. Category B tasks and every ledger row stay in Common Step 5.5, after verification.
+
+**Catch up before verifying (#4343).** Immediately before that run and after any Category A fix commit, run `_shared/pre-verification-catchup.md`: a single-spec `pr-first` worktree run, in every mode, merges in a moved base, so `VERIFICATION_SHA` is then the post-merge HEAD; any other run logs its `SKIP`. It is not repeated before a re-run after a fix, and a conflict it cannot resolve confidently aborts the merge, and the run verifies the un-merged tree.
+
 **Note:** `/build` always runs verification (it is the *producer* of `VERIFICATION_PASSED` and of the runner-written pass stamp, #1921). The skip-if-recent rule in `test/verification.md` applies only to `/test` callers — never to this step. On a pass (runner exit 0 — a baseline-adjudicated pass included), read `VERIFICATION_SHA` from `report.json`'s `sha` and pass it forward with `VERIFICATION_PASSED=true`, so `/test`'s skip-if-recent check can detect a tree change between this step and its own invocation instead of trusting a bare boolean.
 
 If anything fails, fix it and commit the fix. If a fix changes behavior, re-check, before re-running verification, any journey or doc Common Steps 6/6.5 wrote that the fix now contradicts. **When a failure is a behavioral bug — not a mechanical type/lint error — follow the reproduce-first discipline in `_shared/reproduce-first-discipline.md` before changing code** (reproduce on command, fix the confirmed cause, escalate rather than guess if it can't be reproduced; once green, walk the causal-depth chain per the discipline's step 3) — see `failure-recovery.md` for the fuller recovery table this step falls back to.
 
 ### Common Step 5.5: Operational Checklist
 
-After verification passes, check for operational tasks that are easy to forget — deployment and environment concerns that slip through code review (schema/migration files, env access patterns, IaC, CI/CD, container configs).
+After verification passes, check for operational tasks that are easy to forget — deployment and environment concerns that slip through code review (schema/migration files, env access patterns, IaC, CI/CD, container configs). Category A fixes already landed in Common Step 5, before its verification run; this step runs the Category B tasks and writes every ledger row, a `fixed` row per Category A fix included.
 
-If your build's diff matches schema/env/IaC/CI/platform-config files, read `operational-checklist.md` in this skill's directory for the full Category A/B trigger lists, check tables, probe-then-classify procedure, and ledger format. Otherwise skip this step entirely. **On skip**, write a `SKIP` entry per the degrade-trace rule (condition: no schema/env/IaC/CI/platform-config files in diff); standalone: list in the handoff.
+If your build's diff matches schema/env/IaC/CI/platform-config files, or Common Step 5 applied a Category A fix (a `Category A` commit in `git log` since build start), read `operational-checklist.md` in this skill's directory for the full Category A/B trigger lists, check tables, probe-then-classify procedure, and ledger format. Otherwise skip this step entirely. **On skip**, write a `SKIP` entry per the degrade-trace rule (condition: no schema/env/IaC/CI/platform-config files in diff); standalone: list in the handoff.
 
 > **Parallel execution:** Use parallel tool calls — all checks are independent Grep/Glob operations.
 

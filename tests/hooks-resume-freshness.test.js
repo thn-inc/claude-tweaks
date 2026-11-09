@@ -49,6 +49,19 @@ test('checkResumeFreshness: interrupted with a worktree path that no longer exis
   assert.deepStrictEqual(result, { safe: true, verdict: 'worktree-gone' });
 });
 
+test('checkResumeFreshness: interrupted with a self-referential symlink worktree (ELOOP) is indeterminate, not worktree-gone', () => {
+  // existsSync follows the link, hits ELOOP and reads false, so the old gate
+  // reported the worktree as gone. The path exists as a link; only the probe
+  // through it fails, so the verdict must fail closed.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-resume-freshness-loop-'));
+  const loop = path.join(dir, 'loop');
+  fs.symlinkSync(loop, loop);
+  const runDir = tmpRunDir({ status: 'interrupted', sessionId: 'sess-a', worktree: loop });
+  const result = checkResumeFreshness(runDir, { sessionId: 'sess-b' });
+  assert.equal(result.safe, false);
+  assert.equal(result.verdict, 'indeterminate');
+});
+
 test('checkResumeFreshness: interrupted + a live worktree lock blocks', () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);

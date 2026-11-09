@@ -13,6 +13,7 @@ const { createPrStateResolver } = require('../../../plugin/bin/lib/reconcile/pr-
 const { GRANT_LABELS } = require('../../../plugin/bin/lib/release-claim/release');
 const { CLOSING_KEYWORD_ALTERNATION } = require('../../../plugin/bin/lib/issue-branch-tracking');
 const { STUB_SKIP } = require('../../helpers/path-stub');
+const { gateOriginRepo } = require('../../../plugin/bin/lib/repo-resolve');
 
 // The label a `gh api -X DELETE .../labels/{name}` fake call removes: the last argv entry, URL-encoded.
 function deletedLabelName(args) {
@@ -83,6 +84,11 @@ test('decideRelease: transport failures still skip even with closed issue', () =
 test('decideRelease: invalid-arguments skips with reason invalid-arguments (#3416)', () => {
   assert.deepStrictEqual(decideRelease('live', 'invalid-arguments', undefined, undefined), { action: 'skip', reason: 'invalid-arguments' });
 });
+test('decideRelease: unknown-host skips with reason unknown-host, even with a closed issue — never pr-closed-unmerged (#4794)', () => {
+  assert.deepStrictEqual(decideRelease('live', 'unknown-host', 'CLOSED', undefined), { action: 'skip', reason: 'unknown-host' });
+  assert.deepStrictEqual(decideRelease('stale', 'unknown-host', undefined, undefined), { action: 'skip', reason: 'unknown-host' });
+  assert.equal(needsIssueEvidence('unknown-host'), false);
+});
 
 test('decideRelease: tombstone/absent/unreadable never release on issue-closed', () => {
   assert.strictEqual(decideRelease('tombstone', null, 'CLOSED').action, 'skip');
@@ -145,6 +151,27 @@ test('releaseMerged: a tombstoned claim with an unchanged sha is never re-fetche
   assert.equal(readCalls, 1);
   await releaseMerged({ cwd: root, ghApi }); // second pass: sha unchanged, must not re-read
   assert.equal(readCalls, 1, 'second pass must skip the read for an unchanged terminal-state sha');
+});
+
+// #4794: the origin goes through the #4933 gate (repoTargetOf) before any gh call, so a host the gate
+// refuses (an SSH alias) reports unknown-host with the gate's own text, not a bare-slug guess.
+test('#4794: an SSH-alias origin refuses before any gh call — failure unknown-host, detail the gate refusal', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-alias-'));
+  execFileSync('git', ['init', '-q'], { cwd: root });
+  execFileSync('git', ['remote', 'add', 'origin', 'git@github-work:acme/w.git'], { cwd: root });
+  const gateDeps = { env: {}, readFile: () => { throw new Error('ENOENT'); } };
+  const calls = [];
+  const ghApi = (args) => { calls.push(args); return { stdout: '', failure: null, status: null }; };
+
+  const result = await releaseMerged({ cwd: root, ghApi, gateDeps });
+
+  assert.equal(result.failure, 'unknown-host');
+  assert.deepEqual(result.released, []);
+  assert.deepEqual(result.skipped, []);
+  assert.equal(result.detail, gateOriginRepo('git@github-work:acme/w.git', gateDeps).refusal);
+  assert.match(result.detail, /GH_HOST=github\.com/);
+  assert.doesNotMatch(result.detail, /GH_HOST=github-work/);
+  assert.deepEqual(calls, [], 'a refused origin makes no gh call');
 });
 
 // Task 7's Critical TOCTOU fix, pinned (#820 final review). Every other

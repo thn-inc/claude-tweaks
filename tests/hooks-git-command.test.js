@@ -4,7 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 const {
-  gitTargets, gitTargetsFrom, resolvedGitSegments, resolveGitCommand, fileWriteTargets, mkdirTargets, powershellOpaqueCommand, skipGlobalFlags, tokenize, redirectWriteTargets,
+  gitTargets, gitTargetsFrom, resolvedGitSegments, resolveGitCommand, fileWriteTargets, mkdirTargets, powershellOpaqueCommand, processKillByName, skipGlobalFlags, tokenize, redirectWriteTargets,
 } = require('../plugin/bin/lib/hooks/git-command');
 
 test('plain commit resolves to cwd', () => {
@@ -607,6 +607,132 @@ test('an abbreviated flag form (-Com) is a deliberate, documented miss — not m
   assert.strictEqual(powershellOpaqueCommand('powershell -Com "git push"', '/repo'), false);
 });
 
+// ─── processKillByName (#4548) ─────────────────────────────────────────────
+
+const hit = (c) => processKillByName(c, '/repo').length > 0;
+
+test('#4548: processKillByName flags image- and name-based kills', () => {
+  for (const c of [
+    'pkill node', 'killall node', 'taskkill /F /IM node.exe', 'taskkill /im node.exe /f', 'taskkill //F //IM node.exe',
+    'taskkill -im node.exe', 'Stop-Process -Name node', 'stop-process -name node', 'Stop-process -Name node',
+    'kill -Name node', 'Stop-Process -ProcessName:node', 'TASKKILL /IM node.exe', '/usr/bin/pkill node',
+    'C:\\Windows\\System32\\taskkill.exe /IM node.exe', 'sudo pkill node', 'sudo -u root pkill node',
+    'FOO=1 pkill node', 'env pkill node', 'env -u HOME FOO=1 pkill node', 'timeout 10 pkill node',
+    'timeout -s KILL 5 killall node', 'nohup killall node', 'command pkill node', 'exec pkill node',
+    'nice -n 5 pkill node', 'doas pkill node', 'time pkill node', 'sudo nice pkill node', 'sudo FOO=1 pkill node',
+  ]) assert.ok(hit(c), c);
+});
+
+test('#4548: processKillByName reads past control keywords, and arms on a spaced pgrep substitution', () => {
+  for (const c of [
+    'if true; then pkill node; fi', 'if pgrep node; then pkill node; fi', 'for p in $(pgrep node); do kill $p; done',
+    'while true; do killall node; done', '! taskkill /IM node.exe', 'if x; then :; else killall node; fi',
+    'kill $( pgrep node )', 'kill $(  pidof node)',
+  ]) assert.ok(hit(c), c);
+  // A quoted keyword is a command name, not a keyword (bash reserves no quoted word).
+  assert.ok(!hit('"then" pkill node'));
+});
+
+test('#4548: processKillByName does not scan a command substitution body (a deliberate narrow miss)', () => {
+  assert.deepStrictEqual(processKillByName('echo $(pkill node)', '/repo'), []);
+  assert.deepStrictEqual(processKillByName('git commit -m "$(pkill node)"', '/repo'), []);
+});
+
+test('#4548: processKillByName does not read a positional PowerShell command (a deliberate narrow miss)', () => {
+  assert.deepStrictEqual(processKillByName('powershell "Stop-Process -Name node"', '/repo'), []);
+  assert.deepStrictEqual(processKillByName('powershell Stop-Process -Name node', '/repo'), []);
+  assert.strictEqual(powershellOpaqueCommand('powershell "Stop-Process -Name node"', '/repo'), false);
+});
+
+test('#4548: processKillByName flags pgrep-fed kills, non-PID taskkill filters and Get-Process pipelines', () => {
+  for (const c of [
+    'kill $(pgrep node)', 'kill `pgrep node`', 'kill -9 $(pgrep -f vite)', 'pgrep -f x | xargs kill',
+    'pgrep node | xargs -n 1 kill', 'P=$(pgrep node); kill $P', 'kill $(pidof node)', 'kill $(/usr/bin/pgrep node)',
+    'kill $( /usr/bin/pgrep -f x)', 'kill $(pgrep.exe node)', 'kill $($HOME/bin/pgrep node)', 'kill $(${HOME}/bin/pgrep node)',
+    'kill `$BIN/pidof node`',
+    'taskkill /FI "IMAGENAME eq node.exe"', 'taskkill /F /fi "imagename eq node.exe"', 'taskkill /FI "WINDOWTITLE eq dev*"',
+    'taskkill /FI "USERNAME eq me" /F', 'taskkill /FI "STATUS eq NOT RESPONDING"', 'taskkill /FI "PID ne 0"',
+    'Get-Process node | Stop-Process', 'Get-Process -Name node | Stop-Process -Force',
+  ]) assert.ok(hit(c), c);
+});
+
+test('#4548: processKillByName flags a kill fed by a ps | grep name search', () => {
+  for (const c of [
+    "ps aux | grep node | awk '{print $2}' | xargs kill -9", "kill -9 $(ps aux | grep '[n]ode' | awk '{print $2}')",
+    "ps -ef | grep vite | awk '{print $2}' | xargs kill", "kill -9 `ps aux | grep node | awk '{print $2}'`",
+    "sudo ps aux | grep node | xargs kill", "kill $(/bin/ps -ef | /usr/bin/grep vite | awk '{print $2}')",
+    "kill $( ps aux | grep node )", 'kill "$(ps aux | grep node)"', "kill '$(ps aux | grep node)'",
+    "ps aux | egrep node | awk '{print $2}' | xargs kill", "ps aux | fgrep node | xargs kill", "ps aux | grep -E 'node|vite' | xargs kill",
+    "ps aux | grep node; kill 123",
+  ]) assert.ok(hit(c), c);
+});
+
+test('#4548: processKillByName leaves a PID-scoped kill alone next to a ps | grep, before it or fed by a PID lookup', () => {
+  for (const c of [
+    'kill 123; ps aux | grep node', 'kill $(lsof -nP -iTCP:3000 -sTCP:LISTEN -t); ps aux | grep node',
+    'ps -p $PID | grep -q node && kill $PID', 'ps -o comm= -p 123 | grep -q vite && kill 123',
+    'ps -p123 | grep -q vite && kill 123', 'ps -ep 123 | grep vite && kill 123', 'ps --pid 123 | grep vite && kill 123',
+    'ps --pid=123 | grep vite && kill 123', 'kill $(ps -p 123 | grep vite)',
+  ]) assert.ok(!hit(c), c);
+});
+
+test('#4548: processKillByName stays silent on a ps | grep search no kill consumes', () => {
+  for (const c of [
+    'ps aux | grep node', 'ps aux | grep node; echo done', "kill $(ps aux | awk '{print $2}')", "ps aux | awk '{print $2}' | xargs kill",
+    'grep node notes.txt | xargs kill', 'ps aux; kill 123', 'kill 123 | grep x', "echo $(ps aux | grep node)",
+  ]) assert.ok(!hit(c), c);
+});
+
+test('#4548: processKillByName scans each wrapper\'s command argument', () => {
+  for (const c of [
+    'powershell -Command "Stop-Process -Name node"', 'powershell -c "Stop-Process -Name node"',
+    'POWERSHELL.EXE -command "taskkill /IM node.exe"', 'pwsh -Command "Get-Process node | Stop-Process"',
+    'pwsh -c "Stop-Process -Name node"', 'cmd /c taskkill /IM node.exe', 'cmd /C "taskkill /F /IM node.exe"',
+    "sh -c 'pkill node'", 'bash -c "killall node"', "bash -lc 'kill $(pgrep node)'", `bash -c "sh -c 'pkill node'"`,
+  ]) assert.ok(hit(c), c);
+});
+
+test('#4548: processKillByName stays silent on PID-scoped kills, data mentions and benign wrappers', () => {
+  for (const c of [
+    'kill 12345', 'kill -9 12345', 'kill -- -12345', 'taskkill /PID 12345 /T /F', 'taskkill /FI "PID eq 123"',
+    'lsof -nP -iTCP:3000 -sTCP:LISTEN -t | xargs kill', 'kill $(lsof -nP -iTCP:3000 -sTCP:LISTEN -t)',
+    'Stop-Process -Id 123', 'Get-Process -Id 123 | Stop-Process', 'echo pkill', 'grep killall notes.txt',
+    'command -v pkill', 'command -V pkill', 'echo "$(pgrep node)"', 'pgrep node', 'git commit -m "pkill node"', 'bash script.sh', "sh -c 'echo pkill'",
+    "bash -c 'kill 123'", 'cmd /c "taskkill /PID 12 /F"', 'powershell -File kill.ps1', '',
+  ]) assert.ok(!hit(c), c);
+});
+
+test('#4548: processKillByName returns one label per matching segment', () => {
+  assert.deepStrictEqual(processKillByName('npm run dev & sleep 1; pkill -f vite; killall node', '/repo'), ['pkill', 'killall']);
+});
+
+test('#4548: processKillByName caps wrapper recursion without throwing', () => {
+  function nest(levels) {
+    let command = 'pkill node';
+    for (let i = 0; i < levels; i += 1) command = i % 2 ? `bash -c "${command.replace(/(["\\$`])/g, '\\$1')}"` : `sh -c '${command.replace(/'/g, "'\\''")}'`;
+    return command;
+  }
+  // The cap is four wrappers deep: the fourth still reports, the fifth and anything deeper reads as none.
+  assert.deepStrictEqual(processKillByName(nest(4), '/repo'), ['pkill']);
+  assert.deepStrictEqual(processKillByName(nest(5), '/repo'), []);
+  assert.deepStrictEqual(processKillByName(nest(12), '/repo'), []);
+  assert.deepStrictEqual(processKillByName(`bash -c "sh -c 'pkill node'"`, '/repo'), ['pkill']);
+});
+
+test('#4548: processKillByName returns an array on a long run of substitution openers inside one word', () => {
+  // The linearity budget for these shapes lives in perf/process-kill-linearity.test.js
+  // (a wall-clock assertion flakes under load); this pins only that the scan completes.
+  for (const command of [
+    'kill ' + '`'.repeat(32000), "kill '" + '$('.repeat(32000), 'kill ' + '$(ps '.repeat(8000),
+    'kill $(ps ' + '|'.repeat(32000), 'kill $(ps aux ' + '|/'.repeat(16000),
+    'kill ' + '$($'.repeat(10000), 'kill $(' + '$/'.repeat(16000), 'kill ' + '`$/'.repeat(10000),
+  ]) assert.ok(Array.isArray(processKillByName(command, '/repo')), command.slice(0, 10));
+});
+
+test('#4548: processKillByName never throws on a non-string', () => {
+  for (const c of [undefined, null, 42, {}]) assert.deepStrictEqual(processKillByName(c, '/repo'), []);
+});
+
 // #4149: gitTargets and mkdirTargets read a `cd` behind `(` or `{` the way the write walk does.
 // A subshell's cwd ends at its `)`; after a brace group's `}` both cwds stand (its `cd` persists
 // unless the group is piped). A lone `&` ends a command and backgrounds it, so its `cd` does not move
@@ -634,8 +760,10 @@ test('#4149: an absolute -C after a brace group is reported once', () => {
 for (const [label, cmd, expected] of [
   ['a push after an & inside a quoted "$( )" body', "cd /main && gh issue comment 1 --body \"$(cat <<'EOF'\nThe \"Q&A\" page\nEOF\n)\" && git push", [{ action: 'push', dir: path.resolve('/main') }]],
   ['a commit message with an & inside "$( )", then a push', "cd /main && git commit -m \"$(cat <<'EOF'\nUse \"R&D\" term\nEOF\n)\" && git push", [{ action: 'commit', dir: path.resolve('/main') }, { action: 'push', dir: path.resolve('/main') }]],
-  ['a push after a commit body line `1) a`, inside a subshell', "(cd /main && git commit -F - <<'EOF'\n1) a\nEOF\ngit push)", [{ action: 'commit', dir: path.resolve('/main') }, { action: 'push', dir: path.resolve('/main') }]],
-  ['a push after a commit body line `fix: a)`, inside a subshell', "(cd /main && git commit -F - <<'EOF'\nfix: a)\nEOF\ngit push)", [{ action: 'commit', dir: path.resolve('/main') }, { action: 'push', dir: path.resolve('/main') }]],
+  // #4303: the push follows the cd && commit list on a new line, so it runs in /wt too when the cd
+  // fails (bash 3.2 and 5 push from the starting directory then).
+  ['a push after a commit body line `1) a`, inside a subshell', "(cd /main && git commit -F - <<'EOF'\n1) a\nEOF\ngit push)", [{ action: 'commit', dir: path.resolve('/main') }, { action: 'push', dir: path.resolve('/main') }, { action: 'push', dir: '/wt' }]],
+  ['a push after a commit body line `fix: a)`, inside a subshell', "(cd /main && git commit -F - <<'EOF'\nfix: a)\nEOF\ngit push)", [{ action: 'commit', dir: path.resolve('/main') }, { action: 'push', dir: path.resolve('/main') }, { action: 'push', dir: '/wt' }]],
   ['a push inside a kept shell body, walked as its own chunk', "bash <<'EOF'\ncd /main && git push\nEOF", [{ action: 'push', dir: path.resolve('/main') }]],
 ]) {
   test(`#4149: gitTargets reads ${label} as bash runs it`, () => {
@@ -645,15 +773,17 @@ for (const [label, cmd, expected] of [
 
 // #4149: a ${ } honours its quotes (`'}'` closes nothing), `$'…'` inside "$( )" honours
 // `\'`, and a cd inside a backtick or $( ) runs in a subshell, so the push stays at the earlier cd.
-// Checked against bash 3.2 and 5 with a logging git stub.
-for (const [label, cmd] of [
+// Checked against bash 3.2 and 5 with a logging git stub. #4303: a push after `cd … && …;` also
+// runs in /wt when the cd fails (bash 3.2 and 5 push from the starting directory then).
+const pushAtMain = [{ action: 'push', dir: path.resolve('/main') }];
+for (const [label, cmd, expected = pushAtMain] of [
   ['a quoted } inside an unquoted ${ }', "x=; cd /main && echo ${x:-'}'} && git push"],
   ['an ANSI-C \\\' inside a quoted "$( )"', "cd /main && echo \"$(echo $'a\\'b')\" && git push; echo ')\"'"],
-  ['a cd inside a top-level backtick', 'cd /main && echo `true; cd /tmp`; git push'],
-  ['a cd inside an unquoted $( )', 'cd /main && echo $(true; cd /tmp); git push'],
+  ['a cd inside a top-level backtick', 'cd /main && echo `true; cd /tmp`; git push', [...pushAtMain, { action: 'push', dir: '/wt' }]],
+  ['a cd inside an unquoted $( )', 'cd /main && echo $(true; cd /tmp); git push', [...pushAtMain, { action: 'push', dir: '/wt' }]],
 ]) {
   test(`#4149: gitTargets keeps the push after ${label} at the earlier cd`, () => {
-    assert.deepStrictEqual(gitTargets(cmd, '/wt'), [{ action: 'push', dir: path.resolve('/main') }]);
+    assert.deepStrictEqual(gitTargets(cmd, '/wt'), expected);
   });
 }
 
@@ -685,8 +815,10 @@ test('#4149: mkdirTargets reads a mkdir after a & in a subshell inside a $( ) at
   assert.deepStrictEqual(mkdirTargets('cd /main && pid=$( (sleep 0 & echo $!) ) && mkdir d', '/wt'), [{ action: 'mkdir', file: path.resolve('/main/d') }]);
 });
 
+// #4303: the mkdir follows the cd && cat list on a new line, so it runs in /wt too when the cd fails
+// (bash 3.2 and 5 make ./d then, and /main/d when the cd succeeds).
 test('#4149: mkdirTargets skips a heredoc body when tracking group depth', () => {
-  assert.deepStrictEqual(mkdirTargets("(cd /main && cat <<'EOF'\n1) a\nEOF\nmkdir d)", '/wt'), [{ action: 'mkdir', file: path.resolve('/main/d') }]);
+  assert.deepStrictEqual(mkdirTargets("(cd /main && cat <<'EOF'\n1) a\nEOF\nmkdir d)", '/wt'), [{ action: 'mkdir', file: path.resolve('/main/d') }, { action: 'mkdir', file: path.resolve('/wt/d') }]);
 });
 
 test('#4149: mkdirTargets reads a cd behind ( or {', () => {
@@ -723,6 +855,24 @@ test('#4281: spanKinds stays aligned with the value, and an escaped character is
   // bash 3.2 and 5: "a\$b" is a$b, its $ literal; an unquoted a\ b is a b, its space literal.
   assert.strictEqual(tokenize('p "a\\$b"').spanKinds[1], 'ded');
   assert.strictEqual(tokenize('p a\\ b').spanKinds[1], 'beb');
+});
+
+test('AC1.1 #4294: tokenize unescapes a blank and deletes a line continuation, with the mask shrinking to the value (characterization of #4281)', () => {
+  // Tokens are bash word values and the typed text stays in typed.
+  const native = tokenize("cp a C:\\r\\x \\'/wt\\'");
+  assert.deepStrictEqual(native.tokens, ['cp', 'a', 'C:rx', "'/wt'"]);
+  assert.strictEqual(native.typed[2], 'C:\\r\\x');
+  for (const [seg, word, value, kinds] of [
+    ['mkdir a\\ b', 1, 'a b', 'beb'],
+    ['echo a\\"b', 1, 'a"b', 'beb'],
+    ['echo x >/ma\\\nin/x', 2, '>/main/x', 'bbbbbbbb'],
+    ['mkdir -p \\\n/abs', 2, '/abs', 'bbbb'],
+  ]) {
+    const { tokens, spanKinds } = tokenize(seg);
+    assert.strictEqual(tokens[word], value, seg);
+    assert.strictEqual(spanKinds[word], kinds, seg);
+    tokens.forEach((tok, i) => assert.strictEqual(spanKinds[i].length, tok.length, `${seg} word ${i}`));
+  }
 });
 
 test('#4281: typed keeps the word as typed', () => {
@@ -959,4 +1109,76 @@ test('AC3.1 AC3.2 #4281: go-red — putting the backslash rule back into isUnres
   const dirs = (mod) => mod.resolvedGitSegments(TEARDOWN_CMD, 'D:\\x', { pathImpl: path.win32 }).map((s) => s.dir);
   assert.deepStrictEqual(dirs(realGitCommand), ['D:\\repo']);
   assert.ok(!dirs(mutant).includes('D:\\repo'));
+});
+
+// #4281 x #4303: sixteen failing groups pass the walk's cwd cap, so the cwd is lost (LostCwd). Its
+// targets, the stand-in roots and the base-view readings resolve through the walk's pathImpl like
+// every other target, and a drive-relative value is judged against the lost cwd's root, whose drive
+// it shares: `D:f` from a lost cwd on D is a lost target, `E:f` is #4281's other-drive gap (no
+// target), and `cd E:sub` leaves the cwd unknown.
+const lostGroups = Array.from({ length: 16 }, (_, i) => `{ cd /nope${i}; }; `).join('');
+const lostWin = { pathImpl: path.win32, overflowCwd: 'D:\\main' };
+test('#4281 #4303: a lost cwd\'s targets and readings resolve through an injected path.win32', () => {
+  assert.deepStrictEqual(fileWriteTargets(`${lostGroups}echo x > f`, 'D:\\wt', lostWin), [
+    { action: 'write', file: 'D:\\main', lost: true, rel: 'f' },
+    { action: 'write', file: 'D:\\wt\\f', lost: true, rel: 'f' },
+    { action: 'write', file: 'D:\\main\\f', reading: true },
+    { action: 'write', file: 'D:\\wt\\f', reading: true },
+  ]);
+  assert.deepStrictEqual(fileWriteTargets(`${lostGroups}echo x > '..\\..\\a\\f'`, 'D:\\wt', { pathImpl: path.win32 })[0],
+    { action: 'write', file: 'D:\\wt\\a\\f', lost: true, rel: '..\\..\\a\\f' });
+  // Only win32's normalize reads `a\..\..` as a climb, which the clamp then drops: never `D:\b`.
+  assert.strictEqual(fileWriteTargets(`${lostGroups}echo x > 'a\\..\\..\\b'`, 'D:\\wt', { pathImpl: path.win32 })[0].file, 'D:\\wt\\b');
+  // An absolute native target does not depend on the lost cwd: known, no marker, so no second walk,
+  // and an absolute native cd makes the cwd known again.
+  assert.deepStrictEqual(fileWriteTargets(`${lostGroups}echo x > 'D:\\abs\\f'`, 'D:\\wt', lostWin), [{ action: 'write', file: 'D:\\abs\\f' }]);
+  assert.deepStrictEqual(fileWriteTargets(`${lostGroups}cd 'D:\\abs'; echo x > f`, 'D:\\wt', lostWin), [{ action: 'write', file: 'D:\\abs\\f' }]);
+  assert.deepStrictEqual(mkdirTargets(`${lostGroups}mkdir d`, 'D:\\wt', lostWin).map((t) => t.file), ['D:\\main', 'D:\\wt\\d', 'D:\\main\\d', 'D:\\wt\\d']);
+  assert.deepStrictEqual(gitTargets(`${lostGroups}git -C sub commit -m x`, 'D:\\wt', lostWin), [
+    { action: 'commit', dir: 'D:\\main', lost: true, subject: 'x' },
+    { action: 'commit', dir: 'D:\\wt', lost: true, subject: 'x' },
+    { action: 'commit', dir: 'D:\\main\\sub', reading: true },
+    { action: 'commit', dir: 'D:\\wt\\sub', reading: true },
+  ]);
+  // A POSIX root under path.win32 shows the readings and lost dirs go through it: no `/` survives.
+  assert.deepStrictEqual(resolvedGitSegments(`${lostGroups}git commit -m x`, '/wt', { pathImpl: path.win32, overflowCwd: '/main' }).map((s) => s.dir),
+    [path.win32.resolve('/main'), path.win32.resolve('/wt'), path.win32.resolve('/main'), path.win32.resolve('/wt')]);
+});
+
+test('#4281 #4303: teardownTargets marks only a relative remove from a lost cwd lost, under an injected path.win32', () => {
+  const td = (target) => realPreToolUse.teardownTargets(
+    { input: { tool_name: 'Bash', tool_input: { command: `${lostGroups}git worktree remove ${target}` } }, cwd: 'D:\\wt' }, { pathImpl: path.win32 },
+  );
+  const abs = td("'D:\\wt2'");
+  assert.ok(abs.length > 0 && abs.every((e) => e.path === 'D:\\wt2' && e.lost === undefined), JSON.stringify(abs));
+  assert.ok(td('wt2').some((e) => e.path === 'D:\\wt\\wt2' && e.lost === true));
+});
+
+test('#4281 #4303: a drive-relative value from a lost cwd is judged against the lost cwd\'s root', () => {
+  const lost = (cmd) => fileWriteTargets(`${lostGroups}${cmd}`, 'D:\\wt', lostWin).filter((t) => t.lost).map((t) => t.file);
+  assert.deepStrictEqual(lost('echo x > D:f'), ['D:\\main', 'D:\\wt\\f']);
+  assert.deepStrictEqual(lost('cd D:sub; echo x > f'), ['D:\\main', 'D:\\wt\\f']);
+  assert.deepStrictEqual(fileWriteTargets(`${lostGroups}echo x > E:f`, 'D:\\wt', lostWin), []);
+  assert.deepStrictEqual(fileWriteTargets(`${lostGroups}cd E:sub; echo x > f`, 'D:\\wt', lostWin), []);
+  assert.deepStrictEqual(gitTargets(`${lostGroups}git -C E:sub commit -m x`, 'D:\\wt', lostWin), []);
+});
+
+// #4281 x #4303, bash 3.2 and 5 (a scratch tree S with dirs sub and a): `x=$(echo >f) cd sub; echo y
+// > g` and `cd > f sub; echo y > g` write S/f and S/sub/g; `"x"=1 cd sub; echo y > g` and `A\=x cd sub; …` fail with `x=1: command
+// not found` / `A=x: …` and write S/g; `x+=1 cd sub; …` writes S/sub/g. `echo x >\&2`, `> "&2"` and
+// `A="&2"; echo x >$A` write S/&2, `>"&"f` writes S/&f and `>\&` writes S/&, while `>&f`, `>& g` and
+// `1>&h` write f, g and h (the csh form) and `>&2` writes nothing.
+test('#4281 #4303: an assignment prefix, a cd\'s own argument and a literal & after > read as bash reads them', () => {
+  const files = (cmd) => fileWriteTargets(cmd, '/S').map((t) => t.file);
+  const at = (...p) => path.resolve('/S', ...p);
+  assert.ok(files('x=$(echo >f) cd sub; echo y > g').includes(at('sub', 'g')));
+  assert.deepStrictEqual(files('cd > f sub; echo y > g'), [at('f'), at('sub', 'g')]);
+  assert.deepStrictEqual(files('"x"=1 cd sub; echo y > g'), [at('g')]);
+  assert.deepStrictEqual(files('A\\=x cd sub; echo y > g'), [at('g')]);
+  assert.deepStrictEqual(files('x+=1 cd sub; echo y > g'), [at('sub', 'g')]);
+  for (const [cmd, name] of [['echo x >\\&2', '&2'], ['echo x > "&2"', '&2'], ['A="&2"; echo x >$A', '&2'], ['echo x >"&"f', '&f'], ['echo x >\\&', '&'],
+    ['echo x >&f', 'f'], ['echo x >& g', 'g'], ['echo x 1>&h', 'h']]) {
+    assert.deepStrictEqual(files(cmd), [at(name)], cmd);
+  }
+  assert.deepStrictEqual(files('echo x >&2'), []);
 });

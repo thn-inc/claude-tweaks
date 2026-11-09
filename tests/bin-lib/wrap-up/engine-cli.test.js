@@ -147,6 +147,13 @@ test('plan without --base or --run-dir exits 2 with usage on stderr', () => {
   assert.match(r2.stderr, /usage: wrap-up-engine\.js/);
 });
 
+test('usage says --dry-run skips only the telemetry append, so it is never read as a preview', () => {
+  const r = run(['plan', '--base', baseSha]);
+  assert.strictEqual(r.status, 2);
+  assert.match(r.stderr, /--dry-run skips only the telemetry append/);
+  assert.match(r.stderr, /engine-state\.json and decisions\.md are still written/);
+});
+
 test('plan run from a subdirectory of the checkout still sees the root docs/journeys/ (#3017)', () => {
   // Reproduces the reported bug: invoked from <checkout>/sub instead of the
   // repo root, gatherFacts() used to join 'docs/journeys' onto the raw

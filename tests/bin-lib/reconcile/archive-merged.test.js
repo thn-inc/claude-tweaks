@@ -25,6 +25,7 @@ const { unfiledCantTell } = require('../../../plugin/bin/lib/console/finding-out
 const { formatEntry } = require('../../../plugin/bin/lib/log-decision/append');
 const { RESIDUE_ESCALATE_THRESHOLD, listResidueFailures, recordResidueFailure, cachePath, beginCacheBatch, commitCacheBatch } = require('../../../plugin/bin/lib/reconcile/cache');
 const { structurallyStuckBody, parseStuckPaths } = require('../../../plugin/bin/lib/reconcile/escalate-residue');
+const { gateOriginRepo } = require('../../../plugin/bin/lib/repo-resolve');
 const { createIssueListCache } = require('../../../plugin/bin/lib/reconcile/issue-list-cache');
 const { createPrStateResolver } = require('../../../plugin/bin/lib/reconcile/pr-state-cache');
 const { createTimings, withTimings, summarizeTimings } = require('../../../plugin/bin/lib/reconcile/timing');
@@ -2413,7 +2414,7 @@ test('archiveMerged: still skips in place on a single pass, but only starts trac
 test('archiveMerged: two dirs crossing the structurally-stuck threshold in one call share one injected runner — only one underlying issue-list call fires', { skip: STUB_SKIP }, () => {
   const root = fs.realpathSync(makeRepo());
   // escalateStructurallyStuck bails out at 'no-repo-slug' (never calling
-  // `runner` at all) unless repoSlugOf(root) resolves — makeRepo()'s bare
+  // `runner` at all) unless repoTargetOf(root) resolves — makeRepo()'s bare
   // fixture has no origin remote, so one is stamped here (same shape
   // release-merged.test.js's own fixtures use).
   git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
@@ -3461,6 +3462,317 @@ test('archiveMerged: same shape as above, but the merge commit is not yet locall
   assert.equal(fs.existsSync(runDir), true);
 });
 
+// #4387: the by-number MERGED path passes the dry-run flag into localHasMerge.
+// Local main sits behind origin, which holds the merge: a dry-run previews the
+// archive through origin's ancestry (the real pass's mirror would fast-forward
+// first), while nothing moves.
+test('archiveMerged: dry-run by-number MERGED path with local main behind origin previews the archive (#4387)', { skip: STUB_SKIP }, () => {
+  const root = fs.realpathSync(makeRepo());
+  const origin = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-origin-'));
+  git(origin, 'init', '--bare', '-b', 'main');
+  git(root, 'remote', 'add', 'origin', origin);
+  git(root, 'push', '-q', 'origin', 'main');
+  const seed = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-seed-'));
+  git(seed, 'clone', '-q', origin, '.');
+  git(seed, 'config', 'user.email', 't@t');
+  git(seed, 'config', 'user.name', 't');
+  commitPath(seed, 'merged.txt', 'merged\n');
+  git(seed, 'push', '-q', 'origin', 'main');
+  const mergeOid = git(seed, 'rev-parse', 'HEAD').trim();
+  git(root, 'fetch', '-q', 'origin', 'main'); // only origin/main advances; root stays on main
+
+  const runId = '2026-08-01T090000-record-4387-by-number-dry-run';
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active',
+    worktree: path.join(root, '.claude', 'worktrees', 'gone-4387-by-number'), // stamped, never created here
+    pr: { number: 4387001, branch: 'feat-4387-gone' }, // branch never existed locally
+  }));
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ resolved: true }));
+
+  const wrapper = installGhWrapper({
+    number: 4387001, state: 'MERGED', mergedAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+    mergeCommit: { oid: mergeOid },
+  });
+  let result;
+  try {
+    result = archiveMerged({ cwd: root, dryRun: true, integration: 'main' });
+  } finally {
+    wrapper.restore();
+  }
+  assert.ok(result.archived.includes(runDir), `expected ${runDir} previewed as archived, got ${JSON.stringify(result)}`);
+  assert.equal(fs.existsSync(runDir), true, 'a dry-run must move nothing');
+  assert.equal(fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId)), false, 'a dry-run must not archive');
+  assert.notEqual(git(root, 'rev-parse', 'main').trim(), mergeOid, 'a dry-run must not fast-forward local main');
+});
+
+// #4387: a bare origin seeded with one commit (a.txt) from `seed`, plus `root`, a configured clone of it.
+function cloneOfSeededOrigin() {
+  const origin = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-origin-'));
+  git(origin, 'init', '--bare', '-b', 'main');
+  const seed = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-seed-'));
+  git(seed, 'clone', '-q', origin, '.');
+  git(seed, 'config', 'user.email', 't@t');
+  git(seed, 'config', 'user.name', 't');
+  commitPath(seed, 'a.txt', 'a\n');
+  git(seed, 'push', '-q', 'origin', 'main');
+  const clone = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-clone-'));
+  git(clone, 'clone', '-q', origin, '.');
+  const root = fs.realpathSync(clone);
+  git(root, 'config', 'user.email', 't@t');
+  git(root, 'config', 'user.name', 't');
+  return { seed, root };
+}
+
+// #4387: the main checkout sits on the integration branch but origin/main
+// already holds the merge that carries the run's work/ subtree. The first pass
+// must skip the run (`local-behind-merge`) and move nothing — archiving here
+// would git-mv files the checkout does not have yet. Once main fast-forwards,
+// the second pass archives the run and its work/ rename lands in one commit.
+test('archiveMerged: main checkout on main but behind origin\'s merge — skips local-behind-merge, then archives with the work/ git mv once main fast-forwards (#4387)', { skip: STUB_SKIP }, () => {
+  const { seed, root } = cloneOfSeededOrigin();
+
+  const runId = '2026-08-01T090000-record-4387-local-behind';
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId);
+  commitPath(seed, `.claude-tweaks/pipelines/${runId}/work/4387-spec.md`, '# spec 4387\n');
+  git(seed, 'push', '-q', 'origin', 'main');
+  const mergeOid = git(seed, 'rev-parse', 'HEAD').trim();
+  git(root, 'fetch', '-q', 'origin', 'main'); // only origin/main advances; root stays on main
+
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active',
+    worktree: path.join(root, '.claude', 'worktrees', 'gone-4387'), // stamped, never created here
+    pr: { number: 4510, branch: 'feat-4387-gone' }, // branch never existed locally
+  }));
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ resolved: true }));
+
+  const prJson = { number: 4510, state: 'MERGED', mergedAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z', mergeCommit: { oid: mergeOid } };
+  const headBefore = git(root, 'rev-parse', 'HEAD').trim();
+
+  const wrapper1 = installGhWrapper(prJson, { 4387: 'CLOSED' });
+  let first;
+  try {
+    first = archiveMerged({ cwd: root, integration: 'main' });
+  } finally {
+    wrapper1.restore();
+  }
+  assert.ok(!first.archived.includes(runDir), `expected ${runDir} not archived yet, got ${JSON.stringify(first)}`);
+  const skip = first.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(first)}`);
+  assert.equal(skip.reason, 'local-behind-merge');
+  assert.equal(STRUCTURALLY_STUCK_REASONS.has('local-behind-merge'), false);
+  assert.equal(fs.existsSync(path.join(runDir, 'run-state.json')), true);
+  assert.equal(fs.existsSync(archiveDir), false, 'a behind checkout must archive nothing');
+  assert.equal(git(root, 'rev-parse', 'HEAD').trim(), headBefore);
+
+  git(root, 'merge', '-q', '--ff-only', 'origin/main'); // work/ arrives with the fast-forward
+  const wrapper2 = installGhWrapper(prJson, { 4387: 'CLOSED' });
+  let second;
+  try {
+    second = archiveMerged({ cwd: root, integration: 'main' });
+  } finally {
+    wrapper2.restore();
+  }
+  assert.ok(second.archived.includes(runDir), `expected ${runDir} archived, got ${JSON.stringify(second)}`);
+  assert.equal(fs.existsSync(runDir), false, 'original run dir must have been archived away');
+  assert.equal(fs.existsSync(path.join(archiveDir, 'work', '4387-spec.md')), true);
+  const headShow = git(root, 'show', '--name-status', 'HEAD');
+  assert.ok(headShow.includes(`.claude-tweaks/pipelines/${runId}/work/4387-spec.md`), `HEAD should delete the live work file:\n${headShow}`);
+  assert.ok(headShow.includes(`.claude-tweaks/pipelines/archive/${runId}/work/4387-spec.md`), `HEAD should add the archived work file:\n${headShow}`);
+});
+
+// The shared fixture of the abandoned-interrupted local-behind tests below: a clone whose
+// local main is behind origin/main, which holds the run's work/ file — landed by fast-forward,
+// or (squash) as a new commit carrying the same patch, so the run's branch tip is no ancestor
+// of main and only the cherry shape recognises it as merged.
+function fixtureAbandonedBehindOrigin({ squash = false } = {}) {
+  const { seed, root } = cloneOfSeededOrigin();
+  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'integration-branch: main\n');
+
+  const runId = '2026-08-01T090000-record-4387-abandoned';
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId);
+  // The feature commit (dated after the run's start so the run-start corroboration passes)
+  // carries the run's tracked work/ file, then lands on origin/main.
+  git(seed, 'checkout', '-q', '-b', 'feat-4387-abandoned');
+  fs.mkdirSync(path.join(seed, '.claude-tweaks', 'pipelines', runId, 'work'), { recursive: true });
+  fs.writeFileSync(path.join(seed, '.claude-tweaks', 'pipelines', runId, 'work', '4387-spec.md'), '# spec 4387\n');
+  git(seed, 'add', '.claude-tweaks');
+  execFileSync('git', ['commit', '-q', '-m', 'feature work'], {
+    cwd: seed,
+    encoding: 'utf8',
+    env: { ...process.env, GIT_AUTHOR_DATE: '2026-08-01T10:00:00Z', GIT_COMMITTER_DATE: '2026-08-01T10:00:00Z' },
+  });
+  const featureOid = git(seed, 'rev-parse', 'HEAD').trim();
+  git(seed, 'checkout', '-q', 'main');
+  if (squash) {
+    git(seed, 'merge', '-q', '--squash', 'feat-4387-abandoned');
+    git(seed, 'commit', '-q', '-m', 'squash feature work');
+  } else {
+    git(seed, 'merge', '-q', '--ff-only', 'feat-4387-abandoned');
+  }
+  git(seed, 'push', '-q', 'origin', 'main');
+  if (squash) git(seed, 'push', '-q', 'origin', 'feat-4387-abandoned'); // the tip is no ancestor of main: ship it for root to fetch
+  git(root, 'fetch', '-q', 'origin', 'main'); // only origin/main advances; root stays on a behind main
+  if (squash) git(root, 'fetch', '-q', 'origin', 'feat-4387-abandoned:feat-4387-abandoned');
+  else git(root, 'branch', 'feat-4387-abandoned', featureOid); // the run's branch ref survives locally
+
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'interrupted', worktree: path.join(root, 'gone-4387'), pr: { branch: 'feat-4387-abandoned' },
+  }));
+  fs.writeFileSync(
+    path.join(runDir, 'events.jsonl'),
+    '{"skill":"claude-tweaks:build","ts":"2020-01-01T09:05:00.000Z","type":"skill_invoked"}\n',
+  );
+  return { root, runDir, archiveDir, featureOid };
+}
+
+// #4387 (final-review I2): the abandoned-interrupted path archives straight away, on
+// checkRunIntegrity's shipped evidence — which reads origin/main under the policy-
+// configured integration branch. With the main checkout on a local main that is behind
+// origin's merge, the tracked work/ subtree is not in the working tree yet, so the run
+// must be skipped (`local-behind-merge`) and archived only after the fast-forward.
+test('archiveMerged: abandoned-interrupted run shipped on origin/main while the main checkout on main is behind — skips local-behind-merge, then archives with the work/ git mv once main fast-forwards (#4387)', () => {
+  const { root, runDir, archiveDir } = fixtureAbandonedBehindOrigin();
+  const headBefore = git(root, 'rev-parse', 'HEAD').trim();
+
+  const first = archiveMerged({ cwd: root, sessionId: 'this-session', runVerdict: DEAD, integration: 'main' });
+  assert.ok(!first.archived.includes(runDir), `expected ${runDir} not archived yet, got ${JSON.stringify(first)}`);
+  const skip = first.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(first)}`);
+  assert.equal(skip.reason, 'local-behind-merge');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'run-state.json'), 'utf8')).status, 'interrupted');
+  assert.equal(fs.existsSync(archiveDir), false, 'a behind checkout must archive nothing');
+  assert.equal(git(root, 'rev-parse', 'HEAD').trim(), headBefore);
+
+  git(root, 'merge', '-q', '--ff-only', 'origin/main'); // work/ arrives with the fast-forward
+  const second = archiveMerged({ cwd: root, sessionId: 'this-session', runVerdict: DEAD, integration: 'main' });
+  assert.ok(second.archived.includes(runDir), `expected ${runDir} archived, got ${JSON.stringify(second)}`);
+  assert.equal(fs.existsSync(runDir), false, 'original run dir must have been archived away');
+  assert.equal(fs.existsSync(path.join(archiveDir, 'work', '4387-spec.md')), true);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(archiveDir, 'run-state.json'), 'utf8')).status, 'clean');
+});
+
+// #4387: the same guard for a squash-merged run — the branch tip is no ancestor of main, so
+// the guard's cherry (patch-id) shape is the only thing recognising it as merged on main.
+// It must read the LOCAL integration ref: against origin/main it would archive on the first pass.
+test('archiveMerged: abandoned-interrupted run squash-merged on origin/main while the main checkout on main is behind — skips local-behind-merge on the cherry shape, then archives once main fast-forwards (#4387)', () => {
+  const { root, runDir, archiveDir, featureOid } = fixtureAbandonedBehindOrigin({ squash: true });
+  assert.throws(
+    () => git(root, 'merge-base', '--is-ancestor', featureOid, 'origin/main'),
+    'fixture: the run\'s tip must not be an ancestor of origin/main (squash shape)',
+  );
+  const headBefore = git(root, 'rev-parse', 'HEAD').trim();
+
+  const first = archiveMerged({ cwd: root, sessionId: 'this-session', runVerdict: DEAD, integration: 'main' });
+  assert.ok(!first.archived.includes(runDir), `expected ${runDir} not archived yet, got ${JSON.stringify(first)}`);
+  const skip = first.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(first)}`);
+  assert.equal(skip.reason, 'local-behind-merge');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'run-state.json'), 'utf8')).status, 'interrupted');
+  assert.equal(fs.existsSync(archiveDir), false, 'a behind checkout must archive nothing');
+  assert.equal(git(root, 'rev-parse', 'HEAD').trim(), headBefore);
+
+  git(root, 'merge', '-q', '--ff-only', 'origin/main'); // work/ arrives with the fast-forward
+  const second = archiveMerged({ cwd: root, sessionId: 'this-session', runVerdict: DEAD, integration: 'main' });
+  assert.ok(second.archived.includes(runDir), `expected ${runDir} archived, got ${JSON.stringify(second)}`);
+  assert.equal(fs.existsSync(runDir), false, 'original run dir must have been archived away');
+  assert.equal(fs.existsSync(path.join(archiveDir, 'work', '4387-spec.md')), true);
+});
+
+// #4387: the abandoned-interrupted path's close-write-failed branch. The move has landed (local main
+// already holds the merge, so the guard passes), then closeRunState's own run-state write fails: the
+// run stays physically archived and the failure is reported in `skipped`, never as a clean archive.
+// closeRunState writes through `ctxLib.writeRunState` by property access (archive-merged and
+// archiveRunDir hold a destructured binding), so a mock on that property fails only the close
+// write; no real filesystem condition can fail one run-state write and not the identical one
+// archiveRunDir makes a moment earlier.
+test('archiveMerged: abandoned-interrupted run archived but closeRunState\'s run-state write fails — reports close-write-failed and keeps the archive in place (#4387)', (t) => {
+  const { root, runDir, archiveDir } = fixtureAbandonedBehindOrigin();
+  git(root, 'merge', '-q', '--ff-only', 'origin/main'); // local main holds the merge: the guard passes
+  const ctxLib = require('../../../plugin/bin/lib/hooks/context');
+  const realWriteRunState = ctxLib.writeRunState;
+  const closeWrites = [];
+  t.mock.method(ctxLib, 'writeRunState', (dir, patch) => {
+    if (dir !== archiveDir) return realWriteRunState(dir, patch);
+    closeWrites.push(patch);
+    return null; // the write failed
+  });
+
+  const result = archiveMerged({ cwd: root, sessionId: 'this-session', runVerdict: DEAD, integration: 'main' });
+  assert.equal(closeWrites.length, 1, 'closeRunState must attempt exactly one write against the archived dir');
+  assert.equal(closeWrites[0].status, 'clean');
+  assert.ok(!result.archived.includes(runDir), `a failed close write must not report a clean archive, got ${JSON.stringify(result)}`);
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'close-write-failed');
+  assert.equal(fs.existsSync(runDir), false, 'the move already succeeded and is never rolled back');
+  assert.equal(fs.existsSync(path.join(archiveDir, 'work', '4387-spec.md')), true);
+});
+
+// #4387: fails (with `error`) every git call `predicate(args)` matches; the counter records how many.
+function failGitWhere(t, predicate, error) {
+  const counter = { calls: 0 };
+  t.mock.method(cp, 'execFileSync', (file, args, opts) => {
+    if (Array.isArray(args) && predicate(args)) {
+      counter.calls += 1;
+      throw error;
+    }
+    return execFileSync(file, args, opts);
+  });
+  return counter;
+}
+const PROBE_TIMEOUT = () => Object.assign(new Error('simulated probe timeout'), { code: 'ETIMEDOUT', killed: true, signal: 'SIGTERM' });
+
+// #4387 (#2565 parked shape): a main checkout parked on another branch never has the work/ subtree
+// to move, so the abandoned-interrupted path keeps archiving on origin's shipped evidence even
+// though the local integration ref is behind.
+test('archiveMerged: abandoned-interrupted run shipped on origin/main, main checkout parked on another branch with local main behind — still archives (#4387)', () => {
+  const { root, runDir, archiveDir } = fixtureAbandonedBehindOrigin();
+  git(root, 'checkout', '-q', '-b', 'someone-elses-work');
+
+  const result = archiveMerged({ cwd: root, sessionId: 'this-session', runVerdict: DEAD, integration: 'main' });
+  assert.ok(result.archived.includes(runDir), `expected ${runDir} archived, got ${JSON.stringify(result)}`);
+  assert.equal(fs.existsSync(path.join(archiveDir, 'run-state.json')), true);
+});
+
+// #4387: an indeterminate branch probe (timeout) leaves "is the checkout on main?" unanswered,
+// so the same parked-checkout run now skips in the retryable direction instead of archiving.
+test('archiveMerged: abandoned-interrupted run, local main behind, indeterminate `git branch --show-current` probe — skips local-behind-merge (#4387)', (t) => {
+  const { root, runDir, archiveDir } = fixtureAbandonedBehindOrigin();
+  git(root, 'checkout', '-q', '-b', 'someone-elses-work');
+  const probe = failGitWhere(t, (args) => args.includes('branch') && args.includes('--show-current'), PROBE_TIMEOUT());
+
+  const result = archiveMerged({ cwd: root, sessionId: 'this-session', runVerdict: DEAD, integration: 'main' });
+  assert.ok(probe.calls >= 1, 'the probe must have run and failed');
+  assert.ok(!result.archived.includes(runDir), `expected ${runDir} not archived, got ${JSON.stringify(result)}`);
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'local-behind-merge');
+  assert.equal(fs.existsSync(archiveDir), false);
+});
+
+// #4387: local main holds the merge, but the guard's own `merge-base --is-ancestor` against the
+// local ref times out — unanswered evidence is not proof, so the run skips rather than archives.
+test('archiveMerged: abandoned-interrupted run, local main holds the merge, indeterminate merge-base on the local ref — skips local-behind-merge (#4387)', (t) => {
+  const { root, runDir, archiveDir } = fixtureAbandonedBehindOrigin();
+  git(root, 'merge', '-q', '--ff-only', 'origin/main');
+  const probe = failGitWhere(t, (args) => args.includes('merge-base') && args.includes('refs/heads/main'), PROBE_TIMEOUT());
+
+  const result = archiveMerged({ cwd: root, sessionId: 'this-session', runVerdict: DEAD, integration: 'main' });
+  assert.equal(probe.calls, 1, 'the local-ref ancestor probe must have run and failed');
+  assert.ok(!result.archived.includes(runDir), `expected ${runDir} not archived, got ${JSON.stringify(result)}`);
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'local-behind-merge');
+  assert.equal(fs.existsSync(archiveDir), false);
+});
+
 // #2228: the #1962 fallback's outer gate used to require `stampedWorktree`
 // truthy, so a run dir whose worktree was never stamped in the first place
 // (the #1684 gap — e.g. a two-Task-call /flow run whose record-worktree
@@ -3647,7 +3959,8 @@ test('AC3.1: archiveMerged: a MERGED PR reached via the by-number fallback with 
 // pr-first-merge-post-merge.md Step 4.2's reconcile call hits; the
 // staged-items exception must apply here too. `stagedFiles` seeds staged/
 // (absent when empty).
-// #3503 options: `origin` stamps the remote repoSlugOf reads; `closes` (record
+// #3503 options: `origin` stamps the remote repoTargetOf reads (a URL string, or `true` for
+// git@github.com:acme/w.git); `gateDeps` is forwarded to archiveMerged; `closes` (record
 // numbers) puts closingIssuesReferences on the PR; `manifestSpecs` writes
 // manifest.yml; `staleMs` backdates the run dir past the structurally-stuck TTL.
 // `runStateBefore` is run-state.json's bytes read just before archiveMerged.
@@ -3655,9 +3968,10 @@ test('AC3.1: archiveMerged: a MERGED PR reached via the by-number fallback with 
 // main checkout's CLAUDE.md.
 function fixtureOrdinaryMergedNoConsole(branch, runId, stagedFiles = [], specStaged = {}, {
   origin = false, closes = null, manifestSpecs = null, staleMs = null, issueStates = null, claudeMd = null, findings = null, decisions = null,
+  gateDeps = undefined,
 } = {}) {
   const { root, featureSha } = mergedFeatureBranchRepo(branch); // branch ref stays — fallbackBranch recovers it
-  if (origin) git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
+  if (origin) git(root, 'remote', 'add', 'origin', typeof origin === 'string' ? origin : 'git@github.com:acme/w.git');
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
   fs.mkdirSync(runDir, { recursive: true });
   fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n'); // adopted — keeps isOrphanedMint out of the way
@@ -3700,7 +4014,7 @@ function fixtureOrdinaryMergedNoConsole(branch, runId, stagedFiles = [], specSta
   if (claudeMd !== null) fs.writeFileSync(path.join(root, 'CLAUDE.md'), claudeMd);
   const wrapper = installGhWrapper([pr], issueStates);
   try {
-    return { root, runDir, runStateBefore, result: archiveMerged({ cwd: root }) };
+    return { root, runDir, runStateBefore, result: archiveMerged({ cwd: root, gateDeps }) };
   } finally {
     wrapper.restore();
   }
@@ -4060,6 +4374,20 @@ test('decideArchiveCore: invalid-arguments skips with reason invalid-arguments (
   assert.deepStrictEqual(decideArchiveCore('invalid-arguments', 'resolved'), { action: 'skip', reason: 'invalid-arguments' });
 });
 
+// #4794: pr-state's by-number lookup answers 'unknown-host' for a refused origin; the closed
+// PR-state vocabulary here must skip it under its own reason, never as a closed-unmerged PR.
+test('decideArchiveCore (#4794): an unknown-host PR state skips unknown-host, carrying the record check\'s refusal as the hint', () => {
+  assert.deepStrictEqual(decideArchiveCore('unknown-host', 'resolved'), { action: 'skip', reason: 'unknown-host' });
+  assert.deepStrictEqual(
+    decideArchiveCore('unknown-host', 'resolved', false, { records: [5], repoSlug: null, repoRefusal: 'the gate refusal' }),
+    { action: 'skip', reason: 'unknown-host', hint: 'the gate refusal' },
+  );
+  assert.deepStrictEqual(
+    decideArchiveCore('unknown-host', 'none', false, { records: [], repoSlug: null, repoRefusal: null }),
+    { action: 'skip', reason: 'unknown-host' },
+  );
+});
+
 // Shape of one `closingIssuesReferences` entry from `gh pr view --json`.
 function ref(n, owner = 'acme', name = 'w') {
   return { number: n, repository: { name, owner: { login: owner } } };
@@ -4105,6 +4433,7 @@ test('decideArchiveCore: existing skip reasons keep precedence over the record c
 test('STRUCTURALLY_STUCK_REASONS includes merged-partial and no-repo-slug but not closing-issues-unknown', () => {
   assert.ok(STRUCTURALLY_STUCK_REASONS.has('merged-partial'));
   assert.ok(STRUCTURALLY_STUCK_REASONS.has('no-repo-slug'));
+  assert.ok(STRUCTURALLY_STUCK_REASONS.has('unknown-host'));
   assert.ok(!STRUCTURALLY_STUCK_REASONS.has('closing-issues-unknown'));
 });
 
@@ -4434,6 +4763,65 @@ test('F3: a no-repo-slug skip past the TTL enters the structurally-stuck residue
     failures.some((f) => f.reason === 'structurally-stuck' && f.path === runDir),
     `expected ${runDir} to accumulate a structurally-stuck count, got ${JSON.stringify(failures)}`,
   );
+});
+
+// --- #4794: the record check and the residue repo follow the origin gate. ---
+// gateDeps keeps a developer's own GH_HOST and ~/.config/gh/hosts.yml out of the verdict.
+const ORIGIN_GATE_DEPS = { env: {}, readFile: () => { throw new Error('ENOENT'); } };
+
+test('#4794 Review Focus 3: on a *.ghe.com origin a merged run whose PR closes its record still archives (record check compares the bare slug)', { skip: STUB_SKIP }, () => {
+  const { runDir, result } = fixtureOrdinaryMergedNoConsole(
+    'feat-4794-ghe', '2026-10-19T090000-record-3503', [], {},
+    { origin: 'https://acme.ghe.com/acme/w.git', closes: [3503], gateDeps: ORIGIN_GATE_DEPS },
+  );
+  assert.ok(result.archived.includes(runDir), `expected ${runDir} archived, got ${JSON.stringify(result)}`);
+  assert.equal(fs.existsSync(runDir), false, 'the run dir must have been archived away');
+});
+
+test('#4794: an SSH-alias origin skips the record check unknown-host with the refusal as hint, never no-repo-slug', { skip: STUB_SKIP }, () => {
+  const origin = 'git@github-work:acme/w.git';
+  const { root, runDir, result } = fixtureOrdinaryMergedNoConsole(
+    'feat-4794-alias', '2026-10-17T062549-record-3503', [], {},
+    { origin, closes: [3503], staleMs: STRUCTURALLY_STUCK_TTL_MS * 2, gateDeps: ORIGIN_GATE_DEPS },
+  );
+  assert.ok(!result.archived.includes(runDir));
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.equal(skip?.reason, 'unknown-host', JSON.stringify(result));
+  const refusal = gateOriginRepo(origin, ORIGIN_GATE_DEPS).refusal;
+  assert.ok(refusal, 'the fixture origin must be refused');
+  assert.equal(skip.hint, refusal);
+  const failures = listResidueFailures(root);
+  assert.ok(
+    failures.some((f) => f.reason === 'structurally-stuck' && f.path === runDir),
+    `expected ${runDir} to accumulate a structurally-stuck count, got ${JSON.stringify(failures)}`,
+  );
+});
+
+test('#4794: a run with a stamped pr.number and no branch, whose by-number read says unknown-host on an SSH-alias origin, skips unknown-host with the refusal as hint', { skip: STUB_SKIP }, () => {
+  const origin = 'git@github-work:acme/w.git';
+  const branch = 'feat-4794-bynumber';
+  const { root } = mergedFeatureBranchRepo(branch);
+  git(root, 'remote', 'add', 'origin', origin);
+  git(root, 'branch', '-D', branch); // branch ref gone too — only the stamped number can name the PR
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-10-17T062549-record-4794');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active', worktree: path.join(root, '.claude', 'worktrees', 'gone-4794'), pr: { number: 4794001 },
+  }));
+  const prStates = createPrStateResolver({ root, deps: { byNumber: () => 'unknown-host', byBranch: () => null } });
+  const result = archiveMerged({ cwd: root, prStates, gateDeps: ORIGIN_GATE_DEPS });
+  assert.ok(!result.archived.includes(runDir), JSON.stringify(result));
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  const refusal = gateOriginRepo(origin, ORIGIN_GATE_DEPS).refusal;
+  assert.ok(refusal, 'the fixture origin must be refused');
+  assert.deepStrictEqual(skip, { runDir, reason: 'unknown-host', hint: refusal });
+});
+
+test('#4794 decideArchiveCore: a refused origin skips unknown-host ahead of no-repo-slug', () => {
+  const pr = { state: 'MERGED', closingIssuesReferences: [ref(1)] };
+  assert.deepStrictEqual(decideArchiveCore(pr, 'resolved', false, { records: [1], repoSlug: null, repoRefusal: 'R' }),
+    { action: 'skip', reason: 'unknown-host', hint: 'R' });
 });
 
 // --- #3503 F4: the by-number path's resolved-console guard. ---
@@ -5931,4 +6319,63 @@ test('archiveMerged: a dry run, a pass with no main checkout and an unreadable p
   fs.writeFileSync(path.join(blocked, '.claude-tweaks', 'pipelines'), 'not a directory\n'); // readdir -> ENOTDIR
   assert.equal(countOwnerlessNonClean(blocked), null);
   assert.equal('ownerlessNonClean' in archiveMerged({ cwd: blocked, runVerdict: DEAD }), false);
+});
+
+// --- #4599: postMergeDeferred — runs the post-merge check skipped for a retryable reason ---
+
+// The guard sits at the top of both run-dir loops: a deferred dir is skipped `post-merge-pending`
+// before any per-run work, and the skip is never fed to the stuck-skip tracker, because it is
+// transient and must never escalate as residue.
+test('archiveMerged: a run dir in postMergeDeferred is skipped post-merge-pending, untracked, and left in place (#4599)', () => {
+  const root = fs.realpathSync(makeRepo());
+  git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
+  const dir = seedStuckDir4180(root, '2026-01-01T000000-pending-4599');
+  const runner = () => { throw new Error('no gh in this test'); };
+
+  // Control: without the guard the same dir is a tracked structurally-stuck skip.
+  const control = archiveMerged({ cwd: root, runner });
+  assert.deepEqual(control.skipped, [{ runDir: dir, reason: 'no-branch' }]);
+  assert.equal(listResidueFailures(root).filter((e) => e.path === dir).length, 1, 'the control pass tracks the stuck skip');
+  fs.rmSync(cachePath(root), { force: true });
+
+  // The deferred path is compared resolved, so an un-normalized spelling of it still matches.
+  const unnormalized = `${path.dirname(dir)}${path.sep}.${path.sep}${path.basename(dir)}`;
+  const result = archiveMerged({ cwd: root, runner, postMergeDeferred: [unnormalized] });
+  assert.deepEqual(result.skipped, [{ runDir: dir, reason: 'post-merge-pending' }]);
+  assert.deepEqual(result.archived, []);
+  assert.equal(fs.existsSync(dir), true, 'the deferred run dir stays at its top-level path');
+  assert.deepEqual(listResidueFailures(root), [], 'the stuck-skip cache gains no entry for a deferred dir');
+});
+
+test('archiveMerged: postMergeDeferred also guards the clean-status sweep, and only the listed dir (#4599)', () => {
+  const root = fs.realpathSync(makeRepo());
+  const pipelines = path.join(root, '.claude-tweaks', 'pipelines');
+  const mkClean = (id) => {
+    const d = path.join(pipelines, id);
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, 'run-state.json'), JSON.stringify({ status: 'clean', worktree: null }));
+    return d;
+  };
+  const deferred = mkClean('2026-01-01T000001-clean-deferred-4599');
+  const other = mkClean('2026-01-01T000002-clean-other-4599');
+  const byDir = (a, b) => a.runDir.localeCompare(b.runDir);
+
+  // Control: a clean run with no branch to resolve skips `no-branch` — the sweep reaches it.
+  assert.deepEqual(
+    archiveMerged({ cwd: root }).skipped.slice().sort(byDir),
+    [{ runDir: deferred, reason: 'no-branch' }, { runDir: other, reason: 'no-branch' }],
+  );
+  const result = archiveMerged({ cwd: root, postMergeDeferred: [deferred] });
+  assert.deepEqual(
+    result.skipped.slice().sort(byDir),
+    [{ runDir: deferred, reason: 'post-merge-pending' }, { runDir: other, reason: 'no-branch' }],
+  );
+});
+
+test('archiveMerged: an empty or absent postMergeDeferred changes nothing (#4599)', () => {
+  const root = fs.realpathSync(makeRepo());
+  const dir = seedStuckDir4180(root, '2026-01-01T000000-pending-none-4599');
+  for (const extra of [{}, { postMergeDeferred: [] }]) {
+    assert.deepEqual(archiveMerged({ cwd: root, ...extra }).skipped, [{ runDir: dir, reason: 'no-branch' }]);
+  }
 });

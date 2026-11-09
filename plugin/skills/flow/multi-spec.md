@@ -7,13 +7,13 @@ When multiple records are provided (e.g., `#42,#45,#48`), flow runs each one's p
 Before starting, validate the list:
 
 1. **Parse** — split on commas, resolve each to a record (`materialize.md`)
-2. **Prerequisites** — check that each target's `blocked-by:` dependency (`materialize.md`'s Populating the header — sourced from `record.js`'s `parseDependencies`, `facets.blockedBy`, or the native dependency API depending on driver/`work-links`) is satisfied. Reject any target with unmet prerequisites.
+2. **Prerequisites** — check that each target's `blocked-by:` dependency (`materialize.md`'s Populating the header — sourced from `record.js`'s `parseDependencies`, `facets.blockedBy`, or the native dependency API depending on driver/`work-links`) is satisfied. A qualified `owner/name#N` entry is another repository's issue — never an in-run edge and never this repository's `#N`; its verdict is Validation step 3's cross-repository `--blocker-landing` entry under either `work-links` value, whether it was linked natively or declared by a `Blocked by owner/name#N` body line (`multispec-dependency-ordering.md`). Reject any target with unmet prerequisites.
 
 > A record-reference target's dependency data (`blocked-by:`) is read via `materialize.md`'s Resolution step — read-only, safe before any run dir or worktree exists — or the materialized header once composed; see Steps 3-4 below. Cross-spec conflict detection (Step 5) reads the record body's `### Key Files` subsection, via the same `groupByFileOverlap` primitive `/claude-tweaks:help`'s and `/claude-tweaks:specify`'s own conflict detection already use — see "Cross-spec conflict detection" below.
 
 > **Parallel execution:** frontmatter/record reads across N targets (step 3) are independent — run concurrently.
 
-3. **Pre-flight** — collect each target's set from `materialize.md`'s Resolution (facets + body, read-only): `blocked-by:` dependencies, `surface:`/`design-intent:` via the lift rule, and key files from the body's `### Key Files` subsection. These feed the ordering check, Pipeline Preview, conflict detection (Step 5), and Step 4a's merge-state gate. `bin/preflight-records.js {targets in run order} [--work-links native|body-text] [--repo owner/name] --merge-gate --integration-branch "$INTEGRATION_BRANCH"` mechanizes this step — and Step 5's conflict detection and Step 4a's gate, in one call, never a second invocation — printing `{records, overlapGroups, directOverlaps, workLinks, mergeGate}` (exit 0 success, 1 any fetch failed with every failing record named, 2 malformed or a `--waves` dependency cycle); `$INTEGRATION_BRANCH` resolves per `_shared/integration-branch.md`; see its `--help` for details. On a non-zero exit, or with no `gh`, follow `multispec-preflight-failure.md` in this skill's directory.
+3. **Pre-flight** — collect each target's set from `materialize.md`'s Resolution (facets + body, read-only): `blocked-by:` dependencies, `surface:`/`design-intent:` via the lift rule, and key files from the body's `### Key Files` subsection. These feed the ordering check, Pipeline Preview, conflict detection (Step 5), and Step 4a's merge-state gate. `bin/preflight-records.js {targets in run order} [--work-links native|body-text] [--repo owner/name] --merge-gate --blocker-landing --integration-branch "$INTEGRATION_BRANCH"` mechanizes this step — and Step 5's conflict detection, Step 4a's gate and the out-of-run blockers' landing verdicts (`multispec-dependency-ordering.md`), in one call, never a second invocation (the gh-absent `--blocker-states-json` re-run aside; on a resume whose step list has neither `build` nor `test`, the build has run, so leave `--blocker-landing` off, as `validation.md`'s 2.7b skips) — printing `{records, overlapGroups, directOverlaps, workLinks, mergeGate}` with `blockerLanding` on each record (exit 0 success, 1 any fetch failed with every failing record named or the blocker-landing query failed, 2 malformed or a `--waves` dependency cycle); `$INTEGRATION_BRANCH` resolves per `_shared/integration-branch.md`; see its `--help` for details. On a non-zero exit, or with no `gh`, follow `multispec-preflight-failure.md` in this skill's directory.
 4. **Dependency-aware ordering** — Exit-0 envelope only — see "Dependency-aware ordering" below. Topologically sort and reconcile with the user's order.
 4a. **Merge-state gate** — a target demanding an in-run prerequisite already be merged to the integration branch is split out before claiming, never asked; see `multispec-merge-gate.md` in this skill's directory.
 4b. **Parallel waves (`parallel` only)** — add `--waves` to step 3's call and plan independent-record waves from this DAG; see `multispec-parallel-waves.md`.
@@ -53,6 +53,8 @@ $RUN_ROOT/.claude-tweaks/pipelines/{ISO-timestamp}-spec-{N1}-{N2}-{N3}/
 The slug convention, the per-spec `config.yml` copy, and `manifest.yml`'s field-by-field description — including the `phase`/`phases[]` transition log `spec-status` writes (#1928) — are in `multispec-run-dir-layout.md` in this skill's directory.
 
 ## Execution
+
+A `record-steps=` resume follows `steps-and-gates.md`'s Per-record resume over this section: no Pre-flight Verify Sweep, no re-scaffold of a record that has a `spec-{N}/config.yml`, and each record runs its own list, not the full pipeline.
 
 **Create `manifest.yml` once, before spec 1's first `spec-status` call** (parent dir and Manifesto `config.yml` exist): `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" manifest-init --run "{parent}" --specs {N1},{N2},{N3}` — a resume re-run keeps every spec's status and `phases[]` (#3035).
 
@@ -129,6 +131,20 @@ Why shared, not per-record: sequential records in one run are one logical unit o
 > Separate-terminal parallel runs (`/flow #42 worktree` in each terminal) are different — those are N independent single-record runs and each correctly gets its own worktree. See `worktree-merge.md`.
 
 > The opt-in `parallel` token (#2677) is the one in-run exception: a wave's independent records build and test in per-spec worktrees, then merge back into the shared branch before their review — `multispec-parallel-waves.md`.
+
+## Context cap (sequential runs)
+
+The sequential loop gauges after each passing gate of each record (the same boundary units as `context-handoff.md`), with a step left in the run, under `auto`/`confirm`/`hybrid`, never under the `parallel` token or as a `MULTISPEC_PARALLEL_WAVE=1` wave member. One Bash call, with `{parent}` the literal parent run dir, never `spec-{N}/`, because the gauge exits 2 on a `spec-` basename:
+
+`node "${CLAUDE_PLUGIN_ROOT}/bin/context-gauge.js" --run "{parent}" --record-steps "{value}" [--keep-going] [--no-stories]`
+
+`--keep-going` only under the `keep-going` token, `--no-stories` only under the `no-stories` token: both live only in `$ARGUMENTS`, so a resume would lose them, and a later record's list can still hold `build`.
+
+Everywhere the handoff procedure reads the run, a multi-spec run uses the parent, because `$PIPELINE_RUN_DIR` is the per-spec `{parent}/spec-{N}/`, which holds no `run-state.json`: the `dispatched` read targets `$MULTISPEC_PARENT_DIR`, and `{run}` and `handoff.json` are the parent's. A read against `spec-{N}/` prints nothing and would misroute a dispatched bundle to the Top-level branch.
+
+Compose `{value}` in run order: a record past its list, failed under `keep-going`, or `not-run` is `none`; the current record takes its remaining steps; a later record takes its full list with `test` written out before `review`, since the auto-insert is not applied on resume. A run not bound `dispatched: true` leaves `wrap-up` off every list, and skips the gauge when only `wrap-up` steps remain. Result handling is `context-handoff.md`'s.
+
+"Remaining" means after the gate that just passed, and a record's "full list" is its entry in the `record-steps=` value this agent was resumed with, else Step 1's resolved step list. Worked example, a dispatched first call (`build,test`) over #12, #34, #56, gauged after #34's `build` passed, #12 complete and #56 not started: `#12:none;#34:test;#56:build,test`. The gauge refuses a value that gives a `complete`, `failed` or `not-run` record a step (`handoff: null`, so continue in place), because the resume would re-run a finished step. Exit 2 means the gauge refused `{value}` itself (stderr names why, and the CLI writes no trace for it): correct it and re-run once, and if it refuses again log one `SKIP` per `_shared/auto-decision-log.md`'s degrade-trace rule naming stderr's first line before continuing in this agent, so the console shows why this run never handed off.
 
 ## PR phase-checklist convention (shared PR)
 

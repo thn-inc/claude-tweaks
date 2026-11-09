@@ -155,6 +155,25 @@ test('demo:changes-requested is checked even on a closed record', () => {
   assert.deepEqual(result, { action: 'trip', reason: 'demo:changes-requested' });
 });
 
+test('AC2.1: accept:changes-requested trips the breaker exactly as demo:changes-requested does', () => {
+  const entry = { number: 203, state: 'OPEN', labels: ['accept:changes-requested'] };
+  const result = classifyWatchedRecord(entry, [], NOW, WINDOW_DAYS);
+  assert.deepEqual(result, { action: 'trip', reason: 'accept:changes-requested' });
+  const closed = { number: 204, state: 'CLOSED', closedAt: '2026-08-01T00:00:00.000Z', labels: ['accept:changes-requested'] };
+  assert.deepEqual(classifyWatchedRecord(closed, [], NOW, WINDOW_DAYS), { action: 'trip', reason: 'accept:changes-requested' });
+});
+
+test('AC3.1: the breaker trips on a verdict that outranks a leftover pending label, and names the spelling the record carries', () => {
+  const trip = (labels) => classifyWatchedRecord({ number: 206, state: 'OPEN', labels }, [], NOW, WINDOW_DAYS);
+  assert.deepEqual(trip(['accept:pending', 'demo:changes-requested']), { action: 'trip', reason: 'demo:changes-requested' });
+  assert.deepEqual(trip(['demo:pending', 'accept:changes-requested']), { action: 'trip', reason: 'accept:changes-requested' });
+  // Both spellings of the verdict present: demo:* is preferred, so the existing reason pin holds.
+  assert.deepEqual(trip(['accept:changes-requested', 'demo:changes-requested']), { action: 'trip', reason: 'demo:changes-requested' });
+  // Orthogonal category: a record whose acceptance is merely pending or approved does not trip.
+  assert.deepEqual(trip(['accept:pending']), { action: 'update', newState: 'OPEN' });
+  assert.deepEqual(trip(['accept:approved', 'demo:approved']), { action: 'update', newState: 'OPEN' });
+});
+
 test('resolved-good: closed, unreverted, past the revert window prunes from watched.json', () => {
   const gitLog = [{ sha: 'closer-sha', message: 'refs #205 done' }];
   const entry = { number: 205, state: 'CLOSED', closedAt: '2026-08-01T00:00:00.000Z', labels: [] }; // 17 days before NOW

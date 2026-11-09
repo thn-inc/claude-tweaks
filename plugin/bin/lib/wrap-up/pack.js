@@ -15,9 +15,10 @@ const { execFile: execFileCb, execFileSync } = require('child_process');
 const { promisify } = require('util');
 const { resolvePolicyConfig } = require('../policy-schema');
 const { parseManifestYaml } = require('../flow/manifest');
-const { parseDependencies, DEFER_REASONS } = require('../issues/record');
+const { parseDependencies, withoutCrossRepoBlockers, foreignBlockerBlocks, DEFER_REASONS } = require('../issues/record');
+const { parseCrossRepoDependencies, foreignEntries, bodyOnlyForeign, distinctCrossRepoRefs } = require('../issues/cross-repo-refs');
 const { runWithConcurrency } = require('../reconcile/gh-pool');
-const { parseRepo, repoSlug } = require('../repo-resolve');
+const { gateOriginRepo, repoSlug, ghOptions } = require('../repo-resolve');
 const { readRunStateWithParent } = require('../hooks/context');
 const { ownedPlansFiles } = require('./ledger-ownership');
 const { ledgerRowCells } = require('./ledger-cells');
@@ -32,16 +33,20 @@ const BIN = path.join(__dirname, '..', '..');
 // default and comes back as a truncation error) and a 30 s wall clock, so one
 // hung `gh` can never hold the whole pack open.
 // Merged with `cwd` at each call site; never mutated.
-const EXEC_OPTS = { maxBuffer: 32 * 1024 * 1024, timeout: 30000 };
+const EXEC_OPTS = { maxBuffer: 32 * 1024 * 1024, timeout: 30000, windowsHide: true };
+
+// The default `wrap` of execBounded and execSync: hands the options through unchanged.
+const keepOptions = (_args, opts) => opts;
 
 // Node reports a timeout kill as the generic `Command failed: …`, which reads
 // as a crash and hid #3479's 0.5 s of headroom — so a timeout kill (the
 // shared isTimeoutError check) is rethrown naming the timeout. Every other
 // rejection (ENOENT for gh-absent, a maxBuffer overflow) passes through
-// unchanged.
-async function execBounded(deps, cmd, args, cwd) {
+// unchanged. `wrap` transforms the options per call: identity by default,
+// ghOptions (#4505's GH_HOST seam) for a gh spawn.
+async function execBounded(deps, cmd, args, cwd, wrap = keepOptions) {
   try {
-    return await deps.execFile(cmd, args, { cwd, ...EXEC_OPTS });
+    return await deps.execFile(cmd, args, wrap(args, { cwd, ...EXEC_OPTS }));
   } catch (err) {
     if (isTimeoutError(err)) {
       const target = cmd === 'node' ? path.basename(args[0]) : args[0];
@@ -66,8 +71,10 @@ const POLICY_KEYS = ['integration-branch', 'work-links'];
 // stderr is piped rather than inherited or ignored: a failing call cannot
 // spray the CLI's own stderr, and its diagnostic still survives on
 // `err.stderr` for any consumer module that classifies a failure by message.
-function execSync(bin, args, { cwd } = {}) {
-  return execFileSync(bin, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+// `wrap` transforms the options, as execBounded's does: identity by default,
+// ghOptions (#4505's GH_HOST seam) for a gh spawn.
+function execSync(bin, args, { cwd } = {}, wrap = keepOptions) {
+  return execFileSync(bin, args, wrap(args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }));
 }
 
 function defaultGit(args, opts) {
@@ -77,7 +84,7 @@ function defaultGit(args, opts) {
 // Synchronous sibling of defaultGit, for the one ladder rank (#2385) that
 // needs `gh` before resolveInputs has anything async to await.
 function defaultGhSync(args, opts) {
-  return execSync('gh', args, opts);
+  return execSync('gh', args, opts, ghOptions);
 }
 
 // In-process replacement for `node resolve-policy.js --values <key>` (#1930
@@ -153,7 +160,8 @@ function toSummary(r) {
 // The frontmatter `record:` line wins over the filename when both exist.
 // `parkedAtShaping` is true when any file for that record carries the flag —
 // read only from the leading frontmatter block, so a body line quoting the key
-// never counts (#3399).
+// never counts (#3399). `record:` is read from that block only too, so a quoted
+// body line never wins over the filename (#4814).
 function headerEntries(deps, dir) {
   const byRecord = new Map();
   for (const name of deps.readdir(dir)) {
@@ -161,9 +169,9 @@ function headerEntries(deps, dir) {
     if (!m) continue;
     let text = '';
     try { text = deps.readFile(path.join(dir, name)); } catch { continue; }
-    const rec = /^record:\s*(\d+)\s*$/m.exec(text);
-    const n = Number(rec ? rec[1] : m[1]);
     const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
+    const rec = front !== null ? /^record:\s*(\d+)\s*$/m.exec(front[1]) : null;
+    const n = Number(rec ? rec[1] : m[1]);
     const parked = front !== null && /^parked-at-shaping:\s*true\s*$/m.test(front[1]);
     byRecord.set(n, byRecord.get(n) === true || parked);
   }
@@ -396,14 +404,30 @@ const LEDGER_DEFERRED_STAGED_RE = /\bstaged\//;
 const LEDGER_DEFERRED_URL_RE = /\/(?:issues|pull)\/\d+/;
 const LEDGER_DEFERRED_HASH_RE = /#(\d+)/g;
 
+// Whether `text` up to `index` ends in the word `item` and any whitespace — `/\bitem\s*$/i` over
+// `text.slice(0, index)`, walked back by hand: that regex retried at every `item` and rescanned the
+// whole prefix once per `#N` match (quadratic on `'item #1 '.repeat(n)`, .claude/skills/regex-scan-linearity).
+function endsWithItemWord(text, index) {
+  let end = index;
+  while (end > 0 && /\s/.test(text[end - 1])) end -= 1;
+  if (end < 4 || !/^item$/i.test(text.slice(end - 4, end))) return false;
+  return end === 4 || !/\w/.test(text[end - 5]); // the `\b` before `item`
+}
+
 function namesRecordReference(resolution, excludeRecords) {
   if (LEDGER_DEFERRED_URL_RE.test(resolution)) return true;
   for (const m of resolution.matchAll(LEDGER_DEFERRED_HASH_RE)) {
     if (excludeRecords.includes(Number(m[1]))) continue;
-    if (/\bitem\s*$/i.test(resolution.slice(0, m.index))) continue;
+    if (endsWithItemWord(resolution, m.index)) continue;
     return true;
   }
   return false;
+}
+
+// A `deferred` Resolution naming neither a `staged/` path nor a record reference. The one definition
+// behind parseLedger's deferredUnstaged count and stage-item/ledger.js's incomplete-deferral guard.
+function isDeferredUnstaged(resolution, excludeRecords) {
+  return !LEDGER_DEFERRED_STAGED_RE.test(resolution) && !namesRecordReference(resolution, excludeRecords);
 }
 
 // #3004: /build must not park a review minor without a valid `Defer-reason:`
@@ -450,9 +474,7 @@ function parseLedger(text, { excludeRecords = [] } = {}) {
     }
     if (status === 'deferred') {
       const resolution = cells.slice(4).join('|');
-      if (!LEDGER_DEFERRED_STAGED_RE.test(resolution) && !namesRecordReference(resolution, excludeRecords)) {
-        deferredUnstagedItems.push(cells[0]);
-      }
+      if (isDeferredUnstaged(resolution, excludeRecords)) deferredUnstagedItems.push(cells[0]);
     }
     if (phase.toLowerCase() === 'build' && (status === 'deferred' || status === 'open')) {
       const item = cells[2] || '';
@@ -585,6 +607,41 @@ function unblockedLocal(inputs, deps, closed) {
     .map(toSummary);
 }
 
+// #4793: the 'owner/name#N' strings of foreignEntries-shaped entries.
+const foreignRefStrings = (entries) => entries.map((e) => `${e.repository}#${e.number}`);
+
+// A rejected execFile -> its cause, as cross-repo-states.js's failureCause words it:
+// `exit {code}: {first stderr line}` when those fields exist (a promisified execFile error's
+// message is only `Command failed: ...`), else the first message line (a timeout has no code).
+const firstLine = (v) => String(v || '').split('\n').map((l) => l.trim()).find(Boolean) || '';
+function lookupCause(err) {
+  const stderr = firstLine(err && err.stderr);
+  const head = err && typeof err.code === 'number' ? `exit ${err.code}` : firstLine((err && err.message) || err);
+  return stderr ? `${head}: ${stderr}` : head;
+}
+
+// candidates [{ item, refs }] -> the items none of whose foreign refs blocks. ONE
+// resolve-foreign-blockers.js call covers every distinct ref (none, no call). The CLI
+// answers OPEN, CLOSED or null per ref; foreignBlockerBlocks blocks on anything but
+// CLOSED. A failed call or unparseable output throws (a per-ref null state does not:
+// it reads as blocking), so the probe reports ok:false with the cause and nothing is
+// reported unblocked (fail closed, never a silent pass).
+async function dropForeignBlocked(deps, inputs, repoArgs, candidates) {
+  const all = candidates.flatMap((c) => c.refs);
+  if (!all.length) return candidates.map((c) => c.item);
+  const keys = distinctCrossRepoRefs(all).distinct.map(({ key }) => key);
+  let answer;
+  try {
+    const res = await execBounded(deps, 'node', [path.join(BIN, 'resolve-foreign-blockers.js'), keys.join(','), ...repoArgs], inputs.worktree);
+    answer = JSON.parse(String(res.stdout).trim());
+  } catch (err) {
+    throw new Error(`foreign blocker state lookup failed (${lookupCause(err)}) — a body-declared foreign blocker keeps its dependent blocked`);
+  }
+  if (!answer || typeof answer !== 'object' || Array.isArray(answer)) throw new Error('foreign blocker state lookup failed (unparseable output) — a body-declared foreign blocker keeps its dependent blocked');
+  const states = new Map(Object.entries(answer));
+  return candidates.filter((c) => !foreignEntries(c.refs, states).some(foreignBlockerBlocks)).map((c) => c.item);
+}
+
 // The eight probes. Module probes call the exported functions the CLIs already
 // compute from; subprocess probes go through deps.execFile.
 function buildProbes(inputs, deps) {
@@ -607,7 +664,7 @@ function buildProbes(inputs, deps) {
     if (inputs.records.length === 0) throw new Error('records unresolved — no materialized header or manifest found');
   };
   const gh = async (args) => {
-    try { return await execBounded(deps, 'gh', args, inputs.worktree); } catch (err) {
+    try { return await execBounded(deps, 'gh', args, inputs.worktree, ghOptions); } catch (err) {
       if (err && err.code === 'ENOENT') throw new Error('gh-absent');
       throw err;
     }
@@ -712,32 +769,57 @@ function buildProbes(inputs, deps) {
       // Enterprise remote can't otherwise be inferred by a plain `gh` call
       // the way #2425 already fixed for the child spawn alone. `repoSlug`
       // resolves to bare `owner/repo` on github.com, a true no-op there.
-      let repoArgs = [];
+      let remote = null;
       try {
-        const repoSpec = parseRepo(git(['remote', 'get-url', 'origin']));
-        if (repoSpec) repoArgs = ['--repo', repoSlug(repoSpec)];
+        remote = git(['remote', 'get-url', 'origin']);
       } catch { /* no origin remote — every gh call below falls back to its own cwd-derived default, unchanged */ }
+      // #4933: the origin host must carry a positive GitHub signal before gh is
+      // handed it. The refusal throws OUTSIDE the catch above (inside it, it
+      // would be swallowed and a bare `gh issue list` would hit github.com),
+      // before the first gh call, so wrapProbe reports it as the probe's failure.
+      const { spec: repoSpec, refusal } = gateOriginRepo(remote, deps.gateDeps);
+      if (refusal) throw new Error(refusal);
+      const repoArgs = repoSpec ? ['--repo', repoSlug(repoSpec)] : [];
       const { stdout } = await gh(['issue', 'list', '--state', 'open', '--json', 'number,title,body', '--limit', '200', ...repoArgs]);
       const records = JSON.parse(stdout);
       if (inputs.policy.workLinks === 'native') {
         if (!records.length) return [];
         const res = await execBounded(deps, 'node', [path.join(BIN, 'resolve-blockers.js'), records.map((r) => r.number).join(','), ...repoArgs], inputs.worktree);
         const byNumber = JSON.parse(res.stdout.trim());
-        return records.filter((r) => byNumber[r.number] && byNumber[r.number].blockedBy.includes(closed) && !byNumber[r.number].openBlocker).map(toSummary);
+        // #4793 Decisions Q2/Q5: a foreign ref is stripped before the closed
+        // test, and a foreign blocker that is not CLOSED keeps the dependent
+        // blocked. A body-declared foreign blocker (`Blocked by owner/name#N`)
+        // counts under this mode too; a ref already natively linked is not
+        // looked up twice.
+        const candidates = records.filter((r) => {
+          const e = byNumber[r.number];
+          return e && withoutCrossRepoBlockers(e.blockedBy, e.crossRepoBlockers).includes(closed) && !e.openBlocker && !(e.crossRepoBlockers || []).some(foreignBlockerBlocks);
+        }).map((r) => ({
+          item: r,
+          // The empty Map is deliberate: foreignEntries only reshapes the body's refs into entries so
+          // bodyOnlyForeign can drop the natively linked ones; dropForeignBlocked looks up the states.
+          refs: foreignRefStrings(bodyOnlyForeign(byNumber[r.number].crossRepoBlockers || [], foreignEntries(parseCrossRepoDependencies(r.body || ''), new Map()))),
+        }));
+        return (await dropForeignBlocked(deps, inputs, repoArgs, candidates)).map(toSummary);
       }
-      // work-links: body-text — the same two passes unblocked-records.md runs.
+      // work-links: body-text — the same passes unblocked-records.md runs.
       // Pass 1 is `parseDependencies` (the canonical line-anchored `Blocked by
       // #N` parse), pass 2 checks every OTHER blocker is closed too: a
-      // dependent still held by a second open blocker is not unblocked.
+      // dependent still held by a second open blocker is not unblocked, and
+      // pass 3 keeps a dependent blocked while a body-declared foreign
+      // blocker is open or unreadable (#4793). The foreign ref is stripped
+      // before the closed test, because `parseDependencies` only reads
+      // `Blocked by #N`.
       const dependents = records
-        .map((r) => ({ number: r.number, title: r.title, blockedBy: parseDependencies(r.body || '') }))
+        .map((r) => ({ number: r.number, title: r.title, blockedBy: parseDependencies(r.body || ''), foreignRefs: parseCrossRepoDependencies(r.body || '') }))
         .filter((r) => r.blockedBy.includes(closed));
       if (!dependents.length) return [];
       const states = await gh(['issue', 'list', '--state', 'all', '--json', 'number,state', '--limit', '200', ...repoArgs]);
       const stateOf = new Map(JSON.parse(states.stdout).map((i) => [i.number, i.state]));
-      return dependents
+      const candidates = dependents
         .filter((d) => d.blockedBy.every((b) => b === closed || stateOf.get(b) === 'CLOSED'))
-        .map(toSummary);
+        .map((d) => ({ item: d, refs: d.foreignRefs }));
+      return (await dropForeignBlocked(deps, inputs, repoArgs, candidates)).map(toSummary);
     },
   };
 }
@@ -756,6 +838,14 @@ async function gatherPack({ runDir, cwd = process.cwd(), only = null, deps: over
   return pack;
 }
 
+// The run's own record numbers — the `excludeRecords` input the ledger
+// predicates above take (`stage-item/ledger.js`'s checkLedgerStatus/settleRow):
+// the resolveRecords ladder's records, empty when it is `unavailable`.
+function ownRecordNumbers(runDir, worktree) {
+  return resolveRecords(defaultDeps(worktree || process.cwd()), runDir, worktree).records;
+}
+
 module.exports = {
   gatherPack, resolveInputs, resolveWorktreeBase, wrapProbe, withTimeout, parseLedger, PROBE_NAMES, resolveRecords, headerRecords, closingRecords, worktreeMirror,
+  LEDGER_DEFERRED_STAGED_RE, namesRecordReference, isDeferredUnstaged, hasValidDeferReason, ownRecordNumbers,
 };

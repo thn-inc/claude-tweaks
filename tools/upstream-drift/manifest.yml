@@ -221,6 +221,8 @@ dependencies:
       - "skills/using-git-worktrees/SKILL.md"
       - "skills/finishing-a-development-branch/SKILL.md"
       - "skills/writing-plans/SKILL.md"
+      - "skills/test-driven-development/SKILL.md"
+      - "skills/executing-plans/SKILL.md"
     assertions:
       - file: "plugin/skills/_shared/subagent-output-contract.md"
         claims: "the four-status vocabulary mirrors SDD's implementer statuses"
@@ -318,6 +320,22 @@ dependencies:
         claims: "will rely on (record #3386): the final-review capture records the fix wave as FIX_BASE..HEAD, the name SDD gives the head the previous review saw — line first appeared in superpowers 6.2.0 or earlier"
         upstream-path: "skills/subagent-driven-development/SKILL.md"
         must-match: "where FIX_BASE is the head the previous review saw"
+      - file: "plugin/skills/build/dispatch.md"
+        claims: "will rely on (record #5117): SDD's implementer prompt tells each implementer to run the full suite once before committing — the line the affected-set rule overrides"
+        upstream-path: "skills/subagent-driven-development/implementer-prompt.md"
+        must-match: "full suite once before committing, not after every edit."
+      - file: "plugin/skills/build/dispatch.md"
+        claims: "will rely on (record #5117): test-driven-development reads 'Other tests' as the project's whole suite — the line the affected-set rule overrides"
+        upstream-path: "skills/test-driven-development/SKILL.md"
+        must-match: "means the project's suite, not just your file."
+      - file: "plugin/skills/build/worktree-setup.md"
+        claims: "will rely on (record #5117): using-git-worktrees has a Step 3 named Verify Clean Baseline — the baseline test run worktree-setup skips inside a pipeline"
+        upstream-path: "skills/using-git-worktrees/SKILL.md"
+        must-match: "## Step 3: Verify Clean Baseline"
+      - file: "plugin/skills/build/dispatch.md"
+        claims: "will rely on (record #5117): executing-plans runs the whole suite after each task — the line the batched affected-set rule overrides"
+        upstream-path: "skills/executing-plans/SKILL.md"
+        must-match: "make it pass, then run the whole suite."
     # fixtures: [] — frozen-artifact rationale: an installed plugin cache dir is
     # immutable post-install, so version movement is the only mechanical change
     # signal; there is no runtime surface to replay (the impeccable-plugin
@@ -357,18 +375,22 @@ dependencies:
   # claude-code: the harness itself. post-tool-use-failure.js and
   # bash-prefilter.js recognize Claude Code's worktree-isolation Bash refusal by
   # its text, so a reworded refusal would silently zero the `wd-guard-refusal`
-  # events friction-events.js counts (#3304). Five assertions, two kinds:
-  # - The first three are the fragments plugin/bin/lib/hooks/harness-refusal.js
+  # events friction-events.js counts (#3304, #3819). Nine assertions, two kinds:
+  # - The first five are the fragments plugin/bin/lib/hooks/harness-refusal.js
   #   matches on; keep each `must-match` in lockstep with it —
   #   tests/harness-refusal-drift-pin.test.js enforces that. They are not unique
   #   to the matched templates: at 2.1.302 `noun:"This session"` occurs 1x,
-  #   ` is isolated in the worktree ` 9x and `Refusing to run it` 5x, the rest in
+  #   `noun:"This agent"` 1x, ` is isolated in the worktree ` 9x,
+  #   `Refusing to run it` 5x and `Refusing to run there` 3x, the rest in
   #   unrelated messages. So rewording only the templates the hook matches would
-  #   leave all three passing.
-  # - The last two anchor on text unique to those templates: `Refusing to run it`
+  #   leave all five passing.
+  # - The last four anchor on text unique to those templates: `Refusing to run it`
   #   + a dash occurs 1x (the git-operations refusal, the "too complex to verify"
   #   family the hook logs), `Refusing to run it there` 2x (the two cwd-escape
-  #   refusals). The dash is the minified source's six-character backslash-u2014
+  #   refusals), `Refusing to run there` + a dash 1x (the fixed-noun worktree-gone
+  #   refusal) and `outside that worktree. Refusing to run there.` 2x (the
+  #   `${noun}` worktree-gone refusal: the template plus a compiled string-table
+  #   copy). The dash is the minified source's six-character backslash-u2014
   #   escape, which is how the binary holds it; a toolchain change that emits a
   #   raw em dash instead shows up as loud false drift, never a silent miss.
   # Limit: literal substring matching cannot prove how a message is assembled, so
@@ -408,13 +430,21 @@ dependencies:
         upstream-path: "."
         must-match: 'noun:"This session"'
       - file: "plugin/bin/lib/hooks/harness-refusal.js"
+        claims: "the isolation refusal's noun for an agent-owned worktree is This agent (AGENT_NOUN)"
+        upstream-path: "."
+        must-match: 'noun:"This agent"'
+      - file: "plugin/bin/lib/hooks/harness-refusal.js"
         claims: "the refusal names its worktree with the clause ' is isolated in the worktree ' (ISOLATION_CLAUSE)"
         upstream-path: "."
         must-match: " is isolated in the worktree "
       - file: "plugin/bin/lib/hooks/harness-refusal.js"
-        claims: "every isolation refusal carries Refusing to run it (REFUSAL_SIGNATURE, the prefilter's gate)"
+        claims: "the command-shape and cwd-escape isolation refusals carry Refusing to run it (REFUSAL_SIGNATURE, one of the prefilter's two signatures)"
         upstream-path: "."
         must-match: "Refusing to run it"
+      - file: "plugin/bin/lib/hooks/harness-refusal.js"
+        claims: "the worktree-gone refusals carry Refusing to run there (WORKTREE_GONE_SIGNATURE, the prefilter's gate and the worktree-gone variant)"
+        upstream-path: "."
+        must-match: "Refusing to run there"
       - file: "plugin/bin/lib/hooks/harness-refusal.js"
         claims: "the git-operations refusal the hook logs keeps its Refusing to run it + dash wording"
         upstream-path: "."
@@ -423,4 +453,12 @@ dependencies:
         claims: "the cwd-escape refusals the hook logs keep their Refusing to run it there wording"
         upstream-path: "."
         must-match: "Refusing to run it there"
+      - file: "plugin/bin/lib/hooks/harness-refusal.js"
+        claims: "the fixed worktree-gone refusal the hook logs keeps its Refusing to run there + dash wording"
+        upstream-path: "."
+        must-match: 'Refusing to run there \u2014 '
+      - file: "plugin/bin/lib/hooks/harness-refusal.js"
+        claims: "the noun worktree-gone refusal the hook logs keeps its outside that worktree. Refusing to run there. wording"
+        upstream-path: "."
+        must-match: "outside that worktree. Refusing to run there."
     fixtures: []
