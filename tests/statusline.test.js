@@ -998,21 +998,19 @@ test('renderSessionSegment: absent when there is no file, no session id, or an u
   });
 });
 
-test('renderSessionSegment: a malformed file renders nothing', () => {
-  const bad = [
-    'not json',
-    JSON.stringify(null),
-    JSON.stringify({ stale_text: 'hub offline', at: '2026-11-08T12:00:00Z', ttl_s: 10 }),
-    JSON.stringify({ text: 'hub ✓', at: '2026-11-08T12:00:00Z', ttl_s: 10 }),
-    JSON.stringify({ text: 'hub ✓', stale_text: 'hub offline', at: 'yesterday', ttl_s: 10 }),
-    JSON.stringify({ text: 'hub ✓', stale_text: 'hub offline', at: '2026-11-08T12:00:00Z', ttl_s: '10' }),
+test('renderSessionSegment: a malformed file renders nothing, and an unreadable at or ttl_s reads as stale', () => {
+  const cases = [
+    ['not json', null],
+    [JSON.stringify(null), null],
+    [JSON.stringify({ stale_text: 'hub offline', at: '2026-11-08T12:00:00Z', ttl_s: 10 }), null],
+    [JSON.stringify({ text: 'hub ✓', at: '2026-11-08T12:00:00Z', ttl_s: 10 }), null],
+    [JSON.stringify({ text: 'hub ✓', stale_text: 'hub offline', at: 'yesterday', ttl_s: 10 }), 'hub offline'],
+    [JSON.stringify({ text: 'hub ✓', stale_text: 'hub offline', at: '2026-11-08T12:00:00Z', ttl_s: '10' }), 'hub offline'],
   ];
   withSegmentHome((home) => {
-    for (const body of bad) {
+    for (const [body, want] of cases) {
       writeSessionSegment(home, 'sess-1', body);
-      const got = sl.renderSessionSegment({ session_id: 'sess-1' }, { home, now: SEG_AT });
-      assert.ok(got === null || got === 'hub offline', `${body} → ${JSON.stringify(got)}`);
-      if (!body.includes('stale_text')) assert.strictEqual(got, null, body);
+      assert.strictEqual(sl.renderSessionSegment({ session_id: 'sess-1' }, { home, now: SEG_AT }), want, body);
     }
   });
 });
@@ -1024,7 +1022,8 @@ test('renderSessionSegment: refuses text with control characters beyond OSC 8 li
   try {
     withSegmentHome((home) => {
       const seg = (text) => ({ text, stale_text: 'hub offline', at: '2026-11-08T12:00:00Z', ttl_s: 10 });
-      for (const text of ['hub\x1b[2J', 'hub\r✓', 'hub\x07', 'x'.repeat(41)]) {
+      // The last two hide controls inside an OSC 8 link's body, which a terminal can read as ending the link early.
+      for (const text of ['hub\x1b[2J', 'hub\r✓', 'hub\x07', 'x'.repeat(41), '\x1b]8;;\x18\u009b2J\x07x\x1b]8;;\x07', '\x1b]8;;http://h/\x1a\x07x\x1b]8;;\x07']) {
         writeSessionSegment(home, 'sess-1', seg(text));
         assert.strictEqual(sl.renderSessionSegment({ session_id: 'sess-1' }, { home, now: SEG_AT }), null, JSON.stringify(text));
       }
