@@ -417,7 +417,11 @@ function renderAccount(input, { env = process.env, home = os.homedir() } = {}) {
 // no segment.
 const SESSION_SEGMENT_COLS = 40;
 const SESSION_ID_SAFE = /^[A-Za-z0-9_-]+$/;
-const OSC8 = /\x1b\]8;[^\x07\x1b]*(?:\x07|\x1b\\)/g;
+// The link's body may hold no control at all: a terminal can read CAN, SUB or
+// C1 CSI there as ending the link early, and the CONTROL check below never sees
+// a body this strips.
+// eslint-disable-next-line no-control-regex
+const OSC8 = /\x1b\]8;[^\x00-\x1f\x7f-\x9f]*(?:\x07|\x1b\\)/g;
 const SGR = /\x1b\[[0-9;:]*m/g;
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\x00-\x1f\x7f-\x9f]/;
