@@ -1018,17 +1018,24 @@ test('renderSessionSegment: a malformed file renders nothing', () => {
 });
 
 test('renderSessionSegment: refuses text with control characters beyond OSC 8 links and SGR, or over 40 columns', () => {
-  withSegmentHome((home) => {
-    const seg = (text) => ({ text, stale_text: 'hub offline', at: '2026-11-08T12:00:00Z', ttl_s: 10 });
-    for (const text of ['hub\x1b[2J', 'hub\r✓', 'hub\x07', 'x'.repeat(41)]) {
-      writeSessionSegment(home, 'sess-1', seg(text));
-      assert.strictEqual(sl.renderSessionSegment({ session_id: 'sess-1' }, { home, now: SEG_AT }), null, JSON.stringify(text));
-    }
-    for (const text of ['x'.repeat(40), '\x1b[33mhub ✓\x1b[0m', '\x1b]8;;http://h/s/1\x07hub ✓\x1b]8;;\x07']) {
-      writeSessionSegment(home, 'sess-1', seg(text));
-      assert.strictEqual(sl.renderSessionSegment({ session_id: 'sess-1' }, { home, now: SEG_AT }), text, JSON.stringify(text));
-    }
-  });
+  // The SGR case expects color kept, so an ambient NO_COLOR (set on the Windows runner) must not apply.
+  const orig = process.env.NO_COLOR;
+  delete process.env.NO_COLOR;
+  try {
+    withSegmentHome((home) => {
+      const seg = (text) => ({ text, stale_text: 'hub offline', at: '2026-11-08T12:00:00Z', ttl_s: 10 });
+      for (const text of ['hub\x1b[2J', 'hub\r✓', 'hub\x07', 'x'.repeat(41)]) {
+        writeSessionSegment(home, 'sess-1', seg(text));
+        assert.strictEqual(sl.renderSessionSegment({ session_id: 'sess-1' }, { home, now: SEG_AT }), null, JSON.stringify(text));
+      }
+      for (const text of ['x'.repeat(40), '\x1b[33mhub ✓\x1b[0m', '\x1b]8;;http://h/s/1\x07hub ✓\x1b]8;;\x07']) {
+        writeSessionSegment(home, 'sess-1', seg(text));
+        assert.strictEqual(sl.renderSessionSegment({ session_id: 'sess-1' }, { home, now: SEG_AT }), text, JSON.stringify(text));
+      }
+    });
+  } finally {
+    if (orig !== undefined) process.env.NO_COLOR = orig;
+  }
 });
 
 test('renderSessionSegment: NO_COLOR strips SGR but keeps the link', () => {
