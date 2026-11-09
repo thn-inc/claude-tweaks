@@ -60,6 +60,9 @@ Three conventions follow from how this repo works, and all are visible below:
 
 * Take the full-suite verification from the PR's CI run… ([#4347](https://github.com/thn-inc/claude-tweaks/issues/4347)) ([dc88ac4](https://github.com/thn-inc/claude-tweaks/commit/dc88ac4e1a489abf3cf66b1a489fb6f9da3332b3))
 
+### Highlights
+* Projects can point final test verification at their CI run, so a pipeline waits a few minutes for CI instead of running the whole suite on a busy local machine.
+
 ## [6.163.0](https://github.com/thn-inc/claude-tweaks/compare/v6.162.1...v6.163.0) (2026-11-09)
 
 
