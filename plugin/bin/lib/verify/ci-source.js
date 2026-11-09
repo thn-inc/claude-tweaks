@@ -18,6 +18,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { GH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('../shared-primitives');
+const { ghOptions } = require('../repo-resolve');
 
 // A job log is one download of up to a few MB — wider than the 5s single-call
 // bound on purpose, so a slow log fetch is not misread as "unavailable".
@@ -25,9 +26,9 @@ const LOG_TIMEOUT_MS = 30000;
 const SHA_RE = /^[0-9a-f]{40}$/;
 
 function defaultRunner(args, { cwd = null, timeout = GH_TIMEOUT_MS } = {}) {
-  return execFileSync('gh', args, {
+  return execFileSync('gh', args, ghOptions(args, {
     encoding: 'utf8', cwd: cwd || undefined, timeout, maxBuffer: LARGE_MAX_BUFFER_BYTES, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
-  });
+  }));
 }
 
 function defaultSleep(ms) { return new Promise((resolve) => { setTimeout(resolve, ms); }); }
