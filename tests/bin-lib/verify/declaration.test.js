@@ -344,3 +344,42 @@ test('no impact block → decl.impact is null and rules keep exactly {match, sui
   assert.strictEqual(zero.ok, true);
   assert.strictEqual(zero.decl.impact, null);
 });
+
+test('a ci block declares a CI source per suite, with wait/poll defaults (#4347)', () => {
+  const r = readJson({ ...EXAMPLE, ci: { api: { workflow: 'test.yml', job: 'test' }, web: { workflow: 'web.yml', job: 'unit', waitSeconds: 60, pollSeconds: 5 } } });
+  assert.strictEqual(r.ok, true, JSON.stringify(r.errors));
+  assert.deepStrictEqual(r.decl.ci, {
+    api: { workflow: 'test.yml', job: 'test', waitSeconds: 900, pollSeconds: 20 },
+    web: { workflow: 'web.yml', job: 'unit', waitSeconds: 60, pollSeconds: 5 },
+  });
+});
+
+test('no ci block → decl.ci is null (#4347)', () => {
+  assert.strictEqual(readJson(EXAMPLE).decl.ci, null);
+});
+
+test('every invalid ci field is reported (#4347)', () => {
+  const r = readJson({
+    ...EXAMPLE,
+    ci: {
+      nope: { workflow: 'a.yml', job: 'j' },
+      api: { workflow: '', job: 3, waitSeconds: 0, pollSeconds: 1.5, extra: true },
+    },
+  });
+  assert.strictEqual(r.ok, false);
+  const text = r.errors.join('\n');
+  assert.match(text, /ci\.nope: unknown suite/);
+  assert.match(text, /ci\.api\.workflow: must be a non-empty string/);
+  assert.match(text, /ci\.api\.job: must be a non-empty string/);
+  assert.match(text, /ci\.api\.waitSeconds: must be a positive integer/);
+  assert.match(text, /ci\.api\.pollSeconds: must be a positive integer/);
+  assert.match(text, /ci\.api: unknown key\(s\) "extra"/);
+  assert.match(readJson({ ...EXAMPLE, ci: [] }).errors.join('\n'), /ci: must be an object/);
+  assert.match(readJson({ ...EXAMPLE, ci: { api: 'test.yml' } }).errors.join('\n'), /ci\.api: must be an object/);
+});
+
+test('a ci source on a tool-scoped tests command is refused (#4347)', () => {
+  const r = readJson({ checks: { tests: 'pnpm vitest --changed {base}' }, ci: { tests: { workflow: 'a.yml', job: 'j' } }, rules: [] });
+  assert.strictEqual(r.ok, false);
+  assert.match(r.errors.join('\n'), /ci\.tests: .*\{base\}/);
+});

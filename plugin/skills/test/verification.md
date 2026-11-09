@@ -69,7 +69,7 @@ The runner owns execution and scope (`verify.js --scope`, #1922); this table own
 
 | Site | Mode |
 |------|------|
-| Build Common Step 5 (`/claude-tweaks:build`) | full (impact-selected via [impact-selection.md](impact-selection.md) when the declaration has `impact`) |
+| Build Common Step 5 (`/claude-tweaks:build`) | full (impact-selected via [impact-selection.md](impact-selection.md) when the declaration has `impact`; taken from the PR's CI job via [ci-source.md](ci-source.md) when it has `ci`) |
 | In-pipeline `test` after build, `VERIFICATION_SHA` ≠ HEAD (`/claude-tweaks:flow`) | scoped (`none` on a bookkeeping-only delta) |
 | Second call's auto-inserted `test` (`/claude-tweaks:flow`) | scoped against `fullSha` |
 | Polish re-verify (`/claude-tweaks:test skip-qa`, `/claude-tweaks:flow`) | scoped |
@@ -88,6 +88,8 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --run "$PIPELINE_RUN_DIR" --scope .cl
 ```
 
 `{ref}` resolves via `_shared/integration-branch.md`'s ladder (the runner has no `origin/HEAD` fallback and exits 2 without it when no usable stamp anchor exists). **When `checks.tests` maps suites** (`#3022`), no `--cmd` is required — each selected suite, and `types`/`lint` when declared, runs the command the declaration already carries; omit the `--cmd {suite}=…`/`--cmd types=…`/`--cmd lint=…` flags unless one check's command needs a one-off override (same name wins over the declared one; `tests` is not itself a declared suite in map form, and naming it is a usage error, exit 2). The runner refuses a set missing a required check from either source (exit 2 naming it). **A missing `--scope` file is a usage error** (exit 2, naming the resolved path) — a silent full-run fallback hid stale or mistyped paths (#3017); a stamp whose anchor is no longer an ancestor of HEAD (rebase, force-push) → the runner forces `full`, the same fail-closed posture unmatched paths get — or, under `impact`, anchors on `--integration-branch`'s merge-base (`impact-selection.md`). A scoped stamp is never a full pass (`--stamp-status`'s `match` stays `false`), but it does verify HEAD: Skip-if-recent and `/claude-tweaks:review` Step 1.5 read `verifiedHead`, so a passing scoped run is never re-triggered by the next gate.
+
+**CI source (#4347).** When the declaration has a `ci` block, a `--scope` run takes a suite's full run from the PR's CI job on HEAD instead of running it here — HEAD must be pushed and be the open PR's head, on a clean tree — and falls back to the local run with a named reason otherwise. A CI-sourced pass does not cover macOS, Node 22 or Windows. Read [ci-source.md](ci-source.md) when the declaration declares `ci` or a report carries `ci`.
 
 **Baseline on the same invocation (#3511).** When the declaration gives a `retry.{suite}` template, a scoped site adjudicates a failure on this same command — the `--baseline origin/{ref}` shown above — never by abandoning the scoped form for a second, unscoped full run; `--baseline-cmd` resolves per the `--scope` resolution rule in Baseline adjudication below. With no `retry` template, drop `--baseline` (the runner refuses it, exit 2).
 

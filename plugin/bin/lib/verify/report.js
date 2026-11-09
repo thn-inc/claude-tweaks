@@ -99,6 +99,8 @@ function entryFor(check) {
   // #1837: never disable the count-stamp comparison silently — a tests
   // check whose counts didn't parse (with a stamp in play) says so.
   if (check.countsUnparsed) entry.countsUnparsed = check.countsUnparsed;
+  // #4347: a check whose verdict is a CI job's names that run.
+  if (check.ci) entry.ci = check.ci;
   return entry;
 }
 
