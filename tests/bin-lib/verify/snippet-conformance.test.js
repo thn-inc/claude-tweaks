@@ -184,3 +184,10 @@ test('AC1.1: the execute block itself tells a pipeline site to append the baseli
   assert.ok(block.includes('`retry.{check}` template'), 'names the retry-template precondition');
   assert.ok(block.includes('exact form under Baseline adjudication below'), 'points at the section holding the exact form');
 });
+
+test('verification.md documents Windows cmd.exe shell parsing and wrapper-file pattern (#5145)', () => {
+  assert.ok(DOC.includes('Windows shell parsing'), 'verification.md must name Windows shell parsing');
+  assert.ok(DOC.includes('`cmd.exe`'), 'verification.md must document cmd.exe execution');
+  assert.ok(DOC.includes('wrapper file') || DOC.includes('.cmd wrapper'), 'verification.md must document wrapper file pattern');
+  assert.ok(DOC.includes('#5145'), 'verification.md must cite #5145');
+});

@@ -69,6 +69,10 @@ function runOne({
     // #2779: a check's own --cmd-env variables merge last, over the inherited
     // environment, and reach the child through spawn's `env` option — never
     // as a `VAR=val` prefix on the command string, which cmd.exe rejects.
+    // #5145: on Windows, spawnImpl with shell:true runs cmd.exe, which splits
+    // metacharacters like pipe `|` in unquoted arguments (cmd.exe does not treat
+    // single quotes as quoting). Commands requiring such characters use a wrapper
+    // script passed as the --cmd value.
     // On Windows names are case-insensitive and spawn keeps only the
     // lexicographically first of two case variants, so an inherited variant
     // of a check's own name is dropped first — otherwise `PATH` inherited
