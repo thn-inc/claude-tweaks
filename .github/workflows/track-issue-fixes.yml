@@ -17,6 +17,7 @@ concurrency:
 
 jobs:
   label-fix-branch:
+    # cloſe/reſolve are deliberate: the runner's grep -iP folds ſ to s, GitHub's contains() does not
     if: github.ref != format('refs/heads/{0}', github.event.repository.default_branch) && contains(join(github.event.commits.*.message, ' '), '#') && (contains(join(github.event.commits.*.message, ' '), 'close') || contains(join(github.event.commits.*.message, ' '), 'cloſe') || contains(join(github.event.commits.*.message, ' '), 'fix') || contains(join(github.event.commits.*.message, ' '), 'resolve') || contains(join(github.event.commits.*.message, ' '), 'reſolve'))
     runs-on: ubuntu-latest
     steps:
@@ -71,6 +72,7 @@ jobs:
           done
 
   cleanup-fix-labels:
+    # cloſe/reſolve are deliberate: the runner's grep -iP folds ſ to s, GitHub's contains() does not
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && contains(join(github.event.commits.*.message, ' '), '#') && (contains(join(github.event.commits.*.message, ' '), 'close') || contains(join(github.event.commits.*.message, ' '), 'cloſe') || contains(join(github.event.commits.*.message, ' '), 'fix') || contains(join(github.event.commits.*.message, ' '), 'resolve') || contains(join(github.event.commits.*.message, ' '), 'reſolve'))
     runs-on: ubuntu-latest
     steps:

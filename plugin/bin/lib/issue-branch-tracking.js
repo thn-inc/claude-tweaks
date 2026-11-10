@@ -13,8 +13,6 @@
 // limitation GitHub's own native keyword parsing already has.
 
 const crypto = require('crypto');
-const { CLAIMS_BRANCH } = require('./issues/claims');
-const { HEALTH_STATE_BRANCH } = require('./health-core/durable-state');
 
 // The closing-keyword vocabulary on its own, exported so a caller with a
 // different grammar (line-anchored, `[ \t]` whitespace) shares the keyword set
@@ -114,7 +112,14 @@ function extractReferencedIssuesStep() {
   ];
 }
 
+const LONG_S_ADOPTER_COMMENT =
+  `    # cloſe/reſolve are deliberate: the runner's grep -iP folds ſ to s, GitHub's contains() does not`;
+
 function generateWorkflowYaml() {
+  // Lazy: post-tool-use.js imports this module only for ISSUE_REF_SOURCE, so
+  // the branch-name modules must not load on every PostToolUse.
+  const { CLAIMS_BRANCH } = require('./issues/claims');
+  const { HEALTH_STATE_BRANCH } = require('./health-core/durable-state');
   const lines = [
     'name: Track issue fixes across branches',
     '',
@@ -136,6 +141,7 @@ function generateWorkflowYaml() {
     '',
     'jobs:',
     '  label-fix-branch:',
+    LONG_S_ADOPTER_COMMENT,
     "    if: github.ref != format('refs/heads/{0}', github.event.repository.default_branch) && " + PREFILTER_EXPRESSION,
     '    runs-on: ubuntu-latest',
     '    steps:',
@@ -185,6 +191,7 @@ function generateWorkflowYaml() {
     '          done',
     '',
     '  cleanup-fix-labels:',
+    LONG_S_ADOPTER_COMMENT,
     "    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && " + PREFILTER_EXPRESSION,
     '    runs-on: ubuntu-latest',
     '    steps:',
@@ -227,7 +234,7 @@ const PRIOR_OUTPUT_SHA256 = Object.freeze([
 ]);
 
 function normalisedDigest(text) {
-  const normalised = String(text).replace(/^﻿/, '').replace(/\r\n/g, '\n').replace(/\n+$/, '');
+  const normalised = String(text).replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\n+$/, '');
   return crypto.createHash('sha256').update(normalised).digest('hex');
 }
 
