@@ -38,6 +38,7 @@ test('parses repeatable --cmd plus --json, --log-dir, and --count-stamp', () => 
     baseline: null,
     baselineCmds: [],
     noBaselineFixed: false,
+    defaultSuiteSlots: null,
     cmdEnvs: [],
   });
 });
@@ -347,6 +348,30 @@ test('#3063: without --cmd-timeout no check carries a timeout key (unchanged par
 
 test('#3063: USAGE names --cmd-timeout', () => {
   assert.ok(USAGE.includes('--cmd-timeout <name>=<ms>'));
+});
+
+test('#5119: --default-suite-slots parses to a number, null when absent', () => {
+  assert.strictEqual(parseArgs(['--cmd', 'foo=x', '--default-suite-slots', '3']).defaultSuiteSlots, 3);
+  assert.strictEqual(parseArgs(['--cmd', 'foo=x']).defaultSuiteSlots, null);
+});
+
+test('#5119: a --default-suite-slots value other than a positive integer is a UsageError naming the value', () => {
+  for (const v of ['0', '-1', 'two', '1.5']) {
+    assert.throws(
+      () => parseArgs(['--cmd', 'foo=x', '--default-suite-slots', v]),
+      (err) => err instanceof UsageError && err.message === `--default-suite-slots must be a positive integer, got: ${v}`,
+      v,
+    );
+  }
+});
+
+test('#5119: --default-suite-slots is a usage error in the read-only modes', () => {
+  assert.throws(() => parseArgs(['--stamp-status', '--default-suite-slots', '2']), UsageError);
+  assert.throws(() => parseArgs(['--changed-files', '--default-suite-slots', '2']), UsageError);
+});
+
+test('#5119: USAGE names --default-suite-slots', () => {
+  assert.ok(USAGE.includes('--default-suite-slots <n>'));
 });
 
 test('--baseline with --baseline-cmd parses (#3043)', () => {
