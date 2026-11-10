@@ -14,7 +14,7 @@ node -e "const m=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issue-branch-tracking.js
 ```
 
 - `current` — matches today's generator output: skip silently.
-- `prior-generated` — byte-identical (modulo CRLF and trailing newlines) to an earlier
+- `prior-generated` — byte-identical (modulo a leading BOM, CRLF and trailing newlines) to an earlier
   generator output, so nothing hand-written can be lost: regenerate in place with the
   generation command below, no prompt. Report one line:
   `track-issue-fixes.yml: regenerated (was an unmodified earlier generator output)`. Same
