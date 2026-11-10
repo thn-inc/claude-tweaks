@@ -535,6 +535,14 @@ test('current generator output digest is pinned', () => {
   );
 });
 
+test('the checked-in .github/workflows/track-issue-fixes.yml is the generator output', () => {
+  const checkedIn = fs.readFileSync(
+    path.join(__dirname, '..', '.github/workflows/track-issue-fixes.yml'),
+    'utf8',
+  );
+  assert.strictEqual(checkedIn, generateWorkflowYaml() + '\n');
+});
+
 test('PRIOR_OUTPUT_SHA256 holds five distinct digests and excludes the current output', () => {
   assert.strictEqual(PRIOR_OUTPUT_SHA256.length, 5);
   assert.strictEqual(new Set(PRIOR_OUTPUT_SHA256).size, 5);
