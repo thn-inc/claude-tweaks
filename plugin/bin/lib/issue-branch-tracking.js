@@ -12,6 +12,9 @@
 // more than that will miss references in the truncated commits — the same
 // limitation GitHub's own native keyword parsing already has.
 
+const { CLAIMS_BRANCH } = require('./issues/claims');
+const { HEALTH_STATE_BRANCH } = require('./health-core/durable-state');
+
 // The closing-keyword vocabulary on its own, exported so a caller with a
 // different grammar (line-anchored, `[ \t]` whitespace) shares the keyword set
 // instead of hand-rolling a second copy that could silently drift.
@@ -41,9 +44,10 @@ function extractIssueNumbers(commitMessages) {
 //
 // Case folding, verified rather than assumed: GitHub's contains() uses
 // StringComparison.OrdinalIgnoreCase (actions/runner
-// src/Sdk/Expressions/Sdk/Functions/Contains.cs), which folds ASCII letters
-// only; dotnet/runtime's OrdinalCasingTests state U+017F (long s) is NOT
-// equal to s. GNU grep 3.12 -zoiP with the generated PATTERN DOES fold long s
+// src/Sdk/Expressions/Sdk/Functions/Contains.cs). OrdinalIgnoreCase does fold
+// some non-ASCII letters (e.g. é/É), but an ASCII-only fold is equivalent to it
+// for these literals, which are all ASCII plus ſ; dotnet/runtime's
+// OrdinalCasingTests state U+017F (long s) is NOT equal to s. GNU grep 3.12 -zoiP with the generated PATTERN DOES fold long s
 // to s (cloſes #1 and reſolves #2 extract), and does not fold dotless i
 // (fıxes #3 does not extract). So each stem containing an s also gets a
 // long-s literal, or the prefilter would skip a push the runner would track.
@@ -116,6 +120,9 @@ function generateWorkflowYaml() {
     '  push:',
     '    branches:',
     "      - '**'",
+    // Bookkeeping pushes never carry a fix; `!` patterns must follow '**'.
+    `      - '!${CLAIMS_BRANCH}'`,
+    `      - '!${HEALTH_STATE_BRANCH}'`,
     '',
     'permissions:',
     '  contents: read',

@@ -481,3 +481,17 @@ test('long-s and dotless-i: runtime extraction and the prefilter model agree (GN
     assert.strictEqual(prefilterMatches([msg]), extracted !== '', `prefilter for ${msg}`);
   }
 });
+
+test('push trigger excludes the plugin bookkeeping branches, named from their constants', () => {
+  const { CLAIMS_BRANCH } = require('../plugin/bin/lib/issues/claims');
+  const { HEALTH_STATE_BRANCH } = require('../plugin/bin/lib/health-core/durable-state');
+  assert.strictEqual(CLAIMS_BRANCH, 'claims-registry');
+  assert.strictEqual(HEALTH_STATE_BRANCH, 'health-state');
+  const lines = generateWorkflowYaml().split('\n');
+  const start = lines.indexOf('  push:');
+  assert.ok(start >= 0, 'push: trigger present');
+  const rest = lines.slice(start + 1);
+  const block = rest.slice(0, rest.indexOf(''));
+  const items = block.filter((l) => l.startsWith('      - ')).map((l) => l.slice('      - '.length));
+  assert.deepStrictEqual(items, ["'**'", `'!${CLAIMS_BRANCH}'`, `'!${HEALTH_STATE_BRANCH}'`]);
+});
