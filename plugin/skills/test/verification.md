@@ -36,8 +36,16 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --stamp-status
 **Not skipped — execute.** Run every resolved check through the deterministic runner — one plain command at the invocation level (no `;`, `&&`, or pipe chains):
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --run "$PIPELINE_RUN_DIR" --cmd types="tsc --noEmit" --cmd lint="eslint ." --cmd tests="npm test"
+node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --run "$PIPELINE_RUN_DIR" --default-suite-slots {slots} --cmd types="tsc --noEmit" --cmd lint="eslint ." --cmd tests="npm test"
 ```
+
+**Suite slots (#5119).** Before any run invocation below, resolve the project's slot count once, as its own plain command (no `$(...)`, per the worktree-guard note below), and paste the printed integer as `{slots}`:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values verify-suite-slots
+```
+
+The runner queues for a machine-wide slot before it runs a check; `suite-slots.md` in this skill's directory has the lanes, the resolution order and the held-slot environment. Read-only modes (`--stamp-status`, `--changed-files`) take no slot and reject the flag.
 
 **Pipeline sites add the baseline flags.** With `$PIPELINE_RUN_DIR` set, append `--baseline`/`--baseline-cmd` (and any `--cmd-env`) for each check the declaration gives a `retry.{check}` template — exact form under Baseline adjudication below.
 
@@ -84,7 +92,7 @@ The runner owns execution and scope (`verify.js --scope`, #1922); this table own
 **Scoped invocation.** A "scoped" site runs Step 2's command with the declaration and the integration branch added — one plain command (shown for a declaration whose `checks.tests` is a single command string):
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --run "$PIPELINE_RUN_DIR" --scope .claude-tweaks/verify-scope.json --integration-branch {ref} --baseline origin/{ref} --cmd types="tsc --noEmit" --cmd lint="eslint ." --cmd tests="npm test"
+node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --run "$PIPELINE_RUN_DIR" --default-suite-slots {slots} --scope .claude-tweaks/verify-scope.json --integration-branch {ref} --baseline origin/{ref} --cmd types="tsc --noEmit" --cmd lint="eslint ." --cmd tests="npm test"
 ```
 
 `{ref}` resolves via `_shared/integration-branch.md`'s ladder (the runner has no `origin/HEAD` fallback and exits 2 without it when no usable stamp anchor exists). **When `checks.tests` maps suites** (`#3022`), no `--cmd` is required — each selected suite, and `types`/`lint` when declared, runs the command the declaration already carries; omit the `--cmd {suite}=…`/`--cmd types=…`/`--cmd lint=…` flags unless one check's command needs a one-off override (same name wins over the declared one; `tests` is not itself a declared suite in map form, and naming it is a usage error, exit 2). The runner refuses a set missing a required check from either source (exit 2 naming it). **A missing `--scope` file is a usage error** (exit 2, naming the resolved path) — a silent full-run fallback hid stale or mistyped paths (#3017); a stamp whose anchor is no longer an ancestor of HEAD (rebase, force-push) → the runner forces `full`, the same fail-closed posture unmatched paths get — or, under `impact`, anchors on `--integration-branch`'s merge-base (`impact-selection.md`). A scoped stamp is never a full pass (`--stamp-status`'s `match` stays `false`), but it does verify HEAD: Skip-if-recent and `/claude-tweaks:review` Step 1.5 read `verifiedHead`, so a passing scoped run is never re-triggered by the next gate.
@@ -142,7 +150,7 @@ run ledger as a fact.
 
 On a checkout whose suite carries a known environment-specific failure baseline, the runner adjudicates a failing run against the commit the branch forked from, `git merge-base HEAD {ref}`, so a test red at the fork point that the integration branch has since fixed stays baseline — this replaces the hand-run by-file comparison above for pipeline sites. Every pipeline site — any invocation with `$PIPELINE_RUN_DIR` set (including `/claude-tweaks:test`'s full re-run inside a flow and `/claude-tweaks:review` Step 1.5's re-trigger) — appends, for each check `.claude-tweaks/verify-scope.json` gives a `retry.{check}` template, `--baseline origin/{integration-branch} --baseline-cmd {check}="{template}"`, plus any `--cmd-env` the per-file runs need (they inherit nothing the suite's own wrapper sets) — in this repo:
 
-    node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --run "$PIPELINE_RUN_DIR" --cmd tests="npm test" --cmd-env tests=CT_HOOKS_GIT_TIMEOUT_MS=60000 --baseline origin/main --baseline-cmd tests="node --test {file}"
+    node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --run "$PIPELINE_RUN_DIR" --default-suite-slots {slots} --cmd tests="npm test" --cmd-env tests=CT_HOOKS_GIT_TIMEOUT_MS=60000 --baseline origin/main --baseline-cmd tests="node --test {file}"
 
 That block is the unscoped (explicit `--cmd`) form. **Under `--scope`** `--baseline-cmd` is optional: each declared suite takes an explicit `--baseline-cmd {name}=…` when one is given, else the declaration's `retry.{name}` template (explicit always wins; `types`/`lint` and other `--cmd` names have no fallback and need an explicit one); a `--baseline-cmd` may name a `--cmd` or any declared suite, and one that names no `--cmd` or declared suite is a usage error (exit 2), as is `--baseline` with no `--baseline-cmd` and no declared `retry` template. A `--baseline` run (scoped or not) runs every suite even after one fails — only a `types`/`lint` failure still skips the suite tier — so adjudication sees every suite's evidence.
 
