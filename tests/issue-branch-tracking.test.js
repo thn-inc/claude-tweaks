@@ -1,5 +1,8 @@
 'use strict';
 const { test } = require('node:test');
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
 const assert = require('node:assert');
 const {
   ISSUE_REF_SOURCE,
@@ -9,6 +12,8 @@ const {
   extractIssueNumbers,
   prefilterMatches,
   generateWorkflowYaml,
+  classifyExistingWorkflow,
+  PRIOR_OUTPUT_SHA256,
 } = require('../plugin/bin/lib/issue-branch-tracking');
 
 test('extractIssueNumbers matches GitHub closing keywords, case-insensitive', () => {
@@ -494,4 +499,45 @@ test('push trigger excludes the plugin bookkeeping branches, named from their co
   const block = rest.slice(0, rest.indexOf(''));
   const items = block.filter((l) => l.startsWith('      - ')).map((l) => l.slice('      - '.length));
   assert.deepStrictEqual(items, ["'**'", `'!${CLAIMS_BRANCH}'`, `'!${HEALTH_STATE_BRANCH}'`]);
+});
+
+const normalisedDigest = (text) =>
+  crypto.createHash('sha256').update(text.replace(/\r\n/g, '\n').replace(/\n+$/, '')).digest('hex');
+const PRE_5152_FIXTURE = fs.readFileSync(
+  path.join(__dirname, 'fixtures', 'track-issue-fixes-pre-5152.yml'),
+  'utf8',
+);
+const PINNED_CURRENT_DIGEST = '7a6446358b5cb6593a9b99aa76ae6a30abc03fe289afbc6e0f9fc530a5c105cf';
+
+test('classifyExistingWorkflow: current generator output', () => {
+  const current = generateWorkflowYaml();
+  assert.strictEqual(classifyExistingWorkflow(current), 'current');
+  assert.strictEqual(classifyExistingWorkflow(current + '\n'), 'current');
+  assert.strictEqual(classifyExistingWorkflow(current.replace(/\n/g, '\r\n')), 'current');
+});
+
+test('classifyExistingWorkflow: pre-5152 checked-in file is prior-generated', () => {
+  assert.strictEqual(classifyExistingWorkflow(PRE_5152_FIXTURE), 'prior-generated');
+});
+
+test('classifyExistingWorkflow: a hand edit is modified', () => {
+  const edited = PRE_5152_FIXTURE.replace(/^(\s*# )(.)/m, (_, lead, ch) => lead + (ch === 'X' ? 'Y' : 'X'));
+  assert.notStrictEqual(edited, PRE_5152_FIXTURE);
+  assert.strictEqual(classifyExistingWorkflow(edited), 'modified');
+  assert.strictEqual(classifyExistingWorkflow(''), 'modified');
+});
+
+test('current generator output digest is pinned', () => {
+  assert.strictEqual(
+    normalisedDigest(generateWorkflowYaml()),
+    PINNED_CURRENT_DIGEST,
+    'generator output changed — append the previous digest to PRIOR_OUTPUT_SHA256 so adopters on it upgrade silently, then update this pinned value',
+  );
+});
+
+test('PRIOR_OUTPUT_SHA256 holds five distinct digests and excludes the current output', () => {
+  assert.strictEqual(PRIOR_OUTPUT_SHA256.length, 5);
+  assert.strictEqual(new Set(PRIOR_OUTPUT_SHA256).size, 5);
+  for (const d of PRIOR_OUTPUT_SHA256) assert.match(d, /^[0-9a-f]{64}$/);
+  assert.ok(!PRIOR_OUTPUT_SHA256.includes(normalisedDigest(generateWorkflowYaml())));
 });

@@ -12,6 +12,7 @@
 // more than that will miss references in the truncated commits — the same
 // limitation GitHub's own native keyword parsing already has.
 
+const crypto = require('crypto');
 const { CLAIMS_BRANCH } = require('./issues/claims');
 const { HEALTH_STATE_BRANCH } = require('./health-core/durable-state');
 
@@ -47,13 +48,14 @@ function extractIssueNumbers(commitMessages) {
 // src/Sdk/Expressions/Sdk/Functions/Contains.cs). OrdinalIgnoreCase does fold
 // some non-ASCII letters (e.g. é/É), but an ASCII-only fold is equivalent to it
 // for these literals, which are all ASCII plus ſ; dotnet/runtime's
-// OrdinalCasingTests state U+017F (long s) is NOT equal to s. GNU grep 3.12 -zoiP with the generated PATTERN DOES fold long s
-// to s (cloſes #1 and reſolves #2 extract), and does not fold dotless i
+// OrdinalCasingTests state U+017F (long s) is NOT equal to s. GNU grep 3.12
+// -zoiP with the generated PATTERN DOES fold long s to s (cloſes #1 and
+// reſolves #2 extract), and does not fold dotless i
 // (fıxes #3 does not extract). So each stem containing an s also gets a
 // long-s literal, or the prefilter would skip a push the runner would track.
-// prefilterMatches models OrdinalIgnoreCase exactly: ASCII-only folding,
-// never String.prototype.toUpperCase (which maps ſ to S and would be looser
-// than GitHub, voiding the proof).
+// prefilterMatches models OrdinalIgnoreCase exactly for these literals:
+// ASCII-only folding, never String.prototype.toUpperCase (which maps ſ to S
+// and would be looser than GitHub, voiding the proof).
 const BASE_KEYWORD_STEMS = Object.freeze(['close', 'fix', 'resolve']);
 
 const LONG_S = '\u017f';
@@ -209,6 +211,36 @@ function generateWorkflowYaml() {
   return lines.join('\n');
 }
 
+// Digests of every distinct generateWorkflowYaml() output this generator has
+// ever produced, so /init can tell an unedited generated file (safe to
+// regenerate) from a hand-edited one. Derived 2026-11-10: walk `git log
+// --follow` of this module, take each revision's output, normalise it (CRLF to
+// LF, trailing newlines stripped) and sha256 it. APPEND the previous digest
+// here whenever the generator's output changes — the pinned-digest test in
+// tests/issue-branch-tracking.test.js is what notices.
+const PRIOR_OUTPUT_SHA256 = Object.freeze([
+  '0b9a50e7dacd86c560626ae566a27cc4a2528acebd83b340d78596354a3127dd',
+  'a64b869f142c07baf9477259374b00cb0aa62332cf0f699684c98f52e2876dd4',
+  'a05f433b8079c9147f6750bf8ef01a3a61de6c52f3c3c5d7db6ed7c582fdc561',
+  'dba131107bd1224c9ff823bc5390401ace05c2ab1e33cc7ec4fea0c96efb9138',
+  '89f9cc80110f35535fce118eb445d03de5e1c80886932a8c076138c0e270d1ae',
+]);
+
+function normalisedDigest(text) {
+  const normalised = String(text).replace(/\r\n/g, '\n').replace(/\n+$/, '');
+  return crypto.createHash('sha256').update(normalised).digest('hex');
+}
+
+// Classify an existing track-issue-fixes.yml: 'current' (matches today's
+// output), 'prior-generated' (matches an older output — safe to regenerate),
+// or 'modified' (anything else — never overwrite).
+function classifyExistingWorkflow(content) {
+  const digest = normalisedDigest(content);
+  if (digest === normalisedDigest(generateWorkflowYaml())) return 'current';
+  if (PRIOR_OUTPUT_SHA256.includes(digest)) return 'prior-generated';
+  return 'modified';
+}
+
 module.exports = {
   ISSUE_REF_SOURCE,
   CLOSING_KEYWORD_ALTERNATION,
@@ -217,4 +249,6 @@ module.exports = {
   extractIssueNumbers,
   prefilterMatches,
   generateWorkflowYaml,
+  PRIOR_OUTPUT_SHA256,
+  classifyExistingWorkflow,
 };
