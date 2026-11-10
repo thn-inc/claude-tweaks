@@ -322,5 +322,9 @@
   "plugin/bin/lib/phase-exit": {
     "lastSweptMs": 1793675172526,
     "lastHash": "fcc3e11918f40f0173fbda21afdbd77454c0d2b9"
+  },
+  "plugin/bin/lib/plan-retention": {
+    "lastSweptMs": 1794279986598,
+    "lastHash": "f23f46e2de6136a55c2c7878566d0480a2c84dfc"
   }
 }
