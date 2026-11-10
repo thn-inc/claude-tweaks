@@ -1,7 +1,4 @@
 {
-  "worktree": {
-    "baseRef": "head"
-  },
   "permissions": {
     "allow": [
       "Read(node_modules/**)"
@@ -27,6 +24,9 @@
       "Read(~/.git-credentials)",
       "Read(~/.config/gh/hosts.yml)"
     ]
+  },
+  "worktree": {
+    "baseRef": "head"
   },
   "enabledPlugins": {
     "superpowers@claude-plugins-official": true,

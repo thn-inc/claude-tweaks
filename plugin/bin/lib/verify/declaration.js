@@ -21,6 +21,12 @@ const MAX_RETRIES_CEILING = 2;
 const DEFAULT_MAX_AGE_COMMITS = 200;
 const GIT_COMMON_DIR_TOKEN = '{git-common-dir}';
 const IMPACT_KEYS = ['suite', 'command', 'tests', 'maxAgeCommits', 'map', 'fetch'];
+const CI_KEYS = ['workflow', 'job', 'waitSeconds', 'pollSeconds'];
+// #4347: a CI run of this repo's suite takes ~3.5 min plus queueing; 15 min
+// matches the job's own timeout-minutes, so a run that is still going past it
+// would have been killed anyway.
+const DEFAULT_CI_WAIT_SECONDS = 900;
+const DEFAULT_CI_POLL_SECONDS = 20;
 
 function isPlainObject(v) { return typeof v === 'object' && v !== null && !Array.isArray(v); }
 
@@ -143,6 +149,41 @@ function readDeclaration(filePath, fsImpl = fs, { selfPath = null } = {}) {
     }
   }
 
+  // ci (#4347): a suite whose full run is taken from the PR's CI job on HEAD
+  // instead of a local run — {suite: {workflow, job, waitSeconds?, pollSeconds?}}.
+  // A reader that predates the key ignores it (no unknown-top-level-key check
+  // above), so the committed declaration stays readable by older builds.
+  let ci = null;
+  if (raw.ci !== undefined) {
+    if (!isPlainObject(raw.ci)) {
+      errors.push('ci: must be an object of suite name to {workflow, job, waitSeconds?, pollSeconds?}');
+    } else {
+      const before = errors.length;
+      const parsedCi = {};
+      for (const [name, src] of Object.entries(raw.ci)) {
+        const where = `ci.${name}`;
+        if (!declared.has(name)) errors.push(`${where}: unknown suite (declared: ${suites.join(', ') || 'none'})`);
+        else if (toolScoped) errors.push(`${where}: cannot take a CI source for a tool-scoped checks.tests command ({base}) — CI runs the whole suite, that tool selects its own tests`);
+        if (!isPlainObject(src)) { errors.push(`${where}: must be an object of {${CI_KEYS.join(', ')}}`); continue; }
+        const unknown = Object.keys(src).filter((k) => !CI_KEYS.includes(k));
+        if (unknown.length) errors.push(`${where}: unknown key(s) ${unknown.map((k) => JSON.stringify(k)).join(', ')} (allowed: ${CI_KEYS.join(', ')})`);
+        for (const key of ['workflow', 'job']) {
+          if (typeof src[key] !== 'string' || src[key].trim() === '') errors.push(`${where}.${key}: must be a non-empty string`);
+        }
+        for (const key of ['waitSeconds', 'pollSeconds']) {
+          if (src[key] !== undefined && (!Number.isInteger(src[key]) || src[key] < 1)) errors.push(`${where}.${key}: must be a positive integer`);
+        }
+        parsedCi[name] = {
+          workflow: src.workflow,
+          job: src.job,
+          waitSeconds: src.waitSeconds === undefined ? DEFAULT_CI_WAIT_SECONDS : src.waitSeconds,
+          pollSeconds: src.pollSeconds === undefined ? DEFAULT_CI_POLL_SECONDS : src.pollSeconds,
+        };
+      }
+      if (errors.length === before) ci = parsedCi;
+    }
+  }
+
   // rules
   const rules = [];
   if (!Array.isArray(raw.rules)) {
@@ -252,7 +293,7 @@ function readDeclaration(filePath, fsImpl = fs, { selfPath = null } = {}) {
     ok: true,
     decl: {
       checks: { types: typeof checks.types === 'string' ? checks.types : null, lint: typeof checks.lint === 'string' ? checks.lint : null, tests },
-      suites, toolScoped, retry, rules, flaky, preExisting, generated, impact,
+      suites, toolScoped, retry, rules, flaky, preExisting, generated, impact, ci,
     },
   };
 }
@@ -270,4 +311,5 @@ function generatedExemption(dirtyPaths, generated) {
 
 module.exports = {
   readDeclaration, generatedExemption, DECLARATION_PATH, DEFAULT_MAX_RETRIES, MAX_RETRIES_CEILING, DEFAULT_MAX_AGE_COMMITS, GIT_COMMON_DIR_TOKEN,
+  DEFAULT_CI_WAIT_SECONDS, DEFAULT_CI_POLL_SECONDS,
 };
