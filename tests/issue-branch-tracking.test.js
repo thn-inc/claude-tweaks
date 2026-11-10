@@ -3,7 +3,11 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const {
   ISSUE_REF_SOURCE,
+  CLOSING_KEYWORD_ALTERNATION,
+  PREFILTER_KEYWORD_STEMS,
+  PREFILTER_EXPRESSION,
   extractIssueNumbers,
+  prefilterMatches,
   generateWorkflowYaml,
 } = require('../plugin/bin/lib/issue-branch-tracking');
 
@@ -205,7 +209,7 @@ function extractRunBody(yaml) {
 // `grep` on PATH resolved to a real GNU grep (this environment may only
 // have it under a different name, e.g. `ggrep` on macOS — every GitHub
 // Actions ubuntu-latest runner ships GNU grep natively as `grep`).
-function runExtractStep(t, commits) {
+function runExtractStep(t, commits, envOverrides = {}) {
   const gnuGrep = resolveGnuGrep();
   if (!gnuGrep) {
     t.skip('no GNU grep found (checked `grep` and `ggrep`) — every GitHub Actions ubuntu-latest runner ships GNU grep natively, so this is a local-environment gap, not a real gap');
@@ -241,6 +245,7 @@ function runExtractStep(t, commits) {
         RUNNER_TEMP: tmp,
         GITHUB_OUTPUT: githubOutput,
         COMMITS_JSON: JSON.stringify(commits),
+        ...envOverrides,
       },
     });
     const outputContent = fs.readFileSync(githubOutput, 'utf8');
@@ -286,4 +291,159 @@ test('extraction pipeline (literal generated script): a revert commit alongside 
   const issues = runExtractStep(t, commits);
   if (issues === null) return; // skipped — see runExtractStep
   assert.strictEqual(issues, '7', `expected only the non-revert commit's issue to surface, got: "${issues}"`);
+});
+
+// ---------------------------------------------------------------------------
+// Job-level prefilter (#5152): a strict superset of the in-job extraction.
+// ---------------------------------------------------------------------------
+
+test('PREFILTER_KEYWORD_STEMS cover every word CLOSING_KEYWORD_ALTERNATION accepts', () => {
+  const letters = 'abcdefghijklmnopqrstuvwxyz'.split('');
+  const suffixes = [''];
+  for (const a of letters) {
+    suffixes.push(a);
+    for (const b of letters) {
+      suffixes.push(a + b);
+      for (const c of letters) suffixes.push(a + b + c);
+    }
+  }
+  const candidates = [];
+  for (const stem of PREFILTER_KEYWORD_STEMS) for (const sfx of suffixes) candidates.push(stem + sfx);
+  const re = new RegExp('^(?:' + CLOSING_KEYWORD_ALTERNATION + ')$');
+  const matched = candidates.filter((w) => re.test(w)).sort();
+  assert.deepStrictEqual(matched, ['close', 'closed', 'closes', 'fix', 'fixed', 'fixes', 'resolve', 'resolved', 'resolves']);
+  for (const w of matched) {
+    assert.ok(PREFILTER_KEYWORD_STEMS.some((s) => w.includes(s)), `${w} must contain a prefilter stem`);
+  }
+});
+
+test('emitted if: lines carry exactly the prefilter literals', () => {
+  const yaml = generateWorkflowYaml();
+  const ifLines = yaml.split('\n').filter((l) => /^\s+if: github\.ref (?:!=|==) /.test(l));
+  assert.strictEqual(ifLines.length, 2);
+  const litRe = /contains\(join\(github\.event\.commits\.\*\.message, ' '\), '([^']*)'\)/g;
+  for (const line of ifLines) {
+    const literals = [...line.matchAll(litRe)].map((m) => m[1]).sort();
+    assert.deepStrictEqual(literals, ['#', ...PREFILTER_KEYWORD_STEMS].sort());
+    assert.ok(line.includes(PREFILTER_EXPRESSION));
+    assert.ok(!/\s#/.test(line), 'a whitespace-then-# would start a YAML comment');
+  }
+});
+
+test('prefilterMatches rejects pushes with no closing reference', () => {
+  assert.strictEqual(prefilterMatches(['Update README']), false);
+  assert.strictEqual(prefilterMatches(['refs #12 tidy']), false);
+  assert.strictEqual(prefilterMatches(['health-state: code-health update']), false);
+  assert.strictEqual(prefilterMatches(['fix the build']), false);
+  assert.strictEqual(prefilterMatches([]), false);
+  assert.strictEqual(prefilterMatches(undefined), false);
+  assert.strictEqual(prefilterMatches([undefined]), false);
+  assert.strictEqual(prefilterMatches([42]), false);
+});
+
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const KEYWORD_FORMS = ['close', 'closes', 'closed', 'fix', 'fixes', 'fixed', 'resolve', 'resolves', 'resolved'];
+
+function generateCommitCorpus() {
+  const rand = mulberry32(5152);
+  const pick = (arr) => arr[Math.floor(rand() * arr.length)];
+  const casings = [
+    (w) => w.toLowerCase(),
+    (w) => w.toUpperCase(),
+    (w) => w[0].toUpperCase() + w.slice(1).toLowerCase(),
+    (w) => w.split('').map((c, i) => (i % 2 ? c.toUpperCase() : c)).join(''), // fixed mixed case, e.g. fIxEs
+  ];
+  const separators = [' ', '\t', '\n', '\r\n'];
+  const noise = ['the', 'build', 'refs', 'update', 'docs', 'login', 'see', 'and', 'of', 'closing', 'fixture', 'prefix'];
+  const sep = () => {
+    let s = '';
+    const n = 1 + Math.floor(rand() * 3);
+    for (let i = 0; i < n; i++) s += pick(separators);
+    return s;
+  };
+  const num = () => String(Math.floor(rand() * 99999) + 1).slice(0, 1 + Math.floor(rand() * 5));
+  const keyword = () => {
+    const form = pick(KEYWORD_FORMS);
+    return rand() < 0.25 ? form.split('').map((c) => (rand() < 0.5 ? c.toUpperCase() : c)).join('') : pick(casings.slice(0, 3))(form);
+  };
+
+  const corpus = [];
+  // Seeded by construction: every keyword form x casing, so keyword/casing
+  // coverage never depends on chance.
+  let n = 1;
+  for (const form of KEYWORD_FORMS) for (const c of casings) corpus.push([`${c(form)} #${n++}`]);
+  corpus.push(['cloſes #1']);
+
+  while (corpus.length < 5000) {
+    const count = 1 + Math.floor(rand() * 3);
+    const msgs = [];
+    for (let i = 0; i < count; i++) {
+      const roll = rand();
+      let msg;
+      if (roll < 0.15 && i + 1 < count) {
+        // keyword in this message, #N in the next
+        msgs.push(`${keyword()}${sep()}`);
+        msgs.push(`#${num()} ${pick(noise)}`);
+        i++;
+        continue;
+      } else if (roll < 0.7) {
+        msg = `${pick(noise)} ${keyword()}${sep()}#${num()} ${pick(noise)}`;
+      } else if (roll < 0.85) {
+        msg = `${pick(noise)} #${num()} ${pick(noise)} ${rand() < 0.5 ? keyword() : ''}`;
+      } else {
+        msg = `${pick(noise)} ${pick(noise)}`;
+      }
+      if (rand() < 0.1) msg = `Revert "${msg}"`;
+      msgs.push(msg);
+    }
+    corpus.push(msgs);
+  }
+  return corpus;
+}
+
+test('prefilterMatches is a superset of extractIssueNumbers (seeded property test)', () => {
+  const corpus = generateCommitCorpus();
+  assert.strictEqual(corpus.length, 5000);
+  let nonEmpty = 0;
+  for (const msgs of corpus) {
+    if (extractIssueNumbers(msgs).length > 0) {
+      nonEmpty++;
+      assert.strictEqual(prefilterMatches(msgs), true, `prefilter dropped a push the extraction matches: ${JSON.stringify(msgs)}`);
+    }
+  }
+  assert.ok(nonEmpty >= 1000, `property is vacuous: only ${nonEmpty} arrays had a non-empty extraction`);
+});
+
+test('prefilterMatches is a superset of the literal generated extraction script (runtime)', (t) => {
+  for (const msgs of generateCommitCorpus().slice(0, 150)) {
+    const issues = runExtractStep(t, msgs.map((m) => ({ message: m })));
+    if (issues === null) return; // skipped — see runExtractStep
+    if (issues !== '') {
+      assert.strictEqual(prefilterMatches(msgs), true, `runtime extraction matched but prefilter dropped: ${JSON.stringify(msgs)}`);
+    }
+  }
+});
+
+test('long-s case fold: runtime extraction and prefilter agree on cloſes #1', (t) => {
+  const issues = runExtractStep(t, [{ message: 'cloſes #1' }], { LC_ALL: 'C.UTF-8' });
+  if (issues === null) return; // skipped — see runExtractStep
+  if (issues === '1') {
+    assert.strictEqual(prefilterMatches(['cloſes #1']), true);
+  } else {
+    // This grep does not fold ſ to s in this locale, so extraction finds
+    // nothing. The prefilter is still true for it (asserted below), so no
+    // direction of the superset relation is lost.
+    assert.strictEqual(issues, '');
+  }
+  assert.strictEqual(prefilterMatches(['cloſes #1']), true);
 });

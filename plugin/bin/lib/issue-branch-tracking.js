@@ -33,6 +33,29 @@ function extractIssueNumbers(commitMessages) {
   return Array.from(found).sort((a, b) => a - b);
 }
 
+// Job-level prefilter: a false job `if` gets no runner at all, so a push that
+// cannot reference a closing keyword never bills one. It is deliberately looser
+// than ISSUE_REF_SOURCE (a '#' plus any keyword stem anywhere in the joined
+// messages, no word boundary, no whitespace shape) so it can only over-admit,
+// never drop a push the in-job extraction would have matched. GitHub's
+// contains() compares with StringComparison.OrdinalIgnoreCase
+// (actions/runner src/Sdk/Expressions/Sdk/Functions/Contains.cs), which
+// prefilterMatches models by upper-casing both sides.
+const PREFILTER_KEYWORD_STEMS = Object.freeze(['close', 'fix', 'resolve']);
+
+const PREFILTER_JOINED_MESSAGES = "join(github.event.commits.*.message, ' ')";
+
+const PREFILTER_EXPRESSION =
+  `contains(${PREFILTER_JOINED_MESSAGES}, '#') && (` +
+  PREFILTER_KEYWORD_STEMS.map((s) => `contains(${PREFILTER_JOINED_MESSAGES}, '${s}')`).join(' || ') +
+  ')';
+
+function prefilterMatches(commitMessages) {
+  if (!Array.isArray(commitMessages)) return false;
+  const joined = commitMessages.filter((m) => typeof m === 'string').join(' ').toUpperCase();
+  return joined.includes('#') && PREFILTER_KEYWORD_STEMS.some((s) => joined.includes(s.toUpperCase()));
+}
+
 // Shared "Extract referenced issues" step — identical in both jobs below (each
 // needs its own list of issues this push references before doing job-specific
 // work with them). Kept as one array so a future fix to the extraction shell
@@ -84,7 +107,7 @@ function generateWorkflowYaml() {
     '',
     'jobs:',
     '  label-fix-branch:',
-    "    if: github.ref != format('refs/heads/{0}', github.event.repository.default_branch)",
+    "    if: github.ref != format('refs/heads/{0}', github.event.repository.default_branch) && " + PREFILTER_EXPRESSION,
     '    runs-on: ubuntu-latest',
     '    steps:',
     ...extractReferencedIssuesStep(),
@@ -133,7 +156,7 @@ function generateWorkflowYaml() {
     '          done',
     '',
     '  cleanup-fix-labels:',
-    "    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)",
+    "    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && " + PREFILTER_EXPRESSION,
     '    runs-on: ubuntu-latest',
     '    steps:',
     ...extractReferencedIssuesStep(),
@@ -159,4 +182,12 @@ function generateWorkflowYaml() {
   return lines.join('\n');
 }
 
-module.exports = { ISSUE_REF_SOURCE, CLOSING_KEYWORD_ALTERNATION, extractIssueNumbers, generateWorkflowYaml };
+module.exports = {
+  ISSUE_REF_SOURCE,
+  CLOSING_KEYWORD_ALTERNATION,
+  PREFILTER_KEYWORD_STEMS,
+  PREFILTER_EXPRESSION,
+  extractIssueNumbers,
+  prefilterMatches,
+  generateWorkflowYaml,
+};
