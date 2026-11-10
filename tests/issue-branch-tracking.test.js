@@ -502,7 +502,7 @@ test('push trigger excludes the plugin bookkeeping branches, named from their co
 });
 
 const normalisedDigest = (text) =>
-  crypto.createHash('sha256').update(text.replace(/\r\n/g, '\n').replace(/\n+$/, '')).digest('hex');
+  crypto.createHash('sha256').update(text.replace(/^﻿/, '').replace(/\r\n/g, '\n').replace(/\n+$/, '')).digest('hex');
 const PRE_5152_FIXTURE = fs.readFileSync(
   path.join(__dirname, 'fixtures', 'track-issue-fixes-pre-5152.yml'),
   'utf8',
@@ -520,8 +520,13 @@ test('classifyExistingWorkflow: pre-5152 checked-in file is prior-generated', ()
   assert.strictEqual(classifyExistingWorkflow(PRE_5152_FIXTURE), 'prior-generated');
 });
 
+test('classifyExistingWorkflow: a leading UTF-8 BOM does not turn an unmodified file into modified', () => {
+  assert.strictEqual(classifyExistingWorkflow('﻿' + generateWorkflowYaml()), 'current');
+  assert.strictEqual(classifyExistingWorkflow('﻿' + PRE_5152_FIXTURE), 'prior-generated');
+});
+
 test('classifyExistingWorkflow: a hand edit is modified', () => {
-  const edited = PRE_5152_FIXTURE.replace(/^(\s*# )(.)/m, (_, lead, ch) => lead + (ch === 'X' ? 'Y' : 'X'));
+  const edited = PRE_5152_FIXTURE.replace(/^([ \t]*# )(.)/m, (_, lead, ch) => lead + (ch === 'X' ? 'Y' : 'X'));
   assert.notStrictEqual(edited, PRE_5152_FIXTURE);
   assert.strictEqual(classifyExistingWorkflow(edited), 'modified');
   assert.strictEqual(classifyExistingWorkflow(''), 'modified');

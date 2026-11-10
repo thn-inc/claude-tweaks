@@ -50,9 +50,9 @@ function extractIssueNumbers(commitMessages) {
 // for these literals, which are all ASCII plus ſ; dotnet/runtime's
 // OrdinalCasingTests state U+017F (long s) is NOT equal to s. GNU grep 3.12
 // -zoiP with the generated PATTERN DOES fold long s to s (cloſes #1 and
-// reſolves #2 extract), and does not fold dotless i
-// (fıxes #3 does not extract). So each stem containing an s also gets a
-// long-s literal, or the prefilter would skip a push the runner would track.
+// reſolves #2 extract), and does not fold dotless i (fıxes #3 does not
+// extract). So each stem containing an s also gets a long-s literal, or the
+// prefilter would skip a push the runner would track.
 // prefilterMatches models OrdinalIgnoreCase exactly for these literals:
 // ASCII-only folding, never String.prototype.toUpperCase (which maps ſ to S
 // and would be looser than GitHub, voiding the proof).
@@ -227,7 +227,7 @@ const PRIOR_OUTPUT_SHA256 = Object.freeze([
 ]);
 
 function normalisedDigest(text) {
-  const normalised = String(text).replace(/\r\n/g, '\n').replace(/\n+$/, '');
+  const normalised = String(text).replace(/^﻿/, '').replace(/\r\n/g, '\n').replace(/\n+$/, '');
   return crypto.createHash('sha256').update(normalised).digest('hex');
 }
 

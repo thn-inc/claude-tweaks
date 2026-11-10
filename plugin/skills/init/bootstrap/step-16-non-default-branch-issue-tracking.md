@@ -26,7 +26,8 @@ node -e "const m=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issue-branch-tracking.js
   - Option 1 — `label`: `"Keep my file (Recommended)"`, `description`: `"Leave the edited file as is."`
   - Option 2 — `label`: `"Regenerate (discards local edits)"`, `description`: `"Overwrite with the current generator output — local edits are lost."`
 
-  On Option 2, run the generation command below.
+  On Option 1, leave the file unchanged; the step ends. On Option 2, run the generation
+  command below.
 - A classifier command that exits non-zero is surfaced and the step continues without
   writing — the Failure handling paragraph below.
 
@@ -70,8 +71,9 @@ default-branch merge closes the records. A claude-tweaks `pr-first` run is the o
 closes sooner: when its PR merges into a non-default base, `pr-first-merge-post-merge.md` Step 4.0
 closes the PR's `Fixes` records itself (see "Close-via-merge" in `_shared/issue-claims.md`).
 
-**Failure handling:** if writing the file fails (e.g. permissions), surface the
-failure and continue `/init` — never abort the rest of bootstrap on this step.
+**Failure handling:** if the classifier command fails, or writing the file fails (e.g.
+permissions), surface the failure, write nothing further, and continue `/init` — never
+abort the rest of bootstrap on this step.
 
 **Re-run behavior:** an existing workflow file is classified, never blindly skipped:
 `current` is silent, `prior-generated` is regenerated without a prompt, `modified`
