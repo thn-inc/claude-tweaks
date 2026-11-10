@@ -47,6 +47,8 @@ Waived plugin/bin/lib/health-core/durable-state.js: read-only import of `HEALTH_
 
 ### Task 1: Prefilter expression, JS model, and superset proof
 
+**Review risk:** high
+
 **Files:**
 - Modify: `plugin/bin/lib/issue-branch-tracking.js` (add constants and functions near `ISSUE_REF_SOURCE`; change both jobs' `if:` lines in `generateWorkflowYaml()`; extend `module.exports`)
 - Test: `tests/issue-branch-tracking.test.js` (append tests; reuse `resolveGnuGrep`, `hasJq` and `runExtractStep`, never copy them)
@@ -80,11 +82,18 @@ Waived plugin/bin/lib/health-core/durable-state.js: read-only import of `HEALTH_
       - occasionally a `Revert "…"` wrapper;
       - occasionally the keyword in one message and `#N` in the next;
       - the fixed case `'cloſes #1'`.
+    - Before the random draws, seed the corpus with all 36 combinations of the 9 keyword forms × the 4 casings (lower, UPPER, Title, a fixed mixed case such as `fIxEs`), each as `"<form> #<n>"`, so AC3.2 holds by construction rather than by chance.
     - For every array where `extractIssueNumbers(msgs).length > 0`, assert `prefilterMatches(msgs) === true`, with the failing input in the message.
     - Assert that at least 1000 generated arrays had a non-empty extraction, so the property is not vacuous.
   - `'prefilterMatches is a superset of the literal generated extraction script (runtime)'`:
     - Take the first 150 arrays from the same seeded generator and run `runExtractStep(t, msgs.map((m) => ({ message: m })))` for each, honouring its skip.
     - When the returned `issues` is non-empty, assert `prefilterMatches(msgs)`.
+  - `'long-s case fold: runtime extraction and prefilter agree on cloſes #1'`:
+    - Give `runExtractStep` an optional third `envOverrides` argument, merged last into its env.
+    - Run `runExtractStep(t, [{ message: 'cloſes #1' }], { LC_ALL: 'C.UTF-8' })`, honouring its skip.
+    - When it returns `'1'`, assert `prefilterMatches(['cloſes #1'])` is true.
+    - When it returns `''` (this grep does not fold ſ in that locale), assert that, and record in a comment that the prefilter is still true for it, so no direction is lost.
+    - Assert `prefilterMatches(['cloſes #1'])` is true unconditionally.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -139,6 +148,8 @@ Expected: FAIL after Step 1 — the branch list is only `'**'`.
 
 ### Task 3: Classify an existing workflow file for the upgrade path
 
+**Review risk:** high
+
 **Files:**
 - Modify: `plugin/bin/lib/issue-branch-tracking.js`
 - Create: `tests/fixtures/track-issue-fixes-pre-5152.yml`, with its content taken from `git show c1fa86602:.github/workflows/track-issue-fixes.yml` (byte-exact, via redirect)
@@ -153,6 +164,7 @@ Expected: FAIL after Step 1 — the branch list is only `'**'`.
   - `'classifyExistingWorkflow: current generator output'`: assert `current` for `generateWorkflowYaml()`, for the same plus `'\n'`, and for the output with every `\n` replaced by `\r\n`.
   - `'classifyExistingWorkflow: pre-5152 checked-in file is prior-generated'`: read the fixture and assert `prior-generated`.
   - `'classifyExistingWorkflow: a hand edit is modified'`: assert `modified` for the fixture with its first `# ` comment line altered by one character, and for the empty string.
+  - `'current generator output digest is pinned'`: assert that the sha256 of the normalised `generateWorkflowYaml()` equals a literal hard-coded in the test (computed after Tasks 1–2). The failure message reads: `generator output changed — append the previous digest to PRIOR_OUTPUT_SHA256 so adopters on it upgrade silently, then update this pinned value`.
   - `'PRIOR_OUTPUT_SHA256 holds five distinct digests and excludes the current output'`: assert a length of 5, that the values are distinct and 64-hex, and that the current output's digest is not in the list. That last check makes "current" and "prior-generated" disjoint.
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -173,6 +185,8 @@ Expected: FAIL after Step 1 — `classifyExistingWorkflow` is not a function.
 
 ### Task 4: Init Step 16 acts on the classification
 
+**Review risk:** high
+
 **Files:**
 - Modify: `plugin/skills/init/bootstrap/step-16-non-default-branch-issue-tracking.md` (the existence check in its second paragraph; the job descriptions; the "Re-run behavior" paragraph)
 - Modify: `plugin/skills/init/SKILL.md` (the Step 16 paragraph, around line 167: replace "Idempotent: skipped silently once the workflow file exists.")
@@ -187,7 +201,7 @@ Expected: FAIL after Step 1 — `classifyExistingWorkflow` is not a function.
     - `question`: `"track-issue-fixes.yml differs from every version claude-tweaks generated, so it was edited by hand. The current generator adds a job-level prefilter (no runner on pushes that reference no issue) and skips the claims-registry and health-state bookkeeping branches. Regenerate it?"`
     - `header`: `"Tracking wf"`
     - Option 1: `"Keep my file (Recommended)"`, described as `"Leave the edited file as is."`.
-    - Option 2: `"Regenerate"`, described as `"Overwrite with the current generator output — local edits are lost."`.
+    - Option 2: `"Regenerate (discards local edits)"`, described as `"Overwrite with the current generator output — local edits are lost."`.
   - A classifier command that exits non-zero is surfaced, and Step 16 continues without writing, matching the existing Failure handling paragraph.
 - [ ] **Step 2: Update the job descriptions.** Both jobs run only when the pushed commits contain `#` and a closing-keyword stem, and the trigger skips `claims-registry`/`health-state`. Replace the "Re-run behavior" paragraph with the three outcomes.
 - [ ] **Step 3: Update `init/SKILL.md`'s Step 16 paragraph** to say that a re-run regenerates an unmodified earlier generator output and asks before overwriting a hand-edited one.
