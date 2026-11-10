@@ -37,11 +37,26 @@ function extractIssueNumbers(commitMessages) {
 // cannot reference a closing keyword never bills one. It is deliberately looser
 // than ISSUE_REF_SOURCE (a '#' plus any keyword stem anywhere in the joined
 // messages, no word boundary, no whitespace shape) so it can only over-admit,
-// never drop a push the in-job extraction would have matched. GitHub's
-// contains() compares with StringComparison.OrdinalIgnoreCase
-// (actions/runner src/Sdk/Expressions/Sdk/Functions/Contains.cs), which
-// prefilterMatches models by upper-casing both sides.
-const PREFILTER_KEYWORD_STEMS = Object.freeze(['close', 'fix', 'resolve']);
+// never drop a push the in-job extraction would have matched.
+//
+// Case folding, verified rather than assumed: GitHub's contains() uses
+// StringComparison.OrdinalIgnoreCase (actions/runner
+// src/Sdk/Expressions/Sdk/Functions/Contains.cs), which folds ASCII letters
+// only; dotnet/runtime's OrdinalCasingTests state U+017F (long s) is NOT
+// equal to s. GNU grep 3.12 -zoiP with the generated PATTERN DOES fold long s
+// to s (cloſes #1 and reſolves #2 extract), and does not fold dotless i
+// (fıxes #3 does not extract). So each stem containing an s also gets a
+// long-s literal, or the prefilter would skip a push the runner would track.
+// prefilterMatches models OrdinalIgnoreCase exactly: ASCII-only folding,
+// never String.prototype.toUpperCase (which maps ſ to S and would be looser
+// than GitHub, voiding the proof).
+const BASE_KEYWORD_STEMS = Object.freeze(['close', 'fix', 'resolve']);
+
+const LONG_S = '\u017f';
+
+const PREFILTER_KEYWORD_STEMS = Object.freeze(
+  BASE_KEYWORD_STEMS.flatMap((stem) => (stem.includes('s') ? [stem, stem.replace(/s/g, LONG_S)] : [stem]))
+);
 
 const PREFILTER_JOINED_MESSAGES = "join(github.event.commits.*.message, ' ')";
 
@@ -50,10 +65,15 @@ const PREFILTER_EXPRESSION =
   PREFILTER_KEYWORD_STEMS.map((s) => `contains(${PREFILTER_JOINED_MESSAGES}, '${s}')`).join(' || ') +
   ')';
 
+// .NET OrdinalIgnoreCase for our literals: fold A-Z only, leave all else as is.
+function foldAsciiUpper(str) {
+  return str.replace(/[a-z]/g, (c) => c.toUpperCase());
+}
+
 function prefilterMatches(commitMessages) {
   if (!Array.isArray(commitMessages)) return false;
-  const joined = commitMessages.filter((m) => typeof m === 'string').join(' ').toUpperCase();
-  return joined.includes('#') && PREFILTER_KEYWORD_STEMS.some((s) => joined.includes(s.toUpperCase()));
+  const joined = foldAsciiUpper(commitMessages.filter((m) => typeof m === 'string').join(' '));
+  return joined.includes('#') && PREFILTER_KEYWORD_STEMS.some((s) => joined.includes(foldAsciiUpper(s)));
 }
 
 // Shared "Extract referenced issues" step — identical in both jobs below (each

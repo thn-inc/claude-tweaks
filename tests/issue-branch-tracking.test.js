@@ -297,7 +297,22 @@ test('extraction pipeline (literal generated script): a revert commit alongside 
 // Job-level prefilter (#5152): a strict superset of the in-job extraction.
 // ---------------------------------------------------------------------------
 
+const KEYWORD_FORMS = ['close', 'closes', 'closed', 'fix', 'fixes', 'fixed', 'resolve', 'resolves', 'resolved'];
+const BASE_STEMS = ['close', 'fix', 'resolve'];
+
+test('PREFILTER_KEYWORD_STEMS are the base stems plus the long-s variant of each stem containing an s', () => {
+  assert.deepStrictEqual([...PREFILTER_KEYWORD_STEMS], ['close', 'cloſe', 'fix', 'resolve', 'reſolve']);
+});
+
 test('PREFILTER_KEYWORD_STEMS cover every word CLOSING_KEYWORD_ALTERNATION accepts', () => {
+  // The enumeration below only reaches words that start with a base stem, so
+  // it cannot see a newly added alternation word of another shape. Pinning the
+  // exact string is what makes any widening of the vocabulary fail loudly.
+  assert.strictEqual(
+    CLOSING_KEYWORD_ALTERNATION,
+    '(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)',
+    'CLOSING_KEYWORD_ALTERNATION changed: revisit PREFILTER_KEYWORD_STEMS (a word without a stem would be dropped by the job-level prefilter) before updating this pin'
+  );
   const letters = 'abcdefghijklmnopqrstuvwxyz'.split('');
   const suffixes = [''];
   for (const a of letters) {
@@ -308,12 +323,12 @@ test('PREFILTER_KEYWORD_STEMS cover every word CLOSING_KEYWORD_ALTERNATION accep
     }
   }
   const candidates = [];
-  for (const stem of PREFILTER_KEYWORD_STEMS) for (const sfx of suffixes) candidates.push(stem + sfx);
+  for (const stem of BASE_STEMS) for (const sfx of suffixes) candidates.push(stem + sfx);
   const re = new RegExp('^(?:' + CLOSING_KEYWORD_ALTERNATION + ')$');
   const matched = candidates.filter((w) => re.test(w)).sort();
-  assert.deepStrictEqual(matched, ['close', 'closed', 'closes', 'fix', 'fixed', 'fixes', 'resolve', 'resolved', 'resolves']);
+  assert.deepStrictEqual(matched, [...KEYWORD_FORMS].sort());
   for (const w of matched) {
-    assert.ok(PREFILTER_KEYWORD_STEMS.some((s) => w.includes(s)), `${w} must contain a prefilter stem`);
+    assert.ok(prefilterMatches([`${w} #1`]), `${w} #1 must pass the prefilter`);
   }
 });
 
@@ -339,6 +354,20 @@ test('prefilterMatches rejects pushes with no closing reference', () => {
   assert.strictEqual(prefilterMatches(undefined), false);
   assert.strictEqual(prefilterMatches([undefined]), false);
   assert.strictEqual(prefilterMatches([42]), false);
+  assert.strictEqual(prefilterMatches(null), false);
+  assert.strictEqual(prefilterMatches([{}]), false);
+  assert.strictEqual(prefilterMatches([null]), false);
+});
+
+test('prefilterMatches models OrdinalIgnoreCase: ASCII folds, long s and dotless i do not', () => {
+  // The cloſe literal (not a Unicode upper-casing) is what admits cloſes #1.
+  assert.strictEqual(prefilterMatches(['cloſes #1']), true);
+  assert.strictEqual(prefilterMatches(['CLOſE #1']), true);
+  assert.strictEqual(prefilterMatches(['reſolves #2']), true);
+  assert.strictEqual(prefilterMatches(['ſ #1']), false);
+  // Neither GitHub's contains() nor GNU grep folds dotless i to i.
+  assert.strictEqual(prefilterMatches(['fıxes #3']), false);
+  assert.strictEqual(prefilterMatches(['FİXES #4']), false);
 });
 
 function mulberry32(seed) {
@@ -351,8 +380,6 @@ function mulberry32(seed) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
-
-const KEYWORD_FORMS = ['close', 'closes', 'closed', 'fix', 'fixes', 'fixed', 'resolve', 'resolves', 'resolved'];
 
 function generateCommitCorpus() {
   const rand = mulberry32(5152);
@@ -382,7 +409,7 @@ function generateCommitCorpus() {
   // coverage never depends on chance.
   let n = 1;
   for (const form of KEYWORD_FORMS) for (const c of casings) corpus.push([`${c(form)} #${n++}`]);
-  corpus.push(['cloſes #1']);
+  corpus.push(['cloſes #1'], ['reſolves #2'], ['fıxes #3']);
 
   while (corpus.length < 5000) {
     const count = 1 + Math.floor(rand() * 3);
@@ -425,25 +452,32 @@ test('prefilterMatches is a superset of extractIssueNumbers (seeded property tes
 });
 
 test('prefilterMatches is a superset of the literal generated extraction script (runtime)', (t) => {
+  let nonEmpty = 0;
   for (const msgs of generateCommitCorpus().slice(0, 150)) {
     const issues = runExtractStep(t, msgs.map((m) => ({ message: m })));
     if (issues === null) return; // skipped — see runExtractStep
     if (issues !== '') {
+      nonEmpty++;
       assert.strictEqual(prefilterMatches(msgs), true, `runtime extraction matched but prefilter dropped: ${JSON.stringify(msgs)}`);
     }
   }
+  assert.ok(nonEmpty >= 36, `runtime property is vacuous: only ${nonEmpty} non-empty extractions (all 36 seeded combinations must extract)`);
 });
 
-test('long-s case fold: runtime extraction and prefilter agree on cloſes #1', (t) => {
-  const issues = runExtractStep(t, [{ message: 'cloſes #1' }], { LC_ALL: 'C.UTF-8' });
-  if (issues === null) return; // skipped — see runExtractStep
-  if (issues === '1') {
-    assert.strictEqual(prefilterMatches(['cloſes #1']), true);
-  } else {
-    // This grep does not fold ſ to s in this locale, so extraction finds
-    // nothing. The prefilter is still true for it (asserted below), so no
-    // direction of the superset relation is lost.
-    assert.strictEqual(issues, '');
+test('long-s and dotless-i: runtime extraction and the prefilter model agree (GNU grep folds ſ, not ı)', (t) => {
+  const run = (msg) => runExtractStep(t, [{ message: msg }], { LC_ALL: 'C.UTF-8' });
+  const cases = [
+    { msg: 'cloſes #1', extracted: '1' },
+    { msg: 'reſolves #2', extracted: '2' },
+    // GNU grep does not fold dotless i to i, and neither does GitHub's
+    // contains(): the model must not be looser than GitHub here.
+    { msg: 'fıxes #3', extracted: '' },
+  ];
+  for (const { msg, extracted } of cases) {
+    const issues = run(msg);
+    if (issues === null) return; // skipped — see runExtractStep
+    t.diagnostic(`grep returned ${JSON.stringify(issues)} for ${JSON.stringify(msg)}`);
+    assert.strictEqual(issues, extracted, `runtime extraction for ${msg}`);
+    assert.strictEqual(prefilterMatches([msg]), extracted !== '', `prefilter for ${msg}`);
   }
-  assert.strictEqual(prefilterMatches(['cloſes #1']), true);
 });
