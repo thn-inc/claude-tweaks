@@ -161,10 +161,8 @@ test('AC4.1: a run whose only suite runs its impact subset takes the subset lane
   const slotDir = tmpDir('verify-impact-slots-');
   const fullLock = path.join(slotDir, 'slot-0.lock');
   fs.writeFileSync(fullLock, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(), cwd: '/holder-cwd' }));
-  const started = Date.now();
   const run = await runCli(ARGS, r.repo, { env: slotEnv(slotDir), timeout: 10000 });
   assert.strictEqual(run.code, 0, run.stderr + run.stdout);
-  assert.ok(Date.now() - started < 10000);
   assert.strictEqual(r.marker(), 'tests/a.test.js\n', 'the subset command ran');
   const { waitedMs, ...slot } = r.report().slot;
   assert.deepStrictEqual(slot, { lane: 'subset', index: 0, slots: 1, source: 'default' });

@@ -3565,10 +3565,8 @@ test('AC2.1: a lock naming a dead pid is reclaimed by the next verify.js run (#5
   const dir = tmpDir();
   const dead = spawnSync(process.execPath, ['-e', '0']).pid;
   fs.writeFileSync(path.join(dir, 'slot-0.lock'), JSON.stringify({ pid: dead, startedAt: new Date().toISOString(), cwd: '/gone' }));
-  const started = Date.now();
   const run = await runCli(['--cmd', 'tests=node -e 0'], { cwd: r.repo, env: slotEnv(dir), timeout: 10000 });
   assert.strictEqual(run.code, 0, run.stdout + run.stderr);
-  assert.ok(Date.now() - started < 10000);
   assert.strictEqual(reportAt(r).slot.index, 0);
   assert.strictEqual(fs.existsSync(path.join(dir, 'slot-0.lock')), false);
 });
@@ -3692,10 +3690,8 @@ test('AC7.1: a run started with CT_TEST_SUITE_SLOT_HELD=1 takes no slot (#5119)'
   const r = tmpGitRepo();
   const dir = tmpDir();
   holdLock(dir);
-  const started = Date.now();
   const run = await runCli(['--cmd', 'tests=node -e 0'], { cwd: r.repo, env: slotEnv(dir, { CT_TEST_SUITE_SLOT_HELD: '1' }), timeout: 10000 });
   assert.strictEqual(run.code, 0, run.stdout + run.stderr);
-  assert.ok(Date.now() - started < 10000);
   assert.ok(!('slot' in reportAt(r)));
   assert.deepStrictEqual(fs.readdirSync(dir), ['slot-0.lock'], 'no ticket and no other slot was taken');
 });
