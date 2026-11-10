@@ -313,6 +313,8 @@ async function adjudicate({
   checks, baselineCmds, base, baseSha, cwd = null, logDir, runOne, spawnImpl, now = Date.now,
   envOf = () => null, timeoutOf = () => null, git, concurrency = 4, env = process.env, computeFixed = true,
   platform = process.platform,
+  // The held full-lane suite slot's index (#5119), accepted unused until #5150 consumes it.
+  slot = null,
 }) {
   const header = { base, baseSha };
   const ineligible = (reason) => ({ ...header, eligible: false, reason });

@@ -6,6 +6,7 @@ const os = require('os');
 const fs = require('fs');
 const { execFile, spawn, spawnSync, execFileSync } = require('child_process');
 const { readText } = require('../../helpers/read-skill');
+const { slotEnv } = require('../../helpers/suite-slot-env');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'verify.js');
 
@@ -24,7 +25,9 @@ function tmpDir() {
 function runCli(args, opts = {}) {
   const cwd = opts.cwd || tmpDir();
   return new Promise((resolve) => {
-    execFile(process.execPath, [CLI, ...args], { maxBuffer: 10 * 1024 * 1024, cwd, ...(opts.env ? { env: opts.env } : {}) },
+    execFile(process.execPath, [CLI, ...args], {
+      maxBuffer: 10 * 1024 * 1024, cwd, ...(opts.env ? { env: opts.env } : {}), ...(opts.timeout ? { timeout: opts.timeout } : {}),
+    },
       (err, stdout, stderr) => resolve({ code: err ? err.code : 0, stdout, stderr, cwd }));
   });
 }
@@ -3484,6 +3487,285 @@ test('--baseline: a SIGINT mid-run removes the scratch worktree and exits 130, l
   assert.strictEqual(code, 130);
   const list = r.git('worktree', 'list', '--porcelain');
   assert.strictEqual((list.match(/^worktree /gm) || []).length, 1, 'no registered scratch worktree afterwards');
+});
+
+// ---- #5119: the machine-wide suite slot. Each test below builds its child env with slotEnv(),
+// which strips the CT_TEST_SUITE_SLOT_HELD=1 this suite's runner sets and points
+// CT_TEST_SUITE_SLOT_DIR at the test's own temp dir. Every other test in this file inherits
+// HELD=1, so its runs take no slot, exactly as before. ----
+
+const SLOT_POSIX_ONLY = { skip: process.platform === 'win32' && 'POSIX signal delivery and process-group kill only' };
+const RUN_TESTS = path.join(__dirname, '..', '..', '..', 'tools', 'run-tests.js');
+const reportAt = (r) => JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+const withoutWait = ({ waitedMs, ...rest }) => rest;
+const pause = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+
+// A check appending `start <id> <ms>`, then `ms` later `end <id> <ms>`, to `out`.
+function intervalCmd(out, id, ms = 1500) {
+  return nodeCmd("const fs=require('fs'); const [out,id,ms]=process.argv.slice(1); const line=(w)=>fs.appendFileSync(out,w+' '+id+' '+Date.now()+String.fromCharCode(10)); line('start'); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,Number(ms)); line('end')", out, id, String(ms));
+}
+// The `start`/`end` intervals in `out`, asserted complete and pairwise non-overlapping; returns the
+// ids in start order.
+function assertSerialized(out, count) {
+  const by = {};
+  for (const l of fs.readFileSync(out, 'utf8').trim().split('\n')) {
+    const [what, id, ms] = l.split(' ');
+    by[id] = { ...by[id], [what]: Number(ms) };
+  }
+  const ivs = Object.entries(by).sort((a, b) => a[1].start - b[1].start);
+  assert.strictEqual(ivs.length, count, JSON.stringify(by));
+  for (const [id, iv] of ivs) assert.ok(Number.isFinite(iv.start) && Number.isFinite(iv.end), `${id}: ${JSON.stringify(by)}`);
+  for (let i = 1; i < ivs.length; i++) {
+    assert.ok(ivs[i][1].start >= ivs[i - 1][1].end, `${ivs[i][0]} started before ${ivs[i - 1][0]} ended: ${JSON.stringify(by)}`);
+  }
+  return ivs.map(([id]) => id);
+}
+// Holds `dir`'s full-lane slot-0.lock as this (live) test process, naming `cwd`.
+function holdLock(dir, cwd = '/holder-cwd') {
+  const lock = path.join(dir, 'slot-0.lock');
+  fs.writeFileSync(lock, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(), cwd }));
+  return lock;
+}
+// Resolves once a waiter's queue ticket shows in `dir`'s full lane, plus a margin for it to try the
+// slot and log its waiting line.
+async function waitForQueued(dir, timeoutMs = 20000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!fs.readdirSync(dir).some((n) => /^ticket-\d+\.json$/.test(n))) {
+    if (Date.now() > deadline) throw new Error(`no run queued in ${dir} within ${timeoutMs} ms`);
+    await pause(50);
+  }
+  await pause(500);
+}
+// Resolves with `file`'s text once it matches `re`.
+async function waitForText(file, re, timeoutMs = 20000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const text = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+    if (re.test(text)) return text;
+    if (Date.now() > deadline) throw new Error(`${file} never matched ${re}: ${JSON.stringify(text)}`);
+    await pause(50);
+  }
+}
+
+test('AC1.1: two concurrent full runs in different worktrees serialize on one lock dir (#5119)', async () => {
+  const dir = tmpDir();
+  const out = path.join(tmpDir(), 'intervals.txt');
+  const repos = [tmpGitRepo(), tmpGitRepo()];
+  const runs = await Promise.all(repos.map((r, i) => runCli(['--cmd', `tests=${intervalCmd(out, `run${i}`)}`], { cwd: r.repo, env: slotEnv(dir) })));
+  for (const run of runs) assert.strictEqual(run.code, 0, run.stdout + run.stderr);
+  assertSerialized(out, 2);
+  const slots = repos.map((r) => reportAt(r).slot);
+  for (const slot of slots) assert.deepStrictEqual(withoutWait(slot), { lane: 'full', index: 0, slots: 1, source: 'default' });
+  assert.ok(Math.max(...slots.map((s) => s.waitedMs)) >= 1000, `one run waited for the other: ${JSON.stringify(slots)}`);
+  assert.deepStrictEqual(fs.readdirSync(dir), [], 'both slots and both tickets are gone');
+});
+
+test('AC2.1: a lock naming a dead pid is reclaimed by the next verify.js run (#5119)', async () => {
+  const r = tmpGitRepo();
+  const dir = tmpDir();
+  const dead = spawnSync(process.execPath, ['-e', '0']).pid;
+  fs.writeFileSync(path.join(dir, 'slot-0.lock'), JSON.stringify({ pid: dead, startedAt: new Date().toISOString(), cwd: '/gone' }));
+  const started = Date.now();
+  const run = await runCli(['--cmd', 'tests=node -e 0'], { cwd: r.repo, env: slotEnv(dir), timeout: 10000 });
+  assert.strictEqual(run.code, 0, run.stdout + run.stderr);
+  assert.ok(Date.now() - started < 10000);
+  assert.strictEqual(reportAt(r).slot.index, 0);
+  assert.strictEqual(fs.existsSync(path.join(dir, 'slot-0.lock')), false);
+});
+
+test('AC3.1: tools/run-tests.js and verify.js serialize on one lock dir, in both orders (#5119)', async () => {
+  const probe = "'use strict';\nconst fs = require('fs');\nrequire('node:test')('interval', () => {\n"
+    + "  const line = (w) => fs.appendFileSync(process.env.CT_PROBE_OUT, w + ' rt ' + Date.now() + '\\n');\n"
+    + "  line('start');\n  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3000);\n  line('end');\n});\n";
+  const runTests = (root, env) => new Promise((resolve) => {
+    execFile(process.execPath, [RUN_TESTS, root], { cwd: path.join(__dirname, '..', '..', '..'), env, maxBuffer: 10 * 1024 * 1024 },
+      (err, stdout, stderr) => resolve({ code: err ? err.code : 0, stdout, stderr }));
+  });
+  for (const first of ['rt', 'v']) {
+    const dir = tmpDir();
+    const out = path.join(tmpDir(), 'intervals.txt');
+    const root = tmpDir();
+    fs.writeFileSync(path.join(root, 'interval.test.js'), probe);
+    // A private TMPDIR, as run-tests-isolation does, so the runner's startup sweep never scans the real one.
+    const childTmp = tmpDir();
+    const rtEnv = slotEnv(dir, { CT_PROBE_OUT: out, TMPDIR: childTmp, TMP: childTmp, TEMP: childTmp });
+    const r = tmpGitRepo();
+    const startVerify = () => runCli(['--cmd', `tests=${intervalCmd(out, 'v', 3000)}`], { cwd: r.repo, env: slotEnv(dir) });
+    const firstRun = first === 'rt' ? runTests(root, rtEnv) : startVerify();
+    await waitForText(out, new RegExp(`^start ${first} `, 'm'));
+    const secondRun = first === 'rt' ? startVerify() : runTests(root, rtEnv);
+    const [a, b] = await Promise.all([firstRun, secondRun]);
+    for (const res of [a, b]) assert.strictEqual(res.code, 0, `${first} first: ${res.stdout}${res.stderr}`);
+    assert.deepStrictEqual(assertSerialized(out, 2), first === 'rt' ? ['rt', 'v'] : ['v', 'rt']);
+  }
+});
+
+test('AC5.1: a scoped failing --baseline run\'s adjudication waits for a full-lane slot its subset-lane checks never queued for (#5119)', async () => {
+  // A tool-scoped declaration (its tests command takes {base}) over baselineRepo()'s failing-at-base
+  // suite: after one full pass anchors the stamp, a change runs tool-scoped — a subset-lane
+  // command — and fails into adjudication.
+  const r = baselineRepo();
+  const trunk = r.git('symbolic-ref', '--short', 'HEAD').trim();
+  commitFile(r, 'scripts/suite.js', "const r = require('child_process').spawnSync(process.execPath, ['--test', '--test-reporter=tap', 'tests/env.test.js', 'tests/ok.test.js'], { stdio: 'inherit' });\nprocess.exit(r.status === null ? 1 : r.status);\n");
+  commitFile(r, '.claude-tweaks/verify-scope.json', JSON.stringify({
+    checks: { tests: 'node scripts/suite.js {base}' },
+    retry: { tests: PER_FILE.slice('tests='.length) },
+    rules: [{ match: '**', suites: [], static: false }],
+  }));
+  r.git('checkout', '-q', '-b', 'feature');
+  const scope = ['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', trunk];
+  const anchor = await runCli([...scope, '--cmd', 'tests=node -e 0'], r.opts);
+  assert.strictEqual(anchor.code, 0, anchor.stdout + anchor.stderr);
+  commitFile(r, 'src/a.js', 'module.exports = 1;\n');
+  const dir = tmpDir();
+  const lock = holdLock(dir);
+  const run = runCli([...scope, '--baseline', trunk, '--no-stamp'], { cwd: r.repo, env: slotEnv(dir) });
+  await waitForQueued(dir);
+  const releasedAt = Date.now();
+  fs.unlinkSync(lock);
+  const res = await run;
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  const report = reportAt(r);
+  assert.strictEqual(report.scope.mode, 'tool-scoped');
+  assert.strictEqual(report.slot.lane, 'subset');
+  assert.strictEqual(report.baselineAdjudicated.verdict, 'pass');
+  assert.deepStrictEqual(withoutWait(report.baselineAdjudicated.slot), { lane: 'full', index: 0, slots: 1, source: 'default' });
+  const logDir = path.join(r.gitDir, 'claude-tweaks-verify');
+  const mtime = (f) => fs.statSync(path.join(logDir, f)).mtimeMs;
+  const adjLogs = fs.readdirSync(logDir).filter((f) => /^tests-(baseline|isolated)-.*\.log$/.test(f));
+  assert.ok(adjLogs.length > 0, fs.readdirSync(logDir).join(', '));
+  // 50 ms of slack for a filesystem clock coarser than Date.now(); the poll interval is 2 s.
+  assert.ok(Math.min(...adjLogs.map(mtime)) >= releasedAt - 50, 'the first adjudication rerun spawned only after the full-lane slot was released');
+  assert.ok(mtime('tests.log') < releasedAt, 'the checks ran before the release');
+});
+
+test('AC4.2: a scoped selection whose suite runs its declared full command takes the full lane (#5119)', async () => {
+  const r = scopedRepo([
+    { match: 'src/**', suites: ['unit'], static: false },
+    { match: 'docs/**', suites: [], static: false },
+  ]);
+  const args = ['--scope', r.declPath, '--integration-branch', r.branch, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0'];
+  const anchor = await runCli(args, { cwd: r.repo });
+  assert.strictEqual(anchor.code, 0, anchor.stderr);
+  commitFile(r, 'src/a.js', '1');
+  const run = await runCli(args, { cwd: r.repo, env: slotEnv(tmpDir()) });
+  assert.strictEqual(run.code, 0, run.stdout + run.stderr);
+  const report = reportAt(r);
+  assert.strictEqual(report.scope.mode, 'scoped');
+  assert.strictEqual(report.slot.lane, 'full');
+});
+
+test('AC6.1, AC6.2, AC6.3: the slot count comes from the declaration, then --default-suite-slots, then 1 — each named in report.json slot.source (#5119)', async () => {
+  const flag = tmpGitRepo();
+  assert.strictEqual((await runCli(['--cmd', 'tests=node -e 0', '--default-suite-slots', '3'], { cwd: flag.repo, env: slotEnv(tmpDir()) })).code, 0);
+  assert.deepStrictEqual(withoutWait(reportAt(flag).slot), { lane: 'full', index: 0, slots: 3, source: 'flag' });
+
+  const declared = scopedRepo([{ match: '**', suites: '*', static: true }], { concurrency: { suiteSlots: 2 } });
+  const scoped = await runCli(['--scope', declared.declPath, '--integration-branch', declared.branch, '--cmd', `unit=${declared.unitCmd}`, '--cmd', 'other=node -e 0', '--default-suite-slots', '3'], { cwd: declared.repo, env: slotEnv(tmpDir()) });
+  assert.strictEqual(scoped.code, 0, scoped.stdout + scoped.stderr);
+  assert.deepStrictEqual(withoutWait(reportAt(declared).slot), { lane: 'full', index: 0, slots: 2, source: 'declaration' });
+
+  // Without --scope, only the default declaration's concurrency block is read.
+  const unscoped = await runCli(['--cmd', 'tests=node -e 0', '--default-suite-slots', '3'], { cwd: declared.repo, env: slotEnv(tmpDir()) });
+  assert.strictEqual(unscoped.code, 0, unscoped.stdout + unscoped.stderr);
+  assert.deepStrictEqual(withoutWait(reportAt(declared).slot), { lane: 'full', index: 0, slots: 2, source: 'declaration' });
+
+  const neither = tmpGitRepo();
+  assert.strictEqual((await runCli(['--cmd', 'tests=node -e 0'], { cwd: neither.repo, env: slotEnv(tmpDir()) })).code, 0);
+  assert.deepStrictEqual(withoutWait(reportAt(neither).slot), { lane: 'full', index: 0, slots: 1, source: 'default' });
+});
+
+test('an invalid default declaration\'s concurrency falls back with one stderr line (#5119)', async () => {
+  const r = tmpGitRepo();
+  commitFile(r, '.claude-tweaks/verify-scope.json', JSON.stringify({
+    checks: { tests: 'npm test' }, rules: [{ match: '**', suites: '*', static: false }], concurrency: { suiteSlots: 0 },
+  }));
+  const run = await runCli(['--cmd', 'tests=node -e 0'], { cwd: r.repo, env: slotEnv(tmpDir()) });
+  assert.strictEqual(run.code, 0, run.stdout + run.stderr);
+  assert.strictEqual(reportAt(r).slot.source, 'default');
+  const lines = run.stderr.split('\n').filter(Boolean);
+  assert.strictEqual(lines.length, 1, run.stderr);
+  assert.match(lines[0], /^verify\.js: concurrency ignored — .*concurrency\.suiteSlots/);
+});
+
+test('AC7.1: a run started with CT_TEST_SUITE_SLOT_HELD=1 takes no slot (#5119)', async () => {
+  const r = tmpGitRepo();
+  const dir = tmpDir();
+  holdLock(dir);
+  const started = Date.now();
+  const run = await runCli(['--cmd', 'tests=node -e 0'], { cwd: r.repo, env: slotEnv(dir, { CT_TEST_SUITE_SLOT_HELD: '1' }), timeout: 10000 });
+  assert.strictEqual(run.code, 0, run.stdout + run.stderr);
+  assert.ok(Date.now() - started < 10000);
+  assert.ok(!('slot' in reportAt(r)));
+  assert.deepStrictEqual(fs.readdirSync(dir), ['slot-0.lock'], 'no ticket and no other slot was taken');
+});
+
+test('AC7.2: a check spawned under a held slot sees CT_TEST_SUITE_SLOT_HELD=1 and a positive CT_TEST_WORKERS (#5119)', async () => {
+  const r = tmpGitRepo();
+  const out = path.join(tmpDir(), 'env.txt');
+  const cmd = nodeCmd("require('fs').writeFileSync(process.argv[1], process.env.CT_TEST_SUITE_SLOT_HELD + ' ' + process.env.CT_TEST_WORKERS)", out);
+  const run = await runCli(['--cmd', `tests=${cmd}`], { cwd: r.repo, env: slotEnv(tmpDir()) });
+  assert.strictEqual(run.code, 0, run.stdout + run.stderr);
+  const [held, workers] = fs.readFileSync(out, 'utf8').split(' ');
+  assert.strictEqual(held, '1');
+  assert.match(workers, /^[1-9]\d*$/);
+});
+
+test('AC8.1: a waiting run prints one stderr line naming the holder and how to raise the limit (#5119)', async () => {
+  const r = tmpGitRepo();
+  const dir = tmpDir();
+  const lock = holdLock(dir, '/holder-cwd');
+  const run = runCli(['--cmd', 'tests=node -e 0'], { cwd: r.repo, env: slotEnv(dir) });
+  await waitForQueued(dir);
+  await pause(2500); // past one more 2 s poll: the line is printed once per wait, not once per poll
+  fs.unlinkSync(lock);
+  const res = await run;
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  const lines = res.stderr.split('\n').filter(Boolean);
+  assert.strictEqual(lines.length, 1, res.stderr);
+  assert.match(lines[0], new RegExp(`^verify\\.js \\[full lane\\]: waiting for a test-suite slot — held by pid ${process.pid} \\(cwd \\/holder-cwd\\)`));
+  assert.ok(lines[0].includes('concurrency.suiteSlots') && lines[0].includes('verify-suite-slots'), lines[0]);
+  assert.ok(reportAt(r).slot.waitedMs >= 2500);
+});
+
+test('a SIGTERM mid-check kills the check\'s process tree and frees the slot (#5119)', SLOT_POSIX_ONLY, async () => {
+  const r = tmpGitRepo();
+  const dir = tmpDir();
+  const out = path.join(tmpDir(), 'pid.txt');
+  const cmd = nodeCmd("require('fs').writeFileSync(process.argv[1], String(process.pid)); setTimeout(() => {}, 30000)", out);
+  const child = spawn(process.execPath, [CLI, '--cmd', `tests=${cmd}`], { cwd: r.repo, env: slotEnv(dir), stdio: 'ignore' });
+  const exited = new Promise((resolve) => { child.on('exit', (c, s) => resolve([c, s])); });
+  const fixturePid = Number(await waitForText(out, /^\d+$/));
+  child.kill('SIGTERM');
+  const [code, signal] = await exited;
+  let gone = false;
+  for (const deadline = Date.now() + 5000; Date.now() < deadline && !gone;) {
+    try { process.kill(fixturePid, 0); await pause(50); } catch (err) { gone = err.code === 'ESRCH'; }
+  }
+  if (!gone) { try { process.kill(fixturePid, 'SIGKILL'); } catch { /* already gone */ } }
+  assert.strictEqual(signal, null, 'verify.js exits through its own handler, never killed outright by the signal');
+  assert.strictEqual(code, 143);
+  assert.strictEqual(fs.existsSync(path.join(dir, 'slot-0.lock')), false);
+  assert.ok(gone, `the check (pid ${fixturePid}) was killed, not orphaned`);
+});
+
+test('--baseline: a SIGINT while adjudication holds its slot still removes the scratch worktree and exits 130, freeing the slot (#5119)', SLOT_POSIX_ONLY, async () => {
+  const r = baselineRepo();
+  headCommit(r);
+  const dir = tmpDir();
+  const child = spawn(process.execPath, [CLI, '--cmd', SUITE, '--baseline', r.baseSha, '--baseline-cmd', 'tests=node -e "setTimeout(() => {}, 8000)" {file}'], {
+    cwd: r.repo, env: slotEnv(dir), stdio: ['ignore', 'ignore', 'ignore'],
+  });
+  const exited = new Promise((resolve) => { child.on('exit', (c, s) => resolve([c, s])); });
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline && (r.git('worktree', 'list', '--porcelain').match(/^worktree /gm) || []).length < 2) await pause(50);
+  assert.ok(fs.existsSync(path.join(dir, 'slot-0.lock')), 'adjudication holds the full-lane slot');
+  child.kill('SIGINT');
+  const [code, signal] = await exited;
+  assert.strictEqual(signal, null);
+  assert.strictEqual(code, 130, 'adjudication\'s own handler exits, after the slot handler released');
+  assert.strictEqual((r.git('worktree', 'list', '--porcelain').match(/^worktree /gm) || []).length, 1, 'no registered scratch worktree afterwards');
+  assert.strictEqual(fs.existsSync(path.join(dir, 'slot-0.lock')), false);
 });
 
 test('#4177 AC1/AC3: no fixture command uses the POSIX-only single-quoted node -e form — cmd.exe gives \' no meaning', () => {

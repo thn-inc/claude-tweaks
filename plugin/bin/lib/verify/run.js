@@ -33,7 +33,7 @@ function killTree(child, { platform = process.platform, kill = process.kill, exe
 
 function runOne({
   name, command, logDir, spawnImpl, now, cwd, env: checkEnv = null, platform = process.platform,
-  timeout: timeoutMs = null,
+  timeout: timeoutMs = null, track = null,
 }) {
   const logPath = path.join(logDir, `${name}.log`);
   const stream = fs.createWriteStream(logPath);
@@ -47,6 +47,7 @@ function runOne({
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
+      if (track && child) track.delete(child);
       stream.end(() => resolve(result));
     };
     // A write-stream failure (missing logDir, disk full, ...), a spawn-time
@@ -85,14 +86,18 @@ function runOne({
     // detached:true makes the spawned shell the leader of its own POSIX
     // process group, so killTree's negative-pid kill below reaches every
     // descendant the shell forks — never set on win32, which has no such
-    // group and where `detached` instead opens a new console.
-    if (timeoutMs !== null && platform !== 'win32') opts.detached = true;
+    // group and where `detached` instead opens a new console. A `track`ed
+    // child (#5119: verify.js kills every running check before it frees its
+    // suite slot on a signal) needs the same group, so the kill reaches the
+    // whole tree; the set holds the child from spawn until it settles.
+    if ((timeoutMs !== null || track) && platform !== 'win32') opts.detached = true;
     try {
       child = spawnImpl(command, opts);
     } catch (err) {
       finishError(err);
       return;
     }
+    if (track) track.add(child);
     // #3063: a hung check otherwise blocks this run (and --baseline
     // adjudication) forever. A null exit code is never adjudicated and
     // never passes (see runChecks/report.js) — `timedOut` just names why.
@@ -139,12 +144,14 @@ async function runOrSkip(c, ctx, skip) {
 // (types/lint) check failed; a failing suite no longer skips the suites after
 // it, because baseline adjudication refuses a run holding a skipped check and
 // needs every suite's evidence. Off (the default) is the fail-fast above.
+// `track` (#5119), when given, reaches every runOne here and rides in the
+// ctx handed to `retry`, so a retry's spawns join the same set.
 async function runChecks({
   cmds, logDir, spawnImpl = require('child_process').spawn, now = Date.now, retry = async (r) => r, cwd = null,
-  continueSuitesAfterFailure = false,
+  continueSuitesAfterFailure = false, track = null,
 }) {
   const ctx = {
-    logDir, spawnImpl, now, retry, cwd,
+    logDir, spawnImpl, now, retry, cwd, track,
   };
   const results = [];
   const stage1 = cmds.filter((c) => STAGE1.includes(c.name));

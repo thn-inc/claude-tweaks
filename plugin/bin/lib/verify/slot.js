@@ -1,8 +1,16 @@
-// plugin/bin/lib/verify/slot.js — pure helpers for verify.js's machine-wide
-// suite slot (#5119): how many slots a project's runs may hold at once, which
-// lane a run queues in, and how many test workers one slot may use. The lock
-// itself lives in plugin/bin/lib/suite-slot.js.
+// plugin/bin/lib/verify/slot.js — verify.js's machine-wide suite slot (#5119):
+// pure helpers for how many slots a project's runs may hold at once, which lane
+// a run queues in and how many test workers one slot may use, plus holdSlot,
+// which takes and holds one. The lock itself lives in plugin/bin/lib/suite-slot.js.
 'use strict';
+
+const os = require('os');
+const {
+  acquireSlot, releaseSlot, isPidAlive, ensureOwnDir, slotLane, slotIndexOf, defaultSlotBase,
+} = require('../suite-slot');
+
+const SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+const SLOT_HINT = 'raise concurrency.suiteSlots in .claude-tweaks/verify-scope.json, or the verify-suite-slots policy key';
 
 // A declared concurrency.suiteSlots wins, then --default-suite-slots, then one
 // slot. `declared` and `flag` are positive integers or null (validated by
@@ -27,4 +35,66 @@ function workerCap(cores, slots) {
   return Math.max(1, Math.floor(cores / (2 * slots)));
 }
 
-module.exports = { resolveSuiteSlots, chooseLane, workerCap };
+// Takes one of `slots` machine-wide suite slots in `lane` ('full' or 'subset') and holds it until
+// release(). Returns null, touching nothing, when there is nothing to queue for (`lane` null) or a
+// parent already holds a slot for this process tree (CT_TEST_SUITE_SLOT_HELD=1), so a nested
+// verify.js or run-tests.js never waits on its own parent. While held, every child inherits
+// CT_TEST_SUITE_SLOT_HELD=1 and a CT_TEST_WORKERS cap (a value the caller set wins); release
+// restores both. The slot is freed on every exit path: an 'exit' hook, and SIGINT/SIGTERM/SIGHUP
+// handlers that first run `beforeRelease` (verify.js kills its running checks there), then
+// release, then exit 128+n only when no other listener for that signal remains — so
+// adjudicate()'s own handler still removes its scratch worktree and exits. The acquire wait is
+// synchronous: no check runs while a run waits.
+function holdSlot({
+  lane, slots, source, beforeRelease = () => {}, env = process.env, tmpdir = os.tmpdir(),
+  cores = os.availableParallelism(), pid = process.pid, cwd = process.cwd(), isAlive = isPidAlive, now = Date.now,
+  sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
+  log = (l) => process.stderr.write(`${l}\n`), proc = process,
+}) {
+  if (env.CT_TEST_SUITE_SLOT_HELD === '1' || lane === null) return null;
+  const base = defaultSlotBase(env, tmpdir);
+  ensureOwnDir(base);
+  const startedMs = now();
+  const lockPath = acquireSlot({
+    dir: slotLane(base, lane === 'subset').dir, slots, pid, cwd, isAlive, now, sleep, log,
+    label: `verify.js [${lane} lane]`, hint: SLOT_HINT,
+  });
+  const waitedMs = now() - startedMs;
+  const prior = { CT_TEST_SUITE_SLOT_HELD: env.CT_TEST_SUITE_SLOT_HELD, CT_TEST_WORKERS: env.CT_TEST_WORKERS };
+  env.CT_TEST_SUITE_SLOT_HELD = '1';
+  if (env.CT_TEST_WORKERS === undefined) env.CT_TEST_WORKERS = String(workerCap(cores, slots));
+  let released = false;
+  const handlers = [];
+  const release = () => {
+    if (released) return;
+    released = true;
+    releaseSlot(lockPath, pid);
+    for (const [key, value] of Object.entries(prior)) {
+      if (value === undefined) delete env[key];
+      else env[key] = value;
+    }
+    proc.removeListener('exit', release);
+    for (const [sig, handler] of handlers) proc.removeListener(sig, handler);
+  };
+  proc.on('exit', release);
+  for (const sig of SIGNALS) {
+    const handler = () => {
+      const last = proc.listenerCount(sig) === 1;
+      try {
+        beforeRelease();
+      } finally {
+        release();
+      }
+      if (last) proc.exit(128 + os.constants.signals[sig]);
+    };
+    handlers.push([sig, handler]);
+    proc.on(sig, handler);
+  }
+  return {
+    lane, index: slotIndexOf(lockPath), slots, source, waitedMs, release,
+  };
+}
+
+module.exports = {
+  resolveSuiteSlots, chooseLane, workerCap, holdSlot,
+};

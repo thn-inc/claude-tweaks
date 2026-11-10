@@ -458,6 +458,51 @@ test('runOne adds detached:true to spawn opts only when a timeout is set, and ne
   assert.ok(!('detached' in win.spawnedOpts[0]));
 });
 
+test('runOne with track adds the child while it runs and removes it on close (#5119)', async () => {
+  const { spawnImpl, children } = makeFakeSpawn({ x: { manual: true } });
+  const track = new Set();
+  const done = runOne({
+    name: 'tests', command: 'x', logDir: tmpLogDir(), spawnImpl, now: Date.now, track,
+  });
+  assert.deepStrictEqual([...track], [children.x], 'tracked from spawn');
+  children.x.emit('close', 0);
+  await done;
+  assert.strictEqual(track.size, 0, 'removed once it settles');
+});
+
+test('a tracked child is spawned detached on POSIX, never on win32; runChecks forwards track to every spawn (#5119)', async () => {
+  const posix = makeFakeSpawn({ x: { exit: 0 } });
+  await runOne({
+    name: 'tests', command: 'x', logDir: tmpLogDir(), spawnImpl: posix.spawnImpl, now: Date.now, track: new Set(), platform: 'linux',
+  });
+  assert.strictEqual(posix.spawnedOpts[0].detached, true);
+
+  const win = makeFakeSpawn({ x: { exit: 0 } });
+  await runOne({
+    name: 'tests', command: 'x', logDir: tmpLogDir(), spawnImpl: win.spawnImpl, now: Date.now, track: new Set(), platform: 'win32',
+  });
+  assert.ok(!('detached' in win.spawnedOpts[0]));
+
+  const all = makeFakeSpawn({ types: { exit: 0 }, tests: { exit: 1 } });
+  const track = new Set();
+  let retryTrack = null;
+  await runChecks({
+    cmds: [{ name: 'types', command: 'types' }, { name: 'tests', command: 'tests' }],
+    logDir: tmpLogDir(), spawnImpl: all.spawnImpl, track,
+    retry: async (r, ctx) => { retryTrack = ctx.track; return r; },
+  });
+  const expected = process.platform === 'win32' ? undefined : true;
+  assert.deepStrictEqual(all.spawnedOpts.map((o) => o.detached), [expected, expected], 'every check spawn is tracked');
+  assert.strictEqual(retryTrack, track, 'the retry hook gets the same set');
+  assert.strictEqual(track.size, 0);
+});
+
+test('runChecks without track spawns exactly as before — no detached option (#5119)', async () => {
+  const { spawnImpl, spawnedOpts } = makeFakeSpawn({ tests: { exit: 0 } });
+  await runChecks({ cmds: [{ name: 'tests', command: 'tests' }], logDir: tmpLogDir(), spawnImpl });
+  assert.ok(!('detached' in spawnedOpts[0]));
+});
+
 test('runChecks forwards a per-check timeout to runOne so a hung check times out (#3063)', async () => {
   const { spawnImpl } = makeFakeSpawn({ hang: { manual: true }, ok: { exit: 0 } });
   const results = await runChecks({
