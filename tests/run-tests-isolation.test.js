@@ -743,7 +743,15 @@ async function withSandbox(fixture, testName, fn) {
 }
 
 const RUNNER = path.join(ROOT, 'tools', 'run-tests.js');
-const PROBE = ['tmpdir-probe.fixture.js', 'probe.test.js'];
+// Places a copy of the runner at `<root>/tools/run-tests.js` beside the slot-lock module it requires
+// (`<root>/plugin/bin/lib/suite-slot.js`), so a copied runner starts the way the real one does.
+function copyRunner(root) {
+  const lib = path.join(root, 'plugin', 'bin', 'lib');
+  fs.mkdirSync(lib, { recursive: true });
+  fs.copyFileSync(path.join(ROOT, 'plugin', 'bin', 'lib', 'suite-slot.js'), path.join(lib, 'suite-slot.js'));
+  fs.copyFileSync(RUNNER, path.join(root, 'tools', 'run-tests.js'));
+}
+const PROBE =['tmpdir-probe.fixture.js', 'probe.test.js'];
 const runRunner = (sb, { env = sb.env, timeout = 60000 } = {}) =>
   spawnSync(process.execPath, [RUNNER, sb.suiteRoot], { cwd: ROOT, env, encoding: 'utf8', timeout });
 const SLOT_LOCKS = (dir) => fs.readdirSync(dir).filter((n) => /^slot-.*\.lock$/.test(n));
@@ -830,7 +838,7 @@ test('run-tests.js --files-from runs exactly the listed files, resolved against 
     const root = path.join(sb.suiteRoot, 'repo root');
     fs.mkdirSync(path.join(root, 'tools'), { recursive: true });
     fs.mkdirSync(path.join(root, 'tests'));
-    fs.copyFileSync(RUNNER, path.join(root, 'tools', 'run-tests.js'));
+    copyRunner(root);
     const fixtures = path.join(ROOT, 'tests', 'fixtures', 'run-tests');
     fs.copyFileSync(path.join(fixtures, 'tmpdir-probe.fixture.js'), path.join(root, 'tests', 'one.test.js'));
     fs.copyFileSync(path.join(fixtures, 'tmpdir-probe.fixture.js'), path.join(root, 'tests', 'two.test.js'));
@@ -870,7 +878,7 @@ test('a --files-from subset does not wait behind a held full-suite slot', async 
     const root = path.join(sb.suiteRoot, 'repo');
     fs.mkdirSync(path.join(root, 'tools'), { recursive: true });
     fs.mkdirSync(path.join(root, 'tests'));
-    fs.copyFileSync(RUNNER, path.join(root, 'tools', 'run-tests.js'));
+    copyRunner(root);
     fs.copyFileSync(path.join(ROOT, 'tests', 'fixtures', 'run-tests', 'tmpdir-probe.fixture.js'), path.join(root, 'tests', 'one.test.js'));
     const list = path.join(sb.suiteRoot, 'list.txt');
     fs.writeFileSync(list, 'tests/one.test.js\n');
@@ -895,7 +903,7 @@ test('a --files-from subset refuses a slot base that is a symlink', {
     const root = path.join(sb.suiteRoot, 'repo');
     fs.mkdirSync(path.join(root, 'tools'), { recursive: true });
     fs.mkdirSync(path.join(root, 'tests'));
-    fs.copyFileSync(RUNNER, path.join(root, 'tools', 'run-tests.js'));
+    copyRunner(root);
     fs.copyFileSync(path.join(ROOT, 'tests', 'fixtures', 'run-tests', 'tmpdir-probe.fixture.js'), path.join(root, 'tests', 'one.test.js'));
     const list = path.join(sb.suiteRoot, 'list.txt');
     fs.writeFileSync(list, 'tests/one.test.js\n');
@@ -1156,7 +1164,7 @@ test('#4134 AC2.1: a win32 --files-from subset too long for the command line run
     const root = path.join(sb.suiteRoot, 'repo root');
     fs.mkdirSync(path.join(root, 'tools'), { recursive: true });
     fs.mkdirSync(path.join(root, 'tests'));
-    fs.copyFileSync(RUNNER, path.join(root, 'tools', 'run-tests.js'));
+    copyRunner(root);
     const names = Array.from({ length: 400 }, (_, i) => `tests/${'a'.repeat(90)}${i}.test.js`);
     for (const name of names) fs.writeFileSync(path.join(root, name), '');
     const list = path.join(sb.suiteRoot, 'list.txt');
