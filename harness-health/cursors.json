@@ -9,7 +9,7 @@
   },
   "library-shape:library-shape": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1786281312841
+    "lastAuditedMs": 1794288326398
   },
   "skill:policy-schema": {
     "lastAuditedSha": null,
@@ -266,5 +266,9 @@
   "skill:blocker-surface-parity": {
     "lastAuditedSha": null,
     "lastAuditedMs": 1794028490451
+  },
+  "skill:dispatch-queue-exclusion-addition": {
+    "lastAuditedSha": null,
+    "lastAuditedMs": 1794288325012
   }
 }
