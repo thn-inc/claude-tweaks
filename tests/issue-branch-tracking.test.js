@@ -1,9 +1,9 @@
 'use strict';
 const { test } = require('node:test');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert');
+const { readText } = require('./helpers/read-skill');
 const {
   ISSUE_REF_SOURCE,
   CLOSING_KEYWORD_ALTERNATION,
@@ -523,10 +523,7 @@ test('push trigger excludes the plugin bookkeeping branches, named from their co
 
 const normalisedDigest = (text) =>
   crypto.createHash('sha256').update(text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\n+$/, '')).digest('hex');
-const PRE_5152_FIXTURE = fs.readFileSync(
-  path.join(__dirname, 'fixtures', 'track-issue-fixes-pre-5152.yml'),
-  'utf8',
-);
+const PRE_5152_FIXTURE = readText(path.join(__dirname, 'fixtures', 'track-issue-fixes-pre-5152.yml'));
 const PINNED_CURRENT_DIGEST = 'df673d6fe95eb97c7009ef9ae0b9ae5465570868e5ae11934573334d96d129df';
 
 test('classifyExistingWorkflow: current generator output', () => {
@@ -561,10 +558,7 @@ test('current generator output digest is pinned', () => {
 });
 
 test('the checked-in .github/workflows/track-issue-fixes.yml is the generator output', () => {
-  const checkedIn = fs.readFileSync(
-    path.join(__dirname, '..', '.github/workflows/track-issue-fixes.yml'),
-    'utf8',
-  );
+  const checkedIn = readText(path.join(__dirname, '..', '.github/workflows/track-issue-fixes.yml'));
   assert.strictEqual(checkedIn, generateWorkflowYaml() + '\n');
 });
 
