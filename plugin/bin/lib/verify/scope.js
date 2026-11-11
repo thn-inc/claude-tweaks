@@ -24,7 +24,7 @@ const { anchorOf } = require('./stamp');
 const { selectImpactTests } = require('./impact');
 
 function impactResult(suite, fields = {}) {
-  return { suite, files: null, fallback: null, selected: null, changedTests: [], untracedTests: [], driftTests: [], driftSelected: null, superseded: false, ...fields };
+  return { suite, files: null, fallback: null, selected: null, changedTests: [], untracedTests: [], driftTests: [], driftSelected: null, superseded: false, supersedingPaths: [], ...fields };
 }
 
 // `ctx` is the caller's {map, problem, headTests}; a missing context or map
@@ -64,12 +64,17 @@ function selectScope({ decl, files, stamp, statuses = null, impact = null, fallb
   const unmatched = [];
   const selected = new Set();
   const impactPaths = [];
+  // The files that send the impact suite to a full run (#4321): unmatched paths
+  // and files a non-impact rule sends to it. Named so timing.json can say why a
+  // subset never fired; only read when `superseded`.
+  const supersedingPaths = [];
   let all = false;
   let isStatic = false;
   for (const file of files) {
     const idx = decl.rules.findIndex((r) => globToRegExp(r.match).test(file));
     if (idx === -1) {
       unmatched.push(file);
+      supersedingPaths.push(file);
       matched.push({ file, rule: null });
       all = true;
       isStatic = true;
@@ -78,8 +83,11 @@ function selectScope({ decl, files, stamp, statuses = null, impact = null, fallb
     const rule = decl.rules[idx];
     matched.push({ file, rule: idx });
     if (rule.impact) impactPaths.push(file);
-    else if (rule.suites === '*') all = true;
-    else for (const s of rule.suites) selected.add(s);
+    else if (rule.suites === '*') { all = true; supersedingPaths.push(file); }
+    else {
+      for (const s of rule.suites) selected.add(s);
+      if (decl.impact && rule.suites.includes(decl.impact.suite)) supersedingPaths.push(file);
+    }
     if (rule.static) isStatic = true;
   }
   if (decl.toolScoped) {
@@ -89,7 +97,7 @@ function selectScope({ decl, files, stamp, statuses = null, impact = null, fallb
   let imp = null;
   if (decl.impact) {
     const suite = decl.impact.suite;
-    if (all || selected.has(suite)) imp = impactResult(suite, { superseded: true });
+    if (all || selected.has(suite)) imp = impactResult(suite, { superseded: true, supersedingPaths });
     // Nothing selected it: the empty subset, so `files null` keeps meaning
     // "runs its full command".
     else if (impactPaths.length === 0) imp = impactResult(suite, { files: [], selected: 0, driftSelected: 0 });
