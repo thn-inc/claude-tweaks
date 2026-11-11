@@ -751,7 +751,7 @@ function copyRunner(root) {
   fs.copyFileSync(path.join(ROOT, 'plugin', 'bin', 'lib', 'suite-slot.js'), path.join(lib, 'suite-slot.js'));
   fs.copyFileSync(RUNNER, path.join(root, 'tools', 'run-tests.js'));
 }
-const PROBE =['tmpdir-probe.fixture.js', 'probe.test.js'];
+const PROBE = ['tmpdir-probe.fixture.js', 'probe.test.js'];
 const runRunner = (sb, { env = sb.env, timeout = 60000 } = {}) =>
   spawnSync(process.execPath, [RUNNER, sb.suiteRoot], { cwd: ROOT, env, encoding: 'utf8', timeout });
 const SLOT_LOCKS = (dir) => fs.readdirSync(dir).filter((n) => /^slot-.*\.lock$/.test(n));

@@ -400,6 +400,14 @@ test('concurrency refusals each report their exact message (#5119)', () => {
   assert.deepStrictEqual(errs({ slots: 2 }), ['concurrency: unknown key(s) "slots" (allowed: suiteSlots)']);
 });
 
+test('every invalid concurrency field is reported together (#5119)', () => {
+  const r = readJson({ ...EXAMPLE, concurrency: { slots: 2, suiteSlots: 0 } });
+  assert.strictEqual(r.ok, false);
+  const text = r.errors.join('\n');
+  assert.match(text, /concurrency: unknown key\(s\) "slots" \(allowed: suiteSlots\)/);
+  assert.match(text, /concurrency\.suiteSlots: must be a positive integer/);
+});
+
 test('CONCURRENCY_KEYS names the allowed concurrency keys (#5119)', () => {
   assert.deepStrictEqual(require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'declaration.js')).CONCURRENCY_KEYS, ['suiteSlots']);
 });

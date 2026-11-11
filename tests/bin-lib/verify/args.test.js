@@ -366,8 +366,10 @@ test('#5119: a --default-suite-slots value other than a positive integer is a Us
 });
 
 test('#5119: --default-suite-slots is a usage error in the read-only modes', () => {
-  assert.throws(() => parseArgs(['--stamp-status', '--default-suite-slots', '2']), UsageError);
-  assert.throws(() => parseArgs(['--changed-files', '--default-suite-slots', '2']), UsageError);
+  const conflict = (err) => err instanceof UsageError
+    && err.message === '--default-suite-slots applies to a check run — not to --stamp-status or --changed-files';
+  assert.throws(() => parseArgs(['--stamp-status', '--default-suite-slots', '2']), conflict);
+  assert.throws(() => parseArgs(['--changed-files', '--default-suite-slots', '2']), conflict);
 });
 
 test('#5119: USAGE names --default-suite-slots', () => {

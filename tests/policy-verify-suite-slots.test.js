@@ -49,7 +49,7 @@ test('AC9.1: resolve-policy prints 1 for an unset verify-suite-slots', () => {
 
 test('AC9.1: resolve-policy prints a set positive integer, and 1 for a malformed value', () => {
   assert.strictEqual(resolveWith('verify-suite-slots: 3\n').stdout.trim(), '3');
-  for (const bad of ['0', 'two']) {
+  for (const bad of ['0', 'two', '-1', '1.5']) {
     assert.strictEqual(resolveWith(`verify-suite-slots: ${bad}\n`).stdout.trim(), '1', bad);
   }
 });
