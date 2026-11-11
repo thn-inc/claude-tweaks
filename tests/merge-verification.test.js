@@ -210,6 +210,9 @@ test('I1: readPullRequestWorkflow reads an unreadable on: as an unparsed PR trig
   for (const c of ['on: push\n', 'on: [push, workflow_dispatch]\n', 'on: { push: {} }\n', 'on:\n  push:\n',
     'on:\n  - push\n  - workflow_dispatch\n',
     'on:\n- push\njobs:\n  a: {}\n', // an indentless list ends at the next top-level key
+    // the on: block ends at a col-0 key: a later job or key named pull_request is not a trigger
+    'on:\n  push:\njobs:\n  pull_request:\n    runs-on: x\n',
+    'on:\n- push\nx:\n- pull_request\n',
     // a quoted '#' on the on: line is not a comment start
     "on: { push: { branches: ['rel #1'] } }\n",
     'on: &t\n  push:\n']) {
@@ -277,6 +280,12 @@ test('AC5.2: readPullRequestWorkflow detects a draft reference in if: == false a
     // a non-ASCII letter before the apostrophe is still in-word
     "on: pull_request\nname: Zoë's run # github.event.pull_request.draft\n",
     "on: pull_request\njobs:\n  a:\n    steps:\n      - run: echo café's # github.event.pull_request.draft\n",
+    // a combining mark (NFD é = e + U+0301) before the apostrophe is still in-word
+    "on: pull_request\nname: Zoe\u0301's run # github.event.pull_request.draft\n",
+    // a backslash escapes nothing inside single quotes; '\' closes there
+    "on: pull_request\nx: contains(a, '\\') # github.event.pull_request.draft\n",
+    // an escaped backslash inside double quotes does not escape the closing quote
+    'on: pull_request\nx: "a\\\\" # github.event.pull_request.draft\n',
   ];
   for (const c of no) bothEndings(c, (t) => assert.equal(mv.readPullRequestWorkflow(t).draftReference, false, JSON.stringify(t)));
 });

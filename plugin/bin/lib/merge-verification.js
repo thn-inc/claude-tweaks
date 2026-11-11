@@ -185,7 +185,7 @@ function stripCommentQuoteAware(s) {
       else if (ch === quote) quote = null;
       continue;
     }
-    if ((ch === "'" || ch === '"') && (i === 0 || !/[\p{L}\p{N}_]/u.test(s[i - 1]))) { quote = ch; continue; }
+    if ((ch === "'" || ch === '"') && (i === 0 || !/[\p{L}\p{M}\p{N}_]/u.test(s[i - 1]))) { quote = ch; continue; }
     if (ch === '#' && (i === 0 || /\s/.test(s[i - 1]))) return s.slice(0, i).trim();
   }
   return s.trim();
