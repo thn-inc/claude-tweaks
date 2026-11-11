@@ -152,6 +152,10 @@ Each record has a wall-clock ceiling and a spend ceiling, both policy values wit
 
 ## Phase 1 — Through to a green PR
 
+## Phase 1: Specified
+
+Records: parent #5215; sub-issues #5216 (lane admission and policy keys), #5217 (worker launcher), #5218 (`drive.js` to a green draft PR), #5219 (standalone settle, ceilings, usage page).
+
 Steps 1 to 9 and 11 for explicitly named records. Every run ends `pending-review`, `express-escalated` or `blocked`; nothing merges.
 
 Done when three real eligible records have each been driven to a draft PR with green CI, and for each the report shows cost, wall clock with and without CI wait, worker turns and denials, and the worker transcript contains no harness CLI, `gh` or `git` write call.
