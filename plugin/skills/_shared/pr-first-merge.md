@@ -238,7 +238,7 @@ guard refuses a `--jq` program inside this loop (`_shared/scratch-worktree.md` �
   `headRefOid` changed since the first read (a new push landed) or `state` is not `OPEN`, re-enter this
   step from the top (one re-entry; a second change reports `pending-review`, reason `moving-target`)
   — never merge blind; a failing head run takes the Red path, reason `check-failed:{names}` (names from
-  its `workflowName`s); a head run not yet `completed` resumes the bounded watch at the same `DEADLINE`, as does an `awaiting` ready-run read (`awaitingReadyRun`); otherwise merge via Step 3's immediate `--squash` form (re-run its composer call first) (outcome `merged`,
+  its `workflowName`s); a head run not yet `completed` resumes the bounded watch at the same `DEADLINE`, as does an `awaiting` ready-run read (`awaitingReadyRun`); any other ready-run state routes per Step 2.5; otherwise merge via Step 3's immediate `--squash` form (re-run its composer call first) (outcome `merged`,
   then Step 4).
 - `RC=1` (a check failed during the watch) → **Red path**, reason `check-failed:{names}` (names from
   the `fail` rows of `{pr-checks-path}`).

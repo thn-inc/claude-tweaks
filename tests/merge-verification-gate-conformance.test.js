@@ -127,6 +127,7 @@ function assertReadyRunWatchClauses(gateText) {
   const section = gateText.slice(step25, gateText.indexOf('## Step 3:'));
   const rc0 = section.slice(section.indexOf('`RC=0` → **green**'), section.indexOf('`RC=1` (a check failed'));
   assert.ok(rc0.includes('awaitingReadyRun') && rc0.includes('resumes the bounded watch'), 'RC=0 clause: the bullet must resume the bounded watch on awaitingReadyRun');
+  assert.ok(rc0.includes('; any other ready-run state routes per Step 2.5; otherwise merge'), 'RC=0 re-read clause: any other ready-run state (read-failed included) must route per Step 2.5 before the merge');
   assert.equal(section.split('DEADLINE=$(( $(date +%s) + 900 ))').length - 1, 1, 'deadline clause: the 15-minute literal must appear exactly once');
   assert.ok(/^\*\*Bounded watch \([^\n]*— 15 minutes, fixed\.\*\*$/m.test(section), 'deadline clause: the heading must end — 15 minutes, fixed.**');
   const rc3Start = section.indexOf('- `RC=3`');
@@ -149,6 +150,7 @@ test('AC7.2: the RC=0 bullet resumes the bounded watch on awaitingReadyRun and t
     assert.throws(() => assertReadyRunWatchClauses(mutated), { message: new RegExp(message.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) }, message);
   };
   mutate(', as does an `awaiting` ready-run read (`awaitingReadyRun`)', '', 'RC=0 clause: the bullet must resume the bounded watch on awaitingReadyRun');
+  mutate('; any other ready-run state routes per Step 2.5', '', 'RC=0 re-read clause: any other ready-run state (read-failed included) must route per Step 2.5 before the merge');
   mutate('DEADLINE=$(( $(date +%s) + 900 ))', 'DEADLINE=$(( $(date +%s) + 1800 ))', 'deadline clause: the 15-minute literal must appear exactly once');
   mutate('— 15 minutes, fixed.**', '— 30 minutes.**', 'deadline clause: the heading must end — 15 minutes, fixed.**');
   mutate('- `RC=3` (ready-run `red` or `draft-skip-without-ready-trigger`)', '- `RC=3` (ready-run `red`)', 'RC=3 clause: the bullet must name draft-skip-without-ready-trigger and the Red path');
