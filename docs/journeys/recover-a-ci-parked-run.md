@@ -11,7 +11,7 @@ files:
 
 **Persona:** Maintainer of a `pr-first` project who finds a work record carrying `bot:parked` while its `auto:build`/`auto:merge` grants are still intact, and a ready (non-draft) PR that never merged.
 **Goal:** Understand that the run was *parked, not failed* — the merge gate saw a red or still-pending check on the PR — and get it moving again without re-authorizing a build or bypassing the checks.
-**Entry point:** The `bot:parked` label on the record, the gate's park comment on the issue (`Parked by merge-verification ({value}): {failing checks} on PR #{n}. Resume once green.`), or `/claude-tweaks:tidy`'s Shape 5.6 row.
+**Entry point:** The `bot:parked` label on the record, the gate's park comment on the issue (`Parked by merge-verification ({value}): {failing checks} on PR #{n}. {resume}`), or `/claude-tweaks:tidy`'s Shape 5.6 row.
 **Success state:** The maintainer knows which check parked the run and why (`check-failed:{names}` or `checks-pending-timeout`), fixes or re-runs the check, and resumes the run through the confirmation gate — which merges only when the checks are green (or arms `--auto` only where the forge itself holds the merge).
 
 ## Steps
@@ -34,7 +34,7 @@ files:
 - **URL:** `/claude-tweaks:dispatch`'s "Confirm before resuming" (`Resume {target} toward merge? PR #{n} …, CI: {status} …`) — reached by asking the agent to resume the run
 - **Action:** Read the CI status in the question and confirm.
 - **Should feel:** Decided on evidence — the same status shown is the status acted on.
-- **Should understand:** One-shot per Step 2.5's resume rule: green → the run re-enters its Review Console and merges; red → the confirmation says so and the run stays parked; pending → `--auto` is armed only when `mergeStateStatus` is `BLOCKED` (the forge holds it), otherwise the confirmation carries the choice, because on an unprotected repository arming is an immediate merge. Remove `bot:parked` as part of that resume, not before. "Green" means both of Step 2.5's reads agree: every rollup entry passed **and** every workflow run for the PR head (`gh run list --commit`) has completed without a failing conclusion (a failing head run reads red) — a partial rollup, where some workflows have not registered yet, reads pending (#3405).
+- **Should understand:** One-shot per Step 2.5's resume rule: green → the run re-enters its Review Console and merges; red → the confirmation says so and the run stays parked; pending → `--auto` is armed only when `mergeStateStatus` is `BLOCKED` (the forge holds it), otherwise the confirmation carries the choice, because on an unprotected repository arming is an immediate merge. Remove `bot:parked` as part of that resume, not before. "Green" means Step 2.5's three reads agree: every rollup entry passed, every workflow run for the PR head (`gh run list --commit`) has completed without a failing conclusion (a failing head run reads red), **and** the ready-run read has no `awaiting` workflow (a workflow that declares `ready_for_review` and has not yet run since the undraft reads pending) — a partial rollup, where some workflows have not registered yet, reads pending (#3405).
 - **Red flags:** A resume merging a PR whose checks the question showed as pending or red; the agent running a 15-minute watch inside the confirmation; `CI: passing` shown while a head-sha workflow run is still in progress.
 
 ## Origin

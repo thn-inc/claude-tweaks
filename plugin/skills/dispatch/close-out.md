@@ -34,7 +34,10 @@ touching shared state runs one member at a time.
 1. **Re-verify CI is currently green — never trust the parked state (AC1).** Read fresh via `gh pr
    checks {number}` (or `gh pr view {number} --json statusCheckRollup`), summarized as
    `passing`/`failing`/`pending`, plus `_shared/pr-first-merge.md` Step 2.5's head-run `gh run list`
-   read (a not-yet-completed head run is `pending`, not green) — the identical read `resume-confirmation.md`'s own live-value-
+   read (a not-yet-completed head run is `pending`, not green), plus Step 2.5's ready-run read
+   (`bin/ready-run.js`: `awaiting` reads `pending`, `red` or `draft-skip-without-ready-trigger` reads
+   `failing`, and `read-failed` — or a non-zero exit or output with no `state` — stops this candidate
+   as `stopped: CI unreadable`) — the identical read `resume-confirmation.md`'s own live-value-
    sourcing paragraph already performs for its confirmation, reused rather than re-implemented.
    `failing`: report the failure and stop for this candidate — do not treat a stale prior green as
    current. `pending`: report and stop for this candidate too; a headless close-out that waited on
@@ -77,6 +80,12 @@ touching shared state runs one member at a time.
    Then, when `isDraft`, run `_shared/pr-first-merge.md`'s Step 2 (Mark ready) now, before the
    confirmation gate — the gate's own question states the PR's current state, and "still draft"
    would already be stale by the time a human reads it otherwise.
+
+   **Re-read CI after Mark ready.** When Mark ready ran, re-run step 1's read — the rollup, the
+   head-run read and the ready-run read — against the now-ready PR before the confirmation gate,
+   with step 1's stop rules (#5153). Right after `gh pr ready`, a workflow that declares
+   `ready_for_review` has no run since the undraft yet, so this read is `pending` and stops the
+   candidate; a later `close-out #{number}` reads the finished ready run.
 4. **Confirmation gate.** Read `close-out-confirmation.md` in this skill's directory and follow it
    (AC4). Declining stops here — the PR stays `pending-review` as it was (an update that already ran stays pushed), and nothing below
    runs for this candidate.

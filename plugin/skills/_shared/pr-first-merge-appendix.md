@@ -31,7 +31,7 @@ Named rationale and history moved out of `pr-first-merge.md`'s operative head (#
 
 ## Resume-to-merge
 
-`dispatch/SKILL.md`'s "Confirm before resuming" confirmation applies this same lever as a single read-then-decide over both of Step 2.5's reads (the state read and the head-run `gh run list` read; a not-yet-completed head run reads pending, a failing one red) (green → proceed; red → surface in the confirmation; pending with `mergeStateStatus: BLOCKED` → arm `--auto`, since the forge is what holds it; pending with any other `mergeStateStatus` → do **not** arm — on an unprotected repo arming *is* an immediate merge (capture (a)), so the confirmation itself carries the choice: wait for green, or leave parked) — a human is present on resume, so it never runs the bounded watch.
+`dispatch/SKILL.md`'s "Confirm before resuming" confirmation applies this same lever as a single read-then-decide over both of Step 2.5's reads (the state read, the head-run `gh run list` read and the ready-run read; a not-yet-completed head run reads pending, a failing one red, an `awaiting` ready run pending, `draft-skip-without-ready-trigger` red) (green → proceed; red → surface in the confirmation; pending with `mergeStateStatus: BLOCKED` → arm `--auto`, since the forge is what holds it; pending with any other `mergeStateStatus` → do **not** arm — on an unprotected repo arming *is* an immediate merge (capture (a)), so the confirmation itself carries the choice: wait for green, or leave parked) — a human is present on resume, so it never runs the bounded watch.
 
 ## Signatures (Task 0 captures)
 
