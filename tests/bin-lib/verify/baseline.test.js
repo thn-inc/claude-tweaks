@@ -31,6 +31,8 @@ const PASS_LOG = ['✔ x (1ms)', 'ℹ tests 1', 'ℹ pass 1', 'ℹ fail 0', 'ℹ
 function fakes({ outcomes, existsAtBase = () => true, sameAtBase = () => true, inCheckout = () => true, throwOn = null, logs = {}, repoRoot = '/repo' }) {
   const calls = { runs: [], added: [], removed: [], batchBaseInfo: [] };
   const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-fake-runs-'));
+  // #5150: the scratch's HEAD is the sha its latest addWorktree call was given.
+  let head = 'b'.repeat(40);
   const git = {
     repoRoot: () => repoRoot,
     // One call per adjudicate() run, however many files — #3070's AC: a
@@ -43,7 +45,8 @@ function fakes({ outcomes, existsAtBase = () => true, sameAtBase = () => true, i
       return m;
     },
     inCheckout: (dir, rel) => inCheckout(dir, rel),
-    addWorktree: (sha) => { calls.added.push(sha); return { dir: '/scratch', reused: false }; },
+    addWorktree: (sha) => { calls.added.push(sha); head = sha; return { dir: '/scratch', reused: false }; },
+    headOf: () => head,
     removeWorktree: (dir) => { calls.removed.push(dir); },
   };
   const runOne = async ({ name, command, cwd }) => {
@@ -157,6 +160,7 @@ test('#3063 AC2: an isolated run that times out is no evidence — the file stay
     batchBaseInfo: (sha, files) => new Map(files.map((f) => [f, { exists: true, same: true }])),
     inCheckout: () => true,
     addWorktree: () => ({ dir: '/scratch', reused: false }),
+    headOf: () => 'b'.repeat(40),
     removeWorktree: () => {},
   };
   const runOne = async ({ name, command }) => {
@@ -1683,4 +1687,103 @@ test('removeWorktree on a slot path removes wt and keeps slot-<index> (#5150)', 
   assert.ok(fs.statSync(path.dirname(out.dir)).isDirectory(), 'slot-0/ stays');
   assert.deepStrictEqual(fx.registered(), [fx.repo]);
   assert.deepStrictEqual(fx.warned, []);
+});
+
+// #5150: a base-side run is evidence only when its scratch HEAD is the base sha, checked just before
+// the run spawns and again once it settles. The #3043 AC1 shape: baseline exits 1 and isolated exits 1.
+const BASE_SHA = 'b'.repeat(40);
+const OTHER_SHA = 'c'.repeat(40);
+// `headOf(ran)` answers each check, where `ran()` says whether the base rerun has spawned yet — so
+// "before" and "after" are told apart by the run itself, not by how many times headOf was asked.
+async function adjudicateMoved(headOf) {
+  const { p, dir } = logFile(SPEC(['tests/a.test.js']));
+  const f = fakes({ outcomes: { 'baseline:tests/a.test.js': 1, 'isolated:tests/a.test.js': 1 } });
+  let started = false;
+  const runOne = (args) => { if (args.name.includes('-baseline-')) started = true; return f.runOne(args); };
+  const git = headOf === undefined ? f.git : { ...f.git, headOf: () => headOf(() => started) };
+  return adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: BASE_SHA, cwd: '/repo', logDir: dir, runOne, git });
+}
+// headOf answering from a list, one answer per call, the last repeating (the base full run's test).
+const headSeq = (...answers) => { let n = 0; return () => answers[Math.min(n++, answers.length - 1)]; };
+const assertMovedOut = (r) => {
+  assert.strictEqual(r.eligible, true);
+  assert.deepStrictEqual(r.baselineFailing, []);
+  assert.deepStrictEqual(r.attributable, ['tests/a.test.js']);
+  assert.strictEqual(r.verdict, 'fail');
+  assert.strictEqual(r.scratch.moved, true);
+};
+
+test('a base rerun in a scratch whose HEAD is not the base sha is never "fails at base" (#5150)', async () => {
+  assertMovedOut(await adjudicateMoved(() => OTHER_SHA));
+  const control = await adjudicateMoved();
+  assert.deepStrictEqual(control.baselineFailing, ['tests/a.test.js']);
+  assert.strictEqual(control.verdict, 'pass');
+  assert.ok(!('moved' in control.scratch), 'moved is absent when no base-side run was refused');
+});
+
+test('a scratch that moves while a base rerun runs is no evidence — the check after the run decides (#5150)', async () => {
+  assertMovedOut(await adjudicateMoved((ran) => (ran() ? OTHER_SHA : BASE_SHA)));
+});
+
+test('a scratch not at the base sha when a base rerun starts is no evidence — the check before the run decides (#5150)', async () => {
+  assertMovedOut(await adjudicateMoved((ran) => (ran() ? BASE_SHA : OTHER_SHA)));
+});
+
+test('a base full run in a moved scratch leaves fixed null with a named reason (#5150)', async () => {
+  // One failing file: calls 1 and 2 bracket its base rerun, call 3 precedes the base full run.
+  const { p, dir } = logFile(SPEC(['tests/a.test.js']));
+  const f = fakes({
+    outcomes: { 'baseline:tests/a.test.js': 1, 'base-full:npm test': 1 },
+    logs: { 'base-full:npm test': SPEC(['tests/a.test.js', 'tests/fixed.test.js']) },
+  });
+  const git = { ...f.git, headOf: headSeq(BASE_SHA, BASE_SHA, OTHER_SHA) };
+  const r = await adjudicate({
+    checks: [{ name: 'tests', command: 'npm test', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: BASE_SHA,
+    cwd: '/repo', logDir: dir, runOne: f.runOne, git,
+  });
+  assert.deepStrictEqual(r.baselineFailing, ['tests/a.test.js'], 'the per-file evidence stands');
+  assert.strictEqual(r.verdict, 'pass');
+  assert.strictEqual(r.fixed, null);
+  assert.strictEqual(r.fixedReason, 'tests base full run: the scratch checkout was not at the base commit');
+  assert.strictEqual(r.scratch.moved, true);
+});
+
+test('realGit.headOf reads a worktree\'s HEAD and returns null for a missing directory (#5150)', (t) => {
+  const fx = slotFixture(t);
+  const out = fx.rg.addWorktree(fx.sha1, { slot: 0, slotBase: fx.S });
+  assert.strictEqual(fx.rg.headOf(out.dir), fx.sha1);
+  assert.strictEqual(fx.rg.headOf(fx.repo), fx.sha2, 'the main checkout is at the later commit');
+  fx.rg.removeWorktree(out.dir);
+  assert.strictEqual(fx.rg.headOf(out.dir), null, 'a removed directory');
+  assert.strictEqual(fx.rg.headOf(path.join(fx.tmpdir, 'no-such-dir')), null);
+});
+
+test('two adjudications on one slot path: the one whose checkout was replaced loses its base evidence and never passes (#5150)', async (t) => {
+  const fx = slotFixture(t);
+  const { p, dir } = logFile(SPEC(['tests/a.test.js']));
+  const f = fakes({ outcomes: { 'baseline:tests/a.test.js': 1, 'isolated:tests/a.test.js': 1 } });
+  const logDirs = new Set([dir]);
+  t.after(() => { for (const d of logDirs) fs.rmSync(d, { recursive: true, force: true }); });
+  const other = realGit(fx.repo, { tmpdir: fx.tmpdir, warn: (line) => fx.warned.push(line) });
+  let b = null;
+  const runOne = async (args) => {
+    // Adjudication B takes the same slot path: its leftover cleanup removes A's live checkout and
+    // adds it again at another sha, mid-run.
+    if (b === null && args.name.includes('-baseline-')) b = other.addWorktree(fx.sha2, { slot: 0, slotBase: fx.S });
+    const res = await f.runOne(args);
+    logDirs.add(path.dirname(res.logPath));
+    return res;
+  };
+  try {
+    const r = await adjudicate({
+      checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: fx.sha1,
+      cwd: fx.repo, logDir: dir, runOne, git: fx.rg, takeSlot: () => ({ index: 0, base: fx.S }),
+    });
+    assert.strictEqual(r.eligible, true, r.reason);
+    assert.strictEqual(b.reused, true, 'B found A\'s checkout at the path');
+    assertMovedOut(r);
+  } finally {
+    if (b !== null) other.removeWorktree(b.dir);
+  }
+  assert.deepStrictEqual(fx.registered(), [fx.repo]);
 });

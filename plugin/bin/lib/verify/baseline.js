@@ -120,6 +120,11 @@ function realGit(cwd, { warn = (line) => process.stderr.write(line), rmSync = fs
       // --end-of-options: a ref spelled like a flag is a (non-existent) ref, never a git option.
       try { return git(['rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`]) || null; } catch { return null; }
     },
+    // #5150: the sha a checkout's HEAD is at, or null on any failure (a missing directory, not a
+    // checkout) — a base-side run counts as evidence only while the scratch is at the base sha.
+    headOf: (dir) => {
+      try { return git(['-C', dir, 'rev-parse', '--verify', 'HEAD']) || null; } catch { return null; }
+    },
     // `git merge-base --is-ancestor`: exit 0 → true, exit 1 → false; any
     // other failure throws (the caller's adjudication-error path), never a
     // guessed answer.
@@ -568,8 +573,23 @@ async function adjudicate({
       const log = readLog(r.logPath);
       return log !== null && timeoutEvidence(log, sniffFamily(log), timeoutPatterns) !== null;
     };
+    // #5150: every base-side run (each per-file rerun and each base full run) goes through here. It
+    // counts as evidence only when the scratch's HEAD is the base sha both just before it spawns and
+    // once it settles — a sibling's cleanup may replace the checkout at a shared path at any moment.
+    // Otherwise nothing of the run is kept — not even a clean exit, which would read as "passes at
+    // base" — only a `moved` marker with no exit code, and a run that never started is not spawned.
+    let scratchMoved = false;
+    const runAtBase = async (args) => {
+      const refused = () => { scratchMoved = true; return { moved: true, exitCode: null }; };
+      if (git.headOf(scratch) !== baseSha) return refused();
+      const r = await runOne(args);
+      return git.headOf(scratch) !== baseSha ? refused() : r;
+    };
     const used = { baseline: null, isolated: null, retry: null };
-    const baseRuns = await pool(work, limit, (w, k) => (atBase[k] ? run(w, 'baseline', baseDir) : null));
+    const baseRuns = await pool(work, limit, (w, k) => (atBase[k] ? runAtBase({
+      name: `${w.check}-baseline-${slug(w.file)}`, command: w.command, logDir, spawnImpl, now, cwd: baseDir,
+      env: envOf(w.check), timeout: timeoutOf(w.check),
+    }) : null));
     if (baseRuns.some(Boolean)) used.baseline = limit;
     if (limit > 1 && baseRuns.some(timedOutRun)) { limit = 1; reason = 'phase-timeout: baseline'; }
     // A numeric non-zero exit alone proves nothing (a typo'd template, a scratch
@@ -732,9 +752,10 @@ async function adjudicate({
       for (const c of acceptedChecks) {
         const checkEnv = envOf(c.name);
         if (!c.command) { fixedReason = `${c.name} has no command to run at base`; break; }
-        const r = await runOne({
+        const r = await runAtBase({
           name: `${c.name}-base-full`, command: c.command, logDir, spawnImpl, now, cwd: baseDir, env: checkEnv, timeout: timeoutOf(c.name),
         });
+        if (r.moved) { fixedReason = `${c.name} base full run: the scratch checkout was not at the base commit`; break; }
         if (typeof r.exitCode !== 'number') {
           fixedReason = `${c.name} base full run exited without a numeric code${r.timedOut ? ' (timed out)' : ''}`; break;
         }
@@ -771,7 +792,9 @@ async function adjudicate({
       ...(fixed === null ? { fixedReason } : {}),
       timedOut,
       concurrency: { declared: concurrency, used, reason },
-      scratch: { path: scratch, reused: scratchReused, ...(scratchFallback !== undefined ? { fallback: scratchFallback } : {}) },
+      scratch: {
+        path: scratch, reused: scratchReused, ...(scratchFallback !== undefined ? { fallback: scratchFallback } : {}), ...(scratchMoved ? { moved: true } : {}),
+      },
     };
   } finally {
     for (const [sig, handler] of signalHandlers) process.removeListener(sig, handler);
