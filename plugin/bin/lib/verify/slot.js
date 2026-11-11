@@ -59,8 +59,9 @@ function workerCap(cores, slots) {
 // CT_TEST_SUITE_SLOT_HELD=1 and a CT_TEST_WORKERS cap (a value the caller set wins); release
 // restores both. The slot is freed on every exit path: an 'exit' hook, and SIGINT/SIGTERM/SIGHUP
 // handlers that first run `beforeRelease(signal)` (verify.js stops its running checks there),
-// then release, then exit 128+n only when no other listener for that signal remains — so
-// adjudicate()'s own handler still removes its scratch worktree and exits. The acquire wait is
+// then — only when no other listener for that signal remains — release and exit 128+n.
+// Otherwise adjudicate()'s own handler, registered later, removes its scratch worktree and exits,
+// and the 'exit' hook releases the slot after that removal (#5150). The acquire wait is
 // synchronous: no check runs while a run waits. A lock dir it cannot use throws
 // SlotUnavailableError. `cores` defaults to the core count, read only once a slot is held, from
 // `osImpl.availableParallelism()`, or `osImpl.cpus().length` on a Node without it (before 18.14).
@@ -107,16 +108,26 @@ function holdSlot({
       const last = proc.listenerCount(sig) === 1;
       try {
         beforeRelease(sig);
-      } finally {
-        release();
+      } catch (err) {
+        // A throw would stop the listener chain, and adjudicate()'s later handler would never
+        // remove its scratch worktree: name it and carry on (#5150).
+        log(`verify.js: stopping the running checks on ${sig} failed — ${String((err && err.message) || err)}`);
       }
-      if (last) proc.exit(128 + os.constants.signals[sig]);
+      // #5150: a later listener (adjudicate()'s) still has to remove this slot's scratch
+      // worktree, so the slot stays held until that listener exits — the 'exit' hook releases
+      // it — and a waiter on this slot never starts on the path while it is torn down.
+      if (last) {
+        release();
+        proc.exit(128 + os.constants.signals[sig]);
+      }
     };
     handlers.push([sig, handler]);
     proc.on(sig, handler);
   }
+  // `base` is the lock dir the slot was taken under: with `index` it keys the scratch worktree path
+  // a --baseline adjudication reuses (#5150).
   return {
-    lane, index: slotIndexOf(lockPath), slots, source, waitedMs, release,
+    lane, index: slotIndexOf(lockPath), slots, source, waitedMs, release, base,
   };
 }
 

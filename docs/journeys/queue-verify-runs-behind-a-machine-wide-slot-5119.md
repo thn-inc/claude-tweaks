@@ -64,13 +64,14 @@ files:
 - **Action:** Press Ctrl-C, or send SIGTERM or SIGHUP to verify.js.
 - **Should feel:** Orderly. The test runner gets the same signal and a few seconds to clean up, then verify.js exits.
 - **Should understand:**
-  - verify.js forwards the signal to each running check's process group and waits up to 5 seconds. It then kills whatever is still alive, frees the slot, and exits 128 + the signal number. During `--baseline` adjudication, adjudication's own handler also removes its scratch worktree.
+  - verify.js forwards the signal to each running check's process group and waits up to 5 seconds. It then kills whatever is still alive, frees the slot, and exits 128 + the signal number. During `--baseline` adjudication, adjudication's own handler also removes its scratch worktree, and the slot is freed only after that removal, so the next holder of that slot never finds its per-slot scratch path mid-teardown (#5150).
   - The wait ends as soon as every check's group has exited (on Linux, a group whose processes have all exited but are not yet reaped counts as exited). One stderr line marks its start: `verify.js: {SIGNAL} sent — waiting up to 5s for {n} check process group(s) to finish their teardown before killing them`.
   - A check's output, teardown output included, goes straight to its log file, never through a pipe, so a noisy teardown cannot stall during the wait.
   - While a slot is held, each check runs in its own session (its own process group, with no controlling terminal). A SIGKILL sent to verify.js's process group therefore never reaches a running check. The orphan keeps running while its slot is reclaimed as a dead holder's.
 - **Red flags:**
   - A test runner's teardown (containers, temp databases, workers) not running after Ctrl-C.
   - The slot still held after verify.js has exited.
+  - The slot freed while an interrupted adjudication is still removing its per-slot scratch worktree.
   - verify.js waiting the full 5 seconds after every check has already exited.
 
 ### 5. Size the slot count for the project's shared resources
@@ -90,4 +91,5 @@ files:
 ## Origin
 - Created during build of #5119. A consumer project's parallel sessions starved a shared database server: every session's suites and baseline reruns ran at once, and timeouts amplified the reruns.
 - Updated after #5119's review fixes: adjudication queues only once a rerun will spawn, the signal grace ends early and announces itself, slot waits no longer count toward the verify-minutes budget, a queued dispatched subagent ends `STATUS: BLOCKED`, and an other-user lock dir names `CT_TEST_SUITE_SLOT_DIR`.
+- Step 4 extended by #5150: on a signal during adjudication the slot is freed only after the per-slot scratch is removed (`holdSlot` releases in-handler only as the last signal listener). The same `concurrency` block also takes `reruns` and `timeoutPatterns`, walked in `run-a-deterministic-verification-check.md` Step 11.
 - Related: `run-the-suite-alongside-sibling-sessions-3969.md` (the same lock as `tools/run-tests.js` holds it in this repo) and `run-parallel-pipelines-without-per-task-full-suites-5117.md` (fewer full-suite runs per pipeline, the other half of the load problem).

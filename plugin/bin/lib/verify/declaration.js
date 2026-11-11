@@ -22,7 +22,7 @@ const DEFAULT_MAX_AGE_COMMITS = 200;
 const GIT_COMMON_DIR_TOKEN = '{git-common-dir}';
 const IMPACT_KEYS = ['suite', 'command', 'tests', 'maxAgeCommits', 'map', 'fetch'];
 const CI_KEYS = ['workflow', 'job', 'waitSeconds', 'pollSeconds'];
-const CONCURRENCY_KEYS = ['suiteSlots'];
+const CONCURRENCY_KEYS = ['suiteSlots', 'reruns', 'timeoutPatterns'];
 // #4347: a CI run of this repo's suite takes ~3.5 min plus queueing; 15 min
 // matches the job's own timeout-minutes, so a run that is still going past it
 // would have been killed anyway.
@@ -188,7 +188,11 @@ function readDeclaration(filePath, fsImpl = fs, { selfPath = null } = {}) {
   // concurrency (#5119): how many machine-wide suite slots this project's runs
   // may hold at once. A reader that predates the key ignores it. Always present
   // on a parsed declaration; suiteSlots null means "not declared".
-  const concurrency = { suiteSlots: null };
+  // #5150 adds reruns (how many baseline adjudication reruns may run at once;
+  // null = not declared) and timeoutPatterns (literal substrings that mark a
+  // failure as a timeout; [] = none). The block stays strict: a reader built
+  // before the release carrying #5150 rejects either key as unknown.
+  const concurrency = { suiteSlots: null, reruns: null, timeoutPatterns: [] };
   if (raw.concurrency !== undefined) {
     if (!isPlainObject(raw.concurrency)) {
       errors.push('concurrency: must be an object');
@@ -199,6 +203,16 @@ function readDeclaration(filePath, fsImpl = fs, { selfPath = null } = {}) {
       if (slots !== undefined) {
         if (!Number.isInteger(slots) || slots < 1) errors.push('concurrency.suiteSlots: must be a positive integer');
         else concurrency.suiteSlots = slots;
+      }
+      const reruns = raw.concurrency.reruns;
+      if (reruns !== undefined) {
+        if (!Number.isInteger(reruns) || reruns < 1) errors.push('concurrency.reruns: must be a positive integer');
+        else concurrency.reruns = reruns;
+      }
+      const patterns = raw.concurrency.timeoutPatterns;
+      if (patterns !== undefined) {
+        if (!Array.isArray(patterns) || !patterns.every((p) => typeof p === 'string' && p !== '')) errors.push('concurrency.timeoutPatterns: must be an array of non-empty strings');
+        else concurrency.timeoutPatterns = patterns.slice();
       }
     }
   }

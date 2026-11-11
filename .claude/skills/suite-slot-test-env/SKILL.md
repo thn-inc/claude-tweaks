@@ -25,6 +25,10 @@ A helper that spawns `verify.js` and is given no env defaults the child to `{ ..
 
 A test that waits on a slot-holding child bounds it with the spawn's own `timeout` and `killSignal: 'SIGKILL'` (`spawnVerifyWithScript` in `cli.test.js`), so a stuck child becomes a failed assertion, never a stuck suite. Never assert a wall-clock budget to catch a hang: under bounded test concurrency and sibling sessions, elapsed time tracks machine load, not the code.
 
+## A slot-holding `--baseline` child writes under its own temp dir
+
+A `verify.js --baseline` child that holds a slot checks the base out at `<os tmpdir>/ct-verify-base/<repo-key>/slot-<index>/wt`, keyed by the repository and the slot's lock dir, and the `slot-<index>/` directory outlives the run (`slotScratchPath` and `addWorktree` in `plugin/bin/lib/verify/baseline.js`, #5150). `slotEnv` leaves the child's temp dir alone. Under `tools/run-tests.js` every test file in the run shares one `TMPDIR`, so a test that asserts the scratch path, or that the temp dir holds no `ct-verify-base-*` path, passes a private one in `extra`: `slotEnv(dir, { TMPDIR: t, TMP: t, TEMP: t })` (`os.tmpdir()` reads `TEMP`/`TMP` on Windows), as the AC5.1 `--baseline` test in `cli.test.js` does. Without it, a direct `node --test` of the file also leaves a `ct-verify-base/<repo-key>/` directory in the real temp dir on every run.
+
 ## Anti-patterns
 
 | Pattern | Why it fails |
