@@ -22,7 +22,7 @@ Scope keywords: transitional guard, copy-out guard, 2026-11-07
 
 ## Deliverable 1: Removal-condition check (run at authoring time, 2026-11-11)
 
-Ran from the main checkout: `find "/Users/thomasholknielsen/Code Workspaces/claude-tweaks" -maxdepth 6 -path "*/.claude/worktrees/*/.claude-tweaks/pipelines/*" -type d`. Result: 15,008 lines, 14,976 run-dir hits across 32 worktrees. Every hit's run id also exists under the main checkout's `.claude-tweaks/pipelines/` (live or `archive/`): 0 missing, 0 holding gitignored state outside `work/`. The hits are post-anchoring tracked `work/` spec dirs, not trapped pre-anchoring state. The condition holds; the removal is also unconditional past the 2026-11-07 sunset. Quote this summary in the PR body.
+Ran from the main checkout: `find "/Users/thomasholknielsen/Code Workspaces/claude-tweaks" -maxdepth 6 -path "*/.claude/worktrees/*/.claude-tweaks/pipelines/*" -type d`. Result: 15,008 lines, 14,976 run-dir hits across 32 worktrees. Every hit's run id also exists under the main checkout's `.claude-tweaks/pipelines/` (live or `archive/`): 0 missing, 0 holding gitignored state outside `work/`. The hits are post-anchoring tracked `work/` spec dirs, not trapped pre-anchoring state. The condition holds; the removal is also unconditional past the 2026-11-07 sunset. Per the spec's Plan Review Clarifications (decided by the user at plan review: command plus a hit/missing summary, not the raw 15,008 lines), Task 5 Step 6 writes this summary into PR #5220's body.
 
 ## Review Focus
 
@@ -40,9 +40,10 @@ Ran from the main checkout: `find "/Users/thomasholknielsen/Code Workspaces/clau
 
 **Files:**
 - Modify: `plugin/skills/wrap-up/cleanup-procedures-execution-appendix.md:23-79`
-- Modify: `plugin/skills/wrap-up/cleanup-procedures-execution.md` (lines 139, 154, 160-168)
-- Modify: `docs/plugin-structure.md:119`
+- Modify: `plugin/skills/wrap-up/cleanup-procedures-execution.md` (lines 111, 139, 154, 160-168)
 - Test: `tests/bin-lib/wrap-up/engine-cli.test.js:707`
+- Test: `tests/wrap-up-record-resolution-conformance.test.js:72` (pins line 111's step list)
+- Test: `tests/local-merge-auto-finish.test.js:74` (slices the local-merge branch up to `'3.5.'`)
 
 **Interfaces:**
 - Consumes: nothing.
@@ -50,27 +51,27 @@ Ran from the main checkout: `find "/Users/thomasholknielsen/Code Workspaces/clau
 
 - [ ] **Step 1: Delete the appendix section.** Remove from the line `## Step 3.5: Transitional guard — a run directory whose only copy is inside this worktree` through the end of the `**Removal condition**` paragraph (ending `…abandoned state, not live state.`), and the blank line after it, so `## Step 4: Unverified caveat on the \`reconcile\` remedy` follows the Step 2 section directly.
 
-- [ ] **Step 2: Delete step 3.5 from the head.** In `cleanup-procedures-execution.md`, remove the whole list item starting `3.5. **Transitional guard — a run directory whose only copy is inside this worktree.**` through `condition); until then, check it on every run.`. On lines 139 and 154 replace `Skip steps 3.5, 3.6, 4, and 5 below` with `Skip steps 3.6, 4, and 5 below`.
+- [ ] **Step 2: Delete step 3.5 from the head.** In `cleanup-procedures-execution.md`, remove the whole list item starting `3.5. **Transitional guard — a run directory whose only copy is inside this worktree.**` through `condition); until then, check it on every run.`. On lines 139 and 154 replace `Skip steps 3.5, 3.6, 4, and 5 below` with `Skip steps 3.6, 4, and 5 below`. On line 111 replace `skip steps 3, 3.5, 3.6, 4, and 5 below and Section E` with `skip steps 3, 3.6, 4, and 5 below and Section E`.
+
+- [ ] **Step 2b: Re-point the two tests that read the head's step list.** In `tests/wrap-up-record-resolution-conformance.test.js:72` change the regex to `/Stop here with no carrier commit: skip steps 3, 3\.6, 4, and 5 below and Section E/`. In `tests/local-merge-auto-finish.test.js:74` change `EXEC.indexOf('3.5.', localMergeStart)` to `EXEC.indexOf('3.6.', localMergeStart)` — step 3.6 is the list item that now follows the local-merge branch, so the slice keeps its old end boundary instead of running to end-of-file.
 
 - [ ] **Step 3: Replace the engine-cli sentinel (AC4.1).** In `tests/bin-lib/wrap-up/engine-cli.test.js:707` replace `assert.doesNotMatch(r.stdout, /Delete unconditionally after \*\*2026-11-07\*\*/);` with `assert.doesNotMatch(r.stdout, /producing \*\*no merge commit at all\*\*/);`. Control (run after Step 1):
 
 Run: `grep -c -F 'producing **no merge commit at all**' plugin/skills/wrap-up/cleanup-procedures-execution-appendix.md plugin/skills/wrap-up/cleanup-procedures-execution.md`
 Expected: `…appendix.md:1` and `…execution.md:0` (recorded at authoring: 1 and 0).
 
-- [ ] **Step 4: Update the appendix description.** In `docs/plugin-structure.md:119` replace `— the Prose fallback, the pre-anchoring Transitional guard, and the Multi-spec defer protocol, respectively —` with `— the Prose fallback, the dedicated-commit rationale and \`reconcile\` caveat, and the Multi-spec defer protocol, respectively —`.
-
 - [ ] **Step 5: Verify.**
 
-Run: `node --test tests/bin-lib/wrap-up/engine-cli.test.js`
+Run: `node --test tests/bin-lib/wrap-up/engine-cli.test.js tests/wrap-up-record-resolution-conformance.test.js tests/local-merge-auto-finish.test.js`
 Expected: PASS, including `render --section procedure:cleanup-procedures-execution emits the head file and excludes its appendix content`.
 
 Run: `grep -n -i 'transitional guard\|2026-11-07\|3\.5' plugin/skills/wrap-up/cleanup-procedures-execution-appendix.md plugin/skills/wrap-up/cleanup-procedures-execution.md`
-Expected: no output (at base: hits on appendix 23/76 and head 139/154/160/165/167).
+Expected: no output (at base: hits on appendix 23/76 and head 111/139/154/160/165/167).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add plugin/skills/wrap-up/cleanup-procedures-execution-appendix.md plugin/skills/wrap-up/cleanup-procedures-execution.md docs/plugin-structure.md tests/bin-lib/wrap-up/engine-cli.test.js
+git add plugin/skills/wrap-up/cleanup-procedures-execution-appendix.md plugin/skills/wrap-up/cleanup-procedures-execution.md tests/bin-lib/wrap-up/engine-cli.test.js tests/wrap-up-record-resolution-conformance.test.js tests/local-merge-auto-finish.test.js
 git commit -m "Remove wrap-up Section C step 3.5's transitional guard at its sunset (#3847)"
 ```
 
@@ -122,12 +123,16 @@ git commit -m "Re-ground [IL-116]'s rationale on the surviving teardown sequence
 - Modify: `plugin/skills/wrap-up/merge-mode.md:27`
 - Modify: `docs/skill-graph.md:249`
 - Modify: `plugin/skills/_shared/pipeline-run-dir.md` (lines 48-51, 76-79, 131-134)
+- Modify: `docs/plugin-structure.md:119`
+- Test: `tests/wrap-up-merge-mode-conformance.test.js:36` (pins merge-mode.md's `Section C steps 3.5-5.5`)
 
 **Interfaces:**
 - Consumes: Task 1's Section C numbering.
 - Produces: no "3.5-5.5" range; the anchoring contract no longer names a pre-anchoring exception.
 
-- [ ] **Step 1: merge-mode.md:27.** Replace `Section C steps 3.5-5.5 (step 3.5 is the pre-anchoring copy-out guard; step 4 carries the squash containment proof)` with `Section C steps 3.6-5.5 (step 4 carries the squash containment proof)`.
+- [ ] **Step 1: merge-mode.md:27 and its pin.** Replace `Section C steps 3.5-5.5 (step 3.5 is the pre-anchoring copy-out guard; step 4 carries the squash containment proof)` with `Section C steps 3.6-5.5 (step 4 carries the squash containment proof)`. In `tests/wrap-up-merge-mode-conformance.test.js:36` change `'section-c': /Section C steps 3\.5-5\.5/,` to `'section-c': /Section C steps 3\.6-5\.5/,`.
+
+- [ ] **Step 1b: Update the appendix description.** In `docs/plugin-structure.md:119` replace `— the Prose fallback, the pre-anchoring Transitional guard, and the Multi-spec defer protocol, respectively —` with `— the Prose fallback, the dedicated-commit rationale and \`reconcile\` caveat, and the Multi-spec defer protocol, respectively —`.
 
 - [ ] **Step 2: skill-graph.md:249.** Replace `cites Section C steps 3.5-5.5 and Section E` with `cites Section C steps 3.6-5.5 and Section E`.
 
@@ -141,13 +146,13 @@ git commit -m "Re-ground [IL-116]'s rationale on the surviving teardown sequence
 Run: `node --test tests/wrap-up-merge-mode-conformance.test.js tests/skill-graph-table-structure.test.js tests/pipeline-run-dir-cli-boundary-pin.test.js tests/flow-run-dir-anchoring.test.js tests/pipeline-run-dir-adoption-anchoring.test.js`
 Expected: PASS.
 
-Run: `grep -n -i 'step 3\.5\|steps 3\.5\|transitional\|2026-11-07' plugin/skills/wrap-up/merge-mode.md plugin/skills/_shared/pipeline-run-dir.md docs/skill-graph.md`
-Expected: no output (at base: merge-mode:27, pipeline-run-dir:50/78/133/134, skill-graph:249).
+Run: `grep -n -i 'step 3\.5\|steps 3\.5\|transitional\|2026-11-07' plugin/skills/wrap-up/merge-mode.md plugin/skills/_shared/pipeline-run-dir.md docs/skill-graph.md docs/plugin-structure.md`
+Expected: no output (at base: merge-mode:27, pipeline-run-dir:50/78/133/134, skill-graph:249, plugin-structure:119).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/skills/wrap-up/merge-mode.md docs/skill-graph.md plugin/skills/_shared/pipeline-run-dir.md
+git add plugin/skills/wrap-up/merge-mode.md docs/skill-graph.md plugin/skills/_shared/pipeline-run-dir.md docs/plugin-structure.md tests/wrap-up-merge-mode-conformance.test.js
 git commit -m "Re-point Section C step ranges and drop the pre-anchoring exception from the anchoring contract (#3847)"
 ```
 
@@ -206,19 +211,20 @@ git commit -m "Drop the retired copy-out guard from hook comments and the shadow
 
 **Role:** transcription
 
-**Files:** none modified (verification only; a hit here is fixed in the task that owns the file).
+**Files:** none modified in the repo (verification plus one PR-body write; a grep hit here is fixed in the task that owns the file).
 
 - [ ] **Step 1: AC1.1** — Run: `git grep -n '2026-11-07' -- plugin/ tests/` — Expected: no output. Control at base `87e79b904`: 6 hits (pre-tool-use.js:712, pipeline-run-dir.md:134, appendix:76, cleanup-procedures-execution.md:167, engine-cli.test.js:707, hooks-pipeline-shadow-guard.test.js:14).
 - [ ] **Step 2: AC2.1** — Run: `git grep -n -i 'transitional guard' -- plugin/ tests/ docs/donts.md` — Expected: no output. Control at base: hits in appendix, cleanup-procedures-execution.md, pipeline-run-dir.md, two-call-gate.md, flags.md, donts.md, hooks-pipeline-shadow-guard.test.js.
 - [ ] **Step 3: AC3.1** — Run: `git grep -n -i 'step 3\.5' -- plugin/skills/wrap-up/cleanup-procedures-execution.md plugin/skills/wrap-up/cleanup-procedures-execution-appendix.md plugin/skills/_shared/pipeline-run-dir.md plugin/skills/_shared/ceremony-profile.md plugin/skills/dispatch/two-call-gate.md docs/donts.md` — Expected: no output. Control at base: hits in all six files.
-- [ ] **Step 4: Retirement sweep (three phrasings)** — Run: `git grep -n -i -e 'copy-out guard' -e 'steps 3\.5' -e 'step 3\.5.s' -- plugin docs tests ':!docs/incident-log.md' ':!docs/superpowers/plans' ':!docs/plans/*-ledger.md'` — Expected: no hit naming wrap-up's cleanup step (hits about review/backlog/journeys/docs-health/routine/attention Step 3.5 are unrelated and stay). Exclusions added per #4579; control on the excluded form at base returns the context.js, run-dir-resolve.js, pipeline-run-dir.md, merge-mode.md, skill-graph.md and cleanup-procedures-execution.md sites.
+- [ ] **Step 4: Retirement sweep (three phrasings)** — Run: `git grep -n -i -e 'copy-out guard' -e 'steps 3\.5' -e 'step 3\.5.s' -e '3, 3\.5' -e '3\\\.5-5\\\.5' -e "'3\.5\.'" -- plugin docs tests ':!docs/incident-log.md' ':!docs/superpowers/plans' ':!docs/plans/*-ledger.md'` — Expected: no hit naming wrap-up's cleanup step (hits about review/backlog/journeys/docs-health/routine/attention Step 3.5 are unrelated and stay). Exclusions added per #4579; control on the excluded form at base returns the context.js, run-dir-resolve.js, pipeline-run-dir.md, merge-mode.md, skill-graph.md and cleanup-procedures-execution.md sites.
 - [ ] **Step 5: AC6.1** — the full `npm test` runs at build Common Step 5 (`verify.js`), not here.
+- [ ] **Step 6: Deliverable 1 into the PR body.** Read PR #5220's current body (`gh pr view 5220 --json body -q .body` to a session-tmp file), append a `### Removal-condition check (Deliverable 1)` section holding the exact `find` command from the Deliverable 1 section above and its summary line (15,008 lines; 14,976 run-dir hits across 32 worktrees; 0 runs missing from the main checkout's `pipelines/`; 0 holding gitignored state outside `work/`), write it with the Write tool, and apply it with `gh pr edit 5220 --body-file {file}`. Verify with `gh pr view 5220 --json body -q .body` showing the section. Re-run the `find` first if the worktree set changed since 2026-11-11, and use the fresh counts.
 
 ## Spec coverage
 
 | Spec item | Task |
 |---|---|
-| Deliverable 1 (find check, quote in PR) | Authoring-time result above |
+| Deliverable 1 (find check, summary in PR per Plan Review Clarifications) | Authoring-time result above; Task 5 Step 6 |
 | Deliverable 2 (delete appendix section + Section C step) | Task 1 |
 | Deliverable 3 (pipeline-run-dir.md) | Task 3 |
 | Deliverable 4 (`[IL-116]` re-point) | Task 2 |
