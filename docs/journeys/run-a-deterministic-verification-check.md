@@ -14,6 +14,7 @@ files:
   - plugin/bin/lib/verify/file-template.js
   - plugin/bin/lib/verify/scope.js
   - plugin/bin/lib/verify/baseline.js
+  - plugin/bin/lib/verify/slot.js
   - plugin/bin/lib/verify/pre-existing.js
   - plugin/skills/test/verification.md
   - plugin/skills/test/flake-handling.md
@@ -238,4 +239,5 @@ files:
 - Step 11 extended by #3933 (`verification.md`'s "Not skipped — execute" block states the pipeline-site baseline flags and points at Baseline adjudication for the exact form; pinned by `tests/bin-lib/verify/snippet-conformance.test.js`'s `AC1.1` test). Before this, a caller following that block ran three verification passes that could not adjudicate before a fourth, with the baseline flags, stamped HEAD.
 - Step 11 extended by #3723 (`baseline.js`'s report-only `attributedTests`, by suite path; `extract.js`'s `failingTestsByFile` gains an off-by-default `ownOnly` option that drops TAP parents whose failure is only inherited): a consumer such as the Windows regression filer can name the tests a file newly fails instead of the file's first failure.
 - Step 16 and Step 17 updated by #4006 (bare `--stamp-status` discovers `.claude-tweaks/verify-scope.json`; `checkFirstCallStamp` accepts a complete composed verdict; a discovered declaration that resolves outside the checkout, or dangles, is reported as `scopeError` and never read) — a chunked or generated-regenerating project is no longer re-verified in full at every later gate.
+- Step 11 extended by #5150 (`baseline.js` reruns serially unless `concurrency.reruns` declares more and backs off on `extract.js`'s `timeoutEvidence` or a declared `concurrency.timeoutPatterns` match; a slot-holding run reuses one scratch path per slot and lock dir; a base-side run counts only while its scratch HEAD is the base commit; ADR 0031): a project whose test command owns one per-checkout resource no longer gets four concurrent reruns on it, nor a new scratch path per adjudication.
 - Step 10's agent-side guidance relocated by #4059 (`verification.md`'s Flake handling section moved verbatim to `plugin/skills/test/flake-handling.md`, read when a `tests` check fails or the runner prints a `flaky-retried`/`flaky-allowlist` caveat): no behavior change — `verification.md` drops back under the 52,500 B Read rail.
