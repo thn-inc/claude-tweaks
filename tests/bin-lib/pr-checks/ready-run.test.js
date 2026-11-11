@@ -449,6 +449,20 @@ test('CLI: run prints exactly the core envelope plus pr and sha on one line, exi
   const rooted = cli(['--pr', '7', '--sha', SHA, '--root', '/elsewhere'], harness({ gh: { ready: [] } }).deps);
   assert.deepEqual(rooted.roots, ['/elsewhere']);
   emitted.add(JSON.parse(rooted.out).state);
+  // A removed cwd (a reaped worktree) is read-failed data, still exit 0, with nothing read.
+  const out = [];
+  const code = run(['--pr', '7', '--sha', SHA], {
+    cwd: () => { throw Object.assign(new Error('ENOENT: process.cwd failed'), { code: 'ENOENT' }); },
+    stdout: (s) => out.push(s),
+    stderr: () => {},
+    readerDeps: () => { throw new Error('reader must not be built'); },
+  });
+  assert.equal(code, 0);
+  const gone = JSON.parse(out.join(''));
+  assert.equal(gone.state, 'read-failed');
+  assert.equal(gone.reason, 'checkout unreadable: ENOENT: process.cwd failed');
+  assert.equal(gone.pr, PR);
+  emitted.add(gone.state);
 });
 
 test('CLI: the states its cases emit cover STATES exactly', () => {
