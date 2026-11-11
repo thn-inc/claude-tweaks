@@ -22,8 +22,10 @@ const path = require('path');
 const { spawn, spawnSync, execFileSync } = require('child_process');
 
 const { parseArgs, UsageError, USAGE } = require('./lib/verify/args');
-const { runChecks, runOne, killTree } = require('./lib/verify/run');
-const { resolveSuiteSlots, chooseLane, holdSlot } = require('./lib/verify/slot');
+const { runChecks, runOne, stopTrees } = require('./lib/verify/run');
+const {
+  resolveSuiteSlots, chooseLane, holdSlot, SlotUnavailableError,
+} = require('./lib/verify/slot');
 const {
   adjudicate, realGit, findStaleBaselineWorktrees, RUNNER_ERROR_RE,
 } = require('./lib/verify/baseline');
@@ -784,16 +786,19 @@ async function main() {
 
   // #5119: the machine-wide suite slot. Its count is the declaration's
   // concurrency.suiteSlots (under --scope the declaration read above, else
-  // the default one), then --default-suite-slots, then 1. Every hold below
-  // passes `track` to its spawns, so a signal mid-hold kills the running
-  // checks' process trees before the slot is freed; an unheld run never
-  // tracks, keeping today's spawn options exactly.
+  // the default one), then --default-suite-slots, then 1. A nested run
+  // (inheriting CT_TEST_SUITE_SLOT_HELD=1) takes no slot, so it never reads
+  // the default one. Every hold below passes `track` to its spawns, so a
+  // signal mid-hold stops the running checks' process trees (stopTrees:
+  // the signal, a grace for their own teardown, then a kill) before the slot
+  // is freed; an unheld run never tracks, keeping today's spawn options exactly.
+  const nestedRun = process.env.CT_TEST_SUITE_SLOT_HELD === '1';
   const { slots, source: slotSource } = resolveSuiteSlots({
-    declared: (decl ? decl.concurrency : defaultConcurrency(parsed.cwd || process.cwd())).suiteSlots,
+    declared: decl ? decl.concurrency.suiteSlots : (nestedRun ? null : defaultConcurrency(parsed.cwd || process.cwd()).suiteSlots),
     flag: parsed.defaultSuiteSlots,
   });
   const track = new Set();
-  const killTracked = () => { for (const child of track) killTree(child); };
+  const killTracked = (signal) => stopTrees(track, signal);
   const holdFor = (lane) => holdSlot({
     lane, slots, source: slotSource, beforeRelease: killTracked,
   });
@@ -840,7 +845,9 @@ async function main() {
         check: result, plan, maxRetries: decl.flaky.maxRetries,
         logDir: ctx.logDir, runOne: (ctx.track || retryHold) ? trackedRunOne : runOne, spawnImpl: ctx.spawnImpl, now: ctx.now, cwd: ctx.cwd, env: envOf(result.name),
       });
-      return { ...retried, retryDecision: decision };
+      // The retry's own hold is recorded on the retried check, as `retrySlot` —
+      // report.slot stays the checks' hold alone.
+      return { ...retried, retryDecision: decision, ...(retryHold ? { retrySlot: slotReport(retryHold) } : {}) };
     } finally {
       if (retryHold) retryHold.release();
     }
@@ -1517,6 +1524,14 @@ async function main() {
 }
 
 main().catch((err) => {
+  // #5119: a lock dir the suite slot cannot use is an infrastructure failure
+  // before the checks run, so it takes the usage/infrastructure exit (2),
+  // never the failed-check exit.
+  if (err instanceof SlotUnavailableError) {
+    process.stderr.write(`verify.js: suite slot unavailable — ${err.message}\n`);
+    process.exitCode = 2;
+    return;
+  }
   process.stderr.write(`verify.js: ${String((err && err.stack) || err)}\n`);
   process.exitCode = 1;
 });

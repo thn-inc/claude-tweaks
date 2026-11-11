@@ -7,7 +7,7 @@ const fs = require('fs');
 const { EventEmitter } = require('events');
 
 const {
-  resolveSuiteSlots, chooseLane, workerCap, holdSlot,
+  resolveSuiteSlots, chooseLane, workerCap, holdSlot, SlotUnavailableError,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'slot.js'));
 
 test('resolveSuiteSlots: the declaration wins over the flag, the flag over the default (#5119)', () => {
@@ -109,9 +109,9 @@ test('holdSlot: a signal with no other listener runs beforeRelease, releases, an
   for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
     const dir = tmpSlotDir();
     const order = [];
-    const { proc } = hold(dir, { beforeRelease: () => order.push(fs.existsSync(lockFile(dir)) ? 'kill-while-held' : 'kill-after-release') });
+    const { proc } = hold(dir, { beforeRelease: (got) => order.push([got, fs.existsSync(lockFile(dir)) ? 'kill-while-held' : 'kill-after-release']) });
     proc.emit(sig);
-    assert.deepStrictEqual(order, ['kill-while-held'], sig);
+    assert.deepStrictEqual(order, [[sig, 'kill-while-held']], `${sig}: beforeRelease gets the signal received, while the slot is held`);
     assert.strictEqual(fs.existsSync(lockFile(dir)), false, sig);
     assert.deepStrictEqual(proc.exits, [128 + os.constants.signals[sig]], sig);
   }
@@ -136,6 +136,39 @@ test('holdSlot: the exit hook frees the slot on any exit path (#5119)', () => {
   const { proc } = hold(dir);
   proc.emit('exit', 1);
   assert.strictEqual(fs.existsSync(lockFile(dir)), false);
+});
+
+test('holdSlot reads the core count only once it holds a slot, from cpus() where availableParallelism is missing (Node before 18.14) (#5119)', () => {
+  const dir = tmpSlotDir();
+  const { h, env } = hold(dir, { cores: undefined, osImpl: { cpus: () => new Array(40).fill({}) } });
+  assert.strictEqual(env.CT_TEST_WORKERS, String(workerCap(40, 1)));
+  h.release();
+  const tooEarly = () => { throw new Error('the core count was read before the early return'); };
+  const nested = hold(dir, {
+    cores: undefined, osImpl: { availableParallelism: tooEarly, cpus: tooEarly }, env: { CT_TEST_SUITE_SLOT_DIR: dir, CT_TEST_SUITE_SLOT_HELD: '1' },
+  });
+  assert.strictEqual(nested.h, null);
+});
+
+test('holdSlot: the wait line names only concurrency.suiteSlots when the declaration set the count (#5119)', () => {
+  for (const [source, namesPolicy] of [['declaration', false], ['flag', true], ['default', true]]) {
+    const dir = tmpSlotDir();
+    fs.writeFileSync(lockFile(dir), JSON.stringify({ pid: process.pid, cwd: '/holder', startedAt: new Date().toISOString() }));
+    const lines = [];
+    const { h } = hold(dir, {
+      source, pid: process.pid + 1, log: (l) => lines.push(l), sleep: () => fs.unlinkSync(lockFile(dir)),
+    });
+    assert.strictEqual(lines.length, 1, source);
+    assert.ok(lines[0].includes('concurrency.suiteSlots in .claude-tweaks/verify-scope.json'), `${source}: ${lines[0]}`);
+    assert.strictEqual(lines[0].includes('verify-suite-slots'), namesPolicy, `${source}: ${lines[0]}`);
+    h.release();
+  }
+});
+
+test('holdSlot: a lock dir it cannot use throws SlotUnavailableError carrying the cause (#5119)', () => {
+  const file = path.join(tmpSlotDir(), 'not-a-dir');
+  fs.writeFileSync(file, '');
+  assert.throws(() => hold(file), (err) => err instanceof SlotUnavailableError && err.message.length > 0);
 });
 
 test('holdSlot: index is the slot taken (#5119)', () => {

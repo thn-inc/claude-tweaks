@@ -10,7 +10,17 @@ const {
 } = require('../suite-slot');
 
 const SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'];
-const SLOT_HINT = 'raise concurrency.suiteSlots in .claude-tweaks/verify-scope.json, or the verify-suite-slots policy key';
+
+// The wait line's raise-the-limit advice. A declared count wins over the
+// policy key's flag, so raising the key would change nothing there.
+function slotHint(source) {
+  const declared = 'raise concurrency.suiteSlots in .claude-tweaks/verify-scope.json';
+  return source === 'declaration' ? declared : `${declared}, or the verify-suite-slots policy key`;
+}
+
+// A lock dir holdSlot cannot use (not a directory owned by this user, not
+// writable, …): verify.js exits 2 on it, never 1 as if a check had failed.
+class SlotUnavailableError extends Error {}
 
 // A declared concurrency.suiteSlots wins, then --default-suite-slots, then one
 // slot. `declared` and `flag` are positive integers or null (validated by
@@ -41,28 +51,36 @@ function workerCap(cores, slots) {
 // verify.js or run-tests.js never waits on its own parent. While held, every child inherits
 // CT_TEST_SUITE_SLOT_HELD=1 and a CT_TEST_WORKERS cap (a value the caller set wins); release
 // restores both. The slot is freed on every exit path: an 'exit' hook, and SIGINT/SIGTERM/SIGHUP
-// handlers that first run `beforeRelease` (verify.js kills its running checks there), then
-// release, then exit 128+n only when no other listener for that signal remains — so
+// handlers that first run `beforeRelease(signal)` (verify.js stops its running checks there),
+// then release, then exit 128+n only when no other listener for that signal remains — so
 // adjudicate()'s own handler still removes its scratch worktree and exits. The acquire wait is
-// synchronous: no check runs while a run waits.
+// synchronous: no check runs while a run waits. A lock dir it cannot use throws
+// SlotUnavailableError. `cores` defaults to the core count, read only once a slot is held, from
+// `osImpl.availableParallelism()`, or `osImpl.cpus().length` on a Node without it (before 18.14).
 function holdSlot({
   lane, slots, source, beforeRelease = () => {}, env = process.env, tmpdir = os.tmpdir(),
-  cores = os.availableParallelism(), pid = process.pid, cwd = process.cwd(), isAlive = isPidAlive, now = Date.now,
+  cores, osImpl = os, pid = process.pid, cwd = process.cwd(), isAlive = isPidAlive, now = Date.now,
   sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
   log = (l) => process.stderr.write(`${l}\n`), proc = process,
 }) {
   if (env.CT_TEST_SUITE_SLOT_HELD === '1' || lane === null) return null;
   const base = defaultSlotBase(env, tmpdir);
-  ensureOwnDir(base);
   const startedMs = now();
-  const lockPath = acquireSlot({
-    dir: slotLane(base, lane === 'subset').dir, slots, pid, cwd, isAlive, now, sleep, log,
-    label: `verify.js [${lane} lane]`, hint: SLOT_HINT,
-  });
+  let lockPath;
+  try {
+    ensureOwnDir(base);
+    lockPath = acquireSlot({
+      dir: slotLane(base, lane === 'subset').dir, slots, pid, cwd, isAlive, now, sleep, log,
+      label: `verify.js [${lane} lane]`, hint: slotHint(source),
+    });
+  } catch (err) {
+    throw new SlotUnavailableError(String((err && err.message) || err));
+  }
   const waitedMs = now() - startedMs;
+  const cpuCount = cores ?? (typeof osImpl.availableParallelism === 'function' ? osImpl.availableParallelism() : osImpl.cpus().length);
   const prior = { CT_TEST_SUITE_SLOT_HELD: env.CT_TEST_SUITE_SLOT_HELD, CT_TEST_WORKERS: env.CT_TEST_WORKERS };
   env.CT_TEST_SUITE_SLOT_HELD = '1';
-  if (env.CT_TEST_WORKERS === undefined) env.CT_TEST_WORKERS = String(workerCap(cores, slots));
+  if (env.CT_TEST_WORKERS === undefined) env.CT_TEST_WORKERS = String(workerCap(cpuCount, slots));
   let released = false;
   const handlers = [];
   const release = () => {
@@ -81,7 +99,7 @@ function holdSlot({
     const handler = () => {
       const last = proc.listenerCount(sig) === 1;
       try {
-        beforeRelease();
+        beforeRelease(sig);
       } finally {
         release();
       }
@@ -96,5 +114,5 @@ function holdSlot({
 }
 
 module.exports = {
-  resolveSuiteSlots, chooseLane, workerCap, holdSlot,
+  resolveSuiteSlots, chooseLane, workerCap, holdSlot, SlotUnavailableError,
 };

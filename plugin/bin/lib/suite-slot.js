@@ -11,14 +11,15 @@
 // `ticket-<seq>.json`, `subset/`) or the ticket JSON shape (`{ pid, startedAt, cwd, slots? }`):
 // sibling worktrees on an older run-tests.js share the same directory and read these files.
 //
-// Every function is pure of `process`/`os` state except through its parameters, so tests drive the
-// lock with fake pids, clocks and sleeps.
+// The lock functions read no `process`/`os` state except through their parameters, so tests drive
+// the lock with fake pids, clocks and sleeps. Two helpers do read the process: `isPidAlive` probes
+// with `process.kill`, and `ensureOwnDir` compares against `process.getuid()`.
 
 const fs = require('fs');
 const path = require('path');
 
-// Matches a positive integer with no sign, fraction, or leading zero — the shape both
-// `CT_TEST_CONCURRENCY` and `CT_TEST_SUITE_SLOTS` accept.
+// Matches a positive integer with no sign, fraction, or leading zero — the shape
+// `CT_TEST_SUITE_SLOTS` and `CT_TEST_SUBSET_SLOTS` accept.
 const POSITIVE_INT = /^[1-9]\d*$/;
 
 // How many full suites may run at once across processes (the slot semaphore). Defaults to 1;

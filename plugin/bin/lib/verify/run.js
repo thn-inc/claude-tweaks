@@ -31,6 +31,51 @@ function killTree(child, { platform = process.platform, kill = process.kill, exe
   try { if (child) child.kill('SIGKILL'); } catch { /* best effort */ }
 }
 
+// #5119: how long a signalled check gets for its own teardown (containers,
+// temp databases, worker shutdown) before stopTrees kills its tree.
+const SIGNAL_GRACE_MS = 5000;
+
+// Whether any process is left in the POSIX process group `pid` leads. Any
+// throw counts as gone: ESRCH, or EPERM, which macOS reports for a group of
+// only unreaped zombies — and a group we cannot signal could not be killed
+// below anyway.
+function groupAlive(pid, kill) {
+  try {
+    kill(-pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Stops every tracked check on a signal (#5119): POSIX forwards `signal` to
+// each check's process group (the session runOne's `detached` spawn gave it,
+// so the terminal's own signal never reached it), polls every `pollMs` for up
+// to `graceMs` while any group lives, then killTrees the groups still alive.
+// Synchronous, because it runs inside a signal handler that cannot await:
+// `sleep` blocks. An exited check's group stays visible until Node reaps it,
+// which it cannot do while this blocks, so on Linux, where a zombie still
+// answers the probe, the grace runs to its end. Win32 has no signal to
+// forward, so each tree is killed at once (killTree's taskkill /T). Never
+// throws.
+function stopTrees(children, signal, {
+  platform = process.platform, kill = process.kill, execImpl = execFileSync, graceMs = SIGNAL_GRACE_MS, pollMs = 100,
+  sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
+} = {}) {
+  const all = [...children];
+  const grouped = platform === 'win32' ? [] : all.filter((c) => c && typeof c.pid === 'number');
+  for (const child of all) if (!grouped.includes(child)) killTree(child, { platform, kill, execImpl });
+  for (const child of grouped) {
+    try { kill(-child.pid, signal); } catch { /* ESRCH: the group already exited */ }
+  }
+  let alive = grouped.filter((c) => groupAlive(c.pid, kill));
+  for (let waited = 0; alive.length && waited < graceMs; waited += pollMs) {
+    sleep(pollMs);
+    alive = alive.filter((c) => groupAlive(c.pid, kill));
+  }
+  for (const child of alive) killTree(child, { platform, kill, execImpl });
+}
+
 function runOne({
   name, command, logDir, spawnImpl, now, cwd, env: checkEnv = null, platform = process.platform,
   timeout: timeoutMs = null, track = null,
@@ -177,4 +222,6 @@ async function runChecks({
   return results;
 }
 
-module.exports = { runChecks, runOne, killTree };
+module.exports = {
+  runChecks, runOne, killTree, stopTrees, SIGNAL_GRACE_MS,
+};

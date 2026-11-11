@@ -101,6 +101,8 @@ function entryFor(check) {
   if (check.countsUnparsed) entry.countsUnparsed = check.countsUnparsed;
   // #4347: a check whose verdict is a CI job's names that run.
   if (check.ci) entry.ci = check.ci;
+  // #5119: the suite slot a CI-answered suite's local retry held.
+  if (check.retrySlot) entry.retrySlot = check.retrySlot;
   return entry;
 }
 

@@ -214,6 +214,7 @@ test('a red CI suite with no local retry takes no slot (#5119)', { skip: SKIP },
   const res = await runCli(['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', r.branch, '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env: withSlots(env, dir) });
   assert.strictEqual(res.code, 1, res.stdout + res.stderr);
   assert.strictEqual(reportOf(r).checks.tests.retryDecision.retry, false);
+  assert.ok(!('retrySlot' in reportOf(r).checks.tests), 'no retry hold, no retrySlot');
   assert.strictEqual(fs.existsSync(dir), false, 'no slot was tried for');
 });
 
@@ -229,41 +230,69 @@ test('a red CI suite\'s local flaky retry runs under a held subset-lane slot (#5
   const dir = path.join(tmpDir(), 'slots');
   const res = await runCli(['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', r.branch, '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env: withSlots(env, dir) });
   assert.strictEqual(res.code, 0, res.stdout + res.stderr);
-  assert.deepStrictEqual(reportOf(r).checks.tests.flakyRetried, ['tests/env.test.js']);
+  const report = reportOf(r);
+  assert.deepStrictEqual(report.checks.tests.flakyRetried, ['tests/env.test.js']);
+  const { waitedMs, ...retrySlot } = report.checks.tests.retrySlot;
+  assert.deepStrictEqual(retrySlot, { lane: 'subset', index: 0, slots: 1, source: 'default' }, 'the retry hold is recorded on the retried check');
+  assert.ok(Number.isInteger(waitedMs), String(waitedMs));
+  assert.ok(!('slot' in report), 'report.slot stays the checks hold\'s alone — no local check ran here');
   assert.strictEqual(fs.readFileSync(out, 'utf8'), '1', 'the retry ran with the slot held');
   assert.deepStrictEqual(fs.readdirSync(path.join(dir, 'subset')), [], 'the subset-lane slot was taken and freed');
   assert.deepStrictEqual(fs.readdirSync(dir), ['subset'], 'never the full lane');
 });
 
-test('a SIGTERM during a CI-failed suite\'s local retry kills the retry and frees its slot (#5119)', { skip: SKIP }, async () => {
+test('a SIGTERM during a CI-failed suite\'s local retry kills the retry and its forked grandchild, and frees its slot (#5119)', { skip: SKIP }, async () => {
   const out = path.join(tmpDir(), 'retry-pid.txt');
+  const grandOut = path.join(tmpDir(), 'grandchild-pid.txt');
+  // The retry forks a grandchild that ignores SIGTERM, so only the group kill after the grace reaches it.
+  const script = path.join(tmpDir(), 'retry.js');
+  fs.writeFileSync(script, [
+    "const fs = require('fs');",
+    "const { spawn } = require('child_process');",
+    'const [out, grandOut] = process.argv.slice(2);',
+    "const grand = \"process.on('SIGTERM', () => {}); require('fs').writeFileSync(process.argv[1], String(process.pid)); setInterval(() => {}, 1000);\";",
+    "spawn(process.execPath, ['-e', grand, grandOut], { stdio: 'ignore', windowsHide: true });",
+    'fs.writeFileSync(out, String(process.pid));',
+    'setTimeout(() => {}, 30000);',
+  ].join('\n'));
   const r = repoWith({
     declExtra: {
       flaky: { files: ['tests/env.test.js'] },
-      retry: { tests: `node -e "require('fs').writeFileSync(process.argv[1], String(process.pid)); setTimeout(() => {}, 30000)" "${out}" {file}` },
+      retry: { tests: `node "${script}" "${out}" "${grandOut}" {file}` },
     },
   });
   const { env } = fakeGhEnv('red', ciLogOf(r, ['tests/env.test.js', 'tests/ok.test.js']));
   const dir = path.join(tmpDir(), 'slots');
   const child = spawn(process.execPath, [CLI, '--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', r.branch, '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], {
-    cwd: r.repo, env: withSlots(env, dir), stdio: 'ignore',
+    cwd: r.repo, env: withSlots(env, dir), stdio: 'ignore', timeout: 60000, killSignal: 'SIGKILL',
   });
   const exited = new Promise((resolve) => { child.on('exit', (c, s) => resolve([c, s])); });
   const pause = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
-  let retryPid = NaN;
-  for (const deadline = Date.now() + 20000; Date.now() < deadline && !Number.isInteger(retryPid);) {
-    const text = fs.existsSync(out) ? fs.readFileSync(out, 'utf8') : '';
-    if (/^\d+$/.test(text)) retryPid = Number(text); else await pause(50);
-  }
-  assert.ok(Number.isInteger(retryPid), 'the retry started');
+  const pidIn = async (file) => {
+    for (const deadline = Date.now() + 20000; Date.now() < deadline;) {
+      const text = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+      if (/^\d+$/.test(text)) return Number(text);
+      await pause(50);
+    }
+    return NaN;
+  };
+  const retryPid = await pidIn(out);
+  const grandPid = await pidIn(grandOut);
+  assert.ok(Number.isInteger(retryPid) && Number.isInteger(grandPid), 'the retry and its grandchild started');
   child.kill('SIGTERM');
   const [code] = await exited;
-  let gone = false;
-  for (const deadline = Date.now() + 5000; Date.now() < deadline && !gone;) {
-    try { process.kill(retryPid, 0); await pause(50); } catch (err) { gone = err.code === 'ESRCH'; }
-  }
-  if (!gone) { try { process.kill(retryPid, 'SIGKILL'); } catch { /* already gone */ } }
+  const goneAfter = async (pid) => {
+    for (const deadline = Date.now() + 10000; Date.now() < deadline;) {
+      try { process.kill(pid, 0); } catch (err) { if (err.code === 'ESRCH') return true; }
+      await pause(50);
+    }
+    try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
+    return false;
+  };
+  const goneRetry = await goneAfter(retryPid);
+  const goneGrand = await goneAfter(grandPid);
   assert.strictEqual(code, 143);
-  assert.ok(gone, `the retry (pid ${retryPid}) was killed, not orphaned`);
+  assert.ok(goneRetry, `the retry (pid ${retryPid}) was killed, not orphaned`);
+  assert.ok(goneGrand, `the retry's grandchild (pid ${grandPid}) was killed with its group, not orphaned`);
   assert.deepStrictEqual(fs.readdirSync(path.join(dir, 'subset')), [], 'the subset-lane slot is freed');
 });

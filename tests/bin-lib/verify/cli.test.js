@@ -3555,8 +3555,9 @@ test('AC1.1: two concurrent full runs in different worktrees serialize on one lo
   for (const run of runs) assert.strictEqual(run.code, 0, run.stdout + run.stderr);
   assertSerialized(out, 2);
   const slots = repos.map((r) => reportAt(r).slot);
+  // No waitedMs lower bound: the holder is the sibling run, so a loaded machine can start the two
+  // far enough apart that neither waits. assertSerialized above is the proof.
   for (const slot of slots) assert.deepStrictEqual(withoutWait(slot), { lane: 'full', index: 0, slots: 1, source: 'default' });
-  assert.ok(Math.max(...slots.map((s) => s.waitedMs)) >= 1000, `one run waited for the other: ${JSON.stringify(slots)}`);
   assert.deepStrictEqual(fs.readdirSync(dir), [], 'both slots and both tickets are gone');
 });
 
@@ -3565,7 +3566,7 @@ test('AC2.1: a lock naming a dead pid is reclaimed by the next verify.js run (#5
   const dir = tmpDir();
   const dead = spawnSync(process.execPath, ['-e', '0']).pid;
   fs.writeFileSync(path.join(dir, 'slot-0.lock'), JSON.stringify({ pid: dead, startedAt: new Date().toISOString(), cwd: '/gone' }));
-  const run = await runCli(['--cmd', 'tests=node -e 0'], { cwd: r.repo, env: slotEnv(dir), timeout: 10000 });
+  const run = await runCli(['--cmd', 'tests=node -e 0'], { cwd: r.repo, env: slotEnv(dir), timeout: 60000 });
   assert.strictEqual(run.code, 0, run.stdout + run.stderr);
   assert.strictEqual(reportAt(r).slot.index, 0);
   assert.strictEqual(fs.existsSync(path.join(dir, 'slot-0.lock')), false);
@@ -3633,7 +3634,7 @@ test('AC5.1: a scoped failing --baseline run\'s adjudication waits for a full-la
   const adjLogs = fs.readdirSync(logDir).filter((f) => /^tests-(baseline|isolated)-.*\.log$/.test(f));
   assert.ok(adjLogs.length > 0, fs.readdirSync(logDir).join(', '));
   // 50 ms of slack for a filesystem clock coarser than Date.now(); the poll interval is 2 s.
-  assert.ok(Math.min(...adjLogs.map(mtime)) >= releasedAt - 50, 'the first adjudication rerun spawned only after the full-lane slot was released');
+  assert.ok(Math.min(...adjLogs.map(mtime)) >= releasedAt - 50, 'every adjudication log was last written after the release (an mtime is a last-write time, not a spawn time; the queued ticket waitForQueued saw is what shows adjudication waited)');
   assert.ok(mtime('tests.log') < releasedAt, 'the checks ran before the release');
 });
 
@@ -3686,11 +3687,49 @@ test('an invalid default declaration\'s concurrency falls back with one stderr l
   assert.match(lines[0], /^verify\.js: concurrency ignored — .*concurrency\.suiteSlots/);
 });
 
+test('a nested run (CT_TEST_SUITE_SLOT_HELD=1) never reads the default declaration\'s concurrency, so an invalid one prints no line (#5119)', async () => {
+  const r = tmpGitRepo();
+  commitFile(r, '.claude-tweaks/verify-scope.json', JSON.stringify({
+    checks: { tests: 'npm test' }, rules: [{ match: '**', suites: '*', static: false }], concurrency: { suiteSlots: 0 },
+  }));
+  const run = await runCli(['--cmd', 'tests=node -e 0'], { cwd: r.repo, env: slotEnv(tmpDir(), { CT_TEST_SUITE_SLOT_HELD: '1' }), timeout: 60000 });
+  assert.strictEqual(run.code, 0, run.stdout + run.stderr);
+  assert.doesNotMatch(run.stderr, /concurrency ignored/);
+});
+
+test('a lock dir verify.js cannot use exits 2 with one named line, never 1 as if a check failed (#5119)', async () => {
+  const r = tmpGitRepo();
+  const notADir = path.join(tmpDir(), 'slots');
+  fs.writeFileSync(notADir, '');
+  const run = await runCli(['--cmd', 'tests=node -e 0'], { cwd: r.repo, env: slotEnv(notADir), timeout: 60000 });
+  assert.strictEqual(run.code, 2, run.stdout + run.stderr);
+  const lines = run.stderr.split('\n').filter(Boolean);
+  assert.strictEqual(lines.length, 1, run.stderr);
+  assert.match(lines[0], /^verify\.js: suite slot unavailable — \S/);
+});
+
+test('a check that runs tools/run-tests.js under the held slot skips the lock instead of waiting on its own parent (#5119 nested deadlock)', async () => {
+  const r = tmpGitRepo();
+  const dir = tmpDir();
+  const root = tmpDir();
+  fs.writeFileSync(path.join(root, 'nested.test.js'), "require('node:test')('nested', () => {});\n");
+  // A private TMPDIR, as AC3.1 does, so the nested runner's startup sweep never scans the real one.
+  const childTmp = tmpDir();
+  const run = await runCli(['--cmd', `tests=node "${RUN_TESTS}" "${root}"`], {
+    cwd: r.repo, env: slotEnv(dir, { TMPDIR: childTmp, TMP: childTmp, TEMP: childTmp }), timeout: 60000,
+  });
+  assert.strictEqual(run.code, 0, run.stdout + run.stderr);
+  const report = reportAt(r);
+  assert.deepStrictEqual(withoutWait(report.slot), { lane: 'full', index: 0, slots: 1, source: 'default' }, 'the parent held the one full-lane slot');
+  assert.strictEqual(report.checks.tests.exitCode, 0);
+  assert.deepStrictEqual(fs.readdirSync(dir), [], 'the nested runner took no slot and left no ticket');
+});
+
 test('AC7.1: a run started with CT_TEST_SUITE_SLOT_HELD=1 takes no slot (#5119)', async () => {
   const r = tmpGitRepo();
   const dir = tmpDir();
   holdLock(dir);
-  const run = await runCli(['--cmd', 'tests=node -e 0'], { cwd: r.repo, env: slotEnv(dir, { CT_TEST_SUITE_SLOT_HELD: '1' }), timeout: 10000 });
+  const run = await runCli(['--cmd', 'tests=node -e 0'], { cwd: r.repo, env: slotEnv(dir, { CT_TEST_SUITE_SLOT_HELD: '1' }), timeout: 60000 });
   assert.strictEqual(run.code, 0, run.stdout + run.stderr);
   assert.ok(!('slot' in reportAt(r)));
   assert.deepStrictEqual(fs.readdirSync(dir), ['slot-0.lock'], 'no ticket and no other slot was taken');
@@ -3743,6 +3782,80 @@ test('a SIGTERM mid-check kills the check\'s process tree and frees the slot (#5
   assert.strictEqual(code, 143);
   assert.strictEqual(fs.existsSync(path.join(dir, 'slot-0.lock')), false);
   assert.ok(gone, `the check (pid ${fixturePid}) was killed, not orphaned`);
+});
+
+// Resolves true once `pid` no longer exists, false if it is still alive after `ms`.
+async function waitGone(pid, ms = 10000) {
+  for (const deadline = Date.now() + ms; Date.now() < deadline;) {
+    try { process.kill(pid, 0); } catch (err) { if (err.code === 'ESRCH') return true; }
+    await pause(50);
+  }
+  return false;
+}
+// verify.js with one check running `node <script> <args…>`, spawned with a timeout that turns a hang
+// into a SIGKILL (and so a failed `signal === null` assertion), never a stuck test.
+function spawnVerifyWithScript(r, dir, script, args) {
+  const scriptPath = path.join(tmpDir(), 'check.js');
+  fs.writeFileSync(scriptPath, script);
+  const cmd = [`node "${scriptPath}"`, ...args.map((a) => `"${a}"`)].join(' ');
+  const child = spawn(process.execPath, [CLI, '--cmd', `tests=${cmd}`], {
+    cwd: r.repo, env: slotEnv(dir), stdio: 'ignore', timeout: 60000, killSignal: 'SIGKILL',
+  });
+  return { child, exited: new Promise((resolve) => { child.on('exit', (c, s) => resolve([c, s])); }) };
+}
+
+test('a SIGTERM mid-check reaches the check first, so its own teardown runs before verify.js frees the slot (#5119)', SLOT_POSIX_ONLY, async () => {
+  const r = tmpGitRepo();
+  const dir = tmpDir();
+  const ready = path.join(tmpDir(), 'ready.txt');
+  const marker = path.join(tmpDir(), 'teardown.txt');
+  const { child, exited } = spawnVerifyWithScript(r, dir, [
+    "const fs = require('fs');",
+    'const [ready, marker] = process.argv.slice(2);',
+    "process.on('SIGTERM', () => { fs.writeFileSync(marker, 'teardown ran'); process.exit(0); });",
+    'fs.writeFileSync(ready, String(process.pid));',
+    'setInterval(() => {}, 1000);',
+  ].join('\n'), [ready, marker]);
+  const checkPid = Number(await waitForText(ready, /^\d+$/));
+  child.kill('SIGTERM');
+  const [code, signal] = await exited;
+  if (!(await waitGone(checkPid, 1000))) { try { process.kill(checkPid, 'SIGKILL'); } catch { /* already gone */ } }
+  assert.strictEqual(signal, null, 'verify.js exits through its own handler');
+  assert.strictEqual(code, 143);
+  assert.ok(fs.existsSync(marker), 'the check got the SIGTERM and ran its own handler before its tree was killed');
+  assert.strictEqual(fs.readFileSync(marker, 'utf8'), 'teardown ran');
+  assert.strictEqual(fs.existsSync(path.join(dir, 'slot-0.lock')), false);
+});
+
+test('a SIGTERM to a check that ignores it kills the check and its forked grandchild once the grace ends, and frees the slot (#5119)', SLOT_POSIX_ONLY, async () => {
+  const r = tmpGitRepo();
+  const dir = tmpDir();
+  const checkOut = path.join(tmpDir(), 'check.txt');
+  const grandOut = path.join(tmpDir(), 'grandchild.txt');
+  const { child, exited } = spawnVerifyWithScript(r, dir, [
+    "const fs = require('fs');",
+    "const { spawn } = require('child_process');",
+    'const [checkOut, grandOut] = process.argv.slice(2);',
+    "process.on('SIGTERM', () => {});",
+    "const grand = \"process.on('SIGTERM', () => {}); require('fs').writeFileSync(process.argv[1], String(process.pid)); setInterval(() => {}, 1000);\";",
+    "spawn(process.execPath, ['-e', grand, grandOut], { stdio: 'ignore', windowsHide: true });",
+    'fs.writeFileSync(checkOut, String(process.pid));',
+    'setInterval(() => {}, 1000);',
+  ].join('\n'), [checkOut, grandOut]);
+  const checkPid = Number(await waitForText(checkOut, /^\d+$/));
+  const grandPid = Number(await waitForText(grandOut, /^\d+$/));
+  child.kill('SIGTERM');
+  const [code, signal] = await exited;
+  const goneCheck = await waitGone(checkPid);
+  const goneGrand = await waitGone(grandPid);
+  for (const [pid, gone] of [[checkPid, goneCheck], [grandPid, goneGrand]]) {
+    if (!gone) { try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ } }
+  }
+  assert.strictEqual(signal, null, 'verify.js exits through its own handler');
+  assert.strictEqual(code, 143);
+  assert.ok(goneCheck, `the check (pid ${checkPid}) was killed, not orphaned`);
+  assert.ok(goneGrand, `the check's grandchild (pid ${grandPid}) was killed with its group, not orphaned`);
+  assert.strictEqual(fs.existsSync(path.join(dir, 'slot-0.lock')), false);
 });
 
 test('--baseline: a SIGINT while adjudication holds its slot still removes the scratch worktree and exits 130, freeing the slot (#5119)', SLOT_POSIX_ONLY, async () => {

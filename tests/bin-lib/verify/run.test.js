@@ -7,7 +7,9 @@ const fs = require('fs');
 const { EventEmitter } = require('events');
 const { PassThrough } = require('stream');
 
-const { runChecks, runOne, killTree } = require(path.join(
+const {
+  runChecks, runOne, killTree, stopTrees, SIGNAL_GRACE_MS,
+} = require(path.join(
   __dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'run.js'));
 
 function tmpLogDir() {
@@ -546,4 +548,53 @@ test('killTree falls back to child.kill("SIGKILL") when the primary kill throws,
 
 test('killTree is a no-op, never throws, when given no child', () => {
   assert.doesNotThrow(() => killTree(null, {}));
+});
+
+// A fake process table for stopTrees: `kill(-pgid, 0)` throws ESRCH once a group is gone.
+function fakeGroups(live) {
+  const calls = [];
+  const kill = (pid, sig) => {
+    calls.push([pid, sig]);
+    if (!live.has(pid)) throw Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' });
+    if (sig === 'SIGKILL') live.delete(pid);
+  };
+  return { calls, kill };
+}
+
+test('stopTrees forwards the signal to each group, polls through the grace, then SIGKILLs only the groups still alive (#5119)', () => {
+  assert.strictEqual(SIGNAL_GRACE_MS, 5000);
+  const live = new Set([-1001, -1002]);
+  const { calls, kill } = fakeGroups(live);
+  let sleeps = 0;
+  const sleep = (ms) => {
+    assert.strictEqual(ms, 100);
+    sleeps += 1;
+    if (sleeps === 2) live.delete(-1001); // this group's own teardown finishes inside the grace
+  };
+  const gone = { pid: 1003 }; // exited before the signal: its forward hits ESRCH
+  stopTrees(new Set([{ pid: 1001 }, { pid: 1002 }, gone]), 'SIGTERM', {
+    platform: 'linux', kill, sleep, graceMs: 500, pollMs: 100,
+  });
+  assert.deepStrictEqual(calls.filter(([, sig]) => sig === 'SIGTERM'), [[-1001, 'SIGTERM'], [-1002, 'SIGTERM'], [-1003, 'SIGTERM']]);
+  assert.deepStrictEqual(calls.filter(([, sig]) => sig === 'SIGKILL'), [[-1002, 'SIGKILL']]);
+  assert.strictEqual(sleeps, 5, 'the grace is polled to its end while a group lives');
+});
+
+test('stopTrees stops polling once every group is gone (#5119)', () => {
+  const live = new Set([-1001]);
+  const { calls, kill } = fakeGroups(live);
+  let sleeps = 0;
+  stopTrees([{ pid: 1001 }], 'SIGINT', {
+    platform: 'darwin', kill, sleep: () => { sleeps += 1; live.delete(-1001); }, graceMs: 5000, pollMs: 100,
+  });
+  assert.strictEqual(sleeps, 1);
+  assert.deepStrictEqual(calls.filter(([, sig]) => sig === 'SIGKILL'), []);
+});
+
+test('stopTrees on win32 runs taskkill at once — no signal to forward, no grace (#5119)', () => {
+  const calls = [];
+  stopTrees([{ pid: 4242 }], 'SIGTERM', {
+    platform: 'win32', kill: (...a) => calls.push(['kill', ...a]), execImpl: (cmd, args) => calls.push([cmd, args]), sleep: () => calls.push('sleep'),
+  });
+  assert.deepStrictEqual(calls, [['taskkill', ['/pid', '4242', '/T', '/F']]]);
 });
