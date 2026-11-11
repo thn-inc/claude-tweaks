@@ -583,3 +583,184 @@ test('AC2.1 AC2.2: a derived off with an empty rollup still proceeds green', () 
   assertEmptyRollupNeverWaits(emptyRollupBullet());
   assert.throws(() => assertEmptyRollupNeverWaits(PRE_4550_EMPTY_ROLLUP), 'the pre-#4550 bullet fails the same pin (go-red) [IL-105]');
 });
+
+// #5153: Step 2.5 reads the ready run (`bin/ready-run.js`) after the head runs, classifies its
+// `state`, and parks a draft-skip workflow with no `ready_for_review` trigger on its own reason.
+const collapse = (s) => s.replace(/\s+/g, ' ');
+const HEAD_RUNS_LINE = 'gh run list --repo {owner}/{repo} --commit {headRefOid} --limit 100 --json name,workflowName,status,conclusion,url';
+const READY_RUN_LINE = 'node "${CLAUDE_PLUGIN_ROOT}/bin/ready-run.js" --pr {pr-number} --sha {headRefOid}';
+const RED_ANCHOR = '- Any `statusCheckRollup[]` entry';
+const READY_ANCHOR = "- The ready-run read's `state`";
+const PENDING_ANCHOR = '- Any entry with `status`';
+
+function readyRunBullet(section) {
+  const start = section.indexOf(READY_ANCHOR);
+  assert.ok(start !== -1, 'Step 2.5 must carry the ready-run bullet');
+  const end = section.indexOf('\n- ', start + 1);
+  assert.ok(end !== -1, 'the ready-run bullet must be followed by another bullet');
+  return collapse(section.slice(start, end));
+}
+
+function parkTemplateText(section) {
+  const start = section.indexOf('`Parked by merge-verification ({value}):');
+  assert.ok(start !== -1, 'Step 2.5 must carry the park-comment template');
+  // Template, resume line, compose sentence, printf fence and the `$REASON` sentence — up to the label check.
+  const end = section.indexOf('**Verify the label landed**', start);
+  assert.ok(end !== -1, 'the park-comment text must be followed by the label-landed check');
+  return collapse(section.slice(start, end));
+}
+
+function requireOrder(text, anchors) {
+  let last = -1;
+  for (const [label, anchor] of anchors) {
+    const at = text.indexOf(anchor);
+    assert.ok(at !== -1, `ordering anchor missing: ${label}`);
+    assert.ok(at > last, `ordering: ${label} must come after the previous anchor`);
+    last = at;
+  }
+}
+
+const BULLET_CLAUSES = {
+  route: [
+    ['read-failed routes to state-read-failed', '`read-failed` → `state-read-failed`'],
+    ['red routes to red with its failing', '`red` → **red** (its `failing`)'],
+    ['draft-skip routes to the Red path', '`draft-skip-without-ready-trigger` → **Red path**'],
+    ['the park reason carries the files', 'reason `draft-skip-without-ready-trigger:{files}`'],
+    ['the fix is named', 'fix: add `ready_for_review` to `types`'],
+    ['the convention citation', '`_shared/ci-skips-drafts.md`'],
+    ['the explicit off escape', 'an explicit `off` logs it and merges'],
+  ],
+  awaiting: [
+    ['awaiting is pending', '`awaiting` → **pending**'],
+    ['awaiting names the workflows', '`awaitingReadyRun` names the workflows with no finished run since ready'],
+  ],
+  passthrough: [
+    ['met and not-applicable change nothing', '`met`, `not-applicable` → no change'],
+    ['the code twin is named', "`classify.js`'s `readyRunVerdict`"],
+  ],
+};
+
+const PARK_CLAUSES = [
+  ['template names the fix', '"{files} skips drafts with no ready_for_review trigger — add ready_for_review to its types (_shared/ci-skips-drafts.md)" for draft-skip-without-ready-trigger'],
+  ['template tail is the resume placeholder', 'on PR #{n}. {resume}`'],
+  ['resume maps the draft-skip reason', '`{resume}`: `Resume once green.`; for draft-skip-without-ready-trigger, `Resume once its workflow is fixed or a post-ready run lands.`'],
+  ['timeout appends the awaiting files', 'A timeout whose last ready-run read named `awaitingReadyRun` appends ` (no run since ready: {files})`.'],
+];
+
+function assertReadyRunStep25(section, group) {
+  const groups = group ? [group] : [...Object.keys(BULLET_CLAUSES), 'park'];
+  for (const g of groups) {
+    if (g === 'park') {
+      const park = parkTemplateText(section);
+      for (const [label, needle] of PARK_CLAUSES) assert.ok(park.includes(needle), `park comment missing ${label}: ${needle}`);
+      assert.ok(!/on PR #\{n\}\. Resume once green\./.test(park), 'the park template must not hard-code "Resume once green." — a draft skip never says it');
+      continue;
+    }
+    const bullet = readyRunBullet(section);
+    for (const [label, needle] of BULLET_CLAUSES[g]) assert.ok(bullet.includes(needle), `ready-run bullet missing ${label}: ${needle}`);
+  }
+}
+
+function assertReasonListedOnce(section) {
+  const logStart = section.indexOf('Step 2.5 (merge-verification gate): parked — {reason:');
+  assert.ok(logStart !== -1, 'Step 2.5 must carry the Red-path log line');
+  const logLine = section.slice(logStart, section.indexOf('\n', logStart));
+  const hits = logLine.split('draft-skip-without-ready-trigger:{files}').length - 1;
+  assert.equal(hits, 1, `the Red-path log line's reason alternation must list draft-skip-without-ready-trigger:{files} exactly once (found ${hits})`);
+  assert.ok(logLine.includes('check-failed:{names} | checks-pending-timeout | draft-skip-without-ready-trigger:{files}}'), 'the reason alternation keeps its order');
+}
+
+function assertOutcomeRow(text) {
+  const row = text.split('\n').find((l) => l.startsWith('| `pending-review` |'));
+  assert.ok(row, 'the Outcome vocabulary must carry the pending-review row');
+  assert.ok(row.includes('reason check-failed:{names}, checks-pending-timeout or draft-skip-without-ready-trigger:{files}'), 'the pending-review row lists the new reason');
+}
+
+// Replace a needle that may wrap across lines in the live text (spaces match any whitespace run).
+function mutate(section, needle, to) {
+  const re = new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s+'));
+  const mutated = section.replace(re, () => to);
+  assert.notEqual(mutated, section, `mutation target absent: ${needle}`);
+  return mutated;
+}
+
+test('AC6.1: Step 2.5 routes draft-skip-without-ready-trigger to the Red path with the fix and the convention citation', () => {
+  const section = step25Section();
+  assertReadyRunStep25(section, 'route');
+  for (const [label, needle] of BULLET_CLAUSES.route) {
+    assert.throws(() => assertReadyRunStep25(mutate(section, needle, 'X'), 'route'), { message: new RegExp(`ready-run bullet missing ${label}`) });
+  }
+});
+
+test('AC6.1: the park comment names the fix and never says "Resume once green" for a draft skip', () => {
+  const section = step25Section();
+  assertReadyRunStep25(section, 'park');
+  for (const [label, needle] of PARK_CLAUSES) {
+    assert.throws(() => assertReadyRunStep25(mutate(section, needle, 'X'), 'park'), { message: new RegExp(`park comment missing ${label}`) });
+  }
+  // Every clause still present, but the template also carries the pre-change tail.
+  const hardCoded = mutate(section, 'on PR #{n}. {resume}`', 'on PR #{n}. {resume}` on PR #{n}. Resume once green.');
+  assert.throws(() => assertReadyRunStep25(hardCoded, 'park'), { message: /must not hard-code "Resume once green\."/ });
+});
+
+test('AC6.2: only the draft-skip state parks on that reason — met and not-applicable change nothing', () => {
+  const section = step25Section();
+  assertReadyRunStep25(section, 'passthrough');
+  assertReasonListedOnce(section);
+  assertOutcomeRow(MERGE);
+  for (const [label, needle] of BULLET_CLAUSES.passthrough) {
+    assert.throws(() => assertReadyRunStep25(mutate(section, needle, 'X'), 'passthrough'), { message: new RegExp(`ready-run bullet missing ${label}`) });
+  }
+  const dropped = mutate(section, 'checks-pending-timeout | draft-skip-without-ready-trigger:{files}}', 'checks-pending-timeout}');
+  assert.throws(() => assertReasonListedOnce(dropped), { message: /exactly once \(found 0\)/ });
+  const doubled = mutate(section, 'checks-pending-timeout | draft-skip-without-ready-trigger:{files}}', 'checks-pending-timeout | draft-skip-without-ready-trigger:{files} | draft-skip-without-ready-trigger:{files}}');
+  assert.throws(() => assertReasonListedOnce(doubled), { message: /exactly once \(found 2\)/ });
+  const oldRow = mutate(MERGE, ', checks-pending-timeout or draft-skip-without-ready-trigger:{files}', ' or checks-pending-timeout');
+  assert.throws(() => assertOutcomeRow(oldRow), { message: /the pending-review row lists the new reason/ });
+});
+
+test('AC11.1: the Step 2.5 reads carry the ready-run read after the head-run read, and the head-run read is byte-identical', () => {
+  const section = step25Section();
+  assert.equal(section.split('\n').filter((l) => l === HEAD_RUNS_LINE).length, 1, 'the head-run read line is present once, unchanged');
+  assert.ok(section.includes('Classify from the three reads, in this order:'), 'Step 2.5 classifies from the three reads');
+  const anchors = [['head-run read', HEAD_RUNS_LINE], ['ready-run read', READY_RUN_LINE], ['classification', 'Classify from the three reads']];
+  requireOrder(section, anchors);
+  const swapped = section.replace(HEAD_RUNS_LINE, '@@HEAD@@').replace(READY_RUN_LINE, HEAD_RUNS_LINE).replace('@@HEAD@@', READY_RUN_LINE);
+  assert.notEqual(swapped, section);
+  assert.throws(() => requireOrder(swapped, anchors), { message: /ordering: ready-run read must come after the previous anchor/ });
+  assert.throws(() => requireOrder(mutate(section, READY_RUN_LINE, ''), anchors), { message: /ordering anchor missing: ready-run read/ });
+  assert.throws(() => requireOrder(mutate(section, 'Classify from the three reads', 'Classify from both reads'), anchors), { message: /ordering anchor missing: classification/ });
+});
+
+test('AC11.1: the ready-run bullet sits after the red bullet and before the pending bullet', () => {
+  const section = step25Section();
+  const anchors = [['red bullet', RED_ANCHOR], ['ready-run bullet', READY_ANCHOR], ['pending bullet', PENDING_ANCHOR]];
+  requireOrder(section, anchors);
+  const swap = (a, b) => section.replace(a, '@@A@@').replace(b, a).replace('@@A@@', b);
+  assert.throws(() => requireOrder(swap(RED_ANCHOR, READY_ANCHOR), anchors), { message: /ordering: (ready-run|pending) bullet must come after the previous anchor/ });
+  assert.throws(() => requireOrder(swap(READY_ANCHOR, PENDING_ANCHOR), anchors), { message: /ordering: pending bullet must come after the previous anchor/ });
+});
+
+test('AC3.1 (prose): red still wins — the ready-run bullet\'s awaiting row is pending and its red row is red', () => {
+  const section = step25Section();
+  assertReadyRunStep25(section, 'awaiting');
+  const bullet = readyRunBullet(section);
+  assert.ok(bullet.includes('`red` → **red**'), 'the red row stays red');
+  assert.ok(!/`awaiting` → \*\*red\*\*/.test(bullet), 'awaiting never reads red');
+  const flipped = mutate(section, '`awaiting` → **pending**', '`awaiting` → **green**');
+  assert.throws(() => assertReadyRunStep25(flipped, 'awaiting'), { message: /ready-run bullet missing awaiting is pending/ });
+});
+
+test('settle-parked names the ready-run rule and the new park reason', () => {
+  const settle = collapse(read('plugin', 'skills', 'dispatch', 'settle-parked.md'));
+  const needles = [
+    "Step 2.5's state read, its head-run read and its ready-run rule",
+    '`reason: check-failed:{names} | checks-pending-timeout | draft-skip-without-ready-trigger:{files}`',
+  ];
+  for (const n of needles) {
+    assert.ok(settle.includes(n), `settle-parked.md missing: ${n}`);
+    assert.ok(!settle.replace(n, '').includes(n), `the needle is unique: ${n}`);
+  }
+  assert.ok(!settle.includes("Step 2.5's state read plus its head-run read"), 'the pre-change wording is gone');
+  assert.ok(!settle.includes('`reason: check-failed:{names} | checks-pending-timeout`'), 'the pre-change reason list is gone');
+});

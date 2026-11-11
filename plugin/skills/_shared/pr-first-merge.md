@@ -145,9 +145,15 @@ gh run list --repo {owner}/{repo} --commit {headRefOid} --limit 100 --json name,
 
 A failed or unparseable runs read is the `state-read-failed` report, same as the first bullet. An empty runs list adds nothing. The code twin is `bin/lib/pr-checks/classify.js`'s `classifyRollup` (with `headRuns`), which applies the same order.
 
+Then the ready-run read (#5153: the last `ReadyForReviewEvent`'s `createdAt`, the head's runs with `createdAt`, `event` and workflow `path`, and the head's workflow triggers):
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/ready-run.js" --pr {pr-number} --sha {headRefOid}
+```
+
 **`StatusContext` entries are normalized first.** A legacy commit-status entry (`StatusContext` — `context`/`state`/`targetUrl`, no `status` or `conclusion`) is read by its `state` before the rules below apply: `FAILURE` or `ERROR` → red, `PENDING` or `EXPECTED` → pending (as is any other unfinished state), `SUCCESS` → green — completed, never pending. The code twin is `bin/lib/pr-checks/classify.js`'s `normalizeEntry`.
 
-Classify from both reads, in this order:
+Classify from the three reads, in this order:
 
 - The command failed, or its output is not parseable JSON with those five fields → report
   (`pending-review`, reason `state-read-failed`) and stop — never merge on a state this gate could
@@ -159,6 +165,13 @@ Classify from both reads, in this order:
   — or any head run whose `status` is `completed` and whose `conclusion`, compared case-insensitively (run conclusions are lowercase), is in that same list → **red** (the *PR being merged* has a failing check — distinct from #561's red *tip*, which is
   reconcile's concern). Take the **Red path** below now, before anything else. Under `off` this
   read still runs — an explicit `off` skips only the *wait* — but an explicit `off` merges anyway; a derived `off` takes the **Red path**. An explicit `off`'s red read is logged, not acted on.
+- The ready-run read's `state` (code twin: `classify.js`'s `readyRunVerdict`): `read-failed` →
+  `state-read-failed`; `red` → **red** (its `failing`); `draft-skip-without-ready-trigger` →
+  **Red path**, reason `draft-skip-without-ready-trigger:{files}` — the workflow skips drafts but its
+  `types` lack `ready_for_review`, so nothing runs after `gh pr ready`; fix: add `ready_for_review` to
+  `types` (`_shared/ci-skips-drafts.md`); an explicit `off` logs it and merges; `awaiting` → **pending**
+  (`awaitingReadyRun` names the workflows with no finished run since ready); `met`, `not-applicable` →
+  no change.
 - Any entry with `status` not `COMPLETED` (or `conclusion` null while `status: IN_PROGRESS`/`QUEUED`/`PENDING`), or any head run whose `status` is not `completed`
   → **pending**. A partial rollup (some workflows reported, others not yet registered) is not green.
 - An **empty rollup** → read the merge state first: `mergeStateStatus: DIRTY` (or `mergeable: CONFLICTING`)
@@ -233,7 +246,8 @@ guard refuses a `--jq` program inside this loop (`_shared/scratch-worktree.md` �
    on every record in `{issue-list}` — dispatch's existing `bot:*` home; `run-state.json` statuses are
    untouched (parking surfaces via label + log, not run-state) — and post one comment naming the
    failing check(s), the PR, and the reason:
-   `Parked by merge-verification ({value}): {failing check names — or "checks still pending after 15m" for checks-pending-timeout} on PR #{n}. Resume once green.`
+   `Parked by merge-verification ({value}): {failing check names — or "checks still pending after 15m" for checks-pending-timeout, or "{files} skips drafts with no ready_for_review trigger — add ready_for_review to its types (_shared/ci-skips-drafts.md)" for draft-skip-without-ready-trigger} on PR #{n}. {resume}`
+   `{resume}`: `Resume once green.`; for draft-skip-without-ready-trigger, `Resume once its workflow is fixed or a post-ready run lands.`
    Compose that body to a temp file and post it with `--body-file` — never inline the names into a
    shell string. Check names come from the PR's own workflow YAML (third-party-controlled on a fork
    PR), and every other comment site in this file already builds its body the same way:
@@ -242,7 +256,7 @@ guard refuses a `--jq` program inside this loop (`_shared/scratch-worktree.md` �
    gh issue comment "$ISSUE" --repo {owner}/{repo} --body-file "{park-comment-path}"
    ```
    (`$REASON` holds the check names — from `{pr-checks-path}`'s `fail` rows, or the failing
-   head runs' `workflowName`s — or the pending-timeout phrase — passed as a `printf` argument, never expanded inside the format string. Under a derived `off`, the comment's `{value}`/`$VALUE` is `derived off`.)
+   head runs' `workflowName`s — or the pending-timeout phrase — passed as a `printf` argument, never expanded inside the format string. A timeout whose last ready-run read named `awaitingReadyRun` appends ` (no run since ready: {files})`. Under a derived `off`, the comment's `{value}`/`$VALUE` is `derived off`.)
    **Verify the label landed** — re-read each record's labels (`gh issue view {n} --json labels`)
    after the add; a missing `bot:parked` is retried once. If it is still missing, the park has no
    lock the `[pr-unarmed]` sweep (`_shared/github-pr-scan.md`) would honor, so fall back to the one
@@ -250,7 +264,7 @@ guard refuses a `--jq` program inside this loop (`_shared/scratch-worktree.md` �
    --undo` — the sole exception to item 1's never-re-draft, taken only because the label failed) and
    say so in the log line below. Never report a park the label read did not confirm.
 3. Log to `decisions.md` per `_shared/auto-decision-log.md` (an action taken autonomously — parked, not asked):
-   `AUTO {HH:MM:SS} — Step 2.5 (merge-verification gate): parked — {reason: check-failed:{names} | checks-pending-timeout} on PR #{n}; bot:parked applied to #{issue-list} {— or: bot:parked NOT applied to #{list} ({error}); PR re-drafted as the fallback lock}. Reversibility: high (label removal + resume). [lever: merge-verification={value} ({source})]`
+   `AUTO {HH:MM:SS} — Step 2.5 (merge-verification gate): parked — {reason: check-failed:{names} | checks-pending-timeout | draft-skip-without-ready-trigger:{files}} on PR #{n}; bot:parked applied to #{issue-list} {— or: bot:parked NOT applied to #{list} ({error}); PR re-drafted as the fallback lock}. Reversibility: high (label removal + resume). [lever: merge-verification={value} ({source})]`
 4. Report outcome `pending-review`. This is a HARD-GATE-class stop written as park-and-surface — the
    `_shared/auto-mode-contract.md` strict rule holds: never a mid-pipeline prompt here; the human-facing
    surface is dispatch's resume confirmation (`dispatch/SKILL.md`, "Confirm before resuming").
@@ -441,7 +455,7 @@ Replaces `ready-to-merge` (folded into `merged`/`armed` — see Step 3.6) and `p
 |---|---|---|
 | `merged` | Confirmed synchronously via `gh pr view` | Step 4's reconcile call |
 | `armed` | `--auto` armed, checks still pending | None — reconciler completes it later |
-| `pending-review` | Checks red, conflict unresolvable headlessly, permission denied, or an unrecognized error, checks red or still pending at Step 2.5's bound (parked with bot:parked, reason check-failed:{names} or checks-pending-timeout), pr-not-open, moving-target | None — PR stays ready, human decides |
+| `pending-review` | Checks red, conflict unresolvable headlessly, permission denied, or an unrecognized error, checks red or still pending at Step 2.5's bound (parked with bot:parked, reason check-failed:{names}, checks-pending-timeout or draft-skip-without-ready-trigger:{files}), pr-not-open, moving-target | None — PR stays ready, human decides |
 | `failed` | This run never reached the merge attempt at all (upstream HARD-GATE) | Handled entirely by Settle, before this procedure is ever invoked |
 
 ## Comment ordering
