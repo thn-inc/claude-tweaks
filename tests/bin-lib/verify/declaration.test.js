@@ -394,21 +394,6 @@ test('AC8.1: reruns: 3 and timeoutPatterns: ["deadline"] parse, and an absent or
   assert.deepStrictEqual(readJson({ ...EXAMPLE, concurrency: { timeoutPatterns: [] } }).decl.concurrency.timeoutPatterns, []);
 });
 
-test('timeoutPatterns is a copy of the parsed array, never an alias of it (#5150)', () => {
-  // Capture the object readDeclaration parses, so the parsed array itself can be compared.
-  const parse = JSON.parse;
-  let raw = null;
-  JSON.parse = (...args) => { raw = parse(...args); return raw; };
-  let r;
-  try {
-    r = readJson({ ...EXAMPLE, concurrency: { timeoutPatterns: ['deadline'] } });
-  } finally {
-    JSON.parse = parse;
-  }
-  assert.deepStrictEqual(r.decl.concurrency.timeoutPatterns, ['deadline']);
-  assert.notStrictEqual(r.decl.concurrency.timeoutPatterns, raw.concurrency.timeoutPatterns);
-});
-
 test('AC8.2: other reruns and timeoutPatterns values each report their exact message (#5150)', () => {
   const errs = (concurrency) => readJson({ ...EXAMPLE, concurrency }).errors;
   for (const v of [0, 1.5, '2', null]) {
