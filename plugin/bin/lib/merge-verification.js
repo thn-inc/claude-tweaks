@@ -363,14 +363,22 @@ function readPullRequestWorkflow(text) {
       }
     } else {
       let triggerIndent = null;
+      let sequence = false;
       for (let j = onIdx + 1; j < lines.length; j++) {
         const line = lines[j];
         if (!line.trim() || line.trim().startsWith('#')) continue;
         const indent = /^(\s*)/.exec(line)[1].length;
         // An indentless top-level sequence (`on:\n- push`) keeps `- ` items at col 0.
         if (indent === 0 && !/^-(?:\s|$)/.test(line)) break;
-        if (triggerIndent === null) triggerIndent = indent;
+        if (triggerIndent === null) {
+          triggerIndent = indent;
+          // The first item decides the `on:` value's shape. Under a mapping, a `- ` line at
+          // the trigger indent is an indentless sequence value of the key above it
+          // (`  schedule:\n  - cron: …`), never a trigger.
+          sequence = /^\s*-(?:\s|$)/.test(line);
+        }
         if (indent !== triggerIndent) continue;
+        if (!sequence && /^\s*-(?:\s|$)/.test(line)) continue;
         if (/^\s*<<\s*:/.test(line)) { // merge key: triggers come from an anchor
           triggers.push(UNREADABLE_TRIGGER());
           continue;

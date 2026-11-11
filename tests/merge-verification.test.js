@@ -239,6 +239,22 @@ test('readPullRequestWorkflow: a file that never spells pull_request is no PR tr
   });
 });
 
+test('readPullRequestWorkflow: an indentless sequence value under a trigger key is that key\'s value, never a trigger', () => {
+  // `  schedule:\n  - cron: …` puts the cron item at the trigger indent; it must not read as an
+  // unreadable PR trigger, or a schedule-only workflow would demand a ready run on every merge.
+  // The job's `pull_request` text keeps the reader's no-literal shortcut from answering first.
+  bothEndings('name: nightly\non:\n  schedule:\n  - cron: "0 3 * * *"\n  workflow_dispatch:\njobs:\n  a:\n    if: github.event_name != \'pull_request\'\n    runs-on: x\n', (t) => {
+    assert.deepEqual(mv.readPullRequestWorkflow(t), { prTrigger: false, types: [], typesDeclared: false, draftReference: false, unparsed: false }, JSON.stringify(t));
+  });
+  bothEndings('on:\n  schedule:\n  - cron: "x"\n  pull_request:\n    types: [opened, ready_for_review]\n', (t) => {
+    const r = mv.readPullRequestWorkflow(t);
+    assert.deepEqual(r.types, ['opened', 'ready_for_review'], JSON.stringify(t));
+    assert.equal(r.unparsed, false, JSON.stringify(t));
+  });
+  // A top-level sequence still reads its items as triggers.
+  bothEndings('on:\n- push\n- pull_request\n', (t) => assert.equal(mv.readPullRequestWorkflow(t).prTrigger, true));
+});
+
 test('readPullRequestWorkflow: an on: &anchor node name does not hide the block beneath it', () => {
   bothEndings('on: &t\n  pull_request:\n    types: [opened]\n', (t) => {
     const r = mv.readPullRequestWorkflow(t);
