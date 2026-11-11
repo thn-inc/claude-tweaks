@@ -656,6 +656,7 @@ async function main() {
       const changed = changedFiles({ base: resolvedBase, withStatus: Boolean(decl.impact) });
       files = changed.files;
       let statuses = changed.statuses || null;
+      const unnarrowed = { files, statuses };
       // #3072: anchored on a full pass and asked about an integration branch the
       // run has since merged — narrow to the branch's own delta. Only when the
       // resolved base IS the usable anchor; with no anchor, resolveBase already
@@ -683,6 +684,13 @@ async function main() {
       const fallbackBase = !anchorSha && parsed.integrationBranch && !parsed.base ? resolvedBase : null;
       const select = (impact) => selectScope({ decl, files, stamp: anchorSha ? priorStamp : null, statuses, impact, fallbackBase });
       sel = select(impactCtx);
+      // #4638: narrowing never earns a zero-suite stamp. Re-select over the full set;
+      // a delta whose paths map to no suite still reads none (or static-only) there and still stamps.
+      if (narrowing && sel.suites.length === 0) {
+        ({ files, statuses } = unnarrowed);
+        narrowing = null;
+        sel = select(impactCtx);
+      }
       if (sel.impact && sel.impact.files && sel.impact.files.length) {
         const listPath = path.resolve(logDir, 'impact-files.txt');
         const sub = substituteFile(decl.impact.command, listPath, { token: '{files}' });
