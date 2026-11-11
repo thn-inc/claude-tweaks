@@ -4072,9 +4072,11 @@ test('--baseline: a SIGINT while adjudication holds its slot still removes the s
   const r = baselineRepo();
   headCommit(r);
   const dir = tmpDir();
+  // A private TMPDIR, as AC5.1 does, so the per-slot scratch parent this adjudication creates never lands in the real temp dir.
+  const t = tmpDir();
   // The timeout turns a hang into a SIGKILL (and so a failed `signal === null` assertion), never a stuck test.
   const child = spawn(process.execPath, [CLI, '--cmd', SUITE, '--baseline', r.baseSha, '--baseline-cmd', 'tests=node -e "setTimeout(() => {}, 8000)" {file}'], {
-    cwd: r.repo, env: slotEnv(dir), stdio: ['ignore', 'ignore', 'ignore'], timeout: 60000, killSignal: 'SIGKILL',
+    cwd: r.repo, env: slotEnv(dir, { TMPDIR: t, TMP: t, TEMP: t }), stdio: ['ignore', 'ignore', 'ignore'], timeout: 60000, killSignal: 'SIGKILL',
   });
   const exited = new Promise((resolve) => { child.on('exit', (c, s) => resolve([c, s])); });
   try {
