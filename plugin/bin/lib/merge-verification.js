@@ -40,6 +40,9 @@ function stripComment(s) {
 // inside another trigger's value sits at depth 2+ and is never returned.
 // Quoted spans are tracked so a colon inside a quoted value can't be mistaken
 // for a key separator.
+// Twin: flowMappingEntries (below) scans the same shape for readPullRequestWorkflow.
+// This one feeds workflowHasPullRequestTrigger and fails toward "no PR trigger"
+// (off); the twin's callers fail toward "unparsed" (wait for a ready run).
 function flowMappingKeysAtDepth1(s) {
   const keys = [];
   let depth = 0;
@@ -72,6 +75,10 @@ function flowMappingKeysAtDepth1(s) {
 // (`  pull_request:`). Keys nested deeper than the trigger level (e.g. a
 // `branches:` under push:) never count. Trigger PRESENCE is the proxy for "CI
 // verification is requested" — enforcement (branch protection) is out of scope.
+// Twin: readPullRequestWorkflow (below) repeats this `on:` walk. This one fails
+// toward "no PR trigger" on any shape it cannot read (the permissive `off`
+// direction); the twin reports the same shapes as `unparsed` (fail closed).
+// Keep the two walks' shape coverage in step.
 function workflowHasPullRequestTrigger(text) {
   if (typeof text !== 'string' || !text) return false;
   // Strip a leading UTF-8 BOM (some editors/tools save workflow YAML with
@@ -149,17 +156,38 @@ function hasPullRequestCi(repoRoot, { readWorkflows = readWorkflowFiles } = {}) 
 //
 // Two failure directions, both deliberate. A miss — a trigger or draft guard
 // that lives in a reusable workflow (`uses:`) this reader never opens — leaves
-// today's behaviour (no ready-run wait). A false hit (a `types:` value this
-// reader cannot read, reported as `unparsed`) waits for a ready run and parks
-// with a named reason (spec Gotcha 3) — never silently read as "no requirement"
-// and never collapsed into the default types.
+// today's behaviour (no ready-run wait). A false hit — an `on:` it cannot read
+// (an unbalanced flow list/mapping, an alias or expression scalar, a `<<:`
+// merge key) or a `types:` value it cannot read — is reported as `unparsed`
+// with prTrigger true: the gate waits for a ready run and parks with a named
+// reason (spec Gotcha 3). Unreadable is never read as "no PR trigger" and never
+// collapsed into the default types. (workflowHasPullRequestTrigger, by
+// contrast, keeps its fail-toward-off direction.)
 
 // GitHub's default activity types for pull_request / pull_request_target.
 const DEFAULT_PR_TYPES = Object.freeze(['opened', 'synchronize', 'reopened']);
 
-const DRAFT_REF = /\bgithub\.event\.pull_request\.draft\b(?!\w)/;
+// `github.event.pull_request.draft` and its index forms `['draft']` / `["draft"]`.
+const DRAFT_REF = /\bgithub\.event\.pull_request(?:\.draft\b(?!\w)|\[\s*['"]draft['"]\s*\])/;
+
+// stripComment, but a `#` inside a quoted string is not a comment start (an `if:`
+// expression such as contains(x, ' #wip') carries one).
+function stripCommentQuoteAware(s) {
+  let quote = null;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (quote) { if (ch === quote) quote = null; continue; }
+    if (ch === "'" || ch === '"') { quote = ch; continue; }
+    if (ch === '#' && (i === 0 || /\s/.test(s[i - 1]))) return s.slice(0, i).trim();
+  }
+  return s.trim();
+}
 const TYPE_ITEM = /^[A-Za-z_]+$/;
 const BLOCK_ITEM = /^['"]?[A-Za-z_]+['"]?$/;
+
+// A trigger the reader knows exists but cannot read: contributes no types, sets
+// prTrigger and unparsed.
+const UNREADABLE_TRIGGER = () => ({ types: [], declared: false, unparsed: true });
 
 function emptyWorkflowRead() {
   return { prTrigger: false, types: [], typesDeclared: false, draftReference: false, unparsed: false };
@@ -168,6 +196,8 @@ function emptyWorkflowRead() {
 // Entries {key, value} sitting directly inside the outer `{ }` of a one-line
 // flow mapping, plus whether the braces balanced on this line. Commas and
 // colons inside nested braces/brackets or quotes never split an entry.
+// Twin: flowMappingKeysAtDepth1 (above) — it feeds workflowHasPullRequestTrigger
+// and fails toward "no PR trigger"; this one's callers fail toward `unparsed`.
 function flowMappingEntries(s) {
   const entries = [];
   let depth = 0;
@@ -283,7 +313,7 @@ function readPullRequestWorkflow(text) {
   if (typeof text !== 'string' || !text) return out;
   if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
   const lines = text.split(/\r?\n/);
-  out.draftReference = lines.some((l) => !l.trim().startsWith('#') && DRAFT_REF.test(stripComment(l)));
+  out.draftReference = lines.some((l) => !l.trim().startsWith('#') && DRAFT_REF.test(stripCommentQuoteAware(l)));
 
   const triggers = [];
   const onIdx = lines.findIndex((l) => /^(?:on|'on'|"on")\s*:/.test(l));
@@ -291,7 +321,9 @@ function readPullRequestWorkflow(text) {
     const rest = stripComment(/^(?:on|'on'|"on")\s*:(.*)$/.exec(lines[onIdx])[1]);
     if (rest) {
       if (rest.startsWith('[')) {
-        if (rest.replace(/^\[|\]$/g, '').split(',').map(stripQuotes).some((k) => PR_TRIGGERS.has(k))) {
+        if (!rest.endsWith(']')) {
+          triggers.push(UNREADABLE_TRIGGER()); // multi-line flow list
+        } else if (rest.replace(/^\[|\]$/g, '').split(',').map(stripQuotes).some((k) => PR_TRIGGERS.has(k))) {
           triggers.push({ types: [...DEFAULT_PR_TYPES], declared: false, unparsed: false });
         }
       } else if (rest.startsWith('{')) {
@@ -299,7 +331,10 @@ function readPullRequestWorkflow(text) {
         for (const e of entries) {
           if (PR_TRIGGERS.has(e.key)) triggers.push(readInlineTriggerValue(e.value));
         }
-        if (!balanced && triggers.length > 0) triggers[triggers.length - 1].unparsed = true;
+        // Multi-line flow mapping: the PR key may sit on a later line.
+        if (!balanced) triggers.push(UNREADABLE_TRIGGER());
+      } else if (!TYPE_ITEM.test(stripQuotes(rest))) {
+        triggers.push(UNREADABLE_TRIGGER()); // *alias, &anchor, ${{ … }}, anything but a name
       } else if (PR_TRIGGERS.has(stripQuotes(rest))) {
         triggers.push({ types: [...DEFAULT_PR_TYPES], declared: false, unparsed: false });
       }
@@ -312,6 +347,10 @@ function readPullRequestWorkflow(text) {
         if (indent === 0) break;
         if (triggerIndent === null) triggerIndent = indent;
         if (indent !== triggerIndent) continue;
+        if (/^\s*<<\s*:/.test(line)) { // merge key: triggers come from an anchor
+          triggers.push(UNREADABLE_TRIGGER());
+          continue;
+        }
         const item = /^\s*-\s*(['"]?[A-Za-z_]+['"]?)\s*(?:#.*)?$/.exec(line);
         if (item && PR_TRIGGERS.has(stripQuotes(item[1]))) {
           triggers.push({ types: [...DEFAULT_PR_TYPES], declared: false, unparsed: false });
