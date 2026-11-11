@@ -26,7 +26,7 @@ const { substituteFile, describePath } = require('./file-template');
 const { toPosix } = require('../shared-primitives');
 const {
   sniffFamily, extractFailingFiles, countUnmatchedFailures, fileLevelFailures, failingTestsByFile, parseCounts, stripAnsi,
-  specEntryCount, cancelledCount, testTree,
+  specEntryCount, cancelledCount, testTree, timeoutEvidence,
 } = require('./extract');
 
 // `warn` and `rmSync` are injectable so a test can force a failed cleanup.
@@ -311,8 +311,14 @@ const SIGNAL_EXIT_CODES = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 };
 
 async function adjudicate({
   checks, baselineCmds, base, baseSha, cwd = null, logDir, runOne, spawnImpl, now = Date.now,
-  envOf = () => null, timeoutOf = () => null, git, concurrency = 4, env = process.env, computeFixed = true,
+  envOf = () => null, timeoutOf = () => null, git, env = process.env, computeFixed = true,
   platform = process.platform,
+  // #5150: the declared rerun limit — null (undeclared) runs one rerun at a time. A declared limit
+  // above 1 drops to 1 for every later phase once timeout evidence appears (a failing check's own
+  // log, or a rerun's), because load-induced timeouts are what concurrency causes.
+  concurrency = null,
+  // #5150: project-declared substrings counted as timeout evidence beside the runner's own markers.
+  timeoutPatterns = [],
   // The held full-lane suite slot's index (#5119), accepted unused until #5150 consumes it.
   slot = null,
   // #5119: takes the full-lane suite slot and returns its index (null when none was taken). Called
@@ -323,6 +329,7 @@ async function adjudicate({
   const ineligible = (reason) => ({ ...header, eligible: false, reason });
   const work = [];
   const acceptedChecks = [];
+  let evidenceCheck = null;
   const headDir = tryRealpath(cwd || process.cwd());
   // Every log is read against the checkout it ran in, and only a path present
   // there names a failing file (#3153).
@@ -382,6 +389,7 @@ async function adjudicate({
       }
     }
     acceptedChecks.push(c);
+    if (evidenceCheck === null && (c.timedOut || timeoutEvidence(text, family, timeoutPatterns) !== null)) evidenceCheck = c.name;
     const headFileLevel = fileLevelFailures(text, family, at(headDir));
     const headTests = failingTestsByFile(text, family, at(headDir));
     const headLocated = failingTestsByFile(text, family, { ...at(headDir), located: true });
@@ -454,7 +462,21 @@ async function adjudicate({
       scratch = tryRealpath(git.addWorktree(baseSha));
     }
     const baseDir = scratch && (sub ? path.join(scratch, ...sub.split('/')) : scratch);
-    const baseRuns = await pool(work, concurrency, (w, k) => (atBase[k] ? run(w, 'baseline', baseDir) : null));
+    // #5150: the limit each phase's pool runs under, lowered to 1 for good by timeout evidence.
+    let limit = concurrency === null ? 1 : concurrency;
+    let reason = concurrency === null ? 'default-serial' : 'declared';
+    if (limit > 1 && evidenceCheck !== null) { limit = 1; reason = `timeout-evidence: ${evidenceCheck}`; }
+    // A rerun's own log carrying timeout evidence is that phase timing out, like a process timeout.
+    const timedOutRun = (r) => {
+      if (!r) return false;
+      if (r.timedOut) return true;
+      const log = readLog(r.logPath);
+      return log !== null && timeoutEvidence(log, sniffFamily(log), timeoutPatterns) !== null;
+    };
+    const used = { baseline: null, isolated: null, retry: null };
+    const baseRuns = await pool(work, limit, (w, k) => (atBase[k] ? run(w, 'baseline', baseDir) : null));
+    if (baseRuns.some(Boolean)) used.baseline = limit;
+    if (limit > 1 && baseRuns.some(timedOutRun)) { limit = 1; reason = 'phase-timeout: baseline'; }
     // A numeric non-zero exit alone proves nothing (a typo'd template, a scratch
     // tree with no node_modules and a shell syntax error all exit non-zero):
     // the base run's own log must name this very file as failing, under the
@@ -481,7 +503,9 @@ async function adjudicate({
     // Every file present at base takes one isolated HEAD run. A file absent
     // at base is new on this branch: attributable outright — an isolated pass
     // must never let a flaky verdict cover a new file.
-    const headRuns = await pool(work, concurrency, (w, k) => (atBase[k] ? run(w, 'isolated', cwd) : null));
+    const headRuns = await pool(work, limit, (w, k) => (atBase[k] ? run(w, 'isolated', cwd) : null));
+    if (headRuns.some(Boolean)) used.isolated = limit;
+    if (limit > 1 && headRuns.some(timedOutRun)) { limit = 1; reason = 'phase-timeout: isolated'; }
     // A test file that does not load at all has no tests to compare, so it is
     // baseline only when it is wholly file-level at base and in the full run,
     // unchanged, failing at the same sites (a load failure at 1:1 never covers
@@ -562,7 +586,8 @@ async function adjudicate({
       Boolean(headRuns[k]) && typeof headRuns[k].exitCode === 'number' && headRuns[k].exitCode !== 0
       && !headLoadFail[k] && !headRanClean[k] && !headBaselineIso[k]
     ));
-    const retryRuns = await pool(work, concurrency, (w, k) => (needsRetry[k] ? run(w, 'isolated-retry', cwd) : null));
+    const retryRuns = await pool(work, limit, (w, k) => (needsRetry[k] ? run(w, 'isolated-retry', cwd) : null));
+    if (retryRuns.some(Boolean)) used.retry = limit;
     const baselineFailing = [];
     const flakyPassed = [];
     const flakyLogs = {};
@@ -650,6 +675,7 @@ async function adjudicate({
       fixed,
       ...(fixed === null ? { fixedReason } : {}),
       timedOut,
+      concurrency: { declared: concurrency, used, reason },
     };
   } finally {
     for (const [sig, handler] of signalHandlers) process.removeListener(sig, handler);

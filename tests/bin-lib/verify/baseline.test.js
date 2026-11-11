@@ -1310,3 +1310,122 @@ test('#3723: attributedTests never touches the verdict', async () => {
   assert.deepStrictEqual(r.attributedTests, {});
   assert.strictEqual(r.verdict, 'pass');
 });
+
+// #5150: reruns are serial unless the project declares otherwise, and back off to serial on
+// timeout evidence. peakFakes wraps fakes()'s runOne: each call is held for 5ms and the peak
+// in-flight count is recorded per kind and per cwd.
+const SIX = ['a', 'b', 'c', 'd', 'e', 'f'].map((x) => `tests/${x}.test.js`);
+const allPhases = (files = SIX) => Object.fromEntries(files.flatMap((f) => [[`baseline:${f}`, 0], [`isolated:${f}`, 1], [`isolated-retry:${f}`, 1]]));
+function peakFakes(opts) {
+  const f = fakes(opts);
+  const live = { kind: {}, cwd: {} };
+  const peak = { kind: {}, cwd: {} };
+  const bump = (bag, key, by) => {
+    live[bag][key] = (live[bag][key] || 0) + by;
+    if (by > 0) peak[bag][key] = Math.max(peak[bag][key] || 0, live[bag][key]);
+  };
+  const runOne = async (o) => {
+    const kind = o.name.endsWith('-base-full') ? 'base-full' : (o.name.includes('-baseline-') ? 'baseline' : (o.name.includes('-isolated-retry-') ? 'isolated-retry' : 'isolated'));
+    bump('kind', kind, 1); bump('cwd', o.cwd, 1);
+    try {
+      await new Promise((r) => setTimeout(r, 5));
+      return await f.runOne(o);
+    } finally { bump('kind', kind, -1); bump('cwd', o.cwd, -1); }
+  };
+  return { ...f, runOne, peak };
+}
+async function adjudicatePeaks({ log = SPEC(SIX), check = {}, fakeOpts = {}, extra = {} } = {}) {
+  const { p, dir } = logFile(log);
+  const f = peakFakes({ outcomes: allPhases(), ...fakeOpts });
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p, ...check }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne: f.runOne, git: f.git, ...extra });
+  return { r, peak: f.peak, calls: f.calls };
+}
+const ALL = (n) => ({ baseline: n, isolated: n, 'isolated-retry': n });
+const SPEC_WITH_MARKER = (f) => SPEC([f]).replace(`test at ${f}:1:1\n✖ x (1ms)\n`, `test at ${f}:1:1\n✖ x (1ms)\n  test timed out after 100ms\n`);
+const SIX_WITH_MARKER = SPEC(SIX).replace('test at tests/a.test.js:1:1\n✖ x (1ms)\n', 'test at tests/a.test.js:1:1\n✖ x (1ms)\n  test timed out after 100ms\n');
+
+test('AC1.1, AC1.2: with no reruns declared every phase runs one rerun at a time (#5150)', async () => {
+  const { r, peak } = await adjudicatePeaks();
+  assert.deepStrictEqual(peak.kind, ALL(1));
+  assert.deepStrictEqual(peak.cwd, { '/scratch': 1, '/repo': 1 });
+  assert.deepStrictEqual(r.concurrency, { declared: null, used: { baseline: 1, isolated: 1, retry: 1 }, reason: 'default-serial' });
+});
+
+test('AC2.1: reruns 3 with 6 failing files peaks at 3 in each phase (#5150)', async () => {
+  const { r, peak } = await adjudicatePeaks({ extra: { concurrency: 3 } });
+  assert.deepStrictEqual(peak.kind, ALL(3));
+  assert.deepStrictEqual(r.concurrency, { declared: 3, used: { baseline: 3, isolated: 3, retry: 3 }, reason: 'declared' });
+});
+
+const TIMEOUT_EVIDENCE = { declared: 4, used: { baseline: 1, isolated: 1, retry: 1 }, reason: 'timeout-evidence: tests' };
+
+test('AC3.1, AC3.2: timeout evidence on a failing check runs every phase serially — timedOut (#5150)', async () => {
+  const { r, peak } = await adjudicatePeaks({ check: { timedOut: true }, extra: { concurrency: 4 } });
+  assert.deepStrictEqual(peak.kind, ALL(1));
+  assert.deepStrictEqual(r.concurrency, TIMEOUT_EVIDENCE);
+  // The real run.js shape for a process timeout: no numeric exit code, so nothing is adjudicated.
+  const none = await adjudicatePeaks({ check: { exitCode: null, timedOut: true }, extra: { concurrency: 4 } });
+  assert.strictEqual(none.r.eligible, false);
+  assert.deepStrictEqual(none.calls.runs, []);
+});
+
+test('AC3.1, AC3.2: timeout evidence on a failing check runs every phase serially — inconclusive marker (#5150)', async () => {
+  const { r, peak } = await adjudicatePeaks({ log: SIX_WITH_MARKER, extra: { concurrency: 4 } });
+  assert.deepStrictEqual(peak.kind, ALL(1));
+  assert.deepStrictEqual(r.concurrency, TIMEOUT_EVIDENCE);
+});
+
+test('AC3.1, AC3.2: timeout evidence on a failing check runs every phase serially — cancelled count (#5150)', async () => {
+  const log = SPEC(SIX).replace('ℹ fail 6', 'ℹ fail 5').replace('ℹ cancelled 0', 'ℹ cancelled 1');
+  const { r, peak } = await adjudicatePeaks({ log, extra: { concurrency: 4 } });
+  assert.strictEqual(r.eligible, true, 'entries = fail + cancelled keeps it eligible');
+  assert.deepStrictEqual(peak.kind, ALL(1));
+  assert.deepStrictEqual(r.concurrency, TIMEOUT_EVIDENCE);
+});
+
+test('AC3.1, AC3.2: timeout evidence on a failing check runs every phase serially — declared pattern (#5150)', async () => {
+  const log = SPEC(SIX).replace('test at tests/a.test.js:1:1\n✖ x (1ms)\n', 'test at tests/a.test.js:1:1\n✖ x (1ms)\n  \u001b[31mran past its deadline\u001b[39m\n');
+  const { r, peak } = await adjudicatePeaks({ log, extra: { concurrency: 4, timeoutPatterns: ['ran past its deadline'] } });
+  assert.deepStrictEqual(peak.kind, ALL(1));
+  assert.deepStrictEqual(r.concurrency, TIMEOUT_EVIDENCE);
+  const control = await adjudicatePeaks({ log, extra: { concurrency: 4, timeoutPatterns: [] } });
+  assert.deepStrictEqual(control.peak.kind, ALL(4), 'only the declared pattern decides');
+  assert.strictEqual(control.r.concurrency.reason, 'declared');
+});
+
+test('AC4.1: a timed-out base rerun runs the isolated and retry phases serially (#5150)', async () => {
+  const outcomes = { ...allPhases(), 'baseline:tests/a.test.js': { exitCode: null, timedOut: true } };
+  const { r, peak } = await adjudicatePeaks({ fakeOpts: { outcomes }, extra: { concurrency: 4 } });
+  assert.deepStrictEqual(peak.kind, { baseline: 4, isolated: 1, 'isolated-retry': 1 });
+  assert.deepStrictEqual(r.concurrency, { declared: 4, used: { baseline: 4, isolated: 1, retry: 1 }, reason: 'phase-timeout: baseline' });
+});
+
+test('a timed-out isolated rerun runs the retry phase serially (#5150)', async () => {
+  const outcomes = { ...allPhases(), 'isolated:tests/a.test.js': { exitCode: null, timedOut: true } };
+  const { r, peak } = await adjudicatePeaks({ fakeOpts: { outcomes }, extra: { concurrency: 4 } });
+  assert.deepStrictEqual(peak.kind, { baseline: 4, isolated: 4, 'isolated-retry': 1 });
+  assert.deepStrictEqual(r.concurrency, { declared: 4, used: { baseline: 4, isolated: 4, retry: 1 }, reason: 'phase-timeout: isolated' });
+});
+
+test('a phase that spawns no rerun reports used null (#5150)', async () => {
+  const same = Object.fromEntries(SIX.flatMap((f) => [[`baseline:${f}`, 1], [`isolated:${f}`, 1]]));
+  const noRetry = await adjudicatePeaks({ fakeOpts: { outcomes: same }, extra: { concurrency: 4 } });
+  assert.deepStrictEqual(noRetry.r.concurrency.used, { baseline: 4, isolated: 4, retry: null });
+  const absent = await adjudicatePeaks({ fakeOpts: { existsAtBase: () => false }, extra: { concurrency: 4 } });
+  assert.deepStrictEqual(absent.r.concurrency.used, { baseline: null, isolated: null, retry: null });
+});
+
+test('RF4: a base rerun failing on a per-test timeout in its own log backs off like a process timeout (#5150)', async () => {
+  const outcomes = { ...allPhases(), 'baseline:tests/a.test.js': 1 };
+  const logs = { 'baseline:tests/a.test.js': SPEC_WITH_MARKER('tests/a.test.js') };
+  const { r, peak } = await adjudicatePeaks({ fakeOpts: { outcomes, logs }, extra: { concurrency: 4 } });
+  assert.deepStrictEqual(peak.kind, { baseline: 4, isolated: 1, 'isolated-retry': 1 });
+  assert.strictEqual(r.concurrency.reason, 'phase-timeout: baseline');
+});
+
+test('undeclared reruns stays default-serial even with timeout evidence (#5150)', async () => {
+  const { r, peak } = await adjudicatePeaks({ log: SIX_WITH_MARKER });
+  assert.deepStrictEqual(peak.kind, ALL(1));
+  assert.strictEqual(r.concurrency.reason, 'default-serial');
+  assert.strictEqual(r.concurrency.declared, null);
+});
