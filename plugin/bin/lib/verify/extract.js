@@ -342,7 +342,9 @@ function cancelledCount(text, family) {
 // timeout cannot make its parent inconclusive), this reads the whole failing
 // region: a quoted child timeout can over-match, which costs speed (reruns run
 // serially), never a verdict. A family with no failing region (summary,
-// generic) reads the whole stripped text.
+// generic) reads the whole stripped text. On tap only top-level `not ok` blocks
+// are read, so a child's timeout (an indented block before its parent) is
+// visible there only through the cancelled count.
 function timeoutEvidence(text, family, patterns = []) {
   if ((cancelledCount(text, family) || 0) > 0) return 'cancelled';
   const stripped = stripAnsi(text);
