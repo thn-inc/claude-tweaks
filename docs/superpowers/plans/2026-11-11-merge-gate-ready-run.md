@@ -115,7 +115,7 @@ Scope keywords: classifyRollup, readyRunVerdict, readySince, readyWorkflows, awa
 **Composed-bundle rail (Byte-pin check).** Measured 2026-11-11 with `node plugin/bin/context-cost-report.js --plugin-root plugin`:
 - The `merge` bundle (`pr-first-merge.md` + `pr-checklist-refresh.md`, `bin/lib/compose-context/phases.js:26`) composes to **52,498 B**, against `RAIL_BYTES` 52,500. That leaves 2 B.
 - Every byte added to `pr-first-merge.md` must first be paid for. Task 5 moves rationale blocks to `pr-first-merge-appendix.md`, which is in no bundle.
-- A scratch simulation of this plan's exact moves and inserts gives 49,149 after Task 5, 50,363 after Task 7 and 51,253 after Task 8.
+- A scratch simulation of this plan's exact moves and inserts, plan-review amendments included, gives 49,001 after Task 5, 50,407 after Task 7 and 51,320 after Task 8.
 - Gates:
   - After Task 5, merge max ≤ 49,400 B.
   - After Task 7, merge max ≤ 50,600 B.
@@ -130,7 +130,10 @@ Waived plugin/skills/_shared/github-pr-scan.md: out of scope per the spec's Gotc
 - `plugin/skills/dispatch/close-out-update.md:134`: the post-push watch re-enters Step 2.5's head-run read on an already-ready PR. The new head's `synchronize` runs postdate `readySince`.
 - `plugin/skills/wrap-up/merge-mode.md:50`: the `CLEAN` branch re-enters Step 2.5 from the top, so it inherits the ready-run read.
 - `plugin/skills/wrap-up/review-console-interactive.md:42` and `plugin/bin/lib/wrap-up/pack.js:715`: their CI verdict comes from `bin/pr-checks.js --pr`, which Task 4 updates. `pack.js` reads `state`/`failing`/`pending`, so the added optional `awaitingReadyRun` key is ignored.
-- `plugin/skills/_shared/github-pr-scan.md` item 9 also gates on `pr-checks.js --pr` (`tests/display-ci-readers-conformance.test.js:96`). With Task 4 it reads `pending` for a ready PR whose ready workflow has not run yet. That direction is stricter, not looser, and this plan accepts it.
+- `plugin/skills/_shared/github-pr-scan.md` item 9 also gates on `pr-checks.js --pr` (`tests/display-ci-readers-conformance.test.js:96`). With Task 4 the outcome depends on the PR:
+  - A PR that was undrafted and whose ready workflow has not run since reads `pending`. That is stricter, not looser, and this plan accepts it.
+  - A PR that was never a draft, or is still a draft, has no `ReadyForReviewEvent`. The reader stops after the timeline read and touches no workflow file, so its verdict is unchanged, even when the session's clone lacks the PR head's objects (plan review, amendment 3).
+  - An undrafted PR whose head is not local is read through the contents API at that ref. It is `read-failed` only when both sources fail.
 - `plugin/bin/lib/verify/ci-source.js`: the coexistence ruling is prose (Task 6), and conflict detection is #5154's.
 - Check B keyword hits with no behavior to change:
   - `CHANGELOG.md` and `docs/superpowers/plans/2026-10-31-derived-off-pending-wait-4550.md`: history.
@@ -141,7 +144,8 @@ Waived plugin/skills/_shared/github-pr-scan.md: out of scope per the spec's Gotc
 
 - **The head-runs read stays byte-identical, and a new read is added beside it.** Deliverable 4 asks for `createdAt,event` plus workflow identity on the head-runs read. This plan keeps Step 2.5's `gh run list … --json name,workflowName,status,conclusion,url` unchanged, together with its pins and its restatements in `release/execute.md`, `resume-confirmation.md`, `close-out.md` and `tidy/actions-github-issues.md`. It adds `bin/ready-run.js`, whose own REST read carries `created_at`/`event`/`path`. `gh run list` has no workflow path field. Comparing ISO timestamps across up to 100 runs is code's job, not prose's. The CLI is also what the shell loop needs.
 - **A ready workflow is `met` only when its newest post-ready run has completed without failing.** Existence alone is not enough. The CLI's REST snapshot is taken after the prose's `gh run list` snapshot, so a run that appears between the two reads must still hold the merge. `classifyRollup` keeps the spec's existence rule (`awaitingReadyRun`), because there the post-ready run sits in the same `headRuns` the general pending/red rules read.
-- **Workflow files come from git objects at `{headRefOid}`, not the worktree's working tree.** This yields the same bytes when the worktree's HEAD is `headRefOid`, which Step 2.5 already relies on. Linked worktrees share one object store, so dispatch close-out can run from the main checkout with no run worktree. A missing object is `read-failed` with a runnable `git fetch origin pull/{n}/head`.
+- **Workflow files come from git objects at `{headRefOid}`, else the contents API at that ref, and only once a ready event exists.** Git objects yield the same bytes as the worktree when its HEAD is `headRefOid`, which Step 2.5 already relies on. Linked worktrees share one object store, so dispatch close-out can run from the main checkout. The timeline is read first, so with no ready event no workflow file is read at all. When the head object is absent, `gh api repos/{o}/{r}/contents/.github/workflows?ref={sha}` and per-file contents serve instead. Only both failing is `read-failed`, with a runnable `git fetch origin pull/{n}/head` (plan review, amendment 3).
+- **A draft-skip workflow without `ready_for_review` parks only while it has no post-ready run.** This is Reading B, decided by the user and recorded in the spec's `## Plan Review Clarifications`. A later `synchronize` push that really runs CI clears it, and from then on it is judged like any ready workflow.
 - **The GraphQL variables are `-f owner=… -f name=…` from `repoTargetOf`, plus `-F number=…`.** The spec's `…` left them open. This follows `bin/lib/reconcile/pr-state.js`'s precedent and gh-api-module-pattern's #610 rule.
 - **`pr-checks.js` folds draft-skip workflows into `readyWorkflows`.** `/test`'s gate then reads them `pending` with no new state, so `_shared/pr-check-gate.md`'s routing and its "every state is routed" twin pin stay unchanged. Only the merge gate parks with the dedicated reason.
 
@@ -150,7 +154,7 @@ Waived plugin/skills/_shared/github-pr-scan.md: out of scope per the spec's Gotc
 - **A PR re-drafted and re-readied.** The Red path's label-failure fallback re-drafts, and a human later readies the PR again. Only runs after the *last* `ReadyForReviewEvent` count. Task 3 asserts the query carries `last:1`. Task 2 pins a run created between two ready events (before the last one) as not counted.
 - **A workflow committed with CRLF line endings.** The `on:` reader must not read `pull_request:\r` as absent. Task 1 runs every reader case on an LF and a CRLF copy built from the same string.
 - **A ready run slower than 15 minutes.** The watch must park with `checks-pending-timeout` and name the workflow still awaited, not merge. Task 8's executed loop test drives an `awaiting` CLI past the stubbed deadline and asserts `RC=124`.
-- **Close-out from a checkout without the PR head's objects.** The reader must say so with a runnable remedy, never "no requirement". Task 3 pins `read-failed` with a reason naming `git fetch origin pull/{n}/head` when `ls-tree` exits 128.
+- **A checkout without the PR head's objects** (close-out, or a `--pr` reader in another clone). With no ready event the verdict must be unchanged. With one, the requirement must still be read through the contents API, and the result is `read-failed` with a runnable remedy only when both sources fail. Task 3 pins all three cases (amendment 3 a/b/c), and Task 4 pins (a) and (c) through the CLI.
 - **A numeric-only owner or repo name.** GraphQL `String!` variables must go in via `-f`, never `-F` (#610). Task 3 asserts the exact recorded argv: `-f owner=…`, `-f name=…`, `-F number=…`.
 
 ---
@@ -253,7 +257,7 @@ git commit -m "Add workflow trigger-types reader — types, draft reference, unp
   - The newest counted row decides each `W`. It is chosen by `Date.parse`, then by a numeric `databaseId ?? id`.
   - The newest row puts `W` in a list as follows:
     - Status not `COMPLETED` after uppercasing → `pending`.
-    - A conclusion in `FAILING_CONCLUSIONS` → `failing`, as `{ name: row.workflowName || row.name || W, url: row.html_url || row.url || null }`.
+    - `conclusion` uppercased (`String(row.conclusion || '').toUpperCase()`, the same normalization as `normalizeHeadRun`) in `FAILING_CONCLUSIONS` → `failing`. REST and `gh run list` rows carry lowercase conclusions such as `failure`. The entry is `{ name: row.workflowName || row.name || W, url: row.html_url || row.url || null }`.
     - No counted row at all → `awaiting`.
 - Produces: `classifyRollup({ …existing, readySince?, readyWorkflows? })`.
   - Active iff `typeof readySince === 'string' && readySince !== '' && Array.isArray(readyWorkflows) && readyWorkflows.length > 0`.
@@ -286,6 +290,7 @@ git commit -m "Add workflow trigger-types reader — types, draft reference, unp
     - (e) `readyWorkflows: 'ci.yml'` → `read-failed`, `malformed-ready-workflows`.
     - (f) Of two post-ready rows for `W`, the older `failure` and the newer `success`, `readyRunVerdict` reports no failing. This test calls `readyRunVerdict` directly, because `classifyRollup`'s general red rule still sees the older row, a pre-existing history-not-state behaviour this record does not change.
     - (g) A row created after the first of two ready events but before `READY` (the last) does not count.
+    - (h) Call `readyRunVerdict` directly with a lowercase `failure` post-ready REST-shaped row (`rest(W,'pull_request',after,'completed','failure',3)`). It lands in `failing` as `[{ name, url }]`. Deleting the uppercase normalization turns this test red, because the row then reads neither failing nor pending.
   - `test('readyRunVerdict is exported and pure: no input mutation', …)`.
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -328,26 +333,31 @@ git commit -m "Add ready-run rule to classifyRollup — readySince, readyWorkflo
   - `defaultDeps(root) -> { gh(args) -> string, git(args) -> string, repoTarget() -> object|null, ghAvailable() -> boolean }`.
     - `gh` runs `execFileSync('gh', args, ghOptions(args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true }))`.
     - `git` runs `execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GIT_TIMEOUT_MS, maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true })`.
-  - `readReadyRun(deps, { pr: number, sha: string }) -> { readySince: string|null, workflows: Array<{file,…}>, headRuns: object[] } | { reason: string }`. It never throws. The order is fixed, and an early return makes no network call:
-    1. Workflows at `sha` come from `git ls-tree -z --end-of-options {sha} -- .github/workflows/`, parsed with `parseLsTreeZ`. Keep `type === 'blob'` rows whose path is `.github/workflows/{name}`, where the name matches `/\.ya?ml$/i` and holds no further `/`. Then read each with `git cat-file blob {blobSha}`.
-       - A thrown `ls-tree` with numeric `status` 128 gives reason `head ${sha} not in the local object store — run: git fetch origin pull/${pr}/head`.
-       - Any other throw gives `workflow read failed: {err text}`.
-       - An empty listing gives `workflows: []`, `readySince: null`, `headRuns: []`, which is `not-applicable`.
-    2. `readyRequirement(workflows)`. When both `readyWorkflows` and `draftSkipWithoutReadyTrigger` are empty, return `{ readySince: null, workflows, headRuns: [] }` with no `gh` call.
-    3. `deps.ghAvailable()` false gives reason `gh absent`.
-    4. `deps.repoTarget()` that is null or a refusal gives reason `repo unresolvable from origin`.
-    5. The timeline read, with argv `['api', 'graphql', '-f', `owner=${owner}`, '-f', `name=${name}`, '-F', `number=${pr}`, '-f', `query=${READY_EVENT_QUERY}`]`. Read the body from `stdout` even on a throw (`err.stdout`). A missing `data.repository.pullRequest` gives reason `ready-event read failed: …`. An empty `nodes` gives `readySince: null`, so the call returns with no runs read. Otherwise `nodes[nodes.length - 1].createdAt`.
-    6. The REST runs read, with argv `['api', `repos/${owner}/${name}/actions/runs?head_sha=${sha}&per_page=100`]` (no `-f`/`-F`, so it stays GET).
+  - `readReadyRun(deps, { pr: number, sha: string }) -> { readySince: string|null, workflows: Array<{file,…}>, headRuns: object[] } | { reason: string }`. It never throws. The order is fixed, and it reads the ready event **first**: with no ready event no workflow file is read, so a head missing from the local object store cannot demote a verdict (plan review, amendment 3).
+    1. `deps.ghAvailable()` false gives reason `gh absent`.
+    2. `deps.repoTarget()` that is null or a refusal gives reason `repo unresolvable from origin`.
+    3. The timeline read, with argv `['api', 'graphql', '-f', `owner=${owner}`, '-f', `name=${name}`, '-F', `number=${pr}`, '-f', `query=${READY_EVENT_QUERY}`]`. Read the body from `stdout` even on a throw (`err.stdout`). The result is one of three:
+       - An empty `nodes` means the PR was never a draft, or is still a draft (`/test`'s gate before undraft). Return `{ readySince: null, workflows: [], headRuns: [] }` with no workflow or runs read. This is "no requirement", so `not-applicable`.
+       - A failed or malformed read (a missing `data.repository.pullRequest`, unparseable stdout) goes to the step-4 local read alone, with no contents API. If the local objects are present and `readyRequirement` is empty, no ready-run rule could apply, so return `{ readySince: null, workflows, headRuns: [] }`. Otherwise give reason `ready-event read failed: {err}`. This keeps a GraphQL blip from parking merges on repos that use no draft skip and no `ready_for_review`. It never loosens a repo that does.
+       - Otherwise `readySince = nodes[nodes.length - 1].createdAt`.
+    4. Workflows at `sha`, local objects first. `git ls-tree -z --end-of-options {sha} -- .github/workflows/` is parsed with `parseLsTreeZ`. Keep `type === 'blob'` rows whose path is `.github/workflows/{name}`, where the name matches `/\.ya?ml$/i` and holds no further `/`. Read each with `git cat-file blob {blobSha}`. An empty listing is `workflows: []`.
+    5. Any throw in step 4 (typically `ls-tree` exit 128 for an absent commit) falls back to the contents API at that ref:
+       - The listing is `['api', `repos/${owner}/${name}/contents/.github/workflows?ref=${sha}`]` (GET, no `-f`/`-F`).
+       - Each `type === 'file'` entry whose name matches `/\.ya?ml$/i` is read with `['api', `repos/${owner}/${name}/contents/${entry.path}?ref=${sha}`]`, decoding `content` from base64 (`encoding: 'base64'`).
+       - A 404 on the listing, where GraphQL has resolved owner and name and `sha` is the PR head GitHub reported, is `workflows: []`.
+       - Only when both sources fail: reason `workflows unreadable at ${sha}: local objects ({err}); contents API ({err}) — run: git fetch origin pull/${pr}/head`. This fails closed with a named reason.
+    6. `readyRequirement(workflows)`. When both `readyWorkflows` and `draftSkipWithoutReadyTrigger` are empty, return `{ readySince, workflows, headRuns: [] }` with no runs read. That is `not-applicable`.
+    7. The REST runs read, with argv `['api', `repos/${owner}/${name}/actions/runs?head_sha=${sha}&per_page=100`]` (no `-f`/`-F`, so it stays GET).
        - `workflow_runs` not an array gives reason `runs read failed: not a list`.
        - `total_count > workflow_runs.length` gives reason `runs read truncated: {len} of {total}`, failing closed.
-  - `readyRunState({ readySince, workflows, headRuns }) -> { state, readySince, readyWorkflows, awaitingReadyRun, pending, failing, draftSkipWithoutReadyTrigger, unparsed }`. It is pure.
+  - `readyRunState({ readySince, workflows, headRuns }) -> { state, readySince, readyWorkflows, awaitingReadyRun, pending, failing, draftSkipWithoutReadyTrigger, unparsed }`. It is pure. Reading B, the user's decision at plan review: a draft-skip workflow parks only while it has no post-ready run, and once it has one it is judged like any ready workflow.
     - `not-applicable` when there is no `readySince`, or no requirement.
-    - Otherwise, with `v = readyRunVerdict({ readySince, readyWorkflows, headRuns })`:
-      - `red` when `v.failing.length`.
-      - Else `draft-skip-without-ready-trigger` when that list is non-empty.
-      - Else `awaiting` when `v.awaiting.length || v.pending.length`.
+    - Otherwise let `req = readyRequirement(workflows)` and `v = readyRunVerdict({ readySince, readyWorkflows: [...req.readyWorkflows, ...req.draftSkipWithoutReadyTrigger], headRuns })`. Then `parked = req.draftSkipWithoutReadyTrigger.filter((w) => v.awaiting.includes(w))` and `awaitingReadyRun = v.awaiting.filter((w) => !parked.includes(w))`.
+      - `red` when `v.failing.length`, which includes a draft-skip workflow whose newest post-ready run failed.
+      - Else `draft-skip-without-ready-trigger` when `parked` is non-empty.
+      - Else `awaiting` when `awaitingReadyRun.length || v.pending.length`.
       - Else `met`.
-    - `awaitingReadyRun = v.awaiting` and `pending = v.pending`.
+    - The envelope's `draftSkipWithoutReadyTrigger` is `parked`, meaning only the workflows with no post-ready run. `readyWorkflows` is `req.readyWorkflows`, and `pending = v.pending`.
   - `resolveReadyRun(deps, { pr, sha }) -> envelope` is the core. A `{ reason }` becomes `{ state: 'read-failed', reason, readySince: null, readyWorkflows: [], awaitingReadyRun: [], pending: [], failing: [], draftSkipWithoutReadyTrigger: [], unparsed: [] }`.
 - Produces in `plugin/bin/ready-run.js`: `run(argv, deps) -> exitCode`, `parseArgs(argv)` and `USAGE`, which is built from `STATES` and carries the line `state: ${STATES.join(' | ')}`. The JSON line printed is `{ ...envelope, pr, sha }`.
   - Exit 0 in every state.
@@ -357,18 +367,25 @@ git commit -m "Add ready-run rule to classifyRollup — readySince, readyWorkflo
   - `if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps)`.
 
 - [ ] **Step 1: Write the failing tests** in `tests/bin-lib/pr-checks/ready-run.test.js`.
-  - A fake `gh` branches on `args[1] === 'graphql'` versus `args[1].startsWith('repos/')`, and throws `unexpected …` on anything else. It records argv inside the runner and asserts after the call.
+  - A fake `gh` branches on `args[1] === 'graphql'`, on `args[1].includes('/actions/runs?')` and on `args[1].includes('/contents/')`, and throws `unexpected …` on anything else. A contents fake can also be set to throw. It records argv inside the runner and asserts after the call.
   - A fake `git` serves `ls-tree`/`cat-file` from an in-memory `{path: text}` map, built through `parseLsTreeZ`'s input shape (`<mode> blob <sha>\t<path>\0`).
   - The test list:
-    - `test('readReadyRun: no workflow requires a ready run → not-applicable with zero gh calls', …)`.
+    - `test('readReadyRun: a ready event but no workflow requiring a ready run → not-applicable with no runs read', …)`.
     - `test('readReadyRun: the timeline argv passes owner/name with -f and number with -F, and the query asks last:1', …)`. This pins the exact argv array.
-    - `test('readReadyRun: a never-draft PR (empty nodes) is not-applicable and reads no runs', …)`.
+    - `test('readReadyRun: no ready event (never a draft, or still a draft) → no requirement with zero git calls and no runs read', …)`. This is amendment 3(a) at the reader: the fake `git` throws on any call, so the test proves no workflow read happens.
     - `test('readReadyRun: the runs read is a GET path with head_sha and per_page=100 and no -f/-F', …)`.
-    - `test('readReadyRun: an absent head commit (ls-tree exit 128) is read-failed naming git fetch origin pull/{n}/head', …)`. The fake throws `Object.assign(new Error('fatal: not a tree object'), { status: 128 })`.
-    - `test('readReadyRun: a GraphQL NOT_FOUND body, a truncated runs page, a non-list runs body, gh absent and an unresolvable repo are each read-failed with their own reason', …)`: one assertion per cause.
+    - `test('readReadyRun: a ready event and a non-local head read the workflows through the contents API at the ref', …)`. This is amendment 3(b). The fake `git` throws `Object.assign(new Error('fatal: not a tree object'), { status: 128 })`. The contents fake serves the listing and a base64 `ci.yml` with a default-types draft skip. Expect `draftSkipWithoutReadyTrigger: ['.github/workflows/ci.yml']`, and both recorded contents argv carry `?ref={sha}` with no `-f`/`-F`.
+    - `test('readReadyRun: a ready event with neither local objects nor the contents API is read-failed naming both causes and git fetch origin pull/{n}/head', …)`. This is amendment 3(c).
+    - `test('readReadyRun: a contents-API 404 on the workflows listing is no workflows, never read-failed', …)`.
+    - `test('readReadyRun: a failed timeline read is read-failed unless the local workflows show no requirement', …)`. Two cases: local objects showing a draft skip give `read-failed` with `ready-event read failed:`, and local objects with only a bare `pull_request:` workflow give `not-applicable`.
+    - `test('readReadyRun: a truncated runs page, a non-list runs body, gh absent and an unresolvable repo are each read-failed with their own reason', …)`: one assertion per cause.
     - `test('AC6.1: a draft-skip workflow with default types gives draft-skip-without-ready-trigger naming the file', …)`: the workflow is `.github/workflows/ci.yml` with `on:\n  pull_request:\n` and a job `if: github.event.pull_request.draft == false`, under a ready event. Expect state `draft-skip-without-ready-trigger` and `draftSkipWithoutReadyTrigger: ['.github/workflows/ci.yml']`.
     - `test('AC6.2: a workflow declaring ready_for_review never gives draft-skip-without-ready-trigger', …)`: `types: [opened, synchronize, reopened, ready_for_review]` plus the same draft skip. Expect `awaiting` with no post-ready run, `met` with a completed success post-ready run, and never the draft-skip state.
     - `test('readyRunState: red wins over draft-skip and awaiting; an unparsed workflow is awaited and listed in unparsed', …)`.
+    - `test('AC6.1 (Reading B): a draft-skip workflow without ready_for_review parks only while it has no post-ready run', …)`. Use the same default-types draft-skip workflow twice:
+      - With no head run at or after `readySince`, expect `draft-skip-without-ready-trigger` and `draftSkipWithoutReadyTrigger: ['.github/workflows/ci.yml']`.
+      - With a completed `success` REST row `{ path: '.github/workflows/ci.yml', event: 'pull_request', created_at: <after readySince> }` from a later `synchronize` push, expect `met`, an empty `draftSkipWithoutReadyTrigger`, and not parked.
+      - Further cases with the same workflow: an `in_progress` post-ready run gives `awaiting`, and a `failure` one gives `red`.
     - `test('real git: workflows are read at the sha from a committed fixture repo', …)`: uses `tests/helpers/git-fixtures.js`'s `gitRepo` (under `os.tmpdir()`). It commits the AC6.1 workflow and runs `readReadyRun` with `defaultDeps(repo)`'s real `git` and a fake `gh`, asserting the file's `draftReference: true`. This is the Real-writer fixture check.
     - `test('CLI: malformed --pr/--sha/--root, a trailing bare flag, an empty value and an unknown arg each exit 2 with no gh or git call', …)`.
     - `test('CLI: --help prints USAGE built from STATES and exits 0 without probing', …)`: every `STATES` member appears in `USAGE`, and `Object.isFrozen(STATES)`.
@@ -381,7 +398,7 @@ Run: `node --test tests/bin-lib/pr-checks/ready-run.test.js`
 Expected: FAIL — `Cannot find module '../../../plugin/bin/lib/pr-checks/ready-run'` (or the test file is absent before Step 1).
 
 - [ ] **Step 3: Implement `plugin/bin/lib/pr-checks/ready-run.js` and `plugin/bin/ready-run.js`** per the Interfaces block. Header comments:
-  - The lib's header names the three reads and the fail-closed rule: every read failure is `read-failed`, never `not-applicable`.
+  - The lib's header names the reads in order: the timeline first, then workflows from local objects or else the contents API, then runs. It also states the fail-closed rule: a read failure is `read-failed`, never `not-applicable`. The one exception is a failed timeline read where the local workflows show no requirement, since no ready-run rule can apply there.
   - The CLI's header copies `pr-checks.js`'s status-as-data paragraph shape: "Status is data: exit 0 in every state … 2 malformed invocation".
 - Name each `catch`'s direction in a comment beside it.
 - The CLI reads no run dir, so no anchoring guard is owed (`cli-wrapper-contract.md` L39–L41).
@@ -410,6 +427,7 @@ git commit -m "Add ready-run reader and CLI — timeline ready event, REST runs 
 ### Task 4: `pr-checks.js` feeds the ready-run inputs to `classifyRollup`
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/pr-checks.js`: a `realDeps.readyRun`, `classifyPr` at :185-221, `gateEntry` at :143-155, and the `USAGE` and header envelope key lists
@@ -432,6 +450,9 @@ Dependency-caller enumeration: `git grep -l -e "pr-checks.js" -e "bin/pr-checks'
     - `test('ready-run: a green rollup with a ready workflow and no post-ready run is pending with awaitingReadyRun', …)`.
     - `test('ready-run: a completed successful post-ready REST run makes it green', …)`.
     - `test('ready-run: a draft-skip workflow without a ready trigger is folded into readyWorkflows and reads pending, never a new state', …)`.
+    - `test('ready-run (Reading B): a draft-skip workflow with a completed successful post-ready synchronize run is green, the same verdict the merge gate\'s met gives', …)`.
+    - `test('ready-run: no ready event and a head absent from the local object store leave the verdict unchanged', …)`. This is amendment 3(a) end to end. `readyRun` is the real `readReadyRun` wired to fakes: a GraphQL fake answering `nodes: []`, and a `git` that throws exit 128. Assert the envelope deep-equals the one the default stub gives (green), and assert zero `git` calls.
+    - `test('ready-run: a ready event, a non-local head and both workflow sources unavailable is read-failed on a green rollup', …)`. This is amendment 3(c) through the CLI.
     - `test('ready-run: a readyRun reason on a non-red verdict is read-failed with reason prefix "ready-run read failed:"; on a red verdict it stays red', …)`.
     - `test('ready-run: a stale head never calls readyRun', …)`.
     - `test('ready-run: --pr mode passes the PR head sha and the git toplevel as root', …)`.
@@ -448,7 +469,11 @@ Expected: FAIL after Step 1 — the new `ready-run:` tests fail, because `readyR
   - In `classifyPr`, inside the existing `headRefOid === compareHead` branch and after the runs read, call `deps.readyRun({ pr: n, sha: headRefOid, root: repoRoot })` in a `try`. Move the `repoRoot` resolution above it.
   - A `{ reason }`, or a throw, sets `readyFailure`. It is handled exactly like `runsFailure` at :219: it demotes only a non-red verdict (batching L33).
   - Otherwise compute `req = readyRequirement(ready.workflows)`. When `ready.readySince` is set and `[...req.readyWorkflows, ...req.draftSkipWithoutReadyTrigger]` is non-empty, pass `readySince`, that list as `readyWorkflows`, and `headRuns: [...rows, ...ready.headRuns]`. Otherwise pass today's arguments unchanged.
-  - Fold the draft-skip workflows in. A draft-skip workflow with no ready trigger never gets a ready run, so `/test`'s gate reads it `pending`. Only the merge gate has the dedicated park reason. Record this folding in the header comment.
+  - Fold the draft-skip workflows in, which is consistent with Reading B. `classifyRollup`'s existence rule then treats a draft-skip workflow exactly as `readyRunState` does:
+    - With no post-ready run it is in `awaitingReadyRun`, so `pending`.
+    - Once a post-ready run exists (for example a later `synchronize` push with `draft == false`), the general rules judge it: pending while in progress, red on a failing conclusion, green when it succeeds.
+
+    The two gates therefore agree on every head. Only the merge gate names the no-post-ready-run case with the dedicated park reason. Record this folding in the header comment.
   - `gateEntry`'s pending text falls back to `no run since ready: ${out.awaitingReadyRun.join(', ')}` before `'no check reported yet'`. `_shared/pr-check-gate.md:76` gets the same phrase, so the hand-written fallback entry matches the CLI's.
 
 - [ ] **Step 4: Run the tests to verify they pass**
@@ -467,7 +492,7 @@ git commit -m "Feed ready-run inputs to pr-checks.js — /test's gate and the me
 
 ### Task 5: Pay for the merge-bundle bytes — move rationale blocks to the appendix
 
-**Role:** transcription
+**Role:** integration
 
 **Files:**
 - Modify: `plugin/skills/_shared/pr-first-merge.md` (blocks named below)
@@ -490,7 +515,9 @@ Moved blocks. Each move is a verbatim cut and paste, and each pointer is the exa
 9. **Sequential multi-branch merges (:473-476):** replace the paragraph with `` **Sequential multi-branch merges** are serialized one at a time (`flow/worktree-merge.md`'s reconciliation) — why each later branch's update-from-base sees real current state: `pr-first-merge-appendix.md`'s "Rationale notes". ``
 10. **Armed-outcome trigger list (:433-435):** `(\`_shared/pr-run-comments.md\`'s consumer table;\n     session-start, dispatch queue-pull, routine kickoffs, tidy, all converge on this\n     eventually).` becomes `(\`_shared/pr-run-comments.md\`'s consumer table).`. The list moves to `## Rationale notes`. `**Do not poll or wait**`, which `tests/pr-first-merge.test.js:72` pins, stays.
 
-The simulated effect of moves 1–10 on a scratch copy (`node {scratch}/simulate.js`, 2026-11-11) is −3,349 B raw, which puts the composed merge bundle at 49,149.
+11. **Step 3 eval-guard rationale (:348-349):** move the sentence ` Why: the worktree Bash guard refuses \`eval\` and a \`gh\` argument computed at runtime, and every pr-first merge runs from a worktree session (#3522).` to `## Rationale notes`, with no pointer. The operative instructions before it, "Run each fence as its own Bash call" and "paste the path inside the printed quotes", stay. `git grep -n -F 'worktree Bash guard refuses \`eval\`' -- tests plugin` finds no pin.
+
+The simulated effect of moves 1–11 on a scratch copy (`node {scratch}/simulate.js`, 2026-11-11) is −3,497 B raw, which puts the composed merge bundle at 49,001.
 
 Capture (f) is appended to `## Signatures` as one bullet. It records PR #5156 (2026-11-11): `ReadyForReviewEvent` `createdAt` `2026-11-11T00:45:28Z`, and the head's only `pull_request` run, `test.yml` run 42931704440, created `2026-11-11T00:29:06Z`. This repo's bare `pull_request:` (default types) starts no run on ready, so every run on that head predates `readySince`. The ready-event window the gate waits through is the same not-yet-registered shape as capture (e).
 
@@ -501,7 +528,7 @@ Capture (f) is appended to `## Signatures` as one bullet. It records PR #5156 (2
 Run: `node --test tests/merge-verification-gate-conformance.test.js`
 Expected: FAIL after Step 1 — `sectionOf` throws "## Resume-to-merge" not found.
 
-- [ ] **Step 3: Make the ten moves and the capture**, verbatim, in file order. Re-resolve deictics (Deictic-reference check). Stub 4 says "the pending column below" and stays above the table, and stub 9 sits where its paragraph sat.
+- [ ] **Step 3: Make the eleven moves and the capture**, verbatim, in file order. Re-resolve deictics (Deictic-reference check). Stub 4 says "the pending column below" and stays above the table, and stub 9 sits where its paragraph sat.
 
 - [ ] **Step 4: Run the tests and measure**
 
@@ -509,7 +536,7 @@ Run: `node --test tests/merge-verification-gate-conformance.test.js tests/pr-fir
 Expected: PASS.
 
 Run: `node plugin/bin/context-cost-report.js --plugin-root plugin`
-Expected: every `"step":"merge"` row's `max` ≤ 49,400, against 52,498 before the moves; the simulation gave 49,149. Record the number in the commit body.
+Expected: every `"step":"merge"` row's `max` ≤ 49,400, against 52,498 before the moves; the simulation gave 49,001. Record the number in the commit body.
 
 - [ ] **Step 5: Commit**
 
@@ -641,7 +668,15 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/ready-run.js" --pr {pr-number} --sha {headRefOid
   no change.
 ```
 
-(d) Red path item 2's comment phrase `{failing check names — or "checks still pending after 15m" for checks-pending-timeout}` gains `, or "{files} skips drafts with no ready_for_review trigger" for draft-skip-without-ready-trigger`. The `$REASON` sentence gains: ` A timeout whose last ready-run read named \`awaitingReadyRun\` appends \` (no run since ready: {files})\`.` An `unparsed` workflow is in `awaitingReadyRun`, so this names it as the spec requires.
+(d) Red path item 2's park-comment template (:263) becomes the following, where `{reason}` is the existing braces text plus one alternative:
+
+```markdown
+`Parked by merge-verification ({value}): {failing check names — or "checks still pending after 15m" for checks-pending-timeout, or "{files} skips drafts with no ready_for_review trigger — add ready_for_review to its types (_shared/ci-skips-drafts.md)" for draft-skip-without-ready-trigger} on PR #{n}. {resume}`
+```
+
+The line after it adds ` \`{resume}\`: \`Resume once green.\`; for draft-skip-without-ready-trigger, \`Resume once its workflow is fixed or a post-ready run lands.\``. A draft-skip park never says "Resume once green". The fence that writes the comment carries `{resume}` as its own `printf` argument. That edit is in Task 8, because it re-keys two existing fence pins.
+
+The `$REASON` sentence gains: ` A timeout whose last ready-run read named \`awaitingReadyRun\` appends \` (no run since ready: {files})\`.` An `unparsed` workflow is in `awaitingReadyRun`, so this names it as the spec requires.
 
 (e) Red path item 3's `{reason: check-failed:{names} | checks-pending-timeout}` becomes `{reason: check-failed:{names} | checks-pending-timeout | draft-skip-without-ready-trigger:{files}}`.
 
@@ -652,6 +687,12 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/ready-run.js" --pr {pr-number} --sha {headRefOid
 - [ ] **Step 1: Write the failing tests.**
   - In `tests/pr-first-merge.test.js`, use one helper `assertReadyRunStep25(section)` over `step25Section()`, which throws a per-clause message. Each needle is matched against the bullet after collapsing whitespace (`.replace(/\s+/g, ' ')`), because the bullet wraps.
     - `test('AC6.1: Step 2.5 routes draft-skip-without-ready-trigger to the Red path with the fix and the convention citation', …)`: the bullet contains `` `draft-skip-without-ready-trigger` → **Red path** ``, `` fix: add `ready_for_review` to `types` `` and `_shared/ci-skips-drafts.md` (AC9's third citer).
+    - `test('AC6.1: the park comment names the fix and never says "Resume once green" for a draft skip', …)`. This pins three things:
+      - The template line carries the literal `{files} skips drafts with no ready_for_review trigger — add ready_for_review to its types (_shared/ci-skips-drafts.md)`.
+      - The `{resume}` sentence maps draft-skip-without-ready-trigger to `Resume once its workflow is fixed or a post-ready run lands.`
+      - The template's tail is `on PR #{n}. {resume}`, not `Resume once green.`
+
+      It has mutation controls per clause.
     - `test('AC6.2: only the draft-skip state parks on that reason — met and not-applicable change nothing', …)`: `` `met`, `not-applicable` → no change `` is present, and the Red-path log line's reason alternation lists the new reason exactly once.
     - `test('AC11.1: the Step 2.5 reads carry the ready-run read after the head-run read, and the head-run read is byte-identical', …)`:
       - The existing `gh run list --repo {owner}/{repo} --commit {headRefOid} --limit 100 --json name,workflowName,status,conclusion,url` line is present unchanged.
@@ -681,7 +722,7 @@ Run: `node --test tests/pr-first-merge.test.js tests/pr-check-gate-conformance.t
 Expected: PASS.
 
 Run: `node plugin/bin/context-cost-report.js --plugin-root plugin`
-Expected: merge `max` ≤ 50,600. The simulation at authoring time gave 50,363.
+Expected: merge `max` ≤ 50,600. The simulation at authoring time gave 50,407.
 
 - [ ] **Step 5: Commit**
 
@@ -698,14 +739,17 @@ git commit -m "Step 2.5 reads the ready run and parks a draft skip with no ready
 **Review risk:** high
 
 **Files:**
-- Modify: `plugin/skills/_shared/pr-first-merge.md`, in five places:
+- Modify: `plugin/skills/_shared/pr-first-merge.md`, in six places:
   - The scratch-path resolve line (:149) and its substitution sentence (:144-145).
   - The watch loop's `0)` arm (:225-230).
   - The `RC=0` bullet (:241-247).
   - A new `RC=3` bullet after `RC=1`.
   - The `RC=124` bullet (:250-251).
+  - The Red path's park-comment fence (:268). Its `printf` carries `{resume}` as an argument; this is amendment 4, paired with Task 7(d).
 - Test: `tests/merge-verification-gate-conformance.test.js` (extend `the gate cross-checks head-sha workflow runs…`, plus one new test)
 - Create: `tests/merge-watch-ready-run.test.js` (extracts and runs the loop fence)
+- Modify: `tests/skill-fence-guard-shapes.test.js:104`. Re-key the `_shared/pr-first-merge.md` `gh-computed-input` ratchet anchor to the new first line of the same fence. This is the same fence with the same one violation, so the count stays unchanged: a re-key, not growth.
+- Modify: `tests/session-tmp-root-migration.test.js:194`. The live regex `/printf .* "\$VALUE" "\$REASON" "\$PR" > "\{park-comment-path\}"/` becomes `/printf .* "\$VALUE" "\$REASON" "\$PR" "\$RESUME" > "\{park-comment-path\}"/`. The frozen `PRE_CHANGE_PARK_FENCE` and its path-ban go-red control stay as they are.
 
 **Interfaces:**
 - Consumes: `bin/ready-run.js` (Task 3). The `{pr-ready-path}` placeholder is the session-tmp file `pr-ready-{n}.json`.
@@ -725,6 +769,7 @@ Prose edits:
 - The `RC=0` bullet: after `a head run not yet \`completed\` resumes the bounded watch at the same \`DEADLINE\`` add `, as does a ready-run read still \`awaiting\` (\`awaitingReadyRun\` non-empty); its \`red\` or \`draft-skip-without-ready-trigger\` takes the Red path`.
 - New bullet: `` - `RC=3` (ready-run `red` or `draft-skip-without-ready-trigger`) → **Red path**, reason from `{pr-ready-path}`: `check-failed:{names}` or `draft-skip-without-ready-trigger:{files}`. ``
 - `RC=124`: `checks or head runs still running at the bound` becomes `checks, head runs or an awaited ready run still pending at the bound`.
+- Park-comment fence: `printf 'Parked by merge-verification (%s): %s on PR #%s. Resume once green.\n' "$VALUE" "$REASON" "$PR" > "{park-comment-path}"` becomes `printf 'Parked by merge-verification (%s): %s on PR #%s. %s\n' "$VALUE" "$REASON" "$PR" "$RESUME" > "{park-comment-path}"`. The `(\`$REASON\` holds …)` parenthetical gains `; \`$RESUME\` holds \`{resume}\``. Both are `printf` arguments, never expanded inside the format string.
 
 - [ ] **Step 1: Write the failing tests.**
   - `tests/merge-watch-ready-run.test.js` is the extract-and-run binding.
@@ -753,6 +798,7 @@ Prose edits:
       - The `RC=0` slice contains `awaitingReadyRun` and `resumes the bounded watch` (the existing clause the new text extends).
       - The section contains `DEADLINE=$(( $(date +%s) + 900 ))` exactly once and the heading line ending `— 15 minutes, fixed.**`.
       - The `RC=3` bullet names `draft-skip-without-ready-trigger`.
+      - The park-comment fence's format string has no `Resume once green` and ends `%s\n'`, followed by `"$VALUE" "$REASON" "$PR" "$RESUME"`. The fence is run in `tests/merge-watch-ready-run.test.js` with a `gh()` stub that records the `--body-file` content, using `RESUME='Resume once its workflow is fixed or a post-ready run lands.'`. The test asserts the written body ends with that sentence and does not contain `Resume once green`.
       - Mutation controls for each clause go through one helper with per-clause messages.
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -768,13 +814,13 @@ Run: `node --test tests/merge-watch-ready-run.test.js tests/merge-verification-g
 Expected: PASS. `session-tmp-root-migration`'s `COMBINED_RESOLVE` is an `includes` over the unchanged prefix.
 
 Run: `node plugin/bin/context-cost-report.js --plugin-root plugin`
-Expected: merge `max` ≤ 51,500 (the hard gate). The simulation at authoring time gave 51,253. On a miss, trim this plan's new prose in Tasks 7–8, never existing operative text.
+Expected: merge `max` ≤ 51,500 (the hard gate). The simulation at authoring time gave 51,320. On a miss, trim this plan's new prose in Tasks 7–8, never existing operative text.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/skills/_shared/pr-first-merge.md tests/merge-verification-gate-conformance.test.js tests/merge-watch-ready-run.test.js
-git commit -m "Bounded watch re-applies the ready-run rule on gh pr checks exit 0 — 15-minute deadline unchanged (#5153)"
+git add plugin/skills/_shared/pr-first-merge.md tests/merge-verification-gate-conformance.test.js tests/merge-watch-ready-run.test.js tests/skill-fence-guard-shapes.test.js tests/session-tmp-root-migration.test.js
+git commit -m "Bounded watch re-applies the ready-run rule on gh pr checks exit 0; park comment carries its resume sentence — 15-minute deadline unchanged (#5153)"
 ```
 
 ---
@@ -816,14 +862,16 @@ Text:
     - One deletion control for the new marker, matched to the existence message.
   - `test('the post-Mark-ready re-read names the ready-run read and stops on pending', …)`: inside the paragraph, `ready-run read` and `step 1's stop rules`.
   - `test('close-out step 1 and resume-confirmation name bin/ready-run.js; the appendix resume rule names the ready-run read and keeps its pinned clause', …)`.
-  - `test('the recover-a-ci-parked-run journey names three reads', …)`.
+  - `test('the recover-a-ci-parked-run journey names three reads and quotes the park comment with {resume}', …)`.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `node --test tests/close-out-ready-run-conformance.test.js`
 Expected: FAIL — the test file is absent before Step 1. After Step 1, `**Re-read CI after Mark ready.**` is not found.
 
-- [ ] **Step 3: Apply the five text edits.** Step-position check: close-out may run from the main checkout with no run worktree. `bin/ready-run.js` reads the head's workflows from the shared object store, and a missing head object is `read-failed` with a `git fetch origin pull/{n}/head` remedy, which this step reports as `stopped: CI unreadable`.
+- [ ] **Step 3: Apply the five text edits.** Step-position check: close-out may run from the main checkout with no run worktree. `bin/ready-run.js` reads the head's workflows from the shared object store. A missing head object falls back to the contents API at that ref. Only both failing is `read-failed`, with a `git fetch origin pull/{n}/head` remedy, which this step reports as `stopped: CI unreadable`.
+
+Also update the journey's park-comment template quote (`docs/journeys/recover-a-ci-parked-run.md:14`) to the `{resume}` form from Task 7(d).
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
