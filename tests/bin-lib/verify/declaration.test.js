@@ -378,6 +378,40 @@ test('every invalid ci field is reported (#4347)', () => {
   assert.match(readJson({ ...EXAMPLE, ci: { api: 'test.yml' } }).errors.join('\n'), /ci\.api: must be an object/);
 });
 
+test('concurrency.suiteSlots: 2 parses (#5119)', () => {
+  const r = readJson({ ...EXAMPLE, concurrency: { suiteSlots: 2 } });
+  assert.strictEqual(r.ok, true);
+  assert.deepStrictEqual(r.decl.concurrency, { suiteSlots: 2 });
+});
+
+test('an absent concurrency block gives suiteSlots null (#5119)', () => {
+  const r = readJson(EXAMPLE);
+  assert.strictEqual(r.ok, true);
+  assert.deepStrictEqual(r.decl.concurrency, { suiteSlots: null });
+  assert.deepStrictEqual(readJson({ ...EXAMPLE, concurrency: {} }).decl.concurrency, { suiteSlots: null });
+});
+
+test('concurrency refusals each report their exact message (#5119)', () => {
+  const errs = (concurrency) => readJson({ ...EXAMPLE, concurrency }).errors;
+  assert.deepStrictEqual(errs([]), ['concurrency: must be an object']);
+  assert.deepStrictEqual(errs({ suiteSlots: 0 }), ['concurrency.suiteSlots: must be a positive integer']);
+  assert.deepStrictEqual(errs({ suiteSlots: 1.5 }), ['concurrency.suiteSlots: must be a positive integer']);
+  assert.deepStrictEqual(errs({ suiteSlots: '2' }), ['concurrency.suiteSlots: must be a positive integer']);
+  assert.deepStrictEqual(errs({ slots: 2 }), ['concurrency: unknown key(s) "slots" (allowed: suiteSlots)']);
+});
+
+test('every invalid concurrency field is reported together (#5119)', () => {
+  const r = readJson({ ...EXAMPLE, concurrency: { slots: 2, suiteSlots: 0 } });
+  assert.strictEqual(r.ok, false);
+  const text = r.errors.join('\n');
+  assert.match(text, /concurrency: unknown key\(s\) "slots" \(allowed: suiteSlots\)/);
+  assert.match(text, /concurrency\.suiteSlots: must be a positive integer/);
+});
+
+test('CONCURRENCY_KEYS names the allowed concurrency keys (#5119)', () => {
+  assert.deepStrictEqual(require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'declaration.js')).CONCURRENCY_KEYS, ['suiteSlots']);
+});
+
 test('a ci source on a tool-scoped tests command is refused (#4347)', () => {
   const r = readJson({ checks: { tests: 'pnpm vitest --changed {base}' }, ci: { tests: { workflow: 'a.yml', job: 'j' } }, rules: [] });
   assert.strictEqual(r.ok, false);

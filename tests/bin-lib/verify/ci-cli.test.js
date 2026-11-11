@@ -9,7 +9,9 @@ const assert = require('node:assert');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
-const { execFile, execFileSync, spawnSync } = require('child_process');
+const { execFile, execFileSync, spawn, spawnSync } = require('child_process');
+
+const { slotEnv } = require('../../helpers/suite-slot-env');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'verify.js');
 const SKIP = process.platform === 'win32' ? 'a PATH shim named gh is not spawnable on win32' : false;
@@ -36,9 +38,12 @@ function fakeGhEnv(mode, logFile) {
   const bin = tmpDir();
   fs.writeFileSync(path.join(bin, 'gh'), FAKE_GH, { mode: 0o755 });
   const calls = path.join(tmpDir(), 'calls.txt');
+  // CT_TEST_SUITE_SLOT_HELD=1 (#5119): the child skips the machine-wide suite slot exactly as under
+  // tools/run-tests.js, so a direct `node --test` of this file never queues on the real lock;
+  // withSlots() strips it again for the tests that exercise the slot.
   const env = {
     ...process.env, PATH: [bin, path.dirname(process.execPath), process.env.PATH].join(path.delimiter),
-    FAKE_GH_MODE: mode, FAKE_GH_CALLS: calls, FAKE_GH_LOG_FILE: logFile || '',
+    FAKE_GH_MODE: mode, FAKE_GH_CALLS: calls, FAKE_GH_LOG_FILE: logFile || '', CT_TEST_SUITE_SLOT_HELD: '1',
   };
   delete env.NODE_TEST_CONTEXT;
   return { env, calls };
@@ -53,7 +58,7 @@ function runCli(args, { cwd, env }) {
 
 // A repo whose base commit carries a test failing for an environment reason,
 // and a HEAD commit adding the declaration (with or without a ci block).
-function repoWith({ ci = true, extraFiles = {} } = {}) {
+function repoWith({ ci = true, extraFiles = {}, declExtra = {} } = {}) {
   const repo = tmpDir();
   const git = (...a) => execFileSync('git', a, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   git('init', '-q');
@@ -70,6 +75,7 @@ function repoWith({ ci = true, extraFiles = {} } = {}) {
     retry: { tests: 'node --test --test-reporter=tap {file}' },
     rules: [{ match: '**', suites: '*', static: false }],
     ...(ci ? { ci: { tests: { workflow: 'test.yml', job: 'test', waitSeconds: 5, pollSeconds: 1 } } } : {}),
+    ...declExtra,
   };
   fs.mkdirSync(path.join(repo, '.claude-tweaks'));
   fs.writeFileSync(path.join(repo, '.claude-tweaks', 'verify-scope.json'), JSON.stringify(decl));
@@ -187,4 +193,109 @@ test('without a ci block, report, stamp and stdout carry nothing new and gh is n
   const status = JSON.parse((await runCli(['--stamp-status'], { cwd: r.repo, env })).stdout);
   assert.ok(!('source' in status) && !('ci' in status));
   assert.ok(!fs.existsSync(calls));
+});
+
+// #5119: the suite slot around CI-answered suites. slotEnv() strips the CT_TEST_SUITE_SLOT_HELD=1
+// this suite's runner sets; the slot dir does not exist beforehand, so a run that never tried for a
+// slot leaves it uncreated.
+const withSlots = (env, dir) => slotEnv(dir, {}, env);
+
+test('a green CI suite takes no slot (#5119)', { skip: SKIP }, async () => {
+  const r = repoWith();
+  const { env } = fakeGhEnv('green', ciLogOf(r, ['tests/ok.test.js']));
+  const dir = path.join(tmpDir(), 'slots');
+  const res = await runCli(['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', r.branch, '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env: withSlots(env, dir) });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(!('slot' in reportOf(r)));
+  assert.strictEqual(fs.existsSync(dir), false, 'no slot was tried for');
+});
+
+test('a red CI suite with no local retry takes no slot (#5119)', { skip: SKIP }, async () => {
+  const r = repoWith();
+  const { env } = fakeGhEnv('red', ciLogOf(r, ['tests/env.test.js', 'tests/ok.test.js']));
+  const dir = path.join(tmpDir(), 'slots');
+  const res = await runCli(['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', r.branch, '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env: withSlots(env, dir) });
+  assert.strictEqual(res.code, 1, res.stdout + res.stderr);
+  assert.strictEqual(reportOf(r).checks.tests.retryDecision.retry, false);
+  assert.ok(!('retrySlot' in reportOf(r).checks.tests), 'no retry hold, no retrySlot');
+  assert.strictEqual(fs.existsSync(dir), false, 'no slot was tried for');
+});
+
+test('a red CI suite\'s local flaky retry runs under a held subset-lane slot (#5119)', { skip: SKIP }, async () => {
+  const out = path.join(tmpDir(), 'held.txt');
+  const r = repoWith({
+    declExtra: {
+      flaky: { files: ['tests/env.test.js'] },
+      retry: { tests: `node -e "require('fs').writeFileSync(process.argv[1], String(process.env.CT_TEST_SUITE_SLOT_HELD))" "${out}" {file}` },
+    },
+  });
+  const { env } = fakeGhEnv('red', ciLogOf(r, ['tests/env.test.js', 'tests/ok.test.js']));
+  const dir = path.join(tmpDir(), 'slots');
+  const res = await runCli(['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', r.branch, '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env: withSlots(env, dir) });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  const report = reportOf(r);
+  assert.deepStrictEqual(report.checks.tests.flakyRetried, ['tests/env.test.js']);
+  const { waitedMs, ...retrySlot } = report.checks.tests.retrySlot;
+  assert.deepStrictEqual(retrySlot, { lane: 'subset', index: 0, slots: 1, source: 'default' }, 'the retry hold is recorded on the retried check');
+  assert.ok(Number.isInteger(waitedMs), String(waitedMs));
+  assert.ok(!('slot' in report), 'report.slot stays the checks hold\'s alone — no local check ran here');
+  assert.strictEqual(fs.readFileSync(out, 'utf8'), '1', 'the retry ran with the slot held');
+  assert.deepStrictEqual(fs.readdirSync(path.join(dir, 'subset')), [], 'the subset-lane slot was taken and freed');
+  assert.deepStrictEqual(fs.readdirSync(dir), ['subset'], 'never the full lane');
+});
+
+test('a SIGTERM during a CI-failed suite\'s local retry kills the retry and its forked grandchild, and frees its slot (#5119)', { skip: SKIP }, async () => {
+  const out = path.join(tmpDir(), 'retry-pid.txt');
+  const grandOut = path.join(tmpDir(), 'grandchild-pid.txt');
+  // The retry forks a grandchild that ignores SIGTERM, so only the group kill after the grace reaches it.
+  const script = path.join(tmpDir(), 'retry.js');
+  fs.writeFileSync(script, [
+    "const fs = require('fs');",
+    "const { spawn } = require('child_process');",
+    'const [out, grandOut] = process.argv.slice(2);',
+    "const grand = \"process.on('SIGTERM', () => {}); require('fs').writeFileSync(process.argv[1], String(process.pid)); setInterval(() => {}, 1000);\";",
+    "spawn(process.execPath, ['-e', grand, grandOut], { stdio: 'ignore', windowsHide: true });",
+    'fs.writeFileSync(out, String(process.pid));',
+    'setTimeout(() => {}, 30000);',
+  ].join('\n'));
+  const r = repoWith({
+    declExtra: {
+      flaky: { files: ['tests/env.test.js'] },
+      retry: { tests: `node "${script}" "${out}" "${grandOut}" {file}` },
+    },
+  });
+  const { env } = fakeGhEnv('red', ciLogOf(r, ['tests/env.test.js', 'tests/ok.test.js']));
+  const dir = path.join(tmpDir(), 'slots');
+  const child = spawn(process.execPath, [CLI, '--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', r.branch, '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], {
+    cwd: r.repo, env: withSlots(env, dir), stdio: 'ignore', timeout: 60000, killSignal: 'SIGKILL',
+  });
+  const exited = new Promise((resolve) => { child.on('exit', (c, s) => resolve([c, s])); });
+  const pause = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+  const pidIn = async (file) => {
+    for (const deadline = Date.now() + 20000; Date.now() < deadline;) {
+      const text = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+      if (/^\d+$/.test(text)) return Number(text);
+      await pause(50);
+    }
+    return NaN;
+  };
+  const retryPid = await pidIn(out);
+  const grandPid = await pidIn(grandOut);
+  assert.ok(Number.isInteger(retryPid) && Number.isInteger(grandPid), 'the retry and its grandchild started');
+  child.kill('SIGTERM');
+  const [code] = await exited;
+  const goneAfter = async (pid) => {
+    for (const deadline = Date.now() + 10000; Date.now() < deadline;) {
+      try { process.kill(pid, 0); } catch (err) { if (err.code === 'ESRCH') return true; }
+      await pause(50);
+    }
+    try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
+    return false;
+  };
+  const goneRetry = await goneAfter(retryPid);
+  const goneGrand = await goneAfter(grandPid);
+  assert.strictEqual(code, 143);
+  assert.ok(goneRetry, `the retry (pid ${retryPid}) was killed, not orphaned`);
+  assert.ok(goneGrand, `the retry's grandchild (pid ${grandPid}) was killed with its group, not orphaned`);
+  assert.deepStrictEqual(fs.readdirSync(path.join(dir, 'subset')), [], 'the subset-lane slot is freed');
 });

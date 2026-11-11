@@ -71,7 +71,7 @@ function snippetArgv(snippet) {
   const afterScript = snippet.split('bin/verify.js"')[1];
   assert.ok(afterScript, 'snippet must invoke ".../bin/verify.js"');
   const tokens = afterScript.match(/(?:"[^"]*"|\S)+/g) || [];
-  return tokens.map((t) => t.replace(/"/g, '').replace(/\$\([^)]*\)/g, '/dummy'));
+  return tokens.map((t) => t.replace(/"/g, '').replace(/\$\([^)]*\)/g, '/dummy').replace('{slots}', '1'));
 }
 
 // The Baseline adjudication section's invocation is an indented block, not a
@@ -93,6 +93,17 @@ test('the embedded snippet parses clean through the real arg parser (AC8)', () =
   const argv = snippetArgv(extractSnippet());
   const parsed = parseArgs(argv);
   assert.ok(parsed.cmds.length >= 1, 'snippet must pass at least one --cmd');
+});
+
+test('every run-mode snippet passes --default-suite-slots {slots} (#5119 AC9.1)', () => {
+  const run = [extractSnippet(), extractScopedSnippet().replace(/\{ref\}/g, 'main'), extractBaselineSnippet(), ...extractStampSuiteSnippet()];
+  assert.strictEqual(run.length, 5, 'canonical, scoped, baseline and two chunk invocations');
+  for (const snippet of run) {
+    assert.ok(snippet.includes('--default-suite-slots {slots}'), `missing the flag: ${snippet}`);
+    assert.strictEqual(parseArgs(snippetArgv(snippet)).defaultSuiteSlots, 1);
+  }
+  assert.ok(DOC.includes('--values verify-suite-slots'), 'the policy resolution command is documented');
+  assert.ok(!extractStampStatusSnippet().includes('--default-suite-slots'), 'the read-only mode never takes the flag');
 });
 
 test('negative control: the parser rejects an unknown flag, so drift turns this suite red', () => {

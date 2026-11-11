@@ -26,7 +26,7 @@ test('verification.md: Skip-if-recent is checked before the runner is invoked, n
   const stepTwoIdx = text.indexOf('## Step 2: Execute');
   const skipHeadingIdx = text.indexOf('### Skip-if-recent (for /flow pipelines)');
   const runnerInvocationIdx = text.indexOf(
-    'node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --run "$PIPELINE_RUN_DIR" --cmd types="tsc --noEmit"'
+    'node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --run "$PIPELINE_RUN_DIR" --default-suite-slots {slots} --cmd types="tsc --noEmit"'
   );
   const suiteCountCaveatIdx = text.indexOf('### Suite-count regression caveat (#881)');
 
