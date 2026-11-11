@@ -113,8 +113,8 @@ function readFileList(text, { exists }) {
   return entries;
 }
 
-// Matches a positive integer with no sign, fraction, or leading zero — the shape both
-// `CT_TEST_CONCURRENCY` and `CT_TEST_SUITE_SLOTS` accept.
+// Matches a positive integer with no sign, fraction, or leading zero — the shape
+// `CT_TEST_CONCURRENCY` accepts (the slot variables share it in suite-slot.js).
 const POSITIVE_INT = /^[1-9]\d*$/;
 
 // How many test files `node --test` runs at once. Half the cores (at least 1) by default so one
