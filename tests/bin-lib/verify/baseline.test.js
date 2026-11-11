@@ -68,8 +68,11 @@ function fakes({ outcomes, existsAtBase = () => true, sameAtBase = () => true, i
     fs.writeFileSync(logPath, text);
     return { name, command, exitCode: code === undefined ? 1 : code, ...(outcome && outcome.timedOut ? { timedOut: true } : {}), durationMs: 1, logPath };
   };
-  return { git, runOne, calls };
+  return { git, runOne, calls, logRoot };
 }
+
+// Removes the temp dirs a test's logFile()/fakes() calls made, once the adjudication returned.
+const rmDirs = (...dirs) => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); };
 
 const tmpl = new Map([['tests', 'node --test {file}']]);
 
@@ -1347,8 +1350,10 @@ function peakFakes(opts) {
 async function adjudicatePeaks({ log = SPEC(SIX), check = {}, fakeOpts = {}, extra = {} } = {}) {
   const { p, dir } = logFile(log);
   const f = peakFakes({ outcomes: allPhases(), ...fakeOpts });
-  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p, ...check }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne: f.runOne, git: f.git, ...extra });
-  return { r, peak: f.peak, calls: f.calls };
+  try {
+    const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p, ...check }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne: f.runOne, git: f.git, ...extra });
+    return { r, peak: f.peak, calls: f.calls };
+  } finally { rmDirs(dir, f.logRoot); }
 }
 const ALL = (n) => ({ baseline: n, isolated: n, 'isolated-retry': n });
 // `log` with an inconclusive marker under file `f`'s failing entry.
@@ -1434,6 +1439,13 @@ test('RF4: a base rerun failing on a per-test timeout in its own log backs off l
   assert.strictEqual(r.concurrency.reason, 'phase-timeout: baseline');
 });
 
+test('an isolated rerun failing on a per-test timeout in its own log runs the retry phase serially (#5150)', async () => {
+  const logs = { 'isolated:tests/a.test.js': withMarker(SPEC(['tests/a.test.js']), 'tests/a.test.js') };
+  const { r, peak } = await adjudicatePeaks({ fakeOpts: { outcomes: allPhases(), logs }, extra: { concurrency: 4 } });
+  assert.deepStrictEqual(peak.kind, { baseline: 4, isolated: 4, 'isolated-retry': 1 });
+  assert.deepStrictEqual(r.concurrency, { declared: 4, used: { baseline: 4, isolated: 4, retry: 1 }, reason: 'phase-timeout: isolated' });
+});
+
 test('undeclared reruns stays default-serial even with timeout evidence (#5150)', async () => {
   const { r, peak } = await adjudicatePeaks({ log: SIX_WITH_MARKER });
   assert.deepStrictEqual(peak.kind, ALL(1));
@@ -1452,7 +1464,9 @@ test('a concurrency that is neither null nor a positive integer throws before an
     }), (err) => err instanceof TypeError && /^concurrency must be null or a positive integer, got /.test(err.message), String(bad));
     assert.deepStrictEqual(f.calls.runs, [], `${String(bad)}: nothing spawned`);
     assert.strictEqual(took, false, `${String(bad)}: no slot taken`);
+    rmDirs(f.logRoot);
   }
+  rmDirs(dir);
   for (const ok of [null, 1, 2]) {
     assert.strictEqual((await adjudicatePeaks({ extra: { concurrency: ok } })).r.eligible, true, String(ok));
   }
@@ -1615,7 +1629,9 @@ test('AC7.1: an adjudication with no slot keeps a fresh ct-verify-base-* path (#
   const args = { checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne: f.runOne, git };
   await adjudicate(args);
   await adjudicate({ ...args, takeSlot: () => ({ index: 0, base: '/slots' }) });
-  assert.deepStrictEqual(seen, [{ slot: null, slotBase: null }, { slot: 0, slotBase: '/slots' }]);
+  // The values handed over, not the options object's shape: an absent and a null slot read the same.
+  const handed = seen.map((o) => [(o && o.slot) ?? null, (o && o.slotBase) ?? null]);
+  assert.deepStrictEqual(handed, [[null, null], [0, '/slots']]);
 });
 
 test('RF1: a ct-verify-base root that is a symlink is never removed through — fresh path, one warning, scratch.fallback (#5150)', SYMLINK_POSIX_ONLY, async (t) => {
@@ -1766,8 +1782,10 @@ async function adjudicateMoved(headOf) {
   let started = false;
   const runOne = (args) => { if (args.name.includes('-baseline-')) started = true; return f.runOne(args); };
   const git = headOf === undefined ? f.git : { ...f.git, headOf: () => headOf(() => started) };
-  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: BASE_SHA, cwd: '/repo', logDir: dir, runOne, git });
-  return { r, calls: f.calls };
+  try {
+    const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: BASE_SHA, cwd: '/repo', logDir: dir, runOne, git });
+    return { r, calls: f.calls };
+  } finally { rmDirs(dir, f.logRoot); }
 }
 const assertMovedOut = (r) => {
   assert.strictEqual(r.eligible, true);

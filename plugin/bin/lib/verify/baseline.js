@@ -410,17 +410,21 @@ function absentFromCheckoutReason(n, checkName) {
 // to report (#3064).
 const SIGNAL_EXIT_CODES = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 };
 
-// #5150: the phases a back-off from the declared reruns governs — every phase for evidence on a
+// #5150: the back-off reasons `concurrency.reason` carries, defined once so the sites that set them
+// in adjudicate() and backOffRan() below, which reads them, cannot drift apart.
+const TIMEOUT_EVIDENCE_REASON = 'timeout-evidence: '; // followed by the check's name
+const PHASE_TIMEOUT_REASON = { baseline: 'phase-timeout: baseline', isolated: 'phase-timeout: isolated' };
+// The phases a back-off from the declared reruns governs — every phase for evidence on a
 // failing check, only the phases after the one that timed out for a phase timeout.
 const BACKED_OFF_PHASES = {
-  'phase-timeout: baseline': ['isolated', 'retry'],
-  'phase-timeout: isolated': ['retry'],
+  [PHASE_TIMEOUT_REASON.baseline]: ['isolated', 'retry'],
+  [PHASE_TIMEOUT_REASON.isolated]: ['retry'],
 };
 // Whether a result's `concurrency` record shows a back-off that some phase actually ran under
 // (a non-null `used`): the condition for verify.js's back-off stdout line.
 function backOffRan(concurrency) {
   if (!concurrency || typeof concurrency.reason !== 'string' || !concurrency.used) return false;
-  const phases = concurrency.reason.startsWith('timeout-evidence: ')
+  const phases = concurrency.reason.startsWith(TIMEOUT_EVIDENCE_REASON)
     ? ['baseline', 'isolated', 'retry'] : BACKED_OFF_PHASES[concurrency.reason];
   return Boolean(phases) && phases.some((phase) => concurrency.used[phase] !== null);
 }
@@ -435,10 +439,6 @@ async function adjudicate({
   concurrency = null,
   // #5150: project-declared substrings counted as timeout evidence beside the runner's own markers.
   timeoutPatterns = [],
-  // The full-lane suite slot this process holds, as `{ index, base }` — its index and the lock dir
-  // it was taken under (#5119) — which together pick the scratch worktree's stable path (#5150).
-  // null keeps a fresh ct-verify-base-* path.
-  slot = null,
   // #5119: takes the full-lane suite slot and returns it as `{ index, base }` (null when none was
   // taken). Called at most once, just before the first rerun spawns, never when nothing will; the
   // caller releases.
@@ -566,6 +566,11 @@ async function adjudicate({
   // HEAD run, a retry of that, the base full run — so with none nothing spawns and no slot is
   // taken. Taken before the signal handlers below exist, so a signal during the wait exits by
   // default and leaves no scratch worktree behind.
+  // The slot this process took, as `{ index, base }` — its index and the lock dir it was taken
+  // under — which together pick the scratch worktree's stable path (#5150). Only what takeSlot
+  // returns sets it, so a stable path is never used without the slot that makes it exclusive;
+  // null keeps a fresh ct-verify-base-* path.
+  let slot = null;
   if (atBase.some(Boolean)) {
     const taken = takeSlot();
     if (taken !== null && taken !== undefined) slot = taken;
@@ -595,7 +600,7 @@ async function adjudicate({
     // #5150: the limit each phase's pool runs under, lowered to 1 for good by timeout evidence.
     let limit = concurrency === null ? 1 : concurrency;
     let reason = concurrency === null ? 'default-serial' : 'declared';
-    if (limit > 1 && evidenceCheck !== null) { limit = 1; reason = `timeout-evidence: ${evidenceCheck}`; }
+    if (limit > 1 && evidenceCheck !== null) { limit = 1; reason = `${TIMEOUT_EVIDENCE_REASON}${evidenceCheck}`; }
     // A rerun's own log carrying timeout evidence is that phase timing out, like a process timeout.
     const timedOutRun = (r) => {
       if (!r) return false;
@@ -624,7 +629,7 @@ async function adjudicate({
       env: envOf(w.check), timeout: timeoutOf(w.check),
     }) : null));
     if (baseSpawned) used.baseline = limit;
-    if (limit > 1 && baseRuns.some(timedOutRun)) { limit = 1; reason = 'phase-timeout: baseline'; }
+    if (limit > 1 && baseRuns.some(timedOutRun)) { limit = 1; reason = PHASE_TIMEOUT_REASON.baseline; }
     // A numeric non-zero exit alone proves nothing (a typo'd template, a scratch
     // tree with no node_modules and a shell syntax error all exit non-zero):
     // the base run's own log must name this very file as failing, under the
@@ -653,7 +658,7 @@ async function adjudicate({
     // must never let a flaky verdict cover a new file.
     const headRuns = await pool(work, limit, (w, k) => (atBase[k] ? run(w, 'isolated', cwd) : null));
     if (headRuns.some(Boolean)) used.isolated = limit;
-    if (limit > 1 && headRuns.some(timedOutRun)) { limit = 1; reason = 'phase-timeout: isolated'; }
+    if (limit > 1 && headRuns.some(timedOutRun)) { limit = 1; reason = PHASE_TIMEOUT_REASON.isolated; }
     // A test file that does not load at all has no tests to compare, so it is
     // baseline only when it is wholly file-level at base and in the full run,
     // unchanged, failing at the same sites (a load failure at 1:1 never covers
