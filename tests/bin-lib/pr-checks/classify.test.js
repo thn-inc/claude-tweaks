@@ -266,7 +266,7 @@ test('PR_EVENTS is the frozen pull_request pair', () => {
   assert.ok(Object.isFrozen(PR_EVENTS));
 });
 
-test('AC1.1: draft-time head runs and rollup entries all completed SKIPPED/SUCCESS are pending with awaitingReadyRun', () => {
+test('#5153 AC1.1: draft-time head runs and rollup entries all completed SKIPPED/SUCCESS are pending with awaitingReadyRun', () => {
   const rollup = [run('ci', 'COMPLETED', 'SKIPPED'), run('label-fix-branch', 'COMPLETED', 'SUCCESS')];
   const r = ready([rest(W, 'pull_request', BEFORE, 'completed', 'skipped', 1)], rollup);
   assert.equal(r.state, 'pending');
@@ -274,44 +274,44 @@ test('AC1.1: draft-time head runs and rollup entries all completed SKIPPED/SUCCE
   assert.deepEqual(r.pending, []);
 });
 
-test('AC1.2: readySince set and a ready workflow with no head run at or after it is pending with awaitingReadyRun', () => {
+test('#5153 AC1.2: readySince set and a ready workflow with no head run at or after it is pending with awaitingReadyRun', () => {
   const r = ready([]);
   assert.equal(r.state, 'pending');
   assert.deepEqual(r.awaitingReadyRun, [W]);
 });
 
-test('AC1.3: a pre-ready run, including a re-run that keeps its original createdAt, does not satisfy the requirement', () => {
+test('#5153 AC1.3: a pre-ready run, including a re-run that keeps its original createdAt, does not satisfy the requirement', () => {
   const row = { ...rest(W, 'pull_request', '2026-11-11T00:45:27Z', 'completed', 'success', 2), run_attempt: 2 };
   const r = ready([row]);
   assert.equal(r.state, 'pending');
   assert.deepEqual(r.awaitingReadyRun, [W]);
 });
 
-test('AC2.1: a matching post-ready run in progress is pending', () => {
+test('#5153 AC2.1: a matching post-ready run in progress is pending', () => {
   const r = ready([rest(W, 'pull_request', AFTER, 'in_progress', null, 5)]);
   assert.equal(r.state, 'pending');
   assert.equal('awaitingReadyRun' in r, false);
 });
 
-test('AC2.1: a matching post-ready run that fails is red', () => {
+test('#5153 AC2.2: a matching post-ready run that fails is red', () => {
   const r = ready([rest(W, 'pull_request', AFTER, 'completed', 'failure', 6)]);
   assert.equal(r.state, 'red');
   assert.deepEqual(r.failing.map((f) => f.name), ['ci']);
 });
 
-test('AC2.1: a matching post-ready run that succeeds is green', () => {
+test('#5153 AC2.3: a matching post-ready run that succeeds is green', () => {
   const r = ready([rest(W, 'pull_request', AFTER, 'completed', 'success', 7)]);
   assert.equal(r.state, 'green');
   assert.equal('awaitingReadyRun' in r, false);
 });
 
-test('AC3.1: a red head run still returns red while a ready run is awaited', () => {
-  const r = ready([{ ...hr('lint', 'completed', 'failure') }]);
+test('#5153 AC3.1: a red head run still returns red while a ready run is awaited', () => {
+  const r = ready([hr('lint', 'completed', 'failure')]);
   assert.equal(r.state, 'red');
   assert.equal('awaitingReadyRun' in r, false);
 });
 
-test('AC4.1: with readySince/readyWorkflows absent or empty every existing classify case returns its current verdict, unchanged', () => {
+test('#5153 AC4.1: with readySince/readyWorkflows absent or empty every existing classify case returns its current verdict, unchanged', () => {
   const ctx = (context, state) => ({ __typename: 'StatusContext', context, state, targetUrl: `https://ci.example/${context}` });
   const base = { headRefOid: HEAD, localHead: HEAD, hasPrCi: true };
   const inputs = [
@@ -342,6 +342,7 @@ test('AC4.1: with readySince/readyWorkflows absent or empty every existing class
     { readySince: null, readyWorkflows: [] },
     { readySince: READY, readyWorkflows: [] },
     { readySince: undefined, readyWorkflows: [W] },
+    { readySince: null, readyWorkflows: [W] },
     { readySince: '', readyWorkflows: [W] },
     { readySince: READY, readyWorkflows: undefined },
     { readySince: READY, readyWorkflows: null },
@@ -452,4 +453,41 @@ test('readyRunVerdict is exported and pure: no input mutation', () => {
   readyRunVerdict(input);
   ready(input.headRuns);
   assert.deepEqual(input, snapshot);
+});
+
+test('#5153 readyRunVerdict called directly: an unparseable, undefined or null readySince fails closed to awaiting', () => {
+  const headRuns = [rest(W, 'pull_request', AFTER, 'completed', 'success', 20)];
+  assert.deepEqual(readyRunVerdict({ readySince: 'garbage', readyWorkflows: [W], headRuns }).awaiting, [W]);
+  assert.deepEqual(readyRunVerdict({ readySince: undefined, readyWorkflows: [W], headRuns }).awaiting, [W]);
+  assert.deepEqual(readyRunVerdict({ readySince: null, readyWorkflows: [W], headRuns }).awaiting, [W]);
+});
+
+test('#5153 a run created in the same second as readySince counts (at-or-after boundary)', () => {
+  const r = ready([rest(W, 'pull_request', READY, 'completed', 'success', 21)]);
+  assert.equal(r.state, 'green');
+  assert.equal('awaitingReadyRun' in r, false);
+});
+
+test('#5153 a non-string readySince is read-failed malformed-ready-since, never green', () => {
+  for (const readySince of [1762821928000, {}, true]) {
+    const r = ready([rest(W, 'pull_request', AFTER, 'completed', 'success', 22)], GREEN_ROLLUP, { readySince });
+    assert.equal(r.state, 'read-failed');
+    assert.equal(r.reason, 'malformed-ready-since');
+  }
+});
+
+test('#5153 a readyWorkflows element that is not a non-empty string is read-failed malformed-ready-workflows', () => {
+  const pathless = { name: 'ci', workflowName: 'ci', status: 'completed', conclusion: 'success', event: 'pull_request', createdAt: AFTER, databaseId: 23 };
+  for (const readyWorkflows of [[''], [null], [W, 3], [undefined]]) {
+    const r = ready([pathless], GREEN_ROLLUP, { readyWorkflows });
+    assert.equal(r.state, 'read-failed');
+    assert.equal(r.reason, 'malformed-ready-workflows');
+  }
+});
+
+test('#5153 normalizeHeadRun reads a REST html_url when there is no url, so a REST-only failing run names its link', () => {
+  assert.equal(normalizeHeadRun({ name: 'ci', status: 'completed', conclusion: 'failure', html_url: 'https://github.example/runs/9' }).url, 'https://github.example/runs/9');
+  assert.equal(normalizeHeadRun({ name: 'ci', url: 'u1', html_url: 'u2' }).url, 'u1');
+  const r = ready([rest(W, 'pull_request', AFTER, 'completed', 'failure', 24)]);
+  assert.deepEqual(r.failing, [{ name: 'ci', url: 'https://github.example/runs/24' }]);
 });

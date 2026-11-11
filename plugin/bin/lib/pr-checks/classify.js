@@ -46,7 +46,7 @@ function normalizeHeadRun(row) {
   const r = row && typeof row === 'object' ? row : {};
   return {
     name: r.workflowName || r.name || null,
-    url: r.url || null,
+    url: r.url || r.html_url || null,
     status: r.status ? String(r.status).toUpperCase() : null,
     conclusion: r.conclusion ? String(r.conclusion).toUpperCase() : null,
   };
@@ -98,8 +98,12 @@ function classifyRollup({ rollup, headRefOid, localHead, hasPrCi, headRuns, read
   if (headRuns !== undefined && !Array.isArray(headRuns)) {
     return result('read-failed', headRefOid, { reason: 'malformed-head-runs' });
   }
-  if (readyWorkflows !== undefined && readyWorkflows !== null && !Array.isArray(readyWorkflows)) {
+  if (readyWorkflows !== undefined && readyWorkflows !== null
+    && (!Array.isArray(readyWorkflows) || readyWorkflows.some((w) => typeof w !== 'string' || w === ''))) {
     return result('read-failed', headRefOid, { reason: 'malformed-ready-workflows' });
+  }
+  if (readySince !== undefined && readySince !== null && typeof readySince !== 'string') {
+    return result('read-failed', headRefOid, { reason: 'malformed-ready-since' });
   }
   const readyActive = typeof readySince === 'string' && readySince !== '' && Array.isArray(readyWorkflows) && readyWorkflows.length > 0;
   if (readyActive && Number.isNaN(Date.parse(readySince))) {
