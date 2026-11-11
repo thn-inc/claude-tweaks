@@ -150,6 +150,7 @@ test('AC5.1: readPullRequestWorkflow reads a bare pull_request: as default types
     'on: [push, pull_request]\n',
     'on: pull_request\n',
     'on:\n  - push\n  - pull_request\n',
+    'on:\n- push\n- pull_request\n', // indentless top-level sequence
     'on:\n  pull_request:\n    branches: [main]\n',
     'on:\n  pull_request: {}\n',
     'on:\n  pull_request: null\n',
@@ -195,6 +196,7 @@ test('I1: readPullRequestWorkflow reads an unreadable on: as an unparsed PR trig
     `on:\n  - push\n  - *pr\n${draft}`,
     `on: [push, *pr]\n${draft}`,
     `on:\n  - push\n  - \${{ x }}\n${draft}`,
+    `on:\n- push\n- *pr\n${draft}`,
   ];
   for (const c of cases) {
     bothEndings(c, (t) => {
@@ -207,6 +209,7 @@ test('I1: readPullRequestWorkflow reads an unreadable on: as an unparsed PR trig
   // controls: a readable push-only on: in each shape stays "no PR trigger"
   for (const c of ['on: push\n', 'on: [push, workflow_dispatch]\n', 'on: { push: {} }\n', 'on:\n  push:\n',
     'on:\n  - push\n  - workflow_dispatch\n',
+    'on:\n- push\njobs:\n  a: {}\n', // an indentless list ends at the next top-level key
     // a quoted '#' on the on: line is not a comment start
     "on: { push: { branches: ['rel #1'] } }\n",
     'on: &t\n  push:\n']) {
@@ -221,6 +224,14 @@ test('readPullRequestWorkflow: an on: &anchor node name does not hide the block 
     assert.deepEqual(r.types, ['opened']);
     assert.equal(r.unparsed, false);
   });
+  // the anchor name ends at a flow indicator: `&t[..]` is anchor t plus a list
+  bothEndings('on: &t[push,pull_request]\n', (t) => {
+    const r = mv.readPullRequestWorkflow(t);
+    assert.equal(r.prTrigger, true);
+    assert.deepEqual(r.types, [...mv.DEFAULT_PR_TYPES]);
+    assert.equal(r.unparsed, false);
+  });
+  bothEndings('on: &t[push,workflow_dispatch]\n', (t) => assert.equal(mv.readPullRequestWorkflow(t).prTrigger, false));
 });
 
 test('M2: readPullRequestWorkflow reads a non-empty inline trigger scalar and a quoted types scalar as unparsed', () => {
@@ -247,6 +258,8 @@ test('AC5.2: readPullRequestWorkflow detects a draft reference in if: == false a
     'on: pull_request\njobs:\n  a:\n    if: ${{ !github.event.pull_request.draft }}\n',
     // M3: a quoted ' #' before the reference is not a comment start
     "on: pull_request\njobs:\n  a:\n    if: contains(github.event.pull_request.title, ' #wip') == false && !github.event.pull_request.draft\n",
+    // an escaped quote inside a double-quoted string does not close it
+    'on: pull_request\njobs:\n  a:\n    if: "x == \\" #\\" || github.event.pull_request.draft == false"\n',
     // M3: the index form
     "on: pull_request\njobs:\n  a:\n    if: github.event.pull_request['draft'] == false\n",
     'on: pull_request\njobs:\n  a:\n    if: ${{ !github.event.pull_request["draft"] }}\n',
@@ -261,6 +274,9 @@ test('AC5.2: readPullRequestWorkflow detects a draft reference in if: == false a
     // an in-word apostrophe does not open a quote that hides the real comment
     "on: pull_request\nname: Don't run # github.event.pull_request.draft\n",
     "on: pull_request\njobs:\n  a:\n    steps:\n      - run: echo can't # github.event.pull_request.draft\n",
+    // a non-ASCII letter before the apostrophe is still in-word
+    "on: pull_request\nname: Zoë's run # github.event.pull_request.draft\n",
+    "on: pull_request\njobs:\n  a:\n    steps:\n      - run: echo café's # github.event.pull_request.draft\n",
   ];
   for (const c of no) bothEndings(c, (t) => assert.equal(mv.readPullRequestWorkflow(t).draftReference, false, JSON.stringify(t)));
 });

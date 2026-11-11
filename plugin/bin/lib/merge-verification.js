@@ -75,10 +75,12 @@ function flowMappingKeysAtDepth1(s) {
 // (`  pull_request:`). Keys nested deeper than the trigger level (e.g. a
 // `branches:` under push:) never count. Trigger PRESENCE is the proxy for "CI
 // verification is requested" — enforcement (branch protection) is out of scope.
-// Twin: readPullRequestWorkflow (below) repeats this `on:` walk. This one fails
-// toward "no PR trigger" on any shape it cannot read (the permissive `off`
-// direction); the twin reports the same shapes as `unparsed` (fail closed).
-// Keep the two walks' shape coverage in step.
+// Twin: readPullRequestWorkflow (below) repeats this `on:` walk, and the two
+// have diverged on purpose. This one is unchanged and fails toward `false` ("no
+// PR trigger", the permissive `off` direction) on any shape it cannot read; the
+// twin additionally strips a leading `&anchor`, reads the `on:` line with a
+// quote-aware comment strip, walks an indentless top-level sequence, and
+// reports every unreadable shape as `unparsed` (fail closed) instead.
 function workflowHasPullRequestTrigger(text) {
   if (typeof text !== 'string' || !text) return false;
   // Strip a leading UTF-8 BOM (some editors/tools save workflow YAML with
@@ -178,8 +180,12 @@ function stripCommentQuoteAware(s) {
   let quote = null;
   for (let i = 0; i < s.length; i++) {
     const ch = s[i];
-    if (quote) { if (ch === quote) quote = null; continue; }
-    if ((ch === "'" || ch === '"') && (i === 0 || !/\w/.test(s[i - 1]))) { quote = ch; continue; }
+    if (quote) {
+      if (quote === '"' && ch === '\\') i++; // an escaped character never closes the quote
+      else if (ch === quote) quote = null;
+      continue;
+    }
+    if ((ch === "'" || ch === '"') && (i === 0 || !/[\p{L}\p{N}_]/u.test(s[i - 1]))) { quote = ch; continue; }
     if (ch === '#' && (i === 0 || /\s/.test(s[i - 1]))) return s.slice(0, i).trim();
   }
   return s.trim();
@@ -321,7 +327,7 @@ function readPullRequestWorkflow(text) {
   const onIdx = lines.findIndex((l) => /^(?:on|'on'|"on")\s*:/.test(l));
   if (onIdx >= 0) {
     // A leading `&anchor` only names the node; the block (if any) still follows.
-    const rest = stripCommentQuoteAware(/^(?:on|'on'|"on")\s*:(.*)$/.exec(lines[onIdx])[1]).replace(/^&\S+\s*/, '');
+    const rest = stripCommentQuoteAware(/^(?:on|'on'|"on")\s*:(.*)$/.exec(lines[onIdx])[1]).replace(/^&[^\s[\]{},]+\s*/, '');
     if (rest) {
       if (rest.startsWith('[')) {
         if (!rest.endsWith(']')) {
@@ -342,7 +348,7 @@ function readPullRequestWorkflow(text) {
         // Multi-line flow mapping: the PR key may sit on a later line.
         if (!balanced) triggers.push(UNREADABLE_TRIGGER());
       } else if (!TYPE_ITEM.test(stripQuotes(rest))) {
-        triggers.push(UNREADABLE_TRIGGER()); // *alias, &anchor, ${{ … }}, anything but a name
+        triggers.push(UNREADABLE_TRIGGER()); // *alias, ${{ … }}, anything but a name (a leading &anchor was stripped above)
       } else if (PR_TRIGGERS.has(stripQuotes(rest))) {
         triggers.push({ types: [...DEFAULT_PR_TYPES], declared: false, unparsed: false });
       }
@@ -352,7 +358,8 @@ function readPullRequestWorkflow(text) {
         const line = lines[j];
         if (!line.trim() || line.trim().startsWith('#')) continue;
         const indent = /^(\s*)/.exec(line)[1].length;
-        if (indent === 0) break;
+        // An indentless top-level sequence (`on:\n- push`) keeps `- ` items at col 0.
+        if (indent === 0 && !/^-(?:\s|$)/.test(line)) break;
         if (triggerIndent === null) triggerIndent = indent;
         if (indent !== triggerIndent) continue;
         if (/^\s*<<\s*:/.test(line)) { // merge key: triggers come from an anchor
