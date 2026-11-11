@@ -52,6 +52,8 @@ function makeDeps(main, over = {}) {
       if (args[0] === 'run' && args[1] === 'list') return '[]';
       throw new Error('unexpected gh ' + args.join(' '));
     },
+    // The default reads as "no ready event": no requirement, so every pre-#5153 test is unchanged.
+    readyRun: () => ({ readySince: null, workflows: [], headRuns: [] }),
     stdout: (s) => out.push(s),
     stderr: (s) => err.push(s),
     ...over,
@@ -759,4 +761,158 @@ test('append failure reports logged:false and keeps exit 0', () => {
     assert.equal(h.err.join('').trim().split('\n').length, 1, state);
     assert.match(h.err.join(''), /disk full/, state);
   }
+});
+
+// #5153: the ready-run inputs. pr-checks.js feeds readySince / readyWorkflows / the REST
+// runs to classifyRollup, so /test's gate agrees with the merge gate on every head.
+const CI_FILE = '.github/workflows/ci.yml';
+const READY_AT = '2026-11-11T10:00:00Z';
+const wfReady = { file: CI_FILE, prTrigger: true, types: ['opened', 'synchronize', 'reopened', 'ready_for_review'], draftReference: true, unparsed: false };
+const wfDraftSkip = { file: CI_FILE, prTrigger: true, types: ['opened', 'synchronize', 'reopened'], draftReference: true, unparsed: false };
+const restRun = (over = {}) => ({ id: 11, name: 'CI', path: CI_FILE, event: 'pull_request', created_at: '2026-11-11T10:05:00Z', status: 'completed', conclusion: 'success', html_url: 'https://github.example/runs/11', ...over });
+const readyStub = (ready, calls = []) => (a) => { calls.push(a); return ready; };
+const greenView = viewGh({ headRefOid: HEAD, statusCheckRollup: [PASS] });
+
+test('ready-run: a green rollup with a ready workflow and no post-ready run is pending with awaitingReadyRun', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { gh: greenView, readyRun: readyStub({ readySince: READY_AT, workflows: [wfReady], headRuns: [] }) });
+  assert.equal(run(['--run', runDir], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.state, 'pending');
+  assert.deepEqual(j.pending, []);
+  assert.deepEqual(j.awaitingReadyRun, [CI_FILE]);
+});
+
+test('ready-run: a completed successful post-ready REST run makes it green', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { gh: greenView, readyRun: readyStub({ readySince: READY_AT, workflows: [wfReady], headRuns: [restRun()] }) });
+  assert.equal(run(['--run', runDir], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.state, 'green');
+  assert.equal('awaitingReadyRun' in j, false);
+});
+
+test('ready-run: a draft-skip workflow without a ready trigger is folded into readyWorkflows and reads pending, never a new state', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { gh: greenView, readyRun: readyStub({ readySince: READY_AT, workflows: [wfDraftSkip], headRuns: [] }) });
+  assert.equal(run(['--run', runDir], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.state, 'pending');
+  assert.deepEqual(j.awaitingReadyRun, [CI_FILE]);
+});
+
+test('ready-run (Reading B): a draft-skip workflow with a completed successful post-ready synchronize run is green, the same verdict the merge gate\'s met gives', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { gh: greenView, readyRun: readyStub({ readySince: READY_AT, workflows: [wfDraftSkip], headRuns: [restRun({ event: 'pull_request' })] }) });
+  assert.equal(run(['--run', runDir], h.deps), 0);
+  assert.equal(h.json().state, 'green');
+});
+
+// readReadyRun wired to fakes: GraphQL answers `timeline`, git throws exit 128 (head not local).
+function realReady({ timeline, gitCalls, ghCalls }) {
+  const { readReadyRun } = require('../../../plugin/bin/lib/pr-checks/ready-run');
+  const rdeps = {
+    ghAvailable: () => true,
+    repoTarget: () => ({ owner: 'o', repo: 'r' }),
+    gh: (args) => {
+      ghCalls.push(args);
+      if (args[0] === 'api' && args[1] === 'graphql') return JSON.stringify({ data: { repository: { pullRequest: { timelineItems: { nodes: timeline } } } } });
+      const e = new Error('HTTP 404'); e.stdout = JSON.stringify({ status: '502', message: 'Bad Gateway' }); throw e;
+    },
+    git: (args) => { gitCalls.push(args); const e = new Error('fatal: not a tree object'); e.status = 128; throw e; },
+  };
+  return (a) => readReadyRun(rdeps, a);
+}
+
+test('ready-run: no ready event and a head absent from the local object store leave the verdict unchanged', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const base = makeDeps(main, { gh: greenView });
+  assert.equal(run(['--run', runDir], base.deps), 0);
+  const gitCalls = []; const ghCalls = [];
+  const { main: main2, runDir: runDir2 } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main2, { gh: greenView, readyRun: realReady({ timeline: [], gitCalls, ghCalls }) });
+  assert.equal(run(['--run', runDir2], h.deps), 0);
+  assert.deepEqual(h.json(), base.json());
+  assert.equal(h.json().state, 'green');
+  assert.equal(gitCalls.length, 0);
+  assert.equal(ghCalls.length, 1, 'only the timeline read');
+});
+
+test('ready-run: a ready event, a non-local head and both workflow sources unavailable is read-failed on a green rollup', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { gh: greenView, readyRun: realReady({ timeline: [{ createdAt: READY_AT }], gitCalls: [], ghCalls: [] }) });
+  assert.equal(run(['--run', runDir], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.state, 'read-failed');
+  assert.match(j.reason, /^ready-run read failed: workflows unreadable at c{40}/);
+});
+
+test('ready-run: a readyRun reason on a non-red verdict is read-failed with reason prefix "ready-run read failed:"; on a red verdict it stays red', () => {
+  for (const ready of [() => ({ reason: 'gh absent' }), () => { throw new Error('boom'); }]) {
+    const { main, runDir } = fixture({ pr: { number: 7 } });
+    const h = makeDeps(main, { gh: greenView, readyRun: ready });
+    assert.equal(run(['--run', runDir], h.deps), 0);
+    assert.equal(h.json().state, 'read-failed');
+    assert.match(h.json().reason, /^ready-run read failed: (gh absent|boom)/);
+  }
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { integrationBranch: () => null, readyRun: () => ({ reason: 'gh absent' }) });
+  assert.equal(run(['--run', runDir], h.deps), 0);
+  assert.equal(h.json().state, 'red');
+});
+
+test('ready-run: a stale head never calls readyRun', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const calls = [];
+  const h = makeDeps(main, { ...STATE_OVERRIDES.stale(), readyRun: readyStub({ reason: 'x' }, calls) });
+  assert.equal(run(['--run', runDir], h.deps), 0);
+  assert.equal(h.json().state, 'stale');
+  assert.equal(calls.length, 0);
+});
+
+test('ready-run: --pr mode passes the PR head sha and the git toplevel as root', () => {
+  const { main } = fixture(null);
+  const calls = [];
+  const h = prDeps(main, { gh: greenView, readyRun: readyStub({ readySince: null, workflows: [], headRuns: [] }, calls) });
+  assert.equal(run(['--pr', '7'], h.deps), 0);
+  assert.deepEqual(calls, [{ pr: 7, sha: HEAD, root: main }]);
+});
+
+test('ready-run: the pending gate line names "no run since ready: {files}" when only awaitingReadyRun holds it', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { gh: greenView, readyRun: readyStub({ readySince: READY_AT, workflows: [wfReady], headRuns: [] }) });
+  assert.equal(run(['--run', runDir, '--section', '/test'], h.deps), 0);
+  assert.equal(h.json().logged, true);
+  assert.equal(afterStamp(entriesOf(runDir)[0]), `— PR-check gate: PR #7 checks pending at ccccccc (no run since ready: ${CI_FILE}) — passed with caveat. Reversibility: high.`);
+});
+
+test('ready-run: a run present as a gh row and as a REST row counts once; no verdict changes (watch item)', () => {
+  const ghRow = (over = {}) => ({ name: 'CI', workflowName: 'CI', status: 'completed', conclusion: 'failure', url: 'https://github.example/gh-row', ...over });
+  const ready = (rows) => readyStub({ readySince: READY_AT, workflows: [wfReady], headRuns: rows });
+  const view = (ghRows) => (args) => (args[0] === 'pr' ? JSON.stringify({ headRefOid: HEAD, statusCheckRollup: [PASS] }) : JSON.stringify(ghRows));
+  const go = (over) => { const { main, runDir } = fixture({ pr: { number: 7 } }); const h = makeDeps(main, { integrationBranch: () => null, ...over }); run(['--run', runDir], h.deps); return h.json(); };
+  // failing in both shapes: one entry, the gh row's url (first seen)
+  const red = go({ gh: view([ghRow()]), readyRun: ready([restRun({ conclusion: 'failure', html_url: 'https://github.example/rest-row' })]) });
+  assert.equal(red.state, 'red');
+  assert.deepEqual(red.failing, [{ name: 'CI', url: 'https://github.example/gh-row' }]);
+  // pending in both shapes: named once; the post-ready run exists, so no awaitingReadyRun
+  const pend = go({ gh: view([ghRow({ status: 'in_progress', conclusion: '' })]), readyRun: ready([restRun({ status: 'in_progress', conclusion: null })]) });
+  assert.equal(pend.state, 'pending');
+  assert.deepEqual(pend.pending, ['CI']);
+  assert.equal('awaitingReadyRun' in pend, false);
+  // green in both shapes
+  assert.equal(go({ gh: view([ghRow({ conclusion: 'success' })]), readyRun: ready([restRun()]) }).state, 'green');
+});
+
+test('USAGE names awaitingReadyRun? among the envelope keys', () => {
+  const { main } = fixture(null);
+  const h = makeDeps(main);
+  assert.equal(run(['--help'], h.deps), 0);
+  assert.match(h.out.join(''), /prints \{[^}]*awaitingReadyRun\?[^}]*\}/);
+});
+
+test('the pending gate-line phrase "no run since ready" appears in _shared/pr-check-gate.md (prose twin of gateEntry)', () => {
+  const { readText } = require('../../helpers/read-skill');
+  const prose = readText(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', '_shared', 'pr-check-gate.md'));
+  assert.match(prose, /'no run since ready: \{files\}' when only `awaitingReadyRun` holds it/);
 });

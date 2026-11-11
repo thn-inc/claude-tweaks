@@ -16,7 +16,7 @@
 // cannot occur. Exactly one of --run / --pr is required.
 //
 // Prints one JSON line: {state, failing:[{name,url,inherited?}], pending:[name],
-// headRefOid, localHead, pr, reason?, baseBranch?, baseSha?, baseReason?,
+// awaitingReadyRun?:[workflow file], headRefOid, localHead, pr, reason?, baseBranch?, baseSha?, baseReason?,
 // logged? (--run only)}. state
 // is red | inherited-red | pending | stale | green | no-ci | read-failed | no-pr
 // | gh-absent.
@@ -30,6 +30,17 @@
 // run of a workflow counts at the base tip (classify.js). Only `red` triggers the
 // base read. A failed head-runs read that would leave a non-red verdict
 // (including inherited-red) is `read-failed`: the read is partial.
+//
+// The ready-run inputs (#5153): when the PR has a ready event and a workflow its
+// ready transition must run (lib/pr-checks/ready-run.js), readySince /
+// readyWorkflows / the REST runs reach classifyRollup, and a pending envelope
+// gains awaitingReadyRun (the workflow files with no run since ready). A
+// draft-skip workflow without a ready trigger is folded in with the ready ones
+// (Reading B): pending while it has no post-ready run, judged by the general
+// rules once a later push has run it -- so this gate and the merge gate's
+// ready-run reader agree on every head; only the merge gate names the
+// no-post-ready-run case with its own park reason. A failed ready-run read
+// demotes a non-red verdict to read-failed, like the head-runs read.
 //
 // Under --run (#4026) the CLI writes the gate's own decisions.md line, step
 // "PR-check gate", under --section (no heading without it) -- the line
@@ -52,12 +63,13 @@ const { resolveIntegrationBranch, bareIntegrationName } = require('./lib/hooks/w
 const { resolveTarget, formatEntry, appendEntry } = require('./lib/log-decision/append');
 const { readRunStateWithParent } = require('./lib/hooks/context');
 const { ghAvailable, ghOptions } = require('./lib/repo-resolve');
-const { hasPullRequestCi } = require('./lib/merge-verification');
+const { hasPullRequestCi, readyRequirement } = require('./lib/merge-verification');
+const { readReadyRun, defaultDeps: readyRunDeps } = require('./lib/pr-checks/ready-run');
 const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('./lib/shared-primitives');
 
 const USAGE = 'usage: pr-checks.js --run <run-dir> [--section "/<skill>"] | --pr <n> [--help]\n'
   + '  --pr <n> classifies a PR by number with no run dir: local HEAD is not compared (the PR\'s own head stands in), localHead is null, never stale, never no-pr\n'
-  + '  prints {state, failing, pending, headRefOid, localHead, pr, reason?, baseBranch?, baseSha?, baseReason?, logged? (--run only)};\n'
+  + '  prints {state, failing, pending, awaitingReadyRun?, headRefOid, localHead, pr, reason?, baseBranch?, baseSha?, baseReason?, logged? (--run only)};\n'
   + '  baseBranch: the branch compared on a red read -- the PR\'s own base, else the integration branch;\n'
   + '  state: red | inherited-red | pending | stale | green | no-ci | read-failed | no-pr | gh-absent\n'
   + '  --run appends the PR-check gate line to decisions.md under --section and adds logged: AUTO on inherited-red | pending | stale; SKIP on no-pr | gh-absent | no-ci | read-failed\n'
@@ -94,6 +106,7 @@ const realDeps = {
   integrationBranch: (repoRoot) => bareIntegrationName(resolveIntegrationBranch(repoRoot)),
   gh: (args) => execFileSync('gh', args, ghOptions(args, { ...QUIET, timeout: GH_TIMEOUT_MS, windowsHide: true })),
   git: (args) => execFileSync('git', args, { ...QUIET, timeout: GIT_TIMEOUT_MS, windowsHide: true }),
+  readyRun: (a) => readReadyRun(readyRunDeps(a.root), a),
   readRunState: (runDir) => readRunStateWithParent(runDir, { requireRunIdParent: true }).state,
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
@@ -146,7 +159,8 @@ function gateEntry(out) {
     return { status: 'AUTO', reversibility: 'high', text: `PR #${pr} checks red at ${short(out.headRefOid)}, but every failing check (${out.failing.map((f) => f.name).join(', ')}) is also failing on ${out.baseBranch} at ${short(out.baseSha)} — inherited, passed with caveat` };
   }
   if (state === 'pending' || state === 'stale') {
-    return { status: 'AUTO', reversibility: 'high', text: `PR #${pr} checks ${state} at ${short(out.headRefOid)} (${out.pending.length ? out.pending.join(', ') : (state === 'stale' ? 'HEAD not yet pushed' : 'no check reported yet')}) — passed with caveat` };
+    const awaiting = Array.isArray(out.awaitingReadyRun) && out.awaitingReadyRun.length ? `no run since ready: ${out.awaitingReadyRun.join(', ')}` : null;
+    return { status: 'AUTO', reversibility: 'high', text: `PR #${pr} checks ${state} at ${short(out.headRefOid)} (${out.pending.length ? out.pending.join(', ') : (state === 'stale' ? 'HEAD not yet pushed' : (awaiting || 'no check reported yet'))}) — passed with caveat` };
   }
   if (DEGRADED.includes(state)) {
     return { status: 'SKIP', reversibility: 'n/a', text: `condition: pr-checks.js ${state}${out.reason ? `: ${out.reason}` : ''} → fallback: local verification only` };
@@ -190,8 +204,12 @@ function classifyPr(deps, n, localHead, audit) {
   // The full 40-char sha: an abbreviated --commit lists no runs (#3405).
   const headRefOid = view && view.headRefOid;
   const compareHead = localHead === null ? headRefOid : localHead;
+  let repoRoot = deps.cwd();
+  try { repoRoot = String(deps.git(['rev-parse', '--show-toplevel'])).trim(); } catch { repoRoot = deps.cwd(); }
   let headRuns;
   let runsFailure = null;
+  let ready = null;
+  let readyFailure = null;
   // A stale head skips the runs read: the classifier concludes nothing from it,
   // so a transient runs-read failure must not turn `stale` into `read-failed`.
   if (typeof headRefOid === 'string' && headRefOid && headRefOid === compareHead) {
@@ -202,12 +220,37 @@ function classifyPr(deps, n, localHead, audit) {
     } catch (e) {
       runsFailure = `gh run list failed: ${errText(e)}`;
     }
+    // The ready-run read (#5153) is a corroborating read like the runs read: a
+    // failure of it can only demote a non-red verdict, never soften a red one.
+    if (!runsFailure) {
+      try {
+        const r = deps.readyRun({ pr: n, sha: headRefOid, root: repoRoot });
+        if (!r || typeof r !== 'object') readyFailure = 'ready-run read failed: no result';
+        else if (r.reason) readyFailure = `ready-run read failed: ${r.reason}`;
+        else ready = r;
+      } catch (e) {
+        readyFailure = `ready-run read failed: ${errText(e)}`;
+      }
+    }
   }
-  let repoRoot = deps.cwd();
-  try { repoRoot = String(deps.git(['rev-parse', '--show-toplevel'])).trim(); } catch { repoRoot = deps.cwd(); }
   let hasPrCi = false;
   try { hasPrCi = Boolean(deps.hasPullRequestCi(repoRoot)); } catch { hasPrCi = false; }
-  const verdict = classifyRollup({ rollup: view && view.statusCheckRollup, headRefOid, localHead: compareHead, hasPrCi, headRuns });
+  const input = { rollup: view && view.statusCheckRollup, headRefOid, localHead: compareHead, hasPrCi, headRuns };
+  if (ready) {
+    // A draft-skip workflow without a ready trigger is folded in with the ready ones (Reading B): with no
+    // post-ready run it is awaiting (pending); once a later push has run it, the general rules judge that
+    // run. This is the verdict the merge gate's ready-run reader gives; only the merge gate names the
+    // no-post-ready-run case with its own park reason. A run in both shapes (gh row + REST row) is named
+    // once by the general scans (they dedupe by name), so the REST rows are appended, never substituted.
+    const req = readyRequirement(ready.workflows);
+    const readyWorkflows = [...req.readyWorkflows, ...req.draftSkipWithoutReadyTrigger];
+    if (ready.readySince && readyWorkflows.length > 0) {
+      input.readySince = ready.readySince;
+      input.readyWorkflows = readyWorkflows;
+      input.headRuns = [...(headRuns || []), ...(Array.isArray(ready.headRuns) ? ready.headRuns : [])];
+    }
+  }
+  const verdict = classifyRollup(input);
   // Only a red verdict reads the base tip (#3258): green/pending/stale never change on it.
   let final = verdict;
   if (verdict.state === 'red') {
@@ -217,6 +260,8 @@ function classifyPr(deps, n, localHead, audit) {
   // A failed runs read cannot conclude a pass-class verdict (green/pending/inherited-red): a failing run
   // absent from the rollup would be invisible. Only a verdict still red is conclusive on its own.
   if (runsFailure && final.state !== 'red') return report(deps, { state: 'read-failed', pr: n, localHead, reason: runsFailure }, audit);
+  // Same for the ready-run read: a green or pending verdict could hide a ready-run failure.
+  if (readyFailure && final.state !== 'red') return report(deps, { state: 'read-failed', pr: n, localHead, reason: readyFailure }, audit);
   return report(deps, { ...final, localHead, pr: n }, audit);
 }
 
