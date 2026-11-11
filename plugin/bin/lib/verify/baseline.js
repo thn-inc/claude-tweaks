@@ -97,8 +97,11 @@ function realGit(cwd, { warn = (line) => process.stderr.write(line), rmSync = fs
       return { reason: `root-unusable: ${String((err && err.message) || err)}` };
     }
     const dir = slotScratchPath({ tmpdir, commonDir, slotBase: base, slot });
-    // A failed mkdir leaves a parent that does not resolve, which the containment check refuses.
-    try { fs.mkdirSync(path.dirname(dir), { recursive: true, mode: 0o700 }); } catch { /* refused below */ }
+    try {
+      fs.mkdirSync(path.dirname(dir), { recursive: true, mode: 0o700 });
+    } catch (err) {
+      return { reason: `slot-dir-unusable: ${String((err && err.message) || err)}` };
+    }
     // A symlinked `<repo-key>` or `slot-<index>` resolves outside the root: refused before
     // anything is removed or checked out there.
     const parent = resolveWithin(path.dirname(dir), root);

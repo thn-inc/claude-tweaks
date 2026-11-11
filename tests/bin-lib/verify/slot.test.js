@@ -130,16 +130,35 @@ test('holdSlot: a signal with no other listener runs beforeRelease, releases, an
 
 test('holdSlot: adjudication\'s own signal handler still runs and is the only one to exit (#5119)', () => {
   const dir = tmpSlotDir();
-  const { proc } = hold(dir);
-  const seen = [];
+  const order = [];
+  const { proc } = hold(dir, { beforeRelease: () => order.push('kill') });
+  // Like adjudicate()'s handler: remove the scratch, then exit — a real process.exit emits 'exit'.
   proc.on('SIGTERM', () => {
-    seen.push(fs.existsSync(lockFile(dir)) ? 'adjudicator-saw-held' : 'adjudicator-saw-released');
+    order.push('adjudicator');
     proc.exit(143);
+    proc.emit('exit', 143);
   });
   proc.emit('SIGTERM');
-  assert.deepStrictEqual(seen, ['adjudicator-saw-released']);
+  assert.deepStrictEqual(order, ['kill', 'adjudicator']);
   assert.deepStrictEqual(proc.exits, [143], 'exit is called once, by the later listener');
+  assert.strictEqual(fs.existsSync(lockFile(dir)), false, 'released once the later listener exits');
   assert.strictEqual(proc.listenerCount('SIGTERM'), 1, 'only the adjudicator\'s own listener remains');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('holdSlot: with a later signal listener the slot is still held while that listener runs — kill, remove, then release (#5150)', () => {
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    const dir = tmpSlotDir();
+    const { proc } = hold(dir);
+    const seen = [];
+    proc.on(sig, () => { seen.push(fs.existsSync(lockFile(dir)) ? 'held' : 'released'); });
+    proc.emit(sig);
+    assert.deepStrictEqual(seen, ['held'], `${sig}: a waiter on this slot cannot start while the later listener removes the scratch`);
+    assert.deepStrictEqual(proc.exits, [], `${sig}: the later listener exits, not holdSlot`);
+    proc.emit('exit', 128 + os.constants.signals[sig]);
+    assert.strictEqual(fs.existsSync(lockFile(dir)), false, `${sig}: the exit hook releases`);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('holdSlot: the exit hook frees the slot on any exit path (#5119)', () => {

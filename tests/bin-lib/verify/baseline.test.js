@@ -1635,6 +1635,45 @@ test('a slot with no lock dir falls back with no-slot-lock-dir (#5150)', (t) => 
   assert.deepStrictEqual(fs.readdirSync(fx.tmpdir), []);
 });
 
+test('a <repo-key> that is a plain file falls back with slot-dir-unusable and is left alone (#5150)', (t) => {
+  const fx = slotFixture(t);
+  const keyPath = path.dirname(path.dirname(fx.at()));
+  fs.mkdirSync(path.dirname(keyPath), { recursive: true });
+  fs.writeFileSync(keyPath, 'not a directory\n');
+  const out = fx.rg.addWorktree(fx.sha1, { slot: 0, slotBase: fx.S });
+  assert.ok(out.fallback.startsWith('slot-dir-unusable: '), out.fallback);
+  assert.strictEqual(out.reused, false);
+  assert.match(path.basename(path.dirname(out.dir)), /^ct-verify-base-/);
+  assert.deepStrictEqual(fx.warned, [fallbackLine(out.fallback)]);
+  assert.strictEqual(fs.readFileSync(keyPath, 'utf8'), 'not a directory\n');
+  fx.rg.removeWorktree(out.dir);
+});
+
+test('a ct-verify-base root that is a plain file falls back with root-unusable and is left alone (#5150)', (t) => {
+  const fx = slotFixture(t);
+  const rootPath = path.join(fx.tmpdir, 'ct-verify-base');
+  fs.writeFileSync(rootPath, 'not a directory\n');
+  const out = fx.rg.addWorktree(fx.sha1, { slot: 0, slotBase: fx.S });
+  assert.ok(out.fallback.startsWith('root-unusable: '), out.fallback);
+  assert.strictEqual(out.reused, false);
+  assert.match(path.basename(path.dirname(out.dir)), /^ct-verify-base-/);
+  assert.deepStrictEqual(fx.warned, [fallbackLine(out.fallback)]);
+  assert.strictEqual(fs.readFileSync(rootPath, 'utf8'), 'not a directory\n');
+  fx.rg.removeWorktree(out.dir);
+});
+
+test('a cwd git cannot name a common dir for falls back with no-common-dir before making the root (#5150)', (t) => {
+  const fx = slotFixture(t);
+  const notARepo = fx.mk('baseline-slot-not-a-repo-');
+  assert.throws(() => execFileSync('git', ['rev-parse', '--git-common-dir'], { cwd: notARepo, stdio: 'ignore' }), 'precondition: no repository above the fixture');
+  const warned = [];
+  const rg = realGit(notARepo, { tmpdir: fx.tmpdir, warn: (line) => warned.push(line) });
+  // The fallback's own `git worktree add` then fails outside a repository, as an unslotted run would.
+  assert.throws(() => rg.addWorktree(fx.sha1, { slot: 0, slotBase: fx.S }));
+  assert.deepStrictEqual(warned, [fallbackLine('no-common-dir')]);
+  assert.deepStrictEqual(fs.readdirSync(fx.tmpdir), [], 'no root made, and the fresh parent removed on the throw');
+});
+
 test('removeWorktree on a slot path removes wt and keeps slot-<index> (#5150)', (t) => {
   const fx = slotFixture(t);
   const out = fx.rg.addWorktree(fx.sha1, { slot: 0, slotBase: fx.S });
