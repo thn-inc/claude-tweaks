@@ -66,6 +66,7 @@ Two decisions it owes beyond the six above:
 | Run-level, record not at fault, firing continues (exit 6) | 1-10 |
 | Run-level, shared cause, teardown must not release, firing ends (exit 7) | All 13 |
 | An existing failure re-routed to another code | Every row that names the old code, plus row 7's restatements of it |
+| A new cause folded into an existing code (#4794's `unknown-host` origin refusal on exit 2) | Rows 1, 2 and 4, row 7's command line, and every sentence that characterizes the code's old meaning, reworded so it does not misdescribe the new cause. Exit 2's bullet called every exit 2 "a bug in this call" until review reworded it as an environment stop with its remedy (`f1d8d79f6`). The shared code answers none of the six decisions above; answer them for the new cause |
 | A `/flow` pre-claim stop that is not a `claim-targets.js` exit (blocker-landing) | 8, 11, and the four sites in the section above |
 
 ## Project Conventions

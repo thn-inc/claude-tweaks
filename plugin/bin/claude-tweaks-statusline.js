@@ -406,6 +406,45 @@ function renderAccount(input, { env = process.env, home = os.homedir() } = {}) {
   return email ? `acct: ${email}` : null;
 }
 
+// A generic extension point: another tool can show one segment for a session
+// by writing `~/.claude/statusline/segments/<session id>.json`, shaped
+// `{ text, stale_text, at, ttl_s }` (cc-router's agent writes `hub ✓` there).
+// `text` shows while `at` + `ttl_s` seconds is in the future and `stale_text`
+// after, so a writer that stops reads as stale rather than frozen. Always
+// the user's home, never CLAUDE_CONFIG_DIR: one writer serves every account.
+// The file is untrusted, so the text may hold only OSC 8 links and SGR codes
+// and at most 40 visible characters; anything else renders nothing. No file,
+// no segment.
+const SESSION_SEGMENT_COLS = 40;
+const SESSION_ID_SAFE = /^[A-Za-z0-9_-]+$/;
+// The link's body may hold no control at all: a terminal can read CAN, SUB or
+// C1 CSI there as ending the link early, and the CONTROL check below never sees
+// a body this strips.
+// eslint-disable-next-line no-control-regex
+const OSC8 = /\x1b\]8;[^\x00-\x1f\x7f-\x9f]*(?:\x07|\x1b\\)/g;
+const SGR = /\x1b\[[0-9;:]*m/g;
+// eslint-disable-next-line no-control-regex
+const CONTROL = /[\x00-\x1f\x7f-\x9f]/;
+
+function renderSessionSegment(input, { home = os.homedir(), now = Date.now() } = {}) {
+  const id = input.session_id;
+  if (typeof id !== 'string' || !SESSION_ID_SAFE.test(id)) return null;
+  let seg;
+  try {
+    seg = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'statusline', 'segments', `${id}.json`), 'utf8'));
+  } catch {
+    return null;
+  }
+  if (!seg || typeof seg.text !== 'string' || typeof seg.stale_text !== 'string') return null;
+  const at = Date.parse(seg.at);
+  const fresh = Number.isFinite(at) && typeof seg.ttl_s === 'number' && now < at + seg.ttl_s * 1000;
+  let text = fresh ? seg.text : seg.stale_text;
+  if (!color.colorEnabled()) text = text.replace(SGR, '');
+  const visible = text.replace(OSC8, '').replace(SGR, '');
+  if (!visible || CONTROL.test(visible) || Array.from(visible).length > SESSION_SEGMENT_COLS) return null;
+  return text;
+}
+
 async function main() {
   const raw = await readStdin();
   let input = {};
@@ -432,6 +471,7 @@ async function main() {
     findOpenLedger(cwd),
     renderCost(input),
     renderAccount(input),
+    renderSessionSegment(input, { now }),
   ].filter((s) => s !== null && s !== undefined && s !== '');
 
   process.stdout.write(segments.join(SEPARATOR));
@@ -456,6 +496,7 @@ module.exports = {
   findActiveSpec,
   findOpenLedger,
   renderAccount,
+  renderSessionSegment,
   formatDuration,
   colorByPct,
   parseStatusBranch,

@@ -371,8 +371,12 @@ stays best-effort and the claim read stays the authoritative hold check:
   the gh-absent MCP claim procedure does not reach this stop, and a refused claim there stays the transient `## Flow: Claim failed` card (#4899).
 - **2** — malformed invocation or missing dependency (a bad `--run-id`/`--targets` value, `gh`
   absent, or a non-timeout repo-slug resolution failure — a real auth error or 404, never a
-  timeout, which is exit 4 instead per #3065) — a bug in this call, not a claim outcome. Treat as
-  a hard stop.
+  timeout, which is exit 4 instead per #3065) — a bug in this call, not a claim outcome. The
+  exception is an origin host the origin-host gate refuses (`claim-targets: unknown-host —
+  {refusal}`, #4794): that is an environment stop, not a bug in the call — the refusal text names
+  its remedy (export `GH_HOST` as the host the origin really reaches, per the refusal), and nothing
+  was claimed. Treat as a hard stop. The gh-absent MCP claim procedure does not reach that refusal; it claims
+  on the GitHub MCP's host.
 
 **On exit 3, 4, 5, 6, or 7** — release nothing further (the CLI's `released`/`releaseFailed` already covers
 the attempt; a non-empty `releaseFailed` is not this step's problem to retry — the named claim

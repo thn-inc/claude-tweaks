@@ -49,7 +49,7 @@ const {
 } = require('./claims-git-cas');
 const { GH_TIMEOUT_MS, escapeRegExp } = require('../shared-primitives');
 const { normalizePrListing } = require('./mcp-pr-shape');
-const { ghOptions } = require('../repo-resolve');
+const { ghOptions, repoSlug, normalizeHost } = require('../repo-resolve');
 
 // How many times `writeClaimBlob` re-leases and re-pushes a git-CAS write
 // whose rejection a fresh read proves spurious (#787 final-review finding I1 —
@@ -198,11 +198,13 @@ function classifyGhApiError(e) {
 // The real ghApi. A failed call also carries `error`, the thrown error's text
 // (#4495): a bootstrap refusal is surfaced to the user verbatim, and the
 // classified `{failure, status}` alone drops the reason (a 4xx is data, not
-// a throw, on this seam).
-function defaultGhApi(args) {
+// a throw, on this seam). `opts.cwd` (#4794) is the repo the call is about, so
+// the seam reads its origin rather than process.cwd()'s; with none, unchanged.
+function defaultGhApi(args, opts = {}) {
   const ghArgs = ['api', ...args];
   try {
     const stdout = execFileSync('gh', ghArgs, ghOptions(ghArgs, {
+      ...(opts.cwd ? { cwd: opts.cwd } : {}),
       encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS,
       windowsHide: true,
     }));
@@ -363,6 +365,12 @@ function unresolvedSlugGhApi() {
   return { stdout: null, failure: 'repo-slug-unresolved', status: null };
 }
 
+// (#4794) The contents-API leg for an origin the #4933 gate refused: no request, and the
+// `unknown-host` failure `createClaimReader` pairs with the refusal text.
+function refusedOriginGhApi() {
+  return { stdout: null, failure: 'unknown-host', status: null };
+}
+
 // (#3393) `repos/null/contents/...` is never a valid request: an unresolved
 // repo slug used to reach the contents API as the literal `null` and 404,
 // which read as "claim absent" — a false "no claim" for a claim that may
@@ -370,18 +378,23 @@ function unresolvedSlugGhApi() {
 // build on: an unresolved slug makes the contents-API leg a `repo-slug-
 // unresolved` failure instead of a request, so the git leg's answer stands
 // and a git failure stays a failure, never absent.
-// ({gitRunner?, ghApi?, repoSlug?, runGh?}) -> {repoSlug, read(issueNumber)}
+// ({gitRunner?, ghApi?, repoSlug?, repoRefusal?, runGh?}) -> {repoSlug, read(issueNumber)}
 // `repoSlug` is used as given when the key is present (including `null`);
-// otherwise it is resolved through `runGh`. `read` returns `{content}` (null
+// otherwise it is resolved through `runGh`. `repoRefusal` (#4794) is the #4933
+// gate's refusal text for a refused origin: the contents-API leg then makes no
+// request and `read` returns `{failure: 'unknown-host', detail: repoRefusal}`
+// where it would return `repo-slug-unresolved`. `read` returns `{content}` (null
 // content = absent) or `{failure}`, and chains the git tip across calls so a
 // batch of reads costs one fetch.
 function createClaimReader(opts = {}) {
-  const { gitRunner = defaultRunner, ghApi = defaultGhApi, runGh } = opts;
+  const { gitRunner = defaultRunner, ghApi = defaultGhApi, runGh, repoRefusal } = opts;
   const slug = Object.prototype.hasOwnProperty.call(opts, 'repoSlug') ? opts.repoSlug : resolveRepoSlug(runGh);
-  const deps = { gitRunner, ghApi: slug ? ghApi : unresolvedSlugGhApi };
+  const noSlugGhApi = repoRefusal ? refusedOriginGhApi : unresolvedSlugGhApi;
+  const deps = { gitRunner, ghApi: slug ? ghApi : noSlugGhApi };
   let tip = null;
   function read(issueNumber) {
     const r = readClaimBlob(deps, slug, issueNumber, tip);
+    if (r.failure === 'unknown-host' && repoRefusal) return { failure: r.failure, detail: repoRefusal };
     if (r.failure) return { failure: r.failure };
     if (r.via === 'git') tip = r.sha;
     return { content: r.absent ? null : r.content };
@@ -674,11 +687,15 @@ function ensureClaimsBranch(deps, repoSlug) {
   return { ok: false, reason: reasons.join('; '), ...(a.transient ? { transient: true, failure: a.failure } : {}) };
 }
 
-function isSameRepoPrUrl(link, owner, repo) {
+// host: the run's one resolved host (a `resolveRepoTarget` result's `host`),
+// compared normalized (case-insensitive, trailing dots ignored); null/absent
+// reads as github.com.
+function isSameRepoPrUrl(link, owner, repo, host = null) {
   if (typeof link !== 'string') return false;
   if (typeof owner !== 'string' || !owner || typeof repo !== 'string' || !repo) return false;
-  const re = new RegExp(`^https://github\\.com/${escapeRegExp(owner)}/${escapeRegExp(repo)}/pull/\\d+$`);
-  return re.test(link);
+  const re = new RegExp(`^https://([^/]+)/${escapeRegExp(owner)}/${escapeRegExp(repo)}/pull/\\d+$`);
+  const m = re.exec(link);
+  return m !== null && normalizeHost(m[1]) === normalizeHost(host || 'github.com');
 }
 
 // content: the raw tombstone blob text just read. gh: the generic throwing
@@ -690,15 +707,17 @@ function isSameRepoPrUrl(link, owner, repo) {
 // means a build already completed and is awaiting merge, so reclaiming here
 // would race that open PR. `link` is untrusted (any session with
 // registry-branch write access can set it), so this validates it — a
-// well-formed `https://github.com/{owner}/{repo}/pull/{number}` URL for the
-// SAME owner/repo as the issue being claimed — before ever calling `gh`.
-function tombstoneInFlightPr(content, gh, owner, repo) {
+// well-formed `https://{host}/{owner}/{repo}/pull/{number}` URL for the
+// SAME owner/repo as the issue being claimed, its host compared normalized
+// against the run's one resolved `host` (github.com by default) — before ever
+// calling `gh`.
+function tombstoneInFlightPr(content, gh, owner, repo, host = null) {
   try {
     const parsed = JSON.parse(content);
     const reason = parsed && parsed.reason;
     const link = parsed && parsed.link;
     if (typeof reason !== 'string' || !reason.startsWith('pr-opened:')) return null;
-    if (!isSameRepoPrUrl(link, owner, repo)) return null;
+    if (!isSameRepoPrUrl(link, owner, repo, host)) return null;
     const state = gh(['pr', 'view', link, '--json', 'state', '--jq', '.state']).trim();
     return state === 'OPEN' ? { link } : null;
   } catch {
@@ -717,8 +736,10 @@ const OPEN_PR_LIST_LIMIT = 1000;
 
 // The `gh pr list` argv staleClaimInFlightPr runs — exported so the CLI
 // (`bin/stale-claim-pr.js`, #4596) and the agent's MCP fetch name one listing.
-function openPrListArgs(owner, repo) {
-  return ['pr', 'list', '--repo', `${owner}/${repo}`, '--state', 'open',
+// `target` is a `resolveRepoTarget` result ({ host, ghRepo }); null keeps the
+// bare `owner/repo`.
+function openPrListArgs(owner, repo, target = null) {
+  return ['pr', 'list', '--repo', target ? target.ghRepo : repoSlug({ owner, repo }), '--state', 'open',
     '--json', 'url,body,isCrossRepository', '--limit', String(OPEN_PR_LIST_LIMIT)];
 }
 
@@ -736,12 +757,12 @@ function staleClaimRunId(content) {
 // matching entry, or null for a clean no-match; throws when the listing is not
 // an array or a no-match listing hit OPEN_PR_LIST_LIMIT (not a clean "no
 // marked PR").
-function matchStaleClaimPr(runId, prs, owner, repo) {
+function matchStaleClaimPr(runId, prs, owner, repo, host = null) {
   if (!Array.isArray(prs)) throw new Error('open-PR listing is not an array');
   const markers = [`claude-tweaks-run: ${runId}`, `<!-- claude-tweaks-run: ${runId} -->`];
   for (const pr of prs) {
     if (!pr || typeof pr.body !== 'string' || pr.isCrossRepository !== false) continue;
-    if (!isSameRepoPrUrl(pr.url, owner, repo)) continue;
+    if (!isSameRepoPrUrl(pr.url, owner, repo, host)) continue;
     if (pr.body.split('\n').some((line) => markers.includes(line.trim()))) return { url: pr.url, body: pr.body };
   }
   if (prs.length >= OPEN_PR_LIST_LIMIT) {
@@ -771,13 +792,16 @@ function matchStaleClaimPr(runId, prs, owner, repo) {
 // hit OPEN_PR_LIST_LIMIT and so may have cut the marked PR off) is not a
 // clean "no marked PR", so the optional trailing `onError(err)` lets the
 // caller surface it (#4423). An `onError` that itself throws is swallowed —
-// this function always returns null on failure.
-function staleClaimInFlightPr(content, gh, owner, repo, onError) {
+// this function always returns null on failure. `target` is the run's one
+// `resolveRepoTarget` result ({ host, ghRepo }): the listing's `--repo` and the
+// PR-url match both come from it, so they can never name two hosts; null keeps
+// today's bare listing and github.com match.
+function staleClaimInFlightPr(content, gh, owner, repo, onError, target = null) {
   try {
     const runId = staleClaimRunId(content);
     if (runId === null) return null;
-    const prs = normalizePrListing(JSON.parse(gh(openPrListArgs(owner, repo))), owner, repo);
-    const m = matchStaleClaimPr(runId, prs, owner, repo);
+    const prs = normalizePrListing(JSON.parse(gh(openPrListArgs(owner, repo, target))), owner, repo);
+    const m = matchStaleClaimPr(runId, prs, owner, repo, target ? target.host : null);
     return m ? { link: m.url } : null;
   } catch (e) {
     if (typeof onError === 'function') {

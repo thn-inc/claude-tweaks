@@ -5,7 +5,7 @@
 // layer — takes exactly the object reconcile() already returns; no changes
 // to reconcile()/its per-check modules, and no I/O of its own.
 //
-// Four kinds of line:
+// Five kinds of line:
 //   - one per non-empty action category, naming what was actually DONE
 //     (e.g. "archived: 1 run dir", "released: 3 claims", "reaped: 1
 //     worktree") — drawn from the taken-action entries in each of
@@ -16,6 +16,9 @@
 //     lines (#4798): the parent record(s) it left open and its step-wide
 //     skips that left no parent open, each flattened from every post-merge
 //     entry whatever its action or verdict;
+//   - one line after those naming what a run whose claim another pass took
+//     over had already changed on GitHub (#4797) — numbers only; the run
+//     itself still folds into the aggregated in-flight skip below;
 //   - one aggregated "skipped: N {unit} (reason count, reason count, ...)"
 //     line, folding together every PER-ITEM skip across every category
 //     (archive's per-run-dir skip reasons, reap's per-worktree reasons,
@@ -42,7 +45,8 @@
 // post-merge.js's classifyEntry judges a post-merge entry, its
 // failedRecordNumbers names the records a failed run left, and
 // formatPostMergeStep40bLines loads parentsLeftOpen, stepSkipsOf,
-// parentsLeftOpenLine and stepSkipsLine to render Step 4.0b's two lines.
+// parentsLeftOpenLine and stepSkipsLine to render Step 4.0b's two lines;
+// formatSupersededChangesLine loads supersededChanges and supersededChangesLine.
 // All are loaded on first use, never at module load: `bin/hooks.js reconcile`
 // requires this file outside the try that turns a module-load fault
 // into the `reconcile-threw` fallback, so a module-level require of
@@ -55,9 +59,11 @@ const failedRecordsSuffix = (taken) => {
   return numbers.length ? ` (records ${numbers.map((n) => `#${n}`).join(', ')})` : '';
 };
 // A skip's detail can be multi-line or long (a raw gh error): flattened and bounded exactly as post-merge.js does, so it cannot break the one-line-per-entry summary.
-const boundedDetail = (text) => {
+// An `unknown-host` detail is the gate's own refusal text (#4794): flattened but never bounded, because
+// a real SSH-remote refusal runs past the bound and the cut would drop its GitHub Enterprise advice.
+const boundedDetail = (text, reason) => {
   const { oneLine, boundDetail } = require('./post-merge');
-  return boundDetail(oneLine(text));
+  return reason === 'unknown-host' ? oneLine(text) : boundDetail(oneLine(text));
 };
 
 // Array-shaped result fields: unit noun (singular), the action value(s)
@@ -218,7 +224,7 @@ function formatItemSkippedLine(result) {
 function formatCheckSkipLines(result) {
   if (!Array.isArray(result.skipped)) return [];
   return result.skipped.map((e) => {
-    const detailSuffix = e.detail ? ` (${boundedDetail(e.detail)})` : '';
+    const detailSuffix = e.detail ? ` (${boundedDetail(e.detail, e.reason)})` : '';
     const countSuffix = e.count > 1 ? ` x${e.count}` : '';
     const namesSuffix = Array.isArray(e.names) && e.names.length ? `: ${e.names.join(', ')}` : '';
     return `skipped: ${e.check} — ${e.reason}${detailSuffix}${countSuffix}${namesSuffix}`;
@@ -233,6 +239,15 @@ function formatPostMergeStep40bLines(result) {
   if (!Array.isArray(pm)) return [];
   const { parentsLeftOpen, stepSkipsOf, parentsLeftOpenLine, stepSkipsLine } = require('./post-merge');
   return [parentsLeftOpenLine(parentsLeftOpen(pm)), stepSkipsLine(stepSkipsOf(pm))].filter(Boolean);
+}
+
+// #4797: what a run whose claim another pass took over had already changed on GitHub before it stopped. Its
+// entry still folds into the aggregated in-flight skip; this line is the only place the changes show.
+function formatSupersededChangesLine(result) {
+  const pm = result.postMerge;
+  if (!Array.isArray(pm)) return null;
+  const { supersededChanges, supersededChangesLine } = require('./post-merge');
+  return supersededChangesLine(supersededChanges(pm));
 }
 
 // result -> compact multi-line string (no trailing newline; caller appends
@@ -260,6 +275,9 @@ function formatSummary(result) {
   }
 
   lines.push(...formatPostMergeStep40bLines(result));
+
+  const supersededLine = formatSupersededChangesLine(result);
+  if (supersededLine) lines.push(supersededLine);
 
   const residuePlanLine = formatResiduePlanLine(result.residuePlan);
   if (residuePlanLine) lines.push(residuePlanLine);

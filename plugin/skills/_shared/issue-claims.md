@@ -179,30 +179,28 @@ node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
      A rejection on either transport is **contested** — same handling as `'live'` below, not a
      retry.
   4. **`state: 'tombstone'` or `'stale'`** — a legitimate re-claim, not a contest, EXCEPT: first
-     check for an in-flight build (#974) — the MCP-transport equivalent of the in-flight check
-     the "In-flight detection at claim time (#315)" section below documents for the `gh`-CLI
-     transport (`tombstoneInFlightPr`, run inside `bin/claim-targets.js`, which does not apply
-     here — the tombstone check has no CLI of its own). Parse the tombstone content already
+     check for an in-flight build (#974) — the MCP twin of the "In-flight detection at claim time
+     (#315)" check below (`tombstoneInFlightPr`, which runs inside `bin/claim-targets.js`, not here). `{host}` is the GitHub host the record lives on: `github.com` on the GitHub MCP path; on the `gh` path an exported non-empty `GH_HOST`, else the origin's host when it is `github.com` or a known GitHub Enterprise host (a `*.ghe.com` host, or a host key in `gh`'s `hosts.yml`), else `github.com`. Parse the tombstone content already
      extracted in step 2: when its `reason` field starts with `pr-opened:` and its `link` field is
-     a well-formed `https://github.com/{owner}/{repo}/pull/{number}` URL for the SAME owner/repo
-     as the issue being claimed (anything else — missing link, wrong repo, malformed value — skip
-     this check and proceed to the write below, the identical fail-open posture
-     `tombstoneInFlightPr` uses), read that PR's state via `mcp__github__pull_request_read` (`get`
-     method) — one of two documented PR-read exceptions (the other is the stale listing below) to
-     `_shared/github-write-transport.md`'s "Pull requests are not covered by this mapping" note,
-     already used the same way by `_shared/pr-checklist-refresh.md`'s Phase-checklist update
-     section. A still-`OPEN` state means a build for this issue already exists and reclaiming
-     would race it — stop here, do not write, and report it the same way `flow/claim-targets.md`'s
+     a well-formed `https://{host}/{owner}/{repo}/pull/{number}` URL for the SAME owner/repo
+     as the issue being claimed, its host compared case-insensitively, trailing dots ignored
+     (anything else skips this check and proceeds to the write below, `tombstoneInFlightPr`'s
+     fail-open posture), read that PR's state via `mcp__github__pull_request_read` (`get`
+     method) — one of two documented PR-read exceptions (the other: the stale listing below) to
+     `_shared/github-write-transport.md`'s "Pull requests are not covered by this mapping" note.
+     A still-`OPEN` state means a build for this issue already exists and reclaiming
+     would race it — stop here, do not write, and report it as `flow/claim-targets.md`'s
      in-flight card does. Any other state (closed, merged) or a failed read falls through to the
-     write below unchanged. For a `'stale'` blob, the counterpart (#4423): run
-     `node "${CLAUDE_PLUGIN_ROOT}/bin/stale-claim-pr.js" --claim-file "{CLASSIFY_INPUT path}" --repo "{owner}/{repo}"`
-     — the matcher `bin/claim-targets.js` runs on the `gh` path (`claim-store.js`'s
-     `staleClaimInFlightPr`); it validates the run id first, so a claim with no usable run id never
-     lists PRs. A JSON verdict is the answer. Exit 2 means `gh` is absent: list the repo's open PRs
+     write below. For a `'stale'` blob, the counterpart (#4423): run
+     `node "${CLAUDE_PLUGIN_ROOT}/bin/stale-claim-pr.js" --claim-file "{CLASSIFY_INPUT path}"`
+     — the matcher `bin/claim-targets.js` runs on the `gh` path (`staleClaimInFlightPr`); it
+     validates the run id first, so a claim with no usable run id never lists PRs. A JSON verdict
+     is the answer. Exit 3 (origin does not parse, as with a sandbox proxy): re-run adding `--repo "{host}/{owner}/{repo}"`, never a bare `owner/repo`.
+     Exit 2 means `gh` is absent: list the repo's open PRs
      once per claim run via `mcp__github__list_pull_requests` (`state: open`, `perPage: 100`, paging
      until exhausted), Write every page's entries as one JSON array to the path
      `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value stale-claim-open-prs.json`
-     prints, and re-run it adding `--listing "{that path}"` (it normalizes the MCP entries itself).
+     prints, and re-run it adding `--listing "{that path}"` and `--repo "github.com/{owner}/{repo}"` (the MCP's host, so listing and match share one host).
      `"match": true` stops the claim and writes nothing, as the tombstone case does.
      **Resume exception (#4588):** when the run carries `RESUME_PR=<url>` (`dispatch resume`) and
      the verdict is `"match": true` with a `link` exactly equal to it, take the conditional write
@@ -210,7 +208,7 @@ node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
      (`flow/claim-targets.md`'s "Log the claim"). A `pr-opened:` tombstone above still stops
      whatever `RESUME_PR` says, and so does a verdict whose `link` differs. A `failure` verdict
      keeps its fail-open-with-a-line handling: a non-null
-     `failure`, a non-zero exit other than the exit 2 that triggers the listing, or a listing that
+     `failure`, a non-zero exit after those re-runs, or a listing that
      could not be fetched or written, falls through to the write (fail open), after one line saying
      the check failed — never silently, so it is not read as no marked PR.
      Otherwise, write **conditionally** (**with** `sha` = the current file's blob sha from step 1):
@@ -518,16 +516,15 @@ exists — it lands in the release marker and human line.
 the PR that build produced — before reclaiming such a tombstone, a claim-time reader may check
 `gh pr view <link> --json state --jq .state`; a still-`OPEN` result means a build for this issue
 already exists and reclaiming would race it. `bin/lib/issues/claim-store.js`'s `tombstoneInFlightPr`
-runs this check (moved there from the retired `claim-engine.js`, #787), returning `{ link }` instead
+runs this check, returning `{ link }` instead
 of proceeding to a fresh claim; any other reason, a missing `link`, or a failed/closed/merged check
 falls through to the reclaim behavior below unchanged (fail open). `link` is untrusted (any session
 with registry-branch write access can set it), so `tombstoneInFlightPr` validates it — a well-formed
-`https://github.com/{owner}/{repo}/pull/{number}` URL for the SAME owner/repo as the issue being
+`https://{host}/{owner}/{repo}/pull/{number}` URL (`{host}` as defined in "The lock" step 4) for the SAME owner/repo as the issue being
 claimed — before ever calling `gh pr view`; anything else (wrong repo, malformed, non-string) is
-treated the same as a missing `link` and never reaches `gh` at all. A `'stale'` claim whose `runId`
+treated the same as a missing `link` and never reaches `gh`. A `'stale'` claim whose `runId`
 matches an open same-repo PR's `claude-tweaks-run:` marker is in flight too (#4423,
-`staleClaimInFlightPr`) — same `inFlight` envelope, same fail-open (the gh-CLI path also writes
-one stderr warning on a failed check). Under `dispatch resume` (#4588), passing
+`staleClaimInFlightPr`) — same `inFlight` envelope, same fail-open. Under `dispatch resume` (#4588), passing
 `--resume-pr <url>` lets a `'stale'` claim whose in-flight link is exactly `<url>` re-claim; a
 `pr-opened:` tombstone still stops, and so does a stale claim whose link differs — "The lock" step 4
 mirrors this exception.

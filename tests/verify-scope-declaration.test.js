@@ -63,6 +63,20 @@ test('this repo declares its own verify scope and it passes readDeclaration (#19
   assert.ok(r.decl.impact.fetch.includes('tools/test-impact.js fetch'), r.decl.impact.fetch);
 });
 
+// #4347: the full `tests` run is taken from the PR's test.yml `test` job — the
+// same suite that workflow runs (`npm test`) — whenever HEAD is that PR's head.
+test('the tests suite declares test.yml\'s test job as its CI source, and that job runs npm test (#4347)', () => {
+  const r = readDeclaration(DECL);
+  assert.strictEqual(r.ok, true, JSON.stringify(r.errors));
+  assert.deepStrictEqual(Object.keys(r.decl.ci), ['tests']);
+  assert.strictEqual(r.decl.ci.tests.workflow, 'test.yml');
+  assert.strictEqual(r.decl.ci.tests.job, 'test');
+  const workflow = readText(path.join(REPO_ROOT, '.github', 'workflows', 'test.yml'));
+  assert.match(workflow, /^ {2}test:\n/m, 'test.yml must keep a job keyed `test` (its job name, with no name: override)');
+  assert.match(workflow, /^\s+- run: npm test$/m, 'the CI job must run the same suite the declaration names');
+  assert.match(workflow, /^\s+pull_request:/m, 'CI runs only exist for a PR head under pull_request');
+});
+
 // #4024 expand-contract: the installed plugin build reads this committed file with code that predates
 // `impact`, and that reader rejects any rule lacking `suites` (a usage error, not a full-run fallback).
 // Every impact rule therefore also carries `"suites": "*"` — older readers run full, current ones ignore it.

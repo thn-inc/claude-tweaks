@@ -53,6 +53,63 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.164.0](https://github.com/thn-inc/claude-tweaks/compare/v6.163.0...v6.164.0) (2026-11-09)
+
+
+### Features
+
+* Take the full-suite verification from the PR's CI run… ([#4347](https://github.com/thn-inc/claude-tweaks/issues/4347)) ([dc88ac4](https://github.com/thn-inc/claude-tweaks/commit/dc88ac4e1a489abf3cf66b1a489fb6f9da3332b3))
+
+### Highlights
+* Projects can point final test verification at their CI run, so a pipeline waits a few minutes for CI instead of running the whole suite on a busy local machine.
+
+## [6.163.0](https://github.com/thn-inc/claude-tweaks/compare/v6.162.1...v6.163.0) (2026-11-09)
+
+
+### Features
+
+* Cut redundant local full-suite runs in pipelines… ([#5117](https://github.com/thn-inc/claude-tweaks/issues/5117)) ([2dc5e6d](https://github.com/thn-inc/claude-tweaks/commit/2dc5e6dd62db89a002f2d70ff215b4c9362e0877))
+* Render a per-session segment file in the statusline ([#5126](https://github.com/thn-inc/claude-tweaks/issues/5126)) ([bf3ed43](https://github.com/thn-inc/claude-tweaks/commit/bf3ed434892b9f84eff444c04886cac91142b37b))
+
+
+### Bug Fixes
+
+* Refuse controls inside a session segment's OSC 8 link ([#5129](https://github.com/thn-inc/claude-tweaks/issues/5129)) ([dde61cb](https://github.com/thn-inc/claude-tweaks/commit/dde61cb9686e4be9161a0cb91d8e8c410fe0fe3c))
+
+### Highlights
+* Pipelines now run the full test suite once per branch instead of once per plan task plus a worktree baseline run, which cuts local CPU and memory load when several sessions run in parallel.
+
+## [6.162.1](https://github.com/thn-inc/claude-tweaks/compare/v6.162.0...v6.162.1) (2026-11-05)
+
+
+### Bug Fixes
+
+* Host-qualify the origin-derived repo slug so a GHE… ([#4794](https://github.com/thn-inc/claude-tweaks/issues/4794)) ([fb75da2](https://github.com/thn-inc/claude-tweaks/commit/fb75da2c63da7192bc5e8c94e366457728e24f69))
+* Replace post-merge.js hand-rolled takeClaim with a… ([#4797](https://github.com/thn-inc/claude-tweaks/issues/4797)) ([bf3ac1e](https://github.com/thn-inc/claude-tweaks/commit/bf3ac1ef8cddc4393537edf08c4db7d2f9738ffe))
+
+### Highlights
+* Reconcile and claim-store `gh` calls now reach the right host when your origin is a GitHub Enterprise server.
+* Two background post-merge passes can no longer run the same parent-close step at once when one of them stalls.
+
+## [6.162.0](https://github.com/thn-inc/claude-tweaks/compare/v6.161.0...v6.162.0) (2026-11-04)
+
+
+### Features
+
+* Give the open-items ledger a sanctioned append/settle CLI ([#4439](https://github.com/thn-inc/claude-tweaks/issues/4439)) ([027c337](https://github.com/thn-inc/claude-tweaks/commit/027c337e69d6bc76fd83d299000157e447f6a94d))
+
+
+### Bug Fixes
+
+* Surface a partial Step 4.0b parent-close instead of… ([#4798](https://github.com/thn-inc/claude-tweaks/issues/4798)) ([f156150](https://github.com/thn-inc/claude-tweaks/commit/f1561500bfe301c998668ace20519557da729702))
+* Windows: the guard-rewrite normalizer declines a native… ([#4292](https://github.com/thn-inc/claude-tweaks/issues/4292)) ([81fbb3c](https://github.com/thn-inc/claude-tweaks/commit/81fbb3c09d164775b5f278fc637b102102520aa3))
+
+### Highlights
+* Queued test-suite runs now take their slot in the order they arrived, so a run no longer starves behind newer arrivals.
+* Windows: the Bash-command normalizer now drops a redundant leading `cd "<cwd>" &&` on a backslash-spelled cwd, and inlines `${CLAUDE_PLUGIN_ROOT}` forward-slashed (`D:/…`). Whether Claude Code's Windows worktree guard accepts the inlined root has not been tested in a live Windows session.
+* Pipeline phases record and settle open-items ledger rows through one safe command instead of hand-edited table lines.
+* A cross-repository native blocker no longer causes a false stop or a false landed verdict in the blocker-landing check.
+
 ## [6.161.0](https://github.com/thn-inc/claude-tweaks/compare/v6.160.3...v6.161.0) (2026-11-03)
 
 

@@ -8,6 +8,7 @@ files:
   - plugin/bin/lib/hooks/run-dir-resolve.js
   - plugin/skills/_shared/pipeline-run-dir.md
   - plugin/bin/post-merge-run.js
+  - plugin/bin/lib/reconcile/post-merge.js
   - tests/wrap-up-merge-mode-conformance.test.js
 ---
 
@@ -66,7 +67,7 @@ When it cannot merge, the outcome is `pending-review` with the PR ready and a st
 - **Should understand:**
   - **Failed preconditions.** Each one is named, and none of them runs a merge step first. A `CLOSED` PR stops with no cleanup.
   - **Already merged.** The outcome is `merged`, led by an `already merged {mergedAt} by {mergedBy}` line. A post-merge close that failed gets its own `cleanup:` line, never `ran`.
-  - **In flight.** If another process holds the run's post-merge claim, the line reads `in-flight`, never `ran`. For an archived run that holder can only be another merge-mode invocation, so the line also names `/claude-tweaks:wrap-up #{n} merge` again once the claim is past its 10-minute stale window.
+  - **In flight.** If another process holds the run's post-merge claim, the line reads `in-flight`, never `ran`. For an archived run that holder can only be another merge-mode invocation, so the line also names `/claude-tweaks:wrap-up #{n} merge` again in case that holder died or stalled: a re-run takes over a dead holder's claim at once, a live holder's claim it has not refreshed for `CLAIM_MAX_IDLE_MS`, and a claim naming no holder once it is past its 10-minute stale window. When this invocation's own pass had its claim taken over by another pass after changing GitHub, the `in-flight` line also states what it changed (parents closed below the oversight floor, records reopened or closed), so it never reads as a pass that did nothing.
   - **Which step failed.** The CLI's `verdict` and `failedSteps` pick the lines. A Step 4.0 failure names the records it left unsettled, a Step 4.0b failure names each parent it could not close, and a step that ran clean is never reported failed. A CLI crash, or output that will not parse, still reports `cleanup: post-merge closes failed` and names the re-run.
   - **No retry after a recorded failure.** Once the closes ran, their marker is written, so a re-run reports `already done` and retries nothing. That failure line names `/claude-tweaks:tidy`'s `parent-gate` backstop instead of a re-run.
   - **Closes ran, marker missing.** When the marker write fails, or the CLI throws after Step 4.0b's closes ran, the entry is a `cleanup:` failure line that adds `, Step 4.0b {reason} on #{parent}` for each parent Step 4.0b left open. No marker was written, so this line does name the re-run, which tries the closes again (#4798).
@@ -128,3 +129,4 @@ When it cannot merge, the outcome is `pending-review` with the PR ready and a st
 - Updated during build of #4692. Step 3 now finishes a PR that something else already merged: merge mode's `## Already merged` section runs the post-merge closes through `bin/post-merge-run.js`, then the teardown. Before this, such a PR stopped the command with no cleanup.
 - Updated during wrap-up of #4692, after its review's fix wave. Step 3 now covers the `in-flight` result, a failure line per failed step, a CLI crash or unparseable output, and why a failure in closes that already ran is not retried.
 - Updated during wrap-up of #4798 (run `2026-11-03T201056-record-4798`). Step 3 now covers a failed marker write that names the parents Step 4.0b left open, and a step-wide Step 4.0b skip with nothing left to close, which reads `ran` with a note instead of a failure.
+- Updated during build of #4797 (run `2026-11-04T064811-record-4797`). Step 3's **In flight.** case now names all three takeovers a re-run makes (a dead holder at once, a live holder idle past `CLAIM_MAX_IDLE_MS`, an ownerless claim past the 10-minute stale window) and states the GitHub changes this invocation's own pass made before another pass took its claim over.

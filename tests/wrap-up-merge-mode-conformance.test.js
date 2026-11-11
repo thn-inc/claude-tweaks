@@ -76,8 +76,9 @@ const MERGE_MODE_FACTS = {
   'already-verdict-clean': /`verdict` `clean`: report `ran` with its `closingLinks` word and `parentsClosed` count/,
   'already-verdict-done': /`verdict` `already-done`:/,
   'already-in-flight': /`verdict` `in-flight` — another process holds the run's claim and is running them now: report `in-flight`, never `ran`/,
-  'already-in-flight-live': /With `next` `none`, a live run, that is the whole line/,
-  'already-in-flight-archived': /`next` `rerun-after-stale-claim` marks an archived run \(the adopted path is under `archive\/`\), whose holder is another merge-mode invocation, because the reconciler never walks `archive\/`: the line also names `\/claude-tweaks:wrap-up #\{n\} merge` again once the claim is past its 10-minute stale window \(`CLAIM_STALE_MS`\), in case that holder died/,
+  'already-in-flight-live': /With `next` `none`, a live run, that is the whole line unless the entry carries `parentsClosed`, `recordsReopened` or `recordsClosed` \(below\)/,
+  'already-in-flight-archived': /`next` `rerun-after-stale-claim` marks an archived run \(the adopted path is under `archive\/`\), whose holder is another merge-mode invocation, because the reconciler never walks `archive\/`: the line also names `\/claude-tweaks:wrap-up #\{n\} merge` again, in case that holder died or stalled — a re-run takes over a dead holder's claim at once, a live holder's claim it has not refreshed for `CLAIM_MAX_IDLE_MS`, and a claim naming no holder once it is past its 10-minute stale window \(`CLAIM_STALE_MS`\)/,
+  'already-in-flight-superseded': /An `in-flight` entry that carries `parentsClosed`, `recordsReopened` or `recordsClosed` is this invocation's own pass, whose claim another pass took over after it had changed GitHub: the line also states each of those it carries — `before another pass took over the claim, this run closed \{parentsClosed\} parent record\(s\) below the oversight floor, reopened #\{recordsReopened\} and closed #\{recordsClosed\}` — so it never reads as a pass that did nothing/,
   'already-failed-steps': /`verdict` `failed` on a `ran` entry reports only the steps its `failedSteps` names/,
   'already-failed-ran': /When `failedSteps` includes `4\.0`: one `cleanup: post-merge closes failed — \{closingLinks\}` line naming every record in its `records` lists/,
   'already-parent-failures': /When `failedSteps` includes `4\.0b`: one `cleanup: post-merge closes failed — Step 4\.0b \{reason\} on #\{parent\}` line per `parentFailures` element/,
@@ -495,4 +496,25 @@ test('summary-template.md Next Actions list line backticks consoleAutoResolve', 
   const region = summaryNextActionsRegion();
   assert.ok(!/grants consoleAutoResolve/.test(region), 'unbackticked consoleAutoResolve');
   assert.match(region, /grants `consoleAutoResolve`/);
+});
+
+test('#4797 round 5: post-merge-run.js (header and USAGE separately) and plugin-structure.md name a superseded pass\'s change fields', () => {
+  const cli = read('plugin', 'bin', 'post-merge-run.js');
+  const usageStart = cli.indexOf('const USAGE =');
+  assert.ok(usageStart > 0, 'post-merge-run.js declares USAGE');
+  const usageEnd = usageStart + cli.slice(usageStart).search(/;\r?\n/); // CRLF checkouts end the statement with ;\r\n
+  assert.ok(usageEnd > usageStart, 'USAGE is one statement');
+  const headerEnd = cli.indexOf("'use strict'");
+  assert.ok(headerEnd > 0 && headerEnd < usageStart, "post-merge-run.js has a header before 'use strict'");
+  const surfaces = [
+    ['plugin/bin/post-merge-run.js header', cli.slice(0, headerEnd).replace(/^\/\/ ?/gm, '')],
+    ['plugin/bin/post-merge-run.js USAGE', cli.slice(usageStart, usageEnd)],
+    ['docs/plugin-structure.md', read('docs', 'plugin-structure.md')],
+  ];
+  for (const [name, raw] of surfaces) {
+    const text = flat(raw);
+    assert.match(text, /recordsReopened\?/, `${name}: the entry shape carries recordsReopened`);
+    assert.match(text, /recordsClosed\?/, `${name}: the entry shape carries recordsClosed`);
+    assert.match(text, /claim another pass took over/, `${name}: states when an in-flight entry carries them`);
+  }
 });

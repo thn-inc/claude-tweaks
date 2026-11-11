@@ -76,6 +76,14 @@ function unionMs(spans) {
   if (curStart !== null) total += curEnd - curStart;
   return total;
 }
+// A verify event's work time: its durationMs less its suite-slot queue wait
+// (#5119 `slotWaitedMs`, absent on an event before it), at least 0; 0 with no
+// numeric durationMs.
+function verifyWorkMs(v) {
+  if (!Number.isFinite(v.durationMs)) return 0;
+  const waited = Number.isFinite(v.slotWaitedMs) && v.slotWaitedMs > 0 ? v.slotWaitedMs : 0;
+  return Math.max(0, v.durationMs - waited);
+}
 function skillName(ev) { return typeof ev.skill === 'string' && ev.skill.startsWith(NS) ? ev.skill.slice(NS.length) : null; }
 function isTopLevel(ev) {
   const n = skillName(ev);
@@ -274,9 +282,11 @@ function derivePhases({ events, manifest = null, runState = null, now = new Date
     // exceed endOfRun minus the first event (#1928 fix round 3).
     minutes: unionMinutes(rows.flatMap((r) => r._list || [])),
     verifyRuns: verifies.length,
-    // Summed verify wall-clock (#4029), to one decimal; a verify event with no
-    // numeric durationMs adds nothing.
-    verifyMinutes: Math.round(verifies.reduce((sum, v) => sum + (Number.isFinite(v.durationMs) ? v.durationMs : 0), 0) / 6000) / 10,
+    // Summed verify time (#4029), to one decimal; a verify event with no
+    // numeric durationMs adds nothing. #5119: the time an event spent queued
+    // for a suite slot (`slotWaitedMs`) is waiting, not verify work, so it is
+    // subtracted from that event's contribution, never below 0.
+    verifyMinutes: Math.round(verifies.reduce((sum, v) => sum + verifyWorkMs(v), 0) / 6000) / 10,
     verifyModes: [...new Set(verifies.map((v) => v.mode).filter((m) => typeof m === 'string'))],
   };
   return { phases, totals };
