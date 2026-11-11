@@ -8,7 +8,7 @@ const { EventEmitter } = require('events');
 const { PassThrough } = require('stream');
 
 const {
-  runChecks, runOne, killTree, stopTrees, SIGNAL_GRACE_MS,
+  runChecks, runOne, killTree, stopTrees, groupAlive, readProcStats, SIGNAL_GRACE_MS,
 } = require(path.join(
   __dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'run.js'));
 
@@ -196,14 +196,14 @@ test('check output lands in its own {name}.log under logDir (AC2 capture half)',
   assert.strictEqual(fs.readFileSync(results[0].logPath, 'utf8'), 'hello from the check\n');
 });
 
-test('a write-stream failure (unwritable logDir) records a failed check with spawnError, never a crash', async () => {
+test('a log-open failure (unwritable logDir) records a failed check with spawnError, never a crash', async () => {
   // manual: true means the fake child never closes on its own — the only way
-  // this promise can resolve is via the write-stream's 'error' event. If that
-  // handler is missing/broken, this test hangs instead of racing to a false
-  // pass against the fake spawn's close event.
+  // this promise can resolve is via the log-open failure path. If that path
+  // is missing/broken, this test hangs instead of racing to a false pass
+  // against the fake spawn's close event.
   const { spawnImpl } = makeFakeSpawn({ t: { manual: true } });
   // logDir itself doesn't exist (and its parent isn't created either), so
-  // fs.createWriteStream emits 'error' (ENOENT) rather than opening the file.
+  // opening the log file fails (ENOENT).
   const logDir = path.join(tmpLogDir(), 'does-not-exist', 'nested');
   const results = await runChecks({
     cmds: [{ name: 'tests', command: 't' }], logDir, spawnImpl,
@@ -230,13 +230,29 @@ test('a child.stdout stream error records a failed check without crashing the pr
   assert.ok(results[0].spawnError.includes('stream broke'));
 });
 
-test('a write-stream failure kills the already-spawned child instead of leaving it orphaned (security)', async () => {
-  const { spawnImpl, children } = makeFakeSpawn({ t: { manual: true } });
+test('a log-open failure spawns nothing, so no child is left orphaned (security, #5119)', async () => {
+  const { spawnImpl, spawned } = makeFakeSpawn({ t: { manual: true } });
   const logDir = path.join(tmpLogDir(), 'does-not-exist', 'nested');
-  await runChecks({
+  const results = await runChecks({
     cmds: [{ name: 'tests', command: 't' }], logDir, spawnImpl,
   });
-  assert.strictEqual(children.t.killed, true);
+  assert.deepStrictEqual(spawned, []);
+  assert.strictEqual(results[0].exitCode, null);
+});
+
+test('a real child writes straight to its log descriptor — no stdout/stderr pipe to fill while a signal grace blocks the loop (#5119)', async () => {
+  const logDir = tmpLogDir();
+  let child = null;
+  const spawnImpl = (cmd, opts) => { child = require('child_process').spawn(cmd, opts); return child; };
+  // 200 KiB on stdout, more than any platform's pipe buffer, then one stderr line.
+  const script = "process.stdout.write('x'.repeat(200*1024));process.stderr.write('done')";
+  const r = await runOne({
+    name: 'tests', command: `"${process.execPath}" -e "${script}"`, logDir, spawnImpl, now: Date.now,
+  });
+  assert.strictEqual(r.exitCode, 0);
+  assert.strictEqual(child.stdout, null, 'stdout is the log descriptor, not a pipe');
+  assert.strictEqual(child.stderr, null, 'stderr is the log descriptor, not a pipe');
+  assert.strictEqual(fs.readFileSync(r.logPath, 'utf8'), `${'x'.repeat(200 * 1024)}done`);
 });
 
 test('a failed tests check is handed to the retry hook, and a hook that returns exitCode 0 un-skips the checks behind it (#1925)', async () => {
@@ -408,8 +424,12 @@ test('runChecks gives each check only its own env; a check without one spawns ex
   const optsOf = (command) => spawnedOpts[spawned.indexOf(command)];
   assert.strictEqual(optsOf('cmd-foo').env.MY_VAR, '1');
   assert.ok(!('MY_VAR' in optsOf('cmd-bar').env));
-  // The --cmd-only spawn is byte-for-byte the pre-flag options object.
-  assert.deepStrictEqual(optsOf('cmd-bar'), { shell: true, env: { NO_COLOR: '1', FORCE_COLOR: '0', ...process.env }, windowsHide: true });
+  // The --cmd-only spawn is byte-for-byte the pre-flag options object, plus
+  // #5119's stdio: stdout and stderr are the log file's own descriptor.
+  const { stdio, ...rest } = optsOf('cmd-bar');
+  assert.deepStrictEqual(rest, { shell: true, env: { NO_COLOR: '1', FORCE_COLOR: '0', ...process.env }, windowsHide: true });
+  assert.strictEqual(stdio[0], 'pipe');
+  assert.ok(Number.isInteger(stdio[1]) && stdio[1] === stdio[2], `stdout and stderr share one descriptor: ${stdio}`);
   // The env map never leaks into a recorded result (and so never into report.json).
   for (const r of results) assert.ok(!('env' in r));
 });
@@ -423,8 +443,7 @@ test('runOne kills a hung child and records {timedOut:true, exitCode:null} on ex
   assert.strictEqual(result.timedOut, true);
   assert.strictEqual(typeof result.durationMs, 'number');
   // killTree's fallback branch (the fake child has no numeric .pid) calls
-  // child.kill('SIGKILL') — the same observable the write-stream-failure
-  // test above already uses to prove a kill actually happened.
+  // child.kill('SIGKILL'), which the fake records as `killed`.
   assert.strictEqual(children.hang.killed, true, 'the hung child must be killed on timeout');
 });
 
@@ -572,12 +591,15 @@ test('stopTrees forwards the signal to each group, polls through the grace, then
     if (sleeps === 2) live.delete(-1001); // this group's own teardown finishes inside the grace
   };
   const gone = { pid: 1003 }; // exited before the signal: its forward hits ESRCH
+  const logged = [];
   stopTrees(new Set([{ pid: 1001 }, { pid: 1002 }, gone]), 'SIGTERM', {
-    platform: 'linux', kill, sleep, graceMs: 500, pollMs: 100,
+    platform: 'linux', kill, sleep, graceMs: 500, pollMs: 100, procStats: () => null, log: (l) => logged.push(l),
   });
   assert.deepStrictEqual(calls.filter(([, sig]) => sig === 'SIGTERM'), [[-1001, 'SIGTERM'], [-1002, 'SIGTERM'], [-1003, 'SIGTERM']]);
   assert.deepStrictEqual(calls.filter(([, sig]) => sig === 'SIGKILL'), [[-1002, 'SIGKILL']]);
-  assert.strictEqual(sleeps, 5, 'the grace is polled to its end while a group lives');
+  assert.strictEqual(sleeps, 5, 'the grace is polled to its end while a group lives (unreadable /proc keeps the probe answer)');
+  assert.deepStrictEqual(logged, ['verify.js: SIGTERM sent — waiting up to 0.5s for 2 check process group(s) to finish their teardown before killing them\n'],
+    'the grace announces itself once, naming what it waits on and the bound');
 });
 
 test('stopTrees stops polling once every group is gone (#5119)', () => {
@@ -585,10 +607,63 @@ test('stopTrees stops polling once every group is gone (#5119)', () => {
   const { calls, kill } = fakeGroups(live);
   let sleeps = 0;
   stopTrees([{ pid: 1001 }], 'SIGINT', {
-    platform: 'darwin', kill, sleep: () => { sleeps += 1; live.delete(-1001); }, graceMs: 5000, pollMs: 100,
+    platform: 'darwin', kill, sleep: () => { sleeps += 1; live.delete(-1001); }, graceMs: 5000, pollMs: 100, log: () => {},
   });
   assert.strictEqual(sleeps, 1);
   assert.deepStrictEqual(calls.filter(([, sig]) => sig === 'SIGKILL'), []);
+});
+
+test('stopTrees on Linux ends the grace once a group holds only zombies, though the probe still answers (#5119)', () => {
+  // The probe never throws: an exited, unreaped leader keeps the group visible to kill(-pgid, 0).
+  const { calls, kill } = fakeGroups(new Set([-1001, -1002]));
+  let table = [
+    { pgrp: 1001, state: 'S' }, { pgrp: 1001, state: 'Z' }, { pgrp: 1002, state: 'R' }, { pgrp: 7, state: 'S' },
+  ];
+  let sleeps = 0;
+  const sleep = () => {
+    sleeps += 1;
+    if (sleeps === 1) table = [{ pgrp: 1001, state: 'Z' }, { pgrp: 1002, state: 'Z' }, { pgrp: 7, state: 'S' }];
+  };
+  stopTrees([{ pid: 1001 }, { pid: 1002 }], 'SIGINT', {
+    platform: 'linux', kill, sleep, graceMs: 5000, pollMs: 100, procStats: () => table, log: () => {},
+  });
+  assert.strictEqual(sleeps, 1, 'the zombie-only groups count as gone at the next poll');
+  assert.deepStrictEqual(calls.filter(([, sig]) => sig === 'SIGKILL'), [], 'nothing left to kill');
+});
+
+test('stopTrees never announces a grace when no group outlives the signal (#5119)', () => {
+  const logged = [];
+  stopTrees([{ pid: 1001 }], 'SIGTERM', {
+    platform: 'linux', kill: fakeGroups(new Set()).kill, sleep: () => {}, procStats: () => [], log: (l) => logged.push(l),
+  });
+  assert.deepStrictEqual(logged, []);
+});
+
+test('groupAlive: any probe throw counts as gone — EPERM (macOS, a group of only unreaped zombies) as well as ESRCH (#5119)', () => {
+  const eperm = () => { throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' }); };
+  assert.strictEqual(groupAlive(1001, eperm), false);
+  assert.strictEqual(groupAlive(1001, eperm, [{ pgrp: 1001, state: 'S' }]), false, 'the probe decides first');
+  const ok = () => {};
+  assert.strictEqual(groupAlive(1001, ok), true, 'no /proc stats: the probe answer stands');
+  assert.strictEqual(groupAlive(1001, ok, []), true, 'stats naming no member keep the probe answer');
+  assert.strictEqual(groupAlive(1001, ok, [{ pgrp: 1001, state: 'Z' }]), false);
+  assert.strictEqual(groupAlive(1001, ok, [{ pgrp: 1001, state: 'Z' }, { pgrp: 1001, state: 'D' }]), true);
+});
+
+test('readProcStats reads state and pgrp after the last ")" of each /proc/<pid>/stat, and null when /proc is unreadable (#5119)', () => {
+  const files = {
+    '/proc/12/stat': '12 (a) b) c) Z 1 1001 1001 0 -1\n',
+    '/proc/13/stat': '13 (node) S 12 1001 1001 0 -1\n',
+  };
+  const fakeFs = {
+    readdirSync: () => ['12', '13', '14', 'self', 'net'],
+    readFileSync: (p) => {
+      if (!(p in files)) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); // 14 exited mid-scan
+      return files[p];
+    },
+  };
+  assert.deepStrictEqual(readProcStats(fakeFs), [{ state: 'Z', pgrp: 1001 }, { state: 'S', pgrp: 1001 }]);
+  assert.strictEqual(readProcStats({ readdirSync: () => { throw new Error('ENOENT'); } }), null);
 });
 
 test('stopTrees on win32 runs taskkill at once — no signal to forward, no grace (#5119)', () => {
