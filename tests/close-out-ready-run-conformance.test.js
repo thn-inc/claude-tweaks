@@ -7,7 +7,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
-const { sectionOf } = require('./helpers/conformance-asserts');
+const { sectionOf, missingFactsOf, assertEachPatternGoesRed } = require('./helpers/conformance-asserts');
 
 const ROOT = path.join(__dirname, '..');
 const CLOSE_OUT = readText(path.join(ROOT, 'plugin/skills/dispatch/close-out.md'));
@@ -72,53 +72,73 @@ test('AC8.1 AC8.2: the ordering pin goes red when adjacent blocks are permuted o
   assert.throws(() => requireOrder(absent, CHAIN), /marker missing/);
 });
 
-test('the post-Mark-ready re-read names the ready-run read and stops on pending', () => {
-  const para = reReadParagraph();
-  assert.match(para, /ready-run read/);
-  assert.match(para, /step 1's stop rules/);
-  assert.match(para, /\bpending\b[^.]*stops the candidate/);
-  assert.match(para, /rollup/);
-  assert.match(para, /head-run read/);
-  // go-red: each claim is lost when its phrase is removed from the paragraph.
-  for (const pattern of [/ready-run read/, /step 1's stop rules/, /stops the candidate/]) {
-    assert.doesNotMatch(para.replace(pattern, ''), pattern);
+const collapse = (s) => s.replace(/\s+/g, ' ');
+
+// One fact list per region. Each pattern matches exactly once in its slice and the patterns are
+// disjoint, so stripping one reports exactly that fact (assertEachPatternGoesRed's contract).
+const REREAD_FACTS = [
+  [/the rollup, the head-run read and the ready-run read/, 'the re-read names all three reads'],
+  [/with step 1's stop rules/, 'the re-read applies step 1 stop rules'],
+  [/this read is `pending` and stops the candidate/, 'a post-undraft pending read stops the candidate'],
+];
+const STEP1_FACTS = [
+  [/\(`bin\/ready-run\.js`: `awaiting` reads `pending`/, 'step 1 maps awaiting to pending'],
+  [/`red` or `draft-skip-without-ready-trigger` reads `failing`/, 'step 1 maps red and draft-skip to failing'],
+  [/`read-failed` — or a non-zero exit or output with no `state` — stops this candidate as `stopped: CI unreadable`/, 'step 1 fails closed on an unreadable ready-run read'],
+  [/on a `DIRTY`\/`CONFLICTING` PR — step 2's read — `awaiting` and `draft-skip-without-ready-trigger` do not stop here but fall through to step 2/, 'step 1 applies the conflict-first rule'],
+];
+const CLOSE_OUT_FACTS = [
+  [/`stopped: CI \{status\}`, `stopped: CI unreadable`, /, 'the Reporting list carries stopped: CI unreadable'],
+];
+const RESUME_FACTS = [
+  [/ready-run read, `bin\/ready-run\.js` — `awaiting` reads `pending`/, 'resume names bin/ready-run.js'],
+  [/`red` or `draft-skip-without-ready-trigger` reads `failing`/, 'resume maps red and draft-skip to failing'],
+  [/`read-failed` \(or a non-zero exit or output with no `state`\) reads `unavailable`, never as no requirement/, 'resume fails closed'],
+  [/on a `DIRTY`\/`CONFLICTING` PR `awaiting` and `draft-skip-without-ready-trigger` take Step 2\.5's conflict-first rule/, 'resume applies the conflict-first rule'],
+  [/unavailable → the run stays parked/, 'resume parks on unavailable'],
+];
+const APPENDIX_FACTS = [
+  [/the state read, the head-run `gh run list` read and the ready-run read/, 'appendix names the ready-run read'],
+  [/not-yet-completed head run reads pending/, 'appendix keeps the pinned head-run clause'],
+  [/an `awaiting` ready run pending, `draft-skip-without-ready-trigger` red/, 'appendix maps awaiting and draft-skip'],
+  [/on a `DIRTY`\/`CONFLICTING` PR those two take Step 2\.5's conflict-first rule/, 'appendix applies the conflict-first rule'],
+];
+const JOURNEY_FACTS = [
+  [/"Green" means Step 2\.5's three reads agree/, 'journey says three reads'],
+  [/the ready-run read has no `awaiting` workflow/, 'journey names the ready-run condition'],
+  [/on PR #\{n\}\. \{resume\}`/, 'journey quotes the park comment with {resume}'],
+];
+
+const step1Of = () => {
+  const from = CLOSE_OUT.indexOf('1. **Re-verify CI is currently green');
+  const to = CLOSE_OUT.indexOf('2. **Re-check mergeability');
+  assert.ok(from !== -1 && to > from, 'step 1 slice resolves');
+  return collapse(CLOSE_OUT.slice(from, to));
+};
+
+const REGIONS = [
+  ['re-read paragraph', () => reReadParagraph(), REREAD_FACTS],
+  ['close-out step 1', step1Of, STEP1_FACTS],
+  ['close-out reporting list', () => collapse(CLOSE_OUT), CLOSE_OUT_FACTS],
+  ['resume-confirmation', () => collapse(RESUME), RESUME_FACTS],
+  ['appendix Resume-to-merge', () => collapse(sectionOf(APPENDIX, '## Resume-to-merge')), APPENDIX_FACTS],
+  ['journey', () => collapse(JOURNEY), JOURNEY_FACTS],
+];
+
+test('every ready-run mapping fact is present in its own region', () => {
+  for (const [name, slice, facts] of REGIONS) {
+    assert.deepEqual(missingFactsOf(facts)(slice()), [], `${name} lost a fact`);
   }
 });
 
-test('close-out step 1 and resume-confirmation name bin/ready-run.js; the appendix resume rule names the ready-run read and keeps its pinned clause', () => {
-  const step1 = CLOSE_OUT.slice(CLOSE_OUT.indexOf('1. **Re-verify CI is currently green'), CLOSE_OUT.indexOf('2. **Re-check mergeability'));
-  assert.ok(step1.length > 0, 'step 1 slice resolves');
-  const s1 = step1.replace(/\s+/g, ' ');
-  assert.match(s1, /ready-run read \(`bin\/ready-run\.js`/);
-  assert.match(s1, /`awaiting` reads `pending`/);
-  assert.match(s1, /`red` or `draft-skip-without-ready-trigger` reads `failing`/);
-  assert.match(s1, /`read-failed`[^)]*`stopped: CI unreadable`/);
-  // Fail closed: a failed call or output with no state is unreadable, never "no requirement".
-  assert.match(s1, /non-zero exit or output with no `state`[^)]*`stopped: CI unreadable`/);
-
-  const resume = RESUME.replace(/\s+/g, ' ');
-  assert.match(resume, /ready-run read, `bin\/ready-run\.js`/);
-  assert.match(resume, /`awaiting` reads `pending`, `red` or `draft-skip-without-ready-trigger` reads `failing`/);
-  assert.match(resume, /`read-failed`[^.;]*unavailable/);
-  assert.match(resume, /non-zero exit or output with no `state`[^.;]*unavailable/);
-
-  const rule = sectionOf(APPENDIX, '## Resume-to-merge').replace(/\s+/g, ' ');
-  assert.match(rule, /the state read, the head-run `gh run list` read and the ready-run read/);
-  assert.match(rule, /not-yet-completed head run reads pending/);
-  assert.match(rule, /an `awaiting` ready run pending, `draft-skip-without-ready-trigger` red/);
-
-  // go-red: each pin fails once its phrase is stripped.
-  assert.doesNotMatch(s1.replace('`bin/ready-run.js`', ''), /ready-run read \(`bin\/ready-run\.js`/);
-  assert.doesNotMatch(rule.replace('and the ready-run read', ''), /and the ready-run read/);
-  assert.doesNotMatch(resume.replace('`bin/ready-run.js`', ''), /ready-run read, `bin\/ready-run\.js`/);
+test('each mapping fact goes red alone: stripping only its phrase reports exactly that fact', () => {
+  for (const [, slice, facts] of REGIONS) {
+    assertEachPatternGoesRed(slice(), facts, missingFactsOf(facts));
+  }
 });
 
-test('the recover-a-ci-parked-run journey names three reads and quotes the park comment with {resume}', () => {
-  const j = JOURNEY.replace(/\s+/g, ' ');
-  assert.match(j, /"Green" means Step 2\.5's three reads agree/);
+test('the journey no longer says both reads or quotes the retired park comment', () => {
+  const j = collapse(JOURNEY);
   assert.doesNotMatch(j, /both of Step 2\.5's reads/);
-  assert.match(j, /ready-run read/);
-  assert.match(j, /on PR #\{n\}\. \{resume\}`/);
   assert.doesNotMatch(j, /on PR #\{n\}\. Resume once green\.`/);
-  assert.doesNotMatch(j.replace('three reads', ''), /Step 2\.5's three reads agree/);
 });

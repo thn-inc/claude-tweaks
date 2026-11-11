@@ -37,7 +37,9 @@ touching shared state runs one member at a time.
    read (a not-yet-completed head run is `pending`, not green), plus Step 2.5's ready-run read
    (`bin/ready-run.js`: `awaiting` reads `pending`, `red` or `draft-skip-without-ready-trigger` reads
    `failing`, and `read-failed` — or a non-zero exit or output with no `state` — stops this candidate
-   as `stopped: CI unreadable`) — the identical read `resume-confirmation.md`'s own live-value-
+   as `stopped: CI unreadable`; on a `DIRTY`/`CONFLICTING` PR — step 2's read — `awaiting` and
+   `draft-skip-without-ready-trigger` do not stop here but fall through to step 2, since a
+   conflicting PR gets no workflow run, per Step 2.5's conflict-first rule) — the identical read `resume-confirmation.md`'s own live-value-
    sourcing paragraph already performs for its confirmation, reused rather than re-implemented.
    `failing`: report the failure and stop for this candidate — do not treat a stale prior green as
    current. `pending`: report and stop for this candidate too; a headless close-out that waited on
@@ -122,7 +124,7 @@ touching shared state runs one member at a time.
 ## Reporting
 
 One line per candidate: `#{number} — {outcome}` where `{outcome}` is one of `merged`, `armed`,
-`stopped: CI {status}`, `stopped: mergeStateStatus {DIRTY | BEHIND} — update declined`,
+`stopped: CI {status}`, `stopped: CI unreadable`, `stopped: mergeStateStatus {DIRTY | BEHIND} — update declined`,
 `stopped: update failed — {conflict not resolved | verification | push rejected | update-branch rejected | head moved | base not fetched | marker unreadable | marker not written | gh absent | command failed}`,
 `stopped: CI {status} after update`, `stopped: mergeStateStatus {status} after update`,
 `stopped: acceptance labeling unverifiable — no run dir`, or `declined at confirmation gate`.
