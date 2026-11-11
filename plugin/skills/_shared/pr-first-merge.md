@@ -234,7 +234,7 @@ guard refuses a `--jq` program inside this loop (`_shared/scratch-worktree.md` �
 
 - `RC=0` → **green** — every reported check passed **and** every head run completed (the `0)` branch
   breaks only at zero pending head runs). Re-read state (`gh pr view … --json state,mergeStateStatus,headRefOid`)
-  and the head runs (the same `gh run list` read as above): if
+  and the head runs and ready run (the same reads as above): if
   `headRefOid` changed since the first read (a new push landed) or `state` is not `OPEN`, re-enter this
   step from the top (one re-entry; a second change reports `pending-review`, reason `moving-target`)
   — never merge blind; a failing head run takes the Red path, reason `check-failed:{names}` (names from

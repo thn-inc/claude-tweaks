@@ -6,7 +6,7 @@
 // bin/ready-run.js reached through CLAUDE_PLUGIN_ROOT. Observable outcome = the RC the fence leaves
 // plus how many times the stub CLI was called.
 'use strict';
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -32,7 +32,7 @@ fs.writeFileSync(f, String(n + 1));
 fs.appendFileSync(path.join(d, 'ready-calls.log'), process.argv.slice(2).join(' ') + '\\n');
 const seq = (process.env.READY_SEQ || '').split(',');
 const v = seq[Math.min(n, seq.length - 1)];
-if (v === '__fail') process.exit(3);
+if (v === '__fail') { console.log(JSON.stringify({ state: 'met' })); process.exit(3); } // valid output + non-zero exit: only the CLI-line guard can stop it
 if (v === '__nostate') console.log('{}');
 else if (v === '__garbage') console.log('not json');
 else console.log(JSON.stringify({ state: v }));
@@ -55,8 +55,11 @@ const SHELLS = [
 ];
 
 // Substitute every placeholder literally against a fresh per-run scratch dir.
+const TMP_DIRS = [];
+after(() => { for (const d of TMP_DIRS) fs.rmSync(d, { recursive: true, force: true }); });
 function sandbox() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'merge-watch-'));
+  TMP_DIRS.push(dir);
   fs.mkdirSync(path.join(dir, 'bin'));
   fs.writeFileSync(path.join(dir, 'bin', 'ready-run.js'), STUB_CLI);
   const paths = {
@@ -159,6 +162,14 @@ for (const shell of SHELLS) {
     assert.notEqual(lax, FENCE);
     assert.equal(runWatch(shell, FENCE, '__nostate').rc, 2);
     assert.notEqual(runWatch(shell, lax, '__nostate').rc, 2, 'a lax extraction reads `undefined` as a state');
+
+    // The CLI-exit guard: __fail prints a valid `met` state and exits non-zero, so only this guard yields RC=2.
+    const cliLine = FENCE.split('\n').find((l) => l.includes('bin/ready-run.js'));
+    assert.ok(cliLine && cliLine.endsWith(' || { RC=2; break; }'), 'the CLI line carries its exit guard');
+    const noCliGuard = FENCE.replace(cliLine, cliLine.slice(0, -' || { RC=2; break; }'.length));
+    assert.notEqual(noCliGuard, FENCE);
+    assert.equal(runWatch(shell, FENCE, '__fail').rc, 2);
+    assert.notEqual(runWatch(shell, noCliGuard, '__fail').rc, 2, 'without the CLI-line guard a failed CLI call is read as met');
   });
 
   t('AC7.2: the park-comment fence writes the {resume} sentence as a printf argument', () => {
