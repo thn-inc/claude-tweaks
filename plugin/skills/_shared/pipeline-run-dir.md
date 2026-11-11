@@ -47,8 +47,7 @@ rather than silently substituted. Never creates a directory unless `--create` is
   applies before anything is created.
 - `--root-only`: skips run resolution entirely and prints the anchored `$RUN_ROOT` itself — for a
   call site that only ever needed the main-checkout root (a `find` backstop scoped to the whole
-  `pipelines/` tree), never a specific
-  run's directory.
+  `pipelines/` tree), never a specific run's directory.
 - `--archived` (#4677): needs `--spec-slug <s>`, and is refused with `--create` or without `--spec-slug`, both checked before step 1. It falls back, only after steps 1-2 resolve nothing, to the newest closed match that records a `pr` object: an `archive/` dir, or a live `clean` dir that `archive-run` refused (a live dir whose run-id also exists under `archive/` is never adopted). That match is refused, exit 1, when a newer live run of the same slug is not closed (`interrupted`, or an `active` run step 2 refused), because merging the older run's still-open PR would skip it. It is read-only, an adoptable step-2 match always wins, and its only caller is `wrap-up/merge-mode.md`.
 
 ## Anchoring
@@ -127,8 +126,8 @@ A second, unconditional PreToolUse guard (`bin/lib/hooks/pre-tool-use.js`'s
 `checkPipelineShadowGuard`, not gated on `worktree-always`) denies the opposite direction: an
 Edit/Write/NotebookEdit or Bash write/mkdir that would CREATE a *new* `.claude-tweaks/pipelines/`
 run directory inside a linked worktree — a shadow, the exact split this file's Anchoring section
-exists to prevent. It flags only a genuinely new creation; a run directory that already exists in a worktree is left
-alone.
+exists to prevent. It flags only a genuinely new creation; a run directory that already exists in
+a worktree is left alone.
 
 **`work/{n}-spec.md` carve-out (#959).** The guard takes the first path segment under `pipelines/`
 as the run-dir candidate and, before this fix, denied whenever that directory did not already

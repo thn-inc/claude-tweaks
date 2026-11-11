@@ -9,8 +9,8 @@
 // plugin-architecture invariant, not a project opt-in.
 //
 // Deliberately NOT flagged: a write into a run directory that ALREADY EXISTS
-// in the worktree (the pre-anchoring shape). Only a brand-new creation is
-// denied.
+// in the worktree (an existing directory creates no new shadow). Only a
+// brand-new creation is denied.
 'use strict';
 const { test, after } = require('node:test');
 const assert = require('node:assert');
