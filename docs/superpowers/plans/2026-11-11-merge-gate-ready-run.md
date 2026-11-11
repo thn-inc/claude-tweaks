@@ -130,6 +130,7 @@ Waived plugin/skills/_shared/github-pr-scan.md: out of scope per the spec's Gotc
 - `plugin/skills/dispatch/close-out-update.md:134`: the post-push watch re-enters Step 2.5's head-run read on an already-ready PR. The new head's `synchronize` runs postdate `readySince`.
 - `plugin/skills/wrap-up/merge-mode.md:50`: the `CLEAN` branch re-enters Step 2.5 from the top, so it inherits the ready-run read.
 - `plugin/skills/wrap-up/review-console-interactive.md:42` and `plugin/bin/lib/wrap-up/pack.js:715`: their CI verdict comes from `bin/pr-checks.js --pr`, which Task 4 updates. `pack.js` reads `state`/`failing`/`pending`, so the added optional `awaitingReadyRun` key is ignored.
+- `tests/bin-lib/console/backfill.test.js:87`: the Check B `classifyRollup` hit is a quoted decision-log line inside a fixture string, not a reader of the classifier.
 - `plugin/skills/_shared/github-pr-scan.md` item 9 also gates on `pr-checks.js --pr` (`tests/display-ci-readers-conformance.test.js:96`). With Task 4 the outcome depends on the PR:
   - A PR that was undrafted and whose ready workflow has not run since reads `pending`. That is stricter, not looser, and this plan accepts it.
   - A PR that was never a draft, or is still a draft, has no `ReadyForReviewEvent`. The reader stops after the timeline read and touches no workflow file, so its verdict is unchanged, even when the session's clone lacks the PR head's objects (plan review, amendment 3).
