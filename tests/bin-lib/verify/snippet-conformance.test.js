@@ -220,7 +220,7 @@ test('verification.md and suite-slots.md document serial reruns, the timeout bac
     [/`scratch\.fallback`/, 'scratch.fallback'],
     [/`scratch\.moved`/, 'scratch.moved'],
     [/is not the base commit before and after it runs is no evidence/, 'a moved scratch is no evidence'],
-    [/and one `Baseline:` stdout line says so/, 'a moved scratch is named on stdout'],
+    [/Baseline: the scratch checkout was not at the base commit for some base-side run\(s\) — those runs are no evidence \(scratch\.moved\)` prints — present it verbatim in Step 3/, 'the moved-scratch stdout line, quoted and presented verbatim'],
     [/must tolerate starting from another commit's state/, 'the reuse contract'],
   ];
   assert.deepStrictEqual(missingFactsOf(verificationFacts)(section), []);

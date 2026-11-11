@@ -1704,6 +1704,20 @@ test('a <repo-key> that is a plain file falls back with slot-dir-unusable and is
   fx.rg.removeWorktree(out.dir);
 });
 
+test('a slot-<index> that is a plain file falls back with slot-dir-unusable and is left alone (#5150)', (t) => {
+  const fx = slotFixture(t);
+  const slotPath = path.dirname(fx.at());
+  fs.mkdirSync(path.dirname(slotPath), { recursive: true });
+  fs.writeFileSync(slotPath, 'not a directory\n');
+  const out = fx.rg.addWorktree(fx.sha1, { slot: 0, slotBase: fx.S });
+  assert.ok(out.fallback.startsWith('slot-dir-unusable: '), out.fallback);
+  assert.strictEqual(out.reused, false);
+  assert.match(path.basename(path.dirname(out.dir)), /^ct-verify-base-/);
+  assert.deepStrictEqual(fx.warned, [fallbackLine(out.fallback)]);
+  assert.strictEqual(fs.readFileSync(slotPath, 'utf8'), 'not a directory\n');
+  fx.rg.removeWorktree(out.dir);
+});
+
 test('a ct-verify-base root that is a plain file falls back with root-unusable and is left alone (#5150)', (t) => {
   const fx = slotFixture(t);
   const rootPath = path.join(fx.tmpdir, 'ct-verify-base');

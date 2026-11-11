@@ -1507,7 +1507,7 @@ async function main() {
       if (backOffRan(b.concurrency)) {
         lines.push(`Baseline: reruns backed off to one at a time from declared reruns ${b.concurrency.declared} — ${b.concurrency.reason}`);
       }
-      // #5150: a moved scratch decides verdicts without a base run; say so beside the ATTRIBUTABLE lines.
+      // #5150: a moved scratch decides verdicts without a base run; say so before the new/fixed lines.
       if (b.scratch && b.scratch.moved) {
         lines.push('Baseline: the scratch checkout was not at the base commit for some base-side run(s) — those runs are no evidence (scratch.moved)');
       }
