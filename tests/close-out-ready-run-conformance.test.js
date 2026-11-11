@@ -100,6 +100,8 @@ const RESUME_FACTS = [
   [/`read-failed` \(or a non-zero exit or output with no `state`\) reads `unavailable`, never as no requirement/, 'resume fails closed'],
   [/on a `DIRTY`\/`CONFLICTING` PR `awaiting` and `draft-skip-without-ready-trigger` take Step 2\.5's conflict-first rule/, 'resume applies the conflict-first rule'],
   [/unavailable → the run stays parked/, 'resume parks on unavailable'],
+  // The Recommended rule must name a failed read's plain `unavailable`, or that state has no Recommended option.
+  [/Cancel is Recommended only when CI reads `failing`, or a plain `unavailable` from a failed CI read \(never `unavailable — gh absent`\)/, 'resume recommends Cancel on a failed read'],
 ];
 const APPENDIX_FACTS = [
   [/the state read, the head-run `gh run list` read and the ready-run read/, 'appendix names the ready-run read'],
