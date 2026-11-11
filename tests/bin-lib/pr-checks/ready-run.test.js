@@ -425,7 +425,7 @@ test('readReadyRun: a runs listing past one page is read page by page until tota
 });
 
 test('readReadyRun: the runs paging stops at 10 pages and fails closed as truncated when rows are still missing', () => {
-  const full = (args) => JSON.stringify({ total_count: 5000, workflow_runs: Array.from({ length: 100 }, (_, i) => restRun(CI, { id: i + 1 })) });
+  const full = () => JSON.stringify({ total_count: 5000, workflow_runs: Array.from({ length: 100 }, (_, i) => restRun(CI, { id: i + 1 })) });
   const h = harness({ files: { [CI]: DRAFT_SKIP_READY }, gh: { runs: full } });
   const env = resolveReadyRun(h.deps, ARGS);
   assert.equal(env.state, 'read-failed');
