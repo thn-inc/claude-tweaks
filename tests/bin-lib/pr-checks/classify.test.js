@@ -462,6 +462,12 @@ test('#5153 readyRunVerdict called directly: an unparseable, undefined or null r
   assert.deepEqual(readyRunVerdict({ readySince: null, readyWorkflows: [W], headRuns }).awaiting, [W]);
 });
 
+test('#5153 readyRunVerdict called directly: a pathless row never counts, even for an empty-string workflow', () => {
+  const pathless = { name: 'ci', workflowName: 'ci', status: 'completed', conclusion: 'success', event: 'pull_request', createdAt: AFTER, databaseId: 25 };
+  assert.deepEqual(readyRunVerdict({ readySince: READY, readyWorkflows: [''], headRuns: [pathless] }), { awaiting: [''], pending: [], failing: [] });
+  assert.deepEqual(readyRunVerdict({ readySince: READY, readyWorkflows: [W], headRuns: [pathless] }).awaiting, [W]);
+});
+
 test('#5153 a run created in the same second as readySince counts (at-or-after boundary)', () => {
   const r = ready([rest(W, 'pull_request', READY, 'completed', 'success', 21)]);
   assert.equal(r.state, 'green');
