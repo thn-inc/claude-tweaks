@@ -74,8 +74,8 @@ function readyRunVerdict({ readySince, readyWorkflows, headRuns } = {}) {
     let newestAt = -Infinity;
     for (const row of rows) {
       if (!row || typeof row !== 'object') continue;
-      if (typeof row.path !== 'string' || row.path === '') continue;
-      if (row.path.replace(/@.*$/, '') !== W || !PR_EVENTS.includes(row.event)) continue;
+      const path = typeof row.path === 'string' ? row.path.replace(/@.*$/, '') : '';
+      if (path === '' || path !== W || !PR_EVENTS.includes(row.event)) continue;
       const at = Date.parse(row.createdAt ?? row.created_at);
       if (Number.isNaN(at) || Number.isNaN(since) || at < since) continue;
       if (!newest || at > newestAt || (at === newestAt && ids(row) > ids(newest))) {

@@ -468,6 +468,13 @@ test('#5153 readyRunVerdict called directly: a pathless row never counts, even f
   assert.deepEqual(readyRunVerdict({ readySince: READY, readyWorkflows: [W], headRuns: [pathless] }).awaiting, [W]);
 });
 
+test('#5153 readyRunVerdict called directly: a row whose path is empty or strips to empty never counts for an empty-string workflow', () => {
+  for (const path of ['', '@x', '@refs/heads/x']) {
+    const row = rest(path, 'pull_request', AFTER, 'completed', 'success', 26);
+    assert.deepEqual(readyRunVerdict({ readySince: READY, readyWorkflows: [''], headRuns: [row] }), { awaiting: [''], pending: [], failing: [] });
+  }
+});
+
 test('#5153 a run created in the same second as readySince counts (at-or-after boundary)', () => {
   const r = ready([rest(W, 'pull_request', READY, 'completed', 'success', 21)]);
   assert.equal(r.state, 'green');
