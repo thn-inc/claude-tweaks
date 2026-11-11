@@ -22,7 +22,7 @@ files:
 - **Action:** The build pushes the branch (`git push origin {branch}`), then runs the scoped `verify.js` invocation with `--baseline` exactly as before. No new flag is needed; the declaration's `ci` block is enough.
 - **Should feel:** One push and a few minutes of waiting, with nothing competing for this machine's CPU.
 - **Should understand:** CI runs only for a PR's head commit, so an unpushed HEAD, a dirty tree, or a HEAD that is not the open PR's head runs the suite locally, and `report.json`'s `ci[].fallback` names why (`head-not-pushed`, `dirty-tree`, `no-open-pr-at-head`).
-- **Red flags:** a `CI: … taken from` line on a run whose tree was dirty; a long wait on a PR whose conflicts mean CI will never run (that case is `pr-conflicted`, decided at once).
+- **Red flags:** a `CI: … taken from` line on a run whose tree was dirty; a long wait on a PR whose conflicts mean CI will never run (that case is `pr-conflicted`, decided at once); a `ci` declaration in a project whose CI skips draft PRs (`test/ci-source.md`'s CI that skips draft PRs), where every verify falls back with `ci-job-skipped` after one poll, or with a workflow-level gate waits `waitSeconds` before `no-ci-run-within-wait`.
 
 ### 2. Read the CI verdict
 - **URL:** `verify.js` stdout and `{git-dir}/claude-tweaks-verify/report.json`
@@ -40,4 +40,5 @@ files:
 
 ## Origin
 - Created during `/claude-tweaks:build` of record #4347 (2026-10-27), from the speed analysis of the #4026 dispatch, whose local full runs took 55 minutes and 1h34 under load while the same suite took 3.5 minutes in CI.
+- Updated during wrap-up of #5153: step 1 flags a `ci` declaration in a project whose CI skips draft PRs, which `_shared/ci-skips-drafts.md` rules a misconfiguration.
 - Related: `docs/journeys/get-one-full-suite-run-on-a-docs-touching-build-3060.md` (Common Step 5's run-once rule), `docs/journeys/declare-a-verify-scope-1924.md` (the declaration).
