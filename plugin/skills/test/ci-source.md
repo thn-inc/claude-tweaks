@@ -55,6 +55,10 @@ Every other outcome runs the suite locally, exactly as selected (its impact subs
 
 stdout prints one line per CI-declared suite before the table: `CI: {suite} — taken from {workflow} / {job} run {id} on HEAD ({conclusion}, {url})`, or `CI: {suite} — ran locally ({reason})`.
 
+## CI that skips draft PRs
+
+The runner reads draft-PR CI, so a project picks one shape (`_shared/ci-skips-drafts.md`): CI that runs on draft PRs plus a `ci` declaration, where full-suite verdicts come from that CI and every phase push costs Actions minutes, or CI that skips drafts and no `ci` declaration, where verification runs locally and CI runs once at ready, which the merge gate waits for. Declaring both is a misconfiguration: with a job-level draft skip every verify falls back on `ci-job-skipped` after one poll, and with a workflow-level gate every verify stalls for `waitSeconds` before `no-ci-run-within-wait`.
+
 ## What the CI pass does not cover
 
 The CI job runs on ubuntu with Node 20. A CI-sourced pass therefore does not cover this machine's platform: macOS, and Node 22. Windows is not covered either; `windows-regression.yml` still checks it after merge. A change whose risk is platform-specific still runs locally: the caller runs verify.js without `--scope`, which never consults `ci`.
