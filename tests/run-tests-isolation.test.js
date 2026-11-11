@@ -140,8 +140,9 @@ function withTempDir(fn) {
   }
 }
 
+// `label` as tools/run-tests.js passes it: the shared module's own default is neutral (#5119).
 function slotArgs(dir, over) {
-  return { dir, slots: 1, pid: 111, cwd: '/work/a', isAlive: () => false, now: Date.now, log: () => {}, sleep: () => {}, ...over };
+  return { dir, slots: 1, pid: 111, cwd: '/work/a', isAlive: () => false, now: Date.now, log: () => {}, sleep: () => {}, label: 'run-tests.js', ...over };
 }
 
 const noSleep = () => { throw new Error('sleep must not be called'); };

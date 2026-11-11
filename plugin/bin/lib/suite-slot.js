@@ -22,12 +22,15 @@ const path = require('path');
 // `CT_TEST_SUITE_SLOTS` and `CT_TEST_SUBSET_SLOTS` accept.
 const POSITIVE_INT = /^[1-9]\d*$/;
 
+// The variable that moves the lock directory (defaultSlotBase), named in ensureOwnDir's refusal.
+const SLOT_DIR_VAR = 'CT_TEST_SUITE_SLOT_DIR';
+
 // How many full suites may run at once across processes (the slot semaphore). Defaults to 1;
 // `CT_TEST_SUITE_SLOTS` overrides with a positive integer. An invalid value falls back to 1 and
 // says so once through `log`, so a typo is visible instead of silently changing the cap. `key`
 // names the variable read — `CT_TEST_SUBSET_SLOTS` for the subset lane, same rules. `label` prefixes
-// the message with the calling tool's name.
-function resolveSlots(env, log, key = 'CT_TEST_SUITE_SLOTS', label = 'run-tests.js') {
+// the message with the calling tool's name; each caller passes its own.
+function resolveSlots(env, log, key = 'CT_TEST_SUITE_SLOTS', label = 'suite-slot') {
   const raw = env[key];
   if (raw === undefined) return 1;
   if (typeof raw === 'string' && POSITIVE_INT.test(raw)) return Number(raw);
@@ -170,12 +173,16 @@ function reclaimSlot(lockPath, { pid, cwd, isAlive, now, staleUnparseableMs, sta
 // and run-root parents sit at fixed names under the tmpdir; where that is a shared, world-writable
 // /tmp (multi-user Linux), another user could pre-create either — a symlink steering the sweep's
 // deletes, or a directory of theirs holding a lock that blocks every run. Throws on a mismatch.
-function ensureOwnDir(dir) {
+// A user who does not own such a directory cannot remove it from a sticky /tmp either, so when the
+// directory has an override variable (`overrideVar`, `CT_TEST_SUITE_SLOT_DIR` for the slot lock)
+// the message names it as the way out.
+function ensureOwnDir(dir, overrideVar = null) {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const st = fs.lstatSync(dir);
   const uid = typeof process.getuid === 'function' ? process.getuid() : null;
   if (!st.isDirectory() || (uid !== null && st.uid !== uid)) {
-    throw new Error(`${dir} is not a directory owned by this user — remove it and re-run.`);
+    const override = overrideVar ? `, or set ${overrideVar} to a directory this user owns` : '';
+    throw new Error(`${dir} is not a directory owned by this user — remove it and re-run${override}.`);
   }
 }
 
@@ -264,11 +271,12 @@ function namesPid(filePath, pid) {
 // `isAlive`, `now`, `sleep` and `log` are parameters so tests never touch real processes or time.
 // A lock or ticket naming our own `pid` is stale by definition — a prior run that crashed and whose
 // pid the OS then reused for this one — so it is reclaimed rather than waited on forever.
-// `label` prefixes the wait line with the calling tool's name; `hint` replaces its trailing
-// "set <slotsVar> to raise the limit" advice when that variable is not the caller's knob.
-function acquireSlot({ dir, slots, pid, cwd, isAlive: isPidLive, now, sleep, log, pollMs = 2000, staleUnparseableMs = 600000, staleReclaimMs = 30000, slotsVar = 'CT_TEST_SUITE_SLOTS', label = 'run-tests.js', hint = null }) {
+// `label` prefixes the wait line with the calling tool's name (each caller passes its own); `hint`
+// replaces its trailing "set <slotsVar> to raise the limit" advice when that variable is not the
+// caller's knob.
+function acquireSlot({ dir, slots, pid, cwd, isAlive: isPidLive, now, sleep, log, pollMs = 2000, staleUnparseableMs = 600000, staleReclaimMs = 30000, slotsVar = 'CT_TEST_SUITE_SLOTS', label = 'suite-slot', hint = null }) {
   const isAlive = (holderPid) => holderPid !== pid && isPidLive(holderPid);
-  ensureOwnDir(dir);
+  ensureOwnDir(dir, SLOT_DIR_VAR);
   const advice = hint ?? `set ${slotsVar} to raise the limit`;
   const holderOpts = { isAlive, now, staleUnparseableMs, slots };
   let ticket = takeTicket(dir, { pid, cwd, now, slots });
@@ -331,10 +339,10 @@ function slotIndexOf(lockPath) {
 // Where the slot locks live: `CT_TEST_SUITE_SLOT_DIR` when it is a non-empty string, else
 // `ct-test-suite-slots` under `tmpdir`. Pure: `env` and `tmpdir` are parameters.
 function defaultSlotBase(env, tmpdir) {
-  const override = env.CT_TEST_SUITE_SLOT_DIR;
+  const override = env[SLOT_DIR_VAR];
   return typeof override === 'string' && override !== '' ? override : path.join(tmpdir, 'ct-test-suite-slots');
 }
 
 module.exports = {
-  isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, slotLane, resolveSlots, slotIndexOf, defaultSlotBase,
+  isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, slotLane, resolveSlots, slotIndexOf, defaultSlotBase, SLOT_DIR_VAR,
 };

@@ -98,9 +98,34 @@ test('acquireSlot names the label and hint in its queued-behind line too', () =>
   assert.ok(lines[0].includes('raise concurrency.suiteSlots') && lines[0].includes('(ticket: '), lines[0]);
 });
 
-test('acquireSlot\'s default wait line is unchanged', () => {
+test('acquireSlot\'s default label is neutral, never a maintainer tool\'s name (#5119)', () => {
   const { lines } = acquireBehindHolder({});
   assert.strictEqual(lines.length, 1);
-  assert.ok(lines[0].startsWith('run-tests.js: waiting for a test-suite slot — held by pid 424242'), lines[0]);
+  assert.ok(lines[0].startsWith('suite-slot: waiting for a test-suite slot — held by pid 424242'), lines[0]);
   assert.ok(lines[0].includes('set CT_TEST_SUITE_SLOTS to raise the limit (lock: '), lines[0]);
+  const logged = [];
+  assert.strictEqual(mod.resolveSlots({ CT_TEST_SUITE_SLOTS: 'x' }, (l) => logged.push(l)), 1);
+  assert.ok(logged[0].startsWith('suite-slot: ignoring invalid CT_TEST_SUITE_SLOTS'), logged[0]);
+});
+
+test('ensureOwnDir\'s refusal names the override variable when the caller has one (#5119)', {
+  skip: process.platform === 'win32' && 'win32: creating a symlink needs extra privileges',
+}, () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'suite-slot-test-'));
+  try {
+    // A symlink in the directory's place: not a real directory, refused whoever owns it.
+    const target = path.join(dir, 'elsewhere');
+    fs.mkdirSync(target);
+    const link = path.join(dir, 'link');
+    fs.symlinkSync(target, link);
+    assert.throws(() => mod.ensureOwnDir(link, mod.SLOT_DIR_VAR),
+      (err) => err.message === `${link} is not a directory owned by this user — remove it and re-run, or set CT_TEST_SUITE_SLOT_DIR to a directory this user owns.`);
+    assert.throws(() => mod.ensureOwnDir(link), (err) => err.message === `${link} is not a directory owned by this user — remove it and re-run.`);
+    // acquireSlot refuses its lane directory the same way.
+    assert.throws(() => acquireSlot({
+      dir: link, slots: 1, pid: process.pid, cwd: '/here', isAlive: () => false, now: Date.now, sleep: () => {}, log: () => {},
+    }), /or set CT_TEST_SUITE_SLOT_DIR to a directory this user owns\.$/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

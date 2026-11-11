@@ -33,7 +33,7 @@ The lock dir is `CT_TEST_SUITE_SLOT_DIR`, else `<os tmpdir>/ct-test-suite-slots`
 
 The wait counts against the calling tool's timeout: with fewer slots than concurrent sessions, a run can queue behind several full suites before its checks start. `verification.md`'s Foreground rule says which timeout to set and how to read a call that comes back queued.
 
-A lock dir `verify.js` cannot use (not a directory owned by this user, or not writable) prints `verify.js: suite slot unavailable — {message}` and exits 2 before the checks it was queuing for run. At `--baseline` adjudication the same failure is recorded as not adjudicated (`adjudication error: suite slot unavailable — {message}`).
+A lock dir `verify.js` cannot use (not a directory owned by this user, or not writable) prints `verify.js: suite slot unavailable — {message}` and exits 2 before the checks it was queuing for run. A directory another user owns (a shared `/tmp` on a multi-user host) is not this user's to remove, so the message also names the way out: set `CT_TEST_SUITE_SLOT_DIR` to a directory this user owns. At `--baseline` adjudication the same failure is recorded as not adjudicated (`adjudication error: suite slot unavailable — {message}`).
 
 ## While a slot is held
 

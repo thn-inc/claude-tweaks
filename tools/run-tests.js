@@ -44,8 +44,12 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const {
-  isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, slotLane, resolveSlots, defaultSlotBase,
+  isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, slotLane, resolveSlots, defaultSlotBase, SLOT_DIR_VAR,
 } = require('../plugin/bin/lib/suite-slot');
+
+// This runner's name on the shared slot lock's log lines; the shipped module's default is neutral,
+// so every call below passes it.
+const LABEL = 'run-tests.js';
 
 // The repo root every root path is relative to — both the explicit file list and the win32
 // root globs resolve against it (the spawned `node --test` runs with it as cwd), so the two
@@ -286,12 +290,13 @@ if (require.main === module) {
   if (process.env.CT_TEST_SUITE_SLOT_HELD !== '1') {
     // The subset leaf sits under the fixed-name slot base, so the base is ownership-checked too.
     const slotBase = defaultSlotBase(process.env, os.tmpdir());
-    ensureOwnDir(slotBase);
+    ensureOwnDir(slotBase, SLOT_DIR_VAR);
     const lane = slotLane(slotBase, roots === null);
     lockPath = acquireSlot({
       dir: lane.dir,
       slotsVar: lane.slotsVar,
-      slots: resolveSlots(process.env, console.error, lane.slotsVar),
+      label: LABEL,
+      slots: resolveSlots(process.env, console.error, lane.slotsVar, LABEL),
       pid: process.pid,
       cwd: REPO_ROOT,
       isAlive: isPidAlive,

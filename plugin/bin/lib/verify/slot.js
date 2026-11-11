@@ -6,7 +6,7 @@
 
 const os = require('os');
 const {
-  acquireSlot, releaseSlot, isPidAlive, ensureOwnDir, slotLane, slotIndexOf, defaultSlotBase,
+  acquireSlot, releaseSlot, isPidAlive, ensureOwnDir, slotLane, slotIndexOf, defaultSlotBase, SLOT_DIR_VAR,
 } = require('../suite-slot');
 
 const SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'];
@@ -75,7 +75,7 @@ function holdSlot({
   const startedMs = now();
   let lockPath;
   try {
-    ensureOwnDir(base);
+    ensureOwnDir(base, SLOT_DIR_VAR);
     lockPath = acquireSlot({
       dir: slotLane(base, lane === 'subset').dir, slots, pid, cwd, isAlive, now, sleep, log,
       label: `verify.js [${lane} lane]`, hint: slotHint(source),
