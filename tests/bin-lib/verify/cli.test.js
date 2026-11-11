@@ -2924,7 +2924,7 @@ function writeConcurrencyDecl(r, concurrency) {
 }
 const BASELINE_ARGS = (r) => ['--cmd', SUITE, '--baseline', r.baseSha, '--baseline-cmd', PER_FILE, '--no-stamp'];
 const adjudicationReport = (r) => JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8')).baselineAdjudicated;
-const BACKOFF_LINE = /^Baseline: reruns ran one at a time/m;
+const BACKOFF_LINE = /^Baseline: reruns backed off/m;
 
 test('AC1.1: with no declaration the adjudication reports default-serial and prints no back-off line (#5150)', async () => {
   const r = baselineRepo();
@@ -2933,6 +2933,7 @@ test('AC1.1: with no declaration the adjudication reports default-serial and pri
   assert.strictEqual(res.code, 0, res.stdout + res.stderr);
   assert.deepStrictEqual(adjudicationReport(r).concurrency, { declared: null, used: { baseline: 1, isolated: 1, retry: null }, reason: 'default-serial' });
   assert.doesNotMatch(res.stdout, BACKOFF_LINE);
+  assert.doesNotMatch(res.stdout, /scratch\.moved/, 'no moved line while the scratch stayed at the base commit');
 });
 
 test('AC2.1: a declared concurrency.reruns reaches adjudicate() from the default declaration, nested run included (#5150)', async () => {
@@ -2953,7 +2954,61 @@ test('AC3.1: a declared timeoutPatterns match forces serial reruns and prints on
   assert.strictEqual(res.code, 0, res.stdout + res.stderr);
   assert.deepStrictEqual(adjudicationReport(r).concurrency, { declared: 4, used: { baseline: 1, isolated: 1, retry: null }, reason: 'timeout-evidence: tests' });
   const lines = res.stdout.split('\n').filter((l) => BACKOFF_LINE.test(l));
-  assert.deepStrictEqual(lines, ['Baseline: reruns ran one at a time (declared reruns 4) — timeout-evidence: tests']);
+  assert.deepStrictEqual(lines, ['Baseline: reruns backed off to one at a time from declared reruns 4 — timeout-evidence: tests']);
+});
+
+test('a base rerun matching timeoutPatterns runs the later phases serially and prints one phase-timeout line (#5150)', async () => {
+  const r = baselineRepo();
+  // Only the base commit's env.test.js carries the declared wording, so only the base rerun's log matches.
+  commitFile(r, 'tests/env.test.js', "require('node:test')('env', () => { throw new Error('env-at-head'); });\n");
+  writeConcurrencyDecl(r, { reruns: 4, timeoutPatterns: ['env-specific'] });
+  const res = await runCli(BASELINE_ARGS(r), r.opts);
+  const adj = adjudicationReport(r);
+  assert.strictEqual(adj.eligible, true, JSON.stringify(adj));
+  assert.strictEqual(adj.concurrency.reason, 'phase-timeout: baseline', JSON.stringify(adj.concurrency));
+  assert.strictEqual(adj.concurrency.used.baseline, 4);
+  assert.strictEqual(adj.concurrency.used.isolated, 1);
+  const lines = res.stdout.split('\n').filter((l) => BACKOFF_LINE.test(l));
+  assert.deepStrictEqual(lines, ['Baseline: reruns backed off to one at a time from declared reruns 4 — phase-timeout: baseline']);
+});
+
+test('timeout evidence with every failing file absent at base spawns no rerun and prints no back-off line (#5150)', async () => {
+  const r = baselineRepo();
+  commitFile(r, 'tests/new.test.js', "require('node:test')('new', () => { throw new Error('env-specific'); });\n");
+  writeConcurrencyDecl(r, { reruns: 4, timeoutPatterns: ['env-specific'] });
+  const res = await runCli(['--cmd', 'tests=node --test --test-reporter=tap tests/new.test.js tests/ok.test.js', '--baseline', r.baseSha, '--baseline-cmd', PER_FILE, '--no-stamp'], r.opts);
+  assert.strictEqual(res.code, 1, res.stdout + res.stderr);
+  assert.deepStrictEqual(adjudicationReport(r).concurrency, { declared: 4, used: { baseline: null, isolated: null, retry: null }, reason: 'timeout-evidence: tests' });
+  assert.match(res.stdout, /^ATTRIBUTABLE: tests\/new\.test\.js$/m);
+  assert.doesNotMatch(res.stdout, BACKOFF_LINE);
+});
+
+test('a --scope run takes concurrency.reruns from the declaration it was given, not the default path (#5150)', async () => {
+  const r = baselineRepo();
+  const branch = r.git('symbolic-ref', '--short', 'HEAD').trim();
+  r.git('checkout', '-q', '-b', 'feature');
+  commitFile(r, 'ci/verify-scope.json', JSON.stringify({
+    checks: { tests: { unit: SUITE.slice('tests='.length) } },
+    retry: { unit: PER_FILE.slice('tests='.length) },
+    rules: [{ match: '**', suites: '*', static: false }],
+    concurrency: { reruns: 3 },
+  }));
+  const res = await runCli(['--scope', 'ci/verify-scope.json', '--integration-branch', branch, '--baseline', branch, '--no-stamp'], r.opts);
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(!fs.existsSync(path.join(r.repo, '.claude-tweaks', 'verify-scope.json')), 'precondition: no default declaration');
+  assert.deepStrictEqual(adjudicationReport(r).concurrency, { declared: 3, used: { baseline: 3, isolated: 3, retry: null }, reason: 'declared' });
+});
+
+test('a base-side run in a scratch moved off the base commit prints one scratch.moved line (#5150)', async () => {
+  const r = baselineRepo();
+  headCommit(r);
+  // The commit lands in whichever checkout the rerun runs in — at base, the scratch.
+  const res = await runCli(['--cmd', SUITE, '--baseline', r.baseSha, '--baseline-cmd', `tests=git commit -q --allow-empty -m adjudicating && ${PER_FILE.slice('tests='.length)}`, '--no-stamp'], r.opts);
+  const adj = adjudicationReport(r);
+  assert.strictEqual(adj.scratch.moved, true, JSON.stringify(adj.scratch));
+  assert.deepStrictEqual(adj.attributable, ['tests/env.test.js']);
+  const lines = res.stdout.split('\n').filter((l) => l.includes('scratch.moved'));
+  assert.deepStrictEqual(lines, ['Baseline: the scratch checkout was not at the base commit for some base-side run(s) — those runs are no evidence (scratch.moved)']);
 });
 
 test('an invalid default declaration prints its concurrency ignored line once on a failing --baseline run (#5150)', async () => {

@@ -46,8 +46,10 @@ function realGit(cwd, { warn = (line) => process.stderr.write(line), rmSync = fs
   // `input`, when given, is piped to the child's stdin (the two batch-check
   // / hash-object calls below); every other call site passes none, and stdin
   // stays closed exactly as it did before `input` existed.
-  const git = (args, input) => String(execFileSync('git', args, {
+  // `env`, when given, replaces the inherited environment for that one call (headOf's ceiling).
+  const git = (args, input, env) => String(execFileSync('git', args, {
     cwd, encoding: 'utf8', stdio: input === undefined ? ['ignore', 'pipe', 'pipe'] : ['pipe', 'pipe', 'pipe'], input, windowsHide: true,
+    ...(env === undefined ? {} : { env }),
   })).trim();
   // Every worktree `git` currently has registered against this repo, as
   // absolute paths — read-only, so the caller can name a stale one without
@@ -97,15 +99,20 @@ function realGit(cwd, { warn = (line) => process.stderr.write(line), rmSync = fs
       return { reason: `root-unusable: ${String((err && err.message) || err)}` };
     }
     const dir = slotScratchPath({ tmpdir, commonDir, slotBase: base, slot });
-    try {
-      fs.mkdirSync(path.dirname(dir), { recursive: true, mode: 0o700 });
-    } catch (err) {
-      return { reason: `slot-dir-unusable: ${String((err && err.message) || err)}` };
-    }
     // A symlinked `<repo-key>` or `slot-<index>` resolves outside the root: refused before
-    // anything is removed or checked out there.
-    const parent = resolveWithin(path.dirname(dir), root);
-    if (parent === null) return { reason: 'parent-outside-root' };
+    // anything is made, removed or checked out there — so `<repo-key>` is made and checked
+    // alone before `slot-<index>` is made inside it.
+    const slotDir = path.dirname(dir);
+    let parent = null;
+    for (const level of [path.dirname(slotDir), slotDir]) {
+      try {
+        fs.mkdirSync(level, { recursive: true, mode: 0o700 });
+      } catch (err) {
+        return { reason: `slot-dir-unusable: ${String((err && err.message) || err)}` };
+      }
+      parent = resolveWithin(level, root);
+      if (parent === null) return { reason: 'parent-outside-root' };
+    }
     const target = path.join(parent, path.basename(dir));
     const leaf = lstatType(dir).type;
     const registered = listWorktrees().some((listed) => canonicalListed(listed) === target);
@@ -122,8 +129,11 @@ function realGit(cwd, { warn = (line) => process.stderr.write(line), rmSync = fs
     },
     // #5150: the sha a checkout's HEAD is at, or null on any failure (a missing directory, not a
     // checkout) — a base-side run counts as evidence only while the scratch is at the base sha.
+    // The ceiling stops git at `dir`: a half-removed scratch never reads an enclosing repo's HEAD.
     headOf: (dir) => {
-      try { return git(['-C', dir, 'rev-parse', '--verify', 'HEAD']) || null; } catch { return null; }
+      try {
+        return git(['-C', dir, 'rev-parse', '--verify', 'HEAD'], undefined, { ...process.env, GIT_CEILING_DIRECTORIES: path.dirname(dir) }) || null;
+      } catch { return null; }
     },
     // `git merge-base --is-ancestor`: exit 0 → true, exit 1 → false; any
     // other failure throws (the caller's adjudication-error path), never a
@@ -400,6 +410,21 @@ function absentFromCheckoutReason(n, checkName) {
 // to report (#3064).
 const SIGNAL_EXIT_CODES = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 };
 
+// #5150: the phases a back-off from the declared reruns governs — every phase for evidence on a
+// failing check, only the phases after the one that timed out for a phase timeout.
+const BACKED_OFF_PHASES = {
+  'phase-timeout: baseline': ['isolated', 'retry'],
+  'phase-timeout: isolated': ['retry'],
+};
+// Whether a result's `concurrency` record shows a back-off that some phase actually ran under
+// (a non-null `used`): the condition for verify.js's back-off stdout line.
+function backOffRan(concurrency) {
+  if (!concurrency || typeof concurrency.reason !== 'string' || !concurrency.used) return false;
+  const phases = concurrency.reason.startsWith('timeout-evidence: ')
+    ? ['baseline', 'isolated', 'retry'] : BACKED_OFF_PHASES[concurrency.reason];
+  return Boolean(phases) && phases.some((phase) => concurrency.used[phase] !== null);
+}
+
 async function adjudicate({
   checks, baselineCmds, base, baseSha, cwd = null, logDir, runOne, spawnImpl, now = Date.now,
   envOf = () => null, timeoutOf = () => null, git, env = process.env, computeFixed = true,
@@ -419,6 +444,11 @@ async function adjudicate({
   // caller releases.
   takeSlot = () => null,
 }) {
+  // #5150: any other limit would run silently wrong (NaN spawns nothing), so it throws — the
+  // caller's adjudication-error path, like every other adjudicator failure.
+  if (concurrency !== null && !(Number.isInteger(concurrency) && concurrency >= 1)) {
+    throw new TypeError(`concurrency must be null or a positive integer, got ${typeof concurrency} ${String(concurrency)}`);
+  }
   const header = { base, baseSha };
   const ineligible = (reason) => ({ ...header, eligible: false, reason });
   const work = [];
@@ -579,9 +609,12 @@ async function adjudicate({
     // Otherwise nothing of the run is kept — not even a clean exit, which would read as "passes at
     // base" — only a `moved` marker with no exit code, and a run that never started is not spawned.
     let scratchMoved = false;
+    // Whether any base-side run got past the check before it — `used.baseline` counts spawns only.
+    let baseSpawned = false;
     const runAtBase = async (args) => {
       const refused = () => { scratchMoved = true; return { moved: true, exitCode: null }; };
       if (git.headOf(scratch) !== baseSha) return refused();
+      baseSpawned = true;
       const r = await runOne(args);
       return git.headOf(scratch) !== baseSha ? refused() : r;
     };
@@ -590,7 +623,7 @@ async function adjudicate({
       name: `${w.check}-baseline-${slug(w.file)}`, command: w.command, logDir, spawnImpl, now, cwd: baseDir,
       env: envOf(w.check), timeout: timeoutOf(w.check),
     }) : null));
-    if (baseRuns.some(Boolean)) used.baseline = limit;
+    if (baseSpawned) used.baseline = limit;
     if (limit > 1 && baseRuns.some(timedOutRun)) { limit = 1; reason = 'phase-timeout: baseline'; }
     // A numeric non-zero exit alone proves nothing (a typo'd template, a scratch
     // tree with no node_modules and a shell syntax error all exit non-zero):
@@ -802,4 +835,4 @@ async function adjudicate({
   }
 }
 
-module.exports = { adjudicate, realGit, findStaleBaselineWorktrees, slotScratchPath, RUNNER_ERROR_RE };
+module.exports = { adjudicate, realGit, findStaleBaselineWorktrees, slotScratchPath, backOffRan, RUNNER_ERROR_RE };

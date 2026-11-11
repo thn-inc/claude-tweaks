@@ -27,7 +27,7 @@ const {
   resolveSuiteSlots, chooseLane, holdSlot, SlotUnavailableError,
 } = require('./lib/verify/slot');
 const {
-  adjudicate, realGit, findStaleBaselineWorktrees, RUNNER_ERROR_RE,
+  adjudicate, realGit, findStaleBaselineWorktrees, backOffRan, RUNNER_ERROR_RE,
 } = require('./lib/verify/baseline');
 const {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine, extractFailingFiles, stripAnsi, unattributedFailureCount,
@@ -981,6 +981,8 @@ async function main() {
           // it refuses on sight never queues behind every full-lane holder.
           let adjHold = null;
           try {
+            // Read before adjudicate() can refuse on sight: a refused nested run with an invalid
+            // default declaration still prints its one `concurrency ignored` line (#5150).
             const declaredConcurrency = concurrencyOf();
             const adjudicated = await adjudicate({
               concurrency: declaredConcurrency.reruns,
@@ -1500,9 +1502,14 @@ async function main() {
     if (baselineAdjudicated.eligible) {
       const b = baselineAdjudicated;
       lines.push('', `Baseline: adjudicated against ${String(b.baseSha).slice(0, 9)} (merge-base of HEAD and ${b.baseRef}) — ${b.failingFiles.length} failing file(s): ${b.baselineFailing.length} also fail at base, ${b.flakyPassed.length} flaky (passed in isolation), ${b.attributable.length} attributable`);
-      // #5150: a back-off from the declared reruns is named, never silent.
-      if (b.concurrency && /^(timeout-evidence|phase-timeout):/.test(b.concurrency.reason)) {
-        lines.push(`Baseline: reruns ran one at a time (declared reruns ${b.concurrency.declared}) — ${b.concurrency.reason}`);
+      // #5150: a back-off from the declared reruns is named, never silent — but only once a phase
+      // it governs spawned reruns, so the line never claims what did not happen.
+      if (backOffRan(b.concurrency)) {
+        lines.push(`Baseline: reruns backed off to one at a time from declared reruns ${b.concurrency.declared} — ${b.concurrency.reason}`);
+      }
+      // #5150: a moved scratch decides verdicts without a base run; say so beside the ATTRIBUTABLE lines.
+      if (b.scratch && b.scratch.moved) {
+        lines.push('Baseline: the scratch checkout was not at the base commit for some base-side run(s) — those runs are no evidence (scratch.moved)');
       }
       // #3313: new/fixed counts; every eligible adjudication carries them.
       if (b.fixed === null) {

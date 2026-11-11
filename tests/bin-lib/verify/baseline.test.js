@@ -6,7 +6,9 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { execFileSync } = require('child_process');
-const { adjudicate, realGit, findStaleBaselineWorktrees, slotScratchPath } = require('../../../plugin/bin/lib/verify/baseline');
+const {
+  adjudicate, realGit, findStaleBaselineWorktrees, slotScratchPath, backOffRan,
+} = require('../../../plugin/bin/lib/verify/baseline');
 
 function logFile(text) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-test-'));
@@ -27,6 +29,9 @@ const FILE_LEVEL = (f) => ['ℹ tests 1', 'ℹ pass 0', 'ℹ fail 1', 'ℹ cance
 // file in a spec-format log, a passing run reports one passing test); `logs`
 // overrides the text per `${kind}:${file}`.
 const PASS_LOG = ['✔ x (1ms)', 'ℹ tests 1', 'ℹ pass 1', 'ℹ fail 0', 'ℹ cancelled 0'].join('\n');
+
+// A rerun's kind, from the run name adjudicate() gives it.
+const kindOf = (name) => (name.endsWith('-base-full') ? 'base-full' : (name.includes('-baseline-') ? 'baseline' : (name.includes('-isolated-retry-') ? 'isolated-retry' : 'isolated')));
 
 function fakes({ outcomes, existsAtBase = () => true, sameAtBase = () => true, inCheckout = () => true, throwOn = null, logs = {}, repoRoot = '/repo' }) {
   const calls = { runs: [], added: [], removed: [], batchBaseInfo: [] };
@@ -50,7 +55,7 @@ function fakes({ outcomes, existsAtBase = () => true, sameAtBase = () => true, i
     removeWorktree: (dir) => { calls.removed.push(dir); },
   };
   const runOne = async ({ name, command, cwd }) => {
-    const kind = name.endsWith('-base-full') ? 'base-full' : (name.includes('-baseline-') ? 'baseline' : (name.includes('-isolated-retry-') ? 'isolated-retry' : 'isolated'));
+    const kind = kindOf(name);
     const file = command.replace('node --test ', '');
     calls.runs.push({ kind, file, cwd });
     if (throwOn && throwOn === `${kind}:${file}`) throw new Error('boom');
@@ -1330,7 +1335,7 @@ function peakFakes(opts) {
     if (by > 0) peak[bag][key] = Math.max(peak[bag][key] || 0, live[bag][key]);
   };
   const runOne = async (o) => {
-    const kind = o.name.endsWith('-base-full') ? 'base-full' : (o.name.includes('-baseline-') ? 'baseline' : (o.name.includes('-isolated-retry-') ? 'isolated-retry' : 'isolated'));
+    const kind = kindOf(o.name);
     bump('kind', kind, 1); bump('cwd', o.cwd, 1);
     try {
       await new Promise((r) => setTimeout(r, 5));
@@ -1346,8 +1351,9 @@ async function adjudicatePeaks({ log = SPEC(SIX), check = {}, fakeOpts = {}, ext
   return { r, peak: f.peak, calls: f.calls };
 }
 const ALL = (n) => ({ baseline: n, isolated: n, 'isolated-retry': n });
-const SPEC_WITH_MARKER = (f) => SPEC([f]).replace(`test at ${f}:1:1\n✖ x (1ms)\n`, `test at ${f}:1:1\n✖ x (1ms)\n  test timed out after 100ms\n`);
-const SIX_WITH_MARKER = SPEC(SIX).replace('test at tests/a.test.js:1:1\n✖ x (1ms)\n', 'test at tests/a.test.js:1:1\n✖ x (1ms)\n  test timed out after 100ms\n');
+// `log` with an inconclusive marker under file `f`'s failing entry.
+const withMarker = (log, f) => log.replace(`test at ${f}:1:1\n✖ x (1ms)\n`, `test at ${f}:1:1\n✖ x (1ms)\n  test timed out after 100ms\n`);
+const SIX_WITH_MARKER = withMarker(SPEC(SIX), 'tests/a.test.js');
 
 test('AC1.1, AC1.2: with no reruns declared every phase runs one rerun at a time (#5150)', async () => {
   const { r, peak } = await adjudicatePeaks();
@@ -1422,7 +1428,7 @@ test('a phase that spawns no rerun reports used null (#5150)', async () => {
 
 test('RF4: a base rerun failing on a per-test timeout in its own log backs off like a process timeout (#5150)', async () => {
   const outcomes = { ...allPhases(), 'baseline:tests/a.test.js': 1 };
-  const logs = { 'baseline:tests/a.test.js': SPEC_WITH_MARKER('tests/a.test.js') };
+  const logs = { 'baseline:tests/a.test.js': withMarker(SPEC(['tests/a.test.js']), 'tests/a.test.js') };
   const { r, peak } = await adjudicatePeaks({ fakeOpts: { outcomes, logs }, extra: { concurrency: 4 } });
   assert.deepStrictEqual(peak.kind, { baseline: 4, isolated: 1, 'isolated-retry': 1 });
   assert.strictEqual(r.concurrency.reason, 'phase-timeout: baseline');
@@ -1433,6 +1439,37 @@ test('undeclared reruns stays default-serial even with timeout evidence (#5150)'
   assert.deepStrictEqual(peak.kind, ALL(1));
   assert.strictEqual(r.concurrency.reason, 'default-serial');
   assert.strictEqual(r.concurrency.declared, null);
+});
+
+test('a concurrency that is neither null nor a positive integer throws before anything spawns (#5150)', async () => {
+  const { p, dir } = logFile(SPEC(SIX));
+  for (const bad of [0, -1, 1.5, NaN, Infinity, '2', true, {}]) {
+    const f = fakes({ outcomes: allPhases() });
+    let took = false;
+    await assert.rejects(adjudicate({
+      checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir,
+      runOne: f.runOne, git: f.git, concurrency: bad, takeSlot: () => { took = true; return null; },
+    }), (err) => err instanceof TypeError && /^concurrency must be null or a positive integer, got /.test(err.message), String(bad));
+    assert.deepStrictEqual(f.calls.runs, [], `${String(bad)}: nothing spawned`);
+    assert.strictEqual(took, false, `${String(bad)}: no slot taken`);
+  }
+  for (const ok of [null, 1, 2]) {
+    assert.strictEqual((await adjudicatePeaks({ extra: { concurrency: ok } })).r.eligible, true, String(ok));
+  }
+});
+
+test('backOffRan: a back-off counts only once a phase it governs spawned reruns (#5150)', () => {
+  const at = (reason, baseline, isolated, retry) => backOffRan({ declared: 4, used: { baseline, isolated, retry }, reason });
+  assert.strictEqual(at('timeout-evidence: tests', 1, 1, null), true);
+  assert.strictEqual(at('timeout-evidence: tests', null, null, 1), true, 'any phase counts for evidence on a check');
+  assert.strictEqual(at('timeout-evidence: tests', null, null, null), false, 'every failing file absent at base');
+  assert.strictEqual(at('phase-timeout: baseline', 4, 1, null), true);
+  assert.strictEqual(at('phase-timeout: baseline', 4, null, 1), true);
+  assert.strictEqual(at('phase-timeout: baseline', 4, null, null), false, 'the base phase itself ran at the declared limit');
+  assert.strictEqual(at('phase-timeout: isolated', 4, 4, 1), true);
+  assert.strictEqual(at('phase-timeout: isolated', 4, 4, null), false, 'no retry followed the timed-out isolated run');
+  for (const reason of ['declared', 'default-serial']) assert.strictEqual(at(reason, 1, 1, 1), false, reason);
+  assert.strictEqual(backOffRan(undefined), false, 'a result without a concurrency record');
 });
 
 // #5150: one stable scratch path per held slot and lock dir. Each fixture is a real repo whose
@@ -1628,6 +1665,20 @@ test('RF2b: a slot-<index> directory symlinked outside the root is never used �
   fx.rg.removeWorktree(out.dir);
 });
 
+test('RF2c: a <repo-key> directory symlinked outside the root gains no slot-<index> — fresh path, parent-outside-root (#5150)', SYMLINK_POSIX_ONLY, (t) => {
+  const fx = slotFixture(t);
+  const keyPath = path.dirname(path.dirname(fx.at()));
+  fs.mkdirSync(path.dirname(keyPath), { recursive: true });
+  fs.symlinkSync(fx.outside, keyPath, 'dir');
+  const out = fx.rg.addWorktree(fx.sha1, { slot: 0, slotBase: fx.S });
+  assert.strictEqual(out.fallback, 'parent-outside-root');
+  assert.strictEqual(out.reused, false);
+  assert.match(path.basename(path.dirname(out.dir)), /^ct-verify-base-/);
+  assert.deepStrictEqual(fx.warned, [fallbackLine('parent-outside-root')]);
+  assert.deepStrictEqual(fs.readdirSync(fx.outside), ['keep.txt'], 'nothing is made in the link target');
+  fx.rg.removeWorktree(out.dir);
+});
+
 test('a slot with no lock dir falls back with no-slot-lock-dir (#5150)', (t) => {
   const fx = slotFixture(t);
   const out = fx.rg.addWorktree(fx.sha1, { slot: 0 });
@@ -1701,10 +1752,9 @@ async function adjudicateMoved(headOf) {
   let started = false;
   const runOne = (args) => { if (args.name.includes('-baseline-')) started = true; return f.runOne(args); };
   const git = headOf === undefined ? f.git : { ...f.git, headOf: () => headOf(() => started) };
-  return adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: BASE_SHA, cwd: '/repo', logDir: dir, runOne, git });
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: BASE_SHA, cwd: '/repo', logDir: dir, runOne, git });
+  return { r, calls: f.calls };
 }
-// headOf answering from a list, one answer per call, the last repeating (the base full run's test).
-const headSeq = (...answers) => { let n = 0; return () => answers[Math.min(n++, answers.length - 1)]; };
 const assertMovedOut = (r) => {
   assert.strictEqual(r.eligible, true);
   assert.deepStrictEqual(r.baselineFailing, []);
@@ -1714,38 +1764,64 @@ const assertMovedOut = (r) => {
 };
 
 test('a base rerun in a scratch whose HEAD is not the base sha is never "fails at base" (#5150)', async () => {
-  assertMovedOut(await adjudicateMoved(() => OTHER_SHA));
-  const control = await adjudicateMoved();
+  assertMovedOut((await adjudicateMoved(() => OTHER_SHA)).r);
+  const control = (await adjudicateMoved()).r;
   assert.deepStrictEqual(control.baselineFailing, ['tests/a.test.js']);
   assert.strictEqual(control.verdict, 'pass');
   assert.ok(!('moved' in control.scratch), 'moved is absent when no base-side run was refused');
 });
 
+test('a scratch whose checkout vanished (headOf null) is no evidence and spawns no base rerun (#5150)', async () => {
+  const { r, calls } = await adjudicateMoved(() => null);
+  assertMovedOut(r);
+  assert.deepStrictEqual(calls.runs.filter((c) => c.kind === 'baseline'), []);
+});
+
 test('a scratch that moves while a base rerun runs is no evidence — the check after the run decides (#5150)', async () => {
-  assertMovedOut(await adjudicateMoved((ran) => (ran() ? OTHER_SHA : BASE_SHA)));
+  const { r, calls } = await adjudicateMoved((ran) => (ran() ? OTHER_SHA : BASE_SHA));
+  assertMovedOut(r);
+  assert.strictEqual(calls.runs.filter((c) => c.kind === 'baseline').length, 1, 'the run spawned');
+  assert.strictEqual(r.concurrency.used.baseline, 1);
 });
 
-test('a scratch not at the base sha when a base rerun starts is no evidence — the check before the run decides (#5150)', async () => {
-  assertMovedOut(await adjudicateMoved((ran) => (ran() ? BASE_SHA : OTHER_SHA)));
+test('a scratch not at the base sha when a base rerun starts is no evidence — the check before the run decides, and nothing spawns (#5150)', async () => {
+  const { r, calls } = await adjudicateMoved((ran) => (ran() ? BASE_SHA : OTHER_SHA));
+  assertMovedOut(r);
+  assert.deepStrictEqual(calls.runs.filter((c) => c.kind === 'baseline'), [], 'a refused run never spawns');
+  assert.strictEqual(r.concurrency.used.baseline, null, 'a phase whose every run was refused spawned nothing');
 });
 
-test('a base full run in a moved scratch leaves fixed null with a named reason (#5150)', async () => {
-  // One failing file: calls 1 and 2 bracket its base rerun, call 3 precedes the base full run.
+// The #3313 base full run: one failing file proven baseline, then one full-command run at base.
+// `headOf(stage)` answers from the latest run kind seen, so the base full run is told apart by its
+// own name, not by how many times headOf was asked.
+async function adjudicateFull(headOf) {
   const { p, dir } = logFile(SPEC(['tests/a.test.js']));
   const f = fakes({
     outcomes: { 'baseline:tests/a.test.js': 1, 'base-full:npm test': 1 },
     logs: { 'base-full:npm test': SPEC(['tests/a.test.js', 'tests/fixed.test.js']) },
   });
-  const git = { ...f.git, headOf: headSeq(BASE_SHA, BASE_SHA, OTHER_SHA) };
+  let stage = 'none';
+  const runOne = (args) => { stage = kindOf(args.name); return f.runOne(args); };
   const r = await adjudicate({
     checks: [{ name: 'tests', command: 'npm test', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: BASE_SHA,
-    cwd: '/repo', logDir: dir, runOne: f.runOne, git,
+    cwd: '/repo', logDir: dir, runOne, git: { ...f.git, headOf: () => headOf(stage) },
   });
   assert.deepStrictEqual(r.baselineFailing, ['tests/a.test.js'], 'the per-file evidence stands');
   assert.strictEqual(r.verdict, 'pass');
   assert.strictEqual(r.fixed, null);
   assert.strictEqual(r.fixedReason, 'tests base full run: the scratch checkout was not at the base commit');
   assert.strictEqual(r.scratch.moved, true);
+  return f.calls;
+}
+
+test('a base full run in a scratch that moved while it ran leaves fixed null with a named reason (#5150)', async () => {
+  const calls = await adjudicateFull((stage) => (stage === 'base-full' ? OTHER_SHA : BASE_SHA));
+  assert.strictEqual(calls.runs.filter((c) => c.kind === 'base-full').length, 1, 'the base full run spawned');
+});
+
+test('a base full run in a scratch already moved before it starts never spawns (#5150)', async () => {
+  const calls = await adjudicateFull((stage) => (stage === 'isolated' ? OTHER_SHA : BASE_SHA));
+  assert.deepStrictEqual(calls.runs.filter((c) => c.kind === 'base-full'), [], 'a refused base full run never spawns');
 });
 
 test('realGit.headOf reads a worktree\'s HEAD and returns null for a missing directory (#5150)', (t) => {
@@ -1756,6 +1832,12 @@ test('realGit.headOf reads a worktree\'s HEAD and returns null for a missing dir
   fx.rg.removeWorktree(out.dir);
   assert.strictEqual(fx.rg.headOf(out.dir), null, 'a removed directory');
   assert.strictEqual(fx.rg.headOf(path.join(fx.tmpdir, 'no-such-dir')), null);
+  // A half-removed scratch (its `.git` link gone) inside another repository never reads that
+  // repository's HEAD.
+  const halfRemoved = path.join(fx.repo, 'scratch', 'wt');
+  fs.mkdirSync(halfRemoved, { recursive: true });
+  assert.strictEqual(fx.g('-C', halfRemoved, 'rev-parse', '--verify', 'HEAD'), fx.sha2, 'precondition: plain git walks up into the enclosing repo');
+  assert.strictEqual(fx.rg.headOf(halfRemoved), null);
 });
 
 test('two adjudications on one slot path: the one whose checkout was replaced loses its base evidence and never passes (#5150)', async (t) => {
