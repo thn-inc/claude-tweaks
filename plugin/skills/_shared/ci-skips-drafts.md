@@ -17,7 +17,15 @@ jobs:
       - uses: actions/checkout@v4
 ```
 
-The job-level condition skips every draft-time run; `ready_for_review` starts the run the gate waits for. After `gh pr ready`, the gate reads the PR timeline's last `ReadyForReviewEvent`. Each PR-triggered workflow that declares `ready_for_review` must then have a `pull_request`/`pull_request_target` run on the head created at or after that event, matched by workflow file path, so a missing or duplicated `name:` does not matter. Until that run exists the verdict is pending. Keep the condition on the job in the PR-triggered workflow itself (`if: ${{ !github.event.pull_request.draft }}` reads the same), not inside a reusable workflow (`uses:`) the gate never opens. A workflow file the gate cannot parse counts as requiring a ready run, never as no requirement.
+The job-level condition skips every draft-time run; `ready_for_review` starts the run the gate waits for. How the gate reads this shape:
+
+- **The ready event.** After `gh pr ready`, the gate reads the PR timeline's last `ReadyForReviewEvent`.
+- **The ready run.** Each PR-triggered workflow that declares `ready_for_review` must then have a `pull_request`/`pull_request_target` run on the head created at or after that event. Until that run exists the verdict is pending.
+- **Matching by path.** Runs are matched to workflows by file path, so a missing or duplicated `name:` does not matter.
+- **Where the condition lives.** Keep it on the job in the PR-triggered workflow itself (`if: ${{ !github.event.pull_request.draft }}` reads the same), not inside a reusable workflow (`uses:`) the gate never opens.
+- **Unparsed files.** A workflow file the gate cannot parse counts as requiring a ready run, never as no requirement.
+
+Rules for the shape:
 
 - **Declare `ready_for_review` only alongside a draft skip.** A workflow that declares it without skipping drafts pays one extra wait per merge, for a second run on the same sha.
 - **Keep `synchronize`.** `ready_for_review` belongs in `types` alongside `synchronize`, which the default types include. A workflow whose `types` lack `synchronize` never runs on a push made after undraft, so the gate keeps that workflow awaiting and parks with `checks-pending-timeout` until the types include it.
@@ -31,7 +39,7 @@ Optionally, a small job that runs on drafts sets a commit status to `pending`, a
 
 ## Path filters
 
-A workflow-level `paths:` filter leaves a docs-only PR with no checks reported when no other workflow reports on that head. The bounded watch reads that as pending and parks after 15 minutes. When another workflow does report (for example the generated tracking workflow's `label-fix-branch`), the rollup is non-empty and the filtered-out CI simply never appears. Under this convention the filtered-out workflow still blocks the merge: one that declares `ready_for_review` never creates the ready run the gate waits for, so the gate parks the PR with `checks-pending-timeout` anyway. Use job-level conditions behind a small always-run job instead, so the CI workflow always reports.
+A workflow-level `paths:` filter leaves a docs-only PR with no checks reported when no other workflow reports on that head. The bounded watch reads that as pending and parks after 15 minutes. When another workflow does report (for example the generated tracking workflow's `label-fix-branch`), the rollup is non-empty and the filtered-out CI simply never appears, unless that workflow declares `ready_for_review`: it then never creates the ready run the gate waits for, and the gate parks the PR with `checks-pending-timeout`. Use job-level conditions behind a small always-run job instead, so the CI workflow always reports.
 
 ## Coexistence with the `ci` verification source
 
