@@ -21,10 +21,13 @@ matched no live worktree.
    command can share a checkout is a property of the command, and the declaration
    (`.claude-tweaks/verify-scope.json`) is where the command lives, so the number lives there too
    (a positive integer; `concurrency.timeoutPatterns`, an array of non-empty literal substrings,
-   names a project's own timeout wording). Timeout evidence forces serial whatever is declared: a
-   timed-out failing run, a `timeoutPatterns` match in a log, or a base rerun that times out (which
-   serializes the later phases, reason `phase-timeout: baseline`) all pin the phase to one call at
-   a time, and the result names the reason. A forced-serial run says so on stdout.
+   names a project's own timeout wording). Timeout evidence forces serial whatever is declared.
+   Evidence on a failing check (a timed-out run, a non-zero cancelled count, an inconclusive marker
+   in its failing region, or a `timeoutPatterns` match in its log) runs every phase one call at a
+   time, reason `timeout-evidence: {check}`. A rerun that times out serializes the phases after
+   its own, reason `phase-timeout: baseline` or `phase-timeout: isolated`. A back-off from a
+   declared count says so on stdout, `Baseline: reruns backed off to one at a time from declared
+   reruns {n} — {reason}`, but only once a phase it governs has spawned reruns.
 
 2. **A stable per-slot scratch path, not a project-declared teardown command.** A run holding a
    suite slot checks the base out at one path that slot owns, and clears whatever a killed earlier
@@ -41,8 +44,9 @@ matched no live worktree.
 3. **The path key folds in the slot lock dir, and a base-side run counts only at the base sha**
    (decided by the user at plan review). Two holders of slot 0 under different lock dirs never
    share a path. A base-side run counts as evidence only when the scratch HEAD is the base sha both
-   before and after it runs (`realGit().headOf`); a run that fails the check is no evidence, its
-   files fall to `attributable`, and the result records `scratch.moved`. When a guard refuses the
+   before and after it runs (`realGit().headOf`); a run that fails the check is no evidence (its
+   file is flaky only on a clean isolated run, else attributable), the result records
+   `scratch.moved`, and stdout says so. When a guard refuses the
    per-slot path (`no-slot-lock-dir`, `no-common-dir`, `root-unusable: {message}`,
    `slot-dir-unusable: {message}`, `parent-outside-root`, `leftover-not-a-directory`), the run warns
    once on stderr, uses a fresh path, and records `scratch.fallback` with the reason.
@@ -70,8 +74,8 @@ matched no live worktree.
   two adjudications on one path once, and the second's leftover cleanup then removes the first's
   live checkout and re-adds it at its own base sha. The first adjudication's base-side runs fail the
   HEAD check (or find no checkout) when the second's base sha differs, and are no evidence, so a
-  collision at another base commit costs that run its evidence (`attributable`, `scratch.moved`),
-  never a false pass. The HEAD check cannot detect a same-sha replacement: a stale break of a live
+  collision at another base commit costs that run its evidence (`scratch.moved`; the file is
+  flaky only on a clean isolated run, else attributable), never a false pass. The HEAD check cannot detect a same-sha replacement: a stale break of a live
   holder's lock in the same lock dir that re-adds the checkout at the same base sha is not caught,
   and is accepted as part of the once-only race.
 - A guard failure leaks one fresh path per run again, visible as `scratch.fallback`.

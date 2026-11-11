@@ -202,7 +202,7 @@ test('verification.md and suite-slots.md document serial reruns, the timeout bac
   const verificationFacts = [
     [/reruns run one at a time in every phase/, 'serial reruns in every phase'],
     [/`concurrency\.reruns`/, 'the reruns declaration key'],
-    [/a timed-out check, an inconclusive marker or a non-zero cancelled count/, 'what counts as timeout evidence'],
+    [/a timed-out check, a non-zero cancelled count, an inconclusive marker in its failing region/, 'what counts as timeout evidence'],
     [/`timeoutPatterns`/, 'the declared timeout substrings'],
     [/forces every phase serial/, 'evidence on a failing check forces every phase serial'],
     [/forces the later phases serial/, 'a timed-out rerun forces the later phases serial'],
@@ -211,7 +211,8 @@ test('verification.md and suite-slots.md document serial reruns, the timeout bac
     [/`default-serial`/, 'reason: default-serial'],
     [/`timeout-evidence: \{check\}`/, 'reason: timeout-evidence'],
     [/`phase-timeout: \{phase\}`/, 'reason: phase-timeout'],
-    [/Baseline: reruns ran one at a time \(declared reruns \{n\}\) — \{reason\}/, 'the stdout line'],
+    [/once a phase it governs spawned reruns/, 'the back-off line prints only once a governed phase spawned'],
+    [/Baseline: reruns backed off to one at a time from declared reruns \{n\} — \{reason\}/, 'the stdout line'],
     [/`<os tmpdir>\/ct-verify-base\/<repo-key>\/slot-<index>\/wt`/, 'the per-slot scratch path'],
     [/first 12 hex digits of the sha256/, 'the repo key derivation'],
     [/a nested run keeps a fresh `ct-verify-base-\*` path/, 'a nested run keeps a fresh path'],
@@ -219,6 +220,7 @@ test('verification.md and suite-slots.md document serial reruns, the timeout bac
     [/`scratch\.fallback`/, 'scratch.fallback'],
     [/`scratch\.moved`/, 'scratch.moved'],
     [/is not the base commit before and after it runs is no evidence/, 'a moved scratch is no evidence'],
+    [/and one `Baseline:` stdout line says so/, 'a moved scratch is named on stdout'],
     [/must tolerate starting from another commit's state/, 'the reuse contract'],
   ];
   assert.deepStrictEqual(missingFactsOf(verificationFacts)(section), []);
