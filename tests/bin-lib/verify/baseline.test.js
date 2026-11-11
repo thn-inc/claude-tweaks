@@ -108,6 +108,38 @@ test('I3: a failing file absent at base is attributable outright — no base run
   assert.deepStrictEqual(calls.added, [], 'no scratch worktree when no failing file exists at base');
 });
 
+test('takeSlot runs once, before the scratch worktree and the first rerun, and never when nothing will spawn (#5119)', async () => {
+  const order = [];
+  const takeSlot = () => { order.push('slot'); return 0; };
+  const spied = (f) => ({
+    ...f,
+    git: { ...f.git, addWorktree: (sha) => { order.push('worktree'); return f.git.addWorktree(sha); } },
+    runOne: (args) => { order.push('run'); return f.runOne(args); },
+  });
+  const a = logFile(SPEC(['tests/a.test.js', 'tests/b.test.js']));
+  const ok = spied(fakes({ outcomes: { 'baseline:tests/a.test.js': 1, 'baseline:tests/b.test.js': 1 } }));
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: a.p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: a.dir, runOne: ok.runOne, git: ok.git, takeSlot });
+  assert.strictEqual(r.eligible, true);
+  assert.deepStrictEqual(order.slice(0, 3), ['slot', 'worktree', 'run']);
+  assert.strictEqual(order.filter((s) => s === 'slot').length, 1);
+
+  order.length = 0;
+  const n = logFile(SPEC(['tests/new.test.js']));
+  const none = fakes({ outcomes: {}, existsAtBase: () => false });
+  await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: n.p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: n.dir, runOne: none.runOne, git: none.git, takeSlot });
+  assert.deepStrictEqual(order, [], 'no file at base: nothing spawns, no slot');
+
+  const refused = await adjudicate({ checks: [{ name: 'lint', exitCode: 1, logPath: n.p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: n.dir, runOne: none.runOne, git: none.git, takeSlot });
+  assert.strictEqual(refused.eligible, false);
+  assert.deepStrictEqual(order, [], 'refused on sight: no slot');
+
+  const thrown = new Error('suite slot unavailable — x');
+  await assert.rejects(adjudicate({
+    checks: [{ name: 'tests', exitCode: 1, logPath: a.p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: a.dir, runOne: ok.runOne, git: ok.git,
+    takeSlot: () => { throw thrown; },
+  }), (err) => err === thrown, 'a slot that cannot be taken propagates to the caller');
+});
+
 test('Review Focus 3: a base run killed by a signal (exitCode null) never counts as failing at base (#3043)', async () => {
   const { p, dir } = logFile(SPEC(['tests/a.test.js']));
   const { git, runOne } = fakes({ outcomes: { 'baseline:tests/a.test.js': null, 'isolated:tests/a.test.js': 1 } });

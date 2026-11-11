@@ -12,7 +12,7 @@ Several sessions on one machine each running a full suite at once is the cost th
 | subset | every local suite runs an impact-subset or tool-scoped command, or only `types`/`lint` run |
 
 - A CI-answered suite (`ci-source.md`) takes no slot while CI answers it. If it fails, its local flaky retry takes a subset-lane slot, and only when a retry actually spawns. A run whose every suite CI answers, with no local retry, takes no slot, and neither does a run with no local check.
-- `--baseline` adjudication always takes its own full-lane slot, after the checks' slot is released. Its reruns and its base-side full run queue behind every other full-lane holder.
+- `--baseline` adjudication always takes its own full-lane slot, after the checks' slot is released, and only once a rerun will actually spawn: an adjudication refused before any rerun (no `--baseline-cmd` for a failing check, an unparseable log, no failing file present at base) takes none. Its reruns and its base-side full run queue behind every other full-lane holder.
 - A nested `verify.js` or `tools/run-tests.js` (inheriting `CT_TEST_SUITE_SLOT_HELD=1`) takes no slot, so it never waits on its parent.
 
 ## How many slots
@@ -33,7 +33,7 @@ The lock dir is `CT_TEST_SUITE_SLOT_DIR`, else `<os tmpdir>/ct-test-suite-slots`
 
 The wait counts against the calling tool's timeout: with fewer slots than concurrent sessions, a run can queue behind several full suites before its checks start. `verification.md`'s Foreground rule says which timeout to set and how to read a call that comes back queued.
 
-A lock dir `verify.js` cannot use (not a directory owned by this user, or not writable) prints `verify.js: suite slot unavailable — {message}` and exits 2 before the checks it was queuing for run. At `--baseline` adjudication the same failure is recorded as not adjudicated (`adjudication error: …`).
+A lock dir `verify.js` cannot use (not a directory owned by this user, or not writable) prints `verify.js: suite slot unavailable — {message}` and exits 2 before the checks it was queuing for run. At `--baseline` adjudication the same failure is recorded as not adjudicated (`adjudication error: suite slot unavailable — {message}`).
 
 ## While a slot is held
 

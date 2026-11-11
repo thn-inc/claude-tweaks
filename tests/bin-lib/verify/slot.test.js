@@ -165,10 +165,10 @@ test('holdSlot: the wait line names only concurrency.suiteSlots when the declara
   }
 });
 
-test('holdSlot: a lock dir it cannot use throws SlotUnavailableError carrying the cause (#5119)', () => {
+test('holdSlot: a lock dir it cannot use throws SlotUnavailableError naming itself and carrying the cause (#5119)', () => {
   const file = path.join(tmpSlotDir(), 'not-a-dir');
   fs.writeFileSync(file, '');
-  assert.throws(() => hold(file), (err) => err instanceof SlotUnavailableError && err.message.length > 0);
+  assert.throws(() => hold(file), (err) => err instanceof SlotUnavailableError && /^suite slot unavailable — \S/.test(err.message));
 });
 
 test('holdSlot: index is the slot taken (#5119)', () => {

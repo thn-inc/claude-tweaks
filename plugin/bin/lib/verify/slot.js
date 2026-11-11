@@ -20,7 +20,14 @@ function slotHint(source) {
 
 // A lock dir holdSlot cannot use (not a directory owned by this user, not
 // writable, …): verify.js exits 2 on it, never 1 as if a check had failed.
-class SlotUnavailableError extends Error {}
+// The message names the failure itself (`suite slot unavailable — {cause}`), so
+// a caller that only records err.message (--baseline adjudication's
+// `adjudication error: …`) still says what failed.
+class SlotUnavailableError extends Error {
+  constructor(cause) {
+    super(`suite slot unavailable — ${cause}`);
+  }
+}
 
 // A declared concurrency.suiteSlots wins, then --default-suite-slots, then one
 // slot. `declared` and `flag` are positive integers or null (validated by

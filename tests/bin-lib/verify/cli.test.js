@@ -3706,6 +3706,53 @@ test('a lock dir verify.js cannot use exits 2 with one named line, never 1 as if
   const lines = run.stderr.split('\n').filter(Boolean);
   assert.strictEqual(lines.length, 1, run.stderr);
   assert.match(lines[0], /^verify\.js: suite slot unavailable — \S/);
+  assert.strictEqual(lines[0].split('suite slot unavailable').length, 2, `named once, never doubled: ${lines[0]}`);
+});
+
+// A check (holding its own slot) that leaves a directory named like a queue ticket in the full lane,
+// so the next full-lane acquire there fails reading it: the lock dir is unusable at adjudication.
+test('--baseline: a lock dir unusable at adjudication is recorded as not adjudicated, naming "suite slot unavailable" (#5119)', async () => {
+  const r = baselineRepo();
+  headCommit(r);
+  const dir = tmpDir();
+  const script = path.join(tmpDir(), 'suite.js');
+  fs.writeFileSync(script, [
+    "const fs = require('fs');",
+    "const path = require('path');",
+    "fs.mkdirSync(path.join(process.env.CT_TEST_SUITE_SLOT_DIR, 'ticket-1.json'));",
+    "const r = require('child_process').spawnSync(process.execPath, ['--test', '--test-reporter=tap', 'tests/env.test.js', 'tests/ok.test.js'], { stdio: 'inherit' });",
+    'process.exit(r.status === null ? 1 : r.status);',
+  ].join('\n'));
+  const run = await runCli(['--cmd', `tests=node "${script}"`, '--baseline', r.baseSha, '--baseline-cmd', PER_FILE], {
+    cwd: r.repo, env: slotEnv(dir), timeout: 60000,
+  });
+  assert.strictEqual(run.code, 1, run.stdout + run.stderr);
+  const adj = reportAt(r).baselineAdjudicated;
+  assert.strictEqual(adj.eligible, false, JSON.stringify(adj));
+  assert.match(adj.reason, /^adjudication error: suite slot unavailable — \S/);
+  assert.ok(!('slot' in adj), 'no adjudication slot was taken');
+});
+
+test('--baseline: an adjudication refused on sight never queues for the full-lane slot a live sibling holds (#5119)', async () => {
+  const r = tmpGitRepo();
+  const base = r.git('rev-parse', 'HEAD').trim();
+  r.git('commit', '-q', '--allow-empty', '-m', 'head');
+  const dir = tmpDir();
+  holdLock(dir);
+  // types/lint alone take the subset lane; the failing lint has no --baseline-cmd, so adjudication
+  // is ineligible before any rerun could spawn. Were it to queue for the held full-lane slot, the
+  // run would hang into the spawn timeout.
+  const run = await runCli(['--cmd', `types=${nodeCmd('0')}`, '--cmd', `lint=${nodeCmd('process.exit(1)')}`, '--baseline', base, '--baseline-cmd', 'types=node -e 0 {file}'], {
+    cwd: r.repo, env: slotEnv(dir), timeout: 60000,
+  });
+  assert.strictEqual(run.code, 1, run.stdout + run.stderr);
+  const report = reportAt(r);
+  assert.strictEqual(report.slot.lane, 'subset');
+  assert.strictEqual(report.baselineAdjudicated.eligible, false);
+  assert.strictEqual(report.baselineAdjudicated.reason, 'no --baseline-cmd for failing check lint');
+  assert.ok(!('slot' in report.baselineAdjudicated), 'no adjudication slot was taken');
+  assert.ok(!fs.readdirSync(dir).some((n) => /^ticket-\d+\.json$/.test(n)), 'nothing queued in the full lane');
+  assert.doesNotMatch(run.stderr, /waiting for a test-suite slot/);
 });
 
 test('a check that runs tools/run-tests.js under the held slot skips the lock instead of waiting on its own parent (#5119 nested deadlock)', async () => {

@@ -957,25 +957,32 @@ async function main() {
           // #5119: adjudication (its base-side full run included) always
           // queues for a full-lane slot of its own, whatever lane the checks
           // took — the checks' slot is already released, so no process ever
-          // holds one slot while it waits for another.
-          const adjHold = holdFor('full');
+          // holds one slot while it waits for another. Like a CI suite's
+          // retry, it takes the slot only once a rerun will actually spawn:
+          // adjudicate() calls takeSlot just before its first spawn, so a run
+          // it refuses on sight never queues behind every full-lane holder.
+          let adjHold = null;
           try {
+            const adjudicated = await adjudicate({
+              checks: results,
+              baselineCmds: baselineCmdMap,
+              base: mergeBaseSha,
+              baseSha: mergeBaseSha,
+              cwd: parsed.cwd,
+              logDir,
+              runOne: (args) => (adjHold ? trackedRunOne(args) : runOne(args)),
+              spawnImpl: spawn,
+              envOf,
+              timeoutOf,
+              git: bgit,
+              computeFixed: !parsed.noBaselineFixed,
+              takeSlot: () => {
+                adjHold = holdFor('full');
+                return adjHold ? adjHold.index : null;
+              },
+            });
             baselineAdjudicated = {
-              ...await adjudicate({
-                checks: results,
-                baselineCmds: baselineCmdMap,
-                base: mergeBaseSha,
-                baseSha: mergeBaseSha,
-                cwd: parsed.cwd,
-                logDir,
-                runOne: adjHold ? trackedRunOne : runOne,
-                spawnImpl: spawn,
-                envOf,
-                timeoutOf,
-                git: bgit,
-                computeFixed: !parsed.noBaselineFixed,
-                slot: adjHold ? adjHold.index : null,
-              }),
+              ...adjudicated,
               baseRef: parsed.baseline,
               ...(adjHold ? { slot: slotReport(adjHold) } : {}),
             };
@@ -1528,7 +1535,7 @@ main().catch((err) => {
   // before the checks run, so it takes the usage/infrastructure exit (2),
   // never the failed-check exit.
   if (err instanceof SlotUnavailableError) {
-    process.stderr.write(`verify.js: suite slot unavailable — ${err.message}\n`);
+    process.stderr.write(`verify.js: ${err.message}\n`); // the message already names "suite slot unavailable — …"
     process.exitCode = 2;
     return;
   }
