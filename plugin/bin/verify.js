@@ -204,7 +204,7 @@ function discoverDeclaration(cwd) {
 // declaration that cannot be read or fails validation counts as undeclared,
 // named in one stderr line.
 function defaultConcurrency(cwd) {
-  const none = { suiteSlots: null };
+  const none = { suiteSlots: null, reruns: null, timeoutPatterns: [] };
   const found = discoverDeclaration(cwd);
   if (found.error) {
     process.stderr.write(`verify.js: concurrency ignored — ${found.error}\n`);
@@ -793,8 +793,18 @@ async function main() {
   // the signal, a grace for their own teardown, then a kill) before the slot
   // is freed; an unheld run never tracks, keeping today's spawn options exactly.
   const nestedRun = process.env.CT_TEST_SUITE_SLOT_HELD === '1';
+  // #5150: the concurrency block is read once per run (memoized) — it feeds the
+  // slot count here and baseline adjudication below, so an invalid default
+  // declaration prints its one `concurrency ignored` line once.
+  let concurrencyBlock = null;
+  const concurrencyOf = () => {
+    if (concurrencyBlock === null) {
+      concurrencyBlock = decl ? decl.concurrency : defaultConcurrency(parsed.cwd || process.cwd());
+    }
+    return concurrencyBlock;
+  };
   const { slots, source: slotSource } = resolveSuiteSlots({
-    declared: decl ? decl.concurrency.suiteSlots : (nestedRun ? null : defaultConcurrency(parsed.cwd || process.cwd()).suiteSlots),
+    declared: decl ? decl.concurrency.suiteSlots : (nestedRun ? null : concurrencyOf().suiteSlots),
     flag: parsed.defaultSuiteSlots,
   });
   const track = new Set();
@@ -971,7 +981,10 @@ async function main() {
           // it refuses on sight never queues behind every full-lane holder.
           let adjHold = null;
           try {
+            const declaredConcurrency = concurrencyOf();
             const adjudicated = await adjudicate({
+              concurrency: declaredConcurrency.reruns,
+              timeoutPatterns: declaredConcurrency.timeoutPatterns,
               checks: results,
               baselineCmds: baselineCmdMap,
               base: mergeBaseSha,
@@ -1487,6 +1500,10 @@ async function main() {
     if (baselineAdjudicated.eligible) {
       const b = baselineAdjudicated;
       lines.push('', `Baseline: adjudicated against ${String(b.baseSha).slice(0, 9)} (merge-base of HEAD and ${b.baseRef}) — ${b.failingFiles.length} failing file(s): ${b.baselineFailing.length} also fail at base, ${b.flakyPassed.length} flaky (passed in isolation), ${b.attributable.length} attributable`);
+      // #5150: a back-off from the declared reruns is named, never silent.
+      if (b.concurrency && /^(timeout-evidence|phase-timeout):/.test(b.concurrency.reason)) {
+        lines.push(`Baseline: reruns ran one at a time (declared reruns ${b.concurrency.declared}) — ${b.concurrency.reason}`);
+      }
       // #3313: new/fixed counts; every eligible adjudication carries them.
       if (b.fixed === null) {
         lines.push(`Baseline: ${b.new.length} new, fixed not computed — ${b.fixedReason}`);

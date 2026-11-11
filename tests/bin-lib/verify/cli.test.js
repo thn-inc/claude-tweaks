@@ -7,6 +7,7 @@ const fs = require('fs');
 const { execFile, spawn, spawnSync, execFileSync } = require('child_process');
 const { readText } = require('../../helpers/read-skill');
 const { slotEnv } = require('../../helpers/suite-slot-env');
+const { slotScratchPath } = require('../../../plugin/bin/lib/verify/baseline');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'verify.js');
 
@@ -2913,6 +2914,71 @@ test('--baseline: a failing check with no extractable file is not adjudicated an
   assert.match(stdout, /Baseline: not adjudicated — no-parse/);
 });
 
+// #5150: the default declaration's concurrency block reaches adjudication. The declaration is
+// written uncommitted; the fixture's one failing file fails identically at base, so no retry spawns.
+function writeConcurrencyDecl(r, concurrency) {
+  fs.mkdirSync(path.join(r.repo, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(r.repo, '.claude-tweaks', 'verify-scope.json'), JSON.stringify({
+    checks: { tests: 'npm test' }, rules: [{ match: '**', suites: '*', static: false }], ...(concurrency ? { concurrency } : {}),
+  }));
+}
+const BASELINE_ARGS = (r) => ['--cmd', SUITE, '--baseline', r.baseSha, '--baseline-cmd', PER_FILE, '--no-stamp'];
+const adjudicationReport = (r) => JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8')).baselineAdjudicated;
+const BACKOFF_LINE = /^Baseline: reruns ran one at a time/m;
+
+test('AC1.1: with no declaration the adjudication reports default-serial and prints no back-off line (#5150)', async () => {
+  const r = baselineRepo();
+  headCommit(r);
+  const res = await runCli(BASELINE_ARGS(r), r.opts);
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.deepStrictEqual(adjudicationReport(r).concurrency, { declared: null, used: { baseline: 1, isolated: 1, retry: null }, reason: 'default-serial' });
+  assert.doesNotMatch(res.stdout, BACKOFF_LINE);
+});
+
+test('AC2.1: a declared concurrency.reruns reaches adjudicate() from the default declaration, nested run included (#5150)', async () => {
+  const r = baselineRepo();
+  headCommit(r);
+  writeConcurrencyDecl(r, { reruns: 3 });
+  const res = await runCli(BASELINE_ARGS(r), r.opts);
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.deepStrictEqual(adjudicationReport(r).concurrency, { declared: 3, used: { baseline: 3, isolated: 3, retry: null }, reason: 'declared' });
+  assert.doesNotMatch(res.stdout, BACKOFF_LINE);
+});
+
+test('AC3.1: a declared timeoutPatterns match forces serial reruns and prints one line (#5150)', async () => {
+  const r = baselineRepo();
+  headCommit(r);
+  writeConcurrencyDecl(r, { reruns: 4, timeoutPatterns: ['env-specific'] });
+  const res = await runCli(BASELINE_ARGS(r), r.opts);
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.deepStrictEqual(adjudicationReport(r).concurrency, { declared: 4, used: { baseline: 1, isolated: 1, retry: null }, reason: 'timeout-evidence: tests' });
+  const lines = res.stdout.split('\n').filter((l) => BACKOFF_LINE.test(l));
+  assert.deepStrictEqual(lines, ['Baseline: reruns ran one at a time (declared reruns 4) — timeout-evidence: tests']);
+});
+
+test('an invalid default declaration prints its concurrency ignored line once on a failing --baseline run (#5150)', async () => {
+  const r = baselineRepo();
+  headCommit(r);
+  writeConcurrencyDecl(r, { reruns: 0 });
+  const t = tmpDir();
+  const res = await runCli(BASELINE_ARGS(r), { cwd: r.repo, env: slotEnv(tmpDir(), { TMPDIR: t, TMP: t, TEMP: t }) });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  const ignored = res.stderr.split('\n').filter((l) => l.startsWith('verify.js: concurrency ignored — '));
+  assert.strictEqual(ignored.length, 1, res.stderr);
+  assert.strictEqual(adjudicationReport(r).concurrency.reason, 'default-serial');
+});
+
+test('AC7.1: a nested run takes no slot, so its scratch stays a fresh ct-verify-base-* path (#5150)', async () => {
+  const r = baselineRepo();
+  headCommit(r);
+  const res = await runCli(BASELINE_ARGS(r), r.opts);
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  const adj = adjudicationReport(r);
+  assert.match(path.basename(path.dirname(adj.scratch.path)), /^ct-verify-base-/);
+  assert.ok(!('slot' in adj), JSON.stringify(adj.slot));
+  assert.ok(!('fallback' in adj.scratch), JSON.stringify(adj.scratch));
+});
+
 // #3810: HEAD forks from the base; the integration branch then moves on
 // (fixing env.test.js). --baseline <integ> must adjudicate against the
 // merge-base of HEAD and integ, not against the moved integration tip.
@@ -3622,7 +3688,9 @@ test('AC5.1: a scoped failing --baseline run\'s adjudication waits for a full-la
   commitFile(r, 'src/a.js', 'module.exports = 1;\n');
   const dir = tmpDir();
   const lock = holdLock(dir);
-  const run = runCli([...scope, '--baseline', trunk, '--no-stamp'], { cwd: r.repo, env: slotEnv(dir) });
+  // A slot-holding child writes its scratch under os.tmpdir(): give it a private one (#5150).
+  const t = tmpDir();
+  const run = runCli([...scope, '--baseline', trunk, '--no-stamp'], { cwd: r.repo, env: slotEnv(dir, { TMPDIR: t, TMP: t, TEMP: t }) });
   await waitForQueued(dir);
   const releasedAt = Date.now();
   fs.unlinkSync(lock);
@@ -3633,6 +3701,13 @@ test('AC5.1: a scoped failing --baseline run\'s adjudication waits for a full-la
   assert.strictEqual(report.slot.lane, 'subset');
   assert.strictEqual(report.baselineAdjudicated.verdict, 'pass');
   assert.deepStrictEqual(withoutWait(report.baselineAdjudicated.slot), { lane: 'full', index: 0, slots: 1, source: 'default' });
+  assert.deepStrictEqual(report.baselineAdjudicated.scratch, {
+    path: path.join(fs.realpathSync(t), path.relative(t, slotScratchPath({
+      tmpdir: t, commonDir: fs.realpathSync.native(path.join(r.repo, '.git')), slotBase: fs.realpathSync.native(dir), slot: 0,
+    }))),
+    reused: false,
+  });
+  assert.ok(!fs.readdirSync(t).some((n) => n.startsWith('ct-verify-base-')), fs.readdirSync(t).join(', '));
   const logDir = path.join(r.gitDir, 'claude-tweaks-verify');
   const mtime = (f) => fs.statSync(path.join(logDir, f)).mtimeMs;
   const adjLogs = fs.readdirSync(logDir).filter((f) => /^tests-(baseline|isolated)-.*\.log$/.test(f));
