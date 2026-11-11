@@ -799,9 +799,17 @@ async function main() {
   });
   const track = new Set();
   const killTracked = (signal) => stopTrees(track, signal);
-  const holdFor = (lane) => holdSlot({
-    lane, slots, source: slotSource, beforeRelease: killTracked,
-  });
+  // Every hold's queue wait, summed: the verify event carries it, so the
+  // timing derivation counts this run's work, not its wait (report.durationMs
+  // stays wall-clock).
+  let slotWaitedMs = 0;
+  const holdFor = (lane) => {
+    const hold = holdSlot({
+      lane, slots, source: slotSource, beforeRelease: killTracked,
+    });
+    if (hold) slotWaitedMs += hold.waitedMs;
+    return hold;
+  };
   const trackedRunOne = (args) => runOne({ ...args, track });
 
   const startedAt = new Date().toISOString();
@@ -1220,6 +1228,8 @@ async function main() {
         mode: report.scope ? report.scope.mode : 'full',
         suitesRun: results.filter((c) => !c.skipped).map((c) => c.name),
         durationMs: report.durationMs,
+        // #5119: the part of durationMs spent queued for a suite slot (0 when none was waited for).
+        slotWaitedMs,
         pass: report.pass,
         baselineAdjudicated: baselineAdjudicated ? baselineAdjudicated.verdict || 'ineligible' : null,
         preExistingAdjudicated: preExistingVerdict,

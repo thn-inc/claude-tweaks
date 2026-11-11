@@ -3810,6 +3810,29 @@ test('AC8.1: a waiting run prints one stderr line naming the holder and how to r
   assert.ok(reportAt(r).slot.waitedMs >= 2500);
 });
 
+test('the verify event carries the run\'s total slot queue wait as slotWaitedMs, so the timing budget can count work only (#5119)', async () => {
+  const r = tmpGitRepo();
+  const runDir = anchoredRunDir(r.repo);
+  const dir = tmpDir();
+  const lock = holdLock(dir);
+  const run = runCli(['--run', runDir, '--no-stamp', '--cmd', 'tests=node -e 0'], { cwd: r.repo, env: slotEnv(dir) });
+  await waitForQueued(dir);
+  fs.unlinkSync(lock);
+  const res = await run;
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  const report = reportAt(r);
+  const ev = JSON.parse(fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').pop());
+  assert.ok(report.slot.waitedMs > 0, JSON.stringify(report.slot));
+  assert.strictEqual(ev.slotWaitedMs, report.slot.waitedMs, 'the one hold\'s wait');
+  assert.strictEqual(ev.durationMs, report.durationMs, 'durationMs stays wall-clock, wait included');
+  assert.ok(ev.durationMs >= ev.slotWaitedMs);
+
+  const unheld = tmpGitRepo();
+  const unheldRun = anchoredRunDir(unheld.repo);
+  assert.strictEqual((await runCli(['--run', unheldRun, '--no-stamp', '--cmd', 'tests=node -e 0'], { cwd: unheld.repo })).code, 0);
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(unheldRun, 'events.jsonl'), 'utf8').trim()).slotWaitedMs, 0, 'no slot taken, no wait');
+});
+
 test('a SIGTERM mid-check kills the check\'s process tree and frees the slot (#5119)', SLOT_POSIX_ONLY, async () => {
   const r = tmpGitRepo();
   const dir = tmpDir();
