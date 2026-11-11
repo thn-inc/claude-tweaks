@@ -197,7 +197,7 @@ test('#4549 AC1.1: Step 3 no longer claims keywords close on any integration bra
   assert.throws(() => assertNoAnyBranchClaim(PRE_CHANGE_STEP3_CLAIM), /any integration branch/, 'go-red: the pre-change sentence fails the check');
 });
 
-test('#4549 AC1.2: Step 3 says keywords close only on the default branch and points at Step 4.0', () => {
+test('#4549 AC1.2: Step 3 points at the appendix rationale, which says keywords close only on the default branch and points at Step 4.0', () => {
   // The Fixes-lines rationale moved to the appendix's Rationale notes (#5153, composed-bundle byte rail);
   // Step 3 keeps a pointer to it.
   const step3 = step3Of(read('pr-first-merge.md'));
