@@ -69,6 +69,14 @@ Three conventions follow from how this repo works, and all are visible below:
 * Test-impact selection never fires: .claude/skills/**… ([#4321](https://github.com/thn-inc/claude-tweaks/issues/4321)) ([828bb7e](https://github.com/thn-inc/claude-tweaks/commit/828bb7e175243b8786349c44f537d8f123b8d7e9))
 * verify.js baseline adjudication: concurrency=4 per-file… ([#5150](https://github.com/thn-inc/claude-tweaks/issues/5150)) ([73691c5](https://github.com/thn-inc/claude-tweaks/commit/73691c54ead049d851a6a471249edc850be51c7f))
 
+### Highlights
+* A verification run whose changed files map to tests can no longer report the tree as verified without running them.
+* Pipeline test runs pick only the affected tests far more often, cutting several minutes from most builds.
+* Baseline adjudication now reruns failing files one at a time unless the project declares otherwise, never fans out when failures look like timeouts, and reuses one scratch checkout per slot instead of creating a new one each run.
+* Make the pr-first merge gate wait for the CI run that marking a PR ready starts, and refuse to merge a PR whose CI skips drafts but never runs on ready. Document a supported "CI skips draft PRs" setup.
+* Parallel pipeline sessions on one machine now queue their test suites and baseline reruns behind a shared slot instead of running them all at once; a project sets how many may run together in verify-scope.json.
+* Stop the generated issue-tracking workflow from starting a billed runner on pushes that reference no issue, and from running at all on the plugin's bookkeeping branches. Re-run `/claude-tweaks:init` to pick up the new file.
+
 ## [6.164.0](https://github.com/thn-inc/claude-tweaks/compare/v6.163.0...v6.164.0) (2026-11-09)
 
 
