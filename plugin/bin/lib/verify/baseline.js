@@ -313,6 +313,11 @@ async function adjudicate({
   checks, baselineCmds, base, baseSha, cwd = null, logDir, runOne, spawnImpl, now = Date.now,
   envOf = () => null, timeoutOf = () => null, git, concurrency = 4, env = process.env, computeFixed = true,
   platform = process.platform,
+  // The held full-lane suite slot's index (#5119), accepted unused until #5150 consumes it.
+  slot = null,
+  // #5119: takes the full-lane suite slot and returns its index (null when none was taken). Called
+  // at most once, just before the first rerun spawns, never when nothing will; the caller releases.
+  takeSlot = () => null,
 }) {
   const header = { base, baseSha };
   const ineligible = (reason) => ({ ...header, eligible: false, reason });
@@ -422,6 +427,14 @@ async function adjudicate({
     env: envOf(w.check), timeout: timeoutOf(w.check),
   });
   const headResolvesDeps = Boolean(env.NODE_PATH) || hasNodeModulesUpward(headDir);
+  // #5119: every rerun below needs a failing file present at base — its base run, its isolated
+  // HEAD run, a retry of that, the base full run — so with none nothing spawns and no slot is
+  // taken. Taken before the signal handlers below exist, so a signal during the wait exits by
+  // default and leaves no scratch worktree behind.
+  if (atBase.some(Boolean)) {
+    const taken = takeSlot();
+    if (taken !== null && taken !== undefined) slot = taken;
+  }
   try {
     if (atBase.some(Boolean)) {
       // While the scratch worktree exists, a Ctrl-C or kill removes it

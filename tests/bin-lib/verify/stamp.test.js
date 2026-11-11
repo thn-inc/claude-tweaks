@@ -261,3 +261,25 @@ test('readStamp returns null for a `preExisting` key the runner did not write â€
   const ok = fakeFs({ [path.join('/g', STAMP_JSON_NAME)]: JSON.stringify({ sha: SHA, scope: 'full', fullSha: SHA, preExisting: { declared: ['tests/a.test.js'] } }) });
   assert.deepStrictEqual(readStamp('/g', ok).preExisting, { declared: ['tests/a.test.js'] });
 });
+
+test('composeStamp names a CI source only when given one (#4347)', () => {
+  const args = {
+    report: REPORT, scope: 'full', fullSha: 'abc123', base: null, changedFiles: [],
+    suitesRun: ['tests'], flakyRetried: [], reportPath: '/r.json', at: 't',
+  };
+  const local = composeStamp(args);
+  assert.ok(!('source' in local) && !('ci' in local));
+  const ci = composeStamp({ ...args, ci: { tests: { runId: 41, runUrl: 'u' } } });
+  assert.strictEqual(ci.source, 'ci');
+  assert.deepStrictEqual(ci.ci, { tests: { runId: 41, runUrl: 'u' } });
+});
+
+test('readStamp reads a CI-sourced stamp, and returns null for a source/ci shape the runner did not write (#4347)', () => {
+  const SHA = '0123456789abcdef0123456789abcdef01234567';
+  const at = (extra) => fakeFs({ [path.join('/g', STAMP_JSON_NAME)]: JSON.stringify({ sha: SHA, scope: 'full', fullSha: SHA, ...extra }) });
+  for (const bad of [{ source: 'local' }, { source: 'ci' }, { source: 'ci', ci: null }, { source: 'ci', ci: [] }, { ci: { tests: {} } }]) {
+    assert.strictEqual(readStamp('/g', at(bad)), null, JSON.stringify(bad));
+  }
+  const ok = readStamp('/g', at({ source: 'ci', ci: { tests: { runId: 41, runUrl: 'u' } } }));
+  assert.strictEqual(ok.source, 'ci');
+});

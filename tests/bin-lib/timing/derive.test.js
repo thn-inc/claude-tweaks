@@ -361,6 +361,16 @@ test('#4029: verifyMinutes sums every verify durationMs to one decimal, 0 with n
   assert.equal(derivePhases({ events: [] }).totals.verifyMinutes, 0);
 });
 
+test('#5119: verifyMinutes counts work, not suite-slot queue wait — each event\'s slotWaitedMs is subtracted, clamped at 0', () => {
+  const ev = (d, w) => ({ ts: '2026-10-24T10:20:00.000Z', type: 'verify', durationMs: d, ...(w === undefined ? {} : { slotWaitedMs: w }) });
+  // 10 min wall-clock of which 7.5 queued, plus 1 min that never waited: 3.5 min of work.
+  assert.equal(derivePhases({ events: [ev(600000, 450000), ev(60000, 0)] }).totals.verifyMinutes, 3.5);
+  // A wait longer than the event's own duration contributes 0, never a negative.
+  assert.equal(derivePhases({ events: [ev(60000, 120000), ev(60000)] }).totals.verifyMinutes, 1);
+  // A non-numeric or negative wait subtracts nothing; an event with no duration still adds 0.
+  assert.equal(derivePhases({ events: [ev(60000, 'x'), ev(60000, -5000), ev(null, 1000)] }).totals.verifyMinutes, 2);
+});
+
 test('#1929: countGuardEvents counts the three guard event types and ignores the rest', () => {
   const events = [
     { ts: 't', type: 'gate-denial' }, { ts: 't', type: 'gate-denial' },

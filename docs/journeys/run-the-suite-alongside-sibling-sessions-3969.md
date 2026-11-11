@@ -1,6 +1,7 @@
 ---
 files:
   - tools/run-tests.js
+  - plugin/bin/lib/suite-slot.js
   - tests/run-tests-isolation.test.js
   - plugin/bin/lib/deps.js
   - docs/plugin-structure.md
@@ -58,6 +59,7 @@ files:
 - **Should understand:**
   - An invalid `CT_TEST_SUITE_SLOTS` falls back to 1 and prints one line naming it.
   - Nested runs (a test that itself spawns `run-tests.js`) skip the slot via `CT_TEST_SUITE_SLOT_HELD=1`, so they never deadlock on the parent's lock.
+  - Under a pipeline, `verify.js` now takes the slot itself and runs `npm test` with `CT_TEST_SUITE_SLOT_HELD=1`, so that child skips the lock. An exported `CT_TEST_SUITE_SLOTS` then governs only direct `npm test` runs. verify.js's own count comes from `concurrency.suiteSlots` or the `verify-suite-slots` policy key (`queue-verify-runs-behind-a-machine-wide-slot-5119.md`).
   - The suite's own slot tests still pass with a raised knob. Their sandboxed runner children start without `CT_TEST_SUITE_SLOTS` or `CT_TEST_SUBSET_SLOTS`, so they always measure the default of one slot.
 - **Red flags:**
   - Raising `CT_TEST_SUITE_SLOTS` globally to make waits go away, when the waits were protecting the machine.
@@ -78,4 +80,5 @@ files:
 - Created during build of #3969. The trigger was a Mac made unusable by stacked concurrent suites (load average 98–176 on 12 cores) and about 3.9 million leaked fixture entries in `$TMPDIR`.
 - Updated during build of #4336: step 4 now covers the slot tests passing under a raised slot knob.
 - Updated during build of #4333: step 2 now covers arrival-order waiting and the queued form of the wait line. A waiter stopped with Ctrl-C leaves only its ticket, and the next waiter removes it once the pid is gone. A `run-tests.js` checkout older than this change ignores tickets and can still jump the queue until it catches up.
+- Updated during build of #5119: the lock moved into `plugin/bin/lib/suite-slot.js`, shared with `verify.js`. Step 4 now covers a verify.js-driven `npm test` skipping the lock, with verify.js's own slot count governing instead of `CT_TEST_SUITE_SLOTS`.
 - Related: `act-on-a-red-wall-clock-budget-scan-3491.md` (another constraint on tests that run under load).

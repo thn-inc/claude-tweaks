@@ -31,13 +31,117 @@ function killTree(child, { platform = process.platform, kill = process.kill, exe
   try { if (child) child.kill('SIGKILL'); } catch { /* best effort */ }
 }
 
+// #5119: how long a signalled check gets for its own teardown (containers,
+// temp databases, worker shutdown) before stopTrees kills its tree.
+const SIGNAL_GRACE_MS = 5000;
+
+// Every process in Linux's /proc as `{ pgrp, state }`, or null when /proc
+// cannot be listed. A stat line is `pid (comm) state ppid pgrp …`; comm may
+// itself hold spaces and parens, so the fields are read after the LAST ')'.
+// A process that exits between the listing and its read is skipped.
+function readProcStats(fsImpl = fs) {
+  let names;
+  try { names = fsImpl.readdirSync('/proc'); } catch { return null; }
+  const stats = [];
+  for (const name of names) {
+    if (!/^\d+$/.test(name)) continue;
+    let line;
+    try { line = fsImpl.readFileSync(`/proc/${name}/stat`, 'utf8'); } catch { continue; }
+    const fields = line.slice(line.lastIndexOf(')') + 1).trim().split(/\s+/);
+    stats.push({ state: fields[0], pgrp: Number(fields[2]) });
+  }
+  return stats;
+}
+
+// Whether any process is left in the POSIX process group `pid` leads. Any
+// throw from the probe counts as gone: ESRCH, or EPERM, which macOS reports
+// for a group of only unreaped zombies — and a group we cannot signal could
+// not be killed below anyway. Linux answers the probe for a zombie, and an
+// exited check stays one until Node reaps it, which it cannot do while
+// stopTrees blocks, so there `procStats` (readProcStats's result) decides: the
+// group lives only while a member is not in state Z. Null stats (/proc
+// unreadable), or stats naming no member at all, keep the probe's answer.
+// Never throws.
+function groupAlive(pid, kill, procStats = null) {
+  try {
+    kill(-pid, 0);
+  } catch {
+    return false;
+  }
+  if (!Array.isArray(procStats)) return true;
+  const members = procStats.filter((s) => s && s.pgrp === pid);
+  return members.length === 0 || members.some((s) => s.state !== 'Z');
+}
+
+// Stops every tracked check on a signal (#5119): POSIX forwards `signal` to
+// each check's process group (the session runOne's `detached` spawn gave it,
+// so the terminal's own signal never reached it), polls every `pollMs` for up
+// to `graceMs` while any group lives, then killTrees the groups still alive.
+// Synchronous, because it runs inside a signal handler that cannot await:
+// `sleep` blocks. On Linux each poll reads `procStats()` once so a group of
+// only zombies counts as gone (groupAlive). The grace announces itself on
+// `log`, so the wait is never silent. A check's output keeps reaching its log
+// meanwhile: runOne hands the child the log file's descriptor, so no pipe
+// fills while nothing drains it. Win32 has no signal to forward, so each tree
+// is killed at once (killTree's taskkill /T). Never throws.
+function stopTrees(children, signal, {
+  platform = process.platform, kill = process.kill, execImpl = execFileSync, graceMs = SIGNAL_GRACE_MS, pollMs = 100,
+  sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
+  procStats = readProcStats, log = (line) => process.stderr.write(line),
+} = {}) {
+  const all = [...children];
+  const grouped = platform === 'win32' ? [] : all.filter((c) => c && typeof c.pid === 'number');
+  for (const child of all) if (!grouped.includes(child)) killTree(child, { platform, kill, execImpl });
+  for (const child of grouped) {
+    try { kill(-child.pid, signal); } catch { /* ESRCH: the group already exited */ }
+  }
+  const snapshot = () => {
+    if (platform !== 'linux') return null;
+    try { return procStats(); } catch { return null; }
+  };
+  const stillAlive = (list) => {
+    const stats = snapshot();
+    return list.filter((c) => groupAlive(c.pid, kill, stats));
+  };
+  let alive = stillAlive(grouped);
+  if (alive.length) {
+    try {
+      log(`verify.js: ${signal} sent — waiting up to ${graceMs / 1000}s for ${alive.length} check process group(s) to finish their teardown before killing them\n`);
+    } catch { /* never throws */ }
+  }
+  for (let waited = 0; alive.length && waited < graceMs; waited += pollMs) {
+    sleep(pollMs);
+    alive = stillAlive(alive);
+  }
+  for (const child of alive) killTree(child, { platform, kill, execImpl });
+}
+
 function runOne({
   name, command, logDir, spawnImpl, now, cwd, env: checkEnv = null, platform = process.platform,
-  timeout: timeoutMs = null,
+  timeout: timeoutMs = null, track = null,
 }) {
   const logPath = path.join(logDir, `${name}.log`);
-  const stream = fs.createWriteStream(logPath);
   const started = now();
+  // #5119: the child writes its stdout/stderr straight to the log file's
+  // descriptor, never through a pipe this process must drain — stopTrees
+  // blocks the event loop through a signal's grace, and a check whose
+  // teardown output filled a pipe meanwhile would stall in write() until it
+  // was killed, its output lost. O_APPEND keeps concurrent writers (a shell
+  // and its children share the descriptor) from overwriting each other. An
+  // unopenable log is recorded before anything spawns.
+  let fd;
+  try {
+    const { O_WRONLY, O_CREAT, O_TRUNC, O_APPEND } = fs.constants;
+    fd = fs.openSync(logPath, O_WRONLY | O_CREAT | O_TRUNC | O_APPEND);
+  } catch (err) {
+    return Promise.resolve({
+      name, command, exitCode: null, spawnError: String((err && err.message) || err), durationMs: now() - started, logPath,
+    });
+  }
+  // The stream owns the descriptor (closed on end). A real child, given the
+  // descriptor, has no stdout/stderr stream; an injected spawnImpl's fake
+  // child still writes through them, piped below.
+  const stream = fs.createWriteStream(logPath, { fd });
   return new Promise((resolve) => {
     let settled = false;
     let timer = null;
@@ -47,6 +151,7 @@ function runOne({
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
+      if (track && child) track.delete(child);
       stream.end(() => resolve(result));
     };
     // A write-stream failure (missing logDir, disk full, ...), a spawn-time
@@ -80,19 +185,25 @@ function runOne({
       for (const k of Object.keys(inherited)) if (mine.has(k.toUpperCase())) delete inherited[k];
     }
     const env = { ...inherited, ...checkEnv };
-    const opts = { shell: true, env, windowsHide: true };
+    const opts = {
+      shell: true, env, windowsHide: true, stdio: ['pipe', fd, fd],
+    };
     if (cwd) opts.cwd = cwd;
     // detached:true makes the spawned shell the leader of its own POSIX
     // process group, so killTree's negative-pid kill below reaches every
     // descendant the shell forks — never set on win32, which has no such
-    // group and where `detached` instead opens a new console.
-    if (timeoutMs !== null && platform !== 'win32') opts.detached = true;
+    // group and where `detached` instead opens a new console. A `track`ed
+    // child (#5119: verify.js kills every running check before it frees its
+    // suite slot on a signal) needs the same group, so the kill reaches the
+    // whole tree; the set holds the child from spawn until it settles.
+    if ((timeoutMs !== null || track) && platform !== 'win32') opts.detached = true;
     try {
       child = spawnImpl(command, opts);
     } catch (err) {
       finishError(err);
       return;
     }
+    if (track) track.add(child);
     // #3063: a hung check otherwise blocks this run (and --baseline
     // adjudication) forever. A null exit code is never adjudicated and
     // never passes (see runChecks/report.js) — `timedOut` just names why.
@@ -139,12 +250,14 @@ async function runOrSkip(c, ctx, skip) {
 // (types/lint) check failed; a failing suite no longer skips the suites after
 // it, because baseline adjudication refuses a run holding a skipped check and
 // needs every suite's evidence. Off (the default) is the fail-fast above.
+// `track` (#5119), when given, reaches every runOne here and rides in the
+// ctx handed to `retry`, so a retry's spawns join the same set.
 async function runChecks({
   cmds, logDir, spawnImpl = require('child_process').spawn, now = Date.now, retry = async (r) => r, cwd = null,
-  continueSuitesAfterFailure = false,
+  continueSuitesAfterFailure = false, track = null,
 }) {
   const ctx = {
-    logDir, spawnImpl, now, retry, cwd,
+    logDir, spawnImpl, now, retry, cwd, track,
   };
   const results = [];
   const stage1 = cmds.filter((c) => STAGE1.includes(c.name));
@@ -170,4 +283,6 @@ async function runChecks({
   return results;
 }
 
-module.exports = { runChecks, runOne, killTree };
+module.exports = {
+  runChecks, runOne, killTree, stopTrees, groupAlive, readProcStats, SIGNAL_GRACE_MS,
+};
