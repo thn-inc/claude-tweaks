@@ -22,12 +22,7 @@ Output is a single JSON object keyed by requested key. Each key resolves to the 
 - `"invalid": true` — a present-but-rejected value degraded to the schema default; distinct from known-but-unset, which is `source: "default"` with no flag
 - `{"error": "unknown-key"}` — the requested key is not in the schema (no value/source)
 
-Carve-outs:
-
-- The PreToolUse hook's `worktree-always` read stays an in-process `bin/lib/policy.js` call — hot path, never shells out.
-- `model-profiles` is policy-only (the `--run` overlay never applies) and returns `{value: null, source: "default"}` when the block is absent. Any fragment-reader failure — a malformed block, or a malformed sibling model key such as `frontier-run-cap` (the reader parses all four model keys; its throws aren't sub-classified) — degrades to `{value: null, source: "default", invalid: true}`.
-- `risk-path-globs` is policy-only too (never reads `--run`) and returns `{value: {}, source: "default"}` when absent; a malformed block degrades to `{value: null, source: "default", invalid: true}`, never a partial map.
-- `deploy-command`, `owned-owners`, `trusted-authors` and `risk-categories` are `policyOnly`: the `--run` overlay never applies.
+Carve-outs (which keys skip the `--run` overlay, and the in-process `worktree-always` read): moved to `_shared/policy-schema-coverage.md`'s "Canonical read path carve-outs" section (#5119, rail headroom). Cite that file, not this stub.
 
 **Derived-default keys** come in two shapes; both are live, so a new derived key picks one deliberately and states the choice in its row.
 
@@ -260,3 +255,4 @@ These levers resolve from `.claude-tweaks/policy.yml`, like every other lever in
 | `release-tip-moves` | `policy.yml` | `/claude-tweaks:release` Step 5 (`execute.md`'s reviewed-tip comparison, #4041) | `2` | Each move of `origin/{branch}` past Step 3's reviewed tip runs one delta review; the move after the last allowed one holds the release `integration branch kept moving`. Floor `0`: it holds on the first move. Not a Manifesto lever |
 | `specify-budget` | `policy.yml` | `/claude-tweaks:specify` | `5` | Default attempt-count budget for a bare `/specify` drain invocation with no `--budget` flag — sibling of `dispatch-batch-size` above; `n`/`all` semantics are canonical in `_shared/record-batch-input.md`'s `--budget` section (#1491) |
 | `specify-decomposition-log` | `policy.yml` | `/claude-tweaks:specify` (decomposition mode, `record-creation-subissues.md`'s Ceremony tally) | `false` | When `true`, a decomposition batch carrying two or more `ceremony:standard` sub-issues appends one entry (batch size, those records' refs, session id/host/cwd) to `docs/specify-decomposition-log.md`, which Step 9's commit picks up — a watch-item record can then confirm the event happened without the session's transcript. At `false` the step is skipped outright: no tally, no file, no output (#3128) |
+| `verify-suite-slots` | `policy.yml` only (`policyOnly`: the `--run` overlay never applies; not a Manifesto lever) | `/claude-tweaks:test` — passed to `bin/verify.js` as `--default-suite-slots {n}`; verify.js never reads `policy.yml` | `1` | Positive integer: how many suites and baseline adjudications may run at once machine-wide. A `concurrency.suiteSlots` declared in `.claude-tweaks/verify-scope.json` wins over it. Unset resolves `1`; `3` resolves `3`; a malformed value (`0`, `two`) resolves `1` with `invalid: true` in the full form |

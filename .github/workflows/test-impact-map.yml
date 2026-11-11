@@ -36,6 +36,7 @@ on:
       - tools/test-impact/**
       - tools/test-impact.js
       - tools/run-tests.js
+      - plugin/bin/lib/suite-slot.js
       - .github/workflows/test-impact-map.yml
 
 concurrency:

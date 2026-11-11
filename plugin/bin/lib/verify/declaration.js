@@ -22,6 +22,7 @@ const DEFAULT_MAX_AGE_COMMITS = 200;
 const GIT_COMMON_DIR_TOKEN = '{git-common-dir}';
 const IMPACT_KEYS = ['suite', 'command', 'tests', 'maxAgeCommits', 'map', 'fetch'];
 const CI_KEYS = ['workflow', 'job', 'waitSeconds', 'pollSeconds'];
+const CONCURRENCY_KEYS = ['suiteSlots'];
 // #4347: a CI run of this repo's suite takes ~3.5 min plus queueing; 15 min
 // matches the job's own timeout-minutes, so a run that is still going past it
 // would have been killed anyway.
@@ -184,6 +185,24 @@ function readDeclaration(filePath, fsImpl = fs, { selfPath = null } = {}) {
     }
   }
 
+  // concurrency (#5119): how many machine-wide suite slots this project's runs
+  // may hold at once. A reader that predates the key ignores it. Always present
+  // on a parsed declaration; suiteSlots null means "not declared".
+  const concurrency = { suiteSlots: null };
+  if (raw.concurrency !== undefined) {
+    if (!isPlainObject(raw.concurrency)) {
+      errors.push('concurrency: must be an object');
+    } else {
+      const unknown = Object.keys(raw.concurrency).filter((k) => !CONCURRENCY_KEYS.includes(k));
+      if (unknown.length) errors.push(`concurrency: unknown key(s) ${unknown.map((k) => JSON.stringify(k)).join(', ')} (allowed: ${CONCURRENCY_KEYS.join(', ')})`);
+      const slots = raw.concurrency.suiteSlots;
+      if (slots !== undefined) {
+        if (!Number.isInteger(slots) || slots < 1) errors.push('concurrency.suiteSlots: must be a positive integer');
+        else concurrency.suiteSlots = slots;
+      }
+    }
+  }
+
   // rules
   const rules = [];
   if (!Array.isArray(raw.rules)) {
@@ -293,7 +312,7 @@ function readDeclaration(filePath, fsImpl = fs, { selfPath = null } = {}) {
     ok: true,
     decl: {
       checks: { types: typeof checks.types === 'string' ? checks.types : null, lint: typeof checks.lint === 'string' ? checks.lint : null, tests },
-      suites, toolScoped, retry, rules, flaky, preExisting, generated, impact, ci,
+      suites, toolScoped, retry, rules, flaky, preExisting, generated, impact, ci, concurrency,
     },
   };
 }
@@ -311,5 +330,5 @@ function generatedExemption(dirtyPaths, generated) {
 
 module.exports = {
   readDeclaration, generatedExemption, DECLARATION_PATH, DEFAULT_MAX_RETRIES, MAX_RETRIES_CEILING, DEFAULT_MAX_AGE_COMMITS, GIT_COMMON_DIR_TOKEN,
-  DEFAULT_CI_WAIT_SECONDS, DEFAULT_CI_POLL_SECONDS,
+  DEFAULT_CI_WAIT_SECONDS, DEFAULT_CI_POLL_SECONDS, CONCURRENCY_KEYS,
 };
