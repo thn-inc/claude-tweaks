@@ -60,8 +60,9 @@ const PR_EVENTS = Object.freeze(['pull_request', 'pull_request_target']);
 
 // #5153 — the CI run `gh pr ready` starts. Only a REST `actions/runs` row (it
 // carries `path`) can count: a `gh run list` row has none, so a run present in
-// both shapes is counted once. A row counts for workflow W when its path (minus
-// an `@ref` suffix) is W, its event is a PR event, and it was created at or
+// both shapes is counted once. A row counts for workflow W when its path is W or
+// W plus an `@ref` suffix (a file named `ci@v2.yml` still matches its own runs;
+// a pathless or empty path, or an empty W, never does), its event is a PR event, and it was created at or
 // after `readySince`; an unparseable date counts for nothing, which leaves the
 // workflow awaiting (fail closed). The newest counted row alone decides W.
 function readyRunVerdict({ readySince, readyWorkflows, headRuns } = {}) {
@@ -74,8 +75,8 @@ function readyRunVerdict({ readySince, readyWorkflows, headRuns } = {}) {
     let newestAt = -Infinity;
     for (const row of rows) {
       if (!row || typeof row !== 'object') continue;
-      const path = typeof row.path === 'string' ? row.path.replace(/@.*$/, '') : '';
-      if (path === '' || path !== W || !PR_EVENTS.includes(row.event)) continue;
+      const path = typeof row.path === 'string' ? row.path : '';
+      if (path === '' || W === '' || (path !== W && !path.startsWith(`${W}@`)) || !PR_EVENTS.includes(row.event)) continue;
       const at = Date.parse(row.createdAt ?? row.created_at);
       if (Number.isNaN(at) || Number.isNaN(since) || at < since) continue;
       if (!newest || at > newestAt || (at === newestAt && ids(row) > ids(newest))) {

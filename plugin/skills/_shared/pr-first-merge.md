@@ -172,7 +172,7 @@ Classify from the three reads, in this order:
   **Red path**, reason `draft-skip-without-ready-trigger:{files}` — the workflow skips drafts but its
   `types` lack `ready_for_review`, so nothing runs after `gh pr ready`; fix: add `ready_for_review` to
   `types` (`_shared/ci-skips-drafts.md`); an explicit `off` logs it and merges; `awaiting` → **pending**
-  (`awaitingReadyRun` names the workflows with no finished run since ready); `met`, `not-applicable` →
+  (`awaitingReadyRun` names the workflows with no run since ready); `met`, `not-applicable` →
   no change. On `mergeStateStatus: DIRTY` or `mergeable: CONFLICTING` (a conflicting PR gets no run),
   `awaiting` and `draft-skip-without-ready-trigger` take the **Conflict path** first.
 - Any entry with `status` not `COMPLETED` (or `conclusion` null while `status: IN_PROGRESS`/`QUEUED`/`PENDING`), or any head run whose `status` is not `completed`
@@ -265,7 +265,7 @@ guard refuses a `--jq` program inside this loop (`_shared/scratch-worktree.md` �
    gh issue comment "$ISSUE" --repo {owner}/{repo} --body-file "{park-comment-path}"
    ```
    (`$RESUME` holds `{resume}`; `$REASON` holds the check names — from `{pr-checks-path}`'s `fail` rows, or the failing
-   head runs' `workflowName`s — or the pending-timeout or draft-skip phrase — passed as a `printf` argument, never expanded inside the format string. A timeout whose last ready-run read named `awaitingReadyRun` appends ` (no run since ready: {files})`. Under a derived `off`, the comment's `{value}`/`$VALUE` is `derived off`.)
+   head runs' `workflowName`s — or the pending-timeout or draft-skip phrase — passed as a `printf` argument, never expanded inside the format string. A timeout whose last ready-run read named `awaitingReadyRun` appends ` (no run since ready: {files})`; `unparsed`: ` ({files} unparsed: _shared/ci-skips-drafts.md)`. Under a derived `off`, the comment's `{value}`/`$VALUE` is `derived off`.)
    **Verify the label landed** — re-read each record's labels (`gh issue view {n} --json labels`)
    after the add; a missing `bot:parked` is retried once. If it is still missing, the park has no
    lock the `[pr-unarmed]` sweep (`_shared/github-pr-scan.md`) would honor, so fall back to the one

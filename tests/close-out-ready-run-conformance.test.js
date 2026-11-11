@@ -1,7 +1,8 @@
 'use strict';
 // #5153 AC8 — close-out and the resume rule read the ready run. Pins (1) the close-out step-3
 // ordering Mark ready -> CI re-read -> confirmation gate, (2) the ready-run read named at every
-// other CI-after-undraft read site, (3) the journey's three reads. Live prose is the declared
+// other CI-after-undraft read site, (3) the journey's three reads, (4) the appendix's residual-risk
+// note on the unprobed draft-payload race. Live prose is the declared
 // contract here: these pins ARE the contract for #5153's prose.
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -85,7 +86,10 @@ const STEP1_FACTS = [
   [/\(`bin\/ready-run\.js`: `awaiting` reads `pending`/, 'step 1 maps awaiting to pending'],
   [/`red` or `draft-skip-without-ready-trigger` reads `failing`/, 'step 1 maps red and draft-skip to failing'],
   [/`read-failed` — or a non-zero exit or output with no `state` — stops this candidate as `stopped: CI unreadable`/, 'step 1 fails closed on an unreadable ready-run read'],
-  [/on a `DIRTY`\/`CONFLICTING` PR — step 2's read — `awaiting` and `draft-skip-without-ready-trigger` do not stop here but fall through to step 2/, 'step 1 applies the conflict-first rule'],
+  [/on a `DIRTY`\/`CONFLICTING` PR — step 2's read — `awaiting`, `draft-skip-without-ready-trigger` and/, 'step 1 applies the conflict-first rule'],
+  // An empty rollup's `pending` on a conflicting PR falls through too: a conflicting PR gets no runs,
+  // so stopping there would never reach step 2's update (Step 2.5's empty-rollup Conflict path).
+  [/an empty rollup's `pending` do not stop here but fall through to step 2/, 'step 1 lets an empty rollup on a conflicting PR fall through'],
 ];
 const CLOSE_OUT_FACTS = [
   [/`stopped: CI \{status\}`, `stopped: CI unreadable`, /, 'the Reporting list carries stopped: CI unreadable'],
@@ -102,6 +106,13 @@ const APPENDIX_FACTS = [
   [/not-yet-completed head run reads pending/, 'appendix keeps the pinned head-run clause'],
   [/an `awaiting` ready run pending, `draft-skip-without-ready-trigger` red/, 'appendix maps awaiting and draft-skip'],
   [/on a `DIRTY`\/`CONFLICTING` PR those two take Step 2\.5's conflict-first rule/, 'appendix applies the conflict-first rule'],
+];
+// The unprobed draft-payload race is recorded as residual risk, with its candidate mitigation.
+const RATIONALE_FACTS = [
+  [/\*\*Residual risk: a draft-payload run after ready \(unprobed, #5153\)\.\*\*/, 'appendix records the residual-risk bullet'],
+  [/a `synchronize` run created after `readySince` whose payload still says `draft: true`/, 'appendix names the race'],
+  [/close-out's update-then-Mark-ready sequence is the likeliest trigger/, 'appendix names the likeliest trigger'],
+  [/once a live probe confirms the race: exclude a post-ready run whose jobs all concluded `skipped`/, 'appendix names the probe-gated mitigation'],
 ];
 const JOURNEY_FACTS = [
   [/"Green" means Step 2\.5's three reads agree/, 'journey says three reads'],
@@ -122,6 +133,7 @@ const REGIONS = [
   ['close-out reporting list', () => collapse(CLOSE_OUT), CLOSE_OUT_FACTS],
   ['resume-confirmation', () => collapse(RESUME), RESUME_FACTS],
   ['appendix Resume-to-merge', () => collapse(sectionOf(APPENDIX, '## Resume-to-merge')), APPENDIX_FACTS],
+  ['appendix Rationale notes', () => collapse(sectionOf(APPENDIX, '## Rationale notes')), RATIONALE_FACTS],
   ['journey', () => collapse(JOURNEY), JOURNEY_FACTS],
 ];
 

@@ -38,6 +38,7 @@ const SECTIONS = [
     [/the gate parks it as `draft-skip-without-ready-trigger`/, 'rule: a draft skip without ready_for_review parks'],
     [/only while that workflow has no post-ready run/, 'rule: a later real CI run clears the draft-skip park'],
     [/The fix is adding `ready_for_review` to `types`/, 'rule: the one-line fix'],
+    [/naming it `\{file\} unparsed`; the fix is a plain `on:` block/, 'unparsed: the park names the file and the fix is a plain on: block'],
   ]],
   ['## Pending-status pattern', [
     [/commit status to `pending`[\s\S]*?flips it to `success` as its first step/, 'pending status: pending at draft time, success first at ready'],

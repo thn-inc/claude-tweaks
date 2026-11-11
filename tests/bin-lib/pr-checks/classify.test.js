@@ -371,6 +371,17 @@ test('guard (b): a path @ref suffix is dropped, a different path never matches',
   assert.deepEqual(r.awaitingReadyRun, [W]);
 });
 
+test('guard (b1): a workflow file with `@` in its name matches its own run path, with or without an @ref suffix', () => {
+  const AT = '.github/workflows/ci@v2.yml';
+  const at = (headRuns) => readyRunVerdict({ readySince: READY, readyWorkflows: [AT], headRuns });
+  assert.deepEqual(at([rest(AT, 'pull_request', AFTER, 'completed', 'success', 30)]), { awaiting: [], pending: [], failing: [] });
+  assert.deepEqual(at([rest(`${AT}@refs/pull/7/merge`, 'pull_request', AFTER, 'completed', 'failure', 31)]).failing, [{ name: 'ci', url: 'https://github.example/runs/31' }]);
+  // A different file sharing the `@`-prefix never matches, nor does the bare name before the `@`.
+  assert.deepEqual(at([rest('.github/workflows/ci@v2.yml2', 'pull_request', AFTER, 'completed', 'success', 32)]).awaiting, [AT]);
+  assert.deepEqual(at([rest('.github/workflows/ci', 'pull_request', AFTER, 'completed', 'success', 33)]).awaiting, [AT]);
+  assert.equal(classifyRollup({ rollup: GREEN_ROLLUP, headRefOid: HEAD, localHead: HEAD, hasPrCi: true, headRuns: [rest(AT, 'pull_request', AFTER, 'completed', 'success', 34)], readySince: READY, readyWorkflows: [AT] }).state, 'green');
+});
+
 test('guard (b2): a gh run list row (no path) never counts, even with a matching name and post-ready createdAt', () => {
   const row = { name: 'ci', workflowName: 'ci', status: 'completed', conclusion: 'success', event: 'pull_request', createdAt: AFTER, databaseId: 4, url: 'u' };
   const r = ready([row]);

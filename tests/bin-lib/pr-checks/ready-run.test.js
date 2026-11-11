@@ -66,9 +66,10 @@ function timelineBody(nodes) {
 }
 
 // opts: ready (nodes, default one READY event), timeline (fn replacing the
-// graphql answer), runs (rows or fn), total (total_count), contents (fn).
+// graphql answer), runs (rows or fn), total (total_count), contents (fn),
+// commit (fn answering `commits/{sha}`).
 function fakeGh(opts, calls) {
-  const { ready = [{ createdAt: READY }], timeline, runs = [], total, contents } = opts;
+  const { ready = [{ createdAt: READY }], timeline, runs = [], total, contents, commit } = opts;
   return (args) => {
     calls.push(args);
     if (args[1] === 'graphql') return timeline ? timeline(args) : timelineBody(ready);
@@ -77,6 +78,7 @@ function fakeGh(opts, calls) {
       return JSON.stringify({ total_count: total ?? runs.length, workflow_runs: runs });
     }
     if (typeof args[1] === 'string' && args[1].includes('/contents/') && contents) return contents(args);
+    if (typeof args[1] === 'string' && args[1].includes('/commits/') && commit) return commit(args);
     throw new Error('unexpected ' + args.join(' '));
   };
 }
@@ -209,17 +211,37 @@ test('readReadyRun: a ready event with neither local objects nor the contents AP
   assert.equal(h.ghCalls.filter(isRunsCall).length, 0);
 });
 
-test('readReadyRun: a contents-API 404 on the workflows listing is no workflows, never read-failed', () => {
-  const h = harness({ git: throwingGit, gh: { contents: () => { throw gh404('Not Found'); } } });
+test('readReadyRun: a contents-API 404 on the workflows listing at a commit that reads back is no workflows, never read-failed', () => {
+  const h = harness({ git: throwingGit, gh: { contents: () => { throw gh404('Not Found'); }, commit: () => JSON.stringify({ sha: SHA }) } });
   const read = readReadyRun(h.deps, ARGS);
   assert.deepEqual(read, { readySince: READY, workflows: [], headRuns: [] });
   assert.equal(readyRunState(read).state, 'not-applicable');
   assert.equal(h.ghCalls.filter(isRunsCall).length, 0);
+  // The confirming read is one GET path through the same seam, no -f/-F.
+  assert.deepEqual(h.ghCalls.filter((a) => typeof a[1] === 'string' && a[1].includes('/commits/')), [['api', `repos/o/r/commits/${SHA}`]]);
   // A 404 naming the ref is an unresolved input, not an absent directory: fail closed.
   const noCommit = harness({ git: throwingGit, gh: { contents: () => { throw gh404(`No commit found for the ref ${SHA}`); } } });
   const env = resolveReadyRun(noCommit.deps, ARGS);
   assert.equal(env.state, 'read-failed');
   assert.match(env.reason, /^workflows unreadable at a{40}: local objects \(fatal: not a tree object\); contents API \(gh: No commit found for the ref a{40} \(HTTP 404\)\) — run: git fetch origin pull\/7\/head$/);
+});
+
+test('readReadyRun: a contents-API directory 404 whose commit does not read back is read-failed, never no workflows (private repo, no Contents access)', () => {
+  const commitAnswers = [
+    ['commit 404', () => { throw Object.assign(gh404('Not Found'), { message: `Command failed: gh api repos/o/r/commits/${SHA}\ngh: Not Found (HTTP 404)\n` }); }, /\(gh: Not Found \(HTTP 404\)\)/],
+    ['commit throw', () => { throw Object.assign(new Error('Command failed: gh api\ngh: HTTP 502\n'), { status: 1, stderr: 'gh: HTTP 502\n' }); }, /\(gh: HTTP 502\)/],
+    ['commit body unparseable', () => 'not json', /unconfirmed \(.+\)/],
+    ['commit body names another sha', () => JSON.stringify({ sha: 'b'.repeat(40) }), /\(commit read returned no matching sha\)/],
+  ];
+  for (const [label, commit, cause] of commitAnswers) {
+    const h = harness({ git: throwingGit, gh: { contents: () => { throw gh404('Not Found'); }, commit } });
+    const env = resolveReadyRun(h.deps, ARGS);
+    assert.equal(env.state, 'read-failed', label);
+    assert.ok(env.reason.startsWith(`workflows unreadable at ${SHA}: local objects (fatal: not a tree object); contents API (.github/workflows Not Found and commit ${SHA} unconfirmed `), `${label}: ${env.reason}`);
+    assert.match(env.reason, cause, label);
+    assert.ok(env.reason.endsWith(' — run: git fetch origin pull/7/head'), label);
+    assert.equal(h.ghCalls.filter(isRunsCall).length, 0, label);
+  }
 });
 
 test('readReadyRun: a failed timeline read is read-failed unless the local workflows show no requirement', () => {

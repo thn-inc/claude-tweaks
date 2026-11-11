@@ -632,7 +632,8 @@ const BULLET_CLAUSES = {
   ],
   awaiting: [
     ['awaiting is pending', '`awaiting` → **pending**'],
-    ['awaiting names the workflows', '`awaitingReadyRun` names the workflows with no finished run since ready'],
+    // Only a workflow with no post-ready run at all is awaiting; a started-but-unfinished one is `pending`.
+    ['awaiting names the workflows', '`awaitingReadyRun` names the workflows with no run since ready'],
   ],
   passthrough: [
     ['met and not-applicable change nothing', '`met`, `not-applicable` → no change'],
@@ -645,7 +646,8 @@ const PARK_CLAUSES = [
   ['template tail is the resume placeholder', 'on PR #{n}. {resume}`'],
   ['resume maps the draft-skip reason', '`{resume}`: `Resume once green.`; for draft-skip-without-ready-trigger, `Resume once its workflow is fixed or a post-ready run lands.`'],
   ['REASON names the draft-skip phrase', 'or the pending-timeout or draft-skip phrase'],
-  ['timeout appends the awaiting files', 'A timeout whose last ready-run read named `awaitingReadyRun` appends ` (no run since ready: {files})`.'],
+  ['timeout appends the awaiting files', 'A timeout whose last ready-run read named `awaitingReadyRun` appends ` (no run since ready: {files})`'],
+  ['timeout names the unparsed files', '; `unparsed`: ` ({files} unparsed: _shared/ci-skips-drafts.md)`.'],
 ];
 
 function assertReadyRunStep25(section, group) {
@@ -753,6 +755,9 @@ test('AC3.1 (prose): red still wins — the ready-run bullet\'s awaiting row is 
   assert.ok(!/`awaiting` → \*\*red\*\*/.test(bullet), 'awaiting never reads red');
   const flipped = mutate(section, '`awaiting` → **pending**', '`awaiting` → **green**');
   assert.throws(() => assertReadyRunStep25(flipped, 'awaiting'), { message: /ready-run bullet missing awaiting is pending/ });
+  // The pre-fix overstatement ("no finished run") goes red: a started run is pending, not awaiting.
+  const finished = mutate(section, 'with no run since ready', 'with no finished run since ready');
+  assert.throws(() => assertReadyRunStep25(finished, 'awaiting'), { message: /ready-run bullet missing awaiting names the workflows/ });
 });
 
 function assertReadFailedRoute(section) {

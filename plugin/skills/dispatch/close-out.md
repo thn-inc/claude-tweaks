@@ -37,8 +37,8 @@ touching shared state runs one member at a time.
    read (a not-yet-completed head run is `pending`, not green), plus Step 2.5's ready-run read
    (`bin/ready-run.js`: `awaiting` reads `pending`, `red` or `draft-skip-without-ready-trigger` reads
    `failing`, and `read-failed` — or a non-zero exit or output with no `state` — stops this candidate
-   as `stopped: CI unreadable`; on a `DIRTY`/`CONFLICTING` PR — step 2's read — `awaiting` and
-   `draft-skip-without-ready-trigger` do not stop here but fall through to step 2, since a
+   as `stopped: CI unreadable`; on a `DIRTY`/`CONFLICTING` PR — step 2's read — `awaiting`,
+   `draft-skip-without-ready-trigger` and an empty rollup's `pending` do not stop here but fall through to step 2, since a
    conflicting PR gets no workflow run, per Step 2.5's conflict-first rule) — the identical read `resume-confirmation.md`'s own live-value-
    sourcing paragraph already performs for its confirmation, reused rather than re-implemented.
    `failing`: report the failure and stop for this candidate — do not treat a stale prior green as

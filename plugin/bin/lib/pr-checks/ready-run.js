@@ -10,7 +10,8 @@
 //      file or run is read — so a head missing from the local object store can
 //      never demote that verdict;
 //   2. the workflow files at `sha`: local objects first (`git ls-tree` +
-//      `git cat-file`), else the REST contents API at that ref;
+//      `git cat-file`), else the REST contents API at that ref (a directory 404
+//      is "no workflows" only once `commits/{sha}` reads back);
 //   3. the REST runs listing for `sha` (`actions/runs?head_sha=`), only when
 //      readyRequirement (merge-verification.js) names a workflow to wait on.
 // readyRunState then classifies with classify.js's readyRunVerdict.
@@ -87,15 +88,29 @@ function isPathNotFound(e) {
   }
 }
 
-// Throws on any failure but a missing-directory 404.
+// A directory `Not Found` is also what a token without Contents access gets on a
+// private repo, so it means "no workflows" only once the commit itself reads back
+// (same seam, a GET path, no -f/-F). Any other answer throws: fail closed.
+function confirmCommit(deps, target, sha) {
+  let body;
+  try {
+    body = JSON.parse(deps.gh(['api', `repos/${target.owner}/${target.repo}/commits/${sha}`]));
+  } catch (e) {
+    throw new Error(`.github/workflows Not Found and commit ${sha} unconfirmed (${errText(e)})`);
+  }
+  if (!body || body.sha !== sha) throw new Error(`.github/workflows Not Found and commit ${sha} unconfirmed (commit read returned no matching sha)`);
+}
+
+// Throws on any failure but a missing-directory 404 at a commit that reads back.
 function readContentsWorkflows(deps, target, sha) {
   const at = (p) => `repos/${target.owner}/${target.repo}/contents/${p.split('/').map(encodeURIComponent).join('/')}?ref=${sha}`;
   let listing;
   try {
     listing = JSON.parse(deps.gh(['api', at('.github/workflows')]));
   } catch (e) {
-    if (isPathNotFound(e)) return []; // the head carries no .github/workflows: no workflows to wait on
-    throw e;
+    if (!isPathNotFound(e)) throw e;
+    confirmCommit(deps, target, sha);
+    return []; // the head carries no .github/workflows: no workflows to wait on
   }
   if (!Array.isArray(listing)) throw new Error('contents listing is not a list');
   const workflows = [];

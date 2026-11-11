@@ -939,6 +939,39 @@ test('USAGE names awaitingReadyRun? among the envelope keys', () => {
   assert.match(h.out.join(''), /prints \{[^}]*awaitingReadyRun\?[^}]*\}/);
 });
 
+// docs/plugin-structure.md's pr-checks.js row restates USAGE's envelope (`logged?` is described
+// separately there) and must name the ready-run read that fills `awaitingReadyRun`.
+function docsRowDrift(row, usage) {
+  const keys = (s) => {
+    const m = /prints \{([^}]*)\}/.exec(s);
+    return m ? m[1].replace(' (--run only)', '').split(', ').filter((k) => k !== 'logged?') : null;
+  };
+  const problems = [];
+  if (!row) return ['pr-checks.js row missing'];
+  if (JSON.stringify(keys(row)) !== JSON.stringify(keys(usage))) problems.push(`envelope ${JSON.stringify(keys(row))} != USAGE ${JSON.stringify(keys(usage))}`);
+  if (!row.includes('the ready-run read (`plugin/bin/lib/pr-checks/ready-run.js`')) problems.push('ready-run read not named');
+  return problems;
+}
+
+test('docs/plugin-structure.md: the pr-checks.js row carries USAGE\'s envelope and names the ready-run read', () => {
+  const { readText } = require('../../helpers/read-skill');
+  const docs = readText(path.join(__dirname, '..', '..', '..', 'docs', 'plugin-structure.md'));
+  const { main } = fixture(null);
+  const h = makeDeps(main);
+  assert.equal(run(['--help'], h.deps), 0);
+  const usage = h.out.join('');
+  const row = docs.split('\n').find((l) => l.startsWith('node plugin/bin/pr-checks.js '));
+  assert.deepEqual(docsRowDrift(row, usage), []);
+  // Controls: the pre-fix envelope (no awaitingReadyRun?) and a row without the ready-run read each go red alone.
+  const noKey = row.replace('pending, awaitingReadyRun?, headRefOid', 'pending, headRefOid');
+  assert.notEqual(noKey, row);
+  assert.equal(docsRowDrift(noKey, usage).length, 1);
+  assert.match(docsRowDrift(noKey, usage)[0], /^envelope /);
+  const noRead = row.replace('the ready-run read (`plugin/bin/lib/pr-checks/ready-run.js`', 'a read');
+  assert.notEqual(noRead, row);
+  assert.deepEqual(docsRowDrift(noRead, usage), ['ready-run read not named']);
+});
+
 test('the pending gate-line phrase "no run since ready" appears in _shared/pr-check-gate.md (prose twin of gateEntry)', () => {
   const { readText } = require('../../helpers/read-skill');
   const prose = readText(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', '_shared', 'pr-check-gate.md'));
