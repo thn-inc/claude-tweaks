@@ -139,6 +139,225 @@ function hasPullRequestCi(repoRoot, { readWorkflows = readWorkflowFiles } = {}) 
   }
 }
 
+// --- Workflow reader: PR trigger `types:`, draft reference, unparsed (#5153) ---
+//
+// The merge gate must wait for the CI run `gh pr ready` starts, but only when a
+// workflow actually runs on ready_for_review. This reader answers, per workflow
+// file and line-based like workflowHasPullRequestTrigger (no YAML library):
+// which activity types its pull_request/pull_request_target triggers fire on,
+// and whether any job `if:` references the PR's draft flag.
+//
+// Two failure directions, both deliberate. A miss — a trigger or draft guard
+// that lives in a reusable workflow (`uses:`) this reader never opens — leaves
+// today's behaviour (no ready-run wait). A false hit (a `types:` value this
+// reader cannot read, reported as `unparsed`) waits for a ready run and parks
+// with a named reason (spec Gotcha 3) — never silently read as "no requirement"
+// and never collapsed into the default types.
+
+// GitHub's default activity types for pull_request / pull_request_target.
+const DEFAULT_PR_TYPES = Object.freeze(['opened', 'synchronize', 'reopened']);
+
+const DRAFT_REF = /\bgithub\.event\.pull_request\.draft\b(?!\w)/;
+const TYPE_ITEM = /^[A-Za-z_]+$/;
+const BLOCK_ITEM = /^['"]?[A-Za-z_]+['"]?$/;
+
+function emptyWorkflowRead() {
+  return { prTrigger: false, types: [], typesDeclared: false, draftReference: false, unparsed: false };
+}
+
+// Entries {key, value} sitting directly inside the outer `{ }` of a one-line
+// flow mapping, plus whether the braces balanced on this line. Commas and
+// colons inside nested braces/brackets or quotes never split an entry.
+function flowMappingEntries(s) {
+  const entries = [];
+  let depth = 0;
+  let bracket = 0;
+  let quote = null;
+  let cur = '';
+  let key = null;
+  const flush = () => {
+    if (key !== null) entries.push({ key, value: cur.trim() });
+    key = null;
+    cur = '';
+  };
+  for (const ch of s) {
+    if (quote) {
+      cur += ch;
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"') { quote = ch; cur += ch; continue; }
+    if (ch === '{') {
+      depth++;
+      if (depth === 1) cur = ''; else cur += ch;
+      continue;
+    }
+    if (ch === '}') {
+      if (depth === 1) flush(); else cur += ch;
+      depth--;
+      continue;
+    }
+    if (ch === '[') bracket++;
+    else if (ch === ']') bracket--;
+    if (depth === 1 && bracket === 0) {
+      if (ch === ',') { flush(); continue; }
+      if (ch === ':' && key === null) { key = stripQuotes(cur); cur = ''; continue; }
+    }
+    cur += ch;
+  }
+  flush();
+  return { entries, balanced: depth === 0 };
+}
+
+// Items of a one-line `[a, b]`; null when any item is not a plain identifier.
+function readFlowItems(inner) {
+  const items = inner.split(',').map(stripQuotes).filter((x) => x !== '');
+  return items.every((x) => TYPE_ITEM.test(x)) ? items : null;
+}
+
+// The effective types of a PR trigger whose value sits on the trigger's own
+// line (scalar-less key value or a flow-mapping value): {} / null / ~ / empty
+// are the defaults; a value mentioning `types` is read only from a one-line
+// `types: [..]`; a value without `types` declares none (defaults).
+function readInlineTriggerValue(value) {
+  const v = stripComment(value);
+  if (v === '' || v === '{}' || v === 'null' || v === '~') return { types: [...DEFAULT_PR_TYPES], declared: false, unparsed: false };
+  if (!/\btypes\b/.test(v)) {
+    return v.startsWith('{')
+      ? { types: [...DEFAULT_PR_TYPES], declared: false, unparsed: false }
+      : { types: [], declared: false, unparsed: true };
+  }
+  const m = /\btypes\s*:\s*\[([^\][]*)\]/.exec(v);
+  const items = m ? readFlowItems(m[1]) : null;
+  return items ? { types: items, declared: true, unparsed: false } : { types: [], declared: true, unparsed: true };
+}
+
+// The effective types of a block-form trigger key at lines[at] (indent
+// `indent`, text after the colon `rest`): scan its sub-block for a `types:` key
+// at the sub-block's first indent.
+function readBlockTrigger(lines, at, indent, rest) {
+  if (stripComment(rest) !== '') return readInlineTriggerValue(rest);
+  let subIndent = null;
+  for (let j = at + 1; j < lines.length; j++) {
+    const line = lines[j];
+    if (!line.trim() || line.trim().startsWith('#')) continue;
+    const ind = /^(\s*)/.exec(line)[1].length;
+    if (ind <= indent) break;
+    if (subIndent === null) subIndent = ind;
+    if (ind !== subIndent) continue;
+    const km = /^\s*(?:types|'types'|"types")\s*:(.*)$/.exec(line);
+    if (!km) continue;
+    const val = stripComment(km[1]);
+    if (val.startsWith('[')) {
+      const items = val.endsWith(']') ? readFlowItems(val.slice(1, -1)) : null;
+      return items ? { types: items, declared: true, unparsed: false } : { types: [], declared: true, unparsed: true };
+    }
+    if (val !== '') {
+      return TYPE_ITEM.test(val)
+        ? { types: [val], declared: true, unparsed: false }
+        : { types: [], declared: true, unparsed: true };
+    }
+    // Empty value: `- item` lines at an indent >= the key's (the indentless
+    // `types:\n- opened` form included).
+    const items = [];
+    for (let k = j + 1; k < lines.length; k++) {
+      const l = lines[k];
+      if (!l.trim() || l.trim().startsWith('#')) continue;
+      const lind = /^(\s*)/.exec(l)[1].length;
+      const im = /^\s*-\s+(.*)$/.exec(l);
+      if (lind < ind || !im) break;
+      const item = stripComment(im[1]);
+      if (!BLOCK_ITEM.test(item)) return { types: [], declared: true, unparsed: true };
+      items.push(stripQuotes(item));
+    }
+    return items.length > 0
+      ? { types: items, declared: true, unparsed: false }
+      : { types: [], declared: true, unparsed: true };
+  }
+  return { types: [...DEFAULT_PR_TYPES], declared: false, unparsed: false };
+}
+
+// Never throws; a non-string or empty input reads as all-false.
+function readPullRequestWorkflow(text) {
+  const out = emptyWorkflowRead();
+  if (typeof text !== 'string' || !text) return out;
+  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+  const lines = text.split(/\r?\n/);
+  out.draftReference = lines.some((l) => !l.trim().startsWith('#') && DRAFT_REF.test(stripComment(l)));
+
+  const triggers = [];
+  const onIdx = lines.findIndex((l) => /^(?:on|'on'|"on")\s*:/.test(l));
+  if (onIdx >= 0) {
+    const rest = stripComment(/^(?:on|'on'|"on")\s*:(.*)$/.exec(lines[onIdx])[1]);
+    if (rest) {
+      if (rest.startsWith('[')) {
+        if (rest.replace(/^\[|\]$/g, '').split(',').map(stripQuotes).some((k) => PR_TRIGGERS.has(k))) {
+          triggers.push({ types: [...DEFAULT_PR_TYPES], declared: false, unparsed: false });
+        }
+      } else if (rest.startsWith('{')) {
+        const { entries, balanced } = flowMappingEntries(rest);
+        for (const e of entries) {
+          if (PR_TRIGGERS.has(e.key)) triggers.push(readInlineTriggerValue(e.value));
+        }
+        if (!balanced && triggers.length > 0) triggers[triggers.length - 1].unparsed = true;
+      } else if (PR_TRIGGERS.has(stripQuotes(rest))) {
+        triggers.push({ types: [...DEFAULT_PR_TYPES], declared: false, unparsed: false });
+      }
+    } else {
+      let triggerIndent = null;
+      for (let j = onIdx + 1; j < lines.length; j++) {
+        const line = lines[j];
+        if (!line.trim() || line.trim().startsWith('#')) continue;
+        const indent = /^(\s*)/.exec(line)[1].length;
+        if (indent === 0) break;
+        if (triggerIndent === null) triggerIndent = indent;
+        if (indent !== triggerIndent) continue;
+        const item = /^\s*-\s*(['"]?[A-Za-z_]+['"]?)\s*(?:#.*)?$/.exec(line);
+        if (item && PR_TRIGGERS.has(stripQuotes(item[1]))) {
+          triggers.push({ types: [...DEFAULT_PR_TYPES], declared: false, unparsed: false });
+          continue;
+        }
+        const key = /^\s*(['"]?[A-Za-z_]+['"]?)\s*:(.*)$/.exec(line);
+        if (key && PR_TRIGGERS.has(stripQuotes(key[1]))) triggers.push(readBlockTrigger(lines, j, indent, key[2]));
+      }
+    }
+  }
+
+  if (triggers.length === 0) return out;
+  out.prTrigger = true;
+  const union = new Set();
+  for (const t of triggers) {
+    for (const ty of t.types) union.add(ty);
+    if (t.declared) out.typesDeclared = true;
+    if (t.unparsed) out.unparsed = true;
+  }
+  out.types = [...union];
+  return out;
+}
+
+// Classifies readPullRequestWorkflow rows ({ file, ...result }, input order,
+// PR-triggered rows only): a workflow that fires on ready_for_review — or whose
+// `types:` could not be read — needs the ready run's CI waited on; one that
+// references the draft flag without firing on ready_for_review skips drafts
+// with nothing re-running at ready. `unparsed` rows are listed in both
+// readyWorkflows and unparsed so the caller can name the reason.
+function readyRequirement(workflows) {
+  const out = { readyWorkflows: [], draftSkipWithoutReadyTrigger: [], unparsed: [] };
+  if (!Array.isArray(workflows)) return out;
+  for (const w of workflows) {
+    if (!w || !w.prTrigger) continue;
+    if (w.unparsed) {
+      out.readyWorkflows.push(w.file);
+      out.unparsed.push(w.file);
+    } else if (Array.isArray(w.types) && w.types.includes('ready_for_review')) {
+      out.readyWorkflows.push(w.file);
+    } else if (w.draftReference) {
+      out.draftSkipWithoutReadyTrigger.push(w.file);
+    }
+  }
+  return out;
+}
+
 // The repository's default branch — skills/_shared/integration-branch.md's
 // rank-5 GitHub-default half, in code: gh's defaultBranchRef, else the local
 // origin/HEAD symref (what a clone records), else null. Never throws.
@@ -219,5 +438,6 @@ function deriveMergeVerification(repoRoot, deps = {}) {
 // real lookup on its own.
 module.exports = {
   workflowHasPullRequestTrigger, readWorkflowFiles, hasPullRequestCi,
+  DEFAULT_PR_TYPES, readPullRequestWorkflow, readyRequirement,
   deriveMergeVerification,
 };
