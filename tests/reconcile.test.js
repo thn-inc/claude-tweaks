@@ -1859,6 +1859,41 @@ test('#4933: a post-merge unknown-host failure carries its refusal detail into s
   assert.deepEqual(bare.skipped.filter((s) => s.check === 'post-merge'), [{ check: 'post-merge', reason: 'not-github-issues' }]);
 });
 
+test('#4794: a release unknown-host failure carries its refusal detail into skipped and the summary line', async () => {
+  const detail = 'origin host git.corp.invalid is not a known GitHub host — if it is GitHub Enterprise, export GH_HOST=git.corp.invalid';
+  const releaseMod = require('../plugin/bin/lib/reconcile/release-merged');
+  const { r } = await reconcileWithAsyncMerge(['release'], {
+    afterStubs: () => { releaseMod.releaseMerged = () => ({ released: [], skipped: [], failure: 'unknown-host', detail }); },
+  });
+  assert.deepEqual(r.skipped.filter((s) => s.check === 'release'), [{ check: 'release', reason: 'unknown-host', detail }]);
+  const line = formatSummary(r).split('\n').find((l) => l.startsWith('skipped: release'));
+  assert.equal(line, `skipped: release — unknown-host (${detail})`);
+  const { r: bare } = await reconcileWithAsyncMerge(['release'], {
+    afterStubs: () => { releaseMod.releaseMerged = () => ({ released: [], skipped: [], failure: 'no-repo-slug' }); },
+  });
+  assert.deepEqual(bare.skipped.filter((s) => s.check === 'release'), [{ check: 'release', reason: 'no-repo-slug' }]);
+});
+
+test('#4794: a remote-prune unknown-host failure carries its refusal detail into skipped', async () => {
+  const detail = 'origin host git.corp.invalid is not a known GitHub host — if it is GitHub Enterprise, export GH_HOST=git.corp.invalid';
+  const pruneMod = require('../plugin/bin/lib/reconcile/prune-remote');
+  const originalPrune = pruneMod.pruneRemote;
+  try {
+    const { r } = await reconcileWithAsyncMerge(['remote-prune'], {
+      afterStubs: () => { pruneMod.pruneRemote = () => ({ entries: [], failure: 'unknown-host', detail }); },
+    });
+    assert.deepEqual(r.skipped.filter((s) => s.check === 'remote-prune'), [{ check: 'remote-prune', reason: 'unknown-host', detail }]);
+    assert.equal(formatSummary(r).split('\n').find((l) => l.startsWith('skipped: remote-prune')), `skipped: remote-prune — unknown-host (${detail})`);
+    // The defensive string-screen path returns the reason with no detail: the entry stays { check, reason }.
+    const { r: bare } = await reconcileWithAsyncMerge(['remote-prune'], {
+      afterStubs: () => { pruneMod.pruneRemote = () => ({ entries: [], failure: 'unknown-host' }); },
+    });
+    assert.deepEqual(bare.skipped.filter((s) => s.check === 'remote-prune'), [{ check: 'remote-prune', reason: 'unknown-host' }]);
+  } finally {
+    pruneMod.pruneRemote = originalPrune;
+  }
+});
+
 test('AC1 (#4599): a pass that does not request post-merge or archive leaves postMerge null and does not run it', async () => {
   const { r, order } = await reconcileWithAsyncMerge(['reap']);
   assert.deepEqual(order, []);
@@ -2201,6 +2236,27 @@ test('formatSummary: a skipped entry\'s detail renders in parentheses after the 
   assert.strictEqual(formatSummary({ ...base, skipped: [{ check: 'post-merge', reason: 'not-github-issues' }] }), 'skipped: post-merge — not-github-issues');
 });
 
+test('#4794: formatSummary renders an unknown-host detail whole — a real SSH-origin refusal is over 300 chars and keeps its Enterprise advice', () => {
+  const { gateOriginRepo } = require('../plugin/bin/lib/repo-resolve');
+  const base = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, console: null };
+  const detail = gateOriginRepo('git@git.corp.invalid:o/r.git', { env: {}, readFile: () => { throw new Error('ENOENT'); } }).refusal;
+  assert.ok(detail.length > 300, `the SSH refusal must exceed the 300-char bound, got ${detail.length}`);
+  const oneLineDetail = detail.replace(/\s+/g, ' ').trim();
+  for (const check of ['release', 'post-merge', 'remote-prune']) {
+    const line = formatSummary({ ...base, skipped: [{ check, reason: 'unknown-host', detail }] });
+    assert.strictEqual(line, `skipped: ${check} — unknown-host (${oneLineDetail})`);
+    assert.ok(!line.includes('…'), line);
+  }
+});
+
+test('#4794: formatSummary still truncates a long detail whose reason is not unknown-host', () => {
+  const base = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, console: null };
+  const detail = 'x'.repeat(400);
+  const line = formatSummary({ ...base, skipped: [{ check: 'release', reason: 'gh-failure', detail }] });
+  assert.ok(line.includes('…'), line);
+  assert.ok(!line.includes(detail), line);
+});
+
 test('formatSummary: a skipped entry\'s multi-line detail renders flattened on one line (#4933)', () => {
   const base = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, console: null };
   const detail = 'origin host git.corp.invalid is not known\n  export GH_HOST=git.corp.invalid\r\nthen re-run';
@@ -2282,6 +2338,25 @@ test('formatSummary: parents left open and step skips render on their own lines,
     'skipped: 2 merged runs (marker-write-failed 1, error 1)',
   ].join('\n'));
   assert.strictEqual(formatSummary({ ...base, postMerge: [{ runDir: 'r4', pr: 15, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 0 }] }), 'post-merge steps run: 1 merged run');
+});
+
+test('formatSummary: a taken-over holder\'s GitHub changes render on their own line; its run still folds into the in-flight skip (#4797)', () => {
+  const { CLAIM_LOST_DETAIL } = require('../plugin/bin/lib/reconcile/post-merge');
+  const base = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, console: null, skipped: null };
+  const lost = { runDir: 'r1', pr: 12, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL, parentsClosed: 1, recordsClosed: [8] };
+  assert.strictEqual(formatSummary({ ...base, postMerge: [lost] }), [
+    'post-merge steps in run(s) whose claim another pass took over had already changed GitHub: PR #12 closed 1 parent record(s) below the oversight floor, closed #8',
+    'skipped: 1 merged run (in-flight 1)',
+  ].join('\n'));
+  // The line sits after Step 4.0b's lines and before the aggregated skip line.
+  const open = { runDir: 'r3', pr: 14, action: 'skipped', reason: 'marker-write-failed', parentsClosed: 0, parentFailures: [{ parent: 200, reason: 'gh-failed' }] };
+  assert.strictEqual(formatSummary({ ...base, postMerge: [lost, open] }), [
+    "post-merge Step 4.0b left parent record(s) open: #200 (gh-failed, PR #14) — tidy's parent-gate backstop recovers them",
+    'post-merge steps in run(s) whose claim another pass took over had already changed GitHub: PR #12 closed 1 parent record(s) below the oversight floor, closed #8',
+    'skipped: 2 merged runs (in-flight 1, marker-write-failed 1)',
+  ].join('\n'));
+  // A superseded holder that changed nothing keeps today's single skip line.
+  assert.strictEqual(formatSummary({ ...base, postMerge: [{ runDir: 'r2', pr: 13, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL }] }), 'skipped: 1 merged run (in-flight 1)');
 });
 
 test('formatSummary: a repaired origin/HEAD renders inline (#3132)', () => {

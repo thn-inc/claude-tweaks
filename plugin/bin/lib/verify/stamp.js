@@ -32,7 +32,7 @@ const SHA_RE = /^[0-9a-f]{40}$/;
 // rule appendEvent states in bin/lib/hooks/context.js).
 function composeStamp({
   report, scope, fullSha, base, changedFiles, suitesRun, flakyRetried, reportPath, at, baseline = null,
-  preExisting = null, generatedExempt = null,
+  preExisting = null, generatedExempt = null, ci = null,
 }) {
   const stamp = {
     sha: report.sha,
@@ -64,6 +64,12 @@ function composeStamp({
   // #2987: the declared-generated paths that were dirty at stamp time —
   // auditable record of what the dirty-gate exemption actually waived.
   if (generatedExempt !== null) stamp.generatedExempt = generatedExempt;
+  // #4347: present only when a suite's verdict came from the PR's CI job on
+  // this sha ({suite: {runId, runUrl}}) — a local pass carries neither key.
+  if (ci !== null) {
+    stamp.source = 'ci';
+    stamp.ci = ci;
+  }
   return stamp;
 }
 
@@ -128,6 +134,11 @@ function readStamp(gitDir, fsImpl = fs) {
     // #3043/#3129's guards above).
     if (parsed.generatedExempt !== undefined
       && (!Array.isArray(parsed.generatedExempt) || parsed.generatedExempt.some((p) => typeof p !== 'string'))) return null;
+    // #4347: `source` is written only as "ci", always beside a `ci` object —
+    // any other shape is one the runner did not write, read as absent.
+    if (parsed.source !== undefined || parsed.ci !== undefined) {
+      if (parsed.source !== 'ci' || parsed.ci === null || typeof parsed.ci !== 'object' || Array.isArray(parsed.ci)) return null;
+    }
     return parsed;
   }
   let bare;

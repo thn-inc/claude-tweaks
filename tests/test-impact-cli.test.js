@@ -617,6 +617,9 @@ function traceFixture(tmp, runTests) {
   for (const dir of ['tests', 'lib', path.join('tools', 'test-impact')]) fs.mkdirSync(path.join(root, dir), { recursive: true });
   for (const dir of ['slots', 'tmp']) fs.mkdirSync(path.join(tmp, dir));
   fs.copyFileSync(path.join(ROOT, 'tools', 'run-tests.js'), path.join(root, 'tools', 'run-tests.js'));
+  // run-tests.js requires the slot-lock module relative to itself, so the fixture carries it too.
+  fs.mkdirSync(path.join(root, 'plugin', 'bin', 'lib'), { recursive: true });
+  fs.copyFileSync(path.join(ROOT, 'plugin', 'bin', 'lib', 'suite-slot.js'), path.join(root, 'plugin', 'bin', 'lib', 'suite-slot.js'));
   if (runTests) fs.writeFileSync(path.join(root, 'tools', 'run-tests.js'), runTests);
   fs.copyFileSync(path.join(ROOT, 'tools', 'test-impact', 'tracer.js'), path.join(root, 'tools', 'test-impact', 'tracer.js'));
   const fixture = path.join(ROOT, 'tests', 'fixtures', 'test-impact');

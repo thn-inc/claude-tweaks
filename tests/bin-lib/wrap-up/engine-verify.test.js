@@ -3498,6 +3498,34 @@ test('upstream-feedback check passes via gh issue view when recorded url resolve
   assert.strictEqual(row.result, 'pass');
 });
 
+test('#4794: upstream-feedback makes no gh call under a GH_HOST naming another host, and keeps today\'s argv otherwise', () => {
+  // runVerify runs every check and another one also probes `gh --version`, so this check's own probe is
+  // isolated by differencing against a baseline run (same env, upstream empty: the check skips before any
+  // gh call); its issue view is the only call carrying issue number 42.
+  const run = (env, upstream = [{ url: 'https://github.com/org/repo/issues/42' }]) => {
+    const runDir = makeTmpDir('verify-upstream-gh-host-');
+    writeExpectations(runDir, { version: 1, memory: [], upstream });
+    const calls = [];
+    const fakeGh = (args) => { calls.push(args); return args[0] === '--version' ? 'gh version 2.0.0' : JSON.stringify({ number: 42 }); };
+    const result = runVerify({ runDir, base: 'main', deps: { git: () => '', gh: fakeGh, gateDeps: { env } } });
+    return { calls, row: result.rows.find((r) => r.check === 'upstream-feedback') };
+  };
+  for (const GH_HOST of ['mine.example', ' ACME.ghe.com ']) {
+    const { calls, row } = run({ GH_HOST });
+    const baseline = run({ GH_HOST }, []).calls;
+    assert.deepStrictEqual(calls.filter((a) => a.includes('42')), [], `no issue view under GH_HOST=${JSON.stringify(GH_HOST)}`);
+    assert.deepStrictEqual(calls, baseline, 'no gh call at all from this check: the probe included, the run matches its upstream-empty baseline');
+    assert.strictEqual(row.result, 'unknown');
+    assert.match(row.detail, /check not run/);
+    assert.doesNotMatch(row.detail, /export GH_HOST/);
+  }
+  for (const env of [{}, { GH_HOST: '' }, { GH_HOST: '  ' }, { GH_HOST: 'GitHub.com.' }]) {
+    const { calls, row } = run(env);
+    assert.deepStrictEqual(calls.filter((a) => a.includes('42')), [['issue', 'view', '42', '--repo', 'org/repo', '--json', 'number']], `today's argv for env ${JSON.stringify(env)}`);
+    assert.strictEqual(row.result, 'pass');
+  }
+});
+
 test('worktree-removed check skips when deferred set includes worktree', () => {
   const runDir = makeTmpDir('verify-deferred-worktree-');
   writeExpectations(runDir, { version: 1, memory: [], upstream: [], deferred: ['worktree'] });

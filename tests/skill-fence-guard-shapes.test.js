@@ -101,7 +101,7 @@ const ALLOWLIST = [
   ratchet('_shared/label-bootstrap.md', 'gh-computed-input', 'LIVE=$(gh label list --search "$NAME" --json name,color,description -q ".[] | select(.name'),
   ratchet('_shared/label-bootstrap.md', 'gh-computed-input', 'gh label list --search "claude-tweaks:bootstrapped-v" --json name -q \'.[].name\' | grep "^c'),
   ratchet('_shared/pr-early-run-lifecycle.md', 'gh-computed-input', 'gh pr create --repo {host}/{owner}/{repo} --draft --base {integration-branch} --head {bran'),
-  ratchet('_shared/pr-first-merge.md', 'gh-computed-input', 'printf \'Parked by merge-verification (%s): %s on PR #%s. Resume once green.\\n\' "$VALUE" "$'),
+  ratchet('_shared/pr-first-merge.md', 'gh-computed-input', 'printf \'Parked by merge-verification (%s): %s on PR #%s. %s\\n\' "$VALUE" "$'),
   ratchet('_shared/record-queue-fetch.md', 'gh-computed-input', 'SESSION_ID="${CLAUDE_CODE_SESSION_ID:-}"'),
   ratchet('_shared/staged-patch.md', 'git-var-operand', 'git -C "$WORKTREE" apply --check "$STAGE_PATH"'),
   ratchet('_shared/trust-table.md', 'gh-computed-input', ': > "{tmp-sub-issue-numbers}"'),

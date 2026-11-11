@@ -22,7 +22,10 @@ const path = require('path');
 const { spawn, spawnSync, execFileSync } = require('child_process');
 
 const { parseArgs, UsageError, USAGE } = require('./lib/verify/args');
-const { runChecks, runOne } = require('./lib/verify/run');
+const { runChecks, runOne, stopTrees } = require('./lib/verify/run');
+const {
+  resolveSuiteSlots, chooseLane, holdSlot, SlotUnavailableError,
+} = require('./lib/verify/slot');
 const {
   adjudicate, realGit, findStaleBaselineWorktrees, RUNNER_ERROR_RE,
 } = require('./lib/verify/baseline');
@@ -48,6 +51,7 @@ const {
 const { selectScope } = require('./lib/verify/scope');
 const { gitLocations, loadImpactContext, lazyImpactContext } = require('./lib/verify/impact');
 const { substituteFile, describePath } = require('./lib/verify/file-template');
+const { fetchCiVerdict } = require('./lib/verify/ci-source');
 const { resolveTarget, writeStagedItem } = require('./lib/stage-item/write');
 const { appendEvent } = require('./lib/hooks/context');
 const { formatEntry, appendEntry, resolveTarget: resolveDecisionTarget } = require('./lib/log-decision/append');
@@ -179,6 +183,49 @@ function scopeSelfPath(resolvedPath, scopeCwd) {
   return path.relative(rootReal, leaf).split(path.sep).join('/') || null;
 }
 
+// The default `.claude-tweaks/verify-scope.json` at the checkout root (#4006),
+// discovered only when it really lies inside this checkout (see stampStatus()
+// for why). `path` is null when there is none to read; `error` names one that
+// was ignored. An unreadable leaf is returned, so its read error surfaces.
+function discoverDeclaration(cwd) {
+  const candidate = resolveScopePath(DECLARATION_PATH, cwd);
+  const leaf = lstatType(candidate).type;
+  if (leaf === 'unreadable' || (leaf !== 'missing' && resolveWithin(candidate, checkoutRoot(cwd)) !== null)) {
+    return { path: candidate, error: null };
+  }
+  if (leaf !== 'missing') {
+    return { path: null, error: `${DECLARATION_PATH}: ignored — it does not resolve to a path inside this checkout (dangling, or a symlink to a target outside it)` };
+  }
+  return { path: null, error: null };
+}
+
+// #5119: a run without --scope still reads one block of the default
+// declaration — `concurrency`, the machine-wide suite slot count. A
+// declaration that cannot be read or fails validation counts as undeclared,
+// named in one stderr line.
+function defaultConcurrency(cwd) {
+  const none = { suiteSlots: null };
+  const found = discoverDeclaration(cwd);
+  if (found.error) {
+    process.stderr.write(`verify.js: concurrency ignored — ${found.error}\n`);
+    return none;
+  }
+  if (found.path === null) return none;
+  const read = readDeclaration(found.path, undefined, { selfPath: scopeSelfPath(found.path, cwd) });
+  if (!read.ok) {
+    process.stderr.write(`verify.js: concurrency ignored — ${read.errors[0]}\n`);
+    return none;
+  }
+  return read.decl ? read.decl.concurrency : none;
+}
+
+// report.json's `slot` (and baselineAdjudicated.slot) for a held suite slot.
+function slotReport(hold) {
+  return {
+    lane: hold.lane, index: hold.index, waitedMs: hold.waitedMs, slots: hold.slots, source: hold.source,
+  };
+}
+
 // --stamp-status (#1921): a read of the runner's own artifact. Status is data,
 // never a failure — exit 0 in every case, including "no checkout at all".
 // `dirty` and `head` are recomputed fresh from the live tree, never echoed
@@ -222,14 +269,10 @@ function stampStatus(parsed) {
     if (parsed.scope) {
       scopePath = resolveScopePath(parsed.scope, process.cwd());
     } else {
-      const candidate = resolveScopePath(DECLARATION_PATH, process.cwd());
-      const leaf = lstatType(candidate).type;
-      if (leaf === 'unreadable' || (leaf !== 'missing' && resolveWithin(candidate, checkoutRoot(process.cwd())) !== null)) {
-        scopePath = candidate;
-        discovered = true;
-      } else if (leaf !== 'missing') {
-        discoveryError = `${DECLARATION_PATH}: ignored — it does not resolve to a path inside this checkout (dangling, or a symlink to a target outside it)`;
-      }
+      const found = discoverDeclaration(process.cwd());
+      scopePath = found.path;
+      discovered = found.path !== null;
+      discoveryError = found.error;
     }
   }
   const scopeRead = scopePath !== null
@@ -337,6 +380,13 @@ function stampStatus(parsed) {
     liveGeneratedExempt,
     scopeError,
   };
+  // #4347: a CI-sourced pass verifies HEAD exactly as a local one does; the
+  // source is named only when the stamp carries one, so a local stamp's
+  // status is unchanged.
+  if (present && stamp.source === 'ci') {
+    status.source = 'ci';
+    status.ci = stamp.ci;
+  }
   process.stdout.write(`${JSON.stringify(status)}\n`);
   process.exitCode = 0;
 }
@@ -459,6 +509,9 @@ async function main() {
   // #4024: the impact map context and, when a subset runs, its list.
   let impactCtx = null;
   let impactSubset = null;
+  // #5119: tool-scoped mode's {base}-substituted tests command — like an
+  // impact subset, a command that is not a full suite (the slot lane rule).
+  let toolScopedCommand = null;
   // #2779: a check's --cmd-env variables, by check name — for the two spawns
   // that are not a parsed --cmd entry itself (tool-scoped's synthesized
   // `tests`, and a flaky retry of a check), so they run in the same
@@ -679,8 +732,9 @@ async function main() {
           });
         if (sel.mode === 'tool-scoped') {
           const testsEnv = envOf('tests');
+          toolScopedCommand = decl.checks.tests.replace(/\{base\}/g, resolvedBase);
           cmds = cmds.concat([{
-            name: 'tests', command: decl.checks.tests.replace(/\{base\}/g, resolvedBase), ...(testsEnv ? { env: testsEnv } : {}),
+            name: 'tests', command: toolScopedCommand, ...(testsEnv ? { env: testsEnv } : {}),
           }]);
         }
       }
@@ -730,6 +784,34 @@ async function main() {
   // runs; only when a declaration names `generated` globs at all.
   const startDirtyPaths = decl && decl.generated.length && startGit.dirty === true ? dirtyFilePaths() : [];
 
+  // #5119: the machine-wide suite slot. Its count is the declaration's
+  // concurrency.suiteSlots (under --scope the declaration read above, else
+  // the default one), then --default-suite-slots, then 1. A nested run
+  // (inheriting CT_TEST_SUITE_SLOT_HELD=1) takes no slot, so it never reads
+  // the default one. Every hold below passes `track` to its spawns, so a
+  // signal mid-hold stops the running checks' process trees (stopTrees:
+  // the signal, a grace for their own teardown, then a kill) before the slot
+  // is freed; an unheld run never tracks, keeping today's spawn options exactly.
+  const nestedRun = process.env.CT_TEST_SUITE_SLOT_HELD === '1';
+  const { slots, source: slotSource } = resolveSuiteSlots({
+    declared: decl ? decl.concurrency.suiteSlots : (nestedRun ? null : defaultConcurrency(parsed.cwd || process.cwd()).suiteSlots),
+    flag: parsed.defaultSuiteSlots,
+  });
+  const track = new Set();
+  const killTracked = (signal) => stopTrees(track, signal);
+  // Every hold's queue wait, summed: the verify event carries it, so the
+  // timing derivation counts this run's work, not its wait (report.durationMs
+  // stays wall-clock).
+  let slotWaitedMs = 0;
+  const holdFor = (lane) => {
+    const hold = holdSlot({
+      lane, slots, source: slotSource, beforeRelease: killTracked,
+    });
+    if (hold) slotWaitedMs += hold.waitedMs;
+    return hold;
+  };
+  const trackedRunOne = (args) => runOne({ ...args, track });
+
   const startedAt = new Date().toISOString();
   const startMs = Date.now();
   // Flaky retry (#1925): only a --scope run ever classifies or retries;
@@ -762,17 +844,85 @@ async function main() {
     });
     const decision = plan.retry ? { retry: true, files: plan.files } : { retry: false, reason: plan.reason };
     if (!plan.retry) return { ...result, retryDecision: decision };
-    const retried = await runRetries({
-      check: result, plan, maxRetries: decl.flaky.maxRetries,
-      logDir: ctx.logDir, runOne, spawnImpl: ctx.spawnImpl, now: ctx.now, cwd: ctx.cwd, env: envOf(result.name),
-    });
-    return { ...retried, retryDecision: decision };
+    // #5119: inside runChecks the checks' slot is already held (ctx.track set
+    // while it is); a CI-answered suite's retry runs outside it, so it takes a
+    // subset-lane slot of its own — only once a retry will actually spawn.
+    const retryHold = ctx.ownSlot ? holdFor('subset') : null;
+    try {
+      const retried = await runRetries({
+        check: result, plan, maxRetries: decl.flaky.maxRetries,
+        logDir: ctx.logDir, runOne: (ctx.track || retryHold) ? trackedRunOne : runOne, spawnImpl: ctx.spawnImpl, now: ctx.now, cwd: ctx.cwd, env: envOf(result.name),
+      });
+      // The retry's own hold is recorded on the retried check, as `retrySlot` —
+      // report.slot stays the checks' hold alone.
+      return { ...retried, retryDecision: decision, ...(retryHold ? { retrySlot: slotReport(retryHold) } : {}) };
+    } finally {
+      if (retryHold) retryHold.release();
+    }
   };
-  const results = (sel && sel.mode === 'none' ? [] : (await runChecks({
-    // #3511: any --baseline run needs every suite's evidence — a fail-fast
-    // skip makes the adjudicator refuse (baseline.js), so suites keep running.
-    cmds, logDir, retry: retryHook, cwd: parsed.cwd, continueSuitesAfterFailure: Boolean(parsed.baseline),
-  })).map(enrich)).map((c) => {
+  // #4347: a suite whose declaration names a `ci` source takes its verdict
+  // from the PR's CI job on HEAD instead of running here — the CI job ran the
+  // whole suite, so it also stands in for an impact subset — on a tree CI
+  // actually saw (clean at start). Every other outcome is a named fallback in
+  // report.json's `ci`, and the suite runs locally exactly as selected.
+  const ciAttempts = [];
+  const ciResults = [];
+  if (decl && decl.ci && sel && !parsed.stampSuite && sel.mode !== 'none') {
+    for (const [suite, source] of Object.entries(decl.ci)) {
+      if (!cmds.some((c) => c.name === suite)) continue;
+      const skipCi = (reason) => ciAttempts.push({
+        suite, workflow: source.workflow, job: source.job, used: false, fallback: reason,
+        prNumber: null, runId: null, runUrl: null, jobId: null, conclusion: null, waitedMs: 0,
+      });
+      if (startGit.dirty !== false) { skipCi(startGit.dirty === null ? 'tree-state-unreadable' : 'dirty-tree'); continue; }
+      const verdict = await fetchCiVerdict({
+        suite, source, headSha: startSha, logDir, localRoot: logCwd, cwd: parsed.cwd || process.cwd(),
+      });
+      ciAttempts.push(verdict.ci);
+      if (!verdict.used) continue;
+      const ciResult = { ...verdict.result, ci: { runId: verdict.ci.runId, runUrl: verdict.ci.runUrl, jobId: verdict.ci.jobId } };
+      ciResults.push(ciResult.exitCode === 0
+        ? ciResult
+        : await retryHook(ciResult, {
+          logDir, spawnImpl: spawn, now: Date.now, cwd: parsed.cwd, ownSlot: true,
+        }));
+    }
+  }
+  const ciSuites = new Set(ciResults.map((r) => r.name));
+  const localCmds = cmds.filter((c) => !ciSuites.has(c.name));
+  // runChecks' own order (types/lint, tests, then the rest in --cmd order),
+  // with the CI-answered suites back in the places they would have run.
+  const stageOf = (name) => {
+    if (name === 'types' || name === 'lint') return 0;
+    return name === 'tests' ? 1 : 2;
+  };
+  const cmdIndex = (name) => cmds.findIndex((c) => c.name === name);
+  // #5119: the checks queue for one slot, held through runChecks so flaky
+  // retries run under it, and released before adjudication takes its own.
+  // The lane follows the commands that run: any local suite running a full
+  // command (anything but the impact subset or tool-scoped's tests command)
+  // takes the full lane; types/lint and narrowed suites queue as subset.
+  let checksHold = null;
+  let ranChecks = [];
+  if (!(sel && sel.mode === 'none') && (localCmds.length || !ciResults.length)) {
+    const fullSuiteRuns = localCmds.some((c) => c.name !== 'types' && c.name !== 'lint'
+      && !(impactSubset && c.command === impactSubset.command) && c.command !== toolScopedCommand);
+    checksHold = holdFor(chooseLane({ localCheckCount: localCmds.length, fullSuiteRuns }));
+    try {
+      ranChecks = await runChecks({
+        // #3511: any --baseline run needs every suite's evidence — a fail-fast
+        // skip makes the adjudicator refuse (baseline.js), so suites keep running.
+        cmds: localCmds, logDir, retry: retryHook, cwd: parsed.cwd, continueSuitesAfterFailure: Boolean(parsed.baseline),
+        track: checksHold ? track : null,
+      });
+    } finally {
+      if (checksHold) checksHold.release();
+    }
+  }
+  const ordered = ciResults.length
+    ? [...ranChecks, ...ciResults].sort((a, b) => (stageOf(a.name) - stageOf(b.name)) || (cmdIndex(a.name) - cmdIndex(b.name)))
+    : ranChecks;
+  const results = ordered.map(enrich).map((c) => {
     // #1837: countsUnparsed is real report content only when a count stamp
     // is actually in play — never disable the comparison silently, but also
     // never surface the field when there is no comparison to have skipped.
@@ -812,23 +962,41 @@ async function main() {
           // #3810: adjudicate against the merge-base with HEAD (the fork point),
           // not the ref's tip — a moved integration branch that fixed a failure
           // must not make the inherited failure look attributable.
-          baselineAdjudicated = {
-            ...await adjudicate({
+          // #5119: adjudication (its base-side full run included) always
+          // queues for a full-lane slot of its own, whatever lane the checks
+          // took — the checks' slot is already released, so no process ever
+          // holds one slot while it waits for another. Like a CI suite's
+          // retry, it takes the slot only once a rerun will actually spawn:
+          // adjudicate() calls takeSlot just before its first spawn, so a run
+          // it refuses on sight never queues behind every full-lane holder.
+          let adjHold = null;
+          try {
+            const adjudicated = await adjudicate({
               checks: results,
               baselineCmds: baselineCmdMap,
               base: mergeBaseSha,
               baseSha: mergeBaseSha,
               cwd: parsed.cwd,
               logDir,
-              runOne,
+              runOne: (args) => (adjHold ? trackedRunOne(args) : runOne(args)),
               spawnImpl: spawn,
               envOf,
               timeoutOf,
               git: bgit,
               computeFixed: !parsed.noBaselineFixed,
-            }),
-            baseRef: parsed.baseline,
-          };
+              takeSlot: () => {
+                adjHold = holdFor('full');
+                return adjHold ? adjHold.index : null;
+              },
+            });
+            baselineAdjudicated = {
+              ...adjudicated,
+              baseRef: parsed.baseline,
+              ...(adjHold ? { slot: slotReport(adjHold) } : {}),
+            };
+          } finally {
+            if (adjHold) adjHold.release();
+          }
         }
       }
     } catch (err) {
@@ -1035,6 +1203,11 @@ async function main() {
   // so a consumer reads it instead of re-deriving it from the adjudication fields.
   const effectivePass = report.pass || adjudicatedPass || preExistingPass;
   report.effectivePass = effectivePass;
+  // #4347: one entry per CI-declared suite this run considered — absent when
+  // the declaration names no `ci` source, so such a report is unchanged.
+  if (ciAttempts.length) report.ci = ciAttempts;
+  // #5119: the slot the checks held — absent when they took none.
+  if (checksHold) report.slot = slotReport(checksHold);
   writeReportAtomic(report, jsonPath);
 
   // Verify event (#1928): the runner is the mechanical source for the
@@ -1055,6 +1228,8 @@ async function main() {
         mode: report.scope ? report.scope.mode : 'full',
         suitesRun: results.filter((c) => !c.skipped).map((c) => c.name),
         durationMs: report.durationMs,
+        // #5119: the part of durationMs spent queued for a suite slot (0 when none was waited for).
+        slotWaitedMs,
         pass: report.pass,
         baselineAdjudicated: baselineAdjudicated ? baselineAdjudicated.verdict || 'ineligible' : null,
         preExistingAdjudicated: preExistingVerdict,
@@ -1189,6 +1364,10 @@ async function main() {
       // say nothing about whether THIS run's tree is dirty for an unrelated
       // reason. Always freshly computed (or null) for the run being stamped.
       generatedExempt,
+      // #4347: the suites whose verdict came from a CI job, by suite name.
+      ci: ciResults.length
+        ? Object.fromEntries(ciResults.map((r) => [r.name, { runId: r.ci.runId, runUrl: r.ci.runUrl }]))
+        : null,
     });
     // H1 (review): the legacy bare-SHA twin only ever names a real FULL
     // pass — a narrowed run leaves it untouched rather than repointing it
@@ -1264,6 +1443,12 @@ async function main() {
     }
     lines.push('');
   }
+  for (const a of ciAttempts) {
+    lines.push(a.used
+      ? `CI: ${a.suite} — taken from ${a.workflow} / ${a.job} run ${a.runId} on HEAD (${a.conclusion}${a.runUrl ? `, ${a.runUrl}` : ''})`
+      : `CI: ${a.suite} — ran locally (${a.fallback})`);
+  }
+  if (ciAttempts.length) lines.push('');
   lines.push('| Check | Status | Duration | Summary |', '|---|---|---|---|');
   for (const check of results) {
     const duration = check.skipped ? '—' : `${(check.durationMs / 1000).toFixed(1)}s`;
@@ -1360,6 +1545,14 @@ async function main() {
 }
 
 main().catch((err) => {
+  // #5119: a lock dir the suite slot cannot use is an infrastructure failure
+  // before the checks run, so it takes the usage/infrastructure exit (2),
+  // never the failed-check exit.
+  if (err instanceof SlotUnavailableError) {
+    process.stderr.write(`verify.js: ${err.message}\n`); // the message already names "suite slot unavailable — …"
+    process.exitCode = 2;
+    return;
+  }
   process.stderr.write(`verify.js: ${String((err && err.stack) || err)}\n`);
   process.exitCode = 1;
 });

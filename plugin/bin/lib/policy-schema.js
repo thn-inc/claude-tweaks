@@ -278,6 +278,9 @@ const POLICY_KEYS = [
   { key: 'standard-run-round-trip-ceiling', type: 'integer', min: 0, default: 900, summary: "Sets how many tool round trips a standard run may use before it is flagged as over budget; 0 turns the check off.", category: 'housekeeping', tier: 'advanced' },
   { key: 'standard-run-procedure-kb-ceiling', type: 'integer', min: 0, default: 580, summary: "Sets how many kilobytes of skill procedure a standard run may read before it is flagged as over budget; 0 turns the check off.", category: 'housekeeping', tier: 'advanced' },
   { key: 'standard-run-verify-minutes-ceiling', type: 'integer', min: 0, default: 37, summary: "Sets how many minutes of verification a standard run may spend before it is flagged as over budget; 0 turns the check off.", category: 'housekeeping', tier: 'advanced' },
+  // #5119: reaches verify.js only as --default-suite-slots (verify.js never reads
+  // policy.yml); a declared concurrency.suiteSlots wins. Not a Manifesto lever; policyOnly so a run config never sets it.
+  { key: 'verify-suite-slots', type: 'integer', min: 1, default: 1, summary: "Sets how many test suites verify.js may run at once on one machine when verify-scope.json declares no concurrency.suiteSlots.", category: 'housekeeping', tier: 'advanced', policyOnly: true },
 ];
 
 const SCHEMA_BY_KEY = new Map(POLICY_KEYS.map((entry) => [entry.key, entry]));

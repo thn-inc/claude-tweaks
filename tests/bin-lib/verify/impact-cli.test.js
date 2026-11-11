@@ -17,6 +17,7 @@ const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'verify.js')
 const { encodeImpactMap, DEFAULT_MAP_NAME } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'impact.js'));
 const { substituteFile } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'file-template.js'));
 const { derivePhases } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'timing', 'derive.js'));
+const { slotEnv } = require('../../helpers/suite-slot-env');
 
 const TMP_DIRS = [];
 after(() => { for (const d of TMP_DIRS) fs.rmSync(d, { recursive: true, force: true }); });
@@ -28,9 +29,13 @@ function tmpDir(prefix = 'verify-impact-cli-') {
   return dir;
 }
 
-function runCli(args, cwd) {
+// With no `opts.env`, the child skips the machine-wide suite slot exactly as under
+// tools/run-tests.js (#5119), so a direct `node --test` of this file never queues on the real lock.
+function runCli(args, cwd, opts = {}) {
   return new Promise((resolve) => {
-    execFile(process.execPath, [CLI, ...args], { maxBuffer: 10 * 1024 * 1024, cwd },
+    execFile(process.execPath, [CLI, ...args], {
+      maxBuffer: 10 * 1024 * 1024, cwd, env: { ...process.env, CT_TEST_SUITE_SLOT_HELD: '1' }, ...opts,
+    },
       (err, stdout, stderr) => resolve({ code: err ? err.code : 0, stdout, stderr }));
   });
 }
@@ -173,6 +178,24 @@ test('selects the subset (AC1.1 report shape)', async () => {
   const stamp = r.stamp();
   assert.strictEqual(stamp.scope, 'scoped');
   assert.strictEqual(stamp.fullSha, r.base, 'the merge-base anchors the stamp');
+});
+
+test('AC4.1: a run whose only suite runs its impact subset takes the subset lane and never waits behind a held full-lane slot (#5119)', async () => {
+  const r = impactRepo();
+  writeMap(r);
+  commitFile(r, 'src/x.js', 'x2\n');
+  // Held by this live test process for the whole run: a full-lane waiter would never get it.
+  const slotDir = tmpDir('verify-impact-slots-');
+  const fullLock = path.join(slotDir, 'slot-0.lock');
+  fs.writeFileSync(fullLock, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(), cwd: '/holder-cwd' }));
+  const run = await runCli(ARGS, r.repo, { env: slotEnv(slotDir), timeout: 60000 });
+  assert.strictEqual(run.code, 0, run.stderr + run.stdout);
+  assert.strictEqual(r.marker(), 'tests/a.test.js\n', 'the subset command ran');
+  const { waitedMs, ...slot } = r.report().slot;
+  assert.deepStrictEqual(slot, { lane: 'subset', index: 0, slots: 1, source: 'default' });
+  assert.ok(Number.isInteger(waitedMs));
+  assert.doesNotMatch(run.stderr, /waiting for a test-suite slot/);
+  assert.ok(fs.existsSync(fullLock), 'the full-lane holder is untouched');
 });
 
 test('a test edited after the map commit to read src/x.js is selected when src/x.js changes, map older than the base (#4132)', async () => {

@@ -9,6 +9,7 @@ const assert = require('node:assert/strict');
 const path = require('path');
 
 const { readText } = require('./helpers/read-skill');
+const { HOST_DEFINITION, firstInvocation, exit3Sentence, listingLegProblems } = require('./helpers/stale-claim-host-pins');
 const { lintReport } = require('../plugin/bin/lib/tidy-report-lint/rules');
 
 const REPO_ROOT = path.join(__dirname, '..');
@@ -47,9 +48,73 @@ test('AC1.2: the stale-claim paragraph calls the CLI on both transports (#4596)'
   const s = claimAuditSection();
   assert.ok(s.includes('bin/stale-claim-pr.js'), 'calls the one matcher implementation');
   assert.ok(s.includes('--resume'), 'asks it for the validated Resume line');
-  assert.ok(s.includes('--repo "{owner}/{repo}"'), 'passes --repo, since an origin shape parseRepo rejects is exit 3 before the gh check');
   assert.ok(s.includes('--listing'), 'hands it the MCP listing when gh is absent');
   assert.ok(s.includes('mcp__github__list_pull_requests'), 'lists open PRs through the MCP tool when gh is absent');
+});
+
+// #4794: the agent-composed calls take their host from origin through the seam. A bare --repo
+// owner/repo means github.com, so the call drops it; only the exit-3 re-run (an origin that does not
+// parse, such as a sandbox proxy remote) and the MCP listing leg (the MCP's host is github.com) pass one.
+// The `{host}` definition lives once, in _shared/issue-claims.md (P7); this file cites it.
+const HOST_CITATION = '`{host}` as `_shared/issue-claims.md` defines it';
+
+test('AC1.2 (#4794): the first stale-claim-pr.js invocation carries no --repo; origin supplies the host', () => {
+  const call = firstInvocation(claimAuditSection().replace(/\s+/g, ' '), 'the section');
+  assert.ok(call.includes('--claim-file "{CLASSIFY_INPUT path}"'), 'the invocation is the matcher call');
+  assert.ok(!call.includes('--repo'), 'a bare --repo owner/repo would mean github.com');
+});
+
+test('AC1.2 (#4794): the section never passes a bare --repo "{owner}/{repo}"', () => {
+  assert.ok(!claimAuditSection().replace(/\s+/g, ' ').includes('--repo "{owner}/{repo}"'));
+});
+
+test('AC1.2 (#4794): exit 3 (origin does not parse) re-runs with a host-qualified --repo, never a bare owner/repo', () => {
+  const flat = claimAuditSection().replace(/\s+/g, ' ');
+  assert.match(exit3Sentence(flat), /[Ee]xit 3/, 'the --repo sits in the exit-3 sentence');
+  assert.ok(flat.includes('never a bare `owner/repo`'), 'a bare slug is ruled out');
+});
+
+// The `{host}` problems the real assertions check, named so the controls can mutate one word and expect exactly one.
+function citationProblems(flat) {
+  const problems = [];
+  if (!flat.includes(HOST_CITATION)) problems.push('citation');
+  if (flat.includes(HOST_DEFINITION)) problems.push('restated');
+  return problems;
+}
+
+test('AC1.2 (#4794): `{host}` is cited from _shared/issue-claims.md, not restated', () => {
+  assert.deepEqual(citationProblems(claimAuditSection().replace(/\s+/g, ' ')), []);
+});
+
+test('AC1.2 (#4794): the MCP listing leg adds --repo "github.com/{owner}/{repo}" and only that leg does', () => {
+  assert.deepEqual(listingLegProblems(claimAuditSection().replace(/\s+/g, ' ')), []);
+});
+
+test('AC1.2 (#4794): an exit 3 that survives the host-qualified re-run is Manual review, not another retry', () => {
+  assert.ok(claimAuditSection().replace(/\s+/g, ' ').includes('so does any other non-zero exit (1, or 3 after that re-run)'));
+});
+
+test('AC1.2 (#4794) control: each retargeted clause goes red alone', () => {
+  const flat = claimAuditSection().replace(/\s+/g, ' ');
+  const wrongHost = flat.replace('--repo "github.com/{owner}/{repo}"', '--repo "{host}/{owner}/{repo}"');
+  assert.notEqual(wrongHost, flat);
+  assert.ok(listingLegProblems(wrongHost).includes('missing'), 'the listing-leg check sees a changed host inside the span');
+  const oldExit = flat.replace('(1, or 3 after that re-run)', '(1 or 3)');
+  assert.notEqual(oldExit, flat);
+  assert.ok(!oldExit.includes('so does any other non-zero exit (1, or 3 after that re-run)'), 'the exit-wording pin sees the old wording');
+  const withBareRepo = flat.replace('--claim-file "{CLASSIFY_INPUT path}"', '--claim-file "{CLASSIFY_INPUT path}" --repo "{owner}/{repo}"');
+  assert.notEqual(withBareRepo, flat);
+  assert.ok(firstInvocation(withBareRepo, 'the section').includes('--repo'), 'the no---repo check sees a re-added bare --repo');
+  const reworded = flat.replace('defines it', 'restates it');
+  assert.notEqual(reworded, flat);
+  assert.deepEqual(citationProblems(reworded), ['citation'], 'the citation check sees one reworded word');
+  assert.deepEqual(citationProblems(`${flat} ${HOST_DEFINITION}`), ['restated'], 'the citation check sees a restated definition');
+  const twice = flat.replace(' to each call.', ' to each call --repo "github.com/{owner}/{repo}".');
+  assert.notEqual(twice, flat);
+  assert.deepEqual(listingLegProblems(twice), ['host carried by a call other than the listing leg'], 'the only-the-listing-leg check sees a second carrier');
+  const noExit3 = flat.replace('Exit 3', 'Exit 4');
+  assert.notEqual(noExit3, flat);
+  assert.throws(() => assert.match(exit3Sentence(noExit3), /[Ee]xit 3/), 'the exit-3 attribution sees a missing exit 3');
 });
 
 test('AC1.1: the stale-claim paragraph restates neither the marker rule nor the Resume grammar (#4596)', () => {

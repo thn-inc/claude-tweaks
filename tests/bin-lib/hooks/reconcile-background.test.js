@@ -295,6 +295,21 @@ test('Ruling 1: an error entry\'s parentsClosed counts with the unmarked closes,
   assert.equal(summary.postMergeUnmarkedParentsClosed, 5, 'marker-write-failed (3) + error (2); an error entry with no parentsClosed adds 0');
 });
 
+test('round 5: a taken-over holder\'s GitHub changes reach the summary on their own, in no other count (#4797)', async () => {
+  const { CLAIM_LOST_DETAIL } = require('../../../plugin/bin/lib/reconcile/post-merge');
+  const summary = await backgroundSummaryFor({ postMerge: [
+    { runDir: '/r/a', pr: 11, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 1 },
+    { runDir: '/r/b', pr: 12, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL, parentsClosed: 2, recordsReopened: [7] },
+    { runDir: '/r/c', pr: 13, action: 'skipped', reason: 'in-flight' },
+    { runDir: '/r/d', pr: 14, action: 'skipped', reason: 'marker-write-failed', parentsClosed: 3 },
+  ] });
+  assert.deepEqual(summary.postMergeSuperseded, [{ pr: 12, parentsClosed: 2, recordsReopened: [7] }]);
+  assert.equal(summary.postMergeParentsClosed, 1);
+  assert.equal(summary.postMergeUnmarkedParentsClosed, 3);
+  assert.equal(summary.postMergeFailed, 0, 'a taken-over holder is not a failed run');
+  assert.deepEqual((await backgroundSummaryFor({})).postMergeSuperseded, []);
+});
+
 test('AC1.1 AC1.2 AC1.3: a close-failed ran entry counts as failed and names its records (#4897)', async () => {
   const summary = await backgroundSummaryFor({ postMerge: [
     { runDir: '/r/a', pr: 1, action: 'ran', closingLinks: 'close-failed', parentsClosed: 0, records: { failed: [], closeFailed: [101], pendingClose: [], unchecked: [] } },
