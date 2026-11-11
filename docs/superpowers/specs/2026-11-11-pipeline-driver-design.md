@@ -162,6 +162,10 @@ Done when three real eligible records have each been driven to a draft PR with g
 
 ## Phase 2 — Merge
 
+## Phase 2: Specified
+
+Records: parent #5223; sub-issues #5226 (merge step in code), #5228 (read-only judgment workers).
+
 Step 10 for records whose live labels carry `auto:merge`. The three obligations of express step 9 hold unchanged: the content judgment (`assess-agent-autonomy merge-check`), acceptance labeling (`wrap-up/verification-brief.md`), and the closing-link check before `_shared/pr-first-merge.md`'s merge.
 
 The merge itself is driver code: mark ready, read the checks, merge, and the post-merge steps. No model holds merge rights. That means porting the deterministic parts of `_shared/pr-first-merge.md` Steps 2 to 3 and its post-merge file, reusing `pr-checks.js`, `compose-subject.js` and `closing-links.js`; this is the bulk of the phase.
@@ -172,17 +176,29 @@ Done when a driven record merges with all three obligations on record and `expre
 
 ## Phase 3 — Entry from `/claude-tweaks:dispatch`
 
+## Phase 3: Specified
+
+Record: #5232 (route driver-admitted singletons from dispatch to `drive.js`); one unit, so no parent.
+
 An eligible singleton in a drain is handed to the driver as one background call, according to the `express-driver` value, and the session reads only the final event line. Dispatch's existing drain keeps owning queue selection in this phase.
 
 Done when a drain with at least one driver-eligible record completes it through the driver, and the session's own token use for that record is the launch and the summary read.
 
 ## Phase 4 — One reviewer, wider lane
 
-A single reviewer worker after the tests pass and before the push. A finding counts only if it comes with a failing test or a command that reproduces it; the driver runs that evidence and discards a finding it cannot reproduce. With the reviewer in place the lane's bounds widen one step (size medium, more Key Files). The exact new bounds are decided from the scoreboard, not in this document.
+## Phase 4: Specified
+
+Records: parent #5221; sub-issues #5222 (evidence-based reviewer step), #5224 (lane bounds as policy values).
+
+A single reviewer worker after the tests pass and before the push. A finding counts only if it comes with a test file that fails; the driver runs that test and discards a finding it cannot reproduce. It never runs a command a reviewer supplies. With the reviewer in place the lane's bounds widen one step (size medium, more Key Files). The exact new bounds are decided from the scoreboard, not in this document.
 
 Done when the scoreboard shows the widened lane's rework rate is no worse than the standard path's over the same period.
 
 ## Phase 5 — Queue selection in the driver
+
+## Phase 5: Specified
+
+Records: parent #5225; sub-issues #5227 (queue pull and ranking as a module and CLI), #5229 (`drive.js --budget N`), #5230 (cut dispatch over to the CLI), #5231 (remove the embedded scripts).
 
 `drive.js --budget N` picks its own records, so the hub can start a drain with no Claude session at all. Queue selection today is a script embedded in `plugin/skills/dispatch/queue-pull-script.md`; this phase extracts it to a module that both the skill and the driver call, per `.claude/skills/shared-contract-extraction`. Until then the hub starts the driver with named records, or starts a dispatch session that hands records to it.
 
@@ -213,6 +229,19 @@ The scoreboard is a view in the dispatch hub, designed and built in the dispatch
 - The implementer allow list for this repository, and where a consumer project declares its own test command for it.
 - Windows: how the `claude` launcher is spawned, per `.claude/skills/windows-checkout-test-parity`.
 - Tests sized like the neighbouring `tests/bin-lib/express/` suites, over a fake runner; no test that reads skill prose.
+
+## Decisions made while specifying
+
+Each came out of a record's red-team pass and is written into the record named.
+
+1. `split` ends at 20 merged records per arm; the Phase 4 parent (#5221) owns removing it (#5216).
+2. The implementer keeps its test command and its Bash runs under Claude Code's sandbox, subject to an escape probe; if a test can still reach `curl`, `gh` or `git push`, the test command is dropped from its allow list. Stated residual: the driver's own test step runs worker-written code with the driver's rights, as every lane does today (#5217).
+3. An escalation comment carries a marker and admission refuses a record that has one, so an escalated record is not driven again until a human removes the comment (#5219).
+4. The judgment-parity criterion needs at least 30 recorded verdicts, at least 10 of them not `auto-merge`, or a recorded waiver; a later change to a judgment prompt, its source skill file or the role's model re-runs it (#5228).
+5. Acceptance labels are derived by driver code from the parent gate and the oversight-floor gate; the acceptance worker returns text only (#5228).
+6. On the dispatch route the driver applies the drain-overlap hold itself: it is handed the drain's in-flight PR list and ends `pending-review` on any shared path before marking its PR ready (#5232).
+7. Reviewer evidence is a test file only, all confirmed findings share one fix round, and a second failure escalates (#5222).
+8. A drain's order comes from two embedded scripts, the queue pull and the ranking; Phase 5 covers both. Removing them (#5231) waits for a maintainer comment stating the release, the drains observed and the defects filed.
 
 ## Calls made in this document that were not discussed
 
