@@ -644,6 +644,7 @@ const PARK_CLAUSES = [
   ['template names the fix', '"{files} skips drafts with no ready_for_review trigger — add ready_for_review to its types (_shared/ci-skips-drafts.md)" for draft-skip-without-ready-trigger'],
   ['template tail is the resume placeholder', 'on PR #{n}. {resume}`'],
   ['resume maps the draft-skip reason', '`{resume}`: `Resume once green.`; for draft-skip-without-ready-trigger, `Resume once its workflow is fixed or a post-ready run lands.`'],
+  ['REASON names the draft-skip phrase', 'or the pending-timeout or draft-skip phrase'],
   ['timeout appends the awaiting files', 'A timeout whose last ready-run read named `awaitingReadyRun` appends ` (no run since ready: {files})`.'],
 ];
 
@@ -749,6 +750,35 @@ test('AC3.1 (prose): red still wins — the ready-run bullet\'s awaiting row is 
   assert.ok(!/`awaiting` → \*\*red\*\*/.test(bullet), 'awaiting never reads red');
   const flipped = mutate(section, '`awaiting` → **pending**', '`awaiting` → **green**');
   assert.throws(() => assertReadyRunStep25(flipped, 'awaiting'), { message: /ready-run bullet missing awaiting is pending/ });
+});
+
+function assertReadFailedRoute(section) {
+  const fenceAt = section.indexOf(READY_RUN_LINE);
+  assert.notEqual(fenceAt, -1, 'the ready-run fence is present');
+  const after = collapse(section.slice(fenceAt + READY_RUN_LINE.length, section.indexOf(READY_ANCHOR)));
+  assert.ok(after.includes('A non-zero exit or output with no `state` is the `state-read-failed` report.'), 'a failed or stateless ready-run read must route to state-read-failed, never "no requirement"');
+}
+
+function assertConflictFirst(section) {
+  const bullet = readyRunBullet(section);
+  const needle = 'On `mergeStateStatus: DIRTY` or `mergeable: CONFLICTING` (a conflicting PR gets no run), `awaiting` and `draft-skip-without-ready-trigger` take the **Conflict path** first.';
+  assert.ok(bullet.includes(needle), 'awaiting and draft-skip on a DIRTY/CONFLICTING PR must take the Conflict path first');
+}
+
+test('AC6.3: a failed or stateless ready-run CLI call is the state-read-failed report', () => {
+  const section = step25Section();
+  assertReadFailedRoute(section);
+  const gone = mutate(section, 'A non-zero exit or output with no `state` is the `state-read-failed` report.', '');
+  assert.throws(() => assertReadFailedRoute(gone), { message: /must route to state-read-failed, never "no requirement"/ });
+});
+
+test('#3607: awaiting and draft-skip on a conflicting PR take the Conflict path before the ready-run wait or park', () => {
+  const section = step25Section();
+  assertConflictFirst(section);
+  const gone = mutate(section, '`awaiting` and `draft-skip-without-ready-trigger` take the **Conflict path** first.', '');
+  assert.throws(() => assertConflictFirst(gone), { message: /must take the Conflict path first/ });
+  const mergeable = mutate(section, '`mergeable: CONFLICTING` (a conflicting', '(a conflicting');
+  assert.throws(() => assertConflictFirst(mergeable), { message: /must take the Conflict path first/ });
 });
 
 test('settle-parked names the ready-run rule and the new park reason', () => {
