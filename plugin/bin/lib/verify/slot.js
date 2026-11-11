@@ -108,13 +108,18 @@ function holdSlot({
       const last = proc.listenerCount(sig) === 1;
       try {
         beforeRelease(sig);
-      } finally {
-        // #5150: a later listener (adjudicate()'s) still has to remove this slot's scratch
-        // worktree, so the slot stays held until that listener exits — the 'exit' hook releases
-        // it — and a waiter on this slot never starts on the path while it is torn down.
-        if (last) release();
+      } catch (err) {
+        // A throw would stop the listener chain, and adjudicate()'s later handler would never
+        // remove its scratch worktree: name it and carry on (#5150).
+        log(`verify.js: stopping the running checks on ${sig} failed — ${String((err && err.message) || err)}`);
       }
-      if (last) proc.exit(128 + os.constants.signals[sig]);
+      // #5150: a later listener (adjudicate()'s) still has to remove this slot's scratch
+      // worktree, so the slot stays held until that listener exits — the 'exit' hook releases
+      // it — and a waiter on this slot never starts on the path while it is torn down.
+      if (last) {
+        release();
+        proc.exit(128 + os.constants.signals[sig]);
+      }
     };
     handlers.push([sig, handler]);
     proc.on(sig, handler);

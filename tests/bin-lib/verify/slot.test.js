@@ -146,6 +146,22 @@ test('holdSlot: adjudication\'s own signal handler still runs and is the only on
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('holdSlot: a beforeRelease that throws is named on stderr and the signal is still handled, a later listener included (#5150)', () => {
+  for (const later of [false, true]) {
+    const dir = tmpSlotDir();
+    const logged = [];
+    const { proc } = hold(dir, { beforeRelease: () => { throw new Error('kill failed'); }, log: (l) => logged.push(l) });
+    const seen = [];
+    if (later) proc.on('SIGTERM', () => { seen.push('adjudicator'); proc.exit(143); proc.emit('exit', 143); });
+    proc.emit('SIGTERM');
+    assert.deepStrictEqual(logged, ['verify.js: stopping the running checks on SIGTERM failed — kill failed']);
+    assert.deepStrictEqual(seen, later ? ['adjudicator'] : [], `later listener ${later}`);
+    assert.deepStrictEqual(proc.exits, [143], 'exit is called once');
+    assert.strictEqual(fs.existsSync(lockFile(dir)), false, 'the slot is released');
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('holdSlot: with a later signal listener the slot is still held while that listener runs — kill, remove, then release (#5150)', () => {
   for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
     const dir = tmpSlotDir();
