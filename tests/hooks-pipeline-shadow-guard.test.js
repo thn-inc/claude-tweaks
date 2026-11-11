@@ -70,7 +70,7 @@ test('an Edit into a NEW run directory inside a linked worktree is denied', () =
   assertDenied(out);
 });
 
-test('a write into a run directory that ALREADY EXISTS in the worktree (pre-anchoring, tolerated) is allowed', () => {
+test('a write into a run directory that ALREADY EXISTS in the worktree (no new shadow) is allowed', () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const existingRunDir = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-spec-3');
@@ -80,7 +80,7 @@ test('a write into a run directory that ALREADY EXISTS in the worktree (pre-anch
   assertAllowed(out);
 });
 
-test('mkdir of a NEW subdirectory inside an already-existing (pre-anchoring) run directory is allowed', () => {
+test('mkdir of a NEW subdirectory inside an already-existing run directory is allowed', () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const existingRunDir = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-spec-4');
