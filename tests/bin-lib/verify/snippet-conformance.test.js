@@ -202,7 +202,8 @@ test('verification.md and suite-slots.md document serial reruns, the timeout bac
   const verificationFacts = [
     [/reruns run one at a time in every phase/, 'serial reruns in every phase'],
     [/`concurrency\.reruns`/, 'the reruns declaration key'],
-    [/a timed-out check, a non-zero cancelled count, an inconclusive marker in its failing region/, 'what counts as timeout evidence'],
+    [/A check that timed out has no numeric exit, so it is refused before adjudication and is never evidence/, 'a timed-out check is refused, not evidence'],
+    [/a failing check's log carrying a non-zero cancelled count, an inconclusive marker in its failing region/, 'what counts as timeout evidence'],
     [/`timeoutPatterns`/, 'the declared timeout substrings'],
     [/forces every phase serial/, 'evidence on a failing check forces every phase serial'],
     [/forces the later phases serial/, 'a timed-out rerun forces the later phases serial'],

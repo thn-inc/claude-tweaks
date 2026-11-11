@@ -22,9 +22,10 @@ matched no live worktree.
    (`.claude-tweaks/verify-scope.json`) is where the command lives, so the number lives there too
    (a positive integer; `concurrency.timeoutPatterns`, an array of non-empty literal substrings,
    names a project's own timeout wording). Timeout evidence forces serial whatever is declared.
-   Evidence on a failing check (a timed-out run, a non-zero cancelled count, an inconclusive marker
-   in its failing region, or a `timeoutPatterns` match in its log) runs every phase one call at a
-   time, reason `timeout-evidence: {check}`. A rerun that times out, or whose own log carries any
+   Evidence on a failing check (a non-zero cancelled count, an inconclusive marker in its failing
+   region, or a `timeoutPatterns` match in its log) runs every phase one call at a time, reason
+   `timeout-evidence: {check}`. A check that timed out is not a source: it has no numeric exit, so
+   adjudication refuses it before any rerun. A rerun that times out, or whose own log carries any
    of that evidence, serializes the phases after its own, reason `phase-timeout: baseline` or
    `phase-timeout: isolated`. A back-off from a
    declared count says so on stdout, `Baseline: reruns backed off to one at a time from declared
