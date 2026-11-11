@@ -10,7 +10,7 @@
 
 **Spec:** `.claude-tweaks/pipelines/2026-11-11T213038-spec-3847/work/3847-spec.md`
 
-Scope keywords: transitional guard, copy-out guard, 2026-11-07, step 3.5
+Scope keywords: transitional guard, copy-out guard, 2026-11-07
 
 ## Global Constraints
 
@@ -40,7 +40,7 @@ Ran from the main checkout: `find "/Users/thomasholknielsen/Code Workspaces/clau
 
 **Files:**
 - Modify: `plugin/skills/wrap-up/cleanup-procedures-execution-appendix.md:23-79`
-- Modify: `plugin/skills/wrap-up/cleanup-procedures-execution.md:139,154,160-168`
+- Modify: `plugin/skills/wrap-up/cleanup-procedures-execution.md` (lines 139, 154, 160-168)
 - Modify: `docs/plugin-structure.md:119`
 - Test: `tests/bin-lib/wrap-up/engine-cli.test.js:707`
 
@@ -80,7 +80,7 @@ git commit -m "Remove wrap-up Section C step 3.5's transitional guard at its sun
 
 **Files:**
 - Modify: `plugin/skills/_shared/ceremony-profile.md:37`
-- Modify: `plugin/skills/dispatch/two-call-gate.md:27,37,88`
+- Modify: `plugin/skills/dispatch/two-call-gate.md` (lines 27, 37, 88)
 - Modify: `docs/donts.md:150`
 - Modify: `plugin/skills/wrap-up/flags.md:6`
 
@@ -121,7 +121,7 @@ git commit -m "Re-ground [IL-116]'s rationale on the surviving teardown sequence
 **Files:**
 - Modify: `plugin/skills/wrap-up/merge-mode.md:27`
 - Modify: `docs/skill-graph.md:249`
-- Modify: `plugin/skills/_shared/pipeline-run-dir.md:48-51,76-79,131-134`
+- Modify: `plugin/skills/_shared/pipeline-run-dir.md` (lines 48-51, 76-79, 131-134)
 
 **Interfaces:**
 - Consumes: Task 1's Section C numbering.
