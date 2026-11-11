@@ -23,11 +23,17 @@ The slot count, applied to both lanes, is the first of:
 2. the `verify-suite-slots` policy key (`_shared/policy-schema.md`), passed by the caller as `--default-suite-slots {n}`
 3. 1
 
-The declaration block is `{ "concurrency": { "suiteSlots": N } }` with `N` a positive integer; `suiteSlots` is the only allowed key. Anything else fails validation with `concurrency: must be an object`, `concurrency: unknown key(s) "{k}" (allowed: suiteSlots)` or `concurrency.suiteSlots: must be a positive integer`. Without `--scope`, `verify.js` still reads this block from the default declaration. A declaration that fails validation there prints `verify.js: concurrency ignored — {first error}` to stderr and counts as undeclared.
+The declaration block is `{ "concurrency": { "suiteSlots": N } }` with `N` a positive integer; `suiteSlots` is the only allowed key. Anything else fails validation with `concurrency: must be an object`, `concurrency: unknown key(s) "{k}" (allowed: suiteSlots)` or `concurrency.suiteSlots: must be a positive integer`. Without `--scope`, `verify.js` still reads this block from the default declaration (a nested run, which takes no slot, does not). A declaration that fails validation there prints `verify.js: concurrency ignored — {first error}` to stderr and counts as undeclared.
+
+`verify.js` ignores `CT_TEST_SUITE_SLOTS` and `CT_TEST_SUBSET_SLOTS`, `run-tests.js`'s own count variables: its count comes only from the declaration, the flag or 1, and a `run-tests.js` child of a held `verify.js` skips the lock.
 
 ## The lock
 
-The lock dir is `CT_TEST_SUITE_SLOT_DIR`, else `<os tmpdir>/ct-test-suite-slots`. This repo's `tools/run-tests.js` shares it, so a `verify.js` run and a `run-tests.js` run queue against each other. A waiting run prints one stderr line, `verify.js [{lane} lane]: waiting for a test-suite slot — held by pid …`, naming the holder and ending with how to raise the limit. A dead holder's slot is reclaimed.
+The lock dir is `CT_TEST_SUITE_SLOT_DIR`, else `<os tmpdir>/ct-test-suite-slots`. This repo's `tools/run-tests.js` shares it, so a `verify.js` run and a `run-tests.js` run queue against each other. A waiting run prints one stderr line, `verify.js [{lane} lane]: waiting for a test-suite slot — held by pid …` when a slot's holder blocks it, or `… — queued behind pid {n} (cwd …) since …` when an earlier waiter's ticket does, naming that process and ending with how to raise the limit (only `concurrency.suiteSlots` when the declaration set the count, since the policy key loses to it). A dead holder's slot is reclaimed.
+
+The wait counts against the calling tool's timeout: with fewer slots than concurrent sessions, a run can queue behind several full suites before its checks start. `verification.md`'s Foreground rule says which timeout to set and how to read a call that comes back queued.
+
+A lock dir `verify.js` cannot use (not a directory owned by this user, or not writable) prints `verify.js: suite slot unavailable — {message}` and exits 2 before the checks it was queuing for run. At `--baseline` adjudication the same failure is recorded as not adjudicated (`adjudication error: …`).
 
 ## While a slot is held
 
@@ -37,14 +43,16 @@ The lock dir is `CT_TEST_SUITE_SLOT_DIR`, else `<os tmpdir>/ct-test-suite-slots`
 - `CT_TEST_WORKERS`: `max(1, floor(cores / (2 × slots)))` unless it is already set. A check's command reads it to cap its own parallelism:
 
 ```bash
-node --test --test-concurrency=$CT_TEST_WORKERS
-go test -p $CT_TEST_WORKERS ./...
-pytest -n $CT_TEST_WORKERS
+node --test --test-concurrency=${CT_TEST_WORKERS:-4}
+go test -p ${CT_TEST_WORKERS:-4} ./...
+pytest -n ${CT_TEST_WORKERS:-4}
 ```
 
-On SIGINT, SIGTERM or SIGHUP while holding a slot, `verify.js` kills each running check's process tree, frees the slot and exits 128 plus the signal number (130, 143, 129). Each local check runs in its own process group while a slot is held so that kill reaches its whole tree. Known limit: a SIGKILL sent to `verify.js`'s own process group does not reach a running check, so the orphaned check keeps running while its slot is reclaimed as a dead holder's.
+`CT_TEST_WORKERS` is unset outside a held slot: in CI, in a direct run of the test command, and in a nested run. So every use needs a default (4 above; the number is the project's choice). Without one, `--test-concurrency=` exits 9 and `go test -p ./...` takes `./...` as the `-p` value. Checks run through `cmd.exe` on Windows, which has no `:-` default: set it in a wrapper script the check command calls (`if not defined CT_TEST_WORKERS set CT_TEST_WORKERS=4`).
 
-`report.json` records the checks' slot as `slot` and the adjudication's as `baselineAdjudicated.slot`: `{lane, index, waitedMs, slots, source}`, where `source` is `declaration`, `flag` or `default`. A run that took no slot has no `slot` field.
+On SIGINT, SIGTERM or SIGHUP while holding a slot, `verify.js` sends that signal to each running check's process group and waits up to 5 seconds for them to exit, so a test runner's own teardown (containers, temp databases, worker shutdown) runs. It then kills each tree still alive, frees the slot and exits 128 plus the signal number (130, 143, 129). During `--baseline` adjudication, adjudication's own handler also runs: it removes its scratch worktree and exits with the same code. On Windows there is no signal to forward, so each tree is killed at once. While a slot is held each local check runs in its own session (setsid: its own process group and no controlling terminal), so a terminal's Ctrl-C reaches only `verify.js`, which forwards it, and a check that opens `/dev/tty` gets no terminal. Known limit: a SIGKILL sent to `verify.js`'s own process group does not reach a running check, so the orphaned check keeps running while its slot is reclaimed as a dead holder's.
+
+`report.json` records the checks' slot as `slot`, the adjudication's as `baselineAdjudicated.slot`, and a CI-answered suite's local retry hold as that check's `checks.{suite}.retrySlot`: `{lane, index, waitedMs, slots, source}`, where `source` is `declaration`, `flag` or `default`. A run that took no slot has no `slot` field, and a check whose retry took none has no `retrySlot`.
 
 ## Sizing
 
