@@ -707,12 +707,8 @@ function checkTeardownGate(ctx, teardownWarnings = [], deps = {}) {
 //
 // Flags only a NEW creation — the run-dir-level path (the first path segment
 // under `.claude-tweaks/pipelines/`) does not already exist on disk. A
-// pre-anchoring run directory already sitting in a worktree is left alone
-// (tolerated transitionally by wrap-up/cleanup-procedures.md Section C step
-// 3.5's copy-out guard, sunset 2026-11-07): that guard only ever READS from
-// the worktree and WRITES to the main checkout, so it never trips this guard
-// itself, and further writes into an already-existing worktree-trapped run
-// dir (e.g. a still-running pre-anchoring pipeline appending events.jsonl)
+// run directory already sitting in a worktree is left alone: further writes
+// into it (e.g. a still-running pre-anchoring pipeline appending events.jsonl)
 // must not be newly denied by a guard shipped after that pipeline started.
 //
 // #959: also lets the one documented worktree-local exception through even
