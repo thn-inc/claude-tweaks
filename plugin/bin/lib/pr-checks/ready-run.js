@@ -37,6 +37,8 @@ const STATES = Object.freeze(['not-applicable', 'met', 'awaiting', 'red', 'draft
 const READY_EVENT_QUERY = 'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){timelineItems(itemTypes:[READY_FOR_REVIEW_EVENT],last:1){nodes{...on ReadyForReviewEvent{createdAt}}}}}}';
 
 const WORKFLOWS_DIR = '.github/workflows/';
+const RUNS_PER_PAGE = 100;
+const RUNS_MAX_PAGES = 10;
 
 // GH_TIMEOUT_MS / GIT_TIMEOUT_MS are lazy getters (a policy read); they are
 // resolved per call, never at require time.
@@ -70,7 +72,9 @@ function isWorkflowPath(p) {
 
 // Throws on any failure; the caller decides which way it falls.
 function readLocalWorkflows(deps, sha) {
-  const listing = parseLsTreeZ(String(deps.git(['ls-tree', '-z', '--end-of-options', sha, '--', WORKFLOWS_DIR])));
+  // --full-tree: the pathspec is top-relative, not cwd-relative, so a root below the repo
+  // top (e.g. `plugin/`) lists the same directory instead of an empty "no workflows".
+  const listing = parseLsTreeZ(String(deps.git(['ls-tree', '-z', '--full-tree', '--end-of-options', sha, '--', WORKFLOWS_DIR])));
   return listing
     .filter((r) => r.type === 'blob' && isWorkflowPath(r.path))
     .map((r) => ({ file: r.path, ...readPullRequestWorkflow(String(deps.git(['cat-file', 'blob', r.sha]))) }));
@@ -125,7 +129,11 @@ function readContentsWorkflows(deps, target, sha) {
   return workflows;
 }
 
-const noRequirement = (req) => req.readyWorkflows.length === 0 && req.draftSkipWithoutReadyTrigger.length === 0;
+// The workflows a ready run is awaited for: the ready ones plus the draft-skip ones without a
+// ready trigger (Reading B). The one place this set is named — the merge gate and /test's
+// pr-checks gate both derive from it, and an empty set is "no requirement".
+const readyWaitSet = (req) => [...req.readyWorkflows, ...req.draftSkipWithoutReadyTrigger];
+const noRequirement = (req) => readyWaitSet(req).length === 0;
 
 // The PR's last ready event as an ISO string, null when there is none, or
 // { failed } when the read failed or its body is malformed.
@@ -196,20 +204,27 @@ function readReadyRun(deps, { pr, sha } = {}) {
 
   if (noRequirement(readyRequirement(workflows))) return { readySince, workflows, headRuns: [] };
 
-  let body;
-  try {
-    body = JSON.parse(deps.gh(['api', `repos/${target.owner}/${target.repo}/actions/runs?head_sha=${sha}&per_page=100`]));
-  } catch (e) {
-    return { reason: `runs read failed: ${errText(e)}` }; // no runs, no verdict: fail closed
+  // Page until the collected rows reach total_count: a run missing from the listing could be
+  // the failing or the pending one, so the listing counts as whole only when an integer
+  // total_count proves it. A short page or the page cap with rows still missing fails closed.
+  const rows = [];
+  let total = 0;
+  for (let page = 1; page <= RUNS_MAX_PAGES; page++) {
+    let body;
+    try {
+      const pageArg = page === 1 ? '' : `&page=${page}`;
+      body = JSON.parse(deps.gh(['api', `repos/${target.owner}/${target.repo}/actions/runs?head_sha=${sha}&per_page=${RUNS_PER_PAGE}${pageArg}`]));
+    } catch (e) {
+      return { reason: `runs read failed: ${errText(e)}` }; // no runs, no verdict: fail closed
+    }
+    const pageRows = body && body.workflow_runs;
+    if (!Array.isArray(pageRows)) return { reason: 'runs read failed: not a list' };
+    if (!Number.isInteger(body.total_count)) return { reason: 'runs read failed: no total_count' };
+    rows.push(...pageRows);
+    total = body.total_count;
+    if (rows.length >= total || pageRows.length < RUNS_PER_PAGE) break;
   }
-  const rows = body && body.workflow_runs;
-  if (!Array.isArray(rows)) return { reason: 'runs read failed: not a list' };
-  // One page only: a run missing from a short page could be the failing or the pending one,
-  // so the page counts as whole only when an integer total_count proves it.
-  if (!Number.isInteger(body.total_count)) return { reason: 'runs read failed: no total_count' };
-  if (body.total_count > rows.length) {
-    return { reason: `runs read truncated: ${rows.length} of ${body.total_count}` };
-  }
+  if (total > rows.length) return { reason: `runs read truncated: ${rows.length} of ${total}` };
   return { readySince, workflows, headRuns: rows };
 }
 
@@ -222,7 +237,7 @@ function readyRunState({ readySince, workflows, headRuns } = {}) {
   if (since === null || noRequirement(req)) {
     return { state: 'not-applicable', readySince: since, readyWorkflows: [], awaitingReadyRun: [], pending: [], failing: [], draftSkipWithoutReadyTrigger: [], unparsed: [] };
   }
-  const v = readyRunVerdict({ readySince: since, readyWorkflows: [...req.readyWorkflows, ...req.draftSkipWithoutReadyTrigger], headRuns });
+  const v = readyRunVerdict({ readySince: since, readyWorkflows: readyWaitSet(req), headRuns });
   const parked = req.draftSkipWithoutReadyTrigger.filter((w) => v.awaiting.includes(w));
   const awaitingReadyRun = v.awaiting.filter((w) => !parked.includes(w));
   let state = 'met';
@@ -245,4 +260,4 @@ function resolveReadyRun(deps, { pr, sha } = {}) {
   return read.reason ? readFailed(read.reason) : readyRunState(read);
 }
 
-module.exports = { STATES, READY_EVENT_QUERY, defaultDeps, readReadyRun, readyRunState, resolveReadyRun, readFailed };
+module.exports = { STATES, READY_EVENT_QUERY, defaultDeps, readReadyRun, readyRunState, resolveReadyRun, readFailed, readyWaitSet };

@@ -304,7 +304,7 @@ test('AC6.1: a draft-skip workflow with default types gives draft-skip-without-r
   const env = resolveReadyRun(h.deps, ARGS);
   assert.equal(env.state, 'draft-skip-without-ready-trigger');
   assert.deepEqual(env.draftSkipWithoutReadyTrigger, [CI]);
-  assert.deepEqual(h.gitCalls[0], ['ls-tree', '-z', '--end-of-options', SHA, '--', '.github/workflows/']);
+  assert.deepEqual(h.gitCalls[0], ['ls-tree', '-z', '--full-tree', '--end-of-options', SHA, '--', '.github/workflows/']);
   assert.deepEqual(h.gitCalls.slice(1).map((a) => a.slice(0, 2)), [['cat-file', 'blob']]);
   // CRLF checkout bytes read the same.
   const crlf = harness({ files: { [CI]: DRAFT_SKIP_DEFAULT.replace(/\n/g, '\r\n') } });
@@ -393,9 +393,58 @@ test('real git: workflows are read at the sha from a committed fixture repo', (t
   assert.equal(ghCalls.filter(isContentsCall).length, 0);
 });
 
-// ---- CLI ----------------------------------------------------------------
+test('real git: a root below the repo top still lists the top-level .github/workflows (--full-tree), never an empty not-applicable', (t) => {
+  const repo = gitRepo();
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(repo, '.github', 'workflows'), { recursive: true });
+  fs.mkdirSync(path.join(repo, 'plugin'), { recursive: true });
+  fs.writeFileSync(path.join(repo, '.github', 'workflows', 'ci.yml'), DRAFT_SKIP_DEFAULT);
+  fs.writeFileSync(path.join(repo, 'plugin', 'x.txt'), 'x\n');
+  fixtureGit(['-C', repo, 'add', '.github', 'plugin']);
+  fixtureGit(['-C', repo, 'commit', '-q', '-m', 'ci']);
+  const sha = String(fixtureGit(['-C', repo, 'rev-parse', 'HEAD'])).trim();
+  // Without --full-tree git resolves the `.github/workflows/` pathspec against `git -C plugin`'s
+  // cwd (plugin/.github/workflows/), which holds nothing: an empty listing that reads "no workflows".
+  const deps = { ...defaultDeps(path.join(repo, 'plugin')), gh: fakeGh({}, []), repoTarget: () => TARGET, ghAvailable: () => true };
+  const read = readReadyRun(deps, { pr: PR, sha });
+  assert.deepEqual(read.workflows.map((w) => w.file), [CI]);
+  assert.equal(readyRunState(read).state, 'draft-skip-without-ready-trigger');
+});
 
-const emitted = new Set();
+test('readReadyRun: a runs listing past one page is read page by page until total_count is reached', () => {
+  const rows = Array.from({ length: 150 }, (_, i) => restRun(CI, { id: i + 1 }));
+  const pageOf = (args) => Number((/&page=(\d+)/.exec(args[1]) || [null, '1'])[1]);
+  const h = harness({ files: { [CI]: DRAFT_SKIP_READY }, gh: { total: 150, runs: (args) => JSON.stringify({ total_count: 150, workflow_runs: rows.slice((pageOf(args) - 1) * 100, pageOf(args) * 100) }) } });
+  const read = readReadyRun(h.deps, ARGS);
+  assert.equal(read.headRuns.length, 150);
+  assert.deepEqual(h.ghCalls.filter(isRunsCall), [
+    ['api', `repos/o/r/actions/runs?head_sha=${SHA}&per_page=100`],
+    ['api', `repos/o/r/actions/runs?head_sha=${SHA}&per_page=100&page=2`],
+  ]);
+  assert.equal(readyRunState(read).state, 'met');
+});
+
+test('readReadyRun: the runs paging stops at 10 pages and fails closed as truncated when rows are still missing', () => {
+  const full = (args) => JSON.stringify({ total_count: 5000, workflow_runs: Array.from({ length: 100 }, (_, i) => restRun(CI, { id: i + 1 })) });
+  const h = harness({ files: { [CI]: DRAFT_SKIP_READY }, gh: { runs: full } });
+  const env = resolveReadyRun(h.deps, ARGS);
+  assert.equal(env.state, 'read-failed');
+  assert.equal(env.reason, 'runs read truncated: 1000 of 5000');
+  assert.equal(h.ghCalls.filter(isRunsCall).length, 10);
+});
+
+test('readReadyRun: a non-list contents listing, a workflow file without base64 content, and a throwing ghAvailable each fail closed', () => {
+  const reasonOf = (opts) => resolveReadyRun(harness(opts).deps, ARGS).reason;
+  const listingNotList = reasonOf({ git: throwingGit, gh: { contents: () => JSON.stringify({ message: 'not a directory' }) } });
+  assert.match(listingNotList, new RegExp(`^workflows unreadable at ${SHA}: local objects \\(fatal: not a tree object\\); contents API \\(contents listing is not a list\\)`));
+  const noContent = (args) => (args[1] === `repos/o/r/contents/.github/workflows?ref=${SHA}`
+    ? JSON.stringify([{ type: 'file', name: 'ci.yml', path: CI }])
+    : JSON.stringify({ type: 'file', path: CI, encoding: 'none', content: '' }));
+  assert.match(reasonOf({ git: throwingGit, gh: { contents: noContent } }), new RegExp(`contents API \\(${CI.replace(/\./g, '\\.')}: no base64 content\\)`));
+  assert.equal(reasonOf({ ghAvailable: () => { throw new Error('probe exploded'); } }), 'gh absent');
+});
+
+// ---- CLI ----------------------------------------------------------------
 
 function cli(argv, readerDeps, cwd = '/work') {
   const out = [];
@@ -459,16 +508,18 @@ test('CLI: --help prints USAGE built from STATES and exits 0 without probing', (
   assert.equal(h.ghCalls.length + h.gitCalls.length, 0);
 });
 
+// The inputs that emit each state: the CLI test prints them, the coverage test drives them itself.
+const STATE_CASES = [
+  ['not-applicable', { gh: { ready: [] } }],
+  ['met', { files: { [CI]: DRAFT_SKIP_READY }, gh: { runs: [restRun(CI)] } }],
+  ['awaiting', { files: { [CI]: DRAFT_SKIP_READY } }],
+  ['red', { files: { [CI]: DRAFT_SKIP_READY }, gh: { runs: [restRun(CI, { conclusion: 'failure' })] } }],
+  ['draft-skip-without-ready-trigger', { files: { [CI]: DRAFT_SKIP_DEFAULT } }],
+  ['read-failed', { ghAvailable: () => false }],
+];
+
 test('CLI: run prints exactly the core envelope plus pr and sha on one line, exit 0 in every state', () => {
-  const cases = [
-    ['not-applicable', { gh: { ready: [] } }],
-    ['met', { files: { [CI]: DRAFT_SKIP_READY }, gh: { runs: [restRun(CI)] } }],
-    ['awaiting', { files: { [CI]: DRAFT_SKIP_READY } }],
-    ['red', { files: { [CI]: DRAFT_SKIP_READY }, gh: { runs: [restRun(CI, { conclusion: 'failure' })] } }],
-    ['draft-skip-without-ready-trigger', { files: { [CI]: DRAFT_SKIP_DEFAULT } }],
-    ['read-failed', { ghAvailable: () => false }],
-  ];
-  for (const [state, opts] of cases) {
+  for (const [state, opts] of STATE_CASES) {
     const h = harness(opts);
     const r = cli(['--pr', '7', '--sha', SHA], h.deps);
     assert.equal(r.code, 0, state);
@@ -478,11 +529,9 @@ test('CLI: run prints exactly the core envelope plus pr and sha on one line, exi
     assert.deepEqual(printed, { ...resolveReadyRun(harness(opts).deps, ARGS), pr: PR, sha: SHA });
     assert.equal(printed.state, state);
     assert.deepEqual(r.roots, ['/work']);
-    emitted.add(printed.state);
   }
   const rooted = cli(['--pr', '7', '--sha', SHA, '--root', '/elsewhere'], harness({ gh: { ready: [] } }).deps);
   assert.deepEqual(rooted.roots, ['/elsewhere']);
-  emitted.add(JSON.parse(rooted.out).state);
   // A removed cwd (a reaped worktree) is read-failed data, still exit 0, with nothing read.
   const out = [];
   const code = run(['--pr', '7', '--sha', SHA], {
@@ -496,9 +545,10 @@ test('CLI: run prints exactly the core envelope plus pr and sha on one line, exi
   assert.equal(gone.state, 'read-failed');
   assert.equal(gone.reason, 'checkout unreadable: ENOENT: process.cwd failed');
   assert.equal(gone.pr, PR);
-  emitted.add(gone.state);
 });
 
 test('CLI: the states its cases emit cover STATES exactly', () => {
+  // Self-contained: drives each case itself, so it holds alone and after an earlier failure.
+  const emitted = new Set(STATE_CASES.map(([, opts]) => resolveReadyRun(harness(opts).deps, ARGS).state));
   assert.deepEqual([...emitted].sort(), [...STATES].sort());
 });

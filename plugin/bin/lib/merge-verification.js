@@ -498,5 +498,5 @@ function deriveMergeVerification(repoRoot, deps = {}) {
 module.exports = {
   workflowHasPullRequestTrigger, readWorkflowFiles, hasPullRequestCi,
   DEFAULT_PR_TYPES, readPullRequestWorkflow, readyRequirement,
-  deriveMergeVerification,
+  deriveMergeVerification, PR_TRIGGERS,
 };

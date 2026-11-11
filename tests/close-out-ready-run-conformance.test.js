@@ -1,8 +1,8 @@
 'use strict';
 // #5153 AC8 — close-out and the resume rule read the ready run. Pins (1) the close-out step-3
 // ordering Mark ready -> CI re-read -> confirmation gate, (2) the ready-run read named at every
-// other CI-after-undraft read site, (3) the journey's three reads, (4) the appendix's residual-risk
-// note on the unprobed draft-payload race. Live prose is the declared
+// other CI-after-undraft read site, (3) the journey's three reads, (4) the appendix's note that a
+// post-ready run which verified nothing does not count, closing the draft-payload race. Live prose is the declared
 // contract here: these pins ARE the contract for #5153's prose.
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -107,12 +107,12 @@ const APPENDIX_FACTS = [
   [/an `awaiting` ready run pending, `draft-skip-without-ready-trigger` red/, 'appendix maps awaiting and draft-skip'],
   [/on a `DIRTY`\/`CONFLICTING` PR those two take Step 2\.5's conflict-first rule/, 'appendix applies the conflict-first rule'],
 ];
-// The unprobed draft-payload race is recorded as residual risk, with its candidate mitigation.
+// The draft-payload race is closed by excluding unverified post-ready runs, and the cost is named.
 const RATIONALE_FACTS = [
-  [/\*\*Residual risk: a draft-payload run after ready \(unprobed, #5153\)\.\*\*/, 'appendix records the residual-risk bullet'],
-  [/a `synchronize` run created after `readySince` whose payload still says `draft: true`/, 'appendix names the race'],
-  [/close-out's update-then-Mark-ready sequence is the likeliest trigger/, 'appendix names the likeliest trigger'],
-  [/once a live probe confirms the race: exclude a post-ready run whose jobs all concluded `skipped`/, 'appendix names the probe-gated mitigation'],
+  [/\*\*A ready run that verified nothing \(#5153\)\.\*\*/, 'appendix records the ready-run-verified-nothing bullet'],
+  [/A post-ready run that concluded `skipped`, `cancelled`, `action_required` or `stale` counts for nothing/, 'appendix names the four excluded conclusions'],
+  [/a `synchronize` run created after `readySince` whose payload still says `draft: true`/, 'appendix names the race the exclusion closes'],
+  [/a ready workflow whose post-ready runs all skip never gets a counted run, so the run parks with `checks-pending-timeout \(no run since ready: \{file\}\)`/, 'appendix names the park consequence'],
 ];
 const JOURNEY_FACTS = [
   [/"Green" means Step 2\.5's three reads agree/, 'journey says three reads'],

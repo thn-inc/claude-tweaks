@@ -266,6 +266,11 @@ test('PR_EVENTS is the frozen pull_request pair', () => {
   assert.ok(Object.isFrozen(PR_EVENTS));
 });
 
+test('PR_EVENTS is the same set as merge-verification PR_TRIGGERS (the workflow reader and the ready-run rule agree on what a PR event is)', () => {
+  const { PR_TRIGGERS } = require('../../../plugin/bin/lib/merge-verification');
+  assert.deepEqual([...PR_EVENTS].sort(), [...PR_TRIGGERS].sort());
+});
+
 test('#5153 AC1.1: draft-time head runs and rollup entries all completed SKIPPED/SUCCESS are pending with awaitingReadyRun', () => {
   const rollup = [run('ci', 'COMPLETED', 'SKIPPED'), run('label-fix-branch', 'COMPLETED', 'SUCCESS')];
   const r = ready([rest(W, 'pull_request', BEFORE, 'completed', 'skipped', 1)], rollup);
@@ -303,6 +308,28 @@ test('#5153 AC2.3: a matching post-ready run that succeeds is green', () => {
   const r = ready([rest(W, 'pull_request', AFTER, 'completed', 'success', 7)]);
   assert.equal(r.state, 'green');
   assert.equal('awaitingReadyRun' in r, false);
+});
+
+for (const conclusion of ['skipped', 'cancelled', 'action_required', 'stale']) {
+  test(`#5153 a lone post-ready run that concluded ${conclusion} verified nothing, so the workflow is still awaiting its ready run`, () => {
+    const r = ready([rest(W, 'pull_request', AFTER, 'completed', conclusion, 50)]);
+    assert.equal(r.state, 'pending');
+    assert.deepEqual(r.awaitingReadyRun, [W]);
+    assert.deepEqual(readyRunVerdict({ readySince: READY, readyWorkflows: [W], headRuns: [rest(W, 'pull_request', AFTER, 'completed', conclusion, 50)] }), { awaiting: [W], pending: [], failing: [] });
+  });
+}
+
+test('#5153 a post-ready skipped run newer than a post-ready success is ignored, so the success decides and the gate is green', () => {
+  const r = ready([rest(W, 'pull_request', AFTER, 'completed', 'success', 51), rest(W, 'pull_request', '2026-11-11T00:50:00Z', 'completed', 'skipped', 52)]);
+  assert.equal(r.state, 'green');
+  assert.equal('awaitingReadyRun' in r, false);
+});
+
+test('#5153 a post-ready skipped run beside a post-ready run in progress is pending on that run, not awaiting', () => {
+  const r = ready([rest(W, 'pull_request', '2026-11-11T00:50:00Z', 'completed', 'skipped', 53), rest(W, 'pull_request', AFTER, 'in_progress', null, 54)]);
+  assert.equal(r.state, 'pending');
+  assert.equal('awaitingReadyRun' in r, false);
+  assert.deepEqual(readyRunVerdict({ readySince: READY, readyWorkflows: [W], headRuns: [rest(W, 'pull_request', '2026-11-11T00:50:00Z', 'completed', 'skipped', 53), rest(W, 'pull_request', AFTER, 'in_progress', null, 54)] }).pending, [W]);
 });
 
 test('#5153 AC3.1: a red head run still returns red while a ready run is awaited', () => {

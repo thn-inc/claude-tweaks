@@ -64,7 +64,7 @@ const { resolveTarget, formatEntry, appendEntry } = require('./lib/log-decision/
 const { readRunStateWithParent } = require('./lib/hooks/context');
 const { ghAvailable, ghOptions } = require('./lib/repo-resolve');
 const { hasPullRequestCi, readyRequirement } = require('./lib/merge-verification');
-const { readReadyRun, defaultDeps: readyRunDeps } = require('./lib/pr-checks/ready-run');
+const { readReadyRun, readyWaitSet, defaultDeps: readyRunDeps } = require('./lib/pr-checks/ready-run');
 const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('./lib/shared-primitives');
 
 const USAGE = 'usage: pr-checks.js --run <run-dir> [--section "/<skill>"] | --pr <n> [--help]\n'
@@ -237,13 +237,13 @@ function classifyPr(deps, n, localHead, audit) {
   try { hasPrCi = Boolean(deps.hasPullRequestCi(repoRoot)); } catch { hasPrCi = false; }
   const input = { rollup: view && view.statusCheckRollup, headRefOid, localHead: compareHead, hasPrCi, headRuns };
   if (ready) {
-    // A draft-skip workflow without a ready trigger is folded in with the ready ones (Reading B): with no
-    // post-ready run it is awaiting (pending); once a later push has run it, the general rules judge that
-    // run. This is the verdict the merge gate's ready-run reader gives; only the merge gate names the
+    // The wait set is ready-run.js's readyWaitSet: a draft-skip workflow without a ready trigger is folded in
+    // with the ready ones (Reading B). With no post-ready run it is awaiting (pending); once a later push has
+    // run it, the general rules judge that run. This is the verdict the merge gate's ready-run reader gives
+    // (same helper, so the two cannot disagree on what is awaited); only the merge gate names the
     // no-post-ready-run case with its own park reason. A run in both shapes (gh row + REST row) is named
     // once by the general scans (they dedupe by name), so the REST rows are appended, never substituted.
-    const req = readyRequirement(ready.workflows);
-    const readyWorkflows = [...req.readyWorkflows, ...req.draftSkipWithoutReadyTrigger];
+    const readyWorkflows = readyWaitSet(readyRequirement(ready.workflows));
     if (ready.readySince && readyWorkflows.length > 0) {
       input.readySince = ready.readySince;
       input.readyWorkflows = readyWorkflows;

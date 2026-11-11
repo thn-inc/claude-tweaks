@@ -58,12 +58,20 @@ function result(state, headRefOid, extra = {}) {
 
 const PR_EVENTS = Object.freeze(['pull_request', 'pull_request_target']);
 
+// Conclusions of a run that verified nothing: its jobs were skipped, it was
+// cancelled or left waiting for approval, or GitHub marked it stale.
+const UNVERIFIED_CONCLUSIONS = Object.freeze(['SKIPPED', 'CANCELLED', 'ACTION_REQUIRED', 'STALE']);
+
 // #5153 — the CI run `gh pr ready` starts. Only a REST `actions/runs` row (it
 // carries `path`) can count: a `gh run list` row has none, so a run present in
 // both shapes is counted once. A row counts for workflow W when runPathMatches,
-// its event is a PR event, and it was created at or
-// after `readySince`; an unparseable date counts for nothing, which leaves the
-// workflow awaiting (fail closed). The newest counted row alone decides W.
+// its event is a PR event, it was created at or after `readySince`, and it did
+// not conclude in UNVERIFIED_CONCLUSIONS; an unparseable date counts for
+// nothing, which leaves the workflow awaiting (fail closed). An unverified
+// conclusion counts for nothing too, so a green gate always rests on a ready
+// run that ran — this also covers a `synchronize` run created after ready whose
+// payload still said draft, so its jobs skipped. A run not yet completed is
+// never excluded. The newest counted row alone decides W.
 // A run path is W, or W plus an `@ref` suffix (a file named `ci@v2.yml` still
 // matches its own runs). The suffix must hold a `/` with no `@` before it: a
 // ref (`refs/…`) does, while a sibling file `W@x.yml`, with or without its own
@@ -92,6 +100,8 @@ function readyRunVerdict({ readySince, readyWorkflows, headRuns } = {}) {
       if (!runPathMatches(path, W) || !PR_EVENTS.includes(row.event)) continue;
       const at = Date.parse(row.createdAt ?? row.created_at);
       if (Number.isNaN(at) || Number.isNaN(since) || at < since) continue;
+      const concluded = String(row.status || '').toUpperCase() === 'COMPLETED';
+      if (concluded && UNVERIFIED_CONCLUSIONS.includes(String(row.conclusion || '').toUpperCase())) continue;
       if (!newest || at > newestAt || (at === newestAt && ids(row) > ids(newest))) {
         newest = row;
         newestAt = at;

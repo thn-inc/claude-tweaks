@@ -20,7 +20,7 @@ jobs:
 The job-level condition skips every draft-time run; `ready_for_review` starts the run the gate waits for. How the gate reads this shape:
 
 - **The ready event.** After `gh pr ready`, the gate reads the PR timeline's last `ReadyForReviewEvent`.
-- **The ready run.** Each PR-triggered workflow that declares `ready_for_review` must then have a `pull_request`/`pull_request_target` run on the head created at or after that event. Until that run exists the verdict is pending.
+- **The ready run.** Each PR-triggered workflow that declares `ready_for_review` must then have a `pull_request`/`pull_request_target` run on the head created at or after that event. Until that run exists the verdict is pending. A post-ready run that concluded `skipped`, `cancelled`, `action_required` or `stale` does not count.
 - **Matching by path.** Runs are matched to workflows by file path, so a missing or duplicated `name:` does not matter.
 - **Where the condition lives.** Keep it on the job in the PR-triggered workflow itself (`if: ${{ !github.event.pull_request.draft }}` reads the same), not inside a reusable workflow (`uses:`) the gate never opens.
 - **Unparsed files.** A workflow file the gate cannot parse counts as requiring a ready run, never as no requirement. With no ready run it parks with `checks-pending-timeout`, naming it `{file} unparsed`; the fix is a plain `on:` block: no `*alias`, `<<:` merge key or `${{ }}` expression, each flow list or mapping closed on its own line.
