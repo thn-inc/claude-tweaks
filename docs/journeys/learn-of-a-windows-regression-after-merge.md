@@ -25,8 +25,8 @@ files:
 ### 2. The Windows run starts on the merge commit — Actions tab, `gh run list --workflow windows-regression.yml`
 - **Action:** Nothing. The push to `main` starts one run per commit (concurrency keyed on the sha, never cancelled), comparing against the push's previous `main` tip.
 - **Should feel:** Like background monitoring — a run you can look at, not one you have to.
-- **Should understand:** The run's "Resolve the comparison base" step prints which commit it compares against and why (push event before, merge-base with origin/main for a manual dispatch, or the `HEAD^1` fallback). A clean run takes about 17 minutes. The `windows` job is capped at 90 minutes and every per-file baseline run at 20 (`--cmd-timeout`), so a hung test file ends as a named timeout, not a run that never finishes.
-- **Red flags:** A skipped commit (no run for a merged sha); `npm test` dying before any test runs (`ENAMETOOLONG` — the runner must pass root globs on Windows); the `windows` job cancelled at its 90-minute limit, which uploads no report and files a "no verify report" issue instead of a verdict.
+- **Should understand:** The run's "Resolve the comparison base" step prints which commit it compares against and why (push event before, merge-base with origin/main for a manual dispatch, or the `HEAD^1` fallback). A clean run takes about 17 minutes. The `windows` job is capped at 150 minutes and every per-file baseline run at 20 (`--cmd-timeout`), so a hung test file ends as a named timeout, not a run that never finishes.
+- **Red flags:** A skipped commit (no run for a merged sha); `npm test` dying before any test runs (`ENAMETOOLONG` — the runner must pass root globs on Windows); the `windows` job cancelled at its 150-minute limit, which uploads no report and files a "no verify report" issue instead of a verdict.
 
 ### 3a. Green — nothing new broke on Windows
 - **Action:** None. A raw pass, or failures that also fail on the base commit or pass in isolation (baseline-adjudicated), end green and file nothing.
