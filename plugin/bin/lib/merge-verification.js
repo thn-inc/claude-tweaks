@@ -193,6 +193,9 @@ function stripCommentQuoteAware(s) {
 const TYPE_ITEM = /^[A-Za-z_]+$/;
 const BLOCK_ITEM = /^['"]?[A-Za-z_]+['"]?$/;
 
+// A trigger that fires on GitHub's default activity types.
+const defaultTrigger = () => ({ types: [...DEFAULT_PR_TYPES], declared: false, unparsed: false });
+
 // A trigger the reader knows exists but cannot read: contributes no types, sets
 // prTrigger and unparsed.
 const UNREADABLE_TRIGGER = () => ({ types: [], declared: false, unparsed: true });
@@ -259,10 +262,10 @@ function readFlowItems(inner) {
 // `types: [..]`; a value without `types` declares none (defaults).
 function readInlineTriggerValue(value) {
   const v = stripComment(value);
-  if (v === '' || v === '{}' || v === 'null' || v === '~') return { types: [...DEFAULT_PR_TYPES], declared: false, unparsed: false };
+  if (v === '' || v === '{}' || v === 'null' || v === '~') return defaultTrigger();
   if (!/\btypes\b/.test(v)) {
     return v.startsWith('{')
-      ? { types: [...DEFAULT_PR_TYPES], declared: false, unparsed: false }
+      ? defaultTrigger()
       : { types: [], declared: false, unparsed: true };
   }
   const m = /\btypes\s*:\s*\[([^\][]*)\]/.exec(v);
@@ -312,7 +315,7 @@ function readBlockTrigger(lines, at, indent, rest) {
       ? { types: items, declared: true, unparsed: false }
       : { types: [], declared: true, unparsed: true };
   }
-  return { types: [...DEFAULT_PR_TYPES], declared: false, unparsed: false };
+  return defaultTrigger();
 }
 
 // Never throws; a non-string or empty input reads as all-false.
@@ -337,7 +340,7 @@ function readPullRequestWorkflow(text) {
           if (!names.every((k) => TYPE_ITEM.test(k))) {
             triggers.push(UNREADABLE_TRIGGER()); // *alias, ${{ … }} or another non-name item
           } else if (names.some((k) => PR_TRIGGERS.has(k))) {
-            triggers.push({ types: [...DEFAULT_PR_TYPES], declared: false, unparsed: false });
+            triggers.push(defaultTrigger());
           }
         }
       } else if (rest.startsWith('{')) {
@@ -350,7 +353,7 @@ function readPullRequestWorkflow(text) {
       } else if (!TYPE_ITEM.test(stripQuotes(rest))) {
         triggers.push(UNREADABLE_TRIGGER()); // *alias, ${{ … }}, anything but a name (a leading &anchor was stripped above)
       } else if (PR_TRIGGERS.has(stripQuotes(rest))) {
-        triggers.push({ types: [...DEFAULT_PR_TYPES], declared: false, unparsed: false });
+        triggers.push(defaultTrigger());
       }
     } else {
       let triggerIndent = null;
@@ -370,7 +373,7 @@ function readPullRequestWorkflow(text) {
         if (li) {
           const item = stripCommentQuoteAware(li[1]);
           if (!BLOCK_ITEM.test(item)) triggers.push(UNREADABLE_TRIGGER()); // `- *pr`, `- ${{ … }}`
-          else if (PR_TRIGGERS.has(stripQuotes(item))) triggers.push({ types: [...DEFAULT_PR_TYPES], declared: false, unparsed: false });
+          else if (PR_TRIGGERS.has(stripQuotes(item))) triggers.push(defaultTrigger());
           continue;
         }
         const key = /^\s*(['"]?[A-Za-z_]+['"]?)\s*:(.*)$/.exec(line);
