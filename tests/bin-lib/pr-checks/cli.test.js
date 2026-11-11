@@ -861,6 +861,33 @@ test('ready-run: a readyRun reason on a non-red verdict is read-failed with reas
   assert.equal(h.json().state, 'red');
 });
 
+test('ready-run: a readyRun reason plus a base comparison that concludes inherited-red is read-failed (partial read)', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const f = redWithBase(['test'], ['test'], { readyRun: () => ({ reason: 'x' }) });
+  const h = makeDeps(main, f.over);
+  assert.equal(run(['--run', runDir], h.deps), 0);
+  assert.equal(h.json().state, 'read-failed');
+  assert.equal(h.json().reason, 'ready-run read failed: x');
+});
+
+test('ready-run: a null readyRun result is read-failed "no result", never "no requirement"', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { gh: greenView, readyRun: () => null });
+  assert.equal(run(['--run', runDir], h.deps), 0);
+  assert.equal(h.json().state, 'read-failed');
+  assert.equal(h.json().reason, 'ready-run read failed: no result');
+});
+
+test('ready-run: the pending gate line names pending checks first when they sit beside awaitingReadyRun', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { gh: viewGh({ headRefOid: HEAD, statusCheckRollup: [RUNNING] }), readyRun: readyStub({ readySince: READY_AT, workflows: [wfReady], headRuns: [] }) });
+  assert.equal(run(['--run', runDir, '--section', '/test'], h.deps), 0);
+  const j = h.json();
+  assert.deepEqual(j.pending, ['test']);
+  assert.deepEqual(j.awaitingReadyRun, [CI_FILE]);
+  assert.equal(afterStamp(entriesOf(runDir)[0]), '— PR-check gate: PR #7 checks pending at ccccccc (test) — passed with caveat. Reversibility: high.');
+});
+
 test('ready-run: a stale head never calls readyRun', () => {
   const { main, runDir } = fixture({ pr: { number: 7 } });
   const calls = [];
@@ -873,7 +900,8 @@ test('ready-run: a stale head never calls readyRun', () => {
 test('ready-run: --pr mode passes the PR head sha and the git toplevel as root', () => {
   const { main } = fixture(null);
   const calls = [];
-  const h = prDeps(main, { gh: greenView, readyRun: readyStub({ readySince: null, workflows: [], headRuns: [] }, calls) });
+  // cwd differs from the git toplevel, so passing cwd as root would be caught
+  const h = prDeps(main, { cwd: () => path.join(main, 'sub'), gh: greenView, readyRun: readyStub({ readySince: null, workflows: [], headRuns: [] }, calls) });
   assert.equal(run(['--pr', '7'], h.deps), 0);
   assert.deepEqual(calls, [{ pr: 7, sha: HEAD, root: main }]);
 });
@@ -914,5 +942,5 @@ test('USAGE names awaitingReadyRun? among the envelope keys', () => {
 test('the pending gate-line phrase "no run since ready" appears in _shared/pr-check-gate.md (prose twin of gateEntry)', () => {
   const { readText } = require('../../helpers/read-skill');
   const prose = readText(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', '_shared', 'pr-check-gate.md'));
-  assert.match(prose, /'no run since ready: \{files\}' when only `awaitingReadyRun` holds it/);
+  assert.match(prose, /'no run since ready: \{files\}' when only awaitingReadyRun holds it/);
 });
