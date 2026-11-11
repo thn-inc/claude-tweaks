@@ -646,6 +646,15 @@ test("Step 16's prose names the excluded bookkeeping branches by their constants
   assert.ok(prose.includes(`\`${CLAIMS_BRANCH}\` and \`${HEALTH_STATE_BRANCH}\` bookkeeping branches`), 'the job description names both branches');
 });
 
+test("Step 16's outcome bullets are exactly the values classifyExistingWorkflow returns", () => {
+  const prose = readText(path.join(__dirname, '..', 'plugin/skills/init/bootstrap/step-16-non-default-branch-issue-tracking.md'));
+  const bulleted = [...prose.matchAll(/^- `([a-z-]+)` — /gm)].map((m) => m[1]).sort();
+  const returned = [
+    ...new Set([generateWorkflowYaml(), PRE_5152_FIXTURE, ''].map(classifyExistingWorkflow)),
+  ].sort();
+  assert.deepStrictEqual(bulleted, returned);
+});
+
 test('the checked-in .github/workflows/track-issue-fixes.yml is the generator output', () => {
   const checkedIn = readText(path.join(__dirname, '..', '.github/workflows/track-issue-fixes.yml'));
   assert.strictEqual(checkedIn, generateWorkflowYaml() + '\n');
