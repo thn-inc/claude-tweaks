@@ -60,11 +60,24 @@ const PR_EVENTS = Object.freeze(['pull_request', 'pull_request_target']);
 
 // #5153 — the CI run `gh pr ready` starts. Only a REST `actions/runs` row (it
 // carries `path`) can count: a `gh run list` row has none, so a run present in
-// both shapes is counted once. A row counts for workflow W when its path is W or
-// W plus an `@ref` suffix (a file named `ci@v2.yml` still matches its own runs;
-// a pathless or empty path, or an empty W, never does), its event is a PR event, and it was created at or
+// both shapes is counted once. A row counts for workflow W when runPathMatches,
+// its event is a PR event, and it was created at or
 // after `readySince`; an unparseable date counts for nothing, which leaves the
 // workflow awaiting (fail closed). The newest counted row alone decides W.
+// A run path is W, or W plus an `@ref` suffix (a file named `ci@v2.yml` still
+// matches its own runs). The suffix must hold a `/` with no `@` before it: a
+// ref (`refs/…`) does, while a sibling file `W@x.yml`, with or without its own
+// `@ref`, never does (a workflow file name has no `/`), so it never satisfies W.
+// A pathless or empty path, or an empty W, never matches.
+function runPathMatches(path, W) {
+  if (path === '' || W === '') return false;
+  if (path === W) return true;
+  if (!path.startsWith(`${W}@`)) return false;
+  const suffix = path.slice(W.length + 1);
+  const slash = suffix.indexOf('/');
+  return slash > 0 && !suffix.slice(0, slash).includes('@');
+}
+
 function readyRunVerdict({ readySince, readyWorkflows, headRuns } = {}) {
   const verdict = { awaiting: [], pending: [], failing: [] };
   const since = Date.parse(readySince);
@@ -76,7 +89,7 @@ function readyRunVerdict({ readySince, readyWorkflows, headRuns } = {}) {
     for (const row of rows) {
       if (!row || typeof row !== 'object') continue;
       const path = typeof row.path === 'string' ? row.path : '';
-      if (path === '' || W === '' || (path !== W && !path.startsWith(`${W}@`)) || !PR_EVENTS.includes(row.event)) continue;
+      if (!runPathMatches(path, W) || !PR_EVENTS.includes(row.event)) continue;
       const at = Date.parse(row.createdAt ?? row.created_at);
       if (Number.isNaN(at) || Number.isNaN(since) || at < since) continue;
       if (!newest || at > newestAt || (at === newestAt && ids(row) > ids(newest))) {

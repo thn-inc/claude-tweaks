@@ -382,6 +382,20 @@ test('guard (b1): a workflow file with `@` in its name matches its own run path,
   assert.equal(classifyRollup({ rollup: GREEN_ROLLUP, headRefOid: HEAD, localHead: HEAD, hasPrCi: true, headRuns: [rest(AT, 'pull_request', AFTER, 'completed', 'success', 34)], readySince: READY, readyWorkflows: [AT] }).state, 'green');
 });
 
+test('guard (b1s): a sibling workflow file named `W@….yml` never satisfies W, with or without its own @ref (fail closed)', () => {
+  const v = (p) => readyRunVerdict({ readySince: READY, readyWorkflows: [W], headRuns: [rest(p, 'pull_request', AFTER, 'completed', 'success', 40)] });
+  for (const sibling of [`${W}@v2.yml`, `${W}@v2.yml@refs/pull/7/merge`, `${W}@v2.yml@main`]) {
+    assert.deepEqual(v(sibling), { awaiting: [W], pending: [], failing: [] }, sibling);
+    const r = ready([rest(sibling, 'pull_request', AFTER, 'completed', 'success', 41)]);
+    assert.equal(r.state, 'pending', sibling);
+    assert.deepEqual(r.awaitingReadyRun, [W], sibling);
+  }
+  // W's own run with a ref suffix still matches.
+  for (const own of [`${W}@refs/pull/7/merge`, `${W}@refs/heads/feat@x`]) {
+    assert.deepEqual(v(own), { awaiting: [], pending: [], failing: [] }, own);
+  }
+});
+
 test('guard (b2): a gh run list row (no path) never counts, even with a matching name and post-ready createdAt', () => {
   const row = { name: 'ci', workflowName: 'ci', status: 'completed', conclusion: 'success', event: 'pull_request', createdAt: AFTER, databaseId: 4, url: 'u' };
   const r = ready([row]);

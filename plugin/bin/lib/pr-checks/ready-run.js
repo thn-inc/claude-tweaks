@@ -11,7 +11,7 @@
 //      never demote that verdict;
 //   2. the workflow files at `sha`: local objects first (`git ls-tree` +
 //      `git cat-file`), else the REST contents API at that ref (a directory 404
-//      is "no workflows" only once `commits/{sha}` reads back);
+//      is "no workflows" only once `git/commits/{sha}` reads back);
 //   3. the REST runs listing for `sha` (`actions/runs?head_sha=`), only when
 //      readyRequirement (merge-verification.js) names a workflow to wait on.
 // readyRunState then classifies with classify.js's readyRunVerdict.
@@ -90,11 +90,13 @@ function isPathNotFound(e) {
 
 // A directory `Not Found` is also what a token without Contents access gets on a
 // private repo, so it means "no workflows" only once the commit itself reads back
-// (same seam, a GET path, no -f/-F). Any other answer throws: fail closed.
+// (same seam, a GET path, no -f/-F). The Git Database read (`git/commits`) needs
+// the same Contents permission but computes no diff, so a huge commit cannot
+// time it out into a false read-failed. Any other answer throws: fail closed.
 function confirmCommit(deps, target, sha) {
   let body;
   try {
-    body = JSON.parse(deps.gh(['api', `repos/${target.owner}/${target.repo}/commits/${sha}`]));
+    body = JSON.parse(deps.gh(['api', `repos/${target.owner}/${target.repo}/git/commits/${sha}`]));
   } catch (e) {
     throw new Error(`.github/workflows Not Found and commit ${sha} unconfirmed (${errText(e)})`);
   }
