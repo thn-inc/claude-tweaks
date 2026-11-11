@@ -1251,6 +1251,10 @@ async function main() {
         sha: git.sha,
         flakyRetried: retriedFiles,
         reportPath: jsonPath,
+        ...(sel && sel.impact ? { impact: {
+          suite: sel.impact.suite, fallback: sel.impact.fallback, superseded: sel.impact.superseded,
+          selected: sel.impact.selected, supersedingPaths: sel.impact.supersedingPaths,
+        } } : {}),
       });
       // #3062: a baseline-flaky file that reaches the escalation threshold
       // without being on flaky.files never joins the allowlist silently —
