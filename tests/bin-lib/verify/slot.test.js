@@ -81,6 +81,17 @@ test('holdSlot sets CT_TEST_SUITE_SLOT_HELD and CT_TEST_WORKERS while held and r
   assert.ok(!('CT_TEST_SUITE_SLOT_HELD' in unset.env));
 });
 
+test('holdSlot\'s hold names the lock dir it acquired under (#5150)', () => {
+  const dir = tmpSlotDir();
+  const { h } = hold(dir);
+  try {
+    assert.strictEqual(h.base, dir);
+  } finally {
+    h.release();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('holdSlot release is idempotent, removes slot-<index>.lock and every listener it added (#5119)', () => {
   const dir = tmpSlotDir();
   const { h, proc } = hold(dir);
@@ -119,16 +130,51 @@ test('holdSlot: a signal with no other listener runs beforeRelease, releases, an
 
 test('holdSlot: adjudication\'s own signal handler still runs and is the only one to exit (#5119)', () => {
   const dir = tmpSlotDir();
-  const { proc } = hold(dir);
-  const seen = [];
+  const order = [];
+  const { proc } = hold(dir, { beforeRelease: () => order.push('kill') });
+  // Like adjudicate()'s handler: remove the scratch, then exit — a real process.exit emits 'exit'.
   proc.on('SIGTERM', () => {
-    seen.push(fs.existsSync(lockFile(dir)) ? 'adjudicator-saw-held' : 'adjudicator-saw-released');
+    order.push('adjudicator');
     proc.exit(143);
+    proc.emit('exit', 143);
   });
   proc.emit('SIGTERM');
-  assert.deepStrictEqual(seen, ['adjudicator-saw-released']);
+  assert.deepStrictEqual(order, ['kill', 'adjudicator']);
   assert.deepStrictEqual(proc.exits, [143], 'exit is called once, by the later listener');
+  assert.strictEqual(fs.existsSync(lockFile(dir)), false, 'released once the later listener exits');
   assert.strictEqual(proc.listenerCount('SIGTERM'), 1, 'only the adjudicator\'s own listener remains');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('holdSlot: a beforeRelease that throws is named on stderr and the signal is still handled, a later listener included (#5150)', () => {
+  for (const later of [false, true]) {
+    const dir = tmpSlotDir();
+    const logged = [];
+    const { proc } = hold(dir, { beforeRelease: () => { throw new Error('kill failed'); }, log: (l) => logged.push(l) });
+    const seen = [];
+    if (later) proc.on('SIGTERM', () => { seen.push('adjudicator'); proc.exit(143); proc.emit('exit', 143); });
+    proc.emit('SIGTERM');
+    assert.deepStrictEqual(logged, ['verify.js: stopping the running checks on SIGTERM failed — kill failed']);
+    assert.deepStrictEqual(seen, later ? ['adjudicator'] : [], `later listener ${later}`);
+    assert.deepStrictEqual(proc.exits, [143], 'exit is called once');
+    assert.strictEqual(fs.existsSync(lockFile(dir)), false, 'the slot is released');
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('holdSlot: with a later signal listener the slot is still held while that listener runs — kill, remove, then release (#5150)', () => {
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    const dir = tmpSlotDir();
+    const { proc } = hold(dir);
+    const seen = [];
+    proc.on(sig, () => { seen.push(fs.existsSync(lockFile(dir)) ? 'held' : 'released'); });
+    proc.emit(sig);
+    assert.deepStrictEqual(seen, ['held'], `${sig}: a waiter on this slot cannot start while the later listener removes the scratch`);
+    assert.deepStrictEqual(proc.exits, [], `${sig}: the later listener exits, not holdSlot`);
+    proc.emit('exit', 128 + os.constants.signals[sig]);
+    assert.strictEqual(fs.existsSync(lockFile(dir)), false, `${sig}: the exit hook releases`);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('holdSlot: the exit hook frees the slot on any exit path (#5119)', () => {
