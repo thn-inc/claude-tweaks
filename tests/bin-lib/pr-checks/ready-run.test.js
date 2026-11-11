@@ -163,6 +163,14 @@ test('readReadyRun: the last ready event wins, and a body on a failed exit is st
     gh: { timeline: () => { throw Object.assign(new Error('Command failed: gh api graphql'), { status: 1, stdout: timelineBody([{ createdAt: READY }]), stderr: 'gh: partial\n' }); } },
   });
   assert.equal(readReadyRun(thrown.deps, ARGS).readySince, READY);
+  // A failed exit whose body carries an empty `nodes` (and `errors`) is a failed read, never "no event".
+  const emptyOnError = harness({
+    files: { [CI]: DRAFT_SKIP_DEFAULT },
+    gh: { timeline: () => { throw Object.assign(new Error('Command failed: gh api graphql\ngh: something failed\n'), { status: 1, stdout: JSON.stringify({ data: { repository: { pullRequest: { timelineItems: { nodes: [] } } } }, errors: [{ message: 'something failed' }] }), stderr: 'gh: something failed\n' }); } },
+  });
+  const failedEmpty = resolveReadyRun(emptyOnError.deps, ARGS);
+  assert.equal(failedEmpty.state, 'read-failed');
+  assert.equal(failedEmpty.reason, 'ready-event read failed: gh: something failed');
 });
 
 test('readReadyRun: the runs read is a GET path with head_sha and per_page=100 and no -f/-F', () => {
@@ -248,6 +256,9 @@ test('readReadyRun: a truncated runs page, a non-list runs body, gh absent and a
   const reason = (opts) => resolveReadyRun(harness({ files, ...opts }).deps, ARGS).reason;
   assert.equal(reason({ gh: { runs: [restRun(CI)], total: 150 } }), 'runs read truncated: 1 of 150');
   assert.equal(reason({ gh: { runs: () => JSON.stringify({ total_count: 0, workflow_runs: null }) } }), 'runs read failed: not a list');
+  // A page is whole only when total_count proves it: absent or non-integer fails closed.
+  assert.equal(reason({ gh: { runs: () => JSON.stringify({ workflow_runs: [] }) } }), 'runs read failed: no total_count');
+  assert.equal(reason({ gh: { runs: () => JSON.stringify({ total_count: '500', workflow_runs: [] }) } }), 'runs read failed: no total_count');
   assert.equal(reason({ gh: { runs: () => { throw Object.assign(new Error('Command failed: gh api\ngh: HTTP 500\n'), { status: 1, stderr: 'gh: HTTP 500\n' }); } } }), 'runs read failed: gh: HTTP 500');
   // A silent non-zero exit names its exit, never the `Command failed:` argv line.
   assert.equal(reason({ gh: { runs: () => { throw Object.assign(new Error(`Command failed: gh api repos/o/r/actions/runs?head_sha=${SHA}&per_page=100`), { status: 1, stderr: '' }); } } }), 'runs read failed: exit 1');

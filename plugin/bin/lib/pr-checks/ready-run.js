@@ -129,7 +129,8 @@ function readReadyEvent(deps, target, pr) {
     nodes = null; // unparseable, or no pullRequest: a failed read, never "no event"
   }
   if (!Array.isArray(nodes)) return { failed: cause || `malformed timeline body: ${String(stdout).slice(0, 200)}` };
-  if (nodes.length === 0) return null;
+  // An empty list on a failed exit (the body carries `errors`) is a failed read, never "no event".
+  if (nodes.length === 0) return cause ? { failed: cause } : null;
   const at = nodes[nodes.length - 1] && nodes[nodes.length - 1].createdAt;
   if (typeof at !== 'string' || Number.isNaN(Date.parse(at))) return { failed: `malformed ready event createdAt: ${JSON.stringify(at)}` };
   return at;
@@ -186,8 +187,10 @@ function readReadyRun(deps, { pr, sha } = {}) {
   }
   const rows = body && body.workflow_runs;
   if (!Array.isArray(rows)) return { reason: 'runs read failed: not a list' };
-  // One page only: a run missing from a short page could be the failing or the pending one.
-  if (typeof body.total_count === 'number' && body.total_count > rows.length) {
+  // One page only: a run missing from a short page could be the failing or the pending one,
+  // so the page counts as whole only when an integer total_count proves it.
+  if (!Number.isInteger(body.total_count)) return { reason: 'runs read failed: no total_count' };
+  if (body.total_count > rows.length) {
     return { reason: `runs read truncated: ${rows.length} of ${body.total_count}` };
   }
   return { readySince, workflows, headRuns: rows };
