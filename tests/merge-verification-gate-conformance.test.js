@@ -9,6 +9,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
 const { toPosix } = require('../plugin/bin/lib/shared-primitives');
+const { sectionOf } = require('./helpers/conformance-asserts');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
 const GATE_FILE = path.join(SKILLS, '_shared', 'pr-first-merge.md');
@@ -97,7 +98,9 @@ test('the gate cross-checks head-sha workflow runs before reading green (#3405)'
   const signatures = appendix.slice(appendix.indexOf('## Signatures'), appendix.indexOf('\n## ', appendix.indexOf('## Signatures') + 1));
   assert.ok(signatures.includes('#3390') && signatures.includes('39042323352'), 'Signatures list missing the #3390 capture (run 39042323352)');
   // The resume confirmation's one read-then-decide classifies from both reads, not the rollup alone.
-  const resume = section.slice(section.indexOf('**Resume-to-merge is one-shot.**'));
+  // The rule moved to the appendix (#5153, composed-bundle byte rail); Step 2.5 keeps a labeled stub that points at it.
+  assert.ok(section.includes('**Resume-to-merge is one-shot.**') && section.includes('"Resume-to-merge"'), 'Step 2.5 must keep the resume stub and its pointer to the appendix');
+  const resume = sectionOf(appendix, '## Resume-to-merge');
   assert.ok(resume.includes('gh run list') && resume.includes('not-yet-completed head run reads pending'), 'resume paragraph must classify from the head-run read too');
   // The RC=0 re-read names the not-yet-completed head run case and resumes the watch, never a blind merge.
   const rc0 = section.slice(section.indexOf('`RC=0` → **green**'), section.indexOf('`RC=1` (a check failed'));
