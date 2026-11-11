@@ -220,6 +220,25 @@ test('I1: readPullRequestWorkflow reads an unreadable on: as an unparsed PR trig
   }
 });
 
+test('readPullRequestWorkflow: a file that never spells pull_request is no PR trigger, whatever its on: shape', () => {
+  const none = { prTrigger: false, types: [], typesDeclared: false, draftReference: false, unparsed: false };
+  for (const c of [
+    'x: &t\n  push: {}\non: *t\n',
+    'x: &b\n  push: {}\non:\n  <<: *b\n',
+    "on:\n  schedule:\n  - cron: '0 0 * * *'\n",
+    'on: [push,\n  workflow_dispatch]\n',
+    'on:\n  - push\n  - *t\n',
+  ]) {
+    bothEndings(c, (t) => assert.deepEqual(mv.readPullRequestWorkflow(t), none, JSON.stringify(t)));
+  }
+  // a double-quoted escape can spell the name without the literal: the read stays fail-closed
+  bothEndings('x: &t { "pull\\u005frequest": {} }\non: *t\n', (t) => {
+    const r = mv.readPullRequestWorkflow(t);
+    assert.equal(r.prTrigger, true);
+    assert.equal(r.unparsed, true);
+  });
+});
+
 test('readPullRequestWorkflow: an on: &anchor node name does not hide the block beneath it', () => {
   bothEndings('on: &t\n  pull_request:\n    types: [opened]\n', (t) => {
     const r = mv.readPullRequestWorkflow(t);

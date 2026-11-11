@@ -29,7 +29,7 @@ const DRAFT_SKIP_READY = 'name: ci\non:\n  pull_request:\n    types: [opened, sy
 // A bare pull_request workflow with no draft reference: no ready-run requirement.
 const BARE_PR = 'name: test\non:\n  pull_request:\njobs:\n  t:\n    runs-on: ubuntu-latest\n';
 // An `on:` the reader cannot read: prTrigger true, unparsed true.
-const UNPARSED = 'name: weird\non: *anchor\njobs: {}\n';
+const UNPARSED = 'name: weird\nx: &anchor [push, pull_request]\non: *anchor\njobs: {}\n';
 
 const wf = (file, text) => ({ file, ...readPullRequestWorkflow(text) });
 

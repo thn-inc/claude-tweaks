@@ -325,6 +325,12 @@ function readPullRequestWorkflow(text) {
   if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
   const lines = text.split(/\r?\n/);
   out.draftReference = lines.some((l) => !l.trim().startsWith('#') && DRAFT_REF.test(stripCommentQuoteAware(l)));
+  // A file that never spells `pull_request` cannot name a PR trigger, however
+  // its `on:` is shaped, so a shape this reader cannot follow (an alias, a merge
+  // key, an indentless schedule list) costs no ready-run wait there. A
+  // double-quoted escape is the one way to spell the name without the literal,
+  // so a backslash inside double quotes keeps the full, fail-closed read.
+  if (!text.includes('pull_request') && !/"[^"]*\\/.test(text)) return out;
 
   const triggers = [];
   const onIdx = lines.findIndex((l) => /^(?:on|'on'|"on")\s*:/.test(l));
