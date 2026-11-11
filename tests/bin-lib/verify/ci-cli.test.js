@@ -38,9 +38,12 @@ function fakeGhEnv(mode, logFile) {
   const bin = tmpDir();
   fs.writeFileSync(path.join(bin, 'gh'), FAKE_GH, { mode: 0o755 });
   const calls = path.join(tmpDir(), 'calls.txt');
+  // CT_TEST_SUITE_SLOT_HELD=1 (#5119): the child skips the machine-wide suite slot exactly as under
+  // tools/run-tests.js, so a direct `node --test` of this file never queues on the real lock;
+  // withSlots() strips it again for the tests that exercise the slot.
   const env = {
     ...process.env, PATH: [bin, path.dirname(process.execPath), process.env.PATH].join(path.delimiter),
-    FAKE_GH_MODE: mode, FAKE_GH_CALLS: calls, FAKE_GH_LOG_FILE: logFile || '',
+    FAKE_GH_MODE: mode, FAKE_GH_CALLS: calls, FAKE_GH_LOG_FILE: logFile || '', CT_TEST_SUITE_SLOT_HELD: '1',
   };
   delete env.NODE_TEST_CONTEXT;
   return { env, calls };

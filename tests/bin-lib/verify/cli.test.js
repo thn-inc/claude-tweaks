@@ -22,11 +22,13 @@ function tmpDir() {
   return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'verify-cli-test-')));
 }
 
+// With no `opts.env`, the child skips the machine-wide suite slot exactly as under
+// tools/run-tests.js (#5119), so a direct `node --test` of this file never queues on the real lock.
 function runCli(args, opts = {}) {
   const cwd = opts.cwd || tmpDir();
   return new Promise((resolve) => {
     execFile(process.execPath, [CLI, ...args], {
-      maxBuffer: 10 * 1024 * 1024, cwd, ...(opts.env ? { env: opts.env } : {}), ...(opts.timeout ? { timeout: opts.timeout } : {}),
+      maxBuffer: 10 * 1024 * 1024, cwd, env: opts.env || { ...process.env, CT_TEST_SUITE_SLOT_HELD: '1' }, ...(opts.timeout ? { timeout: opts.timeout } : {}),
     },
       (err, stdout, stderr) => resolve({ code: err ? err.code : 0, stdout, stderr, cwd }));
   });
@@ -111,7 +113,7 @@ test('a >1MB emitter leaves runner stdout <= 64KB while the log holds everything
   const result = spawnSync(process.execPath, [CLI,
     '--log-dir', logDir,
     '--cmd', 'tests=node -e "process.stdout.write(Buffer.alloc(1500000, 120), () => process.exit(1))"',
-  ], { stdio: ['ignore', outFd, 'ignore'], cwd: tmpDir() });
+  ], { stdio: ['ignore', outFd, 'ignore'], cwd: tmpDir(), env: { ...process.env, CT_TEST_SUITE_SLOT_HELD: '1' } });
   fs.closeSync(outFd);
   assert.notStrictEqual(result.status, 0);
   const stdoutSize = fs.statSync(outFile).size;
@@ -2784,8 +2786,10 @@ const PER_FILE = 'tests=node --test --test-reporter=tap {file}';
 // A `node --test` child of this suite inherits NODE_TEST_CONTEXT, which makes a
 // nested `node --test` run the file bare (no reporter output, exit 0 on a
 // failing test) — the fixtures' inner runs need it stripped to be real runs.
+// CT_TEST_SUITE_SLOT_HELD=1, as runCli's default env sets it (#5119): these runs never take the
+// real machine-wide slot, even when this file runs directly rather than under tools/run-tests.js.
 function nestedRunEnv() {
-  const env = { ...process.env };
+  const env = { ...process.env, CT_TEST_SUITE_SLOT_HELD: '1' };
   delete env.NODE_TEST_CONTEXT;
   return env;
 }
@@ -3685,6 +3689,12 @@ test('an invalid default declaration\'s concurrency falls back with one stderr l
   const lines = run.stderr.split('\n').filter(Boolean);
   assert.strictEqual(lines.length, 1, run.stderr);
   assert.match(lines[0], /^verify\.js: concurrency ignored — .*concurrency\.suiteSlots/);
+
+  // Every real skill call passes --default-suite-slots: the invalid declaration falls back to the flag, not to 1.
+  const flagged = await runCli(['--cmd', 'tests=node -e 0', '--default-suite-slots', '3'], { cwd: r.repo, env: slotEnv(tmpDir()) });
+  assert.strictEqual(flagged.code, 0, flagged.stdout + flagged.stderr);
+  assert.deepStrictEqual(withoutWait(reportAt(r).slot), { lane: 'full', index: 0, slots: 3, source: 'flag' });
+  assert.match(flagged.stderr, /^verify\.js: concurrency ignored — /);
 });
 
 test('a nested run (CT_TEST_SUITE_SLOT_HELD=1) never reads the default declaration\'s concurrency, so an invalid one prints no line (#5119)', async () => {
@@ -3932,14 +3942,19 @@ test('--baseline: a SIGINT while adjudication holds its slot still removes the s
   const r = baselineRepo();
   headCommit(r);
   const dir = tmpDir();
+  // The timeout turns a hang into a SIGKILL (and so a failed `signal === null` assertion), never a stuck test.
   const child = spawn(process.execPath, [CLI, '--cmd', SUITE, '--baseline', r.baseSha, '--baseline-cmd', 'tests=node -e "setTimeout(() => {}, 8000)" {file}'], {
-    cwd: r.repo, env: slotEnv(dir), stdio: ['ignore', 'ignore', 'ignore'],
+    cwd: r.repo, env: slotEnv(dir), stdio: ['ignore', 'ignore', 'ignore'], timeout: 60000, killSignal: 'SIGKILL',
   });
   const exited = new Promise((resolve) => { child.on('exit', (c, s) => resolve([c, s])); });
-  const deadline = Date.now() + 10000;
-  while (Date.now() < deadline && (r.git('worktree', 'list', '--porcelain').match(/^worktree /gm) || []).length < 2) await pause(50);
-  assert.ok(fs.existsSync(path.join(dir, 'slot-0.lock')), 'adjudication holds the full-lane slot');
-  child.kill('SIGINT');
+  try {
+    const deadline = Date.now() + 10000;
+    while (Date.now() < deadline && (r.git('worktree', 'list', '--porcelain').match(/^worktree /gm) || []).length < 2) await pause(50);
+    assert.ok(fs.existsSync(path.join(dir, 'slot-0.lock')), 'adjudication holds the full-lane slot');
+  } finally {
+    // Always, even when the assertion above fails: a running verify.js and its scratch worktree never leak.
+    child.kill('SIGINT');
+  }
   const [code, signal] = await exited;
   assert.strictEqual(signal, null);
   assert.strictEqual(code, 130, 'adjudication\'s own handler exits, after the slot handler released');

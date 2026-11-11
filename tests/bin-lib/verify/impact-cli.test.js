@@ -28,9 +28,13 @@ function tmpDir(prefix = 'verify-impact-cli-') {
   return dir;
 }
 
+// With no `opts.env`, the child skips the machine-wide suite slot exactly as under
+// tools/run-tests.js (#5119), so a direct `node --test` of this file never queues on the real lock.
 function runCli(args, cwd, opts = {}) {
   return new Promise((resolve) => {
-    execFile(process.execPath, [CLI, ...args], { maxBuffer: 10 * 1024 * 1024, cwd, ...opts },
+    execFile(process.execPath, [CLI, ...args], {
+      maxBuffer: 10 * 1024 * 1024, cwd, env: { ...process.env, CT_TEST_SUITE_SLOT_HELD: '1' }, ...opts,
+    },
       (err, stdout, stderr) => resolve({ code: err ? err.code : 0, stdout, stderr }));
   });
 }
