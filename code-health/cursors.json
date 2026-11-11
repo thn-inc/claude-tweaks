@@ -326,5 +326,9 @@
   "plugin/bin/lib/plan-retention": {
     "lastSweptMs": 1794279986598,
     "lastHash": "f23f46e2de6136a55c2c7878566d0480a2c84dfc"
+  },
+  "plugin/bin/lib/release-tip": {
+    "lastSweptMs": 1794366437976,
+    "lastHash": "4117f1e8d0fd93722c6bad9b94e55e792123d169"
   }
 }
