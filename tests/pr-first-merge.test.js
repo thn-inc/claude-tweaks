@@ -729,7 +729,10 @@ test('AC11.1: the Step 2.5 reads carry the ready-run read after the head-run rea
   const swapped = section.replace(HEAD_RUNS_LINE, '@@HEAD@@').replace(READY_RUN_LINE, HEAD_RUNS_LINE).replace('@@HEAD@@', READY_RUN_LINE);
   assert.notEqual(swapped, section);
   assert.throws(() => requireOrder(swapped, anchors), { message: /ordering: ready-run read must come after the previous anchor/ });
-  assert.throws(() => requireOrder(mutate(section, READY_RUN_LINE, ''), anchors), { message: /ordering anchor missing: ready-run read/ });
+  // The bounded watch's 0) arm re-runs the same CLI (#5153), so the deletion control strips every copy.
+  const noReadyRun = section.split(READY_RUN_LINE).join('');
+  assert.notEqual(noReadyRun, section);
+  assert.throws(() => requireOrder(noReadyRun, anchors), { message: /ordering anchor missing: ready-run read/ });
   assert.throws(() => requireOrder(mutate(section, 'Classify from the three reads', 'Classify from both reads'), anchors), { message: /ordering anchor missing: classification/ });
 });
 

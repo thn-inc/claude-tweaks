@@ -191,7 +191,7 @@ test('#4173: Step 2.5 resolves its checks and head-runs captures and park-commen
   assert.match(text, /> "\{pr-checks-path\}" 2>&1; RC=\$\?/, 'the watch loop redirects into the resolved {pr-checks-path}');
   assert.match(text, /--json status > "\{pr-runs-path\}" \|\|/, 'the watch loop writes head runs to the resolved {pr-runs-path}');
   assert.match(text, /-- "\{pr-runs-path\}"\)/, 'the pending-runs count reads the resolved {pr-runs-path}');
-  assert.match(text, /printf .* "\$VALUE" "\$REASON" "\$PR" > "\{park-comment-path\}"/, 'the printf redirect writes the resolved {park-comment-path}');
+  assert.match(text, /printf .* "\$VALUE" "\$REASON" "\$PR" "\$RESUME" > "\{park-comment-path\}"/, 'the printf redirect writes the resolved {park-comment-path}');
   assert.match(text, /--body-file "\{park-comment-path\}"/, '--body-file reads the resolved {park-comment-path}');
   assert.doesNotMatch(PRE_CHANGE_PARK_FENCE, /session-tmp-resolve\.js/, 'go-red: the pre-change park fence does not resolve through session-tmp-resolve.js');
   assert.match(PRE_CHANGE_PARK_FENCE, FIXED_PARK_PATH_RE, 'go-red: the park-path ban matches the frozen pre-change fence');
