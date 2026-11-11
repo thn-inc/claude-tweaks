@@ -244,5 +244,8 @@
   },
   "doc:decisions/0028-below-floor-parents-close-autonomously-after-the-merge": {
     "lastAuditedMs": 1794204748598
+  },
+  "doc:decisions/0029-acceptance-labels-resolve-most-conservative-wins": {
+    "lastAuditedMs": 1794377524028
   }
 }
