@@ -149,6 +149,7 @@ test('AC5.1: readPullRequestWorkflow reads a bare pull_request: as default types
     'on:\n  pull_request:\n',
     'on: [push, pull_request]\n',
     'on: pull_request\n',
+    'on:\n  - push\n  - pull_request\n',
     'on:\n  pull_request:\n    branches: [main]\n',
     'on:\n  pull_request: {}\n',
     'on:\n  pull_request: null\n',
@@ -190,6 +191,10 @@ test('I1: readPullRequestWorkflow reads an unreadable on: as an unparsed PR trig
     `on: \${{ fromJSON(x) }}\n${draft}`,
     `on:\n  <<: *base\n${draft}`,
     `on:\n  push:\n  <<: *base\n${draft}`,
+    // an alias inside a list is as unreadable as an alias scalar
+    `on:\n  - push\n  - *pr\n${draft}`,
+    `on: [push, *pr]\n${draft}`,
+    `on:\n  - push\n  - \${{ x }}\n${draft}`,
   ];
   for (const c of cases) {
     bothEndings(c, (t) => {
@@ -200,9 +205,22 @@ test('I1: readPullRequestWorkflow reads an unreadable on: as an unparsed PR trig
     });
   }
   // controls: a readable push-only on: in each shape stays "no PR trigger"
-  for (const c of ['on: push\n', 'on: [push, workflow_dispatch]\n', 'on: { push: {} }\n', 'on:\n  push:\n']) {
+  for (const c of ['on: push\n', 'on: [push, workflow_dispatch]\n', 'on: { push: {} }\n', 'on:\n  push:\n',
+    'on:\n  - push\n  - workflow_dispatch\n',
+    // a quoted '#' on the on: line is not a comment start
+    "on: { push: { branches: ['rel #1'] } }\n",
+    'on: &t\n  push:\n']) {
     bothEndings(c, (t) => assert.deepEqual(mv.readPullRequestWorkflow(t), { prTrigger: false, types: [], typesDeclared: false, draftReference: false, unparsed: false }, JSON.stringify(t)));
   }
+});
+
+test('readPullRequestWorkflow: an on: &anchor node name does not hide the block beneath it', () => {
+  bothEndings('on: &t\n  pull_request:\n    types: [opened]\n', (t) => {
+    const r = mv.readPullRequestWorkflow(t);
+    assert.equal(r.prTrigger, true);
+    assert.deepEqual(r.types, ['opened']);
+    assert.equal(r.unparsed, false);
+  });
 });
 
 test('M2: readPullRequestWorkflow reads a non-empty inline trigger scalar and a quoted types scalar as unparsed', () => {
@@ -240,6 +258,9 @@ test('AC5.2: readPullRequestWorkflow detects a draft reference in if: == false a
     'on: pull_request\njobs:\n  a:\n    runs-on: x # github.event.pull_request.draft\n',
     'on: pull_request\njobs:\n  a:\n    if: github.event.pull_request.drafted == false\n',
     "on: pull_request\njobs:\n  a:\n    if: github.event.pull_request['drafted'] == false\n",
+    // an in-word apostrophe does not open a quote that hides the real comment
+    "on: pull_request\nname: Don't run # github.event.pull_request.draft\n",
+    "on: pull_request\njobs:\n  a:\n    steps:\n      - run: echo can't # github.event.pull_request.draft\n",
   ];
   for (const c of no) bothEndings(c, (t) => assert.equal(mv.readPullRequestWorkflow(t).draftReference, false, JSON.stringify(t)));
 });

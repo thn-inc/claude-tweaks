@@ -171,13 +171,15 @@ const DEFAULT_PR_TYPES = Object.freeze(['opened', 'synchronize', 'reopened']);
 const DRAFT_REF = /\bgithub\.event\.pull_request(?:\.draft\b(?!\w)|\[\s*['"]draft['"]\s*\])/;
 
 // stripComment, but a `#` inside a quoted string is not a comment start (an `if:`
-// expression such as contains(x, ' #wip') carries one).
+// expression such as contains(x, ' #wip') carries one). A quote opens only after
+// a non-word character, so an in-word apostrophe (`Don't`) never swallows a
+// later real comment.
 function stripCommentQuoteAware(s) {
   let quote = null;
   for (let i = 0; i < s.length; i++) {
     const ch = s[i];
     if (quote) { if (ch === quote) quote = null; continue; }
-    if (ch === "'" || ch === '"') { quote = ch; continue; }
+    if ((ch === "'" || ch === '"') && (i === 0 || !/\w/.test(s[i - 1]))) { quote = ch; continue; }
     if (ch === '#' && (i === 0 || /\s/.test(s[i - 1]))) return s.slice(0, i).trim();
   }
   return s.trim();
@@ -318,13 +320,19 @@ function readPullRequestWorkflow(text) {
   const triggers = [];
   const onIdx = lines.findIndex((l) => /^(?:on|'on'|"on")\s*:/.test(l));
   if (onIdx >= 0) {
-    const rest = stripComment(/^(?:on|'on'|"on")\s*:(.*)$/.exec(lines[onIdx])[1]);
+    // A leading `&anchor` only names the node; the block (if any) still follows.
+    const rest = stripCommentQuoteAware(/^(?:on|'on'|"on")\s*:(.*)$/.exec(lines[onIdx])[1]).replace(/^&\S+\s*/, '');
     if (rest) {
       if (rest.startsWith('[')) {
         if (!rest.endsWith(']')) {
           triggers.push(UNREADABLE_TRIGGER()); // multi-line flow list
-        } else if (rest.replace(/^\[|\]$/g, '').split(',').map(stripQuotes).some((k) => PR_TRIGGERS.has(k))) {
-          triggers.push({ types: [...DEFAULT_PR_TYPES], declared: false, unparsed: false });
+        } else {
+          const names = rest.slice(1, -1).split(',').map(stripQuotes).filter((k) => k !== '');
+          if (!names.every((k) => TYPE_ITEM.test(k))) {
+            triggers.push(UNREADABLE_TRIGGER()); // *alias, ${{ … }} or another non-name item
+          } else if (names.some((k) => PR_TRIGGERS.has(k))) {
+            triggers.push({ types: [...DEFAULT_PR_TYPES], declared: false, unparsed: false });
+          }
         }
       } else if (rest.startsWith('{')) {
         const { entries, balanced } = flowMappingEntries(rest);
@@ -351,9 +359,11 @@ function readPullRequestWorkflow(text) {
           triggers.push(UNREADABLE_TRIGGER());
           continue;
         }
-        const item = /^\s*-\s*(['"]?[A-Za-z_]+['"]?)\s*(?:#.*)?$/.exec(line);
-        if (item && PR_TRIGGERS.has(stripQuotes(item[1]))) {
-          triggers.push({ types: [...DEFAULT_PR_TYPES], declared: false, unparsed: false });
+        const li = /^\s*-\s*(.*)$/.exec(line);
+        if (li) {
+          const item = stripCommentQuoteAware(li[1]);
+          if (!BLOCK_ITEM.test(item)) triggers.push(UNREADABLE_TRIGGER()); // `- *pr`, `- ${{ … }}`
+          else if (PR_TRIGGERS.has(stripQuotes(item))) triggers.push({ types: [...DEFAULT_PR_TYPES], declared: false, unparsed: false });
           continue;
         }
         const key = /^\s*(['"]?[A-Za-z_]+['"]?)\s*:(.*)$/.exec(line);
