@@ -8,6 +8,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
 const { readText } = require('../../helpers/read-skill');
+const { missingFactsOf, assertEachPatternGoesRed } = require('../../helpers/conformance-asserts');
 
 const ROOT = path.join(__dirname, '..', '..', '..');
 // CRLF-normalized: a core.autocrlf checkout holds the doc CRLF in the working
@@ -194,4 +195,48 @@ test('AC1.1: the execute block itself tells a pipeline site to append the baseli
   assert.ok(block.includes('`--baseline`/`--baseline-cmd`'), 'names both baseline flags');
   assert.ok(block.includes('`retry.{check}` template'), 'names the retry-template precondition');
   assert.ok(block.includes('exact form under Baseline adjudication below'), 'points at the section holding the exact form');
+});
+
+test('verification.md and suite-slots.md document serial reruns, the timeout back-off and the per-slot scratch path (#5150)', () => {
+  const section = DOC.slice(DOC.indexOf('### Baseline adjudication'), DOC.indexOf('### Declared pre-existing failures'));
+  const verificationFacts = [
+    [/reruns run one at a time in every phase/, 'serial reruns in every phase'],
+    [/`concurrency\.reruns`/, 'the reruns declaration key'],
+    [/a timed-out check, an inconclusive marker or a non-zero cancelled count/, 'what counts as timeout evidence'],
+    [/`timeoutPatterns`/, 'the declared timeout substrings'],
+    [/forces every phase serial/, 'evidence on a failing check forces every phase serial'],
+    [/forces the later phases serial/, 'a timed-out rerun forces the later phases serial'],
+    [/used: \{baseline, isolated, retry\}/, 'the per-phase limit record'],
+    [/`null` for a phase that spawned no rerun/, 'the null limit for a phase with no rerun'],
+    [/`default-serial`/, 'reason: default-serial'],
+    [/`timeout-evidence: \{check\}`/, 'reason: timeout-evidence'],
+    [/`phase-timeout: \{phase\}`/, 'reason: phase-timeout'],
+    [/Baseline: reruns ran one at a time \(declared reruns \{n\}\) — \{reason\}/, 'the stdout line'],
+    [/`<os tmpdir>\/ct-verify-base\/<repo-key>\/slot-<index>\/wt`/, 'the per-slot scratch path'],
+    [/first 12 hex digits of the sha256/, 'the repo key derivation'],
+    [/a nested run keeps a fresh `ct-verify-base-\*` path/, 'a nested run keeps a fresh path'],
+    [/`scratch\.reused`/, 'scratch.reused'],
+    [/`scratch\.fallback`/, 'scratch.fallback'],
+    [/`scratch\.moved`/, 'scratch.moved'],
+    [/is not the base commit before and after it runs is no evidence/, 'a moved scratch is no evidence'],
+    [/must tolerate starting from another commit's state/, 'the reuse contract'],
+  ];
+  assert.deepStrictEqual(missingFactsOf(verificationFacts)(section), []);
+  assertEachPatternGoesRed(section, verificationFacts, missingFactsOf(verificationFacts));
+
+  const slotsDoc = readText(path.join(ROOT, 'plugin', 'skills', 'test', 'suite-slots.md'));
+  const slotsFacts = [
+    [/\{ "concurrency": \{ "suiteSlots": N, "reruns": N, "timeoutPatterns": \["[^"]*"\] \} \}/, 'the three-key block'],
+    [/\(allowed: suiteSlots, reruns, timeoutPatterns\)/, 'the allowed-keys message'],
+    [/`concurrency\.reruns: must be a positive integer`/, 'the reruns message'],
+    [/`concurrency\.timeoutPatterns: must be an array of non-empty strings`/, 'the timeoutPatterns message'],
+    [/`reruns` is per checkout, one run's reruns/, 'reruns is per checkout'],
+    [/declaring it above 1 is the opt-in/, 'reruns above 1 is the opt-in'],
+    [/`timeoutPatterns` are literal substrings/, 'timeoutPatterns are literal substrings'],
+    [/only the slot count is ignored there/, 'adjudication reads the block in a nested run'],
+    [/rejects the whole declaration over either key/, 'the version floor, by property'],
+    [/must be on a release that documents them/, 'every machine must be on such a release'],
+  ];
+  assert.deepStrictEqual(missingFactsOf(slotsFacts)(slotsDoc), []);
+  assertEachPatternGoesRed(slotsDoc, slotsFacts, missingFactsOf(slotsFacts));
 });
