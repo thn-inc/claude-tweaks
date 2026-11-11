@@ -352,13 +352,62 @@ test('emitted if: lines carry exactly the prefilter literals', () => {
   }
 });
 
+// Compiles one emitted job `if:` into a JS predicate (ref, messages) => boolean,
+// keeping its && / || / parenthesis structure exactly as emitted. contains() is
+// evaluated the way GitHub does for these literals: an ASCII-only case fold over
+// the messages joined with ' '. Throws on any token it does not recognise, so an
+// unexpected expression shape fails loudly instead of being half-evaluated.
+function compileEmittedIf(line) {
+  const refRe = /^\s*if: github\.ref (?:!=|==) format\('refs\/heads\/\{0\}', github\.event\.repository\.default_branch\)/;
+  assert.match(line, refRe);
+  const literals = [];
+  const expr = line
+    .replace(refRe, 'REF')
+    .replace(/contains\(join\(github\.event\.commits\.\*\.message, ' '\), '([^']*)'\)/g, (_, lit) => `C(${literals.push(lit) - 1})`);
+  assert.match(expr, /^(?:REF|C\(\d+\)|&&|\|\||[()\s])+$/, `unrecognised token in emitted if: ${expr}`);
+  const fold = (s) => s.replace(/[a-z]/g, (c) => c.toUpperCase());
+  const predicate = new Function('REF', 'C', `return (${expr});`);
+  return (ref, msgs) => {
+    const joined = fold(msgs.join(' '));
+    return predicate(ref, (i) => joined.includes(fold(literals[i])));
+  };
+}
+
+test('each emitted if: evaluates to the ref condition AND the prefilter, over the seeded corpus', () => {
+  const ifLines = generateWorkflowYaml().split('\n').filter((l) => /^\s+if: github\.ref (?:!=|==) /.test(l));
+  assert.strictEqual(ifLines.length, 2);
+  const corpus = [
+    ...generateCommitCorpus(),
+    ['fixes it'],
+    ['refs #12 tidy'],
+    ['Update README'],
+    [],
+  ];
+  for (const line of ifLines) {
+    const evaluate = compileEmittedIf(line);
+    for (const msgs of corpus) {
+      for (const ref of [true, false]) {
+        assert.strictEqual(
+          evaluate(ref, msgs),
+          ref && prefilterMatches(msgs),
+          `${line.trim().slice(0, 40)}… with ref=${ref} on ${JSON.stringify(msgs)}`,
+        );
+      }
+    }
+  }
+});
+
 test('each job carries the adopter comment on the line directly above its if:', () => {
   const lines = generateWorkflowYaml().split('\n');
-  const comment = "    # cloſe/reſolve are deliberate: the runner's grep -iP folds ſ to s, GitHub's contains() does not";
   const idx = lines.map((l, i) => (/^    if: github\.ref (?:!=|==) /.test(l) ? i : -1)).filter((i) => i >= 0);
   assert.strictEqual(idx.length, 2);
-  for (const i of idx) assert.strictEqual(lines[i - 1], comment);
-  assert.strictEqual(lines.filter((l) => l === comment).length, 2);
+  for (const i of idx) {
+    const comment = lines[i - 1];
+    assert.match(comment, /^    # /, 'the line above each if: is a comment');
+    for (const stem of PREFILTER_KEYWORD_STEMS.filter((s) => s.includes('ſ'))) {
+      assert.ok(comment.includes(stem), `the comment names the deliberate long-s stem ${stem}`);
+    }
+  }
 });
 
 test('prefilterMatches rejects pushes with no closing reference', () => {
@@ -497,9 +546,10 @@ test('long-s and dotless-i: runtime extraction and the prefilter model agree (GN
     if (issues === null) return; // skipped — see runExtractStep
     if (issues === '' && extracted !== '') {
       // This environment's grep/locale does not fold ſ; the prefilter is still a superset there.
+      // Keep checking the remaining cases (the dotless-i one still applies).
       assert.strictEqual(prefilterMatches([msg]), true, `prefilter for ${msg}`);
       t.skip(`environment gap: grep/locale does not fold ſ (${JSON.stringify(msg)} extracted nothing) — the prefilter is still a superset there`);
-      return;
+      continue;
     }
     t.diagnostic(`grep returned ${JSON.stringify(issues)} for ${JSON.stringify(msg)}`);
     assert.strictEqual(issues, extracted, `runtime extraction for ${msg}`);
@@ -553,8 +603,47 @@ test('current generator output digest is pinned', () => {
   assert.strictEqual(
     normalisedDigest(generateWorkflowYaml()),
     PINNED_CURRENT_DIGEST,
-    'generator output changed — append the previous digest to PRIOR_OUTPUT_SHA256, update the expected count in the PRIOR_OUTPUT_SHA256 test below, and update PINNED_CURRENT_DIGEST',
+    `generator output changed — append ${PINNED_CURRENT_DIGEST} (the previous digest) to PRIOR_OUTPUT_SHA256, update the expected count in the PRIOR_OUTPUT_SHA256 test below, and set PINNED_CURRENT_DIGEST to the new digest`,
   );
+});
+
+// Adopters hold whatever workflow the plugin generated at the release they ran
+// init on, and this repo's own file is pinned to the generator output, so every
+// version of it on the integration branch is a released output. Each must still
+// classify as current or prior-generated — this fails when a generator change
+// bumps PINNED_CURRENT_DIGEST without appending the old digest to the list.
+test('every released version of the workflow file still classifies as current or prior-generated', (t) => {
+  const { execFileSync } = require('node:child_process');
+  const repoRoot = path.join(__dirname, '..');
+  const file = '.github/workflows/track-issue-fixes.yml';
+  const git = (args) => execFileSync('git', ['-C', repoRoot, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  let shas;
+  try {
+    shas = git(['log', '--format=%H', 'origin/main', '--', file]).split('\n').filter(Boolean);
+  } catch {
+    t.skip('origin/main is not available in this checkout (no remote ref, or git is missing)');
+    return;
+  }
+  if (shas.length === 0) {
+    t.skip(`origin/main has no history for ${file} (shallow clone?)`);
+    return;
+  }
+  for (const sha of shas) {
+    const content = git(['show', `${sha}:${file}`]);
+    assert.notStrictEqual(
+      classifyExistingWorkflow(content),
+      'modified',
+      `${file} at ${sha.slice(0, 9)} (released on origin/main) now classifies as modified — append its digest ${normalisedDigest(content)} to PRIOR_OUTPUT_SHA256`,
+    );
+  }
+});
+
+test("Step 16's prose names the excluded bookkeeping branches by their constants' values", () => {
+  const { CLAIMS_BRANCH } = require('../plugin/bin/lib/issues/claims');
+  const { HEALTH_STATE_BRANCH } = require('../plugin/bin/lib/health-core/durable-state');
+  const prose = readText(path.join(__dirname, '..', 'plugin/skills/init/bootstrap/step-16-non-default-branch-issue-tracking.md'));
+  assert.ok(prose.includes(`${CLAIMS_BRANCH} and ${HEALTH_STATE_BRANCH} bookkeeping branches`), 'the hand-edited-file question names both branches');
+  assert.ok(prose.includes(`\`${CLAIMS_BRANCH}\` and \`${HEALTH_STATE_BRANCH}\` bookkeeping branches`), 'the job description names both branches');
 });
 
 test('the checked-in .github/workflows/track-issue-fixes.yml is the generator output', () => {

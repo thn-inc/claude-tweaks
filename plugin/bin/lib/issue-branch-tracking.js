@@ -54,6 +54,10 @@ function extractIssueNumbers(commitMessages) {
 // prefilterMatches models OrdinalIgnoreCase exactly for these literals:
 // ASCII-only folding, never String.prototype.toUpperCase (which maps ſ to S
 // and would be looser than GitHub, voiding the proof).
+// Invariant: every word CLOSING_KEYWORD_ALTERNATION accepts must contain one of
+// these stems. Widening the alternation means revisiting this list; the test
+// "PREFILTER_KEYWORD_STEMS cover every word CLOSING_KEYWORD_ALTERNATION
+// accepts" fails until it is.
 const BASE_KEYWORD_STEMS = Object.freeze(['close', 'fix', 'resolve']);
 
 const LONG_S = '\u017f';
@@ -64,6 +68,9 @@ const PREFILTER_KEYWORD_STEMS = Object.freeze(
 
 const PREFILTER_JOINED_MESSAGES = "join(github.event.commits.*.message, ' ')";
 
+// Emitted unquoted as a plain-scalar `if:` value, where whitespace followed by
+// '#' starts a YAML comment and silently truncates the condition. The '#'
+// literal is safe only because a quote precedes it; keep it that way.
 const PREFILTER_EXPRESSION =
   `contains(${PREFILTER_JOINED_MESSAGES}, '#') && (` +
   PREFILTER_KEYWORD_STEMS.map((s) => `contains(${PREFILTER_JOINED_MESSAGES}, '${s}')`).join(' || ') +
@@ -221,10 +228,12 @@ function generateWorkflowYaml() {
 // Digests of every distinct generateWorkflowYaml() output this generator has
 // ever produced, so /init can tell an unedited generated file (safe to
 // regenerate) from a hand-edited one. Derived 2026-11-10: walk `git log
-// --follow` of this module, take each revision's output, normalise it (CRLF to
-// LF, trailing newlines stripped) and sha256 it. APPEND the previous digest
-// here whenever the generator's output changes — the pinned-digest test in
-// tests/issue-branch-tracking.test.js is what notices.
+// --follow` of this module, take each revision's output and hash it with
+// normalisedDigest below. APPEND the previous digest here whenever the
+// generator's output changes. The pinned-digest test in
+// tests/issue-branch-tracking.test.js notices the change, and its release-history
+// test fails if the previously released workflow no longer classifies as
+// prior-generated.
 const PRIOR_OUTPUT_SHA256 = Object.freeze([
   '0b9a50e7dacd86c560626ae566a27cc4a2528acebd83b340d78596354a3127dd',
   'a64b869f142c07baf9477259374b00cb0aa62332cf0f699684c98f52e2876dd4',
@@ -233,6 +242,11 @@ const PRIOR_OUTPUT_SHA256 = Object.freeze([
   '89f9cc80110f35535fce118eb445d03de5e1c80886932a8c076138c0e270d1ae',
 ]);
 
+// Strips a leading BOM, CRLF and trailing newlines before hashing, because a
+// Windows core.autocrlf checkout or an editor-added BOM must not make an
+// untouched generated file read as hand-edited. The digests in
+// PRIOR_OUTPUT_SHA256 were computed through this same normalisation, so changing
+// it means re-deriving them.
 function normalisedDigest(text) {
   const normalised = String(text).replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\n+$/, '');
   return crypto.createHash('sha256').update(normalised).digest('hex');
