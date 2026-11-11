@@ -164,7 +164,7 @@ Always offered (not gated) — detect which claude-tweaks skills ship `routine-t
 
 ### Step 16: Non-Default-Branch Issue Tracking (Optional Companion)
 
-Offer only on projects with a GitHub remote — writes `.github/workflows/track-issue-fixes.yml`, which labels (`fix-on-<branch>`) and comments on issues fixed on non-default branches, then strips those labels once the fix reaches the default branch and GitHub closes the issue natively. Idempotent: skipped silently once the workflow file exists. Read `bootstrap/step-16-non-default-branch-issue-tracking.md` for the full procedure.
+Offer only on projects with a GitHub remote — writes `.github/workflows/track-issue-fixes.yml`, which labels (`fix-on-<branch>`) and comments on issues fixed on non-default branches, then strips those labels once the fix reaches the default branch and GitHub closes the issue natively. On a re-run, an existing workflow that is already current is skipped silently, an unmodified earlier generator output is regenerated, and a hand-edited one is overwritten only after asking. Read `bootstrap/step-16-non-default-branch-issue-tracking.md` for the full procedure.
 
 ### Step 17: Work-Record Backend (Optional)
 
