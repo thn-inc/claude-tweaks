@@ -4,8 +4,9 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const crypto = require('crypto');
 const { execFileSync } = require('child_process');
-const { adjudicate, realGit, findStaleBaselineWorktrees } = require('../../../plugin/bin/lib/verify/baseline');
+const { adjudicate, realGit, findStaleBaselineWorktrees, slotScratchPath } = require('../../../plugin/bin/lib/verify/baseline');
 
 function logFile(text) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-test-'));
@@ -42,7 +43,7 @@ function fakes({ outcomes, existsAtBase = () => true, sameAtBase = () => true, i
       return m;
     },
     inCheckout: (dir, rel) => inCheckout(dir, rel),
-    addWorktree: (sha) => { calls.added.push(sha); return '/scratch'; },
+    addWorktree: (sha) => { calls.added.push(sha); return { dir: '/scratch', reused: false }; },
     removeWorktree: (dir) => { calls.removed.push(dir); },
   };
   const runOne = async ({ name, command, cwd }) => {
@@ -110,7 +111,7 @@ test('I3: a failing file absent at base is attributable outright — no base run
 
 test('takeSlot runs once, before the scratch worktree and the first rerun, and never when nothing will spawn (#5119)', async () => {
   const order = [];
-  const takeSlot = () => { order.push('slot'); return 0; };
+  const takeSlot = () => { order.push('slot'); return { index: 0, base: '/slots' }; };
   const spied = (f) => ({
     ...f,
     git: { ...f.git, addWorktree: (sha) => { order.push('worktree'); return f.git.addWorktree(sha); } },
@@ -155,7 +156,7 @@ test('#3063 AC2: an isolated run that times out is no evidence — the file stay
     repoRoot: () => '/repo',
     batchBaseInfo: (sha, files) => new Map(files.map((f) => [f, { exists: true, same: true }])),
     inCheckout: () => true,
-    addWorktree: () => '/scratch',
+    addWorktree: () => ({ dir: '/scratch', reused: false }),
     removeWorktree: () => {},
   };
   const runOne = async ({ name, command }) => {
@@ -534,7 +535,7 @@ test('#3167: a base worktree reached through a symlinked parent still classifies
     repoRoot: outer,
   });
   // Hand back the symlinked path, as `fs.mkdtempSync(os.tmpdir())` does on macOS.
-  git.addWorktree = () => symWtDir;
+  git.addWorktree = () => ({ dir: symWtDir, reused: false });
   const r = await adjudicate({
     checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40),
     cwd: outer, logDir: dir, runOne, git,
@@ -1428,4 +1429,219 @@ test('undeclared reruns stays default-serial even with timeout evidence (#5150)'
   assert.deepStrictEqual(peak.kind, ALL(1));
   assert.strictEqual(r.concurrency.reason, 'default-serial');
   assert.strictEqual(r.concurrency.declared, null);
+});
+
+// #5150: one stable scratch path per held slot and lock dir. Each fixture is a real repo whose
+// tests/a.test.js changes across two commits; `tmpdir` (handed to realGit) and `S` (standing in
+// for the slot lock dir) are fresh temp dirs of their own, so `tmpdir` holds only what
+// addWorktree makes there. Every dir is canonical, as the callers pass them.
+const realp = (p) => fs.realpathSync.native(p);
+const SYMLINK_POSIX_ONLY = { skip: process.platform === 'win32' && 'symlink fixtures need POSIX symlink rights' };
+const fallbackLine = (reason) => `verify.js: baseline scratch: the per-slot path is unavailable (${reason}) — using a fresh ct-verify-base-* path for this run\n`;
+function slotFixture(t) {
+  const made = [];
+  const mk = (prefix) => { const d = realp(fs.mkdtempSync(path.join(os.tmpdir(), prefix))); made.push(d); return d; };
+  const repo = mk('baseline-slot-repo-');
+  const tmpdir = mk('baseline-slot-tmp-');
+  const S = mk('baseline-slot-lock-');
+  const outside = mk('baseline-slot-outside-');
+  fs.writeFileSync(path.join(outside, 'keep.txt'), 'keep\n');
+  const g = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  g('init', '-q');
+  fs.mkdirSync(path.join(repo, 'tests'));
+  const commit = (text) => {
+    fs.writeFileSync(path.join(repo, 'tests', 'a.test.js'), text);
+    g('add', '.');
+    g('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', text.trim());
+    return g('rev-parse', 'HEAD');
+  };
+  const sha1 = commit('one\n');
+  const sha2 = commit('two\n');
+  // Removing the repo drops its worktree registry; removing tmpdir drops every scratch checkout.
+  t.after(() => { for (const d of made) fs.rmSync(d, { recursive: true, force: true }); });
+  const commonDir = realp(path.join(repo, '.git'));
+  const at = (slotBase = S, slot = 0) => slotScratchPath({ tmpdir, commonDir, slotBase, slot });
+  const registered = () => [...g('worktree', 'list', '--porcelain').matchAll(/^worktree (.+)$/gm)].map((m) => realp(m[1]));
+  const warned = [];
+  const rg = realGit(repo, { tmpdir, warn: (line) => warned.push(line) });
+  return { repo, tmpdir, S, outside, mk, g, sha1, sha2, commonDir, at, registered, warned, rg };
+}
+// A real-git adjudication whose single failing file exists at base; reruns come from fakes().
+async function adjudicateReal(fx, t, sha, extra = {}) {
+  const { p, dir } = logFile(SPEC(['tests/a.test.js']));
+  const f = fakes({ outcomes: { 'baseline:tests/a.test.js': 1 } });
+  const logDirs = new Set([dir]);
+  t.after(() => { for (const d of logDirs) fs.rmSync(d, { recursive: true, force: true }); });
+  const runOne = async (args) => { const res = await f.runOne(args); logDirs.add(path.dirname(res.logPath)); return res; };
+  return adjudicate({
+    checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: sha,
+    cwd: fx.repo, logDir: dir, runOne, git: fx.rg, ...extra,
+  });
+}
+
+test('slotScratchPath joins tmpdir, a 12-hex key over the common dir and lock dir, slot-<index> and wt (#5150)', () => {
+  const tmpdir = path.resolve('/t');
+  const commonDir = path.resolve('/repo/.git');
+  const key = (slotBase) => crypto.createHash('sha256').update(`${commonDir}\n${slotBase}`).digest('hex').slice(0, 12);
+  const one = slotScratchPath({ tmpdir, commonDir, slotBase: path.resolve('/locks-a'), slot: 2 });
+  assert.strictEqual(one, path.join(tmpdir, 'ct-verify-base', key(path.resolve('/locks-a')), 'slot-2', 'wt'));
+  assert.match(path.basename(path.dirname(path.dirname(one))), /^[0-9a-f]{12}$/);
+  const two = slotScratchPath({ tmpdir, commonDir, slotBase: path.resolve('/locks-b'), slot: 2 });
+  assert.notStrictEqual(one, two, 'the same common dir under two lock dirs gives two paths');
+});
+
+test('AC5.1: two sequential adjudications holding slot 0 at two base shas use the same scratch path, and the tmpdir gains no ct-verify-base-* entry (#5150)', async (t) => {
+  const fx = slotFixture(t);
+  const takeSlot = () => ({ index: 0, base: fx.S });
+  const first = await adjudicateReal(fx, t, fx.sha1, { takeSlot });
+  const second = await adjudicateReal(fx, t, fx.sha2, { takeSlot });
+  for (const r of [first, second]) {
+    assert.strictEqual(r.eligible, true, r.reason);
+    assert.deepStrictEqual(r.scratch, { path: fx.at(), reused: false });
+  }
+  assert.strictEqual(first.scratch.path, second.scratch.path);
+  assert.deepStrictEqual(fs.readdirSync(fx.tmpdir), ['ct-verify-base']);
+  assert.deepStrictEqual(fs.readdirSync(path.dirname(fx.at())), [], 'slot-0/ stays, empty');
+  assert.deepStrictEqual(fx.registered(), [fx.repo], 'only the main checkout is registered');
+  assert.deepStrictEqual(fx.warned, []);
+});
+
+test('two holders of slot 0 from different lock dirs never share a path (#5150)', (t) => {
+  const fx = slotFixture(t);
+  const S2 = fx.mk('baseline-slot-lock2-');
+  const a = fx.rg.addWorktree(fx.sha1, { slot: 0, slotBase: fx.S });
+  const b = fx.rg.addWorktree(fx.sha1, { slot: 0, slotBase: S2 });
+  assert.deepStrictEqual(a, { dir: fx.at(fx.S), reused: false });
+  assert.deepStrictEqual(b, { dir: fx.at(S2), reused: false });
+  assert.notStrictEqual(a.dir, b.dir);
+  const listed = fx.registered();
+  assert.ok(listed.includes(realp(a.dir)) && listed.includes(realp(b.dir)), JSON.stringify(listed));
+  fx.rg.removeWorktree(a.dir);
+  fx.rg.removeWorktree(b.dir);
+  assert.deepStrictEqual(fx.registered(), [fx.repo]);
+});
+
+test('AC6.1: a leftover worktree registered at the slot path is removed before git worktree add, the adjudication completes, and scratch.reused is true (#5150)', async (t) => {
+  const fx = slotFixture(t);
+  fs.mkdirSync(path.dirname(fx.at()), { recursive: true });
+  fx.g('worktree', 'add', '--detach', fx.at(), fx.sha2);
+  fs.writeFileSync(path.join(fx.at(), 'untracked.txt'), 'left behind by a killed run\n');
+  const r = await adjudicateReal(fx, t, fx.sha1, { takeSlot: () => ({ index: 0, base: fx.S }) });
+  assert.strictEqual(r.eligible, true, r.reason);
+  assert.deepStrictEqual(r.scratch, { path: fx.at(), reused: true });
+  assert.deepStrictEqual(fx.registered(), [fx.repo], 'only the main checkout is registered afterwards');
+  assert.deepStrictEqual(fx.warned, []);
+});
+
+test('RF3: a registered slot worktree whose directory is gone is pruned and reused (#5150)', (t) => {
+  const fx = slotFixture(t);
+  fs.mkdirSync(path.dirname(fx.at()), { recursive: true });
+  fx.g('worktree', 'add', '--detach', fx.at(), fx.sha1);
+  fs.rmSync(fx.at(), { recursive: true, force: true });
+  const out = fx.rg.addWorktree(fx.sha1, { slot: 0, slotBase: fx.S });
+  assert.deepStrictEqual(out, { dir: fx.at(), reused: true });
+  assert.ok(fs.statSync(path.join(out.dir, 'tests', 'a.test.js')).isFile(), 'checked out');
+  fx.rg.removeWorktree(out.dir);
+  assert.deepStrictEqual(fx.registered(), [fx.repo]);
+
+  // A leftover whose `.git` link is gone: `git worktree remove --force` refuses it, so only the
+  // rm plus `git worktree prune` clears the registration before the add.
+  fx.g('worktree', 'add', '--detach', fx.at(), fx.sha1);
+  fs.rmSync(path.join(fx.at(), '.git'));
+  const broken = fx.rg.addWorktree(fx.sha2, { slot: 0, slotBase: fx.S });
+  assert.deepStrictEqual(broken, { dir: fx.at(), reused: true });
+  assert.strictEqual(fx.g('-C', broken.dir, 'rev-parse', 'HEAD'), fx.sha2, 'checked out afresh at the new sha');
+  fx.rg.removeWorktree(broken.dir);
+  assert.deepStrictEqual(fx.registered(), [fx.repo]);
+});
+
+test('AC7.1: an adjudication with no slot keeps a fresh ct-verify-base-* path (#5150)', async (t) => {
+  const fx = slotFixture(t);
+  const r = await adjudicateReal(fx, t, fx.sha1);
+  assert.strictEqual(r.eligible, true, r.reason);
+  assert.match(path.basename(path.dirname(r.scratch.path)), /^ct-verify-base-/);
+  assert.strictEqual(r.scratch.reused, false);
+  assert.ok(!('fallback' in r.scratch));
+  assert.deepStrictEqual(fs.readdirSync(fx.tmpdir), [], 'the fresh parent goes with its worktree');
+  assert.deepStrictEqual(fx.warned, []);
+
+  // What adjudicate hands addWorktree, with and without a slot taken.
+  const { p, dir } = logFile(SPEC(['tests/a.test.js']));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const seen = [];
+  const f = fakes({ outcomes: { 'baseline:tests/a.test.js': 1 } });
+  const git = { ...f.git, addWorktree: (sha, opts) => { seen.push(opts); return f.git.addWorktree(sha); } };
+  const args = { checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne: f.runOne, git };
+  await adjudicate(args);
+  await adjudicate({ ...args, takeSlot: () => ({ index: 0, base: '/slots' }) });
+  assert.deepStrictEqual(seen, [{ slot: null, slotBase: null }, { slot: 0, slotBase: '/slots' }]);
+});
+
+test('RF1: a ct-verify-base root that is a symlink is never removed through — fresh path, one warning, scratch.fallback (#5150)', SYMLINK_POSIX_ONLY, async (t) => {
+  const fx = slotFixture(t);
+  fs.symlinkSync(fx.outside, path.join(fx.tmpdir, 'ct-verify-base'), 'dir');
+  const out = fx.rg.addWorktree(fx.sha1, { slot: 0, slotBase: fx.S });
+  assert.match(path.basename(path.dirname(out.dir)), /^ct-verify-base-/);
+  assert.strictEqual(out.reused, false);
+  assert.ok(out.fallback.startsWith('root-unusable: '), out.fallback);
+  assert.deepStrictEqual(fx.warned, [fallbackLine(out.fallback)]);
+  assert.deepStrictEqual(fs.readdirSync(fx.outside), ['keep.txt'], 'the link target is untouched');
+  fx.rg.removeWorktree(out.dir);
+
+  const r = await adjudicateReal(fx, t, fx.sha1, { takeSlot: () => ({ index: 0, base: fx.S }) });
+  assert.strictEqual(r.eligible, true, r.reason);
+  assert.strictEqual(r.scratch.fallback, out.fallback);
+  assert.strictEqual(r.scratch.reused, false);
+  assert.deepStrictEqual(fs.readdirSync(fx.outside), ['keep.txt']);
+  assert.deepStrictEqual(fx.registered(), [fx.repo]);
+});
+
+test('RF2: a wt entry that is a symlink is never followed — fresh path, leftover-not-a-directory (#5150)', SYMLINK_POSIX_ONLY, (t) => {
+  const fx = slotFixture(t);
+  fs.mkdirSync(path.dirname(fx.at()), { recursive: true });
+  fs.symlinkSync(fx.outside, fx.at(), 'dir');
+  const out = fx.rg.addWorktree(fx.sha1, { slot: 0, slotBase: fx.S });
+  assert.strictEqual(out.fallback, 'leftover-not-a-directory');
+  assert.strictEqual(out.reused, false);
+  assert.match(path.basename(path.dirname(out.dir)), /^ct-verify-base-/);
+  assert.deepStrictEqual(fx.warned, [fallbackLine('leftover-not-a-directory')]);
+  assert.deepStrictEqual(fs.readdirSync(fx.outside), ['keep.txt'], 'the link target is untouched');
+  assert.strictEqual(fs.lstatSync(fx.at()).isSymbolicLink(), true, 'the link itself is left alone');
+  fx.rg.removeWorktree(out.dir);
+});
+
+test('RF2b: a slot-<index> directory symlinked outside the root is never used — fresh path, parent-outside-root (#5150)', SYMLINK_POSIX_ONLY, (t) => {
+  const fx = slotFixture(t);
+  fs.mkdirSync(path.dirname(path.dirname(fx.at())), { recursive: true });
+  fs.symlinkSync(fx.outside, path.dirname(fx.at()), 'dir');
+  const out = fx.rg.addWorktree(fx.sha1, { slot: 0, slotBase: fx.S });
+  assert.strictEqual(out.fallback, 'parent-outside-root');
+  assert.strictEqual(out.reused, false);
+  assert.match(path.basename(path.dirname(out.dir)), /^ct-verify-base-/);
+  assert.deepStrictEqual(fx.warned, [fallbackLine('parent-outside-root')]);
+  assert.deepStrictEqual(fs.readdirSync(fx.outside), ['keep.txt'], 'no wt is created in the link target');
+  assert.ok(!fx.registered().some((p) => path.dirname(p) === fx.outside), 'no worktree registered there');
+  fx.rg.removeWorktree(out.dir);
+});
+
+test('a slot with no lock dir falls back with no-slot-lock-dir (#5150)', (t) => {
+  const fx = slotFixture(t);
+  const out = fx.rg.addWorktree(fx.sha1, { slot: 0 });
+  assert.strictEqual(out.fallback, 'no-slot-lock-dir');
+  assert.strictEqual(out.reused, false);
+  assert.match(path.basename(path.dirname(out.dir)), /^ct-verify-base-/);
+  assert.deepStrictEqual(fx.warned, [fallbackLine('no-slot-lock-dir')]);
+  fx.rg.removeWorktree(out.dir);
+  assert.deepStrictEqual(fs.readdirSync(fx.tmpdir), []);
+});
+
+test('removeWorktree on a slot path removes wt and keeps slot-<index> (#5150)', (t) => {
+  const fx = slotFixture(t);
+  const out = fx.rg.addWorktree(fx.sha1, { slot: 0, slotBase: fx.S });
+  assert.ok(fs.statSync(out.dir).isDirectory());
+  fx.rg.removeWorktree(out.dir);
+  assert.strictEqual(fs.existsSync(out.dir), false, 'wt is removed');
+  assert.ok(fs.statSync(path.dirname(out.dir)).isDirectory(), 'slot-0/ stays');
+  assert.deepStrictEqual(fx.registered(), [fx.repo]);
+  assert.deepStrictEqual(fx.warned, []);
 });

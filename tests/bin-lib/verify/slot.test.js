@@ -81,6 +81,17 @@ test('holdSlot sets CT_TEST_SUITE_SLOT_HELD and CT_TEST_WORKERS while held and r
   assert.ok(!('CT_TEST_SUITE_SLOT_HELD' in unset.env));
 });
 
+test('holdSlot\'s hold names the lock dir it acquired under (#5150)', () => {
+  const dir = tmpSlotDir();
+  const { h } = hold(dir);
+  try {
+    assert.strictEqual(h.base, dir);
+  } finally {
+    h.release();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('holdSlot release is idempotent, removes slot-<index>.lock and every listener it added (#5119)', () => {
   const dir = tmpSlotDir();
   const { h, proc } = hold(dir);

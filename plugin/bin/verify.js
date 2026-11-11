@@ -986,7 +986,7 @@ async function main() {
               computeFixed: !parsed.noBaselineFixed,
               takeSlot: () => {
                 adjHold = holdFor('full');
-                return adjHold ? adjHold.index : null;
+                return adjHold ? { index: adjHold.index, base: adjHold.base } : null;
               },
             });
             baselineAdjudicated = {

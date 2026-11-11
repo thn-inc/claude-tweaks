@@ -18,25 +18,99 @@
 // CLI's seam.
 'use strict';
 
+const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { substituteFile, describePath } = require('./file-template');
 const { toPosix } = require('../shared-primitives');
+const { lstatType, canonicalRealpath, resolveWithin } = require('../path-guard');
+const { ensureOwnDir } = require('../suite-slot');
 const {
   sniffFamily, extractFailingFiles, countUnmatchedFailures, fileLevelFailures, failingTestsByFile, parseCounts, stripAnsi,
   specEntryCount, cancelledCount, testTree, timeoutEvidence,
 } = require('./extract');
 
-// `warn` and `rmSync` are injectable so a test can force a failed cleanup.
-function realGit(cwd, { warn = (line) => process.stderr.write(line), rmSync = fs.rmSync } = {}) {
+// #5150: the one scratch path a held suite slot owns — keyed by the repository (its git common
+// dir, shared by every worktree) and the slot's lock dir, so holders of the same slot index under
+// two lock dirs never share a path. Pure; callers pass both directories already canonical.
+function slotScratchPath({ tmpdir, commonDir, slotBase, slot }) {
+  const repoKey = crypto.createHash('sha256').update(`${commonDir}\n${slotBase}`).digest('hex').slice(0, 12);
+  return path.join(tmpdir, 'ct-verify-base', repoKey, `slot-${slot}`, 'wt');
+}
+
+// `warn` and `rmSync` are injectable so a test can force a failed cleanup; `tmpdir` is where
+// every scratch worktree is made, so a test can keep them out of the real temp dir.
+function realGit(cwd, { warn = (line) => process.stderr.write(line), rmSync = fs.rmSync, tmpdir = os.tmpdir() } = {}) {
   // `input`, when given, is piped to the child's stdin (the two batch-check
   // / hash-object calls below); every other call site passes none, and stdin
   // stays closed exactly as it did before `input` existed.
   const git = (args, input) => String(execFileSync('git', args, {
     cwd, encoding: 'utf8', stdio: input === undefined ? ['ignore', 'pipe', 'pipe'] : ['pipe', 'pipe', 'pipe'], input, windowsHide: true,
   })).trim();
+  // Every worktree `git` currently has registered against this repo, as
+  // absolute paths — read-only, so the caller can name a stale one without
+  // ever sweeping it itself (#3064).
+  const listWorktrees = () => {
+    try {
+      return [...git(['worktree', 'list', '--porcelain']).matchAll(/^worktree (.+)$/gm)].map((m) => m[1]);
+    } catch { return []; }
+  };
+  // A fresh `ct-verify-base-*` parent of its own: every run without a held slot, and every run
+  // whose slot path a guard refused.
+  const freshWorktree = (sha) => {
+    const parent = fs.mkdtempSync(path.join(tmpdir, 'ct-verify-base-'));
+    const dir = path.join(parent, 'wt');
+    try {
+      git(['worktree', 'add', '--detach', dir, sha]);
+    } catch (err) {
+      // The caller never learns `dir` on a throw, so its cleanup cannot run — remove the parent here.
+      try { rmSync(parent, { recursive: true, force: true }); } catch { /* best effort */ }
+      throw err;
+    }
+    return dir;
+  };
+  // A registered worktree path in canonical form; one whose directory is gone keeps its basename
+  // under its parent's canonical form, so a leftover whose checkout was deleted still matches.
+  const canonicalListed = (listed) => {
+    const real = canonicalRealpath(listed);
+    if (real !== null) return real;
+    const parent = canonicalRealpath(path.dirname(listed));
+    return parent === null ? null : path.join(parent, path.basename(listed));
+  };
+  // #5150: the slot's stable path and whether a leftover sits there, or the reason it cannot be
+  // used. Every guard runs before anything is removed, so a refusal removes nothing.
+  const slotWorktree = (slot, slotBase) => {
+    const base = slotBase === null ? null : canonicalRealpath(slotBase);
+    if (base === null) return { reason: 'no-slot-lock-dir' };
+    let commonDir = null;
+    try {
+      const out = git(['rev-parse', '--git-common-dir']);
+      if (out !== '') commonDir = canonicalRealpath(path.resolve(cwd, out));
+    } catch { /* not a repository: null */ }
+    if (commonDir === null) return { reason: 'no-common-dir' };
+    const root = path.join(tmpdir, 'ct-verify-base');
+    try {
+      ensureOwnDir(root);
+    } catch (err) {
+      return { reason: `root-unusable: ${String((err && err.message) || err)}` };
+    }
+    const dir = slotScratchPath({ tmpdir, commonDir, slotBase: base, slot });
+    // A failed mkdir leaves a parent that does not resolve, which the containment check refuses.
+    try { fs.mkdirSync(path.dirname(dir), { recursive: true, mode: 0o700 }); } catch { /* refused below */ }
+    // A symlinked `<repo-key>` or `slot-<index>` resolves outside the root: refused before
+    // anything is removed or checked out there.
+    const parent = resolveWithin(path.dirname(dir), root);
+    if (parent === null) return { reason: 'parent-outside-root' };
+    const target = path.join(parent, path.basename(dir));
+    const leaf = lstatType(dir).type;
+    const registered = listWorktrees().some((listed) => canonicalListed(listed) === target);
+    // The parent is proven inside the root, so the leaf alone decides: a symlinked or file `wt`
+    // is never removed through.
+    if (leaf !== 'missing' && leaf !== 'directory') return { reason: 'leftover-not-a-directory' };
+    return { dir, leftover: registered || leaf !== 'missing' };
+  };
   return {
     repoRoot: () => git(['rev-parse', '--show-toplevel']),
     resolveCommit: (ref) => {
@@ -105,37 +179,46 @@ function realGit(cwd, { warn = (line) => process.stderr.write(line), rmSync = fs
     // `tests/../../x` verbatim), is never inside it.
     inCheckout: (dir, rel) => !path.posix.isAbsolute(rel) && !/^[A-Za-z]:/.test(rel)
       && !rel.split('/').includes('..') && fs.existsSync(path.join(dir, rel)),
-    addWorktree: (sha) => {
-      const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-verify-base-'));
-      const dir = path.join(parent, 'wt');
+    // #5150: with a held slot (`slot` its index, `slotBase` its lock dir) the checkout goes to the
+    // slot's stable path, clearing a leftover a killed run on this slot left there (`reused`).
+    // A guard that refuses that path warns once and falls back to a fresh path, recording why
+    // in `fallback`; without a slot it is the fresh path, silently.
+    addWorktree: (sha, { slot = null, slotBase = null } = {}) => {
+      if (slot === null) return { dir: freshWorktree(sha), reused: false };
+      const chosen = slotWorktree(slot, slotBase);
+      if (chosen.reason !== undefined) {
+        warn(`verify.js: baseline scratch: the per-slot path is unavailable (${chosen.reason}) — using a fresh ct-verify-base-* path for this run\n`);
+        return { dir: freshWorktree(sha), reused: false, fallback: chosen.reason };
+      }
+      const { dir, leftover } = chosen;
+      if (leftover) {
+        try { git(['worktree', 'remove', '--force', dir]); } catch { /* best effort — rm below */ }
+        try { rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
+        try { git(['worktree', 'prune']); } catch { /* best effort */ }
+      }
       try {
         git(['worktree', 'add', '--detach', dir, sha]);
       } catch (err) {
-        // The caller never learns `dir` on a throw, so its cleanup cannot run — remove the parent here.
-        try { rmSync(parent, { recursive: true, force: true }); } catch { /* best effort */ }
+        // The caller never learns `dir` on a throw; `slot-<index>/` stays for the next run.
+        try { rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
         throw err;
       }
-      return dir;
+      return { dir, reused: leftover };
     },
     // Never silent: a scratch that survives every attempt is named on stderr
     // with the manual cleanup command. No startup sweep — it could delete a
-    // sibling session's live scratch.
+    // sibling session's live scratch. A fresh path's `ct-verify-base-*` parent
+    // goes with it; a slot path's `slot-<index>/` stays (#5150).
     removeWorktree: (dir) => {
       try { git(['worktree', 'remove', '--force', dir]); } catch { /* best effort — rm below */ }
-      try { rmSync(path.dirname(dir), { recursive: true, force: true }); } catch { /* best effort */ }
+      const owned = path.basename(path.dirname(dir)).startsWith('ct-verify-base-') ? path.dirname(dir) : dir;
+      try { rmSync(owned, { recursive: true, force: true }); } catch { /* best effort */ }
       try { git(['worktree', 'prune']); } catch { /* best effort */ }
       if (fs.existsSync(dir)) {
         warn(`verify.js: could not remove the baseline scratch worktree ${dir} — remove it manually: git worktree remove --force ${dir}\n`);
       }
     },
-    // Every worktree `git` currently has registered against this repo, as
-    // absolute paths — read-only, so the caller can name a stale one without
-    // ever sweeping it itself (#3064).
-    listWorktrees: () => {
-      try {
-        return [...git(['worktree', 'list', '--porcelain']).matchAll(/^worktree (.+)$/gm)].map((m) => m[1]);
-      } catch { return []; }
-    },
+    listWorktrees,
   };
 }
 
@@ -319,10 +402,13 @@ async function adjudicate({
   concurrency = null,
   // #5150: project-declared substrings counted as timeout evidence beside the runner's own markers.
   timeoutPatterns = [],
-  // The held full-lane suite slot's index (#5119), accepted unused until #5150 consumes it.
+  // The full-lane suite slot this process holds, as `{ index, base }` — its index and the lock dir
+  // it was taken under (#5119) — which together pick the scratch worktree's stable path (#5150).
+  // null keeps a fresh ct-verify-base-* path.
   slot = null,
-  // #5119: takes the full-lane suite slot and returns its index (null when none was taken). Called
-  // at most once, just before the first rerun spawns, never when nothing will; the caller releases.
+  // #5119: takes the full-lane suite slot and returns it as `{ index, base }` (null when none was
+  // taken). Called at most once, just before the first rerun spawns, never when nothing will; the
+  // caller releases.
   takeSlot = () => null,
 }) {
   const header = { base, baseSha };
@@ -425,6 +511,9 @@ async function adjudicate({
   const atBase = work.map((w) => baseInfo.get(repoRel(w.file)).exists);
   const unchanged = work.map((w) => baseInfo.get(repoRel(w.file)).same);
   let scratch = null;
+  // #5150: whether addWorktree cleared a leftover at the slot path, and why it fell back, if it did.
+  let scratchReused = false;
+  let scratchFallback;
   let signalHandlers = [];
   // #3063: a single-file run bounds at the same timeout as the check's own
   // full-suite --cmd-timeout (a generous bound — one file should finish
@@ -459,7 +548,10 @@ async function adjudicate({
       signalHandlers = Object.entries(SIGNAL_EXIT_CODES).map(([sig, code]) => [sig, () => { if (scratch) git.removeWorktree(scratch); process.exit(code); }]);
       for (const [sig, handler] of signalHandlers) process.on(sig, handler);
       // Realpath'd like headDir (#3167): addWorktree may return a symlinked path.
-      scratch = tryRealpath(git.addWorktree(baseSha));
+      const added = git.addWorktree(baseSha, { slot: slot === null ? null : slot.index, slotBase: slot === null ? null : slot.base });
+      scratch = tryRealpath(added.dir);
+      scratchReused = added.reused;
+      scratchFallback = added.fallback;
     }
     const baseDir = scratch && (sub ? path.join(scratch, ...sub.split('/')) : scratch);
     // #5150: the limit each phase's pool runs under, lowered to 1 for good by timeout evidence.
@@ -676,6 +768,7 @@ async function adjudicate({
       ...(fixed === null ? { fixedReason } : {}),
       timedOut,
       concurrency: { declared: concurrency, used, reason },
+      scratch: { path: scratch, reused: scratchReused, ...(scratchFallback !== undefined ? { fallback: scratchFallback } : {}) },
     };
   } finally {
     for (const [sig, handler] of signalHandlers) process.removeListener(sig, handler);
@@ -683,4 +776,4 @@ async function adjudicate({
   }
 }
 
-module.exports = { adjudicate, realGit, findStaleBaselineWorktrees, RUNNER_ERROR_RE };
+module.exports = { adjudicate, realGit, findStaleBaselineWorktrees, slotScratchPath, RUNNER_ERROR_RE };

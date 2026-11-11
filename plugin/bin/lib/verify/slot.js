@@ -115,8 +115,10 @@ function holdSlot({
     handlers.push([sig, handler]);
     proc.on(sig, handler);
   }
+  // `base` is the lock dir the slot was taken under: with `index` it keys the scratch worktree path
+  // a --baseline adjudication reuses (#5150).
   return {
-    lane, index: slotIndexOf(lockPath), slots, source, waitedMs, release,
+    lane, index: slotIndexOf(lockPath), slots, source, waitedMs, release, base,
   };
 }
 
