@@ -14,7 +14,7 @@
 
 - AC: No tidy scan template instructs an agent to collapse findings into a count row.
 - Do not touch `plugin/skills/_shared/subagent-dispatch-core.md`'s shared Template A — other skills keep its cap.
-- Keep the reconcile command text `hooks.js" reconcile --checks mirror,red-tip,reap,release,archive,archive-branches,remote-prune,ledger-residue,console --json` byte-identical (`tests/reconcile.test.js:1299` pins it), and keep the sentence `A non-empty \`console.ready\` array names answered consoles … follow \`_shared/console-execution.md\`` (`tests/console-execution.test.js:121` pins it).
+- Keep the reconcile command text `hooks.js" reconcile --checks mirror,red-tip,reap,release,archive,archive-branches,remote-prune,ledger-residue,console --json` byte-identical (`tests/reconcile-dispatch.test.js`, pre-split `tests/reconcile.test.js:1299`, pins it), and keep the sentence `A non-empty \`console.ready\` array names answered consoles … follow \`_shared/console-execution.md\`` (`tests/console-execution.test.js:121` pins it).
 - Keep `scan-execution.md`'s existing phrases `only read — they write nothing` and `single-assistant-message rule` (`tests/worktree-forge-api-carve-out.test.js:100`, `tests/subagent-contract-clauses.test.js`).
 - Commit messages: `{Verb} {what} — {detail}`, ending with the trailer `Claude-Session: https://claude.ai/code/session_01YPgdwTF5oxR7DnGFhhiX8r`.
 
@@ -96,7 +96,7 @@ Expected: FAIL (the two new tests)
 
 - [ ] **Step 4: Run tests to verify pass**
 
-Run: `node --test tests/tidy-scan-dispatch-conformance.test.js tests/reconcile.test.js tests/console-execution.test.js tests/worktree-forge-api-carve-out.test.js tests/materiality-floor-conformance.test.js tests/subagent-contract-clauses.test.js`
+Run: `node --test tests/tidy-scan-dispatch-conformance.test.js tests/reconcile-dispatch.test.js tests/console-execution.test.js tests/worktree-forge-api-carve-out.test.js tests/materiality-floor-conformance.test.js tests/subagent-contract-clauses.test.js`
 Expected: PASS
 
 - [ ] **Step 5: Commit**

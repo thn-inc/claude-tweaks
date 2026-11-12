@@ -482,7 +482,7 @@ Expected: FAIL after Step 1. `CLAIM_LOST_DETAIL`, `SUPERSEDED_LOCATION_SUFFIX` a
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `node --test tests/bin-lib/reconcile/post-merge.test.js tests/post-merge-run-cli.test.js tests/post-merge-parent-left-open-e2e.test.js tests/reconcile.test.js`
+Run: `node --test tests/bin-lib/reconcile/post-merge.test.js tests/post-merge-run-cli.test.js tests/post-merge-parent-left-open-e2e.test.js tests/reconcile*.test.js`
 Expected: PASS.
 
 Guard discrimination: delete each guard once, re-run, and confirm the named test turns red:
@@ -512,7 +512,7 @@ git commit -m "Heartbeat the post-merge claim on every gh call and write — a t
 - Modify: `plugin/bin/lib/reconcile/post-merge.js` (new pure helpers `isSupersededEntry`, `supersededChanges`, `supersededChangesLine`; `module.exports`)
 - Modify: `plugin/bin/lib/reconcile/format-summary.js` (one new line after the Step 4.0b lines; the header comment's line-kind list)
 - Test: `tests/bin-lib/reconcile/post-merge.test.js`
-- Test: `tests/reconcile.test.js`
+- Test: `tests/reconcile-dispatch.test.js`
 
 One list and one renderer, shared by the reconcile CLI summary (this task) and SessionStart (Task 4), as `parentsLeftOpen` / `parentsLeftOpenLine` already are. The line carries numbers only (PRs, counts, record numbers): it reaches SessionStart's model-facing context, so no forge text travels, the rule `flattenStepFields`' comment states.
 
@@ -554,7 +554,7 @@ test('supersededChanges + supersededChangesLine: name every GitHub change of a t
 });
 ```
 
-In `tests/reconcile.test.js`, append after `formatSummary: parents left open and step skips render on their own lines…`:
+In `tests/reconcile-dispatch.test.js`, append after `formatSummary: parents left open and step skips render on their own lines…`:
 
 ```js
 test('formatSummary: a taken-over holder\'s GitHub changes render on their own line; its run still folds into the in-flight skip (#4797)', () => {
@@ -570,11 +570,11 @@ test('formatSummary: a taken-over holder\'s GitHub changes render on their own l
 });
 ```
 
-Match `require` paths to each file's existing ones (`tests/reconcile.test.js` already requires `formatSummary`).
+Match `require` paths to each file's existing ones (`tests/reconcile-dispatch.test.js` already requires `formatSummary`).
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `node --test tests/bin-lib/reconcile/post-merge.test.js tests/reconcile.test.js`
+Run: `node --test tests/bin-lib/reconcile/post-merge.test.js tests/reconcile-dispatch.test.js`
 Expected: FAIL after Step 1. The three helpers are undefined and the CLI summary renders no superseded line.
 
 - [ ] **Step 3: Implement**
@@ -584,7 +584,7 @@ Expected: FAIL after Step 1. The three helpers are undefined and the CLI summary
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `node --test tests/bin-lib/reconcile/post-merge.test.js tests/reconcile.test.js`
+Run: `node --test tests/bin-lib/reconcile/post-merge.test.js tests/reconcile-dispatch.test.js`
 Expected: PASS.
 
 Guard discrimination: delete each once and confirm the named test turns red:
@@ -595,7 +595,7 @@ Guard discrimination: delete each once and confirm the named test turns red:
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/bin/lib/reconcile/post-merge.js plugin/bin/lib/reconcile/format-summary.js tests/bin-lib/reconcile/post-merge.test.js tests/reconcile.test.js
+git add plugin/bin/lib/reconcile/post-merge.js plugin/bin/lib/reconcile/format-summary.js tests/bin-lib/reconcile/post-merge.test.js tests/reconcile-dispatch.test.js
 git commit -m "Name a taken-over post-merge holder's GitHub changes in the reconcile CLI summary (refs #4797)"
 ```
 
@@ -785,7 +785,7 @@ Expected: matches the journey's "once the claim is past its 10-minute stale wind
 
 - [ ] **Step 3: Verify the sweep**
 
-Run the sweep grep from this task's header, then `node --test tests/wrap-up-merge-mode-conformance.test.js tests/reconcile.test.js tests/below-floor-parent-close-conformance.test.js` (the suites that read `docs/reconcile-checks.md`).
+Run the sweep grep from this task's header, then `node --test tests/wrap-up-merge-mode-conformance.test.js tests/reconcile-dispatch.test.js tests/below-floor-parent-close-conformance.test.js` (the suites that read `docs/reconcile-checks.md`).
 Expected: the suites PASS, and no hit still says that a live claim is judged by mtime alone, that a re-run waits out the stale window for a dead holder, or that a taken-over holder writes or reports nothing. The Step 1 grep now matches only the new "naming no holder" clause in the journey.
 
 - [ ] **Step 4: Commit**

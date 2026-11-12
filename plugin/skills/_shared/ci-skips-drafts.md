@@ -14,7 +14,7 @@ jobs:
     if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 ```
 
 The job-level condition skips every draft-time run; `ready_for_review` starts the run the gate waits for. How the gate reads this shape:

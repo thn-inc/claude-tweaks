@@ -129,6 +129,23 @@ produced zero captured events, reproduced twice, while the identical setup corre
 section for the full measurement. Capture one scenario per tool the pattern is meant to match, and
 keep the measurement date beside the pattern.
 
+**A plugin hook's matcher is probed through a scratch plugin, not `--settings` (#4589).** When the
+question is whether a `plugin/hooks/hooks.json` entry fires (which tool name it sees, whether its
+deny takes effect), load a scratch plugin (`.claude-plugin/plugin.json`, plus `hooks/hooks.json`
+running a stdin logger through `${CLAUDE_PLUGIN_ROOT}`) with `claude -p --plugin-dir <scratch>
+--output-format stream-json --verbose --include-hook-events`. The entry is then a plugin hook like
+the shipped one, and the stream carries each hook's own stdout and exit code beside the tool result.
+`docs/reference/pretooluse-agent-tool-probe.md` is the instance: one scenario per branch the gate
+takes (a main-thread call, a denied call, a nested call, a prompt passed from a file), with an
+`Agent` and a `Task` matcher both registered so the capture shows which name fires (only `Agent`, on
+2.1.322). Two of its checks carry over. Prove a deny by its effect, not by the hook's output: the
+denied stream held zero `"parent_tool_use_id":"toolu_…"` lines, so no subagent started. And a probe
+spawned from inside a Claude Code session removes that session's variables (`CLAUDECODE`,
+`CLAUDE_CODE_SESSION_ID`, `CLAUDE_PID` and the rest the probe doc lists) from the child's
+environment, so it runs as a fresh top-level session rather than a child that could inherit the
+parent's session id. `docs/reference/pretooluse-updatedinput-worktree-guard.md` (#4028) took the same
+`--plugin-dir` route against the real `plugin/` directory.
+
 ## A fixture is a claim, not ground truth
 
 The same gap one level over: a fixture's literal values are an assertion about the real shape,

@@ -17,6 +17,15 @@ An allow rule names a command; the command's own flags decide what it can do. #5
 
 For every command an allow rule admits, list its flags that write a file, read outside the working directory (`git diff --no-index`), run a program (a pager, a configured hook, `-c` config) or reach the network, and probe each one through this module's own launcher. Add a step for the worst one to the opt-in live smoke test in `tests/bin-lib/driver/worker.test.js` (`AC7`, run with `DRIVER_LIVE_SMOKE=1`), the way `.git/info`, `.git/config` and `.git/hooks/pre-commit` writes were added.
 
+### How to probe a tool through the launcher
+
+Drive `launchWorker` from `worker.js` with the real `defaultRunner`, wrapped through the `runner` dependency so that it changes only what the probe tests (for a tool, its name in `--tools`). Every other flag, the environment and the generated settings stay the module's own; anything else measures a launch the driver never makes. Pass the `platform` whose generated settings you mean to test, and record the host it ran on, since settings generated for one platform on a host of another speak for that host only.
+
+- Run an allow-listed variant (the tool appended to `permissions.allow` in the generated settings file) and a tool-only variant (no allow rule) as separate runs, and report them separately: a bare allow rule may admit what the tool-only form confines.
+- Take the evidence from each launch's session transcript, found by the result's `session_id` (see `transcript-payload-verification`): every `tool_use` input and its `tool_result`, plus the envelope's `denials`. The worker's own summary is its account of what happened, not evidence.
+- A case whose transcript holds no `tool_use` of the tool is not-called, never contained: re-run it once, and report it as unsettled if it is still not called. A launch whose transcript cannot be found stops the probe. A tool error that is not a refusal is its own outcome, and a refusal matcher must fit the wording the launch actually emits — a pattern written for ordinary permission errors misses a `--restricted` refusal.
+- Give each outside route its own case (a path argument, an absolute pattern, a symlink given as the path, a recursion that reaches a symlink, a directory that is not a temporary one), and record both the results and the routes left unprobed in the `roles.js` header.
+
 ### A probe speaks for one CLI version, one platform and one launch context
 
 Record each result in the module header with the CLI version, platform, date, login kind and whether a TTY was attached, and keep rights that rest on an unprobed cell off. The sandbox block and every Bash rule exist only on `darwin`; elsewhere the implementer has Read, Write and Edit and nothing that runs a command. Supporting a new platform means running the sandbox probes there first, then adding it to `SANDBOX_PROBED_PLATFORMS`, never the other way round. A result measured with a scratch configuration directory says nothing about a subscription login, which is why the user-level leakage probe is a stated residual rather than a pass.
@@ -36,6 +45,8 @@ No code path composes wider rights after a permission denial: a denial goes into
 ### What the consumer owes
 
 The run loop that consumes the envelope must treat every string in `result`, `detail` when it carries the worker's own text, and `denials[].tool_input` as untrusted, and neutralize it before it reaches a command, a commit message, a comment or a log line. On POSIX the worker is detached into its own process group, so the consumer must forward termination to it. Envelope `ok` means only that conforming structured output arrived; the worker's verdict is `result.status`, which may be `cannot-complete`.
+
+Any step that executes worker-authored content (its tests, a `verify-scope.json` command, a build or lint script it can edit) runs outside the worker's sandbox. Give that child an allow-listed environment with no forge credentials, or run it under the worker's sandbox profile, or run `check`'s bounds first. Never inherit the driver's own environment (#5218 review).
 
 ## Decision Framework
 
