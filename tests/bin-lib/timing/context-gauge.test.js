@@ -257,7 +257,7 @@ test('real-input probe: a trimmed real dispatched-call transcript measures the h
 // config.yml is the shape /flow's Manifesto writes (this run's own, 2026-10-25); mode: null omits it.
 const configYml = (mode) => `mode: ${mode}\nscope-creep: add-to-plan\noverlap: companion\nmerge-authorization: ask\nspec: 4027\ncreated: 2026-10-25T162129\n`;
 
-function runFixture({ spec = 'worktree', specDirs = [], worktree = true, mode = 'auto' } = {}) {
+function runFixture({ spec = 'worktree', specDirs = [], worktree = true, mode = 'auto', dispatched = false } = {}) {
   const root = gitRepo();
   created.push(root);
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', RUN_ID);
@@ -266,7 +266,7 @@ function runFixture({ spec = 'worktree', specDirs = [], worktree = true, mode = 
   let wt = null;
   if (worktree) {
     wt = harnessWorktreeOf(root);
-    fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ worktree: wt, status: 'active' }));
+    fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ worktree: wt, status: 'active', ...(dispatched ? { dispatched: true } : {}) }));
   }
   if (spec === 'worktree' && wt) {
     fs.mkdirSync(path.join(wt, '.claude-tweaks', 'pipelines', RUN_ID, 'work'), { recursive: true });
@@ -325,7 +325,7 @@ test('CLI: 150000 tokens is under the cap — over: false and no handoff.json', 
 });
 
 test('CLI: --cap overrides CONTEXT_CAP_TOKENS', async () => {
-  const fx = runFixture();
+  const fx = runFixture({ dispatched: true });
   const t = transcriptAt(tmp('ct-gauge-cli-'), 150000);
   const c = cli(fx);
   assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--cap', '100000', '--next-steps', 'review,polish,wrap-up'], c.deps), 0);
@@ -419,7 +419,7 @@ const { HANDOFF_BOUND } = require('../../../plugin/bin/lib/timing/context-gauge'
 const readHandoff = (runDir) => JSON.parse(fs.readFileSync(path.join(runDir, 'handoff.json'), 'utf8'));
 
 test('CLI: handoffCount increments from the existing handoff.json', async () => {
-  const fx = runFixture();
+  const fx = runFixture({ dispatched: true });
   const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
   fs.writeFileSync(path.join(fx.runDir, 'handoff.json'), JSON.stringify({ nextSteps: ['test'], handoffCount: 2 }));
   const c = cli(fx);
@@ -443,7 +443,7 @@ test('CLI: a missing, garbage, or count-less handoff.json counts as 0 handoffs',
 
 test('CLI: at the bound (3 earlier handoffs) nothing is written — over: true, handoff: null, continue in place', async () => {
   assert.strictEqual(HANDOFF_BOUND, 3);
-  const fx = runFixture();
+  const fx = runFixture({ dispatched: true });
   const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
   const prior = `${JSON.stringify({ nextSteps: ['wrap-up'], handoffCount: 3 })}\n`;
   fs.writeFileSync(path.join(fx.runDir, 'handoff.json'), prior);
@@ -482,6 +482,41 @@ test('CLI: a fallback-identified transcript over the cap writes no handoff — o
   }
 });
 
+// flow/context-handoff.md: a top-level run (run-state.json not dispatched: true) never hands off wrap-up.
+// The refusal is handoff: null with this reason, logged as a SKIP like every other reason.
+const TOP_LEVEL_WRAPUP_REASON = 'handoff.json not written: a top-level run (run-state.json not dispatched: true) never hands off wrap-up — flow/context-handoff.md: continue in place';
+
+test('CLI: a top-level run over the cap with wrap-up in --next-steps writes no handoff — over as measured, handoff: null, reason names the rule', async () => {
+  const fx = runFixture();
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  const c = cli(fx);
+  assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--next-steps', 'review,polish,wrap-up'], c.deps), 0, c.err.join(''));
+  assert.deepStrictEqual(c.json(), { contextTokens: 250000, cap: 200000, over: true, transcript: t, handoff: null, reason: TOP_LEVEL_WRAPUP_REASON });
+  assert.ok(!fs.readdirSync(fx.runDir).includes('handoff.json'));
+  assert.ok(fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8').includes(TOP_LEVEL_WRAPUP_REASON), 'the refusal is logged to decisions.md');
+});
+
+test('CLI: a dispatched run over the cap with wrap-up in --next-steps still writes handoff.json', async () => {
+  const fx = runFixture({ dispatched: true });
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  const c = cli(fx);
+  assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--next-steps', 'review,polish,wrap-up'], c.deps), 0, c.err.join(''));
+  assert.deepStrictEqual(c.json(), { contextTokens: 250000, cap: 200000, over: true, transcript: t, handoff: path.join(fx.runDir, 'handoff.json'), reason: null });
+  assert.deepStrictEqual(readHandoff(fx.runDir).nextSteps, ['review', 'polish', 'wrap-up']);
+  assert.strictEqual(readHandoff(fx.runDir).handoffCount, 1);
+});
+
+test('CLI: a top-level run with --record-steps naming wrap-up writes no handoff', async () => {
+  const fx = multiRun();
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  const c = cli(fx);
+  assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--record-steps', '#12:none;#34:build,test,wrap-up'], c.deps), 0, c.err.join(''));
+  assert.strictEqual(c.json().over, true);
+  assert.strictEqual(c.json().handoff, null);
+  assert.strictEqual(c.json().reason, TOP_LEVEL_WRAPUP_REASON);
+  assert.ok(!fs.readdirSync(fx.runDir).includes('handoff.json'));
+});
+
 test('CLI: target records — the run dir\'s work/ when no worktree is recorded; spec-{N}/ dirs for a multi-spec run; none found is reported', async () => {
   const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
   const own = runFixture({ spec: 'run-dir', worktree: false });
@@ -515,7 +550,7 @@ test('CLI: resume carries the run\'s mode — auto/confirm/hybrid resume as auto
     ['auto', ' auto'], ['confirm', ' auto'], ['hybrid', ' auto'], ['interactive', ''], [null, ''],
   ];
   for (const [mode, token] of cases) {
-    const fx = runFixture({ mode });
+    const fx = runFixture({ mode, dispatched: true });
     const c = cli(fx);
     assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--next-steps', 'review,wrap-up'], c.deps), 0, c.err.join(''));
     const h = JSON.parse(fs.readFileSync(path.join(fx.runDir, 'handoff.json'), 'utf8'));

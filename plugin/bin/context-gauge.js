@@ -50,7 +50,8 @@
 // or any other measurement failure prints over: false, contextTokens: null and
 // a `reason`; a handoff that cannot be written (no target records, a failed
 // write, a multi-record run under --next-steps, --record-steps with no manifest
-// or naming other records than it lists) prints over: true, handoff: null and a `reason`.
+// or naming other records than it lists, a top-level run — run-state.json not
+// dispatched: true — naming wrap-up) prints over: true, handoff: null and a `reason`.
 // Neither ever stops a run. Several reasons are joined with "; ". Every
 // non-null `reason` is also logged to the run's decisions.md as a SKIP
 // (_shared/auto-decision-log.md's degrade trace), so a gauge that cannot work
@@ -159,6 +160,7 @@ const FALLBACK_REASONS = {
 // a dispatched call, `main` is the dispatcher's own — so it measures and reports, never hands off.
 const HANDS_OFF = new Set(['in-flight', 'explicit']);
 const NOT_IDENTIFIED_REASON = 'handoff.json not written: the caller was not identified, so the measured transcript may be another agent\'s (only an in-flight or --transcript identification hands off)';
+const TOP_LEVEL_WRAPUP_REASON = 'handoff.json not written: a top-level run (run-state.json not dispatched: true) never hands off wrap-up — flow/context-handoff.md: continue in place';
 
 // Measure, and write the handoff when over. Never throws: every failure is a
 // `reason` on the result (the fail-open contract); several join with '; '.
@@ -200,6 +202,12 @@ async function measure({ runDir, runId, cwd, cap, nextSteps, parsedRecordSteps =
   }
   if (!result.over || !nextSteps) return done();
   if (!HANDS_OFF.has(identified)) return done(NOT_IDENTIFIED_REASON);
+  // flow/context-handoff.md: a top-level run never hands off wrap-up; a dispatched run may.
+  if (nextSteps.includes('wrap-up')) {
+    let state = null;
+    try { state = deps.readRunState(runDir); } catch { state = null; }
+    if (!state || state.dispatched !== true) return done(TOP_LEVEL_WRAPUP_REASON);
+  }
 
   try {
     const previous = deps.readHandoffCount(runDir);
