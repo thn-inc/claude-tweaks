@@ -316,10 +316,15 @@ function recordingTimers() {
   return { handles, cleared, timers: { setTimeout: (fn, ms) => { const h = setTimeout(fn, ms); handles.push(h); return h; }, clearTimeout: (h) => { cleared.push(h); clearTimeout(h); } } };
 }
 // Kills a child a test started if the test ended without it exiting.
+// It signals by pid directly, never through `handle.kill`, which is the code under test.
 function reapAfter(t, handle) {
   let done = false;
   handle.exited.then(() => { done = true; }, () => { done = true; });
-  t.after(() => { if (!done) { try { handle.kill('SIGKILL'); } catch { /* already gone */ } } });
+  t.after(() => {
+    if (done || !Number.isInteger(handle.pid) || handle.pid <= 0) return;
+    if (process.platform !== 'win32') { try { process.kill(-handle.pid, 'SIGKILL'); } catch { /* already gone */ } }
+    try { process.kill(handle.pid, 'SIGKILL'); } catch { /* already gone */ }
+  });
 }
 
 test('AC4: at the ceiling a POSIX child gets SIGTERM and the envelope is timeout/wall-clock-ceiling', async (t) => {
@@ -399,6 +404,23 @@ test('a child that survives the kill is given up on at the reap deadline, with i
   assert.deepStrictEqual(fs.readdirSync(winOpts.settingsDir), []);
 });
 
+test('a taskkill that never returns does not hold the launch past the reap deadline', async (t) => {
+  const taskkillKills = [];
+  const never = new Promise(() => {});
+  const runner = (call) => (call.file === 'taskkill'
+    ? { pid: 1, kill(sig) { taskkillKills.push(sig); }, exited: never }
+    : { pid: 4242, kill() {}, exited: never });
+  const { timers, delays } = instantTimers();
+  const opts = base(t, { platform: 'win32', env: { Path: 'p' }, ceilings: { wallClockMs: 1234 } });
+  const env = await launchWorker(opts, { runner, timers });
+  assert.strictEqual(env.status, 'timeout');
+  assert.strictEqual(env.reason, 'wall-clock-ceiling');
+  assert.strictEqual(env.detail, 'child 4242 did not exit after kill');
+  assert.deepStrictEqual(delays, [1234, worker.REAP_DEADLINE_MS]);
+  assert.deepStrictEqual(taskkillKills, ['SIGKILL']);
+  assert.deepStrictEqual(fs.readdirSync(opts.settingsDir), []);
+});
+
 test('AC4: a child that exits before the ceiling clears the timer and is classified normally', async (t) => {
   const { runner } = fakeRunner(okOut());
   const { timers, cleared } = recordingTimers();
@@ -421,13 +443,16 @@ test('a launch that fails to start clears the ceiling timer', async (t) => {
 });
 
 test('a wall-clock ceiling that is not a positive finite number is refused', async (t) => {
-  for (const bad of [0, -5, NaN, undefined]) {
+  for (const bad of [0, -5, NaN, undefined, 2147483648, Infinity]) {
     const { runner, calls } = fakeRunner(okOut());
     const opts = base(t, { ceilings: { wallClockMs: bad } });
     await assert.rejects(launchWorker(opts, { runner }), RangeError, String(bad));
     assert.strictEqual(calls.length, 0);
     assert.deepStrictEqual(fs.readdirSync(opts.settingsDir), []);
   }
+  const { runner } = fakeRunner(okOut());
+  const env = await launchWorker(base(t, { ceilings: { wallClockMs: 2147483647 } }), { runner });
+  assert.strictEqual(env.status, 'ok');
 });
 
 test('AC9: the win32 launch of a .cmd launcher is pinned as an exact string', async (t) => {
@@ -446,14 +471,14 @@ test('AC9: a non-.cmd launcher passes through untouched on every platform', asyn
   assert.strictEqual(calls[0].args[0], '-p');
 });
 
-test('defaultRunner pipes input to the child and resolves with its output', async (t) => {
+test('defaultRunner pipes input to the child and resolves with its output', { timeout: 20000 }, async (t) => {
   const handle = worker.defaultRunner({ file: process.execPath, args: ['-e', 'process.stdin.pipe(process.stdout)'], options: { cwd: os.tmpdir(), env: process.env }, input: 'hello' });
   reapAfter(t, handle);
   assert.deepStrictEqual(await handle.exited, { code: 0, signal: null, stdout: 'hello', stderr: '' });
   assert.strictEqual(typeof handle.pid, 'number');
 });
 
-test('defaultRunner takes detached and its kill from the platform it is given (win32)', async (t) => {
+test('defaultRunner takes detached and its kill from the platform it is given (win32)', { timeout: 20000 }, async (t) => {
   const seen = [];
   const spawn = (file, args, o) => { seen.push(o); return cp.spawn(file, args, o); };
   const handle = worker.defaultRunner({ file: process.execPath, args: ['-e', 'setInterval(()=>{},1000)'], options: { cwd: os.tmpdir(), env: process.env }, input: '', platform: 'win32' }, { spawn });
@@ -464,7 +489,7 @@ test('defaultRunner takes detached and its kill from the platform it is given (w
   assert.strictEqual((await handle.exited).signal, 'SIGTERM');
 });
 
-test('defaultRunner takes detached and its kill from the platform it is given (linux)', { skip: process.platform === 'win32' && 'win32: no process groups' }, async (t) => {
+test('defaultRunner takes detached and its kill from the platform it is given (linux)', { timeout: 20000, skip: process.platform === 'win32' && 'win32: no process groups' }, async (t) => {
   const seen = [];
   const spawn = (file, args, o) => { seen.push(o); return cp.spawn(file, args, o); };
   const handle = worker.defaultRunner({ file: process.execPath, args: ['-e', 'setInterval(()=>{},1000)'], options: { cwd: os.tmpdir(), env: process.env }, input: '', platform: 'linux' }, { spawn });
@@ -474,7 +499,7 @@ test('defaultRunner takes detached and its kill from the platform it is given (l
   assert.strictEqual((await handle.exited).signal, 'SIGTERM');
 });
 
-test('defaultRunner rejects when the binary does not exist', async (t) => {
+test('defaultRunner rejects when the binary does not exist', { timeout: 20000 }, async (t) => {
   const missing = path.join(os.tmpdir(), 'no-such-binary-5217');
   const handle = worker.defaultRunner({ file: missing, args: [], options: { cwd: os.tmpdir(), env: process.env }, input: 'x' });
   reapAfter(t, handle);
@@ -484,7 +509,7 @@ test('defaultRunner rejects when the binary does not exist', async (t) => {
   assert.strictEqual(env.reason, 'launch-error');
 });
 
-test('defaultRunner kill ends the child and a grandchild it started (POSIX only)', { skip: process.platform === 'win32' && 'win32: no process groups; taskkill covers it' }, async (t) => {
+test('defaultRunner kill ends the child and a grandchild it started (POSIX only)', { timeout: 20000, skip: process.platform === 'win32' && 'win32: no process groups; taskkill covers it' }, async (t) => {
   const dir = tmp(t);
   const script = [
     "const { spawn } = require('child_process');",
@@ -510,10 +535,25 @@ test('defaultRunner kill ends the child and a grandchild it started (POSIX only)
   assert.ok(gone, 'the grandchild outlived the group kill');
 });
 
+test("defaultRunner lets the child's exit decide when stdin errors", async () => {
+  const { EventEmitter } = require('node:events');
+  const child = Object.assign(new EventEmitter(), { pid: 77 });
+  child.stdin = Object.assign(new EventEmitter(), { write() {}, end() {} });
+  child.stdout = Object.assign(new EventEmitter(), { setEncoding() {} });
+  child.stderr = Object.assign(new EventEmitter(), { setEncoding() {} });
+  const handle = worker.defaultRunner({ file: 'x', args: [], options: {}, input: 'p', platform: 'linux' }, { spawn: () => child });
+  child.stdin.emit('error', Object.assign(new Error('write EOF'), { code: 'EOF' }));
+  child.stderr.emit('data', "error: unknown option '--x'\n");
+  child.emit('close', 1, null);
+  assert.deepStrictEqual(await handle.exited, { code: 1, signal: null, stdout: '', stderr: "error: unknown option '--x'\n" });
+});
+
 test('AC7: live smoke test — the write runs, echo and curl are denied', { skip: !process.env.DRIVER_LIVE_SMOKE && 'set DRIVER_LIVE_SMOKE=1 to launch a real worker (spends tokens)' }, async (t) => {
   const cwd = tmp(t);
   const settingsDir = tmp(t);
-  cp.spawnSync('git', ['init', '-q'], { cwd, windowsHide: true });
+  const init = cp.spawnSync('git', ['init', '-q'], { cwd, windowsHide: true });
+  assert.strictEqual(init.status, 0, 'git init failed in the smoke test directory');
+  fs.mkdirSync(path.join(cwd, '.git', 'info'), { recursive: true });
   const prompt = 'Do these four things in order, continuing after any denial: (1) use the Write tool to create smoke-w.txt containing hi; (2) run the bash command: echo hi > smoke-b.txt (3) run the bash command: curl -s https://example.com -o smoke-net.txt (4) use the Write tool to create .git/info/smoke-note.txt containing hi. Then report what happened.';
   const env = await launchWorker({ role: 'implementer', cwd, settingsDir, prompt, model: 'haiku', testCommand: 'node --test', ceilings: { wallClockMs: 180000, spendCeiling: 1 }, claudeMdText: 'Probe project file.' });
   assert.strictEqual(env.status, 'ok', JSON.stringify(env));

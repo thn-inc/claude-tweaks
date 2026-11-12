@@ -72,9 +72,10 @@
 // SIGTERM to the whole group; if the child is still running KILL_GRACE_MS (5 seconds)
 // later, it sends SIGKILL to the group. On win32 there are no process groups, so the
 // launcher runs `taskkill /T /F /PID {pid}` (the whole process tree, forced) through
-// the runner, waits for that to finish, and ignores its outcome. A kill that throws
-// because the child is already gone is swallowed. After the kill a reap deadline of
-// REAP_DEADLINE_MS (5 seconds) starts. The envelope is returned once the child has
+// the runner and ignores its outcome: nothing waits on it. A kill that throws
+// because the child is already gone is swallowed. A reap deadline of
+// REAP_DEADLINE_MS (5 seconds) starts after the SIGKILL on POSIX and as soon as
+// taskkill has been started on win32; if it fires, a taskkill still running is killed. The envelope is returned once the child has
 // exited, as `timeout` with reason `wall-clock-ceiling`, built from whatever the
 // child printed. Only when the deadline passes first (a child that survives the kill,
 // or a descendant that holds the child's output open) does the launcher return
@@ -185,6 +186,8 @@ function describeError(err) {
 
 const KILL_GRACE_MS = 5000;
 const REAP_DEADLINE_MS = 5000;
+// The largest delay a timer takes; a larger one fires after 1 ms, killing the child at once.
+const MAX_TIMER_MS = 2147483647;
 
 function classify({ timedOut, timeoutDetail, spawnError, code, signal, stdout, stderr }, { schema, spendCeiling }) {
   const obj = parseResultObject(stdout);
@@ -232,6 +235,7 @@ async function superviseChild({ handle, runner, platform, wallClockMs, timers })
   let finished = false;
   let timedOut = false;
   let giveUp;
+  let killerHandle;
   const gaveUp = new Promise((resolve) => { giveUp = resolve; });
   const arm = (fn, ms) => {
     const timer = timers.setTimeout(fn, ms);
@@ -255,13 +259,14 @@ async function superviseChild({ handle, runner, platform, wallClockMs, timers })
   const onCeiling = () => {
     timedOut = true;
     if (platform === 'win32') {
-      let killer;
       try {
-        killer = runner({ file: 'taskkill', args: ['/T', '/F', '/PID', String(handle.pid)], options: {}, input: '', platform });
+        killerHandle = runner({ file: 'taskkill', args: ['/T', '/F', '/PID', String(handle.pid)], options: {}, input: '', platform });
       } catch {
         // Its outcome is ignored, a throw included.
       }
-      Promise.resolve(killer && killer.exited).then(() => {}, () => {}).then(armReap);
+      // Nothing waits on taskkill: its `exited` is observed only to swallow a rejection.
+      Promise.resolve(killerHandle && killerHandle.exited).then(() => {}, () => {});
+      armReap();
     } else {
       kill('SIGTERM');
       arm(onGrace, KILL_GRACE_MS);
@@ -273,7 +278,17 @@ async function superviseChild({ handle, runner, platform, wallClockMs, timers })
       handle.exited.then((result) => ({ result }), (err) => ({ err: err === undefined ? new Error('launch failed') : err })),
       gaveUp.then(() => ({ gaveUp: true })),
     ]);
-    if (settled.gaveUp) return { timedOut: true, timeoutDetail: 'child ' + handle.pid + ' did not exit after kill' };
+    if (settled.gaveUp) {
+      // A taskkill that is still running is not left behind.
+      if (killerHandle) {
+        try {
+          killerHandle.kill('SIGKILL');
+        } catch {
+          // Already gone.
+        }
+      }
+      return { timedOut: true, timeoutDetail: 'child ' + handle.pid + ' did not exit after kill' };
+    }
     if (settled.err !== undefined) return { timedOut, spawnError: settled.err };
     return { timedOut, ...settled.result };
   } catch (err) {
@@ -299,10 +314,9 @@ function defaultRunner({ file, args, options, input, platform = process.platform
     child.stderr.on('data', (chunk) => { stderr += chunk; });
     child.on('error', reject);
     child.on('close', (code, signal) => resolve({ code, signal, stdout, stderr }));
-    child.stdin.on('error', (err) => {
-      // The child exited before it read its input: its exit is what gets reported.
-      if (!err || err.code !== 'EPIPE') reject(err);
-    });
+    // A write to a pipe the child has closed fails under different codes per platform
+    // (EPIPE, EOF, ECONNRESET). Whatever the code, the child's own exit decides the result.
+    child.stdin.on('error', () => {});
   });
   child.stdin.end(input);
   return {
@@ -331,8 +345,8 @@ async function launchWorker(opts, deps = defaultDeps()) {
     throw new RangeError('ceilings.spendCeiling must be a finite number above zero, got ' + String(spendCeiling));
   }
   const wallClockMs = ceilings.wallClockMs;
-  if (!(typeof wallClockMs === 'number' && Number.isFinite(wallClockMs) && wallClockMs > 0)) {
-    throw new RangeError('ceilings.wallClockMs must be a finite number above zero, got ' + String(wallClockMs));
+  if (!(typeof wallClockMs === 'number' && Number.isFinite(wallClockMs) && wallClockMs > 0 && wallClockMs <= MAX_TIMER_MS)) {
+    throw new RangeError('ceilings.wallClockMs must be a finite number above zero and at most ' + MAX_TIMER_MS + ', got ' + String(wallClockMs));
   }
   const timers = deps.timers || defaultDeps().timers;
   assertSupportedSchema(schema);
