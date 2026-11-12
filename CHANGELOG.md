@@ -62,6 +62,12 @@ Three conventions follow from how this repo works, and all are visible below:
 * Headless worker launcher with per-role rights ([#5217](https://github.com/thn-inc/claude-tweaks/issues/5217)) ([d7409c5](https://github.com/thn-inc/claude-tweaks/commit/d7409c5eda8bd161ee70b2f43a454377cad21e7b))
 * Probe Grep and Glob for the implementer worker where it has no shell ([#5239](https://github.com/thn-inc/claude-tweaks/issues/5239)) ([e882af4](https://github.com/thn-inc/claude-tweaks/commit/e882af4a03507962a8d04bbca5f61a7d31849124))
 
+### Highlights
+* Added the admission rules and settings the upcoming pipeline driver uses to decide which records it may take on.
+* Records a Grep and Glob containment probe for the driver's headless implementer worker in its module header; the implementer's tool list is unchanged until Linux and Windows hosts are probed.
+* Settle 3 small deferred findings in policy.
+* Added the headless worker launcher the upcoming pipeline driver uses, with narrow per-role permissions.
+
 ## [6.165.0](https://github.com/thn-inc/claude-tweaks/compare/v6.164.0...v6.165.0) (2026-11-11)
 
 
