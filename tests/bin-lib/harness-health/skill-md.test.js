@@ -189,3 +189,28 @@ test('judge-procedure.md fenced blocks balance, so inlining cannot break the pro
   const fences = readJudge().split('\n').filter((l) => /^\s*```/.test(l));
   assert.strictEqual(fences.length % 2, 0, `unbalanced code fences: ${fences.length}`);
 });
+
+// ── ci-health-check.md (#5161, lazy-loaded) ─────────────────────────────────
+// The CI health check's procedure lives in its own sub-file; SKILL.md carries
+// only the scope sentence and a pointer, so its call site stays in the sub-file.
+
+const { RAIL_BYTES } = require('../../../plugin/bin/lib/skill-audit/budgets');
+const CI_HEALTH = path.resolve(__dirname, '..', '..', '..', 'plugin', 'skills', 'harness-health', 'ci-health-check.md');
+
+test('AC10.1: SKILL.md stays under the rail, points at ci-health-check.md, and names CI run health in its scope', () => {
+  const body = read();
+  assert.ok(Buffer.byteLength(body, 'utf8') <= RAIL_BYTES, `SKILL.md is ${Buffer.byteLength(body, 'utf8')} B, over the ${RAIL_BYTES} B rail`);
+  assert.ok(body.includes('`ci-health-check.md`'), 'SKILL.md must point at `ci-health-check.md`');
+  const end = body.indexOf('\n## When to Use');
+  assert.notStrictEqual(end, -1, 'SKILL.md has no ## When to Use heading');
+  assert.match(body.slice(0, end), /CI run health/, 'the scope paragraph must name CI run health');
+});
+
+test('AC10.2: the ci-health.js call site lives in ci-health-check.md, which carries the gh-absent and bootstrap paths', () => {
+  assert.ok(!read().includes('${CLAUDE_PLUGIN_ROOT}/bin/ci-health.js'), 'SKILL.md must point at the sub-file, not carry the call site');
+  assert.ok(fs.existsSync(CI_HEALTH), `ci-health-check.md not found at ${CI_HEALTH}`);
+  const sub = readText(CI_HEALTH);
+  for (const token of ['node "${CLAUDE_PLUGIN_ROOT}/bin/ci-health.js" --file', '--dry-run', 'github-write-transport.md', '_shared/label-bootstrap.md']) {
+    assert.ok(sub.includes(token), `ci-health-check.md is missing ${token}`);
+  }
+});
