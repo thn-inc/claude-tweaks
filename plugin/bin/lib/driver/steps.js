@@ -126,19 +126,20 @@ const policyStep = defineStep(STEP.policy, STOP_CLASSES.REFUSED, async (ctx, dep
     return { status: 'fail', detail };
   };
   try {
+    const mainRoot = mainCheckoutRoot(deps.cwd());
+    if (!mainRoot) return fatal('main checkout root unresolvable from the working directory');
+    let remote;
+    try { remote = deps.remoteUrl(); } catch (err) { return fatal(`origin remote unreadable: ${errorText(err)}`); }
+    // The origin-host gate (#4933): an unknown host is refused, never sent to gh. It runs before
+    // the policy read, whose unset integration-model default probes `gh repo view`.
+    const { spec: repo, refusal } = gateOriginRepo(remote, { env: deps.env, platform: deps.platform });
+    if (refusal) return fatal(refusal);
+    if (!repo) return fatal('origin remote does not name a host/owner/repo');
     const resolved = deps.resolvePolicy(POLICY_KEYS.slice()) || {};
     const unreadable = POLICY_KEYS.filter((k) => !resolved[k] || resolved[k].error);
     if (unreadable.length) {
       return fatal(`policy unreadable: ${unreadable.map((k) => `${k} (${(resolved[k] && resolved[k].error) || 'missing'})`).join(', ')}`);
     }
-    const mainRoot = mainCheckoutRoot(deps.cwd());
-    if (!mainRoot) return fatal('main checkout root unresolvable from the working directory');
-    let remote;
-    try { remote = deps.remoteUrl(); } catch (err) { return fatal(`origin remote unreadable: ${errorText(err)}`); }
-    // The origin-host gate (#4933): an unknown host is refused, never sent to gh.
-    const { spec: repo, refusal } = gateOriginRepo(remote, { env: deps.env, platform: deps.platform });
-    if (refusal) return fatal(refusal);
-    if (!repo) return fatal('origin remote does not name a host/owner/repo');
     const { ref, why } = resolveIntegrationRef(resolved, mainRoot, deps);
     if (!ref) return fatal(`integration branch unresolvable: ${why}`);
     shared.policy = resolved;
