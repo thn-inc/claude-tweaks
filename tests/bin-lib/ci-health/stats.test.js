@@ -301,6 +301,28 @@ test('a fork run on a branch named like the default branch is non-default work; 
   assert.strictEqual(w.supersededShare, 0.5);
 });
 
+test('superseded key: two branches from one head repo are separate keys', () => {
+  const t = NOW.getTime() - 2 * DAY;
+  const w = only(computeStats([
+    run({ branch: 'main', sha: 'a', created: t, seconds: 60, headRepo: 'x/r' }),
+    run({ branch: 'g', sha: 'b', created: t + HOUR, seconds: 60, headRepo: 'x/r' }),
+  ], OPTS30));
+  assert.strictEqual(w.superseded, 0);
+  assert.strictEqual(w.supersededShare, 0);
+});
+
+test('a run with head_repository but no repository on the default branch name is non-default work', () => {
+  const t = NOW.getTime() - 2 * DAY;
+  const bare = (sha, created) => {
+    const r = run({ branch: 'main', sha, created, seconds: 60 });
+    delete r.repository;
+    return r;
+  };
+  const w = only(computeStats([bare('a', t), bare('b', t + HOUR)], OPTS30));
+  assert.strictEqual(w.superseded, 1);
+  assert.strictEqual(w.supersededShare, 0.5);
+});
+
 test('defaultBranch null: superseded and supersededShare are null', () => {
   const t = NOW.getTime() - 2 * DAY;
   const w = only(computeStats([
