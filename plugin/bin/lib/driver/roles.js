@@ -79,8 +79,9 @@
 // Grep given the symlink to the sibling directory as its path was refused too, with
 // "resolves through a symlink to <target>, which is outside <cwd>". Grep recursing from
 // the working directory, and Glob with `link/*.txt` and `**/*`, were not refused but
-// returned nothing from the symlink's target; that is what was observed, and the cause was not isolated, since it may be
-// the search tools' default of not following symbolic links rather than `--restricted`.
+// returned nothing from the symlink's target; that is what was observed, and the
+// cause was not isolated, since it may be the search tools' default of not following
+// symbolic links rather than `--restricted`.
 // Not probed: `../` relative paths, Grep's `glob` and `type` parameters, a symlinked
 // file (as opposed to a directory), a hard link, and Linux and Windows hosts. Because
 // only a darwin host was probed, Grep and Glob stay off the implementer on Linux and
