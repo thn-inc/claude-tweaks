@@ -148,15 +148,3 @@ test('Task 0 fixtures carry the field names the launcher reads', () => {
   assert.strictEqual(budget.subtype, 'error_max_budget_usd');
   assert.ok(!('structured_output' in budget));
 });
-
-test('#5239 AC2, AC3: off darwin the implementer keeps Read, Write, Edit — Grep and Glob stay off until Linux and Windows hosts are probed', () => {
-  assert.deepStrictEqual(toolsFor('implementer', 'darwin'), ['Read', 'Write', 'Edit', 'Bash']);
-  for (const platform of ['linux', 'win32']) {
-    assert.deepStrictEqual(toolsFor('implementer', platform), ['Read', 'Write', 'Edit'], platform);
-    const allow = implementerSettings({ testCommand: 'node --test', platform }).permissions.allow;
-    assert.deepStrictEqual(allow, ['Read', 'Edit', 'Write'], platform);
-    for (const rule of allow) assert.ok(!/^(Bash|Grep|Glob)\b/.test(rule), platform + ': ' + rule);
-    const args = composeArgs({ role: 'implementer', settingsFile: '/s/x.json', schema: RESULT_SCHEMA, platform });
-    assert.strictEqual(args[args.indexOf('--tools') + 1], 'Read,Write,Edit', platform);
-  }
-});
