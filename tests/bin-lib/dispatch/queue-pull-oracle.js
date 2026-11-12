@@ -7,8 +7,9 @@
 //   <root>/proj       a clone of <root>/origin.git: the cwd, with policy.yml and the pre-minted
 //                     dispatch-standalone run dir
 //   <root>/bin        PATH shims: gh (answers from QP_SHIM_TABLE, never the real gh), git (the
-//                     real git, only inside <root>), mktemp (counter-file names) and a node link
-//   <root>/logs       gh-argv.jsonl, git-argv.jsonl and the mktemp counter
+//                     real git, only inside <root>), mktemp (counter-file names) and node (the real
+//                     node, logging two CLIs' inputs first: nodeShim)
+//   <root>/logs       gh-argv.jsonl, git-argv.jsonl, cli-calls/ and the mktemp counter
 //   <root>/agent      files transport only: what the agent fetched through MCP (QP_AGENT_DIR), which
 //                     filesOracleScript's agent writes copy from, and DISPATCH_FOREIGN_STATES
 //   <root>/sysbin     files transport only: links to the system tools the fence runs, so the PATH
@@ -279,7 +280,32 @@ function writeShims(bin, { gh = true } = {}) {
     const src = `#!${process.execPath}\n'use strict';\nrequire(${JSON.stringify(__filename)}).shimMain(${JSON.stringify(kind)});\n`;
     fs.writeFileSync(path.join(bin, kind), src, { mode: 0o755 });
   }
-  fs.symlinkSync(process.execPath, path.join(bin, 'node'));
+  fs.writeFileSync(path.join(bin, 'node'), nodeShim(), { mode: 0o755 });
+}
+
+// bin/node: the real node, exec'd (same pid, stdin, exit and signals), after logging the two CLI
+// calls the real-writer pins read, under <logs>/cli-calls/<pid>/: `argv` (NUL-separated, the
+// script path first) and, for dispatch-unlanded-blockers.js, copies of its --groups and
+// --exclusions files as they stood when it ran (the fence overwrites the groups file with its
+// stdout). The logging is silent: nothing it does reaches the run's own streams.
+function nodeShim() {
+  return [
+    '#!/bin/bash',
+    'case "$1" in',
+    '  */bin/resolve-policy.js|*/bin/dispatch-unlanded-blockers.js)',
+    '    if [ -n "$QP_LOG_DIR" ]; then',
+    '      d="$QP_LOG_DIR/cli-calls/$$"',
+    '      { /bin/mkdir -p "$d" && printf \'%s\\0\' "$@" > "$d/argv"',
+    '        prev=',
+    '        for a in "$@"; do',
+    '          case "$prev" in --groups) /bin/cp "$a" "$d/groups" ;; --exclusions) /bin/cp "$a" "$d/exclusions" ;; esac',
+    '          prev=$a',
+    '        done; } 2>/dev/null',
+    '    fi ;;',
+    'esac',
+    `exec ${JSON.stringify(process.execPath)} "$@"`,
+    '',
+  ].join('\n');
 }
 
 // createSandbox(scenario, { transport, origin, name, agent }) -> sandbox. `origin` is another
@@ -466,6 +492,7 @@ async function runOracle(sandbox, script, { sessionId = `qp-${sandbox.name}`, tm
     const scriptFile = path.join(sandbox.root, `queue-pull-${sandbox.runs}.sh`);
     fs.writeFileSync(scriptFile, script);
     for (const log of ['gh-argv.jsonl', 'git-argv.jsonl']) fs.writeFileSync(path.join(sandbox.logs, log), '');
+    fs.rmSync(path.join(sandbox.logs, 'cli-calls'), { recursive: true, force: true });
 
     const run = await spawnBounded(bash, ['--noprofile', '--norc', '-c', 'ulimit -f 4096; exec "$0" --noprofile --norc "$1"', bash, scriptFile],
       { cwd: sandbox.proj, env: sandbox.runEnv({ tmpdir, sessionId }) });
@@ -486,6 +513,7 @@ async function runModuleCli(sandbox, argv, { sessionId = `qp-${sandbox.name}`, s
     const tmpdir = path.join(sandbox.root, 'tmp', tmp || `run-${sandbox.runs}`);
     fs.mkdirSync(tmpdir, { recursive: true });
     for (const log of ['gh-argv.jsonl', 'git-argv.jsonl']) fs.writeFileSync(path.join(sandbox.logs, log), '');
+    fs.rmSync(path.join(sandbox.logs, 'cli-calls'), { recursive: true, force: true });
     if (Object.keys(stage).length) {
       const sessionDir = sessionDirUnder(tmpdir, sessionId);
       fs.mkdirSync(sessionDir, { recursive: true });
@@ -519,7 +547,19 @@ function collectResult(sandbox, run, tmpdir, sessionId) {
     orderBlob: sandbox.orderBlob(),
     ghArgv: readJsonl(path.join(sandbox.logs, 'gh-argv.jsonl')),
     gitArgv: readJsonl(path.join(sandbox.logs, 'git-argv.jsonl')),
+    cliCalls: readCliCalls(path.join(sandbox.logs, 'cli-calls')),
   };
+}
+
+// nodeShim's log: [{ argv, groups, exclusions }] (the files' text, or null), sorted by argv. Only
+// PATH `node` calls are logged, so a module-side run (whose CLIs spawn process.execPath) logs none.
+function readCliCalls(dir) {
+  const calls = (fs.existsSync(dir) ? fs.readdirSync(dir) : []).map((pid) => ({
+    argv: fs.readFileSync(path.join(dir, pid, 'argv'), 'utf8').split('\0').slice(0, -1),
+    groups: readOrNull(path.join(dir, pid, 'groups')),
+    exclusions: readOrNull(path.join(dir, pid, 'exclusions')),
+  }));
+  return calls.sort((a, b) => (a.argv.join('\0') < b.argv.join('\0') ? -1 : 1));
 }
 
 // The real checkout's HEAD (its commit and what it points at: a branch, or detached), refs, index

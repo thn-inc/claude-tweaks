@@ -712,8 +712,10 @@ function D1Second() {
 }
 
 // The in-process twin of the policy / blocker CLIs the passes spawn: resolve-policy.js answers
-// scenario.policy (unset keys read as the empty line); any other CLI needs an override, a result
-// object or (args, opts) => result. The returned function records `.calls` ({name, args}).
+// as the real CLI's --values does, scenario.policy's value, else the key's schema default, else the
+// empty line (pinned against the real CLI by the real-writer test); any other CLI needs an
+// override, a result object or (args, opts) => result. The returned function records `.calls`
+// ({name, args}).
 function fakeSpawnCli(scenario, overrides = {}) {
   const calls = [];
   const spawnCli = (name, args, opts) => {
@@ -724,7 +726,11 @@ function fakeSpawnCli(scenario, overrides = {}) {
     }
     if (name === 'resolve-policy.js') {
       const key = args[args.indexOf('--values') + 1];
-      const value = (scenario.policy || {})[key];
+      // Lazy: the PATH shims re-enter this file and never answer a policy read.
+      const { POLICY_KEYS } = require('../../../plugin/bin/lib/policy-schema');
+      const set = (scenario.policy || {})[key];
+      const entry = POLICY_KEYS.find((k) => k.key === key);
+      const value = set !== undefined ? set : entry && entry.default;
       return { status: 0, stdout: `${value === undefined ? '' : value}\n`, stderr: '' };
     }
     if (name === 'resolve-linked-prs.js') {

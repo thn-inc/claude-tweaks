@@ -2830,30 +2830,52 @@ describe('#5227 parity (AC1)', { skip: oracleSkip(), timeout: 600_000 }, () => {
     assert.ok(R['S1-gh-miss'].module.ghArgv.length > 0 && R['S1-gh-miss'].oracle.ghArgv.length > 0);
   });
 
-  test('#5227 real-writer: fakeSpawnCli canned stdout equals what the real CLIs printed in S1-gh-miss', () => {
+  test('#5227 real-writer: fakeSpawnCli and the canned landing CLI print what the real CLIs printed for the exact inputs S1-gh-miss gave them', () => {
     const { oracle } = R['S1-gh-miss'];
+    const cliCalls = (name) => oracle.cliCalls.filter((c) => path.basename(c.argv[0]) === name);
     // resolve-linked-prs.js: the numbers the real CLI queried, in its alias order.
     const [linked] = ghCall(oracle, /CROSS_REFERENCED_EVENT/);
     const numbers = [...linked.join(' ').matchAll(/\bi(\d+)\s*:\s*issue\(/g)].map((m) => m[1]);
     assert.ok(numbers.length > 5, numbers.join());
     assert.equal(fakeSpawnCli(PARITY_S1())('resolve-linked-prs.js', [numbers.join(',')]).stdout, oracle.files['dispatch-linked-prs.json']);
-    // dispatch-unlanded-blockers.js: nothing after it rewrites dispatch-groups.json, so the oracle's
-    // file is the real CLI's stdout. The canned CLI over that pool plus #9011 and #9012 prints it
-    // byte for byte and appends the real CLI's two entries.
-    const eligible = JSON.parse(oracle.files['dispatch-eligible.json']);
-    const record = (n) => eligible.find((c) => c.number === n);
+
+    // dispatch-unlanded-blockers.js: the fence's one call, its argv and its --groups / --exclusions
+    // files as they stood when it ran (bin/node logs them). Nothing after it rewrites
+    // dispatch-groups.json, so the oracle's final file is the real CLI's stdout; only the neighbour
+    // pass appends after it, so the final exclusions without its entries are what the real CLI left.
+    const [landing, ...more] = cliCalls('dispatch-unlanded-blockers.js');
+    assert.equal(more.length, 0, 'one landing call');
+    assert.deepEqual(landing.argv.slice(5), ['--integration-branch', 'main', '--work-links', 'body-text']);
+    const preLanding = JSON.parse(landing.groups).flat().map((c) => c.number);
+    assert.ok(preLanding.includes(9011) && preLanding.includes(9012), `the real pre-landing pool holds both records the CLI removes: ${preLanding}`);
     const own = fs.mkdtempSync(path.join(os.tmpdir(), 'qp-writer-'));
     try {
       const groupsFile = path.join(own, 'groups.json');
       const exclusionsFile = path.join(own, 'exclusions.json');
-      fs.writeFileSync(groupsFile, JSON.stringify([...JSON.parse(oracle.files['dispatch-groups.json']), [record(9011)], [record(9012)]]));
-      fs.writeFileSync(exclusionsFile, '[]');
-      const out = cannedLanding([])(['--groups', groupsFile, '--exclusions', exclusionsFile, '--integration-branch', 'main', '--work-links', 'body-text']);
-      assert.equal(out.stdout, oracle.files['dispatch-groups.json']);
-      assert.deepEqual(JSON.parse(fs.readFileSync(exclusionsFile, 'utf8')),
-        exclusionsIn(oracle).filter((e) => e.reason === 'malformed-blocker' || e.reason === 'unlanded-blocker'));
+      fs.writeFileSync(groupsFile, landing.groups);
+      fs.writeFileSync(exclusionsFile, landing.exclusions);
+      const out = cannedLanding([])(['--groups', groupsFile, '--exclusions', exclusionsFile, ...landing.argv.slice(5)]);
+      assert.equal(out.stdout, oracle.files['dispatch-groups.json'], "the canned stdout is the real CLI's for that input");
+      assert.deepEqual(JSON.parse(fs.readFileSync(exclusionsFile, 'utf8')), exclusionsIn(oracle).filter((e) => e.reason !== 'neighbour-in-flight'),
+        "the canned appends are the real CLI's");
     } finally {
       fs.rmSync(own, { recursive: true, force: true });
+    }
+
+    // resolve-policy.js: every argv the fence passed, through the real CLI in the same sandbox (its
+    // policy.yml is the fixture's), prints what fakeSpawnCli answers for the fixture's policy.
+    const policyArgs = [...new Set(cliCalls('resolve-policy.js').map((c) => JSON.stringify(c.argv.slice(1))))].map((a) => JSON.parse(a));
+    assert.deepEqual(policyArgs.map((a) => a[1]).sort(), ['dispatch-fastlane-bundle-cap', 'dispatch-group-size-guard', 'integration-branch', 'work-links'],
+      'the keys the fence reads, set (work-links, the size guard) and unset (the bundle cap, the integration branch)');
+    const sb = oracle.sandbox;
+    const tmpdir = path.join(sb.root, 'tmp', 'policy-pin');
+    fs.mkdirSync(tmpdir, { recursive: true });
+    for (const args of policyArgs) {
+      const real = spawnSync(process.execPath, [path.join(REPO, 'plugin', 'bin', 'resolve-policy.js'), ...args],
+        { cwd: sb.proj, env: sb.runEnv({ tmpdir, sessionId: 'qp-policy-pin' }), encoding: 'utf8' });
+      assert.equal(real.status, 0, real.stderr);
+      const fake = fakeSpawnCli(PARITY_S1())('resolve-policy.js', args);
+      assert.deepEqual({ stdout: fake.stdout, stderr: fake.stderr }, { stdout: real.stdout, stderr: real.stderr }, args.join(' '));
     }
   });
 
@@ -3199,6 +3221,9 @@ describe('#5227 parity (AC4 fetch failures)', { skip: oracleSkip(), timeout: 600
   }
 
   test('AC4.1 detail: each fault\'s own effect, both sides (cache miss, fail-closed foreign state, origin/ targets, unprobed files, no overlap, no blob)', () => {
+    // The un-faulted warm control in the same pool: the same scenario on the same miss origin hits,
+    // so the miss below is the fault's doing, never a cache that could not hit at all.
+    for (const [side, r] of sides(R['S1-gh-hit'])) assert.ok(r.stderr.includes(HIT_MESSAGE), `S1-gh-hit ${side}: the un-faulted warm run hits (control)`);
     for (const [side, r] of sides(R['F-depfresh'])) {
       assert.ok(!r.stderr.includes(HIT_MESSAGE), `F-depfresh ${side}: the failed freshness search turns a warm cache into a miss`);
       assert.deepEqual(groupedIn(r), groupedIn(R['S1-gh-miss'].oracle), `F-depfresh ${side}: the recompute reaches the base's groups`);
