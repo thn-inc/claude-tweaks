@@ -293,11 +293,16 @@ test('AC5.1: gh absent exits 2, both halves read unavailable from ghAbsent, noth
 test('AC6.1: an empty window with --file exits 0, reports no runs and files nothing', () => {
   const json = deps({ routes: userRoutes([[]]), remote: `https://github.com/${USER}.git` });
   assert.equal(run(['--file', '--json'], json.d), 0);
-  assert.deepEqual(envelope(json.out).workflows, []);
+  const env = envelope(json.out);
+  assert.deepEqual(env.workflows, []);
+  assert.deepEqual(env.breaches, []);
+  assert.equal(env.filingSkipped, 'no breach');
   assert.deepEqual(json.out.created, []);
   const text = deps({ routes: userRoutes([[]]), remote: `https://github.com/${USER}.git` });
   assert.equal(run(['--file'], text.d), 0);
   assert.ok(lines(text.out).includes('no workflow runs in the last 30 days'), lines(text.out).join('\n'));
+  // `no breach` stays in the envelope; a report with no breach: line prints no filing line.
+  assert.ok(!lines(text.out).some((l) => /^(filed|not filed)/.test(l)), lines(text.out).join('\n'));
   assert.deepEqual(text.out.created, []);
 });
 
@@ -360,7 +365,8 @@ test('gh vanishing after page 1 is a failed runs read, never gh absent: --file w
   const env = envelope(json.out);
   assert.equal(env.ghAbsent, false);
   assert.ok(env.breaches.some((b) => b.kind === 'p90-over-watch'));
-  assert.equal(env.failures[0].query, 'runs page 2');
+  // The billing read gh vanished under is a query that did not complete, so failures[] names it.
+  assert.deepEqual(env.failures.map((f) => f.query), ['runs page 2', 'billing budgets']);
   assert.equal(env.filed, null);
   assert.equal(env.filingSkipped, 'runs read failed');
   assert.deepEqual(json.out.created, []);
@@ -369,8 +375,25 @@ test('gh vanishing after page 1 is a failed runs read, never gh absent: --file w
   const all = lines(text.out);
   assert.ok(all.includes('not filed: runs read failed'), all.join('\n'));
   assert.ok(all.includes('failed read: runs page 2: spawnSync gh ENOENT'), all.join('\n'));
+  assert.ok(all.includes('failed read: billing budgets: spawnSync gh ENOENT'), all.join('\n'));
   assert.ok(!all.some((l) => l.includes('gh absent')), all.join('\n'));
   assert.deepEqual(text.out.created, []);
+});
+
+test('gh absent from runs page 1 on: the billing read it fails adds no failure row', () => {
+  const base = deps();
+  const answered = base.d.runner;
+  // The repo read answers; runs page 1 and the billing read find no gh.
+  base.d.runner = (args) => {
+    if (args[3] === `repos/${ORG}`) return answered(args);
+    base.out.calls.push(args);
+    throw Object.assign(new Error('spawnSync gh ENOENT'), { code: 'ENOENT' });
+  };
+  assert.equal(run(['--json'], base.d), 2);
+  const env = envelope(base.out);
+  assert.equal(env.ghAbsent, true);
+  assert.ok(base.out.calls.some((args) => args[3] === ORG_BUDGETS), 'the billing budgets read was attempted');
+  assert.deepEqual(env.failures, []);
 });
 
 test('AC7.2: every call failing HTTP 500 exits 2', () => {
@@ -482,6 +505,20 @@ test('--file: an open issue with the title skips filing; a failed create is a fa
   assert.equal(env.filed, null);
   assert.equal(env.filingSkipped, null);
   assert.deepEqual(env.failures, [{ query: 'file issue', error: 'HTTP 422' }]);
+});
+
+test('--file: an unreadable open-title list files nothing and prints a failed read line, exit 0', () => {
+  const unread = () => { throw ghError('HTTP 502: Bad Gateway'); };
+  const text = deps({ routes: orgRoutes(ORG, [ac1Runs()]), openIssueTitles: unread });
+  assert.equal(run(['--file'], text.d), 0);
+  assert.deepEqual(text.out.created, []);
+  const all = lines(text.out);
+  assert.ok(all.includes('failed read: open issue titles: HTTP 502: Bad Gateway'), all.join('\n'));
+  assert.ok(!all.some((l) => /^(filed|not filed)/.test(l)), all.join('\n'));
+  const json = deps({ routes: orgRoutes(ORG, [ac1Runs()]), openIssueTitles: unread });
+  assert.equal(run(['--file', '--json'], json.d), 0);
+  assert.deepEqual(json.out.created, []);
+  assert.deepEqual(envelope(json.out).failures, [{ query: 'open issue titles', error: 'HTTP 502: Bad Gateway' }]);
 });
 
 test('--json: a filed breach carries filed {title, number} and a null filingSkipped', () => {

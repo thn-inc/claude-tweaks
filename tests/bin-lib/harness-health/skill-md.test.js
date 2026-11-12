@@ -214,3 +214,17 @@ test('AC10.2: the ci-health.js call site lives in ci-health-check.md, which carr
     assert.ok(sub.includes(token), `ci-health-check.md is missing ${token}`);
   }
 });
+
+// The sub-file's `not filed: {reason}` copies against thresholds.js's SKIP_REASONS. Two reasons never
+// print: `no --file` (the CLI calls fileBreaches only under --file) and `no breach` (render.js prints
+// a filing line only beside a breach: line), so the sub-file names exactly the other three.
+test('AC10.3: ci-health-check.md names every printable fileBreaches skip reason verbatim, and no other', () => {
+  const { SKIP_REASONS } = require('../../../plugin/bin/lib/ci-health/thresholds');
+  const neverPrinted = [SKIP_REASONS.NO_FILE, SKIP_REASONS.NO_BREACH];
+  const printable = Object.values(SKIP_REASONS).filter((reason) => !neverPrinted.includes(reason));
+  const sub = readText(CI_HEALTH);
+  const named = [...sub.matchAll(/not filed: ([^`\n.,;)]+)/g)].map((m) => m[1].trim());
+  assert.ok(printable.length > 0 && named.length > 0, 'the pin must compare a non-empty list');
+  for (const reason of printable) assert.ok(named.includes(reason), `ci-health-check.md must name \`not filed: ${reason}\``);
+  for (const reason of named) assert.ok(printable.includes(reason), `ci-health-check.md names \`not filed: ${reason}\`, which fileBreaches never prints`);
+});

@@ -36,9 +36,9 @@ function breachesOf({ workflows, billing }, { minHeadroomPct = DEFAULT_MIN_HEADR
 }
 
 // A workflow's `name` comes from its YAML and its `path` names its file, and a fork PR can add a
-// workflow file under any name with any YAML, so both are neutralized before it reaches the markdown body: whitespace runs
-// (newlines included) collapse to one space, a backtick becomes `'`, and `@` becomes `(at)` so no
-// mention can ping anyone.
+// workflow file under any name with any YAML, so both are neutralized before they reach the
+// markdown body: whitespace runs (newlines included) collapse to one space, a backtick becomes `'`,
+// and `@` becomes `(at)` so no mention can ping anyone.
 function neutralName(name) {
   return String(name).replace(/\s+/g, ' ').trim().replace(/`/g, "'").replace(/@/g, '(at)');
 }
@@ -88,14 +88,24 @@ function composeBreachIssue(breaches, {
   return payload;
 }
 
+// Every `skipped` value fileBreaches returns; render.js prints one as `not filed: {reason}`, and
+// harness-health/ci-health-check.md names the ones that can print (a test pins the two equal).
+const SKIP_REASONS = Object.freeze({
+  NO_FILE: 'no --file',
+  NO_BREACH: 'no breach',
+  TRUNCATED: 'window truncated',
+  RUNS_READ_FAILED: 'runs read failed',
+  OPEN_ISSUE_EXISTS: 'open issue exists',
+});
+
 // A failed runs read (any page, page 1 included) covers only part of the window, like a truncated
 // one, so neither files.
 function fileBreaches({ breaches, truncated, partial, file }, { openIssueTitles, createIssue }, composeArgs) {
   const outcome = (fields) => ({ filed: null, skipped: null, failure: null, ...fields });
-  if (!file) return outcome({ skipped: 'no --file' });
-  if (!breaches || breaches.length === 0) return outcome({ skipped: 'no breach' });
-  if (truncated) return outcome({ skipped: 'window truncated' });
-  if (partial) return outcome({ skipped: 'runs read failed' });
+  if (!file) return outcome({ skipped: SKIP_REASONS.NO_FILE });
+  if (!breaches || breaches.length === 0) return outcome({ skipped: SKIP_REASONS.NO_BREACH });
+  if (truncated) return outcome({ skipped: SKIP_REASONS.TRUNCATED });
+  if (partial) return outcome({ skipped: SKIP_REASONS.RUNS_READ_FAILED });
   let titles;
   try {
     titles = openIssueTitles();
@@ -106,7 +116,7 @@ function fileBreaches({ breaches, truncated, partial, file }, { openIssueTitles,
   if (!Array.isArray(titles)) {
     return outcome({ failure: { query: 'open issue titles', error: 'open issue titles is not a list' } });
   }
-  if (titles.includes(BREACH_TITLE)) return outcome({ skipped: 'open issue exists' });
+  if (titles.includes(BREACH_TITLE)) return outcome({ skipped: SKIP_REASONS.OPEN_ISSUE_EXISTS });
   const payload = composeBreachIssue(breaches, composeArgs);
   let created;
   try {
@@ -117,4 +127,4 @@ function fileBreaches({ breaches, truncated, partial, file }, { openIssueTitles,
   return outcome({ filed: { title: payload.title, number: created && isNum(created.number) ? created.number : null } });
 }
 
-module.exports = { BREACH_TITLE, breachesOf, composeBreachIssue, fileBreaches };
+module.exports = { BREACH_TITLE, SKIP_REASONS, breachesOf, composeBreachIssue, fileBreaches };

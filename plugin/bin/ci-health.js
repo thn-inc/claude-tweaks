@@ -183,9 +183,9 @@ function run(argv, deps = realDeps) {
   const { runner } = deps;
   const repoRead = readRepo({ owner, repo }, { runner });
   const runs = fetchRuns({ owner, repo, from }, { runner });
-  const { billing, failures: billingFailures } = readBilling({ repoRead }, { runner });
+  const { billing, failures: billingFailures } = readBilling({ repoRead, ghAbsent: runs.ghAbsent }, { runner });
 
-  // gh absence renders from `ghAbsent`, so it adds no failure row.
+  // gh absent from the start renders from `ghAbsent`, so it adds no failure row.
   const failures = [];
   if (!repoRead.ok && !repoRead.ghAbsent) failures.push({ query: 'repo', status: repoRead.status, error: repoRead.error });
   failures.push(...runs.failures, ...billingFailures);

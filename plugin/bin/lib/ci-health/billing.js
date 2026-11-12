@@ -13,6 +13,11 @@
 // `gh api --method GET <path>` with { timeout: CI_HEALTH_GH_TIMEOUT_MS }; the path starts with a
 // literal segment and the login comes from GitHub's own repo response.
 //
+// A billing read that finds gh gone (ENOENT) adds no failure row only when the caller passes the
+// runs half's `ghAbsent: true` (gh absent from the start: the render's `billing unavailable (gh
+// absent)` line covers it). With gh vanishing after runs page 1, `ghAbsent` is false, so the read is
+// a failed query like any other and is named in `failures[]`.
+//
 // An Actions budget is a `budgets[]` entry whose `budget_product_sku` lower-cases to `actions` and
 // whose `budget_scope` is `organization`; SKU-level (`actions_linux`) and repository- or
 // cost-center-scoped budgets are not. Spend is the sum of `netAmount` over `usageItems[]` whose
@@ -50,9 +55,9 @@ function headroomFrom(budgetsJson, summaryJson) {
   return { headroomPct, reason: null, firstPageOnly };
 }
 
-// One GET read: {ok: true, body} or {ok: false, billing, failure}; failure is null when gh is absent
-// (gh absence renders from the runs half's `ghAbsent`, so it adds no failure row).
-function readOne(query, apiPath, runner) {
+// One GET read: {ok: true, body} or {ok: false, billing, failure}; failure is null only when gh is
+// absent and `ghAbsent` (the runs half's) says so, since that absence renders from `ghAbsent`.
+function readOne(query, apiPath, runner, ghAbsent) {
   let out;
   try {
     out = runner(['api', '--method', 'GET', apiPath], { timeout: CI_HEALTH_GH_TIMEOUT_MS });
@@ -62,7 +67,7 @@ function readOne(query, apiPath, runner) {
     return {
       ok: false,
       billing: { available: false, status, reason: STATUS_REASONS.has(status) ? `HTTP ${status}` : error },
-      failure: isGhAbsent(err) ? null : { query, status, error },
+      failure: ghAbsent && isGhAbsent(err) ? null : { query, status, error },
     };
   }
   try {
@@ -77,22 +82,23 @@ function unavailable(r) {
   return { billing: r.billing, failures: r.failure ? [r.failure] : [] };
 }
 
-function readBilling({ repoRead }, { runner }) {
+// `ghAbsent` is the runs half's (fetchRuns's) flag; absent or false, every failed read is named.
+function readBilling({ repoRead, ghAbsent = false }, { runner }) {
   if (!repoRead || repoRead.ok !== true) {
     return { billing: { available: false, status: null, reason: 'owner type unreadable' }, failures: [] };
   }
   const login = repoRead.ownerLogin;
   if (repoRead.ownerType === 'User') {
-    const usage = readOne('billing usage', `users/${login}/settings/billing/usage`, runner);
+    const usage = readOne('billing usage', `users/${login}/settings/billing/usage`, runner, ghAbsent);
     if (!usage.ok) return unavailable(usage);
     return { billing: { available: true, scope: 'user', headroomPct: null, reason: NO_BUDGET }, failures: [] };
   }
   if (repoRead.ownerType !== 'Organization') {
     return { billing: { available: false, status: null, reason: 'unsupported owner type' }, failures: [] };
   }
-  const budgets = readOne('billing budgets', `organizations/${login}/settings/billing/budgets`, runner);
+  const budgets = readOne('billing budgets', `organizations/${login}/settings/billing/budgets`, runner, ghAbsent);
   if (!budgets.ok) return unavailable(budgets);
-  const summary = readOne('billing usage summary', `organizations/${login}/settings/billing/usage/summary`, runner);
+  const summary = readOne('billing usage summary', `organizations/${login}/settings/billing/usage/summary`, runner, ghAbsent);
   if (!summary.ok) return unavailable(summary);
   const { headroomPct, reason, firstPageOnly } = headroomFrom(budgets.body, summary.body);
   const billing = { available: true, scope: 'org', headroomPct };

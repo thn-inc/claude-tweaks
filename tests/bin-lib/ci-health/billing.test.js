@@ -235,11 +235,24 @@ for (const [label, body] of [
   });
 }
 
-test('gh vanishing between the repo read and a billing read adds no failure row', () => {
+test('a billing read finding gh gone adds no failure row only when the runs half is ghAbsent', () => {
   const enoent = Object.assign(new Error('spawnSync gh ENOENT'), { code: 'ENOENT' });
-  const { runner } = billingRunner({ [BUDGETS_PATH]: enoent });
-  const r = readBilling({ repoRead: ORG_REPO }, { runner });
-  assert.deepStrictEqual(r, { billing: { available: false, status: null, reason: 'spawnSync gh ENOENT' }, failures: [] });
+  const billing = { available: false, status: null, reason: 'spawnSync gh ENOENT' };
+  const absent = billingRunner({ [BUDGETS_PATH]: enoent });
+  assert.deepStrictEqual(readBilling({ repoRead: ORG_REPO, ghAbsent: true }, { runner: absent.runner }), { billing, failures: [] });
+  // gh vanishing after runs page 1 leaves the runs half ghAbsent: false, so the read is named.
+  for (const repoArg of [{ repoRead: ORG_REPO, ghAbsent: false }, { repoRead: ORG_REPO }]) {
+    const { runner } = billingRunner({ [BUDGETS_PATH]: enoent });
+    assert.deepStrictEqual(readBilling(repoArg, { runner }), {
+      billing, failures: [{ query: 'billing budgets', status: null, error: 'spawnSync gh ENOENT' }],
+    }, JSON.stringify(repoArg));
+  }
+  const user = billingRunner({ [USER_PATH]: enoent });
+  assert.deepStrictEqual(readBilling({ repoRead: USER_REPO, ghAbsent: false }, { runner: user.runner }).failures,
+    [{ query: 'billing usage', status: null, error: 'spawnSync gh ENOENT' }]);
+  const summaryGone = billingRunner({ [BUDGETS_PATH]: BUDGETS, [SUMMARY_PATH]: enoent });
+  assert.deepStrictEqual(readBilling({ repoRead: ORG_REPO, ghAbsent: false }, { runner: summaryGone.runner }).failures,
+    [{ query: 'billing usage summary', status: null, error: 'spawnSync gh ENOENT' }]);
 });
 
 for (const ghAbsent of [false, true]) {
