@@ -33,6 +33,14 @@
 //     the ignored file, then the gh lookup bodyForeignBlockers still attempts with no gh.
 //   - A failed queue or open-numbers fetch stops the pull at the group-building check (the fetch
 //     pass's `stop`), a third and fourth stop beside Q3's corrupt-exclusions and unreadable-groups.
+//   - F-linked's single Warning (the open-linked-PR lookup failed) also turns off the shipped pass:
+//     it drops shipped:9010 as well as the two open-pr exclusions. F-intbranch (no integration-branch
+//     policy key, `git remote show origin` fails) drops the unlanded-blocker:9011 exclusion. (NEW
+//     cross-pass effects; each pass still fails open.)
+//   - A silent fail-open on the files transport: files-verifiedOpenDeps-missing and
+//     files-verifiedOpenDeps-malformed exit 0 with no Warning or AUTO line and drop the blocked:9002
+//     exclusion, so a blocked record becomes dispatchable with nothing printed (the files twin of
+//     F-depview).
 //   - The silent fail-opens (ledger row 6) are F-depfresh, F-depview, F-prview and F-openprs.
 // One module divergence the matrix found and the module fixed (Task 3 carry): on `files` the
 // agent's dependency-freshness file stands where the fence's `gh issue list --search` stands, so
