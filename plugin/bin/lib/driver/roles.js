@@ -164,6 +164,9 @@ function implementerSettings({ testCommand, platform } = {}) {
   if (sandboxed) {
     allow.push('Bash(' + testCommand + ' *)', 'Bash(git status *)', 'Bash(git diff *)', 'Bash(git log *)', 'Bash(git show *)', 'Bash(git ls-files *)');
   }
+  // A second layer, not the only one: with `dontAsk`, a closed allow list and
+  // `autoAllowBashIfSandboxed: false`, these commands are already refused. The deny
+  // rules keep them refused if a later change widens the allow list or the sandbox.
   const deny = ['Bash(gh *)', 'Bash(git push *)', 'Bash(git commit *)', 'Bash(git add *)', 'Bash(curl *)', 'Bash(wget *)'];
   const settings = { permissions: { defaultMode: 'dontAsk', allow, deny } };
   if (sandboxed) {

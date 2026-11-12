@@ -10,9 +10,17 @@
 // costUsd, detail. Fields may be added, never renamed. `status` is `ok`, `fail` or
 // `timeout`; `reason` is null for `ok`, else one of `wall-clock-ceiling`,
 // `launch-error`, `spend-ceiling`, `exit` or `schema`. `result` is the worker's
-// structured output when status is `ok` and null otherwise. A structured output whose
-// `title` holds a line break (`\n` or `\r`) is `fail` with reason `schema`: the title
-// is meant to be one line.
+// structured output when status is `ok` and null otherwise. `ok` means only that a
+// conforming structured output arrived: the worker's own verdict is `result.status`,
+// which may be `cannot-complete`. A structured output whose `title` holds a line break
+// (`\n` or `\r`) is `fail` with reason `schema`: the title is meant to be one line.
+// `detail` is null on `ok` and, on `fail`, names the cause in a few words.
+//
+// The schema. `schema` defaults to RESULT_SCHEMA (roles.js). The launcher checks the
+// structured output itself, and handles only the keywords `type` (`object` or
+// `string`), `properties`, `required` (an array of names), `enum` (an array) and a
+// boolean `additionalProperties`; a schema using anything else is refused before
+// anything is written, so it can never be half-checked.
 //
 // Untrusted text. `result` (every string in it), `detail` when it carries the worker's
 // own `result` string, and `denials[].tool_input` are text the worker controls. A
@@ -42,7 +50,9 @@
 // translation added. `platform` is the launch's own platform, so a runner never
 // consults the host's. The prompt is passed as `input`, to be written to the child's
 // standard input; it is never on the argument list. A runner that cannot start the
-// child rejects `exited` (or throws) with the spawn error.
+// child rejects `exited` (or throws) with the spawn error. On POSIX `kill(signal)` must
+// signal the child's whole process group, as the default runner does (it starts the
+// child detached and signals `-pid`): the launcher signals only through the handle.
 //
 // What the launch rests on. These facts were probed on 2026-11-12 with Claude Code CLI
 // 2.1.322 on macOS (darwin), under a subscription login, with the model alias
@@ -81,16 +91,22 @@
 // settings directory and the working directory must both be absolute paths, and the
 // settings directory must lie outside the working directory: the implementer's Edit
 // and Write rules cover the working directory, so a rights file inside it could be
-// edited by the worker. The check is lexical (no symbolic link is resolved) and the
-// caller is trusted code. The prompt must be a string.
+// edited by the worker. The check runs on the paths as given and again on their
+// canonical forms (path-guard: symbolic links followed, the OS casing of the parts that
+// exist, the parts not yet created re-appended), so a link, a case variant or a second
+// spelling of the working directory is refused too, and a path that cannot be resolved
+// (a dangling link, an unreadable part) is refused. The caller is trusted code; a link
+// planted between the check and the write is not guarded against. The prompt must be
+// a string.
 //
 // The wall-clock ceiling. The launcher enforces it, never the runner: once the runner
 // has returned the child's handle, a timer for `ceilings.wallClockMs` is armed, and it
 // is cleared when the child exits. At the ceiling the child is killed. On POSIX the
 // child was started as the leader of its own process group, so the launcher sends
 // SIGTERM to the whole group; if the child is still running KILL_GRACE_MS (5 seconds)
-// later, it sends SIGKILL to the group. On win32 there are no process groups, so the
-// launcher runs `taskkill /T /F /PID {pid}` (the whole process tree, forced) through
+// later, it sends SIGKILL to the group. Both go through the handle's `kill`, which is
+// what reaches the group (see the runner contract). On win32 there are no process
+// groups, so the launcher runs `taskkill /T /F /PID {pid}` (the whole process tree, forced) through
 // the runner, with the allow-listed environment, and ignores its outcome: nothing
 // waits on it. A kill that throws because the child is already gone is swallowed. A
 // reap deadline of REAP_DEADLINE_MS (5 seconds) starts after the SIGKILL on POSIX and
@@ -113,7 +129,7 @@ const path = require('path');
 const crypto = require('crypto');
 const cp = require('node:child_process');
 const { launchSpec } = require('../impeccable-engine');
-const { isAncestorOrSelf } = require('../path-guard');
+const { isAncestorOrSelf, resolveLeaf } = require('../path-guard');
 const { ROLES, RESULT_SCHEMA, implementerSettings, composeArgs, assertSpendCeiling } = require('./roles');
 
 // One string, split: tests/git-status-optional-locks.test.js reads an array literal
@@ -158,6 +174,12 @@ function assertSupportedSchema(schema) {
   }
   if (schema.type !== undefined && schema.type !== 'object' && schema.type !== 'string') {
     throw new Error('unsupported schema keyword: type ' + JSON.stringify(schema.type));
+  }
+  if (schema.enum !== undefined && !Array.isArray(schema.enum)) {
+    throw new Error('unsupported schema keyword: enum (must be an array)');
+  }
+  if (schema.required !== undefined && !(Array.isArray(schema.required) && schema.required.every((k) => typeof k === 'string'))) {
+    throw new Error('unsupported schema keyword: required (must be an array of names)');
   }
   if (schema.properties !== undefined) {
     if (!isPlainObject(schema.properties)) throw new Error('unsupported schema keyword: properties (must be an object)');
@@ -252,15 +274,47 @@ function classify({ timedOut, timeoutDetail, spawnError, code, signal, stdout, s
     const line = firstLine(stderr);
     return envelope('fail', 'exit', exitWhat(code, signal) + (line ? ': ' + line : ''));
   }
-  if (!obj || obj.structured_output === undefined || !conformsTo(schema, obj.structured_output)) {
-    return envelope('fail', 'schema', null);
-  }
+  if (!obj) return envelope('fail', 'schema', 'stdout is not a result object');
+  if (obj.structured_output === undefined) return envelope('fail', 'schema', 'the result has no structured_output');
+  if (!conformsTo(schema, obj.structured_output)) return envelope('fail', 'schema', 'structured_output does not conform to the schema');
   const title = isPlainObject(obj.structured_output) ? obj.structured_output.title : undefined;
-  if (typeof title === 'string' && /[\r\n]/.test(title)) return envelope('fail', 'schema', null);
+  if (typeof title === 'string' && /[\r\n]/.test(title)) return envelope('fail', 'schema', 'title is not one line');
   return envelope('ok', null, null, obj.structured_output);
 }
 
 let launchCounter = 0;
+
+// Creates `file` exclusively with mode 0600 and records it in `written` as soon as it
+// exists, before any byte is written, so a write that fails partway still leaves the
+// file for the launcher's cleanup. A file that already existed is never recorded.
+function writeExclusive(file, text, written) {
+  const fd = fs.openSync(file, 'wx', 0o600);
+  written.push(file);
+  try {
+    fs.writeFileSync(fd, text);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+// The canonical form of an absolute path (path-guard): its nearest existing ancestor
+// resolved, with the parts not yet created re-appended. Throws when a part exists but
+// cannot be resolved (a dangling link, an unreadable directory), so the containment
+// check fails closed.
+function canonicalTarget(p, name) {
+  const missing = [];
+  let current = p;
+  for (;;) {
+    const leaf = resolveLeaf(current);
+    if (leaf.state === 'resolved') return path.join(leaf.path, ...missing.reverse());
+    const parent = path.dirname(current);
+    if (leaf.state !== 'missing' || parent === current) {
+      throw new Error(name + ' cannot be resolved (' + leaf.state + (leaf.code ? ' ' + leaf.code : '') + '): ' + current);
+    }
+    missing.push(path.basename(current));
+    current = parent;
+  }
+}
 
 // Waits for the child to exit, enforcing the wall-clock ceiling (see the header). Every
 // timer armed here is cleared before this returns, whichever way the launch ends.
@@ -398,7 +452,7 @@ async function launchWorker(opts, deps = defaultDeps()) {
   for (const [name, value] of [['cwd', cwd], ['settingsDir', settingsDir]]) {
     if (typeof value !== 'string' || !path.isAbsolute(value)) throw new TypeError(name + ' must be an absolute path string, got ' + String(value));
   }
-  if (isAncestorOrSelf(cwd, settingsDir)) {
+  if (isAncestorOrSelf(cwd, settingsDir) || isAncestorOrSelf(canonicalTarget(cwd, 'cwd'), canonicalTarget(settingsDir, 'settingsDir'))) {
     throw new Error('settingsDir must lie outside the working directory: ' + settingsDir + ' is not outside ' + cwd);
   }
   const settingsText = spec.settings ? JSON.stringify(implementerSettings({ testCommand, platform }), null, 2) : null;
@@ -412,13 +466,11 @@ async function launchWorker(opts, deps = defaultDeps()) {
     let appendPromptFile;
     if (settingsText !== null) {
       settingsFile = stem + '.settings.json';
-      fs.writeFileSync(settingsFile, settingsText, { flag: 'wx', mode: 0o600 });
-      written.push(settingsFile);
+      writeExclusive(settingsFile, settingsText, written);
     }
     if (withAppend) {
       appendPromptFile = stem + '.append.md';
-      fs.writeFileSync(appendPromptFile, claudeMdText, { flag: 'wx', mode: 0o600 });
-      written.push(appendPromptFile);
+      writeExclusive(appendPromptFile, claudeMdText, written);
     }
     const args = composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeiling, model, platform });
     const childEnv = buildEnv(env, platform);

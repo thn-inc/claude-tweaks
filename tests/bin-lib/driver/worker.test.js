@@ -363,10 +363,9 @@ test('Review focus: a removal that fails neither replaces the envelope nor skips
 test('Review focus: a name collision never removes the other file', async (t) => {
   const { runner, calls } = fakeRunner(okOut());
   const settingsDir = tmp(t);
-  const original = fs.writeFileSync;
   const collision = Object.assign(new Error('file already exists'), { code: 'EEXIST' });
-  const mock = t.mock.method(fs, 'writeFileSync', (file, ...rest) => {
-    original(file, 'foreign');
+  const mock = t.mock.method(fs, 'openSync', (file) => {
+    fs.writeFileSync(file, 'foreign');
     throw collision;
   }, { times: 1 });
   await assert.rejects(launchWorker(base(t, { settingsDir }), { runner }), (err) => err === collision);
@@ -375,6 +374,45 @@ test('Review focus: a name collision never removes the other file', async (t) =>
   const files = fs.readdirSync(settingsDir);
   assert.strictEqual(files.length, 1);
   assert.strictEqual(fs.readFileSync(path.join(settingsDir, files[0]), 'utf8'), 'foreign');
+});
+
+test('Review: a per-launch file whose write fails partway is still removed', async (t) => {
+  for (const claudeMdText of [undefined, 'project rules']) {
+    const { runner, calls } = fakeRunner(okOut());
+    const settingsDir = tmp(t);
+    const full = Object.assign(new Error('no space left on device'), { code: 'ENOSPC' });
+    // The settings file is written first; with project text the second write (the append file) fails.
+    let writes = 0;
+    const original = fs.writeFileSync;
+    const mock = t.mock.method(fs, 'writeFileSync', (target, ...rest) => {
+      writes += 1;
+      if (writes === (claudeMdText ? 2 : 1)) { original(target, 'part'); throw full; }
+      return original(target, ...rest);
+    });
+    await assert.rejects(launchWorker(base(t, { settingsDir, claudeMdText }), { runner }), (err) => err === full);
+    mock.mock.restore();
+    assert.strictEqual(calls.length, 0);
+    assert.deepStrictEqual(fs.readdirSync(settingsDir), [], String(claudeMdText));
+  }
+});
+
+test('Review: a settingsDir reached through a link into the working directory is refused, and an unresolvable one fails closed', async (t) => {
+  const refused = async (cwd, settingsDir, pattern) => {
+    const { runner, calls } = fakeRunner(okOut());
+    await assert.rejects(launchWorker(base(t, { cwd, settingsDir }), { runner }), (err) => pattern.test(err.message), settingsDir);
+    assert.strictEqual(calls.length, 0);
+  };
+  const cwd = tmp(t);
+  const outside = tmp(t);
+  // A junction on win32 needs no privilege; POSIX ignores the type.
+  fs.symlinkSync(cwd, path.join(outside, 'link'), 'junction');
+  await refused(cwd, path.join(outside, 'link'), /settingsDir.*outside the working directory/);
+  await refused(cwd, path.join(outside, 'link', 'sub', 'settings'), /settingsDir.*outside the working directory/);
+  assert.ok(!fs.existsSync(path.join(cwd, 'sub')), 'a directory was created inside the working directory');
+  // A second spelling of the working directory itself: its canonical form.
+  await refused(fs.realpathSync.native(cwd), path.join(outside, 'link', 'settings'), /settingsDir.*outside the working directory/);
+  fs.symlinkSync(path.join(outside, 'gone'), path.join(outside, 'dangling'), 'junction');
+  await refused(cwd, path.join(outside, 'dangling', 'settings'), /settingsDir cannot be resolved \(dangling\)/);
 });
 
 test('conformsTo covers the schema subset and refuses the rest', () => {
@@ -388,6 +426,33 @@ test('conformsTo covers the schema subset and refuses the rest', () => {
   assert.strictEqual(conformsTo(RESULT_SCHEMA, null), false);
   assert.strictEqual(conformsTo(RESULT_SCHEMA, []), false);
   assert.throws(() => conformsTo({ type: 'object', patternProperties: {} }, {}), /patternProperties/);
+  for (const [schema, pattern] of [
+    [{ type: 'array' }, /type "array"/],
+    [{ type: 'object', properties: { n: { type: 'integer' } } }, /type "integer"/],
+    [{ type: 'object', additionalProperties: {} }, /additionalProperties/],
+    [{ type: 'object', properties: [] }, /properties/],
+    [{ type: 'string', enum: 'done' }, /enum/],
+    [{ type: 'object', required: 'ab' }, /required/],
+    [{ type: 'object', required: [1] }, /required/],
+  ]) {
+    assert.throws(() => conformsTo(schema, {}), pattern, JSON.stringify(schema));
+  }
+});
+
+test('Review: each schema failure names its cause in detail', async (t) => {
+  const noOutput = { ...OK };
+  delete noOutput.structured_output;
+  for (const [outcome, detail] of [
+    [{ code: 0, stdout: 'warning: x\n' }, 'stdout is not a result object'],
+    [{ code: 0, stdout: JSON.stringify(noOutput) }, 'the result has no structured_output'],
+    [okOut({ structured_output: { ...OK.structured_output, status: 'maybe' } }), 'structured_output does not conform to the schema'],
+    [okOut({ structured_output: { ...OK.structured_output, title: 'two\nlines' } }), 'title is not one line'],
+  ]) {
+    const { runner } = fakeRunner(outcome);
+    const env = await launchWorker(base(t), { runner });
+    assert.strictEqual(env.reason, 'schema', detail);
+    assert.strictEqual(env.detail, detail);
+  }
 });
 
 // Never exits on its own. `dieOn` names what ends it: a signal name, or 'taskkill'.
@@ -531,6 +596,34 @@ test('a worker handle whose kill throws at the win32 reap deadline does not stop
   const { timers } = instantTimers();
   const env = await launchWorker(base(t, { platform: 'win32', env: { Path: 'p' }, ceilings: { wallClockMs: 1234 } }), { runner, timers });
   assert.strictEqual(env.status, 'timeout');
+  assert.strictEqual(env.detail, 'child 4242 did not exit after kill');
+});
+
+test('a taskkill launch that throws at the win32 ceiling does not stop the reap deadline', async (t) => {
+  const never = new Promise(() => {});
+  const workerKills = [];
+  const runner = (call) => {
+    if (call.file === 'taskkill') throw Object.assign(new Error('spawn taskkill ENOENT'), { code: 'ENOENT' });
+    return { pid: 4242, kill(sig) { workerKills.push(sig); }, exited: never };
+  };
+  const { timers, delays } = instantTimers();
+  const env = await launchWorker(base(t, { platform: 'win32', env: { Path: 'p' }, ceilings: { wallClockMs: 1234 } }), { runner, timers });
+  assert.strictEqual(env.status, 'timeout');
+  assert.strictEqual(env.reason, 'wall-clock-ceiling');
+  assert.strictEqual(env.detail, 'child 4242 did not exit after kill');
+  assert.deepStrictEqual(delays, [1234, worker.REAP_DEADLINE_MS]);
+  assert.deepStrictEqual(workerKills, ['SIGKILL']);
+});
+
+test('a taskkill handle whose kill throws at the reap deadline still returns timeout', async (t) => {
+  const never = new Promise(() => {});
+  const runner = (call) => (call.file === 'taskkill'
+    ? { pid: 1, kill() { throw new Error('already gone'); }, exited: never }
+    : { pid: 4242, kill() {}, exited: never });
+  const { timers } = instantTimers();
+  const env = await launchWorker(base(t, { platform: 'win32', env: { Path: 'p' }, ceilings: { wallClockMs: 1234 } }), { runner, timers });
+  assert.strictEqual(env.status, 'timeout');
+  assert.strictEqual(env.reason, 'wall-clock-ceiling');
   assert.strictEqual(env.detail, 'child 4242 did not exit after kill');
 });
 
