@@ -47,6 +47,16 @@ function fixtureGit(args, opts = {}) {
   try {
     return execFileSync('git', args, { timeout: FIXTURE_TIMEOUT_MS, ...opts });
   } catch (err) {
+    // A maxBuffer overflow kills the child with SIGTERM too, so it is told apart by its code first:
+    // it is an output-size failure, not contention.
+    if (err.code === 'ENOBUFS') {
+      const cap = opts.maxBuffer === undefined ? 1024 * 1024 : opts.maxBuffer;
+      throw Object.assign(new Error(
+        `git-fixtures: \`git ${args.join(' ')}\` printed more than its maxBuffer (${cap} bytes) and was killed. `
+        + 'Pass a larger maxBuffer for a real-sized output.',
+        { cause: err },
+      ), { code: 'ENOBUFS' });
+    }
     if (err.killed || err.code === 'ETIMEDOUT' || err.signal === 'SIGTERM') {
       throw new Error(
         `git-fixtures: \`git ${args.join(' ')}\` exceeded ${FIXTURE_TIMEOUT_MS}ms and was killed. `

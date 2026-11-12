@@ -376,8 +376,8 @@ function createSandbox(scenario, { transport = 'gh', origin = null, name = scena
         throw err;
       }
       if (!git(['-C', originDir, 'ls-tree', '--name-only', 'health-state', '--', 'queue-order/order.json']).trim()) return null;
-      // A real-sized queue's blob passes execFileSync's 1 MiB default buffer (whose kill fixtureGit
-      // reports as a timeout).
+      // A real-sized queue's blob passes execFileSync's 1 MiB default buffer (fixtureGit reports an
+      // overflow as one).
       return JSON.parse(git(['-C', originDir, 'show', 'health-state:queue-order/order.json'], { maxBuffer: 64 * 1024 * 1024 }));
     };
     const setScenario = (next) => fs.writeFileSync(tablePath, JSON.stringify({ ...shimTable(next), root, realGit }));
@@ -410,7 +410,7 @@ function capture(stream) {
 // command + args run as their own process group, stdin closed, each stream capped, reaped on exit.
 function spawnBounded(command, args, { cwd, env }) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(command, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     if (child.pid) liveGroups.add(child.pid);
     const stdout = capture(child.stdout);
     const stderr = capture(child.stderr);
@@ -520,8 +520,9 @@ function collectResult(sandbox, run, tmpdir, sessionId) {
   };
 }
 
-// The real checkout's HEAD, refs, index and tracked-file status before and after fn; any change
-// fails the run (#4303: an inherited OLDPWD put commits on the live branch). Untracked files are
+// The real checkout's HEAD (its commit and what it points at: a branch, or detached), refs, index
+// and tracked-file status before and after fn; any change fails the run (#4303: an inherited
+// OLDPWD put commits on the live branch). Untracked files are
 // deliberately not compared: tools/run-tests.js runs files concurrently and another suite
 // (exit-code-conformance) creates a temporary untracked file in this checkout (controller ruling,
 // Task 4 review). A stray commit, ref, staged change or tracked-file edit is still caught.
@@ -530,16 +531,26 @@ async function withEscapeGuard(repoRoot, fn) {
   let currentBranch = null;
   try { currentBranch = g('symbolic-ref', '--short', 'HEAD').trim(); } catch { /* detached HEAD: HEAD is compared */ }
   // The repository's refs are shared with every worktree and sibling session, so a whole-repo
-  // `for-each-ref` flaps whenever one of them pushes a branch (seen live). The refs compared are the
-  // ones an escape moves: the current branch, tags and the stash, plus any ref whose tip carries the
-  // sandbox's own git identity (`qp-oracle`, the only author an escaped oracle command can commit as).
+  // `for-each-ref` flaps whenever one of them pushes a branch (seen live), and tags and the stash
+  // are as shared (a sibling's tag or stash entry moves them too). The refs compared are the current
+  // branch and any ref whose tip carries the sandbox's own git identity (`qp-oracle`, the only author
+  // an escaped oracle command can commit as, so an escaped stash or tag is still caught by it).
+  // `symref` is what HEAD points at, so a branch switch at the same commit is caught.
+  const symbolicHead = () => {
+    try {
+      return g('symbolic-ref', '-q', 'HEAD').trim();
+    } catch (err) {
+      if (err.status === 1) return '(detached)';
+      throw err;
+    }
+  };
   const read = () => ({
     head: g('rev-parse', 'HEAD').trim(),
+    symref: symbolicHead(),
     refs: g('for-each-ref', '--format=%(refname) %(objectname) %(authorname)').split('\n')
       .filter(Boolean).filter((l) => {
         const [name, , ...author] = l.split(' ');
-        return author.join(' ') === 'qp-oracle' || name.startsWith('refs/tags/') || name === 'refs/stash'
-          || name === `refs/heads/${currentBranch}`;
+        return author.join(' ') === 'qp-oracle' || name === `refs/heads/${currentBranch}`;
       }).join('\n') + '\n',
     index: g('diff', '--cached', '--name-status'),
     status: g('status', '--porcelain', '--untracked-files=no'),
@@ -552,8 +563,9 @@ async function withEscapeGuard(repoRoot, fn) {
     outcome = { err };
   }
   const after = read();
-  if (['head', 'refs', 'index', 'status'].some((k) => after[k] !== before[k])) {
+  if (['head', 'symref', 'refs', 'index', 'status'].some((k) => after[k] !== before[k])) {
     throw new Error(`escape guard: ${repoRoot} changed during the run\nHEAD ${before.head} -> ${after.head}\n`
+      + `HEAD points at ${before.symref} -> ${after.symref}\n`
       + `refs before:\n${before.refs}refs after:\n${after.refs}`
       + `index before:\n${before.index}index after:\n${after.index}`
       + `status before:\n${before.status}status after:\n${after.status}`);
@@ -739,13 +751,12 @@ function ghShim(table) {
   process.exitCode = answer.status;
 }
 
-// `-c` keys that run a command or move git's view off the sandbox. No fence or plugin call path
-// sets any of them (the one plugin `-c` is review-context's core.quotePath).
-const REFUSED_CONFIG_KEYS = new Set(['core.worktree', 'core.hookspath', 'core.fsmonitor', 'core.sshcommand', 'core.gitproxy']);
-const refusedConfig = (setting) => {
-  const key = setting.split('=')[0].toLowerCase();
-  return REFUSED_CONFIG_KEYS.has(key) || key.startsWith('alias.');
-};
+// The only `-c` key the shim lets through: core.quotePath, the one key any plugin call path sets
+// (review-context's). Every other key is refused, because a deny-list of the keys that run a
+// command or move git's view off the sandbox always misses one (include.path pulls in a config
+// file that can set any of them; remote.<name>.receivepack runs a program on push).
+const ALLOWED_CONFIG_KEYS = new Set(['core.quotepath']);
+const refusedConfig = (setting) => !ALLOWED_CONFIG_KEYS.has(setting.split('=')[0].toLowerCase());
 
 function gitShim(table) {
   const argv = process.argv.slice(2);

@@ -134,7 +134,7 @@ test('#5227 oracle: the mktemp shim emits tmp.qp00000001 then tmp.qp00000002 fro
   }
 });
 
-test('#5227 oracle: the git shim refuses a directory outside the sandbox, an exported GIT_DIR and a command-running -c key', { skip: oracleSkip() }, () => {
+test('#5227 oracle: the git shim refuses a directory outside the sandbox, an exported GIT_DIR and every -c key but core.quotePath', { skip: oracleSkip() }, () => {
   const sb = createSandbox(S0());
   try {
     const env = sb.runEnv({ tmpdir: path.join(sb.root, 'tmp'), sessionId: 'qp-git-probe' });
@@ -149,15 +149,23 @@ test('#5227 oracle: the git shim refuses a directory outside the sandbox, an exp
     const gitDir = git(['rev-parse', '--show-toplevel'], { GIT_DIR: path.join(sb.root, 'no-such.git') });
     assert.equal(gitDir.status, 97);
     assert.match(gitDir.stderr, /GIT_DIR\/GIT_WORK_TREE set/);
-    for (const setting of ['core.hooksPath=/x', 'core.fsmonitor=true', 'core.worktree=/x', 'core.sshCommand=x', 'core.gitProxy=x', 'alias.st=!sh', 'Core.HooksPath=/x']) {
+    // An allow-list: the keys a deny-list named, and the two it missed (include.path pulls in a
+    // config file that can set any of them; remote.<name>.receivepack runs a program on push).
+    const outsideConfig = path.join(sb.root, 'evil.gitconfig');
+    fs.writeFileSync(outsideConfig, '[core]\n\thooksPath = /x\n');
+    const refusedSettings = ['core.hooksPath=/x', 'core.fsmonitor=true', 'core.worktree=/x', 'core.sshCommand=x', 'core.gitProxy=x', 'alias.st=!sh', 'Core.HooksPath=/x',
+      `include.path=${outsideConfig}`, 'remote.origin.receivepack=x', 'user.name=x'];
+    for (const setting of refusedSettings) {
       const r = git(['-c', setting, 'rev-parse', '--show-toplevel']);
       assert.equal(r.status, 97, setting);
-      assert.match(r.stderr, /git-shim: refused \(config key not allowed: /, setting);
+      assert.equal(r.stderr, `git-shim: refused (config key not allowed: ${setting.split('=')[0]}): -c ${setting} rev-parse --show-toplevel\n`, setting);
     }
-    const allowed = git(['-c', 'core.quotePath=false', 'rev-parse', '--show-toplevel']);
-    assert.equal(allowed.status, 0, allowed.stderr);
+    for (const setting of ['core.quotePath=false', 'core.quotepath=false']) {
+      const allowed = git(['-c', setting, 'rev-parse', '--show-toplevel']);
+      assert.equal(allowed.status, 0, `${setting}: ${allowed.stderr}`);
+    }
     const log = fs.readFileSync(path.join(sb.logs, 'git-argv.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
-    assert.equal(log.filter((e) => e.tag === 'REFUSED').length, 9);
+    assert.equal(log.filter((e) => e.tag === 'REFUSED').length, 2 + refusedSettings.length);
   } finally {
     sb.cleanup();
   }
@@ -297,6 +305,27 @@ test('#5227 oracle: withEscapeGuard rejects a run that moves the guarded repo HE
         fixtureGit(['-C', repo, 'update-ref', 'refs/heads/escaped-ref', sha]);
       }),
       /escape guard/, 'a new ref made by the sandbox identity trips it',
+    );
+    // Tags and the stash are shared with sibling sessions as well: one made by someone else mid-run
+    // is not an escape; one carrying the sandbox identity is (the ref filter above).
+    assert.equal(await withEscapeGuard(repo, async () => {
+      fixtureGit(['-C', repo, 'tag', 'sibling-tag']);
+      fixtureGit(['-C', repo, 'update-ref', 'refs/stash', 'HEAD']);
+      return 'ok';
+    }), 'ok');
+    await assert.rejects(
+      withEscapeGuard(repo, async () => { fixtureGit(['-C', repo, 'tag', 'escaped-tag', 'refs/heads/escaped-ref']); }),
+      /escape guard/, 'a tag on a sandbox-identity commit trips it',
+    );
+    // A branch switch at the same commit moves no compared ref and no commit: only what HEAD points at.
+    const branch = fixtureGit(['-C', repo, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
+    await assert.rejects(
+      withEscapeGuard(repo, async () => { fixtureGit(['-C', repo, 'checkout', '-q', 'sibling-branch']); }),
+      (err) => err.message.includes(`HEAD points at refs/heads/${branch} -> refs/heads/sibling-branch\n`), 'a same-commit branch switch trips it',
+    );
+    await assert.rejects(
+      withEscapeGuard(repo, async () => { fixtureGit(['-C', repo, 'checkout', '-q', '--detach']); }),
+      (err) => err.message.includes('HEAD points at refs/heads/sibling-branch -> (detached)\n'), 'detaching HEAD at the same commit trips it',
     );
   } finally {
     fs.rmSync(path.dirname(repo), { recursive: true, force: true });
