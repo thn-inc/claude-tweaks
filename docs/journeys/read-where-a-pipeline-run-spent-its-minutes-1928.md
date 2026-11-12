@@ -6,6 +6,8 @@ files:
   - plugin/bin/lib/timing/derive.js
   - plugin/bin/phase-timing.js
   - plugin/bin/lib/hooks/subagent-stop.js
+  - plugin/bin/ci-gate-record.js
+  - plugin/skills/_shared/pr-first-merge.md
   - plugin/skills/flow/summary-template.md
   - plugin/skills/wrap-up/summary-template.md
   - plugin/skills/_shared/timing-render.md
@@ -54,3 +56,10 @@ files:
 - **Should feel:** Only real subagent replies are graded; an orchestrator's own narration turns no longer show up.
 - **Should understand:** The SubagentStop hook grades `agent_transcript_path` only, and only when it names a file *distinct* from the same firing's own `transcript_path`. Two shapes are a deliberate no-op rather than a graded turn: the field absent entirely (no fallback to the parent session's transcript), and the field present but identical to `transcript_path` — the dispatching session's own file, which the harness sometimes sends while a main session ends its turn waiting on an async dispatch. A genuine subagent stop always carries its own distinct transcript, so neither no-op can hide a real violation. A third skip: a reply whose last non-empty line starts `INTERIM_STATUS: ` is a nested dispatcher's interim progress turn (`_shared/subagent-output-contract.md`) and is never graded; an interim turn without that marker still counts as a violation, unless the dispatcher's own async `Agent` launches are still pending in its transcript (#3015, `_shared/subagent-output-contract.md`).
 - **Red flags:** Zero violations on a run where an agent clearly replied without a status line — either the harness stopped sending `agent_transcript_path`, or it is sending this session's own `transcript_path` under that name. Compare the two fields in the firing before concluding the check is simply off.
+
+### 5. See what CI cost at the merge gate
+- **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/ci-gate-record.js" --pr {n} --head-sha {sha} --verdict green|red|timeout-park --gate-start-epoch {epoch} --run "$PIPELINE_RUN_DIR" --repo {owner}/{repo}` (called by `_shared/pr-first-merge.md` Step 2.5, never typed by hand), then Step 3's `phase-timing.js --markdown`.
+- **Action:** Nothing new to type. The merge-verification gate notes when it started, and once it decides (green before the merge, red, or still pending at its 15-minute bound) it records one `ci-gate` event in `events.jsonl`. Re-run Step 3's command after the merge to read it.
+- **Should feel:** One extra line under the timing table, `CI gate: green, 20.3 min wall, gate waited 5 min (PR #5240)`, that answers "how long did CI run for this PR, and how long did the run sit waiting on it" without opening GitHub.
+- **Should understand:** `wall` is the span from the earliest start to the latest finish of the head commit's completed workflow runs, read after the verdict; `(lower bound)` marks a gate that timed out with checks still pending, and `n/a` means no head run had completed, never zero. `timing.json` gains `totals.ciWallMinutes` and a `ciGate` list only when an event exists, so a run that never reached the gate keeps its old shape byte for byte. The gate records nothing under an explicit `merge-verification: off`, when it arms an auto-merge on pending checks, when the checks read fails, or in dispatch close-out. A summary rendered before the merge (the usual wrap-up order) has no `CI gate:` line yet; the event is still in `events.jsonl`. In a multi-spec run the event goes to the parent run directory. The writer never blocks a merge: a non-zero exit is logged as a `SKIP` line and the merge continues.
+- **Red flags:** `ci-gate not recorded` in `decisions.md` on every merge — exit 2 is a malformed call or a failed `gh run list`, exit 3 a run directory that is missing or not under the main checkout's pipelines tree. A PR that went through the gate twice (a red-path resume, a head that moved) shows one line, its latest pass; the earlier pass stays in `events.jsonl`.
