@@ -60,7 +60,7 @@ const { readText } = require('../../helpers/read-skill');
 const { gitRepo, fixtureGit } = require('../../helpers/git-fixtures');
 const {
   REPO, SCRIPT_MD, MCP_MD, FENCE_FIRST_LINE, RUN_DIR_NAME,
-  oracleSkip, extractFence, fenceSessionFiles, filesOracleScript, createSandbox, runOracle, runModuleCli, runPair, withEscapeGuard, normalize, reported, assertParity, runAll, failedJobs,
+  oracleSkip, extractFence, fenceSessionFiles, filesOracleScript, createSandbox, runOracle, runModuleCli, runPair, withEscapeGuard, normalize, reported, assertParity, runAll, failedJobs, shQuote,
   STREAM_TRUNCATED, TAIL_LINES,
 } = require('./queue-pull-oracle');
 const {
@@ -3466,4 +3466,11 @@ describe('#5227 parity (AC7.2 files inputs)', { skip: oracleSkip(), timeout: 600
     assert.deepEqual(assertFaultFiles(first, 'gh', 'D1 first'), [], 'D1 first: no tail line, every file compared whole');
     assert.deepEqual(assertFaultFiles(second, 'gh', 'D1 second'), [], 'D1 second: no tail line, every file compared whole');
   });
+});
+
+test('the oracle shim quotes the node path for bash: $, a backtick, a backslash, a double and a single quote stay literal', () => {
+  const awkward = 'a$HOME`id`\\b"c\'d $(x)';
+  const out = spawnSync('bash', ['-c', `printf %s ${shQuote(awkward)}`], { encoding: 'utf8', windowsHide: true });
+  assert.equal(out.status, 0, out.stderr);
+  assert.equal(out.stdout, awkward);
 });

@@ -283,6 +283,11 @@ function writeShims(bin, { gh = true } = {}) {
   fs.writeFileSync(path.join(bin, 'node'), nodeShim(), { mode: 0o755 });
 }
 
+// POSIX single-quoting: the text stands for itself in bash, whatever it holds.
+function shQuote(text) {
+  return `'${text.replace(/'/g, `'\\''`)}'`;
+}
+
 // bin/node: the real node, exec'd (same pid, stdin, exit and signals), after logging the two CLI
 // calls the real-writer pins read, under <logs>/cli-calls/<pid>/: `argv` (NUL-separated, the
 // script path first) and, for dispatch-unlanded-blockers.js, copies of its --groups and
@@ -303,7 +308,7 @@ function nodeShim() {
     '        done; } 2>/dev/null',
     '    fi ;;',
     'esac',
-    `exec ${JSON.stringify(process.execPath)} "$@"`,
+    `exec ${shQuote(process.execPath)} "$@"`,
     '',
   ].join('\n');
 }
@@ -880,6 +885,6 @@ function shimMain(kind) {
 module.exports = {
   REPO, SCRIPT_MD, MCP_MD, FENCE_FIRST_LINE, RUN_DIR_NAME,
   findBash, oracleSkip, extractFence, fenceSessionFiles, sessionFileNames, filesOracleScript,
-  createSandbox, runOracle, runModuleCli, runPair, withEscapeGuard, normalize, reported, assertParity, runAll, failedJobs, shimMain,
+  createSandbox, runOracle, runModuleCli, runPair, withEscapeGuard, normalize, reported, assertParity, runAll, failedJobs, shimMain, shQuote,
   STREAM_TRUNCATED, TAIL_LINES,
 };
