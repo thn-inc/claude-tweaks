@@ -4,6 +4,7 @@ files:
   - plugin/skills/help/SKILL.md
   - plugin/bin/resolve-policy.js
   - plugin/bin/lib/policy-schema.js
+  - plugin/bin/lib/model-profiles/policy-fragment.js
   - plugin/skills/init/policy-review.md
   - plugin/bin/lib/hooks/pre-tool-use.js
 ---
@@ -29,14 +30,14 @@ files:
 - **Action:** Read Set levers (grouped by category, each row `` `{key}` — {value} ({source}) · default: {default} — {summary} ``), Issues (each non-empty list, or the literal `Policy config issues: none` line), Notable defaults (core-tier keys still on default where a project signal argues otherwise, or one of the two zero-finding lines), and Advanced tier (one collapsed `{N} advanced levers on defaults` line).
 - **Should feel:** Complete in one read — every set lever's value, source, and meaning, without a second lookup.
 - **Should understand:** All four sections render from the single `--all` snapshot taken at Gather time; a `null` default renders as `default: no default`, not literal `null`, except the derived-default keys' own special case (`_shared/policy-schema.md`'s Shape A/Shape B list) — `integration-model` renders `computed (forge detection)`, `merge-verification` `computed (derivation ladder)`, `housekeeping-auto-merge` `computed (derived from autonomy)`. `housekeeping-auto-merge` is the differently-shaped Shape B case (#580, render fix #636): its metadata `default` stays the literal `false` (the `supervised` base) while its resolved value derives from `autonomy`, so on a `trusted`/`unattended` project a key **explicitly set** in `policy.yml` now shows that computed wording in Set levers rather than the literal `false`. Left **unset** there, the held snapshot carries `{"value":true,"source":"default"}`: `source` keeps it out of Set levers, and the snapshot-intrinsic finding (any core-tier key whose snapshot `value` differs from its snapshot `default`) always surfaces it in Notable defaults instead — never silently omitted, never promoted. `node plugin/bin/resolve-policy.js housekeeping-auto-merge` is where it is read directly (`docs/journeys/resolve-a-policy-key.md` step 1).
-- **Red flags:** A section silently skipped instead of rendering its own zero-finding line; a hand-typed default value instead of one read from the snapshot; an unset `housekeeping-auto-merge` promoted into Set levers because its derived value is `true` — the derivation changes the value, never the `source` that decides which section a key belongs to.
+- **Red flags:** A `model-profiles:` block missing from Issues because `policy.yml` was saved with CRLF line endings and a trailing `# comment` on the key line. The audit's block reader shares the resolver's comment rule, so a non-profile row name there is flagged (#4816). A section silently skipped instead of rendering its own zero-finding line; a hand-typed default value instead of one read from the snapshot; an unset `housekeeping-auto-merge` promoted into Set levers because its derived value is `true` — the derivation changes the value, never the `source` that decides which section a key belongs to.
 
 ### 3. Expand the advanced tier — chat
 - **URL:** no command — say "show advanced" in chat
 - **Action:** Ask to see the advanced-tier levers still on default.
 - **Should feel:** A free follow-up, not a new decision — no confirmation, no new question.
-- **Should understand:** This expands in-conversation from the same held snapshot; it never triggers a new `AskUserQuestion` — the mode has exactly one, reserved for the apply step below.
-- **Red flags:** A second `AskUserQuestion` call firing here.
+- **Should understand:** This expands in-conversation from the same held snapshot; it never triggers a new `AskUserQuestion` — the mode has exactly one, reserved for the apply step below. The control-mode levers listed here (`control-mode`, the deploy/dev/acceptance keys, `owned-owners`, `trusted-authors`, `risk-categories`, `risk-path-globs`) show summaries opening "Not yet used". Setting them today changes nothing, until the #4608 record that wires each one lands (#4816).
+- **Red flags:** A second `AskUserQuestion` call firing here; a control-mode lever presented as if setting it changes behavior today.
 
 ### 4. Answer the one apply question — `AskUserQuestion`
 - **URL:** no page — the mode's single `AskUserQuestion` call (`multiSelect: true`)
@@ -58,3 +59,4 @@ Reviewing configuration this way is read-only-safe up through Step 3 — `/claud
 - Updated at wrap-up of the policy-key rename run: Step 5's main-checkout branch now tracks the build-version gate the policy.yml write exemption introduced (#537/#589)
 - Related specs: #332 (policy-key naming convention), #602 (`worktree.always` → `worktree-always`)
 - Updated by #3495: the policy.yml write exemption now compares case-canonical real paths, so a mis-cased path to the file keeps the exemption
+- Updated by #4816: Step 2 red flag for the CRLF `model-profiles` audit blind spot, now closed; Step 3 notes the "Not yet used" marker on control-mode lever summaries
