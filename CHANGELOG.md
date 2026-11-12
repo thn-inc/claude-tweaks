@@ -53,6 +53,30 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.165.0](https://github.com/thn-inc/claude-tweaks/compare/v6.164.0...v6.165.0) (2026-11-11)
+
+
+### Features
+
+* Ship the machine-wide full-suite slot lock to consumer… ([#5119](https://github.com/thn-inc/claude-tweaks/issues/5119)) ([f0d68d5](https://github.com/thn-inc/claude-tweaks/commit/f0d68d551b651b434bee6dcc800bc04fb796d480))
+
+
+### Bug Fixes
+
+* A scoped verify at the integration tip runs zero suites… ([#4638](https://github.com/thn-inc/claude-tweaks/issues/4638)) ([fd77f3b](https://github.com/thn-inc/claude-tweaks/commit/fd77f3b1965a8297e3988238a103411cb89b1721))
+* issue-branch-tracking.js: the generated track-issue-fixes… ([#5152](https://github.com/thn-inc/claude-tweaks/issues/5152)) ([18c73c6](https://github.com/thn-inc/claude-tweaks/commit/18c73c625ba597b42ab7e9369715b0a857064db9))
+* pr-first-merge Step 2.5: checks are read right after gh… ([#5153](https://github.com/thn-inc/claude-tweaks/issues/5153)) ([8e1a10b](https://github.com/thn-inc/claude-tweaks/commit/8e1a10b79c6075a7f3df0c51b5ccbab642852734))
+* Test-impact selection never fires: .claude/skills/**… ([#4321](https://github.com/thn-inc/claude-tweaks/issues/4321)) ([828bb7e](https://github.com/thn-inc/claude-tweaks/commit/828bb7e175243b8786349c44f537d8f123b8d7e9))
+* verify.js baseline adjudication: concurrency=4 per-file… ([#5150](https://github.com/thn-inc/claude-tweaks/issues/5150)) ([73691c5](https://github.com/thn-inc/claude-tweaks/commit/73691c54ead049d851a6a471249edc850be51c7f))
+
+### Highlights
+* A verification run whose changed files map to tests can no longer report the tree as verified without running them.
+* Pipeline test runs pick only the affected tests far more often, cutting several minutes from most builds.
+* Baseline adjudication now reruns failing files one at a time unless the project declares otherwise, never fans out when failures look like timeouts, and reuses one scratch checkout per slot instead of creating a new one each run.
+* Make the pr-first merge gate wait for the CI run that marking a PR ready starts, and refuse to merge a PR whose CI skips drafts but never runs on ready. Document a supported "CI skips draft PRs" setup.
+* Parallel pipeline sessions on one machine now queue their test suites and baseline reruns behind a shared slot instead of running them all at once; a project sets how many may run together in verify-scope.json.
+* Stop the generated issue-tracking workflow from starting a billed runner on pushes that reference no issue, and from running at all on the plugin's bookkeeping branches. Re-run `/claude-tweaks:init` to pick up the new file.
+
 ## [6.164.0](https://github.com/thn-inc/claude-tweaks/compare/v6.163.0...v6.164.0) (2026-11-09)
 
 
