@@ -80,7 +80,7 @@
 //   `CLAUDE_CONFIG_DIR` is passed through as well, because it selects the login.
 // - Smoke test. The opt-in live smoke test passed once on the same CLI, date and
 //   platform, launched from a process with no TTY. A run started by a person from a
-//   terminal has not been recorded.
+//   terminal passed too, on 2026-11-12 with the same CLI (2.1.322) on macOS (darwin).
 //
 // On win32 the default `bin` of `claude` does not find an npm-installed `claude.cmd`;
 // a win32 caller passes `bin` explicitly.
