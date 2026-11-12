@@ -201,7 +201,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/ci-gate-record.js" --pr {pr-number} --head-sha {
 `--run` follows the per-merged-run rule above (a multi-spec bundle: `$MULTISPEC_PARENT_DIR`). A non-zero exit logs `SKIP {HH:MM:SS} — Step 2.5 (merge-verification gate): ci-gate not recorded ({error})` and the merge path continues unchanged — the writer never gates a merge. A Red-path resume or moving-target re-entry is a new gate pass with its own call; a Step 3 degrade into the `wait` row is the same pass, no second green call. Dispatch close-out skips this step, so records nothing; so do an explicit `off`, an armed merge on pending checks and a failed read.
 
 **Bounded watch (`wait`, `merge-when-green` when arming would not hold, and a derived `off` with pending checks) — 15 minutes, fixed.**
-(Fixed by design, not a policy key — `pr-first-merge-appendix.md`'s "Rationale notes".) Poll
+(Fixed by design, not a policy key — `pr-first-merge-appendix.md`'s "Rationale notes"; `900` is `MERGE_GATE_WATCH_SECONDS` in `bin/lib/ci-health/constants.js`.) Poll
 `gh pr checks` and key on its exit code — captured (Task 0): `0` all green, `8` at least one check
 still pending, `1` at least one check failed — so a red result at any minute takes the Red path
 immediately:
