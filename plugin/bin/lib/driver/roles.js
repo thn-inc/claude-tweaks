@@ -43,25 +43,25 @@
 // The test-command allow rule, the git rules and the sandbox block exist only on the
 // platforms where the sandbox was probed (SANDBOX_PROBED_PLATFORMS). Elsewhere the
 // worker has no Bash at all: its tool list is Read, Write and Edit, and `toolsFor`
-// drops Bash from `--tools` as well. The reason is a probe on the same CLI and date, on
-// macOS, in a throwaway repository, launched with no TTY, through this module's own
-// launcher. An allowed `git log`, `git diff` or `git show` writes a file of the
-// worker's choosing through `--output=<path>`. With no sandbox
-// (the settings generated for a platform that is not sandbox-probed) no command was
-// denied, and every one of six writes landed: a file in the working directory, one
-// under `.git/info/`, one in a directory outside the working directory, and
-// `.git/config` itself was overwritten. An allowed `git status` would then run a
-// program named in that configuration (`core.fsmonitor`) with the user's full rights
-// and network. With the sandbox on (the settings generated for `darwin`), the same
-// commands were not denied by the permission rules but ran inside the sandbox: the
-// writes into the working directory and under `.git/info/` succeeded; the writes to
-// `.git/config` and to `.git/hooks/pre-commit` failed with `fatal: could not open
-// '<path>' for writing: Operation not permitted`; a write to a directory under the
-// system temporary directory failed the same way; a write under the CLI's own
-// per-user scratch root in `/tmp` succeeded. Wherever the git rules exist,
-// `git diff --no-index` also reads files outside the working directory. Off the probed
-// platforms the worker can neither list nor search files, so its prompt must name the
-// files it is to work on.
+// drops Bash from `--tools` as well. The reason is a probe on the same CLI and date,
+// on macOS, in a throwaway repository, launched with no TTY, through this module's
+// own launcher. An allowed `git log`, `git diff` or `git show` writes a file of the
+// worker's choosing through `--output=<path>`. With no sandbox (the settings
+// generated for a platform that is not sandbox-probed) no command was denied, and
+// every one of six writes landed: a file in the working directory, one under
+// `.git/info/`, one in a directory outside the working directory, and `.git/config`
+// itself was overwritten. An allowed `git status` would then run a program named in
+// that configuration (`core.fsmonitor`) with the user's full rights and network.
+// With the sandbox on (the settings generated for `darwin`), the same commands were
+// not denied by the permission rules but ran inside the sandbox: the writes into the
+// working directory and under `.git/info/` succeeded; the writes to `.git/config`
+// and to `.git/hooks/pre-commit` failed with `fatal: could not open '<path>' for
+// writing: Operation not permitted`; a write to a directory under the system
+// temporary directory failed the same way; a write under the CLI's own per-user
+// scratch root in `/tmp` succeeded. Wherever the git rules exist, `git diff
+// --no-index` also reads files outside the working directory. Off the probed
+// platforms the worker can neither list nor search files, so its prompt must name
+// the files it is to work on.
 //
 // Under `--restricted`, with `defaultMode: dontAsk` and `--permission-prompts none`,
 // the worker's Write and Edit tools into `.git` were denied in a probe (Claude Code CLI
@@ -80,28 +80,29 @@
 // The residual, stated plainly: the driver's own test step runs worker-written code
 // with the driver's rights, as every other lane does today. Where Bash exists (the
 // probed platforms), code the worker runs can read files outside the working
-// directory, because the sandbox as configured denies writes and network but not
-// reads, and so can `git diff --no-index`. With the network denied, the worker's own
-// result text is the remaining way out for what it read. This is a stated residual.
+// directory, because the sandbox as configured confines writes to the working
+// directory and the CLI's own scratch root and denies the network, but does not
+// restrict reads, and so can `git diff --no-index`. With the network denied, the
+// worker's own result text is the remaining way out for what it read. This is a
+// stated residual.
 //
-// What the worker's code can read and write today, probed on Claude Code CLI 2.1.322,
-// macOS, 2026-11-12, under a subscription login with no TTY, using a test file the
-// worker ran through the allowed test command with the sandbox on. With the settings
-// as generated, the test read a file in a directory under the system temporary
-// directory and a file under the CLI's per-user scratch root, listed the home
-// directory, and opened shell and package-manager dotfiles there. It wrote under the
-// CLI's per-user scratch root, which is also what the sandbox sets as the temporary
-// directory for the commands it runs. With the setting
+// What the worker's code can read and write today, probed on Claude Code CLI
+// 2.1.322, macOS, 2026-11-12, under a subscription login with no TTY, using a test
+// file the worker ran through the allowed test command with the sandbox on. With the
+// settings as generated, the test read a file in a directory under the system
+// temporary directory and a file under the CLI's per-user scratch root, listed the
+// home directory, and opened shell and package-manager dotfiles there. It wrote
+// under the CLI's per-user scratch root, which is also what the sandbox sets as the
+// temporary directory for the commands it runs. With the setting
 // `permissions.blockReadsOutsideWorkingDirectories: true` added, listing the home
 // directory, opening a shell profile there and listing the SSH directory failed with
 // EPERM; the files under the system temporary directory and the scratch root stayed
-// readable; `node --test` and
-// `git status` still ran, but a Node installation under the home directory was no
-// longer reachable, so a different `node` ran. That read block is not turned on here:
-// it protects the home directory but cuts off a toolchain installed there, so it needs
-// a per-project list of readable paths, which is a decision for the project and is not
-// made here. Setting `CLAUDE_CODE_TMPDIR` in the worker's environment did not move the
-// sandbox's writable temporary root.
+// readable; `node --test` and `git status` still ran, but a Node installation under
+// the home directory was no longer reachable, so a different `node` ran. That read
+// block is not turned on here: it protects the home directory but cuts off a
+// toolchain installed there, so it needs a per-project list of readable paths, which
+// is a decision for the project and is not made here. Setting `CLAUDE_CODE_TMPDIR`
+// in the worker's environment did not move the sandbox's writable temporary root.
 //
 // Permission denials are data for the driver's event line, never a reason to widen a
 // list: there is no path here that composes wider rights after a denial.

@@ -386,12 +386,13 @@ async function launchWorker(opts, deps = defaultDeps()) {
   assertSupportedSchema(schema);
   const spec = Object.prototype.hasOwnProperty.call(ROLES, role) ? ROLES[role] : undefined;
   if (!spec) throw new Error('unknown role: ' + String(role));
+  if (typeof platform !== 'string' || platform === '') throw new TypeError('platform must be a non-empty string, got ' + String(platform));
   if (typeof prompt !== 'string') throw new TypeError('prompt must be a string, got ' + (prompt === null ? 'null' : typeof prompt));
   for (const [name, value] of [['cwd', cwd], ['settingsDir', settingsDir]]) {
     if (typeof value !== 'string' || !path.isAbsolute(value)) throw new TypeError(name + ' must be an absolute path string, got ' + String(value));
   }
   const rel = path.relative(cwd, settingsDir);
-  if (rel === '' || !(rel.startsWith('..') || path.isAbsolute(rel))) {
+  if (!(rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel))) {
     throw new Error('settingsDir must lie outside the working directory: ' + settingsDir + ' is not outside ' + cwd);
   }
   const settingsText = spec.settings ? JSON.stringify(implementerSettings({ testCommand, platform }), null, 2) : null;

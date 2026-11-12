@@ -55,7 +55,7 @@ test('AC5: an ok result fills every envelope field from the result', async (t) =
   assert.strictEqual(env.detail, null);
 });
 
-test('AC5: the envelope field names are pinned',() => {
+test('AC5: the envelope field names are pinned', () => {
   assert.deepStrictEqual(ENVELOPE_FIELDS, ['status', 'reason', 'result', 'usage', 'turns', 'denials', 'spendOverrun', 'costUsd', 'detail']);
 });
 
@@ -143,7 +143,13 @@ test('Review focus: a spend ceiling that is not a positive finite number is refu
   for (const bad of [0, -1, NaN, '2']) {
     const { runner, calls } = fakeRunner(okOut());
     const opts = base(t, { ceilings: { wallClockMs: 60000, spendCeiling: bad } });
+    const write = t.mock.method(fs, 'writeFileSync');
+    const mkdir = t.mock.method(fs, 'mkdirSync');
     await assert.rejects(launchWorker(opts, { runner }), RangeError, String(bad));
+    assert.strictEqual(write.mock.callCount(), 0, 'a file was written before the refusal');
+    assert.strictEqual(mkdir.mock.callCount(), 0, 'a directory was made before the refusal');
+    write.mock.restore();
+    mkdir.mock.restore();
     assert.strictEqual(calls.length, 0);
     assert.deepStrictEqual(fs.readdirSync(opts.settingsDir), []);
   }
@@ -169,6 +175,26 @@ test('Review: cwd and settingsDir must be absolute, and the rights file must lie
   const inside = tmp(t);
   await refused({ cwd: inside, settingsDir: path.join(inside, 'sub', 'settings') }, /settingsDir.*outside the working directory/, Error);
   assert.ok(!fs.existsSync(path.join(inside, 'sub')));
+  const dots = tmp(t);
+  await refused({ cwd: dots, settingsDir: path.join(dots, '..foo') }, /settingsDir.*outside the working directory/, Error);
+  await refused({ cwd: dots, settingsDir: path.join(dots, '..foo', 's') }, /settingsDir.*outside the working directory/, Error);
+  assert.ok(!fs.existsSync(path.join(dots, '..foo')));
+});
+
+test('Review: platform must be a non-empty string, refused before anything is written', async (t) => {
+  for (const bad of ['', null]) {
+    const { runner, calls } = fakeRunner(okOut());
+    const opts = base(t, { platform: bad });
+    const write = t.mock.method(fs, 'writeFileSync');
+    const mkdir = t.mock.method(fs, 'mkdirSync');
+    await assert.rejects(launchWorker(opts, { runner }), (err) => err instanceof TypeError && /platform/.test(err.message), String(bad));
+    assert.strictEqual(write.mock.callCount(), 0);
+    assert.strictEqual(mkdir.mock.callCount(), 0);
+    write.mock.restore();
+    mkdir.mock.restore();
+    assert.strictEqual(calls.length, 0);
+    assert.deepStrictEqual(fs.readdirSync(opts.settingsDir), []);
+  }
 });
 
 test('Review: a settingsDir that merely shares a name prefix with cwd is accepted', async (t) => {
@@ -479,10 +505,11 @@ test('a child that survives the kill is given up on at the reap deadline, with i
 test('a taskkill that never returns does not hold the launch past the reap deadline', async (t) => {
   const taskkillKills = [];
   const workerKills = [];
+  const order = [];
   const never = new Promise(() => {});
   const runner = (call) => (call.file === 'taskkill'
-    ? { pid: 1, kill(sig) { taskkillKills.push(sig); }, exited: never }
-    : { pid: 4242, kill(sig) { workerKills.push(sig); }, exited: never });
+    ? { pid: 1, kill(sig) { taskkillKills.push(sig); order.push('taskkill:' + sig); }, exited: never }
+    : { pid: 4242, kill(sig) { workerKills.push(sig); order.push('worker:' + sig); }, exited: never });
   const { timers, delays } = instantTimers();
   const opts = base(t, { platform: 'win32', env: { Path: 'p' }, ceilings: { wallClockMs: 1234 } });
   const env = await launchWorker(opts, { runner, timers });
@@ -492,6 +519,7 @@ test('a taskkill that never returns does not hold the launch past the reap deadl
   assert.deepStrictEqual(delays, [1234, worker.REAP_DEADLINE_MS]);
   assert.deepStrictEqual(taskkillKills, ['SIGKILL']);
   assert.deepStrictEqual(workerKills, ['SIGKILL']);
+  assert.deepStrictEqual(order, ['taskkill:SIGKILL', 'worker:SIGKILL']);
   assert.deepStrictEqual(fs.readdirSync(opts.settingsDir), []);
 });
 
@@ -628,7 +656,7 @@ test('defaultRunner kills a child it started when something throws after the spa
   child.stdout = Object.assign(new EventEmitter(), { setEncoding() {} });
   child.stderr = Object.assign(new EventEmitter(), { setEncoding() {} });
   assert.throws(() => worker.defaultRunner({ file: 'x', args: [], options: {}, input: 'p', platform: 'win32' }, { spawn: () => child }), /stdin broke/);
-  assert.strictEqual(killed.length, 1);
+  assert.deepStrictEqual(killed, ['SIGKILL']);
 });
 
 test("defaultRunner lets the child's exit decide when stdin errors", async () => {
@@ -644,7 +672,7 @@ test("defaultRunner lets the child's exit decide when stdin errors", async () =>
   assert.deepStrictEqual(await handle.exited, { code: 1, signal: null, stdout: '', stderr: "error: unknown option '--x'\n" });
 });
 
-test('AC7: live smoke test — the write runs, echo and curl are denied', { skip: !process.env.DRIVER_LIVE_SMOKE && 'set DRIVER_LIVE_SMOKE=1 to launch a real worker (spends tokens)' }, async (t) => {
+test('AC7: live smoke test — the write runs, and the echo, curl and .git writes do not', { skip: !process.env.DRIVER_LIVE_SMOKE && 'set DRIVER_LIVE_SMOKE=1 to launch a real worker (spends tokens)' }, async (t) => {
   const cwd = tmp(t);
   const settingsDir = tmp(t);
   const init = cp.spawnSync('git', ['init', '-q'], { cwd, windowsHide: true });
