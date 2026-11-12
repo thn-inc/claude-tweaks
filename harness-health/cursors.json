@@ -57,7 +57,7 @@
   },
   "skill:gh-api-module-pattern": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1794389610865
+    "lastAuditedMs": 1794501552708
   },
   "skill:skill-prose-conformance-tests": {
     "lastAuditedSha": null,
@@ -113,7 +113,7 @@
   },
   "skill:parse-signal-discipline": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1794492586266
+    "lastAuditedMs": 1794501553845
   },
   "skill:scratch-worktree": {
     "lastAuditedSha": null,
@@ -129,7 +129,7 @@
   },
   "skill:driver-skill-outcome-taxonomy": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793855567253
+    "lastAuditedMs": 1794501551544
   },
   "skill:release": {
     "lastAuditedSha": null,
@@ -173,7 +173,7 @@
   },
   "skill:node-test-output-evidence": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793566713173
+    "lastAuditedMs": 1794501557823
   },
   "skill:visual-review": {
     "lastAuditedSha": null,
@@ -209,7 +209,7 @@
   },
   "skill:bin-source-scan-conformance": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1794473233265
+    "lastAuditedMs": 1794501555089
   },
   "skill:hooks-js-verb-registration": {
     "lastAuditedSha": null,
@@ -249,7 +249,7 @@
   },
   "skill:policy-key-addition": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1794494173689
+    "lastAuditedMs": 1794501556358
   },
   "skill:regex-scan-linearity": {
     "lastAuditedSha": null,
@@ -265,6 +265,6 @@
   },
   "skill:headless-worker-launch": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1794487633548
+    "lastAuditedMs": 1794501550396
   }
 }
