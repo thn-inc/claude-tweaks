@@ -2165,8 +2165,11 @@ test('#5227 spawnCli: the default spawn is bounded above every spawned CLI\'s ow
   assert.equal(killed.stderr, 'partial\nsignal SIGKILL\n');
   const failed = spawnCli('resolve-linked-prs.js', ['9001']);
   assert.equal(failed.stderr, 'resolve-linked-prs: gh failed\n', 'a plain non-zero exit keeps the CLI stderr as it was');
-  // dispatch-unlanded-blockers.js bounds its preflight-records.js child at 300 s; the outer bound must not cut it short.
-  for (const o of opts) assert.ok(Number.isFinite(o.timeout) && o.timeout > 300000, `timeout ${o.timeout}`);
+  // dispatch-unlanded-blockers.js bounds its preflight-records.js child at its exported
+  // PREFLIGHT_TIMEOUT_MS; the outer bound must stay strictly above it whichever side changes.
+  const { PREFLIGHT_TIMEOUT_MS } = require('../../../plugin/bin/dispatch-unlanded-blockers');
+  assert.ok(Number.isFinite(PREFLIGHT_TIMEOUT_MS) && PREFLIGHT_TIMEOUT_MS > 0, `PREFLIGHT_TIMEOUT_MS ${PREFLIGHT_TIMEOUT_MS}`);
+  for (const o of opts) assert.ok(Number.isFinite(o.timeout) && o.timeout > PREFLIGHT_TIMEOUT_MS, `timeout ${o.timeout} vs PREFLIGHT_TIMEOUT_MS ${PREFLIGHT_TIMEOUT_MS}`);
   assert.equal(opts[0].windowsHide, true);
 
   // The cause reaches the fence's Warning text instead of an empty tail.
