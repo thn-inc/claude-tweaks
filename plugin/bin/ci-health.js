@@ -13,9 +13,12 @@
 //                          github.com); its host is pinned for every gh call
 //   --min-headroom-pct N   the headroom floor, a number 0..100 (default 10)
 //   --file                 file the breach issue (exact-title dedup against open by:harness-health
-//                          issues; never on a truncated window or a partial runs read, where
-//                          a page after page 1 failed)
-//   --json                 print the report envelope as one JSON line instead of the report lines
+//                          issues; never on a truncated window or a failed runs read, page 1
+//                          included: `not filed: runs read failed`)
+//   --json                 print the report envelope as one JSON line instead of the report lines;
+//                          its `filed` is {title, number} or null, `filingSkipped` the skip reason
+//                          or null (both null without --file), and a failed filing a failures[]
+//                          entry (`file issue` or `open issue titles`)
 // Exit codes:
 //   0 report written — partial allowed: a runs half that read at least one page, whatever billing
 //     returns; a failed filing is named in failures[]
@@ -195,13 +198,15 @@ function run(argv, deps = realDeps) {
   const breaches = breachesOf({ workflows, billing }, { minHeadroomPct: o.minHeadroomPct, watchSeconds: MERGE_GATE_WATCH_SECONDS });
 
   let filed = null;
+  let filingSkipped = null;
   if (o.file) {
-    filed = fileBreaches(
+    const outcome = fileBreaches(
       { breaches, truncated: runs.truncated, partial: runs.failures.length > 0, file: true },
       { openIssueTitles: () => deps.openIssueTitles(slug), createIssue: (issue) => deps.createIssue(slug, issue) },
       { repo: slug, days: o.days, watchSeconds: MERGE_GATE_WATCH_SECONDS, minHeadroomPct: o.minHeadroomPct, workTypes: deps.workTypes() },
     );
-    if (filed.failure) failures.push(filed.failure);
+    ({ filed, skipped: filingSkipped } = outcome);
+    if (outcome.failure) failures.push(outcome.failure);
   }
 
   const report = {
@@ -216,6 +221,7 @@ function run(argv, deps = realDeps) {
     failures,
     breaches,
     filed,
+    filingSkipped,
   };
   deps.stdout(o.json ? `${JSON.stringify(report)}\n` : `${renderReport(report).join('\n')}\n`);
   return runs.pages === 0 ? 2 : 0;

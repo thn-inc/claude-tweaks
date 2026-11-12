@@ -54,10 +54,12 @@ function readRepo({ owner, repo }, { runner }) {
   }
 }
 
-// Reads pages 1..MAX_RUN_PAGES of the window, stopping after a short page, a failed page, or gh
-// absence. `available` = page 1 succeeded; `truncated` = the last allowed page was full.
+// Reads pages 1..MAX_RUN_PAGES of the window, stopping after a short page or a failed page.
+// `available` = page 1 succeeded; `truncated` = the last allowed page was full. Runs are kept once
+// per `id` (first occurrence): a run created mid-read shifts the pages, so a run can repeat.
 function fetchRuns({ owner, repo, from }, { runner }) {
   const result = { available: false, runs: [], pages: 0, truncated: false, ghAbsent: false, failures: [] };
+  const seen = new Set();
   for (let n = 1; n <= MAX_RUN_PAGES; n += 1) {
     const args = [
       'api', '--method', 'GET', `repos/${owner}/${repo}/actions/runs`,
@@ -69,12 +71,20 @@ function fetchRuns({ owner, repo, from }, { runner }) {
       page = body && body.workflow_runs;
       if (!Array.isArray(page)) throw new Error(`runs page ${n}: response has no workflow_runs array`);
     } catch (err) {
-      // gh absence renders from `ghAbsent` alone, so it adds no failure row.
-      if (isGhAbsent(err)) result.ghAbsent = true;
+      // gh absent on page 1 renders from `ghAbsent` alone, so it adds no failure row. gh vanishing
+      // after page 1 is a failed page like any other: the window is only partly read.
+      if (n === 1 && isGhAbsent(err)) result.ghAbsent = true;
       else result.failures.push({ query: `runs page ${n}`, status: httpStatusOf(err), error: errorText(err) });
       break;
     }
-    result.runs.push(...page);
+    for (const run of page) {
+      const id = run && run.id;
+      if (id !== undefined && id !== null) {
+        if (seen.has(id)) continue;
+        seen.add(id);
+      }
+      result.runs.push(run);
+    }
     result.pages = n;
     result.available = true;
     if (page.length < RUNS_PER_PAGE) break;

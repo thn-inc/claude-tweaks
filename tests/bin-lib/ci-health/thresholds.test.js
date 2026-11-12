@@ -114,6 +114,13 @@ test('AC8.3: an open issue with the exact title skips filing', () => {
   assert.deepStrictEqual(result, { filed: null, skipped: 'open issue exists', failure: null });
 });
 
+test('dedup is an exact title match: a suffixed or lower-cased title still files', () => {
+  const { calls, deps } = fakeDeps({ titles: [`${BREACH_TITLE} (old)`, BREACH_TITLE.toLowerCase()] });
+  const result = fileFor([wf()], NO_BILLING, { deps });
+  assert.strictEqual(calls.createIssue.length, 1);
+  assert.deepStrictEqual(result, { filed: { title: BREACH_TITLE, number: 42 }, skipped: null, failure: null });
+});
+
 test('AC8.4: push-only and schedule-only slow workflows, p90 at the watch, unreadable billing: no breach', () => {
   const workflows = [
     wf({ name: 'Release', path: '.github/workflows/release.yml', events: ['push'], p90Seconds: 2000 }),
@@ -178,12 +185,12 @@ test('a truncated window never files', () => {
   assert.deepStrictEqual(result, { filed: null, skipped: 'window truncated', failure: null });
 });
 
-test('a partial runs read never files, and a truncated window is named first', () => {
+test('a failed runs read never files, and a truncated window is named first', () => {
   const { calls, deps } = fakeDeps();
   const result = fileFor([wf()], NO_BILLING, { deps, partial: true });
   assert.strictEqual(calls.openIssueTitles, 0);
   assert.strictEqual(calls.createIssue.length, 0);
-  assert.deepStrictEqual(result, { filed: null, skipped: 'runs read partial', failure: null });
+  assert.deepStrictEqual(result, { filed: null, skipped: 'runs read failed', failure: null });
   assert.strictEqual(fileFor([wf()], NO_BILLING, { deps, partial: true, truncated: true }).skipped, 'window truncated');
   assert.strictEqual(fileFor([], NO_BILLING, { deps, partial: true }).skipped, 'no breach');
 });
@@ -238,10 +245,18 @@ test('the footer states the open-title dedup rule, never a close or wontfix prom
   assert.ok(body.includes('A later `--file` run files again while a breach remains and no open issue carries this exact title.'));
 });
 
-test('a fork-controlled workflow name is neutralized in the body; the path is not', () => {
+test('a fork-controlled workflow name is neutralized in the body', () => {
   const workflows = [wf({ name: 'CI `x`\n## Pwn @someone', path: '.github/workflows/ci.yml' })];
   const { body } = composeBreachIssue(breachesOf({ workflows, billing: NO_BILLING }, OPTS), compose('native'));
   assert.ok(body.includes("- Workflow `CI 'x' ## Pwn (at)someone` (`.github/workflows/ci.yml`)"), body);
+  assert.doesNotMatch(body, /@someone/);
+  assert.doesNotMatch(body, /\n## Pwn/);
+});
+
+test('a fork-controlled workflow path is neutralized in the body too', () => {
+  const workflows = [wf({ name: 'CI', path: '.github/workflows/x`y\n## Pwn @someone.yml' })];
+  const { body } = composeBreachIssue(breachesOf({ workflows, billing: NO_BILLING }, OPTS), compose('native'));
+  assert.ok(body.includes("- Workflow `CI` (`.github/workflows/x'y ## Pwn (at)someone.yml`)"), body);
   assert.doesNotMatch(body, /@someone/);
   assert.doesNotMatch(body, /\n## Pwn/);
 });

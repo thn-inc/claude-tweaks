@@ -55,13 +55,13 @@ function breachLine(breach, watchSeconds) {
   return `breach: Actions budget headroom ${breach.headroomPct}% below the ${breach.floor}% floor`;
 }
 
-function filingLine(outcome) {
-  if (outcome.filed) {
-    const { number, title } = outcome.filed;
+// A failed filing has no filing line: its `failed read: {query}: …` line names it.
+function filingLine({ filed, filingSkipped }) {
+  if (filed) {
+    const { number, title } = filed;
     return number === null ? `filed (issue number unread): ${title}` : `filed #${number}: ${title}`;
   }
-  if (outcome.skipped) return `not filed: ${outcome.skipped}`;
-  return `not filed: ${outcome.failure ? oneLine(outcome.failure.query) : 'unknown'} failed`;
+  return filingSkipped ? `not filed: ${filingSkipped}` : null;
 }
 
 function renderReport(report) {
@@ -78,8 +78,9 @@ function renderReport(report) {
   else for (const w of report.workflows) out.push(workflowLine(w, report.watchSeconds));
   out.push(billingLine(report));
   for (const breach of report.breaches) out.push(breachLine(breach, report.watchSeconds));
-  // `filed` is null without --file.
-  if (report.filed && report.breaches.length > 0) out.push(filingLine(report.filed));
+  // `filed` and `filingSkipped` are both null without --file.
+  const filing = report.breaches.length > 0 ? filingLine(report) : null;
+  if (filing) out.push(filing);
   for (const f of failures) out.push(`failed read: ${oneLine(f.query)}: ${oneLine(f.error)}`);
   return out;
 }

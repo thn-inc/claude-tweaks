@@ -72,6 +72,13 @@ const FORMULA_KEYS = {
   'repo-user.json': ['owner.type', 'default_branch'],
 };
 
+// Both the key check and the leak scan below iterate PROBED_KEYS, so a new fixture fails here
+// until it joins that closed set.
+test('every ci-health JSON fixture is in PROBED_KEYS, and every PROBED_KEYS entry is a fixture', () => {
+  const onDisk = fs.readdirSync(FIX).filter((name) => name.endsWith('.json')).sort();
+  assert.deepStrictEqual(onDisk, Object.keys(PROBED_KEYS).sort());
+});
+
 for (const name of Object.keys(PROBED_KEYS)) {
   test(`${name}: key paths stay inside the probed set and carry the formula fields`, () => {
     const paths = keyPaths(load(name));

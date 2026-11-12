@@ -26,8 +26,9 @@ function enoent() {
   return err;
 }
 
-function pageBody(count) {
-  const workflow_runs = Array.from({ length: count }, (_, i) => ({ id: i + 1 }));
+// Page n's runs carry ids (n - 1) * 100 + 1 onward, so no two pages share an id.
+function pageBody(count, n = 1) {
+  const workflow_runs = Array.from({ length: count }, (_, i) => ({ id: (n - 1) * 100 + i + 1 }));
   return JSON.stringify({ total_count: count, workflow_runs });
 }
 
@@ -42,7 +43,7 @@ function runsRunner(pages) {
     if (entry === undefined) throw new Error('unexpected ' + args.join(' '));
     if (entry instanceof Error) throw entry;
     if (typeof entry === 'string') return entry;
-    return pageBody(entry);
+    return pageBody(entry, n);
   };
   return { runner, calls };
 }
@@ -134,6 +135,31 @@ test('ENOENT on page 1 signals gh absent with no failure row, and stops', () => 
   assert.strictEqual(calls.length, 1);
 });
 
+test('ENOENT on page 2 is a failed page, never gh absent: page 1 kept, the page named, and stops', () => {
+  const { runner, calls } = runsRunner([100, enoent(), 100]);
+  const r = fetchRuns({ owner: 'acme', repo: 'widgets', from: FROM }, { runner });
+  assert.strictEqual(r.available, true);
+  assert.strictEqual(r.ghAbsent, false);
+  assert.strictEqual(r.runs.length, 100);
+  assert.strictEqual(r.pages, 1);
+  assert.deepStrictEqual(r.failures, [{ query: 'runs page 2', status: null, error: 'spawnSync gh ENOENT' }]);
+  assert.strictEqual(calls.length, 2, 'no page 3 call');
+});
+
+test('a run repeated across a page boundary (page drift) is counted once, first occurrence kept', () => {
+  const page1 = Array.from({ length: 100 }, (_, i) => ({ id: i + 1, n: 1 }));
+  const page2 = [{ id: 100, n: 2 }, { id: 101, n: 2 }, { id: 102, n: 2 }];
+  const { runner } = runsRunner([
+    JSON.stringify({ total_count: 102, workflow_runs: page1 }),
+    JSON.stringify({ total_count: 102, workflow_runs: page2 }),
+  ]);
+  const r = fetchRuns({ owner: 'acme', repo: 'widgets', from: FROM }, { runner });
+  assert.strictEqual(r.runs.length, 102);
+  assert.deepStrictEqual(r.runs.filter((run) => run.id === 100), [{ id: 100, n: 1 }]);
+  assert.deepStrictEqual(r.runs.map((run) => run.id), Array.from({ length: 102 }, (_, i) => i + 1));
+  assert.strictEqual(r.pages, 2);
+});
+
 for (const [label, body] of [
   ['an unparseable body', 'not json'],
   ['a non-array workflow_runs', JSON.stringify({ total_count: 1, workflow_runs: { id: 1 } })],
@@ -178,12 +204,18 @@ test('readRepo maps ENOENT to ghAbsent: true with a null status', () => {
   assert.deepStrictEqual({ ok: r.ok, status: r.status, ghAbsent: r.ghAbsent }, { ok: false, status: null, ghAbsent: true });
 });
 
-test('readRepo maps a body without an owner type to ok: false, never ok with an undefined field', () => {
-  const r = readRepo({ owner: 'acme', repo: 'widgets' }, { runner: () => JSON.stringify({ default_branch: 'main', owner: { login: 'acme' } }) });
-  assert.strictEqual(r.ok, false);
-  assert.strictEqual(r.status, null);
-  assert.strictEqual(r.ghAbsent, false);
-});
+for (const [label, body] of [
+  ['an owner type', { default_branch: 'main', owner: { login: 'acme' } }],
+  ['an owner login', { default_branch: 'main', owner: { type: 'Organization' } }],
+  ['a default branch', { owner: { login: 'acme', type: 'Organization' } }],
+]) {
+  test(`readRepo maps a body without ${label} to ok: false, never ok with an undefined field`, () => {
+    const r = readRepo({ owner: 'acme', repo: 'widgets' }, { runner: () => JSON.stringify(body) });
+    assert.strictEqual(r.ok, false);
+    assert.strictEqual(r.status, null);
+    assert.strictEqual(r.ghAbsent, false);
+  });
+}
 
 test('errorText prefers stderr, else the message, trimmed and capped at 300 chars — never stdout', () => {
   assert.strictEqual(errorText(ghError('  HTTP 403: nope \n')), 'HTTP 403: nope');

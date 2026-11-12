@@ -187,10 +187,11 @@ test('the origin path pins nothing and reads origin once; --days sets the window
   assert.equal(env.repo, ORG);
   assert.deepEqual(env.window, { days: 7, from: '2026-11-05' });
   assert.deepEqual(Object.keys(env), ['repo', 'window', 'truncated', 'ghAbsent', 'workflows', 'watchSeconds',
-    'minHeadroomPct', 'billing', 'failures', 'breaches', 'filed']);
+    'minHeadroomPct', 'billing', 'failures', 'breaches', 'filed', 'filingSkipped']);
   assert.equal(env.watchSeconds, 900);
   assert.equal(env.minHeadroomPct, 10);
   assert.equal(env.filed, null);
+  assert.equal(env.filingSkipped, null);
 });
 
 test('AC1.1 render: the AC1 fixture renders its workflow line, over the merge-gate watch', () => {
@@ -309,17 +310,66 @@ test('AC7.1: a failed page 2 is a partial report — exit 0, page 1 workflows, t
   assert.equal(env.truncated, false);
 });
 
-test('a partial runs read never files: page 2 failing with a p90 breach under --file creates nothing', () => {
+test('a failed runs read never files: page 2 failing with a p90 breach under --file creates nothing', () => {
   const json = deps({ routes: orgRoutes(ORG, [fullPage(1000), http(500)]) });
   assert.equal(run(['--file', '--json'], json.d), 0);
   const env = envelope(json.out);
   assert.ok(env.breaches.some((b) => b.kind === 'p90-over-watch'));
-  assert.equal(env.filed.skipped, 'runs read partial');
+  assert.equal(env.filed, null);
+  assert.equal(env.filingSkipped, 'runs read failed');
   assert.deepEqual(json.out.created, []);
   assert.deepEqual(json.out.titles, []);
   const text = deps({ routes: orgRoutes(ORG, [fullPage(1000), http(500)]) });
   assert.equal(run(['--file'], text.d), 0);
-  assert.ok(lines(text.out).includes('not filed: runs read partial'), lines(text.out).join('\n'));
+  assert.ok(lines(text.out).includes('not filed: runs read failed'), lines(text.out).join('\n'));
+  assert.deepEqual(text.out.created, []);
+});
+
+test('a failed page 1 never files: HTTP 500 with a headroom-only breach under --file exits 2 and creates nothing', () => {
+  const json = deps({ routes: orgRoutes(ORG, [http(500)]) });
+  assert.equal(run(['--file', '--json'], json.d), 2);
+  const env = envelope(json.out);
+  assert.deepEqual(env.breaches, [{ kind: 'headroom-below-floor', headroomPct: 5, floor: 10 }]);
+  assert.equal(env.filed, null);
+  assert.equal(env.filingSkipped, 'runs read failed');
+  assert.deepEqual(json.out.created, []);
+  assert.deepEqual(json.out.titles, []);
+  const text = deps({ routes: orgRoutes(ORG, [http(500)]) });
+  assert.equal(run(['--file'], text.d), 2);
+  assert.ok(lines(text.out).includes('not filed: runs read failed'), lines(text.out).join('\n'));
+  assert.deepEqual(text.out.created, []);
+});
+
+test('gh vanishing after page 1 is a failed runs read, never gh absent: --file with a p90 breach files nothing', () => {
+  const enoent = () => Object.assign(new Error('spawnSync gh ENOENT'), { code: 'ENOENT' });
+  // Page 1 answers; every later call (page 2, then billing) finds no gh.
+  const vanishing = () => {
+    const base = deps({ routes: orgRoutes(ORG, [fullPage(1000), fullPage(1000)]) });
+    const answered = base.d.runner;
+    let pageOneRead = false;
+    base.d.runner = (args) => {
+      if (pageOneRead) { base.out.calls.push(args); throw enoent(); }
+      const out = answered(args);
+      if (args.includes('page=1')) pageOneRead = true;
+      return out;
+    };
+    return base;
+  };
+  const json = vanishing();
+  assert.equal(run(['--file', '--json'], json.d), 0);
+  const env = envelope(json.out);
+  assert.equal(env.ghAbsent, false);
+  assert.ok(env.breaches.some((b) => b.kind === 'p90-over-watch'));
+  assert.equal(env.failures[0].query, 'runs page 2');
+  assert.equal(env.filed, null);
+  assert.equal(env.filingSkipped, 'runs read failed');
+  assert.deepEqual(json.out.created, []);
+  const text = vanishing();
+  assert.equal(run(['--file'], text.d), 0);
+  const all = lines(text.out);
+  assert.ok(all.includes('not filed: runs read failed'), all.join('\n'));
+  assert.ok(all.includes('failed read: runs page 2: spawnSync gh ENOENT'), all.join('\n'));
+  assert.ok(!all.some((l) => l.includes('gh absent')), all.join('\n'));
   assert.deepEqual(text.out.created, []);
 });
 
@@ -356,7 +406,8 @@ test('AC7.3: a truncated window renders the truncation line and never files, bre
   const env = envelope(json.out);
   assert.equal(env.truncated, true);
   assert.ok(env.breaches.some((b) => b.kind === 'p90-over-watch'));
-  assert.equal(env.filed.skipped, 'window truncated');
+  assert.equal(env.filed, null);
+  assert.equal(env.filingSkipped, 'window truncated');
   assert.deepEqual(json.out.created, []);
   const text = deps({ routes: orgRoutes(ORG, pages) });
   assert.equal(run(['--file'], text.d), 0);
@@ -424,6 +475,21 @@ test('--file: an open issue with the title skips filing; a failed create is a fa
   assert.equal(run(['--file'], broken.d), 0);
   const all = lines(broken.out);
   assert.ok(all.includes('failed read: file issue: could not add label: \'risk:low\' not found'), all.join('\n'));
+  assert.ok(!all.some((l) => /^(filed|not filed)/.test(l)), all.join('\n'));
+  const brokenJson = deps({ routes: orgRoutes(ORG, [ac1Runs()]), createIssue: () => { throw ghError('HTTP 422'); } });
+  assert.equal(run(['--file', '--json'], brokenJson.d), 0);
+  const env = envelope(brokenJson.out);
+  assert.equal(env.filed, null);
+  assert.equal(env.filingSkipped, null);
+  assert.deepEqual(env.failures, [{ query: 'file issue', error: 'HTTP 422' }]);
+});
+
+test('--json: a filed breach carries filed {title, number} and a null filingSkipped', () => {
+  const { d, out } = deps({ routes: orgRoutes(ORG, [ac1Runs()]) });
+  assert.equal(run(['--file', '--json'], d), 0);
+  const env = envelope(out);
+  assert.deepEqual(env.filed, { title: BREACH_TITLE, number: 42 });
+  assert.equal(env.filingSkipped, null);
 });
 
 test('render keeps one line per workflow: a workflow name carrying a newline is collapsed', () => {

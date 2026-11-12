@@ -35,16 +35,17 @@ function breachesOf({ workflows, billing }, { minHeadroomPct = DEFAULT_MIN_HEADR
   return breaches;
 }
 
-// A workflow's `name` comes from its YAML, which a fork PR controls, so it is neutralized before it
-// reaches the markdown body: whitespace runs (newlines included) collapse to one space, a backtick
-// becomes `'`, and `@` becomes `(at)` so no mention can ping anyone. The repo's own `path` stays as is.
+// A workflow's `name` comes from its YAML and its `path` names its file, and a fork PR can add a
+// workflow file under any name with any YAML, so both are neutralized before it reaches the markdown body: whitespace runs
+// (newlines included) collapse to one space, a backtick becomes `'`, and `@` becomes `(at)` so no
+// mention can ping anyone.
 function neutralName(name) {
   return String(name).replace(/\s+/g, ' ').trim().replace(/`/g, "'").replace(/@/g, '(at)');
 }
 
 function breachLine(breach, watchSeconds) {
   if (breach.kind === 'p90-over-watch') {
-    return `- Workflow \`${neutralName(breach.workflow)}\` (\`${breach.path}\`): whole-window p90 run duration ${breach.p90Seconds} s, above the merge gate's ${watchSeconds} s watch.`;
+    return `- Workflow \`${neutralName(breach.workflow)}\` (\`${neutralName(breach.path)}\`): whole-window p90 run duration ${breach.p90Seconds} s, above the merge gate's ${watchSeconds} s watch.`;
   }
   return `- Actions budget headroom ${breach.headroomPct}%, below the ${breach.floor}% floor.`;
 }
@@ -87,14 +88,14 @@ function composeBreachIssue(breaches, {
   return payload;
 }
 
-// A partial runs half (a page after page 1 failed) covers only part of the window, like a truncated
+// A failed runs read (any page, page 1 included) covers only part of the window, like a truncated
 // one, so neither files.
 function fileBreaches({ breaches, truncated, partial, file }, { openIssueTitles, createIssue }, composeArgs) {
   const outcome = (fields) => ({ filed: null, skipped: null, failure: null, ...fields });
   if (!file) return outcome({ skipped: 'no --file' });
   if (!breaches || breaches.length === 0) return outcome({ skipped: 'no breach' });
   if (truncated) return outcome({ skipped: 'window truncated' });
-  if (partial) return outcome({ skipped: 'runs read partial' });
+  if (partial) return outcome({ skipped: 'runs read failed' });
   let titles;
   try {
     titles = openIssueTitles();
