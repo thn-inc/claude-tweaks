@@ -1752,6 +1752,15 @@ test('a non-zero check exit writes the failed-call line; a failing log leaves th
   const final = lastLine(bad);
   assert.deepEqual([final.status, final.outcome, final.stop.class], ['fail', 'blocked', 'blocked']);
   assert.match(final.stop.detail, /exited 1: x \(failed-call line not logged: log-decision\.js exited 1\)/);
+  // A log-decision.js call that throws (not just exits non-zero) changes nothing either.
+  const thrown = harness({ script: [
+    [on('node', /express-lane\.js$/, 'check'), { code: 1, stdout: '', stderr: 'x\n' }],
+    [(c) => c.kind === 'node' && /log-decision\.js$/.test(c.args[0]) && c.args.includes('Express lane'), new Error('spawn EAGAIN @bob')],
+  ] });
+  await run(['#7'], thrown.deps);
+  const tf = lastLine(thrown);
+  assert.deepEqual([tf.status, tf.outcome, tf.stop.class], ['fail', 'blocked', 'blocked']);
+  assert.match(tf.stop.detail, /^express-lane\.js check exited 1: x \(failed-call line not logged: spawn EAGAIN @​bob\)$/);
 });
 
 test('a signal queued during the last record\'s final synchronous call is delivered before unsubscribe: terminate runs, the final line stays the record\'s own', async () => {
