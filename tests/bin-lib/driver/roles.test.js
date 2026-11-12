@@ -29,13 +29,46 @@ test('AC12: on a sandbox-probed platform the sandbox block is present with these
   assert.deepStrictEqual(implementerSettings({ testCommand: 'node --test', platform: 'darwin' }).sandbox, SANDBOX);
 });
 
-test('AC12: off the sandbox-probed platforms there is no sandbox block and no rule that can execute a file the worker wrote', () => {
+test('AC12: off the sandbox-probed platforms there is no sandbox block, no test-command rule, and every Bash rule is a read-only git command', () => {
   for (const platform of ['linux', 'win32']) {
     const s = implementerSettings({ testCommand: 'node --test', platform });
     assert.deepStrictEqual(Object.keys(s), ['permissions']);
     assert.deepStrictEqual(s.permissions.allow, ALLOW_EDIT_ONLY);
     assert.deepStrictEqual(s.permissions.deny, DENY);
+    for (const r of s.permissions.allow.filter((x) => x.startsWith('Bash('))) assert.match(r, /^Bash\(git (status|diff|log|show|ls-files) \*\)$/);
   }
+});
+
+test('Minor: a testCommand that widens the rule is refused, and the usual runners stay allowed', () => {
+  for (const bad of [' node --test', 'node --test ', 'node  --test', 'bash -c', 'node -e', 'node --eval', 'node -p', 'node --print', 'python -c', 'sh', 'bash', 'zsh', 'node', 'python', 'python3']) {
+    assert.throws(() => implementerSettings({ testCommand: bad, platform: 'darwin' }), /testCommand/, JSON.stringify(bad));
+  }
+  for (const good of ['pytest', 'make', 'node --test', 'npm test --']) {
+    assert.ok(implementerSettings({ testCommand: good, platform: 'darwin' }).permissions.allow.includes('Bash(' + good + ' *)'), good);
+  }
+});
+
+test('Minor: composeArgs refuses a missing settings file or schema', () => {
+  assert.throws(() => composeArgs({ role: 'implementer', schema: RESULT_SCHEMA }), /settingsFile/);
+  assert.throws(() => composeArgs({ role: 'implementer', settingsFile: '', schema: RESULT_SCHEMA }), /settingsFile/);
+  assert.throws(() => composeArgs({ role: 'reviewer' }), /schema/);
+  assert.throws(() => composeArgs({ role: 'reviewer', schema: 'x' }), /schema/);
+});
+
+test('Minor: a given spendCeiling must be a finite number above zero', () => {
+  for (const bad of [0, -1, NaN, Infinity, '2']) {
+    assert.throws(() => composeArgs({ role: 'reviewer', schema: RESULT_SCHEMA, spendCeiling: bad }), RangeError, String(bad));
+  }
+});
+
+test('Minor: the exported tables are frozen, and the builders return fresh objects', () => {
+  for (const v of [ROLES, ROLES.reviewer.tools, RESULT_SCHEMA, RESULT_SCHEMA.properties.status.enum, SANDBOX_PROBED_PLATFORMS]) assert.ok(Object.isFrozen(v));
+  const a = implementerSettings({ testCommand: 'node --test', platform: 'darwin' });
+  const b = implementerSettings({ testCommand: 'node --test', platform: 'darwin' });
+  assert.notStrictEqual(a.permissions.allow, b.permissions.allow);
+  assert.ok(!Object.isFrozen(a.permissions.allow));
+  const args = composeArgs({ role: 'reviewer', schema: RESULT_SCHEMA });
+  assert.ok(!Object.isFrozen(args));
 });
 
 test('Review focus: a testCommand that would corrupt the rule is refused', () => {
