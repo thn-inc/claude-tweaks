@@ -948,8 +948,8 @@ test('F4: issues: write is granted only to the file job; the windows job is cont
 test('F4: the windows job uploads verify-report and the file job downloads it, tolerating a miss', () => {
   const windows = jobBlock('windows');
   const file = jobBlock('file');
-  assert.match(stepContaining(windows, 'upload-artifact@v4'), /name: verify-report/);
-  const dlAt = file.indexOf('download-artifact@v4');
+  assert.match(stepContaining(windows, 'upload-artifact@v7'), /name: verify-report/);
+  const dlAt = file.indexOf('download-artifact@v8');
   const download = file.slice(dlAt, file.indexOf(stepAnchor(file), dlAt));
   assert.ok(dlAt !== -1 && /name: verify-report/.test(download) && /continue-on-error:\s*true/.test(download), 'download step tolerates a missing artifact');
   assert.match(file, /--report "\$RUNNER_TEMP\/verify\/verify-report\.json"/);

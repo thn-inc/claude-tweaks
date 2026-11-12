@@ -114,7 +114,7 @@ test('reconcile-background: a stale (dead-pid) lock is reclaimed; a completed pa
   assert.equal(fs.existsSync(lockFile), false, 'the lock must be released once the pass completes');
 });
 
-// #1687: mirrors tests/bin-lib/reconcile/archive-merged.test.js's own
+// #1687: mirrors tests/bin-lib/reconcile/archive-merged-helpers.js's own
 // fixtureAbandonedShippedRun (an abandoned, stale, shipped 'interrupted' run
 // whose worktree was torn down) — but this test drives the real
 // `reconcile-background` CLI subcommand, not archiveMerged() in-process. The
@@ -132,7 +132,7 @@ function fixtureAbandonedShippedRun({ runId, ownerSessionId } = {}) {
   git(['commit', '-q', '-m', 'init'], root);
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   // `integration-model: pr-first` is load-bearing here beyond what
-  // archive-merged.test.js's own fixture needs: that file calls
+  // archive-merged-helpers.js's own fixture needs: its callers call
   // archiveMerged() directly, bypassing reconcile()'s own
   // resolveIntegrationModel gate entirely, but this test drives the real
   // reconcile-background CLI, which skips every check (including 'archive')
@@ -199,7 +199,7 @@ test('reconcile-background: the same abandoned interrupted run IS archived when 
 
 // The status file's `summary` is built from reconcile()'s result. Drives the
 // real `reconcile-background` branch of main() in-process with reconcile()
-// stubbed (the same module-object stub tests/reconcile.test.js's AC3.1 uses),
+// stubbed (the same module-object stub tests/reconcile-dispatch.test.js's AC3.1 uses),
 // so no git remote or `gh` is involved. process.cwd() is what that branch
 // reads, so the test switches into the fixture repo and back.
 async function backgroundSummaryFor(result) {

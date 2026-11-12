@@ -63,18 +63,46 @@ test('this repo declares its own verify scope and it passes readDeclaration (#19
   assert.ok(r.decl.impact.fetch.includes('tools/test-impact.js fetch'), r.decl.impact.fetch);
 });
 
-// #4347: the full `tests` run is taken from the PR's test.yml `test` job — the
-// same suite that workflow runs (`npm test`) — whenever HEAD is that PR's head.
-test('the tests suite declares test.yml\'s test job as its CI source, and that job runs npm test (#4347)', () => {
+// #4347: the full `tests` run is taken from the PR's test.yml `test` job whenever
+// HEAD is that PR's head. The suite runs in parallel `shard` jobs (`npm test --
+// --shard i/n`), and the `test` job prints their merged log, so that one job's log
+// still carries the whole suite verify.js reads.
+const TEST_WORKFLOW = path.join(REPO_ROOT, '.github', 'workflows', 'test.yml');
+const SHARD_FACTS = {
+  // A job's name is its key unless it sets `name:`, and the ci source matches the name.
+  'a job keyed `test` with no name: override, run after a red shard but not after a cancel':
+    /^ {2}test:\n {4}needs: shard\n {4}if: \$\{\{ !cancelled\(\) \}\}\n {4}runs-on: [^\n]+\n(?: {4}timeout-minutes: \d+\n)? {4}steps:\n/m,
+  'each shard runs npm test on its slice, keeping the exit code through tee': /^ {8}shell: bash\n {8}run: npm test --silent -- --shard \$\{\{ matrix\.shard \}\}\/\$\{\{ strategy\.job-total \}\} \| tee "\$RUNNER_TEMP\/shard-\$\{\{ matrix\.shard \}\}\.tap"\n/m,
+  'shards do not cancel each other': /^ {6}fail-fast: false\n/m,
+  'each shard uploads its log even when red': /^ {6}- uses: actions\/upload-artifact@v\d+\n {8}if: always\(\)\n {8}with:\n {10}name: shard-tap-\$\{\{ matrix\.shard \}\}\n/m,
+  'test prints the merged log': /^ {8}run: node tools\/merge-shard-logs\.js --expect (\d+) "\$RUNNER_TEMP\/shards"\n/m,
+  'test is red when any shard was': /^ {6}- name: Fail when any shard did not succeed\n {8}if: needs\.shard\.result != 'success'\n/m,
+  'pull_request trigger': /^on:\n {2}pull_request:\n/m,
+};
+const missingShardFacts = (text) => Object.keys(SHARD_FACTS).filter((k) => !SHARD_FACTS[k].test(text));
+
+test('the tests suite declares test.yml\'s test job as its CI source, and that job prints the whole sharded npm test run (#4347)', () => {
   const r = readDeclaration(DECL);
   assert.strictEqual(r.ok, true, JSON.stringify(r.errors));
   assert.deepStrictEqual(Object.keys(r.decl.ci), ['tests']);
   assert.strictEqual(r.decl.ci.tests.workflow, 'test.yml');
   assert.strictEqual(r.decl.ci.tests.job, 'test');
-  const workflow = readText(path.join(REPO_ROOT, '.github', 'workflows', 'test.yml'));
-  assert.match(workflow, /^ {2}test:\n/m, 'test.yml must keep a job keyed `test` (its job name, with no name: override)');
-  assert.match(workflow, /^\s+- run: npm test$/m, 'the CI job must run the same suite the declaration names');
-  assert.match(workflow, /^\s+pull_request:/m, 'CI runs only exist for a PR head under pull_request');
+  assert.strictEqual(r.decl.checks.tests.tests, 'npm test', 'the shards run the suite the declaration names');
+  const workflow = readText(TEST_WORKFLOW);
+  assert.deepStrictEqual(missingShardFacts(workflow), []);
+  // The shard count is written twice; a mismatch drops a slice or waits on one that never ran.
+  const matrix = /^ {8}shard: \[([\d, ]+)\]\n/m.exec(workflow);
+  assert.ok(matrix, 'test.yml must list its shards as `shard: [1, 2, ...]`');
+  const shards = matrix[1].split(',').map((s) => Number(s.trim()));
+  assert.deepStrictEqual(shards, shards.map((_, i) => i + 1), 'shards must be numbered 1..n');
+  assert.strictEqual(Number(SHARD_FACTS['test prints the merged log'].exec(workflow)[1]), shards.length,
+    '--expect must equal the number of matrix shards');
+  // Each fact goes red on its own: strip only its match and the predicate names exactly it.
+  for (const [fact, re] of Object.entries(SHARD_FACTS)) {
+    const doctored = workflow.replace(re, '');
+    assert.notStrictEqual(doctored, workflow, fact);
+    assert.deepStrictEqual(missingShardFacts(doctored), [fact]);
+  }
 });
 
 // #4024 expand-contract: the installed plugin build reads this committed file with code that predates
