@@ -542,6 +542,12 @@ const testStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
   const { wt, runDir } = ctx;
   const { policy, ref } = ctx.shared;
   const scopeRel = '.claude-tweaks/verify-scope.json';
+  // lstatType checks only the leaf: a symlinked `.claude-tweaks/` holding a regular file
+  // would read as `file`, so the parent must itself be a directory (or absent).
+  const parent = deps.lstatType(path.join(wt, '.claude-tweaks'));
+  if (parent.type !== 'directory' && parent.type !== 'missing') {
+    return { status: 'stop', detail: `.claude-tweaks is not a directory (${parent.type}), so ${scopeRel} is refused; verify.js was not run` };
+  }
   const state = deps.lstatType(path.join(wt, '.claude-tweaks', 'verify-scope.json'));
   const base = ['--run', runDir, '--default-suite-slots', String(policy['verify-suite-slots'].value)];
   let args;
@@ -562,7 +568,10 @@ const testStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
   if (r.code === null || r.code === undefined) {
     return { status: 'fail', detail: `verify.js did not finish: ${neutralize(firstLine(r.stderr)) || 'no exit code'}` };
   }
-  if (r.code !== 0) return { status: 'stop', detail: 'red tests' };
+  // verify.js: exit 1 is a failed check (red tests); any other non-zero exit (2: usage or
+  // infrastructure error) means the run itself failed, so it is a `fail`, not a gate saying no.
+  if (r.code === 1) return { status: 'stop', detail: 'red tests' };
+  if (r.code !== 0) return { status: 'fail', detail: neutralize(firstLine(r.stderr)) || `verify exited ${r.code}` };
   return { status: 'ok', detail };
 });
 
@@ -589,7 +598,16 @@ const checkStep = defineStep(STEP.check, STOP_CLASSES.PRE_PUSH, async (ctx, deps
     ['check', '--run', ctx.runDir, '--issue', String(n), '--integration-branch', ctx.shared.ref, '--record-json', recordFile],
     { cwd: ctx.wt, timeout: CLI_TIMEOUT_MS, env: deps.env });
   if (r.code !== 0) {
-    return { status: 'fail', stopClass: STOP_CLASSES.BLOCKED, detail: `express-lane.js check exited ${r.code}: ${neutralize(firstLine(r.stderr)) || 'no output'}` };
+    const text = `#${n} express-lane.js check exited ${r.code}: ${neutralize(firstLine(r.stderr)) || 'no output'}`;
+    // express-lane.md's failed-call rule (a): no escalation line landed, so log this one.
+    let note = '';
+    try {
+      const log = logDecisionFile(ctx, deps, 'check-failed.txt', text, 'Express lane', []);
+      if (log.code !== 0) note = ` (failed-call line not logged: log-decision.js exited ${log.code})`;
+    } catch (err) {
+      note = ` (failed-call line not logged: ${neutralize(errorText(err))})`;
+    }
+    return { status: 'fail', stopClass: STOP_CLASSES.BLOCKED, detail: `${text.replace(/^#\d+ /, '')}${note}` };
   }
   let envelope;
   try { envelope = JSON.parse(r.stdout); } catch { envelope = null; }
@@ -661,4 +679,5 @@ const STEPS = Object.freeze([
 
 module.exports = {
   STEPS, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, WIN32_CLAUDE_BIN,
+  VERIFY_TIMEOUT_MS,
 };

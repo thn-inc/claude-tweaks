@@ -308,6 +308,11 @@ async function run(argv, deps) {
   try {
     for (const record of parsed.records) {
       await driveRecord(record, shared, deps);
+      // A signal queued during the record's last synchronous call is delivered only when the
+      // event loop turns; without this turn the unsubscribe below would drop it (exit 0).
+      // A signal queued during the record's last synchronous call is delivered only when the
+      // event loop turns; without this turn the unsubscribe below would drop it (exit 0).
+      await yieldToEventLoop();
       if (shared.fatal) return 1;
       // The process ends by the signal (deps.terminate); this only keeps a slow re-raise
       // from driving another record.

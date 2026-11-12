@@ -13,7 +13,7 @@ const {
 } = require(path.join(LIB, 'driver', 'events'));
 const { run, parseArgs, USAGE, driveRecord, newShared, interruptClass, reraiseAfterFlush } = require(path.join(LIB, 'driver', 'run'));
 const {
-  STEPS, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, WIN32_CLAUDE_BIN,
+  STEPS, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, WIN32_CLAUDE_BIN, VERIFY_TIMEOUT_MS,
 } = require(path.join(LIB, 'driver', 'steps'));
 const { openBlockerRefs } = require(path.join(LIB, 'issues', 'record-dependencies'));
 const { formatTimestamp } = require(path.join(LIB, 'hooks', 'run-dir-resolve'));
@@ -228,8 +228,8 @@ function harness(over = {}) {
   const signals = [];
   const state = { probes: 0, clock: NOW };
   const script = [...(over.script || []), ...defaultScript(over)];
-  function dispatch(kind, args, cwd, env) {
-    const call = { kind, args, cwd, env };
+  function dispatch(kind, args, cwd, env, timeout) {
+    const call = { kind, args, cwd, env, timeout };
     calls.push(call);
     for (const [match, reply] of script) {
       if (!match(call)) continue;
@@ -244,7 +244,7 @@ function harness(over = {}) {
     gh: (args) => dispatch('gh', args),
     ghBatch: (args) => dispatch('ghBatch', args),
     git: (args, opts = {}) => dispatch('git', args, opts.cwd),
-    node: (script_, args, opts = {}) => dispatch('node', [script_, ...args], opts.cwd, opts.env),
+    node: (script_, args, opts = {}) => dispatch('node', [script_, ...args], opts.cwd, opts.env, opts.timeout),
     resolvePolicy: (keys) => dispatch('policy', keys),
     evaluateRecordEligibility: (issue, opts) => dispatch('eligibility', [issue, opts]),
     fetchNativeDependencies: (opts) => dispatch('native-deps', [opts]),
@@ -1697,6 +1697,75 @@ test('check and verify run in the worktree, with deps.env and a generous bound o
   assert.equal(checkCalls(h)[0].cwd, WT);
   assert.equal(verifyCalls(h)[0].env, env);
   assert.equal(checkCalls(h)[0].env, env);
+  assert.equal(verifyCalls(h)[0].timeout, VERIFY_TIMEOUT_MS);
+  assert.ok(VERIFY_TIMEOUT_MS >= 30 * 60 * 1000);
+});
+
+test('verify exit 1 is the red-tests stop; any other non-zero exit is a fail carrying its own words', async () => {
+  const cases = [
+    [1, 'boom\n', 'stop', 'red tests'],
+    [2, '--scope: mode x requires --cmd for: y\nmore\n', 'fail', '--scope: mode x requires --cmd for: y'],
+    [2, '', 'fail', 'verify exited 2'],
+    [137, 'ping @bob closes #4\n', 'fail', neutralize('ping @bob closes #4')],
+  ];
+  for (const [code, stderr, status, detail] of cases) {
+    const h = harness({ script: [[on('node', /verify\.js$/), { code, stdout: '', stderr }]] });
+    await run(['#7'], h.deps);
+    const final = lastLine(h);
+    assert.deepEqual([final.stop.step, final.status, final.stop.class, final.stop.detail], ['test', status, 'pre-push', detail], String(code));
+    assert.equal(checkCalls(h).length, 0);
+  }
+});
+
+test('a symlinked (or non-directory) .claude-tweaks parent refuses the scope file, no test run', async () => {
+  const parent = path.join(WT, '.claude-tweaks');
+  for (const type of ['symlink', 'file', 'other', 'unreadable']) {
+    const h = harness({ script: [[(c) => c.kind === 'lstatType' && c.args[0] === parent, { type, code: null }], scopeIs('file')] });
+    await run(['#7'], h.deps);
+    const final = lastLine(h);
+    assert.deepEqual([final.stop.step, final.status, final.stop.class], ['test', 'stop', 'pre-push'], type);
+    assert.match(final.stop.detail, /\.claude-tweaks\/verify-scope\.json/);
+    assert.equal(verifyCalls(h).length, 0);
+  }
+  for (const type of ['directory', 'missing']) {
+    const h = harness({ script: [[(c) => c.kind === 'lstatType' && c.args[0] === parent, { type, code: null }]] });
+    await run(['#7'], h.deps);
+    assert.equal(verifyCalls(h).length, 1, type);
+  }
+});
+
+test('a non-zero check exit writes the failed-call line; a failing log leaves the outcome blocked and says so', async () => {
+  const h = harness({ script: [[on('node', /express-lane\.js$/, 'check'), { code: 2, stdout: '', stderr: 'usage: closes #5 @bob\nmore\n' }]] });
+  await run(['#7'], h.deps);
+  const file = path.join(runDirOf(h), 'check-failed.txt');
+  assert.equal(h.files[file], `#7 express-lane.js check exited 2: ${neutralize('usage: closes #5 @bob')}\n`);
+  const log = calls(h, 'node', /log-decision\.js$/).find((c) => c.args.includes(file));
+  assert.deepEqual(log.args.slice(1), ['--run', runDirOf(h), '--status', 'AUTO', '--section', '/express-lane', '--step', 'Express lane', '--text-file', file]);
+  assert.equal(log.cwd, MAIN);
+  assert.equal(log.env, h.deps.env);
+  assert.equal(lastLine(h).stop.class, 'blocked');
+  const bad = harness({ script: [
+    [on('node', /express-lane\.js$/, 'check'), { code: 1, stdout: '', stderr: 'x\n' }],
+    [(c) => c.kind === 'node' && /log-decision\.js$/.test(c.args[0]) && c.args.includes('Express lane'), { code: 1, stdout: '', stderr: 'no' }],
+  ] });
+  await run(['#7'], bad.deps);
+  const final = lastLine(bad);
+  assert.deepEqual([final.status, final.outcome, final.stop.class], ['fail', 'blocked', 'blocked']);
+  assert.match(final.stop.detail, /exited 1: x \(failed-call line not logged: log-decision\.js exited 1\)/);
+});
+
+test('a signal queued during the last record\'s final synchronous call is delivered before unsubscribe: terminate runs, the final line stays the record\'s own', async () => {
+  const order = [];
+  let handler = null;
+  const h = harness({
+    deps: { terminate: (sig) => order.push(sig) },
+    script: [[onGit('push'), () => { setImmediate(() => handler('SIGTERM')); return ''; }]],
+  });
+  h.deps.onSignal = (fn) => { handler = fn; return () => { order.push('unsubscribed'); }; };
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.deepEqual(order, ['SIGTERM', 'unsubscribed']);
+  const final = lastLine(h);
+  assert.deepEqual([final.step, final.outcome, final.stop.pushed], [FINAL_STEP, 'pending-review', true]);
 });
 
 test('check runs express-lane.js check with the run, issue, integration ref and a record.json holding the fetched record verbatim', async () => {
