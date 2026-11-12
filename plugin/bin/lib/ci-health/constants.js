@@ -15,6 +15,10 @@ const MERGE_GATE_WATCH_SECONDS = 900;
 const CI_HEALTH_GH_TIMEOUT_MS = 15000;
 
 const RUNS_PER_PAGE = 100;
+// 10 pages of 100 is GitHub's 1,000-result ceiling for one `created`-filtered actions/runs query:
+// past it the API returns no further runs. fetch.js sets `truncated` only when page MAX_RUN_PAGES
+// comes back full, so raising this past the ceiling would read past the end and never report a
+// truncated window.
 const MAX_RUN_PAGES = 10;
 const DEFAULT_DAYS = 30;
 const MAX_DAYS = 400;

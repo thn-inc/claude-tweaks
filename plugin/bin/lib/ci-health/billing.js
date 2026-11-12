@@ -6,7 +6,7 @@
 // and an unparseable body gets a fixed reason (a JSON SyntaxError message can quote body text).
 // The legacy `orgs/{org}/settings/billing/actions` (410) is never called.
 //
-// Routing on Task 3's readRepo result: an unreadable owner type makes no call (gh absence included;
+// Routing on fetch.js's `readRepo` result: an unreadable owner type makes no call (gh absence included;
 // it renders from the runs half's `ghAbsent`); `Organization` reads budgets, then the usage summary,
 // stopping at the first failure; `User` reads the user usage endpoint, whose 200 only proves
 // readability — it exposes no budget, so headroom is always null there. Each read is
@@ -21,8 +21,15 @@
 // An Actions budget is a `budgets[]` entry whose `budget_product_sku` lower-cases to `actions` and
 // whose `budget_scope` is `organization`; SKU-level (`actions_linux`) and repository- or
 // cost-center-scoped budgets are not. Spend is the sum of `netAmount` over `usageItems[]` whose
-// `product` lower-cases to `actions`. A needed field absent or not a finite number gives
-// `headroomPct: null` and a reason naming it, never a guess.
+// `product` lower-cases to `actions`: `netAmount` is the amount after discounts, which is what a
+// budget counts, where `grossAmount` is the amount before them. A needed field absent or not a finite number gives `headroomPct: null` and a reason naming
+// it, never a guess.
+//
+// Budgets are read one page only, unlike the runs: the budgets endpoint answers `has_next_page`,
+// and when it is true the result carries `firstPageOnly: true` (rendered `(first page of budgets
+// only)`) rather than paging on. An Actions budget on a later page is then never seen, so the
+// minimum headroom can be overstated, or `no Actions budget to compare` reported while one exists;
+// the note is what tells the reader so.
 'use strict';
 
 const { CI_HEALTH_GH_TIMEOUT_MS } = require('./constants');

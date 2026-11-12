@@ -17,6 +17,13 @@
 // counted like any other. With no default branch known (`defaultBranch: null`) both superseded
 // figures are null.
 //
+// Push-run coverage: `pushRunRate` is a workflow's distinct `head_sha` values among its `event:
+// push` runs over the distinct push `head_sha` values across every workflow's runs, and
+// `pushesOnNearlyEveryPush` flags it at PUSH_RATE_FLAG or above. Distinct SHAs, not run counts,
+// because the question is how many pushes start this workflow: a re-run or a second run on one
+// SHA is not another push. Below PUSH_SAMPLE_FLOOR distinct push SHAs, or with no push runs of its
+// own, the rate is null and nothing is flagged.
+//
 // The trend label and the push flag compare the same 2-dp rounded value the Workflow reports
 // (`trend.ratio`, `pushRunRate`), so a reported 1.25 is never `flat` and a 0.9 never unflagged.
 //
