@@ -35,7 +35,9 @@
 // `ctx.omit.has(<its id>)` and runs its shared steps regardless (for example `oversized` owns the
 // grouping block that writes dispatch-groups.json and the `blocked` appends, and `target-missing`
 // owns the integration-branch and run-dir resolution). Omitting a setup pass, or naming an
-// unknown reason or id, throws TypeError.
+// unknown reason or id, throws TypeError. Omit is a test-only contract (no shipped caller passes
+// it); because an omitted pass leaves groups the cache blob would then misdescribe, the write-back
+// pass writes nothing (no writeOrder call) whenever the omit set is non-empty.
 //
 // PF6: failOpen is taken across both transports, so a gh-only reader sees `stop` for a pass whose
 // gh fetch fails open (neighbour-in-flight): on `files`, a missing or malformed in-flight or
@@ -199,7 +201,9 @@ const GH = 'gh';
 // before it failed otherwise. `quiet` is `2>/dev/null`.
 function ghRun(ctx, args, { quiet = false } = {}) {
   try {
-    return { ok: true, stdout: String(ctx.deps.run(GH, args, quiet ? { stdio: ['pipe', 'pipe', 'ignore'] } : {})) };
+    const opts = { ...cliOpts(ctx), ...(quiet ? { stdio: ['pipe', 'pipe', 'ignore'] } : {}) };
+    for (const k of Object.keys(opts)) if (opts[k] === undefined) delete opts[k];
+    return { ok: true, stdout: String(ctx.deps.run(GH, args, opts)) };
   } catch (err) {
     return { ok: false, stdout: err && err.stdout != null ? String(err.stdout) : '' };
   }
@@ -218,6 +222,9 @@ function readPolicy(ctx, key) {
   return trimNl(r && r.stdout);
 }
 
+// A fence redirect or echo that fails does not stop the fence (R6): the write is a step.
+const put = (ctx, file, content) => step(ctx, `write ${path.basename(file)}`, () => fs.writeFileSync(file, content));
+
 // alias_mcp_timestamps (fence 61-69): the camelCase keys added in place. D3: a non-array file is
 // silently rewritten as [].
 function aliasFile(ctx, name, file) {
@@ -229,7 +236,19 @@ function aliasFile(ctx, name, file) {
 function fetchDepFreshness(ctx, numbersCsv, file) {
   const search = numbersCsv.split(',').join(' ').replace(/[0-9]+/g, '#$&');
   const r = ghRun(ctx, ['issue', 'list', '--search', search, '--state', 'all', '--json', 'number,updatedAt,state', '--limit', '500'], { quiet: true });
-  fs.writeFileSync(file, r.ok ? r.stdout : '[]');
+  put(ctx, file, r.ok ? r.stdout : '[]');
+}
+
+// The two exclusion-append loops the hit and miss paths share.
+function appendBlocked(file, entries) {
+  for (const e of entries) appendExclusion(file, { reason: 'blocked', records: [e.number], detail: { blockedBy: e.blockedBy } });
+}
+function appendOversized(file, groups, groupSizeGuard, omitted) {
+  const { oversized, threshold } = partitionGroupsBySizeGuard(groups, { groupSizeGuard: parseInt(groupSizeGuard, 10) });
+  if (omitted) return;
+  for (const g of oversized) {
+    appendExclusion(file, { reason: 'oversized', records: g.map((i) => i.number), detail: { size: g.length, threshold } });
+  }
 }
 
 const rootOf = (ctx) => {
@@ -277,7 +296,7 @@ function runFetch(ctx) {
   const f = state.files;
   const onGh = ctx.options.transport !== 'files';
 
-  if (onGh) fs.writeFileSync(f.queueRaw, ghRun(ctx, QUEUE_ARGV).stdout);
+  if (onGh) put(ctx, f.queueRaw, ghRun(ctx, QUEUE_ARGV).stdout);
   aliasFile(ctx, 'alias-queue', f.queueRaw);
   const count = step(ctx, 'queue-count', () => readJson(f.queueRaw).length);
   if (count.ok && count.value >= 500) deps.stderr(`${QUEUE_CAP_WARNING}\n`);
@@ -289,8 +308,8 @@ function runFetch(ctx) {
     const depOnly = (persisted.freshnessSignal.issues || []).filter((i) => !autoBuildNumbers.has(i.number));
     return depOnly.map((i) => i.number).join(',');
   }).value || '';
-  if (onGh) fs.writeFileSync(f.depFreshness, '[]');
-  fs.writeFileSync(paths['dispatch-fastlane-bundles.json'], '[]');
+  if (onGh) put(ctx, f.depFreshness, '[]');
+  put(ctx, paths['dispatch-fastlane-bundles.json'], '[]');
   if (onGh && depNumbers) fetchDepFreshness(ctx, depNumbers, f.depFreshness);
   aliasFile(ctx, 'alias-dep-freshness', f.depFreshness);
 
@@ -311,7 +330,7 @@ function runFetch(ctx) {
   }
   if (state.cacheHit) return;
 
-  if (onGh) fs.writeFileSync(f.openNumbers, ghRun(ctx, OPEN_NUMBERS_ARGV).stdout);
+  if (onGh) put(ctx, f.openNumbers, ghRun(ctx, OPEN_NUMBERS_ARGV).stdout);
   state.workLinks = readPolicy(ctx, 'work-links');
   state.groupSizeGuard = readPolicy(ctx, 'dispatch-group-size-guard');
   state.bundleCap = readPolicy(ctx, 'dispatch-fastlane-bundle-cap');
@@ -328,9 +347,7 @@ function runBlocked(ctx) {
     if (skip) return;
     try {
       // persisted.excluded is the disk cache's own {number, blockedBy}[] shape; convert here (Q28).
-      for (const e of state.persisted.excluded) {
-        appendExclusion(paths['dispatch-exclusions.json'], { reason: 'blocked', records: [e.number], detail: { blockedBy: e.blockedBy } });
-      }
+      appendBlocked(paths['dispatch-exclusions.json'], state.persisted.excluded);
     } catch (err) {
       throw cacheHitStop(ctx, err);
     }
@@ -377,11 +394,11 @@ function runBlocked(ctx) {
     }
     for (const dep of verifiedOpen) openNumbers.add(dep);
     // #4793: a supplied states file (either transport) answers the foreign refs; the rest go to
-    // resolve-foreign-blockers.js, which reaches gh itself.
+    // resolve-foreign-blockers.js through the library's own bounded spawn (tests inject
+    // deps.foreignDeps.spawn).
     const foreign = bodyForeignBlockers(eligiblePreDep, {
       statesFile: state.foreignStates,
       stderr: deps.stderr,
-      spawn: (argv) => deps.spawnCli(path.basename(argv[0]), argv.slice(1), cliOpts(ctx)),
       ...deps.foreignDeps,
     });
     const { eligible, excluded } = partitionByOpenBodyBlockers(eligiblePreDep, openNumbers, foreign);
@@ -389,7 +406,7 @@ function runBlocked(ctx) {
     fs.writeFileSync(paths['dispatch-blocked-excluded-body.json'], JSON.stringify(excluded));
   });
 
-  fs.writeFileSync(paths['dispatch-native-deps.json'], '{}');
+  put(ctx, paths['dispatch-native-deps.json'], '{}');
   if (!skip && state.workLinks === 'native') {
     step(ctx, 'native-deps', () => {
       const nativeNums = readJson(paths['dispatch-eligible.json']).map((i) => i.number).join(',');
@@ -415,12 +432,7 @@ function runOversized(ctx) {
 
   if (state.cacheHit) {
     try {
-      const { oversized, threshold } = partitionGroupsBySizeGuard(state.persisted.groups, { groupSizeGuard: parseInt(state.groupSizeGuard, 10) });
-      if (!omit.has('oversized')) {
-        for (const g of oversized) {
-          appendExclusion(exclusions, { reason: 'oversized', records: g.map((i) => i.number), detail: { size: g.length, threshold } });
-        }
-      }
+      appendOversized(exclusions, state.persisted.groups, state.groupSizeGuard, omit.has('oversized'));
       // #2066: a persisted record from before the field existed has no `bundles`.
       fs.writeFileSync(paths['dispatch-fastlane-bundles.json'], JSON.stringify(state.persisted.bundles || []));
     } catch (err) {
@@ -456,17 +468,10 @@ function runOversized(ctx) {
     fs.writeFileSync(paths['dispatch-fastlane-bundles.json'], JSON.stringify(bundles));
     const excludedBody = readJson(paths['dispatch-blocked-excluded-body.json']);
     if (!omit.has('blocked')) {
-      for (const e of [...excludedBody, ...excludedNative]) {
-        appendExclusion(exclusions, { reason: 'blocked', records: [e.number], detail: { blockedBy: e.blockedBy } });
-      }
+      appendBlocked(exclusions, [...excludedBody, ...excludedNative]);
     }
     // Size guard (#1228): flagged, never removed from the groups.
-    const { oversized, threshold } = partitionGroupsBySizeGuard(groups, { groupSizeGuard: parseInt(state.groupSizeGuard, 10) });
-    if (!omit.has('oversized')) {
-      for (const g of oversized) {
-        appendExclusion(exclusions, { reason: 'oversized', records: g.map((i) => i.number), detail: { size: g.length, threshold } });
-      }
-    }
+    appendOversized(exclusions, groups, state.groupSizeGuard, omit.has('oversized'));
   } catch (err) {
     deps.stderr(`queue-pull: group-building: ${err && err.message}\n`);
     throw new QueuePullStopped('dispatch: queue-pull stopped -- group-building exclusion pass failed (exit 1); see error above.');
@@ -485,10 +490,11 @@ function runWriteBack(ctx) {
     const eligiblePreDep = readJson(paths['dispatch-eligible-pre-dep.json']);
     return [...new Set(eligiblePreDep.flatMap((i) => parseDependencies(i.body)))].join(',');
   }).value || '';
-  if (onGh) fs.writeFileSync(f.depFreshness, '[]');
+  if (onGh) put(ctx, f.depFreshness, '[]');
   if (onGh && allDeps) fetchDepFreshness(ctx, allDeps, f.depFreshness);
   aliasFile(ctx, 'alias-dep-freshness', f.depFreshness);
 
+  if (ctx.omit.size > 0) return; // an omitted pass leaves groups the blob would misdescribe
   step(ctx, 'write-back', () => {
     const root = rootOf(ctx);
     const autoBuild = readJson(f.queueRaw);

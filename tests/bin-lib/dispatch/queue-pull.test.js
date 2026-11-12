@@ -508,6 +508,8 @@ function pull(scenario, o = {}) {
       stderr: (s) => errs.push(s),
       now: () => NOW,
       expressQueuePolicy: EXPRESS_OFF,
+      // Production lets the library spawn resolve-foreign-blockers.js; tests inject through the seam.
+      foreignDeps: { spawn: o.foreignSpawn || ((argv) => spawnCli(path.basename(argv[0]), argv.slice(1))) },
       queueOrder: {
         readOrder: () => store.persisted,
         writeOrder: (root, blob) => { store.written.push({ root, blob }); return o.writeResult || { ok: true }; },
@@ -522,7 +524,7 @@ function pull(scenario, o = {}) {
     try { runPasses(T3_PASSES, ctx); } catch (err) { thrown = err; }
     if (thrown && !o.allowThrow) throw thrown;
     const text = {};
-    for (const name of SESSION_FILES) if (fs.existsSync(paths[name])) text[name] = fs.readFileSync(paths[name], 'utf8');
+    for (const name of SESSION_FILES) if (fs.existsSync(paths[name]) && fs.statSync(paths[name]).isFile()) text[name] = fs.readFileSync(paths[name], 'utf8');
     for (const file of Object.values(ctx.state.files)) if (fs.existsSync(file)) text[file] = fs.readFileSync(file, 'utf8');
     return {
       thrown, cwd, errs, ghCalls, store, state: ctx.state, text, stderr: errs.join(''),
@@ -568,7 +570,8 @@ test('AC2.1 blocked: #9002 (Blocked by open #8000) is excluded and leaves the gr
   assert.deepEqual(groupNumbers(omitted), [[9001], [9002], [9003]], 'the grouping block still ran and kept #9002');
   assert.deepEqual(omitted.json('dispatch-eligible.json').map((c) => c.number), [9001, 9002, 9003], 'the eligible list is still produced');
   assert.deepEqual(omitted.json('dispatch-blocked-excluded-body.json'), []);
-  assert.equal(omitted.store.written.length, 1, 'the write-back still ran');
+  assert.equal(omitted.store.written.length, 0, 'an omit run never persists a blob its groups would misdescribe');
+  assert.equal(pull(S1()).store.written.length, 1, 'a normal run still writes back');
 });
 
 test('AC2.2 oversized: three fast-lane singletons bundle into one group over a guard of 2; omitting the pass keeps the group and bundle, writes no entry', () => {
@@ -667,6 +670,49 @@ test('#5227 foreign blocker: a Blocked by owner/name#N line holds the record whi
   const omitted = pull(foreignScenario(), { spawn: {}, omit: ['blocked'] });
   assert.deepEqual(omitted.cliCalls.filter(([n]) => n === 'resolve-foreign-blockers.js'), [], 'omitting blocked skips the foreign lookup');
   assert.deepEqual(groupNumbers(omitted), [[9001]]);
+});
+
+test('#5227 foreign blocker: a spawn error reaches the Warning as the library prints it; an unreadable states file adds its own fail-closed Warning and the CLI is still asked', () => {
+  const failing = pull(foreignScenario(), { foreignSpawn: () => ({ status: null, signal: null, error: new Error('spawn node ETIMEDOUT'), stdout: '', stderr: '' }) });
+  const w = failing.errs.filter((e) => e.startsWith('Warning:'));
+  assert.equal(w.length, 1, failing.stderr);
+  assert.match(w[0], /^Warning: foreign blocker state lookup failed \(spawn node ETIMEDOUT\) — every body-declared foreign blocker reads state unreadable \(fail closed\)\n$/);
+  assert.deepEqual(entriesOf(failing, 'blocked'), [{ reason: 'blocked', records: [9001], detail: { blockedBy: ['acme-corp/other#12 (state unreadable)'] } }]);
+
+  // Brief deviation, pinned to the library: a set-but-unreadable states file prints its own Warning
+  // and the CLI is asked anyway, so a failing CLI gives two Warnings (one if the CLI answers).
+  const missing = (own) => ({ inputs: { foreignStates: path.join(own, 'no-such-states.json') } });
+  const both = pull(foreignScenario(), { prepare: missing, spawn: { 'resolve-foreign-blockers.js': { status: 1, stdout: '', stderr: 'boom' } } });
+  const bothWarnings = both.errs.filter((e) => e.startsWith('Warning:'));
+  assert.equal(bothWarnings.length, 2, both.stderr);
+  assert.match(bothWarnings[0], /^Warning: foreign blocker states file .*no-such-states\.json ignored \(.*ENOENT.*\) — supplied states not used \(fail closed\)\n$/);
+  assert.match(bothWarnings[1], /^Warning: foreign blocker state lookup failed \(exit 1: boom\)/);
+  assert.deepEqual(entriesOf(both, 'blocked'), [{ reason: 'blocked', records: [9001], detail: { blockedBy: ['acme-corp/other#12 (state unreadable)'] } }]);
+  assert.deepEqual(both.cliCalls.filter(([n]) => n === 'resolve-foreign-blockers.js'), [['resolve-foreign-blockers.js', 'acme-corp/other#12']]);
+
+  const answered = pull(foreignScenario(), { prepare: missing, spawn: foreignStates('OPEN') });
+  assert.equal(answered.errs.filter((e) => e.startsWith('Warning:')).length, 1, answered.stderr);
+  assert.deepEqual(entriesOf(answered, 'blocked'), [{ reason: 'blocked', records: [9001], detail: { blockedBy: ['acme-corp/other#12'] } }]);
+});
+
+test('#5227 R6: a failed session-file write is a step error and the fence goes on (no stop)', () => {
+  const r = pull(S1(), {
+    before: (ctx) => { fs.mkdirSync(ctx.paths['dispatch-fastlane-bundles.json']); }, // a directory: the write fails
+    allowThrow: true,
+  });
+  assert.ok(r.errs.some((e) => /^queue-pull: write dispatch-fastlane-bundles\.json: /.test(e)), r.stderr);
+});
+
+test('#5227 gh calls carry options.cwd and options.env through to the runner', () => {
+  const seen = [];
+  const base = fakeRun(S1());
+  const env = { SOME: 'env' };
+  pull(S1(), { run: (cmd, args, opts) => { seen.push(opts); return base(cmd, args, opts); }, env });
+  assert.ok(seen.length > 0);
+  for (const opts of seen) {
+    assert.equal(opts.env, env);
+    assert.ok(typeof opts.cwd === 'string' && opts.cwd.endsWith('proj'));
+  }
 });
 
 test('#5227 foreign blocker: a supplied states file (inputs.foreignStates, or DISPATCH_FOREIGN_STATES) answers on the gh transport and the CLI is not asked', () => {
