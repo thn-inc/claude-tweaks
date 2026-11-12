@@ -2,3 +2,11 @@
 
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
+| 1 | build | SDD ruling — per-task test runs used the fallback set (driver tests plus the two source scans), not a verify.js impact selection: ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | open | — |
+| 2 | build | SDD ruling — the live smoke test gained a step, a Write under .git/info that must be denied: ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | open | — |
+| 3 | build | SDD ruling — on win32 the reap deadline starts when taskkill is started, not after it returns: ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | open | — |
+| 4 | build | SDD ruling — off macOS the implementer worker has no Bash at all, which narrows the plan-review decision that it reads git: ratify or reverse at the Review Console (staged/sdd-ruling-4.md) | open | — |
+| 5 | build | SDD ruling — the sandbox read block is not turned on, so code a worker runs can read the home directory: ratify or reverse at the Review Console (staged/sdd-ruling-5.md) | open | — |
+| 6 | build | SDD ruling — the last small fix after the re-review was checked centrally instead of getting a second re-review: ratify or reverse at the Review Console (staged/sdd-ruling-6.md) | open | — |
+| 7 | build/ops | Run the live smoke test once from a terminal — `DRIVER_LIVE_SMOKE=1 node --test --test-name-pattern="AC7: live smoke test" tests/bin-lib/driver/worker.test.js` — and add the result to the worker.js header and the record: a terminal-started launch is the one initiator Task 0 names that is not yet recorded (reason-not-auto: no-cli — it needs a person at a terminal; the pipeline has no TTY) | open | — |
+| 8 | build | The run loop that consumes the worker envelope must treat worker-controlled text as untrusted (every string in `result`, `detail` when it carries the worker's own text, and `denials[].tool_input`) and neutralize it before it reaches a commit message, a comment or a log line; it must also forward termination to the detached worker, which does not die with the launching process (final review I3 and M7; stated in the worker.js header) | deferred | Defer-reason: blocked-dependency — the consumer is the run loop, which is not built yet (the next record in the driver chain); to be filed as a backlog record at wrap-up |
