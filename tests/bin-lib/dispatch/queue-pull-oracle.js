@@ -343,27 +343,52 @@ async function runOracle(sandbox, script, { sessionId = `qp-${sandbox.name}` } =
     for (const log of ['gh-argv.jsonl', 'git-argv.jsonl']) fs.writeFileSync(path.join(sandbox.logs, log), '');
 
     const run = await spawnBounded(bash, scriptFile, { cwd: sandbox.proj, env: sandbox.runEnv({ tmpdir, sessionId }) });
-
-    const sessionDir = sessionDirUnder(tmpdir, sessionId);
-    const files = {};
-    for (const name of sessionFileNames()) files[name] = readOrNull(path.join(sessionDir, name));
-    const stagedDir = path.join(sandbox.runDir, 'staged');
-    const staged = {};
-    for (const name of fs.existsSync(stagedDir) ? fs.readdirSync(stagedDir).sort() : []) {
-      staged[name] = fs.readFileSync(path.join(stagedDir, name), 'utf8');
-    }
-    const result = {
-      ...run,
-      files,
-      staged,
-      decisions: readOrNull(path.join(sandbox.runDir, 'decisions.md')),
-      orderBlob: sandbox.orderBlob(),
-      ghArgv: readJsonl(path.join(sandbox.logs, 'gh-argv.jsonl')),
-      gitArgv: readJsonl(path.join(sandbox.logs, 'git-argv.jsonl')),
-    };
+    const result = collectResult(sandbox, run, tmpdir, sessionId);
     Object.defineProperty(result, 'sandbox', { value: sandbox, enumerable: false });
     return result;
   });
+}
+
+// runModuleCli(sandbox, argv, { sessionId }) -> the same result shape as runOracle: spawns
+// `node <this checkout>/plugin/bin/queue-pull.js <argv>` with the sandbox's explicit env (PATH
+// shims, frozen clock, fresh TMPDIR) and cwd, inside the escape guard.
+async function runModuleCli(sandbox, argv, { sessionId = `qp-${sandbox.name}` } = {}) {
+  return withEscapeGuard(REPO, async () => {
+    sandbox.runs += 1;
+    const tmpdir = path.join(sandbox.root, 'tmp', `run-${sandbox.runs}`);
+    fs.mkdirSync(tmpdir, { recursive: true });
+    for (const log of ['gh-argv.jsonl', 'git-argv.jsonl']) fs.writeFileSync(path.join(sandbox.logs, log), '');
+    const r = spawnSync(process.execPath, [path.join(REPO, 'plugin', 'bin', 'queue-pull.js'), ...argv], {
+      cwd: sandbox.proj, env: sandbox.runEnv({ tmpdir, sessionId }), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: ORACLE_TIMEOUT_MS, maxBuffer: STREAM_CAP_BYTES * 16, windowsHide: true,
+    });
+    if (r.error) throw r.error;
+    const result = collectResult(sandbox, { status: r.status === null ? 128 : r.status, stdout: r.stdout, stderr: r.stderr }, tmpdir, sessionId);
+    Object.defineProperty(result, 'sandbox', { value: sandbox, enumerable: false });
+    return result;
+  });
+}
+
+// The files, staged proposals, decisions, order blob and shim logs a run left behind, merged into
+// the run's { status, stdout, stderr }. Shared by the oracle and the module CLI.
+function collectResult(sandbox, run, tmpdir, sessionId) {
+  const sessionDir = sessionDirUnder(tmpdir, sessionId);
+  const files = {};
+  for (const name of sessionFileNames()) files[name] = readOrNull(path.join(sessionDir, name));
+  const stagedDir = path.join(sandbox.runDir, 'staged');
+  const staged = {};
+  for (const name of fs.existsSync(stagedDir) ? fs.readdirSync(stagedDir).sort() : []) {
+    staged[name] = fs.readFileSync(path.join(stagedDir, name), 'utf8');
+  }
+  return {
+    ...run,
+    files,
+    staged,
+    decisions: readOrNull(path.join(sandbox.runDir, 'decisions.md')),
+    orderBlob: sandbox.orderBlob(),
+    ghArgv: readJsonl(path.join(sandbox.logs, 'gh-argv.jsonl')),
+    gitArgv: readJsonl(path.join(sandbox.logs, 'git-argv.jsonl')),
+  };
 }
 
 // The real checkout's HEAD, refs, index and tracked-file status before and after fn; any change
@@ -618,5 +643,5 @@ function shimMain(kind) {
 module.exports = {
   REPO, SCRIPT_MD, FENCE_FIRST_LINE, RUN_DIR_NAME,
   findBash, oracleSkip, extractFence, fenceSessionFiles, sessionFileNames,
-  createSandbox, runOracle, withEscapeGuard, normalize, reported, assertParity, runAll, shimMain,
+  createSandbox, runOracle, runModuleCli, withEscapeGuard, normalize, reported, assertParity, runAll, shimMain,
 };

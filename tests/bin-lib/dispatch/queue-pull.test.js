@@ -24,7 +24,7 @@ const { readText } = require('../../helpers/read-skill');
 const { gitRepo, fixtureGit } = require('../../helpers/git-fixtures');
 const {
   REPO, SCRIPT_MD, FENCE_FIRST_LINE, RUN_DIR_NAME,
-  oracleSkip, extractFence, fenceSessionFiles, createSandbox, runOracle, withEscapeGuard, normalize, reported, assertParity, runAll,
+  oracleSkip, extractFence, fenceSessionFiles, createSandbox, runOracle, runModuleCli, withEscapeGuard, normalize, reported, assertParity, runAll,
 } = require('./queue-pull-oracle');
 const {
   S0, S1, SFast, fakeRun, fakeSpawnCli, ghRecord, withBody, QUEUE_ARGV, DEP_SEARCH_8000, mention, WEAK_PR_FILES,
@@ -2066,4 +2066,206 @@ test('AC6.3 oracle: a missing or malformed dispatch-groups.json fails the fence 
       dropSession(sessionId);
     }
   }
+});
+
+// ---- Task 7: the CLI (AC9, AC7.3/7.4, AC4.6, --rank, AC10) -------------------------------------
+const CLI_PATH = path.join(REPO, 'plugin', 'bin', 'queue-pull.js');
+const cli = require('../../../plugin/bin/queue-pull');
+const { STUB_SKIP } = require('../../helpers/path-stub');
+
+// run() over captured streams. A deps member that is not given stays real, so a test passes
+// everything the invocation under test may touch.
+function cliRun(argv, deps = {}) {
+  const out = []; const err = [];
+  const code = cli.run(argv, { stdout: (s) => out.push(s), stderr: (s) => err.push(s), ...deps });
+  return { code, stdout: out.join(''), stderr: err.join('') };
+}
+// deps whose every dependency member throws when read: proves a path touched nothing.
+function touchNothing(out, err) {
+  const boom = (name) => { throw new Error(`deps.${name} was touched`); };
+  return {
+    stdout: (s) => out.push(s),
+    stderr: (s) => err.push(s),
+    get ghAvailable() { return boom('ghAvailable'); },
+    get queuePull() { return boom('queuePull'); },
+    get rankFromFiles() { return boom('rankFromFiles'); },
+    get env() { return boom('env'); },
+    get cwd() { return boom('cwd'); },
+  };
+}
+
+test('AC9.1: --help and -h exit 0 and print USAGE before any probe, and win over every other flag', () => {
+  for (const argv of [['--help'], ['-h'], ['--transport', 'gh', '--help'], ['--rank', '-h'], ['--bogus', '--help']]) {
+    const out = []; const err = [];
+    const code = cli.run(argv, touchNothing(out, err));
+    assert.equal(code, 0, argv.join(' '));
+    assert.equal(out.join(''), cli.USAGE);
+    assert.deepEqual(err, []);
+  }
+});
+
+test('AC9.2: a malformed invocation exits 1, prints USAGE on stderr, and touches no dependency', () => {
+  const cases = [
+    ['--bogus'], ['stray'], ['--transport'], ['--transport', ''], ['--transport', '   '], ['--transport', 'sideways'],
+    ['--transport', '--rank'], ['--rank', '--priority'], ['--rank', '--priority', ''], ['--rank', '--priority', 'urgent'],
+    ['--transport', 'gh', '--queue-raw', 'x'], ['--transport', 'files', '--queue-raw'], ['--transport', 'files', '--queue-raw', '-x'],
+    ['--transport', 'files', '--foreign-states', ''], ['--rank', '--transport', 'files'], ['--rank', '--queue-raw', 'x'],
+    ['--transport', 'files', '--priority', 'high'], [],
+  ];
+  for (const argv of cases) {
+    const out = []; const err = [];
+    const code = cli.run(argv, touchNothing(out, err));
+    assert.equal(code, 1, JSON.stringify(argv));
+    assert.ok(err.join('').endsWith(cli.USAGE), `usage printed for ${JSON.stringify(argv)}`);
+    assert.deepEqual(out, []);
+  }
+});
+
+test('AC9.2: a well-formed invocation is not mistaken for a malformed one (control)', () => {
+  assert.deepEqual(cli.parseArgs(['--transport', 'files', '--queue-raw', 'q.json', '--foreign-states', 'f.json']),
+    { mode: 'pull', transport: 'files', priority: null, inputs: { queueRaw: 'q.json', foreignStates: 'f.json' } });
+  assert.deepEqual(cli.parseArgs(['--rank', '--priority', 'low']), { mode: 'rank', transport: null, priority: 'low', inputs: {} });
+  assert.deepEqual(cli.parseArgs(['--transport', 'gh']), { mode: 'pull', transport: 'gh', priority: null, inputs: {} });
+  assert.ok(cli.parseArgs(['constructor']).error, 'an inherited key is not a flag');
+});
+
+test('AC9.3: the header comment and USAGE each state exit codes 0, 1, 2, 3 and 4', () => {
+  const source = readText(CLI_PATH);
+  const header = source.split('\n').filter((l) => l.startsWith('//')).join('\n');
+  for (const n of [0, 1, 2, 3, 4]) {
+    assert.match(header, new RegExp(`^//\\s+${n}\\s{2}\\S`, 'm'), `header states exit ${n}`);
+    assert.match(cli.USAGE, new RegExp(`^\\s+${n}\\s{2}\\S`, 'm'), `USAGE states exit ${n}`);
+  }
+  assert.deepEqual(cli.EXIT, { OK: 0, USAGE: 1, MISSING_DEPENDENCY: 2, REMOTE_FAILED: 3, STOPPED: 4 });
+  assert.match(header, /Reopen\s+\/\/ when the cutover has landed/, "R4's decision comment names its reopen condition");
+  assert.match(header, /Departure \(R5\)/);
+});
+
+test('AC7.3: --transport gh with gh absent exits 2, names --transport files, and never falls back', () => {
+  const calls = [];
+  const r = cliRun(['--transport', 'gh'], {
+    env: { CLAUDE_CODE_SESSION_ID: 's' }, cwd: os.tmpdir(), ghAvailable: () => false, queuePull: (o) => { calls.push(o); return {}; },
+  });
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /--transport files/);
+  assert.equal(r.stdout, '');
+  // A probe that throws is the same missing dependency, not an uncaught crash.
+  const thrown = cliRun(['--transport', 'gh'], {
+    env: {}, cwd: os.tmpdir(), ghAvailable: () => { throw new Error('spawn failed'); }, queuePull: (o) => { calls.push(o); return {}; },
+  });
+  assert.equal(thrown.code, 2);
+  assert.match(thrown.stderr, /--transport files/);
+  assert.deepEqual(calls, []);
+});
+
+test('AC7.4: --transport gh with gh absent never calls queuePull; with gh present it calls it once with the gh transport', () => {
+  let pulls = 0;
+  cliRun(['--transport', 'gh'], { env: {}, cwd: os.tmpdir(), ghAvailable: () => false, queuePull: () => { pulls += 1; } });
+  assert.equal(pulls, 0);
+  const seen = [];
+  const r = cliRun(['--transport', 'gh'], {
+    env: { CLAUDE_CODE_SESSION_ID: 'sess-1' }, cwd: '/work', ghAvailable: () => true, queuePull: (o) => { seen.push(o); return {}; },
+  });
+  assert.equal(r.code, 0);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].transport, 'gh');
+  assert.equal(seen[0].sessionId, 'sess-1');
+  assert.equal(seen[0].cwd, '/work');
+  assert.deepEqual(seen[0].inputs, {});
+});
+
+test('AC7.1: --transport files never probes gh and forwards the input paths resolved against the cwd', () => {
+  const seen = [];
+  let probed = 0;
+  const dir = path.join(os.tmpdir(), 'qp-cwd');
+  const r = cliRun(['--transport', 'files', '--queue-raw', 'q.json', '--foreign-states', path.join(dir, 'abs.json')], {
+    env: {}, cwd: dir, ghAvailable: () => { probed += 1; return true; }, queuePull: (o) => { seen.push(o); return {}; },
+  });
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(probed, 0, 'gh was never probed');
+  assert.equal(seen[0].transport, 'files');
+  assert.deepEqual(seen[0].inputs, { queueRaw: path.join(dir, 'q.json'), foreignStates: path.join(dir, 'abs.json') });
+});
+
+test('QueuePullStopped prints its stop line and exits 4; any other throw exits 4 prefixed "queue-pull: "', () => {
+  const line = 'dispatch: queue-pull stopped -- group-building exclusion pass failed (exit 1); see error above.';
+  const stopped = cliRun(['--transport', 'files'], { env: {}, cwd: os.tmpdir(), queuePull: () => { throw new QueuePullStopped(line); } });
+  assert.equal(stopped.code, 4);
+  assert.equal(stopped.stderr, `${line}\n`);
+  const internal = cliRun(['--transport', 'files'], { env: {}, cwd: os.tmpdir(), queuePull: () => { throw new TypeError('boom'); } });
+  assert.equal(internal.code, 4);
+  assert.equal(internal.stderr, 'queue-pull: boom\n');
+  const ranking = cliRun(['--rank'], { env: {}, rankFromFiles: () => { throw new Error('ENOENT groups'); } });
+  assert.equal(ranking.code, 4);
+  assert.equal(ranking.stderr, 'queue-pull: ENOENT groups\n');
+});
+
+test('AC4.6: a corrupt dispatch-exclusions.json makes the CLI exit 4 with the stop line; no pass after the stop runs; the file is unchanged', () => {
+  const scenario = S1();
+  scenario.linked = { 9001: { openPR: 70 } };
+  scenario.gh = scenario.gh.map((e) => (e.argv && e.argv.join() === DEP_SEARCH_8000.join() ? { ...e, effect: 'corrupt-exclusions' } : e));
+  let cliResult = null;
+  // pull4 builds the fake-deps context; the CLI's queuePull runs the real passes over it, so the
+  // QueuePullStopped travels the CLI's real catch.
+  const r = pull4(scenario, {
+    passes: PASSES,
+    lib: {
+      makeContext,
+      runPasses: (passes, ctx) => {
+        cliResult = cliRun(['--transport', 'files'], {
+          env: {}, cwd: ctx.options.cwd, queuePull: () => runPasses(passes, ctx),
+        });
+      },
+    },
+  });
+  assert.equal(r.thrown, null, 'the CLI caught the stop');
+  assert.equal(cliResult.code, 4);
+  assert.ok(cliResult.stderr.startsWith(OPEN_STOP), cliResult.stderr);
+  assert.match(cliResult.stderr, /appendExclusion: .* is unreadable/);
+  assert.deepEqual(r.cap.order, ['truncate', 'fetch', 'blocked', 'oversized', 'write-back', 'not-spec-shaped', 'open-pr'], 'no pass after open-pr ran');
+  assert.equal(r.text['dispatch-exclusions.json'], '{corrupt', 'the file keeps its bytes');
+});
+
+test('#5227 --rank writes dispatch-next-pick.json and exits 0 (and --priority reaches the ranking)', () => withSession((paths, sessionId) => {
+  fs.writeFileSync(paths['dispatch-groups.json'], JSON.stringify([HIGH_OLD, MED, LOW]));
+  const env = { CLAUDE_CODE_SESSION_ID: sessionId };
+  const plain = cliRun(['--rank'], { env });
+  assert.equal(plain.code, 0, plain.stderr);
+  assert.equal(fs.readFileSync(paths['dispatch-next-pick.json'], 'utf8'), JSON.stringify(HIGH_OLD) + '\n');
+  assert.equal(plain.stdout, JSON.stringify(HIGH_OLD) + '\n');
+  const low = cliRun(['--rank', '--priority', 'low'], { env });
+  assert.equal(low.code, 0, low.stderr);
+  assert.equal(fs.readFileSync(paths['dispatch-next-pick.json'], 'utf8'), JSON.stringify(LOW) + '\n');
+  fs.rmSync(paths['dispatch-groups.json']);
+  const missing = cliRun(['--rank'], { env });
+  assert.equal(missing.code, 4);
+  assert.match(missing.stderr, /^queue-pull: /);
+  assert.equal(fs.readFileSync(paths['dispatch-next-pick.json'], 'utf8'), '', 'the stale pick was truncated, not left behind');
+}));
+
+test('#5227 CLI process: the real binary runs --help, rejects a bad flag and pulls a one-record queue under the sandbox shims', { skip: STUB_SKIP }, async () => {
+  const sandbox = createSandbox(S0());
+  try {
+    const help = await runModuleCli(sandbox, ['--help']);
+    assert.equal(help.status, 0, help.stderr);
+    assert.equal(help.stdout, cli.USAGE);
+    const bad = await runModuleCli(sandbox, ['--bogus']);
+    assert.equal(bad.status, 1);
+    assert.ok(bad.stderr.endsWith(cli.USAGE));
+    const pull = await runModuleCli(sandbox, ['--transport', 'gh']);
+    assert.equal(pull.status, 0, pull.stderr);
+    assert.deepEqual(JSON.parse(pull.files['dispatch-groups.json']).flat().map((c) => c.number), [9001]);
+    assert.deepEqual(JSON.parse(pull.files['dispatch-exclusions.json']), []);
+    assert.deepEqual(pull.ghArgv.filter((a) => a.tag === 'UNHANDLED'), []);
+  } finally {
+    sandbox.cleanup();
+  }
+});
+
+test('AC10.1: docs/plugin-structure.md names queue-pull.js in the command reference and the plugin/bin/lib/dispatch/ entry', () => {
+  const lines = readText(path.join(REPO, 'docs', 'plugin-structure.md')).split('\n');
+  assert.ok(lines.some((l) => l.startsWith('node plugin/bin/queue-pull.js')), 'a command-reference line');
+  const entry = lines.find((l) => l.startsWith('plugin/bin/lib/dispatch/'));
+  assert.ok(entry, 'the module entry exists');
+  assert.ok(entry.includes('queue-pull.js'), 'the module entry names queue-pull.js');
 });
