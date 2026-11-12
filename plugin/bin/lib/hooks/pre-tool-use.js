@@ -44,6 +44,7 @@ const { hasClaimLogFor } = require('../log-decision/claim-log');
 const { readWorkBackend } = require('../work-backend');
 // Every realpath resolution in this file goes through canonicalRealpath (#3682); lexical containment checks (isPipelineBookkeeping) resolve nothing.
 const { resolveLeaf, canonicalRealpath, lstatType } = require('../path-guard');
+const { checkDispatchPromptGate } = require('./dispatch-prompt-gate');
 
 // #4149, #4303: the options the worktree-required, E1 and teardown walks pass the shell scanner. A
 // walk that carries more distinct cwds than its cap (brace groups and substitution tails whose scope
@@ -2405,6 +2406,8 @@ function checkDispatchConfigGate(ctx, commandGitTargets, deps = {}) {
 function runInner(ctx, indeterminateTargets, warnings, deps) {
   // #3712: no other gate applies to AskUserQuestion.
   if (ctx.input && ctx.input.tool_name === 'AskUserQuestion') return checkReviewConsoleAskGate(ctx, deps);
+  // #4589: no other gate applies to Agent/Task.
+  if (ctx.input && (ctx.input.tool_name === 'Agent' || ctx.input.tool_name === 'Task')) return checkDispatchPromptGate(ctx, deps, denyResult);
 
   const teardown = checkTeardownGate(ctx, warnings, deps);
   if (teardown.json) return teardown;
