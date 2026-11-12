@@ -20,10 +20,12 @@
 // unwritable or a stale part not removable); 2 malformed invocation (an invalid --next-steps, no --out and no session id, a
 // resume combined with a second call/--headless/several issues/an ineligible verdict) or a --run
 // that is missing or refused. On exit 1/2 nothing is written to --out or its parts and nothing is
-// appended to the registry, except one case: a registry append that fails after the writes is
-// exit 1 (the prompt was never recorded, so the gate would deny it). Once the registry line is
+// appended to the registry, except two cases, both exit 1 after --out and its parts were written
+// and with nothing appended (the prompt was never recorded, so the gate would deny it): a stale
+// part that cannot be removed, and a registry append that fails. Once the registry line is
 // appended the prompt is recorded, so a throwing stdout write is reported on stderr and the exit stays 0.
-// --help short-circuits before the rest of argv is validated.
+// --help (or -h) in a flag position short-circuits before the rest of argv is validated; as the
+// value of a value flag (`--out -h`) it is that value.
 // --run guard is shape 4 of the cli-wrapper contract, as in compose-context.js: bin/lib/run-dir-guard.js's
 // anchored-or-outside rule — a path outside any checkout is accepted, a worktree-local shadow is refused.
 // A non-zero exit is never followed by hand substitution (two-call-gate.md section 2): the caller reports it.
@@ -51,12 +53,21 @@ const VALUE_FLAGS = Object.freeze({
   '--call': 'call', '--run': 'run', '--issues': 'issues', '--out': 'out', '--next-steps': 'nextSteps',
   '--resume-verdict': 'resumeVerdict', '--selected-at': 'selectedAt',
 });
-const BOOL_FLAGS = Object.freeze({ '--headless': 'headless', '--help': 'help', '-h': 'help' });
+const BOOL_FLAGS = Object.freeze({ '--headless': 'headless' });
+
+// --help/-h in a flag position: an element that is not the value of a preceding value flag.
+function wantsHelp(argv) {
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--help' || argv[i] === '-h') return true;
+    if (Object.hasOwn(VALUE_FLAGS, argv[i])) i++;
+  }
+  return false;
+}
 
 function parseArgs(argv) {
   const o = {
     call: null, run: null, issues: null, out: null, nextSteps: null, resumeVerdict: null,
-    selectedAt: null, headless: false, help: false,
+    selectedAt: null, headless: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -124,9 +135,9 @@ const realDeps = {
 
 function run(argv, deps = {}) {
   const d = { ...realDeps, ...deps };
-  const fail = (code, message) => { d.stderr(`dispatch-prompt.js: ${String(message).replace(/^dispatch-prompt: /, '')}\n`); return code; };
+  const fail = (code, message) => { d.stderr(`dispatch-prompt.js: ${message}\n`); return code; };
   const usageError = (message) => { d.stderr(`dispatch-prompt.js: ${message}\n${USAGE}`); return 2; };
-  if (argv.some((a) => a === '--help' || a === '-h')) { d.stdout(USAGE); return 0; }
+  if (wantsHelp(argv)) { d.stdout(USAGE); return 0; }
   const o = parseArgs(argv);
   if (o.error) return usageError(o.error);
   if (o.call !== 'first' && o.call !== 'second') return usageError('--call first|second is required');
@@ -199,7 +210,7 @@ function run(argv, deps = {}) {
   } catch (err) { return fail(1, err && err.message); }
 
   const size = promptSize(prompt);
-  if (!size.ok) return fail(1, `dispatch-prompt: rendered prompt is ${size.bytes} bytes, over the ${MAX_PROMPT_BYTES}-byte sanity bound (#4589)`);
+  if (!size.ok) return fail(1, `rendered prompt is ${size.bytes} bytes, over the ${MAX_PROMPT_BYTES}-byte sanity bound (#4589)`);
   let chunks;
   try { chunks = chunkPrompt(prompt); } catch (err) { return fail(1, err && err.message); }
 

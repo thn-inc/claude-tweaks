@@ -228,6 +228,7 @@ test('a failing resolver or unreadable template exits 1 and writes nothing', () 
   assert.strictEqual(run(['--call', 'first', ...base(runDir)], deps), 1);
   assert.ok(log.err.includes(path.join(runDir, 'p.md')));
   assert.deepStrictEqual(log.appends, []);
+  assert.strictEqual(log.out, '');
 });
 
 test('the real resolveProfile\'s failure shape exits 1', () => {
@@ -272,6 +273,8 @@ test('a stale part that cannot be removed exits 1 before the registry append', (
   const { deps, log } = harness({ removeFile: () => { throw new Error('busy'); } });
   assert.strictEqual(run(['--call', 'first', ...base(runDir)], deps), 1);
   assert.deepStrictEqual(log.appends, []);
+  assert.strictEqual(log.out, '');
+  assert.ok(log.err.startsWith('dispatch-prompt.js: cannot remove a stale part of'), log.err);
 });
 
 test('resolvePolicyValues parsing counts lines after the trailing newline', () => {
@@ -296,16 +299,31 @@ test('the size and chunk errors carry one prefix, and deps.env reaches selectedA
   const h = harness({ readFile: (p) => (p === TEMPLATE ? big : readText(p)) });
   assert.strictEqual(run(['--call', 'first', ...base(runDir)], h.deps), 1);
   assert.ok(h.log.err.startsWith('dispatch-prompt.js: rendered prompt is'));
-  const seen = [];
-  const h2 = harness({ env: { CLAUDE_CODE_SESSION_ID: 'sid' }, selectedAt: (e) => { seen.push(e); return 'unknown'; }, defaultOut: (a, b, e) => { seen.push(e); return '/s/x.md'; } });
+  const seen = {};
+  const h2 = harness({ env: { CLAUDE_CODE_SESSION_ID: 'sid' }, selectedAt: (e) => { seen.selectedAt = e; return 'unknown'; }, defaultOut: (a, b, e) => { seen.defaultOut = e; return '/s/x.md'; } });
   assert.strictEqual(run(['--call', 'first', '--run', runDir, '--issues', '4589'], h2.deps), 0);
-  assert.deepStrictEqual(seen, [{ CLAUDE_CODE_SESSION_ID: 'sid' }, { CLAUDE_CODE_SESSION_ID: 'sid' }].reverse());
+  assert.deepStrictEqual(seen, { selectedAt: { CLAUDE_CODE_SESSION_ID: 'sid' }, defaultOut: { CLAUDE_CODE_SESSION_ID: 'sid' } });
 });
 
 test('--help short-circuits before the rest of argv is validated', () => {
-  const { deps, log } = harness();
-  assert.strictEqual(run(['--help', '--bogus'], deps), 0);
-  assert.ok(log.out.startsWith('usage: dispatch-prompt.js'));
+  for (const argv of [['--help', '--bogus'], ['--bogus', '-h'], ['--call', 'first', '--help']]) {
+    const { deps, log } = harness();
+    assert.strictEqual(run(argv, deps), 0, argv.join(' '));
+    assert.ok(log.out.startsWith('usage: dispatch-prompt.js'), argv.join(' '));
+  }
+});
+
+test('-h or --help as the value of a value flag is that value, not a help request', () => {
+  const runDir = mkRun();
+  const { deps, log } = harness({ cwd: () => runDir });
+  assert.strictEqual(run(['--call', 'first', '--run', runDir, '--issues', '4589', '--out', '-h'], deps), 0, log.err);
+  assert.ok(written(log, path.join(runDir, '-h')));
+  assert.strictEqual(envelope(log).out, path.join(runDir, '-h'));
+  assert.ok(!log.out.includes('usage:'));
+  const h2 = harness();
+  assert.strictEqual(run(['--call', 'first', '--run', runDir, '--issues', '4589', '--out', '--help'], h2.deps), 2);
+  assert.ok(h2.log.err.includes('--out needs a value'), h2.log.err);
+  assertNothingWritten(h2.log);
 });
 
 test('AC1.1: a multi-chunk prompt is written as parts that rejoin to the registry digest', () => {
@@ -351,7 +369,7 @@ test('an unsplittable prompt exits 1 and writes nothing', () => {
   assert.ok(promptSize(long).ok);
   const { deps, log } = harness({ readFile: (p) => (p === TEMPLATE ? long : readText(p)) });
   assert.strictEqual(run(['--call', 'second', ...base(runDir)], deps), 1);
-  assert.ok(log.err.includes('no chunk split'));
+  assert.ok(log.err.startsWith('dispatch-prompt.js: no chunk split'), log.err);
   assertNothingWritten(log);
 });
 

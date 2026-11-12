@@ -134,6 +134,42 @@ test('renders a $& path literally', () => {
   assert.ok(render({ runDir }).includes(runDir));
 });
 
+test('renders a $& resume prUrl literally on both invocation lines', () => {
+  const prUrl = 'https://github.com/o/r/pull/9?x=$&y=$1';
+  const out = render({ resume: { ...VERDICT, prUrl } });
+  assert.strictEqual(out.split(`" RESUME_PR="${prUrl}" /claude-tweaks:flow`).length - 1, 2);
+});
+
+test('a value carrying a dispatcher placeholder token is refused, never rewritten', () => {
+  const cases = [
+    ['runDir', { runDir: '/tmp/{ISO}/.claude-tweaks/pipelines/r1' }, '{ISO}'],
+    ['runDir', { runDir: '/tmp/x/.claude-tweaks/pipelines/{run-id}' }, '{run-id}'],
+    ['pluginRoot', { pluginRoot: '/p/{policy-values}' }, '{policy-values}'],
+    ['policyValues', { policyValues: 'autonomy={minted-run-dir}' }, '{minted-run-dir}'],
+    ['selectedAt', { selectedAt: '{plugin-root}' }, '{plugin-root}'],
+    ['stepToken', { stepToken: 'test{ISO}' }, '{ISO}'],
+    ['resume.prUrl', { resume: { ...VERDICT, prUrl: 'https://x/{ISO}' } }, '{ISO}'],
+  ];
+  for (const [name, o, tok] of cases) {
+    assert.throws(() => render(o), (err) => err.message === `${name} contains the placeholder token ${tok}`, name);
+  }
+  // A value with a non-dispatcher brace token (agent-facing) still renders.
+  assert.ok(render({ runDir: '/tmp/{n}/.claude-tweaks/pipelines/r1' }).includes('/tmp/{n}/.claude-tweaks/pipelines/r1'));
+});
+
+test('issues must be positive integers', () => {
+  for (const issues of [[0], [-3], [1.5], ['12'], [NaN], [4589, null]]) {
+    assert.throws(() => render({ issues }), /issues must be positive integers/, JSON.stringify(issues));
+  }
+  assert.ok(render({ issues: [1] }).includes('#1'));
+});
+
+test('a missing or empty runDir fails with a clear error', () => {
+  for (const runDir of [undefined, null, '', 42]) {
+    assert.throws(() => render({ runDir }), (err) => !(err instanceof TypeError) && err.message === 'runDir must be a non-empty string', String(runDir));
+  }
+});
+
 test('AC4.1: an unsubstituted placeholder fails the render', () => {
   assert.throws(() => render({ selectedAt: undefined }), /unsubstituted.*\{ISO\}/);
   assert.deepStrictEqual(findUnsubstituted('x {minted-run-dir} y'), ['{minted-run-dir}']);
@@ -173,6 +209,16 @@ test('marker and digest', () => {
   assert.deepStrictEqual([m[1], m[2]], [RUN_ID, 'first']);
   assert.strictEqual(markerLine('r1', 'second'), '[dispatch-prompt: r1 second]');
   assert.strictEqual(REGISTRY_FILE, 'dispatch-prompts.jsonl');
+});
+
+test('MARKER_RE matches the marker only as the first line', () => {
+  const marker = markerLine(RUN_ID, 'first');
+  assert.ok(MARKER_RE.exec(`${marker}\n\nbody`));
+  assert.ok(MARKER_RE.exec(marker));
+  assert.strictEqual(MARKER_RE.exec(`Review this prompt:\n${marker}\n\nbody`), null);
+  assert.strictEqual(MARKER_RE.exec(`\n${marker}\nbody`), null);
+  assert.strictEqual(MARKER_RE.exec(`${marker} trailing\nbody`), null);
+  assert.strictEqual(MARKER_RE.exec(` ${marker}\nbody`), null);
 });
 
 test('digest hashes the exact bytes', () => {
@@ -234,15 +280,15 @@ test('chunkPrompt never cuts beside whitespace', () => {
   const chunks = chunkPrompt(fixture);
   assert.strictEqual(chunks.join('\n'), fixture);
   for (const c of chunks) assert.strictEqual(c, c.trim());
-  // go-red control: a splitter that cuts at any newline produces a chunk that fails the trim check
-  const naive = [];
-  let cur = '';
-  for (const l of lines) {
-    const next = cur ? cur + '\n' + l : l;
-    if (fitsChunk(next)) cur = next; else { naive.push(cur); cur = l; }
-  }
-  naive.push(cur);
-  assert.ok(naive.some((c) => c !== c.trim()));
+});
+
+test("chunkPrompt cuts where its own rule allows, not at the last newline that fits", () => {
+  // L1..L3 fit one chunk (18,002 B) and L4 would overflow it, so a greedy cut lands after L3 —
+  // but L4 starts with a space, and the L2/L3 newline sits after L2's trailing space. The only
+  // legal cut in reach is after L1; the rest (18,103 B) fits one chunk.
+  const L = ['a'.repeat(6000), `${'b'.repeat(5999)} `, 'c'.repeat(6000), ` ${'d'.repeat(5999)}`, 'e'.repeat(100)];
+  const fixture = L.join('\n');
+  assert.deepStrictEqual(chunkPrompt(fixture), [L[0], L.slice(1).join('\n')]);
 });
 
 test('promptSize and fitsChunk count UTF-8 bytes', () => {

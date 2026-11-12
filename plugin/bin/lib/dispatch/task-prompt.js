@@ -8,9 +8,16 @@
 //
 // Output shape: a marker line (`[dispatch-prompt: {run-id} {call}]`), the filled template with the
 // Context pack inlined at `{context-pack}`, an optional resume line, an optional effort line, no
-// trailing whitespace. MARKER_RE, promptDigest and REGISTRY_FILE are shared with
-// bin/lib/hooks/dispatch-prompt-gate.js, which matches a dispatched prompt against the registry the
-// CLI writes (digest = sha256 of the exact UTF-8 bytes, no normalization).
+// trailing whitespace. MARKER_RE matches the marker only as the prompt's first line, where the CLI
+// writes it: a rendered prompt quoted inside another prompt carries no marker. MARKER_RE,
+// promptDigest and REGISTRY_FILE are shared with bin/lib/hooks/dispatch-prompt-gate.js, which
+// matches a dispatched prompt against the registry the CLI writes (digest = sha256 of the exact
+// UTF-8 bytes, no normalization).
+//
+// Values are checked before any substitution: the issues are positive integers, runDir is a
+// non-empty string, and no value carries a DISPATCHER_PLACEHOLDERS token — a later fill would
+// rewrite it inside the value (a runDir holding `{ISO}`), or the closed-set check would blame the
+// template for it.
 //
 // Chunking: a rendered prompt is read back in pieces. CHUNK_BYTES sits a third under the Bash output
 // cap observed at authoring; a chunk is a run of whole lines that neither starts nor ends with
@@ -25,7 +32,7 @@ const DISPATCHER_PLACEHOLDERS = Object.freeze([
 ]);
 
 const REGISTRY_FILE = 'dispatch-prompts.jsonl';
-const MARKER_RE = /^\[dispatch-prompt: (\S+) (first|second)\]$/m;
+const MARKER_RE = /^\[dispatch-prompt: (\S+) (first|second)\](?:\n|$)/;
 const MAX_PROMPT_BYTES = 131072;
 const CHUNK_BYTES = 20000;
 
@@ -129,7 +136,7 @@ function chunkPrompt(prompt) {
       if (splitOk(lines[e], lines[e + 1])) best = e;
     }
     if (best === -1) {
-      throw new Error(`dispatch-prompt: no chunk split within ${CHUNK_BYTES} bytes at line ${start + 1} `
+      throw new Error(`no chunk split within ${CHUNK_BYTES} bytes at line ${start + 1} `
         + '(an over-long line, or blank lines spanning the limit)');
     }
     chunks.push(lines.slice(start, best + 1).join('\n'));
@@ -145,6 +152,16 @@ function renderTaskPrompt(text, opts) {
   if (call !== 'first' && call !== 'second') throw new Error(`call must be 'first' or 'second', got ${call}`);
   const issues = Array.isArray(o.issues) ? o.issues : [];
   if (!issues.length) throw new Error('issues must be a non-empty list');
+  if (!issues.every((n) => Number.isInteger(n) && n > 0)) {
+    throw new Error(`issues must be positive integers, got ${JSON.stringify(issues)}`);
+  }
+  if (typeof o.runDir !== 'string' || !o.runDir) throw new Error('runDir must be a non-empty string');
+  const named = [['runDir', o.runDir], ['pluginRoot', o.pluginRoot], ['policyValues', o.policyValues],
+    ['selectedAt', o.selectedAt], ['stepToken', o.stepToken], ['resume.prUrl', o.resume && o.resume.prUrl]];
+  for (const [name, value] of named) {
+    const hit = typeof value === 'string' ? DISPATCHER_PLACEHOLDERS.find((p) => value.includes(p)) : undefined;
+    if (hit) throw new Error(`${name} contains the placeholder token ${hit}`);
+  }
 
   // (1) template
   let t = extractTemplates(text)[call];
@@ -165,7 +182,7 @@ function renderTaskPrompt(text, opts) {
     if (count(t, INVOKE) !== 2) throw new Error('first template lost its two invocation lines');
     const flag = o.headless ? 'DISPATCH_HEADLESS=1' : `RESUME_PR="${o.resume.prUrl}"`;
     if (o.resume) renderResumeContext(o.resume);
-    t = fill(t, INVOKE, INVOKE.replace(' /claude-tweaks:flow', ` ${flag} /claude-tweaks:flow`));
+    t = fill(t, INVOKE, fill(INVOKE, ' /claude-tweaks:flow', ` ${flag} /claude-tweaks:flow`));
   }
 
   // (4) issue forms
@@ -190,7 +207,7 @@ function renderTaskPrompt(text, opts) {
     ['{issue list}', issues.map((n) => `#${n}`).join(', ')],
     ['{comma-joined issue numbers}', issues.join(',')],
     ['{minted-run-dir}', o.runDir],
-    ['{run-id}', o.runDir ? path.basename(o.runDir) : undefined],
+    ['{run-id}', path.basename(o.runDir)],
     ['{plugin-root}', o.pluginRoot],
     ['{policy-values}', o.policyValues],
     ['{ISO}', o.selectedAt],
