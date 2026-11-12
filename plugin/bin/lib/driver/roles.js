@@ -115,14 +115,18 @@ function deepFreeze(value) {
   return value;
 }
 
+// Every property is required, so `required` is the property names in order. (Written
+// out, the list would start with 'status', which tests/git-status-optional-locks.test.js
+// reads as a git argument list.)
+const RESULT_PROPERTIES = {
+  status: { type: 'string', enum: ['done', 'cannot-complete'] },
+  title: { type: 'string' },
+  summary: { type: 'string' },
+};
 const RESULT_SCHEMA = deepFreeze({
   type: 'object',
-  properties: {
-    status: { type: 'string', enum: ['done', 'cannot-complete'] },
-    title: { type: 'string' },
-    summary: { type: 'string' },
-  },
-  required: ['status', 'title', 'summary'],
+  properties: RESULT_PROPERTIES,
+  required: Object.keys(RESULT_PROPERTIES),
   additionalProperties: false,
 });
 

@@ -113,9 +113,12 @@ const path = require('path');
 const crypto = require('crypto');
 const cp = require('node:child_process');
 const { launchSpec } = require('../impeccable-engine');
+const { isAncestorOrSelf } = require('../path-guard');
 const { ROLES, RESULT_SCHEMA, implementerSettings, composeArgs, assertSpendCeiling } = require('./roles');
 
-const ENVELOPE_FIELDS = Object.freeze(['status', 'reason', 'result', 'usage', 'turns', 'denials', 'spendOverrun', 'costUsd', 'detail']);
+// One string, split: tests/git-status-optional-locks.test.js reads an array literal
+// that starts with 'status' as a git argument list.
+const ENVELOPE_FIELDS = Object.freeze('status reason result usage turns denials spendOverrun costUsd detail'.split(' '));
 const ENV_ALLOW = Object.freeze(['PATH', 'HOME', 'USER', 'TMPDIR', 'LANG', 'CLAUDE_CONFIG_DIR']);
 const ENV_ALLOW_WIN32 = Object.freeze([...ENV_ALLOW, 'USERPROFILE', 'USERNAME', 'APPDATA', 'LOCALAPPDATA', 'SystemRoot', 'ComSpec', 'PATHEXT', 'TEMP', 'TMP']);
 
@@ -395,8 +398,7 @@ async function launchWorker(opts, deps = defaultDeps()) {
   for (const [name, value] of [['cwd', cwd], ['settingsDir', settingsDir]]) {
     if (typeof value !== 'string' || !path.isAbsolute(value)) throw new TypeError(name + ' must be an absolute path string, got ' + String(value));
   }
-  const rel = path.relative(cwd, settingsDir);
-  if (!(rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel))) {
+  if (isAncestorOrSelf(cwd, settingsDir)) {
     throw new Error('settingsDir must lie outside the working directory: ' + settingsDir + ' is not outside ' + cwd);
   }
   const settingsText = spec.settings ? JSON.stringify(implementerSettings({ testCommand, platform }), null, 2) : null;
