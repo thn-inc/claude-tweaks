@@ -68,17 +68,18 @@
 // with no TTY through this module's own launcher. The settings were those
 // `implementerSettings` generates for `linux` (`defaultMode: dontAsk`, allow `Read`,
 // `Edit`, `Write`, the deny list, no sandbox block), with `--restricted`, `--safe-mode`
-// and `Grep,Glob` added to `--tools`; in variant A `Grep` and `Glob` were also appended
-// to the allow list, in variant B they were not, and B behaved the same as A. Both
-// tools saw a file inside the working directory. Every path outside it was refused,
-// for both tools in both variants, with "<path> is outside <cwd>; --restricted confines
-// the file tools to the working directory." and each refusal appeared in the result's
+// and `Grep,Glob` added to `--tools`. Two variants were run: in variant A `Grep` and
+// `Glob` were also appended to the allow list, in variant B they were not, and B
+// behaved the same as A. Both tools saw a file inside the working directory. Every
+// outside path argument or absolute pattern that was tried was refused, in both
+// variants, with "<path> is outside <cwd>; --restricted confines the file tools to
+// the working directory." and each refusal appeared in the result's
 // permission denials: a path argument to a sibling directory, an absolute Glob pattern
 // there, and a non-temporary directory (this checkout's own `plugin/bin/lib/driver`);
 // Grep given the symlink to the sibling directory as its path was refused too, with
-// "resolves through a symlink to <target>, which is outside <cwd>". Grep and Glob run
-// from the working directory (`link/*.txt`, `**/*`) returned nothing from the symlink's
-// target; that is what was observed, and the cause was not isolated, since it may be
+// "resolves through a symlink to <target>, which is outside <cwd>". Grep recursing from
+// the working directory, and Glob with `link/*.txt` and `**/*`, were not refused but
+// returned nothing from the symlink's target; that is what was observed, and the cause was not isolated, since it may be
 // the search tools' default of not following symbolic links rather than `--restricted`.
 // Not probed: `../` relative paths, Grep's `glob` and `type` parameters, a symlinked
 // file (as opposed to a directory), a hard link, and Linux and Windows hosts. Because
