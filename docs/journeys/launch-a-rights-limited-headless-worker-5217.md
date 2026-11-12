@@ -24,14 +24,14 @@ files:
 - **URL:** the promise `launchWorker` returns, rejected
 - **Action:** read the error and fix the option it names.
 - **Should feel:** strict and immediate. A wrong option costs nothing, because no file was written and no process was started.
-- **Should understand:** the launcher refuses a working directory or settings directory that is not absolute, a settings directory inside the working directory (the worker could edit its own rights file there), a prompt that is not text, a ceiling that is not a positive number, and a schema it cannot check.
+- **Should understand:** the launcher refuses a working directory or settings directory that is not absolute, a settings directory inside the working directory (the worker could edit its own rights file there), including one that reaches it through a symbolic link, a case variant or a second spelling, a working or settings directory whose path cannot be resolved (a dangling link, an unreadable part), a prompt that is not text, a ceiling that is not a positive number, and a schema it cannot check.
 - **Red flags:** a settings file left behind after a refused launch, or a refusal that arrives only after the worker has already run.
 
 ### 3. Read the envelope — the same call, resolved
 - **URL:** the envelope: `status`, `reason`, `result`, `usage`, `turns`, `denials`, `spendOverrun`, `costUsd`, `detail`
 - **Action:** branch on `status` and `reason`. On `ok`, use `result`. On `fail`, `reason` says which kind: `launch-error` (the worker never started), `exit`, `schema` or `spend-ceiling`.
 - **Should feel:** unambiguous. One object, one verdict; a worker that printed something odd never reads as success.
-- **Should understand:** `denials` lists what the worker tried and was refused. That is information for a log line, never a reason to launch again with wider rights. Every string the worker wrote (`result`, and `detail` when it carries the worker's words) is untrusted text: keep it out of commands, and neutralize it before it reaches a commit message or a comment.
+- **Should understand:** `ok` means only that a structured output matching the schema arrived, not that the task was done: the worker's own verdict is `result.status`, which is `done` or `cannot-complete`, so branch on it before treating the task as finished. `denials` lists what the worker tried and was refused. That is information for a log line, never a reason to launch again with wider rights. Every string the worker wrote (every string in `result`, `detail` when it carries the worker's words, and each denial's `tool_input`) is untrusted text: keep it out of commands, and neutralize it before it reaches a commit message or a comment.
 - **Red flags:** the run loop retrying a launch because of a denial, or pasting the worker's title straight into a commit subject.
 
 ### 4. Trust the ceiling — a worker that hangs
