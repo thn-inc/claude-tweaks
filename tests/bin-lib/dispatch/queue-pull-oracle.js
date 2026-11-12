@@ -22,7 +22,9 @@ const { spawn, spawnSync } = require('node:child_process');
 const { STUB_SKIP_REASON } = require('../../helpers/path-stub');
 const { readText } = require('../../helpers/read-skill');
 const { fixtureGit } = require('../../helpers/git-fixtures');
-const { ghAnswer, applyEffect, shimTable } = require('./queue-pull-fixtures');
+const {
+  ghAnswer, applyEffect, gitSubArgv, gitFailMatch, isGetUrlOrigin, shimTable,
+} = require('./queue-pull-fixtures');
 
 const REPO = path.resolve(__dirname, '..', '..', '..');
 const SCRIPT_MD = path.join(REPO, 'plugin', 'skills', 'dispatch', 'queue-pull-script.md');
@@ -246,12 +248,17 @@ function createSandbox(scenario, { transport = 'gh', origin = null, name = scena
       for (const [k, v] of Object.entries(process.env)) if (k.startsWith('CT_TRACE_')) env[k] = v;
       return env;
     };
+    // null only when origin has no health-state branch or the branch has no order.json; a git
+    // failure of any other kind, or a blob that is not JSON, throws.
     const orderBlob = () => {
       try {
-        return JSON.parse(git(['-C', originDir, 'show', 'health-state:queue-order/order.json']));
-      } catch {
-        return null;
+        git(['-C', originDir, 'rev-parse', '--verify', '--quiet', 'refs/heads/health-state']);
+      } catch (err) {
+        if (err.status === 1 && !String(err.stderr || '').trim()) return null;
+        throw err;
       }
+      if (!git(['-C', originDir, 'ls-tree', '--name-only', 'health-state', '--', 'queue-order/order.json']).trim()) return null;
+      return JSON.parse(git(['-C', originDir, 'show', 'health-state:queue-order/order.json']));
     };
     return {
       name, transport, scenario, root, home, proj, bin, logs, origin: originDir, runDir, runs: 0, runEnv, orderBlob, cleanup,
@@ -317,6 +324,10 @@ const readOrNull = (file) => {
 };
 const readJsonl = (file) => (readOrNull(file) || '').split('\n').filter(Boolean).map((l) => JSON.parse(l));
 
+// The session dir a run's node processes resolve under its TMPDIR: plugin/bin/lib/session-tmp.js's
+// sessionTmpRoot rule, which this test process cannot call directly (its os.tmpdir() differs).
+const sessionDirUnder = (tmpdir, sessionId) => path.join(tmpdir, `ct-session-${String(sessionId).trim()}`);
+
 // runOracle(sandbox, script, { sessionId }) -> { status, stdout, stderr, files, staged, decisions,
 // orderBlob, ghArgv, gitArgv }, plus a non-enumerable `sandbox`. The session id is derived from
 // the sandbox name, so a parity pair's two sandboxes print the same paths after normalize.
@@ -333,7 +344,7 @@ async function runOracle(sandbox, script, { sessionId = `qp-${sandbox.name}` } =
 
     const run = await spawnBounded(bash, scriptFile, { cwd: sandbox.proj, env: sandbox.runEnv({ tmpdir, sessionId }) });
 
-    const sessionDir = path.join(tmpdir, `ct-session-${sessionId}`);
+    const sessionDir = sessionDirUnder(tmpdir, sessionId);
     const files = {};
     for (const name of sessionFileNames()) files[name] = readOrNull(path.join(sessionDir, name));
     const stagedDir = path.join(sandbox.runDir, 'staged');
@@ -482,15 +493,22 @@ function ghShim(table) {
     process.exitCode = 97;
     return;
   }
-  const { TMPDIR, CLAUDE_CODE_SESSION_ID: sessionId } = process.env;
-  applyEffect(answer.effect, TMPDIR && sessionId ? path.join(TMPDIR, `ct-session-${sessionId.trim()}`) : null);
+  // The plugin's own rule; its os.tmpdir() reads the sandbox TMPDIR this shim runs under.
+  const { sessionTmpRoot } = require(path.join(REPO, 'plugin', 'bin', 'lib', 'session-tmp.js'));
+  applyEffect(answer.effect, sessionTmpRoot(process.env.CLAUDE_CODE_SESSION_ID));
   shimLog('gh-argv.jsonl', { tag: answer.status ? 'injected' : 'ok', argv });
   process.stdout.write(answer.stdout);
   process.stderr.write(answer.stderr);
   process.exitCode = answer.status;
 }
 
-const GIT_GLOBAL_FLAGS = new Set(['--no-optional-locks', '--no-pager', '--literal-pathspecs']);
+// `-c` keys that run a command or move git's view off the sandbox. No fence or plugin call path
+// sets any of them (the one plugin `-c` is review-context's core.quotePath).
+const REFUSED_CONFIG_KEYS = new Set(['core.worktree', 'core.hookspath', 'core.fsmonitor', 'core.sshcommand', 'core.gitproxy']);
+const refusedConfig = (setting) => {
+  const key = setting.split('=')[0].toLowerCase();
+  return REFUSED_CONFIG_KEYS.has(key) || key.startsWith('alias.');
+};
 
 function gitShim(table) {
   const argv = process.argv.slice(2);
@@ -501,20 +519,13 @@ function gitShim(table) {
     process.exitCode = 97;
   };
   if (process.env.GIT_DIR || process.env.GIT_WORK_TREE) return refuse('GIT_DIR/GIT_WORK_TREE set');
+  const parsed = gitSubArgv(argv);
+  if (parsed.unknown) return refuse(`unknown global option ${parsed.unknown}`);
+  const badConfig = parsed.configs.find(refusedConfig);
+  if (badConfig !== undefined) return refuse(`config key not allowed: ${badConfig.split('=')[0]}`);
+  // Each -C resolves against the one before it, as git does.
   const dirs = [cwd];
-  let i = 0;
-  while (i < argv.length && argv[i].startsWith('-') && argv[i] !== '--version') {
-    if (argv[i] === '-C') {
-      dirs.push(path.resolve(dirs[dirs.length - 1], argv[i + 1] || ''));
-      i += 2;
-    } else if (argv[i] === '-c') {
-      i += 2;
-    } else if (GIT_GLOBAL_FLAGS.has(argv[i])) {
-      i += 1;
-    } else {
-      return refuse(`unknown global option ${argv[i]}`);
-    }
-  }
+  for (const dir of parsed.dirs) dirs.push(path.resolve(dirs[dirs.length - 1], dir));
   for (const dir of dirs) {
     let real;
     try {
@@ -524,14 +535,14 @@ function gitShim(table) {
     }
     if (real !== table.root && !real.startsWith(table.root + path.sep)) return refuse(`outside the sandbox: ${real}`);
   }
-  const sub = argv.slice(i);
-  if (table.git.fail.some((prefix) => prefix.every((a, k) => sub[k] === a))) {
+  const { sub } = parsed;
+  if (gitFailMatch(table.git.fail, sub)) {
     shimLog('git-argv.jsonl', { tag: 'injected', cwd, argv });
     process.stderr.write(`git-shim: injected failure: ${sub.join(' ')}\n`);
     process.exitCode = 128;
     return undefined;
   }
-  if (sub.length === 3 && sub[0] === 'remote' && sub[1] === 'get-url' && sub[2] === 'origin') {
+  if (isGetUrlOrigin(sub)) {
     shimLog('git-argv.jsonl', { tag: 'canned', cwd, argv });
     process.stdout.write(table.git.remoteUrl + '\n');
     return undefined;

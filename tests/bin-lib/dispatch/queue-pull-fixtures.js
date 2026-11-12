@@ -4,7 +4,8 @@
 //   { argv: string[], stdout, stderr?, status?, effect? }  -- matched by exact argv equality
 //   { graphql: 'linked'|'native'|'landing'|'foreign', aliases: { <alias>: node }, status?, effect? }
 // A graphql entry matches an `api graphql` call whose query is that kind (the signature of the
-// query builder in plugin/bin/lib), and answers with only the aliases the query requests. A
+// query builder in plugin/bin/lib), and answers with only the aliases the query requests; a
+// requested alias the entry lacks makes the call a miss (an explicit null is GitHub's not-found). A
 // non-zero `status` injects a failure after the output is written, as gh does on a partial
 // GraphQL error. `effect` mutates a session file before the answer: `corrupt-exclusions`,
 // `corrupt-groups` or `delete-session-file:<name>`.
@@ -28,17 +29,22 @@ function validateEntry(entry, i) {
   throw new TypeError(`scenario.gh[${i}] is neither {argv: string[], stdout} nor {graphql: ${Object.keys(GRAPHQL_KINDS).join('|')}, aliases}`);
 }
 
+// The entry's answer to `query`, or null when the query requests an alias the entry does not
+// hold as an own key (a miss, never a silently partial response). An explicit `null` value is
+// an answer: GitHub's not-found node.
 function graphqlAnswer(entry, query) {
   const kind = GRAPHQL_KINDS[entry.graphql];
   const out = {};
   for (const m of query.matchAll(kind.alias)) {
-    if (Object.prototype.hasOwnProperty.call(entry.aliases, m[1])) out[m[1]] = entry.aliases[m[1]];
+    if (!Object.prototype.hasOwnProperty.call(entry.aliases, m[1])) return null;
+    out[m[1]] = entry.aliases[m[1]];
   }
   return JSON.stringify({ data: kind.inRepository ? { repository: out } : out }) + '\n';
 }
 
 // (entries, argv) -> { stdout, stderr, status, effect } | null. The one matcher the PATH shim
-// and fakeRun share: an exact-argv entry first, then a graphql entry of the query's kind.
+// and fakeRun share: an exact-argv entry first, then the first graphql entry of the query's
+// kind that answers every alias the query requests.
 function ghAnswer(entries, argv) {
   (entries || []).forEach(validateEntry);
   const exact = (entries || []).find((e) => Array.isArray(e.argv)
@@ -49,11 +55,45 @@ function ghAnswer(entries, argv) {
   if (argv[0] === 'api' && argv[1] === 'graphql') {
     const queryArg = argv.find((a) => a.startsWith('query=')) || '';
     const query = queryArg.slice('query='.length);
-    const entry = (entries || []).find((e) => e.graphql && GRAPHQL_KINDS[e.graphql].query.test(query));
-    if (entry) return { stdout: graphqlAnswer(entry, query), stderr: '', status: entry.status || 0, effect: entry.effect || null };
+    for (const entry of entries || []) {
+      if (!entry.graphql || !GRAPHQL_KINDS[entry.graphql].query.test(query)) continue;
+      const stdout = graphqlAnswer(entry, query);
+      if (stdout !== null) return { stdout, stderr: '', status: entry.status || 0, effect: entry.effect || null };
+    }
   }
   return null;
 }
+
+// Git's leading global options, as the git shim and fakeRun both skip them. `-C` and `-c`
+// take a value; the rest stand alone. `--version` is a subcommand here, not an option.
+const GIT_VALUE_OPTIONS = new Set(['-C', '-c']);
+const GIT_FLAG_OPTIONS = new Set(['--no-optional-locks', '--no-pager', '--literal-pathspecs']);
+
+// argv -> { dirs: the -C values in order, configs: the -c values, sub: the argv from the
+// subcommand on, unknown: the first other leading option (or null) }.
+function gitSubArgv(argv) {
+  const dirs = [];
+  const configs = [];
+  let i = 0;
+  while (i < argv.length && argv[i].startsWith('-') && argv[i] !== '--version') {
+    if (GIT_VALUE_OPTIONS.has(argv[i])) {
+      (argv[i] === '-C' ? dirs : configs).push(argv[i + 1] === undefined ? '' : argv[i + 1]);
+      i += 2;
+    } else if (GIT_FLAG_OPTIONS.has(argv[i])) {
+      i += 1;
+    } else {
+      return { dirs, configs, sub: argv.slice(i), unknown: argv[i] };
+    }
+  }
+  return { dirs, configs, sub: argv.slice(i), unknown: null };
+}
+
+// True when the subcommand argv starts with one of the table's injected-failure prefixes.
+function gitFailMatch(failPrefixes, sub) {
+  return failPrefixes.some((prefix) => prefix.every((a, k) => sub[k] === a));
+}
+
+const isGetUrlOrigin = (sub) => sub.length === 3 && sub[0] === 'remote' && sub[1] === 'get-url' && sub[2] === 'origin';
 
 // Applies an entry's `effect` to the session dir it names files in.
 function applyEffect(effect, sessionDir) {
@@ -96,13 +136,11 @@ function fakeRun(scenario, { sessionDir } = {}) {
       return answer.stdout;
     }
     if (cmd === 'git') {
-      let i = 0;
-      while (args[i] === '-C') i += 2;
-      const sub = args.slice(i);
-      if (table.git.fail.some((prefix) => prefix.every((a, k) => sub[k] === a))) {
+      const { sub } = gitSubArgv(args);
+      if (gitFailMatch(table.git.fail, sub)) {
         throw fakeFailure(args, { status: 128, stdout: '', stderr: `git-shim: injected failure: ${sub.join(' ')}\n` });
       }
-      if (sub.join(' ') === 'remote get-url origin') return table.git.remoteUrl + '\n';
+      if (isGetUrlOrigin(sub)) return table.git.remoteUrl + '\n';
     }
     throw new Error(`unexpected ${cmd} ${args.join(' ')}`);
   };
@@ -153,5 +191,6 @@ function S0() {
 }
 
 module.exports = {
-  DEFAULT_REMOTE_URL, GRAPHQL_KINDS, ghAnswer, applyEffect, shimTable, fakeRun, ghLabel, ghRecord, SPEC_BODY, S0,
+  DEFAULT_REMOTE_URL, GRAPHQL_KINDS, ghAnswer, applyEffect, gitSubArgv, gitFailMatch, isGetUrlOrigin, shimTable, fakeRun,
+  ghLabel, ghRecord, SPEC_BODY, S0,
 };

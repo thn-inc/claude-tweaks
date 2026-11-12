@@ -35,6 +35,7 @@ test('#5227 oracle: queue-pull-script.md runs whole over a one-record fixture', 
   assert.deepEqual(JSON.parse(r.files['dispatch-groups.json']).flat().map((c) => c.number), [9001]);
   assert.deepEqual(JSON.parse(r.files['dispatch-exclusions.json']), []);
   assert.equal(r.ghArgv.filter((a) => a.tag === 'UNHANDLED').length, 0);
+  assert.deepEqual(r.gitArgv.filter((a) => a.tag === 'REFUSED'), [], 'the fence never trips the git shim containment');
   // The write-back reached the sandbox origin, stamped by the preloaded frozen clock.
   assert.equal(r.orderBlob.computedAt, '2026-11-12T12:00:00.000Z');
 });
@@ -86,7 +87,7 @@ test('#5227 oracle: the mktemp shim emits tmp.qp00000001 then tmp.qp00000002 fro
   }
 });
 
-test('#5227 oracle: the git shim refuses a directory outside the sandbox and an exported GIT_DIR', { skip: oracleSkip() }, () => {
+test('#5227 oracle: the git shim refuses a directory outside the sandbox, an exported GIT_DIR and a command-running -c key', { skip: oracleSkip() }, () => {
   const sb = createSandbox(S0());
   try {
     const env = sb.runEnv({ tmpdir: path.join(sb.root, 'tmp'), sessionId: 'qp-git-probe' });
@@ -97,9 +98,78 @@ test('#5227 oracle: the git shim refuses a directory outside the sandbox and an 
     const outside = git(['-C', REPO, 'rev-parse', 'HEAD']);
     assert.equal(outside.status, 97);
     assert.match(outside.stderr, /git-shim: refused \(outside the sandbox/);
-    const gitDir = git(['status'], { GIT_DIR: path.join(REPO, '.git') });
+    // The shim refuses on the variable's presence, so a bogus in-sandbox value is enough.
+    const gitDir = git(['rev-parse', '--show-toplevel'], { GIT_DIR: path.join(sb.root, 'no-such.git') });
     assert.equal(gitDir.status, 97);
     assert.match(gitDir.stderr, /GIT_DIR\/GIT_WORK_TREE set/);
+    for (const setting of ['core.hooksPath=/x', 'core.fsmonitor=true', 'core.worktree=/x', 'core.sshCommand=x', 'core.gitProxy=x', 'alias.st=!sh', 'Core.HooksPath=/x']) {
+      const r = git(['-c', setting, 'rev-parse', '--show-toplevel']);
+      assert.equal(r.status, 97, setting);
+      assert.match(r.stderr, /git-shim: refused \(config key not allowed: /, setting);
+    }
+    const allowed = git(['-c', 'core.quotePath=false', 'rev-parse', '--show-toplevel']);
+    assert.equal(allowed.status, 0, allowed.stderr);
+    const log = fs.readFileSync(path.join(sb.logs, 'git-argv.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    assert.equal(log.filter((e) => e.tag === 'REFUSED').length, 9);
+  } finally {
+    sb.cleanup();
+  }
+});
+
+test('#5227 oracle: the gh shim exits 97 and logs UNHANDLED for an unanswered argv and for a graphql alias the table lacks', { skip: oracleSkip() }, () => {
+  const s = S0();
+  s.gh.push({ argv: ['effect-probe'], stdout: 'done\n', effect: 'delete-session-file:probe.txt' });
+  const sb = createSandbox(s);
+  try {
+    const env = sb.runEnv({ tmpdir: path.join(sb.root, 'tmp'), sessionId: ' qp-gh-probe ' });
+    // An effect lands in the session dir the plugin's own sessionTmpRoot names (the id trimmed).
+    const probe = path.join(sb.root, 'tmp', 'ct-session-qp-gh-probe', 'probe.txt');
+    fs.mkdirSync(path.dirname(probe), { recursive: true });
+    fs.writeFileSync(probe, 'x');
+    const gh = (args) => spawnSync(path.join(sb.bin, 'gh'), args, { cwd: sb.proj, env, encoding: 'utf8' });
+    const linked = (n) => `query=query{ repository{ i${n}: issue(number:${n}){ number timelineItems(itemTypes:[CROSS_REFERENCED_EVENT]){ nodes } } } }`;
+    const miss = gh(['issue', 'view', '1']);
+    assert.equal(miss.status, 97);
+    assert.equal(miss.stdout, '');
+    assert.equal(miss.stderr, 'gh-shim: no canned response for: issue view 1\n');
+    const aliasMiss = gh(['api', 'graphql', '-f', linked(9002)]);
+    assert.equal(aliasMiss.status, 97);
+    assert.match(aliasMiss.stderr, /^gh-shim: no canned response for: api graphql /);
+    const hit = gh(['api', 'graphql', '-f', linked(9001)]);
+    assert.equal(hit.status, 0, hit.stderr);
+    assert.deepEqual(Object.keys(JSON.parse(hit.stdout).data.repository), ['i9001']);
+    const effect = gh(['effect-probe']);
+    assert.equal(effect.status, 0, effect.stderr);
+    assert.equal(fs.existsSync(probe), false);
+    const log = fs.readFileSync(path.join(sb.logs, 'gh-argv.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    assert.deepEqual(log.map((e) => e.tag), ['UNHANDLED', 'UNHANDLED', 'ok', 'ok']);
+    assert.deepEqual(log[0].argv, ['issue', 'view', '1']);
+  } finally {
+    sb.cleanup();
+  }
+});
+
+test('#5227 oracle: orderBlob is null only for a missing health-state branch or order.json, and throws on a non-JSON blob', { skip: oracleSkip() }, () => {
+  const sb = createSandbox(S0());
+  try {
+    const env = sb.runEnv({ tmpdir: path.join(sb.root, 'tmp'), sessionId: 'qp-blob-probe' });
+    const git = (...args) => {
+      const r = spawnSync(path.join(sb.bin, 'git'), args, { cwd: sb.proj, env, encoding: 'utf8' });
+      assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
+    };
+    assert.equal(sb.orderBlob(), null, 'no branch');
+    git('push', '-q', 'origin', 'main:refs/heads/health-state');
+    assert.equal(sb.orderBlob(), null, 'branch without order.json');
+    fs.mkdirSync(path.join(sb.proj, 'queue-order'));
+    fs.writeFileSync(path.join(sb.proj, 'queue-order', 'order.json'), 'not json');
+    git('add', 'queue-order/order.json');
+    git('commit', '-q', '-m', 'blob');
+    git('push', '-q', 'origin', 'HEAD:refs/heads/health-state');
+    assert.throws(() => sb.orderBlob(), SyntaxError);
+    fs.writeFileSync(path.join(sb.proj, 'queue-order', 'order.json'), '{"computedAt":"x"}');
+    git('commit', '-q', '-am', 'json');
+    git('push', '-q', 'origin', 'HEAD:refs/heads/health-state');
+    assert.deepEqual(sb.orderBlob(), { computedAt: 'x' });
   } finally {
     sb.cleanup();
   }
@@ -151,6 +221,16 @@ test('#5227 oracle: fakeRun answers the shim table by exact argv and requested g
   const query = 'query=query{ repository{ i1: issue(number:1){ number timelineItems(itemTypes:[CROSS_REFERENCED_EVENT]){ nodes } } } }';
   assert.deepEqual(JSON.parse(run('gh', ['api', 'graphql', '-f', query])), { data: { repository: { i1: { number: 1 } } } });
   assert.throws(() => run('gh', ['api', 'graphql', '-f', 'query=query{ b1: issue(number:1){ CLOSED_EVENT } }']), /unexpected gh api graphql/);
+  // A requested alias the entry lacks is a miss, never a partial answer; an explicit null answers.
+  const twoAliases = 'query=query{ repository{ i1: issue(number:1){ number CROSS_REFERENCED_EVENT } i3: issue(number:3){ number CROSS_REFERENCED_EVENT } } }';
+  assert.throws(() => run('gh', ['api', 'graphql', '-f', twoAliases]), /^Error: unexpected gh api graphql /);
+  const withNull = fakeRun({ gh: [{ graphql: 'linked', aliases: { i1: { number: 1 }, i3: null } }] });
+  assert.deepEqual(JSON.parse(withNull('gh', ['api', 'graphql', '-f', twoAliases])), { data: { repository: { i1: { number: 1 }, i3: null } } });
+  // git: the same global-option skip and prefix matcher the shim uses.
+  const gitRun = fakeRun({ gh: [], gitFail: [['remote', 'show', 'origin']], remoteUrl: 'https://example.invalid/o/r.git' });
+  assert.throws(() => gitRun('git', ['-c', 'core.quotePath=false', '--no-optional-locks', '-C', '/x', 'remote', 'show', 'origin']), (err) => err.status === 128);
+  assert.equal(gitRun('git', ['--no-pager', 'remote', 'get-url', 'origin']), 'https://example.invalid/o/r.git\n');
+  assert.throws(() => gitRun('git', ['remote', 'show']), /^Error: unexpected git remote show$/);
 });
 
 test('#5227 oracle: normalize substitutes only the sandbox root and run-dir name; reported keeps AUTO/Warning lines; assertParity compares them', () => {
