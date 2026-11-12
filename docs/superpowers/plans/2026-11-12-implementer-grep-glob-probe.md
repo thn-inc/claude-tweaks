@@ -177,10 +177,12 @@ Either way `toolsFor` and `implementerSettings` are unchanged. This is Deliverab
 
 ## Coverage map
 
-- AC1.1: Task 2 Step 3 (header paragraph). `Waived AC1.1: header prose with no mechanical test; the whole-branch review reads the header against the evidence file.`
+- AC1.1: Task 2 Step 3 (header paragraph).
 - AC2.1: Task 2 Step 1 (`AC2.1, AC3.1` pin test), backed by Task 1's evidence.
 - AC3.1: Task 2 Step 1 (no `Bash` rule or tool off darwin).
 - Deliverables 1, 2, 3 and 4: Tasks 1, 2 (Step 3), 2 (Decision rule and Step 3) and 2 (Step 1).
+
+Waived AC1.1: header prose with no mechanical test; the whole-branch review reads the header against the evidence file.
 
 ## Follow-up (controller, not an implementer task)
 
