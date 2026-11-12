@@ -254,9 +254,23 @@ function renderTaskPrompt(text, opts) {
   return out.replace(/\s+$/, '');
 }
 
+// The [Use: X] profile of `call`'s fenced template ('first' | 'second').
+function profileForCall(text, call) {
+  return profileOf(extractTemplates(text)[call]);
+}
+
+// The CLI's one render call: renderTaskPrompt, then the MAX_PROMPT_BYTES sanity bound (throws over
+// it), the read chunks and the registry digest. The narrow functions above stay exported as test seams.
+function renderDispatchPrompt(text, opts) {
+  const prompt = renderTaskPrompt(text, opts);
+  const size = promptSize(prompt);
+  if (!size.ok) throw new Error(`rendered prompt is ${size.bytes} bytes, over the ${MAX_PROMPT_BYTES}-byte sanity bound (#4589)`);
+  return { prompt, bytes: size.bytes, chunks: chunkPrompt(prompt), sha256: promptDigest(prompt) };
+}
+
 module.exports = {
   DISPATCHER_PLACEHOLDERS, extractTemplates, extractContextPack, profileOf, findUnsubstituted,
   renderResumeContext, MARKER_RE, markerLine, promptDigest, REGISTRY_FILE, MAX_PROMPT_BYTES,
   promptSize, CHUNK_BYTES, fitsChunk, chunkPrompt, renderTaskPrompt,
-  partPath, registryLine, latestRegistryEntry,
+  partPath, registryLine, latestRegistryEntry, profileForCall, renderDispatchPrompt,
 };
