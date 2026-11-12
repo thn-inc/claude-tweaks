@@ -1,4 +1,4 @@
-# Parse-Signal Discipline — fix shape, items 17-26
+# Parse-Signal Discipline — fix shape, items 17-27
 
 Lazy-loaded from `SKILL.md`'s "The fix shape" section; the numbering continues that list.
 
@@ -202,6 +202,29 @@ Lazy-loaded from `SKILL.md`'s "The fix shape" section; the numbering continues t
     offset. When a fix widens an extractor whose value feeds a stored id, keep the old extraction
     for the key, and pin a stored legacy-keyed item surviving a re-run without a second filing
     (`tests/bin-lib/console/backfill.test.js`'s AC2 cases).
+    Widening the class to take a space is no fix when one side of the join is drifting prose.
+    #4632 had to key `a dir/x.ts:3` and `b dir/x.ts:3` apart. A tiebreak verdict line is written
+    by code (`resolveTiebreak`), so its path is exact, but a STAGED line is LLM-written from a
+    template, and 55 of 3,204 real lens lines put other words between `finding` and the path
+    (`finding at plugin/a.ts:4`). Parsing the text after `finding ` as the path would have made
+    keys no verdict carries, and lines that settle today would have stopped settling. So
+    `resolve.js` keys a verdict on its whole parsed path (`verdictKey`), and a STAGED location
+    offers ordered candidates instead of one parsed value (`locationCandidates`: the
+    `FINDING_PATH` match first, then each longer span that starts after a character outside the
+    class). The longest candidate some settler's key names wins, and the shortest, today's key,
+    is the fallback (`namedCandidate`). A coincidence line's second location the class cannot
+    read keys as its raw text, which no settler names, so the line stays open. The first version
+    let it settle on its first location alone, and the whole-branch review caught it. The same
+    truncation sat in a second reader of the same value: `tiebreak.js`'s `EVIDENCE_RE` read the
+    evidence path as `\S+`, so a space-holding finding could never be confirmed or dropped. Only
+    the spec's premise check found it, because the shaped record named `resolve.js` alone.
+    `parseEvidence` now matches the finding's own path as a literal prefix (string comparison, no
+    regex built from the path). When one side of a join is machine-written and the other is
+    drifting prose, key from the exact side and let the prose side offer candidates resolved
+    against it; never parse the prose into one value. Measure how far real prose drifts from its
+    template before choosing, keep today's key as the fallback, grep for every other reader of
+    the same value, and pin the drifted-prose case, the fallback, and a path holding two spaces
+    (`tests/bin-lib/console/resolve.test.js`'s #4632 cases).
 26. **A recogniser that must ignore a marker shown as code owes a rule the host format
     guarantees, not a home-made model of that format.** A model that drifts from the real parser
     fails toward accepting the marker. `plugin/bin/lib/issues/accept-verdict.js`'s
@@ -221,3 +244,39 @@ Lazy-loaded from `SKILL.md`'s "The fix shape" section; the numbering continues t
     that ends the comment, and the parser rejects a raw `<` or `>`. Pin each hiding place with its
     own case (`tests/bin-lib/issues/accept-verdict.test.js`: a block that does not own its line,
     fence text before the block, and a note holding `-->`).
+27. **A parse problem that hides content owes its own report, found by a second read under the
+    relaxed reading and credited only to a cause the author can edit.** A fence that never closes
+    swallows every heading after it. Before #4350, `plugin/bin/lib/issues/materialize-format.js`'s
+    `shapeGate` named those swallowed sections missing, so the author looked for sections that
+    were there. `plugin/bin/lib/markdown-blocks.js`'s `hiddenByUnclosedFence` now reads the body
+    twice through the same `findSection`: a heading absent as read but found with
+    `unclosedAsText: true` is hidden, and the probe returns the opener's 1-based line, so the gate
+    reports `unclosed-fence at line N` (`UNCLOSED_FENCE_PREFIX`) in place of the section's name.
+    A heading found under the strict reading (even empty), or absent under both, returns `null`
+    and keeps its own answer (item 3). The report never changes the verdict (item 2). The first
+    cut also fired on a fence inside the verbatim `## Original request`, text no author may edit,
+    so the report pointed at a fence nobody could close. The final review caught it, and
+    `7e4820dc5` credits the fence only when its opener lies in the authored lines before that
+    heading; otherwise the section stays missing by name. Take the second read through the same
+    reader with one option flipped, never through a second model of the format (item 26), and
+    credit the report only to a cause inside the region the author can edit. Pin a hidden
+    section, a section absent under both reads, an opener in the uneditable region, and an opener
+    on the editable region's last line (`tests/bin-lib/markdown-blocks.test.js`'s
+    `hiddenByUnclosedFence` cases, `tests/bin-lib/issues/materialize-format.test.js`'s two #4350
+    Original request cases).
+28. **A parser that fails closed owes a cheap precondition that proves the signal absent, so its
+    gaps cost only on inputs that could hold the signal.** Failing closed is right when the
+    parser cannot read a shape, but each gap then costs whatever "closed" costs, on every input
+    that has that shape. #5153's workflow reader (`plugin/bin/lib/merge-verification.js`'s
+    `readPullRequestWorkflow`) reads any `on:` shape it cannot follow as an unparsed PR trigger,
+    and the merge gate then waits for a ready run that never comes: every pr-first merge in the
+    repo parks. Five reader fix rounds and a high review finding (an indentless `schedule:` list
+    in a workflow with no PR trigger at all) were that one class. `05aeb2ed6` bounds it: a file
+    whose text never contains `pull_request` cannot name a PR trigger, so the reader returns
+    "no PR trigger" before the `on:` walk. The precondition must prove absence, not guess it. A
+    YAML double-quoted escape can spell the name without the literal, so a backslash inside
+    double quotes keeps the full fail-closed read. Pin both halves, each going red alone: a file
+    with no literal and an unreadable shape reads as no trigger, and an escaped spelling stays
+    unparsed (`tests/merge-verification.test.js`'s "never spells pull_request" test). When a
+    later fixture depended on the old behavior, give it the literal rather than weaken the
+    guard (`tests/bin-lib/pr-checks/ready-run.test.js`'s `UNPARSED`).

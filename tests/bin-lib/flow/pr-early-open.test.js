@@ -11,6 +11,7 @@ const { composePrEarlyBody } = require('../../../plugin/bin/lib/flow/pr-body');
 const { hasPrEarlyStep1LineFor, hasLoggedPrDegrade } = require('../../../plugin/bin/lib/hooks/pre-tool-use');
 const logDecision = require('../../../plugin/bin/log-decision');
 const { gitRepo } = require('../../helpers/git-fixtures');
+const { readText } = require('../../helpers/read-skill');
 
 const RUN_ID = '2026-10-25T000001-record-4027';
 const BRANCH = 'worktree-dispatch-record-4027';
@@ -18,6 +19,8 @@ const REPO = 'thn-inc/claude-tweaks';
 const NOW = new Date(2026, 9, 25, 12, 34, 56).getTime();
 const URL7 = 'https://github.com/thn-inc/claude-tweaks/pull/7';
 const URL42 = 'https://github.com/thn-inc/claude-tweaks/pull/42';
+const PR7_CLOSED = { number: 7, url: URL7, state: 'CLOSED' };
+const PR7_OPEN = { number: 7, url: URL7, state: 'OPEN' };
 
 const created = [];
 test.after(() => {
@@ -147,11 +150,15 @@ test('an OPEN match is reused: reuse line before the push, no create, the PR rec
 });
 
 test('a CLOSED match is reopened, logged as a retry, and recorded', async () => {
-  const h = harness({ list: [{ number: 7, url: URL7, state: 'CLOSED', isDraft: true }] });
+  const h = harness({ lists: [[{ number: 7, url: URL7, state: 'CLOSED', isDraft: true }], [{ number: 7, url: URL7, state: 'OPEN', isDraft: true }]] });
   const res = await openPrEarly(OPTS, h.deps);
   assert.deepEqual(res, { outcome: 'reopened', number: 7, url: URL7 });
+  assert.ok(!('reopenRejected' in res), 'a confirmed reopen carries no reopenRejected key');
   assert.ok(h.calls.some((c) => c.join(' ') === `gh pr reopen 7 --repo ${REPO}`));
+  const listCalls = h.calls.map((c, i) => [c, i]).filter(([c]) => c[0] === 'gh' && c[2] === 'list');
+  assert.equal(listCalls.length, 2, 'Step 1 list, then the confirming re-list');
   const reopened = idx(h.calls, (c) => c[0] === 'log' && c[1].includes(`reopened PR #7 for ${BRANCH} (retry).`));
+  assert.ok(listCalls[1][1] < reopened, 'the confirming list runs before the reopened log line');
   assert.ok(reopened !== -1 && reopened < idx(h.calls, isPush));
   assert.equal(h.calls.find(isCreate), undefined);
   assert.equal(h.calls.find((c) => c[2] === 'edit'), undefined, 'no rebind without an adopted-prior-attempt line');
@@ -161,7 +168,10 @@ test('a CLOSED match is reopened, logged as a retry, and recorded', async () => 
 test('a reopen of an adopted prior attempt rebinds its body to this run before the push', async () => {
   const decisions = `- AUTO 10:00:00 — log-decision: Adopted-branch collision check: adopted prior attempt abc1234 from closed PR #8 for ${BRANCH}. Reversibility: high (merge commit on an unpushed branch).\n`;
   const h = harness({
-    list: [{ number: 9, url: URL7, state: 'CLOSED' }, { number: 8, url: URL7, state: 'CLOSED' }],
+    lists: [
+      [{ number: 9, url: URL7, state: 'CLOSED' }, { number: 8, url: URL7, state: 'CLOSED' }],
+      [{ number: 9, url: URL7, state: 'CLOSED' }, { number: 8, url: URL7, state: 'OPEN' }],
+    ],
     decisions,
   });
   const res = await openPrEarly(OPTS, h.deps);
@@ -175,7 +185,11 @@ test('a reopen of an adopted prior attempt rebinds its body to this run before t
 
 test('a failed rebind is a logged SKIP, never a stop', async () => {
   const decisions = `- AUTO 10:00:00 — x: adopted prior attempt abc1234 from closed PR #7 for ${BRANCH}. Reversibility: high.\n`;
-  const h = harness({ list: [{ number: 7, url: URL7, state: 'CLOSED' }], decisions, edit: new Error('HTTP 422') });
+  const h = harness({
+    lists: [[PR7_CLOSED], [PR7_OPEN]],
+    decisions,
+    edit: new Error('HTTP 422'),
+  });
   const res = await openPrEarly(OPTS, h.deps);
   assert.equal(res.outcome, 'reopened');
   assert.ok(h.lines.some((l) => l.startsWith('- SKIP ') && l.includes('rebind of reopened PR #7 failed (HTTP 422)')
@@ -212,7 +226,7 @@ test('AC1.1: a recorded still-open PR whose body names another run is rebound, w
   assert.deepEqual(h.records, []);
 });
 
-test('AC2.1: a reused PR whose body already names this run gets no gh pr edit, on either reuse path', async () => {
+test('AC2.1: a reused PR whose body already names this run, or names no run at all, gets no gh pr edit, on either reuse path', async () => {
   const bodies = [bodyFor(RUN_ID), `claude-tweaks-run: ${RUN_ID}\n\nMCP-written body`, 'A hand-written body with no marker.'];
   for (const body of bodies) {
     const listed = harness({ list: [{ number: 7, url: URL7, state: 'OPEN', body }] });
@@ -250,6 +264,72 @@ test('AC4.1: a failing gh pr edit on a reused PR logs the SKIP degrade and still
   assert.ok(recorded.lines.some((l) => l.startsWith('- SKIP ') && l.includes('rebind of reused PR #9 failed (HTTP 422)')));
 });
 
+test('AC1.1: a reused-PR rebind whose body write fails its first-line check is a logged SKIP, never a stop, on either reuse path', async () => {
+  const mismatchBody = (h) => {
+    h.deps.writeBodyFile = (name, text) => {
+      const p = path.join(h.bodyDir, name);
+      fs.writeFileSync(p, text.replace(RUN_ID, '2026-01-01T000000-record-9'));
+      return p;
+    };
+  };
+  const listed = harness({ list: [{ number: 7, url: URL7, state: 'OPEN', body: bodyFor(OTHER_RUN) }] });
+  mismatchBody(listed);
+  assert.deepEqual(await openPrEarly(OPTS, listed.deps), { outcome: 'reused', number: 7, url: URL7 });
+  const recorded = harness({ runState: { pr: { number: 9, url: URL7 } }, view: { state: 'OPEN', url: URL7, body: bodyFor(OTHER_RUN) } });
+  mismatchBody(recorded);
+  assert.deepEqual(await openPrEarly(OPTS, recorded.deps), { outcome: 'reused', number: 9, url: URL7 });
+  for (const [h, n] of [[listed, 7], [recorded, 9]]) {
+    assert.equal(h.calls.find((c) => c[0] === 'gh' && c[2] === 'edit'), undefined, 'a refused body is never written to the PR');
+    assert.ok(h.lines.some((l) => l.startsWith('- SKIP ') && l.includes(`rebind of reused PR #${n} failed (PR body first line is`)
+      && l.includes(`until its body names run ${RUN_ID}`)), `SKIP line for #${n}`);
+  }
+  assert.equal(recorded.calls.find(isPush), undefined, 'the recorded path never pushes');
+  assert.deepEqual(listed.records, [{ number: 7, url: URL7 }]);
+  assert.ok(idx(listed.calls, (c) => c[0] === 'record') < idx(listed.calls, isPush), 'the listed path still records, then pushes');
+});
+
+const LIFECYCLE_DOC = path.join(__dirname, '../../../plugin/skills/_shared/pr-early-run-lifecycle.md');
+const collapse = (text) => text.replace(/\s+/g, ' ');
+const REBIND_TEMPLATE = /`((?:AUTO|SKIP) \{time\} — PR-early run lifecycle: (?:rebound|rebind of) (?:reused|reopened) PR [^`]*)`/g;
+
+function assertRebindTwins(collapsedDoc, emitted) {
+  const templates = [...collapsedDoc.matchAll(REBIND_TEMPLATE)].map((m) => m[1]);
+  assert.equal(templates.length, 4, 'expected 4 rebind templates in pr-early-run-lifecycle.md');
+  assert.deepEqual([...emitted].sort(), [...templates].sort(), 'rebind log lines drift between pr-early-open.js and pr-early-run-lifecycle.md');
+}
+
+test('AC1.1: the four rebind log lines pr-early-open.js writes equal pr-early-run-lifecycle.md\'s templates', async () => {
+  const closedDecisions = `- AUTO 10:00:00 — x: adopted prior attempt abc1234 from closed PR #7 for ${BRANCH}. Reversibility: high.\n`;
+  const runs = [
+    { list: [{ number: 7, url: URL7, state: 'OPEN', body: bodyFor(OTHER_RUN) }] },
+    { list: [{ number: 7, url: URL7, state: 'OPEN', body: bodyFor(OTHER_RUN) }], edit: new Error('HTTP 422') },
+    { lists: [[PR7_CLOSED], [PR7_OPEN]], decisions: closedDecisions },
+    { lists: [[PR7_CLOSED], [PR7_OPEN]], decisions: closedDecisions, edit: new Error('HTTP 422') },
+  ];
+  const emitted = [];
+  for (const script of runs) {
+    const h = harness(script);
+    await openPrEarly(OPTS, h.deps);
+    for (const l of h.lines.filter((x) => x.includes('rebound ') || x.includes('rebind of '))) {
+      emitted.push(l
+        .replace(/^- (AUTO|SKIP) \d\d:\d\d:\d\d — log-decision: /, '$1 {time} — ')
+        .split('#7').join('#{number}')
+        .split(RUN_ID).join('{run-id}')
+        .split('HTTP 422').join('{error}'));
+    }
+  }
+  const liveDoc = collapse(readText(LIFECYCLE_DOC));
+  assertRebindTwins(liveDoc, emitted);
+
+  const reworded = liveDoc.replace('phase-checklist updates will exit 4 until its body names run {run-id}. Reversibility: n/a.', 'phase-checklist updates will exit 4. Reversibility: n/a.');
+  assert.notEqual(reworded, liveDoc);
+  assert.throws(() => assertRebindTwins(reworded, emitted), { message: /^rebind log lines drift between pr-early-open\.js and pr-early-run-lifecycle\.md(?:\n|$)/ });
+
+  const dropped = liveDoc.replace('`AUTO {time} — PR-early run lifecycle: rebound reused PR #{number} to run {run-id}. Reversibility: high.`', '');
+  assert.notEqual(dropped, liveDoc);
+  assert.throws(() => assertRebindTwins(dropped, emitted), { message: /^expected 4 rebind templates in pr-early-run-lifecycle\.md(?:\n|$)/ });
+});
+
 test('a rejected reopen falls through to creation with its own Step 1 line', async () => {
   const h = harness({ list: [{ number: 7, url: URL7, state: 'CLOSED' }], reopen: new Error('GraphQL: Could not open the pull request') });
   const res = await openPrEarly(OPTS, h.deps);
@@ -257,6 +337,93 @@ test('a rejected reopen falls through to creation with its own Step 1 line', asy
   const step1 = h.lines[0];
   assert.match(step1, /reopen of closed PR #7 for worktree-dispatch-record-4027 was rejected; creating\./);
   assert.ok(hasPrEarlyStep1LineFor(step1, BRANCH));
+});
+
+test('a reopen that exits 0 while the re-list still reads CLOSED is rejected: created, one cause line, no reopened record', async () => {
+  const h = harness({ lists: [[PR7_CLOSED], [PR7_CLOSED]] });
+  const res = await openPrEarly(OPTS, h.deps);
+  assert.deepEqual(res, { outcome: 'opened', number: 42, url: URL42, reopenRejected: 7 });
+  assert.ok(h.lines.some((l) => l.includes(`reopen of closed PR #7 for ${BRANCH} exited 0 but the PR still reads CLOSED; creating.`)));
+  assert.equal(h.lines.some((l) => l.includes('reopened PR #7')), false, 'no reopened log line');
+  assert.equal(h.lines.some((l) => l.includes('was rejected')), false, 'one cause line, not two');
+  assert.deepEqual(h.records, [{ number: 42, url: URL42 }]);
+  assert.ok(hasPrEarlyStep1LineFor(h.lines[0], BRANCH));
+});
+
+test('a reopen whose re-list no longer carries the picked PR reads ABSENT and is not confirmed', async () => {
+  const h = harness({ lists: [[PR7_CLOSED], []] });
+  const res = await openPrEarly(OPTS, h.deps);
+  assert.deepEqual(res, { outcome: 'opened', number: 42, url: URL42, reopenRejected: 7 });
+  assert.ok(h.lines.some((l) => l.includes(`reopen of closed PR #7 for ${BRANCH} exited 0 but the PR still reads ABSENT; creating.`)));
+  assert.deepEqual(h.records, [{ number: 42, url: URL42 }]);
+});
+
+test('a confirming re-list that throws is an unconfirmed reopen: the create path runs with its own cause line', async () => {
+  const h = harness({
+    lists: [[PR7_CLOSED], new Error('HTTP 502: Bad Gateway')],
+  });
+  const res = await openPrEarly(OPTS, h.deps);
+  assert.deepEqual(res, { outcome: 'opened', number: 42, url: URL42, reopenRejected: 7 });
+  assert.ok(h.lines.some((l) => l.includes(`could not confirm reopen of closed PR #7 for ${BRANCH} (HTTP 502: Bad Gateway); creating.`)));
+  assert.equal(h.lines.some((l) => l.includes('reopened PR #7')), false, 'no reopened log line');
+  assert.deepEqual(h.records, [{ number: 42, url: URL42 }]);
+});
+
+test('a confirming re-list error that names "failed" is logged as "errored", so the line never reads as a degrade', async () => {
+  const h = harness({
+    lists: [[PR7_CLOSED], new Error('Command failed: gh pr list --repo thn-inc/claude-tweaks --head x')],
+  });
+  const res = await openPrEarly(OPTS, h.deps);
+  assert.equal(res.outcome, 'opened');
+  const line = h.lines.find((l) => l.includes('could not confirm'));
+  assert.ok(line.includes('Command errored: gh pr list'), line);
+  assert.equal(/failed/i.test(line), false);
+  const dir = tmpDir('ct-pr-early-gate-');
+  fs.writeFileSync(path.join(dir, 'decisions.md'), `## /build\n${h.lines.join('\n')}\n`);
+  assert.equal(hasLoggedPrDegrade(dir), false, 'a successful create after an unconfirmed reopen is not a degrade');
+  assert.ok(hasPrEarlyStep1LineFor(h.lines[0], BRANCH));
+});
+
+test('a confirming re-list that throws, then a create that lands the picked PR with another run\'s body: rebound before it is recorded', async () => {
+  const h = harness({
+    lists: [
+      [PR7_CLOSED],
+      new Error('HTTP 502: Bad Gateway'),
+      [{ ...PR7_OPEN, body: bodyFor(OTHER_RUN) }],
+    ],
+    create: [new Error('a pull request for branch "x" into branch "dev" already exists')],
+  });
+  const res = await openPrEarly(OPTS, h.deps);
+  assert.deepEqual(res, { outcome: 'opened', number: 7, url: URL7, reopenRejected: 7 });
+  assert.equal(h.calls.filter(isCreate).length, 1, 'the landed PR is adopted, not duplicated');
+  const bodyPath = path.join(h.bodyDir, `pr-early-body-${RUN_ID}.md`);
+  const editAt = idx(h.calls, (c) => c[0] === 'gh' && c[2] === 'edit');
+  assert.deepEqual(h.calls[editAt], ['gh', 'pr', 'edit', '7', '--repo', REPO, '--body-file', bodyPath]);
+  assert.ok(h.lines.some((l) => l.includes(`PR-early run lifecycle: rebound reopened PR #7 to run ${RUN_ID}.`)));
+  assert.ok(editAt < idx(h.calls, (c) => c[0] === 'record' && c[1] === 7), 'rebind precedes the record');
+  assert.deepEqual(h.records, [{ number: 7, url: URL7 }]);
+});
+
+test('a landed picked PR whose body already names this run gets no gh pr edit', async () => {
+  const h = harness({
+    lists: [
+      [PR7_CLOSED],
+      new Error('HTTP 502: Bad Gateway'),
+      [{ ...PR7_OPEN, body: bodyFor(RUN_ID) }],
+    ],
+    create: [new Error('a pull request for branch "x" into branch "dev" already exists')],
+  });
+  const res = await openPrEarly(OPTS, h.deps);
+  assert.deepEqual(res, { outcome: 'opened', number: 7, url: URL7, reopenRejected: 7 });
+  assert.equal(h.calls.find((c) => c[0] === 'gh' && c[2] === 'edit'), undefined, 'no rebind for a body naming this run');
+  assert.deepEqual(h.records, [{ number: 7, url: URL7 }]);
+});
+
+test('a confirming re-list that returns a non-array is unconfirmed, not a crash', async () => {
+  const h = harness({ lists: [[PR7_CLOSED], {}] });
+  const res = await openPrEarly(OPTS, h.deps);
+  assert.deepEqual(res, { outcome: 'opened', number: 42, url: URL42, reopenRejected: 7 });
+  assert.ok(h.lines.some((l) => l.includes(`could not confirm reopen of closed PR #7 for ${BRANCH} (gh pr list did not return an array); creating.`)));
 });
 
 test('a MERGED-only match is treated as no match', async () => {
@@ -455,9 +622,11 @@ test('every line written satisfies the bookkeeping-stamps gate\'s own matchers',
     harness({ list: [] }),
     harness({ list: [{ number: 7, url: URL7, state: 'OPEN' }] }),
     harness({ list: [{ number: 7, url: URL7, state: 'OPEN', body: bodyFor(OTHER_RUN) }] }),
-    harness({ list: [{ number: 7, url: URL7, state: 'CLOSED' }] }),
+    harness({ lists: [[PR7_CLOSED], [PR7_OPEN]] }),
     harness({ list: [{ number: 7, url: URL7, state: 'CLOSED' }], reopen: new Error('rejected') }),
-    harness({ list: [{ number: 7, url: URL7, state: 'CLOSED' }], decisions: adoptedLine }),
+    harness({ lists: [[PR7_CLOSED], [PR7_OPEN]], decisions: adoptedLine }),
+    harness({ lists: [[PR7_CLOSED], [PR7_CLOSED]] }),
+    harness({ lists: [[PR7_CLOSED], new Error('HTTP 502: Bad Gateway')] }),
   ];
   for (const h of scenarios) await openPrEarly(OPTS, h.deps);
   for (const h of scenarios) {
@@ -483,7 +652,11 @@ test('every line written satisfies the bookkeeping-stamps gate\'s own matchers',
   // hasLoggedPrDegrade's regex is case-insensitive, so it does read as a
   // degrade. That is harmless only because the reopened PR is recorded
   // first, so the run is never PR-less. Pin both halves.
-  const rebindFail = harness({ list: [{ number: 7, url: URL7, state: 'CLOSED' }], decisions: adoptedLine, edit: new Error('HTTP 422') });
+  const rebindFail = harness({
+    lists: [[PR7_CLOSED], [PR7_OPEN]],
+    decisions: adoptedLine,
+    edit: new Error('HTTP 422'),
+  });
   await openPrEarly(OPTS, rebindFail.deps);
   assert.ok(hasPrEarlyStep1LineFor(rebindFail.lines[0], BRANCH));
   const dir = tmpDir('ct-pr-early-gate-');
@@ -526,8 +699,9 @@ function cliFixture({ policy = null, runState = null } = {}) {
   return { root, runDir, summaryFile, wt };
 }
 
-function cliDeps(fx, { list = [], create = `${URL42}\n`, push = null, ghAvailable = true, defaultBranch = 'main', view = null } = {}) {
+function cliDeps(fx, { list = [], lists = null, create = `${URL42}\n`, push = null, ghAvailable = true, defaultBranch = 'main', view = null } = {}) {
   const out = []; const err = []; const calls = [];
+  let listN = 0;
   const deps = {
     cwd: () => fx.root,
     mainRoot: fx.root,
@@ -538,7 +712,12 @@ function cliDeps(fx, { list = [], create = `${URL42}\n`, push = null, ghAvailabl
         assert.equal(opts && opts.cwd, fx.wt);
         return JSON.stringify({ nameWithOwner: REPO, url: 'https://github.com/thn-inc/claude-tweaks', defaultBranchRef: { name: defaultBranch } });
       }
-      if (args[0] === 'pr' && args[1] === 'list') return JSON.stringify(list);
+      if (args[0] === 'pr' && args[1] === 'list') {
+        const v = lists ? lists[Math.min(listN, lists.length - 1)] : list;
+        listN++;
+        if (v instanceof Error) throw v;
+        return JSON.stringify(v);
+      }
       if (args[0] === 'pr' && args[1] === 'view' && view) return JSON.stringify(view);
       if (args[0] === 'pr' && args[1] === 'reopen') return '';
       if (args[0] === 'pr' && args[1] === 'create') { if (create instanceof Error) throw create; return create; }
@@ -638,7 +817,11 @@ for (const [label, over] of [
 for (const state of ['OPEN', 'CLOSED']) {
   test(`CLI: a ${state} match followed by a failed push exits 3 with the PR still recorded and its number on stdout`, async () => {
     const fx = cliFixture();
-    const h = cliDeps(fx, { list: [{ number: 7, url: URL7, state }], push: new Error('fatal: Authentication failed') });
+    const h = cliDeps(fx, {
+      list: [{ number: 7, url: URL7, state }],
+      lists: state === 'CLOSED' ? [[PR7_CLOSED], [PR7_OPEN]] : null,
+      push: new Error('fatal: Authentication failed'),
+    });
     assert.equal(await run(cliArgv(fx), h.deps), 3, h.err.join(''));
     const res = JSON.parse(h.out.join(''));
     assert.equal(res.outcome, 'push-failed');
@@ -799,6 +982,10 @@ test('CLI: an internal error (unparseable gh output) exits 1', async () => {
   assert.doesNotMatch(h.err.join(''), /gh-timeout-ms/);
 });
 
+// cliDeps stubs ghAvailable, so this pins only the CLI's error routing (the timeout
+// hint, never the gh-absent message). The probe's own rule that a timed-out
+// `gh --version` means present is pinned by tests/bin-lib/repo-resolve.test.js's
+// ghAvailable cases (#4554).
 test('CLI: a gh timeout exits 1 with the timeout hint, never the gh-absent message (#4554)', async () => {
   const fx = cliFixture();
   const h = cliDeps(fx);

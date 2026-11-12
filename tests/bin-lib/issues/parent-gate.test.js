@@ -3,9 +3,11 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   CLOSE_HEADING, VERDICT_FIELDS, IDEMPOTENCE_VALUES, VALID_RISK_FLOORS, GhFailure, ghCaller,
-  enumerateSubIssues, gatherGateFacts, gatherIdempotenceFacts, evaluateParentGate,
+  enumerateSubIssues, readSubIssueFacts, gatherGateFacts, gatherIdempotenceFacts, evaluateParentGate,
   evaluateIdempotence, evaluateGateWithIdempotence, needsIdempotenceReads, parseClosingTokens, positive,
+  IDENTITY_PROBE_FAILED_NOTE, readLogin, listOmitsSubIssue,
 } = require('../../../plugin/bin/lib/issues/parent-gate');
+const { untrustedSkipNote } = require('../../../plugin/bin/lib/issues/comment-trust');
 const { run: runFetchSubIssues, EXIT_SUBISSUES_UNAVAILABLE } = require('../../../plugin/bin/fetch-sub-issues');
 const { buildNativeParentQuery, buildNativeSubIssuesQuery } = require('../../../plugin/bin/lib/issues/record');
 
@@ -73,7 +75,7 @@ function makeGh(world) {
     m = /^issue view (\d+) --repo o\/r --json state,stateReason,comments$/.exec(key);
     if (m && world.liveRaw && m[1] in world.liveRaw) return world.liveRaw[m[1]];
     if (m) return JSON.stringify((world.parentLive || {})[m[1]] || { state: 'OPEN', stateReason: '', comments: [] });
-    if (key === 'api user --jq .login') return `${world.login || 'bot'}\n`;
+    if (key === 'api user --jq .login') return `${'login' in world ? world.login : 'bot'}\n`;
     throw new Error(`unexpected gh call: ${key}`);
   };
   return { gh, calls, caller: ghCaller(gh) };
@@ -193,6 +195,7 @@ test('no parent yields the no-parent verdict', () => {
   const v = evaluateParentGate({ parent: null, parentLabels: [], subIssues: [], riskFloor: 'high' });
   assert.deepEqual(v, {
     parent: null,
+    repo: null,
     state: 'no-parent',
     exceeds: null,
     closeReason: null,
@@ -209,7 +212,7 @@ test('no parent yields the no-parent verdict', () => {
 
 test('the verdict carries VERDICT_FIELDS in order', () => {
   assert.deepEqual(VERDICT_FIELDS, [
-    'parent', 'state', 'exceeds', 'closeReason', 'idempotence', 'maxTier', 'riskFloor', 'parentIssue', 'needs', 'held', 'subIssues', 'skipped',
+    'parent', 'repo', 'state', 'exceeds', 'closeReason', 'idempotence', 'maxTier', 'riskFloor', 'parentIssue', 'needs', 'held', 'subIssues', 'skipped',
   ]);
   const due = evaluateParentGate(facts());
   assert.deepEqual(Object.keys(due), VERDICT_FIELDS);
@@ -218,6 +221,12 @@ test('the verdict carries VERDICT_FIELDS in order', () => {
   assert.equal(due.idempotence, null);
   assert.deepEqual(due.skipped, []);
   assert.equal(due.riskFloor, 'high');
+});
+
+test('evaluateParentGate passes slug through as repo', () => {
+  assert.equal(evaluateParentGate(facts()).repo, null);
+  assert.equal(evaluateParentGate(facts({ slug: 'o/r' })).repo, 'o/r');
+  assert.equal(evaluateParentGate({ parent: null, parentLabels: [], subIssues: [], riskFloor: 'high', slug: 'o/r' }).repo, 'o/r');
 });
 
 test('an invalid risk floor throws', () => {
@@ -313,6 +322,33 @@ test('the facts shape is the explicit source, never sniffed from a body field', 
   for (const source of ['Body', 'local-files', '', null]) {
     assert.throws(() => evaluateIdempotence(facts, { source }), TypeError, String(source));
   }
+});
+
+test('#4770 AC1.2: evaluateIdempotence adds the degrade note when login is empty and nothing counted', () => {
+  assert.deepEqual(
+    evaluateIdempotence({ state: 'OPEN', stateReason: '', comments: [], login: '' }),
+    { idempotence: 'comment-and-close', skipped: [IDENTITY_PROBE_FAILED_NOTE] },
+  );
+});
+
+test("#4770 AC2.1: a trusted marker with login '' is close-only and carries no note", () => {
+  assert.deepEqual(
+    evaluateIdempotence({ state: 'OPEN', stateReason: '', comments: [headingComment()], login: '' }),
+    { idempotence: 'close-only', skipped: [] },
+  );
+});
+
+test("#4770 AC3.1: an untrusted own-bot marker with login '' reads as no comment", () => {
+  const c = headingComment({ authorAssociation: 'NONE', author: { login: 'bot' }, url: 'u5' });
+  assert.deepEqual(
+    evaluateIdempotence({ state: 'OPEN', stateReason: '', comments: [c], login: '' }),
+    { idempotence: 'comment-and-close', skipped: [untrustedSkipNote(c), IDENTITY_PROBE_FAILED_NOTE] },
+  );
+});
+
+test('#4770 the degrade note never applies to a CLOSED or REOPENED parent', () => {
+  assert.deepEqual(evaluateIdempotence({ state: 'CLOSED', stateReason: '', comments: [], login: '' }), { idempotence: 'already-closed', skipped: [] });
+  assert.deepEqual(evaluateIdempotence({ state: 'OPEN', stateReason: 'REOPENED', comments: [], login: '' }), { idempotence: 'reopened', skipped: [] });
 });
 
 test('needsIdempotenceReads: only a parent neither CLOSED nor REOPENED reads comments and login', () => {
@@ -529,6 +565,33 @@ test('gatherGateFacts with no resolvable parent stops after resolution', () => {
   assert.equal(bodyText.calls.length, 1);
 });
 
+test("gatherGateFacts body-text: a Parent line the parent's task list omits resolves no parent (Reading B)", () => {
+  const { calls, caller } = makeGh({ bodies: { 11: 'Parent: #10\n', 10: '- [ ] #12\n' } });
+  const got = gatherGateFacts({ subIssue: 11, owner: 'o', repo: 'r', workLinks: 'body-text', caller });
+  assert.deepEqual(got, { parent: null, parentLabels: [], subIssues: [] });
+  assert.deepEqual(argvOf(calls), [SHAPE.body(11), SHAPE.body(10)], 'no shape 5 or 6 read');
+  // Only the sub-issue side: the same unlisted record, named as the parent's own `parent`, is gathered as before.
+  const fromParent = gatherGateFacts({ parent: 10, owner: 'o', repo: 'r', workLinks: 'body-text', caller: makeGh({ bodies: { 10: '- [ ] #12\n' } }).caller });
+  assert.equal(fromParent.parent, 10);
+  assert.deepEqual(fromParent.subIssues.map((s) => s.number), [12]);
+});
+
+test("gatherGateFacts body-text: a parent with no task list keeps the parent (an empty list is not an omission)", () => {
+  for (const parentBody of ['', 'Just prose, no task list.\n']) {
+    const { calls, caller } = makeGh({ bodies: { 11: 'Parent: #10\n', 10: parentBody } });
+    const got = gatherGateFacts({ subIssue: 11, owner: 'o', repo: 'r', workLinks: 'body-text', caller });
+    assert.deepEqual(got, { parent: 10, parentLabels: ['parent-issue'], subIssues: [] }, JSON.stringify(parentBody));
+    assert.deepEqual(argvOf(calls), [SHAPE.body(11), SHAPE.body(10), SHAPE.labels(10)], JSON.stringify(parentBody));
+  }
+});
+
+test("gatherGateFacts native: a sub-issue list omitting the sub-issue keeps the parent (Reading B is body-text only)", () => {
+  const { caller } = makeGh({ parentOf: { 11: 10 }, subs: { 10: [12] } });
+  const got = gatherGateFacts({ subIssue: 11, ...NATIVE, caller });
+  assert.equal(got.parent, 10);
+  assert.deepEqual(got.subIssues.map((s) => s.number), [12]);
+});
+
 test('gatherGateFacts from a parent skips resolution', () => {
   const { calls, caller } = makeGh({ subs: { 10: [11, 12] } });
   const got = gatherGateFacts({ parent: 10, ...NATIVE, caller });
@@ -569,6 +632,26 @@ test('shape 5: a closedByPullRequestsReferences that is present, non-null and no
     const { caller } = makeGh({ parentOf: { 11: 10 }, subs: { 10: [11, 12] }, garbled: { 12: text } });
     assert.deepEqual(gatherGateFacts({ subIssue: 11, ...NATIVE, caller }).subIssues[1].closedBy, [], text);
   }
+});
+
+// #4805 Clarification 3: engine-verify renders `unknown` for a malformed sub-issue reply, so the core
+// refuses it rather than reading a missing state as '' or a non-array labels as a TypeError.
+test('shape 5: a malformed state, stateReason or labels is a GhFailure', () => {
+  const answer = (over) => JSON.stringify({ state: 'OPEN', stateReason: '', title: 'T', labels: [], closedByPullRequestsReferences: [], ...over });
+  const read = (text) => readSubIssueFacts({ num: 12, slug: 'o/r', caller: makeGh({ garbled: { 12: text } }).caller });
+  const malformed = [
+    { state: null }, { state: 7 }, { state: 'OPEN', stateReason: 7 },
+    { labels: [null] }, { labels: ['risk:high'] }, { labels: [{ name: 7 }] }, { labels: [{}] }, { labels: null }, { labels: 'x' },
+  ];
+  for (const over of malformed) {
+    assert.throws(() => read(answer(over)), ghFailure(/^gh issue view 12: unexpected output/), JSON.stringify(over));
+  }
+  // An absent labels key is an unlabeled issue; an absent or null stateReason reads ''.
+  const absent = JSON.stringify({ state: 'OPEN', title: 'T' });
+  assert.deepEqual(read(absent).labels, []);
+  assert.equal(read(absent).stateReason, '');
+  assert.equal(read(answer({ stateReason: null })).stateReason, '');
+  assert.deepEqual(read(answer({ labels: [{ name: 'risk:low' }] })).labels, ['risk:low']);
 });
 
 test('shape 6: a parent-labels read that is not a JSON array is a GhFailure', () => {
@@ -635,11 +718,52 @@ test('gatherIdempotenceFacts reads the login only for an open, non-reopened pare
   assert.deepEqual(argvOf(gh.calls), [SHAPE.live(10)]);
 });
 
+test("#4770 AC1.1: gatherIdempotenceFacts reads login '' when the probe throws", () => {
+  const gh = makeGh({ throwWhen: (k) => k.startsWith('api user') });
+  assert.deepEqual(gatherIdempotenceFacts({ parent: 10, ...OR, caller: gh.caller }), { state: 'OPEN', stateReason: '', comments: [], login: '' });
+});
+
+test("#4770 AC4.1: an empty probe line reads as login ''", () => {
+  const gh = makeGh({ login: '' });
+  assert.deepEqual(gatherIdempotenceFacts({ parent: 10, ...OR, caller: gh.caller }), { state: 'OPEN', stateReason: '', comments: [], login: '' });
+});
+
+test('#4770 gatherIdempotenceFacts still throws when the comments read fails', () => {
+  const gh = makeGh({ throwWhen: (k) => k.includes('state,stateReason,comments') });
+  assert.throws(() => gatherIdempotenceFacts({ parent: 10, ...OR, caller: gh.caller }), ghFailure('gh issue view 10:'));
+});
+
+test('#4770 gatherIdempotenceFacts uses an injected readLogin', () => {
+  const gh = makeGh({});
+  const out = gatherIdempotenceFacts({ parent: 10, ...OR, caller: gh.caller, readLogin: () => 'x' });
+  assert.equal(out.login, 'x');
+  assert.deepEqual(argvOf(gh.calls), [SHAPE.live(10)]);
+  const failing = gatherIdempotenceFacts({ parent: 10, ...OR, caller: gh.caller, readLogin: () => { throw new GhFailure('x'); } });
+  assert.equal(failing.login, '');
+  assert.throws(
+    () => gatherIdempotenceFacts({ parent: 10, ...OR, caller: gh.caller, readLogin: () => { throw new TypeError('x'); } }),
+    TypeError,
+  );
+});
+
+test('#4770 readLogin trims the line, sends --hostname for a GHE host, and lets the caller error propagate', () => {
+  const seen = [];
+  const caller = { call: (args) => { seen.push(args); return '  bot \n'; } };
+  assert.equal(readLogin({ caller, host: 'ghe.example.com' }), 'bot');
+  assert.deepEqual(seen[0], ['api', 'user', '--jq', '.login', '--hostname', 'ghe.example.com']);
+  assert.equal(readLogin({ caller, host: undefined }), 'bot');
+  assert.deepEqual(seen[1], ['api', 'user', '--jq', '.login']);
+  const boom = new GhFailure('gh api user: boom');
+  assert.throws(() => readLogin({ caller: { call: () => { throw boom; } }, host: 'ghe.example.com' }), (err) => err === boom);
+});
+
 // --- the origin host (GitHub Enterprise Server) ---
 
 const GHE = 'ghe.example.com';
 // A github.com argv as the gate sends it to GHE: `--repo` host-qualified, every `gh api` read `--hostname`d.
 const onGhe = (args) => (args[0] === 'api' ? [...args, '--hostname', GHE] : args.map((a) => (a === 'o/r' ? `${GHE}/o/r` : a)));
+// fetch-sub-issues.js sends its GraphQL reads (4a, 4b) with the host right after `graphql`.
+const graphqlOnGhe = (args) => ['api', 'graphql', '--hostname', GHE, ...args.slice(2)];
 // makeGh's world reached through GHE argv: the fake takes the host back off before answering,
 // so a read missing it, or carrying it twice, still shows in the recorded argv.
 function makeGheGh(world) {
@@ -648,10 +772,13 @@ function makeGheGh(world) {
   const gh = (args) => {
     calls.push({ args });
     const n = args.length;
-    const plain = args[0] === 'api' && args[n - 2] === '--hostname' && args[n - 1] === GHE
-      ? args.slice(0, -2)
-      : args.map((a) => (a === `${GHE}/o/r` ? 'o/r' : a));
-    return inner.gh(plain);
+    if (args[0] === 'api' && args[1] === 'graphql' && args[2] === '--hostname' && args[3] === GHE) {
+      return inner.gh(['api', 'graphql', ...args.slice(4)]);
+    }
+    if (args[0] === 'api' && args[n - 2] === '--hostname' && args[n - 1] === GHE) {
+      return inner.gh(args.slice(0, -2));
+    }
+    return inner.gh(args.map((a) => (a === `${GHE}/o/r` ? 'o/r' : a)));
   };
   return { calls, caller: ghCaller(gh) };
 }
@@ -661,7 +788,7 @@ const BODY_WORLD = { bodies: { 11: 'Intro\n\nParent: #10\n', 10: '- [ ] #11\n- [
 test('with an Enterprise host every read carries the host-qualified slug or --hostname', () => {
   let gh = makeGheGh(NATIVE_WORLD);
   assert.deepEqual(gatherGateFacts({ subIssue: 11, ...NATIVE, host: GHE, caller: gh.caller }).subIssues.map((s) => s.number), [11, 12]);
-  assert.deepEqual(argvOf(gh.calls), [SHAPE.parent(11), SHAPE.probe(), SHAPE.page(10), SHAPE.sub(11), SHAPE.sub(12), SHAPE.labels(10)].map(onGhe));
+  assert.deepEqual(argvOf(gh.calls), [onGhe(SHAPE.parent(11)), graphqlOnGhe(SHAPE.probe()), graphqlOnGhe(SHAPE.page(10)), onGhe(SHAPE.sub(11)), onGhe(SHAPE.sub(12)), onGhe(SHAPE.labels(10))]);
 
   gh = makeGheGh(BODY_WORLD);
   assert.equal(gatherGateFacts({ subIssue: 11, ...OR, workLinks: 'body-text', host: GHE, caller: gh.caller }).parent, 10);
@@ -671,12 +798,12 @@ test('with an Enterprise host every read carries the host-qualified slug or --ho
   const page = Array.from({ length: 100 }, (_, i) => 100 + i);
   gh = makeGheGh({ subs: { 10: page }, hasNextPage: { 10: true }, rest: { 10: [...page, 200] } });
   assert.equal(enumerateSubIssues({ parent: 10, ...NATIVE, host: GHE, caller: gh.caller }).length, 101);
-  assert.deepEqual(argvOf(gh.calls), [SHAPE.probe(), SHAPE.page(10), SHAPE.rest(10)].map(onGhe));
+  assert.deepEqual(argvOf(gh.calls), [graphqlOnGhe(SHAPE.probe()), graphqlOnGhe(SHAPE.page(10)), onGhe(SHAPE.rest(10))]);
 
   // 4d, sent by the gather itself.
   gh = makeGheGh({ probeFields: ['title'], rest: { 10: [11] } });
   assert.deepEqual(enumerateSubIssues({ parent: 10, ...NATIVE, host: GHE, caller: gh.caller }), [11]);
-  assert.deepEqual(argvOf(gh.calls), [SHAPE.probe(), SHAPE.rest(10)].map(onGhe));
+  assert.deepEqual(argvOf(gh.calls), [graphqlOnGhe(SHAPE.probe()), onGhe(SHAPE.rest(10))]);
 
   const seen = [];
   const fetcher = (argv, deps) => { seen.push(argv); deps.stdout(`${JSON.stringify({ byParent: { 10: [11] }, retry: [] })}\n`); return 0; };
@@ -719,4 +846,10 @@ test('closeBelowFloorParents composes the shared core (one implementation)', () 
   for (const gone of ["require('./acceptance')", "require('./oversight-floor')", "require('./native-dependencies')", "require('./comment-trust')", 'sub_issues']) {
     assert.ok(!source.includes(gone), `no longer carries ${gone}`);
   }
+});
+
+test("listOmitsSubIssue: only a non-empty list that lacks the sub-issue is an omission", () => {
+  assert.equal(listOmitsSubIssue([12, 30], 20), true);
+  assert.equal(listOmitsSubIssue([12, 20], 20), false);
+  assert.equal(listOmitsSubIssue([], 20), false, "an empty list keeps the parent");
 });

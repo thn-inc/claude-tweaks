@@ -24,7 +24,7 @@ via `log-decision.js --status AUTO --step "Artifact check" --text "config.yml mi
 
 1. **Settle runs inside the first call's own agent, not in this thread.** `settle-and-merge.md`'s Settle procedure states its own ownership: it "runs inside whichever of them handles the outcome being settled — the first call (`build,test`) when that call hits a HARD-GATE, the second (`review,polish,wrap-up`) on any path that reaches wrap-up — against that call's own record(s), never in dispatch's main thread." The first call's template in `task-prompt.md` instructs it accordingly, since a `build,test` HARD-GATE failure is that call's own failure to settle — claim release, `assess-agent-autonomy` failure classification, retry counting, `auto:merge` revocation, and the failure comment all happen there. The dispatching session does **not** run Settle itself; it only observes that the first call reported a failure. The one gap: a first call that produced no parseable report at all may never have run Settle, in which case that group's claims lapse via their TTL and a later firing re-pulls the records — the same resting state as any agent that died mid-run.
 
-2. **Worktree teardown still routes through wrap-up.** `[IL-116]` forbids calling `ExitWorktree` / raw `git worktree remove` on a pipeline-run worktree: it skips `wrap-up/cleanup-procedures-execution.md` Section C step 3.5's transitional guard and can permanently destroy a pre-anchoring run's `config.yml`/`decisions.md`/`staged/` with no git history to recover from. But wrap-up lives only in the second call, which on this path was never dispatched. So the dispatching session makes one further call, from inside the group's worktree, purely to reach that cleanup route — **`/claude-tweaks:wrap-up` directly, not `/claude-tweaks:flow`:**
+2. **Worktree teardown still routes through wrap-up.** `[IL-116]` forbids calling `ExitWorktree` / raw `git worktree remove` on a pipeline-run worktree: it skips `wrap-up/cleanup-procedures-execution.md` Section C's teardown sequence — step 3.6's close-run, the sanctioned exit the teardown gate checks for, and step 4's ordered removal — leaving the run non-terminal with its worktree assignment still recorded. But wrap-up lives only in the second call, which on this path was never dispatched. So the dispatching session makes one further call, from inside the group's worktree, purely to reach that cleanup route — **`/claude-tweaks:wrap-up` directly, not `/claude-tweaks:flow`:**
 
    ```
    PIPELINE_RUN_DIR="{run-dir}" CLAIM_RUN_ID="{RUN_ID}" /claude-tweaks:wrap-up {target} cleanup-only
@@ -34,11 +34,15 @@ via `log-decision.js --status AUTO --step "Artifact check" --text "config.yml mi
 
    `{run-dir}` here is the same value this session minted for the group in Step 4 and already passed to the first call — anchored under `$RUN_ROOT/.claude-tweaks/pipelines/` by construction, since Step 4 built it directly from `_shared/pipeline-run-dir.md`'s Anchoring section rather than deriving it from an agent's report. There is nothing to re-derive or re-validate here.
 
-   **`cleanup-only` still does what #298 shipped it to do.** Skips Phase 1 (ESTABLISH/reflection), Phase 2 (ROUTE), Phase 3 (SETTLE), and Phase 4's decide/execute/hand-off logic entirely — runs only `cleanup-procedures.md`'s cleanup items (A-E). `[IL-116]`'s constraint (Section C step 3.5's transitional guard) is unaffected — `cleanup-only` never relaxes it, only the reflection/routing/settle/close content and (when reached via `/flow`) `/flow` Step 5's ledger gate that this teardown call never needed. A materialize-gate failure means no `work/{n}-spec.md` was ever written for this record; `cleanup-procedures.md`'s worktree/carrier-commit check (item 4) already handles that — under `pr-first` it is skipped outright, and otherwise it resolves the run's records (`wrap-up-pack.json`'s `inputs.closingRecords` — Section E produces the pack before item 4 on a `cleanup-only` run — or the worktree mirror's `work/*-spec.md` when the pack could not be produced) and treats an empty result as the no-commits case, no carrier commit, nothing to stamp.
+   **`cleanup-only` still does what #298 shipped it to do.** Skips Phase 1 (ESTABLISH/reflection), Phase 2 (ROUTE), Phase 3 (SETTLE), and Phase 4's decide/execute/hand-off logic entirely — runs only `cleanup-procedures.md`'s cleanup items (A-E). `[IL-116]`'s constraint (Section C's teardown sequence) is unaffected — `cleanup-only` never relaxes it, only the reflection/routing/settle/close content and (when reached via `/flow`) `/flow` Step 5's ledger gate that this teardown call never needed. A materialize-gate failure means no `work/{n}-spec.md` was ever written for this record; `cleanup-procedures.md`'s worktree/carrier-commit check (item 4) already handles that — under `pr-first` it is skipped outright, and otherwise it resolves the run's records (`wrap-up-pack.json`'s `inputs.closingRecords` — Section E produces the pack before item 4 on a `cleanup-only` run — or the worktree mirror's `work/*-spec.md` when the pack could not be produced) and treats an empty result as the no-commits case, no carrier commit, nothing to stamp.
+
+   **Claim permission stop (#4899).** When the first call reported `ISSUE #{n}: failed:claim-permission-denied`, Settle ran no release (`settle-and-merge.md`'s special case: skip steps 1-7), so the paragraph below does not apply, and the firing ends after this call (`SKILL.md`'s Claim permission stop). Append the parenthetical `(claim-permission-denied: skip the claim release)` to the cleanup-only invocation above; `wrap-up/cleanup-procedures-execution.md` Section E skips its release when the invocation names that, because `release-claim.js` would post a false release comment on an absent blob or tombstone for a record this run never claimed.
 
    Settle has already released this group's claim and adjusted its labels by this point, so `cleanup-only`'s Section E release step may run against an already-released claim. That overlap is accepted and recorded here so a duplicate release comment is not later read as a defect — the alternative is the `[IL-116]` hazard above.
 
-Only once that cleanup call returns does this session enter the next group's worktree.
+   **Blocker-landing stop (#4792).** When the first call, or its last handoff continuation (section 8), reported `ISSUE #{n}: failed:blocker-landing`, Settle released a claim only when an earlier call of this run had taken one (`settle-and-merge.md`'s Blocker-landing special case), so the paragraph above, on Settle's already-released claim, does not apply. Append the parenthetical `(blocker-landing: skip the claim release)` to the cleanup-only invocation above, in both cases; `wrap-up/cleanup-procedures-execution.md` Section E skips its release when the invocation names that, because `release-claim.js` posts a release comment on an absent blob or a tombstone too (`bin/lib/release-claim/release.js`): a false one when this run never claimed the record, a duplicate when Settle already released it. Unlike a Claim permission stop, the firing goes on to the next group.
+
+Only once that cleanup call returns does this session enter the next group's worktree (none after a Claim permission stop: the firing ends).
 
 ## 6. Terminal path when the second call's status line is missing or malformed
 
@@ -81,8 +85,10 @@ Settle ran when it didn't leaves the claim, worktree, and run directory stranded
 
 3. **Worktree teardown is unaffected by which call reached it.** `[IL-116]`'s constraint on raw
    `ExitWorktree`/`git worktree remove` applies identically regardless of which Task call's
-   failure triggered this path — `cleanup-only`'s `cleanup-procedures.md` Section C step 3.5 is
+   failure triggered this path — `cleanup-only`'s `cleanup-procedures.md` Section C teardown sequence is
    what performs it correctly either way.
+
+**Blocker-landing stop (#4792).** A second call's handoff continuation (section 8) whose step list includes `test` re-runs `/flow`'s pre-claim checks, and when Step 2.7b stops it, the continuation reports `OUTCOME: blocked` with `ISSUE #{n}: failed:blocker-landing` before reaching wrap-up, so the group's worktree is still up. Make item 1's call for it too, with the parenthetical `(blocker-landing: skip the claim release)` appended, the same phrase section 5's Blocker-landing stop paragraph appends. The first call claimed the record, so the continuation's own Settle already released the claim and closed the draft PR (`settle-and-merge.md`'s Blocker-landing special case, claimed case), and item 2 does not apply: `wrap-up/cleanup-procedures-execution.md` Section E skips its release on that phrase, because `release-claim.js` would post a duplicate release comment on the tombstone (`bin/lib/release-claim/release.js`).
 
 ## 7. Terminal path when the first call reports `already-shipped`
 
@@ -114,7 +120,7 @@ PIPELINE_RUN_DIR="{run-dir}" CLAIM_RUN_ID="{RUN_ID}" /claude-tweaks:wrap-up {tar
 idempotent overlap section 6 item 2 already describes. This dispatching session's own report for
 the group is a **no-op**, never `pending-review` — the record is closed via the staged Close
 proposal, not shipped via a merge this firing performed. Only once that cleanup call returns does
-this session enter the next group's worktree.
+this session enter the next group's worktree (none after a Claim permission stop: the firing ends, `SKILL.md`).
 
 ## 8. Continuing a handed-off call (#4027)
 
@@ -129,15 +135,21 @@ worktree, before anything else in this file runs for it.
    For the first call that is `parseNextSteps(reply, FIRST_CALL_STEPS)`, the parse
    `resolveFirstCallGate` runs before it returns `handoff`. For the second call it is
    `parseNextSteps(reply, SECOND_CALL_STEPS)`, the steps a second call can still run (`test`,
-   `review`, `polish`, `re-verify`, `wrap-up`). Its `{ ok: true, steps }` is the continuation's step
+   `review`, `polish`, `re-verify`, `wrap-up`). Every group passes its records as
+   `{ targets }`, `#N` strings (`['#12','#34']`), never bare numbers, a single-record group too
+   (`['#12']` stays on the flat path), so no agent judges whether its group is a bundle and a flat
+   `NEXT_STEPS` from a bundle fails closed; `resolveFirstCallGate` also takes `{ targets }`, in the same form, and
+   forwards them to this parse. An `{ ok: true, steps }` result is the continuation's step
    list. A `{ ok: false, reason, message }` result fails closed. That covers
-   NEXT_STEPS missing or empty, a step the call does not run, and a step named twice. Log
+   NEXT_STEPS missing or empty, a step the call does not run, a step named twice, and a per-record
+   value whose records differ from the targets. Log
    `Handoff refused: {message}` via `log-decision.js --status REFUSED --text-file "{text-file}"`
    (`_shared/auto-decision-log.md`'s Text from git or a user paragraph, since `{message}` quotes the
    agent's own text). Then treat the call as `build-test-blocked` (first call, section 5) or
    `blocked` (second call, section 6).
 2. **Continue.** Dispatch `task-prompt.md`'s Continuation call: the same call's template, its step
-   list replaced by `NEXT_STEPS`, with the same `{minted-run-dir}` and the same model profile. Log it
+   list replaced by `NEXT_STEPS`, with the same `{minted-run-dir}` and the same model profile. A
+   per-record result's `stepArg` is the replacement. Log it
    first via `log-decision.js --status AUTO --step "Dispatch group {group}" --text "call {1|2} handed off ({n} of 3 this run); continuing {NEXT_STEPS} in a fresh call" --reversibility n/a`,
    `{n}` counting this run's handoffs across both calls.
    A continuation that reports `handoff` again comes back to item 1 with its own report.
@@ -156,7 +168,7 @@ worktree, before anything else in this file runs for it.
 4. **Gate on the last continuation's report.** It stands as the call's report. For the first call,
    section 2 runs on it as if the first call had returned it: status line, `OUTCOME`, the artifact
    check, the repair branch, the stamp read. For the second call, its `OUTCOME` routes like any
-   second call's (`SKILL.md` Step 6; section 6 for a missing or malformed status line). A handoff
+   second call's (`SKILL.md` Step 6; section 6 for a missing or malformed status line, or for a blocker-landing stop's `blocked`, per its Blocker-landing stop paragraph). A handoff
    report runs neither the artifact check nor the stamp read, because the steps that leave those
    artifacts have not all run yet.
 

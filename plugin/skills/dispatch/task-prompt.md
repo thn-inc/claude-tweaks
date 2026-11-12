@@ -154,7 +154,7 @@ once, comma-joined. Stop after the test gate -- do not proceed to review, polish
 a separate Task call handles those. If you reference any of these issue numbers in an
 intermediate commit message, write "refs #N" -- never "closes #N" or "fixes #N".
 
-Foreground execution (required): run `npm test` and every other long-running command in the
+Foreground execution (required): run the project's test command and every other long-running command in the
 foreground of this turn, output redirected to a file if it's long -- never with `run_in_background`.
 Never end this turn waiting on a background test run or fix-round you started this way -- you cannot
 count on being re-woken by either, and the run stalls silently when you are not (#1965). A nested
@@ -240,6 +240,11 @@ shared repo-wide across every worktree of this checkout, so any of them can pop,
 a sibling worktree's in-flight work. To compare against a baseline without mutating the tree, use
 `git show <rev>:<path>`; to set your own work aside, make a temporary WIP commit instead.
 
+Never kill a process by image or name (`taskkill /IM`, `pkill`, `killall`, `Stop-Process -Name`,
+a `pgrep`-fed `kill`): the process table is shared machine-wide with sibling sessions. Kill only
+a PID you started or your own port's listener (`lsof -nP -iTCP:{port} -sTCP:LISTEN -t`; win32:
+`taskkill /PID {pid} /T /F`); otherwise leave the process running and report it.
+
 CRITICAL: before reporting `DONE`/`build-test-ok`, confirm your own claim against the artifact
 you just produced -- this call is the producer, not a second call distrusting someone else's
 prior claim, so there is no earlier report to check here, only your own freshly written result.
@@ -247,7 +252,7 @@ The actual artifact is the runner-written pass stamp verifying HEAD (`verify.js 
 reports `verifiedHead: true`) and its `report.json` -- or a complete composed verdict
 (`suiteComposed.complete: true`), whose per-suite records carry their own report paths and are
 the same artifact. Both exist only when the test phase runs through `/claude-tweaks:test`. A raw
-`npm test` log is not that artifact: it leaves no stamp, and the second call then re-runs the
+test-command log is not that artifact: it leaves no stamp, and the second call then re-runs the
 full suite (#3661). Never report a result from narrative or memory of an earlier pass in this same
 call -- if `--stamp-status` does not report `verifiedHead: true` (no stamp, no complete
 composition, or neither verifies HEAD), re-run the test phase through `/claude-tweaks:test` once
@@ -277,13 +282,14 @@ OUTPUT FORMAT (required) -- return ONLY these lines, no preamble:
 
 GROUP: {comma-joined issue numbers}
 OUTCOME: {build-test-ok | build-test-failed | build-test-blocked | already-shipped | handoff}
-NEXT_STEPS: {only with OUTCOME: handoff -- the comma-joined steps still to run; omit otherwise}
+NEXT_STEPS: {only with OUTCOME: handoff -- the steps still to run; omit otherwise}
 MANIFEST: {absolute path to this group's run-dir manifest.yml/decisions.md -- a
   human-readable trace only; the dispatching session already holds this run's identity as
   {minted-run-dir} and derives nothing from this line}
 
 One line per issue in this group that hit a HARD-GATE (omit if none):
 ISSUE #{n}: failed:{gate}
+  (a claim-targets.js exit 7 uses the gate value `claim-permission-denied`, exactly, with `OUTCOME: build-test-blocked`)
 
 Status line (required): on its own trailing line, after everything above -- the reply's last
 non-empty line -- write exactly `STATUS: {WORD}`, where {WORD} is one of: DONE /
@@ -338,7 +344,7 @@ _shared/run-dir-resolution.md's resolution order step 1 (the env var, its docume
 path) feeding flow/SKILL.md Step 3's adopt-if-set branch. You need no other input about what
 the prior call did or found.
 
-Foreground execution (required): run `npm test` and every other long-running command in the
+Foreground execution (required): run the project's test command and every other long-running command in the
 foreground of this turn, output redirected to a file if it's long -- never with `run_in_background`.
 Never end this turn waiting on a background test run or fix-round you started this way -- you cannot
 count on being re-woken by either, and the run stalls silently when you are not (#1965). A nested
@@ -441,6 +447,11 @@ shared repo-wide across every worktree of this checkout, so any of them can pop,
 a sibling worktree's in-flight work. To compare against a baseline without mutating the tree, use
 `git show <rev>:<path>`; to set your own work aside, make a temporary WIP commit instead.
 
+Never kill a process by image or name (`taskkill /IM`, `pkill`, `killall`, `Stop-Process -Name`,
+a `pgrep`-fed `kill`): the process table is shared machine-wide with sibling sessions. Kill only
+a PID you started or your own port's listener (`lsof -nP -iTCP:{port} -sTCP:LISTEN -t`; win32:
+`taskkill /PID {pid} /T /F`); otherwise leave the process running and report it.
+
 Status line (required): the last non-empty line of your reply, after the OUTPUT FORMAT block
 below, must read exactly `STATUS: {WORD}`, where {WORD} is one of: DONE / DONE_WITH_CONCERNS /
 NEEDS_CONTEXT / BLOCKED.
@@ -486,7 +497,7 @@ OUTPUT FORMAT (required), before the trailing status line -- return ONLY these l
 
 GROUP: {comma-joined issue numbers}
 OUTCOME: {merged | armed | pending-review | ready-to-merge | failed | blocked | handoff}
-NEXT_STEPS: {only with OUTCOME: handoff -- the comma-joined steps still to run; omit otherwise}
+NEXT_STEPS: {only with OUTCOME: handoff -- the steps still to run; omit otherwise}
 MANIFEST: {path to this group's run-dir manifest.yml/decisions.md -- a human-readable trace
   only; the dispatching session already holds this run's identity as {minted-run-dir} and
   derives nothing from this line}
@@ -546,4 +557,4 @@ None of Templates A/B/C (A in `_shared/subagent-dispatch-core.md`; B/C in `_shar
 
 ## Continuation call — after `OUTCOME: handoff` (#4027)
 
-A call that reports `OUTCOME: handoff` crossed `/flow`'s context cap at a phase boundary (`flow/context-handoff.md`'s Dispatched call) and is continued in a fresh `Task()` call, never treated as a failure. The continuation is that call's own template above, inlined verbatim with the same substitutions: the same `{minted-run-dir}`, `{context-pack}` and `DISPATCH_HEADLESS=1 ` decision, and the same model profile (`capable` for the first call, `standard` for the second). One thing changes: the step list on both invocation lines (`build,test`, or `review,polish,wrap-up`) is replaced by the report's `NEXT_STEPS` value. Every other sentence stays verbatim. In the first call's template that includes "Stop after the test gate", which holds a `test` continuation to `test`, because a single step argument otherwise resumes from that step onward (`flow/steps-and-gates.md`'s Step Arguments). `two-call-gate.md` section 8 owns the bound and what the gate reads afterward.
+Read `continuation-call.md` in this skill's directory.

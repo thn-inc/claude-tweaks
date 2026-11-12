@@ -344,3 +344,89 @@ test('no impact block → decl.impact is null and rules keep exactly {match, sui
   assert.strictEqual(zero.ok, true);
   assert.strictEqual(zero.decl.impact, null);
 });
+
+test('a ci block declares a CI source per suite, with wait/poll defaults (#4347)', () => {
+  const r = readJson({ ...EXAMPLE, ci: { api: { workflow: 'test.yml', job: 'test' }, web: { workflow: 'web.yml', job: 'unit', waitSeconds: 60, pollSeconds: 5 } } });
+  assert.strictEqual(r.ok, true, JSON.stringify(r.errors));
+  assert.deepStrictEqual(r.decl.ci, {
+    api: { workflow: 'test.yml', job: 'test', waitSeconds: 900, pollSeconds: 20 },
+    web: { workflow: 'web.yml', job: 'unit', waitSeconds: 60, pollSeconds: 5 },
+  });
+});
+
+test('no ci block → decl.ci is null (#4347)', () => {
+  assert.strictEqual(readJson(EXAMPLE).decl.ci, null);
+});
+
+test('every invalid ci field is reported (#4347)', () => {
+  const r = readJson({
+    ...EXAMPLE,
+    ci: {
+      nope: { workflow: 'a.yml', job: 'j' },
+      api: { workflow: '', job: 3, waitSeconds: 0, pollSeconds: 1.5, extra: true },
+    },
+  });
+  assert.strictEqual(r.ok, false);
+  const text = r.errors.join('\n');
+  assert.match(text, /ci\.nope: unknown suite/);
+  assert.match(text, /ci\.api\.workflow: must be a non-empty string/);
+  assert.match(text, /ci\.api\.job: must be a non-empty string/);
+  assert.match(text, /ci\.api\.waitSeconds: must be a positive integer/);
+  assert.match(text, /ci\.api\.pollSeconds: must be a positive integer/);
+  assert.match(text, /ci\.api: unknown key\(s\) "extra"/);
+  assert.match(readJson({ ...EXAMPLE, ci: [] }).errors.join('\n'), /ci: must be an object/);
+  assert.match(readJson({ ...EXAMPLE, ci: { api: 'test.yml' } }).errors.join('\n'), /ci\.api: must be an object/);
+});
+
+test('concurrency.suiteSlots: 2 parses (#5119)', () => {
+  const r = readJson({ ...EXAMPLE, concurrency: { suiteSlots: 2 } });
+  assert.strictEqual(r.ok, true);
+  assert.deepStrictEqual(r.decl.concurrency, { suiteSlots: 2, reruns: null, timeoutPatterns: [] });
+});
+
+test('AC8.1: reruns: 3 and timeoutPatterns: ["deadline"] parse, and an absent or empty block gives every key its default (#5119, #5150)', () => {
+  const r = readJson({ ...EXAMPLE, concurrency: { reruns: 3, timeoutPatterns: ['deadline'] } });
+  assert.strictEqual(r.ok, true);
+  assert.deepStrictEqual(r.decl.concurrency, { suiteSlots: null, reruns: 3, timeoutPatterns: ['deadline'] });
+  assert.strictEqual(readJson(EXAMPLE).ok, true);
+  assert.deepStrictEqual(readJson(EXAMPLE).decl.concurrency, { suiteSlots: null, reruns: null, timeoutPatterns: [] });
+  assert.deepStrictEqual(readJson({ ...EXAMPLE, concurrency: {} }).decl.concurrency, { suiteSlots: null, reruns: null, timeoutPatterns: [] });
+  assert.deepStrictEqual(readJson({ ...EXAMPLE, concurrency: { timeoutPatterns: [] } }).decl.concurrency.timeoutPatterns, []);
+});
+
+test('AC8.2: other reruns and timeoutPatterns values each report their exact message (#5150)', () => {
+  const errs = (concurrency) => readJson({ ...EXAMPLE, concurrency }).errors;
+  for (const v of [0, 1.5, '2', null]) {
+    assert.deepStrictEqual(errs({ reruns: v }), ['concurrency.reruns: must be a positive integer']);
+  }
+  for (const v of ['x', [1], [''], ['a', null], {}]) {
+    assert.deepStrictEqual(errs({ timeoutPatterns: v }), ['concurrency.timeoutPatterns: must be an array of non-empty strings']);
+  }
+  assert.deepStrictEqual(errs({ slots: 2 }), ['concurrency: unknown key(s) "slots" (allowed: suiteSlots, reruns, timeoutPatterns)']);
+});
+
+test('concurrency refusals each report their exact message (#5119)', () => {
+  const errs = (concurrency) => readJson({ ...EXAMPLE, concurrency }).errors;
+  assert.deepStrictEqual(errs([]), ['concurrency: must be an object']);
+  assert.deepStrictEqual(errs({ suiteSlots: 0 }), ['concurrency.suiteSlots: must be a positive integer']);
+  assert.deepStrictEqual(errs({ suiteSlots: 1.5 }), ['concurrency.suiteSlots: must be a positive integer']);
+  assert.deepStrictEqual(errs({ suiteSlots: '2' }), ['concurrency.suiteSlots: must be a positive integer']);
+});
+
+test('every invalid concurrency field is reported together (#5119)', () => {
+  const r = readJson({ ...EXAMPLE, concurrency: { slots: 2, suiteSlots: 0 } });
+  assert.strictEqual(r.ok, false);
+  const text = r.errors.join('\n');
+  assert.match(text, /concurrency: unknown key\(s\) "slots" \(allowed: suiteSlots, reruns, timeoutPatterns\)/);
+  assert.match(text, /concurrency\.suiteSlots: must be a positive integer/);
+});
+
+test('AC8.2: CONCURRENCY_KEYS names suiteSlots, reruns and timeoutPatterns (#5150)', () => {
+  assert.deepStrictEqual(require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'declaration.js')).CONCURRENCY_KEYS, ['suiteSlots', 'reruns', 'timeoutPatterns']);
+});
+
+test('a ci source on a tool-scoped tests command is refused (#4347)', () => {
+  const r = readJson({ checks: { tests: 'pnpm vitest --changed {base}' }, ci: { tests: { workflow: 'a.yml', job: 'j' } }, rules: [] });
+  assert.strictEqual(r.ok, false);
+  assert.match(r.errors.join('\n'), /ci\.tests: .*\{base\}/);
+});

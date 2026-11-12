@@ -52,7 +52,10 @@ const {
 } = require('./lib/wrap-up/engine-render');
 const { runVerify, renderVerifyTable, resolveArchivedRunDir } = require('./lib/wrap-up/engine-verify');
 const { writeVerifyResults } = require('./lib/wrap-up/verify-results');
-const { resolveLedgerPath, flipLedgerRow, TERMINAL_STATUSES } = require('./lib/wrap-up/ledger-write');
+const { resolveLedgerPath, flipLedgerRow, parseLedgerTable, TERMINAL_STATUSES } = require('./lib/wrap-up/ledger-write');
+const { ledgerRowCells } = require('./lib/wrap-up/ledger-cells');
+const { headerField } = require('./lib/stage-item/ledger');
+const { sddRulingRatifyAction, SDD_RULING_RATIFY_ACTIONS } = require('./lib/console/sdd-ruling');
 const { appendEntry, formatEntry } = require('./lib/log-decision/append');
 const { writeFileAtomic } = require('./lib/atomic-write');
 const { validateFields, writeExpectations } = require('./lib/verify-expectations/write');
@@ -626,6 +629,55 @@ function validateFinishConsolePayload(payload) {
     if (!l || !Number.isInteger(l.item) || l.item <= 0) return `ledger[${i}].item must be a positive integer`;
     if (!TERMINAL_STATUSES.includes(l.status)) return `ledger[${i}].status must be one of ${TERMINAL_STATUSES.join(', ')}`;
     if (l.status !== 'observation' && !String(l.resolution || '').trim()) return `ledger[${i}].resolution is required for status '${l.status}'`;
+    // #3942: ratifying a deferral ruling files a record; its row goes deferred only
+    // with that record's number — an uncreated record leaves the row open instead.
+    if (l.status === 'deferred' && /^ratified\b/i.test(String(l.resolution).trim()) && !/→\s*#\d+/.test(l.resolution)) {
+      return `ledger[${i}]: a ratified deferral needs its record number (ratified → #{n}) — leave the row open when the record was not created`;
+    }
+  }
+  return null;
+}
+
+// #3942 backstop: an `accepted` entry may close an SDD ruling's row only when its ratify
+// action is `accept` (a settled `Defers: no`). A deferral's ratify files a record (row
+// `deferred`, `ratified → #{n}`); a ruling with no ratify action leaves the row open.
+// stage-item.js --ledger names the pairing twice — the staged file's `Ledger: {ref}#{n}`
+// header and the row's `(staged/{name})` Item suffix. The Item suffix decides when present
+// (it lives in the ledger the caller resolved, and an empty or unreadable file has no header
+// to read); only a row whose Item names no file falls back to the header's number, and then
+// every ruling carrying that number must be `accept` — list order never picks one. A row
+// naming a staged ruling that is gone reads as unreadable. Returns the refusal or null.
+function rulingAcceptError(runDir, ledgerText, ledgerUpdates) {
+  if (!ledgerUpdates.some((l) => l.status === 'accepted')) return null;
+  const base = path.resolve(runDir);
+  const stagedDir = path.join(base, 'staged');
+  let names = [];
+  try { names = fs.readdirSync(stagedDir).filter((n) => /^sdd-ruling-.*\.md$/.test(n)); } catch { /* no staged/ — no rulings */ }
+  // IL-161: the same contained read the on-PR console's gate uses (console-execute.js), so a
+  // symlinked `staged/sdd-ruling-*.md` that leaves the run dir reads as unreadable here too, never
+  // as ruling text. Loaded lazily: this runs only for an `accepted` entry on finish-console.
+  const { readInsideRunDir } = require('./lib/reconcile/console-execute');
+  const rulings = names.map((name) => {
+    const read = readInsideRunDir(base, `staged/${name}`);
+    const text = read.error ? null : read.text;
+    const m = text === null ? null : /#(\d+)$/.exec(headerField(text, 'Ledger') || '');
+    return { name, text, row: m ? Number(m[1]) : null };
+  });
+  const { rows } = parseLedgerTable(ledgerText);
+  for (const [i, l] of ledgerUpdates.entries()) {
+    if (l.status !== 'accepted') continue;
+    const row = rows.get(String(l.item));
+    const named = row ? /\(staged\/(sdd-ruling-[^()\s]+\.md)\)$/.exec(ledgerRowCells(row)[2] || '') : null;
+    const matched = named
+      ? [rulings.find((r) => r.name === named[1]) || { name: named[1], text: null }]
+      : rulings.filter((r) => r.row === l.item);
+    for (const ruling of matched) {
+      const action = sddRulingRatifyAction(ruling.text);
+      if (action === SDD_RULING_RATIFY_ACTIONS.ACCEPT) continue;
+      return action === SDD_RULING_RATIFY_ACTIONS.FILE_RECORD
+        ? `ledger[${i}]: ${ruling.name} is not a settled \`Defers: no\` ruling — its ratify files a record (deferred, ratified → #{n}), never accepted`
+        : `ledger[${i}]: ${ruling.name} is not ratifiable (empty, blank, or unreadable) — its row stays open, never accepted`;
+    }
   }
   return null;
 }
@@ -688,6 +740,13 @@ function runFinishConsole(args) {
         process.exitCode = 1;
         return;
       }
+    }
+    // Every flip above succeeded, so the table parses; a flip never changes an Item cell.
+    const rulingError = rulingAcceptError(args.runDir, text, ledgerUpdates);
+    if (rulingError) {
+      process.stderr.write(`wrap-up-engine.js finish-console: ${rulingError} — nothing written\n`);
+      process.exitCode = 1;
+      return;
     }
     ledgerFlip = { path: resolved.path, text };
   }

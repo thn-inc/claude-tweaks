@@ -160,9 +160,10 @@ async function reconcileInner(opts, state) {
   // Declined-learning store prune (#1399) — local, gitignored bookkeeping unrelated to git/
   // GitHub reachability, so it runs unconditionally on every reconcile pass regardless of
   // `checks`, the integration model, or whether this even resolves to a repo — the store's own
-  // path is process.cwd()-relative (no root param on this module today, matching every existing
-  // caller: /feedback and /reflect never pass one either), so this deliberately does not thread
-  // `root` through. Best-effort: a prune failure never blocks the rest of the pass.
+  // path resolves from process.cwd() to the main checkout (#4360; no root param on this module
+  // today, matching every existing caller: /feedback and /reflect never pass one either), so this
+  // deliberately does not thread `root` through. Best-effort: a prune failure never blocks the
+  // rest of the pass.
   // #4180: skipped on a dry run — the prune rewrites the store file (and takes its lock directory).
   if (!dryRun) {
     try {
@@ -533,7 +534,7 @@ async function reconcileInner(opts, state) {
     } else {
       const r = await timePhase('release', () => releaseMerged({ cwd: root, prStates }));
       if (r.failure) {
-        result.skipped.push({ check: 'release', reason: r.failure });
+        result.skipped.push({ check: 'release', reason: r.failure, ...(r.detail ? { detail: r.detail } : {}) });
       } else {
         result.claims = r.released.map((c) => ({ ...c, action: 'released' }))
           .concat(r.skipped.map((s) => ({ ...s, action: 'skipped' })));
@@ -556,7 +557,7 @@ async function reconcileInner(opts, state) {
       return postMerge({ cwd: root, prStates, dryRun, budgetExceeded: () => budget.exceeded() });
     });
     if (r.failure) {
-      result.skipped.push({ check: 'post-merge', reason: r.failure });
+      result.skipped.push({ check: 'post-merge', reason: r.failure, ...(r.detail ? { detail: r.detail } : {}) });
     } else {
       result.postMerge = r.entries;
       postMergeDeferred = Array.isArray(r.deferred) ? r.deferred : [];
@@ -572,11 +573,14 @@ async function reconcileInner(opts, state) {
         cache: runIntegrityCache, postMergeDeferred,
       });
     });
-    result.runs = r.archived.map((d) => ({ runDir: d, action: 'archived' }))
+    // #3721: the commit an attempt made, archived or refused (stubbed archiveMergeds return none).
+    const commits = r.archiveCommits || {};
+    result.runs = r.archived.map((d) => ({ runDir: d, action: 'archived', ...(commits[d] ? { commit: commits[d] } : {}) }))
       .concat(r.skipped.map((s) => ({
         runDir: s.runDir,
         action: 'skipped',
         reason: s.reason,
+        ...(commits[s.runDir] ? { commit: commits[s.runDir] } : {}),
         ...(s.unclosed !== undefined ? { unclosed: s.unclosed } : {}),
         ...(s.missing !== undefined ? { missing: s.missing } : {}),
         ...(s.unfiled !== undefined ? { unfiled: s.unfiled } : {}),
@@ -609,7 +613,7 @@ async function reconcileInner(opts, state) {
   if (checks.includes('remote-prune') && sharedFetchOk) {
     const r = timePhaseSync('remote-prune', () => pruneRemote({ cwd: root, integration, dryRun, skipFetch: true }));
     if (r.failure) {
-      result.skipped.push({ check: 'remote-prune', reason: r.failure });
+      result.skipped.push({ check: 'remote-prune', reason: r.failure, ...(r.detail ? { detail: r.detail } : {}) });
     } else {
       result.remoteBranches = r.entries;
     }

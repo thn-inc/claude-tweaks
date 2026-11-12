@@ -17,7 +17,7 @@ files:
 
 **Persona:** A claude-tweaks maintainer whose pipeline runs re-verify a two-line skill-prose edit. Until now each re-verify paid an eight-minute full `npm test` run, queued behind sibling sessions for the single suite slot.
 **Goal:** A scoped verify runs only the test files that actually read what the branch changed. Whenever that answer can't be trusted, it runs the whole suite and says why.
-**Entry point:** `node plugin/bin/verify.js --run "$PIPELINE_RUN_DIR" --scope .claude-tweaks/verify-scope.json --integration-branch main --cmd tests="npm test"`. This is the scoped invocation every pipeline re-verify site already runs.
+**Entry point:** `node plugin/bin/verify.js --run "$PIPELINE_RUN_DIR" --scope .claude-tweaks/verify-scope.json --integration-branch main --cmd tests="npm test"`. This is the scoped invocation every pipeline re-verify site already runs; since #5119 those sites also pass `--default-suite-slots {slots}`.
 **Success state:** A docs-only or skill-prose delta finishes in seconds. Stdout shows one `Impact:` line naming the selected count and the map's commit, and `report.json`'s `scope.impact` lists exactly which test files ran. A missing, stale, red or non-ancestor map, or a path no traced read covers, runs the full suite with the reason named.
 
 ## Steps
@@ -74,7 +74,8 @@ files:
   - An unknown never selects fewer tests. When git cannot list the tests that differ since the map's commit, the reason is `map-drift-unreadable`.
   - Changing `tools/run-tests.js` or the tracer always runs the whole suite through its own `"suites": "*"` rule.
   - Standalone `/claude-tweaks:test` and a standalone `/build` stay full.
-  - On Windows, a selected subset whose command line would reach the 32,767-character limit runs the full suite instead, in the full-suite slot lane. The suite's stderr then reads `run-tests.js: --files-from {list}: a {n}-file subset needs a {len}-character command line, over the Windows limit of 32767 — running the full suite instead.` verify's `Impact:` line still names the subset it selected.
+  - `timing.json` keeps the reason, the superseded flag, the selected count and the superseding paths in the run's verify entry, so they outlive the worktree and the overwritten `report.json`.
+  - On Windows, a selected subset whose command line would reach the 32,767-character limit runs the full suite instead. A direct `node tools/run-tests.js --files-from` run then takes the full-suite slot lane, but under verify.js the fallback stays inside verify's own subset-lane slot: the lane follows the command verify spawned, and the child runner skips its own lock (#5119). The suite's stderr then reads `run-tests.js: --files-from {list}: a {n}-file subset needs a {len}-character command line, over the Windows limit of 32767 — running the full suite instead.` verify's `Impact:` line still names the subset it selected.
 - **Red flags:**
   - A fallback with no named reason.
   - A large Windows subset that fails to spawn (`ENAMETOOLONG`) instead of falling back.
@@ -87,4 +88,6 @@ files:
 - Updated during the build of #4133: the tracer now resolves a `require` the way Node does, and it parses shell and `env` wrappers. Its existence-probe records fell from 135,709 to 31,033 across the suite with no resolution change lost.
 - Updated during the build of #4131: a map now records whether it was traced from a dirty tree, and verify refuses such a map as `map-dirty`. An interrupted `trace` now forwards the signal to the suite and removes its temp dir; before, a signal left the dir behind.
 - Updated during the build of #4134: tracing works on Windows, and a Windows subset too long for the command line falls back to the full suite.
+- Updated during the build of #5119: verify.js now holds the suite slot itself, so under verify a Windows full-suite fallback runs inside verify's subset-lane slot rather than taking the full-suite lane.
+- Updated during the build of #4321: the verify event, and through it `timing.json`, now carries the impact outcome, including the paths that superseded a subset.
 - Related: `declare-a-verify-scope-1924.md` (the declaration this extends) and `run-the-suite-alongside-sibling-sessions-3969.md` (the suite slot a subset run holds for less time).

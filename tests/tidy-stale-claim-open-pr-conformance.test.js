@@ -9,8 +9,13 @@ const assert = require('node:assert/strict');
 const path = require('path');
 
 const { readText } = require('./helpers/read-skill');
+const { HOST_DEFINITION, firstInvocation, exit3Sentence, listingLegProblems } = require('./helpers/stale-claim-host-pins');
+const { lintReport } = require('../plugin/bin/lib/tidy-report-lint/rules');
 
 const REPO_ROOT = path.join(__dirname, '..');
+const RESUME_ROW = 'Resume open PR {number} — {resume}';
+const RESOLVE_ROW = 'Resolve open PR {number} before release';
+const REPLACED_ROW = '{disposition}: dispatch-resume {n}';
 
 function read(rel) {
   return readText(path.join(REPO_ROOT, rel));
@@ -43,9 +48,73 @@ test('AC1.2: the stale-claim paragraph calls the CLI on both transports (#4596)'
   const s = claimAuditSection();
   assert.ok(s.includes('bin/stale-claim-pr.js'), 'calls the one matcher implementation');
   assert.ok(s.includes('--resume'), 'asks it for the validated Resume line');
-  assert.ok(s.includes('--repo "{owner}/{repo}"'), 'passes --repo, since an origin shape parseRepo rejects is exit 3 before the gh check');
   assert.ok(s.includes('--listing'), 'hands it the MCP listing when gh is absent');
   assert.ok(s.includes('mcp__github__list_pull_requests'), 'lists open PRs through the MCP tool when gh is absent');
+});
+
+// #4794: the agent-composed calls take their host from origin through the seam. A bare --repo
+// owner/repo means github.com, so the call drops it; only the exit-3 re-run (an origin that does not
+// parse, such as a sandbox proxy remote) and the MCP listing leg (the MCP's host is github.com) pass one.
+// The `{host}` definition lives once, in _shared/issue-claims.md (P7); this file cites it.
+const HOST_CITATION = '`{host}` as `_shared/issue-claims.md` defines it';
+
+test('AC1.2 (#4794): the first stale-claim-pr.js invocation carries no --repo; origin supplies the host', () => {
+  const call = firstInvocation(claimAuditSection().replace(/\s+/g, ' '), 'the section');
+  assert.ok(call.includes('--claim-file "{CLASSIFY_INPUT path}"'), 'the invocation is the matcher call');
+  assert.ok(!call.includes('--repo'), 'a bare --repo owner/repo would mean github.com');
+});
+
+test('AC1.2 (#4794): the section never passes a bare --repo "{owner}/{repo}"', () => {
+  assert.ok(!claimAuditSection().replace(/\s+/g, ' ').includes('--repo "{owner}/{repo}"'));
+});
+
+test('AC1.2 (#4794): exit 3 (origin does not parse) re-runs with a host-qualified --repo, never a bare owner/repo', () => {
+  const flat = claimAuditSection().replace(/\s+/g, ' ');
+  assert.match(exit3Sentence(flat), /[Ee]xit 3/, 'the --repo sits in the exit-3 sentence');
+  assert.ok(flat.includes('never a bare `owner/repo`'), 'a bare slug is ruled out');
+});
+
+// The `{host}` problems the real assertions check, named so the controls can mutate one word and expect exactly one.
+function citationProblems(flat) {
+  const problems = [];
+  if (!flat.includes(HOST_CITATION)) problems.push('citation');
+  if (flat.includes(HOST_DEFINITION)) problems.push('restated');
+  return problems;
+}
+
+test('AC1.2 (#4794): `{host}` is cited from _shared/issue-claims.md, not restated', () => {
+  assert.deepEqual(citationProblems(claimAuditSection().replace(/\s+/g, ' ')), []);
+});
+
+test('AC1.2 (#4794): the MCP listing leg adds --repo "github.com/{owner}/{repo}" and only that leg does', () => {
+  assert.deepEqual(listingLegProblems(claimAuditSection().replace(/\s+/g, ' ')), []);
+});
+
+test('AC1.2 (#4794): an exit 3 that survives the host-qualified re-run is Manual review, not another retry', () => {
+  assert.ok(claimAuditSection().replace(/\s+/g, ' ').includes('so does any other non-zero exit (1, or 3 after that re-run)'));
+});
+
+test('AC1.2 (#4794) control: each retargeted clause goes red alone', () => {
+  const flat = claimAuditSection().replace(/\s+/g, ' ');
+  const wrongHost = flat.replace('--repo "github.com/{owner}/{repo}"', '--repo "{host}/{owner}/{repo}"');
+  assert.notEqual(wrongHost, flat);
+  assert.ok(listingLegProblems(wrongHost).includes('missing'), 'the listing-leg check sees a changed host inside the span');
+  const oldExit = flat.replace('(1, or 3 after that re-run)', '(1 or 3)');
+  assert.notEqual(oldExit, flat);
+  assert.ok(!oldExit.includes('so does any other non-zero exit (1, or 3 after that re-run)'), 'the exit-wording pin sees the old wording');
+  const withBareRepo = flat.replace('--claim-file "{CLASSIFY_INPUT path}"', '--claim-file "{CLASSIFY_INPUT path}" --repo "{owner}/{repo}"');
+  assert.notEqual(withBareRepo, flat);
+  assert.ok(firstInvocation(withBareRepo, 'the section').includes('--repo'), 'the no---repo check sees a re-added bare --repo');
+  const reworded = flat.replace('defines it', 'restates it');
+  assert.notEqual(reworded, flat);
+  assert.deepEqual(citationProblems(reworded), ['citation'], 'the citation check sees one reworded word');
+  assert.deepEqual(citationProblems(`${flat} ${HOST_DEFINITION}`), ['restated'], 'the citation check sees a restated definition');
+  const twice = flat.replace(' to each call.', ' to each call --repo "github.com/{owner}/{repo}".');
+  assert.notEqual(twice, flat);
+  assert.deepEqual(listingLegProblems(twice), ['host carried by a call other than the listing leg'], 'the only-the-listing-leg check sees a second carrier');
+  const noExit3 = flat.replace('Exit 3', 'Exit 4');
+  assert.notEqual(noExit3, flat);
+  assert.throws(() => assert.match(exit3Sentence(noExit3), /[Ee]xit 3/), 'the exit-3 attribution sees a missing exit 3');
 });
 
 test('AC1.1: the stale-claim paragraph restates neither the marker rule nor the Resume grammar (#4596)', () => {
@@ -67,8 +136,8 @@ test('a matching PR routes as the Yours Unsettled run no-op, never staged and ne
   const s = claimAuditSection().replace(/\s+/g, ' '); // prose wraps at ~98 columns
   assert.match(s, /`resume`/);
   assert.match(s, /`resolve`/);
-  assert.ok(s.includes('Resume open PR #{number} ({url})'), 'the Resume rendering names the PR');
-  assert.ok(s.includes('Resolve open PR #{number} ({url})'), 'the Resolve fallback names the PR');
+  assert.ok(s.includes(RESUME_ROW), 'the Resume rendering names the PR');
+  assert.ok(s.includes(RESOLVE_ROW), 'the Resolve fallback names the PR');
   // Step 4.7's table rows already say "Manual review", so a bare match proves nothing: pin the
   // failed-listing sentence itself.
   assert.match(s, /failed listing[^.]*Manual review[^.]*never an unchecked Release/);
@@ -84,7 +153,7 @@ test('AC1.1: the stale-claim call passes --issue {n} so a gone run dir resumes t
   const flat = claimAuditSection().replace(/\s+/g, ' '); // prose wraps at ~98 columns
   assert.ok(flat.includes('--resume --issue {n}'), 'the call hands the claim number to the CLI');
   // The dispatch literal sits in the Resume row's own sentence, not merely somewhere in the section.
-  const rowAt = flat.indexOf('Resume open PR #{number} ({url}) — {resume}');
+  const rowAt = flat.indexOf(RESUME_ROW);
   assert.notEqual(rowAt, -1, 'the Resume row is present');
   const archivedAt = flat.indexOf('absent or archived', rowAt);
   assert.notEqual(archivedAt, -1, 'the Resume row names the absent-or-archived condition');
@@ -96,8 +165,82 @@ test('AC1.1: the stale-claim call passes --issue {n} so a gone run dir resumes t
 
 test('AC2.1: a present run dir still renders the PR body\'s resume line (#4673)', () => {
   const flat = claimAuditSection().replace(/\s+/g, ' '); // prose wraps at ~98 columns
-  assert.ok(flat.includes('Resume open PR #{number} ({url}) — {resume}'), 'the Resume row keeps its rendering');
+  assert.ok(flat.includes(RESUME_ROW), 'the Resume row keeps its rendering');
   assert.ok(flat.includes('the PR body\'s resume line'), 'the PR body stays the resume source for a present run dir');
+});
+
+// #4849: the two rows cannot carry a `#` ref beside the record's own (One record per row), and the url
+// never fit the Width gate, so neither renders any more.
+function rowFormProblems(flat) {
+  const problems = [];
+  if (!flat.includes(RESUME_ROW)) problems.push('resume row');
+  if (!flat.includes(RESOLVE_ROW)) problems.push('resolve row');
+  if (!flat.includes('`{resume}` takes its own command line')) problems.push('command alone');
+  if (!flat.includes("`{number}` is `link`'s trailing `/pull/` number")) problems.push('number source');
+  if (/open PR #\{number\}|\{url\}/.test(flat)) problems.push('retired form');
+  return problems;
+}
+
+test('the Resume and Resolve rows name the PR with no # and no url (#4849)', () => {
+  assert.deepEqual(rowFormProblems(claimAuditSection().replace(/\s+/g, ' ')), []);
+  assert.doesNotMatch(read('plugin/skills/tidy/issue-claims-backstops.md').replace(/\s+/g, ' '), /open PR #\{number\}|\{url\}/);
+});
+
+for (const [name, from, to] of [
+  ['resume row', RESUME_ROW, 'Resume it'],
+  ['resolve row', RESOLVE_ROW, 'Resolve it'],
+  ['command alone', '`{resume}` takes its own command line', 'and'],
+  ['number source', "`{number}` is `link`'s trailing `/pull/` number", 'and so on'],
+  ['retired form', RESOLVE_ROW, `${RESOLVE_ROW} Resolve open PR #{number} ({url})`],
+]) {
+  test(`control: mutating the Yours rows reports exactly "${name}" (#4849)`, () => {
+    const flat = claimAuditSection().replace(/\s+/g, ' ');
+    const mutated = flat.replace(from, to);
+    assert.notEqual(mutated, flat);
+    assert.deepEqual(rowFormProblems(mutated), [name]);
+  });
+}
+
+// The rows run through the real linter on both surfaces, at the widest title the Report rules allow. The
+// trailing columns are built from the pinned rows, so a wider row goes red here on Width.
+const TITLE_50 = `${'x'.repeat(49)}…`;
+const fill = (row) => row.replace('{number}', '4901').replace(' — {resume}', '').replace(/\{disposition\}/, 'close-out').replace('{n}', '4849');
+function yoursFixture({ resumeRow = RESUME_ROW, resolveRow = RESOLVE_ROW } = {}) {
+  const row = (trailing, n) => `   #${n}  ${TITLE_50}  ${fill(trailing)}`;
+  return [
+    '**Yours (3)**',
+    '```text',
+    '/claude-tweaks:dispatch resume (1)',
+    row(resumeRow, 4849),
+    '   /claude-tweaks:dispatch resume #4849',
+    'node (1)',
+    row(REPLACED_ROW, 4850),
+    '   node "${CLAUDE_PLUGIN_ROOT}/bin/dispatch-resume.js" --issue 4850',
+    'review (1)',
+    row(resolveRow, 4851),
+    '```',
+    '',
+    '**Clean:**',
+    '```text',
+    'claims             3 checked',
+    '```',
+    '',
+    'Full decision log: x/decisions.md',
+  ].join('\n');
+}
+
+for (const surface of ['condensed', 'full']) {
+  test(`a Yours fixture with 50-column titles passes tidy-report-lint on the ${surface} surface (#4849)`, () => {
+    assert.deepEqual(lintReport(yoursFixture(), { surface }), []);
+  });
+}
+
+test('control: the retired rows fail tidy-report-lint on Width and One record per row (#4849)', () => {
+  const oldRow = 'Resolve open PR #{number} (https://github.com/o/r/pull/4901) before any release';
+  const text = yoursFixture({ resolveRow: oldRow });
+  assert.ok(lintReport(text, { surface: 'condensed' }).some((i) => i.startsWith('Width:')));
+  assert.ok(lintReport(yoursFixture({ resolveRow: 'Resolve open PR #{number} now' }), { surface: 'full' }).some((i) => i.startsWith('One record per row:')));
+  assert.ok(lintReport(yoursFixture({ resolveRow: 'Resolve open PR {number} before any release' }), { surface: 'condensed' }).some((i) => i.startsWith('Width:')));
 });
 
 test('the Collect line carries the PR number and resume command for a Resume recommendation (#4423)', () => {
@@ -115,6 +258,211 @@ test('the Release claim executor never receives an open-PR stale row (#4423)', (
   const s = ACTIONS.slice(start, end);
   assert.match(s, /open marked PR/);
   assert.match(s, /never a Release row/);
+});
+
+// #4849: a stale-claim Release (and a matched Resume row) states the open linked PR's disposition,
+// taken from bin/dispatch-resume.js's verdict. The section is addressed to the Issue Claims agent,
+// which gets issue-claims-backstops.md inlined whole, so it carries the whole rule.
+const BACKSTOPS = read('plugin/skills/tidy/issue-claims-backstops.md');
+const STEP6 = read('plugin/skills/tidy/step-6-auto.md');
+const DISPOSITION_PREFIX = '### Open linked PR on a stale-claim Release';
+const DISPOSITION_HEADING = `${DISPOSITION_PREFIX} (#4849)`;
+
+function dispositionSection(text) {
+  const start = text.indexOf(DISPOSITION_PREFIX);
+  const end = text.indexOf('### Backstop: missed `parked` restoration');
+  if (start === -1) return '';
+  assert.ok(end > start, 'the disposition section sits before the first Backstop heading');
+  return text.slice(start, end);
+}
+
+// One entry per fact the section must state; a string is an exact literal, a RegExp a window claim.
+const DISPOSITION_FACTS = [
+  { name: 'section', pin: DISPOSITION_HEADING, strip: ' (#4849)' },
+  { name: 'runs the verdict', pin: 'run `node "${CLAUDE_PLUGIN_ROOT}/bin/dispatch-resume.js" --issue {n}`' },
+  { name: 'resume disposition', pin: 'PR #{prNumber}: resume — /claude-tweaks:dispatch resume #{n}' },
+  { name: 'no-pr appends nothing', pin: 'exit 3 with reason `no-pr`, append nothing' },
+  { name: 'refused disposition', pin: 'PR #{number}: {disposition} — {remedy}' },
+  { name: 'several PRs on one line', pin: '(ascending, on one line: several PRs render `PR #{a}, #{b}: {disposition} — {remedy}`)' },
+  { name: 'disposition vocabulary', pin: '`disposition` (`resume`, `close-out` or `close`)' },
+  { name: 'lands in the finding', pin: "end of the `[claim]` row's `{recommendation}`" },
+  { name: 'a failed read is stated', pin: /exit 2 or 4[^.]*open linked PR unknown \(dispatch-resume exit \{code\}\)/ },
+  { name: 'gh-absent transport citation', pin: '`_shared/github-write-transport.md`' },
+  { name: 'matched row is scoped to the dispatch form', pin: 'runs the verdict only when the printed `resume` is `/claude-tweaks:dispatch resume #{n}`' },
+  { name: 'a PR body resume line stands', pin: "a PR body's own resume line stands, with no verdict run" },
+  { name: 'matched row exit 0 keeps the command', pin: 'exit 0 keeps the printed command' },
+  { name: 'dispatch form runs the same command', pin: 'For the dispatch form, run the same command' },
+  { name: 'matched row no-pr resolves', pin: 'on exit 3 with reason `no-pr` render `Resolve open PR {number} before release` instead' },
+  { name: 'matched row replaced rendering', pin: 'any other exit 3 renders `{disposition}: dispatch-resume {n}` in place of the Resume rendering (the verdict CLI, `dispatch-resume.js --issue {n}`, prints the steps)' },
+  { name: 'replaced row group and closing command', pin: 'that row keys under `node` and closes with one `node "${CLAUDE_PLUGIN_ROOT}/bin/dispatch-resume.js" --issue {n}` line per row' },
+  { name: 'intro scopes the matched rows to the dispatch form', pin: 'for each one `stale-claim-pr.js` matched with the dispatch-resume command printed as `resume`' },
+  { name: 'matched row failed read keeps the command', pin: 'on exit 2 or 4 it keeps the command and appends the same unknown note' },
+  { name: 'matched row stays never staged', pin: 'That row stays never staged and its claim never released' },
+  { name: 'stale claim reads resumable', pin: 'the same as the `swept: stale claim` tombstone the Release writes' },
+];
+
+function missingDispositionFacts(text) {
+  const flat = dispositionSection(text).replace(/\s+/g, ' ');
+  return DISPOSITION_FACTS.filter(({ pin }) => (typeof pin === 'string' ? !flat.includes(pin) : !pin.test(flat))).map((f) => f.name);
+}
+
+// Strips exactly one fact from the section (the heading fact drops only its issue suffix, so the section is still found).
+function stripFact(text, fact) {
+  const section = dispositionSection(text);
+  const flatSection = section.replace(/\s+/g, ' ');
+  const stripped = flatSection.replace(fact.strip || fact.pin, '');
+  const start = text.indexOf(DISPOSITION_PREFIX);
+  return text.slice(0, start) + stripped + text.slice(start + section.length);
+}
+
+test('AC4.1: the stale-claim finding names a PR disposition when an open linked PR exists (#4849)', () => {
+  assert.ok(dispositionSection(BACKSTOPS).length > 0, 'the section exists in issue-claims-backstops.md');
+  assert.deepEqual(missingDispositionFacts(BACKSTOPS), []);
+});
+
+for (const fact of DISPOSITION_FACTS) {
+  test(`AC4.1 control: dropping "${fact.name}" goes red on exactly that fact (#4849)`, () => {
+    const mutated = stripFact(BACKSTOPS, fact);
+    assert.notEqual(mutated, BACKSTOPS, 'the strip matched something');
+    assert.deepEqual(missingDispositionFacts(mutated), [fact.name]);
+  });
+}
+
+// A rewrite of a guard condition, not a deletion: each `from` sits inside its fact's pinned phrase and is
+// unique at its first occurrence in the section, so replacing it changes exactly that fact's string.
+const DISPOSITION_REWRITES = [
+  { fact: 'matched row no-pr resolves', from: 'exit 3 with reason `no-pr` render', to: 'exit 3 with reason refused render' },
+  { fact: 'matched row no-pr resolves', from: 'on exit 3 with reason `no-pr` render', to: 'render' },
+  { fact: 'matched row replaced rendering', from: 'any other exit 3 renders', to: 'exit 3 renders' },
+  { fact: 'matched row replaced rendering', from: 'any other exit 3 renders', to: 'exit 0 renders' },
+  { fact: 'matched row replaced rendering', from: '`{disposition}: dispatch-resume {n}`', to: '`PR #{number}: {disposition} — dispatch-resume.js --issue {n} prints the steps`' },
+  { fact: 'dispatch form runs the same command', from: 'For the dispatch form, run', to: 'For either form, run' },
+  { fact: 'intro scopes the matched rows to the dispatch form', from: 'the dispatch-resume command printed as `resume`', to: 'a printed resume command' },
+  { fact: 'replaced row group and closing command', from: 'keys under `node`', to: 'keys under `gh`' },
+  { fact: 'replaced row group and closing command', from: 'one `node "${CLAUDE_PLUGIN_ROOT}/bin/dispatch-resume.js" --issue {n}` line per row', to: 'one `node "${CLAUDE_PLUGIN_ROOT}/bin/dispatch-resume.js" --issue {n}` line per group' },
+  { fact: 'matched row exit 0 keeps the command', from: 'exit 0 keeps the printed command', to: 'exit 3 keeps the printed command' },
+  { fact: 'matched row failed read keeps the command', from: 'it keeps the command and appends', to: 'it drops the command and appends' },
+];
+
+for (const { fact, from, to } of DISPOSITION_REWRITES) {
+  test(`AC4.1 control: rewriting "${from}" to "${to}" reports exactly "${fact}" (#4849)`, () => {
+    const section = dispositionSection(BACKSTOPS);
+    const flatSection = section.replace(/\s+/g, ' ');
+    assert.ok(flatSection.includes(from), 'the rewrite target is in the section');
+    const mutated = BACKSTOPS.replace(section, flatSection.replace(from, to));
+    assert.notEqual(mutated, BACKSTOPS);
+    assert.deepEqual(missingDispositionFacts(mutated), [fact]);
+  });
+}
+
+test('AC4.1 control: a section-less file reports every fact missing (#4849)', () => {
+  assert.deepEqual(missingDispositionFacts(BACKSTOPS.replace(DISPOSITION_HEADING, '### Something else')), DISPOSITION_FACTS.map((f) => f.name));
+});
+
+const HANDOFF = "means Release plus `issue-claims-backstops.md`'s PR disposition.";
+const OLD_HANDOFF = 'means plain Release.';
+
+function handoffProblems(flat) {
+  const problems = [];
+  if (!flat.includes(HANDOFF)) problems.push('hand-off');
+  if (flat.includes(OLD_HANDOFF)) problems.push('old sentence');
+  return problems;
+}
+
+test('AC4.1: the plain-Release sentence hands to the disposition section (#4849)', () => {
+  assert.deepEqual(handoffProblems(claimAuditSection().replace(/\s+/g, ' ')), []);
+});
+
+test('AC4.1 control: dropping the hand-off sentence reports only the hand-off (#4849)', () => {
+  const flat = claimAuditSection().replace(/\s+/g, ' ');
+  const mutated = flat.replace(HANDOFF, '');
+  assert.notEqual(mutated, flat);
+  assert.deepEqual(handoffProblems(mutated), ['hand-off']);
+});
+
+test('AC4.1 control: the old plain-Release sentence alone is reported as the old sentence (#4849)', () => {
+  const flat = claimAuditSection().replace(/\s+/g, ' ');
+  const mutated = `${flat} ${OLD_HANDOFF}`;
+  assert.notEqual(mutated, flat);
+  assert.deepEqual(handoffProblems(mutated), ['old sentence']);
+});
+
+// A staged claim-releases row's action states the disposition in a short form so the Approve item passes
+// the Width gate; a close remedy runs about 490 characters, past the 100-character gate on one `command`
+// line. The four forms are the rulings of the #4849 fix round.
+const STAGED_FACTS = [
+  { name: 'one-PR action', pin: "`claim-releases` row's `action` reads `Release claim; PR #{number} disposition: {disposition}` for one open PR" },
+  { name: 'several-PR action', pin: '`Release claim; {k} open PRs, disposition: {disposition}` for several (no `#` refs)' },
+  { name: 'unknown-PR action', pin: '`Release claim; open linked PR unknown (dispatch-resume exit {code})` after exit 2 or 4' },
+  { name: 'no-pr action', pin: 'and the plain release action for `no-pr`' },
+  { name: 'remedy stays off command', pin: "The full remedy stays in the finding's `{recommendation}` and in the staged `.md` body, never in `command`, which stays the release mutation" },
+];
+const STAGED_REWRITES = [
+  { fact: 'remedy stays off command', from: 'never in `command`', to: 'also in `command`' },
+  { fact: 'remedy stays off command', from: ' and in the staged `.md` body', to: '' },
+  { fact: 'remedy stays off command', from: 'which stays the release mutation', to: 'which carries the remedy' },
+  { fact: 'one-PR action', from: 'for one open PR', to: 'for several open PRs' },
+  { fact: 'one-PR action', from: 'disposition: {disposition}` for one', to: 'disposition: {remedy}` for one' },
+  { fact: 'several-PR action', from: 'for several (no `#` refs)', to: 'for several (with `#` refs)' },
+  { fact: 'unknown-PR action', from: 'after exit 2 or 4', to: 'after exit 3' },
+  { fact: 'no-pr action', from: 'for `no-pr`', to: 'for `close`' },
+];
+const STAGED_BANNED = /`claim-releases`[^.]*verbatim/;
+
+function stagedProblems(flat) {
+  const problems = STAGED_FACTS.filter(({ pin }) => !flat.includes(pin)).map((f) => f.name);
+  if (STAGED_BANNED.test(flat)) problems.push('verbatim');
+  return problems;
+}
+
+test('AC4.1: a staged claim-releases row states its disposition in short form and keeps the remedy off command (#4849)', () => {
+  assert.deepEqual(stagedProblems(STEP6.replace(/\s+/g, ' ')), []);
+});
+
+for (const fact of STAGED_FACTS) {
+  test(`AC4.1 control: step-6-auto without "${fact.name}" reports exactly that fact (#4849)`, () => {
+    const flat = STEP6.replace(/\s+/g, ' ');
+    const mutated = flat.replace(fact.pin, '');
+    assert.notEqual(mutated, flat);
+    assert.deepEqual(stagedProblems(mutated), [fact.name]);
+  });
+}
+
+for (const { fact, from, to } of STAGED_REWRITES) {
+  test(`AC4.1 control: step-6-auto rewriting "${from}" to "${to}" reports exactly "${fact}" (#4849)`, () => {
+    const flat = STEP6.replace(/\s+/g, ' ');
+    assert.ok(flat.includes(from), 'the rewrite target is in step-6-auto.md');
+    const mutated = flat.replace(from, to);
+    assert.notEqual(mutated, flat);
+    assert.deepEqual(stagedProblems(mutated), [fact]);
+  });
+}
+
+test('AC4.1 control: a claim-releases action that carries the disposition verbatim is reported (#4849)', () => {
+  const flat = STEP6.replace(/\s+/g, ' ');
+  const mutated = `${flat} A \`claim-releases\` row's \`action\` carries the PR disposition verbatim.`;
+  assert.deepEqual(stagedProblems(mutated), ['verbatim']);
+});
+
+// [\s\S] not [^.]: the sentence names `release-claim.js`, whose dot would end a [^.]* window.
+const EXECUTOR_PIN = /PR disposition[\s\S]{0,160}`release-claim\.js` never closes or touches the PR/;
+
+function releaseClaimSection() {
+  const start = ACTIONS.indexOf('## Release claim');
+  const end = ACTIONS.indexOf('## Sync to GitHub');
+  assert.ok(start !== -1 && end > start, 'actions-github-issues.md carries both headings');
+  return ACTIONS.slice(start, end);
+}
+
+test('the Release claim executor leaves the PR alone (#4849)', () => {
+  assert.match(releaseClaimSection().replace(/\s+/g, ' '), EXECUTOR_PIN);
+});
+
+test('control: the Release claim section without the executor sentence fails the pin (#4849)', () => {
+  const flat = releaseClaimSection().replace(/\s+/g, ' ');
+  const mutated = flat.replace(EXECUTOR_PIN, '');
+  assert.notEqual(mutated, flat);
+  assert.doesNotMatch(mutated, EXECUTOR_PIN);
 });
 
 test('collection-routing routes a [claim] Resume/Resolve outcome to Yours and supersedes [unsettled] (#4423)', () => {

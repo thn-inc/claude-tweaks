@@ -67,7 +67,7 @@ For each finding, route by recommendation type:
 | **Propose digest cluster** (Step 5.6 cluster promotion; on approval, files a new backlog record) | Stage | Stage | Stage — new backlog-record writes are on the auto-mode contract's never-silenced list, same as the Capture row above |
 | **Expiry summary** (Step 5.6, `github-issues` — posts a closing summary comment) | Stage | Stage | Stage — outward-facing GitHub write, never auto-applied per the reversibility floor |
 | **Expiry summary** (Step 5.6, `local-files` — moves entry lines to `## Archived {date}` in `specs/digest.md`) | Stage | Auto-apply | Auto-apply — a tracked-file edit, same reversibility class as the `local-files` Defer row above |
-| **Rollover digest container** (Step 5.6, `github-issues` only — 100-comment threshold) | Stage | Stage | Stage — closes one issue, opens another, and moves a label: outward-facing, never auto-applied per the reversibility floor |
+| **Rollover digest container** (Step 5.6, `github-issues` only — 100-comment threshold, or an unfinished rollover to resume) | Stage | Stage | Stage — closes one issue, opens another, carries its entries and moves a label: outward-facing, never auto-applied per the reversibility floor |
 
 **Net-empty branches (#613).** `scan-procedures.md`'s Step 4.5 worktree/branch audit — the Build-branches table and every shared-probe worktree/branch candidate alike — checks each unmerged `{branch}` against its own fork point before falling back to "Unmerged changes"/manual review: resolve `{base}` per `_shared/integration-branch.md` (same resolution the `-d`/`-D` procedure there already uses), then `git -C "{REPO_ROOT}" diff --quiet "$(git -C "{REPO_ROOT}" merge-base {base} {branch})" {branch}`. Exit 0 (no diff) means `{branch}`'s tree is byte-identical to where it forked — the canonical `/specify` residue shape (a design doc committed, then deleted after decomposition, netting zero across two commits) is exactly this, and it is invisible both to the shared probe's `--merged`-only `kind: branch` finding and to a plain "unmerged" read, since the branch is neither merged nor genuinely holding unmerged work. A `merge-base` failure (no common ancestor) or a malformed-ref error from `git diff --quiet` is a non-zero exit that is not "no diff" — it falls through to the existing "unmerged"/manual-review path exactly like any other refusal, never to auto-delete. Collect as `[git] {branch} — net-empty — delete via -D` — the same Recommendation-column string `scan-procedures.md`'s own collect rule (`[git] {worktree/branch} — {recommendation}`) already produces for this outcome, so the scan-phase and auto-execution reports never diverge — which routes through the Delete row above like any other merged-worktree finding. `-d` will typically refuse this case (content-identical, not history-contained) — use `-D`; safe because the empty diff is itself the proof nothing is lost. This override never applies over a PR-state `OPEN` row, a dirty-worktree override (`dirty: true`/`unknown`), or a locked worktree — those still win. This is intentionally stricter than `scan-procedures.md`'s general Dirty-worktree override (#1424), which treats `dirty: unknown` alone as non-blocking for ordinary worktree removal — because `-D` here is an irreversible force-delete, the ambiguity of an unknown dirty status is itself reason enough to defer to manual review rather than proceed.
 
@@ -97,7 +97,13 @@ finding}, "title": "{≤50-char title}", "action": "{the staged action, one line
 exact command or mutation}"}`. This sidecar is what `render-tidy-report.js` reads back — the
 **only** thing it reads back — to render the Approve section below, so a staged item with no
 sidecar is invisible to the report and a sidecar with no staged item never exists (one call writes
-both, or neither).
+both, or neither). A `claim-releases` row's `action` reads `Release claim; PR #{number} disposition: {disposition}`
+for one open PR, `Release claim; {k} open PRs, disposition: {disposition}` for several (no `#`
+refs), `Release claim; open linked PR unknown (dispatch-resume exit {code})` after exit 2 or 4,
+and the plain release action for `no-pr`, so the staged-action line the Approve item renders stays
+inside the Width gate. The full remedy stays in the finding's `{recommendation}` and in the staged
+`.md` body, never in `command`, which stays the release mutation (a close remedy runs about 490
+characters, past the 100-character Width gate).
 
 Nothing enforces that the sidecar's fields stay in sync with the `.md` file's own prose — both
 describe the same proposal, but only the `.json` side is ever read back to render the report.

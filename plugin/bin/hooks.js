@@ -11,7 +11,9 @@
 // that never actually matched pre-tool-use.js's real behavior. The directly
 // invoked CLI verbs below (record-worktree, resolve-run-dir, close-run, …)
 // are a separate contract and may exit non-zero on malformed or rejected
-// input.
+// input. A VERBS command's unexpected exception exits 1 with
+// `claude-tweaks: {verb}: {message}` on stderr (#4932), while EVENTS keep exit
+// 0 through the entry catch.
 'use strict';
 // #3074: Bash prefilter fast path. hooks.json registers ONE unconditional
 // Bash handler per tool-use event, so every Bash call spawns this process —
@@ -127,6 +129,7 @@ const VERBS = {
   'close-run': { usage: 'close-run [--run <dir>]', run: runCloseRun },
   'delete-ledger': { usage: 'delete-ledger --run <dir> [--ledger <path>]', run: runDeleteLedger },
   'resolve-ledger': { usage: 'resolve-ledger --run <dir>', run: runResolveLedger },
+  'ledger-row': { usage: 'ledger-row [--run <dir>] [--ledger <path>] (--phase <phase> (--item <text> | --item-file <path>) | --row <n>) --status <status> [--resolution <text> | --resolution-file <path>]', run: runLedgerRow },
   'teardown-run': { usage: 'teardown-run [--run <dir>] [--merged|--abandoned] [--remote-ref-only]', run: runTeardownRun },
   'archive-run': { usage: 'archive-run [--run <dir>]', run: runArchiveRun },
   'resolve-console': { usage: 'resolve-console --run <dir> [--approve <id,id,...>] [--decline <id,id,...>] [--reverse-failed <id,id,...>] [--filing-failed <id,id,...>]', run: runResolveConsole },
@@ -162,7 +165,7 @@ function usageText() {
 // verb and fails closed: a verb with no entry refuses every flag, and a flagless
 // verb carries `[]`. `--help`/`-h` are never declared; main() intercepts both
 // anywhere in the argument list (value positions included) before the
-// undeclared-flag scan.
+// undeclared-flag scan. An undeclared flag is refused on stderr with exit 1 (#4834).
 // tests/hooks-js-flag-strict.test.js enforces the membership. The table gates
 // flags only: archive-run keeps its ctxLib.resolveRunDir fallback, because
 // unambiguousOnly is chosen per call site (resolveOpts), not by this table —
@@ -172,6 +175,7 @@ const KNOWN_FLAGS = {
   'close-run': ['--run'],
   'delete-ledger': ['--run', '--ledger'],
   'resolve-ledger': ['--run'],
+  'ledger-row': ['--run', '--ledger', '--phase', '--item', '--item-file', '--status', '--resolution', '--resolution-file', '--row'],
   'record-worktree': ['--run', '--dispatch'],
   'record-pr': ['--run'],
   'manifest-init': ['--run', '--specs'],
@@ -204,23 +208,25 @@ const KNOWN_FLAGS = {
 // with "--", and the handler would otherwise read the stray flag as the value.
 // One set for every verb: a flag name here takes a value on every verb that
 // declares it, so it must never be a boolean flag on another verb.
-const VALUE_FLAGS = new Set(['--run', '--specs', '--spec', '--status', '--phase', '--now', '--approve', '--decline', '--reverse-failed', '--filing-failed', '--ledger', '--spec-slug', '--mode', '--standalone', '--worktree', '--record', '--checks']);
+const VALUE_FLAGS = new Set(['--run', '--specs', '--spec', '--status', '--phase', '--now', '--approve', '--decline', '--reverse-failed', '--filing-failed', '--ledger', '--spec-slug', '--mode', '--standalone', '--worktree', '--record', '--checks', '--item', '--item-file', '--resolution', '--resolution-file', '--row']);
 
-// First `--*`-shaped token in `args` that isn't declared for this verb, or
-// null when every `--*` token is declared (or there are none). Scans the
-// FULL argument list, not just a fixed position. A token consumed as a value
-// is skipped, so main() checks --help and -h over every position separately
-// (#1143's "anywhere in the argument list" guarantee).
+// Returns the first refused `--*` token in `args`: an undeclared flag, as
+// `{ token, valueFlag: null }`, or any `--*` token sitting in a declared value
+// flag's value position, as `{ token, valueFlag }` naming that flag. Returns
+// null when nothing is refused. Scans the FULL argument list, not just a
+// fixed position. A token consumed as a value is skipped, so main() checks
+// --help and -h over every position separately (#1143's "anywhere in the
+// argument list" guarantee).
 function firstUnknownFlag(knownFlags, args) {
   const known = new Set(knownFlags);
   for (let i = 0; i < args.length; i += 1) {
     const a = args[i];
     if (typeof a !== 'string' || !a.startsWith('--')) continue;
-    if (!known.has(a)) return a;
+    if (!known.has(a)) return { token: a, valueFlag: null };
     if (VALUE_FLAGS.has(a)) {
       // A value flag followed by a "--" token has no value: refuse that token.
       const next = args[i + 1];
-      if (typeof next === 'string' && next.startsWith('--')) return next;
+      if (typeof next === 'string' && next.startsWith('--')) return { token: next, valueFlag: a };
       i += 1; // skip this flag's own value
     }
   }
@@ -953,11 +959,11 @@ async function runRecordPr(argv) {
     // Best-effort: a run with no recorded worktree, or a derivation that
     // comes back null, simply records {number, url} as before.
     // Guarded because this is the first external-process call in a verb that
-    // previously had none: main()'s own `.catch(() => process.exit(0))` would
-    // swallow a throw here and skip writeRunState entirely, exiting 0 with no
-    // output — the PR silently never recorded, while every other failure
-    // branch in this verb prints a "not recorded" notice. Degrading to the
-    // pre-#1672 {number, url} write is the correct best-effort outcome.
+    // previously had none: without the guard, a throw here would exit 1 with
+    // `claude-tweaks: record-pr: …` (#4932) and still skip writeRunState — the
+    // PR would not be recorded, while every other failure branch in this verb
+    // prints a "not recorded" notice. Degrading to the pre-#1672 {number, url}
+    // write is the correct best-effort outcome.
     let prBranch = null;
     try {
       prBranch = deriveBranch(repoRootOf(runDir), ctxLib.readRunState(runDir)?.worktree || null);
@@ -1231,6 +1237,139 @@ async function runResolveLedger(argv) {
   return 0;
 }
 
+// #4439: the first token of `args` that is neither a `--*` flag nor a declared value flag's value —
+// an unquoted multi-word value would otherwise be silently truncated to its first word.
+function firstStrayArg(args) {
+  for (let i = 0; i < args.length; i += 1) {
+    if (!args[i].startsWith('--')) return args[i];
+    if (VALUE_FLAGS.has(args[i])) i += 1;
+  }
+  return null;
+}
+
+// #4439: one ledger-row text value, from its argv flag or its `--*-file` twin (the file is how a value
+// carrying `|`, a backtick or `$` reaches the row without shell quoting). A text-file usage error comes
+// back as `usageError` (the verb exits 2 on it).
+function ledgerRowText(args, flag, fileFlag) {
+  const fromArgv = args.includes(flag);
+  const fromFile = args.includes(fileFlag);
+  const fail = (usageError) => ({ present: true, text: null, usageError });
+  if (fromArgv && fromFile) return fail(`${flag} and ${fileFlag} cannot be combined`);
+  if (!fromFile) return { present: fromArgv, text: fromArgv ? String(flagVal(args, flag) ?? '') : null, usageError: null };
+  const file = flagVal(args, fileFlag);
+  if (typeof file !== 'string' || file.trim() === '') return fail(`${fileFlag} needs a path`);
+  let text;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    return fail(`${fileFlag} ${file} is unreadable (${err && err.code ? err.code : err && err.message})`);
+  }
+  let end = text.length;
+  while (end > 0 && (text[end - 1] === '\n' || text[end - 1] === '\r')) end -= 1;
+  text = text.slice(0, end);
+  if (text.trim() === '') return fail(`${fileFlag} ${file} is empty`);
+  if (/[\r\n]/.test(text)) return fail(`${fileFlag} ${file} holds more than one line — a ledger cell is one table line`);
+  return { present: true, text, usageError: null };
+}
+
+async function runLedgerRow(argv) {
+  // #4439: the sanctioned writer for a plain open-items ledger row — append one (`--phase`/`--item`/
+  // `--status`), or settle one by number (`--row`/`--status`/`--resolution`). stdout is exactly one JSON
+  // line; every refusal is one stderr line, exit 1 and nothing written, except a text-file usage error
+  // (exit 2). The status/Resolution rules and the locked write are stage-item/ledger.js's.
+  const callerIdentity = { sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() };
+  const {
+    runDir, invalidRunArg, rest, worktreeLocalFallback, explicit, candidates,
+  } = resolveRunArg(argv.slice(3), process.cwd(), process.env, { unambiguousOnly: true, callerIdentity });
+  reportWorktreeLocalFallback(runDir, worktreeLocalFallback, process.stderr);
+  const fail = async (text, code = 1) => {
+    await new Promise((resolve) => process.stderr.write(`${text}\n`, resolve));
+    return code;
+  };
+  const refuse = (reason, code = 1) => fail(`claude-tweaks: ledger-row: ${reason} — nothing written`, code);
+  if (invalidRunArg) return fail(`claude-tweaks: --run path rejected: ${invalidRunArg} — nothing written`);
+  if (candidates) return fail(`${renderCandidateRefusal('ledger-row', candidates)}\nNothing written.`);
+  if (!runDir) return fail('claude-tweaks: no pipeline run dir found — nothing written');
+  const runState = ctxLib.readRunState(runDir);
+  // Same write-time guard as record-pr's and spec-status's: an implicit resolution (only the env-var arm
+  // can reach a foreign run) never writes against another session's run; an explicit --run bypasses it.
+  if (!explicit && ctxLib.classifyOwnership(callerIdentity, runState) === 'foreign') {
+    return refuse(`run ${path.basename(runDir)} was recorded by another session/worktree — refusing to write a ledger row against it without an explicit --run`);
+  }
+  const stray = firstStrayArg(rest);
+  if (stray !== null) return refuse(`unexpected argument '${stray}' — quote a value that contains spaces, or pass it with --item-file/--resolution-file`);
+
+  const item = ledgerRowText(rest, '--item', '--item-file');
+  const resolution = ledgerRowText(rest, '--resolution', '--resolution-file');
+  for (const source of [item, resolution]) {
+    if (source.usageError) return refuse(source.usageError, 2);
+  }
+
+  const isBlank = (value) => typeof value !== 'string' || value.trim() === '';
+  const status = flagVal(rest, '--status');
+  const phase = flagVal(rest, '--phase');
+  const ledgerArg = flagVal(rest, '--ledger');
+  const settle = rest.includes('--row');
+  const row = settle ? flagVal(rest, '--row') : null;
+  if (isBlank(status)) return refuse('--status is required');
+  if (rest.includes('--ledger') && isBlank(ledgerArg)) return refuse('--ledger needs a path');
+  if (settle) {
+    if (!/^\d+$/.test(row || '')) return refuse(`--row needs a row number, got '${row}'`);
+    if (rest.includes('--phase') || item.present) return refuse('--row settles an existing row — it cannot be combined with --phase, --item or --item-file');
+  } else {
+    if (isBlank(phase)) return refuse('an append needs --phase');
+    if (isBlank(item.text)) return refuse('an append needs --item or --item-file');
+  }
+
+  const { checkLedgerStatus, appendRow, settleRow } = require('./lib/stage-item/ledger');
+  const { ownRecordNumbers } = require('./lib/wrap-up/pack');
+  const { resolveLedgerPath } = require('./lib/wrap-up/ledger-write');
+  const worktree = runState?.worktree || process.cwd();
+  const excludeRecords = ownRecordNumbers(runDir, worktree);
+  // Only a `fixed` row matches its Resolution against the origin repo; unresolvable origin reads as null.
+  let repo = null;
+  if (status === 'fixed') {
+    try {
+      const repoResolve = require('./lib/repo-resolve');
+      // #4794: read the origin the gate's way (userinfo, port and scheme dropped), so the verdict never depends on the URL's spelling.
+      repo = repoResolve.originSpecOf(repoResolve.originUrl(worktree));
+    } catch { repo = null; }
+  }
+  const verdict = checkLedgerStatus(status, resolution.text, { excludeRecords, repo });
+  if (verdict.refusal) return refuse(verdict.refusal);
+  if (settle && status !== 'observation' && isBlank(resolution.text)) {
+    return refuse(`settling row #${row} to '${status}' needs --resolution or --resolution-file`);
+  }
+
+  const resolved = resolveLedgerPath({ runDir, worktree, explicit: ledgerArg ? path.resolve(process.cwd(), ledgerArg) : null });
+  if (!resolved.ok) {
+    const named = resolved.candidates.length > 0 ? `: ${resolved.candidates.join(', ')}` : '';
+    // The hint names the flag the caller already passed for an explicit --ledger (rejected, not-found); it only helps an implicit resolution.
+    const hint = ledgerArg ? '' : ' — pass --ledger <path> to name one';
+    return refuse(`ledger ${resolved.reason}${resolved.detail ? ` (${resolved.detail})` : ''}${named}${hint}`);
+  }
+
+  let written;
+  try {
+    written = settle
+      ? settleRow({
+        runDir, ledgerPath: resolved.path, row, status, resolution: resolution.text, excludeRecords,
+      })
+      : appendRow({
+        runDir, ledgerPath: resolved.path, phase, item: item.text, status, resolution: resolution.text,
+      });
+  } catch (err) {
+    const message = err && err.message ? err.message : String(err);
+    return refuse(err && err.code === 'LOCK_TIMEOUT' ? `the ledger lock is held (LOCK_TIMEOUT: ${message}) — retry once` : message);
+  }
+  const result = {
+    action: settle ? 'settled' : 'appended', row: written.number, status, ledger: resolved.path,
+  };
+  if (verdict.incompleteDeferral) result.incompleteDeferral = true;
+  await new Promise((resolve) => process.stdout.write(`${JSON.stringify(result)}\n`, resolve));
+  return 0;
+}
+
 async function runTeardownRun(argv) {
   const callerIdentity = { sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() };
   const { runDir, invalidRunArg, worktreeLocalFallback, candidates } = resolveRunArg(
@@ -1253,7 +1392,7 @@ async function runTeardownRun(argv) {
 
 async function runArchiveRun(argv) {
   const {
-    archiveRunDir, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, listSpecDirs, listStagedItems, consoleReplacedByAutoMerge,
+    archiveRunDir, archiveCommitLine, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, listSpecDirs, listStagedItems, consoleReplacedByAutoMerge,
     TIEBREAK_COVERAGE_HINT, CANT_TELL_UNFILED_HINT, unfiledCantTellFindings,
   } = require('./lib/reconcile/archive-merged');
   const { NON_TERMINAL } = require('./lib/hooks/run-integrity');
@@ -1375,7 +1514,10 @@ async function runArchiveRun(argv) {
       return 0;
     }
   }
-  // Output below is informational human text, never parsed by any caller
+  // Output below is informational human text. The one line a caller reads is
+  // the success line `claude-tweaks: archived {run-id}` (skills/tidy/SKILL.md
+  // and skills/release/SKILL.md key on it); the "moved:" and "committed" lines
+  // are informational only, and any added line must leave that one intact
   // (skills/flow/multispec-review-console.md's parent-dir archival is a
   // future caller of this verb, not a consumer of this stdout format).
   // The "moved:" lines are read from archiveRunDir's own movedEntries
@@ -1389,12 +1531,15 @@ async function runArchiveRun(argv) {
     // `hint`, never a string match against a specific reason code.
     const hintSuffix = typeof result.hint === 'string' && result.hint.length ? ` — ${result.hint}` : '';
     process.stdout.write(`claude-tweaks: archival refused — ${result.reason}${hintSuffix}\n`);
+    // #3721: a refusal after the archive commit landed still reports that commit.
+    if (result.commit) process.stdout.write(`${archiveCommitLine(mainRoot, result.commit)}\n`);
     return 0;
   }
   for (const name of result.movedEntries) {
     process.stdout.write(`moved: ${name}\n`);
   }
   process.stdout.write(`claude-tweaks: archived ${path.basename(runDir)}\n`);
+  if (result.commit) process.stdout.write(`${archiveCommitLine(mainRoot, result.commit)}\n`);
   return 0;
 }
 
@@ -1460,7 +1605,11 @@ async function runResolveConsole(argv) {
     return 1;
   }
   if (result.reason === 'not-finding-items') {
-    process.stdout.write(`claude-tweaks: --filing-failed id(s) ${result.ids.join(', ')} are not finding rows (no findingItem), console not resolved\n`);
+    process.stdout.write(`claude-tweaks: --filing-failed id(s) ${result.ids.join(', ')} are neither finding rows nor sdd-ruling rows (no findingItem, no isRulingRow flag), console not resolved\n`);
+    return 1;
+  }
+  if (result.reason === 'conflicting-failure-ids') {
+    process.stdout.write(`claude-tweaks: id(s) ${result.ids.join(', ')} named in both --reverse-failed and --filing-failed, console not resolved\n`);
     return 1;
   }
   process.stdout.write(`claude-tweaks: console resolution failed for ${path.basename(runDir)} — ${result.reason}${result.error ? `: ${result.error}` : ''}\n`);
@@ -1583,16 +1732,10 @@ async function runCheckPassReentry(argv) {
   }
   // Disclosure goes to stderr: stdout is reserved for the verdict JSON alone.
   reportWorktreeLocalFallback(runDir, worktreeLocalFallback, process.stderr);
-  let verdict;
-  try {
-    verdict = require('./lib/flow/consolidated-pass').checkPassReentry(runDir, {
-      online: argv.slice(3).includes('--online'),
-      sessionId: process.env.CLAUDE_CODE_SESSION_ID,
-    });
-  } catch (e) {
-    process.stderr.write(`claude-tweaks: check-pass-reentry failed — ${e.message}\n`);
-    return 1;
-  }
+  const verdict = require('./lib/flow/consolidated-pass').checkPassReentry(runDir, {
+    online: argv.slice(3).includes('--online'),
+    sessionId: process.env.CLAUDE_CODE_SESSION_ID,
+  });
   await new Promise((resolve) => process.stdout.write(`${JSON.stringify(verdict)}\n`, resolve));
   return 0;
 }
@@ -1801,7 +1944,9 @@ async function runReconcileBackground(argv) {
   // blocking failure — this process is detached (spawn'd with
   // `detached: true, stdio: 'ignore'` and unref'd) and nothing reads its
   // exit code or stdout, so every path below returns 0 and best-effort
-  // swallows its own errors rather than surfacing them anywhere.
+  // swallows its own errors rather than surfacing them anywhere. A throw
+  // outside those catches (a require, the lock acquire, its finally release)
+  // exits 1 per #4932, equally unread.
   const cwd = process.cwd();
   const { reconcile } = require('./lib/reconcile');
   const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
@@ -1868,7 +2013,11 @@ async function runReconcileBackground(argv) {
   let summary = {};
   try {
     const r = await reconcile({ cwd, checks: BACKGROUND_CHECKS, sessionId, budgetMs: BACKGROUND_BUDGET_MS });
+    const {
+      classifyEntry, isFailedRun, failedRecordNumbers, parentsLeftOpen, stepSkipsOf, supersededChanges,
+    } = require('./lib/reconcile/post-merge');
     const postMergeEntries = r.postMerge || [];
+    const failedRanEntries = postMergeEntries.filter(isFailedRun);
     const parentsClosedBy = (counts) => postMergeEntries
       .filter(counts)
       .reduce((n, e) => n + (Number.isInteger(e.parentsClosed) ? e.parentsClosed : 0), 0);
@@ -1877,16 +2026,36 @@ async function runReconcileBackground(argv) {
       // Merged runs whose Steps 4.0/4.0b this pass ran late (#4599) and the parents it closed below
       // the oversight floor: the background pass is the only place those closes happen unattended,
       // so without a count the next SessionStart would never mention one.
-      postMergeRan: postMergeEntries.filter((e) => e.action === 'ran' && !e.step40Failed).length,
-      // Runs whose steps did not complete: Step 4.0 itself failed (non-zero exit, unreadable envelope: a SKIP
-      // marker was written, Step 4.0b never ran), or the check threw (no marker, and the run is not deferred).
-      // Either way the parent waits for tidy's backstop, so they are never counted as ran.
-      postMergeFailed: postMergeEntries.filter((e) => (e.action === 'ran' && e.step40Failed) || e.reason === 'error').length,
+      postMergeRan: postMergeEntries.filter((e) => e.action === 'ran' && classifyEntry(e).verdict === 'clean').length,
+      // Runs whose steps did not complete cleanly, judged by post-merge.js's classifyEntry (#4897): Step 4.0
+      // failed (non-zero exit, an unread base, or a non-clean word such as close-failed), Step 4.0b
+      // reported a parent failure, or the check threw (no marker, and the run is not deferred). They are never
+      // counted as ran. A failed Step 4.0 with no closing set skips Step 4.0b, so that parent waits for tidy's
+      // backstop; with a closing set Step 4.0b still runs and the parent stays open only if a record is unsettled.
+      postMergeFailed: failedRanEntries.length + postMergeEntries.filter((e) => e.reason === 'error').length,
+      // The record numbers those failed runs name (Step 4.0's four lists, carried on a loop entry whose Step 4.0
+      // printed a non-clean word), sorted and unique; empty when no failed run carried any.
+      postMergeFailedRecords: failedRecordNumbers(postMergeEntries),
+      // A failed run's Step 4.0 could not append a decisions.md line, so SessionStart must not point there.
+      postMergeFailedLogMissing: failedRanEntries.some((e) => e.logFailed === true),
       // Two disjoint counts, so SessionStart credits each close once and does no arithmetic: the parents
       // closed by runs that wrote their marker, and those closed by runs whose marker write failed
-      // (closed on GitHub all the same, only the decisions.md marker is missing).
+      // (closed on GitHub all the same, only the decisions.md marker is missing). A Step 4.0b tail that threw
+      // (`reason: 'error'`) wrote no marker either, so its `parentsClosed` is counted with the unmarked ones; an
+      // `error` entry thrown before Step 4.0b carries none, which parentsClosedBy treats as 0. A holder whose
+      // claim another pass took over (#4797) is in neither count (it is an `in-flight` skip, not `ran` or
+      // `marker-write-failed`/`error`): the successor owns the marker, so the "marker could not be written"
+      // line would be false for it. Its GitHub changes travel in `postMergeSuperseded` below.
       postMergeParentsClosed: parentsClosedBy((e) => e.action === 'ran'),
-      postMergeUnmarkedParentsClosed: parentsClosedBy((e) => e.reason === 'marker-write-failed'),
+      postMergeUnmarkedParentsClosed: parentsClosedBy((e) => e.reason === 'marker-write-failed' || e.reason === 'error'),
+      // The parents Step 4.0b left open and its step-wide skips (#4798): both read every entry carrying
+      // `parentFailures` / `stepSkips`, a `marker-write-failed` one included (Q5; that run is in no count above)
+      // and an `error` one thrown after Step 4.0b, each element's raw `reason` quoted and its `detail` dropped.
+      postMergeParentsLeftOpen: parentsLeftOpen(postMergeEntries),
+      postMergeStepSkips: stepSkipsOf(postMergeEntries),
+      // What a holder whose claim another pass took over had already changed on GitHub before it stopped
+      // (#4797): [{ pr, parentsClosed?, recordsReopened?, recordsClosed? }], empty when none did.
+      postMergeSuperseded: supersededChanges(postMergeEntries),
       archived: (r.runs || []).filter((x) => x.action === 'archived').length,
       archivedBranches: (r.branches || []).filter((b) => b.kind === 'branch' && (b.action === 'delete' || b.action === 'tag-and-delete')).length,
       prunedRemote: (r.remoteBranches || []).filter((b) => b.action === 'delete').length,
@@ -1943,10 +2112,11 @@ async function main(argv) {
   // #1012, #4777: ANY undeclared --* argument (--help included — it is never
   // declared) intercepts here, before resolveRunArg or any lib call ever runs,
   // for every VERBS-table verb. A verb missing its KNOWN_FLAGS entry fails
-  // closed and refuses every flag. The refusal keeps the #1012/#1143 shape —
-  // usage on stdout, exit 0 (tests/hooks-help-guard.test.js pins it) — even for
-  // resolve-run-dir, whose callers capture stdout as a path: such a caller gets
-  // the usage line, not an empty value.
+  // closed and refuses every flag. --help/-h keeps the #1012/#1143 shape — usage
+  // on stdout, exit 0 (tests/hooks-help-guard.test.js pins it). An undeclared
+  // flag is a caller mistake, so it is refused on stderr with exit 1, the
+  // unknown-verb shape (#1586, #4834): a caller capturing stdout gets an empty
+  // value and a non-zero exit.
   if (verb) {
     // -h is a single-dash short flag, so firstUnknownFlag's `--`-prefixed
     // scan never sees it. --help is checked in every position too: the scan
@@ -1954,12 +2124,40 @@ async function main(argv) {
     // value position would otherwise reach the handler as that flag's value.
     const argsAfterCmd = argv.slice(3);
     const hasHelpFlag = argsAfterCmd.includes('-h') || argsAfterCmd.includes('--help');
-    if (hasHelpFlag || firstUnknownFlag(KNOWN_FLAGS[cmd] || [], argsAfterCmd)) {
+    if (hasHelpFlag) {
       process.stdout.write(`claude-tweaks: usage: ${verb.usage}\n`);
       return 0;
     }
+    const unknown = firstUnknownFlag(KNOWN_FLAGS[cmd] || [], argsAfterCmd);
+    if (unknown) {
+      const reason = unknown.valueFlag
+        ? `${unknown.valueFlag} needs a value, got '${unknown.token}'`
+        : `unknown flag '${unknown.token}'`;
+      // fs.writeSync in a try/catch, not process.stderr.write: a closed (EBADF)
+      // or broken (EPIPE) stderr would otherwise throw into the entry's
+      // `.catch(() => process.exit(0))` and turn this refusal back into the
+      // silent exit 0 that #4834 removed. Pinned by tests/hooks-js-flag-strict
+      // .test.js's "#4834: an unusable stderr still refuses with exit 1".
+      try {
+        fs.writeSync(2, `claude-tweaks: ${cmd}: ${reason}\n`);
+        fs.writeSync(2, `claude-tweaks: usage: ${verb.usage}\n`);
+      } catch { /* stderr unusable — the exit code still carries the refusal */ }
+      return 1;
+    }
   }
-  if (verb) return verb.run(argv);
+  // #4932: a VERBS exception exits 1 here; EVENTS still fall through to the entry catch.
+  // The `await` is load-bearing: `return verb.run(argv)` would hand an async
+  // handler's rejection past this catch to the entry catch, exiting 0 again.
+  if (verb) {
+    try {
+      return await verb.run(argv);
+    } catch (err) {
+      try {
+        fs.writeSync(2, `claude-tweaks: ${cmd}: ${err && err.message ? err.message : String(err)}\n`);
+      } catch { /* stderr unusable — the exit code still carries the failure */ }
+      return 1;
+    }
+  }
   if (!EVENTS.includes(cmd)) {
     // #1586: every table verb already dispatched before this point — reaching
     // here means `cmd` is neither a hook event (EVENTS) nor any of the named

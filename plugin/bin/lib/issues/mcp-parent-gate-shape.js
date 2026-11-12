@@ -9,7 +9,7 @@
 // skill); this file is the compute half, and it is a no-op on a gh-shaped entry.
 // The "shape N" numbers below are the gh reads in parent-gate.js's header legend.
 //
-// Every entry is shape-guarded (rule 3): an MCP error object (`{message:'Not
+// Every entry except `me` is shape-guarded (rule 3): an MCP error object (`{message:'Not
 // Found'}`) or a wrapper written as data fails its guard with a FactsError of exit
 // 3 and is never read as content. A required key that is absent, or a
 // `subIssueGets` key set that is not the enumerated numbers, is exit 1: the read
@@ -27,18 +27,21 @@
 //      `parentLink` present (1) then guarded (3), or, under body-text, `subIssueGet`;
 //   3. `parentGet` present (1) then guarded (3);
 //   4. the enumeration source: `subIssueList` present (1), then guarded (3), or, under
-//      body-text, `parentGet`'s body;
+//      body-text, `parentGet`'s body; a sub-issue in hand that body-text's non-empty list
+//      omits has no parent (Reading B), so the result is the no-parent shape and 5 never runs;
 //   5. `subIssueGets` present (1), an object (3), its key set equal to the enumerated
 //      numbers (1), then each entry guarded in ascending order (3).
 // normalizeMcpFacts stops there. `parentComments` and `me` are read by
 // `withIdempotenceReads`, which the CLI calls only where evaluateIdempotence reads them
-// (the parent due below the floor and neither CLOSED nor REOPENED): presence (1), then
-// guards (3). A gh-path verdict that never reads them must not depend on them.
+// (the parent due below the floor and neither CLOSED nor REOPENED): `parentComments`
+// presence (1) then guard (3); `me` presence (1) only, since a login-less `me` reads as no
+// identity (trusted-author-only dedupe), not as an error. A gh-path verdict that never reads
+// them must not depend on them.
 'use strict';
 
-const { parseSubIssues } = require('./record');
+const { parseSubIssues, parseParent } = require('./record');
 const { normalizeLabelNames } = require('./record-vocabulary');
-const { PARENT_LINE_RE, distinctAscending, needsIdempotenceReads } = require('./parent-gate');
+const { distinctAscending, needsIdempotenceReads, listOmitsSubIssue } = require('./parent-gate');
 
 // The agent's seven fact keys, each one MCP result written unreshaped:
 //   parentLink    `get_parent` of the sub-issue in hand, or null when it has none (native).
@@ -47,7 +50,7 @@ const { PARENT_LINE_RE, distinctAscending, needsIdempotenceReads } = require('./
 //   parentGet     `get` of the parent.
 //   subIssueGets  { "<n>": `get` of n }, exactly one key per enumerated number.
 //   parentComments  every `get_comments` entry of the parent, all pages concatenated.
-//   me            `get_me`.
+//   me            `get_me`; a present me without a login (a failed get_me) reads as no identity.
 const FACTS_KEYS = ['parentLink', 'subIssueGet', 'subIssueList', 'parentGet', 'subIssueGets', 'parentComments', 'me'];
 
 // exit 1: the file as a whole is wrong (not an object, a key absent or unrequested), so
@@ -125,8 +128,7 @@ function resolveParent(raw, subIssue, workLinks) {
   if (workLinks === 'body-text') {
     const entry = need(raw, 'subIssueGet');
     guardIssue(entry, 'subIssueGet', subIssue);
-    const match = PARENT_LINE_RE.exec(entry.body ?? '');
-    return match ? Number(match[1]) : null;
+    return parseParent(entry.body);
   }
   const link = need(raw, 'parentLink');
   if (link === null) return null;
@@ -155,6 +157,11 @@ function normalizeComment(c) {
   };
 }
 
+// A fresh no-parent result per call, so no caller can mutate a shared one.
+function noParent() {
+  return { gate: { parent: null, parentLabels: [], subIssues: [] }, idempotence: null };
+}
+
 // raw facts + { subIssue | parent, workLinks } -> { gate, idempotence }.
 //   gate         { parent, parentLabels, subIssues: [{ number, title, state, stateReason, labels, closedBy }] }
 //                (the facts shape gatherGateFacts returns; with no parent, { parent: null, parentLabels: [], subIssues: [] }).
@@ -165,13 +172,15 @@ function normalizeMcpFacts(raw, { subIssue, parent, workLinks } = {}) {
   if (!isPlainObject(raw)) throw absent('(top level)', 'must be a JSON object');
   const given = parent !== null && parent !== undefined;
   const resolved = given ? parent : resolveParent(raw, subIssue, workLinks);
-  if (resolved === null || resolved === undefined) {
-    return { gate: { parent: null, parentLabels: [], subIssues: [] }, idempotence: null };
-  }
+  if (resolved === null || resolved === undefined) return noParent();
 
   const parentEntry = need(raw, 'parentGet');
   guardIssue(parentEntry, 'parentGet', resolved);
   const numbers = enumerate(raw, parentEntry, workLinks);
+  // Reading B, as parent-gate.js's gatherGateFacts: under body-text a `Parent: #N` whose non-empty
+  // task list does not list the sub-issue in hand resolves no parent. An empty or missing list is
+  // not an omission: it keeps the parent.
+  if (!given && workLinks === 'body-text' && listOmitsSubIssue(numbers, subIssue)) return noParent();
 
   const gets = need(raw, 'subIssueGets');
   if (!isPlainObject(gets)) throw invalid('subIssueGets', 'is not an object keyed by sub-issue number');
@@ -202,7 +211,8 @@ function normalizeMcpFacts(raw, { subIssue, parent, workLinks } = {}) {
 // The gh idempotence facts for the parent: `idempotence` (from normalizeMcpFacts) plus the
 // guarded `parentComments` and `me`. Only an open, non-reopened parent reads them
 // (evaluateIdempotence), so any other parent returns `idempotence` unchanged without looking at
-// the file's two keys. A missing key is exit 1, a present one that fails its guard exit 3.
+// the file's two keys. A missing key is exit 1, a present `parentComments` that fails its guard
+// exit 3; a present `me` never fails (a login-less one reads as no identity).
 function withIdempotenceReads(raw, idempotence) {
   if (!needsIdempotenceReads(idempotence.state, idempotence.stateReason)) return idempotence;
   const list = need(raw, 'parentComments');
@@ -212,8 +222,11 @@ function withIdempotenceReads(raw, idempotence) {
     return normalizeComment(c);
   });
   const me = need(raw, 'me');
-  if (!isPlainObject(me) || typeof me.login !== 'string' || me.login === '') throw invalid('me', 'has no login');
-  return { ...idempotence, comments, login: me.login };
+  // A present me without a login is a failed get_me: no identity (login ''), which the core
+  // reads as trusted-only dedupe plus a degrade note. Only a missing key is a fact error.
+  // Trimmed like the gh path's readLogin, so a blank login is '' on both transports.
+  const login = isPlainObject(me) && typeof me.login === 'string' ? me.login.trim() : '';
+  return { ...idempotence, comments, login };
 }
 
 module.exports = {

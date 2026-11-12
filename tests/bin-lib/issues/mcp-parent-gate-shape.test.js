@@ -106,6 +106,37 @@ test('a sub-issue entry resolves its parent natively or from the body', () => {
   assert.equal(orphan.gate.parent, null);
 });
 
+test("body-text: a Parent line the parent's task list omits resolves no parent (Reading B)", () => {
+  const facts = {
+    subIssueGet: issue(11, { body: 'Parent: #10' }),
+    parentGet: issue(10, { state: 'open', state_reason: null, body: '- [ ] #12' }),
+  };
+  const got = normalizeMcpFacts(facts, { subIssue: 11, workLinks: 'body-text' });
+  assert.deepEqual(got, { gate: { parent: null, parentLabels: [], subIssues: [] }, idempotence: null });
+  // Only the sub-issue side and only body-text: a given parent, or a native list that omits the sub-issue, still resolves.
+  const given = normalizeMcpFacts({ ...facts, subIssueGets: { 12: issue(12) } }, { parent: 10, workLinks: 'body-text' });
+  assert.equal(given.gate.parent, 10);
+  const native = mcpFacts();
+  native.subIssueList = [{ number: 12 }];
+  native.subIssueGets = { 12: native.subIssueGets[12] };
+  assert.equal(normalizeMcpFacts(native, { subIssue: 11, workLinks: 'native' }).gate.parent, 10);
+});
+
+test('body-text: a parent with no task list keeps the parent (an empty list is not an omission)', () => {
+  for (const body of ['', null, 'Just prose, no task list.']) {
+    const facts = {
+      subIssueGet: issue(11, { body: 'Parent: #10' }),
+      parentGet: issue(10, { state: 'open', state_reason: null, labels: [{ name: 'parent-issue' }], body }),
+      subIssueGets: {},
+    };
+    const got = normalizeMcpFacts(facts, { subIssue: 11, workLinks: 'body-text' });
+    assert.deepEqual(got, {
+      gate: { parent: 10, parentLabels: ['parent-issue'], subIssues: [] },
+      idempotence: { state: 'OPEN', stateReason: '' },
+    }, JSON.stringify(body));
+  }
+});
+
 function factsError(fn) {
   try { fn(); } catch (err) { return err; }
   return assert.fail('expected a FactsError');
@@ -212,7 +243,7 @@ test('a missing or unrequested key is exit 1', () => {
   assert.equal(noBody.key, 'subIssueGet');
 });
 
-test('comments and me are required and guarded only for an open, non-reopened parent', () => {
+test('comments are guarded and me is required only for an open, non-reopened parent', () => {
   const open = { state: 'OPEN', stateReason: '' };
   // Absent -> exit 1, naming the key.
   const noComments = factsError(() => withIdempotenceReads({ me: { login: 'bot' } }, open));
@@ -225,8 +256,6 @@ test('comments and me are required and guarded only for an open, non-reopened pa
   const guards = [
     ['parentComments', { parentComments: { message: 'Not Found' }, me: { login: 'bot' } }],
     ['parentComments.0', { parentComments: [{ message: 'Not Found' }], me: { login: 'bot' } }],
-    ['me', { parentComments: [], me: { message: 'Bad credentials' } }],
-    ['me', { parentComments: [], me: { login: '' } }],
   ];
   for (const [key, raw] of guards) {
     const err = factsError(() => withIdempotenceReads(raw, open));
@@ -240,6 +269,13 @@ test('comments and me are required and guarded only for an open, non-reopened pa
   // Complete -> the gh idempotence shape.
   const done = withIdempotenceReads({ parentComments: [], me: { login: 'bot' } }, open);
   assert.deepEqual(done, { state: 'OPEN', stateReason: '', comments: [], login: 'bot' });
+});
+
+test("#4770 withIdempotenceReads reads any login-less me as login ''", () => {
+  const open = { state: 'OPEN', stateReason: '' };
+  for (const me of [null, { login: '' }, { login: '  ' }, { login: 123 }, { message: 'Bad credentials' }, [], 'x']) {
+    assert.deepEqual(withIdempotenceReads({ parentComments: [], me }, open), { state: 'OPEN', stateReason: '', comments: [], login: '' }, JSON.stringify(me));
+  }
 });
 
 test('withIdempotenceReads reads comments and me exactly where needsIdempotenceReads says, as the gh gather does', () => {

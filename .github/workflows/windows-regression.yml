@@ -43,7 +43,7 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
-    timeout-minutes: 90
+    timeout-minutes: 150
     permissions:
       contents: read
     outputs:
@@ -121,12 +121,15 @@ jobs:
           TEMP: ${{ runner.temp }}
         # Timeout budget: verify reuses --cmd-timeout for every per-file baseline /
         # isolated / retry run, not just the suite. Measured suite ~8.5 min on
-        # windows-latest (run 39036270004); per-file runs go 4 at a time, so up to 4
-        # hung files cost suite + 3 sequential 20-min phases ~ 70 min, inside the
-        # 90-min job limit — verify still writes its report and the filer still runs.
+        # windows-latest (run 39036270004). This repo's declaration sets no
+        # `concurrency.reruns`, so per-file runs go one at a time and each hung file
+        # costs up to 20 min in each of the base, isolated and retry phases: two hung
+        # files cost suite + 2 x 3 x 20 min ~ 128.5 min, inside the 150-min job limit
+        # — verify still writes its report and the filer still runs. The limit
+        # returns to 90 once this repo's declaration can declare `reruns`.
         # --no-baseline-fixed skips the extra full `npm test` at base that
-        # computes the report-only `fixed` list: nothing here reads it, and the
-        # budget above has no room for another ~8.5 min suite run.
+        # computes the report-only `fixed` list: nothing here reads it, so that
+        # ~8.5 min suite run would only spend the budget above.
         run: >-
           node plugin/bin/verify.js
           --cmd tests="npm test"

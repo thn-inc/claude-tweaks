@@ -18,7 +18,8 @@
 const { execSync } = require('child_process');
 const { LARGE_MAX_BUFFER_BYTES } = require('../shared-primitives');
 const { splitLogZ } = require('../git-z');
-const { PRIORITIES, TIERS, parseRecordFacets } = require('./record');
+const { PRIORITIES, TIERS, parseRecordFacets, parseDependencies, foreignBlockerBlocks, foreignBlockerRef, withoutUnreadableSuffix } = require('./record');
+const { parseCrossRepoRef, crossRepoKey } = require('./cross-repo-refs');
 const { blockersOf } = require('./ranking');
 const { evaluateGrantGate } = require('./grant-gate');
 const { isBotParked } = require('./record-buckets');
@@ -163,6 +164,42 @@ function readyGrantedSubset(records) {
   return records.filter((r) => r.facets.stage === 'ready' && (r.facets.grants.build || r.facets.grants.merge));
 }
 
+// records[] -> the records whose body-declared foreign blockers may be looked up: every record
+// but an `unsynced` local one. Their ids are local-record numbers, a different namespace from
+// the GitHub numbers in the merged set (#512 promise F1), and `bodyForeignBlockers` keys its
+// Map by `r.number ?? r.id`, so an unsynced id 12 would otherwise collide with GitHub #12 and
+// one record's refs would be attached to the other. Every caller filters through here.
+function foreignLookupSet(records) {
+  return records.filter((r) => !(r.facets && r.facets.unsynced === true));
+}
+
+// (records[], Map<r.number ?? r.id, {number, repository, state}[]>) -> records[]. Adds each
+// body-declared foreign blocker that still blocks (open or unreadable, never CLOSED) to the
+// tier `blockersOf` reads for that record, so `funnelBuckets` files the record under
+// `granted` as `/claude-tweaks:dispatch` refuses it (#4793 Plan Review Clarifications).
+// A top-level `blockedBy` array, else a `facets.blockedBy` array, receives the refs not
+// already in it (deduplicated by crossRepoKey, case-insensitive; a native ref's
+// ' (state unreadable)' suffix is ignored for the key). A record with neither tier gets
+// `blockedBy: [...parseDependencies(body), ...refs]`, so `blockersOf`'s body-text
+// fallback result survives. An `unsynced` record, and a record absent from the map, is
+// returned as is. Returns a new array of shallow copies; never mutates its input.
+function attachBodyForeignBlockers(records, foreignByRecord) {
+  return records.map((r) => {
+    const entries = foreignByRecord.get(r.number ?? r.id);
+    if (!entries || entries.length === 0 || (r.facets && r.facets.unsynced === true)) return r;
+    const refs = entries.filter(foreignBlockerBlocks);
+    const tier = Array.isArray(r.blockedBy) ? r.blockedBy : r.facets && Array.isArray(r.facets.blockedBy) ? r.facets.blockedBy : null;
+    if (!tier) return { ...r, blockedBy: [...parseDependencies(r.body || ''), ...refs.map(foreignBlockerRef)] };
+    const known = new Set(
+      tier.map((b) => (typeof b === 'string' ? parseCrossRepoRef(withoutUnreadableSuffix(b)) : null)).filter(Boolean).map(crossRepoKey),
+    );
+    const added = refs.filter((e) => !known.has(crossRepoKey(e))).map(foreignBlockerRef);
+    if (added.length === 0) return r;
+    const merged = [...tier, ...added];
+    return Array.isArray(r.blockedBy) ? { ...r, blockedBy: merged } : { ...r, facets: { ...r.facets, blockedBy: merged } };
+  });
+}
+
 // records[] -> { captured, prioritized, specified, granted, dispatchable,
 // inFlight, botParked, parked, notPlanned, parents, needsYou }. The ten stage
 // keys (captured..parents) are mutually exclusive buckets over the post-merge
@@ -184,7 +221,11 @@ function readyGrantedSubset(records) {
 // body-text `parseDependencies` fallback), shared with rankNextToBuild so
 // both consumers agree on the same blocker for the same record (refs #514).
 // Only ids within the open input set count as blockers, since an out-of-set
-// blocker cannot be acted on from this report. `prioritized` keys on
+// blocker cannot be acted on from this report. A string entry is a blocker
+// linked from another repository (`owner/name#N`, #4793), attached only while
+// it is open or its state is unreadable — exactly the blockers
+// `/claude-tweaks:dispatch` refuses on (Decisions Q6) — so it counts although
+// it is never an id in this set. `prioritized` keys on
 // f.priority ALONE — priority is refine's triage verdict, and the stage is
 // named for it. A record carrying only risk/size with no priority and no
 // `ready` stage is an anomaly (specify stamps risk/size and `ready` in one
@@ -204,13 +245,13 @@ function funnelBuckets(records) {
     // Blocker precedence, INCLUDING the unsynced-namespace short-circuit, is
     // owned by ranking.js's blockersOf — one decision, shared with
     // rankNextToBuild (refs #514).
-    const inSetBlockers = blockersOf(r).filter((id) => openIds.has(id));
+    const blockers = blockersOf(r).filter((id) => typeof id === 'string' || openIds.has(id));
     if (f.bot.inProgress) buckets.inFlight.push(r);
     else if (isBotParked(r)) buckets.botParked.push(r);
     else if (f.stage === 'parked') buckets.parked.push(r);
     else if (f.notPlanned) buckets.notPlanned.push(r);
     else if (f.isParentIssue) buckets.parents.push(r);
-    else if (f.stage === 'ready' && granted && inSetBlockers.length > 0) buckets.granted.push(r);
+    else if (f.stage === 'ready' && granted && blockers.length > 0) buckets.granted.push(r);
     else if (f.stage === 'ready' && granted) buckets.dispatchable.push(r);
     else if (f.stage === 'ready') buckets.specified.push(r);
     else if (f.priority) buckets.prioritized.push(r);
@@ -360,5 +401,7 @@ module.exports = {
   funnelBuckets,
   machineGrantOutlook,
   readyGrantedSubset,
+  attachBodyForeignBlockers,
+  foreignLookupSet,
   refineWorklist,
 };

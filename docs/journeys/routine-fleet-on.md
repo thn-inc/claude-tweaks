@@ -24,6 +24,7 @@ files:
 
 3. **Cloud-parity check** — The skill verifies the environment's Setup-script reality before creating billed infrastructure.
    - **Check:** A parity note names what was verified (or what could not be), per `fleet.md` Step 2.
+   - **Check:** With `declare-claude-tweaks: false` in `policy.yml` (#4847), a missing claude-tweaks declaration is no parity gap. The check prints one informational line naming the cloud consequence: fleet routines need claude-tweaks installed in the sandbox some other way. The summary uses the opt-out "OK" alternative. superpowers is still required. See `docs/journeys/opt-out-of-project-scope-claude-tweaks-declaration.md`.
 
 4. **Provisioning loop** — The skill walks the fleet composition table (the focus-scoped code-health vertical finders, the generalist sweeps, the shaping unit, the conditional grant unit, the dispatch drain, tidy weekly), running the existing CREATE/UPDATE procedure per row with fleet-resolved crons instead of the interactive cadence picker.
    - **Check:** The conditional grant unit (`backlog refine`'s headless posture) provisions **only** when `autonomy: unattended` AND `grant-origination-enabled: true` were both already set — otherwise it is reported as skipped with the two-key reason. A repo missing a template gets a partial fleet with each skipped row named, never a refusal.
