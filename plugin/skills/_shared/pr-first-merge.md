@@ -198,7 +198,7 @@ Then, per resolved value:
 node "${CLAUDE_PLUGIN_ROOT}/bin/ci-gate-record.js" --pr {pr-number} --head-sha {headRefOid} --verdict green --gate-start-epoch "$(cat "{gate-start-path}")" --run "$PIPELINE_RUN_DIR" --repo {owner}/{repo}
 ```
 
-`--run` follows the per-merged-run rule above. A non-zero exit logs `SKIP {HH:MM:SS} — Step 2.5 (merge-verification gate): ci-gate not recorded ({error})` and the merge path continues unchanged — the writer never gates a merge. A Red-path resume is a new gate pass with its own call. Dispatch close-out skips this step, so records nothing; so do an explicit `off`, an armed merge and a failed read.
+`--run` follows the per-merged-run rule above (a multi-spec bundle: `$MULTISPEC_PARENT_DIR`). A non-zero exit logs `SKIP {HH:MM:SS} — Step 2.5 (merge-verification gate): ci-gate not recorded ({error})` and the merge path continues unchanged — the writer never gates a merge. A Red-path resume or moving-target re-entry is a new gate pass with its own call; a Step 3 degrade into the `wait` row is the same pass, no second call. Dispatch close-out skips this step, so records nothing; so do an explicit `off`, an armed merge on pending checks and a failed read.
 
 **Bounded watch (`wait`, `merge-when-green` when arming would not hold, and a derived `off` with pending checks) — 15 minutes, fixed.**
 (Fixed by design, not a policy key — `pr-first-merge-appendix.md`'s "Rationale notes".) Poll
@@ -267,7 +267,7 @@ guard refuses a `--jq` program inside this loop (`_shared/scratch-worktree.md` �
    ```
    (`$RESUME` holds `{resume}`; `$REASON` holds the check names — from `{pr-checks-path}`'s `fail` rows, or the failing
    head runs' `workflowName`s — or the pending-timeout or draft-skip phrase — passed as a `printf` argument, never expanded inside the format string, never a quoted literal: with file names in it, Write the body to `{park-comment-path}` instead. A timeout whose last ready-run read named `awaitingReadyRun` appends ` (no run since ready: {files})`; `unparsed`: ` ({files} unparsed: _shared/ci-skips-drafts.md)`. Under a derived `off`, the comment's `{value}`/`$VALUE` is `derived off`.)
-   Then that CI-gate record call with `--verdict timeout-park` for `checks-pending-timeout`, else `--verdict red`.
+   Then the **CI-gate record** call above with `--verdict timeout-park` for `checks-pending-timeout`, else `--verdict red`.
    **Verify the label landed** — re-read each record's labels (`gh issue view {n} --json labels`)
    after the add; a missing `bot:parked` is retried once. If it is still missing, the park has no
    lock the `[pr-unarmed]` sweep (`_shared/github-pr-scan.md`) would honor, so fall back to the one

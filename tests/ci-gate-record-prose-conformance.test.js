@@ -36,12 +36,13 @@ const STEP_25_FACTS = [
   [/session-tmp-resolve\.js" [^\n]*GATE_START=gate-start-\{n\}\.txt/, 'resolve'],
   [/Then, on entry from the top only, record the pass start \(`date \+%s > "\{gate-start-path\}"`; a mid-pass re-read never repeats it\) and read state:/, 'epoch'],
   [/before every merge on a gate-decided \*\*green\*\* \(Green column, `wait` re-read, `RC=0`\), never under an explicit `off`:/, 'green-site'],
-  [/`--run` follows the per-merged-run rule above\./, 'run-rule'],
+  [/`--run` follows the per-merged-run rule above \(a multi-spec bundle: `\$MULTISPEC_PARENT_DIR`\)\./, 'run-rule'],
   [/```bash\r?\nnode "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/ci-gate-record\.js" [^\n]*--verdict green[^\n]*\r?\n```/, 'green-call'],
   [/A non-zero exit logs `SKIP \{HH:MM:SS\} — Step 2\.5 \(merge-verification gate\): ci-gate not recorded \(\{error\}\)` and the merge path continues unchanged — the writer never gates a merge/, 'skip'],
-  [/A Red-path resume is a new gate pass with its own call\./, 'resume'],
+  [/A Red-path resume or moving-target re-entry is a new gate pass with its own call;/, 'resume'],
+  [/a Step 3 degrade into the `wait` row is the same pass, no second call\./, 'same-pass'],
   [/Dispatch close-out skips this step, so records nothing;/, 'close-out'],
-  [/so do an explicit `off`, an armed merge and a failed read\./, 'no-verdict'],
+  [/so do an explicit `off`, an armed merge on pending checks and a failed read\./, 'no-verdict'],
 ];
 const RED_PATH_FACTS = [
   [/`--verdict timeout-park` for `checks-pending-timeout`, else `--verdict red`/, 'red-mapping'],
@@ -106,6 +107,18 @@ function assertCallSitesOrdered(text) {
   assert.ok(redAt < step4At, 'the Red-path call must precede Step 4');
 }
 
+const PARK_POST = '--body-file "{park-comment-path}"';
+const PARK_ORDER_MSG = 'the Red-path CI-gate record call must come after the park comment';
+
+function assertRedCallAfterPark(text) {
+  const red = redPathOf(text);
+  const parkAt = red.indexOf(PARK_POST);
+  const mappingAt = red.indexOf(RED_MAPPING);
+  assert.notEqual(parkAt, -1, `park comment post missing from the Red path (${PARK_POST})`);
+  assert.notEqual(mappingAt, -1, 'red-mapping missing from the Red path');
+  assert.ok(mappingAt > parkAt, PARK_ORDER_MSG);
+}
+
 const GREEN_FENCE = /```bash\r?\n(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/ci-gate-record\.js" [^\n]*--verdict green[^\n]*)\r?\n```/;
 const SHA = 'a'.repeat(40);
 
@@ -138,7 +151,7 @@ test('AC8.1: the start epoch is written once on entry, never inside the state-re
   assertEpochOutsideFence(LIVE);
 });
 
-test('AC8.1: every green path after the watch names the CI-gate record before its merge', () => {
+test('AC8.1: the wait row\'s green re-read and the watch\'s RC=0 green each name the CI-gate record before their merge', () => {
   assertGreenAfterWatch(LIVE);
 });
 
@@ -208,7 +221,22 @@ test('AC8.2 go-red: the epoch capture moved after the Red path fails the orderin
 test('AC8.2 go-red: a renamed flag in the green fence fails the parseArgs pin', () => {
   const mutated = LIVE.replace('--head-sha {headRefOid} --verdict green', '--sha {headRefOid} --verdict green');
   assert.notEqual(mutated, LIVE);
-  assert.throws(() => assertGreenFenceParses(mutated), { message: /parseArgs/ });
+  assert.throws(() => assertGreenFenceParses(mutated), { message: /^green fence fails ci-gate-record\.js parseArgs: unknown argument: --sha/ });
+});
+
+test('AC8.1: the Red-path CI-gate record call comes after the park comment', () => {
+  assertRedCallAfterPark(LIVE);
+});
+
+test('AC8.2 go-red: the Red-path mapping line moved above the park comment fails the ordering pin', () => {
+  const mappingLine = lineStartingWith(LIVE, '   Then the **CI-gate record** call above with');
+  assert.ok(mappingLine.includes(RED_MAPPING), 'the mapping line carries the red-mapping text');
+  const without = LIVE.replace(`${mappingLine}\n`, '');
+  const parkLine = lineStartingWith(without, '   gh issue comment "$ISSUE"');
+  assert.ok(parkLine.includes(PARK_POST), 'the park comment line carries the --body-file post');
+  const mutated = without.replace(`${parkLine}\n`, `${mappingLine}\n${parkLine}\n`);
+  assert.notEqual(mutated, LIVE);
+  assert.throws(() => assertRedCallAfterPark(mutated), { message: new RegExp(`^${PARK_ORDER_MSG}`) });
 });
 
 test('AC8.2 go-red: swapping the mapping (red for checks-pending-timeout) returns exactly red-mapping', () => {
