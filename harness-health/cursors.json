@@ -49,7 +49,7 @@
   },
   "skill:transcript-payload-verification": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793213059675
+    "lastAuditedMs": 1794487635358
   },
   "skill:tidy": {
     "lastAuditedSha": null,
@@ -65,11 +65,11 @@
   },
   "skill:shared-contract-extraction": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1794389620465
+    "lastAuditedMs": 1794437427757
   },
   "skill:work-record-facet-rename": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793440743540
+    "lastAuditedMs": 1794437429844
   },
   "skill:reconcile-check-contract": {
     "lastAuditedSha": null,
@@ -209,7 +209,7 @@
   },
   "skill:bin-source-scan-conformance": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793855565575
+    "lastAuditedMs": 1794473233265
   },
   "skill:hooks-js-verb-registration": {
     "lastAuditedSha": null,
@@ -262,5 +262,9 @@
   "skill:lock-race-test-seam": {
     "lastAuditedSha": null,
     "lastAuditedMs": 1793784417950
+  },
+  "skill:headless-worker-launch": {
+    "lastAuditedSha": null,
+    "lastAuditedMs": 1794487633548
   }
 }
