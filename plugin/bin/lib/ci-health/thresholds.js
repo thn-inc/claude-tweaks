@@ -35,14 +35,27 @@ function breachesOf({ workflows, billing }, { minHeadroomPct = DEFAULT_MIN_HEADR
   return breaches;
 }
 
+// A workflow's `name` comes from its YAML, which a fork PR controls, so it is neutralized before it
+// reaches the markdown body: whitespace runs (newlines included) collapse to one space, a backtick
+// becomes `'`, and `@` becomes `(at)` so no mention can ping anyone. The repo's own `path` stays as is.
+function neutralName(name) {
+  return String(name).replace(/\s+/g, ' ').trim().replace(/`/g, "'").replace(/@/g, '(at)');
+}
+
 function breachLine(breach, watchSeconds) {
   if (breach.kind === 'p90-over-watch') {
-    return `- Workflow \`${breach.workflow}\` (\`${breach.path}\`): whole-window p90 run duration ${breach.p90Seconds} s, above the merge gate's ${watchSeconds} s watch.`;
+    return `- Workflow \`${neutralName(breach.workflow)}\` (\`${breach.path}\`): whole-window p90 run duration ${breach.p90Seconds} s, above the merge gate's ${watchSeconds} s watch.`;
   }
   return `- Actions budget headroom ${breach.headroomPct}%, below the ${breach.floor}% floor.`;
 }
 
-function composeBreachIssue(breaches, { repo, days, watchSeconds, minHeadroomPct, workTypes }) {
+// Dedup is an exact title match against open issues only, so closing resolves nothing and no label
+// suppresses a later filing — the footer says that instead of specShapedBody's default.
+const FOOTER = "_Filed by `/claude-tweaks:harness-health`'s CI health check. A later `--file` run files again while a breach remains and no open issue carries this exact title._";
+
+function composeBreachIssue(breaches, {
+  repo, days, watchSeconds = MERGE_GATE_WATCH_SECONDS, minHeadroomPct = DEFAULT_MIN_HEADROOM_PCT, workTypes,
+} = {}) {
   const body = specShapedBody({
     header: [
       `CI health over the last ${days} days of \`${repo}\` workflow runs, against the merge gate's ${watchSeconds} s watch and a ${minHeadroomPct}% Actions budget headroom floor.`,
@@ -58,6 +71,7 @@ function composeBreachIssue(breaches, { repo, days, watchSeconds, minHeadroomPct
     ].join('\n'),
     releaseNote: 'No user-visible change — CI health evidence.',
     filedBy: '/claude-tweaks:harness-health',
+    footer: FOOTER,
   });
   const payload = recordPayload({
     title: BREACH_TITLE,

@@ -103,8 +103,7 @@ test('AC8.2: a p90 breach plus a headroom breach file one issue naming both', ()
   assert.strictEqual(calls.createIssue.length, 1);
   const { body } = calls.createIssue[0];
   assert.ok(body.includes('ci.yml'));
-  assert.ok(body.includes('5%'));
-  assert.ok(body.includes('10%'));
+  assert.ok(body.includes('- Actions budget headroom 5%, below the 10% floor.'));
   assert.doesNotMatch(body, AMOUNT_RE);
 });
 
@@ -146,6 +145,11 @@ test('AC7.5: headroom 5% breaches a 10% floor and not a 3% floor', () => {
   assert.deepStrictEqual(breachesOf({ workflows: [], billing }, { minHeadroomPct: 3, watchSeconds: 900 }), []);
 });
 
+test('headroom exactly at the floor is not below it', () => {
+  const billing = { available: true, scope: 'org', headroomPct: 10 };
+  assert.deepStrictEqual(breachesOf({ workflows: [], billing }, { minHeadroomPct: 10, watchSeconds: 900 }), []);
+});
+
 test('AC7.7: a null headroom never breaches', () => {
   const billing = { available: true, scope: 'org', headroomPct: null, reason: 'no Actions budget to compare' };
   assert.deepStrictEqual(breachesOf({ workflows: [], billing }, OPTS), []);
@@ -181,6 +185,25 @@ test('an openIssueTitles failure files nothing and names the query', () => {
   assert.deepStrictEqual(result, { filed: null, skipped: null, failure: { query: 'open issue titles', error: 'HTTP 502' } });
 });
 
+test('a non-list openIssueTitles result files nothing', () => {
+  for (const titles of [{}, `prefix ${BREACH_TITLE} suffix`]) {
+    const { calls, deps } = fakeDeps({ titles });
+    const result = fileFor([wf()], NO_BILLING, { deps });
+    assert.strictEqual(calls.createIssue.length, 0, typeof titles);
+    assert.deepStrictEqual(result, {
+      filed: null, skipped: null, failure: { query: 'open issue titles', error: 'open issue titles is not a list' },
+    });
+  }
+});
+
+test('a createIssue result without a finite number files with number null', () => {
+  const { deps } = fakeDeps();
+  deps.createIssue = () => ({});
+  const result = fileFor([wf()], NO_BILLING, { deps });
+  assert.deepStrictEqual(result.filed, { title: BREACH_TITLE, number: null });
+  assert.strictEqual(result.failure, null);
+});
+
 test('a createIssue failure is reported as the file issue query', () => {
   const { calls, deps } = fakeDeps({ createError: new Error('HTTP 422') });
   const result = fileFor([wf()], NO_BILLING, { deps });
@@ -196,4 +219,26 @@ test('the body states p90 is advisory run duration excluding queue wait', () => 
   assert.ok(body.includes("p90 is run duration and excludes queue wait — advisory evidence for the merge gate's 900 s watch, not a verdict on it"));
   assert.ok(body.includes('## Release Note\n\nNo user-visible change — CI health evidence.'));
   assert.ok(body.includes('work-fingerprint: ci-health-threshold-breach'));
+});
+
+test('the footer states the open-title dedup rule, never a close or wontfix promise', () => {
+  const { body } = composeBreachIssue(breachesOf({ workflows: [wf()], billing: NO_BILLING }, OPTS), compose('native'));
+  assert.doesNotMatch(body, /wontfix/);
+  assert.doesNotMatch(body, /Close to resolve/);
+  assert.ok(body.includes('A later `--file` run files again while a breach remains and no open issue carries this exact title.'));
+});
+
+test('a fork-controlled workflow name is neutralized in the body; the path is not', () => {
+  const workflows = [wf({ name: 'CI `x`\n## Pwn @someone', path: '.github/workflows/ci.yml' })];
+  const { body } = composeBreachIssue(breachesOf({ workflows, billing: NO_BILLING }, OPTS), compose('native'));
+  assert.ok(body.includes("- Workflow `CI 'x' ## Pwn (at)someone` (`.github/workflows/ci.yml`)"), body);
+  assert.doesNotMatch(body, /@someone/);
+  assert.doesNotMatch(body, /\n## Pwn/);
+});
+
+test('composeBreachIssue defaults the watch and the headroom floor to the constants', () => {
+  const breaches = breachesOf({ workflows: [wf()], billing: NO_BILLING }, OPTS);
+  const { body } = composeBreachIssue(breaches, { repo: 'example-org/example-repo', days: 30, workTypes: 'native' });
+  assert.doesNotMatch(body, /undefined/);
+  assert.ok(body.includes(`merge gate's ${MERGE_GATE_WATCH_SECONDS} s watch and a ${DEFAULT_MIN_HEADROOM_PCT}% Actions budget headroom floor`));
 });
