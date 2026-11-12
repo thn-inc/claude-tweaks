@@ -25,7 +25,8 @@
 // part that cannot be removed, and a registry append that fails. Once the registry line is
 // appended the prompt is recorded, so a throwing stdout write is reported on stderr and the exit stays 0.
 // --help (or -h) in a flag position short-circuits before the rest of argv is validated; as the
-// value of a value flag (`--out -h`) it is that value.
+// value of a value flag, `-h` is that value (`--out -h`); `--help` is not (parseArgs refuses any
+// `--`-prefixed value), so `--out --help` is neither a value nor a help request and exits 2.
 // --run guard is shape 4 of the cli-wrapper contract, as in compose-context.js: bin/lib/run-dir-guard.js's
 // anchored-or-outside rule — a path outside any checkout is accepted, a worktree-local shadow is refused.
 // A non-zero exit is never followed by hand substitution (two-call-gate.md section 2): the caller reports it.

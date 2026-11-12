@@ -401,6 +401,26 @@ test('fail-open: a marker run entry that is a file, not a directory', () => {
   assertAllowedNoEvent(gate(ctxFor(fx, body)), fx);
 });
 
+test('fail-open: a file run entry is allowed by the directory check alone (the registry read would succeed)', () => {
+  const fx = fixture();
+  const first = render(fx, 'first');
+  const fileRun = '2026-11-01T181356-record-4589';
+  fs.writeFileSync(path.join(fx.project, '.claude-tweaks', 'pipelines', fileRun), 'not a dir');
+  const stale = `${JSON.stringify({ call: 'first', sha256: 'f'.repeat(64), out: 'x', chunks: 1 })}\n`;
+  const seen = [];
+  const deps = {
+    fsImpl: fsWith({
+      readFileSync: (p, ...rest) => {
+        if (String(p).endsWith(REGISTRY_FILE) && String(p).includes(fileRun)) { seen.push(p); return stale; }
+        return fs.readFileSync(p, ...rest);
+      },
+    }),
+  };
+  const body = editWord(first.prompt).replace(/^\[dispatch-prompt: \S+ first\]/, `[dispatch-prompt: ${fileRun} first]`);
+  assertAllowedNoEvent(gate(ctxFor(fx, body), deps), fx);
+  assert.deepStrictEqual(seen, [], 'the registry must never be read for a non-directory run entry');
+});
+
 test('fail-open: deny is not a function', () => {
   const fx = fixture();
   const first = render(fx, 'first');
