@@ -1214,6 +1214,14 @@ test("#5227 open-pr: with no groups the fence's echo '{}' leaves {}\\n in the li
   assert.ok(r.errs.includes('resolve-policy: noted\n'), r.stderr);
 });
 
+test('#5227 shipped: the gh pr view probe runs with stderr ignored (2>/dev/null); the queue pull does not', () => {
+  const seen = [];
+  const base = fakeRun(FULL());
+  pull4(FULL(), { run: (cmd, args, opts) => { seen.push([args[0], args[1], opts.stdio]); return base(cmd, args, opts); } });
+  assert.deepEqual(seen.find(([a, b]) => a === 'pr' && b === 'view')[2], ['pipe', 'pipe', 'ignore']);
+  assert.equal(seen.find(([a, b]) => a === 'issue' && b === 'list')[2], undefined);
+});
+
 test('#5227 oracle helper: reported() keeps AUTO/Warning lines and cuts the four $(cat err) failure lines after their fixed prefix', () => {
   const text = [
     'dispatch: queue-pull stopped -- not-spec-shaped exclusion pass hit a corrupt exclusions file: /tmp/x.cjs:5',
