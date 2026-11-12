@@ -12,21 +12,29 @@
 // subagent (dispatch/sequential-execution.md's #447 shape) sends every call with an `agent_id` and
 // is checked by neither rule: the accepted residual (spec Decision 4 Q1); its `cd` prefix is the one
 // sanctioned edit. It denies only:
-//   (A) mismatch — the prompt carries a MARKER_RE line naming run id R; R passes RUN_ID_RE; the main
-//       checkout resolves; pipelines/ and pipelines/R both canonicalize, R is a directory and a
-//       direct child of pipelines/; its dispatch-prompts.jsonl reads (or is ENOENT: nothing was
-//       rendered for this run); and the LATEST parsed line whose `call` equals the marker's call
-//       (malformed lines skipped) is absent or carries another digest. Only the last render for a
-//       call is current (spec Decision 3), so an earlier render for the same call is a mismatch.
-//   (B) missing marker — no MARKER_RE line; a non-empty session_id; the main checkout resolves;
-//       readdirSync(pipelines/) succeeds; and some entry R (RUN_ID_RE, named anywhere in the prompt)
-//       has a non-clean run-state that isDispatchTaskCall binds to this session.
+//   (A) mismatch — the prompt's first line is a MARKER_RE marker naming run id R (the CLI writes it
+//       there; a marker on any later line is a quoted prompt, read as marker-less); R passes
+//       RUN_ID_RE; the main checkout resolves; pipelines/ and pipelines/R both canonicalize, R is a
+//       directory and a direct child of pipelines/; its dispatch-prompts.jsonl reads (or is ENOENT:
+//       nothing was rendered for this run); and the LATEST parsed line whose `call` equals the
+//       marker's call (malformed lines skipped) is absent or carries another digest. Only the last
+//       render for a call is current (spec Decision 3), so an earlier render for the same call is a
+//       mismatch.
+//   (B) missing marker — no marker on the first line; a non-empty session_id; the main checkout
+//       resolves; readdirSync(pipelines/) succeeds; and some entry R (RUN_ID_RE, named anywhere in
+//       the prompt, a real directory by lstat — never a symlink) has a non-clean run-state with a
+//       non-empty string `dispatchSessionId` that isDispatchTaskCall binds to this session. The
+//       `dispatchSessionId` requirement narrows isDispatchTaskCall for this gate only: a run-state
+//       written before #3711 has no `dispatchSessionId`, and isDispatchTaskCall's fallback to
+//       `sessionId` (the last session to record the worktree, a resumer included) would deny that
+//       resumer's own main-thread Agent calls.
 // Fail-open conditions, each `{}` with no event: any other tool name; a non-string prompt; an
 // agent_id; a load fault in task-prompt.js; a marker run id failing RUN_ID_RE; mainCheckoutRoot null
 // or throwing; a pipelines/ or run dir that does not canonicalize; a run dir that is not a directory
 // or not a direct child of pipelines/ (a symlink out, a traversal); a registry read failing with
 // anything but ENOENT; a marker-less prompt with no session_id, no readable pipelines/, or naming no
-// bound non-clean run of this session; and any throw.
+// bound non-clean run of this session; a named entry that is a symlink or a file; a run-state with
+// no string `dispatchSessionId`; and any throw.
 //
 // Runs read: neither ctx.runDir nor ctx.ownedRun. The dispatching session's cwd is the group's
 // worktree, and its owned run is not necessarily the group's run. Rule (A) reads the run the marker
@@ -122,8 +130,10 @@ function checkMissingMarker(ctx, prompt, d, deny) {
   for (const name of names) {
     if (typeof name !== 'string' || !ctxLib.RUN_ID_RE.test(name) || !prompt.includes(name)) continue;
     const runDir = path.join(pipes, name);
+    if (lstatType(runDir, { fsImpl: d.fsImpl }).type !== 'directory') continue;
     const state = d.readRunState(runDir);
     if (!state || typeof state !== 'object' || state.status === 'clean') continue;
+    if (!isNonEmptyString(state.dispatchSessionId)) continue;
     if (!isDispatchTaskCall({ runState: state, sessionId })) continue;
     ctxLib.appendEvent(runDir, 'gate-denial', { tool: ctx.input.tool_name, gate: GATE, reason: 'missing-marker', ...testTag() });
     return deny(
