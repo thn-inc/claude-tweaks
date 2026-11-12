@@ -84,6 +84,25 @@
 // reads, and so can `git diff --no-index`. With the network denied, the worker's own
 // result text is the remaining way out for what it read. This is a stated residual.
 //
+// What the worker's code can read and write today, probed on Claude Code CLI 2.1.322,
+// macOS, 2026-11-12, under a subscription login with no TTY, using a test file the
+// worker ran through the allowed test command with the sandbox on. With the settings
+// as generated, the test read a file in a directory under the system temporary
+// directory and a file under the CLI's per-user scratch root, listed the home
+// directory, and opened shell and package-manager dotfiles there. It wrote under the
+// CLI's per-user scratch root, which is also what the sandbox sets as the temporary
+// directory for the commands it runs. With the setting
+// `permissions.blockReadsOutsideWorkingDirectories: true` added, listing the home
+// directory, opening a shell profile there and listing the SSH directory failed with
+// EPERM; the files under the system temporary directory and the scratch root stayed
+// readable; `node --test` and
+// `git status` still ran, but a Node installation under the home directory was no
+// longer reachable, so a different `node` ran. That read block is not turned on here:
+// it protects the home directory but cuts off a toolchain installed there, so it needs
+// a per-project list of readable paths, which is a decision for the project and is not
+// made here. Setting `CLAUDE_CODE_TMPDIR` in the worker's environment did not move the
+// sandbox's writable temporary root.
+//
 // Permission denials are data for the driver's event line, never a reason to widen a
 // list: there is no path here that composes wider rights after a denial.
 
