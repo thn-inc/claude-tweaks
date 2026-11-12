@@ -59,6 +59,9 @@ Probed 2026-11-12 with Claude Code CLI 2.1.322 on macOS (darwin), subscription l
 
 ### Task 1: Role table, settings builder and Task 0 evidence
 
+**Role:** integration
+**Review risk:** high
+
 **Files:**
 - Create: `plugin/bin/lib/driver/roles.js`
 - Create: `tests/bin-lib/driver/fixtures/worker-result.json`
@@ -104,16 +107,15 @@ test('AC2: the test command is a parameter, and no other interpreter rule exists
   for (const r of others) assert.doesNotMatch(r, /^Bash\((node|npm|sh|bash|python)\b/);
 });
 
-test('AC12: the sandbox block is present with these exact keys on every platform', () => {
-  for (const platform of ['darwin', 'linux', 'win32']) {
-    assert.deepStrictEqual(implementerSettings({ testCommand: 'node --test', platform }).sandbox, SANDBOX);
-  }
+test('AC12: on a sandbox-probed platform the sandbox block is present with these exact keys', () => {
+  assert.deepStrictEqual(SANDBOX_PROBED_PLATFORMS, ['darwin']);
+  assert.deepStrictEqual(implementerSettings({ testCommand: 'node --test', platform: 'darwin' }).sandbox, SANDBOX);
 });
 
-test('AC12: off the sandbox-probed platforms no allow rule can execute a file the worker wrote', () => {
-  assert.deepStrictEqual(SANDBOX_PROBED_PLATFORMS, ['darwin']);
+test('AC12: off the sandbox-probed platforms there is no sandbox block and no rule that can execute a file the worker wrote', () => {
   for (const platform of ['linux', 'win32']) {
     const s = implementerSettings({ testCommand: 'node --test', platform });
+    assert.deepStrictEqual(Object.keys(s), ['permissions']);
     assert.deepStrictEqual(s.permissions.allow, ALLOW_EDIT_ONLY);
     assert.deepStrictEqual(s.permissions.deny, DENY);
   }
@@ -178,9 +180,9 @@ Expected: FAIL with `Cannot find module` for `driver/roles.js`
 
 - [ ] **Step 3: Implement `roles.js`**
 
-- `implementerSettings({ testCommand, platform })`: throws `TypeError` whose message contains `testCommand` unless `testCommand` is a string matching `/^[A-Za-z0-9 ._\/:=-]+$/`. Returns `{ permissions: { defaultMode: 'dontAsk', allow, deny }, sandbox }` with the arrays and sandbox block the tests pin; `Bash(${testCommand} *)` is in `allow` (fourth position) only when `SANDBOX_PROBED_PLATFORMS.includes(platform)`.
+- `implementerSettings({ testCommand, platform })`: throws `TypeError` whose message contains `testCommand` unless `testCommand` is a string matching `/^[A-Za-z0-9 ._\/:=-]+$/`. Returns `{ permissions: { defaultMode: 'dontAsk', allow, deny }, sandbox }` with the arrays and sandbox block the tests pin when `SANDBOX_PROBED_PLATFORMS.includes(platform)`; on any other platform it returns `{ permissions }` only, with no `sandbox` key and without `Bash(${testCommand} *)` (which otherwise sits fourth in `allow`). The spec's "Plan Review Clarifications" section records this as the user's decision.
 - `composeArgs`: the order the tests pin. `--settings` only when the role has `settings: true`; `--append-system-prompt-file`, `--max-budget-usd` (as `String(spendCeiling)`) and `--model` only when given.
-- Header comment, in plain sentences: what the module is; the "Task 0 results" bullets (e) and "Sandbox (criterion 12)" above including the `autoAllowBashIfSandboxed` finding, with the CLI version, date, platform and login type; that `--restricted` replaced `--setting-sources project` and which probe forced it; that the test-command rule exists only on platforms where the sandbox was probed, and that elsewhere the worker only edits; the residual, verbatim: "the driver's own test step runs worker-written code with the driver's rights, as every other lane does today"; and that permission denials are data for the driver's event line, never a reason to widen a list.
+- Header comment, in plain sentences: what the module is; the "Task 0 results" bullets (e) and "Sandbox (criterion 12)" above including the `autoAllowBashIfSandboxed` finding, with the CLI version, date, platform and login type; that `--restricted` replaced `--setting-sources project` and which probe forced it; that the test-command rule and the sandbox block exist only on platforms where the sandbox was probed, and that elsewhere the worker only edits; that the user-level leakage probe the record asked for (a broad allow rule in a scratch home directory) was not run and why, as an unprobed residual; that a launch the CLI refuses because the sandbox is unavailable surfaces as `launch-error`; the residual, verbatim: "the driver's own test step runs worker-written code with the driver's rights, as every other lane does today"; and that permission denials are data for the driver's event line, never a reason to widen a list.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -210,7 +212,7 @@ Expected: PASS, 11 tests, 0 failed
   - `buildEnv(parentEnv, platform) -> object`
   - `conformsTo(schema, value) -> boolean` (throws `Error` naming the keyword on a schema keyword outside `type` (`object`|`string`), `properties`, `required`, `enum`, `additionalProperties`)
   - `launchWorker(opts, deps) -> Promise<Envelope>` where `opts = { role, cwd, prompt, ceilings: { wallClockMs, spendCeiling }, testCommand, claudeMdText, settingsDir, platform, env, schema, model, bin }` (`schema` defaults to `RESULT_SCHEMA`, `bin` to `'claude'`, `platform` to `process.platform`, `env` to `process.env`) and `deps = { runner, timers }`.
-  - Runner contract, used by Task 3: `runner({ file, args, options, input }) -> { pid, kill(signal), exited: Promise<{ code, signal, stdout, stderr }> }`. `options` carries `cwd`, `env` and whatever `launchSpec` returned. A runner that cannot start the child rejects `exited` (or throws) with the spawn error.
+  - Runner contract, used by Task 3: `runner({ file, args, options, input, platform }) -> { pid, kill(signal), exited: Promise<{ code, signal, stdout, stderr }> }`. `options` carries `cwd`, `env` and whatever `launchSpec` returned; `platform` is the launch's `opts.platform`, passed on every call so the runner never consults `process.platform` itself. A runner that cannot start the child rejects `exited` (or throws) with the spawn error.
 
 Outcome classification, in this order (write it as one function over `{ timedOut, spawnError, code, signal, stdout, stderr }`):
 
@@ -297,7 +299,7 @@ Expected: FAIL with `Cannot find module` for `driver/worker.js`
 
 - [ ] **Step 3: Implement `worker.js`** to the Interfaces block and the classification table
 
-`deps.runner` is required in this task (Task 3 adds the default). Compose with `composeArgs`, pass the result through `launchSpec(bin, args, platform, env)` and call `runner({ file, args, options: { ...spec.options, cwd, env: buildEnv(env, platform) }, input: prompt })`. The settings file text is `JSON.stringify(implementerSettings({ testCommand, platform }), null, 2)`. Header comment, in plain sentences: the envelope contract (field names, the classification table in words, "fields may be added, never renamed"), the runner contract, and Task 0 results (a), (b), (c), (d) and (f) with the CLI version, date, platform and login type, including that the ceiling is checked between turns and that `CLAUDE_CONFIG_DIR` selects the login.
+`deps.runner` is required in this task (Task 3 adds the default). Compose with `composeArgs`, pass the result through `launchSpec(bin, args, platform, env)` and call `runner({ file, args, options: { ...spec.options, cwd, env: buildEnv(env, platform) }, input: prompt, platform })`. The settings file text is `JSON.stringify(implementerSettings({ testCommand, platform }), null, 2)`. Header comment, in plain sentences: the envelope contract (field names, the classification table in words, "fields may be added, never renamed"), the runner contract, and Task 0 results (a), (b), (c), (d) and (f) with the CLI version, date, platform and login type, including that the ceiling is checked between turns and that `CLAUDE_CONFIG_DIR` selects the login.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -326,15 +328,15 @@ Expected: PASS, 0 failed
 
 **Interfaces:**
 - Consumes: `launchWorker(opts, deps)` and the runner contract from Task 2.
-- Produces (added exports): `KILL_GRACE_MS = 5000`; `defaultRunner({ file, args, options, input }) -> handle`; `launchWorker`'s `deps` now defaults to `{ runner: defaultRunner, timers: { setTimeout, clearTimeout } }`.
+- Produces (added exports): `KILL_GRACE_MS = 5000`; `REAP_DEADLINE_MS = 5000`; `defaultRunner({ file, args, options, input, platform }, { spawn } = {}) -> handle` (`platform` defaults to `process.platform`; `spawn` defaults to `cp.spawn`, read at the call site); `launchWorker`'s `deps` now defaults to `{ runner: defaultRunner, timers: { setTimeout, clearTimeout } }`.
 
 Ceiling behaviour: `launchWorker` arms `timers.setTimeout(onCeiling, ceilings.wallClockMs)` after the runner returns the handle and clears it when the child exits. `ceilings.wallClockMs` must be a finite number above zero, else a `RangeError` before anything is written. `onCeiling`, by `platform`:
-- not `win32`: `handle.kill('SIGTERM')`, then `timers.setTimeout(() => handle.kill('SIGKILL'), KILL_GRACE_MS)`, cleared when the child exits.
-- `win32`: `runner({ file: 'taskkill', args: ['/T', '/F', '/PID', String(handle.pid)], options: {}, input: '' })`; its own outcome is awaited and ignored (a rejection too).
+- not `win32`: `handle.kill('SIGTERM')`, then `timers.setTimeout(onGrace, KILL_GRACE_MS)`, cleared when the child exits; `onGrace` calls `handle.kill('SIGKILL')` and arms the reap deadline.
+- `win32`: `runner({ file: 'taskkill', args: ['/T', '/F', '/PID', String(handle.pid)], options: {}, input: '', platform })`; its own outcome is awaited and ignored (a rejection too), then the reap deadline is armed.
 
-In both cases the envelope is returned only after `handle.exited` settles, with `timeout`/`wall-clock-ceiling` whatever the child printed. A `kill` that throws (the child is already gone) is swallowed.
+Reap deadline: `timers.setTimeout(onDeadline, REAP_DEADLINE_MS)`, cleared when the child exits. The envelope is returned when `handle.exited` settles, with `timeout`/`wall-clock-ceiling` whatever the child printed and `detail: null`. Only if the deadline fires first (a child that survives the kill, or a descendant holding its output open) does the launcher return without it: `timeout`/`wall-clock-ceiling` with `detail: 'child {pid} did not exit after kill'`. A launcher that waited forever would hang the driver; the header comment says so. A `kill` that throws (the child is already gone) is swallowed. The per-launch files are removed on this path too.
 
-`defaultRunner`: `cp.spawn(file, args, { ...options, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })` with `cp` being `require('node:child_process')` accessed as a property at the call site. It writes `input` to stdin and ends it, collects stdout and stderr as UTF-8 strings, resolves `exited` on `close` with `{ code, signal, stdout, stderr }`, and rejects it on the child's `error` event. `kill(signal)` is `process.kill(-child.pid, signal)` when the spawn was detached, else `child.kill(signal)`. An `EPIPE` on stdin (the child exited before reading) is ignored.
+`defaultRunner`: `spawn(file, args, { ...options, detached: platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })`, where `spawn` is the injected one or `cp.spawn` with `cp` being `require('node:child_process')`, accessed as a property at the call site. It writes `input` to stdin and ends it, collects stdout and stderr as UTF-8 strings, resolves `exited` on `close` with `{ code, signal, stdout, stderr }`, and rejects it on the child's `error` event. `kill(signal)` is `process.kill(-child.pid, signal)` when `platform !== 'win32'`, else `child.kill(signal)`. An `EPIPE` on stdin (the child exited before reading) is ignored.
 
 - [ ] **Step 1: Write the failing tests** (appended to `tests/bin-lib/driver/worker.test.js`)
 
@@ -353,16 +355,20 @@ function hungRunner(dieOn) {
   return { runner, calls, kills };
 }
 // Timers that record each delay and fire on the next tick, so no test waits on a real clock.
-function instantTimers() {
-  const delays = [];
-  return { delays, timers: { setTimeout: (fn, ms) => { delays.push(ms); return setImmediate(fn); }, clearTimeout: (h) => clearImmediate(h) } };
+// `hold` lists delays that are recorded but never fired (the test decides the child's fate instead).
+function instantTimers({ hold = [] } = {}) {
+  const delays = []; const cleared = [];
+  return { delays, cleared, timers: { setTimeout: (fn, ms) => { delays.push(ms); return hold.includes(ms) ? { held: ms } : setImmediate(fn); }, clearTimeout: (h) => { cleared.push(h); if (h && !h.held) clearImmediate(h); } } };
 }
 ```
 
+Every test below passes `ceilings: { wallClockMs: 1234 }`. `KILL_GRACE_MS` and `REAP_DEADLINE_MS` are both 5000, so `hold: [5000]` holds both; they are told apart by position in `delays`.
+
 1. `AC4: at the ceiling a POSIX child gets SIGTERM and the envelope is timeout/wall-clock-ceiling` — `hungRunner('SIGTERM')`, `platform: 'linux'`, `ceilings: { wallClockMs: 1234 }`, `instantTimers()`; expect `status 'timeout'`, `reason 'wall-clock-ceiling'`, `kills` deep-equals `['SIGTERM']`, `delays[0] === 1234`.
-2. `AC4: a POSIX child that ignores SIGTERM gets SIGKILL after KILL_GRACE_MS` — `hungRunner('SIGKILL')`; expect `kills` deep-equals `['SIGTERM', 'SIGKILL']`, `delays` deep-equals `[1234, worker.KILL_GRACE_MS]`, and `worker.KILL_GRACE_MS === 5000`.
+2. `AC4: a POSIX child that ignores SIGTERM gets SIGKILL after KILL_GRACE_MS` — `hungRunner('SIGKILL')`; expect `kills` deep-equals `['SIGTERM', 'SIGKILL']`, `delays.slice(0, 2)` deep-equals `[1234, worker.KILL_GRACE_MS]`, `worker.KILL_GRACE_MS === 5000`, `worker.REAP_DEADLINE_MS === 5000`, and `detail === null`.
 3. `AC4: on win32 the ceiling runs taskkill on the child's pid` — `hungRunner('taskkill')`, `platform: 'win32'`, `env: { Path: 'p' }`; expect `timeout`/`wall-clock-ceiling`, `kills` deep-equals `[]`, and the second recorded call has `file === 'taskkill'` and `args` deep-equal `['/T', '/F', '/PID', '4242']`.
-4. `AC4: the envelope is returned only after the child has exited` — a runner whose `exited` resolves only when the test calls a `release()` it holds; with `instantTimers()` and `hungRunner`-style kill recording that does not finish the child: after `await new Promise(setImmediate)` twice, a `settled` flag set in `.then` is still `false`; call `release({ code: null, signal: 'SIGTERM', stdout: '', stderr: '' })`, await the launch, expect `timeout`.
+4. `AC4: the envelope is returned only after the child has exited` — a runner whose `exited` resolves only when the test calls a `release()` it holds and whose `kill` only records; timers `instantTimers({ hold: [5000] })` (the grace and the reap deadline are recorded, never fired). After `await new Promise(setImmediate)` three times, a `settled` flag set in `.then` is still `false` and `kills` deep-equals `['SIGTERM']`; call `release({ code: null, signal: 'SIGTERM', stdout: '', stderr: '' })`, await the launch, expect `timeout`/`wall-clock-ceiling` with `detail === null`.
+4b. `a child that survives the kill is given up on at the reap deadline, with its pid named` — `hungRunner('never')` (nothing ends it), `platform: 'linux'`, `instantTimers()`; expect `timeout`/`wall-clock-ceiling`, `kills` deep-equals `['SIGTERM', 'SIGKILL']`, `delays` deep-equals `[1234, worker.KILL_GRACE_MS, worker.REAP_DEADLINE_MS]`, `detail === 'child 4242 did not exit after kill'`, and `fs.readdirSync(settingsDir)` empty. Same on `platform: 'win32'` with `env: { Path: 'p' }`: `kills` deep-equals `[]`, a `taskkill` call recorded, `delays` deep-equals `[1234, worker.REAP_DEADLINE_MS]`, same `detail`.
 5. `AC4: a child that exits before the ceiling clears the timer and is classified normally` — `fakeRunner(okOut())` with timers that record `clearTimeout` calls; expect `status 'ok'` and exactly one clear.
 6. `a wall-clock ceiling that is not a positive finite number is refused` — `0`, `-5`, `NaN`, `undefined`: `assert.rejects(..., RangeError)` and the runner is never called.
 7. `AC9: the win32 launch of a .cmd launcher is pinned as an exact string` — `platform: 'win32'`, `bin: 'C:\\x\\claude.cmd'`, `role: 'reviewer'`, `env: { ComSpec: 'cmd.exe', Path: 'p' }`, `fakeRunner(okOut())`; assert `calls[0].file === 'cmd.exe'`, `calls[0].args.slice(0, 3)` deep-equals `['/d', '/s', '/c']`, `calls[0].options.windowsVerbatimArguments === true`, and `calls[0].args[3]` strictly equals this literal, written in the test with `String.raw` (do not call `launchSpec` or `escapeBatchArg` from the test); pass `schema: { type: 'object' }`:
@@ -374,6 +380,7 @@ function instantTimers() {
    That line is what the existing `launchSpec` printed for these arguments when the plan was written; its escaping is pinned and round-trip tested in `tests/bin-lib/impeccable-engine/windows-launch.test.js`.
 8. `AC9: a non-.cmd launcher passes through untouched on every platform` — `platform: 'win32'`, default `bin`: `calls[0].file === 'claude'` and `calls[0].args[0] === '-p'`.
 9. `defaultRunner pipes input to the child and resolves with its output` — `worker.defaultRunner({ file: process.execPath, args: ['-e', 'process.stdin.pipe(process.stdout)'], options: { cwd: os.tmpdir(), env: process.env }, input: 'hello' })`; `await handle.exited` deep-equals `{ code: 0, signal: null, stdout: 'hello', stderr: '' }`, and `handle.pid` is a number.
+9b. `defaultRunner takes detached and its kill from the platform it is given` — pass a recording `spawn` as the second argument (`(file, args, o) => { seen.push(o); return cp.spawn(file, args, o); }`, `cp` being `require('node:child_process')`) and run a hung child (`process.execPath`, `['-e', 'setInterval(()=>{},1000)']`): with `platform: 'win32'`, `seen[0].detached === false`, `seen[0].windowsHide === true`, and `handle.kill('SIGTERM')` ends it (`exited` resolves with `signal: 'SIGTERM'`); with `platform: 'linux'`, `seen[0].detached === true` and `handle.kill('SIGTERM')` ends it too. Give the `'linux'` half `{ skip: process.platform === 'win32' && 'win32: no process groups' }` as its own test.
 10. `defaultRunner rejects when the binary does not exist` — `file: path.join(os.tmpdir(), 'no-such-binary-5217')`; `assert.rejects(handle.exited, /ENOENT/)`. Through `launchWorker` with `bin` set to that path and the default deps: `fail`/`launch-error`.
 11. `defaultRunner kill ends the child and a grandchild it started (POSIX only)` — `{ skip: process.platform === 'win32' && 'win32: no process groups; taskkill covers it' }`. Child script (via `-e`): spawn a grandchild `node -e "setInterval(()=>{},1000)"` with `stdio: 'ignore'`, print the grandchild pid on stdout, then `setInterval(()=>{},1000)`. The child also writes a marker file (its path passed as an argument) once the grandchild pid is printed; the test waits for that file with `fs.watch`-free polling (`fs.readdirSync` of its temp directory, up to 50 tries 100 ms apart), then calls `handle.kill('SIGTERM')`, awaits `handle.exited`, parses the grandchild pid from the resolved `stdout`, and polls `process.kill(grandPid, 0)` up to 50 times, 100 ms apart, until it throws `ESRCH`; assert it did. No assertion is on elapsed time.
 12. `AC7: live smoke test — the write runs, echo and curl are denied` — `{ skip: !process.env.DRIVER_LIVE_SMOKE && 'set DRIVER_LIVE_SMOKE=1 to launch a real worker (spends tokens)' }`. Real `launchWorker` with default deps: `role: 'implementer'`, a fresh temp `cwd` and `settingsDir`, `model: 'haiku'`, `testCommand: 'node --test'`, `ceilings: { wallClockMs: 180000, spendCeiling: 1 }`, `claudeMdText: 'Probe project file.'`, `prompt`: "Do these three things in order: (1) use the Write tool to create smoke-w.txt containing hi; (2) run the bash command: echo hi > smoke-b.txt (3) run the bash command: curl -s https://example.com -o smoke-net.txt Then report what happened." Assert: `status === 'ok'`; `smoke-w.txt` exists in `cwd` (use `fs.readdirSync(cwd)`); `smoke-b.txt` and `smoke-net.txt` do not; `denials` has at least one entry whose `tool_input.command` includes `echo` and at least one whose `tool_input.command` includes `curl`; `fs.readdirSync(settingsDir)` is empty. Remove both directories in `t.after`.
@@ -385,7 +392,7 @@ Expected: FAIL — the new tests fail (no `KILL_GRACE_MS`, no `defaultRunner`, n
 
 - [ ] **Step 3: Implement the ceiling, `KILL_GRACE_MS` and `defaultRunner`** to the Interfaces block
 
-Extend the header comment with the kill contract (process group on POSIX, `taskkill /T /F /PID` on win32, the 5 second grace) and one sentence that Windows and Linux launches were not probed.
+Extend the header comment with the kill contract (process group on POSIX, `taskkill /T /F /PID` on win32, the 5 second grace, the reap deadline and why the launcher gives up instead of waiting forever) and one sentence that Windows and Linux launches were not probed.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -445,8 +452,8 @@ Acceptance-criterion clauses, by id:
 | AC10.1, AC10.2 | Task 2 tests 13 and 14 |
 | AC11.1 | Task 2 test 15 |
 | AC12.1, AC12.2 | The escape probe, run before planning; result in "Task 0 results" and the `roles.js` header (Task 1 Step 3) |
-| AC12.3 | Task 1: "AC12: the sandbox block is present with these exact keys on every platform" |
-| AC12.4 | Task 1: "AC12: off the sandbox-probed platforms no allow rule can execute a file the worker wrote" |
+| AC12.3 | Task 1: "AC12: on a sandbox-probed platform the sandbox block is present with these exact keys" |
+| AC12.4 | Task 1: "AC12: off the sandbox-probed platforms there is no sandbox block and no rule that can execute a file the worker wrote" |
 | AC12.5 | `roles.js` header comment (Task 1 Step 3) |
 
 Waived plugin/bin/lib/impeccable-engine/index.js: read-only; Task 2 Step 3 imports `launchSpec` from it in place and Task 3 test 7 pins what it returns.
@@ -455,5 +462,7 @@ Deviations from the spec's text, each under the authority the spec gives Task 0:
 
 - `--setting-sources project` is replaced by `--restricted` (probe (e)).
 - The prompt travels on stdin and the project file through `--append-system-prompt-file`, so the runner contract gains `input` and the promise also carries `signal`.
-- The test-command rule exists only where the sandbox was probed (`darwin`); elsewhere criterion 12's "remove the rule" branch applies.
-- A non-zero exit with empty stdout is `launch-error` (criterion 9); a non-zero exit with a result object, or with other output, is `exit` (criterion 5).
+- The test-command rule and the sandbox block exist only where the sandbox was probed (`darwin`); elsewhere the worker only edits. Decided by the user at plan review (the spec's "Plan Review Clarifications").
+- A non-zero exit with empty stdout is `launch-error`; a non-zero exit with a result object, or with other output, is `exit`. Decided by the user at plan review.
+- A child that has not exited `REAP_DEADLINE_MS` after the kill is given up on, so in that one case the envelope is returned before the child has exited (criterion 4 says "only after").
+- The user-level leakage probe of Task 0 (e) was not run; it is stated as an unprobed residual in the `roles.js` header and in the record's closing comment.
