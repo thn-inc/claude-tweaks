@@ -10,6 +10,12 @@
 // Warning texts are copied from the fence byte for byte. The module reproduces the fence's
 // behavior, including behavior that looks wrong; a defect found while porting goes to the run
 // ledger and is never fixed here.
+//   The fence's own calls are unbounded; the default deps bound every one (shared-primitives.js),
+// so a call that hangs, or outlasts its bound, is where the two can differ. GH_BATCH_TIMEOUT_MS
+// bounds an aliased GraphQL batch and every paginated list call (`issue list` / `pr list` with
+// --limit above 100, and the `pr list --json files` overlap fetch: isBatchGhCall); GH_TIMEOUT_MS
+// bounds every other gh call (a single `issue view` / `pr view`); GIT_TIMEOUT_MS every git call;
+// CLI_TIMEOUT_MS every spawned plugin CLI.
 //
 // R7, registry semantics: PASSES is the ordered registry. `queuePull` walks it in array order, so
 // position in the array is position in the run. Each entry is
@@ -1031,18 +1037,46 @@ function tmpName() {
   return file;
 }
 
-function defaultDeps() {
+// A gh call bounded by GH_BATCH_TIMEOUT_MS rather than GH_TIMEOUT_MS: an aliased GraphQL batch, or
+// a paginated list call (`issue list` / `pr list` with --limit above 100, or a `pr list` asking for
+// `files`), the #4815 batched-call precedent.
+function isBatchGhCall(args) {
+  if (args.includes('graphql')) return true;
+  if (args[1] !== 'list' || (args[0] !== 'issue' && args[0] !== 'pr')) return false;
+  const at = args.indexOf('--limit');
+  const json = args.indexOf('--json');
+  const fields = json >= 0 ? String(args[json + 1]).split(',') : [];
+  return (at >= 0 && Number(args[at + 1]) > 100) || (args[0] === 'pr' && fields.includes('files'));
+}
+
+// dispatch-unlanded-blockers.js's PREFLIGHT_TIMEOUT_MS (300 s, the longest bound any CLI spawned here sets) plus a 5 s margin.
+const CLI_TIMEOUT_MS = 300000 + 5000;
+
+// A spawn result's stderr with a spawn error or a killing signal appended, as cross-repo-states.js's
+// failureCause names them, so a Warning or stop line that quotes the stderr never ends empty.
+function spawnStderr(r) {
+  const stderr = r.stderr || '';
+  const cause = r.error ? (r.error.message || String(r.error)) : (r.signal ? `signal ${r.signal}` : '');
+  if (!cause) return stderr;
+  return `${stderr}${stderr && !stderr.endsWith('\n') ? '\n' : ''}${cause}\n`;
+}
+
+// seams: { execFileSync, spawnSync }, test-only stand-ins for the two child_process calls below, so
+// a test can read the options each call gets without spawning anything.
+function defaultDeps(seams = {}) {
+  const execFileImpl = seams.execFileSync || execFileSync;
+  const spawnImpl = seams.spawnSync || spawnSync;
   return {
     run(cmd, args, opts = {}) {
       if (cmd === 'gh') {
-        const timeout = args.includes('graphql') ? GH_BATCH_TIMEOUT_MS : GH_TIMEOUT_MS;
-        return execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, timeout, windowsHide: true, ...opts }));
+        const timeout = isBatchGhCall(args) ? GH_BATCH_TIMEOUT_MS : GH_TIMEOUT_MS;
+        return execFileImpl('gh', args, ghOptions(args, { encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, timeout, windowsHide: true, ...opts }));
       }
-      return execFileSync(cmd, args, { encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, timeout: GIT_TIMEOUT_MS, windowsHide: true, ...opts });
+      return execFileImpl(cmd, args, { encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, timeout: GIT_TIMEOUT_MS, windowsHide: true, ...opts });
     },
     spawnCli(name, args, { cwd, env } = {}) {
-      const r = spawnSync(process.execPath, [path.join(BIN_DIR, name), ...args], { encoding: 'utf8', cwd, env, maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true });
-      return { status: r.status, stdout: r.stdout || '', stderr: r.stderr || '' };
+      const r = spawnImpl(process.execPath, [path.join(BIN_DIR, name), ...args], { encoding: 'utf8', cwd, env, timeout: CLI_TIMEOUT_MS, maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true });
+      return { status: r.status, stdout: r.stdout || '', stderr: spawnStderr(r) };
     },
     stdout: (s) => process.stdout.write(s),
     stderr: (s) => process.stderr.write(s),

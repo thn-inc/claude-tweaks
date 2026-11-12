@@ -1974,6 +1974,79 @@ test('AC2.1: every registry entry that writes a reason, and each informational p
   assert.equal(swept, SWEPT.length, 'the loop ran every entry');
 });
 
+// ---- the default deps: which bound each call gets, and a spawn failure's cause (defaultDeps seams) ----
+
+const PRIMITIVES = require('../../../plugin/bin/lib/shared-primitives');
+
+test('#5227 gh timeout: the paginated list calls a whole pull makes get GH_BATCH_TIMEOUT_MS; a single-record view gets GH_TIMEOUT_MS and git GIT_TIMEOUT_MS', () => inOwnTmp((own) => {
+  assert.notEqual(PRIMITIVES.GH_BATCH_TIMEOUT_MS, PRIMITIVES.GH_TIMEOUT_MS, 'the two bounds differ, so the assertions below discriminate');
+  const seen = [];
+  const answer = fakeRun(S0());
+  const { run } = defaultDeps({ execFileSync: (cmd, args, opts) => { seen.push({ cmd, args, timeout: opts.timeout }); return answer(cmd, args, opts); } });
+  queuePull({ sessionId: 'qp-timeout', cwd: own, env: { GH_HOST: 'github.com' } }, {
+    run,
+    spawnCli: fakeSpawnCli(S0(), {
+      'hooks.js': { status: 0, stdout: '', stderr: '' },
+      'dispatch-unlanded-blockers.js': (args) => ({ status: 0, stdout: fs.readFileSync(args[args.indexOf('--groups') + 1], 'utf8'), stderr: '' }),
+    }),
+    queueOrder: { readOrder: () => null, writeOrder: () => ({ ok: true }) },
+    expressQueuePolicy: EXPRESS_OFF,
+    createClaimReader: () => ({ read: () => ({ content: null }) }),
+    stderr: () => {},
+  });
+  const timeoutOf = (argv) => {
+    const hit = seen.find((c) => c.cmd === 'gh' && c.args.join('\u0000') === argv.join('\u0000'));
+    assert.ok(hit, `the pull made ${argv.join(' ')}`);
+    return hit.timeout;
+  };
+  for (const argv of [QUEUE_ARGV, OPEN_NUMBERS_ARGV, IN_FLIGHT_ARGV, OPEN_PRS_ARGV]) {
+    assert.equal(timeoutOf(argv), PRIMITIVES.GH_BATCH_TIMEOUT_MS, argv.join(' '));
+  }
+  const ghSeen = seen.filter((c) => c.cmd === 'gh');
+  assert.equal(ghSeen.length, 4, `S0 makes exactly those four gh calls: ${ghSeen.map((c) => c.args.join(' '))}`);
+  for (const c of seen.filter((s) => s.cmd === 'git')) assert.equal(c.timeout, PRIMITIVES.GIT_TIMEOUT_MS, c.args.join(' '));
+
+  // The single-call argv the pull makes per record, and the dependency-freshness search (--limit 500).
+  const direct = defaultDeps({ execFileSync: (cmd, args, opts) => { seen.push({ cmd, args, timeout: opts.timeout }); return ''; } }).run;
+  const ghEnv = { env: { GH_HOST: 'github.com' } };
+  for (const argv of [PR_VIEW(5010), ['issue', 'view', '8000', '--json', 'state', '-q', '.state']]) {
+    direct('gh', argv, ghEnv);
+    assert.equal(timeoutOf(argv), PRIMITIVES.GH_TIMEOUT_MS, argv.join(' '));
+  }
+  direct('gh', DEP_SEARCH_8000, ghEnv);
+  assert.equal(timeoutOf(DEP_SEARCH_8000), PRIMITIVES.GH_BATCH_TIMEOUT_MS, 'the dependency-freshness search is a --limit 500 list call');
+  // A list at gh's own --limit ceiling of 100 that asks for no files stays a single-call bound.
+  const small = ['issue', 'list', '--state', 'open', '--json', 'number', '--limit', '100'];
+  direct('gh', small, ghEnv);
+  assert.equal(timeoutOf(small), PRIMITIVES.GH_TIMEOUT_MS);
+}));
+
+test('#5227 spawnCli: the default spawn is bounded above every spawned CLI\'s own bound, and a spawn error or a signal reaches the returned stderr', () => {
+  const opts = [];
+  const results = [
+    { error: new Error('spawn ENOBUFS'), status: null, stdout: '', stderr: '' },
+    { status: null, signal: 'SIGKILL', stdout: '', stderr: 'partial\n' },
+    { status: 1, stdout: '', stderr: 'resolve-linked-prs: gh failed\n' },
+  ];
+  const { spawnCli } = defaultDeps({ spawnSync: (file, argv, o) => { opts.push(o); return results.shift(); } });
+  const errored = spawnCli('resolve-linked-prs.js', ['9001']);
+  assert.equal(errored.status, null);
+  assert.equal(errored.stderr, 'spawn ENOBUFS\n');
+  const killed = spawnCli('resolve-linked-prs.js', ['9001']);
+  assert.equal(killed.stderr, 'partial\nsignal SIGKILL\n');
+  const failed = spawnCli('resolve-linked-prs.js', ['9001']);
+  assert.equal(failed.stderr, 'resolve-linked-prs: gh failed\n', 'a plain non-zero exit keeps the CLI stderr as it was');
+  // dispatch-unlanded-blockers.js bounds its preflight-records.js child at 300 s; the outer bound must not cut it short.
+  for (const o of opts) assert.ok(Number.isFinite(o.timeout) && o.timeout > 300000, `timeout ${o.timeout}`);
+  assert.equal(opts[0].windowsHide, true);
+
+  // The cause reaches the fence's Warning text instead of an empty tail.
+  const viaDefault = () => defaultDeps({ spawnSync: () => ({ error: new Error('spawn ENOBUFS'), status: null, stdout: '', stderr: '' }) })
+    .spawnCli('resolve-linked-prs.js', ['9001']);
+  const r = pull4(FULL(), { spawn: { 'resolve-linked-prs.js': viaDefault } });
+  assert.ok(r.errs.includes(`${LINKED_WARNING}spawn ENOBUFS\n`), r.stderr);
+});
+
 // ---- Task 6: rankNext / rankFromFiles (AC6) ---------------------------------------------------
 // One table, three consumers: rankNext in-process, next-ranking.md's fence under the bash oracle
 // (same sandbox + escape guard as the queue-pull fence), and rankFromFiles' written file. Every
