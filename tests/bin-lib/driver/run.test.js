@@ -16,6 +16,7 @@ const {
   STEPS, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, WIN32_CLAUDE_BIN,
 } = require(path.join(LIB, 'driver', 'steps'));
 const { openBlockerRefs } = require(path.join(LIB, 'issues', 'record-dependencies'));
+const { formatTimestamp } = require(path.join(LIB, 'hooks', 'run-dir-resolve'));
 
 test('AC14.3: neutralize strips closing refs, mentions, fences, newlines', () => {
   const s = neutralize('Fixes #12 and closes owner/repo#3\n@alice ```rm```');
@@ -153,9 +154,33 @@ function on(kind, ...prefix) {
 
 const pick = (v, c) => (typeof v === 'function' ? v(c) : v);
 
+// A git call whose argv, past the leading `-C {dir}` the steps pass, starts with `prefix`.
+const gitSub = (c) => (c.args[0] === '-C' ? c.args.slice(2) : c.args);
+const onGit = (...prefix) => (c) => c.kind === 'git' && prefix.every((p, i) => gitSub(c)[i] === p);
+const claimTarget = (c) => Number(c.args[c.args.indexOf('--targets') + 1]);
+const exitOne = () => { throw Object.assign(new Error('exit 1'), { status: 1 }); };
+
 function defaultScript(over) {
   const policy = { ...POLICY, ...(over.policy || {}) };
   return [
+    // The claim, run-dir and worktree steps' happy path: a claimed record, a minted dir named
+    // from the claim's own timestamp, no leftover, a worktree created and recorded.
+    [on('node', /claim-targets\.js$/), (c) => ({
+      code: 0, stderr: '',
+      stdout: JSON.stringify({ claimed: [claimTarget(c)], alreadyOwned: [], skipped: [], labelFailures: [], transportByIssue: { [claimTarget(c)]: 'git' } }),
+    })],
+    [on('resolveRunDir'), (c) => ({
+      ok: true, created: true, reason: null, message: '',
+      path: path.join(MAIN, '.claude-tweaks', 'pipelines', `${formatTimestamp(c.args[0].now)}-${c.args[0].specSlug}`),
+    })],
+    [on('node', /log-decision\.js$/), { code: 0, stdout: '', stderr: '' }],
+    [on('lstatType'), { type: 'missing', code: 'ENOENT' }],
+    [on('readdir'), []],
+    [onGit('rev-parse'), exitOne],
+    [onGit('fetch'), ''],
+    [onGit('worktree', 'add'), ''],
+    [onGit('merge'), ''],
+    [on('node', /hooks\.js$/, 'record-worktree'), (c) => ({ code: 0, stderr: '', stdout: `claude-tweaks: worktree recorded for ${path.basename(c.args[3])}\n` })],
     [on('policy'), (c) => Object.fromEntries(c.args.map((k) => [k, { value: policy[k], source: 'policy' }]))],
     [on('gh', 'issue', 'view'), (c) => JSON.stringify(issueFor(Number(c.args.at(-1))))],
     [on('git', 'symbolic-ref'), 'origin/main\n'],
@@ -495,7 +520,7 @@ test('the policy step resolves the main root, the origin repo and the integratio
   const s2 = newShared();
   await driveRecord(7, s2, pinned.deps);
   assert.equal(s2.ref, 'develop');
-  assert.equal(pinned.calls.filter((c) => c.kind === 'git').length, 0);
+  assert.equal(pinned.calls.filter((c) => c.kind === 'git' && c.args[0] === 'symbolic-ref').length, 0);
 
   const trunk = harness({ script: [[on('git', 'symbolic-ref'), 'origin/trunk\n']] });
   const s3 = newShared();
@@ -560,7 +585,7 @@ test('every step emits one event line with the core fields; the final line carri
   assert.ok(Number.isInteger(final.msTotal) && final.msTotal > 0);
   assert.equal(final.msWithoutCi, final.msTotal);
   assert.deepEqual(final.stop, {
-    step: null, class: 'none', pushed: false, created: { worktree: false, branch: false },
+    step: null, class: 'none', pushed: false, created: { worktree: true, branch: true },
     reason: null, detail: null, checkLogged: null,
   });
   assert.equal('eventsFileError' in final, false);
@@ -671,4 +696,318 @@ test('a failing events file never aborts the record; the final line names the er
   assert.equal(final.outcome, 'pending-review');
   assert.equal(final.eventsFileError, 'EACCES: permission denied');
   assert.equal(h.lines().at(-1).eventsFileError, 'EACCES: permission denied');
+});
+
+// --- claim, run-dir and worktree ---------------------------------------------------------------
+
+const calls = (h, kind, re) => h.calls.filter((c) => c.kind === kind && (!re || re.test(String(c.args[0]))));
+const gitCalls = (h) => h.calls.filter((c) => c.kind === 'git' && c.args[0] !== 'symbolic-ref');
+const claimOut = (n, transport = 'git') => JSON.stringify({ claimed: [n], alreadyOwned: [], skipped: [], labelFailures: [], transportByIssue: { [n]: transport } });
+const claimReply = (code, stdout = '', stderr = '') => [on('node', /claim-targets\.js$/), { code, stdout, stderr }];
+const WT = path.join(MAIN, '.claude', 'worktrees', 'drive-record-7');
+const mintedRunId = (h) => `${formatTimestamp(calls(h, 'resolveRunDir')[0].args[0].now)}-drive-7`;
+
+test('AC7.2: a failed claim is blocked, no run dir', async () => {
+  for (const code of [2, 3, 4, 5, 6, 7]) {
+    const h = harness({ script: [claimReply(code, JSON.stringify({ contested: [{ issue: 7, holder: 'x-drive-7' }] }))] });
+    assert.equal(await run(['#7'], h.deps), 0);
+    const final = h.lines().at(-1);
+    assert.equal(final.outcome, 'blocked', `exit ${code}`);
+    assert.equal(final.status, 'fail');
+    assert.equal(final.stop.step, 'claim');
+    assert.equal(final.stop.class, 'claim');
+    assert.match(final.stop.detail, new RegExp(`exited ${code} \\(contested\\)`));
+    assert.equal(final.run, null);
+    assert.equal(calls(h, 'resolveRunDir').length, 0);
+    assert.deepEqual(h.writes(), []);
+  }
+});
+
+test('a claim with no JSON envelope names the exit code and stderr; one that claimed nothing is a fail', async () => {
+  const noJson = harness({ script: [claimReply(4, '', 'gh: HTTP 502\n')] });
+  await run(['#7'], noJson.deps);
+  assert.equal(noJson.lines().at(-1).stop.detail, 'claim-targets.js exited 4 (gh: HTTP 502)');
+  for (const stdout of ['not json', JSON.stringify({ claimed: [8], transportByIssue: { 8: 'git' } }), claimOut(7, 'Git!'), JSON.stringify({ claimed: [7], transportByIssue: {} })]) {
+    const h = harness({ script: [claimReply(0, stdout)] });
+    await run(['#7'], h.deps);
+    const final = h.lines().at(-1);
+    assert.equal(final.stop.step, 'claim', stdout);
+    assert.equal(final.stop.class, 'claim');
+    assert.equal(final.outcome, 'blocked');
+    assert.match(final.stop.detail, /without claiming #7/);
+    assert.equal(calls(h, 'resolveRunDir').length, 0);
+  }
+});
+
+test('AC7.3: a run dir that cannot be minted is blocked', async () => {
+  const cases = [
+    [{ ok: false, path: null, message: 'no-repo: could not determine the repository root' }, /run directory not minted: no-repo/],
+    [{ ok: true, path: path.join(MAIN, '.claude-tweaks', 'pipelines', '2026-01-01T000000-drive-7') }, /does not match the claim's run id/],
+    [undefined, /run directory not minted: no result/],
+  ];
+  for (const [reply, re] of cases) {
+    const h = harness({ script: [[on('resolveRunDir'), reply]] });
+    assert.equal(await run(['#7'], h.deps), 0);
+    const final = h.lines().at(-1);
+    assert.equal(final.outcome, 'blocked');
+    assert.equal(final.stop.step, 'run-dir');
+    assert.equal(final.stop.class, 'claim');
+    assert.equal(final.status, 'fail');
+    assert.match(final.stop.detail, re);
+    assert.equal(final.run, null);
+    assert.equal(calls(h, 'node', /log-decision/).length, 0);
+    assert.equal(gitCalls(h).length, 0);
+  }
+});
+
+test('AC5.1, AC5.3: pre-run-dir events carry run:null; the jsonl holds them first', async () => {
+  const h = harness();
+  assert.equal(await run(['#7'], h.deps), 0);
+  const runId = mintedRunId(h);
+  const lines = h.lines();
+  const order = lines.map((l) => l.step);
+  assert.deepEqual(order, ['policy', 'fetch', 'eligibility', 'admission', 'claim', 'run-dir', 'worktree', FINAL_STEP]);
+  for (const l of lines) assert.equal(l.run, order.indexOf(l.step) <= order.indexOf('claim') ? null : runId, l.step);
+  assert.equal(h.files[path.join(MAIN, '.claude-tweaks', 'pipelines', runId, 'driver-events.jsonl')], h.out.join(''));
+  assert.equal(lines.at(-1).outcome, 'pending-review');
+});
+
+test('claim and run-dir share one run id and write the canonical claim log', async () => {
+  const h = harness();
+  await run(['#7'], h.deps);
+  const runId = mintedRunId(h);
+  const runDir = path.join(MAIN, '.claude-tweaks', 'pipelines', runId);
+  const claim = calls(h, 'node', /claim-targets\.js$/)[0];
+  assert.deepEqual(claim.args.slice(1), ['--run-id', runId, '--targets', '7', '--steps', 'build,test']);
+  assert.ok(claim.args[0].endsWith(path.join('plugin', 'bin', 'claim-targets.js')));
+  const mint = calls(h, 'resolveRunDir')[0].args[0];
+  assert.ok(mint.now instanceof Date);
+  assert.deepEqual({ ...mint, now: 'date' }, { cwd: MAIN, env: {}, specSlug: 'drive-7', create: true, now: 'date' });
+  const log = calls(h, 'node', /log-decision\.js$/)[0];
+  assert.deepEqual(log.args.slice(1), ['--run', runDir, '--status', 'AUTO', '--section', '/flow', '--step', 'Step 2.8', '--text', 'claimed #7 (bin/claim-targets.js, transport: git)']);
+  // The order the spec states: claim, then mint, then the claim log.
+  const idx = (pred) => h.calls.findIndex(pred);
+  assert.ok(idx((c) => c === claim) < idx((c) => c.kind === 'resolveRunDir') && idx((c) => c.kind === 'resolveRunDir') < idx((c) => c === log));
+  // The transport the claim reported flows into the text.
+  const alt = harness({ script: [claimReply(0, claimOut(7, 'contents-api'))] });
+  await run(['#7'], alt.deps);
+  assert.match(calls(alt, 'node', /log-decision\.js$/)[0].args.at(-1), /transport: contents-api\)$/);
+});
+
+test('the claim-log text and step the driver passes make the line express-lane.js verify reads', async () => {
+  const { isClaimLogEntry } = require(path.join(LIB, 'log-decision', 'claim-log'));
+  const { formatEntry } = require(path.join(LIB, 'log-decision', 'append'));
+  const h = harness();
+  await run(['#7'], h.deps);
+  const argv = calls(h, 'node', /log-decision\.js$/)[0].args;
+  const flag = (name) => argv[argv.indexOf(name) + 1];
+  const line = formatEntry({ status: flag('--status'), now: NOW, step: flag('--step'), text: flag('--text') });
+  assert.ok(isClaimLogEntry(line), line);
+});
+
+test('claim, mint and every plugin CLI run in the main checkout', async () => {
+  const h = harness();
+  await run(['#7'], h.deps);
+  for (const re of [/claim-targets\.js$/, /log-decision\.js$/, /hooks\.js$/]) assert.equal(calls(h, 'node', re)[0].cwd, MAIN, String(re));
+  assert.equal(calls(h, 'resolveRunDir')[0].args[0].cwd, MAIN);
+  // The driver's own cwd (a subdirectory here) is only the policy step's input to mainCheckoutRoot.
+  const sub = path.join(MAIN, 'sub');
+  fs.mkdirSync(sub, { recursive: true });
+  const moved = harness({ deps: { cwd: () => sub } });
+  await run(['#7'], moved.deps);
+  assert.equal(calls(moved, 'node', /claim-targets\.js$/)[0].cwd, MAIN);
+  assert.ok(gitCalls(moved).every((c) => c.cwd === MAIN || c.cwd === WT));
+});
+
+test('AC9.2 (Reading A): a live earlier claim ends blocked at claim, before the worktree step', async () => {
+  const contested = JSON.stringify({ contested: [{ issue: 7, holder: '2026-11-12T090000-drive-7' }] });
+  const h = harness({ script: [claimReply(3, contested)] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const final = h.lines().at(-1);
+  assert.deepEqual([final.stop.step, final.stop.class, final.outcome], ['claim', 'claim', 'blocked']);
+  assert.equal(gitCalls(h).length, 0);
+  assert.equal(calls(h, 'lstatType').length + calls(h, 'readdir').length, 0);
+  assert.equal(h.lines().filter((l) => l.step === 'worktree').length, 0);
+});
+
+test('the worktree step: fetch, worktree add, catch-up fetch and merge, then record-worktree', async () => {
+  const h = harness();
+  assert.equal(await run(['#7'], h.deps), 0);
+  const runId = mintedRunId(h);
+  const runDir = path.join(MAIN, '.claude-tweaks', 'pipelines', runId);
+  assert.deepEqual(gitCalls(h).map((c) => [c.args, c.cwd]), [
+    [['-C', MAIN, 'rev-parse', '--verify', '--quiet', '--end-of-options', 'refs/heads/drive-record-7'], MAIN],
+    [['-C', MAIN, 'fetch', '--end-of-options', 'origin', 'main'], MAIN],
+    [['-C', MAIN, 'worktree', 'add', '-b', 'drive-record-7', WT, 'origin/main'], MAIN],
+    [['-C', WT, 'fetch', '--end-of-options', 'origin', 'main'], WT],
+    [['-C', WT, 'merge', '--end-of-options', 'origin/main'], WT],
+  ]);
+  assert.deepEqual(calls(h, 'lstatType')[0].args, [WT]);
+  assert.deepEqual(calls(h, 'readdir')[0].args, [path.join(MAIN, '.claude-tweaks', 'pipelines')]);
+  const stamp = calls(h, 'node', /hooks\.js$/)[0];
+  assert.deepEqual(stamp.args.slice(1), ['record-worktree', '--run', runDir, WT]);
+  assert.deepEqual(h.lines().at(-1).stop.created, { worktree: true, branch: true });
+  const ctxs = [];
+  const probe = harness();
+  await driveRecord(7, newShared(), probe.deps, [...STEPS, defineStep('look', 'none', async (ctx) => { ctxs.push(ctx); return { status: 'ok' }; })]);
+  const [ctx] = ctxs;
+  assert.deepEqual([ctx.wt, ctx.branch, ctx.created, ctx.runDir, ctx.transport], [WT, 'drive-record-7', { worktree: true, branch: true }, runDir, 'git']);
+  assert.ok(ctx.claimDate instanceof Date);
+});
+
+test('AC9.2: leftover worktree, branch or run dir refuses at the worktree step', async () => {
+  const leftovers = {
+    worktree: [[on('lstatType'), { type: 'directory', code: null }], /worktree .*drive-record-7 \(directory\)/],
+    branch: [[onGit('rev-parse'), 'abc123\n'], /branch drive-record-7/],
+    rundir: [[on('readdir'), ['2026-11-12T090000-drive-7', 'archive', '2026-11-12T090000-drive-70', 'x-drive-17']], /run directory 2026-11-12T090000-drive-7(;|$)/],
+  };
+  for (const [name, [entry, re]] of Object.entries(leftovers)) {
+    const h = harness({ script: [entry] });
+    assert.equal(await run(['#7'], h.deps), 0);
+    const final = h.lines().at(-1);
+    assert.equal(final.stop.step, 'worktree', name);
+    assert.equal(final.status, 'fail');
+    assert.equal(final.outcome, 'express-escalated');
+    assert.equal(final.stop.class, 'pre-push');
+    assert.match(final.stop.detail, re);
+    assert.match(final.stop.detail, /nothing reused or removed/);
+    assert.deepEqual(final.stop.created, { worktree: false, branch: false });
+    assert.equal(gitCalls(h).filter((c) => !gitSub(c).includes('rev-parse')).length, 0, 'no fetch, add or merge');
+    assert.equal(calls(h, 'node', /hooks\.js$/).length, 0);
+    assert.ok(h.files[path.join(MAIN, '.claude-tweaks', 'pipelines', mintedRunId(h), 'driver-events.jsonl')], 'the run dir exists, so the events are in its jsonl');
+  }
+  const all = harness({ script: [[on('lstatType'), { type: 'file' }], [onGit('rev-parse'), ''], [on('readdir'), ['x-drive-7']]] });
+  await run(['#7'], all.deps);
+  assert.match(all.lines().at(-1).stop.detail, /worktree .*branch drive-record-7; run directory x-drive-7/);
+});
+
+test('this run\'s own run dir, archive and other records\' dirs are not leftovers; an absent pipelines dir is fine', async () => {
+  let minted = null;
+  const h = harness({ script: [
+    [on('resolveRunDir'), (c) => { minted = `${formatTimestamp(c.args[0].now)}-drive-7`; return { ok: true, path: path.join(MAIN, '.claude-tweaks', 'pipelines', minted) }; }],
+    [on('readdir'), () => [minted, 'archive', '2026-11-12T090000-drive-8', '2026-11-12T090000-spec-7']],
+  ] });
+  await run(['#7'], h.deps);
+  assert.equal(h.lines().at(-1).outcome, 'pending-review');
+  const absent = harness({ script: [[on('readdir'), () => { throw Object.assign(new Error('nope'), { code: 'ENOENT' }); }]] });
+  await run(['#7'], absent.deps);
+  assert.equal(absent.lines().at(-1).outcome, 'pending-review');
+});
+
+test('a leftover check that cannot run fails the step rather than passing it', async () => {
+  const cases = [
+    [[onGit('rev-parse'), () => { throw Object.assign(new Error('fatal: not a git repository'), { status: 128 }); }], /could not check for branch drive-record-7/],
+    [[on('readdir'), () => { throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); }], /could not list run directories/],
+    [[on('lstatType'), { type: 'unreadable', code: 'EACCES' }], /\(unreadable\)/],
+  ];
+  for (const [entry, re] of cases) {
+    const h = harness({ script: [entry] });
+    await run(['#7'], h.deps);
+    const final = h.lines().at(-1);
+    assert.equal(final.stop.step, 'worktree');
+    assert.equal(final.outcome, 'express-escalated');
+    assert.match(final.stop.detail, re);
+    assert.equal(gitCalls(h).filter((c) => gitSub(c)[0] === 'worktree').length, 0);
+  }
+});
+
+test('Review Focus 5: a non-main integration branch flows into fetch and worktree add', async () => {
+  const h = harness({ policy: { 'integration-branch': 'develop' } });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const args = gitCalls(h).flatMap((c) => c.args);
+  assert.ok(args.includes('origin/develop') && args.includes('develop'));
+  assert.ok(!args.includes('origin/main') && !args.includes('main'));
+  assert.deepEqual(gitCalls(h).find((c) => gitSub(c)[0] === 'worktree').args.slice(-1), ['origin/develop']);
+});
+
+test('Gotcha: a run with CLAUDE_CODE_SESSION_ID unset drives normally', async () => {
+  const read = [];
+  const env = new Proxy({}, { get: (_, key) => { read.push(String(key)); return undefined; }, has: (_, key) => { read.push(String(key)); return false; } });
+  const h = harness({ deps: { env } });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.equal(calls(h, 'node', /hooks\.js$/).length, 1);
+  assert.equal(h.lines().at(-1).outcome, 'pending-review');
+  assert.ok(!read.includes('CLAUDE_CODE_SESSION_ID'));
+});
+
+test('record-worktree: only its own success line counts; any other output is a pre-push fail', async () => {
+  const cases = [
+    ['claude-tweaks: failed to record worktree for X — run-state.json could not be written\n', 0],
+    ['claude-tweaks: worktree recorded for 2026-01-01T000000-drive-7\n', 0],
+    ['claude-tweaks: record-worktree requires --run — worktree not recorded\n', 1],
+    ['', 0],
+  ];
+  for (const [stdout, code] of cases) {
+    const h = harness({ script: [[on('node', /hooks\.js$/, 'record-worktree'), { code, stdout, stderr: '' }]] });
+    await run(['#7'], h.deps);
+    const final = h.lines().at(-1);
+    assert.equal(final.stop.step, 'worktree', stdout);
+    assert.equal(final.stop.class, 'pre-push');
+    assert.equal(final.outcome, 'express-escalated');
+    assert.match(final.stop.detail, /worktree not recorded in the run state/);
+    assert.deepEqual(final.stop.created, { worktree: true, branch: true }, 'the worktree exists, so the stop reports it');
+  }
+});
+
+test('a failing fetch or worktree add leaves created false; a failing catch-up leaves it true', async () => {
+  const cases = [
+    [onGit('fetch'), false, (c) => c.cwd === MAIN],
+    [onGit('worktree', 'add'), false, () => true],
+    [onGit('merge'), true, () => true],
+  ];
+  for (const [matcher, created, only] of cases) {
+    const h = harness({ script: [[(c) => matcher(c) && only(c), new Error('git said no')]] });
+    assert.equal(await run(['#7'], h.deps), 0);
+    const final = h.lines().at(-1);
+    assert.equal(final.stop.step, 'worktree');
+    assert.equal(final.stop.class, 'pre-push');
+    assert.match(final.stop.detail, /git said no/);
+    assert.deepEqual(final.stop.created, { worktree: created, branch: created });
+    assert.equal(calls(h, 'node', /hooks\.js$/).length, 0);
+  }
+});
+
+test('a claim-log write that fails is pre-push: the run dir exists, so the events are in its jsonl', async () => {
+  const h = harness({ script: [[on('node', /log-decision\.js$/), { code: 1, stdout: '', stderr: 'log-decision: cannot write decisions.md\n' }]] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const final = h.lines().at(-1);
+  assert.deepEqual([final.stop.step, final.stop.class, final.outcome, final.status], ['run-dir', 'pre-push', 'express-escalated', 'fail']);
+  assert.match(final.stop.detail, /log-decision\.js exited 1 \(log-decision: cannot write decisions\.md\)/);
+  assert.equal(final.run, mintedRunId(h));
+  assert.ok(h.files[path.join(MAIN, '.claude-tweaks', 'pipelines', final.run, 'driver-events.jsonl')]);
+  assert.equal(gitCalls(h).length, 0);
+});
+
+test('a second record gets its own claim, run id and worktree path', async () => {
+  const h = harness();
+  assert.equal(await run(['#7', '#8'], h.deps), 0);
+  assert.deepEqual(calls(h, 'node', /claim-targets\.js$/).map((c) => c.args[c.args.indexOf('--targets') + 1]), ['7', '8']);
+  assert.deepEqual(finals(h).map((f) => [f.record, f.outcome, f.run.endsWith(`-drive-${f.record}`)]), [[7, 'pending-review', true], [8, 'pending-review', true]]);
+  assert.ok(gitCalls(h).some((c) => c.args.includes(path.join(MAIN, '.claude', 'worktrees', 'drive-record-8'))));
+});
+
+test('realDeps.ghBatch runs under GH_BATCH_TIMEOUT_MS and realDeps.gh under GH_TIMEOUT_MS', () => {
+  const cp = require('node:child_process');
+  const runPath = require.resolve(path.join(LIB, 'driver', 'run'));
+  const primitives = require(path.join(LIB, 'shared-primitives'));
+  const original = cp.execFileSync;
+  const priorHost = process.env.GH_HOST;
+  const seen = [];
+  cp.execFileSync = (bin, args, options) => { seen.push({ bin, args, options }); return ''; };
+  process.env.GH_HOST = 'github.com';
+  try {
+    delete require.cache[runPath];
+    const fresh = require(runPath);
+    fresh.realDeps.ghBatch(['api', 'graphql']);
+    fresh.realDeps.gh(['issue', 'view']);
+  } finally {
+    cp.execFileSync = original;
+    if (priorHost === undefined) delete process.env.GH_HOST; else process.env.GH_HOST = priorHost;
+    delete require.cache[runPath];
+  }
+  assert.deepEqual(seen.map((s) => s.args[0]), ['api', 'issue']);
+  assert.equal(seen[0].options.timeout, primitives.GH_BATCH_TIMEOUT_MS);
+  assert.equal(seen[1].options.timeout, primitives.GH_TIMEOUT_MS);
+  assert.ok(primitives.GH_BATCH_TIMEOUT_MS >= 30000);
+  assert.ok(seen.every((s) => s.options.windowsHide === true));
 });

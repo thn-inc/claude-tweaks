@@ -22,14 +22,23 @@
 //     class while run.js still names no step.
 //
 // Every external call goes through `deps`; nothing here reads process state.
+const path = require('node:path');
 const { STEP, STOP_CLASSES } = require('./events');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { gateOriginRepo } = require('../repo-resolve');
 const { openBlockerRefs } = require('../issues/record-dependencies');
 const { sensitivePathsOf } = require('../express/policy');
+const { formatTimestamp } = require('../hooks/run-dir-resolve');
+const { claimLogText, CLAIM_LOG_SECTION, CLAIM_LOG_STEP } = require('../log-decision/claim-log');
 
 // The worker's test command and the full verify invocation's `--cmd tests=…` value.
 const TEST_COMMAND = 'npm test';
+// The plugin's bin/ directory (steps.js lives in bin/lib/driver), where the CLIs the steps run live.
+const BIN_DIR = path.join(__dirname, '..', '..');
+// Bound on one plugin/bin CLI call (claim-targets.js talks to GitHub; the rest are local).
+const CLI_TIMEOUT_MS = 120000;
+// claim-log.js's own transport shape: `transport: [a-z-]+`.
+const TRANSPORT_RE = /^[a-z-]+$/;
 // How long the ci step waits for a pending or stale check state, and how often it polls.
 const CI_WAIT_BOUND_MS = 30 * 60 * 1000;
 const CI_POLL_INTERVAL_MS = 30 * 1000;
@@ -51,8 +60,10 @@ const REF_RE = /^[^\s-]\S*$/;
 
 // An execFileSync error's own words: gh and git put the cause on stderr, while the
 // message leads with "Command failed: …". First non-empty line of whichever has text.
+function firstLine(s) {
+  return String(s || '').split(/\r?\n/).map((l) => l.trim()).find(Boolean) || '';
+}
 function errorText(err) {
-  const firstLine = (s) => String(s || '').split(/\r?\n/).map((l) => l.trim()).find(Boolean) || '';
   return firstLine(err && err.stderr) || firstLine(err && err.message) || String(err);
 }
 
@@ -210,7 +221,133 @@ const admissionStep = defineStep(STEP.admission, STOP_CLASSES.REFUSED, async (ct
   return { status: 'ok' };
 });
 
-const STEPS = Object.freeze([policyStep, fetchStep, eligibilityStep, admissionStep]);
+// A plugin/bin CLI of this plugin, run under the driver's own Node via deps.node.
+function binScript(name) {
+  return path.join(BIN_DIR, name);
+}
+
+// First key of a CLI's JSON stdout envelope ('' when stdout is not a JSON object): the
+// claim CLI names why it refused by the key it prints ({contested: …}, {inFlight: …}).
+function firstEnvelopeKey(stdout) {
+  try {
+    const parsed = JSON.parse(stdout);
+    return parsed && typeof parsed === 'object' ? Object.keys(parsed)[0] || '' : '';
+  } catch {
+    return '';
+  }
+}
+
+// Ports express-lane.md step 1 (claim). The run id is derived here, before the run
+// directory exists, from the same timestamp function the mint uses; the run-dir step
+// mints with the same Date, so the two names agree. Runs in the main checkout.
+const claimStep = defineStep(STEP.claim, STOP_CLASSES.CLAIM, async (ctx, deps) => {
+  const n = ctx.record;
+  const { mainRoot } = ctx.shared;
+  ctx.claimDate = deps.date();
+  ctx.runId = `${formatTimestamp(ctx.claimDate)}-drive-${n}`;
+  const r = deps.node(binScript('claim-targets.js'),
+    ['--run-id', ctx.runId, '--targets', String(n), '--steps', 'build,test'],
+    { cwd: mainRoot, timeout: CLI_TIMEOUT_MS });
+  if (r.code !== 0) {
+    const key = firstEnvelopeKey(r.stdout);
+    const why = key || firstLine(r.stderr);
+    return { status: 'fail', detail: `claim-targets.js exited ${r.code}${why ? ` (${why})` : ''}` };
+  }
+  let envelope;
+  try { envelope = JSON.parse(r.stdout); } catch { envelope = null; }
+  const transport = envelope && envelope.transportByIssue ? envelope.transportByIssue[n] : undefined;
+  if (!envelope || !Array.isArray(envelope.claimed) || !envelope.claimed.includes(n) || typeof transport !== 'string' || !TRANSPORT_RE.test(transport)) {
+    return { status: 'fail', detail: `claim-targets.js exited 0 without claiming #${n}` };
+  }
+  ctx.transport = transport;
+  return { status: 'ok' };
+});
+
+// Ports express-lane.md step 1's run-dir mint and Step 2.8 claim log. The class is `claim`
+// until the directory exists; once it does, a failed claim-log write is `pre-push`.
+const runDirStep = defineStep(STEP.runDir, STOP_CLASSES.CLAIM, async (ctx, deps) => {
+  const n = ctx.record;
+  const { mainRoot } = ctx.shared;
+  const minted = deps.resolveRunDir({ cwd: mainRoot, env: {}, specSlug: `drive-${n}`, create: true, now: ctx.claimDate });
+  if (!minted || minted.ok !== true || typeof minted.path !== 'string' || !minted.path) {
+    return { status: 'fail', detail: `run directory not minted: ${(minted && minted.message) || 'no result'}` };
+  }
+  if (path.basename(minted.path) !== ctx.runId) {
+    return { status: 'fail', detail: `minted run directory ${path.basename(minted.path)} does not match the claim's run id ${ctx.runId}` };
+  }
+  ctx.runDir = minted.path;
+  const log = deps.node(binScript('log-decision.js'),
+    ['--run', ctx.runDir, '--status', 'AUTO', '--section', CLAIM_LOG_SECTION, '--step', CLAIM_LOG_STEP, '--text', claimLogText(n, ctx.transport)],
+    { cwd: mainRoot, timeout: CLI_TIMEOUT_MS });
+  if (log.code !== 0) {
+    return { status: 'fail', stopClass: STOP_CLASSES.PRE_PUSH, detail: `claim log not written: log-decision.js exited ${log.code} (${firstLine(log.stderr) || 'no output'})` };
+  }
+  return { status: 'ok' };
+});
+
+// A git call in `dir`: the directory is named in argv and in the spawn options both, so
+// the driver's own cwd is never relied on.
+function gitIn(deps, dir, args) {
+  return deps.git(['-C', dir, ...args], { cwd: dir });
+}
+
+// Names the state a previous run of this record left behind (express-lane.md has none:
+// the lane merges in the same breath). Never deletes or reuses any of it.
+function findLeftovers(ctx, deps, wt, branch) {
+  const { mainRoot } = ctx.shared;
+  const leftovers = [];
+  const wtState = deps.lstatType(wt);
+  if (wtState.type !== 'missing') leftovers.push(`worktree ${wt} (${wtState.type})`);
+  try {
+    gitIn(deps, mainRoot, ['rev-parse', '--verify', '--quiet', '--end-of-options', `refs/heads/${branch}`]);
+    leftovers.push(`branch ${branch}`);
+  } catch (err) {
+    // `--quiet` exits 1 for an absent ref; any other failure means the check itself failed.
+    if (!err || err.status !== 1) throw new Error(`could not check for branch ${branch}: ${errorText(err)}`);
+  }
+  let entries = [];
+  try {
+    entries = deps.readdir(path.join(mainRoot, '.claude-tweaks', 'pipelines'));
+  } catch (err) {
+    if (!err || (err.code !== 'ENOENT' && err.code !== 'ENOTDIR')) throw new Error(`could not list run directories: ${errorText(err)}`);
+  }
+  for (const entry of entries) {
+    if (String(entry).endsWith(`-drive-${ctx.record}`) && entry !== ctx.runId) leftovers.push(`run directory ${entry}`);
+  }
+  return leftovers;
+}
+
+// Ports /flow's worktree-first ordering: the worktree exists before the first write that
+// belongs to it. A leftover from an earlier run of the same record refuses here.
+const worktreeStep = defineStep(STEP.worktree, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => {
+  const n = ctx.record;
+  const { mainRoot, ref } = ctx.shared;
+  const branch = `drive-record-${n}`;
+  const wt = path.join(mainRoot, '.claude', 'worktrees', branch);
+  const leftovers = findLeftovers(ctx, deps, wt, branch);
+  if (leftovers.length) {
+    return { status: 'fail', detail: `leftover from an earlier run of #${n}, nothing reused or removed: ${leftovers.join('; ')}` };
+  }
+  gitIn(deps, mainRoot, ['fetch', '--end-of-options', 'origin', ref]);
+  gitIn(deps, mainRoot, ['worktree', 'add', '-b', branch, wt, `origin/${ref}`]);
+  ctx.wt = wt;
+  ctx.branch = branch;
+  ctx.created.worktree = true;
+  ctx.created.branch = true;
+  // Catch-up: the integration branch may have moved since the first fetch.
+  gitIn(deps, wt, ['fetch', '--end-of-options', 'origin', ref]);
+  gitIn(deps, wt, ['merge', '--end-of-options', `origin/${ref}`]);
+  const stamped = deps.node(binScript('hooks.js'), ['record-worktree', '--run', ctx.runDir, wt],
+    { cwd: mainRoot, timeout: CLI_TIMEOUT_MS });
+  // The success line only: the failure lines also contain "recorded".
+  const recorded = `claude-tweaks: worktree recorded for ${ctx.runId}`;
+  if (stamped.code !== 0 || !String(stamped.stdout).split(/\r?\n/).some((l) => l.trim() === recorded)) {
+    return { status: 'fail', detail: `worktree not recorded in the run state: ${firstLine(stamped.stdout) || firstLine(stamped.stderr) || 'no output'}` };
+  }
+  return { status: 'ok' };
+});
+
+const STEPS = Object.freeze([policyStep, fetchStep, eligibilityStep, admissionStep, claimStep, runDirStep, worktreeStep]);
 
 module.exports = {
   STEPS, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, WIN32_CLAUDE_BIN,

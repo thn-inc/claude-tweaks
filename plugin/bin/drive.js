@@ -20,7 +20,9 @@ const { run, realDeps } = require('./lib/driver/run');
 
 // Sets proc.exitCode from run(). A rejected run() is a bug, not an outcome: it is exit 2
 // with the message on stderr, never Node's unhandled-rejection exit 1, which would read
-// as the documented exit 1. Never process.exit: a pending stdout write must flush.
+// as the documented exit 1. Exit 2 thus doubles as the internal-error code; revisit if a
+// caller needs to retry an internal error differently from a usage error. Never
+// process.exit: a pending stdout write must flush.
 function main(argv, deps, proc = process) {
   return run(argv, deps)
     .then((code) => { proc.exitCode = code; })
