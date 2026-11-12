@@ -331,6 +331,10 @@ const realDeps = {
   ghBatch: (args) => execFileSync('gh', args, ghOptions(args, {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: sharedPrimitives.GH_BATCH_TIMEOUT_MS, maxBuffer: MAX_BUFFER, windowsHide: true,
   })),
+  // `gh pr create` writes to GitHub and takes longer than a read, so it gets the batched bound too.
+  ghCreate: (args) => execFileSync('gh', args, ghOptions(args, {
+    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: sharedPrimitives.GH_BATCH_TIMEOUT_MS, maxBuffer: MAX_BUFFER, windowsHide: true,
+  })),
   git: (args, { cwd } = {}) => execFileSync('git', args, {
     cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GIT_TIMEOUT_MS, windowsHide: true,
   }),

@@ -672,9 +672,160 @@ const pushStep = defineStep(STEP.push, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
   return { status: 'ok' };
 });
 
+// A transient `gh pr create` failure: a 5xx from GitHub or a timeout.
+const TRANSIENT_CREATE_RE = /HTTP 5\d\d|timed out|ETIMEDOUT/;
+const PR_CREATE_RETRY_WAIT_MS = 15000;
+const PR_URL_RE = /^\S+\/pull\/(\d+)$/;
+
+// The PR a `gh pr create` printed: its URL is the last stdout line ending `/pull/{n}`.
+function parseCreatedPr(stdout) {
+  const url = String(stdout || '').split(/\r?\n/).map((l) => l.trim()).filter((l) => PR_URL_RE.test(l)).pop();
+  return url ? { number: Number(PR_URL_RE.exec(url)[1]), url } : null;
+}
+
+function createText(err) {
+  return `${(err && err.stderr) || ''} ${(err && err.message) || ''}`;
+}
+
+// Ports express-lane.md step 7 (PR): the summary file, the express body, the draft PR. The
+// summary is already neutralized by the worker step, so it is written as it came. `gh pr
+// create` is not idempotent, so a transient failure first looks for an open PR on the
+// branch (a lost response may have landed) and only then retries, once, after 15 seconds.
+// The branch is pushed, so a failure here cannot escalate: class `blocked`.
+const prStep = defineStep(STEP.pr, STOP_CLASSES.BLOCKED, async (ctx, deps) => {
+  const n = ctx.record;
+  const { mainRoot, ref } = ctx.shared;
+  const summaryFile = path.join(ctx.runDir, 'pr-summary.md');
+  const bodyFile = path.join(ctx.runDir, 'pr-body.md');
+  const summary = ctx.worker && ctx.worker.summary ? ctx.worker.summary : `Express lane change for #${n}.`;
+  deps.writeFile(summaryFile, `${summary}\n`);
+  const composed = deps.node(binScript('compose-pr-body.js'),
+    ['--express', '--run-id', ctx.runId, '--summary-file', summaryFile, '--fixes', String(n), '--out', bodyFile],
+    { cwd: mainRoot, timeout: CLI_TIMEOUT_MS, env: deps.env });
+  if (composed.code !== 0) {
+    return { status: 'fail', detail: `compose-pr-body.js exited ${composed.code} (${neutralize(firstLine(composed.stderr)) || 'no output'})` };
+  }
+  const title = `${String(ctx.issue.title || '').replace(/\s+/g, ' ').trim()} (#${n})`;
+  const createArgs = ['pr', 'create', '--draft', '--base', ref, '--head', ctx.branch, '--title', title, '--body-file', bodyFile];
+  const create = () => {
+    const pr = parseCreatedPr(deps.ghCreate(createArgs));
+    if (!pr) throw new Error('gh pr create printed no PR URL');
+    return pr;
+  };
+  let created = null;
+  let firstError = null;
+  try {
+    created = create();
+  } catch (err) {
+    firstError = err;
+  }
+  if (firstError) {
+    if (!TRANSIENT_CREATE_RE.test(createText(firstError))) {
+      return { status: 'fail', detail: `gh pr create failed: ${neutralize(errorText(firstError))}` };
+    }
+    // Never create blind: a list that cannot be read leaves a landed first attempt unverifiable.
+    let open;
+    try {
+      open = JSON.parse(deps.gh(['pr', 'list', '--head', ctx.branch, '--state', 'open', '--json', 'number,url']));
+    } catch (err) {
+      return { status: 'fail', detail: `gh pr create failed (${neutralize(errorText(firstError))}) and the open PRs of ${ctx.branch} could not be listed: ${neutralize(errorText(err))}` };
+    }
+    const found = Array.isArray(open) ? open.find((p) => p && Number.isInteger(p.number) && p.number > 0 && typeof p.url === 'string' && p.url) : undefined;
+    if (found) {
+      created = { number: found.number, url: found.url };
+    } else {
+      await deps.sleep(PR_CREATE_RETRY_WAIT_MS);
+      try {
+        created = create();
+      } catch (err) {
+        return { status: 'fail', detail: `gh pr create failed twice: ${neutralize(errorText(err))}` };
+      }
+    }
+  }
+  ctx.pr = created;
+  return { status: 'ok', detail: `#${created.number}` };
+});
+
+// Stamps the PR into the run state. hooks.js record-pr exits 0 on every path, so only its
+// own success line, bound to this run id, counts.
+const recordPrStep = defineStep(STEP.recordPr, STOP_CLASSES.BLOCKED, async (ctx, deps) => {
+  const { number, url } = ctx.pr;
+  const r = deps.node(binScript('hooks.js'), ['record-pr', '--run', ctx.runDir, String(number), url],
+    { cwd: ctx.shared.mainRoot, timeout: CLI_TIMEOUT_MS, env: deps.env });
+  const recorded = `claude-tweaks: PR #${number} recorded for ${ctx.runId}`;
+  if (r.code !== 0 || !String(r.stdout).split(/\r?\n/).some((l) => l.trim() === recorded)) {
+    return { status: 'fail', detail: `PR not recorded in the run state: ${neutralize(firstLine(r.stdout)) || neutralize(firstLine(r.stderr)) || 'no output'}` };
+  }
+  return { status: 'ok' };
+});
+
+// Writes the run's config.yml, which keeps the run dir from being swept as an orphaned mint,
+// with check's configSet string verbatim.
+const setConfigStep = defineStep(STEP.setConfig, STOP_CLASSES.BLOCKED, async (ctx, deps) => {
+  const configSet = ctx.check && ctx.check.configSet;
+  if (typeof configSet !== 'string' || configSet === '') {
+    return { status: 'fail', detail: 'check printed no configSet to write' };
+  }
+  const r = deps.node(binScript('set-config.js'), ['--run', ctx.runDir, '--set', configSet],
+    { cwd: ctx.shared.mainRoot, timeout: CLI_TIMEOUT_MS, env: deps.env });
+  if (r.code !== 0) {
+    return { status: 'fail', detail: `set-config.js exited ${r.code}: the run dir has no config.yml (${neutralize(firstLine(r.stderr)) || 'no output'})` };
+  }
+  return { status: 'ok' };
+});
+
+// Ports express-lane.md step 8 (the summary line). Never halts: the PR exists, and a lost
+// summary line is reported on its own event, not as a stop. The changed paths are the git-reported
+// ones, so they are neutralized like any text a worker can shape.
+const summaryStep = defineStep(STEP.summary, STOP_CLASSES.NONE, async (ctx, deps) => {
+  try {
+    const files = (ctx.changedFiles || []).map((f) => neutralize(f)).join(', ');
+    const text = `#${ctx.record} built on the express lane: ${files}; tests ${ctx.testMode}; PR #${ctx.pr.number}.`;
+    const log = logDecisionFile(ctx, deps, 'summary.txt', text, 'Express lane', []);
+    if (log.code !== 0) {
+      return { status: 'fail', halt: false, detail: `summary line not logged: log-decision.js exited ${log.code} (${neutralize(firstLine(log.stderr)) || 'no output'})` };
+    }
+    return { status: 'ok' };
+  } catch (err) {
+    return { status: 'fail', halt: false, detail: `summary line not logged: ${neutralize(errorText(err))}` };
+  }
+});
+
+const CI_STATES = new Set(['red', 'inherited-red', 'pending', 'stale', 'green', 'no-ci', 'read-failed', 'no-pr', 'gh-absent']);
+
+// Reads the PR's check rollup at the worktree's HEAD, polling while it is pending or stale.
+// Never halts and always reports `ok`: the word it reads is data for the reviewer. The wait
+// is reported as extra.ciWaitMs, so the final line can exclude it without naming this step.
+// A signal during a sleep is delivered mid-step (run.js's handler writes the stop); the loop
+// then stops polling.
+const ciStep = defineStep(STEP.ci, STOP_CLASSES.NONE, async (ctx, deps) => {
+  const started = deps.now();
+  let state = 'read-failed';
+  for (;;) {
+    let word = 'read-failed';
+    try {
+      const r = deps.node(binScript('pr-checks.js'), ['--run', ctx.runDir],
+        { cwd: ctx.wt, timeout: CLI_TIMEOUT_MS, env: deps.env });
+      const parsed = r.code === 0 ? JSON.parse(r.stdout) : null;
+      if (parsed && typeof parsed.state === 'string' && CI_STATES.has(parsed.state)) word = parsed.state;
+    } catch { /* an unparseable read is read-failed */ }
+    state = word;
+    if (state !== 'pending' && state !== 'stale') break;
+    if (ctx.shared.interrupted) break;
+    if (deps.now() - started >= CI_WAIT_BOUND_MS) {
+      if (state === 'pending') state = 'timeout';
+      break;
+    }
+    await deps.sleep(CI_POLL_INTERVAL_MS);
+    if (ctx.shared.interrupted) break;
+  }
+  ctx.ci = state;
+  return { status: 'ok', detail: state, extra: { ciWaitMs: Math.max(0, deps.now() - started) } };
+});
+
 const STEPS = Object.freeze([
   policyStep, fetchStep, eligibilityStep, admissionStep, claimStep, runDirStep, worktreeStep, workerStep, commitStep,
-  testStep, checkStep, pushStep,
+  testStep, checkStep, pushStep, prStep, recordPrStep, setConfigStep, summaryStep, ciStep,
 ]);
 
 module.exports = {

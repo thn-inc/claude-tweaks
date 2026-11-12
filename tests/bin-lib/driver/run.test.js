@@ -168,6 +168,7 @@ const ENVELOPE = Object.freeze({
 });
 
 const HEAD_SHA = 'a'.repeat(40);
+const PR_URL = 'https://github.com/acme/widgets/pull/9';
 // express-lane.js check's proceed envelope (cli.js's emit); `over` is merged over it.
 const checkProceed = (over = {}) => ({
   action: 'proceed', head: HEAD_SHA, mergeVerification: 'x', configSet: 'k=v',
@@ -206,6 +207,13 @@ function defaultScript(over) {
     [on('node', /verify\.js$/), { code: 0, stdout: '', stderr: '' }],
     [on('node', /express-lane\.js$/, 'check'), { code: 0, stderr: '', stdout: JSON.stringify(checkProceed()) }],
     [onGit('push'), ''],
+    // The PR, record-pr, set-config, summary and ci steps' happy path: a draft PR #9, a
+    // recorded run, a config write, a green CI read.
+    [on('node', /compose-pr-body\.js$/), (c) => ({ code: 0, stderr: '', stdout: JSON.stringify({ out: c.args.at(-1), bytes: 10 }) })],
+    [on('gh', 'pr', 'create'), `${PR_URL}\n`],
+    [on('node', /hooks\.js$/, 'record-pr'), (c) => ({ code: 0, stderr: '', stdout: `claude-tweaks: PR #${c.args[4]} recorded for ${path.basename(c.args[3])}\n` })],
+    [on('node', /set-config\.js$/), { code: 0, stdout: '', stderr: '' }],
+    [on('node', /pr-checks\.js$/), { code: 0, stderr: '', stdout: JSON.stringify({ state: 'green' }) }],
     [on('policy'), (c) => Object.fromEntries(c.args.map((k) => [k, { value: policy[k], source: 'policy' }]))],
     [on('gh', 'issue', 'view'), (c) => JSON.stringify(issueFor(Number(c.args.at(-1))))],
     [on('git', 'symbolic-ref'), 'origin/main\n'],
@@ -243,6 +251,7 @@ function harness(over = {}) {
     cwd: () => MAIN,
     gh: (args) => dispatch('gh', args),
     ghBatch: (args) => dispatch('ghBatch', args),
+    ghCreate: (args) => dispatch('gh', args),
     git: (args, opts = {}) => dispatch('git', args, opts.cwd),
     node: (script_, args, opts = {}) => dispatch('node', [script_, ...args], opts.cwd, opts.env, opts.timeout),
     resolvePolicy: (keys) => dispatch('policy', keys),
@@ -603,13 +612,13 @@ test('every step emits one event line with the core fields; the final line carri
   const final = lines.at(-1);
   assert.equal(final.outcome, 'pending-review');
   assert.equal(final.status, 'ok');
-  assert.equal(final.pr, null);
-  assert.equal(final.ci, null);
+  assert.equal(final.pr, 9);
+  assert.equal(final.ci, 'green');
   assert.equal(final.costUsd, 0.25);
   assert.equal(final.turns, 3);
   assert.equal(final.denialCount, 0);
   assert.ok(Number.isInteger(final.msTotal) && final.msTotal > 0);
-  assert.equal(final.msWithoutCi, final.msTotal);
+  assert.equal(final.msWithoutCi, final.msTotal - lines.find((l) => l.step === 'ci').ciWaitMs);
   assert.deepEqual(final.stop, {
     step: null, class: 'none', pushed: true, created: { worktree: true, branch: true },
     reason: null, detail: null, checkLogged: true,
@@ -790,7 +799,7 @@ test('AC5.1, AC5.3: pre-run-dir events carry run:null; the jsonl holds them firs
   const runId = mintedRunId(h);
   const lines = h.lines();
   const order = lines.map((l) => l.step);
-  assert.deepEqual(order, ['policy', 'fetch', 'eligibility', 'admission', 'claim', 'run-dir', 'worktree', 'worker', 'commit', 'test', 'check', 'push', FINAL_STEP]);
+  assert.deepEqual(order, ['policy', 'fetch', 'eligibility', 'admission', 'claim', 'run-dir', 'worktree', 'worker', 'commit', 'test', 'check', 'push', 'pr', 'record-pr', 'set-config', 'summary', 'ci', FINAL_STEP]);
   for (const l of lines) assert.equal(l.run, order.indexOf(l.step) <= order.indexOf('claim') ? null : runId, l.step);
   assert.equal(h.files[path.join(MAIN, '.claude-tweaks', 'pipelines', runId, 'driver-events.jsonl')], h.out.join(''));
   assert.equal(lines.at(-1).outcome, 'pending-review');
@@ -948,10 +957,10 @@ test('Gotcha: a run with CLAUDE_CODE_SESSION_ID unset drives normally, and every
   const env = { PATH: '/usr/bin' };
   const h = harness({ deps: { env } });
   assert.equal(await run(['#7'], h.deps), 0);
-  assert.equal(calls(h, 'node', /hooks\.js$/).length, 1);
+  assert.equal(calls(h, 'node', /hooks\.js$/).length, 2, 'record-worktree and record-pr');
   assert.equal(h.lines().at(-1).outcome, 'pending-review');
   const cli = calls(h, 'node');
-  assert.equal(cli.length, 5, 'claim, claim log, record-worktree, verify, check');
+  assert.equal(cli.length, 10, 'claim, claim log, record-worktree, verify, check, compose-pr-body, record-pr, set-config, summary log, pr-checks');
   for (const c of cli) {
     assert.equal(c.env, env, c.args[0]);
     assert.ok(!('CLAUDE_CODE_SESSION_ID' in c.env));
@@ -1439,7 +1448,7 @@ test('AC14: a signal before any record, or between records, only terminates', as
   let h = null;
   h = harness({
     deps: { terminate: (sig) => order.push(`between:${sig}`) },
-    script: [[onGit('push'), (c) => { if (c.cwd === WT) fireSoon(h, 'SIGTERM'); return ''; }]],
+    script: [[on('node', /pr-checks\.js$/), (c) => { if (c.cwd === WT) fireSoon(h, 'SIGTERM'); return { code: 0, stderr: '', stdout: JSON.stringify({ state: 'green' }) }; }]],
   });
   await run(['#7', '#8'], h.deps);
   assert.deepEqual(finals(h).map((f) => [f.record, f.outcome]), [[7, 'pending-review']]);
@@ -1768,7 +1777,7 @@ test('a signal queued during the last record\'s final synchronous call is delive
   let handler = null;
   const h = harness({
     deps: { terminate: (sig) => order.push(sig) },
-    script: [[onGit('push'), () => { setImmediate(() => handler('SIGTERM')); return ''; }]],
+    script: [[on('node', /pr-checks\.js$/), () => { setImmediate(() => handler('SIGTERM')); return { code: 0, stderr: '', stdout: JSON.stringify({ state: 'green' }) }; }]],
   });
   h.deps.onSignal = (fn) => { handler = fn; return () => { order.push('unsubscribed'); }; };
   assert.equal(await run(['#7'], h.deps), 0);
@@ -1915,4 +1924,389 @@ test('AC7.5: a failed push is express-escalated, never retried, and leaves pushe
   assert.deepEqual([final.stop.step, final.status, final.outcome, final.stop.class, final.stop.pushed], ['push', 'fail', 'express-escalated', 'pre-push', false]);
   assert.equal(final.stop.detail, `git push failed: ${neutralize('remote: denied for @bob, closes #3')}`);
   assert.equal(pushCalls(h).length, 1, 'never retried');
+});
+
+// --- PR, record-pr, set-config, summary and ci ---------------------------------------------------
+
+const DOC = path.join(__dirname, '..', '..', '..', 'docs', 'plugin-structure.md');
+const nodeCalls = (h, re, sub) => calls(h, 'node', re).filter((c) => sub === undefined || c.args[1] === sub);
+const createCalls = (h) => h.calls.filter((c) => c.kind === 'gh' && c.args[0] === 'pr' && c.args[1] === 'create');
+const listCalls = (h) => h.calls.filter((c) => c.kind === 'gh' && c.args[0] === 'pr' && c.args[1] === 'list');
+const transient = (text = 'HTTP 502: Bad Gateway') => Object.assign(new Error('Command failed: gh pr create'), { stderr: `${text}\n` });
+const prChecksReply = (state) => [on('node', /pr-checks\.js$/), { code: 0, stderr: '', stdout: JSON.stringify({ state }) }];
+const recordPrReply = (stdout) => [on('node', /hooks\.js$/, 'record-pr'), { code: 0, stderr: '', stdout }];
+const logsSummary = (c) => c.kind === 'node' && /log-decision\.js$/.test(c.args[0]) && c.args.some((a) => /summary\.txt$/.test(a));
+
+// One row per stop of the AC7 table: the harness overrides that provoke it.
+const SCENARIOS = {
+  'policy off (admission)': { admission: { admitted: false, reasons: ['express-driver is off'] } },
+  ineligible: { eligibility: { eligible: false, reasons: ['too big'] } },
+  'not admitted': { admission: { admitted: false, reasons: ['open blocker #3'] } },
+  'fetch fails': { script: [[on('gh', 'issue', 'view'), new Error('HTTP 404')]] },
+  'claim exit 3': { script: [claimReply(3, JSON.stringify({ contested: [7] }))] },
+  'run dir mint fails': { script: [[on('resolveRunDir'), { ok: false, message: 'no' }]] },
+  'worktree add fails': { script: [[onGit('worktree', 'add'), new Error('fatal')]] },
+  'record-worktree no line': { script: [[on('node', /hooks\.js$/, 'record-worktree'), { code: 0, stdout: 'worktree not recorded', stderr: '' }]] },
+  'worker fail': { worker: { status: 'fail', reason: 'exit', result: null, detail: 'x' } },
+  'worker timeout': { worker: { status: 'timeout', reason: 'wall-clock', result: null, detail: 'x' } },
+  'no changed files': { script: [[onGit('--no-optional-locks', 'status'), '']] },
+  'commit fails': { script: [[onGit('commit'), new Error('hook failed')]] },
+  'red tests': { script: [[on('node', /verify\.js$/), { code: 1, stdout: '', stderr: '' }]] },
+  'scope symlink': { script: [scopeIs('symlink')] },
+  'check escalate': { script: [checkReply({ action: 'escalate', reason: 'diff-too-large', detail: 'd', logged: true })] },
+  'head mismatch': { script: [[onGit('rev-parse', '--verify', '--end-of-options', 'HEAD'), `${'b'.repeat(40)}\n`]] },
+  'push fails': { script: [[onGit('push'), new Error('denied')]] },
+  'check exit 1': { script: [checkReply('', 1)] },
+  'pr create fails twice': { script: [[on('gh', 'pr', 'create'), () => { throw transient(); }], [on('gh', 'pr', 'list'), '[]']] },
+  'record-pr fails': { script: [recordPrReply('claude-tweaks: usage: x — PR not recorded')] },
+  'set-config fails': { script: [[on('node', /set-config\.js$/), { code: 2, stdout: '', stderr: 'bad' }]] },
+  'summary fails': { script: [[logsSummary, { code: 1, stdout: '', stderr: 'no' }]] },
+  'ci red': { script: [prChecksReply('red')] },
+  'ci green': {},
+};
+
+test('AC2.1: happy path calls run in the deliverable order', async () => {
+  const h = harness();
+  assert.equal(await run(['#7'], h.deps), 0);
+  const signature = h.calls.flatMap((c) => {
+    if (c.kind === 'gh') return [`gh ${c.args[0]} ${c.args[1]}`];
+    if (c.kind === 'git') {
+      if (c.args.includes('symbolic-ref')) return [];
+      const sub = gitSub(c).filter((a) => !a.startsWith('--'));
+      return [`git ${sub[0] === 'worktree' ? 'worktree add' : sub[0]}`];
+    }
+    if (c.kind === 'node') {
+      const name = path.basename(c.args[0]);
+      return [/^(hooks|express-lane)\.js$/.test(name) ? `node ${name} ${c.args[1]}` : `node ${name}`];
+    }
+    return ['policy', 'eligibility', 'native-deps', 'linked-prs', 'admission', 'worker', 'resolveRunDir'].includes(c.kind) ? [c.kind] : [];
+  });
+  assert.deepEqual(signature, [
+    'policy', 'gh issue view', 'eligibility', 'native-deps', 'linked-prs', 'admission',
+    'node claim-targets.js', 'resolveRunDir', 'node log-decision.js',
+    // The leftover check's branch probe runs before the worktree's own fetch.
+    'git rev-parse', 'git fetch', 'git worktree add', 'git fetch', 'git merge', 'node hooks.js record-worktree',
+    'worker', 'git status', 'git add', 'git commit',
+    'node verify.js', 'node express-lane.js check', 'git rev-parse', 'git push',
+    'node compose-pr-body.js', 'gh pr create', 'node hooks.js record-pr', 'node set-config.js',
+    'node log-decision.js', 'node pr-checks.js']);
+  assert.equal(h.lines().at(-1).outcome, 'pending-review');
+});
+
+test('AC2.6: the check --record-json file holds the one fetched record verbatim', async () => {
+  const h = harness();
+  await run(['#7'], h.deps);
+  const c = checkCalls(h)[0];
+  assert.equal(h.files[c.args[c.args.indexOf('--record-json') + 1]], JSON.stringify(issueFor(7)));
+});
+
+test('AC4.1: draft PR with base, head and an express body written from the summary as it came', async () => {
+  const h = harness({ worker: { result: { status: 'done', title: 'T', summary: 'A summary.' } } });
+  await run(['#7'], h.deps);
+  const rd = runDirOf(h);
+  const compose = nodeCalls(h, /compose-pr-body\.js$/)[0];
+  assert.deepEqual(compose.args.slice(1), ['--express', '--run-id', mintedRunId(h), '--summary-file', path.join(rd, 'pr-summary.md'), '--fixes', '7', '--out', path.join(rd, 'pr-body.md')]);
+  assert.equal(h.files[path.join(rd, 'pr-summary.md')], 'A summary.\n');
+  assert.equal(compose.cwd, MAIN);
+  assert.deepEqual(createCalls(h).map((c) => c.args), [
+    ['pr', 'create', '--draft', '--base', 'main', '--head', 'drive-record-7', '--title', 'record 7 (#7)', '--body-file', path.join(rd, 'pr-body.md')],
+  ]);
+  assert.deepEqual(nodeCalls(h, /hooks\.js$/, 'record-pr')[0].args.slice(1), ['record-pr', '--run', rd, '9', PR_URL]);
+});
+
+test('the PR summary is written as the worker step left it: neutralized once, never again', async () => {
+  const raw = 'Closes #12 for @bob\n```';
+  const h = harness({ worker: { result: { status: 'done', title: 'T', summary: raw } } });
+  await run(['#7'], h.deps);
+  const written = h.files[path.join(runDirOf(h), 'pr-summary.md')];
+  assert.equal(written, `${neutralize(raw)}\n`);
+  assert.equal(written.split('​').length, 2, 'one zero-width character for the one @, not two');
+});
+
+test('a failed compose-pr-body.js is blocked before any PR is created', async () => {
+  const h = harness({ script: [[on('node', /compose-pr-body\.js$/), { code: 2, stdout: '', stderr: 'unreadable' }]] });
+  await run(['#7'], h.deps);
+  const f = lastLine(h);
+  assert.deepEqual([f.stop.step, f.outcome, f.stop.class, f.stop.pushed], ['pr', 'blocked', 'blocked', true]);
+  assert.equal(createCalls(h).length, 0);
+});
+
+test('AC6.4: transient pr create retries once after finding no open PR', async () => {
+  let n = 0;
+  const sleeps = [];
+  const h = harness({
+    deps: { sleep: async (ms) => { sleeps.push(ms); } },
+    script: [[on('gh', 'pr', 'create'), () => { n += 1; if (n === 1) throw transient(); return `${PR_URL}\n`; }], [on('gh', 'pr', 'list'), '[]']],
+  });
+  await run(['#7'], h.deps);
+  assert.equal(lastLine(h).outcome, 'pending-review');
+  assert.equal(createCalls(h).length, 2);
+  assert.deepEqual(listCalls(h).map((c) => c.args), [['pr', 'list', '--head', 'drive-record-7', '--state', 'open', '--json', 'number,url']]);
+  assert.deepEqual(sleeps.filter((ms) => ms === 15000), [15000]);
+  const order = h.calls.filter((c) => c.kind === 'gh' && c.args[0] === 'pr').map((c) => c.args[1]);
+  assert.deepEqual(order, ['create', 'list', 'create']);
+});
+
+test('AC6.4: each transient signature retries; a non-transient failure does not', async () => {
+  for (const [text, retried] of [['HTTP 503', true], ['operation timed out', true], ['spawnSync gh ETIMEDOUT', true], ['HTTP 422: Validation Failed', false], ['already exists', false]]) {
+    const h = harness({ script: [[on('gh', 'pr', 'create'), () => { throw transient(text); }], [on('gh', 'pr', 'list'), '[]']] });
+    await run(['#7'], h.deps);
+    assert.equal(createCalls(h).length, retried ? 2 : 1, text);
+    assert.equal(listCalls(h).length, retried ? 1 : 0, text);
+    assert.deepEqual([lastLine(h).outcome, lastLine(h).stop.step], ['blocked', 'pr'], text);
+  }
+});
+
+test('AC6.5: transient failure with an existing open PR uses it, no second create', async () => {
+  const url = 'https://github.com/acme/widgets/pull/12';
+  const h = harness({ script: [[on('gh', 'pr', 'create'), () => { throw transient(); }], [on('gh', 'pr', 'list'), JSON.stringify([{ number: 12, url }])]] });
+  await run(['#7'], h.deps);
+  assert.equal(createCalls(h).length, 1);
+  assert.equal(lastLine(h).pr, 12);
+  assert.equal(lastLine(h).outcome, 'pending-review');
+  assert.deepEqual(nodeCalls(h, /hooks\.js$/, 'record-pr')[0].args.slice(-2), ['12', url]);
+});
+
+test('a pr list that cannot be read never leads to a blind second create', async () => {
+  const h = harness({ script: [[on('gh', 'pr', 'create'), () => { throw transient(); }], [on('gh', 'pr', 'list'), 'not json']] });
+  await run(['#7'], h.deps);
+  assert.equal(createCalls(h).length, 1);
+  assert.deepEqual([lastLine(h).outcome, lastLine(h).stop.step], ['blocked', 'pr']);
+});
+
+test('a create that prints no PR URL is a fail', async () => {
+  const h = harness({ script: [[on('gh', 'pr', 'create'), 'created something\n']] });
+  await run(['#7'], h.deps);
+  assert.deepEqual([lastLine(h).outcome, lastLine(h).stop.step], ['blocked', 'pr']);
+  assert.equal(lastLine(h).pr, null);
+});
+
+test('AC6.6: no other step is retried', async () => {
+  const claim = harness({ script: [claimReply(3, JSON.stringify({ contested: [7] }))] });
+  await run(['#7'], claim.deps);
+  assert.equal(nodeCalls(claim, /claim-targets\.js$/).length, 1);
+  const push = harness({ script: [[onGit('push'), new Error('denied')]] });
+  await run(['#7'], push.deps);
+  assert.equal(pushCalls(push).length, 1);
+  const rec = harness({ script: [recordPrReply('claude-tweaks: PR not recorded')] });
+  await run(['#7'], rec.deps);
+  assert.equal(nodeCalls(rec, /hooks\.js$/, 'record-pr').length, 1);
+  const cfg = harness({ script: [[on('node', /set-config\.js$/), { code: 3, stdout: '', stderr: '' }]] });
+  await run(['#7'], cfg.deps);
+  assert.equal(nodeCalls(cfg, /set-config\.js$/).length, 1);
+  const create = harness({ script: [[on('gh', 'pr', 'create'), () => { throw transient('HTTP 422'); }]] });
+  await run(['#7'], create.deps);
+  assert.equal(createCalls(create).length, 1);
+});
+
+test('AC7.1, AC7.7: outcome and stop class for every stop (table-driven)', async () => {
+  const rows = [
+    ['policy off (admission)', 'refused', 'refused'], ['ineligible', 'refused', 'refused'], ['not admitted', 'refused', 'refused'], ['fetch fails', 'refused', 'refused'],
+    ['claim exit 3', 'blocked', 'claim'], ['run dir mint fails', 'blocked', 'claim'],
+    ['worktree add fails', 'express-escalated', 'pre-push'], ['record-worktree no line', 'express-escalated', 'pre-push'],
+    ['worker fail', 'express-escalated', 'pre-push'], ['worker timeout', 'express-escalated', 'pre-push'], ['no changed files', 'express-escalated', 'pre-push'],
+    ['commit fails', 'express-escalated', 'pre-push'], ['red tests', 'express-escalated', 'pre-push'], ['scope symlink', 'express-escalated', 'pre-push'],
+    ['check escalate', 'express-escalated', 'pre-push'], ['head mismatch', 'express-escalated', 'pre-push'], ['push fails', 'express-escalated', 'pre-push'],
+    ['check exit 1', 'blocked', 'blocked'], ['pr create fails twice', 'blocked', 'blocked'], ['record-pr fails', 'blocked', 'blocked'], ['set-config fails', 'blocked', 'blocked'],
+    ['summary fails', 'pending-review', 'none'], ['ci red', 'pending-review', 'none'], ['ci green', 'pending-review', 'none'],
+  ];
+  assert.deepEqual(rows.map((r) => r[0]).sort(), Object.keys(SCENARIOS).sort(), 'one scenario per row');
+  for (const [name, outcome, cls] of rows) {
+    const h = harness(SCENARIOS[name]);
+    assert.equal(await run(['#7'], h.deps), 0, name);
+    const f = finals(h).at(-1);
+    assert.equal(finals(h).length, 1, name);
+    assert.equal(f.outcome, outcome, name);
+    assert.equal(f.stop.class, cls, name);
+  }
+});
+
+test('summary: the line is logged from a file with the changed files, test mode and PR; a failure never halts', async () => {
+  const h = harness();
+  await run(['#7'], h.deps);
+  const log = h.calls.filter(logsSummary)[0];
+  assert.deepEqual(log.args.slice(1, 9), ['--run', runDirOf(h), '--status', 'AUTO', '--section', '/express-lane', '--step', 'Express lane']);
+  assert.equal(log.args.at(-2), '--text-file');
+  assert.equal(h.files[log.args.at(-1)], '#7 built on the express lane: a.js; tests full; PR #9.\n');
+  const bad = harness(SCENARIOS['summary fails']);
+  await run(['#7'], bad.deps);
+  const lines = bad.lines();
+  const ev = lines.find((l) => l.step === 'summary');
+  assert.deepEqual([ev.status, lines.at(-1).outcome, lines.at(-1).ci], ['fail', 'pending-review', 'green']);
+  assert.equal(lines.at(-2).step, 'ci', 'the ci step still runs');
+  const thrown = harness({ script: [[logsSummary, new Error('spawn EAGAIN')]] });
+  await run(['#7'], thrown.deps);
+  assert.equal(lastLine(thrown).outcome, 'pending-review');
+  assert.equal(thrown.lines().find((l) => l.step === 'summary').status, 'fail');
+});
+
+test('summary neutralizes the changed paths a worker can name', async () => {
+  const h = harness({ script: [[onGit('--no-optional-locks', 'status'), ' M closes #3 @bob.js\0']] });
+  await run(['#7'], h.deps);
+  const text = h.files[h.calls.filter(logsSummary)[0].args.at(-1)];
+  assert.doesNotMatch(text, /closes|#3(?!\d)/i);
+  assert.match(text, /^#7 built on the express lane: /);
+});
+
+test('set-config writes check\'s configSet string verbatim; a missing one is a blocked fail', async () => {
+  const h = harness({ script: [checkReply(checkProceed({ configSet: 'mode=auto,x=y' }))] });
+  await run(['#7'], h.deps);
+  const c = nodeCalls(h, /set-config\.js$/)[0];
+  assert.deepEqual([c.args.slice(1), c.cwd], [['--run', runDirOf(h), '--set', 'mode=auto,x=y'], MAIN]);
+  const none = harness({ script: [checkReply(checkProceed({ configSet: undefined }))] });
+  await run(['#7'], none.deps);
+  assert.deepEqual([lastLine(none).stop.step, lastLine(none).outcome], ['set-config', 'blocked']);
+  assert.equal(nodeCalls(none, /set-config\.js$/).length, 0);
+});
+
+test('AC7.6: ci word is the pr-checks state, timeout at the bound, null with no PR', async () => {
+  for (const state of ['red', 'inherited-red', 'green', 'no-ci', 'read-failed', 'gh-absent']) {
+    const h = harness({ script: [prChecksReply(state)] });
+    await run(['#7'], h.deps);
+    assert.deepEqual([lastLine(h).ci, lastLine(h).outcome], [state, 'pending-review'], state);
+    assert.equal(h.lines().find((l) => l.step === 'ci').detail, state);
+    assert.equal(nodeCalls(h, /pr-checks\.js$/).length, 1);
+  }
+  const forever = harness({ script: [prChecksReply('pending')] });
+  await run(['#7'], forever.deps);
+  assert.deepEqual([lastLine(forever).ci, lastLine(forever).outcome], ['timeout', 'pending-review']);
+  assert.equal(forever.lines().find((l) => l.step === 'ci').status, 'ok');
+  assert.equal(nodeCalls(forever, /pr-checks\.js$/).length, CI_WAIT_BOUND_MS / CI_POLL_INTERVAL_MS + 1);
+  for (const bad of ['not json', '', '{"state":"nonsense"}', 'null']) {
+    const h = harness({ script: [[on('node', /pr-checks\.js$/), { code: 0, stdout: bad, stderr: '' }]] });
+    await run(['#7'], h.deps);
+    assert.equal(lastLine(h).ci, 'read-failed', bad);
+  }
+  const exit = harness({ script: [[on('node', /pr-checks\.js$/), { code: 1, stdout: '{"state":"green"}', stderr: '' }]] });
+  await run(['#7'], exit.deps);
+  assert.equal(lastLine(exit).ci, 'read-failed');
+  for (const name of ['red tests', 'push fails', 'check exit 1', 'worker fail']) {
+    const h = harness(SCENARIOS[name]);
+    await run(['#7'], h.deps);
+    assert.equal(lastLine(h).ci, null, name);
+    assert.equal(lastLine(h).pr, null, name);
+  }
+});
+
+test('ci polls pending then stale until a settled state, sleeping the poll interval between reads', async () => {
+  const states = ['pending', 'stale', 'green'];
+  const sleeps = [];
+  const h = harness({
+    deps: { sleep: async (ms) => { sleeps.push(ms); } },
+    script: [[on('node', /pr-checks\.js$/), () => ({ code: 0, stderr: '', stdout: JSON.stringify({ state: states.shift() }) })]],
+  });
+  await run(['#7'], h.deps);
+  assert.equal(lastLine(h).ci, 'green');
+  assert.deepEqual(sleeps, [CI_POLL_INTERVAL_MS, CI_POLL_INTERVAL_MS]);
+});
+
+test('pr-checks runs in the worktree', async () => {
+  const h = harness();
+  await run(['#7'], h.deps);
+  assert.equal(nodeCalls(h, /pr-checks\.js$/)[0].cwd, WT);
+  assert.deepEqual(nodeCalls(h, /pr-checks\.js$/)[0].args.slice(1), ['--run', runDirOf(h)]);
+});
+
+test('AC14: a signal during the CI wait is delivered mid-step: blocked, pushed, and polling stops', async () => {
+  const order = [];
+  let h = null;
+  h = harness({
+    deps: {
+      sleep: () => new Promise((resolve) => { setImmediate(() => { h.signals[0]('SIGTERM'); resolve(); }); }),
+      terminate: (sig) => order.push(`terminate:${sig}`),
+    },
+    script: [prChecksReply('pending')],
+  });
+  assert.equal(await run(['#7', '#8'], h.deps), 0);
+  const lines = h.lines();
+  const [stopLine, final] = lines.slice(-2);
+  assert.deepEqual([stopLine.step, stopLine.status, stopLine.detail], ['ci', 'fail', 'interrupted by SIGTERM']);
+  assert.deepEqual([final.step, final.outcome, final.stop.class, final.stop.pushed, final.stop.step], [FINAL_STEP, 'blocked', 'blocked', true, 'ci']);
+  assert.equal(final.pr, 9);
+  assert.equal(finals(h).length, 1);
+  assert.equal(lines.filter((l) => l.record === 8).length, 0, 'no further record');
+  assert.deepEqual(order, ['terminate:SIGTERM']);
+  assert.equal(nodeCalls(h, /pr-checks\.js$/).length, 1, 'no poll after the interrupt');
+});
+
+test('stop.pushed and stop.created track this run only', async () => {
+  const rec = harness(SCENARIOS['record-pr fails']);
+  await run(['#7'], rec.deps);
+  const f = lastLine(rec);
+  assert.deepEqual([f.stop.step, f.stop.pushed, f.stop.created, f.pr], ['record-pr', true, { worktree: true, branch: true }, 9]);
+  const left = harness({ script: [[on('lstatType'), { type: 'directory', code: null }]] });
+  await run(['#7'], left.deps);
+  const g = lastLine(left);
+  assert.deepEqual([g.stop.step, g.stop.pushed, g.stop.created], ['worktree', false, { worktree: false, branch: false }]);
+});
+
+test('AC5.6: stdout and driver-events.jsonl hold the same lines in order', async () => {
+  const h = harness();
+  await run(['#7'], h.deps);
+  assert.equal(h.files[path.join(runDirOf(h), 'driver-events.jsonl')], h.out.join(''));
+});
+
+test('AC5.5: final line carries outcome, totals, pr and ci; msWithoutCi excludes the ci step\'s wait only', async () => {
+  const h = harness({ script: [prChecksReply('pending')] });
+  await run(['#7'], h.deps);
+  const lines = h.lines();
+  const f = lines.at(-1);
+  for (const key of ['outcome', 'msTotal', 'msWithoutCi', 'pr', 'ci', 'costUsd', 'turns', 'denialCount', 'stop']) assert.ok(key in f, key);
+  const wait = lines.find((l) => l.step === 'ci').ciWaitMs;
+  assert.ok(wait >= CI_WAIT_BOUND_MS);
+  assert.equal(f.msWithoutCi, f.msTotal - wait);
+  assert.ok(f.msWithoutCi > 0 && f.msWithoutCi < f.msTotal);
+  // A step appended after ci changes nothing: run.js names no step.
+  const h2 = harness({ script: [prChecksReply('pending')] });
+  const late = defineStep('late', 'none', async (ctx, deps) => { await deps.sleep(5000); return { status: 'ok' }; });
+  const final = await driveRecord(7, newShared(), h2.deps, [...STEPS, late]);
+  const ciWait = h2.lines().find((l) => l.step === 'ci').ciWaitMs;
+  assert.equal(final.msWithoutCi, final.msTotal - ciWait);
+});
+
+test('record-pr failure lines are not success', async () => {
+  for (const stdout of ['claude-tweaks: --run path rejected: x — PR not recorded', 'claude-tweaks: run r was recorded by another session/worktree — refusing', 'claude-tweaks: PR #9 recorded for some-other-run', '']) {
+    const h = harness({ script: [recordPrReply(stdout)] });
+    await run(['#7'], h.deps);
+    const f = lastLine(h);
+    assert.deepEqual([f.stop.step, f.status, f.outcome, f.stop.class], ['record-pr', 'fail', 'blocked', 'blocked'], stdout);
+    assert.equal(nodeCalls(h, /set-config\.js$/).length, 0);
+  }
+});
+
+test('AC8.1: nothing merges', async () => {
+  for (const [name, over] of Object.entries(SCENARIOS)) {
+    const h = harness(over);
+    await run(['#7'], h.deps);
+    for (const c of h.calls.filter((x) => x.kind === 'gh' || x.kind === 'ghBatch')) {
+      assert.ok(!c.args.some((a) => a === 'merge' || a === 'ready'), `${name}: ${c.args.join(' ')}`);
+    }
+  }
+  const src = fs.readFileSync(path.join(LIB, 'driver', 'steps.js'), 'utf8');
+  assert.doesNotMatch(src, /pr['",\s]+merge|pr['",\s]+ready|gh pr merge|gh pr ready/);
+});
+
+test('AC9.3: first driven, second refused, and the reverse', async () => {
+  const refuseSecond = harness({ admission: (c) => (c.args[0].number === 8 ? { admitted: false, reasons: ['no'] } : {}) });
+  assert.equal(await run(['#7', '#8'], refuseSecond.deps), 0);
+  assert.deepEqual(finals(refuseSecond).map((f) => f.outcome), ['pending-review', 'refused']);
+  const refuseFirst = harness({ admission: (c) => (c.args[0].number === 7 ? { admitted: false, reasons: ['no'] } : {}) });
+  assert.equal(await run(['#7', '#8'], refuseFirst.deps), 0);
+  assert.deepEqual(finals(refuseFirst).map((f) => f.outcome), ['refused', 'pending-review']);
+});
+
+test('AC13.1: STEPS names equal STEP_NAMES and run.js names no step', () => {
+  assert.deepEqual(STEPS.map((s) => s.name), STEP_NAMES);
+  assert.ok(Object.isFrozen(STEPS));
+  const src = fs.readFileSync(path.join(LIB, 'driver', 'run.js'), 'utf8');
+  for (const name of STEP_NAMES) assert.doesNotMatch(src, new RegExp(`['"\`]${name}['"\`]`), name);
+});
+
+test('realDeps.ghCreate runs under GH_BATCH_TIMEOUT_MS', () => {
+  const src = fs.readFileSync(path.join(LIB, 'driver', 'run.js'), 'utf8');
+  assert.match(src, /ghCreate: \(args\) => execFileSync\('gh', args, ghOptions\(args, \{[^}]*GH_BATCH_TIMEOUT_MS[^}]*windowsHide: true/);
+});
+
+test('AC11: docs/plugin-structure.md lists drive.js', () => {
+  assert.match(fs.readFileSync(DOC, 'utf8'), /node plugin\/bin\/drive\.js #N/);
 });
