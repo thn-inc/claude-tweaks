@@ -292,7 +292,19 @@ function derivePhases({ events, manifest = null, runState = null, now = new Date
     verifyMinutes: Math.round(verifies.reduce((sum, v) => sum + verifyWorkMs(v), 0) / 6000) / 10,
     verifyModes: [...new Set(verifies.map((v) => v.mode).filter((m) => typeof m === 'string'))],
   };
-  return { phases, totals };
+  // ci-gate events (#5160), in file order — not the ts-sorted evs, so an event
+  // without a valid ts still counts. Each PR contributes its latest event's
+  // ciWallMs; with no event, neither key is added.
+  // An absent ci-gate event means CI time was not recorded, never that CI was fast (#5160).
+  const ciGate = (Array.isArray(events) ? events : [])
+    .filter((e) => e && typeof e === 'object' && e.type === 'ci-gate')
+    .map((e) => ({ ...e }));
+  if (!ciGate.length) return { phases, totals };
+  const latest = new Map();
+  for (const e of ciGate) latest.set(e.pr, e);
+  const ciMs = [...latest.values()].reduce((sum, e) => sum + (Number.isFinite(e.ciWallMs) ? e.ciWallMs : 0), 0);
+  totals.ciWallMinutes = Math.round(ciMs / 6000) / 10;
+  return { phases, totals, ciGate };
 }
 
 const ZERO_TOKENS = () => ({ input: 0, output: 0, cacheRead: 0, cacheCreate: 0 });

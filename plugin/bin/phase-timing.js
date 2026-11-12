@@ -243,6 +243,19 @@ function renderDispatches(dispatches) {
   return lines.join('\n') + '\n';
 }
 
+// ciGate: the timing.json `ciGate` list (#5160), or undefined -> ''. One line
+// per distinct pr in first-appearance order, from that PR's latest event; a
+// missing or non-numeric duration renders `n/a`, never NaN.
+function renderCiGate(ciGate) {
+  if (!Array.isArray(ciGate) || ciGate.length === 0) return '';
+  const latest = new Map();
+  for (const e of ciGate) latest.set(e.pr, e);
+  const min = (x) => (Number.isFinite(x) ? Math.round(x / 6000) / 10 : 'n/a');
+  const lines = [...latest.values()].map((e) =>
+    `CI gate: ${e.verdict}, ${min(e.ciWallMs)} min wall${e.pendingAtBound === true ? ' (lower bound)' : ''}, gate waited ${min(e.gateWaitMs)} min (PR #${e.pr})`);
+  return lines.join('\n') + '\n';
+}
+
 // paths: the resolved transcript paths; events: parsed events.jsonl rows. The
 // window is the earliest..latest event ts (no event with a ts -> the whole
 // session), leaving out worktree-reaped: it fires hours after the session
@@ -346,6 +359,7 @@ async function main(argv) {
   const guard = wantTokens ? countGuardEvents(events.events) : null;
 
   const timing = { runDir, generatedAt: new Date().toISOString(), phases: tokens ? tokens.phases : out.phases, totals: { ...out.totals } };
+  if (out.ciGate) timing.ciGate = out.ciGate;
   if (tokens) {
     timing.unattributed = tokens.unattributed;
     timing.totals.tokens = tokens.totals.tokens;
@@ -375,7 +389,7 @@ async function main(argv) {
     if (previous && typeof previous === 'object' && Object.hasOwn(previous, 'budget')) timing.budget = previous.budget;
   }
   fs.writeFileSync(timingPath, JSON.stringify(timing, null, 2) + '\n');
-  if (o.markdown) process.stdout.write(renderMarkdown(out, tokens, guard, notes) + renderDispatches(timing.dispatches));
+  if (o.markdown) process.stdout.write(renderMarkdown(out, tokens, guard, notes) + renderCiGate(timing.ciGate) + renderDispatches(timing.dispatches));
   else if (o.json) process.stdout.write(JSON.stringify(timing, null, 2) + '\n');
   else process.stdout.write(`timing: wrote ${timingPath}\n`);
   // Under --json stdout stays one JSON document; the budget rides in its `budget` key.
@@ -389,4 +403,4 @@ if (require.main === module) {
     process.exitCode = 2;
   });
 }
-module.exports = { main, parseArgs, renderMarkdown, renderDispatches };
+module.exports = { main, parseArgs, renderMarkdown, renderDispatches, renderCiGate };
