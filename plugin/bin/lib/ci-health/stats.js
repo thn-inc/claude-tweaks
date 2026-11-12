@@ -87,8 +87,19 @@ function trendOf(buckets) {
   const firstP50 = p50(first);
   if (firstP50 === 0) return 'insufficient';
   const ratio = round2(p50(last) / firstP50);
-  const label = ratio >= TREND_RISING ? 'rising' : ratio <= TREND_FALLING ? 'falling' : 'flat';
-  return { ratio, label };
+  return { ratio, label: trendLabel(ratio) };
+}
+
+function trendLabel(ratio) {
+  if (ratio >= TREND_RISING) return 'rising';
+  if (ratio <= TREND_FALLING) return 'falling';
+  return 'flat';
+}
+
+function byPath(a, b) {
+  if (a.path < b.path) return -1;
+  if (a.path > b.path) return 1;
+  return 0;
 }
 
 function isDefaultBranchRun(run, defaultBranch) {
@@ -176,7 +187,7 @@ function computeStats(runs, { from, days, defaultBranch }) {
   };
   const out = [];
   for (const [path, group] of groups) out.push(workflowStats(path, group, context));
-  return out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  return out.sort(byPath);
 }
 
 module.exports = { durationSeconds, nearestRank, computeStats, round2 };

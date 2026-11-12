@@ -23,9 +23,8 @@ function workflowLine(w, watchSeconds) {
   const gated = Array.isArray(w.events) && w.events.includes('pull_request');
   if (gated && w.p90Seconds !== null && w.p90Seconds > watchSeconds) line += ` — over the ${watchSeconds}s merge-gate watch`;
   line += w.trend === 'insufficient' ? ', trend insufficient' : `, trend ${w.trend.label} ${w.trend.ratio}`;
-  line += w.superseded === null
-    ? ', superseded n/a'
-    : `, superseded ${w.superseded} (${w.supersededShare === null ? 'n/a' : w.supersededShare})`;
+  if (w.superseded === null) line += ', superseded n/a';
+  else line += `, superseded ${w.superseded} (${w.supersededShare === null ? 'n/a' : w.supersededShare})`;
   line += `, cancelled ${w.cancelled}`;
   if (w.skippedRuns) line += `, skipped ${w.skippedRuns}`;
   if (w.noWorkRuns) line += `, no-work ${w.noWorkRuns}`;

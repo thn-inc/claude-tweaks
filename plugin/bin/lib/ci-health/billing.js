@@ -26,7 +26,7 @@
 'use strict';
 
 const { CI_HEALTH_GH_TIMEOUT_MS } = require('./constants');
-const { errorText, httpStatusOf, isGhAbsent } = require('./fetch');
+const { errorText, httpStatusOf, isGhAbsent, parseBody } = require('./fetch');
 // The envelope, the render and the headroom floor compare all read this one 2-dp value, rounded
 // like stats.js's trend ratio.
 const { round2 } = require('./stats');
@@ -71,7 +71,7 @@ function readOne(query, apiPath, runner, ghAbsent) {
     };
   }
   try {
-    return { ok: true, body: typeof out === 'string' ? JSON.parse(out) : out };
+    return { ok: true, body: parseBody(out) };
   } catch {
     const error = `${apiPath}: response is not valid JSON`;
     return { ok: false, billing: { available: false, status: null, reason: error }, failure: { query, status: null, error } };
@@ -107,4 +107,4 @@ function readBilling({ repoRead, ghAbsent = false }, { runner }) {
   return { billing, failures: [] };
 }
 
-module.exports = { NO_BUDGET, headroomFrom, readBilling };
+module.exports = { NO_BUDGET, isNum, headroomFrom, readBilling };

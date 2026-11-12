@@ -16,11 +16,10 @@
 
 const { MERGE_GATE_WATCH_SECONDS, P90_BREACH_MIN_RUNS, DEFAULT_MIN_HEADROOM_PCT } = require('./constants');
 const { errorText } = require('./fetch');
+const { isNum } = require('./billing');
 const { recordPayload, specShapedBody } = require('../issues/record');
 
 const BREACH_TITLE = 'CI health: workflow p90 duration or Actions budget headroom breaches a threshold';
-
-const isNum = (value) => typeof value === 'number' && Number.isFinite(value);
 
 function breachesOf({ workflows, billing }, { minHeadroomPct = DEFAULT_MIN_HEADROOM_PCT, watchSeconds = MERGE_GATE_WATCH_SECONDS } = {}) {
   const breaches = [];

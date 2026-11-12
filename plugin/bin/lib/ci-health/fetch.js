@@ -79,7 +79,7 @@ function fetchRuns({ owner, repo, from }, { runner }) {
     }
     for (const run of page) {
       const id = run && run.id;
-      if (id !== undefined && id !== null) {
+      if (id != null) {
         if (seen.has(id)) continue;
         seen.add(id);
       }
@@ -93,4 +93,4 @@ function fetchRuns({ owner, repo, from }, { runner }) {
   return result;
 }
 
-module.exports = { errorText, httpStatusOf, isGhAbsent, readRepo, fetchRuns };
+module.exports = { errorText, httpStatusOf, isGhAbsent, parseBody, readRepo, fetchRuns };

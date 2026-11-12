@@ -199,7 +199,6 @@ test('AC1.1 render: the AC1 fixture renders its workflow line, over the merge-ga
   assert.equal(run([], d), 0);
   const all = lines(out);
   assert.equal(all[0], 'ci health: example-org/widgets, last 30 days (from 2026-10-13)');
-  assert.ok(ciLine(out).startsWith('ci.yml (.github/workflows/ci.yml): 5 runs, p50 800s, p90 1300s — over the 900s merge-gate watch'), ciLine(out));
   assert.equal(ciLine(out),
     'ci.yml (.github/workflows/ci.yml): 5 runs, p50 800s, p90 1300s — over the 900s merge-gate watch, trend insufficient, superseded 0 (n/a), cancelled 0');
   assert.ok(all.includes('breach: ci.yml (.github/workflows/ci.yml) p90 1300s over the 900s merge-gate watch'), all.join('\n'));
