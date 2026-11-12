@@ -51,7 +51,10 @@
 // the same containment applies as to the test itself.
 //
 // The test command is project configuration supplied by the driver, never taken from
-// a record or a worker.
+// a record or a worker. The refusals in `assertTestCommand` catch obvious mistakes
+// only and are not a closed check: forms such as `node -pe` or `sh -xc` still pass.
+// Any test command executes code by design, which is why the rule exists only on the
+// platforms where the sandbox was probed.
 //
 // The residual, stated plainly: the driver's own test step runs worker-written code
 // with the driver's rights, as every other lane does today.

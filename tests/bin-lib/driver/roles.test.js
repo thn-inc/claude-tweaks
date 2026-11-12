@@ -53,6 +53,8 @@ test('Minor: composeArgs refuses a missing settings file or schema', () => {
   assert.throws(() => composeArgs({ role: 'implementer', settingsFile: '', schema: RESULT_SCHEMA }), /settingsFile/);
   assert.throws(() => composeArgs({ role: 'reviewer' }), /schema/);
   assert.throws(() => composeArgs({ role: 'reviewer', schema: 'x' }), /schema/);
+  assert.throws(() => composeArgs({ role: 'reviewer', schema: null }), /schema/);
+  assert.throws(() => composeArgs({ role: 'reviewer', schema: [] }), /schema/);
 });
 
 test('Minor: a given spendCeiling must be a finite number above zero', () => {
