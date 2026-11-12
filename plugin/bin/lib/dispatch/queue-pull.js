@@ -933,6 +933,8 @@ const IN_FLIGHT_CAP_WARNING = 'Warning: the bot:in-progress pull for the neighbo
 // is this pass's own: omitting the pass skips it (and so its appends and AUTO line), while the pool
 // fetch and its cap Warning are shared setup. A missing or malformed pool or claim-map file throws
 // inside the compute and stops the pull (R8); only the agent-written `[]` / `{}` values fail open.
+// This pass prints no claim-targets list (mcp-transport.md's step 2), so the claim-map file must
+// cover every record in the pool file; bin/queue-pull.js's header says why.
 // The claim reader is the library's own and reads process.cwd()/process.env: options.cwd and
 // options.env are not threaded to it (createClaimReader takes only gitRunner/ghApi/runGh seams).
 function runNeighbourInFlight(ctx) {

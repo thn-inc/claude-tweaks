@@ -19,6 +19,15 @@
 // session path the script reads. The input-path flags are valid only with `--transport files`.
 // `--transport` is always explicit: with `gh` and no gh on PATH the CLI exits 2 and names the
 // `files` transport. It never falls back to it silently.
+//   The claims file (--in-flight-claims, default DISPATCH_IN_FLIGHT_CLAIMS) must hold an entry for
+// every claim the neighbour-in-flight pass reads: each record in the pool file (--in-flight-raw,
+// DISPATCH_IN_FLIGHT_RAW) that neighbours a candidate, the set mcp-transport.md's Step 2 prints
+// with neighbourClaimTargets over the groups left at that pass. Unlike the script, this CLI prints
+// no targets list, and the caller writes the file before the pull has built those groups, so it
+// reads the claim of every record in the pool file. That set covers any targets list, and a list
+// computed over the queue instead is not safe: a queued record that an earlier pass drops becomes a
+// neighbour, never a candidate. A number left out reads as a failed claim read: the pass prints the
+// AUTO claim-read line and counts that record as not in flight.
 //
 // Exit codes (Split-1/2 base, plus 4 for a pull that stopped; one vocabulary, never mixed):
 //   0  success: the pull ran to the end (or the pick was written, `null` when nothing is eligible)
@@ -71,6 +80,9 @@ const USAGE = `usage:
 (the input-path flags, valid only with it, default to the session-scoped paths). --rank picks the
 next group and writes dispatch-next-pick.json (stdout stays empty). Omit --priority when no
 filter is set: an empty value exits 1. A value flag may be given only once.
+The --in-flight-claims file must cover the claim of every record in the --in-flight-raw file:
+the pull prints no claim-targets list (mcp-transport.md Step 2's neighbourClaimTargets), and a
+number left out reads as a failed claim read (an AUTO line; that record counts as not in flight).
 exit codes:
   0  success
   1  malformed invocation (usage printed)
