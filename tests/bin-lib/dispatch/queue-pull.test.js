@@ -1906,17 +1906,17 @@ const RANK_CASES = [
 const quoteSh = (p) => `'${p.replace(/'/g, "'\\''")}'`;
 function writeCaseFiles(dir, c) {
   const groups = path.join(dir, 'groups.json');
-  fs.writeFileSync(groups, JSON.stringify(c.groups));
+  if (c.groups !== null) fs.writeFileSync(groups, typeof c.groups === 'string' ? c.groups : JSON.stringify(c.groups));
   const exclusions = path.join(dir, 'exclusions.json');
   const hasExclusions = c.exclusions !== undefined && c.exclusions !== null;
   if (hasExclusions) fs.writeFileSync(exclusions, typeof c.exclusions === 'string' ? c.exclusions : JSON.stringify(c.exclusions));
-  return { groups, exclusions: hasExclusions ? exclusions : null };
+  return { groups: c.groups === null ? null : groups, exclusions: hasExclusions ? exclusions : null };
 }
 
 // Seeds the module's session dir for sessionId and returns its paths; the caller removes it.
 function seedModuleSession(sessionId, files) {
   const paths = sessionPaths(sessionId);
-  fs.copyFileSync(files.groups, paths['dispatch-groups.json']);
+  if (files.groups) fs.copyFileSync(files.groups, paths['dispatch-groups.json']);
   if (files.exclusions) fs.copyFileSync(files.exclusions, paths['dispatch-exclusions.json']);
   return paths;
 }
@@ -1934,14 +1934,15 @@ async function runRankingFence(c) {
     const resolve = (name) => `"$(node "\${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value ${name})"`;
     const preamble = [
       `SEED_G=${resolve('dispatch-groups.json')}`,
-      `cp ${quoteSh(files.groups)} "$SEED_G"`,
+      ...(files.groups ? [`cp ${quoteSh(files.groups)} "$SEED_G"`] : []),
+      ...(c.stalePick ? [`SEED_P=${resolve('dispatch-next-pick.json')}`, `printf %s ${quoteSh(c.stalePick)} > "$SEED_P"`] : []),
       ...(files.exclusions ? [`SEED_E=${resolve('dispatch-exclusions.json')}`, `cp ${quoteSh(files.exclusions)} "$SEED_E"`] : []),
       `PRIORITY_FILTER=${quoteSh(c.priority || '')}`,
       '',
     ].join('\n');
     const r = await runOracle(sb, preamble + rankingFence);
-    assert.equal(r.status, 0, r.stderr);
-    return { pickText: r.files['dispatch-next-pick.json'] };
+    if (!c.expectFail) assert.equal(r.status, 0, r.stderr);
+    return { pickText: r.files['dispatch-next-pick.json'], status: r.status };
   } finally {
     sb.cleanup();
   }
@@ -1983,6 +1984,17 @@ test('AC6.2: equal createdAt ranks in the script sort order, and a snake_case po
   const aliased = snakePool.map((g) => aliasMcpTimestamps(g));
   assert.equal(rankNext(aliased, [], {})[0].number, 2);
   assert.deepEqual(rankNext(aliased, [], {}).map((r) => r.number), rankNext(camelPool, [], {}).map((r) => r.number));
+  // Multi-member groups: the within-group representative also needs the alias. The oldest-member
+  // group (#20 new, #21 old) beats #22 only when the representative is found by age.
+  const oldest = [rec(20, 'high', '2026-05-01T00:00:00Z'), rec(21, 'high', '2026-01-01T00:00:00Z')];
+  const multiCamel = [A(22, 'high', 3), oldest];
+  const multiSnake = multiCamel.map(snake);
+  assert.deepEqual(rankNext(multiCamel, [], {}).map((r) => r.number), [20, 21]);
+  assert.deepEqual(rankNext(multiSnake, [], {}).map((r) => r.number), [22], 'unaliased: no createdAt, pool order wins');
+  assert.deepEqual(rankNext(multiSnake.map((g) => aliasMcpTimestamps(g)), [], {}).map((r) => r.number), [20, 21]);
+  const mixedSnake = [MED, MIXED].map(snake).map((g) => aliasMcpTimestamps(g));
+  assert.deepEqual(rankNext(mixedSnake, [], {}).map((r) => r.number), [6, 7, 8], 'MIXED ranks as high through the round trip');
+  assert.deepEqual(rankNext(mixedSnake, [], { priority: 'high' }).map((r) => r.number), [6, 7, 8]);
 });
 
 function withSession(fn) {
@@ -2016,21 +2028,42 @@ test('AC6.3: rankFromFiles reads an absent and a corrupt dispatch-exclusions.jso
 }));
 
 test('AC6.3: rankFromFiles writes null when nothing is eligible, honours --priority, and throws on a missing or malformed groups file without writing a pick', () => withSession((paths, sessionId) => {
+  // The script redirects node's stdout into the pick file, so a throw leaves it EMPTY, not stale.
+  fs.writeFileSync(paths['dispatch-next-pick.json'], 'STALE\n');
   assert.throws(() => rankFromFiles({ sessionId }), /ENOENT/);
-  assert.equal(fs.existsSync(paths['dispatch-next-pick.json']), false);
+  assert.equal(fs.readFileSync(paths['dispatch-next-pick.json'], 'utf8'), '', 'missing groups: stale pick truncated');
   fs.writeFileSync(paths['dispatch-groups.json'], JSON.stringify([HIGH_OLD, MED]));
   assert.equal(rankFromFiles({ sessionId, priority: 'low' }), null);
   assert.equal(fs.readFileSync(paths['dispatch-next-pick.json'], 'utf8'), 'null\n');
   assert.deepEqual(rankFromFiles({ sessionId, priority: 'medium' }), MED);
-  fs.rmSync(paths['dispatch-next-pick.json']);
+  assert.equal(fs.readFileSync(paths['dispatch-next-pick.json'], 'utf8'), JSON.stringify(MED) + '\n', 'a stale pick exists before the malformed run');
   fs.writeFileSync(paths['dispatch-groups.json'], '{broken');
   assert.throws(() => rankFromFiles({ sessionId }), SyntaxError);
-  assert.equal(fs.existsSync(paths['dispatch-next-pick.json']), false);
+  assert.equal(fs.readFileSync(paths['dispatch-next-pick.json'], 'utf8'), '', 'malformed groups: stale pick truncated');
 }));
 
 test('AC6.3 oracle: the fence reads an absent and a corrupt dispatch-exclusions.json as no exclusions too', { skip: oracleSkip() }, async () => {
   for (const exclusions of [undefined, '{not json']) {
     const oracle = await runRankingFence({ groups: [HIGH_OLD, MED], exclusions, priority: '' });
     assert.deepEqual(JSON.parse(oracle.pickText), HIGH_OLD);
+  }
+});
+
+test('AC6.3 oracle: a missing or malformed dispatch-groups.json fails the fence and leaves an empty pick over a stale one, byte for byte with rankFromFiles', { skip: oracleSkip() }, async () => {
+  for (const groups of [null, '{broken']) {
+    const oracle = await runRankingFence({ groups, exclusions: [], priority: '', stalePick: 'STALE\n', expectFail: true });
+    assert.notEqual(oracle.status, 0, 'the fence exits non-zero');
+    assert.equal(oracle.pickText, '', 'the redirect truncated the stale pick');
+    const sessionId = `qp-rank-${process.pid}-${rankSession += 1}`;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qp-rank-case-'));
+    try {
+      const paths = seedModuleSession(sessionId, writeCaseFiles(dir, { groups, exclusions: [] }));
+      fs.writeFileSync(paths['dispatch-next-pick.json'], 'STALE\n');
+      assert.throws(() => rankFromFiles({ sessionId, priority: '' }));
+      assert.equal(fs.readFileSync(paths['dispatch-next-pick.json'], 'utf8'), oracle.pickText);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+      dropSession(sessionId);
+    }
   }
 });

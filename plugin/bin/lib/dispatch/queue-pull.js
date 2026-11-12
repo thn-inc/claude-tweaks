@@ -1056,11 +1056,15 @@ function rankNext(groups, exclusionEntries, { priority } = {}) {
   return ranked.length ? ranked[0].group : null;
 }
 
-// Reads the session's dispatch-groups.json (a missing or malformed file throws, as the script's
-// require() does) and dispatch-exclusions.json (absent or unreadable reads as [] via
-// readExclusions), and writes the pick -- or null -- to dispatch-next-pick.json as console.log would.
+// The script runs `node ... > "$DISPATCH_NEXT_PICK"`, so the shell truncates the pick file before
+// node starts: a missing or malformed dispatch-groups.json (node's require() throws) leaves an
+// EMPTY pick file, never the previous iteration's pick. This writes the empty file first for the
+// same effect, then reads dispatch-groups.json (a missing or malformed file throws) and
+// dispatch-exclusions.json (absent or unreadable reads as [] via readExclusions), and writes the
+// pick -- or null -- as console.log would.
 function rankFromFiles({ sessionId, priority } = {}) {
   const paths = sessionPaths(sessionId);
+  fs.writeFileSync(paths['dispatch-next-pick.json'], '');
   const groups = readJson(paths['dispatch-groups.json']);
   const pick = rankNext(groups, readExclusions(paths['dispatch-exclusions.json']), { priority });
   fs.writeFileSync(paths['dispatch-next-pick.json'], JSON.stringify(pick) + '\n');
