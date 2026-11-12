@@ -225,7 +225,7 @@ function ghRun(ctx, args, { quiet = false } = {}) {
 
 // `resolve-policy.js --values <key>` in $( ), stderr forwarded, failure reads as the empty string.
 function readPolicy(ctx, key) {
-  const r = spawnCli(ctx, 'resolve-policy.js', ['--values', key], 'policy');
+  const r = spawnCli(ctx, 'resolve-policy.js', ['--values', key], { label: 'policy' });
   forward(ctx, r, { stdout: false });
   return trimNl(r.stdout);
 }
@@ -589,13 +589,14 @@ function runOpts(ctx, extra = {}) {
 }
 
 // A fence CLI call: a spawn that throws reads as a failed call with no output, noted as
-// `queue-pull: <label>: <message>` (label defaults to the CLI name).
-function spawnCli(ctx, name, args, label = name) {
+// `queue-pull: <label>: <message>` (label defaults to the CLI name), or not noted at all when
+// `quiet` (a fence call whose stderr goes to /dev/null).
+function spawnCli(ctx, name, args, { label = name, quiet = false } = {}) {
   try {
     const r = ctx.deps.spawnCli(name, args, cliOpts(ctx));
     return { status: r && r.status, stdout: (r && r.stdout) || '', stderr: (r && r.stderr) || '' };
   } catch (err) {
-    ctx.deps.stderr(`queue-pull: ${label}: ${errText(err)}\n`);
+    if (!quiet) ctx.deps.stderr(`queue-pull: ${label}: ${errText(err)}\n`);
     return { status: null, stdout: '', stderr: '' };
   }
 }
@@ -781,9 +782,10 @@ function lazyClaimReader(ctx) {
 }
 
 // Fence 551-580: one Close proposal per strong-tier exclusion, staged into the firing's own run dir.
+// The run-dir call is `2>/dev/null || true`: its stderr is dropped and a spawn throw is silent.
 function stageShippedProposals(ctx) {
   const { paths } = ctx;
-  const runDir = trimNl(spawnCli(ctx, 'hooks.js', ['resolve-run-dir', '--spec-slug', 'dispatch-standalone']).stdout);
+  const runDir = trimNl(spawnCli(ctx, 'hooks.js', ['resolve-run-dir', '--spec-slug', 'dispatch-standalone'], { quiet: true }).stdout);
   if (!runDir) return;
   const exclusions = paths['dispatch-exclusions.json'];
   const entries = step(ctx, 'shipped-stage', () => readExclusions(exclusions)

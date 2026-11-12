@@ -1665,6 +1665,25 @@ test('#5227 shipped: an empty hooks.js resolve-run-dir answer stages no shipped 
   assert.equal(r.text['shipped-close-proposal-9010.md'], undefined, 'no proposal file is written either');
 });
 
+test('#5227 shipped: a hooks.js resolve-run-dir spawn that throws prints nothing (the fence\'s 2>/dev/null || true), stages nothing and the pull goes on; the first call\'s throw is still printed', () => {
+  const hooksThrowingAt = (at) => {
+    const seen = { n: 0 };
+    return { seen, spawn: { 'hooks.js': () => { seen.n += 1; if (seen.n === at) throw new Error('spawn EMFILE'); return { status: 0, stdout: '\n', stderr: '' }; } } };
+  };
+  const second = hooksThrowingAt(2);
+  const r = pull4(FULL(), { spawn: second.spawn });
+  assert.equal(second.seen.n, 2, 'both resolve-run-dir calls were made');
+  assert.equal(r.thrown, null, 'the pull does not stop');
+  assert.ok(!r.stderr.includes('queue-pull: hooks.js'), r.stderr);
+  assert.ok(!r.stderr.includes('spawn EMFILE'), r.stderr);
+  assert.deepEqual(r.cap.staged.filter((s) => s.id.startsWith('shipped-close-')), [], 'a throw reads as an empty answer: nothing is staged');
+  assertShipped(r);
+
+  const first = hooksThrowingAt(1);
+  const r1 = pull4(FULL(), { spawn: first.spawn });
+  assert.ok(r1.errs.includes('queue-pull: hooks.js: spawn EMFILE\n'), 'the target-missing call leaves its stderr on the terminal (fence 385)');
+});
+
 test('#5227 target-missing: an empty first run-dir answer still calls log-decision and stage-item with --run "" (the fence does not guard it)', () => {
   const r = pull4(FULL(), { hooksOut: () => '' });
   assert.equal(r.cap.log.length, 2);
