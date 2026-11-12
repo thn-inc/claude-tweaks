@@ -3,6 +3,7 @@ files:
   - plugin/bin/dispatch-prompt.js
   - plugin/bin/lib/dispatch/task-prompt.js
   - plugin/bin/lib/hooks/dispatch-prompt-gate.js
+  - plugin/bin/lib/hooks/pre-tool-use.js
   - plugin/hooks/hooks.json
   - plugin/skills/dispatch/SKILL.md
   - plugin/skills/dispatch/task-prompt.md

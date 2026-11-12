@@ -38,6 +38,10 @@ const { execFileSync } = require('child_process');
 const { anchoredOrOutsideMessage } = require('./lib/run-dir-guard');
 const { sessionTmpRoot, sessionTmpPath } = require('./lib/session-tmp');
 const { parseNextSteps, FIRST_CALL_STEPS, SECOND_CALL_STEPS } = require('./lib/dispatch/first-call-artifact-check');
+const { GIT_TIMEOUT_MS } = require('./lib/shared-primitives');
+// POLICY_KEYS includes integration-model, which can reach the forge ladder: size its child's kill
+// timeout the way phase-exit does, so a slow healthy detection is not killed mid-ladder.
+const { policyReadTimeoutMs } = require('./lib/phase-exit/phase-exit');
 const {
   renderTaskPrompt, extractTemplates, profileOf, promptDigest, promptSize, MAX_PROMPT_BYTES,
   chunkPrompt, REGISTRY_FILE,
@@ -110,13 +114,13 @@ const realDeps = {
   resolvePolicyValues: (cwd) => {
     const out = execFileSync(process.execPath,
       [path.join(PLUGIN_ROOT, 'bin', 'resolve-policy.js'), '--values', POLICY_KEYS.join(',')],
-      { cwd, encoding: 'utf8', windowsHide: true });
+      { cwd, encoding: 'utf8', timeout: policyReadTimeoutMs('integration-model', cwd), windowsHide: true });
     return parsePolicyValues(out);
   },
   resolveProfile: (name, { unattended, cwd }) => {
     const args = [path.join(PLUGIN_ROOT, 'bin', 'resolve-profile.js'), name];
     if (unattended) args.push('--unattended');
-    return JSON.parse(execFileSync(process.execPath, args, { cwd, encoding: 'utf8', windowsHide: true }));
+    return JSON.parse(execFileSync(process.execPath, args, { cwd, encoding: 'utf8', timeout: GIT_TIMEOUT_MS, windowsHide: true }));
   },
   removeFile: (p) => {
     try { fs.unlinkSync(p); return true; } catch (err) { if (err && (err.code === 'ENOENT' || err.code === 'ENOTDIR')) return false; throw err; }
