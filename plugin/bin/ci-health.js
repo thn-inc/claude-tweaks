@@ -22,8 +22,9 @@
 //                          included: `not filed: runs read failed`)
 //   --json                 print the report envelope as one JSON line instead of the report lines;
 //                          its `runsAvailable` is false when no runs page was read (beside
-//                          `billing.available`), its `filed` is {title, number} or null, `filingSkipped` the skip reason
-//                          or null (both null without --file), and a failed filing a failures[]
+//                          `billing.available`), its `filed` is {title, number} or null,
+//                          `filingSkipped` the skip reason or null (both null without --file),
+//                          and a failed filing a failures[]
 //                          entry (`file issue` or `open issue titles`)
 // Exit codes:
 //   0 report written — partial allowed: a runs half that read at least one page, whatever billing

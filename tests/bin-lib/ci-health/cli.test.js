@@ -5,12 +5,16 @@
 // (args[3]) and throws `unexpected …` on anything else. No test name carries an amount.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 
 const { readText } = require('../../helpers/read-skill');
 const { installStub, STUB_SKIP } = require('../../helpers/path-stub');
 const { run, realDeps, issueListArgs, issueCreateArgs, issueDeps } = require('../../../plugin/bin/ci-health');
 const { BREACH_TITLE } = require('../../../plugin/bin/lib/ci-health/thresholds');
+const { renderReport } = require('../../../plugin/bin/lib/ci-health/render');
 
 const NOW = new Date('2026-11-12T10:00:00Z');
 const DAY = 24 * 60 * 60 * 1000;
@@ -211,10 +215,7 @@ test('--root refuses a non-github.com or unreadable origin in that checkout, nam
 });
 
 test('realDeps origin read: --root reads that checkout\'s origin, and a missing origin leaves one CLI stderr line', () => {
-  const fs = require('node:fs');
-  const os = require('node:os');
-  const { spawnSync } = require('node:child_process');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-health-root-'));
+  const dir =fs.mkdtempSync(path.join(os.tmpdir(), 'ci-health-root-'));
   const env = { ...process.env, GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_NOSYSTEM: '1' };
   delete env.GIT_DIR;
   delete env.GIT_WORK_TREE;
@@ -652,7 +653,6 @@ test('--json: runsAvailable is false when no runs page was read, and the unavail
   assert.equal(envelope(empty.out).runsAvailable, true);
   // The decision is the flag's, not the failure label's: an unavailable half with no page-1 row still
   // reads unavailable, never as an empty window.
-  const { renderReport } = require('../../../plugin/bin/lib/ci-health/render');
   const report = {
     repo: ORG, window: { days: 30, from: '2026-10-13' }, runsAvailable: false, truncated: false, ghAbsent: false,
     workflows: [], watchSeconds: 900, minHeadroomPct: 10, billing: { available: false, status: null, reason: 'owner type unreadable' },

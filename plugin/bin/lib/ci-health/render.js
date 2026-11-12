@@ -62,6 +62,13 @@ function billingLine(report) {
   return `billing: ${NO_BUDGET}${firstPage}`;
 }
 
+function runsUnavailableLine(failures) {
+  const firstPage = failures.find((f) => f.query === 'runs page 1');
+  if (!firstPage) return 'runs unavailable';
+  const why = firstPage.status != null ? `HTTP ${firstPage.status}` : oneLine(firstPage.error);
+  return why ? `runs unavailable (${why})` : 'runs unavailable';
+}
+
 function breachLine(breach, watchSeconds) {
   if (breach.kind === 'p90-over-watch') {
     return `breach: ${code(breach.workflow)} (${code(breach.path)}) p90 ${breach.p90Seconds}s over the ${watchSeconds}s merge-gate watch`;
@@ -86,11 +93,8 @@ function renderReport(report) {
     out.push(`window truncated at ${RUNS_PER_PAGE * MAX_RUN_PAGES} runs: statistics cover the newest runs only`);
   }
   if (report.ghAbsent) out.push('runs unavailable (gh absent)');
-  else if (report.runsAvailable !== true) {
-    const firstPage = failures.find((f) => f.query === 'runs page 1');
-    const why = firstPage && (firstPage.status != null ? `HTTP ${firstPage.status}` : oneLine(firstPage.error));
-    out.push(why ? `runs unavailable (${why})` : 'runs unavailable');
-  } else if (report.workflows.length === 0) out.push(`no workflow runs in the last ${days} days`);
+  else if (report.runsAvailable !== true) out.push(runsUnavailableLine(failures));
+  else if (report.workflows.length === 0) out.push(`no workflow runs in the last ${days} days`);
   else for (const w of report.workflows) out.push(workflowLine(w, report.watchSeconds));
   out.push(billingLine(report));
   for (const breach of report.breaches) out.push(breachLine(breach, report.watchSeconds));

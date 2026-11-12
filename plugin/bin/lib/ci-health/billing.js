@@ -22,8 +22,8 @@
 // whose `budget_scope` is `organization`; SKU-level (`actions_linux`) and repository- or
 // cost-center-scoped budgets are not. Spend is the sum of `netAmount` over `usageItems[]` whose
 // `product` lower-cases to `actions`: `netAmount` is the amount after discounts, which is what a
-// budget counts, where `grossAmount` is the amount before them. A needed field absent or not a finite number gives `headroomPct: null` and a reason naming
-// it, never a guess.
+// budget counts, where `grossAmount` is the amount before them. A needed field absent or not a
+// finite number gives `headroomPct: null` and a reason naming it, never a guess.
 //
 // Budgets are read one page only, unlike the runs: the budgets endpoint answers `has_next_page`,
 // and when it is true the result carries `firstPageOnly: true` (rendered `(first page of budgets
