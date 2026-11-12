@@ -392,6 +392,8 @@ function createSandbox(scenario, { transport = 'gh', origin = null, name = scena
 
 // --- the bounded run -----------------------------------------------------------
 
+// The marker a capped stream ends with; assertClean fails any run whose stream carries it.
+const STREAM_TRUNCATED = '[queue-pull oracle: stream truncated at 64 KiB]';
 function capture(stream) {
   const chunks = [];
   let size = 0;
@@ -404,7 +406,7 @@ function capture(stream) {
     chunks.push(kept);
     size += kept.length;
   });
-  return () => Buffer.concat(chunks).toString('utf8') + (truncated ? '\n[queue-pull oracle: stream truncated at 64 KiB]\n' : '');
+  return () => Buffer.concat(chunks).toString('utf8') + (truncated ? `\n${STREAM_TRUNCATED}\n` : '');
 }
 
 // command + args run as their own process group, stdin closed, each stream capped, reaped on exit.
@@ -591,13 +593,14 @@ function normalize(value, sandbox) {
 // The four failure lines whose fence tail is `$(cat <err file>)`: Node's uncaught-exception header
 // (a throw-site file:line or a node:internal loader line, Node-version dependent) leads the tail,
 // and the module prints err.message instead. They compare up to and including this prefix, tail
-// excluded (controller ruling, Task 4 review).
-const TAIL_EXCLUDED_PREFIXES = [
-  'dispatch: queue-pull stopped -- not-spec-shaped exclusion pass hit a corrupt exclusions file: ',
-  'dispatch: queue-pull stopped -- open-linked-PR exclusion pass hit a corrupt exclusions file: ',
-  'Warning: not-spec-shaped pass skipped — ',
-  'Warning: open-linked-PR filtering failed — dispatch-groups.json left unfiltered for this exclusion this run: ',
+// excluded (controller ruling, Task 4 review). `errFile` is the session file the tail is read from.
+const TAIL_LINES = [
+  { prefix: 'dispatch: queue-pull stopped -- not-spec-shaped exclusion pass hit a corrupt exclusions file: ', errFile: 'dispatch-shape-gate.err' },
+  { prefix: 'dispatch: queue-pull stopped -- open-linked-PR exclusion pass hit a corrupt exclusions file: ', errFile: 'dispatch-linked-prs.err' },
+  { prefix: 'Warning: not-spec-shaped pass skipped — ', errFile: 'dispatch-shape-gate.err' },
+  { prefix: 'Warning: open-linked-PR filtering failed — dispatch-groups.json left unfiltered for this exclusion this run: ', errFile: 'dispatch-linked-prs.err' },
 ];
+const TAIL_EXCLUDED_PREFIXES = TAIL_LINES.map((t) => t.prefix);
 
 // The AUTO and Warning lines AC1 compares on each channel.
 function reported(text) {
@@ -834,4 +837,5 @@ module.exports = {
   REPO, SCRIPT_MD, MCP_MD, FENCE_FIRST_LINE, RUN_DIR_NAME,
   findBash, oracleSkip, extractFence, fenceSessionFiles, sessionFileNames, filesOracleScript,
   createSandbox, runOracle, runModuleCli, runPair, withEscapeGuard, normalize, reported, assertParity, runAll, failedJobs, shimMain,
+  STREAM_TRUNCATED, TAIL_LINES,
 };

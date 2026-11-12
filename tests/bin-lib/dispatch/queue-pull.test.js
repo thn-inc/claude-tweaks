@@ -12,7 +12,10 @@
 // the not-spec-shaped / open-linked-PR filtering Warnings) compare up to and including their fixed
 // prefix, tail excluded. The fence's tail opens with Node's uncaught-exception header (a throw-site
 // file:line or a node:internal loader line, Node-version dependent, absent from err.stack); the
-// module prints err.message. See TAIL_EXCLUDED_PREFIXES in queue-pull-oracle.js.
+// module prints err.message. See TAIL_LINES in queue-pull-oracle.js. The same tail is the whole of
+// the .err file the line reads, so on a fault row that prints such a line that one .err file
+// compares by its fixed part only (written and non-empty on both sides, the module's message inside
+// the oracle's report; faultComparison); every other .err file compares whole.
 // One exit-code mapping, not a normalization (R4): where the fence stops (`exit 1`), the CLI exits 4,
 // so the parity tests compare a stopped pair's statuses as 1 and 4 and everything else as is.
 //
@@ -58,6 +61,7 @@ const { gitRepo, fixtureGit } = require('../../helpers/git-fixtures');
 const {
   REPO, SCRIPT_MD, MCP_MD, FENCE_FIRST_LINE, RUN_DIR_NAME,
   oracleSkip, extractFence, fenceSessionFiles, filesOracleScript, createSandbox, runOracle, runModuleCli, runPair, withEscapeGuard, normalize, reported, assertParity, runAll, failedJobs,
+  STREAM_TRUNCATED, TAIL_LINES,
 } = require('./queue-pull-oracle');
 const {
   S0, S1, S2, SEmpty, SMalformed, SPortable, SFast, fakeRun, fakeSpawnCli, agentInputs, ghRecord, withBody, QUEUE_ARGV, DEP_SEARCH_8000, mention, WEAK_PR_FILES,
@@ -2648,12 +2652,14 @@ after(async () => {
 const assertEveryJobRan = (R) => assert.deepEqual(failedJobs(R).map(([name, err]) => `${name}: ${err.message}`), [], 'every job in this pool ran');
 const sides = (pair) => [['oracle', pair.oracle], ['module', pair.module]];
 
-// Every gh call either side made was answered by the scenario's table, and no git call left the
-// sandbox (the git shim refuses and logs any directory outside it).
+// Every gh call either side made was answered by the scenario's table, no git call left the
+// sandbox (the git shim refuses and logs any directory outside it), and neither stream overflowed
+// the 64 KiB capture (a cut stream would compare only its kept head).
 function assertClean(pair, label) {
   for (const [side, r] of sides(pair)) {
     assert.deepEqual(r.ghArgv.filter((a) => a.tag === 'UNHANDLED').map((a) => a.argv.join(' ').slice(0, 300)), [], `${label} ${side}: an unanswered gh call`);
     assert.deepEqual(r.gitArgv.filter((a) => a.tag === 'REFUSED'), [], `${label} ${side}: a git call outside the sandbox`);
+    for (const channel of ['stdout', 'stderr']) assert.ok(!r[channel].includes(STREAM_TRUNCATED), `${label} ${side}: ${channel} was truncated at 64 KiB`);
   }
 }
 
@@ -2959,15 +2965,36 @@ describe('#5227 parity (AC5, portability)', { skip: oracleSkip(), timeout: 600_0
 // their new bases and D1, from one `before`. A row asserts what the ORACLE did (Plan Review
 // Clarifications, criteria 4, 5 and 7): its exit, the lines it adds on each channel, and its
 // exclusions read against the base's. It then asserts that the module did the same.
-// Files compared: every session file but two kinds. The two `.err` files whose `$(cat)` tails the
-// header's one exception covers are left out. On files, so are the agent-written inputs: the module
-// side has them staged before its run, while the oracle's agent writes each at its fence point, so
-// a run that stops first leaves them unwritten on the oracle side only. ----
+// Files compared: every session file, byte-equal (JSON-equal), with two row-level carve-outs (see
+// faultComparison). ----
 
-const FAULT_TAIL_FILES = new Set(['dispatch-shape-gate.err', 'dispatch-linked-prs.err']);
 const AGENT_STAGED = new Set(['dispatch-queue-raw.json', 'dispatch-open-numbers.json', 'dispatch-dep-freshness.json',
   'dispatch-verified-open-deps.txt', 'dispatch-in-flight-raw.json', 'dispatch-in-flight-claims.json']);
-const faultFiles = (transport) => SESSION_FILES.filter((n) => !FAULT_TAIL_FILES.has(n) && !(transport === 'files' && AGENT_STAGED.has(n)));
+// pair -> { files: the session files compared whole, tailErr: the .err files compared by their fixed
+// part }. The carve-outs, each only on the row that needs it:
+//   - On files, an agent-written input the oracle never wrote while the module holds it: the module
+//     side has the agent's files staged before its run, while the oracle's agent writes each at its
+//     fence point, so a run that stops first leaves it unwritten on the oracle side only. Every
+//     other combination (both written, neither, only the oracle's) compares.
+//   - A row whose oracle stderr carries one of the header's four `$(cat <err file>)` lines: that
+//     line's .err file is all tail, so it compares by its fixed part only (written and non-empty on
+//     both sides, the module's err.message inside the oracle's Node report of the same error).
+function faultComparison(pair, transport) {
+  const stderrLines = String(pair.oracle.stderr).split('\n');
+  const tailErr = [...new Set(TAIL_LINES.filter((t) => stderrLines.some((l) => l.startsWith(t.prefix))).map((t) => t.errFile))];
+  const stagedOnly = (n) => transport === 'files' && AGENT_STAGED.has(n) && pair.oracle.files[n] === null && pair.module.files[n] !== null;
+  return { files: SESSION_FILES.filter((n) => !tailErr.includes(n) && !stagedOnly(n)), tailErr };
+}
+function assertFaultFiles(pair, transport, label, module = pair.module) {
+  const { files, tailErr } = faultComparison(pair, transport);
+  assertParity(pair.oracle, module, { files });
+  for (const name of tailErr) {
+    const [o, m] = [pair.oracle, pair.module].map((r) => r.files[name]);
+    assert.ok(o && m, `${label}: ${name} is written and non-empty on both sides (oracle ${JSON.stringify(o)}, module ${JSON.stringify(m)})`);
+    assert.ok(normalize(o, pair.oracle.sandbox).includes(normalize(m.trim(), pair.module.sandbox)), `${label}: the module's ${name} is the error the oracle's reports:\n${o}\n---\n${m}`);
+  }
+  return tailErr;
+}
 const fullStop = (re) => { const m = re.exec(FENCE); return `${m[1]}1${m[2]}`; };
 const STOP_LINE = {
   grouping: fullStop(GROUPING_STOP_RE),
@@ -3101,7 +3128,7 @@ function assertFaultRow(row, expect, R, transport) {
     const baseInjected = new Set(injectedCalls(base.oracle));
     for (const [side, r] of sides(pair)) assert.ok(injectedCalls(r).some((c) => !baseInjected.has(c)), `${row.id} ${side}: the fault's call was injected`);
   }
-  assertParity(oracle, module, { files: faultFiles(transport) });
+  assertFaultFiles(pair, transport, row.id, module);
 }
 
 // D1: two pulls in one session per side (the one deliberate session reuse: one session id and one
@@ -3220,6 +3247,11 @@ describe('#5227 parity (AC4 fetch failures)', { skip: oracleSkip(), timeout: 600
       for (const [side, r] of sides(R[id])) assert.ok(reported(r.stderr).at(-1).startsWith('dispatch: queue-pull stopped -- '), `${id} ${side}: the stop line is the last reported line`);
     }
     for (const [side, r] of sides(R['F-groups'])) assert.equal(r.files['dispatch-groups.json'], '{corrupt', `F-groups ${side}: the unreadable groups file is left as it was`);
+    // These two rows are the fault rows that print a `$(cat <err file>)` line; every other row
+    // compares both .err files whole.
+    const tailRows = [...FAULTS, ...FILES_FAULTS].filter((f) => faultComparison(R[f.id], FAULTS.includes(f) ? 'gh' : 'files').tailErr.length).map((f) => f.id);
+    assert.deepEqual(tailRows, ['F-corrupt', 'F-groups']);
+    for (const id of tailRows) assert.deepEqual(faultComparison(R[id], 'gh').tailErr, ['dispatch-linked-prs.err'], id);
   });
 
   test('AC4.4: the oracle stops on exactly the observed stop set, and every other fault exits 0', () => {
@@ -3294,6 +3326,24 @@ describe('#5227 parity (AC7.2 files inputs)', { skip: oracleSkip(), timeout: 600
     assert.deepEqual(exclusionsIn(R['S2-files-miss'].oracle).find((e) => e.records[0] === 9031).detail.blockedBy, ['acme-corp/other#12'], 'a readable file answers the state (control)');
   });
 
+  test('#5227 AC7.2: the agent-input carve-out covers only the rows that stop before an agent write point, and only the inputs written after it', () => {
+    const carved = {};
+    for (const f of FILES_FAULTS) {
+      const { files } = faultComparison(R[f.id], 'files');
+      const left = SESSION_FILES.filter((n) => !files.includes(n));
+      if (left.length) carved[f.id] = left;
+    }
+    const inFlight = ['dispatch-in-flight-raw.json', 'dispatch-in-flight-claims.json'];
+    // The grouping-block stops come before the neighbour pass's two writes; the warm cache-check
+    // stop comes before the open-numbers and verified-open-deps writes as well.
+    const cacheStop = ['dispatch-open-numbers.json', 'dispatch-verified-open-deps.txt', ...inFlight];
+    assert.deepEqual(carved, {
+      'files-queueRaw-missing': inFlight, 'files-queueRaw-malformed': inFlight,
+      'files-depFreshness-missing': cacheStop, 'files-depFreshness-malformed': cacheStop,
+      'files-openNumbers-missing': inFlight, 'files-openNumbers-malformed': inFlight,
+    });
+  });
+
   test('AC7.2: a dependency-freshness file the agent never wrote stops a warm-cache pull at the cache check, and on a cold cache only leaves the write-back unwritten', () => {
     for (const [side, r] of sides(R['files-depFreshness-missing'])) {
       assert.equal(reported(r.stderr).at(-1), STOP_LINE.cacheHit, `warm ${side}`);
@@ -3351,7 +3401,7 @@ describe('#5227 parity (AC7.2 files inputs)', { skip: oracleSkip(), timeout: 600
       assert.equal(title9003(two.orderBlob.groups), 'Fixture record 9003', `${side}: the blob holds the stale groups`);
       assert.equal(two.orderBlob.freshnessSignal.issues.find((i) => i.number === 9003).updatedAt, '2026-11-12T11:00:00Z', `${side}: under the new freshness`);
     }
-    assertParity(first.oracle, first.module, { files: faultFiles('gh') });
-    assertParity(second.oracle, second.module, { files: faultFiles('gh') });
+    assert.deepEqual(assertFaultFiles(first, 'gh', 'D1 first'), [], 'D1 first: no tail line, every file compared whole');
+    assert.deepEqual(assertFaultFiles(second, 'gh', 'D1 second'), [], 'D1 second: no tail line, every file compared whole');
   });
 });
