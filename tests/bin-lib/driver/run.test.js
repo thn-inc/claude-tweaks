@@ -203,8 +203,8 @@ function harness(over = {}) {
   const signals = [];
   const state = { probes: 0, clock: NOW };
   const script = [...(over.script || []), ...defaultScript(over)];
-  function dispatch(kind, args, cwd) {
-    const call = { kind, args, cwd };
+  function dispatch(kind, args, cwd, env) {
+    const call = { kind, args, cwd, env };
     calls.push(call);
     for (const [match, reply] of script) {
       if (!match(call)) continue;
@@ -219,7 +219,7 @@ function harness(over = {}) {
     gh: (args) => dispatch('gh', args),
     ghBatch: (args) => dispatch('ghBatch', args),
     git: (args, opts = {}) => dispatch('git', args, opts.cwd),
-    node: (script_, args, opts = {}) => dispatch('node', [script_, ...args], opts.cwd),
+    node: (script_, args, opts = {}) => dispatch('node', [script_, ...args], opts.cwd, opts.env),
     resolvePolicy: (keys) => dispatch('policy', keys),
     evaluateRecordEligibility: (issue, opts) => dispatch('eligibility', [issue, opts]),
     fetchNativeDependencies: (opts) => dispatch('native-deps', [opts]),
@@ -236,6 +236,7 @@ function harness(over = {}) {
     ghAvailable: () => { state.probes += 1; return over.ghAvailable === undefined ? true : over.ghAvailable; },
     gitAvailable: () => { state.probes += 1; return over.gitAvailable === undefined ? true : over.gitAvailable; },
     platform: 'darwin',
+    pid: 4242,
     env: {},
     now: () => { state.clock += 1; return state.clock; },
     date: () => new Date(state.clock),
@@ -838,7 +839,7 @@ test('the worktree step: fetch, worktree add, catch-up fetch and merge, then rec
   assert.deepEqual(gitCalls(h).map((c) => [c.args, c.cwd]), [
     [['-C', MAIN, 'rev-parse', '--verify', '--quiet', '--end-of-options', 'refs/heads/drive-record-7'], MAIN],
     [['-C', MAIN, 'fetch', '--end-of-options', 'origin', 'main'], MAIN],
-    [['-C', MAIN, 'worktree', 'add', '-b', 'drive-record-7', WT, 'origin/main'], MAIN],
+    [['-C', MAIN, 'worktree', 'add', '--lock', '--reason', 'drive.js record 7 (pid 4242)', '--no-track', '-b', 'drive-record-7', WT, 'origin/main'], MAIN],
     [['-C', WT, 'fetch', '--end-of-options', 'origin', 'main'], WT],
     [['-C', WT, 'merge', '--end-of-options', 'origin/main'], WT],
   ]);
@@ -920,14 +921,70 @@ test('Review Focus 5: a non-main integration branch flows into fetch and worktre
   assert.deepEqual(gitCalls(h).find((c) => gitSub(c)[0] === 'worktree').args.slice(-1), ['origin/develop']);
 });
 
-test('Gotcha: a run with CLAUDE_CODE_SESSION_ID unset drives normally', async () => {
-  const read = [];
-  const env = new Proxy({}, { get: (_, key) => { read.push(String(key)); return undefined; }, has: (_, key) => { read.push(String(key)); return false; } });
+test('Gotcha: a run with CLAUDE_CODE_SESSION_ID unset drives normally, and every CLI call gets deps.env', async () => {
+  const env = { PATH: '/usr/bin' };
   const h = harness({ deps: { env } });
   assert.equal(await run(['#7'], h.deps), 0);
   assert.equal(calls(h, 'node', /hooks\.js$/).length, 1);
   assert.equal(h.lines().at(-1).outcome, 'pending-review');
-  assert.ok(!read.includes('CLAUDE_CODE_SESSION_ID'));
+  const cli = calls(h, 'node');
+  assert.equal(cli.length, 3);
+  for (const c of cli) {
+    assert.equal(c.env, env, c.args[0]);
+    assert.ok(!('CLAUDE_CODE_SESSION_ID' in c.env));
+  }
+});
+
+test('realDeps.node spawns with the caller\'s env, and with process.env only when none is given', () => {
+  const cp = require('node:child_process');
+  const runPath = require.resolve(path.join(LIB, 'driver', 'run'));
+  const original = cp.spawnSync;
+  const seen = [];
+  cp.spawnSync = (bin, args, options) => { seen.push(options); return { status: 0, stdout: '', stderr: '' }; };
+  try {
+    delete require.cache[runPath];
+    const fresh = require(runPath);
+    const env = { ONLY: '1' };
+    fresh.realDeps.node('x.js', [], { cwd: MAIN, timeout: 1, env });
+    fresh.realDeps.node('x.js', [], { cwd: MAIN, timeout: 1 });
+    assert.equal(seen[0].env, env);
+    assert.equal(seen[1].env, process.env);
+    assert.ok(seen.every((o) => o.windowsHide === true));
+    assert.equal(fresh.realDeps.pid, process.pid);
+  } finally {
+    cp.spawnSync = original;
+    delete require.cache[runPath];
+  }
+});
+
+test('the worktree is created locked with the driver pid in the reason, which the reaper parses back', async () => {
+  const { parseWorktreeList } = require(path.join(LIB, 'hooks', 'worktree-reap'));
+  const h = harness();
+  await run(['#7'], h.deps);
+  const add = gitCalls(h).find((c) => gitSub(c)[0] === 'worktree').args;
+  const reason = add[add.indexOf('--reason') + 1];
+  assert.ok(add.includes('--lock') && add.includes('--no-track'));
+  assert.ok(add.indexOf('--no-track') < add.indexOf('-b'));
+  const porcelain = `worktree ${MAIN}\nHEAD abc\nbranch refs/heads/main\n\nworktree ${WT}\nHEAD abc\nbranch refs/heads/drive-record-7\nlocked ${reason}\n\n`;
+  const entry = parseWorktreeList(porcelain).find((e) => e.path === WT);
+  assert.deepEqual([entry.locked, entry.pid, entry.lockReason], [true, 4242, reason]);
+});
+
+test('a failed worktree add reports the branch it left behind, and only that', async () => {
+  let checks = 0;
+  const left = harness({ script: [
+    [onGit('worktree', 'add'), new Error('fatal: already checked out')],
+    [onGit('rev-parse'), () => { checks += 1; if (checks === 1) return exitOne(); return 'abc123\n'; }],
+  ] });
+  await run(['#7'], left.deps);
+  const final = left.lines().at(-1);
+  assert.equal(final.stop.step, 'worktree');
+  assert.deepEqual(final.stop.created, { worktree: false, branch: true });
+  const after = gitCalls(left).filter((c) => gitSub(c)[0] === 'rev-parse');
+  assert.deepEqual(after.at(-1).args, ['-C', MAIN, 'rev-parse', '--verify', '--quiet', '--end-of-options', 'refs/heads/drive-record-7']);
+  const clean = harness({ script: [[onGit('worktree', 'add'), new Error('fatal: no such ref')]] });
+  await run(['#7'], clean.deps);
+  assert.deepEqual(clean.lines().at(-1).stop.created, { worktree: false, branch: false });
 });
 
 test('record-worktree: only its own success line counts; any other output is a pre-push fail', async () => {
@@ -990,6 +1047,8 @@ test('realDeps.ghBatch runs under GH_BATCH_TIMEOUT_MS and realDeps.gh under GH_T
   const cp = require('node:child_process');
   const runPath = require.resolve(path.join(LIB, 'driver', 'run'));
   const primitives = require(path.join(LIB, 'shared-primitives'));
+  // Discriminating only while the two bounds differ (a raised gh-timeout-ms can equalize them).
+  assert.notEqual(primitives.GH_BATCH_TIMEOUT_MS, primitives.GH_TIMEOUT_MS, 'the two bounds must differ for this test to discriminate');
   const original = cp.execFileSync;
   const priorHost = process.env.GH_HOST;
   const seen = [];

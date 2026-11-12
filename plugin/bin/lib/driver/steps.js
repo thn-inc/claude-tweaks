@@ -247,7 +247,7 @@ const claimStep = defineStep(STEP.claim, STOP_CLASSES.CLAIM, async (ctx, deps) =
   ctx.runId = `${formatTimestamp(ctx.claimDate)}-drive-${n}`;
   const r = deps.node(binScript('claim-targets.js'),
     ['--run-id', ctx.runId, '--targets', String(n), '--steps', 'build,test'],
-    { cwd: mainRoot, timeout: CLI_TIMEOUT_MS });
+    { cwd: mainRoot, timeout: CLI_TIMEOUT_MS, env: deps.env });
   if (r.code !== 0) {
     const key = firstEnvelopeKey(r.stdout);
     const why = key || firstLine(r.stderr);
@@ -278,7 +278,7 @@ const runDirStep = defineStep(STEP.runDir, STOP_CLASSES.CLAIM, async (ctx, deps)
   ctx.runDir = minted.path;
   const log = deps.node(binScript('log-decision.js'),
     ['--run', ctx.runDir, '--status', 'AUTO', '--section', CLAIM_LOG_SECTION, '--step', CLAIM_LOG_STEP, '--text', claimLogText(n, ctx.transport)],
-    { cwd: mainRoot, timeout: CLI_TIMEOUT_MS });
+    { cwd: mainRoot, timeout: CLI_TIMEOUT_MS, env: deps.env });
   if (log.code !== 0) {
     return { status: 'fail', stopClass: STOP_CLASSES.PRE_PUSH, detail: `claim log not written: log-decision.js exited ${log.code} (${firstLine(log.stderr) || 'no output'})` };
   }
@@ -329,7 +329,20 @@ const worktreeStep = defineStep(STEP.worktree, STOP_CLASSES.PRE_PUSH, async (ctx
     return { status: 'fail', detail: `leftover from an earlier run of #${n}, nothing reused or removed: ${leftovers.join('; ')}` };
   }
   gitIn(deps, mainRoot, ['fetch', '--end-of-options', 'origin', ref]);
-  gitIn(deps, mainRoot, ['worktree', 'add', '-b', branch, wt, `origin/${ref}`]);
+  // Created locked, with this process's pid in the reason: worktree-reap.js reaps an unlocked
+  // worktree with no local-only content, which a fresh one is until the worker's first write.
+  // A pid-bearing lock reads in-use while the driver lives and orphaned (24h grace) after.
+  // --no-track: the branch is pushed with an explicit `git push origin {branch}`.
+  try {
+    gitIn(deps, mainRoot, ['worktree', 'add', '--lock', '--reason', `drive.js record ${n} (pid ${deps.pid})`, '--no-track', '-b', branch, wt, `origin/${ref}`]);
+  } catch (err) {
+    // A failed add can leave the branch it created behind; report what is actually there.
+    try {
+      gitIn(deps, mainRoot, ['rev-parse', '--verify', '--quiet', '--end-of-options', `refs/heads/${branch}`]);
+      ctx.created.branch = true;
+    } catch { /* absent, or unreadable: not claimed as created */ }
+    throw err;
+  }
   ctx.wt = wt;
   ctx.branch = branch;
   ctx.created.worktree = true;
@@ -338,8 +351,9 @@ const worktreeStep = defineStep(STEP.worktree, STOP_CLASSES.PRE_PUSH, async (ctx
   gitIn(deps, wt, ['fetch', '--end-of-options', 'origin', ref]);
   gitIn(deps, wt, ['merge', '--end-of-options', `origin/${ref}`]);
   const stamped = deps.node(binScript('hooks.js'), ['record-worktree', '--run', ctx.runDir, wt],
-    { cwd: mainRoot, timeout: CLI_TIMEOUT_MS });
-  // The success line only: the failure lines also contain "recorded".
+    { cwd: mainRoot, timeout: CLI_TIMEOUT_MS, env: deps.env });
+  // The exact success line: record-worktree exits 0 on its failure paths too, and the line
+  // binds the match to this run id.
   const recorded = `claude-tweaks: worktree recorded for ${ctx.runId}`;
   if (stamped.code !== 0 || !String(stamped.stdout).split(/\r?\n/).some((l) => l.trim() === recorded)) {
     return { status: 'fail', detail: `worktree not recorded in the run state: ${firstLine(stamped.stdout) || firstLine(stamped.stderr) || 'no output'}` };

@@ -19,7 +19,7 @@
 // required lazily inside realDeps, so --help, a malformed invocation and the tests never
 // load them.
 //
-// ASSUMPTION (spec #5218, Gotchas) — answered at build: An ownerless driver run is not reaped or orphaned while a record is driven: bin/lib/hooks/worktree-reap.js reaps an unlocked worktree only when it is merged into the integration branch with no local-only content; reconcile/archive-merged.js only counts ownerless runs (countOwnerlessNonClean); tidy/scan-procedures.md keeps unmerged worktrees and acts only after its Step 6 approval.
+// ASSUMPTION (spec #5218, Gotchas) — answered at build: a fresh unlocked worktree IS reap-eligible: bin/lib/hooks/worktree-reap.js reaps an unlocked worktree under .claude/worktrees/ with no local-only content, which a new one is until the worker's first write. The driver therefore creates its worktree locked, with its own pid in the lock reason (steps.js, the worktree step); the lock reads in-use while the driver lives, and once it is gone or the lock is cleared the reaper's 24h grace applies. Unchanged: reconcile/archive-merged.js only counts ownerless runs (countOwnerlessNonClean); tidy/scan-procedures.md keeps unmerged worktrees and acts only after its Step 6 approval.
 const fs = require('fs');
 const { execFileSync, spawnSync } = require('child_process');
 const { createEventSink, outcomeFor, FINAL_STEP, STOP_CLASSES } = require('./events');
@@ -206,8 +206,9 @@ const realDeps = {
     cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GIT_TIMEOUT_MS, windowsHide: true,
   }),
   // A plugin/bin CLI under this Node; never throws on a non-zero exit.
-  node: (script, args, { cwd, timeout } = {}) => {
-    const r = spawnSync(process.execPath, [script, ...args], { cwd, encoding: 'utf8', timeout, maxBuffer: MAX_BUFFER, windowsHide: true });
+  // The child gets the caller's env (steps pass deps.env), never an implicit copy of the parent's.
+  node: (script, args, { cwd, timeout, env = process.env } = {}) => {
+    const r = spawnSync(process.execPath, [script, ...args], { cwd, env, encoding: 'utf8', timeout, maxBuffer: MAX_BUFFER, windowsHide: true });
     const stderr = r.stderr || '';
     return { code: r.status, stdout: r.stdout || '', stderr: r.error ? `${stderr}${r.error.message}\n` : stderr };
   },
@@ -226,6 +227,7 @@ const realDeps = {
   mkdirSync: (p, opts) => fs.mkdirSync(p, opts),
   platform: process.platform,
   env: process.env,
+  pid: process.pid,
   now: Date.now,
   date: () => new Date(),
   sleep: (ms) => new Promise((resolve) => { setTimeout(resolve, ms); }),
