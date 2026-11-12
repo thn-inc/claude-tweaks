@@ -1,0 +1,16 @@
+{
+  "usageItems": [
+    {
+      "date": "2026-11-01",
+      "product": "Actions",
+      "sku": "actions_linux",
+      "quantity": 5,
+      "unitType": "minutes",
+      "pricePerUnit": 1,
+      "grossAmount": 5,
+      "discountAmount": 0,
+      "netAmount": 5,
+      "repositoryName": "example-user/widgets"
+    }
+  ]
+}
