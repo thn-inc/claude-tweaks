@@ -2268,4 +2268,5 @@ test('AC10.1: docs/plugin-structure.md names queue-pull.js in the command refere
   const entry = lines.find((l) => l.startsWith('plugin/bin/lib/dispatch/'));
   assert.ok(entry, 'the module entry exists');
   assert.ok(entry.includes('queue-pull.js'), 'the module entry names queue-pull.js');
+  assert.ok(entry.includes('; queue-pull.js (#5227'), 'the module has its own entry in the list, not only a mention');
 });
