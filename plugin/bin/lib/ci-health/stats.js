@@ -11,8 +11,14 @@
 // Superseded: per workflow, among runs on non-default branches keyed by
 // `head_repository.full_name` + `head_branch`, a run whose `head_sha` is not the head of the newest
 // run (by `created_at`) for that key, whatever its conclusion; denominator = that workflow's
-// non-default-branch runs. Default-branch runs are never superseded. With no default branch known
-// (`defaultBranch: null`) both superseded figures are null.
+// non-default-branch runs. Default-branch runs are never superseded. A run is default-branch work
+// only when `head_branch` is the default branch and its `head_repository` is null or is the run's
+// own `repository`: a fork PR from the fork's own `main` is non-default-branch work, keyed and
+// counted like any other. With no default branch known (`defaultBranch: null`) both superseded
+// figures are null.
+//
+// The trend label and the push flag compare the same 2-dp rounded value the Workflow reports
+// (`trend.ratio`, `pushRunRate`), so a reported 1.25 is never `flat` and a 0.9 never unflagged.
 //
 // A completed run whose conclusion is in NO_WORK_CONCLUSIONS did no CI work: it counts in `runs`
 // and `noWorkRuns` and stays out of the percentiles, the weekly buckets, `completedRuns` and the
@@ -80,18 +86,24 @@ function trendOf(buckets) {
   if (first.length < MIN_BUCKET_RUNS || last.length < MIN_BUCKET_RUNS) return 'insufficient';
   const firstP50 = p50(first);
   if (firstP50 === 0) return 'insufficient';
-  const ratio = p50(last) / firstP50;
+  const ratio = round2(p50(last) / firstP50);
   const label = ratio >= TREND_RISING ? 'rising' : ratio <= TREND_FALLING ? 'falling' : 'flat';
-  return { ratio: round2(ratio), label };
+  return { ratio, label };
+}
+
+function isDefaultBranchRun(run, defaultBranch) {
+  if (run.head_branch !== defaultBranch) return false;
+  if (!run.head_repository) return true;
+  return Boolean(run.repository) && run.head_repository.full_name === run.repository.full_name;
 }
 
 function supersededOf(group, defaultBranch) {
   if (defaultBranch == null) return { superseded: null, supersededShare: null };
   const byKey = new Map();
   for (const run of group) {
-    if (run.head_branch === defaultBranch) continue;
-    const repo = run.head_repository ? run.head_repository.full_name : null;
-    const key = JSON.stringify([repo == null ? null : repo, run.head_branch == null ? null : run.head_branch]);
+    if (isDefaultBranchRun(run, defaultBranch)) continue;
+    // JSON.stringify writes an undefined array entry as null, so a missing field keys like null.
+    const key = JSON.stringify([run.head_repository ? run.head_repository.full_name : null, run.head_branch]);
     if (!byKey.has(key)) byKey.set(key, []);
     byKey.get(key).push(run);
   }
@@ -126,7 +138,7 @@ function workflowStats(path, group, { fromMs, fullBuckets, defaultBranch, pushSa
     if (bucket >= 0 && bucket < fullBuckets) buckets[bucket].push(seconds);
   }
   const sorted = ascending(durations);
-  const rate = pushSample === null || pushShas.size === 0 ? null : pushShas.size / pushSample;
+  const rate = pushSample === null || pushShas.size === 0 ? null : round2(pushShas.size / pushSample);
   const { superseded, supersededShare } = supersededOf(group, defaultBranch);
   return {
     name: newestOf(group).name,
@@ -143,7 +155,7 @@ function workflowStats(path, group, { fromMs, fullBuckets, defaultBranch, pushSa
     superseded,
     supersededShare,
     cancelled,
-    pushRunRate: rate === null ? null : round2(rate),
+    pushRunRate: rate,
     pushesOnNearlyEveryPush: rate !== null && rate >= PUSH_RATE_FLAG,
   };
 }
@@ -159,7 +171,7 @@ function computeStats(runs, { from, days, defaultBranch }) {
   const context = {
     fromMs: from.getTime(),
     fullBuckets: Math.floor(days / BUCKET_DAYS),
-    defaultBranch: defaultBranch == null ? null : defaultBranch,
+    defaultBranch,
     pushSample: allPushShas.size >= PUSH_SAMPLE_FLOOR ? allPushShas.size : null,
   };
   const out = [];

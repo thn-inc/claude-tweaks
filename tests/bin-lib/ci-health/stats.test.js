@@ -33,6 +33,7 @@ function run({
     head_branch: branch,
     head_sha: sha === undefined ? `sha-${seq}` : sha,
     head_repository: headRepo === null ? null : { full_name: headRepo },
+    repository: { full_name: 'o/r' },
     created_at: iso(start),
     run_started_at: iso(start),
     updated_at: iso(start + seconds * 1000),
@@ -54,9 +55,9 @@ const ac11Runs = () => [600, 700, 800, 1200, 1300].map((seconds, i) =>
   run({ created: NOW.getTime() - 3 * DAY + i * HOUR, seconds }));
 
 // AC2.2: five runs a week for three full weeks from 2026-10-22.
-function trendRuns([s1, s2, s3], week3Count = 5) {
+function trendRuns([s1, s2, s3], week3Count = 5, week1Count = 5) {
   const out = [];
-  for (let i = 0; i < 5; i++) out.push(run({ created: at(i), seconds: s1 }));
+  for (let i = 0; i < week1Count; i++) out.push(run({ created: at(i), seconds: s1 }));
   for (let i = 0; i < 5; i++) out.push(run({ created: at(7 + i), seconds: s2 }));
   for (let i = 0; i < week3Count; i++) out.push(run({ created: at(14 + i), seconds: s3 }));
   return out;
@@ -148,7 +149,30 @@ test('AC2.2: weekly p50 per full bucket, rising trend; the partial tail moves p9
 test('AC2.3 / AC2.4: falling and flat trends', () => {
   assert.deepStrictEqual(only(computeStats(trendRuns([600, 500, 400]), OPTS21)).trend,
     { ratio: 0.67, label: 'falling' });
-  assert.strictEqual(only(computeStats(trendRuns([500, 520, 540]), OPTS21)).trend.label, 'flat');
+  assert.deepStrictEqual(only(computeStats(trendRuns([500, 520, 540]), OPTS21)).trend,
+    { ratio: 1.08, label: 'flat' });
+});
+
+test('trend thresholds: exactly 1.25 is rising, exactly 0.8 is falling', () => {
+  assert.deepStrictEqual(only(computeStats(trendRuns([400, 450, 500]), OPTS21)).trend,
+    { ratio: 1.25, label: 'rising' });
+  assert.deepStrictEqual(only(computeStats(trendRuns([500, 450, 400]), OPTS21)).trend,
+    { ratio: 0.8, label: 'falling' });
+});
+
+test('trend label compares the rounded ratio it reports: 1.248 is rising, 0.803 is falling', () => {
+  assert.deepStrictEqual(only(computeStats(trendRuns([500, 550, 624]), OPTS21)).trend,
+    { ratio: 1.25, label: 'rising' });
+  assert.deepStrictEqual(only(computeStats(trendRuns([1000, 900, 803]), OPTS21)).trend,
+    { ratio: 0.8, label: 'falling' });
+});
+
+test('trend: under 5 working runs in the first full bucket is insufficient', () => {
+  assert.strictEqual(only(computeStats(trendRuns([400, 450, 600], 5, 4), OPTS21)).trend, 'insufficient');
+});
+
+test('trend: a first full bucket with a p50 of 0 is insufficient, never an infinite ratio', () => {
+  assert.strictEqual(only(computeStats(trendRuns([0, 450, 600]), OPTS21)).trend, 'insufficient');
 });
 
 test('AC2.5: fewer than two full buckets, or under 5 completed runs in the last one, is insufficient', () => {
@@ -187,6 +211,30 @@ test('AC3.1 / AC3.2 / AC3.3: push-run rate against every workflow\'s distinct pu
   }
 });
 
+test('push flag boundaries: 9 of 10 shas is 0.9 and flagged; a rate rounding to 0.90 is flagged', () => {
+  const t = NOW.getTime() - 5 * DAY;
+  const pushes = (path, list) => list.map((sha, i) =>
+    run({ path, event: 'push', sha, created: t + i * HOUR, seconds: 60 }));
+  const shas = (n) => Array.from({ length: n }, (_, i) => `q${i + 1}`);
+
+  const ten = shas(10);
+  const atFloor = computeStats([
+    ...pushes('.github/workflows/a.yml', ten.slice(0, 9)),
+    ...pushes('.github/workflows/b.yml', ten.slice(9)),
+  ], OPTS30)[0];
+  assert.strictEqual(atFloor.pushRunRate, 0.9);
+  assert.strictEqual(atFloor.pushesOnNearlyEveryPush, true);
+
+  // 26 / 29 = 0.8966, reported as 0.9.
+  const twentyNine = shas(29);
+  const rounded = computeStats([
+    ...pushes('.github/workflows/a.yml', twentyNine.slice(0, 26)),
+    ...pushes('.github/workflows/b.yml', twentyNine.slice(26)),
+  ], OPTS30)[0];
+  assert.strictEqual(rounded.pushRunRate, 0.9);
+  assert.strictEqual(rounded.pushesOnNearlyEveryPush, true);
+});
+
 test('AC6.2: completed runs missing run_started_at or updated_at are skipped, not percentiled', () => {
   const base = ac11Runs();
   const noStart = { ...run({ created: NOW.getTime() - DAY, seconds: 5 }) };
@@ -220,6 +268,15 @@ test('Review Focus 2: a renamed workflow is one workflow keyed by path, named fr
   assert.strictEqual(w.runs, 2);
 });
 
+test('newest run: an equal created_at falls to the higher run id, whatever the array order', () => {
+  const t = NOW.getTime() - 4 * DAY;
+  const older = run({ name: 'Old', created: t, seconds: 60 });
+  const newer = run({ name: 'New', created: t, seconds: 60 });
+  assert.ok(newer.id > older.id);
+  assert.strictEqual(only(computeStats([older, newer], OPTS30)).name, 'New');
+  assert.strictEqual(only(computeStats([newer, older], OPTS30)).name, 'New');
+});
+
 test('Review Focus 3: a fork run with head_repository null does not throw and counts in the denominator', () => {
   const t = NOW.getTime() - 2 * DAY;
   const runs = [
@@ -230,6 +287,18 @@ test('Review Focus 3: a fork run with head_repository null does not throw and co
   const w = only(computeStats(runs, OPTS30));
   assert.strictEqual(w.superseded, 1);
   assert.strictEqual(w.supersededShare, 0.33);
+});
+
+test('a fork run on a branch named like the default branch is non-default work; base-repo runs on it are not', () => {
+  const t = NOW.getTime() - 2 * DAY;
+  const w = only(computeStats([
+    run({ branch: 'main', sha: 'a', created: t, seconds: 60, headRepo: 'x/r' }),
+    run({ branch: 'main', sha: 'b', created: t + HOUR, seconds: 60, headRepo: 'x/r' }),
+    run({ branch: 'main', sha: 'c', created: t - HOUR, seconds: 60 }),
+    run({ branch: 'main', sha: 'd', created: t - 2 * HOUR, seconds: 60, headRepo: null }),
+  ], OPTS30));
+  assert.strictEqual(w.superseded, 1);
+  assert.strictEqual(w.supersededShare, 0.5);
 });
 
 test('defaultBranch null: superseded and supersededShare are null', () => {
