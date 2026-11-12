@@ -8,7 +8,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {
-  run, parseArgs, realDeps, computeCiWallMs, ghRunner, VERDICTS, RUN_LIST_FIELDS, CI_GATE_GH_TIMEOUT_MS,
+  run, parseArgs, realDeps, makeRealDeps, computeCiWallMs, VERDICTS, RUN_LIST_FIELDS, CI_GATE_GH_TIMEOUT_MS,
 } = require('../../../plugin/bin/ci-gate-record');
 
 const RUN_ID = '2026-11-12T102742-record-5160';
@@ -343,8 +343,11 @@ test('a write that does not land exits 3: the real appendEvent with events.jsonl
 
 test('the real gh spawn: execFileSync-shaped call with a 15 s timeout, quiet stdio and windowsHide', () => {
   assert.equal(CI_GATE_GH_TIMEOUT_MS, 15000);
+  // realDeps is makeRealDeps() itself, so its gh is the one this test drives with a recorder.
+  assert.equal(realDeps.gh.toString(), makeRealDeps().gh.toString(), 'realDeps.gh must be makeRealDeps\'s gh');
+  assert.equal(makeRealDeps().resolveTarget, realDeps.resolveTarget);
   const seen = [];
-  const gh = ghRunner((cmd, args, opts) => { seen.push({ cmd, args, opts }); return '[]'; });
+  const { gh } = makeRealDeps((cmd, args, opts) => { seen.push({ cmd, args, opts }); return '[]'; });
   // --repo makes ghOptions return the options unchanged (no host resolution from the cwd).
   const args = ['run', 'list', '--repo', 'o/r'];
   assert.equal(gh(args), '[]');

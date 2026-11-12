@@ -40,7 +40,7 @@ const STEP_25_FACTS = [
   [/```bash\r?\nnode "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/ci-gate-record\.js" [^\n]*--verdict green[^\n]*\r?\n```/, 'green-call'],
   [/A non-zero exit logs `SKIP \{HH:MM:SS\} — Step 2\.5 \(merge-verification gate\): ci-gate not recorded \(\{error\}\)` and the merge path continues unchanged — the writer never gates a merge/, 'skip'],
   [/A Red-path resume or moving-target re-entry is a new gate pass with its own call;/, 'resume'],
-  [/a Step 3 degrade into the `wait` row is the same pass, no second call\./, 'same-pass'],
+  [/a Step 3 degrade into the `wait` row is the same pass, no second green call\./, 'same-pass'],
   [/Dispatch close-out skips this step, so records nothing;/, 'close-out'],
   [/so do an explicit `off`, an armed merge on pending checks and a failed read\./, 'no-verdict'],
 ];

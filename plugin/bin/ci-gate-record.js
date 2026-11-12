@@ -105,25 +105,22 @@ function computeCiWallMs(runs) {
   return min === Infinity ? null : max - min;
 }
 
-// The one gh spawn, bound to `spawnImpl` (execFileSync in realDeps) so a test can
-// pass a recorder and pin the options it is spawned with.
-function ghRunner(spawnImpl = execFileSync) {
-  return (args) => spawnImpl('gh', args, ghOptions(args, {
-    encoding: 'utf8', windowsHide: true, timeout: CI_GATE_GH_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'pipe'],
-  }));
-}
-
-const realDeps = {
+// The real deps, with the one gh spawn bound to `spawnImpl` (execFileSync for
+// realDeps) so a test can pass a recorder and pin the options it is spawned with.
+const makeRealDeps = (spawnImpl = execFileSync) => ({
   cwd: () => process.cwd(),
   mainRoot: undefined,
   now: () => Date.now(),
-  gh: ghRunner(),
+  gh: (args) => spawnImpl('gh', args, ghOptions(args, {
+    encoding: 'utf8', windowsHide: true, timeout: CI_GATE_GH_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'pipe'],
+  })),
   appendEvent,
   resolveTarget,
   readFile: (p) => fs.readFileSync(p, 'utf8'),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
-};
+});
+const realDeps = makeRealDeps();
 
 const isPlainObject = (v) => typeof v === 'object' && v !== null && !Array.isArray(v);
 
@@ -211,7 +208,7 @@ function run(argv, deps = realDeps) {
 }
 
 module.exports = {
-  run, parseArgs, realDeps, computeCiWallMs, ghRunner, VERDICTS, RUN_LIST_FIELDS, CI_GATE_GH_TIMEOUT_MS,
+  run, parseArgs, realDeps, makeRealDeps, computeCiWallMs, VERDICTS, RUN_LIST_FIELDS, CI_GATE_GH_TIMEOUT_MS,
 };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);
