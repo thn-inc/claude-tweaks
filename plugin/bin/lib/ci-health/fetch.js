@@ -70,8 +70,9 @@ function fetchRuns({ owner, repo, from }, { runner }) {
       page = body && body.workflow_runs;
       if (!Array.isArray(page)) throw new Error(`runs page ${n}: response has no workflow_runs array`);
     } catch (err) {
-      result.failures.push({ query: `runs page ${n}`, status: httpStatusOf(err), error: errorText(err) });
+      // gh absence renders from `ghAbsent` alone, so it adds no failure row.
       if (isGhAbsent(err)) result.ghAbsent = true;
+      else result.failures.push({ query: `runs page ${n}`, status: httpStatusOf(err), error: errorText(err) });
       break;
     }
     result.runs.push(...page);

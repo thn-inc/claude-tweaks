@@ -124,11 +124,13 @@ for (const [label, stderr, status] of [
   });
 }
 
-test('ENOENT on page 1 signals gh absent and stops', () => {
+test('ENOENT on page 1 signals gh absent with no failure row, and stops', () => {
   const { runner, calls } = runsRunner([enoent(), 100]);
   const r = fetchRuns({ owner: 'acme', repo: 'widgets', from: FROM }, { runner });
   assert.strictEqual(r.ghAbsent, true);
   assert.strictEqual(r.available, false);
+  assert.deepStrictEqual(r.failures, []);
+  assert.deepStrictEqual(r.runs, []);
   assert.strictEqual(calls.length, 1);
 });
 
