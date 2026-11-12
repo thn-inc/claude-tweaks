@@ -288,6 +288,24 @@ test('AC4.8: isControlModeOn is true only for the exact string on', () => {
   }
 });
 
+// Control-mode keys no plugin code acts on yet; the #4608 leaves wire them
+// (policy-schema.js's Control mode comment names which). The record that wires
+// a key removes it from this list and drops "Not yet used" from its summary.
+const NOT_YET_USED = ['control-mode', 'acceptance-target', 'deploy-reach', 'deploy-command', 'deploy-live-workflow', 'deploy-version-url', 'dev-base-url', 'dev-test-account', 'deploy-wait-seconds', 'deploy-poll-seconds', 'owned-owners', 'trusted-authors', 'risk-categories', 'risk-path-globs', 'express-driver', 'express-driver-wall-clock-minutes', 'express-driver-spend-ceiling-dollars'];
+
+test('every control-mode key nothing consumes yet says so in its summary (#4816)', () => {
+  for (const key of NOT_YET_USED) {
+    const row = POLICY_KEYS.find((r) => r.key === key);
+    assert.ok(row, `${key} missing from POLICY_KEYS`);
+    assert.match(row.summary, /^Not yet used[.;] /, key);
+  }
+});
+
+test('no key outside NOT_YET_USED opens its summary with "Not yet used" (#4816)', () => {
+  const marked = POLICY_KEYS.filter((r) => /^Not yet used\b/.test(r.summary)).map((r) => r.key);
+  assert.deepStrictEqual(marked.sort(), [...NOT_YET_USED].sort());
+});
+
 test('risk-categories accepts extra slugs and rejects a non-slug', () => {
   const ok = json('risk-categories: data-export,pii\n', 'risk-categories');
   assert.deepStrictEqual(ok['risk-categories'], { value: 'data-export,pii', source: 'policy' });

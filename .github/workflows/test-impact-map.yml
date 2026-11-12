@@ -11,6 +11,11 @@
 # real runner before merge; fetch reads main runs only, so a PR's map is never
 # served.
 #
+# This is also main's only post-merge run of the full suite: test.yml runs on
+# pull requests only, and a red traced suite fails this run (the last step), so
+# a commit that breaks main shows red here. It installs zsh for the same reason
+# test.yml does, so the zsh cases run rather than skip.
+#
 # trace runs without --allow-dirty: a fresh checkout is clean, so a refusal
 # here means CI dirtied a tracked file, and that should fail visibly. trace
 # exits 0 whenever it wrote a map — a failing suite still writes one,
@@ -62,18 +67,20 @@ jobs:
       # whole pass, which is exactly what happened here without a token.
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Full history, as in test.yml: the traced suite must read what the
           # gating suite reads, and some tests walk origin/main's history.
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
+      # ubuntu-latest ships no zsh; without it the zsh cases (#4107) skip. Same step as test.yml.
+      - run: sudo apt-get install -y --no-install-recommends zsh || (sudo apt-get update && sudo apt-get install -y --no-install-recommends zsh)
       # No install step: the plugin ships zero npm deps, and node --test is built in.
       - name: Trace the suite into a test-impact map
         run: node tools/test-impact.js trace --out "$RUNNER_TEMP/test-impact-map.json"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: test-impact-map

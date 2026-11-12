@@ -52,7 +52,7 @@
 - The merge-verification degrade line is Deliverable 4's line with the key swapped (Decision Q9) — no "derived from" wording anywhere in code, tests, or docs.
 - `CLAUDE_TWEAKS_GH_TIMEOUT_MS` set to a non-integer or out-of-range value falls through to policy, not to 5000 and not a throw — Task 1 test.
 - A degraded detection in the PR-stamp gate must leave `run-state.json` without `prExempt` (Decision Q5), while a clean `local-merge` still persists it — Task 3 tests both via the `deps.resolveIntegrationModel` override.
-- `reconcile()` callers that never set `forgeProbeTimeoutMs` (CLI verb, background pass, tests) keep the forwarded shape `{ mcpReachable }` exactly — the existing `#1558` test in `tests/reconcile.test.js` stays green and Task 4 adds the set case.
+- `reconcile()` callers that never set `forgeProbeTimeoutMs` (CLI verb, background pass, tests) keep the forwarded shape `{ mcpReachable }` exactly — the existing `#1558` test in `tests/reconcile-preflight-fetch.test.js` stays green and Task 4 adds the set case.
 - The JSON `degraded` field is the bare reason code (`timeout` / `timeout-then-exit`), never rendered text (Decision Q13); the stderr line still carries the ms, rendered from the side-channel degrade object.
 - A degraded `integration-model` never reaches `config.yml` as the run pin (Decision Q10), on both the `manifesto-write.js` CLI path and the prose Write mechanism; a clean resolve still pins exactly as before.
 - `precondition.js` reports `degraded-detection` (ok, fail-open) only for a reported degrade; a clean `local-merge` still reports `not-pr-first` (Decision Q11).
@@ -403,7 +403,7 @@ git commit -m "Bound the PR-stamp gate's forge probe explicitly — timeout para
 **Files:**
 - Modify: `plugin/bin/lib/reconcile/index.js` (opts doc comment 103, model resolution 246-257)
 - Modify: `plugin/bin/lib/hooks/session-start.js` (imports ~12, inline `reconcile({…})` call 259-261 and its comment)
-- Test: `tests/reconcile.test.js` (beside the `#1558` forwarding test, ~1923)
+- Test: `tests/reconcile-preflight-fetch.test.js` (beside the `#1558` forwarding test; pre-split `tests/reconcile.test.js` ~1923)
 - Test: `tests/hooks-session-start.test.js`
 
 **Interfaces:**
@@ -412,7 +412,7 @@ git commit -m "Bound the PR-stamp gate's forge probe explicitly — timeout para
 
 - [ ] **Step 1: Write the failing tests**
 
-`tests/reconcile.test.js`:
+`tests/reconcile-preflight-fetch.test.js`:
 
 ```js
 test('reconcile(): forwards opts.forgeProbeTimeoutMs into resolveIntegrationModel as timeoutMs (#4578 AC11.1)', async () => {
@@ -435,7 +435,7 @@ test('session-start passes HOOK_FORGE_PROBE_TIMEOUT_MS into its inline reconcile
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `node --test tests/reconcile.test.js tests/hooks-session-start.test.js`
+Run: `node --test tests/reconcile-preflight-fetch.test.js tests/hooks-session-start.test.js`
 Expected: FAIL — the first call's forwarded options lack `timeoutMs`; the source scan does not match.
 
 - [ ] **Step 3: Implement**
@@ -444,13 +444,13 @@ Expected: FAIL — the first call's forwarded options lack `timeoutMs`; the sour
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `node --test tests/reconcile.test.js tests/hooks-session-start.test.js`
+Run: `node --test tests/reconcile-preflight-fetch.test.js tests/hooks-session-start.test.js`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/bin/lib/reconcile/index.js plugin/bin/lib/hooks/session-start.js tests/reconcile.test.js tests/hooks-session-start.test.js
+git add plugin/bin/lib/reconcile/index.js plugin/bin/lib/hooks/session-start.js tests/reconcile-preflight-fetch.test.js tests/hooks-session-start.test.js
 git commit -m "Pass the hook-bounded forge probe timeout from SessionStart into reconcile — refs #4578"
 ```
 

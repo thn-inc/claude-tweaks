@@ -93,7 +93,7 @@ against reality than trusting it in the abstract; do that for whichever check yo
    `BACKGROUND_CHECKS`, pinned by `tests/bin-lib/hooks/reconcile-background.test.js`); a deferred
    check is then absent from the unscoped CLI's inline set. `plugin/skills/tidy/scan-procedures.md`'s
    Reconcile-first call lists every check explicitly for that reason, and
-   `tests/reconcile.test.js` pins that list to `ALL_CHECKS`.
+   `tests/reconcile-dispatch.test.js` pins that list to `ALL_CHECKS`.
 4. **`bin/hooks.js`'s `reconcile-threw` fallback** — a **hand-maintained duplicate** of
    `reconcile()`'s result shape (`{ mirror, redTip, worktrees, claims, postMerge, runs, branches,
    remoteBranches, ledgerResidue, console, residuePlan, residueErrors, skipped, timings }`), substituted only when `reconcile()` itself
@@ -112,8 +112,10 @@ against reality than trusting it in the abstract; do that for whichever check yo
 6. **`docs/hooks.md`'s Background convergence bullet** — it names every check twice in prose (the
    full set, then the background half). Add the new check to both lists.
 7. **Three shape-asserting test files:**
-   - `tests/reconcile.test.js` — dispatch order, `ALL_CHECKS` membership, the `local-merge-model`
-     skip list (a check with no local-merge fallback belongs in that skip line's check list).
+   - `tests/reconcile-dispatch.test.js` — dispatch order and `ALL_CHECKS` membership. It,
+     `tests/reconcile.test.js` and `tests/reconcile-preflight-fetch.test.js` all assert the
+     `local-merge-model` skip list (a check with no local-merge fallback belongs in that skip line's
+     check list).
    - `tests/console-execute.test.js` / `tests/console-execution.test.js` — only if the new check
      interacts with console execution.
    - The check's own `tests/bin-lib/reconcile/{check}.test.js`.
