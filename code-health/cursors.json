@@ -330,5 +330,9 @@
   "plugin/bin/lib/release-tip": {
     "lastSweptMs": 1794366437976,
     "lastHash": "4117f1e8d0fd93722c6bad9b94e55e792123d169"
+  },
+  "plugin/bin/lib/run-liveness": {
+    "lastSweptMs": 1794452963512,
+    "lastHash": "f585d1fb63a314fa9f3acc282fc99a00d028a36d"
   }
 }
