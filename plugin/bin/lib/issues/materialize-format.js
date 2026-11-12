@@ -7,7 +7,7 @@
 'use strict';
 
 const { POLICY_KEYS } = require('../policy-schema');
-const { fencedLineRanges, findSection, hiddenByUnclosedFence, unclosedFenceLine } = require('../markdown-blocks');
+const { fencedLineRanges, fencedLineMask, findSection, hiddenByUnclosedFence, unclosedFenceLine } = require('../markdown-blocks');
 
 const REQUIRED_SECTIONS = ['## Current State', '## Deliverables', '## Acceptance Criteria', '## Release Note'];
 // The Design-intent enum, read once from the policy schema (never restated here).
@@ -28,6 +28,21 @@ const PLACEHOLDER_RE = new RegExp(PLACEHOLDER_PATTERNS.map((p) => p.re.source).j
 // original capture's own text, never unresolved authored placeholders, so
 // the placeholder gate tests only the text before it (refs #1240).
 const ORIGINAL_REQUEST_RE = /^## Original request[ \t]*$/m;
+
+// text -> the offset of the first `## Original request` heading outside a fenced block, or
+// -1 (#4351): a fenced quoted heading must not end the authored scan. The one boundary rule
+// shapeGate, compose-record and ambiguity-resolve share. A trailing unclosed fence reads as
+// prose, so a stray opener cannot swallow the real heading (fencedLineMask's unclosedAsText).
+function originalRequestOffset(text) {
+  const lines = text.split('\n');
+  const fenced = fencedLineMask(lines, { unclosedAsText: true });
+  let offset = 0;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (!fenced[i] && ORIGINAL_REQUEST_RE.test(lines[i])) return offset;
+    offset += lines[i].length + 1;
+  }
+  return -1;
+}
 
 // #1839: a fenced block or inline code span quotes content rather than
 // authoring it — a Deliverables fence quoting the exact CLAUDE.md line
@@ -103,7 +118,7 @@ const UNCLOSED_FENCE_PREFIX = 'unclosed-fence at line ';
 function shapeGate(body) {
   const text = typeof body === 'string' ? body : '';
   const missing = [];
-  const originalRequestAt = text.search(ORIGINAL_REQUEST_RE);
+  const originalRequestAt = originalRequestOffset(text);
   const authored = originalRequestAt === -1 ? text : text.slice(0, originalRequestAt);
   const authoredLines = authored.replace(/\r\n/g, '\n').split('\n');
   let fenceLine = null;
@@ -230,5 +245,5 @@ function composeFile({ header, n, title, body }) {
 }
 
 module.exports = {
-  REQUIRED_SECTIONS, PLACEHOLDER_PATTERNS, ORIGINAL_REQUEST_RE, UNCLOSED_FENCE_PREFIX, DESIGN_INTENT_VALUES, sectionText, shapeGate, normalizeDesignIntent, describeDesignIntentError, liftMetadata, composeHeader, composeFile, stripCodeSpans,
+  REQUIRED_SECTIONS, PLACEHOLDER_PATTERNS, ORIGINAL_REQUEST_RE, originalRequestOffset, UNCLOSED_FENCE_PREFIX, DESIGN_INTENT_VALUES, sectionText, shapeGate, normalizeDesignIntent, describeDesignIntentError, liftMetadata, composeHeader, composeFile, stripCodeSpans,
 };
