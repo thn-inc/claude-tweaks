@@ -768,7 +768,8 @@ const recordPrStep = defineStep(STEP.recordPr, STOP_CLASSES.BLOCKED, async (ctx,
 });
 
 // Writes the run's config.yml, which keeps the run dir from being swept as an orphaned mint,
-// with check's configSet string verbatim.
+// with check's configSet string verbatim. Once it is written the record is a complete
+// pending-review, so ctx.configWritten makes a later interrupt class `none` (run.js's interruptClass).
 const setConfigStep = defineStep(STEP.setConfig, STOP_CLASSES.BLOCKED, async (ctx, deps) => {
   const configSet = ctx.check && ctx.check.configSet;
   if (typeof configSet !== 'string' || configSet === '') {
@@ -779,6 +780,7 @@ const setConfigStep = defineStep(STEP.setConfig, STOP_CLASSES.BLOCKED, async (ct
   if (r.code !== 0) {
     return { status: 'fail', detail: `set-config.js exited ${r.code}: the run dir has no config.yml (${neutralize(firstLine(r.stderr)) || 'no output'})` };
   }
+  ctx.configWritten = true;
   return { status: 'ok' };
 });
 
@@ -819,12 +821,16 @@ function readCiState(ctx, deps, args) {
 // Never halts and always reports `ok`: the word it reads is data for the reviewer. The wait is
 // reported as extra.ciWaitMs, so the final line can exclude it without naming this step. A signal
 // during a sleep is delivered mid-step (run.js's handler writes the stop); polling then stops.
+// For that handler, ctx.ci holds the last polled state and ctx.ciWaitStartedAt the wait's start
+// while the step runs, so the interrupted line reports the state and the wait so far.
 const ciStep = defineStep(STEP.ci, STOP_CLASSES.NONE, async (ctx, deps) => {
   const started = deps.now();
+  ctx.ciWaitStartedAt = started;
   let polled = 'read-failed';
   let timedOut = false;
   for (;;) {
     polled = readCiState(ctx, deps, ['--pr', String(ctx.pr.number)]);
+    ctx.ci = polled;
     if (polled !== 'pending' || ctx.shared.interrupted) break;
     if (deps.now() - started >= CI_WAIT_BOUND_MS) {
       timedOut = true;
@@ -839,6 +845,7 @@ const ciStep = defineStep(STEP.ci, STOP_CLASSES.NONE, async (ctx, deps) => {
     if (timedOut && state === 'pending') state = 'timeout';
   }
   ctx.ci = state;
+  ctx.ciWaitStartedAt = null;
   return { status: 'ok', detail: state, extra: { ciWaitMs: Math.max(0, deps.now() - started) } };
 });
 

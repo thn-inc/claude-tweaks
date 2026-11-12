@@ -898,7 +898,7 @@ test('AC9.2: leftover worktree, branch or run dir refuses at the worktree step',
   const leftovers = {
     worktree: [[on('lstatType'), { type: 'directory', code: null }], /worktree .*drive-record-7 \(directory\)/],
     branch: [[onGit('rev-parse'), 'abc123\n'], /branch drive-record-7/],
-    rundir: [[on('readdir'), ['2026-11-12T090000-drive-7', 'archive', '2026-11-12T090000-drive-70', 'x-drive-17']], /run directory 2026-11-12T090000-drive-7(;|$)/],
+    rundir:[[on('readdir'), ['2026-11-12T090000-drive-7', 'archive', '2026-11-12T090000-drive-70', 'x-drive-17']], /run directory 2026-11-12T090000-drive-7(;|$)/],
   };
   for (const [name, [entry, re]] of Object.entries(leftovers)) {
     const h = harness({ script: [entry] });
@@ -1471,7 +1471,9 @@ test('AC14: a signal before any record, or between records, only terminates', as
   assert.equal(idle.out.length, before, 'nothing emitted with no record running');
 });
 
-test('interruptClass keys on the side effect held: pushed, run dir, claim, else nothing written', () => {
+test('interruptClass keys on the side effect held: config written, pushed, run dir, claim, else nothing written', () => {
+  assert.equal(interruptClass({ configWritten: true, pushed: true, runDir: '/r', claimed: true }), 'none');
+  assert.equal(interruptClass({ configWritten: false, pushed: true, runDir: '/r', claimed: true }), 'blocked');
   assert.equal(interruptClass({ pushed: true, runDir: '/r', claimed: true }), 'blocked');
   assert.equal(interruptClass({ pushed: false, runDir: '/r', claimed: true }), 'pre-push');
   assert.equal(interruptClass({ pushed: false, runDir: null, claimed: true }), 'claim');
@@ -2228,7 +2230,7 @@ test('every record gets exactly one pr-checks --run read, carrying the express-l
   }
 });
 
-test('AC14: a signal during the CI wait is delivered mid-step: blocked, pushed, and polling stops', async () => {
+test('AC14: a signal during the CI wait is delivered mid-step: the record is a complete pending-review, and polling stops', async () => {
   const order = [];
   let h = null;
   h = harness({
@@ -2242,13 +2244,50 @@ test('AC14: a signal during the CI wait is delivered mid-step: blocked, pushed, 
   const lines = h.lines();
   const [stopLine, final] = lines.slice(-2);
   assert.deepEqual([stopLine.step, stopLine.status, stopLine.detail], ['ci', 'fail', 'interrupted by SIGTERM']);
-  assert.deepEqual([final.step, final.outcome, final.stop.class, final.stop.pushed, final.stop.step], [FINAL_STEP, 'blocked', 'blocked', true, 'ci']);
+  assert.deepEqual([final.step, final.outcome, final.stop.class, final.stop.pushed, final.stop.step], [FINAL_STEP, 'pending-review', 'none', true, 'ci']);
   assert.equal(final.pr, 9);
+  assert.equal(final.ci, 'pending', 'the last polled state, never null with a PR');
   assert.equal(finals(h).length, 1);
   assert.equal(lines.filter((l) => l.record === 8).length, 0, 'no further record');
   assert.deepEqual(order, ['terminate:SIGTERM']);
   assert.equal(nodeCalls(h, /pr-checks\.js$/).length, 1, 'no poll after the interrupt, and no --run read');
   assert.equal(checkRuns(h).length, 0);
+});
+
+test('AC14: a mid-poll interrupt reports the polled ci state and keeps the elapsed wait out of msWithoutCi', async () => {
+  let h = null;
+  h = harness({ script: [prChecksReply('pending')] });
+  // Time passes in the sleep (the harness clock), then the signal lands before it resolves.
+  const tick = h.deps.sleep;
+  h.deps.sleep = (ms) => tick(ms).then(() => new Promise((resolve) => { setImmediate(() => { h.signals[0]('SIGINT'); resolve(); }); }));
+  await run(['#7'], h.deps);
+  const [stopLine, final] = h.lines().slice(-2);
+  assert.deepEqual([stopLine.step, stopLine.status, final.outcome, final.stop.class, final.ci], ['ci', 'fail', 'pending-review', 'none', 'pending']);
+  assert.ok(stopLine.ciWaitMs >= CI_POLL_INTERVAL_MS, `the interrupted wait is reported: ${stopLine.ciWaitMs}`);
+  assert.equal(final.msWithoutCi, final.msTotal - stopLine.ciWaitMs);
+  assert.ok(final.msWithoutCi > 0 && final.msWithoutCi < CI_POLL_INTERVAL_MS, `msWithoutCi ${final.msWithoutCi} excludes the wait`);
+});
+
+test('AC14: a boundary interrupt after set-config is pending-review; before it, the pushed record is blocked', async () => {
+  // [the call the signal lands during, the step it is reported before, class, outcome, pr, ci]
+  const rows = [
+    [onGit('push'), 'pr', 'blocked', 'blocked', null, null],
+    [on('node', /hooks\.js$/, 'record-pr'), 'set-config', 'blocked', 'blocked', 9, 'pending'],
+    [on('node', /set-config\.js$/), 'summary', 'none', 'pending-review', 9, 'pending'],
+    [logsSummary, 'ci', 'none', 'pending-review', 9, 'pending'],
+  ];
+  for (const [during, before, cls, outcome, pr, ci] of rows) {
+    let h = null;
+    // Answered by the default reply, the signal queued for the next turn of the event loop.
+    h = harness({ script: [[(c) => during(c) && (fireSoon(h, 'SIGTERM'), false), null]] });
+    await run(['#7'], h.deps);
+    const [stopLine, final] = h.lines().slice(-2);
+    assert.deepEqual([stopLine.step, stopLine.status, stopLine.detail], [before, 'fail', `interrupted by SIGTERM before ${before}`], before);
+    assert.deepEqual([final.stop.step, final.stop.class, final.outcome, final.stop.pushed, final.pr, final.ci], [before, cls, outcome, true, pr, ci], before);
+    assert.equal('ciWaitMs' in stopLine, false, `${before}: no CI wait to report`);
+    assert.equal(final.msWithoutCi, final.msTotal, before);
+    assert.equal(checkRuns(h).length + checkPolls(h).length, 0, `${before}: CI is never read`);
+  }
 });
 
 test('stop.pushed and stop.created track this run only', async () => {

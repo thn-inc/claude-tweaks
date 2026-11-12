@@ -35,9 +35,11 @@
 //     and deps.terminate(signal);
 //   - with no record running, or before a record's first step: deps.terminate only.
 // The stop class (interruptClass) keys on what the record actually holds, never on the
-// step named: `blocked` once the branch is pushed, else `pre-push` once the run directory
-// exists, else class claim once the claim was obtained (ctx.claimed), else `refused`,
-// because nothing was written.
+// step named: `none` once the run's config is written (ctx.configWritten: the record is a
+// complete pending-review, so a signal during the CI wait never reads as a failure), else
+// `blocked` once the branch is pushed, else `pre-push` once the run directory exists, else
+// class claim once the claim was obtained (ctx.claimed), else `refused`, because nothing was
+// written.
 // Nothing further is driven or emitted after an interrupt. deps.terminate re-raises the
 // signal only once stdout has taken the queued lines (reraiseAfterFlush), so stdout and the
 // jsonl end alike.
@@ -100,8 +102,8 @@ function newShared() {
 function newCtx(record, shared) {
   return {
     record, runId: null, runDir: null, wt: null, branch: null, claimed: false,
-    created: { worktree: false, branch: false }, pushed: false,
-    pr: null, ci: null, checkLogged: undefined, worker: null,
+    created: { worktree: false, branch: false }, pushed: false, configWritten: false,
+    pr: null, ci: null, ciWaitStartedAt: null, checkLogged: undefined, worker: null,
     shared,
   };
 }
@@ -164,10 +166,13 @@ function yieldToEventLoop() {
   return new Promise((resolve) => { setImmediate(resolve); });
 }
 
-// An interrupted record's stop class, from the side effects it holds: `blocked` once the
-// branch is pushed, `pre-push` once the run directory exists (an escalation has somewhere
-// to live), the claim class once the claim was obtained, else `refused` (nothing written).
+// An interrupted record's stop class, from the side effects it holds: `none` once the run's
+// config is written (the PR is created, recorded and configured: a complete pending-review),
+// `blocked` once the branch is pushed, `pre-push` once the run directory exists (an escalation
+// has somewhere to live), the claim class once the claim was obtained, else `refused`
+// (nothing written).
 function interruptClass(ctx) {
+  if (ctx.configWritten === true) return STOP_CLASSES.NONE;
   if (ctx.pushed === true) return STOP_CLASSES.BLOCKED;
   if (ctx.runDir) return STOP_CLASSES.PRE_PUSH;
   if (ctx.claimed === true) return STOP_CLASSES.CLAIM;
@@ -175,13 +180,17 @@ function interruptClass(ctx) {
 }
 
 // Writes an interrupted record's stop at `step` and its final line, then terminates. The
-// process ends by the signal whatever the emission does.
+// process ends by the signal whatever the emission does. A CI wait in progress is reported
+// as the stop's ciWaitMs, so msWithoutCi still excludes it; with a PR, the ci field is the last
+// polled state, or `pending` when CI was never read (null is reserved for no PR).
 function reportInterrupt(shared, current, step, detail, ms, deps) {
   const { ctx, sink } = current;
   try {
     // A step that set ctx.runDir may not have had its sink bound yet; binding twice is harmless.
     if (ctx.runDir) sink.bindRunDir(ctx.runDir);
-    const result = { status: 'fail', detail, halt: true, stopClass: interruptClass(ctx), reason: 'fail', extra: {} };
+    if (ctx.pr && (ctx.ci === null || ctx.ci === undefined)) ctx.ci = 'pending';
+    const extra = Number.isFinite(ctx.ciWaitStartedAt) ? { ciWaitMs: Math.max(0, deps.now() - ctx.ciWaitStartedAt) } : {};
+    const result = { status: 'fail', detail, halt: true, stopClass: interruptClass(ctx), reason: 'fail', extra };
     sink.emit(eventFor(ctx, step.name, result, ms, deps));
     current.final = finalEvent(ctx, { name: step.name, result }, sink, deps.now() - current.started, deps);
     sink.emit(current.final);
