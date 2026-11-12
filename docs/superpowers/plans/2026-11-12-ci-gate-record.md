@@ -14,7 +14,7 @@
 
 **Task dependencies:** Tasks 1, 2 and 5 are independent. Task 3 needs Task 2's refused-case list. Task 4 needs Task 1 (the golden is committed before any `derive.js` edit). Task 6 needs Task 3 (`parseArgs`, `VERDICTS`) and Task 5 (the byte headroom). Task 7 needs Tasks 3 and 4. Longest chain: 3.
 
-**Byte budget (composed `merge` bundle).** Plan-audit measures the composed `merge` bundle (`pr-first-merge.md` + `pr-checklist-refresh.md`, composed at `dispatch/task-prompt.md:109`, `wrap-up/auto-merge-short-circuit.md:245`, `wrap-up/merge-mode.md:25`, `wrap-up/review-console.md:124`) at 51,695 B of `RAIL_BYTES` 52,500 B: 805 B of headroom at authoring. Task 5 removes 867 B of restated rationale from `pr-first-merge.md`; Task 6 adds 848 B of Step 2.5 prose (both measured with `Buffer.byteLength` over the verbatim before/after text against the live file at `2771d7929`). After both: `pr-first-merge.md` 37,030 B, bundle ≈ 51,676 B, headroom ≈ 824 B — above the orchestrator's 380 B floor, which leaves room for #5161's ≈100 B sentence on this branch.
+**Byte budget (composed `merge` bundle).** Plan-audit measures the composed `merge` bundle (`pr-first-merge.md` + `pr-checklist-refresh.md`, composed at `dispatch/task-prompt.md:109`, `wrap-up/auto-merge-short-circuit.md:245`, `wrap-up/merge-mode.md:25`, `wrap-up/review-console.md:124`) at 51,695 B of `RAIL_BYTES` 52,500 B: 805 B of headroom at authoring. Task 5 removes 867 B of restated rationale from `pr-first-merge.md`; Task 6 adds 1,115 B of Step 2.5 prose (both measured with `Buffer.byteLength` over the verbatim before/after text against the live file at `2771d7929`). After both: `pr-first-merge.md` 37,297 B, bundle ≈ 51,943 B, headroom ≈ 557 B — above the orchestrator's 380 B floor, which leaves room for #5161's ≈100 B sentence on this branch.
 
 ## Spec claims corrected (fact-checked against the tree at `2771d7929`)
 
@@ -301,7 +301,7 @@ git -C "<worktree>" commit -m "Add the ci-gate-record.js writer — one ci-gate 
 - Consumes: Task 1's golden; the `ci-gate` event shape (Global Constraints).
 - Produces: `derivePhases(...) -> { phases, totals, ciGate? }` where `ciGate` (every `ci-gate` event as written, in file order, each `{ ...event }`) and `totals.ciWallMinutes: number` are present only when at least one event exists; `renderCiGate(ciGate: object[]|undefined) -> string` exported from `phase-timing.js`.
 
-Derivation (append after the existing `totals` literal, before `return`): iterate the raw `events` argument (file order, not the ts-sorted `evs`), keep `e && typeof e === 'object' && e.type === 'ci-gate'`. If none, return exactly as today. Else `latest = new Map()` keyed by `e.pr` (later overwrites); `ms = Σ latest values' ciWallMs where Number.isFinite`; `totals.ciWallMinutes = Math.round(ms / 6000) / 10`; return `{ phases, totals, ciGate }`. Comment beside it: "An absent ci-gate event means CI time was not recorded, never that CI was fast (#5160)."
+Derivation (append after the existing `totals` literal, before `return`): iterate the guarded array `(Array.isArray(events) ? events : [])` — the same guard line 95 applies, so `events: null` (Task 1's characterization case) yields nothing — in file order, not the ts-sorted `evs`; keep `e && typeof e === 'object' && e.type === 'ci-gate'`. If none, return exactly as today. Else `latest = new Map()` keyed by `e.pr` (later overwrites); `ms = Σ latest values' ciWallMs where Number.isFinite`; `totals.ciWallMinutes = Math.round(ms / 6000) / 10`; return `{ phases, totals, ciGate }`. Comment beside it: "An absent ci-gate event means CI time was not recorded, never that CI was fast (#5160)."
 
 Render: `renderCiGate` returns `''` for a missing or empty list; else one line per distinct `pr` in first-appearance order, using that PR's latest event: `` `CI gate: ${verdict}, ${wall} min wall${pendingAtBound === true ? ' (lower bound)' : ''}, gate waited ${wait} min (PR #${pr})` `` with `wall`/`wait` = `Math.round(x / 6000) / 10` when `Number.isFinite(x)`, else `'n/a'`; lines joined by `\n` plus a trailing `\n`. In `main`: after `timing` is built, `if (out.ciGate) timing.ciGate = out.ciGate;`; the `--markdown` write becomes `renderMarkdown(...) + renderCiGate(timing.ciGate) + renderDispatches(timing.dispatches)`. `renderMarkdown` itself is unchanged. Add `renderCiGate` to `module.exports`.
 
@@ -317,7 +317,8 @@ test('AC5.3: events for two distinct PRs (1200000 and 300000) give 25')
 test('AC5.4: an event whose ciWallMs is null contributes 0 and still appears in ciGate') // [CIG({ ciWallMs: null })] → 0, ciGate length 1
 test('latest null wins: same pr 1200000 then null contributes 0')                       // Review Focus 5 → ciWallMinutes 0
 test('AC6.1: with no ci-gate event derivePhases has no ciGate key and totals has no ciWallMinutes')
-  // record-1535 events and [] — 'ciGate' in out === false; 'ciWallMinutes' in out.totals === false
+  // record-1535 events, [], null and undefined — no throw; 'ciGate' in out === false; 'ciWallMinutes' in out.totals === false
+test('a ci-gate event without a valid ts still counts, in file order')  // [CIG({ ts: undefined, ciWallMs: 600000 }), CIG()] same pr → 20, ciGate length 2
 test('AC7.1: phase-timing --markdown prints exactly "CI gate: green, 20 min wall, gate waited 2 min (PR #123)"')
   // tmp run dir, events.jsonl = JSON.stringify(CIG()) + '\n'; spawn; stdout.split('\n') includes the line exactly once
 test('AC7.2: pendingAtBound prints "CI gate: timeout-park, 20 min wall (lower bound), gate waited 2 min (PR #123)"')
@@ -486,7 +487,7 @@ git -C "<worktree>" commit -m "Trim restated rationale from pr-first-merge.md �
 **Review risk:** high
 
 **Files:**
-- Modify: `plugin/skills/_shared/pr-first-merge.md` (Step 2.5: lines 127, 131, 137, after the table at 200, Red path item 2 after 268 — line numbers as of `2771d7929`; Task 5's cuts T1–T3 at lines 10-45 shift them up by 7 lines; locate each by its quoted text)
+- Modify: `plugin/skills/_shared/pr-first-merge.md` (Step 2.5: lines 127, 131, 134, 199, after the table at 200, 241, Red path item 2 after 268 — line numbers as of `2771d7929`; Task 5's cuts T1–T3 at lines 10-45 shift them up by 7 lines; locate each by its quoted text)
 - Create: `tests/ci-gate-record-prose-conformance.test.js`
 - Test: `tests/merge-verification-gate-conformance.test.js` (unchanged — must stay green)
 - Test: `tests/session-tmp-root-migration.test.js` (unchanged — its `COMBINED_RESOLVE` is an `includes` substring pin, so appending `GATE_START=…` to the end of that line keeps it green)
@@ -496,28 +497,31 @@ git -C "<worktree>" commit -m "Trim restated rationale from pr-first-merge.md �
 - Consumes: `parseArgs`, `VERDICTS` from Task 3; the byte headroom from Task 5.
 - Produces: the Step 2.5 prose below.
 
-**Size — the binding limit is the composed `merge` bundle, not the file** (see the header's Byte budget). After Task 5, `pr-first-merge.md` is 36,182 B and the bundle 50,828 B. The five edits below add exactly **848 B** (measured with `Buffer.byteLength` over the verbatim text at authoring), so the file becomes 37,030 B and the bundle ≈ 51,676 B, leaving ≈ 824 B — the orchestrator's floor is 380 B, i.e. bundle `max` ≤ 52,120 B. The text stays compact anyway (no `(#5160)` tag, no `{run-dir}` gloss — the existing per-merged-run rule at lines 109-112 governs `$PIPELINE_RUN_DIR` — and no `auto-decision-log.md` citation) because #5161 adds a sentence to this file next. Do not add bytes beyond the verbatim text. If a sibling record has grown either source so the Step 4 rail check reads `max` > 52,120, revert the edits and report BLOCKED — never trim other prose to fit. No per-file byte pin exists (decision 0024). Guard-shape probe at authoring: `tools/guard-refusals/shapes.js`'s `detectShapes` returns `[]` for the extended resolve line, the state-read fence with the epoch line, and the writer fence.
+**Size — the binding limit is the composed `merge` bundle, not the file** (see the header's Byte budget). After Task 5, `pr-first-merge.md` is 36,182 B and the bundle 50,828 B. The six edits below add exactly **1,115 B** (measured by applying them in memory with `Buffer.byteLength` against the live file; edit 6 matches twice), so the file becomes 37,297 B and the bundle ≈ 51,943 B, leaving ≈ 557 B — the orchestrator's floor is 380 B, i.e. bundle `max` ≤ 52,120 B. The text stays compact anyway (no `(#5160)` tag, no `auto-decision-log.md` citation) because #5161 adds a sentence to this file next. Do not add bytes beyond the verbatim text. If a sibling record has grown either source so the Step 4 rail check reads `max` > 52,120, revert the edits and report BLOCKED — never trim other prose to fit. No per-file byte pin exists (decision 0024). Guard-shape probe at authoring: `tools/guard-refusals/shapes.js`'s `detectShapes` returns `[]` for the extended resolve line and the writer fence; the epoch command is an inline span outside every fence (the scan reads fences plus inline `eval "$(` spans only).
 
-Ordering trace (Ordering-fix location check): the green call sits in Step 2.5 before Step 3's `gh pr merge`; the Red path never merges; Step 4.2's archive (`pr-first-merge-post-merge.md`) runs only after outcome `merged`. Between the call and the archive the only writers of `events.jsonl` are hooks via `appendEvent` (append-only, no conflict). The epoch line runs in the state-read fence, so every entry into Step 2.5 from the top (a re-entry, a Red-path resume) overwrites it; both call sites run later in the same pass. Step position: the run dir and worktree still exist at both sites (nothing in Step 2.5 removes them). Deictic: edit 5's "that CI-gate record call" refers to edit 4's paragraph, which sits above the Red path (after line 200 vs. 251). Degrade-clause convention: the `SKIP` line follows `_shared/auto-decision-log.md`'s SKIP status (not cited inline, for bytes).
+Which greens record (spec's Plan Review Clarifications): only green, red and timeout-park record; an explicit `merge-verification: off` merge (green or not), an armed auto-merge and a failed checks read record nothing. A gate-decided green is reached at three places, and each carries the call: the per-value table's Green column (any row except an explicit `off`; a derived `off` green is the gate's own read), the `wait` row's green re-read, and the bounded watch's `RC=0` bullet. The last two merge via "Step 3's immediate `--squash` form (re-run its composer call first)" and never pass the Green column, so edit 6 rewrites that parenthetical at both places to name the record first.
+
+Ordering trace (Ordering-fix location check): the green call sits in Step 2.5 before Step 3's `gh pr merge` (or the immediate `--squash`); the Red path never merges; Step 4.2's archive (`pr-first-merge-post-merge.md`) runs only after outcome `merged`. Between the call and the archive the only writers of `events.jsonl` are hooks via `appendEvent` (append-only, no conflict). The epoch is written only on entry from the top (a first entry, a moving-target re-entry, a Red-path resume): it is an inline command in the sentence before the state-read fence, never inside the fence, and the sentence states that a mid-pass re-read (the `wait` row's re-read, `RC=0`'s "the same reads as above") never repeats it, so `gateWaitMs` spans the whole watch. `--run`: the fence shows `"$PIPELINE_RUN_DIR"` like the lever read at line 103, and the paragraph states that `--run` follows the per-merged-run rule at lines 109-112 (each merged run's own dir); edit 5's Red-path call inherits it as "that CI-gate record call". Step position: the run dir and worktree still exist at both sites (nothing in Step 2.5 removes them). Deictic: edit 5's "that CI-gate record call" refers to edit 4's paragraph, which sits above the Red path (after line 200 vs. 251). Degrade-clause convention: the `SKIP` line follows `_shared/auto-decision-log.md`'s SKIP status (not cited inline, for bytes).
 
 Exact edits (copy verbatim):
 
 1. Line 127: `` `PR_CHECKS`/`PR_RUNS`/`PARK_COMMENT`/`PR_READY` literals for `{pr-checks-path}`/`{pr-runs-path}`/`{park-comment-path}`/`{pr-ready-path}` `` → `` `PR_CHECKS`/`PR_RUNS`/`PARK_COMMENT`/`PR_READY`/`GATE_START` literals for `{pr-checks-path}`/`{pr-runs-path}`/`{park-comment-path}`/`{pr-ready-path}`/`{gate-start-path}` ``.
 2. Line 131: append ` GATE_START=gate-start-{n}.txt` to the end of the `session-tmp-resolve.js` line.
-3. Line 137 (the state-read fence's `gh pr view … statusCheckRollup` line): add a second line inside the same fence, directly after it: `date +%s > "{gate-start-path}"`. The fence must still open with `` ```bash\ngh pr view `` (`tests/session-tmp-root-migration.test.js` anchors on it).
+3. Line 134, the whole line `Then read state:` → ``Then, on entry from the top only, record the pass start (`date +%s > "{gate-start-path}"`; a mid-pass re-read never repeats it) and read state:`` — the state-read fence itself is unchanged, so `tests/session-tmp-root-migration.test.js`'s `` ```bash\ngh pr view `` anchor still holds.
 4. After the per-value table (after line 200, before `**Bounded watch`), insert:
 
 ````markdown
-**CI-gate record.** Once per gate pass, on **green** before Step 3:
+**CI-gate record.** Once per gate pass, before every merge on a gate-decided **green** (Green column, `wait` re-read, `RC=0`), never under an explicit `off`:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/ci-gate-record.js" --pr {pr-number} --head-sha {headRefOid} --verdict green --gate-start-epoch "$(cat "{gate-start-path}")" --run "$PIPELINE_RUN_DIR" --repo {owner}/{repo}
 ```
 
-A non-zero exit logs `SKIP {HH:MM:SS} — Step 2.5 (merge-verification gate): ci-gate not recorded ({error})` and the merge path continues unchanged — the writer never gates a merge. A Red-path resume is a new gate pass with its own call. Dispatch close-out skips this step, so records nothing; so do armed, explicit-`off` and read-failure outcomes.
+`--run` follows the per-merged-run rule above. A non-zero exit logs `SKIP {HH:MM:SS} — Step 2.5 (merge-verification gate): ci-gate not recorded ({error})` and the merge path continues unchanged — the writer never gates a merge. A Red-path resume is a new gate pass with its own call. Dispatch close-out skips this step, so records nothing; so do an explicit `off`, an armed merge and a failed read.
 ````
 
 5. In Red path item 2, after the parenthetical paragraph ending `` the comment's `{value}`/`$VALUE` is `derived off`.) `` (line 268), insert a line indented three spaces: ``   Then that CI-gate record call with `--verdict timeout-park` for `checks-pending-timeout`, else `--verdict red`.``
+6. At both occurrences — the `wait` row's Green cell (line 199) and the `RC=0` bullet (line 241) — replace `(re-run its composer call first)` with `(CI-gate record, then re-run its composer call)`. Leave the rest of each clause, including `; any other ready-run state routes per Step 2.5; otherwise merge` (pinned by `tests/merge-verification-gate-conformance.test.js`), unchanged.
 
 - [ ] **Step 1: Write the failing conformance suite**
 
@@ -526,17 +530,28 @@ A non-zero exit logs `SKIP {HH:MM:SS} — Step 2.5 (merge-verification gate): ci
 | Fact | Pattern (region) |
 |---|---|
 | `resolve` | `/session-tmp-resolve\.js" [^\n]*GATE_START=gate-start-\{n\}\.txt/` (Step 2.5) |
-| `epoch` | `` /statusCheckRollup\r?\ndate \+%s > "\{gate-start-path\}"\r?\n```/ `` (Step 2.5 — pins the line inside the state-read fence) |
-| `green-site` | `/Once per gate pass, on \*\*green\*\* before Step 3:/` (Step 2.5) |
+| `epoch` | ``/Then, on entry from the top only, record the pass start \(`date \+%s > "\{gate-start-path\}"`; a mid-pass re-read never repeats it\) and read state:/`` (Step 2.5) |
+| `green-site` | ``/before every merge on a gate-decided \*\*green\*\* \(Green column, `wait` re-read, `RC=0`\), never under an explicit `off`:/`` (Step 2.5) |
+| `run-rule` | ``/`--run` follows the per-merged-run rule above\./`` (Step 2.5) |
 | `green-call` | `/```bash\r?\nnode "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/ci-gate-record\.js" [^\n]*--verdict green[^\n]*\r?\n```/` (Step 2.5) |
 | `red-mapping` | ``/`--verdict timeout-park` for `checks-pending-timeout`, else `--verdict red`/`` (Red path) |
 | `skip` | ``/A non-zero exit logs `SKIP \{HH:MM:SS\} — Step 2\.5 \(merge-verification gate\): ci-gate not recorded \(\{error\}\)` and the merge path continues unchanged — the writer never gates a merge/`` (Step 2.5) |
 | `resume` | `/A Red-path resume is a new gate pass with its own call\./` (Step 2.5) |
 | `close-out` | `/Dispatch close-out skips this step, so records nothing;/` (Step 2.5) |
-| `no-verdict` | ``/so do armed, explicit-`off` and read-failure outcomes\./`` (Step 2.5) |
+| `no-verdict` | ``/so do an explicit `off`, an armed merge and a failed read\./`` (Step 2.5) |
+
+Two region pins beside the fact list, each in its own helper with its own message:
+- `assertEpochOutsideFence(text)`: the state-read fence (from `` ```bash\ngh pr view `` to the next `` ``` ``, both indexes `!== -1`) contains no `date +%s`, and Step 2.5 contains `date +%s > "{gate-start-path}"` exactly once. Message on failure: `epoch must be written once, outside the reusable state-read fence`.
+- `assertGreenAfterWatch(text)`: the `wait` table row (the line starting `` | `wait` | ``) and the `RC=0` bullet (sliced from `` `RC=0` → **green** `` to `` `RC=1` (a check failed ``, both `!== -1`) each contain `(CI-gate record, then re-run its composer call)` exactly once, and neither contains `(re-run its composer call first)`. Messages: `wait green re-read must name the CI-gate record` / `RC=0 green must name the CI-gate record`.
 
 ```js
 test('AC8.1: Step 2.5 carries the epoch capture, the green call and the Red-path verdict-by-reason mapping')  // ciGateFacts(live) deepEqual []
+test('AC8.1: the start epoch is written once on entry, never inside the state-read fence a mid-pass re-read repeats')  // assertEpochOutsideFence(live)
+test('AC8.1: every green path after the watch names the CI-gate record before its merge')  // assertGreenAfterWatch(live)
+test('AC8.2 go-red: the epoch moved into the state-read fence fails the fence pin')
+  // mutated = live with '\ndate +%s > "{gate-start-path}"' inserted after the gh pr view line; notEqual; throws { message: /epoch must be written once, outside/ }
+test('AC8.2 go-red: the wait re-read without the record fails, and so does RC=0 without it')
+  // two mutations, each restoring '(re-run its composer call first)' at one site only; each throws with that site's own message
 test('AC8.1: both call sites follow the epoch capture and precede Step 4')
   // epochAt < greenAt, epochAt < redMappingAt, both < text.indexOf('## Step 4 and Step 5') (assert each !== -1)
 test('AC8.1: the green fence parses through ci-gate-record.js parseArgs as verdict green')
@@ -556,9 +571,9 @@ test('AC8.2 go-red: swapping the mapping (red for checks-pending-timeout) return
 Run: `node --test tests/ci-gate-record-prose-conformance.test.js`
 Expected: FAIL (the suite file does not exist; after Step 1, every fact is missing from today's prose).
 
-- [ ] **Step 3: Apply the five prose edits above**
+- [ ] **Step 3: Apply the six prose edits above**
 
-Then `wc -c plugin/skills/_shared/pr-first-merge.md` and record the number in the task report (expected exactly 37,030 after Task 5 if no sibling change landed; this task's delta must be exactly +848).
+Then `wc -c plugin/skills/_shared/pr-first-merge.md` and record the number in the task report (expected exactly 37,297 after Task 5 if no sibling change landed; this task's delta must be exactly +1,115).
 
 - [ ] **Step 4: Run the suite, the neighbouring pins, and the composed-bundle rail check**
 
@@ -566,7 +581,7 @@ Run: `node --test tests/ci-gate-record-prose-conformance.test.js tests/merge-ver
 Expected: PASS, 0 failures.
 
 Run: `node "${CLAUDE_PLUGIN_ROOT}/bin/plan-audit.js" docs/superpowers/plans/2026-11-12-ci-gate-record.md --repo-root "<worktree>"`
-Expected: in the first stdout line's JSON, every `headroom.composed[*].max` is ≤ 52,120 (≥ 380 B headroom; ≈ 51,676 expected) and `headroom.breaches` is `[]` (read only `headroom`; `checkC` findings are expected now that earlier tasks are built). Any `max` > 52,120 → revert the prose edits, report BLOCKED with the measured `max`.
+Expected: in the first stdout line's JSON, every `headroom.composed[*].max` is ≤ 52,120 (≥ 380 B headroom; ≈ 51,943 expected) and `headroom.breaches` is `[]` (read only `headroom`; `checkC` findings are expected now that earlier tasks are built). Any `max` > 52,120 → revert the prose edits, report BLOCKED with the measured `max`.
 
 - [ ] **Step 5: Commit**
 
