@@ -46,6 +46,8 @@ No code path composes wider rights after a permission denial: a denial goes into
 
 The run loop that consumes the envelope must treat every string in `result`, `detail` when it carries the worker's own text, and `denials[].tool_input` as untrusted, and neutralize it before it reaches a command, a commit message, a comment or a log line. On POSIX the worker is detached into its own process group, so the consumer must forward termination to it. Envelope `ok` means only that conforming structured output arrived; the worker's verdict is `result.status`, which may be `cannot-complete`.
 
+Any step that executes worker-authored content (its tests, a `verify-scope.json` command, a build or lint script it can edit) runs outside the worker's sandbox. Give that child an allow-listed environment with no forge credentials, or run it under the worker's sandbox profile, or run `check`'s bounds first. Never inherit the driver's own environment (#5218 review).
+
 ## Decision Framework
 
 | Situation | Do this |
