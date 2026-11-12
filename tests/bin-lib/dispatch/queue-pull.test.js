@@ -968,6 +968,15 @@ test('#5227 cache hit vs miss: spawnCli policy read order (PF9/PF14)', () => {
   assert.deepEqual(hit.cliCalls, [guard], 'the size guard is read once, inside the cache check, and nothing else');
 });
 
+test('#5227 policy: a resolve-policy.js spawn that throws prints "queue-pull: policy: <message>" once per read, and the value reads as empty', () => {
+  const r = pull(S1(), { allowThrow: true, spawn: { 'resolve-policy.js': () => { throw new Error('spawn EAGAIN'); } } });
+  assert.equal(r.cliCalls.length, 4, 'the four policy reads of a miss');
+  assert.deepEqual(r.errs.filter((e) => e.startsWith('queue-pull: policy: ')), Array(4).fill('queue-pull: policy: spawn EAGAIN\n'), r.stderr);
+  assert.ok(!r.errs.some((e) => e.startsWith('queue-pull: resolve-policy.js: ')), 'the label is "policy", not the CLI name');
+  assert.equal(r.state.workLinks, '', 'a failed read is the empty string, as $( ) of a failed command is');
+  assert.equal(r.state.groupSizeGuard, '');
+});
+
 test('AC4.5 write-back: a miss writes composeOrderBlob stamped from now(), runId from PIPELINE_RUN_DIR, excluded in {number, blockedBy} shape; a refused write prints the fence line and the pull continues', () => {
   const assertWriteBack = (r, runId) => {
     assert.equal(r.store.written.length, 1);
