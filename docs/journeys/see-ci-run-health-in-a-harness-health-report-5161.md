@@ -1,6 +1,8 @@
 ---
 files:
   - plugin/bin/ci-health.js
+  - plugin/bin/lib/ci-health/constants.js
+  - plugin/bin/lib/ci-health/fetch.js
   - plugin/bin/lib/ci-health/stats.js
   - plugin/bin/lib/ci-health/billing.js
   - plugin/bin/lib/ci-health/thresholds.js
@@ -20,23 +22,23 @@ files:
 
 ### 1. Harness-health runs the CI check — `harness-health/ci-health-check.md`
 - **URL:** —
-- **Action:** Step 1 reads the sub-file and runs `node "${CLAUDE_PLUGIN_ROOT}/bin/ci-health.js" --file` (with `--repo {owner}/{name}` when `--root` names another checkout). Under `--dry-run` it writes only `ci health: skipped (--dry-run never calls gh)`.
+- **Action:** Step 1 reads the sub-file and runs `node "${CLAUDE_PLUGIN_ROOT}/bin/ci-health.js" --file` (with `--root {dir}` when harness-health's `--root` names another checkout, so that checkout's origin and `work-types` are read). Under `--dry-run` it writes only `ci health: skipped (--dry-run never calls gh)`.
 - **Should feel:** Routine: one more deterministic check beside the composed-bytes and cost-efficiency checks, with no question asked.
 - **Should understand:** The check reports and files only. It never edits a workflow and never changes the merge gate's watch, whatever p90 it measures.
 - **Red flags:** The check skipped on a nothing-due firing; a `--dry-run` firing that calls `gh`.
 
-### 2. The report shows per-workflow run statistics — `ci-health.js`, `stats.js`, `render.js`
+### 2. The report shows per-workflow run statistics — `ci-health.js`, `fetch.js`, `stats.js`, `render.js`
 - **URL:** —
-- **Action:** The CLI reads up to 10 pages of the last 30 days of workflow runs and prints one line per workflow, for example `ci.yml (.github/workflows/ci.yml): 5 runs, p50 800s, p90 1300s — over the 900s merge-gate watch, trend rising 1.5, superseded 2 (0.5), cancelled 1`.
+- **Action:** The CLI reads up to 10 pages of the last 30 days of workflow runs and prints one line per workflow, its name and path in code spans, for example ``` `ci.yml` (`.github/workflows/ci.yml`): 5 runs, p50 800s, p90 1300s — over the 900s merge-gate watch, trend rising 1.5, superseded 2 (0.5), cancelled 1 ```.
 - **Should feel:** Readable at a glance: the slow workflow stands out, and the trend says whether it is getting worse.
 - **Should understand:** p90 is run duration (`updated_at` minus `run_started_at`) and excludes queue wait, so it is advisory evidence for the watch. Skipped (`conclusion: skipped`) runs count in `runs` but not in the percentiles. A trend with too few runs reads `insufficient`. Hitting the 1,000-run cap prints `window truncated at 1000 runs: statistics cover the newest runs only`.
-- **Red flags:** A negative or zero-second duration in the figures; a push-only workflow carrying the watch suffix; a truncated window with no truncation line.
+- **Red flags:** A negative or zero-second duration in the figures; a push-only workflow carrying the watch suffix; a truncated window with no truncation line; a workflow name that renders as a link, a mention, or a line of its own.
 
 ### 3. The billing line shows headroom, never an amount — `billing.js`
 - **URL:** —
 - **Action:** For an organisation-owned repository the CLI reads the org's budgets and usage summary and prints `billing: Actions budget headroom {h}% (floor 10%)`. A user-owned repository, or no Actions budget, prints `billing: no Actions budget to compare`. An unreadable endpoint prints `billing unavailable ({status})`.
 - **Should feel:** Safe to paste anywhere: a percentage and a floor, nothing that reveals what the organisation spends.
-- **Should understand:** A token without `admin:org` gets a 404, which reads as unavailable, never as "no budget". The legacy billing endpoint is never called.
+- **Should understand:** A token without `admin:org` gets a 404, which reads as unavailable, never as "no budget". The legacy billing endpoint is never called. Budgets are read one page only, so a `(first page of budgets only)` note means the headroom may be overstated.
 - **Red flags:** A currency amount in any line; "no budget" printed for a 403/404/410.
 
 ### 4. A breach files one issue, once — `thresholds.js`
@@ -46,7 +48,7 @@ files:
 - **Should understand:** Dedup is an exact title match against open issues only, so closing the issue lets a later firing file again while the breach remains. A truncated window or a failed runs read never files (`not filed: window truncated` / `not filed: runs read failed`); an open issue with the same title prints `not filed: open issue exists`.
 - **Red flags:** A second open issue with the same title; an issue filed from a partially read window; an amount in the issue body.
 
-### 5. A sandbox without `gh` reports unavailable, never clean — `ci-health-check.md`
+### 5. A sandbox without `gh` reports unavailable, never clean — `ci-health-check.md`, `fetch.js`
 - **URL:** —
 - **Action:** In a `gh`-absent cloud sandbox the report reads `runs unavailable (gh absent)` and `billing unavailable (gh absent)`, or `ci health: failed (…)` when the origin is a proxy remote that cannot be resolved.
 - **Should feel:** Honest: the maintainer can tell "nothing to report" from "could not look".
