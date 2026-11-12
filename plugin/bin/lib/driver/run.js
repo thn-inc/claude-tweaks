@@ -386,7 +386,7 @@ const realDeps = {
   ghAvailable: () => ghAvailable(),
   gitAvailable: () => {
     try {
-      execFileSync('git', ['--version'], { stdio: 'ignore', timeout: GIT_PROBE_TIMEOUT_MS, windowsHide: true });
+      execFileSync('git', ['version'], { stdio: 'ignore', timeout: GIT_PROBE_TIMEOUT_MS, windowsHide: true });
       return true;
     } catch {
       return false;

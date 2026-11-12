@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { readText } = require('../../helpers/read-skill');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const DRIVE = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'drive.js');
 const {
@@ -338,7 +339,7 @@ test('AC10.3, AC10.5: absent gh or git exits 2', async () => {
 });
 
 test('AC10.6: header comment and USAGE state exit codes 0, 1 and 2', () => {
-  const header = fs.readFileSync(DRIVE, 'utf8').split('\n').filter((l) => l.startsWith('//')).join('\n');
+  const header = readText(DRIVE).split('\n').filter((l) => l.startsWith('//')).join('\n');
   for (const text of [USAGE, header]) {
     assert.match(text, /Usage: drive\.js #N \[#M…\]/);
     assert.match(text, /\b0\s+every named record reached its final event, whatever its outcome/);
@@ -639,7 +640,7 @@ test('STEPS is a frozen table whose names follow the event vocabulary in order',
 });
 
 test('run.js names no step', () => {
-  const src = fs.readFileSync(path.join(LIB, 'driver', 'run.js'), 'utf8');
+  const src = readText(path.join(LIB, 'driver', 'run.js'));
   for (const name of STEP_NAMES) assert.doesNotMatch(src, new RegExp(`['"\`]${name}['"\`]`), name);
 });
 
@@ -2303,7 +2304,7 @@ test('AC8.1: nothing merges', async () => {
       assert.ok(!c.args.some((a) => a === 'merge' || a === 'ready'), `${name}: ${c.args.join(' ')}`);
     }
   }
-  const src = fs.readFileSync(path.join(LIB, 'driver', 'steps.js'), 'utf8');
+  const src = readText(path.join(LIB, 'driver', 'steps.js'));
   assert.doesNotMatch(src, /pr['",\s]+merge|pr['",\s]+ready|gh pr merge|gh pr ready/);
 });
 
@@ -2319,17 +2320,17 @@ test('AC9.3: first driven, second refused, and the reverse', async () => {
 test('AC13.1: STEPS names equal STEP_NAMES and run.js names no step', () => {
   assert.deepEqual(STEPS.map((s) => s.name), STEP_NAMES);
   assert.ok(Object.isFrozen(STEPS));
-  const src = fs.readFileSync(path.join(LIB, 'driver', 'run.js'), 'utf8');
+  const src = readText(path.join(LIB, 'driver', 'run.js'));
   for (const name of STEP_NAMES) assert.doesNotMatch(src, new RegExp(`['"\`]${name}['"\`]`), name);
 });
 
 test('realDeps.ghCreate runs under GH_BATCH_TIMEOUT_MS', () => {
-  const src = fs.readFileSync(path.join(LIB, 'driver', 'run.js'), 'utf8');
+  const src = readText(path.join(LIB, 'driver', 'run.js'));
   assert.match(src, /ghCreate: \(args\) => execFileSync\('gh', args, ghOptions\(args, \{[^}]*GH_BATCH_TIMEOUT_MS[^}]*windowsHide: true/);
 });
 
 test('AC11: docs/plugin-structure.md lists drive.js', () => {
-  assert.match(fs.readFileSync(DOC, 'utf8'), /node plugin\/bin\/drive\.js #N/);
+  assert.match(readText(DOC), /node plugin\/bin\/drive\.js #N/);
 });
 
 // --- gh repo target, transient classification, interrupt during the retry wait -----------------
