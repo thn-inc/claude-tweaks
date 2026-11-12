@@ -199,7 +199,7 @@ test('an openIssueTitles failure files nothing and names the query', () => {
   const { calls, deps } = fakeDeps({ titlesError: new Error('HTTP 502') });
   const result = fileFor([wf()], NO_BILLING, { deps });
   assert.strictEqual(calls.createIssue.length, 0);
-  assert.deepStrictEqual(result, { filed: null, skipped: null, failure: { query: 'open issue titles', error: 'HTTP 502' } });
+  assert.deepStrictEqual(result, { filed: null, skipped: null, failure: { query: 'open issue titles', status: null, error: 'HTTP 502' } });
 });
 
 test('a non-list openIssueTitles result files nothing', () => {
@@ -208,7 +208,7 @@ test('a non-list openIssueTitles result files nothing', () => {
     const result = fileFor([wf()], NO_BILLING, { deps });
     assert.strictEqual(calls.createIssue.length, 0, typeof titles);
     assert.deepStrictEqual(result, {
-      filed: null, skipped: null, failure: { query: 'open issue titles', error: 'open issue titles is not a list' },
+      filed: null, skipped: null, failure: { query: 'open issue titles', status: null, error: 'open issue titles is not a list' },
     });
   }
 });
@@ -227,8 +227,8 @@ test('a createIssue failure is reported as the file issue query', () => {
   assert.strictEqual(calls.createIssue.length, 1);
   assert.strictEqual(result.filed, null);
   assert.strictEqual(result.skipped, null);
-  assert.strictEqual(result.failure.query, 'file issue');
-  assert.strictEqual(result.failure.error, 'HTTP 422');
+  // The same {query, status, error} shape as every other failures[] entry.
+  assert.deepStrictEqual(result.failure, { query: 'file issue', status: null, error: 'HTTP 422' });
 });
 
 test('the body states p90 is advisory run duration excluding queue wait', () => {

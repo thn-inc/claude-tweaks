@@ -6,17 +6,23 @@
 // Logic lives in run(argv, deps); every side effect (runner, remoteUrl, pinGhHost, workTypes,
 // openIssueTitles, createIssue, now, stdout, stderr) is injected so tests never touch gh.
 //
-// Usage: ci-health.js [--days N] [--repo owner/name] [--min-headroom-pct N] [--file] [--json] [--help|-h]
+// Usage: ci-health.js [--days N] [--repo owner/name | --root <dir>] [--min-headroom-pct N] [--file] [--json] [--help|-h]
 //   --days N               window length, an integer 1..400 (default 30); the window starts at the
 //                          UTC date N days before now
 //   --repo owner/name      a github.com repository (default: the origin remote, which must be on
 //                          github.com); its host is pinned for every gh call
+//   --root <dir>           the checkout to read instead of the current directory: its origin remote
+//                          names the repository (refused off github.com, as without --root) and its
+//                          CLAUDE.md the `work-types` value the breach issue is typed by. Never with
+//                          --repo, which would name the repository a second way; under --repo alone
+//                          `work-types` is read from the current directory
 //   --min-headroom-pct N   the headroom floor, a number 0..100 (default 10)
 //   --file                 file the breach issue (exact-title dedup against open by:harness-health
 //                          issues; never on a truncated window or a failed runs read, page 1
 //                          included: `not filed: runs read failed`)
 //   --json                 print the report envelope as one JSON line instead of the report lines;
-//                          its `filed` is {title, number} or null, `filingSkipped` the skip reason
+//                          its `runsAvailable` is false when no runs page was read (beside
+//                          `billing.available`), its `filed` is {title, number} or null, `filingSkipped` the skip reason
 //                          or null (both null without --file), and a failed filing a failures[]
 //                          entry (`file issue` or `open issue titles`)
 // Exit codes:
@@ -30,14 +36,17 @@
 // stdout carries report lines, so no third code is earned. Reopen when a caller must branch on the
 // code itself.
 //
-// Every gh call is bounded by CI_HEALTH_GH_TIMEOUT_MS (15 s; constants.js states why it does not
-// follow `gh-timeout-ms`) and runs with stdio piped, since every failure is caught and reported.
+// Every gh call is bounded by the `timeout` its caller passes (fetch.js and billing.js pass
+// CI_HEALTH_GH_TIMEOUT_MS), else by that constant (15 s; constants.js states why it does not follow
+// `gh-timeout-ms`), and runs with stdio piped, since every failure is caught and reported. The
+// origin read is repo-resolve.js's originUrl, which drops git's own stderr, so a usage or origin
+// error is this CLI's one stderr line.
 // The workflow-runs and billing reads have no GitHub MCP equivalent, so a gh-absent sandbox gets no
 // fallback read: the report says both halves are unavailable.
 'use strict';
 
 const { execFileSync } = require('child_process');
-const { remoteUrl, originSpecOf, repoSlug, ghOptions, pinExplicitRepoHost } = require('./lib/repo-resolve');
+const { originUrl, originSpecOf, repoSlug, ghOptions, pinExplicitRepoHost } = require('./lib/repo-resolve');
 const { readWorkTypes } = require('./lib/work-backend');
 const { LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
 const {
@@ -49,7 +58,7 @@ const { readBilling } = require('./lib/ci-health/billing');
 const { breachesOf, fileBreaches } = require('./lib/ci-health/thresholds');
 const { renderReport, oneLine } = require('./lib/ci-health/render');
 
-const USAGE = 'usage: ci-health.js [--days N] [--repo owner/name] [--min-headroom-pct N] [--file] [--json] [--help|-h]\n';
+const USAGE = 'usage: ci-health.js [--days N] [--repo owner/name | --root <dir>] [--min-headroom-pct N] [--file] [--json] [--help|-h]\n';
 
 // owner/name only: no host prefix, no leading hyphen on the owner, no third segment. Both values
 // are interpolated into REST paths, so `.`/`..` segments are refused too (gh-api-module-pattern).
@@ -61,7 +70,7 @@ function validSlug(slug) {
 }
 
 function parseArgs(argv) {
-  const o = { days: DEFAULT_DAYS, repo: null, minHeadroomPct: DEFAULT_MIN_HEADROOM_PCT, file: false, json: false, help: false };
+  const o = { days: DEFAULT_DAYS, repo: null, root: null, minHeadroomPct: DEFAULT_MIN_HEADROOM_PCT, file: false, json: false, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const next = () => {
@@ -86,15 +95,20 @@ function parseArgs(argv) {
       if (v === null) return { error: '--repo requires a value' };
       if (!validSlug(v)) return { error: `--repo ${JSON.stringify(v)} must be owner/name on github.com` };
       o.repo = v;
+    } else if (a === '--root') {
+      const v = next();
+      if (v === null || !v.trim()) return { error: '--root requires a directory' };
+      o.root = v;
     } else return { error: `unknown argument: ${JSON.stringify(a)}` };
   }
+  if (o.repo !== null && o.root !== null) return { error: '--repo and --root each name the repository: pass one' };
   return o;
 }
 
 // A 100-run `actions/runs` page is several MiB of JSON, past execFileSync's 1 MiB default buffer
 // (ENOBUFS on the first real read), so the seam takes the shared large buffer.
 const ghRunner = (args, opts = {}) => execFileSync('gh', args, ghOptions(args, {
-  encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: CI_HEALTH_GH_TIMEOUT_MS, maxBuffer: LARGE_MAX_BUFFER_BYTES, input: opts.input, windowsHide: true,
+  encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: opts.timeout || CI_HEALTH_GH_TIMEOUT_MS, maxBuffer: LARGE_MAX_BUFFER_BYTES, input: opts.input, windowsHide: true,
 }));
 
 function issueListArgs(slug) {
@@ -127,10 +141,11 @@ function issueDeps(runner) {
 const realDeps = {
   runner: ghRunner,
   ...issueDeps(ghRunner),
-  remoteUrl: () => remoteUrl(),
+  // `root` is --root's value, or null for the checkout the CLI runs in.
+  remoteUrl: (root) => originUrl(root || process.cwd()),
   pinGhHost: (repoSpec) => pinExplicitRepoHost(repoSpec),
-  // The checkout the CLI runs in, as reflect-apply.js reads it; readWorkTypes never throws.
-  workTypes: () => readWorkTypes(process.cwd()),
+  // readWorkTypes never throws: an unreadable CLAUDE.md reads as unset.
+  workTypes: (root) => readWorkTypes(root || process.cwd()),
   now: null,
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
@@ -151,16 +166,17 @@ function resolveSlug(o, deps) {
     }
     return { slug: o.repo };
   }
+  const where = o.root === null ? '' : ` of ${JSON.stringify(o.root)}`;
   let url;
   try {
-    url = deps.remoteUrl();
+    url = deps.remoteUrl(o.root);
   } catch (err) {
-    return { error: `no --repo and origin remote unreadable: ${oneLine(errorText(err))}` };
+    return { error: `no --repo and origin remote${where} unreadable: ${oneLine(errorText(err))}` };
   }
   const spec = originSpecOf(url);
-  if (!spec) return { error: `no --repo and origin remote is not a GitHub URL: ${withoutUserinfo(oneLine(url))}` };
+  if (!spec) return { error: `no --repo and origin remote${where} is not a GitHub URL: ${withoutUserinfo(oneLine(url))}` };
   if (spec.host !== 'github.com') {
-    return { error: `origin remote is on ${spec.host}, not github.com — pass --repo <owner/name> for a github.com repository` };
+    return { error: `origin remote${where} is on ${spec.host}, not github.com — pass --repo <owner/name> for a github.com repository` };
   }
   const slug = repoSlug({ owner: spec.owner, repo: spec.repo });
   if (!validSlug(slug)) return { error: `origin remote resolves to an unusable owner/name ${JSON.stringify(slug)} — pass --repo <owner/name>` };
@@ -203,7 +219,7 @@ function run(argv, deps = realDeps) {
     const outcome = fileBreaches(
       { breaches, truncated: runs.truncated, partial: runs.failures.length > 0, file: true },
       { openIssueTitles: () => deps.openIssueTitles(slug), createIssue: (issue) => deps.createIssue(slug, issue) },
-      { repo: slug, days: o.days, watchSeconds: MERGE_GATE_WATCH_SECONDS, minHeadroomPct: o.minHeadroomPct, workTypes: deps.workTypes() },
+      { repo: slug, days: o.days, watchSeconds: MERGE_GATE_WATCH_SECONDS, minHeadroomPct: o.minHeadroomPct, workTypes: deps.workTypes(o.root) },
     );
     ({ filed, skipped: filingSkipped } = outcome);
     if (outcome.failure) failures.push(outcome.failure);
@@ -212,6 +228,8 @@ function run(argv, deps = realDeps) {
   const report = {
     repo: slug,
     window: { days: o.days, from },
+    // The runs half's own flag (fetch.js: at least page 1 read), beside billing's `available`.
+    runsAvailable: runs.available,
     truncated: runs.truncated,
     ghAbsent: runs.ghAbsent,
     workflows,

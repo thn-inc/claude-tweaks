@@ -79,7 +79,7 @@ function userRoutes(pages = [[]]) {
 }
 
 function deps({ routes = orgRoutes(ORG), remote = `https://github.com/${ORG}.git`, ...overrides } = {}) {
-  const out = { stdout: [], stderr: [], calls: [], pinned: [], remoteReads: 0, titles: [], created: [], workTypes: 0 };
+  const out = { stdout: [], stderr: [], calls: [], pinned: [], remoteReads: 0, remoteRoots: [], titles: [], created: [], workTypes: 0, workTypesRoots: [] };
   const d = {
     runner: (args) => {
       out.calls.push(args);
@@ -90,9 +90,9 @@ function deps({ routes = orgRoutes(ORG), remote = `https://github.com/${ORG}.git
       if (entry instanceof Error) throw entry;
       return typeof entry === 'string' ? entry : JSON.stringify(entry);
     },
-    remoteUrl: () => { out.remoteReads += 1; return `${remote}\n`; },
+    remoteUrl: (root) => { out.remoteReads += 1; out.remoteRoots.push(root); return `${remote}\n`; },
     pinGhHost: (spec) => { out.pinned.push(spec); },
-    workTypes: () => { out.workTypes += 1; return 'labels'; },
+    workTypes: (root) => { out.workTypes += 1; out.workTypesRoots.push(root); return 'labels'; },
     openIssueTitles: (slug) => { out.titles.push(slug); return []; },
     createIssue: (slug, issue) => { out.created.push({ slug, issue }); return { number: 42 }; },
     now: NOW,
@@ -109,12 +109,12 @@ const envelope = (out) => {
   assert.ok(out.stdout[0].endsWith('\n') && !out.stdout[0].slice(0, -1).includes('\n'), '--json prints one line');
   return JSON.parse(out.stdout[0]);
 };
-const ciLine = (out) => lines(out).find((l) => l.startsWith('ci.yml ('));
+const ciLine = (out) => lines(out).find((l) => l.startsWith('`ci.yml` ('));
 
 test('--help exits 0 before any runner call or origin read', () => {
   const { d, out } = deps();
   assert.equal(run(['--help'], d), 0);
-  assert.equal(out.stdout.join(''), 'usage: ci-health.js [--days N] [--repo owner/name] [--min-headroom-pct N] [--file] [--json] [--help|-h]\n');
+  assert.equal(out.stdout.join(''), 'usage: ci-health.js [--days N] [--repo owner/name | --root <dir>] [--min-headroom-pct N] [--file] [--json] [--help|-h]\n');
   const short = deps();
   assert.equal(run(['-h'], short.d), 0);
   assert.equal(short.out.stdout.join(''), out.stdout.join(''));
@@ -129,6 +129,8 @@ test('usage: each malformed invocation exits 2 with one stderr line, empty stdou
     ['--min-headroom-pct', '-1'], ['--min-headroom-pct', ' '], ['--bogus'],
     ['--repo', '-evil/x'], ['--repo', 'acme/.'], ['--repo', 'acme/..'], ['--repo', './x'], ['--repo', '../x'],
     ['--repo'], ['--repo', ''], ['--repo', 'ghe.example.com/acme/widgets'], ['--repo', 'acme/x\nbilling: fake'],
+    ['--root'], ['--root', ''], ['--root', ' '], ['--root', '--json'],
+    ['--repo', 'acme/widgets', '--root', '/elsewhere'], ['--root', '/elsewhere', '--repo', 'acme/widgets'],
   ];
   for (const argv of cases) {
     const { d, out } = deps();
@@ -178,16 +180,72 @@ test('--repo pins the github.com host, skips the origin read, and addresses ever
     '-f', 'created=>=2026-10-13', '-f', 'per_page=100', '-f', 'page=1']);
 });
 
+test('--root reads the repository from that checkout\'s origin and types the issue from its work-types', () => {
+  const { d, out } = deps({ routes: orgRoutes(ORG, [ac1Runs()]) });
+  assert.equal(run(['--root', '/elsewhere/checkout', '--file', '--json'], d), 0);
+  assert.deepEqual(out.remoteRoots, ['/elsewhere/checkout']);
+  assert.deepEqual(out.workTypesRoots, ['/elsewhere/checkout']);
+  assert.deepEqual(out.pinned, []);
+  assert.equal(envelope(out).repo, ORG);
+  assert.equal(out.created.length, 1);
+  assert.equal(out.created[0].slug, ORG);
+  const bare = deps({ routes: orgRoutes(ORG, [ac1Runs()]) });
+  assert.equal(run(['--file'], bare.d), 0);
+  assert.deepEqual(bare.out.workTypesRoots, [null], 'no --root reads work-types from the current directory');
+  const typed = deps({ routes: orgRoutes('acme/widgets', [ac1Runs()]) });
+  assert.equal(run(['--repo', 'acme/widgets', '--file'], typed.d), 0);
+  assert.deepEqual(typed.out.workTypesRoots, [null], '--repo alone reads work-types from the current directory');
+});
+
+test('--root refuses a non-github.com or unreadable origin in that checkout, naming the checkout, with no runner call', () => {
+  const ghe = deps({ remote: 'git@ghe.example.com:acme/widgets.git' });
+  assert.equal(run(['--root', '/elsewhere/checkout'], ghe.d), 2);
+  assert.deepEqual(ghe.out.remoteRoots, ['/elsewhere/checkout']);
+  assert.deepEqual(ghe.out.stdout, []);
+  assert.deepEqual(ghe.out.calls, []);
+  assert.deepEqual(ghe.out.stderr, ['ci-health.js: origin remote of "/elsewhere/checkout" is on ghe.example.com, not github.com — pass --repo <owner/name> for a github.com repository\n']);
+  const unreadable = deps({ remoteUrl: () => { throw new Error('Command failed: git remote get-url origin'); } });
+  assert.equal(run(['--root', '/elsewhere/checkout'], unreadable.d), 2);
+  assert.deepEqual(unreadable.out.calls, []);
+  assert.deepEqual(unreadable.out.stderr, ['ci-health.js: no --repo and origin remote of "/elsewhere/checkout" unreadable: Command failed: git remote get-url origin\n']);
+});
+
+test('realDeps origin read: --root reads that checkout\'s origin, and a missing origin leaves one CLI stderr line', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const { spawnSync } = require('node:child_process');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-health-root-'));
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_NOSYSTEM: '1' };
+  delete env.GIT_DIR;
+  delete env.GIT_WORK_TREE;
+  try {
+    assert.equal(spawnSync('git', ['init', '-q', dir], { env }).status, 0);
+    const cli = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'ci-health.js');
+    const noOrigin = spawnSync(process.execPath, [cli], { cwd: dir, env, encoding: 'utf8' });
+    assert.equal(noOrigin.status, 2);
+    assert.equal(noOrigin.stdout, '');
+    assert.match(noOrigin.stderr, /^ci-health\.js: no --repo and origin remote unreadable: [^\n]*\n$/, JSON.stringify(noOrigin.stderr));
+    assert.equal(spawnSync('git', ['-C', dir, 'remote', 'add', 'origin', 'git@ghe.example.com:acme/widgets.git'], { env }).status, 0);
+    const other = spawnSync(process.execPath, [cli, '--root', dir], { cwd: os.tmpdir(), env, encoding: 'utf8' });
+    assert.equal(other.status, 2);
+    assert.match(other.stderr, /^ci-health\.js: origin remote of "[^"]+" is on ghe\.example\.com, not github\.com — [^\n]*\n$/, other.stderr);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('the origin path pins nothing and reads origin once; --days sets the window from now', () => {
   const { d, out } = deps();
   assert.equal(run(['--days', '7', '--json'], d), 0);
   assert.deepEqual(out.pinned, []);
   assert.equal(out.remoteReads, 1);
+  assert.deepEqual(out.remoteRoots, [null], 'no --root reads the current directory');
   const env = envelope(out);
   assert.equal(env.repo, ORG);
   assert.deepEqual(env.window, { days: 7, from: '2026-11-05' });
-  assert.deepEqual(Object.keys(env), ['repo', 'window', 'truncated', 'ghAbsent', 'workflows', 'watchSeconds',
+  assert.deepEqual(Object.keys(env), ['repo', 'window', 'runsAvailable', 'truncated', 'ghAbsent', 'workflows', 'watchSeconds',
     'minHeadroomPct', 'billing', 'failures', 'breaches', 'filed', 'filingSkipped']);
+  assert.equal(env.runsAvailable, true);
   assert.equal(env.watchSeconds, 900);
   assert.equal(env.minHeadroomPct, 10);
   assert.equal(env.filed, null);
@@ -200,8 +258,8 @@ test('AC1.1 render: the AC1 fixture renders its workflow line, over the merge-ga
   const all = lines(out);
   assert.equal(all[0], 'ci health: example-org/widgets, last 30 days (from 2026-10-13)');
   assert.equal(ciLine(out),
-    'ci.yml (.github/workflows/ci.yml): 5 runs, p50 800s, p90 1300s — over the 900s merge-gate watch, trend insufficient, superseded 0 (n/a), cancelled 0');
-  assert.ok(all.includes('breach: ci.yml (.github/workflows/ci.yml) p90 1300s over the 900s merge-gate watch'), all.join('\n'));
+    '`ci.yml` (`.github/workflows/ci.yml`): 5 runs, p50 800s, p90 1300s — over the 900s merge-gate watch, trend insufficient, superseded 0 (n/a), cancelled 0');
+  assert.ok(all.includes('breach: `ci.yml` (`.github/workflows/ci.yml`) p90 1300s over the 900s merge-gate watch'), all.join('\n'));
   assert.ok(all.includes('billing: Actions budget headroom 5% (floor 10%)'), all.join('\n'));
   assert.ok(all.includes('breach: Actions budget headroom 5% below the 10% floor'), all.join('\n'));
   assert.ok(!all.some((l) => /^(filed|not filed)/.test(l)), 'no filing line without --file');
@@ -211,7 +269,7 @@ test('AC1.1 render with no-work runs: a skipped run counts in runs and no-work, 
   const runs = [...ac1Runs(), wfRun({ created: NOW.getTime() - DAY, seconds: 5, conclusion: 'skipped' })];
   const text = deps({ routes: orgRoutes(ORG, [runs]) });
   assert.equal(run([], text.d), 0);
-  assert.ok(ciLine(text.out).startsWith('ci.yml (.github/workflows/ci.yml): 6 runs, p50 800s, p90 1300s'), ciLine(text.out));
+  assert.ok(ciLine(text.out).startsWith('`ci.yml` (`.github/workflows/ci.yml`): 6 runs, p50 800s, p90 1300s'), ciLine(text.out));
   assert.ok(ciLine(text.out).includes(', no-work 1'), ciLine(text.out));
   assert.ok(!ciLine(text.out).includes(', skipped '), ciLine(text.out));
   const json = deps({ routes: orgRoutes(ORG, [runs]) });
@@ -242,10 +300,10 @@ test('render: the trend, superseded share, skipped count and push suffix each re
   assert.equal(run(['--days', '14'], d), 0);
   const all = lines(out);
   for (const expected of [
-    'trend.yml (.github/workflows/trend.yml): 10 runs, p50 100s, p90 150s, trend rising 1.5, superseded 0 (n/a), cancelled 0',
-    'sup.yml (.github/workflows/sup.yml): 2 runs, p50 60s, p90 60s, trend insufficient, superseded 1 (0.5), cancelled 0',
-    'skip.yml (.github/workflows/skip.yml): 2 runs, p50 60s, p90 60s, trend insufficient, superseded 0 (n/a), cancelled 0, skipped 1',
-    "push.yml (.github/workflows/push.yml): 10 runs, p50 60s, p90 60s, trend insufficient, superseded 0 (n/a), cancelled 0, runs on 100% of pushes (informational; a repo's only push workflow always reads 100%)",
+    '`trend.yml` (`.github/workflows/trend.yml`): 10 runs, p50 100s, p90 150s, trend rising 1.5, superseded 0 (n/a), cancelled 0',
+    '`sup.yml` (`.github/workflows/sup.yml`): 2 runs, p50 60s, p90 60s, trend insufficient, superseded 1 (0.5), cancelled 0',
+    '`skip.yml` (`.github/workflows/skip.yml`): 2 runs, p50 60s, p90 60s, trend insufficient, superseded 0 (n/a), cancelled 0, skipped 1',
+    "`push.yml` (`.github/workflows/push.yml`): 10 runs, p50 60s, p90 60s, trend insufficient, superseded 0 (n/a), cancelled 0, runs on 100% of pushes (informational; a repo's only push workflow always reads 100%)",
   ]) assert.ok(all.includes(expected), `missing: ${expected}\n${all.join('\n')}`);
 });
 
@@ -256,9 +314,9 @@ test('render: a p90 over the watch reads as over the merge-gate watch only on a 
   assert.equal(run([], d), 0);
   const all = lines(out);
   const tail = ', trend insufficient, superseded 0 (n/a), cancelled 0';
-  assert.ok(all.includes(`push.yml (.github/workflows/push.yml): 5 runs, p50 1000s, p90 1000s${tail}`), all.join('\n'));
-  assert.ok(all.includes(`schedule.yml (.github/workflows/schedule.yml): 5 runs, p50 1000s, p90 1000s${tail}`), all.join('\n'));
-  assert.ok(all.includes(`pull_request.yml (.github/workflows/pull_request.yml): 5 runs, p50 1000s, p90 1000s — over the 900s merge-gate watch${tail}`), all.join('\n'));
+  assert.ok(all.includes(`\`push.yml\` (\`.github/workflows/push.yml\`): 5 runs, p50 1000s, p90 1000s${tail}`), all.join('\n'));
+  assert.ok(all.includes(`\`schedule.yml\` (\`.github/workflows/schedule.yml\`): 5 runs, p50 1000s, p90 1000s${tail}`), all.join('\n'));
+  assert.ok(all.includes(`\`pull_request.yml\` (\`.github/workflows/pull_request.yml\`): 5 runs, p50 1000s, p90 1000s — over the 900s merge-gate watch${tail}`), all.join('\n'));
 });
 
 for (const status of [404, 403, 410]) {
@@ -503,7 +561,7 @@ test('--file: an open issue with the title skips filing; a failed create is a fa
   const env = envelope(brokenJson.out);
   assert.equal(env.filed, null);
   assert.equal(env.filingSkipped, null);
-  assert.deepEqual(env.failures, [{ query: 'file issue', error: 'HTTP 422' }]);
+  assert.deepEqual(env.failures, [{ query: 'file issue', status: null, error: 'HTTP 422' }]);
 });
 
 test('--file: an unreadable open-title list files nothing and prints a failed read line, exit 0', () => {
@@ -517,7 +575,7 @@ test('--file: an unreadable open-title list files nothing and prints a failed re
   const json = deps({ routes: orgRoutes(ORG, [ac1Runs()]), openIssueTitles: unread });
   assert.equal(run(['--file', '--json'], json.d), 0);
   assert.deepEqual(json.out.created, []);
-  assert.deepEqual(envelope(json.out).failures, [{ query: 'open issue titles', error: 'HTTP 502: Bad Gateway' }]);
+  assert.deepEqual(envelope(json.out).failures, [{ query: 'open issue titles', status: null, error: 'HTTP 502: Bad Gateway' }]);
 });
 
 test('--json: a filed breach carries filed {title, number} and a null filingSkipped', () => {
@@ -528,13 +586,106 @@ test('--json: a filed breach carries filed {title, number} and a null filingSkip
   assert.equal(env.filingSkipped, null);
 });
 
-test('render keeps one line per workflow: a workflow name carrying a newline is collapsed', () => {
+test('render keeps one line per workflow: a workflow name carrying a newline is collapsed inside its code span', () => {
   const runs = ac1Runs().map((r) => ({ ...r, name: 'ci\nbilling: Actions budget headroom 99% (floor 10%)' }));
   const { d, out } = deps({ routes: orgRoutes(ORG, [runs]) });
   assert.equal(run([], d), 0);
   const all = lines(out);
   assert.ok(!all.includes('billing: Actions budget headroom 99% (floor 10%)'), all.join('\n'));
-  assert.ok(all.some((l) => l.startsWith('ci billing: Actions budget headroom 99% (floor 10%) (.github/workflows/ci.yml): 5 runs')), all.join('\n'));
+  assert.ok(all.some((l) => l.startsWith('`ci billing: Actions budget headroom 99% (floor 10%)` (`.github/workflows/ci.yml`): 5 runs')), all.join('\n'));
+});
+
+test('render neutralizes a hostile workflow name and path: no report prefix, link, mention or escape byte survives', () => {
+  const name = 'failed read: file issue: [click](https://evil.example) @maintainer \u001b[31mred`x\u0007';
+  const p = '.github/workflows/\u001b]8;;https://evil.example\u0007ci`@x.yml';
+  const runs = ac1Runs().map((r) => ({ ...r, name, path: p }));
+  const { d, out } = deps({ routes: orgRoutes(ORG, [runs]) });
+  assert.equal(run([], d), 0);
+  const all = lines(out);
+  const expectedName = "`failed read: file issue: [click](https://evil.example) (at)maintainer [31mred'x`";
+  const expectedPath = "`.github/workflows/]8;;https://evil.exampleci'(at)x.yml`";
+  assert.ok(all.includes(`${expectedName} (${expectedPath}): 5 runs, p50 800s, p90 1300s — over the 900s merge-gate watch, trend insufficient, superseded 0 (n/a), cancelled 0`), all.join('\n'));
+  assert.ok(all.includes(`breach: ${expectedName} (${expectedPath}) p90 1300s over the 900s merge-gate watch`), all.join('\n'));
+  assert.ok(!all.some((l) => l.startsWith('failed read:')), 'a workflow name never opens a line with a report prefix');
+  for (const line of all) {
+    // eslint-disable-next-line no-control-regex
+    assert.doesNotMatch(line, /[\u0000-\u001f\u007f-\u009f]/, JSON.stringify(line));
+    assert.doesNotMatch(line, /@/, line);
+  }
+});
+
+test('render: a failed repo read beside a readable runs page 1 — the repo failure row, superseded n/a, owner type unreadable', () => {
+  const runs = [
+    ...ac1Runs(),
+    wfRun({ branch: 'feature', created: NOW.getTime() - DAY, seconds: 60 }),
+    wfRun({ branch: 'feature', created: NOW.getTime() - DAY + HOUR, seconds: 60 }),
+  ];
+  const routes = { ...orgRoutes(ORG, [runs]), [`repos/${ORG}`]: http(503) };
+  const json = deps({ routes });
+  assert.equal(run(['--json'], json.d), 0);
+  const env = envelope(json.out);
+  assert.equal(env.runsAvailable, true);
+  assert.deepEqual(env.failures, [{ query: 'repo', status: 503, error: 'gh: request failed (HTTP 503)' }]);
+  assert.deepEqual(env.billing, { available: false, status: null, reason: 'owner type unreadable' });
+  const ci = env.workflows.find((w) => w.path === CI);
+  assert.equal(ci.superseded, null, 'no default branch known: superseded is null, never 0');
+  assert.equal(ci.supersededShare, null);
+  assert.equal(ci.runs, 7);
+  assert.ok(!json.out.calls.some((args) => /settings\/billing/.test(args[3])), 'no billing read without an owner type');
+  const text = deps({ routes });
+  assert.equal(run([], text.d), 0);
+  const all = lines(text.out);
+  assert.ok(all.includes('`ci.yml` (`.github/workflows/ci.yml`): 7 runs, p50 700s, p90 1300s — over the 900s merge-gate watch, trend insufficient, superseded n/a, cancelled 0'), all.join('\n'));
+  assert.ok(all.includes('billing unavailable (owner type unreadable)'), all.join('\n'));
+  assert.ok(all.includes('failed read: repo: gh: request failed (HTTP 503)'), all.join('\n'));
+});
+
+test('--json: runsAvailable is false when no runs page was read, and the unavailable line comes from it', () => {
+  const failed = deps({ routes: orgRoutes(ORG, [http(500)]) });
+  assert.equal(run(['--json'], failed.d), 2);
+  assert.equal(envelope(failed.out).runsAvailable, false);
+  const absent = deps({ runner: () => { throw Object.assign(new Error('spawn gh ENOENT'), { code: 'ENOENT' }); } });
+  assert.equal(run(['--json'], absent.d), 2);
+  assert.equal(envelope(absent.out).runsAvailable, false);
+  const empty = deps({ routes: orgRoutes(ORG, [[]]) });
+  assert.equal(run(['--json'], empty.d), 0);
+  assert.equal(envelope(empty.out).runsAvailable, true);
+  // The decision is the flag's, not the failure label's: an unavailable half with no page-1 row still
+  // reads unavailable, never as an empty window.
+  const { renderReport } = require('../../../plugin/bin/lib/ci-health/render');
+  const report = {
+    repo: ORG, window: { days: 30, from: '2026-10-13' }, runsAvailable: false, truncated: false, ghAbsent: false,
+    workflows: [], watchSeconds: 900, minHeadroomPct: 10, billing: { available: false, status: null, reason: 'owner type unreadable' },
+    failures: [], breaches: [], filed: null, filingSkipped: null,
+  };
+  const rendered = renderReport(report);
+  assert.ok(rendered.includes('runs unavailable'), rendered.join('\n'));
+  assert.ok(!rendered.includes('no workflow runs in the last 30 days'), rendered.join('\n'));
+});
+
+test('--min-headroom-pct reaches run(): 3 with 5% headroom is no breach; the boundary values are accepted', () => {
+  const { d, out } = deps({ routes: orgRoutes(ORG, [[]]) });
+  assert.equal(run(['--min-headroom-pct', '3', '--json'], d), 0);
+  const env = envelope(out);
+  assert.equal(env.minHeadroomPct, 3);
+  assert.equal(env.billing.headroomPct, 5);
+  assert.deepEqual(env.breaches, []);
+  for (const [value, expected] of [['0', 0], ['100', 100], ['5.5', 5.5]]) {
+    const r = deps({ routes: orgRoutes(ORG, [[]]) });
+    assert.equal(run(['--min-headroom-pct', value, '--json'], r.d), 0, value);
+    const e = envelope(r.out);
+    assert.equal(e.minHeadroomPct, expected, value);
+    assert.equal(e.breaches.length, expected > 5 ? 1 : 0, value);
+  }
+  const text = deps({ routes: orgRoutes(ORG, [[]]) });
+  assert.equal(run(['--min-headroom-pct', '3'], text.d), 0);
+  assert.ok(lines(text.out).includes('billing: Actions budget headroom 5% (floor 3%)'), lines(text.out).join('\n'));
+});
+
+test('--file: a created issue whose number cannot be read renders filed (issue number unread)', () => {
+  const { d, out } = deps({ routes: orgRoutes(ORG, [ac1Runs()]), createIssue: () => ({ number: null }) });
+  assert.equal(run(['--file'], d), 0);
+  assert.ok(lines(out).includes(`filed (issue number unread): ${BREACH_TITLE}`), lines(out).join('\n'));
 });
 
 test('realDeps argv pins: the open-title list and the create argv per type branch', () => {
@@ -564,6 +715,30 @@ test('realDeps issue seam: titles parsed from the list, the body piped on stdin,
   assert.deepEqual(calls[1].args, issueCreateArgs('acme/widgets', issue));
   assert.deepEqual(calls[1].opts, { input: 'BODY' });
   assert.deepEqual(seam.createIssue('acme/widgets', { ...issue, body: 'other' }), { number: null });
+});
+
+// The per-call `{ timeout }` fetch.js and billing.js pass reaches the real execFileSync, and a call
+// passing none gets CI_HEALTH_GH_TIMEOUT_MS; neither follows CLAUDE_TWEAKS_GH_TIMEOUT_MS.
+test('realDeps.runner hands each call\'s own timeout to execFileSync, else the 15 s CI health bound', () => {
+  const { captureGhTimeout } = require('../../helpers/gh-timeout-probe');
+  const cliPath = require.resolve('../../../plugin/bin/ci-health');
+  const { readRepo } = require('../../../plugin/bin/lib/ci-health/fetch');
+  const repoReply = JSON.stringify({ owner: { type: 'User', login: 'acme' }, default_branch: 'main' });
+  const viaFetch = captureGhTimeout({
+    envValue: '45000', modulePaths: [cliPath], reply: repoReply,
+    exercise: (setEnv) => { setEnv(); readRepo({ owner: 'acme', repo: 'widgets' }, { runner: require(cliPath).realDeps.runner }); },
+  });
+  assert.equal(viaFetch, 15000);
+  const own = captureGhTimeout({
+    envValue: '45000', modulePaths: [cliPath],
+    exercise: (setEnv) => { setEnv(); require(cliPath).realDeps.runner(['api', '--method', 'GET', 'repos/acme/widgets'], { timeout: 1234 }); },
+  });
+  assert.equal(own, 1234);
+  const none = captureGhTimeout({
+    envValue: '45000', modulePaths: [cliPath], reply: '[]',
+    exercise: (setEnv) => { setEnv(); require(cliPath).realDeps.openIssueTitles('acme/widgets'); },
+  });
+  assert.equal(none, 15000);
 });
 
 // A real 100-run page is several MiB; execFileSync's 1 MiB default buffer fails it with ENOBUFS.

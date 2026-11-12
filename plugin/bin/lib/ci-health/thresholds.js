@@ -17,6 +17,7 @@
 const { MERGE_GATE_WATCH_SECONDS, P90_BREACH_MIN_RUNS, DEFAULT_MIN_HEADROOM_PCT } = require('./constants');
 const { errorText } = require('./fetch');
 const { isNum } = require('./billing');
+const { neutralName } = require('./render');
 const { recordPayload, specShapedBody } = require('../issues/record');
 
 const BREACH_TITLE = 'CI health: workflow p90 duration or Actions budget headroom breaches a threshold';
@@ -35,13 +36,8 @@ function breachesOf({ workflows, billing }, { minHeadroomPct = DEFAULT_MIN_HEADR
 }
 
 // A workflow's `name` comes from its YAML and its `path` names its file, and a fork PR can add a
-// workflow file under any name with any YAML, so both are neutralized before they reach the
-// markdown body: whitespace runs (newlines included) collapse to one space, a backtick becomes `'`,
-// and `@` becomes `(at)` so no mention can ping anyone.
-function neutralName(name) {
-  return String(name).replace(/\s+/g, ' ').trim().replace(/`/g, "'").replace(/@/g, '(at)');
-}
-
+// workflow file under any name with any YAML, so both go through render.js's neutralName (the one
+// neutralizer the report lines share) and sit inside a code span in the markdown body.
 function breachLine(breach, watchSeconds) {
   if (breach.kind === 'p90-over-watch') {
     return `- Workflow \`${neutralName(breach.workflow)}\` (\`${neutralName(breach.path)}\`): whole-window p90 run duration ${breach.p90Seconds} s, above the merge gate's ${watchSeconds} s watch.`;
@@ -109,11 +105,11 @@ function fileBreaches({ breaches, truncated, partial, file }, { openIssueTitles,
   try {
     titles = openIssueTitles();
   } catch (err) {
-    return outcome({ failure: { query: 'open issue titles', error: errorText(err) } });
+    return outcome({ failure: { query: 'open issue titles', status: null, error: errorText(err) } });
   }
   // An unreadable title list cannot prove there is no duplicate, so it files nothing.
   if (!Array.isArray(titles)) {
-    return outcome({ failure: { query: 'open issue titles', error: 'open issue titles is not a list' } });
+    return outcome({ failure: { query: 'open issue titles', status: null, error: 'open issue titles is not a list' } });
   }
   if (titles.includes(BREACH_TITLE)) return outcome({ skipped: SKIP_REASONS.OPEN_ISSUE_EXISTS });
   const payload = composeBreachIssue(breaches, composeArgs);
@@ -121,7 +117,7 @@ function fileBreaches({ breaches, truncated, partial, file }, { openIssueTitles,
   try {
     created = createIssue(payload);
   } catch (err) {
-    return outcome({ failure: { query: 'file issue', error: errorText(err) } });
+    return outcome({ failure: { query: 'file issue', status: null, error: errorText(err) } });
   }
   return outcome({ filed: { title: payload.title, number: created && isNum(created.number) ? created.number : null } });
 }

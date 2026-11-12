@@ -2,12 +2,15 @@
 // /claude-tweaks:harness-health's CI health check (#5161). Pure: renderReport(report) takes the
 // CLI's report envelope and returns one string per line; harness-health copies the lines verbatim.
 //
-// The runs half is unavailable when gh is absent or page 1 failed (fetch.js stops at the first
-// failed page, so a `runs page 1` failure means no page was read); only an available, empty runs
-// half says there were no runs. An unreadable billing endpoint never reads as "no budget".
+// The runs half is unavailable when gh is absent or no runs page was read (the envelope's
+// `runsAvailable`, fetch.js's `available`); only an available, empty runs half says there were no
+// runs. The unavailable line shows page 1's HTTP status, else its error. An unreadable billing
+// endpoint never reads as "no budget".
 //
-// Every free-text value (a workflow name from fork-controllable YAML, a gh error, a reason) has its
-// whitespace runs collapsed to one space, so each item stays on its own line.
+// Every free-text value (a gh error, a reason) has its whitespace runs collapsed to one space, so
+// each item stays on its own line. A workflow's name and path come from YAML a fork PR controls, so
+// they go through neutralName and render inside a code span: a name can then never open a line with
+// a report prefix such as `failed read:`, render a link, ping a mention, or carry a terminal escape.
 'use strict';
 
 const { RUNS_PER_PAGE, MAX_RUN_PAGES } = require('./constants');
@@ -16,8 +19,20 @@ const { NO_BUDGET } = require('./billing');
 const oneLine = (value) => String(value).replace(/\s+/g, ' ').trim();
 const seconds = (value) => (value === null ? 'n/a' : `${value}s`);
 
+// The one neutralizer for a fork-controlled workflow name or path, shared by these report lines and
+// thresholds.js's issue body, both of which put it inside a code span: C0 controls (ESC included),
+// DEL and C1 controls are dropped, whitespace runs (newlines included) collapse to one space, a
+// backtick becomes `'` so the code span cannot be closed early (a link or heading inside it stays
+// literal text), and `@` becomes `(at)` so no mention can ping anyone.
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARS = /[\u0000-\u0008\u000e-\u001f\u007f-\u009f]/g;
+function neutralName(name) {
+  return String(name).replace(CONTROL_CHARS, '').replace(/\s+/g, ' ').trim().replace(/`/g, "'").replace(/@/g, '(at)');
+}
+const code = (value) => `\`${neutralName(value)}\``;
+
 function workflowLine(w, watchSeconds) {
-  let line = `${oneLine(w.name)} (${oneLine(w.path)}): ${w.runs} runs, p50 ${seconds(w.p50Seconds)}, p90 ${seconds(w.p90Seconds)}`;
+  let line = `${code(w.name)} (${code(w.path)}): ${w.runs} runs, p50 ${seconds(w.p50Seconds)}, p90 ${seconds(w.p90Seconds)}`;
   // Only a pull_request workflow sits behind the merge gate's watch (and can breach it), so a push-only
   // or scheduled workflow's p90 never reads as over the watch.
   const gated = Array.isArray(w.events) && w.events.includes('pull_request');
@@ -49,7 +64,7 @@ function billingLine(report) {
 
 function breachLine(breach, watchSeconds) {
   if (breach.kind === 'p90-over-watch') {
-    return `breach: ${oneLine(breach.workflow)} (${oneLine(breach.path)}) p90 ${breach.p90Seconds}s over the ${watchSeconds}s merge-gate watch`;
+    return `breach: ${code(breach.workflow)} (${code(breach.path)}) p90 ${breach.p90Seconds}s over the ${watchSeconds}s merge-gate watch`;
   }
   return `breach: Actions budget headroom ${breach.headroomPct}% below the ${breach.floor}% floor`;
 }
@@ -70,10 +85,12 @@ function renderReport(report) {
   if (report.truncated) {
     out.push(`window truncated at ${RUNS_PER_PAGE * MAX_RUN_PAGES} runs: statistics cover the newest runs only`);
   }
-  const firstPage = failures.find((f) => f.query === 'runs page 1');
   if (report.ghAbsent) out.push('runs unavailable (gh absent)');
-  else if (firstPage) out.push(`runs unavailable (${firstPage.status != null ? `HTTP ${firstPage.status}` : oneLine(firstPage.error)})`);
-  else if (report.workflows.length === 0) out.push(`no workflow runs in the last ${days} days`);
+  else if (report.runsAvailable !== true) {
+    const firstPage = failures.find((f) => f.query === 'runs page 1');
+    const why = firstPage && (firstPage.status != null ? `HTTP ${firstPage.status}` : oneLine(firstPage.error));
+    out.push(why ? `runs unavailable (${why})` : 'runs unavailable');
+  } else if (report.workflows.length === 0) out.push(`no workflow runs in the last ${days} days`);
   else for (const w of report.workflows) out.push(workflowLine(w, report.watchSeconds));
   out.push(billingLine(report));
   for (const breach of report.breaches) out.push(breachLine(breach, report.watchSeconds));
@@ -84,4 +101,4 @@ function renderReport(report) {
   return out;
 }
 
-module.exports = { renderReport, oneLine };
+module.exports = { renderReport, oneLine, neutralName };
