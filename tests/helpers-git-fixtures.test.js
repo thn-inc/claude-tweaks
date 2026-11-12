@@ -106,3 +106,13 @@ test('a fixture spawn killed for printing past its maxBuffer reports the overflo
     fs.rmSync(repo, { recursive: true, force: true });
   }
 });
+
+test('fixtureGit leaves a spawn-level ENOBUFS (no signal: not a maxBuffer overflow) unrelabeled', () => {
+  const { fixtureGit } = require('./helpers/git-fixtures');
+  const spawnFailure = Object.assign(new Error('spawnSync git ENOBUFS'), { code: 'ENOBUFS' });
+  assert.throws(
+    () => fixtureGit(['status'], { execFileSync: () => { throw spawnFailure; } }),
+    (err) => err === spawnFailure && !/maxBuffer/.test(err.message),
+    'rethrown unchanged',
+  );
+});
