@@ -109,8 +109,11 @@ function evaluateRecordEligibility(issue, opts) {
   if (integrationModel !== 'pr-first') reasons.push(REASONS.notPrFirst);
   if (facets.risk !== 'low') reasons.push(REASONS.risk);
   if (facets.size !== 'low') reasons.push(REASONS.size);
-  // allowAbsentCeremony relaxes only this rule, for the driver lane: no ceremony:* label at all
-  // (raw names, any spelling) passes.
+  // allowAbsentCeremony relaxes only this rule, for the pipeline driver lane (#5216; its
+  // admission is ../driver/admission.js): no ceremony:* label at all passes, since the lane's
+  // other gates (risk, size, type, Key Files, shape) still apply. It reads raw label names, any
+  // spelling, because facets.ceremony is null for an unrecognised label (ceremony:fastlane,
+  // Ceremony:fast-lane) as well as an absent one, and an unrecognised label must still refuse.
   const ceremonyOk = facets.ceremony === 'fast-lane'
     || (allowAbsentCeremony === true && !normalizeLabelNames(labels).some((n) => /^ceremony:/i.test(n)));
   if (!ceremonyOk) reasons.push(REASONS.ceremony);

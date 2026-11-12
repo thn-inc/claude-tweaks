@@ -1012,8 +1012,10 @@ for (const { id, key, def, other, policyVal } of DRIVER_KEYS) {
 
 test('AC8.3: each ceiling\'s doc row states its unit', () => {
   const lines = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'policy-schema.md')).split('\n');
-  assert.ok(lines.find((l) => l.startsWith('| `express-driver-wall-clock-minutes` |')).includes('minutes'));
-  assert.ok(lines.find((l) => l.startsWith('| `express-driver-spend-ceiling-dollars` |')).includes('dollars'));
+  // The summary cell alone: the key cell already spells the unit, so matching the whole row could not fail.
+  const summaryOf = (key) => lines.find((l) => l.startsWith(`| \`${key}\` |`)).split('|')[5];
+  assert.match(summaryOf('express-driver-wall-clock-minutes'), /\bminutes\b/i);
+  assert.match(summaryOf('express-driver-spend-ceiling-dollars'), /\bwhole dollars\b/i);
 });
 
 test('AC11.4: the policyOnly bullet names all three keys', () => {

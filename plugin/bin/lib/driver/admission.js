@@ -1,6 +1,7 @@
 'use strict';
 // Admission for the pipeline driver lane: whether one record may enter the
-// driver's run loop. The design's "Eligibility" section, as one pure verdict.
+// driver's run loop (#5216, from the pipeline driver design's "Eligibility"
+// section), as one pure verdict.
 // No I/O: the caller fetches the record's state, labels, open blockers and open
 // linked PRs, and resolves the `express-driver` routing value, then passes them in.
 //
@@ -40,7 +41,10 @@ const R = ADMISSION_REASONS;
 
 // `express-driver` routing -> the reason it refuses this record, or null. Only
 // `split` reads the issue number: an even number is admitted, an odd one refused,
-// and a missing or non-integer one is unreadable.
+// and a missing or non-integer one is unreadable. `split` exists to compare the
+// driver with the standard path on similar records: the odd half stays on the
+// other paths. It is temporary, dropped for `on` or `off` once each arm has 20
+// merged records (#5216; the `express-driver` row of _shared/policy-schema.md).
 function routingReason(routing, number) {
   if (routing === 'on') return null;
   if (routing === 'off') return R.routingOff;
