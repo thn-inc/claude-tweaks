@@ -4,6 +4,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { spawnSync } = require('child_process');
 const { POLICY_KEYS, RENAMED_KEYS, auditPolicy, resolveValue, resolvePolicyKeys } = require('../plugin/bin/lib/policy-schema');
 const { readText } = require('./helpers/read-skill');
 
@@ -949,12 +950,11 @@ test('#4029 M4: the procedure-kb ceiling summaries say a run may read its proced
 });
 
 // #5216: the express-driver keys — all policyOnly, so a --run config never sets them.
-const { spawnSync } = require('child_process');
 const DRIVER_CLI = path.join(__dirname, '..', 'plugin', 'bin', 'resolve-policy.js');
 const DRIVER_KEYS = [
-  { id: 'AC11.1', key: 'express-driver', def: 'off', other: 'on' },
-  { id: 'AC11.2', key: 'express-driver-wall-clock-minutes', def: 30, other: 99 },
-  { id: 'AC11.3', key: 'express-driver-spend-ceiling-dollars', def: 10, other: 77 },
+  { id: 'AC11.1', key: 'express-driver', def: 'off', other: 'on', policyVal: 'split' },
+  { id: 'AC11.2', key: 'express-driver-wall-clock-minutes', def: 30, other: 99, policyVal: 5 },
+  { id: 'AC11.3', key: 'express-driver-spend-ceiling-dollars', def: 10, other: 77, policyVal: 5 },
 ];
 
 test('AC7.1: express-driver resolves off from the default in a fresh project', () => {
@@ -988,13 +988,12 @@ test('AC8.2: a ceiling below 1, negative or non-integer falls back invalid', () 
   }
 });
 
-for (const { id, key, def, other } of DRIVER_KEYS) {
+for (const { id, key, def, other, policyVal } of DRIVER_KEYS) {
   test(`${id}: a run config cannot set ${key}`, () => {
     const viaRun = resolvePolicyKeys([key], { policyRaw: '', runConfigRaw: `${key}: ${other}\n` })[key];
     assert.deepStrictEqual(viaRun, { value: def, source: 'default' });
-    const withPolicy = resolvePolicyKeys([key], { policyRaw: `${key}: ${other === 'on' ? 'split' : 5}\n`, runConfigRaw: `${key}: ${other}\n` })[key];
-    assert.strictEqual(withPolicy.source, 'policy');
-    assert.strictEqual(String(withPolicy.value), other === 'on' ? 'split' : '5');
+    const withPolicy = resolvePolicyKeys([key], { policyRaw: `${key}: ${policyVal}\n`, runConfigRaw: `${key}: ${other}\n` })[key];
+    assert.deepStrictEqual(withPolicy, { value: policyVal, source: 'policy' });
   });
 
   test(`${id} via the CLI: resolve-policy.js --run ignores a run config that sets ${key}`, () => {

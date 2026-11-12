@@ -275,3 +275,13 @@ test('allowAbsentCeremony: only a literal true relaxes', () => {
   const out = evaluateRecordEligibility(record(['risk:low', 'size:low', 'type:task']), { ...OPTS, allowAbsentCeremony: 'yes' });
   assert.deepStrictEqual(out.reasons, [REASONS.ceremony]);
 });
+
+test('allowAbsentCeremony: gh {name} label objects take the same ceremony rule as strings', () => {
+  const objs = (names) => names.map((name) => ({ name }));
+  const base = ['risk:low', 'size:low', 'type:task'];
+  assert.strictEqual(evaluateRecordEligibility(record(objs(base)), DRIVER).eligible, true);
+  for (const bad of ['ceremony:standard', 'ceremony:Standard', 'Ceremony:fast-lane', 'ceremony:fastlane']) {
+    const out = evaluateRecordEligibility(record(objs([...base, bad])), DRIVER);
+    assert.deepStrictEqual(out.reasons, [REASONS.ceremony], bad);
+  }
+});

@@ -12,7 +12,6 @@ Output is a single JSON object keyed by requested key. Each key resolves to the 
 - `"invalid": true` — a present-but-rejected value degraded to the schema default; distinct from known-but-unset, which is `source: "default"` with no flag
 - `{"error": "unknown-key"}` — the requested key is not in the schema (no value/source)
 
-
 **Derived-default keys** come in two shapes; both are live, so a new derived key picks one deliberately and states the choice in its row.
 
 *Shape A — resolve-time derivation, no static default* (`integration-model`, `merge-verification`): the `POLICY_KEYS` row carries no static `default`; the derivation's one prose statement lives in `_shared/policy-schema-coverage.md`'s `merge-verification` derivation section and `_shared/integration-model.md`'s forge-detection ladder with a code twin in `bin/lib/` (`policy-schema.js`'s `detectIntegrationModel`; `merge-verification.js`'s `deriveMergeVerification`); `bin/resolve-policy.js` computes it only for an *absent* key (`source: "default"`, no `invalid` flag), never overwriting an `invalid: true` envelope; and `/claude-tweaks:help`'s policy mode renders the default as `computed (…)`.

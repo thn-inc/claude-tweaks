@@ -136,7 +136,7 @@ test('AC6.3: on admits both', () => {
 });
 
 test('AC6.4: an unrecognised routing value is refused by the template', () => {
-  for (const routing of ['ON', undefined, 'both']) {
+  for (const routing of ['ON', undefined, null, 'both']) {
     const reasons = reasonsFor({ routing });
     assert.strictEqual(reasons.length, 1, `routing=${routing}`);
     assert.ok(reasons[0].startsWith('express-driver value not recognised: '), reasons[0]);
@@ -217,4 +217,11 @@ test('parity linked PR: admission\'s open-PR verdict matches partitionByOpenLink
     const { reasons } = evaluateAdmission({ ...ADMIT, number: c.number, openLinkedPRs });
     assert.strictEqual(reasons.includes(R.openPR), inExcluded, `#${c.number}`);
   }
+});
+
+test('a null argument fails closed instead of throwing', () => {
+  let out;
+  assert.doesNotThrow(() => { out = evaluateAdmission(null); });
+  assert.strictEqual(out.admitted, false);
+  for (const r of [R.labelsUnreadable, R.blockerFactsUnreadable, R.prFactsUnreadable, R.stateUnreadable]) assert.ok(out.reasons.includes(r), r);
 });

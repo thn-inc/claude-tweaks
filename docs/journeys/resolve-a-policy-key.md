@@ -15,7 +15,7 @@ files:
 # Resolve a Policy Key Through the Canonical Read Path
 
 **Persona:** claude-tweaks skill author (or a maintainer of a project using the plugin) who wants proof that policy resolution honors the documented precedence chain — run config, then `policy.yml`, then schema default — rather than trusting each skill's prose to have re-implemented it correctly.
-**Goal:** Watch one key resolve under three configurations and confirm the returned `{value, source}` envelope changes exactly as `plugin/skills/_shared/policy-schema.md` §Canonical read path says it will.
+**Goal:** Watch one key resolve under three configurations and confirm the returned `{value, source}` envelope changes exactly as `plugin/skills/_shared/policy-schema-read-path.md` §Canonical read path says it will.
 **Entry point:** A terminal at a project checkout root (any repo with — or even without — a `.claude-tweaks/policy.yml`).
 **Success state:** Three JSON objects whose `source` fields read `default`, `policy`, and `run-config` respectively, plus one `renamed-from` resolution proving the alias table is live, plus one `--all` snapshot whose every row carries `{value, source}` decorated with schema metadata, plus one direct-from-`policy.yml` read proving the enforcement hook honors the same alias table the CLI does, plus three `risk-path-globs` reads (unset, valid block, typo'd block) whose answers — `{}` from `default`, the slug-to-glob map from `policy`, and `null` flagged `invalid` — are each distinct.
 

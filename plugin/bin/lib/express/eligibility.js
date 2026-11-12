@@ -96,7 +96,9 @@ function isFrontend(body, keyFiles) {
 // compose the merge subject; `auto:merge-pending` is a grant that matures only on
 // the normal path's wrap-up.
 function evaluateRecordEligibility(issue, opts) {
-  const { enabled, integrationModel, sensitivePaths = [], escalated = false, allowAbsentCeremony = false } = opts || {};
+  const {
+    enabled, integrationModel, sensitivePaths = [], escalated = false, allowAbsentCeremony = false,
+  } = opts || {};
   const body = (issue && issue.body) || '';
   const labels = (issue && issue.labels) || [];
   const facets = parseRecordFacets(labels);
@@ -107,10 +109,10 @@ function evaluateRecordEligibility(issue, opts) {
   if (integrationModel !== 'pr-first') reasons.push(REASONS.notPrFirst);
   if (facets.risk !== 'low') reasons.push(REASONS.risk);
   if (facets.size !== 'low') reasons.push(REASONS.size);
-  // allowAbsentCeremony relaxes only this rule, for the driver lane: no ceremony:* label at all (raw names, any spelling) passes.
-  const ceremonyOk = allowAbsentCeremony === true
-    ? facets.ceremony === 'fast-lane' || !normalizeLabelNames(labels).some((n) => /^ceremony:/i.test(n))
-    : facets.ceremony === 'fast-lane';
+  // allowAbsentCeremony relaxes only this rule, for the driver lane: no ceremony:* label at all
+  // (raw names, any spelling) passes.
+  const ceremonyOk = facets.ceremony === 'fast-lane'
+    || (allowAbsentCeremony === true && !normalizeLabelNames(labels).some((n) => /^ceremony:/i.test(n)));
   if (!ceremonyOk) reasons.push(REASONS.ceremony);
   if (!typeOf(issue || {})) reasons.push(REASONS.type);
   if (normalizeLabelNames(labels).includes('auto:merge-pending')) reasons.push(REASONS.mergePending);
