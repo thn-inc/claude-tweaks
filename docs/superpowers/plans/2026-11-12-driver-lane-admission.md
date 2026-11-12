@@ -16,7 +16,7 @@
 
 - Names are pinned for #5218 (built concurrently) — use exactly: `evaluateAdmission`, `ADMISSION_REASONS`, `allowAbsentCeremony`, `express-driver`, `express-driver-wall-clock-minutes`, `express-driver-spend-ceiling-dollars`. "If the build finds one must change, say so in a comment on #5218 before merging."
 - `evaluateAdmission({ number, state, labels, openBlockerRefs, openLinkedPRs, routing })` returns `{ admitted: boolean, reasons: string[] }`; `evaluateRecordEligibility`'s return shape `{ number, eligible, reasons, keyFiles }` is unchanged.
-- Reason strings, verbatim from the spec: `record lacks auto:build`, `record is parked`, `record is blocked`, `record has an open blocker`, `record has an open PR`, `record is not open`, `blocker facts unreadable`, `open PR facts unreadable`, `record state unreadable`, `express-driver is off`, `express-driver split: issue number is odd`, `express-driver split: issue number unreadable`, template `express-driver value not recognised: {value}`.
+- Reason strings, verbatim from the spec: `record lacks auto:build`, `record is parked`, `record is blocked`, `record has an open blocker`, `record has an open PR`, `record is not open`, `blocker facts unreadable`, `open PR facts unreadable`, `record state unreadable`, `record labels unreadable` (plan-review addition under the spec's closed rule: "adding a refusal is the only amendment it may make"), `express-driver is off`, `express-driver split: issue number is odd`, `express-driver split: issue number unreadable`, template `express-driver value not recognised: {value}`.
 - `express-driver`: `enum` `off`/`split`/`on`, default `off`. Ceilings: `integer`, `min: 1`, defaults ≥ the design's targets (≥ 15 minutes, ≥ 5 dollars) — this plan sets **30** and **10**. All three `policyOnly: true`, tier `advanced`.
 - AC10: no file under `plugin/skills/` changes except `_shared/policy-schema.md`, the new sibling `_shared/policy-schema-read-path.md`, and `_shared/policy-schema-coverage.md`'s `policyOnly` bullet. `plugin/skills/_shared/express-lane.md` is untouched.
 - Scope and edit discipline (verbatim): "Commit tests only where the task asks for them or the repo already keeps tests for this kind of change, sized like the neighboring test files; scratch checks stay scratch. Touch only what the task requires — a pre-existing bug you notice is a follow-up to report, not a fix to fold in, unless the task cannot work without it. Don't reformat or "improve" adjacent code; edit in place rather than rewrite when the result is the same."
@@ -63,7 +63,11 @@ Not applicable, with reason: `parse-signal-discipline` (admission parses no pros
 | B. Metadata fields prose: intro paragraph + `summary`/`category`/`tier` bullets | 43–47 | 1,665 | None. Keep the heading and the mapping table (`tests/policy-schema-metadata.test.js` slices `## Metadata fields` for the table). |
 | C. Control mode intro, all but the slug sentence | 218 | ≈ 1,010 of 1,114 | None. Keep "Built-in risk slugs: `migrations`, `auth`, `public-contract`, `irreversible-side-effect`." in the section (`tests/resolve-policy-control-mode.test.js:229-237`). |
 
-Projected: 52,309 + 1,250 − (4,330 + 1,665 + 1,010) + stubs ≈ 600 → ≈ 47,150. If Task 4's measurement exceeds 47,250, move D: the "Additional levers" intro paragraph (line 239 at base, 386 B, uncited) behind a one-line pointer — and nothing else.
+Projected: 52,309 + 1,250 − (4,330 + 1,665 + 1,010) + stubs ≈ 600 → ≈ 47,150. If Task 4's measurement exceeds 47,250, move D: the "Additional levers" intro paragraph (line 239 at base, 386 B, uncited) behind a one-line pointer.
+
+**Overflow rule (plan review).** Moves A–D are the whole sanctioned set (the user ruled at plan review on cited-block moves; no further section was ruled on). If `policy-schema.md` is still over 47,250 after D — at Task 3, at Task 4, or after any `main` merge before Common Step 5 — first shorten this record's own three doc rows (never another key's row); still over → stop the build as an AC9 failure and surface the measured bytes for a human decision, never move an un-ruled section on the implementer's own judgment.
+
+Block A is cited (`help/policy.md:51,57`, the journey): moved under the user's plan-review ruling (spec `## Plan Review Clarifications`), with the stub keeping every cited name.
 
 Deictics that the move breaks (rewrite in the moved text, Task 3 Step 3):
 - Shape A: "the derivation's one prose statement lives here (…; the `merge-verification` coverage block below)" → "lives in `_shared/policy-schema-coverage.md`'s `merge-verification` derivation section and `_shared/integration-model.md`'s forge-detection ladder".
@@ -75,6 +79,7 @@ Deictics that the move breaks (rewrite in the moved text, Task 3 Step 3):
 ### Task 1: `allowAbsentCeremony` on express eligibility
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/express/eligibility.js:98-110` (`evaluateRecordEligibility` opts destructure and the ceremony line)
@@ -119,11 +124,12 @@ Expected: PASS, 0 failures.
 
 **Interfaces:**
 - Consumes: `normalizeLabelNames`, `parseRecordFacets`, `LABELS` from `plugin/bin/lib/issues/record.js`.
-- Produces: `module.exports = { ADMISSION_REASONS, evaluateAdmission }`. `ADMISSION_REASONS` is `Object.freeze`d with exactly these keys: `noBuildGrant`, `parked`, `blocked`, `openBlocker`, `openPR`, `notOpen`, `blockerFactsUnreadable`, `prFactsUnreadable`, `stateUnreadable`, `routingOff`, `splitOdd`, `splitUnreadable`, `routingUnknown` (a function `(value) => \`express-driver value not recognised: ${value}\``), values as in Global Constraints. `evaluateAdmission({ number, state, labels, openBlockerRefs, openLinkedPRs, routing }) → { admitted, reasons }`.
+- Produces: `module.exports = { ADMISSION_REASONS, evaluateAdmission }`. `ADMISSION_REASONS` is `Object.freeze`d with exactly these keys: `noBuildGrant`, `parked`, `blocked`, `openBlocker`, `openPR`, `notOpen`, `blockerFactsUnreadable`, `prFactsUnreadable`, `stateUnreadable`, `labelsUnreadable`, `routingOff`, `splitOdd`, `splitUnreadable`, `routingUnknown` (a function `(value) => \`express-driver value not recognised: ${value}\``), values as in Global Constraints. `evaluateAdmission({ number, state, labels, openBlockerRefs, openLinkedPRs, routing }) → { admitted, reasons }`.
 
 - [ ] **Step 1: Write the failing tests.** A base fact set `ADMIT = { number: 5216, state: 'OPEN', labels: ['auto:build', 'ready'], openBlockerRefs: [], openLinkedPRs: [], routing: 'on' }` admits (`{ admitted: true, reasons: [] }`). Then:
   - One test per gate, each asserting `reasons` deepEqual `[thatReason]` from a single mutation of `ADMIT` (so deleting that gate alone turns it red): `AC3.1: no auto:build` → `noBuildGrant`; `AC3.2: the parked stage label` and `AC3.2: bot:parked` → `parked` (two tests); `AC3.3: bot:blocked` → `blocked`; `AC3.4: an open blocker` (`openBlockerRefs: [4816]`) → `openBlocker`; `AC3.5: an open PR` (`openLinkedPRs: [5247]`) → `openPR`; `AC3.6: state CLOSED` → `notOpen`.
-  - `AC3.7: ADMISSION_REASONS exports exactly the documented keys` — `Object.keys(ADMISSION_REASONS).sort()` deepEqual the 13 keys above.
+  - `AC3.7: ADMISSION_REASONS exports exactly the documented keys` — `Object.keys(ADMISSION_REASONS).sort()` deepEqual the 14 keys above.
+  - `labels unreadable fails closed with its own reason` — `labels` of `'auto:build'` (a string) and `{ name: 'auto:build' }` (a plain object) → `reasons` deepEqual `[labelsUnreadable]` and no throw; `labels: null` / `undefined` → `[labelsUnreadable]` too (never `record lacks auto:build`). An empty array is readable (→ `[noBuildGrant]`).
   - `Review Focus 1: ready and parked together still refuses as parked` — labels `['auto:build','ready','parked']` → `[parked]`.
   - `Review Focus 3: lower-case or padded state is not open, not unreadable` — `'open'` and `'OPEN '` → `[notOpen]`.
   - `Review Focus 4: gh label objects are accepted` — `labels: [{ name: 'auto:build' }]` admits.
@@ -147,7 +153,7 @@ Expected: PASS, 0 failures.
 Run: `node --test tests/bin-lib/driver/admission.test.js`
 Expected: FAIL — `Cannot find module '../../../plugin/bin/lib/driver/admission.js'`.
 
-- [ ] **Step 3: Implement `evaluateAdmission`** in `plugin/bin/lib/driver/admission.js` — header comment naming the design ("Eligibility") and the closed rule: the listed refusals are the complete set; a claimed record (`bot:in-progress`) is deliberately not a gate (the claim step owns it). Pure: no I/O, no `require` of fs/child_process. Check order: grant, parked (raw `LABELS.PARKED` in `normalizeLabelNames(labels)` or `facets.bot.parked`), blocked, blocker facts (`Array.isArray` else unreadable; non-empty → open blocker), PR facts (same), state (`typeof !== 'string'` → unreadable; `!== 'OPEN'` → not open), routing. Never short-circuit. `admitted = reasons.length === 0`.
+- [ ] **Step 3: Implement `evaluateAdmission`** in `plugin/bin/lib/driver/admission.js` — header comment naming the design ("Eligibility") and the closed rule: the listed refusals are the complete set; a claimed record (`bot:in-progress`) is deliberately not a gate (the claim step owns it). Pure: no I/O, no `require` of fs/child_process. A non-array `labels` pushes `labelsUnreadable` and skips the three label gates (grant, parked, blocked) — never passes it to `normalizeLabelNames`, which throws on a string or object; the remaining gates still run. Check order: labels readable, grant, parked (raw `LABELS.PARKED` in `normalizeLabelNames(labels)` or `facets.bot.parked`), blocked, blocker facts (`Array.isArray` else unreadable; non-empty → open blocker), PR facts (same), state (`typeof !== 'string'` → unreadable; `!== 'OPEN'` → not open), routing. Never short-circuit. `admitted = reasons.length === 0`.
 
 - [ ] **Step 4: Run to verify all pass**
 
@@ -178,7 +184,7 @@ Expected: PASS, 0 failures. Then prove discrimination: delete the `bot:blocked` 
 - [ ] **Step 6: Verify**
 
 Run: `wc -c plugin/skills/_shared/policy-schema.md plugin/skills/_shared/policy-schema-read-path.md`
-Expected: `policy-schema.md` ≤ 46,000 (≥ 1,250 B under 47,250 for Task 4's rows); sibling well under 52,500.
+Expected: `policy-schema.md` ≤ 46,000 (≥ 1,250 B under 47,250 for Task 4's rows); sibling well under 52,500. Between 46,000 and 47,250: proceed — Task 4 measures after its rows and applies move D if needed. Over 47,250: something other than the planned moves grew the file (a `main` merge) — apply move D here and re-measure; still over → stop the build (Overflow rule below).
 
 Run: `node --test tests/policy-schema-metadata.test.js tests/policy-key-naming.test.js tests/resolve-policy-control-mode.test.js tests/bin-lib/skill-audit/context-cost.test.js tests/bin-lib/skill-audit/house-structure.test.js`
 Expected: PASS, 0 failures.
@@ -212,6 +218,7 @@ Expected: at least one hit (the stub) — a citer following `help/policy.md`'s r
   - `AC8.1: each ceiling resolves its default when unset, at or above the design targets` — wall-clock `{ value: 30, source: 'default' }`, value ≥ 15; spend `{ value: 10, source: 'default' }`, value ≥ 5.
   - `AC8.2: a ceiling below 1, negative or non-integer falls back invalid` — for each key and each of `0`, `-3`, `1.5`, `abc`: `{ value: <default>, source: 'default', invalid: true }`.
   - `AC11.1`–`AC11.3: a run config cannot set {key}` — one test per key: `resolvePolicyKeys([key], { policyRaw: '', runConfigRaw: '<key>: <non-default>\n' })` returns the default with `source: 'default'`; with a `policyRaw` value too, returns the policy value with `source: 'policy'`.
+  - `AC11.1`–`AC11.3 via the CLI: resolve-policy.js --run ignores a run config that sets {key}` — one test per key: `tmpRepo()` as cwd (no policy), a second `fs.mkdtempSync` run dir outside any checkout holding `config.yml` with `{key}: <non-default>`; `spawnSync(process.execPath, [CLI, '--run', runDir, key], { cwd: repo })` → JSON `[key]` deepEqual `{ value: <default>, source: 'default' }`. `CLI` is `path.join(__dirname, '..', 'plugin', 'bin', 'resolve-policy.js')`. Clean up both tmp dirs.
   - `AC8.3: each ceiling's doc row states its unit` — the `policy-schema.md` line starting `` | `express-driver-wall-clock-minutes` | `` includes `minutes`; the `` | `express-driver-spend-ceiling-dollars` | `` line includes `dollars`.
   - `AC11.4: the policyOnly bullet names all three keys` — slice `policy-schema-coverage.md` from the line containing `are \`policyOnly\`` to the end of that line; assert it contains each key in backticks.
 
@@ -228,7 +235,7 @@ Run: `node --test tests/policy-schema.test.js tests/policy-key-naming.test.js te
 Expected: PASS, 0 failures (AC9.2; the skill-audit half of AC9.1).
 
 Run: `wc -c plugin/skills/_shared/policy-schema.md`
-Expected: ≤ 47,250 (AC9.1). If over, apply move D from the Headroom arithmetic section (and only that) as part of this task and re-run.
+Expected: ≤ 47,250 (AC9.1). If over, apply move D from the Headroom arithmetic section as part of this task and re-run. Still over → Overflow rule.
 
 Run: `git diff --name-only 688c93e31...HEAD -- plugin/skills`
 Expected: exactly `plugin/skills/_shared/policy-schema-coverage.md`, `plugin/skills/_shared/policy-schema-read-path.md`, `plugin/skills/_shared/policy-schema.md` (AC10.1); `git diff 688c93e31...HEAD -- plugin/skills/_shared/policy-schema-coverage.md` changes only the `policyOnly` bullet line.
@@ -242,5 +249,6 @@ Prove discrimination: remove `policyOnly: true` from `express-driver-spend-ceili
 ## Final checks (controller, after all tasks)
 
 - AC10: `git diff --name-only 688c93e31...HEAD -- plugin/skills` lists exactly `plugin/skills/_shared/policy-schema.md`, `plugin/skills/_shared/policy-schema-read-path.md`, `plugin/skills/_shared/policy-schema-coverage.md`; and `git diff 688c93e31...HEAD -- plugin/skills/_shared/policy-schema-coverage.md` touches only the `policyOnly` bullet line.
-- AC9 is re-measured after any `main` merge (Gotchas: other open records append rows here).
-- Comment on #5218 only if any pinned name changed (none planned).
+- AC9 is re-measured after any `main` merge (Gotchas: other open records append rows here); an overflow follows the Overflow rule.
+- Comment on #5218 (always — plan-review ruling): its run loop is the first consumer of all three keys, so the commit that wires the reads drops all three `Not yet used` summary markers and their `NOT_YET_USED` entries in `tests/resolve-policy-control-mode.test.js`; and `ADMISSION_REASONS` gained an additive `labelsUnreadable` (`record labels unreadable`) beside the pinned names, which are otherwise unchanged.
+- File a follow-up record via `/claude-tweaks:capture` (spec-shaped, `Defer-reason:` per `_shared/deferral-gate.md`): retarget `help/policy.md:51,57` and `docs/journeys/review-project-policy.md:32` straight at `_shared/policy-schema-read-path.md`, which AC10 forbids here.
