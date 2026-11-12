@@ -518,10 +518,10 @@ function pull(scenario, o = {}) {
     };
     const extra = o.prepare ? o.prepare(own) : {};
     const options = { transport: o.transport || 'gh', sessionId, cwd, env: o.env || {}, omit: o.omit || [], inputs: o.inputs, ...extra };
-    const ctx = makeContext(options, deps);
+    const ctx = (o.lib || { makeContext }).makeContext(options, deps);
     if (o.before) o.before(ctx, own);
     let thrown = null;
-    try { runPasses(T3_PASSES, ctx); } catch (err) { thrown = err; }
+    try { (o.lib || { runPasses }).runPasses(T3_PASSES, ctx); } catch (err) { thrown = err; }
     if (thrown && !o.allowThrow) throw thrown;
     const text = {};
     for (const name of SESSION_FILES) if (fs.existsSync(paths[name]) && fs.statSync(paths[name]).isFile()) text[name] = fs.readFileSync(paths[name], 'utf8');
@@ -695,12 +695,49 @@ test('#5227 foreign blocker: a spawn error reaches the Warning as the library pr
   assert.deepEqual(entriesOf(answered, 'blocked'), [{ reason: 'blocked', records: [9001], detail: { blockedBy: ['acme-corp/other#12'] } }]);
 });
 
-test('#5227 R6: a failed session-file write is a step error and the fence goes on (no stop)', () => {
+test('#5227 R6: a failed session-file write is a step error and the run continues past fetch to its next outcome', () => {
   const r = pull(S1(), {
     before: (ctx) => { fs.mkdirSync(ctx.paths['dispatch-fastlane-bundles.json']); }, // a directory: the write fails
     allowThrow: true,
   });
   assert.ok(r.errs.some((e) => /^queue-pull: write dispatch-fastlane-bundles\.json: /.test(e)), r.stderr);
+  // The run went on past fetch (and blocked): the grouping block, which rewrites the same
+  // file, is what stops it. A put that logged and rethrew would surface the raw EISDIR instead.
+  assert.ok(r.thrown instanceof QueuePullStopped, String(r.thrown));
+  assert.match(r.thrown.line, /group-building exclusion pass failed/);
+  assert.ok(r.errs.some((e) => e.startsWith('queue-pull: group-building: ')), r.stderr);
+});
+
+// Loads queue-pull.js fresh with cross-repo-states.js's bodyForeignBlockers replaced by a recorder.
+function withRecordedForeignDeps(fn) {
+  const csPath = require.resolve('../../../plugin/bin/lib/issues/cross-repo-states');
+  const qpPath = require.resolve('../../../plugin/bin/lib/dispatch/queue-pull');
+  const real = require(csPath);
+  const savedCs = require.cache[csPath].exports;
+  const savedQp = require.cache[qpPath];
+  const seen = [];
+  require.cache[csPath].exports = { ...real, bodyForeignBlockers: (records, deps) => { seen.push(deps); return new Map(); } };
+  delete require.cache[qpPath];
+  try {
+    return fn(require(qpPath), seen);
+  } finally {
+    require.cache[csPath].exports = savedCs;
+    delete require.cache[qpPath];
+    require.cache[qpPath] = savedQp;
+  }
+}
+
+test('#5227 foreign blocker: with no deps.foreignDeps.spawn, no spawn key reaches bodyForeignBlockers (the library default bounded spawn runs)', () => {
+  withRecordedForeignDeps((lib, seen) => {
+    pull(foreignScenario(), { lib, deps: { foreignDeps: {} } });
+    assert.equal(seen.length, 1);
+    assert.equal(Object.prototype.hasOwnProperty.call(seen[0], 'spawn'), false);
+    assert.equal(typeof seen[0].stderr, 'function');
+    // Positive control: an injected seam spawn is passed through untouched.
+    const injected = () => ({ status: 0, stdout: '{}', stderr: '' });
+    pull(foreignScenario(), { lib, deps: { foreignDeps: { spawn: injected } } });
+    assert.equal(seen[1].spawn, injected);
+  });
 });
 
 test('#5227 gh calls carry options.cwd and options.env through to the runner', () => {
