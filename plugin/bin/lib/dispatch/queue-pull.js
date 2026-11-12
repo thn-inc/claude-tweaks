@@ -49,7 +49,7 @@
 // it); because an omitted pass leaves groups the cache blob would then misdescribe, the write-back
 // pass writes nothing (no writeOrder call) whenever the omit set is non-empty.
 //
-// PF6: failOpen is taken across both transports, so a gh-only reader sees `stop` for a pass whose
+// failOpen is taken across both transports, so a gh-only reader sees `stop` for a pass whose
 // gh fetch fails open (neighbour-in-flight): on `files`, a missing or malformed in-flight or
 // claims file stops the pull.
 //
@@ -59,6 +59,14 @@
 // the counter back, so a failed create does not advance it. The parity CLI is
 // a subprocess and cannot take an injected function, and the oracle's mktemp shim implements the
 // same format over the same variable, so both sides emit identical names. Production never sets it.
+//
+// Test seams beyond `deps` (no shipped caller uses them; a refactor keeps them or updates the
+// tests in queue-pull.test.js that read them): `makeContext(options, deps)` is exported, and tests
+// run passes over its context and then assert on `ctx.state.cacheHit`, `.workLinks`,
+// `.groupSizeGuard`, `.integrationBranch`, `.integrationRef` and `.files` (the effective input
+// paths); `runPasses` takes `ctx.runners` ({ [id]: fn }) in place of the real runners; and
+// `defaultDeps({ execFileSync, spawnSync })` replaces the two child_process calls the default
+// runner and spawnCli make.
 
 const fs = require('fs');
 const os = require('os');
@@ -572,13 +580,13 @@ function runWriteBack(ctx) {
   });
 }
 
-// ---- Task 4: not-spec-shaped, open-pr, target-missing and shipped ------------------------------
+// ---- not-spec-shaped, open-pr, target-missing and shipped (fence 307-580) ---------------------
 
 // The text this module quotes where the fence prints `$(cat $ERR_FILE)`. The fence's file holds
 // Node's uncaught-exception report: a header (a throw-site file:line, or a node:internal loader
 // line, depending on the Node version) that err.stack does not carry, then the error text and a
 // stack. This is the thrown message only, so those four lines differ from the oracle's after
-// their fixed prefix (controller ruling, Task 4 review; the parity suite compares the prefix).
+// their fixed prefix, and the parity suite's reported() compares those lines up to that prefix.
 const errText = (err) => String(err && err.message != null ? err.message : err);
 
 // The options a runner call carries: the context's cwd and env, no undefined keys.
@@ -716,7 +724,7 @@ function targetMissingProposal(num, tpath, ref) {
   ].map((l) => `${l}\n`).join('');
 }
 
-// Fence 384-466. PF10: the run-dir and integration-branch resolution (385-395) is shared setup and
+// Fence 384-466. The run-dir and integration-branch resolution (385-395) is shared setup and
 // runs whether or not this pass is omitted; later passes read state.integrationBranch.
 function runTargetMissing(ctx) {
   const { deps, paths, omit, state } = ctx;
@@ -883,12 +891,12 @@ function runShipped(ctx) {
   stageShippedProposals(ctx);
 }
 
-// ---- Task 5: blocker-landing, neighbour-in-flight, cross-PR overlap and near-duplicate ---------
+// ---- blocker-landing, neighbour-in-flight, cross-PR overlap and near-duplicate (fence 582-671) --
 
 // Fence 582-589. One dispatch-unlanded-blockers.js call writes both the unlanded-blocker and the
-// malformed-blocker entries, so omitting either reason skips the whole call (PF8). `--work-links`
+// malformed-blocker entries, so omitting either reason skips the whole call (R7). `--work-links`
 // is the value the fetch pass stored: on a queue-order cache hit the fence never sets WORK_LINKS,
-// so "$WORK_LINKS" is the empty string and the CLI accepts it (PF9).
+// so "$WORK_LINKS" is the empty string and the CLI accepts it.
 function runBlockerLanding(ctx) {
   const { paths, omit, state } = ctx;
   if (omit.has('blocker-landing')) return;
