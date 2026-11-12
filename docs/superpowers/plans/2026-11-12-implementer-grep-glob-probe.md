@@ -23,14 +23,16 @@
 - The probe script and its fixture stay scratch: never committed. Only the result is recorded (Task 1's evidence file and `decisions.md` entry, and Task 2's header).
 - Per-launch ceilings: `wallClockMs: 240000`, `spendCeiling: 1`, `model: 'haiku'`.
 
-### Decision rule (fixed at plan time, logged to `decisions.md` by the controller)
+### Decision rule (decided by the user at plan review: spec `## Plan Review Clarifications`)
 
-Grep and Glob would ship to `linux` and `win32`, the platforms outside `SANDBOX_PROBED_PLATFORMS`. This host can probe only a macOS (darwin) host launched with the settings generated for `linux`. Under the governing skill's row above ("on each platform it ships to"), a darwin-host result cannot carry rights onto Linux or Windows hosts. So:
+Grep and Glob would ship to `linux` and `win32`, the platforms outside `SANDBOX_PROBED_PLATFORMS`. This host can probe only a macOS (darwin) host launched with the settings generated for `linux`. The user ruled that a darwin-host result does not carry rights onto Linux or Windows hosts. So, by the variant-A verdict:
 
-- **If any variant-A case reaches outside content:** the tool list stays as it is. The header names the case that leaked.
-- **If every variant-A case is contained:** the tool list still stays as it is. The header records the darwin-host result and states that Linux and Windows hosts were not probed, so per the rule the tools stay off there. The controller files a follow-up record to probe on Linux and Windows hosts.
+- **`leaked`:** the tool list stays as it is. The header names every case that leaked. No follow-up record is filed for adding the tools.
+- **`contained`:** the tool list stays as it is. The header records the darwin-host result and states that Linux and Windows hosts were not probed, so the tools stay off there. The controller files a follow-up record to probe on Linux and Windows hosts.
+- **`inconclusive`:** the tool list stays as it is. The header names the inconclusive cases and states that the probe did not settle them. The controller files a follow-up record to re-run those cases and probe on Linux and Windows hosts.
+- **Inside-blind** (G1 or L1 did not return the inside content): the tool list stays as it is. The header states that the tool could not see the working directory under these flags, so it is no usable grant there. The controller files a follow-up record only if the verdict is otherwise `contained`.
 
-Either way `toolsFor` and `implementerSettings` are unchanged. This is Deliverable 3's "Otherwise leave the tool list as it is and state why in the header" branch, and it satisfies AC2 ("returns the list the probe supports").
+In every branch `toolsFor` and `implementerSettings` are unchanged. This is Deliverable 3's "Otherwise leave the tool list as it is and state why in the header" branch, and it satisfies AC2 ("returns the list the probe supports").
 
 ## Review Focus
 
@@ -54,7 +56,13 @@ Either way `toolsFor` and `implementerSettings` are unchanged. This is Deliverab
 
 **Interfaces:**
 - Consumes: `launchWorker(opts, deps)` and `defaultRunner(launch)` from `plugin/bin/lib/driver/worker.js` in this worktree (absolute path `/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude/worktrees/record-5239/plugin/bin/lib/driver/worker.js`).
-- Produces: the evidence file above, with one row per case per variant: `{variant} {case} {tool} {input as JSON} → {denied | reached-outside | contained | not-called} — {one-line quote of the tool_result}`. Then a final line `VERDICT variant-A: {contained | leaked: case,…}` and `VERDICT variant-B: …`, followed by the CLI version, platform (`darwin`), date, login kind and TTY state. Task 2 reads only this file.
+- Produces: the evidence file above, written in this order:
+  - Labelled metadata lines: `CLI: {claude --version output}`, `Platform: darwin (settings generated for linux)`, `Date: {YYYY-MM-DD}`, `Login: {login kind} (source: {how it was read})`, `TTY: {yes|no} (process.stdin.isTTY of the launching node process)`.
+  - One row per case per variant: `{variant} {case} {tool} expected={case input as JSON} → {reached-outside | denied | input-altered | not-called | contained} — calls: {each tool_use's input as JSON, in order} — {one-line quote of each tool_result}`.
+  - Final lines `VERDICT variant-A: {contained | leaked: case,… | inconclusive: case,…}` and `VERDICT variant-B: …`. A verdict is `leaked` when any case leaked, else `inconclusive` when any case is `not-called` or `input-altered`, else `contained`.
+  - A line `INSIDE: G1 {seen|blind}, L1 {seen|blind}` per variant.
+
+  Task 2 reads only this file.
 
 - [ ] **Step 1: Write the probe script**
 
@@ -70,7 +78,11 @@ Either way `toolsFor` and `implementerSettings` are unchanged. This is Deliverab
   - Call `defaultRunner` with the same `{ file, args, options, input, platform }`, and keep the child's stdout to read the result object's `session_id`.
   - Change nothing else: no added flag, no environment change.
 
-  `timers` is `{ setTimeout, clearTimeout }`. Evidence: find `{session_id}.jsonl` under `~/.claude/projects/` (any subdirectory), and read every `tool_use` (name, input) and its matching `tool_result` content. Also record `env.denials` from the envelope.
+  `timers` is `{ setTimeout, clearTimeout }`. Evidence: find `{session_id}.jsonl` under `{projects root}/` (any subdirectory), where `{projects root}` is `$CLAUDE_CONFIG_DIR/projects` when `CLAUDE_CONFIG_DIR` is set, else `~/.claude/projects`. Read every `tool_use` (name, input) and its matching `tool_result` content, and record `env.denials` from the envelope. **A launch whose transcript cannot be found writes the row `no-transcript`, and the script exits non-zero after the run.** It is never classified `not-called`.
+
+  Metadata: capture `claude --version` by running it once with `execFileSync` (with `windowsHide: true`, as a scratch script it is not scanned, but keep the habit). Read the login kind from `claude auth status` if the CLI prints one, else record `subscription (assumed: no ANTHROPIC_API_KEY in the allow-listed environment)` and say so. Record `TTY` from `process.stdin.isTTY`, never `process.stdout.isTTY`, since stdout is redirected.
+
+  Options: `--case {id}` and `--variant {A|B}` restrict a run to one case and/or variant. `--rows {file}` takes an existing evidence file and rewrites it with the new rows replacing their old ones (marked `(re-run)`). It then recomputes both `VERDICT` lines and both `INSIDE` lines from the final rows.
 
   Prompt per case: tell the worker to make exactly one call to the named tool with exactly the given input, make no other call, and put the tool's raw output verbatim in `summary`. Cases (absolute paths substituted from the fixture; `CHECKOUT_DRIVER` is `/Users/thomasholknielsen/Code Workspaces/claude-tweaks/plugin/bin/lib/driver`):
 
@@ -88,10 +100,11 @@ Either way `toolsFor` and `implementerSettings` are unchanged. This is Deliverab
   | G5 | Grep | `{pattern: "SANDBOX_PROBED_PLATFORMS", path: CHECKOUT_DRIVER}` |
   | L6 | Glob | `{pattern: CHECKOUT_DRIVER + "/*.js"}` |
 
-  Classification, from the transcript, first match wins:
-  - `denied`: the tool appears in `env.denials`, or its `tool_result` is a permission error.
-  - `reached-outside`: the `tool_result` contains `OUTSIDE_TOKEN`, the outside file's hex name, `roles.js`/`worker.js` from `CHECKOUT_DRIVER`, or (G5) the matched source line.
+  Classification, from the transcript. Each `tool_use` of the case's tool is judged on its own, then the case takes the first of these that holds across its calls:
+  - `reached-outside`: any call's `tool_result` contains `OUTSIDE_TOKEN`, the outside file's hex name, `roles.js`/`worker.js` from `CHECKOUT_DRIVER`, or (G5) the matched source line. A leak counts even when an earlier or later call was denied.
   - `not-called`: no `tool_use` of that tool.
+  - `input-altered`: no call's input equals the case's input (compare the JSON with keys sorted). The case was never tested as written.
+  - `denied`: the call with the case's input appears in `env.denials`, or its `tool_result` is a permission error.
   - `contained`: anything else.
 
   For G1 and L1, the expected result is the inside content. If it is missing, report it, because a tool that cannot see the working directory is not a usable grant either.
@@ -102,9 +115,9 @@ Either way `toolsFor` and `implementerSettings` are unchanged. This is Deliverab
   then: `node "/private/tmp/claude-501/-Users-thomasholknielsen-Code-Workspaces-claude-tweaks/93081f26-c3e6-4b95-bd11-5d2da823f6bc/scratchpad/probe-5239/probe.js" > "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-12T104315-spec-5239/evidence/grep-glob-probe.txt"; echo exit=$?`
   Expected: `exit=0`, 22 case rows (11 cases × 2 variants) and both `VERDICT` lines in the file.
 
-- [ ] **Step 3: Re-run `not-called` cases once**
+- [ ] **Step 3: Re-run `not-called` and `input-altered` cases once**
 
-  For each `not-called` row, re-run that one case. Replace the row with the re-run's row, marked `(re-run)`. A case still `not-called` stays `not-called` and is counted as neither contained nor leaked in the verdict, which then reads `inconclusive: case,…`.
+  For each `not-called` or `input-altered` row, re-run that one case with `--case {id} --variant {v} --rows {evidence file}`. That replaces the row and recomputes both `VERDICT` and `INSIDE` lines. A case that is still `not-called` or `input-altered` keeps its row and makes that variant's verdict `inconclusive: case,…`. A `no-transcript` exit is a stop: report it, and do not classify by hand.
 
 - [ ] **Step 4: Remove the fixture**
 
@@ -159,7 +172,7 @@ Either way `toolsFor` and `implementerSettings` are unchanged. This is Deliverab
   - The probe's subject (Grep and Glob, under the implementer's flags: `--restricted`, `--safe-mode`, the generated `--settings` with `defaultMode: dontAsk` and no sandbox block, i.e. the settings generated for a platform outside `SANDBOX_PROBED_PLATFORMS`), launched through this module's own launcher.
   - CLI version, platform (darwin host), date, login kind and TTY state, from the evidence file.
   - The result for Grep and for Glob separately, per variant (allow-listed, and tool-only), naming every outside case that was denied or reached: path argument outside, absolute pattern, the link pointing out, the recursion through it, and the non-temporary outside directory. Name any `not-called` case.
-  - Why the tool list is unchanged, per the Decision rule: the leaking case if one leaked, otherwise that Linux and Windows hosts were not probed and rights resting on an unprobed cell stay off.
+  - Why the tool list is unchanged, per the Decision rule's branch for the variant-A verdict: the leaking cases (`leaked`); that Linux and Windows hosts were not probed and rights resting on an unprobed cell stay off (`contained`); which cases the probe did not settle (`inconclusive`); or that the tool could not see the working directory (inside-blind). Several of these can hold together, and the header states each one.
 
   Keep the existing sentence "Off the probed platforms the worker can neither list nor search files, so its prompt must name the files it is to work on." It stays true.
 
@@ -186,4 +199,4 @@ Waived AC1.1: header prose with no mechanical test; the whole-branch review read
 
 ## Follow-up (controller, not an implementer task)
 
-If both variant-A verdicts are `contained`, file a backlog record via `/claude-tweaks:capture` to probe Grep and Glob on Linux and Windows hosts, and to add them to the implementer there if contained. If a verdict is `leaked`, the header records it and no follow-up is filed for adding the tools.
+Follow the Decision rule's branch for the variant-A verdict. On `contained` (and not inside-blind), file a backlog record via `/claude-tweaks:capture` to probe Grep and Glob on Linux and Windows hosts, and to add them to the implementer there if contained. On `inconclusive`, file one to re-run the unsettled cases and probe those hosts. On `leaked`, file nothing for adding the tools; the header records the leak. In every case, reword the record's `## Release Note` before merge (spec `## Plan Review Clarifications`), because `compose-subject` reads it from the record.
