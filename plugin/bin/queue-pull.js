@@ -10,6 +10,10 @@
 // comes from CLAUDE_CODE_SESSION_ID; every file lands at the session-scoped path the script's
 // `session-tmp-resolve.js --value` calls resolve.
 //
+// `--rank` prints nothing on stdout (the pick lives in the file). A caller with no priority filter
+// omits `--priority` rather than passing an empty value: the script tolerates an empty
+// $PRIORITY_FILTER, this CLI's empty-value rule exits 1. A repeated value flag exits 1 too.
+//
 // Transports. `gh` pulls through the gh CLI. `files` makes zero gh calls: the calling skill fetched
 // the records (mcp-transport.md) and the input-path flags name its files; each defaults to the
 // session path the script reads. The input-path flags are valid only with `--transport files`.
@@ -61,7 +65,8 @@ const USAGE = `usage:
   queue-pull.js --help
 --transport gh pulls through gh; --transport files reads the files the agent fetched through MCP
 (the input-path flags, valid only with it, default to the session-scoped paths). --rank picks the
-next group and writes dispatch-next-pick.json.
+next group and writes dispatch-next-pick.json (stdout stays empty). Omit --priority when no
+filter is set: an empty value exits 1. A value flag may be given only once.
 exit codes:
   0  success
   1  malformed invocation (usage printed)
@@ -71,7 +76,7 @@ exit codes:
 `;
 
 const TRANSPORTS = ['files', 'gh'];
-const PRIORITIES = ['high', 'medium', 'low'];
+const { PRIORITIES } = require('./lib/issues/record-vocabulary'); // pure; safe before --help
 // flag -> key of the module's options.inputs
 const INPUT_FLAGS = {
   '--queue-raw': 'queueRaw',
@@ -88,6 +93,7 @@ const VALUE_FLAGS = new Set(['--transport', '--priority', ...Object.keys(INPUT_F
 function parseArgs(argv) {
   if (argv.some((a) => a === '--help' || a === '-h')) return { help: true };
   const out = { mode: null, transport: null, priority: null, inputs: {} };
+  const seen = new Set();
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--rank') { out.mode = 'rank'; continue; }
@@ -97,6 +103,10 @@ function parseArgs(argv) {
     // is refused too, because the module forwards inputs to children as paths.
     if (typeof value !== 'string' || !value.trim() || value.startsWith('-')) return { error: `${arg} needs a value` };
     i += 1;
+    // A repeated value flag is refused, never last-wins: `--transport gh --transport files` must
+    // not quietly run the files transport.
+    if (seen.has(arg)) return { error: `${arg} given more than once` };
+    seen.add(arg);
     if (arg === '--transport') {
       if (!TRANSPORTS.includes(value)) return { error: `--transport must be gh or files, got: ${value}` };
       out.transport = value;
@@ -164,8 +174,9 @@ function run(argv, deps = {}) {
     const sessionId = env.CLAUDE_CODE_SESSION_ID;
 
     if (args.mode === 'rank') {
-      const pick = dep('rankFromFiles')({ sessionId, priority: args.priority || undefined }, { stdout: out, stderr: err });
-      out(`${JSON.stringify(pick)}\n`);
+      // Prints nothing: next-ranking.md redirects node's output into the pick file, and the pick
+      // is a whole group of full records, which must not reach the agent's context.
+      dep('rankFromFiles')({ sessionId, priority: args.priority || undefined });
       return EXIT.OK;
     }
 

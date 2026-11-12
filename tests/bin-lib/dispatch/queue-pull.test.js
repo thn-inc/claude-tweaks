@@ -2111,6 +2111,9 @@ test('AC9.2: a malformed invocation exits 1, prints USAGE on stderr, and touches
     ['--transport', 'gh', '--queue-raw', 'x'], ['--transport', 'files', '--queue-raw'], ['--transport', 'files', '--queue-raw', '-x'],
     ['--transport', 'files', '--foreign-states', ''], ['--rank', '--transport', 'files'], ['--rank', '--queue-raw', 'x'],
     ['--transport', 'files', '--priority', 'high'], [],
+    ['--transport', 'gh', '--transport', 'files'], ['--transport', 'files', '--transport', 'files'],
+    ['--rank', '--priority', 'high', '--priority', 'low'],
+    ['--transport', 'files', '--queue-raw', 'a.json', '--queue-raw', 'b.json'],
   ];
   for (const argv of cases) {
     const out = []; const err = [];
@@ -2139,6 +2142,10 @@ test('AC9.3: the header comment and USAGE each state exit codes 0, 1, 2, 3 and 4
   assert.deepEqual(cli.EXIT, { OK: 0, USAGE: 1, MISSING_DEPENDENCY: 2, REMOTE_FAILED: 3, STOPPED: 4 });
   assert.match(header, /Reopen\s+\/\/ when the cutover has landed/, "R4's decision comment names its reopen condition");
   assert.match(header, /Departure \(R5\)/);
+  assert.match(header, /omits `--priority`/, 'the header states the omit-on-empty caller rule');
+  assert.match(cli.USAGE, /Omit --priority when no\s+filter is set/, 'USAGE states it too');
+  assert.deepEqual(require('../../../plugin/bin/lib/issues/record-vocabulary').PRIORITIES, ['high', 'medium', 'low']);
+  assert.match(source, /require\('\.\/lib\/issues\/record-vocabulary'\)/, 'the priority list is imported, not retyped');
 });
 
 test('AC7.3: --transport gh with gh absent exits 2, names --transport files, and never falls back', () => {
@@ -2232,7 +2239,10 @@ test('#5227 --rank writes dispatch-next-pick.json and exits 0 (and --priority re
   const plain = cliRun(['--rank'], { env });
   assert.equal(plain.code, 0, plain.stderr);
   assert.equal(fs.readFileSync(paths['dispatch-next-pick.json'], 'utf8'), JSON.stringify(HIGH_OLD) + '\n');
-  assert.equal(plain.stdout, JSON.stringify(HIGH_OLD) + '\n');
+  assert.equal(plain.stdout, '', '--rank prints nothing: the pick lives in the file');
+  const argCounts = [];
+  cliRun(['--rank', '--priority', 'low'], { env, rankFromFiles: (...a) => { argCounts.push(a.length); return null; } });
+  assert.deepEqual(argCounts, [1], 'rankFromFiles takes one argument');
   const low = cliRun(['--rank', '--priority', 'low'], { env });
   assert.equal(low.code, 0, low.stderr);
   assert.equal(fs.readFileSync(paths['dispatch-next-pick.json'], 'utf8'), JSON.stringify(LOW) + '\n');
