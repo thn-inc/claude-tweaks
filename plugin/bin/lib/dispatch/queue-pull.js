@@ -28,12 +28,23 @@
 // dispatch-unlanded-blockers.js call writes both; they carry one identical failOpen. A shared id
 // runs once, at its first entry.
 //
-// `omit` (queuePull option) takes reasons or ids and removes that pass's id and nothing else,
-// with one exception: omitting either blocker-landing reason skips the shared call, so both
-// reasons. Omitting a setup pass, or naming an unknown reason or id, throws TypeError.
+// `omit` (queuePull option) takes reasons or ids and removes that pass's own filtering and
+// appends and nothing else, with one exception: omitting either blocker-landing reason skips the
+// shared call, so both reasons. runPasses ALWAYS calls every pass's runner and exposes the omit
+// set as `ctx.omit` (a Set of ids); each runner skips only its own filtering and appends when
+// `ctx.omit.has(<its id>)` and runs its shared steps regardless (for example `oversized` owns the
+// grouping block that writes dispatch-groups.json and the `blocked` appends, and `target-missing`
+// owns the integration-branch and run-dir resolution). Omitting a setup pass, or naming an
+// unknown reason or id, throws TypeError.
+//
+// PF6: failOpen is taken across both transports, so a gh-only reader sees `stop` for a pass whose
+// gh fetch fails open (neighbour-in-flight): on `files`, a missing or malformed in-flight or
+// claims file stops the pull.
 //
 // Test-only seam: when QP_TMPNAME_COUNTER_FILE is set, defaultDeps().tmpName reads that file's
-// integer, increments it, writes it back and returns `tmp.qp<8-digit counter>`. The parity CLI is
+// integer (a missing file is 0; a non-integer or negative value is refused, as the oracle's
+// mktemp shim refuses it), creates `tmp.qp<8-digit counter+1>` exclusively, and only then writes
+// the counter back, so a failed create does not advance it. The parity CLI is
 // a subprocess and cannot take an injected function, and the oracle's mktemp shim implements the
 // same format over the same variable, so both sides emit identical names. Production never sets it.
 
@@ -68,7 +79,7 @@ const PASSES = deepFreeze([
   row('write-back', 'setup', null, false, false, false, 'open', 'same'),
   row('not-spec-shaped', 'exclusion', 'not-spec-shaped', true, false, true, 'n/a', 'same'),
   row('open-pr', 'exclusion', 'open-pr', true, false, true, 'open', 'fails-open'),
-  row('target-missing', 'exclusion', 'target-missing', true, false, true, 'n/a', 'same'),
+  row('target-missing', 'exclusion', 'target-missing', true, false, true, 'open', 'same'),
   row('shipped', 'exclusion', 'shipped', true, false, true, 'open', 'skipped-empty'),
   row('blocker-landing', 'exclusion', 'malformed-blocker', true, false, true, 'open', 'same'),
   row('blocker-landing', 'exclusion', 'unlanded-blocker', true, false, true, 'open', 'fails-open'),
@@ -161,12 +172,10 @@ function resolveOmit(omit = []) {
 // { deps, paths, options, omit?: Set of ids, runners?: { [id]: fn } }.
 function runPasses(passes, ctx) {
   const runners = ctx.runners || RUNNERS;
-  const omitted = ctx.omit || new Set();
   const seen = new Set();
   for (const pass of passes) {
     if (seen.has(pass.id)) continue;
     seen.add(pass.id);
-    if (omitted.has(pass.id)) continue;
     const runner = runners[pass.id];
     if (typeof runner !== 'function') throw new Error(`queue-pull: pass not implemented: ${pass.id}`);
     if (ctx.deps.onPass) ctx.deps.onPass(pass.id);
@@ -178,11 +187,14 @@ function tmpName() {
   const counterFile = process.env.QP_TMPNAME_COUNTER_FILE;
   let base;
   if (counterFile) {
-    let stored = '0';
+    let stored = null;
     try { stored = fs.readFileSync(counterFile, 'utf8'); } catch (err) { if (!err || err.code !== 'ENOENT') throw err; }
-    const next = Number(stored) + 1;
-    fs.writeFileSync(counterFile, String(next));
-    base = `tmp.qp${String(next).padStart(8, '0')}`;
+    const n = stored === null ? 0 : Number(stored);
+    if (!Number.isSafeInteger(n) || n < 0) throw new Error(`queue-pull: tmpName: counter file holds ${JSON.stringify(stored)}`);
+    const file = path.join(os.tmpdir(), `tmp.qp${String(n + 1).padStart(8, '0')}`);
+    fs.writeFileSync(file, '', { flag: 'wx', mode: 0o600 });
+    fs.writeFileSync(counterFile, String(n + 1));
+    return file;
   } else {
     const alnum = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
     base = 'tmp.' + Array.from(crypto.randomBytes(10), (b) => alnum[b % alnum.length]).join('');
@@ -225,8 +237,9 @@ function defaultDeps() {
 // `queue-pull: pass not implemented: <id>`.
 function queuePull(options = {}, deps = {}) {
   const merged = { ...defaultDeps(), ...deps };
+  const omit = resolveOmit(options.omit);
   const paths = sessionPaths(options.sessionId);
-  const ctx = { options, deps: merged, paths, omit: resolveOmit(options.omit) };
+  const ctx = { options, deps: merged, paths, omit };
   runPasses(PASSES, ctx);
   const groupsFile = paths['dispatch-groups.json'];
   const groups = lstatType(groupsFile).type === 'missing' ? [] : JSON.parse(fs.readFileSync(groupsFile, 'utf8'));

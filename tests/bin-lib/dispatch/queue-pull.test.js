@@ -295,12 +295,33 @@ test('AC11.1: runPasses walks a registry in array order and runs a shared id onc
   assert.equal(expected[0], 'near-dup-pairs');
 });
 
-test('AC11.1: a pass without a runner throws "pass not implemented"; an omitted one is skipped', () => {
+test('AC11.1: a pass without a runner throws "pass not implemented"', () => {
   assert.throws(() => runPasses(PASSES, { deps: {}, paths: {}, options: {}, runners: {} }), /^Error: queue-pull: pass not implemented: truncate$/);
-  const seen = [];
-  runPasses(PASSES, { deps: { onPass: (id) => seen.push(id) }, paths: {}, options: {}, omit: new Set(['fetch']), runners: Object.fromEntries(PASSES.map((p) => [p.id, () => {}])) });
-  assert.ok(!seen.includes('fetch'));
-  assert.equal(seen.length, new Set(PASSES.map((p) => p.id)).size - 1);
+});
+
+test('R7/PF8: an omitted pass still has its runner called; the runner sees ctx.omit and skips only its own appends', () => {
+  // Stub runners model a pass with a shared step (always) and its own appends (skipped on omit).
+  const run = (omitReasons) => {
+    const log = [];
+    const runners = Object.fromEntries(PASSES.map((p) => [p.id, (ctx) => {
+      log.push(`${p.id}:shared`);
+      if (!ctx.omit.has(p.id)) log.push(`${p.id}:appends`);
+    }]));
+    runPasses(PASSES, { deps: {}, paths: {}, options: {}, omit: resolveOmit(omitReasons), runners });
+    return log;
+  };
+  const base = run([]);
+  assert.ok(base.includes('oversized:shared') && base.includes('oversized:appends'));
+  const noOversized = run(['oversized']);
+  assert.ok(noOversized.includes('oversized:shared'), 'the grouping step still runs');
+  assert.ok(!noOversized.includes('oversized:appends'));
+  assert.deepEqual(noOversized.filter((l) => !l.startsWith('oversized:')), base.filter((l) => !l.startsWith('oversized:')));
+  for (const reason of ['malformed-blocker', 'unlanded-blocker']) {
+    const log = run([reason]);
+    assert.equal(log.filter((l) => l === 'blocker-landing:shared').length, 1, 'the shared call runs once');
+    assert.ok(!log.includes('blocker-landing:appends'), `${reason} skips both reasons' appends`);
+    assert.deepEqual(log.filter((l) => !l.startsWith('blocker-landing:')), base.filter((l) => !l.startsWith('blocker-landing:')));
+  }
 });
 
 test('AC11.2: every registry field has a fixed value set', () => {
@@ -318,6 +339,7 @@ test('AC11.2: every registry field has a fixed value set', () => {
   assert.equal(PASSES.filter((p) => p.id === 'blocker-landing').length, 2);
   assert.equal(new Set(PASSES.filter((p) => p.id === 'blocker-landing').map((p) => p.failOpen)).size, 1, 'PF5: one identical failOpen');
   assert.equal(PASSES.find((p) => p.id === 'neighbour-in-flight').failOpen, 'stop', 'PF6');
+  assert.equal(PASSES.find((p) => p.id === 'target-missing').failOpen, 'open', '`git remote show origin` can fail and the pull continues');
   assert.deepEqual(PASS_FIELD_VALUES.failOpen, ['open', 'stop', 'n/a']);
   assert.deepEqual(PASS_FIELD_VALUES.mcp, ['same', 'skipped-empty', 'fails-open', 'agent-fetched']);
   assert.ok(Object.isFrozen(PASSES) && Object.isFrozen(PASSES[0]));
@@ -417,8 +439,27 @@ test('#5227 omit: unknown reason or a setup pass throws TypeError; malformed-blo
   assert.deepEqual([...resolveOmit(['unlanded-blocker'])], ['blocker-landing']);
   assert.deepEqual([...resolveOmit(['shipped', 'cross-pr-overlap'])].sort(), ['cross-pr-overlap', 'shipped']);
   assert.deepEqual([...resolveOmit([])], []);
-  assert.throws(() => queuePull({ sessionId: 'qp-omit', omit: ['bogus'] }, { stderr: () => {} }), TypeError);
+  inOwnTmp((own) => {
+    assert.throws(() => queuePull({ sessionId: 'qp-omit', omit: ['bogus'] }, { stderr: () => {} }), TypeError);
+    assert.deepEqual(fs.readdirSync(own), [], 'omit is validated before any session path is created');
+  });
 });
+
+test('#5227 tmpName counter seam matches the oracle mktemp shim: refuses a bad counter, advances only after a successful create', () => inOwnTmp((own) => {
+  const { tmpName } = defaultDeps();
+  const counter = path.join(own, 'counter');
+  process.env.QP_TMPNAME_COUNTER_FILE = counter;
+  for (const bad of ['abc', '-1', '1.5', '']) {
+    fs.writeFileSync(counter, bad);
+    if (bad === '') { assert.equal(path.basename(tmpName()), 'tmp.qp00000001'); continue; }
+    assert.throws(() => tmpName(), /counter file holds/, bad);
+    assert.equal(fs.readFileSync(counter, 'utf8'), bad, 'a refused counter is left as it was');
+  }
+  fs.writeFileSync(counter, '4');
+  fs.writeFileSync(path.join(own, 'tmp.qp00000005'), '');
+  assert.throws(() => tmpName(), (e) => e.code === 'EEXIST');
+  assert.equal(fs.readFileSync(counter, 'utf8'), '4', 'an EEXIST create does not advance the counter');
+}));
 
 test('#5227 queuePull runs the truncate pass, then stops at the first pass with no runner', () => inOwnTmp(() => {
   const paths = sessionPaths('qp-pull');
