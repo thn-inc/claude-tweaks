@@ -19,7 +19,16 @@
 // required lazily inside realDeps, so --help, a malformed invocation and the tests never
 // load them.
 //
-// ASSUMPTION (spec #5218, Gotchas) — answered at build: a fresh unlocked worktree IS reap-eligible: bin/lib/hooks/worktree-reap.js reaps an unlocked worktree under .claude/worktrees/ with no local-only content, which a new one is until the worker's first write. The driver therefore creates its worktree locked, with its own pid in the lock reason (steps.js, the worktree step); the lock reads in-use while the driver lives, and once it is gone or the lock is cleared the reaper's 24h grace applies. Unchanged: reconcile/archive-merged.js only counts ownerless runs (countOwnerlessNonClean); tidy/scan-procedures.md keeps unmerged worktrees and acts only after its Step 6 approval.
+// ASSUMPTION (spec #5218, Gotchas) — answered at build: a fresh unlocked worktree IS reap-eligible: bin/lib/hooks/worktree-reap.js reaps a `free` (unlocked) worktree under .claude/worktrees/ whose branch is merged into, or content-identical with, the integration branch and that holds no local-only content, which a new one cut from the integration branch is until the worker's first write. The driver therefore creates its worktree locked, with its own pid in the lock reason (steps.js, the worktree step), so the lock reads `in-use` while the driver lives. The reaper's 24h grace applies only to an `orphaned` verdict (the driver's pid is dead and the lock is still present). A cleared lock reads `free`, with no grace: a tree still content-identical with the integration branch and holding no local-only content is reaped at the next SessionStart. Unchanged: reconcile/archive-merged.js only counts ownerless runs (countOwnerlessNonClean); tidy/scan-procedures.md keeps unmerged worktrees and acts only after its Step 6 approval.
+//
+// Interrupts (AC14 F1, the spec's Plan Review Clarification, Reading B). run() subscribes
+// once through deps.onSignal and unsubscribes before it resolves. On SIGINT or SIGTERM the
+// handler, for the record being driven (shared.current): signals the running worker's
+// handle (shared.activeWorker, whose kill reaches the worker's process group on POSIX),
+// emits a `fail` event for the running step with detail `interrupted by {signal}`, emits
+// the record's final line with that step's own stop class (ctx.currentStopClass, which
+// defineStep records), and then calls deps.terminate(signal). With no record running it
+// only calls terminate. Nothing further is driven or emitted after an interrupt.
 const fs = require('fs');
 const { execFileSync, spawnSync } = require('child_process');
 const { createEventSink, outcomeFor, FINAL_STEP, STOP_CLASSES } = require('./events');
@@ -66,11 +75,12 @@ function parseArgs(argv) {
   return { records };
 }
 
-// `current` is the record being driven, `{ ctx, sink }`, set for the length of one
-// driveRecord and cleared after it, so a signal handler can reach that record's context
-// and event sink.
+// `current` is the record being driven, `{ ctx, sink, started, stepStarted, final }`, set
+// for the length of one driveRecord and cleared after it, so a signal handler can reach
+// that record's context, event sink and clocks, and leave the final line it wrote in
+// `final`. `interrupted` is set once by that handler.
 function newShared() {
-  return { policy: null, ref: null, mainRoot: null, repo: null, fatal: false, activeWorker: null, current: null };
+  return { policy: null, ref: null, mainRoot: null, repo: null, fatal: false, activeWorker: null, current: null, interrupted: false };
 }
 
 function newCtx(record, shared) {
@@ -137,14 +147,19 @@ function finalEvent(ctx, stop, sink, msTotal, deps) {
 async function driveRecord(record, shared, deps, steps = STEPS) {
   const sink = createEventSink({ stdout: deps.stdout, appendFile: deps.appendFile });
   const ctx = newCtx(record, shared);
-  shared.current = { ctx, sink };
+  const current = { ctx, sink, started: null, stepStarted: null, final: null };
+  shared.current = current;
   try {
     const started = deps.now();
+    current.started = started;
     let bound = false;
     let stop = null;
     for (const step of steps) {
       const t0 = deps.now();
+      current.stepStarted = t0;
       const result = await step.run(ctx, deps);
+      // The interrupt handler already wrote this record's stop and final line.
+      if (shared.interrupted) return current.final;
       const ms = deps.now() - t0;
       if (!bound && ctx.runDir) {
         sink.bindRunDir(ctx.runDir);
@@ -161,6 +176,34 @@ async function driveRecord(record, shared, deps, steps = STEPS) {
     return final;
   } finally {
     shared.current = null;
+  }
+}
+
+// The signal handler run() subscribes (see the header's Interrupts paragraph). It never
+// throws past terminate: whatever the emission does, the process still ends by the signal.
+function interrupt(shared, signal, deps) {
+  const { current } = shared;
+  try {
+    if (!current || shared.interrupted || !current.ctx.currentStep) return;
+    shared.interrupted = true;
+    const { ctx, sink } = current;
+    const worker = shared.activeWorker;
+    if (worker) {
+      try {
+        worker.kill('SIGTERM');
+      } catch {
+        // The worker is already gone.
+      }
+    }
+    // A step that set ctx.runDir has not had its sink bound yet; binding twice is harmless.
+    if (ctx.runDir) sink.bindRunDir(ctx.runDir);
+    const name = ctx.currentStep;
+    const result = { status: 'fail', detail: `interrupted by ${signal}`, halt: true, stopClass: ctx.currentStopClass, reason: 'fail', extra: {} };
+    sink.emit(eventFor(ctx, name, result, deps.now() - current.stepStarted, deps));
+    current.final = finalEvent(ctx, { name, result }, sink, deps.now() - current.started, deps);
+    sink.emit(current.final);
+  } finally {
+    deps.terminate(signal);
   }
 }
 
@@ -183,11 +226,19 @@ async function run(argv, deps) {
     return 2;
   }
   const shared = newShared();
-  for (const record of parsed.records) {
-    await driveRecord(record, shared, deps);
-    if (shared.fatal) return 1;
+  const unsubscribe = deps.onSignal((signal) => interrupt(shared, signal, deps));
+  try {
+    for (const record of parsed.records) {
+      await driveRecord(record, shared, deps);
+      if (shared.fatal) return 1;
+      // The process ends by the signal (deps.terminate); this only keeps a slow re-raise
+      // from driving another record.
+      if (shared.interrupted) break;
+    }
+    return 0;
+  } finally {
+    if (typeof unsubscribe === 'function') unsubscribe();
   }
-  return 0;
 }
 
 // The signal subscription onSignal made, so terminate can drop it before re-raising.
@@ -206,7 +257,8 @@ const realDeps = {
     cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GIT_TIMEOUT_MS, windowsHide: true,
   }),
   // A plugin/bin CLI under this Node; never throws on a non-zero exit.
-  // The child gets the caller's env (steps pass deps.env), never an implicit copy of the parent's.
+  // The child gets the env the caller passes (steps pass deps.env); a call that omits `env`
+  // falls back to process.env.
   node: (script, args, { cwd, timeout, env = process.env } = {}) => {
     const r = spawnSync(process.execPath, [script, ...args], { cwd, env, encoding: 'utf8', timeout, maxBuffer: MAX_BUFFER, windowsHide: true });
     const stderr = r.stderr || '';
