@@ -33,7 +33,7 @@ const MERGE_MODE_FACTS = {
   'precondition-model': /`integration-model: pr-first`/,
   'steps-1-4': /`_shared\/pr-first-merge\.md` Steps 1 through 4/,
   'step-4-1': /then Step 4\.0b \(`\{pr-number\}` = `\{pr\}`\), then Step 4\.1\./,
-  'section-c': /Section C steps 3\.5-5\.5/,
+  'section-c': /Section C steps 3\.6-5\.5/,
   'pack-before-teardown': /When `\{run-dir\}\/wrap-up-pack\.json` is absent, produce it before any teardown/,
   'release-reason': /with reason `merged: spec \{n\}` and `\$LINK` set to the merge commit sha/,
   'human-turn': /The confirmation holds only on a human's own turn: a subagent, a scheduled Routine, or any other headless caller that reaches this file stops and reports `pending-review`, reason `no-human-confirmation`/,
