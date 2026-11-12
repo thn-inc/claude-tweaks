@@ -57,7 +57,7 @@ const { readText } = require('../../helpers/read-skill');
 const { gitRepo, fixtureGit } = require('../../helpers/git-fixtures');
 const {
   REPO, SCRIPT_MD, MCP_MD, FENCE_FIRST_LINE, RUN_DIR_NAME,
-  oracleSkip, extractFence, fenceSessionFiles, filesOracleScript, createSandbox, runOracle, runModuleCli, runPair, withEscapeGuard, normalize, reported, assertParity, runAll,
+  oracleSkip, extractFence, fenceSessionFiles, filesOracleScript, createSandbox, runOracle, runModuleCli, runPair, withEscapeGuard, normalize, reported, assertParity, runAll, failedJobs,
 } = require('./queue-pull-oracle');
 const {
   S0, S1, S2, SEmpty, SMalformed, SPortable, SFast, fakeRun, fakeSpawnCli, agentInputs, ghRecord, withBody, QUEUE_ARGV, DEP_SEARCH_8000, mention, WEAK_PR_FILES,
@@ -315,8 +315,27 @@ test('#5227 oracle: runAll keys results by job name and runs an `after` job stri
   assert.deepEqual(results, { miss: 'origin-A', hit: 'hit-on-origin-A', other: 'other' });
   assert.ok(events.indexOf('other:start') < events.indexOf('miss:end'), `independent jobs run concurrently: ${events}`);
   assert.ok(events.indexOf('hit:start') > events.indexOf('miss:end'), `after-job waits: ${events}`);
-  await assert.rejects(runAll([{ name: 'a', run: async () => { throw new Error('boom'); } }], 1), /job a failed: boom/);
   await assert.rejects(runAll([{ name: 'a', after: 'nope', run: async () => 1 }], 1), /unknown after/);
+});
+
+test('#5227 oracle: runAll settles every job; each failed job (and a job after it) throws its own error when read, and failedJobs names them all', async () => {
+  const ran = [];
+  const R = await runAll([
+    { name: 'a', run: async () => { ran.push('a'); throw new Error('boom a'); } },
+    { name: 'b', run: async () => { ran.push('b'); return 'kept'; } },
+    { name: 'c', run: async () => { ran.push('c'); throw new Error('boom c'); } },
+    { name: 'd', after: 'a', run: async () => { ran.push('d'); return 'never'; } },
+    { name: 'e', run: async () => { ran.push('e'); return 'after the failures'; } },
+  ], 1);
+  assert.deepEqual(ran, ['a', 'b', 'c', 'e'], 'a failure stops no later job; a job after a failed one never runs');
+  assert.deepEqual(R, { b: 'kept', e: 'after the failures' }, 'only the successes are enumerable');
+  assert.throws(() => R.a, /^Error: runAll: job a failed: boom a$/);
+  assert.throws(() => R.c, (err) => err.message === 'runAll: job c failed: boom c' && err.cause.message === 'boom c');
+  assert.throws(() => R.d, (err) => /^runAll: job d never ran: its after job a failed$/.test(err.message) && err.cause.message === 'runAll: job a failed: boom a');
+  assert.deepEqual(failedJobs(R).map(([name, err]) => [name, err.message]), [
+    ['a', 'runAll: job a failed: boom a'], ['c', 'runAll: job c failed: boom c'], ['d', 'runAll: job d never ran: its after job a failed'],
+  ]);
+  assert.deepEqual(failedJobs(await runAll([{ name: 'x', run: async () => 1 }], 1)), [], 'no failure (control)');
 });
 
 test('#5227 oracle: fakeRun answers the shim table by exact argv and requested graphql aliases only', () => {
@@ -2570,14 +2589,34 @@ const MATRIX = [
 const AC1_FILES = ['dispatch-groups.json', 'dispatch-exclusions.json', 'dispatch-fastlane-bundles.json', 'dispatch-near-dup-pairs.json',
   'dispatch-crosspr-overlap.json', 'dispatch-linked-prs.json', 'dispatch-shipped-releases.json'];
 
+// One runPair per config name for the whole file: whichever pool reaches a config first runs it,
+// and every later pool naming it gets that same result (the fault pool reuses the AC1 matrix's S1
+// and S2 miss runs as its bases, and S1-gh-hit as F-depfresh's warm control). A name stands for
+// one config only. Every memoized pair's sandboxes are removed once, after the file's last test.
+const PAIR_MEMO = new Map();
+const pairKey = (cfg) => JSON.stringify([cfg.scenario, cfg.transport || 'gh', cfg.after || null, cfg.agent || null]);
+function memoPair(cfg, miss) {
+  const key = pairKey(cfg);
+  const memo = PAIR_MEMO.get(cfg.name);
+  if (memo) {
+    if (memo.key !== key) throw new Error(`pair memo: ${cfg.name} names two different configs`);
+    return memo.pair;
+  }
+  const pair = runPair({ ...cfg, origin: miss ? { oracle: miss.oracle.sandbox.origin, module: miss.module.sandbox.origin } : null });
+  PAIR_MEMO.set(cfg.name, { key, pair });
+  return pair;
+}
 // Each config as a runAll job: a hit config starts only once its miss config has finished, and each
 // of its two sides copies that same side's origin from the miss run (PF1).
-const pairJobs = (configs) => configs.map((cfg) => ({
-  name: cfg.name,
-  after: cfg.after,
-  run: (miss) => runPair({ ...cfg, origin: miss ? { oracle: miss.oracle.sandbox.origin, module: miss.module.sandbox.origin } : null }),
-}));
-const cleanupPairs = (R) => { for (const pair of Object.values(R)) for (const r of [pair.oracle, pair.module]) r.sandbox.cleanup(); };
+const pairJobs = (configs) => configs.map((cfg) => ({ name: cfg.name, after: cfg.after, run: (miss) => memoPair(cfg, miss) }));
+const cleanupPairs = (pairs) => { for (const pair of pairs) for (const r of [pair.oracle, pair.module]) r.sandbox.cleanup(); };
+after(async () => {
+  const settled = await Promise.allSettled([...PAIR_MEMO.values()].map((m) => m.pair));
+  cleanupPairs(settled.filter((s) => s.status === 'fulfilled').map((s) => s.value));
+});
+// A pool's own summary row: every job settled with a result (each row reading a failed job also
+// fails on that job's own error, B7).
+const assertEveryJobRan = (R) => assert.deepEqual(failedJobs(R).map(([name, err]) => `${name}: ${err.message}`), [], 'every job in this pool ran');
 const sides = (pair) => [['oracle', pair.oracle], ['module', pair.module]];
 
 // Every gh call either side made was answered by the scenario's table, and no git call left the
@@ -2642,14 +2681,15 @@ test('#5227 oracle: the git shim answers `remote get-url origin` with the scenar
 });
 
 describe('#5227 parity (AC1)', { skip: oracleSkip(), timeout: 600_000 }, () => {
-  const R = {};
+  let R = {};
   const timing = {};
   before(async () => {
     const t0 = Date.now();
-    Object.assign(R, await runAll(pairJobs(MATRIX), POOL));
+    R = await runAll(pairJobs(MATRIX), POOL);
     timing.ms = Date.now() - t0;
   });
-  after(() => cleanupPairs(R));
+
+  test('#5227 parity (AC1): every pair in the matrix pool ran', () => assertEveryJobRan(R));
 
   for (const cfg of MATRIX) {
     test(`AC1.1 [${cfg.name}]: groups, exclusions and every other output equal the script's`, () => {
@@ -2803,14 +2843,15 @@ describe('#5227 parity (AC5, portability)', { skip: oracleSkip(), timeout: 600_0
     { name: 'SMalformed-blocker', scenario: SMalformed('blocker') },
     { name: 'SPortable-gh-miss', scenario: SPortable() },
   ];
-  const R = {};
+  let R = {};
   const timing = {};
   before(async () => {
     const t0 = Date.now();
-    Object.assign(R, await runAll(pairJobs(EXTRA), POOL));
+    R = await runAll(pairJobs(EXTRA), POOL);
     timing.ms = Date.now() - t0;
   });
-  after(() => cleanupPairs(R));
+
+  test('#5227 parity (AC5, portability): every pair in the pool ran', () => assertEveryJobRan(R));
 
   test('AC5.1: an empty queue yields the same files as the script', (t) => {
     const pair = R['SEmpty-gh-miss'];
@@ -2884,7 +2925,9 @@ describe('#5227 parity (AC5, portability)', { skip: oracleSkip(), timeout: 600_0
 // ---- Task 9: fetch-failure faults (AC4), files-input faults (AC7.2) and the reproduced script
 // defects (D1, D3, D4). Each FAULTS row (queue-pull-fixtures.js) fails one gh fetch, and each
 // FILES_FAULTS row one files input, on both sides through the shared table. Its base is the same
-// scenario un-faulted, run in the same pool. A row asserts what the ORACLE did (Plan Review
+// scenario un-faulted: the AC1 matrix's own run of it where the matrix has one (S1 and S2, reused
+// through the pair memo), else a base run in the fault pool. One pool runs both transports' rows,
+// their new bases and D1, from one `before`. A row asserts what the ORACLE did (Plan Review
 // Clarifications, criteria 4, 5 and 7): its exit, the lines it adds on each channel, and its
 // exclusions read against the base's. It then asserts that the module did the same.
 // Files compared: every session file but two kinds. The two `.err` files whose `$(cat)` tails the
@@ -2911,10 +2954,15 @@ const FOREIGN_LOOKUP_NO_GH = 'Warning: foreign blocker state lookup failed (exit
 const NEAR_DUP = 'AUTO — dispatch: near-duplicate candidates across groups: ';
 const FOREIGN_UNREADABLE = 'acme-corp/other#12 (state unreadable)';
 
-const FAULT_BASES = {
-  gh: { 'gh-P1': PARITY_S1, 'gh-S2': S2, 'gh-livedep': () => S1LiveDep() },
-  files: { 'files-P1': PARITY_S1, 'files-S2': S2, 'files-livedep': () => S1LiveDep() },
-};
+// A row's default base, and the fault pool's bases: the matrix configs themselves (so the memo
+// hands back their runs), the live-dependency scenario the matrix does not run, and S1-gh-hit,
+// F-depfresh's un-faulted warm control on the same miss origin.
+const MATRIX_CFG = Object.fromEntries(MATRIX.map((c) => [c.name, c]));
+const BASE = { gh: 'S1-gh-miss', files: 'S1-files-miss' };
+const FAULT_BASES = [
+  MATRIX_CFG['S1-gh-miss'], MATRIX_CFG['S1-gh-hit'], MATRIX_CFG['S2-gh-miss'], { name: 'gh-livedep', scenario: S1LiveDep(), transport: 'gh' },
+  MATRIX_CFG['S1-files-miss'], MATRIX_CFG['S2-files-miss'], { name: 'files-livedep', scenario: S1LiveDep(), transport: 'files' },
+];
 
 // Per row: `status` the oracle's exit (the CLI's is 4 where it is 1); `base` the un-faulted run it
 // is read against (default <transport>-P1); `stderr` / `stdout` the prefixes, in order, of the
@@ -2926,8 +2974,8 @@ const FAULT_EXPECT = {
   'F-opennum': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
   'F-depfresh': { status: 0, stderr: [], drops: [] },
   'F-depview': { status: 0, base: 'gh-livedep', stderr: [], drops: ['blocked:9002'] },
-  'F-native': { status: 0, base: 'gh-S2', stderr: [`${NATIVE_WARNING_PREFIX}gh-fault: injected failure`, LANDING_EXITED], drops: ['blocked:9030'] },
-  'F-foreign': { status: 0, base: 'gh-S2', stderr: ['Warning: foreign blocker state lookup failed (exit 3: gh-fault: injected failure resolve-foreign-blockers.js: '], drops: [] },
+  'F-native': { status: 0, base: 'S2-gh-miss', stderr: [`${NATIVE_WARNING_PREFIX}gh-fault: injected failure`, LANDING_EXITED], drops: ['blocked:9030'] },
+  'F-foreign': { status: 0, base: 'S2-gh-miss', stderr: ['Warning: foreign blocker state lookup failed (exit 3: gh-fault: injected failure resolve-foreign-blockers.js: '], drops: [] },
   'F-linked': { status: 0, stderr: [`${LINKED_WARNING}gh-fault: injected failure`], drops: ['open-pr:9005', 'open-pr:9008', 'shipped:9010'] },
   'F-intbranch': {
     status: 0, stderr: [`${LANDING_SKIPPED}no integration branch resolved; no unlanded-blocker exclusions this pull`],
@@ -2948,7 +2996,7 @@ const FAULT_EXPECT = {
   'F-groups': { status: 1, stderr: [OPEN_FILTER_WARNING, STOP_LINE.target], entries: ['blocked:9002', 'oversized:9001+9003+9016', 'not-spec-shaped:9004', 'not-spec-shaped:9007'] },
 };
 const FILES_STOPPED_NEIGHBOUR = { status: 1, stderr: [STOP_LINE.neighbour], drops: ['neighbour-in-flight:9013'] };
-const FILES_FOREIGN = (why) => ({ status: 0, base: 'files-S2', stderr: [`Warning: foreign blocker states file <SCR>/agent/foreign-states.json ignored (${why}`, FOREIGN_LOOKUP_NO_GH], drops: [] });
+const FILES_FOREIGN = (why) => ({ status: 0, base: 'S2-files-miss', stderr: [`Warning: foreign blocker states file <SCR>/agent/foreign-states.json ignored (${why}`, FOREIGN_LOOKUP_NO_GH], drops: [] });
 const FILES_EXPECT = {
   'files-queueRaw-missing': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
   'files-queueRaw-malformed': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
@@ -2971,31 +3019,15 @@ const FILES_EXPECT = {
   'files-foreignStates-malformed': FILES_FOREIGN('not valid JSON) — supplied states not used (fail closed)'),
 };
 
-// One pool per transport: its bases, then its rows (a `warm` row after <transport>-P1, copying that
-// side's origin and so its queue-order blob). Memoized: AC4.2 reads both transports.
-const faultGroups = {};
-function runFaultGroup(transport) {
-  if (!faultGroups[transport]) {
-    const rows = transport === 'gh' ? FAULTS : FILES_FAULTS;
-    const configs = [
-      ...Object.entries(FAULT_BASES[transport]).map(([name, make]) => ({ name, scenario: make(), transport })),
-      ...rows.map((row) => {
-        const scenario = row.scenario();
-        return { name: row.id, scenario, transport, after: row.warm ? `${transport}-P1` : undefined, agent: transport === 'files' ? row.agent(agentInputs(scenario)) : null };
-      }),
-    ];
-    const t0 = Date.now();
-    faultGroups[transport] = runAll(pairJobs(configs), POOL).then((R) => ({ R, pairs: configs.length, ms: Date.now() - t0 }));
-  }
-  return faultGroups[transport];
+// The fault pool's pair configs: the bases, then each transport's rows (a `warm` row after its
+// transport's base, copying that side's origin and so its queue-order blob, PF1).
+function faultConfigs() {
+  const rows = (transport) => (transport === 'gh' ? FAULTS : FILES_FAULTS).map((row) => {
+    const scenario = row.scenario();
+    return { name: row.id, scenario, transport, after: row.warm ? BASE[transport] : undefined, agent: transport === 'files' ? row.agent(agentInputs(scenario)) : null };
+  });
+  return [...FAULT_BASES, ...rows('gh'), ...rows('files')];
 }
-after(async () => {
-  for (const group of Object.values(faultGroups)) {
-    let settled = null;
-    try { settled = await group; } catch { /* runAll already reported the failure; nothing to clean */ }
-    if (settled) cleanupPairs(settled.R);
-  }
-});
 
 const compactEntries = (r) => {
   const text = r.files['dispatch-exclusions.json'];
@@ -3012,7 +3044,7 @@ const posture = (r) => (r.status === 0 ? 'open' : 'stop');
 // One row: the oracle against the expectation, then the module against the oracle.
 function assertFaultRow(row, expect, R, transport) {
   const pair = R[row.id];
-  const base = R[expect.base || `${transport}-P1`];
+  const base = R[expect.base || BASE[transport]];
   assertClean(pair, row.id);
   assertClean(base, `${row.id} base`);
   assert.equal(base.oracle.status, 0, `${row.id} base: ${base.oracle.stderr.slice(-2000)}`);
@@ -3043,114 +3075,6 @@ function assertFaultRow(row, expect, R, transport) {
   assertParity(oracle, module, { files: faultFiles(transport) });
 }
 
-describe('#5227 parity (AC4 fetch failures)', { skip: oracleSkip(), timeout: 600_000 }, () => {
-  let R = {};
-  let group = null;
-  before(async () => {
-    group = await runFaultGroup('gh');
-    R = group.R;
-  });
-
-  for (const f of FAULTS) {
-    test(`AC4.1 [${f.id}]: the module takes the script's path — this fetch's posture, exit category, the same zero or one reported line per channel, exclusions and groups`, () => {
-      assert.ok(FAULT_EXPECT[f.id], `${f.id} has an expectation row`);
-      assertFaultRow(f, FAULT_EXPECT[f.id], R, 'gh');
-    });
-  }
-
-  test('AC4.1 detail: each fault\'s own effect, both sides (cache miss, fail-closed foreign state, origin/ targets, unprobed files, no overlap, no blob)', () => {
-    for (const [side, r] of sides(R['F-depfresh'])) {
-      assert.ok(!r.stderr.includes(HIT_MESSAGE), `F-depfresh ${side}: the failed freshness search turns a warm cache into a miss`);
-      assert.deepEqual(groupedIn(r), groupedIn(R['gh-P1'].oracle), `F-depfresh ${side}: the recompute reaches the base's groups`);
-    }
-    for (const [side, r] of sides(R['F-foreign'])) {
-      assert.deepEqual(exclusionsIn(r).find((e) => e.records[0] === 9031).detail.blockedBy, [FOREIGN_UNREADABLE], `F-foreign ${side}: fail closed`);
-    }
-    assert.deepEqual(exclusionsIn(R['gh-S2'].oracle).find((e) => e.records[0] === 9031).detail.blockedBy, ['acme-corp/other#12'], 'the S2 base reads the state (control)');
-    for (const [side, r] of sides(R['F-intbranch'])) {
-      assert.deepEqual(exclusionsIn(r).find((e) => e.records[0] === 9017).detail, { path: 'docs/present.md' }, `F-intbranch ${side}`);
-      assert.ok(r.gitArgv.some((e) => e.tag === 'injected' && e.argv.join(' ') === 'remote show origin'), `F-intbranch ${side}`);
-      const proposals = Object.entries(r.staged).filter(([n]) => n.startsWith('dispatch-target-missing-')).map(([, body]) => body);
-      assert.equal(proposals.length, 3, `F-intbranch ${side}`);
-      assert.ok(proposals.every((body) => body.includes('absent at `origin/`')), `F-intbranch ${side}: every target-missing Close proposal names origin/`);
-    }
-    for (const [side, r] of sides(R['F-prview'])) assert.equal(r.files['dispatch-shipped-pr-files.jsonl'], '{"pr":5016,"files":[]}\n', `F-prview ${side}: a failed probe reads as no files`);
-    assert.equal(R['gh-P1'].oracle.files['dispatch-shipped-pr-files.jsonl'], `{"pr":5016,"files":${JSON.stringify(WEAK_PR_FILES)}}\n`, 'the base probes the files (control)');
-    for (const [side, r] of sides(R['F-openprs'])) assert.deepEqual(JSON.parse(r.files['dispatch-crosspr-overlap.json']), [], `F-openprs ${side}`);
-    assert.notDeepEqual(JSON.parse(R['gh-P1'].oracle.files['dispatch-crosspr-overlap.json']), [], 'the base reports #9001 against PR #41 (control)');
-    for (const [side, r] of sides(R['F-depview'])) assert.ok(groupedIn(r).includes(9002), `F-depview ${side}: #9002 is dispatchable`);
-    for (const [side, r] of sides(R['gh-livedep'])) assert.ok(r.ghArgv.some((a) => a.argv.join(' ') === 'issue view 8000 --json state -q .state'), `gh-livedep ${side}: the live check is what holds #9002`);
-  });
-
-  test('AC4.2: each PASSES failOpen equals the strictest posture observed across that pass\'s fault fixtures (stop if any stops, else open; n/a with no fetch)', { timeout: 600_000 }, async (t) => {
-    const files = (await runFaultGroup('files')).R;
-    const strictest = (side) => {
-      const out = {};
-      for (const [rows, results] of [[FAULTS, R], [FILES_FAULTS, files]]) {
-        for (const row of rows.filter((x) => x.pass !== '(stop)')) {
-          const p = posture(results[row.id][side]);
-          out[row.pass] = out[row.pass] === 'stop' || p === 'stop' ? 'stop' : 'open';
-        }
-      }
-      return out;
-    };
-    const observed = strictest('oracle');
-    assert.deepEqual(strictest('module'), observed, 'the module\'s exits give the same postures');
-    for (const id of Object.keys(observed)) assert.ok(PASSES.some((p) => p.id === id), `fault rows name a registry id: ${id}`);
-    for (const p of PASSES) assert.equal(p.failOpen, observed[p.id] || 'n/a', `${p.id} (${p.reason || p.kind})`);
-    // PF6: neighbour-in-flight is open on gh and stop on files; the stricter value wins.
-    assert.equal(posture(R['F-inflight'].oracle), 'open');
-    assert.equal(posture(files['files-inFlightRaw-missing'].oracle), 'stop');
-    t.diagnostic(`postures: ${JSON.stringify(observed)}`);
-  });
-
-  test('AC4.3: F-corrupt and F-groups stop the pull on both sides (oracle exit 1, CLI exit 4)', () => {
-    for (const id of ['F-corrupt', 'F-groups']) {
-      const { oracle, module } = R[id];
-      stopMapped(oracle, module);
-      for (const [side, r] of sides(R[id])) assert.ok(reported(r.stderr).at(-1).startsWith('dispatch: queue-pull stopped -- '), `${id} ${side}: the stop line is the last reported line`);
-    }
-    for (const [side, r] of sides(R['F-groups'])) assert.equal(r.files['dispatch-groups.json'], '{corrupt', `F-groups ${side}: the unreadable groups file is left as it was`);
-  });
-
-  test('AC4.4: the oracle stops on exactly the observed stop set, and every other fault exits 0', (t) => {
-    const STOP_SET = ['F-corrupt', 'F-groups', 'F-opennum', 'F-queue'];
-    assert.deepEqual(FAULTS.filter((f) => R[f.id].oracle.status !== 0).map((f) => f.id).sort(), STOP_SET, 'the oracle');
-    assert.deepEqual(FAULTS.filter((f) => R[f.id].module.status !== 0).map((f) => f.id).sort(), STOP_SET, 'the module');
-    for (const f of FAULTS) {
-      const want = STOP_SET.includes(f.id) ? [1, 4] : [0, 0];
-      assert.deepEqual([R[f.id].oracle.status, R[f.id].module.status], want, f.id);
-    }
-    t.diagnostic(`AC4 gh group: ${group.pairs} pairs (${group.pairs * 2} runs), pool ${POOL}, wall ${group.ms} ms`);
-  });
-
-  test('AC4.5: F-writeback exits 0 on both sides with the non-blocking write-back line', () => {
-    assert.ok(R['gh-P1'].oracle.orderBlob, 'the base persists the blob (control)');
-    for (const [side, r] of sides(R['F-writeback'])) {
-      assert.equal(r.status, 0, `${side}: ${r.stderr.slice(-2000)}`);
-      assert.equal(reported(r.stderr).filter((l) => l.startsWith('Queue-order cache write-back failed (non-blocking): ')).length, 1, side);
-      assert.equal(r.orderBlob, null, `${side}: the push failed, so origin holds no blob`);
-      assert.ok(r.gitArgv.some((e) => e.tag === 'injected' && e.argv.includes('push')), side);
-      assert.deepEqual(groupedIn(r), groupedIn(R['gh-P1'].oracle), `${side}: the pull went on to the base's groups`);
-    }
-  });
-
-  test('AC4.6 parity: after F-corrupt the CLI exits 4, the exclusions file is byte-identical to the oracle\'s, and no later pass wrote its file', () => {
-    const { oracle, module } = R['F-corrupt'];
-    assert.equal(module.status, 4);
-    assert.equal(module.files['dispatch-exclusions.json'], oracle.files['dispatch-exclusions.json']);
-    assert.equal(oracle.files['dispatch-exclusions.json'], '{corrupt');
-    const LATER = ['dispatch-named-targets.json', 'dispatch-shipped-probe-prs.json', 'dispatch-shipped-pr-files.jsonl', 'dispatch-shipped-releases.json',
-      'dispatch-in-flight-raw.json', 'dispatch-open-prs.json', 'dispatch-crosspr-overlap.json', 'dispatch-near-dup-pairs.json'];
-    for (const [side, r] of sides(R['F-corrupt'])) {
-      for (const name of LATER) assert.equal(r.files[name], null, `${side}: ${name} (a pass after open-pr)`);
-      assert.deepEqual(r.staged, {}, `${side}: no Close proposal staged`);
-      assert.equal(r.decisions, '', `${side}: no decision logged`);
-    }
-    for (const name of LATER) assert.notEqual(R['gh-P1'].oracle.files[name], null, `the base writes ${name} (control)`);
-  });
-});
-
 // D1: two pulls in one session per side (the one deliberate session reuse: one session id and one
 // TMPDIR), the second answering from D1Second's table.
 async function runD1() {
@@ -3174,16 +3098,143 @@ async function runD1() {
   }
 }
 
+// The one fault pool: both transports' rows, their bases and D1, started by the first describe
+// `before` that asks for it (the AC4 one) and awaited, already settled, by the other.
+let faultPool = null;
+function runFaultPool() {
+  if (!faultPool) {
+    const configs = faultConfigs();
+    const reused = configs.filter((c) => PAIR_MEMO.has(c.name)).length;
+    const t0 = Date.now();
+    // D1 first: its two pulls run one after the other, so it starts before the single-pull pairs.
+    faultPool = runAll([{ name: 'D1', run: runD1 }, ...pairJobs(configs)], POOL)
+      .then((R) => ({ R, pairs: configs.length - reused, reused, ms: Date.now() - t0 }));
+  }
+  return faultPool;
+}
+after(async () => {
+  if (!faultPool) return;
+  let d1 = null;
+  try { d1 = (await faultPool).R.D1; } catch { return; } // a failed runD1 removed its own sandboxes
+  cleanupPairs([d1.first]); // the second pull ran in the same two sandboxes; the pairs are the memo's
+});
+
+describe('#5227 parity (AC4 fetch failures)', { skip: oracleSkip(), timeout: 600_000 }, () => {
+  let R = {};
+  let pool = null;
+  before(async () => {
+    pool = await runFaultPool();
+    R = pool.R;
+  });
+
+  test('#5227 fault pool: every job ran (the gh and files fault rows, their bases and D1, in one pool)', (t) => {
+    assertEveryJobRan(R);
+    t.diagnostic(`fault pool: ${pool.pairs} new pairs (${pool.pairs * 2} runs) + D1 (4 runs), ${pool.reused} reused from the AC1 matrix, pool ${POOL}, wall ${pool.ms} ms`);
+  });
+
+  for (const f of FAULTS) {
+    test(`AC4.1 [${f.id}]: the module takes the script's path — this fetch's posture, exit category, the same zero or one reported line per channel, exclusions and groups`, () => {
+      assert.ok(FAULT_EXPECT[f.id], `${f.id} has an expectation row`);
+      assertFaultRow(f, FAULT_EXPECT[f.id], R, 'gh');
+    });
+  }
+
+  test('AC4.1 detail: each fault\'s own effect, both sides (cache miss, fail-closed foreign state, origin/ targets, unprobed files, no overlap, no blob)', () => {
+    for (const [side, r] of sides(R['F-depfresh'])) {
+      assert.ok(!r.stderr.includes(HIT_MESSAGE), `F-depfresh ${side}: the failed freshness search turns a warm cache into a miss`);
+      assert.deepEqual(groupedIn(r), groupedIn(R['S1-gh-miss'].oracle), `F-depfresh ${side}: the recompute reaches the base's groups`);
+    }
+    for (const [side, r] of sides(R['F-foreign'])) {
+      assert.deepEqual(exclusionsIn(r).find((e) => e.records[0] === 9031).detail.blockedBy, [FOREIGN_UNREADABLE], `F-foreign ${side}: fail closed`);
+    }
+    assert.deepEqual(exclusionsIn(R['S2-gh-miss'].oracle).find((e) => e.records[0] === 9031).detail.blockedBy, ['acme-corp/other#12'], 'the S2 base reads the state (control)');
+    for (const [side, r] of sides(R['F-intbranch'])) {
+      assert.deepEqual(exclusionsIn(r).find((e) => e.records[0] === 9017).detail, { path: 'docs/present.md' }, `F-intbranch ${side}`);
+      assert.ok(r.gitArgv.some((e) => e.tag === 'injected' && e.argv.join(' ') === 'remote show origin'), `F-intbranch ${side}`);
+      const proposals = Object.entries(r.staged).filter(([n]) => n.startsWith('dispatch-target-missing-')).map(([, body]) => body);
+      assert.equal(proposals.length, 3, `F-intbranch ${side}`);
+      assert.ok(proposals.every((body) => body.includes('absent at `origin/`')), `F-intbranch ${side}: every target-missing Close proposal names origin/`);
+    }
+    for (const [side, r] of sides(R['F-prview'])) assert.equal(r.files['dispatch-shipped-pr-files.jsonl'], '{"pr":5016,"files":[]}\n', `F-prview ${side}: a failed probe reads as no files`);
+    assert.equal(R['S1-gh-miss'].oracle.files['dispatch-shipped-pr-files.jsonl'], `{"pr":5016,"files":${JSON.stringify(WEAK_PR_FILES)}}\n`, 'the base probes the files (control)');
+    for (const [side, r] of sides(R['F-openprs'])) assert.deepEqual(JSON.parse(r.files['dispatch-crosspr-overlap.json']), [], `F-openprs ${side}`);
+    assert.notDeepEqual(JSON.parse(R['S1-gh-miss'].oracle.files['dispatch-crosspr-overlap.json']), [], 'the base reports #9001 against PR #41 (control)');
+    for (const [side, r] of sides(R['F-depview'])) assert.ok(groupedIn(r).includes(9002), `F-depview ${side}: #9002 is dispatchable`);
+    for (const [side, r] of sides(R['gh-livedep'])) assert.ok(r.ghArgv.some((a) => a.argv.join(' ') === 'issue view 8000 --json state -q .state'), `gh-livedep ${side}: the live check is what holds #9002`);
+  });
+
+  test('AC4.2: each PASSES failOpen equals the strictest posture observed across that pass\'s fault fixtures (stop if any stops, else open; n/a with no fetch)', (t) => {
+    const strictest = (side) => {
+      const out = {};
+      for (const rows of [FAULTS, FILES_FAULTS]) {
+        for (const row of rows.filter((x) => x.pass !== '(stop)')) {
+          const p = posture(R[row.id][side]);
+          out[row.pass] = out[row.pass] === 'stop' || p === 'stop' ? 'stop' : 'open';
+        }
+      }
+      return out;
+    };
+    const observed = strictest('oracle');
+    assert.deepEqual(strictest('module'), observed, 'the module\'s exits give the same postures');
+    for (const id of Object.keys(observed)) assert.ok(PASSES.some((p) => p.id === id), `fault rows name a registry id: ${id}`);
+    for (const p of PASSES) assert.equal(p.failOpen, observed[p.id] || 'n/a', `${p.id} (${p.reason || p.kind})`);
+    // PF6: neighbour-in-flight is open on gh and stop on files; the stricter value wins.
+    assert.equal(posture(R['F-inflight'].oracle), 'open');
+    assert.equal(posture(R['files-inFlightRaw-missing'].oracle), 'stop');
+    t.diagnostic(`postures: ${JSON.stringify(observed)}`);
+  });
+
+  test('AC4.3: F-corrupt and F-groups stop the pull on both sides (oracle exit 1, CLI exit 4)', () => {
+    for (const id of ['F-corrupt', 'F-groups']) {
+      const { oracle, module } = R[id];
+      stopMapped(oracle, module);
+      for (const [side, r] of sides(R[id])) assert.ok(reported(r.stderr).at(-1).startsWith('dispatch: queue-pull stopped -- '), `${id} ${side}: the stop line is the last reported line`);
+    }
+    for (const [side, r] of sides(R['F-groups'])) assert.equal(r.files['dispatch-groups.json'], '{corrupt', `F-groups ${side}: the unreadable groups file is left as it was`);
+  });
+
+  test('AC4.4: the oracle stops on exactly the observed stop set, and every other fault exits 0', () => {
+    const STOP_SET = ['F-corrupt', 'F-groups', 'F-opennum', 'F-queue'];
+    assert.deepEqual(FAULTS.filter((f) => R[f.id].oracle.status !== 0).map((f) => f.id).sort(), STOP_SET, 'the oracle');
+    assert.deepEqual(FAULTS.filter((f) => R[f.id].module.status !== 0).map((f) => f.id).sort(), STOP_SET, 'the module');
+    for (const f of FAULTS) {
+      const want = STOP_SET.includes(f.id) ? [1, 4] : [0, 0];
+      assert.deepEqual([R[f.id].oracle.status, R[f.id].module.status], want, f.id);
+    }
+  });
+
+  test('AC4.5: F-writeback exits 0 on both sides with the non-blocking write-back line', () => {
+    assert.ok(R['S1-gh-miss'].oracle.orderBlob, 'the base persists the blob (control)');
+    for (const [side, r] of sides(R['F-writeback'])) {
+      assert.equal(r.status, 0, `${side}: ${r.stderr.slice(-2000)}`);
+      assert.equal(reported(r.stderr).filter((l) => l.startsWith('Queue-order cache write-back failed (non-blocking): ')).length, 1, side);
+      assert.equal(r.orderBlob, null, `${side}: the push failed, so origin holds no blob`);
+      assert.ok(r.gitArgv.some((e) => e.tag === 'injected' && e.argv.includes('push')), side);
+      assert.deepEqual(groupedIn(r), groupedIn(R['S1-gh-miss'].oracle), `${side}: the pull went on to the base's groups`);
+    }
+  });
+
+  test('AC4.6 parity: after F-corrupt the CLI exits 4, the exclusions file is byte-identical to the oracle\'s, and no later pass wrote its file', () => {
+    const { oracle, module } = R['F-corrupt'];
+    assert.equal(module.status, 4);
+    assert.equal(module.files['dispatch-exclusions.json'], oracle.files['dispatch-exclusions.json']);
+    assert.equal(oracle.files['dispatch-exclusions.json'], '{corrupt');
+    const LATER = ['dispatch-named-targets.json', 'dispatch-shipped-probe-prs.json', 'dispatch-shipped-pr-files.jsonl', 'dispatch-shipped-releases.json',
+      'dispatch-in-flight-raw.json', 'dispatch-open-prs.json', 'dispatch-crosspr-overlap.json', 'dispatch-near-dup-pairs.json'];
+    for (const [side, r] of sides(R['F-corrupt'])) {
+      for (const name of LATER) assert.equal(r.files[name], null, `${side}: ${name} (a pass after open-pr)`);
+      assert.deepEqual(r.staged, {}, `${side}: no Close proposal staged`);
+      assert.equal(r.decisions, '', `${side}: no decision logged`);
+    }
+    for (const name of LATER) assert.notEqual(R['S1-gh-miss'].oracle.files[name], null, `the base writes ${name} (control)`);
+  });
+});
+
 describe('#5227 parity (AC7.2 files inputs)', { skip: oracleSkip(), timeout: 600_000 }, () => {
   let R = {};
-  let group = null;
-  let d1 = null;
   before(async () => {
-    group = await runFaultGroup('files');
-    R = group.R;
-    d1 = await runD1();
+    R = (await runFaultPool()).R;
   });
-  after(() => { if (d1) cleanupPairs({ first: d1.first }); });
 
   for (const f of FILES_FAULTS) {
     test(`AC7.2 [${f.input} ${f.mode}]: module and oracle agree on the outcome`, () => {
@@ -3192,7 +3243,7 @@ describe('#5227 parity (AC7.2 files inputs)', { skip: oracleSkip(), timeout: 600
     });
   }
 
-  test('AC7.2: in-flight raw and claims FILE missing or malformed stop the pull; [] and {} values fail open; a bad foreign-states file excludes as (state unreadable) with a fail-closed Warning (Plan Review Clarifications, criterion 7)', (t) => {
+  test('AC7.2: in-flight raw and claims FILE missing or malformed stop the pull; [] and {} values fail open; a bad foreign-states file excludes as (state unreadable) with a fail-closed Warning (Plan Review Clarifications, criterion 7)', () => {
     for (const id of ['files-inFlightRaw-missing', 'files-inFlightRaw-malformed', 'files-inFlightClaims-missing', 'files-inFlightClaims-malformed']) {
       stopMapped(R[id].oracle, R[id].module);
       for (const [side, r] of sides(R[id])) assert.equal(reported(r.stderr).at(-1), STOP_LINE.neighbour, `${id} ${side}`);
@@ -3203,7 +3254,7 @@ describe('#5227 parity (AC7.2 files inputs)', { skip: oracleSkip(), timeout: 600
         assert.deepEqual(exclusionsIn(r).filter((e) => e.reason === 'neighbour-in-flight'), [], `${id} ${side}: excludes nothing`);
       }
     }
-    assert.deepEqual(exclusionsIn(R['files-P1'].oracle).filter((e) => e.reason === 'neighbour-in-flight').map((e) => e.records[0]), [9013], 'the base excludes #9013 (control)');
+    assert.deepEqual(exclusionsIn(R['S1-files-miss'].oracle).filter((e) => e.reason === 'neighbour-in-flight').map((e) => e.records[0]), [9013], 'the base excludes #9013 (control)');
     for (const id of ['files-foreignStates-missing', 'files-foreignStates-malformed']) {
       for (const [side, r] of sides(R[id])) {
         assert.equal(r.status, 0, `${id} ${side}`);
@@ -3211,8 +3262,7 @@ describe('#5227 parity (AC7.2 files inputs)', { skip: oracleSkip(), timeout: 600
         assert.ok(reported(r.stderr).some((l) => l.startsWith('Warning: ') && l.endsWith('(fail closed)')), `${id} ${side}: a fail-closed Warning`);
       }
     }
-    assert.deepEqual(exclusionsIn(R['files-S2'].oracle).find((e) => e.records[0] === 9031).detail.blockedBy, ['acme-corp/other#12'], 'a readable file answers the state (control)');
-    t.diagnostic(`AC7.2 files group: ${group.pairs} pairs (${group.pairs * 2} runs), pool ${POOL}, wall ${group.ms} ms`);
+    assert.deepEqual(exclusionsIn(R['S2-files-miss'].oracle).find((e) => e.records[0] === 9031).detail.blockedBy, ['acme-corp/other#12'], 'a readable file answers the state (control)');
   });
 
   test('AC7.2: a dependency-freshness file the agent never wrote stops a warm-cache pull at the cache check, and on a cold cache only leaves the write-back unwritten', () => {
@@ -3220,12 +3270,12 @@ describe('#5227 parity (AC7.2 files inputs)', { skip: oracleSkip(), timeout: 600
       assert.equal(reported(r.stderr).at(-1), STOP_LINE.cacheHit, `warm ${side}`);
       assert.equal(r.files['dispatch-groups.json'], null, `warm ${side}: the stop came before any groups file`);
     }
-    assert.ok(R['files-P1'].oracle.orderBlob, 'the cold base persists its blob (control)');
+    assert.ok(R['S1-files-miss'].oracle.orderBlob, 'the cold base persists its blob (control)');
     for (const [side, r] of sides(R['files-depFreshness-missing-cold'])) {
       assert.equal(r.status, 0, `cold ${side}`);
       assert.equal(r.files['dispatch-dep-freshness.json'], null, `cold ${side}: the agent wrote none, so the session file is gone`);
       assert.equal(r.orderBlob, null, `cold ${side}: the write-back cannot read the freshness and persists nothing`);
-      assert.deepEqual(groupedIn(r), groupedIn(R['files-P1'].oracle), `cold ${side}: the pull itself is the base's`);
+      assert.deepEqual(groupedIn(r), groupedIn(R['S1-files-miss'].oracle), `cold ${side}: the pull itself is the base's`);
     }
   });
 
@@ -3236,7 +3286,7 @@ describe('#5227 parity (AC7.2 files inputs)', { skip: oracleSkip(), timeout: 600
       assert.equal(r.files['dispatch-queue-raw.json'], '[]', `${side}: aliasMcpTimestamps rewrote the wrapper as []`);
       assert.deepEqual([...reported(r.stderr), ...reported(r.stdout)].filter((l) => l.startsWith('Warning: ')), [], `${side}: no Warning`);
     }
-    assert.ok(groupedIn(R['files-P1'].oracle).length > 0, 'the same records unwrapped are dispatchable (control)');
+    assert.ok(groupedIn(R['S1-files-miss'].oracle).length > 0, 'the same records unwrapped are dispatchable (control)');
   });
 
   test('#5227 D4: a non-JSON claim string yields no exclusion and no AUTO line, both sides', () => {
@@ -3250,7 +3300,7 @@ describe('#5227 parity (AC7.2 files inputs)', { skip: oracleSkip(), timeout: 600
   });
 
   test('#5227 D1: a second pull in the same session whose open-numbers fetch returns empty reuses the first pull\'s eligible files, both sides', () => {
-    const { first, second } = d1;
+    const { first, second } = R.D1;
     assertClean(first, 'D1 first');
     assertClean(second, 'D1 second');
     for (const [side] of sides(second)) {

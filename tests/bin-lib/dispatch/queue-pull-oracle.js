@@ -619,8 +619,12 @@ function assertParity(a, b, { files = sessionFileNames() } = {}) {
 }
 
 // runAll([{ name, after?, run(depResult) }], limit) -> { [name]: result }. A job naming `after`
-// starts only once that job has finished, and gets its result; independent jobs run up to
-// `limit` at a time. The first failure rejects, after the jobs already running settle.
+// starts only once that job has settled, and gets its result; independent jobs run up to `limit`
+// at a time. Every job settles: one failure never stops the others. A failed job (or one whose
+// `after` failed, which never runs) gets a non-enumerable property that throws its own error when
+// read, so each consumer fails on its own job with that job's cause; failedJobs(results) lists
+// every failure. An invalid job list (a duplicate name, an unknown or cyclic `after`) rejects.
+const FAILED_JOBS = Symbol('runAll.failed');
 function runAll(jobs, limit = (os.availableParallelism ? os.availableParallelism() : os.cpus().length)) {
   const names = new Set();
   for (const job of jobs) {
@@ -633,37 +637,49 @@ function runAll(jobs, limit = (os.availableParallelism ? os.availableParallelism
   const slots = Math.max(1, Math.floor(limit) || 1);
   const pending = [...jobs];
   const results = {};
-  const finished = new Set();
-  const errors = [];
+  const failed = new Map();
+  Object.defineProperty(results, FAILED_JOBS, { value: failed, enumerable: false });
+  const settled = new Set();
+  const fail = (name, err) => {
+    failed.set(name, err);
+    Object.defineProperty(results, name, { enumerable: false, configurable: true, get() { throw err; } });
+  };
   let running = 0;
   return new Promise((resolve, reject) => {
     const pump = () => {
-      while (errors.length === 0 && running < slots) {
-        const at = pending.findIndex((job) => job.after === undefined || finished.has(job.after));
+      while (running < slots) {
+        const at = pending.findIndex((job) => job.after === undefined || settled.has(job.after));
         if (at === -1) break;
         const [job] = pending.splice(at, 1);
+        if (job.after !== undefined && failed.has(job.after)) {
+          fail(job.name, new Error(`runAll: job ${job.name} never ran: its after job ${job.after} failed`, { cause: failed.get(job.after) }));
+          settled.add(job.name);
+          continue;
+        }
         running += 1;
         Promise.resolve()
           .then(() => job.run(job.after === undefined ? undefined : results[job.after]))
           .then((value) => {
             results[job.name] = value;
-            finished.add(job.name);
           }, (err) => {
-            errors.push(new Error(`runAll: job ${job.name} failed: ${err && err.message}`, { cause: err }));
+            fail(job.name, new Error(`runAll: job ${job.name} failed: ${err && err.message}`, { cause: err }));
           })
           .finally(() => {
+            settled.add(job.name);
             running -= 1;
             pump();
           });
       }
       if (running > 0) return;
-      if (errors.length) reject(errors[0]);
-      else if (pending.length) reject(new Error(`runAll: jobs that can never start (an after cycle): ${pending.map((j) => j.name).join(', ')}`));
+      if (pending.length) reject(new Error(`runAll: jobs that can never start (an after cycle): ${pending.map((j) => j.name).join(', ')}`));
       else resolve(results);
     };
     pump();
   });
 }
+
+// [[name, error]] for every job runAll could not give a result, in settle order.
+const failedJobs = (results) => [...(results[FAILED_JOBS] || new Map())];
 
 // runPair({ name, scenario, transport, origin, agent }) -> { oracle, module }: two sandboxes built
 // from one scenario under one name (so both print the same session paths after normalize), the
@@ -671,25 +687,32 @@ function runAll(jobs, limit = (os.availableParallelism ? os.availableParallelism
 // origin.git paths) makes each side copy its own earlier run's origin -- a cache-hit config after
 // its miss. On `files`, `agent` (default agentInputs(scenario)) is what the oracle's agent writes
 // copy from, and the same files are staged at the module's session paths. Both results keep their
-// sandbox (non-enumerable `.sandbox`) for the caller to clean up.
+// sandbox (non-enumerable `.sandbox`) for the caller to clean up. On a failure both sides settle
+// before either sandbox is removed (the other side's process may still be running in its own), and
+// the first failure is rethrown.
 let fenceText = null;
 async function runPair({ name, scenario, transport = 'gh', origin = null, agent = null }) {
   if (!fenceText) fenceText = extractFence(readText(SCRIPT_MD), FENCE_FIRST_LINE);
   const inputs = transport === 'files' ? (agent || agentInputs(scenario)) : {};
+  const script = transport === 'files' ? filesOracleScript(fenceText, readText(MCP_MD)) : fenceText;
   const make = (side) => createSandbox(scenario, { transport, name, agent: inputs, origin: origin ? origin[side] : null });
   const sandboxes = [];
-  try {
-    sandboxes.push(make('oracle'), make('module'));
-    const script = transport === 'files' ? filesOracleScript(fenceText, readText(MCP_MD)) : fenceText;
-    const [oracle, module] = await Promise.all([
-      runOracle(sandboxes[0], script),
-      runModuleCli(sandboxes[1], ['--transport', transport], { stage: inputs }),
-    ]);
-    return { oracle, module };
-  } catch (err) {
+  const teardown = (err) => {
     for (const sb of sandboxes) sb.cleanup();
     throw err;
+  };
+  try {
+    sandboxes.push(make('oracle'), make('module'));
+  } catch (err) {
+    teardown(err);
   }
+  const [oracle, module] = await Promise.allSettled([
+    runOracle(sandboxes[0], script),
+    runModuleCli(sandboxes[1], ['--transport', transport], { stage: inputs }),
+  ]);
+  const rejected = [oracle, module].find((s) => s.status === 'rejected');
+  if (rejected) teardown(rejected.reason);
+  return { oracle: oracle.value, module: module.value };
 }
 
 // --- the shims (each bin/ file re-enters here) -------------------------------------
@@ -799,5 +822,5 @@ function shimMain(kind) {
 module.exports = {
   REPO, SCRIPT_MD, MCP_MD, FENCE_FIRST_LINE, RUN_DIR_NAME,
   findBash, oracleSkip, extractFence, fenceSessionFiles, sessionFileNames, filesOracleScript,
-  createSandbox, runOracle, runModuleCli, runPair, withEscapeGuard, normalize, reported, assertParity, runAll, shimMain,
+  createSandbox, runOracle, runModuleCli, runPair, withEscapeGuard, normalize, reported, assertParity, runAll, failedJobs, shimMain,
 };
