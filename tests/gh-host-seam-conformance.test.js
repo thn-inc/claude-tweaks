@@ -300,7 +300,7 @@ test('AC3.1: every gh spawn under plugin/bin/ routes through ghOptions', () => {
 // (backlog-grant-gate.js). The spawn scan above cannot see a CLI that drops either half, and the CLI
 // then splits one record across two hosts on a GHE origin (found in #4505's review), so the roster
 // is pinned here.
-const PIN_WIRED = ['acceptance-packet.js', 'activity-gather.js', 'fetch-sub-issues.js', 'lib/compose-subject.js', 'lib/number-list-cli.js', 'link-records.js',
+const PIN_WIRED = ['acceptance-packet.js', 'activity-gather.js', 'ci-health.js', 'fetch-sub-issues.js', 'lib/compose-subject.js', 'lib/number-list-cli.js', 'link-records.js',
   'list-claims.js', 'materialize.js', 'preflight-records.js', 'release-claim.js', 'repair-claim.js', 'resolved-refusal.js'];
 
 test('review (#4505): every CLI that pins its explicit --repo host keeps both halves of the wiring, and no unlisted CLI wires it', () => {

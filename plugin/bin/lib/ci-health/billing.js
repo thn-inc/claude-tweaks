@@ -101,4 +101,4 @@ function readBilling({ repoRead }, { runner }) {
   return { billing, failures: [] };
 }
 
-module.exports = { headroomFrom, readBilling };
+module.exports = { NO_BUDGET, headroomFrom, readBilling };
