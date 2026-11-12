@@ -1,7 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { parsePolicyModelConfig } = require('../../../plugin/bin/lib/model-profiles/policy-fragment');
+const { parsePolicyModelConfig, stripComment } = require('../../../plugin/bin/lib/model-profiles/policy-fragment');
 
 const SAMPLE = [
   'worktree-always: true',
@@ -64,4 +64,12 @@ test('a flat key after a model-profiles block is still parsed', () => {
     'model-profiles': { standard: { effort: 'low' } },
     'model-ceiling': 'capable',
   });
+});
+
+test('stripComment cuts at the first # anywhere and drops a CRLF \\r (#4816)', () => {
+  assert.strictEqual(stripComment('model-profiles:   # project overrides\r'), 'model-profiles:');
+  assert.strictEqual(stripComment('  standard:  # x\r'), '  standard:');
+  assert.strictEqual(stripComment('    model: opus#note'), '    model: opus');
+  assert.strictEqual(stripComment('    effort: low'), '    effort: low');
+  assert.strictEqual(stripComment('    effort: low\r'), '    effort: low');
 });
