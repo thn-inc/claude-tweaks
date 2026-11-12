@@ -373,9 +373,20 @@ async function runOracle(sandbox, script, { sessionId = `qp-${sandbox.name}` } =
 // Task 4 review). A stray commit, ref, staged change or tracked-file edit is still caught.
 async function withEscapeGuard(repoRoot, fn) {
   const g = (...args) => fixtureGit(['--no-optional-locks', '-C', repoRoot, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  let currentBranch = null;
+  try { currentBranch = g('symbolic-ref', '--short', 'HEAD').trim(); } catch { /* detached HEAD: HEAD is compared */ }
+  // The repository's refs are shared with every worktree and sibling session, so a whole-repo
+  // `for-each-ref` flaps whenever one of them pushes a branch (seen live). The refs compared are the
+  // ones an escape moves: the current branch, tags and the stash, plus any ref whose tip carries the
+  // sandbox's own git identity (`qp-oracle`, the only author an escaped oracle command can commit as).
   const read = () => ({
     head: g('rev-parse', 'HEAD').trim(),
-    refs: g('for-each-ref'),
+    refs: g('for-each-ref', '--format=%(refname) %(objectname) %(authorname)').split('\n')
+      .filter(Boolean).filter((l) => {
+        const [name, , ...author] = l.split(' ');
+        return author.join(' ') === 'qp-oracle' || name.startsWith('refs/tags/') || name === 'refs/stash'
+          || name === `refs/heads/${currentBranch}`;
+      }).join('\n') + '\n',
     index: g('diff', '--cached', '--name-status'),
     status: g('status', '--porcelain', '--untracked-files=no'),
   });

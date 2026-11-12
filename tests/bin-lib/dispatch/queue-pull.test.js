@@ -214,9 +214,22 @@ test('#5227 oracle: withEscapeGuard rejects a run that moves the guarded repo HE
       /escape guard/, 'a staged change trips it',
     );
     fixtureGit(['-C', repo, 'reset', '-q']);
+    // On a detached HEAD a stray commit moves no ref, so only the HEAD comparison sees it.
+    fixtureGit(['-C', repo, 'checkout', '-q', '--detach']);
     await assert.rejects(
-      withEscapeGuard(repo, async () => { fixtureGit(['-C', repo, 'branch', 'escaped-ref']); }),
-      /escape guard/, 'a new ref trips it',
+      withEscapeGuard(repo, async () => { fixtureGit(['-C', repo, 'commit', '--allow-empty', '-q', '-m', 'detached escape']); }),
+      /escape guard/, 'a detached-HEAD commit trips it',
+    );
+    fixtureGit(['-C', repo, 'checkout', '-q', '-']);
+    // A new ref: refs are shared with sibling worktrees and sessions, so only a ref carrying the
+    // sandbox identity (qp-oracle) counts as an escape; an unrelated branch appearing does not.
+    assert.equal(await withEscapeGuard(repo, async () => { fixtureGit(['-C', repo, 'branch', 'sibling-branch']); return 'ok'; }), 'ok');
+    await assert.rejects(
+      withEscapeGuard(repo, async () => {
+        const sha = fixtureGit(['-C', repo, '-c', 'user.name=qp-oracle', '-c', 'user.email=qp@example.invalid', 'commit-tree', 'HEAD^{tree}', '-m', 'escaped'], { encoding: 'utf8' }).trim();
+        fixtureGit(['-C', repo, 'update-ref', 'refs/heads/escaped-ref', sha]);
+      }),
+      /escape guard/, 'a new ref made by the sandbox identity trips it',
     );
   } finally {
     fs.rmSync(path.dirname(repo), { recursive: true, force: true });
@@ -1188,6 +1201,17 @@ test('#5227 target-missing: the first hooks.js resolve-run-dir call leaves its s
   const r = pull4(FULL(), { hooksErr: (i) => `claude-tweaks: resolve-run-dir: boom ${i}\n` });
   assert.ok(r.errs.includes('claude-tweaks: resolve-run-dir: boom 0\n'), r.stderr);
   assert.ok(!r.stderr.includes('boom 1'), 'the second call (shipped) is silenced in the fence');
+});
+
+test("#5227 open-pr: with no groups the fence's echo '{}' leaves {}\\n in the linked-PRs file and no query runs; a resolve-policy.js stderr is forwarded", () => {
+  const scenario = {
+    policy: { 'work-links': 'body-text' },
+    gh: [{ argv: QUEUE_ARGV, stdout: '[]\n' }, { argv: OPEN_NUMBERS_ARGV, stdout: '[]\n' }],
+  };
+  const r = pull4(scenario, { spawn: { 'resolve-policy.js': { status: 0, stdout: '\n', stderr: 'resolve-policy: noted\n' } } });
+  assert.equal(r.text['dispatch-linked-prs.json'], '{}\n');
+  assert.deepEqual(r.cli('resolve-linked-prs.js'), []);
+  assert.ok(r.errs.includes('resolve-policy: noted\n'), r.stderr);
 });
 
 test('#5227 oracle helper: reported() keeps AUTO/Warning lines and cuts the four $(cat err) failure lines after their fixed prefix', () => {
