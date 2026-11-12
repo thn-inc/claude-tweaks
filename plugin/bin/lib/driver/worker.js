@@ -204,6 +204,10 @@ function exitWhat(code, signal) {
   return typeof code === 'number' ? 'exit ' + code : (signal || 'exit ' + code);
 }
 
+function errorOrDefault(err) {
+  return err === undefined ? new Error('launch failed') : err;
+}
+
 function describeError(err) {
   if (err && typeof err === 'object') return (err.code ? err.code + ': ' : '') + String(err.message);
   return String(err);
@@ -302,7 +306,7 @@ async function superviseChild({ handle, runner, platform, env, wallClockMs, time
   try {
     arm(onCeiling, wallClockMs);
     const settled = await Promise.race([
-      handle.exited.then((result) => ({ result }), (err) => ({ err: err === undefined ? new Error('launch failed') : err })),
+      handle.exited.then((result) => ({ result }), (err) => ({ err: errorOrDefault(err) })),
       gaveUp.then(() => ({ gaveUp: true })),
     ]);
     if (settled.gaveUp) {
@@ -321,7 +325,7 @@ async function superviseChild({ handle, runner, platform, env, wallClockMs, time
     if (settled.err !== undefined) return { timedOut, spawnError: settled.err };
     return { timedOut, ...settled.result };
   } catch (err) {
-    return { timedOut, spawnError: err === undefined ? new Error('launch failed') : err };
+    return { timedOut, spawnError: errorOrDefault(err) };
   } finally {
     finished = true;
     for (const timer of armed) timers.clearTimeout(timer);
@@ -422,7 +426,7 @@ async function launchWorker(opts, deps = defaultDeps()) {
       const handle = runner({ file: launch.file, args: launch.args, options: { ...launch.options, cwd, env: childEnv }, input: prompt, platform });
       outcome = await superviseChild({ handle, runner, platform, env, wallClockMs, timers });
     } catch (err) {
-      outcome = { timedOut: false, spawnError: err === undefined ? new Error('launch failed') : err };
+      outcome = { timedOut: false, spawnError: errorOrDefault(err) };
     }
     return classify(outcome, { schema, spendCeiling });
   } finally {

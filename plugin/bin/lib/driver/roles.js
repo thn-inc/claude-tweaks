@@ -134,6 +134,11 @@ const ROLES = deepFreeze({
   explorer: { tools: ['Read', 'Grep', 'Glob'], settings: false },
 });
 
+function specFor(role) {
+  if (!Object.prototype.hasOwnProperty.call(ROLES, role)) throw new Error('unknown role: ' + String(role));
+  return ROLES[role];
+}
+
 const TEST_COMMAND_PATTERN = /^[A-Za-z0-9 ._\/:=-]+$/;
 const CODE_FLAGS = ['-c', '-e', '--eval', '-p', '--print'];
 const BARE_INTERPRETERS = ['sh', 'bash', 'zsh', 'node', 'python', 'python3'];
@@ -153,8 +158,7 @@ function implementerSettings({ testCommand, platform } = {}) {
   const sandboxed = SANDBOX_PROBED_PLATFORMS.includes(platform);
   const allow = ['Read', 'Edit', 'Write'];
   if (sandboxed) {
-    allow.push('Bash(' + testCommand + ' *)');
-    allow.push('Bash(git status *)', 'Bash(git diff *)', 'Bash(git log *)', 'Bash(git show *)', 'Bash(git ls-files *)');
+    allow.push('Bash(' + testCommand + ' *)', 'Bash(git status *)', 'Bash(git diff *)', 'Bash(git log *)', 'Bash(git show *)', 'Bash(git ls-files *)');
   }
   const deny = ['Bash(gh *)', 'Bash(git push *)', 'Bash(git commit *)', 'Bash(git add *)', 'Bash(curl *)', 'Bash(wget *)'];
   const settings = { permissions: { defaultMode: 'dontAsk', allow, deny } };
@@ -180,15 +184,13 @@ function assertSpendCeiling(value) {
 // The tools a role launches with on a platform: Bash is dropped for a role that carries
 // generated settings when the platform is not sandbox-probed. A fresh array each call.
 function toolsFor(role, platform) {
-  const spec = Object.prototype.hasOwnProperty.call(ROLES, role) ? ROLES[role] : undefined;
-  if (!spec) throw new Error('unknown role: ' + String(role));
+  const spec = specFor(role);
   const sandboxed = SANDBOX_PROBED_PLATFORMS.includes(platform);
   return spec.tools.filter((tool) => !(tool === 'Bash' && spec.settings && !sandboxed));
 }
 
 function composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeiling, model, platform } = {}) {
-  const spec = Object.prototype.hasOwnProperty.call(ROLES, role) ? ROLES[role] : undefined;
-  if (!spec) throw new Error('unknown role: ' + String(role));
+  const spec = specFor(role);
   if (spec.settings && (typeof settingsFile !== 'string' || settingsFile === '')) {
     throw new Error('settingsFile is required for role ' + role + ' and must be a non-empty string');
   }
