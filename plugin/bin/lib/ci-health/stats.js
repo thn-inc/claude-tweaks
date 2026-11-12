@@ -179,4 +179,4 @@ function computeStats(runs, { from, days, defaultBranch }) {
   return out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 }
 
-module.exports = { durationSeconds, nearestRank, computeStats };
+module.exports = { durationSeconds, nearestRank, computeStats, round2 };

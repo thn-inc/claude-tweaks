@@ -5,13 +5,13 @@
 // No test name carries an amount — only percentages and statuses.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
 
+const { readText } = require('../../helpers/read-skill');
 const { headroomFrom, readBilling } = require('../../../plugin/bin/lib/ci-health/billing');
 
 const FIXTURES = path.join(__dirname, '..', '..', 'fixtures', 'ci-health');
-const read = (name) => fs.readFileSync(path.join(FIXTURES, name), 'utf8');
+const read = (name) => readText(path.join(FIXTURES, name));
 const BUDGETS = read('org-budgets.json');
 const SUMMARY = read('org-usage-summary.json');
 const USER_USAGE = read('user-usage.json');
@@ -45,12 +45,13 @@ const budgets = (list, extra = {}) => ({ budgets: list, has_next_page: false, to
 const actionsBudget = (amount, extra = {}) => ({ budget_product_sku: 'actions', budget_scope: 'organization', budget_amount: amount, ...extra });
 const summary = () => JSON.parse(SUMMARY);
 
-for (const status of [404, 403, 410]) {
+for (const [status, text] of [[404, 'Not Found'], [403, 'Forbidden'], [410, 'Gone']]) {
   test(`AC4.1: the org budgets read throwing HTTP ${status} is unavailable with that status, and stops`, () => {
-    const { runner, calls } = billingRunner({ [BUDGETS_PATH]: ghError(`gh: Not Found (HTTP ${status})`), [SUMMARY_PATH]: SUMMARY });
+    const stderr = `gh: ${text} (HTTP ${status})`;
+    const { runner, calls } = billingRunner({ [BUDGETS_PATH]: ghError(stderr), [SUMMARY_PATH]: SUMMARY });
     const r = readBilling({ repoRead: ORG_REPO }, { runner });
     assert.deepStrictEqual(r.billing, { available: false, status, reason: `HTTP ${status}` });
-    assert.deepStrictEqual(r.failures, [{ query: 'billing budgets', status, error: `gh: Not Found (HTTP ${status})` }]);
+    assert.deepStrictEqual(r.failures, [{ query: 'billing budgets', status, error: stderr }]);
     assert.strictEqual(calls.length, 1, 'no usage summary call after a failed budgets read');
   });
 }
@@ -133,6 +134,15 @@ test('has_next_page: true → firstPageOnly over the listed page, carried into t
   });
 });
 
+test('has_next_page: true with no Actions budget on the first page → firstPageOnly beside the null headroom', () => {
+  const b = budgets(JSON.parse(BUDGETS).budgets.filter((x) => x.budget_product_sku === 'git_lfs'), { has_next_page: true });
+  assert.deepStrictEqual(headroomFrom(b, summary()), { headroomPct: null, reason: 'no Actions budget to compare', firstPageOnly: true });
+  const { runner } = billingRunner({ [BUDGETS_PATH]: JSON.stringify(b), [SUMMARY_PATH]: SUMMARY });
+  assert.deepStrictEqual(readBilling({ repoRead: ORG_REPO }, { runner }).billing, {
+    available: true, scope: 'org', headroomPct: null, reason: 'no Actions budget to compare', firstPageOnly: true,
+  });
+});
+
 for (const [label, mutate] of [
   ['missing', (item) => { delete item.netAmount; }],
   ['a string', (item) => { item.netAmount = String(item.netAmount); }],
@@ -197,25 +207,30 @@ test('a read failing with another status keeps the status and uses the error tex
   assert.deepStrictEqual(r.failures, [{ query: 'billing budgets', status: 502, error: stderr }]);
 });
 
-test('an unparseable body is a failed read with a null status and a reason that quotes no body text', () => {
-  const body = '{"budgets":[{"budget_amount":123456';
-  const { runner } = billingRunner({ [BUDGETS_PATH]: body });
-  const r = readBilling({ repoRead: ORG_REPO }, { runner });
-  assert.strictEqual(r.billing.available, false);
-  assert.strictEqual(r.billing.status, null);
-  assert.doesNotMatch(r.billing.reason, /123456/);
-  assert.strictEqual(r.failures.length, 1);
-  assert.strictEqual(r.failures[0].query, 'billing budgets');
-  assert.doesNotMatch(r.failures[0].error, /123456/);
-});
+// The second body makes V8's SyntaxError quote the body text ("budget 123456" is not valid JSON),
+// so a reason built from the parse error's message would carry it.
+for (const [label, body] of [
+  ['a truncated body', '{"budgets":[{"budget_amount":123456'],
+  ['a body the parse error quotes', 'budget 123456'],
+]) {
+  test(`${label} is a failed read with a null status and a fixed reason that quotes no body text`, () => {
+    const { runner } = billingRunner({ [BUDGETS_PATH]: body });
+    const r = readBilling({ repoRead: ORG_REPO }, { runner });
+    const error = `${BUDGETS_PATH}: response is not valid JSON`;
+    assert.deepStrictEqual(r, {
+      billing: { available: false, status: null, reason: error },
+      failures: [{ query: 'billing budgets', status: null, error }],
+    });
+    assert.doesNotMatch(r.billing.reason, /123456/);
+    assert.doesNotMatch(r.failures[0].error, /123456/);
+  });
+}
 
 test('gh vanishing between the repo read and a billing read adds no failure row', () => {
   const enoent = Object.assign(new Error('spawnSync gh ENOENT'), { code: 'ENOENT' });
   const { runner } = billingRunner({ [BUDGETS_PATH]: enoent });
   const r = readBilling({ repoRead: ORG_REPO }, { runner });
-  assert.strictEqual(r.billing.available, false);
-  assert.strictEqual(r.billing.status, null);
-  assert.deepStrictEqual(r.failures, []);
+  assert.deepStrictEqual(r, { billing: { available: false, status: null, reason: 'spawnSync gh ENOENT' }, failures: [] });
 });
 
 for (const ghAbsent of [false, true]) {

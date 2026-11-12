@@ -22,15 +22,15 @@
 
 const { CI_HEALTH_GH_TIMEOUT_MS } = require('./constants');
 const { errorText, httpStatusOf, isGhAbsent } = require('./fetch');
+// The envelope, the render and the headroom floor compare all read this one 2-dp value, rounded
+// like stats.js's trend ratio.
+const { round2 } = require('./stats');
 
 const NO_BUDGET = 'no Actions budget to compare';
 const STATUS_REASONS = new Set([403, 404, 410]);
 
 const isActions = (value) => typeof value === 'string' && value.toLowerCase() === 'actions';
 const isNum = (value) => typeof value === 'number' && Number.isFinite(value);
-// The envelope, the render and the headroom floor compare all read this one 2-dp value (like
-// stats.js's rounded trend ratio).
-const round2 = (x) => Math.round(x * 100) / 100;
 
 function headroomFrom(budgetsJson, summaryJson) {
   const firstPageOnly = Boolean(budgetsJson) && budgetsJson.has_next_page === true;
