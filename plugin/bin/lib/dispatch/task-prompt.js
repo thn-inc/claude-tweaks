@@ -12,7 +12,9 @@
 // writes it: a rendered prompt quoted inside another prompt carries no marker. MARKER_RE,
 // promptDigest and REGISTRY_FILE are shared with bin/lib/hooks/dispatch-prompt-gate.js, which
 // matches a dispatched prompt against the registry the CLI writes (digest = sha256 of the exact
-// UTF-8 bytes, no normalization).
+// UTF-8 bytes, no normalization). The registry's line format and the `{out}.partN` part names are
+// owned here too (registryLine, latestRegistryEntry, partPath): the CLI writes through them and the
+// gate reads through them, so the writer and the reader cannot drift apart.
 //
 // Values are checked before any substitution: the issues are positive integers, runDir is a
 // non-empty string, and no value carries a DISPATCHER_PLACEHOLDERS token — a later fill would
@@ -103,6 +105,28 @@ function markerLine(runId, call) {
 
 function promptDigest(text) {
   return crypto.createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+// The k-th (1-based) read part of the rendered prompt written at `out`.
+function partPath(out, k) {
+  return `${out}.part${k}`;
+}
+
+// One REGISTRY_FILE line, newline-terminated, fields in a fixed order.
+function registryLine({ sha256, call, out, chunks, issues, at }) {
+  return `${JSON.stringify({ sha256, call, out, chunks, issues, at })}\n`;
+}
+
+// The last parseable REGISTRY_FILE entry for `call`, or null; blank and unparseable lines are skipped.
+function latestRegistryEntry(text, call) {
+  let latest = null;
+  for (const line of String(text).split('\n')) {
+    if (!line.trim()) continue;
+    let o;
+    try { o = JSON.parse(line); } catch { continue; }
+    if (o && typeof o === 'object' && o.call === call) latest = o;
+  }
+  return latest;
 }
 
 function promptSize(prompt) {
@@ -234,4 +258,5 @@ module.exports = {
   DISPATCHER_PLACEHOLDERS, extractTemplates, extractContextPack, profileOf, findUnsubstituted,
   renderResumeContext, MARKER_RE, markerLine, promptDigest, REGISTRY_FILE, MAX_PROMPT_BYTES,
   promptSize, CHUNK_BYTES, fitsChunk, chunkPrompt, renderTaskPrompt,
+  partPath, registryLine, latestRegistryEntry,
 };

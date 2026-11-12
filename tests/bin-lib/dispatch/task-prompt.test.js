@@ -229,6 +229,27 @@ test('digest hashes the exact bytes', () => {
   assert.strictEqual(promptDigest('é'), crypto.createHash('sha256').update('é', 'utf8').digest('hex'));
 });
 
+test('partPath names the 1-based read parts of a rendered prompt', () => {
+  assert.strictEqual(tp.partPath('/r/p.md', 1), '/r/p.md.part1');
+  assert.strictEqual(tp.partPath('/r/p.md', 12), '/r/p.md.part12');
+});
+
+test('registryLine writes one newline-terminated JSON line in a fixed field order', () => {
+  const line = tp.registryLine({ at: 'T', issues: [4589], chunks: 3, out: '/r/p.md', call: 'first', sha256: 'abc' });
+  assert.strictEqual(line, '{"sha256":"abc","call":"first","out":"/r/p.md","chunks":3,"issues":[4589],"at":"T"}\n');
+});
+
+test('latestRegistryEntry returns the last parseable entry for the call, or null', () => {
+  const a = tp.registryLine({ sha256: 'a', call: 'first', out: '/x', chunks: 1, issues: [1], at: 't1' });
+  const b = tp.registryLine({ sha256: 'b', call: 'second', out: '/y', chunks: 2, issues: [1], at: 't2' });
+  const c = tp.registryLine({ sha256: 'c', call: 'first', out: '/z', chunks: 3, issues: [1], at: 't3' });
+  const text = `${a}not json\n\n${b}${c}{"call":"first"`;
+  assert.strictEqual(tp.latestRegistryEntry(text, 'first').sha256, 'c');
+  assert.strictEqual(tp.latestRegistryEntry(text, 'second').sha256, 'b');
+  assert.strictEqual(tp.latestRegistryEntry(a, 'second'), null);
+  assert.strictEqual(tp.latestRegistryEntry('', 'first'), null);
+});
+
 test('the rendered prompt ends without whitespace', () => {
   for (const call of ['first', 'second']) {
     for (const effortLine of [EFFORT, null]) {

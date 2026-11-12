@@ -44,7 +44,7 @@ const { GIT_TIMEOUT_MS } = require('./lib/shared-primitives');
 const { policyReadTimeoutMs } = require('./lib/phase-exit/phase-exit');
 const {
   renderTaskPrompt, extractTemplates, profileOf, promptDigest, promptSize, MAX_PROMPT_BYTES,
-  chunkPrompt, REGISTRY_FILE,
+  chunkPrompt, REGISTRY_FILE, partPath, registryLine,
 } = require('./lib/dispatch/task-prompt');
 
 const PLUGIN_ROOT = path.resolve(__dirname, '..');
@@ -221,17 +221,17 @@ function run(argv, deps = {}) {
 
   const registry = path.join(runDir, REGISTRY_FILE);
   const sha256 = promptDigest(prompt);
-  const parts = chunks.map((c, i) => ({ path: `${out}.part${i + 1}`, text: c }));
+  const parts = chunks.map((c, i) => ({ path: partPath(out, i + 1), text: c }));
   let target = out;
   try {
     d.writeFile(out, prompt);
     parts.forEach((p) => { target = p.path; d.writeFile(p.path, p.text); });
   } catch (err) { return fail(1, `cannot write ${target}: ${err && err.message}`); }
   try {
-    for (let k = parts.length + 1; d.removeFile(`${out}.part${k}`); k++);
+    for (let k = parts.length + 1; d.removeFile(partPath(out, k)); k++);
   } catch (err) { return fail(1, `cannot remove a stale part of ${out}: ${err && err.message}`); }
   try {
-    d.appendFile(registry, `${JSON.stringify({ sha256, call, out, chunks: chunks.length, issues, at: d.now() })}\n`);
+    d.appendFile(registry, registryLine({ sha256, call, out, chunks: chunks.length, issues, at: d.now() }));
   } catch (err) { return fail(1, `cannot append to the registry ${registry}: ${err && err.message}`); }
 
   const envelopeLine = `${JSON.stringify({
