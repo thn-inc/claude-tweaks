@@ -42,7 +42,7 @@
 - An exported but empty (or whitespace-only) `GH_HOST` is treated as unset on every path (spec minor ruling and round 5, Q2): the gate and `resolveRepoTarget` already do, and Task 17 changes `ghOptions` and `explicitRepoGhHost` (#4505) to match, so one reconcile pass never splits across hosts. Every host comparison goes through `normalizeHost` (case-insensitive, trailing dots ignored).
 - **One origin read, one verdict per host (the reviewer's high defect, spec "Review defects"; round 6, Q1, Reading A).** The seam reads origin as `parseRepo(hostPathOf(url))`; the gate read `parseRepo(remote)`, which rejects a `*.ghe.com` origin with userinfo (`https://oauth2@acme.ghe.com/acme/w.git`), a port, or an `ssh://` scheme, so `repoTargetOf` fell back to github.com while the seam injected `GH_HOST=acme.ghe.com`. Task 1 makes the gate judge that normalized read alone, `parseRepo(hostPathOf(remote))`, its only parse. The round-5 plan's raw-read branch (an origin only the normalized read parsed, on a refused host, kept the unparseable verdict: "never a new refusal") is gone: a credentialed, ported or `ssh://` origin on an unknown host or an SSH alias now reports the same `unknown-host` refusal its plain spelling does (`ssh://git@git.corp.invalid/acme/w.git` refused as `git@git.corp.invalid:acme/w.git` is, `https://oauth2@git.corp.invalid/acme/w.git` as `https://git.corp.invalid/acme/w.git` is, `ssh://git@github-work/acme/w.git` as `git@github-work:acme/w.git` is).
   - **Cloud sandbox proxy remotes do not parse under that read, so no carve-out is needed.** The repo's own code names no proxy shape (`git grep -n -i -e proxy -e 127.0.0.1 -e localhost -- plugin/bin/lib/repo-resolve.js plugin/bin/lib/hooks/git-exec.js tests/bin-lib/repo-resolve.test.js tests/hooks-git-exec.test.js` prints nothing, and #4857's body names only `ssh://git@ghe.example/o/r.git`). The shape recorded in this machine's session transcripts is `http://local_proxy@127.0.0.1:{port}/git/{owner}/{repo}` (seen as `…:43210/git/thn-inc/claude-tweaks` and `…:43215/git/acme/w`). `hostPathOf` reduces it to `127.0.0.1/git/{owner}/{repo}`, three path segments, which `parseRepo` rejects; with `.git`, a trailing `/`, no `local_proxy@`, or `localhost` for `127.0.0.1` it is rejected the same way (probed at plan time against this tree's `parseRepo`). It stays `{ spec: null, refusal: null }`, so `repoSpecOf`'s #4857 fallback, claim-targets' `gh repo view` path and `stale-claim-pr.js`'s exit-3 `--repo` re-run are unchanged. Task 1 pins those shapes, plus one contrast: `http://local_proxy@127.0.0.1:43215/acme/w` (no `/git/` segment; not a shape any sandbox was seen using) does parse, host `127.0.0.1`, and is refused like any unknown host. That pin keeps the boundary visible: a carve-out is needed only if a sandbox ever drops the `/git/` segment.
-  - **Test flips.** `git grep -n -E "ssh://|git\+ssh://|https?://[^/'\" ]*@|https?://[^/'\" ]+:[0-9]+/" -- tests` finds two gated origins, both in Task 1: `tests/hooks-git-exec.test.js` :471 (`ssh://git@git.corp.invalid/acme/w.git`: was the loose fallback `{ host: null, … }`, now `{ refusal }`, the same text its scp spelling gets) and :477 (`ssh://git@github.com/acme/w.git`: was `host: null`, now `host: 'github.com'`). Every other hit is the seam's own cases (`tests/bin-lib/repo-resolve.test.js` :269-395, unchanged) or a URL that is not an origin or not read by the gate (`pr-state-batch`, `release-local`, `statusline`, `packet-render`, `packet-links`, `acceptance-packet-cli`, `acceptance-packet-contract-conformance`, `resolve-policy-control-mode`, `visual-decide`, `qa-prompts-step-origin`). The `file://` origins in `tests/bin-lib/docs-health/` and `tests/bin-lib/verify/cli.test.js` reduce to an absolute path that neither read parses. The 18 gated files other than `lib/repo-resolve.js` (`git grep -n -l gateOriginRepo -- plugin/bin`, 19 lines) have no test with a gated `ssh://`, userinfo or ported origin on an unknown host, so none of them flips.
+  - **Test flips.** `git grep -n -E "ssh://|git\+ssh://|https?://[^/'\" ]*@|https?://[^/'\" ]+:[0-9]+/" -- tests` finds two gated origins, both in Task 1: `tests/hooks-git-exec.test.js` :471 (`ssh://git@git.corp.invalid/acme/w.git`: was the loose fallback `{ host: null, … }`, now `{ refusal }`, the same text its scp spelling gets) and :477 (`ssh://git@github.com/acme/w.git`: was `host: null`, now `host: 'github.com'`). Every other hit is the seam's own cases (`tests/bin-lib/repo-resolve.test.js` :269-395, unchanged) or a URL that is not an origin or not read by the gate (`pr-state-batch`, `release-local`, `statusline`, `packet-render`, `packet-links`, `acceptance-packet-cli`, `acceptance-packet-contract-conformance`, `resolve-policy-control-mode`, `visual-decide`, `qa-prompts-step-origin`). The `file://` origins in `tests/bin-lib/docs-health/` and `tests/bin-lib/verify/cli-baseline-verdicts.test.js` reduce to an absolute path that neither read parses. The 18 gated files other than `lib/repo-resolve.js` (`git grep -n -l gateOriginRepo -- plugin/bin`, 19 lines) have no test with a gated `ssh://`, userinfo or ported origin on an unknown host, so none of them flips.
 - **Explicit `--repo` (spec round 2):** a typed host-qualified `--repo` on `stale-claim-pr.js` is trusted for any host and is not gated (ADR 0030: "A user-typed `--repo` is not gated"). No agent-composed call relies on a bare `--repo` (spec round 3, Q2).
 - A remote the normalized read does not parse (a cloud sandbox proxy remote, `http://local_proxy@127.0.0.1:{port}/git/{owner}/{repo}`; a local path; a `file://` URL) keeps `repoSpecOf`'s #4857 fallback (owner/repo from the last two path segments, host unknown): its target host is `GH_HOST` or github.com, which is also where the seam sends it, so the pass does not split. #4857 owns that case; Task 2 pins it with the proxy shape. An `ssh://` origin no longer reaches the fallback: the gate admits or refuses it on its host.
 - ADR 0030: "Every new producer that derives a host from origin must call `gateOriginRepo`". `stale-claim-pr.js` moves onto the gate (Task 13), with `tests/gh-host-seam-conformance.test.js`'s rosters. claim-targets (spec round 5) calls the gate to refuse only: its repo still comes from `gh repo view` and its host from the gh seam's `resolveGhHost(cwd)` (positive signals only, #4854), the same host its inferred calls already reach, and for an admitted origin that is the gate's host too (both read `hostPathOf`). It joins `ORIGIN_GATED` but not `CLI_TABLE` in `tests/gh-host-seam-behavior.test.js`: that table's AC4.1/AC5.1/AC7 cases assert an origin-derived slug in the argv, which claim-targets never sends, so Task 12 pins its refusal in dedicated cases instead (the gh-api-module-pattern skill's "joins both" rule assumes an origin-derived repo).
@@ -55,7 +55,7 @@
 - Governing skill `.claude/skills/skill-prose-conformance-tests/SKILL.md` (Task 14 retargets prose pins), quoted verbatim: "**Retargeting existing pins: diff the assertion inventory, not the plan's prose anchor list.** When a migration moves pinned prose from one file to another, enumerate every assertion literal in the *replaced* tests and give each one an explicit verdict — moved, retargeted (naming the new literal), or retired (with its own stated reason)."
 - `.claude/skills/claim-targets-stop-addition/SKILL.md` applies in part: no exit code is added, but Task 12 adds a new cause to the existing exit 2 ("a non-timeout repo-slug resolution failure"), a run-level stop that returns directly with or without `--keep-going`. Rows taken: 1 (the stop, `USAGE`'s exit-2 line, Task 12), 2 (the header's exit list, Task 12), 4 (`flow/claim-targets.md`'s exit-2 bullet and its transport limit, Task 18), 7 (`docs/plugin-structure.md`'s command line, Task 18; the journey and the gh-api-module-pattern skill restate no claim-targets exit-2 cause: `git grep -n -E 'claim-targets.{0,80}exit 2|exit 2.{0,80}claim-targets' -- docs/journeys .claude/skills` prints nothing). Not taken, with the decisions: exit 2 already stops `/flow` before the Manifesto (row 5's Step 2.8 sentence, "else a hard stop", stays true); it fires before any claim read or write, so "never claimed" holds for a singleton and for a bundle alike (the gate runs once, before the first target) and Settle's existing exit-2 handling, the release call and Section E need nothing (rows 8, 11); the record is not at fault and the cause is the repo's origin, which every record of the repo shares, but `preflight-records.js` already exits 2 on the same refusal under `work-links: native` (`/flow` Step 2.7b) with no firing-stop wiring, so this stop follows that precedent (rows 10, 12, 13 not taken); it carries no forge text (decision 6); the gh-absent MCP claim procedure does not reach it, stated in row 4's bullet (decision 2). `.claude/skills/mcp-agent-fetch-node-compute/SKILL.md` covers `stale-claim-pr.js --listing`; `normalizePrListing` is not changed.
 - Every in-process test that reads the gate or the seam deletes `GH_HOST`, calls `_resetGhHostCache()` before and after the case (`withoutGhHost(t)` in `tests/gh-host-seam-behavior.test.js`), and passes `gateDeps: { env: {}, readFile: () => { throw new Error('ENOENT'); } }` (or points `GH_CONFIG_DIR` at a temp dir it controls) so the developer's own `~/.config/gh/hosts.yml` and `GH_HOST` cannot change the verdict. Child-process cases build their env the way `runGated` does (no `GH_HOST`, an empty per-case `GH_CONFIG_DIR`, `GIT_ALLOW_PROTOCOL=file`).
-- Fixture sweep for origins the gate now refuses (`git grep -n -o -E "'(https?://|git@)[^' ]+'" -- tests/bin-lib/reconcile tests/reconcile.test.js tests/hooks-sibling-sessions.test.js`): every reconcile-module fixture uses `git@github.com:acme/w.git` or a local path, except `https://example.invalid/…` in `tests/bin-lib/reconcile/prune-remote.test.js` :316 (fixed in Task 7) and in `tests/reconcile.test.js` :148, :1426, :2360, :3850, which run only mirror or origin-head (no gated check) and stay unchanged.
+- Fixture sweep for origins the gate now refuses (`git grep -n -o -E "'(https?://|git@)[^' ]+'" -- tests/bin-lib/reconcile 'tests/reconcile*.test.js' tests/hooks-sibling-sessions.test.js`): every reconcile-module fixture uses `git@github.com:acme/w.git` or a local path, except `https://example.invalid/…` in `tests/bin-lib/reconcile/prune-remote.test.js` :316 (fixed in Task 7) and in `tests/reconcile.test.js`, `tests/reconcile-preflight-fetch.test.js` and `tests/reconcile-archive-residue.test.js` (pre-split `tests/reconcile.test.js` :148, :1426, :2360, :3850), which run only mirror or origin-head (no gated check) and stay unchanged.
 - A test that compares a refusal compares it to the gate's own string computed in the test (`gateOriginRepo(remote, gateDeps).refusal`), never a hand-copied literal, except Task 1's exact-copy pins.
 - Rail (`RAIL_BYTES` 52500, `plugin/bin/lib/skill-audit/budgets.js`), measured on this tree: `plugin/skills/tidy/scan-procedures.md` 52447 bytes (53 headroom), `plugin/skills/_shared/issue-claims.md` 50800 bytes by `wc -c` (plan-audit's rail measurement, `when:` lines stripped: 50191). The composed `claims` bundle that draws on issue-claims.md measures 50338 at its four call sites (`dispatch/task-prompt.md` :107/:109, `flow/claim-targets.md` :223, `tidy/scan-procedures.md` :212). Task 14 keeps each file at or below today's size, so neither the files nor that bundle grow; check `wc -c` after the edit and trim words in the same paragraphs, never elsewhere. Task 18 edits `plugin/skills/flow/claim-targets.md` (39278 bytes, 13222 headroom) and no other governed-corpus file.
 - Empty-`GH_HOST` fixture sweep (Task 17, `git grep -n -F -e "GH_HOST: ''" -- tests`): `tests/helpers/git-fixtures.js` :114, `tests/bin-lib/phase-exit/phase-exit.test.js` :777, `tests/merge-verification.test.js` :220 and `tests/resolve-policy-cli.test.js` :377 set it only to mask a developer's own `GH_HOST`, over local-path or github.com origins where the seam injects nothing either way: unchanged. The three `tests/bin-lib/repo-resolve.test.js` pins of "empty wins" (:157-163 `AC4.1`, :309-314 `explicitRepoGhHost AC4`, :330-338 `#4795 … empty string included`) flip in Task 17, each with its own verdict there.
@@ -120,7 +120,7 @@ Expected: FAIL after Step 1 — every scp case gets today's `export GH_HOST=<hos
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `node --test tests/bin-lib/repo-resolve.test.js tests/hooks-git-exec.test.js tests/gh-host-seam-conformance.test.js tests/gh-host-seam-behavior.test.js tests/bin-lib/reconcile/post-merge.test.js tests/reconcile.test.js tests/hooks-teardown-run.test.js`
+Run: `node --test tests/bin-lib/repo-resolve.test.js tests/hooks-git-exec.test.js tests/gh-host-seam-conformance.test.js tests/gh-host-seam-behavior.test.js tests/bin-lib/reconcile/post-merge.test.js tests/reconcile*.test.js tests/hooks-teardown-run.test.js`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -217,7 +217,7 @@ Expected: FAIL after Step 1 — the runner is called with `--repo [object Object
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `node --test tests/bin-lib/reconcile/escalate-residue.test.js tests/bin-lib/reconcile/cache.test.js tests/bin-lib/reconcile/reap-merged.test.js tests/bin-lib/reconcile/archive-merged.test.js`
+Run: `node --test tests/bin-lib/reconcile/escalate-residue.test.js tests/bin-lib/reconcile/cache.test.js tests/bin-lib/reconcile/reap-merged.test.js tests/bin-lib/reconcile/archive-merged.test.js tests/bin-lib/reconcile/archive-merged-record-guards.test.js`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -257,7 +257,7 @@ Expected: FAIL after Step 1 — the GHE case logs `GH_HOST=unset` (the seam read
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `node --test tests/gh-host-seam-behavior.test.js tests/bin-lib/reconcile/release-merged.test.js tests/reconcile.test.js`
+Run: `node --test tests/gh-host-seam-behavior.test.js tests/bin-lib/reconcile/release-merged.test.js tests/reconcile*.test.js`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -275,7 +275,7 @@ git commit -m "Gate release-merged's origin and bind its gh calls to the repo ro
 **Files:**
 - Modify: `plugin/bin/lib/reconcile/archive-merged.js` (`decideArchiveCore` :470-509, `STRUCTURALLY_STUCK_REASONS` :1862-1884, `byNumberRecordSkip` :2206-2211, `archiveMergedRun` :2245-2275, `archiveMerged` :2368-2385 and its residue call sites: `track` :2407, every `finishArchiveAttempt` (:2441, :2457, :2496, :2604, :2681, :2709), `trackArchiveResult` :2525, `byNumberRecordSkip` calls :2675/:2702, both `archiveMergedRun` calls :2719/:2750, `pruneResidueFailures` :2776; drop `repoSlugOf` from the `require('./release-merged')` at :31)
 - Modify: `plugin/bin/lib/reconcile/reap-merged.js` (:210 and its `trackReapResidue` calls :259/:285/:291; replace the `require('./release-merged')` at :29 with `repoTargetOf` from `../hooks/git-exec`)
-- Test: `tests/gh-host-seam-behavior.test.js`, `tests/bin-lib/reconcile/archive-merged.test.js` (extend `fixtureOrdinaryMergedNoConsole` :3967-4018: `origin` accepts a URL string, `true` keeping today's `git@github.com:acme/w.git`, and a new `gateDeps` option forwarded to `archiveMerged`; reword the `repoSlugOf` comments at :2416 and :3961 to `repoTargetOf`, keeping each sentence's claim), `tests/bin-lib/reconcile/reap-merged.test.js`
+- Test: `tests/gh-host-seam-behavior.test.js`, `tests/bin-lib/reconcile/archive-merged.test.js` and `tests/bin-lib/reconcile/archive-merged-record-guards.test.js` (extend `fixtureOrdinaryMergedNoConsole`, now in `tests/bin-lib/reconcile/archive-merged-helpers.js`, pre-split `archive-merged.test.js:3967-4018`: `origin` accepts a URL string, `true` keeping today's `git@github.com:acme/w.git`, and a new `gateDeps` option forwarded to `archiveMerged`; reword the `repoSlugOf` comments at :2416 and :3961 to `repoTargetOf`, keeping each sentence's claim), `tests/bin-lib/reconcile/reap-merged.test.js`
 
 **Interfaces:**
 - Consumes: `repoTargetOf` (Task 2), the residue-repo contract (Task 3).
@@ -291,7 +291,7 @@ git commit -m "Gate release-merged's origin and bind its gh calls to the repo ro
     - `test('AC2.1: archiveMerged on a github.com origin escalates with --repo acme/widgets', …)`.
     - `test('#4794: archiveMerged on an SSH-alias origin escalates nothing — the runner sees no call', …)`, origin `git@github-work:acme/widgets.git`.
   - Same file, reap (model on `reap-merged.test.js`'s "removal-failed … escalates once at the threshold" test :304: a locked worktree, `RESIDUE_ESCALATE_THRESHOLD` passes, `prStates: { byBranch: () => ({ number: 9, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }) }`, the same `gateDeps` and recording `runner`): `test('AC1.1: reapMerged on a *.ghe.com origin escalates removal-failed residue with the host-qualified --repo', …)`, its `AC2.1` github.com twin, and `test('#4794: reapMerged on an SSH-alias origin escalates nothing and records unknown-host', …)`: zero runner calls, and the `removal-failed` cache entry's `lastResidueError.reason` starts with `'unknown-host ('`.
-  - `archive-merged.test.js`:
+  - `archive-merged-record-guards.test.js`:
     - `test('#4794 Review Focus 3: on a *.ghe.com origin a merged run whose PR closes its record still archives (record check compares the bare slug)', …)`: `fixtureOrdinaryMergedNoConsole(…, { origin: 'https://acme.ghe.com/acme/w.git', closes: [<the run's record>], gateDeps })` and the helper's existing archived-with-`closes` assertions.
     - `test('#4794: an SSH-alias origin skips the record check unknown-host with the refusal as hint, never no-repo-slug', …)`: `{ origin: 'git@github-work:acme/w.git', closes: [3503], gateDeps }` → not archived, the skip's `reason === 'unknown-host'`, `hint === gateOriginRepo('git@github-work:acme/w.git', gateDeps).refusal`; with `staleMs: STRUCTURALLY_STUCK_TTL_MS * 2` the run accumulates a `structurally-stuck` residue entry (as the F3 test :4737 asserts for `no-repo-slug`).
     - `test('#4794 decideArchiveCore: a refused origin skips unknown-host ahead of no-repo-slug', …)`: `decideArchiveCore(<merged PR>, null, false, { records: [1], repoSlug: null, repoRefusal: 'R' })` deep-equals `{ action: 'skip', reason: 'unknown-host', hint: 'R' }`.
@@ -299,20 +299,20 @@ git commit -m "Gate release-merged's origin and bind its gh calls to the repo ro
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `node --test tests/gh-host-seam-behavior.test.js tests/bin-lib/reconcile/archive-merged.test.js tests/bin-lib/reconcile/reap-merged.test.js`
+Run: `node --test tests/gh-host-seam-behavior.test.js tests/bin-lib/reconcile/archive-merged.test.js tests/bin-lib/reconcile/archive-merged-record-guards.test.js tests/bin-lib/reconcile/reap-merged.test.js`
 Expected: FAIL after Step 1 — the GHE escalation cases see `--repo acme/widgets`, the SSH-alias cases see a runner call, the alias record check skips `no-repo-slug`. The github.com cases and Review Focus 3 pass before the change; after Step 3, prove Review Focus 3 can go red by temporarily passing `residueRepo` into `recordCheck`, then restore.
 
 - [ ] **Step 3: Implement** the derivations, the record-check refusal and the call-site argument changes.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `node --test tests/gh-host-seam-behavior.test.js tests/bin-lib/reconcile/archive-merged.test.js tests/bin-lib/reconcile/reap-merged.test.js tests/bin-lib/reconcile/escalate-residue.test.js tests/reconcile.test.js`
+Run: `node --test tests/gh-host-seam-behavior.test.js tests/bin-lib/reconcile/archive-merged.test.js tests/bin-lib/reconcile/archive-merged-record-guards.test.js tests/bin-lib/reconcile/reap-merged.test.js tests/bin-lib/reconcile/escalate-residue.test.js tests/reconcile*.test.js`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/bin/lib/reconcile/archive-merged.js plugin/bin/lib/reconcile/reap-merged.js tests/gh-host-seam-behavior.test.js tests/bin-lib/reconcile/archive-merged.test.js tests/bin-lib/reconcile/reap-merged.test.js
+git add plugin/bin/lib/reconcile/archive-merged.js plugin/bin/lib/reconcile/reap-merged.js tests/gh-host-seam-behavior.test.js tests/bin-lib/reconcile/archive-merged.test.js tests/bin-lib/reconcile/archive-merged-record-guards.test.js tests/bin-lib/reconcile/archive-merged-helpers.js tests/bin-lib/reconcile/reap-merged.test.js
 git commit -m "Gate archive's record check and archive/reap residue escalation on the origin host (refs #4794)"
 ```
 
@@ -391,7 +391,7 @@ Expected: FAIL after Step 1 — the recording screens are called and no `unknown
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `node --test tests/bin-lib/reconcile/prune-remote.test.js tests/bin-lib/reconcile/archive-branches.test.js tests/gh-host-seam-behavior.test.js tests/reconcile.test.js`
+Run: `node --test tests/bin-lib/reconcile/prune-remote.test.js tests/bin-lib/reconcile/archive-branches.test.js tests/gh-host-seam-behavior.test.js tests/reconcile*.test.js`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -407,7 +407,7 @@ git commit -m "Gate prune-remote's and archive-branches' PR screen — unknown-h
 
 **Files:**
 - Modify: `plugin/bin/lib/reconcile/index.js` (the release skip :536-537, the remote-prune skip :615-616)
-- Test: `tests/reconcile.test.js`
+- Test: `tests/reconcile-dispatch.test.js`
 
 **Interfaces:**
 - Consumes: Task 4's and Task 7's `{ failure: 'unknown-host', detail }`.
@@ -419,20 +419,20 @@ git commit -m "Gate prune-remote's and archive-branches' PR screen — unknown-h
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `node --test tests/reconcile.test.js`
+Run: `node --test tests/reconcile-dispatch.test.js`
 Expected: FAIL after Step 1 — both entries drop `detail`
 
 - [ ] **Step 3: Implement** the two lines.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `node --test tests/reconcile.test.js`
+Run: `node --test tests/reconcile-dispatch.test.js`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/bin/lib/reconcile/index.js tests/reconcile.test.js
+git add plugin/bin/lib/reconcile/index.js tests/reconcile-dispatch.test.js
 git commit -m "Carry the release and remote-prune refusal detail into reconcile's skipped entries (refs #4794)"
 ```
 
@@ -502,7 +502,7 @@ Expected: FAIL after Step 1, naming `lib/hooks/git-exec.js` and `lib/reconcile/r
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `node --test tests/gh-host-seam-conformance.test.js tests/hooks-git-exec.test.js tests/bin-lib/reconcile/release-merged.test.js tests/bin-lib/reconcile/archive-merged.test.js tests/bin-lib/reconcile/reap-merged.test.js tests/bin-lib/reconcile/pr-state.test.js tests/hooks-sibling-sessions.test.js`
+Run: `node --test tests/gh-host-seam-conformance.test.js tests/hooks-git-exec.test.js tests/bin-lib/reconcile/release-merged.test.js tests/bin-lib/reconcile/archive-merged.test.js tests/bin-lib/reconcile/archive-merged-record-guards.test.js tests/bin-lib/reconcile/reap-merged.test.js tests/bin-lib/reconcile/pr-state.test.js tests/hooks-sibling-sessions.test.js`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -861,7 +861,7 @@ Expected: FAIL after Step 1 — the `mine.example` and `ACME.ghe.com` envs each 
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `node --test tests/bin-lib/reconcile/pr-state-batch.test.js tests/bin-lib/reconcile/pr-state-cache.test.js tests/gh-host-seam-conformance.test.js tests/reconcile.test.js`
+Run: `node --test tests/bin-lib/reconcile/pr-state-batch.test.js tests/bin-lib/reconcile/pr-state-cache.test.js tests/gh-host-seam-conformance.test.js tests/reconcile*.test.js`
 Expected: PASS
 
 - [ ] **Step 5: Commit**

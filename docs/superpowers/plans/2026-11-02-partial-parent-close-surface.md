@@ -187,7 +187,7 @@ Expected: FAIL. The loop entry has no `parentFailures`, there is no `stepSkips`,
 
 - [ ] **Step 5: Run the suites to verify they pass**
 
-Run: `node --test tests/bin-lib/reconcile/post-merge.test.js tests/post-merge-run-cli.test.js tests/reconcile.test.js tests/bin-lib/hooks/reconcile-background.test.js`
+Run: `node --test tests/bin-lib/reconcile/post-merge.test.js tests/post-merge-run-cli.test.js tests/reconcile*.test.js tests/bin-lib/hooks/reconcile-background.test.js`
 Expected: PASS, 0 failures.
 
 - [ ] **Step 6: Commit**
@@ -356,13 +356,13 @@ git commit -m "Name the parents a background Step 4.0b left open at SessionStart
 
 **Files:**
 - Modify: `plugin/bin/lib/reconcile/format-summary.js`: a new `formatPostMergeStep40bLines(result)` beside the other line formatters, its lines pushed in `formatSummary` (~227-262) right after the `CATEGORIES` loop
-- Test: `tests/reconcile.test.js`, after the `formatSummary: the failed row names the records …` test (~2255)
+- Test: `tests/reconcile-dispatch.test.js`, after the `formatSummary: the failed row names the records …` test (pre-split `tests/reconcile.test.js` ~2255)
 
 **Interfaces:**
 - Consumes: Task 1's `parentsLeftOpen`, `stepSkipsOf`, `parentsLeftOpenLine` and `stepSkipsLine`, loaded on first use (`require('./post-merge')` inside the function, never at module load: the file's header at ~38-45 explains why).
 - Produces: the same two lines SessionStart prints, in that order, each only when non-null, rendered when `result.postMerge` is an array, whatever the entries' actions or verdicts (Q5: a `marker-write-failed` entry is folded into the aggregated `skipped:` line, so these lines are the only place its fields show).
 
-- [ ] **Step 1: Write the failing test** in `tests/reconcile.test.js`
+- [ ] **Step 1: Write the failing test** in `tests/reconcile-dispatch.test.js`
 
 ```js
 test('formatSummary: parents left open and step skips render on their own lines, a marker-write-failed entry\'s included, never dropped (#4798)', () => {
@@ -383,20 +383,20 @@ test('formatSummary: parents left open and step skips render on their own lines,
 
 - [ ] **Step 2: Run it to verify it fails**
 
-Run: `node --test --test-name-pattern="#4798" tests/reconcile.test.js`
+Run: `node --test --test-name-pattern="#4798" tests/reconcile-dispatch.test.js`
 Expected: FAIL. Neither line is rendered.
 
 - [ ] **Step 3: Implement** `formatPostMergeStep40bLines` in `format-summary.js`: return `[]` when `result.postMerge` is not an array, else `[parentsLeftOpenLine(parentsLeftOpen(pm)), stepSkipsLine(stepSkipsOf(pm))]` with the nulls dropped. Push its lines right after the `CATEGORIES` loop.
 
 - [ ] **Step 4: Run the suites to verify they pass**
 
-Run: `node --test tests/reconcile.test.js tests/bin-lib/reconcile/post-merge.test.js`
+Run: `node --test tests/reconcile-dispatch.test.js tests/bin-lib/reconcile/post-merge.test.js`
 Expected: PASS, 0 failures.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/bin/lib/reconcile/format-summary.js tests/reconcile.test.js
+git add plugin/bin/lib/reconcile/format-summary.js tests/reconcile-dispatch.test.js
 git commit -m "Report Step 4.0b parents left open and step skips in the reconcile CLI summary — refs #4798"
 ```
 
@@ -445,7 +445,7 @@ Expected: PASS, 0 failures.
   - `git grep -n -F "#4798 adds that field" -- docs plugin` → no output. Control: `git grep -n -F "#4798 adds that field" HEAD -- docs/reconcile-checks.md` matches line ~744 at plan time.
   - Wording sweep: `git grep -n -e "closed no sub-issue" -- plugin docs/reconcile-checks.md docs/journeys` → no output (Q3).
   - Behavior-change sweep: `git grep -n -e "postMergeOne only" -e "stay single-run" -e "carry none" -- plugin/bin docs/reconcile-checks.md docs/plugin-structure.md`. Every hit is either updated in this plan or classified below.
-  - Run: `node --test tests/below-floor-parent-close-conformance.test.js tests/reconcile.test.js tests/wrap-up-merge-mode-conformance.test.js`. Expected: PASS.
+  - Run: `node --test tests/below-floor-parent-close-conformance.test.js tests/reconcile-dispatch.test.js tests/wrap-up-merge-mode-conformance.test.js`. Expected: PASS.
 
 - [ ] **Step 6: Commit**
 

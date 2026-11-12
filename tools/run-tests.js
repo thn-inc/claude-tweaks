@@ -16,6 +16,14 @@
 // whatever the caller's cwd) — verify.js's impact-selected subset (#4024). An empty list, a
 // missing file or a non-`*.test.js` entry exits 1, never handing `node --test` zero files.
 //
+// `--shard <i>/<n>` runs only the i-th of n disjoint slices of the root set, so CI can spread the suite
+// across parallel jobs (`.github/workflows/test.yml`). Every shard computes the same partition from the
+// same checkout: files are weighted by `tools/test-durations.json` (an unmeasured file weighs the median
+// measured file) plus a fixed per-file startup cost, then dealt heaviest-first onto the lightest shard.
+// The durations only balance the slices; a missing or unreadable file is named on stderr and every file
+// weighs the same, and no file is ever dropped. `--record-durations <out>` runs the whole root set with
+// an extra reporter (`tools/test-durations-reporter.js`) that writes that durations file.
+//
 // Elsewhere the explicit file list goes to `node --test`; on Windows (Node >= 22) the root globs
 // go instead, because ~780 paths overflow the 32,767-char command line (#3316). A `--files-from`
 // subset has no globs to fall back to, so on Windows one whose command line would overflow runs
@@ -206,13 +214,147 @@ function sweepStaleRoots({ dir, isAlive }) {
   return removed;
 }
 
+// `<index>/<total>`, both positive integers with no leading zero, index <= total.
+const SHARD_RE = /^([1-9]\d*)\/([1-9]\d*)$/;
+
+function parseShard(value) {
+  const m = SHARD_RE.exec(String(value));
+  if (!m) throw new Error(`--shard takes <index>/<total>, both positive integers (got ${JSON.stringify(value)})`);
+  const index = Number(m[1]);
+  const total = Number(m[2]);
+  if (index > total) throw new Error(`--shard index ${index} is above the total ${total}`);
+  return { index, total };
+}
+
+// The committed per-file durations `--shard` balances by, and what `--record-durations` writes.
+const DURATIONS_FILE = path.join('tools', 'test-durations.json');
+// A test process's startup and require cost, which the per-test durations leave out. Without it the
+// ~1,000 sub-second files weigh almost nothing and pile onto whichever shard looks lightest.
+const PER_FILE_OVERHEAD_MS = 150;
+// An unmeasured file's weight when nothing is measured at all.
+const DEFAULT_FILE_MS = 500;
+
+// Parses a durations file: `{ "files": { "<repo-relative posix path>": <ms> } }`. Throws on any other
+// shape, so the caller can name the problem and fall back to equal weights.
+function readDurations(text) {
+  const parsed = JSON.parse(text);
+  const files = parsed && parsed.files;
+  if (!files || typeof files !== 'object' || Array.isArray(files)) throw new Error('it has no "files" object');
+  const durations = new Map();
+  for (const [file, ms] of Object.entries(files)) {
+    if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) {
+      throw new Error(`its entry ${JSON.stringify(file)} is not a non-negative number`);
+    }
+    durations.set(file, ms);
+  }
+  return durations;
+}
+
+const posixKey = (file) => file.split(/[\\/]/).join('/');
+const byPath = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+
+// Deals `files` (repo-relative) into `total` shards: heaviest first, each onto the shard with the
+// smallest estimated load (lowest index on a tie), so the result depends only on the inputs and every
+// shard job computes the same partition. Returns one `{ files, ms, unmeasured }` per shard, its files
+// sorted. Every input file lands in exactly one shard.
+// Pure: `durations` is a Map from posix path to ms.
+function assignShards(files, durations, total) {
+  const measured = files.map((f) => durations.get(posixKey(f))).filter((ms) => ms !== undefined).sort((a, b) => a - b);
+  const fallbackMs = measured.length ? measured[Math.floor(measured.length / 2)] : DEFAULT_FILE_MS;
+  const weighted = files.map((file) => {
+    const ms = durations.get(posixKey(file));
+    return { file, measured: ms !== undefined, ms: (ms === undefined ? fallbackMs : ms) + PER_FILE_OVERHEAD_MS };
+  });
+  weighted.sort((a, b) => b.ms - a.ms || byPath(a.file, b.file));
+  const shards = Array.from({ length: total }, () => ({ files: [], ms: 0, unmeasured: 0 }));
+  for (const w of weighted) {
+    let lightest = 0;
+    for (let i = 1; i < total; i++) if (shards[i].ms < shards[lightest].ms) lightest = i;
+    shards[lightest].files.push(w.file);
+    shards[lightest].ms += w.ms;
+    if (!w.measured) shards[lightest].unmeasured += 1;
+  }
+  for (const s of shards) s.files.sort(byPath);
+  return shards;
+}
+
+// Where a `--record-durations <out>` run's reporter writes until the run ends: beside `out`, tagged
+// with the runner's pid, so the suite (which reads the committed durations file) never sees it
+// truncated mid-run.
+function durationsPartialPath(out, pid) {
+  return `${path.resolve(out)}.partial-${pid}`;
+}
+
+// Moves a finished recording over `out`. A run killed by a signal, or a reporter that wrote nothing,
+// leaves `out` as it was and the partial file removed. Returns a stderr line, never throws.
+function finishRecording(out, pid, { signalled }) {
+  const partial = durationsPartialPath(out, pid);
+  let size = 0;
+  try {
+    size = fs.statSync(partial).size;
+  } catch (_) {
+    // no partial file: the reporter never opened it
+  }
+  if (!signalled && size > 0) {
+    try {
+      fs.renameSync(partial, path.resolve(out));
+      return `run-tests.js: recorded test durations to ${out}`;
+    } catch (err) {
+      return `run-tests.js: could not move ${partial} to ${out}: ${err.message}`;
+    }
+  }
+  fs.rmSync(partial, { force: true });
+  return `run-tests.js: ${out} left unchanged — ${signalled ? 'the run was interrupted' : 'the durations reporter wrote nothing'}`;
+}
+
+// Pulls `--shard <v>` / `--shard=<v>` and `--record-durations <path>` out of argv. Returns the
+// remaining arguments with the two values (null when absent). Throws on a flag with no value.
+function extractRunFlags(argv) {
+  const rest = [];
+  let shard = null;
+  let recordDurations = null;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg.startsWith('--shard=')) {
+      shard = arg.slice('--shard='.length);
+    } else if (arg === '--shard' || arg === '--record-durations') {
+      const value = argv[i + 1];
+      if (value === undefined || value.startsWith('--')) throw new Error(`${arg} needs a value`);
+      if (arg === '--shard') shard = value;
+      else recordDurations = value;
+      i += 1;
+    } else {
+      rest.push(arg);
+    }
+  }
+  return { rest, shard, recordDurations };
+}
+
 module.exports = {
   listTestFiles, buildTestArgs, resolveConcurrency, resolveSlots, subsetFallbackReason, WIN32_COMMAND_LINE_MAX,
   isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, createRunRoot, sweepStaleRoots, readFileList, slotLane,
+  parseShard, readDurations, assignShards, extractRunFlags, durationsPartialPath, finishRecording,
+  DURATIONS_FILE, PER_FILE_OVERHEAD_MS, DEFAULT_FILE_MS,
 };
 
 if (require.main === module) {
-  const argv = process.argv.slice(2);
+  let argv;
+  let shard = null;
+  let recordDurations = null;
+  try {
+    const flags = extractRunFlags(process.argv.slice(2));
+    argv = flags.rest;
+    shard = flags.shard === null ? null : parseShard(flags.shard);
+    recordDurations = flags.recordDurations;
+    // A partial run must never overwrite the committed durations, and a subset has no shards.
+    if (shard && argv.includes('--files-from')) throw new Error('--shard cannot be combined with --files-from');
+    if (recordDurations !== null && (shard || argv.includes('--files-from'))) {
+      throw new Error('--record-durations needs the whole root set, so it cannot be combined with --shard or --files-from');
+    }
+  } catch (err) {
+    console.error(`run-tests.js: ${err.message}`);
+    process.exit(1);
+  }
   let roots;
   let files;
   if (argv.includes('--files-from')) {
@@ -254,6 +396,27 @@ if (require.main === module) {
     process.exit(1);
   }
 
+  if (shard) {
+    let durations = new Map();
+    try {
+      durations = readDurations(fs.readFileSync(path.join(REPO_ROOT, DURATIONS_FILE), 'utf8'));
+    } catch (err) {
+      console.error(`run-tests.js: ${DURATIONS_FILE} is unusable (${err.message}) — every file weighs the same, so the shards are unbalanced.`);
+    }
+    const shards = assignShards(files, durations, shard.total);
+    const mine = shards[shard.index - 1];
+    const totalMs = shards.reduce((n, s) => n + s.ms, 0);
+    console.error(
+      `run-tests.js: shard ${shard.index}/${shard.total} — ${mine.files.length} of ${files.length} files, ` +
+        `estimated ${Math.round(mine.ms / 1000)}s of ${Math.round(totalMs / 1000)}s` +
+        (mine.unmeasured ? `, ${mine.unmeasured} unmeasured in ${DURATIONS_FILE}` : ''),
+    );
+    // More shards than files: this slice is legitimately empty, and `node --test` with no files would
+    // discover its own defaults instead of running nothing.
+    if (mine.files.length === 0) process.exit(0);
+    files = mine.files;
+  }
+
   process.env.CT_HOOKS_GIT_TIMEOUT_MS = process.env.CT_HOOKS_GIT_TIMEOUT_MS || '60000';
 
   let testArgs;
@@ -263,7 +426,26 @@ if (require.main === module) {
       nodeMajor: Number(process.versions.node.split('.')[0]),
       concurrency: resolveConcurrency(process.env, os.availableParallelism()),
     };
-    testArgs = buildTestArgs(files, roots, argOptions);
+    // A shard is an explicit file list on every platform: its root globs would select the whole set.
+    testArgs = buildTestArgs(files, shard ? null : roots, argOptions);
+    if (shard) {
+      const tooLong = subsetFallbackReason(process.execPath, testArgs, { platform: process.platform });
+      if (tooLong) throw new Error(`--shard ${shard.index}/${shard.total}: ${tooLong}; use more shards`);
+    }
+    if (recordDurations !== null) {
+      // Two reporters: the durations file, and the output this run would print anyway. node opens
+      // (truncates) a reporter destination when the run starts, and the suite reads the committed
+      // durations file, so the reporter writes beside it and the file is replaced only when the run
+      // ends (see the exit handler below).
+      testArgs.splice(
+        2,
+        0,
+        `--test-reporter=${path.join(__dirname, 'test-durations-reporter.js')}`,
+        `--test-reporter-destination=${durationsPartialPath(recordDurations, process.pid)}`,
+        `--test-reporter=${process.stdout.isTTY ? 'spec' : 'tap'}`,
+        '--test-reporter-destination=stdout',
+      );
+    }
     // A subset too long for the Windows command line has no globs of its own, so it runs the
     // full suite (and takes the full-suite slot lane below) rather than failing to spawn (#4134).
     const reason = roots === null ? subsetFallbackReason(process.execPath, testArgs, { platform: process.platform }) : null;
@@ -359,6 +541,9 @@ if (require.main === module) {
   });
   child.on('exit', (code, signal) => {
     cleanup();
+    if (recordDurations !== null) {
+      console.error(finishRecording(recordDurations, process.pid, { signalled: Boolean(forwarded || signal) }));
+    }
     if (forwarded) process.exit(128 + os.constants.signals[forwarded]);
     if (signal) process.exit(128 + os.constants.signals[signal]);
     process.exit(code === null ? 1 : code);

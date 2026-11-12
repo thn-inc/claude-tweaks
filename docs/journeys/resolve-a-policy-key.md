@@ -5,16 +5,18 @@ files:
   - plugin/bin/lib/policy-schema.js
   - plugin/bin/lib/policy.js
   - plugin/bin/lib/risk-path-globs.js
+  - plugin/bin/lib/model-profiles/policy-fragment.js
   - plugin/bin/lib/merge-verification.js
   - plugin/bin/lib/shared-primitives.js
   - plugin/skills/_shared/policy-schema.md
   - plugin/skills/_shared/policy-schema-coverage.md
+  - plugin/skills/_shared/policy-schema-read-path.md
 ---
 
 # Resolve a Policy Key Through the Canonical Read Path
 
 **Persona:** claude-tweaks skill author (or a maintainer of a project using the plugin) who wants proof that policy resolution honors the documented precedence chain — run config, then `policy.yml`, then schema default — rather than trusting each skill's prose to have re-implemented it correctly.
-**Goal:** Watch one key resolve under three configurations and confirm the returned `{value, source}` envelope changes exactly as `plugin/skills/_shared/policy-schema.md` §Canonical read path says it will.
+**Goal:** Watch one key resolve under three configurations and confirm the returned `{value, source}` envelope changes exactly as `plugin/skills/_shared/policy-schema-read-path.md` §Canonical read path says it will.
 **Entry point:** A terminal at a project checkout root (any repo with — or even without — a `.claude-tweaks/policy.yml`).
 **Success state:** Three JSON objects whose `source` fields read `default`, `policy`, and `run-config` respectively, plus one `renamed-from` resolution proving the alias table is live, plus one `--all` snapshot whose every row carries `{value, source}` decorated with schema metadata, plus one direct-from-`policy.yml` read proving the enforcement hook honors the same alias table the CLI does, plus three `risk-path-globs` reads (unset, valid block, typo'd block) whose answers — `{}` from `default`, the slug-to-glob map from `policy`, and `null` flagged `invalid` — are each distinct.
 
@@ -39,14 +41,14 @@ files:
 - **Action:** Run with `--run` pointing at an active pipeline run directory whose `config.yml` sets the requested lever.
 - **Should feel:** Deterministic layering — the run's Manifesto answer wins over the project default, and `source: "run-config"` says so.
 - **Should understand:** This is the whole precedence chain made mechanical: run config beats `policy.yml` beats the schema default, per key, in one call. A run dir that exists but has no `config.yml` yet is not an error — the overlay is simply absent.
-- **Red flags:** A nonexistent `--run` dir resolving anything (must exit 1 with a stderr message); the overlay applying to `model-profiles` (policy-only by contract) or to a `policyOnly` flat key (`deploy-command`, `owned-owners`, `trusted-authors`, `risk-categories`, #4609). Running this step from a **linked worktree** with a *relative* `--run` (or one pointing inside any checkout other than the main one) exits 1 with a "resolves outside the main checkout" message naming the resolved path — that is the anchored-or-outside guard (#1065, the `[IL-127]` shadow-copy protection) working as designed, not a defect; a `$PIPELINE_RUN_DIR` resolved per `_shared/pipeline-run-dir.md` is always anchored under the main checkout and passes, as does any path outside every checkout.
+- **Red flags:** A nonexistent `--run` dir resolving anything (must exit 1 with a stderr message); the overlay applying to `model-profiles` (policy-only by contract) or to a `policyOnly` flat key (`deploy-command`, `owned-owners`, `trusted-authors`, `risk-categories`, #4609; `express-driver`, `express-driver-wall-clock-minutes`, `express-driver-spend-ceiling-dollars`, #5216). Running this step from a **linked worktree** with a *relative* `--run` (or one pointing inside any checkout other than the main one) exits 1 with a "resolves outside the main checkout" message naming the resolved path — that is the anchored-or-outside guard (#1065, the `[IL-127]` shadow-copy protection) working as designed, not a defect; a `$PIPELINE_RUN_DIR` resolved per `_shared/pipeline-run-dir.md` is always anchored under the main checkout and passes, as does any path outside every checkout.
 
 ### 4. Snapshot the whole config — `--all`
 - **URL:** `node plugin/bin/resolve-policy.js --all`
 - **Action:** Run with no key arguments.
 - **Should feel:** One call replacing key-by-key enumeration — the whole config, self-describing.
-- **Should understand:** Every schema key returns its `{value, source}` envelope decorated with `summary`/`category`/`tier`/`type`/`default` — a JSON `null` default means no default. `--all` composes with `--run`. `--all --values` and `--all <key>` are invocation errors.
-- **Red flags:** A registered key missing from the output; a row missing `summary`/`category`/`tier`; `--all` accepting key arguments.
+- **Should understand:** Every schema key returns its `{value, source}` envelope decorated with `summary`/`category`/`tier`/`type`/`default` — a JSON `null` default means no default. `--all` composes with `--run`. `--all --values` and `--all <key>` are invocation errors. The control-mode keys (`control-mode`, the deploy/dev/acceptance levers, `owned-owners`, `trusted-authors`, `risk-categories`, `risk-path-globs`) resolve and validate today, but nothing in the plugin acts on them yet. Their summaries open "Not yet used" until the #4608 record that wires each one drops the marker (#4816).
+- **Red flags:** A registered key missing from the output; a row missing `summary`/`category`/`tier`; `--all` accepting key arguments; a control-mode key's summary reading as live behavior (no "Not yet used" opener) while no plugin code consumes it.
 
 ### 5. Confirm the enforcement hook honors the same alias — `plugin/bin/lib/policy.js`
 - **URL:** `node -e "console.log(require('./plugin/bin/lib/policy.js').isWorktreeAlwaysOn(process.cwd()))"`
@@ -63,6 +65,8 @@ files:
 - **Red flags:** A malformed block resolving `{}`, which would silently switch off a safety check; a key after the block (`autonomy: trusted`) swallowed into it.
 
 ## Origin
+- Step 3 updated during build of #5216 (driver lane admission) — three new `policyOnly` keys join the red flag's list of flat keys the `--run` overlay must never reach; the Canonical read path citation and `files:` now name `_shared/policy-schema-read-path.md`, where #5216 moved that text for Read-rail headroom. The keys are "Not yet used" until #5218 wires the driver, so no step demonstrates their effect
+- Step 4 updated during build of #4816 (settle 3 policy digest findings): the control-mode key summaries now carry a "Not yet used" marker; `plugin/bin/lib/model-profiles/policy-fragment.js` joins `files:` because `auditPolicy`'s `model-profiles` view now shares its `stripComment`
 - Step 1 updated during build of #4578 (forge detection honours `gh-timeout-ms`). A computed integration-model entry can now carry an additive `degraded` reason code and a stderr degrade line. The full flow is in `resolve-the-integration-model-on-a-slow-gh-host-4578.md`.
 - Step 2, step 6 and the success state updated during build of #4609 (control-mode keys) — `risk-path-globs` is the second block-style key, parsed by `plugin/bin/lib/risk-path-globs.js`
 - Created during build of #329 (policy resolver CLI); step 3 and the alias red-flag in step 2 updated during build of #332 (policy-key naming convention + rename program — `review-severity-floor` → `review-auto-apply-ceiling`, seven identity aliases); step 5 added during build of #602, when the hook's own read path (`isWorktreeAlwaysOn`/`rawValue` in `plugin/bin/lib/policy.js`) became alias-aware

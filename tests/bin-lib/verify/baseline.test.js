@@ -958,7 +958,7 @@ test('findStaleBaselineWorktrees filters `git worktree list` down to ct-verify-b
 test('realGit.listWorktrees reads real `git worktree list` output, and findStaleBaselineWorktrees names only the stale scratch one (#3064)', () => {
   // realpathSync: on macOS, os.tmpdir() is a symlink (/var -> /private/var)
   // that `git worktree list` reports already resolved — an unresolved
-  // mkdtemp path would spuriously mismatch (same note as cli.test.js's own
+  // mkdtemp path would spuriously mismatch (same note as cli-helpers.js's own
   // tmpDir() helper).
   const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-realgit-')));
   execFileSync('git', ['init', '-q'], { cwd: repo });
