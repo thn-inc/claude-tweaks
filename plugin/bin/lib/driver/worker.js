@@ -64,10 +64,28 @@
 // Per-launch files live under the caller's settings directory, with the process id, a
 // counter and random hex in their names, are written exclusively with mode 0600, and
 // are removed after the child has exited on every path, including a throw.
+//
+// The wall-clock ceiling. The launcher enforces it, never the runner: once the runner
+// has returned the child's handle, a timer for `ceilings.wallClockMs` is armed, and it
+// is cleared when the child exits. At the ceiling the child is killed. On POSIX the
+// child was started as the leader of its own process group, so the launcher sends
+// SIGTERM to the whole group; if the child is still running KILL_GRACE_MS (5 seconds)
+// later, it sends SIGKILL to the group. On win32 there are no process groups, so the
+// launcher runs `taskkill /T /F /PID {pid}` (the whole process tree, forced) through
+// the runner, waits for that to finish, and ignores its outcome. A kill that throws
+// because the child is already gone is swallowed. After the kill a reap deadline of
+// REAP_DEADLINE_MS (5 seconds) starts. The envelope is returned once the child has
+// exited, as `timeout` with reason `wall-clock-ceiling`, built from whatever the
+// child printed. Only when the deadline passes first (a child that survives the kill,
+// or a descendant that holds the child's output open) does the launcher return
+// without waiting, with `detail` naming the pid. A launcher that waited forever
+// would hang the driver that called it. The per-launch files are removed on this path
+// too. The Windows and Linux kill paths were not probed against a real worker.
 
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const cp = require('node:child_process');
 const { launchSpec } = require('../impeccable-engine');
 const { ROLES, RESULT_SCHEMA, implementerSettings, composeArgs } = require('./roles');
 
@@ -165,7 +183,10 @@ function describeError(err) {
   return String(err);
 }
 
-function classify({ timedOut, spawnError, code, signal, stdout, stderr }, { schema, spendCeiling }) {
+const KILL_GRACE_MS = 5000;
+const REAP_DEADLINE_MS = 5000;
+
+function classify({ timedOut, timeoutDetail, spawnError, code, signal, stdout, stderr }, { schema, spendCeiling }) {
   const obj = parseResultObject(stdout);
   const cost = obj && typeof obj.total_cost_usd === 'number' ? obj.total_cost_usd : null;
   const envelope = (status, reason, detail, okResult) => ({
@@ -181,7 +202,7 @@ function classify({ timedOut, spawnError, code, signal, stdout, stderr }, { sche
   });
   const empty = typeof stdout !== 'string' || stdout.trim() === '';
 
-  if (timedOut) return envelope('timeout', 'wall-clock-ceiling', null);
+  if (timedOut) return envelope('timeout', 'wall-clock-ceiling', timeoutDetail === undefined ? null : timeoutDetail);
   if (spawnError !== undefined) return envelope('fail', 'launch-error', describeError(spawnError));
   if (!obj && typeof code === 'number' && code !== 0 && empty) {
     return envelope('fail', 'launch-error', firstLine(stderr) || 'exit ' + code);
@@ -204,7 +225,101 @@ function classify({ timedOut, spawnError, code, signal, stdout, stderr }, { sche
 
 let launchCounter = 0;
 
-async function launchWorker(opts, deps) {
+// Waits for the child to exit, enforcing the wall-clock ceiling (see the header). Every
+// timer armed here is cleared before this returns, whichever way the launch ends.
+async function superviseChild({ handle, runner, platform, wallClockMs, timers }) {
+  const armed = [];
+  let finished = false;
+  let timedOut = false;
+  let giveUp;
+  const gaveUp = new Promise((resolve) => { giveUp = resolve; });
+  const arm = (fn, ms) => {
+    const timer = timers.setTimeout(fn, ms);
+    armed.push(timer);
+    return timer;
+  };
+  const kill = (signal) => {
+    try {
+      handle.kill(signal);
+    } catch {
+      // The child is already gone.
+    }
+  };
+  const armReap = () => {
+    if (!finished) arm(giveUp, REAP_DEADLINE_MS);
+  };
+  const onGrace = () => {
+    kill('SIGKILL');
+    armReap();
+  };
+  const onCeiling = () => {
+    timedOut = true;
+    if (platform === 'win32') {
+      let killer;
+      try {
+        killer = runner({ file: 'taskkill', args: ['/T', '/F', '/PID', String(handle.pid)], options: {}, input: '', platform });
+      } catch {
+        // Its outcome is ignored, a throw included.
+      }
+      Promise.resolve(killer && killer.exited).then(() => {}, () => {}).then(armReap);
+    } else {
+      kill('SIGTERM');
+      arm(onGrace, KILL_GRACE_MS);
+    }
+  };
+  try {
+    arm(onCeiling, wallClockMs);
+    const settled = await Promise.race([
+      handle.exited.then((result) => ({ result }), (err) => ({ err: err === undefined ? new Error('launch failed') : err })),
+      gaveUp.then(() => ({ gaveUp: true })),
+    ]);
+    if (settled.gaveUp) return { timedOut: true, timeoutDetail: 'child ' + handle.pid + ' did not exit after kill' };
+    if (settled.err !== undefined) return { timedOut, spawnError: settled.err };
+    return { timedOut, ...settled.result };
+  } catch (err) {
+    return { timedOut, spawnError: err === undefined ? new Error('launch failed') : err };
+  } finally {
+    finished = true;
+    for (const timer of armed) timers.clearTimeout(timer);
+  }
+}
+
+// The launch's own spawn, used when the caller injects no runner. `spawn` is read at the
+// call site so a test can swap it. The child leads its own process group on POSIX so the
+// ceiling's kill reaches its descendants.
+function defaultRunner({ file, args, options, input, platform = process.platform }, { spawn } = {}) {
+  const spawnFn = spawn || cp.spawn;
+  const child = spawnFn(file, args, { ...options, detached: platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  let stdout = '';
+  let stderr = '';
+  const exited = new Promise((resolve, reject) => {
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', (code, signal) => resolve({ code, signal, stdout, stderr }));
+    child.stdin.on('error', (err) => {
+      // The child exited before it read its input: its exit is what gets reported.
+      if (!err || err.code !== 'EPIPE') reject(err);
+    });
+  });
+  child.stdin.end(input);
+  return {
+    pid: child.pid,
+    kill(signal) {
+      if (platform !== 'win32') process.kill(-child.pid, signal);
+      else child.kill(signal);
+    },
+    exited,
+  };
+}
+
+function defaultDeps() {
+  return { runner: defaultRunner, timers: { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (timer) => clearTimeout(timer) } };
+}
+
+async function launchWorker(opts, deps = defaultDeps()) {
   const {
     role, cwd, prompt, ceilings = {}, testCommand, claudeMdText, settingsDir,
     platform = process.platform, env = process.env, schema = RESULT_SCHEMA, model, bin = 'claude',
@@ -215,6 +330,11 @@ async function launchWorker(opts, deps) {
   if (spendCeiling !== undefined && !(typeof spendCeiling === 'number' && Number.isFinite(spendCeiling) && spendCeiling > 0)) {
     throw new RangeError('ceilings.spendCeiling must be a finite number above zero, got ' + String(spendCeiling));
   }
+  const wallClockMs = ceilings.wallClockMs;
+  if (!(typeof wallClockMs === 'number' && Number.isFinite(wallClockMs) && wallClockMs > 0)) {
+    throw new RangeError('ceilings.wallClockMs must be a finite number above zero, got ' + String(wallClockMs));
+  }
+  const timers = deps.timers || defaultDeps().timers;
   assertSupportedSchema(schema);
   const spec = Object.prototype.hasOwnProperty.call(ROLES, role) ? ROLES[role] : undefined;
   if (!spec) throw new Error('unknown role: ' + String(role));
@@ -243,7 +363,7 @@ async function launchWorker(opts, deps) {
     let outcome;
     try {
       const handle = runner({ file: launch.file, args: launch.args, options: { ...launch.options, cwd, env: childEnv }, input: prompt, platform });
-      outcome = { timedOut: false, ...(await handle.exited) };
+      outcome = await superviseChild({ handle, runner, platform, wallClockMs, timers });
     } catch (err) {
       outcome = { timedOut: false, spawnError: err === undefined ? new Error('launch failed') : err };
     }
@@ -259,4 +379,4 @@ async function launchWorker(opts, deps) {
   }
 }
 
-module.exports = { ENVELOPE_FIELDS, ENV_ALLOW, ENV_ALLOW_WIN32, buildEnv, conformsTo, launchWorker };
+module.exports = { ENVELOPE_FIELDS, ENV_ALLOW, ENV_ALLOW_WIN32, KILL_GRACE_MS, REAP_DEADLINE_MS, buildEnv, conformsTo, defaultRunner, launchWorker };
