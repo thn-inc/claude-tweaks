@@ -312,6 +312,17 @@ function findLeftovers(ctx, deps, wt, branch) {
     // `--quiet` exits 1 for an absent ref; any other failure means the check itself failed.
     if (!err || err.status !== 1) throw new Error(`could not check for branch ${branch}: ${errorText(err)}`);
   }
+  // The branch left on origin by a stopped run whose local branch is gone (a closed draft PR):
+  // caught here, not after a full worker run at the push. The full ref is the pattern because
+  // ls-remote tail-matches, so a bare name would also match `refs/heads/x/{branch}`. An absent
+  // ref exits 0 with no output; any failure (no network, no origin) is the check failing.
+  let remote;
+  try {
+    remote = String(gitIn(deps, mainRoot, ['ls-remote', '--heads', '--end-of-options', 'origin', `refs/heads/${branch}`]));
+  } catch (err) {
+    throw new Error(`could not check for remote branch origin/${branch}: ${errorText(err)}`);
+  }
+  if (remote.trim() !== '') leftovers.push(`remote branch origin/${branch}`);
   let entries = [];
   try {
     entries = deps.readdir(path.join(mainRoot, '.claude-tweaks', 'pipelines'));
@@ -478,7 +489,9 @@ const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async (ctx, de
     denials,
     costUsd: orNull(envelope.costUsd),
   };
-  const extra = { usage: ctx.worker.usage, denials };
+  // spendOverrun: an `ok` launch whose last turn crossed the spend ceiling (worker.js checks it
+  // between turns); present only when the envelope says so.
+  const extra = { usage: ctx.worker.usage, turns: ctx.worker.turns, denials, ...(envelope.spendOverrun === true ? { spendOverrun: true } : {}) };
   if (envelope.status !== 'ok') {
     const why = neutralize(envelope.detail);
     return { status: 'fail', detail: `${neutralize(String(envelope.status))}/${neutralize(String(envelope.reason))}${why ? `: ${why}` : ''}`, extra };

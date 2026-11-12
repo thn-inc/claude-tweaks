@@ -8,7 +8,8 @@
 //   - the step, outcome and stop-class constants,
 //   - the event sink (stdout line + {run-dir}/driver-events.jsonl),
 //   - the neutralizers for text the headless worker controls, so that text cannot close an
-//     issue, mention a user, open a code fence or break a line in a commit, PR body or event.
+//     issue (or backlink one), mention a user, open a code fence or an HTML comment, or break a
+//     line in a commit, PR body or event.
 
 const path = require('node:path');
 
@@ -55,11 +56,20 @@ function outcomeFor(stopClass) {
 const CLOSING_KEYWORDS = /\b(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\b/gi;
 const QUALIFIED_REF = /[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#\d+/g;
 const BARE_REF = /#\d+/g;
+// An issue or PR URL on any host, with any tail (`/files`, `#issuecomment-…`): it backlinks
+// like `#N`. Removed before the keywords, which could otherwise cut a path segment out of it.
+const URL_REF = /\bhttps?:\/\/[^\s/]+\/[^\s/]+\/[^\s/]+\/(?:issues|pull)\/\d+(?:[/#?]\S*)?/gi;
+const GH_REF = /\bGH-\d+\b/gi;
+// An HTML comment opener hides the rest of a rendered body; `<\!--` renders as the text `<!--`.
+const COMMENT_OPENER = /<!--/g;
 
 function neutralize(text) {
   if (typeof text !== 'string') return '';
   return text
     .replace(/[\r\n\t]+/g, ' ')
+    .replace(URL_REF, '')
+    .replace(GH_REF, '')
+    .replace(COMMENT_OPENER, '<\\!--')
     .replace(/`/g, "'")
     .replace(/@/g, '@​')
     .replace(CLOSING_KEYWORDS, '')

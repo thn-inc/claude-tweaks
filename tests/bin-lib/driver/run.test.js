@@ -34,6 +34,17 @@ test('neutralize: non-string is empty, whitespace runs collapse, result is trimm
   assert.equal(neutralize('prefixes and fixture'), 'prefixes and fixture');
 });
 
+test('neutralize: HTML comment openers render inert; issue and PR URLs and GH-N references are removed', () => {
+  assert.equal(neutralize('a <!-- hidden --> b'), 'a <\\!-- hidden --> b');
+  assert.equal(neutralize('<!--<!--'), '<\\!--<\\!--');
+  assert.equal(neutralize('see https://github.com/acme/widgets/issues/12 now'), 'see now');
+  assert.equal(neutralize('(http://ghe.example.com/o/r/pull/3) x'), '() x');
+  assert.equal(neutralize('y https://github.com/o/r/pull/5/files#diff-1 z'), 'y z');
+  assert.equal(neutralize('x https://github.com/o/fix/issues/5 y'), 'x y');
+  assert.equal(neutralize('see GH-42 and gh-7'), 'see and');
+  assert.equal(neutralize('https://github.com/o/r/blob/main/a.js'), 'https://github.com/o/r/blob/main/a.js');
+});
+
 test('AC3.4: normalizeTitle keeps first line, drops period and keywords', () => {
   assert.equal(normalizeTitle('Add the loop. Resolves #9.\nsecond line'), 'Add the loop');
   assert.equal(normalizeTitle('Closes #4\n'), '');
@@ -194,6 +205,7 @@ function defaultScript(over) {
     [on('readdir'), []],
     [onGit('rev-parse', '--verify', '--end-of-options', 'HEAD'), `${HEAD_SHA}\n`],
     [onGit('rev-parse'), exitOne],
+    [onGit('ls-remote'), ''],
     [onGit('fetch'), ''],
     [onGit('worktree', 'add'), ''],
     [onGit('merge'), ''],
@@ -874,8 +886,9 @@ test('the worktree step: fetch, worktree add, catch-up fetch and merge, then rec
   assert.equal(await run(['#7'], h.deps), 0);
   const runId = mintedRunId(h);
   const runDir = path.join(MAIN, '.claude-tweaks', 'pipelines', runId);
-  assert.deepEqual(gitCalls(h).slice(0, 5).map((c) => [c.args, c.cwd]), [
+  assert.deepEqual(gitCalls(h).slice(0, 6).map((c) => [c.args, c.cwd]), [
     [['-C', MAIN, 'rev-parse', '--verify', '--quiet', '--end-of-options', 'refs/heads/drive-record-7'], MAIN],
+    [['-C', MAIN, 'ls-remote', '--heads', '--end-of-options', 'origin', 'refs/heads/drive-record-7'], MAIN],
     [['-C', MAIN, 'fetch', '--end-of-options', 'origin', 'main'], MAIN],
     [['-C', MAIN, 'worktree', 'add', '--lock', '--reason', 'drive.js record 7 (pid 4242)', '--no-track', '-b', 'drive-record-7', WT, 'origin/main'], MAIN],
     [['-C', WT, 'fetch', '--end-of-options', 'origin', 'main'], WT],
@@ -898,6 +911,7 @@ test('AC9.2: leftover worktree, branch or run dir refuses at the worktree step',
   const leftovers = {
     worktree: [[on('lstatType'), { type: 'directory', code: null }], /worktree .*drive-record-7 \(directory\)/],
     branch: [[onGit('rev-parse'), 'abc123\n'], /branch drive-record-7/],
+    remote: [[onGit('ls-remote'), `${HEAD_SHA}\trefs/heads/drive-record-7\n`], /remote branch origin\/drive-record-7/],
     rundir:[[on('readdir'), ['2026-11-12T090000-drive-7', 'archive', '2026-11-12T090000-drive-70', 'x-drive-17']], /run directory 2026-11-12T090000-drive-7(;|$)/],
   };
   for (const [name, [entry, re]] of Object.entries(leftovers)) {
@@ -911,7 +925,7 @@ test('AC9.2: leftover worktree, branch or run dir refuses at the worktree step',
     assert.match(final.stop.detail, re);
     assert.match(final.stop.detail, /nothing reused or removed/);
     assert.deepEqual(final.stop.created, { worktree: false, branch: false });
-    assert.equal(gitCalls(h).filter((c) => !gitSub(c).includes('rev-parse')).length, 0, 'no fetch, add or merge');
+    assert.equal(gitCalls(h).filter((c) => !['rev-parse', 'ls-remote'].includes(gitSub(c)[0])).length, 0, 'no fetch, add or merge');
     assert.equal(calls(h, 'node', /hooks\.js$/).length, 0);
     assert.ok(h.files[path.join(MAIN, '.claude-tweaks', 'pipelines', mintedRunId(h), 'driver-events.jsonl')], 'the run dir exists, so the events are in its jsonl');
   }
@@ -936,6 +950,8 @@ test('this run\'s own run dir, archive and other records\' dirs are not leftover
 test('a leftover check that cannot run fails the step rather than passing it', async () => {
   const cases = [
     [[onGit('rev-parse'), () => { throw Object.assign(new Error('fatal: not a git repository'), { status: 128 }); }], /could not check for branch drive-record-7/],
+    // No network or no origin: never read as "no remote branch".
+    [[onGit('ls-remote'), () => { throw Object.assign(new Error('Command failed'), { status: 128, stderr: 'fatal: \'origin\' does not appear to be a git repository\n' }); }], /could not check for remote branch origin\/drive-record-7: fatal: 'origin' does not appear/],
     [[on('readdir'), () => { throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); }], /could not list run directories/],
     [[on('lstatType'), { type: 'unreadable', code: 'EACCES' }], /\(unreadable\)/],
   ];
@@ -1152,6 +1168,12 @@ test('the worker step launches the implementer in the worktree with the policy c
   assert.deepEqual(ctx.worker, { title: 'Add the loop', summary: 'Adds the loop.', usage: ENVELOPE.usage, turns: 3, denials: [], costUsd: 0.25 });
   const line = h.lines().find((l) => l.step === 'worker');
   assert.deepEqual([line.status, line.usage, line.denials, 'model' in line], ['ok', ENVELOPE.usage, [], false]);
+  assert.deepEqual([line.turns, 'spendOverrun' in line], [3, false], 'turns always; spendOverrun only when the envelope says true');
+  // An ok envelope whose last turn crossed the spend ceiling (worker.js: checked between turns).
+  const over = harness({ worker: { turns: 11, spendOverrun: true, costUsd: 5.4 } });
+  await run(['#7'], over.deps);
+  const overLine = over.lines().find((l) => l.step === 'worker');
+  assert.deepEqual([overLine.status, overLine.turns, overLine.spendOverrun], ['ok', 11, true]);
 });
 
 test('the worker prompt states the record, Key Files, the edit rule, the test command and ceilings, then the fenced body', async () => {
@@ -1998,8 +2020,8 @@ test('AC2.1: happy path calls run in the deliverable order', async () => {
   assert.deepEqual(signature, [
     'policy', 'gh issue view', 'eligibility', 'native-deps', 'linked-prs', 'admission',
     'node claim-targets.js', 'resolveRunDir', 'node log-decision.js',
-    // The leftover check's branch probe runs before the worktree's own fetch.
-    'git rev-parse', 'git fetch', 'git worktree add', 'git fetch', 'git merge', 'node hooks.js record-worktree',
+    // The leftover check's local and remote branch probes run before the worktree's own fetch.
+    'git rev-parse', 'git ls-remote', 'git fetch', 'git worktree add', 'git fetch', 'git merge', 'node hooks.js record-worktree',
     'worker', 'git status', 'git add', 'git commit',
     'node verify.js', 'node express-lane.js check', 'git rev-parse', 'git push',
     'node compose-pr-body.js', 'gh pr create', 'node hooks.js record-pr', 'node set-config.js',
@@ -2339,7 +2361,7 @@ test('AC8.1: nothing merges', async () => {
   for (const [name, over] of Object.entries(SCENARIOS)) {
     const h = harness(over);
     await run(['#7'], h.deps);
-    for (const c of h.calls.filter((x) => x.kind === 'gh' || x.kind === 'ghBatch')) {
+    for (const c of h.calls.filter((x) => x.kind === 'gh' || x.kind === 'ghBatch' || x.kind === 'ghCreate')) {
       assert.ok(!c.args.some((a) => a === 'merge' || a === 'ready'), `${name}: ${c.args.join(' ')}`);
     }
   }

@@ -43,6 +43,11 @@
 // Nothing further is driven or emitted after an interrupt. deps.terminate re-raises the
 // signal only once stdout has taken the queued lines (reraiseAfterFlush), so stdout and the
 // jsonl end alike.
+// Limit: every call but the worker is a synchronous child, and Node runs no handler until
+// it returns, so a SIGTERM sent to drive.js alone waits for the running child: up to the
+// verify bound (30 minutes) or the 2-minute bound of the other CLIs. Ctrl-C in a terminal
+// signals the whole foreground process group, children included, so it is prompt. A
+// supervisor should signal the process group, not the pid.
 const fs = require('fs');
 const { execFileSync, spawnSync } = require('child_process');
 const { createEventSink, outcomeFor, FINAL_STEP, STOP_CLASSES } = require('./events');
@@ -345,7 +350,7 @@ const realDeps = {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: sharedPrimitives.GH_BATCH_TIMEOUT_MS, maxBuffer: MAX_BUFFER, windowsHide: true,
   })),
   git: (args, { cwd } = {}) => execFileSync('git', args, {
-    cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GIT_TIMEOUT_MS, windowsHide: true,
+    cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GIT_TIMEOUT_MS, maxBuffer: MAX_BUFFER, windowsHide: true,
   }),
   // A plugin/bin CLI under this Node; never throws on a non-zero exit.
   // The child gets the env the caller passes (steps pass deps.env); a call that omits `env`
