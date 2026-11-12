@@ -28,6 +28,9 @@ const STATUS_REASONS = new Set([403, 404, 410]);
 
 const isActions = (value) => typeof value === 'string' && value.toLowerCase() === 'actions';
 const isNum = (value) => typeof value === 'number' && Number.isFinite(value);
+// The envelope, the render and the headroom floor compare all read this one 2-dp value (like
+// stats.js's rounded trend ratio).
+const round2 = (x) => Math.round(x * 100) / 100;
 
 function headroomFrom(budgetsJson, summaryJson) {
   const firstPageOnly = Boolean(budgetsJson) && budgetsJson.has_next_page === true;
@@ -43,7 +46,7 @@ function headroomFrom(budgetsJson, summaryJson) {
   const actionsItems = items.filter((i) => i && isActions(i.product));
   if (actionsItems.some((i) => !isNum(i.netAmount))) return none('an Actions usage item has no numeric netAmount');
   const spend = actionsItems.reduce((sum, i) => sum + i.netAmount, 0);
-  const headroomPct = Math.min(...amounts.map((budget) => ((budget - spend) / budget) * 100));
+  const headroomPct = round2(Math.min(...amounts.map((budget) => ((budget - spend) / budget) * 100)));
   return { headroomPct, reason: null, firstPageOnly };
 }
 

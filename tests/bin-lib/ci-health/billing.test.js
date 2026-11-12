@@ -75,6 +75,12 @@ test('AC7.6: two Actions budgets — the smaller headroom wins', () => {
   assert.strictEqual(r.reason, null);
 });
 
+test('a non-integer headroom is rounded to 2 dp inside headroomFrom', () => {
+  const s = summary();
+  s.usageItems = [{ product: 'Actions', sku: 'actions_linux', netAmount: 271 }];
+  assert.strictEqual(headroomFrom(budgets([actionsBudget(300)]), s).headroomPct, 9.67);
+});
+
 for (const [label, list] of [
   ['only a git_lfs budget', JSON.parse(BUDGETS).budgets.filter((b) => b.budget_product_sku === 'git_lfs')],
   ['a zero Actions budget', [actionsBudget(0)]],
