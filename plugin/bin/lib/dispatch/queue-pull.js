@@ -56,11 +56,15 @@ const path = require('path');
 const crypto = require('crypto');
 const { execFileSync, spawnSync } = require('child_process');
 
-const { readExclusions, appendExclusion } = require('./exclusions');
+const { readExclusions, appendExclusion, groupIsExcluded } = require('./exclusions');
+const { writeReleaseTimes, readReleaseTimes } = require('./shipped-releases');
 const { buildFreshnessSignal, cacheUsable, composeOrderBlob } = require('./queue-order');
 const { aliasMcpTimestamps } = require('../issues/mcp-issue-shape');
 const { parseRecordFacets, parseDependencies, partitionByOpenBodyBlockers, openBlockerRefs } = require('../issues/record');
 const { bodyForeignBlockers } = require('../issues/cross-repo-states');
+const { shapeGate } = require('../issues/materialize-format');
+const { namedTarget } = require('../issues/named-target');
+const { classifyShipped, predatesClaimRelease } = require('../issues/shipped-candidate');
 const { extractKeyFiles, expectsKeyFilesSection, buildDispatchGroups, partitionGroupsBySizeGuard } = require('../issues/grouping');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { sessionTmpPath } = require('../session-tmp');
@@ -278,6 +282,9 @@ function makeContext(options = {}, deps = {}) {
     groupSizeGuard: '',
     bundleCap: '',
     foreignStates: inputs.foreignStates || env.DISPATCH_FOREIGN_STATES,
+    standaloneDir: '',
+    integrationBranch: '',
+    integrationRef: '',
     files: {
       queueRaw: pick(inputs.queueRaw, 'dispatch-queue-raw.json'),
       depFreshness: pick(inputs.depFreshness, 'dispatch-dep-freshness.json'),
@@ -518,8 +525,310 @@ function runWriteBack(ctx) {
   });
 }
 
+// ---- Task 4: not-spec-shaped, open-pr, target-missing and shipped ------------------------------
+
+// The text a node block's failure leaves in the fence's `$(cat $ERR_FILE)`: the thrown message.
+const errText = (err) => String(err && err.message != null ? err.message : err);
+
+// The options a runner call carries: the context's cwd and env, no undefined keys.
+function runOpts(ctx, extra = {}) {
+  const opts = { ...cliOpts(ctx), ...extra };
+  for (const k of Object.keys(opts)) if (opts[k] === undefined) delete opts[k];
+  return opts;
+}
+
+// A fence CLI call: a spawn that throws reads as a failed call with no output.
+function spawnCli(ctx, name, args) {
+  try {
+    const r = ctx.deps.spawnCli(name, args, cliOpts(ctx));
+    return { status: r && r.status, stdout: (r && r.stdout) || '', stderr: (r && r.stderr) || '' };
+  } catch (err) {
+    ctx.deps.stderr(`queue-pull: ${name}: ${errText(err)}\n`);
+    return { status: null, stdout: '', stderr: '' };
+  }
+}
+
+// A CLI whose stdout and stderr the fence leaves on the terminal.
+function forward(ctx, r, { stdout = true, stderr = true } = {}) {
+  if (stdout && r.stdout) ctx.deps.stdout(r.stdout);
+  if (stderr && r.stderr) ctx.deps.stderr(r.stderr);
+}
+
+// Reads dispatch-groups.json, keeps each group's members `makeKeep()` accepts (called after the read,
+// like the fence's `require` order), drops emptied groups, and writes `console.log(JSON.stringify(..))`.
+function rewriteGroups(ctx, makeKeep) {
+  const file = ctx.paths['dispatch-groups.json'];
+  const groups = readJson(file);
+  const keep = makeKeep();
+  const finalGroups = groups.map((g) => g.filter(keep)).filter((g) => g.length > 0);
+  fs.writeFileSync(file, `${JSON.stringify(finalGroups)}\n`);
+}
+
+// The node block of an exclusion pass whose stderr the fence redirects into `errFile` (fence 308,
+// 352): the file keeps the failure text. Returns the failure text, or null on success.
+function runRedirectedBlock(ctx, errFile, fn) {
+  try {
+    fn();
+    put(ctx, errFile, '');
+    return null;
+  } catch (err) {
+    const text = errText(err);
+    put(ctx, errFile, `${text}\n`);
+    return text;
+  }
+}
+
+// Fence 307-336. Keeps a candidate only when its cached body passes the Materialization gate.
+function runNotSpecShaped(ctx) {
+  const { deps, paths, omit } = ctx;
+  const skip = omit.has('not-spec-shaped');
+  const failure = runRedirectedBlock(ctx, paths['dispatch-shape-gate.err'], () => rewriteGroups(ctx, () => (c) => {
+    if (skip) return true;
+    const result = shapeGate(c.body);
+    if (!result.ok) {
+      appendExclusion(paths['dispatch-exclusions.json'], { reason: 'not-spec-shaped', records: [c.number], detail: { missing: result.missing } });
+      return false;
+    }
+    return true;
+  }));
+  if (failure === null) return;
+  // #3110: a thrown appendExclusion means the exclusions file itself may be partially written.
+  if (failure.includes('appendExclusion:')) {
+    throw new QueuePullStopped(`dispatch: queue-pull stopped -- not-spec-shaped exclusion pass hit a corrupt exclusions file: ${trimNl(failure)}`);
+  }
+  deps.stderr(`Warning: not-spec-shaped pass skipped — ${trimNl(failure)}\n`);
+}
+
+// Fence 338-382. The linked-PR query is shared setup (the shipped pass reads its mentions); only the
+// exclusion filtering is this pass's own.
+function runOpenPr(ctx) {
+  const { deps, paths, omit } = ctx;
+  const linkedFile = paths['dispatch-linked-prs.json'];
+  const errFile = paths['dispatch-linked-prs.err'];
+  const nums = step(ctx, 'group-numbers', () => readJson(paths['dispatch-groups.json']).flat().map((i) => i.number).join(',')).value || '';
+  put(ctx, linkedFile, '{}');
+  if (nums) {
+    const r = spawnCli(ctx, 'resolve-linked-prs.js', [nums]);
+    put(ctx, linkedFile, r.stdout);
+    put(ctx, errFile, r.stderr);
+    if (r.status !== 0) {
+      deps.stderr(`Warning: linked-PR query failed — falling back to no open-PR exclusion this run: ${trimNl(r.stderr)}\n`);
+      put(ctx, linkedFile, '{}');
+    }
+  }
+  const skip = omit.has('open-pr');
+  const failure = runRedirectedBlock(ctx, errFile, () => rewriteGroups(ctx, () => {
+    const linkedPRs = readJson(linkedFile);
+    return (c) => {
+      const entry = linkedPRs[c.number];
+      if (!skip && entry && entry.openPR) {
+        appendExclusion(paths['dispatch-exclusions.json'], { reason: 'open-pr', records: [c.number], detail: { pr: entry.openPR } });
+        return false;
+      }
+      return true;
+    };
+  }));
+  if (failure === null) return;
+  // #3110: a thrown appendExclusion is not a transient resolve-linked-prs.js failure.
+  if (failure.includes('appendExclusion:')) {
+    throw new QueuePullStopped(`dispatch: queue-pull stopped -- open-linked-PR exclusion pass hit a corrupt exclusions file: ${trimNl(failure)}`);
+  }
+  deps.stderr(`Warning: open-linked-PR filtering failed — dispatch-groups.json left unfiltered for this exclusion this run: ${trimNl(failure)}\n`);
+}
+
+// `git remote show origin | sed -n '/HEAD branch/s/.*: //p'` (fence 393): a failed git still hands
+// over whatever it printed.
+function remoteHeadBranch(ctx) {
+  let out;
+  try {
+    out = String(ctx.deps.run('git', ['remote', 'show', 'origin'], runOpts(ctx)));
+  } catch (err) {
+    out = err && err.stdout != null ? String(err.stdout) : '';
+  }
+  return trimNl(out.split('\n').filter((l) => /HEAD branch/.test(l) && /: /.test(l)).map((l) => l.replace(/^.*: /, '')).join('\n'));
+}
+
+// The staged Close (GitHub) body of a target-missing exclusion: the fence's echo lines.
+function targetMissingProposal(num, tpath, ref) {
+  return [
+    `# Staged: Close (GitHub) — #${num} (named target absent at ${ref})`,
+    '',
+    `**Finding:** \`[gh-issue] #${num}\` names target \`${tpath}\`, which is absent at \`${ref}\` — deleted by a later commit after this record was filed.`,
+    '',
+    `**Proposed:** Close #${num} as not planned — named target deleted, nothing left to fix.`,
+    '',
+    '**Commands:**',
+    `gh issue comment ${num} --body "Closing: the named target ${tpath} no longer exists at ${ref} — this record's Acceptance Criteria has no remaining target. Filed by /claude-tweaks:dispatch (queue pull)."`,
+    `gh issue close ${num} --reason "not planned"`,
+  ].map((l) => `${l}\n`).join('');
+}
+
+// Fence 384-466. PF10: the run-dir and integration-branch resolution (385-395) is shared setup and
+// runs whether or not this pass is omitted; later passes read state.integrationBranch.
+function runTargetMissing(ctx) {
+  const { deps, paths, omit, state } = ctx;
+  state.standaloneDir = trimNl(spawnCli(ctx, 'hooks.js', ['resolve-run-dir', '--spec-slug', 'dispatch-standalone']).stdout);
+  let branch = readPolicy(ctx, 'integration-branch');
+  if (!branch) branch = remoteHeadBranch(ctx);
+  state.integrationBranch = branch;
+  const ref = `origin/${branch}`;
+  state.integrationRef = ref;
+  const exclusions = paths['dispatch-exclusions.json'];
+
+  if (!omit.has('target-missing')) {
+    step(ctx, 'named-targets', () => {
+      const named = readJson(paths['dispatch-groups.json']).flat()
+        .map((c) => ({ number: c.number, target: namedTarget(c) }))
+        .filter((c) => c.target);
+      fs.writeFileSync(paths['dispatch-named-targets.json'], JSON.stringify(named));
+    });
+    const probe = step(ctx, 'target-missing', () => {
+      const named = readJson(paths['dispatch-named-targets.json']);
+      const missing = named.filter(({ target }) => {
+        try {
+          deps.run('git', ['cat-file', '-e', `${ref}:${target.path}`], runOpts(ctx, { stdio: 'pipe' }));
+          return false;
+        } catch {
+          return true;
+        }
+      });
+      for (const { number, target } of missing) {
+        appendExclusion(exclusions, { reason: 'target-missing', records: [number], detail: { path: target.path } });
+      }
+    });
+    // #3110: stop rather than continue with a partial exclusion list.
+    if (!probe.ok) throw new QueuePullStopped('dispatch: queue-pull stopped -- target-missing exclusion pass failed (exit 1); see error above.');
+  }
+
+  step(ctx, 'target-missing-filter', () => rewriteGroups(ctx, () => {
+    const entries = readExclusions(exclusions);
+    return (c) => !groupIsExcluded([c], entries, ['target-missing']);
+  }));
+
+  const rows = step(ctx, 'target-missing-rows', () => readExclusions(exclusions)
+    .filter((e) => e.reason === 'target-missing')
+    .map((e) => ({ number: e.records[0], path: e.detail.path }))).value || [];
+  for (const { number, path: tpath } of rows) {
+    forward(ctx, spawnCli(ctx, 'log-decision.js', ['--run', state.standaloneDir, '--status', 'AUTO',
+      '--text', `dispatch: #${number} excluded, named target ${tpath} absent at ${ref}`, '--reversibility', 'n/a']));
+    // The mktemp file is extensionless, so stage-item.js names the staged item after its random
+    // suffix (ledger row 2). Reproduced, never normalized.
+    const tmp = step(ctx, 'mktemp', () => deps.tmpName());
+    if (tmp.ok) put(ctx, tmp.value, targetMissingProposal(number, tpath, ref));
+    forward(ctx, spawnCli(ctx, 'stage-item.js', ['--run', state.standaloneDir, '--id', `dispatch-target-missing-${number}`, '--file', tmp.ok ? tmp.value : '']));
+  }
+}
+
+// The claim reader writeReleaseTimes asks for, built only when a candidate has a merged mention.
+function lazyClaimReader(ctx) {
+  let reader = null;
+  return { read: (n) => { if (!reader) reader = ctx.deps.createClaimReader(); return reader.read(n); } };
+}
+
+// Fence 551-580: one Close proposal per strong-tier exclusion, staged into the firing's own run dir.
+function stageShippedProposals(ctx) {
+  const { paths } = ctx;
+  const runDir = trimNl(spawnCli(ctx, 'hooks.js', ['resolve-run-dir', '--spec-slug', 'dispatch-standalone']).stdout);
+  if (!runDir) return;
+  const exclusions = paths['dispatch-exclusions.json'];
+  const entries = step(ctx, 'shipped-stage', () => readExclusions(exclusions)
+    .filter((e) => e.reason === 'shipped')
+    .map((e) => ({ number: e.records[0], pr: e.detail.pr, signals: e.detail.signals }))).value || [];
+  const tmpDir = path.dirname(exclusions);
+  for (const entry of entries) {
+    const file = path.join(tmpDir, `shipped-close-proposal-${entry.number}.md`);
+    const wrote = step(ctx, 'shipped-stage', () => fs.writeFileSync(file, [
+      '## Close (GitHub)',
+      '',
+      `#${entry.number} — deliverables already shipped by merged PR #${entry.pr}`,
+      '',
+      `Signals: ${entry.signals.join(', ')}`,
+      '',
+      `Comment then close: \`gh issue close ${entry.number} --comment "Deliverables already shipped by #${entry.pr}"\``,
+    ].join('\n')));
+    if (!wrote.ok) break;
+    // stdout dropped (`>/dev/null`), failure ignored (`|| true`); stderr stays on the terminal.
+    forward(ctx, spawnCli(ctx, 'stage-item.js', ['--run', runDir, '--id', `shipped-close-${entry.number}`, '--file', file]), { stdout: false });
+  }
+}
+
+// Fence 468-580. Omitting the pass skips its classification, probes, exclusions and staging.
+function runShipped(ctx) {
+  const { deps, paths, omit } = ctx;
+  if (omit.has('shipped')) {
+    step(ctx, 'shipped', () => rewriteGroups(ctx, () => () => true));
+    return;
+  }
+  const linkedFile = paths['dispatch-linked-prs.json'];
+  const probeFile = paths['dispatch-shipped-probe-prs.json'];
+  const prFilesFile = paths['dispatch-shipped-pr-files.jsonl'];
+  const releasesFile = paths['dispatch-shipped-releases.json'];
+
+  // First pass: title-only classification; only a `weak` result not predating the claim release is
+  // probed for the files-based upgrade, capped at 5 live `gh pr view` calls per pull.
+  step(ctx, 'shipped-probe', () => {
+    const groups = readJson(paths['dispatch-groups.json']);
+    const linkedPRs = readJson(linkedFile);
+    const releases = writeReleaseTimes(releasesFile, groups.flat(), linkedPRs, { log: (line) => deps.stderr(`${line}\n`), reader: lazyClaimReader(ctx) });
+    const toProbe = [];
+    for (const c of groups.flat()) {
+      const entry = linkedPRs[c.number];
+      const mentions = (entry && entry.mentions) || [];
+      if (mentions.length === 0) continue;
+      const result = classifyShipped(c, mentions, { lastReleasedAt: releases[c.number] });
+      if (result.tier === 'weak' && !predatesClaimRelease(result)) toProbe.push(result.pr);
+    }
+    fs.writeFileSync(probeFile, JSON.stringify([...new Set(toProbe)].slice(0, 5)));
+  });
+
+  put(ctx, prFilesFile, '');
+  const probePrs = step(ctx, 'shipped-probe-list', () => readJson(probeFile).join(' ').split(/\s+/).filter(Boolean)).value || [];
+  for (const pr of probePrs) {
+    // `2>/dev/null || echo '[]'`: a failed fetch prints nothing and reads as [].
+    const r = ghRun(ctx, ['pr', 'view', pr, '--json', 'files', '-q', '[.files[].path]'], { quiet: true });
+    const filesJson = trimNl(r.ok ? r.stdout : `${r.stdout}[]\n`);
+    step(ctx, 'shipped-pr-files', () => fs.appendFileSync(prFilesFile, `${JSON.stringify({ pr: Number(pr), files: JSON.parse(filesJson) })}\n`));
+  }
+
+  // Second pass: final tier, with the probed files. `strong` leaves the groups for this pull;
+  // `weak` stays, logged for build-time context.
+  const second = step(ctx, 'shipped', () => rewriteGroups(ctx, () => {
+    const linkedPRs = readJson(linkedFile);
+    let prFilesLines = [];
+    try {
+      prFilesLines = fs.readFileSync(prFilesFile, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    } catch (err) {
+      if (!err || err.code !== 'ENOENT') throw err;
+    }
+    const prFiles = new Map(prFilesLines.map((e) => [e.pr, e.files]));
+    const releases = readReleaseTimes(releasesFile);
+    return (c) => {
+      const entry = linkedPRs[c.number];
+      const mentions = (entry && entry.mentions) || [];
+      if (mentions.length === 0) return true;
+      const result = classifyShipped(c, mentions, { prFiles, lastReleasedAt: releases[c.number] });
+      if (result.tier === 'strong') {
+        appendExclusion(paths['dispatch-exclusions.json'], { reason: 'shipped', records: [c.number], detail: { pr: result.pr, signals: result.signals } });
+        deps.stderr(`AUTO — dispatch: #${c.number} excluded, shipped by merged PR #${result.pr} (${result.signals.join(', ')})\n`);
+        return false;
+      }
+      if (result.tier === 'weak') {
+        deps.stderr(`AUTO — dispatch: #${c.number}${predatesClaimRelease(result)
+          ? ` kept: merged PR #${result.pr} predates claim release at ${releases[c.number]} — remaining work assumed`
+          : ` mentioned by merged PR #${result.pr} without a closing keyword; dispatching anyway`}\n`);
+      }
+      return true;
+    };
+  }));
+  // #3110: this pass's shipped-candidate exclusions may be only partially written.
+  if (!second.ok) throw new QueuePullStopped('dispatch: queue-pull stopped -- shipped-candidate exclusion pass failed; see error above.');
+
+  stageShippedProposals(ctx);
+}
+
 const RUNNERS = {
   truncate: runTruncate, fetch: runFetch, blocked: runBlocked, oversized: runOversized, 'write-back': runWriteBack,
+  'not-spec-shaped': runNotSpecShaped, 'open-pr': runOpenPr, 'target-missing': runTargetMissing, shipped: runShipped,
 };
 
 // omit entries (reasons or ids) -> the Set of pass ids to skip. Exported so the omit mapping
@@ -600,8 +909,7 @@ function defaultDeps() {
   };
 }
 
-// Runs the pull. The truncate, fetch, blocked, oversized and write-back passes have runners so
-// far; any other pass throws `queue-pull: pass not implemented: <id>`.
+// Runs the pull. The passes through shipped have runners so far; any other pass throws `queue-pull: pass not implemented: <id>`.
 function queuePull(options = {}, deps = {}) {
   const ctx = makeContext(options, deps);
   const { paths } = ctx;

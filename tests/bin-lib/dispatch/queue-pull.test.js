@@ -21,7 +21,7 @@ const {
   oracleSkip, extractFence, fenceSessionFiles, createSandbox, runOracle, withEscapeGuard, normalize, reported, assertParity, runAll,
 } = require('./queue-pull-oracle');
 const {
-  S0, S1, SFast, fakeRun, fakeSpawnCli, ghRecord, withBody, QUEUE_ARGV, DEP_SEARCH_8000,
+  S0, S1, SFast, fakeRun, fakeSpawnCli, ghRecord, withBody, QUEUE_ARGV, DEP_SEARCH_8000, mention, WEAK_PR_FILES,
 } = require('./queue-pull-fixtures');
 const {
   PASSES, PASS_FIELD_VALUES, SESSION_FILES, QueuePullStopped, sessionPaths, runPasses, resolveOmit, defaultDeps, makeContext, queuePull,
@@ -463,20 +463,21 @@ test('#5227 tmpName counter seam matches the oracle mktemp shim: refuses a bad c
   assert.equal(fs.readFileSync(counter, 'utf8'), '4', 'an EEXIST create does not advance the counter');
 }));
 
-test('#5227 queuePull runs the truncate..write-back passes, then stops at the first pass with no runner', () => inOwnTmp((own) => {
+test('#5227 queuePull runs the passes that have runners, then stops at the first pass with no runner', () => inOwnTmp((own) => {
   const paths = sessionPaths('qp-pull');
   appendExclusion(paths['dispatch-exclusions.json'], { reason: 'blocked', records: [1], detail: { blockedBy: [2] } });
   const seen = [];
   const deps = {
     run: fakeRun(S0()),
-    spawnCli: fakeSpawnCli(S0()),
+    spawnCli: fakeSpawnCli(S0(), { 'hooks.js': { status: 0, stdout: '', stderr: '' } }),
     queueOrder: { readOrder: () => null, writeOrder: () => ({ ok: true }) },
     expressQueuePolicy: () => ({ enabled: false, grouping: 'per-record', keepSingleton: () => false }),
+    createClaimReader: () => ({ read: () => ({ content: null }) }),
     onPass: (id) => seen.push(id),
     stderr: () => {},
   };
-  assert.throws(() => queuePull({ sessionId: 'qp-pull', cwd: own }, deps), /queue-pull: pass not implemented: not-spec-shaped/);
-  assert.deepEqual(seen, ['truncate', 'fetch', 'blocked', 'oversized', 'write-back'], 'onPass fires only for a pass that has a runner');
+  assert.throws(() => queuePull({ sessionId: 'qp-pull', cwd: own }, deps), /queue-pull: pass not implemented: blocker-landing/);
+  assert.deepEqual(seen, ['truncate', 'fetch', 'blocked', 'oversized', 'write-back', 'not-spec-shaped', 'open-pr', 'target-missing', 'shipped'], 'onPass fires only for a pass that has a runner');
   assert.equal(fs.readFileSync(paths['dispatch-exclusions.json'], 'utf8'), '[]');
 }));
 
@@ -521,10 +522,15 @@ function pull(scenario, o = {}) {
     const ctx = (o.lib || { makeContext }).makeContext(options, deps);
     if (o.before) o.before(ctx, own);
     let thrown = null;
-    try { (o.lib || { runPasses }).runPasses(T3_PASSES, ctx); } catch (err) { thrown = err; }
+    try { (o.lib || { runPasses }).runPasses(o.passes || T3_PASSES, ctx); } catch (err) { thrown = err; }
     if (thrown && !o.allowThrow) throw thrown;
     const text = {};
     for (const name of SESSION_FILES) if (fs.existsSync(paths[name]) && fs.statSync(paths[name]).isFile()) text[name] = fs.readFileSync(paths[name], 'utf8');
+    // Any other file a pass left in the session dir (the shipped Close proposals).
+    for (const name of fs.readdirSync(path.dirname(paths['dispatch-groups.json']))) {
+      const file = path.join(path.dirname(paths['dispatch-groups.json']), name);
+      if (!(name in text) && fs.statSync(file).isFile()) text[name] = fs.readFileSync(file, 'utf8');
+    }
     for (const file of Object.values(ctx.state.files)) if (fs.existsSync(file)) text[file] = fs.readFileSync(file, 'utf8');
     return {
       thrown, cwd, errs, ghCalls, store, state: ctx.state, text, stderr: errs.join(''),
@@ -971,4 +977,483 @@ test('#5227 stop: a cache-hit pass that cannot append (corrupt exclusions file) 
   assert.equal(r.thrown.line, `${head}1${tail}`);
   assert.match(r.stderr, /queue-pull: cache-hit: appendExclusion: .* is unreadable/);
   assert.ok(!r.stderr.includes(HIT_MESSAGE), 'no hit message after a stop');
+});
+
+// ---- Task 4: not-spec-shaped, open-pr, target-missing and shipped (in-process, S1 full) ----
+
+const T4_PASSES = PASSES.slice(0, 9); // truncate .. shipped
+const T4_SESSION = 'qp-t3'; // pull()'s default session id
+const FULL = () => S1({ full: true });
+
+// pull() with the Task 4 CLIs faked: hooks.js answers the run dir (o.hooksOut(callIndex, runDir)
+// overrides one answer), log-decision.js and stage-item.js record their argv and the staged file's
+// body at call time, and the claim reader answers o.claims (number -> blob content, default absent).
+function pull4(scenario, o = {}) {
+  const cap = { runDir: null, hooks: [], log: [], staged: [], stdout: [], order: [] };
+  const spawn = {
+    'hooks.js': (args) => {
+      cap.hooks.push(args);
+      const out = o.hooksOut ? o.hooksOut(cap.hooks.length - 1, cap.runDir) : cap.runDir;
+      return { status: 0, stdout: `${out}\n`, stderr: '' };
+    },
+    'log-decision.js': (args) => { cap.log.push(args); return { status: 0, stdout: `logged ${args[args.indexOf('--text') + 1]}\n`, stderr: '' }; },
+    'stage-item.js': (args) => {
+      const id = args[args.indexOf('--id') + 1];
+      const file = args[args.indexOf('--file') + 1];
+      cap.staged.push({ args, id, file, body: file && fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null });
+      return { status: 0, stdout: `staged ${id}\n`, stderr: '' };
+    },
+    ...(o.spawn || {}),
+  };
+  const claims = o.claims || {};
+  const r = pull(scenario, {
+    passes: T4_PASSES,
+    ...o,
+    spawn,
+    prepare: (own) => {
+      cap.runDir = path.join(own, 'run');
+      fs.mkdirSync(cap.runDir);
+      return o.prepare ? o.prepare(own) : {};
+    },
+    deps: {
+      stdout: (s) => cap.stdout.push(s),
+      createClaimReader: () => ({ read: (n) => ({ content: Object.prototype.hasOwnProperty.call(claims, n) ? claims[n] : null }) }),
+      onPass: (id) => cap.order.push(id),
+      ...(o.deps || {}),
+    },
+  });
+  return { ...r, cap, cli: (name) => r.cliCalls.filter(([n]) => n === name) };
+}
+
+const reasonsOf = (r, number) => r.json('dispatch-exclusions.json').filter((e) => e.records.includes(number)).map((e) => e.reason);
+const PR_VIEW = (pr) => ['pr', 'view', String(pr), '--json', 'files', '-q', '[.files[].path]'];
+const prViews = (r) => r.ghCalls.filter((a) => a[0] === 'pr' && a[1] === 'view');
+const gitCalls = (calls) => calls.filter(([cmd]) => cmd === 'git');
+const LINKED_WARNING = fenceText(/echo "(Warning: linked-PR query failed[^$]*)\$\(cat /);
+const OPEN_FILTER_WARNING = fenceText(/echo "(Warning: open-linked-PR filtering failed[^$]*)\$\(cat /);
+const SHAPE_WARNING = fenceText(/echo "(Warning: not-spec-shaped pass skipped[^$]*)\$\(cat /);
+const SHAPE_STOP = fenceText(/echo "(dispatch: queue-pull stopped -- not-spec-shaped exclusion pass hit a corrupt exclusions file: )\$\(cat /);
+const OPEN_STOP = fenceText(/echo "(dispatch: queue-pull stopped -- open-linked-PR exclusion pass hit a corrupt exclusions file: )\$\(cat /);
+const TARGET_STOP = fenceText(/echo "(dispatch: queue-pull stopped -- target-missing exclusion pass failed \(exit )\$TARGET_MISSING_RC\); see error above\.\" >&2/);
+const SHIPPED_STOP = fenceText(/echo "(dispatch: queue-pull stopped -- shipped-candidate exclusion pass failed; see error above\.)" >&2/);
+
+// The target-missing Close proposal the fence's `echo` lines build, derived from the fence text.
+function fenceTargetProposal(num, tpath, ref) {
+  const block = FENCE.match(/TMP_PROPOSAL=\$\(mktemp\)\n {2}\{\n([\s\S]*?)\n {2}\} > "\$TMP_PROPOSAL"/);
+  assert.ok(block, 'the fence no longer builds the proposal with an echo group');
+  return block[1].split('\n').map((l) => {
+    const m = l.trim().match(/^echo "(.*)"$/);
+    assert.ok(m, `not an echo line: ${l}`);
+    return m[1].replace(/\\(["`])/g, '$1').replace(/\$\{NUM\}/g, num).replace(/\$\{TPATH\}/g, tpath).replace(/\$\{INTEGRATION_REF\}/g, ref);
+  }).map((l) => `${l}\n`).join('');
+}
+
+// One assertion function per reason: the positive run and the omitted run both go through it.
+function assertNotSpecShaped(r) {
+  assert.deepEqual(entriesOf(r, 'not-spec-shaped'), [
+    { reason: 'not-spec-shaped', records: [9004], detail: { missing: ['Current State', 'Deliverables', 'Acceptance Criteria', 'Release Note'] } },
+    { reason: 'not-spec-shaped', records: [9007], detail: { missing: ['Acceptance Criteria'] } },
+  ]);
+  const left = groupNumbers(r).flat();
+  assert.ok(!left.includes(9004) && !left.includes(9007), `excluded candidates leave the groups: ${left}`);
+}
+function assertOpenPr(r) {
+  assert.deepEqual(entriesOf(r, 'open-pr').map((e) => [e.records[0], e.detail.pr]).sort(), [[9005, 79], [9008, 77]]);
+  const left = groupNumbers(r).flat();
+  assert.ok(!left.includes(9005) && !left.includes(9008));
+}
+function assertTargetMissing(r) {
+  assert.deepEqual(entriesOf(r, 'target-missing'), [
+    { reason: 'target-missing', records: [9006], detail: { path: 'docs/gone6.md' } },
+    { reason: 'target-missing', records: [9009], detail: { path: 'docs/gone.md' } },
+  ]);
+  const left = groupNumbers(r).flat();
+  assert.ok(!left.includes(9006) && !left.includes(9009));
+}
+function assertShipped(r) {
+  assert.deepEqual(entriesOf(r, 'shipped'), [
+    { reason: 'shipped', records: [9010], detail: { pr: 5010, signals: ['merged-pr-mention-after-created', 'title-similarity'] } },
+  ]);
+  assert.ok(!groupNumbers(r).flat().includes(9010));
+}
+
+test('AC2.1 not-spec-shaped: #9004 and #9007 leave the groups with their missing sections; omitting the pass keeps #9007 and lets #9004 reach the open-PR pass', () => {
+  const positive = pull4(FULL());
+  assertNotSpecShaped(positive);
+  assert.equal(positive.text['dispatch-shape-gate.err'], '', 'the redirect leaves an empty error file');
+
+  const omitted = pull4(FULL(), { omit: ['not-spec-shaped'] });
+  asserts(() => assertNotSpecShaped(omitted));
+  assert.deepEqual(entriesOf(omitted, 'not-spec-shaped'), []);
+  assert.ok(groupNumbers(omitted).flat().includes(9007), 'the spec-less record stays');
+  assert.deepEqual(reasonsOf(omitted, 9004), ['open-pr'], 'a candidate the omitted pass no longer excludes falls to the next reason (AC3)');
+  assert.deepEqual(omitted.cap.order, ['truncate', 'fetch', 'blocked', 'oversized', 'write-back', 'not-spec-shaped', 'open-pr', 'target-missing', 'shipped'], 'the omitted pass still has its runner called');
+  assert.ok(omitted.cli('resolve-linked-prs.js').length === 1, 'the later passes still run');
+  assert.ok(omitted.text['dispatch-groups.json'].endsWith('\n'), 'the groups file is still rewritten by the shared step');
+});
+
+test('AC2.1 open-pr: #9005 and #9008 leave the groups with their PR; omitting the pass still queries linked PRs and keeps them', () => {
+  const positive = pull4(FULL());
+  assertOpenPr(positive);
+  assert.deepEqual(positive.json('dispatch-linked-prs.json')['9008'].openPR, 77);
+
+  const omitted = pull4(FULL(), { omit: ['open-pr'] });
+  asserts(() => assertOpenPr(omitted));
+  assert.deepEqual(entriesOf(omitted, 'open-pr'), []);
+  assert.ok(groupNumbers(omitted).flat().includes(9008));
+  assert.equal(omitted.cli('resolve-linked-prs.js').length, 1, 'the shared linked-PR query still runs (the shipped pass reads its mentions)');
+  assert.deepEqual(entriesOf(omitted, 'shipped').map((e) => e.records[0]), [9005, 9010], 'the shipped pass still has the mentions to classify');
+});
+
+test('AC2.1 open-pr: a failed resolve-linked-prs.js prints the fence Warning and writes {}; unparseable output prints the filtering Warning and leaves the groups unfiltered', () => {
+  const failed = pull4(FULL(), { spawn: { 'resolve-linked-prs.js': { status: 3, stdout: 'partial', stderr: 'graphql down\n' } } });
+  assert.ok(failed.errs.includes(`${LINKED_WARNING}graphql down\n`), failed.stderr);
+  assert.equal(failed.text['dispatch-linked-prs.json'], '{}');
+  assert.deepEqual(entriesOf(failed, 'open-pr'), []);
+  assert.ok(groupNumbers(failed).flat().includes(9008), 'nothing is excluded on a failed query');
+  assert.deepEqual(entriesOf(failed, 'shipped'), [], 'with no mentions the shipped pass classifies nothing');
+
+  // Reproduced behavior: the shipped pass reads the same unparseable file, and its failure stops the pull.
+  const garbled = pull4(FULL(), { allowThrow: true, spawn: { 'resolve-linked-prs.js': { status: 0, stdout: 'not json', stderr: '' } } });
+  const warning = garbled.errs.find((e) => e.startsWith(OPEN_FILTER_WARNING));
+  assert.ok(warning, garbled.stderr);
+  assert.match(warning, /JSON/);
+  assert.ok(garbled.text['dispatch-linked-prs.err'].includes('JSON'), 'the error file keeps the failure text');
+  assert.ok(groupNumbers(garbled).flat().includes(9005), 'the open-PR pass left the groups unfiltered');
+  assert.ok(garbled.thrown instanceof QueuePullStopped);
+  assert.equal(garbled.thrown.line, SHIPPED_STOP);
+});
+
+test('AC2.1 target-missing: #9006 and #9009 leave the groups, log the fence AUTO text and stage the fence Close body; the stage-item stdout is forwarded', () => {
+  const positive = pull4(FULL());
+  assertTargetMissing(positive);
+  assert.deepEqual(positive.cap.log, [[9006, 'docs/gone6.md'], [9009, 'docs/gone.md']].map(([n, p]) => [
+    '--run', positive.cap.runDir, '--status', 'AUTO',
+    '--text', `dispatch: #${n} excluded, named target ${p} absent at origin/main`, '--reversibility', 'n/a',
+  ]));
+  const staged = positive.cap.staged.filter((s) => s.id.startsWith('dispatch-target-missing-'));
+  assert.deepEqual(staged.map((s) => s.id), ['dispatch-target-missing-9006', 'dispatch-target-missing-9009']);
+  assert.equal(staged[0].body, fenceTargetProposal('9006', 'docs/gone6.md', 'origin/main'));
+  assert.equal(staged[1].body, fenceTargetProposal('9009', 'docs/gone.md', 'origin/main'));
+  assert.deepEqual(staged[1].args.slice(0, 4), ['--run', positive.cap.runDir, '--id', 'dispatch-target-missing-9009']);
+  assert.ok(positive.cap.stdout.includes('staged dispatch-target-missing-9009\n'), 'the stage-item stdout reaches the terminal');
+  assert.ok(positive.cap.stdout.includes('logged dispatch: #9009 excluded, named target docs/gone.md absent at origin/main\n'), 'so does the log-decision stdout');
+  assert.deepEqual(gitCalls(positive.ghCalls.map((a) => ['gh', ...a])), []);
+  assert.deepEqual(positive.json('dispatch-named-targets.json'), [
+    { number: 9006, target: { path: 'docs/gone6.md' } }, { number: 9009, target: { path: 'docs/gone.md' } },
+  ]);
+
+  const omitted = pull4(FULL(), { omit: ['target-missing'] });
+  asserts(() => assertTargetMissing(omitted));
+  assert.deepEqual(entriesOf(omitted, 'target-missing'), []);
+  assert.ok(groupNumbers(omitted).flat().includes(9009), 'the named-target record stays');
+  assert.deepEqual(omitted.cap.log, []);
+  assert.deepEqual(omitted.cap.staged.filter((s) => s.id.startsWith('dispatch-target-missing-')), []);
+  assert.equal(omitted.text['dispatch-named-targets.json'], undefined, 'no named-target probe');
+  // PF10: the run-dir and integration-branch resolution is shared setup and still runs.
+  assert.equal(omitted.cap.hooks.length >= 1, true);
+  assert.deepEqual(omitted.cli('resolve-policy.js').filter(([, , key]) => key === 'integration-branch').length, 1);
+  assert.equal(omitted.state.integrationRef, 'origin/main');
+  assert.deepEqual(entriesOf(omitted, 'shipped').map((e) => e.records[0]), [9006, 9010], 'AC3: with target-missing omitted #9006 falls to shipped');
+});
+
+test('AC2.1 target-missing: a target present at the integration tip is kept; the git probe argv is cat-file -e <ref>:<path>', () => {
+  const scenario = { ...FULL(), origin: { branches: { main: { 'docs/gone.md': 'still here\n' } } } };
+  const r = pull4(scenario);
+  assert.deepEqual(entriesOf(r, 'target-missing').map((e) => e.records[0]), [9006]);
+  assert.ok(groupNumbers(r).flat().includes(9009), 'a present target is not excluded');
+  assert.deepEqual(r.cap.staged.map((s) => s.id).filter((id) => id.startsWith('dispatch-target-missing-')), ['dispatch-target-missing-9006']);
+});
+
+test('AC2.1 target-missing D2: --file is whatever deps.tmpName returns, so the staged id takes its random suffix; QP_TMPNAME_COUNTER_FILE makes it tmp.qp00000001', () => {
+  const random = pull4(FULL());
+  const randomFiles = random.cap.staged.filter((s) => s.id.startsWith('dispatch-target-missing-')).map((s) => s.file);
+  assert.equal(randomFiles.length, 2);
+  for (const file of randomFiles) assert.match(file, /tmp\.[A-Za-z0-9]{10}$/);
+  assert.notEqual(randomFiles[0], randomFiles[1]);
+
+  const seamed = pull4(FULL(), { prepare: (own) => { process.env.QP_TMPNAME_COUNTER_FILE = path.join(own, 'counter'); return {}; } });
+  const seamFiles = seamed.cap.staged.filter((s) => s.id.startsWith('dispatch-target-missing-')).map((s) => s.file);
+  assert.deepEqual(seamFiles.map((f) => path.basename(f)), ['tmp.qp00000001', 'tmp.qp00000002']);
+  assert.deepEqual(seamFiles.map((f) => path.extname(f)), ['.qp00000001', '.qp00000002'], 'the extensionless mktemp name hands stage-item.js its extension (ledger row 2)');
+  assert.equal(seamed.cap.staged[0].body, fenceTargetProposal('9006', 'docs/gone6.md', 'origin/main'));
+});
+
+test('AC2.1 shipped: #9010 (strong) is excluded with its signals, prints the strong AUTO line and stages shipped-close-9010; #9016 (weak) is probed, prints the weak AUTO line and stays', () => {
+  const r = pull4(FULL());
+  assertShipped(r);
+  const auto = r.errs.filter((e) => e.startsWith('AUTO — dispatch:'));
+  assert.deepEqual(auto, [
+    'AUTO — dispatch: #9010 excluded, shipped by merged PR #5010 (merged-pr-mention-after-created, title-similarity)\n',
+    'AUTO — dispatch: #9016 mentioned by merged PR #5016 without a closing keyword; dispatching anyway\n',
+  ]);
+  assert.ok(FENCE.includes("'AUTO — dispatch: #' + c.number + ' excluded, shipped by merged PR #' + result.pr + ' (' + result.signals.join(', ') + ')'"));
+  assert.ok(FENCE.includes("' mentioned by merged PR #' + result.pr + ' without a closing keyword; dispatching anyway'"));
+  assert.ok(groupNumbers(r).flat().includes(9016), 'a weak mention never excludes');
+  assert.deepEqual(prViews(r), [PR_VIEW(5016)], 'only the weak candidate is probed');
+  assert.deepEqual(r.json('dispatch-shipped-probe-prs.json'), [5016]);
+  assert.equal(r.text['dispatch-shipped-pr-files.jsonl'], `${JSON.stringify({ pr: 5016, files: WEAK_PR_FILES })}\n`);
+  assert.deepEqual(r.json('dispatch-shipped-releases.json'), {});
+
+  const staged = r.cap.staged.filter((s) => s.id.startsWith('shipped-close-'));
+  assert.deepEqual(staged.map((s) => s.id), ['shipped-close-9010']);
+  assert.equal(path.basename(staged[0].file), 'shipped-close-proposal-9010.md');
+  assert.equal(path.basename(path.dirname(staged[0].file)), `ct-session-${T4_SESSION}`, 'the proposal lives beside the exclusions file');
+  assert.equal(r.text['shipped-close-proposal-9010.md'], staged[0].body);
+  assert.deepEqual(staged[0].args.slice(0, 2), ['--run', r.cap.runDir]);
+  assert.equal(staged[0].body, [
+    '## Close (GitHub)', '', '#9010 — deliverables already shipped by merged PR #5010', '',
+    'Signals: merged-pr-mention-after-created, title-similarity', '',
+    'Comment then close: `gh issue close 9010 --comment "Deliverables already shipped by #5010"`',
+  ].join('\n'));
+  assert.ok(FENCE.includes("'Comment then close: \\`gh issue close ' + entry.number + ' --comment \"Deliverables already shipped by #' + entry.pr + '\"\\`',"));
+  assert.ok(!r.cap.stdout.includes('staged shipped-close-9010\n'), 'the shipped stage-item stdout is dropped');
+  assert.equal(r.cap.hooks.length, 2, 'hooks.js resolve-run-dir is called twice, as in the fence');
+  assert.deepEqual(r.cap.hooks[1], ['resolve-run-dir', '--spec-slug', 'dispatch-standalone']);
+
+  const omitted = pull4(FULL(), { omit: ['shipped'] });
+  asserts(() => assertShipped(omitted));
+  assert.deepEqual(entriesOf(omitted, 'shipped'), []);
+  assert.ok(groupNumbers(omitted).flat().includes(9010));
+  assert.deepEqual(prViews(omitted), []);
+  assert.deepEqual(omitted.cap.staged.filter((s) => s.id.startsWith('shipped-close-')), []);
+  assert.deepEqual(omitted.errs.filter((e) => e.startsWith('AUTO')), []);
+  assert.equal(omitted.cap.hooks.length, 1, 'only the shared target-missing resolution ran');
+  assertTargetMissing(omitted);
+  assertOpenPr(omitted);
+  assertNotSpecShaped(omitted);
+});
+
+test('AC2.1 shipped: a probed PR whose files cover the Key Files upgrades a weak mention to strong (key-files-covered)', () => {
+  const scenario = FULL();
+  scenario.gh = scenario.gh.map((e) => (e.argv && e.argv[1] === 'view' ? { ...e, stdout: '["plugin/bin/fixture-9016.js"]\n' } : e));
+  const r = pull4(scenario);
+  assert.deepEqual(entriesOf(r, 'shipped').map((e) => [e.records[0], e.detail.signals]), [
+    [9010, ['merged-pr-mention-after-created', 'title-similarity']],
+    [9016, ['merged-pr-mention-after-created', 'key-files-covered']],
+  ]);
+  assert.ok(!groupNumbers(r).flat().includes(9016));
+});
+
+test('#5227 shipped: a failing gh pr view prints nothing, reads as [] and the candidate stays weak', () => {
+  const scenario = FULL();
+  scenario.gh = scenario.gh.map((e) => (e.argv && e.argv[1] === 'view' ? { ...e, stdout: '', stderr: 'boom\n', status: 1 } : e));
+  const r = pull4(scenario);
+  assert.deepEqual(prViews(r), [PR_VIEW(5016)]);
+  assert.equal(r.text['dispatch-shipped-pr-files.jsonl'], '{"pr":5016,"files":[]}\n', 'the fence reads the failed call as [] (`|| echo [])');
+  assert.ok(groupNumbers(r).flat().includes(9016));
+  assert.deepEqual(r.errs.filter((e) => e.startsWith('Warning:')), [], 'the silent fail-open prints no Warning');
+  assert.ok(r.errs.includes('AUTO — dispatch: #9016 mentioned by merged PR #5016 without a closing keyword; dispatching anyway\n'));
+  assert.ok(!r.stderr.includes('boom'), 'the failed call stderr is dropped (2>/dev/null)');
+
+  // Whatever a failed call printed before it failed is kept, with the echoed [] after it.
+  const partial = FULL();
+  partial.gh = partial.gh.map((e) => (e.argv && e.argv[1] === 'view' ? { ...e, stdout: '["a"]', status: 1 } : e));
+  const p = pull4(partial);
+  assert.equal(p.text['dispatch-shipped-pr-files.jsonl'], '', '["a"][] is not JSON: the node line fails and nothing is appended');
+  assert.ok(p.errs.some((e) => e.startsWith('queue-pull: shipped-pr-files: ')), p.stderr);
+});
+
+test('#5227 shipped: no mention means no probe and no AUTO line; a weak mention that predates the claim release is kept without a probe, and its AUTO line names the release', () => {
+  const quiet = pull4(S1());
+  assert.deepEqual(prViews(quiet), []);
+  assert.deepEqual(quiet.errs.filter((e) => e.startsWith('AUTO')), []);
+  assert.deepEqual(quiet.cap.staged, []);
+
+  const claims = { 9016: JSON.stringify({ released: true, releasedAt: '2026-11-07T10:00:00Z' }), 9010: JSON.stringify({ released: true, releasedAt: '2026-11-07T10:00:00Z' }) };
+  const r = pull4(FULL(), { claims });
+  assert.deepEqual(prViews(r), [], 'a predating weak result is never a probe candidate');
+  assert.deepEqual(r.json('dispatch-shipped-releases.json'), { 9010: '2026-11-07T10:00:00.000Z', 9016: '2026-11-07T10:00:00.000Z' });
+  assert.deepEqual(r.errs.filter((e) => e.startsWith('AUTO')), [
+    'AUTO — dispatch: #9010 kept: merged PR #5010 predates claim release at 2026-11-07T10:00:00.000Z — remaining work assumed\n',
+    'AUTO — dispatch: #9016 kept: merged PR #5016 predates claim release at 2026-11-07T10:00:00.000Z — remaining work assumed\n',
+  ]);
+  assert.deepEqual(entriesOf(r, 'shipped'), [], 'a title match that predates the release rates weak, so it is not excluded');
+  assert.ok(FENCE.includes("' kept: merged PR #' + result.pr + ' predates claim release at ' + releases[c.number] + ' — remaining work assumed'"));
+});
+
+test('#5227 shipped: at most 5 distinct PRs are probed per pull', () => {
+  const labels = ['auto:build', 'ready'];
+  const numbers = [9201, 9202, 9203, 9204, 9205, 9206, 9207, 9208];
+  const linked = Object.fromEntries(numbers.map((n) => [n, { mentions: [mention(n === 9208 ? 6201 : n - 3000, 'Unrelated cleanup of the build output')] }]));
+  const scenario = {
+    policy: { 'work-links': 'body-text' },
+    origin: { branches: { main: {} } },
+    linked,
+    gh: [
+      { argv: QUEUE_ARGV, stdout: JSON.stringify(numbers.map((n) => ghRecord(n, { body: withBody(n), labels }))) + '\n' },
+      { argv: OPEN_NUMBERS_ARGV, stdout: `${JSON.stringify(numbers.map((number) => ({ number })))}\n` },
+      ...numbers.slice(0, 7).map((n) => ({ argv: PR_VIEW(n - 3000), stdout: '[]\n' })),
+    ],
+  };
+  const r = pull4(scenario);
+  assert.deepEqual(r.json('dispatch-shipped-probe-prs.json'), [6201, 6202, 6203, 6204, 6205], 'the 8th record mentions PR 6201 again, which counts once');
+  assert.deepEqual(prViews(r), [6201, 6202, 6203, 6204, 6205].map(PR_VIEW));
+});
+
+test('AC3.1: a candidate that qualifies for several passes gets only the first reason; no probe is made for an excluded candidate', () => {
+  const r = pull4(FULL());
+  assert.deepEqual(reasonsOf(r, 9004), ['not-spec-shaped'], '#9004: spec-shape, open PR, missing target and a strong mention');
+  assert.deepEqual(reasonsOf(r, 9005), ['open-pr'], '#9005: open PR and a strong mention');
+  assert.deepEqual(reasonsOf(r, 9006), ['target-missing'], '#9006: missing target and a strong mention');
+  assert.deepEqual(reasonsOf(r, 9007), ['not-spec-shaped']);
+  assert.deepEqual(reasonsOf(r, 9008), ['open-pr']);
+  assert.deepEqual(reasonsOf(r, 9009), ['target-missing']);
+  assert.deepEqual(reasonsOf(r, 9010), ['shipped']);
+  assert.deepEqual(reasonsOf(r, 9016), []);
+  assert.deepEqual(r.cli('resolve-linked-prs.js').map(([, nums]) => nums.split(',').map(Number)), [[9001, 9003, 9005, 9006, 9008, 9009, 9010, 9016]], 'the linked-PR query leaves out #9004 and #9007');
+  const proposals = r.cap.staged.map((s) => s.id);
+  assert.deepEqual(proposals, ['dispatch-target-missing-9006', 'dispatch-target-missing-9009', 'shipped-close-9010'], 'no stray Close proposal for #9004, #9005 or the open-PR records');
+  assert.ok(!r.cap.log.some((a) => a.join(' ').includes('9004')), 'no target probe or log for the spec-less docs-health record');
+  assert.deepEqual(r.json('dispatch-named-targets.json').map((n) => n.number), [9006, 9009], '#9004 never reaches the named-target read');
+});
+
+test('#5227 portability: the integration branch comes from the policy key, else from `git remote show origin` HEAD, never a literal', () => {
+  const withPolicy = pull4({ ...FULL(), policy: { 'work-links': 'body-text', 'integration-branch': 'release/next' }, origin: { branches: { 'release/next': { 'docs/gone.md': 'x' }, main: {} } } });
+  assert.equal(withPolicy.state.integrationBranch, 'release/next');
+  assert.equal(withPolicy.state.integrationRef, 'origin/release/next');
+  assert.ok(withPolicy.cap.log.some((a) => a.includes('dispatch: #9006 excluded, named target docs/gone6.md absent at origin/release/next')));
+  assert.deepEqual(entriesOf(withPolicy, 'target-missing').map((e) => e.records[0]), [9006], 'the probe ran against origin/release/next, where docs/gone.md exists');
+  assert.ok(withPolicy.cap.staged[0].body.includes('absent at `origin/release/next`'));
+
+  const gitArgvs = [];
+  const base = fakeRun({ ...FULL(), headBranch: 'trunk', origin: { branches: { main: {}, trunk: { 'docs/gone.md': 'x' } } } });
+  const viaRemote = pull4({ ...FULL(), headBranch: 'trunk', origin: { branches: { main: {}, trunk: { 'docs/gone.md': 'x' } } } }, {
+    run: (cmd, args, opts) => { if (cmd === 'git') gitArgvs.push(args); return base(cmd, args, opts); },
+  });
+  assert.deepEqual(gitArgvs, [['remote', 'show', 'origin'], ['cat-file', '-e', 'origin/trunk:docs/gone6.md'], ['cat-file', '-e', 'origin/trunk:docs/gone.md']]);
+  assert.equal(viaRemote.state.integrationBranch, 'trunk');
+  assert.deepEqual(entriesOf(viaRemote, 'target-missing').map((e) => e.records[0]), [9006]);
+
+  const policyGit = [];
+  const policyBase = fakeRun(FULL());
+  pull4({ ...FULL(), policy: { 'work-links': 'body-text', 'integration-branch': 'release/next' } }, {
+    run: (cmd, args, opts) => { if (cmd === 'git') policyGit.push(args); return policyBase(cmd, args, opts); },
+  });
+  assert.deepEqual(policyGit.map((a) => a.join(' ')), ['cat-file -e origin/release/next:docs/gone6.md', 'cat-file -e origin/release/next:docs/gone.md'], 'no `git remote show origin` when the policy answers');
+});
+
+test('#5227 portability: a failing `git remote show origin` leaves the branch empty and the pull continues (every named target reads as missing)', () => {
+  const r = pull4({ ...FULL(), gitFail: [['remote', 'show', 'origin']] });
+  assert.equal(r.state.integrationBranch, '');
+  assert.equal(r.state.integrationRef, 'origin/');
+  assert.deepEqual(entriesOf(r, 'target-missing').map((e) => e.records[0]), [9006, 9009]);
+});
+
+test('AC4.6 (in-process): a corrupt exclusions file before the open-PR append throws QueuePullStopped with the fence stop line, runs no later pass and leaves the file as it was', () => {
+  const scenario = S1();
+  scenario.linked = { 9001: { openPR: 70 } };
+  scenario.gh = scenario.gh.map((e) => (e.argv && e.argv.join() === DEP_SEARCH_8000.join() ? { ...e, effect: 'corrupt-exclusions' } : e));
+  const r = pull4(scenario, { allowThrow: true });
+  assert.ok(r.thrown instanceof QueuePullStopped, String(r.thrown));
+  assert.ok(r.thrown.line.startsWith(OPEN_STOP), r.thrown.line);
+  assert.match(r.thrown.line, /appendExclusion: .* is unreadable/);
+  assert.deepEqual(r.cap.order, ['truncate', 'fetch', 'blocked', 'oversized', 'write-back', 'not-spec-shaped', 'open-pr'], 'no pass after open-pr ran');
+  assert.equal(r.text['dispatch-exclusions.json'], '{corrupt', 'the file keeps its bytes');
+  assert.ok(r.text['dispatch-linked-prs.err'].includes('appendExclusion:'), 'the error file keeps the failure text the stop line quotes');
+});
+
+test('AC4.6 (in-process): the not-spec-shaped pass stops on a corrupt exclusions file the same way', () => {
+  const scenario = FULL();
+  scenario.gh = scenario.gh.map((e) => (e.argv && e.argv.join() === DEP_SEARCH_8000.join() ? { ...e, effect: 'corrupt-exclusions' } : e));
+  const r = pull4(scenario, { allowThrow: true });
+  assert.ok(r.thrown instanceof QueuePullStopped, String(r.thrown));
+  assert.ok(r.thrown.line.startsWith(SHAPE_STOP), r.thrown.line);
+  assert.deepEqual(r.cap.order.slice(-1), ['not-spec-shaped']);
+  assert.equal(r.text['dispatch-exclusions.json'], '{corrupt');
+  assert.ok(r.text['dispatch-groups.json'].includes('9007'), 'the groups file is left unfiltered');
+});
+
+test('#5227 not-spec-shaped non-append failure: an unreadable groups file prints "Warning: not-spec-shaped pass skipped — <err>" and filters nothing', () => {
+  const scenario = FULL();
+  scenario.gh = scenario.gh.map((e) => (e.argv && e.argv.join() === DEP_SEARCH_8000.join() ? { ...e, effect: 'corrupt-groups' } : e));
+  const r = pull4(scenario, { passes: PASSES.slice(0, 6) });
+  const warning = r.errs.find((e) => e.startsWith(SHAPE_WARNING));
+  assert.ok(warning, r.stderr);
+  assert.match(warning, /^Warning: not-spec-shaped pass skipped — .*JSON.*\n$/);
+  assert.equal(r.text['dispatch-groups.json'], '{corrupt', 'nothing was filtered or rewritten');
+  assert.ok(r.text['dispatch-shape-gate.err'].includes('JSON'), 'the error file keeps the text the Warning quotes');
+  assert.deepEqual(entriesOf(r, 'not-spec-shaped'), []);
+  assert.equal(r.thrown, null, 'a non-append failure never stops the pull');
+});
+
+test('#5227 target-missing and shipped stops: an unreadable named-targets file stops with the fence line; a shipped append failure stops with the shipped line', () => {
+  const brokenNamed = pull4(FULL(), {
+    allowThrow: true, passes: PASSES.slice(0, 8),
+    before: (ctx) => { fs.mkdirSync(ctx.paths['dispatch-named-targets.json'], { recursive: true }); },
+  });
+  assert.ok(brokenNamed.thrown instanceof QueuePullStopped, String(brokenNamed.thrown));
+  assert.equal(brokenNamed.thrown.line, `${TARGET_STOP}1); see error above.`);
+  assert.ok(brokenNamed.errs.some((e) => e.startsWith('queue-pull: named-targets: ')), brokenNamed.stderr);
+
+  const scenario = FULL();
+  scenario.gh = scenario.gh.map((e) => (e.argv && e.argv[0] === 'pr' ? { ...e, effect: 'corrupt-exclusions' } : e));
+  const shipped = pull4(scenario, { allowThrow: true });
+  assert.ok(shipped.thrown instanceof QueuePullStopped, String(shipped.thrown));
+  assert.equal(shipped.thrown.line, SHIPPED_STOP);
+  assert.ok(shipped.errs.some((e) => /^queue-pull: shipped: appendExclusion: /.test(e)), shipped.stderr);
+  assert.equal(shipped.cap.order.at(-1), 'shipped');
+  assert.deepEqual(shipped.cap.staged.filter((s) => s.id.startsWith('shipped-close-')), [], 'nothing is staged after the stop');
+});
+
+test('#5227 shipped: an empty hooks.js resolve-run-dir answer stages no shipped proposal', () => {
+  const r = pull4(FULL(), { hooksOut: (i, dir) => (i === 0 ? dir : '') });
+  assertShipped(r);
+  assert.equal(r.cap.hooks.length, 2);
+  assert.deepEqual(r.cap.staged.filter((s) => s.id.startsWith('shipped-close-')), []);
+  assert.deepEqual(r.cap.staged.map((s) => s.id), ['dispatch-target-missing-9006', 'dispatch-target-missing-9009'], 'the earlier answer was non-empty, so target-missing still staged');
+  assert.equal(r.text['shipped-close-proposal-9010.md'], undefined, 'no proposal file is written either');
+});
+
+test('#5227 target-missing: an empty first run-dir answer still calls log-decision and stage-item with --run "" (the fence does not guard it)', () => {
+  const r = pull4(FULL(), { hooksOut: () => '' });
+  assert.equal(r.cap.log.length, 2);
+  assert.ok(r.cap.log.every((a) => a[a.indexOf('--run') + 1] === ''));
+  assert.ok(r.cap.staged.every((s) => s.args[1] === ''));
+});
+
+test('#5227 cache hit: the four passes run again over the replayed groups and reach the same reasons', () => {
+  const miss = pull4(FULL());
+  const blob = miss.store.written[0].blob;
+  const hit = pull4(FULL(), { persisted: blob });
+  assert.equal(hit.state.cacheHit, true);
+  for (const reason of ['not-spec-shaped', 'open-pr', 'target-missing', 'shipped']) {
+    assert.deepEqual(entriesOf(hit, reason), entriesOf(miss, reason), reason);
+  }
+  assert.deepEqual(hit.json('dispatch-groups.json'), miss.json('dispatch-groups.json'));
+  assert.deepEqual(hit.cap.staged.map((s) => s.id), miss.cap.staged.map((s) => s.id));
+  assert.deepEqual(hit.cap.order.slice(-4), ['not-spec-shaped', 'open-pr', 'target-missing', 'shipped']);
+});
+
+test('#5227 omit: each Task 4 runner is called under omit and its omission removes only its own entries (every other reason is unchanged)', () => {
+  const reasons = ['not-spec-shaped', 'open-pr', 'target-missing', 'shipped'];
+  const base = pull4(FULL());
+  for (const reason of reasons) {
+    const omitted = pull4(FULL(), { omit: [reason] });
+    assert.ok(omitted.cap.order.includes(reason), `${reason}'s runner still runs`);
+    assert.deepEqual(entriesOf(omitted, reason), [], reason);
+    assert.equal(omitted.store.written.length, 0, 'omit never persists a cache blob');
+    const keepsOthers = reasons.filter((x) => x !== reason && x !== 'shipped' && !(reason === 'not-spec-shaped' && x === 'open-pr') && !(reason === 'open-pr' && x === 'shipped'));
+    for (const other of keepsOthers) assert.deepEqual(entriesOf(omitted, other), entriesOf(base, other), `${reason} omitted, ${other}`);
+  }
+});
+
+test('#5227 oracle cross-check: S1 full gives the oracle the same groups, the four reasons and the staged Close bodies the module yields', { skip: oracleSkip() }, async () => {
+  const oracle = await withEscapeGuard(REPO, () => runOracle(createSandbox(FULL()), FENCE));
+  assert.equal(oracle.status, 0, oracle.stderr);
+  const mine = pull4(FULL());
+  const oracleEntries = JSON.parse(oracle.files['dispatch-exclusions.json']);
+  for (const reason of ['not-spec-shaped', 'open-pr', 'target-missing', 'shipped']) {
+    assert.ok(oracleEntries.some((e) => e.reason === reason), `the oracle yields a ${reason} entry`);
+    assert.deepEqual(entriesOf(mine, reason), oracleEntries.filter((e) => e.reason === reason), reason);
+  }
+  assert.deepEqual(mine.json('dispatch-groups.json'), JSON.parse(oracle.files['dispatch-groups.json']));
+  const bodies = (staged) => Object.fromEntries(Object.entries(staged).map(([name, body]) => [name.replace(/\..*$/, ''), body]));
+  const myBodies = Object.fromEntries(mine.cap.staged.map((s) => [s.id, s.body]));
+  assert.deepEqual(myBodies, bodies(oracle.staged), 'the staged Close bodies match');
+  assert.ok(Object.keys(oracle.staged).some((n) => /^dispatch-target-missing-9009\.qp\d{8}$/.test(n)), `the oracle names the target-missing item after the mktemp suffix: ${Object.keys(oracle.staged)}`);
+  assert.deepEqual(mine.json('dispatch-linked-prs.json'), JSON.parse(oracle.files['dispatch-linked-prs.json']));
+  assert.deepEqual(mine.json('dispatch-shipped-probe-prs.json'), JSON.parse(oracle.files['dispatch-shipped-probe-prs.json']));
+  assert.equal(mine.text['dispatch-shipped-pr-files.jsonl'], oracle.files['dispatch-shipped-pr-files.jsonl']);
+  assert.equal(mine.text['dispatch-named-targets.json'], oracle.files['dispatch-named-targets.json']);
 });

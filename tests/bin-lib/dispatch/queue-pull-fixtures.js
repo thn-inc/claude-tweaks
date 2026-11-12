@@ -117,6 +117,14 @@ function shimTable(scenario) {
   };
 }
 
+// The files a scenario's origin holds on `branch` (the sandbox's own seed: main always carries
+// README.md and .gitignore), or null when origin has no such branch.
+function originBranchFiles(scenario, branch) {
+  const spec = (scenario.origin && scenario.origin.branches) || {};
+  if (branch === 'main') return { 'README.md': 'fixture\n', '.gitignore': '.claude-tweaks/pipelines/\n', ...(spec.main || {}) };
+  return Object.prototype.hasOwnProperty.call(spec, branch) ? spec[branch] : null;
+}
+
 function fakeFailure(args, answer) {
   const err = new Error(`gh ${args.join(' ')} exited ${answer.status}`);
   Object.assign(err, { status: answer.status, stdout: answer.stdout, stderr: answer.stderr });
@@ -141,6 +149,16 @@ function fakeRun(scenario, { sessionDir } = {}) {
         throw fakeFailure(args, { status: 128, stdout: '', stderr: `git-shim: injected failure: ${sub.join(' ')}\n` });
       }
       if (isGetUrlOrigin(sub)) return table.git.remoteUrl + '\n';
+      if (sub.length === 3 && sub[0] === 'remote' && sub[1] === 'show' && sub[2] === 'origin') {
+        return `* remote origin\n  Fetch URL: ${table.git.remoteUrl}\n  HEAD branch: ${scenario.headBranch || 'main'}\n`;
+      }
+      if (sub.length === 3 && sub[0] === 'cat-file' && sub[1] === '-e') {
+        const colon = sub[2].indexOf(':');
+        const ref = sub[2].slice(0, colon);
+        const files = originBranchFiles(scenario, ref.replace(/^origin\//, ''));
+        if (files && Object.prototype.hasOwnProperty.call(files, sub[2].slice(colon + 1))) return '';
+        throw fakeFailure(args, { status: 128, stdout: '', stderr: `fatal: path '${sub[2].slice(colon + 1)}' does not exist in '${ref}'\n` });
+      }
     }
     throw new Error(`unexpected ${cmd} ${args.join(' ')}`);
   };
@@ -192,8 +210,39 @@ function S0() {
 
 // The scenario's non-queue answers: everything the rest of the fence asks for over a queue of
 // `numbers` that all survive to the open-PR pass.
-function tailGh(numbers) {
-  const aliases = Object.fromEntries(numbers.map((n) => [`i${n}`, { number: n, state: 'OPEN', closedByPullRequestsReferences: { nodes: [] }, timelineItems: { nodes: [] } }]));
+const REPO_SLUG = 'fixture-owner/fixture-repo';
+
+// A linked-PR GraphQL node (the oracle's gh table) for record `n`; `spec` is scenario.linked[n]:
+// { openPR, mentions: [{ number, title, merged, mergedAt, createdAt }] }.
+function linkedNode(n, spec = {}) {
+  const mentions = spec.mentions || [];
+  return {
+    number: n,
+    state: 'OPEN',
+    closedByPullRequestsReferences: { nodes: spec.openPR ? [{ number: spec.openPR, state: 'OPEN' }] : [] },
+    timelineItems: { nodes: mentions.map((m) => ({ source: {
+      number: m.number, title: m.title, state: m.merged ? 'MERGED' : 'OPEN', merged: m.merged, mergedAt: m.mergedAt || null, createdAt: m.createdAt || null, repository: { nameWithOwner: REPO_SLUG },
+    } })) },
+  };
+}
+
+// What bin/resolve-linked-prs.js prints for `numbers` over scenario.linked: openPR, mentions and
+// hasClosingPRReference only (the CLI drops fetchLinkedPRs' issueState).
+function linkedOutput(linked, numbers) {
+  const out = {};
+  for (const n of numbers) {
+    const spec = (linked || {})[n] || {};
+    out[n] = {
+      openPR: spec.openPR || null,
+      mentions: (spec.mentions || []).map((m) => ({ number: m.number, title: m.title, state: m.merged ? 'MERGED' : 'OPEN', merged: !!m.merged, mergedAt: m.mergedAt || null, createdAt: m.createdAt || null })),
+      hasClosingPRReference: Boolean(spec.openPR),
+    };
+  }
+  return out;
+}
+
+function tailGh(numbers, linked = {}) {
+  const aliases = Object.fromEntries(numbers.map((n) => [`i${n}`, linkedNode(n, linked[n])]));
   return [
     { argv: ['--version'], stdout: 'gh version 2.99.0 (qp-shim)\n' },
     { graphql: 'linked', aliases },
@@ -209,21 +258,66 @@ const withBody = (n, extra) => SPEC_BODY.replace('plugin/bin/oracle-fixture.js',
 
 // S1: #9001 and #9003 plain; #9002 declares `Blocked by #8000` and #8000 is open, so the blocked
 // pass holds it. Body-text repo, default guard and bundle cap.
-function S1() {
+//
+// S1({ full: true }) adds the spec-shape, open-PR, target-missing and shipped candidates (the
+// Task 4 passes). Each qualifies for the passes its comment names; the first pass to run wins:
+//   #9004 docs-health, not spec-shaped (no sections), and also: open PR #78, named target
+//         docs/gone4.md absent, strong shipped mention  -> only not-spec-shaped
+//   #9005 open PR #79 and a strong shipped mention        -> only open-pr
+//   #9006 docs-health, named target docs/gone6.md absent and a strong mention -> only target-missing
+//   #9007 spec body without Acceptance Criteria           -> not-spec-shaped
+//   #9008 open PR #77                                     -> open-pr
+//   #9009 docs-health, named target docs/gone.md absent   -> target-missing (+ staged Close proposal)
+//   #9010 strong mention (title match)                    -> shipped (+ staged Close proposal)
+//   #9016 weak mention (unrelated title, probed files miss) -> stays, weak AUTO line
+const MERGED_AT = '2026-11-06T10:00:00Z';
+const PR_OPENED_AT = '2026-11-05T10:00:00Z';
+const mention = (number, title) => ({ number, title, merged: true, mergedAt: MERGED_AT, createdAt: PR_OPENED_AT });
+const WEAK_PR_FILES = ['plugin/bin/unrelated.js'];
+
+function S1({ full = false } = {}) {
+  const docsHealth = ['auto:build', 'ready', 'by:docs-health'];
+  const header = (doc) => `**Doc:** ${doc} | **Section:** fixture\n\n`;
   const records = [
     ghRecord(9001, { body: withBody(9001) }),
     ghRecord(9002, { body: `Blocked by #8000\n\n${withBody(9002)}` }),
     ghRecord(9003, { body: withBody(9003) }),
   ];
+  const linked = {};
+  const survivors = [9001, 9003];
+  if (full) {
+    records.push(
+      ghRecord(9004, { body: `${header('docs/gone4.md')}No spec sections in this body.\n`, labels: docsHealth }),
+      ghRecord(9005, { body: withBody(9005) }),
+      ghRecord(9006, { body: header('docs/gone6.md') + withBody(9006), labels: docsHealth }),
+      ghRecord(9007, { body: withBody(9007).replace(/## Acceptance Criteria\n\n- \[ \] Fixture criterion\.\n\n/, '') }),
+      ghRecord(9008, { body: withBody(9008) }),
+      ghRecord(9009, { body: header('docs/gone.md') + withBody(9009), labels: docsHealth }),
+      ghRecord(9010, { body: withBody(9010) }),
+      ghRecord(9016, { body: withBody(9016) }),
+    );
+    Object.assign(linked, {
+      9004: { openPR: 78, mentions: [mention(5004, 'Fixture record 9004')] },
+      9005: { openPR: 79, mentions: [mention(5005, 'Fixture record 9005')] },
+      9006: { mentions: [mention(5006, 'Fixture record 9006')] },
+      9008: { openPR: 77 },
+      9010: { mentions: [mention(5010, 'Fixture record 9010')] },
+      9016: { mentions: [mention(5016, 'Unrelated cleanup of the build output')] },
+    });
+    survivors.push(9004, 9005, 9006, 9007, 9008, 9009, 9010, 9016);
+  }
+  const openNumbers = [...records.map((r) => r.number), 8000].map((number) => ({ number }));
   return {
     name: 'S1',
     policy: { 'work-links': 'body-text' },
     origin: { branches: { main: {} } },
+    linked,
     gh: [
       { argv: QUEUE_ARGV, stdout: JSON.stringify(records) + '\n' },
-      { argv: ['issue', 'list', '--state', 'open', '--json', 'number', '--limit', '200'], stdout: '[{"number":9001},{"number":9002},{"number":9003},{"number":8000}]\n' },
+      { argv: ['issue', 'list', '--state', 'open', '--json', 'number', '--limit', '200'], stdout: JSON.stringify(openNumbers) + '\n' },
       { argv: DEP_SEARCH_8000, stdout: '[{"number":8000,"updatedAt":"2026-11-09T10:00:00Z","state":"OPEN"}]\n' },
-      ...tailGh([9001, 9003]),
+      ...(full ? [{ argv: ['pr', 'view', '5016', '--json', 'files', '-q', '[.files[].path]'], stdout: JSON.stringify(WEAK_PR_FILES) + '\n' }] : []),
+      ...tailGh(survivors, linked),
     ],
   };
 }
@@ -261,6 +355,9 @@ function fakeSpawnCli(scenario, overrides = {}) {
       const value = (scenario.policy || {})[key];
       return { status: 0, stdout: `${value === undefined ? '' : value}\n`, stderr: '' };
     }
+    if (name === 'resolve-linked-prs.js') {
+      return { status: 0, stdout: JSON.stringify(linkedOutput(scenario.linked, args[0].split(',').map(Number))) + '\n', stderr: '' };
+    }
     throw new Error(`unexpected spawnCli ${name} ${args.join(' ')}`);
   };
   spawnCli.calls = calls;
@@ -270,4 +367,5 @@ function fakeSpawnCli(scenario, overrides = {}) {
 module.exports = {
   DEFAULT_REMOTE_URL, GRAPHQL_KINDS, ghAnswer, applyEffect, gitSubArgv, gitFailMatch, isGetUrlOrigin, shimTable, fakeRun,
   ghLabel, ghRecord, SPEC_BODY, QUEUE_ARGV, DEP_SEARCH_8000, withBody, S0, S1, SFast, fakeSpawnCli,
+  REPO_SLUG, linkedNode, linkedOutput, mention, WEAK_PR_FILES, tailGh,
 };
