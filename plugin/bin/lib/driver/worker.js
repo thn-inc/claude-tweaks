@@ -129,7 +129,7 @@ const path = require('path');
 const crypto = require('crypto');
 const cp = require('node:child_process');
 const { launchSpec } = require('../impeccable-engine');
-const { isAncestorOrSelf, resolveLeaf } = require('../path-guard');
+const { isAncestorOrSelf, resolveTarget } = require('../path-guard');
 const { ROLES, RESULT_SCHEMA, implementerSettings, composeArgs, assertSpendCeiling } = require('./roles');
 
 // One string, split: tests/git-status-optional-locks.test.js reads an array literal
@@ -297,23 +297,15 @@ function writeExclusive(file, text, written) {
   }
 }
 
-// The canonical form of an absolute path (path-guard): its nearest existing ancestor
-// resolved, with the parts not yet created re-appended. Throws when a part exists but
-// cannot be resolved (a dangling link, an unreadable directory), so the containment
-// check fails closed.
+// The canonical form of an absolute path (path-guard's resolveTarget). Throws when a
+// part exists but cannot be resolved (a dangling link, an unreadable directory), so the
+// containment check fails closed.
 function canonicalTarget(p, name) {
-  const missing = [];
-  let current = p;
-  for (;;) {
-    const leaf = resolveLeaf(current);
-    if (leaf.state === 'resolved') return path.join(leaf.path, ...missing.reverse());
-    const parent = path.dirname(current);
-    if (leaf.state !== 'missing' || parent === current) {
-      throw new Error(name + ' cannot be resolved (' + leaf.state + (leaf.code ? ' ' + leaf.code : '') + '): ' + current);
-    }
-    missing.push(path.basename(current));
-    current = parent;
+  const target = resolveTarget(p);
+  if (target.state !== 'resolved') {
+    throw new Error(name + ' cannot be resolved (' + target.state + (target.code ? ' ' + target.code : '') + '): ' + p);
   }
+  return target.path;
 }
 
 // Waits for the child to exit, enforcing the wall-clock ceiling (see the header). Every
