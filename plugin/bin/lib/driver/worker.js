@@ -34,8 +34,7 @@
 // translation added. `platform` is the launch's own platform, so a runner never
 // consults the host's. The prompt is passed as `input`, to be written to the child's
 // standard input; it is never on the argument list. A runner that cannot start the
-// child rejects `exited` (or throws) with the spawn error. `ceilings.wallClockMs` is
-// accepted here and acted on by the runner side, not by this function.
+// child rejects `exited` (or throws) with the spawn error.
 //
 // What the launch rests on. These facts were probed on 2026-11-12 with Claude Code CLI
 // 2.1.322 on macOS (darwin), under a subscription login, with the model alias
@@ -43,7 +42,8 @@
 //
 // - Result shape. `--output-format json` prints one object with `type: "result"`. The
 //   fields read here are `subtype` (`"success"`), `is_error`, `num_turns`,
-//   `total_cost_usd`, `usage`, `permission_denials` (an array of `{ tool_name,
+//   `total_cost_usd`, `usage` (holding `input_tokens`, `cache_creation_input_tokens`,
+//   `cache_read_input_tokens` and `output_tokens`), `permission_denials` (an array of `{ tool_name,
 //   tool_use_id, tool_input }`), `result` (a string) and, when `--json-schema` is
 //   passed, `structured_output`.
 // - Spend ceiling. `--max-budget-usd` takes effect under subscription login. With a
@@ -59,9 +59,7 @@
 // - Hooks. A default launch ran the plugin's SessionStart hook, which created a
 //   directory in the working directory; adding `--safe-mode` stopped that.
 // - Environment. `PATH`, `HOME` and `USER` were the minimum that launched logged in.
-//   `CLAUDE_CONFIG_DIR` is passed through as well, because it selects the login:
-//   without it the worker used the default configuration directory's login instead of
-//   the launching session's.
+//   `CLAUDE_CONFIG_DIR` is passed through as well, because it selects the login.
 //
 // Per-launch files live under the caller's settings directory, with the process id, a
 // counter and random hex in their names, are written exclusively with mode 0600, and
@@ -101,24 +99,31 @@ function isPlainObject(v) {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
 }
 
-// A validator for the small JSON Schema subset the worker result schema uses. A
-// keyword outside that subset throws, so a schema can never be half-checked.
-function conformsTo(schema, value) {
+// Throws, naming the keyword, when a schema or any schema nested under `properties`
+// uses something outside the subset `conformsTo` handles.
+function assertSupportedSchema(schema) {
+  if (!isPlainObject(schema)) throw new Error('schema must be an object');
   for (const keyword of Object.keys(schema)) {
     if (!SCHEMA_KEYWORDS.includes(keyword)) throw new Error('unsupported schema keyword: ' + keyword);
   }
   if (schema.additionalProperties !== undefined && typeof schema.additionalProperties !== 'boolean') {
     throw new Error('unsupported schema keyword: additionalProperties (only a boolean is handled)');
   }
-  if (schema.type !== undefined) {
-    if (schema.type === 'object') {
-      if (!isPlainObject(value)) return false;
-    } else if (schema.type === 'string') {
-      if (typeof value !== 'string') return false;
-    } else {
-      throw new Error('unsupported schema keyword: type ' + JSON.stringify(schema.type));
-    }
+  if (schema.type !== undefined && schema.type !== 'object' && schema.type !== 'string') {
+    throw new Error('unsupported schema keyword: type ' + JSON.stringify(schema.type));
   }
+  if (schema.properties !== undefined) {
+    if (!isPlainObject(schema.properties)) throw new Error('unsupported schema keyword: properties (must be an object)');
+    for (const key of Object.keys(schema.properties)) assertSupportedSchema(schema.properties[key]);
+  }
+}
+
+// A validator for the small JSON Schema subset the worker result schema uses. A
+// keyword outside that subset throws, so a schema can never be half-checked.
+function conformsTo(schema, value) {
+  assertSupportedSchema(schema);
+  if (schema.type === 'object' && !isPlainObject(value)) return false;
+  if (schema.type === 'string' && typeof value !== 'string') return false;
   if (schema.enum !== undefined && !schema.enum.includes(value)) return false;
   if (schema.required !== undefined) {
     if (!isPlainObject(value)) return false;
@@ -169,7 +174,7 @@ function classify({ timedOut, spawnError, code, signal, stdout, stderr }, { sche
     result: okResult === undefined ? null : okResult,
     usage: obj && obj.usage !== undefined ? obj.usage : null,
     turns: obj && obj.num_turns !== undefined ? obj.num_turns : null,
-    denials: obj && obj.permission_denials !== undefined ? obj.permission_denials : [],
+    denials: obj && Array.isArray(obj.permission_denials) ? obj.permission_denials : [],
     spendOverrun: obj !== null && typeof spendCeiling === 'number' && cost !== null && cost > spendCeiling,
     costUsd: cost,
     detail,
@@ -210,6 +215,7 @@ async function launchWorker(opts, deps) {
   if (spendCeiling !== undefined && !(typeof spendCeiling === 'number' && Number.isFinite(spendCeiling) && spendCeiling > 0)) {
     throw new RangeError('ceilings.spendCeiling must be a finite number above zero, got ' + String(spendCeiling));
   }
+  assertSupportedSchema(schema);
   const spec = Object.prototype.hasOwnProperty.call(ROLES, role) ? ROLES[role] : undefined;
   if (!spec) throw new Error('unknown role: ' + String(role));
   const settingsText = spec.settings ? JSON.stringify(implementerSettings({ testCommand, platform }), null, 2) : null;
@@ -223,13 +229,13 @@ async function launchWorker(opts, deps) {
     let appendPromptFile;
     if (settingsText !== null) {
       settingsFile = stem + '.settings.json';
-      written.push(settingsFile);
       fs.writeFileSync(settingsFile, settingsText, { flag: 'wx', mode: 0o600 });
+      written.push(settingsFile);
     }
     if (withAppend) {
       appendPromptFile = stem + '.append.md';
-      written.push(appendPromptFile);
       fs.writeFileSync(appendPromptFile, claudeMdText, { flag: 'wx', mode: 0o600 });
+      written.push(appendPromptFile);
     }
     const args = composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeiling, model });
     const childEnv = buildEnv(env, platform);
@@ -243,7 +249,13 @@ async function launchWorker(opts, deps) {
     }
     return classify(outcome, { schema, spendCeiling });
   } finally {
-    for (const file of written) fs.rmSync(file, { force: true });
+    for (const file of written) {
+      try {
+        fs.rmSync(file, { force: true });
+      } catch {
+        // A removal that fails never changes the outcome and never stops the next one.
+      }
+    }
   }
 }
 

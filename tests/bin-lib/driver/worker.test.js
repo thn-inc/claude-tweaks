@@ -158,7 +158,13 @@ test('AC10: the runner receives only allow-listed environment names', async (t) 
   const { runner, calls } = fakeRunner(okOut());
   const env = { PATH: '/bin', HOME: '/h', USER: 'u', TMPDIR: '/t', LANG: 'C', CLAUDE_CONFIG_DIR: '/c', PIPELINE_RUN_DIR: '/r', CLAUDE_CODE_SESSION_ID: 's', GH_TOKEN: 'g', GITHUB_TOKEN: 'g2', SECRET: 'x' };
   await launchWorker(base(t, { env }), { runner });
-  assert.deepStrictEqual(Object.keys(calls[0].options.env).sort(), [...ENV_ALLOW].sort());
+  assert.deepStrictEqual(Object.keys(calls[0].options.env).sort(), ['CLAUDE_CONFIG_DIR', 'HOME', 'LANG', 'PATH', 'TMPDIR', 'USER']);
+  for (const name of ['PIPELINE_RUN_DIR', 'CLAUDE_CODE_SESSION_ID', 'GH_TOKEN', 'GITHUB_TOKEN']) assert.ok(!(name in calls[0].options.env), name);
+});
+
+test('AC10: the allow lists are pinned', () => {
+  assert.deepStrictEqual(ENV_ALLOW, ['PATH', 'HOME', 'USER', 'TMPDIR', 'LANG', 'CLAUDE_CONFIG_DIR']);
+  assert.deepStrictEqual(ENV_ALLOW_WIN32, ['PATH', 'HOME', 'USER', 'TMPDIR', 'LANG', 'CLAUDE_CONFIG_DIR', 'USERPROFILE', 'USERNAME', 'APPDATA', 'LOCALAPPDATA', 'SystemRoot', 'ComSpec', 'PATHEXT', 'TEMP', 'TMP']);
 });
 
 test('AC10: on win32 the allow list matches names case-insensitively and keeps the stored spelling', () => {
@@ -206,6 +212,71 @@ test('reviewer launches write no settings file', async (t) => {
   await launchWorker(base(t, { role: 'reviewer' }), { runner });
   assert.ok(!calls[0].args.includes('--settings'));
   assert.ok(!('--settings' in calls[0].files));
+});
+
+test('Review focus: a schema with an unsupported keyword is refused before anything is written', async (t) => {
+  const { runner, calls } = fakeRunner(okOut());
+  const opts = base(t, { schema: { type: 'object', patternProperties: {} } });
+  await assert.rejects(launchWorker(opts, { runner }), /patternProperties/);
+  assert.strictEqual(calls.length, 0);
+  assert.deepStrictEqual(fs.readdirSync(opts.settingsDir), []);
+  const nested = base(t, { schema: { type: 'object', properties: { a: { type: 'string', pattern: 'x' } } } });
+  await assert.rejects(launchWorker(nested, { runner }), /pattern/);
+  assert.strictEqual(calls.length, 0);
+});
+
+test('Review focus: a null or absent permission_denials gives an empty denials list', async (t) => {
+  const absent = { ...OK };
+  delete absent.permission_denials;
+  for (const stdout of [JSON.stringify({ ...OK, permission_denials: null }), JSON.stringify(absent)]) {
+    const { runner } = fakeRunner({ code: 0, stdout });
+    const env = await launchWorker(base(t), { runner });
+    assert.strictEqual(env.status, 'ok');
+    assert.deepStrictEqual(env.denials, []);
+  }
+});
+
+test('Review focus: a zero exit with an error result is fail/exit', async (t) => {
+  for (const over of [{ subtype: 'error_during_execution' }, { is_error: true }]) {
+    const { runner } = fakeRunner(okOut(over));
+    const env = await launchWorker(base(t), { runner });
+    assert.strictEqual(env.status, 'fail', JSON.stringify(over));
+    assert.strictEqual(env.reason, 'exit', JSON.stringify(over));
+    assert.strictEqual(env.result, null);
+  }
+});
+
+test('Review focus: a removal that fails neither replaces the envelope nor skips the other file', async (t) => {
+  const settingsDir = tmp(t);
+  const okRunner = fakeRunner(okOut()).runner;
+  const runner = (call) => {
+    const handle = okRunner(call);
+    const settingsPath = call.args[call.args.indexOf('--settings') + 1];
+    fs.rmSync(settingsPath, { force: true });
+    fs.mkdirSync(path.join(settingsPath, 'child'), { recursive: true });
+    fs.writeFileSync(path.join(settingsPath, 'child', 'f'), 'x');
+    return handle;
+  };
+  const env = await launchWorker(base(t, { settingsDir, claudeMdText: 'project rules' }), { runner });
+  assert.strictEqual(env.status, 'ok');
+  assert.deepStrictEqual(fs.readdirSync(settingsDir).filter((n) => n.endsWith('.append.md')), []);
+});
+
+test('Review focus: a name collision never removes the other file', async (t) => {
+  const { runner, calls } = fakeRunner(okOut());
+  const settingsDir = tmp(t);
+  const original = fs.writeFileSync;
+  const collision = Object.assign(new Error('file already exists'), { code: 'EEXIST' });
+  const mock = t.mock.method(fs, 'writeFileSync', (file, ...rest) => {
+    original(file, 'foreign');
+    throw collision;
+  }, { times: 1 });
+  await assert.rejects(launchWorker(base(t, { settingsDir }), { runner }), (err) => err === collision);
+  mock.mock.restore();
+  assert.strictEqual(calls.length, 0);
+  const files = fs.readdirSync(settingsDir);
+  assert.strictEqual(files.length, 1);
+  assert.strictEqual(fs.readFileSync(path.join(settingsDir, files[0]), 'utf8'), 'foreign');
 });
 
 test('conformsTo covers the schema subset and refuses the rest', () => {
