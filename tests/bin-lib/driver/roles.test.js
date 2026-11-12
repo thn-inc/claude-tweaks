@@ -149,7 +149,7 @@ test('Task 0 fixtures carry the field names the launcher reads', () => {
   assert.ok(!('structured_output' in budget));
 });
 
-test('AC2.1, AC3.1: the implementer tool list per platform is what the Grep/Glob probe supports (#5239)', () => {
+test('#5239 AC2, AC3: off darwin the implementer keeps Read, Write, Edit — Grep and Glob stay off until Linux and Windows hosts are probed', () => {
   assert.deepStrictEqual(toolsFor('implementer', 'darwin'), ['Read', 'Write', 'Edit', 'Bash']);
   for (const platform of ['linux', 'win32']) {
     assert.deepStrictEqual(toolsFor('implementer', platform), ['Read', 'Write', 'Edit'], platform);
