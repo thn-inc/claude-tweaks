@@ -346,7 +346,7 @@ test('pruneRemote: branch attached to a live worktree is silently out of scope',
 // Reassigning `gitExec.runGit` afterward only changes what a fresh
 // `require('../hooks/git-exec').runGit` property lookup returns — the
 // already-bound local `runGit` inside prune-remote.js keeps pointing at the
-// original function (see tests/reconcile.test.js's identical note on
+// original function (see tests/reconcile-preflight-fetch.test.js's identical note on
 // classify.js/shared-fetch.js, #820 D2). Intercept at the process-spawn
 // boundary instead: a `git` wrapper placed first on PATH.
 function installPushWrapper(failMultiBranch) {
@@ -516,7 +516,7 @@ test('index: pr-first repo with a working remote actually reaches the remote-pru
   // 2s timeout; that live network call flaked in CI (observed failures at
   // ~2051ms, right at the ceiling), skipping the remote-prune dispatch and
   // leaving remoteBranches null regardless of this fixture. Stub it the
-  // same way tests/reconcile.test.js does throughout, so this test only
+  // same way the tests/reconcile*.test.js suites do throughout, so this test only
   // discriminates on the dispatch block itself.
   const preflight = require('../../../plugin/bin/lib/reconcile/preflight');
   const originalHealth = preflight.ghHealthCheck;

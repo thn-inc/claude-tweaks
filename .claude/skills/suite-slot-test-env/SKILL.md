@@ -15,7 +15,7 @@ Build the child env with `slotEnv(dir, extra)` from `tests/helpers/suite-slot-en
 - points `CT_TEST_SUITE_SLOT_DIR` at the test's own temp `dir`, never the shared `<tmpdir>/ct-test-suite-slots`;
 - applies `extra` last, so a test of the nested-run path passes `slotEnv(dir, { CT_TEST_SUITE_SLOT_HELD: '1' })` and still gets a private lock dir.
 
-The `#5119` block in `tests/bin-lib/verify/cli.test.js` is the worked example; `ci-cli.test.js` and `impact-cli.test.js` use the same helper. An in-process `holdSlot` test passes an explicit `env` object, never `process.env` (`hold` in `tests/bin-lib/verify/slot.test.js`). `withSandbox` in `tests/run-tests-isolation.test.js` predates the helper and strips the same keys inline for `tools/run-tests.js` children.
+The `#5119` tests in `tests/bin-lib/verify/cli-slot.test.js`, `cli-slot-queue.test.js` and `cli-slot-signals.test.js` are the worked example; `ci-cli.test.js` and `impact-cli.test.js` use the same helper. An in-process `holdSlot` test passes an explicit `env` object, never `process.env` (`hold` in `tests/bin-lib/verify/slot.test.js`). `withSandbox` in `tests/run-tests-isolation.test.js` predates the helper and strips the same keys inline for `tools/run-tests.js` children.
 
 ## Every other spawn helper defaults to HELD=1
 
