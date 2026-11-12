@@ -2386,6 +2386,11 @@ test('AC9.2: a malformed invocation exits 1, prints USAGE on stderr, and touches
   }
 });
 
+test('#5227 CLI: the priority vocabulary renders as high|medium|low in USAGE and "high, medium or low" in the --priority error', () => {
+  assert.match(cli.USAGE, /^ {2}queue-pull\.js --rank \[--priority high\|medium\|low\]$/m);
+  assert.deepEqual(cli.parseArgs(['--rank', '--priority', 'urgent']), { error: '--priority must be high, medium or low, got: urgent' });
+});
+
 test('AC9.2: a well-formed invocation is not mistaken for a malformed one (control)', () => {
   assert.deepEqual(cli.parseArgs(['--transport', 'files', '--queue-raw', 'q.json', '--foreign-states', 'f.json']),
     { mode: 'pull', transport: 'files', priority: null, inputs: { queueRaw: 'q.json', foreignStates: 'f.json' } });

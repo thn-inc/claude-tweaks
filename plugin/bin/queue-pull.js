@@ -58,10 +58,14 @@ const path = require('node:path');
 
 const EXIT = { OK: 0, USAGE: 1, MISSING_DEPENDENCY: 2, REMOTE_FAILED: 3, STOPPED: 4 };
 
+const { PRIORITIES } = require('./lib/issues/record-vocabulary'); // pure; safe before --help
+// 'high, medium or low'
+const PRIORITY_LIST = `${PRIORITIES.slice(0, -1).join(', ')} or ${PRIORITIES[PRIORITIES.length - 1]}`;
+
 const USAGE = `usage:
   queue-pull.js --transport gh|files [--queue-raw <p>] [--dep-freshness <p>] [--open-numbers <p>]
                 [--verified-open-deps <p>] [--in-flight-raw <p>] [--in-flight-claims <p>] [--foreign-states <p>]
-  queue-pull.js --rank [--priority high|medium|low]
+  queue-pull.js --rank [--priority ${PRIORITIES.join('|')}]
   queue-pull.js --help
 --transport gh pulls through gh; --transport files reads the files the agent fetched through MCP
 (the input-path flags, valid only with it, default to the session-scoped paths). --rank picks the
@@ -76,7 +80,6 @@ exit codes:
 `;
 
 const TRANSPORTS = ['files', 'gh'];
-const { PRIORITIES } = require('./lib/issues/record-vocabulary'); // pure; safe before --help
 // flag -> key of the module's options.inputs
 const INPUT_FLAGS = {
   '--queue-raw': 'queueRaw',
@@ -111,7 +114,7 @@ function parseArgs(argv) {
       if (!TRANSPORTS.includes(value)) return { error: `--transport must be gh or files, got: ${value}` };
       out.transport = value;
     } else if (arg === '--priority') {
-      if (!PRIORITIES.includes(value)) return { error: `--priority must be high, medium or low, got: ${value}` };
+      if (!PRIORITIES.includes(value)) return { error: `--priority must be ${PRIORITY_LIST}, got: ${value}` };
       out.priority = value;
     } else {
       out.inputs[INPUT_FLAGS[arg]] = value;
