@@ -22,13 +22,24 @@
 // ASSUMPTION (spec #5218, Gotchas) — answered at build: a fresh unlocked worktree IS reap-eligible: bin/lib/hooks/worktree-reap.js reaps a `free` (unlocked) worktree under .claude/worktrees/ whose branch is merged into, or content-identical with, the integration branch and that holds no local-only content, which a new one cut from the integration branch is until the worker's first write. The driver therefore creates its worktree locked, with its own pid in the lock reason (steps.js, the worktree step), so the lock reads `in-use` while the driver lives. The reaper's 24h grace applies only to an `orphaned` verdict (the driver's pid is dead and the lock is still present). A cleared lock reads `free`, with no grace: a tree still content-identical with the integration branch and holding no local-only content is reaped at the next SessionStart. Unchanged: reconcile/archive-merged.js only counts ownerless runs (countOwnerlessNonClean); tidy/scan-procedures.md keeps unmerged worktrees and acts only after its Step 6 approval.
 //
 // Interrupts (AC14 F1, the spec's Plan Review Clarification, Reading B). run() subscribes
-// once through deps.onSignal and unsubscribes before it resolves. On SIGINT or SIGTERM the
-// handler, for the record being driven (shared.current): signals the running worker's
-// handle (shared.activeWorker, whose kill reaches the worker's process group on POSIX),
-// emits a `fail` event for the running step with detail `interrupted by {signal}`, emits
-// the record's final line with that step's own stop class (ctx.currentStopClass, which
-// defineStep records), and then calls deps.terminate(signal). With no record running it
-// only calls terminate. Nothing further is driven or emitted after an interrupt.
+// once through deps.onSignal and unsubscribes before it resolves. Node delivers a signal
+// only when the event loop turns, and the steps before the worker make only synchronous
+// calls, so the loop yields to the event loop (setImmediate) before every step. On SIGINT
+// or SIGTERM the handler sets shared.interrupted to the signal and signals the running
+// worker's handle if there is one (shared.activeWorker, whose kill reaches the worker's
+// process group on POSIX). Then:
+//   - inside a step that is awaiting (the worker): at once, a `fail` event for that step
+//     with detail `interrupted by {signal}`, the record's final line, deps.terminate(signal);
+//   - between steps: driveRecord, at the next boundary, emits a `fail` event for the step
+//     about to start with detail `interrupted by {signal} before {step}`, the final line,
+//     and deps.terminate(signal);
+//   - with no record running, or before a record's first step: deps.terminate only.
+// The stop class (interruptClass) is `blocked` once the branch is pushed, else `pre-push`
+// once the run directory exists, else that step's own class (its table entry's
+// stopClass): class refused before the claim, class claim from the claim to the mint.
+// Nothing further is driven or emitted after an interrupt. deps.terminate re-raises the
+// signal only once stdout has taken the queued lines (reraiseAfterFlush), so stdout and the
+// jsonl end alike.
 const fs = require('fs');
 const { execFileSync, spawnSync } = require('child_process');
 const { createEventSink, outcomeFor, FINAL_STEP, STOP_CLASSES } = require('./events');
@@ -75,10 +86,12 @@ function parseArgs(argv) {
   return { records };
 }
 
-// `current` is the record being driven, `{ ctx, sink, started, stepStarted, final }`, set
-// for the length of one driveRecord and cleared after it, so a signal handler can reach
-// that record's context, event sink and clocks, and leave the final line it wrote in
-// `final`. `interrupted` is set once by that handler.
+// `current` is the record being driven, `{ ctx, sink, started, step, inStep, stepStarted,
+// final }`, set for the length of one driveRecord and cleared after it, so the signal
+// handler can reach that record's context, event sink and clocks: `step` is the table
+// entry running or last run (null before the first), `inStep` is true while it is pending,
+// and `final` holds the final line an interrupt wrote. `interrupted` is the signal's name
+// once the handler has run, else false.
 function newShared() {
   return { policy: null, ref: null, mainRoot: null, repo: null, fatal: false, activeWorker: null, current: null, interrupted: false };
 }
@@ -143,11 +156,43 @@ function finalEvent(ctx, stop, sink, msTotal, deps) {
   return event;
 }
 
-// One record through the table; returns its final event. `steps` is a test seam.
+// Lets the event loop deliver a pending signal before the next step: every step before the
+// worker makes only synchronous calls, and an await that settles on microtasks alone never
+// turns the loop, so without this a SIGINT during the claim would wait for the worker.
+function yieldToEventLoop() {
+  return new Promise((resolve) => { setImmediate(resolve); });
+}
+
+// An interrupted record's stop class: `blocked` once the branch is pushed, `pre-push` once
+// the run directory exists (an escalation has somewhere to live), else the step's own.
+function interruptClass(ctx, stepClass) {
+  if (ctx.pushed === true) return STOP_CLASSES.BLOCKED;
+  if (ctx.runDir) return STOP_CLASSES.PRE_PUSH;
+  return stepClass;
+}
+
+// Writes an interrupted record's stop at `step` and its final line, then terminates. The
+// process ends by the signal whatever the emission does.
+function reportInterrupt(shared, current, step, detail, ms, deps) {
+  const { ctx, sink } = current;
+  try {
+    // A step that set ctx.runDir may not have had its sink bound yet; binding twice is harmless.
+    if (ctx.runDir) sink.bindRunDir(ctx.runDir);
+    const result = { status: 'fail', detail, halt: true, stopClass: interruptClass(ctx, step.stopClass), reason: 'fail', extra: {} };
+    sink.emit(eventFor(ctx, step.name, result, ms, deps));
+    current.final = finalEvent(ctx, { name: step.name, result }, sink, deps.now() - current.started, deps);
+    sink.emit(current.final);
+  } finally {
+    deps.terminate(shared.interrupted);
+  }
+}
+
+// One record through the table; returns its final event (null when an interrupt landed
+// before its first step). `steps` is a test seam.
 async function driveRecord(record, shared, deps, steps = STEPS) {
   const sink = createEventSink({ stdout: deps.stdout, appendFile: deps.appendFile });
   const ctx = newCtx(record, shared);
-  const current = { ctx, sink, started: null, stepStarted: null, final: null };
+  const current = { ctx, sink, started: null, step: null, inStep: false, stepStarted: null, final: null };
   shared.current = current;
   try {
     const started = deps.now();
@@ -155,10 +200,26 @@ async function driveRecord(record, shared, deps, steps = STEPS) {
     let bound = false;
     let stop = null;
     for (const step of steps) {
+      await yieldToEventLoop();
+      if (shared.interrupted) {
+        // Before the first step the handler has already terminated; after one, the
+        // interrupt is reported at the step about to start.
+        if (current.step !== null) {
+          reportInterrupt(shared, current, step, `interrupted by ${shared.interrupted} before ${step.name}`, 0, deps);
+        }
+        return current.final;
+      }
       const t0 = deps.now();
+      current.step = step;
       current.stepStarted = t0;
-      const result = await step.run(ctx, deps);
-      // The interrupt handler already wrote this record's stop and final line.
+      current.inStep = true;
+      let result;
+      try {
+        result = await step.run(ctx, deps);
+      } finally {
+        current.inStep = false;
+      }
+      // The handler already wrote this record's stop and final line.
       if (shared.interrupted) return current.final;
       const ms = deps.now() - t0;
       if (!bound && ctx.runDir) {
@@ -179,31 +240,45 @@ async function driveRecord(record, shared, deps, steps = STEPS) {
   }
 }
 
-// The signal handler run() subscribes (see the header's Interrupts paragraph). It never
-// throws past terminate: whatever the emission does, the process still ends by the signal.
+// The signal handler run() subscribes (see the header's Interrupts paragraph). A second
+// signal is ignored: the first one's terminate already drops the subscription.
 function interrupt(shared, signal, deps) {
-  const { current } = shared;
-  try {
-    if (!current || shared.interrupted || !current.ctx.currentStep) return;
-    shared.interrupted = true;
-    const { ctx, sink } = current;
-    const worker = shared.activeWorker;
-    if (worker) {
-      try {
-        worker.kill('SIGTERM');
-      } catch {
-        // The worker is already gone.
-      }
+  if (shared.interrupted) return;
+  shared.interrupted = signal;
+  const worker = shared.activeWorker;
+  if (worker) {
+    try {
+      worker.kill('SIGTERM');
+    } catch {
+      // The worker is already gone.
     }
-    // A step that set ctx.runDir has not had its sink bound yet; binding twice is harmless.
-    if (ctx.runDir) sink.bindRunDir(ctx.runDir);
-    const name = ctx.currentStep;
-    const result = { status: 'fail', detail: `interrupted by ${signal}`, halt: true, stopClass: ctx.currentStopClass, reason: 'fail', extra: {} };
-    sink.emit(eventFor(ctx, name, result, deps.now() - current.stepStarted, deps));
-    current.final = finalEvent(ctx, { name, result }, sink, deps.now() - current.started, deps);
-    sink.emit(current.final);
-  } finally {
+  }
+  const { current } = shared;
+  if (current && current.inStep) {
+    reportInterrupt(shared, current, current.step, `interrupted by ${signal}`, deps.now() - current.stepStarted, deps);
+  } else if (!current || current.step === null) {
     deps.terminate(signal);
+  }
+  // Otherwise the signal landed between two steps: driveRecord reports it at the next one.
+}
+
+// Re-raises `sig` once stdout has taken every queued line: to a pipe on macOS stdout is
+// asynchronous, and a re-raise straight after the last write can drop lines the jsonl
+// holds. The unref'd backstop raises anyway should the flush never call back.
+const TERMINATE_FLUSH_BACKSTOP_MS = 500;
+function reraiseAfterFlush(sig, { stdout, kill, setTimer }) {
+  let raised = false;
+  const raise = () => {
+    if (raised) return;
+    raised = true;
+    kill(sig);
+  };
+  const backstop = setTimer(raise, TERMINATE_FLUSH_BACKSTOP_MS);
+  if (backstop && typeof backstop.unref === 'function') backstop.unref();
+  try {
+    stdout.write('', raise);
+  } catch {
+    raise();
   }
 }
 
@@ -293,10 +368,11 @@ const realDeps = {
     };
     return unsubscribeSignals;
   },
-  // Drops the subscription, then re-raises the signal so the process ends by it.
+  // Drops the subscription, then re-raises the signal once stdout has flushed, so the
+  // process ends by it.
   terminate: (sig) => {
     if (unsubscribeSignals) unsubscribeSignals();
-    process.kill(process.pid, sig);
+    reraiseAfterFlush(sig, { stdout: process.stdout, kill: (s) => process.kill(process.pid, s), setTimer: setTimeout });
   },
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
@@ -312,4 +388,4 @@ const realDeps = {
   remoteUrl: () => remoteUrl(),
 };
 
-module.exports = { run, parseArgs, USAGE, realDeps, driveRecord, newShared };
+module.exports = { run, parseArgs, USAGE, realDeps, driveRecord, newShared, interruptClass, reraiseAfterFlush };
