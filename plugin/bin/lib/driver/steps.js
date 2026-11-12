@@ -23,7 +23,8 @@ const path = require('node:path');
 const { STEP, STOP_CLASSES, neutralize, normalizeTitle } = require('./events');
 const { parseStatusPorcelainZ } = require('../git-z');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
-const { gateOriginRepo } = require('../repo-resolve');
+const { gateOriginRepo, resolveRepoTarget } = require('../repo-resolve');
+const { isTimeoutError } = require('../shared-primitives');
 const { openBlockerRefs } = require('../issues/record-dependencies');
 const { sensitivePathsOf } = require('../express/policy');
 const { formatTimestamp } = require('../hooks/run-dir-resolve');
@@ -142,6 +143,9 @@ const policyStep = defineStep(STEP.policy, STOP_CLASSES.REFUSED, async (ctx, dep
     shared.policy = resolved;
     shared.mainRoot = mainRoot;
     shared.repo = repo;
+    // The one `--repo` every gh call of the run carries: host-qualified off github.com, so a
+    // bare slug never reaches the wrong host (ghOptions injects no GH_HOST once --repo is present).
+    shared.ghRepo = resolveRepoTarget({ owner: repo.owner, repo: repo.repo, originHost: repo.host }, { env: deps.env }).ghRepo;
     shared.ref = ref;
     return { status: 'ok' };
   } catch (err) {
@@ -153,7 +157,7 @@ const policyStep = defineStep(STEP.policy, STOP_CLASSES.REFUSED, async (ctx, dep
 const fetchStep = defineStep(STEP.fetch, STOP_CLASSES.REFUSED, async (ctx, deps) => {
   let raw;
   try {
-    raw = deps.gh(['issue', 'view', '--json', ISSUE_JSON_FIELDS, '--', String(ctx.record)]);
+    raw = deps.gh(['issue', 'view', '--repo', ctx.shared.ghRepo, '--json', ISSUE_JSON_FIELDS, '--', String(ctx.record)]);
   } catch (err) {
     return { status: 'fail', detail: `gh issue view failed: ${errorText(err)}` };
   }
@@ -683,8 +687,11 @@ function parseCreatedPr(stdout) {
   return url ? { number: Number(PR_URL_RE.exec(url)[1]), url } : null;
 }
 
-function createText(err) {
-  return `${(err && err.stderr) || ''} ${(err && err.message) || ''}`;
+// Never err.message: execFileSync's message embeds the whole argv, record title included, so a
+// title naming "HTTP 503" would read as a transient failure. Classify on gh's own stderr and on a
+// timeout kill.
+function isTransientCreate(err) {
+  return isTimeoutError(err) || TRANSIENT_CREATE_RE.test(String((err && err.stderr) || ''));
 }
 
 // Ports express-lane.md step 7 (PR): the summary file, the express body, the draft PR. The
@@ -706,7 +713,7 @@ const prStep = defineStep(STEP.pr, STOP_CLASSES.BLOCKED, async (ctx, deps) => {
     return { status: 'fail', detail: `compose-pr-body.js exited ${composed.code} (${neutralize(firstLine(composed.stderr)) || 'no output'})` };
   }
   const title = `${String(ctx.issue.title || '').replace(/\s+/g, ' ').trim()} (#${n})`;
-  const createArgs = ['pr', 'create', '--draft', '--base', ref, '--head', ctx.branch, '--title', title, '--body-file', bodyFile];
+  const createArgs = ['pr', 'create', '--repo', ctx.shared.ghRepo, '--draft', '--base', ref, '--head', ctx.branch, '--title', title, '--body-file', bodyFile];
   const create = () => {
     const pr = parseCreatedPr(deps.ghCreate(createArgs));
     if (!pr) throw new Error('gh pr create printed no PR URL');
@@ -720,13 +727,13 @@ const prStep = defineStep(STEP.pr, STOP_CLASSES.BLOCKED, async (ctx, deps) => {
     firstError = err;
   }
   if (firstError) {
-    if (!TRANSIENT_CREATE_RE.test(createText(firstError))) {
+    if (!isTransientCreate(firstError)) {
       return { status: 'fail', detail: `gh pr create failed: ${neutralize(errorText(firstError))}` };
     }
     // Never create blind: a list that cannot be read leaves a landed first attempt unverifiable.
     let open;
     try {
-      open = JSON.parse(deps.gh(['pr', 'list', '--head', ctx.branch, '--state', 'open', '--json', 'number,url']));
+      open = JSON.parse(deps.gh(['pr', 'list', '--repo', ctx.shared.ghRepo, '--head', ctx.branch, '--state', 'open', '--json', 'number,url']));
     } catch (err) {
       return { status: 'fail', detail: `gh pr create failed (${neutralize(errorText(firstError))}) and the open PRs of ${ctx.branch} could not be listed: ${neutralize(errorText(err))}` };
     }
@@ -735,6 +742,7 @@ const prStep = defineStep(STEP.pr, STOP_CLASSES.BLOCKED, async (ctx, deps) => {
       created = { number: found.number, url: found.url };
     } else {
       await deps.sleep(PR_CREATE_RETRY_WAIT_MS);
+      if (ctx.shared.interrupted) return { status: 'fail', detail: `interrupted by ${ctx.shared.interrupted} before the gh pr create retry` };
       try {
         created = create();
       } catch (err) {
@@ -793,31 +801,42 @@ const summaryStep = defineStep(STEP.summary, STOP_CLASSES.NONE, async (ctx, deps
 
 const CI_STATES = new Set(['red', 'inherited-red', 'pending', 'stale', 'green', 'no-ci', 'read-failed', 'no-pr', 'gh-absent']);
 
-// Reads the PR's check rollup at the worktree's HEAD, polling while it is pending or stale.
-// Never halts and always reports `ok`: the word it reads is data for the reviewer. The wait
-// is reported as extra.ciWaitMs, so the final line can exclude it without naming this step.
-// A signal during a sleep is delivered mid-step (run.js's handler writes the stop); the loop
-// then stops polling.
+// One pr-checks.js read in the worktree (it reads local HEAD from its cwd): the state word, or
+// `read-failed` for a non-zero exit, unparseable stdout or a word outside the vocabulary.
+function readCiState(ctx, deps, args) {
+  try {
+    const r = deps.node(binScript('pr-checks.js'), args, { cwd: ctx.wt, timeout: CLI_TIMEOUT_MS, env: deps.env });
+    const parsed = r.code === 0 ? JSON.parse(r.stdout) : null;
+    if (parsed && typeof parsed.state === 'string' && CI_STATES.has(parsed.state)) return parsed.state;
+  } catch { /* an unparseable read is read-failed */ }
+  return 'read-failed';
+}
+
+// Reads the PR's check rollup at the worktree's HEAD. Polls `pr-checks.js --pr {n}` (which
+// writes no decisions.md line) while the state is pending, then makes exactly one `--run` read
+// under the express-lane section: that read logs the gate's own line once, and its state is the
+// one recorded (`timeout` when it is still pending at the bound; only this read can say `stale`).
+// Never halts and always reports `ok`: the word it reads is data for the reviewer. The wait is
+// reported as extra.ciWaitMs, so the final line can exclude it without naming this step. A signal
+// during a sleep is delivered mid-step (run.js's handler writes the stop); polling then stops.
 const ciStep = defineStep(STEP.ci, STOP_CLASSES.NONE, async (ctx, deps) => {
   const started = deps.now();
-  let state = 'read-failed';
+  let polled = 'read-failed';
+  let timedOut = false;
   for (;;) {
-    let word = 'read-failed';
-    try {
-      const r = deps.node(binScript('pr-checks.js'), ['--run', ctx.runDir],
-        { cwd: ctx.wt, timeout: CLI_TIMEOUT_MS, env: deps.env });
-      const parsed = r.code === 0 ? JSON.parse(r.stdout) : null;
-      if (parsed && typeof parsed.state === 'string' && CI_STATES.has(parsed.state)) word = parsed.state;
-    } catch { /* an unparseable read is read-failed */ }
-    state = word;
-    if (state !== 'pending' && state !== 'stale') break;
-    if (ctx.shared.interrupted) break;
+    polled = readCiState(ctx, deps, ['--pr', String(ctx.pr.number)]);
+    if (polled !== 'pending' || ctx.shared.interrupted) break;
     if (deps.now() - started >= CI_WAIT_BOUND_MS) {
-      if (state === 'pending') state = 'timeout';
+      timedOut = true;
       break;
     }
     await deps.sleep(CI_POLL_INTERVAL_MS);
     if (ctx.shared.interrupted) break;
+  }
+  let state = polled;
+  if (!ctx.shared.interrupted) {
+    state = readCiState(ctx, deps, ['--run', ctx.runDir, '--section', '/express-lane']);
+    if (timedOut && state === 'pending') state = 'timeout';
   }
   ctx.ci = state;
   return { status: 'ok', detail: state, extra: { ciWaitMs: Math.max(0, deps.now() - started) } };

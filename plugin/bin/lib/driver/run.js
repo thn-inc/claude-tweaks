@@ -94,7 +94,7 @@ function parseArgs(argv) {
 // and `final` holds the final line an interrupt wrote. `interrupted` is the signal's name
 // once the handler has run, else false.
 function newShared() {
-  return { policy: null, ref: null, mainRoot: null, repo: null, fatal: false, activeWorker: null, current: null, interrupted: false };
+  return { policy: null, ref: null, mainRoot: null, repo: null, ghRepo: null, fatal: false, activeWorker: null, current: null, interrupted: false };
 }
 
 function newCtx(record, shared) {
