@@ -1014,7 +1014,7 @@ function mcpRecord(number, body) {
   };
 }
 
-test('#5227 files: the queue file is aliased in place, dispatch-verified-open-deps.txt replaces the gh issue view loop, and no gh call is made', () => {
+test('#5227 files: the queue file is copied into the session file and aliased there, dispatch-verified-open-deps.txt replaces the gh issue view loop, and no gh call is made', () => {
   const calls = [];
   const noGh = (cmd, args) => { calls.push([cmd, ...args]); throw new Error(`gh must not be called on files: ${args.join(' ')}`); };
   const write = (own, { verified }) => {
@@ -1030,10 +1030,12 @@ test('#5227 files: the queue file is aliased in place, dispatch-verified-open-de
   };
   const held = pull(S1(), { transport: 'files', run: noGh, prepare: (own) => write(own, { verified: '8000\n' }) });
   assert.deepEqual(calls, []);
-  const queue = JSON.parse(held.text[held.state.files.queueRaw]);
+  const queue = JSON.parse(held.text['dispatch-queue-raw.json']);
   assert.equal(queue[0].createdAt, '2026-11-01T10:00:00Z');
   assert.equal(queue[0].created_at, '2026-11-01T10:00:00Z', 'the snake_case key stays beside the alias');
   assert.equal(queue[0].updatedAt, '2026-11-10T10:00:00Z');
+  assert.equal(held.text[held.state.files.queueRaw], JSON.stringify([mcpRecord(9001, withBody(9001)), mcpRecord(9002, `Blocked by #8000\n\n${withBody(9002)}`)]),
+    'the caller\'s own queue file is left as the agent wrote it');
   assert.equal(JSON.parse(held.text['dispatch-dep-freshness.json'])[0].updatedAt, '2026-11-09T10:00:00Z', 'the dependency-freshness file is aliased too');
   assert.deepEqual(entriesOf(held, 'blocked'), [{ reason: 'blocked', records: [9002], detail: { blockedBy: [8000] } }]);
   assert.deepEqual(groupNumbers(held), [[9001]]);
@@ -1105,22 +1107,46 @@ test('#5227 files: the dependency-freshness file is used only where the fence se
   assert.equal(absent.store.written.length, 0, 'the write-back cannot read the freshness and writes nothing');
 });
 
-test('#5227 D3: a non-array queue file such as {issues:[...]} reads as an empty queue, with no Warning', () => {
+test('#5227 D3: a non-array queue file such as {issues:[...]} reads as an empty queue, with no Warning, and the caller\'s file outside the session dir is left byte-identical', () => {
+  const wrapper = JSON.stringify({ issues: [mcpRecord(9001, withBody(9001))] });
   const r = pull(S1(), {
     transport: 'files', run: () => { throw new Error('no gh on files'); },
     prepare: (own) => {
       const put = (name, content) => { const file = path.join(own, name); fs.writeFileSync(file, content); return file; };
       return { inputs: {
-        queueRaw: put('queue.json', JSON.stringify({ issues: [mcpRecord(9001, withBody(9001))] })),
+        queueRaw: put('queue.json', wrapper),
         openNumbers: put('open.json', '[]'),
         depFreshness: put('dep.json', '[]'),
         verifiedOpenDeps: put('verified.txt', ''),
       } };
     },
   });
-  assert.equal(r.text[r.state.files.queueRaw], '[]');
+  assert.notEqual(path.dirname(r.state.files.queueRaw), path.dirname(sessionPaths('qp-t3')['dispatch-queue-raw.json']), 'the caller file sits outside the session dir');
+  assert.equal(r.text[r.state.files.queueRaw], wrapper, 'D3 rewrites the session copy, never the caller\'s file');
+  assert.equal(r.text['dispatch-queue-raw.json'], '[]', 'D3 is unchanged: the session copy reads as []');
   assert.deepEqual(r.json('dispatch-groups.json'), []);
   assert.deepEqual(r.errs, [], r.stderr);
+});
+
+test('#5227 files: a queue file the agent never wrote removes the session copy (the agent write\'s rm -f) and stops the pull at group-building, as AC7.2 pins', () => {
+  const r = pull(S1(), {
+    transport: 'files', run: () => { throw new Error('no gh on files'); }, allowThrow: true,
+    prepare: (own) => {
+      const put = (name, content) => { const file = path.join(own, name); fs.writeFileSync(file, content); return file; };
+      return { inputs: {
+        queueRaw: path.join(own, 'absent-queue.json'),
+        openNumbers: put('open.json', '[]'),
+        depFreshness: put('dep.json', '[]'),
+        verifiedOpenDeps: put('verified.txt', ''),
+      } };
+    },
+    before: (ctx) => fs.writeFileSync(ctx.paths['dispatch-queue-raw.json'], JSON.stringify([mcpRecord(9001, withBody(9001))])),
+  });
+  assert.equal(r.text['dispatch-queue-raw.json'], undefined, 'the stale session copy is gone');
+  assert.match(r.stderr, /queue-pull: alias-queue: ENOENT/);
+  const [, head, tail] = FENCE.match(GROUPING_STOP_RE);
+  assert.ok(r.thrown instanceof QueuePullStopped, String(r.thrown));
+  assert.equal(r.thrown.line, `${head}1${tail}`);
 });
 
 test('#5227 stop: a grouping-block throw first truncates dispatch-groups.json to 0 bytes, then throws QueuePullStopped with the fence stop line', () => {

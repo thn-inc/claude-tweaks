@@ -257,6 +257,16 @@ function agentDepFreshness(ctx, file) {
   else put(ctx, file, text);
 }
 
+// On `files` the agent's queue file stands where the fence's queue pull stands, as the agent's Write
+// does: copied into the session file, which is the one aliased and read from then on, so the
+// caller's own file is never rewritten (D3 turns a non-array into [] in the session copy only). A
+// queue file the agent never wrote removes the session file, so an earlier pull's queue is not read.
+function agentQueueRaw(ctx, input, file) {
+  const text = step(ctx, 'queue-input', () => readTextOrNull(input)).value ?? null;
+  if (text === null) step(ctx, 'agent-queue', () => fs.rmSync(file, { force: true }));
+  else put(ctx, file, text);
+}
+
 // The input file's text, or null when it does not exist.
 function readTextOrNull(file) {
   try {
@@ -330,17 +340,19 @@ function runFetch(ctx) {
   const f = state.files;
   const onGh = ctx.options.transport !== 'files';
   const depFile = paths['dispatch-dep-freshness.json'];
+  const queueFile = paths['dispatch-queue-raw.json'];
 
   if (!onGh) state.depFreshnessInput = step(ctx, 'dep-freshness-input', () => readTextOrNull(f.depFreshness)).value ?? null;
-  if (onGh) put(ctx, f.queueRaw, ghRun(ctx, QUEUE_ARGV).stdout);
-  aliasFile(ctx, 'alias-queue', f.queueRaw);
-  const count = step(ctx, 'queue-count', () => readJson(f.queueRaw).length);
+  if (onGh) put(ctx, queueFile, ghRun(ctx, QUEUE_ARGV).stdout);
+  else agentQueueRaw(ctx, f.queueRaw, queueFile);
+  aliasFile(ctx, 'alias-queue', queueFile);
+  const count = step(ctx, 'queue-count', () => readJson(queueFile).length);
   if (count.ok && count.value >= 500) deps.stderr(`${QUEUE_CAP_WARNING}\n`);
 
   const depNumbers = step(ctx, 'dep-numbers', () => {
     const persisted = deps.queueOrder.readOrder(rootOf(ctx));
     if (!persisted) return '';
-    const autoBuildNumbers = new Set(readJson(f.queueRaw).map((i) => i.number));
+    const autoBuildNumbers = new Set(readJson(queueFile).map((i) => i.number));
     const depOnly = (persisted.freshnessSignal.issues || []).filter((i) => !autoBuildNumbers.has(i.number));
     return depOnly.map((i) => i.number).join(',');
   }).value || '';
@@ -357,7 +369,7 @@ function runFetch(ctx) {
   try {
     const persisted = deps.queueOrder.readOrder(rootOf(ctx));
     if (persisted) {
-      const current = buildFreshnessSignal([...readJson(f.queueRaw), ...readJson(depFile)]);
+      const current = buildFreshnessSignal([...readJson(queueFile), ...readJson(depFile)]);
       if (cacheUsable(persisted, current, deps.expressQueuePolicy({ stderr: deps.stderr }).grouping)) {
         fs.writeFileSync(paths['dispatch-groups.json'], JSON.stringify(persisted.groups));
         state.cacheHit = true;
@@ -394,7 +406,7 @@ function runBlocked(ctx) {
   }
 
   step(ctx, 'eligible-pre-dep', () => {
-    const issues = readJson(f.queueRaw);
+    const issues = readJson(paths['dispatch-queue-raw.json']);
     const openNumbers = new Set(readJson(f.openNumbers).map((i) => i.number));
     const eligiblePreDep = issues
       .map((i) => ({ ...i, facets: parseRecordFacets(i.labels) }))
@@ -522,7 +534,6 @@ function runOversized(ctx) {
 function runWriteBack(ctx) {
   const { deps, paths, state } = ctx;
   if (state.cacheHit) return;
-  const f = state.files;
   const onGh = ctx.options.transport !== 'files';
   const depFile = paths['dispatch-dep-freshness.json'];
 
@@ -540,7 +551,7 @@ function runWriteBack(ctx) {
   if (ctx.omit.size > 0) return; // an omitted pass leaves groups the blob would misdescribe
   step(ctx, 'write-back', () => {
     const root = rootOf(ctx);
-    const autoBuild = readJson(f.queueRaw);
+    const autoBuild = readJson(paths['dispatch-queue-raw.json']);
     const depFreshness = readJson(depFile);
     const groups = readJson(paths['dispatch-groups.json']);
     // The disk cache keeps its pre-#1752 {number, blockedBy}[] `excluded` shape: reshape the
