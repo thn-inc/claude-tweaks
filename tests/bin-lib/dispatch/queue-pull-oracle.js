@@ -9,6 +9,10 @@
 //   <root>/bin        PATH shims: gh (answers from QP_SHIM_TABLE, never the real gh), git (the
 //                     real git, only inside <root>), mktemp (counter-file names) and a node link
 //   <root>/logs       gh-argv.jsonl, git-argv.jsonl and the mktemp counter
+//   <root>/agent      files transport only: what the agent fetched through MCP (QP_AGENT_DIR), which
+//                     filesOracleScript's agent writes copy from, and DISPATCH_FOREIGN_STATES
+//   <root>/sysbin     files transport only: links to the system tools the fence runs, so the PATH
+//                     holds no gh (the bin holds no gh shim there either)
 // The env is explicit (shell-scanner-bash-differential's escape rules): nothing is inherited
 // except NODE_OPTIONS (the clock stub's --require appended) and CT_TRACE_*, so the test-impact
 // tracer still sees the children. Every run sits inside withEscapeGuard on this checkout.
@@ -23,7 +27,7 @@ const { STUB_SKIP_REASON } = require('../../helpers/path-stub');
 const { readText } = require('../../helpers/read-skill');
 const { fixtureGit } = require('../../helpers/git-fixtures');
 const {
-  ghAnswer, applyEffect, gitSubArgv, gitFailMatch, isGetUrlOrigin, shimTable,
+  ghAnswer, applyEffect, gitSubArgv, gitFailMatch, isGetUrlOrigin, shimTable, agentInputs,
 } = require('./queue-pull-fixtures');
 
 const REPO = path.resolve(__dirname, '..', '..', '..');
@@ -71,6 +75,81 @@ function extractFence(mdText, firstLine) {
     return lines.slice(i + 1, end).join('\n') + '\n';
   }
   throw new Error(`extractFence: anchor not found: ${firstLine}`);
+}
+
+// --- the files transport: mcp-transport.md's substitutions over the gh fence ---------------------
+
+const MCP_MD = path.join(REPO, 'plugin', 'skills', 'dispatch', 'mcp-transport.md');
+const MCP_TARGETS_FIRST_LINE = 'node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_IN_FLIGHT_RAW" <<NODE_EVAL_EOF';
+const MCP_EXCLUSIONS_FIRST_LINE = 'node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_IN_FLIGHT_RAW" "$DISPATCH_EXCLUSIONS" "$DISPATCH_IN_FLIGHT_CLAIMS" <<NODE_EVAL_EOF';
+
+// The agent's Write of one fetched file, standing where the gh call stood: the file QP_AGENT_DIR
+// holds, or no file at all when the agent wrote none.
+const agentWrite = (name, variable) => `if [ -f "$QP_AGENT_DIR/${name}" ]; then cp "$QP_AGENT_DIR/${name}" "$${variable}"; else rm -f "$${variable}"; fi`;
+
+// Replaces the span of `lines` that starts at the line equal to `first` and ends at the first later
+// line equal to `through` (inclusive) or `before` (exclusive), after checking the span holds `holds`
+// (the gh call it replaces). A missing anchor throws `anchor not found: <line>`.
+function replaceSpan(lines, { first, through = first, before = null, holds }, replacement) {
+  const start = lines.indexOf(first);
+  if (start === -1) throw new Error(`anchor not found: ${first}`);
+  const endLine = before === null ? through : before;
+  let end = lines.indexOf(endLine, start + (before === null && through === first ? 0 : 1));
+  if (end === -1) throw new Error(`anchor not found: ${endLine}`);
+  if (before === null) end += 1;
+  const span = lines.slice(start, end);
+  if (!span.some((l) => l.includes(holds))) throw new Error(`anchor not found: ${holds}`);
+  lines.splice(start, end - start, ...replacement);
+}
+
+// filesOracleScript(fence, mcpText) -> the fence as mcp-transport.md's procedure runs it with gh
+// absent: (a) the queue pull and the open-numbers pull, (b) both dependency-freshness searches and
+// (c) the `gh issue view` loop become the agent's writes; (d) the neighbour-in-flight block becomes
+// mcp-transport's four steps (pool write, its claim-targets fence, claims-map write, its exclusions
+// fence), followed by the fence's own NEIGHBOUR_RC stop, kept as written; (e) the cross-PR overlap
+// fetch and compute become `echo '[]'`. Everything else runs as written; the CLIs it spawns find no
+// gh on the files sandbox's PATH (f).
+function filesOracleScript(fence, mcpText) {
+  const lines = fence.replace(/\n$/, '').split('\n');
+  const mcpFence = (firstLine) => extractFence(mcpText, firstLine).replace(/\n$/, '').split('\n');
+  replaceSpan(lines, {
+    first: 'gh issue list --label auto:build --state open --json number,title,body,labels,createdAt,updatedAt,state --limit 500 > "$DISPATCH_QUEUE_RAW"',
+    holds: 'gh issue list --label auto:build',
+  }, [agentWrite('dispatch-queue-raw.json', 'DISPATCH_QUEUE_RAW')]);
+  replaceSpan(lines, {
+    first: 'gh issue list --state open --json number --limit 200 > "$DISPATCH_OPEN_NUMBERS"',
+    holds: 'gh issue list --state open',
+  }, [agentWrite('dispatch-open-numbers.json', 'DISPATCH_OPEN_NUMBERS')]);
+  for (const v of ['DISPATCH_DEP_NUMBERS', 'DISPATCH_ALL_DEP_NUMBERS']) {
+    replaceSpan(lines, {
+      first: `  gh issue list --search "$(echo "$${v}" | tr ',' ' ' | sed 's/[0-9][0-9]*/#&/g')" --state all --json number,updatedAt,state --limit 500 > "$DISPATCH_DEP_FRESHNESS" 2>/dev/null || echo '[]' > "$DISPATCH_DEP_FRESHNESS"`,
+      holds: 'gh issue list --search',
+    }, [`  ${agentWrite('dispatch-dep-freshness.json', 'DISPATCH_DEP_FRESHNESS')}`]);
+  }
+  replaceSpan(lines, { first: ': > "$DISPATCH_VERIFIED_OPEN_DEPS"', through: 'done', holds: 'gh issue view "$DEP"' },
+    [agentWrite('dispatch-verified-open-deps.txt', 'DISPATCH_VERIFIED_OPEN_DEPS')]);
+  replaceSpan(lines, {
+    first: 'if ! gh issue list --label bot:in-progress --state open --json number,title,body,labels --limit 200 > "$DISPATCH_IN_FLIGHT_RAW" 2>/dev/null; then',
+    before: 'NEIGHBOUR_RC=$?',
+    holds: 'neighbourInFlightExclusions',
+  }, [
+    agentWrite('dispatch-in-flight-raw.json', 'DISPATCH_IN_FLIGHT_RAW'),
+    ...mcpFence(MCP_TARGETS_FIRST_LINE),
+    agentWrite('dispatch-in-flight-claims.json', 'DISPATCH_IN_FLIGHT_CLAIMS'),
+    ...mcpFence(MCP_EXCLUSIONS_FIRST_LINE),
+  ]);
+  replaceSpan(lines, {
+    first: 'gh pr list --state open --json number,files,closingIssuesReferences --limit 100 > "$DISPATCH_OPEN_PRS" 2>/dev/null || echo \'[]\' > "$DISPATCH_OPEN_PRS"',
+    through: 'NODE_EVAL_EOF',
+    holds: 'detectCrossPRFileOverlap',
+  }, ['echo \'[]\' > "$DISPATCH_CROSSPR_OVERLAP"']);
+  // The one gh call left as written: the shipped pass's `gh pr view` probe loop, which mcp-transport.md
+  // does not replace. It iterates the probe list, which is empty on files: the linked-PR query fails
+  // with no gh, so dispatch-linked-prs.json is {} and no candidate has a mention to probe.
+  const kept = new Set(['  FILES_JSON=$(gh pr view "$PR" --json files -q \'[.files[].path]\' 2>/dev/null || echo \'[]\')']);
+  const leftover = lines.find((l) => !kept.has(l) && /(^|[\s(!|;&])gh\s/.test(l.replace(/'[^']*'|"[^"$]*"/g, '')) && !/^\s*#/.test(l));
+  if (leftover) throw new Error(`filesOracleScript: a gh call survives the substitutions: ${leftover}`);
+  return lines.join('\n') + '\n';
 }
 
 // The fence's session-tmp-resolve `--value <name>` arguments, in fence order.
@@ -161,11 +240,16 @@ function writeTree(gitDir, files, git) {
 }
 
 // origin.git always has main, has each other branch the scenario names (claims-registry when a
-// claim is fixtured), and never health-state: the queue-order cache starts cold.
-function seedOrigin(originDir, spec, git) {
+// claim is fixtured), and never health-state: the queue-order cache starts cold. `headBranch`
+// (scenario.headBranch) points origin's HEAD at another seeded branch, so a clone checks it out and
+// `git remote show origin` reports it.
+function seedOrigin(originDir, spec, git, headBranch) {
   const branches = { main: {}, ...((spec && spec.branches) || {}) };
   if (Object.prototype.hasOwnProperty.call(branches, 'health-state')) {
     throw new Error('scenario.origin.branches never seeds health-state: the queue-order cache starts cold');
+  }
+  if (headBranch && !Object.prototype.hasOwnProperty.call(branches, headBranch)) {
+    throw new Error(`scenario.headBranch ${headBranch} names no seeded branch`);
   }
   git(['init', '--bare', '-q', '-b', 'main', originDir]);
   for (const [branch, files] of Object.entries(branches)) {
@@ -173,22 +257,38 @@ function seedOrigin(originDir, spec, git) {
     const commit = git(['-C', originDir, 'commit-tree', writeTree(originDir, all, git), '-m', `seed ${branch}`]).trim();
     git(['-C', originDir, 'update-ref', `refs/heads/${branch}`, commit]);
   }
+  if (headBranch) git(['-C', originDir, 'symbolic-ref', 'HEAD', `refs/heads/${headBranch}`]);
 }
 
-function writeShims(bin) {
+// The system tools the fence and its CLIs run, for the `files` sandbox's PATH: symlinked into
+// <root>/sysbin so the PATH holds no gh even where the host has one in /usr/bin (a CI runner does).
+const FILES_SYSTEM_TOOLS = ['bash', 'sh', 'cat', 'cp', 'mv', 'rm', 'grep', 'sed', 'tr', 'dirname', 'env', 'mkdir', 'ls'];
+function writeSystemBin(sysbin) {
+  for (const tool of FILES_SYSTEM_TOOLS) {
+    const found = ['/usr/bin', '/bin'].map((d) => path.join(d, tool)).find((p) => fs.existsSync(p));
+    if (!found) throw new Error(`queue-pull oracle: no ${tool} in /usr/bin or /bin`);
+    fs.symlinkSync(found, path.join(sysbin, tool));
+  }
+}
+
+function writeShims(bin, { gh = true } = {}) {
   if (/\s/.test(process.execPath)) {
     throw new Error(`queue-pull oracle: the node path ${process.execPath} holds whitespace, so it cannot stand in a #! line`);
   }
-  for (const kind of ['gh', 'git', 'mktemp']) {
+  for (const kind of gh ? ['gh', 'git', 'mktemp'] : ['git', 'mktemp']) {
     const src = `#!${process.execPath}\n'use strict';\nrequire(${JSON.stringify(__filename)}).shimMain(${JSON.stringify(kind)});\n`;
     fs.writeFileSync(path.join(bin, kind), src, { mode: 0o755 });
   }
   fs.symlinkSync(process.execPath, path.join(bin, 'node'));
 }
 
-// createSandbox(scenario, { transport, origin, name }) -> sandbox. `origin` is another sandbox's
-// origin.git to copy (a cache-hit run after its cache-miss run); scenario.origin is then unused.
-function createSandbox(scenario, { transport = 'gh', origin = null, name = scenario.name || 'sandbox' } = {}) {
+// createSandbox(scenario, { transport, origin, name, agent }) -> sandbox. `origin` is another
+// sandbox's origin.git to copy (a cache-hit run after its cache-miss run); scenario.origin is then
+// unused. On transport 'files' the bin holds no gh shim and the PATH no gh at all, `agent`
+// ({ name: content }) is written to <root>/agent (QP_AGENT_DIR, what filesOracleScript's agent
+// writes copy from), and scenario.foreign ({ 'owner/name#N': state }) is written there as
+// foreign-states.json and exported as DISPATCH_FOREIGN_STATES.
+function createSandbox(scenario, { transport = 'gh', origin = null, name = scenario.name || 'sandbox', agent = {} } = {}) {
   installExitHooks();
   const table = shimTable(scenario);
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'qp-oracle-')));
@@ -222,7 +322,7 @@ function createSandbox(scenario, { transport = 'gh', origin = null, name = scena
     const git = (args, opts = {}) => fixtureGit(args, { env: setupEnv, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], ...opts });
 
     if (origin) fs.cpSync(origin, originDir, { recursive: true });
-    else seedOrigin(originDir, scenario.origin, git);
+    else seedOrigin(originDir, scenario.origin, git, scenario.headBranch);
     git(['clone', '-q', originDir, proj]);
 
     const policy = Object.entries(scenario.policy || {}).map(([k, v]) => `${k}: ${v}\n`).join('');
@@ -232,18 +332,33 @@ function createSandbox(scenario, { transport = 'gh', origin = null, name = scena
     fs.mkdirSync(path.join(runDir, 'staged'), { recursive: true });
     fs.writeFileSync(path.join(runDir, 'decisions.md'), '');
 
-    writeShims(bin);
+    const onFiles = transport === 'files';
+    writeShims(bin, { gh: !onFiles });
     fs.writeFileSync(tablePath, JSON.stringify({ ...table, root, realGit }));
+    const agentDir = dir('agent');
+    for (const [file, content] of Object.entries(agent)) fs.writeFileSync(path.join(agentDir, file), content);
+    let foreignStates = null;
+    if (onFiles && scenario.foreign) {
+      foreignStates = path.join(agentDir, 'foreign-states.json');
+      fs.writeFileSync(foreignStates, JSON.stringify(scenario.foreign));
+    }
+    let systemPath = ['/usr/bin', '/bin'];
+    if (onFiles) {
+      systemPath = [dir('sysbin')];
+      writeSystemBin(systemPath[0]);
+    }
 
     const runEnv = ({ tmpdir, sessionId }) => {
       const env = {
-        PATH: [bin, '/usr/bin', '/bin'].join(path.delimiter),
+        PATH: [bin, ...systemPath].join(path.delimiter),
         HOME: home, PWD: proj, OLDPWD: proj, TMPDIR: tmpdir, TZ: 'UTC', LANG: 'C',
         CLAUDE_PLUGIN_ROOT: path.join(REPO, 'plugin').split(path.sep).join('/'),
         CLAUDE_CODE_SESSION_ID: sessionId,
         ...gitIsolation,
         QP_SHIM_TABLE: tablePath, QP_LOG_DIR: logs, QP_TMPNAME_COUNTER_FILE: path.join(logs, 'tmpname-counter'),
         NODE_OPTIONS: [process.env.NODE_OPTIONS, `--require ${JSON.stringify(CLOCK_STUB)}`].filter(Boolean).join(' '),
+        ...(onFiles ? { QP_AGENT_DIR: agentDir } : {}),
+        ...(foreignStates ? { DISPATCH_FOREIGN_STATES: foreignStates } : {}),
       };
       for (const [k, v] of Object.entries(process.env)) if (k.startsWith('CT_TRACE_')) env[k] = v;
       return env;
@@ -258,10 +373,12 @@ function createSandbox(scenario, { transport = 'gh', origin = null, name = scena
         throw err;
       }
       if (!git(['-C', originDir, 'ls-tree', '--name-only', 'health-state', '--', 'queue-order/order.json']).trim()) return null;
-      return JSON.parse(git(['-C', originDir, 'show', 'health-state:queue-order/order.json']));
+      // A real-sized queue's blob passes execFileSync's 1 MiB default buffer (whose kill fixtureGit
+      // reports as a timeout).
+      return JSON.parse(git(['-C', originDir, 'show', 'health-state:queue-order/order.json'], { maxBuffer: 64 * 1024 * 1024 }));
     };
     return {
-      name, transport, scenario, root, home, proj, bin, logs, origin: originDir, runDir, runs: 0, runEnv, orderBlob, cleanup,
+      name, transport, scenario, root, home, proj, bin, logs, agentDir, origin: originDir, runDir, runs: 0, runEnv, orderBlob, cleanup,
     };
   } catch (err) {
     cleanup();
@@ -286,10 +403,10 @@ function capture(stream) {
   return () => Buffer.concat(chunks).toString('utf8') + (truncated ? '\n[queue-pull oracle: stream truncated at 64 KiB]\n' : '');
 }
 
-function spawnBounded(bash, scriptFile, { cwd, env }) {
+// command + args run as their own process group, stdin closed, each stream capped, reaped on exit.
+function spawnBounded(command, args, { cwd, env }) {
   return new Promise((resolve, reject) => {
-    const child = spawn(bash, ['--noprofile', '--norc', '-c', 'ulimit -f 4096; exec "$0" --noprofile --norc "$1"', bash, scriptFile],
-      { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(command, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
     if (child.pid) liveGroups.add(child.pid);
     const stdout = capture(child.stdout);
     const stderr = capture(child.stderr);
@@ -342,28 +459,33 @@ async function runOracle(sandbox, script, { sessionId = `qp-${sandbox.name}` } =
     fs.writeFileSync(scriptFile, script);
     for (const log of ['gh-argv.jsonl', 'git-argv.jsonl']) fs.writeFileSync(path.join(sandbox.logs, log), '');
 
-    const run = await spawnBounded(bash, scriptFile, { cwd: sandbox.proj, env: sandbox.runEnv({ tmpdir, sessionId }) });
+    const run = await spawnBounded(bash, ['--noprofile', '--norc', '-c', 'ulimit -f 4096; exec "$0" --noprofile --norc "$1"', bash, scriptFile],
+      { cwd: sandbox.proj, env: sandbox.runEnv({ tmpdir, sessionId }) });
     const result = collectResult(sandbox, run, tmpdir, sessionId);
     Object.defineProperty(result, 'sandbox', { value: sandbox, enumerable: false });
     return result;
   });
 }
 
-// runModuleCli(sandbox, argv, { sessionId }) -> the same result shape as runOracle: spawns
+// runModuleCli(sandbox, argv, { sessionId, stage }) -> the same result shape as runOracle: spawns
 // `node <this checkout>/plugin/bin/queue-pull.js <argv>` with the sandbox's explicit env (PATH
-// shims, frozen clock, fresh TMPDIR) and cwd, inside the escape guard.
-async function runModuleCli(sandbox, argv, { sessionId = `qp-${sandbox.name}` } = {}) {
+// shims, frozen clock, fresh TMPDIR) and cwd, inside the escape guard. `stage` ({ name: content })
+// is written to the run's session dir first: the `files` transport's inputs at their default paths.
+async function runModuleCli(sandbox, argv, { sessionId = `qp-${sandbox.name}`, stage = {} } = {}) {
   return withEscapeGuard(REPO, async () => {
     sandbox.runs += 1;
     const tmpdir = path.join(sandbox.root, 'tmp', `run-${sandbox.runs}`);
     fs.mkdirSync(tmpdir, { recursive: true });
     for (const log of ['gh-argv.jsonl', 'git-argv.jsonl']) fs.writeFileSync(path.join(sandbox.logs, log), '');
-    const r = spawnSync(process.execPath, [path.join(REPO, 'plugin', 'bin', 'queue-pull.js'), ...argv], {
-      cwd: sandbox.proj, env: sandbox.runEnv({ tmpdir, sessionId }), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: ORACLE_TIMEOUT_MS, maxBuffer: STREAM_CAP_BYTES * 16, windowsHide: true,
-    });
-    if (r.error) throw r.error;
-    const result = collectResult(sandbox, { status: r.status === null ? 128 : r.status, stdout: r.stdout, stderr: r.stderr }, tmpdir, sessionId);
+    if (Object.keys(stage).length) {
+      const sessionDir = sessionDirUnder(tmpdir, sessionId);
+      fs.mkdirSync(sessionDir, { recursive: true });
+      for (const [name, content] of Object.entries(stage)) fs.writeFileSync(path.join(sessionDir, name), content);
+    }
+    // Async and bounded like the oracle's own run, so a parity pool runs the two sides concurrently.
+    const r = await spawnBounded(process.execPath, [path.join(REPO, 'plugin', 'bin', 'queue-pull.js'), ...argv],
+      { cwd: sandbox.proj, env: sandbox.runEnv({ tmpdir, sessionId }) });
+    const result = collectResult(sandbox, r, tmpdir, sessionId);
     Object.defineProperty(result, 'sandbox', { value: sandbox, enumerable: false });
     return result;
   });
@@ -536,6 +658,33 @@ function runAll(jobs, limit = (os.availableParallelism ? os.availableParallelism
   });
 }
 
+// runPair({ name, scenario, transport, origin, agent }) -> { oracle, module }: two sandboxes built
+// from one scenario under one name (so both print the same session paths after normalize), the
+// oracle run in one and the module CLI in the other, concurrently. `origin` ({ oracle, module }:
+// origin.git paths) makes each side copy its own earlier run's origin -- a cache-hit config after
+// its miss. On `files`, `agent` (default agentInputs(scenario)) is what the oracle's agent writes
+// copy from, and the same files are staged at the module's session paths. Both results keep their
+// sandbox (non-enumerable `.sandbox`) for the caller to clean up.
+let fenceText = null;
+async function runPair({ name, scenario, transport = 'gh', origin = null, agent = null }) {
+  if (!fenceText) fenceText = extractFence(readText(SCRIPT_MD), FENCE_FIRST_LINE);
+  const inputs = transport === 'files' ? (agent || agentInputs(scenario)) : {};
+  const make = (side) => createSandbox(scenario, { transport, name, agent: inputs, origin: origin ? origin[side] : null });
+  const sandboxes = [];
+  try {
+    sandboxes.push(make('oracle'), make('module'));
+    const script = transport === 'files' ? filesOracleScript(fenceText, readText(MCP_MD)) : fenceText;
+    const [oracle, module] = await Promise.all([
+      runOracle(sandboxes[0], script),
+      runModuleCli(sandboxes[1], ['--transport', transport], { stage: inputs }),
+    ]);
+    return { oracle, module };
+  } catch (err) {
+    for (const sb of sandboxes) sb.cleanup();
+    throw err;
+  }
+}
+
 // --- the shims (each bin/ file re-enters here) -------------------------------------
 
 function shimLog(file, entry) {
@@ -641,7 +790,7 @@ function shimMain(kind) {
 }
 
 module.exports = {
-  REPO, SCRIPT_MD, FENCE_FIRST_LINE, RUN_DIR_NAME,
-  findBash, oracleSkip, extractFence, fenceSessionFiles, sessionFileNames,
-  createSandbox, runOracle, runModuleCli, withEscapeGuard, normalize, reported, assertParity, runAll, shimMain,
+  REPO, SCRIPT_MD, MCP_MD, FENCE_FIRST_LINE, RUN_DIR_NAME,
+  findBash, oracleSkip, extractFence, fenceSessionFiles, sessionFileNames, filesOracleScript,
+  createSandbox, runOracle, runModuleCli, runPair, withEscapeGuard, normalize, reported, assertParity, runAll, shimMain,
 };

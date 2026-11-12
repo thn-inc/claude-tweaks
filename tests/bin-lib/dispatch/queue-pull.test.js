@@ -13,7 +13,19 @@
 // prefix, tail excluded. The fence's tail opens with Node's uncaught-exception header (a throw-site
 // file:line or a node:internal loader line, Node-version dependent, absent from err.stack); the
 // module prints err.message. See TAIL_EXCLUDED_PREFIXES in queue-pull-oracle.js.
-const { test, mock } = require('node:test');
+// One exit-code mapping, not a normalization (R4): where the fence stops (`exit 1`), the CLI exits 4,
+// so the parity tests compare a stopped pair's statuses as 1 and 4 and everything else as is.
+//
+// Script defects the parity matrix (Task 8) shows, reproduced by the module, never fixed:
+//   - A candidate whose `labels` is not an array (SMalformed's #9020) throws inside the eligibility
+//     block (record-vocabulary.js's normalizeLabelNames calls .map on it), so the eligible list is
+//     never written and the pull stops at the group-building check: one malformed record stops
+//     every candidate, the clean #9001 included (a cross-candidate effect, on the run ledger).
+// One module divergence the matrix found and the module fixed (Task 3 carry): on `files` the
+// agent's dependency-freshness file stands where the fence's `gh issue list --search` stands, so
+// it is read only when there are dependency numbers to search; otherwise the fence's `echo '[]'`
+// holds (S2-files-miss, whose queue declares no dependency, diverged on the write-back blob).
+const { test, mock, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -23,12 +35,12 @@ const { spawnSync } = require('node:child_process');
 const { readText } = require('../../helpers/read-skill');
 const { gitRepo, fixtureGit } = require('../../helpers/git-fixtures');
 const {
-  REPO, SCRIPT_MD, FENCE_FIRST_LINE, RUN_DIR_NAME,
-  oracleSkip, extractFence, fenceSessionFiles, createSandbox, runOracle, runModuleCli, withEscapeGuard, normalize, reported, assertParity, runAll,
+  REPO, SCRIPT_MD, MCP_MD, FENCE_FIRST_LINE, RUN_DIR_NAME,
+  oracleSkip, extractFence, fenceSessionFiles, filesOracleScript, createSandbox, runOracle, runModuleCli, runPair, withEscapeGuard, normalize, reported, assertParity, runAll,
 } = require('./queue-pull-oracle');
 const {
-  S0, S1, SFast, fakeRun, fakeSpawnCli, ghRecord, withBody, QUEUE_ARGV, DEP_SEARCH_8000, mention, WEAK_PR_FILES,
-  IN_FLIGHT_7001, OPEN_PR_41, LIVE_CLAIM,
+  S0, S1, S2, SEmpty, SMalformed, SPortable, SFast, fakeRun, fakeSpawnCli, agentInputs, ghRecord, withBody, QUEUE_ARGV, DEP_SEARCH_8000, mention, WEAK_PR_FILES,
+  IN_FLIGHT_7001, OPEN_PR_41, LIVE_CLAIM, LANDING_COMMIT, PORTABLE_SLUG,
 } = require('./queue-pull-fixtures');
 const {
   PASSES, PASS_FIELD_VALUES, SESSION_FILES, QueuePullStopped, sessionPaths, runPasses, resolveOmit, defaultDeps, makeContext, queuePull, rankNext, rankFromFiles,
@@ -954,7 +966,7 @@ test('#5227 files: the queue file is aliased in place, dispatch-verified-open-de
   assert.equal(queue[0].createdAt, '2026-11-01T10:00:00Z');
   assert.equal(queue[0].created_at, '2026-11-01T10:00:00Z', 'the snake_case key stays beside the alias');
   assert.equal(queue[0].updatedAt, '2026-11-10T10:00:00Z');
-  assert.equal(JSON.parse(held.text[held.state.files.depFreshness])[0].updatedAt, '2026-11-09T10:00:00Z', 'the dependency-freshness file is aliased too');
+  assert.equal(JSON.parse(held.text['dispatch-dep-freshness.json'])[0].updatedAt, '2026-11-09T10:00:00Z', 'the dependency-freshness file is aliased too');
   assert.deepEqual(entriesOf(held, 'blocked'), [{ reason: 'blocked', records: [9002], detail: { blockedBy: [8000] } }]);
   assert.deepEqual(groupNumbers(held), [[9001]]);
   assert.notEqual(held.state.files.queueRaw, sessionPaths('qp-t3')['dispatch-queue-raw.json'], 'the supplied path is read, not the session file');
@@ -980,6 +992,47 @@ test('#5227 files: the queue file is aliased in place, dispatch-verified-open-de
   });
   assert.deepEqual(entriesOf(foreign, 'blocked'), [{ reason: 'blocked', records: [9001], detail: { blockedBy: ['acme-corp/other#12'] } }], 'PF17: foreignStates is read on files too');
   assert.deepEqual(foreign.cliCalls.filter(([n]) => n === 'resolve-foreign-blockers.js'), []);
+});
+
+// Task 8 (the files-transport reading, confirmed against filesOracleScript's S2-files-miss run): the
+// agent's dependency-freshness file stands where the fence's `gh issue list --search` stands, so it
+// is read only when there are dependency numbers to search. Otherwise the fence's `echo '[]'` holds.
+test('#5227 files: the dependency-freshness file is used only where the fence searches; with no dependency the session file is [] and the input is not read', () => {
+  const noGh = () => { throw new Error('no gh on files'); };
+  const inputsWith = (queue, dep) => (own) => {
+    const put = (name, content) => { const file = path.join(own, name); fs.writeFileSync(file, content); return file; };
+    return { inputs: {
+      queueRaw: put('queue.json', JSON.stringify(queue)),
+      openNumbers: put('open.json', JSON.stringify(queue.map((r) => ({ number: r.number })).concat([{ number: 8000 }]))),
+      depFreshness: dep === null ? path.join(own, 'absent-dep.json') : put('dep.json', dep),
+      verifiedOpenDeps: put('verified.txt', ''),
+    } };
+  };
+  const STALE = '[{"number":8000,"updated_at":"2026-11-09T10:00:00Z","state":"open"}]';
+  const signalNumbers = (r) => r.store.written[0].blob.freshnessSignal.issues.map((i) => i.number);
+
+  // No record declares a dependency: a stale agent file is never read, and a missing one is no error.
+  for (const dep of [STALE, null]) {
+    const r = pull(S1(), { transport: 'files', run: noGh, prepare: inputsWith([mcpRecord(9001, withBody(9001))], dep) });
+    assert.deepEqual(r.errs, [], `${dep === null ? 'missing' : 'stale'} input: ${r.stderr}`);
+    assert.equal(r.store.written.length, 1, 'the write-back still runs');
+    assert.deepEqual(signalNumbers(r), [9001], 'the freshness signal holds the queue only, as the fence\'s [] leaves it');
+    assert.equal(r.text['dispatch-dep-freshness.json'], '[]', 'the session file is the fence\'s [] (aliased)');
+  }
+
+  // A declared dependency: the write-back search point reads the agent file, aliased in the session file.
+  const deps = pull(S1(), { transport: 'files', run: noGh, prepare: inputsWith([mcpRecord(9002, `Blocked by #8000\n\n${withBody(9002)}`)], STALE) });
+  assert.deepEqual(deps.errs, [], deps.stderr);
+  assert.deepEqual(signalNumbers(deps), [9002, 8000]);
+  assert.equal(JSON.parse(deps.text['dispatch-dep-freshness.json'])[0].updatedAt, '2026-11-09T10:00:00Z');
+  assert.equal(deps.text[deps.state.files.depFreshness], STALE, 'the supplied file itself is left as the agent wrote it');
+
+  // A declared dependency and no agent file: the agent wrote none, so the session file is removed
+  // (filesOracleScript's `rm -f`), and the steps that read it fail as the fence's node blocks do.
+  const absent = pull(S1(), { transport: 'files', run: noGh, prepare: inputsWith([mcpRecord(9002, `Blocked by #8000\n\n${withBody(9002)}`)], null) });
+  assert.equal(absent.text['dispatch-dep-freshness.json'], undefined);
+  assert.match(absent.stderr, /queue-pull: alias-dep-freshness: ENOENT/);
+  assert.equal(absent.store.written.length, 0, 'the write-back cannot read the freshness and writes nothing');
 });
 
 test('#5227 D3: a non-array queue file such as {issues:[...]} reads as an empty queue, with no Warning', () => {
@@ -1563,7 +1616,6 @@ test('#5227 oracle cross-check: S1 full gives the oracle the same groups, the fo
 // ---- Task 5: blocker-landing, neighbour-in-flight, cross-PR overlap, near-duplicate; the omit sweep ----
 
 const PIPE = () => S1({ pipeline: true });
-const LANDING_COMMIT = 'c0ffee0000000000000000000000000000000001';
 const MALFORMED_CAUSE = 'a Blocked by line names no valid issue number (#0)';
 const NEIGHBOUR_STOP = fenceText(/echo "(dispatch: queue-pull stopped -- neighbour-in-flight exclusion pass failed \(exit )\$NEIGHBOUR_RC\); see error above\.\" >&2/);
 const UNLANDED_STOP = fenceText(/echo "(dispatch: queue-pull stopped -- unlanded-blocker exclusion pass failed; see error above\.)" >&2/);
@@ -2279,4 +2331,337 @@ test('AC10.1: docs/plugin-structure.md names queue-pull.js in the command refere
   assert.ok(entry, 'the module entry exists');
   assert.ok(entry.includes('queue-pull.js'), 'the module entry names queue-pull.js');
   assert.ok(entry.includes('; queue-pull.js (#5227'), 'the module has its own entry in the list, not only a mention');
+});
+
+// ---- Task 8: the parity matrix (AC1), multi-reason (AC3), empty and malformed queues (AC5),
+// portability and the real-writer pins. Each pair is the bash oracle over the fence (or, on files,
+// filesOracleScript's mcp-transport.md rendering of it) beside the real CLI, both under the same
+// sandbox shims; see the header for the normalizations and the one exit-code mapping. ----
+
+const POOL = Math.max(1, Math.min(4, (os.availableParallelism ? os.availableParallelism() : os.cpus().length) - 1));
+const PARITY_S1 = () => S1({ parity: true });
+const ALL_REASONS = [...new Set(PASSES.map((p) => p.reason).filter(Boolean))].sort();
+const FILES_S1_REASONS = ['blocked', 'malformed-blocker', 'neighbour-in-flight', 'not-spec-shaped', 'oversized', 'target-missing'];
+// `reasons`: the exclusion reasons the config's oracle run writes. On files the three gh-backed
+// probes (open-pr, shipped, unlanded-blocker) fail open as mcp-transport.md documents.
+const MATRIX = [
+  { name: 'S1-gh-miss', scenario: PARITY_S1(), transport: 'gh', reasons: ALL_REASONS },
+  { name: 'S1-gh-hit', scenario: PARITY_S1(), transport: 'gh', after: 'S1-gh-miss', reasons: ALL_REASONS },
+  { name: 'S1-files-miss', scenario: PARITY_S1(), transport: 'files', reasons: FILES_S1_REASONS },
+  { name: 'S1-files-hit', scenario: PARITY_S1(), transport: 'files', after: 'S1-files-miss', reasons: FILES_S1_REASONS },
+  { name: 'S2-gh-miss', scenario: S2(), transport: 'gh', reasons: ['blocked'] },
+  { name: 'S2-files-miss', scenario: S2(), transport: 'files', reasons: ['blocked'] },
+];
+const AC1_FILES = ['dispatch-groups.json', 'dispatch-exclusions.json', 'dispatch-fastlane-bundles.json', 'dispatch-near-dup-pairs.json',
+  'dispatch-crosspr-overlap.json', 'dispatch-linked-prs.json', 'dispatch-shipped-releases.json'];
+
+// Each config as a runAll job: a hit config starts only once its miss config has finished, and each
+// of its two sides copies that same side's origin from the miss run (PF1).
+const pairJobs = (configs) => configs.map((cfg) => ({
+  name: cfg.name,
+  after: cfg.after,
+  run: (miss) => runPair({ ...cfg, origin: miss ? { oracle: miss.oracle.sandbox.origin, module: miss.module.sandbox.origin } : null }),
+}));
+const cleanupPairs = (R) => { for (const pair of Object.values(R)) for (const r of [pair.oracle, pair.module]) r.sandbox.cleanup(); };
+const sides = (pair) => [['oracle', pair.oracle], ['module', pair.module]];
+
+// Every gh call either side made was answered by the scenario's table, and no git call left the
+// sandbox (the git shim refuses and logs any directory outside it).
+function assertClean(pair, label) {
+  for (const [side, r] of sides(pair)) {
+    assert.deepEqual(r.ghArgv.filter((a) => a.tag === 'UNHANDLED').map((a) => a.argv.join(' ').slice(0, 300)), [], `${label} ${side}: an unanswered gh call`);
+    assert.deepEqual(r.gitArgv.filter((a) => a.tag === 'REFUSED'), [], `${label} ${side}: a git call outside the sandbox`);
+  }
+}
+
+// R4's mapping for a stopped pair: the fence's `exit 1` is the CLI's 4. Returns the module result
+// with the oracle's status, so assertParity compares everything else as is.
+function stopMapped(oracle, module) {
+  assert.equal(oracle.status, 1, `the oracle stopped: ${oracle.stderr.slice(-2000)}`);
+  assert.equal(module.status, 4, `the module stopped: ${module.stderr.slice(-2000)}`);
+  return Object.defineProperty({ ...module, status: oracle.status }, 'sandbox', { value: module.sandbox });
+}
+
+const exclusionsIn = (r) => JSON.parse(r.files['dispatch-exclusions.json']);
+const groupedIn = (r) => JSON.parse(r.files['dispatch-groups.json']).flat().map((c) => c.number);
+const ghCall = (r, pattern) => r.ghArgv.map((a) => a.argv).filter((argv) => argv.some((x) => pattern.test(x)));
+
+test('#5227 filesOracleScript: every gh fetch becomes the agent write, the neighbour pass becomes mcp-transport\'s four steps, and a missing anchor throws', () => {
+  const mcp = readText(MCP_MD);
+  const script = filesOracleScript(FENCE, mcp);
+  for (const name of ['dispatch-queue-raw.json', 'dispatch-open-numbers.json', 'dispatch-verified-open-deps.txt', 'dispatch-in-flight-raw.json', 'dispatch-in-flight-claims.json']) {
+    assert.equal(script.split(`if [ -f "$QP_AGENT_DIR/${name}" ]`).length - 1, 1, name);
+  }
+  assert.equal(script.split('if [ -f "$QP_AGENT_DIR/dispatch-dep-freshness.json" ]').length - 1, 2, 'both dependency-freshness searches');
+  assert.deepEqual(script.split('\n').filter((l) => /^\s*(if ! )?gh (issue|pr) |\$\(gh issue view/.test(l)), [], 'no gh fetch survives');
+  assert.ok(script.includes('neighbourClaimTargets') && script.includes('claimReaderFromMap'), 'both mcp-transport fences are in');
+  assert.ok(!script.includes('createClaimReader().read'), 'the gh claim reader is gone');
+  assert.ok(script.includes('NEIGHBOUR_RC=$?\nif [ "$NEIGHBOUR_RC" -ne 0 ]; then\n  echo "dispatch: queue-pull stopped -- neighbour-in-flight exclusion pass failed (exit $NEIGHBOUR_RC); see error above." >&2\n  exit 1\nfi'), 'the fence\'s own stop follows step 4');
+  assert.ok(script.includes('echo \'[]\' > "$DISPATCH_CROSSPR_OVERLAP"') && !script.includes('detectCrossPRFileOverlap(candidates, openPRs)'), 'the overlap report is the agent\'s []');
+  assert.ok(script.includes('gh pr view "$PR"'), 'the shipped probe loop stays as written (its list is empty on files)');
+
+  const anchors = FENCE.split('\n').filter((l) => /^\s*(if ! )?gh (issue|pr) /.test(l));
+  assert.equal(anchors.length, 6, `the fence's gh fetch lines: ${anchors.join('\n')}`);
+  for (const line of [...anchors, ': > "$DISPATCH_VERIFIED_OPEN_DEPS"']) {
+    assert.throws(() => filesOracleScript(FENCE.replace(line, '# moved'), mcp), (err) => err.message === `anchor not found: ${line}`, line);
+  }
+  // mcp-transport.md's claim-targets fence (step 2) is the only one whose first line ends at this argument.
+  assert.throws(() => filesOracleScript(FENCE, mcp.replace('"$DISPATCH_IN_FLIGHT_RAW" <<NODE_EVAL_EOF', '"$X" <<NODE_EVAL_EOF')), /anchor not found/);
+});
+
+test('#5227 oracle: the git shim answers `remote get-url origin` with the scenario remote URL (canned and logged); any other remote call reaches the real git', { skip: oracleSkip() }, () => {
+  const sb = createSandbox(SPortable());
+  try {
+    const env = sb.runEnv({ tmpdir: path.join(sb.root, 'tmp'), sessionId: 'qp-geturl-probe' });
+    const git = (args) => spawnSync(path.join(sb.bin, 'git'), args, { cwd: sb.proj, env, encoding: 'utf8' });
+    const canned = git(['remote', 'get-url', 'origin']);
+    assert.equal(canned.status, 0, canned.stderr);
+    assert.equal(canned.stdout, `https://github.com/${PORTABLE_SLUG}.git\n`, 'the scenario URL, not the sandbox origin.git');
+    const near = git(['remote', 'get-url', '--all', 'origin']);
+    assert.equal(near.stdout, `${sb.origin}\n`, 'a different argv is delegated');
+    const log = fs.readFileSync(path.join(sb.logs, 'git-argv.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    assert.deepEqual(log.map((e) => e.tag), ['canned', 'delegated']);
+  } finally {
+    sb.cleanup();
+  }
+});
+
+describe('#5227 parity (AC1)', { skip: oracleSkip(), timeout: 600_000 }, () => {
+  const R = {};
+  const timing = {};
+  before(async () => {
+    const t0 = Date.now();
+    Object.assign(R, await runAll(pairJobs(MATRIX), POOL));
+    timing.ms = Date.now() - t0;
+  });
+  after(() => cleanupPairs(R));
+
+  for (const cfg of MATRIX) {
+    test(`AC1.1 [${cfg.name}]: groups, exclusions and every other output equal the script's`, () => {
+      const pair = R[cfg.name];
+      assertClean(pair, cfg.name);
+      assert.equal(pair.oracle.status, 0, pair.oracle.stderr.slice(-3000));
+      assert.deepEqual([...new Set(exclusionsIn(pair.oracle).map((e) => e.reason))].sort(), cfg.reasons, 'the reasons this config exercises');
+      for (const [side, r] of sides(pair)) assert.equal(r.stderr.includes(HIT_MESSAGE), Boolean(cfg.after), `${side}: a hit config hits and a miss config misses`);
+      assertParity(pair.oracle, pair.module, { files: AC1_FILES });
+    });
+  }
+
+  test('AC1.2: normalize substitutes only the sandbox root and the run id; the staged target-missing ids are byte-equal on both sides (deterministic temp names)', (t) => {
+    for (const cfg of MATRIX) {
+      const { oracle, module } = R[cfg.name];
+      assert.deepEqual(Object.keys(module.staged), Object.keys(oracle.staged), `${cfg.name}: the staged names, before any normalization`);
+    }
+    for (const name of ['S1-gh-miss', 'S1-files-miss']) {
+      const names = Object.keys(R[name].oracle.staged);
+      assert.ok(names.some((n) => /^dispatch-target-missing-9009\.qp\d{8}$/.test(n)), `${name}: the mktemp suffix names the item (D2): ${names}`);
+    }
+    assert.ok(Object.keys(R['S1-gh-miss'].oracle.staged).includes('shipped-close-9010.md'));
+    const sb = R['S1-gh-miss'].oracle.sandbox;
+    const sample = `${sb.root}/proj/.claude-tweaks/pipelines/${RUN_DIR_NAME}/staged x 2026-11-12T12:00:00.000Z ${sb.root}-not tmp.qp00000001`;
+    assert.equal(normalize(sample, sb), '<SCR>/proj/.claude-tweaks/pipelines/<RUN>/staged x 2026-11-12T12:00:00.000Z <SCR>-not tmp.qp00000001',
+      'the clock and the temp names are left as they are');
+    for (const [side, r] of sides(R['S1-gh-miss'])) assert.equal(r.orderBlob.computedAt, '2026-11-12T12:00:00.000Z', `${side}: the frozen clock, not a normalization`);
+    t.diagnostic(`AC1 matrix: ${MATRIX.length} pairs (${MATRIX.length * 2} runs), pool ${POOL}, wall ${timing.ms} ms`);
+  });
+
+  test('AC1.1 go-red: assertParity throws when the module result drops one exclusion entry', () => {
+    const { oracle, module } = R['S1-gh-miss'];
+    assertParity(oracle, module, { files: AC1_FILES });
+    const entries = exclusionsIn(module);
+    for (const at of [0, entries.length - 1]) {
+      const dropped = Object.defineProperty({ ...module, files: { ...module.files, 'dispatch-exclusions.json': JSON.stringify(entries.filter((_, i) => i !== at)) } }, 'sandbox', { value: module.sandbox });
+      assert.throws(() => assertParity(oracle, dropped, { files: AC1_FILES }), assert.AssertionError, `dropping entry ${at}`);
+    }
+  });
+
+  test('AC2.3: removing reasons are absent from dispatch-groups.json while oversized and neighbour-in-flight are present, both sides', () => {
+    const removing = PASSES.filter((p) => p.kind === 'exclusion' && p.removes).map((p) => p.reason);
+    const staying = [...new Set(PASSES.filter((p) => p.kind === 'exclusion' && !p.removes).map((p) => p.reason))].sort();
+    assert.deepEqual(staying, ['neighbour-in-flight', 'oversized']);
+    for (const cfg of MATRIX.filter((c) => c.name.startsWith('S1-'))) {
+      for (const [side, r] of sides(R[cfg.name])) {
+        const grouped = groupedIn(r);
+        const entries = exclusionsIn(r);
+        for (const e of entries.filter((x) => removing.includes(x.reason))) {
+          for (const n of e.records) assert.ok(!grouped.includes(n), `${cfg.name} ${side}: ${e.reason} #${n} left the groups`);
+        }
+        for (const reason of staying) {
+          const named = entries.filter((e) => e.reason === reason).flatMap((e) => e.records);
+          assert.ok(named.length > 0, `${cfg.name} ${side}: a ${reason} entry`);
+          for (const n of named) assert.ok(grouped.includes(n), `${cfg.name} ${side}: ${reason} #${n} stays in the groups`);
+        }
+      }
+    }
+  });
+
+  test('AC3.1 parity: #9004/#9005/#9006 carry one reason each and the linked-PR GraphQL names no #9004 alias, both sides', () => {
+    for (const cfg of MATRIX.filter((c) => c.name.startsWith('S1-'))) {
+      for (const [side, r] of sides(R[cfg.name])) {
+        const reasonsOf = (n) => exclusionsIn(r).filter((e) => e.records.includes(n)).map((e) => e.reason);
+        const label = `${cfg.name} ${side}`;
+        assert.deepEqual(reasonsOf(9004), ['not-spec-shaped'], label);
+        assert.deepEqual(reasonsOf(9006), ['target-missing'], label);
+        if (cfg.transport === 'files') {
+          assert.deepEqual(reasonsOf(9005), [], `${label}: no open-PR exclusion on files (the linked-PR query fails open)`);
+          continue;
+        }
+        assert.deepEqual(reasonsOf(9005), ['open-pr'], label);
+        const linked = ghCall(r, /CROSS_REFERENCED_EVENT/);
+        assert.equal(linked.length, 1, `${label}: one linked-PR query`);
+        const query = linked[0].join(' ');
+        assert.ok(!/\bi9004\s*:/.test(query), `${label}: the not-spec-shaped #9004 is never queried`);
+        assert.ok(/\bi9005\s*:/.test(query) && /\bi9006\s*:/.test(query), `${label}: #9005 and #9006 are (control)`);
+        assert.deepEqual(r.ghArgv.filter((a) => a.argv[0] === 'pr' && a.argv[1] === 'view').map((a) => a.argv[2]), ['5016'],
+          `${label}: only #9016's weak mention is probed, never an excluded candidate's`);
+      }
+    }
+  });
+
+  test('AC7.1: the files transport writes dispatch-crosspr-overlap.json as [] and dispatch-linked-prs.json as {}, both sides', () => {
+    for (const cfg of MATRIX.filter((c) => c.transport === 'files')) {
+      for (const [side, r] of sides(R[cfg.name])) {
+        const label = `${cfg.name} ${side}`;
+        // JSON-equal, AC1's "identical": the oracle's agent writes `echo '[]'` (a newline), the module '[]'.
+        assert.deepEqual(JSON.parse(r.files['dispatch-crosspr-overlap.json']), [], label);
+        assert.deepEqual(JSON.parse(r.files['dispatch-linked-prs.json']), {}, label);
+        assert.deepEqual(r.ghArgv, [], `${label}: zero gh calls`);
+        // Claims come from the agent's map (claimReaderFromMap), never a claims-registry read: the
+        // sandbox registry would give the same live answer, so only the read itself tells them apart.
+        assert.deepEqual(r.gitArgv.filter((e) => e.argv.some((x) => x.startsWith('claims-registry:'))), [], `${label}: no claims-registry read`);
+        const PATH = r.sandbox.runEnv({ tmpdir: r.sandbox.root, sessionId: 'unused' }).PATH;
+        for (const dir of PATH.split(path.delimiter)) assert.equal(fs.existsSync(path.join(dir, 'gh')), false, `${label}: no gh in ${dir}`);
+      }
+    }
+    // The gh configs are the control: the same passes do call gh there.
+    assert.ok(R['S1-gh-miss'].module.ghArgv.length > 0 && R['S1-gh-miss'].oracle.ghArgv.length > 0);
+  });
+
+  test('#5227 real-writer: fakeSpawnCli canned stdout equals what the real CLIs printed in S1-gh-miss', () => {
+    const { oracle } = R['S1-gh-miss'];
+    // resolve-linked-prs.js: the numbers the real CLI queried, in its alias order.
+    const [linked] = ghCall(oracle, /CROSS_REFERENCED_EVENT/);
+    const numbers = [...linked.join(' ').matchAll(/\bi(\d+)\s*:\s*issue\(/g)].map((m) => m[1]);
+    assert.ok(numbers.length > 5, numbers.join());
+    assert.equal(fakeSpawnCli(PARITY_S1())('resolve-linked-prs.js', [numbers.join(',')]).stdout, oracle.files['dispatch-linked-prs.json']);
+    // dispatch-unlanded-blockers.js: nothing after it rewrites dispatch-groups.json, so the oracle's
+    // file is the real CLI's stdout. The canned CLI over that pool plus #9011 and #9012 prints it
+    // byte for byte and appends the real CLI's two entries.
+    const eligible = JSON.parse(oracle.files['dispatch-eligible.json']);
+    const record = (n) => eligible.find((c) => c.number === n);
+    const own = fs.mkdtempSync(path.join(os.tmpdir(), 'qp-writer-'));
+    try {
+      const groupsFile = path.join(own, 'groups.json');
+      const exclusionsFile = path.join(own, 'exclusions.json');
+      fs.writeFileSync(groupsFile, JSON.stringify([...JSON.parse(oracle.files['dispatch-groups.json']), [record(9011)], [record(9012)]]));
+      fs.writeFileSync(exclusionsFile, '[]');
+      const out = cannedLanding([])(['--groups', groupsFile, '--exclusions', exclusionsFile, '--integration-branch', 'main', '--work-links', 'body-text']);
+      assert.equal(out.stdout, oracle.files['dispatch-groups.json']);
+      assert.deepEqual(JSON.parse(fs.readFileSync(exclusionsFile, 'utf8')),
+        exclusionsIn(oracle).filter((e) => e.reason === 'malformed-blocker' || e.reason === 'unlanded-blocker'));
+    } finally {
+      fs.rmSync(own, { recursive: true, force: true });
+    }
+  });
+
+  test('#5227 cwd/env: on the module side the foreign-blocker lookup and the claim-registry reads reach the sandbox shims, and every git call runs inside the sandbox', () => {
+    const s2 = R['S2-gh-miss'].module;
+    assert.ok(s2.ghArgv.some((a) => a.tag === 'ok' && a.argv.some((x) => /\bc0\s*:\s*repository\(/.test(x)) && a.argv.includes('o0=acme-corp')),
+      'resolve-foreign-blockers.js asked the gh shim for acme-corp/other#12');
+    const s1 = R['S1-gh-miss'].module;
+    assert.ok(s1.ghArgv.some((a) => a.tag === 'ok' && a.argv.join(' ') === 'repo view --json nameWithOwner -q .nameWithOwner'), "the claim reader's slug lookup reached the gh shim");
+    assert.ok(s1.gitArgv.some((e) => e.argv.includes('fetch') && e.argv.some((x) => x.startsWith('claims-registry:'))), 'the claim reader fetched the sandbox claims-registry');
+    for (const [name, pair] of Object.entries(R)) {
+      for (const [side, r] of sides(pair)) {
+        for (const e of r.gitArgv) assert.ok(e.cwd === r.sandbox.root || e.cwd.startsWith(r.sandbox.root + path.sep), `${name} ${side}: git ran in ${e.cwd}`);
+      }
+    }
+  });
+});
+
+describe('#5227 parity (AC5, portability)', { skip: oracleSkip(), timeout: 600_000 }, () => {
+  const EXTRA = [
+    { name: 'SEmpty-gh-miss', scenario: SEmpty() },
+    { name: 'SMalformed-gh-miss', scenario: SMalformed() },
+    { name: 'SMalformed-labels', scenario: SMalformed('labels') },
+    { name: 'SMalformed-body', scenario: SMalformed('body') },
+    { name: 'SMalformed-blocker', scenario: SMalformed('blocker') },
+    { name: 'SPortable-gh-miss', scenario: SPortable() },
+  ];
+  const R = {};
+  const timing = {};
+  before(async () => {
+    const t0 = Date.now();
+    Object.assign(R, await runAll(pairJobs(EXTRA), POOL));
+    timing.ms = Date.now() - t0;
+  });
+  after(() => cleanupPairs(R));
+
+  test('AC5.1: an empty queue yields the same files as the script', (t) => {
+    const pair = R['SEmpty-gh-miss'];
+    assertClean(pair, 'SEmpty');
+    assert.equal(pair.oracle.status, 0, pair.oracle.stderr.slice(-3000));
+    assertParity(pair.oracle, pair.module);
+    for (const [side, r] of sides(pair)) {
+      assert.deepEqual(JSON.parse(r.files['dispatch-groups.json']), [], side);
+      assert.deepEqual(exclusionsIn(r), [], side);
+    }
+    t.diagnostic(`AC5/portability: ${EXTRA.length} pairs (${EXTRA.length * 2} runs), pool ${POOL}, wall ${timing.ms} ms`);
+  });
+
+  test('AC5.2: non-array labels, a non-string body and an invalid Blocked-by number are handled as the script handles them, and #9001\'s verdict matches the oracle\'s', () => {
+    const verdict = (r) => ({
+      grouped: r.files['dispatch-groups.json'] ? groupedIn(r).includes(9001) : null,
+      reasons: r.files['dispatch-exclusions.json'] ? exclusionsIn(r).filter((e) => e.records.includes(9001)).map((e) => e.reason) : null,
+    });
+    // Non-array labels: the script stops the whole pull at the group-building check (header).
+    for (const name of ['SMalformed-gh-miss', 'SMalformed-labels']) {
+      const pair = R[name];
+      assertClean(pair, name);
+      assertParity(pair.oracle, stopMapped(pair.oracle, pair.module), { files: AC1_FILES });
+      for (const [side, r] of sides(pair)) {
+        assert.deepEqual(reported(r.stderr), [`${GROUPING_STOP_RE.exec(FENCE)[1]}1${GROUPING_STOP_RE.exec(FENCE)[2]}`], `${name} ${side}`);
+        assert.equal(r.files['dispatch-groups.json'], '', `${name} ${side}: the grouping redirect truncated the groups file`);
+      }
+      assert.deepEqual(verdict(pair.module), verdict(pair.oracle), `${name}: #9001's verdict`);
+    }
+    // A non-string body: not-spec-shaped. An invalid Blocked-by number: malformed-blocker.
+    const expected = {
+      'SMalformed-body': { reason: 'not-spec-shaped', records: [9021], detail: { missing: ['Current State', 'Deliverables', 'Acceptance Criteria', 'Release Note'] } },
+      'SMalformed-blocker': { reason: 'malformed-blocker', records: [9022], detail: { cause: 'a Blocked by line names no valid issue number (#99999999999)' } },
+    };
+    for (const [name, entry] of Object.entries(expected)) {
+      const pair = R[name];
+      assertClean(pair, name);
+      assert.equal(pair.oracle.status, 0, pair.oracle.stderr.slice(-3000));
+      assertParity(pair.oracle, pair.module, { files: AC1_FILES });
+      for (const [side, r] of sides(pair)) {
+        assert.deepEqual(exclusionsIn(r), [entry], `${name} ${side}`);
+        assert.deepEqual(groupedIn(r), [9001], `${name} ${side}: the clean record is dispatchable`);
+      }
+      assert.deepEqual(verdict(pair.module), verdict(pair.oracle), `${name}: #9001's verdict`);
+      assert.deepEqual(verdict(pair.oracle), { grouped: true, reasons: [] });
+    }
+  });
+
+  test('#5227 portability: release/next and acme-corp/widgets reach git cat-file, --integration-branch and the GraphQL owner/repo on both sides', () => {
+    const pair = R['SPortable-gh-miss'];
+    assertClean(pair, 'SPortable');
+    assert.equal(pair.oracle.status, 0, pair.oracle.stderr.slice(-3000));
+    assertParity(pair.oracle, pair.module, { files: AC1_FILES });
+    const [owner, repo] = PORTABLE_SLUG.split('/');
+    for (const [side, r] of sides(pair)) {
+      const catFiles = r.gitArgv.map((e) => e.argv).filter((a) => a.includes('cat-file')).map((a) => a.slice(a.indexOf('cat-file')).join(' ')).sort();
+      assert.deepEqual(catFiles, ['cat-file -e origin/release/next:docs/gone.md', 'cat-file -e origin/release/next:docs/kept.md'], side);
+      assert.ok(!r.gitArgv.some((e) => e.argv.join(' ').includes('remote show origin')), `${side}: the policy key wins, origin's HEAD (trunk) is never asked`);
+      for (const pattern of [/CLOSED_EVENT/, /CROSS_REFERENCED_EVENT/]) {
+        const [call] = ghCall(r, pattern);
+        assert.ok(call && call.includes(`owner=${owner}`) && call.includes(`repo=${repo}`), `${side}: ${pattern} names ${PORTABLE_SLUG}`);
+      }
+      assert.ok(r.ghArgv.some((a) => a.argv[1] === `repos/${PORTABLE_SLUG}/compare/release/next...${LANDING_COMMIT}`), `${side}: --integration-branch release/next reached the compare`);
+      assert.deepEqual(exclusionsIn(r).map((e) => [e.reason, e.records[0]]), [['target-missing', 9041], ['unlanded-blocker', 9042]], side);
+      assert.deepEqual(groupedIn(r), [9040], `${side}: docs/kept.md is present at origin/release/next`);
+      assert.ok(r.stderr.includes(`blocker #8001 closed but its closing commit ${LANDING_COMMIT} is not on origin/release/next`), side);
+    }
+  });
 });

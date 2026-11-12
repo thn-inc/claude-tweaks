@@ -11,6 +11,25 @@
 // `corrupt-groups` or `delete-session-file:<name>`.
 // An unmatched call fails on both sides: the PATH shim exits 97 with
 // `gh-shim: no canned response for: …`, and fakeRun throws 'unexpected gh ' + args.join(' ').
+//
+// The parity tables were filled by running each pair over the table and answering every UNHANDLED
+// argv in turn (Task 1's loop). The final gh argv each pair makes, both sides, all answered (a
+// graphql call shown as <kind: aliases> and its -f variables; [injected] is a fixtured failure;
+// the files configs make none, their PATH holding no gh):
+//   common  issue list --label auto:build ... --limit 500 | issue list --state open --json number --limit 200
+//           --version | issue list --label bot:in-progress ... --limit 200 | repo view --json nameWithOwner -q .nameWithOwner
+//           pr list --state open --json number,files,closingIssuesReferences --limit 100
+//   S1 (parity; miss and hit)  issue view 8001 | [injected] issue view 0 | issue list --search #8000 #8001 #0 (miss)
+//           issue list --search #8000 #8001 (hit) | <linked: i9005,i9006,i9008,i9009,i9010,i9011,i9012,i9013,i9014,
+//           i9015,i9001,i9003,i9016> | pr view 5016 --json files | <landing: b8001>
+//           api repos/fixture-owner/fixture-repo/compare/main...c0ffee…01 --jq .status   (owner=fixture-owner repo=fixture-repo)
+//   S2      <foreign: c0> o0=acme-corp n0=other | <native: i9001,i9030> | <native: i9001> | <linked: i9001>
+//   SEmpty  the common calls only (no linked query: no group number)
+//   SMalformed, SMalformed('labels')  the queue and open-numbers pulls (and --version), then the stop
+//   SMalformed('body')  <linked: i9001> | SMalformed('blocker')  [injected] issue view 99999999999 |
+//           issue list --search #99999999999 | <linked: i9001,i9022>
+//   SPortable  issue view 8001 | issue list --search #8001 | <linked: i9040,i9041,i9042> | <landing: b8001>
+//           api repos/acme-corp/widgets/compare/release/next...c0ffee…01 --jq .status   (owner=acme-corp repo=widgets)
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -294,14 +313,30 @@ const DEP_SEARCH_PIPELINE = ['issue', 'list', '--search', '#8000 #8001 #0', '--s
 const DEP_SEARCH_PIPELINE_HIT = ['issue', 'list', '--search', '#8000 #8001', '--state', 'all', '--json', 'number,updatedAt,state', '--limit', '500'];
 const DEP_FRESHNESS_PIPELINE = '[{"number":8000,"updatedAt":"2026-11-09T10:00:00Z","state":"OPEN"},{"number":8001,"updatedAt":"2026-11-08T10:00:00Z","state":"CLOSED"}]\n';
 
-function S1({ full = false, pipeline = false } = {}) {
+// #8001's landing answer for preflight-records.js --blocker-landing: closed by a commit that the
+// compare API reports as diverged from the integration branch, so #9011 reads `unlanded`.
+const LANDING_COMMIT = 'c0ffee0000000000000000000000000000000001';
+const LANDING_8001 = {
+  number: 8001, state: 'CLOSED', stateReason: 'COMPLETED',
+  timelineItems: { nodes: [{ closer: { __typename: 'Commit', oid: LANDING_COMMIT } }] },
+  closedByPullRequestsReferences: { pageInfo: { hasNextPage: false }, nodes: [] },
+};
+const compareArgv = (slug, branch) => ['api', `repos/${slug}/compare/${branch}...${LANDING_COMMIT}`, '--jq', '.status'];
+
+//
+// S1({ parity: true }) is pipeline plus the oversized reason, for the AC1 matrix: a size guard of 2,
+// and #9001, #9003 and #9016 carry ceremony:fast-lane, so they bundle into one group of 3 that is
+// over the guard (it stays in dispatch-groups.json and is named in dispatch-fastlane-bundles.json).
+function S1({ full = false, pipeline = false, parity = false } = {}) {
+  pipeline = pipeline || parity;
   full = full || pipeline;
   const docsHealth = ['auto:build', 'ready', 'by:docs-health'];
+  const fastLane = parity ? { labels: ['auto:build', 'ready', 'ceremony:fast-lane'] } : {};
   const header = (doc) => `**Doc:** ${doc} | **Section:** fixture\n\n`;
   const records = [
-    ghRecord(9001, { body: withBody(9001) }),
+    ghRecord(9001, { body: withBody(9001), ...fastLane }),
     ghRecord(9002, { body: `Blocked by #8000\n\n${withBody(9002)}` }),
-    ghRecord(9003, { body: withBody(9003) }),
+    ghRecord(9003, { body: withBody(9003), ...fastLane }),
   ];
   const linked = {};
   const survivors = [9001, 9003];
@@ -314,7 +349,7 @@ function S1({ full = false, pipeline = false } = {}) {
       ghRecord(9008, { body: withBody(9008) }),
       ghRecord(9009, { body: header('docs/gone.md') + withBody(9009), labels: docsHealth }),
       ghRecord(9010, { body: withBody(9010) }),
-      ghRecord(9016, { body: withBody(9016) }),
+      ghRecord(9016, { body: withBody(9016), ...fastLane }),
     );
     Object.assign(linked, {
       9004: { openPR: 78, mentions: [mention(5004, 'Fixture record 9004')] },
@@ -343,8 +378,10 @@ function S1({ full = false, pipeline = false } = {}) {
   const openNumbers = [...records.map((r) => r.number), 8000].map((number) => ({ number }));
   return {
     name: 'S1',
-    policy: { 'work-links': 'body-text' },
-    origin: { branches: { main: {} } },
+    policy: { 'work-links': 'body-text', ...(parity ? { 'dispatch-group-size-guard': '2' } : {}) },
+    origin: pipeline
+      ? { branches: { main: { 'docs/present.md': 'present\n' }, 'claims-registry': { 'claims/issue-7001.json': LIVE_CLAIM } } }
+      : { branches: { main: {} } },
     linked,
     gh: [
       { argv: QUEUE_ARGV, stdout: JSON.stringify(records) + '\n' },
@@ -356,9 +393,123 @@ function S1({ full = false, pipeline = false } = {}) {
         { argv: DEP_SEARCH_PIPELINE, stdout: DEP_FRESHNESS_PIPELINE },
         // A queue-order cache hit refetches only the dependencies the blob's freshness signal holds (#0 has no record).
         { argv: DEP_SEARCH_PIPELINE_HIT, stdout: DEP_FRESHNESS_PIPELINE },
+        { graphql: 'landing', aliases: { b8001: LANDING_8001 } },
+        { argv: compareArgv(REPO_SLUG, 'main'), stdout: 'diverged\n' },
       ] : [{ argv: DEP_SEARCH_8000, stdout: '[{"number":8000,"updatedAt":"2026-11-09T10:00:00Z","state":"OPEN"}]\n' }]),
       ...(full ? [{ argv: ['pr', 'view', '5016', '--json', 'files', '-q', '[.files[].path]'], stdout: JSON.stringify(WEAK_PR_FILES) + '\n' }] : []),
       ...tailGh(survivors, linked, pipeline ? { inFlight: [IN_FLIGHT_7001], openPrs: [OPEN_PR_41] } : {}),
+    ],
+  };
+}
+
+// S2: work-links native. #9030 is natively blocked by open #8100; #9031's body says
+// `Blocked by acme-corp/other#12`, an open issue in another repository; #9001 is clean. On gh the
+// native edges come from resolve-blockers.js's GraphQL and the foreign state from
+// resolve-foreign-blockers.js's; on files from scenario.foreign (DISPATCH_FOREIGN_STATES), while the
+// native query fails with no gh, as mcp-transport.md documents.
+function S2() {
+  const records = [
+    ghRecord(9001, { body: withBody(9001) }),
+    ghRecord(9030, { body: withBody(9030) }),
+    ghRecord(9031, { body: `Blocked by acme-corp/other#12\n\n${withBody(9031)}` }),
+  ];
+  const repo = { nameWithOwner: REPO_SLUG };
+  const nativeNode = (number, blockers) => ({ number, repository: repo, blockedBy: { nodes: blockers.map((n) => ({ number: n, state: 'OPEN', repository: repo })) } });
+  return {
+    name: 'S2',
+    policy: { 'work-links': 'native' },
+    origin: { branches: { main: {} } },
+    foreign: { 'acme-corp/other#12': 'OPEN' },
+    gh: [
+      { argv: QUEUE_ARGV, stdout: JSON.stringify(records) + '\n' },
+      { argv: ['issue', 'list', '--state', 'open', '--json', 'number', '--limit', '200'], stdout: JSON.stringify([9001, 9030, 9031, 8100].map((number) => ({ number }))) + '\n' },
+      // resolve-foreign-blockers.js's lookup of acme-corp/other#12, aliased c0.
+      { graphql: 'foreign', aliases: { c0: { issue: { state: 'OPEN' } } } },
+      // resolve-blockers.js (over 9001 and 9030), then preflight-records.js's native read inside
+      // dispatch-unlanded-blockers.js (over the survivors): one entry answers both.
+      { graphql: 'native', aliases: { i9001: nativeNode(9001, []), i9030: nativeNode(9030, [8100]) } },
+      ...tailGh([9001]),
+    ],
+  };
+}
+
+const OPEN_ARGV = ['issue', 'list', '--state', 'open', '--json', 'number', '--limit', '200'];
+
+// SEmpty: an empty auto:build queue (AC5.1).
+function SEmpty() {
+  return {
+    name: 'SEmpty',
+    policy: { 'work-links': 'body-text' },
+    origin: { branches: { main: {} } },
+    gh: [
+      { argv: QUEUE_ARGV, stdout: '[]\n' },
+      { argv: OPEN_ARGV, stdout: '[]\n' },
+      ...tailGh([]),
+    ],
+  };
+}
+
+// SMalformed (AC5.2): #9020's labels is the string "auto:build", #9021's body is the number 42,
+// #9022 declares `Blocked by #99999999999` (above 2147483647, so no issue can exist), and #9001 is
+// the clean control whose verdict must match the oracle's whatever the other three do. In the
+// script, #9020's string labels throw inside the eligibility block (record-vocabulary.js's
+// normalizeLabelNames calls .map on it), so the whole pull stops at the group-building check
+// before #9021 or #9022 reach any pass. SMalformed(only) keeps #9001 and the one named
+// candidate ('labels', 'body' or 'blocker'), so each malformed input reaches its own handling.
+const MALFORMED = {
+  labels: () => ({ ...ghRecord(9020, { body: withBody(9020) }), labels: 'auto:build' }),
+  body: () => ({ ...ghRecord(9021), body: 42 }),
+  blocker: () => ghRecord(9022, { body: `Blocked by #99999999999\n\n${withBody(9022)}` }),
+};
+function SMalformed(only = null) {
+  const records = [ghRecord(9001, { body: withBody(9001) }), ...Object.entries(MALFORMED).filter(([k]) => !only || k === only).map(([, make]) => make())];
+  const numbers = records.map((r) => r.number);
+  return {
+    name: only ? `SMalformed-${only}` : 'SMalformed',
+    policy: { 'work-links': 'body-text' },
+    origin: { branches: { main: {} } },
+    gh: [
+      { argv: QUEUE_ARGV, stdout: JSON.stringify(records) + '\n' },
+      { argv: OPEN_ARGV, stdout: JSON.stringify(numbers.map((number) => ({ number }))) + '\n' },
+      // #9022's blocker is outside the open-numbers pull, so the fence checks it live (it cannot
+      // exist) and searches it for the freshness signal (nothing matches).
+      { argv: ['issue', 'view', '99999999999', '--json', 'state', '-q', '.state'], stdout: '', stderr: 'GraphQL: Could not resolve to an issue or pull request with the number of 99999999999. (repository.issue)\n', status: 1 },
+      { argv: ['issue', 'list', '--search', '#99999999999', '--state', 'all', '--json', 'number,updatedAt,state', '--limit', '500'], stdout: '[]\n' },
+      ...tailGh(numbers),
+    ],
+  };
+}
+
+// SPortable: integration-branch release/next (policy), origin's HEAD at trunk and the remote
+// https://github.com/acme-corp/widgets.git. #9040 names docs/kept.md (only on release/next), #9041
+// names docs/gone.md (only on trunk), and #9042 is blocked by closed #8001 whose commit the compare
+// against release/next reports diverged. The branch, the owner and the repo must come from those
+// three sources and never from a literal `main` or the fixture slug.
+const PORTABLE_SLUG = 'acme-corp/widgets';
+function SPortable() {
+  const docsHealth = ['auto:build', 'ready', 'by:docs-health'];
+  const header = (doc) => `**Doc:** ${doc} | **Section:** fixture\n\n`;
+  const records = [
+    ghRecord(9040, { body: header('docs/kept.md') + withBody(9040), labels: docsHealth }),
+    ghRecord(9041, { body: header('docs/gone.md') + withBody(9041), labels: docsHealth }),
+    ghRecord(9042, { body: `Blocked by #8001\n\n${withBody(9042)}` }),
+  ];
+  const ignore = { '.gitignore': '.claude-tweaks/pipelines/\n' };
+  const tail = tailGh([9040, 9041, 9042]).map((e) => (e.argv && e.argv[0] === 'repo' ? { ...e, stdout: `${PORTABLE_SLUG}\n` } : e));
+  return {
+    name: 'SPortable',
+    policy: { 'work-links': 'body-text', 'integration-branch': 'release/next' },
+    remoteUrl: `https://github.com/${PORTABLE_SLUG}.git`,
+    headBranch: 'trunk',
+    origin: { branches: { main: {}, trunk: { ...ignore, 'docs/gone.md': 'on trunk only\n' }, 'release/next': { ...ignore, 'docs/kept.md': 'on release/next only\n' } } },
+    gh: [
+      { argv: QUEUE_ARGV, stdout: JSON.stringify(records) + '\n' },
+      { argv: OPEN_ARGV, stdout: JSON.stringify([9040, 9041, 9042].map((number) => ({ number }))) + '\n' },
+      { argv: ['issue', 'view', '8001', '--json', 'state', '-q', '.state'], stdout: 'CLOSED\n' },
+      { argv: ['issue', 'list', '--search', '#8001', '--state', 'all', '--json', 'number,updatedAt,state', '--limit', '500'], stdout: '[{"number":8001,"updatedAt":"2026-11-08T10:00:00Z","state":"CLOSED"}]\n' },
+      { graphql: 'landing', aliases: { b8001: LANDING_8001 } },
+      { argv: compareArgv(PORTABLE_SLUG, 'release/next'), stdout: 'diverged\n' },
+      ...tail,
     ],
   };
 }
@@ -405,8 +556,55 @@ function fakeSpawnCli(scenario, overrides = {}) {
   return spawnCli;
 }
 
+// --- the files transport's agent-fetched inputs ----------------------------------------------------
+
+const ghStdout = (scenario, argv) => {
+  const entry = (scenario.gh || []).find((e) => Array.isArray(e.argv) && e.argv.join('\u0000') === argv.join('\u0000'));
+  return entry ? entry.stdout : null;
+};
+
+// A gh-shaped issue as the MCP list_issues/issue_read tools return it (Review Focus 5): labels as
+// [{name}], a lowercase state, snake_case timestamps. A non-array labels value is passed through.
+function mcpShape(issue) {
+  const { createdAt, updatedAt, labels, state, ...rest } = issue;
+  const out = { ...rest };
+  if (labels !== undefined) out.labels = Array.isArray(labels) ? labels.map((l) => ({ name: l.name })) : labels;
+  if (state !== undefined) out.state = typeof state === 'string' ? state.toLowerCase() : state;
+  if (createdAt !== undefined) out.created_at = createdAt;
+  if (updatedAt !== undefined) out.updated_at = updatedAt;
+  return out;
+}
+
+// scenario -> { <session file name>: content }: what the agent writes on the files transport
+// (mcp-transport.md), derived from the same gh table the gh configs answer from, in MCP shape. The
+// queue, open-numbers, verified-open-deps, in-flight pool and claims map are always written (the
+// claims map as {} when no claim is fixtured); the dependency-freshness file only when the table
+// answers a dependency search, as the agent fetches it only when there are dependencies to fetch.
+function agentInputs(scenario) {
+  const out = {};
+  const queue = ghStdout(scenario, QUEUE_ARGV);
+  out['dispatch-queue-raw.json'] = JSON.stringify(JSON.parse(queue).map(mcpShape));
+  out['dispatch-open-numbers.json'] = ghStdout(scenario, ['issue', 'list', '--state', 'open', '--json', 'number', '--limit', '200']);
+  const search = (scenario.gh || []).find((e) => Array.isArray(e.argv) && e.argv[0] === 'issue' && e.argv[2] === '--search');
+  if (search) out['dispatch-dep-freshness.json'] = JSON.stringify(JSON.parse(search.stdout).map(mcpShape));
+  out['dispatch-verified-open-deps.txt'] = (scenario.gh || [])
+    .filter((e) => Array.isArray(e.argv) && e.argv[0] === 'issue' && e.argv[1] === 'view' && !e.status && String(e.stdout).trim() === 'OPEN')
+    .map((e) => `${e.argv[2]}\n`).join('');
+  const inFlight = ghStdout(scenario, ['issue', 'list', '--label', 'bot:in-progress', '--state', 'open', '--json', 'number,title,body,labels', '--limit', '200']);
+  out['dispatch-in-flight-raw.json'] = JSON.stringify(JSON.parse(inFlight || '[]').map(mcpShape));
+  const registry = (scenario.origin && scenario.origin.branches && scenario.origin.branches['claims-registry']) || {};
+  const claims = {};
+  for (const [file, content] of Object.entries(registry)) {
+    const m = file.match(/^claims\/issue-(\d+)\.json$/);
+    if (m) claims[m[1]] = content;
+  }
+  out['dispatch-in-flight-claims.json'] = JSON.stringify(claims);
+  return out;
+}
+
 module.exports = {
   DEFAULT_REMOTE_URL, GRAPHQL_KINDS, ghAnswer, applyEffect, gitSubArgv, gitFailMatch, isGetUrlOrigin, shimTable, fakeRun,
-  ghLabel, ghRecord, SPEC_BODY, QUEUE_ARGV, DEP_SEARCH_8000, withBody, S0, S1, SFast, fakeSpawnCli,
+  ghLabel, ghRecord, SPEC_BODY, QUEUE_ARGV, DEP_SEARCH_8000, withBody, S0, S1, S2, SEmpty, SMalformed, SPortable, SFast, fakeSpawnCli, agentInputs,
+  LANDING_COMMIT, PORTABLE_SLUG,
   REPO_SLUG, linkedNode, linkedOutput, mention, WEAK_PR_FILES, tailGh, IN_FLIGHT_7001, OPEN_PR_41, LIVE_CLAIM,
 };

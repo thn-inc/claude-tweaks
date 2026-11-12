@@ -237,6 +237,26 @@ function fetchDepFreshness(ctx, numbersCsv, file) {
   put(ctx, file, r.ok ? r.stdout : '[]');
 }
 
+// On `files` the agent's dependency-freshness file stands where the fence's `gh issue list --search`
+// stands (mcp-transport.md's Step 2): written to the session file at each search the fence makes,
+// or the session file removed when the agent wrote none. The agent's text was read once, before the
+// fence's `echo '[]'` reset the session file (the input defaults to that same path).
+function agentDepFreshness(ctx, file) {
+  const text = ctx.state.depFreshnessInput;
+  if (text === null) step(ctx, 'agent-dep-freshness', () => fs.rmSync(file, { force: true }));
+  else put(ctx, file, text);
+}
+
+// The input file's text, or null when it does not exist.
+function readTextOrNull(file) {
+  try {
+    return fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return null;
+    throw err;
+  }
+}
+
 // The two exclusion-append loops the hit and miss paths share.
 function appendBlocked(file, entries) {
   for (const e of entries) appendExclusion(file, { reason: 'blocked', records: [e.number], detail: { blockedBy: e.blockedBy } });
@@ -276,6 +296,7 @@ function makeContext(options = {}, deps = {}) {
     groupSizeGuard: '',
     bundleCap: '',
     foreignStates: inputs.foreignStates || env.DISPATCH_FOREIGN_STATES,
+    depFreshnessInput: null, // files only: the agent's dependency-freshness text, read by the fetch pass
     standaloneDir: '',
     integrationBranch: '',
     integrationRef: '',
@@ -298,7 +319,9 @@ function runFetch(ctx) {
   const { deps, paths, state } = ctx;
   const f = state.files;
   const onGh = ctx.options.transport !== 'files';
+  const depFile = paths['dispatch-dep-freshness.json'];
 
+  if (!onGh) state.depFreshnessInput = step(ctx, 'dep-freshness-input', () => readTextOrNull(f.depFreshness)).value ?? null;
   if (onGh) put(ctx, f.queueRaw, ghRun(ctx, QUEUE_ARGV).stdout);
   aliasFile(ctx, 'alias-queue', f.queueRaw);
   const count = step(ctx, 'queue-count', () => readJson(f.queueRaw).length);
@@ -311,17 +334,20 @@ function runFetch(ctx) {
     const depOnly = (persisted.freshnessSignal.issues || []).filter((i) => !autoBuildNumbers.has(i.number));
     return depOnly.map((i) => i.number).join(',');
   }).value || '';
-  if (onGh) put(ctx, f.depFreshness, '[]');
+  put(ctx, depFile, '[]');
   put(ctx, paths['dispatch-fastlane-bundles.json'], '[]');
-  if (onGh && depNumbers) fetchDepFreshness(ctx, depNumbers, f.depFreshness);
-  aliasFile(ctx, 'alias-dep-freshness', f.depFreshness);
+  if (depNumbers) {
+    if (onGh) fetchDepFreshness(ctx, depNumbers, depFile);
+    else agentDepFreshness(ctx, depFile);
+  }
+  aliasFile(ctx, 'alias-dep-freshness', depFile);
 
   // The size guard is read for the cache check whether or not a blob exists (fence line 107).
   state.groupSizeGuard = readPolicy(ctx, 'dispatch-group-size-guard');
   try {
     const persisted = deps.queueOrder.readOrder(rootOf(ctx));
     if (persisted) {
-      const current = buildFreshnessSignal([...readJson(f.queueRaw), ...readJson(f.depFreshness)]);
+      const current = buildFreshnessSignal([...readJson(f.queueRaw), ...readJson(depFile)]);
       if (cacheUsable(persisted, current, deps.expressQueuePolicy({ stderr: deps.stderr }).grouping)) {
         fs.writeFileSync(paths['dispatch-groups.json'], JSON.stringify(persisted.groups));
         state.cacheHit = true;
@@ -488,20 +514,24 @@ function runWriteBack(ctx) {
   if (state.cacheHit) return;
   const f = state.files;
   const onGh = ctx.options.transport !== 'files';
+  const depFile = paths['dispatch-dep-freshness.json'];
 
   const allDeps = step(ctx, 'all-dep-numbers', () => {
     const eligiblePreDep = readJson(paths['dispatch-eligible-pre-dep.json']);
     return [...new Set(eligiblePreDep.flatMap((i) => parseDependencies(i.body)))].join(',');
   }).value || '';
-  if (onGh) put(ctx, f.depFreshness, '[]');
-  if (onGh && allDeps) fetchDepFreshness(ctx, allDeps, f.depFreshness);
-  aliasFile(ctx, 'alias-dep-freshness', f.depFreshness);
+  put(ctx, depFile, '[]');
+  if (allDeps) {
+    if (onGh) fetchDepFreshness(ctx, allDeps, depFile);
+    else agentDepFreshness(ctx, depFile);
+  }
+  aliasFile(ctx, 'alias-dep-freshness', depFile);
 
   if (ctx.omit.size > 0) return; // an omitted pass leaves groups the blob would misdescribe
   step(ctx, 'write-back', () => {
     const root = rootOf(ctx);
     const autoBuild = readJson(f.queueRaw);
-    const depFreshness = readJson(f.depFreshness);
+    const depFreshness = readJson(depFile);
     const groups = readJson(paths['dispatch-groups.json']);
     // The disk cache keeps its pre-#1752 {number, blockedBy}[] `excluded` shape: reshape the
     // unified 'blocked' entries back at the one place the schemas meet (Q28).
