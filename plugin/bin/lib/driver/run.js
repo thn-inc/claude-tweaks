@@ -34,9 +34,10 @@
 //     about to start with detail `interrupted by {signal} before {step}`, the final line,
 //     and deps.terminate(signal);
 //   - with no record running, or before a record's first step: deps.terminate only.
-// The stop class (interruptClass) is `blocked` once the branch is pushed, else `pre-push`
-// once the run directory exists, else that step's own class (its table entry's
-// stopClass): class refused before the claim, class claim from the claim to the mint.
+// The stop class (interruptClass) keys on what the record actually holds, never on the
+// step named: `blocked` once the branch is pushed, else `pre-push` once the run directory
+// exists, else class claim once the claim was obtained (ctx.claimed), else `refused`,
+// because nothing was written.
 // Nothing further is driven or emitted after an interrupt. deps.terminate re-raises the
 // signal only once stdout has taken the queued lines (reraiseAfterFlush), so stdout and the
 // jsonl end alike.
@@ -98,7 +99,7 @@ function newShared() {
 
 function newCtx(record, shared) {
   return {
-    record, runId: null, runDir: null, wt: null, branch: null,
+    record, runId: null, runDir: null, wt: null, branch: null, claimed: false,
     created: { worktree: false, branch: false }, pushed: false,
     pr: null, ci: null, checkLogged: undefined, worker: null,
     shared,
@@ -163,12 +164,14 @@ function yieldToEventLoop() {
   return new Promise((resolve) => { setImmediate(resolve); });
 }
 
-// An interrupted record's stop class: `blocked` once the branch is pushed, `pre-push` once
-// the run directory exists (an escalation has somewhere to live), else the step's own.
-function interruptClass(ctx, stepClass) {
+// An interrupted record's stop class, from the side effects it holds: `blocked` once the
+// branch is pushed, `pre-push` once the run directory exists (an escalation has somewhere
+// to live), the claim class once the claim was obtained, else `refused` (nothing written).
+function interruptClass(ctx) {
   if (ctx.pushed === true) return STOP_CLASSES.BLOCKED;
   if (ctx.runDir) return STOP_CLASSES.PRE_PUSH;
-  return stepClass;
+  if (ctx.claimed === true) return STOP_CLASSES.CLAIM;
+  return STOP_CLASSES.REFUSED;
 }
 
 // Writes an interrupted record's stop at `step` and its final line, then terminates. The
@@ -178,7 +181,7 @@ function reportInterrupt(shared, current, step, detail, ms, deps) {
   try {
     // A step that set ctx.runDir may not have had its sink bound yet; binding twice is harmless.
     if (ctx.runDir) sink.bindRunDir(ctx.runDir);
-    const result = { status: 'fail', detail, halt: true, stopClass: interruptClass(ctx, step.stopClass), reason: 'fail', extra: {} };
+    const result = { status: 'fail', detail, halt: true, stopClass: interruptClass(ctx), reason: 'fail', extra: {} };
     sink.emit(eventFor(ctx, step.name, result, ms, deps));
     current.final = finalEvent(ctx, { name: step.name, result }, sink, deps.now() - current.started, deps);
     sink.emit(current.final);

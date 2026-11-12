@@ -3,12 +3,11 @@
 //
 // Ports plugin/skills/_shared/express-lane.md Procedure steps 1–8 and 10 (step 9, merge, omitted by design); each step function names the step it ports. No test reads that prose — keep the two in step by hand.
 //
-// STEPS is a frozen, ordered array of { name, stopClass, run }. run.js walks it once per
-// record and owns only event emission and stop handling between steps, so a later unit
-// adds a step as one table entry, never a change to the loop. Each entry is built by
-// defineStep:
+// STEPS is a frozen, ordered array of { name, run }. run.js walks it once per record and
+// owns only event emission and stop handling between steps, so a later unit adds a step
+// as one table entry, never a change to the loop. Each entry is built by defineStep:
 //
-//   defineStep(name, stopClass, fn) -> { name, stopClass, run }
+//   defineStep(name, stopClass, fn) -> { name, run }
 //     fn(ctx, deps) -> Promise<StepResult>, where
 //     StepResult = { status: 'ok'|'stop'|'fail', detail?, halt?, stopClass?, reason?, extra? }
 //   - `stop` means a gate said no; `fail` means a call failed.
@@ -18,8 +17,6 @@
 //   - `reason` defaults to the status; it is the final line's `stop.reason`.
 //   - `extra` fields merge into the step's event line (never over its core fields).
 //   - A throw from fn is `{ status: 'fail', detail: err.message }` with the step's class.
-//   - The entry's `stopClass` is what run.js's interrupt handling reads for the step that
-//     was running or about to start, so run.js still names no step.
 //
 // Every external call goes through `deps`; nothing here reads process state.
 const path = require('node:path');
@@ -94,7 +91,7 @@ function defineStep(name, stopClass, fn) {
       extra: result.extra || {},
     };
   }
-  return Object.freeze({ name, stopClass, run: runStep });
+  return Object.freeze({ name, run: runStep });
 }
 
 // The integration-branch policy value when non-empty, else origin/HEAD minus `origin/`
@@ -257,7 +254,10 @@ const claimStep = defineStep(STEP.claim, STOP_CLASSES.CLAIM, async (ctx, deps) =
   let envelope;
   try { envelope = JSON.parse(r.stdout); } catch { envelope = null; }
   const transport = envelope && envelope.transportByIssue ? envelope.transportByIssue[n] : undefined;
-  if (!envelope || !Array.isArray(envelope.claimed) || !envelope.claimed.includes(n) || typeof transport !== 'string' || !TRANSPORT_RE.test(transport)) {
+  // The claim is held once claim-targets.js says it claimed #n, whatever else is wrong with
+  // its envelope: an interrupt from here on owes a release (run.js's interruptClass).
+  ctx.claimed = Boolean(envelope && Array.isArray(envelope.claimed) && envelope.claimed.includes(n));
+  if (!ctx.claimed || typeof transport !== 'string' || !TRANSPORT_RE.test(transport)) {
     return { status: 'fail', detail: `claim-targets.js exited 0 without claiming #${n}` };
   }
   ctx.transport = transport;

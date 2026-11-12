@@ -623,14 +623,12 @@ test('step constants', () => {
   assert.equal(WIN32_CLAUDE_BIN, 'claude.cmd');
 });
 
-test('defineStep: a throw is a fail with the step class; the entry carries its class', async () => {
+test('defineStep: a throw is a fail with the step class', async () => {
   const table = [
     defineStep('one', 'refused', async () => ({ status: 'ok' })),
     defineStep('two', 'pre-push', async () => { throw new Error('boom'); }),
     defineStep('three', 'none', async () => { throw new Error('never reached'); }),
   ];
-  assert.deepEqual(table.map((s) => [s.name, s.stopClass]), [['one', 'refused'], ['two', 'pre-push'], ['three', 'none']]);
-  assert.deepEqual(STEPS.map((s) => s.stopClass), ['refused', 'refused', 'refused', 'refused', 'claim', 'claim', 'pre-push', 'pre-push', 'pre-push']);
   const h = harness();
   const final = await driveRecord(7, newShared(), h.deps, table);
   assert.deepEqual(h.lines().map((l) => [l.step, l.status]), [['one', 'ok'], ['two', 'fail'], [FINAL_STEP, 'fail']]);
@@ -1352,6 +1350,52 @@ test('AC14: a signal while the claim runs is delivered before run-dir, which it 
   assert.equal(h.signals.length, 0, 'unsubscribed before run resolved');
 });
 
+test('AC14: a signal during admission is delivered before claim; nothing written, so refused', async () => {
+  const order = [];
+  let h = null;
+  h = harness({
+    deps: { terminate: (sig) => order.push(sig) },
+    admission: () => { fireSoon(h, 'SIGTERM'); return {}; },
+  });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const [stopLine, final] = h.lines().slice(-2);
+  assert.deepEqual([stopLine.step, stopLine.status, stopLine.detail], ['claim', 'fail', 'interrupted by SIGTERM before claim']);
+  assert.deepEqual([final.stop.step, final.stop.class, final.outcome, final.run], ['claim', 'refused', 'refused', null]);
+  assert.equal(calls(h, 'node', /claim-targets\.js$/).length, 0, 'no claim is taken');
+  assert.deepEqual(h.writes(), []);
+  assert.deepEqual(order, ['SIGTERM']);
+});
+
+test('AC14: a worker that settles after the kill adds nothing: one worker event, one final line, no commit, no next record', async () => {
+  const killedFail = { ...ENVELOPE, status: 'fail', reason: 'exit', result: null, detail: 'terminated' };
+  // A fail envelope, and a worker that finished just as it was killed (an ok envelope).
+  for (const settled of [killedFail, ENVELOPE]) {
+    const order = [];
+    let release;
+    const exited = new Promise((resolve) => { release = resolve; });
+    const handle = { pid: 99, kill: (sig) => { order.push(`kill:${sig}`); release(); }, exited };
+    let launched;
+    const started = new Promise((resolve) => { launched = resolve; });
+    const h = harness({
+      deps: { runner: () => handle, terminate: (sig) => order.push(`terminate:${sig}`) },
+      script: [[on('worker'), (c) => { c.args[1].runner({ file: 'claude' }); launched(); return exited.then(() => settled); }]],
+    });
+    const done = run(['#7', '#8'], h.deps);
+    await started;
+    fireSoon(h, 'SIGINT');
+    assert.equal(await done, 0, settled.status);
+    const lines = h.lines();
+    const finalsSeen = lines.filter((l) => l.step === FINAL_STEP);
+    assert.equal(finalsSeen.length, 1, `${settled.status}: one final line`);
+    assert.equal(lines.at(-1), finalsSeen[0], 'and it is the last line');
+    assert.deepEqual([finalsSeen[0].stop.step, finalsSeen[0].stop.detail, finalsSeen[0].stop.class], ['worker', 'interrupted by SIGINT', 'pre-push']);
+    assert.equal(lines.filter((l) => l.record === 7 && l.step === 'worker').length, 1, 'one worker event');
+    assert.equal(commitGit(h).length + gitCalls(h).filter((c) => gitSub(c)[1] === 'status').length, 0, 'no commit step');
+    assert.equal(lines.filter((l) => l.record === 8).length, 0, 'no record 8');
+    assert.deepEqual(order, ['kill:SIGTERM', 'terminate:SIGINT']);
+  }
+});
+
 test('AC14: a signal after the mint is delivered before worktree; class pre-push, both sinks hold it', async () => {
   const order = [];
   let h = null;
@@ -1399,11 +1443,29 @@ test('AC14: a signal before any record, or between records, only terminates', as
   assert.equal(idle.out.length, before, 'nothing emitted with no record running');
 });
 
-test('interruptClass: blocked once pushed, pre-push once the run dir exists, else the step\'s own class', () => {
-  assert.equal(interruptClass({ pushed: true, runDir: '/r' }, 'pre-push'), 'blocked');
-  assert.equal(interruptClass({ pushed: false, runDir: '/r' }, 'claim'), 'pre-push');
-  assert.equal(interruptClass({ pushed: false, runDir: null }, 'claim'), 'claim');
-  assert.equal(interruptClass({ pushed: false, runDir: null }, 'refused'), 'refused');
+test('interruptClass keys on the side effect held: pushed, run dir, claim, else nothing written', () => {
+  assert.equal(interruptClass({ pushed: true, runDir: '/r', claimed: true }), 'blocked');
+  assert.equal(interruptClass({ pushed: false, runDir: '/r', claimed: true }), 'pre-push');
+  assert.equal(interruptClass({ pushed: false, runDir: null, claimed: true }), 'claim');
+  assert.equal(interruptClass({ pushed: false, runDir: null, claimed: false }), 'refused');
+});
+
+test('the claim step records the claim as held once claim-targets.js names the record claimed', async () => {
+  const cases = [
+    [claimReply(0, claimOut(7)), true],
+    [claimReply(0, claimOut(7, 'Git!')), true],
+    [claimReply(0, JSON.stringify({ claimed: [8], transportByIssue: { 8: 'git' } })), false],
+    [claimReply(3, JSON.stringify({ contested: [{ issue: 7 }] })), false],
+  ];
+  for (const [reply, held] of cases) {
+    const h = harness({ script: [reply] });
+    const shared = newShared();
+    let ctx = null;
+    // The real steps up to and including the claim, the claim's ctx kept whether or not it halts.
+    const table = STEPS.slice(0, 5).map((step) => ({ name: step.name, run: async (c, d) => { ctx = c; return step.run(c, d); } }));
+    await driveRecord(7, shared, h.deps, table);
+    assert.equal(ctx.claimed, held, reply[1].stdout);
+  }
 });
 
 test('reraiseAfterFlush: the signal is re-raised once stdout has taken the queued lines, with an unref\'d backstop', () => {
