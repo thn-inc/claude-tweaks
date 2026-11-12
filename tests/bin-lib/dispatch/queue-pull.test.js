@@ -21,6 +21,10 @@ const {
   oracleSkip, extractFence, fenceSessionFiles, createSandbox, runOracle, withEscapeGuard, normalize, reported, assertParity, runAll,
 } = require('./queue-pull-oracle');
 const { S0, fakeRun } = require('./queue-pull-fixtures');
+const {
+  PASSES, PASS_FIELD_VALUES, SESSION_FILES, sessionPaths, runPasses, resolveOmit, defaultDeps, queuePull,
+} = require('../../../plugin/bin/lib/dispatch/queue-pull');
+const { appendExclusion } = require('../../../plugin/bin/lib/dispatch/exclusions');
 
 const FENCE = extractFence(readText(SCRIPT_MD), FENCE_FIRST_LINE);
 const ORACLE_ENV_KEYS = new Set([
@@ -251,3 +255,176 @@ test('#5227 oracle: normalize substitutes only the sandbox root and run-dir name
   assertParity(result('/scr/a', 'Warning: w\nnoise a'), result('/scr/b', 'Warning: w\nnoise b'), { files });
   assert.throws(() => assertParity(result('/scr/a', 'Warning: w'), result('/scr/b', 'Warning: v'), { files }));
 });
+
+// ---- Task 2: registry, session paths, truncate pass, pass loop (in-process, any platform) ----
+
+const SCRIPT_TEXT = readText(SCRIPT_MD);
+
+// One assertion function serves the positive test and the go-red controls.
+function assertRegistryMatchesBullets(passes, scriptText) {
+  const bullets = scriptText.split(/\r?\n/).map((l) => ({ l, m: l.match(/^- `reason: '([a-z-]+)'`/) })).filter((x) => x.m);
+  assert.ok(bullets.length >= 9, 'header bullet pattern no longer matches queue-pull-script.md');
+  assert.deepEqual([...new Set(passes.map((p) => p.reason).filter(Boolean))].sort(), bullets.map((b) => b.m[1]).sort());
+  for (const { l, m } of bullets) assert.equal(passes.find((p) => p.reason === m[1]).removes, !l.includes('stay IN `dispatch-groups.json`'), m[1]);
+}
+const notTheGuard = (err) => err instanceof assert.AssertionError && !/header bullet pattern/.test(err.message);
+
+test('AC11.1: the set of reasons in PASSES equals the script header bullets, plus nothing', () => {
+  assertRegistryMatchesBullets(PASSES, SCRIPT_TEXT);
+});
+
+test('AC11.1 go-red: a renamed reason on either side fails on the set comparison, not the count guard', () => {
+  const renamed = PASSES.map((p) => (p.reason === 'shipped' ? { ...p, reason: 'shipped-x' } : p));
+  assert.equal(renamed.filter((p) => p.reason).length, PASSES.filter((p) => p.reason).length);
+  assert.throws(() => assertRegistryMatchesBullets(renamed, SCRIPT_TEXT), notTheGuard);
+  assert.throws(() => assertRegistryMatchesBullets(PASSES, SCRIPT_TEXT.replace("- `reason: 'shipped'`", "- `reason: 'shipped-x'`")), notTheGuard);
+  const flipped = PASSES.map((p) => (p.reason === 'oversized' ? { ...p, removes: true } : p));
+  assert.throws(() => assertRegistryMatchesBullets(flipped, SCRIPT_TEXT), notTheGuard);
+});
+
+test('AC11.1: runPasses walks a registry in array order and runs a shared id once', () => {
+  const reversed = [...PASSES].reverse();
+  const ran = [];
+  const seen = [];
+  const runners = Object.fromEntries(PASSES.map((p) => [p.id, () => ran.push(p.id)]));
+  runPasses(reversed, { deps: { onPass: (id) => seen.push(id) }, paths: {}, options: {}, runners });
+  const expected = [...new Set(reversed.map((p) => p.id))];
+  assert.deepEqual(seen, expected);
+  assert.deepEqual(ran, expected);
+  assert.equal(ran.filter((id) => id === 'blocker-landing').length, 1);
+  assert.equal(expected[0], 'near-dup-pairs');
+});
+
+test('AC11.1: a pass without a runner throws "pass not implemented"; an omitted one is skipped', () => {
+  assert.throws(() => runPasses(PASSES, { deps: {}, paths: {}, options: {}, runners: {} }), /^Error: queue-pull: pass not implemented: truncate$/);
+  const seen = [];
+  runPasses(PASSES, { deps: { onPass: (id) => seen.push(id) }, paths: {}, options: {}, omit: new Set(['fetch']), runners: Object.fromEntries(PASSES.map((p) => [p.id, () => {}])) });
+  assert.ok(!seen.includes('fetch'));
+  assert.equal(seen.length, new Set(PASSES.map((p) => p.id)).size - 1);
+});
+
+test('AC11.2: every registry field has a fixed value set', () => {
+  const idCounts = {};
+  for (const p of PASSES) {
+    assert.deepEqual(Object.keys(p).sort(), ['bypass', 'failOpen', 'id', 'kind', 'mcp', 'reason', 'removes', 'runsOnCacheHit']);
+    for (const f of ['removes', 'bypass', 'runsOnCacheHit']) assert.equal(typeof p[f], 'boolean', `${p.id}.${f}`);
+    assert.ok(PASS_FIELD_VALUES.kind.includes(p.kind), p.id);
+    assert.ok(PASS_FIELD_VALUES.failOpen.includes(p.failOpen), p.id);
+    assert.ok(PASS_FIELD_VALUES.mcp.includes(p.mcp), p.id);
+    assert.equal(p.reason === null, p.kind !== 'exclusion', p.id);
+    idCounts[p.id] = (idCounts[p.id] || 0) + 1;
+  }
+  assert.deepEqual(Object.keys(idCounts).filter((id) => idCounts[id] > 1), ['blocker-landing']);
+  assert.equal(PASSES.filter((p) => p.id === 'blocker-landing').length, 2);
+  assert.equal(new Set(PASSES.filter((p) => p.id === 'blocker-landing').map((p) => p.failOpen)).size, 1, 'PF5: one identical failOpen');
+  assert.equal(PASSES.find((p) => p.id === 'neighbour-in-flight').failOpen, 'stop', 'PF6');
+  assert.deepEqual(PASS_FIELD_VALUES.failOpen, ['open', 'stop', 'n/a']);
+  assert.deepEqual(PASS_FIELD_VALUES.mcp, ['same', 'skipped-empty', 'fails-open', 'agent-fetched']);
+  assert.ok(Object.isFrozen(PASSES) && Object.isFrozen(PASSES[0]));
+});
+
+// Runs fn with TMPDIR (and the win32 spellings) pointed at a test-owned dir, never the host one.
+function inOwnTmp(fn) {
+  const own = fs.mkdtempSync(path.join(os.tmpdir(), 'qp-t2-'));
+  const keys = ['TMPDIR', 'TEMP', 'TMP', 'QP_TMPNAME_COUNTER_FILE'];
+  const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  for (const k of ['TMPDIR', 'TEMP', 'TMP']) process.env[k] = own;
+  delete process.env.QP_TMPNAME_COUNTER_FILE;
+  try {
+    return fn(own);
+  } finally {
+    for (const k of keys) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+    fs.rmSync(own, { recursive: true, force: true });
+  }
+}
+
+test('#5227 truncate keeps only firing entries (Q28)', () => inOwnTmp((own) => {
+  const paths = sessionPaths('qp-truncate');
+  const file = paths['dispatch-exclusions.json'];
+  appendExclusion(file, { reason: 'firing', records: [11], detail: { why: 'kept' } });
+  appendExclusion(file, { reason: 'blocked', records: [12], detail: { blockedBy: [1] } });
+  appendExclusion(file, { reason: 'oversized', records: [13, 14], detail: { size: 2, threshold: 1 } });
+  const errs = [];
+  runPasses(PASSES.slice(0, 1), { deps: { stderr: (s) => errs.push(s) }, paths, options: {} });
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), [{ reason: 'firing', records: [11], detail: { why: 'kept' } }]);
+  assert.deepEqual(errs, []);
+  assert.ok(file.startsWith(own), 'the exclusions file lives under the test-owned temp dir');
+  // A corrupt file truncates to [] (readExclusions degrades loud, never throws) and the pull goes on.
+  const realErr = console.error;
+  console.error = () => {};
+  try {
+    fs.writeFileSync(file, '{not json');
+    runPasses(PASSES.slice(0, 1), { deps: { stderr: () => {} }, paths, options: {} });
+  } finally {
+    console.error = realErr;
+  }
+  assert.equal(fs.readFileSync(file, 'utf8'), '[]');
+}));
+
+test('#5227 truncate: a throw prints "queue-pull: truncate: <message>" and the run continues', () => {
+  const errs = [];
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qp-t2-trunc-'));
+  try {
+    const paths = { 'dispatch-exclusions.json': path.join(dir, 'missing-dir', 'x.json') };
+    runPasses(PASSES.slice(0, 1), { deps: { stderr: (s) => errs.push(s) }, paths, options: {} });
+    assert.equal(errs.length, 1);
+    assert.match(errs[0], /^queue-pull: truncate: .*ENOENT/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('#5227 SESSION_FILES equals the fence --value list in fence order', () => {
+  assert.deepEqual(SESSION_FILES, [...fenceSessionFiles(extractFence(readText(SCRIPT_MD), FENCE_FIRST_LINE)), 'dispatch-next-pick.json']);
+  assert.equal(SESSION_FILES.length, 27);
+});
+
+test('#5227 tmpName: random tmp.<10 alnum> by default; tmp.qp00000001, tmp.qp00000002 under QP_TMPNAME_COUNTER_FILE', () => inOwnTmp((own) => {
+  const { tmpName } = defaultDeps();
+  const random = tmpName();
+  assert.equal(path.dirname(random), own);
+  assert.match(path.basename(random), /^tmp\.[A-Za-z0-9]{10}$/);
+  assert.equal(fs.readFileSync(random, 'utf8'), '', 'the file is created');
+  assert.notEqual(tmpName(), random);
+
+  const counter = path.join(own, 'counter');
+  process.env.QP_TMPNAME_COUNTER_FILE = counter;
+  const first = tmpName();
+  const second = tmpName();
+  assert.equal(path.basename(first), 'tmp.qp00000001');
+  assert.equal(path.basename(second), 'tmp.qp00000002');
+  assert.equal(path.dirname(first), own);
+  assert.equal(fs.readFileSync(counter, 'utf8'), '2');
+  assert.ok(fs.existsSync(first) && fs.existsSync(second));
+}));
+
+test('#5227 sessionPaths fallback: no session id gives path.join(os.tmpdir(), name)', () => inOwnTmp((own) => {
+  const none = sessionPaths(undefined);
+  assert.deepEqual(Object.keys(none), SESSION_FILES);
+  for (const name of SESSION_FILES) assert.equal(none[name], path.join(os.tmpdir(), name));
+  assert.equal(path.dirname(none['dispatch-groups.json']), own);
+  const scoped = sessionPaths('qp-sess');
+  assert.equal(scoped['dispatch-groups.json'], path.join(os.tmpdir(), 'ct-session-qp-sess', 'dispatch-groups.json'));
+  assert.notEqual(scoped['dispatch-groups.json'], none['dispatch-groups.json']);
+  assert.ok(scoped['dispatch-groups.json'].startsWith(own));
+}));
+
+test('#5227 omit: unknown reason or a setup pass throws TypeError; malformed-blocker maps to blocker-landing', () => {
+  assert.throws(() => resolveOmit(['no-such-reason']), TypeError);
+  assert.throws(() => resolveOmit(['fetch']), TypeError);
+  assert.throws(() => resolveOmit(['truncate']), TypeError);
+  assert.deepEqual([...resolveOmit(['malformed-blocker'])], ['blocker-landing']);
+  assert.deepEqual([...resolveOmit(['unlanded-blocker'])], ['blocker-landing']);
+  assert.deepEqual([...resolveOmit(['shipped', 'cross-pr-overlap'])].sort(), ['cross-pr-overlap', 'shipped']);
+  assert.deepEqual([...resolveOmit([])], []);
+  assert.throws(() => queuePull({ sessionId: 'qp-omit', omit: ['bogus'] }, { stderr: () => {} }), TypeError);
+});
+
+test('#5227 queuePull runs the truncate pass, then stops at the first pass with no runner', () => inOwnTmp(() => {
+  const paths = sessionPaths('qp-pull');
+  appendExclusion(paths['dispatch-exclusions.json'], { reason: 'blocked', records: [1], detail: { blockedBy: [2] } });
+  const seen = [];
+  assert.throws(() => queuePull({ sessionId: 'qp-pull' }, { onPass: (id) => seen.push(id), stderr: () => {} }), /queue-pull: pass not implemented: fetch/);
+  assert.deepEqual(seen, ['truncate'], 'onPass fires only for a pass that has a runner');
+  assert.equal(fs.readFileSync(paths['dispatch-exclusions.json'], 'utf8'), '[]');
+}));
