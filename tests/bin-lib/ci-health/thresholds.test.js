@@ -50,9 +50,9 @@ function fakeDeps({ titles = [], titlesError = null, createError = null } = {}) 
   return { calls, deps };
 }
 
-function fileFor(workflows, billing, { workTypes = 'native', file = true, truncated = false, deps } = {}) {
+function fileFor(workflows, billing, { workTypes = 'native', file = true, truncated = false, partial = false, deps } = {}) {
   const breaches = breachesOf({ workflows, billing }, OPTS);
-  return fileBreaches({ breaches, truncated, file }, deps, compose(workTypes));
+  return fileBreaches({ breaches, truncated, partial, file }, deps, compose(workTypes));
 }
 
 test('BREACH_TITLE is the spec title, verbatim', () => {
@@ -176,6 +176,16 @@ test('a truncated window never files', () => {
   assert.strictEqual(calls.openIssueTitles, 0);
   assert.strictEqual(calls.createIssue.length, 0);
   assert.deepStrictEqual(result, { filed: null, skipped: 'window truncated', failure: null });
+});
+
+test('a partial runs read never files, and a truncated window is named first', () => {
+  const { calls, deps } = fakeDeps();
+  const result = fileFor([wf()], NO_BILLING, { deps, partial: true });
+  assert.strictEqual(calls.openIssueTitles, 0);
+  assert.strictEqual(calls.createIssue.length, 0);
+  assert.deepStrictEqual(result, { filed: null, skipped: 'runs read partial', failure: null });
+  assert.strictEqual(fileFor([wf()], NO_BILLING, { deps, partial: true, truncated: true }).skipped, 'window truncated');
+  assert.strictEqual(fileFor([], NO_BILLING, { deps, partial: true }).skipped, 'no breach');
 });
 
 test('an openIssueTitles failure files nothing and names the query', () => {

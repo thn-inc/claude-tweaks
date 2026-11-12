@@ -18,7 +18,10 @@ const seconds = (value) => (value === null ? 'n/a' : `${value}s`);
 
 function workflowLine(w, watchSeconds) {
   let line = `${oneLine(w.name)} (${oneLine(w.path)}): ${w.runs} runs, p50 ${seconds(w.p50Seconds)}, p90 ${seconds(w.p90Seconds)}`;
-  if (w.p90Seconds !== null && w.p90Seconds > watchSeconds) line += ` — over the ${watchSeconds}s merge-gate watch`;
+  // Only a pull_request workflow sits behind the merge gate's watch (and can breach it), so a push-only
+  // or scheduled workflow's p90 never reads as over the watch.
+  const gated = Array.isArray(w.events) && w.events.includes('pull_request');
+  if (gated && w.p90Seconds !== null && w.p90Seconds > watchSeconds) line += ` — over the ${watchSeconds}s merge-gate watch`;
   line += w.trend === 'insufficient' ? ', trend insufficient' : `, trend ${w.trend.label} ${w.trend.ratio}`;
   line += w.superseded === null
     ? ', superseded n/a'

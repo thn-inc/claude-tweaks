@@ -114,7 +114,10 @@ const ciLine = (out) => lines(out).find((l) => l.startsWith('ci.yml ('));
 test('--help exits 0 before any runner call or origin read', () => {
   const { d, out } = deps();
   assert.equal(run(['--help'], d), 0);
-  assert.match(out.stdout.join(''), /^usage: ci-health\.js \[--days N\] \[--repo owner\/name\] \[--min-headroom-pct N\] \[--file\] \[--json\] \[--help\]/);
+  assert.equal(out.stdout.join(''), 'usage: ci-health.js [--days N] [--repo owner/name] [--min-headroom-pct N] [--file] [--json] [--help|-h]\n');
+  const short = deps();
+  assert.equal(run(['-h'], short.d), 0);
+  assert.equal(short.out.stdout.join(''), out.stdout.join(''));
   assert.equal(out.calls.length, 0);
   assert.equal(out.remoteReads, 0);
 });
@@ -149,6 +152,15 @@ test('origin: a non-github.com, unparsable or unreadable origin exits 2 with one
   const ghe = deps({ remote: 'git@ghe.example.com:acme/widgets.git' });
   run([], ghe.d);
   assert.match(ghe.out.stderr[0], /origin remote is on ghe\.example\.com, not github\.com/);
+  for (const remote of ['https://user:secret@example.com/x/y', 'https://user:secret@example.com/onlyone']) {
+    const r = deps({ remote });
+    assert.equal(run([], r.d), 2, remote);
+    assert.equal(r.out.stderr.length, 1, remote);
+    assert.doesNotMatch(r.out.stderr[0], /secret|user:/, remote);
+  }
+  const echoed = deps({ remote: 'https://user:secret@example.com/onlyone' });
+  run([], echoed.d);
+  assert.match(echoed.out.stderr[0], /origin remote is not a GitHub URL: https:\/\/example\.com\/onlyone$/m);
   const unreadable = deps({ remoteUrl: () => { throw new Error('fatal: not a git repository'); } });
   assert.equal(run([], unreadable.d), 2);
   assert.equal(unreadable.out.stderr.length, 1);
@@ -210,6 +222,45 @@ test('AC1.1 render with no-work runs: a skipped run counts in runs and no-work, 
   assert.equal(ci.runs, 6);
 });
 
+test('render: the trend, superseded share, skipped count and push suffix each render exactly', () => {
+  const wf = (name) => ({ name, p: `.github/workflows/${name}` });
+  const recent = (h) => NOW.getTime() - DAY + h * HOUR;
+  const runs = [
+    // --days 14 from 2026-10-29: two full weeks, five runs each, p50 100 s then 150 s.
+    ...[0, 1, 2, 3, 4].map((i) => wfRun({ ...wf('trend.yml'), created: Date.parse('2026-10-30T00:00:00Z') + i * HOUR, seconds: 100 })),
+    ...[0, 1, 2, 3, 4].map((i) => wfRun({ ...wf('trend.yml'), created: Date.parse('2026-11-06T00:00:00Z') + i * HOUR, seconds: 150 })),
+    // Two runs on one feature branch: the older head is superseded by the newer one.
+    wfRun({ ...wf('sup.yml'), branch: 'feature', created: recent(0), seconds: 60 }),
+    wfRun({ ...wf('sup.yml'), branch: 'feature', created: recent(1), seconds: 60 }),
+    // A completed run whose run_started_at is after its updated_at.
+    wfRun({ ...wf('skip.yml'), created: recent(0), seconds: 60 }),
+    wfRun({ ...wf('skip.yml'), created: recent(1), seconds: -5 }),
+    // The repo's only push workflow, over ten distinct push shas.
+    ...Array.from({ length: 10 }, (_, i) => wfRun({ ...wf('push.yml'), event: 'push', created: recent(i), seconds: 60 })),
+  ];
+  const { d, out } = deps({ routes: orgRoutes(ORG, [runs]) });
+  assert.equal(run(['--days', '14'], d), 0);
+  const all = lines(out);
+  for (const expected of [
+    'trend.yml (.github/workflows/trend.yml): 10 runs, p50 100s, p90 150s, trend rising 1.5, superseded 0 (n/a), cancelled 0',
+    'sup.yml (.github/workflows/sup.yml): 2 runs, p50 60s, p90 60s, trend insufficient, superseded 1 (0.5), cancelled 0',
+    'skip.yml (.github/workflows/skip.yml): 2 runs, p50 60s, p90 60s, trend insufficient, superseded 0 (n/a), cancelled 0, skipped 1',
+    "push.yml (.github/workflows/push.yml): 10 runs, p50 60s, p90 60s, trend insufficient, superseded 0 (n/a), cancelled 0, runs on 100% of pushes (informational; a repo's only push workflow always reads 100%)",
+  ]) assert.ok(all.includes(expected), `missing: ${expected}\n${all.join('\n')}`);
+});
+
+test('render: a p90 over the watch reads as over the merge-gate watch only on a pull_request workflow', () => {
+  const slow = (event) => [0, 1, 2, 3, 4].map((i) =>
+    wfRun({ name: `${event}.yml`, p: `.github/workflows/${event}.yml`, event, created: NOW.getTime() - DAY + i * HOUR, seconds: 1000 }));
+  const { d, out } = deps({ routes: orgRoutes(ORG, [[...slow('push'), ...slow('schedule'), ...slow('pull_request')]]) });
+  assert.equal(run([], d), 0);
+  const all = lines(out);
+  const tail = ', trend insufficient, superseded 0 (n/a), cancelled 0';
+  assert.ok(all.includes(`push.yml (.github/workflows/push.yml): 5 runs, p50 1000s, p90 1000s${tail}`), all.join('\n'));
+  assert.ok(all.includes(`schedule.yml (.github/workflows/schedule.yml): 5 runs, p50 1000s, p90 1000s${tail}`), all.join('\n'));
+  assert.ok(all.includes(`pull_request.yml (.github/workflows/pull_request.yml): 5 runs, p50 1000s, p90 1000s — over the 900s merge-gate watch${tail}`), all.join('\n'));
+});
+
 for (const status of [404, 403, 410]) {
   test(`AC4.1 render / AC4.2: an org budgets read failing HTTP ${status} renders billing unavailable (${status}) and never "no budget"`, () => {
     const routes = { ...orgRoutes(ORG), [ORG_BUDGETS]: http(status) };
@@ -256,6 +307,20 @@ test('AC7.1: a failed page 2 is a partial report — exit 0, page 1 workflows, t
   assert.equal(env.workflows.reduce((sum, w) => sum + w.runs, 0), 100);
   assert.equal(env.failures[0].query, 'runs page 2');
   assert.equal(env.truncated, false);
+});
+
+test('a partial runs read never files: page 2 failing with a p90 breach under --file creates nothing', () => {
+  const json = deps({ routes: orgRoutes(ORG, [fullPage(1000), http(500)]) });
+  assert.equal(run(['--file', '--json'], json.d), 0);
+  const env = envelope(json.out);
+  assert.ok(env.breaches.some((b) => b.kind === 'p90-over-watch'));
+  assert.equal(env.filed.skipped, 'runs read partial');
+  assert.deepEqual(json.out.created, []);
+  assert.deepEqual(json.out.titles, []);
+  const text = deps({ routes: orgRoutes(ORG, [fullPage(1000), http(500)]) });
+  assert.equal(run(['--file'], text.d), 0);
+  assert.ok(lines(text.out).includes('not filed: runs read partial'), lines(text.out).join('\n'));
+  assert.deepEqual(text.out.created, []);
 });
 
 test('AC7.2: every call failing HTTP 500 exits 2', () => {

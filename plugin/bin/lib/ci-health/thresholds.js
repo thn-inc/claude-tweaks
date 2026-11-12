@@ -87,11 +87,14 @@ function composeBreachIssue(breaches, {
   return payload;
 }
 
-function fileBreaches({ breaches, truncated, file }, { openIssueTitles, createIssue }, composeArgs) {
+// A partial runs half (a page after page 1 failed) covers only part of the window, like a truncated
+// one, so neither files.
+function fileBreaches({ breaches, truncated, partial, file }, { openIssueTitles, createIssue }, composeArgs) {
   const outcome = (fields) => ({ filed: null, skipped: null, failure: null, ...fields });
   if (!file) return outcome({ skipped: 'no --file' });
   if (!breaches || breaches.length === 0) return outcome({ skipped: 'no breach' });
   if (truncated) return outcome({ skipped: 'window truncated' });
+  if (partial) return outcome({ skipped: 'runs read partial' });
   let titles;
   try {
     titles = openIssueTitles();

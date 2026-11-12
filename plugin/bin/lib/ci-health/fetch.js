@@ -13,13 +13,12 @@ const { CI_HEALTH_GH_TIMEOUT_MS, RUNS_PER_PAGE, MAX_RUN_PAGES } = require('./con
 
 const ERROR_TEXT_MAX = 300;
 
-// stderr, else message + stdout; trimmed, first 300 chars.
+// stderr, else the message; trimmed, first 300 chars. Never stdout: a call that fails after partial
+// output (ENOBUFS, a timeout) leaves response body text there, and a billing body can hold amounts.
 function errorText(err) {
   const stderr = err && err.stderr ? String(err.stderr).trim() : '';
-  const text = stderr || [err && err.message, err && err.stdout]
-    .filter((p) => p && String(p).trim())
-    .map((p) => String(p).trim())
-    .join(' ') || String(err);
+  const message = err && err.message ? String(err.message).trim() : '';
+  const text = stderr || message || String(err);
   return text.slice(0, ERROR_TEXT_MAX);
 }
 

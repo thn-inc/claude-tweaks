@@ -56,6 +56,15 @@ for (const [status, text] of [[404, 'Not Found'], [403, 'Forbidden'], [410, 'Gon
   });
 }
 
+test('a billing read that fails after partial output never copies that stdout into the reason or the failure', () => {
+  const partial = Object.assign(new Error('spawnSync gh ETIMEDOUT'), { code: 'ETIMEDOUT', stdout: '{"usageItems":[{"product":"actions","netAmount": 123}' });
+  const { runner } = billingRunner({ [BUDGETS_PATH]: BUDGETS, [SUMMARY_PATH]: partial });
+  const r = readBilling({ repoRead: ORG_REPO }, { runner });
+  assert.deepStrictEqual(r.billing, { available: false, status: null, reason: 'spawnSync gh ETIMEDOUT' });
+  assert.deepStrictEqual(r.failures, [{ query: 'billing usage summary', status: null, error: 'spawnSync gh ETIMEDOUT' }]);
+  assert.doesNotMatch(JSON.stringify(r), /123/);
+});
+
 test('AC7.4: the org fixtures give 5% headroom through the two exact GET reads', () => {
   const { runner, calls } = billingRunner({ [BUDGETS_PATH]: BUDGETS, [SUMMARY_PATH]: SUMMARY });
   const r = readBilling({ repoRead: ORG_REPO }, { runner });

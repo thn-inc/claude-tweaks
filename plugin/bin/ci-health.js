@@ -6,14 +6,15 @@
 // Logic lives in run(argv, deps); every side effect (runner, remoteUrl, pinGhHost, workTypes,
 // openIssueTitles, createIssue, now, stdout, stderr) is injected so tests never touch gh.
 //
-// Usage: ci-health.js [--days N] [--repo owner/name] [--min-headroom-pct N] [--file] [--json] [--help]
+// Usage: ci-health.js [--days N] [--repo owner/name] [--min-headroom-pct N] [--file] [--json] [--help|-h]
 //   --days N               window length, an integer 1..400 (default 30); the window starts at the
 //                          UTC date N days before now
 //   --repo owner/name      a github.com repository (default: the origin remote, which must be on
 //                          github.com); its host is pinned for every gh call
 //   --min-headroom-pct N   the headroom floor, a number 0..100 (default 10)
 //   --file                 file the breach issue (exact-title dedup against open by:harness-health
-//                          issues; never on a truncated window)
+//                          issues; never on a truncated window or a partial runs read, where
+//                          a page after page 1 failed)
 //   --json                 print the report envelope as one JSON line instead of the report lines
 // Exit codes:
 //   0 report written — partial allowed: a runs half that read at least one page, whatever billing
@@ -45,7 +46,7 @@ const { readBilling } = require('./lib/ci-health/billing');
 const { breachesOf, fileBreaches } = require('./lib/ci-health/thresholds');
 const { renderReport, oneLine } = require('./lib/ci-health/render');
 
-const USAGE = 'usage: ci-health.js [--days N] [--repo owner/name] [--min-headroom-pct N] [--file] [--json] [--help]\n';
+const USAGE = 'usage: ci-health.js [--days N] [--repo owner/name] [--min-headroom-pct N] [--file] [--json] [--help|-h]\n';
 
 // owner/name only: no host prefix, no leading hyphen on the owner, no third segment. Both values
 // are interpolated into REST paths, so `.`/`..` segments are refused too (gh-api-module-pattern).
@@ -132,6 +133,12 @@ const realDeps = {
   stderr: (s) => process.stderr.write(s),
 };
 
+// A remote URL's `userinfo@` (everything between `://` and the last `@` before the host) can be a
+// token, so a remote echoed into a message drops it.
+function withoutUserinfo(url) {
+  return url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/]*@/i, '$1');
+}
+
 function resolveSlug(o, deps) {
   if (o.repo) {
     try {
@@ -148,7 +155,7 @@ function resolveSlug(o, deps) {
     return { error: `no --repo and origin remote unreadable: ${oneLine(errorText(err))}` };
   }
   const spec = originSpecOf(url);
-  if (!spec) return { error: `no --repo and origin remote is not a GitHub URL: ${oneLine(url)}` };
+  if (!spec) return { error: `no --repo and origin remote is not a GitHub URL: ${withoutUserinfo(oneLine(url))}` };
   if (spec.host !== 'github.com') {
     return { error: `origin remote is on ${spec.host}, not github.com — pass --repo <owner/name> for a github.com repository` };
   }
@@ -190,7 +197,7 @@ function run(argv, deps = realDeps) {
   let filed = null;
   if (o.file) {
     filed = fileBreaches(
-      { breaches, truncated: runs.truncated, file: true },
+      { breaches, truncated: runs.truncated, partial: runs.failures.length > 0, file: true },
       { openIssueTitles: () => deps.openIssueTitles(slug), createIssue: (issue) => deps.createIssue(slug, issue) },
       { repo: slug, days: o.days, watchSeconds: MERGE_GATE_WATCH_SECONDS, minHeadroomPct: o.minHeadroomPct, workTypes: deps.workTypes() },
     );

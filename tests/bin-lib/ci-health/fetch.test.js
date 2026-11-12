@@ -185,10 +185,11 @@ test('readRepo maps a body without an owner type to ok: false, never ok with an 
   assert.strictEqual(r.ghAbsent, false);
 });
 
-test('errorText prefers stderr, else message plus stdout, trimmed and capped at 300 chars', () => {
+test('errorText prefers stderr, else the message, trimmed and capped at 300 chars — never stdout', () => {
   assert.strictEqual(errorText(ghError('  HTTP 403: nope \n')), 'HTTP 403: nope');
-  const noStderr = Object.assign(new Error('boom'), { stdout: ' partial \n' });
-  assert.strictEqual(errorText(noStderr), 'boom partial');
+  const noStderr = Object.assign(new Error(' boom '), { stdout: '{"netAmount": 123}\n' });
+  assert.strictEqual(errorText(noStderr), 'boom');
+  assert.doesNotMatch(errorText(noStderr), /123/);
   assert.strictEqual(errorText(new Error('only message')), 'only message');
   assert.strictEqual(errorText(ghError('x'.repeat(500))).length, 300);
 });
