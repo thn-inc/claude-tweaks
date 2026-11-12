@@ -10,7 +10,15 @@
 // costUsd, detail. Fields may be added, never renamed. `status` is `ok`, `fail` or
 // `timeout`; `reason` is null for `ok`, else one of `wall-clock-ceiling`,
 // `launch-error`, `spend-ceiling`, `exit` or `schema`. `result` is the worker's
-// structured output when status is `ok` and null otherwise.
+// structured output when status is `ok` and null otherwise. A structured output whose
+// `title` holds a line break (`\n` or `\r`) is `fail` with reason `schema`: the title
+// is meant to be one line.
+//
+// Untrusted text. `result` (every string in it), `detail` when it carries the worker's
+// own `result` string, and `denials[].tool_input` are text the worker controls. A
+// consumer must treat them as untrusted: never place them in a command, and neutralize
+// them before they reach a commit message, a comment or a log line that a person or a
+// tool will act on.
 //
 // How an outcome is classified, first match wins. The launcher killed the child at the
 // wall-clock ceiling: `timeout`. The runner threw or its `exited` promise rejected:
@@ -43,9 +51,9 @@
 // - Result shape. `--output-format json` prints one object with `type: "result"`. The
 //   fields read here are `subtype` (`"success"`), `is_error`, `num_turns`,
 //   `total_cost_usd`, `usage` (holding `input_tokens`, `cache_creation_input_tokens`,
-//   `cache_read_input_tokens` and `output_tokens`), `permission_denials` (an array of `{ tool_name,
-//   tool_use_id, tool_input }`), `result` (a string) and, when `--json-schema` is
-//   passed, `structured_output`.
+//   `cache_read_input_tokens` and `output_tokens`), `permission_denials` (an array of
+//   `{ tool_name, tool_use_id, tool_input }`), `result` (a string) and, when
+//   `--json-schema` is passed, `structured_output`.
 // - Spend ceiling. `--max-budget-usd` takes effect under subscription login. With a
 //   ceiling of 0.0001 the process exited 1 after one turn and printed a result with
 //   `subtype: "error_max_budget_usd"`, `is_error: true` and `errors` holding
@@ -60,10 +68,21 @@
 //   directory in the working directory; adding `--safe-mode` stopped that.
 // - Environment. `PATH`, `HOME` and `USER` were the minimum that launched logged in.
 //   `CLAUDE_CONFIG_DIR` is passed through as well, because it selects the login.
+// - Smoke test. The opt-in live smoke test passed once on the same CLI, date and
+//   platform, launched from a process with no TTY. A run started by a person from a
+//   terminal has not been recorded.
+//
+// On win32 the default `bin` of `claude` does not find an npm-installed `claude.cmd`;
+// a win32 caller passes `bin` explicitly.
 //
 // Per-launch files live under the caller's settings directory, with the process id, a
 // counter and random hex in their names, are written exclusively with mode 0600, and
-// are removed after the child has exited on every path, including a throw.
+// are removed after the child has exited on every path, including a throw. The
+// settings directory and the working directory must both be absolute paths, and the
+// settings directory must lie outside the working directory: the implementer's Edit
+// and Write rules cover the working directory, so a rights file inside it could be
+// edited by the worker. The check is lexical (no symbolic link is resolved) and the
+// caller is trusted code. The prompt must be a string.
 //
 // The wall-clock ceiling. The launcher enforces it, never the runner: once the runner
 // has returned the child's handle, a timer for `ceilings.wallClockMs` is armed, and it
@@ -72,23 +91,29 @@
 // SIGTERM to the whole group; if the child is still running KILL_GRACE_MS (5 seconds)
 // later, it sends SIGKILL to the group. On win32 there are no process groups, so the
 // launcher runs `taskkill /T /F /PID {pid}` (the whole process tree, forced) through
-// the runner and ignores its outcome: nothing waits on it. A kill that throws
-// because the child is already gone is swallowed. A reap deadline of
-// REAP_DEADLINE_MS (5 seconds) starts after the SIGKILL on POSIX and as soon as
-// taskkill has been started on win32; if it fires, a taskkill still running is killed. The envelope is returned once the child has
-// exited, as `timeout` with reason `wall-clock-ceiling`, built from whatever the
-// child printed. Only when the deadline passes first (a child that survives the kill,
-// or a descendant that holds the child's output open) does the launcher return
-// without waiting, with `detail` naming the pid. A launcher that waited forever
-// would hang the driver that called it. The per-launch files are removed on this path
-// too. The Windows and Linux kill paths were not probed against a real worker.
+// the runner, with the allow-listed environment, and ignores its outcome: nothing
+// waits on it. A kill that throws because the child is already gone is swallowed. A
+// reap deadline of REAP_DEADLINE_MS (5 seconds) starts after the SIGKILL on POSIX and
+// as soon as taskkill has been started on win32; if it fires, a taskkill still running
+// is killed, and on win32 the worker handle's own `kill('SIGKILL')` is called once. The
+// envelope is returned once the child has exited, as `timeout` with reason
+// `wall-clock-ceiling`, built from whatever the child printed. Only when the deadline
+// passes first (a child that survives the kill, or a descendant that holds the child's
+// output open) does the launcher return without waiting, with `detail` naming the pid.
+// A launcher that waited forever would hang the driver that called it. The per-launch
+// files are removed on this path too. The Windows and Linux kill paths were not probed
+// against a real worker.
+//
+// Termination of the launcher itself. On POSIX the worker is spawned detached, as the
+// leader of its own process group, so it does not die when the launching process is
+// interrupted or dies. Whoever calls the launcher must forward termination to it.
 
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const cp = require('node:child_process');
 const { launchSpec } = require('../impeccable-engine');
-const { ROLES, RESULT_SCHEMA, implementerSettings, composeArgs } = require('./roles');
+const { ROLES, RESULT_SCHEMA, implementerSettings, composeArgs, assertSpendCeiling } = require('./roles');
 
 const ENVELOPE_FIELDS = Object.freeze(['status', 'reason', 'result', 'usage', 'turns', 'denials', 'spendOverrun', 'costUsd', 'detail']);
 const ENV_ALLOW = Object.freeze(['PATH', 'HOME', 'USER', 'TMPDIR', 'LANG', 'CLAUDE_CONFIG_DIR']);
@@ -223,6 +248,8 @@ function classify({ timedOut, timeoutDetail, spawnError, code, signal, stdout, s
   if (!obj || obj.structured_output === undefined || !conformsTo(schema, obj.structured_output)) {
     return envelope('fail', 'schema', null);
   }
+  const title = isPlainObject(obj.structured_output) ? obj.structured_output.title : undefined;
+  if (typeof title === 'string' && /[\r\n]/.test(title)) return envelope('fail', 'schema', null);
   return envelope('ok', null, null, obj.structured_output);
 }
 
@@ -230,7 +257,7 @@ let launchCounter = 0;
 
 // Waits for the child to exit, enforcing the wall-clock ceiling (see the header). Every
 // timer armed here is cleared before this returns, whichever way the launch ends.
-async function superviseChild({ handle, runner, platform, wallClockMs, timers }) {
+async function superviseChild({ handle, runner, platform, env, wallClockMs, timers }) {
   const armed = [];
   let finished = false;
   let timedOut = false;
@@ -260,7 +287,7 @@ async function superviseChild({ handle, runner, platform, wallClockMs, timers })
     timedOut = true;
     if (platform === 'win32') {
       try {
-        killerHandle = runner({ file: 'taskkill', args: ['/T', '/F', '/PID', String(handle.pid)], options: {}, input: '', platform });
+        killerHandle = runner({ file: 'taskkill', args: ['/T', '/F', '/PID', String(handle.pid)], options: { env: buildEnv(env, platform) }, input: '', platform });
       } catch {
         // Its outcome is ignored, a throw included.
       }
@@ -287,6 +314,8 @@ async function superviseChild({ handle, runner, platform, wallClockMs, timers })
           // Already gone.
         }
       }
+      // On win32 nothing else has signalled the worker's own handle yet.
+      if (platform === 'win32') kill('SIGKILL');
       return { timedOut: true, timeoutDetail: 'child ' + handle.pid + ' did not exit after kill' };
     }
     if (settled.err !== undefined) return { timedOut, spawnError: settled.err };
@@ -305,28 +334,35 @@ async function superviseChild({ handle, runner, platform, wallClockMs, timers })
 function defaultRunner({ file, args, options, input, platform = process.platform }, { spawn } = {}) {
   const spawnFn = spawn || cp.spawn;
   const child = spawnFn(file, args, { ...options, detached: platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
-  let stdout = '';
-  let stderr = '';
-  const exited = new Promise((resolve, reject) => {
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (chunk) => { stdout += chunk; });
-    child.stderr.on('data', (chunk) => { stderr += chunk; });
-    child.on('error', reject);
-    child.on('close', (code, signal) => resolve({ code, signal, stdout, stderr }));
-    // A write to a pipe the child has closed fails under different codes per platform
-    // (EPIPE, EOF, ECONNRESET). Whatever the code, the child's own exit decides the result.
-    child.stdin.on('error', () => {});
-  });
-  child.stdin.end(input);
-  return {
-    pid: child.pid,
-    kill(signal) {
-      if (platform !== 'win32') process.kill(-child.pid, signal);
-      else child.kill(signal);
-    },
-    exited,
+  const kill = (signal) => {
+    if (platform !== 'win32') process.kill(-child.pid, signal);
+    else child.kill(signal);
   };
+  try {
+    let stdout = '';
+    let stderr = '';
+    const exited = new Promise((resolve, reject) => {
+      child.stdout.setEncoding('utf8');
+      child.stderr.setEncoding('utf8');
+      child.stdout.on('data', (chunk) => { stdout += chunk; });
+      child.stderr.on('data', (chunk) => { stderr += chunk; });
+      child.on('error', reject);
+      child.on('close', (code, signal) => resolve({ code, signal, stdout, stderr }));
+      // A write to a pipe the child has closed fails under different codes per platform
+      // (EPIPE, EOF, ECONNRESET). Whatever the code, the child's own exit decides the result.
+      child.stdin.on('error', () => {});
+    });
+    child.stdin.end(input);
+    return { pid: child.pid, kill, exited };
+  } catch (err) {
+    // A child that was started must not outlive a failed set-up.
+    try {
+      kill('SIGKILL');
+    } catch {
+      // Already gone.
+    }
+    throw err;
+  }
 }
 
 function defaultDeps() {
@@ -341,9 +377,7 @@ async function launchWorker(opts, deps = defaultDeps()) {
   const runner = deps && deps.runner;
   if (typeof runner !== 'function') throw new TypeError('deps.runner is required');
   const spendCeiling = ceilings.spendCeiling;
-  if (spendCeiling !== undefined && !(typeof spendCeiling === 'number' && Number.isFinite(spendCeiling) && spendCeiling > 0)) {
-    throw new RangeError('ceilings.spendCeiling must be a finite number above zero, got ' + String(spendCeiling));
-  }
+  assertSpendCeiling(spendCeiling);
   const wallClockMs = ceilings.wallClockMs;
   if (!(typeof wallClockMs === 'number' && Number.isFinite(wallClockMs) && wallClockMs > 0 && wallClockMs <= MAX_TIMER_MS)) {
     throw new RangeError('ceilings.wallClockMs must be a finite number above zero and at most ' + MAX_TIMER_MS + ', got ' + String(wallClockMs));
@@ -352,6 +386,14 @@ async function launchWorker(opts, deps = defaultDeps()) {
   assertSupportedSchema(schema);
   const spec = Object.prototype.hasOwnProperty.call(ROLES, role) ? ROLES[role] : undefined;
   if (!spec) throw new Error('unknown role: ' + String(role));
+  if (typeof prompt !== 'string') throw new TypeError('prompt must be a string, got ' + (prompt === null ? 'null' : typeof prompt));
+  for (const [name, value] of [['cwd', cwd], ['settingsDir', settingsDir]]) {
+    if (typeof value !== 'string' || !path.isAbsolute(value)) throw new TypeError(name + ' must be an absolute path string, got ' + String(value));
+  }
+  const rel = path.relative(cwd, settingsDir);
+  if (rel === '' || !(rel.startsWith('..') || path.isAbsolute(rel))) {
+    throw new Error('settingsDir must lie outside the working directory: ' + settingsDir + ' is not outside ' + cwd);
+  }
   const settingsText = spec.settings ? JSON.stringify(implementerSettings({ testCommand, platform }), null, 2) : null;
   const withAppend = typeof claudeMdText === 'string' && claudeMdText !== '';
 
@@ -371,13 +413,13 @@ async function launchWorker(opts, deps = defaultDeps()) {
       fs.writeFileSync(appendPromptFile, claudeMdText, { flag: 'wx', mode: 0o600 });
       written.push(appendPromptFile);
     }
-    const args = composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeiling, model });
+    const args = composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeiling, model, platform });
     const childEnv = buildEnv(env, platform);
     const launch = launchSpec(bin, args, platform, childEnv);
     let outcome;
     try {
       const handle = runner({ file: launch.file, args: launch.args, options: { ...launch.options, cwd, env: childEnv }, input: prompt, platform });
-      outcome = await superviseChild({ handle, runner, platform, wallClockMs, timers });
+      outcome = await superviseChild({ handle, runner, platform, env, wallClockMs, timers });
     } catch (err) {
       outcome = { timedOut: false, spawnError: err === undefined ? new Error('launch failed') : err };
     }

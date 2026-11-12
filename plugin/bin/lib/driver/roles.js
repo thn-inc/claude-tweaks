@@ -27,28 +27,49 @@
 //   (exit 56), `gh api` ("host is not on the allow list"), `git ls-remote` over HTTPS
 //   (403 from the proxy), `git push` to a bare repository outside the working
 //   directory (rejected), a file write outside the working directory (`EPERM`). With
-//   the sandbox off all five succeeded.
+//   the sandbox off all five succeeded. Writes are not confined to the working
+//   directory, though: a write to a directory under the system temporary directory
+//   failed, but a write under the CLI's own per-user scratch root in `/tmp` succeeded,
+//   so code the worker runs can write there. That is a stated residual.
 // - `sandbox.autoAllowBashIfSandboxed` defaults to true, and then lets any sandboxed
 //   Bash command run without an allow rule (`touch` ran). With it set to false,
 //   `touch` was denied while `node --test`, `git status --short` and
 //   `git log --oneline -1` ran. This module therefore sets it to false.
 // - `sandbox.failIfUnavailable: true` comes from the documentation and was not
 //   exercised, because the sandbox was available on the probe host. A launch the CLI
-//   refuses because the sandbox is unavailable surfaces as `launch-error`.
+//   refuses because the sandbox is unavailable is expected to surface as
+//   `launch-error`; that was not probed.
 //
-// The test-command allow rule and the sandbox block exist only on the platforms where
-// the sandbox was probed (SANDBOX_PROBED_PLATFORMS). Elsewhere the worker only edits
-// and runs read-only git commands. Those git rules can start a program only through
-// git configuration: `core.fsmonitor` on `git status`, and external diff and textconv
-// drivers on `git diff` and `git show`. Under `--restricted`, with `defaultMode:
-// dontAsk` and `--permission-prompts none`, the worker's writes into `.git` were
-// denied in a probe (Claude Code CLI 2.1.322, macOS, 2026-11-12): an Edit of
-// `.git/config`, a Write of a new file under `.git/info/`, and, in a linked worktree,
-// a Write over the one-line `.git` file, although Read, Edit and Write are on the
-// allow list. Each showed up as a permission denial in the result. This was probed on
-// macOS only and is not proven on other platforms. On a sandbox-probed platform a
-// test the worker runs could write git configuration only inside the sandbox, where
-// the same containment applies as to the test itself.
+// The test-command allow rule, the git rules and the sandbox block exist only on the
+// platforms where the sandbox was probed (SANDBOX_PROBED_PLATFORMS). Elsewhere the
+// worker has no Bash at all: its tool list is Read, Write and Edit, and `toolsFor`
+// drops Bash from `--tools` as well. The reason is a probe on the same CLI and date, on
+// macOS, in a throwaway repository, launched with no TTY, through this module's own
+// launcher. An allowed `git log`, `git diff` or `git show` writes a file of the
+// worker's choosing through `--output=<path>`. With no sandbox
+// (the settings generated for a platform that is not sandbox-probed) no command was
+// denied, and every one of six writes landed: a file in the working directory, one
+// under `.git/info/`, one in a directory outside the working directory, and
+// `.git/config` itself was overwritten. An allowed `git status` would then run a
+// program named in that configuration (`core.fsmonitor`) with the user's full rights
+// and network. With the sandbox on (the settings generated for `darwin`), the same
+// commands were not denied by the permission rules but ran inside the sandbox: the
+// writes into the working directory and under `.git/info/` succeeded; the writes to
+// `.git/config` and to `.git/hooks/pre-commit` failed with `fatal: could not open
+// '<path>' for writing: Operation not permitted`; a write to a directory under the
+// system temporary directory failed the same way; a write under the CLI's own
+// per-user scratch root in `/tmp` succeeded. Wherever the git rules exist,
+// `git diff --no-index` also reads files outside the working directory. Off the probed
+// platforms the worker can neither list nor search files, so its prompt must name the
+// files it is to work on.
+//
+// Under `--restricted`, with `defaultMode: dontAsk` and `--permission-prompts none`,
+// the worker's Write and Edit tools into `.git` were denied in a probe (Claude Code CLI
+// 2.1.322, macOS, 2026-11-12): an Edit of `.git/config`, a Write of a new file under
+// `.git/info/`, and, in a linked worktree, a Write over the one-line `.git` file,
+// although Read, Edit and Write are on the allow list. Each showed up as a permission
+// denial in the result. This was probed on macOS only and is not proven on other
+// platforms.
 //
 // The test command is project configuration supplied by the driver, never taken from
 // a record or a worker. The refusals in `assertTestCommand` catch obvious mistakes
@@ -57,7 +78,11 @@
 // platforms where the sandbox was probed.
 //
 // The residual, stated plainly: the driver's own test step runs worker-written code
-// with the driver's rights, as every other lane does today.
+// with the driver's rights, as every other lane does today. Where Bash exists (the
+// probed platforms), code the worker runs can read files outside the working
+// directory, because the sandbox as configured denies writes and network but not
+// reads, and so can `git diff --no-index`. With the network denied, the worker's own
+// result text is the remaining way out for what it read. This is a stated residual.
 //
 // Permission denials are data for the driver's event line, never a reason to widen a
 // list: there is no path here that composes wider rights after a denial.
@@ -107,8 +132,10 @@ function implementerSettings({ testCommand, platform } = {}) {
   assertTestCommand(testCommand);
   const sandboxed = SANDBOX_PROBED_PLATFORMS.includes(platform);
   const allow = ['Read', 'Edit', 'Write'];
-  if (sandboxed) allow.push('Bash(' + testCommand + ' *)');
-  allow.push('Bash(git status *)', 'Bash(git diff *)', 'Bash(git log *)', 'Bash(git show *)', 'Bash(git ls-files *)');
+  if (sandboxed) {
+    allow.push('Bash(' + testCommand + ' *)');
+    allow.push('Bash(git status *)', 'Bash(git diff *)', 'Bash(git log *)', 'Bash(git show *)', 'Bash(git ls-files *)');
+  }
   const deny = ['Bash(gh *)', 'Bash(git push *)', 'Bash(git commit *)', 'Bash(git add *)', 'Bash(curl *)', 'Bash(wget *)'];
   const settings = { permissions: { defaultMode: 'dontAsk', allow, deny } };
   if (sandboxed) {
@@ -123,7 +150,23 @@ function implementerSettings({ testCommand, platform } = {}) {
   return settings;
 }
 
-function composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeiling, model } = {}) {
+// The one spend-ceiling rule, shared by composeArgs and the launcher: absent passes.
+function assertSpendCeiling(value) {
+  if (value !== undefined && !(typeof value === 'number' && Number.isFinite(value) && value > 0)) {
+    throw new RangeError('spendCeiling must be a finite number above zero, got ' + String(value));
+  }
+}
+
+// The tools a role launches with on a platform: Bash is dropped for a role that carries
+// generated settings when the platform is not sandbox-probed. A fresh array each call.
+function toolsFor(role, platform) {
+  const spec = Object.prototype.hasOwnProperty.call(ROLES, role) ? ROLES[role] : undefined;
+  if (!spec) throw new Error('unknown role: ' + String(role));
+  const sandboxed = SANDBOX_PROBED_PLATFORMS.includes(platform);
+  return spec.tools.filter((tool) => !(tool === 'Bash' && spec.settings && !sandboxed));
+}
+
+function composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeiling, model, platform } = {}) {
   const spec = Object.prototype.hasOwnProperty.call(ROLES, role) ? ROLES[role] : undefined;
   if (!spec) throw new Error('unknown role: ' + String(role));
   if (spec.settings && (typeof settingsFile !== 'string' || settingsFile === '')) {
@@ -132,10 +175,9 @@ function composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeilin
   if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) {
     throw new Error('schema is required and must be an object');
   }
-  if (spendCeiling !== undefined && !(typeof spendCeiling === 'number' && Number.isFinite(spendCeiling) && spendCeiling > 0)) {
-    throw new RangeError('spendCeiling must be a finite number above zero, got ' + String(spendCeiling));
-  }
-  const args = ['-p', '--safe-mode', '--restricted', '--tools', spec.tools.join(','), '--disable-slash-commands', '--strict-mcp-config'];
+  assertSpendCeiling(spendCeiling);
+  if (typeof platform !== 'string' || platform === '') throw new TypeError('platform is required and must be a non-empty string');
+  const args = ['-p', '--safe-mode', '--restricted', '--tools', toolsFor(role, platform).join(','), '--disable-slash-commands', '--strict-mcp-config'];
   if (spec.settings) args.push('--settings', settingsFile);
   args.push('--permission-prompts', 'none', '--output-format', 'json', '--json-schema', JSON.stringify(schema));
   if (appendPromptFile) args.push('--append-system-prompt-file', appendPromptFile);
@@ -144,4 +186,4 @@ function composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeilin
   return args;
 }
 
-module.exports = { RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, ROLES, implementerSettings, composeArgs };
+module.exports = { RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, ROLES, implementerSettings, composeArgs, toolsFor, assertSpendCeiling };

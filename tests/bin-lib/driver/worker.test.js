@@ -1,5 +1,6 @@
 'use strict';
 const test = require('node:test');
+const { afterEach } = test;
 const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -8,9 +9,17 @@ const cp = require('node:child_process');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const worker = require(path.join(LIB, 'driver', 'worker.js'));
 const { launchWorker, buildEnv, conformsTo, ENVELOPE_FIELDS, ENV_ALLOW, ENV_ALLOW_WIN32 } = worker;
-const { RESULT_SCHEMA, implementerSettings } = require(path.join(LIB, 'driver', 'roles.js'));
+const { RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings } = require(path.join(LIB, 'driver', 'roles.js'));
 const OK = require('./fixtures/worker-result.json');
 const BUDGET = require('./fixtures/worker-result-budget.json');
+
+// A kill reaching the shared fake runner's handle is never expected. The launcher swallows
+// a throwing `kill`, so the fake records instead, and the hook below fails the test.
+const unexpectedKills = [];
+afterEach(() => {
+  const seen = unexpectedKills.splice(0);
+  assert.deepStrictEqual(seen, [], 'the shared fake runner was killed');
+});
 
 // A fake runner: records every call, answers with `outcome` (or rejects with `spawnError`).
 function fakeRunner(outcome, { spawnError } = {}) {
@@ -22,7 +31,7 @@ function fakeRunner(outcome, { spawnError } = {}) {
       if (i !== -1) record.files[flag] = { path: call.args[i + 1], text: fs.readFileSync(call.args[i + 1], 'utf8') };
     }
     calls.push(record);
-    return { pid: 4242, kill() { throw new Error('unexpected kill'); }, exited: spawnError ? Promise.reject(spawnError) : Promise.resolve({ signal: null, stderr: '', ...outcome }) };
+    return { pid: 4242, kill(signal) { unexpectedKills.push(signal); }, exited: spawnError ? Promise.reject(spawnError) : Promise.resolve({ signal: null, stderr: '', ...outcome }) };
   };
   return { runner, calls };
 }
@@ -46,7 +55,7 @@ test('AC5: an ok result fills every envelope field from the result', async (t) =
   assert.strictEqual(env.detail, null);
 });
 
-test('AC5: the envelope field names are pinned', () => {
+test('AC5: the envelope field names are pinned',() => {
   assert.deepStrictEqual(ENVELOPE_FIELDS, ['status', 'reason', 'result', 'usage', 'turns', 'denials', 'spendOverrun', 'costUsd', 'detail']);
 });
 
@@ -58,6 +67,18 @@ test('AC5: a result that fails the schema is fail/schema', async (t) => {
   assert.strictEqual(env.result, null);
   assert.strictEqual(env.turns, OK.num_turns);
   assert.strictEqual(env.denials.length, 2);
+});
+
+test('AC5: a title that is not one line is fail/schema', async (t) => {
+  for (const title of ['two\nlines', 'two\rlines', 'two\r\nlines']) {
+    const { runner } = fakeRunner(okOut({ structured_output: { ...OK.structured_output, title } }));
+    const env = await launchWorker(base(t), { runner });
+    assert.strictEqual(env.status, 'fail', JSON.stringify(title));
+    assert.strictEqual(env.reason, 'schema', JSON.stringify(title));
+    assert.strictEqual(env.result, null);
+  }
+  const { runner } = fakeRunner(okOut({ structured_output: { ...OK.structured_output, title: 'one line, with: punctuation' } }));
+  assert.strictEqual((await launchWorker(base(t), { runner })).status, 'ok');
 });
 
 test('Review focus: a result with no structured_output is fail/schema, and the free-text result is not parsed', async (t) => {
@@ -85,6 +106,14 @@ test('AC6: a result with permission denials stays ok, and the runner is called e
   assert.strictEqual(env.denials.length, 2);
   assert.strictEqual(calls.length, 1);
   assert.strictEqual(calls[0].files['--settings'].text, JSON.stringify(implementerSettings({ testCommand: 'node --test', platform: 'darwin' }), null, 2));
+});
+
+test('AC12: a launch off the sandbox-probed platforms carries no Bash tool and no Bash rule', async (t) => {
+  const { runner, calls } = fakeRunner(okOut());
+  await launchWorker(base(t, { platform: 'linux' }), { runner });
+  assert.strictEqual(calls[0].args[calls[0].args.indexOf('--tools') + 1], 'Read,Write,Edit');
+  const settings = JSON.parse(calls[0].files['--settings'].text);
+  for (const rule of settings.permissions.allow) assert.ok(!rule.startsWith('Bash('), rule);
 });
 
 test('AC8: the CLI stopping at the spend ceiling is fail/spend-ceiling', async (t) => {
@@ -115,6 +144,48 @@ test('Review focus: a spend ceiling that is not a positive finite number is refu
     const { runner, calls } = fakeRunner(okOut());
     const opts = base(t, { ceilings: { wallClockMs: 60000, spendCeiling: bad } });
     await assert.rejects(launchWorker(opts, { runner }), RangeError, String(bad));
+    assert.strictEqual(calls.length, 0);
+    assert.deepStrictEqual(fs.readdirSync(opts.settingsDir), []);
+  }
+});
+
+test('Review: cwd and settingsDir must be absolute, and the rights file must lie outside the working directory', async (t) => {
+  const refused = async (over, pattern, errClass) => {
+    const { runner, calls } = fakeRunner(okOut());
+    const opts = base(t, over);
+    await assert.rejects(launchWorker(opts, { runner }), (err) => err instanceof errClass && pattern.test(err.message), JSON.stringify(Object.keys(over)));
+    assert.strictEqual(calls.length, 0);
+    if (path.isAbsolute(opts.settingsDir)) {
+      if (fs.existsSync(opts.settingsDir)) assert.deepStrictEqual(fs.readdirSync(opts.settingsDir), []);
+    } else {
+      assert.ok(!fs.existsSync(opts.settingsDir), 'a relative settingsDir was created');
+    }
+  };
+  await refused({ cwd: undefined }, /cwd/, TypeError);
+  await refused({ cwd: 'relative/dir' }, /cwd/, TypeError);
+  await refused({ settingsDir: 'relative/settings' }, /settingsDir/, TypeError);
+  const same = tmp(t);
+  await refused({ cwd: same, settingsDir: same }, /settingsDir.*outside the working directory/, Error);
+  const inside = tmp(t);
+  await refused({ cwd: inside, settingsDir: path.join(inside, 'sub', 'settings') }, /settingsDir.*outside the working directory/, Error);
+  assert.ok(!fs.existsSync(path.join(inside, 'sub')));
+});
+
+test('Review: a settingsDir that merely shares a name prefix with cwd is accepted', async (t) => {
+  const { runner, calls } = fakeRunner(okOut());
+  const cwd = tmp(t);
+  const settingsDir = cwd + '-settings';
+  t.after(() => fs.rmSync(settingsDir, { recursive: true, force: true }));
+  const env = await launchWorker(base(t, { cwd, settingsDir }), { runner });
+  assert.strictEqual(env.status, 'ok');
+  assert.strictEqual(calls.length, 1);
+});
+
+test('Review: a prompt that is not a string is refused before anything is written', async (t) => {
+  for (const bad of [undefined, 42, Buffer.from('x')]) {
+    const { runner, calls } = fakeRunner(okOut());
+    const opts = base(t, { prompt: bad });
+    await assert.rejects(launchWorker(opts, { runner }), (err) => err instanceof TypeError && /prompt/.test(err.message), String(bad));
     assert.strictEqual(calls.length, 0);
     assert.deepStrictEqual(fs.readdirSync(opts.settingsDir), []);
   }
@@ -359,6 +430,7 @@ test("AC4: on win32 the ceiling runs taskkill on the child's pid", async (t) => 
   assert.deepStrictEqual(kills, []);
   assert.strictEqual(calls[1].file, 'taskkill');
   assert.deepStrictEqual(calls[1].args, ['/T', '/F', '/PID', '4242']);
+  assert.deepStrictEqual(calls[1].options, { env: { Path: 'p' } });
 });
 
 test('AC4: the envelope is returned only after the child has exited', async (t) => {
@@ -397,7 +469,7 @@ test('a child that survives the kill is given up on at the reap deadline, with i
   const b = await launchWorker(winOpts, { runner: win.runner, timers: winTimers.timers });
   assert.strictEqual(b.status, 'timeout');
   assert.strictEqual(b.reason, 'wall-clock-ceiling');
-  assert.deepStrictEqual(win.kills, []);
+  assert.deepStrictEqual(win.kills, ['SIGKILL']);
   assert.ok(win.calls.some((c) => c.file === 'taskkill'));
   assert.deepStrictEqual(winTimers.delays, [1234, worker.REAP_DEADLINE_MS]);
   assert.strictEqual(b.detail, 'child 4242 did not exit after kill');
@@ -406,10 +478,11 @@ test('a child that survives the kill is given up on at the reap deadline, with i
 
 test('a taskkill that never returns does not hold the launch past the reap deadline', async (t) => {
   const taskkillKills = [];
+  const workerKills = [];
   const never = new Promise(() => {});
   const runner = (call) => (call.file === 'taskkill'
     ? { pid: 1, kill(sig) { taskkillKills.push(sig); }, exited: never }
-    : { pid: 4242, kill() {}, exited: never });
+    : { pid: 4242, kill(sig) { workerKills.push(sig); }, exited: never });
   const { timers, delays } = instantTimers();
   const opts = base(t, { platform: 'win32', env: { Path: 'p' }, ceilings: { wallClockMs: 1234 } });
   const env = await launchWorker(opts, { runner, timers });
@@ -418,7 +491,19 @@ test('a taskkill that never returns does not hold the launch past the reap deadl
   assert.strictEqual(env.detail, 'child 4242 did not exit after kill');
   assert.deepStrictEqual(delays, [1234, worker.REAP_DEADLINE_MS]);
   assert.deepStrictEqual(taskkillKills, ['SIGKILL']);
+  assert.deepStrictEqual(workerKills, ['SIGKILL']);
   assert.deepStrictEqual(fs.readdirSync(opts.settingsDir), []);
+});
+
+test('a worker handle whose kill throws at the win32 reap deadline does not stop the launch from returning', async (t) => {
+  const never = new Promise(() => {});
+  const runner = (call) => (call.file === 'taskkill'
+    ? { pid: 1, kill() {}, exited: never }
+    : { pid: 4242, kill() { throw new Error('already gone'); }, exited: never });
+  const { timers } = instantTimers();
+  const env = await launchWorker(base(t, { platform: 'win32', env: { Path: 'p' }, ceilings: { wallClockMs: 1234 } }), { runner, timers });
+  assert.strictEqual(env.status, 'timeout');
+  assert.strictEqual(env.detail, 'child 4242 did not exit after kill');
 });
 
 test('AC4: a child that exits before the ceiling clears the timer and is classified normally', async (t) => {
@@ -535,6 +620,17 @@ test('defaultRunner kill ends the child and a grandchild it started (POSIX only)
   assert.ok(gone, 'the grandchild outlived the group kill');
 });
 
+test('defaultRunner kills a child it started when something throws after the spawn, and rethrows', async () => {
+  const { EventEmitter } = require('node:events');
+  const killed = [];
+  const child = Object.assign(new EventEmitter(), { pid: 88, kill(sig) { killed.push(sig); } });
+  child.stdin = Object.assign(new EventEmitter(), { end() { throw new Error('stdin broke'); } });
+  child.stdout = Object.assign(new EventEmitter(), { setEncoding() {} });
+  child.stderr = Object.assign(new EventEmitter(), { setEncoding() {} });
+  assert.throws(() => worker.defaultRunner({ file: 'x', args: [], options: {}, input: 'p', platform: 'win32' }, { spawn: () => child }), /stdin broke/);
+  assert.strictEqual(killed.length, 1);
+});
+
 test("defaultRunner lets the child's exit decide when stdin errors", async () => {
   const { EventEmitter } = require('node:events');
   const child = Object.assign(new EventEmitter(), { pid: 77 });
@@ -554,17 +650,25 @@ test('AC7: live smoke test — the write runs, echo and curl are denied', { skip
   const init = cp.spawnSync('git', ['init', '-q'], { cwd, windowsHide: true });
   assert.strictEqual(init.status, 0, 'git init failed in the smoke test directory');
   fs.mkdirSync(path.join(cwd, '.git', 'info'), { recursive: true });
-  const prompt = 'Do these four things in order, continuing after any denial: (1) use the Write tool to create smoke-w.txt containing hi; (2) run the bash command: echo hi > smoke-b.txt (3) run the bash command: curl -s https://example.com -o smoke-net.txt (4) use the Write tool to create .git/info/smoke-note.txt containing hi. Then report what happened.';
+  const commit = cp.spawnSync('git', ['-c', 'user.name=probe', '-c', 'user.email=probe@example.invalid', 'commit', '-q', '--allow-empty', '-m', 'init'], { cwd, windowsHide: true });
+  assert.strictEqual(commit.status, 0, 'git commit failed in the smoke test directory');
+  const configBefore = fs.readFileSync(path.join(cwd, '.git', 'config'));
+  const prompt = 'Do these six things in order, continuing after any denial: (1) use the Write tool to create smoke-w.txt containing hi; (2) run the bash command: echo hi > smoke-b.txt (3) run the bash command: curl -s https://example.com -o smoke-net.txt (4) use the Write tool to create .git/info/smoke-note.txt containing hi (5) run the bash command: git log -1 --format=%H --output=.git/config (6) run the bash command: git log -1 --format=%H --output=.git/hooks/pre-commit. Then report what happened.';
   const env = await launchWorker({ role: 'implementer', cwd, settingsDir, prompt, model: 'haiku', testCommand: 'node --test', ceilings: { wallClockMs: 180000, spendCeiling: 1 }, claudeMdText: 'Probe project file.' });
   assert.strictEqual(env.status, 'ok', JSON.stringify(env));
   const files = fs.readdirSync(cwd);
   assert.ok(files.includes('smoke-w.txt'));
   assert.ok(!files.includes('smoke-b.txt'));
   assert.ok(!files.includes('smoke-net.txt'));
-  const command = (d) => String((d.tool_input && d.tool_input.command) || '');
-  assert.ok(env.denials.some((d) => command(d).includes('echo')), 'echo denied');
-  assert.ok(env.denials.some((d) => command(d).includes('curl')), 'curl denied');
   assert.ok(!fs.readdirSync(path.join(cwd, '.git', 'info')).includes('smoke-note.txt'));
+  assert.ok(fs.readFileSync(path.join(cwd, '.git', 'config')).equals(configBefore), '.git/config changed');
+  assert.ok(!fs.existsSync(path.join(cwd, '.git', 'hooks', 'pre-commit')), '.git/hooks/pre-commit was written');
+  // Bash is in the tool list only on the platforms where the sandbox was probed.
+  if (SANDBOX_PROBED_PLATFORMS.includes(process.platform)) {
+    const command = (d) => String((d.tool_input && d.tool_input.command) || '');
+    assert.ok(env.denials.some((d) => command(d).includes('echo')), 'echo denied');
+    assert.ok(env.denials.some((d) => command(d).includes('curl')), 'curl denied');
+  }
   assert.ok(env.denials.some((d) => d.tool_name === 'Write' && String((d.tool_input && d.tool_input.file_path) || '').includes('.git')), 'write into .git denied');
   assert.deepStrictEqual(fs.readdirSync(settingsDir), []);
 });

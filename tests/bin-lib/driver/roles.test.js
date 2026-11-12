@@ -3,10 +3,10 @@ const test = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
-const { ROLES, RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, composeArgs } = require(path.join(LIB, 'driver', 'roles.js'));
+const { ROLES, RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, composeArgs, toolsFor, assertSpendCeiling } = require(path.join(LIB, 'driver', 'roles.js'));
 
 const ALLOW_SANDBOXED = ['Read', 'Edit', 'Write', 'Bash(node --test *)', 'Bash(git status *)', 'Bash(git diff *)', 'Bash(git log *)', 'Bash(git show *)', 'Bash(git ls-files *)'];
-const ALLOW_EDIT_ONLY = ['Read', 'Edit', 'Write', 'Bash(git status *)', 'Bash(git diff *)', 'Bash(git log *)', 'Bash(git show *)', 'Bash(git ls-files *)'];
+const ALLOW_EDIT_ONLY = ['Read', 'Edit', 'Write'];
 const DENY = ['Bash(gh *)', 'Bash(git push *)', 'Bash(git commit *)', 'Bash(git add *)', 'Bash(curl *)', 'Bash(wget *)'];
 const SANDBOX = { enabled: true, autoAllowBashIfSandboxed: false, allowUnsandboxedCommands: false, failIfUnavailable: true, network: { allowedDomains: [], strictAllowlist: true } };
 
@@ -29,13 +29,32 @@ test('AC12: on a sandbox-probed platform the sandbox block is present with these
   assert.deepStrictEqual(implementerSettings({ testCommand: 'node --test', platform: 'darwin' }).sandbox, SANDBOX);
 });
 
-test('AC12: off the sandbox-probed platforms there is no sandbox block, no test-command rule, and every Bash rule is a read-only git command', () => {
+test('AC12: off the sandbox-probed platforms the implementer has no Bash at all', () => {
   for (const platform of ['linux', 'win32']) {
     const s = implementerSettings({ testCommand: 'node --test', platform });
     assert.deepStrictEqual(Object.keys(s), ['permissions']);
     assert.deepStrictEqual(s.permissions.allow, ALLOW_EDIT_ONLY);
     assert.deepStrictEqual(s.permissions.deny, DENY);
-    for (const r of s.permissions.allow.filter((x) => x.startsWith('Bash('))) assert.match(r, /^Bash\(git (status|diff|log|show|ls-files) \*\)$/);
+    assert.ok(!('sandbox' in s));
+    for (const r of s.permissions.allow) assert.ok(!r.startsWith('Bash('), r);
+    const args = composeArgs({ role: 'implementer', settingsFile: '/s/settings.json', schema: RESULT_SCHEMA, platform });
+    assert.strictEqual(args[args.indexOf('--tools') + 1], 'Read,Write,Edit');
+  }
+});
+
+test('AC12: toolsFor drops Bash for a settings role off the probed platforms, and returns a fresh array', () => {
+  assert.deepStrictEqual(toolsFor('implementer', 'darwin'), ['Read', 'Write', 'Edit', 'Bash']);
+  assert.deepStrictEqual(toolsFor('implementer', 'linux'), ['Read', 'Write', 'Edit']);
+  assert.deepStrictEqual(toolsFor('implementer', 'win32'), ['Read', 'Write', 'Edit']);
+  for (const platform of ['darwin', 'linux']) assert.deepStrictEqual(toolsFor('reviewer', platform), ['Read', 'Grep', 'Glob']);
+  assert.notStrictEqual(toolsFor('reviewer', 'darwin'), ROLES.reviewer.tools);
+  assert.ok(!Object.isFrozen(toolsFor('implementer', 'darwin')));
+});
+
+test('AC12: composeArgs requires a platform for every role', () => {
+  for (const platform of [undefined, '', 5, null]) {
+    assert.throws(() => composeArgs({ role: 'reviewer', schema: RESULT_SCHEMA, platform }), (e) => e instanceof TypeError && /platform/.test(e.message), String(platform));
+    assert.throws(() => composeArgs({ role: 'implementer', settingsFile: '/s/x.json', schema: RESULT_SCHEMA, platform }), /platform/, String(platform));
   }
 });
 
@@ -63,13 +82,19 @@ test('Minor: a given spendCeiling must be a finite number above zero', () => {
   }
 });
 
+test('Minor: assertSpendCeiling is the one rule: undefined and positive finite numbers pass, the rest throw RangeError', () => {
+  assert.doesNotThrow(() => assertSpendCeiling(undefined));
+  assert.doesNotThrow(() => assertSpendCeiling(0.0001));
+  for (const bad of [0, -1, NaN, Infinity, '2', null]) assert.throws(() => assertSpendCeiling(bad), RangeError, String(bad));
+});
+
 test('Minor: the exported tables are frozen, and the builders return fresh objects', () => {
   for (const v of [ROLES, ROLES.reviewer.tools, RESULT_SCHEMA, RESULT_SCHEMA.properties.status.enum, SANDBOX_PROBED_PLATFORMS]) assert.ok(Object.isFrozen(v));
   const a = implementerSettings({ testCommand: 'node --test', platform: 'darwin' });
   const b = implementerSettings({ testCommand: 'node --test', platform: 'darwin' });
   assert.notStrictEqual(a.permissions.allow, b.permissions.allow);
   assert.ok(!Object.isFrozen(a.permissions.allow));
-  const args = composeArgs({ role: 'reviewer', schema: RESULT_SCHEMA });
+  const args = composeArgs({ role: 'reviewer', schema: RESULT_SCHEMA, platform: 'darwin' });
   assert.ok(!Object.isFrozen(args));
 });
 
@@ -80,7 +105,7 @@ test('Review focus: a testCommand that would corrupt the rule is refused', () =>
 });
 
 test('AC1: the implementer argument list carries every flag, in this exact order', () => {
-  const args = composeArgs({ role: 'implementer', settingsFile: '/s/settings.json', appendPromptFile: '/s/append.md', schema: RESULT_SCHEMA, spendCeiling: 2.5, model: 'haiku' });
+  const args = composeArgs({ role: 'implementer', settingsFile: '/s/settings.json', appendPromptFile: '/s/append.md', schema: RESULT_SCHEMA, spendCeiling: 2.5, model: 'haiku', platform: 'darwin' });
   assert.deepStrictEqual(args, [
     '-p', '--safe-mode', '--restricted', '--tools', 'Read,Write,Edit,Bash', '--disable-slash-commands', '--strict-mcp-config',
     '--settings', '/s/settings.json', '--permission-prompts', 'none', '--output-format', 'json',
@@ -89,13 +114,13 @@ test('AC1: the implementer argument list carries every flag, in this exact order
 });
 
 test('AC1: optional parts are omitted when not given', () => {
-  const args = composeArgs({ role: 'implementer', settingsFile: '/s/settings.json', schema: RESULT_SCHEMA });
+  const args = composeArgs({ role: 'implementer', settingsFile: '/s/settings.json', schema: RESULT_SCHEMA, platform: 'darwin' });
   for (const flag of ['--append-system-prompt-file', '--max-budget-usd', '--model']) assert.ok(!args.includes(flag), flag);
 });
 
 test('AC3: reviewer and explorer launch with --restricted, read-only tools, no Bash and no settings file', () => {
   for (const role of ['reviewer', 'explorer']) {
-    const args = composeArgs({ role, schema: RESULT_SCHEMA });
+    const args = composeArgs({ role, schema: RESULT_SCHEMA, platform: 'darwin' });
     assert.deepStrictEqual(args, ['-p', '--safe-mode', '--restricted', '--tools', 'Read,Grep,Glob', '--disable-slash-commands', '--strict-mcp-config', '--permission-prompts', 'none', '--output-format', 'json', '--json-schema', JSON.stringify(RESULT_SCHEMA)]);
     assert.ok(!ROLES[role].tools.includes('Bash'));
     assert.strictEqual(ROLES[role].settings, false);
@@ -105,7 +130,7 @@ test('AC3: reviewer and explorer launch with --restricted, read-only tools, no B
 test('AC1: no role ever carries a bypass, in arguments or settings', () => {
   const settings = JSON.stringify(['darwin', 'linux', 'win32'].map((platform) => implementerSettings({ testCommand: 'node --test', platform })));
   for (const role of Object.keys(ROLES)) {
-    const text = composeArgs({ role, settingsFile: '/s/x.json', appendPromptFile: '/s/a.md', schema: RESULT_SCHEMA, spendCeiling: 1, model: 'm' }).join('\n') + settings;
+    const text = composeArgs({ role, settingsFile: '/s/x.json', appendPromptFile: '/s/a.md', schema: RESULT_SCHEMA, spendCeiling: 1, model: 'm', platform: 'darwin' }).join('\n') + settings;
     assert.ok(!text.includes('--dangerously-skip-permissions'));
     assert.ok(!text.includes('bypassPermissions'));
     assert.ok(!text.includes('--setting-sources'));
