@@ -90,7 +90,8 @@ function isTopLevel(ev) {
   return n !== null && (ev.source === 'user' ? (n === 'flow' || PHASES.includes(n)) : !(n in NESTED_PARENT));
 }
 
-// { events, manifest?, runState?, now? } -> { phases, totals }
+// { events, manifest?, runState?, now? } -> { phases, totals }, plus `ciGate` (and
+// totals.ciWallMinutes) when a ci-gate event exists (#5160)
 function derivePhases({ events, manifest = null, runState = null, now = new Date() } = {}) {
   const evs = (Array.isArray(events) ? events : [])
     .filter((e) => e && typeof e === 'object' && ms(e.ts) !== null)

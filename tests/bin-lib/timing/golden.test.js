@@ -8,7 +8,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { derivePhases } = require('../../../plugin/bin/lib/timing/derive');
+const { derivePhases, joinTokens, countGuardEvents } = require('../../../plugin/bin/lib/timing/derive');
 const { evaluateBudgets, budgetProposal } = require('../../../plugin/bin/lib/timing/budget');
 const { renderMarkdown } = require('../../../plugin/bin/phase-timing');
 const { parseManifestYaml } = require('../../../plugin/bin/lib/flow/manifest');
@@ -26,13 +26,17 @@ function normalizeTiming(obj) {
 }
 
 // Runs the real CLI over a temp copy of record-1535 and returns the timing.json it wrote.
+// One spawn per file: the golden test and its go-red share this lazily computed value.
+let writtenTimingCache;
 function writtenTiming() {
+  if (writtenTimingCache !== undefined) return writtenTimingCache;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-timing-golden-'));
   try {
     for (const f of ['events.jsonl', 'manifest.yml']) fs.copyFileSync(path.join(FIX, f), path.join(dir, f));
     const r = spawnSync(process.execPath, [CLI, '--run', dir, '--markdown'], { encoding: 'utf8' });
     assert.equal(r.status, 0, r.stderr);
-    return JSON.parse(fs.readFileSync(path.join(dir, 'timing.json'), 'utf8'));
+    writtenTimingCache = JSON.parse(fs.readFileSync(path.join(dir, 'timing.json'), 'utf8'));
+    return writtenTimingCache;
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -87,4 +91,12 @@ test('Deliverable reader invariance: evaluateBudgets, budgetProposal and renderM
   assert.equal(proposal(T2), proposal(T));
 
   assert.equal(renderMarkdown({ phases, totals: T2 }), renderMarkdown({ phases, totals: T }));
+
+  // The with-tokens branches: token columns, the total row's token cells, guard and turn lines.
+  const tokens = joinTokens(phases, []);
+  tokens.totals.rows = 1;
+  const guard = countGuardEvents(fixtureEvents());
+  const withTokens = renderMarkdown({ phases, totals: T }, tokens, guard);
+  assert.match(withTokens, /\| Tokens \(in\/out\) \|/, 'the with-tokens table rendered');
+  assert.equal(renderMarkdown({ phases, totals: T2 }, tokens, guard), withTokens);
 });

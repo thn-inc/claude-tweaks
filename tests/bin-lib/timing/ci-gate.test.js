@@ -63,6 +63,7 @@ test('AC5.2: two events for the same pr (600000 then 1200000) give 20 and ciGate
   const out = derivePhases({ events, now: NOW });
   assert.equal(out.totals.ciWallMinutes, 20);
   assert.deepEqual(out.ciGate, events);
+  assert.notEqual(out.ciGate[0], events[0], 'ciGate entries are copies, not the caller\'s event objects');
 });
 
 test('AC5.3: events for two distinct PRs (1200000 and 300000) give 25', () => {

@@ -20,7 +20,7 @@ Guard denials: {n} gate · {n} wd-ambiguous · {n} wd-deny
 
 Two run-wide lines render verbatim after the `Tokens (in/out)` footnote (#4029): `Turn classes (tool calls): …` and `Context per turn: …`. Per-phase values live in `timing.json`'s phases. The class total counts tool calls, which can exceed `Tool RTs` when calls are batched into one round trip. Ceremony share is the procedure, bookkeeping, orientation and guard-refusal calls over all calls; it reads `—` when the run made none.
 
-When the run recorded a merge-gate event (`ci-gate-record.js`, #5160), one `CI gate: {verdict}, {minutes} min wall[ (lower bound)], gate waited {minutes} min (PR #{n})` line per PR renders verbatim after the table and its run-wide lines; `n/a` is a value the gate could not record, never a zero. A summary rendered before the merge has no such line.
+When the run recorded a merge-gate event (`ci-gate-record.js`, #5160), one `CI gate: {verdict}, {minutes} min wall[ (lower bound)], gate waited {minutes} min (PR #{n})` line per PR renders verbatim after the table and its run-wide lines; `n/a` means no head run had completed, never a zero. A summary rendered before the merge has no such line.
 
 ## Dispatches
 

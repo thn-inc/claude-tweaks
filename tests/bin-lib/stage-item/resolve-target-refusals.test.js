@@ -81,6 +81,8 @@ test('AC4 probe C5b: resolveTarget refuses the shadow spelled with a trailing se
   assertRefused(resolveTarget({ runDir: shadow + sep, cwd: worktree }), 'not-anchored');
 });
 
+// The `missing` outcome comes from safeReal resolving the relative URL-shaped value
+// against process.cwd() (no such directory there), not against the fixture's `cwd` argument.
 test('AC4 probe C6: resolveTarget refuses a URL-shaped run dir as missing', (t) => {
   const { worktree } = fixture(t);
   const runDir = `https://example.com/.claude-tweaks/pipelines/${RUN_ID}`;

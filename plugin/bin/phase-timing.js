@@ -32,6 +32,11 @@
 // aggregated by tier and role, clipped to the run's event window, and printed
 // after the phase table; the key is absent without a transcript flag.
 //
+// When events.jsonl holds a `ci-gate` event (#5160, bin/ci-gate-record.js),
+// timing.json also gains `ciGate` (those events, in file order) and
+// `totals.ciWallMinutes`, and --markdown prints one `CI gate: ...` line per PR
+// after the phase table; with no such event both keys and the line are absent.
+//
 // --check-budgets (#4029) compares the run's totals with the efficiency
 // ceilings for its {run-dir}/config.yml `ceremony-profile` (absent or invalid
 // reads as `standard`, with a stderr note) from the checkout's policy.yml, found
