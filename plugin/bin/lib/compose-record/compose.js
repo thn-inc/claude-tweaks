@@ -6,8 +6,9 @@
 'use strict';
 
 const { recordPayload } = require('../issues/record');
+const { fencedLineMask } = require('../markdown-blocks');
 const {
-  REQUIRED_SECTIONS: GATE_SECTIONS, PLACEHOLDER_PATTERNS, ORIGINAL_REQUEST_RE, UNCLOSED_FENCE_PREFIX, sectionText, shapeGate,
+  REQUIRED_SECTIONS: GATE_SECTIONS, PLACEHOLDER_PATTERNS, originalRequestOffset, UNCLOSED_FENCE_PREFIX, sectionText, shapeGate,
   stripCodeSpans, liftMetadata, describeDesignIntentError,
 } = require('../issues/materialize-format');
 
@@ -18,13 +19,15 @@ const MARKER_NAMES = PLACEHOLDER_PATTERNS.map((p) => p.marker);
 
 // body -> { [headingText]: contentString } — content is every line between one line-anchored
 // "## {Heading}" line and the next (or end of string), trimmed. A "## " appearing mid-line
-// (not at the start of a line) is never treated as a heading.
+// (not at the start of a line) is never treated as a heading, nor is one inside a fenced
+// block (#4351, the sectionText rule since #4169) — it stays content of its section.
 function splitSections(body) {
   const lines = String(body || '').split('\n');
+  const fenced = fencedLineMask(lines);
   const raw = {};
   let current = null;
-  for (const line of lines) {
-    const m = /^## (.+)$/.exec(line);
+  for (const [i, line] of lines.entries()) {
+    const m = fenced[i] ? null : /^## (.+)$/.exec(line);
     if (m) {
       current = m[1].trim();
       if (!(current in raw)) raw[current] = [];
@@ -55,7 +58,7 @@ function validateShaped(body) {
     if (entry.startsWith(UNCLOSED_FENCE_PREFIX)) gaps.push(entry);
   }
   if (gate.missing.includes('unresolved-placeholder')) {
-    const at = text.search(ORIGINAL_REQUEST_RE);
+    const at = originalRequestOffset(text);
     const authored = stripCodeSpans(at === -1 ? text : text.slice(0, at));
     for (const { marker, re } of PLACEHOLDER_PATTERNS) {
       if (re.test(authored)) gaps.push(`unresolved placeholder marker: ${marker}`);
