@@ -1843,6 +1843,19 @@ test('#5227 blocker-landing: a non-zero exit stops the pull with the fence line,
   assert.match(thrown.stderr, /queue-pull: dispatch-unlanded-blockers\.js: spawn ENOENT/);
 });
 
+test('#5227 blocker-landing: a .tmp file that cannot be created skips the CLI and stops with the fence line, as the fence\'s failed > redirect does', () => {
+  const r = pull5(PIPE(), {
+    allowThrow: true,
+    before: (ctx) => fs.mkdirSync(`${ctx.paths['dispatch-groups.json']}.tmp`), // a directory: the create fails with EISDIR
+  });
+  assert.equal(r.landing.length, 0, 'the CLI is never spawned');
+  assert.ok(r.thrown instanceof QueuePullStopped, String(r.thrown));
+  assert.equal(r.thrown.line, UNLANDED_STOP);
+  assert.ok(r.errs.some((e) => e.startsWith('queue-pull: write dispatch-groups.json.tmp: ')), r.stderr);
+  assert.ok(groupNumbers(r).flat().includes(9011), 'the pool is left as it was');
+  assert.ok(!r.cap.order.includes('neighbour-in-flight'), 'no later pass runs after the stop');
+});
+
 test('AC2.2 neighbour-in-flight: #9013 (a Key File shared with in-flight #7001, whose claim reads live) is written and stays in the groups; omitting the pass writes nothing', () => {
   const r = pull5(PIPE());
   assert.deepEqual(entriesOf(r, 'neighbour-in-flight'), [

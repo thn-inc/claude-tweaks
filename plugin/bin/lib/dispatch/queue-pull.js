@@ -894,7 +894,13 @@ function runBlockerLanding(ctx) {
   if (omit.has('blocker-landing')) return;
   const groupsFile = paths['dispatch-groups.json'];
   const tmp = `${groupsFile}.tmp`;
-  put(ctx, tmp, ''); // the fence's `> "${DISPATCH_GROUPS}.tmp"` redirect creates the file before the CLI runs
+  const stop = new QueuePullStopped('dispatch: queue-pull stopped -- unlanded-blocker exclusion pass failed; see error above.');
+  // The fence's `> "${DISPATCH_GROUPS}.tmp"` redirect creates the file before the CLI runs; a failed
+  // redirect runs no command and takes the `else` branch (rm -f, then the stop).
+  if (!put(ctx, tmp, '').ok) {
+    step(ctx, 'rm dispatch-groups.json.tmp', () => fs.rmSync(tmp, { force: true }));
+    throw stop;
+  }
   const r = spawnCli(ctx, 'dispatch-unlanded-blockers.js', ['--groups', groupsFile, '--exclusions', paths['dispatch-exclusions.json'],
     '--integration-branch', state.integrationBranch, '--work-links', state.workLinks]);
   forward(ctx, r, { stdout: false });
@@ -906,7 +912,7 @@ function runBlockerLanding(ctx) {
     return;
   }
   fs.rmSync(tmp, { force: true });
-  throw new QueuePullStopped('dispatch: queue-pull stopped -- unlanded-blocker exclusion pass failed; see error above.');
+  throw stop;
 }
 
 const IN_FLIGHT_ARGV = ['issue', 'list', '--label', 'bot:in-progress', '--state', 'open', '--json', 'number,title,body,labels', '--limit', '200'];
