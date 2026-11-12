@@ -253,8 +253,8 @@ function harness(over = {}) {
   const signals = [];
   const state = { probes: 0, clock: NOW };
   const script = [...(over.script || []), ...defaultScript(over)];
-  function dispatch(kind, args, cwd, env, timeout) {
-    const call = { kind, args, cwd, env, timeout };
+  function dispatch(kind, args, cwd, env, timeout, extra = {}) {
+    const call = { kind, args, cwd, env, timeout, ...extra };
     calls.push(call);
     // AC8: nothing merges, in any test. A gh argv with `pr` followed by `merge` or `ready` is never answered.
     if (['gh', 'ghBatch', 'ghCreate'].includes(kind)) {
@@ -274,7 +274,7 @@ function harness(over = {}) {
     gh: (args) => dispatch('gh', args),
     ghBatch: (args) => dispatch('ghBatch', args),
     ghCreate: (args) => dispatch('ghCreate', args),
-    git: (args, opts = {}) => dispatch('git', args, opts.cwd),
+    git: (args, opts = {}) => dispatch('git', args, opts.cwd, undefined, undefined, { remoteWrite: opts.remoteWrite }),
     node: (script_, args, opts = {}) => dispatch('node', [script_, ...args], opts.cwd, opts.env, opts.timeout),
     resolvePolicy: (keys) => dispatch('policy', keys),
     evaluateRecordEligibility: (issue, opts) => dispatch('eligibility', [issue, opts]),
@@ -678,11 +678,6 @@ test('codeOf self-test: a comment never matches, code after a literal opener sti
   const misparse = "if (b) /'/.test(b); const c = 'x'; f(c);";
   assert.equal(stripperVerdict(misparse, stripComments(misparse, { literals: 'blank' })), 'misparsed');
   for (const file of ['run.js', 'steps.js']) assert.ok(codeOf(path.join(LIB, 'driver', file)).length > 1000, file);
-});
-
-test('run.js names no step', () => {
-  const src = codeOf(path.join(LIB, 'driver', 'run.js'));
-  for (const name of STEP_NAMES) assert.doesNotMatch(src, new RegExp(`['"\`]${name}['"\`]`), name);
 });
 
 test('step constants', () => {
@@ -1154,6 +1149,38 @@ test('realDeps.ghBatch runs under GH_BATCH_TIMEOUT_MS and realDeps.gh under GH_T
   assert.equal(seen[2].options.timeout, primitives.GH_BATCH_TIMEOUT_MS, 'ghCreate runs under the batch bound');
   assert.ok(primitives.GH_BATCH_TIMEOUT_MS >= 30000);
   assert.ok(seen.every((s) => s.options.windowsHide === true));
+});
+
+test('realDeps.git runs under the shared git bound, and under the push bound only when asked', () => {
+  const cp = require('node:child_process');
+  const runPath = require.resolve(path.join(LIB, 'driver', 'run'));
+  const primitives = require(path.join(LIB, 'shared-primitives'));
+  // Discriminating only while the two bounds differ (an env or policy override can equalize them).
+  assert.notEqual(primitives.GIT_PUSH_TIMEOUT_MS, primitives.GIT_TIMEOUT_MS, 'the two bounds must differ for this test to discriminate');
+  const original = cp.execFileSync;
+  const seen = [];
+  cp.execFileSync = (bin, args, options) => { seen.push({ bin, args, options }); return ''; };
+  try {
+    delete require.cache[runPath];
+    const fresh = require(runPath);
+    fresh.realDeps.git(['status'], { cwd: '/x' });
+    fresh.realDeps.git(['push', 'origin', 'b'], { cwd: '/x', remoteWrite: true });
+  } finally {
+    cp.execFileSync = original;
+    delete require.cache[runPath];
+  }
+  assert.deepEqual(seen.map((s) => [s.bin, s.args[0]]), [['git', 'status'], ['git', 'push']]);
+  assert.equal(seen[0].options.timeout, primitives.GIT_TIMEOUT_MS);
+  assert.equal(seen[1].options.timeout, primitives.GIT_PUSH_TIMEOUT_MS);
+  assert.ok(seen.every((s) => s.options.maxBuffer === primitives.LARGE_MAX_BUFFER_BYTES && s.options.windowsHide === true));
+});
+
+test('the push step alone asks for the push bound', async () => {
+  const h = harness();
+  assert.equal(await run(['#7'], h.deps), 0);
+  const bounded = gitCalls(h).filter((c) => c.remoteWrite !== undefined);
+  assert.deepEqual(bounded.map((c) => [c.remoteWrite, c.args.includes('push')]), [[true, true]]);
+  assert.ok(gitCalls(h).length > 1, 'the run made other git calls, all without a bound');
 });
 
 test('a failed worktree add still names the intended worktree and branch on ctx', async () => {

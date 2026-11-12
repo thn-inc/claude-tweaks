@@ -22,7 +22,7 @@ files:
 - **Should understand:**
   - Records run one at a time, in the order named. A record that stops never prevents the next one from running.
   - Exit 0 means every record reached its final line, whatever its outcome; the outcome is in the data.
-  - Exit 1 means the policy, repository or integration branch could not be resolved, so no record went further.
+  - Exit 1 means the policy, repository or integration branch could not be resolved, so no record went further. The repository is checked first: an origin whose host the origin-host gate refuses exits 1 before any `gh` call, the policy read included.
   - Exit 2 is a malformed command (no reference, or a non-numeric one), an absent `gh` or `git`, or an internal error.
 - **Red flags:**
   - A non-zero exit for a record that was merely refused or escalated.
@@ -44,8 +44,8 @@ files:
 - **Should feel:** watched-over. Every gate is a program decision with a named step, and the worker's text never appears raw in a command, a commit subject or an event line.
 - **Should understand:**
   - The worker event carries `usage`, `turns` and `denials`, plus `spendOverrun` when the spend ceiling was crossed. A denial is information, never a reason to relaunch.
-  - A stop here ends the record `express-escalated`. Such stops are a worker `fail` or `timeout`, no changed files, red tests, a refused scope file, an `escalate` verdict, a HEAD mismatch, or leftover state from an earlier run (a worktree, branch or remote branch named in the detail).
-  - A failed claim, or a run directory that cannot be minted, ends the record `blocked`.
+  - A stop here ends the record `express-escalated`. Such stops include a worker `fail`, `timeout` or `cannot-complete`, no changed files, red tests, a refused scope file, an `escalate` verdict, a HEAD mismatch, a push that failed without reaching origin, or leftover state from an earlier run (a worktree, branch, remote branch or run directory named in the detail).
+  - A failed claim, or a run directory that cannot be minted, ends the record `blocked`. So does a failed `express-lane.js check` call (a non-zero exit, or no check envelope), even though nothing is pushed yet: no escalation line landed, so the full pipeline would not know the record left the lane.
 - **Red flags:**
   - A commit message carrying `Fixes #N`, or a push after a HEAD mismatch.
   - A worker transcript with a `gh`, `git commit` or `git push` call.
@@ -56,7 +56,7 @@ files:
 - **Action:** open the PR the final line names. It is a draft, its body was composed by `compose-pr-body.js --express`, and it targets the integration branch.
 - **Should feel:** finished, but not shipped. The work is reviewable, and the merge decision is still the human's.
 - **Should understand:**
-  - Once the branch is pushed, a failure of `check`'s exit, `gh pr create` (after its one retry, which first looks for an open PR on the branch), `record-pr` or `set-config` ends the record `blocked`, because a pushed branch cannot escalate.
+  - Once the branch is pushed, a failure of `gh pr create` (after its one retry, which first looks for an open PR on the branch), `record-pr` or `set-config` ends the record `blocked`, because a pushed branch cannot escalate. So does a `git push` that reported a failure while `origin/drive-record-{n}` already holds the checked HEAD.
   - A failed summary entry still ends the record `pending-review`.
 - **Red flags:** two PRs for one record after a transient `gh` failure; a PR that is not a draft; a ready-for-review flip or a merge call anywhere.
 
@@ -84,3 +84,4 @@ files:
 ## Origin
 - Created during the build of #5218 (run `2026-11-12T104316-spec-5218`), the pipeline driver's second unit. It drives the express lane's steps 1–8 and 10 as code over the #5217 worker launcher; step 9 (merge) is deliberately absent.
 - Settling a stopped record (releasing the claim, removing the locked worktree with `git worktree unlock` first, closing a tombstoned PR) belongs to the settle unit, not this journey.
+- Updated at wrap-up of #5218, after the review fixes. Step 1 says the origin-host gate runs before the policy read. Steps 3 and 4 now place a failed `check` call (`blocked` before any push) and a push that failed after reaching origin (`blocked`) where the code ends them.

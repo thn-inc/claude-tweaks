@@ -296,8 +296,9 @@ const runDirStep = defineStep(STEP.runDir, STOP_CLASSES.CLAIM, async (ctx, deps)
 
 // A git call in `dir`: the directory is named in argv and in the spawn options both, so
 // the driver's own cwd is never relied on.
-function gitIn(deps, dir, args) {
-  return deps.git(['-C', dir, ...args], { cwd: dir });
+// `remoteWrite: true` asks deps.git for the push timeout instead of the ordinary git one.
+function gitIn(deps, dir, args, { remoteWrite = false } = {}) {
+  return deps.git(['-C', dir, ...args], remoteWrite ? { cwd: dir, remoteWrite } : { cwd: dir });
 }
 
 // Names the state a previous run of this record left behind (express-lane.md has none:
@@ -681,7 +682,7 @@ const pushStep = defineStep(STEP.push, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
     return { status: 'stop', detail: `HEAD ${neutralize(current)} is not the commit check verified (${head})` };
   }
   try {
-    gitIn(deps, wt, ['push', '--end-of-options', 'origin', branch]);
+    gitIn(deps, wt, ['push', '--end-of-options', 'origin', branch], { remoteWrite: true });
   } catch (err) {
     const detail = `git push failed: ${neutralize(errorText(err))}`;
     // A failed push (a timeout included) may have updated the remote ref already: ask origin.

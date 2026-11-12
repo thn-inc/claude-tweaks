@@ -75,9 +75,8 @@ const USAGE = [
 ].join('\n');
 
 const RECORD_RE = /^#?(\d+)$/;
-const GIT_TIMEOUT_MS = 120000;
 const GIT_PROBE_TIMEOUT_MS = 10000;
-const MAX_BUFFER = 64 * 1024 * 1024;
+const MAX_BUFFER = sharedPrimitives.LARGE_MAX_BUFFER_BYTES;
 
 // argv -> { records } | { help: true } | { error }. `#N` or `N`, positive integers only,
 // de-duplicated in the order given. --help (or -h) anywhere wins.
@@ -351,8 +350,13 @@ const realDeps = {
   ghCreate: (args) => execFileSync('gh', args, ghOptions(args, {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: sharedPrimitives.GH_BATCH_TIMEOUT_MS, maxBuffer: MAX_BUFFER, windowsHide: true,
   })),
-  git: (args, { cwd } = {}) => execFileSync('git', args, {
-    cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GIT_TIMEOUT_MS, maxBuffer: MAX_BUFFER, windowsHide: true,
+  // The shared git bounds, read at call time (env, then policy, then the default): a call that
+  // writes to the remote passes `remoteWrite: true` for GIT_PUSH_TIMEOUT_MS, every other call
+  // gets GIT_TIMEOUT_MS.
+  git: (args, { cwd, remoteWrite } = {}) => execFileSync('git', args, {
+    cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: remoteWrite === true ? sharedPrimitives.GIT_PUSH_TIMEOUT_MS : sharedPrimitives.GIT_TIMEOUT_MS,
+    maxBuffer: MAX_BUFFER, windowsHide: true,
   }),
   // A plugin/bin CLI under this Node; never throws on a non-zero exit.
   // The child gets the env the caller passes (steps pass deps.env); a call that omits `env`
