@@ -1036,6 +1036,37 @@ function queuePull(options = {}, deps = {}) {
   return { groups, exclusions: readExclusions(paths['dispatch-exclusions.json']) };
 }
 
+// ---- the `next` ranking (next-ranking.md's fence), expression for expression ------------------
+// Pure: camelCase input, as the queue pull writes it (it aliases MCP timestamps before writing
+// dispatch-groups.json). A snake_case pool is aliased by the caller, never in here.
+const RANK = { high: 0, medium: 1, low: 2 };
+const bandOf = (r) => (r.facets.priority ? RANK[r.facets.priority] : 3);
+
+// groups: arrays of records; exclusionEntries: dispatch-exclusions.json's entries. Returns the
+// best eligible group, or null.
+function rankNext(groups, exclusionEntries, { priority } = {}) {
+  const eligibleGroups = groups.filter((g) => !groupIsExcluded(g, exclusionEntries, ['oversized', 'firing', 'neighbour-in-flight']));
+  const representative = (g) => g.slice().sort((a, b) =>
+    bandOf(a) - bandOf(b) || new Date(a.createdAt) - new Date(b.createdAt))[0];
+  const priorityFilter = priority || null;
+  let candidates = eligibleGroups.map((g) => ({ group: g, rep: representative(g) }));
+  if (priorityFilter) candidates = candidates.filter((c) => c.rep.facets.priority === priorityFilter);
+  const ranked = candidates
+    .sort((x, y) => bandOf(x.rep) - bandOf(y.rep) || new Date(x.rep.createdAt) - new Date(y.rep.createdAt));
+  return ranked.length ? ranked[0].group : null;
+}
+
+// Reads the session's dispatch-groups.json (a missing or malformed file throws, as the script's
+// require() does) and dispatch-exclusions.json (absent or unreadable reads as [] via
+// readExclusions), and writes the pick -- or null -- to dispatch-next-pick.json as console.log would.
+function rankFromFiles({ sessionId, priority } = {}) {
+  const paths = sessionPaths(sessionId);
+  const groups = readJson(paths['dispatch-groups.json']);
+  const pick = rankNext(groups, readExclusions(paths['dispatch-exclusions.json']), { priority });
+  fs.writeFileSync(paths['dispatch-next-pick.json'], JSON.stringify(pick) + '\n');
+  return pick;
+}
+
 module.exports = {
-  PASSES, PASS_FIELD_VALUES, SESSION_FILES, sessionPaths, QueuePullStopped, runPasses, resolveOmit, defaultDeps, makeContext, queuePull,
+  PASSES, PASS_FIELD_VALUES, SESSION_FILES, sessionPaths, QueuePullStopped, runPasses, resolveOmit, defaultDeps, makeContext, queuePull, rankNext, rankFromFiles,
 };

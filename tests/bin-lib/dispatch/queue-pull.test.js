@@ -13,7 +13,7 @@
 // prefix, tail excluded. The fence's tail opens with Node's uncaught-exception header (a throw-site
 // file:line or a node:internal loader line, Node-version dependent, absent from err.stack); the
 // module prints err.message. See TAIL_EXCLUDED_PREFIXES in queue-pull-oracle.js.
-const { test } = require('node:test');
+const { test, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -31,9 +31,10 @@ const {
   IN_FLIGHT_7001, OPEN_PR_41, LIVE_CLAIM,
 } = require('./queue-pull-fixtures');
 const {
-  PASSES, PASS_FIELD_VALUES, SESSION_FILES, QueuePullStopped, sessionPaths, runPasses, resolveOmit, defaultDeps, makeContext, queuePull,
+  PASSES, PASS_FIELD_VALUES, SESSION_FILES, QueuePullStopped, sessionPaths, runPasses, resolveOmit, defaultDeps, makeContext, queuePull, rankNext, rankFromFiles,
 } = require('../../../plugin/bin/lib/dispatch/queue-pull');
 const { appendExclusion } = require('../../../plugin/bin/lib/dispatch/exclusions');
+const { aliasMcpTimestamps } = require('../../../plugin/bin/lib/issues/mcp-issue-shape');
 
 const FENCE = extractFence(readText(SCRIPT_MD), FENCE_FIRST_LINE);
 const ORACLE_ENV_KEYS = new Set([
@@ -1859,4 +1860,177 @@ test('AC2.1: every registry entry that writes a reason, and each informational p
     swept += 1;
   }
   assert.equal(swept, SWEPT.length, 'the loop ran every entry');
+});
+
+// ---- Task 6: rankNext / rankFromFiles (AC6) ---------------------------------------------------
+// One table, three consumers: rankNext in-process, next-ranking.md's fence under the bash oracle
+// (same sandbox + escape guard as the queue-pull fence), and rankFromFiles' written file. Every
+// `expected` is a literal group, never computed by rankNext (Q4).
+const NEXT_RANKING_MD = path.join(REPO, 'plugin', 'skills', 'dispatch', 'next-ranking.md');
+const RANKING_FENCE_FIRST_LINE = 'DISPATCH_GROUPS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-groups.json)"';
+const rec = (number, priority, createdAt) => ({ number, createdAt, facets: { priority } });
+const A = (n, p, d) => [rec(n, p, `2026-0${d}-01T00:00:00Z`)];
+const ex = (reason, ...records) => ({ reason, records, detail: 'fixture' });
+
+const HIGH_NEW = A(1, 'high', 5);
+const HIGH_OLD = A(2, 'high', 2);
+const MED = A(3, 'medium', 1);
+const LOW = A(4, 'low', 1);
+const NONE = A(5, null, 1);
+const MIXED = [rec(6, 'low', '2026-01-01T00:00:00Z'), rec(7, 'high', '2026-06-01T00:00:00Z'), rec(8, null, '2026-01-01T00:00:00Z')];
+const SAME_A = A(11, 'medium', 3);
+const SAME_B = A(12, 'medium', 3);
+
+const RANK_CASES = [
+  { name: 'empty pool', groups: [], exclusions: [], priority: '', expected: null },
+  { name: 'band high beats medium, low and unprioritized', groups: [NONE, LOW, MED, HIGH_NEW], exclusions: [], priority: '', expected: HIGH_NEW },
+  { name: 'band medium beats low and unprioritized', groups: [NONE, LOW, MED], exclusions: [], priority: '', expected: MED },
+  { name: 'band low beats unprioritized', groups: [NONE, LOW], exclusions: [], priority: '', expected: LOW },
+  { name: 'an unprioritized group alone is picked', groups: [NONE], exclusions: [], priority: '', expected: NONE },
+  { name: 'a tie within a band goes to the older record', groups: [HIGH_NEW, HIGH_OLD], exclusions: [], priority: '', expected: HIGH_OLD },
+  { name: "a group's best member is not its first: [low, high, unprioritized] ranks as high", groups: [MED, MIXED], exclusions: [], priority: '', expected: MIXED },
+  { name: 'oversized excludes the best group', groups: [HIGH_OLD, MED], exclusions: [ex('oversized', 2)], priority: '', expected: MED },
+  { name: 'firing excludes the best group', groups: [HIGH_OLD, MED], exclusions: [ex('firing', 2)], priority: '', expected: MED },
+  { name: 'neighbour-in-flight excludes the best group', groups: [HIGH_OLD, MED], exclusions: [ex('neighbour-in-flight', 2)], priority: '', expected: MED },
+  { name: 'one excluded member excludes its whole group', groups: [MIXED, LOW], exclusions: [ex('firing', 8)], priority: '', expected: LOW },
+  { name: 'a reason outside the three does not exclude', groups: [HIGH_OLD, MED], exclusions: [ex('blocked', 2)], priority: '', expected: HIGH_OLD },
+  { name: 'every group excluded gives null', groups: [HIGH_OLD, MED], exclusions: [ex('oversized', 2), ex('firing', 3)], priority: '', expected: null },
+  { name: '--priority picks the matching band even when a higher one exists', groups: [HIGH_OLD, MED, LOW], exclusions: [], priority: 'medium', expected: MED },
+  { name: '--priority filters on the representative: [low, high] with --priority low gives null', groups: [MIXED], exclusions: [], priority: 'low', expected: null },
+  { name: '--priority that matches nothing gives null', groups: [HIGH_OLD, MED], exclusions: [], priority: 'low', expected: null },
+  { name: "within a band the representative is the group's oldest member", groups: [A(22, 'high', 3), [rec(20, 'high', '2026-05-01T00:00:00Z'), rec(21, 'high', '2026-01-01T00:00:00Z')]], exclusions: [], priority: '', expected: [rec(20, 'high', '2026-05-01T00:00:00Z'), rec(21, 'high', '2026-01-01T00:00:00Z')] },
+  { name: 'equal createdAt between two groups keeps the pool order (stable sort)', groups: [SAME_A, SAME_B], exclusions: [], priority: '', expected: SAME_A },
+  { name: 'equal createdAt, reversed pool, keeps the reversed order', groups: [SAME_B, SAME_A], exclusions: [], priority: '', expected: SAME_B },
+];
+
+const quoteSh = (p) => `'${p.replace(/'/g, "'\\''")}'`;
+function writeCaseFiles(dir, c) {
+  const groups = path.join(dir, 'groups.json');
+  fs.writeFileSync(groups, JSON.stringify(c.groups));
+  const exclusions = path.join(dir, 'exclusions.json');
+  const hasExclusions = c.exclusions !== undefined && c.exclusions !== null;
+  if (hasExclusions) fs.writeFileSync(exclusions, typeof c.exclusions === 'string' ? c.exclusions : JSON.stringify(c.exclusions));
+  return { groups, exclusions: hasExclusions ? exclusions : null };
+}
+
+// Seeds the module's session dir for sessionId and returns its paths; the caller removes it.
+function seedModuleSession(sessionId, files) {
+  const paths = sessionPaths(sessionId);
+  fs.copyFileSync(files.groups, paths['dispatch-groups.json']);
+  if (files.exclusions) fs.copyFileSync(files.exclusions, paths['dispatch-exclusions.json']);
+  return paths;
+}
+const dropSession = (sessionId) => fs.rmSync(path.dirname(sessionPaths(sessionId)['dispatch-groups.json']), { recursive: true, force: true });
+
+// Runs next-ranking.md's bash fence whole under the oracle sandbox (the same escape guard as the
+// queue-pull fence). The preamble seeds the oracle's session files from the case files by copy, so
+// the fence reads exactly the bytes rankFromFiles reads; PRIORITY_FILTER is the script's own input.
+let rankingFence;
+async function runRankingFence(c) {
+  rankingFence = rankingFence || extractFence(readText(NEXT_RANKING_MD), RANKING_FENCE_FIRST_LINE);
+  const sb = createSandbox(S0(), { name: 'rank' });
+  try {
+    const files = writeCaseFiles(sb.root, c);
+    const resolve = (name) => `"$(node "\${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value ${name})"`;
+    const preamble = [
+      `SEED_G=${resolve('dispatch-groups.json')}`,
+      `cp ${quoteSh(files.groups)} "$SEED_G"`,
+      ...(files.exclusions ? [`SEED_E=${resolve('dispatch-exclusions.json')}`, `cp ${quoteSh(files.exclusions)} "$SEED_E"`] : []),
+      `PRIORITY_FILTER=${quoteSh(c.priority || '')}`,
+      '',
+    ].join('\n');
+    const r = await runOracle(sb, preamble + rankingFence);
+    assert.equal(r.status, 0, r.stderr);
+    return { pickText: r.files['dispatch-next-pick.json'] };
+  } finally {
+    sb.cleanup();
+  }
+}
+
+let rankSession = 0;
+for (const c of RANK_CASES) {
+  test(`AC6.1: rankNext matches next-ranking.md — ${c.name}`, () => {
+    assert.deepEqual(rankNext(c.groups, c.exclusions, { priority: c.priority }), c.expected);
+  });
+  test(`AC6.1 oracle: next-ranking.md's fence picks the same, and rankFromFiles writes its exact bytes — ${c.name}`, { skip: oracleSkip() }, async () => {
+    const oracle = await runRankingFence(c);
+    assert.deepEqual(JSON.parse(oracle.pickText), c.expected);
+    assert.equal(oracle.pickText, JSON.stringify(c.expected) + '\n');
+    const sessionId = `qp-rank-${process.pid}-${rankSession += 1}`;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qp-rank-case-'));
+    try {
+      const paths = seedModuleSession(sessionId, writeCaseFiles(dir, c));
+      const pick = rankFromFiles({ sessionId, priority: c.priority });
+      assert.deepEqual(pick, c.expected);
+      assert.equal(fs.readFileSync(paths['dispatch-next-pick.json'], 'utf8'), oracle.pickText, 'the module file is byte-identical to the fence output');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+      dropSession(sessionId);
+    }
+  });
+}
+
+test('AC6.2: equal createdAt ranks in the script sort order, and a snake_case pool aliased with aliasMcpTimestamps ranks as its camelCase twin', () => {
+  // Stable sort: the first pooled group wins a createdAt tie; the literal is the oracle row above.
+  assert.equal(rankNext([SAME_A, SAME_B], [], {})[0].number, 11);
+  assert.equal(rankNext([SAME_B, SAME_A], [], {})[0].number, 12);
+  const snake = (g) => g.map(({ createdAt, ...rest }) => ({ ...rest, created_at: createdAt }));
+  const camelPool = [HIGH_NEW, HIGH_OLD];
+  const snakePool = camelPool.map(snake);
+  // Without aliasing the snake_case pool has no createdAt, so every comparison is NaN and the pool
+  // order wins -- the go-red control proving the alias below is what makes it rank by age.
+  assert.equal(rankNext(snakePool, [], {})[0].number, 1);
+  const aliased = snakePool.map((g) => aliasMcpTimestamps(g));
+  assert.equal(rankNext(aliased, [], {})[0].number, 2);
+  assert.deepEqual(rankNext(aliased, [], {}).map((r) => r.number), rankNext(camelPool, [], {}).map((r) => r.number));
+});
+
+function withSession(fn) {
+  const sessionId = `qp-rank-${process.pid}-${rankSession += 1}`;
+  const paths = sessionPaths(sessionId);
+  try {
+    return fn(paths, sessionId);
+  } finally {
+    dropSession(sessionId);
+  }
+}
+
+test('AC6.3: rankFromFiles reads an absent and a corrupt dispatch-exclusions.json as no exclusions, and a present one as exclusions', () => withSession((paths, sessionId) => {
+  fs.writeFileSync(paths['dispatch-groups.json'], JSON.stringify([HIGH_OLD, MED]));
+  const picked = () => fs.readFileSync(paths['dispatch-next-pick.json'], 'utf8');
+  assert.deepEqual(rankFromFiles({ sessionId }), HIGH_OLD, 'absent file');
+  assert.equal(picked(), JSON.stringify(HIGH_OLD) + '\n');
+  const err = mock.method(console, 'error', () => {});
+  try {
+    for (const corrupt of ['{not json', '{"reason":"firing"}']) {
+      fs.writeFileSync(paths['dispatch-exclusions.json'], corrupt);
+      assert.deepEqual(rankFromFiles({ sessionId }), HIGH_OLD, `corrupt file ${corrupt}`);
+    }
+    assert.equal(err.mock.callCount(), 2, 'readExclusions reports each unreadable file on stderr and carries on');
+  } finally {
+    err.mock.restore();
+  }
+  fs.writeFileSync(paths['dispatch-exclusions.json'], JSON.stringify([ex('firing', 2)]));
+  assert.deepEqual(rankFromFiles({ sessionId }), MED, 'a present firing entry is honoured (control)');
+  assert.equal(picked(), JSON.stringify(MED) + '\n');
+}));
+
+test('AC6.3: rankFromFiles writes null when nothing is eligible, honours --priority, and throws on a missing or malformed groups file without writing a pick', () => withSession((paths, sessionId) => {
+  assert.throws(() => rankFromFiles({ sessionId }), /ENOENT/);
+  assert.equal(fs.existsSync(paths['dispatch-next-pick.json']), false);
+  fs.writeFileSync(paths['dispatch-groups.json'], JSON.stringify([HIGH_OLD, MED]));
+  assert.equal(rankFromFiles({ sessionId, priority: 'low' }), null);
+  assert.equal(fs.readFileSync(paths['dispatch-next-pick.json'], 'utf8'), 'null\n');
+  assert.deepEqual(rankFromFiles({ sessionId, priority: 'medium' }), MED);
+  fs.rmSync(paths['dispatch-next-pick.json']);
+  fs.writeFileSync(paths['dispatch-groups.json'], '{broken');
+  assert.throws(() => rankFromFiles({ sessionId }), SyntaxError);
+  assert.equal(fs.existsSync(paths['dispatch-next-pick.json']), false);
+}));
+
+test('AC6.3 oracle: the fence reads an absent and a corrupt dispatch-exclusions.json as no exclusions too', { skip: oracleSkip() }, async () => {
+  for (const exclusions of [undefined, '{not json']) {
+    const oracle = await runRankingFence({ groups: [HIGH_OLD, MED], exclusions, priority: '' });
+    assert.deepEqual(JSON.parse(oracle.pickText), HIGH_OLD);
+  }
 });
