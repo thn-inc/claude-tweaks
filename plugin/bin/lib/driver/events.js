@@ -76,27 +76,43 @@ function normalizeTitle(raw) {
   return neutralize(firstLine).replace(/(?:\s*\.)+\s*$/, '').trim();
 }
 
+// Every line reaches stdout at once. The file side is a queue: lines are held until the
+// run directory is bound, then appended in order, each removed only once its append
+// succeeds. A failed append never throws to the caller: the line stays queued and is
+// tried again at the next emit, so the file stays an in-order prefix of stdout. The
+// first failure is kept for fileError(), which the caller reports on the final line.
 function createEventSink({ stdout, appendFile }) {
   const emitted = [];
-  let held = [];
+  const held = [];
   let eventsFile = null;
+  let firstError = null;
+
+  function flush() {
+    while (held.length > 0) {
+      try {
+        appendFile(eventsFile, held[0]);
+      } catch (err) {
+        if (firstError === null) firstError = (err && err.message) || String(err);
+        return;
+      }
+      held.shift();
+    }
+  }
 
   function emit(event) {
     const line = JSON.stringify(event) + '\n';
     emitted.push(event);
     stdout(line);
-    if (eventsFile === null) held.push(line);
-    else appendFile(eventsFile, line);
+    held.push(line);
+    if (eventsFile !== null) flush();
   }
 
   function bindRunDir(runDir) {
     eventsFile = path.join(runDir, 'driver-events.jsonl');
-    const pending = held;
-    held = [];
-    for (const line of pending) appendFile(eventsFile, line);
+    flush();
   }
 
-  return { emit, bindRunDir, events: () => emitted.slice() };
+  return { emit, bindRunDir, events: () => emitted.slice(), fileError: () => firstError };
 }
 
 module.exports = {
