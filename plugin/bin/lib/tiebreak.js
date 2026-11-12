@@ -243,18 +243,26 @@ function firstLine(raw) {
 
 const squash = (s) => s.replace(/\s+/g, ' ').trim();
 
+function canonicalFindingPath(findingPath, evidencePath) {
+  if (findingPath.startsWith('plugin/')) return findingPath;
+  const skillPath = `plugin/skills/${findingPath}`;
+  return evidencePath === skillPath ? skillPath : findingPath;
+}
+
 // Returns null when the evidence checks out against the file, else the reason.
 // The cited line must sit within ±LINE_TOLERANCE_REPRODUCTION_WIDE of the
 // finding's line, and the quote must carry content (three or more consecutive
 // word characters), so `}` or `c` can never verify against a window.
+// A legacy skill-relative Location matches its `plugin/skills/` Evidence path and is read through that path.
 function evidenceProblem(evidence, finding, line, readFile) {
-  if (evidence.path !== finding.path) return 'evidence-path-mismatch';
+  const readPath = canonicalFindingPath(finding.path, evidence.path);
+  if (evidence.path !== readPath) return 'evidence-path-mismatch';
   const quote = squash(evidence.quote);
   if (!/[A-Za-z0-9_]{3,}/.test(quote)) return 'evidence-unverified';
   if (Math.abs(evidence.line - line) > LINE_TOLERANCE_REPRODUCTION_WIDE) return 'evidence-unverified';
   // One guard for both: an absent or non-function reader throws here too.
   let text;
-  try { text = readFile(finding.path); } catch { return 'evidence-unverified'; }
+  try { text = readFile(readPath); } catch { return 'evidence-unverified'; }
   if (typeof text !== 'string') return 'evidence-unverified';
   const lines = text.split(/\r?\n/);
   if (lines[lines.length - 1] === '') lines.pop();

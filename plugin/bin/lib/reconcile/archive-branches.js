@@ -32,15 +32,16 @@
 // tie-break to prune-remote — archive's deletes are local-only and
 // recoverable from origin.
 //
-// A screen failure degrades to per-branch gh-absent/network-failure skips
-// (the pre-#1083 shape) rather than a check-level failure: the archive-tag
+// A screen failure, or an origin the #4933 gate refuses, degrades to per-branch
+// gh-absent/network-failure/unknown-host skips (the pre-#1083 shape; an unknown-host
+// skip carries the refusal as `detail`) rather than a check-level failure: the archive-tag
 // aging sweep is wholly gh-independent and keeps running — a permanently
 // gh-absent environment must not lose tag GC (#1083 review). prune-remote's
 // check-level pr-screen-failed differs deliberately: it guards no secondary
 // sweep.
 'use strict';
 
-const { runGit } = require('../hooks/git-exec');
+const { runGit, repoTargetOf } = require('../hooks/git-exec');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
 const { resolvePrState, resolvePrStatesBulk } = require('./pr-state');
 const { isSquashMerged } = require('./squash-provenance');
@@ -140,7 +141,7 @@ function isCherryEquivalent(root, integration, branch) {
   return lines.every((l) => l.startsWith('-'));
 }
 
-function archiveBranches({ cwd, integration, dryRun, now, resolvePr, resolvePrBulk } = {}) {
+function archiveBranches({ cwd, integration, dryRun, now, resolvePr, resolvePrBulk, gateDeps } = {}) {
   const root = cwd || process.cwd();
   const nowMs = now || Date.now();
   const resolve = resolvePr || resolvePrState;
@@ -164,18 +165,32 @@ function archiveBranches({ cwd, integration, dryRun, now, resolvePr, resolvePrBu
     candidates.push({ branch, committerDate, tip });
   }
 
-  const screen = candidates.length > 0
-    ? resolveBulk(root, candidates.map((c) => c.branch))
-    : new Map();
+  // #4794: the origin goes through the #4933 gate before the screen. A refused origin (an SSH
+  // alias, an unknown host) is a per-branch `unknown-host` skip carrying the gate's text — the
+  // same degrade as gh-absent, so the tag-aging sweep below still runs — and nothing is
+  // screened. An admitted origin hands the screen its bare owner/name slug, never the
+  // host-qualified `--repo` form.
+  const target = candidates.length > 0 ? repoTargetOf(root, gateDeps) : null;
+  const refusal = target && target.refusal;
+  let screen;
+  if (candidates.length === 0) {
+    screen = new Map();
+  } else if (refusal) {
+    screen = 'unknown-host';
+  } else {
+    screen = resolveBulk(root, candidates.map((c) => c.branch), target ? { repoSlug: target.slug } : undefined);
+  }
 
-  if (screen === 'gh-absent' || screen === 'network-failure') {
+  if (typeof screen === 'string') {
     // Degrade to per-branch skips (the pre-#1083 shape) rather than a
     // check-level failure: the archive-tag aging sweep below is wholly
     // gh-independent and must keep running in a gh-absent environment
     // (#1083 review, reproduced) — unlike prune-remote, whose check-level
-    // pr-screen-failed return guards no such secondary sweep.
+    // pr-screen-failed return guards no such secondary sweep. Any string
+    // screen verdict (gh-absent, network-failure, unknown-host) lands here, so
+    // a string is never read as a Map.
     for (const { branch } of candidates) {
-      entries.push({ name: branch, kind: 'branch', action: 'skip', reason: screen });
+      entries.push({ name: branch, kind: 'branch', action: 'skip', reason: screen, ...(refusal ? { detail: refusal } : {}) });
     }
   } else {
     for (const { branch, committerDate, tip } of candidates) {

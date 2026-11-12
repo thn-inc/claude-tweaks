@@ -11,6 +11,9 @@ files:
   - plugin/bin/lib/issues/shipped-candidate.js
   - plugin/bin/lib/issues/linked-prs.js
   - plugin/bin/dispatch-resume.js
+  - plugin/bin/dispatch-unlanded-blockers.js
+  - plugin/bin/lib/dispatch/shipped-releases.js
+  - plugin/bin/lib/issues/materialize-format.js
 ---
 
 # Learn Why a Named Record Won't Dispatch
@@ -18,20 +21,20 @@ files:
 **Persona:** a maintainer who has just shaped or captured a record, runs `/claude-tweaks:dispatch #N` (or a `#N,#M` list) to build it now, and needs to know what to fix when it doesn't start.
 **Goal:** see the actual reason a named record was excluded from this firing, with the command that fixes it, instead of a wrong reason or silence.
 **Entry point:** `/claude-tweaks:dispatch #N` or `/claude-tweaks:dispatch #N,#M` naming a record that carries `auto:build` and no `bot:*` label.
-**Success state:** the record is reported by the exclusion reason the queue pull actually recorded — `not-spec-shaped` with its `/claude-tweaks:specify #N` (or `/claude-tweaks:tidy` for a missing Release Note only) remedy, `blocked` with its open blocker(s), `open-pr` with the PR number, `target-missing`, or `shipped` — and, in the list form, every other named record still proceeds.
+**Success state:** the record is reported by the exclusion reason the queue pull actually recorded — `not-spec-shaped` with its `/claude-tweaks:specify #N` (or `/claude-tweaks:tidy` for a missing Release Note only) remedy, `blocked` with its open blocker(s), `open-pr` with the PR number, `target-missing`, `shipped`, `unlanded-blocker` with the blocker and closing commit that never landed, or `malformed-blocker` with the cause — and, in the list form, every other named record still proceeds.
 
 ## Steps
 
 ### 1. Name the record
-- **URL:** `plugin/skills/dispatch/SKILL.md` Step 3, `#N` / `#N[,#M,#O...]` bullets
+- **URL:** `plugin/skills/dispatch/SKILL.md` Step 3, `#N` / `#N[,#M,#O...]` bullets; `plugin/bin/dispatch-unlanded-blockers.js` (the queue-pull pass that writes `unlanded-blocker` and `malformed-blocker`)
 - **Action:** Run `/claude-tweaks:dispatch #N`. The label checks pass (it has `auto:build`, no `bot:*`), but the queue pull already dropped it from `dispatch-groups.json` before any selection form read that file.
 - **Should feel:** Direct — the maintainer named one record and gets one answer about that record.
-- **Should understand:** A record can carry every grant and still be ineligible this firing: the queue pull removes candidates for five reasons (`blocked`, `open-pr`, `not-spec-shaped`, `target-missing`, `shipped`) unconditionally, and naming the record does not bypass any of them.
+- **Should understand:** A record can carry every grant and still be ineligible this firing: the queue pull removes candidates for seven reasons (`blocked`, `open-pr`, `not-spec-shaped`, `target-missing`, `shipped`, `unlanded-blocker`, `malformed-blocker`) unconditionally, and naming the record does not bypass any of them.
 - **Red flags:** Dispatch proceeding to claim a record the queue pull excluded; a generic "not found" with no reason.
 
 ### 2. Read the reason by name
 - **URL:** `plugin/skills/dispatch/SKILL.md` `#N` bullet; `plugin/skills/dispatch/not-spec-shaped-exclusion-report.md`; `plugin/skills/dispatch/blocked-exclusion-report.md`; `plugin/skills/dispatch/open-pr-exclusion-report.md`
-- **Action:** Dispatch reads this run's `dispatch-exclusions.json` entry for `#N` and reports its reason, then stops. A not-spec-shaped record reads `#N excluded — not spec-shaped (missing: Release Note). Run /claude-tweaks:tidy.` (or `Run /claude-tweaks:specify #N` for any other missing section or an unresolved placeholder); a blocked record reads `1 excluded — blocked by an open dependency: #N (blocked by #x)`; an open-PR record reads `#N already has an open PR (#pr) — not re-dispatch-eligible until that PR merges or closes`. Before printing that open-PR line, dispatch runs `bin/dispatch-resume.js --issue N`; when it exits 0 (the PR is `#N`'s own stalled draft build), the line gains `; it is #N's own stalled build — run /claude-tweaks:dispatch resume #N` (#4588). Any other exit leaves the line exactly as quoted.
+- **Action:** Dispatch reads this run's `dispatch-exclusions.json` entry for `#N` and reports its reason, then stops. A not-spec-shaped record reads `#N excluded — not spec-shaped (missing: Release Note). Run /claude-tweaks:tidy.` (or `Run /claude-tweaks:specify #N` for any other missing section, an unresolved placeholder, or an `unclosed-fence at line L` entry — an unclosed code fence that hides required sections, or sits in a body that already fails, is named instead of the sections it hides, #4350); a blocked record reads `1 excluded — blocked by an open dependency: #N (blocked by #x)`; an unlanded-blocker record reads `#N excluded — blocker not landed: #x (closing commit {commit}) — eligible again once it reaches the integration branch`; a malformed-blocker record reads `#N excluded — malformed blocker declaration: {cause} — eligible again once its blocker declaration can be checked`; an open-PR record reads `#N already has an open PR (#pr) — not re-dispatch-eligible until that PR merges or closes`. Before printing that open-PR line, dispatch runs `bin/dispatch-resume.js --issue N`; when it exits 0 (the PR is `#N`'s own stalled draft build), the line gains `; it is #N's own stalled build — run /claude-tweaks:dispatch resume #N` (#4588). Any other exit leaves the line exactly as quoted.
 - **Should feel:** Actionable — the next command is on the same line as the reason, so there is nothing to look up.
 - **Should understand:** The reason shown is the one the queue pull recorded, never inferred; a not-spec-shaped record is never described as having an open PR (#3084's fix — before it, only `open-pr` entries were read).
 - **Red flags:** "already has an open PR" for a record with no PR; a `missing:` list that disagrees with the record body; no remedy command; the `dispatch resume` suffix on a PR another record, a live sibling session or a human owns.
@@ -57,6 +60,13 @@ files:
 - **Should understand:** The `shipped` reason still fires for a PR opened after the record was filed that mentions it and matches its title or covers its Key Files. The new skip is per mention: a later, independent PR can still mark the same record shipped. The accepted cost is a PR that was already open when the record was filed and fixed it with only `refs #N`. That record now builds, and the build finds the work already done (#2502's already-shipped exit).
 - **Red flags:** `#4135`, or another follow-up from a still-open PR's build, reported as `shipped` by the PR whose build filed it. A Close proposal staged for it. A record genuinely shipped by a later PR now dispatching.
 
+### 2e. A partly shipped record you released is not "shipped"
+- **URL:** `plugin/skills/dispatch/SKILL.md` False-positive posture (#1984, #4432); `plugin/skills/dispatch/queue-pull-script.md` shipped-candidate section; `plugin/bin/lib/dispatch/shipped-releases.js` `writeReleaseTimes`; `plugin/bin/lib/issues/shipped-candidate.js` `classifyShipped` (`lastReleasedAt`)
+- **Action:** Name a record that a pipeline built only half of: an earlier PR matching its title merged, the run released the claim to finish the rest, and the record stayed open. The queue pull reads the record's latest claim release time and sees that the PR merged before it. The record is kept and dispatches, and the firing prints `AUTO — dispatch: #N kept: merged PR #pr predates claim release at {time} — remaining work assumed`. No Close proposal is staged.
+- **Should feel:** Trusted. A record you released to finish keeps its place in the queue, and you no longer drop a false Close proposal by hand at every firing.
+- **Should understand:** The release time comes from the record's claim tombstone. A missing or unreadable one never downgrades, so the record is judged exactly as before. Any release after a merge downgrades, whatever its reason: a shaping-only release, or the wrap-up release of a run whose own merge left the record open. That is the safe direction: the record builds, and the build's already-shipped exit finds work that is truly done. A PR that merged after the release and matches the title or covers the Key Files still marks the record `shipped` (#4432).
+- **Red flags:** A record whose only mention merged before its latest claim release reported as `shipped`, or given a Close proposal. A PR merged after the release that matches the title or covers the Key Files no longer excluding the record as `shipped`. The `kept:` line for a record with no release at all.
+
 ### 3. Name several records at once
 - **URL:** `plugin/skills/dispatch/SKILL.md` `#N[,#M,#O...]` bullet
 - **Action:** Run `/claude-tweaks:dispatch #N,#M` where `#N` is excluded and `#M` is eligible. `#N` appears in the `notFound` report with the same named reason as step 2; `#M`'s group proceeds to Step 4.
@@ -73,3 +83,6 @@ files:
 - Updated during build of #3278: Step 2c covers the non-removing `neighbour-in-flight` reason. `#N` prints the waits line and still dispatches. `neighbour-in-flight-report.md` added to `files:`
 - Updated during build of #4314: Step 2d covers a follow-up record filed during a PR's build, which is no longer read as `shipped` by that PR. `shipped-candidate.js` and `linked-prs.js` added to `files:`
 - Updated during wrap-up of #4588: Step 2 names the open-PR line's `dispatch resume` suffix, appended only when `dispatch-resume.js` exits 0. `dispatch-resume.js` added to `files:`
+- Updated during build of #4792: names `unlanded-blocker` (a closed out-of-run blocker whose closing commit never reached the integration branch) and `malformed-blocker` (a blocker declaration that cannot be checked), the sixth and seventh removing exclusions, in Step 1 and the Success state; `dispatch-unlanded-blockers.js` added to `files:`. Wrap-up of #4792: Step 2 quotes both report lines, and Step 1's URL names `dispatch-unlanded-blockers.js`
+- Updated during build of #4432: Step 2e covers a record whose only merged mention predates its latest claim release, which is kept with a `kept:` log line instead of read as `shipped`. `shipped-releases.js` added to `files:`
+- Updated during build of #4350: Step 2's not-spec-shaped line names an `unclosed-fence at line L` entry and routes it to `/claude-tweaks:specify #N`. `materialize-format.js` added to `files:`

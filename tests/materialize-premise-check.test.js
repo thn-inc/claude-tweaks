@@ -15,6 +15,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 const { gitRepo } = require('./helpers/git-fixtures');
+const { readText } = require('./helpers/read-skill');
 const wtDetect = require('../plugin/bin/lib/hooks/worktree-detect');
 const { run, runPremiseCheckDefault, resolveCheckoutRoot } = require('../plugin/bin/materialize');
 const { buildPremiseCheck } = require('../plugin/bin/lib/harness-health/issue-payload');
@@ -479,11 +480,11 @@ test('computePremise asks checkoutRoot for the injected cwd', () => {
   });
 });
 
-// #4505 final review: materialize pins an explicit --repo's host as GH_HOST for its
-// own gh calls. The record-authored Premise-check: command must not inherit that
-// pin: a remote-inferring gh call inside it would reach the --repo's host, fail,
-// and read as satisfied-at-base, staging a close proposal. A GH_HOST the user
-// exported is theirs, and still reaches the command.
+// #4505 final review, #4795: materialize pins an explicit --repo's host, but the pin
+// lives only in ghOptions's per-call env (process.env is never written). The
+// record-authored Premise-check: command therefore inherits the user's environment
+// as is: a remote-inferring gh call inside it never sees the --repo's host. A GH_HOST
+// the user exported is theirs, and still reaches the command.
 const { pinExplicitRepoHost, _resetGhHostCache } = require('../plugin/bin/lib/repo-resolve');
 
 function withGhHost(value, fn) {
@@ -507,18 +508,18 @@ function runWithRealPin(repo, command, runDir) {
   return JSON.parse(deps.calls.stdout.join('')).premise;
 }
 
-test('#4505: the GH_HOST materialize pinned for --repo does not reach the Premise-check command', () => {
+test("#4795: materialize's --repo pin never reaches process.env, so the Premise-check command sees no GH_HOST", () => {
   const repo = gitRepo();
   withCwd(repo, () => withGhHost(undefined, () => {
     const command = '[ -z "${GH_HOST+x}" ]';
     const premise = runWithRealPin(repo, command, runDirFor(repo));
-    assert.strictEqual(process.env.GH_HOST, 'acme.ghe.com', "the pin still lands for materialize's own gh calls");
+    assert.strictEqual(process.env.GH_HOST, undefined, 'the pin never touches process.env (#4795)');
     assert.deepStrictEqual(premise, { command, exit: 0, satisfiedAtBase: false });
     assert.ok(!fs.existsSync(path.join(runDirFor(repo), 'staged')), 'no close proposal is staged');
   }));
 });
 
-test("#4505: a user's own exported GH_HOST is never stripped from the Premise-check command", () => {
+test("AC2.1 (#4795): materialize runs the Premise-check command with the user's environment — an exported GH_HOST survives it", () => {
   const repo = gitRepo();
   withCwd(repo, () => withGhHost('mine.example', () => {
     const command = '[ "$GH_HOST" = mine.example ]';
@@ -526,4 +527,9 @@ test("#4505: a user's own exported GH_HOST is never stripped from the Premise-ch
     assert.strictEqual(process.env.GH_HOST, 'mine.example');
     assert.deepStrictEqual(premise, { command, exit: 0, satisfiedAtBase: false });
   }));
+});
+
+test('#4795: materialize no longer defines an env restore for the Premise-check command', () => {
+  const src = readText(path.join(__dirname, '..', 'plugin', 'bin', 'materialize.js'));
+  assert.doesNotMatch(src, /envBeforeGhHostPin|pinnedGhHost/);
 });

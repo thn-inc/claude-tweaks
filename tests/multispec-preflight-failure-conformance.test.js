@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
+const { missingFactsOf, assertEachPatternGoesRed } = require('./helpers/conformance-asserts');
 
 const ROOT = path.join(__dirname, '..');
 const FLOW_DIR = path.join(ROOT, 'plugin', 'skills', 'flow');
@@ -61,6 +62,17 @@ test('AC6.1: the ruling sub-file states all five branches', () => {
   assert.doesNotMatch(textArg[1], /`/, 'SKIP --text must be shell-safe: no backticks inside the double-quoted argument');
 });
 
+test('the exit-1 paragraph names the one native GraphQL failure that does name a record (#4792)', () => {
+  const NAMED = /naming no record unless `gh` reported a candidate NOT_FOUND \(`missing dependency data for #n`\)/;
+  const exit1Of = (t) => t.split('\n').find((l) => l.startsWith('**Exit 1')) || '';
+  const live = read(RULING);
+  assert.match(exit1Of(live), NAMED, 'exit 1 says a native GraphQL failure names no record unless gh reported a candidate NOT_FOUND');
+  // Go-red control on a mutated copy: the pre-fix wording ("with no record named").
+  const mutated = live.replace(NAMED, 'with no record named');
+  assert.notEqual(mutated, live, 'the mutation matched nothing');
+  assert.doesNotMatch(exit1Of(mutated), NAMED, 'the pin goes red when the clause is reverted to the pre-fix wording');
+});
+
 test('AC6.2: multi-spec.md step 3 points to the ruling', () => {
   const step3 = read(MULTI_SPEC).match(/^3\. \*\*Pre-flight\*\*.*$/m);
   assert.ok(step3, 'step 3 line present');
@@ -105,4 +117,20 @@ test('AC10.1: docs/plugin-structure.md\'s preflight-records CLI line names --rec
   const line = read(PLUGIN_STRUCTURE).match(/^node plugin\/bin\/preflight-records\.js.*$/m);
   assert.ok(line, 'CLI line present');
   assert.match(line[0], /--records-json/);
+});
+
+// #4793: the Blocker landing paragraph hard-fails closed on a body-declared foreign blocker under
+// --records-json unless the caller supplies its state. The paragraph is one long line.
+const FOREIGN_STATES_FACTS = [
+  [/read each such ref with MCP `issue_read` on that owner and repository/, 'the caller reads each body-declared foreign ref with issue_read on its own repository'],
+  [/add it to that states file under the key `owner\/name#N` with the value copied from `issue_read`'s `state` \(any case; an unreadable ref is left out\)/, 'the foreign state goes into the states file under an owner/name#N key'],
+  [/an `OPEN` one stops the run, named `owner\/name#N`, and a `CLOSED` one reads `undetermined` and proceeds/, 'an OPEN supplied foreign state stops the run and a CLOSED one proceeds'],
+  [/A ref the file leaves out stays unreadable and stops the run/i, 'a foreign ref the file leaves out stays unreadable and stops the run'],
+];
+
+test('the Blocker landing paragraph lets the MCP caller supply a body-declared foreign blocker\'s state (#4793)', () => {
+  const text = read(RULING).replace(/\s+/g, ' ');
+  const missing = missingFactsOf(FOREIGN_STATES_FACTS);
+  assert.deepEqual(missing(text), [], 'multispec-preflight-failure.md states every fact');
+  assertEachPatternGoesRed(text, FOREIGN_STATES_FACTS, missing);
 });

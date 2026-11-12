@@ -1,10 +1,19 @@
 'use strict';
 const { test } = require('node:test');
+const crypto = require('node:crypto');
+const path = require('node:path');
 const assert = require('node:assert');
+const { readText } = require('./helpers/read-skill');
 const {
   ISSUE_REF_SOURCE,
+  CLOSING_KEYWORD_ALTERNATION,
+  PREFILTER_KEYWORD_STEMS,
+  PREFILTER_EXPRESSION,
   extractIssueNumbers,
+  prefilterMatches,
   generateWorkflowYaml,
+  classifyExistingWorkflow,
+  PRIOR_OUTPUT_SHA256,
 } = require('../plugin/bin/lib/issue-branch-tracking');
 
 test('extractIssueNumbers matches GitHub closing keywords, case-insensitive', () => {
@@ -205,13 +214,15 @@ function extractRunBody(yaml) {
 // `grep` on PATH resolved to a real GNU grep (this environment may only
 // have it under a different name, e.g. `ggrep` on macOS — every GitHub
 // Actions ubuntu-latest runner ships GNU grep natively as `grep`).
-function runExtractStep(t, commits) {
-  const gnuGrep = resolveGnuGrep();
+let extractEnv; // resolved once per process: { gnuGrep, jq }
+function runExtractStep(t, commits, envOverrides = {}) {
+  if (!extractEnv) extractEnv = { gnuGrep: resolveGnuGrep(), jq: hasJq() };
+  const gnuGrep = extractEnv.gnuGrep;
   if (!gnuGrep) {
     t.skip('no GNU grep found (checked `grep` and `ggrep`) — every GitHub Actions ubuntu-latest runner ships GNU grep natively, so this is a local-environment gap, not a real gap');
     return null;
   }
-  if (!hasJq()) {
+  if (!extractEnv.jq) {
     t.skip('jq not found in this environment');
     return null;
   }
@@ -241,6 +252,7 @@ function runExtractStep(t, commits) {
         RUNNER_TEMP: tmp,
         GITHUB_OUTPUT: githubOutput,
         COMMITS_JSON: JSON.stringify(commits),
+        ...envOverrides,
       },
     });
     const outputContent = fs.readFileSync(githubOutput, 'utf8');
@@ -286,4 +298,375 @@ test('extraction pipeline (literal generated script): a revert commit alongside 
   const issues = runExtractStep(t, commits);
   if (issues === null) return; // skipped — see runExtractStep
   assert.strictEqual(issues, '7', `expected only the non-revert commit's issue to surface, got: "${issues}"`);
+});
+
+// ---------------------------------------------------------------------------
+// Job-level prefilter (#5152): a strict superset of the in-job extraction.
+// ---------------------------------------------------------------------------
+
+const KEYWORD_FORMS = ['close', 'closes', 'closed', 'fix', 'fixes', 'fixed', 'resolve', 'resolves', 'resolved'];
+const BASE_STEMS = ['close', 'fix', 'resolve'];
+
+test('PREFILTER_KEYWORD_STEMS are the base stems plus the long-s variant of each stem containing an s', () => {
+  assert.deepStrictEqual([...PREFILTER_KEYWORD_STEMS], ['close', 'cloſe', 'fix', 'resolve', 'reſolve']);
+});
+
+test('PREFILTER_KEYWORD_STEMS cover every word CLOSING_KEYWORD_ALTERNATION accepts', () => {
+  // The enumeration below only reaches words that start with a base stem, so
+  // it cannot see a newly added alternation word of another shape. Pinning the
+  // exact string is what makes any widening of the vocabulary fail loudly.
+  assert.strictEqual(
+    CLOSING_KEYWORD_ALTERNATION,
+    '(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)',
+    'CLOSING_KEYWORD_ALTERNATION changed: revisit PREFILTER_KEYWORD_STEMS (a word without a stem would be dropped by the job-level prefilter) before updating this pin'
+  );
+  const letters = 'abcdefghijklmnopqrstuvwxyz'.split('');
+  const suffixes = [''];
+  for (const a of letters) {
+    suffixes.push(a);
+    for (const b of letters) {
+      suffixes.push(a + b);
+      for (const c of letters) suffixes.push(a + b + c);
+    }
+  }
+  const candidates = [];
+  for (const stem of BASE_STEMS) for (const sfx of suffixes) candidates.push(stem + sfx);
+  const re = new RegExp('^(?:' + CLOSING_KEYWORD_ALTERNATION + ')$');
+  const matched = candidates.filter((w) => re.test(w)).sort();
+  assert.deepStrictEqual(matched, [...KEYWORD_FORMS].sort());
+  for (const w of matched) {
+    assert.ok(prefilterMatches([`${w} #1`]), `${w} #1 must pass the prefilter`);
+  }
+});
+
+test('emitted if: lines carry exactly the prefilter literals', () => {
+  const yaml = generateWorkflowYaml();
+  const ifLines = yaml.split('\n').filter((l) => /^\s+if: github\.ref (?:!=|==) /.test(l));
+  assert.strictEqual(ifLines.length, 2);
+  const litRe = /contains\(join\(github\.event\.commits\.\*\.message, ' '\), '([^']*)'\)/g;
+  for (const line of ifLines) {
+    const literals = [...line.matchAll(litRe)].map((m) => m[1]).sort();
+    assert.deepStrictEqual(literals, ['#', ...PREFILTER_KEYWORD_STEMS].sort());
+    assert.ok(line.includes(PREFILTER_EXPRESSION));
+    assert.ok(!/\s#/.test(line), 'a whitespace-then-# would start a YAML comment');
+  }
+});
+
+// Compiles one emitted job `if:` into a JS predicate (ref, messages) => boolean,
+// keeping its && / || / parenthesis structure exactly as emitted. contains() is
+// evaluated the way GitHub does for these literals: an ASCII-only case fold over
+// the messages joined with ' '. Throws on any token it does not recognise, so an
+// unexpected expression shape fails loudly instead of being half-evaluated.
+function compileEmittedIf(line) {
+  const refRe = /^\s*if: github\.ref (?:!=|==) format\('refs\/heads\/\{0\}', github\.event\.repository\.default_branch\)/;
+  assert.match(line, refRe);
+  const literals = [];
+  const expr = line
+    .replace(refRe, 'REF')
+    .replace(/contains\(join\(github\.event\.commits\.\*\.message, ' '\), '([^']*)'\)/g, (_, lit) => `C(${literals.push(lit) - 1})`);
+  assert.match(expr, /^(?:REF|C\(\d+\)|&&|\|\||[()\s])+$/, `unrecognised token in emitted if: ${expr}`);
+  const fold = (s) => s.replace(/[a-z]/g, (c) => c.toUpperCase());
+  const predicate = new Function('REF', 'C', `return (${expr});`);
+  return (ref, msgs) => {
+    const joined = fold(msgs.join(' '));
+    return predicate(ref, (i) => joined.includes(fold(literals[i])));
+  };
+}
+
+test('each emitted if: evaluates to the ref condition AND the prefilter, over the seeded corpus', () => {
+  const ifLines = generateWorkflowYaml().split('\n').filter((l) => /^\s+if: github\.ref (?:!=|==) /.test(l));
+  assert.strictEqual(ifLines.length, 2);
+  const corpus = [
+    ...generateCommitCorpus(),
+    ['fixes it'],
+    ['refs #12 tidy'],
+    ['Update README'],
+    [],
+  ];
+  for (const line of ifLines) {
+    const evaluate = compileEmittedIf(line);
+    for (const msgs of corpus) {
+      for (const ref of [true, false]) {
+        assert.strictEqual(
+          evaluate(ref, msgs),
+          ref && prefilterMatches(msgs),
+          `${line.trim().slice(0, 40)}… with ref=${ref} on ${JSON.stringify(msgs)}`,
+        );
+      }
+    }
+  }
+});
+
+test('each job carries the adopter comment on the line directly above its if:', () => {
+  const lines = generateWorkflowYaml().split('\n');
+  const idx = lines.map((l, i) => (/^    if: github\.ref (?:!=|==) /.test(l) ? i : -1)).filter((i) => i >= 0);
+  assert.strictEqual(idx.length, 2);
+  for (const i of idx) {
+    const comment = lines[i - 1];
+    assert.match(comment, /^    # /, 'the line above each if: is a comment');
+    for (const stem of PREFILTER_KEYWORD_STEMS.filter((s) => s.includes('ſ'))) {
+      assert.ok(comment.includes(stem), `the comment names the deliberate long-s stem ${stem}`);
+    }
+  }
+});
+
+test('prefilterMatches rejects pushes with no closing reference', () => {
+  assert.strictEqual(prefilterMatches(['Update README']), false);
+  assert.strictEqual(prefilterMatches(['refs #12 tidy']), false);
+  assert.strictEqual(prefilterMatches(['health-state: code-health update']), false);
+  assert.strictEqual(prefilterMatches(['fix the build']), false);
+  assert.strictEqual(prefilterMatches([]), false);
+  assert.strictEqual(prefilterMatches(undefined), false);
+  assert.strictEqual(prefilterMatches([undefined]), false);
+  assert.strictEqual(prefilterMatches([42]), false);
+  assert.strictEqual(prefilterMatches(null), false);
+  assert.strictEqual(prefilterMatches([{}]), false);
+  assert.strictEqual(prefilterMatches([null]), false);
+});
+
+test('prefilterMatches models OrdinalIgnoreCase: ASCII folds, long s and dotless i do not', () => {
+  // The cloſe literal (not a Unicode upper-casing) is what admits cloſes #1.
+  assert.strictEqual(prefilterMatches(['cloſes #1']), true);
+  assert.strictEqual(prefilterMatches(['CLOſE #1']), true);
+  assert.strictEqual(prefilterMatches(['reſolves #2']), true);
+  assert.strictEqual(prefilterMatches(['ſ #1']), false);
+  // Neither GitHub's contains() nor GNU grep folds dotless i to i.
+  assert.strictEqual(prefilterMatches(['fıxes #3']), false);
+  assert.strictEqual(prefilterMatches(['FİXES #4']), false);
+});
+
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function generateCommitCorpus() {
+  const rand = mulberry32(5152);
+  const pick = (arr) => arr[Math.floor(rand() * arr.length)];
+  const casings = [
+    (w) => w.toLowerCase(),
+    (w) => w.toUpperCase(),
+    (w) => w[0].toUpperCase() + w.slice(1).toLowerCase(),
+    (w) => w.split('').map((c, i) => (i % 2 ? c.toUpperCase() : c)).join(''), // fixed mixed case, e.g. fIxEs
+  ];
+  const separators = [' ', '\t', '\n', '\r\n'];
+  const noise = ['the', 'build', 'refs', 'update', 'docs', 'login', 'see', 'and', 'of', 'closing', 'fixture', 'prefix'];
+  const sep = () => {
+    let s = '';
+    const n = 1 + Math.floor(rand() * 3);
+    for (let i = 0; i < n; i++) s += pick(separators);
+    return s;
+  };
+  const num = () => String(Math.floor(rand() * 99999) + 1).slice(0, 1 + Math.floor(rand() * 5));
+  const keyword = () => {
+    const form = pick(KEYWORD_FORMS);
+    return rand() < 0.25 ? form.split('').map((c) => (rand() < 0.5 ? c.toUpperCase() : c)).join('') : pick(casings.slice(0, 3))(form);
+  };
+
+  const corpus = [];
+  // Seeded by construction: every keyword form x casing, so keyword/casing
+  // coverage never depends on chance.
+  let n = 1;
+  for (const form of KEYWORD_FORMS) for (const c of casings) corpus.push([`${c(form)} #${n++}`]);
+  corpus.push(['cloſes #1'], ['reſolves #2'], ['fıxes #3']);
+
+  while (corpus.length < 5000) {
+    const count = 1 + Math.floor(rand() * 3);
+    const msgs = [];
+    for (let i = 0; i < count; i++) {
+      const roll = rand();
+      let msg;
+      if (roll < 0.15 && i + 1 < count) {
+        // keyword in this message, #N in the next
+        msgs.push(`${keyword()}${sep()}`);
+        msgs.push(`#${num()} ${pick(noise)}`);
+        i++;
+        continue;
+      } else if (roll < 0.7) {
+        msg = `${pick(noise)} ${keyword()}${sep()}#${num()} ${pick(noise)}`;
+      } else if (roll < 0.85) {
+        msg = `${pick(noise)} #${num()} ${pick(noise)} ${rand() < 0.5 ? keyword() : ''}`;
+      } else {
+        msg = `${pick(noise)} ${pick(noise)}`;
+      }
+      if (rand() < 0.1) msg = `Revert "${msg}"`;
+      msgs.push(msg);
+    }
+    corpus.push(msgs);
+  }
+  return corpus;
+}
+
+test('prefilterMatches is a superset of extractIssueNumbers (seeded property test)', () => {
+  const corpus = generateCommitCorpus();
+  assert.strictEqual(corpus.length, 5000);
+  let nonEmpty = 0;
+  for (const msgs of corpus) {
+    if (extractIssueNumbers(msgs).length > 0) {
+      nonEmpty++;
+      assert.strictEqual(prefilterMatches(msgs), true, `prefilter dropped a push the extraction matches: ${JSON.stringify(msgs)}`);
+    }
+  }
+  assert.ok(nonEmpty >= 1000, `property is vacuous: only ${nonEmpty} arrays had a non-empty extraction`);
+});
+
+test('prefilterMatches is a superset of the literal generated extraction script (runtime)', (t) => {
+  let nonEmpty = 0;
+  const RUNTIME_SUBSET = 60;
+  // The seeded form x casing combinations and the 3 fixed long-s/dotless cases lead the corpus.
+  assert.ok(KEYWORD_FORMS.length * 4 + 3 <= RUNTIME_SUBSET, 'runtime subset must contain every seeded case');
+  for (const msgs of generateCommitCorpus().slice(0, RUNTIME_SUBSET)) {
+    const issues = runExtractStep(t, msgs.map((m) => ({ message: m })));
+    if (issues === null) return; // skipped — see runExtractStep
+    if (issues !== '') {
+      nonEmpty++;
+      assert.strictEqual(prefilterMatches(msgs), true, `runtime extraction matched but prefilter dropped: ${JSON.stringify(msgs)}`);
+    }
+  }
+  assert.ok(nonEmpty >= 36, `runtime property is vacuous: only ${nonEmpty} non-empty extractions (all 36 seeded combinations must extract)`);
+});
+
+test('long-s and dotless-i: runtime extraction and the prefilter model agree (GNU grep folds ſ, not ı)', (t) => {
+  const run = (msg) => runExtractStep(t, [{ message: msg }], { LC_ALL: 'C.UTF-8' });
+  const cases = [
+    { msg: 'cloſes #1', extracted: '1' },
+    { msg: 'reſolves #2', extracted: '2' },
+    // GNU grep does not fold dotless i to i, and neither does GitHub's
+    // contains(): the model must not be looser than GitHub here.
+    { msg: 'fıxes #3', extracted: '' },
+  ];
+  for (const { msg, extracted } of cases) {
+    const issues = run(msg);
+    if (issues === null) return; // skipped — see runExtractStep
+    if (issues === '' && extracted !== '') {
+      // This environment's grep/locale does not fold ſ; the prefilter is still a superset there.
+      // Keep checking the remaining cases (the dotless-i one still applies).
+      assert.strictEqual(prefilterMatches([msg]), true, `prefilter for ${msg}`);
+      t.skip(`environment gap: grep/locale does not fold ſ (${JSON.stringify(msg)} extracted nothing) — the prefilter is still a superset there`);
+      continue;
+    }
+    t.diagnostic(`grep returned ${JSON.stringify(issues)} for ${JSON.stringify(msg)}`);
+    assert.strictEqual(issues, extracted, `runtime extraction for ${msg}`);
+    assert.strictEqual(prefilterMatches([msg]), extracted !== '', `prefilter for ${msg}`);
+  }
+});
+
+test('push trigger excludes the plugin bookkeeping branches, named from their constants', () => {
+  const { CLAIMS_BRANCH } = require('../plugin/bin/lib/issues/claims');
+  const { HEALTH_STATE_BRANCH } = require('../plugin/bin/lib/health-core/durable-state');
+  assert.strictEqual(CLAIMS_BRANCH, 'claims-registry');
+  assert.strictEqual(HEALTH_STATE_BRANCH, 'health-state');
+  const lines = generateWorkflowYaml().split('\n');
+  const start = lines.indexOf('  push:');
+  assert.ok(start >= 0, 'push: trigger present');
+  const rest = lines.slice(start + 1);
+  const block = rest.slice(0, rest.indexOf(''));
+  const items = block.filter((l) => l.startsWith('      - ')).map((l) => l.slice('      - '.length));
+  assert.deepStrictEqual(items, ["'**'", `'!${CLAIMS_BRANCH}'`, `'!${HEALTH_STATE_BRANCH}'`]);
+});
+
+const normalisedDigest = (text) =>
+  crypto.createHash('sha256').update(text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\n+$/, '')).digest('hex');
+const PRE_5152_FIXTURE = readText(path.join(__dirname, 'fixtures', 'track-issue-fixes-pre-5152.yml'));
+const PINNED_CURRENT_DIGEST = 'df673d6fe95eb97c7009ef9ae0b9ae5465570868e5ae11934573334d96d129df';
+
+test('classifyExistingWorkflow: current generator output', () => {
+  const current = generateWorkflowYaml();
+  assert.strictEqual(classifyExistingWorkflow(current), 'current');
+  assert.strictEqual(classifyExistingWorkflow(current + '\n'), 'current');
+  assert.strictEqual(classifyExistingWorkflow(current.replace(/\n/g, '\r\n')), 'current');
+});
+
+test('classifyExistingWorkflow: pre-5152 checked-in file is prior-generated', () => {
+  assert.strictEqual(classifyExistingWorkflow(PRE_5152_FIXTURE), 'prior-generated');
+});
+
+test('classifyExistingWorkflow: a leading UTF-8 BOM does not turn an unmodified file into modified', () => {
+  assert.strictEqual(classifyExistingWorkflow('\uFEFF' + generateWorkflowYaml()), 'current');
+  assert.strictEqual(classifyExistingWorkflow('\uFEFF' + PRE_5152_FIXTURE), 'prior-generated');
+});
+
+test('classifyExistingWorkflow: a hand edit is modified', () => {
+  const edited = PRE_5152_FIXTURE.replace(/^([ \t]*# )(.)/m, (_, lead, ch) => lead + (ch === 'X' ? 'Y' : 'X'));
+  assert.notStrictEqual(edited, PRE_5152_FIXTURE);
+  assert.strictEqual(classifyExistingWorkflow(edited), 'modified');
+  assert.strictEqual(classifyExistingWorkflow(''), 'modified');
+});
+
+test('current generator output digest is pinned', () => {
+  assert.strictEqual(
+    normalisedDigest(generateWorkflowYaml()),
+    PINNED_CURRENT_DIGEST,
+    `generator output changed — append ${PINNED_CURRENT_DIGEST} (the previous digest) to PRIOR_OUTPUT_SHA256, update the expected count in the PRIOR_OUTPUT_SHA256 test below, and set PINNED_CURRENT_DIGEST to the new digest`,
+  );
+});
+
+// Adopters hold whatever workflow the plugin generated at the release they ran
+// init on, and this repo's own file is pinned to the generator output, so every
+// version of it on the integration branch is a released output. Each must still
+// classify as current or prior-generated — this fails when a generator change
+// bumps PINNED_CURRENT_DIGEST without appending the old digest to the list.
+test('every released version of the workflow file still classifies as current or prior-generated', (t) => {
+  const { execFileSync } = require('node:child_process');
+  const repoRoot = path.join(__dirname, '..');
+  const file = '.github/workflows/track-issue-fixes.yml';
+  const git = (args) => execFileSync('git', ['-C', repoRoot, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  let shas;
+  try {
+    shas = git(['log', '--format=%H', 'origin/main', '--', file]).split('\n').filter(Boolean);
+  } catch {
+    t.skip('origin/main is not available in this checkout (no remote ref, or git is missing)');
+    return;
+  }
+  if (shas.length === 0) {
+    t.skip(`origin/main has no history for ${file} (shallow clone?)`);
+    return;
+  }
+  for (const sha of shas) {
+    const content = git(['show', `${sha}:${file}`]);
+    assert.notStrictEqual(
+      classifyExistingWorkflow(content),
+      'modified',
+      `${file} at ${sha.slice(0, 9)} (released on origin/main) now classifies as modified — append its digest ${normalisedDigest(content)} to PRIOR_OUTPUT_SHA256`,
+    );
+  }
+});
+
+test("Step 16's prose names the excluded bookkeeping branches by their constants' values", () => {
+  const { CLAIMS_BRANCH } = require('../plugin/bin/lib/issues/claims');
+  const { HEALTH_STATE_BRANCH } = require('../plugin/bin/lib/health-core/durable-state');
+  const prose = readText(path.join(__dirname, '..', 'plugin/skills/init/bootstrap/step-16-non-default-branch-issue-tracking.md'));
+  assert.ok(prose.includes(`${CLAIMS_BRANCH} and ${HEALTH_STATE_BRANCH} bookkeeping branches`), 'the hand-edited-file question names both branches');
+  assert.ok(prose.includes(`\`${CLAIMS_BRANCH}\` and \`${HEALTH_STATE_BRANCH}\` bookkeeping branches`), 'the job description names both branches');
+});
+
+test("Step 16's outcome bullets are exactly the values classifyExistingWorkflow returns", () => {
+  const prose = readText(path.join(__dirname, '..', 'plugin/skills/init/bootstrap/step-16-non-default-branch-issue-tracking.md'));
+  const bulleted = [...prose.matchAll(/^- `([a-z-]+)` — /gm)].map((m) => m[1]).sort();
+  const returned = [
+    ...new Set([generateWorkflowYaml(), PRE_5152_FIXTURE, ''].map(classifyExistingWorkflow)),
+  ].sort();
+  assert.deepStrictEqual(bulleted, returned);
+});
+
+test('the checked-in .github/workflows/track-issue-fixes.yml is the generator output', () => {
+  const checkedIn = readText(path.join(__dirname, '..', '.github/workflows/track-issue-fixes.yml'));
+  assert.strictEqual(checkedIn, generateWorkflowYaml() + '\n');
+});
+
+test('PRIOR_OUTPUT_SHA256 holds five distinct digests and excludes the current output', () => {
+  assert.strictEqual(
+    PRIOR_OUTPUT_SHA256.length,
+    5,
+    'digest count changed — append the previous digest to PRIOR_OUTPUT_SHA256, update this expected count and PINNED_CURRENT_DIGEST',
+  );
+  assert.strictEqual(new Set(PRIOR_OUTPUT_SHA256).size, 5);
+  for (const d of PRIOR_OUTPUT_SHA256) assert.match(d, /^[0-9a-f]{64}$/);
+  assert.ok(!PRIOR_OUTPUT_SHA256.includes(normalisedDigest(generateWorkflowYaml())));
 });

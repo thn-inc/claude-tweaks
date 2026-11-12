@@ -139,7 +139,7 @@ const POLICY_KEYS = [
   { key: 'specify-decomposition-log', type: 'boolean', default: false, summary: "When on, /specify logs each decomposition yielding 2+ ceremony:standard sub-issues to a git-tracked file for later confirmation.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'tidy-aggressiveness', type: 'enum', values: ['conservative', 'moderate', 'aggressive'], default: 'moderate', summary: "Sets how boldly cleanup sweeps act on what they find — from keep-unless-certain to delete-unless-doubtful.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'auto-mode', type: 'enum', values: ['default-on', 'default-off'], summary: "Sets whether a pipeline run (/flow), a standalone build, or an unattended cleanup run starts hands-off by default, without being asked.", category: 'pipeline-behavior', tier: 'advanced' },
-  { key: 'backlog-fetch-limit', type: 'integer', default: 1000, summary: "Caps how many backlog issues one scan pulls before warning that the list was truncated.", category: 'housekeeping', tier: 'advanced' },
+  { key: 'backlog-fetch-limit', type: 'integer', default: 1000, summary: "Caps how many backlog issues or PRs one scan pulls (every queue, PR-scan, and triage fetch) before warning that the list was truncated.", category: 'housekeeping', tier: 'advanced' },
   // Session-scoped record snapshot (#645) — how long /tmp/ct-records-{session-id}.json stays
   // fresh before a consumer (backlog/capture/specify/trust-table/help/tidy/visualize) re-fetches
   // instead of reading the cached snapshot. See _shared/record-queue-fetch.md.
@@ -152,7 +152,7 @@ const POLICY_KEYS = [
   // before its one automatic retry even starts. CLAUDE_TWEAKS_GH_TIMEOUT_MS
   // (an env var, not a policy key) takes precedence over this when both are
   // set — see shared-primitives.js's resolution order.
-  { key: 'gh-timeout-ms', type: 'integer', min: 1000, max: 60000, default: 5000, summary: "Bounds how long a single `gh` subprocess call may run before it is killed and retried once.", category: 'housekeeping', tier: 'advanced' },
+  { key: 'gh-timeout-ms', type: 'integer', min: 1000, max: 60000, default: 5000, summary: "Bounds how long one `gh` call may run before it is killed and retried once; batched calls outside reconcile get max(30000, this value).", category: 'housekeeping', tier: 'advanced' },
   // #3051: the `git` subprocess timeout for claims-git-cas.js's compare-and-
   // swap reads/writes against the claims-registry branch, routed through
   // bin/lib/shared-primitives.js's GIT_TIMEOUT_MS export — mirrors
@@ -166,6 +166,7 @@ const POLICY_KEYS = [
   { key: 'git-timeout-ms', type: 'integer', min: 1000, max: 120000, default: 30000, summary: "Bounds how long one `git` subprocess call on the claims-registry, pr-checks and compose-subject runners may run before it is killed.", category: 'housekeeping', tier: 'advanced' },
   { key: 'depth-survey', type: 'enum', values: ['off'], summary: "When set, turns off the end-of-run prompt asking whether recently changed code deserves a deeper architectural pass.", category: 'housekeeping', tier: 'advanced' },
   { key: 'creative-survey', type: 'enum', values: ['off'], summary: "When set, turns off the end-of-run prompt suggesting creative or UX improvement ideas for what was just built.", category: 'housekeeping', tier: 'advanced' },
+  { key: 'declare-claude-tweaks', type: 'boolean', default: true, summary: "When false, /init stops declaring claude-tweaks in committed project settings and the cloud setup script; superpowers stays.", category: 'housekeeping', tier: 'advanced' },
   { key: 'scope-keywords-required', type: 'boolean', default: false, summary: "When on, a build refuses to start over files outside its plan unless the plan names its intended scope; otherwise it is only a warning.", category: 'pipeline-behavior', tier: 'advanced' },
   // Renamed from merge-check in #331 (default-parity: that key also defaulted
   // true) — the old name collided with assess-agent-autonomy's merge-check
@@ -278,6 +279,9 @@ const POLICY_KEYS = [
   { key: 'standard-run-round-trip-ceiling', type: 'integer', min: 0, default: 900, summary: "Sets how many tool round trips a standard run may use before it is flagged as over budget; 0 turns the check off.", category: 'housekeeping', tier: 'advanced' },
   { key: 'standard-run-procedure-kb-ceiling', type: 'integer', min: 0, default: 580, summary: "Sets how many kilobytes of skill procedure a standard run may read before it is flagged as over budget; 0 turns the check off.", category: 'housekeeping', tier: 'advanced' },
   { key: 'standard-run-verify-minutes-ceiling', type: 'integer', min: 0, default: 37, summary: "Sets how many minutes of verification a standard run may spend before it is flagged as over budget; 0 turns the check off.", category: 'housekeeping', tier: 'advanced' },
+  // #5119: reaches verify.js only as --default-suite-slots (verify.js never reads
+  // policy.yml); a declared concurrency.suiteSlots wins. Not a Manifesto lever; policyOnly so a run config never sets it.
+  { key: 'verify-suite-slots', type: 'integer', min: 1, default: 1, summary: "Sets how many test suites verify.js may run at once on one machine when verify-scope.json declares no concurrency.suiteSlots.", category: 'housekeeping', tier: 'advanced', policyOnly: true },
 ];
 
 const SCHEMA_BY_KEY = new Map(POLICY_KEYS.map((entry) => [entry.key, entry]));

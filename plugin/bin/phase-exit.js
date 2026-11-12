@@ -95,8 +95,9 @@ function run(argv, overrides = {}) {
     return 3;
   }
 
-  // Absolute from here on: the sub-steps spawn with cwd --worktree, so a relative
-  // path would name a different directory in different sub-steps.
+  // Absolute from here on: the hooks.js and resolve-policy.js sub-steps spawn with cwd
+  // --worktree, while pr-checklist.js and pr-merge-state.js run in-process at this
+  // process's cwd, so a relative path would name a different directory in those two kinds.
   let envelope;
   try {
     envelope = runPhaseExit({

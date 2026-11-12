@@ -12,7 +12,7 @@
 'use strict';
 const path = require('path');
 const { execFileSyncTimed, execFileAsyncTimed } = require('./timing');
-const { runGit, repoSlugOf } = require('../hooks/git-exec');
+const { runGit, repoTargetOf } = require('../hooks/git-exec');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
 const { readRunState } = require('../hooks/context');
 const { fallbackBranch } = require('../hooks/run-integrity');
@@ -76,6 +76,8 @@ function prClosesIssue(prState, issueNumber, repoSlug, mergeCommitMessage) {
 //                                       cannot legitimately still be in progress
 //   MERGED + closesIssue false       -> skip pr-merged-not-closing
 //   MERGED + closesIssue undefined   -> skip pr-merged-closing-unknown
+//   gh-absent / network-failure / invalid-arguments / pr-not-found / unknown-host
+//                                    -> skip, the failure string as the reason (no PR read)
 // A merged PR is release evidence only when it closes THIS issue: a PR that
 // merely touches the branch's work (a sibling, a partial) leaves the record
 // open, and unknown closing data fails closed — never "does not close" and
@@ -90,6 +92,7 @@ function decideRelease(classifiedState, prState, issueState, closesIssue) {
   if (prState === 'network-failure') return { action: 'skip', reason: 'network-failure' };
   if (prState === 'invalid-arguments') return { action: 'skip', reason: 'invalid-arguments' };
   if (prState === 'pr-not-found') return { action: 'skip', reason: 'pr-not-found' }; // stamped number names no PR (#3543)
+  if (prState === 'unknown-host') return { action: 'skip', reason: 'unknown-host' }; // origin host the gate refuses (#4933): no PR was read, never "closed unmerged"
   if (prState && prState.state === 'MERGED') {
     if (closesIssue === true) return { action: 'release', reason: `merged: reconciled from PR #${prState.number}` };
     if (issueState === 'CLOSED') return { action: 'release', reason: 'issue-closed' };
@@ -110,7 +113,7 @@ function decideRelease(classifiedState, prState, issueState, closesIssue) {
 // all, a PR closed unmerged, or a MERGED PR not confirmed to close the issue
 // (`closesIssue` false or unknown: the issue's own state is the only remaining
 // release evidence, #3412). Everything else (OPEN, MERGED + closesIssue true,
-// gh-absent, network-failure, invalid-arguments, pr-not-found) is decided
+// gh-absent, network-failure, invalid-arguments, pr-not-found, unknown-host) is decided
 // without an issue lookup, so this is what gates the extra gh api call at the
 // call site.
 function needsIssueEvidence(prState, closesIssue) {
@@ -168,11 +171,14 @@ function buildFailure(e) {
   return { stdout: null, failure: classifyGhExecError(e) };
 }
 
-function ghApi(args) {
+// #4794: `cwd`, when given, is the repo root whose origin decides the host (ghOptions reads
+// `cwd` from the options object), so a run from outside the repo still reaches its host.
+function ghApi(args, cwd) {
   const ghArgs = ['api', ...args];
   return runClassified(
     () => buildSuccess(execFileSyncTimed('gh', ghArgs, ghOptions(ghArgs, {
       encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: GH_TIMEOUT_MS, windowsHide: true,
+      ...(cwd ? { cwd } : {}),
     }))),
     buildFailure,
     { retryOnTimeout: true },
@@ -181,8 +187,8 @@ function ghApi(args) {
 
 // Raw `gh` runner for the shared write path below (ghApi prepends `api` and
 // swallows failures; writeTombstoneShared composes its own argv and needs the throw).
-function ghRunner(args) {
-  return execFileSyncTimed('gh', args, ghOptions(args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: GH_TIMEOUT_MS, windowsHide: true }));
+function ghRunner(args, cwd) {
+  return execFileSyncTimed('gh', args, ghOptions(args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: GH_TIMEOUT_MS, windowsHide: true, ...(cwd ? { cwd } : {}) }));
 }
 
 // Both delegate to claim-store.js's one contents-API implementation.
@@ -219,11 +225,11 @@ function readClaim(repoSlug, name, api = ghApi) {
 // runWithConcurrency's cap actually run calls concurrently, unlike
 // execFileSync, which blocks the whole event loop regardless of how the
 // calling code is structured.
-async function ghApiAsync(args) {
+async function ghApiAsync(args, cwd) {
   const ghArgs = ['api', ...args];
   return runClassifiedAsync(
     async () => {
-      const { stdout } = await execFileAsyncTimed('gh', ghArgs, ghOptions(ghArgs, { encoding: 'utf8', timeout: GH_TIMEOUT_MS, windowsHide: true }));
+      const { stdout } = await execFileAsyncTimed('gh', ghArgs, ghOptions(ghArgs, { encoding: 'utf8', timeout: GH_TIMEOUT_MS, windowsHide: true, ...(cwd ? { cwd } : {}) }));
       return buildSuccess(stdout);
     },
     buildFailure,
@@ -310,7 +316,8 @@ function logGrantRemoval(runDir, root, reason) {
   try { appendEntry({ runDir, entry }); } catch { /* best-effort, never gates the release */ }
 }
 
-// opts: { cwd?, ghApi? } — `ghApi` is an injectable override for this
+// opts: { cwd?, ghApi?, prStates?, gateDeps? } — `gateDeps` reaches the #4933 origin gate
+// (a test's env/readFile; production passes none). `ghApi` is an injectable override for this
 // module's own gh-api calls (listing, per-claim reads, issue-state, label
 // removal), mirroring claim-store.js's seam, so tests never shell to the
 // real `gh` binary. Defaults to the module-level `ghApi` above.
@@ -345,20 +352,26 @@ function logGrantRemoval(runDir, root, reason) {
 // (pr-state-cache.js) Phase 1.5's two batches ask instead of pr-state.js
 // directly; bound as `prStateResolver` because Phase 1.5 names a local
 // `prStates` (its resolved results).
-async function releaseMerged({ cwd, ghApi: ghApiOverride, prStates: prStateResolver } = {}) {
+async function releaseMerged({ cwd, ghApi: ghApiOverride, prStates: prStateResolver, gateDeps } = {}) {
   const released = [];
   const skipped = [];
   const root = cwd || process.cwd();
-  const repoSlug = repoSlugOf(root);
-  if (!repoSlug) return { released, skipped, failure: 'no-remote' };
+  // #4794: the origin goes through the #4933 gate; a refused origin (an SSH alias, an unknown
+  // host) reports unknown-host with the gate's text before any gh call. `repoSlug` is the bare
+  // owner/repo that every `repos/…` path and the PR-closes comparison below take.
+  const target = repoTargetOf(root, gateDeps);
+  if (!target) return { released, skipped, failure: 'no-remote' };
+  if (target.refusal) return { released, skipped, failure: 'unknown-host', detail: target.refusal };
+  const repoSlug = target.slug;
 
-  const api = ghApiOverride || ghApi;
+  // Every gh call is bound to `root`, so the host follows the repo's origin, not process.cwd().
+  const api = ghApiOverride || ((args) => ghApi(args, root));
   // Async-compatible counterpart of `api` for Phase 2's readIssueStateAsync
   // calls — reuses the same single injectable `ghApi` opt rather than
   // adding a second override parameter. A sync test fake's return value is
   // simply wrapped in an already-resolved promise; production defaults to
   // the real (non-blocking) ghApiAsync.
-  const apiAsync = ghApiOverride ? (args) => Promise.resolve(ghApiOverride(args)) : ghApiAsync;
+  const apiAsync = ghApiOverride ? (args) => Promise.resolve(ghApiOverride(args)) : (args) => ghApiAsync(args, root);
 
   const { entries, failure } = listClaims(repoSlug, api);
   if (failure) return { released, skipped, failure };
@@ -589,7 +602,7 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride, prStates: prStateResol
       ? `issue-closed: reconciled from #${c.issueNumber}`
       : decision.reason;
     const payload = releasePayload({ issueNumber: c.issueNumber, runId: c.runId, reason, now: Date.now() });
-    const ok = writeTombstone(repoSlug, c.name, c.sha, payload.tombstoneContent, reason);
+    const ok = writeTombstone(repoSlug, c.name, c.sha, payload.tombstoneContent, reason, (args) => ghRunner(args, root));
     if (!ok) { skipped.push({ issueNumber: c.issueNumber, runId: c.runId, reason: 'release-write-failed' }); continue; }
     removeInProgressLabel(repoSlug, c.issueNumber, api); // best-effort, never gates the release
     if (reason.startsWith('merged:')) {
@@ -616,6 +629,6 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride, prStates: prStateResol
 }
 
 module.exports = {
-  releaseMerged, decideRelease, releasedEntry, repoSlugOf, writeTombstone, shouldSkipClaimRead,
+  releaseMerged, decideRelease, releasedEntry, writeTombstone, shouldSkipClaimRead,
   prClosesIssue, needsIssueEvidence,
 };

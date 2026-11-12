@@ -121,7 +121,8 @@ execution would. This short-circuit closes exactly one record, so pass that reco
 reads. That file owns the routing: a record with a resolvable parent goes to its
 Parent-Gate Procedure (the parent gets the one gate; this sub-issue gets none), and
 everything else goes through its Steps 1-4 — bootstrap, observation-plan authoring, the Step 2.5
-safety-net gate, sourcing, posting, then `demo:pending`. Do not apply `demo:pending` to this record
+safety-net gate, gathering, posting the acceptance packet, then `demo:pending`; below the oversight
+floor it skips the bootstrap and the safety-net gate and posts the packet with no label. Do not apply `demo:pending` to this record
 independently of that routing: an `auto:merge`'d sub-issue is exactly the population
 whose below-floor parent the reconciler's `post-merge` check closes first, with
 `_shared/github-pr-scan-acceptance.md`'s `parent-gate` backstop scope as the last resort.
@@ -159,8 +160,9 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" delete-ledger --run "$RUN_DIR"
 This is a delete, so it takes the rule's writer branch: `delete-ledger` resolves through
 `bin/lib/wrap-up/ledger-write.js`'s `resolveLedgerPath` — ownership-aware, never a glob, failing
 closed on a ledger it cannot attribute to this run. Handle its printed report exactly as
-`cleanup-procedures.md`'s Item 2 paragraph does (the verb always exits 0 — read the report, not
-the exit code). On `deleted ledger {path}`, take `{path}` as `LEDGER_FILE` and test it with
+`cleanup-procedures.md`'s Item 2 paragraph does (the verb exits 0 on every printed report — read
+the report, not the exit code; an exception exit 1 with no report on stdout is handled like a
+non-`deleted` report, #4932). On `deleted ledger {path}`, take `{path}` as `LEDGER_FILE` and test it with
 `git -C "$WORKTREE_PATH" ls-files --error-unmatch -- "$LEDGER_FILE"` (the verb has already unlinked the
 file, but a tracked path stays in the index, so exit 0 means tracked). Only a tracked
 `docs/plans/` path gets the deletion staged and committed; a run-dir `ledger.md` is gitignored and
@@ -239,7 +241,7 @@ Skip the blocking wait and merge directly — bypass the interactive
 **`integration-model: pr-first` (`_shared/integration-model.md`):** run the Verdict backstop above
 first (anything but `{n}=1`, stop here and go to "Any layer fails" below). Then run `_shared/pr-first-merge.md`'s
 procedure now — `tag: {tag}` (see `manifesto-authorized-merge.md`'s Tag selection section) (distinct from dispatch's `auto-merge` tag; `/help`'s
-auto-merged-this-week count keys on all three, `_shared/github-pr-scan.md` `triage-queue` item 3),
+auto-merged-this-week count keys on all three, `_shared/github-pr-scan-triage.md` `triage-queue` item 3),
 `issue-list` this one record, `summary` the record's own title. Read that procedure as one composed bundle: `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --step merge "${CLAUDE_PLUGIN_ROOT}/skills/_shared/pr-first-merge.md" "${CLAUDE_PLUGIN_ROOT}/skills/_shared/pr-checklist-refresh.md"`, then read `$PIPELINE_RUN_DIR/context/merge.md`; if the compose command is unavailable or exits non-zero, read the named source files directly. No checkout is needed — `gh pr
 merge` runs directly, which is what retires this section's pre-#411 `git -C "$RUN_DIR"`
 worktree/branch resolution (#299: that resolution anchored against the run dir, not the worktree —

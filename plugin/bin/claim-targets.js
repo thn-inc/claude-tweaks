@@ -4,7 +4,8 @@
 // --steps with neither build nor test claims nothing (skipGuard: no-build-or-test).
 // --resume-pr re-claims a stale claim whose in-flight PR is exactly <url> (dispatch resume, #4588).
 // Exit 0 = all claimed (or, with --keep-going, partial; or skip-guarded); 2 = malformed
-// invocation or missing dependency; 3 = contested, or in flight — a pr-opened
+// invocation or missing dependency (an origin host the origin-host gate refuses,
+// `unknown-host`, included); 3 = contested, or in flight — a pr-opened
 // tombstone whose linked PR is still open, or a stale claim whose run marker
 // sits on an open same-repo PR (JSON on stdout — {contested:[...]} or
 // {inFlight:[{issue,link}]}); 4 = transient gh failure (a claims-registry
@@ -12,7 +13,9 @@
 // reported success but the post-write read-back did not confirm it
 // ({unverified:[{issue}]}); 6 = the claims-registry branch is missing on origin
 // and creating it was refused ({branchMissing:{branch,reason}}, with or without
-// --keep-going). See bin/lib/claim-targets/claim-targets.js for
+// --keep-going); 7 = GitHub refused a claim read or write
+// ({permissionDenied:{issue,operation,reason}}, with or without --keep-going).
+// See bin/lib/claim-targets/claim-targets.js for
 // the full contract and skills/_shared/issue-claims.md for the protocol.
 'use strict';
 
@@ -22,7 +25,9 @@ const claimStore = require('./lib/issues/claim-store');
 const { run, defaultAppendClaimLog } = require('./lib/claim-targets/claim-targets');
 const { defaultRunner: gitDefaultRunner } = require('./lib/issues/claims-git-cas');
 const { GH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
-const { ghOptions } = require('./lib/repo-resolve');
+const {
+  ghOptions, resolveRepoTarget, resolveGhHost, gateOriginRepo, originUrl,
+} = require('./lib/repo-resolve');
 
 // maxBuffer: the stale-claim check's `gh pr list --json url,body,...` carries
 // every open PR's body, which overflows Node's 1 MiB default (ENOBUFS) well
@@ -44,6 +49,23 @@ const realDeps = {
   hostname: os.hostname(),
   sessionId: process.env.CLAUDE_CODE_SESSION_ID || '',
   appendClaimLog: defaultAppendClaimLog,
+  // #4794: the origin-host gate's verdict ({ spec, refusal }), for run() to refuse an
+  // unknown or SSH-alias origin before any gh call. `originUrl` carries the git timeout.
+  gateOrigin: () => {
+    let remote = null;
+    try { remote = originUrl(process.cwd()); } catch { remote = null; }
+    return gateOriginRepo(remote);
+  },
+  // #4794: the run's one repo target. The host is the gh seam's (`resolveGhHost`, positive
+  // signals only): the one `defaultGh`'s inferred calls (`gh repo view`, `gh pr view`) already
+  // reach, so the stale listing, the tombstone check and the stale match share it. When the gate
+  // admitted a spec, run() passes its host (`gateHost`) so the one origin read decides: a second
+  // `resolveGhHost` read could time out alone and send the run's calls to github.com although the
+  // gate admitted a GHE origin. With no spec (an unparseable sandbox proxy remote) the seam's own
+  // read stays the fallback.
+  repoTarget: (owner, repo, gateHost) => resolveRepoTarget({
+    owner, repo, originHost: gateHost || resolveGhHost(process.cwd()),
+  }),
 };
 
 // `realDeps` is exported so the CLI's own wiring is testable — specifically

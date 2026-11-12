@@ -960,6 +960,107 @@ test('end-to-end: the cost segment sits just before acct:', () => {
   assert.ok(!zero.includes('$'), `zero cost must render nothing: ${zero}`);
 });
 
+// A per-session segment file another tool writes (cc-router's agent writes
+// `hub ✓`): ~/.claude/statusline/segments/<session id>.json.
+function writeSessionSegment(home, id, seg) {
+  const dir = path.join(home, '.claude', 'statusline', 'segments');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${id}.json`), typeof seg === 'string' ? seg : JSON.stringify(seg));
+}
+
+function withSegmentHome(fn) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-seg-'));
+  try {
+    return fn(home);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+
+const SEG_AT = Date.parse('2026-11-08T12:00:00Z');
+const HUB_LINK = '\x1b]8;;http://127.0.0.1:4100/s/sess-1\x1b\\hub ✓\x1b]8;;\x1b\\';
+
+test('renderSessionSegment: shows text while at + ttl_s is in the future, stale_text after', () => {
+  withSegmentHome((home) => {
+    writeSessionSegment(home, 'sess-1', { text: HUB_LINK, stale_text: 'hub offline', at: '2026-11-08T12:00:00Z', ttl_s: 10 });
+    const input = { session_id: 'sess-1' };
+    assert.strictEqual(sl.renderSessionSegment(input, { home, now: SEG_AT + 9_999 }), HUB_LINK);
+    assert.strictEqual(sl.renderSessionSegment(input, { home, now: SEG_AT + 10_000 }), 'hub offline');
+  });
+});
+
+test('renderSessionSegment: absent when there is no file, no session id, or an unsafe id', () => {
+  withSegmentHome((home) => {
+    writeSessionSegment(home, 'sess-1', { text: 'hub off', stale_text: 'hub off', at: '2026-11-08T12:00:00Z', ttl_s: 10 });
+    for (const input of [{}, { session_id: 'other' }, { session_id: '' }, { session_id: 42 }, { session_id: '../segments/sess-1' }, { session_id: 'sess-1.json' }]) {
+      assert.strictEqual(sl.renderSessionSegment(input, { home, now: SEG_AT }), null, JSON.stringify(input));
+    }
+  });
+});
+
+test('renderSessionSegment: a malformed file renders nothing, and an unreadable at or ttl_s reads as stale', () => {
+  const cases = [
+    ['not json', null],
+    [JSON.stringify(null), null],
+    [JSON.stringify({ stale_text: 'hub offline', at: '2026-11-08T12:00:00Z', ttl_s: 10 }), null],
+    [JSON.stringify({ text: 'hub ✓', at: '2026-11-08T12:00:00Z', ttl_s: 10 }), null],
+    [JSON.stringify({ text: 'hub ✓', stale_text: 'hub offline', at: 'yesterday', ttl_s: 10 }), 'hub offline'],
+    [JSON.stringify({ text: 'hub ✓', stale_text: 'hub offline', at: '2026-11-08T12:00:00Z', ttl_s: '10' }), 'hub offline'],
+  ];
+  withSegmentHome((home) => {
+    for (const [body, want] of cases) {
+      writeSessionSegment(home, 'sess-1', body);
+      assert.strictEqual(sl.renderSessionSegment({ session_id: 'sess-1' }, { home, now: SEG_AT }), want, body);
+    }
+  });
+});
+
+test('renderSessionSegment: refuses text with control characters beyond OSC 8 links and SGR, or over 40 columns', () => {
+  // The SGR case expects color kept, so an ambient NO_COLOR (set on the Windows runner) must not apply.
+  const orig = process.env.NO_COLOR;
+  delete process.env.NO_COLOR;
+  try {
+    withSegmentHome((home) => {
+      const seg = (text) => ({ text, stale_text: 'hub offline', at: '2026-11-08T12:00:00Z', ttl_s: 10 });
+      // The last two hide controls inside an OSC 8 link's body, which a terminal can read as ending the link early.
+      for (const text of ['hub\x1b[2J', 'hub\r✓', 'hub\x07', 'x'.repeat(41), '\x1b]8;;\x18\u009b2J\x07x\x1b]8;;\x07', '\x1b]8;;http://h/\x1a\x07x\x1b]8;;\x07']) {
+        writeSessionSegment(home, 'sess-1', seg(text));
+        assert.strictEqual(sl.renderSessionSegment({ session_id: 'sess-1' }, { home, now: SEG_AT }), null, JSON.stringify(text));
+      }
+      for (const text of ['x'.repeat(40), '\x1b[33mhub ✓\x1b[0m', '\x1b]8;;http://h/s/1\x07hub ✓\x1b]8;;\x07']) {
+        writeSessionSegment(home, 'sess-1', seg(text));
+        assert.strictEqual(sl.renderSessionSegment({ session_id: 'sess-1' }, { home, now: SEG_AT }), text, JSON.stringify(text));
+      }
+    });
+  } finally {
+    if (orig !== undefined) process.env.NO_COLOR = orig;
+  }
+});
+
+test('renderSessionSegment: NO_COLOR strips SGR but keeps the link', () => {
+  const orig = process.env.NO_COLOR;
+  try {
+    process.env.NO_COLOR = '1';
+    withSegmentHome((home) => {
+      writeSessionSegment(home, 'sess-1', { text: `\x1b[32m${HUB_LINK}\x1b[0m`, stale_text: 'hub offline', at: '2026-11-08T12:00:00Z', ttl_s: 10 });
+      assert.strictEqual(sl.renderSessionSegment({ session_id: 'sess-1' }, { home, now: SEG_AT }), HUB_LINK);
+    });
+  } finally {
+    if (orig === undefined) delete process.env.NO_COLOR;
+    else process.env.NO_COLOR = orig;
+  }
+});
+
+test('end-to-end: the session segment sits after acct:', () => {
+  const seedHome = (home) => {
+    fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'a@example.com' } }));
+    writeSessionSegment(home, 'sess-1', { text: 'hub off', stale_text: 'hub off', at: new Date().toISOString(), ttl_s: 10 });
+  };
+  const base = { session_id: 'sess-1', transcript_path: '/Users/x/.claude/projects/foo/s.jsonl' };
+  const out = runStatusline({ ...base, cost: { total_cost_usd: 0.42 } }, { NO_COLOR: '1' }, seedHome);
+  assert.ok(stripLinks(out).endsWith('$0.42  acct: a@example.com  hub off'), `expected the segment after acct: ${out}`);
+});
+
 test('end-to-end: NO_COLOR strips ANSI codes even at high context', () => {
   const out = runStatusline(
     { model: { display_name: 'Sonnet 5' }, context_window: { used_percentage: 95 } },
