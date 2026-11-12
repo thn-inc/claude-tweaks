@@ -2,7 +2,9 @@
 // The pipeline driver's run loop (drive.js, record #5218): run(argv, deps) parses the
 // record references, probes gh and git, then walks steps.js's STEPS table once per named
 // record, in order. The loop owns only event emission and stop handling between steps:
-// it names no step, so adding a step is a table entry, never a change here.
+// it names no step, so adding a step is a table entry, never a change here — with one
+// exception: a step that leaves a new durable side effect must also set a ctx flag for it
+// and add a rung for that flag to interruptClass (the ladder in the Interrupts paragraph).
 //
 // Per record: one event line per step ({ ts, run, record, step, status, ms, ...extra,
 // detail? }) on stdout, held in memory until a step first sets ctx.runDir and from then

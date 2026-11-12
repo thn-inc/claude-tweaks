@@ -72,7 +72,7 @@ function neutralize(text) {
     .replace(GH_REF, '')
     .replace(COMMENT_OPENER, '<\\!--')
     .replace(/`/g, "'")
-    .replace(/@/g, '@​')
+    .replace(/@/g, '@\u200B')
     .replace(CLOSING_KEYWORDS, '')
     .replace(QUALIFIED_REF, '')
     .replace(BARE_REF, '')

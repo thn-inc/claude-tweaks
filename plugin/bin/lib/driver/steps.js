@@ -25,6 +25,7 @@ const { parseStatusPorcelainZ } = require('../git-z');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { gateOriginRepo, resolveRepoTarget } = require('../repo-resolve');
 const { isTimeoutError } = require('../shared-primitives');
+const { fenceFor } = require('../markdown-blocks');
 const { openBlockerRefs } = require('../issues/record-dependencies');
 const { sensitivePathsOf } = require('../express/policy');
 const { formatTimestamp } = require('../hooks/run-dir-resolve');
@@ -387,12 +388,6 @@ function positiveNumber(value) {
   return Number.isFinite(n) && n > 0 ? n : NaN;
 }
 
-// A backtick fence longer than any backtick run in `text`, so the text cannot close it.
-function fenceFor(text) {
-  const longest = (text.match(/`+/g) || []).reduce((max, run) => Math.max(max, run.length), 0);
-  return '`'.repeat(Math.max(3, longest + 1));
-}
-
 // The implementer's prompt. It goes to the worker's standard input, never its argv. The
 // record body comes last, fenced and labelled as data: the worker's narrow rights and
 // check's diff bounds are what contain it, so nothing here relies on the worker's trust.
@@ -638,10 +633,14 @@ const checkStep = defineStep(STEP.check, STOP_CLASSES.PRE_PUSH, async (ctx, deps
     ctx.check = { action: 'escalate', reason, detail: why };
     let note = '';
     if (!ctx.checkLogged) {
-      const log = logDecisionFile(ctx, deps, 'check-escalate.txt',
-        `escalated #${n} to /flow (reason: ${reason}) — ${why}`, 'Express lane',
-        ['--reversibility', 'high (worktree and branch kept)']);
-      if (log.code !== 0) note = ` (escalation line not logged: log-decision.js exited ${log.code})`;
+      try {
+        const log = logDecisionFile(ctx, deps, 'check-escalate.txt',
+          `escalated #${n} to /flow (reason: ${reason}) — ${why}`, 'Express lane',
+          ['--reversibility', 'high (worktree and branch kept)']);
+        if (log.code !== 0) note = ` (escalation line not logged: log-decision.js exited ${log.code})`;
+      } catch (err) {
+        note = ` (escalation line not logged: ${neutralize(errorText(err))})`;
+      }
     }
     return { status: 'stop', detail: `${reason}: ${why}${note}` };
   }
@@ -683,7 +682,19 @@ const pushStep = defineStep(STEP.push, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
   try {
     gitIn(deps, wt, ['push', '--end-of-options', 'origin', branch]);
   } catch (err) {
-    return { status: 'fail', detail: `git push failed: ${neutralize(errorText(err))}` };
+    const detail = `git push failed: ${neutralize(errorText(err))}`;
+    // A failed push (a timeout included) may have updated the remote ref already: ask origin.
+    // Only an exact match of the checked sha counts; any other outcome keeps the pre-push failure.
+    let remote = '';
+    try {
+      remote = String(gitIn(deps, wt, ['ls-remote', '--heads', '--end-of-options', 'origin', `refs/heads/${branch}`]));
+    } catch { /* unreadable: treated as not pushed */ }
+    const [sha, ref] = remote.trim().split(/\s+/);
+    if (sha === head && ref === `refs/heads/${branch}`) {
+      ctx.pushed = true;
+      return { status: 'fail', stopClass: STOP_CLASSES.BLOCKED, detail: `${detail}; the push reported a failure but the remote branch origin/${branch} is at the checked HEAD ${head}` };
+    }
+    return { status: 'fail', detail };
   }
   ctx.pushed = true;
   return { status: 'ok' };
