@@ -413,7 +413,7 @@ test('flags.md declares the blocker-landing phrase beside #4899\'s', () => {
   assert.doesNotMatch(stripped, DECLARED);
 });
 
-test('the fact-pack journey names both phrases that skip Section E and the pack', () => {
+test('the fact-pack journey names all three phrases that skip Section E and the pack', () => {
   const SENTENCE = '`claim-permission-denied: skip the claim release` (#4899), `prompt-not-dispatched: skip the claim release` (#4589) or `blocker-landing: skip the claim release` (#4792), any of which skips Section E and the pack with it';
   const text = readText(PACK_JOURNEY);
   assert.ok(text.includes(SENTENCE), 'the journey must name all three skip phrases');

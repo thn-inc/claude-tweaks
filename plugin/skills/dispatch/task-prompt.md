@@ -4,7 +4,7 @@ Referenced by `skills/dispatch/SKILL.md` Step 5. **Each of this file's two templ
 
 Each group is dispatched as **two sequential `Task()` calls**, not one (per `_shared/subagent-output-contract.md`'s input discipline — minimal input, literal output template inlined, no conversation history). The single-assistant-message rule (`_shared/subagent-dispatch-core.md`'s fan-out section) creates no batching decision here — these two calls are sequential by design, never emitted together.
 
-## Context pack (#1542 — resolve once, substitute into both calls)
+## Context pack (#1542 — resolved once by `dispatch-prompt.js` for both calls)
 
 A dispatched Task agent inherits no shell environment (`_shared/subagent-output-contract.md`'s
 Input Discipline), so an env-var reference such as `${CLAUDE_PLUGIN_ROOT}` embedded in a template
@@ -133,7 +133,7 @@ template applied.
 
 **No handoff to capture from this call's report.** Dispatch Step 4 already minted this group's run directory before either call — `{minted-run-dir}` below is that same directory, substituted literally, on both calls. There is nothing to parse out of this call's prose report to construct the second call's input; the gate between calls (`two-call-gate.md`) reduces to reading the status line and `OUTCOME` (plus `NEXT_STEPS` on a handoff).
 
-**Before substituting this template**, the dispatching session decides whether to pass `--headless`, which adds `DISPATCH_HEADLESS=1 ` immediately before `/claude-tweaks:flow` on both invocation lines below. Add it when this firing came from a scheduled Routine — a bare drain, or its deprecated `next` alias — with nobody present; omit it when a human typed the command directly, in any form (bare, `next`, `#N`, or explicit-list) — the same human-present/Routine discriminator `SKILL.md`'s Next Actions render rule already uses. When set, it tells this call's Settle procedure (`settle-and-merge.md`) that nobody is present to read a Step 2.8 claim-contest stop, so a contest there self-reports via `_shared/headless-self-report.md`.
+**Before rendering this template**, the dispatching session decides whether to pass `--headless`, which adds `DISPATCH_HEADLESS=1 ` immediately before `/claude-tweaks:flow` on both invocation lines below. Add it when this firing came from a scheduled Routine — a bare drain, or its deprecated `next` alias — with nobody present; omit it when a human typed the command directly, in any form (bare, `next`, `#N`, or explicit-list) — the same human-present/Routine discriminator `SKILL.md`'s Next Actions render rule already uses. When set, it tells this call's Settle procedure (`settle-and-merge.md`) that nobody is present to read a Step 2.8 claim-contest stop, so a contest there self-reports via `_shared/headless-self-report.md`.
 
 A dispatched call is headless and cannot answer `interactive` prompts, so both calls pass `auto` explicitly; an explicit mode argument outranks the project's `auto-mode` policy, and the `autonomy` ceiling still bounds what the run may do. The `auto` suffix after the step list is independent of the `DISPATCH_HEADLESS=1 ` prefix before `/claude-tweaks:flow`.
 

@@ -137,8 +137,10 @@ test('AC2.1: no hand-substitution fallback survives (ban + positive twin, proved
 test('task-prompt.md names the CLI as the renderer of its fenced blocks', () => {
   const opening = TASK_PROMPT.slice(0, TASK_PROMPT.indexOf('\n## '));
   assertIncludesAll(opening, ['dispatch-prompt.js', 'only template source'], 'task-prompt.md opening');
+  assert.ok(TASK_PROMPT.includes('\n## Context pack (#1542 — resolved once by `dispatch-prompt.js` for both calls)\n'),
+    'the Context pack heading must name the CLI, not a hand substitution');
   const paras = TASK_PROMPT.split('\n\n');
-  const headless = paras.find((p) => p.startsWith('**Before substituting this template**'));
+  const headless = paras.find((p) => p.startsWith('**Before rendering this template**'));
   assert.ok(headless, 'headless paragraph missing');
   assert.ok(headless.includes('--headless'), 'headless paragraph must name --headless');
   const resume = paras.find((p) => p.startsWith('**Resume (#4588).**'));
@@ -154,8 +156,10 @@ test('continuation-call.md renders the continuation with --next-steps', () => {
   assertIncludesAll(CONT, NEEDLES, 'continuation-call.md');
   assert.throws(() => assertIncludesAll(CONT.split('--next-steps "{NEXT_STEPS}"').join('x'), NEEDLES, 'control'));
   const item2 = region(GATE, '2. **Continue.**', '\n3.');
-  assert.ok(item2.includes('dispatch-prompt.js --next-steps'), 'two-call-gate.md section 8 item 2 must name the CLI');
-  assert.ok(!item2.split('dispatch-prompt.js --next-steps').join('x').includes('dispatch-prompt.js --next-steps'), 'control');
+  const assertItem2 = (text) => assertIncludesAll(text, ['dispatch-prompt.js --next-steps'], 'two-call-gate.md section 8 item 2');
+  assertItem2(item2);
+  // Go-red: the pre-change item 2 (f3f076dc0) named no CLI; a copy with the CLI call removed fails.
+  assert.throws(() => assertItem2(item2.split('dispatch-prompt.js --next-steps').join('the template with')), /missing/);
 });
 
 // resume.md Step 7, verbatim from f3f076dc0 (the hand-substitution wording this task retires).
@@ -181,21 +185,71 @@ test('express-prompt.md says its placeholders stay hand-substituted', () => {
 
 // A first call that never dispatched ran no /flow Step 2.8, so its teardown must not release a claim.
 const SKIP = 'prompt-not-dispatched: skip the claim release';
-test('a first call that never dispatched skips the claim release (#4589)', () => {
-  const sec2 = region(GATE, '## 2.', '## 5.');
+const SECTION_E_CLAUSE = `**Skip it too when the invocation names \`${SKIP}\` (#4589)**`;
+// The exclusion both sections state: a continuation, and an escalated express run's first call
+// (_shared/express-lane.md's Escalation keeps the express claim), already hold a claim.
+const SEC2_EXCLUSION = 'not its continuation, and not an escalated express run\'s first call, both of which hold a claim';
+const SEC5_EXCLUSION = 'not its continuation, not an escalated express run\'s first call, whose claim the express lane took, not a second call';
+
+function assertSkipPhrase(gate, sectionE, flags) {
+  const sec2 = region(gate, '## 2.', '## 5.');
   assert.ok(sec2.includes(`\`(${SKIP})\``), 'section 2 must name the parenthetical');
-  assert.ok(sec2.includes('not its continuation, which holds a claim'), 'section 2 must exclude a continuation');
-  const sec5 = region(GATE, '## 5.', '## 6.');
+  assert.ok(sec2.includes(SEC2_EXCLUSION), 'section 2 must exclude a continuation and an escalated express first call');
+  const sec5 = region(gate, '## 5.', '## 6.');
   const para = sec5.split('\n').find((l) => l.trim().startsWith('**Prompt not dispatched (#4589).**'));
   assert.ok(para, 'section 5 paragraph missing');
-  assertIncludesAll(para, [`\`(${SKIP})\``, 'not its continuation, not a second call', 'Section E skips its release'], 'section 5 paragraph');
-  assert.ok(!region(GATE, '## 6.', '## 7.').includes(SKIP), 'a second call (section 6) must not append it');
-  assert.ok(SECTION_E.includes(`**Skip it too when the invocation names \`${SKIP}\` (#4589)**`), 'Section E clause missing');
-  assert.ok(FLAGS.includes(`\`(${SKIP})\` (#4589)`), 'flags.md must declare the phrase');
-  // Go-red: the pre-change text (f3f076dc0) carried none of these; removing the phrase fails each place.
-  for (const text of [GATE, SECTION_E, FLAGS]) {
-    assert.notStrictEqual(text.split(SKIP).join(''), text, 'control must change the text');
+  assertIncludesAll(para, [`\`(${SKIP})\``, SEC5_EXCLUSION, 'Section E skips its release'], 'section 5 paragraph');
+  assert.ok(!region(gate, '## 6.', '## 7.').includes(SKIP), 'a second call (section 6) must not append it');
+  assert.ok(sectionE.includes(SECTION_E_CLAUSE), 'Section E clause missing');
+  assert.ok(flags.includes(`\`(${SKIP})\` (#4589)`), 'flags.md must declare the phrase');
+}
+
+test('a first call that never dispatched skips the claim release (#4589)', () => {
+  assertSkipPhrase(GATE, SECTION_E, FLAGS);
+  // Go-red: the pre-change text (f3f076dc0) carried none of these; removing the phrase from any one
+  // file fails the assertion.
+  const drop = (text) => {
+    const out = text.split(SKIP).join('');
+    assert.notStrictEqual(out, text, 'control must change the text');
+    return out;
+  };
+  assert.throws(() => assertSkipPhrase(drop(GATE), SECTION_E, FLAGS), /parenthetical|section 5/);
+  assert.throws(() => assertSkipPhrase(GATE, drop(SECTION_E), FLAGS), /Section E clause missing/);
+  assert.throws(() => assertSkipPhrase(GATE, SECTION_E, drop(FLAGS)), /flags\.md must declare/);
+  // Go-red: the pre-B1 exclusion (a continuation only) fails both sections.
+  const narrowed2 = GATE.split(SEC2_EXCLUSION).join('not its continuation, which holds a claim');
+  assert.notStrictEqual(narrowed2, GATE);
+  assert.throws(() => assertSkipPhrase(narrowed2, SECTION_E, FLAGS), /escalated express/);
+  const narrowed5 = GATE.split(SEC5_EXCLUSION).join('not its continuation, not a second call');
+  assert.notStrictEqual(narrowed5, GATE);
+  assert.throws(() => assertSkipPhrase(narrowed5, SECTION_E, FLAGS), /section 5 paragraph/);
+});
+
+function requireOrder(text, markers) {
+  let last = -1;
+  for (const marker of markers) {
+    const idx = text.indexOf(marker);
+    assert.notStrictEqual(idx, -1, `marker missing: ${marker}`);
+    assert.ok(idx > last, `${marker} must come after the previous marker`);
+    last = idx;
   }
+}
+
+test('the Section E skip clause sits inside Section E, before the record is identified (#4589)', () => {
+  const MARKERS = [
+    '## E. Issue claim release',
+    'Skip this whole section when the invocation names `claim-permission-denied',
+    SECTION_E_CLAUSE,
+    'This spec\'s record is identified whenever this section runs',
+  ];
+  requireOrder(SECTION_E, MARKERS);
+  // Go-red: the clause moved after Section E's record-identification paragraph fails the order.
+  const lines = SECTION_E.split('\n');
+  const at = lines.findIndex((l) => l.startsWith(SECTION_E_CLAUSE));
+  assert.notStrictEqual(at, -1);
+  const [clause] = lines.splice(at, 1);
+  const moved = `${lines.join('\n')}\n${clause}\n`;
+  assert.throws(() => requireOrder(moved, MARKERS), /must come after/);
 });
 
 test('the CLI file named in prose exists', () => {
