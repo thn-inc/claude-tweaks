@@ -35,6 +35,8 @@ const TEST_COMMAND = 'npm test';
 const BIN_DIR = path.join(__dirname, '..', '..');
 // Bound on one plugin/bin CLI call (claim-targets.js talks to GitHub; the rest are local).
 const CLI_TIMEOUT_MS = 120000;
+// Bound on the verify.js run: it is a suite run, so it gets far longer than a local CLI.
+const VERIFY_TIMEOUT_MS = 30 * 60 * 1000;
 // claim-log.js's own transport shape: `transport: [a-z-]+`.
 const TRANSPORT_RE = /^[a-z-]+$/;
 // How long the ci step waits for a pending or stale check state, and how often it polls.
@@ -533,8 +535,128 @@ const commitStep = defineStep(STEP.commit, STOP_CLASSES.PRE_PUSH, async (ctx, de
   return { status: 'ok', detail: `${paths.length} file(s)` };
 });
 
+// Ports express-lane.md step 4 (test): the runner pass stamp `check` reads is written by
+// verify.js, run in the worktree. A regular verify-scope.json scopes the run; an absent one
+// runs the full suite; anything else (a symlink, a directory) is refused, never followed.
+const testStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => {
+  const { wt, runDir } = ctx;
+  const { policy, ref } = ctx.shared;
+  const scopeRel = '.claude-tweaks/verify-scope.json';
+  const state = deps.lstatType(path.join(wt, '.claude-tweaks', 'verify-scope.json'));
+  const base = ['--run', runDir, '--default-suite-slots', String(policy['verify-suite-slots'].value)];
+  let args;
+  let detail;
+  if (state.type === 'file') {
+    ctx.testMode = 'scoped';
+    args = [...base, '--scope', scopeRel, '--integration-branch', ref];
+    detail = 'scoped';
+  } else if (state.type === 'missing') {
+    ctx.testMode = 'full';
+    args = [...base, '--cmd', `tests=${TEST_COMMAND}`];
+    detail = 'full (no verify-scope.json)';
+  } else {
+    return { status: 'stop', detail: `${scopeRel} is not a regular file (${state.type}); verify.js was not run` };
+  }
+  const r = deps.node(binScript('verify.js'), args, { cwd: wt, timeout: VERIFY_TIMEOUT_MS, env: deps.env });
+  // A null code is no exit at all (a timeout, a spawn error): the suite never gave a verdict.
+  if (r.code === null || r.code === undefined) {
+    return { status: 'fail', detail: `verify.js did not finish: ${neutralize(firstLine(r.stderr)) || 'no exit code'}` };
+  }
+  if (r.code !== 0) return { status: 'stop', detail: 'red tests' };
+  return { status: 'ok', detail };
+});
+
+// Appends one entry to the run's decisions.md through log-decision.js, the text written to a
+// file in the run directory first (`--text-file`): it carries check's own words.
+function logDecisionFile(ctx, deps, fileName, text, step, extraArgs) {
+  const file = path.join(ctx.runDir, fileName);
+  deps.writeFile(file, `${text}\n`);
+  return deps.node(binScript('log-decision.js'),
+    ['--run', ctx.runDir, '--status', 'AUTO', '--section', '/express-lane', '--step', step, ...extraArgs, '--text-file', file],
+    { cwd: ctx.shared.mainRoot, timeout: CLI_TIMEOUT_MS, env: deps.env });
+}
+
+// Ports express-lane.md step 5 (check): the runner stamp, then the diff bounds, both read
+// in the worktree. A non-zero exit or a stdout that is not a check envelope is `blocked`
+// (no escalation line landed, so the normal path would not know the record left the lane).
+// Escalate is a `pre-push` stop. `head` is kept as-is: whether it may pass is the push
+// step's guard, which a malformed envelope must never get through.
+const checkStep = defineStep(STEP.check, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => {
+  const n = ctx.record;
+  const recordFile = path.join(ctx.runDir, 'record.json');
+  deps.writeFile(recordFile, ctx.recordJson);
+  const r = deps.node(binScript('express-lane.js'),
+    ['check', '--run', ctx.runDir, '--issue', String(n), '--integration-branch', ctx.shared.ref, '--record-json', recordFile],
+    { cwd: ctx.wt, timeout: CLI_TIMEOUT_MS, env: deps.env });
+  if (r.code !== 0) {
+    return { status: 'fail', stopClass: STOP_CLASSES.BLOCKED, detail: `express-lane.js check exited ${r.code}: ${neutralize(firstLine(r.stderr)) || 'no output'}` };
+  }
+  let envelope;
+  try { envelope = JSON.parse(r.stdout); } catch { envelope = null; }
+  if (!envelope || typeof envelope !== 'object' || (envelope.action !== 'proceed' && envelope.action !== 'escalate')) {
+    return { status: 'fail', stopClass: STOP_CLASSES.BLOCKED, detail: 'express-lane.js check printed no check envelope' };
+  }
+  ctx.checkLogged = envelope.logged !== false;
+  if (envelope.action === 'escalate') {
+    const reason = neutralize(envelope.reason);
+    const why = neutralize(envelope.detail);
+    ctx.check = { action: 'escalate', reason, detail: why };
+    let note = '';
+    if (!ctx.checkLogged) {
+      const log = logDecisionFile(ctx, deps, 'check-escalate.txt',
+        `escalated #${n} to /flow (reason: ${reason}) — ${why}`, 'Express lane',
+        ['--reversibility', 'high (worktree and branch kept)']);
+      if (log.code !== 0) note = ` (escalation line not logged: log-decision.js exited ${log.code})`;
+    }
+    return { status: 'stop', detail: `${reason}: ${why}${note}` };
+  }
+  const bounds = envelope.bounds && typeof envelope.bounds === 'object' ? envelope.bounds : {};
+  ctx.check = { action: 'proceed', head: envelope.head, configSet: envelope.configSet, mergeVerification: envelope.mergeVerification, bounds };
+  if (!ctx.checkLogged) {
+    const k = Array.isArray(bounds.changedFiles) ? bounds.changedFiles.length : 0;
+    const log = logDecisionFile(ctx, deps, 'check-proceed.txt',
+      `#${n} proceed — ${k} changed file(s), ${neutralize(String(bounds.implLines))} implementation line(s) within bounds; runner stamp verifies HEAD ${neutralize(String(envelope.head))}.`,
+      'Express lane check', []);
+    if (log.code !== 0) {
+      return { status: 'fail', detail: `check's proceed line not logged: log-decision.js exited ${log.code} (${neutralize(firstLine(log.stderr)) || 'no output'})` };
+    }
+  }
+  return { status: 'ok' };
+});
+
+const FULL_SHA_RE = /^[0-9a-f]{40}$/;
+
+// Ports express-lane.md step 6 (push): only the commit `check` verified goes out. The guard
+// is closed: a head that is not a full sha, a HEAD that cannot be read, or one that differs
+// each stop before any push. The explicit `origin {branch}` is needed because the branch was
+// created with --no-track. Never retried, never forced.
+const pushStep = defineStep(STEP.push, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => {
+  const { wt, branch } = ctx;
+  const head = ctx.check && ctx.check.head;
+  if (typeof head !== 'string' || !FULL_SHA_RE.test(head)) {
+    return { status: 'stop', detail: `check's head is not a full commit sha: ${neutralize(JSON.stringify(head))}` };
+  }
+  let current;
+  try {
+    current = String(gitIn(deps, wt, ['rev-parse', '--verify', '--end-of-options', 'HEAD'])).trim();
+  } catch (err) {
+    return { status: 'stop', detail: `HEAD of the worktree is unreadable: ${neutralize(errorText(err))}` };
+  }
+  if (current !== head) {
+    return { status: 'stop', detail: `HEAD ${neutralize(current)} is not the commit check verified (${head})` };
+  }
+  try {
+    gitIn(deps, wt, ['push', '--end-of-options', 'origin', branch]);
+  } catch (err) {
+    return { status: 'fail', detail: `git push failed: ${neutralize(errorText(err))}` };
+  }
+  ctx.pushed = true;
+  return { status: 'ok' };
+});
+
 const STEPS = Object.freeze([
   policyStep, fetchStep, eligibilityStep, admissionStep, claimStep, runDirStep, worktreeStep, workerStep, commitStep,
+  testStep, checkStep, pushStep,
 ]);
 
 module.exports = {

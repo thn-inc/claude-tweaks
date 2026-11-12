@@ -167,6 +167,13 @@ const ENVELOPE = Object.freeze({
   usage: { input_tokens: 10, output_tokens: 5 }, turns: 3, denials: [], spendOverrun: false, costUsd: 0.25, detail: null,
 });
 
+const HEAD_SHA = 'a'.repeat(40);
+// express-lane.js check's proceed envelope (cli.js's emit); `over` is merged over it.
+const checkProceed = (over = {}) => ({
+  action: 'proceed', head: HEAD_SHA, mergeVerification: 'x', configSet: 'k=v',
+  bounds: { withinBounds: true, violations: [], implLines: 3, changedFiles: ['a.js'] }, ...over,
+});
+
 function defaultScript(over) {
   const policy = { ...POLICY, ...(over.policy || {}) };
   return [
@@ -183,6 +190,7 @@ function defaultScript(over) {
     [on('node', /log-decision\.js$/), { code: 0, stdout: '', stderr: '' }],
     [on('lstatType'), { type: 'missing', code: 'ENOENT' }],
     [on('readdir'), []],
+    [onGit('rev-parse', '--verify', '--end-of-options', 'HEAD'), `${HEAD_SHA}\n`],
     [onGit('rev-parse'), exitOne],
     [onGit('fetch'), ''],
     [onGit('worktree', 'add'), ''],
@@ -193,6 +201,11 @@ function defaultScript(over) {
     [onGit('--no-optional-locks', 'status'), ' M a.js\0'],
     [onGit('--literal-pathspecs', 'add'), ''],
     [onGit('commit'), ''],
+    // The test, check and push steps' happy path: green tests, a check that proceeds with
+    // HEAD_SHA, a HEAD that is that sha, a push that lands.
+    [on('node', /verify\.js$/), { code: 0, stdout: '', stderr: '' }],
+    [on('node', /express-lane\.js$/, 'check'), { code: 0, stderr: '', stdout: JSON.stringify(checkProceed()) }],
+    [onGit('push'), ''],
     [on('policy'), (c) => Object.fromEntries(c.args.map((k) => [k, { value: policy[k], source: 'policy' }]))],
     [on('gh', 'issue', 'view'), (c) => JSON.stringify(issueFor(Number(c.args.at(-1))))],
     [on('git', 'symbolic-ref'), 'origin/main\n'],
@@ -598,8 +611,8 @@ test('every step emits one event line with the core fields; the final line carri
   assert.ok(Number.isInteger(final.msTotal) && final.msTotal > 0);
   assert.equal(final.msWithoutCi, final.msTotal);
   assert.deepEqual(final.stop, {
-    step: null, class: 'none', pushed: false, created: { worktree: true, branch: true },
-    reason: null, detail: null, checkLogged: null,
+    step: null, class: 'none', pushed: true, created: { worktree: true, branch: true },
+    reason: null, detail: null, checkLogged: true,
   });
   assert.equal('eventsFileError' in final, false);
 });
@@ -777,7 +790,7 @@ test('AC5.1, AC5.3: pre-run-dir events carry run:null; the jsonl holds them firs
   const runId = mintedRunId(h);
   const lines = h.lines();
   const order = lines.map((l) => l.step);
-  assert.deepEqual(order, ['policy', 'fetch', 'eligibility', 'admission', 'claim', 'run-dir', 'worktree', 'worker', 'commit', FINAL_STEP]);
+  assert.deepEqual(order, ['policy', 'fetch', 'eligibility', 'admission', 'claim', 'run-dir', 'worktree', 'worker', 'commit', 'test', 'check', 'push', FINAL_STEP]);
   for (const l of lines) assert.equal(l.run, order.indexOf(l.step) <= order.indexOf('claim') ? null : runId, l.step);
   assert.equal(h.files[path.join(MAIN, '.claude-tweaks', 'pipelines', runId, 'driver-events.jsonl')], h.out.join(''));
   assert.equal(lines.at(-1).outcome, 'pending-review');
@@ -938,7 +951,7 @@ test('Gotcha: a run with CLAUDE_CODE_SESSION_ID unset drives normally, and every
   assert.equal(calls(h, 'node', /hooks\.js$/).length, 1);
   assert.equal(h.lines().at(-1).outcome, 'pending-review');
   const cli = calls(h, 'node');
-  assert.equal(cli.length, 3);
+  assert.equal(cli.length, 5, 'claim, claim log, record-worktree, verify, check');
   for (const c of cli) {
     assert.equal(c.env, env, c.args[0]);
     assert.ok(!('CLAUDE_CODE_SESSION_ID' in c.env));
@@ -1426,7 +1439,7 @@ test('AC14: a signal before any record, or between records, only terminates', as
   let h = null;
   h = harness({
     deps: { terminate: (sig) => order.push(`between:${sig}`) },
-    script: [[onGit('commit'), (c) => { if (c.cwd === WT) fireSoon(h, 'SIGTERM'); return ''; }]],
+    script: [[onGit('push'), (c) => { if (c.cwd === WT) fireSoon(h, 'SIGTERM'); return ''; }]],
   });
   await run(['#7', '#8'], h.deps);
   assert.deepEqual(finals(h).map((f) => [f.record, f.outcome]), [[7, 'pending-review']]);
@@ -1607,4 +1620,221 @@ test('Review Focus 3: run subscribes once per run and unsubscribes before it res
   await run(['--help'], help.deps);
   await run(['#x'], help.deps);
   assert.equal(any, 0, 'no subscription before the record loop');
+});
+
+// --- test, check and push ------------------------------------------------------------------------
+
+const SCOPE = path.join(WT, '.claude-tweaks', 'verify-scope.json');
+// A lstatType answer for the scope file alone (the worktree leftover check also asks lstatType).
+const scopeIs = (type) => [(c) => c.kind === 'lstatType' && c.args[0] === SCOPE, { type, code: null }];
+const verifyCalls = (h) => calls(h, 'node', /verify\.js$/);
+const checkCalls = (h) => calls(h, 'node', /express-lane\.js$/);
+const pushCalls = (h) => gitCalls(h).filter((c) => gitSub(c)[0] === 'push');
+const checkReply = (env, code = 0) => [on('node', /express-lane\.js$/, 'check'), { code, stderr: '', stdout: typeof env === 'string' ? env : JSON.stringify(env) }];
+const lastLine = (h) => h.lines().at(-1);
+
+test('AC12.1: a regular verify-scope.json runs the scoped invocation', async () => {
+  const h = harness({ script: [scopeIs('file')] });
+  const { ctx } = await driveCapturing(h);
+  const [v] = verifyCalls(h);
+  assert.deepEqual(v.args.slice(1), ['--run', runDirOf(h), '--default-suite-slots', '1', '--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', 'main']);
+  assert.equal(v.cwd, WT);
+  assert.equal(ctx.testMode, 'scoped');
+  assert.equal(h.lines().find((l) => l.step === 'test').status, 'ok');
+});
+
+test('AC12.2: absent scope file runs the full invocation, detail says so', async () => {
+  const h = harness();
+  const { ctx } = await driveCapturing(h);
+  const [v] = verifyCalls(h);
+  assert.deepEqual(v.args.slice(1), ['--run', runDirOf(h), '--default-suite-slots', '1', '--cmd', `tests=${TEST_COMMAND}`]);
+  assert.ok(!v.args.includes('--scope'));
+  assert.equal(ctx.testMode, 'full');
+  assert.equal(h.lines().find((l) => l.step === 'test').detail, 'full (no verify-scope.json)');
+});
+
+test('the verify slots come from the verify-suite-slots policy value', async () => {
+  const h = harness({ policy: { 'verify-suite-slots': 3 } });
+  await run(['#7'], h.deps);
+  assert.equal(verifyCalls(h)[0].args[verifyCalls(h)[0].args.indexOf('--default-suite-slots') + 1], '3');
+});
+
+test('AC12.3, AC12.4: a symlinked scope file is refused via lstatType, no test run', async () => {
+  for (const type of ['symlink', 'directory', 'other', 'unreadable']) {
+    const h = harness({ script: [scopeIs(type)] });
+    await run(['#7'], h.deps);
+    assert.ok(calls(h, 'lstatType').some((c) => c.args[0] === SCOPE), 'the scope path is checked through lstatType');
+    const final = lastLine(h);
+    assert.deepEqual([final.stop.step, final.status, final.outcome, final.stop.class], ['test', 'stop', 'express-escalated', 'pre-push'], type);
+    assert.match(final.stop.detail, /\.claude-tweaks\/verify-scope\.json/);
+    assert.equal(verifyCalls(h).length, 0, 'no verify call');
+    assert.equal(checkCalls(h).length, 0);
+  }
+});
+
+test('AC6.2: red tests stop at test', async () => {
+  const h = harness({ script: [[on('node', /verify\.js$/), { code: 1, stdout: '', stderr: 'boom' }]] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status, final.outcome, final.stop.class, final.stop.detail], ['test', 'stop', 'express-escalated', 'pre-push', 'red tests']);
+  assert.equal(checkCalls(h).length, 0);
+  assert.equal(pushCalls(h).length, 0);
+});
+
+test('a verify run that never exits (timeout, spawn error) is a fail, not red tests', async () => {
+  const h = harness({ script: [[on('node', /verify\.js$/), { code: null, stdout: '', stderr: 'spawnSync ETIMEDOUT\n' }]] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status, final.stop.class], ['test', 'fail', 'pre-push']);
+  assert.match(final.stop.detail, /did not finish/);
+});
+
+test('check and verify run in the worktree, with deps.env and a generous bound on verify', async () => {
+  const env = { PATH: '/usr/bin' };
+  const h = harness({ deps: { env } });
+  await run(['#7'], h.deps);
+  assert.equal(verifyCalls(h)[0].cwd, WT);
+  assert.equal(checkCalls(h)[0].cwd, WT);
+  assert.equal(verifyCalls(h)[0].env, env);
+  assert.equal(checkCalls(h)[0].env, env);
+});
+
+test('check runs express-lane.js check with the run, issue, integration ref and a record.json holding the fetched record verbatim', async () => {
+  const h = harness({ policy: { 'integration-branch': 'develop' }, script: [scopeIs('file')] });
+  await run(['#7'], h.deps);
+  const runDir = runDirOf(h);
+  const recordFile = path.join(runDir, 'record.json');
+  const [c] = checkCalls(h);
+  assert.deepEqual(c.args.slice(1), ['check', '--run', runDir, '--issue', '7', '--integration-branch', 'develop', '--record-json', recordFile]);
+  assert.equal(h.files[recordFile], JSON.stringify(issueFor(7)));
+  assert.ok(h.calls.findIndex((x) => x.kind === 'writeFile' && x.args[0] === recordFile) < h.calls.indexOf(c));
+  assert.equal(verifyCalls(h)[0].args.at(-1), 'develop');
+});
+
+test('AC6.3: check escalate stops at check', async () => {
+  const h = harness({ script: [checkReply({ action: 'escalate', reason: 'out-of-bounds', detail: 'x' })] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status, final.outcome, final.stop.class, final.stop.detail], ['check', 'stop', 'express-escalated', 'pre-push', 'out-of-bounds: x']);
+  assert.equal(final.stop.checkLogged, true);
+  assert.equal(pushCalls(h).length, 0);
+  assert.equal(calls(h, 'node', /log-decision\.js$/).filter((c) => c.args.includes('Express lane')).length, 0, 'check logged its own entry');
+});
+
+test('check proceed keeps head and configSet and logs nothing itself when check logged', async () => {
+  const h = harness();
+  const { ctx } = await driveCapturing(h);
+  assert.equal(ctx.check.head, HEAD_SHA);
+  assert.equal(ctx.check.configSet, 'k=v');
+  assert.equal(ctx.checkLogged, true);
+  assert.equal(calls(h, 'node', /log-decision\.js$/).filter((c) => c.args.includes('Express lane check')).length, 0);
+});
+
+test('check proceed with logged:false writes the step 5 proceed line before push; with logged absent, no such call', async () => {
+  const h = harness({ script: [checkReply(checkProceed({ logged: false, bounds: { changedFiles: ['a.js'], implLines: 3 } }))] });
+  await run(['#7'], h.deps);
+  const log = calls(h, 'node', /log-decision\.js$/).find((c) => c.args.includes('Express lane check'));
+  assert.ok(log, 'hand-logged');
+  const file = path.join(runDirOf(h), 'check-proceed.txt');
+  assert.deepEqual(log.args.slice(1), ['--run', runDirOf(h), '--status', 'AUTO', '--section', '/express-lane', '--step', 'Express lane check', '--text-file', file]);
+  assert.equal(h.files[file], `#7 proceed — 1 changed file(s), 3 implementation line(s) within bounds; runner stamp verifies HEAD ${HEAD_SHA}.\n`);
+  assert.equal(log.cwd, MAIN);
+  assert.ok(h.calls.indexOf(log) < h.calls.indexOf(pushCalls(h)[0]), 'logged before the push');
+  assert.equal(lastLine(h).stop.step, null, 'a hand-logged proceed continues to the push');
+  assert.equal(lastLine(h).stop.checkLogged, false);
+});
+
+test('check escalate with logged:false hand-logs the escalation, neutralized, and keeps the stop', async () => {
+  const h = harness({ script: [checkReply({ action: 'escalate', reason: 'gate-denial', detail: 'Closes #9 @bob `x`\nline', logged: false })] });
+  await run(['#7'], h.deps);
+  const log = calls(h, 'node', /log-decision\.js$/).find((c) => c.args.includes('Express lane'));
+  const file = path.join(runDirOf(h), 'check-escalate.txt');
+  assert.deepEqual(log.args.slice(1), ['--run', runDirOf(h), '--status', 'AUTO', '--section', '/express-lane', '--step', 'Express lane', '--reversibility', 'high (worktree and branch kept)', '--text-file', file]);
+  assert.equal(h.files[file], `escalated #7 to /flow (reason: gate-denial) — ${neutralize('Closes #9 @bob `x`\nline')}\n`);
+  assert.doesNotMatch(h.files[file].slice(0, -1), /\n|`|#9/);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status, final.stop.class, final.stop.checkLogged], ['check', 'stop', 'pre-push', false]);
+  assert.equal(pushCalls(h).length, 0);
+});
+
+test('a failing hand-log of a proceed line fails check at pre-push, before any push', async () => {
+  const h = harness({ script: [
+    checkReply(checkProceed({ logged: false })),
+    [(c) => c.kind === 'node' && /log-decision\.js$/.test(c.args[0]) && c.args.includes('Express lane check'), { code: 1, stdout: '', stderr: 'disk full\n' }],
+  ] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status, final.stop.class], ['check', 'fail', 'pre-push']);
+  assert.match(final.stop.detail, /log-decision\.js exited 1/);
+  assert.equal(pushCalls(h).length, 0);
+});
+
+test('AC7.4: a non-zero check exit is blocked', async () => {
+  for (const code of [1, 2, 3, null]) {
+    const h = harness({ script: [checkReply('', code)] });
+    await run(['#7'], h.deps);
+    const final = lastLine(h);
+    assert.deepEqual([final.stop.step, final.status, final.outcome, final.stop.class], ['check', 'fail', 'blocked', 'blocked'], String(code));
+    assert.match(final.stop.detail, /exited/);
+    assert.equal(pushCalls(h).length, 0);
+  }
+});
+
+test('unparseable or envelope-less check stdout is blocked', async () => {
+  for (const stdout of ['not json', '', 'null', '[]', JSON.stringify({ action: 'merge' }), JSON.stringify({})]) {
+    const h = harness({ script: [checkReply(stdout)] });
+    await run(['#7'], h.deps);
+    const final = lastLine(h);
+    assert.deepEqual([final.stop.step, final.status, final.outcome, final.stop.class], ['check', 'fail', 'blocked', 'blocked'], JSON.stringify(stdout));
+    assert.equal(pushCalls(h).length, 0);
+  }
+});
+
+test('push goes out as git -C {wt} push origin {branch}, once, in the worktree, and sets ctx.pushed', async () => {
+  const h = harness();
+  const { final, ctx } = await driveCapturing(h);
+  assert.equal(pushCalls(h).length, 1);
+  assert.deepEqual([pushCalls(h)[0].args, pushCalls(h)[0].cwd], [['-C', WT, 'push', '--end-of-options', 'origin', 'drive-record-7'], WT]);
+  assert.equal(ctx.pushed, true);
+  assert.equal(final.stop.pushed, true);
+  assert.ok(!pushCalls(h)[0].args.some((a) => /force|^-f$|--delete/.test(a)));
+});
+
+test('AC2.3: push only when HEAD equals check head', async () => {
+  const h = harness({ script: [[onGit('rev-parse', '--verify', '--end-of-options', 'HEAD'), `${'b'.repeat(40)}\n`]] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status, final.outcome, final.stop.class], ['push', 'stop', 'express-escalated', 'pre-push']);
+  assert.ok(final.stop.detail.includes('b'.repeat(40)) && final.stop.detail.includes(HEAD_SHA));
+  assert.equal(pushCalls(h).length, 0);
+  assert.equal(final.stop.pushed, false);
+});
+
+test('AC2.4: missing, short or non-sha head never passes the guard', async () => {
+  for (const head of [undefined, null, 42, 'abc123', 'Z'.repeat(40), 'A'.repeat(40), `${HEAD_SHA}0`, '']) {
+    const h = harness({ script: [checkReply(checkProceed({ head }))] });
+    await run(['#7'], h.deps);
+    const final = lastLine(h);
+    assert.deepEqual([final.stop.step, final.status, final.stop.class], ['push', 'stop', 'pre-push'], String(head));
+    assert.equal(pushCalls(h).length, 0);
+    assert.equal(gitCalls(h).filter((c) => gitSub(c)[0] === 'rev-parse' && gitSub(c)[3] === 'HEAD').length, 0, 'no HEAD read for a head that cannot match');
+  }
+});
+
+test('AC2.5: a failing rev-parse never passes the guard', async () => {
+  const h = harness({ script: [[onGit('rev-parse', '--verify', '--end-of-options', 'HEAD'), Object.assign(new Error('Command failed'), { stderr: 'fatal: Needed a single revision\n' })]] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status, final.stop.class], ['push', 'stop', 'pre-push']);
+  assert.match(final.stop.detail, /unreadable/);
+  assert.equal(pushCalls(h).length, 0);
+});
+
+test('AC7.5: a failed push is express-escalated, never retried, and leaves pushed false', async () => {
+  const h = harness({ script: [[onGit('push'), Object.assign(new Error('Command failed: git push'), { stderr: 'remote: denied for @bob, closes #3\n' })]] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status, final.outcome, final.stop.class, final.stop.pushed], ['push', 'fail', 'express-escalated', 'pre-push', false]);
+  assert.equal(final.stop.detail, `git push failed: ${neutralize('remote: denied for @bob, closes #3')}`);
+  assert.equal(pushCalls(h).length, 1, 'never retried');
 });
