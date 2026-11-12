@@ -59,7 +59,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { derivePhases, joinTokens, countGuardEvents, aggregateDispatches, TIERS, ROLE_PATTERNS } = require('./lib/timing/derive');
+const { derivePhases, joinTokens, countGuardEvents, aggregateDispatches, TIERS, ROLE_PATTERNS, latestCiGatePerPr } = require('./lib/timing/derive');
 const { locateTranscripts, readUsage, subagentsDirFor, readDispatches } = require('./lib/timing/transcript');
 const { readManifest } = require('./lib/flow/manifest');
 const { TURN_CLASSES, CEREMONY_CLASSES } = require('./lib/timing/turn-class');
@@ -249,14 +249,13 @@ function renderDispatches(dispatches) {
 }
 
 // ciGate: the timing.json `ciGate` list (#5160), or undefined -> ''. One line
-// per distinct pr in first-appearance order, from that PR's latest event; a
+// per distinct pr in first-appearance order, from that PR's latest event
+// (derive.js's latestCiGatePerPr, the rule totals.ciWallMinutes uses); a
 // missing or non-numeric duration renders `n/a`, never NaN.
 function renderCiGate(ciGate) {
   if (!Array.isArray(ciGate) || ciGate.length === 0) return '';
-  const latest = new Map();
-  for (const e of ciGate) latest.set(e.pr, e);
   const min = (x) => (Number.isFinite(x) ? Math.round(x / 6000) / 10 : 'n/a');
-  const lines = [...latest.values()].map((e) =>
+  const lines = latestCiGatePerPr(ciGate).map((e) =>
     `CI gate: ${e.verdict}, ${min(e.ciWallMs)} min wall${e.pendingAtBound === true ? ' (lower bound)' : ''}, gate waited ${min(e.gateWaitMs)} min (PR #${e.pr})`);
   return lines.join('\n') + '\n';
 }

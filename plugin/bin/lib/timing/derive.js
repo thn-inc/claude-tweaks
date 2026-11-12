@@ -301,11 +301,22 @@ function derivePhases({ events, manifest = null, runState = null, now = new Date
     .filter((e) => e && typeof e === 'object' && e.type === 'ci-gate')
     .map((e) => ({ ...e }));
   if (!ciGate.length) return { phases, totals };
-  const latest = new Map();
-  for (const e of ciGate) latest.set(e.pr, e);
-  const ciMs = [...latest.values()].reduce((sum, e) => sum + (Number.isFinite(e.ciWallMs) ? e.ciWallMs : 0), 0);
+  const ciMs = latestCiGatePerPr(ciGate).reduce((sum, e) => sum + (Number.isFinite(e.ciWallMs) ? e.ciWallMs : 0), 0);
   totals.ciWallMinutes = Math.round(ciMs / 6000) / 10;
   return { phases, totals, ciGate };
+}
+
+// ci-gate events -> each PR's latest event (by file order), in first-appearance
+// order. Latest, not a sum (#5160 AC5): every gate pass on a PR writes its own
+// event (a Red-path resume is a new pass, _shared/pr-first-merge.md Step 2.5),
+// and passes over one head re-read overlapping runs, so a sum would count that
+// CI time twice. The cost: an earlier head's CI, superseded by a re-push, is
+// left out of the total (its event stays in ciGate[]). The one rule both
+// totals.ciWallMinutes and phase-timing.js's CI gate lines read.
+function latestCiGatePerPr(ciGate) {
+  const latest = new Map();
+  for (const e of ciGate) latest.set(e.pr, e);
+  return [...latest.values()];
 }
 
 const ZERO_TOKENS = () => ({ input: 0, output: 0, cacheRead: 0, cacheCreate: 0 });
@@ -482,4 +493,5 @@ function aggregateDispatches(items) {
 module.exports = {
   derivePhases, PHASES, NESTED_PARENT, joinTokens, countGuardEvents,
   unionMinutes, resolveTier, TIERS, ROLE_PATTERNS, roleOf, aggregateDispatches,
+  latestCiGatePerPr,
 };

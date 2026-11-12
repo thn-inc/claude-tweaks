@@ -6,8 +6,12 @@
 //   node bin/ci-gate-record.js --pr <n> --head-sha <sha> --verdict <green|red|timeout-park>
 //     --gate-start-epoch <s> --run <run-dir> [--repo <owner/repo>] [--help]
 // It re-reads the head commit's workflow runs with one
-// `gh run list --commit <sha> --limit 100 --json <RUN_LIST_FIELDS>`
-// (no --repo: gh resolves the repo from the cwd's origin through ghOptions).
+// `gh run list --commit <sha> --limit 100 --json <RUN_LIST_FIELDS>`, passing
+// --repo through when given (Step 2.5 always gives it; without it gh resolves
+// the repo from the cwd's origin through ghOptions). It re-reads rather than
+// taking Step 2.5's own read so its call shape stays independent of how that
+// read changes; runs[] is therefore a post-verdict snapshot that can differ
+// from the evidence the verdict used, which runsReadAt marks.
 //
 // The `ci-gate` event's fields — this file is their single source; prose
 // cites it rather than restating the list:
@@ -15,8 +19,8 @@
 //   headSha     the --head-sha value
 //   verdict     the --verdict value, from the flag only (never reconciled with
 //               the runs read here)
-//   gateWaitMs  now - gate-start-epoch * 1000, unclamped (negative under clock
-//               skew or a stale gate-start file)
+//   gateWaitMs  now - gate-start-epoch * 1000, unclamped (negative only for an
+//               epoch in the future, e.g. clock skew)
 //   runsReadAt  ISO time the runs were read
 //   runs[]      each { workflow (gh's workflowName), event, status, createdAt,
 //               startedAt, updatedAt, attempt, conclusion, databaseId }, unfiltered
@@ -31,7 +35,9 @@
 // is not a JSON array of objects or a completed run with an unparseable
 // timestamp, never a ciWallMs of null; 3 the run dir is missing or not anchored
 // under the main checkout (e.g. a worktree-local shadow — _shared/pipeline-run-dir.md's
-// Anchoring section, [IL-127]), or the write did not land. No exit 1.
+// Anchoring section, [IL-127]), or the write did not land. No exit 1. The
+// gh-failure overload of 2 is deliberate: Step 2.5 logs a SKIP on any non-zero
+// exit; a caller that retries a remote failure would reopen it.
 //
 // Confirm by re-read: appendEvent is best-effort and swallows its own write
 // failure, so a return from it proves nothing. The writer re-reads
@@ -88,7 +94,11 @@ function parseArgs(argv) {
 }
 
 // Latest updatedAt minus earliest createdAt over completed runs; null when none.
-// Throws TypeError on a completed run whose createdAt/updatedAt does not parse.
+// Every completed run counts, whatever its conclusion or event: the value is
+// the span the gate could have been waiting, not billable time, and runs[]
+// keeps event/status/conclusion/attempt so a reader can narrow it later — do
+// not filter here. gh run list returns each run's latest attempt only, so a
+// re-run counts once. Throws TypeError on a completed run whose createdAt/updatedAt does not parse.
 function computeCiWallMs(runs) {
   let min = Infinity;
   let max = -Infinity;
