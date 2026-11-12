@@ -28,6 +28,7 @@ const {
 } = require('./queue-pull-oracle');
 const {
   S0, S1, SFast, fakeRun, fakeSpawnCli, ghRecord, withBody, QUEUE_ARGV, DEP_SEARCH_8000, mention, WEAK_PR_FILES,
+  IN_FLIGHT_7001, OPEN_PR_41, LIVE_CLAIM,
 } = require('./queue-pull-fixtures');
 const {
   PASSES, PASS_FIELD_VALUES, SESSION_FILES, QueuePullStopped, sessionPaths, runPasses, resolveOmit, defaultDeps, makeContext, queuePull,
@@ -501,21 +502,28 @@ test('#5227 tmpName counter seam matches the oracle mktemp shim: refuses a bad c
   assert.equal(fs.readFileSync(counter, 'utf8'), '4', 'an EEXIST create does not advance the counter');
 }));
 
-test('#5227 queuePull runs the passes that have runners, then stops at the first pass with no runner', () => inOwnTmp((own) => {
+test('#5227 queuePull runs every registry pass in order and returns the final groups and exclusions', () => inOwnTmp((own) => {
   const paths = sessionPaths('qp-pull');
   appendExclusion(paths['dispatch-exclusions.json'], { reason: 'blocked', records: [1], detail: { blockedBy: [2] } });
   const seen = [];
   const deps = {
     run: fakeRun(S0()),
-    spawnCli: fakeSpawnCli(S0(), { 'hooks.js': { status: 0, stdout: '', stderr: '' } }),
+    spawnCli: fakeSpawnCli(S0(), {
+      'hooks.js': { status: 0, stdout: '', stderr: '' },
+      // Hands the pool back unchanged, as the real CLI does when no record has an unlanded blocker.
+      'dispatch-unlanded-blockers.js': (args) => ({ status: 0, stdout: fs.readFileSync(args[args.indexOf('--groups') + 1], 'utf8'), stderr: '' }),
+    }),
     queueOrder: { readOrder: () => null, writeOrder: () => ({ ok: true }) },
     expressQueuePolicy: () => ({ enabled: false, grouping: 'per-record', keepSingleton: () => false }),
     createClaimReader: () => ({ read: () => ({ content: null }) }),
     onPass: (id) => seen.push(id),
     stderr: () => {},
   };
-  assert.throws(() => queuePull({ sessionId: 'qp-pull', cwd: own }, deps), /queue-pull: pass not implemented: blocker-landing/);
-  assert.deepEqual(seen, ['truncate', 'fetch', 'blocked', 'oversized', 'write-back', 'not-spec-shaped', 'open-pr', 'target-missing', 'shipped'], 'onPass fires only for a pass that has a runner');
+  const result = queuePull({ sessionId: 'qp-pull', cwd: own }, deps);
+  assert.deepEqual(seen, ['truncate', 'fetch', 'blocked', 'oversized', 'write-back', 'not-spec-shaped', 'open-pr', 'target-missing', 'shipped',
+    'blocker-landing', 'neighbour-in-flight', 'cross-pr-overlap', 'near-dup-pairs'], 'every distinct registry id has a runner and runs once, in registry order');
+  assert.deepEqual(result.groups.flat().map((c) => c.number), [9001]);
+  assert.deepEqual(result.exclusions, [], 'the pre-seeded non-firing entry is truncated by the first pass');
   assert.equal(fs.readFileSync(paths['dispatch-exclusions.json'], 'utf8'), '[]');
 }));
 
@@ -1549,4 +1557,306 @@ test('#5227 oracle cross-check: S1 full gives the oracle the same groups, the fo
   assert.deepEqual(mine.json('dispatch-shipped-probe-prs.json'), JSON.parse(oracle.files['dispatch-shipped-probe-prs.json']));
   assert.equal(mine.text['dispatch-shipped-pr-files.jsonl'], oracle.files['dispatch-shipped-pr-files.jsonl']);
   assert.equal(mine.text['dispatch-named-targets.json'], oracle.files['dispatch-named-targets.json']);
+});
+
+// ---- Task 5: blocker-landing, neighbour-in-flight, cross-PR overlap, near-duplicate; the omit sweep ----
+
+const PIPE = () => S1({ pipeline: true });
+const LANDING_COMMIT = 'c0ffee0000000000000000000000000000000001';
+const MALFORMED_CAUSE = 'a Blocked by line names no valid issue number (#0)';
+const NEIGHBOUR_STOP = fenceText(/echo "(dispatch: queue-pull stopped -- neighbour-in-flight exclusion pass failed \(exit )\$NEIGHBOUR_RC\); see error above\.\" >&2/);
+const UNLANDED_STOP = fenceText(/echo "(dispatch: queue-pull stopped -- unlanded-blocker exclusion pass failed; see error above\.)" >&2/);
+const IN_FLIGHT_POOL_AUTO = fenceText(/echo "(AUTO — dispatch: neighbour-in-flight pool fetch failed[^"]*)" >&2/);
+const IN_FLIGHT_CAP = fenceText(/echo "(Warning: the bot:in-progress pull for the neighbour-in-flight pass[^"]*)" >&2/);
+const OPEN_PR_CAP = fenceText(/echo "(Warning: the open-PR pull for the cross-PR overlap report[^"]*)" >&2/);
+const IN_FLIGHT_ARGV = ['issue', 'list', '--label', 'bot:in-progress', '--state', 'open', '--json', 'number,title,body,labels', '--limit', '200'];
+const OPEN_PRS_ARGV = ['pr', 'list', '--state', 'open', '--json', 'number,files,closingIssuesReferences', '--limit', '100'];
+
+// The canned dispatch-unlanded-blockers.js: for the pipeline fixture's #9012 (a Blocked by line with
+// no valid number) and #9011 (a closed blocker whose commit never landed) it appends the real CLI's
+// entries and prints the pool without them. A pool holding neither is handed back unchanged.
+function cannedLanding(seen) {
+  return (args) => {
+    seen.push(args);
+    const val = (flag) => args[args.indexOf(flag) + 1];
+    const groups = JSON.parse(fs.readFileSync(val('--groups'), 'utf8'));
+    const present = new Set(groups.flat().map((c) => c.number));
+    const gone = new Set();
+    if (present.has(9012)) {
+      appendExclusion(val('--exclusions'), { reason: 'malformed-blocker', records: [9012], detail: { cause: MALFORMED_CAUSE } });
+      gone.add(9012);
+    }
+    if (present.has(9011)) {
+      appendExclusion(val('--exclusions'), { reason: 'unlanded-blocker', records: [9011], detail: { blockers: [{ blocker: 8001, commit: LANDING_COMMIT }] } });
+      gone.add(9011);
+    }
+    return { status: 0, stdout: JSON.stringify(groups.map((g) => g.filter((c) => !gone.has(c.number))).filter((g) => g.length > 0)), stderr: '' };
+  };
+}
+
+// pull4 over the whole registry with the canned landing CLI; live claims default to #7001 live.
+function pull5(scenario, o = {}) {
+  const landing = [];
+  const r = pull4(scenario, {
+    passes: PASSES,
+    claims: { 7001: LIVE_CLAIM },
+    ...o,
+    spawn: { 'dispatch-unlanded-blockers.js': cannedLanding(landing), ...(o.spawn || {}) },
+  });
+  return { ...r, landing };
+}
+const withGh = (scenario, argv, change) => ({
+  ...scenario,
+  gh: scenario.gh.map((e) => (e.argv && e.argv.join('\u0000') === argv.join('\u0000') ? { ...e, ...change } : e)),
+});
+const flagValue = (args, flag) => args[args.indexOf(flag) + 1];
+
+test('AC2.1 malformed-blocker and unlanded-blocker: #9012 and #9011 leave the groups with the canned CLI entries; omitting either reason skips the one shared call for both', () => {
+  const positive = pull5(PIPE());
+  assert.deepEqual(entriesOf(positive, 'malformed-blocker'), [{ reason: 'malformed-blocker', records: [9012], detail: { cause: MALFORMED_CAUSE } }]);
+  assert.deepEqual(entriesOf(positive, 'unlanded-blocker'), [{ reason: 'unlanded-blocker', records: [9011], detail: { blockers: [{ blocker: 8001, commit: LANDING_COMMIT }] } }]);
+  const left = groupNumbers(positive).flat();
+  assert.ok(!left.includes(9011) && !left.includes(9012));
+  assert.equal(positive.landing.length, 1, 'one call writes both reasons');
+  const [args] = positive.landing;
+  assert.deepEqual(args.map((a, i) => (args[i - 1] === '--groups' || args[i - 1] === '--exclusions' ? path.basename(a) : a)),
+    ['--groups', 'dispatch-groups.json', '--exclusions', 'dispatch-exclusions.json', '--integration-branch', 'main', '--work-links', 'body-text']);
+  assert.ok(!('dispatch-groups.json.tmp' in positive.text), 'the tmp file is moved over the groups file');
+  assert.equal(JSON.parse(positive.text['dispatch-groups.json']).flat().length, groupNumbers(positive).flat().length);
+
+  for (const reason of ['malformed-blocker', 'unlanded-blocker']) {
+    const omitted = pull5(PIPE(), { omit: [reason] });
+    assert.equal(omitted.landing.length, 0, `${reason} omitted: the shared call is skipped`);
+    assert.deepEqual(entriesOf(omitted, 'malformed-blocker'), [], reason);
+    assert.deepEqual(entriesOf(omitted, 'unlanded-blocker'), [], reason);
+    assert.ok(groupNumbers(omitted).flat().includes(9011) && groupNumbers(omitted).flat().includes(9012), `${reason} omitted: both records stay`);
+    assert.ok(omitted.cap.order.includes('blocker-landing'), 'the runner is still called');
+  }
+});
+
+test('#5227 blocker-landing: on a queue-order cache hit --work-links is the empty string (PF9) and the integration branch is still resolved', () => {
+  const miss = pull5(PIPE());
+  assert.equal(flagValue(miss.landing[0], '--work-links'), 'body-text');
+  const hit = pull5(PIPE(), { persisted: miss.store.written[0].blob });
+  assert.equal(hit.state.cacheHit, true);
+  assert.equal(hit.state.workLinks, '', 'the fence sets WORK_LINKS only on a miss');
+  assert.equal(hit.landing.length, 1);
+  assert.equal(flagValue(hit.landing[0], '--work-links'), '', 'the unset "$WORK_LINKS" reaches the CLI as an empty argument');
+  assert.equal(flagValue(hit.landing[0], '--integration-branch'), 'main');
+  assert.deepEqual(entriesOf(hit, 'unlanded-blocker').map((e) => e.records), [[9011]]);
+});
+
+test('#5227 blocker-landing: a non-zero exit stops the pull with the fence line, leaves the groups file unchanged, removes the tmp file and forwards the CLI stderr', () => {
+  let tmpDuringCall = null;
+  const failing = (args) => {
+    tmpDuringCall = fs.existsSync(`${flagValue(args, '--groups')}.tmp`);
+    return { status: 1, stdout: 'ignored', stderr: 'dispatch-unlanded-blockers.js: boom\n' };
+  };
+  const r = pull5(PIPE(), { allowThrow: true, spawn: { 'dispatch-unlanded-blockers.js': failing } });
+  assert.equal(tmpDuringCall, true, "the fence's > redirect has created the tmp file by the time the CLI runs");
+  assert.ok(r.thrown instanceof QueuePullStopped, String(r.thrown));
+  assert.equal(r.thrown.line, UNLANDED_STOP);
+  assert.match(r.stderr, /dispatch-unlanded-blockers\.js: boom/);
+  assert.ok(groupNumbers(r).flat().includes(9011), 'the pool is not replaced by the failed output');
+  assert.ok(!('dispatch-groups.json.tmp' in r.text), 'the tmp file is removed');
+  assert.ok(!r.cap.order.includes('neighbour-in-flight'), 'no later pass runs after the stop');
+  // A spawn that throws reads as a failed call too (status null).
+  const thrown = pull5(PIPE(), { allowThrow: true, spawn: { 'dispatch-unlanded-blockers.js': () => { throw new Error('spawn ENOENT'); } } });
+  assert.ok(thrown.thrown instanceof QueuePullStopped);
+  assert.match(thrown.stderr, /queue-pull: dispatch-unlanded-blockers\.js: spawn ENOENT/);
+});
+
+test('AC2.2 neighbour-in-flight: #9013 (a Key File shared with in-flight #7001, whose claim reads live) is written and stays in the groups; omitting the pass writes nothing', () => {
+  const r = pull5(PIPE());
+  assert.deepEqual(entriesOf(r, 'neighbour-in-flight'), [
+    { reason: 'neighbour-in-flight', records: [9013], detail: { neighbours: [{ number: 7001, files: ['plugin/bin/fixture-9013.js'] }] } },
+  ]);
+  assert.ok(groupNumbers(r).flat().includes(9013), 'bypass: the record stays in dispatch-groups.json');
+  assert.deepEqual(r.ghCalls.filter((a) => a.join() === IN_FLIGHT_ARGV.join()).length, 1);
+  assert.equal(JSON.parse(r.text['dispatch-in-flight-raw.json'])[0].number, 7001);
+
+  const omitted = pull5(PIPE(), { omit: ['neighbour-in-flight'] });
+  assert.deepEqual(entriesOf(omitted, 'neighbour-in-flight'), []);
+  assert.ok(groupNumbers(omitted).flat().includes(9013));
+  assert.ok(omitted.cap.order.includes('neighbour-in-flight'), 'the runner is still called');
+  assert.equal(omitted.ghCalls.filter((a) => a.join() === IN_FLIGHT_ARGV.join()).length, 1, 'the pool fetch is shared setup');
+
+  const tombstone = pull5(PIPE(), { claims: { 7001: JSON.stringify({ released: true, releasedAt: '2026-11-12T11:00:00.000Z' }) } });
+  assert.deepEqual(entriesOf(tombstone, 'neighbour-in-flight'), [], 'a released claim is not live');
+});
+
+test('#5227 neighbour: an unreadable claim prints the fence AUTO line and excludes nothing; a failed pool fetch writes [] and prints the pool AUTO line; a 200-record pool prints the cap Warning', () => {
+  const unreadable = pull5(PIPE(), { deps: { createClaimReader: () => ({ read: () => ({ failure: 'git-fetch-failed' }) }) } });
+  assert.deepEqual(entriesOf(unreadable, 'neighbour-in-flight'), []);
+  assert.ok(unreadable.stderr.includes('AUTO — dispatch: neighbour-in-flight claim read failed for #7001; treated as not in flight\n'), unreadable.stderr);
+  assert.ok(FENCE.includes("'AUTO — dispatch: neighbour-in-flight claim read failed for #' + unreadable.join(', #') + '; treated as not in flight'"));
+
+  const poolFail = pull5(withGh(PIPE(), IN_FLIGHT_ARGV, { status: 1, stdout: 'partial garbage' }));
+  assert.equal(poolFail.text['dispatch-in-flight-raw.json'], '[]\n', "the fence's echo '[]' overwrites whatever the failed call printed");
+  assert.deepEqual(entriesOf(poolFail, 'neighbour-in-flight'), []);
+  assert.ok(poolFail.stderr.includes(`${IN_FLIGHT_POOL_AUTO}\n`), poolFail.stderr);
+  assert.equal(poolFail.stderr.split(IN_FLIGHT_POOL_AUTO).length - 1, 1, 'printed exactly once');
+
+  const pool = (n) => Array.from({ length: n }, (_, i) => ({ number: 7100 + i, title: `unrelated ${i}`, body: 'nothing', labels: [] }));
+  const capped = pull5(withGh(PIPE(), IN_FLIGHT_ARGV, { stdout: JSON.stringify(pool(200)) }));
+  assert.ok(capped.stderr.includes(`${IN_FLIGHT_CAP}\n`), 'exactly 200 prints the cap Warning');
+  const under = pull5(withGh(PIPE(), IN_FLIGHT_ARGV, { stdout: JSON.stringify(pool(199)) }));
+  assert.ok(!under.stderr.includes(IN_FLIGHT_CAP), '199 does not');
+});
+
+// The files transport's neighbour inputs: the agent-written pool and claim-map FILES.
+function filesPull(o = {}) {
+  const scenario = PIPE();
+  const ghAnswerOf = (argv) => scenario.gh.find((e) => e.argv && e.argv.join() === argv.join()).stdout;
+  return pull5(scenario, {
+    transport: 'files',
+    allowThrow: true,
+    ...o,
+    prepare: (own) => {
+      const put = (name, content) => { const file = path.join(own, name); fs.writeFileSync(file, content); return file; };
+      const inputs = {
+        queueRaw: put('queue.json', ghAnswerOf(QUEUE_ARGV)),
+        openNumbers: put('open.json', ghAnswerOf(OPEN_NUMBERS_ARGV)),
+        depFreshness: put('dep.json', '[]'),
+        verifiedOpenDeps: put('verified.txt', ''),
+        inFlightRaw: o.raw === null ? path.join(own, 'absent-raw.json') : put('in-flight.json', o.raw === undefined ? JSON.stringify([IN_FLIGHT_7001]) : o.raw),
+        inFlightClaims: o.claimsFile === null ? path.join(own, 'absent-claims.json') : put('claims.json', o.claimsFile === undefined ? JSON.stringify({ 7001: LIVE_CLAIM }) : o.claimsFile),
+      };
+      return { inputs };
+    },
+  });
+}
+const neighbourGhCalls = (r) => r.ghCalls.filter((a) => a.join() === IN_FLIGHT_ARGV.join() || a[0] === 'repo');
+
+test('#5227 files neighbour: claims come from the agent-written map through claimReaderFromMap; no gh pool fetch and no claim reader is built', () => {
+  // The shipped pass builds its own reader for merged-PR mentions; the neighbour pass must never ask it for #7001.
+  const reads = [];
+  const r = filesPull({ deps: { createClaimReader: () => ({ read: (n) => { reads.push(n); return { content: null }; } }) } });
+  assert.equal(r.thrown, null, String(r.thrown));
+  assert.deepEqual(entriesOf(r, 'neighbour-in-flight').map((e) => e.records), [[9013]]);
+  assert.deepEqual(neighbourGhCalls(r), []);
+  assert.ok(!reads.includes(7001), `the map answers the claim: ${reads}`);
+
+  // A claim the agent recorded as a not-found wrapper is a failed read, never a live claim.
+  const wrapper = filesPull({ claimsFile: JSON.stringify({ 7001: { message: 'Not Found' } }) });
+  assert.equal(wrapper.thrown, null);
+  assert.deepEqual(entriesOf(wrapper, 'neighbour-in-flight'), []);
+  assert.ok(wrapper.stderr.includes('AUTO — dispatch: neighbour-in-flight claim read failed for #7001; treated as not in flight\n'));
+
+  // The agent-written empty values fail open: nothing is in flight, and no claim is read.
+  const emptyPool = filesPull({ raw: '[]', claimsFile: '{}' });
+  assert.equal(emptyPool.thrown, null);
+  assert.deepEqual(entriesOf(emptyPool, 'neighbour-in-flight'), []);
+  assert.ok(!emptyPool.stderr.includes('claim read failed'));
+  const emptyClaims = filesPull({ claimsFile: '{}' });
+  assert.deepEqual(entriesOf(emptyClaims, 'neighbour-in-flight'), [], 'a number left out of the map is a failed read');
+  assert.ok(emptyClaims.stderr.includes('claim read failed for #7001'));
+});
+
+test('#5227 files neighbour: a missing or malformed pool file or claim-map file stops the pull with the neighbour stop line (R8)', () => {
+  const cases = [
+    ['missing claims file', { claimsFile: null }],
+    ['malformed claims file', { claimsFile: '{not json' }],
+    ['missing pool file', { raw: null }],
+    ['malformed pool file', { raw: 'not json at all' }],
+  ];
+  for (const [name, o] of cases) {
+    const r = filesPull(o);
+    assert.ok(r.thrown instanceof QueuePullStopped, `${name}: ${r.thrown}`);
+    assert.equal(r.thrown.line, `${NEIGHBOUR_STOP}1); see error above.`, name);
+    assert.match(r.stderr, /queue-pull: neighbour-in-flight: /, name);
+    assert.ok(!r.cap.order.includes('cross-pr-overlap'), `${name}: no later pass runs`);
+  }
+});
+
+test('#5227 D4: a non-JSON string in the claim map is read as unreadable content, so it excludes nothing and prints no AUTO line', () => {
+  const r = filesPull({ claimsFile: JSON.stringify({ 7001: 'this is not json' }) });
+  assert.equal(r.thrown, null, String(r.thrown));
+  assert.deepEqual(entriesOf(r, 'neighbour-in-flight'), []);
+  assert.ok(!r.stderr.includes('neighbour-in-flight'), `no neighbour line of any kind: ${r.stderr}`);
+});
+
+test('#5227 cross-PR: gh pr list feeds detectCrossPRFileOverlap; a failure writes [] silently; files writes [] with no gh call; 100 PRs print the cap Warning', () => {
+  const r = pull5(PIPE());
+  assert.equal(r.ghCalls.filter((a) => a.join() === OPEN_PRS_ARGV.join()).length, 1);
+  const overlap = r.json('dispatch-crosspr-overlap.json');
+  assert.equal(overlap.length, 1, JSON.stringify(overlap));
+  assert.ok(JSON.stringify(overlap).includes('9001') && JSON.stringify(overlap).includes('41'), JSON.stringify(overlap));
+  assert.ok(groupNumbers(r).flat().includes(9001), 'informational: nothing leaves the groups');
+
+  // A PR that already closes the candidate is a re-dispatch guard, not an overlap.
+  const closing = pull5(withGh(PIPE(), OPEN_PRS_ARGV, { stdout: JSON.stringify([{ ...OPEN_PR_41, closingIssuesReferences: [{ number: 9001 }] }]) }));
+  assert.deepEqual(closing.json('dispatch-crosspr-overlap.json'), []);
+
+  const failed = pull5(withGh(PIPE(), OPEN_PRS_ARGV, { status: 1, stdout: 'partial' }));
+  assert.deepEqual(failed.json('dispatch-crosspr-overlap.json'), []);
+  assert.equal(failed.text['dispatch-open-prs.json'], '[]\n');
+  assert.ok(!/cross-PR|open-PR pull|queue-pull:|Warning:/.test(failed.stderr), `the failure is silent: ${failed.stderr}`);
+
+  const files = filesPull();
+  assert.equal(files.thrown, null, String(files.thrown));
+  assert.equal(files.text['dispatch-crosspr-overlap.json'], '[]');
+  assert.equal(files.ghCalls.filter((a) => a[0] === 'pr' && a[1] === 'list').length, 0);
+  assert.equal(files.text['dispatch-open-prs.json'], undefined, 'the open-PR file is not written on files');
+
+  const prs = (n) => Array.from({ length: n }, (_, i) => ({ number: 600 + i, files: [], closingIssuesReferences: [] }));
+  assert.ok(pull5(withGh(PIPE(), OPEN_PRS_ARGV, { stdout: JSON.stringify(prs(100)) })).stderr.includes(`${OPEN_PR_CAP}\n`));
+  assert.ok(!pull5(withGh(PIPE(), OPEN_PRS_ARGV, { stdout: JSON.stringify(prs(99)) })).stderr.includes(OPEN_PR_CAP));
+});
+
+test('#5227 neighbour and cross-PR: both gh fetches run with stderr ignored (2>/dev/null) and carry options.cwd', () => {
+  const seen = [];
+  const base = fakeRun(PIPE());
+  pull5(PIPE(), { run: (cmd, args, opts) => { seen.push({ args: args.join(' '), stdio: opts.stdio, cwd: opts.cwd }); return base(cmd, args, opts); } });
+  for (const argv of [IN_FLIGHT_ARGV, OPEN_PRS_ARGV]) {
+    const call = seen.find((c) => c.args === argv.join(' '));
+    assert.deepEqual(call.stdio, ['pipe', 'pipe', 'ignore'], argv.join(' '));
+    assert.ok(call.cwd, 'the context cwd reaches the runner');
+  }
+});
+
+test('#5227 near-dup: every cross-group pair prints its AUTO line, and only strong pairs are written to dispatch-near-dup-pairs.json', () => {
+  const r = pull5(PIPE());
+  const pairs = r.json('dispatch-near-dup-pairs.json');
+  assert.deepEqual(pairs.map((p) => p.records), [[9014, 9015]]);
+  assert.deepEqual(Object.keys(pairs[0]), ['records', 'signals', 'sharedAnchors'], 'the strong flag is not persisted');
+  assert.deepEqual(pairs[0].sharedAnchors, ['WidgetScheduler.flush', 'schedulerCache.evict']);
+  const line = `AUTO — dispatch: near-duplicate candidates across groups: #9014 / #9015 (${pairs[0].signals.join(', ')})\n`;
+  assert.ok(r.stderr.includes(line), r.stderr);
+  assert.ok(pairs[0].signals.includes('body-anchor-overlap'));
+  const autoLines = r.stderr.split('\n').filter((l) => l.startsWith('AUTO — dispatch: near-duplicate candidates'));
+  assert.ok(autoLines.length > pairs.length, `weak title-only pairs print too but are not written: ${autoLines.length} lines, ${pairs.length} written`);
+  assert.ok(autoLines.some((l) => l.endsWith('(title-similarity)')), 'a weak pair is among the printed lines');
+
+  // With no pair at all the file is still written, as [] (an earlier pull's pairs are never read).
+  const none = pull5(S1());
+  assert.equal(none.text['dispatch-near-dup-pairs.json'], '[]');
+});
+
+// ---- the omit sweep (AC2.1 / AC11): every non-setup registry entry goes red when omitted ----
+
+const SWEPT = PASSES.filter((p) => p.kind !== 'setup');
+const informationalFile = { 'cross-pr-overlap': 'dispatch-crosspr-overlap.json', 'near-dup-pairs': 'dispatch-near-dup-pairs.json' };
+
+test('AC2.1: every registry entry that writes a reason, and each informational pass, goes red when omitted', () => {
+  assert.equal(SWEPT.length, 11, 'the sweep covers 11 entries: 9 reasons and 2 informational passes');
+  let swept = 0;
+  for (const p of SWEPT) {
+    const name = p.reason || p.id;
+    const scenario = () => (p.id === 'oversized' ? SFast() : PIPE());
+    const full = pull5(scenario());
+    const omitted = pull5(scenario(), { omit: [name] });
+    assert.ok(omitted.cap.order.includes(p.id), `${name}: the runner is called under omit`);
+    if (p.kind === 'exclusion') {
+      assert.ok(entriesOf(full, p.reason).length > 0, `${name}: the full run writes a ${p.reason} entry (a real positive control)`);
+      assert.deepEqual(entriesOf(omitted, p.reason), [], `${name}: the omitted run writes none`);
+    } else {
+      const file = informationalFile[p.id];
+      assert.ok(JSON.parse(full.text[file]).length > 0, `${name}: the full run writes non-empty ${file}`);
+      assert.notEqual(omitted.text[file], full.text[file], `${name}: omission changes ${file}`);
+      assert.deepEqual(omitted.json('dispatch-exclusions.json'), full.json('dispatch-exclusions.json'), `${name}: an informational pass removes nothing`);
+    }
+    swept += 1;
+  }
+  assert.equal(swept, SWEPT.length, 'the loop ran every entry');
 });

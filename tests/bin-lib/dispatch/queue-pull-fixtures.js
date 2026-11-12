@@ -241,14 +241,14 @@ function linkedOutput(linked, numbers) {
   return out;
 }
 
-function tailGh(numbers, linked = {}) {
+function tailGh(numbers, linked = {}, { inFlight = [], openPrs = [] } = {}) {
   const aliases = Object.fromEntries(numbers.map((n) => [`i${n}`, linkedNode(n, linked[n])]));
   return [
     { argv: ['--version'], stdout: 'gh version 2.99.0 (qp-shim)\n' },
     { graphql: 'linked', aliases },
-    { argv: ['issue', 'list', '--label', 'bot:in-progress', '--state', 'open', '--json', 'number,title,body,labels', '--limit', '200'], stdout: '[]\n' },
+    { argv: ['issue', 'list', '--label', 'bot:in-progress', '--state', 'open', '--json', 'number,title,body,labels', '--limit', '200'], stdout: JSON.stringify(inFlight) + '\n' },
     { argv: ['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'], stdout: 'fixture-owner/fixture-repo\n' },
-    { argv: ['pr', 'list', '--state', 'open', '--json', 'number,files,closingIssuesReferences', '--limit', '100'], stdout: '[]\n' },
+    { argv: ['pr', 'list', '--state', 'open', '--json', 'number,files,closingIssuesReferences', '--limit', '100'], stdout: JSON.stringify(openPrs) + '\n' },
   ];
 }
 
@@ -275,7 +275,27 @@ const PR_OPENED_AT = '2026-11-05T10:00:00Z';
 const mention = (number, title) => ({ number, title, merged: true, mergedAt: MERGED_AT, createdAt: PR_OPENED_AT });
 const WEAK_PR_FILES = ['plugin/bin/unrelated.js'];
 
-function S1({ full = false } = {}) {
+//
+// S1({ pipeline: true }) is full plus the Task 5 candidates (the blocker-landing, neighbour,
+// overlap and near-duplicate passes), each qualifying only for its own pass:
+//   #9011 Blocked by closed #8001 whose closing commit never reached the integration branch -> unlanded-blocker
+//   #9012 Blocked by #0 (no valid issue number)                                            -> malformed-blocker
+//   #9013 shares a Key File with in-flight #7001 (a live claim in the tests)               -> neighbour-in-flight
+//   #9014 / #9015 two cross-group records naming the same two Current State anchors        -> a strong near-duplicate pair
+// and an open PR #41 (closing nothing) that touches #9001's Key File, for the cross-PR overlap report.
+// dispatch-unlanded-blockers.js is the in-process tests' canned CLI (see CANNED_LANDING in the suite).
+const IN_FLIGHT_7001 = {
+  number: 7001, title: 'Tune the harness cache eviction', body: withBody(9013), labels: [ghLabel('bot:in-progress')],
+};
+const OPEN_PR_41 = { number: 41, files: [{ path: 'plugin/bin/fixture-9001.js' }], closingIssuesReferences: [] };
+const LIVE_CLAIM = JSON.stringify({ claimedAt: '2026-11-12T11:55:00.000Z', runId: 'qp-fixture' });
+const DEP_SEARCH_PIPELINE = ['issue', 'list', '--search', '#8000 #8001 #0', '--state', 'all', '--json', 'number,updatedAt,state', '--limit', '500'];
+
+const DEP_SEARCH_PIPELINE_HIT = ['issue', 'list', '--search', '#8000 #8001', '--state', 'all', '--json', 'number,updatedAt,state', '--limit', '500'];
+const DEP_FRESHNESS_PIPELINE = '[{"number":8000,"updatedAt":"2026-11-09T10:00:00Z","state":"OPEN"},{"number":8001,"updatedAt":"2026-11-08T10:00:00Z","state":"CLOSED"}]\n';
+
+function S1({ full = false, pipeline = false } = {}) {
+  full = full || pipeline;
   const docsHealth = ['auto:build', 'ready', 'by:docs-health'];
   const header = (doc) => `**Doc:** ${doc} | **Section:** fixture\n\n`;
   const records = [
@@ -306,6 +326,20 @@ function S1({ full = false } = {}) {
     });
     survivors.push(9004, 9005, 9006, 9007, 9008, 9009, 9010, 9016);
   }
+  if (pipeline) {
+    const widget = (n, title) => ghRecord(n, {
+      title,
+      body: withBody(n).replace('Fixture current state.', 'The `WidgetScheduler.flush` path and `schedulerCache.evict` disagree on ordering.'),
+    });
+    records.push(
+      ghRecord(9011, { body: `Blocked by #8001\n\n${withBody(9011)}` }),
+      ghRecord(9012, { body: `Blocked by #0\n\n${withBody(9012)}` }),
+      ghRecord(9013, { body: withBody(9013) }),
+      widget(9014, 'Rework the widget scheduler cache'),
+      widget(9015, 'Rework the widget scheduler cache layer'),
+    );
+    survivors.push(9011, 9012, 9013, 9014, 9015);
+  }
   const openNumbers = [...records.map((r) => r.number), 8000].map((number) => ({ number }));
   return {
     name: 'S1',
@@ -315,9 +349,16 @@ function S1({ full = false } = {}) {
     gh: [
       { argv: QUEUE_ARGV, stdout: JSON.stringify(records) + '\n' },
       { argv: ['issue', 'list', '--state', 'open', '--json', 'number', '--limit', '200'], stdout: JSON.stringify(openNumbers) + '\n' },
-      { argv: DEP_SEARCH_8000, stdout: '[{"number":8000,"updatedAt":"2026-11-09T10:00:00Z","state":"OPEN"}]\n' },
+      ...(pipeline ? [
+        // #8001 is closed (not an open blocker); #0 is no issue at all, so its state read fails.
+        { argv: ['issue', 'view', '8001', '--json', 'state', '-q', '.state'], stdout: 'CLOSED\n' },
+        { argv: ['issue', 'view', '0', '--json', 'state', '-q', '.state'], stdout: '', status: 1 },
+        { argv: DEP_SEARCH_PIPELINE, stdout: DEP_FRESHNESS_PIPELINE },
+        // A queue-order cache hit refetches only the dependencies the blob's freshness signal holds (#0 has no record).
+        { argv: DEP_SEARCH_PIPELINE_HIT, stdout: DEP_FRESHNESS_PIPELINE },
+      ] : [{ argv: DEP_SEARCH_8000, stdout: '[{"number":8000,"updatedAt":"2026-11-09T10:00:00Z","state":"OPEN"}]\n' }]),
       ...(full ? [{ argv: ['pr', 'view', '5016', '--json', 'files', '-q', '[.files[].path]'], stdout: JSON.stringify(WEAK_PR_FILES) + '\n' }] : []),
-      ...tailGh(survivors, linked),
+      ...tailGh(survivors, linked, pipeline ? { inFlight: [IN_FLIGHT_7001], openPrs: [OPEN_PR_41] } : {}),
     ],
   };
 }
@@ -367,5 +408,5 @@ function fakeSpawnCli(scenario, overrides = {}) {
 module.exports = {
   DEFAULT_REMOTE_URL, GRAPHQL_KINDS, ghAnswer, applyEffect, gitSubArgv, gitFailMatch, isGetUrlOrigin, shimTable, fakeRun,
   ghLabel, ghRecord, SPEC_BODY, QUEUE_ARGV, DEP_SEARCH_8000, withBody, S0, S1, SFast, fakeSpawnCli,
-  REPO_SLUG, linkedNode, linkedOutput, mention, WEAK_PR_FILES, tailGh,
+  REPO_SLUG, linkedNode, linkedOutput, mention, WEAK_PR_FILES, tailGh, IN_FLIGHT_7001, OPEN_PR_41, LIVE_CLAIM,
 };

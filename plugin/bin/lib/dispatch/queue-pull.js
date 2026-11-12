@@ -2,7 +2,7 @@
 
 // #5227: the module port of dispatch's queue-pull script -- the ```bash fence in
 // plugin/skills/dispatch/queue-pull-script.md that starts at the `DISPATCH_QUEUE_RAW=` line.
-// This file holds the registry, the session paths, the pass loop and the passes ported so far.
+// This file holds the registry, the session paths, the pass loop and every pass runner.
 //
 // R6, step-for-step port: each fence step is one function. A throw inside a step is caught and
 // printed to stderr as `queue-pull: <step>: <message>`, and the run then continues or stops
@@ -65,7 +65,9 @@ const { bodyForeignBlockers } = require('../issues/cross-repo-states');
 const { shapeGate } = require('../issues/materialize-format');
 const { namedTarget } = require('../issues/named-target');
 const { classifyShipped, predatesClaimRelease } = require('../issues/shipped-candidate');
-const { extractKeyFiles, expectsKeyFilesSection, buildDispatchGroups, partitionGroupsBySizeGuard } = require('../issues/grouping');
+const { extractKeyFiles, expectsKeyFilesSection, buildDispatchGroups, partitionGroupsBySizeGuard, detectCrossPRFileOverlap } = require('../issues/grouping');
+const { neighbourInFlightExclusions, claimReaderFromMap } = require('./in-flight-neighbours');
+const { nearDuplicatePairsAcrossGroups } = require('./near-dup-pairs');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { sessionTmpPath } = require('../session-tmp');
 const { ghOptions } = require('../repo-resolve');
@@ -282,6 +284,8 @@ function makeContext(options = {}, deps = {}) {
       depFreshness: pick(inputs.depFreshness, 'dispatch-dep-freshness.json'),
       openNumbers: pick(inputs.openNumbers, 'dispatch-open-numbers.json'),
       verifiedOpenDeps: pick(inputs.verifiedOpenDeps, 'dispatch-verified-open-deps.txt'),
+      inFlightRaw: pick(inputs.inFlightRaw, 'dispatch-in-flight-raw.json'),
+      inFlightClaims: pick(inputs.inFlightClaims, 'dispatch-in-flight-claims.json'),
     },
   };
   return { options, deps: merged, paths, omit, state };
@@ -826,9 +830,122 @@ function runShipped(ctx) {
   stageShippedProposals(ctx);
 }
 
+// ---- Task 5: blocker-landing, neighbour-in-flight, cross-PR overlap and near-duplicate ---------
+
+// Fence 582-589. One dispatch-unlanded-blockers.js call writes both the unlanded-blocker and the
+// malformed-blocker entries, so omitting either reason skips the whole call (PF8). `--work-links`
+// is the value the fetch pass stored: on a queue-order cache hit the fence never sets WORK_LINKS,
+// so "$WORK_LINKS" is the empty string and the CLI accepts it (PF9).
+function runBlockerLanding(ctx) {
+  const { paths, omit, state } = ctx;
+  if (omit.has('blocker-landing')) return;
+  const groupsFile = paths['dispatch-groups.json'];
+  const tmp = `${groupsFile}.tmp`;
+  put(ctx, tmp, ''); // the fence's `> "${DISPATCH_GROUPS}.tmp"` redirect creates the file before the CLI runs
+  const r = spawnCli(ctx, 'dispatch-unlanded-blockers.js', ['--groups', groupsFile, '--exclusions', paths['dispatch-exclusions.json'],
+    '--integration-branch', state.integrationBranch, '--work-links', state.workLinks]);
+  forward(ctx, r, { stdout: false });
+  if (r.status === 0) {
+    step(ctx, 'unlanded-blocker', () => {
+      fs.writeFileSync(tmp, r.stdout);
+      fs.renameSync(tmp, groupsFile);
+    });
+    return;
+  }
+  fs.rmSync(tmp, { force: true });
+  throw new QueuePullStopped('dispatch: queue-pull stopped -- unlanded-blocker exclusion pass failed; see error above.');
+}
+
+const IN_FLIGHT_ARGV = ['issue', 'list', '--label', 'bot:in-progress', '--state', 'open', '--json', 'number,title,body,labels', '--limit', '200'];
+const IN_FLIGHT_POOL_AUTO = 'AUTO — dispatch: neighbour-in-flight pool fetch failed; no neighbour-in-flight exclusions this pull';
+// fence 595, byte for byte
+const IN_FLIGHT_CAP_WARNING = 'Warning: the bot:in-progress pull for the neighbour-in-flight pass (#3278) returned exactly the --limit cap (200) — in-flight records beyond the cap are not checked as neighbours. Informational only; never blocks dispatch.';
+
+// Fence 591-618 on `gh`; on `files` mcp-transport.md's Step 2 four-step replacement, whose agent-
+// written pool and claim-map FILES this pass reads (steps 1-3 are the agent's). Only the compute
+// is this pass's own: omitting the pass skips it (and so its appends and AUTO line), while the pool
+// fetch and its cap Warning are shared setup. A missing or malformed pool or claim-map file throws
+// inside the compute and stops the pull (R8); only the agent-written `[]` / `{}` values fail open.
+// The claim reader is the library's own and reads process.cwd()/process.env: options.cwd and
+// options.env are not threaded to it (createClaimReader takes only gitRunner/ghApi/runGh seams).
+function runNeighbourInFlight(ctx) {
+  const { deps, paths, omit, state } = ctx;
+  const f = state.files;
+  const onGh = ctx.options.transport !== 'files';
+  if (onGh) {
+    const pool = ghRun(ctx, IN_FLIGHT_ARGV, { quiet: true });
+    if (pool.ok) {
+      put(ctx, f.inFlightRaw, pool.stdout);
+    } else {
+      put(ctx, f.inFlightRaw, '[]\n');
+      deps.stderr(`${IN_FLIGHT_POOL_AUTO}\n`);
+    }
+    const count = step(ctx, 'in-flight-count', () => readJson(f.inFlightRaw).length);
+    if (count.ok && count.value >= 200) deps.stderr(`${IN_FLIGHT_CAP_WARNING}\n`);
+  }
+  if (omit.has('neighbour-in-flight')) return;
+  const computed = step(ctx, 'neighbour-in-flight', () => {
+    const candidates = readJson(paths['dispatch-groups.json']).flat();
+    const inFlight = readJson(f.inFlightRaw);
+    const readClaimContent = onGh ? deps.createClaimReader().read : claimReaderFromMap(readJson(f.inFlightClaims));
+    const { exclusions, unreadable } = neighbourInFlightExclusions({ candidates, inFlight, readClaimContent, now: deps.now().getTime() });
+    for (const e of exclusions) appendExclusion(paths['dispatch-exclusions.json'], e);
+    if (unreadable.length) deps.stderr(`AUTO — dispatch: neighbour-in-flight claim read failed for #${unreadable.join(', #')}; treated as not in flight\n`);
+  });
+  if (!computed.ok) throw new QueuePullStopped('dispatch: queue-pull stopped -- neighbour-in-flight exclusion pass failed (exit 1); see error above.');
+}
+
+const OPEN_PRS_ARGV = ['pr', 'list', '--state', 'open', '--json', 'number,files,closingIssuesReferences', '--limit', '100'];
+// fence 645, byte for byte
+const OPEN_PR_CAP_WARNING = 'Warning: the open-PR pull for the cross-PR overlap report (#1579) returned exactly the --limit cap (100) — overlap detection may be missing older open PRs. Informational only; never blocks dispatch.';
+
+// Fence 620-652, informational. On `files` mcp-transport.md skips the fetch and has the agent write
+// `[]`; the module does the same and makes no gh call. On `gh` the open-PR fetch fails silently
+// (`2>/dev/null || echo '[]'`) and a compute failure is a step error the fence does not stop on.
+function runCrossPrOverlap(ctx) {
+  const { deps, paths, omit } = ctx;
+  const out = paths['dispatch-crosspr-overlap.json'];
+  const skip = omit.has('cross-pr-overlap');
+  if (ctx.options.transport === 'files') {
+    if (!skip) put(ctx, out, '[]');
+    return;
+  }
+  const prsFile = paths['dispatch-open-prs.json'];
+  const r = ghRun(ctx, OPEN_PRS_ARGV, { quiet: true });
+  put(ctx, prsFile, r.ok ? r.stdout : '[]\n');
+  const count = step(ctx, 'open-pr-count', () => readJson(prsFile).length);
+  if (count.ok && count.value >= 100) deps.stderr(`${OPEN_PR_CAP_WARNING}\n`);
+  if (skip) return;
+  step(ctx, 'cross-pr-overlap', () => {
+    const groups = readJson(paths['dispatch-groups.json']);
+    const openPrsRaw = readJson(prsFile);
+    const candidates = groups.flat().map((c) => ({ number: c.number, keyFiles: extractKeyFiles(c) }));
+    const openPRs = openPrsRaw.map((pr) => ({
+      number: pr.number,
+      files: (pr.files || []).map((x) => x.path),
+      closingIssueNumbers: (pr.closingIssuesReferences || []).map((i) => i.number),
+    }));
+    fs.writeFileSync(out, JSON.stringify(detectCrossPRFileOverlap(candidates, openPRs)));
+  });
+}
+
+// Fence 654-671, informational: every cross-group pair gets an AUTO line, and only the strong ones
+// reach dispatch-near-dup-pairs.json (always written, [] when there are none).
+function runNearDupPairs(ctx) {
+  if (ctx.omit.has('near-dup-pairs')) return;
+  const { deps, paths } = ctx;
+  step(ctx, 'near-dup-pairs', () => {
+    const pairs = nearDuplicatePairsAcrossGroups(readJson(paths['dispatch-groups.json']));
+    for (const p of pairs) deps.stderr(`AUTO — dispatch: near-duplicate candidates across groups: #${p.records[0]} / #${p.records[1]} (${p.signals.join(', ')})\n`);
+    fs.writeFileSync(paths['dispatch-near-dup-pairs.json'], JSON.stringify(pairs.filter((p) => p.strong).map(({ records, signals, sharedAnchors }) => ({ records, signals, sharedAnchors }))));
+  });
+}
+
 const RUNNERS = {
   truncate: runTruncate, fetch: runFetch, blocked: runBlocked, oversized: runOversized, 'write-back': runWriteBack,
   'not-spec-shaped': runNotSpecShaped, 'open-pr': runOpenPr, 'target-missing': runTargetMissing, shipped: runShipped,
+  'blocker-landing': runBlockerLanding, 'neighbour-in-flight': runNeighbourInFlight,
+  'cross-pr-overlap': runCrossPrOverlap, 'near-dup-pairs': runNearDupPairs,
 };
 
 // omit entries (reasons or ids) -> the Set of pass ids to skip. Exported so the omit mapping
@@ -909,7 +1026,7 @@ function defaultDeps() {
   };
 }
 
-// Runs the pull. The passes through shipped have runners so far; any other pass throws `queue-pull: pass not implemented: <id>`.
+// Runs the pull: every registry pass has a runner.
 function queuePull(options = {}, deps = {}) {
   const ctx = makeContext(options, deps);
   const { paths } = ctx;
