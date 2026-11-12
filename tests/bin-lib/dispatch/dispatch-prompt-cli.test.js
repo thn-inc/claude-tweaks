@@ -2,14 +2,14 @@
 // #4589: the dispatch-prompt CLI — renders each dispatch Task() prompt from the live
 // skills/dispatch/task-prompt.md, writes it (and chunked parts), and records its digest in the run's
 // registry. Fake deps drive every branch; the run dir is a real tmp dir outside any checkout.
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { readText } = require('../../helpers/read-skill');
-const { run, realDeps } = require('../../../plugin/bin/dispatch-prompt');
+const { run, realDeps, parsePolicyValues } = require('../../../plugin/bin/dispatch-prompt');
 const {
   findUnsubstituted, promptDigest, promptSize, REGISTRY_FILE,
 } = require('../../../plugin/bin/lib/dispatch/task-prompt');
@@ -19,8 +19,13 @@ const TEMPLATE = path.join(__dirname, '..', '..', '..', 'plugin', 'skills', 'dis
 const LIVE = readText(TEMPLATE);
 const RUN_BASE = '2026-11-12T000000-record-4589';
 
+const tmpRoots = [];
+after(() => { tmpRoots.forEach((d) => fs.rmSync(d, { recursive: true, force: true })); });
+
 function mkRun(pad = 0) {
-  let dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dp-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dp-'));
+  tmpRoots.push(root);
+  let dir = root;
   let left = pad;
   while (left > 0) {
     const seg = 'p'.repeat(Math.min(left, 190));
@@ -38,6 +43,7 @@ function harness(over = {}) {
     cwd: () => os.tmpdir(),
     env: {},
     anchoredOrOutsideMessage: () => null,
+    removeFile: () => false,
     readFile: (p) => (p === TEMPLATE ? LIVE : readText(p)),
     writeFile: (p, s) => { log.writes.push([p, s]); },
     appendFile: (p, s) => { log.appends.push([p, s]); },
@@ -60,7 +66,7 @@ const base = (runDir, extra = []) => ['--run', runDir, '--issues', '4589', '--ou
 const written = (log, p) => log.writes.find(([w]) => w === p)?.[1];
 const envelope = (log) => JSON.parse(log.out.trim());
 const registryLine = (log) => JSON.parse(log.appends[0][1]);
-const assertNothingWritten = (log) => { assert.deepStrictEqual(log.writes, []); assert.deepStrictEqual(log.appends, []); };
+const assertNothingWritten = (log) => { assert.deepStrictEqual(log.writes, []); assert.deepStrictEqual(log.appends, []); assert.strictEqual(log.out, ''); };
 
 test('AC1.1: one call renders the first-call prompt to --out, records its digest, and reports the profile', () => {
   const runDir = mkRun();
@@ -241,6 +247,65 @@ test('a failed registry append exits 1', () => {
   const { deps, log } = harness({ appendFile: () => { throw new Error('disk'); } });
   assert.strictEqual(run(['--call', 'first', ...base(runDir)], deps), 1);
   assert.ok(log.err.includes(path.join(runDir, REGISTRY_FILE)));
+  assert.ok(written(log, path.join(runDir, 'p.md')));
+  assert.ok(written(log, `${path.join(runDir, 'p.md')}.part1`));
+  assert.strictEqual(log.out, '');
+});
+
+test('a stale part from an earlier larger render is removed, stopping at the first absent index', () => {
+  const runDir = mkRun();
+  const out = path.join(runDir, 'p.md');
+  const h = harness({ writeFile: (p, s) => fs.writeFileSync(p, s), appendFile: (p, s) => fs.appendFileSync(p, s), removeFile: realDeps.removeFile });
+  assert.strictEqual(run(['--call', 'first', '--run', runDir, '--issues', '4589', '--out', out], h.deps), 0, h.log.err);
+  const N = envelope(h.log).chunks.length;
+  for (const k of [N + 1, N + 2, N + 4]) fs.writeFileSync(`${out}.part${k}`, 'stale');
+  const h2 = harness({ writeFile: (p, s) => fs.writeFileSync(p, s), appendFile: (p, s) => fs.appendFileSync(p, s), removeFile: realDeps.removeFile });
+  assert.strictEqual(run(['--call', 'first', '--run', runDir, '--issues', '4589', '--out', out], h2.deps), 0, h2.log.err);
+  assert.ok(fs.existsSync(`${out}.part${N}`));
+  assert.ok(!fs.existsSync(`${out}.part${N + 1}`));
+  assert.ok(!fs.existsSync(`${out}.part${N + 2}`));
+  assert.ok(fs.existsSync(`${out}.part${N + 4}`));
+});
+
+test('a stale part that cannot be removed exits 1 before the registry append', () => {
+  const runDir = mkRun();
+  const { deps, log } = harness({ removeFile: () => { throw new Error('busy'); } });
+  assert.strictEqual(run(['--call', 'first', ...base(runDir)], deps), 1);
+  assert.deepStrictEqual(log.appends, []);
+});
+
+test('resolvePolicyValues parsing counts lines after the trailing newline', () => {
+  assert.strictEqual(parsePolicyValues('unattended\npr-first\nmerge-when-green\nhigh\nhigh\n'),
+    'autonomy=unattended, integration-model=pr-first, merge-verification=merge-when-green, risk-floor=high, size-floor=high');
+  assert.ok(parsePolicyValues('a\n\nc\nd\ne\n').includes('integration-model=(unset)'));
+  assert.throws(() => parsePolicyValues('a\nb\nc\nd\n'), /4 line/);
+  assert.throws(() => parsePolicyValues(''), /line/);
+});
+
+test('a throwing stdout after the append still exits 0 and says so on stderr', () => {
+  const runDir = mkRun();
+  const { deps, log } = harness({ stdout: () => { throw new Error('EPIPE'); } });
+  assert.strictEqual(run(['--call', 'first', ...base(runDir)], deps), 0);
+  assert.strictEqual(log.appends.length, 1);
+  assert.ok(log.err.includes('prompt recorded'));
+});
+
+test('the size and chunk errors carry one prefix, and deps.env reaches selectedAt and defaultOut', () => {
+  const runDir = mkRun();
+  const big = LIVE.replace('[Use: Capable]', `[Use: Capable]\n${'x'.repeat(140000)}`);
+  const h = harness({ readFile: (p) => (p === TEMPLATE ? big : readText(p)) });
+  assert.strictEqual(run(['--call', 'first', ...base(runDir)], h.deps), 1);
+  assert.ok(h.log.err.startsWith('dispatch-prompt.js: rendered prompt is'));
+  const seen = [];
+  const h2 = harness({ env: { CLAUDE_CODE_SESSION_ID: 'sid' }, selectedAt: (e) => { seen.push(e); return 'unknown'; }, defaultOut: (a, b, e) => { seen.push(e); return '/s/x.md'; } });
+  assert.strictEqual(run(['--call', 'first', '--run', runDir, '--issues', '4589'], h2.deps), 0);
+  assert.deepStrictEqual(seen, [{ CLAUDE_CODE_SESSION_ID: 'sid' }, { CLAUDE_CODE_SESSION_ID: 'sid' }].reverse());
+});
+
+test('--help short-circuits before the rest of argv is validated', () => {
+  const { deps, log } = harness();
+  assert.strictEqual(run(['--help', '--bogus'], deps), 0);
+  assert.ok(log.out.startsWith('usage: dispatch-prompt.js'));
 });
 
 test('AC1.1: a multi-chunk prompt is written as parts that rejoin to the registry digest', () => {

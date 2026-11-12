@@ -6,21 +6,24 @@
 // The dispatching session used to hand-substitute the fenced templates in
 // skills/dispatch/task-prompt.md. This CLI reads that same file, fills the closed placeholder set
 // (bin/lib/dispatch/task-prompt.js), writes the prompt to --out (default: the session temp path
-// dispatch-prompt-{run-id}-{call}.md), writes it again as {out}.part1..N when it exceeds one
-// readable chunk, and appends one line {sha256, call, out, chunks, issues, at} to
+// dispatch-prompt-{run-id}-{call}.md), always writes it again as {out}.part1..N (N is 1 for a prompt
+// that fits one readable chunk), removes any stale {out}.part{N+1}.. an earlier larger render left
+// (stopping at the first absent index), and appends one line {sha256, call, out, chunks, issues, at} to
 // {run}/dispatch-prompts.jsonl. That registry feeds bin/lib/hooks/dispatch-prompt-gate.js, which
-// denies a Task() prompt whose digest is not in it. stdout: exactly one JSON line
+// compares a Task() prompt's digest against the LATEST registry line for the marker's call. stdout: exactly one JSON line
 // {out, bytes, chunks:[{path,bytes}], join, call, issues, continuation, resume, profile, selectedAt,
 // sha256}; the prompt itself never goes to stdout. The session reads each chunk path and joins them
 // by `join` ('\n'); the join is byte-identical to the file at `out`.
 // Exit codes (mirroring compose-context.js): 0 rendered; 1 failure (template unreadable or
 // unparseable, a resolver failed, a placeholder left, prompt over the MAX_PROMPT_BYTES sanity bound
 // or with no valid chunk split, --resume-verdict unreadable or not JSON, --out or the registry
-// unwritable); 2 malformed invocation (an invalid --next-steps, no --out and no session id, a
+// unwritable or a stale part not removable); 2 malformed invocation (an invalid --next-steps, no --out and no session id, a
 // resume combined with a second call/--headless/several issues/an ineligible verdict) or a --run
 // that is missing or refused. On exit 1/2 nothing is written to --out or its parts and nothing is
 // appended to the registry, except one case: a registry append that fails after the writes is
-// exit 1 (the prompt was never recorded, so the gate would deny it).
+// exit 1 (the prompt was never recorded, so the gate would deny it). Once the registry line is
+// appended the prompt is recorded, so a throwing stdout write is reported on stderr and the exit stays 0.
+// --help short-circuits before the rest of argv is validated.
 // --run guard is shape 4 of the cli-wrapper contract, as in compose-context.js: bin/lib/run-dir-guard.js's
 // anchored-or-outside rule — a path outside any checkout is accepted, a worktree-local shadow is refused.
 // A non-zero exit is never followed by hand substitution (two-call-gate.md section 2): the caller reports it.
@@ -74,6 +77,16 @@ function parseIssues(raw) {
   return { issues };
 }
 
+// resolve-policy.js --values prints one newline-terminated line per key; an empty line is an unset key.
+function parsePolicyValues(out) {
+  const lines = out.split('\n');
+  if (lines[lines.length - 1] === '') lines.pop();
+  if (lines.length !== POLICY_KEYS.length) {
+    throw new Error(`resolve-policy.js printed ${lines.length} line(s) for ${POLICY_KEYS.length} keys`);
+  }
+  return POLICY_KEYS.map((k, i) => `${k}=${lines[i].trim() || '(unset)'}`).join(', ');
+}
+
 const realDeps = {
   cwd: () => process.cwd(),
   env: process.env,
@@ -86,23 +99,24 @@ const realDeps = {
     const out = execFileSync(process.execPath,
       [path.join(PLUGIN_ROOT, 'bin', 'resolve-policy.js'), '--values', POLICY_KEYS.join(',')],
       { cwd, encoding: 'utf8', windowsHide: true });
-    const lines = out.split('\n');
-    if (lines.length < POLICY_KEYS.length) throw new Error('resolve-policy.js printed fewer lines than keys requested');
-    return POLICY_KEYS.map((k, i) => `${k}=${lines[i].trim() || '(unset)'}`).join(', ');
+    return parsePolicyValues(out);
   },
   resolveProfile: (name, { unattended, cwd }) => {
     const args = [path.join(PLUGIN_ROOT, 'bin', 'resolve-profile.js'), name];
     if (unattended) args.push('--unattended');
     return JSON.parse(execFileSync(process.execPath, args, { cwd, encoding: 'utf8', windowsHide: true }));
   },
-  selectedAt: () => {
+  removeFile: (p) => {
+    try { fs.unlinkSync(p); return true; } catch (err) { if (err && (err.code === 'ENOENT' || err.code === 'ENOTDIR')) return false; throw err; }
+  },
+  selectedAt: (env = process.env) => {
     try {
-      const root = sessionTmpRoot(process.env.CLAUDE_CODE_SESSION_ID);
+      const root = sessionTmpRoot(env.CLAUDE_CODE_SESSION_ID);
       if (!root) return 'unknown';
       return fs.statSync(path.join(root, 'dispatch-groups.json')).mtime.toISOString();
     } catch { return 'unknown'; }
   },
-  defaultOut: (runId, call) => sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, `dispatch-prompt-${runId}-${call}.md`),
+  defaultOut: (runId, call, env = process.env) => sessionTmpPath(env.CLAUDE_CODE_SESSION_ID, `dispatch-prompt-${runId}-${call}.md`),
   now: () => new Date().toISOString(),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
@@ -110,11 +124,11 @@ const realDeps = {
 
 function run(argv, deps = {}) {
   const d = { ...realDeps, ...deps };
-  const fail = (code, message) => { d.stderr(`dispatch-prompt.js: ${message}\n`); return code; };
+  const fail = (code, message) => { d.stderr(`dispatch-prompt.js: ${String(message).replace(/^dispatch-prompt: /, '')}\n`); return code; };
   const usageError = (message) => { d.stderr(`dispatch-prompt.js: ${message}\n${USAGE}`); return 2; };
+  if (argv.some((a) => a === '--help' || a === '-h')) { d.stdout(USAGE); return 0; }
   const o = parseArgs(argv);
   if (o.error) return usageError(o.error);
-  if (o.help) { d.stdout(USAGE); return 0; }
   if (o.call !== 'first' && o.call !== 'second') return usageError('--call first|second is required');
   if (!o.run) return usageError('--run <run-dir> is required');
   if (!o.issues) return usageError('--issues N[,M...] is required');
@@ -144,7 +158,7 @@ function run(argv, deps = {}) {
   const runId = path.basename(runDir);
 
   let out = null;
-  try { out = o.out ? path.resolve(cwd, o.out) : d.defaultOut(runId, call); } catch (err) { return fail(1, err && err.message); }
+  try { out = o.out ? path.resolve(cwd, o.out) : d.defaultOut(runId, call, d.env); } catch (err) { return fail(1, err && err.message); }
   if (!out) return usageError('no --out and no session id (CLAUDE_CODE_SESSION_ID) to derive a default path from');
 
   let stepToken = null;
@@ -176,7 +190,7 @@ function run(argv, deps = {}) {
     profileName = profileOf(extractTemplates(text)[call]);
     const policyValues = d.resolvePolicyValues(cwd);
     profile = d.resolveProfile(profileName, { unattended: o.headless, cwd });
-    selectedAt = o.selectedAt !== null ? o.selectedAt : d.selectedAt();
+    selectedAt = o.selectedAt !== null ? o.selectedAt : d.selectedAt(d.env);
     prompt = renderTaskPrompt(text, {
       call, issues, runDir, pluginRoot: PLUGIN_ROOT, policyValues, selectedAt,
       headless: o.headless, stepToken: stepToken || undefined, resume: resume || undefined,
@@ -198,10 +212,13 @@ function run(argv, deps = {}) {
     parts.forEach((p) => { target = p.path; d.writeFile(p.path, p.text); });
   } catch (err) { return fail(1, `cannot write ${target}: ${err && err.message}`); }
   try {
+    for (let k = parts.length + 1; d.removeFile(`${out}.part${k}`); k++);
+  } catch (err) { return fail(1, `cannot remove a stale part of ${out}: ${err && err.message}`); }
+  try {
     d.appendFile(registry, `${JSON.stringify({ sha256, call, out, chunks: chunks.length, issues, at: d.now() })}\n`);
   } catch (err) { return fail(1, `cannot append to the registry ${registry}: ${err && err.message}`); }
 
-  d.stdout(`${JSON.stringify({
+  const envelopeLine = `${JSON.stringify({
     out,
     bytes: size.bytes,
     chunks: parts.map((p) => ({ path: p.path, bytes: Buffer.byteLength(p.text, 'utf8') })),
@@ -213,7 +230,8 @@ function run(argv, deps = {}) {
     profile: { name: profileName, model: profile.model, effort: profile.effort, source: profile.source },
     selectedAt,
     sha256,
-  })}\n`);
+  })}\n`;
+  try { d.stdout(envelopeLine); } catch (err) { d.stderr(`dispatch-prompt.js: prompt recorded, but writing the envelope to stdout failed: ${err && err.message}\n`); }
   return 0;
 }
 
@@ -226,4 +244,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { run, parseArgs, realDeps };
+module.exports = { run, parseArgs, parsePolicyValues, realDeps };
