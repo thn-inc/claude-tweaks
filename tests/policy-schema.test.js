@@ -4,6 +4,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { spawnSync } = require('child_process');
 const { POLICY_KEYS, RENAMED_KEYS, auditPolicy, resolveValue, resolvePolicyKeys } = require('../plugin/bin/lib/policy-schema');
 const { readText } = require('./helpers/read-skill');
 
@@ -146,8 +147,9 @@ test('POLICY_KEYS entries are unique', () => {
   // 97 -> 98, #4609 (human-in-control policy keys): risk-path-globs — the second block-style key, a slug-to-glob-list map
   // 98 -> 99, #4847: declare-claude-tweaks — boolean, default true — false stops /init Step 14 declaring claude-tweaks at project scope
   // 99 -> 100, #5119: verify-suite-slots — integer >= 1, default 1 — the project-wide default for verify.js's machine-wide suite slots
-  assert.strictEqual(POLICY_KEYS.length, 100);
-  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 100);
+  // 100 -> 103, #5216 (pipeline driver admission): express-driver — enum off|split|on, default off; express-driver-wall-clock-minutes, express-driver-spend-ceiling-dollars — integer >= 1, ceilings
+  assert.strictEqual(POLICY_KEYS.length, 103);
+  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 103);
 });
 
 test('express-lane keys resolve their defaults (#4025)', () => {
@@ -945,4 +947,78 @@ test('#4029 M4: the procedure-kb ceiling summaries say a run may read its proced
     assert.doesNotMatch(summary, /may load/, key);
     assert.ok(summary.length <= 140, `${key}: ${summary.length} chars`);
   }
+});
+
+// #5216: the express-driver keys — all policyOnly, so a --run config never sets them.
+const DRIVER_CLI = path.join(__dirname, '..', 'plugin', 'bin', 'resolve-policy.js');
+const DRIVER_KEYS = [
+  { id: 'AC11.1', key: 'express-driver', def: 'off', other: 'on', policyVal: 'split' },
+  { id: 'AC11.2', key: 'express-driver-wall-clock-minutes', def: 30, other: 99, policyVal: 5 },
+  { id: 'AC11.3', key: 'express-driver-spend-ceiling-dollars', def: 10, other: 77, policyVal: 5 },
+];
+
+test('AC7.1: express-driver resolves off from the default in a fresh project', () => {
+  const repo = tmpRepo();
+  try {
+    const r = spawnSync(process.execPath, [DRIVER_CLI, 'express-driver'], { cwd: repo, encoding: 'utf8' });
+    assert.deepStrictEqual(JSON.parse(r.stdout)['express-driver'], { value: 'off', source: 'default' });
+  } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+});
+
+test('AC6/express-driver: each value resolves; a malformed one falls back', () => {
+  for (const v of ['split', 'on']) {
+    assert.deepStrictEqual(resolvePolicyKeys(['express-driver'], { policyRaw: `express-driver: ${v}\n`, runConfigRaw: null })['express-driver'], { value: v, source: 'policy' });
+  }
+  assert.deepStrictEqual(resolvePolicyKeys(['express-driver'], { policyRaw: 'express-driver: half\n', runConfigRaw: null })['express-driver'], { value: 'off', source: 'default', invalid: true });
+});
+
+test('AC8.1: each ceiling resolves its default when unset, at or above the design targets', () => {
+  const r = resolvePolicyKeys(['express-driver-wall-clock-minutes', 'express-driver-spend-ceiling-dollars'], { policyRaw: '', runConfigRaw: null });
+  assert.deepStrictEqual(r['express-driver-wall-clock-minutes'], { value: 30, source: 'default' });
+  assert.ok(r['express-driver-wall-clock-minutes'].value >= 15);
+  assert.deepStrictEqual(r['express-driver-spend-ceiling-dollars'], { value: 10, source: 'default' });
+  assert.ok(r['express-driver-spend-ceiling-dollars'].value >= 5);
+});
+
+test('AC8.2: a ceiling below 1, negative or non-integer falls back invalid', () => {
+  for (const { key, def } of DRIVER_KEYS.slice(1)) {
+    for (const bad of ['0', '-3', '1.5', 'abc']) {
+      assert.deepStrictEqual(resolvePolicyKeys([key], { policyRaw: `${key}: ${bad}\n`, runConfigRaw: null })[key], { value: def, source: 'default', invalid: true }, `${key}=${bad}`);
+    }
+  }
+});
+
+for (const { id, key, def, other, policyVal } of DRIVER_KEYS) {
+  test(`${id}: a run config cannot set ${key}`, () => {
+    const viaRun = resolvePolicyKeys([key], { policyRaw: '', runConfigRaw: `${key}: ${other}\n` })[key];
+    assert.deepStrictEqual(viaRun, { value: def, source: 'default' });
+    const withPolicy = resolvePolicyKeys([key], { policyRaw: `${key}: ${policyVal}\n`, runConfigRaw: `${key}: ${other}\n` })[key];
+    assert.deepStrictEqual(withPolicy, { value: policyVal, source: 'policy' });
+  });
+
+  test(`${id} via the CLI: resolve-policy.js --run ignores a run config that sets ${key}`, () => {
+    const repo = tmpRepo();
+    const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-driver-run-'));
+    try {
+      fs.writeFileSync(path.join(runDir, 'config.yml'), `${key}: ${other}\n`);
+      const r = spawnSync(process.execPath, [DRIVER_CLI, '--run', runDir, key], { cwd: repo, encoding: 'utf8' });
+      assert.deepStrictEqual(JSON.parse(r.stdout)[key], { value: def, source: 'default' });
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+      fs.rmSync(runDir, { recursive: true, force: true });
+    }
+  });
+}
+
+test('AC8.3: each ceiling\'s doc row states its unit', () => {
+  const lines = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'policy-schema.md')).split('\n');
+  // The summary cell alone: the key cell already spells the unit, so matching the whole row could not fail.
+  const summaryOf = (key) => lines.find((l) => l.startsWith(`| \`${key}\` |`)).split('|')[5];
+  assert.match(summaryOf('express-driver-wall-clock-minutes'), /\bminutes\b/i);
+  assert.match(summaryOf('express-driver-spend-ceiling-dollars'), /\bwhole dollars\b/i);
+});
+
+test('AC11.4: the policyOnly bullet names all three keys', () => {
+  const line = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'policy-schema-coverage.md')).split('\n').find((l) => l.includes('are `policyOnly`'));
+  for (const { key } of DRIVER_KEYS) assert.ok(line.includes('`' + key + '`'), key);
 });
