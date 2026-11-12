@@ -63,6 +63,28 @@
 // platforms the worker can neither list nor search files, so its prompt must name
 // the files it is to work on.
 //
+// Grep and Glob were probed for the implementer on Claude Code CLI 2.1.322, on a macOS
+// (darwin) host, on 2026-11-12, under a claude.ai subscription (max) login, launched
+// with no TTY through this module's own launcher. The settings were those
+// `implementerSettings` generates for `linux` (`defaultMode: dontAsk`, allow `Read`,
+// `Edit`, `Write`, the deny list, no sandbox block), with `--restricted`, `--safe-mode`
+// and `Grep,Glob` added to `--tools`; in variant A `Grep` and `Glob` were also appended
+// to the allow list, in variant B they were not, and B behaved the same as A. Both
+// tools saw a file inside the working directory. Every path outside it was refused,
+// for both tools in both variants, with "<path> is outside <cwd>; --restricted confines
+// the file tools to the working directory." and each refusal appeared in the result's
+// permission denials: a path argument to a sibling directory, an absolute Glob pattern
+// there, and a non-temporary directory (this checkout's own `plugin/bin/lib/driver`);
+// Grep given the symlink to the sibling directory as its path was refused too, with
+// "resolves through a symlink to <target>, which is outside <cwd>". Grep and Glob run
+// from the working directory (`link/*.txt`, `**/*`) returned nothing from the symlink's
+// target; that is what was observed, and the cause was not isolated, since it may be
+// the search tools' default of not following symbolic links rather than `--restricted`.
+// Not probed: `../` relative paths, Grep's `glob` and `type` parameters, a symlinked
+// file (as opposed to a directory), a hard link, and Linux and Windows hosts. Because
+// only a darwin host was probed, Grep and Glob stay off the implementer on Linux and
+// Windows; the tool list is unchanged.
+//
 // Under `--restricted`, with `defaultMode: dontAsk` and `--permission-prompts none`,
 // the worker's Write and Edit tools into `.git` were denied in a probe (Claude Code CLI
 // 2.1.322, macOS, 2026-11-12): an Edit of `.git/config`, a Write of a new file under
