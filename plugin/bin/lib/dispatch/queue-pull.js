@@ -205,9 +205,7 @@ const GH = 'gh';
 // before it failed otherwise. `quiet` is `2>/dev/null`.
 function ghRun(ctx, args, { quiet = false } = {}) {
   try {
-    const opts = { ...cliOpts(ctx), ...(quiet ? { stdio: ['pipe', 'pipe', 'ignore'] } : {}) };
-    for (const k of Object.keys(opts)) if (opts[k] === undefined) delete opts[k];
-    return { ok: true, stdout: String(ctx.deps.run(GH, args, opts)) };
+    return { ok: true, stdout: String(ctx.deps.run(GH, args, runOpts(ctx, quiet ? { stdio: ['pipe', 'pipe', 'ignore'] } : {}))) };
   } catch (err) {
     return { ok: false, stdout: err && err.stdout != null ? String(err.stdout) : '' };
   }
@@ -215,15 +213,9 @@ function ghRun(ctx, args, { quiet = false } = {}) {
 
 // `resolve-policy.js --values <key>` in $( ), stderr forwarded, failure reads as the empty string.
 function readPolicy(ctx, key) {
-  let r;
-  try {
-    r = ctx.deps.spawnCli('resolve-policy.js', ['--values', key], cliOpts(ctx));
-  } catch (err) {
-    ctx.deps.stderr(`queue-pull: policy: ${err && err.message}\n`);
-    return '';
-  }
-  if (r && r.stderr) ctx.deps.stderr(r.stderr);
-  return trimNl(r && r.stdout);
+  const r = spawnCli(ctx, 'resolve-policy.js', ['--values', key], 'policy');
+  forward(ctx, r, { stdout: false });
+  return trimNl(r.stdout);
 }
 
 // A fence redirect or echo that fails does not stop the fence (R6): the write is a step.
@@ -527,7 +519,11 @@ function runWriteBack(ctx) {
 
 // ---- Task 4: not-spec-shaped, open-pr, target-missing and shipped ------------------------------
 
-// The text a node block's failure leaves in the fence's `$(cat $ERR_FILE)`: the thrown message.
+// The text this module quotes where the fence prints `$(cat $ERR_FILE)`. The fence's file holds
+// Node's uncaught-exception report: a header (a throw-site file:line, or a node:internal loader
+// line, depending on the Node version) that err.stack does not carry, then the error text and a
+// stack. This is the thrown message only, so those four lines differ from the oracle's after
+// their fixed prefix (controller ruling, Task 4 review; the parity suite compares the prefix).
 const errText = (err) => String(err && err.message != null ? err.message : err);
 
 // The options a runner call carries: the context's cwd and env, no undefined keys.
@@ -537,13 +533,14 @@ function runOpts(ctx, extra = {}) {
   return opts;
 }
 
-// A fence CLI call: a spawn that throws reads as a failed call with no output.
-function spawnCli(ctx, name, args) {
+// A fence CLI call: a spawn that throws reads as a failed call with no output, noted as
+// `queue-pull: <label>: <message>` (label defaults to the CLI name).
+function spawnCli(ctx, name, args, label = name) {
   try {
     const r = ctx.deps.spawnCli(name, args, cliOpts(ctx));
     return { status: r && r.status, stdout: (r && r.stdout) || '', stderr: (r && r.stderr) || '' };
   } catch (err) {
-    ctx.deps.stderr(`queue-pull: ${name}: ${errText(err)}\n`);
+    ctx.deps.stderr(`queue-pull: ${label}: ${errText(err)}\n`);
     return { status: null, stdout: '', stderr: '' };
   }
 }
@@ -606,14 +603,14 @@ function runOpenPr(ctx) {
   const linkedFile = paths['dispatch-linked-prs.json'];
   const errFile = paths['dispatch-linked-prs.err'];
   const nums = step(ctx, 'group-numbers', () => readJson(paths['dispatch-groups.json']).flat().map((i) => i.number).join(',')).value || '';
-  put(ctx, linkedFile, '{}');
+  put(ctx, linkedFile, '{}\n'); // the fence's `echo '{}'`
   if (nums) {
     const r = spawnCli(ctx, 'resolve-linked-prs.js', [nums]);
     put(ctx, linkedFile, r.stdout);
     put(ctx, errFile, r.stderr);
     if (r.status !== 0) {
       deps.stderr(`Warning: linked-PR query failed — falling back to no open-PR exclusion this run: ${trimNl(r.stderr)}\n`);
-      put(ctx, linkedFile, '{}');
+      put(ctx, linkedFile, '{}\n');
     }
   }
   const skip = omit.has('open-pr');
@@ -667,7 +664,10 @@ function targetMissingProposal(num, tpath, ref) {
 // runs whether or not this pass is omitted; later passes read state.integrationBranch.
 function runTargetMissing(ctx) {
   const { deps, paths, omit, state } = ctx;
-  state.standaloneDir = trimNl(spawnCli(ctx, 'hooks.js', ['resolve-run-dir', '--spec-slug', 'dispatch-standalone']).stdout);
+  // Fence 385: `$(node hooks.js resolve-run-dir ...)` captures stdout; its stderr stays on the terminal.
+  const runDirCall = spawnCli(ctx, 'hooks.js', ['resolve-run-dir', '--spec-slug', 'dispatch-standalone']);
+  forward(ctx, runDirCall, { stdout: false });
+  state.standaloneDir = trimNl(runDirCall.stdout);
   let branch = readPolicy(ctx, 'integration-branch');
   if (!branch) branch = remoteHeadBranch(ctx);
   state.integrationBranch = branch;

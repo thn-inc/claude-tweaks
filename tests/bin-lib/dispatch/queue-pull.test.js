@@ -7,6 +7,12 @@
 // Normalizations (AC1, and nothing else): the sandbox root becomes <SCR> and the pre-minted
 // run-dir basename becomes <RUN>. The clock is frozen by the stub rather than normalized, and
 // temp names match across sides through the QP_TMPNAME_COUNTER_FILE seam.
+// One documented exception (controller ruling, Task 4 review): the four failure lines whose fence
+// tail is `$(cat <err file>)` (the not-spec-shaped and open-pr corrupt-exclusions stop lines and
+// the not-spec-shaped / open-linked-PR filtering Warnings) compare up to and including their fixed
+// prefix, tail excluded. The fence's tail opens with Node's uncaught-exception header (a throw-site
+// file:line or a node:internal loader line, Node-version dependent, absent from err.stack); the
+// module prints err.message. See TAIL_EXCLUDED_PREFIXES in queue-pull-oracle.js.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -189,9 +195,28 @@ test('#5227 oracle: withEscapeGuard rejects a run that moves the guarded repo HE
       withEscapeGuard(repo, async () => { fixtureGit(['-C', repo, 'commit', '--allow-empty', '-q', '-m', 'escaped']); }),
       /escape guard/,
     );
+    // An untracked file created mid-run (a concurrent suite's temporary file) is not an escape.
+    assert.equal(await withEscapeGuard(repo, async () => { fs.writeFileSync(path.join(repo, 'stray.txt'), 'x'); return 'ok'; }), 'ok');
+    fs.rmSync(path.join(repo, 'stray.txt'));
+    fs.writeFileSync(path.join(repo, 'tracked.txt'), 'a');
+    fixtureGit(['-C', repo, 'add', 'tracked.txt']);
+    fixtureGit(['-C', repo, 'commit', '-q', '-m', 'track']);
     await assert.rejects(
-      withEscapeGuard(repo, async () => { fs.writeFileSync(path.join(repo, 'stray.txt'), 'x'); }),
-      /escape guard/,
+      withEscapeGuard(repo, async () => { fs.writeFileSync(path.join(repo, 'tracked.txt'), 'b'); }),
+      /escape guard/, 'a tracked-file modification trips it',
+    );
+    fixtureGit(['-C', repo, 'checkout', '--', 'tracked.txt']);
+    await assert.rejects(
+      withEscapeGuard(repo, async () => {
+        fs.writeFileSync(path.join(repo, 'staged.txt'), 'x');
+        fixtureGit(['-C', repo, 'add', 'staged.txt']);
+      }),
+      /escape guard/, 'a staged change trips it',
+    );
+    fixtureGit(['-C', repo, 'reset', '-q']);
+    await assert.rejects(
+      withEscapeGuard(repo, async () => { fixtureGit(['-C', repo, 'branch', 'escaped-ref']); }),
+      /escape guard/, 'a new ref trips it',
     );
   } finally {
     fs.rmSync(path.dirname(repo), { recursive: true, force: true });
@@ -994,7 +1019,7 @@ function pull4(scenario, o = {}) {
     'hooks.js': (args) => {
       cap.hooks.push(args);
       const out = o.hooksOut ? o.hooksOut(cap.hooks.length - 1, cap.runDir) : cap.runDir;
-      return { status: 0, stdout: `${out}\n`, stderr: '' };
+      return { status: 0, stdout: `${out}\n`, stderr: o.hooksErr ? o.hooksErr(cap.hooks.length - 1) : '' };
     },
     'log-decision.js': (args) => { cap.log.push(args); return { status: 0, stdout: `logged ${args[args.indexOf('--text') + 1]}\n`, stderr: '' }; },
     'stage-item.js': (args) => {
@@ -1028,7 +1053,6 @@ function pull4(scenario, o = {}) {
 const reasonsOf = (r, number) => r.json('dispatch-exclusions.json').filter((e) => e.records.includes(number)).map((e) => e.reason);
 const PR_VIEW = (pr) => ['pr', 'view', String(pr), '--json', 'files', '-q', '[.files[].path]'];
 const prViews = (r) => r.ghCalls.filter((a) => a[0] === 'pr' && a[1] === 'view');
-const gitCalls = (calls) => calls.filter(([cmd]) => cmd === 'git');
 const LINKED_WARNING = fenceText(/echo "(Warning: linked-PR query failed[^$]*)\$\(cat /);
 const OPEN_FILTER_WARNING = fenceText(/echo "(Warning: open-linked-PR filtering failed[^$]*)\$\(cat /);
 const SHAPE_WARNING = fenceText(/echo "(Warning: not-spec-shaped pass skipped[^$]*)\$\(cat /);
@@ -1108,7 +1132,7 @@ test('AC2.1 open-pr: #9005 and #9008 leave the groups with their PR; omitting th
 test('AC2.1 open-pr: a failed resolve-linked-prs.js prints the fence Warning and writes {}; unparseable output prints the filtering Warning and leaves the groups unfiltered', () => {
   const failed = pull4(FULL(), { spawn: { 'resolve-linked-prs.js': { status: 3, stdout: 'partial', stderr: 'graphql down\n' } } });
   assert.ok(failed.errs.includes(`${LINKED_WARNING}graphql down\n`), failed.stderr);
-  assert.equal(failed.text['dispatch-linked-prs.json'], '{}');
+  assert.equal(failed.text['dispatch-linked-prs.json'], '{}\n', "the fence's echo '{}' writes a newline");
   assert.deepEqual(entriesOf(failed, 'open-pr'), []);
   assert.ok(groupNumbers(failed).flat().includes(9008), 'nothing is excluded on a failed query');
   assert.deepEqual(entriesOf(failed, 'shipped'), [], 'with no mentions the shipped pass classifies nothing');
@@ -1138,7 +1162,10 @@ test('AC2.1 target-missing: #9006 and #9009 leave the groups, log the fence AUTO
   assert.deepEqual(staged[1].args.slice(0, 4), ['--run', positive.cap.runDir, '--id', 'dispatch-target-missing-9009']);
   assert.ok(positive.cap.stdout.includes('staged dispatch-target-missing-9009\n'), 'the stage-item stdout reaches the terminal');
   assert.ok(positive.cap.stdout.includes('logged dispatch: #9009 excluded, named target docs/gone.md absent at origin/main\n'), 'so does the log-decision stdout');
-  assert.deepEqual(gitCalls(positive.ghCalls.map((a) => ['gh', ...a])), []);
+  // ghCalls records every runner call's argv, git included: the branch lookup and the two probes.
+  assert.deepEqual(positive.ghCalls.filter((a) => ['cat-file', 'remote'].includes(a[0])), [
+    ['remote', 'show', 'origin'], ['cat-file', '-e', 'origin/main:docs/gone6.md'], ['cat-file', '-e', 'origin/main:docs/gone.md'],
+  ]);
   assert.deepEqual(positive.json('dispatch-named-targets.json'), [
     { number: 9006, target: { path: 'docs/gone6.md' } }, { number: 9009, target: { path: 'docs/gone.md' } },
   ]);
@@ -1151,10 +1178,33 @@ test('AC2.1 target-missing: #9006 and #9009 leave the groups, log the fence AUTO
   assert.deepEqual(omitted.cap.staged.filter((s) => s.id.startsWith('dispatch-target-missing-')), []);
   assert.equal(omitted.text['dispatch-named-targets.json'], undefined, 'no named-target probe');
   // PF10: the run-dir and integration-branch resolution is shared setup and still runs.
-  assert.equal(omitted.cap.hooks.length >= 1, true);
+  assert.equal(omitted.cap.hooks.length, 2, 'target-missing resolution (shared, PF10) plus the shipped pass');
   assert.deepEqual(omitted.cli('resolve-policy.js').filter(([, , key]) => key === 'integration-branch').length, 1);
   assert.equal(omitted.state.integrationRef, 'origin/main');
   assert.deepEqual(entriesOf(omitted, 'shipped').map((e) => e.records[0]), [9006, 9010], 'AC3: with target-missing omitted #9006 falls to shipped');
+});
+
+test('#5227 target-missing: the first hooks.js resolve-run-dir call leaves its stderr on the terminal; the shipped pass drops its own (2>/dev/null)', () => {
+  const r = pull4(FULL(), { hooksErr: (i) => `claude-tweaks: resolve-run-dir: boom ${i}\n` });
+  assert.ok(r.errs.includes('claude-tweaks: resolve-run-dir: boom 0\n'), r.stderr);
+  assert.ok(!r.stderr.includes('boom 1'), 'the second call (shipped) is silenced in the fence');
+});
+
+test('#5227 oracle helper: reported() keeps AUTO/Warning lines and cuts the four $(cat err) failure lines after their fixed prefix', () => {
+  const text = [
+    'dispatch: queue-pull stopped -- not-spec-shaped exclusion pass hit a corrupt exclusions file: /tmp/x.cjs:5',
+    'dispatch: queue-pull stopped -- open-linked-PR exclusion pass hit a corrupt exclusions file: node:internal/modules:1',
+    'Warning: not-spec-shaped pass skipped — whatever',
+    'Warning: open-linked-PR filtering failed — dispatch-groups.json left unfiltered for this exclusion this run: tail',
+    'Warning: linked-PR query failed — falling back to no open-PR exclusion this run: kept whole',
+  ].join('\n');
+  assert.deepEqual(reported(text), [
+    'dispatch: queue-pull stopped -- not-spec-shaped exclusion pass hit a corrupt exclusions file: ',
+    'dispatch: queue-pull stopped -- open-linked-PR exclusion pass hit a corrupt exclusions file: ',
+    'Warning: not-spec-shaped pass skipped — ',
+    'Warning: open-linked-PR filtering failed — dispatch-groups.json left unfiltered for this exclusion this run: ',
+    'Warning: linked-PR query failed — falling back to no open-PR exclusion this run: kept whole',
+  ]);
 });
 
 test('AC2.1 target-missing: a target present at the integration tip is kept; the git probe argv is cat-file -e <ref>:<path>', () => {

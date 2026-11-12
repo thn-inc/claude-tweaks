@@ -366,12 +366,18 @@ async function runOracle(sandbox, script, { sessionId = `qp-${sandbox.name}` } =
   });
 }
 
-// The real checkout's HEAD and `git status --porcelain` before and after fn; any change fails
-// the run (#4303: an inherited OLDPWD put commits on the live branch).
+// The real checkout's HEAD, refs, index and tracked-file status before and after fn; any change
+// fails the run (#4303: an inherited OLDPWD put commits on the live branch). Untracked files are
+// deliberately not compared: tools/run-tests.js runs files concurrently and another suite
+// (exit-code-conformance) creates a temporary untracked file in this checkout (controller ruling,
+// Task 4 review). A stray commit, ref, staged change or tracked-file edit is still caught.
 async function withEscapeGuard(repoRoot, fn) {
+  const g = (...args) => fixtureGit(['--no-optional-locks', '-C', repoRoot, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   const read = () => ({
-    head: fixtureGit(['-C', repoRoot, 'rev-parse', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim(),
-    status: fixtureGit(['--no-optional-locks', '-C', repoRoot, 'status', '--porcelain'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }),
+    head: g('rev-parse', 'HEAD').trim(),
+    refs: g('for-each-ref'),
+    index: g('diff', '--cached', '--name-status'),
+    status: g('status', '--porcelain', '--untracked-files=no'),
   });
   const before = read();
   let outcome;
@@ -381,8 +387,10 @@ async function withEscapeGuard(repoRoot, fn) {
     outcome = { err };
   }
   const after = read();
-  if (after.head !== before.head || after.status !== before.status) {
+  if (['head', 'refs', 'index', 'status'].some((k) => after[k] !== before[k])) {
     throw new Error(`escape guard: ${repoRoot} changed during the run\nHEAD ${before.head} -> ${after.head}\n`
+      + `refs before:\n${before.refs}refs after:\n${after.refs}`
+      + `index before:\n${before.index}index after:\n${after.index}`
       + `status before:\n${before.status}status after:\n${after.status}`);
   }
   if (outcome.err) throw outcome.err;
@@ -403,9 +411,23 @@ function normalize(value, sandbox) {
   return walk(value);
 }
 
+// The four failure lines whose fence tail is `$(cat <err file>)`: Node's uncaught-exception header
+// (a throw-site file:line or a node:internal loader line, Node-version dependent) leads the tail,
+// and the module prints err.message instead. They compare up to and including this prefix, tail
+// excluded (controller ruling, Task 4 review).
+const TAIL_EXCLUDED_PREFIXES = [
+  'dispatch: queue-pull stopped -- not-spec-shaped exclusion pass hit a corrupt exclusions file: ',
+  'dispatch: queue-pull stopped -- open-linked-PR exclusion pass hit a corrupt exclusions file: ',
+  'Warning: not-spec-shaped pass skipped — ',
+  'Warning: open-linked-PR filtering failed — dispatch-groups.json left unfiltered for this exclusion this run: ',
+];
+
 // The AUTO and Warning lines AC1 compares on each channel.
 function reported(text) {
-  return String(text || '').split(/\r?\n/).filter((line) => REPORTED_LINE.test(line));
+  return String(text || '').split(/\r?\n/).filter((line) => REPORTED_LINE.test(line)).map((line) => {
+    const prefix = TAIL_EXCLUDED_PREFIXES.find((p) => line.startsWith(p));
+    return prefix ? prefix : line;
+  });
 }
 
 const parsedOrRaw = (text) => {
