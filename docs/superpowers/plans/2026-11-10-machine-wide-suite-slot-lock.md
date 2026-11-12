@@ -129,7 +129,7 @@ Expected: FAIL (Cannot find module `plugin/bin/lib/verify/slot`)
 - Test: `tests/bin-lib/verify/run.test.js`
 - Test: `tests/bin-lib/verify/ci-cli.test.js`
 - Test: `tests/bin-lib/verify/slot.test.js`
-- Test: `tests/bin-lib/verify/cli.test.js`
+- Test: `tests/bin-lib/verify/cli-slot.test.js`, `tests/bin-lib/verify/cli-slot-queue.test.js`, `tests/bin-lib/verify/cli-slot-signals.test.js`
 - Waived `plugin/bin/lib/file-lock.js`: the spec's Gotchas names it only to say the two locks must not merge; this plan never touches it.
 - Waived `plugin/bin/lib/verify/report.js`: the spec lists it, but `report.slot` is set in verify.js after `composeReport`, the same way `report.ci` is, so report.js needs no change.
 
@@ -141,7 +141,7 @@ Expected: FAIL (Cannot find module `plugin/bin/lib/verify/slot`)
 
 - [ ] **Step 1: Write the failing tests**
   - `tests/bin-lib/verify/slot.test.js` (in-process, temp `CT_TEST_SUITE_SLOT_DIR`, injected `env` object and a fake `proc` EventEmitter with `exit` recorded): `holdSlot returns null under CT_TEST_SUITE_SLOT_HELD=1 and creates no lock`; `holdSlot sets CT_TEST_SUITE_SLOT_HELD and CT_TEST_WORKERS while held and restores them on release` (prior `CT_TEST_WORKERS='7'` survives untouched and is restored; `workerCap(16, 2) === '4'` appears when unset); `release is idempotent and removes slot-<index>.lock`; `a signal with no other listener releases and exits 128+n`; `adjudication's own signal handler still runs` (a second SIGTERM listener registered after `holdSlot`: emitting SIGTERM releases the slot, calls the second listener, and `proc.exit` is called only by that listener); `index is the slot taken` (with slot-0 held by a live foreign pid and `slots: 2`, `index === 1`).
-  - `tests/bin-lib/verify/cli.test.js` — a helper `slotEnv(dir)` returning `{ ...process.env, CT_TEST_SUITE_SLOT_DIR: dir }` minus `CT_TEST_SUITE_SLOT_HELD` and `CT_TEST_WORKERS`; fixture checks built with the file's `nodeCmd` (they append `start <id> <Date.now()>` / `end <id> <Date.now()>` to an out file argv path and sleep 1500 ms). Tests:
+  - `tests/bin-lib/verify/cli-slot.test.js`, `cli-slot-queue.test.js` and `cli-slot-signals.test.js` — a helper `slotEnv(dir)` returning `{ ...process.env, CT_TEST_SUITE_SLOT_DIR: dir }` minus `CT_TEST_SUITE_SLOT_HELD` and `CT_TEST_WORKERS`; fixture checks built with `cli-helpers.js`'s `nodeCmd` (they append `start <id> <Date.now()>` / `end <id> <Date.now()>` to an out file argv path and sleep 1500 ms). Tests:
     - `AC1.1: two concurrent full runs in different worktrees serialize on one lock dir` — two `tmpGitRepo()`s, one shared temp slot dir, both `runCli` started together with `--cmd tests=<fixture>`; parse the out file: the later `start` is ≥ the earlier `end`. Both exit 0 and both `report.slot` read `{ lane: 'full', index: 0, slots: 1, source: 'default' }`.
     - `AC2.1: a dead holder's lock is reclaimed` — pre-write `slot-0.lock` naming the pid of a child that has already exited; the run exits 0 within 10 s and leaves no `slot-0.lock`.
     - `AC3.1: run-tests.js and verify.js serialize on one lock dir, both orders` — copy `tests/fixtures/run-tests/sleep-probe.fixture.js`'s pattern into a temp root as a `.test.js`; run `node tools/run-tests.js {root}` (env from `slotEnv`) first and verify.js second, then the reverse; in each order the second's work starts after the first's ends (use the probe's `CT_PROBE_OUT` and the verify fixture's out file).
@@ -173,9 +173,9 @@ Expected: FAIL (`holdSlot is not a function`; the CLI tests fail on missing `rep
 
 - [ ] **Step 4: Run to verify it passes** — same command as Step 2. Expected: PASS, 0 failures.
 
-- [ ] **Step 5: Prove the serialization test discriminates (AC1.2)** — temporarily replace the `holdSlot(...)` before `runChecks` with `null`, re-run only `cli.test.js`: `AC1.1` and `AC3.1` must fail (overlapping intervals). Restore, re-run, PASS. Record both outputs' summary lines in the task report.
+- [ ] **Step 5: Prove the serialization test discriminates (AC1.2)** — temporarily replace the `holdSlot(...)` before `runChecks` with `null`, re-run only `cli-slot.test.js`: `AC1.1` and `AC3.1` must fail (overlapping intervals). Restore, re-run, PASS. Record both outputs' summary lines in the task report.
 
-- [ ] **Step 6: Commit** — `git add plugin/bin/lib/verify/slot.js plugin/bin/verify.js plugin/bin/lib/verify/baseline.js plugin/bin/lib/verify/run.js tests/bin-lib/verify/slot.test.js tests/bin-lib/verify/cli.test.js tests/bin-lib/verify/run.test.js`, message `Queue verify.js checks and baseline adjudication behind the machine-wide suite slot (#5119)`.
+- [ ] **Step 6: Commit** — `git add plugin/bin/lib/verify/slot.js plugin/bin/verify.js plugin/bin/lib/verify/baseline.js plugin/bin/lib/verify/run.js tests/bin-lib/verify/slot.test.js tests/bin-lib/verify/cli-slot.test.js tests/bin-lib/verify/cli-slot-queue.test.js tests/bin-lib/verify/cli-slot-signals.test.js tests/bin-lib/verify/run.test.js`, message `Queue verify.js checks and baseline adjudication behind the machine-wide suite slot (#5119)`.
 
 ### Task 4: The `verify-suite-slots` policy key
 

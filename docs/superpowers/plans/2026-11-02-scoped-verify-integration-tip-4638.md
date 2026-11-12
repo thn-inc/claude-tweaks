@@ -52,7 +52,7 @@ Each line is pinned by a named test in Task 1.
 - Modify: `plugin/bin/lib/verify/changed-files.js:165-205`
 - Modify: `plugin/bin/verify.js:602-632`
 - Test: `tests/bin-lib/verify/changed-files.test.js`
-- Test: `tests/bin-lib/verify/cli.test.js`
+- Test: `tests/bin-lib/verify/cli-scope-integration.test.js`
 - Test: `tests/bin-lib/verify/impact-cli.test.js`
 - Modify: `plugin/skills/test/verification.md:94`
 - Modify: `docs/plugin-structure.md:58`
@@ -138,7 +138,7 @@ test('round-4 Reading B: a no-own-commit --no-ff merge of the ref declines even 
 
 In the same file, apply the round-4 fixture changes named in Global Constraints. Insert `r.commit('src/own.py', 'own');` directly after the `mergeTrunkWith(...)` line of each of these tests: `an uncommitted edit to a merge-identical path stays selected`, `a failing working-tree status read degrades to null`, and `a failing anchor merge-base or pre-anchor diff degrades to null`. In `a conflict resolved in the integration branch's favour…`, insert it after `r.git('commit', '-q', '--no-edit');`. In `an uncommitted edit…`, change `assert.deepStrictEqual(n.files, ['ui/b.js']);` to `assert.deepStrictEqual(n.files, ['src/own.py', 'ui/b.js']);`. In the two failing-read tests, the own commit must come before `const files = changedSince(...)`.
 
-In `tests/bin-lib/verify/cli.test.js`, after the `#3072 AC3` test. `runScoped` and the rule set are local to these tests; `mergedScopedRepo`, `anchorFullPass`, `mergeTrunk`, `commitFile`, `stampOf` and `runCli` already exist in that file.
+In `tests/bin-lib/verify/cli-scope-integration.test.js`, after the `#3072 AC3` test. `runScoped` and the rule set are local to these tests; `mergedScopedRepo`, `anchorFullPass` and `mergeTrunk` already exist in that file, and `commitFile`, `stampOf` and `runCli` come from `tests/bin-lib/verify/cli-helpers.js`.
 
 ```js
 // #4638: mergedScopedRepo's rules plus a bookkeeping path (no suite, no static)
@@ -333,7 +333,7 @@ If the first run does not write a stamp whose `fullSha` is `r.base`, the fixture
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `node --test --test-name-pattern "#4638" tests/bin-lib/verify/changed-files.test.js tests/bin-lib/verify/cli.test.js tests/bin-lib/verify/impact-cli.test.js`
+Run: `node --test --test-name-pattern "#4638" tests/bin-lib/verify/changed-files.test.js tests/bin-lib/verify/cli-scope-integration.test.js tests/bin-lib/verify/impact-cli.test.js`
 Expected: FAIL. The `AC1.1` unit tests fail because `mergeNarrowing` returns a narrowed object. So does the round-4 unit test. The CLI `AC1.1`, `AC1.2` zero-suite and round-4 tests fail on `still-verified`, `suitesRun` or `mergeNarrowing`. The impact-status test fails because the narrowed run selects no suite and writes no marker. Three pass at this step, because they pin behavior that must survive. `a failing ahead-count read` goes red only under Step 5's mutation. `narrowing that leaves a suite still narrows` holds before and after. `an empty impact subset with no merge narrowing still stamps none` holds before and after too. The four `#3072` fixture changes keep their tests green both before and after; their names carry no `#4638`, so this pattern does not select them. This appends to three already-passing files, so plan-audit reports it as append-shaped.
 
 - [ ] **Step 3: Implement both guards**
@@ -371,7 +371,7 @@ if (narrowing && sel.suites.length === 0) {
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `node --test tests/bin-lib/verify/changed-files.test.js tests/bin-lib/verify/cli.test.js tests/bin-lib/verify/impact-cli.test.js tests/path-guard-conformance.test.js tests/windows-hide-spawn-conformance.test.js tests/test-skill-affected-conformance.test.js`
+Run: `node --test tests/bin-lib/verify/changed-files.test.js tests/bin-lib/verify/cli-scope-integration.test.js tests/bin-lib/verify/impact-cli.test.js tests/path-guard-conformance.test.js tests/windows-hide-spawn-conformance.test.js tests/test-skill-affected-conformance.test.js`
 Expected: PASS, including every pre-existing `#3072` and `#4024` test. The only pre-existing assertion edited is the one `n.files` line Global Constraints names.
 
 - [ ] **Step 5: Prove each guard can go red**
@@ -408,12 +408,12 @@ Headroom: `verification.md` is 42,277 B against the 52,500 B rail; this adds abo
 
 - [ ] **Step 7: Run the affected suites**
 
-Run: `node --test tests/bin-lib/verify/changed-files.test.js tests/bin-lib/verify/cli.test.js tests/bin-lib/verify/impact-cli.test.js tests/test-skill-affected-conformance.test.js tests/skill-size-single-source.test.js`
+Run: `node --test tests/bin-lib/verify/changed-files.test.js tests/bin-lib/verify/cli-scope-integration.test.js tests/bin-lib/verify/impact-cli.test.js tests/test-skill-affected-conformance.test.js tests/skill-size-single-source.test.js`
 Expected: PASS.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add plugin/bin/lib/verify/changed-files.js plugin/bin/verify.js tests/bin-lib/verify/changed-files.test.js tests/bin-lib/verify/cli.test.js tests/bin-lib/verify/impact-cli.test.js plugin/skills/test/verification.md docs/plugin-structure.md
+git add plugin/bin/lib/verify/changed-files.js plugin/bin/verify.js tests/bin-lib/verify/changed-files.test.js tests/bin-lib/verify/cli-scope-integration.test.js tests/bin-lib/verify/impact-cli.test.js plugin/skills/test/verification.md docs/plugin-structure.md
 git commit -m "Keep merge narrowing from earning a zero-suite stamp — refs #4638"
 ```

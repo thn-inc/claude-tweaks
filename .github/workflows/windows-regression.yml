@@ -67,11 +67,11 @@ jobs:
       # hit the Windows MAX_PATH limit.
       - name: Enable long paths
         run: git config --global core.longpaths true
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Full history: the base commit must exist for the baseline run.
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           # run-tests.js passes root globs on win32 (the file list overflows the command line), which needs Node >= 22
           node-version: 22
@@ -140,7 +140,7 @@ jobs:
           --json "$RUNNER_TEMP/verify-report.json"
           --log-dir "$RUNNER_TEMP/verify-logs"
           --no-stamp
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: verify-report
@@ -164,14 +164,14 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       BASE_SHA: ${{ needs.windows.outputs.base }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           # The filer needs no node --test globs, so it stays on the repo's CI Node.
           node-version: 20
       # A missing artifact (the windows job died before uploading) must still reach
       # the filer, which then exits 1 on the unreadable report.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         continue-on-error: true
         with:
           name: verify-report
