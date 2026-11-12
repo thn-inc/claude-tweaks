@@ -32,14 +32,26 @@
   - `TZ=UTC`;
   - `NODE_OPTIONS=--require <clock stub>`, which reaches every node process;
   - pinned `GIT_AUTHOR_DATE` and `GIT_COMMITTER_DATE`.
-- **ASSUMPTION 2 is REVERSED.**
-  - The `files` inputs also include `DISPATCH_OPEN_NUMBERS` and `DISPATCH_VERIFIED_OPEN_DEPS`. The agent writes `DISPATCH_CROSSPR_OVERLAP` as `[]`.
-  - A missing or malformed in-flight pool FILE or claim-map FILE stops the pull (the oracle exits 1). Fail-open applies only to the `[]` and `{}` values the agent writes itself.
-  - A missing or malformed `DISPATCH_FOREIGN_STATES` file excludes each affected record as `owner/name#N (state unreadable)`, with a fail-closed Warning.
-  - AC7's fixtures assert the outcome the oracle actually produces, and the module reproduces it (Task 9).
+- **ASSUMPTION 2's input set is incomplete.** The `files` inputs also include `DISPATCH_OPEN_NUMBERS` and `DISPATCH_VERIFIED_OPEN_DEPS`, and the agent writes `DISPATCH_CROSSPR_OVERLAP` as `[]`.
+- **AC7 `files`-input outcome.** The spec's `## Plan Review Clarifications` (criterion 7) settles this: the module reproduces the script's observed outcome.
+  - A missing or malformed in-flight pool file or claim-map file stops the pull (oracle exit 1, CLI exit 4).
+  - A missing or malformed `DISPATCH_FOREIGN_STATES` file excludes each record that has a foreign blocker as `owner/name#N (state unreadable)`, with a fail-closed `Warning:`.
+  - Fail-open applies only to the `[]` and `{}` values the agent writes itself.
+  - Task 9 covers these cases.
+- **AC4 and AC5.2.** The spec's `## Plan Review Clarifications` (criteria 4 and 5) settles both.
+  - A pass the script fails open on prints exactly what the script prints for that fault: zero or one `Warning:` or `AUTO` line, on the script's channel. It excludes nothing.
+  - A malformed candidate's effect on another candidate's verdict matches the script's.
+  - The silent fail-opens, and any cross-candidate effect, are already on the run ledger.
+- **`failOpen`.** Per the spec's `## Plan Review Clarifications` (criteria 4 and 11), each `PASSES` entry keeps one `failOpen` value: the strictest posture any of that pass's fetches takes.
+  - `stop` if any fetch stops the pull; otherwise `open`. `n/a` when the pass makes no remote fetch.
+  - The AC4.1 fault rows assert each fetch's posture separately.
+- **Temp names.** Per the spec's `## Plan Review Clarifications` (criterion 1), the oracle's `mktemp` shim and the module's `deps.tmpName` emit the same deterministic name in parity runs. The only normalizations are AC1's own: the frozen clock, and substituting the scratch dir and run id in paths.
 - **Script defects are reproduced, never fixed.** Each one is already on the ledger.
   - **D1:** a stale session file is reused when a later fetch comes back empty. Asserted in Task 9.
-  - **D2:** the target-missing proposal is staged with a random `mktemp` extension. The module reproduces this by naming its temp file `tmp.` plus 10 random alphanumerics. D2 is the one normalization beyond the spec's list, and the test header names it (Tasks 4 and 8).
+  - **D2:** the target-missing proposal is staged under the `mktemp` file's extension, so in production that extension is random. The module reproduces this.
+    - Outside parity runs, `deps.tmpName` returns `tmp.` plus 10 random alphanumerics.
+    - In parity runs, both sides draw names from one counter-file seam, so they emit identical names and no normalization is needed. The seam is described under Interfaces → `deps.tmpName`.
+    - Tasks 1, 4 and 8.
   - **D3:** `aliasMcpTimestamps` silently turns a non-array file into `[]`. Asserted in Tasks 3 and 9.
   - **D4:** a non-JSON claim-map string is read as unreadable content, and no AUTO line is printed. Asserted in Tasks 5 and 9.
 
@@ -73,11 +85,11 @@
   - The default deps bound every remote call by importing `GH_TIMEOUT_MS`, `GH_BATCH_TIMEOUT_MS`, `GIT_TIMEOUT_MS` and `LARGE_MAX_BUFFER_BYTES` from `plugin/bin/lib/shared-primitives.js` (`gh-api-module-pattern` SKILL.md L31, read). The script's own calls are unbounded, so the module behaves differently only when a call hangs.
 - **R7: registry semantics.**
   - Each entry is `{ id, kind, reason, removes, bypass, runsOnCacheHit, failOpen, mcp }`. `id` and `kind` are added beyond the spec's six fields. `kind` is `setup`, `exclusion` or `informational`, and `reason` is `null` unless `kind` is `exclusion`.
-  - `failOpen` is the pass's posture when its remote fetch fails. `n/a` means the pass makes no remote fetch.
+  - `failOpen` is the strictest posture any of the pass's remote fetches takes when it fails (Plan Review Clarifications, criteria 4 and 11). It is `stop` if any fetch stops the pull, otherwise `open`. It is `n/a` when the pass makes no remote fetch. The `PASSES` shape is unchanged (AC11).
   - `malformed-blocker` and `unlanded-blocker` share `id: 'blocker-landing'`, because one `dispatch-unlanded-blockers.js` call writes both. The loop runs each id once, at its first entry.
   - `omit` accepts reasons or ids. Omitting a pass removes that reason's filtering and appends and nothing else, so shared steps such as the grouping block still run. Omitting either blocker-landing reason skips the whole call, and omitting a `setup` pass throws `TypeError`.
   - No string array literal leads with `'status'` or holds `'ls-files'` (`bin-source-scan-conformance`, Q-T2.63, read).
-- **R8: missing in-flight handoff files stop the pull.** Q-T2.28's "missing handoff file crashes the compute step" row describes what the script does with the in-flight raw and claims files (mcp-transport step 4). The module reproduces it (Non-Goals), and it stays on the ledger.
+- **R8: missing in-flight handoff files stop the pull, as the Plan Review Clarifications decide for criterion 7.** Q-T2.28's "missing handoff file crashes the compute step" row describes what the script does with the in-flight raw and claims files (mcp-transport step 4). The module reproduces it, and the `mcp-transport.md` drift is tracked as its own record.
 
 ### Platform, CI, runtime
 
@@ -229,7 +241,7 @@ Source: `.claude/skills/shared-contract-extraction/SKILL.md` L58-59
 
 1. **A foreign blocker on `gh`.** A `Blocked by owner/name#N` line sends `bodyForeignBlockers` through `gh`, so `cacheUsable` must miss. The record is held, with one Warning when its state is unreadable. Tests: the Task 3 foreign-blocker cases and S2 in Task 8.
 2. **No session id.** With `CLAUDE_CODE_SESSION_ID` unset, paths fall back to `os.tmpdir()/<name>`, and the CLI must write those same paths. Test: Task 2 `sessionPaths fallback`.
-3. **The integration branch cannot be resolved.** With no policy key and a failing `git remote show origin`, every named-target candidate is checked against `origin/` and excluded. That is the script's behavior. It is reproduced here and is a ledger candidate. Test: Task 9 F-intbranch.
+3. **The integration branch cannot be resolved.** With no policy key and a failing `git remote show origin`, every named-target candidate is checked against `origin/` and excluded. That is the script's behavior. It is reproduced here. Test: Task 9 F-intbranch.
 4. **A pull exactly at its `--limit` cap** (500, 200 or 100) produces the same cap Warning text as the script. Tests: Tasks 3 and 5.
 5. **MCP-shaped records on `files`**, meaning `labels` as `[{name}]`, lowercase `state` and snake_case timestamps, get the same verdicts as the gh shape. Tests: Task 8's files configs use the MCP shape, and Task 3 asserts the in-place aliasing.
 
@@ -257,10 +269,14 @@ defaultDeps() -> deps
 - `deps`:
   - `run(cmd, args, opts) -> stdout` runs `gh` or `git` and throws `{status, stdout, stderr}` on failure. The default uses `execFileSync`, with `gh` wrapped in `ghOptions` and `windowsHide: true` written literally at each call site.
   - `spawnCli(name, args, { input }) -> { status, stdout, stderr }` is `spawnSync(process.execPath, [path.join(BIN_DIR, name), ...args], { windowsHide: true, … })`.
-  - `stdout`, `stderr`, `now() -> Date`, and `tmpName()`, which returns `<os.tmpdir()>/tmp.<10 alnum>` (D2).
+  - `stdout`, `stderr` and `now() -> Date`.
+  - `tmpName()` returns `<os.tmpdir()>/tmp.<10 chars>` and creates the file.
+    - By default the 10 chars are random alphanumerics, which reproduces D2.
+    - When `QP_TMPNAME_COUNTER_FILE` is set, it reads that file's integer, increments it, writes it back, and returns `tmp.qp<8-digit counter>`. This is a test-only seam, documented in the header.
+    - The sandbox's `mktemp` shim implements the same format over the same env var. Each side's sandbox starts its counter at 0, so the oracle and the module emit identical names (Plan Review Clarifications, criterion 1).
   - `sleep`, `queueOrder: { readOrder, writeOrder }`, `createClaimReader`, `expressQueuePolicy`, `foreignDeps`, and an optional `onPass(id)`.
 
-`PASSES` values are seeds. Task 9 asserts `failOpen` against the oracle. If they differ, change the row here and in the module, never the oracle.
+`PASSES` values are seeds. Task 9's AC4.2 compares each `failOpen` against the strictest posture observed across that pass's fault fixtures (`stop` if any stops, else `open`). If the two differ, change the row both here and in the module; the oracle is never changed.
 
 | # | id | kind | reason | removes | bypass | runsOnCacheHit | failOpen | mcp |
 |---|---|---|---|---|---|---|---|---|
@@ -304,6 +320,7 @@ Test helpers, all committed under `tests/bin-lib/dispatch/`:
 
 - `queue-pull-oracle.js`:
   - `oracleSkip(platform = process.platform, bash = findBash())` and `findBash()`.
+  - `fenceSessionFiles(fence)` returns the fence's `--value <name>` arguments in fence order, the 26 session-file names. Task 1 reads session files through this list. Task 2's `SESSION_FILES` is pinned equal to it, plus `dispatch-next-pick.json`.
   - `extractFence(mdText, firstLine)` returns the ```` ```bash ```` block whose first line equals `firstLine`. It splits on `/\r?\n/` and throws `anchor not found` when no fence matches.
   - `createSandbox(scenario, { transport, origin })`, `runOracle(sandbox, script)`, `runModuleCli(sandbox, argv)` and `withEscapeGuard(repoRoot, fn)`.
   - `normalize`, `reported`, `assertParity(a, b, { files })` and `runAll(jobs, limit)`.
@@ -318,11 +335,10 @@ Comparison rules:
 
 - A run returns `{ status, stdout, stderr, files, staged, decisions, orderBlob, ghArgv, gitArgv }`.
 - `reported(text)` keeps the lines matching `/^(AUTO — dispatch: |- AUTO \d{2}:\d{2}:\d{2} — |Warning: |dispatch: queue-pull stopped -- |Queue-order cache |express-lane: |resolve-policy: )/`. These are the AUTO and Warning lines that AC1 compares on each channel.
-- `normalize` makes exactly three substitutions:
-  - the sandbox root becomes `<SCR>`;
-  - the run-dir basename becomes `<RUN>`;
-  - the D2 suffix `dispatch-target-missing-<N>.<10 alnum>` becomes `.<mktemp>`.
-  The clock is frozen by the stub, not normalized.
+- `normalize` makes only AC1's substitutions: the sandbox root becomes `<SCR>`, and the run-dir basename becomes `<RUN>`.
+  - The clock is frozen by the stub rather than normalized.
+  - Temp names come out identical on both sides through the `QP_TMPNAME_COUNTER_FILE` seam, so they need no normalization.
+  - This list is the test header's normalization list.
 
 ---
 
@@ -340,7 +356,10 @@ Comparison rules:
 
 **Interfaces:**
 - Consumes: `tests/helpers/path-stub.js` (`STUB_SKIP_REASON`), `tests/helpers/read-skill.js` (`readText`), `tests/helpers/git-fixtures.js` (`fixtureGit`).
-- Produces: every `queue-pull-oracle.js` export except `filesOracleScript` and `runModuleCli`, plus `S0`, `fakeRun` and `shimTable`.
+- Produces:
+  - Every `queue-pull-oracle.js` export except `filesOracleScript`, `runPair` (Task 8) and `runModuleCli` (Task 7). That includes `fenceSessionFiles`.
+  - `S0`, `fakeRun` and `shimTable` from `queue-pull-fixtures.js`.
+  - Task 1 does not depend on Task 2. Nothing here imports `plugin/bin/lib/dispatch/queue-pull.js`.
 
 The sandbox follows the probe design:
 
@@ -351,14 +370,14 @@ The sandbox follows the probe design:
 - `bin/` holds:
   - `gh`: a node script with an absolute `#!<process.execPath>` shebang. It answers from `QP_SHIM_TABLE`, logs each argv to `logs/gh-argv.jsonl`, and applies the `effect`s `corrupt-exclusions`, `corrupt-groups` and `delete-session-file:<name>`. It never calls the real gh. On a miss it exits 97 with `gh-shim: no canned response for: …`.
   - `git`: runs the real git (absolute path resolved at harness start) only when the realpath of the cwd and of every `-C` lies under `<root>`. It refuses when `GIT_DIR` or `GIT_WORK_TREE` is set. It answers `remote get-url origin` with `scenario.remoteUrl`, defaulting to `https://github.com/fixture-owner/fixture-repo.git`, fails the argv prefixes listed in `scenario.gitFail`, and logs every call.
-  - `mktemp`: with no args it runs `exec /usr/bin/mktemp "$TMPDIR/tmp.XXXXXXXXXX"`, and it refuses any args.
+  - `mktemp`: called with no args, it reads the integer in `$QP_TMPNAME_COUNTER_FILE` (0 when the file is absent) and increments it. It then creates `$TMPDIR/tmp.qp<8-digit counter>`, prints that path, and writes the counter back. It refuses any args. This is the same format and env var as `deps.tmpName`'s seam (Plan Review Clarifications, criterion 1).
   - `node`: a symlink.
 - Env (R2):
   - `PATH=<bin>:/usr/bin:/bin`, `TMPDIR=<root>/tmp/<fresh>`, `TZ=UTC` and `LANG=C`.
   - `CLAUDE_PLUGIN_ROOT=<worktree>/plugin`, forward-slashed.
   - `CLAUDE_CODE_SESSION_ID=qp-<random>`.
   - The git isolation set: `GIT_CEILING_DIRECTORIES`, `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL`, and `GIT_AUTHOR_DATE`/`GIT_COMMITTER_DATE` set to `2026-11-12T12:00:00Z`.
-  - `QP_SHIM_TABLE`, `QP_LOG_DIR` and `NODE_OPTIONS`.
+  - `QP_SHIM_TABLE`, `QP_LOG_DIR`, `QP_TMPNAME_COUNTER_FILE=<root>/logs/tmpname-counter` and `NODE_OPTIONS`.
 
 - [ ] **Step 1: Write the failing tests** in `queue-pull.test.js`:
 
@@ -385,6 +404,13 @@ test('#5227 oracle: extractFence anchors on the fence first line and reads CRLF 
   assert.equal(extractFence(lf.replace(/\n/g, '\r\n'), FENCE_FIRST_LINE), extractFence(lf, FENCE_FIRST_LINE));
   assert.throws(() => extractFence(lf, 'NOT_A_LINE'), /anchor not found/);
 });
+test('#5227 oracle: fenceSessionFiles lists the fence --value names in order', () => {
+  const names = fenceSessionFiles(extractFence(readText(SCRIPT_MD), FENCE_FIRST_LINE));
+  assert.equal(names.length, 26);
+  assert.equal(names[0], 'dispatch-queue-raw.json');
+  assert.equal(names[25], 'dispatch-shape-gate.err');
+});
+test('#5227 oracle: the mktemp shim emits tmp.qp00000001 then tmp.qp00000002 from QP_TMPNAME_COUNTER_FILE', { skip: oracleSkip() }, () => {});
 ```
 
 - `FENCE_FIRST_LINE` is the fence's line 18: `DISPATCH_QUEUE_RAW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-queue-raw.json)"`.
@@ -398,13 +424,13 @@ Expected: FAIL (`Cannot find module './queue-pull-oracle'`)
 
 - [ ] **Step 3: Implement** the three helpers.
   - The oracle spawns `spawn(bash, ['--noprofile', '--norc', '-c', 'ulimit -f 4096; exec "$0" --noprofile --norc "$1"', bash, scriptFile], { cwd: proj, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })`.
-  - `files` reads every `SESSION_FILES` name from the session dir, with `null` for an absent file.
+  - `files` reads every `fenceSessionFiles(FENCE)` name from the session dir, plus `dispatch-next-pick.json`, with `null` for an absent file.
   - `orderBlob` is the parsed output of `git -C <origin.git> show health-state:queue-order/order.json`, or `null`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `node --test --test-name-pattern="#5227 oracle" tests/bin-lib/dispatch/queue-pull.test.js`
-Expected: PASS (4 tests). Without bash ≥ 4, three of them SKIP with `no bash oracle`.
+Expected: PASS (6 tests). Without bash ≥ 4, three of them SKIP with `no bash oracle`.
 
 - [ ] **Step 5: Commit**
 
@@ -420,6 +446,7 @@ Claude-Session: https://claude.ai/code/session_01UwjosEusBiNWBiJFRWNNmQ"
 ### Task 2: `PASSES` registry, session paths, truncate pass, `queuePull` loop
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Create: `plugin/bin/lib/dispatch/queue-pull.js`
@@ -447,14 +474,17 @@ test('AC11.1 go-red: a reason missing from either side fails', () => {
 test('AC11.1: runPasses walks a registry in array order and runs a shared id once', () => { /* reversed PASSES copy, stub runners via ctx, onPass order = unique ids of the reversed copy */ });
 test('AC11.2: every registry field has a fixed value set', () => { /* booleans; kind/failOpen/mcp ⊆ PASS_FIELD_VALUES; reason null iff kind !== 'exclusion'; ids unique except blocker-landing */ });
 test('#5227 truncate keeps only firing entries (Q28)', () => { /* real appendExclusion writes firing+blocked+oversized → runPasses([truncate]) → only the firing entry */ });
-test('#5227 SESSION_FILES equals the fence --value list in fence order', () => {});
+test('#5227 SESSION_FILES equals the fence --value list in fence order', () => {
+  assert.deepEqual(SESSION_FILES, [...fenceSessionFiles(extractFence(readText(SCRIPT_MD), FENCE_FIRST_LINE)), 'dispatch-next-pick.json']);
+});
+test('#5227 tmpName: random tmp.<10 alnum> by default; tmp.qp00000001, tmp.qp00000002 under QP_TMPNAME_COUNTER_FILE', () => {});
 test('#5227 sessionPaths fallback: no session id gives path.join(os.tmpdir(), name)', () => {});
 test('#5227 omit: unknown reason or a setup pass throws TypeError; malformed-blocker maps to blocker-landing', () => {});
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `node --test --test-name-pattern="AC11|truncate keeps|SESSION_FILES|sessionPaths|omit:" tests/bin-lib/dispatch/queue-pull.test.js`
+Run: `node --test --test-name-pattern="AC11|truncate keeps|SESSION_FILES|sessionPaths|tmpName:|omit:" tests/bin-lib/dispatch/queue-pull.test.js`
 Expected: FAIL (`Cannot find module '../../../plugin/bin/lib/dispatch/queue-pull'`)
 
 - [ ] **Step 3: Implement** the exports above.
@@ -465,7 +495,7 @@ Expected: FAIL (`Cannot find module '../../../plugin/bin/lib/dispatch/queue-pull
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `node --test --test-name-pattern="AC11|truncate keeps|SESSION_FILES|sessionPaths|omit:" tests/bin-lib/dispatch/queue-pull.test.js`
+Run: `node --test --test-name-pattern="AC11|truncate keeps|SESSION_FILES|sessionPaths|tmpName:|omit:" tests/bin-lib/dispatch/queue-pull.test.js`
 Expected: PASS
 
 - [ ] **Step 5: Run the source scans**
@@ -497,7 +527,10 @@ Claude-Session: https://claude.ai/code/session_01UwjosEusBiNWBiJFRWNNmQ"
 **Interfaces:**
 - Consumes: Task 2's loop and deps.
 - Produces: the runners for `fetch`, `blocked`, `oversized` and `write-back`.
-  - Policy is read with `deps.spawnCli('resolve-policy.js', ['--values', key])`, using the fence's keys in the fence's order: `dispatch-group-size-guard` (also read before the cache check), then `work-links`, then `dispatch-fastlane-bundle-cap`. Its stderr is forwarded.
+  - Policy is read with `deps.spawnCli('resolve-policy.js', ['--values', key])`, and its stderr is forwarded. The reads follow the fence exactly:
+    - `dispatch-group-size-guard`, once, inside the cache check (fence line 107).
+    - On a cache miss only: `work-links`, then `dispatch-group-size-guard` again, then `dispatch-fastlane-bundle-cap` (fence lines 156-158).
+    - The module reproduces both size-guard reads. A test asserts the recorded `spawnCli` sequence for a miss and for a hit.
 
 - [ ] **Step 1: Write the failing tests.** All of them run in-process with `fakeRun(S1)`, `fakeSpawnCli(S1)`, a fake `queueOrder` store that records the blobs written to it, and a fixed `now`. Each reason has one assertion function, and both its positive run and its omitted run go through that function; the omitted run must make it throw.
   - `AC2.1 blocked`: #9002 is `Blocked by` #8000, which is open. It gets `{reason:'blocked', records:[9002], detail:{blockedBy:[8000]}}` and leaves the groups. With `omit:['blocked']` it stays in the groups and no entry is written.
@@ -571,7 +604,7 @@ Claude-Session: https://claude.ai/code/session_01UwjosEusBiNWBiJFRWNNmQ"
     - It gets `{path:'docs/gone.md'}`.
     - log-decision receives the fence's text.
     - The staged body equals the fence's echo lines.
-    - The `--file` name matches `/tmp\.[A-Za-z0-9]{10}$/` (D2).
+    - The `--file` name is whatever `deps.tmpName()` returned. With the default seam that is `/tmp\.[A-Za-z0-9]{10}$/`, which is D2 reproduced. With `QP_TMPNAME_COUNTER_FILE` set it is `tmp.qp00000001`, and the staged id gets that extension.
   - `AC2.1 shipped`:
     - #9010 has a strong mention. It is excluded with `{pr, signals}`, prints the strong AUTO line, and stages `shipped-close-9010`.
     - #9016 has a weak mention. It prints the weak AUTO line, is probed with `gh pr view <pr> --json files -q [.files[].path]` (at most 5 probes), and stays.
@@ -627,7 +660,7 @@ Claude-Session: https://claude.ai/code/session_01UwjosEusBiNWBiJFRWNNmQ"
 - Consumes: Task 4's integration branch and `work-links`.
 - Produces: the runners for `blocker-landing`, `neighbour-in-flight`, `cross-pr-overlap` and `near-dup-pairs`. With these, `queuePull` is complete.
   - `blocker-landing` spawns `dispatch-unlanded-blockers.js --groups <p> --exclusions <p> --integration-branch <b> --work-links <w>`. On exit 0 its stdout replaces the groups file; any non-zero exit produces the fence's stop line.
-  - `neighbour-in-flight` reads claims through `deps.createClaimReader().read` on `gh`, and through `claimReaderFromMap(...)` over `inputs.inFlightClaims` on `files`. A missing or malformed in-flight-raw or claims FILE stops the pull (A2, R8).
+  - `neighbour-in-flight` reads claims through `deps.createClaimReader().read` on `gh`, and through `claimReaderFromMap(...)` over `inputs.inFlightClaims` on `files`. A missing or malformed in-flight-raw or claims FILE stops the pull (R8; Plan Review Clarifications, criterion 7).
 
 - [ ] **Step 1: Write the failing tests** (in-process, S1):
   - `AC2.1 malformed-blocker`: #9012 is blocked by #0 and is excluded with `{cause}`.
@@ -645,7 +678,7 @@ Claude-Session: https://claude.ai/code/session_01UwjosEusBiNWBiJFRWNNmQ"
     - on `files` the pass writes `[]` and makes no gh call;
     - a 100-PR list prints the 100-cap Warning.
   - `#5227 near-dup`: a strong cross-group pair prints its AUTO line, and only strong pairs are written to `dispatch-near-dup-pairs.json`.
-  - `AC2.1: every registry entry that writes a reason, and each informational pass, goes red when omitted`. For each non-`setup` entry, run S1 with `omit: [p.reason || p.id]` and assert that the reason's entries, or the pass's output file, differ from the full run. Also assert that the sweep covered 12 entries.
+  - `AC2.1: every registry entry that writes a reason, and each informational pass, goes red when omitted`. For each non-`setup` entry, run S1 with `omit: [p.reason || p.id]` and assert that the reason's entries, or the pass's output file, differ from the full run. Also assert the swept count: `assert.equal(PASSES.filter((p) => p.kind !== 'setup').length, 11)`, and check the loop ran exactly that many entries.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -675,6 +708,7 @@ Claude-Session: https://claude.ai/code/session_01UwjosEusBiNWBiJFRWNNmQ"
 ### Task 6: `rankNext` and `rankFromFiles`
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/dispatch/queue-pull.js`
@@ -739,6 +773,7 @@ Claude-Session: https://claude.ai/code/session_01UwjosEusBiNWBiJFRWNNmQ"
 ### Task 7: CLI `plugin/bin/queue-pull.js` and `docs/plugin-structure.md`
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Create: `plugin/bin/queue-pull.js`
@@ -850,7 +885,7 @@ describe('#5227 parity (AC1)', { skip: oracleSkip(), timeout: 600_000 }, () => {
   const R = {};
   before(async () => Object.assign(R, await runAll(MATRIX.map((cfg) => () => runPair(cfg)), POOL)));
   for (const cfg of MATRIX) test(`AC1.1 [${cfg.name}]: groups, exclusions and every other output equal the script's`, () => assertParity(R[cfg.name].oracle, R[cfg.name].module, { files: AC1_FILES }));
-  test('AC1.2: normalize substitutes only the sandbox root, the run id and the D2 mktemp suffix', () => {});
+  test('AC1.2: normalize substitutes only the sandbox root and the run id; the staged target-missing ids are byte-equal on both sides (deterministic temp names)', () => {});
   test('AC1.1 go-red: assertParity throws when the module result drops one exclusion entry', () => {});
   test('AC2.3: removing reasons are absent from dispatch-groups.json while oversized and neighbour-in-flight are present, both sides', () => {});
   test('AC3.1 parity: #9004/#9005/#9006 carry one reason each and the linked-PR GraphQL names no #9004 alias, both sides', () => {});
@@ -859,13 +894,13 @@ describe('#5227 parity (AC1)', { skip: oracleSkip(), timeout: 600_000 }, () => {
 });
 describe('#5227 parity (AC5, portability)', { skip: oracleSkip(), timeout: 600_000 }, () => {
   test('AC5.1: an empty queue yields the same files as the script', () => {});
-  test('AC5.2: non-array labels, a non-string body and an invalid Blocked-by number are handled as the script handles them, and #9001 keeps its verdict', () => {});
+  test('AC5.2: non-array labels, a non-string body and an invalid Blocked-by number are handled as the script handles them, and #9001\'s verdict matches the oracle\'s', () => {});
   test('#5227 portability: release/next and acme-corp/widgets reach git cat-file, --integration-branch and the GraphQL owner/repo on both sides', () => {});
 });
 ```
 
 - The real-writer pin keeps the in-process fixtures from Tasks 3-5 from drifting away from the real CLIs.
-- AC5.2 asserts whatever the oracle does. If one malformed candidate changes #9001's verdict in the oracle, the module reproduces that, and the build adds a ledger row naming the second half of AC5.2 as unmet by the script.
+- AC5.2's second half asserts that #9001's verdict in the module matches its verdict in the oracle, whatever the malformed candidates do to it (Plan Review Clarifications, criteria 4 and 5). Any cross-candidate effect the oracle shows is already tracked on the run ledger.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -943,8 +978,8 @@ Claude-Session: https://claude.ai/code/session_01UwjosEusBiNWBiJFRWNNmQ"
 
 ```js
 describe('#5227 parity (AC4 fetch failures)', { skip: oracleSkip(), timeout: 600_000 }, () => {
-  for (const f of FAULTS) test(`AC4.1 [${f.id}]: the module takes the script's path — exit category, reported lines per channel, exclusions and groups`, () => {});
-  test('AC4.2: each PASSES failOpen equals the posture observed in its fault run', () => {});
+  for (const f of FAULTS) test(`AC4.1 [${f.id}]: the module takes the script's path — this fetch's posture, exit category, the same zero or one reported line per channel, exclusions and groups`, () => {});
+  test('AC4.2: each PASSES failOpen equals the strictest posture observed across that pass\'s fault fixtures (stop if any stops, else open; n/a with no fetch)', () => {});
   test('AC4.3: F-corrupt and F-groups stop the pull on both sides (oracle exit 1, CLI exit 4)', () => {});
   test('AC4.4: the oracle stops on exactly the observed stop set, and every other fault exits 0', () => {});
   test('AC4.5: F-writeback exits 0 on both sides with the non-blocking write-back line', () => {});
@@ -952,17 +987,18 @@ describe('#5227 parity (AC4 fetch failures)', { skip: oracleSkip(), timeout: 600
 });
 describe('#5227 parity (AC7.2 files inputs)', { skip: oracleSkip(), timeout: 600_000 }, () => {
   for (const f of FILES_FAULTS) test(`AC7.2 [${f.input} ${f.mode}]: module and oracle agree on the outcome`, () => {});
-  test('AC7.2: in-flight raw and claims FILE missing or malformed stop the pull; [] and {} values fail open; a bad foreign-states file excludes as (state unreadable) with a fail-closed Warning (A2 reversal)', () => {});
+  test('AC7.2: in-flight raw and claims FILE missing or malformed stop the pull; [] and {} values fail open; a bad foreign-states file excludes as (state unreadable) with a fail-closed Warning (Plan Review Clarifications, criterion 7)', () => {});
   test('#5227 D3: a wrapper-object queue file yields an empty pool, exit 0, no Warning, both sides', () => {});
   test('#5227 D4: a non-JSON claim string yields no exclusion and no AUTO line, both sides', () => {});
   test('#5227 D1: a second pull in the same session whose open-numbers fetch returns empty reuses the first pull\'s eligible files, both sides', () => {});
 });
 ```
 
-- **AC4.1's "one line" takes the oracle as truth.** If the oracle answers a fail-open fault with zero lines, the test asserts zero lines and the build adds a ledger row.
-  - F-depfresh, F-depview, F-prview and F-openprs are expected to be silent, because of the fence's `2>/dev/null || echo '[]'`.
+- **AC4.1 checks what the oracle prints** (Plan Review Clarifications, criteria 4 and 5). A fail-open fault asserts the same zero or one `Warning:`/`AUTO` line on the same channel as the oracle, and that nothing is excluded.
+  - F-depfresh, F-depview, F-prview and F-openprs are expected to be silent, because the fence routes them through `2>/dev/null || echo '[]'`. These silent fail-opens are already tracked on the run ledger.
   - F-intbranch is expected to exclude every named-target candidate against `origin/` (Review Focus 3).
-- **A2 reverses AC7.2's fail-open wording.** The test titles state the outcome actually observed.
+- **AC4.2 compares one value per pass.** It takes the strictest posture across that pass's fault rows. Each per-fetch posture is asserted in its own AC4.1 row (Plan Review Clarifications, criteria 4 and 11).
+- **AC7.2 asserts the outcomes the Plan Review Clarifications set for criterion 7.**
 - **D1 reuses one session id** for two runs per side. It is the only deliberate reuse.
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -971,7 +1007,7 @@ Run: `node --test --test-name-pattern="parity \(AC4|parity \(AC7.2" tests/bin-li
 Expected: FAIL (`FAULTS is not iterable`)
 
 - [ ] **Step 3: Implement** the overlays, then fix each module divergence.
-  - When the observed `failOpen` differs from the seed, correct it in `PASSES`.
+  - If the strictest observed posture for a pass differs from its seed `failOpen`, correct the value in `PASSES`.
   - A stop the census finds beyond Q3's two gets a module stop at the same step (AC4.5).
 
 - [ ] **Step 4: Run test to verify it passes**
