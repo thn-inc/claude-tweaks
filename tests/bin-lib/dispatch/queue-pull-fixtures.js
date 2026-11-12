@@ -2,12 +2,13 @@
 // #5227: scenario builders and the one gh answer table both sides of the queue-pull parity
 // suite read. `scenario.gh` is a list of entries, each one of:
 //   { argv: string[], stdout, stderr?, status?, effect? }  -- matched by exact argv equality
-//   { graphql: 'linked'|'native'|'landing'|'foreign', aliases: { <alias>: node }, status?, effect? }
+//   { graphql: 'linked'|'native'|'landing'|'foreign', aliases: { <alias>: node }, status?, stdout?, stderr?, effect? }
 // A graphql entry matches an `api graphql` call whose query is that kind (the signature of the
 // query builder in plugin/bin/lib), and answers with only the aliases the query requests; a
 // requested alias the entry lacks makes the call a miss (an explicit null is GitHub's not-found). A
 // non-zero `status` injects a failure after the output is written, as gh does on a partial
-// GraphQL error. `effect` mutates a session file before the answer: `corrupt-exclusions`,
+// GraphQL error; a graphql entry's own `stdout` (and `stderr`) replaces that output, so a fault can
+// fail the call with no data at all. `effect` mutates a session file before the answer: `corrupt-exclusions`,
 // `corrupt-groups` or `delete-session-file:<name>`.
 // An unmatched call fails on both sides: the PATH shim exits 97 with
 // `gh-shim: no canned response for: …`, and fakeRun throws 'unexpected gh ' + args.join(' ').
@@ -77,7 +78,10 @@ function ghAnswer(entries, argv) {
     for (const entry of entries || []) {
       if (!entry.graphql || !GRAPHQL_KINDS[entry.graphql].query.test(query)) continue;
       const stdout = graphqlAnswer(entry, query);
-      if (stdout !== null) return { stdout, stderr: '', status: entry.status || 0, effect: entry.effect || null };
+      // An entry's own `stdout`/`stderr` replace the data answer (a fault's failure with no data).
+      if (stdout !== null) {
+        return { stdout: entry.stdout !== undefined ? entry.stdout : stdout, stderr: entry.stderr || '', status: entry.status || 0, effect: entry.effect || null };
+      }
     }
   }
   return null;
@@ -531,6 +535,182 @@ function SFast() {
   };
 }
 
+// --- fault overlays (Task 9: AC4 fetch failures, AC7.2 files inputs, the D1 reproduction) ---------
+//
+// Each overlay makes one fetch fail on both sides through the shared table: a gh entry with
+// `status: 1` (no stdout, an injected stderr line), a `gitFail` prefix the git shim and fakeRun
+// both honour, or an `effect` on the call that reaches the step. Every other answer is the base
+// scenario's, so a fault run differs from its base only by that fetch.
+
+const OPEN_NUMBERS_ARGV = ['issue', 'list', '--state', 'open', '--json', 'number', '--limit', '200'];
+const IN_FLIGHT_ARGV = ['issue', 'list', '--label', 'bot:in-progress', '--state', 'open', '--json', 'number,title,body,labels', '--limit', '200'];
+const OPEN_PRS_ARGV = ['pr', 'list', '--state', 'open', '--json', 'number,files,closingIssuesReferences', '--limit', '100'];
+const PR_VIEW_5016_ARGV = ['pr', 'view', '5016', '--json', 'files', '-q', '[.files[].path]'];
+const contentsApiArgv = (n) => ['api', `repos/${REPO_SLUG}/contents/claims/issue-${n}.json?ref=claims-registry`, '-q', '{content: (.content | @base64d), sha: .sha}'];
+const GH_FAULT_STDERR = 'gh-fault: injected failure\n';
+const NOT_JSON = 'this is not json';
+
+const clone = (scenario) => JSON.parse(JSON.stringify(scenario));
+const sameArgv = (a, b) => Array.isArray(a) && a.length === b.length && a.every((x, i) => x === b[i]);
+
+// The gh answer for `argv` fails: no stdout, the injected stderr line, exit 1. An argv the base
+// table does not answer is added, so the failing call is answered rather than UNHANDLED.
+function failGh(scenario, argv) {
+  const failed = { argv, stdout: '', stderr: GH_FAULT_STDERR, status: 1 };
+  const known = scenario.gh.some((e) => sameArgv(e.argv, argv));
+  scenario.gh = known ? scenario.gh.map((e) => (sameArgv(e.argv, argv) ? failed : e)) : [failed, ...scenario.gh];
+  return scenario;
+}
+
+// Every graphql entry of `kind` fails with no data: no stdout, the injected stderr line, exit 1.
+// (Exit 1 after a data answer is a partial error, which resolve-foreign-blockers.js reads as usable.)
+function failGraphql(scenario, kind) {
+  scenario.gh = scenario.gh.map((e) => (e.graphql === kind ? { ...e, stdout: '', stderr: GH_FAULT_STDERR, status: 1 } : e));
+  return scenario;
+}
+
+// `effect` lands on the graphql entry of `kind`, which still answers (exit 0).
+function effectOn(scenario, kind, effect) {
+  scenario.gh = scenario.gh.map((e) => (e.graphql === kind ? { ...e, effect } : e));
+  return scenario;
+}
+
+// Adds `record` to the queue and the open-numbers answers, and its linked-PR alias (no PR, no
+// mention), so a record a fault lets through reaches the later passes with every call answered.
+function withRecord(scenario, record, { open = true } = {}) {
+  scenario.gh = scenario.gh.map((e) => {
+    if (sameArgv(e.argv, QUEUE_ARGV)) return { ...e, stdout: JSON.stringify([...JSON.parse(e.stdout), record]) + '\n' };
+    if (open && sameArgv(e.argv, OPEN_NUMBERS_ARGV)) return { ...e, stdout: JSON.stringify([...JSON.parse(e.stdout), { number: record.number }]) + '\n' };
+    if (e.graphql === 'linked') return { ...e, aliases: { ...e.aliases, [`i${record.number}`]: linkedNode(record.number) } };
+    return e;
+  });
+  return scenario;
+}
+
+// An OPEN blocker's landing node: the landing check reads it `open` and leaves it to the blocked pass.
+const OPEN_LANDING = (number) => ({
+  number, state: 'OPEN', stateReason: null, timelineItems: { nodes: [] }, closedByPullRequestsReferences: { pageInfo: { hasNextPage: false }, nodes: [] },
+});
+
+// S1({ parity: true }) with #8000 outside the open-numbers pull, so the fence checks it live with
+// `gh issue view 8000` (answered OPEN, so #9002 is held). `viewFails` makes that view fail: #9002
+// then passes the blocked pass, so it is also given its linked-PR alias and #8000 its landing node.
+// (The brief's `issue view 8100` is S2's native blocker, which S2's open-numbers pull answers and
+// whose body-text dependency no record declares; #8000 is the body-text dependency that reaches
+// this loop.)
+function S1LiveDep({ viewFails = false } = {}) {
+  const s = S1({ parity: true });
+  const view = ['issue', 'view', '8000', '--json', 'state', '-q', '.state'];
+  s.gh = s.gh.map((e) => (sameArgv(e.argv, OPEN_NUMBERS_ARGV)
+    ? { ...e, stdout: JSON.stringify(JSON.parse(e.stdout).filter((r) => r.number !== 8000)) + '\n' } : e));
+  s.gh.unshift({ argv: view, stdout: 'OPEN\n' });
+  if (!viewFails) return s;
+  failGh(s, view);
+  s.gh = s.gh.map((e) => {
+    if (e.graphql === 'linked') return { ...e, aliases: { ...e.aliases, i9002: linkedNode(9002) } };
+    if (e.graphql === 'landing') return { ...e, aliases: { ...e.aliases, b8000: OPEN_LANDING(8000) } };
+    return e;
+  });
+  return s;
+}
+
+// FAULTS (gh transport): { id, pass, scenario(), warm? }. `pass` is the PASSES id whose fetch the
+// fault fails ('(stop)' for the two effects that make a step's input unreadable). `warm` runs it
+// after a clean miss of the same base, each side copying its own origin (the queue-order blob).
+const P1 = () => S1({ parity: true });
+const FAULTS = [
+  { id: 'F-queue', pass: 'fetch', scenario: () => failGh(P1(), QUEUE_ARGV) },
+  { id: 'F-opennum', pass: 'fetch', scenario: () => failGh(P1(), OPEN_NUMBERS_ARGV) },
+  { id: 'F-depfresh', pass: 'fetch', warm: true, scenario: () => failGh(P1(), DEP_SEARCH_PIPELINE_HIT) },
+  { id: 'F-depview', pass: 'blocked', scenario: () => S1LiveDep({ viewFails: true }) },
+  {
+    id: 'F-native', pass: 'blocked',
+    // #9030 is natively blocked only through the failing query, so it survives to the later
+    // passes: its linked-PR alias is answered.
+    scenario: () => {
+      const s = failGraphql(S2(), 'native');
+      s.gh = s.gh.map((e) => (e.graphql === 'linked' ? { ...e, aliases: { ...e.aliases, i9030: linkedNode(9030) } } : e));
+      return s;
+    },
+  },
+  { id: 'F-foreign', pass: 'blocked', scenario: () => failGraphql(S2(), 'foreign') },
+  { id: 'F-linked', pass: 'open-pr', scenario: () => failGraphql(P1(), 'linked') },
+  {
+    id: 'F-intbranch', pass: 'target-missing',
+    // #9017 names docs/present.md, which origin/main holds: only the unresolved branch excludes it.
+    scenario: () => Object.assign(withRecord(P1(), ghRecord(9017, {
+      body: `**Doc:** docs/present.md | **Section:** fixture\n\n${withBody(9017)}`, labels: ['auto:build', 'ready', 'by:docs-health'],
+    })), { gitFail: [['remote', 'show', 'origin']] }),
+  },
+  { id: 'F-prview', pass: 'shipped', scenario: () => failGh(P1(), PR_VIEW_5016_ARGV) },
+  { id: 'F-landing', pass: 'blocker-landing', scenario: () => failGraphql(P1(), 'landing') },
+  { id: 'F-inflight', pass: 'neighbour-in-flight', scenario: () => failGh(P1(), IN_FLIGHT_ARGV) },
+  {
+    id: 'F-claim', pass: 'neighbour-in-flight',
+    // The claim reader's git-CAS fetch, then its contents-API fallback, for every claim the pull
+    // reads (the shipped pass's release times for #9010 and #9016, the neighbour pass's #7001).
+    scenario: () => {
+      const s = P1();
+      for (const n of [7001, 9010, 9016]) failGh(s, contentsApiArgv(n));
+      return Object.assign(s, { gitFail: [['fetch', '-q', 'origin']] });
+    },
+  },
+  { id: 'F-openprs', pass: 'cross-pr-overlap', scenario: () => failGh(P1(), OPEN_PRS_ARGV) },
+  { id: 'F-writeback', pass: 'write-back', scenario: () => Object.assign(P1(), { gitFail: [['push']] }) },
+  { id: 'F-corrupt', pass: '(stop)', scenario: () => effectOn(P1(), 'linked', 'corrupt-exclusions') },
+  { id: 'F-groups', pass: '(stop)', scenario: () => effectOn(P1(), 'linked', 'corrupt-groups') },
+];
+
+// FILES_FAULTS (files transport): { id, input, mode, pass, scenario(), agent(base agent files) ->
+// agent files, warm? }. `missing` leaves the file unwritten (the agent wrote none), `malformed`
+// writes NOT_JSON; the queue's `wrapper` (D3), the claim map's `non-JSON string` (D4) and the
+// agent-written `[]` / `{}` values are the shapes the Plan Review Clarifications name.
+const withAgent = (name, content) => (files) => {
+  const out = { ...files };
+  if (content === undefined) delete out[name];
+  else out[name] = content;
+  return out;
+};
+const FILES_INPUTS = [
+  { input: 'queueRaw', file: 'dispatch-queue-raw.json', pass: 'fetch' },
+  { input: 'depFreshness', file: 'dispatch-dep-freshness.json', pass: 'fetch', warm: true },
+  { input: 'openNumbers', file: 'dispatch-open-numbers.json', pass: 'fetch' },
+  { input: 'verifiedOpenDeps', file: 'dispatch-verified-open-deps.txt', pass: 'blocked', scenario: () => S1LiveDep() },
+  { input: 'inFlightRaw', file: 'dispatch-in-flight-raw.json', pass: 'neighbour-in-flight' },
+  { input: 'inFlightClaims', file: 'dispatch-in-flight-claims.json', pass: 'neighbour-in-flight' },
+];
+const FILES_FAULTS = [];
+for (const { input, file, pass, warm, scenario = P1 } of FILES_INPUTS) {
+  for (const [mode, content] of [['missing', undefined], ['malformed', NOT_JSON]]) {
+    FILES_FAULTS.push({ id: `files-${input}-${mode}`, input, mode, pass, warm: Boolean(warm), scenario, agent: withAgent(file, content) });
+  }
+}
+FILES_FAULTS.push(
+  // The same missing file on a cold cache: only the write-back's search point reads it (the
+  // in-process twin is the files dependency-freshness test's third block).
+  { id: 'files-depFreshness-missing-cold', input: 'depFreshness', mode: 'missing (cold cache)', pass: 'fetch', warm: false, scenario: P1, agent: withAgent('dispatch-dep-freshness.json', undefined) },
+  { id: 'files-queueRaw-wrapper', input: 'queueRaw', mode: 'wrapper', pass: 'fetch', scenario: P1,
+    agent: (files) => ({ ...files, 'dispatch-queue-raw.json': JSON.stringify({ issues: JSON.parse(files['dispatch-queue-raw.json']) }) }) },
+  { id: 'files-inFlightRaw-empty', input: 'inFlightRaw', mode: 'empty []', pass: 'neighbour-in-flight', scenario: P1, agent: withAgent('dispatch-in-flight-raw.json', '[]') },
+  { id: 'files-inFlightClaims-empty', input: 'inFlightClaims', mode: 'empty {}', pass: 'neighbour-in-flight', scenario: P1, agent: withAgent('dispatch-in-flight-claims.json', '{}') },
+  { id: 'files-inFlightClaims-string', input: 'inFlightClaims', mode: 'non-JSON string', pass: 'neighbour-in-flight', scenario: P1,
+    agent: withAgent('dispatch-in-flight-claims.json', JSON.stringify({ 7001: NOT_JSON })) },
+  // DISPATCH_FOREIGN_STATES (S2): scenario.foreign null names a file the agent never wrote; a
+  // string is written as is.
+  { id: 'files-foreignStates-missing', input: 'foreignStates', mode: 'missing', pass: 'blocked', scenario: () => Object.assign(S2(), { foreign: null }), agent: (f) => f },
+  { id: 'files-foreignStates-malformed', input: 'foreignStates', mode: 'malformed', pass: 'blocked', scenario: () => Object.assign(S2(), { foreign: NOT_JSON }), agent: (f) => f },
+);
+
+// D1: two pulls in one session. The second's open-numbers fetch returns nothing (exit 1), and
+// #9003 changed since the first (a new title and updatedAt, so the queue-order cache misses).
+function D1Second() {
+  const s = failGh(S1(), OPEN_NUMBERS_ARGV);
+  s.gh = s.gh.map((e) => (sameArgv(e.argv, QUEUE_ARGV)
+    ? { ...e, stdout: JSON.stringify(JSON.parse(e.stdout).map((r) => (r.number === 9003 ? { ...r, title: 'Retitled after the first pull', updatedAt: '2026-11-12T11:00:00Z' } : r))) + '\n' }
+    : e));
+  return s;
+}
+
 // The in-process twin of the policy / blocker CLIs the passes spawn: resolve-policy.js answers
 // scenario.policy (unset keys read as the empty line); any other CLI needs an override, a result
 // object or (args, opts) => result. The returned function records `.calls` ({name, args}).
@@ -607,4 +787,5 @@ module.exports = {
   ghLabel, ghRecord, SPEC_BODY, QUEUE_ARGV, DEP_SEARCH_8000, withBody, S0, S1, S2, SEmpty, SMalformed, SPortable, SFast, fakeSpawnCli, agentInputs,
   LANDING_COMMIT, PORTABLE_SLUG,
   REPO_SLUG, linkedNode, linkedOutput, mention, WEAK_PR_FILES, tailGh, IN_FLIGHT_7001, OPEN_PR_41, LIVE_CLAIM,
+  FAULTS, FILES_FAULTS, D1Second, S1LiveDep, failGh, NOT_JSON, GH_FAULT_STDERR, contentsApiArgv,
 };

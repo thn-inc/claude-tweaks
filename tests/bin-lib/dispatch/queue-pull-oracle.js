@@ -286,8 +286,10 @@ function writeShims(bin, { gh = true } = {}) {
 // sandbox's origin.git to copy (a cache-hit run after its cache-miss run); scenario.origin is then
 // unused. On transport 'files' the bin holds no gh shim and the PATH no gh at all, `agent`
 // ({ name: content }) is written to <root>/agent (QP_AGENT_DIR, what filesOracleScript's agent
-// writes copy from), and scenario.foreign ({ 'owner/name#N': state }) is written there as
-// foreign-states.json and exported as DISPATCH_FOREIGN_STATES.
+// writes copy from), and scenario.foreign ({ 'owner/name#N': state }; a string is written as is,
+// null writes nothing) is written there as foreign-states.json and exported as
+// DISPATCH_FOREIGN_STATES. `sandbox.setScenario(next)` swaps the gh and git answers for later runs
+// (the D1 reproduction's second pull); everything else stays the first scenario's.
 function createSandbox(scenario, { transport = 'gh', origin = null, name = scenario.name || 'sandbox', agent = {} } = {}) {
   installExitHooks();
   const table = shimTable(scenario);
@@ -338,9 +340,10 @@ function createSandbox(scenario, { transport = 'gh', origin = null, name = scena
     const agentDir = dir('agent');
     for (const [file, content] of Object.entries(agent)) fs.writeFileSync(path.join(agentDir, file), content);
     let foreignStates = null;
-    if (onFiles && scenario.foreign) {
+    if (onFiles && scenario.foreign !== undefined) {
       foreignStates = path.join(agentDir, 'foreign-states.json');
-      fs.writeFileSync(foreignStates, JSON.stringify(scenario.foreign));
+      // An object is written as JSON, a string as is; null names a file the agent never wrote.
+      if (scenario.foreign !== null) fs.writeFileSync(foreignStates, typeof scenario.foreign === 'string' ? scenario.foreign : JSON.stringify(scenario.foreign));
     }
     let systemPath = ['/usr/bin', '/bin'];
     if (onFiles) {
@@ -377,8 +380,9 @@ function createSandbox(scenario, { transport = 'gh', origin = null, name = scena
       // reports as a timeout).
       return JSON.parse(git(['-C', originDir, 'show', 'health-state:queue-order/order.json'], { maxBuffer: 64 * 1024 * 1024 }));
     };
+    const setScenario = (next) => fs.writeFileSync(tablePath, JSON.stringify({ ...shimTable(next), root, realGit }));
     return {
-      name, transport, scenario, root, home, proj, bin, logs, agentDir, origin: originDir, runDir, runs: 0, runEnv, orderBlob, cleanup,
+      name, transport, scenario, root, home, proj, bin, logs, agentDir, origin: originDir, runDir, runs: 0, runEnv, orderBlob, cleanup, setScenario,
     };
   } catch (err) {
     cleanup();
@@ -445,15 +449,17 @@ const readJsonl = (file) => (readOrNull(file) || '').split('\n').filter(Boolean)
 // sessionTmpRoot rule, which this test process cannot call directly (its os.tmpdir() differs).
 const sessionDirUnder = (tmpdir, sessionId) => path.join(tmpdir, `ct-session-${String(sessionId).trim()}`);
 
-// runOracle(sandbox, script, { sessionId }) -> { status, stdout, stderr, files, staged, decisions,
-// orderBlob, ghArgv, gitArgv }, plus a non-enumerable `sandbox`. The session id is derived from
-// the sandbox name, so a parity pair's two sandboxes print the same paths after normalize.
-async function runOracle(sandbox, script, { sessionId = `qp-${sandbox.name}` } = {}) {
+// runOracle(sandbox, script, { sessionId, tmp }) -> { status, stdout, stderr, files, staged,
+// decisions, orderBlob, ghArgv, gitArgv }, plus a non-enumerable `sandbox`. The session id is
+// derived from the sandbox name, so a parity pair's two sandboxes print the same paths after
+// normalize. `tmp` names the run's TMPDIR under <root>/tmp (default `run-<n>`, fresh per run): the
+// D1 reproduction passes one name to two runs, its only deliberate session reuse.
+async function runOracle(sandbox, script, { sessionId = `qp-${sandbox.name}`, tmp = null } = {}) {
   const bash = findBash();
   if (!bash) throw new Error(oracleSkip());
   return withEscapeGuard(REPO, async () => {
     sandbox.runs += 1;
-    const tmpdir = path.join(sandbox.root, 'tmp', `run-${sandbox.runs}`);
+    const tmpdir = path.join(sandbox.root, 'tmp', tmp || `run-${sandbox.runs}`);
     fs.mkdirSync(tmpdir, { recursive: true });
     const scriptFile = path.join(sandbox.root, `queue-pull-${sandbox.runs}.sh`);
     fs.writeFileSync(scriptFile, script);
@@ -471,10 +477,11 @@ async function runOracle(sandbox, script, { sessionId = `qp-${sandbox.name}` } =
 // `node <this checkout>/plugin/bin/queue-pull.js <argv>` with the sandbox's explicit env (PATH
 // shims, frozen clock, fresh TMPDIR) and cwd, inside the escape guard. `stage` ({ name: content })
 // is written to the run's session dir first: the `files` transport's inputs at their default paths.
-async function runModuleCli(sandbox, argv, { sessionId = `qp-${sandbox.name}`, stage = {} } = {}) {
+// `tmp` is runOracle's.
+async function runModuleCli(sandbox, argv, { sessionId = `qp-${sandbox.name}`, stage = {}, tmp = null } = {}) {
   return withEscapeGuard(REPO, async () => {
     sandbox.runs += 1;
-    const tmpdir = path.join(sandbox.root, 'tmp', `run-${sandbox.runs}`);
+    const tmpdir = path.join(sandbox.root, 'tmp', tmp || `run-${sandbox.runs}`);
     fs.mkdirSync(tmpdir, { recursive: true });
     for (const log of ['gh-argv.jsonl', 'git-argv.jsonl']) fs.writeFileSync(path.join(sandbox.logs, log), '');
     if (Object.keys(stage).length) {

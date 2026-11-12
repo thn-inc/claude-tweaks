@@ -24,6 +24,10 @@
 //               or excludes fail-closed as "unreadable");
 //     'n/a'  -- the pass makes no fetch.
 //   It is the strictest posture across all of the pass's fetches and across BOTH transports.
+//   A consumer cannot read fail-closed from failOpen alone: `blocked` is 'open', yet an unreadable
+//   foreign state excludes its record. Each fetch's exclusion effect is pinned by the fault rows
+//   (queue-pull.test.js AC4.1 and AC7.2), and each value here is asserted from those oracle runs
+//   (AC4.2), never from the spec.
 // `malformed-blocker` and `unlanded-blocker` share `id: 'blocker-landing'`, because one
 // dispatch-unlanded-blockers.js call writes both; they carry one identical failOpen. A shared id
 // runs once, at its first entry.

@@ -21,6 +21,19 @@
 //     block (record-vocabulary.js's normalizeLabelNames calls .map on it), so the eligible list is
 //     never written and the pull stops at the group-building check: one malformed record stops
 //     every candidate, the clean #9001 included (a cross-candidate effect, on the run ledger).
+// Script behavior the fault rows (Task 9) show, reproduced by the module, never fixed:
+//   - D1 reaches past the session files: the second pull's write-back persists the first pull's
+//     stale groups under the second pull's freshness signal, so a third pull over the same queue
+//     would hit the cache on them (NEW: beyond ledger row 1, which names the session files only).
+//   - One failed native-dependency GraphQL call (F-native) turns off two passes: the blocked pass's
+//     native filtering and, through preflight-records.js's native read, the unlanded-blocker pass
+//     (a Warning each). One failed claim fetch (F-claim) prints an AUTO line for the shipped pass and
+//     one for the neighbour pass. (NEW cross-pass effects; each pass still fails open.)
+//   - A missing or malformed DISPATCH_FOREIGN_STATES file on files prints two fail-closed Warnings:
+//     the ignored file, then the gh lookup bodyForeignBlockers still attempts with no gh.
+//   - A failed queue or open-numbers fetch stops the pull at the group-building check (the fetch
+//     pass's `stop`), a third and fourth stop beside Q3's corrupt-exclusions and unreadable-groups.
+//   - The silent fail-opens (ledger row 6) are F-depfresh, F-depview, F-prview and F-openprs.
 // One module divergence the matrix found and the module fixed (Task 3 carry): on `files` the
 // agent's dependency-freshness file stands where the fence's `gh issue list --search` stands, so
 // it is read only when there are dependency numbers to search; otherwise the fence's `echo '[]'`
@@ -40,7 +53,7 @@ const {
 } = require('./queue-pull-oracle');
 const {
   S0, S1, S2, SEmpty, SMalformed, SPortable, SFast, fakeRun, fakeSpawnCli, agentInputs, ghRecord, withBody, QUEUE_ARGV, DEP_SEARCH_8000, mention, WEAK_PR_FILES,
-  IN_FLIGHT_7001, OPEN_PR_41, LIVE_CLAIM, LANDING_COMMIT, PORTABLE_SLUG,
+  IN_FLIGHT_7001, OPEN_PR_41, LIVE_CLAIM, LANDING_COMMIT, PORTABLE_SLUG, FAULTS, FILES_FAULTS, D1Second, S1LiveDep, NOT_JSON,
 } = require('./queue-pull-fixtures');
 const {
   PASSES, PASS_FIELD_VALUES, SESSION_FILES, QueuePullStopped, sessionPaths, runPasses, resolveOmit, defaultDeps, makeContext, queuePull, rankNext, rankFromFiles,
@@ -137,6 +150,38 @@ test('#5227 oracle: the git shim refuses a directory outside the sandbox, an exp
     assert.equal(allowed.status, 0, allowed.stderr);
     const log = fs.readFileSync(path.join(sb.logs, 'git-argv.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
     assert.equal(log.filter((e) => e.tag === 'REFUSED').length, 9);
+  } finally {
+    sb.cleanup();
+  }
+});
+
+// Task 1 carry, closed in Task 9 (whose F-intbranch, F-claim and F-writeback faults inject through
+// gitFail): the git shim's injected failure, its unresolvable-directory refusal and its
+// unknown-global-option refusal, each pinned shim-side.
+test('#5227 oracle: the git shim fails a gitFail prefix with exit 128 (after the global options) and refuses an unresolvable -C directory and an unknown global option', { skip: oracleSkip() }, () => {
+  const s = S0();
+  s.gitFail = [['remote', 'show', 'origin'], ['fetch', '-q', 'origin']];
+  const sb = createSandbox(s);
+  try {
+    const env = sb.runEnv({ tmpdir: path.join(sb.root, 'tmp'), sessionId: 'qp-gitfail-probe' });
+    const git = (args) => spawnSync(path.join(sb.bin, 'git'), args, { cwd: sb.proj, env, encoding: 'utf8' });
+    const injected = git(['--no-optional-locks', '-C', sb.proj, 'remote', 'show', 'origin']);
+    assert.equal(injected.status, 128);
+    assert.equal(injected.stdout, '');
+    assert.equal(injected.stderr, 'git-shim: injected failure: remote show origin\n');
+    const prefixed = git(['fetch', '-q', 'origin', 'main:refs/qp-probe']);
+    assert.equal(prefixed.status, 128, 'a longer argv under the prefix is failed too');
+    const near = git(['fetch', 'origin', 'main']);
+    assert.equal(near.status, 0, `an argv off the prefix reaches the real git: ${near.stderr}`);
+    const unresolvable = git(['-C', path.join(sb.root, 'no-such-dir'), 'status']);
+    assert.equal(unresolvable.status, 97);
+    assert.equal(unresolvable.stderr, 'git-shim: refused (unresolvable directory ' + path.join(sb.root, 'no-such-dir') + '): -C ' + path.join(sb.root, 'no-such-dir') + ' status\n');
+    const unknown = git(['--bare', 'status']);
+    assert.equal(unknown.status, 97);
+    assert.equal(unknown.stderr, 'git-shim: refused (unknown global option --bare): --bare status\n');
+    const log = fs.readFileSync(path.join(sb.logs, 'git-argv.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    assert.deepEqual(log.map((e) => e.tag), ['injected', 'injected', 'delegated', 'REFUSED', 'REFUSED']);
+    assert.deepEqual(log.filter((e) => e.tag === 'REFUSED').map((e) => e.why), [`unresolvable directory ${path.join(sb.root, 'no-such-dir')}`, 'unknown global option --bare']);
   } finally {
     sb.cleanup();
   }
@@ -284,6 +329,11 @@ test('#5227 oracle: fakeRun answers the shim table by exact argv and requested g
   assert.throws(() => run('gh', ['api', 'graphql', '-f', twoAliases]), /^Error: unexpected gh api graphql /);
   const withNull = fakeRun({ gh: [{ graphql: 'linked', aliases: { i1: { number: 1 }, i3: null } }] });
   assert.deepEqual(JSON.parse(withNull('gh', ['api', 'graphql', '-f', twoAliases])), { data: { repository: { i1: { number: 1 }, i3: null } } });
+  // A graphql entry's own stdout/stderr replace the data answer (Task 9's no-data failure), still
+  // only for a query whose aliases it answers.
+  const noData = fakeRun({ gh: [{ graphql: 'linked', aliases: { i1: { number: 1 } }, stdout: '', stderr: 'gh-fault\n', status: 1 }] });
+  assert.throws(() => noData('gh', ['api', 'graphql', '-f', query]), (err) => err.status === 1 && err.stdout === '' && err.stderr === 'gh-fault\n');
+  assert.throws(() => noData('gh', ['api', 'graphql', '-f', twoAliases]), /^Error: unexpected gh api graphql /);
   // git: the same global-option skip and prefix matcher the shim uses.
   const gitRun = fakeRun({ gh: [], gitFail: [['remote', 'show', 'origin']], remoteUrl: 'https://example.invalid/o/r.git' });
   assert.throws(() => gitRun('git', ['-c', 'core.quotePath=false', '--no-optional-locks', '-C', '/x', 'remote', 'show', 'origin']), (err) => err.status === 128);
@@ -1029,6 +1079,8 @@ test('#5227 files: the dependency-freshness file is used only where the fence se
 
   // A declared dependency and no agent file: the agent wrote none, so the session file is removed
   // (filesOracleScript's `rm -f`), and the steps that read it fail as the fence's node blocks do.
+  // Its oracle pair is FILES_FAULTS' files-depFreshness-missing-cold (AC7.2): exit 0, the session
+  // file gone and no blob written, on both sides.
   const absent = pull(S1(), { transport: 'files', run: noGh, prepare: inputsWith([mcpRecord(9002, `Blocked by #8000\n\n${withBody(9002)}`)], null) });
   assert.equal(absent.text['dispatch-dep-freshness.json'], undefined);
   assert.match(absent.stderr, /queue-pull: alias-dep-freshness: ENOENT/);
@@ -2663,5 +2715,401 @@ describe('#5227 parity (AC5, portability)', { skip: oracleSkip(), timeout: 600_0
       assert.deepEqual(groupedIn(r), [9040], `${side}: docs/kept.md is present at origin/release/next`);
       assert.ok(r.stderr.includes(`blocker #8001 closed but its closing commit ${LANDING_COMMIT} is not on origin/release/next`), side);
     }
+  });
+});
+
+// ---- Task 9: fetch-failure faults (AC4), files-input faults (AC7.2) and the reproduced script
+// defects (D1, D3, D4). Each FAULTS row (queue-pull-fixtures.js) fails one gh fetch, and each
+// FILES_FAULTS row one files input, on both sides through the shared table. Its base is the same
+// scenario un-faulted, run in the same pool. A row asserts what the ORACLE did (Plan Review
+// Clarifications, criteria 4, 5 and 7): its exit, the lines it adds on each channel, and its
+// exclusions read against the base's. It then asserts that the module did the same.
+// Files compared: every session file but two kinds. The two `.err` files whose `$(cat)` tails the
+// header's one exception covers are left out. On files, so are the agent-written inputs: the module
+// side has them staged before its run, while the oracle's agent writes each at its fence point, so
+// a run that stops first leaves them unwritten on the oracle side only. ----
+
+const FAULT_TAIL_FILES = new Set(['dispatch-shape-gate.err', 'dispatch-linked-prs.err']);
+const AGENT_STAGED = new Set(['dispatch-queue-raw.json', 'dispatch-open-numbers.json', 'dispatch-dep-freshness.json',
+  'dispatch-verified-open-deps.txt', 'dispatch-in-flight-raw.json', 'dispatch-in-flight-claims.json']);
+const faultFiles = (transport) => SESSION_FILES.filter((n) => !FAULT_TAIL_FILES.has(n) && !(transport === 'files' && AGENT_STAGED.has(n)));
+const fullStop = (re) => { const m = re.exec(FENCE); return `${m[1]}1${m[2]}`; };
+const STOP_LINE = {
+  grouping: fullStop(GROUPING_STOP_RE),
+  cacheHit: fullStop(CACHE_HIT_STOP_RE),
+  neighbour: `${NEIGHBOUR_STOP}1); see error above.`,
+  target: `${TARGET_STOP}1); see error above.`,
+};
+// Lines the CLIs and libraries the fence runs print (not fence echo text).
+const LANDING_SKIPPED = 'Warning: unlanded-blocker pass skipped — ';
+const LANDING_EXITED = `${LANDING_SKIPPED}preflight-records.js exited 1; no unlanded-blocker exclusions this pull`;
+const CLAIM_READ_FAILED_7001 = 'AUTO — dispatch: neighbour-in-flight claim read failed for #7001; treated as not in flight';
+const FOREIGN_LOOKUP_NO_GH = 'Warning: foreign blocker state lookup failed (exit 2: resolve-foreign-blockers.js: `gh` is required) — every body-declared foreign blocker reads state unreadable (fail closed)';
+const NEAR_DUP = 'AUTO — dispatch: near-duplicate candidates across groups: ';
+const FOREIGN_UNREADABLE = 'acme-corp/other#12 (state unreadable)';
+
+const FAULT_BASES = {
+  gh: { 'gh-P1': PARITY_S1, 'gh-S2': S2, 'gh-livedep': () => S1LiveDep() },
+  files: { 'files-P1': PARITY_S1, 'files-S2': S2, 'files-livedep': () => S1LiveDep() },
+};
+
+// Per row: `status` the oracle's exit (the CLI's is 4 where it is 1); `base` the un-faulted run it
+// is read against (default <transport>-P1); `stderr` / `stdout` the prefixes, in order, of the
+// reported lines it adds on that channel, near-duplicate AUTO lines aside (that informational pass
+// reports whatever pool reaches it); `entries` its exclusions literally (reason:records), or else
+// `drops` / `adds` against the base's.
+const FAULT_EXPECT = {
+  'F-queue': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
+  'F-opennum': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
+  'F-depfresh': { status: 0, stderr: [], drops: [] },
+  'F-depview': { status: 0, base: 'gh-livedep', stderr: [], drops: ['blocked:9002'] },
+  'F-native': { status: 0, base: 'gh-S2', stderr: [`${NATIVE_WARNING_PREFIX}gh-fault: injected failure`, LANDING_EXITED], drops: ['blocked:9030'] },
+  'F-foreign': { status: 0, base: 'gh-S2', stderr: ['Warning: foreign blocker state lookup failed (exit 3: gh-fault: injected failure resolve-foreign-blockers.js: '], drops: [] },
+  'F-linked': { status: 0, stderr: [`${LINKED_WARNING}gh-fault: injected failure`], drops: ['open-pr:9005', 'open-pr:9008', 'shipped:9010'] },
+  'F-intbranch': {
+    status: 0, stderr: [`${LANDING_SKIPPED}no integration branch resolved; no unlanded-blocker exclusions this pull`],
+    stdout: [6, 9, 17].map((n) => `- AUTO 12:00:00 — log-decision: dispatch: #90${String(n).padStart(2, '0')} excluded, named target docs/${{ 6: 'gone6', 9: 'gone', 17: 'present' }[n]}.md absent at origin/. Reversibility: n/a.`),
+    drops: ['unlanded-blocker:9011'], adds: ['target-missing:9017'],
+  },
+  'F-prview': { status: 0, stderr: [], drops: [] },
+  'F-landing': { status: 0, stderr: [LANDING_EXITED], drops: ['unlanded-blocker:9011'] },
+  'F-inflight': { status: 0, stderr: [IN_FLIGHT_POOL_AUTO], drops: ['neighbour-in-flight:9013'] },
+  'F-claim': {
+    status: 0,
+    stderr: ['AUTO — dispatch: shipped-candidate claim read failed for #9010 (network-failure), #9016 (network-failure); release time unknown, no downgrade', CLAIM_READ_FAILED_7001],
+    drops: ['neighbour-in-flight:9013'],
+  },
+  'F-openprs': { status: 0, stderr: [], drops: [] },
+  'F-writeback': { status: 0, stderr: ['Queue-order cache write-back failed (non-blocking): Command failed: git -C <SCR>/proj push origin '], drops: [] },
+  'F-corrupt': { status: 1, stderr: [OPEN_STOP], entries: '{corrupt' },
+  'F-groups': { status: 1, stderr: [OPEN_FILTER_WARNING, STOP_LINE.target], entries: ['blocked:9002', 'oversized:9001+9003+9016', 'not-spec-shaped:9004', 'not-spec-shaped:9007'] },
+};
+const FILES_STOPPED_NEIGHBOUR = { status: 1, stderr: [STOP_LINE.neighbour], drops: ['neighbour-in-flight:9013'] };
+const FILES_FOREIGN = (why) => ({ status: 0, base: 'files-S2', stderr: [`Warning: foreign blocker states file <SCR>/agent/foreign-states.json ignored (${why}`, FOREIGN_LOOKUP_NO_GH], drops: [] });
+const FILES_EXPECT = {
+  'files-queueRaw-missing': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
+  'files-queueRaw-malformed': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
+  'files-depFreshness-missing': { status: 1, stderr: [STOP_LINE.cacheHit], entries: [] },
+  'files-depFreshness-malformed': { status: 1, stderr: [STOP_LINE.cacheHit], entries: [] },
+  'files-depFreshness-missing-cold': { status: 0, stderr: [], drops: [] },
+  'files-openNumbers-missing': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
+  'files-openNumbers-malformed': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
+  'files-verifiedOpenDeps-missing': { status: 0, base: 'files-livedep', stderr: [], drops: ['blocked:9002'] },
+  'files-verifiedOpenDeps-malformed': { status: 0, base: 'files-livedep', stderr: [], drops: ['blocked:9002'] },
+  'files-inFlightRaw-missing': FILES_STOPPED_NEIGHBOUR,
+  'files-inFlightRaw-malformed': FILES_STOPPED_NEIGHBOUR,
+  'files-inFlightClaims-missing': FILES_STOPPED_NEIGHBOUR,
+  'files-inFlightClaims-malformed': FILES_STOPPED_NEIGHBOUR,
+  'files-queueRaw-wrapper': { status: 0, stderr: [], entries: [] },
+  'files-inFlightRaw-empty': { status: 0, stderr: [], drops: ['neighbour-in-flight:9013'] },
+  'files-inFlightClaims-empty': { status: 0, stderr: [CLAIM_READ_FAILED_7001], drops: ['neighbour-in-flight:9013'] },
+  'files-inFlightClaims-string': { status: 0, stderr: [], drops: ['neighbour-in-flight:9013'] },
+  'files-foreignStates-missing': FILES_FOREIGN('ENOENT: '),
+  'files-foreignStates-malformed': FILES_FOREIGN('not valid JSON) — supplied states not used (fail closed)'),
+};
+
+// One pool per transport: its bases, then its rows (a `warm` row after <transport>-P1, copying that
+// side's origin and so its queue-order blob). Memoized: AC4.2 reads both transports.
+const faultGroups = {};
+function runFaultGroup(transport) {
+  if (!faultGroups[transport]) {
+    const rows = transport === 'gh' ? FAULTS : FILES_FAULTS;
+    const configs = [
+      ...Object.entries(FAULT_BASES[transport]).map(([name, make]) => ({ name, scenario: make(), transport })),
+      ...rows.map((row) => {
+        const scenario = row.scenario();
+        return { name: row.id, scenario, transport, after: row.warm ? `${transport}-P1` : undefined, agent: transport === 'files' ? row.agent(agentInputs(scenario)) : null };
+      }),
+    ];
+    const t0 = Date.now();
+    faultGroups[transport] = runAll(pairJobs(configs), POOL).then((R) => ({ R, pairs: configs.length, ms: Date.now() - t0 }));
+  }
+  return faultGroups[transport];
+}
+after(async () => {
+  for (const group of Object.values(faultGroups)) {
+    let settled = null;
+    try { settled = await group; } catch { /* runAll already reported the failure; nothing to clean */ }
+    if (settled) cleanupPairs(settled.R);
+  }
+});
+
+const compactEntries = (r) => {
+  const text = r.files['dispatch-exclusions.json'];
+  try { return JSON.parse(text).map((e) => `${e.reason}:${e.records.join('+')}`); } catch { return text; }
+};
+const injectedCalls = (r) => [...r.ghArgv, ...r.gitArgv].filter((a) => a.tag === 'injected').map((a) => a.argv.join(' '));
+// The reported lines `r` adds on `channel` over its base's, near-duplicate AUTO lines aside.
+function addedLines(r, base, channel) {
+  const seen = new Set(normalize(reported(base[channel]), base.sandbox));
+  return normalize(reported(r[channel]), r.sandbox).filter((l) => !seen.has(l) && !l.startsWith(NEAR_DUP));
+}
+const posture = (r) => (r.status === 0 ? 'open' : 'stop');
+
+// One row: the oracle against the expectation, then the module against the oracle.
+function assertFaultRow(row, expect, R, transport) {
+  const pair = R[row.id];
+  const base = R[expect.base || `${transport}-P1`];
+  assertClean(pair, row.id);
+  assertClean(base, `${row.id} base`);
+  assert.equal(base.oracle.status, 0, `${row.id} base: ${base.oracle.stderr.slice(-2000)}`);
+  const { oracle } = pair;
+  const module = expect.status === 1 ? stopMapped(oracle, pair.module) : pair.module;
+  assert.equal(oracle.status, expect.status, `${row.id}: the oracle's exit: ${oracle.stderr.slice(-2000)}`);
+  if (expect.status === 0) assert.equal(pair.module.status, 0, `${row.id}: the CLI's exit: ${pair.module.stderr.slice(-2000)}`);
+  for (const channel of ['stderr', 'stdout']) {
+    const added = addedLines(oracle, base.oracle, channel);
+    const want = expect[channel] || [];
+    assert.equal(added.length, want.length, `${row.id} ${channel}: the oracle adds ${JSON.stringify(added)}`);
+    want.forEach((prefix, i) => assert.ok(added[i].startsWith(prefix), `${row.id} ${channel}[${i}]: ${added[i]} does not start ${prefix}`));
+  }
+  const entries = compactEntries(oracle);
+  if (expect.entries !== undefined) {
+    assert.deepEqual(entries, expect.entries, `${row.id}: the oracle's exclusions`);
+  } else {
+    const baseEntries = compactEntries(base.oracle);
+    for (const e of expect.drops) assert.ok(baseEntries.includes(e), `${row.id}: the base writes ${e} (control)`);
+    const want = [...baseEntries.filter((e) => !expect.drops.includes(e)), ...(expect.adds || [])].sort();
+    assert.deepEqual([...entries].sort(), want, `${row.id}: the oracle's exclusions against its base's`);
+  }
+  if (transport === 'gh' && row.pass !== '(stop)') {
+    // The fault fired: each side logged an injected call its base did not make.
+    const baseInjected = new Set(injectedCalls(base.oracle));
+    for (const [side, r] of sides(pair)) assert.ok(injectedCalls(r).some((c) => !baseInjected.has(c)), `${row.id} ${side}: the fault's call was injected`);
+  }
+  assertParity(oracle, module, { files: faultFiles(transport) });
+}
+
+describe('#5227 parity (AC4 fetch failures)', { skip: oracleSkip(), timeout: 600_000 }, () => {
+  let R = {};
+  let group = null;
+  before(async () => {
+    group = await runFaultGroup('gh');
+    R = group.R;
+  });
+
+  for (const f of FAULTS) {
+    test(`AC4.1 [${f.id}]: the module takes the script's path — this fetch's posture, exit category, the same zero or one reported line per channel, exclusions and groups`, () => {
+      assert.ok(FAULT_EXPECT[f.id], `${f.id} has an expectation row`);
+      assertFaultRow(f, FAULT_EXPECT[f.id], R, 'gh');
+    });
+  }
+
+  test('AC4.1 detail: each fault\'s own effect, both sides (cache miss, fail-closed foreign state, origin/ targets, unprobed files, no overlap, no blob)', () => {
+    for (const [side, r] of sides(R['F-depfresh'])) {
+      assert.ok(!r.stderr.includes(HIT_MESSAGE), `F-depfresh ${side}: the failed freshness search turns a warm cache into a miss`);
+      assert.deepEqual(groupedIn(r), groupedIn(R['gh-P1'].oracle), `F-depfresh ${side}: the recompute reaches the base's groups`);
+    }
+    for (const [side, r] of sides(R['F-foreign'])) {
+      assert.deepEqual(exclusionsIn(r).find((e) => e.records[0] === 9031).detail.blockedBy, [FOREIGN_UNREADABLE], `F-foreign ${side}: fail closed`);
+    }
+    assert.deepEqual(exclusionsIn(R['gh-S2'].oracle).find((e) => e.records[0] === 9031).detail.blockedBy, ['acme-corp/other#12'], 'the S2 base reads the state (control)');
+    for (const [side, r] of sides(R['F-intbranch'])) {
+      assert.deepEqual(exclusionsIn(r).find((e) => e.records[0] === 9017).detail, { path: 'docs/present.md' }, `F-intbranch ${side}`);
+      assert.ok(r.gitArgv.some((e) => e.tag === 'injected' && e.argv.join(' ') === 'remote show origin'), `F-intbranch ${side}`);
+      const proposals = Object.entries(r.staged).filter(([n]) => n.startsWith('dispatch-target-missing-')).map(([, body]) => body);
+      assert.equal(proposals.length, 3, `F-intbranch ${side}`);
+      assert.ok(proposals.every((body) => body.includes('absent at `origin/`')), `F-intbranch ${side}: every target-missing Close proposal names origin/`);
+    }
+    for (const [side, r] of sides(R['F-prview'])) assert.equal(r.files['dispatch-shipped-pr-files.jsonl'], '{"pr":5016,"files":[]}\n', `F-prview ${side}: a failed probe reads as no files`);
+    assert.equal(R['gh-P1'].oracle.files['dispatch-shipped-pr-files.jsonl'], `{"pr":5016,"files":${JSON.stringify(WEAK_PR_FILES)}}\n`, 'the base probes the files (control)');
+    for (const [side, r] of sides(R['F-openprs'])) assert.deepEqual(JSON.parse(r.files['dispatch-crosspr-overlap.json']), [], `F-openprs ${side}`);
+    assert.notDeepEqual(JSON.parse(R['gh-P1'].oracle.files['dispatch-crosspr-overlap.json']), [], 'the base reports #9001 against PR #41 (control)');
+    for (const [side, r] of sides(R['F-depview'])) assert.ok(groupedIn(r).includes(9002), `F-depview ${side}: #9002 is dispatchable`);
+    for (const [side, r] of sides(R['gh-livedep'])) assert.ok(r.ghArgv.some((a) => a.argv.join(' ') === 'issue view 8000 --json state -q .state'), `gh-livedep ${side}: the live check is what holds #9002`);
+  });
+
+  test('AC4.2: each PASSES failOpen equals the strictest posture observed across that pass\'s fault fixtures (stop if any stops, else open; n/a with no fetch)', { timeout: 600_000 }, async (t) => {
+    const files = (await runFaultGroup('files')).R;
+    const strictest = (side) => {
+      const out = {};
+      for (const [rows, results] of [[FAULTS, R], [FILES_FAULTS, files]]) {
+        for (const row of rows.filter((x) => x.pass !== '(stop)')) {
+          const p = posture(results[row.id][side]);
+          out[row.pass] = out[row.pass] === 'stop' || p === 'stop' ? 'stop' : 'open';
+        }
+      }
+      return out;
+    };
+    const observed = strictest('oracle');
+    assert.deepEqual(strictest('module'), observed, 'the module\'s exits give the same postures');
+    for (const id of Object.keys(observed)) assert.ok(PASSES.some((p) => p.id === id), `fault rows name a registry id: ${id}`);
+    for (const p of PASSES) assert.equal(p.failOpen, observed[p.id] || 'n/a', `${p.id} (${p.reason || p.kind})`);
+    // PF6: neighbour-in-flight is open on gh and stop on files; the stricter value wins.
+    assert.equal(posture(R['F-inflight'].oracle), 'open');
+    assert.equal(posture(files['files-inFlightRaw-missing'].oracle), 'stop');
+    t.diagnostic(`postures: ${JSON.stringify(observed)}`);
+  });
+
+  test('AC4.3: F-corrupt and F-groups stop the pull on both sides (oracle exit 1, CLI exit 4)', () => {
+    for (const id of ['F-corrupt', 'F-groups']) {
+      const { oracle, module } = R[id];
+      stopMapped(oracle, module);
+      for (const [side, r] of sides(R[id])) assert.ok(reported(r.stderr).at(-1).startsWith('dispatch: queue-pull stopped -- '), `${id} ${side}: the stop line is the last reported line`);
+    }
+    for (const [side, r] of sides(R['F-groups'])) assert.equal(r.files['dispatch-groups.json'], '{corrupt', `F-groups ${side}: the unreadable groups file is left as it was`);
+  });
+
+  test('AC4.4: the oracle stops on exactly the observed stop set, and every other fault exits 0', (t) => {
+    const STOP_SET = ['F-corrupt', 'F-groups', 'F-opennum', 'F-queue'];
+    assert.deepEqual(FAULTS.filter((f) => R[f.id].oracle.status !== 0).map((f) => f.id).sort(), STOP_SET, 'the oracle');
+    assert.deepEqual(FAULTS.filter((f) => R[f.id].module.status !== 0).map((f) => f.id).sort(), STOP_SET, 'the module');
+    for (const f of FAULTS) {
+      const want = STOP_SET.includes(f.id) ? [1, 4] : [0, 0];
+      assert.deepEqual([R[f.id].oracle.status, R[f.id].module.status], want, f.id);
+    }
+    t.diagnostic(`AC4 gh group: ${group.pairs} pairs (${group.pairs * 2} runs), pool ${POOL}, wall ${group.ms} ms`);
+  });
+
+  test('AC4.5: F-writeback exits 0 on both sides with the non-blocking write-back line', () => {
+    assert.ok(R['gh-P1'].oracle.orderBlob, 'the base persists the blob (control)');
+    for (const [side, r] of sides(R['F-writeback'])) {
+      assert.equal(r.status, 0, `${side}: ${r.stderr.slice(-2000)}`);
+      assert.equal(reported(r.stderr).filter((l) => l.startsWith('Queue-order cache write-back failed (non-blocking): ')).length, 1, side);
+      assert.equal(r.orderBlob, null, `${side}: the push failed, so origin holds no blob`);
+      assert.ok(r.gitArgv.some((e) => e.tag === 'injected' && e.argv.includes('push')), side);
+      assert.deepEqual(groupedIn(r), groupedIn(R['gh-P1'].oracle), `${side}: the pull went on to the base's groups`);
+    }
+  });
+
+  test('AC4.6 parity: after F-corrupt the CLI exits 4, the exclusions file is byte-identical to the oracle\'s, and no later pass wrote its file', () => {
+    const { oracle, module } = R['F-corrupt'];
+    assert.equal(module.status, 4);
+    assert.equal(module.files['dispatch-exclusions.json'], oracle.files['dispatch-exclusions.json']);
+    assert.equal(oracle.files['dispatch-exclusions.json'], '{corrupt');
+    const LATER = ['dispatch-named-targets.json', 'dispatch-shipped-probe-prs.json', 'dispatch-shipped-pr-files.jsonl', 'dispatch-shipped-releases.json',
+      'dispatch-in-flight-raw.json', 'dispatch-open-prs.json', 'dispatch-crosspr-overlap.json', 'dispatch-near-dup-pairs.json'];
+    for (const [side, r] of sides(R['F-corrupt'])) {
+      for (const name of LATER) assert.equal(r.files[name], null, `${side}: ${name} (a pass after open-pr)`);
+      assert.deepEqual(r.staged, {}, `${side}: no Close proposal staged`);
+      assert.equal(r.decisions, '', `${side}: no decision logged`);
+    }
+    for (const name of LATER) assert.notEqual(R['gh-P1'].oracle.files[name], null, `the base writes ${name} (control)`);
+  });
+});
+
+// D1: two pulls in one session per side (the one deliberate session reuse: one session id and one
+// TMPDIR), the second answering from D1Second's table.
+async function runD1() {
+  const made = [];
+  try {
+    const oracleSb = createSandbox(S1(), { name: 'D1' });
+    made.push(oracleSb);
+    const moduleSb = createSandbox(S1(), { name: 'D1' });
+    made.push(moduleSb);
+    const both = () => Promise.all([
+      runOracle(oracleSb, FENCE, { tmp: 'one-session' }),
+      runModuleCli(moduleSb, ['--transport', 'gh'], { tmp: 'one-session' }),
+    ]);
+    const [o1, m1] = await both();
+    for (const sb of made) sb.setScenario(D1Second());
+    const [o2, m2] = await both();
+    return { first: { oracle: o1, module: m1 }, second: { oracle: o2, module: m2 } };
+  } catch (err) {
+    for (const sb of made) sb.cleanup();
+    throw err;
+  }
+}
+
+describe('#5227 parity (AC7.2 files inputs)', { skip: oracleSkip(), timeout: 600_000 }, () => {
+  let R = {};
+  let group = null;
+  let d1 = null;
+  before(async () => {
+    group = await runFaultGroup('files');
+    R = group.R;
+    d1 = await runD1();
+  });
+  after(() => { if (d1) cleanupPairs({ first: d1.first }); });
+
+  for (const f of FILES_FAULTS) {
+    test(`AC7.2 [${f.input} ${f.mode}]: module and oracle agree on the outcome`, () => {
+      assert.ok(FILES_EXPECT[f.id], `${f.id} has an expectation row`);
+      assertFaultRow(f, FILES_EXPECT[f.id], R, 'files');
+    });
+  }
+
+  test('AC7.2: in-flight raw and claims FILE missing or malformed stop the pull; [] and {} values fail open; a bad foreign-states file excludes as (state unreadable) with a fail-closed Warning (Plan Review Clarifications, criterion 7)', (t) => {
+    for (const id of ['files-inFlightRaw-missing', 'files-inFlightRaw-malformed', 'files-inFlightClaims-missing', 'files-inFlightClaims-malformed']) {
+      stopMapped(R[id].oracle, R[id].module);
+      for (const [side, r] of sides(R[id])) assert.equal(reported(r.stderr).at(-1), STOP_LINE.neighbour, `${id} ${side}`);
+    }
+    for (const id of ['files-inFlightRaw-empty', 'files-inFlightClaims-empty']) {
+      for (const [side, r] of sides(R[id])) {
+        assert.equal(r.status, 0, `${id} ${side}`);
+        assert.deepEqual(exclusionsIn(r).filter((e) => e.reason === 'neighbour-in-flight'), [], `${id} ${side}: excludes nothing`);
+      }
+    }
+    assert.deepEqual(exclusionsIn(R['files-P1'].oracle).filter((e) => e.reason === 'neighbour-in-flight').map((e) => e.records[0]), [9013], 'the base excludes #9013 (control)');
+    for (const id of ['files-foreignStates-missing', 'files-foreignStates-malformed']) {
+      for (const [side, r] of sides(R[id])) {
+        assert.equal(r.status, 0, `${id} ${side}`);
+        assert.deepEqual(exclusionsIn(r).find((e) => e.records[0] === 9031).detail.blockedBy, [FOREIGN_UNREADABLE], `${id} ${side}: fail closed`);
+        assert.ok(reported(r.stderr).some((l) => l.startsWith('Warning: ') && l.endsWith('(fail closed)')), `${id} ${side}: a fail-closed Warning`);
+      }
+    }
+    assert.deepEqual(exclusionsIn(R['files-S2'].oracle).find((e) => e.records[0] === 9031).detail.blockedBy, ['acme-corp/other#12'], 'a readable file answers the state (control)');
+    t.diagnostic(`AC7.2 files group: ${group.pairs} pairs (${group.pairs * 2} runs), pool ${POOL}, wall ${group.ms} ms`);
+  });
+
+  test('AC7.2: a dependency-freshness file the agent never wrote stops a warm-cache pull at the cache check, and on a cold cache only leaves the write-back unwritten', () => {
+    for (const [side, r] of sides(R['files-depFreshness-missing'])) {
+      assert.equal(reported(r.stderr).at(-1), STOP_LINE.cacheHit, `warm ${side}`);
+      assert.equal(r.files['dispatch-groups.json'], null, `warm ${side}: the stop came before any groups file`);
+    }
+    assert.ok(R['files-P1'].oracle.orderBlob, 'the cold base persists its blob (control)');
+    for (const [side, r] of sides(R['files-depFreshness-missing-cold'])) {
+      assert.equal(r.status, 0, `cold ${side}`);
+      assert.equal(r.files['dispatch-dep-freshness.json'], null, `cold ${side}: the agent wrote none, so the session file is gone`);
+      assert.equal(r.orderBlob, null, `cold ${side}: the write-back cannot read the freshness and persists nothing`);
+      assert.deepEqual(groupedIn(r), groupedIn(R['files-P1'].oracle), `cold ${side}: the pull itself is the base's`);
+    }
+  });
+
+  test('#5227 D3: a wrapper-object queue file yields an empty pool, exit 0, no Warning, both sides', () => {
+    for (const [side, r] of sides(R['files-queueRaw-wrapper'])) {
+      assert.equal(r.status, 0, side);
+      assert.deepEqual(JSON.parse(r.files['dispatch-groups.json']), [], `${side}: an empty pool`);
+      assert.equal(r.files['dispatch-queue-raw.json'], '[]', `${side}: aliasMcpTimestamps rewrote the wrapper as []`);
+      assert.deepEqual([...reported(r.stderr), ...reported(r.stdout)].filter((l) => l.startsWith('Warning: ')), [], `${side}: no Warning`);
+    }
+    assert.ok(groupedIn(R['files-P1'].oracle).length > 0, 'the same records unwrapped are dispatchable (control)');
+  });
+
+  test('#5227 D4: a non-JSON claim string yields no exclusion and no AUTO line, both sides', () => {
+    for (const [side, r] of sides(R['files-inFlightClaims-string'])) {
+      assert.equal(r.status, 0, side);
+      assert.deepEqual(exclusionsIn(r).filter((e) => e.reason === 'neighbour-in-flight'), [], side);
+      assert.ok(!r.stderr.includes('neighbour-in-flight claim read failed'), `${side}: no AUTO line`);
+    }
+    // A number left out of the map ({}) is a failed read and does print it (control).
+    for (const [side, r] of sides(R['files-inFlightClaims-empty'])) assert.ok(reported(r.stderr).includes(CLAIM_READ_FAILED_7001), side);
+  });
+
+  test('#5227 D1: a second pull in the same session whose open-numbers fetch returns empty reuses the first pull\'s eligible files, both sides', () => {
+    const { first, second } = d1;
+    assertClean(first, 'D1 first');
+    assertClean(second, 'D1 second');
+    for (const [side] of sides(second)) {
+      const one = first[side];
+      const two = second[side];
+      assert.equal(one.status, 0, `${side} first: ${one.stderr.slice(-2000)}`);
+      assert.equal(two.status, 0, `${side} second: exit 0 on stale data: ${two.stderr.slice(-2000)}`);
+      assert.equal(two.files['dispatch-open-numbers.json'], '', `${side}: the second open-numbers fetch returned nothing`);
+      assert.ok(two.ghArgv.some((a) => a.tag === 'injected' && a.argv.join(' ') === OPEN_NUMBERS_ARGV.join(' ')), side);
+      assert.ok(!two.stderr.includes(HIT_MESSAGE), `${side}: the changed #9003 makes the cache miss`);
+      for (const name of ['dispatch-eligible-pre-dep.json', 'dispatch-eligible.json', 'dispatch-blocked-excluded-body.json']) {
+        assert.equal(two.files[name], one.files[name], `${side}: ${name} is the first pull's`);
+      }
+      assert.ok(JSON.parse(two.files['dispatch-queue-raw.json']).some((c) => c.title === 'Retitled after the first pull'), `${side}: the second queue holds the new title`);
+      const title9003 = (groups) => groups.flat().find((c) => c.number === 9003).title;
+      assert.equal(title9003(JSON.parse(two.files['dispatch-groups.json'])), 'Fixture record 9003', `${side}: the groups carry the first pull's record`);
+      // Beyond the session files: the write-back persists those stale groups under the second
+      // pull's freshness signal, so a third pull over the same queue would hit the cache on them.
+      assert.equal(title9003(two.orderBlob.groups), 'Fixture record 9003', `${side}: the blob holds the stale groups`);
+      assert.equal(two.orderBlob.freshnessSignal.issues.find((i) => i.number === 9003).updatedAt, '2026-11-12T11:00:00Z', `${side}: under the new freshness`);
+    }
+    assertParity(first.oracle, first.module, { files: faultFiles('gh') });
+    assertParity(second.oracle, second.module, { files: faultFiles('gh') });
   });
 });
