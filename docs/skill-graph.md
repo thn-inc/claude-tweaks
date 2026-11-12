@@ -379,6 +379,7 @@ is `plugin/skills/_shared/integration-branch.md`. Paths outside the payload (`do
 | `_shared/work-record.md` | Taxonomy home — the record label contract Stage 1's record scan reads (see that file's "The axes" table for the canonical list; not restated here). `/help` has no row in the permission matrix — it never adds or removes a label, only queries the taxonomy every other row writes to. |
 | `bin/lib/policy-schema.js` | Policy mode calls `auditPolicy()` for its Issues section and `resolveValue()` to validate each approved edit before writing, and reads `POLICY_KEYS` live for enum values (same module harness-health and init call, a third slice of the result). |
 | `bin/resolve-policy.js` | Policy mode takes one `--all` snapshot per run; every section renders from it, including the apply path revert, which reads prior values from the snapshot, never by re-reading the file. |
+| `_shared/policy-schema-read-path.md` | Policy mode's derived-default special case (`help/policy.md`) reads Shape A / Shape B membership here, reached through `_shared/policy-schema.md`'s Canonical read path stub; split out by #5216 for rail headroom (headroom-forced, not a designed boundary). |
 | `_shared/github-pr-scan-triage.md` | Stage 4.6's `triage-queue` scope — split from `_shared/github-pr-scan.md` (#4820) when that file reached the Read rail, so the split is headroom-forced, not a designed boundary. Inlined whole into the Stage 4.6 scan agent's prompt; read raw, never composed. |
 
 ## init
