@@ -1012,22 +1012,22 @@ function runPasses(passes, ctx) {
 
 function tmpName() {
   const counterFile = process.env.QP_TMPNAME_COUNTER_FILE;
+  let next = null;
   let base;
   if (counterFile) {
     let stored = null;
     try { stored = fs.readFileSync(counterFile, 'utf8'); } catch (err) { if (!err || err.code !== 'ENOENT') throw err; }
     const n = stored === null ? 0 : Number(stored);
     if (!Number.isSafeInteger(n) || n < 0) throw new Error(`queue-pull: tmpName: counter file holds ${JSON.stringify(stored)}`);
-    const file = path.join(os.tmpdir(), `tmp.qp${String(n + 1).padStart(8, '0')}`);
-    fs.writeFileSync(file, '', { flag: 'wx', mode: 0o600 });
-    fs.writeFileSync(counterFile, String(n + 1));
-    return file;
+    next = n + 1;
+    base = `tmp.qp${String(next).padStart(8, '0')}`;
   } else {
     const alnum = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
     base = 'tmp.' + Array.from(crypto.randomBytes(10), (b) => alnum[b % alnum.length]).join('');
   }
   const file = path.join(os.tmpdir(), base);
   fs.writeFileSync(file, '', { flag: 'wx', mode: 0o600 });
+  if (next !== null) fs.writeFileSync(counterFile, String(next)); // only after a successful create
   return file;
 }
 
@@ -1040,15 +1040,14 @@ function defaultDeps() {
       }
       return execFileSync(cmd, args, { encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, timeout: GIT_TIMEOUT_MS, windowsHide: true, ...opts });
     },
-    spawnCli(name, args, { input, cwd, env } = {}) {
-      const r = spawnSync(process.execPath, [path.join(BIN_DIR, name), ...args], { encoding: 'utf8', input, cwd, env, maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true });
+    spawnCli(name, args, { cwd, env } = {}) {
+      const r = spawnSync(process.execPath, [path.join(BIN_DIR, name), ...args], { encoding: 'utf8', cwd, env, maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true });
       return { status: r.status, stdout: r.stdout || '', stderr: r.stderr || '' };
     },
     stdout: (s) => process.stdout.write(s),
     stderr: (s) => process.stderr.write(s),
     now: () => new Date(),
     tmpName,
-    sleep: (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
     queueOrder: {
       readOrder: (...a) => require('./queue-order').readOrder(...a),
       writeOrder: (...a) => require('./queue-order').writeOrder(...a),
