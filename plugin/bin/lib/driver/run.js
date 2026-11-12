@@ -11,7 +11,8 @@
 // word for the stop's class (events.js's outcomeFor; `none` when nothing stopped), the
 // totals with and without the CI wait, the PR, the CI word, the worker's cost, turns and
 // denial count, and the structured stop the settle unit reads. A record that sets
-// ctx.shared.fatal (the policy could not be read) ends the run with exit 1.
+// ctx.shared.fatal (the policy, the run's repository or its integration branch cannot be
+// resolved) ends the run with exit 1.
 //
 // Every side effect goes through `deps` (gh-api-module-pattern's CLI wrapper contract);
 // realDeps below is the real set. #5216's admission module and eligibility option are
@@ -31,14 +32,15 @@ const sharedPrimitives = require('../shared-primitives');
 
 const USAGE = [
   'Usage: drive.js #N [#M…]',
+  '       drive.js --help | -h   (prints this text; exit 0, before any probe)',
   'Takes each named record, one at a time and in order, from admission to a draft PR with',
   'CI read. Prints one JSON event line per step on stdout (and, once the run directory',
   'exists, to {run-dir}/driver-events.jsonl); each record ends with a final line carrying',
   'its outcome: pending-review, express-escalated, blocked or refused. Nothing merges.',
   'Exit codes (Combined-2):',
   '  0  every named record reached its final event, whatever its outcome',
-  '  1  the policy could not be read; no further record was attempted',
-  '  2  malformed invocation (no record reference, a non-numeric one) or gh or git absent',
+  '  1  when the policy, or the run\'s repository or integration branch, cannot be resolved and no further record is attempted',
+  '  2  malformed invocation (no record reference, a non-numeric one) or gh or git absent, or an internal error (run itself failed)',
   '',
 ].join('\n');
 
@@ -64,8 +66,11 @@ function parseArgs(argv) {
   return { records };
 }
 
+// `current` is the record being driven, `{ ctx, sink }`, set for the length of one
+// driveRecord and cleared after it, so a signal handler can reach that record's context
+// and event sink.
 function newShared() {
-  return { policy: null, ref: null, mainRoot: null, repo: null, fatal: false, activeWorker: null };
+  return { policy: null, ref: null, mainRoot: null, repo: null, fatal: false, activeWorker: null, current: null };
 }
 
 function newCtx(record, shared) {
@@ -132,26 +137,31 @@ function finalEvent(ctx, stop, sink, msTotal, deps) {
 async function driveRecord(record, shared, deps, steps = STEPS) {
   const sink = createEventSink({ stdout: deps.stdout, appendFile: deps.appendFile });
   const ctx = newCtx(record, shared);
-  const started = deps.now();
-  let bound = false;
-  let stop = null;
-  for (const step of steps) {
-    const t0 = deps.now();
-    const result = await step.run(ctx, deps);
-    const ms = deps.now() - t0;
-    if (!bound && ctx.runDir) {
-      sink.bindRunDir(ctx.runDir);
-      bound = true;
+  shared.current = { ctx, sink };
+  try {
+    const started = deps.now();
+    let bound = false;
+    let stop = null;
+    for (const step of steps) {
+      const t0 = deps.now();
+      const result = await step.run(ctx, deps);
+      const ms = deps.now() - t0;
+      if (!bound && ctx.runDir) {
+        sink.bindRunDir(ctx.runDir);
+        bound = true;
+      }
+      sink.emit(eventFor(ctx, step.name, result, ms, deps));
+      if (result.halt) {
+        stop = { name: step.name, result };
+        break;
+      }
     }
-    sink.emit(eventFor(ctx, step.name, result, ms, deps));
-    if (result.halt) {
-      stop = { name: step.name, result };
-      break;
-    }
+    const final = finalEvent(ctx, stop, sink, deps.now() - started, deps);
+    sink.emit(final);
+    return final;
+  } finally {
+    shared.current = null;
   }
-  const final = finalEvent(ctx, stop, sink, deps.now() - started, deps);
-  sink.emit(final);
-  return final;
 }
 
 async function run(argv, deps) {
@@ -187,6 +197,10 @@ const realDeps = {
   cwd: () => process.cwd(),
   gh: (args) => execFileSync('gh', args, ghOptions(args, {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: sharedPrimitives.GH_TIMEOUT_MS, maxBuffer: MAX_BUFFER, windowsHide: true,
+  })),
+  // One aliased GraphQL batch (#4815), so it gets the batched bound, not the single-call one.
+  ghBatch: (args) => execFileSync('gh', args, ghOptions(args, {
+    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: sharedPrimitives.GH_BATCH_TIMEOUT_MS, maxBuffer: MAX_BUFFER, windowsHide: true,
   })),
   git: (args, { cwd } = {}) => execFileSync('git', args, {
     cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GIT_TIMEOUT_MS, windowsHide: true,

@@ -104,7 +104,8 @@ test('sink: an appendFile that always throws never aborts, stdout keeps every li
 //
 // harness(over) -> { deps, calls, out, err, files, lines(), writes(), probes, signals }.
 // Every injected call is recorded in order in `calls` as { kind, args, cwd }:
-//   gh (args), git (args, cwd), node ([script, ...args], cwd), and the object-taking deps
+//   gh (args), ghBatch (args: one aliased GraphQL batch under the batch bound), git (args,
+//   cwd), node ([script, ...args], cwd), and the object-taking deps
 //   with their arguments as `args`: policy (keys), eligibility ([issue, opts]),
 //   native-deps ([opts]), linked-prs ([opts]), admission ([input]), worker ([opts, deps]),
 //   resolveRunDir ([opts]), lstatType ([p]), readdir ([p]); plus the write seams
@@ -191,6 +192,7 @@ function harness(over = {}) {
   const deps = {
     cwd: () => MAIN,
     gh: (args) => dispatch('gh', args),
+    ghBatch: (args) => dispatch('ghBatch', args),
     git: (args, opts = {}) => dispatch('git', args, opts.cwd),
     node: (script_, args, opts = {}) => dispatch('node', [script_, ...args], opts.cwd),
     resolvePolicy: (keys) => dispatch('policy', keys),
@@ -275,10 +277,28 @@ test('AC10.6: header comment and USAGE state exit codes 0, 1 and 2', () => {
   for (const text of [USAGE, header]) {
     assert.match(text, /Usage: drive\.js #N \[#M…\]/);
     assert.match(text, /\b0\s+every named record reached its final event, whatever its outcome/);
-    assert.match(text, /\b1\s+the policy could not be read; no further record was attempted/);
-    assert.match(text, /\b2\s+malformed invocation \(no record reference, a non-numeric one\) or gh or git absent/);
+    assert.match(text, /\b1\s+when the policy, or the run's repository or integration branch, cannot be resolved and no further record is attempted/);
+    assert.match(text, /\b2\s+malformed invocation \(no record reference, a non-numeric one\) or gh or git absent, or an internal error/);
+    assert.match(text, /drive\.js --help \| -h/);
   }
   assert.match(USAGE.split('\n')[0], /^Usage: drive\.js #N \[#M…\]$/);
+});
+
+test('drive.js main: a rejected run is exit 2 with the message on stderr, never an unhandled rejection', async () => {
+  const { main } = require(DRIVE);
+  const proc = (err) => ({ exitCode: undefined, stderr: { write: (s) => err.push(s) } });
+  const err = [];
+  const p = proc(err);
+  const h = harness({ deps: { ghAvailable: () => { throw new Error('probe exploded'); } } });
+  await main(['#7'], h.deps, p);
+  assert.equal(p.exitCode, 2);
+  assert.match(err.join(''), /^drive\.js: internal error: probe exploded\n$/);
+  const ok = proc([]);
+  await main(['--help'], harness().deps, ok);
+  assert.equal(ok.exitCode, 0);
+  const fatal = proc([]);
+  await main(['#7'], harness({ script: [[on('policy'), { 'express-driver': { error: 'unknown-key' } }]] }).deps, fatal);
+  assert.equal(fatal.exitCode, 1);
 });
 
 test('drive.js is a thin entry: it exports run, and its async guard sets the exit code', () => {
@@ -371,8 +391,9 @@ test('admission reads blockers and linked PRs from the shared repo and passes th
     nativeDeps: entry,
     linkedPRs: { openPR: 12 },
     script: [
-      [on('native-deps'), (c) => { c.args[0].runner(['api', 'graphql', '-f', 'query=x']); return new Map([[7, entry]]); }],
-      [on('gh', 'api', 'graphql'), '{}'],
+      [on('native-deps'), (c) => { c.args[0].runner(['api', 'graphql', '-f', 'query=blockers']); return new Map([[7, entry]]); }],
+      [on('linked-prs'), (c) => { c.args[0].runner(['api', 'graphql', '-f', 'query=linked']); return new Map([[7, { openPR: 12, mentions: [] }]]); }],
+      [on('ghBatch', 'api', 'graphql'), '{}'],
     ],
   });
   assert.equal(await run(['#7'], h.deps), 0);
@@ -380,7 +401,9 @@ test('admission reads blockers and linked PRs from the shared repo and passes th
     const opts = h.calls.find((c) => c.kind === kind).args[0];
     assert.deepEqual({ ...opts, runner: typeof opts.runner }, { numbers: [7], owner: 'acme', repo: 'widgets', host: 'acme.ghe.com', runner: 'function' });
   }
-  assert.ok(h.calls.some((c) => c.kind === 'gh' && c.args[0] === 'api'), 'the runner routes through deps.gh');
+  // Both GraphQL reads run under the batch bound (deps.ghBatch), never the single-call gh.
+  assert.deepEqual(h.calls.filter((c) => c.kind === 'ghBatch').map((c) => c.args.at(-1)), ['query=blockers', 'query=linked']);
+  assert.equal(h.calls.filter((c) => c.kind === 'gh' && c.args[0] === 'api').length, 0);
   assert.deepEqual(h.calls.find((c) => c.kind === 'admission').args[0], {
     number: 7, state: 'OPEN', labels: [{ name: 'risk:low' }],
     openBlockerRefs: openBlockerRefs(entry), openLinkedPRs: [12], routing: 'on',
@@ -396,6 +419,22 @@ test('admission: no open linked PR passes an empty list; refusal names every rea
   assert.equal(final.outcome, 'refused');
   assert.equal(final.stop.step, 'admission');
   assert.equal(final.stop.detail, 'state is CLOSED; open blocker #3');
+});
+
+test('admission: a map with no entry for the record passes null, never "none"', async () => {
+  for (const [kind, field, other] of [['native-deps', 'openBlockerRefs', 'openLinkedPRs'], ['linked-prs', 'openLinkedPRs', 'openBlockerRefs']]) {
+    const h = harness({
+      script: [[on(kind), new Map()]],
+      admission: (c) => (c.args[0][field] === null ? { admitted: false, reasons: [`${field} unreadable`] } : {}),
+    });
+    await run(['#7'], h.deps);
+    const input = h.calls.find((c) => c.kind === 'admission').args[0];
+    assert.equal(input[field], null, kind);
+    assert.deepEqual(input[other], [], `${kind}: the other read is still passed as read`);
+    const final = h.lines().at(-1);
+    assert.equal(final.outcome, 'refused');
+    assert.equal(final.stop.detail, `${field} unreadable`);
+  }
 });
 
 test('admission: a failed blocker or linked-PR read is a refused fail', async () => {
@@ -602,6 +641,23 @@ test('the loop binds the sink when a step first sets ctx.runDir; earlier events 
   assert.deepEqual(h.lines().map((l) => l.run), [null, 'rid-7', 'rid-7', 'rid-7']);
   assert.equal(h.files[path.join('/runs/rid-7', 'driver-events.jsonl')], h.out.join(''));
   assert.equal(final.run, 'rid-7');
+});
+
+test('shared.current exposes the running record\'s ctx and sink, and is cleared after it', async () => {
+  const seen = [];
+  const table = [defineStep('look', 'refused', async (ctx) => {
+    const { current } = ctx.shared;
+    seen.push(current && current.ctx === ctx, current && typeof current.sink.emit === 'function');
+    current.sink.emit({ step: 'probe' });
+    return { status: 'ok' };
+  })];
+  const h = harness();
+  const shared = newShared();
+  assert.equal(shared.current, null);
+  await driveRecord(7, shared, h.deps, table);
+  assert.deepEqual(seen, [true, true]);
+  assert.equal(shared.current, null);
+  assert.deepEqual(h.lines().map((l) => l.step), ['probe', 'look', FINAL_STEP], 'the exposed sink is the record\'s own');
 });
 
 test('a failing events file never aborts the record; the final line names the error', async () => {

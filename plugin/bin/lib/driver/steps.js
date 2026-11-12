@@ -177,7 +177,8 @@ const eligibilityStep = defineStep(STEP.eligibility, STOP_CLASSES.REFUSED, async
 const admissionStep = defineStep(STEP.admission, STOP_CLASSES.REFUSED, async (ctx, deps) => {
   const { policy, repo: { host, owner, repo } } = ctx.shared;
   const n = ctx.record;
-  const runner = (args) => deps.gh(args);
+  // Each read is one aliased GraphQL batch, so it runs under the batch bound (#4815).
+  const runner = (args) => deps.ghBatch(args);
   let blockers;
   let linked;
   try {
@@ -186,14 +187,21 @@ const admissionStep = defineStep(STEP.admission, STOP_CLASSES.REFUSED, async (ct
   } catch (err) {
     return { status: 'fail', detail: `admission read failed: ${errorText(err)}` };
   }
-  const linkedEntry = linked.get(n);
-  const openPR = linkedEntry ? linkedEntry.openPR : null;
+  // A map with no entry for the record is an unread fact, never "none": admission gets
+  // null and refuses with its own unreadable reason.
+  const blockerEntry = blockers && typeof blockers.get === 'function' ? blockers.get(n) : undefined;
+  const linkedEntry = linked && typeof linked.get === 'function' ? linked.get(n) : undefined;
+  let openLinkedPRs = null;
+  if (linkedEntry) {
+    const { openPR } = linkedEntry;
+    openLinkedPRs = openPR === null || openPR === undefined ? [] : [openPR];
+  }
   const verdict = deps.evaluateAdmission({
     number: n,
     state: ctx.issue.state,
     labels: ctx.issue.labels,
-    openBlockerRefs: openBlockerRefs(blockers.get(n) || {}),
-    openLinkedPRs: openPR === null || openPR === undefined ? [] : [openPR],
+    openBlockerRefs: blockerEntry ? openBlockerRefs(blockerEntry) : null,
+    openLinkedPRs,
     routing: policy['express-driver'].value,
   });
   if (!verdict || verdict.admitted !== true) {
