@@ -190,7 +190,84 @@ function S0() {
   };
 }
 
+// The scenario's non-queue answers: everything the rest of the fence asks for over a queue of
+// `numbers` that all survive to the open-PR pass.
+function tailGh(numbers) {
+  const aliases = Object.fromEntries(numbers.map((n) => [`i${n}`, { number: n, state: 'OPEN', closedByPullRequestsReferences: { nodes: [] }, timelineItems: { nodes: [] } }]));
+  return [
+    { argv: ['--version'], stdout: 'gh version 2.99.0 (qp-shim)\n' },
+    { graphql: 'linked', aliases },
+    { argv: ['issue', 'list', '--label', 'bot:in-progress', '--state', 'open', '--json', 'number,title,body,labels', '--limit', '200'], stdout: '[]\n' },
+    { argv: ['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'], stdout: 'fixture-owner/fixture-repo\n' },
+    { argv: ['pr', 'list', '--state', 'open', '--json', 'number,files,closingIssuesReferences', '--limit', '100'], stdout: '[]\n' },
+  ];
+}
+
+const DEP_SEARCH_8000 = ['issue', 'list', '--search', '#8000', '--state', 'all', '--json', 'number,updatedAt,state', '--limit', '500'];
+
+const withBody = (n, extra) => SPEC_BODY.replace('plugin/bin/oracle-fixture.js', `plugin/bin/fixture-${n}.js`) + (extra || '');
+
+// S1: #9001 and #9003 plain; #9002 declares `Blocked by #8000` and #8000 is open, so the blocked
+// pass holds it. Body-text repo, default guard and bundle cap.
+function S1() {
+  const records = [
+    ghRecord(9001, { body: withBody(9001) }),
+    ghRecord(9002, { body: `Blocked by #8000\n\n${withBody(9002)}` }),
+    ghRecord(9003, { body: withBody(9003) }),
+  ];
+  return {
+    name: 'S1',
+    policy: { 'work-links': 'body-text' },
+    origin: { branches: { main: {} } },
+    gh: [
+      { argv: QUEUE_ARGV, stdout: JSON.stringify(records) + '\n' },
+      { argv: ['issue', 'list', '--state', 'open', '--json', 'number', '--limit', '200'], stdout: '[{"number":9001},{"number":9002},{"number":9003},{"number":8000}]\n' },
+      { argv: DEP_SEARCH_8000, stdout: '[{"number":8000,"updatedAt":"2026-11-09T10:00:00Z","state":"OPEN"}]\n' },
+      ...tailGh([9001, 9003]),
+    ],
+  };
+}
+
+// SFast: three fast-lane singletons with disjoint Key Files and a guard of 2, so they bundle into
+// one group of 3 that is over the guard.
+function SFast() {
+  const labels = ['auto:build', 'ready', 'ceremony:fast-lane'];
+  const records = [9101, 9102, 9103].map((n) => ghRecord(n, { body: withBody(n), labels }));
+  return {
+    name: 'SFast',
+    policy: { 'work-links': 'body-text', 'dispatch-group-size-guard': '2', 'dispatch-fastlane-bundle-cap': '3' },
+    origin: { branches: { main: {} } },
+    gh: [
+      { argv: QUEUE_ARGV, stdout: JSON.stringify(records) + '\n' },
+      { argv: ['issue', 'list', '--state', 'open', '--json', 'number', '--limit', '200'], stdout: '[{"number":9101},{"number":9102},{"number":9103}]\n' },
+      ...tailGh([9101, 9102, 9103]),
+    ],
+  };
+}
+
+// The in-process twin of the policy / blocker CLIs the passes spawn: resolve-policy.js answers
+// scenario.policy (unset keys read as the empty line); any other CLI needs an override, a result
+// object or (args, opts) => result. The returned function records `.calls` ({name, args}).
+function fakeSpawnCli(scenario, overrides = {}) {
+  const calls = [];
+  const spawnCli = (name, args, opts) => {
+    calls.push({ name, args });
+    if (Object.prototype.hasOwnProperty.call(overrides, name)) {
+      const o = overrides[name];
+      return typeof o === 'function' ? o(args, opts) : o;
+    }
+    if (name === 'resolve-policy.js') {
+      const key = args[args.indexOf('--values') + 1];
+      const value = (scenario.policy || {})[key];
+      return { status: 0, stdout: `${value === undefined ? '' : value}\n`, stderr: '' };
+    }
+    throw new Error(`unexpected spawnCli ${name} ${args.join(' ')}`);
+  };
+  spawnCli.calls = calls;
+  return spawnCli;
+}
+
 module.exports = {
   DEFAULT_REMOTE_URL, GRAPHQL_KINDS, ghAnswer, applyEffect, gitSubArgv, gitFailMatch, isGetUrlOrigin, shimTable, fakeRun,
-  ghLabel, ghRecord, SPEC_BODY, S0,
+  ghLabel, ghRecord, SPEC_BODY, QUEUE_ARGV, DEP_SEARCH_8000, withBody, S0, S1, SFast, fakeSpawnCli,
 };
