@@ -408,7 +408,7 @@ const NOT_ORIGIN = {
 // The files whose code calls gateOriginRepo(, the defining lib/repo-resolve.js excluded.
 const ORIGIN_GATED = ['materialize.js', 'lib/compose-subject.js', 'release-claim.js', 'repair-claim.js', 'preflight-records.js',
   'parent-gate.js', 'resolved-refusal.js', 'link-records.js', 'fetch-sub-issues.js', 'backlog-grant-gate.js',
-  'apply-refine-labels.js', 'file-feedback.js', 'list-claims.js', 'lib/number-list-cli.js', 'lib/wrap-up/pack.js', 'lib/wrap-up/engine-verify.js', 'lib/hooks/git-exec.js', 'stuck-open-prs.js', 'claim-targets.js', 'stale-claim-pr.js'];
+  'apply-refine-labels.js', 'file-feedback.js', 'list-claims.js', 'lib/number-list-cli.js', 'lib/wrap-up/pack.js', 'lib/wrap-up/engine-verify.js', 'lib/hooks/git-exec.js', 'stuck-open-prs.js', 'claim-targets.js', 'stale-claim-pr.js', 'lib/driver/steps.js'];
 
 // A gateOriginRepo( call in code; blank mode leaves a name inside a string or comment unseen.
 const callsGate = (raw) => /(?<![\w$])gateOriginRepo\s*\(/.test(stripComments(raw, BLANK));

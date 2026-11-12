@@ -615,6 +615,47 @@ test('AC2.1: stale-claim-pr.js on a github.com origin keeps today\'s pr list arg
   assert.equal(JSON.parse(r.stdout).match, true, r.stdout);
 });
 
+// #5218: drive.js (lib/driver/steps.js, ORIGIN_GATED) gates its origin in the policy step, so it
+// joins ORIGIN_GATED but not CLI_TABLE: that table asserts a refusal as exit 2 with the gate's
+// text on stderr, while the driver reports one as a fatal `refused` final line on stdout and exits
+// 1, and its pass-through legs run the claim, worktree and worker steps, which the table's
+// fixtures cannot stand in for. The policy file pins the integration branch, so the policy step
+// reaches the origin gate in a repo with no origin/HEAD. A canned empty `issue view` answer ends
+// a pass-through run at the fetch step, so its one gh call is the host-routing proof.
+const driveRow = (canned = {}) => ({
+  cli: 'drive.js',
+  argv: ['#7'],
+  setup: (repo) => fs.writeFileSync(path.join(repo, '.claude-tweaks', 'policy.yml'), 'integration-branch: main\n'),
+  canned: { 'issue-view': '{}', ...canned },
+});
+const finalLineOf = (stdout) => JSON.parse(stdout.trim().split('\n').pop());
+
+test('#5218: drive.js on an unknown or SSH-alias origin refuses at the policy step (exit 1) and calls no gh', { skip: STUB_SKIP }, (t) => {
+  for (const origin of [`https://${UNKNOWN_HOST}/o/r.git`, 'git@github-work:acme/widgets.git']) {
+    const refusal = gateOriginRepo(origin, GATE_DEPS).refusal;
+    assert.ok(refusal, `${origin}: the gate must refuse it`);
+    const r = runGated(t, driveRow(), { origin });
+    assert.equal(r.status, 1, `${origin}: expected exit 1; stderr:\n${r.stderr}\nstdout:\n${r.stdout}`);
+    const final = finalLineOf(r.stdout);
+    assert.deepEqual([final.stop.step, final.outcome], ['policy', 'refused'], origin);
+    assert.ok(final.stop.detail.includes(refusal), `${origin}: the final line lacks the gate's refusal text:\n${r.stdout}`);
+    assert.deepEqual(networkLines(r.lines), [], `${origin}: gh was called beyond --version:\n${r.lines.join('\n')}`);
+  }
+  const opted = runGated(t, driveRow(), { origin: `https://${UNKNOWN_HOST}/o/r.git`, ghHost: UNKNOWN_HOST });
+  assert.ok(!opted.stdout.includes(NOT_KNOWN_MSG), `an exported GH_HOST opts in, but it was refused:\n${opted.stdout}`);
+});
+
+test('#5218: drive.js on a *.ghe.com origin reads the record from the origin host; on github.com it keeps the bare slug', { skip: STUB_SKIP }, (t) => {
+  const ghe = runGated(t, driveRow(), { origin: GHE_ORIGIN });
+  const view = ghe.lines.filter((l) => / ARGS=issue view /.test(l));
+  assert.equal(view.length, 1, `expected one issue view call, log:\n${ghe.lines.join('\n')}\nstdout:\n${ghe.stdout}`);
+  assert.ok(reachesHost(view[0], 'acme.ghe.com'), view[0]);
+  assert.deepEqual(repoValues(view), ['acme.ghe.com/acme/widgets']);
+  const dotcom = runGated(t, driveRow(), { origin: DOTCOM_ORIGIN });
+  assert.deepEqual(repoValues(dotcom.lines.filter((l) => / ARGS=issue view /.test(l))), ['acme/widgets']);
+  for (const line of dotcom.lines) assert.ok(line.startsWith('GH_HOST=unset '), `GH_HOST injected on github.com: ${line}`);
+});
+
 test('#4794: stale-claim-pr.js on an unknown or SSH-alias origin reports unknown-host at exit 0 and calls no gh', { skip: STUB_SKIP }, (t) => {
   for (const origin of [`https://${UNKNOWN_HOST}/o/r.git`, 'git@github-work:acme/widgets.git']) {
     const refusal = gateOriginRepo(origin, GATE_DEPS).refusal;
