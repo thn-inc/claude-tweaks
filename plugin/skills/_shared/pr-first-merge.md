@@ -7,13 +7,10 @@ short-circuit, `wrap-up/merge-mode.md`, `flow/worktree-merge.md`'s reconciliatio
 
 **The shape:** ready → merge-verification gate (Step 2.5: state read; red parks; pending waits or
 arms only when the forge holds it) → `gh pr merge --auto` (arm) → degrade to immediate merge →
-degrade to ready+comment. `gh pr merge` needs no local checkout, which is what deletes the two-thread split
-every pr-first caller used to need: the same cwd-pinned Task call that already holds
-authorization, `merge-check`, and acceptance labeling can run the merge itself. No
-`close-run`-before-merge relief, no branch-switch guard, no push-from-worktree rule, no
-scratch-worktree conflict procedure — all four existed only because a *local* `git merge` +
-`git push` needed the main checkout. `local-merge` projects keep all four; see each converted
-file's own local-merge fallback section.
+degrade to ready+comment. `gh pr merge` needs no local checkout, so the same cwd-pinned Task call that
+already holds authorization, `merge-check`, and acceptance labeling runs the merge itself — no
+`close-run`-before-merge relief, branch-switch guard, push-from-worktree rule or scratch-worktree
+conflict procedure.
 
 ## Precondition
 
@@ -31,18 +28,14 @@ Run `wrap-up/verification-brief.md` starting from its **Routing** section, exact
 citing file's own two-layer gate already directs (unchanged from today — this procedure does not
 touch layers 1-2, only execution). **Order is load-bearing**: the merge closes the record(s) via
 its `Fixes` lines, so labeling must land while every record is still open. A caller that merges
-before labeling silently drops acceptance sign-off the same way the pre-#410 fast-lane path once
-did for a different reason (`wrap-up/review-console.md`'s own "console content is not all of
-Phase 4" note) — this procedure states the ordering explicitly so it is never re-dropped.
+before labeling silently drops acceptance sign-off.
 Labeling has not landed when `{run-dir}/verify.json` (each `spec-{N}/` copy, multi-spec) is missing
 or its `acceptance-labeling` row's `result` is anything but `pass`/`skip` — the full predicate, live-state tier included, is `_shared/acceptance-labeling-landed.md` — whichever caller reached this merge.
 
 ## Step 1.5: Curation-apply completeness guard (#1465)
 
-Before marking the PR ready, confirm Phase 2's curation-engine apply work has actually landed —
-a defensive assertion against an ordering `wrap-up/curation-engine.md`'s own "Ordering is not
-advisory" note (section 2) states as prose but does not itself mechanically enforce at the merge
-boundary.
+Before marking the PR ready, confirm Phase 2's curation-engine apply work has actually landed
+(the ordering `wrap-up/curation-engine.md` section 2 states, enforced here).
 
 Skip this guard entirely when `$PIPELINE_RUN_DIR/engine-state.json` does not exist — Phase 2 had
 nothing open (every registry row closed), or the run took `curation-engine.md` section 6's prose
@@ -446,8 +439,7 @@ git -C "{worktree-path}" merge origin/{integration-branch}
 - **Conflict markers remain**: this is what "unresolvable headlessly" means — stop, do not
   attempt resolution. Leave the PR ready (already undrafted, never re-drafted) with a comment
   explaining the conflict, and report outcome `pending-review`. A human resolves it the ordinary
-  way — check out the branch, resolve, push — no scratch-worktree ceremony needed, since the
-  conflict already surfaced inside the run's own real worktree, not a throwaway one.
+  way — check out the branch, resolve, push — no scratch-worktree ceremony.
 - **Attended branch (merge mode only).** A human-confirmed merge (`/claude-tweaks:wrap-up #{n} merge`)
   resolves instead of stopping — procedure in `wrap-up/merge-mode.md`'s `## Conflict`. Every other
   caller keeps the stop-at-markers bullet above.
@@ -456,9 +448,8 @@ git -C "{worktree-path}" merge origin/{integration-branch}
 
 ## Outcome vocabulary
 
-Replaces `ready-to-merge` (folded into `merged`/`armed` — see Step 3.6) and `pr-opened` (retired
-— under pr-first the PR already exists from run start, so there is no longer a distinct
-"finish reached, PR opened just now" transition to report).
+Replaces `ready-to-merge` (folded into `merged`/`armed`) and `pr-opened` (retired — the PR
+exists from run start).
 
 | Outcome | Meaning | Cleanup owed by this call |
 |---|---|---|
