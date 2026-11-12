@@ -207,6 +207,16 @@ function ghRecord(number, { title = `Fixture record ${number}`, body = SPEC_BODY
 
 const QUEUE_ARGV = ['issue', 'list', '--label', 'auto:build', '--state', 'open', '--json',
   'number,title,body,labels,createdAt,updatedAt,state', '--limit', '500'];
+const OPEN_NUMBERS_ARGV = ['issue', 'list', '--state', 'open', '--json', 'number', '--limit', '200'];
+const IN_FLIGHT_ARGV = ['issue', 'list', '--label', 'bot:in-progress', '--state', 'open', '--json', 'number,title,body,labels', '--limit', '200'];
+const OPEN_PRS_ARGV = ['pr', 'list', '--state', 'open', '--json', 'number,files,closingIssuesReferences', '--limit', '100'];
+
+// Writes `content` to dir/name and returns the path: the in-process tests' files-transport inputs.
+const writeInput = (dir, name, content) => {
+  const file = path.join(dir, name);
+  fs.writeFileSync(file, content);
+  return file;
+};
 
 // S0: one spec-shaped auto:build record, #9001, on a body-text repo with no integration-branch
 // key (so the fence resolves the branch through `git remote show origin`). Built by running the
@@ -218,15 +228,15 @@ function S0() {
     origin: { branches: { main: {} } },
     gh: [
       { argv: QUEUE_ARGV, stdout: JSON.stringify([ghRecord(9001)]) + '\n' },
-      { argv: ['issue', 'list', '--state', 'open', '--json', 'number', '--limit', '200'], stdout: '[{"number":9001}]\n' },
+      { argv: OPEN_NUMBERS_ARGV, stdout: '[{"number":9001}]\n' },
       { argv: ['--version'], stdout: 'gh version 2.99.0 (qp-shim)\n' },
       {
         graphql: 'linked',
         aliases: { i9001: { number: 9001, state: 'OPEN', closedByPullRequestsReferences: { nodes: [] }, timelineItems: { nodes: [] } } },
       },
-      { argv: ['issue', 'list', '--label', 'bot:in-progress', '--state', 'open', '--json', 'number,title,body,labels', '--limit', '200'], stdout: '[]\n' },
+      { argv: IN_FLIGHT_ARGV, stdout: '[]\n' },
       { argv: ['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'], stdout: 'fixture-owner/fixture-repo\n' },
-      { argv: ['pr', 'list', '--state', 'open', '--json', 'number,files,closingIssuesReferences', '--limit', '100'], stdout: '[]\n' },
+      { argv: OPEN_PRS_ARGV, stdout: '[]\n' },
     ],
   };
 }
@@ -269,9 +279,9 @@ function tailGh(numbers, linked = {}, { inFlight = [], openPrs = [] } = {}) {
   return [
     { argv: ['--version'], stdout: 'gh version 2.99.0 (qp-shim)\n' },
     { graphql: 'linked', aliases },
-    { argv: ['issue', 'list', '--label', 'bot:in-progress', '--state', 'open', '--json', 'number,title,body,labels', '--limit', '200'], stdout: JSON.stringify(inFlight) + '\n' },
+    { argv: IN_FLIGHT_ARGV, stdout: JSON.stringify(inFlight) + '\n' },
     { argv: ['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'], stdout: 'fixture-owner/fixture-repo\n' },
-    { argv: ['pr', 'list', '--state', 'open', '--json', 'number,files,closingIssuesReferences', '--limit', '100'], stdout: JSON.stringify(openPrs) + '\n' },
+    { argv: OPEN_PRS_ARGV, stdout: JSON.stringify(openPrs) + '\n' },
   ];
 }
 
@@ -389,7 +399,7 @@ function S1({ full = false, pipeline = false, parity = false } = {}) {
     linked,
     gh: [
       { argv: QUEUE_ARGV, stdout: JSON.stringify(records) + '\n' },
-      { argv: ['issue', 'list', '--state', 'open', '--json', 'number', '--limit', '200'], stdout: JSON.stringify(openNumbers) + '\n' },
+      { argv: OPEN_NUMBERS_ARGV, stdout: JSON.stringify(openNumbers) + '\n' },
       ...(pipeline ? [
         // #8001 is closed (not an open blocker); #0 is no issue at all, so its state read fails.
         { argv: ['issue', 'view', '8001', '--json', 'state', '-q', '.state'], stdout: 'CLOSED\n' },
@@ -426,7 +436,7 @@ function S2() {
     foreign: { 'acme-corp/other#12': 'OPEN' },
     gh: [
       { argv: QUEUE_ARGV, stdout: JSON.stringify(records) + '\n' },
-      { argv: ['issue', 'list', '--state', 'open', '--json', 'number', '--limit', '200'], stdout: JSON.stringify([9001, 9030, 9031, 8100].map((number) => ({ number }))) + '\n' },
+      { argv: OPEN_NUMBERS_ARGV, stdout: JSON.stringify([9001, 9030, 9031, 8100].map((number) => ({ number }))) + '\n' },
       // resolve-foreign-blockers.js's lookup of acme-corp/other#12, aliased c0.
       { graphql: 'foreign', aliases: { c0: { issue: { state: 'OPEN' } } } },
       // resolve-blockers.js (over 9001 and 9030), then preflight-records.js's native read inside
@@ -437,8 +447,6 @@ function S2() {
   };
 }
 
-const OPEN_ARGV = ['issue', 'list', '--state', 'open', '--json', 'number', '--limit', '200'];
-
 // SEmpty: an empty auto:build queue (AC5.1).
 function SEmpty() {
   return {
@@ -447,7 +455,7 @@ function SEmpty() {
     origin: { branches: { main: {} } },
     gh: [
       { argv: QUEUE_ARGV, stdout: '[]\n' },
-      { argv: OPEN_ARGV, stdout: '[]\n' },
+      { argv: OPEN_NUMBERS_ARGV, stdout: '[]\n' },
       ...tailGh([]),
     ],
   };
@@ -474,7 +482,7 @@ function SMalformed(only = null) {
     origin: { branches: { main: {} } },
     gh: [
       { argv: QUEUE_ARGV, stdout: JSON.stringify(records) + '\n' },
-      { argv: OPEN_ARGV, stdout: JSON.stringify(numbers.map((number) => ({ number }))) + '\n' },
+      { argv: OPEN_NUMBERS_ARGV, stdout: JSON.stringify(numbers.map((number) => ({ number }))) + '\n' },
       // #9022's blocker is outside the open-numbers pull, so the fence checks it live (it cannot
       // exist) and searches it for the freshness signal (nothing matches).
       { argv: ['issue', 'view', '99999999999', '--json', 'state', '-q', '.state'], stdout: '', stderr: 'GraphQL: Could not resolve to an issue or pull request with the number of 99999999999. (repository.issue)\n', status: 1 },
@@ -508,7 +516,7 @@ function SPortable() {
     origin: { branches: { main: {}, trunk: { ...ignore, 'docs/gone.md': 'on trunk only\n' }, 'release/next': { ...ignore, 'docs/kept.md': 'on release/next only\n' } } },
     gh: [
       { argv: QUEUE_ARGV, stdout: JSON.stringify(records) + '\n' },
-      { argv: OPEN_ARGV, stdout: JSON.stringify([9040, 9041, 9042].map((number) => ({ number }))) + '\n' },
+      { argv: OPEN_NUMBERS_ARGV, stdout: JSON.stringify([9040, 9041, 9042].map((number) => ({ number }))) + '\n' },
       { argv: ['issue', 'view', '8001', '--json', 'state', '-q', '.state'], stdout: 'CLOSED\n' },
       { argv: ['issue', 'list', '--search', '#8001', '--state', 'all', '--json', 'number,updatedAt,state', '--limit', '500'], stdout: '[{"number":8001,"updatedAt":"2026-11-08T10:00:00Z","state":"CLOSED"}]\n' },
       { graphql: 'landing', aliases: { b8001: LANDING_8001 } },
@@ -529,7 +537,7 @@ function SFast() {
     origin: { branches: { main: {} } },
     gh: [
       { argv: QUEUE_ARGV, stdout: JSON.stringify(records) + '\n' },
-      { argv: ['issue', 'list', '--state', 'open', '--json', 'number', '--limit', '200'], stdout: '[{"number":9101},{"number":9102},{"number":9103}]\n' },
+      { argv: OPEN_NUMBERS_ARGV, stdout: '[{"number":9101},{"number":9102},{"number":9103}]\n' },
       ...tailGh([9101, 9102, 9103]),
     ],
   };
@@ -542,9 +550,6 @@ function SFast() {
 // both honour, or an `effect` on the call that reaches the step. Every other answer is the base
 // scenario's, so a fault run differs from its base only by that fetch.
 
-const OPEN_NUMBERS_ARGV = ['issue', 'list', '--state', 'open', '--json', 'number', '--limit', '200'];
-const IN_FLIGHT_ARGV = ['issue', 'list', '--label', 'bot:in-progress', '--state', 'open', '--json', 'number,title,body,labels', '--limit', '200'];
-const OPEN_PRS_ARGV = ['pr', 'list', '--state', 'open', '--json', 'number,files,closingIssuesReferences', '--limit', '100'];
 const PR_VIEW_5016_ARGV = ['pr', 'view', '5016', '--json', 'files', '-q', '[.files[].path]'];
 const contentsApiArgv = (n) => ['api', `repos/${REPO_SLUG}/contents/claims/issue-${n}.json?ref=claims-registry`, '-q', '{content: (.content | @base64d), sha: .sha}'];
 const GH_FAULT_STDERR = 'gh-fault: injected failure\n';
@@ -770,13 +775,13 @@ function agentInputs(scenario) {
   const out = {};
   const queue = ghStdout(scenario, QUEUE_ARGV);
   out['dispatch-queue-raw.json'] = JSON.stringify(JSON.parse(queue).map(mcpShape));
-  out['dispatch-open-numbers.json'] = ghStdout(scenario, ['issue', 'list', '--state', 'open', '--json', 'number', '--limit', '200']);
+  out['dispatch-open-numbers.json'] = ghStdout(scenario, OPEN_NUMBERS_ARGV);
   const search = (scenario.gh || []).find((e) => Array.isArray(e.argv) && e.argv[0] === 'issue' && e.argv[2] === '--search');
   if (search) out['dispatch-dep-freshness.json'] = JSON.stringify(JSON.parse(search.stdout).map(mcpShape));
   out['dispatch-verified-open-deps.txt'] = (scenario.gh || [])
     .filter((e) => Array.isArray(e.argv) && e.argv[0] === 'issue' && e.argv[1] === 'view' && !e.status && String(e.stdout).trim() === 'OPEN')
     .map((e) => `${e.argv[2]}\n`).join('');
-  const inFlight = ghStdout(scenario, ['issue', 'list', '--label', 'bot:in-progress', '--state', 'open', '--json', 'number,title,body,labels', '--limit', '200']);
+  const inFlight = ghStdout(scenario, IN_FLIGHT_ARGV);
   out['dispatch-in-flight-raw.json'] = JSON.stringify(JSON.parse(inFlight || '[]').map(mcpShape));
   const registry = (scenario.origin && scenario.origin.branches && scenario.origin.branches['claims-registry']) || {};
   const claims = {};
@@ -790,7 +795,7 @@ function agentInputs(scenario) {
 
 module.exports = {
   DEFAULT_REMOTE_URL, GRAPHQL_KINDS, ghAnswer, applyEffect, gitSubArgv, gitFailMatch, isGetUrlOrigin, shimTable, fakeRun,
-  ghLabel, ghRecord, SPEC_BODY, QUEUE_ARGV, DEP_SEARCH_8000, withBody, S0, S1, S2, SEmpty, SMalformed, SPortable, SFast, fakeSpawnCli, agentInputs,
+  ghLabel, ghRecord, SPEC_BODY, QUEUE_ARGV, OPEN_NUMBERS_ARGV, IN_FLIGHT_ARGV, OPEN_PRS_ARGV, writeInput, DEP_SEARCH_8000, withBody, S0, S1, S2, SEmpty, SMalformed, SPortable, SFast, fakeSpawnCli, agentInputs,
   LANDING_COMMIT, PORTABLE_SLUG,
   REPO_SLUG, linkedNode, linkedOutput, mention, WEAK_PR_FILES, tailGh, IN_FLIGHT_7001, OPEN_PR_41, LIVE_CLAIM,
   FAULTS, FILES_FAULTS, D1Second, S1LiveDep, failGh, NOT_JSON, GH_FAULT_STDERR, contentsApiArgv,

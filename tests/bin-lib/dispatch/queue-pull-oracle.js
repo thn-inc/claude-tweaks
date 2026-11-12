@@ -474,8 +474,12 @@ const readOrNull = (file) => {
 const readJsonl = (file) => (readOrNull(file) || '').split('\n').filter(Boolean).map((l) => JSON.parse(l));
 
 // The session dir a run's node processes resolve under its TMPDIR: plugin/bin/lib/session-tmp.js's
-// sessionTmpRoot rule, which this test process cannot call directly (its os.tmpdir() differs).
-const sessionDirUnder = (tmpdir, sessionId) => path.join(tmpdir, `ct-session-${String(sessionId).trim()}`);
+// sessionTmpRoot rule, which this test process cannot call directly (its os.tmpdir() differs), over
+// the plugin's own session-id rule (required here, not at the top, as the shims re-enter this file).
+const sessionDirUnder = (tmpdir, sessionId) => {
+  const { resolveSessionId } = require(path.join(REPO, 'plugin', 'bin', 'lib', 'session-tmp.js'));
+  return path.join(tmpdir, `ct-session-${resolveSessionId(sessionId)}`);
+};
 
 // runOracle(sandbox, script, { sessionId, tmp }) -> { status, stdout, stderr, files, staged,
 // decisions, orderBlob, ghArgv, gitArgv }, plus a non-enumerable `sandbox`. The session id is

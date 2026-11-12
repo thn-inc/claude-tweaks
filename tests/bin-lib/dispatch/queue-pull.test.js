@@ -64,7 +64,8 @@ const {
   STREAM_TRUNCATED, TAIL_LINES,
 } = require('./queue-pull-oracle');
 const {
-  S0, S1, S2, SEmpty, SMalformed, SPortable, SFast, fakeRun, fakeSpawnCli, agentInputs, ghRecord, withBody, QUEUE_ARGV, DEP_SEARCH_8000, mention, WEAK_PR_FILES,
+  S0, S1, S2, SEmpty, SMalformed, SPortable, SFast, fakeRun, fakeSpawnCli, agentInputs, ghAnswer, ghRecord, withBody, QUEUE_ARGV, DEP_SEARCH_8000, mention, WEAK_PR_FILES,
+  OPEN_NUMBERS_ARGV, IN_FLIGHT_ARGV, OPEN_PRS_ARGV, writeInput,
   IN_FLIGHT_7001, OPEN_PR_41, LIVE_CLAIM, LANDING_COMMIT, PORTABLE_SLUG, FAULTS, FILES_FAULTS, D1Second, S1LiveDep, NOT_JSON,
 } = require('./queue-pull-fixtures');
 const {
@@ -261,6 +262,13 @@ test('#5227 oracle: orderBlob is null only for a missing health-state branch or 
     git('commit', '-q', '-am', 'json');
     git('push', '-q', 'origin', 'HEAD:refs/heads/health-state');
     assert.deepEqual(sb.orderBlob(), { computedAt: 'x' });
+    // Any other git failure throws: an origin that is no repository fails rev-parse with exit 128.
+    fs.renameSync(sb.origin, `${sb.origin}.moved`);
+    try {
+      assert.throws(() => sb.orderBlob(), (err) => err.status === 128 && /rev-parse/.test(err.message));
+    } finally {
+      fs.renameSync(`${sb.origin}.moved`, sb.origin);
+    }
   } finally {
     sb.cleanup();
   }
@@ -399,6 +407,20 @@ test('#5227 oracle: fakeRun answers the shim table by exact argv and requested g
   assert.throws(() => gitRun('git', ['-c', 'core.quotePath=false', '--no-optional-locks', '-C', '/x', 'remote', 'show', 'origin']), (err) => err.status === 128);
   assert.equal(gitRun('git', ['--no-pager', 'remote', 'get-url', 'origin']), 'https://example.invalid/o/r.git\n');
   assert.throws(() => gitRun('git', ['remote', 'show']), /^Error: unexpected git remote show$/);
+});
+
+test('#5227 oracle: ghAnswer falls through a same-kind graphql entry that lacks a requested alias to the next one that holds it', () => {
+  const linkedQuery = (n) => `query=query{ repository{ i${n}: issue(number:${n}){ number timelineItems(itemTypes:[CROSS_REFERENCED_EVENT]){ nodes } } } }`;
+  const entries = [
+    { graphql: 'linked', aliases: { i1: { number: 1 } }, stderr: 'first\n' },
+    { graphql: 'landing', aliases: { i2: { number: 'wrong kind' } } },
+    { graphql: 'linked', aliases: { i2: { number: 2 } }, stderr: 'second\n' },
+  ];
+  const second = ghAnswer(entries, ['api', 'graphql', '-f', linkedQuery(2)]);
+  assert.deepEqual(JSON.parse(second.stdout), { data: { repository: { i2: { number: 2 } } } });
+  assert.equal(second.stderr, 'second\n', 'the later linked entry answers, past the first and past the other kind');
+  assert.equal(ghAnswer(entries, ['api', 'graphql', '-f', linkedQuery(1)]).stderr, 'first\n', 'the first entry still answers its own alias');
+  assert.equal(ghAnswer(entries, ['api', 'graphql', '-f', linkedQuery(3)]), null, 'no entry holds it: a miss');
 });
 
 test('#5227 oracle: normalize substitutes only the sandbox root and run-dir name; reported keeps AUTO/Warning lines; assertParity compares them', () => {
@@ -665,7 +687,6 @@ test('#5227 queuePull runs every registry pass in order and returns the final gr
 const T3_PASSES = PASSES.slice(0, 5); // truncate, fetch, blocked, oversized, write-back
 const NOW = new Date('2026-11-12T12:00:00.000Z');
 const EXPRESS_OFF = () => ({ enabled: false, grouping: 'per-record', keepSingleton: () => false });
-const OPEN_NUMBERS_ARGV = ['issue', 'list', '--state', 'open', '--json', 'number', '--limit', '200'];
 
 // Runs truncate..write-back over a scenario in a test-owned TMPDIR and returns everything a test
 // asserts on. o: { transport, omit, persisted, writeResult, spawn (CLI overrides), env, inputs,
@@ -1079,13 +1100,12 @@ test('#5227 files: the queue file is copied into the session file and aliased th
   const calls = [];
   const noGh = (cmd, args) => { calls.push([cmd, ...args]); throw new Error(`gh must not be called on files: ${args.join(' ')}`); };
   const write = (own, { verified }) => {
-    const put = (name, content) => { const file = path.join(own, name); fs.writeFileSync(file, content); return file; };
     return {
       inputs: {
-        queueRaw: put('queue.json', JSON.stringify([mcpRecord(9001, withBody(9001)), mcpRecord(9002, `Blocked by #8000\n\n${withBody(9002)}`)])),
-        openNumbers: put('open.json', '[{"number":9001},{"number":9002}]'),
-        depFreshness: put('dep.json', '[{"number":8000,"updated_at":"2026-11-09T10:00:00Z","state":"open"}]'),
-        verifiedOpenDeps: verified === null ? path.join(own, 'absent.txt') : put('verified.txt', verified),
+        queueRaw: writeInput(own, 'queue.json', JSON.stringify([mcpRecord(9001, withBody(9001)), mcpRecord(9002, `Blocked by #8000\n\n${withBody(9002)}`)])),
+        openNumbers: writeInput(own, 'open.json', '[{"number":9001},{"number":9002}]'),
+        depFreshness: writeInput(own, 'dep.json', '[{"number":8000,"updated_at":"2026-11-09T10:00:00Z","state":"open"}]'),
+        verifiedOpenDeps: verified === null ? path.join(own, 'absent.txt') : writeInput(own, 'verified.txt', verified),
       },
     };
   };
@@ -1111,13 +1131,12 @@ test('#5227 files: the queue file is copied into the session file and aliased th
   const foreign = pull(foreignScenario(), {
     transport: 'files', run: noGh, spawn: {},
     prepare: (own) => {
-      const put = (name, content) => { const file = path.join(own, name); fs.writeFileSync(file, content); return file; };
       return { inputs: {
-        queueRaw: put('q.json', JSON.stringify([mcpRecord(9001, `Blocked by acme-corp/other#12\n\n${withBody(9001)}`)])),
-        openNumbers: put('o.json', '[{"number":9001}]'),
-        depFreshness: put('d.json', '[]'),
-        verifiedOpenDeps: put('v.txt', ''),
-        foreignStates: put('f.json', '{"acme-corp/other#12":"OPEN"}'),
+        queueRaw: writeInput(own, 'q.json', JSON.stringify([mcpRecord(9001, `Blocked by acme-corp/other#12\n\n${withBody(9001)}`)])),
+        openNumbers: writeInput(own, 'o.json', '[{"number":9001}]'),
+        depFreshness: writeInput(own, 'd.json', '[]'),
+        verifiedOpenDeps: writeInput(own, 'v.txt', ''),
+        foreignStates: writeInput(own, 'f.json', '{"acme-corp/other#12":"OPEN"}'),
       } };
     },
   });
@@ -1131,12 +1150,11 @@ test('#5227 files: the queue file is copied into the session file and aliased th
 test('#5227 files: the dependency-freshness file is used only where the fence searches; with no dependency the session file is [] and the input is not read', () => {
   const noGh = () => { throw new Error('no gh on files'); };
   const inputsWith = (queue, dep) => (own) => {
-    const put = (name, content) => { const file = path.join(own, name); fs.writeFileSync(file, content); return file; };
     return { inputs: {
-      queueRaw: put('queue.json', JSON.stringify(queue)),
-      openNumbers: put('open.json', JSON.stringify(queue.map((r) => ({ number: r.number })).concat([{ number: 8000 }]))),
-      depFreshness: dep === null ? path.join(own, 'absent-dep.json') : put('dep.json', dep),
-      verifiedOpenDeps: put('verified.txt', ''),
+      queueRaw: writeInput(own, 'queue.json', JSON.stringify(queue)),
+      openNumbers: writeInput(own, 'open.json', JSON.stringify(queue.map((r) => ({ number: r.number })).concat([{ number: 8000 }]))),
+      depFreshness: dep === null ? path.join(own, 'absent-dep.json') : writeInput(own, 'dep.json', dep),
+      verifiedOpenDeps: writeInput(own, 'verified.txt', ''),
     } };
   };
   const STALE = '[{"number":8000,"updated_at":"2026-11-09T10:00:00Z","state":"open"}]';
@@ -1173,12 +1191,11 @@ test('#5227 D3: a non-array queue file such as {issues:[...]} reads as an empty 
   const r = pull(S1(), {
     transport: 'files', run: () => { throw new Error('no gh on files'); },
     prepare: (own) => {
-      const put = (name, content) => { const file = path.join(own, name); fs.writeFileSync(file, content); return file; };
       return { inputs: {
-        queueRaw: put('queue.json', wrapper),
-        openNumbers: put('open.json', '[]'),
-        depFreshness: put('dep.json', '[]'),
-        verifiedOpenDeps: put('verified.txt', ''),
+        queueRaw: writeInput(own, 'queue.json', wrapper),
+        openNumbers: writeInput(own, 'open.json', '[]'),
+        depFreshness: writeInput(own, 'dep.json', '[]'),
+        verifiedOpenDeps: writeInput(own, 'verified.txt', ''),
       } };
     },
   });
@@ -1193,12 +1210,11 @@ test('#5227 files: a queue file the agent never wrote removes the session copy (
   const r = pull(S1(), {
     transport: 'files', run: () => { throw new Error('no gh on files'); }, allowThrow: true,
     prepare: (own) => {
-      const put = (name, content) => { const file = path.join(own, name); fs.writeFileSync(file, content); return file; };
       return { inputs: {
         queueRaw: path.join(own, 'absent-queue.json'),
-        openNumbers: put('open.json', '[]'),
-        depFreshness: put('dep.json', '[]'),
-        verifiedOpenDeps: put('verified.txt', ''),
+        openNumbers: writeInput(own, 'open.json', '[]'),
+        depFreshness: writeInput(own, 'dep.json', '[]'),
+        verifiedOpenDeps: writeInput(own, 'verified.txt', ''),
       } };
     },
     before: (ctx) => fs.writeFileSync(ctx.paths['dispatch-queue-raw.json'], JSON.stringify([mcpRecord(9001, withBody(9001))])),
@@ -1798,8 +1814,6 @@ const UNLANDED_STOP = fenceText(/echo "(dispatch: queue-pull stopped -- unlanded
 const IN_FLIGHT_POOL_AUTO = fenceText(/echo "(AUTO — dispatch: neighbour-in-flight pool fetch failed[^"]*)" >&2/);
 const IN_FLIGHT_CAP = fenceText(/echo "(Warning: the bot:in-progress pull for the neighbour-in-flight pass[^"]*)" >&2/);
 const OPEN_PR_CAP = fenceText(/echo "(Warning: the open-PR pull for the cross-PR overlap report[^"]*)" >&2/);
-const IN_FLIGHT_ARGV = ['issue', 'list', '--label', 'bot:in-progress', '--state', 'open', '--json', 'number,title,body,labels', '--limit', '200'];
-const OPEN_PRS_ARGV = ['pr', 'list', '--state', 'open', '--json', 'number,files,closingIssuesReferences', '--limit', '100'];
 
 // The canned dispatch-unlanded-blockers.js: for the pipeline fixture's #9012 (a Blocked by line with
 // no valid number) and #9011 (a closed blocker whose commit never landed) it appends the real CLI's
@@ -1955,14 +1969,13 @@ function filesPull(o = {}) {
     allowThrow: true,
     ...o,
     prepare: (own) => {
-      const put = (name, content) => { const file = path.join(own, name); fs.writeFileSync(file, content); return file; };
       const inputs = {
-        queueRaw: put('queue.json', ghAnswerOf(QUEUE_ARGV)),
-        openNumbers: put('open.json', ghAnswerOf(OPEN_NUMBERS_ARGV)),
-        depFreshness: put('dep.json', '[]'),
-        verifiedOpenDeps: put('verified.txt', ''),
-        inFlightRaw: o.raw === null ? path.join(own, 'absent-raw.json') : put('in-flight.json', o.raw === undefined ? JSON.stringify([IN_FLIGHT_7001]) : o.raw),
-        inFlightClaims: o.claimsFile === null ? path.join(own, 'absent-claims.json') : put('claims.json', o.claimsFile === undefined ? JSON.stringify({ 7001: LIVE_CLAIM }) : o.claimsFile),
+        queueRaw: writeInput(own, 'queue.json', ghAnswerOf(QUEUE_ARGV)),
+        openNumbers: writeInput(own, 'open.json', ghAnswerOf(OPEN_NUMBERS_ARGV)),
+        depFreshness: writeInput(own, 'dep.json', '[]'),
+        verifiedOpenDeps: writeInput(own, 'verified.txt', ''),
+        inFlightRaw: o.raw === null ? path.join(own, 'absent-raw.json') : writeInput(own, 'in-flight.json', o.raw === undefined ? JSON.stringify([IN_FLIGHT_7001]) : o.raw),
+        inFlightClaims: o.claimsFile === null ? path.join(own, 'absent-claims.json') : writeInput(own, 'claims.json', o.claimsFile === undefined ? JSON.stringify({ 7001: LIVE_CLAIM }) : o.claimsFile),
       };
       return { inputs };
     },
@@ -2008,6 +2021,18 @@ test('#5227 files neighbour: a missing or malformed pool file or claim-map file 
     assert.equal(r.thrown.line, `${NEIGHBOUR_STOP}1); see error above.`, name);
     assert.match(r.stderr, /queue-pull: neighbour-in-flight: /, name);
     assert.ok(!r.cap.order.includes('cross-pr-overlap'), `${name}: no later pass runs`);
+  }
+});
+
+test('#5227 files neighbour: with neighbour-in-flight omitted, a missing claim-map or pool file does not stop the pull (only the omitted compute reads them)', () => {
+  for (const [name, o] of [['missing claims file', { claimsFile: null }], ['missing pool file', { raw: null }]]) {
+    const r = filesPull({ ...o, omit: ['neighbour-in-flight'] });
+    assert.equal(r.thrown, null, `${name}: ${r.thrown}`);
+    assert.ok(r.cap.order.includes('neighbour-in-flight') && r.cap.order.includes('cross-pr-overlap'), `${name}: the runner is called and the later passes run`);
+    assert.ok(!/queue-pull: neighbour-in-flight: /.test(r.stderr), `${name}: no step error`);
+    assert.deepEqual(entriesOf(r, 'neighbour-in-flight'), [], name);
+    // The same input without the omit stops the pull (control; the R8 test above).
+    assert.ok(filesPull(o).thrown instanceof QueuePullStopped, `${name}: not omitted, it stops`);
   }
 });
 
@@ -2082,7 +2107,6 @@ const informationalFile = { 'cross-pr-overlap': 'dispatch-crosspr-overlap.json',
 
 test('AC2.1: every registry entry that writes a reason, and each informational pass, goes red when omitted', () => {
   assert.equal(SWEPT.length, 11, 'the sweep covers 11 entries: 9 reasons and 2 informational passes');
-  let swept = 0;
   for (const p of SWEPT) {
     const name = p.reason || p.id;
     const scenario = () => (p.id === 'oversized' ? SFast() : PIPE());
@@ -2098,9 +2122,7 @@ test('AC2.1: every registry entry that writes a reason, and each informational p
       assert.notEqual(omitted.text[file], full.text[file], `${name}: omission changes ${file}`);
       assert.deepEqual(omitted.json('dispatch-exclusions.json'), full.json('dispatch-exclusions.json'), `${name}: an informational pass removes nothing`);
     }
-    swept += 1;
   }
-  assert.equal(swept, SWEPT.length, 'the loop ran every entry');
 });
 
 // ---- the default deps: which bound each call gets, and a spawn failure's cause (defaultDeps seams) ----
@@ -2309,9 +2331,16 @@ test('AC6.2: equal createdAt ranks in the script sort order, and a snake_case po
   assert.deepEqual(rankNext(multiCamel, [], {}).map((r) => r.number), [20, 21]);
   assert.deepEqual(rankNext(multiSnake, [], {}).map((r) => r.number), [22], 'unaliased: no createdAt, pool order wins');
   assert.deepEqual(rankNext(multiSnake.map((g) => aliasMcpTimestamps(g)), [], {}).map((r) => r.number), [20, 21]);
-  const mixedSnake = [MED, MIXED].map(snake).map((g) => aliasMcpTimestamps(g));
-  assert.deepEqual(rankNext(mixedSnake, [], {}).map((r) => r.number), [6, 7, 8], 'MIXED ranks as high through the round trip');
-  assert.deepEqual(rankNext(mixedSnake, [], { priority: 'high' }).map((r) => r.number), [6, 7, 8]);
+  // MIXED ([low, high, unprioritized]) against a newer high group: it wins only when it ranks as
+  // high AND its high member's age is read, so the band alone cannot decide it. The unaliased pool
+  // (no createdAt, so pool order) is the control that a dropped alias would turn this into.
+  const mixedPool = [A(23, 'high', 7), MIXED];
+  assert.deepEqual(rankNext(mixedPool, [], {}).map((r) => r.number), [6, 7, 8], 'camelCase: MIXED (high, 2026-06) beats #23 (high, 2026-07)');
+  const mixedSnake = mixedPool.map(snake);
+  assert.deepEqual(rankNext(mixedSnake, [], {}).map((r) => r.number), [23], 'unaliased: no createdAt, pool order wins');
+  const mixedAliased = mixedSnake.map((g) => aliasMcpTimestamps(g));
+  assert.deepEqual(rankNext(mixedAliased, [], {}).map((r) => r.number), [6, 7, 8], 'MIXED ranks as high, by age, through the round trip');
+  assert.deepEqual(rankNext(mixedAliased, [], { priority: 'high' }).map((r) => r.number), [6, 7, 8]);
 });
 
 function withSession(fn) {
@@ -2344,7 +2373,7 @@ test('AC6.3: rankFromFiles reads an absent and a corrupt dispatch-exclusions.jso
   assert.equal(picked(), JSON.stringify(MED) + '\n');
 }));
 
-test('AC6.3: rankFromFiles writes null when nothing is eligible, honours --priority, and throws on a missing or malformed groups file without writing a pick', () => withSession((paths, sessionId) => {
+test('AC6.3: rankFromFiles writes null when nothing is eligible, honours --priority, and throws on a missing or malformed groups file, leaving the pick file empty', () => withSession((paths, sessionId) => {
   // The script redirects node's stdout into the pick file, so a throw leaves it EMPTY, not stale.
   fs.writeFileSync(paths['dispatch-next-pick.json'], 'STALE\n');
   assert.throws(() => rankFromFiles({ sessionId }), /ENOENT/);
@@ -2376,7 +2405,7 @@ test('AC6.3 oracle: a missing or malformed dispatch-groups.json fails the fence 
     try {
       const paths = seedModuleSession(sessionId, writeCaseFiles(dir, { groups, exclusions: [] }));
       fs.writeFileSync(paths['dispatch-next-pick.json'], 'STALE\n');
-      assert.throws(() => rankFromFiles({ sessionId, priority: '' }));
+      assert.throws(() => rankFromFiles({ sessionId, priority: '' }), groups === null ? (err) => err.code === 'ENOENT' : SyntaxError);
       assert.equal(fs.readFileSync(paths['dispatch-next-pick.json'], 'utf8'), oracle.pickText);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
@@ -2575,7 +2604,7 @@ test('#5227 --rank writes dispatch-next-pick.json and exits 0 (and --priority re
   assert.equal(fs.readFileSync(paths['dispatch-next-pick.json'], 'utf8'), '', 'the stale pick was truncated, not left behind');
 }));
 
-test('#5227 CLI process: the real binary runs --help, rejects a bad flag and pulls a one-record queue under the sandbox shims', { skip: STUB_SKIP }, async () => {
+test('#5227 CLI process: the real binary runs --help, rejects a bad flag and pulls a one-record queue under the sandbox shims (and under a padded session id)', { skip: STUB_SKIP }, async () => {
   const sandbox = createSandbox(S0());
   try {
     const help = await runModuleCli(sandbox, ['--help']);
@@ -2589,6 +2618,11 @@ test('#5227 CLI process: the real binary runs --help, rejects a bad flag and pul
     assert.deepEqual(JSON.parse(pull.files['dispatch-groups.json']).flat().map((c) => c.number), [9001]);
     assert.deepEqual(JSON.parse(pull.files['dispatch-exclusions.json']), []);
     assert.deepEqual(pull.ghArgv.filter((a) => a.tag === 'UNHANDLED'), []);
+    // A padded session id: the CLI's session dir is the trimmed one (the plugin's rule), and the
+    // harness reads that same dir, so the files are found.
+    const padded = await runModuleCli(sandbox, ['--transport', 'gh'], { sessionId: ' qp-padded ' });
+    assert.equal(padded.status, 0, padded.stderr);
+    assert.deepEqual(JSON.parse(padded.files['dispatch-groups.json']).flat().map((c) => c.number), [9001]);
   } finally {
     sandbox.cleanup();
   }
