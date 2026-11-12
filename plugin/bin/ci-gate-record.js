@@ -30,7 +30,7 @@
 // input — a failed `gh run list` is 2 (unreadable input), as is gh output that
 // is not a JSON array of objects or a completed run with an unparseable
 // timestamp, never a ciWallMs of null; 3 the run dir is missing or not anchored
-// under the main checkout (a worktree-local shadow — _shared/pipeline-run-dir.md's
+// under the main checkout (e.g. a worktree-local shadow — _shared/pipeline-run-dir.md's
 // Anchoring section, [IL-127]), or the write did not land. No exit 1.
 //
 // Confirm by re-read: appendEvent is best-effort and swallows its own write
