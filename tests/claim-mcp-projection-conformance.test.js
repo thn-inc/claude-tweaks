@@ -74,7 +74,7 @@ test('task-prompt.md context pack threads the selection time into the Task call 
   assert.match(pack, /dispatch-groups\.json/);
   assert.match(pack, /`Selected at: unknown`/);
   assert.match(pack, /sessionTmpPath/);
-  assert.match(prompt, /resolved seven of these facts/);
+  assert.match(prompt, /`dispatch-prompt\.js` resolves these facts as literals/);
 });
 
 const TRANSPORT = read('plugin/skills/_shared/github-write-transport.md');
