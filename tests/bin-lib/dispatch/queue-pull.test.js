@@ -436,6 +436,16 @@ test('R7/PF8: an omitted pass still has its runner called; the runner sees ctx.o
   }
 });
 
+test('#5227 runPasses: a ctx with no omit runs every pass, each runner seeing an empty omit set', () => {
+  const log = [];
+  const runners = Object.fromEntries(PASSES.map((p) => [p.id, (ctx) => {
+    assert.ok(ctx.omit instanceof Set && ctx.omit.size === 0, `${p.id} sees an empty omit set`);
+    log.push(p.id);
+  }]));
+  runPasses(PASSES, { deps: {}, paths: {}, options: {}, runners });
+  assert.deepEqual(log, [...new Set(PASSES.map((p) => p.id))]);
+});
+
 test('AC11.2: every registry field has a fixed value set', () => {
   const idCounts = {};
   for (const p of PASSES) {

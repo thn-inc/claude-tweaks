@@ -1002,9 +1002,11 @@ function resolveOmit(omit = []) {
 }
 
 // Walks a registry in array order, running each id once at its first entry. ctx carries
-// { deps, paths, options, omit?: Set of ids, runners?: { [id]: fn } }.
+// { deps, paths, options, omit?: Set of ids, runners?: { [id]: fn } }; an absent omit is the
+// empty set, so every pass runs in full.
 function runPasses(passes, ctx) {
   const runners = ctx.runners || RUNNERS;
+  const passCtx = { ...ctx, omit: ctx.omit ?? new Set() };
   const seen = new Set();
   for (const pass of passes) {
     if (seen.has(pass.id)) continue;
@@ -1012,7 +1014,7 @@ function runPasses(passes, ctx) {
     const runner = runners[pass.id];
     if (typeof runner !== 'function') throw new Error(`queue-pull: pass not implemented: ${pass.id}`);
     if (ctx.deps.onPass) ctx.deps.onPass(pass.id);
-    runner(ctx);
+    runner(passCtx);
   }
 }
 
