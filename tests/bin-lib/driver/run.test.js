@@ -42,6 +42,9 @@ test('neutralize: HTML comment openers render inert; issue and PR URLs and GH-N 
   assert.equal(neutralize('y https://github.com/o/r/pull/5/files#diff-1 z'), 'y z');
   assert.equal(neutralize('x https://github.com/o/fix/issues/5 y'), 'x y');
   assert.equal(neutralize('see GH-42 and gh-7'), 'see and');
+  assert.equal(neutralize('(https://github.com/o/r/pull/3/files)'), '()');
+  assert.equal(neutralize('see https://github.com/o/r/issues/5.'), 'see .');
+  assert.equal(neutralize('a https://github.com/o/r/pull/5/files#diff-1, b'), 'a , b');
   assert.equal(neutralize('https://github.com/o/r/blob/main/a.js'), 'https://github.com/o/r/blob/main/a.js');
 });
 
@@ -2223,6 +2226,12 @@ test('AC7.6: ci word is the pr-checks state, timeout at the bound, null with no 
     await run(['#7'], h.deps);
     assert.equal(lastLine(h).ci, null, name);
     assert.equal(lastLine(h).pr, null, name);
+  }
+  // Null is reserved for no PR: a stop after the PR exists reports `pending` when CI was never read.
+  for (const name of ['record-pr fails', 'set-config fails']) {
+    const h = harness(SCENARIOS[name]);
+    await run(['#7'], h.deps);
+    assert.deepEqual([lastLine(h).pr, lastLine(h).ci, lastLine(h).outcome], [9, 'pending', 'blocked'], name);
   }
 });
 

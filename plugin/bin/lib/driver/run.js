@@ -145,7 +145,8 @@ function finalEvent(ctx, stop, sink, msTotal, deps) {
     msTotal,
     msWithoutCi: msTotal - ciWaitMs,
     pr: ctx.pr ? orNull(ctx.pr.number) : null,
-    ci: orNull(ctx.ci),
+    // Null is reserved for no PR: once a PR exists, a CI state never read is `pending`.
+    ci: ctx.pr ? (typeof ctx.ci === 'string' ? ctx.ci : 'pending') : orNull(ctx.ci),
     costUsd: worker ? orNull(worker.costUsd) : null,
     turns: worker ? orNull(worker.turns) : null,
     denialCount: worker && Array.isArray(worker.denials) ? worker.denials.length : null,
@@ -186,14 +187,13 @@ function interruptClass(ctx) {
 
 // Writes an interrupted record's stop at `step` and its final line, then terminates. The
 // process ends by the signal whatever the emission does. A CI wait in progress is reported
-// as the stop's ciWaitMs, so msWithoutCi still excludes it; with a PR, the ci field is the last
-// polled state, or `pending` when CI was never read (null is reserved for no PR).
+// as the stop's ciWaitMs, so msWithoutCi still excludes it; the final line's ci field follows
+// finalEvent's rule (the last polled state, `pending` when never read, null only with no PR).
 function reportInterrupt(shared, current, step, detail, ms, deps) {
   const { ctx, sink } = current;
   try {
     // A step that set ctx.runDir may not have had its sink bound yet; binding twice is harmless.
     if (ctx.runDir) sink.bindRunDir(ctx.runDir);
-    if (ctx.pr && (ctx.ci === null || ctx.ci === undefined)) ctx.ci = 'pending';
     const extra = Number.isFinite(ctx.ciWaitStartedAt) ? { ciWaitMs: Math.max(0, deps.now() - ctx.ciWaitStartedAt) } : {};
     const result = { status: 'fail', detail, halt: true, stopClass: interruptClass(ctx), reason: 'fail', extra };
     sink.emit(eventFor(ctx, step.name, result, ms, deps));

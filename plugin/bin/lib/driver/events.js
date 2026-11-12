@@ -58,7 +58,8 @@ const QUALIFIED_REF = /[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#\d+/g;
 const BARE_REF = /#\d+/g;
 // An issue or PR URL on any host, with any tail (`/files`, `#issuecomment-…`): it backlinks
 // like `#N`. Removed before the keywords, which could otherwise cut a path segment out of it.
-const URL_REF = /\bhttps?:\/\/[^\s/]+\/[^\s/]+\/[^\s/]+\/(?:issues|pull)\/\d+(?:[/#?]\S*)?/gi;
+// The tail stops before trailing punctuation (`)`, `.`, `,` …), which belongs to the sentence.
+const URL_REF = /\bhttps?:\/\/[^\s/]+\/[^\s/]+\/[^\s/]+\/(?:issues|pull)\/\d+(?:[/#?]\S*[^\s)\].,;:!?'">])?/gi;
 const GH_REF = /\bGH-\d+\b/gi;
 // An HTML comment opener hides the rest of a rendered body; `<\!--` renders as the text `<!--`.
 const COMMENT_OPENER = /<!--/g;
