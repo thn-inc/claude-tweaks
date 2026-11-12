@@ -1254,6 +1254,17 @@ test('#5227 shipped: a failing gh pr view prints nothing, reads as [] and the ca
   assert.ok(p.errs.some((e) => e.startsWith('queue-pull: shipped-pr-files: ')), p.stderr);
 });
 
+test('#5227 shipped: a missing shipped-pr-files file reads as no probed files (ENOENT is caught), and the pass still classifies', () => {
+  const scenario = FULL();
+  // The probe call deletes the file and answers invalid JSON, so nothing recreates it.
+  scenario.gh = scenario.gh.map((e) => (e.argv && e.argv[1] === 'view'
+    ? { ...e, stdout: '["a"]', status: 1, effect: 'delete-session-file:dispatch-shipped-pr-files.jsonl' } : e));
+  const r = pull4(scenario);
+  assert.equal(r.text['dispatch-shipped-pr-files.jsonl'], undefined);
+  assertShipped(r);
+  assert.ok(r.errs.includes('AUTO — dispatch: #9016 mentioned by merged PR #5016 without a closing keyword; dispatching anyway\n'), r.stderr);
+});
+
 test('#5227 shipped: no mention means no probe and no AUTO line; a weak mention that predates the claim release is kept without a probe, and its AUTO line names the release', () => {
   const quiet = pull4(S1());
   assert.deepEqual(prViews(quiet), []);
