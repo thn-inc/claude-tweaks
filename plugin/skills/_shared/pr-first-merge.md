@@ -117,14 +117,14 @@ as `wait` for this merge and log `AUTO … Step 2.5: lever unresolved ("{raw}") 
 Never as `off`: an unreadable lever must not become the one value that skips the wait.
 
 **Read state first — never parse stderr first.** Before any merge attempt, regardless of value, resolve this step's scratch paths (`_shared/session-tmp-root.md`)
-and substitute the printed `PR_CHECKS`/`PR_RUNS`/`PARK_COMMENT`/`PR_READY` literals for `{pr-checks-path}`/`{pr-runs-path}`/`{park-comment-path}`/`{pr-ready-path}`
+and substitute the printed `PR_CHECKS`/`PR_RUNS`/`PARK_COMMENT`/`PR_READY`/`GATE_START` literals for `{pr-checks-path}`/`{pr-runs-path}`/`{park-comment-path}`/`{pr-ready-path}`/`{gate-start-path}`
 below (`_shared/scratch-worktree.md` §7):
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PR_CHECKS=pr-checks-{n}.txt PR_RUNS=pr-runs-{n}.json PARK_COMMENT=park-comment-{n}.md PR_READY=pr-ready-{n}.json
+node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PR_CHECKS=pr-checks-{n}.txt PR_RUNS=pr-runs-{n}.json PARK_COMMENT=park-comment-{n}.md PR_READY=pr-ready-{n}.json GATE_START=gate-start-{n}.txt
 ```
 
-Then read state:
+Then, on entry from the top only, record the pass start (`date +%s > "{gate-start-path}"`; a mid-pass re-read never repeats it) and read state:
 
 ```bash
 gh pr view {pr-number} --repo {owner}/{repo} --json state,mergeStateStatus,mergeable,headRefOid,statusCheckRollup
@@ -189,8 +189,16 @@ Then, per resolved value:
 | Value | Green | Pending | Red |
 |---|---|---|---|
 | `merge-when-green` | Step 3 as written — arm/merge (identical outcome when checks are already green) | `mergeStateStatus: BLOCKED` → Step 3 as written — arm `--auto` (the forge holds it; outcome `armed`). Any other value (`CLEAN`, `UNSTABLE`, `BEHIND`, `UNKNOWN`, …) → arming would merge immediately: **degrade to the `wait` row** — never to an immediate merge | Red path |
-| `wait` | Re-read (`gh pr view … --json state,mergeStateStatus,headRefOid`); if `headRefOid` changed since the first read or `state` is no longer `OPEN`, re-enter this step from the top (one re-entry; a second change reports `pending-review`, reason `moving-target`) — never merge blind; otherwise merge via Step 3's immediate `--squash` form (re-run its composer call first) | **Bounded watch** below | Red path |
+| `wait` | Re-read (`gh pr view … --json state,mergeStateStatus,headRefOid`); if `headRefOid` changed since the first read or `state` is no longer `OPEN`, re-enter this step from the top (one re-entry; a second change reports `pending-review`, reason `moving-target`) — never merge blind; otherwise merge via Step 3's immediate `--squash` form (CI-gate record, then re-run its composer call) | **Bounded watch** below | Red path |
 | `off` | Step 3 as written (today's behavior, unchanged) | Derived `off` → **Bounded watch** below, logged `AUTO {HH:MM:SS} — Step 2.5 (merge-verification gate): derived off with pending checks on PR #{n} — bounded watch. Reversibility: n/a. [lever: merge-verification=off (default)]` Explicit `off` → Step 3 as written | Derived `off` → **Red path**. Explicit `off` → Step 3 as written; the red read is logged for the summary |
+
+**CI-gate record.** Once per gate pass, before every merge on a gate-decided **green** (Green column, `wait` re-read, `RC=0`), never under an explicit `off`:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/ci-gate-record.js" --pr {pr-number} --head-sha {headRefOid} --verdict green --gate-start-epoch "$(cat "{gate-start-path}")" --run "$PIPELINE_RUN_DIR" --repo {owner}/{repo}
+```
+
+`--run` follows the per-merged-run rule above. A non-zero exit logs `SKIP {HH:MM:SS} — Step 2.5 (merge-verification gate): ci-gate not recorded ({error})` and the merge path continues unchanged — the writer never gates a merge. A Red-path resume is a new gate pass with its own call. Dispatch close-out skips this step, so records nothing; so do an explicit `off`, an armed merge and a failed read.
 
 **Bounded watch (`wait`, `merge-when-green` when arming would not hold, and a derived `off` with pending checks) — 15 minutes, fixed.**
 (Fixed by design, not a policy key — `pr-first-merge-appendix.md`'s "Rationale notes".) Poll
@@ -231,7 +239,7 @@ guard refuses a `--jq` program inside this loop (`_shared/scratch-worktree.md` �
   `headRefOid` changed since the first read (a new push landed) or `state` is not `OPEN`, re-enter this
   step from the top (one re-entry; a second change reports `pending-review`, reason `moving-target`)
   — never merge blind; a failing head run takes the Red path, reason `check-failed:{names}` (names from
-  its `workflowName`s); a head run not yet `completed` resumes the bounded watch at the same `DEADLINE`, as does an `awaiting` ready-run read (`awaitingReadyRun`); any other ready-run state routes per Step 2.5; otherwise merge via Step 3's immediate `--squash` form (re-run its composer call first) (outcome `merged`,
+  its `workflowName`s); a head run not yet `completed` resumes the bounded watch at the same `DEADLINE`, as does an `awaiting` ready-run read (`awaitingReadyRun`); any other ready-run state routes per Step 2.5; otherwise merge via Step 3's immediate `--squash` form (CI-gate record, then re-run its composer call) (outcome `merged`,
   then Step 4).
 - `RC=1` (a check failed during the watch) → **Red path**, reason `check-failed:{names}` (names from
   the `fail` rows of `{pr-checks-path}`).
@@ -259,6 +267,7 @@ guard refuses a `--jq` program inside this loop (`_shared/scratch-worktree.md` �
    ```
    (`$RESUME` holds `{resume}`; `$REASON` holds the check names — from `{pr-checks-path}`'s `fail` rows, or the failing
    head runs' `workflowName`s — or the pending-timeout or draft-skip phrase — passed as a `printf` argument, never expanded inside the format string, never a quoted literal: with file names in it, Write the body to `{park-comment-path}` instead. A timeout whose last ready-run read named `awaitingReadyRun` appends ` (no run since ready: {files})`; `unparsed`: ` ({files} unparsed: _shared/ci-skips-drafts.md)`. Under a derived `off`, the comment's `{value}`/`$VALUE` is `derived off`.)
+   Then that CI-gate record call with `--verdict timeout-park` for `checks-pending-timeout`, else `--verdict red`.
    **Verify the label landed** — re-read each record's labels (`gh issue view {n} --json labels`)
    after the add; a missing `bot:parked` is retried once. If it is still missing, the park has no
    lock the `[pr-unarmed]` sweep (`_shared/github-pr-scan.md`) would honor, so fall back to the one
