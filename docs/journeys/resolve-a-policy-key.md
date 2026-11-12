@@ -10,6 +10,7 @@ files:
   - plugin/bin/lib/shared-primitives.js
   - plugin/skills/_shared/policy-schema.md
   - plugin/skills/_shared/policy-schema-coverage.md
+  - plugin/skills/_shared/policy-schema-read-path.md
 ---
 
 # Resolve a Policy Key Through the Canonical Read Path

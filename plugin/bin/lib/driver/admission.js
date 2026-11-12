@@ -54,7 +54,8 @@ function routingReason(routing, number) {
 // { number, state, labels, openBlockerRefs, openLinkedPRs, routing } -> { admitted, reasons }.
 function evaluateAdmission(facts) {
   // A null or non-object argument reads as no facts at all: every unreadable reason fires.
-  const { number, state, labels, openBlockerRefs, openLinkedPRs, routing } = (facts && typeof facts === 'object') ? facts : {};
+  const { number, state, labels, openBlockerRefs, openLinkedPRs, routing } =
+    (facts && typeof facts === 'object') ? facts : {};
   const reasons = [];
 
   // normalizeLabelNames throws on a string or plain object, so an unreadable
