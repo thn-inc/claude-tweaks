@@ -247,5 +247,8 @@
   },
   "doc:decisions/0029-acceptance-labels-resolve-most-conservative-wins": {
     "lastAuditedMs": 1794377524028
+  },
+  "doc:decisions/0030-unknown-origin-hosts-are-refused-not-degraded": {
+    "lastAuditedMs": 1794464043038
   }
 }
