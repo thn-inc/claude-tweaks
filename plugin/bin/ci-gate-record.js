@@ -105,13 +105,19 @@ function computeCiWallMs(runs) {
   return min === Infinity ? null : max - min;
 }
 
+// The one gh spawn, bound to `spawnImpl` (execFileSync in realDeps) so a test can
+// pass a recorder and pin the options it is spawned with.
+function ghRunner(spawnImpl = execFileSync) {
+  return (args) => spawnImpl('gh', args, ghOptions(args, {
+    encoding: 'utf8', windowsHide: true, timeout: CI_GATE_GH_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'pipe'],
+  }));
+}
+
 const realDeps = {
   cwd: () => process.cwd(),
   mainRoot: undefined,
   now: () => Date.now(),
-  gh: (args) => execFileSync('gh', args, ghOptions(args, {
-    encoding: 'utf8', windowsHide: true, timeout: CI_GATE_GH_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'pipe'],
-  })),
+  gh: ghRunner(),
   appendEvent,
   resolveTarget,
   readFile: (p) => fs.readFileSync(p, 'utf8'),
@@ -144,7 +150,7 @@ function run(argv, deps = realDeps) {
   }
   if (!target.ok) {
     if (target.reason === 'missing') return fail(3, `run dir does not exist: ${o.run}`);
-    return fail(3, `run dir is not anchored under the main checkout (a worktree-local shadow): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path`);
+    return fail(3, `run dir is not anchored under the main checkout (e.g. a worktree-local shadow): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path`);
   }
 
   const ghArgs = ['run', 'list', '--commit', o.headSha, '--limit', '100', '--json', RUN_LIST_FIELDS, ...(o.repo ? ['--repo', o.repo] : [])];
@@ -205,7 +211,7 @@ function run(argv, deps = realDeps) {
 }
 
 module.exports = {
-  run, parseArgs, realDeps, computeCiWallMs, VERDICTS, RUN_LIST_FIELDS,
+  run, parseArgs, realDeps, computeCiWallMs, ghRunner, VERDICTS, RUN_LIST_FIELDS, CI_GATE_GH_TIMEOUT_MS,
 };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

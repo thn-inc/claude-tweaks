@@ -8,7 +8,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {
-  run, parseArgs, realDeps, computeCiWallMs, VERDICTS, RUN_LIST_FIELDS,
+  run, parseArgs, realDeps, computeCiWallMs, ghRunner, VERDICTS, RUN_LIST_FIELDS, CI_GATE_GH_TIMEOUT_MS,
 } = require('../../../plugin/bin/ci-gate-record');
 
 const RUN_ID = '2026-11-12T102742-record-5160';
@@ -314,8 +314,18 @@ test('future epoch: --gate-start-epoch 2000 with now 1125 s records gateWaitMs -
 
 test('a write that does not land exits 3: an appendEvent that writes nothing', (t) => {
   const h = harness(t);
-  // An unrelated event and an unparseable line, so the confirm scan runs and finds no match.
-  fs.writeFileSync(h.eventsPath, SEED + '{not json\n');
+  // An unrelated event, an unparseable line, and earlier ci-gate lines that each differ from this
+  // call's event in exactly one confirmed field (a multi-PR run dir already holds such lines), so
+  // the confirm scan runs and a predicate weakened to any one of those fields still finds no match.
+  const near = (over) => JSON.stringify({
+    ts: '2026-11-12T09:30:00.000Z', type: 'ci-gate', pr: 123, headSha: SHA, verdict: 'green',
+    runsReadAt: '1970-01-01T00:18:45.000Z', ...over,
+  }) + '\n';
+  fs.writeFileSync(h.eventsPath, SEED + '{not json\n'
+    + near({ pr: 124 })
+    + near({ runsReadAt: '1970-01-01T00:10:00.000Z' })
+    + near({ headSha: 'b'.repeat(40) })
+    + near({ verdict: 'red' }));
   h.deps.appendEvent = () => {};
   assert.equal(run(argvFor(h), h.deps), 3);
   assert.equal(h.err.join(''), `ci-gate-record.js: ci-gate event not confirmed in ${h.eventsPath}\n`);
@@ -329,6 +339,22 @@ test('a write that does not land exits 3: the real appendEvent with events.jsonl
   assert.equal(run(argvFor(h), h.deps), 3);
   assert.match(h.err.join(''), /^ci-gate-record\.js: /);
   assert.equal(h.out.join(''), '');
+});
+
+test('the real gh spawn: execFileSync-shaped call with a 15 s timeout, quiet stdio and windowsHide', () => {
+  assert.equal(CI_GATE_GH_TIMEOUT_MS, 15000);
+  const seen = [];
+  const gh = ghRunner((cmd, args, opts) => { seen.push({ cmd, args, opts }); return '[]'; });
+  // --repo makes ghOptions return the options unchanged (no host resolution from the cwd).
+  const args = ['run', 'list', '--repo', 'o/r'];
+  assert.equal(gh(args), '[]');
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].cmd, 'gh');
+  assert.equal(seen[0].args, args);
+  assert.equal(seen[0].opts.timeout, CI_GATE_GH_TIMEOUT_MS, 'a hung gh must not hold the merge path');
+  assert.deepEqual(seen[0].opts.stdio, ['ignore', 'pipe', 'pipe'], 'quiet posture: gh stderr is captured, never echoed');
+  assert.equal(seen[0].opts.windowsHide, true);
+  assert.equal(seen[0].opts.encoding, 'utf8');
 });
 
 test('success echoes the events.jsonl path on stdout and --help prints usage with exit 0', (t) => {
