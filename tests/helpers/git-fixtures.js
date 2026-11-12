@@ -51,7 +51,7 @@ function fixtureGit(args, { execFileSync: run = execFileSync, ...opts } = {}) {
     // A maxBuffer overflow kills the child with SIGTERM too, so it is told apart by its code first:
     // it is an output-size failure, not contention. A spawn-level ENOBUFS carries no signal and is not one.
     if (err.code === 'ENOBUFS' && err.signal) {
-      const cap = opts.maxBuffer === undefined ? 1024 * 1024 : opts.maxBuffer;
+      const cap = opts.maxBuffer ?? 1024 * 1024;
       throw Object.assign(new Error(
         `git-fixtures: \`git ${args.join(' ')}\` printed more than its maxBuffer (${cap} bytes) and was killed. `
         + 'Pass a larger maxBuffer for a real-sized output.',
