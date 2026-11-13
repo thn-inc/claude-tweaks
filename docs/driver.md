@@ -42,9 +42,9 @@ Termination: every handled record joins this invocation's `firing` set and is ne
 - the budget is spent (`budget`);
 - the ranking returns `null` (`exhausted`);
 - a pull fails or is malformed, or the ranking throws (`pull-failed`);
-- a claim stop ends it: `claim-targets.js` exit 7 gives `permission-stop`, counted in `permissionStopped`; exit 2 or 6 gives `claim-stop`, counted in `claimFailed`. That record gets the claim row's settle (one comment and `bot:blocked`, no release call), and the rest of the budget goes unused. Exits 4 and 5, a killed claim, an exit 0 that claimed nothing and a failed mint count `claimFailed` and the loop goes on; exit 3 counts `contested` and the loop goes on.
+- a claim stop ends it: `claim-targets.js` exit 7 gives `permission-stop`, counted in `permissionStopped`; exit 2 or 6 gives `claim-stop`, counted in `claimFailed`. That record gets the claim row's settle (one comment and `bot:blocked`, no release call; under `--no-settle` none of it runs and the record's final line carries `settle: left-to-caller`), and the rest of the budget goes unused. Exits 4 and 5, a killed claim, an exit 0 that claimed nothing and a failed mint count `claimFailed` and the loop goes on; exit 3 counts `contested` and the loop goes on.
 
-When no summary line is written: an unreadable policy or a refused origin exits 1, and an interrupt ends the process by its signal. After the policy step and after each driven record the loop yields to the event loop, so a pending signal ends the process there. The hub reads the exit code, or the death by signal.
+When no summary line is written: an unreadable policy or a refused origin exits 1, and an interrupt ends the process by its signal. The loop yields to the event loop and checks for an interrupt after the policy step, before and after each queue pull, and after each driven record; a pending signal ends the process at any of those points with no summary line. The hub reads the exit code, or the death by signal.
 
 What the queue pull itself writes, accepted as dispatch has it: the target-missing and shipped passes log decisions and stage Close proposals into the newest `dispatch-standalone` run directory (or an inherited `PIPELINE_RUN_DIR`), and the write-back pass rewrites the queue-order cache. The pull's own session files sit under `os.tmpdir()`. The module's stdout (warnings, AUTO lines) goes to the driver's stderr, so stdout carries JSON event lines only.
 
@@ -90,7 +90,7 @@ A `--budget` run writes one more line, last (the summary line, `step: "budget"`,
 | `driven`, `refused`, `skipped`, `contested`, `claimFailed`, `permissionStopped` | The six counters. `driven` is the records that consumed budget (claim obtained, run directory minted); `refused` an ineligible or inadmissible record; `skipped` a record the pre-screen ruled out; `contested` a claim lost (`claim-targets.js` exit 3); `claimFailed` any other claim failure; `permissionStopped` an exit 7. |
 | `ended` | Why the loop ended: `budget`, `exhausted`, `permission-stop`, `claim-stop`, `pull-failed` or `policy-refused`. |
 | `status` | From `ended`: `ok` for `budget`, `exhausted` and `policy-refused`; `stop` for `permission-stop` and `claim-stop`; `fail` for `pull-failed`. |
-| `detail` | Present with `permission-stop`, `claim-stop` (the exit code and record) and `pull-failed` (the first line of the failure). |
+| `detail` | Present with `permission-stop`, `claim-stop` (the exit code and record) and `pull-failed` (`queue pull failed: ` followed by the first line of the failure). |
 
 `policy-refused` is preceded by a `policy` line with status `stop` and `detail` `express-driver off: --budget drives nothing`. `tests/bin-lib/driver/run.test.js` pins the exit codes and the `ended` to `status` mapping (`budget AC9.5`); `tests/bin-lib/driver/budget.test.js` pins the loop.
 
