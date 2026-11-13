@@ -5,19 +5,20 @@
 // every record of every group the ranking could select (a group the pull excluded as
 // `oversized` or `neighbour-in-flight` is left alone) with the eligibility step's own call, rank
 // (deps.rankNext) against the pull's exclusions plus this invocation's in-memory `firing`
-// entry, and drive the top group's
-// members one at a time, in the group's own order, through `driveOne` (run.js's
-// driveRecordFacts). It never reorders, filters or re-derives the selection beyond the
-// pre-screen and the `firing` entry. One summary line (BUDGET_STEP) closes the run, except on
-// the exit-1 policy path and after an interrupt, where nothing further is emitted.
+// entry, and drive the top group's members one at a time, in the group's own order, through
+// `driveOne` (run.js's driveRecordFacts). It never reorders, filters or re-derives the
+// selection beyond the pre-screen and the `firing` entry. One summary line (BUDGET_STEP) closes
+// the run, except on the exit-1 policy path and after an interrupt, where nothing further is
+// emitted.
 //
 // Counting: from the claim. A record whose claim was obtained and whose run directory was
 // minted (`claimed` true) is `driven` and consumes budget, whatever its outcome; nothing else
 // does. Every handled record lands in exactly one COUNTERS entry (classifyFacts; a pre-screen
 // skip is `skipped`); a record only in a group the pull excluded as `oversized` or
 // `neighbour-in-flight` is never pre-screened, never handled and never counted. A claim stop
-// ends the run with the rest of the budget unused: claim-targets.js exit 7 (`permission-stop`), or exit 2 or 6 (`claim-stop`), whose cause every
-// later claim would meet too; exits 3, 4 and 5 and a failed mint are per-record.
+// ends the run with the rest of the budget unused: claim-targets.js exit 7
+// (`permission-stop`), or exit 2 or 6 (`claim-stop`), whose cause every later claim would meet
+// too; exits 3, 4 and 5 and a failed mint are per-record.
 //
 // Termination: every member of every handled group, and every member of a selectable group whose
 // members the pre-screen all skips, joins the in-memory `firing` set handed to the ranking, so no
@@ -229,4 +230,4 @@ async function runBudget(budget, shared, deps, { driveOne, steps = STEPS }) {
   }
 }
 
-module.exports = { runBudget, ENDED, STATUS_BY_ENDED, COUNTERS, CLAIM_STOP_EXITS, classifyFacts, preScreen };
+module.exports = { runBudget, ENDED, STATUS_BY_ENDED, COUNTERS, CLAIM_STOP_EXITS, UNSELECTABLE_REASONS, classifyFacts, preScreen };

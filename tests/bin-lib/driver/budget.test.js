@@ -7,7 +7,7 @@ const assert = require('node:assert');
 const path = require('node:path');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const {
-  runBudget, ENDED, STATUS_BY_ENDED, COUNTERS, CLAIM_STOP_EXITS, classifyFacts, preScreen,
+  runBudget, ENDED, STATUS_BY_ENDED, COUNTERS, CLAIM_STOP_EXITS, UNSELECTABLE_REASONS, classifyFacts, preScreen,
 } = require(path.join(LIB, 'driver', 'budget'));
 const { BUDGET_STEP, STEP } = require(path.join(LIB, 'driver', 'events'));
 const { defineStep, eligibilityOptions } = require(path.join(LIB, 'driver', 'steps'));
@@ -121,18 +121,20 @@ test('AC1.1, AC1.2, AC1.3: --budget all drives the module-iterated order, restri
   assert.deepEqual([summary.ended, summary.driven, summary.refused], ['exhausted', reference.length - 1, 1]);
 });
 
-test('AC4.1, AC4.2, AC4.4: only a claimed record consumes budget — refused and contested records do not', async () => {
+test('AC4.1, AC4.2, AC4.4: only a claimed record consumes budget — refused, contested and failed claims do not', async () => {
+  // #4's claim fails another way (exit 5): counted claimFailed, consumes nothing, the run goes on.
   const byRecord = {
     1: { final: null, outcome: 'refused', claimed: false, claimExit: null },
     2: { final: null, outcome: 'blocked', claimed: true, claimExit: 0 },
     3: { final: null, outcome: 'blocked', claimed: false, claimExit: 3 },
+    4: { final: null, outcome: 'blocked', claimed: false, claimExit: 5 },
   };
-  const f = fake({ pulls: [{ groups: singletons(1, 2, 3, 4, 5), exclusions: [] }], facts: (n) => byRecord[n] });
+  const f = fake({ pulls: [{ groups: singletons(1, 2, 3, 4, 5, 6), exclusions: [] }], facts: (n) => byRecord[n] });
   assert.equal(await run(f, 2), 0);
-  assert.deepEqual(f.driven(), [1, 2, 3, 4]);
-  assert.ok(!f.driven().includes(5), '#5 is never driven');
+  assert.deepEqual(f.driven(), [1, 2, 3, 4, 5]);
+  assert.ok(!f.driven().includes(6), '#6 is never driven');
   const summary = summaryOf(f);
-  assert.deepEqual([summary.driven, summary.refused, summary.contested, summary.ended], [2, 1, 1, 'budget']);
+  assert.deepEqual([summary.driven, summary.refused, summary.contested, summary.claimFailed, summary.ended], [2, 1, 1, 1, 'budget']);
 });
 
 test('AC4.3: a record handled once is never selected again in this invocation', async () => {
@@ -186,6 +188,9 @@ test('AC6.4: a top record the pre-screen rules out is skipped once and the run r
   assert.deepEqual(f.driven(), [2, 3]);
   const summary = summaryOf(f);
   assert.deepEqual([summary.skipped, summary.driven, summary.ended], [1, 2, 'exhausted']);
+  // The all-skip group joins firing at the pull that screened it, so it never costs a pull of
+  // its own: one pull each for #2 and #3, and one that ranks nothing.
+  assert.equal(f.calls.queuePull.length, 3);
   // Pre-screened once per record per invocation, with the pulled fields and the eligibility step's own options.
   assert.deepEqual(f.calls.eligibility.map((c) => c.issue.number), [1, 2, 3]);
   assert.deepEqual(f.calls.eligibility[0].issue, { number: 1, title: 'r1', body: 'body', labels: [], state: 'OPEN' });
@@ -209,6 +214,15 @@ test('pre-screen: a group the pull excluded as oversized or neighbour-in-flight 
   assert.deepEqual([summary.skipped, summary.driven, summary.ended], [0, 1, 'exhausted']);
   assert.ok(f.calls.rankNext.every((entries) => entries.filter((e) => e.reason === 'firing').every((e) => !e.records.some((n) => [40, 41, 50].includes(n)))),
     'the excluded records never join firing');
+});
+
+test('UNSELECTABLE_REASONS: every reason is one the real rankNext never selects', () => {
+  assert.ok(UNSELECTABLE_REASONS.length > 0 && Object.isFrozen(UNSELECTABLE_REASONS));
+  const group = [pulled(1)];
+  assert.deepEqual(rankNext([group], [], {}), group, 'control: the lone group is selectable unexcluded');
+  for (const reason of UNSELECTABLE_REASONS) {
+    assert.equal(rankNext([group], [{ reason, records: [1] }], {}), null, reason);
+  }
 });
 
 test('AC6.5: a queue that never shrinks still ends', async () => {
