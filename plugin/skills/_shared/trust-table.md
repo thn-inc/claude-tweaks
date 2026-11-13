@@ -355,7 +355,8 @@ Render `{followUpRate}` as `followUpRatePercent(row)` (`bin/lib/issues/trust.js`
 one decimal, rounded up — the same figure gate 2 prints, so a rate that fails the threshold never
 renders equal to it. `Follow-ups` counts every follow-up record naming one of the class's
 in-window records, so one record drawing three reads `3` there; `Follow-up rate` is the share of
-in-window records that drew at least one, and the verdict reads the rate.
+the class's in-window records that shipped (`Not Planned` closes excluded) which drew at least one
+corrective follow-up, and the verdict reads the rate.
 
 **Undispositioned is never omitted, hidden, or folded into another column.** It is the count of
 closed records carrying no acceptance disposition at all — not a count of failures, a count of
@@ -468,8 +469,9 @@ a follow-up source, like an open record. So a class that earned a rejection and 
 recover: once the rejected record ages out, the cell stops carrying it.
 
 Inside the window the rule is split. `changesRequested` and `negativeEvidence` keep zero tolerance —
-one of either reads `mixed`. Corrective follow-ups are a rate, `followUpRecords / total` with
-`followUpRecords` the distinct in-window records that drew at least one, and the cell stays
+one of either reads `mixed`. Corrective follow-ups are a rate, the share of the class's
+in-window records that shipped (NOT_PLANNED closes excluded) which drew a corrective follow-up
+(`followUpRecords` is the distinct such records), and the cell stays
 `clean` while that rate is at or under `trust-follow-up-rate-max-percent` (integer 0-100, default
 30; `0` restores zero tolerance). The `mixed` reasons are named on the row (`mixedReasons`,
 `describeMixedReasons`), and gate 2's refusal prints them.

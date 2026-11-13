@@ -90,8 +90,9 @@ window, not all time. A closed record counts toward a cell only when its `closed
 `trust-evaluation-window-days` (integer ≥ 1, default 30; the boundary is inclusive, a future
 `closedAt` counts, and a closed record with no parseable `closedAt` is out of window). A record
 outside the window forms no cell, but it is still scanned as a follow-up source. Corrective
-follow-ups are judged as a rate — `followUpRecords / total`, where `followUpRecords` counts the
-distinct in-window records that drew at least one — against `trust-follow-up-rate-max-percent`
+follow-ups are judged as a rate — the share of the class's in-window records that shipped
+(NOT_PLANNED closes excluded) which drew a corrective follow-up, where `followUpRecords` counts the
+distinct such records — against `trust-follow-up-rate-max-percent`
 (integer 0-100, default 30; `0` restores zero tolerance). `changesRequested` and `negativeEvidence`
 keep zero tolerance inside the window: one of either still pins the cell below `clean`. That makes
 recovery real — once the rejected or failed record ages out of the window, and the follow-up rate

@@ -20,7 +20,7 @@
 
 const { normalizeLabelNames, parseRecordFacets } = require('./record.js');
 const { resolveProvenance } = require('./provenance.js');
-const { riskBand, describeMixedReasons, followUpRatePercent } = require('./trust.js');
+const { riskBand, describeMixedReasons, describeFollowUpRate } = require('./trust.js');
 const { permittedGrants } = require('./autonomy.js');
 const { isSensitivePath } = require('./blast-radius.js');
 const { exceedsOversightFloor } = require('./oversight-floor.js');
@@ -104,9 +104,9 @@ function evaluateGrantGate({ record, policy, trustVerdicts, grantCheck } = {}) {
         ? row.mixedReasons.filter((r) => r !== 'follow-up-rate')
         : row.mixedReasons;
       const reasons = describeMixedReasons({ ...row, mixedReasons: otherReasons });
-      const rate = followUpRatePercent(row);
+      const rate = describeFollowUpRate(row, 'max');
       if (reasons) detail += ` (${reasons})`;
-      if (rate !== null) detail += ` — follow-up rate ${rate}% (max ${row.followUpRateMaxPercent}%)`;
+      if (rate) detail += ` — ${rate}`;
     }
     return deny('trust', `class ${classKey} verdict is ${verdict}${detail} — only a clean class earns a machine-originated grant`, { classKey, verdict });
   }

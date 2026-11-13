@@ -370,6 +370,7 @@ function trustRows(records, gitLog, now, policy) {
         // Distinct record numbers a corrective follow-up names, and the earliest
         // close among the cell's records — row inputs, not row fields.
         followUpTargets: new Set(),
+        declinedNumbers: new Set(),
         oldestClosedAtMs: Infinity,
       };
       cells.set(key, cell);
@@ -377,7 +378,10 @@ function trustRows(records, gitLog, now, policy) {
 
     cell.total += 1;
     cell.oldestClosedAtMs = Math.min(cell.oldestClosedAtMs, closedAtMsOf(record));
-    if (record.stateReason === 'NOT_PLANNED') cell.notPlanned += 1;
+    if (record.stateReason === 'NOT_PLANNED') {
+      cell.notPlanned += 1;
+      cell.declinedNumbers.add(record.number);
+    }
 
     const disposition = dispositionState(record.labels);
     if (disposition === 'approved') {
@@ -428,15 +432,17 @@ function trustRows(records, gitLog, now, policy) {
     const cell = cellByNumber.get(target);
     if (cell) {
       cell.followUps += 1;
-      cell.followUpTargets.add(target);
+      if (!cell.declinedNumbers.has(target)) cell.followUpTargets.add(target);
     }
   }
 
-  const rows = Array.from(cells.values()).map(({ followUpTargets, oldestClosedAtMs, ...cell }) => {
+  const rows = Array.from(cells.values()).map(({ followUpTargets, declinedNumbers, oldestClosedAtMs, ...cell }) => {
     // The rate counts records that drew a follow-up, not follow-ups: three
     // corrections to one record are one record's worth of rework.
     const followUpRecords = followUpTargets.size;
-    const followUpRate = cell.total === 0 ? 0 : followUpRecords / cell.total;
+    // Base: shipped records (NOT_PLANNED closes excluded); zero base is rate 0.
+    const shipped = cell.total - cell.notPlanned;
+    const followUpRate = shipped <= 0 ? 0 : followUpRecords / shipped;
     const oldestClosedAt = Number.isFinite(oldestClosedAtMs) ? new Date(oldestClosedAtMs).toISOString() : null;
     // negativeEvidence counts toward dispositioned like every other real
     // outcome signal — a known-bad record is not "unknown", so folding it
@@ -467,8 +473,13 @@ function trustRows(records, gitLog, now, policy) {
       // was never done. It stays counted and stays rendered — it says something
       // real about a class's filing precision — but it is not a verdict input.
       //
+      // The rate's base excludes NOT_PLANNED closes (shipped = total - notPlanned):
+      // a declined record never shipped, so it can never draw corrective work, and
+      // counting it in the base would dilute the rate toward clean — contradicting
+      // the decline being no verdict input.
+      //
       // Follow-ups are a rate, not a zero-tolerance count: the share of the
-      // cell's records that drew corrective work may reach
+      // cell's shipped records that drew corrective work may reach
       // `trust-follow-up-rate-max-percent` and still read clean. Compared as
       // integers so a rate exactly at the threshold never fails on float error.
       //
@@ -481,7 +492,7 @@ function trustRows(records, gitLog, now, policy) {
       // stop, the same as one changes-requested already was.
       const failing = {
         'changes-requested': cell.changesRequested !== 0,
-        'follow-up-rate': followUpRecords * 100 > followUpRateMaxPercent * cell.total,
+        'follow-up-rate': followUpRecords * 100 > followUpRateMaxPercent * shipped,
         'negative-evidence': cell.negativeEvidence !== 0,
         'batch-only': batchOnly,
       };
@@ -501,17 +512,33 @@ function trustRows(records, gitLog, now, policy) {
 // A row's follow-up rate in percent, one decimal, rounded up: a rate that fails
 // the integer compare in trustRows never renders equal to the threshold (7/23 is
 // 30.5, never 30.4 or 30). null when the row cannot carry a rate.
+// The base is the shipped records (total minus NOT_PLANNED closes), matching trustRows.
 function followUpRatePercent(row) {
   const total = row && row.total;
   const followUpRecords = row && row.followUpRecords;
   if (typeof total !== 'number' || !Number.isFinite(total) || total <= 0) return null;
   if (!Number.isInteger(followUpRecords)) return null;
-  return Math.ceil((followUpRecords * 1000) / total) / 10;
+  const declined = Number.isInteger(row.notPlanned) ? row.notPlanned : 0;
+  const shipped = total - declined;
+  if (shipped <= 0) return null;
+  return Math.ceil((followUpRecords * 1000) / shipped) / 10;
+}
+
+// The one place the follow-up rate's wording is built. form 'compare' (the
+// mixedReasons rendering) reads "follow-up rate 33.4% > 30%"; form 'max' (grant
+// gate 2's trailing segment) reads "follow-up rate 33.4% (max 30%)". '' when the
+// row carries no rate.
+function describeFollowUpRate(row, form = 'compare') {
+  const rate = followUpRatePercent(row);
+  if (rate === null) return '';
+  return form === 'max'
+    ? `follow-up rate ${rate}% (max ${row.followUpRateMaxPercent}%)`
+    : `follow-up rate ${rate}% > ${row.followUpRateMaxPercent}%`;
 }
 
 const MIXED_REASON_TEXT = {
   'changes-requested': (row) => `${row.changesRequested} changes-requested`,
-  'follow-up-rate': (row) => `follow-up rate ${followUpRatePercent(row)}% > ${row.followUpRateMaxPercent}%`,
+  'follow-up-rate': (row) => describeFollowUpRate(row, 'compare'),
   'negative-evidence': (row) => `${row.negativeEvidence} negative`,
   'batch-only': () => 'batch-only approvals',
 };
@@ -530,5 +557,5 @@ function describeMixedReasons(row) {
 module.exports = {
   riskBand, trustRows, MIN_SAMPLES, MIN_VERDICTS, DEFAULT_REVERT_WINDOW_DAYS,
   parseGitLog, discoverClosingCommits, isClosingCommitReverted, resolveOperationalOutcome,
-  TRUST_POLICY_KEYS, followUpRatePercent, describeMixedReasons,
+  TRUST_POLICY_KEYS, followUpRatePercent, describeFollowUpRate, describeMixedReasons,
 };

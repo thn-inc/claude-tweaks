@@ -1063,6 +1063,52 @@ test('AC5.1: one in-window negative-evidence record pins the class at any rate t
   assert.ok(row.mixedReasons.includes('negative-evidence'));
 });
 
+test('AC5.2: a reverted record ages out — closed 31 days ago no longer pins, 29 days ago still does', () => {
+  const good = capturedClass(MIN_SAMPLES, 15);
+  const revertedAt = (daysAgo) => operationalFixture(9, daysAgo);
+  const gitLog = [
+    ...good.map((r) => commitFor(r.number)),
+    commitFor(9),
+    { sha: sha40(999), message: `This reverts commit ${sha40(9)}.` },
+  ];
+
+  const [aged] = trustRows([...good, revertedAt(31)], gitLog, NOW, {});
+  assert.equal(aged.total, MIN_SAMPLES);
+  assert.equal(aged.negativeEvidence, 0);
+  assert.ok(!aged.mixedReasons.includes('negative-evidence'));
+  assert.equal(aged.verdict, 'clean');
+
+  const [recent] = trustRows([...good, revertedAt(29)], gitLog, NOW, {});
+  assert.equal(recent.negativeEvidence, 1);
+  assert.equal(recent.verdict, 'mixed');
+  assert.ok(recent.mixedReasons.includes('negative-evidence'));
+});
+
+test('the follow-up rate base excludes NOT_PLANNED closes — declines do not dilute it toward clean', () => {
+  const approved = Array.from({ length: 8 }, (_, i) => ({
+    number: i + 1, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '',
+    state: 'CLOSED', closedAt: closedDaysAgo(15),
+  }));
+  const followUps = approved.map((r, i) => reflectFollowUp(101 + i, r.number));
+  const declined = Array.from({ length: 19 }, (_, i) => ({
+    number: 20 + i, labels: ['by:capture', 'risk:low'], body: '',
+    state: 'CLOSED', stateReason: 'NOT_PLANNED', closedAt: closedDaysAgo(15),
+  }));
+
+  const [base] = trustRows([...approved, ...followUps], [], NOW, {});
+  assert.equal(base.followUpRecords, 8);
+  assert.equal(base.followUpRate, 1);
+  assert.equal(base.verdict, 'mixed');
+  assert.ok(base.mixedReasons.includes('follow-up-rate'));
+
+  const [diluted] = trustRows([...approved, ...declined, ...followUps], [], NOW, {});
+  assert.equal(diluted.total, 27);
+  assert.equal(diluted.notPlanned, 19);
+  assert.equal(diluted.followUpRate, 1);
+  assert.equal(diluted.verdict, 'mixed');
+  assert.ok(diluted.mixedReasons.includes('follow-up-rate'));
+});
+
 test('AC6.1: malformed window and rate fall back to the schema defaults', () => {
   const records = [...capturedClass(MIN_SAMPLES, 15), operationalFixture(20, 31)];
   const gitLog = records.map((r) => commitFor(r.number));
