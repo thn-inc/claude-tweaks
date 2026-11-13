@@ -24,7 +24,8 @@ Risk flags: the spec carries no `Risk-flags:` line, so plan-audit Check G has no
 ## Global Constraints
 
 - Key name and value, verbatim from the spec: a top-level `localRuns` key with the one value `"on-request"`, valid only together with a `ci` block. Without the key nothing changes.
-- Exit 3 is new. It means "no verdict yet" and is never a test failure. It writes no pass stamp. This plan also writes no `report.json` on exit 3, because `composeReport` over zero checks reads `pass: true`, and a consumer reading that file would take it as a pass.
+- Exit 3 is new. It means "no verdict yet" and is never a test failure. It writes no pass stamp. This plan also writes no `report.json` on exit 3, because `composeReport` over zero checks reads `pass: true`, and a consumer reading that file would take it as a pass. For the same reason exit 3 removes a `report.json` an earlier run left at the run's report path (`jsonPath`, the default or `--json`): a consumer must never read a previous run's report as this run's answer. A missing file is not an error.
+- The spec's three `**Decision**` paragraphs bind this plan: (1) only an unscoped run naming a CI-declared suite exits 2; (2) a `--stamp-suite` chunk of a CI-declared suite exits 2 without `--local`, never consults CI, and runs here as today with `--local`; (3) a CI-declared suite never runs on this machine without `--local`, everything else behaves as without the key, and exit 3 is decided before any check or retry starts.
 - Without the key, a run without `--local` behaves exactly as before, including the local fallback when CI cannot answer. No existing test changes its expected output (AC4). Two consequences:
   - `parseArgs` adds `local: true` to its result only when `--local` was passed, so `tests/bin-lib/verify/args.test.js`'s whole-object `deepStrictEqual` (line 18) stays green. `--cmd-env`'s `env` key sets the precedent.
   - `fetchCiVerdict` adds `logUnavailable: true` to its `ci` object only in the new under-the-key case.
@@ -45,12 +46,12 @@ Risk flags: the spec carries no `Risk-flags:` line, so plan-audit Check G has no
 
 ## Decisions this plan makes where the spec leaves a choice
 
-1. **Unscoped refusal scope.** An unscoped run without `--local` exits 2 only when one of its `--cmd` names is a key of the declaration's `ci` block. An unscoped `--cmd types=… --cmd lint=…` run names no suite whose verdict CI owns, so it runs as today. The spec's reason ("so running every suite's full command here is always a stated choice") covers only suites. AC3's case (`--cmd tests=…` with `tests` CI-declared) is refused. If the reviewer reads the spec as "every unscoped run", the change is one condition in `refuseUnscopedUnderKey`.
-2. **Stop at the first unanswered suite.** With several CI-declared suites, the loop stops polling at the first one CI cannot answer and exits 3 naming it. It does not wait out every other suite's `waitSeconds` first.
+1. **Unscoped refusal scope (spec Decision 1).** An unscoped run without `--local` exits 2 only when one of its `--cmd` names is a key of the declaration's `ci` block. An unscoped `--cmd types=… --cmd lint=…` run names no suite whose verdict CI owns, so it runs as today. AC3's case (`--cmd tests=…` with `tests` CI-declared) is refused.
+2. **Stop at the first unanswered suite, and decide exit 3 before any retry (spec Decision 3).** With several CI-declared suites, the loop stops polling at the first one CI cannot answer and exits 3 naming it. It does not wait out every other suite's `waitSeconds` first. Under the key the loop only collects verdicts: a red CI job's local flaky retry (`retryHook`) is deferred until after the no-verdict check, so a red first suite followed by an unanswered second suite exits 3 with no retry run on this machine. Without the key the retry stays inside the loop, exactly as today.
 3. **`--local` is recorded, not silent.** A `--local` run skips `fetchCiVerdict` for each selected CI-declared suite and records it in `report.ci` with fallback `local-requested`, so stdout prints `CI: tests — ran locally (local-requested)`. That holds with or without the key. Without `--local` nothing changes.
-4. **Exit 3 writes the `verify` event** (when `--run` is anchored) with `pass: null` and `noVerdict: true`, so the audit trail counts the runs CI could not answer. It writes neither `report.json` nor any stamp.
+4. **Exit 3 writes the `verify` event** (when `--run` is anchored) with `pass: null` and `noVerdict: true`, so the audit trail counts the runs CI could not answer. It writes neither `report.json` nor any stamp, and removes a stale `report.json` at `jsonPath` (Global Constraints).
 5. **A red job with no log under the key** carries `retryDecision: {retry: false, reason: 'ci-log-unavailable'}`. The flaky retry hook would otherwise report `no-parse` and print "whole-suite re-run applies", which under the key is false.
-6. **`--stamp-suite` stays as today.** It never consults CI and runs its chunk here. It is an explicit chunked local run, and the spec lists no change to it.
+6. **`--stamp-suite` under the key (spec Decision 2).** A chunk still never consults CI. Under the key, a chunk whose `--cmd` set names a CI-declared suite exits 2 without `--local`, naming `--local` (Task 6). With `--local` it runs here as today. A chunk naming only suites with no `ci` source, or `types`/`lint`, is unaffected. Without the key nothing changes.
 7. **The no-verdict and refusal text goes to stderr.** That is where every other non-check exit prints, and `plugin/bin/lib/driver/steps.js:695` reports `firstLine(r.stderr)` for any exit other than 0 and 1.
 
 ## Review Focus
@@ -63,7 +64,7 @@ Risk flags: the spec carries no `Risk-flags:` line, so plan-audit Check G has no
 
 ## Out of scope (stated, not deferred silently)
 
-- **#5370 owns the consumers.** The pipeline skills, the scoping table, the opt-in of this repo's `.claude-tweaks/verify-scope.json`, `residue.js`, and the decision doc. #5370's body was read while authoring. It does not name `plugin/bin/lib/driver/steps.js`'s `testStep`, which runs `verify.js --scope` pre-push and maps exit 3 to `fail`. Once #5370 opts this repo in, the express lane's test step fails on every run unless that step passes `--local` or handles exit 3. Task 7's last step (Step 7) adds this to #5370 as a comment. It is not changed here, because without the key no project reaches it.
+- **#5370 owns the consumers.** The pipeline skills, the scoping table, the opt-in of this repo's `.claude-tweaks/verify-scope.json`, `residue.js`'s close-time suite probe, `plugin/bin/lib/driver/steps.js`'s `testStep` (runs `verify.js --scope` pre-push and maps exit 3 to `fail`), and the decision doc. #5370's body now names the driver test step and the residue probe as deliverables, so neither is changed here: without the key no project reaches either.
 - plan-audit Check B's keyword walk hits, classified no-change: `docs/superpowers/plans/2026-10-27-ci-backed-verification.md` and `docs/superpowers/plans/2026-10-31-acceptance-packet.md` are history. `plugin/bin/acceptance-packet.js`, `plugin/bin/lib/hooks/git-exec.js`, `plugin/skills/wrap-up/verification-brief.md`, `tests/acceptance-packet-cli.test.js` and `tests/acceptance-packet-wrap-up-conformance.test.js` match the keyword `--local` only as a prefix of other flags: acceptance-packet's `--local-base-url`, and git's `--local-env-vars` in a `git-exec.js` comment. None names `localRuns`, verify.js's `--local`, or a CI fallback reason (checked with `git grep -F`). `docs/journeys/take-the-full-suite-verdict-from-ci-4347.md` is a real hit and is edited in Task 7.
 - `plugin/bin/lib/flow/preflight.js` calls only `--stamp-status` and `--changed-files`, which AC6 keeps unaffected. No change.
 - Waived plugin/bin/lib/verify/report.js: `composeReport` gains no field. The event fields are composed in `plugin/bin/verify.js` (Task 4), and `report.ci` keeps its existing per-attempt shape (`logUnavailable` rides on the attempt object `fetchCiVerdict` returns, Task 3).
@@ -179,6 +180,8 @@ git commit -m "Parse verify.js --local — a check-run flag, absent from the res
 ```
 
 ### Task 3: Download the CI job log with `--allow-escape-sequences`, and fail a logless red job under the key
+
+**Review risk:** high (decision logic: the retry-once branch and the under-the-key red-job outcome)
 
 **Files:**
 - Modify: `plugin/bin/lib/verify/ci-source.js` (log download at lines 149-162, signature at line 67, exports)
@@ -376,6 +379,8 @@ git commit -m "Record each CI-declared suite's outcome and --local in the verify
 
 ### Task 5: Scoped runs under the key — `--local`, exit 3, and the logless red job
 
+**Review risk:** high (decision logic and async ordering: which outcome a run takes, and the deferred retry)
+
 **Files:**
 - Modify: `plugin/bin/verify.js` (CI loop at lines 861-888, the stdout `CI:` line at 1449-1453, a new no-verdict exit between the loop and the slot hold at line 898)
 - Test: `tests/bin-lib/verify/ci-cli.test.js`, `tests/bin-lib/verify/impact-cli.test.js`
@@ -405,6 +410,9 @@ test('AC1.1: under the key an unpushed HEAD exits 3 before any check, prints hea
   const r = repoWith({ declExtra: KEY });
   const { env } = fakeGhEnv('unpushed', '');
   const marker = path.join(tmpDir(), 'm');
+  // A previous run's report must not survive an exit 3 (it would read as this run's answer).
+  fs.mkdirSync(path.join(r.gitDir, 'claude-tweaks-verify'), { recursive: true });
+  fs.writeFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), '{"pass":true}\n');
   const res = await runCli([...SCOPE(r), '--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
   assert.strictEqual(res.code, 3, res.stdout + res.stderr);
   assert.ok(!fs.existsSync(marker), 'no check may run');
@@ -413,7 +421,7 @@ test('AC1.1: under the key an unpushed HEAD exits 3 before any check, prints hea
   assert.match(second, /push the branch/);
   assert.match(third, /re-run it with --local/);
   assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-pass.json')));
-  assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json')), 'exit 3 writes no report');
+  assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json')), 'exit 3 writes no report and removes the stale one');
 });
 
 test('AC1.2: under the key a green CI job on HEAD is taken from CI and the suite never runs here (#5369)', { skip: SKIP }, async () => { /* green mode, KEY; code 0, marker absent, stamp.source === 'ci' */ });
@@ -432,6 +440,14 @@ test('two CI suites under the key: the second unanswered one exits 3 naming it, 
   /* declExtra: { ...KEY, checks: { tests: { tests: …, other: … } }, ci: { tests: {workflow:'test.yml', job:'test', waitSeconds:5, pollSeconds:1}, other: {workflow:'test.yml', job:'other', waitSeconds:5, pollSeconds:1} } };
      green mode (FAKE_GH_JOBS unset, so job "other" is absent → ci-job-not-found);
      code 3, stderr line 1 names suite "other" and (ci-job-not-found), both markers absent */
+});
+
+test('a red first suite and an unanswered second suite under the key exit 3 before any local retry (#5369)', { skip: SKIP }, async () => {
+  /* declExtra: { ...KEY, checks: { tests: { tests: …, other: … } }, ci: { tests: {workflow:'test.yml', job:'test', …}, other: {workflow:'test.yml', job:'other', …} },
+       flaky: { files: [<the fixture's failing file>], maxRetries: 1 }, retry: { tests: markerCommand(retryMarker) + ' {file}' } };
+     red mode (job "test" fails with a log naming the allowlisted file, so without the key retryHook would spawn the retry), job "other" absent;
+     code 3, stderr line 1 names suite "other" and (ci-job-not-found), retryMarker absent (no retry ran), both suite markers absent.
+     Control in the same test: the identical repo without KEY exits as today and retryMarker is present, proving the fixture reaches the retry. */
 });
 
 test('a dirty tree under the key exits 3 with dirty-tree and calls no gh (#5369)', { skip: SKIP }, async () => { /* KEY, edit tests/ok.test.js; code 3, stderr line 1 has (dirty-tree), calls file absent */ });
@@ -480,8 +496,9 @@ Expected: FAIL after Step 1 — the unpushed run under the key exits 0 and runs 
     - After the dirty-tree `skipCi`, and after a `!verdict.used` push, `break` when `onRequest`.
     - Pass `localRuns: decl.localRuns` to `fetchCiVerdict`.
     - For a used verdict with `verdict.ci.logUnavailable`, push `{ ...ciResult, retryDecision: { retry: false, reason: 'ci-log-unavailable' } }` and skip `retryHook`.
-  - After the loop, `const noVerdict = onRequest ? ciAttempts.find((a) => !a.used && a.fallback !== LOCAL_REQUESTED) : undefined;`. When it is set:
-    1. Write `noVerdictLines(noVerdict).join('\n')` plus `\n` to stderr.
+    - Under the key, a red used verdict is pushed to `ciResults` without calling `retryHook` inside the loop, and marked for a deferred retry. Without the key the in-loop `await retryHook(...)` stays exactly as today.
+  - After the loop, `const noVerdict = onRequest ? ciAttempts.find((a) => !a.used && a.fallback !== LOCAL_REQUESTED) : undefined;`. Only when it is unset, run the deferred `retryHook` calls (same arguments as today's in-loop call, in suite order) and replace each marked entry with the hook's result. When it is set:
+    1. Write `noVerdictLines(noVerdict).join('\n')` plus `\n` to stderr, then remove `jsonPath` (`fs.rmSync(jsonPath, { force: true })`).
     2. Call `writeVerifyEvent` with `{ mode: sel.mode, suitesRun: [], durationMs: Date.now() - startMs, slotWaitedMs: 0, pass: null, noVerdict: true, baselineAdjudicated: null, preExistingAdjudicated: null, sha: startSha, flakyRetried: [], reportPath: null, ...impact subset as in the normal event, ci: ciEventEntries(ciAttempts), local: false }`.
     3. Set `process.exitCode = EXIT_NO_VERDICT` and `return`.
 
@@ -501,10 +518,12 @@ git add plugin/bin/verify.js tests/bin-lib/verify/ci-cli.test.js tests/bin-lib/v
 git commit -m "Stop a scoped verify CI cannot answer under localRuns — exit 3 with both ways on, --local runs here, a logless red job fails, refs #5369"
 ```
 
-### Task 6: Refuse an unscoped run of a CI-declared suite under the key
+### Task 6: Refuse an unscoped run, or a `--stamp-suite` chunk, of a CI-declared suite under the key
+
+**Review risk:** high (decision logic: which runs are refused)
 
 **Files:**
-- Modify: `plugin/bin/verify.js` (`defaultConcurrency` at line 191 split into a memoized `readDefaultDeclaration` plus the existing printer; a new refusal right after the `--cwd` check, line 456)
+- Modify: `plugin/bin/verify.js` (`defaultConcurrency` at line 191 split into a memoized `readDefaultDeclaration` plus the existing printer; a new refusal right after the `--cwd` check, line 456; a `--stamp-suite` refusal through `scopeUsageExit` just before the `if (!parsed.stampSuite)` block, line 598)
 - Test: `tests/bin-lib/verify/ci-cli.test.js`
 
 **Interfaces:**
@@ -535,6 +554,17 @@ test('AC6.1: under the key --stamp-status and --changed-files need no --local (#
 
 test('an unscoped run naming only non-CI checks runs under the key (#5369)', async () => { /* KEY, ['--cmd', 'lint=' + markerCommand(m)]; code 0, marker present */ });
 
+test('Decision 2: under the key a --stamp-suite chunk of a CI-declared suite exits 2 naming --local, calls no gh and runs nothing (#5369)', async () => {
+  /* KEY; [...SCOPE(r), '--no-stamp', '--stamp-suite', '--cmd', localMarkerCmd(m)]; code 2, marker absent, calls file absent,
+     stderr line 1 === 'verify.js: .claude-tweaks/verify-scope.json sets localRuns "on-request", so the --stamp-suite chunk of the CI-declared suite "tests" is a run on this machine: pass --local to run it here.' */
+});
+
+test('Decision 2: under the key a --stamp-suite chunk with --local runs here, and a chunk naming only non-CI checks needs no --local (#5369)', async () => {
+  /* KEY; with '--local': code 0, marker present, calls file absent. Without '--local' and '--cmd', 'lint=' + markerCommand(m2): code 0, m2 present */
+});
+
+test('Decision 2: without the key a --stamp-suite chunk runs as today (#5369)', async () => { /* no KEY, no --local; code 0, marker present */ });
+
 test('an invalid default declaration never refuses an unscoped run (#5369)', async () => { /* declExtra: { localRuns: 'on-request', ci: undefined } with ci: false; code 0, marker present */ });
 
 test('an invalid default declaration prints its concurrency-ignored line exactly once (#5369)', async () => {
@@ -549,12 +579,13 @@ test('an invalid default declaration prints its concurrency-ignored line exactly
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `node --test tests/bin-lib/verify/ci-cli.test.js`
-Expected: FAIL after Step 1 — the unscoped `--cmd tests` run under the key exits 0 and runs the suite.
+Expected: FAIL after Step 1 — the unscoped `--cmd tests` run under the key exits 0 and runs the suite, and so does the `--stamp-suite` chunk without `--local`.
 
 - [ ] **Step 3: Implement in `verify.js`.**
   - Split `defaultConcurrency` into `readDefaultDeclaration` (memoized, no printing) and the printer, with today's stderr text unchanged.
   - After the `--cwd` foreign-checkout check, when `!parsed.scope && parsed.local !== true`, read `readDefaultDeclaration(parsed.cwd || process.cwd()).decl`. If `decl.localRuns === 'on-request'`, find the first `parsed.cmds` entry whose name is an own key of `decl.ci` (`Object.hasOwn`). If one exists, write the refusal and `USAGE` to stderr, set exit 2 and return.
   - An unreadable or invalid declaration has `decl: null` and is never refused.
+  - In the `--scope` branch, just before `if (!parsed.stampSuite) {` (line 598): when `parsed.stampSuite && decl.localRuns === 'on-request' && parsed.local !== true`, find the first `cmds` entry whose name is an own key of `decl.ci`. If one exists, call `scopeUsageExit` with the Step 1 text (`${parsed.scope}` as given, matching the other `--scope` errors) and return. This runs before any `gh` call, check or slot hold.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -565,7 +596,7 @@ Expected: PASS. `cli-slot.test.js` covers the `concurrency ignored` line (#5150)
 
 ```bash
 git add plugin/bin/verify.js tests/bin-lib/verify/ci-cli.test.js
-git commit -m "Refuse an unscoped verify of a CI-declared suite under localRuns — exit 2 naming --scope and --local, refs #5369"
+git commit -m "Refuse an unscoped verify or a --stamp-suite chunk of a CI-declared suite under localRuns — exit 2 naming the way on, refs #5369"
 ```
 
 ### Task 7: Document the key, the flag and exit 3, and retire the always-falls-back wording
@@ -573,6 +604,7 @@ git commit -m "Refuse an unscoped verify of a CI-declared suite under localRuns 
 **Files:**
 - Modify: `plugin/skills/test/ci-source.md` (new `## Local runs on request` section after `## When CI answers`. Qualify line 40's "Every other outcome runs the suite locally" to a declaration without the key. Add a `local-requested` row to the reason table. Add the logless-red `CI:` line to line 56. Rewrite line 64's "the caller runs verify.js without `--scope`, which never consults `ci`". `## CI that skips draft PRs` is not touched.)
 - Modify: `plugin/skills/test/suite-slots.md` (one bullet under `## Lanes`)
+- Modify: `plugin/skills/test/stamp-composition.md` (one sentence appended to the **Chunked verification (#3002).** paragraph, outside every fenced snippet: `tests/bin-lib/verify/snippet-conformance.test.js` byte-pins the snippets and `tests/stamp-status-discovery-prose-conformance.test.js` reads the file, so run both in Step 4; 6,132 B, far from the rail)
 - Modify: `plugin/skills/test/verification.md:100` (qualify "falls back to the local run with a named reason otherwise")
 - Modify: `plugin/skills/_shared/ci-skips-drafts.md:51` (append one sentence to the Coexistence paragraph, repeating none of that slice's pinned tokens listed in Global Constraints)
 - Modify: `docs/plugin-structure.md` (line 58's `ci-source.js` entry, line 204's `verify.js` synopsis and description)
@@ -593,6 +625,8 @@ Content each file must state:
   - A red job whose log cannot be downloaded fails the suite and names the run URL.
   - The job-log download passes `--allow-escape-sequences`.
   - `--local` means the same without the key.
+  - A `--stamp-suite` chunk never consults CI; under the key, a chunk naming a CI-declared suite exits 2 without `--local` and runs here with it (spec Decision 2).
+- **`stamp-composition.md` appended sentence.** "Under the declaration's `localRuns: "on-request"` (`ci-source.md`), a chunk whose `--cmd` set names a CI-declared suite is a run on this machine, so it needs `--local` and exits 2 without it; a chunk of `types`, `lint` or a suite with no `ci` source is unaffected."
 - **`ci-source.md` line 64, last sentence.** "A change whose risk is platform-specific still runs locally: the caller passes `--local`, and CI is not consulted (under `localRuns`, a run without `--scope` that names a CI-declared suite needs `--local` too)."
 - **The 4347 journey, line 24.** After "runs the suite locally", insert "(without the declaration's `localRuns` key; under it the run exits 3 with no verdict, `plugin/skills/test/ci-source.md`)".
 - **`ci-source.md` reason table.** The row `` | `local-requested` | `--local` was passed, so CI was not consulted. | ``. Line 40 becomes "Without `localRuns`, every other outcome runs the suite locally…" plus "under it, the run exits 3 (`## Local runs on request`)". The `ci-log-unavailable` row gains "(without `localRuns`)".
@@ -613,6 +647,8 @@ Content each file must state:
     - `/exits 2/`
     - `/--allow-escape-sequences/`
     - `/names the run URL/`
+    - `/--stamp-suite/`
+  - **Facts for `stamp-composition.md`'s Chunked verification paragraph** (sliced from `**Chunked verification (#3002).**` to the next blank line): `/localRuns: "on-request"/` and `/needs `--local`/`.
   - **Facts for the `## Fallback reasons` section**: the `local-requested` row.
   - **Facts for `suite-slots.md`'s `## Lanes` section**: the `localRuns` bullet.
   - **Facts for `docs/plugin-structure.md`**: the `node plugin/bin/verify.js` line (via `lineStartingWith`) holds `[--local]`, `exits 3` and `exits 2`, and line 58's `ci-source.js (#4347` entry holds `localRuns` and `--allow-escape-sequences`.
@@ -630,11 +666,11 @@ Content each file must state:
 Run: `node --test tests/verify-local-runs-docs-conformance.test.js`
 Expected: FAIL — `sectionOf` throws on the missing `## Local runs on request` heading, and the retired sentences are still present.
 
-- [ ] **Step 3: Edit the six files** with the content listed above. Before saving `ci-skips-drafts.md` and `ci-source.md`, re-read the pinned token list in Global Constraints. The appended Coexistence sentence must repeat none of them, and `ci-source.md`'s `## CI that skips draft PRs` section stays byte-identical.
+- [ ] **Step 3: Edit the seven files** with the content listed above. Before saving `ci-skips-drafts.md` and `ci-source.md`, re-read the pinned token list in Global Constraints. The appended Coexistence sentence must repeat none of them, and `ci-source.md`'s `## CI that skips draft PRs` section stays byte-identical.
 
 - [ ] **Step 4: Run the tests to verify they pass, sibling pins included**
 
-Run: `node --test tests/verify-local-runs-docs-conformance.test.js tests/ci-skips-drafts-conformance.test.js tests/bin-lib/verify/snippet-conformance.test.js tests/pr-first-merge.test.js tests/verify-scope-declaration.test.js`
+Run: `node --test tests/verify-local-runs-docs-conformance.test.js tests/ci-skips-drafts-conformance.test.js tests/bin-lib/verify/snippet-conformance.test.js tests/stamp-status-discovery-prose-conformance.test.js tests/pr-first-merge.test.js tests/verify-scope-declaration.test.js`
 Expected: PASS. `ci-skips-drafts-conformance` still finds each Coexistence and CI-source fact exactly once.
 
 Then check the byte rail and the moved-prose pins:
@@ -648,7 +684,7 @@ Expected: only `plugin/skills/_shared/ci-skips-drafts.md:51` ("degrades harmless
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/skills/test/ci-source.md plugin/skills/test/suite-slots.md plugin/skills/test/verification.md plugin/skills/_shared/ci-skips-drafts.md docs/plugin-structure.md docs/journeys/take-the-full-suite-verdict-from-ci-4347.md tests/verify-local-runs-docs-conformance.test.js
+git add plugin/skills/test/ci-source.md plugin/skills/test/suite-slots.md plugin/skills/test/stamp-composition.md plugin/skills/test/verification.md plugin/skills/_shared/ci-skips-drafts.md docs/plugin-structure.md docs/journeys/take-the-full-suite-verdict-from-ci-4347.md tests/verify-local-runs-docs-conformance.test.js
 git commit -m "Document localRuns, --local and exit 3 — ci-source, suite-slots, plugin-structure; no doc says a CI suite always runs locally, refs #5369"
 ```
 
@@ -657,7 +693,7 @@ git commit -m "Document localRuns, --local and exit 3 — ci-source, suite-slots
 Run: `node --test tests/bin-lib/verify/declaration.test.js tests/bin-lib/verify/args.test.js tests/bin-lib/verify/ci-source.test.js tests/bin-lib/verify/ci-cli.test.js tests/bin-lib/verify/impact-cli.test.js tests/bin-lib/verify/cli.test.js tests/bin-lib/verify/cli-slot.test.js tests/bin-lib/verify/cli-slot-queue.test.js tests/bin-lib/verify/cli-stamp-discovery.test.js tests/bin-lib/verify/cli-scope-integration.test.js tests/bin-lib/verify/cli-baseline.test.js tests/bin-lib/verify/cli-flaky-preexisting.test.js tests/bin-lib/timing/derive.test.js tests/verify-local-runs-docs-conformance.test.js tests/ci-skips-drafts-conformance.test.js tests/windows-hide-spawn-conformance.test.js tests/gh-host-seam-conformance.test.js tests/raw-markdown-read-conformance.test.js tests/path-stub-helper.test.js`
 Expected: PASS, with 0 failing and the raw `# fail 0` line quoted in the handoff. This proves AC4.2: no pre-existing test in these files was edited except `ci-source.test.js`'s log routes and `ci-cli.test.js`'s fake. Those changed only how the fake answers, never an expected output. Any other change to a pre-existing assertion is a defect.
 
-- [ ] **Step 7: Hand the driver gap to #5370 (controller-owned, not an implementer step).** #5370 builds next in this same run, so the `/flow` controller folds `plugin/bin/lib/driver/steps.js`'s `testStep` (runs `verify.js --scope` pre-push and maps exit 3 to `fail`) into #5370's build context and logs it to `decisions.md`. The implementer posts nothing and writes nothing for this step.
+- [ ] **Step 7: No driver hand-off is owed.** #5370's record body already names `plugin/bin/lib/driver/steps.js`'s `testStep` as a deliverable (added after the first plan review). The implementer posts nothing and writes nothing for this step.
 
 ## Acceptance-criterion coverage
 
@@ -679,3 +715,6 @@ Expected: PASS, with 0 failing and the raw `# fail 0` line quoted in the handoff
 | AC9.1 — the log download's argv carries `--allow-escape-sequences`, pinned by a fake that fails without it and answers with it | 3 | ci-source `AC9.1: …` (plus every log test through `logRoute`) |
 | AC9.2 — a runner rejecting the flag as unknown gets one retry without it | 3, 5 | ci-source `AC9.2: …`; ci-cli `AC9.2: an older gh …` |
 | AC9.3 — under the key a red job with no downloadable log exits 1, names the run URL, runs nothing here | 3, 5 | ci-source `AC9.3: …`; ci-cli `AC9.3: …` |
+| Decision 1 — only an unscoped run naming a CI-declared suite exits 2 | 6 | ci-cli `AC3.1: …`; `an unscoped run naming only non-CI checks runs under the key` |
+| Decision 2 — a `--stamp-suite` chunk of a CI-declared suite needs `--local`; docs say so | 6, 7 | ci-cli `Decision 2: …` (three tests); docs conformance `stamp-composition.md` and `ci-source.md` facts |
+| Decision 3 — exit 3 decided before any check or retry; a stale `report.json` never survives it | 5 | ci-cli `a red first suite and an unanswered second suite …`; `AC1.1: …` (stale report removed) |
