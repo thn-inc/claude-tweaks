@@ -61,7 +61,7 @@
   },
   "skill:skill-prose-conformance-tests": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1794545092795
+    "lastAuditedMs": 1794547037887
   },
   "skill:shared-contract-extraction": {
     "lastAuditedSha": null,
@@ -169,7 +169,7 @@
   },
   "skill:windows-checkout-test-parity": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1794542672198
+    "lastAuditedMs": 1794547041884
   },
   "skill:node-test-output-evidence": {
     "lastAuditedSha": null,
@@ -279,8 +279,8 @@
     "lastAuditedSha": null,
     "lastAuditedMs": 1794542654104
   },
-  "skill:blocker-surface-parity": {
+  "skill:suite-slot-test-env": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1794546960476
+    "lastAuditedMs": 1794547040009
   }
 }
