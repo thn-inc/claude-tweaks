@@ -131,10 +131,22 @@ function rewriteTemplatePaths(rootDir, mapping, uniqueNames = []) {
     for (const file of pathFiles(rootDir)) {
       const text = fs.readFileSync(file, 'utf8');
       const next = text.replace(re, (m) => map.get(m));
-      if (next !== text) fs.writeFileSync(file, next);
+      if (next !== text) writeInPlace(file, next);
     }
   }
   assertNoTemplatePaths(rootDir, froms, uniqueNames);
+}
+
+// Git for Windows marks a linked worktree's `.git` file hidden, and Windows refuses to recreate a
+// hidden file (writeFileSync's 'w' flag fails with EPERM), so the existing file is truncated and rewritten.
+function writeInPlace(file, text) {
+  const fd = fs.openSync(file, 'r+');
+  try {
+    fs.ftruncateSync(fd, 0);
+    fs.writeSync(fd, text, 0, 'utf8');
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 // Runs `fn` with git auto-maintenance off in process.env (appended after any

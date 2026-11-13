@@ -22,12 +22,13 @@ function has(cmd) {
 
 // The developer dir xcode-select itself would pick, in its own order: $DEVELOPER_DIR alone when set
 // (a `.app` value means its Contents/Developer), else the xcode-select link's target, else — with no
-// link — the default Xcode.app, then the Command Line Tools.
+// link — the default Xcode.app, then the Command Line Tools. These are macOS paths, so they are joined
+// with path.posix: the answer is the same whatever host computes it.
 function hasAppleDeveloperTool(cmd, { readlink = fs.readlinkSync, exists = fs.existsSync, env = process.env } = {}) {
   let dirs;
   if (env.DEVELOPER_DIR) {
     const dev = env.DEVELOPER_DIR;
-    dirs = [/\.app\/*$/.test(dev) ? path.join(dev, 'Contents', 'Developer') : dev];
+    dirs = [/\.app\/*$/.test(dev) ? path.posix.join(dev, 'Contents', 'Developer') : dev];
   } else {
     try {
       dirs = [readlink('/var/db/xcode_select_link')];
@@ -35,7 +36,7 @@ function hasAppleDeveloperTool(cmd, { readlink = fs.readlinkSync, exists = fs.ex
       dirs = ['/Applications/Xcode.app/Contents/Developer', '/Library/Developer/CommandLineTools'];
     }
   }
-  return dirs.some((dir) => exists(path.join(dir, 'usr', 'bin', cmd)));
+  return dirs.some((dir) => exists(path.posix.join(dir, 'usr', 'bin', cmd)));
 }
 
 function detectPackageManager() {
