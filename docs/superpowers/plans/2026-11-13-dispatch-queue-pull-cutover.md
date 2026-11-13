@@ -81,23 +81,32 @@ Waived plugin/bin/queue-pull.js: read-only — Tasks 4 and 5 read its usage text
 - Produces: `live-comparison.md` with sections `## Verdict` (`identical` | `blocked: {condition}`), `## Stripped fields`, `## Exercised` (exclusion reasons and informational files that were non-empty), `## Not exercised` (each reason plus the `tests/bin-lib/dispatch/queue-pull.test.js` test name that stands in for it), and `## Raw` (per-file per-order equal/differ, any diff). Task 7 quotes it.
 
 - [ ] **Step 1: Write the harness** (Node script under the scratch dir, run with `node`). For one ordered pair `(first, second)`, each path gets its own scratch session id (`qp-livecmp-{order}-{path}`) and its own scratch run dir, minted with `node {plugin}/bin/hooks.js resolve-run-dir --spec-slug livecmp-{order}-{path} --create` and passed as `PIPELINE_RUN_DIR`. The CLI plugin root is the worktree's `plugin/` (`/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude/worktrees/record-5230/plugin`).
-  - **Script path:** extract the single bash fence of `plugin/skills/dispatch/queue-pull-script.md` (`extractFence` from `tests/bin-lib/dispatch/queue-pull-oracle.js` may be required, or read the first fence directly). Run it with `/opt/homebrew/bin/bash` under env `CLAUDE_PLUGIN_ROOT`, `CLAUDE_CODE_SESSION_ID`, `PIPELINE_RUN_DIR` and `RUN_ID` (= that run dir), cwd = worktree root.
+  - **Script path:** extract the single bash fence of `plugin/skills/dispatch/queue-pull-script.md` (`extractFence` from `tests/bin-lib/dispatch/queue-pull-oracle.js` may be required, or read the first fence directly). Run it with `/opt/homebrew/bin/bash` under env `CLAUDE_PLUGIN_ROOT`, `CLAUDE_CODE_SESSION_ID`, `PIPELINE_RUN_DIR` and `RUN_ID` (= that run dir). The cwd is that path's scratch clone (see Cache isolation below); `CLAUDE_PLUGIN_ROOT` stays the worktree's `plugin/`.
   - **CLI path:** `node {plugin}/bin/queue-pull.js --transport gh` under the same env shape.
   - **Ranking:** after each pull, run up to five picks on that path's own session. Script path: `next-ranking.md`'s fence. CLI path: `queue-pull.js --rank`. Both run with `PRIORITY_FILTER` unset and no `--priority`. After each non-null pick, append `{reason:'firing', records: pick members}` with `appendExclusion` from `plugin/bin/lib/dispatch/exclusions.js` to that session's `dispatch-exclusions.json`. Stop at `null`. Record the pick sequence.
+  - **Cache isolation (plan-review clarification 2).** Each path runs from a scratch working clone under the scratch dir, never the worktree.
+    - The clone's `origin` is a scratch bare mirror (`git clone --mirror` of the main checkout's `origin` URL, or `git clone --bare` plus fetches of `main` and `health-state`).
+    - Before each order's first run, commit a removal of `queue-order/order.json` on the mirror's `health-state`, so that run is a cache miss. The second run of the order then reads the first run's write-back, as AC1 describes.
+    - Export `GH_REPO=thn-inc/claude-tweaks`, so every `gh` call still reads the real repository.
+    - Record hit or miss for every run. The module's `state.cacheHit` is not exposed, so infer it: a miss makes the open-numbers `gh issue list` call and a hit does not. Run with a `gh` wrapper on `PATH` that logs argv and execs the real `gh`.
+    - The real `health-state` must not move: `git ls-remote https://github.com/thn-inc/claude-tweaks refs/heads/health-state` prints the same sha before and after the task.
   - **Quiet check:** before the first run and after the second run of each pair, record the open `bot:in-progress` count (`gh issue list --label bot:in-progress --state open --json number --jq length`) and the newest `updatedAt` over `gh issue list --label auto:build --state open --json updatedAt --limit 500`. If either changed, the pair is not quiet.
 - [ ] **Step 2: Compare** the six files `dispatch-groups.json`, `dispatch-exclusions.json`, `dispatch-fastlane-bundles.json`, `dispatch-near-dup-pairs.json`, `dispatch-crosspr-overlap.json` and `dispatch-next-pick.json` (the pick sequence) between the two paths of the pair.
   - Both files must parse. Compare deeply: arrays ordered, object keys unordered.
   - Before comparing, strip only the by-construction differences: replace each path's session-tmp root, session id and scratch run-dir path or basename with a placeholder. List every stripped field.
 - [ ] **Step 3: Run order A (script then CLI), then order B (CLI then script)**, back to back, with no claim written in between. Run when no drain is claiming (check `ListAgents`/the quiet check first).
   - A pair that differs is re-run once.
-  - A difference between orders is itself a finding.
+  - Compare order A's outputs against order B's too, path by path (script A vs script B, CLI A vs CLI B). A difference between orders is re-run once, like a path difference (plan-review clarification 3).
 - [ ] **Step 4: Apply the blocking conditions.** Write `blocked: {condition}` and STOP the build (no edit, no wait) when any of these holds:
   - the queue held no candidates
   - either path exited non-zero
   - an output file is missing, unreadable or not valid JSON
   - a pair was not quiet
   - no exclusion reason was exercised
-  - a difference reproduces on the re-run
+  - a path difference reproduces on the re-run
+  - an order difference reproduces on the re-run (`blocked: order difference`)
+  - an order's first run was a cache hit (`blocked: first run not a cache miss`)
+  - the real `health-state` sha moved
 
   A difference reproduces → STOP and report it. The fix is a new fixture in `tests/bin-lib/dispatch/queue-pull.test.js` plus the module change, a plan amendment, not part of this task.
 - [ ] **Step 5: Write `live-comparison.md`** with the sections from Interfaces. Name each reason not exercised with its #5227 stand-in test (`git grep -n "AC2.1 {reason}\|#5227 {reason}" tests/bin-lib/dispatch/queue-pull.test.js`).
@@ -135,6 +144,7 @@ Verification: `cat ".../live-comparison.md"` shows `## Verdict` → `identical`.
 
 ### Task 3: Repoint the script-text tests (groups 1 and 3)
 **Role:** judgment
+**Review risk:** high
 
 AC6. Each test below stops extracting `queue-pull-script.md` or `next-ranking.md` text and takes the module (`plugin/bin/lib/dispatch/queue-pull.js`) or CLI as its subject. An assertion `queue-pull.test.js` already covers is dropped from the old file only after that fixture is proven to discriminate: revert the module behavior it names (scratch edit) and see red, then restore it. An uncovered assertion gets a new fixture in `queue-pull.test.js` first. Drive fixtures through the existing helpers (`pull4`, the `inOwnTmp`/sandbox helpers, `RANK_CASES`); never through bash.
 
@@ -199,6 +209,7 @@ AC6. Each test below stops extracting `queue-pull-script.md` or `next-ranking.md
   - Step 1's close-out list names the queue-pull stop.
   - Step 3's `Loop: run the \`next\` ranking below` line contains `queue-pull.js" --rank` and `neighbour-in-flight`, and the `next` bullet contains `--rank`.
   - No `--priority` with an empty value anywhere: the `next` bullet says to omit `--priority` when no band is set.
+  - A non-zero `--rank` exit (exit 4 when `dispatch-groups.json` is missing or malformed) stops the firing, quoting its stderr line, with Step 1's close-out run. It is never read as a `null` pick: the Loop line or the `next` bullet says so.
   - `firing-exclusion.md`'s continuation paragraph names `queue-pull.js" --rank` and does not contain `next-ranking.md`'s script verbatim.
   - Every `--flag` token in a `queue-pull.js` call in SKILL.md is in the CLI's usage text (spawn `--help`).
   - The AC2 negative: `run its script verbatim`, `run it verbatim` and `next-ranking.md` are absent from SKILL.md.
@@ -208,6 +219,7 @@ AC6. Each test below stops extracting `queue-pull-script.md` or `next-ranking.md
   - L132 becomes one paragraph: the `--transport gh` call, the `files` switch on the Preflight result (writing `mcp-transport.md` Step 2's inputs first), what it writes (`dispatch-groups.json` plus the exclusion/report files, `_shared/session-tmp-root.md`), and the exit routing: 2 → `files`; 4 → stop the firing, quoting stderr (Step 1's close-out runs); 1 → a malformed call, fix and re-run.
   - L181 replaces "`next-ranking.md` verbatim" with the `--rank` call, keeping the line's prefix and the word "neighbour-in-flight".
   - L189 replaces "Read `next-ranking.md` and run it verbatim" with `queue-pull.js --rank [--priority <band>]` (omit `--priority` when no band is set).
+  - The Loop and the `next` bullet both route a non-zero `--rank` exit: stop the firing, quoting stderr, with Step 1's close-out run. It is never a `null` pick. (`rankFromFiles` writes an empty pick file and then throws on a missing or malformed groups file; the CLI maps the throw to exit 4.)
   - Repoint each citation to "the queue pull" / `bin/lib/dispatch/queue-pull.js`, or drop it where the sentence only described the script's mechanics (the near-duplicate paragraph's mechanics may shrink, keeping its heading, `#3520`, `near-duplicate-pairs.md`, "strong" and "weak").
   - Keep L147's `session-tmp-root.md` citation. Keep every phrase `dispatch-shipped-candidate-prose.test.js` and `dispatch-named-form-exclusion-reasons.test.js` pin.
   - After each edit, `wc -c plugin/skills/dispatch/SKILL.md`, down to ≤ 52,000.
@@ -249,9 +261,8 @@ AC6. Each test below stops extracting `queue-pull-script.md` or `next-ranking.md
 
 - [ ] **Step 1: Write the AC5 test** `'#5230 AC5: the mcp-transport.md files call, gh absent, reproduces the #5227 files fixture outputs'`:
   - Extract the single `queue-pull.js --transport files` call from mcp-transport.md Step 2.
-  - Write the S1 files-fixture inputs to the paths it names.
-  - Spawn it with a `PATH` that holds no `gh` (symlink-only bin dir: node, git and the system tools).
-  - Assert each output file deep-equals what the #5227 files fixture expects: `dispatch-groups.json`, `dispatch-exclusions.json`, `dispatch-fastlane-bundles.json`, `dispatch-near-dup-pairs.json`, `dispatch-crosspr-overlap.json` = `[]`, and `dispatch-next-pick.json` via a following `--rank`.
+  - Tokenize the extracted call's flags and run that argv through `runModuleCli(sandbox, argv, …)` (`tests/bin-lib/dispatch/queue-pull-oracle.js` L519). Use the `S1-files-miss` scenario's sandbox (`createSandbox(PARITY_S1(), { transport: 'files' })`, the shim table without a gh shim, the frozen clock stub, its own TMPDIR), with the S1 files-fixture inputs written to the paths the call names. Never spawn it against the real repo or wall clock (plan review: the outputs and `orderBlob.computedAt` would depend on both).
+  - Assert each output file deep-equals that scenario's module outputs as the existing `S1-files-miss` parity row produces them: `dispatch-groups.json`, `dispatch-exclusions.json`, `dispatch-fastlane-bundles.json`, `dispatch-near-dup-pairs.json`, `dispatch-crosspr-overlap.json` = `[]`, and `dispatch-next-pick.json` via a following `--rank`.
 
   Add prose assertions:
   - Step 2 (L77-L205 region) contains no `run the script as written`, `alias_mcp_timestamps` or `NEIGHBOUR_RC`.
@@ -282,6 +293,7 @@ AC6. Each test below stops extracting `queue-pull-script.md` or `next-ranking.md
 **Files:**
 - Modify: `.claude/skills/dispatch-queue-exclusion-addition/SKILL.md` (description, Overview, registration table rows 1, 2 and 10, Common Operations, Anti-Patterns)
 - Modify: `docs/plugin-structure.md:237` (drop "No skill calls it before the cutover unit"; name `/dispatch` Step 2 / Step 3 / `mcp-transport.md` as its consumers)
+- Modify: `tests/dispatch-unlanded-blocker-consumers-conformance.test.js` (its `GRAPH_NEEDLES` entry `'queue-pull-script.md'` for the `bin/dispatch-unlanded-blockers.js` skill-graph row becomes the module path `bin/lib/dispatch/queue-pull.js`, keeping its go-red control; a `test-mapping.md` row)
 - Modify: `docs/skill-graph.md` (the `/dispatch` → `bin/queue-pull.js` edge; existing rows naming `queue-pull-script.md` as the live caller of a CLI, e.g. L274 `bin/express-lane.js` and L276 `bin/dispatch-unlanded-blockers.js`, name the module instead)
 
 - [ ] **Step 1: Edit the skill.** The home of a pass is `plugin/bin/lib/dispatch/queue-pull.js`: a `PASSES` row plus a `RUNNERS` entry. `REMOVING_REASONS` derives from `PASSES` (`removes`). The script rows leave the live path. Add a line stating that until the removal unit lands, a pass change is made in the module and mirrored in the retained `queue-pull-script.md`, so #5227's parity test stays green.
@@ -298,9 +310,10 @@ AC6. Each test below stops extracting `queue-pull-script.md` or `next-ranking.md
 **Files:**
 - Create (gitignored): `/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-13T021643-spec-5230/closing-comment.md`
 
-- [ ] **Step 1: Prove the revert (AC8)** in a scratch copy (`git worktree add --detach` under the scratchpad, never this worktree):
-  - Run `git -C {scratch} diff origin/main..HEAD -- plugin/skills/dispatch/SKILL.md plugin/skills/dispatch/mcp-transport.md plugin/skills/dispatch/firing-exclusion.md | git -C {scratch} apply -R`.
-  - Confirm that Step 2 reads `Read \`queue-pull-script.md\` … run its script verbatim`, and that `git diff origin/main -- plugin/skills/dispatch/queue-pull-script.md plugin/skills/dispatch/next-ranking.md` is empty.
+- [ ] **Step 1: Prove the revert (AC8)** in a scratch copy: an archive extract (`git archive HEAD | tar -x -C {scratch}`, `{scratch}` a fresh dir under the scratchpad). Never a linked worktree, and never this worktree.
+  - Write the revert patch from this worktree: `git diff origin/main...HEAD -- plugin/skills/dispatch/SKILL.md plugin/skills/dispatch/mcp-transport.md plugin/skills/dispatch/firing-exclusion.md > {scratch}.patch`.
+  - Apply it reversed in the extract: `git apply -R {scratch}.patch`, cwd = `{scratch}`. `git apply` works outside a repository.
+  - Confirm that Step 2 reads `Read \`queue-pull-script.md\` … run its script verbatim`, and that `queue-pull-script.md` and `next-ranking.md` in the extract are byte-identical to `git show origin/main:{path}`.
   - Run `node --test tests/bin-lib/dispatch/queue-pull.test.js` there.
 
   Expected: PASS. Remove the scratch worktree.
