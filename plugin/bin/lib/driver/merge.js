@@ -12,8 +12,9 @@
 // Every external call except two in-process reads goes through `deps` (gh, git, node, readFile,
 // lstatType, ...), so this module spawns nothing itself. The two: the decisions.md read
 // (`confirmFromFile`, spec AC3), and teardown's worktree-path realpath, which falls back to the
-// imported `safeReal` (`fs.realpathSync`) when no `deps.realpath` is given. `merge` never throws: an unexpected throw in any step becomes
-// `pending-review` / `unclassified` naming the sub-step.
+// imported `safeReal` (`fs.realpathSync`) when no `deps.realpath` is given.
+// `merge` never throws: an unexpected throw in any step becomes `pending-review` /
+// `unclassified` naming the sub-step.
 
 const path = require('node:path');
 const {
