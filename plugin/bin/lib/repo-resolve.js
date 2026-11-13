@@ -91,9 +91,11 @@ function _resetGhHostCache() {
   explicitRepoHost = null;
 }
 
-function originUrl(cwd) {
+// `env` (optional) is the environment the git child runs in; absent, the inherited one.
+function originUrl(cwd, env) {
   return execFileSync('git', ['remote', 'get-url', 'origin'], {
     cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: sharedPrimitives.GIT_TIMEOUT_MS, windowsHide: true,
+    ...(env ? { env } : {}),
   });
 }
 
@@ -198,7 +200,7 @@ function resolveGhSpec(cwd, deps = {}) {
   if (ghHostSpecs.has(key)) return ghHostSpecs.get(key);
   let spec = null;
   try {
-    const url = (deps.remoteUrl || originUrl)(key);
+    const url = deps.remoteUrl ? deps.remoteUrl(key) : originUrl(key, deps.env);
     const parsed = originSpecOf(url);
     if (parsed && parsed.host && parsed.host !== 'github.com') {
       // Positive signals only. Any other host stays silent (no note), token or not,

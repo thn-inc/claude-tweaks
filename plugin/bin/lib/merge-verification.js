@@ -441,13 +441,21 @@ function readyRequirement(workflows) {
 // A stale local origin/HEAD (e.g. after a remote default-branch rename) can
 // therefore make the two disagree online vs. offline — the mismatch fails
 // toward `off`, never toward the stricter `merge-when-green`.
-function readDefaultBranch(repoRoot) {
-  const opts = { cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000, encoding: 'utf8', windowsHide: true };
+//
+// `env` (optional) is the environment both children run in, and `homeDir` (optional, a
+// function) is read only if gh's hosts.yml lookup falls through to the home directory.
+function readDefaultBranch(repoRoot, env, homeDir) {
+  const opts = { cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000, encoding: 'utf8', windowsHide: true, ...(env ? { env } : {}) };
+  let ghDeps;
+  if (env || typeof homeDir === 'function') {
+    ghDeps = env ? { env } : {};
+    if (typeof homeDir === 'function') Object.defineProperty(ghDeps, 'homedir', { get() { return homeDir(); }, enumerable: true });
+  }
   try {
     // windowsHide restated in the call: the windows-hide scan reads a bare
     // opts, never one wrapped in ghOptions (#4505's GH_HOST seam).
     const args = ['repo', 'view', '--json', 'defaultBranchRef', '-q', '.defaultBranchRef.name'];
-    const name = execFileSync('gh', args, ghOptions(args, { ...opts, windowsHide: true })).trim();
+    const name = execFileSync('gh', args, ghOptions(args, { ...opts, windowsHide: true }, ghDeps)).trim();
     if (name) return name;
   } catch {}
   try {
@@ -468,11 +476,15 @@ function readDefaultBranch(repoRoot) {
 // integration-model per skills/_shared/integration-model.md; the branch pair
 // per skills/_shared/integration-branch.md via the shared resolvers, never a
 // hand-rolled detection. Any lookup failure resolves toward off.
+// `deps.env` and `deps.homeDir` (optional) are handed to the two branch lookups this
+// function owns, i.e. the ones the caller did not inject.
 function deriveMergeVerification(repoRoot, deps = {}) {
   const integrationModel = deps.integrationModel || resolveIntegrationModel;
   const readWorkflows = deps.readWorkflows || readWorkflowFiles;
-  const integrationBranch = deps.integrationBranch || resolveIntegrationBranch;
-  const defaultBranch = deps.defaultBranch || readDefaultBranch;
+  const integrationBranch = deps.integrationBranch
+    || (deps.env ? (r) => resolveIntegrationBranch(r, undefined, { env: deps.env }) : resolveIntegrationBranch);
+  const defaultBranch = deps.defaultBranch
+    || (deps.env || deps.homeDir ? (r) => readDefaultBranch(r, deps.env, deps.homeDir) : readDefaultBranch);
 
   let model;
   try { model = integrationModel(repoRoot); } catch { return 'off'; }
