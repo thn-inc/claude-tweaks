@@ -896,18 +896,36 @@ const ORIGIN_FALLBACKS = [
     appendCfg(dir, '[remote "origin"] url = https://github.com/o/inline.git\n');
     assert.strictEqual(gitOrigin(dir), 'https://github.com/o/inline.git');
   }],
-  ['a continuation line in an unrelated key', (dir) => appendCfg(dir, '[core]\n\tfoo = bar \\\n\tbaz\n')],
-  ['a continuation inside a comment line (git swallows the next line)', (dir) => {
-    appendCfg(dir, '# note \\\n[remote "origin"]\n\turl = https://github.com/o/swallowed.git\n');
-    appendCfg(dir, '[remote "origin"]\n\turl = https://github.com/o/after.git\n');
+  ['a trailing-backslash line that folds the next url line into it (git does not answer it)', (dir) => {
+    appendCfg(dir, '[remote "origin"]\n\tfetch = x \\\n\turl = https://github.com/o/swallowed.git\n');
+    assert.strictEqual(gitOrigin(dir), LOCAL_URL);
   }],
+  ['an unterminated quote in another section (git rejects the whole file)', (dir) => {
+    appendCfg(dir, '[alias]\n\tx = "a\n');
+    assert.strictEqual(gitOrigin(dir), null);
+  }],
+  ['a vertical tab before = (git rejects the line)', (dir) => {
+    appendCfg(dir, '[remote "origin"]\n\turl\v= https://github.com/o/vt.git\n');
+    assert.strictEqual(gitOrigin(dir), null);
+  }],
+  ['a line starting with a form feed (git rejects the line)', (dir) => appendCfg(dir, '[core]\n\f\tbar = 1\n')],
+  ['an origin url value with a trailing vertical tab (git trims it, the reader would not)', (dir) => appendCfg(dir, '[remote "origin"]\n\turl = https://github.com/o/vtab.git\v\n')],
+  ['a line holding only a form feed (git allows only space and tab as blank)', (dir) => appendCfg(dir, '[core]\n\f\n')],
+  ['a comment line preceded by a form feed (not a comment to git)', (dir) => appendCfg(dir, '[core]\n\f# note\n')],
+  ['a section header preceded by a form feed', (dir) => appendCfg(dir, '\f[core]\n')],
+  ['a section header followed by a form feed', (dir) => appendCfg(dir, '[core]\f\n')],
+  ['an origin url value with a trailing form feed (git trims it, the reader would not)', (dir) => appendCfg(dir, '[remote "origin"]\n\turl = https://github.com/o/ff.git\f\n')],
   ['a line matching no config shape', (dir) => appendCfg(dir, '!!not config\n')],
-  ['a key line before any section', (dir) => {
+  ['a key line before any section (git accepts it; a conservative fallback)', (dir) => {
     const cfg = origCfg(dir);
     fs.writeFileSync(cfg, `url = https://github.com/o/stray.git\n${fs.readFileSync(cfg, 'utf8')}`);
   }],
   ['a url key with no = (a valueless boolean)', (dir) => appendCfg(dir, '[remote "origin"]\n\turl\n')],
-  ['a .git/config.worktree file', (dir) => fs.writeFileSync(path.join(dir, '.git', 'config.worktree'), '')],
+  ['a .git/config.worktree that git reads (extensions.worktreeConfig) and that overrides origin', (dir) => {
+    appendCfg(dir, '[core]\n\trepositoryformatversion = 1\n[extensions]\n\tworktreeConfig = true\n');
+    fs.writeFileSync(path.join(dir, '.git', 'config.worktree'), '[remote "origin"]\n\turl = https://github.com/o/wt.git\n');
+    assert.strictEqual(gitOrigin(dir), 'https://github.com/o/wt.git');
+  }],
 ];
 for (const [label, setup] of ORIGIN_FALLBACKS) {
   test(`originUrlFromConfig: ${label} defers to git`, () => {
@@ -942,6 +960,18 @@ test('originUrlFromConfig: GIT_DIR in the env defers to git (even empty)', () =>
   });
 });
 
+test('originUrlFromConfig: GIT_COMMON_DIR in the env defers to git (git reads $GIT_COMMON_DIR/config)', () => {
+  withRepo('https://github.com/o/a.git', (a) => {
+    withRepo('https://github.com/o/b.git', (b) => {
+      const env = { GIT_COMMON_DIR: path.join(a, '.git') };
+      const real = execFileSync('git', ['config', '--get', 'remote.origin.url'], { cwd: b, encoding: 'utf8', env: { ...process.env, ...env } }).trim();
+      assert.strictEqual(real, 'https://github.com/o/a.git'); // git answers A, not B
+      assert.strictEqual(sl.originUrlFromConfig(b, env), null);
+      assert.strictEqual(sl.originUrlFromConfig(b, { GIT_COMMON_DIR: '' }), null);
+    });
+  });
+});
+
 test('originUrlFromConfig: an unrelated env var does not defer', () => {
   withRepo(LOCAL_URL, (dir) => assert.strictEqual(sl.originUrlFromConfig(dir, { PATH: '/x', GITHUB_TOKEN: 'y' }), LOCAL_URL));
 });
@@ -963,14 +993,24 @@ test('readOriginRemote: fast:false skips the filesystem read and asks git', () =
   });
 });
 
-test('readOriginRemote: a directory that is not a repo answers null without throwing', () => {
+test('readOriginRemote: an existing directory that is not a repo answers null (git exits non-zero)', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-norepo-'));
   try {
     assert.strictEqual(sl.originUrlFromConfig(dir), null);
-    assert.strictEqual(sl.readOriginRemote(path.join(dir, 'missing')), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.readOriginRemote(dir));
+    assert.deepStrictEqual(launches, [ORIGIN_LAUNCH]);
+    assert.strictEqual(result, null);
+    assert.strictEqual(gitOrigin(dir), null);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('originUrlFromConfig: a comment line ending in a backslash does not swallow the next line (git agrees)', () => {
+  withRepo(LOCAL_URL, (dir) => {
+    appendCfg(dir, '# note \\\n[remote "origin"]\n\turl = https://github.com/o/after.git\n');
+    assertFastOrigin(dir, 'https://github.com/o/after.git');
+  });
 });
 
 // Fixture: a fake $HOME with a default `~/.claude/` config dir and, optionally,

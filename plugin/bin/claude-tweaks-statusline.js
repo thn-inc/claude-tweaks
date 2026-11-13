@@ -193,18 +193,20 @@ function githubRepoUrl(remoteUrl) {
 // originUrlFromConfig answers `git config --get remote.origin.url` from the
 // repo-local .git/config alone, no spawn. It returns the last origin `url`, or
 // null meaning "ask git": anything that could make git's answer differ from this
-// plain read — env redirects, an include, a config.worktree, a value with
-// quoting / escape / comment syntax, a continuation line, a header or line shape
-// this parser does not model, a .git that is not a directory, an unreadable
-// config — is null, as is a config with no origin url.
+// plain read — an env that redirects git's config or repo lookup, an include, a
+// config.worktree, a header or key line shape this parser does not model (git
+// allows only space and tab as whitespace there), a value with quote or escape
+// syntax anywhere, an origin url with comment syntax, an unreadable config (which
+// is also what a `.git` that is not a directory yields) — is null, as is a config
+// with no origin url.
 function originUrlFromConfig(mainDir, env = process.env) {
   for (const key of Object.keys(env)) {
     if (key.startsWith('GIT_CONFIG')) return null;
   }
   if (env.GIT_DIR !== undefined) return null;
+  if (env.GIT_COMMON_DIR !== undefined) return null;
   try {
     const gitDir = path.join(mainDir, '.git');
-    if (!fs.statSync(gitDir).isDirectory()) return null;
     try {
       fs.statSync(path.join(gitDir, 'config.worktree'));
       return null;
@@ -215,13 +217,11 @@ function originUrlFromConfig(mainDir, env = process.env) {
     let inOrigin = false;
     let inSection = false;
     for (const line of fs.readFileSync(path.join(gitDir, 'config'), 'utf8').split(/\r?\n/)) {
-      if (line.endsWith('\\')) return null; // git continues a comment line too
-      const trimmed = line.trim();
-      if (!trimmed || trimmed[0] === '#' || trimmed[0] === ';') continue;
-      const header = line.match(/^\s*\[([^\]]*)\]\s*(.*)$/);
+      if (/^[ \t]*$/.test(line) || /^[ \t]*[#;]/.test(line)) continue;
+      const header = line.match(/^[ \t]*\[([^\]]*)\][ \t]*(.*)$/);
       if (header) {
         if (header[2]) return null;
-        const inside = header[1].match(/^([A-Za-z0-9-]+)(?:\s+"([^"\\]*)")?$/);
+        const inside = header[1].match(/^([A-Za-z0-9-]+)(?:[ \t]+"([^"\\]*)")?$/);
         if (!inside) return null;
         const name = inside[1].toLowerCase();
         if (name === 'include') return null;
@@ -230,13 +230,17 @@ function originUrlFromConfig(mainDir, env = process.env) {
         inOrigin = name === 'remote' && inside[2] === 'origin';
         continue;
       }
-      const kv = line.match(/^\s*([A-Za-z][A-Za-z0-9-]*)\s*(?:=\s*(.*))?$/);
+      const kv = line.match(/^[ \t]*([A-Za-z][A-Za-z0-9-]*)[ \t]*(?:=[ \t]*(.*))?$/);
       if (!kv) return null;
+      // git accepts a key line before any section; ask git anyway (conservative).
       if (!inSection) return null;
+      // Any value, in any section: git rejects a bad quote or escape for the whole
+      // file, and trims trailing \v / \f that this reader would keep.
+      if (kv[2] !== undefined && /["\\\v\f]/.test(kv[2])) return null;
       if (!inOrigin || kv[1].toLowerCase() !== 'url') continue;
       if (kv[2] === undefined) return null;
-      if (/["\\#;]/.test(kv[2])) return null;
-      url = kv[2].trim();
+      if (/[#;]/.test(kv[2])) return null;
+      url = kv[2].replace(/[ \t]+$/, '');
     }
     return url || null;
   } catch {
