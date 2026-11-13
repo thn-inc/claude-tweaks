@@ -131,7 +131,7 @@ const crypto = require('crypto');
 const cp = require('node:child_process');
 const { launchSpec } = require('../impeccable-engine');
 const { isAncestorOrSelf, resolveTarget, canonicalRealpath } = require('../path-guard');
-const { ROLES, RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainReadPaths, composeArgs, assertSpendCeiling } = require('./roles');
+const { ROLES, RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainReadPaths, reopensHome, composeArgs, assertSpendCeiling } = require('./roles');
 
 // One string, split: tests/git-status-optional-locks.test.js reads an array literal
 // that starts with 'status' as a git argument list.
@@ -516,14 +516,12 @@ async function launchWorker(opts, deps = defaultDeps()) {
   const settingsText = spec.settings ? JSON.stringify(implementerSettings({ testCommand, platform, readPaths }), null, 2) : null;
   // A caller's readPaths may not re-open the home directory the read block exists to close:
   // an entry that is HOME, the passwd home, or an ancestor of either, lexically or through a
-  // link, is refused (toolchainRoot refuses the same roots on the derived side).
+  // link, is refused by the same reopensHome rule toolchainRoot applies on the derived side.
   if (spec.settings && opts.readPaths !== undefined && SANDBOX_PROBED_PLATFORMS.includes(platform)) {
-    for (const h of realToolchainDeps(env).home) {
-      const realHome = canonicalRealpath(h) || h;
-      for (const entry of readPaths) {
-        if (isAncestorOrSelf(entry, h) || isAncestorOrSelf(canonicalRealpath(entry) || entry, realHome)) {
-          throw new TypeError('readPaths entry ' + JSON.stringify(entry) + ' would re-open the home directory ' + h);
-        }
+    const homeDeps = realToolchainDeps(env);
+    for (const entry of readPaths) {
+      if (reopensHome(entry, homeDeps) || reopensHome(canonicalRealpath(entry) || entry, homeDeps)) {
+        throw new TypeError('readPaths entry ' + JSON.stringify(entry) + ' would re-open the home directory');
       }
     }
   }

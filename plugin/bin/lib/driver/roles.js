@@ -304,7 +304,10 @@ function resolveCommandWord(command, deps) {
 // The directory to re-open for a binary: the root above `bin/`, else the binary's own
 // directory. Never `/`, and never a home (`deps.home`, one path or a list of them) or an
 // ancestor of one, whether that home is taken as given or through its real path.
-function rootOfReal(real, deps) {
+// True when `candidate` is the filesystem root, a home in `deps.home` (one path or a list),
+// or an ancestor of one; each home is also compared in its `deps.realpath` form. The one
+// home rule for both sides: rootOfReal for a derived root, launchWorker for a caller's readPaths.
+function reopensHome(candidate, deps = {}) {
   const homes = [];
   for (const home of Array.isArray(deps.home) ? deps.home : [deps.home]) {
     if (typeof home !== 'string' || home === '') continue;
@@ -314,8 +317,11 @@ function rootOfReal(real, deps) {
       if (typeof realHome === 'string' && realHome !== '') homes.push(realHome);
     } catch (e) { /* the home as given still guards */ }
   }
-  const tooWide = (candidate) =>
-    candidate === '/' || homes.some((h) => isAncestorOrSelf(candidate, h, { pathImpl: path.posix }));
+  return candidate === '/' || homes.some((h) => isAncestorOrSelf(candidate, h, { pathImpl: path.posix }));
+}
+
+function rootOfReal(real, deps) {
+  const tooWide = (candidate) => reopensHome(candidate, deps);
   const dir = path.posix.dirname(real);
   const root = path.posix.basename(dir) === 'bin' ? path.posix.dirname(dir) : dir;
   if (!tooWide(root)) return root;
@@ -405,4 +411,4 @@ function composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeilin
   return args;
 }
 
-module.exports = { RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, ROLES, implementerSettings, toolchainRoot, toolchainReadPaths, composeArgs, toolsFor, assertSpendCeiling };
+module.exports = { RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, ROLES, implementerSettings, toolchainRoot, toolchainReadPaths, reopensHome, composeArgs, toolsFor, assertSpendCeiling };

@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
-const { ROLES, RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainRoot, toolchainReadPaths, composeArgs, toolsFor, assertSpendCeiling } = require(path.join(LIB, 'driver', 'roles.js'));
+const { ROLES, RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainRoot, toolchainReadPaths, reopensHome, composeArgs, toolsFor, assertSpendCeiling } = require(path.join(LIB, 'driver', 'roles.js'));
 
 const ALLOW_SANDBOXED = ['Read', 'Edit', 'Write', 'Bash(node --test *)', 'Bash(git status *)', 'Bash(git diff *)', 'Bash(git log *)', 'Bash(git show *)', 'Bash(git ls-files *)'];
 const ALLOW_EDIT_ONLY = ['Read', 'Edit', 'Write'];
@@ -500,4 +500,13 @@ test('toolchainReadPaths drops a root that another root in the list covers, keep
   // A shared name prefix is not cover: both stay, in order.
   const prefix = fakeDeps({ lookup: { tool: '/o/v2/bin/tool', py: '/o/v22/bin/py' }, firstLine: { '/o/v2/bin/tool': '#!/usr/bin/env py' } });
   assert.deepStrictEqual(toolchainReadPaths('tool run', prefix), ['/o/v2', '/o/v22']);
+});
+
+test('reopensHome is true for the root, a home, an ancestor of a home or of its real path, and false inside a home', () => {
+  const deps = { home: ['/h', '/u/me'], realpath: (p) => (p === '/h' ? '/real/h' : p) };
+  for (const yes of ['/', '/h', '/u/me', '/u', '/real/h', '/real']) assert.strictEqual(reopensHome(yes, deps), true, yes);
+  for (const no of ['/h/.nvm', '/u/me/bin', '/opt/tool', '/real/h/.cargo', '/hh']) assert.strictEqual(reopensHome(no, deps), false, no);
+  // One home as a string, and a realpath that throws, still guard the home as given.
+  assert.strictEqual(reopensHome('/h', { home: '/h', realpath: () => { throw new Error('no'); } }), true);
+  assert.strictEqual(reopensHome('/opt', { home: [] }), false);
 });
