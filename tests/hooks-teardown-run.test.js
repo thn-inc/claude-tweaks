@@ -3,7 +3,7 @@
 // hand-assembled before this (close state, remove worktree, delete local branch, delete remote
 // ref). It never archives the run dir since #3490 — `archive-run` does.
 'use strict';
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync, spawnSync } = require('child_process');
 const fs = require('fs');
@@ -21,11 +21,18 @@ function git(root, ...args) {
   return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8' });
 }
 
+// Every fixture root (its linked worktree lives inside it) is removed once the file's tests finish.
+const fixtureRoots = [];
+after(() => {
+  for (const root of fixtureRoots) fs.rmSync(root, { recursive: true, force: true });
+});
+
 // Main checkout on `trunk` (the integration branch, via policy.yml — never "main"), a fake
 // `origin` remote (repoSpecOf only reads its URL from git config, no network hit), and one
 // linked worktree on `feat-branch` recorded as the run's own worktree.
 function fixtureRepo() {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-td-')));
+  fixtureRoots.push(root);
   git(root, 'init', '-q', '-b', 'trunk');
   git(root, 'config', 'user.email', 't@example.com');
   git(root, 'config', 'user.name', 'T');
