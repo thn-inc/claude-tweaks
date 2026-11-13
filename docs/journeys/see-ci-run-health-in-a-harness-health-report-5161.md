@@ -31,7 +31,7 @@ files:
 - **URL:** —
 - **Action:** The CLI reads the last 30 days of workflow runs one 7-day range at a time (up to 10 pages per range, 50 pages in all) and prints one line per workflow, its name and path in code spans, for example ``` `ci.yml` (`.github/workflows/ci.yml`): 5 runs, p50 800s, p90 1300s — over the 900s merge-gate watch, trend rising 1.5, superseded 2 (0.5), cancelled 1 ```.
 - **Should feel:** Readable at a glance: the slow workflow stands out, and the trend says whether it is getting worse.
-- **Should understand:** p90 is run duration (`updated_at` minus `run_started_at`) and excludes queue wait, so it is advisory evidence for the watch. Skipped (`conclusion: skipped`) runs count in `runs` but not in the percentiles. A trend with too few runs reads `insufficient`. A busy repository past 1,000 runs in the window is still read whole; only a week that itself hits the 1,000-run cap, or that the 50-page read budget leaves unread, is named, on one line such as `window truncated: 1 of 5 weeks hit the 1000-run cap or the read budget (2026-11-03..2026-11-10 cap); figures for those weeks are partial`.
+- **Should understand:** p90 is run duration (`updated_at` minus `run_started_at`) and excludes queue wait, so it is advisory evidence for the watch. Skipped (`conclusion: skipped`) runs count in `runs` but not in the percentiles. A trend with too few runs reads `insufficient`. A busy repository past 1,000 runs in the window is still read whole; only a week that itself hits the 1,000-run cap, or that the 50-page read budget leaves unread, is named, on one line such as `window truncated: 1 of 5 weeks hit the 1000-run cap or the read budget (2026-11-03..2026-11-10 cap); durations for those weeks are sampled from the runs read, counts are partial`.
 - **Red flags:** A negative or zero-second duration in the figures; a push-only workflow carrying the watch suffix; a truncated window with no truncation line; a workflow name that renders as a link, a mention, or a line of its own.
 
 ### 3. The billing line shows headroom, never an amount — `billing.js`
@@ -45,8 +45,8 @@ files:
 - **URL:** —
 - **Action:** Under `--file`, a `pull_request` workflow with at least 5 completed runs whose p90 exceeds 900 s, or headroom below the floor, files one typed issue labelled `by:harness-health`, `risk:low`, `size:low`. The report prints `filed #{n}: {title}`.
 - **Should feel:** Proportionate: one issue listing every current breach, not one per workflow or per firing.
-- **Should understand:** Dedup is an exact title match against open issues only, so closing the issue lets a later firing file again while the breach remains. A truncated window or a failed runs read never files (`not filed: window truncated` / `not filed: runs read failed`); an open issue with the same title prints `not filed: open issue exists`.
-- **Red flags:** A second open issue with the same title; an issue filed from a partially read window; an amount in the issue body.
+- **Should understand:** Dedup is an exact title match against open issues only, so closing the issue lets a later firing file again while the breach remains. A failed runs read never files (`not filed: runs read failed`); an open issue with the same title prints `not filed: open issue exists`. A truncated window still files: a capped week's figures come from its newest 1,000 runs, and the issue body names each sampled week.
+- **Red flags:** A second open issue with the same title; an issue filed after a failed runs read; an issue filed from a truncated window whose body does not name the sampled weeks; an amount in the issue body.
 
 ### 5. A sandbox without `gh` reports unavailable, never clean — `ci-health-check.md`, `fetch.js`
 - **URL:** —

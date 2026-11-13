@@ -521,7 +521,9 @@ test('partial: runs page 1 answers while the org budgets read fails HTTP 404 —
   assert.ok(lines(out).includes('billing unavailable (404)'), lines(out).join('\n'));
 });
 
-test('AC7.3: a truncated window renders the truncation line and never files, breaches and all', () => {
+const SAMPLED_NEWEST = (range) => `Run figures for 1 of 5 weeks are sampled from each week's newest 1000 runs (${range} cap); durations are sampled, counts for those weeks are partial.`;
+
+test('AC7.3: a truncated window renders the truncation line and files its p90 breach once, naming the sampled week', () => {
   const pages = Array.from({ length: 10 }, () => fullPage(1000));
   const json = deps({ routes: orgRoutes(ORG, pages) });
   assert.equal(run(['--file', '--json'], json.d), 0);
@@ -529,15 +531,47 @@ test('AC7.3: a truncated window renders the truncation line and never files, bre
   assert.equal(env.truncated, true);
   assert.deepEqual(env.truncatedRanges, [{ from: '2026-11-10', to: '2026-11-17', reason: 'cap' }]);
   assert.ok(env.breaches.some((b) => b.kind === 'p90-over-watch'));
-  assert.equal(env.filed, null);
-  assert.equal(env.filingSkipped, 'window truncated');
-  assert.deepEqual(json.out.created, []);
+  assert.deepEqual(env.filed, { title: BREACH_TITLE, number: 42 });
+  assert.equal(env.filingSkipped, null);
+  assert.equal(json.out.created.length, 1);
+  assert.equal(json.out.created[0].issue.title, BREACH_TITLE);
+  assert.ok(json.out.created[0].issue.body.includes(SAMPLED_NEWEST('2026-11-10..2026-11-17')), json.out.created[0].issue.body);
   const text = deps({ routes: orgRoutes(ORG, pages) });
   assert.equal(run(['--file'], text.d), 0);
   const all = lines(text.out);
-  assert.ok(all.includes('window truncated: 1 of 5 weeks hit the 1000-run cap or the read budget (2026-11-10..2026-11-17 cap); figures for those weeks are partial'), all.join('\n'));
-  assert.ok(all.includes('not filed: window truncated'), all.join('\n'));
-  assert.deepEqual(text.out.created, []);
+  assert.ok(all.includes('window truncated: 1 of 5 weeks hit the 1000-run cap or the read budget (2026-11-10..2026-11-17 cap); durations for those weeks are sampled from the runs read, counts are partial'), all.join('\n'));
+  assert.ok(all.includes(`filed #42: ${BREACH_TITLE}`), all.join('\n'));
+  assert.equal(text.out.created.length, 1);
+});
+
+test('--file on a truncated window with only a headroom breach files one issue', () => {
+  const pages = Array.from({ length: 10 }, () => fullPage(100));
+  const json = deps({ routes: orgRoutes(ORG, pages) });
+  assert.equal(run(['--file', '--json'], json.d), 0);
+  const env = envelope(json.out);
+  assert.equal(env.truncated, true);
+  assert.deepEqual(env.breaches, [{ kind: 'headroom-below-floor', headroomPct: 5, floor: 10 }]);
+  assert.deepEqual(env.filed, { title: BREACH_TITLE, number: 42 });
+  assert.equal(json.out.created.length, 1);
+  assert.ok(json.out.created[0].issue.body.includes('- Actions budget headroom 5%, below the 10% floor.'), json.out.created[0].issue.body);
+});
+
+test('a truncated window with a failed runs read still files nothing: runs read failed', () => {
+  const sim = actionsRunsSim(busyPool(200, { capWeek: '2026-11-03', capCount: 1200 }));
+  const routes = {
+    ...orgRoutes(ORG),
+    [`repos/${ORG}/actions/runs`]: (args) => (createdArg(args).startsWith('2026-10-20') ? http(502) : sim.answer(args)),
+  };
+  const json = deps({ routes });
+  assert.equal(run(['--file', '--json'], json.d), 0);
+  const env = envelope(json.out);
+  assert.equal(env.truncated, true);
+  assert.deepEqual(env.truncatedRanges, [{ from: '2026-11-03', to: '2026-11-10', reason: 'cap' }]);
+  assert.ok(env.breaches.some((b) => b.kind === 'p90-over-watch'));
+  assert.equal(env.filed, null);
+  assert.equal(env.filingSkipped, 'runs read failed');
+  assert.deepEqual(json.out.created, []);
+  assert.deepEqual(json.out.titles, []);
 });
 
 // A busy 30-day window: `perWeek` pull_request runs of 1000 s on ci.yml in each of the five ranges
@@ -564,13 +598,14 @@ test('--file on a fully read busy window past 1,000 runs files the p90 breach on
   assert.ok(env.breaches.some((b) => b.kind === 'p90-over-watch'));
   assert.deepEqual(env.filed, { title: BREACH_TITLE, number: 42 });
   assert.equal(json.out.created.length, 1);
+  assert.doesNotMatch(json.out.created[0].issue.body, /sampled/, 'a fully read window names no sampled weeks');
   const text = deps({ routes });
   assert.equal(run(['--file'], text.d), 0);
   assert.ok(!lines(text.out).some((l) => l.startsWith('window truncated')), lines(text.out).join('\n'));
   assert.ok(lines(text.out).includes(`filed #42: ${BREACH_TITLE}`), lines(text.out).join('\n'));
 });
 
-test('--file on a busy window with one range over the cap files nothing and names that range', () => {
+test('--file on a busy window with one range over the cap files the p90 breach once, the body naming that range as sampled', () => {
   const pool = busyPool(200, { capWeek: '2026-10-27', capCount: 1200 });
   const routes = { ...orgRoutes(ORG), [`repos/${ORG}/actions/runs`]: actionsRunsSim(pool).answer };
   const json = deps({ routes });
@@ -579,14 +614,16 @@ test('--file on a busy window with one range over the cap files nothing and name
   assert.equal(env.truncated, true);
   assert.deepEqual(env.truncatedRanges, [{ from: '2026-10-27', to: '2026-11-03', reason: 'cap' }]);
   assert.equal(env.workflows.find((w) => w.path === CI).runs, 4 * 200 + 1000);
-  assert.equal(env.filingSkipped, 'window truncated');
-  assert.deepEqual(json.out.created, []);
+  assert.deepEqual(env.filed, { title: BREACH_TITLE, number: 42 });
+  assert.equal(env.filingSkipped, null);
+  assert.equal(json.out.created.length, 1);
+  assert.ok(json.out.created[0].issue.body.includes(SAMPLED_NEWEST('2026-10-27..2026-11-03')), json.out.created[0].issue.body);
   const text = deps({ routes });
   assert.equal(run(['--file'], text.d), 0);
   const all = lines(text.out);
-  assert.ok(all.includes('window truncated: 1 of 5 weeks hit the 1000-run cap or the read budget (2026-10-27..2026-11-03 cap); figures for those weeks are partial'), all.join('\n'));
-  assert.ok(all.includes('not filed: window truncated'), all.join('\n'));
-  assert.deepEqual(text.out.created, []);
+  assert.ok(all.includes('window truncated: 1 of 5 weeks hit the 1000-run cap or the read budget (2026-10-27..2026-11-03 cap); durations for those weeks are sampled from the runs read, counts are partial'), all.join('\n'));
+  assert.ok(all.includes(`filed #42: ${BREACH_TITLE}`), all.join('\n'));
+  assert.equal(text.out.created.length, 1);
 });
 
 test('render: budget-unread ranges are named with their reason, oldest first, on one line', () => {
@@ -601,7 +638,7 @@ test('render: budget-unread ranges are named with their reason, oldest first, on
     failures: [], breaches: [], filed: null, filingSkipped: null,
   };
   assert.equal(renderReport(report)[1],
-    'window truncated: 3 of 58 weeks hit the 1000-run cap or the read budget (2025-10-08..2025-10-15 budget, 2025-10-15..2025-10-22 budget, 2026-11-04..2026-11-11 cap); figures for those weeks are partial');
+    'window truncated: 3 of 58 weeks hit the 1000-run cap or the read budget (2025-10-08..2025-10-15 budget, 2025-10-15..2025-10-22 budget, 2026-11-04..2026-11-11 cap); durations for those weeks are sampled from the runs read, counts are partial');
 });
 
 test('AC7.7 render: a user-owned repo renders billing: no Actions budget to compare', () => {

@@ -217,7 +217,7 @@ test('AC10.2: the ci-health.js call site lives in ci-health-check.md, which carr
 
 // The sub-file's `not filed: {reason}` copies against thresholds.js's SKIP_REASONS. Two reasons never
 // print: `no --file` (the CLI calls fileBreaches only under --file) and `no breach` (render.js prints
-// a filing line only beside a breach: line), so the sub-file names exactly the other three.
+// a filing line only beside a breach: line), so the sub-file names exactly the other two.
 test('AC10.3: ci-health-check.md names every printable fileBreaches skip reason verbatim, and no other', () => {
   const { SKIP_REASONS } = require('../../../plugin/bin/lib/ci-health/thresholds');
   const neverPrinted = [SKIP_REASONS.NO_FILE, SKIP_REASONS.NO_BREACH];

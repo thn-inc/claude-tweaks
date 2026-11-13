@@ -50,10 +50,13 @@ function fakeDeps({ titles = [], titlesError = null, createError = null } = {}) 
   return { calls, deps };
 }
 
-function fileFor(workflows, billing, { workTypes = 'native', file = true, truncated = false, partial = false, deps } = {}) {
+// `truncatedRanges` is fetch.js's list, which the CLI passes in the compose args.
+function fileFor(workflows, billing, { workTypes = 'native', file = true, truncatedRanges = [], partial = false, deps } = {}) {
   const breaches = breachesOf({ workflows, billing }, OPTS);
-  return fileBreaches({ breaches, truncated, partial, file }, deps, compose(workTypes));
+  return fileBreaches({ breaches, partial, file }, deps, { ...compose(workTypes), truncatedRanges });
 }
+const CAPPED = [{ from: '2026-10-27', to: '2026-11-03', reason: 'cap' }];
+const SAMPLED_RE = /sampled/;
 
 test('BREACH_TITLE is the spec title, verbatim', () => {
   assert.strictEqual(BREACH_TITLE, 'CI health: workflow p90 duration or Actions budget headroom breaches a threshold');
@@ -99,7 +102,7 @@ test('AC8.2: a p90 breach plus a headroom breach file one issue naming both', ()
   const billing = { available: true, scope: 'org', headroomPct: 5 };
   const breaches = breachesOf({ workflows: [wf()], billing }, { minHeadroomPct: 10, watchSeconds: 900 });
   assert.deepStrictEqual(breaches.map((b) => b.kind), ['p90-over-watch', 'headroom-below-floor']);
-  fileBreaches({ breaches, truncated: false, file: true }, deps, compose('native'));
+  fileBreaches({ breaches, file: true }, deps, compose('native'));
   assert.strictEqual(calls.createIssue.length, 1);
   const { body } = calls.createIssue[0];
   assert.ok(body.includes('ci.yml'));
@@ -177,21 +180,51 @@ test('the p90 breach carries the workflow name, path and p90', () => {
   ]);
 });
 
-test('a truncated window never files', () => {
+test('a truncated window files its p90 breach, and the body names the sampled weeks', () => {
   const { calls, deps } = fakeDeps();
-  const result = fileFor([wf()], NO_BILLING, { deps, truncated: true });
-  assert.strictEqual(calls.openIssueTitles, 0);
-  assert.strictEqual(calls.createIssue.length, 0);
-  assert.deepStrictEqual(result, { filed: null, skipped: 'window truncated', failure: null });
+  const result = fileFor([wf()], NO_BILLING, { deps, truncatedRanges: CAPPED });
+  assert.deepStrictEqual(result, { filed: { title: BREACH_TITLE, number: 42 }, skipped: null, failure: null });
+  assert.strictEqual(calls.createIssue.length, 1);
+  const { title, body } = calls.createIssue[0];
+  assert.strictEqual(title, BREACH_TITLE);
+  assert.ok(body.includes("Run figures for 1 of 5 weeks are sampled from each week's newest 1000 runs (2026-10-27..2026-11-03 cap); durations are sampled, counts for those weeks are partial."), body);
+  assert.doesNotMatch(body, AMOUNT_RE);
 });
 
-test('a failed runs read never files, and a truncated window is named first', () => {
+test('a truncated window files a headroom-only breach, the sampled weeks named', () => {
+  const { calls, deps } = fakeDeps();
+  const billing = { available: true, scope: 'org', headroomPct: 5 };
+  const result = fileFor([wf({ p90Seconds: 600 })], billing, { deps, truncatedRanges: CAPPED });
+  assert.deepStrictEqual(result.filed, { title: BREACH_TITLE, number: 42 });
+  assert.strictEqual(calls.createIssue.length, 1);
+  const { body } = calls.createIssue[0];
+  assert.ok(body.includes('- Actions budget headroom 5%, below the 10% floor.'), body);
+  assert.ok(body.includes('(2026-10-27..2026-11-03 cap)'), body);
+  assert.doesNotMatch(body, AMOUNT_RE);
+});
+
+test('a budget-cut week is named as read only as far as the read budget reached', () => {
+  const ranges = [{ from: '2026-10-13', to: '2026-10-20', reason: 'budget' }, ...CAPPED];
+  const { body } = composeBreachIssue(breachesOf({ workflows: [wf()], billing: NO_BILLING }, OPTS), { ...compose('native'), truncatedRanges: ranges });
+  assert.ok(body.includes("Run figures for 2 of 5 weeks are sampled from each week's newest runs — up to 1000 (`cap`), or as far as the 50-page read budget reached (`budget`) (2026-10-13..2026-10-20 budget, 2026-10-27..2026-11-03 cap); durations are sampled, counts for those weeks are partial."), body);
+});
+
+test('a fully read window\'s issue body carries no sampled-weeks line', () => {
+  const breaches = breachesOf({ workflows: [wf()], billing: NO_BILLING }, OPTS);
+  for (const args of [{ ...compose('native'), truncatedRanges: [] }, compose('native')]) {
+    const { body } = composeBreachIssue(breaches, args);
+    assert.doesNotMatch(body, SAMPLED_RE, body);
+  }
+});
+
+test('a failed runs read never files, a truncated window included', () => {
   const { calls, deps } = fakeDeps();
   const result = fileFor([wf()], NO_BILLING, { deps, partial: true });
   assert.strictEqual(calls.openIssueTitles, 0);
   assert.strictEqual(calls.createIssue.length, 0);
   assert.deepStrictEqual(result, { filed: null, skipped: 'runs read failed', failure: null });
-  assert.strictEqual(fileFor([wf()], NO_BILLING, { deps, partial: true, truncated: true }).skipped, 'window truncated');
+  assert.strictEqual(fileFor([wf()], NO_BILLING, { deps, partial: true, truncatedRanges: CAPPED }).skipped, 'runs read failed');
+  assert.strictEqual(calls.createIssue.length, 0);
   assert.strictEqual(fileFor([], NO_BILLING, { deps, partial: true }).skipped, 'no breach');
 });
 

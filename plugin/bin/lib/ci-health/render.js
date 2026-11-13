@@ -95,7 +95,7 @@ function renderReport(report) {
   if (report.truncated) {
     const ranges = report.truncatedRanges || [];
     const named = ranges.map((r) => `${r.from}..${r.to} ${r.reason}`).join(', ');
-    out.push(`window truncated: ${ranges.length} of ${weekCount(days)} weeks hit the ${RUNS_PER_PAGE * MAX_RUN_PAGES}-run cap or the read budget (${named}); figures for those weeks are partial`);
+    out.push(`window truncated: ${ranges.length} of ${weekCount(days)} weeks hit the ${RUNS_PER_PAGE * MAX_RUN_PAGES}-run cap or the read budget (${named}); durations for those weeks are sampled from the runs read, counts are partial`);
   }
   if (report.ghAbsent) out.push('runs unavailable (gh absent)');
   else if (report.runsAvailable !== true) out.push(runsUnavailableLine(failures));

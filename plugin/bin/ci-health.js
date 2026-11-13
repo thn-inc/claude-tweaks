@@ -18,8 +18,9 @@
 //                          `work-types` is read from the current directory
 //   --min-headroom-pct N   the headroom floor, a number 0..100 (default 10)
 //   --file                 file the breach issue (exact-title dedup against open by:harness-health
-//                          issues; never on a truncated window or a failed runs read, page 1
-//                          included: `not filed: runs read failed`)
+//                          issues; never on a failed runs read, page 1 included: `not filed:
+//                          runs read failed`. A truncated window files, the issue body naming
+//                          each sampled week)
 //   --json                 print the report envelope as one JSON line instead of the report lines;
 //                          its `runsAvailable` is false when no runs page was read (beside
 //                          `billing.available`), `truncatedRanges` lists each 7-day range
@@ -223,9 +224,12 @@ function run(argv, deps = realDeps) {
   let filingSkipped = null;
   if (o.file) {
     const outcome = fileBreaches(
-      { breaches, truncated: runs.truncated, partial: runs.failures.length > 0, file: true },
+      { breaches, partial: runs.failures.length > 0, file: true },
       { openIssueTitles: () => deps.openIssueTitles(slug), createIssue: (issue) => deps.createIssue(slug, issue) },
-      { repo: slug, days: o.days, watchSeconds: MERGE_GATE_WATCH_SECONDS, minHeadroomPct: o.minHeadroomPct, workTypes: deps.workTypes(o.root) },
+      {
+        repo: slug, days: o.days, watchSeconds: MERGE_GATE_WATCH_SECONDS, minHeadroomPct: o.minHeadroomPct,
+        workTypes: deps.workTypes(o.root), truncatedRanges: runs.truncatedRanges,
+      },
     );
     ({ filed, skipped: filingSkipped } = outcome);
     if (outcome.failure) failures.push(outcome.failure);
