@@ -109,20 +109,26 @@ function harnessWorktreeOf(main, name) {
 // maintenance process. `env`/`run`/`commit`/`gitIn` are rebuilt per call; the
 // copy's remote urls were rewritten to its own `origin.git`.
 function originWithTwoClones(prefix) {
-  const env = {
-    ...process.env,
-    GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.test',
-    GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.test',
-    GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null',
-    GH_REPO: '', GH_HOST: '',
-  };
-  const run = (cwd, args) => fixtureGit(args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-  const commit = (cwd, name) => {
-    fs.writeFileSync(path.join(cwd, name), name);
-    run(cwd, ['add', name]);
-    run(cwd, ['commit', '-q', '-m', name]);
+  // Snapshots process.env when called, so the template build (which runs with
+  // auto-maintenance switched off in process.env) calls it again inside `build`.
+  const makeOps = () => {
+    const env = {
+      ...process.env,
+      GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.test',
+      GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.test',
+      GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null',
+      GH_REPO: '', GH_HOST: '',
+    };
+    const run = (cwd, args) => fixtureGit(args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    const commit = (cwd, name) => {
+      fs.writeFileSync(path.join(cwd, name), name);
+      run(cwd, ['add', name]);
+      run(cwd, ['commit', '-q', '-m', name]);
+    };
+    return { env, run, commit };
   };
   const root = fromTemplate('git-fixtures:origin-two-clones', (tplRoot) => {
+    const { env, run, commit } = makeOps();
     const origin = path.join(tplRoot, 'origin.git');
     const work = path.join(tplRoot, 'work');
     const other = path.join(tplRoot, 'other');
@@ -136,6 +142,7 @@ function originWithTwoClones(prefix) {
     run(work, ['push', '-q', 'origin', 'main']);
     run(other, ['pull', '-q', 'origin', 'main']);
   }, { prefix });
+  const { env, run, commit } = makeOps();
   return {
     root, work: path.join(root, 'work'), other: path.join(root, 'other'), env, run, commit,
     gitIn: (cwd) => (args) => run(cwd, args),

@@ -264,6 +264,33 @@ for (const [name, [make, dirsOf]] of Object.entries(builders)) {
   });
 }
 
+test('template build runs with auto-maintenance off', () => {
+  // The runner's own GIT_CONFIG_* (tools/run-tests.js) would mask a missing
+  // append, so take them out for the duration and put them back after.
+  const mine = /^GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+|GLOBAL|SYSTEM)$/;
+  const saved = Object.entries(process.env).filter(([k]) => mine.test(k));
+  for (const [k] of saved) delete process.env[k];
+  const trace = mk('ct-gt-trace-');
+  try {
+    process.env.GIT_CONFIG_GLOBAL = EMPTY_CONFIG;
+    process.env.GIT_CONFIG_SYSTEM = EMPTY_CONFIG;
+    withEnv('GIT_TRACE2_EVENT', trace, () => {
+      scratch.push(fromTemplate('maint-off', (dir) => {
+        const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.test', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.test' };
+        git(dir, ['init', '-q', '-b', 'main'], env);
+        fs.writeFileSync(path.join(dir, 'f'), 'f');
+        git(dir, ['add', 'f'], env);
+        git(dir, ['commit', '-q', '-m', 'f'], env);
+      }, { prefix: 'ct-gt-' }));
+    });
+  } finally {
+    for (const k of Object.keys(process.env)) if (mine.test(k)) delete process.env[k];
+    for (const [k, v] of saved) process.env[k] = v;
+  }
+  assert.ok(tracedArgvs(trace).length > 0, 'control: the build did trace git processes');
+  assert.ok(!tracedArgvs(trace).some((a) => a.includes('maintenance')), 'no maintenance process during the build');
+});
+
 test('git-fixtures gitRepo({ branch }) keeps the requested branch', () => {
   const dir = gitFixtures.gitRepo({ branch: 'trunk' });
   scratch.push(dir);

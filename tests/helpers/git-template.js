@@ -124,6 +124,32 @@ function rewriteTemplatePaths(rootDir, mapping) {
   assertNoTemplatePaths(rootDir, froms);
 }
 
+// Runs `fn` with git auto-maintenance off in process.env (appended after any
+// inherited GIT_CONFIG_* entries), then restores process.env exactly. Without
+// it, a detached `maintenance run --auto` started after the build's last commit
+// touched `.git/objects` while the first `fs.cpSync` ran, giving ENOENT under a
+// direct `node --test` (tools/run-tests.js sets the same config for its children).
+// A malformed inherited GIT_CONFIG_COUNT is left alone rather than guessed at.
+function withMaintenanceOff(fn) {
+  const raw = process.env.GIT_CONFIG_COUNT;
+  if (raw !== undefined && !/^\d+$/.test(raw)) return fn();
+  const n = raw === undefined ? 0 : Number(raw);
+  const names = ['GIT_CONFIG_COUNT', ...[n, n + 1].flatMap((i) => [`GIT_CONFIG_KEY_${i}`, `GIT_CONFIG_VALUE_${i}`])];
+  const saved = names.map((k) => [k, process.env[k]]);
+  process.env.GIT_CONFIG_COUNT = String(n + 2);
+  process.env[`GIT_CONFIG_KEY_${n}`] = 'maintenance.auto';
+  process.env[`GIT_CONFIG_VALUE_${n}`] = 'false';
+  process.env[`GIT_CONFIG_KEY_${n + 1}`] = 'gc.auto';
+  process.env[`GIT_CONFIG_VALUE_${n + 1}`] = '0';
+  try {
+    return fn();
+  } finally {
+    for (const [k, v] of saved) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  }
+}
+
 function fromTemplateSet(key, build, layout) {
   const names = Object.keys(layout);
   let tpl = cache.get(key);
@@ -135,7 +161,7 @@ function fromTemplateSet(key, build, layout) {
         dirs[n] = path.join(base, n);
         fs.mkdirSync(dirs[n]);
       }
-      build(dirs);
+      withMaintenanceOff(() => build(dirs));
     } catch (err) {
       fs.rmSync(base, { recursive: true, force: true });
       throw err;
