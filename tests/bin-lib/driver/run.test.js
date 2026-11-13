@@ -2487,6 +2487,22 @@ test('ci: the commit-run read stops once a run is seen', async () => {
   assert.equal(runListCalls(h).length, 1);
 });
 
+test('ci: a workflow run that appears after a settled none is seen, so the green read is not rewritten to no-ci', async () => {
+  // A running non-Actions check keeps the loop polling past the first settled `none`.
+  const named = { state: 'pending', pending: ['circleci/build'] };
+  const polls = [...Array(WINDOW_POLLS - 1).fill({ state: 'pending', pending: [] }), named, named];
+  const runLists = ['[]', '[{"databaseId":1}]'];
+  const h = harness({ script: [
+    [on('node', /pr-checks\.js$/), (c) => ({ code: 0, stderr: '',
+      stdout: JSON.stringify(c.args.includes('--run') ? { state: 'green' } : (polls.shift() ?? { state: 'green' })) })],
+    runListReply(() => runLists.shift() ?? '[{"databaseId":1}]'),
+  ] });
+  await run(['#7'], h.deps);
+  assert.equal(lastLine(h).ci, 'green');
+  assert.equal(runListCalls(h).length, 2, 'read again after none, and not after the run is seen');
+  assert.equal(checkPolls(h).length, WINDOW_POLLS + 2);
+});
+
 test('every record gets exactly one pr-checks --run read, carrying the express-lane section', async () => {
   for (const state of ['green', 'red', 'no-ci', 'pending']) {
     const h = harness({ script: [prChecksReply(state)] });
