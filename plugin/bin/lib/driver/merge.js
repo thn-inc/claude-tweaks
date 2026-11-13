@@ -26,6 +26,9 @@ const { LABELS } = require('../issues/record-vocabulary');
 
 const BIN_DIR = path.join(__dirname, '..', '..');
 const AUTHORIZING_LABEL = 'auto:merge';
+// The bounded watch (pr-first-merge.md Step 2.5): 15 minutes, polled every 30 seconds.
+const MERGE_WATCH_BOUND_MS = 15 * 60 * 1000;
+const MERGE_WATCH_POLL_MS = 30 * 1000;
 
 function bin(name) {
   return path.join(BIN_DIR, name);
@@ -577,7 +580,7 @@ function parkComment({ value, reason, pr, names = [], files = [] } = {}) {
   const list = (xs) => reduceDetail((Array.isArray(xs) ? xs : []).join(', '));
   let phrase = list(names);
   let resume = 'Resume once green.';
-  if (stem === 'checks-pending-timeout') phrase = 'checks still pending after 15m';
+  if (stem === 'checks-pending-timeout') phrase = `checks still pending after ${MERGE_WATCH_BOUND_MS / 60000}m`;
   if (stem === 'draft-skip-without-ready-trigger') {
     phrase = `${list(files)} skips drafts with no ready_for_review trigger — add ready_for_review to its types (_shared/ci-skips-drafts.md)`;
     resume = 'Resume once its workflow is fixed or a post-ready run lands.';
@@ -590,10 +593,81 @@ function conflictComment({ pr, base } = {}) {
     + 'The driver does not update a conflicting branch; resolve the conflict and run the record again.';
 }
 
-// Task 4 replaces this stub with the bounded watch.
+// Ports Step 2.5 "Bounded watch", deliberately not the prose loop's shape (#5179): every poll
+// re-reads the merge state as well as the checks, so a PR that turns conflicting mid-watch stops
+// as `conflict` at that poll instead of timing out. Each poll runs its guards (read failure, not
+// OPEN or head changed since the previous read, conflicting) before `classify`, and `s.lastRead`
+// moves only once they pass, so the head comparison is against the prior read. Returns { step }
+// for a stop the watch owns, or { next } for a hand-off that runs after the watch's time is
+// accounted (a hand-off may itself re-enter the gate, which starts another watch).
+async function pollUntilDecided(s, started) {
+  const { ctx, deps } = s;
+  let polls = 0;
+  for (;;) {
+    await deps.sleep(MERGE_WATCH_POLL_MS);
+    if (deps.interrupted()) {
+      // run.js's handler already wrote the final line: no further call, and no hand-off.
+      return { step: { stop: 'unclassified', detail: 'watch: interrupted' }, polls };
+    }
+    polls += 1;
+    const g = gateReads(s, 'checks-read-failed');
+    if (g.stop) return { step: g, polls };
+    const { read } = g;
+    if (read.state !== 'OPEN' || read.headRefOid !== s.lastRead.headRefOid) {
+      if (s.reentries >= 1) {
+        return { step: { stop: 'moving-target', detail: 'the PR changed during the watch a second time' }, polls };
+      }
+      s.reentries += 1;
+      s.recomposeOnReentry = true;
+      return { next: () => gate(s), note: `${read.state !== 'OPEN' ? 'state' : 'head'} changed; re-entering the gate once`, polls };
+    }
+    if (isConflicting(read)) return { next: () => conflictStop(s), note: 'conflicting', polls };
+    s.lastRead = read;
+    const verdict = classify(ctx, read, g.runs, g.ready);
+    if (verdict.kind === 'red') {
+      return { next: () => park(s, `check-failed:${verdict.names.join(',')}`, { names: verdict.names }), note: 'checks red', polls };
+    }
+    if (verdict.kind === 'draft-skip') {
+      return {
+        next: () => park(s, `draft-skip-without-ready-trigger:${verdict.files.join(',')}`, { files: verdict.files }),
+        note: 'draft-skip without a ready trigger',
+        polls,
+      };
+    }
+    if (verdict.kind === 'green') return { next: () => rereadThenMerge(s, read), note: 'checks green', polls };
+    // pending. Step 3's rule applies at every poll: under merge-when-green a BLOCKED read arms.
+    if (s.value === 'merge-when-green' && read.mergeStateStatus === 'BLOCKED') {
+      return { next: () => mergeCall(s, 'auto'), note: 'pending and BLOCKED; arming auto-merge', polls };
+    }
+    if (deps.now() - started >= MERGE_WATCH_BOUND_MS) {
+      return { next: () => park(s, 'checks-pending-timeout'), note: 'checks still pending at the bound', polls };
+    }
+  }
+}
+
+// The watch's time is CI wait: summed on s.ciWaitMs across re-entries, and carried by this
+// watch's one exit event as extra.ciWaitMs (run.js's final line sums the events' values).
 async function watch(s) {
+  const { deps } = s;
   s.stage = 'merge-watch';
-  return stop(s, 'merge-watch', 'unclassified', 'watch not implemented');
+  const started = deps.now();
+  deps.watchClock(started);
+  let out;
+  let waited = 0;
+  try {
+    out = await pollUntilDecided(s, started);
+  } finally {
+    waited = Math.max(0, deps.now() - started);
+    s.ciWaitMs += waited;
+    deps.watchClock(null);
+  }
+  const extra = { ciWaitMs: waited };
+  if (out.step) {
+    emit(s, 'merge-watch', 'stop', `${out.step.stop}: ${out.step.detail || ''} (after ${out.polls} polls)`.trim(), extra);
+    return { stop: out.step.stop, detail: neutralize(String(out.step.detail || '')) };
+  }
+  emit(s, 'merge-watch', 'ok', `watch ended after ${out.polls} polls: ${out.note}`, extra);
+  return out.next();
 }
 
 // Task 5 replaces this stub with the merge call; `mode` is 'auto' (merge-when-green) or 'immediate' (wait).
@@ -604,7 +678,7 @@ async function mergeCall(s, mode) {
 
 function result(s, outcome, reason, detail, extra = {}) {
   return {
-    outcome, reason, detail: detail || '', mergeCommit: null, runDir: s.ctx.runDir, ciWaitMs: 0, postMerge: null,
+    outcome, reason, detail: detail || '', mergeCommit: null, runDir: s.ctx.runDir, ciWaitMs: s.ciWaitMs, postMerge: null,
     eventsStdoutOnly: false, ...extra,
   };
 }
@@ -631,4 +705,6 @@ async function merge(ctx, deps) {
   }
 }
 
-module.exports = { merge, parkComment, conflictComment };
+module.exports = {
+  merge, parkComment, conflictComment, MERGE_WATCH_BOUND_MS, MERGE_WATCH_POLL_MS,
+};

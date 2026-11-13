@@ -9,7 +9,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
-const { merge, parkComment, conflictComment } = require(path.join(LIB, 'driver', 'merge'));
+const {
+  merge, parkComment, conflictComment, MERGE_WATCH_BOUND_MS, MERGE_WATCH_POLL_MS,
+} = require(path.join(LIB, 'driver', 'merge'));
 const { MERGE_STEP_NAMES } = require(path.join(LIB, 'driver', 'events'));
 const { VERDICT_STEPS, verdictMarker } = require(path.join(LIB, 'dispatch', 'merge-verdict'));
 const { formatEntry } = require(path.join(LIB, 'log-decision', 'append'));
@@ -688,7 +690,7 @@ const FAILING_CHECK = { __typename: 'CheckRun', name: 'unit', status: 'COMPLETED
 const PENDING_CHECK = { ...GREEN_CHECK, status: 'IN_PROGRESS', conclusion: null };
 const B = 'b'.repeat(40);
 const lastEvent = (h) => h.events[h.events.length - 1];
-// The Task 5 stub names the mode the gate handed it; the Task 4 stub is 'watch not implemented'.
+// The Task 5 stub names the mode the gate handed it.
 const modeOf = (r) => (/^merge call not implemented \(mode (\w+)\)$/.exec(r.detail) || [])[1] || null;
 const shortOf = (c) => (c.kind === 'node' ? base(c.args[0]) : c.kind === 'gh' ? `gh ${c.args.slice(0, 2).join(' ')}` : c.kind);
 const after = (h, pred) => h.calls.slice(h.calls.findIndex(pred) + 1);
@@ -974,10 +976,11 @@ test('AC8.2: merge-when-green pending with BLOCKED arms; pending with CLEAN runs
   for (const [name, over] of pendings) {
     const h = mergeHarness(over);
     const r = await merge(CTX, h.deps);
-    assert.equal(r.reason, 'unclassified', name);
-    assert.equal(r.detail, 'watch not implemented', name);
+    // Pending and not BLOCKED: the wait row's bounded watch, which these constant reads never leave.
+    assert.equal(r.reason, 'checks-pending-timeout', name);
     assert.ok(!h.calls.some(isReread), name);
-    assert.ok(!h.calls.some(isParkCall), name);
+    assert.ok(h.calls.some(isParkCall), name);
+    noMerge(h);
   }
   // A not-applicable ready-run is no requirement: green.
   const na = mergeHarness({ readyRun: { state: 'not-applicable', failing: [], draftSkipWithoutReadyTrigger: [] } });
@@ -1001,7 +1004,8 @@ test('AC8.3: wait re-reads state and compares the head before the immediate merg
   assert.equal((await merge(CTX, g.deps)).reason, 'state-read-failed');
   // wait never arms: a BLOCKED pending read watches.
   const blocked = mergeHarness({ verification: WAIT, prState: { statusCheckRollup: [PENDING_CHECK], mergeStateStatus: 'BLOCKED' } });
-  assert.equal((await merge(CTX, blocked.deps)).detail, 'watch not implemented');
+  assert.equal((await merge(CTX, blocked.deps)).reason, 'checks-pending-timeout');
+  noMerge(blocked);
 });
 
 test('AC8.4: a state read always precedes the first merge call under every lever value', async () => {
@@ -1036,4 +1040,209 @@ test('parkComment and conflictComment are fixed templates with reduced free text
   const hostile = parkComment({ value: 'wait', reason: 'check-failed:x', pr: 9, names: ['@octo `x` closes #5'] });
   assert.doesNotMatch(hostile, /@|`|#5/);
   assert.doesNotMatch(conflictComment({ pr: 9, base: '@octo/main #5' }), /@|#5/);
+});
+
+// ---- Task 4: the bounded watch (AC10, AC5's pending-timeout and read-failure clauses, AC8.2's BLOCKED arm) ----
+
+const WATCH_POLLS = Math.ceil(MERGE_WATCH_BOUND_MS / MERGE_WATCH_POLL_MS);
+const PENDING = { statusCheckRollup: [PENDING_CHECK] };
+const GREEN = {};
+const C = 'c'.repeat(40);
+// A harness whose sleep records its argument; a poll's sleeps are the polls made.
+function watchHarness(over) {
+  const h = mergeHarness(over);
+  const sleeps = [];
+  const watchClock = [];
+  const realSleep = h.deps.sleep;
+  h.deps.sleep = async (ms) => { sleeps.push(ms); return realSleep(ms); };
+  h.deps.watchClock = (v) => { watchClock.push(v); };
+  return { ...h, sleeps, watchClock };
+}
+const parkLabelAdds = (h) => h.calls.filter((c) => isGh('issue', 'edit')(c) && c.args.includes('bot:parked'));
+const mergeCalls = (h) => h.calls.filter((c) => isGh('pr', 'merge')(c));
+
+test('AC10.1: the watch constants are 15 minutes and 30 seconds', () => {
+  assert.equal(MERGE_WATCH_BOUND_MS, 15 * 60 * 1000);
+  assert.equal(MERGE_WATCH_POLL_MS, 30 * 1000);
+});
+
+test('AC10.2: a PR that turns conflicting mid-watch returns conflict at that poll, not checks-pending-timeout', async () => {
+  for (const state of [{ mergeStateStatus: 'DIRTY' }, { mergeable: 'CONFLICTING' }]) {
+    const h = watchHarness({ verification: WAIT, prState: seq(PENDING, PENDING, PENDING, { ...PENDING, ...state }) });
+    const r = await merge(CTX, h.deps);
+    assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'conflict', mergeCommit: null, postMerge: null });
+    assert.equal(h.sleeps.length, 3);
+    assert.equal(h.calls.filter(isGateRead).length, 4, 'the first read and three polls');
+    // The conflicting poll decides before the checks are read: only the PR comment follows its read.
+    assert.deepEqual(after(h, (c) => h.calls.filter(isGateRead)[3] === c).map(shortOf), ['gh pr comment']);
+    assert.ok(!h.calls.some((c) => isGh('issue', 'edit')(c)), 'nothing parked');
+    noMerge(h);
+  }
+});
+
+test('AC10.3: a red result at any poll takes the Red path at once', async () => {
+  const h = watchHarness({ verification: WAIT, prState: seq(PENDING, PENDING, { statusCheckRollup: [FAILING_CHECK] }) });
+  const r = await merge(CTX, h.deps);
+  assert.equal(r.reason, 'check-failed:unit');
+  assert.equal(h.sleeps.length, 2);
+  assert.equal(parkLabelAdds(h).length, 1);
+  assert.ok(!h.calls.some(isUndo));
+  noMerge(h);
+  // A draft-skip workflow found at a poll parks the same way.
+  const d = watchHarness({
+    verification: WAIT,
+    readyRun: seq(
+      { state: 'awaiting', failing: [], draftSkipWithoutReadyTrigger: [] },
+      { state: 'draft-skip-without-ready-trigger', failing: [], draftSkipWithoutReadyTrigger: ['.github/workflows/t.yml'] },
+    ),
+    prState: PENDING,
+  });
+  const dr = await merge(CTX, d.deps);
+  assert.equal(dr.reason, 'draft-skip-without-ready-trigger:.github/workflows/t.yml');
+  assert.equal(d.sleeps.length, 1);
+  noMerge(d);
+});
+
+test('AC10.4: still pending at the bound parks as checks-pending-timeout after WATCH_POLLS polls', async () => {
+  for (const verification of [WAIT, undefined]) {
+    const h = watchHarness({ verification, prState: PENDING });
+    const r = await merge(CTX, h.deps);
+    assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'checks-pending-timeout', mergeCommit: null, postMerge: null });
+    assert.equal(h.sleeps.length, WATCH_POLLS);
+    assert.ok(h.sleeps.every((ms) => ms === MERGE_WATCH_POLL_MS));
+    assert.equal(parkLabelAdds(h).length, 1);
+    const comment = h.calls.find((c) => isGh('issue', 'comment')(c));
+    const body = comment.args[comment.args.indexOf('--body') + 1];
+    assert.equal(body, parkComment({ value: verification ? 'wait' : 'merge-when-green', reason: 'checks-pending-timeout', pr: 9 }));
+    // The minutes in the comment agree with the bound the watch waits.
+    assert.match(body, new RegExp(`after ${MERGE_WATCH_BOUND_MS / 60000}m`));
+    assert.ok(!h.calls.some(isUndo), 'the PR is left ready');
+    noMerge(h);
+  }
+});
+
+test('AC10.5: watch time is reported as ciWaitMs, on the result and on the exit event', async () => {
+  const h = watchHarness({ verification: WAIT, prState: seq(PENDING, PENDING, PENDING, GREEN) });
+  const r = await merge(CTX, h.deps);
+  assert.equal(h.sleeps.length, 3);
+  assert.ok(r.ciWaitMs >= 3 * MERGE_WATCH_POLL_MS, `ciWaitMs ${r.ciWaitMs}`);
+  const watchEvents = h.events.filter((e) => e.step === 'merge-watch');
+  assert.equal(watchEvents.length, 1);
+  assert.equal(watchEvents[0].extra.ciWaitMs, r.ciWaitMs);
+  // The watch clock is armed with the start and cleared on exit.
+  assert.equal(h.watchClock.length, 2);
+  assert.equal(typeof h.watchClock[0], 'number');
+  assert.equal(h.watchClock[1], null);
+  // Every kind of exit clears it, and a gate that never watches reports no CI wait.
+  const t = watchHarness({ verification: WAIT, prState: PENDING });
+  const tr = await merge(CTX, t.deps);
+  assert.ok(tr.ciWaitMs >= WATCH_POLLS * MERGE_WATCH_POLL_MS);
+  assert.equal(t.watchClock[t.watchClock.length - 1], null);
+  const none = watchHarness({ verification: WAIT });
+  assert.equal((await merge(CTX, none.deps)).ciWaitMs, 0);
+  assert.equal(none.watchClock.length, 0);
+});
+
+test('AC5.9: a read failure during the watch is checks-read-failed and parks nothing', async () => {
+  const cases = [
+    ['the state read throws', { prState: seq(PENDING, new Error('HTTP 502')) }],
+    ['the state read is unusable', { prState: seq(PENDING, '{"state":"OPEN"}') }],
+    ['the head-runs read throws', { prState: PENDING, runs: seq(undefined, new Error('HTTP 502')) }],
+    ['ready-run read-failed', { prState: PENDING, readyRun: seq(undefined, { state: 'read-failed', reason: 'x' }) }],
+    ['ready-run exits non-zero', { prState: PENDING, readyRun: seq(undefined, { code: 3, stdout: '', stderr: '' }) }],
+  ];
+  for (const [name, over] of cases) {
+    const h = watchHarness({ verification: WAIT, ...over });
+    const r = await merge(CTX, h.deps);
+    assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'checks-read-failed', mergeCommit: null, postMerge: null }, name);
+    assert.equal(h.sleeps.length, 1, name);
+    assert.ok(!h.calls.some((c) => isGh('issue', 'edit')(c) || isGh('issue', 'comment')(c) || isUndo(c)), `${name}: parks nothing`);
+    noMerge(h);
+  }
+});
+
+test('watch: a green poll re-reads and merges immediately (no --auto)', async () => {
+  const w = watchHarness({ verification: WAIT, prState: seq(PENDING, GREEN) });
+  const r = await merge(CTX, w.deps);
+  assert.equal(modeOf(r), 'immediate');
+  assert.equal(w.sleeps.length, 1);
+  assert.equal(w.calls.filter(isReread).length, 1);
+  assert.ok(!w.calls.some((c) => c.args.includes('--auto')));
+  // A pending read that was not BLOCKED ran the wait row, so even under merge-when-green its green poll
+  // merges immediately after a re-read, never via --auto.
+  const m = watchHarness({ prState: seq(PENDING, GREEN) });
+  assert.equal(modeOf(await merge(CTX, m.deps)), 'immediate');
+  assert.equal(m.calls.filter(isReread).length, 1);
+});
+
+test('AC8.2: under merge-when-green a pending poll that reads BLOCKED arms (--auto), under wait it keeps watching', async () => {
+  const BLOCKED = { ...PENDING, mergeStateStatus: 'BLOCKED' };
+  const mwg = watchHarness({ prState: seq(PENDING, PENDING, BLOCKED) });
+  const r = await merge(CTX, mwg.deps);
+  assert.equal(modeOf(r), 'auto');
+  assert.equal(mwg.sleeps.length, 2, 'armed at poll 2, no further sleep');
+  assert.ok(!mwg.calls.some(isReread));
+  assert.ok(!mwg.calls.some(isParkCall));
+  const wait = watchHarness({ verification: WAIT, prState: seq(PENDING, BLOCKED, BLOCKED, GREEN) });
+  const wr = await merge(CTX, wait.deps);
+  assert.equal(modeOf(wr), 'immediate');
+  assert.equal(wait.sleeps.length, 3, 'wait never arms on BLOCKED');
+  assert.ok(!wait.calls.some((c) => c.args.includes('--auto')));
+});
+
+test('watch: an interrupt during a sleep makes no further call', async () => {
+  const h = watchHarness({ verification: WAIT, prState: PENDING });
+  let seenAtInterrupt = null;
+  h.deps.interrupted = () => {
+    if (h.sleeps.length < 1) return null;
+    if (seenAtInterrupt === null) seenAtInterrupt = h.calls.length;
+    return 'SIGTERM';
+  };
+  const r = await merge(CTX, h.deps);
+  assert.equal(r.reason, 'unclassified');
+  assert.equal(r.detail, 'watch: interrupted');
+  assert.equal(h.sleeps.length, 1);
+  assert.equal(h.calls.length, seenAtInterrupt, 'no gh, node or file call after the interrupted sleep');
+  assert.equal(h.watchClock[h.watchClock.length - 1], null);
+  noMerge(h);
+});
+
+test('watch: a head change mid-watch re-enters the gate once; a second change is moving-target', async () => {
+  // Compares s.lastRead's head with the poll's: a lastRead overwritten before the comparison never re-enters.
+  const h = watchHarness({ verification: WAIT, prState: seq(PENDING, { ...PENDING, headRefOid: B }, PENDING, GREEN) });
+  const r = await merge(CTX, h.deps);
+  assert.equal(modeOf(r), 'immediate');
+  assert.equal(nodeCalls(h, 'compose-subject.js').length, 2, 'the re-entry recomposes once');
+  assert.ok(h.events.some((e) => e.step === 'merge-watch' && /re-entering the gate once/.test(e.detail)));
+  assert.equal(h.sleeps.length, 2, 'one poll before the change, one after the re-entry');
+  assert.equal(h.events.filter((e) => e.step === 'merge-watch').length, 2, 'each watch reports its own CI wait');
+  assert.equal(h.calls.filter(isReadyCall).length, 1);
+  noMerge(h);
+  const two = watchHarness({ verification: WAIT, prState: seq(PENDING, { ...PENDING, headRefOid: B }, PENDING, { ...PENDING, headRefOid: C }) });
+  const tr = await merge(CTX, two.deps);
+  assert.deepEqual(pick(tr), { outcome: 'pending-review', reason: 'moving-target', mergeCommit: null, postMerge: null });
+  assert.equal(two.sleeps.length, 2);
+  assert.ok(!two.calls.some(isParkCall));
+  noMerge(two);
+  // The ciWaitMs of both watches is summed.
+  assert.ok(tr.ciWaitMs >= 2 * MERGE_WATCH_POLL_MS);
+  // A change onto a head that is not the verified one is moving-target at the re-entry's first read.
+  const off = watchHarness({ verification: WAIT, prState: seq(PENDING, { ...PENDING, headRefOid: B }, { ...PENDING, headRefOid: B }) });
+  assert.equal((await merge(CTX, off.deps)).reason, 'moving-target');
+});
+
+test('watch: a PR no longer OPEN mid-watch re-enters, and the gate reports pr-not-open', async () => {
+  const h = watchHarness({ verification: WAIT, prState: seq(PENDING, { state: 'MERGED' }, { state: 'MERGED' }) });
+  const r = await merge(CTX, h.deps);
+  assert.equal(r.reason, 'pr-not-open');
+  assert.equal(nodeCalls(h, 'compose-subject.js').length, 1, 'a re-entry that stops composes nothing');
+  assert.ok(!h.calls.some(isParkCall));
+  noMerge(h);
+});
+
+test('watch: under merge-when-green a red poll parks and makes no merge call', async () => {
+  const h = watchHarness({ prState: seq(PENDING, PENDING, { statusCheckRollup: [FAILING_CHECK] }) });
+  const r = await merge(CTX, h.deps);
+  assert.equal(r.reason, 'check-failed:unit');
+  assert.equal(mergeCalls(h).length, 0);
 });
