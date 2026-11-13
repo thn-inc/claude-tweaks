@@ -233,7 +233,7 @@ test("item 9's filter never offers a wrap-up-skills-pr PR, even with a run marke
     statusCheckRollup: [{ conclusion: 'SUCCESS' }],
   };
   fs.writeFileSync(inputPath, JSON.stringify([
-    { ...base, number: 3001, title: 'wrap-up learned skills', body: '<!-- wrap-up-skills-pr -->' },
+    { ...base, number: 3001, title: 'wrap-up learned skills', body: '<!-- wrap-up-skills-pr -->\n<!-- wrap-up-residue-pr -->' },
     {
       ...base,
       number: 3002,
@@ -248,7 +248,7 @@ test("item 9's filter never offers a wrap-up-skills-pr PR, even with a run marke
   execFileSync('node', [scriptPath], { env: { ...process.env, UNARMED_AGE: '24' }, stdio: 'pipe' });
 
   const candidateNumbers = JSON.parse(fs.readFileSync(candidatesPath, 'utf8')).map((c) => c.number);
-  assert.ok(!candidateNumbers.includes(3001), 'a marker-only wrap-up-skills-pr PR must not be a candidate');
+  assert.ok(!candidateNumbers.includes(3001), 'a housekeeping-marked wrap-up-skills-pr PR must not be a candidate');
   assert.ok(!candidateNumbers.includes(3002), 'a run-marked, granted wrap-up-skills-pr PR must not be a candidate');
 });
 
