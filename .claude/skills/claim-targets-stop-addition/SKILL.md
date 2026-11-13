@@ -26,7 +26,7 @@ Answer the decisions below first, because they choose the rows. Rows 1-10 apply 
 | 7 | `docs/plugin-structure.md`, `docs/journeys/act-on-a-contested-claim.md`, `.claude/skills/gh-api-module-pattern/` | The command line's exit list; the journey's Success state, a new step and its changelog line; any exit claim the project skills restate (grep them, see Common Operations) |
 | 8 | `plugin/skills/dispatch/settle-and-merge.md` Claim-contest special case | Which Settle steps run, the `flow-step-2.8-…` failing-check-name, and the "{N} different stop shapes" count. `tests/flow-claim-preflight.test.js` slices this section up to `**Open-linked-PR enrichment` |
 | 9 | `plugin/skills/dispatch/task-prompt.md`, `express-prompt.md`, `plugin/skills/_shared/express-lane.md` | The exact `ISSUE #{n}: failed:{gate}` value a dispatched agent reports, and the express lane's step 1 and `blocked` outcome |
-| 10 | `plugin/skills/dispatch/firing-exclusion.md`, `next-ranking.md` | Name the stop in their pre-flight stop lists |
+| 10 | `plugin/skills/dispatch/firing-exclusion.md` | Name the stop in its pre-flight stop list. Not the retained `next-ranking.md`: since #5230 the ranking is `queue-pull.js --rank`, which only picks a group, and `tests/flow-claim-preflight.test.js` no longer pins that file's copy of the stop list |
 | 11 | `plugin/skills/dispatch/two-call-gate.md` section 5, `plugin/skills/wrap-up/cleanup-procedures-execution.md` Section E, `plugin/skills/wrap-up/flags.md` | Only when teardown must not release: the phrase the `cleanup-only` call appends, Section E's skip with its log line, and the `cleanup-only` flag entry that strips the phrase before input classification |
 | 12 | `plugin/skills/dispatch/reporting.md` | Only when a person must act: the relay block, since the first call's reply carries only status lines |
 | 13 | `plugin/skills/dispatch/SKILL.md`, `sequential-execution.md`, `two-call-gate.md` sections 5 and 7 | Only for a firing stop: the stop paragraph, the Every-exit close-out list, the Loop's terminators (two sentences), and every "next group" move-on site |
@@ -66,7 +66,7 @@ Two decisions it owes beyond the six above:
 |---|---|
 | `plugin/skills/dispatch/two-call-gate.md` sections 2, 5 and 6 | The stop's trigger and scope (which calls), the cleanup call it follows, and every `(none after a Claim permission stop …)` clause naming the new stop too |
 | `plugin/skills/dispatch/SKILL.md` | The stop's own paragraph beside "Claim permission stop (#4899)", plus the close-out exit list, the bare-drain Loop line, the loop-termination paragraph and Step 6's none-after clause |
-| `firing-exclusion.md`, `sequential-execution.md`, `next-ranking.md` | One sentence each beside the claim-permission one |
+| `firing-exclusion.md`, `sequential-execution.md` | One sentence each beside the claim-permission one (not the retained `next-ranking.md`, row 10) |
 | `plugin/skills/dispatch/reporting.md` | A relay paragraph shaped like the claim-permission relay, and the `PushNotification` sentence naming a headless case when every later firing would stop at the same point |
 | Journeys 2775, 3026, 3278, 4219 | The new termination where each names the Claim permission stop |
 | `tests/flow-claim-preflight.test.js` | Its #4899 exact-text regexes, widened to the new list wording |
