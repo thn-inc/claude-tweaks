@@ -38,6 +38,7 @@
 **Files:**
 - Create: `tests/fixtures/plan-review-dispatch-prompt-4958.txt`
 - Create: `tests/plan-review-convergence-conformance.test.js`
+- Modify: `tests/log-decision-text-file-sites-conformance.test.js` (append one `SITES` row: `{ id: 'P1', file: 'plugin/skills/build/plan-review.md', content: 'settled after an answered round: {finding} — chose {reading taken}; not {reading not taken}' }`)
 - Modify: `plugin/skills/build/plan-review.md` (Reading the reply's "A table" bullet; Handling by class intro; new `### Converged round (#4958)` subsection before `### Spec gap — needs-human`; that subsection's first paragraph)
 
 **Interfaces:**
@@ -58,7 +59,6 @@ Create `tests/plan-review-convergence-conformance.test.js`:
 // gate sentence is checked against the frozen pre-change excerpt.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
 const { RAIL_BYTES } = require('../plugin/bin/lib/skill-audit/budgets');
@@ -69,7 +69,9 @@ const norm = (t) => t.replace(/\s+/g, ' ');
 const REVIEW = read('plugin', 'skills', 'build', 'plan-review.md');
 const TEMPLATE = read('plugin', 'skills', 'specify', 'spec-template.md');
 const CONTRACT = read('plugin', 'skills', '_shared', 'auto-mode-contract.md');
-const FROZEN_PROMPT = fs.readFileSync(path.join(__dirname, 'fixtures', 'plan-review-dispatch-prompt-4958.txt'), 'utf8');
+// readText, never a raw fs read: tests/raw-markdown-read-conformance.test.js (#3922) forbids
+// raw text-mode reads, and readText's CRLF normalization keeps AC5.1 green on a Windows checkout.
+const FROZEN_PROMPT = readText(path.join(__dirname, 'fixtures', 'plan-review-dispatch-prompt-4958.txt'));
 
 // dispatchBlock and subsection: copy the two helpers verbatim from
 // tests/build-plan-review-conformance.test.js (same slicing).
@@ -85,17 +87,19 @@ const SIGNAL_ANCHORS = [
   'Under `work-backend: local-files` only the spec-line signal applies',
 ];
 const RULE_ANCHORS = [
-  'stays needs-human only when settling it would alter or loosen an existing Acceptance Criterion, or contradict a recorded decision',
+  'stays needs-human only when settling it would alter or loosen an existing Acceptance Criterion, or contradict a recorded decision, under every available reading',
   'a `**Decision**` paragraph in the spec, or a Closed rule',
   'one the promotion rule in Reading the reply marked',
   'never asked',
   'the reading that keeps the criterion as written',
   'blocks, nothing is applied, settled rows included',
+  'logs no `AUTO` entry for a settled row, and the question comment lists only the surviving rows',
 ];
 const TRAIL_ANCHORS = [
   'Settled by plan review after an answered round:',
   'names the reading not taken',
   '--status AUTO',
+  '--text-file "{text-file}"',
   'settled after an answered round: {finding} — chose {reading taken}; not {reading not taken}',
   '--reversibility high',
   '### Plan review amendments (standalone build, if any)',
@@ -114,7 +118,7 @@ Tests (names carry the AC clause ids):
 - `AC2.1, AC2.2: in a converged round only a criterion or recorded-decision conflict stays needs-human; the rest are settled, never asked` — `RULE_ANCHORS` over the subsection.
 - `AC3.1: a settled row carries the attribution, names the reading not taken, and logs one AUTO entry (or a handoff line standalone)` — `TRAIL_ANCHORS` over the subsection.
 - `AC4.1: a first round routes unchanged, and the gate and Reading the reply say only surviving rows reach it` — `FIRST_ROUND` in the subsection; `GATE_SENTENCE` in `subsection(REVIEW, NEEDS_HUMAN)`; `READING_QUALIFIER` in `norm(REVIEW)`; `assert.ok(!norm(PRE_CHANGE_GATE).includes(GATE_SENTENCE))` (go-red against the frozen excerpt).
-- `AC4.1: the Converged round subsection sits after the plan-amendment subsection and before the needs-human gate` — `REVIEW.indexOf('### Undecided behaviour') < REVIEW.indexOf(CONVERGED) < REVIEW.indexOf(NEEDS_HUMAN)`, each index `!== -1`.
+- `AC4.1: the Converged round subsection sits after the plan-amendment subsection and before the needs-human gate` — match each heading as its own line, since `READING_QUALIFIER` mentions `### Converged round (#4958)` inline earlier in the file: `REVIEW.indexOf('\n### Undecided behaviour') < REVIEW.indexOf('\n' + CONVERGED + '\n') < REVIEW.indexOf('\n' + NEEDS_HUMAN + '\n')`, each index `!== -1`.
 - `AC5.1: the reviewer Dispatch prompt block is byte-identical to origin/main` — `assert.strictEqual(dispatchBlock(REVIEW), FROZEN_PROMPT)`; plus `assert.ok(FROZEN_PROMPT.length > 1000)` so an empty fixture cannot pass.
 - `AC7.1 go-red: each anchor set fails when one anchor is removed, and a one-byte prompt edit breaks AC5.1` — for every anchor in the three sets, `problems(set, doctored)` is non-empty where `doctored = subsection(...).split(anchor).join('removed')`; `assert.notStrictEqual(dispatchBlock(REVIEW).replace('spec gap', 'spec-gap'), FROZEN_PROMPT)`.
 - `plan-review.md stays within the rail` — `Buffer.byteLength(REVIEW) <= RAIL_BYTES`.
@@ -142,21 +146,23 @@ Under `work-backend: local-files` only the spec-line signal applies: there are n
 
 **On a first round** (neither signal), routing is unchanged: every needs-human row reaches the HARD-GATE below.
 
-**Convergence rule.** In a converged round, a needs-human row — the reviewer's, or one the promotion rule in Reading the reply marked — stays needs-human only when settling it would alter or loosen an existing Acceptance Criterion, or contradict a recorded decision. A recorded decision is a `Decided by the user at plan review:` line, a `**Decision**` paragraph in the spec, or a Closed rule (`specify/spec-template.md`'s State-Classification Deliverables). Every other needs-human row is settled by plan review, never asked:
+**Convergence rule.** In a converged round, a needs-human row — the reviewer's, or one the promotion rule in Reading the reply marked — stays needs-human only when settling it would alter or loosen an existing Acceptance Criterion, or contradict a recorded decision, under every available reading: the rule judges the reading chosen, not the row's suggested fix. A recorded decision is a `Decided by the user at plan review:` line, a `**Decision**` paragraph in the spec, or a Closed rule (`specify/spec-template.md`'s State-Classification Deliverables). Every other needs-human row is settled by plan review, never asked:
 
 1. Pick the reading closer to the spec's stated intent. When the row came from a criterion change, that is the reading that keeps the criterion as written.
 2. Apply it through the intent-resolvable sequence above, sharing its one commit, record comment and re-audit with every other amendment from this reply. Its clarification line quotes the row's Finding in place of an Evidence sentence, is attributed `Settled by plan review after an answered round:`, and names the reading not taken.
-3. Log one `AUTO` entry per settled row, so the Review Console lists it:
+3. Log one `AUTO` entry per settled row, so the Review Console lists it. The text carries reviewer-written prose (backticks, `$`, quotes), so never a double-quoted `--text` (`_shared/auto-decision-log.md`'s Text from git or a user). Resolve a path with `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" DECISION_TEXT=decision-text-{run-id}-plan-review-settled-{k}.md` (the path it prints is `{text-file}`), then run:
 
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO \
      --section "/build" --step "Common Step 1.6 (plan review)" \
-     --text "settled after an answered round: {finding} — chose {reading taken}; not {reading not taken}" --reversibility high
+     --text-file "{text-file}" --reversibility high
    ```
+
+   having first written `{text-file}` with the Write tool, holding the one line `settled after an answered round: {finding} — chose {reading taken}; not {reading not taken}`.
 
    A standalone `/build` with no run dir lists each settled row in the handoff's `### Plan review amendments (standalone build, if any)` section instead.
 
-Rows that survive the rule go to the HARD-GATE below as one question set. When a dispatched call or parallel-wave member then blocks, nothing is applied, settled rows included: the next build reviews the answered record afresh.
+Rows that survive the rule go to the HARD-GATE below as one question set. When a dispatched call or parallel-wave member then blocks, nothing is applied, settled rows included: the call logs no `AUTO` entry for a settled row, and the question comment lists only the surviving rows. The next build reviews the answered record afresh.
 ````
 
    Check the last sentence against `RULE_ANCHORS`' `blocks, nothing is applied, settled rows included` (the anchor matches after `norm`).
@@ -164,19 +170,19 @@ Rows that survive the rule go to the HARD-GATE below as one question set. When a
 
 - [ ] **Step 4: Run the new suite and every suite pinning plan-review.md**
 
-Run: `node --test tests/plan-review-convergence-conformance.test.js tests/build-plan-review-conformance.test.js tests/plan-review-dispatch-relay-conformance.test.js tests/plan-review-hard-gate-conformance.test.js tests/build-resume-common-steps.test.js`
+Run: `node --test tests/plan-review-convergence-conformance.test.js tests/build-plan-review-conformance.test.js tests/plan-review-dispatch-relay-conformance.test.js tests/plan-review-hard-gate-conformance.test.js tests/build-resume-common-steps.test.js tests/raw-markdown-read-conformance.test.js tests/log-decision-text-file-sites-conformance.test.js`
 Expected: PASS, all suites.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tests/fixtures/plan-review-dispatch-prompt-4958.txt tests/plan-review-convergence-conformance.test.js plugin/skills/build/plan-review.md
+git add tests/fixtures/plan-review-dispatch-prompt-4958.txt tests/plan-review-convergence-conformance.test.js tests/log-decision-text-file-sites-conformance.test.js plugin/skills/build/plan-review.md
 git commit -m "Converge plan review after one answered round — settle non-contradicting needs-human gaps (#4958)"
 ```
 
 ### Task 2: Reconcile the Closed rule and the HARD-GATE row
 
-**Role:** transcription
+**Role:** integration
 **Review risk:** high
 
 **Files:**
