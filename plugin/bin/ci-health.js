@@ -4,7 +4,9 @@
 // Actions runs, plus Actions budget headroom; files one deduplicated issue on a threshold breach,
 // and only under --file. Reporting only: it never edits a workflow or the merge gate's watch.
 // Logic lives in run(argv, deps); every side effect (runner, remoteUrl, pinGhHost, workTypes,
-// openIssueTitles, createIssue, now, stdout, stderr) is injected so tests never touch gh.
+// openIssueTitles, createIssue, now, clock, stdout, stderr) is injected so tests never touch gh.
+// `now` (a Date, else the current time) dates the window; `clock()` (epoch ms) times the run
+// against CI_HEALTH_DEADLINE_MS, so a test drives the deadline with no real time passing.
 //
 // Usage: ci-health.js [--days N] [--repo owner/name | --root <dir>] [--min-headroom-pct N] [--file] [--json] [--help|-h]
 //   --days N               window length, an integer 1..400 (default 30); the window starts at the
@@ -24,8 +26,11 @@
 //   --json                 print the report envelope as one JSON line instead of the report lines;
 //                          its `runsAvailable` is false when no runs page was read (beside
 //                          `billing.available`), `truncatedRanges` lists each 7-day range
-//                          {from, to, reason} that hit the 1,000-run cap (`cap`) or that the
-//                          read budget left wholly or partly unread (`budget`), its `filed` is
+//                          {from, to, reason} (its first and last UTC day, both inclusive) that
+//                          hit the 1,000-run cap (`cap`) or that the read budget (50 pages, or
+//                          the run's CI_HEALTH_DEADLINE_MS deadline) left unread or partly read
+//                          (`budget`) —
+//                          empty when no runs page was read — its `filed` is
 //                          {title, number} or null,
 //                          `filingSkipped` the skip reason or null (both null without --file),
 //                          and a failed filing a failures[]
@@ -55,7 +60,7 @@ const { originUrl, originSpecOf, repoSlug, ghOptions, pinExplicitRepoHost } = re
 const { readWorkTypes } = require('./lib/work-backend');
 const { LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
 const {
-  CI_HEALTH_GH_TIMEOUT_MS, MERGE_GATE_WATCH_SECONDS, DEFAULT_DAYS, MAX_DAYS, DEFAULT_MIN_HEADROOM_PCT,
+  CI_HEALTH_GH_TIMEOUT_MS, CI_HEALTH_DEADLINE_MS, CALLS_AFTER_RUNS, MERGE_GATE_WATCH_SECONDS, DEFAULT_DAYS, MAX_DAYS, DEFAULT_MIN_HEADROOM_PCT,
 } = require('./lib/ci-health/constants');
 const { computeStats } = require('./lib/ci-health/stats');
 const { readRepo, fetchRuns, errorText } = require('./lib/ci-health/fetch');
@@ -152,6 +157,7 @@ const realDeps = {
   // readWorkTypes never throws: an unreadable CLAUDE.md reads as unset.
   workTypes: (root) => readWorkTypes(root || process.cwd()),
   now: null,
+  clock: () => Date.now(),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
@@ -194,6 +200,8 @@ function run(argv, deps = realDeps) {
   if (o.error) return fail(`${o.error} (see --help)`);
   if (o.help) { deps.stdout(USAGE); return 0; }
 
+  const { clock } = deps;
+  const startedMs = clock();
   const resolved = resolveSlug(o, deps);
   if (resolved.error) return fail(resolved.error);
   const { slug } = resolved;
@@ -205,7 +213,9 @@ function run(argv, deps = realDeps) {
   const windowStart = new Date(`${from}T00:00:00Z`);
   const { runner } = deps;
   const repoRead = readRepo({ owner, repo }, { runner });
-  const runs = fetchRuns({ owner, repo, from: windowStart, days: o.days }, { runner });
+  // The runs read leaves room inside the deadline for every call that follows it.
+  const runsDeadlineMs = startedMs + CI_HEALTH_DEADLINE_MS - CALLS_AFTER_RUNS * CI_HEALTH_GH_TIMEOUT_MS;
+  const runs = fetchRuns({ owner, repo, from: windowStart, days: o.days }, { runner, clock, runsDeadlineMs });
   const { billing, failures: billingFailures } = readBilling({ repoRead, ghAbsent: runs.ghAbsent }, { runner });
 
   // gh absent from the start renders from `ghAbsent`, so it adds no failure row.

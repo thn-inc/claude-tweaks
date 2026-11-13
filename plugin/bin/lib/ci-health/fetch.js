@@ -62,27 +62,35 @@ const isoDay = (ms) => new Date(ms).toISOString().slice(0, 10);
 // the one computeStats gets), newest bucket first, so a read the budget cuts keeps the most recent
 // weeks, as the old single newest-first query did. GitHub's `created=a..b` is inclusive at both
 // ends (probed live), so each range ends one second before the next begins and a run created on a
-// boundary is read once, in the bucket stats.js puts it in. Each range pages 1..MAX_RUN_PAGES,
-// stopping after a short or failed page; RUN_PAGE_BUDGET bounds the calls across all ranges.
+// boundary is read once, in the bucket stats.js puts it in. A range's label (`truncatedRanges`
+// from/to, a failure's query) names its first and last UTC day, both inclusive, the same days the
+// query covers, so a label pasted into GitHub's own `created:a..b` reads that week and no more.
+// Each range pages 1..MAX_RUN_PAGES, stopping after a short or failed page; RUN_PAGE_BUDGET bounds
+// the calls across all ranges, and with a `clock` (epoch ms) no call starts that could end, at
+// CI_HEALTH_GH_TIMEOUT_MS, after `runsDeadlineMs` (constants.js's CI_HEALTH_DEADLINE_MS says why).
 // `available` = at least one page was read; `truncatedRanges` names, oldest first, each range whose
-// page MAX_RUN_PAGES came back full (`cap`) or that the budget left unread or cut mid-read
-// (`budget`), and `truncated` is true when there is one. Runs are kept once per `id` (first
-// occurrence): a run created mid-read shifts the pages, so a run can repeat.
-function fetchRuns({ owner, repo, from, days }, { runner }) {
+// page MAX_RUN_PAGES came back full (`cap`, checked first, so a range whose page 10 was the
+// budget's last call still reads `cap`) or that the page budget or the deadline left unread or cut
+// mid-read (`budget`), and `truncated` is true when there is one. A half that read no page names
+// none: like gh absent, it is unavailable, not a window sampled from runs it never read. Runs are
+// kept once per `id` (first occurrence): a run created mid-read shifts the pages, so a run can repeat.
+function fetchRuns({ owner, repo, from, days }, { runner, clock = null, runsDeadlineMs = Infinity }) {
   const result = { available: false, runs: [], pages: 0, truncated: false, truncatedRanges: [], ghAbsent: false, failures: [] };
   const seen = new Set();
   let calls = 0;
+  const outOfTime = () => clock !== null && clock() + CI_HEALTH_GH_TIMEOUT_MS > runsDeadlineMs;
   for (const { startMs, endMs } of bucketRanges(from, days).reverse()) {
     if (result.ghAbsent) break;
-    const label = `${isoDay(startMs)}..${isoDay(endMs)}`;
+    const lastMs = endMs - 1000;
+    const label = `${isoDay(startMs)}..${isoDay(lastMs)}`;
     let reason = null;
     for (let n = 1; ; n += 1) {
       if (n > MAX_RUN_PAGES) { reason = 'cap'; break; }
-      if (calls === RUN_PAGE_BUDGET) { reason = 'budget'; break; }
+      if (calls === RUN_PAGE_BUDGET || outOfTime()) { reason = 'budget'; break; }
       calls += 1;
       const args = [
         'api', '--method', 'GET', `repos/${owner}/${repo}/actions/runs`,
-        '-f', `created=${isoSecond(startMs)}..${isoSecond(endMs - 1000)}`, '-f', `per_page=${RUNS_PER_PAGE}`, '-f', `page=${n}`,
+        '-f', `created=${isoSecond(startMs)}..${isoSecond(lastMs)}`, '-f', `per_page=${RUNS_PER_PAGE}`, '-f', `page=${n}`,
       ];
       let page;
       try {
@@ -109,8 +117,9 @@ function fetchRuns({ owner, repo, from, days }, { runner }) {
       result.available = true;
       if (page.length < RUNS_PER_PAGE) break;
     }
-    if (reason) result.truncatedRanges.unshift({ from: isoDay(startMs), to: isoDay(endMs), reason });
+    if (reason) result.truncatedRanges.unshift({ from: isoDay(startMs), to: isoDay(lastMs), reason });
   }
+  if (!result.available) result.truncatedRanges = [];
   result.truncated = result.truncatedRanges.length > 0;
   return result;
 }

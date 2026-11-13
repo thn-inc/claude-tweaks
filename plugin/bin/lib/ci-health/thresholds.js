@@ -55,16 +55,18 @@ function breachLine(breach, watchSeconds) {
 const FOOTER = "_Filed by `/claude-tweaks:harness-health`'s CI health check. A later `--file` run files again while a breach remains and no open issue carries this exact title._";
 
 // fetch.js's `truncatedRanges` as one body line, or null for a fully read window. A `cap` week is
-// read from its newest 1,000 runs; a `budget` week only as far as the read budget reached.
+// read from its newest 1,000 runs; a `budget` week is unread or partly read (the page budget or the
+// deadline ran out first), so it is never called sampled.
 function sampledWeeksLine(truncatedRanges, days) {
   const ranges = Array.isArray(truncatedRanges) ? truncatedRanges : [];
   if (ranges.length === 0) return null;
   const cap = RUNS_PER_PAGE * MAX_RUN_PAGES;
   const named = ranges.map((r) => `${r.from}..${r.to} ${r.reason}`).join(', ');
-  const from = ranges.some((r) => r.reason === 'budget')
-    ? `each week's newest runs — up to ${cap} (\`cap\`), or as far as the ${RUN_PAGE_BUDGET}-page read budget reached (\`budget\`)`
-    : `each week's newest ${cap} runs`;
-  return `Run figures for ${ranges.length} of ${weekCount(days)} weeks are sampled from ${from} (${named}); durations are sampled, counts for those weeks are partial.`;
+  const weeks = `${ranges.length} of ${weekCount(days)} weeks`;
+  if (ranges.some((r) => r.reason === 'budget')) {
+    return `Run figures for ${weeks} are partial (${named}): a \`cap\` week is sampled from its newest ${cap} runs, and a \`budget\` week is unread or partly read, as far as the ${RUN_PAGE_BUDGET}-page read budget or the run's time deadline reached; durations come from the runs read.`;
+  }
+  return `Run figures for ${weeks} are sampled from each week's newest ${cap} runs (${named}); durations are sampled, counts for those weeks are partial.`;
 }
 
 function composeBreachIssue(breaches, {

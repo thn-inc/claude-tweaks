@@ -55,7 +55,8 @@ function fileFor(workflows, billing, { workTypes = 'native', file = true, trunca
   const breaches = breachesOf({ workflows, billing }, OPTS);
   return fileBreaches({ breaches, partial, file }, deps, { ...compose(workTypes), truncatedRanges });
 }
-const CAPPED = [{ from: '2026-10-27', to: '2026-11-03', reason: 'cap' }];
+// fetch.js's range labels: both ends inclusive UTC days, as GitHub's own `created=a..b` reads them.
+const CAPPED = [{ from: '2026-10-27', to: '2026-11-02', reason: 'cap' }];
 const SAMPLED_RE = /sampled/;
 
 test('BREACH_TITLE is the spec title, verbatim', () => {
@@ -187,7 +188,7 @@ test('a truncated window files its p90 breach, and the body names the sampled we
   assert.strictEqual(calls.createIssue.length, 1);
   const { title, body } = calls.createIssue[0];
   assert.strictEqual(title, BREACH_TITLE);
-  assert.ok(body.includes("Run figures for 1 of 5 weeks are sampled from each week's newest 1000 runs (2026-10-27..2026-11-03 cap); durations are sampled, counts for those weeks are partial."), body);
+  assert.ok(body.includes("Run figures for 1 of 5 weeks are sampled from each week's newest 1000 runs (2026-10-27..2026-11-02 cap); durations are sampled, counts for those weeks are partial."), body);
   assert.doesNotMatch(body, AMOUNT_RE);
 });
 
@@ -199,14 +200,14 @@ test('a truncated window files a headroom-only breach, the sampled weeks named',
   assert.strictEqual(calls.createIssue.length, 1);
   const { body } = calls.createIssue[0];
   assert.ok(body.includes('- Actions budget headroom 5%, below the 10% floor.'), body);
-  assert.ok(body.includes('(2026-10-27..2026-11-03 cap)'), body);
+  assert.ok(body.includes('(2026-10-27..2026-11-02 cap)'), body);
   assert.doesNotMatch(body, AMOUNT_RE);
 });
 
-test('a budget-cut week is named as read only as far as the read budget reached', () => {
-  const ranges = [{ from: '2026-10-13', to: '2026-10-20', reason: 'budget' }, ...CAPPED];
+test('a budget week is named unread or partly read, never as sampled from runs it may not have read', () => {
+  const ranges = [{ from: '2026-10-13', to: '2026-10-19', reason: 'budget' }, ...CAPPED];
   const { body } = composeBreachIssue(breachesOf({ workflows: [wf()], billing: NO_BILLING }, OPTS), { ...compose('native'), truncatedRanges: ranges });
-  assert.ok(body.includes("Run figures for 2 of 5 weeks are sampled from each week's newest runs — up to 1000 (`cap`), or as far as the 50-page read budget reached (`budget`) (2026-10-13..2026-10-20 budget, 2026-10-27..2026-11-03 cap); durations are sampled, counts for those weeks are partial."), body);
+  assert.ok(body.includes('Run figures for 2 of 5 weeks are partial (2026-10-13..2026-10-19 budget, 2026-10-27..2026-11-02 cap): a `cap` week is sampled from its newest 1000 runs, and a `budget` week is unread or partly read, as far as the 50-page read budget or the run\'s time deadline reached; durations come from the runs read.'), body);
 });
 
 test('a fully read window\'s issue body carries no sampled-weeks line', () => {

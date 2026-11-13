@@ -72,8 +72,9 @@ const runsRoute = (pages) => {
     return entry instanceof Error ? entry : { total_count: 0, workflow_runs: entry };
   };
 };
-// The 30-day window from 2026-10-13, as fetch.js reads it: five ranges, newest first.
-const RANGES30 = ['2026-11-10..2026-11-17', '2026-11-03..2026-11-10', '2026-10-27..2026-11-03', '2026-10-20..2026-10-27', '2026-10-13..2026-10-20'];
+// The 30-day window from 2026-10-13, as fetch.js reads it: five ranges, newest first, each labelled
+// by its inclusive first and last UTC day.
+const RANGES30 = ['2026-11-10..2026-11-16', '2026-11-03..2026-11-09', '2026-10-27..2026-11-02', '2026-10-20..2026-10-26', '2026-10-13..2026-10-19'];
 
 function orgRoutes(slug, pages = [[]]) {
   return {
@@ -113,6 +114,8 @@ function deps({ routes = orgRoutes(ORG), remote = `https://github.com/${ORG}.git
     openIssueTitles: (slug) => { out.titles.push(slug); return []; },
     createIssue: (slug, issue) => { out.created.push({ slug, issue }); return { number: 42 }; },
     now: NOW,
+    // A stopped clock: no test reaches the run's deadline unless it injects a moving one.
+    clock: () => 0,
     stdout: (s) => out.stdout.push(s),
     stderr: (s) => out.stderr.push(s),
     ...overrides,
@@ -529,17 +532,17 @@ test('AC7.3: a truncated window renders the truncation line and files its p90 br
   assert.equal(run(['--file', '--json'], json.d), 0);
   const env = envelope(json.out);
   assert.equal(env.truncated, true);
-  assert.deepEqual(env.truncatedRanges, [{ from: '2026-11-10', to: '2026-11-17', reason: 'cap' }]);
+  assert.deepEqual(env.truncatedRanges, [{ from: '2026-11-10', to: '2026-11-16', reason: 'cap' }]);
   assert.ok(env.breaches.some((b) => b.kind === 'p90-over-watch'));
   assert.deepEqual(env.filed, { title: BREACH_TITLE, number: 42 });
   assert.equal(env.filingSkipped, null);
   assert.equal(json.out.created.length, 1);
   assert.equal(json.out.created[0].issue.title, BREACH_TITLE);
-  assert.ok(json.out.created[0].issue.body.includes(SAMPLED_NEWEST('2026-11-10..2026-11-17')), json.out.created[0].issue.body);
+  assert.ok(json.out.created[0].issue.body.includes(SAMPLED_NEWEST('2026-11-10..2026-11-16')), json.out.created[0].issue.body);
   const text = deps({ routes: orgRoutes(ORG, pages) });
   assert.equal(run(['--file'], text.d), 0);
   const all = lines(text.out);
-  assert.ok(all.includes('window truncated: 1 of 5 weeks hit the 1000-run cap or the read budget (2026-11-10..2026-11-17 cap); durations for those weeks are sampled from the runs read, counts are partial'), all.join('\n'));
+  assert.ok(all.includes('window truncated: 1 of 5 weeks hit the 1000-run cap or the read budget (2026-11-10..2026-11-16 cap); durations for those weeks are sampled from the runs read, counts are partial'), all.join('\n'));
   assert.ok(all.includes(`filed #42: ${BREACH_TITLE}`), all.join('\n'));
   assert.equal(text.out.created.length, 1);
 });
@@ -566,7 +569,7 @@ test('a truncated window with a failed runs read still files nothing: runs read 
   assert.equal(run(['--file', '--json'], json.d), 0);
   const env = envelope(json.out);
   assert.equal(env.truncated, true);
-  assert.deepEqual(env.truncatedRanges, [{ from: '2026-11-03', to: '2026-11-10', reason: 'cap' }]);
+  assert.deepEqual(env.truncatedRanges, [{ from: '2026-11-03', to: '2026-11-09', reason: 'cap' }]);
   assert.ok(env.breaches.some((b) => b.kind === 'p90-over-watch'));
   assert.equal(env.filed, null);
   assert.equal(env.filingSkipped, 'runs read failed');
@@ -612,33 +615,85 @@ test('--file on a busy window with one range over the cap files the p90 breach o
   assert.equal(run(['--file', '--json'], json.d), 0);
   const env = envelope(json.out);
   assert.equal(env.truncated, true);
-  assert.deepEqual(env.truncatedRanges, [{ from: '2026-10-27', to: '2026-11-03', reason: 'cap' }]);
+  assert.deepEqual(env.truncatedRanges, [{ from: '2026-10-27', to: '2026-11-02', reason: 'cap' }]);
   assert.equal(env.workflows.find((w) => w.path === CI).runs, 4 * 200 + 1000);
   assert.deepEqual(env.filed, { title: BREACH_TITLE, number: 42 });
   assert.equal(env.filingSkipped, null);
   assert.equal(json.out.created.length, 1);
-  assert.ok(json.out.created[0].issue.body.includes(SAMPLED_NEWEST('2026-10-27..2026-11-03')), json.out.created[0].issue.body);
+  assert.ok(json.out.created[0].issue.body.includes(SAMPLED_NEWEST('2026-10-27..2026-11-02')), json.out.created[0].issue.body);
   const text = deps({ routes });
   assert.equal(run(['--file'], text.d), 0);
   const all = lines(text.out);
-  assert.ok(all.includes('window truncated: 1 of 5 weeks hit the 1000-run cap or the read budget (2026-10-27..2026-11-03 cap); durations for those weeks are sampled from the runs read, counts are partial'), all.join('\n'));
+  assert.ok(all.includes('window truncated: 1 of 5 weeks hit the 1000-run cap or the read budget (2026-10-27..2026-11-02 cap); durations for those weeks are sampled from the runs read, counts are partial'), all.join('\n'));
   assert.ok(all.includes(`filed #42: ${BREACH_TITLE}`), all.join('\n'));
   assert.equal(text.out.created.length, 1);
 });
 
-test('render: budget-unread ranges are named with their reason, oldest first, on one line', () => {
+test('render: budget-unread ranges are named with their reason, oldest first, on one line, a budget week as unread or partly read', () => {
   const report = {
     repo: ORG, window: { days: 400, from: '2025-10-08' }, runsAvailable: true, truncated: true,
     truncatedRanges: [
-      { from: '2025-10-08', to: '2025-10-15', reason: 'budget' },
-      { from: '2025-10-15', to: '2025-10-22', reason: 'budget' },
-      { from: '2026-11-04', to: '2026-11-11', reason: 'cap' },
+      { from: '2025-10-08', to: '2025-10-14', reason: 'budget' },
+      { from: '2025-10-15', to: '2025-10-21', reason: 'budget' },
+      { from: '2026-11-04', to: '2026-11-10', reason: 'cap' },
     ],
     ghAbsent: false, workflows: [], watchSeconds: 900, minHeadroomPct: 10, billing: { available: false, status: null, reason: 'owner type unreadable' },
     failures: [], breaches: [], filed: null, filingSkipped: null,
   };
   assert.equal(renderReport(report)[1],
-    'window truncated: 3 of 58 weeks hit the 1000-run cap or the read budget (2025-10-08..2025-10-15 budget, 2025-10-15..2025-10-22 budget, 2026-11-04..2026-11-11 cap); durations for those weeks are sampled from the runs read, counts are partial');
+    'window truncated: 3 of 58 weeks hit the 1000-run cap or the read budget (2025-10-08..2025-10-14 budget, 2025-10-15..2025-10-21 budget, 2026-11-04..2026-11-10 cap); durations for those weeks are sampled from the runs read (a `budget` week is unread or partly read), counts are partial');
+});
+
+// Every gh call takes its whole 15 s bound on a fake clock, the issue list and the create included.
+function slowDeps(routes) {
+  let t = 0;
+  const base = deps({ routes, clock: () => t });
+  const tick = (fn) => (...args) => { t += 15000; return fn(...args); };
+  base.d.runner = tick(base.d.runner);
+  base.d.openIssueTitles = tick(base.d.openIssueTitles);
+  base.d.createIssue = tick(base.d.createIssue);
+  return { ...base, elapsed: () => t };
+}
+
+test('the deadline: with every gh call at its 15 s bound, the report and the filing still finish inside the 600 s step timeout', () => {
+  // Every week over the cap would cost 50 runs pages: 55 calls, 825 s, with no deadline.
+  const pool = busyPool(1200);
+  const routes = { ...orgRoutes(ORG), [`repos/${ORG}/actions/runs`]: actionsRunsSim(pool).answer };
+  const json = slowDeps(routes);
+  assert.equal(run(['--file', '--json'], json.d), 0);
+  const env = envelope(json.out);
+  assert.ok(json.elapsed() <= 570000, `the run ended at ${json.elapsed()} ms on the fake clock, past its 570 s deadline`);
+  assert.ok(json.elapsed() < 600000);
+  // The repo read, 33 runs pages (ending at 510 s: three weeks read to the cap, three pages of the
+  // fourth), two billing reads, the issue list, the create.
+  assert.equal(json.out.calls.filter((args) => args[3] === `repos/${ORG}/actions/runs`).length, 33);
+  assert.deepEqual(env.truncatedRanges, [
+    { from: '2026-10-13', to: '2026-10-19', reason: 'budget' },
+    { from: '2026-10-20', to: '2026-10-26', reason: 'budget' },
+    { from: '2026-10-27', to: '2026-11-02', reason: 'cap' },
+    { from: '2026-11-03', to: '2026-11-09', reason: 'cap' },
+    { from: '2026-11-10', to: '2026-11-16', reason: 'cap' },
+  ]);
+  assert.deepEqual(env.failures, []);
+  assert.deepEqual(env.filed, { title: BREACH_TITLE, number: 42 });
+  const text = slowDeps(routes);
+  assert.equal(run(['--file'], text.d), 0);
+  assert.ok(lines(text.out)[1].endsWith('(a `budget` week is unread or partly read), counts are partial'), lines(text.out)[1]);
+});
+
+test('every runs call failing on a long window renders runs unavailable and no truncation line', () => {
+  const routes = { ...orgRoutes(ORG), [`repos/${ORG}/actions/runs`]: http(500) };
+  const json = deps({ routes });
+  assert.equal(run(['--days', '400', '--json'], json.d), 2);
+  const env = envelope(json.out);
+  assert.equal(env.runsAvailable, false);
+  assert.equal(env.truncated, false);
+  assert.deepEqual(env.truncatedRanges, []);
+  const text = deps({ routes });
+  assert.equal(run(['--days', '400'], text.d), 2);
+  const all = lines(text.out);
+  assert.ok(all.includes('runs unavailable (HTTP 500)'), all.join('\n'));
+  assert.ok(!all.some((l) => l.startsWith('window truncated')), all.join('\n'));
 });
 
 test('AC7.7 render: a user-owned repo renders billing: no Actions budget to compare', () => {

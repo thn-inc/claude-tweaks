@@ -228,3 +228,16 @@ test('AC10.3: ci-health-check.md names every printable fileBreaches skip reason 
   for (const reason of printable) assert.ok(named.includes(reason), `ci-health-check.md must name \`not filed: ${reason}\``);
   for (const reason of named) assert.ok(printable.includes(reason), `ci-health-check.md names \`not filed: ${reason}\`, which fileBreaches never prints`);
 });
+
+// The user's decision: the step's Bash timeout is at most 600 s (600000 ms). The CLI's own deadline
+// must sit inside it, or Bash kills the CLI before its one stdout write and the report is lost.
+test('ci-health-check.md runs the CLI with a Bash timeout of at most 600000 ms, no shorter than the CLI\'s own deadline', () => {
+  const { CI_HEALTH_DEADLINE_MS } = require('../../../plugin/bin/lib/ci-health/constants');
+  const sub = readText(CI_HEALTH);
+  const figures = [...sub.matchAll(/Bash `timeout` of `(\d+)`/g)].map((m) => Number(m[1]));
+  assert.strictEqual(figures.length, 1, `ci-health-check.md must state one Bash timeout figure, found ${JSON.stringify(figures)}`);
+  const [timeoutMs] = figures;
+  assert.ok(timeoutMs <= 600000, `the Bash timeout ${timeoutMs} ms is past the user's 600000 ms ceiling`);
+  assert.ok(typeof CI_HEALTH_DEADLINE_MS === 'number' && timeoutMs >= CI_HEALTH_DEADLINE_MS,
+    `the Bash timeout ${timeoutMs} ms is shorter than the CLI's ${CI_HEALTH_DEADLINE_MS} ms deadline`);
+});

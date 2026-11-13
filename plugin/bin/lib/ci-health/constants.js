@@ -26,9 +26,20 @@ const BUCKET_DAYS = 7;
 // The runs pages one invocation may request across every range, failed calls included: the default
 // window's 5 ranges (stats.js's weekCount(DEFAULT_DAYS)) × MAX_RUN_PAGES, so the default window is
 // never cut by it on any repository, while --days 400 (58 ranges, up to 580 pages) stops here.
-// Ranges it leaves unread, or cuts mid-read, are truncated with reason `budget`. Worst case at
-// CI_HEALTH_GH_TIMEOUT_MS per call: 50 × 15 s = 750 s of runs reads. A test pins the derivation.
+// Ranges it leaves unread, or cuts mid-read, are truncated with reason `budget`. A test pins the
+// derivation. At CI_HEALTH_GH_TIMEOUT_MS per call that is up to 750 s of runs reads, past the
+// harness-health step's 600 s Bash timeout, so CI_HEALTH_DEADLINE_MS bounds the read by time too.
 const RUN_PAGE_BUDGET = 50;
+// The whole invocation's deadline: 30 s inside the harness-health step's Bash timeout (`600000` in
+// harness-health/ci-health-check.md, the user's ceiling; a skill-md test pins the timeout at least
+// this), left for node's start, the statistics, the render and the one stdout write. Bash killing
+// the CLI before that write loses the whole report. fetch.js requests no runs page that could end
+// past the deadline less the CALLS_AFTER_RUNS calls still to come (the two billing reads, the
+// open-issue list and the create), each at CI_HEALTH_GH_TIMEOUT_MS, and names each range it leaves
+// unread or cuts mid-read `budget`, like the page budget. Worst case: the repo read and 33 runs
+// pages end by 510 s, the last four calls by 570 s.
+const CI_HEALTH_DEADLINE_MS = 570000;
+const CALLS_AFTER_RUNS = 4;
 const MIN_BUCKET_RUNS = 5;
 const TREND_RISING = 1.25;
 const TREND_FALLING = 0.8;
@@ -48,6 +59,8 @@ module.exports = {
   RUNS_PER_PAGE,
   MAX_RUN_PAGES,
   RUN_PAGE_BUDGET,
+  CI_HEALTH_DEADLINE_MS,
+  CALLS_AFTER_RUNS,
   DEFAULT_DAYS,
   MAX_DAYS,
   BUCKET_DAYS,

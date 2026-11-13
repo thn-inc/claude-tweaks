@@ -95,7 +95,10 @@ function renderReport(report) {
   if (report.truncated) {
     const ranges = report.truncatedRanges || [];
     const named = ranges.map((r) => `${r.from}..${r.to} ${r.reason}`).join(', ');
-    out.push(`window truncated: ${ranges.length} of ${weekCount(days)} weeks hit the ${RUNS_PER_PAGE * MAX_RUN_PAGES}-run cap or the read budget (${named}); durations for those weeks are sampled from the runs read, counts are partial`);
+    // A `budget` week may not have been read at all, so the line says so rather than calling its
+    // durations sampled.
+    const unread = ranges.some((r) => r.reason === 'budget') ? ' (a `budget` week is unread or partly read)' : '';
+    out.push(`window truncated: ${ranges.length} of ${weekCount(days)} weeks hit the ${RUNS_PER_PAGE * MAX_RUN_PAGES}-run cap or the read budget (${named}); durations for those weeks are sampled from the runs read${unread}, counts are partial`);
   }
   if (report.ghAbsent) out.push('runs unavailable (gh absent)');
   else if (report.runsAvailable !== true) out.push(runsUnavailableLine(failures));
