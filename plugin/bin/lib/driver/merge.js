@@ -20,6 +20,9 @@ const {
 } = require('./events');
 const { reduceDetail } = require('./settle');
 const { confirmFromFile } = require('../dispatch/merge-verdict');
+const { normalizeEntry, FAILING_CONCLUSIONS } = require('../pr-checks/classify');
+const { ensureLabelPayload } = require('../issues/labels');
+const { LABELS } = require('../issues/record-vocabulary');
 
 const BIN_DIR = path.join(__dirname, '..', '..');
 const AUTHORIZING_LABEL = 'auto:merge';
@@ -48,7 +51,7 @@ function stop(s, step, reason, detail) {
 // Appends one decision line through log-decision.js, the text in a file in the run directory
 // first (--text-file), mirroring steps.js's logDecisionFile. A failed log never stops the
 // merge: it is recorded on s.logFailures and named in the sub-step's event.
-function logDecision(s, step, text, status = 'AUTO', reversibility = null) {
+function logDecision(s, step, text, status = 'AUTO', reversibility = null, lever = null) {
   const { ctx, deps } = s;
   s.logSeq += 1;
   const file = path.join(s.runDir, `merge-log-${s.logSeq}.txt`);
@@ -56,7 +59,7 @@ function logDecision(s, step, text, status = 'AUTO', reversibility = null) {
     deps.writeFile(file, `${text}\n`);
     const r = deps.node(bin('log-decision.js'),
       ['--run', s.runDir, '--status', status, '--section', '/express-lane', '--step', step, '--text-file', file,
-        ...(reversibility ? ['--reversibility', reversibility] : [])],
+        ...(reversibility ? ['--reversibility', reversibility] : []), ...(lever ? ['--lever', lever] : [])],
       { cwd: ctx.mainCheckout, timeout: CLI_TIMEOUT_MS, env: deps.env });
     if (r.code !== 0) s.logFailures.push(`log:${step}`);
   } catch {
@@ -202,15 +205,14 @@ async function entry(s) {
 }
 
 const CLOSING_LINKS_USED = ['clean', 'unlinked', 'still-linked'];
-// The closed set of pre-merge actions, named verbatim in a SKIP line; anything else is free text
-// and goes through reduceDetail (a literal like no-fixes-span would be mangled by neutralize).
-const CLOSING_LINKS_ACTIONS = [...CLOSING_LINKS_USED, 'no-pr', 'no-fixes-span', 'gh-absent'];
 
 // Ports pr-checklist-refresh.md "Then check the forge's closing links": unlink closing keywords
 // the PR's Fixes span does not name, and learn which records must stay open (`keepOpen`, handed
 // to the composer). Never a stop: any failure degrades to "not checked" with keepOpen [].
-// closing-links.js self-logs gh-absent, exit 4 and exit 5; exit 3 (run dir untrusted) cannot, and
-// an unexpected exit is no log at all, so those two get the driver's own SKIP line.
+// closing-links.js self-logs gh-absent, exit 4 and exit 5; every other degraded result gets the
+// driver's own SKIP line: exit 3 (run dir untrusted, so the CLI cannot log), an unexpected exit,
+// and every exit-0 result the driver cannot use (no-pr, no-fixes-span, an unknown action,
+// unparseable output) — everything except gh-absent.
 function closingLinks(s) {
   const { ctx, deps } = s;
   s.stage = 'merge-closing-links';
@@ -240,7 +242,7 @@ function closingLinks(s) {
       detail = `closing links not checked (action ${action}); proceeding with keep open none`;
       // closing-links.js self-logs gh-absent only; every other exit-0 degraded result is ours to log.
       if (action !== 'gh-absent') {
-        const what = action === 'unparseable' ? 'unparseable output' : `action ${CLOSING_LINKS_ACTIONS.includes(action) ? action : reduceDetail(action)}`;
+        const what = action === 'unparseable' ? 'unparseable output' : `action ${reduceDetail(action)}`;
         logDecision(s, 'Closing links (pre-merge) (degraded)',
           `condition: closing-links.js exited 0 with ${what} → fallback: closing links not checked this merge`, 'SKIP', 'n/a');
       }
@@ -260,10 +262,13 @@ function closingLinks(s) {
 // Ports pr-first-merge.md Step 3's composer fence: the Conventional-Commits subject and body the
 // squash commit carries, written to files by compose-subject.js. The title is read from
 // title.txt; the composer's single-quoted stdout line is never parsed. Runs before mark ready on
-// purpose: a refusal leaves the PR in draft.
+// purpose: a refusal leaves the PR in draft. The gate's re-entry runs it once more, after ready,
+// so a refusal there leaves the PR ready and its stop event says so.
 function compose(s) {
   const { ctx, deps } = s;
   s.stage = 'merge-compose';
+  const tail = s.reentries > 0 ? ' (re-entry: PR left ready)' : '';
+  const halt = (reason, detail) => stop(s, 'merge-compose', reason, `${detail}${tail}`);
   const outDir = path.join(s.runDir, 'merge-subject');
   const keep = s.keepOpen.length ? ['--keep-open', String(ctx.record)] : [];
   let r;
@@ -272,21 +277,21 @@ function compose(s) {
       [String(ctx.record), '--repo', ctx.repo, '--tag', 'auto-merge', ...keep, '--pr', String(ctx.pr), '--out-dir', outDir],
       { cwd: ctx.mainCheckout, timeout: CLI_TIMEOUT_MS, env: deps.env });
   } catch (err) {
-    return stop(s, 'merge-compose', 'unclassified', `compose: compose-subject.js failed: ${errorText(err)}`);
+    return halt('unclassified', `compose: compose-subject.js failed: ${errorText(err)}`);
   }
-  if (r.code === 1) return stop(s, 'merge-compose', 'compose-refused', reduceDetail(firstLine(r.stderr)));
+  if (r.code === 1) return halt('compose-refused', reduceDetail(firstLine(r.stderr)));
   if (r.code === 2) {
     const line = firstLine(r.stderr);
-    return stop(s, 'merge-compose', 'gh-absent', line ? reduceDetail(line) : 'compose-subject.js could not use gh');
+    return halt('gh-absent', line ? reduceDetail(line) : 'compose-subject.js could not use gh');
   }
-  if (r.code !== 0) return stop(s, 'merge-compose', 'unclassified', `compose: compose-subject.js exited ${r.code}`);
+  if (r.code !== 0) return halt('unclassified', `compose: compose-subject.js exited ${r.code}`);
   let title = '';
   try {
     title = String(deps.readFile(path.join(outDir, 'title.txt'))).trim();
   } catch (err) {
-    return stop(s, 'merge-compose', 'unclassified', `compose: title.txt unreadable: ${errorText(err)}`);
+    return halt('unclassified', `compose: title.txt unreadable: ${errorText(err)}`);
   }
-  if (!title) return stop(s, 'merge-compose', 'unclassified', 'compose: title.txt is empty');
+  if (!title) return halt('unclassified', 'compose: title.txt is empty');
   s.subject = { title, bodyFile: path.join(outDir, 'body.md') };
   emit(s, 'merge-compose', 'ok', `composed subject (${title.length} chars)`);
   return { ok: true, title, bodyFile: s.subject.bodyFile };
@@ -324,6 +329,261 @@ function markReady(s) {
   return { ok: true };
 }
 
+// ---- The merge-verification gate: pr-first-merge.md Step 2.5, `merge-when-green` and `wait`
+// columns only (the `off` column is not ported; readLever runs `off` as `wait`). ----
+
+const GATE_FIELDS = 'state,mergeStateStatus,mergeable,headRefOid,statusCheckRollup';
+const REREAD_FIELDS = 'state,mergeStateStatus,headRefOid';
+const RUN_FIELDS = 'name,workflowName,status,conclusion,url';
+// The ready-run.js states classify reads; `read-failed`, and any state not named here, is a read failure.
+const READY_RUN_USED = ['not-applicable', 'met', 'awaiting', 'red', 'draft-skip-without-ready-trigger'];
+const LEVER_VALUES = ['merge-when-green', 'wait'];
+const PARKED_DESC = 'Bot state: merge-verification parked it (CI red/timed-out) — auto:* grants stay intact';
+const PARKED_COLOR = '6A737D';
+
+const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const hasStrings = (o, keys) => isObject(o) && keys.every((k) => typeof o[k] === 'string');
+const isConflicting = (read) => read.mergeStateStatus === 'DIRTY' || read.mergeable === 'CONFLICTING';
+
+function parseJson(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+}
+
+// Ports Step 2.5 "Read state first": the PR's state, then its head runs and the ready-run read.
+// The two checks reads are skipped when the first read already decides the gate (not OPEN, not
+// the verified head, conflicting): `runs` and `ready` are then null. A read the gate cannot use
+// is a stop with `word` (the caller's: the gate's state-read-failed, the watch's own), never a guess.
+function gateReads(s, word) {
+  const { ctx, deps } = s;
+  const fail = (detail) => ({ stop: word, detail });
+  let read;
+  try {
+    read = parseJson(deps.gh(['pr', 'view', String(ctx.pr), '--repo', ctx.repo, '--json', GATE_FIELDS]));
+  } catch (err) {
+    return fail(`state read failed: ${errorText(err)}`);
+  }
+  if (!hasStrings(read, ['state', 'mergeStateStatus', 'mergeable', 'headRefOid']) || !Array.isArray(read.statusCheckRollup)) {
+    return fail('state read returned an unusable shape');
+  }
+  s.lastRead = read;
+  if (read.state !== 'OPEN' || read.headRefOid !== ctx.head || isConflicting(read)) return { read, runs: null, ready: null };
+  let runs;
+  try {
+    runs = parseJson(deps.gh(['run', 'list', '--repo', ctx.repo, '--commit', read.headRefOid, '--limit', '100', '--json', RUN_FIELDS]));
+  } catch (err) {
+    return fail(`head-runs read failed: ${errorText(err)}`);
+  }
+  if (!Array.isArray(runs) || !runs.every(isObject)) return fail('head-runs read returned no run list');
+  let r;
+  try {
+    r = deps.node(bin('ready-run.js'), ['--pr', String(ctx.pr), '--sha', read.headRefOid],
+      { cwd: ctx.mainCheckout, timeout: CLI_TIMEOUT_MS, env: deps.env });
+  } catch (err) {
+    return fail(`ready-run read failed: ${errorText(err)}`);
+  }
+  if (r.code !== 0) return fail(`ready-run.js exited ${r.code}`);
+  const ready = parseJson(String(r.stdout).trim());
+  if (!hasStrings(ready, ['state'])) return fail('ready-run.js printed no state');
+  if (ready.state === 'read-failed') return fail(`ready-run read-failed: ${reduceDetail(ready.reason)}`);
+  if (!READY_RUN_USED.includes(ready.state)) return fail(`ready-run state ${reduceDetail(ready.state)} not recognized`);
+  return { read, runs, ready };
+}
+
+// Step 2.5's table, in its order: conflict, red (rollup, head runs, ready-run), draft-skip,
+// pending (ready-run awaiting, anything not completed, an empty rollup), else green.
+function classify(read, runs, ready) {
+  if (isConflicting(read)) return { kind: 'conflict' };
+  const failing = (c) => FAILING_CONCLUSIONS.includes(String(c || '').toUpperCase());
+  const completed = (status) => String(status || '').toUpperCase() === 'COMPLETED';
+  const entries = read.statusCheckRollup.map(normalizeEntry);
+  const redEntries = entries.filter((e) => failing(e.conclusion));
+  const redRuns = runs.filter((r) => completed(r.status) && failing(r.conclusion));
+  if (redEntries.length || redRuns.length || ready.state === 'red') {
+    const names = [
+      ...redEntries.map((e) => e.name),
+      ...redRuns.map((r) => r.workflowName || r.name),
+      ...(ready.state === 'red' && Array.isArray(ready.failing) ? ready.failing.map((f) => f && f.name) : []),
+    ].filter((n) => typeof n === 'string' && n !== '');
+    const unique = [...new Set(names)];
+    return { kind: 'red', names: unique.length ? unique : ['unnamed'] };
+  }
+  if (ready.state === 'draft-skip-without-ready-trigger') {
+    const files = (Array.isArray(ready.draftSkipWithoutReadyTrigger) ? ready.draftSkipWithoutReadyTrigger : [])
+      .filter((f) => typeof f === 'string' && f !== '');
+    return { kind: 'draft-skip', files: files.length ? files : ['unnamed'] };
+  }
+  if (ready.state === 'awaiting' || entries.length === 0 || entries.some((e) => !completed(e.status)) || runs.some((r) => !completed(r.status))) {
+    return { kind: 'pending' };
+  }
+  return { kind: 'green' };
+}
+
+// The gate, from its first read (and again from the top on the one re-entry). The head guard:
+// the first read's headRefOid must be the sha `check` verified (ctx.head).
+async function gate(s) {
+  const { ctx } = s;
+  s.stage = 'merge-gate';
+  const g = gateReads(s, 'state-read-failed');
+  if (g.stop) return stop(s, 'merge-gate', g.stop, g.detail);
+  const { read } = g;
+  if (read.state !== 'OPEN') return stop(s, 'merge-gate', 'pr-not-open', `PR state ${reduceDetail(read.state)}`);
+  if (read.headRefOid !== ctx.head) return stop(s, 'merge-gate', 'moving-target', 'the PR head is not the verified head');
+  const verdict = classify(read, g.runs, g.ready);
+  emit(s, 'merge-gate', 'ok', `checks ${verdict.kind}; merge state ${reduceDetail(read.mergeStateStatus)}; lever ${s.value}`);
+  if (verdict.kind === 'conflict') return conflictStop(s);
+  if (verdict.kind === 'red') return park(s, `check-failed:${verdict.names.join(',')}`, { names: verdict.names });
+  if (verdict.kind === 'draft-skip') {
+    return park(s, `draft-skip-without-ready-trigger:${verdict.files.join(',')}`, { files: verdict.files });
+  }
+  if (s.value === 'merge-when-green') {
+    // A pending read GitHub reports BLOCKED (required checks still running) arms auto-merge.
+    if (verdict.kind === 'green' || read.mergeStateStatus === 'BLOCKED') return mergeCall(s, 'auto');
+    return watch(s);
+  }
+  if (verdict.kind === 'green') return rereadThenMerge(s, read);
+  return watch(s);
+}
+
+// The `wait` row's fresh read right before the immediate merge. A head or state change since the
+// first read re-enters the gate once, recomposing first (the only recompose: the subject may
+// name the new head's records); a second change is moving-target.
+async function rereadThenMerge(s, first) {
+  const { ctx, deps } = s;
+  let read;
+  try {
+    read = parseJson(deps.gh(['pr', 'view', String(ctx.pr), '--repo', ctx.repo, '--json', REREAD_FIELDS]));
+  } catch (err) {
+    return stop(s, 'merge-gate', 'state-read-failed', `state re-read failed: ${errorText(err)}`);
+  }
+  if (!hasStrings(read, ['state', 'mergeStateStatus', 'headRefOid'])) {
+    return stop(s, 'merge-gate', 'state-read-failed', 'state re-read returned an unusable shape');
+  }
+  if (read.headRefOid !== first.headRefOid || read.state !== 'OPEN') {
+    if (s.reentries >= 1) return stop(s, 'merge-gate', 'moving-target', 'the PR changed between reads a second time');
+    s.reentries += 1;
+    emit(s, 'merge-gate', 'ok', `${read.state !== 'OPEN' ? 'state' : 'head'} changed between reads; recomposing and re-entering the gate once`);
+    const c = compose(s);
+    if (c.stop) return c;
+    return gate(s);
+  }
+  if (read.mergeStateStatus === 'DIRTY') return conflictStop(s);
+  return mergeCall(s, 'immediate');
+}
+
+// label-bootstrap.md's check-then-create for bot:parked, mirroring claim-targets.js's
+// ensureAndAddLabel (with --repo, since the driver's cwd is not the record's repo).
+function bootstrapParkedLabel(s) {
+  const { ctx, deps } = s;
+  const p = ensureLabelPayload(LABELS.BOT_PARKED, PARKED_DESC, PARKED_COLOR);
+  const existing = String(deps.gh(['label', 'list', '--repo', ctx.repo, '--search', p.name, '--json', 'name', '-q', '.[].name']) || '')
+    .split('\n').map((x) => x.trim());
+  if (!existing.includes(p.name)) {
+    deps.gh(['label', 'create', p.name, '--repo', ctx.repo, '--color', p.color, '--description', p.description]);
+  }
+}
+
+// Ports Step 2.5 "Red path": never merge. bot:parked on the record (bootstrapped, re-read, added
+// once more if missing), one record comment from the fixed template, the PR left ready. When the
+// label still does not read back, `gh pr ready --undo` is the fallback lock — the only re-draft
+// in this module. Every call is fail-safe: the reason is the one passed, whatever fails here.
+function park(s, reason, { names = [], files = [] } = {}) {
+  const { ctx, deps } = s;
+  s.stage = 'merge-park';
+  const notes = [];
+  try {
+    bootstrapParkedLabel(s);
+  } catch (err) {
+    notes.push(`label bootstrap failed: ${errorText(err)}`);
+  }
+  let applied = false;
+  for (let attempt = 0; attempt < 2 && !applied; attempt += 1) {
+    try {
+      deps.gh(['issue', 'edit', '--repo', ctx.repo, '--add-label', LABELS.BOT_PARKED, '--', String(ctx.record)]);
+    } catch (err) {
+      notes.push(`label add failed: ${errorText(err)}`);
+    }
+    const labels = readLabels(s);
+    if (labels.unreadable) notes.push(labels.unreadable);
+    applied = !labels.unreadable && labels.names.includes(LABELS.BOT_PARKED);
+  }
+  // The log keeps the #refs; the event detail is neutralized, so it names the record in words.
+  let lockLog = `bot:parked applied to #${ctx.record}`;
+  let lockEvent = `bot:parked applied to record ${ctx.record}`;
+  if (!applied) {
+    try {
+      deps.gh(['pr', 'ready', String(ctx.pr), '--repo', ctx.repo, '--undo']);
+      lockLog = `bot:parked NOT applied to #${ctx.record}; PR re-drafted as the fallback lock`;
+      lockEvent = `bot:parked NOT applied to record ${ctx.record}; PR re-drafted as the fallback lock`;
+    } catch (err) {
+      lockLog = `bot:parked NOT applied to #${ctx.record}; the re-draft fallback failed too`;
+      lockEvent = `bot:parked NOT applied to record ${ctx.record}; the re-draft fallback failed too`;
+      notes.push(`re-draft failed: ${errorText(err)}`);
+    }
+  }
+  try {
+    deps.gh(['issue', 'comment', '--repo', ctx.repo, '--body', parkComment({ value: s.value, reason, pr: ctx.pr, names, files }),
+      '--', String(ctx.record)]);
+  } catch (err) {
+    notes.push(`record comment failed: ${errorText(err)}`);
+  }
+  const failuresBefore = s.logFailures.length;
+  logDecision(s, 'Step 2.5 (merge-verification gate)', `parked — ${neutralize(reason)} on PR #${ctx.pr}; ${lockLog}`,
+    'AUTO', 'high (label removal + resume)', `merge-verification=${s.value} (${s.source})`);
+  notes.push(...s.logFailures.slice(failuresBefore));
+  return stop(s, 'merge-park', reason, `${lockEvent}${notes.length ? ` (${notes.join('; ')})` : ''}`);
+}
+
+// Ports Step 2.5's conflict row: the driver never updates a conflicting branch. One PR comment,
+// no git call, no further gh call; the PR stays ready for a human to resolve.
+function conflictStop(s) {
+  const { ctx, deps } = s;
+  s.stage = 'merge-conflict';
+  let note = '';
+  try {
+    deps.gh(['pr', 'comment', '--repo', ctx.repo, '--body', conflictComment({ pr: ctx.pr, base: ctx.base }), '--', String(ctx.pr)]);
+  } catch (err) {
+    note = ` (PR comment failed: ${errorText(err)})`;
+  }
+  return stop(s, 'merge-conflict', 'conflict', `the PR conflicts with its base; left ready${note}`);
+}
+
+// Fixed public templates: closed-set words, free text (check and file names, the base branch)
+// reduced by settle.js's reduceDetail.
+function parkComment({ value, reason, pr, names = [], files = [] } = {}) {
+  const lever = LEVER_VALUES.includes(value) ? value : 'wait';
+  const stem = String(reason || '').split(':')[0];
+  const list = (xs) => reduceDetail((Array.isArray(xs) ? xs : []).join(', '));
+  let phrase = list(names);
+  let resume = 'Resume once green.';
+  if (stem === 'checks-pending-timeout') phrase = 'checks still pending after 15m';
+  if (stem === 'draft-skip-without-ready-trigger') {
+    phrase = `${list(files)} skips drafts with no ready_for_review trigger — add ready_for_review to its types (_shared/ci-skips-drafts.md)`;
+    resume = 'Resume once its workflow is fixed or a post-ready run lands.';
+  }
+  return `Parked by merge-verification (${lever}): ${phrase} on PR #${isPositiveInteger(pr) ? pr : 'unknown'}. ${resume}`;
+}
+
+function conflictComment({ pr, base } = {}) {
+  return `Merge stopped: PR #${isPositiveInteger(pr) ? pr : 'unknown'} conflicts with ${reduceDetail(base)}. `
+    + 'The driver does not update a conflicting branch; resolve the conflict and run the record again.';
+}
+
+// Task 4 replaces this stub with the bounded watch.
+async function watch(s) {
+  s.stage = 'merge-watch';
+  return stop(s, 'merge-watch', 'unclassified', 'watch not implemented');
+}
+
+// Task 5 replaces this stub with the merge call; `mode` is 'auto' (merge-when-green) or 'immediate' (wait).
+async function mergeCall(s, mode) {
+  s.stage = 'merge-call';
+  return stop(s, 'merge-call', 'unclassified', `merge call not implemented (mode ${mode})`);
+}
+
 function result(s, outcome, reason, detail, extra = {}) {
   return {
     outcome, reason, detail: detail || '', mergeCommit: null, runDir: s.ctx.runDir, ciWaitMs: 0, postMerge: null,
@@ -345,11 +605,12 @@ async function merge(ctx, deps) {
     if (c.stop) return result(s, 'pending-review', c.stop, c.detail);
     const ready = markReady(s);
     if (ready.stop) return result(s, 'pending-review', ready.stop, ready.detail);
-    // Later tasks replace this tail with the gate, the watch and the merge call itself.
-    return result(s, 'pending-review', 'unclassified', 'not implemented past ready');
+    // Until the merge call lands (Task 5), every route through the gate ends in a stop.
+    const g = await gate(s);
+    return result(s, 'pending-review', g.stop, g.detail);
   } catch (err) {
     return result(s, 'pending-review', 'unclassified', `${s.stage}: ${neutralize(errorText(err))}`);
   }
 }
 
-module.exports = { merge };
+module.exports = { merge, parkComment, conflictComment };
