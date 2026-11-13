@@ -189,10 +189,10 @@ function describeEntry(entry) {
     if (typeof json === 'string') return json;
   } catch (e) { /* fall through to String */ }
   try {
-    return String(entry);
-  } catch (e) {
-    return Object.prototype.toString.call(entry);
-  }
+    const text = String(entry);
+    if (text !== '') return text;
+  } catch (e) { /* fall through to the tag */ }
+  return Object.prototype.toString.call(entry);
 }
 
 // Every entry must be an absolute, already-normalized path that is not the filesystem
@@ -200,12 +200,11 @@ function describeEntry(entry) {
 function assertReadPaths(readPaths, platform) {
   if (!Array.isArray(readPaths)) throw new TypeError('readPaths must be an array, got ' + describeEntry(readPaths));
   const pathModule = platform === 'win32' ? path.win32 : path.posix;
-  const trailing = platform === 'win32' ? /[\\/]$/ : /\/$/;
   for (const entry of readPaths) {
     const reason =
       typeof entry !== 'string' || !pathModule.isAbsolute(entry) ? 'must be an absolute path string'
       : pathModule.parse(entry).root === entry ? 'must not be the filesystem root'
-      : pathModule.normalize(entry).replace(trailing, '') !== entry.replace(trailing, '') ? 'must already be normalized'
+      : pathModule.normalize(entry) !== entry ? 'must already be normalized'
       : null;
     if (reason) throw new TypeError('readPaths entries ' + reason + ', got ' + describeEntry(entry));
   }

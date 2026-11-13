@@ -53,14 +53,14 @@ test('AC2.1: a readPaths entry that is not a string or not absolute throws a Typ
       JSON.stringify(bad),
     );
   }
-  assert.throws(() => implementerSettings({ testCommand: 'node --test', platform: 'darwin', readPaths: '/opt/tool' }), (e) => e instanceof TypeError && /readPaths/.test(e.message));
+  assert.throws(() => implementerSettings({ testCommand: 'node --test', platform: 'darwin', readPaths: '/opt/tool' }), (e) => e instanceof TypeError && /readPaths must be an array/.test(e.message));
 });
 
 test('AC2.1: validation runs on every platform, and win32 judges absoluteness by win32 rules', () => {
   assert.throws(() => implementerSettings({ testCommand: 'node --test', platform: 'linux', readPaths: ['relative'] }), TypeError);
   assert.throws(() => implementerSettings({ testCommand: 'node --test', platform: 'win32', readPaths: ['opt/tool'] }), TypeError);
   assert.doesNotThrow(() => implementerSettings({ testCommand: 'node --test', platform: 'win32', readPaths: ['C:\\tool'] }));
-  assert.throws(() => implementerSettings({ testCommand: 'node --test', platform: 'linux', readPaths: 'x' }), /readPaths/);
+  assert.throws(() => implementerSettings({ testCommand: 'node --test', platform: 'linux', readPaths: 'x' }), /readPaths must be an array/);
   assert.throws(
     () => implementerSettings({ testCommand: 'node --test', platform: 'darwin', readPaths: ['C:\\tool'] }),
     (e) => e instanceof TypeError && e.message.includes(JSON.stringify('C:\\tool')),
@@ -75,7 +75,7 @@ test('AC2.1: an entry that would void the block is refused: a filesystem root or
       bad,
     );
   }
-  for (const bad of ['C:\\', 'C:\\opt\\..\\x', 'C:/tool']) {
+  for (const bad of ['C:\\', 'C:\\opt\\..\\x', 'C:/tool', 'C:\\tool/']) {
     assert.throws(() => implementerSettings({ testCommand: 'node --test', platform: 'win32', readPaths: [bad] }), (e) => e instanceof TypeError && e.message.includes(JSON.stringify(bad)), bad);
   }
   assert.deepStrictEqual(implementerSettings({ testCommand: 'node --test', platform: 'darwin', readPaths: ['/opt/tool/'] }).sandbox.filesystem.allowRead, ['/opt/tool/']);
@@ -85,7 +85,7 @@ test('AC2.1: an entry that would void the block is refused: a filesystem root or
 test('AC2.1: an entry JSON.stringify cannot serialize is still named in the TypeError', () => {
   const cyclic = []; cyclic.push(cyclic);
   assert.throws(() => implementerSettings({ testCommand: 'node --test', platform: 'darwin', readPaths: [10n] }), (e) => e instanceof TypeError && e.message.includes('10'));
-  assert.throws(() => implementerSettings({ testCommand: 'node --test', platform: 'darwin', readPaths: [cyclic] }), (e) => e instanceof TypeError && /readPaths/.test(e.message));
+  assert.throws(() => implementerSettings({ testCommand: 'node --test', platform: 'darwin', readPaths: [cyclic] }), (e) => e instanceof TypeError && /\[object Array\]/.test(e.message));
   assert.throws(() => implementerSettings({ testCommand: 'node --test', platform: 'darwin', readPaths: [Object.assign(Object.create(null), { toJSON() { throw new Error('x'); } })] }), (e) => e instanceof TypeError && e.message.includes('[object Object]'));
 });
 
