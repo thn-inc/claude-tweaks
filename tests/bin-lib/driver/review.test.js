@@ -915,7 +915,12 @@ function passRig({ findings = [], envelope, runs = [], ignored = [], ignoreThrow
     mkdirSync: (p, o) => { calls.push({ kind: 'mkdirSync', p, opts: o }); if (!(o && o.recursive)) types.set(p, 'directory'); },
     writeFileExclusive: (p, s) => { calls.push({ kind: 'writeFileExclusive', p, content: s }); maybeFail('write', p); types.set(p, 'file'); },
     rmFile: (p) => { calls.push({ kind: 'rmFile', p }); maybeFail('rm', p); types.delete(p); },
-    rmdir: (p) => { calls.push({ kind: 'rmdir', p }); types.delete(p); },
+    // Like fs.rmdirSync: a directory that still holds an entry is not removed.
+    rmdir: (p) => {
+      calls.push({ kind: 'rmdir', p });
+      if ([...types.keys()].some((q) => q.startsWith(p + path.sep))) throw Object.assign(new Error(`ENOTEMPTY: '${p}'`), { code: 'ENOTEMPTY' });
+      types.delete(p);
+    },
     readFile: (p) => {
       calls.push({ kind: 'readFile', p });
       if (!taps.has(p)) throw Object.assign(new Error(`ENOENT: no such file, open '${p}'`), { code: 'ENOENT' });
@@ -925,7 +930,10 @@ function passRig({ findings = [], envelope, runs = [], ignored = [], ignoreThrow
       calls.push({ kind: 'git', args, opts });
       if (args.includes('diff')) return DIFF;
       if (args.includes('check-ignore')) {
-        if (ignoreThrows) throw Object.assign(new Error('fatal: not a git repository'), { status: 128 });
+        // true: every check-ignore fails; a list: only those paths' checks fail.
+        if (ignoreThrows === true || (Array.isArray(ignoreThrows) && ignoreThrows.includes(args[args.length - 1]))) {
+          throw Object.assign(new Error('fatal: not a git repository'), { status: 128 });
+        }
         if (ignored.includes(args[args.length - 1])) return '';
         throw Object.assign(new Error('exit 1'), { status: 1 });
       }
@@ -1300,6 +1308,24 @@ test('AC7, AC12: a mid-pass stop has fixed counts and takes back every evidence 
   const s = await stuck.run();
   assert.strictEqual(s.result.detail, 'the evidence run changed the tree outside the evidence files: second.txt');
   assert.strictEqual(ofKind(stuck.calls, 'rmFile').length, 2);
+});
+
+test('AC7: a stop takes back nested confirmed files newest first, and each file once', async () => {
+  // r1 sits in a directory r0's write created: taking r0 back first would leave tests/new behind.
+  const nested = [
+    reviewFinding(0, { evidence: { path: 'tests/new/r0.test.js', content: CONTENT } }),
+    reviewFinding(1, { evidence: { path: 'tests/new/deep/r1.test.js', content: CONTENT } }),
+    reviewFinding(2),
+  ];
+  const rig = passRig({ findings: nested, runs: ['reproduced', 'reproduced', 'reproduced'], status: (n) => (n === 3 ? '?? second.txt\0' : '') });
+  const out = await rig.run();
+  assert.match(out.result.detail, /changed the tree outside the evidence files: second\.txt$/);
+  assert.deepStrictEqual([...rig.types.keys()].filter((p) => p.startsWith(WT)).sort(), [WT, at('tests')].sort());
+  // A stop between a kept file and the next write: the kept file is removed once, not twice.
+  const once = passRig({ findings: [reviewFinding(0), reviewFinding(1)], runs: ['reproduced'], ignoreThrows: ['tests/new/r1.test.js'] });
+  const o = await once.run();
+  assert.strictEqual(o.result.detail, 'git check-ignore failed for an evidence path');
+  assert.deepStrictEqual(ofKind(once.calls, 'rmFile').map((c) => c.p), [at('tests/new/r0.test.js')]);
 });
 
 test('AC7: an evidence path that does not resolve once written stops and is taken back', async () => {
