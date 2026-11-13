@@ -20,7 +20,7 @@ const {
 } = require('./events');
 const { reduceDetail } = require('./settle');
 const { confirmFromFile } = require('../dispatch/merge-verdict');
-const { classifyRollup } = require('../pr-checks/classify');
+const { classifyRollup, normalizeEntry } = require('../pr-checks/classify');
 const { ensureLabelPayload } = require('../issues/labels');
 const { LABELS } = require('../issues/record-vocabulary');
 
@@ -440,6 +440,7 @@ async function gate(s) {
   }
   s.lastRead = read;
   const verdict = classify(ctx, read, g.runs, g.ready);
+  s.lastVerdict = verdict.kind;
   emit(s, 'merge-gate', 'ok', `checks ${verdict.kind}; merge state ${reduceDetail(read.mergeStateStatus)}; lever ${s.value}`);
   if (verdict.kind === 'red') return park(s, `check-failed:${verdict.names.join(',')}`, { names: verdict.names });
   if (verdict.kind === 'draft-skip') {
@@ -452,7 +453,8 @@ async function gate(s) {
     const c = compose(s);
     if (c.stop) return c;
   }
-  if (s.value === 'merge-when-green') {
+  // Once GitHub refused to arm (Step 3 item 1, s.autoRefused), the rest of the run is the `wait` row.
+  if (s.value === 'merge-when-green' && !s.autoRefused) {
     // A pending read GitHub reports BLOCKED (required checks still running) arms auto-merge.
     if (verdict.kind === 'green' || read.mergeStateStatus === 'BLOCKED') return mergeCall(s, 'auto');
     return watch(s);
@@ -624,6 +626,7 @@ async function pollUntilDecided(s, started) {
     if (isConflicting(read)) return { next: () => conflictStop(s), note: 'conflicting', polls };
     s.lastRead = read;
     const verdict = classify(ctx, read, g.runs, g.ready);
+    s.lastVerdict = verdict.kind;
     if (verdict.kind === 'red') {
       return { next: () => park(s, `check-failed:${verdict.names.join(',')}`, { names: verdict.names }), note: 'checks red', polls };
     }
@@ -635,8 +638,9 @@ async function pollUntilDecided(s, started) {
       };
     }
     if (verdict.kind === 'green') return { next: () => rereadThenMerge(s, read), note: 'checks green', polls };
-    // pending. Step 3's rule applies at every poll: under merge-when-green a BLOCKED read arms.
-    if (s.value === 'merge-when-green' && read.mergeStateStatus === 'BLOCKED') {
+    // pending. Step 3's rule applies at every poll: under merge-when-green a BLOCKED read arms,
+    // unless GitHub already refused to arm this run (then the watch is the `wait` row's).
+    if (s.value === 'merge-when-green' && !s.autoRefused && read.mergeStateStatus === 'BLOCKED') {
       return { next: () => mergeCall(s, 'auto'), note: 'pending and BLOCKED; arming auto-merge', polls };
     }
     if (deps.now() - started >= MERGE_WATCH_BOUND_MS) {
@@ -681,10 +685,137 @@ async function watch(s) {
   return out.next();
 }
 
-// Task 5 replaces this stub with the merge call; `mode` is 'auto' (merge-when-green) or 'immediate' (wait).
+// ---- Step 3: the merge call, its failure signatures, and the confirmation read ----
+
+const CONFIRM_FIELDS = 'state,mergedAt,autoMergeRequest,statusCheckRollup,mergeCommit';
+const AUTO_NOT_ALLOWED_LITERALS = [
+  'Auto merge is not allowed for this repository',
+  'Protected branch rules not configured for this branch',
+  'Pull request is in clean status',
+];
+
+// Ports pr-first-merge.md Step 3 items 1–5 over a failed call's stderr (never err.message, which
+// embeds the argv, title included). Conflict and permission are tested first: the spec's AC11
+// degrades an auto-merge wording only when no conflict or permission wording is present, and
+// item 1 has the bare mutation name defer to those two. Prose order is 1 auto-not-allowed,
+// 2 checks, 3 conflict, 4 permission; only a stderr carrying two classes reads differently.
+function classifyMergeFailure(stderr) {
+  const t = String(stderr || '');
+  if ((/not mergeable/i.test(t) && /conflict/i.test(t)) || /CONFLICTING/.test(t)) return 'conflict';
+  if (/\b403\b/.test(t) || /not accessible/i.test(t) || /must have write access/i.test(t)) return 'permission';
+  if (AUTO_NOT_ALLOWED_LITERALS.some((l) => t.includes(l))
+    || (/auto-merge/i.test(t) && /not allowed|not enabled/i.test(t))
+    || t.includes('enablePullRequestAutoMerge')) return 'auto-not-allowed';
+  if (/not mergeable/i.test(t) && /required status check|review|checks/i.test(t)) return 'checks';
+  return 'unrecognized';
+}
+
+// Ports Step 3's `gh pr merge` call. `mode` is 'auto' (merge-when-green: arm, or merge when GitHub
+// can now) or 'immediate' (the `wait` row). The labels are read again right before every call, so
+// an `auto:merge` removed since entry (during the supplier call or the watch) is honored. The
+// subject is the one composed before ready, or by the gate's re-entry: no compose happens here.
+// `--match-head-commit` is always ctx.head; never --admin, never --delete-branch.
 async function mergeCall(s, mode) {
+  const { ctx, deps } = s;
   s.stage = 'merge-call';
-  return stop(s, 'merge-call', 'unclassified', `merge call not implemented (mode ${mode})`);
+  const labels = readLabels(s);
+  if (labels.unreadable) return stop(s, 'merge-call', 'labels-unreadable', `pre-merge ${labels.unreadable}`);
+  if (!labels.names.includes(AUTHORIZING_LABEL)) {
+    return stop(s, 'merge-call', 'not-authorized', `record lacks ${AUTHORIZING_LABEL} at the pre-merge read`);
+  }
+  const auto = mode === 'auto';
+  try {
+    deps.ghCreate(['pr', 'merge', String(ctx.pr), '--repo', ctx.repo, ...(auto ? ['--auto'] : []), '--squash',
+      '-t', s.subject.title, '--body-file', s.subject.bodyFile, '--match-head-commit', ctx.head]);
+  } catch (err) {
+    const stderr = String((err && err.stderr) || '');
+    const cls = classifyMergeFailure(stderr);
+    if (cls === 'conflict') {
+      emit(s, 'merge-call', 'stop', `gh pr merge refused (conflict) (mode ${mode})`);
+      return conflictStop(s);
+    }
+    if (cls === 'auto-not-allowed' && auto) {
+      // Step 3 item 1 under merge-when-green: degrade to Step 2.5's `wait` row, never to an
+      // immediate merge. A green read re-reads and merges; a pending (BLOCKED) read lands in the
+      // bounded watch. s.autoRefused keeps the rest of the run on the `wait` row, so no later
+      // read arms again and an immediate call never degrades.
+      s.autoRefused = true;
+      const green = s.lastVerdict === 'green';
+      emit(s, 'merge-call', 'stop', `gh pr merge --auto refused (auto-not-allowed); degrading to the wait row (${green ? 're-read' : 'watch'})`);
+      return green ? rereadThenMerge(s, s.lastRead) : watch(s);
+    }
+    // Only the immediate form reaches here with auto-not-allowed: an arm refusal on a call that
+    // did not arm is a signature this procedure does not recognize.
+    const shown = cls === 'auto-not-allowed' ? 'unrecognized' : cls;
+    const first = firstLine(stderr);
+    const code = err && typeof err.code === 'string' ? ` (${reduceDetail(err.code)})` : '';
+    const detail = `merge-refused (${shown}): ${first ? reduceDetail(first) : `gh pr merge failed with no stderr${code}`}`;
+    emit(s, 'merge-call', 'stop', detail);
+    return { stop: 'merge-refused', detail: neutralize(detail) };
+  }
+  emit(s, 'merge-call', 'ok', `gh pr merge exited 0 (mode ${mode})`);
+  return confirm(s);
+}
+
+// Step 3 item 6's report of the rollup at merge time: concluded, not concluded, or none at all.
+function rollupSummary(rollup) {
+  if (!Array.isArray(rollup)) return 'merged — status checks unreadable at merge time';
+  if (rollup.length === 0) return 'merged — no status checks on this PR';
+  const entries = rollup.map(normalizeEntry);
+  const open = entries.filter((e) => e.status !== 'COMPLETED');
+  const names = (es) => es.map((e) => reduceDetail(e.name || 'unnamed')).join(', ');
+  if (open.length) return `merged — ${names(open)} had not concluded at merge time`;
+  return `merged, ${names(entries)} concluded ${entries.map((e) => reduceDetail(e.conclusion || 'unknown')).join(', ')}`;
+}
+
+function readConfirmation(s) {
+  const { ctx, deps } = s;
+  try {
+    const read = parseJson(deps.gh(['pr', 'view', String(ctx.pr), '--repo', ctx.repo, '--json', CONFIRM_FIELDS]));
+    return hasStrings(read, ['state']) ? read : null;
+  } catch {
+    return null;
+  }
+}
+
+// Ports Step 3 item 6: a merge call that exited 0 either merged or armed, and only this read says
+// which; exit 0 alone is never `merged`. A failed read is retried once; a second failure is
+// state-read-failed with no post-merge call (the reconciler completes a merge that did land).
+// mergeCommit rides on the same read so the merge sha needs no second call.
+async function confirm(s) {
+  const { ctx } = s;
+  s.stage = 'merge-confirm';
+  const read = readConfirmation(s) || readConfirmation(s);
+  if (!read) return stop(s, 'merge-confirm', 'state-read-failed', 'merge call exited 0; state unconfirmed');
+  if (read.state === 'MERGED') {
+    const mc = read.mergeCommit;
+    const mergeCommit = isObject(mc) && typeof mc.oid === 'string' && mc.oid ? mc.oid : null;
+    // Check names are free text: the result detail is neutralized like every stop's.
+    const detail = neutralize(rollupSummary(read.statusCheckRollup));
+    emit(s, 'merge-confirm', 'ok', detail);
+    return { outcome: 'merged', mergeCommit, detail };
+  }
+  if (read.state === 'OPEN' && read.autoMergeRequest) {
+    // Step 2.5's armed line; the parenthetical names the read that handed off to the arm, which is
+    // the contract's literal "(mergeStateStatus BLOCKED, checks pending)" on its own path.
+    const held = `mergeStateStatus ${reduceDetail(s.lastRead && s.lastRead.mergeStateStatus)}, checks ${s.lastVerdict}`;
+    const failuresBefore = s.logFailures.length;
+    logDecision(s, 'Step 2.5 (merge-verification gate)',
+      `armed — forge holds the merge (${held}) on PR #${ctx.pr}; reconciler completes cleanup on merged evidence.`,
+      'AUTO', 'high (gh pr merge --disable-auto)', `merge-verification=${s.value} (${s.source})`);
+    const note = s.logFailures.length > failuresBefore ? ` (${s.logFailures.slice(failuresBefore).join(', ')})` : '';
+    const detail = neutralize(`armed — auto-merge armed, the forge holds the merge; the reconciler completes cleanup${note}`);
+    emit(s, 'merge-confirm', 'ok', detail);
+    return { outcome: 'armed', mergeCommit: null, detail };
+  }
+  // `closed` is a closing keyword neutralize strips from every detail, so CLOSED is named in other words.
+  const state = read.state === 'CLOSED' ? 'shut, not merged' : reduceDetail(read.state);
+  return stop(s, 'merge-confirm', 'merge-refused', `confirmation read state ${state}`);
+}
+
+// Task 6 replaces this stub with the post-merge sequence.
+async function postMerge() {
+  return { verdict: null, failedSteps: [], failures: [] };
 }
 
 function result(s, outcome, reason, detail, extra = {}) {
@@ -697,7 +828,8 @@ function result(s, outcome, reason, detail, extra = {}) {
 async function merge(ctx, deps) {
   const s = {
     ctx, deps, runDir: ctx.runDir, value: 'wait', source: 'unresolved', valueRaw: '', keepOpen: [],
-    subject: null, reentries: 0, recomposeOnReentry: false, ciWaitMs: 0, lastRead: null, logFailures: [], logSeq: 0, stage: 'merge-entry',
+    subject: null, reentries: 0, recomposeOnReentry: false, ciWaitMs: 0, lastRead: null, lastVerdict: null, autoRefused: false,
+    logFailures: [], logSeq: 0, stage: 'merge-entry',
     startedAt: typeof deps.now === 'function' ? deps.now() : 0,
   };
   try {
@@ -708,14 +840,19 @@ async function merge(ctx, deps) {
     if (c.stop) return result(s, 'pending-review', c.stop, c.detail);
     const ready = markReady(s);
     if (ready.stop) return result(s, 'pending-review', ready.stop, ready.detail);
-    // Until the merge call lands (Task 5), every route through the gate ends in a stop.
+    // Every route through the gate ends in a stop or in confirm's merged / armed.
     const g = await gate(s);
-    return result(s, 'pending-review', g.stop, g.detail);
+    if (g.stop) return result(s, 'pending-review', g.stop, g.detail);
+    if (g.outcome === 'armed') return result(s, 'armed', null, g.detail);
+    if (g.outcome !== 'merged') throw new Error(`the gate returned no stop and no outcome (${String(g.outcome)})`);
+    s.stage = 'merge-post-merge';
+    const pm = await postMerge(s);
+    return result(s, 'merged', null, g.detail, { mergeCommit: g.mergeCommit, postMerge: pm });
   } catch (err) {
     return result(s, 'pending-review', 'unclassified', `${s.stage}: ${neutralize(errorText(err))}`);
   }
 }
 
 module.exports = {
-  merge, parkComment, conflictComment, MERGE_WATCH_BOUND_MS, MERGE_WATCH_POLL_MS,
+  merge, parkComment, conflictComment, classifyMergeFailure, MERGE_WATCH_BOUND_MS, MERGE_WATCH_POLL_MS,
 };

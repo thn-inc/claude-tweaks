@@ -10,7 +10,7 @@ const os = require('node:os');
 const path = require('node:path');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const {
-  merge, parkComment, conflictComment, MERGE_WATCH_BOUND_MS, MERGE_WATCH_POLL_MS,
+  merge, parkComment, conflictComment, classifyMergeFailure, MERGE_WATCH_BOUND_MS, MERGE_WATCH_POLL_MS,
 } = require(path.join(LIB, 'driver', 'merge'));
 const { MERGE_STEP_NAMES } = require(path.join(LIB, 'driver', 'events'));
 const { VERDICT_STEPS, verdictMarker } = require(path.join(LIB, 'dispatch', 'merge-verdict'));
@@ -55,6 +55,9 @@ const CONFIRMED = `${verdictLine()}\n`;
 const base = (p) => path.basename(p);
 const isNode = (name) => (c) => c.kind === 'node' && base(c.args[0]) === name;
 const isGh = (...words) => (c) => c.kind === 'gh' && words.every((w, i) => c.args[i] === w);
+// `gh pr merge` goes out through the write-bound ghCreate kind; any kind is matched so a merge on the
+// wrong kind still counts as a merge.
+const isMergeCall = (c) => ['gh', 'ghCreate'].includes(c.kind) && c.args[0] === 'pr' && c.args[1] === 'merge';
 const describeArgs = (args) => args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
 
 // The lever read's JSON reply: `{ "merge-verification": entry }`, or `{}` when entry is undefined.
@@ -68,6 +71,12 @@ const REREAD_FIELDS = 'state,mergeStateStatus,headRefOid';
 const GREEN_CHECK = { __typename: 'CheckRun', name: 'unit', status: 'COMPLETED', conclusion: 'SUCCESS', detailsUrl: 'u' };
 const GREEN_RUN = { name: 'CI', workflowName: 'CI', status: 'completed', conclusion: 'success', url: 'u' };
 const MET = { state: 'met', failing: [], draftSkipWithoutReadyTrigger: [] };
+// The confirmation read after a merge call that exited 0 (Step 3 item 6, plus mergeCommit).
+const CONFIRM_FIELDS = 'state,mergedAt,autoMergeRequest,statusCheckRollup,mergeCommit';
+const MERGE_SHA = 'f'.repeat(40);
+const TITLE = 'feat: composed title';
+// Task 6 replaces the post-merge stub; until then a merged run carries this.
+const POST_MERGE_STUB = { verdict: null, failedSteps: [], failures: [] };
 // A knob may be a function (evaluated per call, so a test can script a sequence with seq()).
 const knob = (v) => (typeof v === 'function' ? v() : v);
 // An object is merged over the default reply; a string is the raw stdout; an Error throws.
@@ -79,9 +88,10 @@ function jsonReply(v, dflt) {
 
 // Replies for every call the entry makes on the happy path. Later tasks append theirs here.
 function defaultMergeScript(over, files, logs, applied) {
-  const labels = over.labels === undefined ? [{ name: 'auto:merge' }] : over.labels;
   return [
     [isGh('issue', 'view'), () => {
+      // Read per call, so seq() can script the entry read and the pre-merge read apart.
+      const labels = over.labels === undefined ? [{ name: 'auto:merge' }] : knob(over.labels);
       if (labels instanceof Error) throw labels;
       if (typeof labels === 'string') return labels;
       return JSON.stringify({ labels: [...labels, ...applied.map((name) => ({ name }))] });
@@ -104,7 +114,7 @@ function defaultMergeScript(over, files, logs, applied) {
     [isNode('closing-links.js'), over.closingLinks || { code: 0, stdout: JSON.stringify({ action: 'clean', keepOpen: [] }), stderr: '' }],
     [isNode('compose-subject.js'), over.compose || { code: 0, stdout: "SUBJECT_TITLE='x'\n", stderr: '' }],
     [(c) => c.kind === 'readFile' && base(c.args[0]) === 'title.txt', () => {
-      const ti = over.title === undefined ? 'feat: composed title' : over.title;
+      const ti = over.title === undefined ? TITLE : over.title;
       if (ti instanceof Error) throw ti;
       return ti;
     }],
@@ -150,6 +160,14 @@ function defaultMergeScript(over, files, logs, applied) {
       return '';
     }],
     [isGh('pr', 'comment'), ''],
+    [isMergeCall, () => {
+      const m = knob(over.prMerge);
+      if (m instanceof Error) throw m;
+      return typeof m === 'string' ? m : '';
+    }],
+    [(c) => isGh('pr', 'view')(c) && c.args.includes(CONFIRM_FIELDS), () => jsonReply(knob(over.confirm), {
+      state: 'MERGED', mergedAt: '2026-11-13T09:30:00Z', autoMergeRequest: null, statusCheckRollup: [GREEN_CHECK], mergeCommit: { oid: MERGE_SHA },
+    })],
   ];
 }
 
@@ -162,6 +180,9 @@ function defaultMergeScript(over, files, logs, applied) {
 // Error), runs (array, raw string or Error), readyRun (an envelope object, a full {code,stdout}
 // reply or an Error), labelList (`gh label list` stdout), addLabel ('noop' or an Error),
 // issueComment (an Error makes the record comment throw).
+// Merge-call knobs (each may be a function): labels (also per call, so seq() splits the entry read
+// from the pre-merge read), prMerge (the ghCreate `pr merge` reply: '' or an Error carrying stderr),
+// confirm (the confirmation read: an object merged over the MERGED default, a raw string or an Error).
 function mergeHarness(over = {}) {
   const calls = [];
   const events = [];
@@ -243,11 +264,10 @@ test('events: MERGE_STEP_NAMES is the frozen sub-step vocabulary', () => {
   assert.ok(MERGE_STEP_NAMES.every((n) => /^merge-[a-z-]+$/.test(n)));
 });
 
-test('entry passing: the tail stays pending-review/unclassified until the merge call lands, every call as specified', async () => {
+test('entry passing: the happy path merges, every entry call as specified', async () => {
   const h = mergeHarness();
   const r = await merge(CTX, h.deps);
-  assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'unclassified', mergeCommit: null, postMerge: null });
-  assert.match(r.detail, /^merge call not implemented/);
+  assert.deepEqual(pick(r), { outcome: 'merged', reason: null, mergeCommit: MERGE_SHA, postMerge: POST_MERGE_STUB });
   assert.equal(r.runDir, CTX.runDir);
   assert.equal(r.ciWaitMs, 0);
   assert.equal(r.eventsStdoutOnly, false);
@@ -304,7 +324,7 @@ test('AC1.2, AC1.3: labels without auto:merge, empty, auto:merge-pending only �
     assert.ok(!kindsOf(h).includes('node'), 'labels are read before any policy read');
   }
   const ok = mergeHarness({ labels: [{ name: 'bug' }, { name: 'auto:merge' }] });
-  assert.equal((await merge(CTX, ok.deps)).reason, 'unclassified');
+  assert.equal((await merge(CTX, ok.deps)).outcome, 'merged');
 });
 
 test('AC2.1–AC2.6: entry refusals with their residue', async () => {
@@ -402,7 +422,7 @@ test('AC8.1: merge-verification off, empty, unparseable and a resolver error all
   for (const [name, verification, text, source] of rows) {
     const h = mergeHarness({ verification });
     const r = await merge(CTX, h.deps);
-    assert.equal(r.reason, 'unclassified', `${name}: entry passed (supplier reached, no stop)`);
+    assert.equal(r.outcome, 'merged', `${name}: entry passed (supplier reached, no stop)`);
     assert.ok(kindsOf(h).includes('judgments'), name);
     h.logs = h.logs.filter((l) => l.step === 'Step 2.5');
     assert.equal(h.logs.length, 1, name);
@@ -440,7 +460,7 @@ test('AC8.1: a failed merge-verification read never stops entry; a failed integr
 test('AC8.1: a lever log that fails never stops entry; it is named in the entry event detail', async () => {
   const h = mergeHarness({ verification: leverReply({ value: 'off', source: 'run-config' }), logReply: { code: 1, stdout: '', stderr: 'x' } });
   const r = await merge(CTX, h.deps);
-  assert.equal(r.reason, 'unclassified');
+  assert.equal(r.outcome, 'merged');
   assert.ok(kindsOf(h).includes('judgments'));
   assert.match(h.events.find((e) => e.step === 'merge-entry').detail, /log:Step 2\.5/);
 });
@@ -461,8 +481,7 @@ test('merge never throws: a throw inside a step is unclassified naming the sub-s
   assert.match(r.detail, /^merge-entry: spawn exploded/);
   const h2 = mergeHarness({ deps: { emit: () => { throw new Error('emit broke'); } } });
   const r2 = await merge(CTX, h2.deps);
-  assert.equal(r2.reason, 'unclassified');
-  assert.match(r2.detail, /^merge call not implemented/);
+  assert.equal(r2.outcome, 'merged');
   assert.equal(r2.runDir, CTX.runDir);
 });
 
@@ -476,12 +495,11 @@ const skipsOf = (h) => h.logs.filter((l) => l.status === 'SKIP');
 test('AC4.1: the tail runs closing links, compose, the isDraft read, gh pr ready, then the gate reads in that order', async () => {
   const h = mergeHarness();
   const r = await merge(CTX, h.deps);
-  assert.equal(r.reason, 'unclassified');
-  assert.match(r.detail, /^merge call not implemented/);
+  assert.equal(r.outcome, 'merged');
   const seq = h.calls.slice(h.calls.findIndex((c) => c.kind === 'judgments') + 1).map((c) => (
     c.kind === 'node' ? base(c.args[0]) : c.kind === 'gh' ? `gh ${c.args.slice(0, 2).join(' ')}` : c.kind));
   assert.deepEqual(seq, ['closing-links.js', 'compose-subject.js', 'readFile', 'gh pr view', 'gh pr ready', 'log-decision.js',
-    'gh pr view', 'gh run list', 'ready-run.js']);
+    'gh pr view', 'gh run list', 'ready-run.js', 'gh issue view', 'ghCreate', 'gh pr view']);
   const cl = nodeCalls(h, 'closing-links.js')[0];
   assert.deepEqual(cl.args.slice(1), ['--run', CTX.runDir, '--mode', 'pre-merge']);
   assert.equal(cl.cwd, CTX.mainCheckout);
@@ -531,7 +549,7 @@ test('closing-links exit 3 warns, logs a SKIP and proceeds; exit 5 proceeds with
   const skipText = (code) => `condition: closing-links.js exited ${code} → fallback: closing links not checked this merge`;
   const three = mergeHarness({ closingLinks: { code: 3, stdout: '', stderr: 'run dir not anchored' } });
   const r3 = await merge(CTX, three.deps);
-  assert.equal(r3.reason, 'unclassified');
+  assert.equal(r3.outcome, 'merged');
   assert.ok(!nodeCalls(three, 'compose-subject.js')[0].args.includes('--keep-open'));
   assert.equal(skipsOf(three).length, 1);
   assert.equal(skipsOf(three)[0].step, 'Closing links (pre-merge) (degraded)');
@@ -570,7 +588,7 @@ test('closing links: exit-0 degraded results proceed with keepOpen [] and log on
   for (const [closingLinks, skip] of rows) {
     const h = mergeHarness({ closingLinks });
     const r = await merge(CTX, h.deps);
-    assert.equal(r.reason, 'unclassified', JSON.stringify(closingLinks));
+    assert.equal(r.outcome, 'merged', JSON.stringify(closingLinks));
     assert.ok(!nodeCalls(h, 'compose-subject.js')[0].args.includes('--keep-open'), JSON.stringify(closingLinks));
     assert.equal(h.events.find((e) => e.step === 'merge-closing-links').status, 'ok');
     const skips = skipsOf(h);
@@ -637,7 +655,7 @@ test('compose: the composed event carries the title.txt text, never the single-q
 test('AC4.3: an already-ready PR skips gh pr ready and logs the skip', async () => {
   const h = mergeHarness({ isDraft: false });
   const r = await merge(CTX, h.deps);
-  assert.equal(r.reason, 'unclassified');
+  assert.equal(r.outcome, 'merged');
   assert.ok(!h.calls.some(isReadyCall));
   const l = h.logs.find((x) => x.step === 'Step 2 (mark ready)');
   assert.equal(l.status, 'AUTO');
@@ -661,7 +679,7 @@ test('AC4.4: a failed isDraft read, a non-boolean isDraft or a failed gh pr read
     assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'ready-failed', mergeCommit: null, postMerge: null }, JSON.stringify(over));
     assert.match(r.detail, detail);
     assert.doesNotMatch(r.detail, /Command failed|--repo/);
-    assert.ok(!h.calls.some((c) => isGh('pr', 'merge')(c)));
+    assert.ok(!h.calls.some(isMergeCall));
     const last = h.events[h.events.length - 1];
     assert.deepEqual([last.step, last.status], ['merge-ready', 'stop']);
     assert.ok(!h.logs.some((l) => l.step === 'Step 2 (mark ready)'), 'no AUTO line for a failed ready');
@@ -671,7 +689,7 @@ test('AC4.4: a failed isDraft read, a non-boolean isDraft or a failed gh pr read
 test('mark ready: compose precedes ready, and a failed log write never stops the step', async () => {
   const h = mergeHarness({ logReply: { code: 1, stdout: '', stderr: 'x' } });
   const r = await merge(CTX, h.deps);
-  assert.equal(r.reason, 'unclassified');
+  assert.equal(r.outcome, 'merged');
   const order = h.calls.map((c) => (c.kind === 'node' ? base(c.args[0]) : isReadyCall(c) ? 'ready' : null)).filter(Boolean);
   assert.ok(order.indexOf('compose-subject.js') < order.indexOf('ready'));
   assert.match(h.events.find((e) => e.step === 'merge-ready').detail, /log:Step 2 \(mark ready\)/);
@@ -690,16 +708,20 @@ const FAILING_CHECK = { __typename: 'CheckRun', name: 'unit', status: 'COMPLETED
 const PENDING_CHECK = { ...GREEN_CHECK, status: 'IN_PROGRESS', conclusion: null };
 const B = 'b'.repeat(40);
 const lastEvent = (h) => h.events[h.events.length - 1];
-// The Task 5 stub names the mode the gate handed it.
-const modeOf = (r) => (/^merge call not implemented \(mode (\w+)\)$/.exec(r.detail) || [])[1] || null;
+// The mode of the last merge call a run made: --auto (merge-when-green) or immediate; null for none.
+const modeOf = (h) => {
+  const m = h.calls.filter(isMergeCall);
+  if (!m.length) return null;
+  return m[m.length - 1].args.includes('--auto') ? 'auto' : 'immediate';
+};
 const shortOf = (c) => (c.kind === 'node' ? base(c.args[0]) : c.kind === 'gh' ? `gh ${c.args.slice(0, 2).join(' ')}` : c.kind);
 const after = (h, pred) => h.calls.slice(h.calls.findIndex(pred) + 1);
-const noMerge = (h) => assert.ok(!h.calls.some((c) => isGh('pr', 'merge')(c)), 'no gh pr merge');
+const noMerge = (h) => assert.ok(!h.calls.some(isMergeCall), 'no gh pr merge');
 
 test('AC4.2: the gate reads state, the head runs and ready-run, each as specified', async () => {
   const h = mergeHarness();
-  const r = await merge(CTX, h.deps);
-  assert.equal(modeOf(r), 'auto');
+  await merge(CTX, h.deps);
+  assert.equal(modeOf(h), 'auto');
   const g = h.calls.findIndex(isGateRead);
   assert.deepEqual(h.calls[g].args, ['pr', 'view', '9', '--repo', 'o/r', '--json', GATE_FIELDS]);
   assert.deepEqual(h.calls[g + 1].args,
@@ -710,7 +732,8 @@ test('AC4.2: the gate reads state, the head runs and ready-run, each as specifie
   assert.equal(rr.cwd, CTX.mainCheckout);
   assert.equal(rr.timeout, 120000);
   assert.deepEqual(rr.env, { HARNESS: '1' });
-  assert.equal(h.calls.length, g + 3, 'the merge-call stub makes no call');
+  assert.deepEqual(h.calls.slice(g + 3).map(shortOf), ['gh issue view', 'ghCreate', 'gh pr view'],
+    'then the pre-merge label read, the merge call and the confirmation read');
   assert.deepEqual(h.events.filter((e) => e.step === 'merge-gate').map((e) => e.status), ['ok']);
   assert.match(h.events.find((e) => e.step === 'merge-gate').detail, /green/);
 });
@@ -905,13 +928,14 @@ test('AC9.1: a first read whose headRefOid differs from ctx.head is moving-targe
 test('AC9.2: a head change between the first read and the re-read re-enters once and then merges (wait)', async () => {
   const h = mergeHarness({ verification: WAIT, reread: seq({ headRefOid: B }, {}) });
   const r = await merge(CTX, h.deps);
-  assert.equal(r.reason, 'unclassified');
-  assert.equal(modeOf(r), 'immediate');
+  assert.equal(r.outcome, 'merged');
+  assert.equal(modeOf(h), 'immediate');
   assert.equal(nodeCalls(h, 'compose-subject.js').length, 2, 'initial before ready, and the re-entry');
   // The re-entry recomposes only after its own first read's guards pass, before the handoff.
   assert.deepEqual(after(h, (c) => isReadyCall(c)).map(shortOf), [
     'log-decision.js', 'gh pr view', 'gh run list', 'ready-run.js', 'gh pr view',
     'gh pr view', 'gh run list', 'ready-run.js', 'compose-subject.js', 'readFile', 'gh pr view',
+    'gh issue view', 'ghCreate', 'gh pr view',
   ]);
   assert.equal(h.calls.filter(isGateRead).length, 2);
   assert.equal(h.calls.filter(isReread).length, 2);
@@ -961,10 +985,12 @@ test('AC9.3: two changes return moving-target', async () => {
 
 test('AC8.2: merge-when-green pending with BLOCKED arms; pending with CLEAN runs the wait row (watch)', async () => {
   const green = mergeHarness();
-  assert.equal(modeOf(await merge(CTX, green.deps)), 'auto');
+  await merge(CTX, green.deps);
+  assert.equal(modeOf(green), 'auto');
   assert.ok(!green.calls.some(isReread));
   const blocked = mergeHarness({ prState: { statusCheckRollup: [PENDING_CHECK], mergeStateStatus: 'BLOCKED' } });
-  assert.equal(modeOf(await merge(CTX, blocked.deps)), 'auto');
+  await merge(CTX, blocked.deps);
+  assert.equal(modeOf(blocked), 'auto');
   assert.ok(!blocked.calls.some(isReread));
   const pendings = [
     ['a rollup entry not COMPLETED', { prState: { statusCheckRollup: [PENDING_CHECK] } }],
@@ -984,18 +1010,21 @@ test('AC8.2: merge-when-green pending with BLOCKED arms; pending with CLEAN runs
   }
   // A not-applicable ready-run is no requirement: green.
   const na = mergeHarness({ readyRun: { state: 'not-applicable', failing: [], draftSkipWithoutReadyTrigger: [] } });
-  assert.equal(modeOf(await merge(CTX, na.deps)), 'auto');
+  await merge(CTX, na.deps);
+  assert.equal(modeOf(na), 'auto');
 });
 
 test('AC8.3: wait re-reads state and compares the head before the immediate merge', async () => {
   const h = mergeHarness({ verification: WAIT });
   const r = await merge(CTX, h.deps);
-  assert.equal(modeOf(r), 'immediate');
+  assert.equal(r.outcome, 'merged');
+  assert.equal(modeOf(h), 'immediate');
   const rereads = h.calls.filter(isReread);
   assert.equal(rereads.length, 1);
   assert.deepEqual(rereads[0].args, ['pr', 'view', '9', '--repo', 'o/r', '--json', REREAD_FIELDS]);
   assert.ok(h.calls.indexOf(rereads[0]) > h.calls.findIndex((c) => isNode('ready-run.js')(c)));
-  assert.deepEqual(after(h, isReread), [], 'the re-read is the last call before the merge call');
+  assert.deepEqual(after(h, isReread).map(shortOf), ['gh issue view', 'ghCreate', 'gh pr view'],
+    'the re-read is the last state read before the merge call');
   assert.ok(!h.calls.some((c) => c.args.includes('--auto')));
   // A re-read that fails is state-read-failed, no merge.
   const f = mergeHarness({ verification: WAIT, reread: new Error('HTTP 502') });
@@ -1018,12 +1047,12 @@ test('AC8.4: a state read always precedes the first merge call under every lever
   ];
   for (const verification of levers) {
     const h = mergeHarness({ verification });
-    const r = await merge(CTX, h.deps);
-    assert.ok(modeOf(r), JSON.stringify(verification));
+    await merge(CTX, h.deps);
+    assert.ok(modeOf(h), JSON.stringify(verification));
     const steps = h.events.map((e) => e.step);
     assert.ok(steps.indexOf('merge-gate') >= 0 && steps.indexOf('merge-gate') < steps.indexOf('merge-call'), JSON.stringify(verification));
     assert.ok(h.calls.some(isGateRead));
-    if (modeOf(r) === 'immediate') assert.ok(h.calls.some(isReread), 'wait re-reads before the immediate merge');
+    if (modeOf(h) === 'immediate') assert.ok(h.calls.some(isReread), 'wait re-reads before the immediate merge');
   }
 });
 
@@ -1059,7 +1088,7 @@ function watchHarness(over) {
   return { ...h, sleeps, watchClock };
 }
 const parkLabelAdds = (h) => h.calls.filter((c) => isGh('issue', 'edit')(c) && c.args.includes('bot:parked'));
-const mergeCalls = (h) => h.calls.filter((c) => isGh('pr', 'merge')(c));
+const mergeCalls = (h) => h.calls.filter(isMergeCall);
 
 test('AC10.1: the watch constants are 15 minutes and 30 seconds', () => {
   assert.equal(MERGE_WATCH_BOUND_MS, 15 * 60 * 1000);
@@ -1169,29 +1198,30 @@ test('AC5.9: a read failure during the watch is checks-read-failed and parks not
 
 test('watch: a green poll re-reads and merges immediately (no --auto)', async () => {
   const w = watchHarness({ verification: WAIT, prState: seq(PENDING, GREEN) });
-  const r = await merge(CTX, w.deps);
-  assert.equal(modeOf(r), 'immediate');
+  await merge(CTX, w.deps);
+  assert.equal(modeOf(w), 'immediate');
   assert.equal(w.sleeps.length, 1);
   assert.equal(w.calls.filter(isReread).length, 1);
   assert.ok(!w.calls.some((c) => c.args.includes('--auto')));
   // A pending read that was not BLOCKED ran the wait row, so even under merge-when-green its green poll
   // merges immediately after a re-read, never via --auto.
   const m = watchHarness({ prState: seq(PENDING, GREEN) });
-  assert.equal(modeOf(await merge(CTX, m.deps)), 'immediate');
+  await merge(CTX, m.deps);
+  assert.equal(modeOf(m), 'immediate');
   assert.equal(m.calls.filter(isReread).length, 1);
 });
 
 test('AC8.2: under merge-when-green a pending poll that reads BLOCKED arms (--auto), under wait it keeps watching', async () => {
   const BLOCKED = { ...PENDING, mergeStateStatus: 'BLOCKED' };
   const mwg = watchHarness({ prState: seq(PENDING, PENDING, BLOCKED) });
-  const r = await merge(CTX, mwg.deps);
-  assert.equal(modeOf(r), 'auto');
+  await merge(CTX, mwg.deps);
+  assert.equal(modeOf(mwg), 'auto');
   assert.equal(mwg.sleeps.length, 2, 'armed at poll 2, no further sleep');
   assert.ok(!mwg.calls.some(isReread));
   assert.ok(!mwg.calls.some(isParkCall));
   const wait = watchHarness({ verification: WAIT, prState: seq(PENDING, BLOCKED, BLOCKED, GREEN) });
-  const wr = await merge(CTX, wait.deps);
-  assert.equal(modeOf(wr), 'immediate');
+  await merge(CTX, wait.deps);
+  assert.equal(modeOf(wait), 'immediate');
   assert.equal(wait.sleeps.length, 3, 'wait never arms on BLOCKED');
   assert.ok(!wait.calls.some((c) => c.args.includes('--auto')));
 });
@@ -1241,23 +1271,24 @@ test('watch: a head change mid-watch re-enters the gate once; a second change is
   // Compares s.lastRead's head with the poll's: a lastRead overwritten before the comparison never re-enters.
   const h = watchHarness({ verification: WAIT, prState: seq(PENDING, { ...PENDING, headRefOid: B }, PENDING, GREEN) });
   const r = await merge(CTX, h.deps);
-  assert.equal(modeOf(r), 'immediate');
+  assert.equal(r.outcome, 'merged');
+  assert.equal(modeOf(h), 'immediate');
   assert.equal(nodeCalls(h, 'compose-subject.js').length, 2, 'the re-entry recomposes once');
   assert.ok(h.events.some((e) => e.step === 'merge-watch' && /re-entering the gate once/.test(e.detail)));
   assert.equal(h.sleeps.length, 2, 'one poll before the change, one after the re-entry');
   assert.equal(h.events.filter((e) => e.step === 'merge-watch').length, 2, 'each watch reports its own CI wait');
   assert.equal(h.calls.filter(isReadyCall).length, 1);
-  noMerge(h);
+  assert.equal(mergeCalls(h).length, 1, 'one merge, after the re-entry');
   const two = watchHarness({ verification: WAIT, prState: seq(PENDING, { ...PENDING, headRefOid: B }, PENDING, { ...PENDING, headRefOid: C }) });
   const tr = await merge(CTX, two.deps);
   assert.deepEqual(pick(tr), { outcome: 'pending-review', reason: 'moving-target', mergeCommit: null, postMerge: null });
   assert.equal(two.sleeps.length, 2);
   assert.ok(!two.calls.some(isParkCall));
   noMerge(two);
-  // The ciWaitMs of both watches is summed.
   const watchStops = two.events.filter((e) => e.step === 'merge-watch' && e.status === 'stop');
   assert.equal(watchStops.length, 1, 'the second watch ends in a stop event');
   assert.ok(watchStops[0].extra.ciWaitMs > 0);
+  // The ciWaitMs of both watches is summed.
   assert.ok(tr.ciWaitMs >= 2 * MERGE_WATCH_POLL_MS);
   // A change onto a head that is not the verified one is moving-target at the re-entry's first read.
   const off = watchHarness({ verification: WAIT, prState: seq(PENDING, { ...PENDING, headRefOid: B }, { ...PENDING, headRefOid: B }) });
@@ -1278,4 +1309,350 @@ test('watch: under merge-when-green a red poll parks and makes no merge call', a
   const r = await merge(CTX, h.deps);
   assert.equal(r.reason, 'check-failed:unit');
   assert.equal(mergeCalls(h).length, 0);
+});
+
+// ---- Task 5: Step 3's merge call, failure signatures and confirmation (AC11, AC1.4, AC1.5, AC4, AC9.4) ----
+
+// Fixture stderr literals — source: _shared/pr-first-merge.md Step 3 (items 1–5)
+const SIG = {
+  notAllowed: 'GraphQL: Auto merge is not allowed for this repository (enablePullRequestAutoMerge)',
+  protectedRules: 'GraphQL: Pull request Protected branch rules not configured for this branch (enablePullRequestAutoMerge)',
+  cleanStatus: 'GraphQL: Pull request Pull request is in clean status (enablePullRequestAutoMerge)',
+  mutationOnly: 'GraphQL: something unexpected (enablePullRequestAutoMerge)',
+  checks: 'X Pull request o/r#9 is not mergeable: the base branch policy requires 1 required status check.',
+  permission: 'HTTP 403: Resource not accessible by integration',
+  conflict: 'X Pull request o/r#9 is not mergeable: the merge commit cannot be cleanly created (conflict).',
+  conflictWithMutation: 'GraphQL: Pull request is not mergeable: conflict (enablePullRequestAutoMerge)',
+  unknown: 'some brand new failure',
+};
+// A failed gh call as execFileSync throws it: the message carries the whole argv (the title
+// included); gh's own words are on stderr.
+const ghErr = (stderr) => Object.assign(new Error(`Command failed: gh pr merge 9 --repo o/r --squash -t ${TITLE}`), { stderr: `${stderr}\n` });
+const argAfter = (c, flags) => flags.map((f) => (c.args.includes(f) ? c.args[c.args.indexOf(f) + 1] : undefined));
+const isConfirmRead = (c) => isGh('pr', 'view')(c) && c.args.includes(CONFIRM_FIELDS);
+const isLabelRead = isGh('issue', 'view');
+const AUTO_MERGE = [{ name: 'auto:merge' }];
+const ARMED = { state: 'OPEN', mergedAt: null, autoMergeRequest: { enabledAt: '2026-11-13T09:30:00Z', mergeMethod: 'SQUASH' }, mergeCommit: null };
+const BLOCKED_PENDING = { ...PENDING, mergeStateStatus: 'BLOCKED' };
+const BODY_FILE = path.join(CTX.runDir, 'merge-subject', 'body.md');
+const ARMED_LOG = 'armed — forge holds the merge (mergeStateStatus BLOCKED, checks pending) on PR #9; reconciler completes cleanup on merged evidence.';
+
+// Each recorded call from the supplier call on, as a short label; log-decision.js calls are dropped.
+function sequenceFromSupplier(calls) {
+  return calls.slice(calls.findIndex((c) => c.kind === 'judgments')).filter((c) => !isNode('log-decision.js')(c)).map((c) => {
+    if (c.kind === 'judgments') return 'judgments';
+    if (c.kind === 'readFile') return `readFile ${base(c.args[0])}`;
+    if (c.kind === 'node') {
+      const name = base(c.args[0]);
+      return `${name} ${c.args.slice(1, name === 'ready-run.js' ? 3 : 2).join(' ')}`;
+    }
+    const a = c.args;
+    const json = a.includes('--json') ? a[a.indexOf('--json') + 1] : null;
+    if (isMergeCall(c)) return `${c.kind} pr merge ${a[2]} ${a.filter((x) => x === '--auto' || x === '--squash').join(' ')}`;
+    if (a[0] === 'pr' && a[1] === 'view') return `gh pr view ${json}`;
+    if (a[0] === 'issue' && a[1] === 'view') return `gh issue view ${a[2]} ${json}`;
+    if (a[0] === 'run' && a[1] === 'list') return 'gh run list --commit';
+    if (a[0] === 'pr' && a[1] === 'ready') return `gh pr ready ${a[2]}`;
+    return `${c.kind} ${describeArgs(a)}`;
+  });
+}
+
+test('AC11.1: the auto-not-allowed signatures degrade to the wait row — a state read before an immediate merge', async () => {
+  const paraphrase = 'GraphQL: auto-merge is not enabled on this repository';
+  for (const stderr of [SIG.notAllowed, SIG.protectedRules, SIG.cleanStatus, SIG.mutationOnly, paraphrase]) {
+    const h = mergeHarness({ prMerge: seq(ghErr(stderr), '') });
+    const r = await merge(CTX, h.deps);
+    assert.deepEqual(pick(r), { outcome: 'merged', reason: null, mergeCommit: MERGE_SHA, postMerge: POST_MERGE_STUB }, stderr);
+    const [armed, immediate, ...rest] = mergeCalls(h);
+    assert.deepEqual(rest, [], stderr);
+    assert.ok(armed.args.includes('--auto'), stderr);
+    assert.ok(!immediate.args.includes('--auto'), stderr);
+    // The wait row: a fresh state read, then the pre-merge label read, then the immediate merge.
+    const then = after(h, (c) => c === armed);
+    assert.deepEqual(then.map(shortOf), ['gh pr view', 'gh issue view', 'ghCreate', 'gh pr view'], stderr);
+    assert.ok(isReread(then[0]), stderr);
+    assert.equal(nodeCalls(h, 'compose-subject.js').length, 1, 'the merge call composes nothing');
+    const ev = h.events.filter((e) => e.step === 'merge-call');
+    assert.deepEqual(ev.map((e) => e.status), ['stop', 'ok'], stderr);
+    assert.match(ev[0].detail, /auto-not-allowed.*wait row/, stderr);
+    assert.ok(!h.calls.some(isParkCall), stderr);
+  }
+  // A pending read that armed (BLOCKED) degrades into the bounded watch, never into an immediate
+  // merge while checks are pending; with --auto refused the watch never arms again.
+  const w = watchHarness({ prState: seq(BLOCKED_PENDING, BLOCKED_PENDING, BLOCKED_PENDING, GREEN), prMerge: seq(ghErr(SIG.notAllowed), '') });
+  const wr = await merge(CTX, w.deps);
+  assert.equal(wr.outcome, 'merged');
+  assert.equal(w.sleeps.length, 3, 'two BLOCKED polls watched, the third poll green');
+  assert.deepEqual(mergeCalls(w).map((c) => c.args.includes('--auto')), [true, false], '--auto is tried once');
+  const lastGate = w.calls.filter(isGateRead).pop();
+  assert.deepEqual(after(w, (c) => c === lastGate).map(shortOf),
+    ['gh run list', 'ready-run.js', 'gh pr view', 'gh issue view', 'ghCreate', 'gh pr view'], 'the immediate merge follows the green poll');
+  // A re-entry after the degrade runs as wait too: no second --auto.
+  const re = mergeHarness({ prMerge: seq(ghErr(SIG.notAllowed), ''), reread: seq({ headRefOid: B }, {}) });
+  assert.equal((await merge(CTX, re.deps)).outcome, 'merged');
+  assert.deepEqual(mergeCalls(re).map((c) => c.args.includes('--auto')), [true, false]);
+  assert.equal(nodeCalls(re, 'compose-subject.js').length, 2, 'the initial compose and the re-entry recompose');
+});
+
+test('AC11.2: an immediate call never degrades again', async () => {
+  const h = mergeHarness({ verification: WAIT, prMerge: ghErr(SIG.notAllowed) });
+  const r = await merge(CTX, h.deps);
+  assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'merge-refused', mergeCommit: null, postMerge: null });
+  assert.match(r.detail, /^merge-refused \(unrecognized\): /);
+  assert.equal(mergeCalls(h).length, 1, 'exactly one immediate merge call');
+  assert.equal(h.calls.filter(isReread).length, 1);
+  assert.deepEqual(after(h, isMergeCall), []);
+  // After a degrade, the immediate call's own refusal is final too: --auto once, immediate once.
+  const d = mergeHarness({ prMerge: ghErr(SIG.notAllowed) });
+  const dr = await merge(CTX, d.deps);
+  assert.equal(dr.reason, 'merge-refused');
+  assert.match(dr.detail, /^merge-refused \(unrecognized\): /);
+  assert.deepEqual(mergeCalls(d).map((c) => c.args.includes('--auto')), [true, false]);
+});
+
+test('AC11.3–AC11.5: checks, permission and unrecognized are merge-refused with the class named, nothing parked', async () => {
+  const rows = [
+    [SIG.checks, 'checks'],
+    ['X Pull request o/r#9 is not mergeable: review required', 'checks'],
+    [SIG.permission, 'permission'],
+    ['GraphQL: Resource not accessible by integration', 'permission'],
+    ['GraphQL: you must have write access to merge', 'permission'],
+    [SIG.unknown, 'unrecognized'],
+    ['', 'unrecognized'],
+  ];
+  for (const lever of [undefined, WAIT]) {
+    for (const [stderr, cls] of rows) {
+      const name = `${cls}: ${stderr}`;
+      const h = mergeHarness({ verification: lever, prMerge: ghErr(stderr) });
+      const r = await merge(CTX, h.deps);
+      assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'merge-refused', mergeCommit: null, postMerge: null }, name);
+      assert.ok(r.detail.startsWith(`merge-refused (${cls}): `), `${name}: ${r.detail}`);
+      assert.doesNotMatch(r.detail, /Command failed|composed title/, name);
+      const ev = lastEvent(h);
+      assert.deepEqual([ev.step, ev.status], ['merge-call', 'stop'], name);
+      assert.match(ev.detail, new RegExp(`\\(${cls}\\)`), name);
+      assert.equal(mergeCalls(h).length, 1, name);
+      assert.deepEqual(after(h, isMergeCall), [], `${name}: no call after the refused merge`);
+      assert.ok(!h.calls.some(isParkCall), `${name}: nothing parked`);
+      assert.ok(!h.calls.some((c) => isGh('pr', 'comment')(c) || isUndo(c)), `${name}: no comment, no re-draft`);
+    }
+  }
+  assert.equal((await merge(CTX, mergeHarness({ prMerge: ghErr(SIG.checks) }).deps)).detail,
+    'merge-refused (checks): X Pull request o/r 9 is not mergeable: the base branch policy requires 1 required status check.');
+});
+
+test('AC11.6: a conflict wording (with or without the mutation name) returns conflict', async () => {
+  const text = conflictComment({ pr: 9, base: 'main' });
+  for (const lever of [undefined, WAIT]) {
+    for (const stderr of [SIG.conflict, SIG.conflictWithMutation, 'GraphQL: mergeable: CONFLICTING']) {
+      const h = mergeHarness({ verification: lever, prMerge: ghErr(stderr) });
+      const r = await merge(CTX, h.deps);
+      assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'conflict', mergeCommit: null, postMerge: null }, stderr);
+      assert.deepEqual(after(h, isMergeCall).map((c) => [c.kind, c.args]), [['gh', ['pr', 'comment', '--repo', 'o/r', '--body', text, '--', '9']]], stderr);
+      assert.equal(mergeCalls(h).length, 1, `${stderr}: a conflict never degrades`);
+      assert.ok(!h.calls.some((c) => c.kind === 'git'));
+      assert.ok(!h.calls.some(isUndo), 'PR left ready');
+      assert.deepEqual([lastEvent(h).step, lastEvent(h).status], ['merge-conflict', 'stop']);
+    }
+  }
+});
+
+test('classifyMergeFailure order: conflict and permission beat the bare mutation name', () => {
+  assert.equal(classifyMergeFailure(SIG.conflictWithMutation), 'conflict');
+  assert.equal(classifyMergeFailure('HTTP 403 (enablePullRequestAutoMerge)'), 'permission');
+  assert.equal(classifyMergeFailure(SIG.mutationOnly), 'auto-not-allowed');
+  const table = [
+    [SIG.notAllowed, 'auto-not-allowed'], [SIG.protectedRules, 'auto-not-allowed'], [SIG.cleanStatus, 'auto-not-allowed'],
+    ['auto-merge is not allowed here', 'auto-not-allowed'], ['Auto-Merge not enabled', 'auto-not-allowed'],
+    [SIG.checks, 'checks'], ['not mergeable: checks are failing', 'checks'], [SIG.permission, 'permission'],
+    [SIG.conflict, 'conflict'], ['state CONFLICTING', 'conflict'], [SIG.unknown, 'unrecognized'], ['', 'unrecognized'],
+    // `conflicting` in lower case is no CONFLICTING reason, and `not mergeable` alone names no class.
+    ['the PR is conflicting', 'unrecognized'], ['not mergeable', 'unrecognized'], ['HTTP 4031', 'unrecognized'],
+    [undefined, 'unrecognized'], [null, 'unrecognized'],
+  ];
+  for (const [stderr, cls] of table) assert.equal(classifyMergeFailure(stderr), cls, String(stderr));
+});
+
+test('a failed merge call is classified on its stderr, never on the argv-bearing message', async () => {
+  const err = Object.assign(new Error('Command failed: gh pr merge 9 -t fix: not mergeable conflict 403 enablePullRequestAutoMerge'), { stderr: `${SIG.unknown}\n` });
+  const h = mergeHarness({ prMerge: err });
+  const r = await merge(CTX, h.deps);
+  assert.equal(r.reason, 'merge-refused');
+  assert.equal(r.detail, 'merge-refused (unrecognized): some brand new failure');
+  assert.equal(mergeCalls(h).length, 1);
+  // A throw with no stderr at all (a timeout kill) is unrecognized and names no argv either.
+  const t = mergeHarness({ prMerge: Object.assign(new Error('Command failed: gh pr merge 9 -t x'), { code: 'ETIMEDOUT' }) });
+  const tr = await merge(CTX, t.deps);
+  assert.equal(tr.reason, 'merge-refused');
+  assert.match(tr.detail, /^merge-refused \(unrecognized\): .*ETIMEDOUT/);
+  assert.doesNotMatch(tr.detail, /Command failed/);
+});
+
+test('AC11.7: MERGED is merged with the merge commit; OPEN with autoMergeRequest is armed; anything else merge-refused', async () => {
+  const h = mergeHarness();
+  const r = await merge(CTX, h.deps);
+  assert.deepEqual(pick(r), { outcome: 'merged', reason: null, mergeCommit: MERGE_SHA, postMerge: POST_MERGE_STUB });
+  assert.deepEqual(h.calls.filter(isConfirmRead).map((c) => c.args), [['pr', 'view', '9', '--repo', 'o/r', '--json', CONFIRM_FIELDS]]);
+  const confirmEvent = h.events.find((e) => e.step === 'merge-confirm');
+  assert.deepEqual([confirmEvent.status, confirmEvent.detail], ['ok', 'merged, unit concluded SUCCESS']);
+  assert.equal(r.detail, 'merged, unit concluded SUCCESS');
+  // The rollup at merge time is read before the merge is reported (Step 3 item 6).
+  const rollups = [
+    [[], 'merged — no status checks on this PR'],
+    [[GREEN_CHECK, PENDING_CHECK], 'merged — unit had not concluded at merge time'],
+    [[GREEN_CHECK, { context: 'ci/legacy', state: 'SUCCESS', targetUrl: 'u' }], 'merged, unit, ci/legacy concluded SUCCESS, SUCCESS'],
+    [[{ context: 'ci/legacy', state: 'PENDING' }], 'merged — ci/legacy had not concluded at merge time'],
+    [null, 'merged — status checks unreadable at merge time'],
+  ];
+  for (const [statusCheckRollup, detail] of rollups) {
+    const m = mergeHarness({ confirm: { statusCheckRollup } });
+    const mr = await merge(CTX, m.deps);
+    assert.equal(mr.outcome, 'merged', detail);
+    assert.equal(m.events.find((e) => e.step === 'merge-confirm').detail, detail);
+    assert.equal(mr.detail, detail);
+  }
+  // A hostile check name is reduced and neutralized before it reaches the result detail.
+  const hostile = mergeHarness({ confirm: { statusCheckRollup: [{ ...GREEN_CHECK, name: '@octo `x` closes #5' }] } });
+  const hr = await merge(CTX, hostile.deps);
+  assert.match(hr.detail, /^merged, .* concluded SUCCESS$/);
+  assert.doesNotMatch(hr.detail, /@|`|#5|closes/i);
+  for (const mergeCommit of [null, {}, { oid: '' }, 'abc']) {
+    const m = mergeHarness({ confirm: { mergeCommit } });
+    assert.deepEqual(pick(await merge(CTX, m.deps)), { outcome: 'merged', reason: null, mergeCommit: null, postMerge: POST_MERGE_STUB });
+  }
+  // Armed: the forge holds the merge. Logged once, nothing torn down, no post-merge.
+  const a = mergeHarness({ prState: BLOCKED_PENDING, confirm: ARMED });
+  const ar = await merge(CTX, a.deps);
+  assert.deepEqual(pick(ar), { outcome: 'armed', reason: null, mergeCommit: null, postMerge: null });
+  assert.equal(modeOf(a), 'auto');
+  const log = a.logs.find((l) => l.step === 'Step 2.5 (merge-verification gate)');
+  assert.equal(log.status, 'AUTO');
+  assert.equal(log.text, ARMED_LOG);
+  assert.equal(log.args[log.args.indexOf('--reversibility') + 1], 'high (gh pr merge --disable-auto)');
+  assert.equal(log.args[log.args.indexOf('--lever') + 1], 'merge-verification=merge-when-green (run-config)');
+  assert.deepEqual(after(a, isConfirmRead).map(shortOf), ['log-decision.js'], 'no teardown, no post-merge');
+  assert.deepEqual([lastEvent(a).step, lastEvent(a).status], ['merge-confirm', 'ok']);
+  assert.match(lastEvent(a).detail, /armed/);
+  // Armed from a green read says what that read showed.
+  const g = mergeHarness({ confirm: ARMED });
+  assert.equal((await merge(CTX, g.deps)).outcome, 'armed');
+  assert.equal(g.logs.find((l) => l.step === 'Step 2.5 (merge-verification gate)').text,
+    'armed — forge holds the merge (mergeStateStatus CLEAN, checks green) on PR #9; reconciler completes cleanup on merged evidence.');
+  // A failed armed log never changes the outcome; the event names it.
+  const lf = mergeHarness({ prState: BLOCKED_PENDING, confirm: ARMED, logReply: { code: 1, stdout: '', stderr: 'x' } });
+  assert.equal((await merge(CTX, lf.deps)).outcome, 'armed');
+  assert.match(lastEvent(lf).detail, /log:Step 2\.5 \(merge-verification gate\)/);
+  // neutralize strips the closing keyword `closed` from details, so CLOSED is named in other words.
+  for (const [state, shown] of [['CLOSED', 'shut, not merged'], ['DRAFT', 'DRAFT']]) {
+    const c = mergeHarness({ confirm: { state } });
+    const cr = await merge(CTX, c.deps);
+    assert.deepEqual(pick(cr), { outcome: 'pending-review', reason: 'merge-refused', mergeCommit: null, postMerge: null }, state);
+    assert.equal(cr.detail, `confirmation read state ${shown}`);
+    assert.equal(lastEvent(c).detail, `merge-refused: confirmation read state ${shown}`);
+    assert.deepEqual(after(c, isConfirmRead), [], state);
+  }
+});
+
+test('AC11.8: exit 0 alone is never merged', async () => {
+  for (const lever of [undefined, WAIT]) {
+    const h = mergeHarness({ verification: lever, confirm: { state: 'OPEN', autoMergeRequest: null } });
+    const r = await merge(CTX, h.deps);
+    assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'merge-refused', mergeCommit: null, postMerge: null });
+    assert.equal(r.detail, 'confirmation read state OPEN');
+    assert.deepEqual([lastEvent(h).step, lastEvent(h).status], ['merge-confirm', 'stop']);
+  }
+});
+
+test('AC11.9: a confirmation read that fails twice is state-read-failed, detail says unconfirmed, no post-merge call', async () => {
+  for (const confirm of [new Error('HTTP 502'), 'not json', '{"state":7}', 'null']) {
+    const h = mergeHarness({ confirm });
+    const r = await merge(CTX, h.deps);
+    assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'state-read-failed', mergeCommit: null, postMerge: null }, String(confirm));
+    assert.equal(r.detail, 'merge call exited 0; state unconfirmed');
+    const reads = h.calls.filter(isConfirmRead);
+    assert.equal(reads.length, 2, 'retried once');
+    assert.deepEqual(after(h, (c) => c === reads[1]), [], 'no call after the second read');
+    assert.deepEqual([lastEvent(h).step, lastEvent(h).status], ['merge-confirm', 'stop']);
+  }
+  // One failure, then a good read: merged on the retry.
+  const once = mergeHarness({ confirm: seq(new Error('HTTP 502'), undefined) });
+  assert.equal((await merge(CTX, once.deps)).outcome, 'merged');
+  assert.equal(once.calls.filter(isConfirmRead).length, 2);
+});
+
+test('AC1.4: auto:merge removed between the two label reads is not-authorized with no merge call', async () => {
+  for (const second of [[], [{ name: 'auto:merge-pending' }], [{ name: 'auto:build' }]]) {
+    const h = mergeHarness({ labels: seq(AUTO_MERGE, second) });
+    const r = await merge(CTX, h.deps);
+    assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'not-authorized', mergeCommit: null, postMerge: null }, JSON.stringify(second));
+    const reads = h.calls.filter(isLabelRead);
+    assert.equal(reads.length, 2);
+    assert.ok(h.calls.indexOf(reads[1]) > h.calls.findIndex(isGateRead), 'the second read is the pre-merge read');
+    assert.deepEqual(after(h, (c) => c === reads[1]), []);
+    noMerge(h);
+    assert.deepEqual([lastEvent(h).step, lastEvent(h).status], ['merge-call', 'stop']);
+  }
+  // Removed during the bounded watch: the BLOCKED poll's pre-merge read refuses.
+  const w = watchHarness({ prState: seq(PENDING, PENDING, BLOCKED_PENDING), labels: seq(AUTO_MERGE, []) });
+  assert.equal((await merge(CTX, w.deps)).reason, 'not-authorized');
+  assert.equal(w.sleeps.length, 2);
+  noMerge(w);
+  // The labels are read again before every merge call: the degraded immediate call too.
+  const d = mergeHarness({ prMerge: ghErr(SIG.notAllowed), labels: seq(AUTO_MERGE, AUTO_MERGE, []) });
+  assert.equal((await merge(CTX, d.deps)).reason, 'not-authorized');
+  assert.equal(mergeCalls(d).length, 1, 'only the --auto call went out');
+  assert.equal(d.calls.filter(isLabelRead).length, 3);
+});
+
+test('AC1.5: a failed pre-merge label read is labels-unreadable with no merge call', async () => {
+  for (const second of [new Error('HTTP 502'), 'not json', '{"labels":null}']) {
+    const h = mergeHarness({ labels: seq(AUTO_MERGE, second) });
+    const r = await merge(CTX, h.deps);
+    assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'labels-unreadable', mergeCommit: null, postMerge: null }, String(second));
+    assert.equal(h.calls.filter(isLabelRead).length, 2);
+    noMerge(h);
+    assert.deepEqual([lastEvent(h).step, lastEvent(h).status], ['merge-call', 'stop']);
+  }
+});
+
+test('AC9.4: every pr merge call carries --match-head-commit ctx.head — auto, immediate, degraded and re-entered paths', async () => {
+  const runs = [
+    ['auto', {}, ['auto']],
+    ['immediate', { verification: WAIT }, ['immediate']],
+    ['degraded', { prMerge: seq(ghErr(SIG.notAllowed), '') }, ['auto', 'immediate']],
+    ['re-entered', { verification: WAIT, reread: seq({ headRefOid: B }, {}) }, ['immediate']],
+    ['watched', { prState: seq(PENDING, BLOCKED_PENDING) }, ['auto']],
+  ];
+  for (const [name, over, modes] of runs) {
+    const h = mergeHarness(over);
+    assert.equal((await merge(CTX, h.deps)).outcome, 'merged', name);
+    const calls = mergeCalls(h);
+    assert.deepEqual(calls.map((c) => (c.args.includes('--auto') ? 'auto' : 'immediate')), modes, name);
+    for (const c of calls) {
+      assert.equal(c.kind, 'ghCreate', `${name}: the write-bound gh kind`);
+      assert.deepEqual(argAfter(c, ['--match-head-commit']), [CTX.head], name);
+      assert.deepEqual(argAfter(c, ['-t', '--body-file', '--repo']), [TITLE, BODY_FILE, 'o/r'], name);
+      assert.ok(!c.args.includes('--admin') && !c.args.includes('--delete-branch'), name);
+    }
+  }
+  const h = mergeHarness();
+  await merge(CTX, h.deps);
+  assert.deepEqual(mergeCalls(h)[0].args,
+    ['pr', 'merge', '9', '--repo', 'o/r', '--auto', '--squash', '-t', TITLE, '--body-file', BODY_FILE, '--match-head-commit', CTX.head]);
+});
+
+test('AC4.1, AC4.2: the happy path calls happen in this order', async () => {
+  const h = mergeHarness();
+  const r = await merge(CTX, h.deps);
+  assert.equal(r.outcome, 'merged');
+  assert.deepEqual(sequenceFromSupplier(h.calls), [
+    'judgments', 'closing-links.js --run', 'compose-subject.js 7', 'readFile title.txt', 'gh pr view isDraft', 'gh pr ready 9',
+    'gh pr view state,mergeStateStatus,mergeable,headRefOid,statusCheckRollup', 'gh run list --commit', 'ready-run.js --pr 9',
+    'gh issue view 7 labels', 'ghCreate pr merge 9 --auto --squash',
+    'gh pr view state,mergedAt,autoMergeRequest,statusCheckRollup,mergeCommit',
+    // Task 6: 'post-merge-run.js --run',
+  ]);
+  const m = h.calls.find(isMergeCall);
+  assert.deepEqual(argAfter(m, ['-t', '--body-file', '--match-head-commit']), [TITLE, path.join(CTX.runDir, 'merge-subject', 'body.md'), CTX.head]);
+  assert.deepEqual(h.events.slice(-2).map((e) => [e.step, e.status]), [['merge-call', 'ok'], ['merge-confirm', 'ok']]);
 });
