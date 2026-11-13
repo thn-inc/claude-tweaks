@@ -9,9 +9,10 @@
 // No test reads that prose, and drift between it and this module is accepted by design (the
 // spec's Gotchas); each step function's comment names the section it ports, by symbol.
 //
-// Every external call except the decisions.md read (`confirmFromFile`, in-process, spec AC3)
-// goes through `deps` (gh, git, node, readFile, lstatType, ...), so this module spawns nothing
-// itself. `merge` never throws: an unexpected throw in any step becomes
+// Every external call except two in-process reads goes through `deps` (gh, git, node, readFile,
+// lstatType, ...), so this module spawns nothing itself. The two: the decisions.md read
+// (`confirmFromFile`, spec AC3), and teardown's worktree-path realpath, which falls back to the
+// imported `safeReal` (`fs.realpathSync`) when no `deps.realpath` is given. `merge` never throws: an unexpected throw in any step becomes
 // `pending-review` / `unclassified` naming the sub-step.
 
 const path = require('node:path');
@@ -27,7 +28,7 @@ const { parseWorktreeList, findWorktreeEntry } = require('../hooks/worktree-reap
 const { safeReal } = require('../hooks/worktree-detect');
 
 const BIN_DIR = path.join(__dirname, '..', '..');
-const AUTHORIZING_LABEL = 'auto:merge';
+const AUTHORIZING_LABEL = LABELS.AUTO_MERGE;
 // The bounded watch (pr-first-merge.md Step 2.5): 15 minutes, polled every 30 seconds.
 const MERGE_WATCH_BOUND_MS = 15 * 60 * 1000;
 const MERGE_WATCH_POLL_MS = 30 * 1000;
@@ -160,6 +161,9 @@ function readLever(s) {
 // Ports the express-lane.md step 9 judgment inputs: the supplier's merge-check verdict and
 // acceptance state, then pr-first-merge.md Step 2's backstop, decisions.md's own verdict line
 // (the latest line per record wins, so a later needs-human beats an earlier auto-merge).
+// The supplier contract: `deps.judgments(ctx)` returns, or resolves to,
+// `{ mergeCheck: { verdict: string }, acceptance: { completed: boolean } }`; a throw, a rejection
+// or any other shape is `supplier-failed`.
 async function consultSupplier(s) {
   const { ctx, deps } = s;
   let j;
@@ -759,6 +763,8 @@ async function watch(s, boundFrom = null) {
 // ---- Step 3: the merge call, its failure signatures, and the confirmation read ----
 
 const CONFIRM_FIELDS = 'state,mergedAt,autoMergeRequest,statusCheckRollup,mergeCommit';
+// A SHA-1 or SHA-256 object id.
+const MERGE_OID = /^[0-9a-f]{40,64}$/i;
 const AUTO_NOT_ALLOWED_LITERALS = [
   'Auto merge is not allowed for this repository',
   'Protected branch rules not configured for this branch',
@@ -863,7 +869,9 @@ async function confirm(s) {
   if (!read) return stop(s, 'merge-confirm', 'state-read-failed', 'merge call exited 0; state unconfirmed');
   if (read.state === 'MERGED') {
     const mc = read.mergeCommit;
-    const mergeCommit = isObject(mc) && typeof mc.oid === 'string' && mc.oid ? mc.oid : null;
+    // Only a full hex object id counts: the sha becomes a `git describe` argument, so anything
+    // else (an option-shaped string included) is treated as no merge commit.
+    const mergeCommit = isObject(mc) && typeof mc.oid === 'string' && MERGE_OID.test(mc.oid) ? mc.oid : null;
     // Check names are free text: the result detail is neutralized like every stop's.
     const detail = neutralize(rollupSummary(read.statusCheckRollup));
     emit(s, 'merge-confirm', 'ok', detail);
@@ -1042,7 +1050,7 @@ function reconcile(s) {
       where = 'run directory followed into the archive';
     } else {
       s.eventsStdoutOnly = true;
-      where = 'run directory and its archive are both missing; events go to stdout only';
+      where = 'run directory and its archive are missing or unreadable; events go to stdout only';
     }
   }
   // Before the reconcile event, so it lands where the rest of the run writes (or on stdout alone).
@@ -1071,6 +1079,7 @@ function teardown(s) {
       gone = true;
     } else {
       try {
+        // A locked worktree refuses a plain `worktree remove`, and this teardown never forces.
         runGit(s, ['worktree', 'unlock', worktree]);
       } catch (err) {
         // A worktree that is not locked is fine; any other refusal is left for the removal to surface.
@@ -1119,8 +1128,6 @@ function teardown(s) {
   return gone;
 }
 
-// Ports Step 5: the remote branch delete, only once the worktree is gone and never for the
-// integration branch. "reference does not exist" (already deleted) is success.
 // ctx.repo is the run's `--repo` slug, host-qualified off github.com (`{host}/owner/name`,
 // repo-resolve.js resolveRepoTarget). A REST path takes the bare owner/name, so the host is split
 // off and travels as --hostname, which also keeps ghOptions from injecting another host.
@@ -1129,6 +1136,10 @@ function apiTarget(repo) {
   return parts.length === 3 ? { slug: `${parts[1]}/${parts[2]}`, host: ['--hostname', parts[0]] } : { slug: String(repo || ''), host: [] };
 }
 
+// Ports Step 5: the remote branch delete, only once the worktree is gone and never for the
+// integration branch. "reference does not exist" (already deleted) is success. The branch goes
+// into the REST path encoded per segment: its `/` separators stay, while a `#`, `?` or `%` in a
+// segment cannot end or reshape the path.
 function deleteRemoteBranch(s, worktreeGone) {
   const { ctx, deps } = s;
   s.stage = 'merge-delete-branch';
@@ -1141,7 +1152,8 @@ function deleteRemoteBranch(s, worktreeGone) {
   let detail = 'deleted the remote branch';
   try {
     const target = apiTarget(ctx.repo);
-    deps.gh(['api', '-X', 'DELETE', `repos/${target.slug}/git/refs/heads/${ctx.branch}`, ...target.host]);
+    const ref = String(ctx.branch).split('/').map(encodeURIComponent).join('/');
+    deps.gh(['api', '-X', 'DELETE', `repos/${target.slug}/git/refs/heads/${ref}`, ...target.host]);
   } catch (err) {
     // Unverified wording: the post-merge prose names only the phrase, matched case-insensitively.
     if (!/reference does not exist/i.test(String((err && err.stderr) || ''))) {
@@ -1167,6 +1179,8 @@ async function postMerge(s) {
   return { verdict: out.verdict, failedSteps: out.failedSteps, failures: [...s.pmFailures] };
 }
 
+// `ciWaitMs` is informational: run.js totals the CI wait from the `merge-watch` events' own
+// ciWaitMs, so adding this field to that total as well would count the wait twice.
 function result(s, outcome, reason, detail, extra = {}) {
   return {
     outcome, reason, detail: detail || '', mergeCommit: null, runDir: s.runDir, ciWaitMs: s.ciWaitMs, postMerge: null,

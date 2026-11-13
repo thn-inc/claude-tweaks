@@ -74,7 +74,8 @@ What each `pending-review` reason leaves behind:
 
 | Reasons | PR | Record labels | Comments |
 |---|---|---|---|
-| `no-supplier`, `gh-absent`, `labels-unreadable`, `not-authorized`, `summary-entry-missing`, `not-pr-first`, `supplier-failed`, `verdict-not-confirmed`, `acceptance-not-completed`, `compose-refused` | draft, untouched | none written | none written by `merge` |
+| `no-supplier`, `summary-entry-missing`, `not-pr-first`, `supplier-failed`, `verdict-not-confirmed`, `acceptance-not-completed` | draft, untouched | none written | none written by `merge` |
+| `gh-absent`, `labels-unreadable`, `not-authorized`, `compose-refused` | draft when the stop precedes mark-ready; otherwise as the last call left it (ready) — the labels are read again before the merge call, and the gate's re-entry recomposes the subject | none written | none written by `merge` |
 | `ready-failed`, `state-read-failed`, `pr-not-open`, `moving-target`, `checks-read-failed` | as the last call left it (ready once marked ready) | none written | none |
 | `merge-refused` | ready (for a confirmation-read refusal, as that read found it) | none written | one on the PR |
 | `check-failed:{names}`, `checks-pending-timeout`, `draft-skip-without-ready-trigger:{files}` | ready (re-drafted only by the label-failure fallback) | `bot:parked` | one on the record |

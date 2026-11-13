@@ -15,7 +15,7 @@ const {
 } = require(path.join(LIB, 'driver', 'merge'));
 const { MERGE_STEP_NAMES } = require(path.join(LIB, 'driver', 'events'));
 const { VERDICT_STEPS, verdictMarker } = require(path.join(LIB, 'dispatch', 'merge-verdict'));
-const { formatEntry } = require(path.join(LIB, 'log-decision', 'append'));
+const { formatEntry, STATUSES } = require(path.join(LIB, 'log-decision', 'append'));
 const { aggregateReproductionProblem } = require(path.join(LIB, 'log-decision', 'aggregate-reproduction'));
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('../../helpers/strip-comments');
 const { readText } = require('../../helpers/read-skill');
@@ -123,13 +123,15 @@ function defaultMergeScript(over, files, logs, applied) {
       const a = c.args;
       const file = a[a.indexOf('--text-file') + 1];
       // The real CLI's refusals (log-decision.js run(): exit 2), so a call it would reject goes red here.
+      // The status set is the real exported one (append.js STATUSES); log-decision.js exports no
+      // other rule, so the text and reversibility checks below are local copies of its own.
       const flag = (name) => (a.includes(name) ? a[a.indexOf(name) + 1] : undefined);
       const stepName = flag('--step');
       const line = String(files[file]).replace(/\s+$/, '');
       const reversibility = flag('--reversibility') === undefined ? 'n/a' : flag('--reversibility');
       // The CLI's aggregate-reproduction check, called as it calls it (a pure function; STAGED lines only).
       const aggregate = aggregateReproductionProblem({ status: flag('--status'), step: stepName, text: line });
-      const refusal = aggregate ? 'aggregate reproduction' : !['AUTO', 'STAGED', 'KEPT-PROMPT', 'SCANNED', 'REFUSED', 'SKIP'].includes(flag('--status')) ? 'bad status'
+      const refusal = aggregate ? 'aggregate reproduction' : !STATUSES.includes(flag('--status')) ? 'bad status'
         : !line.trim() ? 'empty text'
           : /[\r\n]/.test(line) ? 'interior line break'
             : (typeof stepName === 'string' && stepName !== '' && line.trim().startsWith(`${stepName}:`)) ? 'text repeats step'
@@ -2034,6 +2036,31 @@ test('AC12: the remote delete takes a bare owner/name path; a host-qualified rep
   assert.deepEqual(gh.calls.filter((c) => isGh('api')(c)).map((c) => c.args), [['api', '-X', 'DELETE', 'repos/o/r/git/refs/heads/drive-7']]);
 });
 
+test('AC12: the remote delete encodes the branch per path segment, keeping its slashes', async () => {
+  const h = mergeHarness();
+  const r = await merge({ ...CTX, branch: 'feat/a#b' }, h.deps);
+  assert.equal(r.outcome, 'merged');
+  assert.deepEqual(h.calls.filter((c) => isGh('api')(c)).map((c) => c.args), [['api', '-X', 'DELETE', 'repos/o/r/git/refs/heads/feat/a%23b']]);
+});
+
+test('a merge commit oid that is not a full hex object id is no merge commit, and is never passed to git describe', async () => {
+  const bad = '--output=/tmp/x';
+  for (const oid of [bad, 'f'.repeat(39), 'g'.repeat(40)]) {
+    const h = mergeHarness({ confirm: { mergeCommit: { oid } } });
+    const r = await merge(CTX, h.deps);
+    assert.equal(r.outcome, 'merged', oid);
+    assert.equal(r.mergeCommit, null, oid);
+    assert.ok(r.postMerge.failures.includes('release-status'), `${oid}: ${JSON.stringify(r.postMerge.failures)}`);
+    assert.ok(!h.calls.some((c) => c.kind === 'git' && c.args.includes(oid)), `${oid}: no git call carries the value`);
+    assert.ok(!h.calls.some(isGit('describe')), `${oid}: no describe`);
+  }
+  // A SHA-256 id (64 hex digits, either case) is a merge commit.
+  const long = 'A'.repeat(64);
+  const l = mergeHarness({ confirm: { mergeCommit: { oid: long } } });
+  assert.equal((await merge(CTX, l.deps)).mergeCommit, long);
+  assert.ok(l.calls.some((c) => isGit('describe')(c) && c.args.includes(long)));
+});
+
 test('AC12: the release-status describe runs in the C locale; the fetch keeps the inherited env', async () => {
   const h = mergeHarness();
   await merge(CTX, h.deps);
@@ -2527,6 +2554,8 @@ test('REASONS: every reason literal and pass-through merge.js reports is in the 
 test('AC6.3: a conflict run leaves the branch tip and the integration branch tip unchanged (real git)', async () => {
   const repo = gitRepo({ branch: 'main' });
   const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.test', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.test' };
+  // An inherited repo pointer (a hook or nested git run) would aim these calls at another repository.
+  for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE']) delete env[key];
   const git = (...args) => fixtureGit(['-C', repo, ...args], { env, encoding: 'utf8', windowsHide: true }).trim();
   // Diverged tips: a branch commit and a later main commit, so a merge, rebase or reset would move one.
   git('switch', '-q', '-c', 'drive-7');
