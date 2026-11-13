@@ -57,7 +57,7 @@
   },
   "skill:gh-api-module-pattern": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1794504163629
+    "lastAuditedMs": 1794542668669
   },
   "skill:skill-prose-conformance-tests": {
     "lastAuditedSha": null,
@@ -65,7 +65,7 @@
   },
   "skill:shared-contract-extraction": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1794494171321
+    "lastAuditedMs": 1794542651005
   },
   "skill:work-record-facet-rename": {
     "lastAuditedSha": null,
@@ -109,11 +109,11 @@
   },
   "skill:pre-tool-use-gate-exemptions": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1794504161378
+    "lastAuditedMs": 1794542660235
   },
   "skill:parse-signal-discipline": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1794501553845
+    "lastAuditedMs": 1794542150586
   },
   "skill:scratch-worktree": {
     "lastAuditedSha": null,
@@ -129,7 +129,7 @@
   },
   "skill:driver-skill-outcome-taxonomy": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1794538253227
+    "lastAuditedMs": 1794542145442
   },
   "skill:release": {
     "lastAuditedSha": null,
@@ -169,7 +169,7 @@
   },
   "skill:windows-checkout-test-parity": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793733987136
+    "lastAuditedMs": 1794542672198
   },
   "skill:node-test-output-evidence": {
     "lastAuditedSha": null,
@@ -181,7 +181,7 @@
   },
   "skill:merge-shape-landed-proof": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793682327511
+    "lastAuditedMs": 1794542663953
   },
   "skill:test": {
     "lastAuditedSha": null,
@@ -213,7 +213,7 @@
   },
   "skill:hooks-js-verb-registration": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793748978317
+    "lastAuditedMs": 1794542657062
   },
   "skill:verify-scope-rule-kind": {
     "lastAuditedSha": null,
@@ -265,10 +265,18 @@
   },
   "skill:headless-worker-launch": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1794501550396
+    "lastAuditedMs": 1794542142632
   },
   "skill:dispatch-queue-exclusion-addition": {
     "lastAuditedSha": null,
     "lastAuditedMs": 1794538251633
+  },
+  "skill:driver-step-addition": {
+    "lastAuditedSha": null,
+    "lastAuditedMs": 1794542136312
+  },
+  "skill:removal-condition-execution": {
+    "lastAuditedSha": null,
+    "lastAuditedMs": 1794542654104
   }
 }
