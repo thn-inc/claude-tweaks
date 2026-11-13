@@ -199,9 +199,11 @@ const FIXES_END_TOKENS = ['<!-- fixes-end -->', '[claude-tweaks-fixes-end]'];
 // 'below') of `lines` (mutated); true when it wrote. A blank neighbour (the
 // newline a stripped comment leaves behind) is filled; otherwise a new line is
 // spliced in, so no existing text is touched. A CRLF body keeps its endings.
-function restoreHtmlForm(lines, htmlToken, plainToken, side) {
+// `after` (an index) limits the plain companion to a line past it, so an end
+// token is placed against the first plain end following its start.
+function restoreHtmlForm(lines, htmlToken, plainToken, side, after = -1) {
   if (lines.some((l) => l.includes(htmlToken))) return false;
-  const at = lines.findIndex((l) => l.trim() === plainToken);
+  const at = lines.findIndex((l, i) => i > after && l.trim() === plainToken);
   if (at === -1) return false;
   const at2 = side === 'above' ? at - 1 : at + 1;
   const neighbour = lines[at2];
@@ -246,20 +248,20 @@ function repairPrBody({ body, runId, fixesLines }) {
   }
 
   const lines = result.split('\n');
-  const plainRun = lines.map((l) => /^claude-tweaks-run:\s*(\S+)$/.exec(l.trim())).find(Boolean);
+  const plainRunAt = lines.findIndex((l) => /^claude-tweaks-run:\s*(\S+)$/.test(l.trim()));
+  const plainRun = plainRunAt === -1 ? null : /^claude-tweaks-run:\s*(\S+)$/.exec(lines[plainRunAt].trim());
   if (plainRun && !/<!--\s*claude-tweaks-run:\s*\S+\s*-->/.test(result)
-    && restoreHtmlForm(lines, runMarkerHtml(plainRun[1]), runMarkerPlain(plainRun[1]), 'above')) {
+    && restoreHtmlForm(lines, runMarkerHtml(plainRun[1]), lines[plainRunAt].trim(), 'above')) {
     restored.push('run marker HTML form');
   }
-  const phases = [
-    restoreHtmlForm(lines, PHASES_START_TOKENS[0], PHASES_START_TOKENS[1], 'above'),
-    restoreHtmlForm(lines, PHASES_END_TOKENS[0], PHASES_END_TOKENS[1], 'below'),
-  ];
+  const restoreSpan = (start, end) => {
+    const startRestored = restoreHtmlForm(lines, start[0], start[1], 'above');
+    const startAt = lines.findIndex((l) => l.trim() === start[1]);
+    return [startRestored, restoreHtmlForm(lines, end[0], end[1], 'below', startAt)];
+  };
+  const phases = restoreSpan(PHASES_START_TOKENS, PHASES_END_TOKENS);
   if (phases.some(Boolean)) restored.push('phases HTML markers');
-  const fixes = [
-    restoreHtmlForm(lines, FIXES_START_TOKENS[0], FIXES_START_TOKENS[1], 'above'),
-    restoreHtmlForm(lines, FIXES_END_TOKENS[0], FIXES_END_TOKENS[1], 'below'),
-  ];
+  const fixes = restoreSpan(FIXES_START_TOKENS, FIXES_END_TOKENS);
   if (fixes.some(Boolean)) restored.push('fixes HTML markers');
   result = lines.join('\n');
 

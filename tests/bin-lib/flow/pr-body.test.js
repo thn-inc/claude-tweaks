@@ -228,7 +228,7 @@ test('#5358: repeated MCP read-repair-write cycles leave the body unchanged', ()
   assert.equal(body, early);
 });
 
-test('#5358: a plain marker with no blank neighbour gets the HTML form on a new line', () => {
+test('#5358: a body with its HTML marker lines removed entirely gets every HTML form back', () => {
   const input = earlyR1().split('\n').filter((l) => !/^<!--.*-->$/.test(l)).join('\n');
   const out = repairPrBody({ body: input, runId: 'r1', fixesLines: ['Fixes #1'] }).body;
   const lines = out.split('\n');
@@ -253,6 +253,27 @@ test('#5358: a plain marker whose neighbour is text gets the HTML form spliced o
     '- [ ] build', '[claude-tweaks-phases-end]', '<!-- phases-end -->', 'after phases', '<!-- fixes-start -->',
     '[claude-tweaks-fixes-start]', 'Fixes #1', '[claude-tweaks-fixes-end]', '<!-- fixes-end -->', 'after fixes',
   ].join('\n'));
+});
+
+test('#5358: a non-canonical plain run marker still gets its HTML form, the plain line untouched', () => {
+  const input = mcpRead(earlyR1()).replace('claude-tweaks-run: r1', 'claude-tweaks-run:r1');
+  const out = repairPrBody({ body: input, runId: 'r1', fixesLines: ['Fixes #1'] });
+  const lines = out.body.split('\n');
+  assert.equal(lines[0], '<!-- claude-tweaks-run: r1 -->');
+  assert.equal(lines[1], 'claude-tweaks-run:r1');
+  assert.ok(out.restored.includes('run marker HTML form'));
+});
+
+test('#5358: an end token quoted in the Spec summary does not pull the HTML end token before its start', () => {
+  const quoted = composePrEarlyBody({
+    runId: 'r1', specSummary: 'quote:\n[claude-tweaks-phases-end]\nend quote', target: '#1', nextStep: 'test', fixesLines: ['Fixes #1'],
+  });
+  const lines = repairPrBody({ body: mcpRead(quoted), runId: 'r1', fixesLines: ['Fixes #1'] }).body.split('\n');
+  const htmlStart = lines.indexOf('<!-- phases-start -->');
+  const htmlEnd = lines.indexOf('<!-- phases-end -->');
+  assert.ok(htmlStart !== -1 && htmlEnd > htmlStart, `end ${htmlEnd} after start ${htmlStart}`);
+  const realEnd = lines.indexOf('[claude-tweaks-phases-end]', lines.indexOf('[claude-tweaks-phases-start]'));
+  assert.equal(htmlEnd, realEnd + 1);
 });
 
 test('#5358: the restored HTML run marker keeps the run id its plain companion names', () => {
