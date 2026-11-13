@@ -18,7 +18,8 @@
 // reason is never pre-screened, never handled and never counted. A claim stop
 // ends the run with the rest of the budget unused: claim-targets.js exit 7
 // (`permission-stop`), or exit 2 or 6 (`claim-stop`), whose cause every later claim would meet
-// too; exits 3, 4 and 5 and a failed mint are per-record.
+// too; exits 3, 4 and 5, an exit 0 that claimed nothing, a killed claim and a failed mint are
+// per-record.
 //
 // Termination: every member of every handled group, and every member of a selectable group whose
 // members the pre-screen all skips, joins the in-memory `firing` set handed to the ranking, so no
