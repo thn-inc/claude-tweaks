@@ -94,12 +94,35 @@
 //             short-name alias of an existing directory resolved) is judged again for the `.git` and
 //             `node_modules` segments, isTestPath, and the protected / merge-sensitive check.
 
+//
+// Evidence write, run and check. The caller asks isIgnored first: git status cannot see an ignored
+// file, so the tree check would never notice one, and such a finding is discarded unwritten.
+//   writeEvidence  runs the whole PATH_RULES chain again at write time, creates the missing parents
+//                  one component at a time, checks that the final parent's canonical path still
+//                  lies inside the worktree's and runs the chain once more (it now judges the real
+//                  parent), then creates the file exclusively (`wx`, which on POSIX also refuses a
+//                  symlink at the leaf). Any failure throws, after taking back the directories it
+//                  made; the caller stops the record.
+//   removeEvidence removes the file, then each directory writeEvidence made, deepest first; a
+//                  directory something else now holds a file in stays (ENOTEMPTY / EEXIST).
+//   runEvidence    runs `node --test` (deps.execPath, an argument list, no shell) on the relative
+//                  path in the worktree, with the launcher's allow-listed environment plus
+//                  GH_CONFIG_DIR at an empty directory, under the launcher's wall-clock kill
+//                  (superviseChild). The child is shared.activeWorker while it runs, so a signal to
+//                  the driver reaches its process group. A run that cannot start throws; a run
+//                  interrupted by a signal gives no verdict.
+//   treeDelta      git status against the expectation: every reported path that is neither a run
+//                  artifact nor an expected evidence file, plus every expected file git does not
+//                  report as untracked.
+
 const path = require('path');
 const { parseRecordFacets } = require('../issues/record');
 const { EXPRESS_MAX_KEY_FILES, isProtectedPath } = require('../express/eligibility');
 const { classifyDiffFiles, isSensitivePath } = require('../issues/blast-radius');
 const { isAncestorOrSelf } = require('../path-guard');
 const { relativeDisplayId } = require('../shared-primitives');
+const { parseStatusPorcelainZ } = require('../git-z');
+const { buildEnv, superviseChild } = require('./worker');
 
 const MAX_FINDINGS = 5;
 const EVIDENCE_PATH_MAX_CHARS = 200;
@@ -363,6 +386,133 @@ function pathRuleViolation(p, opts) {
   return rule ? rule.name : null;
 }
 
+// Whether git ignores the evidence path. check-ignore exits 0 for ignored and 1 for not ignored;
+// deps.git throws on any non-zero exit (execFileSync's error, with `status`). Any other failure is
+// no answer and throws.
+const CHECK_IGNORE_NOT_IGNORED = 1;
+function isIgnored({ wt, rel, deps }) {
+  try {
+    deps.git(['-C', wt, 'check-ignore', '-q', '--no-index', '--', rel], { cwd: wt });
+    return true;
+  } catch (err) {
+    if (err && err.status === CHECK_IGNORE_NOT_IGNORED) return false;
+    throw err;
+  }
+}
+
+function refuseOnViolation(rel, opts, when) {
+  const rule = pathRuleViolation(rel, opts);
+  if (rule) throw new Error(`evidence path refused ${when}: ${rule}`);
+}
+
+// Directories made here, removed deepest first. Best effort: the caller is already handling the
+// failure that brought it here, and a directory that will not go stays for it to report.
+function takeBack(createdDirs, deps) {
+  for (const dir of [...createdDirs].reverse()) {
+    try {
+      deps.rmdir(dir);
+    } catch {
+      // Left for the caller's stop.
+    }
+  }
+}
+
+// Writes one evidence file (see the header). rel is the validated, `/`-separated path relative to
+// the worktree root. No message carries rel or any other reviewer text.
+function writeEvidence({ wt, rel, content, sensitivePaths, deps }) {
+  const opts = { wt, sensitivePaths, deps };
+  refuseOnViolation(rel, opts, 'at write time');
+  const root = path.resolve(wt);
+  const segs = segments(rel);
+  const abs = absoluteIn(root, rel);
+  const createdDirs = [];
+  try {
+    for (let i = 1; i < segs.length; i += 1) {
+      const dir = absoluteIn(root, segs.slice(0, i).join('/'));
+      if (deps.lstatType(dir).type !== 'missing') continue;
+      deps.mkdirSync(dir);
+      createdDirs.push(dir);
+    }
+    const rootReal = deps.canonicalRealpath(root);
+    const parentReal = deps.canonicalRealpath(path.dirname(abs));
+    if (typeof rootReal !== 'string' || typeof parentReal !== 'string' || !isAncestorOrSelf(rootReal, parentReal)) {
+      throw new Error('evidence parent directory resolves outside the worktree');
+    }
+    refuseOnViolation(rel, opts, 'once its parents exist');
+    deps.writeFileExclusive(abs, content);
+  } catch (err) {
+    takeBack(createdDirs, deps);
+    throw err;
+  }
+  return { abs, createdDirs };
+}
+
+// A directory that is not empty (ENOTEMPTY, or EEXIST on some platforms) holds something the
+// tree check will name; it is not a removal failure.
+const RMDIR_NOT_EMPTY = ['ENOTEMPTY', 'EEXIST'];
+function removeEvidence({ abs, createdDirs, deps }) {
+  deps.rmFile(abs);
+  for (const dir of [...createdDirs].reverse()) {
+    try {
+      deps.rmdir(dir);
+    } catch (err) {
+      if (!(err && RMDIR_NOT_EMPTY.includes(err.code))) throw err;
+    }
+  }
+}
+
+// Runs one evidence file (see the header). dest is the TAP destination, fresh for each run: a
+// stale file left there by an earlier run would be read as this run's stream.
+async function runEvidence({ wt, rel, dest, runDir, shared, testCommand, deps, wallClockMs = EVIDENCE_RUN_TIMEOUT_MS }) {
+  const args = evidenceArgs(testCommand, rel, dest);
+  if (args === null) throw new Error('the evidence rule does not cover the test command');
+  deps.mkdirSync(path.dirname(dest), { recursive: true });
+  // An empty gh config dir: an evidence test calling `gh` finds no config-file auth.
+  const ghConfigDir = path.join(runDir, 'gh-config-empty');
+  deps.mkdirSync(ghConfigDir, { recursive: true });
+  const env = { ...buildEnv(deps.env, deps.platform), GH_CONFIG_DIR: ghConfigDir };
+  let outcome;
+  try {
+    const handle = deps.runner({ file: deps.execPath, args, options: { cwd: wt, env }, input: '', platform: deps.platform });
+    shared.activeWorker = handle;
+    outcome = await superviseChild({ handle, runner: deps.runner, platform: deps.platform, env: deps.env, wallClockMs, timers: deps.timers });
+  } finally {
+    shared.activeWorker = null;
+  }
+  if (shared.interrupted) return { verdict: 'unplaceable', interrupted: true };
+  if (outcome.spawnError !== undefined) {
+    const code = outcome.spawnError && outcome.spawnError.code;
+    throw new Error(`the evidence run did not start${code ? ` (${code})` : ''}`);
+  }
+  let tap = '';
+  try {
+    tap = deps.readFile(dest);
+  } catch {
+    // No stream: the rule places nothing.
+  }
+  const { verdict } = classifyEvidenceRun({ code: outcome.code, timedOut: outcome.timedOut, tap });
+  return { verdict, timedOut: outcome.timedOut };
+}
+
+// The worktree's changes against the expectation (see the header). expected is a Set of
+// `/`-separated paths relative to the worktree root, as git prints them. A git failure or a record
+// git-z cannot parse throws.
+function treeDelta({ wt, expected, deps, isRunArtifact }) {
+  const raw = deps.git(['-C', wt, '--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=all'], { cwd: wt });
+  const delta = [];
+  const untrackedExpected = new Set();
+  const add = (p) => { if (!delta.includes(p)) delta.push(p); };
+  for (const entry of parseStatusPorcelainZ(String(raw), { strict: true })) {
+    for (const p of [entry.path, entry.origPath]) {
+      if (typeof p !== 'string' || p === '' || isRunArtifact(p)) continue;
+      if (!expected.has(p)) add(p);
+      else if (entry.xy === '??') untrackedExpected.add(p);
+    }
+  }
+  for (const p of expected) if (!untrackedExpected.has(p)) add(p);
+  return delta;
+}
+
 module.exports = {
   MAX_FINDINGS,
   EVIDENCE_PATH_MAX_CHARS,
@@ -379,4 +529,9 @@ module.exports = {
   contentViolation,
   PATH_RULES,
   pathRuleViolation,
+  isIgnored,
+  writeEvidence,
+  removeEvidence,
+  runEvidence,
+  treeDelta,
 };

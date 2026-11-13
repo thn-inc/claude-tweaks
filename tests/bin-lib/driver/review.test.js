@@ -10,8 +10,9 @@ const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const {
   classifyEvidenceRun, evidenceArgs, EVIDENCE_COMMANDS, reviewRequired, findingShapeViolation, evidenceShapeViolation,
   pathRuleViolation, contentViolation, PATH_RULES, MAX_FINDINGS, EVIDENCE_PATH_MAX_CHARS, EVIDENCE_CONTENT_MAX_BYTES,
-  EVIDENCE_RUN_TIMEOUT_MS, EVENT_TEXT_MAX_CHARS,
+  EVIDENCE_RUN_TIMEOUT_MS, EVENT_TEXT_MAX_CHARS, runEvidence, writeEvidence, removeEvidence, treeDelta, isIgnored,
 } = require(path.join(LIB, 'driver', 'review.js'));
+const { lstatType, canonicalRealpath } = require(path.join(LIB, 'path-guard'));
 const { EXPRESS_MAX_KEY_FILES } = require(path.join(LIB, 'express', 'eligibility.js'));
 const { POLICY_KEYS } = require(path.join(LIB, 'policy-schema.js'));
 const { REVIEW_RESULT_SCHEMA, ROLES, composeArgs } = require(path.join(LIB, 'driver', 'roles.js'));
@@ -468,4 +469,317 @@ test('AC5: named bounds', () => {
   const wallClock = POLICY_KEYS.find((k) => k.key === 'express-driver-wall-clock-minutes');
   assert.ok(Number.isSafeInteger(wallClock.min) && wallClock.min >= 1);
   assert.ok(EVIDENCE_RUN_TIMEOUT_MS < 60000 * wallClock.min);
+});
+
+// An evidence run over fakes. The runner records every call and answers with `outcome`; with
+// `hang` its child never exits until killed (by the handle's kill, or on win32 by a taskkill call
+// through the same runner). `tap` is what deps.readFile returns for the destination (undefined:
+// it throws). Every call lands in `calls` in order.
+const RUN_DIR = path.resolve('/run');
+const DEST = path.join(RUN_DIR, 'review', 'evidence-0.tap');
+const REL = 'tests/new/a.test.js';
+function evidenceRig({ outcome = { code: 0 }, tap, platform = 'darwin', hang = false, exited } = {}) {
+  const calls = [];
+  const kills = [];
+  let settle = null;
+  const runner = (call) => {
+    calls.push({ kind: 'runner', ...call });
+    if (call.file === 'taskkill') {
+      if (settle) settle({ code: 1, signal: null, stdout: '', stderr: '' });
+      return { pid: 99, kill() {}, exited: Promise.resolve({ code: 0, signal: null }) };
+    }
+    if (hang) {
+      return {
+        pid: 4242,
+        kill(signal) { kills.push(signal); if (settle) settle({ code: null, signal, stdout: '', stderr: '' }); },
+        exited: new Promise((resolve) => { settle = resolve; }),
+      };
+    }
+    return { pid: 4242, kill(signal) { kills.push(signal); }, exited: exited ? exited() : Promise.resolve({ signal: null, stdout: '', stderr: '', ...outcome }) };
+  };
+  const deps = {
+    execPath: path.resolve('/opt/node/bin/node'),
+    platform,
+    env: { PATH: '/bin', HOME: '/h', GH_TOKEN: 'gho_secret', Path: 'C:\\bin', SystemRoot: 'C:\\Windows' },
+    timers: { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (timer) => clearTimeout(timer) },
+    runner,
+    mkdirSync: (p, opts) => { calls.push({ kind: 'mkdirSync', args: [p, opts] }); },
+    readFile: (p) => {
+      calls.push({ kind: 'readFile', p });
+      if (tap === undefined) throw Object.assign(new Error('no such file'), { code: 'ENOENT' });
+      return tap;
+    },
+  };
+  const shared = { activeWorker: null, interrupted: false };
+  const args = { wt: WT, rel: REL, dest: DEST, runDir: RUN_DIR, shared, testCommand: 'npm test', deps };
+  return { args, deps, calls, kills, shared };
+}
+
+// One test per discard case; each fixture's frozen TAP with its recorded exit code.
+const RUN_CASES = [
+  { name: 'assert-fail', code: 1, verdict: 'reproduced' },
+  { name: 'pass', code: 0, verdict: 'passed' },
+  { name: 'no-test', code: 0, verdict: 'passed' },
+  { name: 'syntax', code: 1, verdict: 'load-failure' },
+  { name: 'load-throw', code: 1, verdict: 'load-failure' },
+];
+for (const c of RUN_CASES) {
+  test(`AC7: a confirmed run needs the reproduced verdict (${c.name} -> ${c.verdict})`, async () => {
+    const rig = evidenceRig({ outcome: { code: c.code }, tap: tapOf(c.name) });
+    assert.deepStrictEqual(await runEvidence(rig.args), { verdict: c.verdict, timedOut: false });
+    assert.deepStrictEqual(rig.calls.filter((x) => x.kind === 'readFile').map((x) => x.p), [DEST]);
+  });
+}
+
+test('AC7: a confirmed run needs the reproduced verdict (an unplaceable stream)', async () => {
+  const rig = evidenceRig({ outcome: { code: 1 }, tap: 'TAP version 13\ngarbage\n' });
+  assert.deepStrictEqual(await runEvidence(rig.args), { verdict: 'unplaceable', timedOut: false });
+});
+
+test('AC7: a confirmed run needs the reproduced verdict (an unreadable TAP destination reads as empty)', async () => {
+  const rig = evidenceRig({ outcome: { code: 1 } });
+  assert.deepStrictEqual(await runEvidence(rig.args), { verdict: 'unplaceable', timedOut: false });
+});
+
+test('AC7: a confirmed run needs the reproduced verdict (a timed-out run, even with a reproduced TAP)', async () => {
+  const rig = evidenceRig({ hang: true, tap: tapOf('assert-fail') });
+  assert.deepStrictEqual(await runEvidence({ ...rig.args, wallClockMs: 50 }), { verdict: 'timeout', timedOut: true });
+});
+
+test('AC7: the test command is spawned without a shell, in the worktree, with the relative path as one argument', async () => {
+  const rig = evidenceRig({ outcome: { code: 1 }, tap: tapOf('assert-fail') });
+  await runEvidence(rig.args);
+  const spawns = rig.calls.filter((x) => x.kind === 'runner');
+  assert.strictEqual(spawns.length, 1);
+  const [call] = spawns;
+  assert.strictEqual(call.file, rig.deps.execPath);
+  assert.deepStrictEqual(call.args, evidenceArgs('npm test', REL, DEST));
+  assert.strictEqual(call.args.filter((a) => a === REL).length, 1);
+  assert.strictEqual(call.options.cwd, WT);
+  assert.ok(!Object.hasOwn(call.options, 'shell'));
+  assert.ok(!Object.hasOwn(call.options.env, 'GH_TOKEN'));
+  assert.strictEqual(call.options.env.GH_CONFIG_DIR, path.join(RUN_DIR, 'gh-config-empty'));
+  assert.deepStrictEqual(call.options.env, { PATH: '/bin', HOME: '/h', GH_CONFIG_DIR: path.join(RUN_DIR, 'gh-config-empty') });
+  assert.strictEqual(call.input, '');
+  assert.strictEqual(call.platform, 'darwin');
+});
+
+test('AC7: runEvidence creates the TAP destination\'s directory before the spawn', async () => {
+  const rig = evidenceRig({ outcome: { code: 0 }, tap: tapOf('pass') });
+  await runEvidence(rig.args);
+  const kinds = rig.calls.map((x) => x.kind);
+  assert.deepStrictEqual(rig.calls[0], { kind: 'mkdirSync', args: [path.dirname(DEST), { recursive: true }] });
+  // The empty gh config directory the child is pointed at exists too, before the spawn.
+  const ghDir = rig.calls.findIndex((x) => x.kind === 'mkdirSync' && x.args[0] === path.join(RUN_DIR, 'gh-config-empty'));
+  assert.ok(ghDir > 0 && ghDir < kinds.indexOf('runner'), JSON.stringify(rig.calls));
+});
+
+test('AC7: a run past the bound kills the child tree', async () => {
+  const posix = evidenceRig({ hang: true, tap: 'TAP version 13\n' });
+  assert.deepStrictEqual(await runEvidence({ ...posix.args, wallClockMs: 50 }), { verdict: 'timeout', timedOut: true });
+  assert.deepStrictEqual(posix.kills, ['SIGTERM']);
+  assert.strictEqual(posix.calls.filter((x) => x.kind === 'runner').length, 1);
+  const win = evidenceRig({ hang: true, tap: 'TAP version 13\n', platform: 'win32' });
+  assert.deepStrictEqual(await runEvidence({ ...win.args, wallClockMs: 50 }), { verdict: 'timeout', timedOut: true });
+  const taskkill = win.calls.filter((x) => x.kind === 'runner' && x.file === 'taskkill');
+  assert.strictEqual(taskkill.length, 1);
+  assert.deepStrictEqual(taskkill[0].args, ['/T', '/F', '/PID', '4242']);
+  assert.strictEqual(win.calls.find((x) => x.kind === 'runner').options.env.SystemRoot, 'C:\\Windows');
+});
+
+test('AC7: the evidence child is shared.activeWorker for exactly the run, and an interrupt yields', async () => {
+  let seen = null;
+  let rig = null;
+  rig = evidenceRig({ tap: tapOf('assert-fail'), exited: () => Promise.resolve().then(() => { seen = rig.shared.activeWorker; return { code: 1, signal: null }; }) });
+  assert.deepStrictEqual(await runEvidence(rig.args), { verdict: 'reproduced', timedOut: false });
+  assert.ok(seen && seen.pid === 4242, 'the handle was not shared.activeWorker during the run');
+  assert.strictEqual(rig.shared.activeWorker, null);
+  // A signal during the run: no TAP is read and no verdict is given.
+  const hit = evidenceRig({ tap: tapOf('assert-fail'), exited: () => Promise.resolve().then(() => { hit.shared.interrupted = 'SIGINT'; return { code: 1, signal: null }; }) });
+  assert.deepStrictEqual(await runEvidence(hit.args), { verdict: 'unplaceable', interrupted: true });
+  assert.strictEqual(hit.shared.activeWorker, null);
+  assert.ok(!hit.calls.some((x) => x.kind === 'readFile'));
+});
+
+test('AC7: an evidence run that cannot start, or a command the rule does not cover, throws', async () => {
+  const failed = evidenceRig({ exited: () => Promise.reject(Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' })) });
+  await assert.rejects(runEvidence(failed.args), /did not start/);
+  assert.strictEqual(failed.shared.activeWorker, null);
+  const thrown = evidenceRig();
+  thrown.deps.runner = () => { throw new Error('spawn EAGAIN'); };
+  await assert.rejects(runEvidence(thrown.args), /EAGAIN/);
+  assert.strictEqual(thrown.shared.activeWorker, null);
+  const uncovered = evidenceRig();
+  await assert.rejects(runEvidence({ ...uncovered.args, testCommand: 'pytest' }), /does not cover/);
+  assert.ok(!uncovered.calls.some((x) => x.kind === 'runner'));
+});
+
+// The real file system, through the path-guard primitives realDeps uses, with every write and
+// removal recorded.
+function fsDeps(log = []) {
+  return {
+    lstatType: (p) => lstatType(p),
+    canonicalRealpath: (p) => canonicalRealpath(p),
+    mkdirSync: (p, opts) => { log.push(['mkdirSync', p, opts]); fs.mkdirSync(p, opts); },
+    writeFileExclusive: (p, s) => { log.push(['writeFileExclusive', p]); fs.writeFileSync(p, s, { flag: 'wx' }); },
+    rmFile: (p) => { log.push(['rmFile', p]); fs.unlinkSync(p); },
+    rmdir: (p) => { log.push(['rmdir', p]); fs.rmdirSync(p); },
+  };
+}
+const tmpWt = (t) => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'review-wt-'));
+  t.after(() => fs.rmSync(d, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(d, 'tests'));
+  return d;
+};
+const CONTENT = VALID_EVIDENCE.content;
+
+test('AC7: writeEvidence creates parents and removeEvidence takes back only what it created', (t) => {
+  const wt = tmpWt(t);
+  const log = [];
+  const deps = fsDeps(log);
+  const { abs, createdDirs } = writeEvidence({ wt, rel: 'tests/new/deep/a.test.js', content: CONTENT, sensitivePaths: [], deps });
+  assert.strictEqual(abs, path.join(wt, 'tests', 'new', 'deep', 'a.test.js'));
+  assert.deepStrictEqual(createdDirs, [path.join(wt, 'tests', 'new'), path.join(wt, 'tests', 'new', 'deep')]);
+  assert.strictEqual(fs.readFileSync(abs, 'utf8'), CONTENT);
+  // One component at a time, never recursive.
+  assert.deepStrictEqual(log.filter((e) => e[0] === 'mkdirSync').map((e) => e.slice(1)), createdDirs.map((d) => [d, undefined]));
+  removeEvidence({ abs, createdDirs, deps });
+  assert.strictEqual(lstatType(path.join(wt, 'tests')).type, 'directory');
+  assert.strictEqual(lstatType(path.join(wt, 'tests', 'new')).type, 'missing');
+  // Deepest first.
+  assert.deepStrictEqual(log.filter((e) => e[0] === 'rmdir').map((e) => e[1]), [...createdDirs].reverse());
+  // A file at the worktree root creates no directory.
+  const root = writeEvidence({ wt, rel: 'a.test.js', content: CONTENT, sensitivePaths: [], deps });
+  assert.deepStrictEqual(root.createdDirs, []);
+  removeEvidence({ ...root, deps });
+  assert.strictEqual(lstatType(path.join(wt, 'a.test.js')).type, 'missing');
+});
+
+test('AC7: writeEvidence is create-only', (t) => {
+  const wt = tmpWt(t);
+  const target = path.join(wt, 'tests', 'a.test.js');
+  fs.writeFileSync(target, 'original');
+  // A pre-existing file is refused by the write-time path check.
+  assert.throws(() => writeEvidence({ wt, rel: 'tests/a.test.js', content: CONTENT, sensitivePaths: [], deps: fsDeps() }), /exists/);
+  // A file that appears after the check is refused by the exclusive create itself.
+  const racing = { ...fsDeps(), lstatType: (p) => (p === target ? { type: 'missing', code: 'ENOENT' } : lstatType(p)) };
+  assert.throws(() => writeEvidence({ wt, rel: 'tests/a.test.js', content: CONTENT, sensitivePaths: [], deps: racing }), { code: 'EEXIST' });
+  assert.strictEqual(fs.readFileSync(target, 'utf8'), 'original');
+});
+
+test('AC7: writeEvidence re-checks the whole path rule chain at write time', (t) => {
+  const wt = tmpWt(t);
+  const log = [];
+  // A rule from each part of the chain: lexical, the merge-sensitive setting, the file system.
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'review-outside-'));
+  t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
+  fs.symlinkSync(outside, path.join(wt, 'tests', 'escape'));
+  const cases = [
+    ['tests/../a.test.js', [], /dot-segment-or-not-normal/],
+    ['secure/a.test.js', ['secure/**'], /protected-or-sensitive/],
+    ['tests/escape/a.test.js', [], /parent-escapes/],
+  ];
+  for (const [rel, sensitivePaths, want] of cases) {
+    assert.throws(() => writeEvidence({ wt, rel, content: CONTENT, sensitivePaths, deps: fsDeps(log) }), want, rel);
+  }
+  assert.deepStrictEqual(log, [], 'a refused path wrote or created something');
+});
+
+test('AC7: writeEvidence refuses a parent that left the worktree once created, and takes back its directories', (t) => {
+  const wt = tmpWt(t);
+  const log = [];
+  const deep = path.join(wt, 'tests', 'new', 'deep');
+  // The final parent resolves outside the worktree only once it exists (a swap after the check).
+  const deps = { ...fsDeps(log), canonicalRealpath: (p) => (p === deep && lstatType(p).type === 'directory' ? path.resolve('/elsewhere/deep') : canonicalRealpath(p)) };
+  assert.throws(() => writeEvidence({ wt, rel: 'tests/new/deep/a.test.js', content: CONTENT, sensitivePaths: [], deps }), /outside the worktree/);
+  assert.ok(!log.some((e) => e[0] === 'writeFileExclusive'));
+  assert.strictEqual(lstatType(path.join(wt, 'tests', 'new')).type, 'missing');
+  assert.strictEqual(lstatType(path.join(wt, 'tests')).type, 'directory');
+});
+
+test('AC7: writeEvidence judges the real parent again once it exists', (t) => {
+  const wt = tmpWt(t);
+  const log = [];
+  const deep = path.join(wt, 'tests', 'new', 'deep');
+  // Once created, the final parent resolves inside the worktree, but under hooks/ (a swap to an
+  // in-tree symlink after the check): the containment check passes, the canonical rules do not.
+  const deps = {
+    ...fsDeps(log),
+    canonicalRealpath: (p) => (p === deep && lstatType(p).type === 'directory' ? path.join(canonicalRealpath(wt), 'hooks', 'deep') : canonicalRealpath(p)),
+  };
+  assert.throws(() => writeEvidence({ wt, rel: 'tests/new/deep/a.test.js', content: CONTENT, sensitivePaths: [], deps }), /once its parents exist: canonical-protected-or-sensitive/);
+  assert.ok(!log.some((e) => e[0] === 'writeFileExclusive'));
+  assert.strictEqual(lstatType(path.join(wt, 'tests', 'new')).type, 'missing');
+});
+
+test('AC7: removeEvidence: a non-empty directory is not a failure, any other error is', () => {
+  const abs = path.join(WT, 'tests', 'new', 'a.test.js');
+  const createdDirs = [path.join(WT, 'tests'), path.join(WT, 'tests', 'new')];
+  const rig = (rmdirCode, rmFileCode) => {
+    const log = [];
+    const fail = (code) => { throw Object.assign(new Error(code), { code }); };
+    const deps = {
+      rmFile: (p) => { log.push(['rmFile', p]); if (rmFileCode) fail(rmFileCode); },
+      rmdir: (p) => { log.push(['rmdir', p]); if (rmdirCode && p === createdDirs[1]) fail(rmdirCode); },
+    };
+    return { log, deps };
+  };
+  for (const code of ['ENOTEMPTY', 'EEXIST']) {
+    const { log, deps } = rig(code);
+    assert.doesNotThrow(() => removeEvidence({ abs, createdDirs, deps }), code);
+    assert.deepStrictEqual(log, [['rmFile', abs], ['rmdir', createdDirs[1]], ['rmdir', createdDirs[0]]], code);
+  }
+  assert.throws(() => removeEvidence({ abs, createdDirs, deps: rig('EACCES').deps }), { code: 'EACCES' });
+  const noFile = rig(null, 'ENOENT');
+  assert.throws(() => removeEvidence({ abs, createdDirs, deps: noFile.deps }), { code: 'ENOENT' });
+  assert.deepStrictEqual(noFile.log, [['rmFile', abs]]);
+});
+
+const STATUS_ARGS = ['-C', WT, '--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=all'];
+const isPipelineArtifact = (p) => p === '.claude-tweaks/pipelines' || p.startsWith('.claude-tweaks/pipelines/');
+function gitAnswering(stdout) {
+  const calls = [];
+  return { calls, deps: { git: (args, opts) => { calls.push([args, opts]); return stdout; } } };
+}
+
+test('AC7: treeDelta', () => {
+  const delta = (porcelain, expected) => {
+    const { calls, deps } = gitAnswering(porcelain);
+    const out = treeDelta({ wt: WT, expected: new Set(expected), deps, isRunArtifact: isPipelineArtifact });
+    assert.deepStrictEqual(calls, [[STATUS_ARGS, { cwd: WT }]]);
+    return out;
+  };
+  assert.deepStrictEqual(delta('?? a\0', ['a']), []);
+  assert.deepStrictEqual(delta(' M src/x.js\0', []), ['src/x.js']);
+  assert.deepStrictEqual(delta('?? a\0 M src/x.js\0', ['a']), ['src/x.js']);
+  assert.deepStrictEqual(delta('?? a\0?? lock.json\0', ['a']), ['lock.json']);
+  assert.deepStrictEqual(delta('?? a\0?? .claude-tweaks/pipelines/r/x\0', ['a']), []);
+  assert.deepStrictEqual(delta('', ['a']), ['a']);
+  // An expected file git reports as anything but untracked is not the file the driver wrote.
+  assert.deepStrictEqual(delta('A  a\0', ['a']), ['a']);
+  // Both sides of a rename.
+  assert.deepStrictEqual(delta('?? a\0R  src/new.js\0src/old.js\0', ['a']), ['src/new.js', 'src/old.js']);
+});
+
+test('AC7: treeDelta throws when git status fails or prints a record it cannot parse', () => {
+  const failing = { git: () => { throw Object.assign(new Error('git failed'), { status: 128 }); } };
+  assert.throws(() => treeDelta({ wt: WT, expected: new Set(), deps: failing, isRunArtifact: isPipelineArtifact }), /git failed/);
+  assert.throws(() => treeDelta({ wt: WT, expected: new Set(), deps: gitAnswering('?? \0').deps, isRunArtifact: isPipelineArtifact }), /shorter/);
+});
+
+test('AC7: isIgnored reads check-ignore\'s three answers', () => {
+  const ask = (git) => {
+    const calls = [];
+    const deps = { git: (args, opts) => { calls.push([args, opts]); return git(); } };
+    return { calls, run: () => isIgnored({ wt: WT, rel: REL, deps }) };
+  };
+  const exit = (status) => () => { throw Object.assign(new Error(`exit ${status}`), { status }); };
+  const ignored = ask(() => '');
+  assert.strictEqual(ignored.run(), true);
+  assert.deepStrictEqual(ignored.calls, [[['-C', WT, 'check-ignore', '-q', '--no-index', '--', REL], { cwd: WT }]]);
+  assert.strictEqual(ask(exit(1)).run(), false);
+  assert.throws(ask(exit(128)).run, /exit 128/);
+  // A failure with no exit status (a timeout, a missing binary) is no answer either.
+  assert.throws(ask(() => { throw new Error('spawnSync git ETIMEDOUT'); }).run, /ETIMEDOUT/);
 });
