@@ -10,13 +10,14 @@
 //
 // Resume: an entry already `landed` is skipped. An existing remote branch is the base only when its
 // PRs say so: an open PR is reused; no PR ever (a crash between push and create) means the branch is
-// this run's own, so it is the base and the PR is opened on it, but only if every commit on it is a
-// still-captured entry's edit (else it is staged: a failed delete may have left staged entries'
-// commits). A closed PR leaves the branch untouched and a merged PR is never reused, and both stage
-// every entry with a reason. A patch whose commit is already on the branch (a run that died before its
-// manifest write) is reused only when it carries this run's id and this entry's id in its trailers and
-// its own diff has the same `git patch-id --stable` as the entry's current patch file (a join can
-// rewrite the patch under the same id); otherwise it is built again and `apply --check` lands or
+// this run's own, so it is the base and the PR is opened on it. Either way, every commit on it must
+// carry this run's id and the id of a landed or still-captured entry in its trailers, and its own diff
+// must have the same `git patch-id --stable` as that entry's patch file (a join can rewrite the patch
+// under the same id); otherwise (a failed delete may have left staged entries' commits, even behind a
+// PR GitHub opened while create errored) every entry is staged with a reason naming the branch and
+// the PR. A closed PR leaves the branch untouched and a merged PR is never reused, and both stage
+// every entry with a reason. A captured entry whose verified commit is already on the branch (a run
+// that died before its manifest write) reuses it; any other is built and `apply --check` lands or
 // stages it.
 // A `captured` entry is `superseded` only when the run branch changed its target after the merge base
 // AND its patch reverse-applies to HEAD (capture's bothInTree/stuck outcomes leave the edit in the
@@ -272,7 +273,6 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
     };
 
     // Every commit on the branch, with the run id and entry id its trailers carry.
-    const onBranch = new Map(); // entry id -> commit, for this run's commits only
     const commits = [];
     let logError = null;
     if (branchExisted) {
@@ -283,24 +283,27 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
           if (tab <= 0) continue;
           const run = /^Learned-Skills-Run: (.+)$/m.exec(rec);
           const id = /^Learned-Skills-Entry: (\S+)$/m.exec(rec);
-          const c = { sha: rec.slice(0, tab), run: run ? run[1].trim() : null, id: id ? id[1] : null };
-          commits.push(c);
-          if (c.run === runId && c.id) onBranch.set(c.id, c.sha);
+          commits.push({ sha: rec.slice(0, tab), run: run ? run[1].trim() : null, id: id ? id[1] : null });
         }
-      } catch (err) { logError = err; /* with an open PR, nothing is recognised and apply --check decides */ }
+      } catch (err) { logError = err; }
     }
 
-    // A branch with no PR ever is this run's own only if every commit on it is a still-captured entry's
-    // edit. Anything else (a staged or superseded entry's commit left by a failed delete, a foreign
-    // commit, an unreadable log) would ride the next PR.
-    if (branchExisted && !existingPr) {
+    // An existing branch, open PR or none, is a base only if every commit on it is this run's edit of a
+    // landed or still-captured entry. Anything else (a staged or superseded entry's commit left by a
+    // failed delete, a foreign commit, an unreadable log) would ride the PR. The commits that pass are
+    // the only ones a captured entry may reuse.
+    const onBranch = new Map(); // captured entry id -> its verified commit
+    if (branchExisted) {
       const stray = logError ? `its commits could not be read (${firstLine(logError)})` : commits.map((c) => {
         const entry = c.run === runId && c.id ? manifest.find((e) => String(e.id) === c.id) : null;
         if (!entry) return `${c.sha.slice(0, 7)} maps to no entry of this run`;
-        if (entry.status !== 'captured') return `${c.sha.slice(0, 7)} belongs to entry ${entry.id}, which is ${entry.status}`;
-        return sameEdit(c.sha, entry) ? null : `${c.sha.slice(0, 7)} does not hold entry ${entry.id}'s current edit`;
+        if (entry.status !== 'captured' && entry.status !== 'landed') return `${c.sha.slice(0, 7)} belongs to entry ${entry.id}, which is ${entry.status}`;
+        if (!sameEdit(c.sha, entry)) return `${c.sha.slice(0, 7)} does not hold entry ${entry.id}'s current edit`;
+        if (entry.status === 'captured') onBranch.set(String(entry.id), c.sha);
+        return null;
       }).find(Boolean);
-      if (stray) return downgradeAll(todo, `${branch} already exists on origin with no PR but cannot be reused as a base: ${stray}`);
+      const where = existingPr ? `open PR #${existingPr.number}` : 'no PR';
+      if (stray) return downgradeAll(todo, `${branch} already exists on origin with ${where} but cannot be reused as a base: ${stray}`);
     }
 
     // 2. One plumbing commit per patch, on a temp index.
@@ -308,7 +311,7 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
     const built = [];
     for (const entry of todo) {
       const msg = commitMessage(entry, records, runId);
-      if (onBranch.has(String(entry.id)) && sameEdit(onBranch.get(String(entry.id)), entry)) {
+      if (onBranch.has(String(entry.id))) {
         built.push({ entry, commit: onBranch.get(String(entry.id)), reused: true });
         continue;
       }

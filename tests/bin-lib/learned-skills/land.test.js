@@ -599,7 +599,7 @@ test('a join that rewrites a pushed entry\'s patch under the same id is not matc
   const res = land(landArgs(f), again.deps);
   assert.deepEqual(res.landed, [], 'the old commit does not hold the joined edit');
   assert.equal(res.staged.length, 1);
-  assert.match(res.staged[0].reason, /git apply --check/);
+  assert.match(res.staged[0].reason, /with open PR #77 but cannot be reused as a base: [0-9a-f]{7} does not hold entry 1's current edit/);
   assert.equal(readManifest(f.runDir)[0].status, 'staged');
   assert.ok(fs.readFileSync(res.staged[0].stagePath, 'utf8').includes('second edit at the top'), 'the second edit is not lost');
   assert.equal(remoteBranch(f), tip1);
@@ -629,7 +629,7 @@ test('a branch commit with a matching entry id but another run id is not reused'
   const res = land(landArgs(f), deps(gh.gh).deps);
   assert.deepEqual(res.landed, [], 'the other run\'s commit is not this run\'s');
   assert.equal(res.staged.length, 1);
-  assert.match(res.staged[0].reason, /git apply --check/);
+  assert.match(res.staged[0].reason, /with open PR #77 but cannot be reused as a base: [0-9a-f]{7} maps to no entry of this run/);
 });
 
 test('a same-run commit under another entry id, with an equal patch-id, is not matched to the entry', (t) => {
@@ -645,7 +645,7 @@ test('a same-run commit under another entry id, with an equal patch-id, is not m
   const res = land(landArgs(f), deps(gh.gh).deps);
   assert.deepEqual(res.landed, []);
   assert.equal(res.staged.length, 1);
-  assert.match(res.staged[0].reason, /git apply --check/);
+  assert.match(res.staged[0].reason, /with open PR #77 but cannot be reused as a base: [0-9a-f]{7} maps to no entry of this run/);
 });
 
 test('a failed branch delete cannot make the staged entry\'s commit ride a later PR', (t) => {
@@ -688,4 +688,91 @@ test('a no-PR branch holding a foreign commit is not reused as a base', (t) => {
   const res = land(landArgs(f), deps(gh.gh).deps);
   assert.deepEqual(res.landed, []);
   assert.match(res.staged[0].reason, /maps to no entry of this run/);
+});
+
+// The stray-commit guard runs on every existing branch, whatever its PR. Each case: X landed on PR #77,
+// the manifest write was then lost, the PR list reads `prs`, and Z is captured before landing again.
+const OPEN_77 = { number: 77, url: 'https://github.com/o/r/pull/77', state: 'OPEN' };
+const unusable = (pr, stray) => new RegExp(`^${BRANCH} already exists on origin with ${pr ? 'open PR #77' : 'no PR'} but cannot be reused as a base: ${stray}`);
+function landedThenLost(t, prs) {
+  const f = fixture(t, { capturedTargets: [X] });
+  const gh = fakeGh();
+  land(landArgs(f), deps(gh.gh).deps);
+  loseManifest(f);
+  gh.state.prs = [...prs];
+  return { f, gh, tip1: remoteBranch(f) };
+}
+function assertNothingRode(f, gh, again, tip1, createsBefore) {
+  assert.deepEqual(pushes(again.gitCalls), []);
+  assert.equal(gh.calls.filter((c) => c.args[1] === 'create').length, createsBefore, 'no PR is opened');
+  assert.equal(remoteBranch(f), tip1, 'the branch tip is unchanged');
+}
+
+for (const prs of [[], [OPEN_77]]) {
+  const label = prs.length ? 'an open PR' : 'no PR';
+  test(`a branch with ${label} whose commit no longer holds its entry's edit is not a base`, (t) => {
+    const { f, gh, tip1 } = landedThenLost(t, prs);
+    assert.equal(captureMore(f, X, atTop).shared, true, 'the second X edit joins entry 1');
+    captureMore(f, Z, (b) => b + 'z second\n', 'z finding');
+    const createsBefore = gh.calls.filter((c) => c.args[1] === 'create').length;
+    const again = deps(gh.gh);
+    const res = land(landArgs(f), again.deps);
+    assert.deepEqual(res.landed, [], 'Z must not ride a PR atop X\'s stale commit');
+    assert.deepEqual(res.staged.map((s) => s.target).sort(), [X, Z]);
+    for (const s of res.staged) assert.match(s.reason, unusable(prs.length, '[0-9a-f]{7} does not hold entry 1\'s current edit'));
+    assert.equal(res.pr, null);
+    assertNothingRode(f, gh, again, tip1, createsBefore);
+    assert.ok(fs.readFileSync(res.staged.find((s) => s.target === X).stagePath, 'utf8').includes('second edit at the top'));
+  });
+
+  test(`a branch with ${label} whose commits cannot be read is not a base`, (t) => {
+    const { f, gh, tip1 } = landedThenLost(t, prs);
+    captureMore(f, Z, (b) => b + 'z second\n', 'z finding');
+    const createsBefore = gh.calls.filter((c) => c.args[1] === 'create').length;
+    const again = deps(gh.gh);
+    const inner = again.deps.git;
+    again.deps.git = (args, opts) => {
+      if (args.includes('log')) throw new Error('log refused');
+      return inner(args, opts);
+    };
+    const res = land(landArgs(f), again.deps);
+    assert.deepEqual(res.landed, []);
+    assert.deepEqual(res.staged.map((s) => s.target).sort(), [X, Z]);
+    for (const s of res.staged) assert.match(s.reason, unusable(prs.length, 'its commits could not be read \\(log refused\\)'));
+    assertNothingRode(f, gh, again, tip1, createsBefore);
+  });
+}
+
+test('an open PR whose branch carries a staged entry\'s commit is not added to', (t) => {
+  // gh pr create errors after GitHub opened the PR, and the branch delete is refused: X is staged,
+  // yet its commit sits on the branch behind open PR #77.
+  const f = fixture(t, { capturedTargets: [X] });
+  const gh = fakeGh();
+  const opensThenFails = (args, input) => {
+    const r = gh.gh(args, input);
+    if (args[1] === 'create') throw new Error('HTTP 502 after the PR opened');
+    return r;
+  };
+  const failing = deps(opensThenFails);
+  const inner = failing.deps.git;
+  failing.deps.git = (args, opts) => {
+    if (args.includes('push') && args.includes(`:refs/heads/${BRANCH}`)) throw new Error('delete refused');
+    return inner(args, opts);
+  };
+  const r1 = land(landArgs(f), failing.deps);
+  assert.deepEqual(r1.staged.map((s) => s.target), [X]);
+  assert.deepEqual(gh.state.prs, [OPEN_77], 'the PR did open');
+  const tip1 = remoteBranch(f);
+  assert.ok(tip1);
+
+  captureMore(f, Z, (b) => b + 'z second\n', 'z finding');
+  const createsBefore = gh.calls.filter((c) => c.args[1] === 'create').length;
+  const again = deps(gh.gh);
+  const r2 = land(landArgs(f), again.deps);
+  assert.deepEqual(r2.landed, [], 'nothing joins a PR that carries a staged edit');
+  assert.deepEqual(r2.staged.map((s) => s.target), [Z]);
+  assert.match(r2.staged[0].reason, unusable(true, '[0-9a-f]{7} belongs to entry 1, which is staged'));
+  assert.equal(r2.pr, null);
+  assertNothingRode(f, gh, again, tip1, createsBefore);
+  assert.deepEqual(readManifest(f.runDir).map((m) => m.status), ['staged', 'staged']);
 });
