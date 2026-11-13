@@ -185,6 +185,19 @@ test('assertNoTemplatePaths catches a surviving template path', () => {
   assert.doesNotThrow(() => assertNoTemplatePaths(root, ['/T/tpl-1']));
 });
 
+test('assertNoTemplatePaths catches an unlisted spelling by the template\'s unique names', () => {
+  const root = mk('ct-gtu-');
+  fs.mkdirSync(path.join(root, '.git'));
+  const cfg = path.join(root, '.git', 'config');
+  const names = ['ct-git-template-AbC123', 't4-XyZ789'];
+  // Upper-cased drive prefix and doubled slashes: no generated spelling matches these.
+  fs.writeFileSync(cfg, '[remote "a"]\n\turl = D:\\\\T//CT-GIT-TEMPLATE-ABC123//t4-xyz789/o\n');
+  assert.throws(() => assertNoTemplatePaths(root, ['/T/tpl-1'], names), /survived rewrite/);
+  assert.throws(() => rewriteTemplatePaths(root, [['/T/tpl-1', '/T/new']], names), /survived rewrite/);
+  fs.writeFileSync(cfg, '[remote "a"]\n\turl = /T/new/o\n');
+  assert.doesNotThrow(() => assertNoTemplatePaths(root, ['/T/tpl-1'], names));
+});
+
 test('rewriteTemplatePaths rewrites every Windows-shaped spelling', () => {
   const root = mk('ct-gtwin-');
   fs.mkdirSync(path.join(root, '.git', 'worktrees', 'w'), { recursive: true });

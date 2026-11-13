@@ -13,8 +13,11 @@
 // `.git/worktrees/*/gitdir`, and every `.git` file (a linked worktree's
 // pointer) — in each spelling git or the OS may have written (raw, realpath,
 // Windows 8.3-expanded `realpath.native`; native, forward-slash and
-// git-config-escaped `\\` forms). A spelling that survives throws, so a missed
-// one fails the test loudly instead of silently sharing the template's state.
+// git-config-escaped `\\` forms). A listed spelling that survives throws. So does
+// any visited file that still holds, in any case and any spelling, the template's
+// random names (the per-process root `ct-git-template-*` and the member base dir
+// `tN-*`), so a spelling the list lacks also fails the test loudly instead of
+// silently sharing the template's state.
 //
 // Timestamps are deliberately NOT preserved: copies get fresh mtimes, as a
 // freshly built repo did, because some tests order worktrees by mtime. Git
@@ -24,6 +27,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { gitFixtureConfigEnv } = require('../../tools/run-tests');
 
 let templateRoot = null;
 let templateSeq = 0;
@@ -101,46 +105,49 @@ function pathFiles(dir, out = []) {
   return out;
 }
 
-function assertNoTemplatePaths(rootDir, froms) {
+// Two independent nets: the known spellings (the rewrite's own list), and — so a spelling
+// the list lacks (8.3 short name, drive-letter case, doubled slash) cannot slip through both
+// — a case-insensitive scan for `uniqueNames`, the spelling-free random names the template
+// lives under (its per-process root and each member's base dir).
+function assertNoTemplatePaths(rootDir, froms, uniqueNames = []) {
   const { re } = matcher(froms);
-  if (!re) return;
+  const needles = uniqueNames.filter(Boolean).map((n) => n.toLowerCase());
+  if (!re && !needles.length) return;
   for (const file of pathFiles(rootDir)) {
-    re.lastIndex = 0;
-    if (re.test(fs.readFileSync(file, 'utf8'))) {
+    const text = fs.readFileSync(file, 'utf8');
+    if (re) re.lastIndex = 0;
+    const lower = needles.length ? text.toLowerCase() : '';
+    if ((re && re.test(text)) || needles.some((n) => lower.includes(n))) {
       throw new Error(`git-template: template path survived rewrite in ${file}`);
     }
   }
 }
 
-function rewriteTemplatePaths(rootDir, mapping) {
+function rewriteTemplatePaths(rootDir, mapping, uniqueNames = []) {
   const froms = mapping.map(([f]) => f);
   const { map, re } = matcher(froms, mapping.map(([, t]) => t));
-  if (!re) return;
-  for (const file of pathFiles(rootDir)) {
-    const text = fs.readFileSync(file, 'utf8');
-    const next = text.replace(re, (m) => map.get(m));
-    if (next !== text) fs.writeFileSync(file, next);
+  if (re) {
+    for (const file of pathFiles(rootDir)) {
+      const text = fs.readFileSync(file, 'utf8');
+      const next = text.replace(re, (m) => map.get(m));
+      if (next !== text) fs.writeFileSync(file, next);
+    }
   }
-  assertNoTemplatePaths(rootDir, froms);
+  assertNoTemplatePaths(rootDir, froms, uniqueNames);
 }
 
 // Runs `fn` with git auto-maintenance off in process.env (appended after any
 // inherited GIT_CONFIG_* entries), then restores process.env exactly. Without
 // it, a detached `maintenance run --auto` started after the build's last commit
 // touched `.git/objects` while the first `fs.cpSync` ran, giving ENOENT under a
-// direct `node --test` (tools/run-tests.js sets the same config for its children).
-// A malformed inherited GIT_CONFIG_COUNT is left alone rather than guessed at.
+// direct `node --test`. The keys come from tools/run-tests.js's gitFixtureConfigEnv, the
+// same builder it uses for its children, so the two cannot drift.
 function withMaintenanceOff(fn) {
-  const raw = process.env.GIT_CONFIG_COUNT;
-  if (raw !== undefined && !/^\d+$/.test(raw)) return fn();
-  const n = raw === undefined ? 0 : Number(raw);
-  const names = ['GIT_CONFIG_COUNT', ...[n, n + 1].flatMap((i) => [`GIT_CONFIG_KEY_${i}`, `GIT_CONFIG_VALUE_${i}`])];
+  const next = gitFixtureConfigEnv(process.env);
+  const names = Object.keys(next).filter((k) => next[k] !== process.env[k]);
+  if (!names.length) return fn();
   const saved = names.map((k) => [k, process.env[k]]);
-  process.env.GIT_CONFIG_COUNT = String(n + 2);
-  process.env[`GIT_CONFIG_KEY_${n}`] = 'maintenance.auto';
-  process.env[`GIT_CONFIG_VALUE_${n}`] = 'false';
-  process.env[`GIT_CONFIG_KEY_${n + 1}`] = 'gc.auto';
-  process.env[`GIT_CONFIG_VALUE_${n + 1}`] = '0';
+  for (const k of names) process.env[k] = next[k];
   try {
     return fn();
   } finally {
@@ -185,7 +192,8 @@ function fromTemplateSet(key, build, layout) {
       if (realpath) out[n] = dir = fs.realpathSync(dir);
       mapping.push([tpl.dirs[n], dir]);
     }
-    for (const n of names) rewriteTemplatePaths(out[n], mapping);
+    const unique = [path.basename(root()), path.basename(path.dirname(tpl.dirs[names[0]]))];
+    for (const n of names) rewriteTemplatePaths(out[n], mapping, unique);
   } catch (err) {
     for (const d of Object.values(out)) fs.rmSync(d, { recursive: true, force: true });
     throw err;
