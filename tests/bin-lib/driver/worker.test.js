@@ -36,7 +36,10 @@ function fakeRunner(outcome, { spawnError } = {}) {
   return { runner, calls };
 }
 const tmp = (t) => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'driver-worker-')); t.after(() => fs.rmSync(d, { recursive: true, force: true })); return d; };
-const base = (t, extra = {}) => ({ role: 'implementer', cwd: tmp(t), prompt: 'do the thing', ceilings: { wallClockMs: 60000 }, testCommand: 'node --test', settingsDir: tmp(t), platform: 'darwin', env: { PATH: '/bin', HOME: '/h', USER: 'u' }, ...extra });
+// A PATH that cannot exist: a launch that derives its read paths with the real seam finds
+// nothing, so no default test reads the host's file system or varies by host.
+const HERMETIC_PATH = '/nonexistent-driver-test-path';
+const base = (t, extra = {}) => ({ role: 'implementer', cwd: tmp(t), prompt: 'do the thing', ceilings: { wallClockMs: 60000 }, testCommand: 'node --test', settingsDir: tmp(t), platform: 'darwin', env: { PATH: HERMETIC_PATH, HOME: '/h', USER: 'u' }, ...extra });
 const okOut = (over = {}) => ({ code: 0, stdout: JSON.stringify({ ...OK, ...over }) });
 
 test('AC5: an ok result fills every envelope field from the result', async (t) => {
@@ -130,12 +133,13 @@ test('AC5: neither the settings nor the argument list carry additionalDirectorie
 });
 
 test('AC2.1: a bad readPaths is refused before anything is written', async (t) => {
-  for (const bad of [['rel'], '/opt/tool']) {
+  for (const [bad, pattern] of [[['rel'], /"rel"/], ['/opt/tool', /readPaths must be an array/]]) {
     const { runner, calls } = fakeRunner(okOut());
-    const opts = base(t, { readPaths: bad });
-    await assert.rejects(launchWorker(opts, { runner }), TypeError, JSON.stringify(bad));
+    // A directory that does not exist yet: a refusal after mkdirSync would create it.
+    const opts = base(t, { readPaths: bad, settingsDir: path.join(tmp(t), 'not-yet') });
+    await assert.rejects(launchWorker(opts, { runner }), (err) => err instanceof TypeError && pattern.test(err.message), JSON.stringify(bad));
     assert.strictEqual(calls.length, 0);
-    assert.deepStrictEqual(fs.readdirSync(opts.settingsDir), []);
+    assert.ok(!fs.existsSync(opts.settingsDir), 'the settings directory was created before the refusal');
   }
 });
 
@@ -143,11 +147,11 @@ test('a bad testCommand is refused with the testCommand TypeError before any loo
   const looked = [];
   const toolchain = { lookup: (name) => { looked.push(name); return null; }, realpath: (p) => p, firstLine: () => '' };
   const { runner, calls } = fakeRunner(okOut());
-  const opts = base(t, { testCommand: undefined });
+  const opts = base(t, { testCommand: undefined, settingsDir: path.join(tmp(t), 'not-yet') });
   await assert.rejects(launchWorker(opts, { runner, toolchain }), (err) => err instanceof TypeError && /testCommand/.test(err.message));
   assert.deepStrictEqual(looked, []);
   assert.strictEqual(calls.length, 0);
-  assert.deepStrictEqual(fs.readdirSync(opts.settingsDir), []);
+  assert.ok(!fs.existsSync(opts.settingsDir), 'the settings directory was created before the refusal');
 });
 
 test('off the probed platforms nothing is derived', async (t) => {
