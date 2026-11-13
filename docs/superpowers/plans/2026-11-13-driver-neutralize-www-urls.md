@@ -175,10 +175,11 @@ Expected: PASS, 0 failures.
 - [ ] **Step 5: Update `perf/driver-neutralize-linearity.test.js`**
 
 - Header. Replace the `www.` bullet (lines 33-35), the chain bullet's "survives the reference passes" wording (lines 39-42) and the "Dropped as no longer testing anything" paragraph (lines 45-47). The new text should say that #5352 brought back the `www.` and bare-host alternatives and added `PATH_REF`, and list each guard with its probed time when reverted:
-  - no `[\d_](?!www\.)` guard: `'_www.'.repeat(40000)` about 74 s, `'1www.'.repeat(40000)` about 36 s, `'_www.a'.repeat(35000)` about 11 s;
-  - no digit in the `www.`/bare-host boundary: `'www.g/o/r/issues/5'.repeat(11000)` about 95 s, `'github.com/o/r/issues/5'.repeat(9000)` about 23 s;
-  - no `PATH_REF` length bounds: `'a-'.repeat(100000)` about 36 s, `'1'.repeat(200000)` about 64 s;
-  - no digit in the `PATH_REF` boundary: the verdict breaks rather than the time, leaving 87,989 characters of `'o/r/issues/5'.repeat(16000)`.
+  - no `[\d_](?!www\.)` guard: `'_www.'.repeat(40000)` about 74 s, `'1www.'.repeat(40000)` about 71 s, `'_www.a'.repeat(35000)` about 37 s;
+  - no digit in the `www.`/bare-host boundary: `'www.g/o/r/issues/5'.repeat(11000)` about 16 s, `'github.com/o/r/issues/5'.repeat(9000)` about 12.5 s;
+  - no `PATH_REF` length bounds: `'a-'.repeat(100000)` about 17.5 s, `'1'.repeat(200000)` about 32 s;
+  - no digit in the `PATH_REF` boundary: the verdict breaks rather than the time, leaving 96,000 characters of `'o/r/issues/5'.repeat(16000)`.
+  - (These are the figures re-measured against the final implementation, under load, and recorded in the perf header. The planning-time probes differed.)
 - In `www. and keyword runs that match nothing stay linear and unchanged`, take out the `'www.g/o/r/issues/5'` shape. Add these, every one of which comes back unchanged: `'1www.'.repeat(40000)`, `'_www.a'.repeat(35000)`, `'_www.a:1'.repeat(25000)`, `` `www.${'a'.repeat(200000)}` ``, `` `github.com/${'a/'.repeat(100000)}` ``, `'_www.g/o/r/'.repeat(20000)`, `'_github.com/o/r/'.repeat(15000)`, `'a-'.repeat(100000)`, `'a/'.repeat(100000)` and `'o/r/issues/'.repeat(18000)`.
 - Add `neutralize: back-to-back www., bare github.com and host-free references are all removed in one pass`. It asserts `value === ''` with `elapsed < 500` for `'www.g/o/r/issues/5'.repeat(11000)`, `'github.com/o/r/issues/5'.repeat(9000)` and `'o/r/issues/5'.repeat(16000)`.
 - Keyword-chain test: the expected value becomes `''`, and its name becomes `neutralize: a keyword chain before a marker token goes in one pass`.
