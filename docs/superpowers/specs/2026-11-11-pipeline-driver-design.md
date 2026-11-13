@@ -235,7 +235,7 @@ The scoreboard is a view in the dispatch hub, designed and built in the dispatch
 Each came out of a record's red-team pass and is written into the record named.
 
 1. `split` ends at 20 merged records per arm; the Phase 4 parent (#5221) owns removing it (#5216).
-2. The implementer keeps its test command and its Bash runs under Claude Code's sandbox, subject to an escape probe; if a test can still reach `curl`, `gh` or `git push`, the test command is dropped from its allow list. Stated residual: the driver's own test step runs worker-written code with the driver's rights, as every lane does today (#5217).
+2. The implementer keeps its test command and its Bash runs under Claude Code's sandbox, subject to an escape probe; if a test can still reach `curl`, `gh` or `git push`, the test command is dropped from its allow list. Stated residual: the driver's own test step runs worker-written code with the driver's rights, as every lane does today (#5217); #5267 later narrowed that residual by running the test step under an allow-listed environment, an empty gh config dir and a refused scope file.
 3. An escalation comment carries a marker and admission refuses a record that has one, so an escalated record is not driven again until a human removes the comment (#5219).
 4. The judgment-parity criterion needs at least 30 recorded verdicts, at least 10 of them not `auto-merge`, or a recorded waiver; a later change to a judgment prompt, its source skill file or the role's model re-runs it (#5228).
 5. Acceptance labels are derived by driver code from the parent gate and the oversight-floor gate; the acceptance worker returns text only (#5228).
