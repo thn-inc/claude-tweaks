@@ -677,9 +677,18 @@ function parityView(r, files) {
   }, r.sandbox);
 }
 
+// Lines `reported` drops: AC1 compares only AUTO/Warning lines, so a module-side `queue-pull: <step>:`
+// diagnostic (a step that threw, R6) is never compared as text. It may only appear in a run where
+// the script's stderr also carries an unreported line, i.e. where the script errored there too.
+const unreportedLines = (text) => String(text || '').split(/\r?\n/).filter((line) => line.trim() !== '' && !REPORTED_LINE.test(line));
+const moduleDiagnostics = (text) => String(text || '').split(/\r?\n/).filter((line) => line.startsWith('queue-pull: '));
+
 // a: the oracle's run, b: the module's. Files compare JSON-equal (raw text when not JSON).
 function assertParity(a, b, { files = sessionFileNames() } = {}) {
   assert.deepStrictEqual(parityView(b, files), parityView(a, files));
+  const diagnostics = moduleDiagnostics(b.stderr);
+  assert.ok(diagnostics.length === 0 || unreportedLines(a.stderr).length > 0,
+    `the module printed ${JSON.stringify(diagnostics[0])} where the script's stderr shows no error`);
 }
 
 // runAll([{ name, after?, run(depResult) }], limit) -> { [name]: result }. A job naming `after`

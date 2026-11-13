@@ -89,7 +89,6 @@ const { nearDuplicatePairsAcrossGroups } = require('./near-dup-pairs');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { sessionTmpPath } = require('../session-tmp');
 const { ghOptions } = require('../repo-resolve');
-const { lstatType } = require('../path-guard');
 const { GH_TIMEOUT_MS, GH_BATCH_TIMEOUT_MS, GIT_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('../shared-primitives');
 
 const BIN_DIR = path.join(__dirname, '..', '..');
@@ -289,6 +288,10 @@ function readTextOrNull(file) {
 function appendBlocked(file, entries) {
   for (const e of entries) appendExclusion(file, { reason: 'blocked', records: [e.number], detail: { blockedBy: e.blockedBy } });
 }
+// The partition runs before the omit check on purpose: omit removes only this pass's appends, so
+// an omitted run still fails wherever the full run fails. parseInt of an unset policy is NaN, and
+// partitionGroupsBySizeGuard then flags nothing, as the fence's own `parseInt(process.argv[5], 10)`
+// does (queue-pull-script.md, both the cache-hit and the grouping blocks).
 function appendOversized(file, groups, groupSizeGuard, omitted) {
   const { oversized, threshold } = partitionGroupsBySizeGuard(groups, { groupSizeGuard: parseInt(groupSizeGuard, 10) });
   if (omitted) return;
@@ -1130,7 +1133,8 @@ function queuePull(options = {}, deps = {}) {
   const { paths } = ctx;
   runPasses(PASSES, ctx);
   const groupsFile = paths['dispatch-groups.json'];
-  const groups = lstatType(groupsFile).type === 'missing' ? [] : JSON.parse(fs.readFileSync(groupsFile, 'utf8'));
+  const groupsText = readTextOrNull(groupsFile);
+  const groups = groupsText === null ? [] : JSON.parse(groupsText);
   return { groups, exclusions: readExclusions(paths['dispatch-exclusions.json']) };
 }
 
@@ -1142,6 +1146,10 @@ const bandOf = (r) => (r.facets.priority ? RANK[r.facets.priority] : 3);
 
 // groups: arrays of records; exclusionEntries: dispatch-exclusions.json's entries. Returns the
 // best eligible group, or null.
+// The three reasons are next-ranking.md's literal: the exclusion reasons whose records stay IN
+// dispatch-groups.json (every PASSES exclusion row with removes: false), plus `firing`, which the
+// Loop appends between pulls and no pass writes. A removing reason never needs listing here, since
+// its records are already gone from the groups. queue-pull.test.js pins this set against PASSES.
 function rankNext(groups, exclusionEntries, { priority } = {}) {
   const eligibleGroups = groups.filter((g) => !groupIsExcluded(g, exclusionEntries, ['oversized', 'firing', 'neighbour-in-flight']));
   const representative = (g) => g.slice().sort((a, b) =>

@@ -442,6 +442,9 @@ test('#5227 oracle: normalize substitutes only the sandbox root and run-dir name
   const files = ['dispatch-groups.json', 'dispatch-verified-open-deps.txt'];
   assertParity(result('/scr/a', 'Warning: w\nnoise a'), result('/scr/b', 'Warning: w\nnoise b'), { files });
   assert.throws(() => assertParity(result('/scr/a', 'Warning: w'), result('/scr/b', 'Warning: v'), { files }));
+  // A module-only step diagnostic fails parity unless the script's stderr shows an error too.
+  assert.throws(() => assertParity(result('/scr/a', 'Warning: w'), result('/scr/b', 'Warning: w\nqueue-pull: fetch: boom'), { files }), /shows no error/);
+  assertParity(result('/scr/a', 'Warning: w\njq: error'), result('/scr/b', 'Warning: w\nqueue-pull: fetch: boom'), { files });
 });
 
 // ---- Task 2: registry, session paths, truncate pass, pass loop (in-process, any platform) ----
@@ -453,7 +456,12 @@ function assertRegistryMatchesBullets(passes, scriptText) {
   const bullets = scriptText.split(/\r?\n/).map((l) => ({ l, m: l.match(/^- `reason: '([a-z-]+)'`/) })).filter((x) => x.m);
   assert.ok(bullets.length >= 9, 'header bullet pattern no longer matches queue-pull-script.md');
   assert.deepEqual([...new Set(passes.map((p) => p.reason).filter(Boolean))].sort(), bullets.map((b) => b.m[1]).sort());
-  for (const { l, m } of bullets) assert.equal(passes.find((p) => p.reason === m[1]).removes, !l.includes('stay IN `dispatch-groups.json`'), m[1]);
+  for (const { l, m } of bullets) {
+    const pass = passes.find((p) => p.reason === m[1]);
+    assert.equal(pass.removes, !l.includes('stay IN `dispatch-groups.json`'), m[1]);
+    // bypass: the bullet says a named `#N`/`#N,#M,...` form still resolves or dispatches the record.
+    assert.equal(pass.bypass, l.includes('(`#N`/`#N,#M,...` still '), `${m[1]}.bypass`);
+  }
 }
 const notTheGuard = (err) => err instanceof assert.AssertionError && !/header bullet pattern/.test(err.message);
 
@@ -468,6 +476,8 @@ test('AC11.1 go-red: a renamed reason on either side fails on the set comparison
   assert.throws(() => assertRegistryMatchesBullets(PASSES, SCRIPT_TEXT.replace("- `reason: 'shipped'`", "- `reason: 'shipped-x'`")), notTheGuard);
   const flipped = PASSES.map((p) => (p.reason === 'oversized' ? { ...p, removes: true } : p));
   assert.throws(() => assertRegistryMatchesBullets(flipped, SCRIPT_TEXT), notTheGuard);
+  const bypassFlipped = PASSES.map((p) => (p.reason === 'unlanded-blocker' ? { ...p, bypass: true } : p));
+  assert.throws(() => assertRegistryMatchesBullets(bypassFlipped, SCRIPT_TEXT), (err) => notTheGuard(err) && /unlanded-blocker\.bypass/.test(err.message));
 });
 
 test('AC11.1: runPasses walks a registry in array order and runs a shared id once', () => {
@@ -984,6 +994,10 @@ test('#5227 cache hit: a blob over the same freshness replays groups, blocked en
   assert.deepEqual(hit.json('dispatch-groups.json'), blob.groups);
   assertBlocked(hit);
   assert.equal(hit.store.written.length, 0, 'a hit does not write back');
+  assert.equal(miss.store.written.length, 1, 'a miss writes back once (control)');
+  // runsOnCacheHit is that observation: the write-back is the one pass a hit skips (every other
+  // pass running again over the replayed groups is the four-passes cache-hit test below).
+  assert.deepEqual(PASSES.filter((p) => !p.runsOnCacheHit).map((p) => p.id), ['write-back']);
   assert.equal(hit.state.workLinks, '', 'the fence never reads work-links on a hit');
 
   // oversized is recomputed from the CURRENT guard, not replayed: a guard of 2 flags the bundle, a guard of 3 does not.
@@ -2312,6 +2326,20 @@ for (const c of RANK_CASES) {
   });
 }
 
+test('#5227 registry: rankNext skips exactly the non-removing exclusion reasons plus firing', () => {
+  const staying = [...new Set(PASSES.filter((p) => p.kind === 'exclusion' && !p.removes).map((p) => p.reason))];
+  const removing = [...new Set(PASSES.filter((p) => p.kind === 'exclusion' && p.removes).map((p) => p.reason))];
+  assert.ok(staying.length > 0 && removing.length > 0);
+  const group = [rec(40, 'high', '2026-01-01T00:00:00Z')];
+  for (const reason of [...staying, 'firing']) {
+    assert.equal(rankNext([group], [{ reason, records: [40] }], {}), null, `${reason}: the group is skipped`);
+  }
+  // A removing reason's records are already gone from the groups, so ranking never consults it.
+  for (const reason of removing) {
+    assert.deepEqual(rankNext([group], [{ reason, records: [40] }], {}), group, `${reason}: not a ranking exclusion`);
+  }
+});
+
 test('AC6.2: equal createdAt ranks in the script sort order, and a snake_case pool aliased with aliasMcpTimestamps ranks as its camelCase twin', () => {
   // Stable sort: the first pooled group wins a createdAt tie; the literal is the oracle row above.
   assert.equal(rankNext([SAME_A, SAME_B], [], {})[0].number, 11);
@@ -2658,6 +2686,15 @@ const MATRIX = [
   { name: 'S2-gh-miss', scenario: S2(), transport: 'gh', reasons: ['blocked'] },
   { name: 'S2-files-miss', scenario: S2(), transport: 'files', reasons: ['blocked'] },
 ];
+// mcp is pinned by FILES_S1_REASONS, which the AC1.1 matrix asserts equal to the reasons the
+// oracle's files-transport S1 run writes, while the gh S1 run writes every reason: a pass the
+// registry marks skipped-empty or fails-open excludes nothing on `files`, and every other
+// exclusion pass excludes there as on gh.
+test('#5227 registry: mcp skipped-empty and fails-open are exactly the reasons the files-transport S1 run never writes', () => {
+  const mcpOf = (reason) => PASSES.find((p) => p.reason === reason).mcp;
+  assert.deepEqual(FILES_S1_REASONS, ALL_REASONS.filter((reason) => !['skipped-empty', 'fails-open'].includes(mcpOf(reason))));
+});
+
 const AC1_FILES = ['dispatch-groups.json', 'dispatch-exclusions.json', 'dispatch-fastlane-bundles.json', 'dispatch-near-dup-pairs.json',
   'dispatch-crosspr-overlap.json', 'dispatch-linked-prs.json', 'dispatch-shipped-releases.json'];
 
