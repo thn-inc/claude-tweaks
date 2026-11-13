@@ -324,3 +324,13 @@ test('pairedFixture copies point at their own origin and sync through it', () =>
   assert.strictEqual(git(a.mainDir, ['rev-parse', 'origin/main']), git(a.seedDir, ['rev-parse', 'HEAD']));
   assert.notStrictEqual(git(b.mainDir, ['rev-parse', 'origin/main']), git(a.seedDir, ['rev-parse', 'HEAD']));
 });
+
+test('tmpGitRepo: a second call starts no git process and carries the verify identity', () => {
+  const { tmpGitRepo } = require('./bin-lib/verify/cli-helpers');
+  scratch.push(tmpGitRepo().repo);
+  const trace = mk('ct-gt-trace-');
+  const second = withEnv('GIT_TRACE2_EVENT', trace, tmpGitRepo);
+  scratch.push(second.repo);
+  assert.deepStrictEqual(fs.readdirSync(trace), []);
+  assert.strictEqual(second.git('config', 'user.email').trim(), 'verify-test@example.invalid');
+});
