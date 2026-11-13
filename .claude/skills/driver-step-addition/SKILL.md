@@ -20,6 +20,8 @@ Not all of it, though. The loop classifies an interrupted record by the side eff
 | `plugin/bin/lib/driver/run.js` `newCtx` and `interruptClass` | Needed only for a new durable side effect. Initialize its flag in `newCtx`, and set it in the step once the effect exists. Then add a rung to `interruptClass` where its class falls in the ladder (`configWritten`, then `pushed`, then `runDir`, then `claimed`, else refused). Never add a step-name literal: `AC13.1` scans run.js's comment-stripped code for one |
 | `realDeps` in `run.js` | Each new external call, as a `deps` member with its own bound (see `gh-api-module-pattern`). A new gh-shaped kind states its reason beside it, as `ghBatch` and `ghCreate` do |
 | `tests/bin-lib/driver/run.test.js` | A happy-path reply in `defaultScript` for every call the step makes, because the harness throws `unexpected {kind} …` on anything else. A new gh-shaped dep kind joins the kind list in `dispatch` that refuses `pr merge` and `pr ready` (AC8). Add a `SCENARIOS` entry and a row in `AC7.1, AC7.7: outcome and stop class for every stop (table-driven)` for each new stop. A new flag also gets a case in `interruptClass keys on the side effect held` |
+| `plugin/bin/lib/driver/settle.js` `selectRow`, `SETTLE_ROWS`, `CLASS_BY_ROW` | Needed for a new stop class: a `selectRow` case, a `SETTLE_ROWS` row and a `CLASS_BY_ROW` entry. Without the case, `selectRow`'s default settles the stop by the `blocked` row and flags it `unclassified`, and no test fails, because `selectRow`'s test lists the known classes by hand. A new pre-push `reason` must be one of `ESCALATION_REASONS`: `stopObject` passes it through `toEscalationReason`, which turns anything else into `express-error`. A new durable side effect that a pre-push stop must undo also needs a field in `stopObject`'s `created` and a settle call on the `pre-push` row |
+| `docs/driver.md` | Copied by hand, and no test reads it. For a new step: the `step` list under "Event lines". For a new stop class: the "Outcome words" table, the `stop` object's class list, `settleRow`'s row list and the "When a run stops" table |
 
 ## Decisions each step owes
 
@@ -60,6 +62,7 @@ The worker can shape strings such as its summary, a path it named, or CLI stderr
 | A step-name literal in `run.js` | It breaks the table-only contract, and `AC13.1` fails on it |
 | Retrying outside the pr step, or retrying a create blind | `AC6.6` fails, and a lost response may already have landed, so a blind retry opens a duplicate PR |
 | Raw worker text in a `detail` | A `closes #N` or `@user` inside it reaches the forge (AC14.3) |
+| A new stop class added to `STOP_CLASSES` and `OUTCOME_BY_CLASS` only | `selectRow` has no case for it, so settle runs the `blocked` row: the record is labelled `bot:blocked`, the final line's outcome reads `blocked` whatever the class maps to, and `unclassified` is the only sign |
 
 ## Reference
 
