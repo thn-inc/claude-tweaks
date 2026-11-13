@@ -672,6 +672,9 @@ test('I1 (AC10.2): an absolute path glued to -, ., _ or a flag letter is redacte
   assert.equal(reduceDetail('foo./home/me/.ssh/id_rsa'), 'foo.<path>');
   assert.equal(reduceDetail('tar -I/opt/inc x'), 'tar -I<path> x');
   assert.equal(reduceDetail('cd5/Users/me/x'), 'cd5<path>');
+  // Outside a home directory only the widened boundary catches a glued path.
+  assert.equal(reduceDetail('x-/etc/passwd'), 'x-<path>');
+  assert.equal(reduceDetail('a_/opt/secret and b./var/log'), 'a_<path> and b.<path>');
   for (const hostile of ['x-/Users/thomas/secret', 'tar -C/Users/me/x', 'a_/Users/me/x', 'foo./home/me/.ssh/id_rsa', 'build/home/me/.ssh']) {
     const out = reduceDetail(hostile);
     assert.ok(!/\/(Users|home)\//.test(out), out);
