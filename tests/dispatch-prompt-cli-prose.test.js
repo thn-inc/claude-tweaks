@@ -368,3 +368,36 @@ test('task-prompt.md says a render failure ends the firing (#5255)', () => {
   check(TASK_PROMPT);
   assert.throws(() => check(TASK_PROMPT.replace(' and ends the firing', '')), { message: 'task-prompt.md: render failure must end the firing' });
 });
+
+// SKILL.md: the stop's own paragraph, and every other line naming the Claim permission stop
+// (each is a list of firing-ending exits) names the render-failure stop too.
+const SKILL_STOP_LEAD = '**Render-failure stop (#5255).**';
+const SKILL_STOP_FACTS = [
+  'stops the firing in every selection form once that group\'s cleanup call returns',
+  'attempt no further group',
+  'any named records after it as not attempted',
+  'A headless firing (one that passes `--headless`, `task-prompt.md`) also sends one `PushNotification` naming the record and the stderr line.',
+  'A denied-twice call is not this stop.',
+];
+function assertSkillStop(skill) {
+  const para = skill.split('\n\n').find((p) => p.startsWith(SKILL_STOP_LEAD));
+  assert.ok(para, 'SKILL.md: Render-failure stop paragraph missing');
+  for (const f of SKILL_STOP_FACTS) assert.ok(para.includes(f), `SKILL.md Render-failure stop: missing ${JSON.stringify(f)}`);
+  const lists = skill.split('\n').filter((l) => l.includes('Claim permission stop') && !l.startsWith('**Claim permission stop (#4899).**'));
+  assert.ok(lists.length >= 4, `expected at least four firing-ending exit lists, found ${lists.length}`);
+  for (const l of lists) assert.ok(/render-failure stop/i.test(l), `SKILL.md exit list does not name the render-failure stop: ${l.slice(0, 80)}`);
+}
+
+test('AC2.1: SKILL.md carries the Render-failure stop paragraph and every exit list names it (#5255)', () => {
+  assertSkillStop(SKILL);
+});
+
+test('AC2.1 go-red: a dropped fact or an exit list without the stop fails its own assertion (#5255)', () => {
+  for (const f of SKILL_STOP_FACTS) {
+    const mutated = mutateInParagraph(SKILL, SKILL_STOP_LEAD, f, 'x');
+    assert.throws(() => assertSkillStop(mutated), { message: `SKILL.md Render-failure stop: missing ${JSON.stringify(f)}` });
+  }
+  const unlisted = SKILL.replace('or a Claim permission stop or Render-failure stop ends the firing', 'or a Claim permission stop ends the firing');
+  assert.notStrictEqual(unlisted, SKILL);
+  assert.throws(() => assertSkillStop(unlisted), { message: /SKILL\.md exit list does not name the render-failure stop/ });
+});

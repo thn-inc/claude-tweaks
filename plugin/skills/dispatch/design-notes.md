@@ -41,3 +41,17 @@ Accepted gaps:
 - Two firings can pick neighbours at the same moment, before either claim is visible to the other. The overlap is caught at merge, not at selection.
 - Two PRs that edit the same hunk conflict for real. The Conflict path parks the later one as `pending-review` for a human instead of resolving it.
 - Tests that pin literal bytes across files can go red when a neighbour's PR lands first. That is the price of a pin spread over several files, not of this grouping.
+
+## Why the repo-wide infra outage stop reuses Settle's classification
+
+`SKILL.md`'s Repo-wide infra outage stop (#2365) reads the `transient` classification Settle already makes instead of inventing a new detection heuristic. It follows the same "report and stop, never ask" shape the Detection Ladder uses for a real Preflight failure: a repo-wide outage is a real failure, just one only visible after two groups have independently hit it.
+
+## Why a render failure ends the firing (#5255)
+
+A first call whose prompt never rendered is never dispatched, so Settle, which runs inside the call, never counts a retry, posts a failure comment or changes a label. Before #5255 the group was excluded for the rest of that firing only, and every later firing re-selected the same record and failed the same way, with one more `REFUSED` line in `decisions.md` as the only evidence.
+
+`dispatch-prompt.js`'s inputs are nearly all firing-wide: `task-prompt.md`'s template, the resolved policy values, the model profile, the `--run` guard and the session temp path. When one breaks, every later group in the firing fails the same way, so the stop takes the Claim permission stop's shape (#4899): end the firing, relay it, and notify when headless. A denied-twice call is different: the model resent a prompt that differs from the file the CLI wrote, a fault in that one call, so it still ends only its own group.
+
+Rejected alternative: count per-record retries for never-dispatched calls. It would need Settle logic in dispatch's main thread for a cause that is almost never the record's.
+
+Accepted gap: a render failure that really is per-record (a malformed resume PR URL, say) stops every firing at that record until a human acts, because the ranking picks it first each time. The relay and the headless notification make it visible at once, unlike the silent re-selection this replaced.
