@@ -15,8 +15,15 @@
 //     (a closing URL survived), so that case is guarded by its verdict as well as its time.
 //   - a long run of identifier characters with no `/` (or with a `/x` tail and no `#`): QUALIFIED_REF
 //     rescanned the run from every start, quadratic already on the base code (50k `h` ~4s, 100k ~18s,
-//     200k ~91s, and with a `/x` tail ~83s, pre-fix); a left-boundary lookbehind of its own owner class now lets a match start only at the
-//     run's start.
+//     200k ~91s, and with a `/x` tail ~83s, pre-fix); a left-boundary lookbehind of its own owner
+//     class now lets a match start only at the run's start or where a previous `#N` match ended.
+//   - a long digit run (`1`*200k, `#` + `1`*200k + `a`): the `(?<=#\d+)` scan-back would run at every
+//     digit; the `(?!\d)` before it keeps it to once per run (measured only with the guard in place
+//     in the regex's design; the red run without the guard is recorded in the fix report).
+//   - back-to-back qualified references (`a/b#1`*50k): the verdict (everything removed) is the
+//     guard, since a plain left-boundary lookbehind leaves `a/b#a/b#…` behind.
+//   - `h#1`*5k collapsing to `h`*5k: a verdict guard for the fixed-point loop on a many-fragment
+//     input, with no separate pre-fix time.
 // Lives outside tests/ for the same reason the other perf/ files do: a wall-clock assertion flakes
 // under sibling-suite load.
 'use strict';
@@ -62,6 +69,26 @@ test('neutralize: a long identifier run with no slash stays linear', () => {
   const { value, elapsed } = timed(input);
   assert.ok(value === input, `verdict changed (length ${value.length})`);
   assert.ok(elapsed < 500, `took ${elapsed.toFixed(0)}ms — QUALIFIED_REF must not rescan the run from every start`);
+});
+
+test('neutralize: a long digit run stays linear', () => {
+  const input = '1'.repeat(200000);
+  const { value, elapsed } = timed(input);
+  assert.ok(value === input, `verdict changed (length ${value.length})`);
+  assert.ok(elapsed < 500, `took ${elapsed.toFixed(0)}ms — the #N scan-back must not run at every digit`);
+});
+
+test('neutralize: a hash, a long digit run and a letter stays linear', () => {
+  const input = `#${'1'.repeat(200000)}a`;
+  const { value, elapsed } = timed(input);
+  assert.ok(value === 'a', `verdict changed (length ${value.length})`);
+  assert.ok(elapsed < 500, `took ${elapsed.toFixed(0)}ms — the #N scan-back must not run at every digit`);
+});
+
+test('neutralize: back-to-back qualified references are all removed, in linear time', () => {
+  const { value, elapsed } = timed('a/b#1'.repeat(50000));
+  assert.ok(value === '', `verdict changed (length ${value.length})`);
+  assert.ok(elapsed < 1000, `took ${elapsed.toFixed(0)}ms`);
 });
 
 test('neutralize: a long identifier run with a slash tail and no # stays linear', () => {

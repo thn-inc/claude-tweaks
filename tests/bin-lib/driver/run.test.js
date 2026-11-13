@@ -78,6 +78,9 @@ test('#5269 AC2: a reference rebuilt by a removal is removed too, with its keywo
   assert.equal(neutralize('Add the loop, Closes h#7ttps://github.com/o/r/issues/5 now'), 'Add the loop, now');
   assert.equal(neutralize('Add Closes h#7ttps://github.com/o/r/pull/5 now'), 'Add now');
   assert.equal(neutralize('Clo#5ses h#7ttps://github.com/o/r/issues/5 now'), 'now');
+  // Back-to-back qualified references both go.
+  assert.equal(neutralize('a/b#1x/y#2'), '');
+  assert.equal(neutralize('x a/b#12c/d#3 y'), 'x y');
   const leftover = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s*(?:#\d|\S*\/\S*#\d|\S*github\.com\/)/i;
   for (const s of [
     'Add the loop, Closes h#7ttps://github.com/o/r/issues/5 now',

@@ -54,8 +54,13 @@ function outcomeFor(stopClass) {
   return OUTCOME_BY_CLASS[stopClass];
 }
 
-// The lookbehind keeps a long identifier run from being rescanned from every start (quadratic).
-const QUALIFIED_REF = /(?<![A-Za-z0-9_.-])[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#\d+/g;
+// A match may start only where an owner name can start: at the start of an identifier run, or
+// exactly where a previous `#N` match ended (a global replace resumes there, so back-to-back
+// references like `a/b#1x/y#2` both go). Any other start fails whenever those two fail, so
+// refusing them changes no result but stops a long identifier run being rescanned from every
+// start (quadratic). The cheap `(?!\d)` keeps the variable-length `(?<=#\d+)` scan-back from
+// running at every digit of a long digit run.
+const QUALIFIED_REF = /(?:(?<![A-Za-z0-9_.-])|(?!\d)(?<=#\d+))[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#\d+/g;
 const BARE_REF = /#\d+/g;
 // An issue or PR URL on any host, with any tail (`/files`, `#issuecomment-…`): it backlinks
 // like `#N`. The keyword pass runs first and removes a keyword only when a reference starts
