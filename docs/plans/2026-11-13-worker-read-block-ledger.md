@@ -8,3 +8,4 @@
 | 4 | build | SDD ruling — reword the AC7 live prompt to run each command exactly as written: ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | open | — |
 | 5 | build | SDD ruling — one targeted fix for two final-review residuals: ratify or reverse at the Review Console (staged/sdd-ruling-4.md) | open | — |
 | 6 | build | Task 4 cosmetic minor: worker.test.js canary assignment spacing; roles.js header line wrap width | fixed | Fixed in the final-review fix wave, commit f0b327b1c |
+| 7 | build/skill | headless-worker-launch extends: a live smoke prompt must tell the worker to run each Bash command exactly as written — haiku appended an exit-status echo to every command, so the allow rule no longer matched and the step was denied unrun (#5268 live run 1) | observation | Observed in #5268 Task 4; candidate enrichment for the skill's live smoke test guidance |
