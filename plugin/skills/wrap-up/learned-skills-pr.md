@@ -63,6 +63,8 @@ The CLI writes the log lines itself: one AUTO line per landed finding, in `skill
   - For `land`: run `stage` with `--reason "land exited 1"`, never the stderr text on the command line. Log `SKIP {time} — Learned-skills PR land (degraded): condition: land exited 1 ({stderr line}) → fallback: every captured patch staged. Reversibility: n/a.` the same way as the capture SKIP line.
   - For `stage` (the direct `local-merge` call or that fallback): every captured patch still sits only in `{run}/learned-skills/`. Handle each as capture's patch-file case: a SKIP line naming its patch file, and an open wrap-up ledger item so Phase 3's nothing-left-behind gate sees it.
 
+**Two backstops catch a skipped delivery.** `record` refuses an applied `skills`-row finding with no `commit` (exit 1), so a captured finding cannot be recorded before `land` or `stage` gave it a commit or a stage path. And `wrap-up-engine.js verify`'s `learned-skills-delivered` row fails while the manifest still holds a `captured` entry, naming each patch file, and that fail blocks the verdict. When it fails, run `land` (`pr-first`) or `stage` (`local-merge`) with `--run` set to the run dir the row names, which is the archived copy once the run dir is archived, then re-run `verify`.
+
 ## Payload rewrite
 
 Match each finding to the output by the `id` its `capture` printed. Findings that shared one capture share one entry, so they share its commit:

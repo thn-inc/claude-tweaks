@@ -45,7 +45,7 @@ prune` dropped the registration but the directory survived removal) is never
 carved out — it blocks like any other failing check; name the path in the
 report. Any OTHER failing check (`carrier-commit`,
 `memory-updates`, `acceptance-labeling`, `reference-repairs`,
-`upstream-feedback`, or either of these two alongside a different failing
+`learned-skills-delivered`, `upstream-feedback`, or either of these two alongside a different failing
 check) still blocks exactly as before — this carve-out is narrowly scoped to
 the two checks a live, not-yet-exited session can never pass by construction,
 never a general license to downgrade an unrelated failure.

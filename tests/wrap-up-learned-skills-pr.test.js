@@ -58,6 +58,10 @@ const PROC_FACTS = [
   [/Every finding a landed entry carries, each `shared: true` one included, gets its own AUTO line under its own row and summary, all naming that entry's one commit, and the PR body lists every finding's summary/, 'one AUTO line per finding of a landed entry (I1)'],
   [/Match each finding to the output by the `id` its `capture` printed\. Findings that shared one capture share one entry, so they share its commit/, 'the payload rewrite maps by capture id (I1)'],
   [/On `manifestFailed: true` that record could not be written, so `land` logs no AUTO line for this finding: hand-log one/, 'a capture manifestFailed finding is hand-logged (I1)'],
+  // Final-review I2: the mechanical backstops for a captured patch never landed or staged.
+  [/`record` refuses an applied `skills`-row finding with no `commit` \(exit 1\)/, 'record refuses a commit-less applied skills finding (I2)'],
+  [/`learned-skills-delivered` row fails while the manifest still holds a `captured` entry, naming each patch file, and that fail blocks the verdict/, 'verify\'s learned-skills-delivered backstop (I2)'],
+  [/When it fails, run `land` \(`pr-first`\) or `stage` \(`local-merge`\) with `--run` set to the run dir the row names, which is the archived copy once the run dir is archived, then re-run `verify`/, 'the backstop\'s remedy (I2)'],
 ];
 const missingProc = missingFactsOf(PROC_FACTS);
 
@@ -324,6 +328,32 @@ test('the AUTO and STAGED template segments are both in skill-curation.md and in
     assert.deepEqual(missingSegments(prose.split(s).join('')), [s], `control: "${s}" stripped from the prose goes red`);
   }
   assert.deepEqual(missingSegments(stripComments('// on learned-skills PR #\n')), SEGMENTS, 'control: a comment-only copy does not count');
+});
+
+// ---- I2: the verify check is a blocking check, and record's refusal is in the contract row ----
+
+const TEMPLATE = collapse(readText(path.join(WRAP, 'summary-template.md')));
+const blockingChecks = (text) => {
+  const m = /Any OTHER failing check \(([^)]*)\)/.exec(text);
+  assert.ok(m, 'the blocking-checks sentence resolves');
+  return m[1];
+};
+
+test('summary-template.md lists learned-skills-delivered among the blocking checks, as verify registers it', () => {
+  const { runVerify } = require('../plugin/bin/lib/wrap-up/engine-verify');
+  const registered = runVerify({ runDir: null, base: 'main', deps: {} }).rows.map((r) => r.check);
+  assert.ok(registered.includes('learned-skills-delivered'), 'verify registers the check');
+  assert.ok(blockingChecks(TEMPLATE).includes('`learned-skills-delivered`'));
+  const doctored = TEMPLATE.replace('`learned-skills-delivered`, ', '');
+  assert.notEqual(doctored, TEMPLATE);
+  assert.ok(!blockingChecks(doctored).includes('`learned-skills-delivered`'), 'control: dropping it from the list goes red');
+});
+
+test('curation-engine.md section 3 commit row says record refuses a commit-less applied skills finding', () => {
+  const row = ENGINE.split('\n').find((l) => l.startsWith('| `findings[].commit` |')) || '';
+  const claim = /`record` refuses an applied `skills`-row finding without one \(exit 1\): a captured edit gets its hash from `learned-skills-pr\.md`'s `land`, so run `land` or `stage` first/;
+  assert.match(row, claim);
+  assert.doesNotMatch(row.replace(claim, ''), claim, 'control: the claim stripped from the row goes red');
 });
 
 // ---- auto-merge-short-circuit.md: the pr-first FYI ----------------------------

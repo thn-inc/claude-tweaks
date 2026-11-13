@@ -549,6 +549,32 @@ test('HTML comments in a summary cannot plant a run marker in the PR body', (t) 
   assert.ok(body.startsWith('<!-- wrap-up-skills-pr -->'));
 });
 
+// I2 (final review): verify's learned-skills-delivered check runs after the run dir is archived, and its
+// remedy is a land or stage against that dir. The manifest's absolute patch paths are then stale, so
+// each captured patch is read from the learned-skills/ dir beside the manifest.
+function archiveRunDir(f) {
+  const archived = path.join(f.repo, '.claude-tweaks', 'pipelines', 'archive', RUN_ID);
+  fs.mkdirSync(path.dirname(archived), { recursive: true });
+  fs.renameSync(f.runDir, archived);
+  return archived;
+}
+
+test('stage and land deliver captured patches from an archived run dir', (t) => {
+  const f = fixture(t);
+  const archived = archiveRunDir(f);
+  const s = stage({ runDir: archived, worktree: f.repo, mergeBase: f.mergeBase, reason: 'verify found it undelivered' }, { now: () => NOW });
+  assert.equal(s.failed, undefined, JSON.stringify(s.failed));
+  assert.equal(s.staged.length, 2);
+  assert.deepEqual(readManifest(archived).map((m) => m.status), ['staged', 'staged']);
+
+  const g = fixture(t);
+  const archivedG = archiveRunDir(g);
+  const res = land({ ...landArgs(g), runDir: archivedG }, deps(fakeGh().gh).deps);
+  assert.deepEqual(res.staged, [], JSON.stringify(res.staged));
+  assert.equal(res.landed.length, 2);
+  assert.ok(readManifest(archivedG).every((m) => m.status === 'landed' && m.patch.startsWith(archivedG)), 'the manifest names the patches where they now live');
+});
+
 test('stage numbering skips taken slots', (t) => {
   const f = fixture(t, { capturedTargets: [X] });
   fs.mkdirSync(path.join(f.runDir, 'staged'), { recursive: true });

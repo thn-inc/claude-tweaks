@@ -205,6 +205,11 @@ function validatePayload(payload) {
       if (typeof finding.summary !== 'string' || !finding.summary) {
         throw new Error(`recordResult: payload.findings[${index}].summary must be a non-empty string (rowId '${payload.rowId}')`);
       }
+      // #5290: an applied Skills-row edit has a commit, on the run branch or from learned-skills-pr.js
+      // land. One without it never left capture's patch file, so no land or stage delivered it.
+      if (payload.rowId === 'skills' && finding.action === 'applied' && (typeof finding.commit !== 'string' || !finding.commit.trim())) {
+        throw new Error(`recordResult: payload.findings[${index}] is an applied skills-row finding with no commit — run learned-skills-pr.js land or stage first, then rewrite the payload from its output (rowId '${payload.rowId}')`);
+      }
     });
   } else if (payload.findings !== undefined && !Array.isArray(payload.findings)) {
     throw new Error(`recordResult: payload.findings must be an array (rowId '${payload.rowId}')`);

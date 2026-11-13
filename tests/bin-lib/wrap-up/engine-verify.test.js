@@ -1711,6 +1711,52 @@ test('reference-repairs check still fails under pr-first when a repair genuinely
   assert.match(row.detail, /no Initiative-Fix: commit found on PR #1201/);
 });
 
+// ---- learned-skills-delivered (#5290 final review I2) ----
+// A captured Skills-row edit exists only as {run}/learned-skills/{id}.patch until land or stage runs.
+function writeLearnedManifest(runDir, entries) {
+  fs.mkdirSync(path.join(runDir, 'learned-skills'), { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'learned-skills', 'manifest.json'), typeof entries === 'string' ? entries : JSON.stringify(entries));
+}
+const learnedRow = (runDir) => runVerify({ runDir, base: 'main', deps: { git: () => '', gh: () => '' } });
+
+test('learned-skills-delivered skips when the run captured nothing', () => {
+  const runDir = makeTmpDir('verify-learned-none-');
+  const row = learnedRow(runDir).rows.find((r) => r.check === 'learned-skills-delivered');
+  assert.deepStrictEqual(row, { check: 'learned-skills-delivered', result: 'skip', detail: 'no learned-skills captures this run' });
+});
+
+test('learned-skills-delivered passes when every entry was landed, staged or superseded', () => {
+  const runDir = makeTmpDir('verify-learned-done-');
+  writeLearnedManifest(runDir, [
+    { id: '1', status: 'landed', patch: '/gone/1.patch' }, { id: '2', status: 'staged', patch: '' }, { id: '3', status: 'superseded', patch: '/gone/3.patch' },
+  ]);
+  const row = learnedRow(runDir).rows.find((r) => r.check === 'learned-skills-delivered');
+  assert.strictEqual(row.result, 'pass', row.detail);
+});
+
+test('learned-skills-delivered fails on a captured entry and names each patch where it now lives', () => {
+  const runDir = makeTmpDir('verify-learned-captured-');
+  // Absolute paths from before the run dir was archived: the check names the copy beside the manifest.
+  writeLearnedManifest(runDir, [
+    { id: '1', status: 'captured', patch: '/original/run/learned-skills/1.patch' },
+    { id: '2', status: 'landed', patch: '/original/run/learned-skills/2.patch' },
+    { id: '3', status: 'captured', patch: '/original/run/learned-skills/3.patch' },
+  ]);
+  const result = learnedRow(runDir);
+  const row = result.rows.find((r) => r.check === 'learned-skills-delivered');
+  assert.strictEqual(row.result, 'fail');
+  assert.strictEqual(row.detail, `2 captured learned-skills patch(es) never delivered: ${path.join(runDir, 'learned-skills', '1.patch')}, ${path.join(runDir, 'learned-skills', '3.patch')} — run learned-skills-pr.js land (pr-first) or stage (local-merge) with --run ${runDir}`);
+  assert.strictEqual(result.exitCode, 3, 'a fail blocks the verdict');
+});
+
+test('learned-skills-delivered fails on an unreadable manifest', () => {
+  const runDir = makeTmpDir('verify-learned-bad-');
+  writeLearnedManifest(runDir, '{not json');
+  const row = learnedRow(runDir).rows.find((r) => r.check === 'learned-skills-delivered');
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /^learned-skills manifest unreadable: /);
+});
+
 test('acceptance-labeling check renders unknown (gh absent) when gh probe throws', () => {
   const runDir = makeTmpDir('verify-acceptance-ghabsent-');
   writeSpecFile(runDir, '900', 900);

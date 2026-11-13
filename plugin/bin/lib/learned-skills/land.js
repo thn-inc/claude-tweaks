@@ -61,6 +61,17 @@ function checkMergeBase(mergeBase) {
   return mergeBase;
 }
 
+// The manifest, with each captured patch read from the learned-skills/ dir beside it. Its stored
+// absolute path goes stale once the run dir is archived, and verify's learned-skills-delivered
+// remedy is a land or stage against the archived dir.
+function readLocalManifest(runDir) {
+  const manifest = readManifest(runDir);
+  for (const e of manifest) {
+    if (e.status === 'captured' && e.patch) e.patch = path.join(runDir, 'learned-skills', path.basename(e.patch));
+  }
+  return manifest;
+}
+
 // Splits the manifest's captured entries into those to deliver and those the run branch already
 // carries. An entry is superseded only when the run branch changed its target after the merge base AND
 // the entry's patch reverse-applies to HEAD's tree (the edit itself is on the run branch); a target the
@@ -146,7 +157,7 @@ function stage({ runDir, worktree, reason, mergeBase }, overrides = {}) {
   const why = oneLine(reason);
   if (!why) throw new UsageError('reason is required');
   const base = checkMergeBase(mergeBase);
-  const manifest = readManifest(runDir);
+  const manifest = readLocalManifest(runDir);
   const out = { staged: [] };
   const { todo, superseded } = triage({ runDir, worktree, mergeBase: base, manifest, deps });
   if (superseded.length) out.superseded = superseded;
@@ -204,7 +215,7 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
   };
   const openOf = (rows) => rows.find((r) => r.state === 'OPEN') || null;
 
-  const manifest = readManifest(runDir);
+  const manifest = readLocalManifest(runDir);
   const prior = [...manifest].reverse().find((e) => e.status === 'landed' && e.pr);
   // pr is reported only when this call confirmed it open.
   const out = { branch, pr: null, landed: [], staged: [] };
