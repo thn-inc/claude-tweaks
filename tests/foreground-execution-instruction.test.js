@@ -610,7 +610,7 @@ test('AC1.3: a copy with an unrelated sentence between the stop sentence and the
 // gets artifact-directory progress windows and its late result is staged. The rule lives in its own
 // _shared file (headroom-forced); the core section carries one exception sentence pointing at it.
 const RENDERED_UI = path.join(PLUGIN, 'skills', '_shared', 'rendered-ui-units.md');
-const RENDERED_UI_EXCEPTION = 'Exception: a rendered-UI unit (review Step 6/6.5) gets more windows while its artifact directory changes; stage its late result (`rendered-ui-units.md`).';
+const RENDERED_UI_EXCEPTION = 'Exception: a rendered-UI unit (review Step 6/6.5) gets more windows while its artifact directory changes; stage its late result (`_shared/rendered-ui-units.md`).';
 const RENDERED_UI_CONTRACT = [
   [/review\s+Step\s+6\s+\(visual-review\)\s+and\s+Step\s+6\.5\s+\(design-wrapper\s+review\)/, 'names review Step 6 and Step 6.5 as the rendered-UI units'],
   [/Steps?\s+3\.7\s+and\s+3\.8[^.]*?no\s+artifact\s+directory/, 'the 3.7/3.8 children have no artifact directory'],
@@ -633,7 +633,13 @@ const RENDERED_UI_CONTRACT = [
   [/`\{section\}`\s+is\s+`\/review`/, 'binds the log-decision {section}'],
   [/basename\s+of\s+the\s+first\s+path\s+stage-item\s+printed/, '{written-file} is the basename of the first path stage-item printed'],
   [/`\{text-file\}`\s+is\s+a\s+path\s+`bin\/session-tmp-resolve\.js`\s+prints/, 'binds the {text-file} location'],
-  [/as\s+an\s+absolute\s+path/, 'the artifact directory is named as an absolute path'],
+  [/artifact\s+directory\s+in\s+its\s+prompt\s+as\s+an\s+absolute\s+path/, 'the artifact directory is named as an absolute path'],
+  [/`LATE_FINDING:\s+\{severity\}\s+—\s+\{one-line\s+finding\}`/, 'a closed-run finding is one LATE_FINDING: {severity} — {one-line finding} line'],
+  [/immediately\s+before\s+the\s+reply's\s+trailing\s+`STATUS:`\s+line/, 'the LATE_FINDING lines sit immediately before the trailing STATUS: line'],
+  [/re-woken\s+agent\s+after\s+its\s+final\s+reply\s+repeats\s+the\s+whole\s+final\s+reply\s+with\s+those\s+lines\s+inserted\s+before\s+`STATUS:`/, 'a re-wake after a closed run repeats the reply with the lines inserted before STATUS:'],
+  [/no\s+pipeline\s+run\s+directory,\s+or\s+no\s+`run-state\.json`\s+in\s+it,\s+treat\s+the\s+run\s+as\s+not\s+active/, 'no run dir or no run-state.json counts as not active'],
+  [/downgrade\s+line\s+\(`decisions\.md`,\s+under\s+the\s+dispatching\s+skill's\s+section\)[\s\S]{0,120}?review\s+summary's\s+Visual\s+Review\s+or\s+Design\s+Quality\s+section/, 'the explicit decline lands in the downgrade line and the review summary'],
+  [/`\{unit\}`\s+is\s+the\s+child\s+as\s+its\s+launch\s+site\s+named\s+it[^.]*?`\{unit-slug\}`\s+is\s+its\s+lowercase,\s+hyphen-joined\s+form/, 'binds {unit} and {unit-slug}'],
 ];
 const renderedUiMissing = missingFactsOf(RENDERED_UI_CONTRACT);
 
@@ -661,7 +667,7 @@ test('AC1.1: the core section carries the rendered-UI exception sentence once (#
 
 const RENDERED_UI_EXCEPTION_FACTS = [
   [/Exception:\s+a\s+rendered-UI\s+unit\s+\(review\s+Step\s+6\/6\.5\)\s+gets\s+more\s+windows\s+while\s+its\s+artifact\s+directory\s+changes;/, 'names the rendered-UI unit exception and its extra windows'],
-  [/stage\s+its\s+late\s+result\s+\(`rendered-ui-units\.md`\)\./, 'stages the late result per rendered-ui-units.md'],
+  [/stage\s+its\s+late\s+result\s+\(`_shared\/rendered-ui-units\.md`\)\./, 'stages the late result per _shared/rendered-ui-units.md'],
 ];
 const missingRenderedUiException = missingFactsOf(RENDERED_UI_EXCEPTION_FACTS);
 

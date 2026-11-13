@@ -33,7 +33,7 @@ const SITES = [
 ];
 const fileOf = (name) => path.join(SKILLS, ...name.split(' ')[0].split('/'));
 
-test('AC1.1: each rendered-UI launch site names its child a rendered-UI unit and its artifact directory (#5280)', () => {
+test('AC1.1: each rendered-UI launch site names its child a rendered-UI unit and its artifact directory, or that it has none (#5280)', () => {
   for (const [name, region, facts] of SITES) {
     const text = region(readText(fileOf(name)));
     assert.ok(text.length > 0, `region not found in ${name}`);
