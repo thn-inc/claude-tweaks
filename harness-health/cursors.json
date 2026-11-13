@@ -61,7 +61,7 @@
   },
   "skill:skill-prose-conformance-tests": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1794547037887
+    "lastAuditedMs": 1794590530893
   },
   "skill:shared-contract-extraction": {
     "lastAuditedSha": null,
@@ -201,7 +201,7 @@
   },
   "skill:mcp-agent-fetch-node-compute": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793735967262
+    "lastAuditedMs": 1794590535276
   },
   "skill:post-merge-workflow-live-probe": {
     "lastAuditedSha": null,
@@ -257,7 +257,7 @@
   },
   "skill:claim-targets-stop-addition": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1794538248519
+    "lastAuditedMs": 1794590532987
   },
   "skill:lock-race-test-seam": {
     "lastAuditedSha": null,
@@ -269,7 +269,7 @@
   },
   "skill:dispatch-queue-exclusion-addition": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1794538251633
+    "lastAuditedMs": 1794590520659
   },
   "skill:driver-step-addition": {
     "lastAuditedSha": null,
@@ -282,5 +282,9 @@
   "skill:suite-slot-test-env": {
     "lastAuditedSha": null,
     "lastAuditedMs": 1794547040009
+  },
+  "skill:blocker-surface-parity": {
+    "lastAuditedSha": null,
+    "lastAuditedMs": 1794590528152
   }
 }
