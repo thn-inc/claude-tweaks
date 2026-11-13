@@ -1,6 +1,7 @@
 ---
 files:
   - plugin/bin/lib/issues/backlog.js
+  - plugin/bin/lib/issues/trust.js
   - plugin/bin/lib/issues/record.js
   - plugin/bin/lib/issues/record-vocabulary.js
   - plugin/bin/lib/issues/facet-shape.js
