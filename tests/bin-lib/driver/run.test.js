@@ -2765,13 +2765,288 @@ test('AC12: a review step that stops still carries its counts', async () => {
   assert.equal(lastLine(h).stop.step, STEP.review);
 });
 
-test('AC12: a confirmed finding stops at the placeholder, with its counts, until the fix round exists', async () => {
-  const h = harness({ policy: { 'express-driver-review': 'on' }, reviewer: reviewerEnvelope([evidenceFinding(0)]), script: [REPRODUCED] });
+// --- the fix round (#5222, Task 7) ----------------------------------------------------
+//
+// fixRig: the reviewer returns `findings` (one valid finding by default) and each pass run
+// reproduces. The implementer's second launch is the fix round: its envelope is `fix` over a
+// finished one, by default it changes a.js, and `effect(fx)` changes the tree further. An evidence
+// file the step wrote reads as a file until it is removed. The second commit leaves the tree clean,
+// and the name-only diff lists what that commit staged. Each direct run of a kept file answers
+// `direct(i)` (green by default).
+const { buildFixPrompt, normalizeEventText, evidenceArgs } = require(path.join(LIB, 'driver', 'review'));
+const FIX_RESULT = Object.freeze({ status: 'done', title: 'Fix the subtraction', summary: 'Adds instead of subtracting.' });
+const REVIEWER_USAGE = Object.freeze({ input_tokens: 42 });
+const RED = Object.freeze({ code: 1, tap: EVIDENCE_TAP('assert-fail') });
+const GREEN = Object.freeze({ code: 0, tap: EVIDENCE_TAP('pass') });
+const implementerCalls = (h) => h.calls.filter((c) => c.kind === 'worker' && c.args[0].role === 'implementer');
+const evidenceAbs = (i) => path.join(WT, 'tests', 'new', `r${i}.test.js`);
+const fixDest = (h, i) => path.join(runDirOf(h), 'review', `fix-evidence-${i}.tap`);
+// The n-th call `match` accepts gets `reply`; every other call falls through to the later entries.
+const nthCall = (match, n, reply) => { let seen = 0; return [(c) => match(c) && (seen += 1) === n, reply]; };
+// Calls after the second implementer launch.
+const afterFixLaunch = (h) => h.calls.slice(h.calls.indexOf(implementerCalls(h)[1]) + 1);
+function fixRig({ findings = [evidenceFinding(0)], fix = {}, effect = () => {}, direct = () => GREEN, script = [], ...over } = {}) {
+  let h = null;
+  let commits = 0;
+  let runs = 0;
+  let staged = [];
+  h = harness({
+    policy: { 'express-driver-review': 'on' },
+    reviewer: reviewerEnvelope(findings, { usage: REVIEWER_USAGE, denials: [] }),
+    ...over,
+    script: [
+      ...script,
+      [(c) => c.kind === 'worker' && c.args[0].role === 'implementer', (c) => {
+        if (implementerCalls(h).length === 1) return { ...ENVELOPE };
+        h.fx.dirty = ' M a.js\0';
+        effect(h.fx);
+        return { ...ENVELOPE, result: FIX_RESULT, ...pick(fix, c) };
+      }],
+      [(c) => c.kind === 'lstatType' && h.fx.files.has(c.args[0]), { type: 'file', code: null }],
+      [onGit('--literal-pathspecs', 'add'), (c) => { staged = c.args.slice(c.args.indexOf('--') + 1); return ''; }],
+      [onGit('commit'), () => {
+        commits += 1;
+        h.fx.committed = true;
+        if (commits === 2) { h.fx.files.clear(); h.fx.dirty = ''; }
+        return '';
+      }],
+      [onGit('--no-optional-locks', 'diff', '--name-only'), () => staged.map((p) => `${p}\0`).join('')],
+      [on('runner'), () => { runs += 1; return runs <= findings.length ? RED : direct(runs - findings.length - 1); }],
+    ],
+  });
+  return h;
+}
+const FINDING_0 = `${normalizeEventText('src/a.js')}:1 ${normalizeEventText(evidenceFinding(0).claim)}`;
+
+test('AC8: one fix round, in order', async () => {
+  const h = fixRig();
+  assert.equal(await run(['#7'], h.deps), 0);
+  const reviewer = h.calls.findIndex((c) => c.kind === 'worker' && c.args[0].role === 'reviewer');
+  const tail = h.calls.slice(reviewer + 1);
+  const signature = tail.slice(tail.findIndex((c) => c.kind === 'runner')).flatMap((c) => {
+    if (['runner', 'worker'].includes(c.kind)) return [c.kind];
+    if (c.kind === 'writeFileExclusive' || c.kind === 'rmFile') return [`${c.kind} ${path.relative(WT, c.args[0]).split(path.sep).join('/')}`];
+    if (c.kind === 'git') {
+      const sub = gitSub(c).filter((a) => !a.startsWith('--'));
+      return ['status', 'add', 'commit', 'diff', 'push'].includes(sub[0]) ? [`git ${sub[0]}`] : [];
+    }
+    if (c.kind === 'node' && /verify\.js$/.test(c.args[0])) return ['node verify.js'];
+    if (c.kind === 'node' && /express-lane\.js$/.test(c.args[0])) return [`node express-lane.js ${c.args[1]}`];
+    return [];
+  });
+  assert.deepEqual(signature, [
+    // The pass: the red run, its tree check, the last tree check.
+    'runner', 'git status', 'git status',
+    // The fix round: the launch, the rewrite (the file the pass kept is replaced, not written through),
+    // the commit, the scoped test, the direct run and its tree check, the name-only diff, check, push.
+    'worker', 'rmFile tests/new/r0.test.js', 'writeFileExclusive tests/new/r0.test.js',
+    'git status', 'git add', 'git commit', 'node verify.js', 'runner', 'git status', 'git diff', 'node express-lane.js check', 'git push',
+  ]);
+  assert.equal(implementerCalls(h).length, 2);
+  const [firstLaunch, fixLaunch] = implementerCalls(h).map((c) => c.args[0].prompt);
+  assert.ok(fixLaunch.startsWith(firstLaunch), 'the fix prompt starts with the first prompt');
+  const fixText = buildFixPrompt([{ ...evidenceFinding(0), content: EVIDENCE_CONTENT, evidencePath: 'tests/new/r0.test.js' }]);
+  assert.equal(fixLaunch, firstLaunch + fixText);
+  assert.ok(fixText.trimEnd().endsWith('These tests are kept as regression tests: do not edit or delete them. Make every one of them pass.'));
+  const rewrite = h.calls.filter((c) => c.kind === 'writeFileExclusive').at(-1);
+  assert.deepEqual(rewrite.args, [evidenceAbs(0), EVIDENCE_CONTENT]);
+  assert.deepEqual(evidenceRuns(h)[1].args[0].args, evidenceArgs('npm test', 'tests/new/r0.test.js', fixDest(h, 0)));
+  assert.deepEqual([reviewLines(h)[0].status, reviewLines(h)[0].detail], ['ok', '1 reproduced of 1; fixed in one round']);
+  assert.equal(lastLine(h).outcome, 'pending-review');
+});
+
+test('AC8: the second round never launches a third implementer', async () => {
+  const cases = [
+    ['done', {}],
+    ['cannot-complete', { result: { status: 'cannot-complete', title: 't', summary: 'no' } }],
+    ['fail', { status: 'fail', reason: 'exit', result: null, detail: 'x' }],
+  ];
+  for (const [name, fix] of cases) {
+    const h = fixRig({ fix });
+    assert.equal(await run(['#7'], h.deps), 0, name);
+    assert.equal(implementerCalls(h).length, 2, name);
+    assert.equal(h.calls.filter((c) => c.kind === 'worker').length, 3, `${name}: implementer, reviewer, fix round`);
+  }
+});
+
+test('AC9: the evidence file is rewritten from the recorded content before the commit', async () => {
+  // The fix worker deletes the evidence file and changes nothing else: it is recreated, still red.
+  const deleted = fixRig({ effect: (fx) => { fx.files.delete(evidenceAbs(0)); fx.dirty = ''; }, direct: () => RED });
+  await run(['#7'], deleted.deps);
+  const after = afterFixLaunch(deleted);
+  assert.ok(!after.some((c) => c.kind === 'rmFile'), 'a missing file is not removed');
+  const rewrite = after.findIndex((c) => c.kind === 'writeFileExclusive');
+  assert.deepEqual(after[rewrite].args, [evidenceAbs(0), EVIDENCE_CONTENT]);
+  assert.ok(rewrite < after.findIndex((c) => c.kind === 'git' && gitSub(c)[0] === 'commit'), 'rewritten before the commit');
+  assert.deepEqual([lastLine(deleted).stop.step, lastLine(deleted).stop.reason, reviewLines(deleted)[0].status], [STEP.review, 'failing-test', 'stop']);
+  assert.equal(lastLine(deleted).stop.detail, `the kept evidence test did not pass (reproduced): ${FINDING_0}`);
+  assert.equal(pushCalls(deleted).length, 0);
+  // The fix worker edits it into a passing test: the edited file is removed and the recorded bytes written.
+  const edited = fixRig({ effect: (fx) => { fx.edited = 'passing'; } });
+  await run(['#7'], edited.deps);
+  const steps = afterFixLaunch(edited).filter((c) => ['rmFile', 'writeFileExclusive'].includes(c.kind) || (c.kind === 'git' && gitSub(c)[0] === 'commit'));
+  assert.deepEqual(steps.map((c) => [c.kind, c.args[0] === evidenceAbs(0) || c.kind === 'git']), [['rmFile', true], ['writeFileExclusive', true], ['git', true]]);
+  assert.equal(steps[1].args[1], EVIDENCE_CONTENT);
+  assert.equal(lastLine(edited).outcome, 'pending-review');
+});
+
+test('AC10: each escalation names the finding and runs no second round', async () => {
+  const checkCall = on('node', /express-lane\.js$/, 'check');
+  const rows = [
+    ['kept evidence still red', { direct: () => RED }, 'stop', 'pre-push', 'failing-test'],
+    ['verify.js exit 1', { script: [nthCall(on('node', /verify\.js$/), 2, { code: 1, stdout: '', stderr: '' })] }, 'stop', 'pre-push', 'failing-test'],
+    ['check escalate out-of-bounds', { script: [nthCall(checkCall, 2, { code: 0, stderr: '', stdout: JSON.stringify({ action: 'escalate', reason: 'out-of-bounds', detail: 'too many lines', logged: true }) })] }, 'stop', 'pre-push', 'out-of-bounds'],
+    ['fix worker fail', { fix: { status: 'fail', reason: 'exit', result: null, detail: 'x' } }, 'fail', 'pre-push', 'express-error'],
+    ['fix worker timeout', { fix: { status: 'timeout', reason: 'wall-clock-ceiling', result: null, detail: 'x' } }, 'fail', 'pre-push', 'express-error'],
+    ['changed nothing outside the evidence files', { effect: (fx) => { fx.dirty = ''; } }, 'stop', 'pre-push', 'express-error'],
+    ['git commit fails', { script: [nthCall(onGit('commit'), 2, new Error('hook failed'))] }, 'fail', 'pre-push', 'express-error'],
+    ['kept evidence changes the tree', { direct: () => ({ ...GREEN, dirty: ' M other.js\0' }) }, 'fail', 'pre-push', 'express-error'],
+    ['check exit non-zero', { script: [nthCall(checkCall, 2, { code: 1, stdout: '', stderr: 'boom' })] }, 'fail', 'blocked', 'fail'],
+  ];
+  for (const [name, over, status, cls, reason] of rows) {
+    const h = fixRig(over);
+    assert.equal(await run(['#7'], h.deps), 0, name);
+    const { stop, outcome } = lastLine(h);
+    assert.deepEqual([stop.step, stop.class, outcome, stop.reason], [STEP.review, cls, outcomeFor(cls), reason], name);
+    assert.ok(stop.detail.endsWith(`: ${FINDING_0}`), `${name}: ${stop.detail}`);
+    assert.equal(implementerCalls(h).length, 2, name);
+    assert.equal(pushCalls(h).length, 0, name);
+    // AC12: the one review line keeps the pass's counts and the reviewer's own usage and denials.
+    const lines = reviewLines(h);
+    assert.equal(lines.length, 1, name);
+    assert.deepEqual([lines[0].status, lines[0].returned, lines[0].reproduced, lines[0].discarded, lines[0].usage, lines[0].denials],
+      [status, 1, 1, 0, REVIEWER_USAGE, []], name);
+  }
+});
+
+test('AC8: all confirmed findings share the one round', async () => {
+  const h = fixRig({ findings: [evidenceFinding(0), evidenceFinding(1)] });
   await run(['#7'], h.deps);
-  const [line] = reviewLines(h);
-  assert.deepEqual([line.status, line.detail, line.returned, line.reproduced, line.discarded], ['stop', 'fix round not built', 1, 1, 0]);
-  assert.equal(pushCalls(h).length, 0);
-  assert.deepEqual([lastLine(h).stop.class, lastLine(h).outcome], ['pre-push', 'express-escalated']);
+  assert.equal(implementerCalls(h).length, 2);
+  const prompt = implementerCalls(h)[1].args[0].prompt;
+  for (const i of [0, 1]) {
+    assert.ok(prompt.includes(`Evidence test: tests/new/r${i}.test.js`), `finding ${i}`);
+    assert.ok(prompt.includes(evidenceFinding(i).claim), `finding ${i}`);
+  }
+  assert.deepEqual(evidenceRuns(h).slice(2).map((c) => c.args[0].args.at(-2)), [0, 1].map((i) => `--test-reporter-destination=${fixDest(h, i)}`));
+  assert.equal(pushCalls(h).length, 1);
+  // A stop that is no one file's names every confirmed finding.
+  const nothing = fixRig({ findings: [evidenceFinding(0), evidenceFinding(1)], effect: (fx) => { fx.dirty = ''; } });
+  await run(['#7'], nothing.deps);
+  const finding1 = `${normalizeEventText('src/a.js')}:2 ${normalizeEventText(evidenceFinding(1).claim)}`;
+  assert.equal(lastLine(nothing).stop.detail, `the fix round changed nothing outside the evidence files: ${FINDING_0}; ${finding1}`);
+});
+
+test('Review Focus 5: a fix worker that deletes the evidence and fixes the code still passes', async () => {
+  const h = fixRig({ effect: (fx) => { fx.files.delete(evidenceAbs(0)); } });
+  await run(['#7'], h.deps);
+  assert.deepEqual(afterFixLaunch(h).filter((c) => c.kind === 'writeFileExclusive').map((c) => c.args), [[evidenceAbs(0), EVIDENCE_CONTENT]]);
+  assert.equal(evidenceRuns(h).length, 2);
+  assert.equal(pushCalls(h).length, 1);
+  assert.equal(lastLine(h).outcome, 'pending-review');
+});
+
+test('AC15 (summary): after a fix round the summary lists both commits\' files and the PR body keeps the first summary', async () => {
+  const h = fixRig();
+  await run(['#7'], h.deps);
+  const text = h.files[h.calls.filter(logsSummary)[0].args.at(-1)];
+  assert.equal(text, '#7 built on the express lane: a.js, tests/new/r0.test.js; tests full; PR #9.\n');
+  const summary = h.files[path.join(runDirOf(h), 'pr-summary.md')];
+  assert.ok(summary.startsWith(`${ENVELOPE.result.summary} `), summary);
+  assert.equal(summary, `${ENVELOPE.result.summary} Review fix: ${FIX_RESULT.summary}\n`);
+});
+
+test('fix round: ctx.worker merges both launches: the fix title commits, cost and turns add, denials join, overrun ORs', async () => {
+  const denial = (tool) => [{ tool_name: tool, tool_input: { command: 'x' } }];
+  const h = fixRig({
+    script: [nthCall((c) => c.kind === 'worker' && c.args[0].role === 'implementer', 1, { ...ENVELOPE, denials: denial('Bash') })],
+    fix: { denials: denial('WebFetch'), spendOverrun: true, costUsd: 0.5, turns: 4 },
+  });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.costUsd, final.turns, final.denialCount, final.spendOverrun], [0.75, 7, 2, true]);
+  assert.equal(h.files[path.join(runDirOf(h), 'commit-msg.txt')], 'Fix the subtraction — refs #7\n');
+  assert.equal(h.calls.filter((c) => c.kind === 'writeFile' && c.args[0] === path.join(runDirOf(h), 'commit-msg.txt')).length, 2);
+  // A launch that reported no cost leaves the other launch's; neither reporting one stays null.
+  const one = fixRig({ fix: { costUsd: null, turns: null } });
+  await run(['#7'], one.deps);
+  assert.deepEqual([lastLine(one).costUsd, lastLine(one).turns], [ENVELOPE.costUsd, ENVELOPE.turns]);
+  const none = fixRig({ script: [nthCall((c) => c.kind === 'worker' && c.args[0].role === 'implementer', 1, { ...ENVELOPE, costUsd: null })], fix: { costUsd: null } });
+  await run(['#7'], none.deps);
+  assert.equal(lastLine(none).costUsd, null);
+  // A fix round that fails still counts its launch on the final line.
+  const failed = fixRig({ fix: { status: 'fail', reason: 'exit', result: null, detail: 'x', costUsd: 1 } });
+  await run(['#7'], failed.deps);
+  assert.equal(lastLine(failed).costUsd, 1.25);
+});
+
+test('fix round: a parent the fix worker turned into a symlink out of the worktree is refused, with no write', async () => {
+  const parent = path.join(WT, 'tests', 'new');
+  const outside = path.join(MAIN, 'outside');
+  const cases = [
+    // The evidence file's own directory is now a symlink.
+    ['symlinked parent', (swapped) => ({ script: [[(c) => swapped.on && c.kind === 'lstatType' && c.args[0] === parent, { type: 'symlink', code: null }]] })],
+    // A directory whose canonical path is outside the worktree (an ancestor was swapped).
+    ['parent resolving outside', (swapped) => ({
+      script: [[(c) => swapped.on && c.kind === 'lstatType' && c.args[0] === parent, { type: 'directory', code: null }]],
+      deps: { canonicalRealpath: (p) => (swapped.on && p === parent ? outside : p) },
+    })],
+  ];
+  for (const [name, overFor] of cases) {
+    const swapped = { on: false };
+    const h = fixRig({ ...overFor(swapped), effect: () => { swapped.on = true; } });
+    await run(['#7'], h.deps);
+    const writes = afterFixLaunch(h).filter((c) => ['writeFileExclusive', 'rmFile', 'mkdirSync', 'rmdir'].includes(c.kind) && String(c.args[0]).startsWith(WT));
+    assert.deepEqual(writes, [], name);
+    const { stop } = lastLine(h);
+    assert.deepEqual([stop.step, stop.class, reviewLines(h)[0].status], [STEP.review, 'pre-push', 'fail'], name);
+    assert.equal(stop.detail, `evidence path refused before the rewrite: parent-escapes: ${FINDING_0}`, name);
+    assert.equal(commitGit(h).filter((c) => gitSub(c)[0] === 'commit').length, 1, `${name}: no fix-round commit`);
+  }
+  // The evidence path itself turned into a directory: refused, nothing removed.
+  const dir = fixRig({ script: [[(c) => c.kind === 'lstatType' && c.args[0] === evidenceAbs(0) && implementerCalls(dir).length === 2, { type: 'directory', code: null }]] });
+  await run(['#7'], dir.deps);
+  assert.equal(lastLine(dir).stop.detail, `evidence path is not a file before the rewrite: ${FINDING_0}`);
+  assert.ok(!afterFixLaunch(dir).some((c) => ['rmFile', 'writeFileExclusive'].includes(c.kind)));
+});
+
+test('fix round: a commit that does not hold the evidence file (ignored by the worker) fails', async () => {
+  // git status no longer reports the evidence file once the worker wrote a .gitignore for it.
+  const h = fixRig({ effect: (fx) => { fx.dirty = ' M a.js\0 M .gitignore\0'; fx.ignored = true; } });
+  h.fx.written = (wt) => (h.fx.ignored ? '' : [...h.fx.files].map((abs) => `?? ${path.relative(wt, abs).split(path.sep).join('/')}\0`).join(''));
+  await run(['#7'], h.deps);
+  assert.deepEqual([lastLine(h).stop.step, reviewLines(h)[0].status], [STEP.review, 'fail']);
+  assert.equal(lastLine(h).stop.detail, `the fix round commit does not hold the evidence file: ${FINDING_0}`);
+  assert.equal(verifyCalls(h).length, 1, 'no second scoped run');
+});
+
+test('fix round: a kept evidence run that throws or survives its kill fails, and an interrupt yields', async () => {
+  // A TAP destination the run cannot use: fixed text, never the error's own words.
+  const thrown = fixRig({ script: [[(c) => c.kind === 'lstatType' && String(c.args[0]).endsWith('fix-evidence-0.tap'), { type: 'file', code: null }]] });
+  await run(['#7'], thrown.deps);
+  assert.equal(lastLine(thrown).stop.detail, `the kept evidence run failed: ${FINDING_0}`);
+  assert.equal(reviewLines(thrown)[0].status, 'fail');
+  // A child that never exits after its kill.
+  const survived = fixRig();
+  const runner = survived.deps.runner;
+  let n = 0;
+  survived.deps.runner = (call) => {
+    n += 1;
+    if (n !== 2) return runner(call);
+    survived.calls.push({ kind: 'runner', args: [call] });
+    return { pid: 99, kill() {}, exited: new Promise(() => {}) };
+  };
+  await run(['#7'], survived.deps);
+  assert.equal(lastLine(survived).stop.detail, `the evidence run did not exit after its kill: ${FINDING_0}`);
+  assert.equal(reviewLines(survived)[0].status, 'fail');
+  assert.equal(pushCalls(survived).length, 0);
+  // An interrupt during the fix launch is reported at once; nothing after it runs.
+  let h = null;
+  h = fixRig({ effect: () => { h.signals[0]('SIGTERM'); } });
+  await run(['#7'], h.deps);
+  assert.deepEqual(h.lines().slice(-2).map((l) => [l.step, l.status]), [[STEP.review, 'fail'], [FINAL_STEP, 'fail']]);
+  assert.equal(h.lines().at(-2).detail, 'interrupted by SIGTERM');
+  assert.deepEqual(afterFixLaunch(h).filter((c) => ['writeFileExclusive', 'rmFile', 'git'].includes(c.kind)), []);
 });
 
 test('AC12: a discarded finding is counted, its evidence file removed, and the record goes on to the push', async () => {

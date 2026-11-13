@@ -11,7 +11,7 @@ const {
   classifyEvidenceRun, evidenceArgs, EVIDENCE_COMMANDS, reviewRequired, findingShapeViolation, evidenceShapeViolation,
   pathRuleViolation, contentViolation, PATH_RULES, MAX_FINDINGS, EVIDENCE_PATH_MAX_CHARS, EVIDENCE_CONTENT_MAX_BYTES,
   EVIDENCE_RUN_TIMEOUT_MS, EVENT_TEXT_MAX_CHARS, runEvidence, writeEvidence, removeEvidence, treeDelta, isIgnored,
-  DIFF_PROMPT_MAX_BYTES, normalizeEventText, buildReviewerPrompt, reviewPass,
+  DIFF_PROMPT_MAX_BYTES, normalizeEventText, buildReviewerPrompt, reviewPass, reviewRecord,
 } = require(path.join(LIB, 'driver', 'review.js'));
 const { lstatType, canonicalRealpath } = require(path.join(LIB, 'path-guard'));
 const { EXPRESS_MAX_KEY_FILES } = require(path.join(LIB, 'express', 'eligibility.js'));
@@ -1192,7 +1192,7 @@ test('AC7: a confirmed finding keeps its file, and the tree check expects it', a
   assert.strictEqual(out.detail, '1 reproduced of 2');
   const abs = at('tests/new/r0.test.js');
   assert.deepStrictEqual(out.confirmed, [{
-    path: 'src/a.js', line: 1, claim: reviewFinding(0).claim, content: CONTENT, abs, createdDirs: [at('tests/new')], evidencePath: 'tests/new/r0.test.js',
+    path: 'src/a.js', line: 1, claim: reviewFinding(0).claim, rel: 'tests/new/r0.test.js', content: CONTENT, abs, createdDirs: [at('tests/new')], evidencePath: 'tests/new/r0.test.js',
   }]);
   assert.strictEqual(rig.types.get(abs), 'file');
   assert.deepStrictEqual(ofKind(rig.calls, 'rmFile').map((c) => c.p), [at('tests/new/r1.test.js')]);
@@ -1642,4 +1642,94 @@ test('review: a raw error from a dep after an evidence write is a stop that take
   assert.deepStrictEqual(out.extra, { returned: 1, reproduced: 0, discarded: 0, usage: { input_tokens: 7 }, denials: [] });
   assert.strictEqual(ofKind(rig.calls, 'rmFile').length, 1, 'the written file was removed');
   assert.strictEqual(rig.types.get(at('tests/new/r0.test.js')), undefined);
+});
+
+// --- the fix round's rewrite on the real file system (#5222, Task 7) ---------------------
+//
+// The whole step over a real worktree: the review pass confirms one finding, then the fix worker's
+// launch is `swap(wt, outside)`, which changes the real tree; commit, test and check are recorded
+// stand-ins (the commit takes every untracked path, which git status then stops reporting).
+async function fixOnDisk(t, swap) {
+  const wt = tmpWt(t);
+  const mk = (prefix) => { const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix)); t.after(() => fs.rmSync(d, { recursive: true, force: true })); return d; };
+  const runDir = mk('review-run-');
+  const outside = mk('review-outside-');
+  const rig = passRig({ findings: [reviewFinding(0)], runs: ['reproduced', 'passed'] });
+  const committed = new Set();
+  // Every untracked entry under wt as git status lists it: a symlink is an entry, never followed.
+  const untracked = (dir = wt) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    const abs = path.join(dir, e.name);
+    if (e.isDirectory()) return untracked(abs);
+    const rel = path.relative(wt, abs).split(path.sep).join('/');
+    return committed.has(rel) ? [] : [rel];
+  });
+  Object.assign(rig.ctx, { wt, runDir, shared: { ...rig.ctx.shared, policy: { ...POLICY, 'express-driver-review': { value: 'on' } } } });
+  const git = rig.deps.git;
+  Object.assign(rig.deps, fsDeps(), {
+    git: (args, opts) => {
+      if (args.includes('status')) return untracked().map((p) => `?? ${p}\0`).join('');
+      if (args.includes('rev-parse')) return `${HEAD_SHA}\n`;
+      if (args.includes('--name-only')) return 'src/a.js\0tests/new/r0.test.js\0';
+      return git(args, opts);
+    },
+  });
+  const steps = [];
+  const state = {};
+  const wiring = {
+    testCommand: 'npm test',
+    isRunArtifact: isPipelineArtifact,
+    launchImplementer: async (ctx) => { steps.push('launch'); swap(wt, outside, state); ctx.worker = { title: 'Fix', summary: 'Fixed.' }; return { status: 'ok' }; },
+    commit: { run: async (ctx) => { steps.push('commit'); ctx.changedFiles = untracked(); for (const p of ctx.changedFiles) committed.add(p); return { status: 'ok' }; } },
+    test: { run: async () => { steps.push('test'); return { status: 'ok' }; } },
+    check: { run: async () => { steps.push('check'); return { status: 'ok' }; } },
+  };
+  const res = await reviewRecord(rig.ctx, rig.deps, wiring);
+  return { res, steps, outside, state, evidence: path.join(wt, 'tests', 'new', 'r0.test.js') };
+}
+const FINDING_0_TEXT = `src/a.js:1 ${normalizeEventText(reviewFinding(0).claim)}`;
+const treeOf = (dir) => fs.readdirSync(dir, { recursive: true }).map(String).sort();
+
+test('AC9: the rewrite never writes through a parent the fix worker pointed out of the worktree', async (t) => {
+  // The evidence file's own directory becomes a symlink to a directory outside the worktree.
+  const parent = await fixOnDisk(t, (wt, outside) => {
+    fs.rmSync(path.join(wt, 'tests', 'new'), { recursive: true });
+    fs.symlinkSync(outside, path.join(wt, 'tests', 'new'));
+  });
+  assert.deepStrictEqual([parent.res.status, parent.res.stopClass], ['fail', 'pre-push']);
+  assert.strictEqual(parent.res.detail, `evidence path refused before the rewrite: parent-escapes: ${FINDING_0_TEXT}`);
+  assert.deepStrictEqual(treeOf(parent.outside), [], 'nothing was written outside the worktree');
+  assert.deepStrictEqual(parent.steps, ['launch']);
+  // An ancestor moves out and a symlink takes its place: the kept file, now outside, is neither removed nor rewritten.
+  const ancestor = await fixOnDisk(t, (wt, outside, state) => {
+    fs.renameSync(path.join(wt, 'tests'), path.join(outside, 'tests'));
+    fs.symlinkSync(path.join(outside, 'tests'), path.join(wt, 'tests'));
+    state.ino = fs.statSync(path.join(outside, 'tests', 'new', 'r0.test.js')).ino;
+  });
+  assert.strictEqual(ancestor.res.detail, `evidence path refused before the rewrite: parent-escapes: ${FINDING_0_TEXT}`);
+  assert.deepStrictEqual(treeOf(ancestor.outside), ['tests', path.join('tests', 'new'), path.join('tests', 'new', 'r0.test.js')]);
+  assert.strictEqual(fs.statSync(path.join(ancestor.outside, 'tests', 'new', 'r0.test.js')).ino, ancestor.state.ino);
+  assert.deepStrictEqual(ancestor.steps, ['launch']);
+});
+
+test('AC9: the rewrite replaces whatever the fix worker left at the leaf with the recorded bytes', async (t) => {
+  const target = (outside) => path.join(outside, 'target.js');
+  const cases = [
+    ['edited into a passing test', (wt, outside, ev) => { fs.writeFileSync(ev, "require('node:test')('ok', () => {});\n"); }],
+    ['deleted', (wt, outside, ev) => { fs.unlinkSync(ev); }],
+    ['a symlink out of the worktree', (wt, outside, ev) => { fs.writeFileSync(target(outside), 'outside bytes'); fs.unlinkSync(ev); fs.symlinkSync(target(outside), ev); }],
+    ['a hard link to a file outside', (wt, outside, ev) => { fs.writeFileSync(target(outside), 'outside bytes'); fs.unlinkSync(ev); fs.linkSync(target(outside), ev); }],
+  ];
+  for (const [name, change] of cases) {
+    const out = await fixOnDisk(t, (wt, outside) => change(wt, outside, path.join(wt, 'tests', 'new', 'r0.test.js')));
+    assert.strictEqual(out.res.status, 'ok', `${name}: ${out.res.detail}`);
+    assert.strictEqual(lstatType(out.evidence).type, 'file', name);
+    assert.strictEqual(fs.readFileSync(out.evidence, 'utf8'), CONTENT, name);
+    if (fs.readdirSync(out.outside).length) assert.strictEqual(fs.readFileSync(target(out.outside), 'utf8'), 'outside bytes', name);
+    assert.deepStrictEqual(out.steps, ['launch', 'commit', 'test', 'check'], name);
+  }
+  // A directory at the leaf is refused, and left as it is.
+  const dir = await fixOnDisk(t, (wt, outside, state) => { const ev = path.join(wt, 'tests', 'new', 'r0.test.js'); fs.unlinkSync(ev); fs.mkdirSync(ev); state.ev = ev; });
+  assert.strictEqual(dir.res.detail, `evidence path is not a file before the rewrite: ${FINDING_0_TEXT}`);
+  assert.strictEqual(lstatType(dir.state.ev).type, 'directory');
+  assert.deepStrictEqual(dir.steps, ['launch']);
 });
