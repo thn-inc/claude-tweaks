@@ -8,7 +8,8 @@
 
 try {
   const logFile = process.env.CT_COUNT_NODE_LOG;
-  if (logFile) {
+  // a worker thread runs this preload too, with the host's pid: only the main thread is a process
+  if (logFile && require('worker_threads').isMainThread) {
     const fs = require('fs');
     fs.appendFileSync(logFile, JSON.stringify({
       ev: 'start',

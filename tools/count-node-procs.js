@@ -9,7 +9,9 @@
 // (`tests` and `tools/upstream-drift/tests`) explicitly. --json writes the per-file rows.
 // Exit code: the test run's (1 when it has none); 2 for a malformed invocation.
 //
-// The counts are a floor: a child started with a replaced env drops NODE_OPTIONS and is not logged.
+// The counts are a floor: a child started with a replaced env drops NODE_OPTIONS and is not logged, and
+// a node process started through a non-node parent (a shell) is not attributed to a test file. The
+// `node --test` runner is never a test file; it counts as unattributed unless a test file is above it.
 
 const fs = require('fs');
 const os = require('os');
@@ -22,16 +24,17 @@ const PRELOAD_PATH = path.join(__dirname, 'count-node-procs-preload.js');
 const RUN_TESTS_PATH = path.join(__dirname, 'run-tests.js');
 const DEFAULT_ROOTS = ['tests', path.join('tools', 'upstream-drift', 'tests')];
 const USAGE = 'usage: node tools/count-node-procs.js [--files-from <list>] [--json <out>]\n';
-const FLOOR_NOTE = '# counts are a floor: a child started with a replaced env drops NODE_OPTIONS and is not logged; a node process started through a non-node parent (a shell) is not attributed to a test file';
+const FLOOR_NOTE = '# counts are a floor: a child started with a replaced env drops NODE_OPTIONS and is not logged; a node process started through a non-node parent (a shell) is not attributed to a test file; the node --test runner itself is counted as unattributed';
 const MAX_HOPS = 12;
 
 const fwd = (p) => String(p).split(path.sep).join('/').replace(/\\/g, '/');
 
 function analyze(logText, { repoRoot }) {
   const root = fwd(repoRoot).replace(/\/+$/, '');
+  const inRepo = (p) => fwd(p).startsWith(root + '/');
   const rel = (p) => {
     const s = fwd(p);
-    return s.startsWith(root + '/') ? s.slice(root.length + 1) : s;
+    return inRepo(p) ? s.slice(root.length + 1) : s;
   };
   const starts = [];
   const exits = [];
@@ -45,8 +48,9 @@ function analyze(logText, { repoRoot }) {
       continue;
     }
     if (row.ev === 'start') {
-      const script = Array.isArray(row.argv) && typeof row.argv[0] === 'string' ? rel(row.argv[0]) : '';
-      starts.push({ pid: row.pid, ppid: row.ppid, t: row.t, script });
+      const raw = Array.isArray(row.argv) && typeof row.argv[0] === 'string' ? row.argv[0] : '';
+      const runner = Array.isArray(row.execArgv) && row.execArgv.includes('--test');
+      starts.push({ pid: row.pid, ppid: row.ppid, t: row.t, script: rel(raw), inRepo: inRepo(raw), runner });
     } else if (row.ev === 'exit') {
       exits.push({ pid: row.pid, t: row.t });
     } else {
@@ -65,6 +69,11 @@ function analyze(logText, { repoRoot }) {
     if (!list) return null;
     let best = null;
     for (const s of list) { if (s.t <= t) best = s; else break; }
+    // a process that already exited cannot be the parent of a later start: the pid was reused by a non-node process
+    if (best) {
+      const e = exitOf(best);
+      if (e !== null && e < t) return null;
+    }
     return best;
   };
   const exitsByPid = new Map();
@@ -81,20 +90,23 @@ function analyze(logText, { repoRoot }) {
     }
     return best;
   };
-  const isTestFile = (s) => s.script.endsWith('.test.js');
+  // a `node --test` runner takes the first listed test file as argv[0]; it is never a test-file process
+  const isTestFile = (s) => !s.runner && s.inRepo && s.script.endsWith('.test.js');
   const cliName = (s) => {
     const m = /^plugin\/bin\/([^/]+\.js)$/.exec(s.script);
     return m ? m[1] : null;
   };
   const owner = (s) => {
+    // the outermost test-file process among the process itself and up to MAX_HOPS ancestors
     let cur = s;
-    for (let hops = 0; cur && hops < MAX_HOPS; hops += 1) {
-      if (isTestFile(cur)) return cur.script;
+    let found = null;
+    for (let hops = 0; cur && hops <= MAX_HOPS; hops += 1) {
+      if (isTestFile(cur)) found = cur.script;
       const parent = procAt(cur.ppid, cur.t);
-      if (!parent || parent === cur) return null;
+      if (!parent || parent === cur) break;
       cur = parent;
     }
-    return null;
+    return found;
   };
 
   const perFile = new Map();
@@ -122,7 +134,7 @@ function analyze(logText, { repoRoot }) {
       file: f.file,
       nodeProcs: f.nodeProcs,
       cliProcs: f.cliProcs,
-      wallMs: (f.maxExit === null ? f.maxStart : f.maxExit) - f.minStart,
+      wallMs: Math.max(f.maxExit === null ? f.maxStart : f.maxExit, f.maxStart) - f.minStart,
     }));
   return { files, unattributed, skippedLines };
 }
@@ -181,8 +193,16 @@ function run(argv, deps) {
     const result = analyze(logText, { repoRoot: REPO_ROOT });
     d.stdout.write(formatTable(result));
     if (result.skippedLines) d.stderr.write(`count-node-procs: skipped ${result.skippedLines} unreadable log line(s)\n`);
-    if (opts.json) fs.writeFileSync(opts.json, JSON.stringify(result.files));
-    return child && typeof child.status === 'number' ? child.status : 1;
+    const status = child && typeof child.status === 'number' ? child.status : 1;
+    if (opts.json) {
+      try {
+        fs.writeFileSync(opts.json, JSON.stringify(result.files));
+      } catch (e) {
+        d.stderr.write(`count-node-procs: could not write ${opts.json}: ${e.message}\n`);
+        return status !== 0 ? status : 1;
+      }
+    }
+    return status;
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
