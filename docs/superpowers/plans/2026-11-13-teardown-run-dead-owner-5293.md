@@ -56,7 +56,7 @@ Output lines (exact):
 
 - [ ] **Step 1: Write the failing tests**
 
-Append five tests. Each uses `fixtureRepo()`, writes an empty `events.jsonl` into `runDir` (run-liveness's owner-events probe throws on a missing file, which reads `unknown`; every real run carries one — the incident run `2026-11-02T065743-record-4811` has 169 lines), then writes run-state with the file's local `writeRunState` helper as `{ status: 'active', worktree: wt, sessionId: 'someone-else', owner: ownerBlock({ sessionId: 'someone-else', deps: { resolveOwnerPid: () => ({ pid: P, pidSource: 'env' }) } }) }` — `ownerBlock` (from `plugin/bin/lib/hooks/context.js`) is the real writer of the owner-block shape, so `host` and `pidStartedAt` are what production stamps. All four pass `liveness: { now: Date.now() + 2 * LIVE_WINDOW_MS }` (import `LIVE_WINDOW_MS` from `plugin/bin/lib/run-liveness/constants.js`) so the fresh heartbeat and the fixture's fresh commit both read stale; probes stay real except where named.
+Append five tests to `tests/hooks-teardown-run.test.js` (covers AC1.1 — the two dead-owner merged tests; AC2.1 — the live-owner test). Each uses `fixtureRepo()`, writes an empty `events.jsonl` into `runDir` (run-liveness's owner-events probe throws on a missing file, which reads `unknown`; every real run carries one — the incident run `2026-11-02T065743-record-4811` has 169 lines), then writes run-state with the file's local `writeRunState` helper as `{ status: 'active', worktree: wt, sessionId: 'someone-else', owner: ownerBlock({ sessionId: 'someone-else', deps: { resolveOwnerPid: () => ({ pid: P, pidSource: 'env' }) } }) }` — `ownerBlock` (from `plugin/bin/lib/hooks/context.js`) is the real writer of the owner-block shape, so `host` and `pidStartedAt` are what production stamps. All four pass `liveness: { now: Date.now() + 2 * LIVE_WINDOW_MS }` (import `LIVE_WINDOW_MS` from `plugin/bin/lib/run-liveness/constants.js`) so the fresh heartbeat and the fixture's fresh commit both read stale; probes stay real except where named.
 
 Real-input probe (authoring time): `runLiveness` on the incident run `2026-11-02T065743-record-4811` returns `verdict: dead` (owner-pid `negative/gone`, heartbeat `stale`, worktree-lock and last-commit `no-worktree`), so the override fires on the reported case.
 
@@ -85,9 +85,9 @@ Guard discrimination: deleting the `mode === 'merged'` check turns the abandoned
 Run: `node --test tests/hooks-teardown-run.test.js`
 Expected: PASS, every test including the existing AC5.
 
-- [ ] **Step 5: Prove the dead-owner test discriminates**
+- [ ] **Step 5: Verify the dead-owner test discriminates**
 
-Temporarily revert only `teardown-run.js` (`git stash push -m "5293-discrim" -- plugin/bin/lib/hooks/teardown-run.js`, then capture its sha with `git stash list --format='%H %gs'`), run `node --test --test-name-pattern "#5293: dead owner, merged" tests/hooks-teardown-run.test.js` — Expected: FAIL. Restore with `git stash apply {sha}` and drop that entry by tag. Quote both raw outputs in the report.
+Covers AC3.1. Temporarily revert only `teardown-run.js` (`git stash push -m "5293-discrim" -- plugin/bin/lib/hooks/teardown-run.js`, then capture its sha with `git stash list --format='%H %gs'`), run `node --test --test-name-pattern "#5293: dead owner, merged" tests/hooks-teardown-run.test.js` — Expected: FAIL. Restore with `git stash apply {sha}` and drop that entry by tag. Quote both raw outputs in the report.
 
 - [ ] **Step 6: Commit**
 
@@ -117,6 +117,7 @@ Add one sentence: a run recorded by another session (a parked run under `merge-m
 
 - [ ] **Step 3: Verify size and pins**
 
+Covers AC4.1: `grep -n "run-liveness" plugin/skills/wrap-up/merge-mode.md` — Expected: the Procedure step 3 sentence naming the teardown path.
 Run: `wc -c plugin/skills/wrap-up/cleanup-procedures-execution.md` — Expected: under 47,540.
 Run: `node --test tests/skill-size-single-source.test.js` and every test file that reads either skill file (`grep -rl "merge-mode.md\|cleanup-procedures-execution.md" tests`) — Expected: PASS.
 
