@@ -44,6 +44,10 @@ The loop yields to the event loop before every step and then checks `ctx.shared.
 
 The worker can shape strings such as its summary, a path it named, or CLI stderr that may echo either. Each such string goes through `events.js`'s `neutralize` before it reaches an event `detail`, a commit message, a PR body or a log line (AC14.3). The rule itself is `headless-worker-launch`'s "What the consumer owes"; this is where each step applies it.
 
+### A step that runs worker-authored code passes an allow-listed env
+
+The test step runs the worker's test files through `verify.js`. It spawns that child with `buildEnv(deps.env, deps.platform)` from `worker.js` plus `GH_CONFIG_DIR` set to an empty directory, never bare `deps.env`, so the driver's `GH_TOKEN` and `GITHUB_TOKEN` stay out of the child (#5267). A new step that spawns a child which executes worker-written code does the same. The containment is best effort, and the header comment in `steps.js` lists what it does not cover (the git credential helper, a keyring under `HOME`, client hooks in the commit and push steps).
+
 ### One retry, and only after a read-back
 
 `AC6.6: no other step is retried` pins that the claim, push, record-pr and set-config calls each run once. Only the pr step retries. A new retry follows the same shape:
