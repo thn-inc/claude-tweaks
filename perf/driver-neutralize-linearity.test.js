@@ -14,8 +14,8 @@
 //     fixed-point loop must stay linear in the number of fragments; pre-loop the verdict was wrong
 //     (a closing URL survived), so that case is guarded by its verdict as well as its time.
 //   - a long run of identifier characters with no `/` (or with a `/x` tail and no `#`): QUALIFIED_REF
-//     rescanned the run from every start, quadratic already on the base code (50k `h` ~4s, 100k ~18s
-//     pre-fix); a left-boundary lookbehind of its own owner class now lets a match start only at the
+//     rescanned the run from every start, quadratic already on the base code (50k `h` ~4s, 100k ~18s,
+//     200k ~91s, and with a `/x` tail ~83s, pre-fix); a left-boundary lookbehind of its own owner class now lets a match start only at the
 //     run's start.
 // Lives outside tests/ for the same reason the other perf/ files do: a wall-clock assertion flakes
 // under sibling-suite load.
