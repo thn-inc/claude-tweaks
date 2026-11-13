@@ -20,12 +20,20 @@ function has(cmd) {
   return true;
 }
 
-function hasAppleDeveloperTool(cmd, { readlink = fs.readlinkSync, exists = fs.existsSync } = {}) {
-  const dirs = ['/Library/Developer/CommandLineTools'];
-  try {
-    dirs.unshift(readlink('/var/db/xcode_select_link'));
-  } catch {
-    // no xcode-select link — only the Command Line Tools dir can satisfy this
+// The developer dir xcode-select itself would pick, in its own order: $DEVELOPER_DIR alone when set
+// (a `.app` value means its Contents/Developer), else the xcode-select link's target, else — with no
+// link — the default Xcode.app, then the Command Line Tools.
+function hasAppleDeveloperTool(cmd, { readlink = fs.readlinkSync, exists = fs.existsSync, env = process.env } = {}) {
+  let dirs;
+  if (env.DEVELOPER_DIR) {
+    const dev = env.DEVELOPER_DIR;
+    dirs = [/\.app\/*$/.test(dev) ? path.join(dev, 'Contents', 'Developer') : dev];
+  } else {
+    try {
+      dirs = [readlink('/var/db/xcode_select_link')];
+    } catch {
+      dirs = ['/Applications/Xcode.app/Contents/Developer', '/Library/Developer/CommandLineTools'];
+    }
   }
   return dirs.some((dir) => exists(path.join(dir, 'usr', 'bin', cmd)));
 }
@@ -96,6 +104,16 @@ function findOnPath(name, { env, platform, cwd }) {
         const st = fs.statSync(candidate);
         if (st.isFile() && (win || (st.mode & 0o111))) return candidate;
       } catch {
+        // Windows App Execution Aliases (winget) are zero-byte reparse points that statSync can
+        // throw on; the link entry itself still proves the command is installed.
+        if (win) {
+          try {
+            const ls = fs.lstatSync(candidate);
+            if (ls.isFile() || ls.isSymbolicLink()) return candidate;
+          } catch {
+            // not present — keep scanning
+          }
+        }
         // not present / unreadable — keep scanning
       }
     }

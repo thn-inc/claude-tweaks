@@ -199,6 +199,47 @@ test('deps: hasAppleDeveloperTool is false for the stub-only Mac', () => {
   assert.strictEqual(deps.hasAppleDeveloperTool('git', { readlink: enoent, exists: () => false }), false);
 });
 
+// xcode-select's own order: $DEVELOPER_DIR alone when set, else the link, else Xcode.app, then CLT.
+test('deps: hasAppleDeveloperTool honours DEVELOPER_DIR pointing at an Xcode.app', () => {
+  assert.strictEqual(deps.hasAppleDeveloperTool('git', {
+    env: { DEVELOPER_DIR: '/Volumes/X/Xcode.app' },
+    readlink: () => { throw new Error('link must not be consulted'); },
+    exists: (p) => p === '/Volumes/X/Xcode.app/Contents/Developer/usr/bin/git',
+  }), true);
+});
+
+test('deps: hasAppleDeveloperTool lets DEVELOPER_DIR win over the link', () => {
+  const target = '/Applications/Xcode.app/Contents/Developer';
+  assert.strictEqual(deps.hasAppleDeveloperTool('git', {
+    env: { DEVELOPER_DIR: '/opt/empty-dev' },
+    readlink: () => target,
+    exists: (p) => p === `${target}/usr/bin/git`,
+  }), false);
+});
+
+test('deps: hasAppleDeveloperTool with no link uses the default Xcode.app', () => {
+  const enoent = () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); };
+  assert.strictEqual(deps.hasAppleDeveloperTool('git', {
+    env: {},
+    readlink: enoent,
+    exists: (p) => p === '/Applications/Xcode.app/Contents/Developer/usr/bin/git',
+  }), true);
+});
+
+test('deps: hasAppleDeveloperTool with no link and no Xcode.app uses the Command Line Tools', () => {
+  const enoent = () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); };
+  assert.strictEqual(deps.hasAppleDeveloperTool('git', {
+    env: {},
+    readlink: enoent,
+    exists: (p) => p === '/Library/Developer/CommandLineTools/usr/bin/git',
+  }), true);
+});
+
+test('deps: hasAppleDeveloperTool is false when nothing has the tool', () => {
+  const enoent = () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); };
+  assert.strictEqual(deps.hasAppleDeveloperTool('git', { env: {}, readlink: enoent, exists: () => false }), false);
+});
+
 test('deps: installCommand returns expected mapping', () => {
   assert.strictEqual(deps.installCommand({ name: 'brew' }, 'node'), 'brew install node');
   assert.strictEqual(deps.installCommand({ name: 'winget' }, 'git'), 'winget install Git.Git');
@@ -293,6 +334,33 @@ test('deps: findOnPath tries PATHEXT on win32', () => {
       deps.findOnPath('playwright-cli', { env: { PATH: dir, PATHEXT: '.EXE;.CMD' }, platform: 'win32', cwd }),
       file,
     );
+  });
+});
+
+// winget is a zero-byte App Execution Alias; statSync can throw on it where lstatSync does not.
+test('deps: findOnPath accepts a win32 alias that statSync throws on', () => {
+  withTempDirs(({ fs, path, dir, cwd }) => {
+    const candidate = path.join(dir, 'winget.exe');
+    const realStat = fs.statSync;
+    const realLstat = fs.lstatSync;
+    fs.statSync = (p, ...a) => {
+      if (p === candidate) throw Object.assign(new Error('UNKNOWN'), { code: 'UNKNOWN' });
+      return realStat(p, ...a);
+    };
+    fs.lstatSync = (p, ...a) => (p === candidate ? { isFile: () => true, isSymbolicLink: () => false } : realLstat(p, ...a));
+    try {
+      assert.strictEqual(
+        deps.findOnPath('winget', { env: { PATH: dir, PATHEXT: '.EXE' }, platform: 'win32', cwd }),
+        candidate,
+      );
+      assert.strictEqual(
+        deps.findOnPath('winget', { env: { PATH: dir, PATHEXT: '.EXE' }, platform: 'darwin', cwd }),
+        null,
+      );
+    } finally {
+      fs.statSync = realStat;
+      fs.lstatSync = realLstat;
+    }
   });
 });
 
