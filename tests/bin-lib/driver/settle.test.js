@@ -1,8 +1,8 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('../../helpers/read-skill');
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('../../helpers/strip-comments');
 const SETTLE = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'driver', 'settle.js');
 const {
@@ -82,7 +82,7 @@ test('escalate detail names the removal', () => {
 });
 
 test('AC6.1: settle.js requires no model module', () => {
-  const raw = fs.readFileSync(SETTLE, 'utf8');
+  const raw = readText(SETTLE);
   const stripped = stripComments(raw);
   assert.equal(stripperVerdict(raw, stripped), 'ok', STRIPPER_VERDICT_MESSAGES[stripperVerdict(raw, stripped)]);
   const bad = (s) => /require\([^)]*\b(worker|roles)\b/.test(s) || /['"]\.\/(worker|roles)(\.js)?['"]/.test(s);
