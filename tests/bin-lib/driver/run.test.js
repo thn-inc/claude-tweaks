@@ -2397,6 +2397,15 @@ test('ci: the settle window is measured from the push', async () => {
   assert.equal(checkPolls(h).length, 1);
 });
 
+test('ci: the settle window is measured from the push, not from the run\'s start', async () => {
+  let h = null;
+  // The whole window passes before the push (inside verify.js); the CI step is still inside it.
+  h = harness({ script: [[on('node', /verify\.js$/), () => { h.deps.sleep(CI_SETTLE_WINDOW_MS); return { code: 0, stdout: '', stderr: '' }; }]] });
+  await run(['#7'], h.deps);
+  assert.equal(lastLine(h).ci, 'green');
+  assert.equal(checkPolls(h).length, WINDOW_POLLS);
+});
+
 test('ci: the settle window constant', () => {
   assert.equal(CI_SETTLE_WINDOW_MS, 2 * 60 * 1000);
 });
@@ -2410,6 +2419,34 @@ test('ci: no workflow run on the pushed sha after the window records no-ci', asy
     assert.equal(checkPolls(h).length, WINDOW_POLLS, polled);
     assert.equal(checkRuns(h).length, 1, polled);
   }
+});
+
+const prChecksPendingReply = (state, pending) => [on('node', /pr-checks\.js$/), { code: 0, stderr: '', stdout: JSON.stringify({ state, pending }) }];
+
+test('ci: with no Actions run, red and inherited-red are conclusive and are not rewritten to no-ci', async () => {
+  for (const state of ['red', 'inherited-red']) {
+    const h = harness({ script: [runListReply('[]'), prChecksReply(state)] });
+    await run(['#7'], h.deps);
+    assert.equal(lastLine(h).ci, state, state);
+    assert.equal(h.lines().find((l) => l.step === 'ci').detail, state, state);
+    assert.equal(checkPolls(h).length, WINDOW_POLLS, state);
+    assert.equal(checkRuns(h).length, 1, state);
+  }
+});
+
+test('ci: with no Actions run, a pending poll naming pending checks keeps polling to the bound', async () => {
+  const h = harness({ script: [runListReply('[]'), prChecksPendingReply('pending', ['circleci/build'])] });
+  await run(['#7'], h.deps);
+  assert.equal(lastLine(h).ci, 'timeout');
+  assert.equal(checkPolls(h).length, CI_WAIT_BOUND_MS / CI_POLL_INTERVAL_MS + 1);
+  assert.equal(checkRuns(h).length, 1);
+  const empty = harness({ script: [runListReply('[]'), prChecksPendingReply('pending', [])] });
+  await run(['#7'], empty.deps);
+  assert.equal(lastLine(empty).ci, 'no-ci', 'an empty pending list is the no-ci case');
+  assert.equal(checkPolls(empty).length, WINDOW_POLLS);
+  const junk = harness({ script: [runListReply('[]'), prChecksPendingReply('pending', 'circleci/build')] });
+  await run(['#7'], junk.deps);
+  assert.equal(lastLine(junk).ci, 'no-ci', 'a non-array pending field is treated as empty');
 });
 
 test('ci: the commit-run read uses the pushed sha, never the branch', async () => {
@@ -2470,6 +2507,19 @@ test('AC14: a signal during the CI wait is delivered mid-step: the record is a c
   assert.deepEqual(order, ['terminate:SIGTERM']);
   assert.equal(nodeCalls(h, /pr-checks\.js$/).length, 1, 'no poll after the interrupt, and no --run read');
   assert.equal(checkRuns(h).length, 0);
+});
+
+test('AC14: an interrupt after an unsettled early read reports pending, never that read', async () => {
+  for (const early of ['green', 'no-ci', 'red']) {
+    let h = null;
+    h = harness({ script: [prChecksReply(early)] });
+    h.deps.sleep = () => new Promise((resolve) => { setImmediate(() => { h.signals[0]('SIGINT'); resolve(); }); });
+    await run(['#7'], h.deps);
+    const [stopLine, final] = h.lines().slice(-2);
+    assert.deepEqual([stopLine.step, stopLine.status, final.outcome, final.ci], ['ci', 'fail', 'pending-review', 'pending'], early);
+    assert.equal(stopLine.detail, 'interrupted by SIGINT', early);
+    assert.equal(checkRuns(h).length, 0, early);
+  }
 });
 
 test('AC14: a mid-poll interrupt reports the polled ci state and keeps the elapsed wait out of msWithoutCi', async () => {

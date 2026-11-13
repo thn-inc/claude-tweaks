@@ -843,15 +843,18 @@ const summaryStep = defineStep(STEP.summary, STOP_CLASSES.NONE, async (ctx, deps
 
 const CI_STATES = new Set(['red', 'inherited-red', 'pending', 'stale', 'green', 'no-ci', 'read-failed', 'no-pr', 'gh-absent']);
 
-// One pr-checks.js read in the worktree (it reads local HEAD from its cwd): the state word, or
-// `read-failed` for a non-zero exit, unparseable stdout or a word outside the vocabulary.
+// One pr-checks.js read in the worktree (it reads local HEAD from its cwd): `{ state, pending }`,
+// the state word (or `read-failed` for a non-zero exit, unparseable stdout or a word outside the
+// vocabulary) and the envelope's `pending` check names (strings only; anything else is empty).
 function readCiState(ctx, deps, args) {
   try {
     const r = deps.node(binScript('pr-checks.js'), args, { cwd: ctx.wt, timeout: CLI_TIMEOUT_MS, env: deps.env });
     const parsed = r.code === 0 ? JSON.parse(r.stdout) : null;
-    if (parsed && typeof parsed.state === 'string' && CI_STATES.has(parsed.state)) return parsed.state;
+    if (parsed && typeof parsed.state === 'string' && CI_STATES.has(parsed.state)) {
+      return { state: parsed.state, pending: Array.isArray(parsed.pending) ? parsed.pending.filter((n) => typeof n === 'string') : [] };
+    }
   } catch { /* an unparseable read is read-failed */ }
-  return 'read-failed';
+  return { state: 'read-failed', pending: [] };
 }
 
 // The workflow runs on the pushed commit (ctx.check.head): `some` for at least one run, `none`
@@ -870,39 +873,52 @@ function readCommitRuns(ctx, deps) {
 // (readCommitRuns, read after each settled poll until one is seen), then makes exactly one `--run`
 // read under the express-lane section: that read logs the gate's own line once, and its state is
 // the one recorded (`timeout` when it is still pending or stale at the bound; only this read can
-// say `stale`; `no-ci` when the commit still has no run once the window has passed). Never halts
-// and always reports `ok`: the word it reads is data for the reviewer.
+// say `stale`; `no-ci` when the commit still has no run once the window has passed). `gh run list`
+// sees GitHub Actions runs only while pr-checks classifies the whole rollup, so with no Actions run
+// `red`/`inherited-red` stay as read (a failing non-Actions check is conclusive), and a `pending`
+// poll that names pending checks keeps polling (a non-Actions check is still running) until the bound.
+// The `--run` read writes its own decisions.md gate line (e.g. "checks pending — passed with
+// caveat"), which can therefore disagree with the recorded word when that is `no-ci` or `timeout`.
+// Never halts and always reports `ok`: the word it reads is data for the reviewer.
 // The wait is reported as extra.ciWaitMs, so the final line can exclude it without naming this
 // step. A signal during a sleep is delivered mid-step (run.js's handler writes the stop); polling
-// then stops. For that handler, ctx.ci holds the last polled state and ctx.ciWaitStartedAt the
-// wait's start while the step runs, so the interrupted line reports the state and the wait so far.
+// then stops. For that handler, ctx.ci holds the last polled state only once that read is final
+// (the loop is about to exit on it), else `pending` (finalEvent's word for a state never read as
+// final), and ctx.ciWaitStartedAt the wait's start while the step runs, so the interrupted line
+// reports the state and the wait so far.
 const ciStep = defineStep(STEP.ci, STOP_CLASSES.NONE, async (ctx, deps) => {
   const started = deps.now();
   const settleFrom = ctx.pushedAt ?? started;
   ctx.ciWaitStartedAt = started;
-  let polled = 'read-failed';
   let timedOut = false;
   let runs = null; // the commit-run read's last word, taken once the window has passed
+  ctx.ci = 'pending';
   for (;;) {
-    polled = readCiState(ctx, deps, ['--pr', String(ctx.pr.number)]);
-    ctx.ci = polled;
+    const read = readCiState(ctx, deps, ['--pr', String(ctx.pr.number)]);
+    const polled = read.state;
     const now = deps.now();
     const settled = now - settleFrom >= CI_SETTLE_WINDOW_MS;
     if (settled && runs !== 'some') runs = readCommitRuns(ctx, deps);
     const waiting = polled === 'pending' || polled === 'stale';
-    if ((settled && (!waiting || runs === 'none')) || ctx.shared.interrupted) break;
-    if (now - started >= CI_WAIT_BOUND_MS) {
+    // With no Actions run, a pending poll that names pending checks is a non-Actions check still running.
+    const otherCheckRunning = polled === 'pending' && read.pending.length > 0;
+    const settledEnd = settled && (!waiting || (runs === 'none' && !otherCheckRunning));
+    const bound = !settledEnd && now - started >= CI_WAIT_BOUND_MS;
+    // Only a read the loop is about to exit on is final; any other is not what the run saw.
+    ctx.ci = (settledEnd || bound) && !ctx.shared.interrupted ? polled : 'pending';
+    if (settledEnd || ctx.shared.interrupted) break;
+    if (bound) {
       timedOut = true;
       break;
     }
     await deps.sleep(CI_POLL_INTERVAL_MS);
     if (ctx.shared.interrupted) break;
   }
-  let state = polled;
+  let state = ctx.ci;
   if (!ctx.shared.interrupted) {
-    state = readCiState(ctx, deps, ['--run', ctx.runDir, '--section', '/express-lane']);
+    state = readCiState(ctx, deps, ['--run', ctx.runDir, '--section', '/express-lane']).state;
     if (timedOut && (state === 'pending' || state === 'stale')) state = 'timeout';
-    if (runs === 'none') state = 'no-ci';
+    if (runs === 'none' && state !== 'red' && state !== 'inherited-red' && state !== 'timeout') state = 'no-ci';
   }
   ctx.ci = state;
   ctx.ciWaitStartedAt = null;
