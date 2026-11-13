@@ -4,7 +4,7 @@ files:
   - plugin/bin/lib/issues/cross-repo-states.js
   - plugin/bin/resolve-foreign-blockers.js
   - plugin/bin/lib/issues/record-dependencies.js
-  - plugin/skills/dispatch/queue-pull-script.md
+  - plugin/bin/lib/dispatch/queue-pull.js
   - plugin/skills/dispatch/blocked-exclusion-report.md
   - plugin/skills/dispatch/mcp-transport.md
   - plugin/bin/queue-pull.js
@@ -35,7 +35,7 @@ files:
 - **Red flags:** The header lists `#42`. Refine's dependency repair offers to "wire" `Blocked by #42`. The line is flagged as unwired prose.
 
 ### 2. Watch dispatch hold the record
-- **URL:** `plugin/skills/dispatch/queue-pull-script.md` (body-text pass); `plugin/skills/dispatch/blocked-exclusion-report.md`; `plugin/bin/lib/issues/cross-repo-states.js` and `plugin/bin/resolve-foreign-blockers.js` (the batched state lookup); `plugin/bin/lib/issues/record-dependencies.js` (`partitionByOpenBodyBlockers`, `openBlockerRefs`)
+- **URL:** `plugin/bin/queue-pull.js` and `plugin/bin/lib/dispatch/queue-pull.js` (the `blocked` pass, body-text and native); `plugin/skills/dispatch/blocked-exclusion-report.md`; `plugin/bin/lib/issues/cross-repo-states.js` and `plugin/bin/resolve-foreign-blockers.js` (the batched state lookup); `plugin/bin/lib/issues/record-dependencies.js` (`partitionByOpenBodyBlockers`, `openBlockerRefs`)
 - **Action:** Run `/claude-tweaks:dispatch` while `upstream-org/lib#42` is open. The queue pull looks up every foreign blocker's state in one batched call and excludes the record: `blocked by an open dependency: #N (blocked by upstream-org/lib#42)`. If the lookup fails, the line reads `upstream-org/lib#42 (state unreadable)`, and one `Warning:` line names the cause.
 - **Should feel:** Predictable. The record waits and the report says exactly which outside issue it is waiting on.
 - **Should understand:** Only an exact CLOSED state releases the record. Open and unreadable both hold it, so a network blip never lets it start early.

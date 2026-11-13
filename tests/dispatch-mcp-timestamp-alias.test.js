@@ -74,7 +74,7 @@ test('mcp-transport section names the gap, the fields, the consumers and the fal
   const text = sectionOf(MCP);
   for (const token of [
     'created_at', 'updated_at', 'createdAt', 'updatedAt', 'mcp__github__list_issues', 'mcp__github__issue_read',
-    'next-ranking.md', 'aliasMcpTimestamps', 'bin/lib/issues/mcp-issue-shape.js', '2026-10-20T022848-record-3630',
+    'rankNext', '--rank', 'aliasMcpTimestamps', 'bin/lib/issues/mcp-issue-shape.js', '2026-10-20T022848-record-3630',
     'bin/queue-pull.js', '`--transport files`', '`--queue-raw`', '`--dep-freshness`',
     'buildFreshnessSignal', 'signalsMatch', 'false queue-order cache hit',
   ]) {

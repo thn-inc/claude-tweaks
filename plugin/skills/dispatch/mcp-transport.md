@@ -119,7 +119,10 @@ promoted in this file: `bin/queue-pull.js` parses every eligibility and exclusio
 label the CLI never sees cannot be corrected after the pull. Before the `--queue-raw` Write, replace
 each queue record's `labels` with the array `mcp__github__issue_read` returns for that record (`get`
 method's `labels` field, or the `get_labels` method) — never trust the bulk `list_issues` labels
-array alone when `fields` was passed.
+array alone when `fields` was passed. A record whose bulk `list_issues` labels already show
+`bot:in-progress`, `bot:blocked` or `bot:parked` needs no `issue_read`: truncation only ever drops
+labels, so the label is really there, and the CLI's `bot:*` filter drops the record whichever
+labels the file carries (the output is identical, one call saved).
 
 Omitting `fields` entirely (the unprojected response may return full labels) is plausible but
 **unverified** against a live sandbox, so the per-record cross-check stays the required
@@ -131,7 +134,7 @@ file's Step 2 queue-pull section accordingly.
 
 **Confirmed live** (`gh`-absent firing, run `2026-10-20T022848-record-3630`, 2026-10-20): `mcp__github__list_issues` and `mcp__github__issue_read` return issue timestamps as `created_at` / `updated_at`. The dispatch consumers read camelCase `createdAt` / `updatedAt`. That firing's queue pull had to patch `dispatch-groups.json` with camelCase aliases before ranking.
 
-**Consequence.** Without the alias, nothing errors and the picks go wrong quietly. `next-ranking.md`'s oldest-first tie-break compares `new Date(undefined)` values, so every comparison is a tie and the pick falls back to array order. `bin/lib/issues/grouping.js`'s fast-lane bundling degrades the same way. The worst effect is a false queue-order cache hit: `queue-order.js`'s `buildFreshnessSignal` records `updatedAt: undefined`, `JSON.stringify` drops that key when the cache is persisted, and `signalsMatch` then compares `undefined !== undefined`, which is false. A record whose body or labels changed between two MCP firings therefore still matches the persisted signal, and the stale persisted groups are reused.
+**Consequence.** Without the alias, nothing errors and the picks go wrong quietly. `rankNext`'s oldest-first tie-break (`bin/queue-pull.js --rank`) compares `new Date(undefined)` values, so every comparison is a tie and the pick falls back to array order. `bin/lib/issues/grouping.js`'s fast-lane bundling degrades the same way. The worst effect is a false queue-order cache hit: `queue-order.js`'s `buildFreshnessSignal` records `updatedAt: undefined`, `JSON.stringify` drops that key when the cache is persisted, and `signalsMatch` then compares `undefined !== undefined`, which is false. A record whose body or labels changed between two MCP firings therefore still matches the persisted signal, and the stale persisted groups are reused.
 
 **Required workaround.** Alias the timestamps once, at the queue-pull boundary, and `bin/queue-pull.js` already does it on both transports. With `--transport files` it copies the `--queue-raw` file into its session queue file and aliases that copy (the agent's own file is left as written), and it aliases the `--dep-freshness` data each time the pull reads it, before any pass reads either. It is a no-op on gh-shaped input, so an MCP-path agent need only write the raw MCP JSON to those two files. `bin/lib/issues/mcp-issue-shape.js`'s `aliasMcpTimestamps` returns shallow copies with `createdAt` / `updatedAt` added from the string snake_case values. The snake_case originals stay, a camelCase value that is not `undefined` is kept, and a non-array input yields `[]`. Any other MCP-fetched issue array that a node block outside that CLI reads needs the same call.
 

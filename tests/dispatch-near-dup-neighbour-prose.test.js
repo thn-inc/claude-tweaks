@@ -71,19 +71,15 @@ test('reporting.md carries the group predicted-conflict line', () => {
   assert.ok(collapse(REPORTING).includes('predicted conflict with #{partner} (PR #{pr}) — merge #{first} first'));
 });
 
-// #5230: the `next` ranking is the queue-pull module's rankNext; the group shape is
-// queue-pull.test.js's RANK_CASES neighbour case (a high group, a medium one).
-test('the next ranking skips a group whose neighbour-in-flight entry names a strong near-duplicate neighbour (#3520)', () => {
+// #5230: the `next` ranking is the queue-pull module's rankNext; it filters by reason only, so
+// the entry's detail is not read and is left empty.
+test('the next ranking skips any group carrying a neighbour-in-flight entry (#3520)', () => {
   const rec = (number, priority, createdAt) => ({ number, createdAt, facets: { priority } });
   const highOld = [rec(2, 'high', '2026-02-01T00:00:00Z')];
   const med = [rec(3, 'medium', '2026-01-01T00:00:00Z')];
-  const nearDupNeighbour = {
-    reason: 'neighbour-in-flight',
-    records: [2],
-    detail: { neighbours: [{ number: 9, files: [], signals: ['body-anchor-overlap'], sharedAnchors: ['alpha.one', 'beta.two'] }] },
-  };
+  const neighbourEntry = { reason: 'neighbour-in-flight', records: [2], detail: {} };
   assert.deepEqual(rankNext([highOld, med], [], {}), highOld, 'control: with no entry the high group is picked');
-  assert.deepEqual(rankNext([highOld, med], [nearDupNeighbour], {}), med);
+  assert.deepEqual(rankNext([highOld, med], [neighbourEntry], {}), med);
 });
 
 test('docs/plugin-structure.md names the new module and sub-file', () => {

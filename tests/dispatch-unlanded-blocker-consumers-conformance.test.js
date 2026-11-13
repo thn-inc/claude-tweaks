@@ -153,7 +153,7 @@ test('mcp-transport.md places the unlanded-blocker section above the #2523 secti
 
 const GRAPH_ROW_PREFIX = '| `bin/dispatch-unlanded-blockers.js` (`bin/lib/dispatch/unlanded-blockers.js`) |';
 const GRAPH_NEEDLES = [
-  'queue-pull-script.md',
+  'bin/lib/dispatch/queue-pull.js',
   '--prefetched-json',
   "reason: 'unlanded-blocker'",
   "reason: 'malformed-blocker'",
