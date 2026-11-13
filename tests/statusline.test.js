@@ -410,7 +410,10 @@ function withWorktrees(fn) {
   } catch {
     relWt = null;
   }
-  git(['-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', inner, 'sub'], main);
+  // A forward-slash spelling: Git for Windows writes a backslash path into the main
+  // config as an escaped `url = D:\\a\\...`, and the reader defers to git on any backslash.
+  const innerUrl = inner.split(path.sep).join('/');
+  git(['-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', innerUrl, 'sub'], main);
   const sub = path.join(main, 'sub');
   const link = path.join(base, 'link-wt');
   fs.symlinkSync(wt, link);
@@ -421,6 +424,19 @@ function withWorktrees(fn) {
     if (relWt) { try { git(['worktree', 'remove', '--force', relWt], relMain); } catch {} }
     fs.rmSync(base, { recursive: true, force: true });
   }
+}
+
+// Git prints forward slashes on win32 (D:/a/x) where a realpath has backslashes;
+// both name one directory. Folded on win32 only, so a POSIX compare stays byte-exact.
+function dirKey(p) {
+  return path.sep === '\\' ? path.resolve(p) : p;
+}
+
+// Git for Windows marks a linked worktree's .git file hidden, and a plain write
+// (CREATE_ALWAYS) over a hidden file is EPERM: remove it first.
+function overwriteGitFile(p, data) {
+  fs.rmSync(p);
+  fs.writeFileSync(p, data);
 }
 
 function gitCommonMain(dir) {
@@ -473,7 +489,7 @@ test('commonDirFromFs: matches git rev-parse --git-common-dir for every worktree
 test('resolveMainProjectDir: equals git\'s answer for every worktree shape', () => {
   withWorktrees((f) => {
     for (const dir of shapeDirs(f)) {
-      assert.strictEqual(sl.resolveMainProjectDir(dir), gitCommonMain(dir), dir);
+      assert.strictEqual(dirKey(sl.resolveMainProjectDir(dir)), dirKey(gitCommonMain(dir)), dir);
     }
   });
 });
@@ -703,7 +719,7 @@ test('resolveMainProjectDir: an env redirect reaches git, not the file read', ()
   withWorktrees((f) => {
     const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt, { env: { GIT_DIR: '' } }));
     assert.deepStrictEqual(launches, [{ fn: 'execFileSync', file: 'git', args: ['rev-parse', '--git-common-dir'] }]);
-    assert.strictEqual(result, gitCommonMain(f.wt));
+    assert.strictEqual(dirKey(result), dirKey(gitCommonMain(f.wt)));
   });
 });
 
@@ -730,7 +746,7 @@ test('resolveMainProjectDir: a gitdir reached through a symlink resolves a relat
     fs.symlinkSync(adminRoot, link);
     const name = path.basename(fs.readFileSync(path.join(f.wt, '.git'), 'utf8').trim());
     assert.strictEqual(fs.readFileSync(path.join(adminRoot, name, 'commondir'), 'utf8').trim(), '../..');
-    fs.writeFileSync(path.join(f.wt, '.git'), `gitdir: ${path.join(link, name)}\n`);
+    overwriteGitFile(path.join(f.wt, '.git'), `gitdir: ${path.join(link, name)}\n`);
     const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt));
     assert.deepStrictEqual(launches, []); // the fast path answered, no spawn
     assert.strictEqual(result, gitCommonMain(f.wt));
@@ -763,7 +779,7 @@ test('commonDirFromFs: a --relative-paths worktree defers to git (its main confi
     assert.strictEqual(sl.commonDirFromFs(f.relWt), null);
     const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.relWt));
     assert.deepStrictEqual(launches, [GIT_LAUNCH]);
-    assert.strictEqual(result, gitCommonMain(f.relWt));
+    assert.strictEqual(dirKey(result), dirKey(gitCommonMain(f.relWt)));
   });
 });
 
@@ -796,7 +812,7 @@ test('resolveMainProjectDir: fast:false skips the filesystem read and asks git',
   withWorktrees((f) => {
     const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt, { fast: false }));
     assert.deepStrictEqual(launches, [{ fn: 'execFileSync', file: 'git', args: ['rev-parse', '--git-common-dir'] }]);
-    assert.strictEqual(result, gitCommonMain(f.wt));
+    assert.strictEqual(dirKey(result), dirKey(gitCommonMain(f.wt)));
   });
 });
 
@@ -1081,7 +1097,7 @@ test('commonDirFromFs: a linked worktree owned by another user defers to git (en
     assert.strictEqual(sl.commonDirFromFs(f.wt, {}, OTHER_UID), null);
     const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt, { currentUid: OTHER_UID }));
     assert.deepStrictEqual(launches, [GIT_LAUNCH]);
-    assert.strictEqual(result, gitCommonMain(f.wt));
+    assert.strictEqual(dirKey(result), dirKey(gitCommonMain(f.wt)));
   });
 });
 
@@ -1121,11 +1137,11 @@ test('originUrlFromConfig: GIT_OBJECT_DIRECTORY in the env defers to git (is_git
 test('commonDirFromFs: a NUL in the .git file defers to git, which reads up to it', () => {
   withWorktrees((f) => {
     const gitFile = path.join(f.wt, '.git');
-    fs.writeFileSync(gitFile, `${fs.readFileSync(gitFile, 'utf8').trim()}\0junk\n`);
+    overwriteGitFile(gitFile, `${fs.readFileSync(gitFile, 'utf8').trim()}\0junk\n`);
     assert.strictEqual(sl.commonDirFromFs(f.wt), null);
     const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt));
     assert.deepStrictEqual(launches, [GIT_LAUNCH]);
-    assert.strictEqual(result, gitCommonMain(f.wt));
+    assert.strictEqual(dirKey(result), dirKey(gitCommonMain(f.wt)));
   });
 });
 
@@ -1234,7 +1250,7 @@ test('commonDirFromFs: env names match case-insensitively, as on win32', () => {
       assert.strictEqual(sl.commonDirFromFs(f.wt, { [name]: '' }), null, name);
       const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt, { env: { [name]: '' } }));
       assert.deepStrictEqual(launches, [GIT_LAUNCH], name);
-      assert.strictEqual(result, gitCommonMain(f.wt), name);
+      assert.strictEqual(dirKey(result), dirKey(gitCommonMain(f.wt)), name);
     }
   });
 });
