@@ -2893,22 +2893,22 @@ test('AC9: the evidence file is rewritten from the recorded content before the c
 test('AC10: each escalation names the finding and runs no second round', async () => {
   const checkCall = on('node', /express-lane\.js$/, 'check');
   const rows = [
-    ['kept evidence still red', { direct: () => RED }, 'stop', 'pre-push', 'failing-test'],
-    ['verify.js exit 1', { script: [nthCall(on('node', /verify\.js$/), 2, { code: 1, stdout: '', stderr: '' })] }, 'stop', 'pre-push', 'failing-test'],
-    ['check escalate out-of-bounds', { script: [nthCall(checkCall, 2, { code: 0, stderr: '', stdout: JSON.stringify({ action: 'escalate', reason: 'out-of-bounds', detail: 'too many lines', logged: true }) })] }, 'stop', 'pre-push', 'out-of-bounds'],
-    ['fix worker fail', { fix: { status: 'fail', reason: 'exit', result: null, detail: 'x' } }, 'fail', 'pre-push', 'express-error'],
-    ['fix worker timeout', { fix: { status: 'timeout', reason: 'wall-clock-ceiling', result: null, detail: 'x' } }, 'fail', 'pre-push', 'express-error'],
-    ['changed nothing outside the evidence files', { effect: (fx) => { fx.dirty = ''; } }, 'stop', 'pre-push', 'express-error'],
-    ['git commit fails', { script: [nthCall(onGit('commit'), 2, new Error('hook failed'))] }, 'fail', 'pre-push', 'express-error'],
-    ['kept evidence changes the tree', { direct: () => ({ ...GREEN, dirty: ' M other.js\0' }) }, 'fail', 'pre-push', 'express-error'],
-    ['check exit non-zero', { script: [nthCall(checkCall, 2, { code: 1, stdout: '', stderr: 'boom' })] }, 'fail', 'blocked', 'fail'],
+    ['kept evidence still red', { direct: () => RED }, 'stop', 'pre-push', 'failing-test', 'the kept evidence test did not pass (reproduced)'],
+    ['verify.js exit 1', { script: [nthCall(on('node', /verify\.js$/), 2, { code: 1, stdout: '', stderr: '' })] }, 'stop', 'pre-push', 'failing-test', 'fix round test: red tests'],
+    ['check escalate out-of-bounds', { script: [nthCall(checkCall, 2, { code: 0, stderr: '', stdout: JSON.stringify({ action: 'escalate', reason: 'out-of-bounds', detail: 'too many lines', logged: true }) })] }, 'stop', 'pre-push', 'out-of-bounds', 'fix round check: out-of-bounds: too many lines'],
+    ['fix worker fail', { fix: { status: 'fail', reason: 'exit', result: null, detail: 'x' } }, 'fail', 'pre-push', 'express-error', 'fix round worker fail/exit: x'],
+    ['fix worker timeout', { fix: { status: 'timeout', reason: 'wall-clock-ceiling', result: null, detail: 'x' } }, 'fail', 'pre-push', 'express-error', 'fix round worker timeout/wall-clock-ceiling: wall-clock ceiling of 30 minutes reached: x'],
+    ['changed nothing outside the evidence files', { effect: (fx) => { fx.dirty = ''; } }, 'stop', 'pre-push', 'express-error', 'the fix round changed nothing outside the evidence files'],
+    ['git commit fails', { script: [nthCall(onGit('commit'), 2, new Error('hook failed'))] }, 'fail', 'pre-push', 'express-error', 'fix round commit: git commit failed: hook failed'],
+    ['kept evidence changes the tree', { direct: () => ({ ...GREEN, dirty: ' M other.js\0' }) }, 'fail', 'pre-push', 'express-error', 'the kept evidence run changed the tree: other.js'],
+    ['check exit non-zero', { script: [nthCall(checkCall, 2, { code: 1, stdout: '', stderr: 'boom' })] }, 'fail', 'blocked', 'fail', 'fix round check: express-lane.js check exited 1: boom'],
   ];
-  for (const [name, over, status, cls, reason] of rows) {
+  for (const [name, over, status, cls, reason, cause] of rows) {
     const h = fixRig(over);
     assert.equal(await run(['#7'], h.deps), 0, name);
     const { stop, outcome } = lastLine(h);
     assert.deepEqual([stop.step, stop.class, outcome, stop.reason], [STEP.review, cls, outcomeFor(cls), reason], name);
-    assert.ok(stop.detail.endsWith(`: ${FINDING_0}`), `${name}: ${stop.detail}`);
+    assert.equal(stop.detail, `${cause}: ${FINDING_0}`, name);
     assert.equal(implementerCalls(h).length, 2, name);
     assert.equal(pushCalls(h).length, 0, name);
     // AC12: the one review line keeps the pass's counts and the reviewer's own usage and denials.
