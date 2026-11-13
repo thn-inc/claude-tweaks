@@ -385,6 +385,18 @@ test('--require-verify on a multi-spec parent says nothing when its learned-skil
   assert.strictEqual(none.out(), '');
 });
 
+// A single-spec run's manifest is its own verify's learned-skills-delivered row: the residue scan
+// stays silent on it, so one patch is never reported twice.
+test('--require-verify on a single-spec run prints no learned-skills line', () => {
+  const f = fixture();
+  fs.mkdirSync(path.join(f.runDir, 'learned-skills'), { recursive: true });
+  fs.writeFileSync(path.join(f.runDir, 'learned-skills', 'manifest.json'), JSON.stringify([{ id: '1', status: 'captured', patch: '/x/1.patch' }]));
+  writeVerifyResults({ runDir: f.runDir, rows: [], base: 'origin/main' });
+  const h = harness(f.main);
+  assert.strictEqual(run(['--run', f.runDir, '--require-verify', 'origin/main'], h.deps), 0);
+  assert.ok(!h.out().includes('learned-skills'), h.out());
+});
+
 // #4170: the ack and console-resolve.js --set-item both read-modify-write console.json, so the ack runs under
 // the console's own lock and an ack never hides an item a later rewrite re-opened.
 test('--ack reads and writes console.json while holding the console lock (#4170)', () => {

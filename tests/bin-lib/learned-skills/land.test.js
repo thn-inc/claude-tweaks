@@ -847,6 +847,64 @@ test('a stage whose manifest write fails reports it, and a re-run stage stages n
   assert.deepEqual(readManifest(f.runDir).map((e) => e.status), ['staged', 'staged']);
 });
 
+// Residual fix 2, N1: a staged file a manifest entry already owns is never claimed for a later one.
+test('a re-captured edit is staged on its own file, not on the one an earlier staged entry owns', (t) => {
+  const f = fixture(t);
+  const reason = 'integration-model is local-merge';
+  stage({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, reason }, { now: () => NOW });
+  assert.deepEqual(stagedNames(f), ['wrap-up-skill-1.md', 'wrap-up-skill-2.md']);
+  // The same X edit, proposed and captured again: entry 3, with entry 1's exact bytes.
+  write(f.repo, X, fs.readFileSync(path.join(f.repo, X), 'utf8') + 'learned: note for x\n');
+  assert.equal(capture({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, target: X, summary: 'adds a note' }, { now: () => NOW }).id, '3');
+  const linesBefore = stagedLines(f).length;
+  const res = stage({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, reason }, { now: () => NOW });
+  assert.deepEqual(res.staged.map((s) => [s.id, path.basename(s.stagePath), s.reason]), [['3', 'wrap-up-skill-3.md', reason]]);
+  assert.equal(stagedLines(f).length, linesBefore + 1, 'entry 3 gets its own STAGED line');
+  assert.equal(path.basename(readManifest(f.runDir).find((e) => e.id === '1').stagePath), 'wrap-up-skill-1.md');
+});
+
+// Residual fix 2, N2: a re-land where every entry was already staged must still record them.
+test('a re-land after a call that staged every entry and lost its manifest write records them', (t) => {
+  const f = fixture(t);
+  sh(f.repo, ['remote', 'set-url', 'origin', path.join(f.root, 'missing.git')]);
+  const first = land(landArgs(f), failManifest(deps(fakeGh().gh).deps));
+  assert.equal(first.manifestFailed, true);
+  assert.equal(first.staged.length, 2);
+  assert.deepEqual(readManifest(f.runDir).map((e) => e.status), ['captured', 'captured']);
+  const again = land(landArgs(f), deps(fakeGh().gh).deps);
+  assert.equal(again.manifestFailed, undefined);
+  assert.deepEqual(readManifest(f.runDir).map((e) => e.status), ['staged', 'staged'], 'the entries are recorded staged');
+  assert.deepEqual(stagedNames(f), ['wrap-up-skill-1.md', 'wrap-up-skill-2.md']);
+});
+
+// Residual fix 2, item 5: a description-only staged copy (the gate failed) has no diff block, so it is
+// recognised by its Target: and its Invariant: (the entry's summary).
+test('a re-run stage recognises description-only copies and stages nothing twice', (t) => {
+  const f = fixture(t);
+  const gateFails = failManifest({
+    now: () => NOW,
+    git: (a, o) => {
+      if (a.includes('apply') && a.includes('--check') && !a.includes('-R') && !a.includes('--cached')) throw new Error('simulated gate failure');
+      return realDeps.git(a, o);
+    },
+  });
+  const first = stage({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, reason: 'r' }, gateFails);
+  assert.equal(first.manifestFailed, true);
+  for (const n of stagedNames(f)) assert.doesNotMatch(fs.readFileSync(path.join(f.runDir, 'staged', n), 'utf8'), /diff --git/, `${n} is description-only`);
+  const again = stage({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, reason: 'r' }, { now: () => NOW });
+  assert.deepEqual(stagedNames(f), ['wrap-up-skill-1.md', 'wrap-up-skill-2.md'], 'no second copy of either');
+  assert.deepEqual(again.staged.map((s) => path.basename(s.stagePath)).sort(), ['wrap-up-skill-1.md', 'wrap-up-skill-2.md']);
+  assert.deepEqual(readManifest(f.runDir).map((e) => e.status), ['staged', 'staged']);
+});
+
+test('a description-only copy with another summary is not taken for this entry', (t) => {
+  const f = fixture(t, { capturedTargets: [X] });
+  fs.mkdirSync(path.join(f.runDir, 'staged'), { recursive: true });
+  fs.writeFileSync(path.join(f.runDir, 'staged', 'wrap-up-skill-1.md'), `Target: ${X}\nInvariant: some other learning\nFinding: Skills row — some other learning\nStaged-at: abc\n\n`);
+  const res = stage({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, reason: 'r' }, { now: () => NOW });
+  assert.deepEqual(res.staged.map((s) => path.basename(s.stagePath)), ['wrap-up-skill-2.md']);
+});
+
 test('a staged file of another edit to the same target is not taken for this entry', (t) => {
   const f = fixture(t, { capturedTargets: [X] });
   fs.mkdirSync(path.join(f.runDir, 'staged'), { recursive: true });

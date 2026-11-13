@@ -83,7 +83,7 @@ function triage({ runDir, worktree, mergeBase, manifest, deps }) {
   const todo = [];
   const superseded = [];
   const already = [];
-  const copies = stagedCopies(runDir, deps);
+  const copies = stagedCopies(runDir, manifest, deps);
   let owned = [];
   if (captured.length) {
     owned = splitNul(deps.git(['-C', worktree, '-c', 'core.quotePath=false', 'diff', '--name-only', '-z', '--end-of-options', mergeBase, 'HEAD', '--']));
@@ -133,9 +133,12 @@ function triage({ runDir, worktree, mergeBase, manifest, deps }) {
   return { todo, superseded, already };
 }
 
-// Every staged/wrap-up-skill-{N}.md as { path, target, diff }: its Target: line and the bytes after
-// the preamble's blank line. An unreadable staged/ is none.
-function stagedCopies(runDir, deps) {
+// Every staged/wrap-up-skill-{N}.md as { path, target, invariant, diff }: its Target: and Invariant:
+// lines and the bytes after the preamble's blank line (empty for a description-only stage). A file a
+// manifest entry already names as its stagePath (by name: the stored path predates any archival) is
+// taken from the start, never claimed for another entry. An unreadable staged/ is none.
+function stagedCopies(runDir, manifest, deps) {
+  const owned = new Set(manifest.filter((e) => e.stagePath).map((e) => path.basename(String(e.stagePath))));
   const dir = path.join(runDir, 'staged');
   let names = [];
   try { names = deps.readdir(dir).filter((n) => /^wrap-up-skill-\d+\.md$/.test(n)).sort(); } catch { return []; }
@@ -145,20 +148,25 @@ function stagedCopies(runDir, deps) {
     try { bytes = Buffer.from(deps.readFile(path.join(dir, n))); } catch { continue; }
     const end = bytes.indexOf('\n\n');
     if (end < 0) continue;
-    const m = /^Target: (.*)$/m.exec(bytes.subarray(0, end).toString('utf8'));
-    if (m) out.push({ path: path.join(dir, n), target: m[1], diff: bytes.subarray(end + 2), taken: false });
+    const head = bytes.subarray(0, end).toString('utf8');
+    const m = /^Target: (.*)$/m.exec(head);
+    const inv = /^Invariant: (.*)$/m.exec(head);
+    if (m) out.push({ path: path.join(dir, n), target: m[1], invariant: inv ? inv[1] : null, diff: bytes.subarray(end + 2), taken: owned.has(n) });
   }
   return out;
 }
 
-// The staged file that already holds this captured entry's edit: same target, and its diff block is
-// the patch's bytes exactly (a run whose manifest write failed after staging it). Each file is
-// claimed once. Returns its path, or null.
+// The staged file that already holds this captured entry's edit (a run whose manifest write failed
+// after staging it): same target, and its diff block is the patch's bytes exactly, or, for a
+// description-only stage (no diff block), its Invariant: is the entry's summary. Each file is claimed
+// once. Returns its path, or null.
 function stagedCopyOf(entry, copies, deps) {
   if (!copies.length) return null;
   let patch;
   try { patch = Buffer.from(deps.readFile(entry.patch)); } catch { return null; }
-  const hit = copies.find((c) => !c.taken && c.target === entry.target && c.diff.equals(patch));
+  const summary = oneLine(entry.summary);
+  const hit = copies.find((c) => !c.taken && c.target === entry.target
+    && (c.diff.equals(patch) || (c.diff.length === 0 && c.invariant === summary)));
   if (!hit) return null;
   hit.taken = true;
   return hit.path;

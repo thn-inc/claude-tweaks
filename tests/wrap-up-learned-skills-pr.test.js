@@ -69,10 +69,12 @@ const PROC_FACTS = [
   [/A top-level `prBodyStale: true` from `land` means commits were added to the open PR but its body could not be rewritten[\s\S]*?add a wrap-up ledger item \(status `open`\) naming the PR's URL/, 'prBodyStale: what the controller does (item 6)'],
   [/Pass `--worktree` the run worktree's root while it exists\. Once it is removed, pass the main checkout's root \(`\$RUN_ROOT`\)/, 'the remedy\'s --worktree, worktree removed included (item 7)'],
   [/Under `local-merge`, when that `stage` runs after the Review Console resolved, the console can no longer show what it staged: add one wrap-up ledger item \(status `open`\) per `staged\[\]\.stagePath`/, 'local-merge remedy seeds one ledger item per staged path (item 8)'],
+  // Residual fix 2, N4: the multi-spec backstop is the parent residue scan, which does not block.
+  [/In a multi-spec consolidated wrap-up the manifest is the parent's, which no `spec-\*\/` verify reads, so the backstop there is the parent residue scan, `console-residue\.js --require-verify`, that `flow\/multispec-summary\.md` runs: it lists the entry under "Needs a human" at summary time and does not block/, 'the multi-spec backstop is the non-blocking parent scan (N4)'],
   // Final-review I2: the mechanical backstops for a captured patch never landed or staged.
   [/`record` refuses an applied `skills`-row finding with no `commit` \(exit 1\)/, 'record refuses a commit-less applied skills finding (I2)'],
   [/`learned-skills-delivered` row fails while the manifest still holds a `captured` entry, naming each patch file, and that fail blocks the verdict/, 'verify\'s learned-skills-delivered backstop (I2)'],
-  [/When it fails, run `land` \(`pr-first`\) or `stage` \(`local-merge`\) with `--run` set to the run dir the row names, which is the archived copy once the run dir is archived, then re-run `verify`/, 'the backstop\'s remedy (I2)'],
+  [/When either one reports an entry, run `land` \(`pr-first`\) or `stage` \(`local-merge`\) with `--run` set to the run dir the row names, which is the archived copy once the run dir is archived, then re-run `verify`/, 'the backstop\'s remedy (I2)'],
 ];
 const missingProc = missingFactsOf(PROC_FACTS);
 
