@@ -161,6 +161,26 @@ test('push: absent, all, some, ignore and tags', () => {
     assert.deepEqual(read(on).unparsed, ['push branches not read'], on);
     assert.equal(read(on).pushBranches, 'absent', on);
   }
+  // a plain item starting with `*` is a YAML alias, never a pattern; quoted, `**` still means all.
+  // `*` plus a name character is already the on: region's alias reason; `**` and `*-` reach the item read.
+  for (const [on, reason] of [
+    ['on:\n  push:\n    branches: **\n', 'push branches not read'],
+    ['on:\n  push:\n    branches:\n      - **\n', 'push branches not read'],
+    ['on:\n  push:\n    branches: [**]\n', 'push branches not read'],
+    ['on:\n  push:\n    branches:\n      - main\n      - *-dev\n', 'push branches not read'],
+    ['on:\n  push:\n    branches: [main, **]\n', 'push branches not read'],
+    ['on:\n  push:\n    branches: *foo\n', 'anchor or alias in on:'],
+    ['on:\n  push:\n    branches: [main, *foo]\n', 'anchor or alias in on:'],
+  ]) {
+    assert.deepEqual(read(on).unparsed, [reason], on);
+    assert.equal(read(on).pushBranches, 'absent', on);
+  }
+  for (const on of ['on:\n  push:\n    branches: "**"\n', 'on:\n  push:\n    branches:\n      - "**"\n', 'on:\n  push:\n    branches: ["**"]\n']) {
+    assert.equal(read(on).pushBranches, 'all', on);
+    assert.deepEqual(read(on).unparsed, [], on);
+  }
+  assert.equal(read("on:\n  push:\n    branches: ['*-dev', main]\n").pushBranches, 'some');
+  assert.equal(read('on:\n  push:\n    branches: [feature/*]\n').pushBranches, 'some');
   // the indentless top-level sequence stays inside the on: region
   assert.equal(read('on:\n- workflow_dispatch\n- push\n').pushTrigger, true);
   const none = read('on: pull_request\n');
