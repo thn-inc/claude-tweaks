@@ -579,6 +579,19 @@ test('resolveMainProjectDir: an unreadable .git file reaches git', chmodDenialSk
   });
 });
 
+test('resolveMainProjectDir: a gitdir reached through a symlink resolves a relative commondir against its realpath', () => {
+  withWorktrees((f) => {
+    const adminRoot = path.join(f.main, '.git', 'worktrees');
+    const link = path.join(f.base, 'link');
+    fs.symlinkSync(adminRoot, link);
+    const name = path.basename(fs.readFileSync(path.join(f.wt, '.git'), 'utf8').trim());
+    assert.strictEqual(fs.readFileSync(path.join(adminRoot, name, 'commondir'), 'utf8').trim(), '../..');
+    fs.writeFileSync(path.join(f.wt, '.git'), `gitdir: ${path.join(link, name)}\n`);
+    assert.strictEqual(sl.resolveMainProjectDir(f.wt), gitCommonMain(f.wt));
+    assert.strictEqual(sl.resolveMainProjectDir(f.wt), fs.realpathSync(f.main));
+  });
+});
+
 test('commonDirFromFs: a symlink at another depth to a --relative-paths worktree matches git (physical resolve)', (t) => {
   withWorktrees((f) => {
     if (!f.relWt) return t.skip('git lacks --relative-paths');

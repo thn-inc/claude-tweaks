@@ -92,7 +92,9 @@ function commonDirFromFs(dir, env = process.env) {
     if (!gitFile.startsWith('gitdir: ')) return null;
     const target = gitFile.slice('gitdir: '.length);
     if (!target || target.includes('\n')) return null;
-    const gitdir = path.resolve(fs.realpathSync(dir), target);
+    // read_gitfile returns the REALPATH of the gitdir; a relative commondir
+    // resolves against that, not against a symlinked spelling of it.
+    const gitdir = fs.realpathSync(path.resolve(fs.realpathSync(dir), target));
     let common;
     try {
       const content = fs.readFileSync(path.join(gitdir, 'commondir'), 'utf8').replace(/[\r\n]+$/, '');
