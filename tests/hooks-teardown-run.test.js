@@ -13,6 +13,7 @@ const { teardownRun, defaultGhApiDelete, findWorktreeEntry, branchOfWorktree } =
 const { parseWorktreeList } = require('../plugin/bin/lib/hooks/worktree-reap');
 const { gateOriginRepo } = require('../plugin/bin/lib/repo-resolve');
 const { readText } = require('./helpers/read-skill');
+const { fromTemplate } = require('./helpers/git-template');
 
 function git(root, ...args) {
   return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8' });
@@ -22,7 +23,12 @@ function git(root, ...args) {
 // `origin` remote (repoSpecOf only reads its URL from git config, no network hit), and one
 // linked worktree on `feat-branch` recorded as the run's own worktree.
 function fixtureRepo() {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-td-')));
+  const root = fromTemplate('teardown-run-fixture', buildFixtureRepo, { prefix: 'ct-td-', realpath: true });
+  const wt = path.join(root, '.claude', 'worktrees', 'feat');
+  const runId = '2026-08-01T090000-spec-9';
+  return { root, wt, runDir: path.join(root, '.claude-tweaks', 'pipelines', runId), runId };
+}
+function buildFixtureRepo(root) {
   git(root, 'init', '-q', '-b', 'trunk');
   git(root, 'config', 'user.email', 't@example.com');
   git(root, 'config', 'user.name', 'T');
@@ -47,7 +53,6 @@ function fixtureRepo() {
   git(root, 'commit', '-q', '-m', 'materialize #9');
   fs.writeFileSync(path.join(runDir, 'config.yml'), 'mode: auto\n');
   fs.writeFileSync(path.join(runDir, 'decisions.md'), '# log\n');
-  return { root, wt, runDir, runId };
 }
 
 function writeRunState(runDir, state) {
