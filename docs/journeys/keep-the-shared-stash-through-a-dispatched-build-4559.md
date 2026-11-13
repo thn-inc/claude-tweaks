@@ -3,6 +3,7 @@ files:
   - plugin/bin/stash-guard.js
   - plugin/bin/lib/hooks/pre-tool-use.js
   - plugin/skills/build/dispatch.md
+  - plugin/skills/build/stash-guard.md
   - plugin/skills/build/handoff-template.md
   - plugin/skills/dispatch/task-prompt.md
   - plugin/skills/dispatch/express-prompt.md
@@ -38,7 +39,7 @@ files:
 - **Should understand:** An entry an agent *added* is logged and left on the stack, never popped. An implementer result of `DONE` becomes `DONE_WITH_CONCERNS`, and the stash change is named to that task's reviewer. A `NEEDS_CONTEXT` or `BLOCKED` result keeps its status. A restored entry lands at `stash@{0}`, so positions shift, but nothing is lost. A sibling session's own legitimate drop during the window is also restored: an accepted false positive, undone by the sha the AUTO line names. A store that wrote nothing is a failed restore, never a restored one. It carries no recover command (`nothing to recover`) only when its commit is still on top after every restore in the compare and no other recover command is printed. Otherwise it keeps a working command, with an error saying why: a sibling dropped a copy, a later restore moved it down, the stack could not be re-read, or it must run after the other recover commands.
 - **Red flags:** An entry restored with a different subject; an index-keyed restore; a no-op `git stash store` reported as `restored`; a "nothing to recover" entry whose commit is not on top, or that is printed alongside another recover command; a new mid-flow stop.
 
-### 4. A reviewer that touched the stash is reviewed again — `build/dispatch.md`
+### 4. A reviewer that touched the stash is reviewed again — `build/stash-guard.md`
 - **URL:** —
 - **Action:** When the compare after a reviewer dispatch reports a change, the controller voids that verdict. The CLI has already restored the stash. The controller runs `git status --porcelain` and dispatches the same review again under a fresh snapshot/compare pair. If the tree is dirty, the retry names the dirty paths. If the retry changes the stash again, it is restored and logged, and the retry's verdict stands.
 - **Should feel:** Trustworthy: a verdict reached while the stash was disturbed is never acted on.
@@ -56,4 +57,5 @@ files:
 - Created during build of #4559 (build dispatch: size:low → Fast puts a cheapest-tier implementer on git-running tasks, and it ignored the no-stash rule)
 - Steps 1-5 built in this session
 - Updated during build of #4787: Steps 3 and 5 gain the failed-restore shapes (`command: null` with "nothing to recover" only when the commit is still on top of the final stack and no other recover command prints; a working command, with its reason, otherwise)
+- Updated during build of #4785. Steps 3-5's non-zero-exit handling (restore logging, the implementer/fix and reviewer branches, the one reviewer retry, the handoff and hand-log carry-over, the degraded SKIP) moved out of `build/dispatch.md`'s stanza into the lazy-loaded `build/stash-guard.md`. The controller reads it only when a `snapshot` or `compare` exits 3 or 2. Behavior is unchanged.
 - Related: `run-shell-loops-without-a-hook-storm-3074.md` (the Bash prefilter that routes compound `git` commands to the stash gate)
