@@ -89,7 +89,7 @@ Expected: PASS, every test including the existing AC5.
 
 - [ ] **Step 5: Verify the dead-owner test discriminates**
 
-Covers AC3.1. Temporarily revert only `teardown-run.js` (`git stash push -m "5293-discrim" -- plugin/bin/lib/hooks/teardown-run.js`, then capture its sha with `git stash list --format='%H %gs'`), run `node --test --test-name-pattern "#5293: dead owner, merged" tests/hooks-teardown-run.test.js` — Expected: FAIL. Restore with `git stash apply {sha}` and drop that entry by tag. Quote both raw outputs in the report.
+Covers AC3.1. After committing (Step 6), run the dispatch prompt's "Discrimination checks in a scratch checkout" procedure (never `git stash`, never an in-place revert in the shared worktree): in the scratch checkout, `git checkout {base-sha} -- plugin/bin/lib/hooks/teardown-run.js` (the pre-task version), then run the new tests file there — Expected: the dead-owner merged tests FAIL, while the unmutated scratch run passed first. Quote both raw outputs in the report.
 
 - [ ] **Step 6: Commit**
 
