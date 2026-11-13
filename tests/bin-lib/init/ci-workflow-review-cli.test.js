@@ -329,6 +329,38 @@ test('a non-ENOENT miss or an unreadable leaf exits 1 for the declaration and th
   assert.equal(JSON.parse(noDir.stdout).reviewed, 0);
 });
 
+// Where the OS reports a path under a regular file as ENOENT (not ENOTDIR),
+// the leaf alone reads as absent; the parent's type decides. The injected
+// ENOENT leaf stands in for that OS on every platform.
+test('an ENOENT leaf under a regular-file parent exits 1 like ENOTDIR (injected, any platform)', () => {
+  const decl = tmpRoot();
+  write(decl, '.github/workflows/ci.yml', NO_READY);
+  write(decl, '.claude-tweaks', 'not a directory');
+  const a = runInProcess(decl, ['--drift', '--json'], leafError(DECL_SUFFIX, 'ENOENT'));
+  assert.equal(a.status, 1, a.stdout);
+  assert.equal(a.stdout, '');
+  assert.equal(a.stderr, 'ci-workflow-review.js: verify-scope.json: unreadable: ENOTDIR\n');
+
+  const gh = tmpRoot();
+  write(gh, '.github', 'not a directory');
+  const b = runInProcess(gh, ['--drift', '--json'], leafError(WORKFLOWS_SUFFIX, 'ENOENT'));
+  assert.equal(b.status, 1, b.stdout);
+  assert.equal(b.stdout, '');
+  assert.equal(b.stderr, 'ci-workflow-review.js: .github/workflows: unreadable: ENOTDIR — not read\n');
+
+  // Control: a parent that is a symlink to a directory is a directory, so the
+  // ENOENT leaf under it stays the silent absent case.
+  if (!NO_SYMLINKS) {
+    const linked = tmpRoot();
+    write(linked, '.github/workflows/ci.yml', NO_READY);
+    fs.mkdirSync(path.join(linked, 'real-ct'));
+    link(linked, '.claude-tweaks', path.join(linked, 'real-ct'));
+    const c = runInProcess(linked, ['--drift', '--json'], leafError(DECL_SUFFIX, 'ENOENT'));
+    assert.equal(c.status, 0, c.stderr);
+    assert.deepEqual(JSON.parse(c.stdout).findings.map((f) => f.check), ['draft-skip-no-ready-for-review']);
+  }
+});
+
 test('a workflows directory that cannot be listed exits 1 (injected readdirSync throw)', () => {
   const root = tmpRoot();
   write(root, '.github/workflows/ci.yml', CLEAN);
@@ -373,6 +405,18 @@ test('a workflows directory or declaration the user cannot read exits 1 (real EA
   write(c, '.github/workflows/ci.yml', CLEAN);
   write(c, '.claude-tweaks/verify-scope.json', CI_DECL);
   locked(c, '.claude-tweaks', () => expectExit1(c, 'verify-scope.json: unreadable: EACCES'));
+
+  // verify-scope.json mode 0: resolved and contained, but readDeclaration's
+  // own read fails, and its error passes through.
+  const d = tmpRoot();
+  write(d, '.github/workflows/ci.yml', CLEAN);
+  write(d, '.claude-tweaks/verify-scope.json', CI_DECL);
+  locked(d, '.claude-tweaks/verify-scope.json', () => {
+    const res = runCli(d, ['--drift', '--json']);
+    assert.equal(res.status, 1, res.stdout);
+    assert.equal(res.stdout, '');
+    assert.match(res.stderr, /^ci-workflow-review\.js: verify-scope\.json: could not read .*verify-scope\.json: EACCES\b[^\n]*\n$/);
+  });
 });
 
 test('discovery: .yml and .yaml in any case, sorted; every other name is ignored', () => {

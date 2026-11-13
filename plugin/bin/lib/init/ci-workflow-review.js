@@ -237,6 +237,17 @@ function readWorkflowEntry(dir, name, rootReal, fsImpl, opts) {
 const isAbsent = (leaf) => leaf.state === 'missing' && leaf.code === 'ENOENT';
 const isUnreadable = (leaf) => leaf.state === 'unreadable' || (leaf.state === 'missing' && !isAbsent(leaf));
 
+// resolveLeaf(p), except that an ENOENT leaf whose `parent` resolves to a
+// non-directory reads as ENOTDIR: an OS that reports a path under a regular
+// file as ENOENT (win32) must not make that file read as absent.
+function resolveUnder(p, parent, fsImpl, opts) {
+  const leaf = resolveLeaf(p, opts);
+  if (!isAbsent(leaf)) return leaf;
+  const up = resolveLeaf(parent, opts);
+  if (up.state === 'resolved' && lstatType(up.path, { fsImpl }).type !== 'directory') return { state: 'missing', code: 'ENOTDIR' };
+  return leaf;
+}
+
 // `.github/workflows/*.y{a,}ml` under `root`, sorted. A missing directory is
 // an empty set; a directory that exists but cannot be listed (or is not a
 // directory, or resolves outside the checkout) is an error, never empty.
@@ -244,7 +255,7 @@ function readWorkflowSet(root, { fsImpl = fs, realpath } = {}) {
   const opts = guardOpts(fsImpl, realpath);
   const rootReal = canonicalRealpath(root, opts);
   if (rootReal === null) return { ok: false, error: 'could not resolve --root' };
-  const leaf = resolveLeaf(path.join(root, '.github', 'workflows'), opts);
+  const leaf = resolveUnder(path.join(root, '.github', 'workflows'), path.join(root, '.github'), fsImpl, opts);
   if (isAbsent(leaf)) return { ok: true, workflows: [] };
   if (leaf.state === 'dangling') return { ok: false, error: '.github/workflows: dangling symlink — not read' };
   if (isUnreadable(leaf)) return { ok: false, error: `.github/workflows: unreadable: ${leaf.code} — not read` };
@@ -272,7 +283,7 @@ function readCiSources(root, { fsImpl = fs, realpath } = {}) {
   const opts = guardOpts(fsImpl, realpath);
   const rootReal = canonicalRealpath(root, opts);
   if (rootReal === null) return { ok: false, errors: ['could not resolve --root'] };
-  const leaf = resolveLeaf(path.join(root, '.claude-tweaks', 'verify-scope.json'), opts);
+  const leaf = resolveUnder(path.join(root, '.claude-tweaks', 'verify-scope.json'), path.join(root, '.claude-tweaks'), fsImpl, opts);
   if (isAbsent(leaf)) return { ok: true, ciSources: null };
   if (leaf.state === 'dangling') return { ok: false, errors: ['verify-scope.json: dangling symlink — not read'] };
   if (isUnreadable(leaf)) return { ok: false, errors: [`verify-scope.json: unreadable: ${leaf.code}`] };
