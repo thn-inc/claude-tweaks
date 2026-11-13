@@ -61,7 +61,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn, spawnSync, execFileSync } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 const {
   isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, slotLane, resolveSlots, defaultSlotBase, SLOT_DIR_VAR,
 } = require('../plugin/bin/lib/suite-slot');
