@@ -54,12 +54,12 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { spawnSync } = require('node:child_process');
+const { spawnSync, execFileSync } = require('node:child_process');
 
 const { readText } = require('../../helpers/read-skill');
 const { gitRepo, fixtureGit } = require('../../helpers/git-fixtures');
 const {
-  REPO, SCRIPT_MD, MCP_MD, FENCE_FIRST_LINE, RUN_DIR_NAME,
+  REPO, SCRIPT_MD, MCP_MD, MCP_TARGETS_FIRST_LINE, MCP_EXCLUSIONS_FIRST_LINE, FENCE_FIRST_LINE, RUN_DIR_NAME,
   oracleSkip, extractFence, fenceSessionFiles, filesOracleScript, createSandbox, runOracle, runModuleCli, runPair, withEscapeGuard, normalize, reported, assertParity, runAll, failedJobs, shQuote,
   STREAM_TRUNCATED, TAIL_LINES,
 } = require('./queue-pull-oracle');
@@ -2772,6 +2772,16 @@ test('#5227 filesOracleScript: every gh fetch becomes the agent write, the neigh
   }
   // mcp-transport.md's claim-targets fence (step 2) is the only one whose first line ends at this argument.
   assert.throws(() => filesOracleScript(FENCE, mcp.replace('"$DISPATCH_IN_FLIGHT_RAW" <<NODE_EVAL_EOF', '"$X" <<NODE_EVAL_EOF')), /anchor not found/);
+});
+
+test('#5230 oracle: the frozen MCP section equals mcp-transport.md at the pre-cutover commit', () => {
+  const PRE_CUTOVER = '61ec59285c112cbd8c5953855af108d63a03883b';
+  const frozen = fs.readFileSync(path.join(REPO, 'tests', 'fixtures', 'dispatch', 'mcp-transport-step2-pre-cutover-5230.md'), 'utf8');
+  const pre = execFileSync('git', ['show', `${PRE_CUTOVER}:plugin/skills/dispatch/mcp-transport.md`], { cwd: REPO, encoding: 'utf8' });
+  for (const firstLine of [MCP_TARGETS_FIRST_LINE, MCP_EXCLUSIONS_FIRST_LINE]) {
+    assert.equal(extractFence(frozen, firstLine), extractFence(pre, firstLine), firstLine);
+  }
+  assert.equal(MCP_MD, path.join(REPO, 'tests', 'fixtures', 'dispatch', 'mcp-transport-step2-pre-cutover-5230.md'), 'the oracle reads the frozen fixture');
 });
 
 test('#5227 oracle: the git shim answers `remote get-url origin` with the scenario remote URL (canned and logged); any other remote call reaches the real git', { skip: oracleSkip() }, () => {
