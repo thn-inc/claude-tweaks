@@ -40,13 +40,16 @@ const META_CLAUSE_RE = /^(?:present in only one\b|partner agents?\b|single agent
 // A producer note that is meta as a whole parenthetical: a ledger `reason-not-auto:` note and a
 // cross-lens pointer (`same substance as … resolved Don't fix`).
 const META_PAREN_RE = /^(?:reason-not-auto:|same substance as\b)/i;
+// The reproduction step's coordination note about a pair of findings (`A / B share a location but not
+// substance; both staged.`) is meta as a whole clause: it says how the pair was staged, never what either finds.
+const COORDINATION_NOTE_RE = /\bshare\s+(?:a\s+)?locations?\b[^.;()]*?\bbut\s+not\s+substance\b[^.;()]*(?:;\s*both\s+staged\b)?\.?/gi;
 const STAGED_FILE_RE = /staged\/([A-Za-z0-9_-]+\.(?:md|patch))/;
 // A decisions.md line's log prefix (`- STAGED 10:00:00 — `).
 const LOG_PREFIX_RE = /^-\s+(?:STAGED|AUTO)\s+\d{2}:\d{2}:\d{2}\s+—\s+/;
 // The producer's own staging note, in any case and followed by any of `.` `:` `;` ` —` or nothing
 // (`Staged to Review Console as low-confidence`, `both staged as low-confidence`, mid-sentence lowercase).
 const STAGING_NOTE_RE = /(?:\bboth\s+)?\bstaged\s+(?:to\s+Review\s+Console\s+)?as\s+low-confidence\b(?:[.:;]|\s*—)?/gi;
-const BOILERPLATE = [/not reproduced/g, STAGING_NOTE_RE, /Reversibility: \S+\./g, /Artifact: [^.]*\./g];
+const BOILERPLATE = [/not reproduced/g, STAGING_NOTE_RE, COORDINATION_NOTE_RE, /Reversibility: \S+\./g, /Artifact: [^.]*\./g];
 // A ledger-row reference is meta about the console's ledger, never about the finding (R17).
 const LEDGER_REF_RE = /(?:\b[\w-]+\s+case\s*=\s*)?(?:\b(?:already|same\s+as)\s+)?\bledger\s+(?:rows?\s+|#)\d+\b\s*[,;]?/gi;
 // A trailing clause outside parentheses that only points at the ledger (`— ledger row 8.`, `ledger item 4`,
@@ -59,6 +62,9 @@ const TRAILING_LEDGER_RE = /(?:^|\s*—\s*|(?<=[.;,])\s+)(?:(?:same\s+as\s+)?led
 // right after a list separator (`/` `,` `;` `and`) or another ref is a continuation — never one after prose
 // punctuation (`not reproduced: -1 is returned` keeps its `-1`); one that opens the claim is stripped only when a
 // separator, another ref, `and` or the end follows it (`-1 is returned` is prose). Matched against trimmed text.
+// What the next finding leaves behind a claim, at the segment's end only: a joining `and`/`or` ("reads and
+// writes" keeps its words), or the next sentence's lead-in after a sentence boundary (`. Lens 3a findings`).
+const TRAIL_FRAGMENT_RE = /(?:\s+(?:and|or)|(?<=[.;)])\s*(?:Reproduction:\s*)?Lens\s+"?[A-Za-z0-9_+-]+"?\s+findings?)\s*$/i;
 const LEAD_FRAGMENT_RE = /^(?:\s+|(?<=(?:[/,;]|\band|[:\-/]\d+(?:-\d+)?)\s*)[:\-/]\d+(?:-\d+)?|[:\-/]\d+(?:-\d+)?(?=\s*(?:$|[/,;.)—(]|[:\-/]\d)|\s+and\s*(?:$|[/,:.\-]))|\/(?=\s|:\d|$)|[,;:.)—](?!\d)|and\b(?=\s*(?:[/,:.\-]|$)))+/;
 
 const defaultDeps = {
@@ -174,7 +180,7 @@ function cleanSegment(segment) {
   let text = segment.replace(/^[:\-/]\d+(?:-\d+)?/, '').replace(/\(([^()]*)\)/g, (whole, inner) => cleanParenthetical(inner));
   for (const re of BOILERPLATE) text = text.replace(re, '');
   // A dropped parenthetical leaves ` .` behind: at the end it goes (so a lone parenthetical unwraps), mid-claim it closes up.
-  text = text.replace(/\s+/g, ' ').trim().replace(TRAILING_LEDGER_RE, '').replace(LEAD_FRAGMENT_RE, '').replace(/[\s,;]+$/, '').replace(/\s+\.$/, '').replace(/\s+\.(?=\s)/g, '.').trim();
+  text = text.replace(/\s+/g, ' ').trim().replace(TRAILING_LEDGER_RE, '').replace(LEAD_FRAGMENT_RE, '').replace(TRAIL_FRAGMENT_RE, '').replace(/[\s,;]+$/, '').replace(/\s+\.$/, '').replace(/\s+\.(?=\s)/g, '.').trim();
   const whole = /^\(([^()]*)\)\s*\.?$/.exec(text);
   return whole ? whole[1].trim() : text;
 }
