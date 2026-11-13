@@ -46,6 +46,15 @@ const SETTLE_STEP_NAMES = Object.freeze([
   'settle-release', 'settle-remove-worktree', 'settle-delete-branch', 'settle-close',
 ]);
 
+// The sub-step events merge.js emits (#5226), one per sub-step call. Kept apart from STEP_NAMES
+// for the same reason as SETTLE_STEP_NAMES: the pipeline-step list is pinned.
+const MERGE_STEP_NAMES = Object.freeze([
+  'merge-entry', 'merge-supplier', 'merge-closing-links', 'merge-compose', 'merge-ready',
+  'merge-gate', 'merge-watch', 'merge-park', 'merge-conflict', 'merge-call', 'merge-confirm',
+  'merge-post-merge', 'merge-release-status', 'merge-reconcile', 'merge-teardown',
+  'merge-delete-branch',
+]);
+
 const STEP = Object.freeze(Object.fromEntries(
   STEP_NAMES.map((name) => [name.replace(/-([a-z])/g, (_, c) => c.toUpperCase()), name]),
 ));
@@ -163,6 +172,6 @@ function createEventSink({ stdout, appendFile }) {
 
 module.exports = {
   CLI_TIMEOUT_MS, firstLine, errorText,
-  STEP_NAMES, SETTLE_STEP_NAMES, FINAL_STEP, STEP, OUTCOMES, STOP_CLASSES,
+  STEP_NAMES, SETTLE_STEP_NAMES, MERGE_STEP_NAMES, FINAL_STEP, STEP, OUTCOMES, STOP_CLASSES,
   outcomeFor, yieldToEventLoop, neutralize, normalizeTitle, createEventSink,
 };
