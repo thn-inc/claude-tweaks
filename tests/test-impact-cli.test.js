@@ -209,7 +209,7 @@ test('trace runs the suite under the tracer env and writes the map, recording a 
     assert.strictEqual(listenerTotal(signals), 0, 'a finished run leaves no signal handler');
     const req = requireOption(path.join(dir, 'tools', 'test-impact', 'tracer.js'));
     assert.strictEqual(seen.cmd, process.execPath);
-    assert.deepStrictEqual(seen.args, [path.join(dir, 'tools', 'run-tests.js')]);
+    assert.deepStrictEqual(seen.args, [path.join(dir, 'tools', 'run-tests.js'), '--full']);
     assert.strictEqual(seen.opts.cwd, dir);
     assert.strictEqual(seen.opts.env.NODE_OPTIONS, `--max-old-space-size=4096 ${req}`);
     assert.strictEqual(seen.opts.env.CT_TRACE_REQUIRE, req);

@@ -132,7 +132,7 @@ jobs:
         # ~8.5 min suite run would only spend the budget above.
         run: >-
           node plugin/bin/verify.js
-          --cmd tests="npm test"
+          --cmd tests="npm test -- --full"
           --cmd-timeout tests=1200000
           --baseline "$BASE"
           --baseline-cmd tests="node --test {file}"
