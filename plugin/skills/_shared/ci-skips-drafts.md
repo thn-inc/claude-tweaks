@@ -48,7 +48,19 @@ A project picks one of two shapes (`test/ci-source.md`):
 - **CI on drafts plus a `ci` declaration:** full-suite verdicts come from draft-PR CI, there are no local full-suite runs, and every phase push costs Actions minutes.
 - **CI skips drafts and no `ci` declaration:** verification runs locally during the pipeline, and CI runs once at ready, which the gate waits for.
 
-Declaring both is a misconfiguration. With a job-level skip it degrades harmlessly: every verify falls back on `ci-job-skipped` after one poll. With a workflow-level gate it costs a `waitSeconds` stall per verify. Detecting the conflict is #5162's, at init's CI-workflow review.
+Declaring both is a misconfiguration. With a job-level skip it degrades harmlessly: every verify falls back on `ci-job-skipped` after one poll. With a workflow-level gate it costs a `waitSeconds` stall per verify. Init's CI-workflow review (`init/bootstrap/step-22-ci-workflow-review.md`, #5162) reports it as `draft-skip-with-ci-source`.
+
+## Concurrency
+
+Every phase exit pushes, so a PR's earlier CI runs are superseded within minutes (the measured share is in Why projects skip drafts below). A workflow-level `concurrency` block whose `cancel-in-progress` is `true` cancels the superseded run when the next push starts one:
+
+```yaml
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+```
+
+The merge gate reads only runs on the head it merges (`_shared/pr-first-merge.md` Step 2.5), so a run cancelled on a superseded head costs it nothing. Job-level `concurrency` alone, a scalar `concurrency: {group}` and `cancel-in-progress: false` all let superseded runs finish. A `cancel-in-progress` expression is read as unparsed by init's CI-workflow review, which cannot evaluate it.
 
 ## Why projects skip drafts
 

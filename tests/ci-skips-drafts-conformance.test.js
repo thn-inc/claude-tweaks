@@ -58,6 +58,13 @@ const SECTIONS = [
     [/ci-job-skipped/, 'coexistence: a job-level skip falls back on ci-job-skipped'],
     [/waitSeconds/, 'coexistence: a workflow-level gate stalls for waitSeconds'],
     [/#5162/, 'coexistence: conflict detection is #5162\'s'],
+    [/step-22-ci-workflow-review\.md/, 'coexistence: names the init step that detects the conflict'],
+  ]],
+  ['## Concurrency', [
+    [/cancel-in-progress: true\n```/, 'concurrency: the workflow-level block with cancel-in-progress true'],
+    [/cancels the superseded run/, 'concurrency: what it buys'],
+    [/Job-level `concurrency` alone, a scalar `concurrency: \{group\}` and `cancel-in-progress: false` all let superseded runs finish/, 'concurrency: the three shapes that do not cancel'],
+    [/A `cancel-in-progress` expression is read as unparsed/, 'concurrency: an expression is unparsed'],
   ]],
   ['## Why projects skip drafts', [
     [/Actions-minute cost of per-phase pushes/, 'why: the Actions-minute cost of per-phase pushes'],
