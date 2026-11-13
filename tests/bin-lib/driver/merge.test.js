@@ -841,7 +841,7 @@ test('AC5.1–AC5.6: red, draft-skip and read failures never merge', async () =>
     noMerge(h);
     assert.ok(!h.calls.some(isUndo), `${name}: PR not re-drafted`);
     assert.ok(!h.calls.some((c) => isGh('pr', 'comment')(c)), `${name}: no PR comment`);
-    assert.deepEqual(after(h, (c) => c.kind === 'node' && base(c.args[0]) === 'ready-run.js').map(shortOf),
+    assert.deepEqual(afterAll(h, (c) => c.kind === 'node' && base(c.args[0]) === 'ready-run.js').map(shortOf),
       ['gh label list', 'gh issue edit', 'gh issue view', 'gh issue comment', 'log-decision.js'], name);
     assert.deepEqual(h.calls.find((c) => isGh('issue', 'edit')(c)).args, ['issue', 'edit', '--repo', 'o/r', '--add-label', 'bot:parked', '--', '7']);
     const comments = h.calls.filter((c) => isGh('issue', 'comment')(c));
@@ -907,7 +907,7 @@ test('AC5.7: label still missing after one retry re-drafts the PR and says so', 
     const h = mergeHarness({ prState: { statusCheckRollup: [FAILING_CHECK] }, addLabel });
     const r = await merge(CTX, h.deps);
     assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'check-failed:unit', mergeCommit: null, postMerge: null });
-    assert.deepEqual(after(h, (c) => c.kind === 'node' && base(c.args[0]) === 'ready-run.js').map(shortOf),
+    assert.deepEqual(afterAll(h, (c) => c.kind === 'node' && base(c.args[0]) === 'ready-run.js').map(shortOf),
       ['gh label list', 'gh issue edit', 'gh issue view', 'gh issue edit', 'gh issue view', 'gh pr ready', 'gh issue comment', 'log-decision.js']);
     const undos = h.calls.filter(isUndo);
     assert.equal(undos.length, 1);
