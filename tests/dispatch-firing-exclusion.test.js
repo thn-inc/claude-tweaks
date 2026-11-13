@@ -2,13 +2,10 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const { execFileSync } = require('child_process');
+const { spawnSync } = require('child_process');
 const { sessionTmpPath } = require('../plugin/bin/lib/session-tmp');
-const { toPosix } = require('../plugin/bin/lib/shared-primitives');
-const { readText } = require('./helpers/read-skill');
 
 // A bare-drain firing's own re-selection guard: a group whose attempt this
 // firing did not end in a live-held or resolved disposition (claim-contest/
@@ -17,69 +14,59 @@ const { readText } = require('./helpers/read-skill');
 // `settle-and-merge.md`'s Claim-contest special case adds neither `bot:*`
 // label nor releases anything to release. Without an explicit exclusion,
 // the very next iteration of the *same* firing re-ranks the identical group
-// back to the top and reproduces the identical stop. This test extracts and
-// runs the actual `next-ranking.md` script (not a reimplementation) against
-// synthetic group data, proving a `reason: 'firing'` entry in the unified
-// `dispatch-exclusions.json` (#1752; formerly its own dispatch-firing-
-// excluded.json file) is read and actually changes the pick.
+// back to the top and reproduces the identical stop. This test runs the
+// `next` ranking through the CLI the skill calls (`bin/queue-pull.js --rank`,
+// #5230) against synthetic group data, proving a `reason: 'firing'` entry in
+// the unified `dispatch-exclusions.json` (#1752; formerly its own
+// dispatch-firing-excluded.json file) is read and actually changes the pick.
 
 const ROOT = path.join(__dirname, '..');
-const NEXT_RANKING = readText(
-  path.join(ROOT, 'plugin', 'skills', 'dispatch', 'next-ranking.md'),
-);
-
-function extractSnippet(doc = NEXT_RANKING) {
-  const m = doc.match(/```bash\n([\s\S]*?)\n```/);
-  assert.ok(m, 'next-ranking.md must have a fenced bash block -- extraction pattern is out of sync with the doc');
-  return m[1];
-}
-
-const SNIPPET = extractSnippet();
+const CLI = path.join(ROOT, 'plugin', 'bin', 'queue-pull.js');
 
 function group(number, { priority = null, createdAt = '2026-01-01T00:00:00Z' } = {}) {
   return [{ number, facets: { priority }, createdAt }];
 }
 
-// Runs the real next-ranking.md snippet against a fresh session-scoped temp
-// root (so concurrent test runs never collide), writing the given fixture
-// inputs first. Returns the parsed dispatch-next-pick.json content.
+// Runs `queue-pull.js --rank` under a fresh session id (so concurrent test
+// runs never collide), writing the given fixture inputs to that session's
+// files first. Returns the parsed dispatch-next-pick.json content.
 //
 // #1752: oversizedExcluded/firingExcluded are still this test's own fixture
 // vocabulary (unchanged from before the unification) -- only how they reach
-// the snippet changed, from two separate files to one dispatch-exclusions.json
+// the ranking changed, from two separate files to one dispatch-exclusions.json
 // composed of {reason, records, detail} entries.
-function runRanking({ groups, oversizedExcluded = [], firingExcluded, extraEntries = [], priorityFilter = '' }) {
+function runRanking(t, { groups, oversizedExcluded = [], firingExcluded, extraEntries = [] }) {
   const sessionId = `dispatch-firing-excl-test-${crypto.randomBytes(6).toString('hex')}`;
-  fs.writeFileSync(sessionTmpPath(sessionId, 'dispatch-groups.json'), JSON.stringify(groups));
+  const groupsFile = sessionTmpPath(sessionId, 'dispatch-groups.json');
+  t.after(() => fs.rmSync(path.dirname(groupsFile), { recursive: true, force: true }));
+  fs.writeFileSync(groupsFile, JSON.stringify(groups));
   const entries = oversizedExcluded.map((o) => ({ reason: 'oversized', records: o.records, detail: { size: o.size, threshold: o.threshold } }));
   if (firingExcluded !== undefined) {
     entries.push(...firingExcluded.map((n) => ({ reason: 'firing', records: [n], detail: null })));
   }
   entries.push(...extraEntries);
   fs.writeFileSync(sessionTmpPath(sessionId, 'dispatch-exclusions.json'), JSON.stringify(entries));
-  execFileSync('bash', ['-c', SNIPPET], {
-    env: {
-      ...process.env,
-      CLAUDE_PLUGIN_ROOT: toPosix(process.env.CLAUDE_PLUGIN_ROOT || path.join(ROOT, 'plugin')),
-      CLAUDE_CODE_SESSION_ID: sessionId,
-      PRIORITY_FILTER: priorityFilter,
-    },
+  const r = spawnSync(process.execPath, [CLI, '--rank'], {
+    encoding: 'utf8',
+    env: { ...process.env, CLAUDE_CODE_SESSION_ID: sessionId },
     timeout: 30000,
+    windowsHide: true,
   });
-  const pickPath = sessionTmpPath(sessionId, 'dispatch-next-pick.json');
-  return JSON.parse(fs.readFileSync(pickPath, 'utf8'));
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.strictEqual(r.stdout, '', '--rank prints nothing; the pick lives in the file');
+  return JSON.parse(fs.readFileSync(sessionTmpPath(sessionId, 'dispatch-next-pick.json'), 'utf8'));
 }
 
-test('no firing-reason exclusions present ranks normally -- backward compatible', () => {
-  const pick = runRanking({
+test('no firing-reason exclusions present ranks normally -- backward compatible', (t) => {
+  const pick = runRanking(t, {
     groups: [group(100, { priority: 'high' }), group(300, { priority: 'low' })],
   });
   assert.ok(pick, 'expected a pick, got null');
   assert.strictEqual(pick[0].number, 100);
 });
 
-test('a group with a reason:\'firing\' exclusion entry is skipped in favor of the next-ranked candidate', () => {
-  const pick = runRanking({
+test('a group with a reason:\'firing\' exclusion entry is skipped in favor of the next-ranked candidate', (t) => {
+  const pick = runRanking(t, {
     groups: [
       group(100, { priority: 'high', createdAt: '2026-01-01T00:00:00Z' }),
       group(200, { priority: 'high', createdAt: '2026-01-02T00:00:00Z' }),
@@ -91,20 +78,20 @@ test('a group with a reason:\'firing\' exclusion entry is skipped in favor of th
   assert.strictEqual(pick[0].number, 200, 'excluded #100 must not be re-picked; #200 is the next-highest-priority, oldest-eligible candidate');
 });
 
-test('every remaining candidate excluded this firing yields null, not a re-pick of an excluded group', () => {
-  const pick = runRanking({
+test('every remaining candidate excluded this firing yields null, not a re-pick of an excluded group', (t) => {
+  const pick = runRanking(t, {
     groups: [group(100, { priority: 'high' }), group(200, { priority: 'medium' })],
     firingExcluded: [100, 200],
   });
   assert.strictEqual(pick, null);
 });
 
-test('exclusion matches by any member of a bundle group, not just a lone singleton', () => {
+test('exclusion matches by any member of a bundle group, not just a lone singleton', (t) => {
   const bundleGroup = [
     { number: 833, facets: { priority: 'high' }, createdAt: '2026-01-01T00:00:00Z' },
     { number: 834, facets: { priority: 'high' }, createdAt: '2026-01-01T00:00:00Z' },
   ];
-  const pick = runRanking({
+  const pick = runRanking(t, {
     groups: [bundleGroup, group(900, { priority: 'low' })],
     // Excluding only #834 (not #833) must still drop the whole bundle --
     // a group is claimed/released as a unit, never half-excluded.
@@ -114,8 +101,8 @@ test('exclusion matches by any member of a bundle group, not just a lone singlet
   assert.strictEqual(pick[0].number, 900, 'the bundle containing excluded #834 must be dropped entirely, not just its excluded member');
 });
 
-test('firing-exclusion and the oversized-group guard compose -- both filters apply together', () => {
-  const pick = runRanking({
+test('firing-exclusion and the oversized-group guard compose -- both filters apply together', (t) => {
+  const pick = runRanking(t, {
     groups: [
       group(100, { priority: 'high' }),
       group(200, { priority: 'high', createdAt: '2026-01-02T00:00:00Z' }),
@@ -128,24 +115,11 @@ test('firing-exclusion and the oversized-group guard compose -- both filters app
   assert.strictEqual(pick[0].number, 300, '#100 excluded as oversized, #200 excluded as this-firing-excluded -- only #300 remains');
 });
 
-test('AC5.1: bare-drain ranking never selects a group with a neighbour-in-flight member (#3278)', () => {
-  const pick = runRanking({
+test('AC5.1: bare-drain ranking never selects a group with a neighbour-in-flight member (#3278)', (t) => {
+  const pick = runRanking(t, {
     groups: [group(100, { priority: 'high' }), group(300, { priority: 'low' })],
     extraEntries: [{ reason: 'neighbour-in-flight', records: [100], detail: { neighbours: [{ number: 9, files: ['a.js'] }] } }],
   });
   assert.ok(pick, 'expected a pick');
   assert.strictEqual(pick[0].number, 300);
-});
-
-test('CRLF control (#3670): dispatch-firing-exclusion extracts the same result after a CRLF round-trip through readText()', (t) => {
-  const DOC_PATH = path.join(ROOT, 'plugin/skills/dispatch/next-ranking.md');
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-firing-crlf-'));
-  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
-  const lf = readText(DOC_PATH);
-  const crlf = lf.replace(/\n/g, '\r\n');
-  assert.ok(crlf.includes('\r\n'), 'CRLF build must contain \\r\\n');
-  assert.ok(!crlf.includes('\r\r\n'), 'CRLF build must not contain \\r\\r\\n');
-  const file = path.join(tmp, path.basename(DOC_PATH));
-  fs.writeFileSync(file, crlf);
-  assert.deepStrictEqual(extractSnippet(readText(file)), extractSnippet(lf));
 });

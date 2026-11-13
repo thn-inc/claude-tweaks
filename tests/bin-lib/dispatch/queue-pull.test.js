@@ -3523,3 +3523,149 @@ test('the oracle shim quotes the node path for bash: $, a backtick, a backslash,
   assert.equal(out.status, 0, out.stderr);
   assert.equal(out.stdout, awkward);
 });
+
+// ---- #5230: assertions moved here from the single-pass script-text tests (in-process) ----
+// Each test below carries an assertion that a script-extracting test used to pin and no #5227
+// test above covered; the old test now has the module as its subject or is dropped (the run's
+// test-mapping.md names each one).
+
+// Runs only the not-spec-shaped pass over `groups`, written as given: a multi-member group, which
+// per-record grouping builds only as a fast-lane bundle, reaches the pass directly.
+function shapePass(groups) {
+  return inOwnTmp(() => {
+    const errs = [];
+    const ctx = makeContext({ sessionId: 'qp-5230-shape' }, { stderr: (s) => errs.push(s) });
+    fs.mkdirSync(path.dirname(ctx.paths['dispatch-groups.json']), { recursive: true });
+    fs.writeFileSync(ctx.paths['dispatch-groups.json'], JSON.stringify(groups));
+    runPasses(PASSES.filter((p) => p.id === 'not-spec-shaped'), ctx);
+    const file = ctx.paths['dispatch-exclusions.json'];
+    const entries = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : [];
+    return { errs, groups: JSON.parse(fs.readFileSync(ctx.paths['dispatch-groups.json'], 'utf8')), entries: entries.filter((e) => e.reason === 'not-spec-shaped') };
+  });
+}
+const specShaped = ({ deliverables = 'Some deliverables.' } = {}) => [
+  '## Current State', '', 'Some current state.', '',
+  '## Deliverables', '', deliverables, '',
+  '## Acceptance Criteria', '', '- [ ] Some criterion.', '',
+  '## Release Note', '', 'Some release note.', '',
+].join('\n');
+
+test('#5230 not-spec-shaped: an unresolved placeholder in authored prose is flagged; the same marker in a code span or under ## Original request is exempt (#2829 AC2)', () => {
+  const r = shapePass([
+    [{ number: 201, body: specShaped({ deliverables: 'TODO: figure this out.' }) }],
+    [{ number: 202, body: `${specShaped({ deliverables: 'Use the `TODO` marker as a literal example in code.' })}\n\n## Original request\n\nThe user wrote TBD in their original ask.` }],
+  ]);
+  assert.deepEqual(r.errs, []);
+  assert.deepEqual(r.entries.map((e) => e.records[0]), [201]);
+  assert.ok(r.entries[0].detail.missing.includes('unresolved-placeholder'), JSON.stringify(r.entries[0]));
+  assert.deepEqual(r.groups.flat().map((c) => c.number), [202], 'the code-span / Original-request marker is exempt');
+});
+
+test('#5230 not-spec-shaped: a mixed group keeps its conforming member and an all-non-conforming group drops out (#2829 AC3, AC5)', () => {
+  const r = shapePass([
+    [{ number: 301, body: specShaped() }, { number: 302, body: 'Just a sentence, no sections at all.' }],
+    [{ number: 401, body: 'Nothing here.' }, { number: 402, body: 'Also nothing here.' }],
+    [{ number: 501, body: '' }],
+  ]);
+  assert.deepEqual(r.errs, []);
+  assert.deepEqual(r.entries.map((e) => e.records[0]), [302, 401, 402, 501]);
+  assert.deepEqual(r.entries.find((e) => e.records[0] === 501).detail.missing, ['Current State', 'Deliverables', 'Acceptance Criteria', 'Release Note'], 'an empty body misses all four');
+  assert.deepEqual(r.groups.map((g) => g.map((c) => c.number)), [[301]], 'the mixed group keeps only its conforming member; the emptied groups are dropped');
+});
+
+// work-links native: five candidates, each blocked (or not) only through resolve-blockers.js.
+function nativeForeignScenario() {
+  const records = [11, 12, 13, 14, 15].map((n) => ghRecord(n, { body: withBody(n) }));
+  return {
+    name: 'SNativeForeign',
+    policy: { 'work-links': 'native' },
+    gh: [
+      { argv: QUEUE_ARGV, stdout: JSON.stringify(records) + '\n' },
+      { argv: OPEN_NUMBERS_ARGV, stdout: JSON.stringify(records.map((r) => ({ number: r.number }))) + '\n' },
+    ],
+  };
+}
+const NATIVE_FOREIGN = {
+  11: { blockedBy: [5], openBlocker: true, openBlockerIds: [5], crossRepoBlockers: [{ number: 5, repository: 'other/repo', state: 'OPEN' }] },
+  12: { blockedBy: [6], openBlocker: false, openBlockerIds: [], crossRepoBlockers: [{ number: 6, repository: 'other/repo', state: null }] },
+  13: { blockedBy: [7], openBlocker: false, openBlockerIds: [], crossRepoBlockers: [{ number: 7, repository: 'other/repo', state: 'CLOSED' }] },
+  14: { blockedBy: [8], openBlocker: true, openBlockerIds: [8] },
+  15: { blockedBy: [4, 5], openBlocker: true, openBlockerIds: [4, 5], crossRepoBlockers: [{ number: 5, repository: 'other/repo', state: 'OPEN' }] },
+};
+
+test('#5230 blocked, native: a foreign crossRepoBlockers entry that is OPEN excludes as owner/name#N, a null state as owner/name#N (state unreadable), and a CLOSED one keeps the record (#4793)', () => {
+  const r = pull(nativeForeignScenario(), { spawn: { 'resolve-blockers.js': { status: 0, stdout: JSON.stringify(NATIVE_FOREIGN), stderr: '' } } });
+  assert.deepEqual(r.cliCalls.filter(([n]) => n === 'resolve-blockers.js'), [['resolve-blockers.js', '11,12,13,14,15']]);
+  assert.deepEqual(entriesOf(r, 'blocked'), [
+    { reason: 'blocked', records: [11], detail: { blockedBy: ['other/repo#5'] } },
+    { reason: 'blocked', records: [12], detail: { blockedBy: ['other/repo#6 (state unreadable)'] } },
+    { reason: 'blocked', records: [14], detail: { blockedBy: [8] } },
+    { reason: 'blocked', records: [15], detail: { blockedBy: [4, 'other/repo#5'] } },
+  ]);
+  assert.deepEqual(groupNumbers(r), [[13]], 'only the record whose foreign blocker is CLOSED stays eligible');
+});
+
+// body-text: three body-declared foreign blockers, two of them answered by a supplied states file.
+function foreignCaseScenario() {
+  const lines = { 31: 'Blocked by other/repo#5', 32: 'Blocked by Other/Repo#6', 33: 'Blocked by other/repo#7', 34: null };
+  const records = Object.entries(lines).map(([n, line]) => ghRecord(Number(n), { body: line ? `${line}\n\n${withBody(n)}` : withBody(n) }));
+  return {
+    name: 'SForeignCase',
+    policy: { 'work-links': 'body-text' },
+    gh: [
+      { argv: QUEUE_ARGV, stdout: JSON.stringify(records) + '\n' },
+      { argv: OPEN_NUMBERS_ARGV, stdout: JSON.stringify(records.map((r) => ({ number: r.number }))) + '\n' },
+    ],
+  };
+}
+
+test('#5230 foreign blocker: a supplied states key matches a body ref in another case, a CLOSED one groups, and a ref left out of the file is asked of the CLI and fails closed (#4793)', () => {
+  // The CLI's answer with no gh on PATH (exit 2), as resolve-foreign-blockers.js prints it.
+  const noGh = { 'resolve-foreign-blockers.js': { status: 2, stdout: '', stderr: 'resolve-foreign-blockers.js: `gh` is required' } };
+  const r = pull(foreignCaseScenario(), {
+    spawn: noGh,
+    prepare: (own) => ({ inputs: { foreignStates: writeInput(own, 'states.json', JSON.stringify({ 'other/repo#5': 'closed', 'OTHER/REPO#6': 'open' })) } }),
+  });
+  assert.deepEqual(entriesOf(r, 'blocked'), [
+    { reason: 'blocked', records: [32], detail: { blockedBy: ['Other/Repo#6'] } },
+    { reason: 'blocked', records: [33], detail: { blockedBy: ['other/repo#7 (state unreadable)'] } },
+  ]);
+  assert.deepEqual(groupNumbers(r), [[31], [34]]);
+  assert.deepEqual(r.cliCalls.filter(([n]) => n === 'resolve-foreign-blockers.js'), [['resolve-foreign-blockers.js', 'other/repo#7']], 'only the left-out ref is asked');
+  const warnings = r.errs.filter((e) => e.startsWith('Warning:'));
+  assert.equal(warnings.length, 1, r.stderr);
+  assert.match(warnings[0], /foreign blocker state lookup failed \(exit 2: resolve-foreign-blockers\.js: `gh` is required\)/);
+});
+
+test('#5230 near-dup: a stale dispatch-near-dup-pairs.json from an earlier pull is rewritten to [] when no strong pair remains', () => {
+  const stale = JSON.stringify([{ records: [8, 9], signals: [], sharedAnchors: [] }]);
+  const seed = (ctx) => fs.writeFileSync(ctx.paths['dispatch-near-dup-pairs.json'], stale);
+  assert.equal(pull5(S1(), { before: seed }).text['dispatch-near-dup-pairs.json'], '[]');
+  // Control: with the pass omitted the seeded file survives the pull, so the rewrite above is the pass's.
+  assert.equal(pull5(S1(), { before: seed, omit: ['near-dup-pairs'] }).text['dispatch-near-dup-pairs.json'], stale);
+});
+
+test('#5230 neighbour: an in-flight strong near-duplicate with no Key Files is a neighbour, and its detail element carries sharedAnchors (#3520 AC8)', () => {
+  const nearDup = {
+    number: 7002, title: 'Tidy the release notes generator', labels: [{ name: 'bot:in-progress' }],
+    body: '## Current State\n\nThe `WidgetScheduler.flush` path and `schedulerCache.evict` disagree on ordering.\n',
+  };
+  const r = pull5(withGh(PIPE(), IN_FLIGHT_ARGV, { stdout: JSON.stringify([IN_FLIGHT_7001, nearDup]) + '\n' }), { claims: { 7001: LIVE_CLAIM, 7002: LIVE_CLAIM } });
+  const byRecord = Object.fromEntries(entriesOf(r, 'neighbour-in-flight').map((e) => [e.records[0], e.detail.neighbours]));
+  for (const n of [9014, 9015]) {
+    assert.deepEqual(byRecord[n], [{ number: 7002, files: [], signals: ['body-anchor-overlap'], sharedAnchors: ['WidgetScheduler.flush', 'schedulerCache.evict'] }], `#${n}`);
+  }
+  assert.deepEqual(byRecord[9013], [{ number: 7001, files: ['plugin/bin/fixture-9013.js'] }], 'a Key-File neighbour keeps the file form');
+});
+
+test('#5230 blocker-landing: the argv the module hands dispatch-unlanded-blockers.js passes that CLI\'s own parseArgs and names the session groups and exclusions files', () => {
+  let paths = null;
+  const r = pull5(PIPE(), { before: (ctx) => { paths = ctx.paths; } });
+  assert.equal(r.landing.length, 1);
+  const [args] = r.landing;
+  const { parseArgs } = require('../../../plugin/bin/dispatch-unlanded-blockers');
+  const parsed = parseArgs(args);
+  assert.equal(parsed.error, undefined, `the shipped CLI's parseArgs rejects the module's argv: ${parsed.error}`);
+  assert.equal(flagValue(args, '--groups'), paths['dispatch-groups.json']);
+  assert.equal(flagValue(args, '--exclusions'), paths['dispatch-exclusions.json']);
+});

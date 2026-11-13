@@ -448,8 +448,11 @@ test('AC7.1: dispatch/SKILL.md stops the firing on a claim permission denied sto
   assert.match(paragraph, /named records after it as not attempted and unclaimed/);
 });
 
-test('firing-exclusion.md and next-ranking.md name the stop; reporting.md relays it (#4899)', () => {
-  for (const file of ['firing-exclusion.md', 'next-ranking.md']) {
+// #5230: the ranking script's copy of the stop is no longer pinned. The stop is agent-side: the
+// firing ends before the next pick, as firing-exclusion.md (pinned here) states; the ranking
+// (`rankNext`, behind `queue-pull.js --rank`) only picks a group.
+test('firing-exclusion.md names the stop; reporting.md relays it (#4899)', () => {
+  for (const file of ['firing-exclusion.md']) {
     const content = read(`plugin/skills/dispatch/${file}`);
     assert.match(content, /claim-permission-denied/, `${file} must name the stop`);
     assert.match(content, /ends the firing/, `${file} must say the stop ends the firing`);

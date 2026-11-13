@@ -6,18 +6,14 @@
 // literal historical replay has no live precondition left to reproduce against. This test
 // supplies the synthetic-fixture equivalent the record's own Technical Approach anticipates:
 // three synthetic by:docs-health records whose named targets are absent at a fixture git ref,
-// standing in for the historical #1776/#1804/#1818 scenario, run through the *actual* exclusion
-// logic queue-pull-script.md ships (extract-and-run, per skill-prose-conformance-tests) rather
-// than a hand-reimplementation of it.
+// standing in for the historical #1776/#1804/#1818 scenario.
 //
-// Scope: the three `node -e` blocks that (1) compute each candidate's namedTarget, (2) test
-// existence via `git cat-file -e` against the resolved integration ref, and (3) filter excluded
-// candidates out of $DISPATCH_GROUPS. This is the load-bearing part of AC4's "yields three
-// exclusions" claim. The staging/logging tail (stage-item.js, log-decision.js, hooks.js
-// resolve-run-dir) is already covered structurally by
-// tests/dispatch-tidy-named-target-coordination.test.js and by those CLIs' own suites, and
-// pulling it into this fixture would mean re-deriving run-dir anchoring rather than testing
-// AC4's actual claim.
+// #5230: the subject is the queue-pull module's target-missing pass
+// (plugin/bin/lib/dispatch/queue-pull.js), run alone over a groups file, with its git probe going
+// to a REAL fixture repository through the module's default runner (the in-process tests in
+// tests/bin-lib/dispatch/queue-pull.test.js answer `git cat-file -e` from a table). The staging and
+// logging tail (stage-item.js, log-decision.js, hooks.js resolve-run-dir) is faked here; that suite
+// pins its argv and bodies.
 'use strict';
 
 const { test } = require('node:test');
@@ -25,35 +21,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
-const { gitRepo, fixtureGit, FIXTURE_TIMEOUT_MS } = require('./helpers/git-fixtures');
-const { readText } = require('./helpers/read-skill');
-
-const ROOT = path.join(__dirname, '..');
-const QUEUE_PULL_SCRIPT = readText(path.join(ROOT, 'plugin', 'skills', 'dispatch', 'queue-pull-script.md'));
-// The unquoted heredoc expands ${CLAUDE_PLUGIN_ROOT} into a JS string literal, where a Windows
-// backslash path would be read as escapes — pass it with forward slashes.
-const PLUGIN_ROOT = path.join(ROOT, 'plugin').split(path.sep).join('/');
-
-// Structurally anchored (not a prose sentence): the first line is the require call unique to
-// this block, the last is this block's own final console.log + heredoc terminator -- both
-// content, not commentary, so a rewording of the surrounding prose does not move this
-// extraction.
-// #1752: the tail names the unified $DISPATCH_EXCLUSIONS file, not a dedicated
-// $DISPATCH_TARGET_MISSING_EXCLUDED one -- see queue-pull-script.md's Task 2 migration.
-// #2564: each `node -e "..."` block became `node bin/node-eval-file.js <<NODE_EVAL_EOF ...
-// NODE_EVAL_EOF` (the Windows Git Bash multi-line-arg fix) -- anchors updated to the new
-// call shape; the extracted snippet is unchanged in behavior (bash -c still runs it below).
-const START_ANCHOR = 'node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_NAMED_TARGETS" <<NODE_EVAL_EOF\n  const fs = require(\'fs\');\n  const { namedTarget } = require(\'${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/named-target.js\');';
-const END_ANCHOR = '  console.log(JSON.stringify(finalGroups));\nNODE_EVAL_EOF';
-
-function extractExclusionSnippet() {
-  const startIdx = QUEUE_PULL_SCRIPT.indexOf(START_ANCHOR);
-  assert.notStrictEqual(startIdx, -1, 'extraction start anchor not found in queue-pull-script.md -- extraction is out of sync with the live file');
-  const endIdx = QUEUE_PULL_SCRIPT.indexOf(END_ANCHOR, startIdx);
-  assert.notStrictEqual(endIdx, -1, 'extraction end anchor not found in queue-pull-script.md -- extraction is out of sync with the live file');
-  return QUEUE_PULL_SCRIPT.slice(startIdx, endIdx + END_ANCHOR.length);
-}
+const { gitRepo, fixtureGit } = require('./helpers/git-fixtures');
+const { PASSES, makeContext, runPasses } = require('../plugin/bin/lib/dispatch/queue-pull');
 
 function docsHealthRecord(number, docPath) {
   return {
@@ -63,9 +32,18 @@ function docsHealthRecord(number, docPath) {
   };
 }
 
-test('queue-pull-script.md\'s named-target exclusion excludes exactly the synthetic records standing in for #1776/#1804/#1818, leaves a present-target record and a non-docs-health record untouched (#1983 AC4)', () => {
-  const snippet = extractExclusionSnippet();
+// The pass's CLI calls: the integration-branch policy read answers `main`, the run-dir resolution a
+// scratch dir, and log-decision.js / stage-item.js succeed. Anything else is a test failure.
+function fakeCli(runDir) {
+  return (name, args) => {
+    if (name === 'resolve-policy.js' && args[1] === 'integration-branch') return { status: 0, stdout: 'main\n', stderr: '' };
+    if (name === 'hooks.js') return { status: 0, stdout: `${runDir}\n`, stderr: '' };
+    if (name === 'log-decision.js' || name === 'stage-item.js') return { status: 0, stdout: '', stderr: '' };
+    throw new Error(`unexpected CLI ${name} ${args.join(' ')}`);
+  };
+}
 
+test('the queue-pull module\'s named-target exclusion excludes exactly the synthetic records standing in for #1776/#1804/#1818, leaves a present-target record and a non-docs-health record untouched (#1983 AC4)', (t) => {
   const repo = gitRepo();
   // Present-target fixture: commit a docs-health ledger the fixture ref DOES carry, so the
   // exclusion logic must NOT touch it -- proves the mechanism discriminates rather than
@@ -74,10 +52,11 @@ test('queue-pull-script.md\'s named-target exclusion excludes exactly the synthe
   fs.writeFileSync(path.join(repo, 'docs', 'plans', 'present-ledger.md'), '# present\n');
   fixtureGit(['-C', repo, 'add', 'docs/plans/present-ledger.md']);
   fixtureGit(['-C', repo, 'commit', '-q', '-m', 'add present ledger']);
-  const integrationRef = fixtureGit(['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  // The pass probes origin/<integration branch>; the fixture's origin/main is its HEAD.
+  fixtureGit(['-C', repo, 'update-ref', 'refs/remotes/origin/main', 'HEAD']);
 
   // Synthetic stand-ins for #1776/#1804/#1818: by:docs-health records naming a ledger never
-  // committed at all, so it is absent at integrationRef by construction -- the same shape as
+  // committed at all, so it is absent at origin/main by construction -- the same shape as
   // "tidy PR #1819 already deleted it" without depending on that closed PR's live history.
   const groups = [
     [docsHealthRecord(11776, 'docs/plans/synthetic-1776-ledger.md')],
@@ -88,25 +67,18 @@ test('queue-pull-script.md\'s named-target exclusion excludes exactly the synthe
   ];
 
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-named-target-fixture-'));
-  const dispatchGroups = path.join(scratch, 'dispatch-groups.json');
-  const namedTargets = path.join(scratch, 'dispatch-named-targets.json');
-  const exclusions = path.join(scratch, 'dispatch-exclusions.json');
-  fs.writeFileSync(dispatchGroups, JSON.stringify(groups));
-
-  execFileSync('bash', ['-c', snippet], {
-    cwd: repo,
-    timeout: FIXTURE_TIMEOUT_MS,
-    env: {
-      ...process.env,
-      CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT,
-      DISPATCH_GROUPS: dispatchGroups,
-      DISPATCH_NAMED_TARGETS: namedTargets,
-      DISPATCH_EXCLUSIONS: exclusions,
-      INTEGRATION_REF: integrationRef,
-    },
+  const sessionId = `named-target-fixture-${process.pid}-${path.basename(scratch)}`;
+  const ctx = makeContext({ sessionId, cwd: repo }, { spawnCli: fakeCli(scratch), stdout: () => {}, stderr: () => {}, tmpName: () => path.join(scratch, 'proposal.md') });
+  t.after(() => {
+    fs.rmSync(path.dirname(ctx.paths['dispatch-groups.json']), { recursive: true, force: true });
+    fs.rmSync(scratch, { recursive: true, force: true });
+    fs.rmSync(repo, { recursive: true, force: true });
   });
+  fs.writeFileSync(ctx.paths['dispatch-groups.json'], JSON.stringify(groups));
+  runPasses(PASSES.filter((p) => p.id === 'target-missing'), ctx);
+  assert.equal(ctx.state.integrationRef, 'origin/main');
 
-  const missing = JSON.parse(fs.readFileSync(exclusions, 'utf8'))
+  const missing = JSON.parse(fs.readFileSync(ctx.paths['dispatch-exclusions.json'], 'utf8'))
     .filter((e) => e.reason === 'target-missing')
     .map((e) => ({ number: e.records[0], path: e.detail.path }));
   assert.deepStrictEqual(
@@ -118,7 +90,7 @@ test('queue-pull-script.md\'s named-target exclusion excludes exactly the synthe
     assert.ok(m.path.startsWith('docs/plans/synthetic-'), `excluded entry names the absent path (got ${m.path})`);
   }
 
-  const finalGroups = JSON.parse(fs.readFileSync(dispatchGroups, 'utf8'));
+  const finalGroups = JSON.parse(fs.readFileSync(ctx.paths['dispatch-groups.json'], 'utf8'));
   const survivingNumbers = finalGroups.flat().map((r) => r.number).sort((a, b) => a - b);
   assert.deepStrictEqual(
     survivingNumbers,
