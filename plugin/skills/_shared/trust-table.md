@@ -353,9 +353,9 @@ the whole days between now and the minimum `oldestClosedAt` across the rows.
 Render `{coverage}` as a percentage with no decimals (`row.coverage`, e.g. `0.125` renders `13%`).
 Render `{followUpRate}` as `followUpRatePercent(row)` (`bin/lib/issues/trust.js`) with a `%` suffix —
 one decimal, rounded up — the same figure gate 2 prints, so a rate that fails the threshold never
-renders equal to it. `Follow-ups` counts every follow-up record naming one of the class's in-window records, so one
-record drawing three reads `3` there; `Follow-up rate` is the share of in-window records that drew
-at least one, and the verdict reads the rate.
+renders equal to it. `Follow-ups` counts every follow-up record naming one of the class's
+in-window records, so one record drawing three reads `3` there; `Follow-up rate` is the share of
+in-window records that drew at least one, and the verdict reads the rate.
 
 **Undispositioned is never omitted, hidden, or folded into another column.** It is the count of
 closed records carrying no acceptance disposition at all — not a count of failures, a count of

@@ -60,14 +60,15 @@ future firing", not "will be granted". Render one extra `#`-comment line directl
 possible` (`allRefusedOutlookLine`) — it names each refusing gate with its count and, for a
 `trust` refusal, the class and why it is not `clean` (for a `mixed` class, its follow-up rate
 against the resolved maximum, `trust-follow-up-rate-max-percent`). Render it verbatim in place of
-the `# machine-grant live …` line below. The live line is never rendered alongside it.
+the `# machine-grant live …` line below. The live line is never rendered alongside it. This form omits the excluded human-filed count
+(`excludedOrigin`) and the human-grant tail, so it does not say nothing was excluded.
 
 **Otherwise** the fence prints one JSON object `{ eligible, refusedTotal, refused, excludedOrigin }`
 (`refused` maps each `failedKey` to its count, already in descending order) and the live line
 renders from it, with `{eligible}` its `eligible`:
 
 ```
-# machine-grant live (≤{cap}/day): {eligible} eligible pending grant-check; {refused-total} refused — {failedKey}: {count}, ...; {excludedOrigin} human-filed (excluded — never machine-granted) — refused records need a human grant via /claude-tweaks:backlog refine
+# machine-grant live (≤{cap}/day): {eligible} eligible pending grant-check; {refusedTotal} refused — {failedKey}: {count}, ...; {excludedOrigin} human-filed (excluded — never machine-granted) — refused records need a human grant via /claude-tweaks:backlog refine
 ```
 
 The `{failedKey}: {count}` list renders in descending count order; when `refused` is empty, omit
