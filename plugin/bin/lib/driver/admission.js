@@ -16,6 +16,11 @@
 // A non-empty array refuses; a value that is not an array is unreadable and
 // refuses with its own reason, never read as "none".
 //
+// `driverEscalated` is the driver's own escalation marker read off the record's
+// comments (`hasDriverEscalationMarker` in ./settle.js, which owns the trusted-author
+// check): true refuses, false passes, and anything that is not a boolean (null for an
+// unreadable comment list) refuses as unreadable, never read as "not escalated".
+//
 // Every gate runs on every call, so one verdict names every reason that applies.
 
 const { normalizeLabelNames, parseRecordFacets, LABELS } = require('../issues/record');
@@ -34,6 +39,8 @@ const ADMISSION_REASONS = Object.freeze({
   routingOff: 'express-driver is off',
   splitOdd: 'express-driver split: issue number is odd',
   splitUnreadable: 'express-driver split: issue number unreadable',
+  escalatedByDriver: 'already escalated by the driver',
+  commentsUnreadable: 'record comments unreadable',
   routingUnknown: (value) => `express-driver value not recognised: ${value}`,
 });
 
@@ -55,10 +62,10 @@ function routingReason(routing, number) {
   return R.routingUnknown(routing);
 }
 
-// { number, state, labels, openBlockerRefs, openLinkedPRs, routing } -> { admitted, reasons }.
+// { number, state, labels, openBlockerRefs, openLinkedPRs, routing, driverEscalated } -> { admitted, reasons }.
 function evaluateAdmission(facts) {
   // A null or non-object argument reads as no facts at all: every unreadable reason fires.
-  const { number, state, labels, openBlockerRefs, openLinkedPRs, routing } =
+  const { number, state, labels, openBlockerRefs, openLinkedPRs, routing, driverEscalated } =
     (facts && typeof facts === 'object') ? facts : {};
   const reasons = [];
 
@@ -84,6 +91,9 @@ function evaluateAdmission(facts) {
 
   if (typeof state !== 'string') reasons.push(R.stateUnreadable);
   else if (state !== 'OPEN') reasons.push(R.notOpen);
+
+  if (driverEscalated === true) reasons.push(R.escalatedByDriver);
+  else if (driverEscalated !== false) reasons.push(R.commentsUnreadable);
 
   const routed = routingReason(routing, number);
   if (routed) reasons.push(routed);

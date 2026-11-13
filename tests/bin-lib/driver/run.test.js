@@ -162,7 +162,7 @@ const POLICY = {
 };
 
 function issueFor(n) {
-  return { number: n, title: `record ${n}`, body: `Body of #${n}.`, labels: [{ name: 'risk:low' }], state: 'OPEN' };
+  return { number: n, title: `record ${n}`, body: `Body of #${n}.`, labels: [{ name: 'risk:low' }], state: 'OPEN', comments: [] };
 }
 
 function on(kind, ...prefix) {
@@ -462,7 +462,7 @@ test('AC2.2: one record fetch per record', async () => {
   assert.equal(await run(['#7'], h.deps), 0);
   const fetches = h.calls.filter((c) => c.kind === 'gh' && c.args[0] === 'issue' && c.args[1] === 'view');
   assert.equal(fetches.length, 1);
-  assert.deepEqual(fetches[0].args, ['issue', 'view', '--repo', 'acme/widgets', '--json', 'number,title,body,labels,state', '--', '7']);
+  assert.deepEqual(fetches[0].args, ['issue', 'view', '--repo', 'acme/widgets', '--json', 'number,title,body,labels,state,comments', '--', '7']);
 });
 
 test('admission reads blockers and linked PRs from the shared repo and passes them on', async () => {
@@ -488,9 +488,24 @@ test('admission reads blockers and linked PRs from the shared repo and passes th
   assert.equal(h.calls.filter((c) => c.kind === 'gh' && c.args[0] === 'api').length, 0);
   assert.deepEqual(h.calls.find((c) => c.kind === 'admission').args[0], {
     number: 7, state: 'OPEN', labels: [{ name: 'risk:low' }],
-    openBlockerRefs: openBlockerRefs(entry), openLinkedPRs: [12], routing: 'on',
+    openBlockerRefs: openBlockerRefs(entry), openLinkedPRs: [12], routing: 'on', driverEscalated: false,
   });
   assert.equal(h.lines().at(-1).outcome, 'pending-review');
+});
+
+test('AC11.6: run.js supplies the marker fact from the record fetch', async () => {
+  const marker = '<!-- express-driver: escalated -->';
+  const cases = [
+    ['trusted marker', [{ authorAssociation: 'OWNER', body: `Stopped.\n${marker}` }], true],
+    ['untrusted marker', [{ authorAssociation: 'NONE', body: marker }], false],
+    ['no comments', [], false],
+    ['comments not a list', 'oops', null],
+  ];
+  for (const [name, comments, expected] of cases) {
+    const h = harness({ script: [[on('gh', 'issue', 'view'), JSON.stringify({ ...issueFor(7), comments })]] });
+    await run(['#7'], h.deps);
+    assert.strictEqual(h.calls.find((c) => c.kind === 'admission').args[0].driverEscalated, expected, name);
+  }
 });
 
 test('admission: no open linked PR passes an empty list; refusal names every reason', async () => {

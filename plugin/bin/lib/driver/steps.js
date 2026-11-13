@@ -27,6 +27,7 @@ const { gateOriginRepo, resolveRepoTarget } = require('../repo-resolve');
 const { isTimeoutError } = require('../shared-primitives');
 const { fenceFor } = require('../markdown-blocks');
 const { openBlockerRefs } = require('../issues/record-dependencies');
+const { hasDriverEscalationMarker } = require('./settle');
 const { sensitivePathsOf } = require('../express/policy');
 const { formatTimestamp } = require('../hooks/run-dir-resolve');
 const { claimLogText, CLAIM_LOG_SECTION, CLAIM_LOG_STEP } = require('../log-decision/claim-log');
@@ -54,7 +55,7 @@ const POLICY_KEYS = Object.freeze([
   'auto-merge-max-lines',
 ]);
 // The one record read: its JSON feeds eligibility, admission, the worker and check.
-const ISSUE_JSON_FIELDS = 'number,title,body,labels,state';
+const ISSUE_JSON_FIELDS = 'number,title,body,labels,state,comments';
 const RESULT_STATUSES = new Set(['ok', 'stop', 'fail']);
 const STOP_CLASS_SET = new Set(Object.values(STOP_CLASSES));
 // A branch name the integration ref may take: never empty, never flag-shaped, no whitespace.
@@ -209,6 +210,7 @@ const admissionStep = defineStep(STEP.admission, STOP_CLASSES.REFUSED, async (ct
     openBlockerRefs: blockerEntry ? openBlockerRefs(blockerEntry) : null,
     openLinkedPRs,
     routing: policy['express-driver'].value,
+    driverEscalated: hasDriverEscalationMarker(ctx.issue.comments),
   });
   if (!verdict || verdict.admitted !== true) {
     return { status: 'stop', detail: ((verdict && verdict.reasons) || []).join('; ') || 'not admitted' };
