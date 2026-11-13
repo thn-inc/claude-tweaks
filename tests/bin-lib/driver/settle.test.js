@@ -65,8 +65,11 @@ test('AC10.1: every comment kind is built from the template plus a reduced detai
 
 test('commentFor: template details per kind', () => {
   const f = { step: 'test', outcome: 'blocked', detail: 'red' };
-  assert.match(commentFor('blocked-record', { ...f, kept: true }), /Labelled bot:blocked and the claim released\. The draft PR, branch and worktree were kept for a human\. Clear/);
-  assert.match(commentFor('blocked-record', { ...f, kept: false }), /released\. Clear bot:blocked/);
+  assert.match(commentFor('blocked-record', { ...f, kept: 'pr' }), /The driver labels this record bot:blocked and releases the claim\. The draft PR, branch and worktree are kept for a human\. Clear/);
+  assert.match(commentFor('blocked-record', { ...f, kept: 'branch' }), /releases the claim\. The branch and worktree are kept for a human\. Clear bot:blocked/);
+  assert.ok(!commentFor('blocked-record', { ...f, kept: 'branch' }).includes('draft PR'));
+  assert.match(commentFor('blocked-record', f), /The branch and worktree are kept for a human\./);
+  assert.match(commentFor('escalated', f), /The driver releases the claim and removes the worktree and local branch this run created\. The driver will not take/);
   assert.match(commentFor('claim', { ...f, exitCode: 4 }), /failed \(claim-targets\.js exit 4\)\. Detail/);
   assert.match(commentFor('claim', { ...f, exitCode: 'x' }), /failed\. Detail/);
   assert.throws(() => commentFor('nope', f));
@@ -131,7 +134,9 @@ test('AC6.1: settle.js requires no model module', () => {
 const fs = require('node:fs');
 const os = require('node:os');
 const { settle, selectRow, toEscalationReason, SETTLE_ROWS } = require(SETTLE);
-const { SETTLE_STEP_NAMES, STEP_NAMES } = require('../../../plugin/bin/lib/driver/events');
+const { SETTLE_STEP_NAMES, STEP_NAMES, CLI_TIMEOUT_MS } = require('../../../plugin/bin/lib/driver/events');
+const ENV = { SETTLE_TEST_ENV: '1' };
+const NODE_OPTS = { cwd: '/work/main', timeout: CLI_TIMEOUT_MS, env: ENV };
 
 const RD = path.join('/work', 'run');
 const MAIN = '/work/main';
@@ -145,24 +150,29 @@ function stopOf(over = {}) {
 // Fake deps recording every call in order; `answers` scripts gh/git/node.
 function harness({ stop, input = {}, answers = {}, readFile, lstat } = {}) {
   const calls = [];
+  const trace = [];
   const files = {};
   const emitted = [];
   let tick = 0;
   const reply = (v) => { if (v instanceof Error) throw v; return v; };
   const deps = {
-    gh: (args) => { calls.push(['gh', ...args]); return reply(answers.gh?.(args)) ?? ''; },
+    env: ENV,
+    gh: (args) => { calls.push(['gh', ...args]); trace.push(calls[calls.length - 1]); return reply(answers.gh?.(args)) ?? ''; },
     git: (args, opts) => {
       calls.push(['git', ...args]);
+      trace.push(calls[calls.length - 1]);
       assert.deepStrictEqual(opts, { cwd: MAIN }, 'git is called with cwd mainRoot');
       return reply(answers.git?.(args)) ?? '';
     },
-    node: (script, args) => {
+    node: (script, args, opts) => {
       calls.push(['node', path.basename(script), ...args]);
+      trace.push(calls[calls.length - 1]);
+      assert.deepStrictEqual(opts, NODE_OPTS, 'node is called with cwd mainRoot, the CLI timeout and deps.env');
       const a = answers.node?.(path.basename(script), args);
       if (a instanceof Error) throw a;
       return a ?? { code: 0, stdout: '', stderr: '' };
     },
-    writeFile: (p, s) => { files[p] = s; },
+    writeFile: (p, s) => { files[p] = s; trace.push(['write', p]); },
     readFile: readFile || (() => { const e = new Error('ENOENT'); e.code = 'ENOENT'; throw e; }),
     lstatType: lstat || (() => ({ type: 'directory' })),
     now: () => (tick += 5),
@@ -173,7 +183,7 @@ function harness({ stop, input = {}, answers = {}, readFile, lstat } = {}) {
     mainRoot: MAIN, ghRepo: R, emit: (...a) => emitted.push(a), ...input,
   };
   const res = settle(full, deps);
-  return { res, calls, files, emitted };
+  return { res, calls, files, emitted, trace };
 }
 
 const ESC_DETAIL = path.join(RD, 'settle-escalate.txt');
@@ -270,7 +280,7 @@ test('AC1.4: a failed escalate keeps the worktree and branch and settles by the 
   for (const answer of [() => ({ code: 1, stdout: '', stderr: 'boom\nmore' }), () => new Error('spawn failed')]) {
     const h = harness({ answers: { node: (s) => (s === 'express-lane.js' ? answer() : undefined) } });
     assert.deepStrictEqual(h.calls, [
-      ESCALATE(), COMMENT(blockedRecord({ kept: false })), LABEL, RELEASE('drive.js settle: blocked at test'),
+      ESCALATE(), COMMENT(blockedRecord({ kept: 'branch' })), LABEL, RELEASE('drive.js settle: blocked at test'),
     ]);
     assert.ok(!h.calls.some((c) => c.some((a) => a.includes(MARKER))), 'no escalation marker');
     assert.equal(h.res.row, 'blocked');
@@ -283,7 +293,7 @@ test('AC1.4: a failed escalate keeps the worktree and branch and settles by the 
 test('AC2.1: a blocked stop after the push comments on PR and record, labels, releases, removes nothing', () => {
   const stop = stopOf({ step: 'set-config', class: 'blocked', pushed: true });
   const h = harness({ stop, input: { pr: 9 } });
-  const rec = commentFor('blocked-record', { step: 'set-config', outcome: 'blocked', detail: 'red tests', kept: true });
+  const rec = commentFor('blocked-record', { step: 'set-config', outcome: 'blocked', detail: 'red tests', kept: 'pr' });
   assert.deepStrictEqual(h.calls, [
     PR_COMMENT(commentFor('blocked-pr', { step: 'set-config', outcome: 'blocked', detail: 'red tests' })),
     COMMENT(rec), LABEL, RELEASE('drive.js settle: blocked at set-config'),
@@ -298,6 +308,9 @@ test('AC2.2: a failed gh pr create (pushed, no PR) comments on the record only a
   const h = harness({ stop: stopOf({ step: 'pr', class: 'blocked', pushed: true }) });
   assert.ok(!h.calls.some((c) => c[1] === 'pr'));
   assert.deepStrictEqual(h.calls.map((c) => c[0] + ' ' + c[1]), ['gh issue', 'gh issue', 'node release-claim.js']);
+  const body = commentFor('blocked-record', { step: 'pr', outcome: 'blocked', detail: 'red tests', kept: 'branch' });
+  assert.deepStrictEqual(h.calls[0], COMMENT(body));
+  assert.ok(body.includes('The branch and worktree are kept for a human.') && !body.includes('draft PR'));
   assert.deepStrictEqual(h.res.calls.map((c) => c.step), ['settle-comment-record', 'settle-label', 'settle-release']);
 });
 
@@ -327,10 +340,28 @@ test('AC2.5: run-state.json recording a PR makes a pre-push stop blocked', () =>
   }
 });
 
-test('a run-state.json without a PR, or an unreadable one, leaves the pre-push row', () => {
-  assert.equal(harness({ readFile: () => '{"foo":1}' }).res.row, 'pre-push');
-  assert.equal(harness({ readFile: () => 'not json' }).res.row, 'pre-push');
-  assert.equal(harness({ readFile: () => JSON.stringify({ pr: { number: 'x' } }) }).res.row, 'pre-push');
+test('a run-state.json without a PR (or a missing one) leaves the pre-push row', () => {
+  for (const readFile of [() => '{"foo":1}', () => 'null', () => JSON.stringify({ pr: { number: 'x' } }), undefined]) {
+    const h = harness({ readFile });
+    assert.equal(h.res.row, 'pre-push');
+    assert.equal(h.res.note, null);
+  }
+});
+
+test('Minor 7: an unreadable or unparseable run-state.json settles a pre-push stop by the blocked row with a note', () => {
+  const NOTE = 'run-state.json unreadable; settled by the blocked row to keep the work';
+  const eacces = () => { throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); };
+  for (const readFile of [eacces, () => 'not json', () => '']) {
+    const h = harness({ readFile });
+    assert.equal(h.res.row, 'blocked');
+    assert.equal(h.res.note, NOTE);
+    assert.ok(!h.calls.some((c) => c[1] === 'express-lane.js' || c.includes('-D') || c.includes('remove')));
+    assert.deepStrictEqual(h.res.calls.map((c) => c.step), ['settle-comment-record', 'settle-label', 'settle-release']);
+  }
+  // A class that never reads for a reason (blocked, not pre-push) carries no such note.
+  assert.equal(harness({ stop: stopOf({ class: 'blocked', pushed: true }), readFile: eacces }).res.note, null);
+  // A caller-supplied PR number is not read from the file at all.
+  assert.equal(harness({ input: { pr: 9 }, readFile: eacces }).res.note, null);
 });
 
 test('AC3.1: a refusal makes no call', () => {
@@ -386,11 +417,19 @@ test('AC3.4: a pre-push stop whose created says nothing was made removes nothing
 });
 
 test('Review focus 5: a worktree or branch already gone is not a failure', () => {
+  const gone = Object.assign(new Error('Command failed: git worktree remove'), { stderr: `fatal: '${WT}' is not a working tree\n` });
   const h = harness({
     lstat: () => ({ type: 'missing' }),
-    answers: { git: (args) => (args.includes('rev-parse') ? Object.assign(new Error('x'), { status: 1 }) : undefined) },
+    answers: {
+      git: (args) => {
+        if (args.includes('rev-parse')) return Object.assign(new Error('x'), { status: 1 });
+        if (args.includes('worktree')) return gone;
+        return undefined;
+      },
+    },
   });
-  assert.deepStrictEqual(h.calls.filter((c) => c[0] === 'git'), [BR_PROBE]);
+  // The removal is still attempted when the directory is missing (the registration may remain).
+  assert.deepStrictEqual(h.calls.filter((c) => c[0] === 'git'), [RM_WT, BR_PROBE]);
   const wt = h.res.calls.find((c) => c.step === 'settle-remove-worktree');
   const br = h.res.calls.find((c) => c.step === 'settle-delete-branch');
   assert.deepStrictEqual([wt.status, wt.detail, br.status, br.detail], ['ok', 'already gone', 'ok', 'already gone']);
@@ -453,4 +492,62 @@ test('settle reports the shape on every row', () => {
   const h = harness();
   assert.deepStrictEqual(Object.keys(h.res).sort(), ['calls', 'failed', 'note', 'row', 'settledClass', 'unclassified']);
   assert.deepStrictEqual(Object.keys(h.res.calls[0]).sort(), ['detail', 'status', 'step']);
+});
+
+test('Minor 8: with every precondition true, the emitted step names equal SETTLE_ROWS[row] in order', () => {
+  const scenarios = {
+    claim: { stop: stopOf({ step: 'claim', class: 'claim', reason: 'claim-exit-4' }) },
+    'pre-push': { stop: stopOf() },
+    blocked: { stop: stopOf({ class: 'blocked', pushed: true }), input: { pr: 9 } },
+    refused: { stop: stopOf({ class: 'refused' }) },
+    'claim-contested': { stop: stopOf({ class: 'claim', reason: 'claim-exit-3' }) },
+    none: { stop: stopOf({ class: 'none' }) },
+  };
+  for (const [row, sc] of Object.entries(scenarios)) {
+    const h = harness(sc);
+    assert.equal(h.res.row, row);
+    assert.deepStrictEqual(h.emitted.map((e) => e[0]), [...SETTLE_ROWS[row]], row);
+    assert.deepStrictEqual(h.res.calls.map((c) => c.step), [...SETTLE_ROWS[row]], row);
+  }
+});
+
+test('Minor 8: the detail file is written before the escalate call', () => {
+  const h = harness();
+  const w = h.trace.findIndex((c) => c[0] === 'write' && c[1] === ESC_DETAIL);
+  const e = h.trace.findIndex((c) => c[1] === 'express-lane.js');
+  assert.ok(w >= 0 && e > w, `write at ${w}, escalate at ${e}`);
+});
+
+test('Important 2: a node result with code null (a timeout) is a failure, for escalate and release', () => {
+  const timedOut = (script) => (s) => (s === script ? { code: null, stdout: '', stderr: '' } : undefined);
+  const esc = harness({ answers: { node: timedOut('express-lane.js') } });
+  assert.deepStrictEqual(esc.res.failed, ['settle-escalate']);
+  assert.equal(esc.res.row, 'blocked');
+  const rel = harness({ stop: stopOf({ class: 'blocked', pushed: true }), answers: { node: timedOut('release-claim.js') } });
+  assert.deepStrictEqual(rel.res.failed, ['settle-release']);
+});
+
+test('Minor 3: a missing worktree directory still gets the removal call, and a plain success is ok', () => {
+  const h = harness({ lstat: () => ({ type: 'missing' }) });
+  assert.ok(h.calls.some((c) => c.join(' ') === RM_WT.join(' ')));
+  assert.deepStrictEqual(h.res.failed, []);
+  const other = harness({ answers: { git: (a) => (a.includes('worktree') ? new Error('fatal: cannot lock') : undefined) } });
+  assert.deepStrictEqual(other.res.failed, ['settle-remove-worktree']);
+  const plain = harness({ answers: { git: (a) => (a.includes('worktree') ? Object.assign(new Error('x'), { stderr: 'fatal: not a working tree' }) : undefined) } });
+  assert.deepStrictEqual(plain.res.failed, ['settle-remove-worktree'], 'only "is not a working tree" counts as gone');
+});
+
+test('Minor 4: the release reason names the step from the closed set', () => {
+  const h = harness({ stop: stopOf({ step: '@bob closes #9', class: 'blocked', pushed: true }) });
+  const rel = h.calls.find((c) => c[1] === 'release-claim.js');
+  assert.equal(rel[rel.length - 1], 'drive.js settle: blocked at unknown');
+});
+
+test('Important 1: a trailing closing paren, comma, semicolon or full stop stays outside <path> (greedy match, hand-split tail)', () => {
+  assert.equal(reduceDetail('(see /tmp/x)'), '(see <path>)');
+  assert.equal(reduceDetail('(see C:/a/b);'), '(see <path>);');
+  assert.equal(reduceDetail('/a...'), '<path>...');
+  assert.equal(reduceDetail('/a.b,;).'), '<path>,;).');
+  assert.equal(reduceDetail('x /a(b)c y'), 'x <path> y');
+  // The timing budgets for 100k-character inputs live in perf/ (tests/ may not assert wall-clock).
 });

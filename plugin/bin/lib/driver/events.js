@@ -19,6 +19,19 @@ const STEP_NAMES = Object.freeze([
 ]);
 const FINAL_STEP = 'final';
 
+// Bound on one plugin/bin CLI call (claim-targets.js talks to GitHub; the rest are local).
+// Shared by steps.js and settle.js; neither may require the other.
+const CLI_TIMEOUT_MS = 120000;
+
+// An execFileSync error's own words: gh and git put the cause on stderr, while the
+// message leads with "Command failed: …". First non-empty line of whichever has text.
+function firstLine(s) {
+  return String(s || '').split(/\r?\n/).map((l) => l.trim()).find(Boolean) || '';
+}
+function errorText(err) {
+  return firstLine(err && err.stderr) || firstLine(err && err.message) || String(err);
+}
+
 // The calls the driver's own settle makes for a stopped run (settle.js). Kept apart from
 // STEP_NAMES: these are cleanup calls, not pipeline steps, and the step list is pinned.
 const SETTLE_STEP_NAMES = Object.freeze([
@@ -134,6 +147,7 @@ function createEventSink({ stdout, appendFile }) {
 }
 
 module.exports = {
+  CLI_TIMEOUT_MS, firstLine, errorText,
   STEP_NAMES, SETTLE_STEP_NAMES, FINAL_STEP, STEP, OUTCOMES, STOP_CLASSES,
   outcomeFor, neutralize, normalizeTitle, createEventSink,
 };

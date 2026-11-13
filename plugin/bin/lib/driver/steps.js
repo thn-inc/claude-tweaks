@@ -20,7 +20,7 @@
 //
 // Every external call goes through `deps`; nothing here reads process state.
 const path = require('node:path');
-const { STEP, STOP_CLASSES, neutralize, normalizeTitle } = require('./events');
+const { STEP, STOP_CLASSES, neutralize, normalizeTitle, CLI_TIMEOUT_MS, firstLine, errorText } = require('./events');
 const { parseStatusPorcelainZ } = require('../git-z');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { gateOriginRepo, resolveRepoTarget } = require('../repo-resolve');
@@ -35,8 +35,6 @@ const { claimLogText, CLAIM_LOG_SECTION, CLAIM_LOG_STEP } = require('../log-deci
 const TEST_COMMAND = 'npm test';
 // The plugin's bin/ directory (steps.js lives in bin/lib/driver), where the CLIs the steps run live.
 const BIN_DIR = path.join(__dirname, '..', '..');
-// Bound on one plugin/bin CLI call (claim-targets.js talks to GitHub; the rest are local).
-const CLI_TIMEOUT_MS = 120000;
 // Bound on the verify.js run: it is a suite run, so it gets far longer than a local CLI.
 const VERIFY_TIMEOUT_MS = 30 * 60 * 1000;
 // claim-log.js's own transport shape: `transport: [a-z-]+`.
@@ -61,15 +59,6 @@ const RESULT_STATUSES = new Set(['ok', 'stop', 'fail']);
 const STOP_CLASS_SET = new Set(Object.values(STOP_CLASSES));
 // A branch name the integration ref may take: never empty, never flag-shaped, no whitespace.
 const REF_RE = /^[^\s-]\S*$/;
-
-// An execFileSync error's own words: gh and git put the cause on stderr, while the
-// message leads with "Command failed: …". First non-empty line of whichever has text.
-function firstLine(s) {
-  return String(s || '').split(/\r?\n/).map((l) => l.trim()).find(Boolean) || '';
-}
-function errorText(err) {
-  return firstLine(err && err.stderr) || firstLine(err && err.message) || String(err);
-}
 
 function defineStep(name, stopClass, fn) {
   if (!STOP_CLASS_SET.has(stopClass)) throw new Error(`defineStep ${name}: unknown stop class ${String(stopClass)}`);
