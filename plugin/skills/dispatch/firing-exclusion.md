@@ -13,7 +13,7 @@ real terminal shapes, both leaving a group's labels exactly as eligible as befor
 Without an explicit guard, the very next iteration of the *same* firing re-ranks the identical
 group back to the top and reproduces the identical stop, burning the remaining budget on one stuck
 record instead of reaching other eligible candidates.
-A claim-permission-denied stop also ends the firing (`SKILL.md`'s Claim permission stop), so no next iteration runs.
+A claim-permission-denied stop also ends the firing (`SKILL.md`'s Claim permission stop), so no next iteration runs. A render-failure stop ends the firing too (`SKILL.md`'s Render-failure stop, #5255), so no next iteration runs after it either.
 
 ## The rule
 

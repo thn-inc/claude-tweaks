@@ -24,7 +24,7 @@ files:
 ### 2. Read which record the cap left out
 - **URL:** `plugin/skills/dispatch/SKILL.md` `#N[,#M,#O...]` bullet
 - **Action:** The cap keeps the first three ordered groups. Dispatch reports each requested record in the returned `deferredByCap` list as `#4029 deferred by dispatch-batch-size (3) — name it in a later firing`, and leaves it unclaimed in the queue.
-- **Should feel:** Accounted for. Every named record is either dispatched, excluded with a reason, or deferred by the cap, and none is dropped silently. A Claim permission stop (#4899) ends the firing, and its report lists the named records after the stopped one as not attempted and unclaimed.
+- **Should feel:** Accounted for. Every named record is either dispatched, excluded with a reason, or deferred by the cap, and none is dropped silently. A Claim permission stop (#4899) ends the firing, and its report lists the named records after the stopped one as not attempted and unclaimed. A Render-failure stop (#5255) ends it the same way, and its relay lists the named records after it as not attempted.
 - **Should understand:** A cap-deferred record is not an exclusion. It still carries its grant and is eligible, and only the firing's batch size held it back. To build it next, name it again or raise `dispatch-batch-size`.
 - **Red flags:** A named record missing from the report entirely; a cap-deferred record shown with an exclusion reason; a deferred record that ends up claimed.
 
@@ -38,4 +38,5 @@ files:
 ## Origin
 - Created during `/claude-tweaks:build` of record #4219 (2026-10-25). Explicit-list selection now follows the named order, `selectGroupsForExplicitList` applies the `dispatch-batch-size` cap itself, and every requested record the cap leaves out is reported as deferred. Observed 2026-10-24: `#4026,#4028,#4032,#4029` at batch size 3 had left out #4026, the first-named record, without reporting it.
 - Updated during wrap-up of #4899: Step 2 says a Claim permission stop's report lists the named records it left unattempted.
+- Updated during build of #5255: Step 2 says a Render-failure stop does the same.
 - Related: #3520 (predicted-conflict line, `docs/journeys/dispatch-a-near-duplicate-pair-by-name-3520.md`), #3084 (named exclusion reasons, `docs/journeys/learn-why-a-named-record-wont-dispatch-3084.md`)

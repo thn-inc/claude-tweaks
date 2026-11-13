@@ -47,7 +47,6 @@ const SITES = [
   { id: 'C1', file: 'plugin/skills/flow/claim-targets.md', content: 'condition: {stderr line} → fallback: PR-bookend check not run' },
   { id: 'E1', file: 'plugin/skills/_shared/pr-early-run-lifecycle.md', content: 'holding that one line' },
   { id: 'Q1', file: 'plugin/skills/build/plan-authoring-checks.md', content: 'holding one line carrying the criterion it covers' },
-  { id: 'V1', file: 'plugin/skills/wrap-up/verification-brief.md', content: 'screenshot commit for #{record}: PR state {state} → {current branch | evidence PR #{m} ({url})}' },
   { id: 'R3', file: 'plugin/skills/build/plan-review.md', content: 'settled after an answered round: {finding} — chose {reading taken}; not {reading not taken}' },
 ];
 
