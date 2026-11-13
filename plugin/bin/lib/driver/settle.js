@@ -124,6 +124,8 @@ function selectRow(stop, { prRecorded }) {
   switch (stop.class) {
     case STOP_CLASSES.REFUSED: return { row: 'refused', unclassified: false };
     case STOP_CLASSES.CLAIM:
+      // claim-exit-3 is claim-targets.js exit 3 (contested or in flight): another run holds
+      // the claim, so the row writes nothing.
       return { row: stop.reason === 'claim-exit-3' ? 'claim-contested' : 'claim', unclassified: false };
     case STOP_CLASSES.PRE_PUSH:
       return { row: stop.pushed || prRecorded ? 'blocked' : 'pre-push', unclassified: false };
@@ -139,7 +141,7 @@ const SETTLE_ROWS = Object.freeze({
   'claim-contested': Object.freeze([]),
   none: Object.freeze([]),
   claim: Object.freeze(['settle-comment-record', 'settle-label']),
-  'pre-push': Object.freeze(['settle-escalate', 'settle-comment-record', 'settle-release', 'settle-remove-worktree', 'settle-delete-branch']),
+  'pre-push': Object.freeze(['settle-escalate', 'settle-comment-record', 'settle-release', 'settle-remove-worktree', 'settle-delete-branch', 'settle-close']),
   blocked: Object.freeze(['settle-comment-pr', 'settle-comment-record', 'settle-label', 'settle-release']),
 });
 
@@ -159,13 +161,18 @@ function prStateOf(input, deps) {
     return { number: null, unreadable: !(err && err.code === 'ENOENT') };
   }
   let n;
+  let present = false;
   try {
     const parsed = JSON.parse(text);
-    n = parsed && parsed.pr ? parsed.pr.number : undefined;
+    // A pr key that is neither absent nor null is a recorded PR: record-pr writes
+    // { number, url }, so a pr without a safe-integer number is unreadable, not "no PR".
+    present = !!parsed && parsed.pr !== undefined && parsed.pr !== null;
+    n = present ? parsed.pr.number : undefined;
   } catch {
     return { number: null, unreadable: true };
   }
-  return { number: Number.isSafeInteger(n) ? n : null, unreadable: false };
+  if (Number.isSafeInteger(n)) return { number: n, unreadable: false };
+  return { number: null, unreadable: present };
 }
 
 // git lists realpath'd worktree paths, so a `wt` joined through a symlinked .claude or
@@ -252,6 +259,8 @@ async function settle(input, deps) {
   // precondition fails is neither made nor emitted.
   const HANDLERS = {
     'settle-escalate': {
+      // Skipped when check already wrote its own escalation line for its own escalate
+      // verdict: a second escalate would write a second line (spec Gotchas).
       when: () => !(stop.step === 'check' && stop.checkLogged === true),
       run: () => {
         if (!runDir) return noRun();
@@ -279,6 +288,8 @@ async function settle(input, deps) {
         if (!runDir) return noRun();
         const r = deps.node(bin('release-claim.js'), [String(record), '--run', runDir, '--reason',
           `drive.js settle: ${outcome()} at ${stepName}`], nodeOpts);
+        // release-claim.js exit 3 is already released, exit 4 held by another run; neither is a
+        // settle failure (spec AC7). Not claim-targets.js exit 3.
         if (r.code === 3) return 'already released';
         if (r.code === 4) return 'held by another run';
         return exited(r, 'release-claim.js');
@@ -292,6 +303,8 @@ async function settle(input, deps) {
         // or `branch -D` would fail with "used by worktree".
         const listed = parseWorktreeList(gitIn(['worktree', 'list', '--porcelain']));
         if (!findWorktreeEntry(listed, canonicalWorktreePath(wt, deps.realpath || safeReal, deps.pathImpl || path), deps.pathImpl || path)) return 'already gone';
+        // --force twice: the driver creates the worktree locked, and git removes a locked
+        // worktree only when the flag is given twice.
         gitIn(['worktree', 'remove', '--force', '--force', wt]);
         return undefined;
       },
@@ -307,6 +320,16 @@ async function settle(input, deps) {
         }
         gitIn(['branch', '-D', '--end-of-options', branch]);
         return undefined;
+      },
+    },
+    // Last step of the pre-push row: the removed worktree leaves the run non-terminal
+    // (status active, naming a worktree that is gone), so close it. --run is explicit, so
+    // close-run does not refuse the driver-owned run as foreign.
+    'settle-close': {
+      run: () => {
+        if (!runDir) return noRun();
+        const r = deps.node(bin('hooks.js'), ['close-run', '--run', runDir], nodeOpts);
+        return exited(r, 'hooks.js close-run');
       },
     },
   };
@@ -331,6 +354,7 @@ async function settle(input, deps) {
   await runRow(SETTLE_ROWS[row]);
 
   let note = null;
+  // claim-exit-5 is claim-targets.js exit 5, an unverified write: a claim may have been written.
   if (row === 'claim' && (stop.reason === 'claim-exit-5' || stop.reason === 'claim-exit-none' || input.claimed === true)) note = CLAIM_NOTE;
   else if (plan.unreadableNote) note = plan.unreadableNote;
   return { row, settledClass: CLASS_BY_ROW[row], calls, failed, unclassified: plan.unclassified, note, ...(interrupted ? { interrupted: true } : {}) };

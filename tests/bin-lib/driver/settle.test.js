@@ -159,6 +159,7 @@ async function harness({ stop, input = {}, answers = {}, readFile, pathImpl, rea
   const trace = [];
   const files = {};
   const emitted = [];
+  const launches = [];
   let tick = 0;
   const reply = (v) => { if (v instanceof Error) throw v; return v; };
   const deps = {
@@ -185,14 +186,15 @@ async function harness({ stop, input = {}, answers = {}, readFile, pathImpl, rea
     pathImpl,
     realpath,
     now: () => (tick += 5),
-    launchWorker: () => { throw new Error('launcher called'); },
+    // Recorded, not thrown: step() swallows a throw made inside a handler.
+    launchWorker: (...a) => { launches.push(a); },
   };
   const full = {
     stop: stop || stopOf(), record: 7, runId: 'r1', runDir: RD, wt: WT, branch: 'drive-record-7', pr: null, claimed: false,
     mainRoot: MAIN, ghRepo: R, emit: (...a) => emitted.push(a), ...input,
   };
   const res = await settle(full, deps);
-  return { res, calls, files, emitted, trace };
+  return { res, calls, files, emitted, trace, launches };
 }
 
 const ESC_DETAIL = path.join(RD, 'settle-escalate.txt');
@@ -204,13 +206,14 @@ const RELEASE = (reason) => ['node', 'release-claim.js', '7', '--run', RD, '--re
 const LIST_WT = ['git', '-C', MAIN, 'worktree', 'list', '--porcelain'];
 const RM_WT = ['git', '-C', MAIN, 'worktree', 'remove', '--force', '--force', WT];
 const RM_BR = ['git', '-C', MAIN, 'branch', '-D', '--end-of-options', 'drive-record-7'];
+const CLOSE = ['node', 'hooks.js', 'close-run', '--run', RD];
 const BR_PROBE = ['git', '-C', MAIN, 'rev-parse', '--verify', '--quiet', '--end-of-options', 'refs/heads/drive-record-7'];
 const ESCALATED_BODY = commentFor('escalated', { step: 'test', outcome: 'express-escalated', reason: 'failing-test', detail: 'red tests' });
 const blockedRecord = (over) => commentFor('blocked-record', { step: 'test', outcome: 'blocked', detail: 'red tests', ...over });
 const noThrow = (fn) => assert.doesNotReject(fn);
 
-test('SETTLE_STEP_NAMES is the seven settle calls and STEP_NAMES is unchanged', async () => {
-  assert.deepStrictEqual([...SETTLE_STEP_NAMES], ['settle-escalate', 'settle-comment-pr', 'settle-comment-record', 'settle-label', 'settle-release', 'settle-remove-worktree', 'settle-delete-branch']);
+test('SETTLE_STEP_NAMES is the eight settle calls and STEP_NAMES is unchanged', async () => {
+  assert.deepStrictEqual([...SETTLE_STEP_NAMES], ['settle-escalate', 'settle-comment-pr', 'settle-comment-record', 'settle-label', 'settle-release', 'settle-remove-worktree', 'settle-delete-branch', 'settle-close']);
   assert.ok(Object.isFrozen(SETTLE_STEP_NAMES));
   assert.equal(STEP_NAMES.length, 17);
   for (const rows of Object.values(SETTLE_ROWS)) for (const s of rows) assert.ok(SETTLE_STEP_NAMES.includes(s), s);
@@ -241,7 +244,7 @@ test('SETTLE_ROWS is frozen and holds the table', async () => {
   assert.deepStrictEqual(SETTLE_ROWS, {
     refused: [], 'claim-contested': [], none: [],
     claim: ['settle-comment-record', 'settle-label'],
-    'pre-push': ['settle-escalate', 'settle-comment-record', 'settle-release', 'settle-remove-worktree', 'settle-delete-branch'],
+    'pre-push': ['settle-escalate', 'settle-comment-record', 'settle-release', 'settle-remove-worktree', 'settle-delete-branch', 'settle-close'],
     blocked: ['settle-comment-pr', 'settle-comment-record', 'settle-label', 'settle-release'],
   });
 });
@@ -249,7 +252,7 @@ test('SETTLE_ROWS is frozen and holds the table', async () => {
 test('AC1.1, AC11.9: a pre-push stop check did not log runs escalate, comment, release, worktree removal, branch deletion in order', async () => {
   const h = await harness();
   assert.deepStrictEqual(h.calls, [
-    ESCALATE(), COMMENT(ESCALATED_BODY), RELEASE('drive.js settle: express-escalated at test'), LIST_WT, RM_WT, BR_PROBE, RM_BR,
+    ESCALATE(), COMMENT(ESCALATED_BODY), RELEASE('drive.js settle: express-escalated at test'), LIST_WT, RM_WT, BR_PROBE, RM_BR, CLOSE,
   ]);
   assert.equal(h.files[ESC_DETAIL], escalateDetailText({ step: 'test', detail: 'red tests', removes: true }));
   assert.ok(!h.calls.some((c) => c.includes('--remove-grants')));
@@ -265,8 +268,21 @@ test('AC1.2: a check verdict that logged its own line skips escalate', async () 
   const h = await harness({ stop: stopOf({ step: 'check', checkLogged: true, reason: 'out-of-bounds' }) });
   assert.ok(!h.calls.some((c) => c[1] === 'express-lane.js'));
   const body = commentFor('escalated', { step: 'check', outcome: 'express-escalated', reason: 'out-of-bounds', detail: 'red tests' });
-  assert.deepStrictEqual(h.calls, [COMMENT(body), RELEASE('drive.js settle: express-escalated at check'), LIST_WT, RM_WT, BR_PROBE, RM_BR]);
+  assert.deepStrictEqual(h.calls, [COMMENT(body), RELEASE('drive.js settle: express-escalated at check'), LIST_WT, RM_WT, BR_PROBE, RM_BR, CLOSE]);
   assert.deepStrictEqual(h.res.calls.map((c) => c.step), SETTLE_ROWS['pre-push'].slice(1));
+});
+
+test('a failing close-run is a fail step listed in failed and does not change the row', async () => {
+  for (const answer of [() => ({ code: 1, stdout: '', stderr: 'boom' }), () => new Error('spawn failed')]) {
+    const h = await harness({ answers: { node: (s) => (s === 'hooks.js' ? answer() : undefined) } });
+    assert.equal(h.res.row, 'pre-push');
+    assert.deepStrictEqual(h.res.failed, ['settle-close']);
+    const last = h.res.calls[h.res.calls.length - 1];
+    assert.equal(last.step, 'settle-close');
+    assert.equal(last.status, 'fail');
+    assert.equal(h.calls.filter((c) => c[1] === 'hooks.js').length, 1, 'never retried');
+    assert.equal(h.emitted[h.emitted.length - 1][1], 'fail');
+  }
 });
 
 test('AC1.3: check logged:false calls escalate with check\'s reason and detail', async () => {
@@ -276,7 +292,7 @@ test('AC1.3: check logged:false calls escalate with check\'s reason and detail',
   assert.ok(h.files[ESC_DETAIL].includes(reduceDetail('gate-denial: x')));
 });
 
-test('Review focus 3: a pre-push stop after a proceeding check still escalates', async () => {
+test('a pre-push stop after a proceeding check still escalates', async () => {
   const h = await harness({ stop: stopOf({ step: 'push', checkLogged: true, reason: 'stop' }) });
   assert.deepStrictEqual(h.calls[0], ESCALATE('express-error'));
 });
@@ -293,6 +309,7 @@ test('AC1.4: a failed escalate keeps the worktree and branch and settles by the 
       ESCALATE(), COMMENT(blockedRecord({ kept: { pr: false, branch: true, worktree: true } })), LABEL, RELEASE('drive.js settle: blocked at test'),
     ]);
     assert.ok(!h.calls.some((c) => c.some((a) => a.includes(MARKER))), 'no escalation marker');
+    assert.ok(!h.calls.some((c) => c[1] === 'hooks.js'), 'no close-run');
     assert.equal(h.res.row, 'blocked');
     assert.equal(h.res.settledClass, 'blocked');
     assert.deepStrictEqual(h.res.failed, ['settle-escalate']);
@@ -351,14 +368,14 @@ test('AC2.5: run-state.json recording a PR makes a pre-push stop blocked', async
 });
 
 test('a run-state.json without a PR (or a missing one) leaves the pre-push row', async () => {
-  for (const readFile of [() => '{"foo":1}', () => 'null', () => JSON.stringify({ pr: { number: 'x' } }), undefined]) {
+  for (const readFile of [() => '{"foo":1}', () => 'null', () => '{"pr":null}', undefined]) {
     const h = await harness({ readFile });
     assert.equal(h.res.row, 'pre-push');
     assert.equal(h.res.note, null);
   }
 });
 
-test('Minor 7: an unreadable or unparseable run-state.json settles a pre-push stop by the blocked row with a note', async () => {
+test('an unreadable or unparseable run-state.json settles a pre-push stop by the blocked row with a note', async () => {
   const NOTE = 'run-state.json unreadable; settled by the blocked row to keep the work';
   const eacces = () => { throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); };
   for (const readFile of [eacces, () => 'not json', () => '']) {
@@ -374,6 +391,17 @@ test('Minor 7: an unreadable or unparseable run-state.json settles a pre-push st
   assert.equal((await harness({ stop: stopOf({ pushed: true }), readFile: eacces })).res.note, null);
   // A caller-supplied PR number is not read from the file at all.
   assert.equal((await harness({ input: { pr: 9 }, readFile: eacces })).res.note, null);
+});
+
+test('a run-state.json with a pr key but no safe-integer number settles a pre-push stop by the blocked row and removes nothing', async () => {
+  const NOTE = 'run-state.json unreadable; settled by the blocked row to keep the work';
+  for (const readFile of [() => '{"pr":{}}', () => '{"pr":{"number":"12"}}']) {
+    const h = await harness({ readFile });
+    assert.equal(h.res.row, 'blocked');
+    assert.equal(h.res.note, NOTE);
+    assert.ok(!h.calls.some((c) => c.includes('remove') || c.includes('-D')), 'no worktree remove, no branch -D');
+    assert.deepStrictEqual(h.res.calls.map((c) => c.step), ['settle-comment-record', 'settle-label', 'settle-release']);
+  }
 });
 
 test('AC3.1: a refusal makes no call', async () => {
@@ -422,12 +450,12 @@ test('AC3.3: other claim failures write exactly the record comment and bot:block
 
 test('AC3.4: a pre-push stop whose created says nothing was made removes nothing', async () => {
   const h = await harness({ stop: stopOf({ created: { worktree: false, branch: false } }) });
-  assert.deepStrictEqual(h.calls, [ESCALATE(), COMMENT(ESCALATED_BODY), RELEASE('drive.js settle: express-escalated at test')]);
+  assert.deepStrictEqual(h.calls, [ESCALATE(), COMMENT(ESCALATED_BODY), RELEASE('drive.js settle: express-escalated at test'), CLOSE]);
   assert.ok(!h.calls.some((c) => c.includes('rev-parse')));
   const onlyBranch = await harness({ stop: stopOf({ created: { worktree: false, branch: true } }) });
-  assert.deepStrictEqual(onlyBranch.calls.slice(-2), [BR_PROBE, RM_BR]);
+  assert.deepStrictEqual(onlyBranch.calls.slice(-3), [BR_PROBE, RM_BR, CLOSE]);
   const onlyWt = await harness({ stop: stopOf({ created: { worktree: true, branch: false } }) });
-  assert.deepStrictEqual(onlyWt.calls.slice(-2), [LIST_WT, RM_WT]);
+  assert.deepStrictEqual(onlyWt.calls.slice(-3), [LIST_WT, RM_WT, CLOSE]);
   for (const part of [onlyBranch, onlyWt]) {
     assert.equal(part.files[ESC_DETAIL], escalateDetailText({ step: 'test', detail: 'red tests', removes: true }));
   }
@@ -435,7 +463,7 @@ test('AC3.4: a pre-push stop whose created says nothing was made removes nothing
   assert.ok(!noCreated.calls.some((c) => c[0] === 'git'));
 });
 
-test('Review focus 5: a worktree or branch already gone is not a failure', async () => {
+test('a worktree or branch already gone is not a failure', async () => {
   // Unregistered worktree: no remove call at all (registration is read from the porcelain list, not from git's error text).
   const h = await harness({
     answers: {
@@ -474,7 +502,7 @@ test('wt is canonicalized before matching git\'s realpath\'d list: own realpath,
   assert.equal(none.res.calls.find((c) => c.step === 'settle-remove-worktree').detail, 'already gone');
 });
 
-test('K7: with run-state.json unreadable the record comment names no draft PR and keeps the rest of the wording', async () => {
+test('with run-state.json unreadable the record comment names no draft PR and keeps the rest of the wording', async () => {
   const eacces = () => { throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); };
   const h = await harness({ readFile: eacces });
   const body = h.calls.find((c) => c[1] === 'issue' && c[2] === 'comment')[6];
@@ -524,10 +552,10 @@ test('a blocked-record comment omits the kept sentence when nothing was created 
 
 test('AC7.1: a failing call does not stop the rest and is never retried', async () => {
   const h = await harness({ answers: { gh: (args) => (args[1] === 'comment' ? Object.assign(new Error('gh down'), { stderr: 'HTTP 502\nbody' }) : undefined) } });
-  assert.deepStrictEqual(h.calls, [ESCALATE(), COMMENT(ESCALATED_BODY), RELEASE('drive.js settle: express-escalated at test'), LIST_WT, RM_WT, BR_PROBE, RM_BR]);
+  assert.deepStrictEqual(h.calls, [ESCALATE(), COMMENT(ESCALATED_BODY), RELEASE('drive.js settle: express-escalated at test'), LIST_WT, RM_WT, BR_PROBE, RM_BR, CLOSE]);
   assert.deepStrictEqual(h.res.failed, ['settle-comment-record']);
   assert.equal(h.emitted.length, h.res.calls.length);
-  assert.equal(h.emitted.length, 5);
+  assert.equal(h.emitted.length, 6);
   const failed = h.emitted.filter((e) => e[1] === 'fail');
   assert.equal(failed.length, 1);
   assert.equal(failed[0][0], 'settle-comment-record');
@@ -569,9 +597,12 @@ test('AC8.2: an unknown class is settled by the blocked row and named unclassifi
   assert.deepStrictEqual(h.res.calls.map((c) => c.step), ['settle-comment-record', 'settle-label', 'settle-release']);
 });
 
-test('AC6.2: settle never calls a launcher (the harness launcher throws in every scenario above)', async () => {
+test('AC6.2: settle never calls a launcher (the harness launcher records every call)', async () => {
   await noThrow(() => harness());
   await noThrow(() => harness({ stop: stopOf({ class: 'bogus' }) }));
+  for (const sc of [{}, { stop: stopOf({ class: 'bogus' }) }, { stop: stopOf({ class: 'blocked', pushed: true }), input: { pr: 9 } }, { stop: stopOf({ class: 'claim', reason: 'claim-exit-4' }) }]) {
+    assert.deepStrictEqual((await harness(sc)).launches, []);
+  }
 });
 
 test('an interrupted predicate stops settle before its next call: the rest are absent and the result says so', async () => {
@@ -597,21 +628,25 @@ test('an interrupted predicate stops settle before its next call: the rest are a
   assert.ok(!('interrupted' in (await harness({ input: { interrupted: () => false } })).res));
 });
 
+const ROW_SCENARIOS = {
+  claim: { stop: stopOf({ step: 'claim', class: 'claim', reason: 'claim-exit-4' }) },
+  'pre-push': { stop: stopOf() },
+  blocked: { stop: stopOf({ class: 'blocked', pushed: true }), input: { pr: 9 } },
+  refused: { stop: stopOf({ class: 'refused' }) },
+  'claim-contested': { stop: stopOf({ class: 'claim', reason: 'claim-exit-3' }) },
+  none: { stop: stopOf({ class: 'none' }) },
+};
+
 test('settle reports the shape on every row', async () => {
-  const h = await harness();
-  assert.deepStrictEqual(Object.keys(h.res).sort(), ['calls', 'failed', 'note', 'row', 'settledClass', 'unclassified']);
-  assert.deepStrictEqual(Object.keys(h.res.calls[0]).sort(), ['detail', 'status', 'step']);
+  for (const [row, sc] of Object.entries(ROW_SCENARIOS)) {
+    const h = await harness(sc);
+    assert.deepStrictEqual(Object.keys(h.res).sort(), ['calls', 'failed', 'note', 'row', 'settledClass', 'unclassified'], row);
+    for (const c of h.res.calls) assert.deepStrictEqual(Object.keys(c).sort(), ['detail', 'status', 'step'], row);
+  }
 });
 
-test('Minor 8: with every precondition true, the emitted step names equal SETTLE_ROWS[row] in order', async () => {
-  const scenarios = {
-    claim: { stop: stopOf({ step: 'claim', class: 'claim', reason: 'claim-exit-4' }) },
-    'pre-push': { stop: stopOf() },
-    blocked: { stop: stopOf({ class: 'blocked', pushed: true }), input: { pr: 9 } },
-    refused: { stop: stopOf({ class: 'refused' }) },
-    'claim-contested': { stop: stopOf({ class: 'claim', reason: 'claim-exit-3' }) },
-    none: { stop: stopOf({ class: 'none' }) },
-  };
+test('with every precondition true, the emitted step names equal SETTLE_ROWS[row] in order', async () => {
+  const scenarios = ROW_SCENARIOS;
   for (const [row, sc] of Object.entries(scenarios)) {
     const h = await harness(sc);
     assert.equal(h.res.row, row);
@@ -620,14 +655,14 @@ test('Minor 8: with every precondition true, the emitted step names equal SETTLE
   }
 });
 
-test('Minor 8: the detail file is written before the escalate call', async () => {
+test('the detail file is written before the escalate call', async () => {
   const h = await harness();
   const w = h.trace.findIndex((c) => c[0] === 'write' && c[1] === ESC_DETAIL);
   const e = h.trace.findIndex((c) => c[1] === 'express-lane.js');
   assert.ok(w >= 0 && e > w, `write at ${w}, escalate at ${e}`);
 });
 
-test('Important 2: a node result with code null (a timeout) is a failure, for escalate and release', async () => {
+test('a node result with code null (a timeout) is a failure, for escalate and release', async () => {
   const timedOut = (script) => (s) => (s === script ? { code: null, stdout: '', stderr: '' } : undefined);
   const esc = await harness({ answers: { node: timedOut('express-lane.js') } });
   assert.deepStrictEqual(esc.res.failed, ['settle-escalate']);
@@ -636,7 +671,7 @@ test('Important 2: a node result with code null (a timeout) is a failure, for es
   assert.deepStrictEqual(rel.res.failed, ['settle-release']);
 });
 
-test('Minor 3: a registered worktree gets the removal call; any removal failure is a fail', async () => {
+test('a registered worktree gets the removal call; any removal failure is a fail', async () => {
   const h = await harness();
   assert.ok(h.calls.some((c) => c.join(' ') === RM_WT.join(' ')));
   assert.deepStrictEqual(h.res.failed, []);
@@ -645,13 +680,13 @@ test('Minor 3: a registered worktree gets the removal call; any removal failure 
   assert.deepStrictEqual((await rm(Object.assign(new Error('x'), { stderr: `fatal: '${WT}' is not a working tree` }))).res.failed, ['settle-remove-worktree'], 'a registered worktree that fails to remove is a fail whatever git says');
 });
 
-test('Minor 4: the release reason names the step from the closed set', async () => {
+test('the release reason names the step from the closed set', async () => {
   const h = await harness({ stop: stopOf({ step: '@bob closes #9', class: 'blocked', pushed: true }) });
   const rel = h.calls.find((c) => c[1] === 'release-claim.js');
   assert.equal(rel[rel.length - 1], 'drive.js settle: blocked at unknown');
 });
 
-test('Important 1: a trailing closing paren, comma, semicolon or full stop stays outside <path> (greedy match, hand-split tail)', async () => {
+test('a trailing closing paren, comma, semicolon or full stop stays outside <path> (greedy match, hand-split tail)', async () => {
   assert.equal(reduceDetail('(see /tmp/x)'), '(see <path>)');
   assert.equal(reduceDetail('(see C:/a/b);'), '(see <path>);');
   assert.equal(reduceDetail('/a...'), '<path>...');
@@ -660,12 +695,12 @@ test('Important 1: a trailing closing paren, comma, semicolon or full stop stays
   // The timing budgets for 100k-character inputs live in perf/ (tests/ may not assert wall-clock).
 });
 
-test('I1 characterization: relative paths, a lone slash and fractions are not over-redacted', async () => {
+test('relative paths, a lone slash and fractions are not over-redacted', async () => {
   for (const same of ['a/b', 'a/b/c', 'src/lib/x.js', 'rate 1/2 done', '/', '/ alone', 'a-b c_d']) assert.equal(reduceDetail(same), same);
   assert.equal(reduceDetail('see /tmp/x'), 'see <path>');
 });
 
-test('I1 (AC10.2): an absolute path glued to -, ., _ or a flag letter is redacted', async () => {
+test('AC10.2: an absolute path glued to -, ., _ or a flag letter is redacted', async () => {
   assert.equal(reduceDetail('x-/Users/thomas/secret'), 'x-<path>');
   assert.equal(reduceDetail('tar -C/Users/me/x'), 'tar -C<path>');
   assert.equal(reduceDetail('a_/Users/me/x'), 'a_<path>');
@@ -681,7 +716,7 @@ test('I1 (AC10.2): an absolute path glued to -, ., _ or a flag letter is redacte
   }
 });
 
-test('M3: a claim-class stop after the claim says so and names the TTL; a claim-step stop keeps "could not claim"', async () => {
+test('a claim-class stop after the claim says so and names the TTL; a claim-step stop keeps "could not claim"', async () => {
   const after = commentFor('claim', { step: 'run-dir', outcome: 'blocked', detail: 'mint failed', exitCode: 4 });
   assert.match(after, /stopped after claiming this record, at step run-dir\. Detail: mint failed/);
   assert.match(after, /The claim lapses by its TTL\./);
@@ -691,7 +726,7 @@ test('M3: a claim-class stop after the claim says so and names the TTL; a claim-
   assert.ok(!at.includes('lapses'), at);
 });
 
-test('M1: GH-N and www. shapes are neutralized so a detail never backlinks or autolinks', async () => {
+test('GH-N and www. shapes are neutralized so a detail never backlinks or autolinks', async () => {
   assert.equal(reduceDetail('see GH-12 and gh-34'), 'see GH 12 and GH 34');
   assert.equal(reduceDetail('visit www.evil.com/phish now'), 'visit www evil.com/phish now');
   assert.equal(reduceDetail('WWW.evil.com'), 'www evil.com');

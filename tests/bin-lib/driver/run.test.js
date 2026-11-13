@@ -229,6 +229,7 @@ function defaultScript(over) {
     // it absent through the `rev-parse` default above.
     [on('node', /express-lane\.js$/, 'escalate'), { code: 0, stdout: '', stderr: '' }],
     [on('node', /release-claim\.js$/), { code: 0, stdout: '', stderr: '' }],
+    [on('node', /hooks\.js$/, 'close-run'), { code: 0, stdout: '', stderr: '' }],
     [on('gh', 'issue', 'comment'), ''],
     [on('gh', 'pr', 'comment'), ''],
     [on('gh', 'issue', 'edit'), ''],
@@ -981,7 +982,7 @@ test('AC9.2: leftover worktree, branch or run dir refuses at the worktree step',
     assert.match(final.stop.detail, /nothing reused or removed/);
     assert.deepEqual(final.stop.created, { worktree: false, branch: false });
     assert.equal(gitCalls(h).filter((c) => !['rev-parse', 'ls-remote'].includes(gitSub(c)[0])).length, 0, 'no fetch, add or merge');
-    assert.equal(calls(h, 'node', /hooks\.js$/).length, 0);
+    assert.equal(nodeCalls(h, /hooks\.js$/, 'record-worktree').length, 0);
     assert.ok(h.files[path.join(MAIN, '.claude-tweaks', 'pipelines', mintedRunId(h), 'driver-events.jsonl')], 'the run dir exists, so the events are in its jsonl');
   }
   const all = harness({ script: [[on('lstatType'), { type: 'file' }], [onGit('rev-parse'), ''], [on('readdir'), ['x-drive-7']]] });
@@ -1129,7 +1130,7 @@ test('a failing fetch or worktree add leaves created false; a failing catch-up l
     assert.equal(final.stop.class, 'pre-push');
     assert.match(final.stop.detail, /git said no/);
     assert.deepEqual(final.stop.created, { worktree: created, branch: created });
-    assert.equal(calls(h, 'node', /hooks\.js$/).length, 0);
+    assert.equal(nodeCalls(h, /hooks\.js$/, 'record-worktree').length, 0);
   }
 });
 
@@ -2726,7 +2727,7 @@ test('the harness refuses a pr merge or pr ready call in every test', () => {
 // calls settle.js makes and --no-settle, an interrupt and a refusal must not.
 const isSettleCall = (c) => {
   if (c.kind === 'gh') return (c.args[0] === 'issue' && ['comment', 'edit'].includes(c.args[1])) || (c.args[0] === 'pr' && c.args[1] === 'comment');
-  if (c.kind === 'node') return /release-claim\.js$/.test(c.args[0]) || (/express-lane\.js$/.test(c.args[0]) && c.args[1] === 'escalate');
+  if (c.kind === 'node') return /release-claim\.js$/.test(c.args[0]) || (/express-lane\.js$/.test(c.args[0]) && c.args[1] === 'escalate') || (/hooks\.js$/.test(c.args[0]) && c.args[1] === 'close-run');
   if (c.kind === 'git') return (gitSub(c)[0] === 'worktree' && gitSub(c)[1] === 'remove') || (gitSub(c)[0] === 'branch' && gitSub(c)[1] === '-D');
   return false;
 };
@@ -2818,7 +2819,7 @@ test('AC4.1: under --no-settle a pre-push stop that holds a recorded PR names th
   assert.deepEqual(settleCalls(h), []);
 });
 
-test('Minor 3: under --no-settle an unreadable run-state.json names the blocked row and carries settle\'s note', async () => {
+test('under --no-settle an unreadable run-state.json names the blocked row and carries settle\'s note', async () => {
   const eacces = [on('readFile'), () => { throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }); }];
   const h = harness({ script: [eacces, ...REDTESTS.script] });
   await run(['--no-settle', '#7'], h.deps);
@@ -2832,7 +2833,7 @@ test('Minor 3: under --no-settle an unreadable run-state.json names the blocked 
   assert.deepEqual([lastLine(settled).settleRow, lastLine(settled).settleNote, lastLine(settled).outcome], [final.settleRow, final.settleNote, final.outcome]);
 });
 
-test('Minor 1: a stop after the PR exists settles with a comment on that PR', async () => {
+test('a stop after the PR exists settles with a comment on that PR', async () => {
   const h = harness({ script: [[on('node', /set-config\.js$/), { code: 2, stdout: '', stderr: 'bad' }]] });
   await run(['#7'], h.deps);
   const prComments = h.calls.filter((c) => c.kind === 'gh' && c.args[0] === 'pr' && c.args[1] === 'comment');
@@ -2842,7 +2843,7 @@ test('Minor 1: a stop after the PR exists settles with a comment on that PR', as
   assert.equal(lastLine(h).settleRow, 'blocked');
 });
 
-test('Minor 2: a claim the run holds is named in the settle note when the stop follows it', async () => {
+test('a claim the run holds is named in the settle note when the stop follows it', async () => {
   const h = harness({ script: [[on('resolveRunDir'), { ok: false, message: 'no' }]] });
   await run(['#7'], h.deps);
   const final = lastLine(h);
@@ -2855,7 +2856,7 @@ test('Minor 2: a claim the run holds is named in the settle note when the stop f
   assert.ok(!('settleNote' in lastLine(refusedClaim)));
 });
 
-test('Minor 4: a successful settle line omits detail; a failed one carries it', async () => {
+test('a successful settle line omits detail; a failed one carries it', async () => {
   const h = harness({ script: [[on('gh', 'issue', 'comment'), new Error('HTTP 502')], ...REDTESTS.script] });
   await run(['#7'], h.deps);
   const lines = settleLines(h);
@@ -2869,7 +2870,7 @@ test('Minor 4: a successful settle line omits detail; a failed one carries it', 
   assert.ok(lines.some((l) => l.status === 'fail'));
 });
 
-test('Important 1: a signal queued during the halting step\'s synchronous child settles nothing', async () => {
+test('a signal queued during the halting step\'s synchronous child settles nothing', async () => {
   let h = null;
   h = harness({ script: [[on('node', /verify\.js$/), () => { fireSoon(h, 'SIGINT'); return { code: null, stdout: '', stderr: 'killed' }; }]] });
   assert.equal(await run(['#7', '#8'], h.deps), 0);
@@ -2883,7 +2884,7 @@ test('Important 1: a signal queued during the halting step\'s synchronous child 
   assert.equal(h.lines().filter((l) => l.record === 8).length, 0, 'no further record');
 });
 
-test('Important 1: under --no-settle a signal queued during the halting step is interrupted, not left-to-caller', async () => {
+test('under --no-settle a signal queued during the halting step is interrupted, not left-to-caller', async () => {
   let h = null;
   h = harness({ script: [[on('node', /verify\.js$/), () => { fireSoon(h, 'SIGINT'); return { code: null, stdout: '', stderr: 'killed' }; }]] });
   assert.equal(await run(['--no-settle', '#7', '#8'], h.deps), 0);
@@ -2896,7 +2897,7 @@ test('Important 1: under --no-settle a signal queued during the halting step is 
   assert.equal(h.lines().filter((l) => l.record === 8).length, 0);
 });
 
-test('Ruling: a signal during settle itself stops it before the next call', async () => {
+test('a signal during settle itself stops it before the next call', async () => {
   let h = null;
   h = harness({ script: [
     [on('node', /express-lane\.js$/, 'escalate'), () => { fireSoon(h, 'SIGTERM'); return { code: 0, stdout: '', stderr: '' }; }],
@@ -2936,7 +2937,7 @@ test('AC4.3: a settled stop has settle done and its events come before the final
   assert.ok(settleAt.every((i) => i > at('test') && i < at(FINAL_STEP)), 'between the stop line and the final line');
   assert.equal(at(FINAL_STEP), lines.length - 1);
   assert.deepEqual(settleLines(h).map((l) => l.step),
-    ['settle-escalate', 'settle-comment-record', 'settle-release', 'settle-remove-worktree', 'settle-delete-branch']);
+    ['settle-escalate', 'settle-comment-record', 'settle-release', 'settle-remove-worktree', 'settle-delete-branch', 'settle-close']);
   assert.ok(settleLines(h).every((l) => l.record === 7 && l.run === mintedRunId(h) && l.status === 'ok'));
   assert.equal(h.files[path.join(runDirOf(h), 'driver-events.jsonl')], h.out.join(''), 'the jsonl holds the settle lines too');
 });
@@ -2980,7 +2981,7 @@ test('AC7.3: failed settle steps are listed on the final line', async () => {
   assert.equal(event.status, 'fail');
   assert.match(event.detail, /HTTP 502/);
   assert.deepEqual(settleLines(h).filter((l) => l.status === 'ok').map((l) => l.step),
-    ['settle-escalate', 'settle-release', 'settle-remove-worktree', 'settle-delete-branch'], 'the failure stops no later call');
+    ['settle-escalate', 'settle-release', 'settle-remove-worktree', 'settle-delete-branch', 'settle-close'], 'the failure stops no later call');
 });
 
 test('AC1.6: a failed escalate makes the outcome blocked', async () => {

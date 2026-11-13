@@ -10,7 +10,8 @@
 //   - the neutralizers for text the headless worker controls, so that text cannot close an
 //     issue (or backlink one), mention a user, open a code fence or an HTML comment, or break a
 //     line in a commit, PR body or event,
-//   - the small helpers the run loop, steps and settle share, so none requires another:
+//   - the small helpers the run loop, steps and settle share (settle.js never requires
+//     steps.js or run.js; steps.js may require settle.js):
 //     CLI_TIMEOUT_MS (the bound on one plugin/bin CLI call) and firstLine and errorText
 //     (an execFileSync error's own words), shared by steps.js and settle.js;
 //     yieldToEventLoop (lets a pending signal be delivered between steps and between
@@ -26,7 +27,7 @@ const STEP_NAMES = Object.freeze([
 const FINAL_STEP = 'final';
 
 // Bound on one plugin/bin CLI call (claim-targets.js talks to GitHub; the rest are local).
-// Shared by steps.js and settle.js; neither may require the other.
+// Shared by steps.js and settle.js (settle.js never requires steps.js).
 const CLI_TIMEOUT_MS = 120000;
 
 // An execFileSync error's own words: gh and git put the cause on stderr, while the
@@ -42,7 +43,7 @@ function errorText(err) {
 // STEP_NAMES: these are cleanup calls, not pipeline steps, and the step list is pinned.
 const SETTLE_STEP_NAMES = Object.freeze([
   'settle-escalate', 'settle-comment-pr', 'settle-comment-record', 'settle-label',
-  'settle-release', 'settle-remove-worktree', 'settle-delete-branch',
+  'settle-release', 'settle-remove-worktree', 'settle-delete-branch', 'settle-close',
 ]);
 
 const STEP = Object.freeze(Object.fromEntries(
