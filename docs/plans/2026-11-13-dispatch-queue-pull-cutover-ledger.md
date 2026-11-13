@@ -3,3 +3,19 @@
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
 | 1 | ops | Pre-flight branch-divergence-check: origin/main was 3 ahead of local main at run start; continued (worktree caught up via post-creation merge) | fixed | Worktree merged origin/main at 4f6736f10 (post-creation catch-up); branch is current with origin |
+| 2 | build | SDD ruling — approve the scratch clone origin "github.com/thn-inc/claude-tweaks.git" (relative path,...: ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | open | — |
+| 3 | build | SDD ruling — Important #1 (.claude/skills/blocker-surface-parity/SKILL.md:40 and .claude/skills/mcp-...: ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | open | — |
+| 4 | build | SDD ruling — Minors 1 (rename/sharpen the dispatch-near-dup-neighbour-prose rankNext test to what it...: ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | open | — |
+| 5 | build | dispatch-near-dup-pairs-script AC8.1/AC8.2 and the unlanded-rows registry-constant assertions duplicate QPT coverage | deferred | Defer-reason: needs-human-decision — (the brief lists both files as Modify; deleting tests is a coverage call for the final review/human, and the removal unit re-sweeps these files) |
+| 6 | build | SDD ruling — Important #1 (near-duplicate-pairs.md:11-12 tells every firing to re-run queue-pull-scr...: ratify or reverse at the Review Console (staged/sdd-ruling-4.md) | open | — |
+| 7 | build | descriptive 'queue-pull-script.md''s output' citations in blocked/open-pr/oversized/neighbour-in-flight/not-spec-shaped/cross-pr-overlap report files, reporting.md, settle-and-merge.md, drain-pr-overlap.md, and task-prompt.md:90-91 'as next-ranking.md does' | deferred | Defer-reason: blocked-dependency — (spec Non-Goals assign the citation sweep to the removal unit, which needs this cutover merged first) |
+| 8 | build | SDD ruling — minors 2 (mcp-transport L154/L168 stale queue-pull-script.md claims), 3 (#3137 workarou...: ratify or reverse at the Review Console (staged/sdd-ruling-5.md) | open | — |
+| 9 | build | SDD ruling — fold into Task 6's batch the re-review's optional #3137 trim (skip issue_read for queue...: ratify or reverse at the Review Console (staged/sdd-ruling-6.md) | open | — |
+| 10 | build | SDD ruling — fix the Important's two rows plus mcp-agent-fetch-node-compute/SKILL.md L17/L21/L32 (st...: ratify or reverse at the Review Console (staged/sdd-ruling-7.md) | open | — |
+| 11 | build | SDD ruling — stopped the Task 6 implementer and its queued verify.js affected-set run — redundant (f...: ratify or reverse at the Review Console (staged/sdd-ruling-8.md) | open | — |
+| 12 | build | SDD ruling — re-ran the rehearsal in a standalone git-init repo over a fresh extract (plumbing commi...: ratify or reverse at the Review Console (staged/sdd-ruling-9.md) | open | — |
+| 13 | build | SDD ruling — the 4 minors are fixed at wrap-up when the comment is posted (strip draft header, label...: ratify or reverse at the Review Console (staged/sdd-ruling-10.md) | open | — |
+| 14 | build | SDD ruling — I1 (revert leaves 19 prose-pin tests red) fix — widen the AC8 revert pathspec to the pr...: ratify or reverse at the Review Console (staged/sdd-ruling-11.md) | open | — |
+| 15 | build | SDD ruling — ceiling raised from AC3 52,000 (rail - 500) to 52,200 (rail - 300); RAIL_BYTES 52,500 u...: ratify or reverse at the Review Console (staged/sdd-ruling-12.md) | open | — |
+| 16 | build | SDD ruling — accept docs/skill-graph.md in the revert pathspec (its rows describe the cutover); M5 c...: ratify or reverse at the Review Console (staged/sdd-ruling-13.md) | open | — |
+| 17 | build | SDD ruling — re-review out-of-scope note (queue-pull-notes.md native-support paragraphs still say "t...: ratify or reverse at the Review Console (staged/sdd-ruling-14.md) | open | — |
