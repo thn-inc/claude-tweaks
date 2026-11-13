@@ -14,7 +14,7 @@ Scope keywords: PR-body deliverables, Spec Compliance Check, Claims about the PR
 
 ## Global Constraints
 
-- Read-limit rail: `RAIL_BYTES` = 52,500 B (`plugin/bin/lib/skill-audit/budgets.js`). `code-mode-steps.md` is 52,429 B at base; after Task 1's exact edits it measures 52,333 B (167 B headroom, measured by a scratch script over the planned strings). Never add a per-file byte pin (`tests/skill-size-single-source.test.js`).
+- Read-limit rail: `RAIL_BYTES` = 52,500 B (`plugin/bin/lib/skill-audit/budgets.js`). `code-mode-steps.md` is 52,429 B at base; after Task 1's exact edits it measures 52,325 B (175 B headroom, measured by a scratch script over the planned strings). Never add a per-file byte pin (`tests/skill-size-single-source.test.js`).
 - Commit messages: `{Verb} {what} — {detail}` (imperative, no conventional-commit prefix), ending with the line `Claude-Session: https://claude.ai/code/session_016yg3zrGQB1yk3fGi1qfrJ2`.
 - CI runs Node 20; local is Node 22. Use only `node:test` / `node:assert/strict` APIs present in Node 20.
 - Quoted from `.claude/skills/skill-prose-conformance-tests/SKILL.md` (governs both new suites, since both pin `plugin/skills/**/*.md` prose):
@@ -22,12 +22,14 @@ Scope keywords: PR-body deliverables, Spec Compliance Check, Claims about the PR
   - "**When one region must state many facts, use a missing-facts predicate and prove each fact returns exactly itself.** Write the assertion as a predicate that returns the facts whose pattern no longer matches (`missingFactsOf(patterns)`), and assert it returns `[]` on the live region. Then, per pattern, strip only that pattern's match from the live text and assert the same predicate returns exactly `[fact]`."
   - "Keep the patterns non-global: a `/g` regex makes `replace` strip every occurrence, which hides the twice-matched phrase, and its `.test()` carries `lastIndex` from one call to the next."
   - "**A clause pinned to its row or paragraph owes a move-out control, not only a deletion.** Deleting the clause also turns a file-wide `includes` red, so it cannot show the check reads only its slice."
-- Surgical changes: the two Step 2 trims in Task 1 exist only to stay under the rail; touch no other line of `code-mode-steps.md`.
+- Surgical changes: the three Step 2 trims in Task 1 exist only to stay under the rail; touch no other line of `code-mode-steps.md`.
+- Plan review ruling (the user, Reading B): no PR, or a failed PR-body read, is `unverifiable` — never present, flagged as a partial gap, never a block. A body that was read and lacks the content is `missing`.
+- PR source, shared by both tasks: `pr.number` in `run-state.json` (a bundle's parent run dir), else the current branch's PR. With `gh` absent, read via `mcp__github__pull_request_read` and write via `mcp__github__update_pull_request` (`_shared/github-write-transport.md`).
 
 ## Review Focus
 
 1. Standalone `/claude-tweaks:review` with no run dir has no `run-state.json`: item 6 must still name a PR source (the current branch's PR). Task 1's fact list pins "or the current branch's PR".
-2. A PR-body read that fails, or no PR at all, must never count as the deliverable being present. Task 1 pins "no PR or a failed read is `missing`".
+2. A PR-body read that fails, or no PR at all, must never count as the deliverable being present, and must not block (plan-review ruling). Task 1 pins "no PR or a failed read is `unverifiable`, a partial gap, never present".
 3. A build edit to the PR body must not destroy the run markers (`[claude-tweaks-phases-start]` and so on) that later phases read. Task 2 pins "without touching its run markers".
 4. A spec that says "PR description" rather than "PR body" must trigger the check too. Task 1 pins "(or PR description)".
 5. The new item must sit inside Step 1, not anywhere in the file (AC2). Task 1's move-out control moves the item below Step 1's `### Gate:` and expects the fact list to go red.
@@ -57,10 +59,12 @@ const FACTS = [
   [/\*\*PR-body deliverables\*\*/, 'item heading'],
   [/names the PR body \(or PR description\)/, 'PR body or PR description triggers the check'],
   [/against the live body of the run's PR, never the codebase/, 'evidence is the live PR body, not the codebase'],
+  [/\(item 1 skips it\)/, 'item 6 replaces item 1 for these'],
   [/`gh pr view \{pr\} --json body`/, 'read command'],
-  [/`\{pr\}` from `run-state\.json`'s `pr\.number`, or the current branch's PR/, 'PR source, run and standalone'],
+  [/`mcp__github__pull_request_read` without `gh`/, 'gh-absent read'],
+  [/`\{pr\}` is `pr\.number` in `run-state\.json` \(a bundle's parent run dir\), else the current branch's PR/, 'PR source, run, bundle and standalone'],
   [/Mark it `missing` when the body lacks it, `partial` when it carries part/, 'missing / partial verdicts'],
-  [/no PR or a failed read is `missing`/, 'fails closed'],
+  [/no PR or a failed read is `unverifiable`, a partial gap, never present/, 'unreadable is unverifiable, not present, not a block'],
 ];
 ```
 
@@ -75,14 +79,20 @@ Tests:
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `node --test tests/review-pr-body-deliverables.test.js`
-Expected: FAIL — `Step 1 states every PR-body fact` reports all seven facts missing.
+Expected: FAIL — `Step 1 states every PR-body fact` reports all nine facts missing.
 
 - [ ] **Step 3: Edit `plugin/skills/review/code-mode-steps.md`**
 
 Insert this exact line as Step 1's new item 6, directly after item 5's last line (the line that reads ``   still read bare `--stamp-status`.``) and before the blank line that precedes `### Gate:`:
 
 ```
-6. **PR-body deliverables** — check a deliverable or criterion that names the PR body (or PR description) against the live body of the run's PR, never the codebase: `gh pr view {pr} --json body`, `{pr}` from `run-state.json`'s `pr.number`, or the current branch's PR. Mark it `missing` when the body lacks it, `partial` when it carries part; no PR or a failed read is `missing`.
+6. **PR-body deliverables** — check a deliverable or criterion that names the PR body (or PR description) against the live body of the run's PR, never the codebase (item 1 skips it): `gh pr view {pr} --json body`, or `mcp__github__pull_request_read` without `gh`; `{pr}` is `pr.number` in `run-state.json` (a bundle's parent run dir), else the current branch's PR. Mark it `missing` when the body lacks it, `partial` when it carries part; no PR or a failed read is `unverifiable`, a partial gap, never present.
+```
+
+Replace line 147 (the paragraph opening `Not to be confused with "Reusing a Prior Whole-Branch Review" below`) with exactly:
+
+```
+Not to be confused with "Reusing a Prior Whole-Branch Review" below, which governs citing an earlier spec's completed review: this check governs what is in the diff at all.
 ```
 
 Replace line 151 (the paragraph opening `The Merge-Provenance Check above fires only on`) with exactly:
@@ -103,7 +113,7 @@ Run: `node --test tests/review-pr-body-deliverables.test.js tests/review-current
 Expected: PASS, 0 failures.
 
 Run: `wc -c plugin/skills/review/code-mode-steps.md`
-Expected: `52333` (at or under 52500).
+Expected: `52325` (at or under 52500).
 
 Run: `grep -n -i "PR body" plugin/skills/review/code-mode-steps.md`
 Expected: one line, the Step 1 item 6 line.
@@ -118,6 +128,7 @@ git commit -m "Check PR-body deliverables against the live PR body at review Ste
 ### Task 2: Build makes a PR-body claim true before logging it
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/skills/build/architecture-alignment.md` (new section before `## Skip this step if`)
@@ -133,11 +144,14 @@ Region: `sectionOf(TEXT, '## Claims about the PR body')`. Fact list (non-global)
 
 ```js
 const FACTS = [
+  [/applies to every build decision line, not only this step's rows/, 'scope: every build decision line'],
   [/edit it into the body before logging the line/, 'edit before log'],
-  [/`gh pr view \{pr\} --json body -q \.body`/, 'read command'],
-  [/without touching its run markers/, 'run markers preserved'],
-  [/`gh pr edit \{pr\} --body-file \{file\}`/, 'write command'],
-  [/re-read it to confirm/, 'read back'],
+  [/`pr\.number` in `run-state\.json` \(a bundle's parent run dir\), else the current branch's PR/, 'PR source matches review Step 1'],
+  [/`gh pr view \{pr\} --json body -q \.body`, or `mcp__github__pull_request_read` without `gh`/, 'read command, both transports'],
+  [/append the content below the `<!-- fixes-end -->` marker without touching its run markers/, 'placement outside rewritten spans'],
+  [/`gh pr edit \{pr\} --body-file \{file\}`, or `mcp__github__update_pull_request`/, 'write command, both transports'],
+  [/re-read it to confirm your content is there/, 'read back'],
+  [/Bundle members share one PR, so if a concurrent edit dropped it, edit once more/, 'concurrent bundle writers'],
   [/log that the PR body does not carry it — never the claim/, 'failed edit logs the absence'],
 ];
 ```
@@ -158,7 +172,7 @@ Insert this exact section directly before the `## Skip this step if` heading, wi
 ```
 ## Claims about the PR body
 
-When a resolution or decision line would say the PR body carries something (a measured number, a named shortfall, a list left as-is), edit it into the body before logging the line: read the body (`gh pr view {pr} --json body -q .body`, `{pr}` from `run-state.json`'s `pr.number`), add the content without touching its run markers, write it back with `gh pr edit {pr} --body-file {file}`, and re-read it to confirm. If the edit cannot land (no PR, or `gh` fails), log that the PR body does not carry it — never the claim. #5297's build logged "PR body names them" while PR #5299's body never did.
+This applies to every build decision line, not only this step's rows. When a resolution or decision line would say the PR body carries something (a measured number, a named shortfall, a list left as-is), edit it into the body before logging the line. `{pr}` is found as review Step 1 finds it: `pr.number` in `run-state.json` (a bundle's parent run dir), else the current branch's PR. Read the body (`gh pr view {pr} --json body -q .body`, or `mcp__github__pull_request_read` without `gh`), append the content below the `<!-- fixes-end -->` marker without touching its run markers, write it back (`gh pr edit {pr} --body-file {file}`, or `mcp__github__update_pull_request`), and re-read it to confirm your content is there. Bundle members share one PR, so if a concurrent edit dropped it, edit once more. If the edit cannot land (no PR, or the write fails), log that the PR body does not carry it — never the claim. #5297's build logged "PR body names them" while PR #5299's body never did.
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
