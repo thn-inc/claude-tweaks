@@ -1009,7 +1009,9 @@ test('Gotcha: a run with CLAUDE_CODE_SESSION_ID unset drives normally, and every
   const cli = calls(h, 'node');
   assert.equal(cli.length, 11, 'claim, claim log, record-worktree, verify, check, compose-pr-body, record-pr, set-config, summary log, pr-checks --pr, pr-checks --run');
   for (const c of cli) {
-    assert.equal(c.env, env, c.args[0]);
+    // The verify.js child gets an allow-listed copy (#5267); every other CLI the driver's own env.
+    if (/verify\.js$/.test(c.args[0])) assert.deepEqual(c.env, env, c.args[0]);
+    else assert.equal(c.env, env, c.args[0]);
     assert.ok(!('CLAUDE_CODE_SESSION_ID' in c.env));
   }
 });
@@ -1796,6 +1798,26 @@ test('#5267: a scope file that differs from origin/{ref} stops before verify.js 
   assert.deepEqual(gitSub(diff), ['diff', '--quiet', 'origin/main', '--', '.claude-tweaks/verify-scope.json']);
 });
 
+test('#5267: a scope file the worker deleted (missing on disk, differs from origin) stops before verify.js', async () => {
+  const h = harness({ script: [scopeIs('missing'), scopeDiff(exitOne)] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status, final.stop.class], ['test', 'stop', 'pre-push']);
+  assert.match(final.stop.detail, /verify-scope\.json.*differs from origin\/main/);
+  assert.equal(verifyCalls(h).length, 0, 'no verify call');
+});
+
+test('#5267: the verify.js child gets only allow-listed variables, never the driver credentials', async () => {
+  const h = harness();
+  h.deps.env = { PATH: '/bin', HOME: '/home/u', GH_TOKEN: 'x', GITHUB_TOKEN: 'y', GH_HOST: 'h', AWS_SECRET_ACCESS_KEY: 'z' };
+  await run(['#7'], h.deps);
+  const [v] = verifyCalls(h);
+  assert.deepEqual(v.env, { PATH: '/bin', HOME: '/home/u' });
+  for (const name of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_HOST', 'AWS_SECRET_ACCESS_KEY']) assert.ok(!(name in v.env), name);
+  // The other steps keep the driver env: the claim call still sees GH_TOKEN.
+  assert.equal(calls(h, 'node', /claim-targets\.js$/)[0].env.GH_TOKEN, 'x');
+});
+
 test('#5267: an unchanged scope file, and an absent one, proceed to verify.js', async () => {
   for (const script of [[scopeIs('file')], []]) {
     const h = harness({ script });
@@ -1835,7 +1857,7 @@ test('check and verify run in the worktree, with deps.env and a generous bound o
   await run(['#7'], h.deps);
   assert.equal(verifyCalls(h)[0].cwd, WT);
   assert.equal(checkCalls(h)[0].cwd, WT);
-  assert.equal(verifyCalls(h)[0].env, env);
+  assert.deepEqual(verifyCalls(h)[0].env, env, 'an allow-listed copy of deps.env (#5267)');
   assert.equal(checkCalls(h)[0].env, env);
   assert.equal(verifyCalls(h)[0].timeout, VERIFY_TIMEOUT_MS);
   assert.ok(VERIFY_TIMEOUT_MS >= 30 * 60 * 1000);

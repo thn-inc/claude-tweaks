@@ -18,6 +18,14 @@
 //   - `extra` fields merge into the step's event line (never over its core fields).
 //   - A throw from fn is `{ status: 'fail', detail: err.message }` with the step's class.
 //
+// The test step runs worker-authored code (the worker's test files) through verify.js. Containment
+// (#5267): the verify.js child gets worker.js's allow-listed environment, not the driver's, and a
+// verify-scope.json that differs from origin/{ref} is refused before any command runs. That keeps
+// the driver's credential env vars (GH_TOKEN, GITHUB_TOKEN, and the rest) from the child, and a
+// worker-edited scope file from naming the commands verify.js executes. Residual risk: worker-written
+// test files still run with HOME reachable, so gh keychain or config auth under HOME and any file
+// the user can read stay reachable. There is no sandbox profile; the allow-list only removes env vars.
+//
 // Every external call goes through `deps`; nothing here reads process state.
 const path = require('node:path');
 const { STEP, STOP_CLASSES, neutralize, normalizeTitle } = require('./events');
@@ -26,6 +34,7 @@ const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { gateOriginRepo, resolveRepoTarget } = require('../repo-resolve');
 const { isTimeoutError } = require('../shared-primitives');
 const { fenceFor } = require('../markdown-blocks');
+const { buildEnv } = require('./worker');
 const { openBlockerRefs } = require('../issues/record-dependencies');
 const { sensitivePathsOf } = require('../express/policy');
 const { formatTimestamp } = require('../hooks/run-dir-resolve');
@@ -595,7 +604,7 @@ const testStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
   } else {
     return { status: 'stop', detail: `${scopeRel} is not a regular file (${state.type}); verify.js was not run` };
   }
-  const r = deps.node(binScript('verify.js'), args, { cwd: wt, timeout: VERIFY_TIMEOUT_MS, env: deps.env });
+  const r = deps.node(binScript('verify.js'), args, { cwd: wt, timeout: VERIFY_TIMEOUT_MS, env: buildEnv(deps.env, deps.platform) });
   // A null code is no exit at all (a timeout, a spawn error): the suite never gave a verdict.
   if (r.code === null || r.code === undefined) {
     return { status: 'fail', detail: `verify.js did not finish: ${neutralize(firstLine(r.stderr)) || 'no exit code'}` };
