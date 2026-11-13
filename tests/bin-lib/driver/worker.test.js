@@ -101,11 +101,86 @@ test('AC5: a non-zero exit with a result object is fail/exit', async (t) => {
 
 test('AC6: a result with permission denials stays ok, and the runner is called exactly once', async (t) => {
   const { runner, calls } = fakeRunner(okOut());
-  const env = await launchWorker(base(t), { runner });
+  const env = await launchWorker(base(t, { readPaths: [] }), { runner });
   assert.strictEqual(env.status, 'ok');
   assert.strictEqual(env.denials.length, 2);
   assert.strictEqual(calls.length, 1);
-  assert.strictEqual(calls[0].files['--settings'].text, JSON.stringify(implementerSettings({ testCommand: 'node --test', platform: 'darwin' }), null, 2));
+  assert.strictEqual(calls[0].files['--settings'].text, JSON.stringify(implementerSettings({ testCommand: 'node --test', platform: 'darwin', readPaths: [] }), null, 2));
+});
+
+test('AC4.1: with no readPaths the settings file\'s allowRead holds the derived toolchain root, and given readPaths are written exactly', async (t) => {
+  const looked = [];
+  const toolchain = { lookup: (name) => { looked.push(name); return name === 'node' ? '/h/.nvm/versions/node/v22/bin/node' : null; }, realpath: (p) => p, firstLine: () => '' };
+  const derived = fakeRunner(okOut());
+  await launchWorker(base(t), { runner: derived.runner, toolchain });
+  assert.deepStrictEqual(JSON.parse(derived.calls[0].files['--settings'].text).sandbox.filesystem.allowRead, ['/h/.nvm/versions/node/v22']);
+  assert.deepStrictEqual(looked, ['node']);
+  looked.length = 0;
+  const given = fakeRunner(okOut());
+  await launchWorker(base(t, { readPaths: ['/opt/a', '/opt/b'] }), { runner: given.runner, toolchain });
+  assert.deepStrictEqual(JSON.parse(given.calls[0].files['--settings'].text).sandbox.filesystem.allowRead, ['/opt/a', '/opt/b']);
+  assert.deepStrictEqual(looked, []);
+});
+
+test('AC5: neither the settings nor the argument list carry additionalDirectories or --add-dir', async (t) => {
+  const { runner, calls } = fakeRunner(okOut());
+  await launchWorker(base(t, { readPaths: ['/opt/a'] }), { runner });
+  assert.ok(!calls[0].files['--settings'].text.includes('additionalDirectories'));
+  assert.ok(!calls[0].args.includes('--add-dir'));
+});
+
+test('AC2.1: a bad readPaths is refused before anything is written', async (t) => {
+  for (const bad of [['rel'], '/opt/tool']) {
+    const { runner, calls } = fakeRunner(okOut());
+    const opts = base(t, { readPaths: bad });
+    await assert.rejects(launchWorker(opts, { runner }), TypeError, JSON.stringify(bad));
+    assert.strictEqual(calls.length, 0);
+    assert.deepStrictEqual(fs.readdirSync(opts.settingsDir), []);
+  }
+});
+
+test('a bad testCommand is refused with the testCommand TypeError before any lookup', async (t) => {
+  const looked = [];
+  const toolchain = { lookup: (name) => { looked.push(name); return null; }, realpath: (p) => p, firstLine: () => '' };
+  const { runner, calls } = fakeRunner(okOut());
+  const opts = base(t, { testCommand: undefined });
+  await assert.rejects(launchWorker(opts, { runner, toolchain }), (err) => err instanceof TypeError && /testCommand/.test(err.message));
+  assert.deepStrictEqual(looked, []);
+  assert.strictEqual(calls.length, 0);
+  assert.deepStrictEqual(fs.readdirSync(opts.settingsDir), []);
+});
+
+test('off the probed platforms nothing is derived', async (t) => {
+  // The derivation tolerates a throwing seam, so the probe records calls instead.
+  const looked = [];
+  const toolchain = { lookup: (name) => { looked.push(name); return null; }, realpath: (p) => p, firstLine: () => '' };
+  const { runner, calls } = fakeRunner(okOut());
+  const env = await launchWorker(base(t, { platform: 'linux' }), { runner, toolchain });
+  assert.strictEqual(env.status, 'ok');
+  assert.deepStrictEqual(looked, []);
+  assert.ok(!('sandbox' in JSON.parse(calls[0].files['--settings'].text)));
+});
+
+test('realToolchainDeps skips relative and empty PATH entries and finds an executable', { skip: process.platform === 'win32' && 'POSIX modes' }, (t) => {
+  const dir = tmp(t);
+  fs.writeFileSync(path.join(dir, 'tool'), '#!/usr/bin/env node\nrest', { mode: 0o755 });
+  fs.chmodSync(path.join(dir, 'tool'), 0o755);
+  fs.writeFileSync(path.join(dir, 'plain'), 'x', { mode: 0o644 });
+  fs.chmodSync(path.join(dir, 'plain'), 0o644);
+  // A relative entry that would resolve against the cwd must not be searched.
+  const rel = path.relative(process.cwd(), dir);
+  const deps = worker.realToolchainDeps({ PATH: ['', 'rel', rel, dir].join(':'), HOME: '/h' });
+  assert.strictEqual(deps.lookup('tool'), path.join(dir, 'tool'));
+  assert.strictEqual(deps.lookup('plain'), null);
+  assert.strictEqual(deps.lookup('missing'), null);
+  assert.strictEqual(deps.firstLine(path.join(dir, 'tool')), '#!/usr/bin/env node');
+  assert.strictEqual(deps.home, '/h');
+  fs.symlinkSync(dir, path.join(dir, 'link'));
+  assert.strictEqual(deps.realpath(path.join(dir, 'link')), fs.realpathSync.native(dir));
+  assert.throws(() => deps.realpath(path.join(dir, 'missing')), /cannot resolve/);
+  const only = worker.realToolchainDeps({ PATH: ['', rel].join(':') });
+  assert.strictEqual(only.lookup('tool'), null);
+  assert.strictEqual(worker.realToolchainDeps({}).lookup('tool'), null);
 });
 
 test('AC12: a launch off the sandbox-probed platforms carries no Bash tool and no Bash rule', async (t) => {
