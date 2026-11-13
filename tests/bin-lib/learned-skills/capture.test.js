@@ -153,6 +153,20 @@ test('a new file captured again is joined the same way', (t) => {
   assert.equal(status(f.repo, y), '');
 });
 
+// joinPlan's !cx.tracked branch: a new file captured once and then written differently cannot be
+// joined (the earlier patch creates the file), so this edit is staged on its own.
+test('a different edit to a captured new file is staged on its own, naming why', (t) => {
+  const f = fixture(t);
+  const y = '.claude/skills/y/SKILL.md';
+  write(f.repo, y, '# y\n\nbrand new\n');
+  capture(args(f, y));
+  write(f.repo, y, '# y\n\nsomething else entirely\n');
+  const res = capture(args(f, y, 'second finding'));
+  assert.equal(res.route, 'staged');
+  assert.equal(res.reason, 'capture failed: could not join the earlier captured patch (1) with this edit: the target is a new file');
+  assert.deepEqual(readManifest(f.runDir).map((e) => [e.id, e.status]), [['1', 'captured'], ['2', 'staged']]);
+});
+
 test('a failed re-capture of an edit the patch already holds is not staged beside it', (t) => {
   const f = fixture(t);
   const body = fs.readFileSync(path.join(f.repo, X), 'utf8');
@@ -417,6 +431,8 @@ test('a failed re-diff after a join leaves the earlier patch captured', (t) => {
   };
   const res = capture(args(f, X, 'second finding'), deps);
   assert.equal(res.route, 'staged');
+  // The join was undone and the tree holds this edit alone again (joinPlan's same(cx.start) branch).
+  assert.equal(res.reason, 'capture failed: could not join the earlier captured patch (1) with this edit: simulated re-diff failure');
   const manifest = readManifest(f.runDir);
   assert.equal(manifest[0].status, 'captured');
   assert.match(fs.readFileSync(first.patch, 'utf8'), /first edit near the top/);
