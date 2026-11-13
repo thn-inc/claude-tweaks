@@ -536,6 +536,26 @@ test('without the key the stale baseline worktree warning is still stderr line 1
   assert.match(res.stderr.split('\n')[0], /^verify\.js: a stale baseline scratch worktree is registered at /);
 });
 
+test('without the key the stale baseline warning precedes a --scope usage error and one from an unreadable declaration (#5369 AC4)', { skip: SKIP }, async () => {
+  const r = repoWith();
+  const { env } = fakeGhEnv('unpushed', '');
+  const staleParent = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-verify-base-')));
+  r.git('worktree', 'add', '--detach', path.join(staleParent, 'wt'), 'HEAD');
+  const base = ['--baseline', 'HEAD', '--baseline-cmd', 'tests=node -e 0 {file}'];
+  const stale = /^verify\.js: a stale baseline scratch worktree is registered at /;
+  const badCmd = await runCli([...SCOPE(r), ...base, '--cmd', 'nosuchsuite=node -e 0'], { cwd: r.repo, env });
+  assert.strictEqual(badCmd.code, 2, badCmd.stdout + badCmd.stderr);
+  assert.match(badCmd.stderr.split('\n')[0], stale);
+  assert.match(badCmd.stderr, /is not types, lint, or a declared suite/);
+  const missing = await runCli(['--scope', '.claude-tweaks/no-such.json', '--integration-branch', r.branch, ...base], { cwd: r.repo, env });
+  assert.strictEqual(missing.code, 2, missing.stdout + missing.stderr);
+  assert.match(missing.stderr.split('\n')[0], stale);
+  fs.writeFileSync(path.join(r.repo, 'bad.json'), '{"checks": 3}');
+  const invalid = await runCli(['--scope', 'bad.json', '--integration-branch', r.branch, ...base], { cwd: r.repo, env });
+  assert.strictEqual(invalid.code, 2, invalid.stdout + invalid.stderr);
+  assert.match(invalid.stderr.split('\n')[0], stale);
+});
+
 test('a dirty tree under the key exits 3 with dirty-tree and calls no gh (#5369)', { skip: SKIP }, async () => {
   const r = repoWith({ declExtra: KEY });
   const { env, calls } = fakeGhEnv('green', '');

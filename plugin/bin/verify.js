@@ -579,10 +579,12 @@ async function main() {
       selfPath: scopeSelfPath(resolvedScopePath, parsed.cwd || process.cwd()),
     });
     if (!read.ok) {
+      flushStaleWarnings();
       scopeUsageExit(read.errors.join('\n'));
       return;
     }
     if (read.missing) {
+      flushStaleWarnings();
       // #3017: a --scope path that still does not exist after resolving
       // against the checkout root is a usage error, not "no declaration" —
       // the prior silent full-run fallback is exactly how a cwd/typo
