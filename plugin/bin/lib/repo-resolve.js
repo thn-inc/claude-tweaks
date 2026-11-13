@@ -82,11 +82,24 @@ function repoResolutionNote(repoSpec) {
 // every such call went to the wrong host. ghOptions wraps a gh spawn's options
 // object; every key of `deps` is optional and defaults to the real thing.
 const ghHostSpecs = new Map(); // path.resolve(cwd) -> { host, owner, repo } | null
+// #5374: an injected deps.env is an input to the lookup (the origin read and the gh config dir),
+// so a call that injects one memoizes per env object, and a second in-process call for the same
+// cwd with a different env never gets the first env's answer. One env object (a process's own
+// process.env) keeps the per-cwd memo.
+let ghHostSpecsByEnv = new WeakMap(); // deps.env -> Map(path.resolve(cwd) -> spec)
 const notedGhHosts = new Set(); // hosts whose repoResolutionNote this process printed
 let explicitRepoHost = null; // the host pinExplicitRepoHost recorded for this process's explicit --repo (#4795)
 
+function ghHostSpecMemo(env) {
+  if (!env || typeof env !== 'object') return ghHostSpecs;
+  let memo = ghHostSpecsByEnv.get(env);
+  if (!memo) { memo = new Map(); ghHostSpecsByEnv.set(env, memo); }
+  return memo;
+}
+
 function _resetGhHostCache() {
   ghHostSpecs.clear();
+  ghHostSpecsByEnv = new WeakMap();
   notedGhHosts.clear();
   explicitRepoHost = null;
 }
@@ -199,10 +212,8 @@ function originSpecOf(remote) {
 // is looked up from; absent, the inherited one.
 function resolveGhSpec(cwd, deps = {}) {
   const key = path.resolve(cwd);
-  // The memo is keyed by cwd alone, but the answer also depends on an injected env (origin read,
-  // gh config dir) and homedir, so a call that injects either neither reads nor writes it.
-  const useMemo = !deps.env && !deps.homedir;
-  if (useMemo && ghHostSpecs.has(key)) return ghHostSpecs.get(key);
+  const memo = ghHostSpecMemo(deps.env);
+  if (memo.has(key)) return memo.get(key);
   let spec = null;
   try {
     const url = deps.remoteUrl ? deps.remoteUrl(key) : originUrl(key, deps.env);
@@ -226,7 +237,7 @@ function resolveGhSpec(cwd, deps = {}) {
       return null;
     }
   }
-  if (useMemo) ghHostSpecs.set(key, spec);
+  memo.set(key, spec);
   return spec;
 }
 
