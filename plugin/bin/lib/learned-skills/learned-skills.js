@@ -504,12 +504,18 @@ function capture({ runDir, worktree, mergeBase, target, summary, row = DEFAULT_R
 // The earlier capture was reverted, so this edit sits on HEAD alone. Put the earlier patch back on
 // top, so one patch holds the file's whole change. When that cannot be done, this edit is staged
 // on its own ('separate') and the earlier one stays captured, untouched.
+// A tree the earlier patch reverse-applies to already holds the earlier edit (a re-run pass proposed
+// it again): this diff is then the whole change and replaces the patch ('whole'), never staged beside it.
 function joinPlan(cx) {
   const { deps, git, existing } = cx;
   const separate = (why) => ({
     mode: 'separate', C: cx.D, full: cx.start,
     reason: `could not join the earlier captured patch (${existing.id}) with this edit: ${why}`,
   });
+  try {
+    git(['apply', '--check', '-R', '--', existing.patch]);
+    return { mode: 'join', whole: true, C: cx.D, full: cx.start };
+  } catch { /* the tree does not hold the earlier edit: join as usual */ }
   if (!cx.tracked) return separate('the target is a new file');
   try { git(['apply', '--', existing.patch]); } catch (err) { return separate(firstStderrLine(err)); }
   let full = null;
@@ -536,6 +542,7 @@ function joinPlan(cx) {
     if (full !== null && same(full)) {
       return { mode: 'stuck', reason: `could not read the joined diff (${why}) and could not undo the join` };
     }
+    // The tree's unknown bytes are not copied: apply and apply -R are atomic, so both edits are already held (this one in D, the earlier in its patch), and a copy would schedule the earlier edit twice.
     return separate(`${why}; the join was ${undone ? '' : 'not '}undone, and the working tree holds neither this edit alone nor both edits`);
   }
 }
@@ -659,7 +666,7 @@ function fallback(cx, plan, L, failure) {
     }
     if (lHolds()) {
       if (st) removeQuiet(deps, st.stagePath);
-      const tail = lExact() ? earlier
+      const tail = lExact() && !plan.whole ? earlier
         : `; it holds this edit together with the earlier captured patch ${existing.id} (${existing.patch}), which stays captured, so the earlier edit is in both`;
       throw new StagingFailure(`${head}; restoring the edit in the working tree failed too — it is not in the tree; recover it from ${L}${tail}`, { restored: false, holder: L });
     }
@@ -673,6 +680,10 @@ function fallback(cx, plan, L, failure) {
     throw new StagingFailure(`${head}; ${left}`, { restored: false, holder: null });
   };
   let wasReset = false;
+
+  // A whole-change join's diff also holds the earlier captured edit, which stays captured: staging it
+  // would schedule the earlier edit twice. The tree keeps both, for the run branch (land supersedes).
+  if (plan.whole) return settle('this diff also holds the earlier captured patch, so it is not staged on its own');
 
   // 1. Before the tree is reset, a copy outside it must be confirmed: L, or the staged file itself.
   if (!L) {

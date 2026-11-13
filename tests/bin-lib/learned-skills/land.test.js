@@ -651,7 +651,7 @@ test('a join that rewrites a pushed entry\'s patch under the same id is not matc
     if (p.endsWith('manifest.json')) throw new Error('disk full');
     return realDeps.writeFile(p, data);
   };
-  assert.throws(() => land(landArgs(f), lossy.deps), /disk full/);
+  assert.equal(land(landArgs(f), lossy.deps).manifestFailed, true);
   const tip1 = remoteBranch(f);
   assert.equal(readManifest(f.runDir)[0].status, 'captured');
   // A second edit on X joins into entry 1 and rewrites 1.patch under the same id.
@@ -669,6 +669,37 @@ test('a join that rewrites a pushed entry\'s patch under the same id is not matc
   const ids = again.gitCalls.filter((c) => c.args.includes('patch-id'));
   assert.equal(ids.length, 2, 'the commit diff and the patch file are each normalised');
   for (const c of ids) assert.deepEqual(c.args.slice(2), ['patch-id', '--stable']);
+});
+
+// M2 (final review): the manifest write after a push and a PR create used to throw, the CLI exited 1
+// with no JSON, and the prose's fallback `stage` staged entries already on the open PR.
+test('a manifest write that fails after the PR opened still reports what landed, exit 0, and a re-land logs nothing twice', (t) => {
+  const f = fixture(t);
+  const gh = fakeGh();
+  const lossy = deps(gh.gh);
+  lossy.deps.writeFile = (p, data) => {
+    if (p.endsWith('manifest.json')) throw new Error('disk full');
+    return realDeps.writeFile(p, data);
+  };
+  const out = [];
+  const io = { stdout: (s) => out.push(s), stderr: () => {}, mainRoot: f.repo, lib: lossy.deps };
+  const code = cli.run(['land', '--run', f.runDir, '--worktree', f.repo, '--record', '5290', '--integration-branch', 'main', '--merge-base', f.mergeBase], io);
+  assert.equal(code, 0, 'the edits are on the PR: nothing for the caller to stage');
+  const res = JSON.parse(out.join(''));
+  assert.equal(res.manifestFailed, true);
+  assert.equal(res.landed.length, 2);
+  assert.equal(res.pr.number, 77);
+  assert.deepEqual(res.staged, []);
+  assert.deepEqual(readManifest(f.runDir).map((m) => m.status), ['captured', 'captured'], 'the write did not land');
+  const autoLines = () => decisions(f).split('\n').filter((l) => l.startsWith('- AUTO'));
+  assert.equal(autoLines().length, 2, 'the AUTO lines were still written');
+
+  // The recovery: land again once the manifest is writable. It reuses the pushed commits.
+  const again = land(landArgs(f), deps(gh.gh).deps);
+  assert.deepEqual(again.landed.map((l) => l.commit).sort(), res.landed.map((l) => l.commit).sort());
+  assert.equal(again.manifestFailed, undefined);
+  assert.deepEqual(readManifest(f.runDir).map((m) => m.status), ['landed', 'landed']);
+  assert.equal(autoLines().length, 2, 'no AUTO line is written twice');
 });
 
 test('an entry is not superseded when the run branch never changed its target after the merge base', (t) => {

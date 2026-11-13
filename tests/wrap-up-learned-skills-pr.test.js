@@ -58,6 +58,10 @@ const PROC_FACTS = [
   [/Every finding a landed entry carries, each `shared: true` one included, gets its own AUTO line under its own row and summary, all naming that entry's one commit, and the PR body lists every finding's summary/, 'one AUTO line per finding of a landed entry (I1)'],
   [/Match each finding to the output by the `id` its `capture` printed\. Findings that shared one capture share one entry, so they share its commit/, 'the payload rewrite maps by capture id (I1)'],
   [/On `manifestFailed: true` that record could not be written, so `land` logs no AUTO line for this finding: hand-log one/, 'a capture manifestFailed finding is hand-logged (I1)'],
+  // Final-review M2: a manifest write failure after the PR opened is reported, never staged.
+  [/A top-level `manifestFailed: true` from `land` \(exit 0\) means the manifest write after the push and the PR failed\. Every `landed\[\]` entry is on the PR/, 'land manifestFailed: the entries are on the PR (M2)'],
+  [/hand-log the AUTO lines only when `logFailed` is set too, and do not call `stage`, which would stage edits the PR already carries/, 'land manifestFailed: hand-log on logFailed, never stage (M2)'],
+  [/re-run the same `land` call once the run dir is writable: it reuses the pushed commits, records them, and writes no AUTO line twice/, 'land manifestFailed: the recovery re-land (M2)'],
   // Final-review I2: the mechanical backstops for a captured patch never landed or staged.
   [/`record` refuses an applied `skills`-row finding with no `commit` \(exit 1\)/, 'record refuses a commit-less applied skills finding (I2)'],
   [/`learned-skills-delivered` row fails while the manifest still holds a `captured` entry, naming each patch file, and that fail blocks the verdict/, 'verify\'s learned-skills-delivered backstop (I2)'],

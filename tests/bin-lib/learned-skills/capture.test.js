@@ -107,6 +107,74 @@ test('a shared capture whose manifest write fails says so and keeps the patch', 
   assert.equal(readManifest(f.runDir)[0].findings.length, 1);
 });
 
+// M1 (final review): a re-run pass re-proposes an edit already captured. The tree then holds the
+// earlier edit, so the join's `git apply` of the earlier patch fails; before the fix this edit was
+// staged beside the captured one and delivered twice.
+const stagedFiles = (f) => (fs.existsSync(path.join(f.runDir, 'staged')) ? fs.readdirSync(path.join(f.runDir, 'staged')) : []);
+
+test('the same edit captured again replaces the patch as a shared join and stages nothing', (t) => {
+  const f = fixture(t);
+  const body = fs.readFileSync(path.join(f.repo, X), 'utf8');
+  write(f.repo, X, BOTTOM(body));
+  const first = capture(args(f, X, 'first finding'));
+  const earlier = fs.readFileSync(first.patch);
+  write(f.repo, X, BOTTOM(body));
+  const again = capture(args(f, X, 'first finding'));
+  assert.deepEqual(again, { route: 'captured', id: '1', patch: first.patch, shared: true });
+  assert.ok(fs.readFileSync(first.patch).equals(earlier), 'the patch holds the one edit');
+  assert.deepEqual(readManifest(f.runDir).map((e) => [e.id, e.status]), [['1', 'captured']]);
+  assert.deepEqual(stagedFiles(f), []);
+  assert.equal(status(f.repo, X), '');
+
+  // The earlier edit plus a new one: the new diff is the whole change.
+  write(f.repo, X, TOP(BOTTOM(body)));
+  const more = capture(args(f, X, 'second finding'));
+  assert.equal(more.shared, true);
+  const patch = fs.readFileSync(first.patch, 'utf8');
+  assert.match(patch, /first edit near the top/);
+  assert.match(patch, /second edit at the bottom/);
+  sh(f.repo, ['apply', '--check', first.patch]);
+  assert.deepEqual(readManifest(f.runDir).map((e) => [e.id, e.status]), [['1', 'captured']]);
+  assert.equal(readManifest(f.runDir)[0].findings.length, 2);
+  assert.deepEqual(stagedFiles(f), []);
+  assert.equal(fs.readFileSync(path.join(f.repo, X), 'utf8'), body);
+});
+
+test('a new file captured again is joined the same way', (t) => {
+  const f = fixture(t);
+  const y = '.claude/skills/y/SKILL.md';
+  write(f.repo, y, '# y\n\nbrand new\n');
+  const first = capture(args(f, y));
+  write(f.repo, y, '# y\n\nbrand new\n');
+  const again = capture(args(f, y));
+  assert.deepEqual(again, { route: 'captured', id: '1', patch: first.patch, shared: true });
+  assert.deepEqual(stagedFiles(f), []);
+  assert.equal(fs.existsSync(path.join(f.repo, y)), false);
+  assert.equal(status(f.repo, y), '');
+});
+
+test('a failed re-capture of an edit the patch already holds is not staged beside it', (t) => {
+  const f = fixture(t);
+  const body = fs.readFileSync(path.join(f.repo, X), 'utf8');
+  write(f.repo, X, BOTTOM(body));
+  const first = capture(args(f, X, 'first finding'));
+  const earlier = fs.readFileSync(first.patch);
+  write(f.repo, X, TOP(BOTTOM(body)));
+  const noCheckout = (a, o) => {
+    if (a.includes('checkout')) throw new Error('simulated checkout failure');
+    return realDeps.git(a, o);
+  };
+  let caught;
+  try { capture(args(f, X, 'second finding'), { ...baseDeps, git: noCheckout }); } catch (e) { caught = e; }
+  assert.ok(caught && caught.name === 'Error' && caught.holder === 'tree' && caught.restored === true, `staging this diff would schedule the earlier edit twice (${caught && caught.message})`);
+  assert.equal(caught.holder, 'tree');
+  assert.match(caught.message, /still in the working tree/);
+  assert.equal(fs.readFileSync(path.join(f.repo, X), 'utf8'), TOP(BOTTOM(body)), 'the tree keeps both edits, to commit on the run branch');
+  assert.deepEqual(stagedFiles(f), []);
+  assert.deepEqual(readManifest(f.runDir).map((e) => [e.id, e.status]), [['1', 'captured']]);
+  assert.ok(fs.readFileSync(first.patch).equals(earlier));
+});
+
 test('CLI capture passes --row through', (t) => {
   const f = fixture(t);
   write(f.repo, X, fs.readFileSync(path.join(f.repo, X), 'utf8') + 'cli edit\n');
@@ -720,7 +788,7 @@ test('a join whose tree reads back as neither expected state says so, not that i
   const r = joinedReDiffFails(t, ({ f, first }) => ({
     git: (a, o) => {
       // The undo of the join "succeeds" but leaves something else in the file.
-      if (a.includes('apply') && a.includes('-R') && a[a.length - 1] === first.patch) {
+      if (a.includes('apply') && a.includes('-R') && !a.includes('--check') && a[a.length - 1] === first.patch) {
         write(f.repo, X, '# x\n\nsomething else\n');
         return '';
       }

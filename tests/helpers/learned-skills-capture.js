@@ -281,7 +281,9 @@ function faultyDeps(s, faults, fired) {
       if (a.includes('checkout') && has('checkout')) throw boom('checkout');
       if (a.includes('rm') && a.includes('--cached') && has('rm-cached')) throw boom('rm-cached');
       if (a.includes('apply')) {
-        if (a.includes('--check')) {
+        // joinPlan's `apply --check -R` probe (does the tree already hold the earlier edit?) is not
+        // the gate: it takes the reverse-apply fault, which makes it fail and the join run as usual.
+        if (a.includes('--check') && !a.includes('-R')) {
           if (has('gate')) throw boom('gate');
           if (++checks === 1 && has('gate-once')) throw boom('gate-once');
         }

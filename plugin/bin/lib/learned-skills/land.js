@@ -405,8 +405,17 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
       }
     }
     out.pr = prRef;
-    const result = finish();
-    try { deps.appendEntries({ runDir, items }); } catch { result.logFailed = true; }
+    // The edits are on the PR by now, so a failed manifest write is reported, never thrown: a throw
+    // reads as "nothing landed" and the caller would stage edits the PR already carries. A later land
+    // reuses the verified commits and records them.
+    let result;
+    try { result = finish(); } catch { result = out; result.manifestFailed = true; }
+    // A re-land of the same commits (that recovery) writes no AUTO line an earlier call already wrote.
+    const sansTime = (line) => String(line).replace(/^- AUTO \d\d:\d\d:\d\d /, '');
+    let logged = new Set();
+    try { logged = new Set(String(deps.readFile(path.join(runDir, 'decisions.md'))).split(/\r?\n/).map(sansTime)); } catch { /* no log yet */ }
+    const unlogged = items.filter((i) => !logged.has(sansTime(i.entry)));
+    if (unlogged.length) { try { deps.appendEntries({ runDir, items: unlogged }); } catch { result.logFailed = true; } }
     return result;
   } finally {
     try { if (deps.lstatType(indexFile).type !== 'missing') deps.unlink(indexFile); } catch { /* best effort */ }
