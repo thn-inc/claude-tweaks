@@ -6,6 +6,7 @@ files:
   - plugin/bin/lib/hooks/pre-tool-use.js
   - plugin/hooks/hooks.json
   - plugin/skills/dispatch/SKILL.md
+  - plugin/skills/dispatch/reporting.md
   - plugin/skills/dispatch/task-prompt.md
   - plugin/skills/dispatch/two-call-gate.md
 ---
