@@ -116,8 +116,7 @@
 // under Intel Homebrew (`etc/`, `var/`). The driver's `npm test` derives narrow roots
 // under nvm, Homebrew, fnm and the official installer: under nvm on the probe host it
 // derives the one root `~/.nvm/versions/node/v22.23.2`, since npm's package directory
-// lies inside it and is dropped as covered. Narrowing the rule is tracked as a
-// follow-up record.
+// lies inside it and is dropped as covered. Narrowing the rule is tracked in #5320.
 //
 // The read block, and what it rests on. Probed on Claude Code CLI 2.1.322, macOS,
 // 2026-11-12, under a subscription login with no TTY, using a test file the worker
