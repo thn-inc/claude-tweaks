@@ -70,18 +70,28 @@ test('#5269 AC2: a closing keyword before a reference loses both', () => {
   assert.equal(neutralize('closes#5 x'), 'x');
   assert.equal(neutralize('Fixes\n#5 x'), 'x');
   assert.equal(neutralize('Fix #abc'), 'Fix #abc');
-  assert.equal(neutralize('Closes (#4) now'), 'Closes () now');
-  // URL forms GitHub autolinks without a plain `https://` after a word boundary.
-  assert.equal(neutralize('Closes _https://github.com/o/r/issues/5_'), '_');
-  assert.equal(neutralize('Closes www.github.com/o/r/issues/5 now'), 'now');
-  assert.equal(neutralize('Closes github.com/o/r/issues/5 now'), 'now');
+  // GitHub links `closes (#N)`, so the keyword goes with the reference.
+  assert.equal(neutralize('Closes (#4) now'), '() now');
+  // The keyword goes when the token after it carries a reference marker, whatever the URL form;
+  // the scheme boundary rewinds over letters only, so `_https://…` and `1https://…` are removed.
+  assert.equal(neutralize('Closes _https://github.com/o/r/issues/5_'), '__');
+  assert.equal(neutralize('Closes 1https://ghe.co/o/r/issues/5 now'), '1 now');
+  assert.equal(neutralize('Closes xhttps://github.com/o/r/issues/5 now'), 'xhttps://github.com/o/r/issues/5 now');
+  // Non-scheme URL forms stay as backlinks, as on base, but their keyword is gone.
+  assert.equal(neutralize('Closes www.github.com/o/r/issues/5 now'), 'www.github.com/o/r/issues/5 now');
+  assert.equal(neutralize('Closes github.com/o/r/issues/5 now'), 'github.com/o/r/issues/5 now');
+  assert.equal(neutralize('Closes www.ghe.example.com/o/r/issues/5 now'), 'www.ghe.example.com/o/r/issues/5 now');
+  // Documented consequence of the token rule: a keyword before any `word#N` token goes too.
+  assert.equal(neutralize('Fix foo#1 bar'), 'foo bar');
+  // A keyword that is a whole path segment stays, so the URL still matches and goes.
+  assert.equal(neutralize('x https://github.com/o/fix/issues/5 y'), 'x y');
 });
 
 test('#5269 AC2: a reference rebuilt by a removal is removed too', () => {
-  // The rebuilt URL is removed; the keyword before it may stay, because nothing is left to close.
-  assert.equal(neutralize('Add the loop, Closes h#7ttps://github.com/o/r/issues/5 now'), 'Add the loop, Closes https:// now');
-  assert.equal(neutralize('Add Closes h#7ttps://github.com/o/r/pull/5 now'), 'Add Closes https:// now');
-  assert.equal(neutralize('Clo#5ses h#7ttps://github.com/o/r/issues/5 now'), 'Closes https:// now');
+  assert.equal(neutralize('Add the loop, Closes h#7ttps://github.com/o/r/issues/5 now'), 'Add the loop, now');
+  assert.equal(neutralize('Add Closes h#7ttps://github.com/o/r/issues/5 now'), 'Add now');
+  assert.equal(neutralize('Add Closes h#7ttps://github.com/o/r/pull/5 now'), 'Add now');
+  assert.equal(neutralize('Clo#5ses h#7ttps://github.com/o/r/issues/5 now'), 'now');
   assert.equal(neutralize('Add Closes h#7ttps://g/o/r/issues/5 now'), 'Add now');
   // Back-to-back qualified references both go.
   assert.equal(neutralize('a/b#1x/y#2'), '');
@@ -90,6 +100,7 @@ test('#5269 AC2: a reference rebuilt by a removal is removed too', () => {
   const leftover = new RegExp(`\\b${CLOSING_KEYWORD_ALTERNATION}\\s*:?\\s*(?:#\\d|\\S*\\/\\S*#\\d|\\S*github\\.com\\/)`, 'i');
   for (const s of [
     'Add the loop, Closes h#7ttps://github.com/o/r/issues/5 now',
+    'Add Closes h#7ttps://github.com/o/r/issues/5 now',
     'Add Closes h#7ttps://github.com/o/r/pull/5 now',
     'Clo#5ses h#7ttps://github.com/o/r/issues/5 now',
     'Add Closes h#7ttps://g/o/r/issues/5 now',
@@ -119,7 +130,10 @@ test('#5269 AC3: no keyword is ever left followed by a reference, in any case or
         for (const sep of separators) {
           const out = neutralize(`Add ${cased}${sep}${ref} now`);
           assert.doesNotMatch(out, leftover, JSON.stringify([cased, sep, ref, out]));
-          assert.equal(out, 'Add now', JSON.stringify([cased, sep, ref]));
+          // The keyword always goes; the reference goes with it unless it is a URL form that stays a
+          // backlink (`www.`/bare `github.com`), and `_https://…` leaves its `_`.
+          const expected = /^(?:www\.|github\.com)/.test(ref) ? `Add ${ref} now` : ref.startsWith('_') ? 'Add _ now' : 'Add now';
+          assert.equal(out, expected, JSON.stringify([cased, sep, ref]));
         }
       }
     }

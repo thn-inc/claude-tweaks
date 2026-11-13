@@ -27,7 +27,18 @@
 //     the whole text (k=4000 ~3.2s, k=9000 ~12.2s); a single space per in-loop removal ends it.
 //   - a keyword in a long non-space run (`a.fix:https://g/o/r/issues/1/`*8000): the keyword
 //     lookahead embedded URL_REF's greedy tail and scanned to the run's end from every keyword
-//     (232k chars ~1.0s pre-fix, 0.3ms on the base code); it now embeds only the URL head.
+//     (232k chars ~1.0s pre-fix, 0.3ms on the base code). The lookahead is gone: the keyword is now
+//     decided in code from the token after it (markers collected once, forward-only pointers), so
+//     this case also guards a whitespace search restarted per keyword.
+//   - `www.` runs, `_www.` runs, `www.g/o/r/issues/5` chains and `fix:www.` / `fix:` runs: the
+//     `www\.[^\s/]+` URL alternative was quadratic (40k chars 1.0-1.5s, 200k 145s), also through the
+//     keyword lookahead (`fix:www.` x25k, 75s); those alternatives and the lookahead are gone.
+//   - back-to-back scheme URLs (`https://g/o/r/issues/5`*9000): with a `(?<![A-Za-z0-9])` boundary
+//     each URL follows a digit and was refused until the previous removal left a space, peeling one
+//     URL per loop pass (200k chars ~10.5s); the boundary is now letters-only.
+// Dropped as no longer testing anything: the widened-host case (`www.` + 200k `a`, `_https://` +
+// 200k `a`, `github.com/` + `a/`*100k) belonged to the `www.`/`github.com` URL alternatives, which
+// no longer exist.
 //   - `h#1`*5k collapsing to `h`*5k: only a time budget for many bare-reference removals; it
 //     catches none of the mutants above and has no pre-fix time.
 // Lives outside tests/ for the same reason the other perf/ files do: a wall-clock assertion flakes
@@ -47,19 +58,19 @@ function timed(input) {
 test('neutralize: a keyword followed by a long whitespace run and no reference stays linear', () => {
   const { value, elapsed } = timed(`fix${' '.repeat(100000)}x`);
   assert.ok(value === 'fix x', `verdict changed (length ${value.length})`);
-  assert.ok(elapsed < 500, `took ${elapsed.toFixed(0)}ms — the keyword lookahead must not backtrack over the whitespace run`);
+  assert.ok(elapsed < 500, `took ${elapsed.toFixed(0)}ms — the keyword match must not backtrack over the whitespace run`);
 });
 
 test('neutralize: a keyword, a long whitespace run, a colon and a reference stays linear', () => {
   const { value, elapsed } = timed(`Fixes${' '.repeat(100000)}:${' '.repeat(10)}#12`);
   assert.ok(value === '', `verdict changed (length ${value.length})`);
-  assert.ok(elapsed < 500, `took ${elapsed.toFixed(0)}ms — the keyword lookahead must not backtrack over the whitespace run`);
+  assert.ok(elapsed < 500, `took ${elapsed.toFixed(0)}ms — the keyword match must not backtrack over the whitespace run`);
 });
 
 test('neutralize: many fragments that each need a second removal pass stay linear', () => {
   const fragment = 'Add Closes h#7ttps://github.com/o/r/issues/5 now ';
   const { value, elapsed } = timed(fragment.repeat(2000));
-  const expected = 'Add Closes https:// now '.repeat(2000).trim();
+  const expected = 'Add now '.repeat(2000).trim();
   assert.ok(value === expected, `verdict changed (length ${value.length})`);
   assert.ok(elapsed < 1000, `took ${elapsed.toFixed(0)}ms — the fixed-point loop must not rescan per fragment`);
 });
@@ -116,13 +127,26 @@ test('neutralize: deeply nested splices settle without a pass per layer', () => 
 test('neutralize: keywords inside one long non-space run stay linear', () => {
   const { value, elapsed } = timed('a.fix:https://g/o/r/issues/1/'.repeat(8000));
   assert.ok(value === 'a.', `verdict changed (length ${value.length})`);
-  assert.ok(elapsed < 500, `took ${elapsed.toFixed(0)}ms — the keyword lookahead must not scan the URL tail`);
+  assert.ok(elapsed < 500, `took ${elapsed.toFixed(0)}ms — the end of the keyword's token must be found once, not per keyword`);
 });
 
-test('neutralize: the widened URL hosts stay linear on long non-matching runs', () => {
-  for (const input of [`www.${'a'.repeat(200000)}`, `_https://${'a'.repeat(200000)}`, `github.com/${'a/'.repeat(100000)}`]) {
+test('neutralize: www. and keyword runs that match nothing stay linear and unchanged', () => {
+  const shapes = {
+    'www.': 'www.'.repeat(50000),
+    '_www.': '_www.'.repeat(40000),
+    'www.g/o/r/issues/5': 'www.g/o/r/issues/5'.repeat(11000),
+    'fix:www.': 'fix:www.'.repeat(25000),
+    'fix:': 'fix:'.repeat(50000),
+  };
+  for (const [name, input] of Object.entries(shapes)) {
     const { value, elapsed } = timed(input);
-    assert.ok(value === input, `verdict changed (length ${value.length})`);
-    assert.ok(elapsed < 500, `took ${elapsed.toFixed(0)}ms on ${input.slice(0, 12)}`);
+    assert.ok(value === input, `verdict changed on ${name} (length ${value.length})`);
+    assert.ok(elapsed < 1000, `took ${elapsed.toFixed(0)}ms on ${name}`);
   }
+});
+
+test('neutralize: back-to-back scheme URLs are all removed without a loop pass each', () => {
+  const { value, elapsed } = timed('https://g/o/r/issues/5'.repeat(9000));
+  assert.ok(value === '', `verdict changed (length ${value.length})`);
+  assert.ok(elapsed < 500, `took ${elapsed.toFixed(0)}ms — the URL boundary must admit a digit before the scheme`);
 });

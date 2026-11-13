@@ -63,40 +63,67 @@ function outcomeFor(stopClass) {
 // `(?<=#\d+)` scan-back from running at every digit of a long digit run.
 const QUALIFIED_REF = /(?:(?<![A-Za-z0-9_.-])|(?!\d)(?<=#\d+))[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#\d+/g;
 const BARE_REF = /#\d+/g;
-// An issue or PR URL, with any tail (`/files`, `#issuecomment-…`): it backlinks like `#N`. The host
-// is a scheme URL on any host, `www.…`, or bare `github.com` (GitHub autolinks all three); the left
-// boundary is any non-alphanumeric, so `_https://…_` is caught too. Over-removal is the safe side.
-// The keyword pass runs first and removes a keyword only when a reference starts right after it, so
-// it never cuts into a URL path. The tail stops before trailing punctuation (`)`, `.`, `,` …), which
-// belongs to the sentence. The keyword lookahead embeds only the head: it matches exactly when the
-// whole URL_REF would, without scanning the optional greedy tail from every keyword.
-const URL_HEAD = String.raw`(?<![A-Za-z0-9])(?:https?:\/\/[^\s/]+|www\.[^\s/]+|github\.com)\/[^\s/]+\/[^\s/]+\/(?:issues|pull)\/\d+`;
-const URL_TAIL = String.raw`(?:[/#?]\S*[^\s)\].,;:!?'">])?`;
-const URL_REF = new RegExp(URL_HEAD + URL_TAIL, 'gi');
-// A closing keyword (and an optional colon, and any `_` emphasis markers) only where a reference
-// starts right after it; the lookahead leaves the reference for its own pass. A keyword with no reference is plain prose.
-const KEYWORD_BEFORE_REF = new RegExp(
-  '\\b' + CLOSING_KEYWORD_ALTERNATION + '\\b(?:\\s*:)?\\s*_*(?='
-  + [URL_HEAD, QUALIFIED_REF.source, BARE_REF.source].join('|') + ')',
-  'gi',
-);
+// An issue or PR URL on any host, with any tail (`/files`, `#issuecomment-…`): it backlinks like
+// `#N`. The left boundary rewinds over letters only, as GitHub's autolinker does: `1https://…` and
+// `_https://…` link and are removed, `xhttps://…` does not link and stays. The tail stops before
+// trailing punctuation (`)`, `.`, `,` …), which belongs to the sentence. Other URL forms
+// (`www.…`, bare `github.com/…`) are not removed here; their closing keyword still is, below.
+const URL_REF = /(?<![A-Za-z])https?:\/\/[^\s/]+\/[^\s/]+\/[^\s/]+\/(?:issues|pull)\/\d+(?:[/#?]\S*[^\s)\].,;:!?'">])?/gi;
 const GH_REF = /\bGH-\d+\b/gi;
 // An HTML comment opener hides the rest of a rendered body; `<\!--` renders as the text `<!--`.
 const COMMENT_OPENER = /<!--/g;
 
+// A closing keyword (and an optional colon) is removed when the whitespace-delimited token that
+// starts right after it carries a reference marker: `#N`, or an `/issues/N` or `/pull/N` path. That
+// is a superset of "a reference follows", and it does not depend on the reference grammar modelling
+// every way GitHub autolinks one (`Closes (#4)`, `Fix foo#1` lose the keyword too: the safe side).
+// A keyword that is a whole path segment (`/fix/`) stays, since removing it would empty the segment
+// and stop URL_REF matching. The decision is made in code, linearly: the markers are collected once,
+// and the marker pointer and the end of the current token only ever move forward, so each keyword
+// costs O(1) amortized (a lookahead regex, or a fresh whitespace search per keyword, rescans a long
+// non-space run from every keyword).
+const KEYWORD = new RegExp('\\b(' + CLOSING_KEYWORD_ALTERNATION + ')\\b(?:\\s*:)?\\s*', 'gi');
+const REF_MARKER = /#\d|\/(?:issues|pull)\/\d/gi;
+const WHITESPACE = /\s/g;
+function removeKeywordsBeforeReferences(text, replacement) {
+  const markers = [];
+  for (const m of text.matchAll(REF_MARKER)) markers.push(m.index);
+  if (markers.length === 0) return text;
+  let out = '';
+  let last = 0;
+  let mi = 0;
+  let tokenEnd = -1;
+  for (const m of text.matchAll(KEYWORD)) {
+    const tokenStart = m.index + m[0].length;
+    while (mi < markers.length && markers[mi] < tokenStart) mi++;
+    if (mi === markers.length) break;
+    if (text[m.index - 1] === '/' && text[m.index + m[1].length] === '/') continue;
+    if (tokenEnd < tokenStart) {
+      WHITESPACE.lastIndex = tokenStart;
+      const ws = WHITESPACE.exec(text);
+      tokenEnd = ws ? ws.index : text.length;
+    }
+    if (markers[mi] < tokenEnd) {
+      out += text.slice(last, m.index) + replacement;
+      last = tokenStart;
+    }
+  }
+  return last === 0 ? text : out + text.slice(last);
+}
+
 // Removing a reference can splice the text around it into a new one (`h#7ttps://…` becomes a URL,
 // `Clo#5ses` a keyword). The removal passes therefore repeat until the text stops changing. Inside
 // the loop each removal leaves a single space, which no reference, keyword or URL pattern can span,
-// so a removal cannot splice again across the gap and the loop settles in a few passes (a plain
-// deletion would peel one nesting layer per pass, quadratic); the final whitespace collapse
+// so a removal cannot splice again across the gap and a nested splice settles in a few passes (a
+// plain deletion would peel one nesting layer per pass, quadratic); back-to-back URLs do not peel
+// either, as the URL boundary admits a digit before the scheme. The final whitespace collapse
 // normalizes the spaces. Every removed match is at least two characters and is replaced by one, so
 // each changing pass strictly shortens the text and the loop terminates. Only removals loop: the
 // `@` transform is not idempotent, so it runs once, before the loop.
 function removeReferencesToFixedPoint(text) {
   let out = text;
   for (;;) {
-    const next = out
-      .replace(KEYWORD_BEFORE_REF, ' ')
+    const next = removeKeywordsBeforeReferences(out, ' ')
       .replace(URL_REF, ' ')
       .replace(GH_REF, ' ')
       .replace(QUALIFIED_REF, ' ')
@@ -109,9 +136,7 @@ function removeReferencesToFixedPoint(text) {
 function neutralize(text) {
   if (typeof text !== 'string') return '';
   // The comment opener is escaped after the loop: a removal can splice `<!` and `--` together.
-  return removeReferencesToFixedPoint(text
-    .replace(/[\r\n\t]+/g, ' ')
-    .replace(KEYWORD_BEFORE_REF, '')
+  return removeReferencesToFixedPoint(removeKeywordsBeforeReferences(text.replace(/[\r\n\t]+/g, ' '), '')
     .replace(URL_REF, '')
     .replace(GH_REF, '')
     .replace(/`/g, "'")
