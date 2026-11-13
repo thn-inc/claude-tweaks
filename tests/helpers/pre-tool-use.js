@@ -2,21 +2,22 @@
 // Fixtures shared by tests/hooks-pre-tool-use.test.js and
 // tests/hooks-pre-tool-use-forge-memo.test.js (the two halves of what was one
 // slow file, split so CI can shard them). Not a test file: no `.test.js` suffix.
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
 const { execFileSync } = require('child_process');
+const { fromTemplate } = require('./git-template');
 
+// Both repos are copied from a once-per-process template (#5297): a copy starts
+// no git process, where building each one cost an init (and a commit).
 function gitRepo() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-'));
-  execFileSync('git', ['-C', dir, 'init', '-q']);
-  return fs.realpathSync(dir);
+  return fromTemplate('pre-tool-use:init', (dir) => {
+    execFileSync('git', ['-C', dir, 'init', '-q']);
+  }, { prefix: 'ct-e1-', realpath: true });
 }
 
 function gitRepoWithCommit() {
-  const dir = gitRepo();
-  execFileSync('git', ['-C', dir, 'commit', '--allow-empty', '-m', 'init', '-q']);
-  return dir;
+  return fromTemplate('pre-tool-use:init-commit', (dir) => {
+    execFileSync('git', ['-C', dir, 'init', '-q']);
+    execFileSync('git', ['-C', dir, 'commit', '--allow-empty', '-m', 'init', '-q']);
+  }, { prefix: 'ct-e1-', realpath: true });
 }
 
 const GH_TIMEOUT_ENV = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';

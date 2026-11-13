@@ -10,6 +10,7 @@ const sessionStart = require('../plugin/bin/lib/hooks/session-start');
 const ctxLib = require('../plugin/bin/lib/hooks/context');
 const deps = require('../plugin/bin/lib/deps');
 const { INTERACTION_STYLE_DIRECTIVE } = require('../plugin/bin/lib/hooks/interaction-style');
+const { fromTemplate, disableReceiveAutoGc } = require('./helpers/git-template');
 
 // #3380: session-start.js reads the real ~/.claude/plugins/installed_plugins.json
 // through effectiveSuperpowersVersion unless a test injects `superpowersDeps`.
@@ -322,9 +323,10 @@ test('no stale runs and no deps warnings -> no json output', async () => {
 });
 
 function gitProject() {
-  const dir = tmpProject();
-  execFileSync('git', ['-C', dir, 'init', '-q']);
-  return dir;
+  return fromTemplate('session-start-git-project', (dir) => {
+    fs.mkdirSync(path.join(dir, '.claude-tweaks', 'pipelines'), { recursive: true });
+    execFileSync('git', ['-C', dir, 'init', '-q']);
+  }, { prefix: 'ct-ss-' });
 }
 function withPolicy(repo, content) {
   fs.mkdirSync(path.join(repo, '.claude-tweaks'), { recursive: true });
@@ -437,6 +439,7 @@ function git(args, cwd) {
 test('SessionStart fast-forwards a behind-and-clean integration branch via reconcile(), and reports it in additionalContext (#408 AC1)', async () => {
   const originDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-origin-'));
   git(['init', '-q', '--bare', '--initial-branch=main'], originDir);
+  disableReceiveAutoGc(originDir);
 
   // seedDir is the ONLY pusher of history-defining commits — mainDir only
   // ever reads. Two independent pushers of sibling commits (both children
@@ -905,6 +908,7 @@ test('SessionStart renders a prior background pass\'s ledger-residue PR count an
 function prFirstRemoteFixture() {
   const originDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-spawn-origin-'));
   git(['init', '-q', '--bare', '--initial-branch=main'], originDir);
+  disableReceiveAutoGc(originDir);
 
   const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-spawn-seed-'));
   git(['clone', '-q', originDir, seedDir]);
@@ -1102,6 +1106,7 @@ test('SessionStart: a second session start inside the TTL short-circuits the inl
   try {
     const originDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-ttl-origin-'));
     git(['init', '-q', '--bare', '--initial-branch=main'], originDir);
+    disableReceiveAutoGc(originDir);
     const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-ttl-seed-'));
     git(['clone', '-q', originDir, seedDir]);
     git(['config', 'user.email', 'test@example.com'], seedDir);
