@@ -21,15 +21,17 @@
 // The test step runs worker-authored code (the worker's test files) through verify.js. Containment
 // (#5267), the allow-listed-environment option, best effort: the verify.js child gets worker.js's
 // allow-listed environment, not the driver's, plus GH_CONFIG_DIR pointing at an empty directory; and
-// a verify-scope.json that is not equal to origin/{ref}'s is refused before any command runs. That
-// keeps the driver's credential env vars (GH_TOKEN, GITHUB_TOKEN, ...), the config-file auth of a
-// plain `gh` call (the config file itself stays readable under HOME), and a worker-edited scope
-// file naming the commands verify.js executes away from the child. It does not contain: the
+// a verify-scope.json whose bytes are not equal to origin/{ref}'s blob is refused before any command
+// runs. That keeps the driver's credential env vars (GH_TOKEN, GITHUB_TOKEN, ...) and the config-file
+// auth of a plain `gh` call (the config file itself stays readable under HOME) away from the child,
+// and stops the worker choosing the command line verify.js runs through its scope file. It does not
+// stop the worker's code from running in the child: `npm test`, package.json scripts and worker-written
+// test files still run there. It does not contain: the
 // gh keyring entry reachable under HOME on a desktop setup, the git credential helper (git
 // credential fill, osxkeychain), the macOS `security` CLI, or any file the user can read. There is no
 // sandbox profile. Also uncontained: `git commit` and `git push` in the commit and push steps run
 // client hooks (husky, lefthook, pre-commit) that can be worker-authored, with the driver's env; a
-// known residual, tracked as a follow-up. Cost: a project test command needing a variable outside the
+// known residual, with a follow-up record proposed at the Review Console. Cost: a project test command needing a variable outside the
 // allow-list (JAVA_HOME, NODE_OPTIONS, CI, HTTPS_PROXY, NODE_EXTRA_CA_CERTS, LC_ALL, XDG_*) fails at
 // the test step; it fails closed (red, escalate).
 //
@@ -565,29 +567,33 @@ const commitStep = defineStep(STEP.commit, STOP_CLASSES.PRE_PUSH, async (ctx, de
   return { status: 'ok', detail: `${paths.length} file(s)` };
 });
 
-// `git diff --quiet` exits 1 when the path differs from the ref, 0 when it matches; any other
-// failure means the comparison itself failed.
-function scopeDiffersFromBase(deps, wt, ref, scopeRel) {
+// The blob sha of the scope file on origin/{ref}, or null when the path is absent there. The
+// scope file is compared by bytes, never through the index: a worker's `git update-index
+// --assume-unchanged` / `--skip-worktree` makes `git diff` and `cat-file` report an edited file as
+// unchanged. `rev-parse --verify --quiet` exits 1 with no output for an absent path, but also for an
+// unresolvable ref, so an absent answer is only accepted once origin/{ref} itself resolves; any
+// other failure means the lookup failed.
+function scopeBaseBlob(deps, wt, ref, scopeRel) {
   try {
-    gitIn(deps, wt, ['diff', '--quiet', `origin/${ref}`, '--', scopeRel]);
-    return false;
+    return String(gitIn(deps, wt, ['rev-parse', '--verify', '--quiet', '--end-of-options', `origin/${ref}:${scopeRel}`])).trim();
   } catch (err) {
-    if (!err || err.status !== 1) throw new Error(`could not compare ${scopeRel} with origin/${ref}: ${errorText(err)}`);
-    return true;
+    if (!err || err.status !== 1) throw new Error(`could not read ${scopeRel} on origin/${ref}: ${errorText(err)}`);
   }
+  try {
+    gitIn(deps, wt, ['rev-parse', '--verify', '--quiet', '--end-of-options', `origin/${ref}^{commit}`]);
+  } catch (err) {
+    throw new Error(`could not resolve origin/${ref}: ${errorText(err)}`);
+  }
+  return null;
 }
 
-// The scope file must also exist on origin/{ref}: a worker-created copy that git ignores is
-// invisible to `git diff`. `cat-file -e` exits 128 for a missing path (and for an unresolvable ref,
-// which the `git diff` guard that runs first already turns into a `fail`); any other failure means
-// the check itself failed.
-function scopeOnBase(deps, wt, ref, scopeRel) {
+// The sha git would store for the worktree's bytes of the scope file; --no-filters so a clean
+// filter or autocrlf cannot make the hash differ from the committed blob.
+function scopeWorktreeBlob(deps, wt, scopeRel) {
   try {
-    gitIn(deps, wt, ['cat-file', '-e', `origin/${ref}:${scopeRel}`]);
-    return true;
+    return String(gitIn(deps, wt, ['hash-object', '--no-filters', '--', scopeRel])).trim();
   } catch (err) {
-    if (!err || err.status !== 128) throw new Error(`could not check ${scopeRel} on origin/${ref}: ${errorText(err)}`);
-    return false;
+    throw new Error(`could not hash ${scopeRel}: ${errorText(err)}`);
   }
 }
 
@@ -606,13 +612,19 @@ const testStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
   }
   const state = deps.lstatType(path.join(wt, '.claude-tweaks', 'verify-scope.json'));
   // The scope file names commands verify.js runs, so a worker-authored copy is never read: the
-  // worktree is compared with origin/{ref} (committed and uncommitted edits, a created or a
-  // deleted file) before any test command runs.
-  if ((state.type === 'file' || state.type === 'missing') && scopeDiffersFromBase(deps, wt, ref, scopeRel)) {
-    return { status: 'stop', detail: `${scopeRel} differs from origin/${ref}; the worker's copy is never read, verify.js was not run` };
-  }
-  if (state.type === 'file' && !scopeOnBase(deps, wt, ref, scopeRel)) {
-    return { status: 'stop', detail: `${scopeRel} is not on origin/${ref}; the worker's copy is never read, verify.js was not run` };
+  // worktree file's bytes must equal origin/{ref}'s blob (an edit, a created file, a deleted file,
+  // index flags included) before any test command runs.
+  if (state.type === 'file' || state.type === 'missing') {
+    const baseBlob = scopeBaseBlob(deps, wt, ref, scopeRel);
+    if (state.type === 'file' && baseBlob === null) {
+      return { status: 'stop', detail: `${scopeRel} is not on origin/${ref}; the worker's copy is never read, verify.js was not run` };
+    }
+    if (state.type === 'missing' && baseBlob !== null) {
+      return { status: 'stop', detail: `${scopeRel} differs from origin/${ref} (deleted); the worker's copy is never read, verify.js was not run` };
+    }
+    if (state.type === 'file' && scopeWorktreeBlob(deps, wt, scopeRel) !== baseBlob) {
+      return { status: 'stop', detail: `${scopeRel} differs from origin/${ref}; the worker's copy is never read, verify.js was not run` };
+    }
   }
   const base = ['--run', runDir, '--default-suite-slots', String(policy['verify-suite-slots'].value)];
   let args;
