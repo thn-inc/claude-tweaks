@@ -107,7 +107,7 @@ The implementer may read, edit and write inside the worktree, run the project's 
 
 **Structured result, never trusted.** The implementer is given the record body, the Key Files and its limits, and returns a small JSON object (`--json-schema`): a status, a one-line change title, a one-to-two-sentence summary. The driver takes the changed files from git, not from the worker, and applies the diff bounds to what is actually on disk.
 
-The record body is untrusted input. The narrow rights and the bounds check are what contain it.
+The record body is untrusted input. The narrow rights and the bounds check contain the worker; worker-authored code at the test step is contained separately (an allow-listed environment, an empty gh config dir, a refused scope file), with a named residual risk (record #5267; see the header comment at the top of `plugin/bin/lib/driver/steps.js`).
 
 These rules bind every worker in every phase, including the Phase 2 judgment workers: no worker runs `gh`, writes a label, posts a comment or merges. A judgment worker reads and returns a verdict or a text; the driver acts on it.
 

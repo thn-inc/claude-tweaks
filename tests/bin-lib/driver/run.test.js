@@ -214,6 +214,7 @@ function defaultScript(over) {
     [onGit('worktree', 'add'), ''],
     [onGit('merge'), ''],
     [onGit('diff', '--quiet'), ''],
+    [onGit('cat-file'), ''],
     [on('node', /hooks\.js$/, 'record-worktree'), (c) => ({ code: 0, stderr: '', stdout: `claude-tweaks: worktree recorded for ${path.basename(c.args[3])}\n` })],
     // The worker and commit steps' happy path: a finished worker, one changed file, a commit.
     [on('worker'), (c) => ({ ...ENVELOPE, ...pick(over.worker, c) })],
@@ -1010,7 +1011,7 @@ test('Gotcha: a run with CLAUDE_CODE_SESSION_ID unset drives normally, and every
   assert.equal(cli.length, 11, 'claim, claim log, record-worktree, verify, check, compose-pr-body, record-pr, set-config, summary log, pr-checks --pr, pr-checks --run');
   for (const c of cli) {
     // The verify.js child gets an allow-listed copy (#5267); every other CLI the driver's own env.
-    if (/verify\.js$/.test(c.args[0])) assert.deepEqual(c.env, env, c.args[0]);
+    if (/verify\.js$/.test(c.args[0])) assert.deepEqual(c.env, { ...env, GH_CONFIG_DIR: emptyGhDir(h) }, c.args[0]);
     else assert.equal(c.env, env, c.args[0]);
     assert.ok(!('CLAUDE_CODE_SESSION_ID' in c.env));
   }
@@ -1785,6 +1786,7 @@ test('AC12.3, AC12.4: a symlinked scope file is refused via lstatType, no test r
   }
 });
 
+const emptyGhDir = (h) => path.join(runDirOf(h), 'gh-config-empty');
 const scopeDiff = (reply) => [onGit('diff', '--quiet'), reply];
 
 test('#5267: a scope file that differs from origin/{ref} stops before verify.js runs', async () => {
@@ -1812,10 +1814,40 @@ test('#5267: the verify.js child gets only allow-listed variables, never the dri
   h.deps.env = { PATH: '/bin', HOME: '/home/u', GH_TOKEN: 'x', GITHUB_TOKEN: 'y', GH_HOST: 'h', AWS_SECRET_ACCESS_KEY: 'z' };
   await run(['#7'], h.deps);
   const [v] = verifyCalls(h);
-  assert.deepEqual(v.env, { PATH: '/bin', HOME: '/home/u' });
+  assert.deepEqual(v.env, { PATH: '/bin', HOME: '/home/u', GH_CONFIG_DIR: emptyGhDir(h) });
+  assert.ok(calls(h, 'mkdirSync').some((c) => c.args[0] === emptyGhDir(h) && c.args[1].recursive === true), 'the empty gh config dir is created');
   for (const name of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_HOST', 'AWS_SECRET_ACCESS_KEY']) assert.ok(!(name in v.env), name);
   // The other steps keep the driver env: the claim call still sees GH_TOKEN.
   assert.equal(calls(h, 'node', /claim-targets\.js$/)[0].env.GH_TOKEN, 'x');
+});
+
+test('#5267: on win32 the verify.js child keeps Path and SystemRoot, never GH_TOKEN', async () => {
+  const h = harness();
+  h.deps.platform = 'win32';
+  h.deps.env = { Path: 'C:\\bin', SystemRoot: 'C:\\Windows', GH_TOKEN: 'x' };
+  await run(['#7'], h.deps);
+  const [v] = verifyCalls(h);
+  assert.deepEqual(v.env, { Path: 'C:\\bin', SystemRoot: 'C:\\Windows', GH_CONFIG_DIR: emptyGhDir(h) });
+});
+
+test('#5267: a scope file that is not on origin/{ref} (git-ignored, so invisible to diff) stops before verify.js', async () => {
+  const absent = () => { throw Object.assign(new Error('fatal: path \'x\' does not exist in \'origin/main\''), { status: 128 }); };
+  const h = harness({ script: [scopeIs('file'), [onGit('cat-file'), absent]] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status, final.stop.class], ['test', 'stop', 'pre-push']);
+  assert.match(final.stop.detail, /verify-scope\.json.*not on origin\/main/);
+  assert.equal(verifyCalls(h).length, 0, 'no verify call');
+  const cf = gitCalls(h).find((c) => gitSub(c)[0] === 'cat-file');
+  assert.deepEqual(gitSub(cf), ['cat-file', '-e', 'origin/main:.claude-tweaks/verify-scope.json']);
+});
+
+test('#5267: a cat-file failure that is not "absent" fails the step, no verify call', async () => {
+  const h = harness({ script: [scopeIs('file'), [onGit('cat-file'), () => { throw Object.assign(new Error('fatal: bad object'), { status: 2 }); }]] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status], ['test', 'fail']);
+  assert.equal(verifyCalls(h).length, 0);
 });
 
 test('#5267: an unchanged scope file, and an absent one, proceed to verify.js', async () => {
@@ -1857,7 +1889,7 @@ test('check and verify run in the worktree, with deps.env and a generous bound o
   await run(['#7'], h.deps);
   assert.equal(verifyCalls(h)[0].cwd, WT);
   assert.equal(checkCalls(h)[0].cwd, WT);
-  assert.deepEqual(verifyCalls(h)[0].env, env, 'an allow-listed copy of deps.env (#5267)');
+  assert.deepEqual(verifyCalls(h)[0].env, { ...env, GH_CONFIG_DIR: emptyGhDir(h) }, 'an allow-listed copy of deps.env plus an empty gh config dir (#5267)');
   assert.equal(checkCalls(h)[0].env, env);
   assert.equal(verifyCalls(h)[0].timeout, VERIFY_TIMEOUT_MS);
   assert.ok(VERIFY_TIMEOUT_MS >= 30 * 60 * 1000);

@@ -19,12 +19,18 @@
 //   - A throw from fn is `{ status: 'fail', detail: err.message }` with the step's class.
 //
 // The test step runs worker-authored code (the worker's test files) through verify.js. Containment
-// (#5267): the verify.js child gets worker.js's allow-listed environment, not the driver's, and a
-// verify-scope.json that differs from origin/{ref} is refused before any command runs. That keeps
-// the driver's credential env vars (GH_TOKEN, GITHUB_TOKEN, and the rest) from the child, and a
-// worker-edited scope file from naming the commands verify.js executes. Residual risk: worker-written
-// test files still run with HOME reachable, so gh keychain or config auth under HOME and any file
-// the user can read stay reachable. There is no sandbox profile; the allow-list only removes env vars.
+// (#5267), option 2 and best effort: the verify.js child gets worker.js's allow-listed environment,
+// not the driver's, plus GH_CONFIG_DIR pointing at an empty directory; and a verify-scope.json that
+// is not equal to origin/{ref}'s is refused before any command runs. That keeps the driver's
+// credential env vars (GH_TOKEN, GITHUB_TOKEN, ...), gh's config-file auth, and a worker-edited
+// scope file naming the commands verify.js executes away from the child. It does not contain: the
+// gh keyring entry reachable under HOME on a desktop setup, the git credential helper (git
+// credential fill, osxkeychain), the macOS `security` CLI, or any file the user can read. There is no
+// sandbox profile. Also uncontained: `git commit` and `git push` in the commit and push steps run
+// client hooks (husky, lefthook, pre-commit) that can be worker-authored, with the driver's env; a
+// known residual, tracked as a follow-up. Cost: a project test command needing a variable outside the
+// allow-list (JAVA_HOME, NODE_OPTIONS, CI, HTTPS_PROXY, NODE_EXTRA_CA_CERTS, LC_ALL, XDG_*) fails at
+// the test step; it fails closed (red, escalate).
 //
 // Every external call goes through `deps`; nothing here reads process state.
 const path = require('node:path');
@@ -570,6 +576,19 @@ function scopeDiffersFromBase(deps, wt, ref, scopeRel) {
   }
 }
 
+// The scope file must also exist on origin/{ref}: a worker-created copy that git ignores is
+// invisible to `git diff`. `cat-file -e` exits 128 for a missing path; any other failure means the
+// check itself failed.
+function scopeOnBase(deps, wt, ref, scopeRel) {
+  try {
+    gitIn(deps, wt, ['cat-file', '-e', `origin/${ref}:${scopeRel}`]);
+    return true;
+  } catch (err) {
+    if (!err || err.status !== 128) throw new Error(`could not check ${scopeRel} on origin/${ref}: ${errorText(err)}`);
+    return false;
+  }
+}
+
 // Ports express-lane.md step 4 (test): the runner pass stamp `check` reads is written by
 // verify.js, run in the worktree. A regular verify-scope.json scopes the run; an absent one
 // runs the full suite; anything else (a symlink, a directory) is refused, never followed.
@@ -590,6 +609,9 @@ const testStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
   if ((state.type === 'file' || state.type === 'missing') && scopeDiffersFromBase(deps, wt, ref, scopeRel)) {
     return { status: 'stop', detail: `${scopeRel} differs from origin/${ref}; the worker's copy is never read, verify.js was not run` };
   }
+  if (state.type === 'file' && !scopeOnBase(deps, wt, ref, scopeRel)) {
+    return { status: 'stop', detail: `${scopeRel} is not on origin/${ref}; the worker's copy is never read, verify.js was not run` };
+  }
   const base = ['--run', runDir, '--default-suite-slots', String(policy['verify-suite-slots'].value)];
   let args;
   let detail;
@@ -604,7 +626,11 @@ const testStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
   } else {
     return { status: 'stop', detail: `${scopeRel} is not a regular file (${state.type}); verify.js was not run` };
   }
-  const r = deps.node(binScript('verify.js'), args, { cwd: wt, timeout: VERIFY_TIMEOUT_MS, env: buildEnv(deps.env, deps.platform) });
+  // An empty gh config dir: a worker test calling `gh` finds no config-file auth.
+  const ghConfigDir = path.join(runDir, 'gh-config-empty');
+  deps.mkdirSync(ghConfigDir, { recursive: true });
+  const env = { ...buildEnv(deps.env, deps.platform), GH_CONFIG_DIR: ghConfigDir };
+  const r = deps.node(binScript('verify.js'), args, { cwd: wt, timeout: VERIFY_TIMEOUT_MS, env });
   // A null code is no exit at all (a timeout, a spawn error): the suite never gave a verdict.
   if (r.code === null || r.code === undefined) {
     return { status: 'fail', detail: `verify.js did not finish: ${neutralize(firstLine(r.stderr)) || 'no exit code'}` };
