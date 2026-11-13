@@ -49,7 +49,7 @@
   },
   "skill:transcript-payload-verification": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1794487635358
+    "lastAuditedMs": 1794504159460
   },
   "skill:tidy": {
     "lastAuditedSha": null,
@@ -57,11 +57,11 @@
   },
   "skill:gh-api-module-pattern": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1794501552708
+    "lastAuditedMs": 1794504163629
   },
   "skill:skill-prose-conformance-tests": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1794389618112
+    "lastAuditedMs": 1794538250120
   },
   "skill:shared-contract-extraction": {
     "lastAuditedSha": null,
@@ -109,7 +109,7 @@
   },
   "skill:pre-tool-use-gate-exemptions": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793722061941
+    "lastAuditedMs": 1794504161378
   },
   "skill:parse-signal-discipline": {
     "lastAuditedSha": null,
@@ -129,7 +129,7 @@
   },
   "skill:driver-skill-outcome-taxonomy": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1794501551544
+    "lastAuditedMs": 1794538253227
   },
   "skill:release": {
     "lastAuditedSha": null,
@@ -241,7 +241,7 @@
   },
   "skill:pretooluse-updatedinput-normalizer": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793707211001
+    "lastAuditedMs": 1794504166371
   },
   "skill:test-impact-tracer-read-shape": {
     "lastAuditedSha": null,
@@ -257,7 +257,7 @@
   },
   "skill:claim-targets-stop-addition": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793855563912
+    "lastAuditedMs": 1794538248519
   },
   "skill:lock-race-test-seam": {
     "lastAuditedSha": null,
@@ -266,5 +266,9 @@
   "skill:headless-worker-launch": {
     "lastAuditedSha": null,
     "lastAuditedMs": 1794501550396
+  },
+  "skill:dispatch-queue-exclusion-addition": {
+    "lastAuditedSha": null,
+    "lastAuditedMs": 1794538251633
   }
 }
