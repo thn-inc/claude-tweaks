@@ -695,6 +695,9 @@ test('M1: GH-N and www. shapes are neutralized so a detail never backlinks or au
   assert.equal(reduceDetail('see GH-12 and gh-34'), 'see GH 12 and GH 34');
   assert.equal(reduceDetail('visit www.evil.com/phish now'), 'visit www evil.com/phish now');
   assert.equal(reduceDetail('WWW.evil.com'), 'www evil.com');
+  assert.equal(reduceDetail('_www.evil.com'), '_www evil.com');
+  assert.equal(reduceDetail('x_GH-12'), 'x_GH 12');
+  assert.equal(reduceDetail('nowww.x'), 'nowww.x');
   assert.ok(!/\bGH-\d/i.test(commentFor('blocked-record', { step: 'test', outcome: 'blocked', detail: 'GH-1' })));
 });
 

@@ -51,8 +51,8 @@ function reduceDetail(text) {
   s = s.replace(/((?:^|\s)-[A-Za-z])\/{1,2}[A-Za-z0-9._-]\S*/g, (m, pre) => pre + '<path>' + sentenceTail(m));
   s = s.replace(/\/(?:Users|home)\/[A-Za-z0-9._-]+\S*/g, (m) => '<path>' + sentenceTail(m));
   // GitHub turns GH-12 into an issue backlink and www. into an autolink.
-  s = s.replace(/\bGH-(\d+)/gi, 'GH $1');
-  s = s.replace(/\bwww\./gi, 'www ');
+  s = s.replace(/(?<![A-Za-z0-9])GH-(\d+)/gi, 'GH $1');
+  s = s.replace(/(?<![A-Za-z0-9])www\./gi, 'www ');
   s = s.replace(/\s+/g, ' ').trim().slice(0, DETAIL_MAX);
   s = s.replace(/<[a-z]*$/, '').trim();
   return s === '' ? 'none' : s;
