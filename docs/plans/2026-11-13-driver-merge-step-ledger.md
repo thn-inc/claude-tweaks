@@ -53,3 +53,4 @@
 | 49 | review | Review (3c, low) merge.js:112, 134 — readIntegrationModel and readLever call deps.node outside try/catch, so a thrown resolver ends unclassified instead of not-pr-first / wait (AC8) | open | — |
 | 50 | review | Review (gap-sweep, low) merge.js:1079 — post-merge teardown removes the worktree but never closes the run when reconcile kept it, leaving run-state active naming a gone worktree (settle.js settle-close parity) | open | — |
 | 51 | review | Review (3f, low) run.test.js:3756 — the run-level unclassified test injects a null closing-links reply (not a CLI shape), reaching unclassified only through an incidental TypeError | open | — |
+| 52 | review | Fix-agent observation merge.js:44 and merge() entry — deps.now() is called outside merge's try (startedAt) and in emit() outside its own try, so a throwing clock would make merge() throw against its never-throws rule; the real deps.now cannot throw | open | — |
