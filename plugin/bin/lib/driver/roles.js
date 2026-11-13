@@ -114,9 +114,10 @@
 // real file directly in `<prefix>/bin`, the whole prefix is re-opened, e.g. `~/.cargo`
 // (which holds `credentials.toml`), `~/.local` (`share/`, `state/`), or `/usr/local`
 // under Intel Homebrew (`etc/`, `var/`). The driver's `npm test` derives narrow roots
-// under nvm, Homebrew, fnm and the official installer (the 2026-11-13 live run:
-// `~/.nvm/versions/node/v22.23.2` and npm's package directory inside it). Narrowing the
-// rule is tracked as a follow-up record.
+// under nvm, Homebrew, fnm and the official installer: under nvm on the probe host it
+// derives the one root `~/.nvm/versions/node/v22.23.2`, since npm's package directory
+// lies inside it and is dropped as covered. Narrowing the rule is tracked as a
+// follow-up record.
 //
 // The read block, and what it rests on. Probed on Claude Code CLI 2.1.322, macOS,
 // 2026-11-12, under a subscription login with no TTY, using a test file the worker
@@ -154,8 +155,10 @@
 // CLI documentation says those directories also become writable by sandboxed
 // commands. The blocked `~/.npmrc` does not stop the test command: probed 2026-11-13
 // on the same host, `npm test` ran with an unreadable user config file (exit 0).
-// The settings this module generates, with the readable set derived at launch, were
-// run live on 2026-11-13 with Claude Code CLI 2.1.322 on macOS, under a claude.ai
+// The settings this module generated, with the readable set derived at launch, were
+// run live on 2026-11-13 (their `allowRead` then also listed npm's package directory,
+// since dropped as covered by the Node root that holds it, so the readable set is the
+// same) with Claude Code CLI 2.1.322 on macOS, under a claude.ai
 // subscription (max) login, with the worker's standard streams piped (no TTY),
 // through the launcher's `AC7` live smoke test: the worker ran `npm test`, the test
 // file's read of a canary under the home directory failed with `EPERM`, and the

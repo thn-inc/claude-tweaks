@@ -339,6 +339,10 @@ test('toolchainRoot takes an absolute first word as the path and refuses a relat
   assert.strictEqual(toolchainRoot('/opt/t/bin/run --x', d), '/opt/t');
   assert.strictEqual(toolchainRoot('./node_modules/.bin/jest', d), null);
   assert.deepStrictEqual(d.calls, []);
+  // A realpath that would turn the relative word absolute: the refusal itself must hold.
+  const absolute = fakeDeps({ realpath: { './node_modules/.bin/jest': '/abs/node_modules/.bin/jest' } });
+  assert.strictEqual(toolchainRoot('./node_modules/.bin/jest', absolute), null);
+  assert.deepStrictEqual(absolute.calls, []);
 });
 
 test('toolchainRoot returns null when realpath throws', () => {
