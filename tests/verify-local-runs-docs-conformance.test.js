@@ -45,7 +45,7 @@ test('ci-source.md: the Local runs on request section states the key, the flag a
 const REASON_FACTS = [
   [/\| `local-requested` \| `--local` was passed, so CI was not consulted\. \|/, 'the local-requested row'],
   [/\| `not-consulted` \| Under `localRuns`, an earlier suite already left the run with no verdict, so CI was not asked about this one\. \|/, 'the not-consulted row'],
-  [/\| `ci-log-unavailable` \|[^\n]*\(without `localRuns`\)/, 'the ci-log-unavailable row is qualified'],
+  [/\| `ci-log-unavailable` \| A red job's log could not be downloaded, so nothing names its failures \(without `localRuns`\)\. \|/, 'the ci-log-unavailable row is qualified'],
 ];
 
 test('ci-source.md: the reason table carries local-requested and not-consulted', () => {

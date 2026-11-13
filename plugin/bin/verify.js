@@ -1581,7 +1581,7 @@ async function main() {
   }
   for (const a of ciAttempts) {
     if (a.logUnavailable) {
-      lines.push(`CI: ${a.suite} — taken from ${a.workflow} / ${a.job} run ${a.runId} on HEAD (${a.conclusion}, ${a.runUrl}; its log could not be downloaded — pass --local to reproduce the failure here)`);
+      lines.push(`CI: ${a.suite} — taken from ${a.workflow} / ${a.job} run ${a.runId} on HEAD (${a.conclusion}, ${a.runUrl || `run ${a.runId}`}; its log could not be downloaded — pass --local to reproduce the failure here)`);
       continue;
     }
     lines.push(a.used

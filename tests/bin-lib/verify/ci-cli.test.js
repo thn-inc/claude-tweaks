@@ -34,7 +34,7 @@ if ((m = ep.match(/commits\\/([0-9a-f]{40})\\/pulls$/))) {
   out(mode === 'nopr' ? [] : [{ number: 7, state: 'open', head: { sha: m[1] } }]);
 }
 else if (/pulls\\/7$/.test(ep)) out({ number: 7, mergeable_state: 'clean' });
-else if ((m = ep.match(/runs\\?head_sha=([0-9a-f]{40})/))) out({ workflow_runs: [{ id: 41, head_sha: m[1], status: 'completed', html_url: 'https://example.test/runs/41' }] });
+else if ((m = ep.match(/runs\\?head_sha=([0-9a-f]{40})/))) out({ workflow_runs: [{ id: 41, head_sha: m[1], status: 'completed', html_url: process.env.FAKE_GH_NO_RUN_URL ? undefined : 'https://example.test/runs/41' }] });
 else if (/runs\\/41\\/jobs/.test(ep)) out({ jobs: (process.env.FAKE_GH_JOBS || 'test').split(',').map((name) => ({ id: name === 'test' ? 99 : 98, name, status: 'completed', conclusion: mode === 'red' && !(process.env.FAKE_GH_GREEN || '').split(',').includes(name) ? 'failure' : 'success', started_at: '2026-10-25T17:27:00Z', completed_at: '2026-10-25T17:30:30Z', html_url: 'https://example.test/job/' + (name === 'test' ? 99 : 98) })) });
 else if (/jobs\\/(99|98)\\/logs$/.test(ep)) {
   const flagged = a.includes('--allow-escape-sequences');
@@ -594,6 +594,15 @@ test('AC9.3: under the key a red CI job with no downloadable log exits 1, names 
   assert.match(res.stdout, /^CI: tests — taken from test\.yml \/ test run 41 on HEAD \(failure, https:\/\/example\.test\/runs\/41; its log could not be downloaded — pass --local to reproduce the failure here\)$/m);
   assert.deepStrictEqual(reportOf(r).checks.tests.retryDecision, { retry: false, reason: 'ci-log-unavailable' });
   assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-pass.json')), 'a failing run never stamps');
+});
+
+test('AC9.3: a logless red job whose run has no html_url still names the run, never null (#5369)', { skip: SKIP }, async () => {
+  const r = repoWith({ declExtra: KEY });
+  const { env } = fakeGhEnv('red', '', { FAKE_GH_LOG: 'gone', FAKE_GH_NO_RUN_URL: '1' });
+  const res = await runCli([...SCOPE(r), '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 1, res.stdout + res.stderr);
+  assert.match(res.stdout, /^CI: tests — taken from test\.yml \/ test run 41 on HEAD \(failure, run 41; its log could not be downloaded/m);
+  assert.doesNotMatch(res.stdout, /null/);
 });
 
 test('AC9.2: an older gh that rejects --allow-escape-sequences still takes the red verdict from CI (#5369)', { skip: SKIP }, async () => {
