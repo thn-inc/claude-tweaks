@@ -56,7 +56,10 @@ test('near-duplicate-pairs.md carries both predicted-conflict templates verbatim
   assert.ok(flat.includes(collapse(DECISION_LINE)), 'decisions.md line template');
   assert.match(PAIRS, /predictedConflicts/);
   assert.match(PAIRS, /dispatch-near-dup-pairs\.json/);
-  assert.match(PAIRS, /DISPATCH_NEAR_DUP_PAIRS/);
+  // #5230: the path comes from session-tmp-resolve.js directly; the CLI pull sets no
+  // $DISPATCH_NEAR_DUP_PAIRS and the session never reads queue-pull-script.md for it.
+  assert.ok(PAIRS.includes('`node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-near-dup-pairs.json`'), 'the path resolve');
+  assert.doesNotMatch(PAIRS, /queue-pull-script\.md|DISPATCH_NEAR_DUP_PAIRS/);
 });
 
 test('neighbour-in-flight-report.md renders a near-duplicate neighbour and keeps the file form', () => {

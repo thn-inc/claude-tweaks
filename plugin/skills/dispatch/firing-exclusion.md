@@ -46,7 +46,7 @@ rather than rewrite a corrupt, non-array or unreadable `dispatch-exclusions.json
 the append exits non-zero, report its error line and stop the firing — never continue to the next
 iteration: the next queue pull's truncation step reads the file through `readExclusions`, which
 degrades it to `[]`, so no `firing` entry survives and the stuck group is re-selected. This is the
-same stop every `queue-pull-script.md` append site takes.
+same stop every append site in the queue pull (`bin/lib/dispatch/queue-pull.js`) takes.
 
 `queue-pull.js --rank` (the ranking, `bin/lib/dispatch/queue-pull.js`'s `rankNext`) reads this same file (absent or unreadable treated as `[]`, per
 `readExclusions`'s own contract) and, via one `groupIsExcluded(g, entries, ['oversized', 'firing', 'neighbour-in-flight'])`

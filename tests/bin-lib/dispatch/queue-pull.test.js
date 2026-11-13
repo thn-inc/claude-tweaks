@@ -3718,5 +3718,9 @@ test('#5230 shipped: the stage-item.js stderr of a shipped Close proposal reache
   assert.ok(!r.cap.stdout.includes('staged shipped-close-9010\n'), 'the shipped stage-item stdout is dropped');
   assert.ok(r.cap.stdout.includes('staged dispatch-target-missing-9009\n'), 'control: the target-missing call forwards its stdout');
   assert.equal(r.thrown, null, 'a failed staging call does not stop the pull');
-  assert.deepEqual(r.ghCalls.filter((a) => a[0] === 'issue' && a[1] !== 'list'), [], 'the pass stages a Close proposal, never a direct gh issue close');
+  // ghCalls records every argv the runner was handed, answered or not: `gh issue close`, or a
+  // `gh api` call on an issue path that sets state=closed.
+  const closes = r.ghCalls.filter((a) => (a[0] === 'issue' && a[1] === 'close')
+    || (a[0] === 'api' && a.some((x) => /\/issues\/\d+$/.test(x)) && a.some((x) => /^state=closed$/.test(x))));
+  assert.deepEqual(closes, [], 'the pass stages a Close proposal, never a direct close');
 });

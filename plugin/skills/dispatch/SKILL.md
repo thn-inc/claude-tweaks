@@ -128,7 +128,7 @@ build-time context. The residual false negative — a resolving PR that never me
 all, by number or otherwise, or one already open at filing that only says "refs #N" — is accepted:
 there is no signal left to detect it from, and dispatch still discovers it at build time.
 
-Run `node "${CLAUDE_PLUGIN_ROOT}/bin/queue-pull.js" --transport gh`. When Preflight took the MCP path (`gh` absent or GraphQL-blocked), write the inputs `mcp-transport.md` Step 2 names, then run it with `--transport files` instead. Either writes this run's session-scoped `dispatch-groups.json` (`_shared/session-tmp-root.md`), which every selection form below reads, plus `dispatch-exclusions.json` and the report files. Exit 2 (no `gh`): take the `files` path. Exit 4 (the pull stopped): stop the firing, quoting its last stderr line; Step 1's close-out runs. Exit 1 is a malformed call: fix it and re-run. On a `--limit`-cap Warning, see `queue-pull-notes.md`.
+When Preflight took the MCP path (`gh` absent or GraphQL-blocked), write the inputs `mcp-transport.md` Step 2 names, then run the call below with `--transport files`. Otherwise run `node "${CLAUDE_PLUGIN_ROOT}/bin/queue-pull.js" --transport gh`. Either writes this run's session-scoped `dispatch-groups.json` (`_shared/session-tmp-root.md`), which every selection form below reads, plus `dispatch-exclusions.json` and the report files. Exit 2 (no `gh`): take the `files` path. Exit 4 (the pull stopped): stop the firing, quoting its last stderr line; Step 1's close-out runs. Exit 1 is a malformed call: fix it and re-run. On a `--limit`-cap Warning, see `queue-pull-notes.md`.
 
 The `bot:*` filter here is the cheap label-based pre-filter — labels are projection, not truth (`_shared/work-record.md`). The authoritative unclaimed check is `/claude-tweaks:flow`'s Step 2.8 atomic 201/422 claim attempt (`flow/claim-targets.md`) — a record can pass this pre-filter and still turn out contested by the time the first Task call actually claims it. A group of size 1 is a **singleton**; size 2+ is a **bundle** — both dispatch the same way in Step 5, with a different `/claude-tweaks:flow` invocation shape only.
 
@@ -155,7 +155,7 @@ given before rendering one.
 `dispatch-exclusions.json` (`bin/lib/dispatch/exclusions.js`'s `readExclusions`), filtered to `reason: 'shipped'` entries (`records: [number], detail: {pr,
 signals}` each). Non-empty: render one line per entry — `#{number} excluded — already shipped by
 merged PR #{pr} ({signals}); a Close proposal is staged in this firing's run dir for approval.` —
-same convention as the reports above (weak-tier: see above).
+same convention as the reports above.
 
 **Oversized-group report (refs #1228).** See `oversized-group-report.md`, this skill's directory (groups over the size guard stay selectable via `#N`/`#N,#M,...`; not a gate).
 
@@ -172,7 +172,7 @@ predicted-conflict line and the drain-PR checks (`near-duplicate-pairs.md`, this
 
 **Bare (drain)** `/dispatch` — headless, no `AskUserQuestion` (skip this and the rest of Step 3 if the zero-groups case above applies). Resolve `{budget}`: `--budget <n|all>` if present (or its deprecated `--batch-size <n>`/`--concurrent <n>` aliases, each with its own notice), else `dispatch-batch-size` (or its deprecated `dispatch-pick-max-concurrent` key, same notice) — CLI arg beats project policy per `_shared/auto-mode-card.md`. `n` = attempt count; `all` drains to empty. `--budget` + `next`/`#N,#M,...`: **rejected with one notice** (bare-drain-only; `next` already means `--budget 1`).
 
-Loop: run the `next` ranking below (`node "${CLAUDE_PLUGIN_ROOT}/bin/queue-pull.js" --rank [--priority <band>]` as `next` gives it; oversized, neighbour-in-flight, and this-firing-excluded groups excluded via the unified `dispatch-exclusions.json` — maintain per `firing-exclusion.md`, this skill's dir; a non-zero exit stops the firing, never a `null` pick) → dispatch the pick through Steps 4-6 → re-run Step 2's queue pull → repeat until `{budget}` attempts, the ranking returns `null`, or a Claim permission stop ends the firing. Report each iteration as it completes, plus a final line naming groups still eligible but undispatched at budget exhaustion.
+Loop: run the `next` ranking below (`node "${CLAUDE_PLUGIN_ROOT}/bin/queue-pull.js" --rank [--priority <band>]` as `next` gives it; oversized, neighbour-in-flight, and this-firing-excluded groups excluded via the unified `dispatch-exclusions.json` — maintain per `firing-exclusion.md`, this skill's dir; a non-zero exit stops the firing, quoting its stderr line, never a `null` pick) → dispatch the pick through Steps 4-6 → re-run Step 2's queue pull → repeat until `{budget}` attempts, the ranking returns `null`, or a Claim permission stop ends the firing. Report each iteration as it completes, plus a final line naming groups still eligible but undispatched at budget exhaustion.
 
 **At loop termination (`{budget}` attempts spent, the ranking returns `null`, or a Claim permission stop), close this firing's own bookkeeping (#2430)** — logged, non-interactive, never an `AskUserQuestion` (`CLAUDE.md`'s Auto-Mode Contract):
 

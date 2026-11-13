@@ -67,6 +67,8 @@ function assertFilesSelectedByPreflight(t) {
   assert.ok(s.includes('`--transport files`'), 'Step 2 must name --transport files');
   assert.match(s, /Preflight[^.]*`gh` absent or GraphQL-blocked[^.]*`mcp-transport\.md` Step 2[^.]*`--transport files`/,
     'one sentence must select files from the Preflight result, after the inputs mcp-transport.md Step 2 names');
+  // A literal reader on a GraphQL-blocked Preflight meets the files condition before the gh command.
+  assert.ok(s.indexOf('GraphQL-blocked') < s.indexOf('bin/queue-pull.js" --transport gh'), 'the MCP condition must come before the --transport gh call');
 }
 function assertExit2ToFiles(t) {
   assert.match(step2(t), /Exit 2\b[^.]*`files` path/, 'exit 2 must route to the files path');
@@ -92,6 +94,9 @@ test('Review Focus 1: a gh-absent or GraphQL-blocked Preflight selects --transpo
   assertGoesRed(assertFilesSelectedByPreflight, SKILL, '(`gh` absent or GraphQL-blocked)');
   assertGoesRed(assertFilesSelectedByPreflight, SKILL, '`mcp-transport.md` Step 2');
   assertGoesRed(assertFilesSelectedByPreflight, SKILL, null, (t) => t.split('`--transport files`').join('`--transport gh`'));
+  // The gh command moved ahead of the MCP condition.
+  const GH_SENTENCE = ' Otherwise run `node "${CLAUDE_PLUGIN_ROOT}/bin/queue-pull.js" --transport gh`.';
+  assertGoesRed(assertFilesSelectedByPreflight, SKILL, GH_SENTENCE, (t) => t.replace(GH_SENTENCE, '').replace('When Preflight took the MCP path', `${GH_SENTENCE.trim()} When Preflight took the MCP path`));
 });
 
 test('Review Focus 1: exit 2 routes to the files path', () => {
@@ -121,10 +126,10 @@ function assertNextRanks(t) {
 function assertRankExitRouted(t) {
   const loop = loopLine(t);
   const next = nextBullet(t);
-  assert.match(loop, /a non-zero exit stops the firing/, 'the Loop must stop the firing on a non-zero --rank exit');
+  assert.match(loop, /a non-zero exit stops the firing, quoting its stderr line/, 'the Loop must stop the firing on a non-zero --rank exit, quoting stderr');
+  assert.match(loop, /a non-zero exit[^)]*never a `null` pick/, 'the Loop must rule out reading a non-zero exit as a null pick');
   assert.match(next, /A non-zero exit (?:\([^)]*\) )?is never a `null` pick: stop the firing, quoting its stderr line; Step 1's close-out runs/,
     'the next bullet must route a non-zero --rank exit to a stop, never a null pick');
-  assert.ok(/never a `null` pick/.test(loop) || /never a `null` pick/.test(next), 'the Loop line or the next bullet must rule out a null pick');
 }
 function assertPriorityOmitted(t) {
   assert.match(nextBullet(t), /omitting `--priority` when no band is set/, 'the next bullet must say to omit --priority with no band');
@@ -146,7 +151,9 @@ test('AC2: the Loop and the next bullet each rank with one queue-pull.js --rank 
 });
 
 test('a non-zero --rank exit stops the firing with the close-out, never a null pick', () => {
-  assertGoesRed(assertRankExitRouted, SKILL, '; a non-zero exit stops the firing, never a `null` pick');
+  assertGoesRed(assertRankExitRouted, SKILL, '; a non-zero exit stops the firing, quoting its stderr line, never a `null` pick');
+  assertGoesRed(assertRankExitRouted, SKILL, ', quoting its stderr line, never a `null` pick)', (t) => t.replace(', quoting its stderr line, never a `null` pick)', ', never a `null` pick)'));
+  assertGoesRed(assertRankExitRouted, SKILL, ', quoting its stderr line, never a `null` pick)', (t) => t.replace(', quoting its stderr line, never a `null` pick)', ', quoting its stderr line)'));
   assertGoesRed(assertRankExitRouted, SKILL, "is never a `null` pick: stop the firing, quoting its stderr line; Step 1's close-out runs");
 });
 
@@ -206,11 +213,25 @@ test('every --flag in a queue-pull.js call is in the CLI usage text', () => {
 
 // ---- AC2 negative ----
 
-const RETIRED = ['run its script verbatim', 'run it verbatim', 'next-ranking.md'];
+// The three AC2 phrases, plus the script's name: no SKILL.md step may send the session to it.
+const RETIRED = ['run its script verbatim', 'run it verbatim', 'next-ranking.md', 'queue-pull-script.md'];
 function assertNoScriptRun(t) {
   for (const phrase of RETIRED) assert.ok(!t.includes(phrase), `SKILL.md still says ${phrase}`);
 }
 
 test('AC2: SKILL.md no longer tells the session to read and run either script', () => {
   for (const phrase of RETIRED) assertGoesRed(assertNoScriptRun, SKILL, null, (t) => `${t}\n${phrase}\n`);
+});
+
+// The sub-files the Step 3 walk reads (the Loop's firing guard, the explicit list's predicted-conflict
+// step, the #N form's unreadable-exclusions probe) no longer send the session to the script either.
+const STEP3_FILES = ['firing-exclusion.md', 'near-duplicate-pairs.md', 'exclusions-unreadable-report.md'];
+function assertNoScriptCitation(t) {
+  assert.ok(!t.includes('queue-pull-script.md'), 'a Step 3 sub-file still cites queue-pull-script.md');
+}
+
+test('AC2: the Step 3 sub-files no longer cite queue-pull-script.md', () => {
+  for (const name of STEP3_FILES) {
+    assertGoesRed(assertNoScriptCitation, readText(path.join(DISPATCH, name)), null, (t) => `${t}\nRe-run \`queue-pull-script.md\`'s line.\n`);
+  }
 });
