@@ -6,3 +6,4 @@
 | 2 | build | SDD ruling — Task 2 real-input probe moved to the controller after Task 4: ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | open | — |
 | 3 | build | SDD ruling — per-task affected sets used the direct-reader fallback while the suite slot was held: ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | open | — |
 | 4 | build | SDD ruling — gate 2 deny reason states the follow-up rate once, no ">" (spec Gotchas over the plan template): ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | open | — |
+| 5 | build/skill | bin-source-scan-conformance: #5291's tests/trust-policy-keys-conformance.test.js extends the plugin/bin source-scan pattern to fenced node -e snippets under plugin/skills (per-fence check, CRLF fixture, exact site roster spanning both trees) — the skill documents plugin/bin only; worth a paragraph on scanning skill fences too | observation | — |
