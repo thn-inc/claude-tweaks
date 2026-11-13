@@ -18,8 +18,8 @@
 //     200k ~91s, and with a `/x` tail ~83s, pre-fix); a left-boundary lookbehind of its own owner
 //     class now lets a match start only at the run's start or where a previous `#N` match ended.
 //   - a long digit run (`1`*200k, `#` + `1`*200k + `a`): the `(?<=#\d+)` scan-back would run at every
-//     digit; the `(?!\d)` before it keeps it to once per run (measured only with the guard in place
-//     in the regex's design; the red run without the guard is recorded in the fix report).
+//     digit; the `(?!\d)` before it keeps it to once per run (with the guard removed: `1`*200k took
+//     ~158s and `#` + `1`*200k + `a` ~94s).
 //   - back-to-back qualified references (`a/b#1`*50k): the verdict (everything removed) is the
 //     guard, since a plain left-boundary lookbehind leaves `a/b#a/b#…` behind.
 //   - `h#1`*5k collapsing to `h`*5k: a verdict guard for the fixed-point loop on a many-fragment
