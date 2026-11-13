@@ -12,7 +12,7 @@ An item qualifies when what it requires is text in the PR body itself: "the PR b
 
 ## Read the body
 
-`gh pr view {pr} --json body -q .body`, or, without `gh`, `mcp__github__pull_request_read` (`get`). An MCP read strips the body's HTML-comment markers, which does not matter here: only the content is judged.
+`gh pr view {pr} --json body -q .body`, or, without `gh`, `mcp__github__pull_request_read` (`get`). An MCP read strips the body's HTML-comment markers, which does not matter here: only the content is judged. A read is failed when the command exits non-zero or the tool returns an error; only a successful read of an empty body counts as a read that lacks the item.
 
 ## Verdict
 
