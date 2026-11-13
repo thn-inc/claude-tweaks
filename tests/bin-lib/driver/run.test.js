@@ -2882,6 +2882,19 @@ test('Important 1: a signal queued during the halting step\'s synchronous child 
   assert.equal(h.lines().filter((l) => l.record === 8).length, 0, 'no further record');
 });
 
+test('Important 1: under --no-settle a signal queued during the halting step is interrupted, not left-to-caller', async () => {
+  let h = null;
+  h = harness({ script: [[on('node', /verify\.js$/), () => { fireSoon(h, 'SIGINT'); return { code: null, stdout: '', stderr: 'killed' }; }]] });
+  assert.equal(await run(['--no-settle', '#7', '#8'], h.deps), 0);
+  assert.deepEqual(settleCalls(h), []);
+  const fs_ = finals(h);
+  assert.equal(fs_.length, 1, 'exactly one final line');
+  assert.equal(h.lines().at(-1).step, FINAL_STEP);
+  assert.deepEqual([fs_[0].settle, fs_[0].settleRow, fs_[0].stop.step], ['interrupted', null, 'test']);
+  assert.deepEqual(h.calls.filter((c) => c.kind === 'terminate').map((c) => c.args), [['SIGINT']]);
+  assert.equal(h.lines().filter((l) => l.record === 8).length, 0);
+});
+
 test('Ruling: a signal during settle itself stops it before the next call', async () => {
   let h = null;
   h = harness({ script: [

@@ -19,8 +19,8 @@
 // `interrupted`). An interrupted record settles nothing: a signal queued during the halting
 // step's synchronous child is delivered at the loop's yield before settle, and one that lands
 // during settle stops it before its next call (settle yields between calls and reads
-// shared.interrupted); either way the final line says `interrupted` and the loop terminates. A record that sets
-// ctx.shared.fatal (the policy, the run's repository or its integration branch cannot be
+// shared.interrupted); either way the final line says `interrupted` and the loop
+// terminates. A record that sets ctx.shared.fatal (the policy, the run's repository or its integration branch cannot be
 // resolved) ends the run with exit 1.
 //
 // Every side effect goes through `deps` (gh-api-module-pattern's CLI wrapper contract);
@@ -59,7 +59,7 @@
 // supervisor should signal the process group, not the pid.
 const fs = require('fs');
 const { execFileSync, spawnSync } = require('child_process');
-const { createEventSink, outcomeFor, FINAL_STEP, STOP_CLASSES, OUTCOMES } = require('./events');
+const { createEventSink, outcomeFor, yieldToEventLoop, FINAL_STEP, STOP_CLASSES, OUTCOMES } = require('./events');
 const { STEPS } = require('./steps');
 const { toEscalationReason, planRow, SETTLE_ROWS, settle } = require('./settle');
 const { ghAvailable, remoteUrl, ghOptions } = require('../repo-resolve');
@@ -207,12 +207,6 @@ function finalEvent(ctx, stop, sink, msTotal, deps, settled = SETTLE_NONE) {
   return event;
 }
 
-// Lets the event loop deliver a pending signal before the next step: every step before the
-// worker makes only synchronous calls, and an await that settles on microtasks alone never
-// turns the loop, so without this a SIGINT during the claim would wait for the worker.
-function yieldToEventLoop() {
-  return new Promise((resolve) => { setImmediate(resolve); });
-}
 
 // An interrupted record's stop class, from the side effects it holds: `none` once the run's
 // config is written (the PR is created, recorded and configured: a complete pending-review),

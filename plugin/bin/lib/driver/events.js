@@ -73,6 +73,14 @@ function outcomeFor(stopClass) {
   return OUTCOME_BY_CLASS[stopClass];
 }
 
+// Lets the event loop deliver a pending signal: every step before the worker makes only
+// synchronous calls, and an await that settles on microtasks alone never turns the loop, so
+// without this a SIGINT during the claim would wait for the worker. Used by run.js between
+// steps and by settle.js between calls.
+function yieldToEventLoop() {
+  return new Promise((resolve) => { setImmediate(resolve); });
+}
+
 const CLOSING_KEYWORDS = /\b(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\b/gi;
 const QUALIFIED_REF = /[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#\d+/g;
 const BARE_REF = /#\d+/g;
@@ -149,5 +157,5 @@ function createEventSink({ stdout, appendFile }) {
 module.exports = {
   CLI_TIMEOUT_MS, firstLine, errorText,
   STEP_NAMES, SETTLE_STEP_NAMES, FINAL_STEP, STEP, OUTCOMES, STOP_CLASSES,
-  outcomeFor, neutralize, normalizeTitle, createEventSink,
+  outcomeFor, yieldToEventLoop, neutralize, normalizeTitle, createEventSink,
 };

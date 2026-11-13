@@ -11,7 +11,7 @@
 
 const path = require('node:path');
 const { isTrustedComment } = require('../issues/comment-trust');
-const { STEP_NAMES, OUTCOMES, STOP_CLASSES, outcomeFor, neutralize, CLI_TIMEOUT_MS, firstLine, errorText } = require('./events');
+const { STEP_NAMES, OUTCOMES, STOP_CLASSES, outcomeFor, neutralize, CLI_TIMEOUT_MS, firstLine, errorText, yieldToEventLoop } = require('./events');
 const { ESCALATION_REASONS } = require('../express/cli');
 const { LABELS } = require('../issues/record-vocabulary');
 const { parseWorktreeList, findWorktreeEntry } = require('../hooks/worktree-reap');
@@ -174,8 +174,6 @@ function planRow(input, deps) {
   return { row: picked.row, unclassified: picked.unclassified, pr, unreadableNote };
 }
 
-const yieldTurn = () => new Promise((resolve) => { setImmediate(resolve); });
-
 // Performs the fixed calls for a stopped run, iterating SETTLE_ROWS[row]. Every call is made
 // at most once and a failure never stops the next; a worker is never launched (settle is
 // mechanical). When the caller passes `input.interrupted` (a predicate), settle yields to the
@@ -187,8 +185,7 @@ async function settle(input, deps) {
   const failed = [];
   const plan = planRow(input, deps);
   const { pr } = plan;
-  const picked = plan;
-  let row = picked.row;
+  let row = plan.row;
   let interrupted = false;
   const created = stop.created || {};
   const stepName = oneOf(STEP_NAMES, stop.step);
@@ -305,7 +302,7 @@ async function settle(input, deps) {
       const h = HANDLERS[name];
       if (h.when && !h.when()) continue;
       if (typeof input.interrupted === 'function') {
-        await yieldTurn();
+        await yieldToEventLoop();
         if (input.interrupted()) { interrupted = true; return; }
       }
       const status = step(name, h.run);
@@ -322,7 +319,7 @@ async function settle(input, deps) {
   let note = null;
   if (row === 'claim' && (stop.reason === 'claim-exit-5' || stop.reason === 'claim-exit-none' || input.claimed === true)) note = CLAIM_NOTE;
   else if (plan.unreadableNote) note = plan.unreadableNote;
-  return { row, settledClass: CLASS_BY_ROW[row], calls, failed, unclassified: picked.unclassified, note, ...(interrupted ? { interrupted: true } : {}) };
+  return { row, settledClass: CLASS_BY_ROW[row], calls, failed, unclassified: plan.unclassified, note, ...(interrupted ? { interrupted: true } : {}) };
 }
 
 module.exports = {
