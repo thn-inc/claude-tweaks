@@ -711,13 +711,36 @@ test('Decision 2: without the key a --stamp-suite chunk runs as today (#5369)', 
   assert.ok(fs.existsSync(marker));
 });
 
-test('an invalid default declaration never refuses an unscoped run (#5369)', async () => {
-  const r = repoWith({ ci: false, declExtra: KEY });
+test('an invalid default declaration that keeps ci.tests and the key never refuses an unscoped run (#5369)', async () => {
+  const r = repoWith({ declExtra: { ...KEY, concurrency: { suiteSlots: 'many' } } });
+  const { env } = fakeGhEnv('green', '');
+  const marker = path.join(tmpDir(), 'm');
+  const res = await runCli(['--cmd', localMarkerCmd(marker)], { cwd: r.repo, env: withSlots(env, path.join(tmpDir(), 'slots')) });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(res.stderr.includes('concurrency ignored'), `the fixture must be invalid: ${res.stderr}`);
+  assert.ok(fs.existsSync(marker));
+});
+
+test('without the key an unscoped --cmd tests run on a project with a ci block runs here (#5369)', async () => {
+  const r = repoWith();
   const { env } = fakeGhEnv('green', '');
   const marker = path.join(tmpDir(), 'm');
   const res = await runCli(['--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
   assert.strictEqual(res.code, 0, res.stdout + res.stderr);
   assert.ok(fs.existsSync(marker));
+});
+
+test('under the key a CI-declared suite after a non-CI --cmd is still refused, unscoped and as a chunk (#5369)', async () => {
+  const r = repoWith({ declExtra: KEY });
+  const { env } = fakeGhEnv('green', '');
+  const lintMarker = path.join(tmpDir(), 'lint-m');
+  const marker = path.join(tmpDir(), 'm');
+  const cmds = ['--cmd', `lint=${markerCommand(lintMarker)}`, '--cmd', localMarkerCmd(marker)];
+  const unscoped = await runCli(cmds, { cwd: r.repo, env });
+  assert.strictEqual(unscoped.code, 2, unscoped.stdout + unscoped.stderr);
+  const chunk = await runCli([...SCOPE(r), '--no-stamp', '--stamp-suite', ...cmds], { cwd: r.repo, env });
+  assert.strictEqual(chunk.code, 2, chunk.stdout + chunk.stderr);
+  assert.ok(!fs.existsSync(marker) && !fs.existsSync(lintMarker));
 });
 
 test('an invalid default declaration prints its concurrency-ignored line exactly once (#5369)', async () => {

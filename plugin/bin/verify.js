@@ -506,7 +506,7 @@ async function main() {
   // or invalid default declaration has decl null and is never refused.
   if (!parsed.scope && parsed.local !== true) {
     const { decl: defaultDecl } = readDefaultDeclaration(parsed.cwd || process.cwd());
-    if (defaultDecl && defaultDecl.localRuns === 'on-request' && defaultDecl.ci) {
+    if (defaultDecl && defaultDecl.localRuns === 'on-request') {
       const ciCmd = parsed.cmds.find((c) => Object.hasOwn(defaultDecl.ci, c.name));
       if (ciCmd) {
         process.stderr.write(`verify.js: ${DECLARATION_PATH} sets localRuns "on-request", so the CI-declared suite "${ciCmd.name}" runs on this machine only when asked: pass --scope ${DECLARATION_PATH} to take it from CI, or --local to run it here.\n${USAGE}\n`);
@@ -673,7 +673,7 @@ async function main() {
     // `files` stay at their no-scope defaults.
     // #5369: under localRuns "on-request" a chunk naming a CI-declared suite is a run on this
     // machine, so it needs --local; it never consults CI. Before any gh call, check or slot hold.
-    if (parsed.stampSuite && decl && decl.localRuns === 'on-request' && decl.ci && parsed.local !== true) {
+    if (parsed.stampSuite && decl && decl.localRuns === 'on-request' && parsed.local !== true) {
       const ciCmd = parsed.cmds.find((c) => Object.hasOwn(decl.ci, c.name));
       if (ciCmd) {
         scopeUsageExit(`verify.js: ${parsed.scope} sets localRuns "on-request", so the --stamp-suite chunk of the CI-declared suite "${ciCmd.name}" is a run on this machine: pass --local to run it here.`);
