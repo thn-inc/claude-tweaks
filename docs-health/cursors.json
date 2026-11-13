@@ -250,5 +250,8 @@
   },
   "doc:decisions/0030-unknown-origin-hosts-are-refused-not-degraded": {
     "lastAuditedMs": 1794464043038
+  },
+  "doc:decisions/0031-baseline-reruns-run-serially-and-reuse-one-scratch-path-per-slot": {
+    "lastAuditedMs": 1794550416590
   }
 }
