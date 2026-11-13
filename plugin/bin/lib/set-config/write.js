@@ -33,7 +33,7 @@ const path = require('path');
 const { POLICY_KEYS } = require('../policy-schema');
 
 // Ordered per manifesto.md's canonical lever numbering (1=Mode ... 13=Merge
-// authorization). spec:/created: are run bookkeeping, not levers — excluded.
+// authorization). created: is run bookkeeping; spec: is a run pin (RUN_PINS) — neither is a lever.
 const MANIFESTO_LEVERS = Object.freeze([
   'mode', 'scope-creep', 'overlap', 'design-intent', 'leftover-default',
   'auto-fix-threshold', 'review-auto-apply-ceiling', 'tidy-aggressiveness',
