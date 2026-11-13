@@ -232,6 +232,7 @@ function run(argv, deps = realDeps) {
   return 0;
 }
 
-module.exports = { run, parseArgs, realDeps };
+// PREFLIGHT_TIMEOUT_MS is exported so lib/dispatch/queue-pull.js's test can pin its spawn bound above it.
+module.exports = { run, parseArgs, realDeps, PREFLIGHT_TIMEOUT_MS };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

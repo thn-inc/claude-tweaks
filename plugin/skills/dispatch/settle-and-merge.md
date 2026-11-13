@@ -22,8 +22,8 @@ constraint.
 This blanket mapping also covers the `gh` calls the Auto-merge gate's acceptance-labeling step
 delegates to per member (`wrap-up/verification-brief.md`'s Routing section onward, and its
 Parent-Gate Procedure) — `#205`: `acceptance-packet.js post` exits 4 with `gh` absent, and that
-file's Step 4 then makes the same writes through `add_issue_comment` and `issue_write`, its evidence-pr
-`gh pr create` is the PR create exception (#929), and its Step 1 runs `_shared/label-bootstrap.md`,
+file's Step 4 then makes the same writes through `add_issue_comment` and `issue_write`, and its
+Step 1 runs `_shared/label-bootstrap.md`,
 which has no MCP row: skip that loop on the MCP path, as the **Transport (#4602).** paragraph says.
 The Parent-Gate Procedure makes `gh api .../sub_issues`, `gh issue view`, `gh api user`,
 `gh issue comment`, `gh issue close` and `gh issue edit --add-label`; each one's MCP tool is in
