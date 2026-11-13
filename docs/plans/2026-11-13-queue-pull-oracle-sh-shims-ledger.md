@@ -10,3 +10,4 @@
 | 6 | build | SDD ruling — fix all now; remove the sourced-answer path (no measured gain at fixture sizes, max 9.7...: ratify or reverse at the Review Console (staged/sdd-ruling-6.md) | open | — |
 | 7 | build | SDD ruling — fix wave applies all 3, the env item as the reviewer's narrow fork-free extension (refu...: ratify or reverse at the Review Console (staged/sdd-ruling-7.md) | open | — |
 | 8 | build | SDD ruling — residual meets fix-now (same escape class, cheap) → one targeted fix + one scoped re-re...: ratify or reverse at the Review Console (staged/sdd-ruling-8.md) | open | — |
+| 9 | build/skill | Skill observation: generating fork-free POSIX sh PATH shims extends .claude/skills/skill-prose-conformance-tests/whole-fence-parity-oracle.md; its dash-vs-macOS-sh pitfalls (cd empty arg, OLDPWD on cd -, a failed redirect on the colon builtin exits dash, leading zeros in arithmetic, shift past argc) are not written down there | open | — |
