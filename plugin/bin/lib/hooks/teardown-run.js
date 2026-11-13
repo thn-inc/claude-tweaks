@@ -67,18 +67,22 @@ function modeGateSkip(mode, branch, isIntegrationBranch, label) {
 // worktree isn't registered at all. Deliberately independent from run-integrity.js's own
 // deriveBranch — that one derives branch to build shipped-unclosed EVIDENCE and stays scoped to
 // that read-only advisory; this one is a plain lookup for a step about to actually mutate state.
-function branchOfWorktree(root, worktreePath) {
+function listedWorktreeEntry(root, worktreePath) {
   if (!worktreePath) return null;
   const list = runGit(['worktree', 'list', '--porcelain'], root);
   if (list.failure || list.stdout === null) return null;
-  const entry = findWorktreeEntry(parseWorktreeList(list.stdout), worktreePath);
+  return findWorktreeEntry(parseWorktreeList(list.stdout), worktreePath);
+}
+
+function branchOfWorktree(root, worktreePath) {
+  const entry = listedWorktreeEntry(root, worktreePath);
   return entry ? (entry.branch || null) : null;
 }
 
 // `runDir` — the run directory (already resolved/anchored by the caller, same contract as
 // close-run). `opts.mode` — 'merged' | 'abandoned' | null (neither flag given — treated the same
 // as 'abandoned' for steps 4-5: skip branch/ref deletion rather than guess intent). `opts.deps`
-// — test seam for the gh call only; every git call goes through the real runGit (fixture repos
+// — test seam for the gh call and (`deps.runGit`) the dead-owner unlock call only; every other git call goes through the real runGit (fixture repos
 // are real git repos, matching this codebase's existing convention for reconcile/archive tests).
 // #3023: a failed git call's best available cause — stderr when git wrote any,
 // else its exit status (plus stdout when present), else the failure category
@@ -149,7 +153,10 @@ function teardownRun(runDir, opts = {}) {
   // fallbackBranch() itself is gated (never fires when a worktree WAS
   // recorded but is merely gone from disk — that case keeps its existing
   // "no branch recorded" behavior unchanged, per AC9 below).
-  const branch = (root ? branchOfWorktree(root, worktreePath) : null)
+  // The listed entry is kept: Step 3's dead-owner unlock reads its lock state from it (#5293) rather
+  // than listing worktrees a further time.
+  const recordedEntry = root ? listedWorktreeEntry(root, worktreePath) : null;
+  const branch = (recordedEntry ? (recordedEntry.branch || null) : null)
     || (prevState && prevState.branch)
     || (!worktreePath && root
       ? (fallbackBranch(root, runDir, prevState)
@@ -241,15 +248,18 @@ function teardownRun(runDir, opts = {}) {
   // or an unresolvable state, and worktree-reap.js's predicates fail CLOSED either way.
   // #5293: on the dead-owner path only, a lock whose recorded pid is no longer running (lockVerdict
   // 'orphaned') is the dead session's own leftover — unlock it so the removal below can proceed.
-  // An 'in-use' or pid-less ('unknown') lock stays locked and falls to the skip below.
+  // The reaper's ORPHAN_GRACE_MS (24h, isStale) is not applied: it guards against a pid change while
+  // the session is alive, and run-liveness's `dead` verdict already covers that (a resumed session
+  // re-stamps the owner block at SessionStart). An 'in-use' lock stays locked and falls to the skip
+  // below; a pid-less ('unknown') lock is never unlocked either, so it reaches `git worktree remove`,
+  // which git refuses ("worktree: skipped — removal failed (…locked…)").
   let unlockFailure = null;
   if (deadOwnerOverride && effectiveWorktreePath) {
-    const listLocked = runGit(['worktree', 'list', '--porcelain'], root);
-    const lockedEntry = (!listLocked.failure && listLocked.stdout !== null)
-      ? findWorktreeEntry(parseWorktreeList(listLocked.stdout), effectiveWorktreePath)
-      : null;
+    // Reuse the Step-0 listing when the recorded path is the effective one; only a branch-recovered path needs its own.
+    const lockedEntry = effectiveWorktreePath === worktreePath ? recordedEntry : listedWorktreeEntry(root, effectiveWorktreePath);
     if (lockedEntry && lockVerdict(lockedEntry) === 'orphaned') {
-      const unlock = runGit(['worktree', 'unlock', effectiveWorktreePath], root);
+      const unlockGit = (opts.deps && opts.deps.runGit) || runGit;
+      const unlock = unlockGit(['worktree', 'unlock', effectiveWorktreePath], root);
       if (unlock.failure) unlockFailure = unlock;
     }
   }

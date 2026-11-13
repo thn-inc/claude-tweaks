@@ -559,8 +559,10 @@ test('#3695 AC3: no strict worktree-path compare remains at either call site', (
 
 // #5293: a --merged teardown from a later session proceeds when run-liveness reads the recording
 // session's run `dead`; every other verdict/mode keeps the whole-teardown refusal. The owner block
-// is the real writer's shape (context.js ownerBlock); probes are injected so verdicts do not depend
-// on the platform or on pid reuse. `now` is pushed past LIVE_WINDOW_MS so the fixture's fresh
+// is the real writer's shape (context.js ownerBlock); run-liveness's probes are injected (pidAlive,
+// pidStartedAt) so those verdicts do not depend on the platform. The locked-worktree test is the
+// exception: teardown's lockVerdict and run-liveness's lock probe read the real isPidAlive there,
+// against an exited child's pid (a reused pid would fail red, never falsely green). `now` is pushed past LIVE_WINDOW_MS so the fixture's fresh
 // heartbeat and fresh commit read stale.
 const { spawnSync } = require('child_process');
 const { ownerBlock } = require('../plugin/bin/lib/hooks/context');
@@ -614,6 +616,27 @@ test('#5293: dead owner, merged, worktree locked by the dead session — unlocks
   assert.strictEqual(calls.length, 1);
 });
 
+test('#5293: dead owner, merged, the unlock of the dead session\'s lock fails — reported, worktree kept, no removal', () => {
+  const pid = deadPid();
+  const { root, wt, runDir, state } = foreignOwnedRun(pid);
+  git(root, 'worktree', 'lock', '--reason', `claude session someone-else (pid ${pid})`, wt);
+  writeRunState(runDir, { status: 'active', worktree: wt, ...state });
+  const gitCalls = [];
+  const failingUnlock = (args) => {
+    gitCalls.push(args);
+    return { failure: 'exit', exitCode: 1, stderr: 'unlock refused (test)' };
+  };
+  const result = teardownRun(runDir, {
+    mode: 'merged', sessionId: 'me', liveness: staleLiveness({ pidAlive: () => false }),
+    deps: { ghApiDelete: fakeGhApiDelete([], { ok: true }), runGit: failingUnlock },
+  });
+
+  assert.ok(result.lines.includes("worktree: skipped — unlock of the dead session's lock failed (unlock refused (test))"), result.lines.join('\n'));
+  assert.deepStrictEqual(gitCalls, [['worktree', 'unlock', wt]]);
+  assert.match(git(root, 'worktree', 'list'), /feat-branch/);
+  assert.ok(!result.lines.some((l) => l.startsWith('worktree: removed')), result.lines.join('\n'));
+});
+
 test('#5293: live owner, merged — still refused', () => {
   const pidStartTime = () => 'Mon Jan  1 00:00:00 2026';
   const { root, wt, runDir, state } = foreignOwnedRun(process.pid, { pidStartTime });
@@ -642,6 +665,7 @@ test('#5293: dead owner, abandoned — still refused', () => {
   assert.strictEqual(result.lines.length, 1);
   assert.match(result.lines[0], /refused .* another session \(run-liveness: not checked\)/);
   assert.match(git(root, 'worktree', 'list'), /feat-branch/);
+  assert.notStrictEqual(git(root, 'branch', '--list', 'feat-branch').trim(), '');
   assert.strictEqual(calls.length, 0);
 });
 
@@ -658,6 +682,7 @@ test('#5293: unknown liveness, merged — still refused', () => {
   assert.strictEqual(result.lines.length, 1);
   assert.match(result.lines[0], /refused .* another session \(run-liveness: unknown\)/);
   assert.match(git(root, 'worktree', 'list'), /feat-branch/);
+  assert.notStrictEqual(git(root, 'branch', '--list', 'feat-branch').trim(), '');
   assert.strictEqual(calls.length, 0);
 });
 
