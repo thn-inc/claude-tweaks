@@ -12,6 +12,7 @@ Several sessions on one machine each running a full suite at once is the cost th
 | subset | every local suite runs an impact-subset or tool-scoped command, or only `types`/`lint` run |
 
 - A CI-answered suite (`ci-source.md`) takes no slot while CI answers it. If it fails, its local flaky retry takes a subset-lane slot, and only when a retry actually spawns. A run whose every suite CI answers, with no local retry, takes no slot, and neither does a run with no local check.
+- Under `localRuns: "on-request"` (`ci-source.md`) a CI-declared suite runs here only with `--local`. A run that exits 3 has taken no slot.
 - `--baseline` adjudication always takes its own full-lane slot, after the checks' slot is released, and only once a rerun will actually spawn: an adjudication refused before any rerun (no `--baseline-cmd` for a failing check, an unparseable log, no failing file present at base) takes none. Its reruns and its base-side full run queue behind every other full-lane holder.
 - A nested `verify.js` (inheriting `CT_TEST_SUITE_SLOT_HELD=1`) takes no slot, so it never waits on its parent; neither does any other runner that honors that variable.
 
