@@ -88,6 +88,10 @@ When a convention binds only the commands a skill file carries — prose may nam
 
 When skill prose carries a shell or `node -e` snippet the reader is told to run, read `executable-snippet-pins.md` alongside this file before writing its test. It covers extract-and-run versus byte-pinning, the flags-only variant, multi-fence sequences that hand state between calls, stub CLIs for fences that spawn a plugin CLI, and fixtures for fences that write through a run-dir-anchored CLI.
 
+### Run a whole embedded fence as a parity oracle — lazy-loaded
+
+When a Node port of a skill's bash fence must match the fence, and the test runs the fence whole as the oracle, read `whole-fence-parity-oracle.md` alongside this file before writing the harness. It covers fence extraction with a named bash-4 skip, the explicit spawn env, git identity through env rather than `-c user.*`, PATH shims answered from one canned table, the per-pair escape guard, shared temp-name and clock seams, and the guard that fails when the port prints a diagnostic the reference did not.
+
 ### Pin a mirrored copy or a clean-room-dispatched sub-file — lazy-loaded
 
 When the pinned prose deliberately mirrors canonical text in another file, or is inlined verbatim into a Task-tool agent's prompt, read `mirrored-and-dispatched-prose-pins.md` alongside this file before writing its test. It covers pinning two live copies equal through a vocabulary-only normalizer, and the three checks a dispatched body needs beyond a content pin: a strict non-empty subset of the file, a sweep for references the agent cannot resolve, and fence balance.
@@ -236,7 +240,7 @@ A varying failure count across runs on byte-identical code tracks machine load f
 
 ## Advanced proof patterns — lazy-loaded
 
-`advanced-proof-patterns.md` alongside this file holds seven specialized procedures. Read it when a go-red proof needs zero tree mutation, a change adds or removes an Anti-Patterns row, a detection signal needs corpus validation, a sweep ships with an exemption list (stale-checks) or with known offenders unmigrated (exempt/ratchet allowlists), a suite builds throwaway git repos, a resolver test must prove an excluded source never wins, or a new pin needs an existing suite to model on (its `## Reference instances`).
+`advanced-proof-patterns.md` alongside this file holds eight specialized procedures. Read it when a go-red proof needs zero tree mutation, a change adds or removes an Anti-Patterns row, a detection signal needs corpus validation, a sweep ships with an exemption list (stale-checks) or with known offenders unmigrated (exempt/ratchet allowlists), a suite builds throwaway git repos, a resolver test must prove an excluded source never wins, a negative claim needs a clause sweep, or a new pin needs an existing suite to model on (its `## Reference instances`).
 
 ## Reference
 
