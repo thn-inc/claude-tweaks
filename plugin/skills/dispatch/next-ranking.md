@@ -24,7 +24,8 @@ the rest of the firing, exactly like an oversized group — the record's labels 
 present, no `bot:blocked`) do not change on a claim-contest/in-flight/claims-branch-missing stop
 or a pre-retry-ceiling build/test failure, so without this the same firing's very next iteration
 re-selects the identical group and reproduces the identical stop. A claim-permission-denied stop
-never reaches this filter: it ends the firing (`SKILL.md`'s Claim permission stop). All three reasons are checked
+or a render-failure stop never reaches this filter: each ends the firing (`SKILL.md`'s Claim
+permission stop and Render-failure stop, #5255). All three reasons are checked
 together, via one `groupIsExcluded(g, entries, ['oversized', 'firing', 'neighbour-in-flight'])` call
 — no separate key derivation for each.
 
