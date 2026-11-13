@@ -71,6 +71,15 @@ A settle call is not a `STEPS` entry; it is a handler in one of `settle.js`'s `S
 - Settle handlers run under `step()`'s catch-all, so a failing call becomes a `fail` event and the row continues (AC7). A test fake that signals a forbidden call by throwing is swallowed the same way and the test stays green. Fakes for settle deps record their calls into an array that the test asserts on, and never throw. AC6.2 passed with a launcher call inside a handler until its fake was changed this way.
 - A row that removes the run's worktree ends with `hooks.js close-run --run`. Otherwise `run-state.json` stays `active` and names a worktree that no longer exists (`settle-close`, IL-116).
 
+## A step implemented in its own module
+
+The merge step (#5226) runs a procedure with sub-steps of its own, so its body lives in `plugin/bin/lib/driver/merge.js`. Its `STEPS` entry in `steps.js` only builds the module's input, awaits `merge(mctx, mdeps)`, and copies the result back onto `ctx`. A step built this way owes:
+- **A sub-step vocabulary of its own.** The sub-step event names are a frozen list in `events.js` kept apart from `STEP_NAMES`, as `SETTLE_STEP_NAMES` is, because the pipeline-step list is pinned (`MERGE_STEP_NAMES`). The module's `emit` throws on a name not in it, `tests/bin-lib/driver/merge.test.js` asserts every emitted event's step is in it, and `docs/driver.md`'s "Event lines" paragraph lists the names by hand.
+- **Live seams, never copied values.** The entry passes `emit: ctx.events.emit` and `rebindEvents: ctx.events.rebind` (built in run.js's `driveRecord`; `rebind(null)` goes stdout-only and sets `ctx.eventsStdoutOnly`), `interrupted: () => ctx.shared.interrupted`, and `watchClock`, which sets `ctx.ciWaitStartedAt` so the interrupted line can carry the wait. A copied `ctx.shared.interrupted` is read once and never sees the signal.
+- **An interrupt check after every await.** The module calls `deps.interrupted()` after each await and makes no further call once it is set: merge.js does so after the supplier call and after each watch sleep. `docs/driver.md`'s "The merge step" section names those yield points, so a new await adds one there.
+- **No import from `steps.js`.** `steps.js` requires the module, so the reverse import is a require cycle. The module keeps its own copies of the helpers it needs (merge.js's `logDecision` and `bin`, which diverge from `steps.js`'s `logDecisionFile` and `binScript`) and exports its own time constants (see "A step that waits on time").
+- **A result for every stop, never a throw.** `merge()` turns an unexpected throw into `pending-review` / `unclassified` naming the sub-step, so the step never halts and its class (`none`) covers only a throw in the entry itself. `finalEvent` takes the record's outcome from `ctx.merge` when nothing stopped. A wait the module measures goes on its sub-step events (`extra.ciWaitMs` on each `merge-watch` event, summed by `finalEvent`), never on the step's own line, so it is counted once.
+
 ## Anti-Patterns
 
 | Pattern | Why it fails here |
