@@ -41,4 +41,5 @@ files:
 ## Origin
 - Created during `/claude-tweaks:build` of record #4347 (2026-10-27), from the speed analysis of the #4026 dispatch, whose local full runs took 55 minutes and 1h34 under load while the same suite took 3.5 minutes in CI.
 - Updated during wrap-up of #5153: step 1 flags a `ci` declaration in a project whose CI skips draft PRs, which `_shared/ci-skips-drafts.md` rules a misconfiguration.
+- Updated during `/claude-tweaks:build` of #5369: step 1 notes that under the declaration's `localRuns: "on-request"` key an unanswered run exits 3 instead of running locally (`docs/journeys/keep-ci-declared-suites-off-this-machine-5369.md`).
 - Related: `docs/journeys/get-one-full-suite-run-on-a-docs-touching-build-3060.md` (Common Step 5's run-once rule), `docs/journeys/declare-a-verify-scope-1924.md` (the declaration).
