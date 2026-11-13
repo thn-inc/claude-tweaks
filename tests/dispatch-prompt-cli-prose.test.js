@@ -401,3 +401,65 @@ test('AC2.1 go-red: a dropped fact or an exit list without the stop fails its ow
   assert.notStrictEqual(unlisted, SKILL);
   assert.throws(() => assertSkillStop(unlisted), { message: /SKILL\.md exit list does not name the render-failure stop/ });
 });
+
+// firing-exclusion.md, sequential-execution.md, next-ranking.md: each names the stop where it
+// names the Claim permission stop as ending the firing.
+const FIRING_EXCLUSION_STOP = 'A render-failure stop ends the firing too (`SKILL.md`\'s Render-failure stop, #5255), so no next iteration runs after it either.';
+const SEQUENTIAL_STOP = '(none after a Claim permission stop or a render-failure stop: the firing ends, `SKILL.md`)';
+const NEXT_RANKING_STOP = 'or a render-failure stop never reaches this filter: each ends the firing';
+function assertSiblingStops(files) {
+  assert.ok(files.exclusion.includes(FIRING_EXCLUSION_STOP), 'firing-exclusion.md: render-failure stop missing');
+  assert.ok(files.sequential.includes(SEQUENTIAL_STOP), 'sequential-execution.md: render-failure stop missing');
+  assert.ok(files.ranking.includes(NEXT_RANKING_STOP), 'next-ranking.md: render-failure stop missing');
+}
+const SIBLINGS = { exclusion: read('firing-exclusion.md'), sequential: read('sequential-execution.md'), ranking: read('next-ranking.md') };
+
+test('AC3.1: firing-exclusion.md, sequential-execution.md and next-ranking.md name the render-failure stop (#5255)', () => {
+  assertSiblingStops(SIBLINGS);
+});
+
+test('AC3.1 go-red: each file without its sentence fails its own assertion (#5255)', () => {
+  for (const [key, needle, message] of [
+    ['exclusion', FIRING_EXCLUSION_STOP, 'firing-exclusion.md: render-failure stop missing'],
+    ['sequential', SEQUENTIAL_STOP, 'sequential-execution.md: render-failure stop missing'],
+    ['ranking', NEXT_RANKING_STOP, 'next-ranking.md: render-failure stop missing'],
+  ]) {
+    const mutated = { ...SIBLINGS, [key]: SIBLINGS[key].replace(needle, 'x') };
+    assert.notStrictEqual(mutated[key], SIBLINGS[key]);
+    assert.throws(() => assertSiblingStops(mutated), { message });
+  }
+});
+
+// reporting.md: the relay paragraph, and the PushNotification sentence's headless case.
+const RELAY_LEAD = '**Render-failure stops are relayed (#5255).**';
+const RELAY_FACTS = [
+  'names the record and the call (first, second, or a continuation)',
+  'quotes the exit code and the first stderr line from that call\'s `Prompt render failed:` `REFUSED` line',
+  'says the firing stopped',
+  'lists any named records after it as not attempted',
+  'It closes with the remedy on its own line: fix the named cause (the template, a policy value or the environment), then re-run `/claude-tweaks:dispatch #{n}`.',
+];
+const PUSH_CASE = 'for a headless render-failure stop (a firing that passes `--headless`, `task-prompt.md`; one notification naming the record and the stderr line';
+function assertRelay(reporting) {
+  const paras = reporting.split('\n\n');
+  const para = paras.find((p) => p.startsWith(RELAY_LEAD));
+  assert.ok(para, 'reporting.md: relay paragraph missing');
+  for (const f of RELAY_FACTS) assert.ok(para.includes(f), `reporting.md relay: missing ${JSON.stringify(f)}`);
+  const push = paras.find((p) => p.startsWith('`PushNotification` fires only'));
+  assert.ok(push && push.includes(PUSH_CASE), 'reporting.md: PushNotification sentence must name a headless render-failure stop');
+}
+const REPORTING = read('reporting.md');
+
+test('AC4.1: reporting.md relays the render-failure stop and notifies when headless (#5255)', () => {
+  assertRelay(REPORTING);
+});
+
+test('AC4.1 go-red: a dropped relay fact or the missing headless case fails its own assertion (#5255)', () => {
+  for (const f of RELAY_FACTS) {
+    const mutated = mutateInParagraph(REPORTING, RELAY_LEAD, f, 'x');
+    assert.throws(() => assertRelay(mutated), { message: `reporting.md relay: missing ${JSON.stringify(f)}` });
+  }
+  const noPush = REPORTING.replace(PUSH_CASE, 'x');
+  assert.notStrictEqual(noPush, REPORTING);
+  assert.throws(() => assertRelay(noPush), { message: 'reporting.md: PushNotification sentence must name a headless render-failure stop' });
+});
