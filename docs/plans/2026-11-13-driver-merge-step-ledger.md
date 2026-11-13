@@ -24,3 +24,5 @@
 | 20 | build | SDD ruling — contract-beats-spec: apply or decline at the Review Console (staged/build-deviation-1.md) | open | — |
 | 21 | build | SDD ruling — residuals after the fix wave fail the deferral gate (fix-now: small, in touched files): ratify or reverse at the Review Console (staged/sdd-ruling-19.md) | open | — |
 | 22 | build | SDD ruling — residual code-comment Minor (merge.js:603-604 refusedStop doc comment says merge-refused leaves the PR ready: ratify or reverse at the Review Console (staged/sdd-ruling-20.md) | open | — |
+| 23 | build/skill | Skill enrichment for driver-step-addition: a step that delegates to a module emitting sub-step events (ctx.events.emit / rebind to an archive or stdout-only) and must check interrupted() after every await before its next side effect — the merge step is the worked example | open | — |
+| 24 | build/skill | [skill: NEW - bin-cli-test-fake-parity] a test fake for a plugin/bin CLI (log-decision.js here) must mirror the real CLI's refusal rules, or a production-refused call stays green — the accept-anything fake hid a Step 4.1 line refused on every run | open | — |
