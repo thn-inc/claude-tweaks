@@ -119,13 +119,19 @@ test('design-notes.md records the per-record decision and names the hub-exclusio
 // queue-pull.js), run alone here on the gh transport: `pool` answers its one `gh issue list` call
 // (null fails it) and `claim(n)` the claim reads, which go through deps.createClaimReader. Returns
 // the stderr, the pool file it wrote, the neighbour-in-flight entries and the claims it read.
+// An unexpected call is recorded and asserted after the pass: the pass catches a throw from `run`
+// as a failed fetch, so an assertion thrown inside it would never fail the test.
 function runNeighbourPass(t, groups, pool, claim = () => ({ content: null })) {
   const errs = [];
   const read = [];
+  const unexpected = [];
   const ctx = makeContext({ sessionId: `per-record-neighbour-${crypto.randomBytes(6).toString('hex')}` }, {
     stderr: (s) => errs.push(s),
     run: (cmd, args) => {
-      assert.deepEqual([cmd, args[0], args[1], args[3]], ['gh', 'issue', 'list', 'bot:in-progress'], `unexpected call ${cmd} ${args.join(' ')}`);
+      if (cmd !== 'gh' || args[0] !== 'issue' || args[1] !== 'list' || args[3] !== 'bot:in-progress') {
+        unexpected.push(`${cmd} ${args.join(' ')}`);
+        throw new Error(`unexpected call ${cmd} ${args.join(' ')}`);
+      }
       if (pool === null) throw Object.assign(new Error('gh: not found'), { stdout: '' });
       return JSON.stringify(pool);
     },
@@ -135,6 +141,7 @@ function runNeighbourPass(t, groups, pool, claim = () => ({ content: null })) {
   fs.writeFileSync(ctx.paths['dispatch-groups.json'], JSON.stringify(groups));
   fs.writeFileSync(ctx.paths['dispatch-exclusions.json'], '[]');
   runPasses(PASSES.filter((p) => p.id === 'neighbour-in-flight'), ctx);
+  assert.deepEqual(unexpected, [], 'the neighbour-in-flight pass made a call other than its one gh issue list');
   return {
     stderr: errs.join(''),
     raw: JSON.parse(fs.readFileSync(ctx.paths['dispatch-in-flight-raw.json'], 'utf8')),

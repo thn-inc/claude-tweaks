@@ -320,6 +320,16 @@ const FILES_INPUTS = [
   ['--foreign-states', 'dispatch-foreign-states.json', '`{"owner/name#N": "<state>"}`'],
 ];
 
+// FILES_INPUTS is hand-copied, so a flag added to the CLI without a row here would pass every pin
+// below. Its flags must be exactly the input-path flags the CLI's usage text lists, in order.
+test('FILES_INPUTS names exactly the input-path flags bin/queue-pull.js\'s usage lists (#5230)', () => {
+  const { USAGE } = require(CLI);
+  const pullForm = section(USAGE, 'queue-pull.js --transport gh|files', 'queue-pull.js --rank');
+  const flags = [...pullForm.matchAll(/\[(--[a-z-]+) <p>\]/g)].map((m) => m[1]);
+  assert.ok(flags.length > 0, 'the usage text lists no input-path flag');
+  assert.deepEqual(FILES_INPUTS.map(([flag]) => flag), flags);
+});
+
 // The call's argv after `node <script>`, and its `--flag {name}` pairs.
 function filesCallArgv(t) {
   const fences = filesCallFences(t);

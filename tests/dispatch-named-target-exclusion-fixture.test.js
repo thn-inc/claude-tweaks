@@ -33,7 +33,8 @@ function docsHealthRecord(number, docPath) {
 }
 
 // The pass's CLI calls: the integration-branch policy read answers `main`, the run-dir resolution a
-// scratch dir, and log-decision.js / stage-item.js succeed. Anything else is a test failure.
+// scratch dir, and log-decision.js / stage-item.js succeed. Anything else throws; the module catches
+// a step's throw and prints it to stderr, so the test asserts stderr carries no `unexpected CLI`.
 function fakeCli(runDir) {
   return (name, args) => {
     if (name === 'resolve-policy.js' && args[1] === 'integration-branch') return { status: 0, stdout: 'main\n', stderr: '' };
@@ -68,7 +69,8 @@ test('the queue-pull module\'s named-target exclusion excludes exactly the synth
 
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-named-target-fixture-'));
   const sessionId = `named-target-fixture-${process.pid}-${path.basename(scratch)}`;
-  const ctx = makeContext({ sessionId, cwd: repo }, { spawnCli: fakeCli(scratch), stdout: () => {}, stderr: () => {}, tmpName: () => path.join(scratch, 'proposal.md') });
+  const errs = [];
+  const ctx = makeContext({ sessionId, cwd: repo }, { spawnCli: fakeCli(scratch), stdout: () => {}, stderr: (s) => errs.push(s), tmpName: () => path.join(scratch, 'proposal.md') });
   t.after(() => {
     fs.rmSync(path.dirname(ctx.paths['dispatch-groups.json']), { recursive: true, force: true });
     fs.rmSync(scratch, { recursive: true, force: true });
@@ -76,6 +78,7 @@ test('the queue-pull module\'s named-target exclusion excludes exactly the synth
   });
   fs.writeFileSync(ctx.paths['dispatch-groups.json'], JSON.stringify(groups));
   runPasses(PASSES.filter((p) => p.id === 'target-missing'), ctx);
+  assert.doesNotMatch(errs.join(''), /unexpected CLI/, 'the pass made a CLI call the fake does not answer');
   assert.equal(ctx.state.integrationRef, 'origin/main');
 
   const missing = JSON.parse(fs.readFileSync(ctx.paths['dispatch-exclusions.json'], 'utf8'))
