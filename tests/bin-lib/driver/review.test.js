@@ -246,9 +246,11 @@ function pathOpts({ types = {}, real = {}, sensitivePaths = [] } = {}) {
 const testPathOfLength = (n) => `tests/${'a'.repeat(n - 'tests/'.length - '.test.js'.length)}.test.js`;
 
 // One row per PATH_RULES entry; each input trips that rule and no other, so dropping the rule
-// turns its row (and only its row) red.
+// turns its row (and only its row) red. The one declared exception: the length guards inside
+// not-test-path and the parent walk (they keep each rule linear when called directly) refuse every
+// over-length path too.
 const PATH_RULE_ROWS = [
-  { rule: 'empty-or-too-long', input: testPathOfLength(EVIDENCE_PATH_MAX_CHARS + 1) },
+  { rule: 'empty-or-too-long', input: testPathOfLength(EVIDENCE_PATH_MAX_CHARS + 1), alsoTrips: ['not-test-path', 'parent-escapes'] },
   { rule: 'absolute-or-scheme', input: '/abs/a.test.js' },
   { rule: 'backslash', input: 'tests\\a.test.js' },
   { rule: 'percent-encoded', input: 'tests/%2e%2e/a.test.js' },
@@ -256,10 +258,17 @@ const PATH_RULE_ROWS = [
   { rule: 'trailing-slash', input: 'tests/' },
   { rule: 'flag-shaped', input: '-a.test.js' },
   { rule: 'git-segment', input: '.git/info/a.test.js' },
+  { rule: 'win32-alias', input: 'tests/a.test.js:x.test.js' },
+  { rule: 'reserved-char', input: 'tests/a\x1b[31m.test.js' },
+  { rule: 'node-modules-segment', input: 'tests/node_modules/a.test.js' },
   { rule: 'not-test-path', input: 'src/contest.js' },
-  { rule: 'protected-or-sensitive', input: 'hooks/a.test.js' },
+  // A case variant of a protected name that does not exist yet.
+  { rule: 'protected-or-sensitive', input: '.GITHUB/test/a.test.js' },
   { rule: 'exists', input: 'tests/a.test.js', fs: { types: { tests: 'directory', 'tests/a.test.js': 'file' } } },
   { rule: 'parent-escapes', input: 'tests/link/a.test.js', fs: { types: { tests: 'directory', 'tests/link': 'symlink' } } },
+  // In-tree symlinks: tests/g -> ../.git and tests/link -> ../hooks, each with an existing subdirectory.
+  { rule: 'canonical-reserved-segment', input: 'tests/g/info/a.test.js', fs: { types: { tests: 'directory', 'tests/g': 'symlink', 'tests/g/info': 'directory' }, real: { 'tests/g/info': at('.git/info') } } },
+  { rule: 'canonical-protected-or-sensitive', input: 'tests/link/sub/a.test.js', fs: { types: { tests: 'directory', 'tests/link': 'symlink', 'tests/link/sub': 'directory' }, real: { 'tests/link/sub': at('hooks/sub') } } },
 ];
 
 test('AC4: each path rule refuses its own case', async (t) => {
@@ -267,7 +276,10 @@ test('AC4: each path rule refuses its own case', async (t) => {
     await t.test(row.rule, () => {
       const opts = pathOpts(row.fs);
       const tripped = PATH_RULES.filter((r) => r.test(row.input, opts)).map((r) => r.name);
-      assert.deepStrictEqual(tripped, [row.rule], JSON.stringify(row.input));
+      // Its own rule trips, and no rule outside the row's declared exceptions does.
+      assert.ok(tripped.includes(row.rule), `${JSON.stringify(row.input)} trips ${tripped}`);
+      const allowed = [row.rule, ...(row.alsoTrips || [])];
+      assert.deepStrictEqual(tripped.filter((n) => !allowed.includes(n)), [], JSON.stringify(row.input));
       assert.strictEqual(pathRuleViolation(row.input, opts), row.rule);
     });
   }
@@ -298,14 +310,42 @@ test('AC4: every listed shape is refused by the first rule it trips', () => {
     ['tests/a/..', 'dot-segment-or-not-normal'],
     ['src/latest/widget.js', 'not-test-path'],
     ['skills/test/a.md', 'not-test-path'],
-    ['.github/x.test.js', 'protected-or-sensitive'],
     ['x/.GIT/a.test.js', 'git-segment'],
+    // Windows aliases and devices (git's core.protectNTFS shapes).
+    ['tests/a.test.js::$DATA', 'win32-alias'],
+    ['git~1/test/a.test.js', 'win32-alias'],
+    ['GITHUB~1/test/a.test.js', 'win32-alias'],
+    ['.git./info/test/a.test.js', 'win32-alias'],
+    ['.git /x.test.js', 'win32-alias'],
+    ['tests/a.test.js ', 'win32-alias'],
+    ['tests/a.test.js.', 'win32-alias'],
+    ['tests/con.test.js', 'win32-alias'],
+    ['tests/nul', 'win32-alias'],
+    ['tests/LPT¹.test.js', 'win32-alias'],
+    ['tests/COM9', 'win32-alias'],
+    // Control characters, DEL and the characters Windows forbids in a name.
+    ...['\n', '\r', '\t', '\x00', '\x7f', '<', '>', '"', '|', '?', '*'].map((c) => [`tests/a${c}b.test.js`, 'reserved-char']),
+    ['tests/Node_Modules/a.test.js', 'node-modules-segment'],
+    // Protected names, in any letter case.
+    ['hooks/a.test.js', 'protected-or-sensitive'],
+    ['.github/x.test.js', 'protected-or-sensitive'],
+    ['.claude/HOOKS/test/a.test.js', 'protected-or-sensitive'],
+    ['tests/Package.json', 'protected-or-sensitive'],
+    ['tests/CodeOwners', 'protected-or-sensitive'],
   ];
   for (const [input, rule] of rows) assert.strictEqual(pathRuleViolation(input, pathOpts()), rule, JSON.stringify(input));
-  // A configured merge-sensitive glob, and a sensitive-path setting that is not a list (fails closed).
+  // Names that only look reserved.
+  for (const input of ['tests/console.test.js', 'tests/a~b.test.js', 'tests/nullable.test.js', 'tests/.gitkeep.test.js']) {
+    assert.strictEqual(pathRuleViolation(input, pathOpts()), null, input);
+  }
+  // A configured merge-sensitive glob in any letter case, and a sensitive-path setting that is not a
+  // list of strings (fails closed).
   assert.strictEqual(pathRuleViolation('secure/a.test.js', pathOpts({ sensitivePaths: ['secure/**'] })), 'protected-or-sensitive');
+  assert.strictEqual(pathRuleViolation('SECURE/a.test.js', pathOpts({ sensitivePaths: ['secure/**'] })), 'protected-or-sensitive');
+  assert.strictEqual(pathRuleViolation('secure/a.test.js', pathOpts({ sensitivePaths: ['Secure/**'] })), 'protected-or-sensitive');
   assert.strictEqual(pathRuleViolation('secure/a.test.js', pathOpts()), null);
   assert.strictEqual(pathRuleViolation('tests/a.test.js', { ...pathOpts(), sensitivePaths: 'secure/**' }), 'protected-or-sensitive');
+  assert.strictEqual(pathRuleViolation('tests/a.test.js', { ...pathOpts(), sensitivePaths: [5] }), 'protected-or-sensitive');
   // An existing leaf of any kind (a dangling symlink lstats as a symlink).
   for (const type of ['file', 'directory', 'symlink', 'unreadable', 'other']) {
     const opts = pathOpts({ types: { tests: 'directory', 'tests/a.test.js': type } });
@@ -334,6 +374,51 @@ test('AC4: the resolved parent must stay inside the worktree', () => {
   assert.strictEqual(verdict({ types: { tests: 'directory' } }, 'tests/new/deeper/a.test.js'), null);
   assert.strictEqual(verdict({}, 'tests/new/a.test.js'), null);
   assert.strictEqual(verdict({}, 'a.test.js'), null);
+  // A symlinked worktree root: the walk compares against the canonical worktree, not the link.
+  const linkedRoot = { types: { '': 'symlink', tests: 'directory' }, real: { '': realWt, tests: path.join(realWt, 'tests') } };
+  assert.strictEqual(verdict(linkedRoot, 'tests/a.test.js'), null);
+  assert.strictEqual(verdict(linkedRoot, 'tests/new/a.test.js'), null);
+  assert.strictEqual(verdict(linkedRoot, 'a.test.js'), null);
+  assert.strictEqual(verdict({ ...linkedRoot, real: { '': realWt } }, 'tests/a.test.js'), 'parent-escapes');
+});
+
+const ruleNamed = (name) => PATH_RULES.find((r) => r.name === name);
+
+test('AC4: the canonical form is judged again', () => {
+  const canonicalProtected = ruleNamed('canonical-protected-or-sensitive');
+  const canonicalReserved = ruleNamed('canonical-reserved-segment');
+  // An 8.3 alias of an existing directory: refused lexically, and its expanded form is protected.
+  const shortName = pathOpts({ types: { 'GITHUB~1': 'directory', 'GITHUB~1/test': 'directory' }, real: { 'GITHUB~1/test': at('.github/test') } });
+  assert.strictEqual(pathRuleViolation('GITHUB~1/test/a.test.js', shortName), 'win32-alias');
+  assert.strictEqual(canonicalProtected.test('GITHUB~1/test/a.test.js', shortName), true);
+  // A case variant of an existing directory: refused lexically, and its on-disk form is protected.
+  const caseVariant = pathOpts({ types: { '.GitHub': 'directory', '.GitHub/test': 'directory' }, real: { '.GitHub/test': at('.github/test') } });
+  assert.strictEqual(pathRuleViolation('.GitHub/test/a.test.js', caseVariant), 'protected-or-sensitive');
+  assert.strictEqual(canonicalProtected.test('.GitHub/test/a.test.js', caseVariant), true);
+  // In-tree symlinks into node_modules and into a configured merge-sensitive directory.
+  const intoModules = pathOpts({ types: { tests: 'directory', 'tests/nm': 'symlink', 'tests/nm/pkg': 'directory' }, real: { 'tests/nm/pkg': at('node_modules/pkg') } });
+  assert.strictEqual(pathRuleViolation('tests/nm/pkg/a.test.js', intoModules), 'canonical-reserved-segment');
+  const intoSecure = pathOpts({ types: { tests: 'directory', 'tests/s': 'symlink', 'tests/s/x': 'directory' }, real: { 'tests/s/x': at('Secure/x') }, sensitivePaths: ['secure/**'] });
+  assert.strictEqual(pathRuleViolation('tests/s/x/a.test.js', intoSecure), 'canonical-protected-or-sensitive');
+  // An in-tree symlink to a harmless directory, and an unresolvable path, trip neither canonical rule.
+  const harmless = pathOpts({ types: { tests: 'directory', 'tests/l': 'symlink', 'tests/l/x': 'directory' }, real: { 'tests/l/x': at('fixtures/x') } });
+  assert.strictEqual(pathRuleViolation('tests/l/x/a.test.js', harmless), null);
+  const unresolved = pathOpts({ types: { tests: 'directory', 'tests/l': 'symlink' } });
+  assert.strictEqual(canonicalProtected.test('tests/l/a.test.js', unresolved), false);
+  assert.strictEqual(canonicalReserved.test('tests/l/a.test.js', unresolved), false);
+});
+
+test('AC4: the rules fail closed without options and stay linear past the length bound', () => {
+  assert.strictEqual(pathRuleViolation('tests/a.test.js'), 'exists');
+  assert.strictEqual(pathRuleViolation('tests/a.test.js', {}), 'exists');
+  assert.strictEqual(pathRuleViolation('tests/a.test.js', { deps: pathOpts().deps }), 'exists');
+  assert.strictEqual(ruleNamed('parent-escapes').test('tests/a.test.js', {}), true);
+  // not-test-path refuses an over-length path on its own, without reaching isTestPath.
+  assert.strictEqual(ruleNamed('not-test-path').test(testPathOfLength(EVIDENCE_PATH_MAX_CHARS + 1), pathOpts()), true);
+  assert.strictEqual(ruleNamed('not-test-path').test(testPathOfLength(EVIDENCE_PATH_MAX_CHARS), pathOpts()), false);
+  // The parent walk likewise refuses an over-length path before walking it.
+  assert.strictEqual(ruleNamed('parent-escapes').test(testPathOfLength(EVIDENCE_PATH_MAX_CHARS + 1), pathOpts()), true);
+  assert.strictEqual(ruleNamed('parent-escapes').test(testPathOfLength(EVIDENCE_PATH_MAX_CHARS), pathOpts()), false);
 });
 
 test('AC5: content rules at the edge', () => {
