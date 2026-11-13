@@ -135,6 +135,9 @@ test('jobs: job-level if in inline, quoted, wrapped, block and folded forms', ()
     ['    if: >-\n      a\n      && b\n', 'a && b'],
     ['    if: a\n      && b\n', 'a && b'],
     ['    if:\n      a && b\n', 'a && b'],
+    // block and folded scalars carry no quoting: their text is never quote-stripped or unescaped
+    ["    if: >-\n      'x''' == y'\n", "'x''' == y'"],
+    ["    if: |\n      'a' != 'b'\n", "'a' != 'b'"],
     // YAML quote escapes are undone: '' in single quotes, \" and \\ in double quotes
     ["    if: 'github.actor != ''bot'''\n", "github.actor != 'bot'"],
     ['    if: "a == \\"b\\" && c == \'\\\\\'"\n', 'a == "b" && c == \'\\\''],
@@ -188,6 +191,12 @@ test('jobs: stepIfCount counts step keys only', () => {
   bothEndings('on: push\njobs:\n  a:\n    steps:\n    - if: x\n      run: y\n    -\n      if: z\n    runs-on: x\n', (t) => {
     assert.deepEqual(shape(t).jobs, [{ id: 'a', if: null, stepIfCount: 2, concurrency: false }]);
   });
+  // an indentless sequence value under a step key (valid YAML) is that key's value
+  bothEndings('on: push\njobs:\n  a:\n    steps:\n      - name: n\n        args:\n        - a\n        if: x\n', (t) => {
+    const s = shape(t);
+    assert.deepEqual(s.jobs, [{ id: 'a', if: null, stepIfCount: 1, concurrency: false }]);
+    assert.deepEqual(s.unparsed, []);
+  });
   bothEndings('on: push\njobs:\n  build-and-test:\n    uses: ./.github/workflows/r.yml\n', (t) => {
     assert.deepEqual(shape(t).jobs, [{ id: 'build-and-test', if: null, stepIfCount: 0, concurrency: false }]);
   });
@@ -208,6 +217,8 @@ test('concurrency: scalar, block and flow forms', () => {
     ["concurrency:\n  group: x\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n", 'cancel-expression'],
     ['concurrency: {group: x, cancel-in-progress: true}\n', 'cancel-true'],
     ['concurrency: { group: x }\n', 'no-cancel'],
+    // a deeper line under a sub-key is that sub-key's value, never a cancel-in-progress key
+    ['concurrency:\n  group: >-\n    cancel-in-progress: true\n', 'no-cancel'],
   ];
   for (const [c, want] of cases) {
     bothEndings(`${MIN}${c}`, (t) => {
@@ -248,6 +259,11 @@ test('unparsed: each reason fires on its own fixture', () => {
     // text after a flow map's closing brace is unread, at the on: line and at a trigger value
     [`on: { push: {} } junk\n${JOBS}`, 'on: block not read'],
     [`on: { push: {} junk }\n${JOBS}`, 'on: block not read'],
+    // a flow map that closes and reopens, or never closes its outer brace though it ends in `}`
+    [`on: {pull_request: {}} {push: {}}\n${JOBS}`, 'on: block not read'],
+    [`on: { push: { branches: [main] }\n${JOBS}`, 'on: block not read'],
+    [`on:\n  push: {branches: [main]} {tags: [v1]}\n${JOBS}`, 'on: block not read'],
+    [`on:\n  push: {branches: {x: y}\n${JOBS}`, 'on: block not read'],
     [`on:\n  push: {branches: [main]} junk\n${JOBS}`, 'on: block not read'],
     [`on:\n  pull_request:\n    types: "ready_for_review"\n${JOBS}`, 'pull_request trigger not read'],
     [`on:\n  push:\n    branches: \${{ x }}\n${JOBS}`, 'push branches not read'],
@@ -262,11 +278,16 @@ test('unparsed: each reason fires on its own fixture', () => {
     ['on: push\njobs:\n  a:\n    steps:\n      - { name: n, if: "x" }\n', 'jobs: not read'],
     ['on: push\njobs:\n  a:\n    steps:\n      - run: x\n        not a key\n', 'jobs: not read'],
     ['on: push\njobs:\n  a:\n    steps:\n      -\n        {if: x}\n', 'jobs: not read'],
+    // a `- ` line at a step's key column before any key is a nested sequence, not a value
+    ['on: push\njobs:\n  a:\n    steps:\n      -\n        - if: x\n', 'jobs: not read'],
     ['on: push\njobs:\n  a:\n    if:\n    runs-on: x\n', 'job a if: not read'],
     [`${MIN}concurrency: {group: x,\n`, 'concurrency not read'],
     [`${MIN}concurrency:\n`, 'concurrency not read'],
     // text after a flow map's closing brace, and a sub-key shallower than the first one
     [`${MIN}concurrency: {group: x} cancel-in-progress: true\n`, 'concurrency not read'],
+    [`${MIN}concurrency: {group: x} {cancel-in-progress: true}\n`, 'concurrency not read'],
+    [`${MIN}concurrency: {group: x} junk {cancel-in-progress: false}\n`, 'concurrency not read'],
+    [`${MIN}concurrency: {group: {x: y}\n`, 'concurrency not read'],
     [`${MIN}concurrency:\n    group: x\n  cancel-in-progress: true\n`, 'concurrency not read'],
     [`${MIN}concurrency:\n  group: x\n  cancel-in-progress: 'true'\n`, 'cancel-in-progress value not read'],
   ];

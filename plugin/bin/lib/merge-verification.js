@@ -585,8 +585,10 @@ function regionReasons(lines, start, end, region) {
 }
 
 // A scalar's text from its inline value plus every deeper line before `end`
-// (block, folded or plain continuation): the trimmed lines joined by one space,
-// then one pair of surrounding quotes stripped. `next` is the first unread line.
+// (block, folded or plain continuation): the trimmed lines joined by one space.
+// A flow scalar (inline value plus plain continuation lines) then has one pair
+// of surrounding quotes stripped and unescaped; block and folded text carries no
+// quoting and is kept as written. `next` is the first unread line.
 function readJoinedScalar(lines, i, end, keyIndent, inline) {
   const v = stripCommentQuoteAware(inline);
   const block = BLOCK_SCALAR.test(v);
@@ -603,19 +605,39 @@ function readJoinedScalar(lines, i, end, keyIndent, inline) {
     if (!deeper) break;
     parts.push(block ? t : stripCommentQuoteAware(t));
   }
-  return { text: stripQuotePair(parts.join(' ').trim()), next: i };
+  const text = parts.join(' ').trim();
+  return { text: block ? text : stripQuotePair(text), next: i };
+}
+
+// Whether a one-line flow mapping `v` is one whole mapping: its outer `{` closes
+// at v's last character and at no earlier one. flowMappingEntries' `balanced`
+// alone also passes `{a} {b}` (depth returns to 0 and reopens) and ignores any
+// text after the close. Quotes are tracked the way flowMappingEntries tracks them.
+function flowMapSpansValue(v) {
+  if (v[0] !== '{') return false;
+  let depth = 0;
+  let quote = null;
+  for (let i = 0; i < v.length; i++) {
+    const ch = v[i];
+    if (quote) {
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"') quote = ch;
+    else if (ch === '{') depth++;
+    else if (ch === '}' && --depth === 0) return i === v.length - 1;
+  }
+  return false;
 }
 
 // A trigger value given inline: '' / null / ~ / {} read as no sub-keys, a
-// balanced one-line flow mapping as its entries; anything else is unreadable.
+// one-line flow mapping spanning the whole value as its entries; anything else
+// is unreadable.
 function readInlineTriggerKeys(value, line) {
   const v = value.trim();
   if (v === '' || v === 'null' || v === '~') return new Map();
-  if (!v.startsWith('{')) return null;
-  const { entries, balanced } = flowMappingEntries(v);
-  // flowMappingEntries ignores text after the closing brace; that text is unread here.
-  if (!balanced || !v.endsWith('}')) return null;
-  return new Map(entries.map((e) => [e.key, { rest: e.value, line }]));
+  if (!flowMapSpansValue(v)) return null;
+  return new Map(flowMappingEntries(v).entries.map((e) => [e.key, { rest: e.value, line }]));
 }
 
 // The sub-keys of the push, pull_request and pull_request_target triggers, as
@@ -639,9 +661,8 @@ function readTriggerKeys(lines, onIdx, end) {
       return out;
     }
     if (rest.startsWith('{')) {
-      const { entries, balanced } = flowMappingEntries(rest);
-      if (!balanced || !rest.endsWith('}')) return NOT_READ;
-      for (const e of entries) {
+      if (!flowMapSpansValue(rest)) return NOT_READ;
+      for (const e of flowMappingEntries(rest).entries) {
         if (!WANTED.has(e.key)) continue;
         const sub = readInlineTriggerKeys(e.value, onIdx);
         if (sub === null) return NOT_READ;
@@ -747,6 +768,7 @@ function walkSteps(lines, i, end, keyIndent) {
   let stepKeyCol = null;
   let count = 0;
   let unreadable = false;
+  let stepHasKey = false;
   const isIf = (content) => {
     const kv = splitKey(content);
     if (kv === null) unreadable = true;
@@ -772,18 +794,27 @@ function walkSteps(lines, i, end, keyIndent) {
       const content = after.slice(sp);
       if (content === '' || content.startsWith('#')) {
         stepKeyCol = null; // the item's keys start on the next line
+        stepHasKey = false;
       } else {
         stepKeyCol = ind + 1 + sp;
         if (isIf(content)) count++;
         if (unreadable) return null;
+        stepHasKey = true;
       }
       continue;
     }
     if (stepKeyCol === null) stepKeyCol = ind;
     if (ind < stepKeyCol) return null;
     if (ind === stepKeyCol) {
+      // A `- ` line at the key column after a key is an indentless sequence
+      // value of that key (valid YAML); before any key it is unreadable.
+      if (dash) {
+        if (!stepHasKey) return null;
+        continue;
+      }
       if (isIf(line.slice(ind))) count++;
       if (unreadable) return null;
+      stepHasKey = true;
     }
   }
   return { count, next: i };
@@ -866,10 +897,8 @@ function readConcurrency(lines, idx, end, unparsed) {
   };
   const inline = stripCommentQuoteAware(afterColon(lines[idx]));
   if (inline.startsWith('{')) {
-    const { entries, balanced } = flowMappingEntries(inline);
-    // flowMappingEntries ignores text after the closing brace; that text is unread here.
-    if (!balanced || !inline.endsWith('}')) { unparsed.push('concurrency not read'); return null; }
-    const e = entries.find((x) => x.key === 'cancel-in-progress');
+    if (!flowMapSpansValue(inline)) { unparsed.push('concurrency not read'); return null; }
+    const e = flowMappingEntries(inline).entries.find((x) => x.key === 'cancel-in-progress');
     return e ? cancel(e.value) : 'no-cancel';
   }
   if (inline !== '') return 'no-cancel';
