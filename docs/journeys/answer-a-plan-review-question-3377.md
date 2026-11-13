@@ -39,7 +39,7 @@ files:
 
 ### 3. Answer on the record after a dispatched stop — GitHub issue
 - **URL:** the record's `<!-- plan-review-question -->` comment, linked from the dispatch report block
-- **Action:** Read each question and its two readings, then edit the record's **body** to state the decision.
+- **Action:** Read each question and its two readings, then answer each one by adding a `**Decision**` paragraph (or an Acceptance Criterion) to the record's **body**.
 - **Should feel:** Self-contained — the comment carries the finding, its evidence and both readings, so the answer needs no access to the build's worktree.
 - **Should understand:**
   - A dispatched build runs in a subagent that cannot ask, so it posts the question, stops before Task 1, and the dispatching session relays it; Settle releases the claim without counting a retry and the draft PR stays open.

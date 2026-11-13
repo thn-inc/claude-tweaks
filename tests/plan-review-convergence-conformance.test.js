@@ -56,6 +56,10 @@ const problems = (anchors, text) => anchors.filter((a) => !norm(text).includes(a
 const SIGNAL_ANCHORS = [
   'trusted `<!-- plan-review-question -->` comment',
   "the record's body was edited after the newest such comment",
+  "`lastEditedAt` is later than that comment's `createdAt`",
+  'lastEditedAt comments(last:100){nodes{body authorAssociation createdAt url}}',
+  'whose body starts with that marker and whose `authorAssociation` is trusted',
+  "Trusted authors — `OWNER`, `MEMBER`, `COLLABORATOR`)",
   'Decided by the user at plan review:',
   'counts as **not converged**',
   'A missing `lastEditedAt`, or a failed or unreadable read, counts as **not converged**',
