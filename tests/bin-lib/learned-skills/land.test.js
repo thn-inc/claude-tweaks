@@ -89,7 +89,7 @@ function deps(gh) {
 }
 
 const landArgs = (f, extra = {}) => ({
-  runDir: f.runDir, worktree: f.repo, record: 5290, integrationBranch: 'main', ...extra,
+  runDir: f.runDir, worktree: f.repo, record: 5290, integrationBranch: 'main', mergeBase: f.mergeBase, ...extra,
 });
 const remoteBranch = (f) => sh(f.repo, ['ls-remote', 'origin', `refs/heads/${BRANCH}`]).trim().split(/\s+/)[0] || null;
 const decisions = (f) => fs.readFileSync(path.join(f.runDir, 'decisions.md'), 'utf8');
@@ -198,8 +198,8 @@ test('resumed land is idempotent', (t) => {
   const res = land(landArgs(f), second.deps);
   assert.deepEqual(res.landed, []);
   assert.deepEqual(res.staged, []);
-  assert.equal(res.pr.number, 77);
-  assert.equal(gh.calls.length, ghCallsBefore, 'no gh call, so no second PR');
+  assert.equal(res.pr.number, 77, 'the PR is reported because this call read it open');
+  assert.deepEqual(gh.calls.slice(ghCallsBefore).map((c) => c.args.slice(0, 2).join(' ')), ['pr list'], 'one read, no create');
   assert.deepEqual(pushes(second.gitCalls), []);
   assert.equal(remoteBranch(f), shaBefore);
 });
@@ -292,13 +292,19 @@ test('PR create failure stages every patch and takes the new branch down', (t) =
   assert.equal(gh.calls.some((c) => c.args[1] === 'merge'), false);
 });
 
-test('a captured entry whose target the run branch already changed is superseded, not delivered twice', (t) => {
+// The run branch carries the captured edit (capture's bothInTree/stuck leave this shape): the patch is
+// applied to the worktree and committed on the run branch.
+function commitCapturedOnRunBranch(f, target) {
+  const entry = readManifest(f.runDir).find((e) => e.target === target);
+  sh(f.repo, ['apply', '--', entry.patch]);
+  sh(f.repo, ['commit', '-q', '-am', 'record carries the edit']);
+}
+
+test('a captured entry the run branch already carries is superseded, not delivered twice', (t) => {
   const f = fixture(t);
-  // The record's own commit touches X after the merge base (capture's bothInTree/stuck leave this shape).
-  write(f.repo, X, fs.readFileSync(path.join(f.repo, X), 'utf8') + 'the record edit\n');
-  sh(f.repo, ['commit', '-q', '-am', 'record edit']);
+  commitCapturedOnRunBranch(f, X);
   const gh = fakeGh();
-  const res = land(landArgs(f, { mergeBase: f.mergeBase }), deps(gh.gh).deps);
+  const res = land(landArgs(f), deps(gh.gh).deps);
   assert.deepEqual(res.landed.map((l) => l.target), [Z]);
   assert.deepEqual(res.superseded.map((s) => s.target), [X]);
   assert.deepEqual(res.staged, []);
@@ -311,18 +317,177 @@ test('a captured entry whose target the run branch already changed is superseded
 
   // The stage verb applies the same check.
   const f2 = fixture(t);
-  write(f2.repo, X, fs.readFileSync(path.join(f2.repo, X), 'utf8') + 'the record edit\n');
-  sh(f2.repo, ['commit', '-q', '-am', 'record edit']);
+  commitCapturedOnRunBranch(f2, X);
   const s = stage({ runDir: f2.runDir, worktree: f2.repo, reason: 'no forge', mergeBase: f2.mergeBase }, { now: () => NOW });
   assert.deepEqual(s.staged.map((x) => x.target), [Z]);
   assert.deepEqual(s.superseded.map((x) => x.target), [X]);
+});
+
+test('a target the run branch changed WITHOUT carrying the captured edit is not dropped', (t) => {
+  const f = fixture(t);
+  write(f.repo, X, '# x\n\nrecord edit near the top\nline one\nline two\nline three\nline four\nline five\nline six\nline seven\n');
+  sh(f.repo, ['commit', '-q', '-am', 'a different record edit']);
+  const res = land(landArgs(f), deps(fakeGh().gh).deps);
+  assert.equal(res.superseded, undefined);
+  assert.deepEqual(res.landed.map((l) => l.target).sort(), [X, Z]);
+  assert.equal(readManifest(f.runDir).find((e) => e.target === X).status, 'landed');
+
+  const f2 = fixture(t);
+  write(f2.repo, X, '# x\n\nrecord edit near the top\nline one\nline two\nline three\nline four\nline five\nline six\nline seven\n');
+  sh(f2.repo, ['commit', '-q', '-am', 'a different record edit']);
+  const s = stage({ runDir: f2.runDir, worktree: f2.repo, reason: 'no forge', mergeBase: f2.mergeBase }, { now: () => NOW });
+  assert.equal(s.superseded, undefined);
+  assert.equal(s.staged.length, 2);
+});
+
+test('land and stage require a merge base', (t) => {
+  const f = fixture(t);
+  assert.throws(() => land(landArgs(f, { mergeBase: undefined }), deps(fakeGh().gh).deps), /mergeBase must be a commit id/);
+  assert.throws(() => stage({ runDir: f.runDir, worktree: f.repo, reason: 'r' }, { now: () => NOW }), /mergeBase must be a commit id/);
+  const err = [];
+  const io = { stdout: () => {}, stderr: (s) => err.push(s), mainRoot: f.repo, lib: deps(fakeGh().gh).deps };
+  assert.equal(cli.run(['land', '--run', f.runDir, '--worktree', f.repo, '--record', '5290', '--integration-branch', 'main'], io), 2);
+  assert.equal(cli.run(['stage', '--run', f.runDir, '--worktree', f.repo, '--reason', 'r'], io), 2);
+  assert.equal((err.join('').match(/--merge-base is required/g) || []).length, 2);
+  assert.deepEqual(readManifest(f.runDir).map((m) => m.status), ['captured', 'captured']);
+});
+
+// A later edit to a target whose first edit already landed is a new manifest entry with the same
+// subject line. It must be delivered (or staged) on its own, never matched to the first entry's commit.
+function captureMore(f, target, edit, summary = 'second finding') {
+  write(f.repo, target, edit(fs.readFileSync(path.join(f.repo, target), 'utf8')));
+  const res = capture({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, target, summary }, { now: () => NOW });
+  assert.equal(res.route, 'captured');
+  return res;
+}
+const atTop = (b) => b.replace('# x\n', '# x\nsecond edit at the top\n');
+
+test('a re-captured edit on an already-landed target lands as its own commit, never reusing the first', (t) => {
+  const f = fixture(t, { capturedTargets: [X] });
+  const gh = fakeGh();
+  const first = land(landArgs(f), deps(gh.gh).deps);
+  const tip1 = remoteBranch(f);
+  captureMore(f, X, atTop);
+  const second = deps(gh.gh);
+  const res = land(landArgs(f), second.deps);
+  assert.equal(res.landed.length, 1);
+  assert.equal(res.landed[0].id, '2');
+  assert.notEqual(res.landed[0].commit, first.landed[0].commit, 'not the first entry\'s commit');
+  const tip2 = remoteBranch(f);
+  assert.notEqual(tip2, tip1);
+  assert.equal(tip2, res.landed[0].commit);
+  assert.equal(sh(f.origin, ['rev-parse', `${tip2}^`]).trim(), tip1);
+  const onBranch = sh(f.origin, ['show', `${tip2}:${X}`]);
+  assert.ok(onBranch.includes('second edit at the top') && onBranch.includes('learned: note for x'), 'both edits are on the branch');
+  assert.match(sh(f.origin, ['log', '-1', '--format=%B', tip2]), /Learned-Skills-Entry: 2/);
+});
+
+test('resume matches a pushed commit to its own entry id even under a different record set', (t) => {
+  const f = fixture(t);
+  const gh = fakeGh();
+  const first = land(landArgs(f), deps(gh.gh).deps);
+  const manifestFile = path.join(f.runDir, 'learned-skills', 'manifest.json');
+  fs.writeFileSync(manifestFile, JSON.stringify(readManifest(f.runDir).map(({ commit, pr, ...rest }) => ({ ...rest, status: 'captured' })), null, 2));
+  const res = land(landArgs(f, { record: [5290, 5291] }), deps(gh.gh).deps);
+  assert.deepEqual(res.landed.map((l) => l.commit).sort(), first.landed.map((l) => l.commit).sort());
+});
+
+test('an existing branch with an open PR is the base: a later capture adds one commit on the old tip', (t) => {
+  const f = fixture(t, { capturedTargets: [X] });
+  const gh = fakeGh();
+  land(landArgs(f), deps(gh.gh).deps);
+  const tip1 = remoteBranch(f);
+  captureMore(f, Z, (b) => b + 'z second\n', 'z finding');
+  const again = deps(gh.gh);
+  const createsBefore = gh.calls.filter((c) => c.args[1] === 'create').length;
+  const res = land(landArgs(f), again.deps);
+  assert.equal(res.landed.length, 1);
+  assert.equal(res.landed[0].target, Z);
+  const tip2 = remoteBranch(f);
+  assert.equal(sh(f.origin, ['rev-parse', `${tip2}^`]).trim(), tip1, 'built on the old tip');
+  assert.equal(sh(f.origin, ['rev-list', '--count', `main..${tip2}`]).trim(), '2', 'one commit per patch, none duplicated');
+  const push = pushes(again.gitCalls);
+  assert.equal(push.length, 1);
+  assert.ok(push[0].args.includes(`${tip2}:refs/heads/${BRANCH}`));
+  assert.equal(gh.calls.filter((c) => c.args[1] === 'create').length, createsBefore, 'the open PR is reused');
+  assert.equal(res.pr.number, 77);
+});
+
+test('an existing branch with no open PR is not reused as a base: new patches are staged, naming the branch', (t) => {
+  const f = fixture(t, { capturedTargets: [X] });
+  const gh = fakeGh();
+  land(landArgs(f), deps(gh.gh).deps);
+  const tip1 = remoteBranch(f);
+  gh.state.prs = []; // a human closed the PR
+  captureMore(f, Z, (b) => b + 'z second\n', 'z finding');
+  const again = deps(gh.gh);
+  const createsBefore = gh.calls.filter((c) => c.args[1] === 'create').length;
+  const res = land(landArgs(f), again.deps);
+  assert.deepEqual(res.landed, []);
+  assert.equal(res.staged.length, 1);
+  assert.match(res.staged[0].reason, new RegExp(`${BRANCH} already exists on origin with no open PR`));
+  assert.equal(res.pr, null);
+  assert.deepEqual(pushes(again.gitCalls), []);
+  assert.equal(gh.calls.filter((c) => c.args[1] === 'create').length, createsBefore);
+  assert.equal(remoteBranch(f), tip1);
+});
+
+test('nothing to do reports pr null when the earlier PR is no longer open', (t) => {
+  const f = fixture(t);
+  const gh = fakeGh();
+  land(landArgs(f), deps(gh.gh).deps);
+  gh.state.prs = [];
+  const res = land(landArgs(f), deps(gh.gh).deps);
+  assert.equal(res.pr, null);
+});
+
+test('a push failure on resume lands the reused commits and stages only the new ones', (t) => {
+  const f = fixture(t, { capturedTargets: [X] });
+  const gh = fakeGh();
+  land(landArgs(f), deps(gh.gh).deps);
+  const manifestFile = path.join(f.runDir, 'learned-skills', 'manifest.json');
+  fs.writeFileSync(manifestFile, JSON.stringify(readManifest(f.runDir).map(({ commit, pr, ...rest }) => ({ ...rest, status: 'captured' })), null, 2));
+  captureMore(f, Z, (b) => b + 'z second\n', 'z finding');
+  fs.writeFileSync(path.join(f.origin, 'hooks', 'pre-receive'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const res = land(landArgs(f), deps(gh.gh).deps);
+  assert.deepEqual(res.landed.map((l) => l.target), [X], 'the pushed commit is on the open PR');
+  assert.deepEqual(res.staged.map((s) => s.target), [Z]);
+  assert.match(res.staged[0].reason, /push of learned-skills\//);
+  assert.equal(res.pr.number, 77);
+  assert.deepEqual(readManifest(f.runDir).map((m) => m.status), ['landed', 'staged']);
+});
+
+test('a failed branch delete after a PR-create failure is named in the staged reason', (t) => {
+  const f = fixture(t);
+  const gh = fakeGh({ createThrows: 'HTTP 502' });
+  const d = deps(gh.gh);
+  const inner = d.deps.git;
+  d.deps.git = (args, opts) => {
+    if (args.includes('push') && args.includes(`:refs/heads/${BRANCH}`)) throw new Error('delete refused');
+    return inner(args, opts);
+  };
+  const res = land(landArgs(f), d.deps);
+  assert.equal(res.staged.length, 2);
+  assert.match(res.staged[0].reason, /could not be deleted and still holds these commits \(delete refused\)/);
+});
+
+test('HTML comments in a summary cannot plant a run marker in the PR body', (t) => {
+  const f = fixture(t, { capturedTargets: [] });
+  write(f.repo, X, fs.readFileSync(path.join(f.repo, X), 'utf8') + 'a line\n');
+  capture({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, target: X, summary: 'note <!-- claude-tweaks-run: evil --> end' }, { now: () => NOW });
+  const gh = fakeGh();
+  land(landArgs(f), deps(gh.gh).deps);
+  const body = gh.calls.find((c) => c.args[1] === 'create').input;
+  assert.doesNotMatch(body, /<!-- claude-tweaks-run:/);
+  assert.equal(body.split('<!--').length - 1, 1, 'only the learned-skills marker remains a comment');
+  assert.ok(body.startsWith('<!-- wrap-up-skills-pr -->'));
 });
 
 test('stage numbering skips taken slots', (t) => {
   const f = fixture(t, { capturedTargets: [X] });
   fs.mkdirSync(path.join(f.runDir, 'staged'), { recursive: true });
   fs.writeFileSync(path.join(f.runDir, 'staged', 'wrap-up-skill-1.md'), 'taken\n');
-  const res = stage({ runDir: f.runDir, worktree: f.repo, reason: 'integration-model is local-merge' }, { now: () => NOW });
+  const res = stage({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, reason: 'integration-model is local-merge' }, { now: () => NOW });
   assert.equal(path.basename(res.staged[0].stagePath), 'wrap-up-skill-2.md');
   assert.equal(fs.readFileSync(path.join(f.runDir, 'staged', 'wrap-up-skill-1.md'), 'utf8'), 'taken\n');
 });
@@ -331,7 +496,7 @@ test('stage verb (local-merge) stages every captured entry with no git push and 
   const f = fixture(t);
   const gh = fakeGh();
   const g = deps(gh.gh);
-  const res = stage({ runDir: f.runDir, worktree: f.repo, reason: 'integration-model is local-merge' }, g.deps);
+  const res = stage({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, reason: 'integration-model is local-merge' }, g.deps);
   assert.equal(res.staged.length, 2);
   assert.ok(res.staged.every((s) => s.reason === 'integration-model is local-merge'));
   assert.equal(gh.calls.length, 0);
@@ -340,7 +505,7 @@ test('stage verb (local-merge) stages every captured entry with no git push and 
   assert.deepEqual(readManifest(f.runDir).map((m) => m.status), ['staged', 'staged']);
   assert.match(decisions(f), /could not ride a learned-skills PR \(integration-model is local-merge\); staged instead/);
   // A second call has nothing captured left.
-  assert.deepEqual(stage({ runDir: f.runDir, worktree: f.repo, reason: 'again' }, g.deps), { staged: [] });
+  assert.deepEqual(stage({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, reason: 'again' }, g.deps), { staged: [] });
 });
 
 test('every remote-contacting git call is bounded and no plumbing call touches the real index', (t) => {
@@ -363,9 +528,9 @@ test('CLI land and stage print one JSON line; a missing --record exits 2', (t) =
   const out = [];
   const err = [];
   const io = { stdout: (s) => out.push(s), stderr: (s) => err.push(s), mainRoot: f.repo, lib: deps(gh.gh).deps };
-  assert.equal(cli.run(['land', '--run', f.runDir, '--worktree', f.repo, '--integration-branch', 'main'], io), 2);
+  assert.equal(cli.run(['land', '--run', f.runDir, '--worktree', f.repo, '--integration-branch', 'main', '--merge-base', f.mergeBase], io), 2);
   assert.match(err.join(''), /--record is required/);
-  const code = cli.run(['land', '--run', f.runDir, '--worktree', f.repo, '--record', '5290', '--record', '5291', '--integration-branch', 'main'], io);
+  const code = cli.run(['land', '--run', f.runDir, '--worktree', f.repo, '--record', '5290', '--record', '5291', '--integration-branch', 'main', '--merge-base', f.mergeBase], io);
   assert.equal(code, 0);
   const lines = out.join('').trim().split('\n');
   assert.equal(lines.length, 1);
@@ -375,7 +540,7 @@ test('CLI land and stage print one JSON line; a missing --record exits 2', (t) =
 
   const f2 = fixture(t);
   const out2 = [];
-  const code2 = cli.run(['stage', '--run', f2.runDir, '--worktree', f2.repo, '--reason', 'integration-model is local-merge'], {
+  const code2 = cli.run(['stage', '--run', f2.runDir, '--worktree', f2.repo, '--reason', 'integration-model is local-merge', '--merge-base', f2.mergeBase], {
     stdout: (s) => out2.push(s), stderr: () => {}, mainRoot: f2.repo, lib: { now: () => NOW },
   });
   assert.equal(code2, 0);

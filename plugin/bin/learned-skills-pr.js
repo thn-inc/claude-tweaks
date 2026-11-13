@@ -23,13 +23,13 @@
 //                                                 decisions.md, the caller hand-logs it
 //
 //   node bin/learned-skills-pr.js land --run <run-dir> --worktree <abs> --record <n> [--record <m> …]
-//     --integration-branch <name> [--merge-base <sha>]
-//   node bin/learned-skills-pr.js stage --run <run-dir> --worktree <abs> --reason <text> [--merge-base <sha>]
+//     --integration-branch <name> --merge-base <sha>
+//   node bin/learned-skills-pr.js stage --run <run-dir> --worktree <abs> --reason <text> --merge-base <sha>
 //
 // `land` commits each captured patch (plumbing, on a temp index) to learned-skills/{run-id}, pushes it and
 // opens a ready PR that is never armed; a patch that cannot ride it is staged instead. `stage` stages
-// every captured patch (local-merge). --merge-base, when given, marks a captured entry whose target the
-// run branch already changed as superseded (never delivered twice). Stdout is one JSON line:
+// every captured patch (local-merge). --merge-base (required) marks a captured entry whose edit the
+// run branch already carries (its patch reverse-applies to HEAD) as superseded, never delivered twice; pr is set only when confirmed open in this call. Stdout is one JSON line:
 //   land:  {branch, pr: {number,url}|null, landed: [{id,target,commit}], staged: [{id,target,stagePath,reason}]
 //           [, superseded][, failed][, logFailed]}
 //   stage: {staged: [...][, superseded][, failed]}
@@ -54,8 +54,8 @@ const { land, stage } = require('./lib/learned-skills/land');
 const { resolveTarget } = require('./lib/stage-item/write');
 
 const USAGE = 'usage: learned-skills-pr.js capture --run <run-dir> --worktree <abs> --merge-base <sha> --target <repo-rel> --summary-file <path>\n'
-  + '       learned-skills-pr.js land --run <run-dir> --worktree <abs> --record <n> [--record <m> ...] --integration-branch <name> [--merge-base <sha>]\n'
-  + '       learned-skills-pr.js stage --run <run-dir> --worktree <abs> --reason <text> [--merge-base <sha>]\n'
+  + '       learned-skills-pr.js land --run <run-dir> --worktree <abs> --record <n> [--record <m> ...] --integration-branch <name> --merge-base <sha>\n'
+  + '       learned-skills-pr.js stage --run <run-dir> --worktree <abs> --reason <text> --merge-base <sha>\n'
   + '  land / stage print one JSON line ({branch, pr, landed, staged} / {staged}); exit 1 when a staged write failed\n'
   + '  prints {route: run-branch | captured | clean | staged, ...}\n'
   + '  staged results may carry patch (the file holding the edit when the stage is description-only or unvalidated),\n'
@@ -67,8 +67,8 @@ const USAGE = 'usage: learned-skills-pr.js capture --run <run-dir> --worktree <a
 
 const VERBS = {
   capture: ['--run', '--worktree', '--merge-base', '--target', '--summary-file'],
-  land: ['--run', '--worktree', '--record', '--integration-branch'],
-  stage: ['--run', '--worktree', '--reason'],
+  land: ['--run', '--worktree', '--record', '--integration-branch', '--merge-base'],
+  stage: ['--run', '--worktree', '--reason', '--merge-base'],
 };
 const FLAGS = {
   '--run': 'run', '--worktree': 'worktree', '--merge-base': 'mergeBase', '--target': 'target', '--summary-file': 'summaryFile',

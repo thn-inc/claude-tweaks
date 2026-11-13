@@ -10,7 +10,7 @@
 //
 // Resume: an entry already `landed` is skipped; an existing remote branch is the base; an open PR is
 // reused; a patch whose commit is already on that branch (a run that died before its manifest write)
-// is recognised by its commit subject and marked landed instead of being committed twice.
+// is recognised by its Learned-Skills-Entry trailer (never one a landed entry claims) and marked landed instead of being committed twice.
 // A `captured` entry whose target the run branch changed after the merge base is `superseded`, never
 // delivered (capture's bothInTree/stuck outcomes leave the edit in the tree for the run branch).
 //
@@ -46,30 +46,47 @@ function checkCommon({ runDir, worktree }) {
   if (typeof worktree !== 'string' || !worktree) throw new UsageError('worktree is required');
 }
 
+// Required: it is what lets a captured edit the run branch already carries be recognised.
 function checkMergeBase(mergeBase) {
-  if (mergeBase == null) return null;
   if (typeof mergeBase !== 'string' || !mergeBase.trim() || mergeBase.startsWith('-')) throw new UsageError('mergeBase must be a commit id');
   return mergeBase;
 }
 
-// Splits the manifest's captured entries into those to deliver and those the run branch already owns.
-// Returns { todo, superseded } and mutates `manifest` entries for the superseded ones.
+// Splits the manifest's captured entries into those to deliver and those the run branch already
+// carries. An entry is superseded only when the run branch changed its target after the merge base AND
+// the entry's patch reverse-applies to HEAD's tree (the edit itself is on the run branch); a target the
+// run branch changed some other way is delivered as usual. Mutates `manifest` entries for the
+// superseded ones.
 function triage({ runDir, worktree, mergeBase, manifest, deps }) {
   const captured = manifest.filter((e) => e.status === 'captured');
   const todo = [];
   const superseded = [];
-  let owned = null;
-  if (mergeBase && captured.length) {
+  let owned = [];
+  if (captured.length) {
     owned = splitNul(deps.git(['-C', worktree, '-c', 'core.quotePath=false', 'diff', '--name-only', '-z', '--end-of-options', mergeBase, 'HEAD', '--']));
   }
-  for (const e of captured) {
-    if (owned && owned.includes(e.target)) {
-      e.status = 'superseded';
-      e.reason = 'the run branch changed this target after the merge base, so the edit travels with the record';
-      superseded.push({ id: e.id, target: e.target, reason: e.reason });
-    } else {
-      todo.push(e);
+  const checkIndex = path.join(runDir, 'learned-skills', 'index-check.tmp');
+  const carried = (e) => {
+    const env = { ...process.env, GIT_INDEX_FILE: checkIndex };
+    try {
+      deps.mkdir(path.dirname(checkIndex));
+      deps.git(['-C', worktree, 'read-tree', '--end-of-options', 'HEAD'], { env });
+      deps.git(['-C', worktree, 'apply', '--cached', '--check', '-R', '--end-of-options', e.patch], { env });
+      return true;
+    } catch { return false; }
+  };
+  try {
+    for (const e of captured) {
+      if (owned.includes(e.target) && carried(e)) {
+        e.status = 'superseded';
+        e.reason = 'the run branch already carries this edit, so it travels with the record';
+        superseded.push({ id: e.id, target: e.target, reason: e.reason });
+      } else {
+        todo.push(e);
+      }
     }
+  } finally {
+    try { if (deps.lstatType(checkIndex).type !== 'missing') deps.unlink(checkIndex); } catch { /* best effort */ }
   }
   if (superseded.length) {
     const items = superseded.map((s) => ({
@@ -132,17 +149,20 @@ function stage({ runDir, worktree, reason, mergeBase }, overrides = {}) {
 // ---------------------------------------------------------------------------------------------
 // land
 
-function commitMessage(target, records, runId) {
-  const from = records.length === 1 ? `#${records[0]}` : `${records.map((r) => `#${r}`).join(', ')}`;
-  return {
-    subject: `Add learned skill update to ${target} — from ${from}'s wrap-up`,
-    full: `Add learned skill update to ${target} — from ${from}'s wrap-up\n\nLearned-Skills-Run: ${runId}\n`,
-  };
+// The Learned-Skills-Entry trailer keys a pushed commit to its manifest entry, so a resume recognises
+// it by entry id (never by subject: a re-captured edit on a landed target has the same subject).
+function commitMessage(entry, records, runId) {
+  const from = records.map((r) => `#${r}`).join(', ');
+  const subject = `Add learned skill update to ${entry.target} — from ${from}'s wrap-up`;
+  return { full: `${subject}\n\nLearned-Skills-Run: ${runId}\nLearned-Skills-Entry: ${entry.id}\n` };
 }
+
+// HTML comments in a summary could plant a marker (<!-- claude-tweaks-run: …) in the PR body.
+const defang = (text) => String(text).replace(/<!--/g, '&lt;!--').replace(/-->/g, '--&gt;');
 
 function prBody(records, entries) {
   const refs = records.map((r) => `refs #${r}`).join(', ');
-  const rows = entries.map((e) => `- \`${skillLabel(e.target)}\` — ${oneLine(e.summary)}`);
+  const rows = entries.map((e) => `- \`${defang(skillLabel(e.target))}\` — ${defang(oneLine(e.summary))}`);
   const text = [
     MARKER,
     `Learned skill updates from wrap-up (${refs}).`,
@@ -167,9 +187,17 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
   const branch = `learned-skills/${runId}`;
   const git = (args, opts) => deps.git(['-C', worktree, ...args], opts);
 
+  const listOpen = () => {
+    const rows = JSON.parse(deps.gh(['pr', 'list', '--head', branch, '--state', 'open', '--json', 'number,url,state']));
+    if (!Array.isArray(rows)) throw new Error('gh pr list did not return an array');
+    return rows.find((r) => r.state === 'OPEN') || null;
+  };
+
   const manifest = readManifest(runDir);
   const prior = [...manifest].reverse().find((e) => e.status === 'landed' && e.pr);
-  const out = { branch, pr: prior ? prior.pr : null, landed: [], staged: [] };
+  // pr is reported only when this call confirmed it open.
+  const out = { branch, pr: null, landed: [], staged: [] };
+  const confirmed = (pr) => ({ number: Number(pr.number), url: pr.url });
 
   const { todo, superseded } = triage({ runDir, worktree, mergeBase: base, manifest, deps });
   if (superseded.length) out.superseded = superseded;
@@ -177,7 +205,10 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
     if (todo.length || superseded.length) writeManifest(runDir, manifest, deps);
     return out;
   };
-  if (!todo.length) return finish();
+  if (!todo.length) {
+    if (prior) { try { const open = listOpen(); if (open) out.pr = confirmed(open); } catch { /* unconfirmed: reported as null */ } }
+    return finish();
+  }
 
   const downgradeAll = (entries, why) => {
     stageAll({ runDir, worktree, entries, reason: why, deps, out });
@@ -192,6 +223,7 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
     // 1. The base: the existing remote branch (a resumed run), else the integration branch's tip.
     let integrationSha;
     let tip = null;
+    let existingPr = null;
     try {
       git(['fetch', '--end-of-options', 'origin', integrationBranch], { timeout: GIT_TIMEOUT_MS });
       integrationSha = String(git(['rev-parse', '--verify', '--end-of-options', `origin/${integrationBranch}^{commit}`])).trim();
@@ -201,20 +233,32 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
         git(['fetch', '--end-of-options', 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`], { timeout: GIT_TIMEOUT_MS });
         tip = String(git(['rev-parse', '--verify', '--end-of-options', `origin/${branch}^{commit}`])).trim();
         if (tip !== line[0]) throw new Error(`the remote ${branch} moved while it was fetched`);
+        existingPr = listOpen();
       }
     } catch (err) {
       return downgradeAll(todo, `could not read the remote base (${firstLine(err)})`);
     }
     const branchExisted = tip !== null;
+    // An existing branch is a base only with an open PR attached; otherwise its commits (rejected, or
+    // never offered) would ride the next PR.
+    if (branchExisted && !existingPr) {
+      return downgradeAll(todo, `${branch} already exists on origin with no open PR (closed or never opened), so it is not reused as a base; its commits stay on it`);
+    }
 
-    // Commits already on the branch from a run that died before its manifest write.
+    // Commits already on the branch from a run that died before its manifest write: keyed by the
+    // entry id in their trailer, never one a landed entry already claims.
     const onBranch = new Map();
     if (branchExisted) {
+      const claimed = new Set(manifest.filter((e) => e.status === 'landed' && e.commit).map((e) => e.commit));
       try {
-        const raw = String(git(['log', '-z', '--format=%H%x09%s', '--end-of-options', `${integrationSha}..${tip}`]));
+        const raw = String(git(['log', '-z', '--format=%H%x09%B', '--end-of-options', `${integrationSha}..${tip}`]));
         for (const rec of splitNul(raw)) {
           const tab = rec.indexOf('\t');
-          if (tab > 0) onBranch.set(rec.slice(tab + 1), rec.slice(0, tab));
+          if (tab <= 0) continue;
+          const sha = rec.slice(0, tab);
+          const run = /^Learned-Skills-Run: (.+)$/m.exec(rec);
+          const id = /^Learned-Skills-Entry: (\S+)$/m.exec(rec);
+          if (run && run[1].trim() === runId && id && !claimed.has(sha)) onBranch.set(id[1], sha);
         }
       } catch { /* an unreadable log just means nothing is recognised; apply --check then decides */ }
     }
@@ -223,9 +267,9 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
     let parent = tip || integrationSha;
     const built = [];
     for (const entry of todo) {
-      const msg = commitMessage(entry.target, records, runId);
-      if (onBranch.has(msg.subject)) {
-        built.push({ entry, commit: onBranch.get(msg.subject), reused: true });
+      const msg = commitMessage(entry, records, runId);
+      if (onBranch.has(String(entry.id))) {
+        built.push({ entry, commit: onBranch.get(String(entry.id)), reused: true });
         continue;
       }
       let step = 'git read-tree';
@@ -256,21 +300,18 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
       try {
         git(['push', '--end-of-options', 'origin', `${parent}:refs/heads/${branch}`], { timeout: GIT_PUSH_TIMEOUT_MS });
       } catch (err) {
-        // Entries whose commits already sit on the remote branch (reused) stay captured for the next attempt.
-        return downgradeAll(fresh.map((b) => b.entry), `push of ${branch} failed (${firstLine(err)})`);
+        // The new commits are staged; reused commits already sit on the open PR's branch, so they land.
+        stageAll({ runDir, worktree, entries: fresh.map((b) => b.entry), reason: `push of ${branch} failed (${firstLine(err)})`, deps, out });
+        built.splice(0, built.length, ...built.filter((b) => b.reused));
+        if (!built.length) return finish();
       }
     }
 
-    // 4. The PR: reuse an open one, else create it ready and unarmed; re-read it before trusting it.
+    // 4. The PR: the open one an existing branch carries, else create it ready and unarmed and re-read
+    //    it before trusting it.
     const entries = built.map((b) => b.entry);
-    const listOpen = () => {
-      const rows = JSON.parse(deps.gh(['pr', 'list', '--head', branch, '--state', 'open', '--json', 'number,url,state']));
-      if (!Array.isArray(rows)) throw new Error('gh pr list did not return an array');
-      return rows.find((r) => r.state === 'OPEN') || null;
-    };
-    let pr;
+    let pr = existingPr;
     try {
-      pr = listOpen();
       if (!pr) {
         const title = neutralizeClosingPhrases(`Add learned skill updates from wrap-up of ${records.map((r) => `#${r}`).join(', ')}`).text;
         deps.gh(['pr', 'create', '--base', integrationBranch, '--head', branch, '--title', title, '--body-file', '-'], prBody(records, entries));
@@ -278,16 +319,17 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
         if (!pr) throw new Error('the created PR does not read OPEN');
       }
     } catch (err) {
-      if (!branchExisted) {
-        // The branch exists only because of this call: take it down, so a later run cannot inherit
-        // commits whose patches are staged instead.
-        try { git(['push', '--end-of-options', 'origin', `:refs/heads/${branch}`], { timeout: GIT_PUSH_TIMEOUT_MS }); } catch { /* left for the next run to reuse */ }
+      // The branch exists only because of this call (an existing one always has its PR): take it down,
+      // so a later run cannot inherit commits whose patches are staged instead.
+      let note = '';
+      try { git(['push', '--end-of-options', 'origin', `:refs/heads/${branch}`], { timeout: GIT_PUSH_TIMEOUT_MS }); } catch (delErr) {
+        note = `; the branch ${branch} could not be deleted and still holds these commits (${firstLine(delErr)})`;
       }
-      return downgradeAll(entries, `gh pr create failed (${firstLine(err)})`);
+      return downgradeAll(entries, `gh pr create failed (${firstLine(err)})${note}`);
     }
 
     // 5. Record and log.
-    const prRef = { number: Number(pr.number), url: pr.url };
+    const prRef = confirmed(pr);
     const items = [];
     for (const b of built) {
       let short = b.commit.slice(0, 7);
