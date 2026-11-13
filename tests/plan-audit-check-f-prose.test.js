@@ -47,8 +47,8 @@ test('AC5.1 (#3602): plan-audit.md\'s opening enumeration names Check F', () => 
 });
 
 test('AC5.1 (#3602): the Invocation envelope list and --spec paragraph name checkF', () => {
-  assert.ok(PLAN_AUDIT.includes('`{checkA, checkB, checkC, checkD, headroom, premiseRefs, checkE, checkF}`'));
-  assert.match(PLAN_AUDIT, /`checkE` and `checkF` are each `\{ok: true, skipped: 'no-spec'\}`/);
+  assert.ok(PLAN_AUDIT.includes('`{checkA, checkB, checkC, checkD, headroom, premiseRefs, checkE, checkF, checkG}`'));
+  assert.match(PLAN_AUDIT, /`checkE`, `checkF`, and `checkG` are each `\{ok: true, skipped: 'no-spec'\}`/);
 });
 
 test('AC5.1 (#3602): Result interpretation documents every checkF result key', () => {
@@ -97,7 +97,7 @@ test('#3602: build/SKILL.md Common Step 1.5 and docs/plugin-structure.md name Ch
   assert.match(step15(), /Check F \(spec-named path coverage\)/);
   const usage = STRUCTURE.split('\n').find((l) => l.startsWith('node plugin/bin/plan-audit.js'));
   assert.ok(usage, 'docs/plugin-structure.md plan-audit.js line not found');
-  assert.ok(usage.includes('checkE, checkF}'));
+  assert.ok(usage.includes('checkE, checkF, checkG}'));
   assert.ok(usage.includes('Check F (#3602'));
   const row = STRUCTURE.split('\n').find((l) => l.startsWith('| build |'));
   assert.ok(row, 'docs/plugin-structure.md build row not found');
