@@ -54,7 +54,7 @@ Any step that executes worker-authored content (its tests, a `verify-scope.json`
 |---|---|
 | Adding a command to the implementer's allow list | List its write, read, exec and network flags; probe each through the launcher with the sandbox on and off; add the worst case to the live smoke test; record the results in the `roles.js` header |
 | Adding a tool to a role (for example Grep or Glob off macOS) | Probe that the tool stays inside the working directory under that role's flags on each platform it ships to, before adding it to `ROLES` |
-| Turning on `permissions.blockReadsOutsideWorkingDirectories` | It blocks the home directory, including a toolchain installed there (a different `node` ran); it needs a per-project list of readable paths, which is a project decision |
+| Changing which paths the implementer may read | The read block is on; the readable set is the derived toolchain roots (`toolchainReadPaths` in `roles.js`). Never re-open a path through `additionalDirectories` or `--add-dir` — those also become writable. Re-run the `AC7` live smoke test's canary step after any change |
 | A new platform | Run the sandbox probes there, then add it to `SANDBOX_PROBED_PLATFORMS`; until then the implementer has no Bash there |
 | A new CLI version changes a flag's behavior | Re-run the probes the header names for that flag and update the version and date beside each result |
 
@@ -67,6 +67,8 @@ Any step that executes worker-authored content (its tests, a `verify-scope.json`
 | Copying the probed facts into this skill or another document | They drift from the headers they came from; point at `roles.js` and `worker.js` instead |
 | Widening rights after reading a permission denial | There is no such path by design; a denial is reported, never retried with more rights |
 | Writing a schema `required` list or a field list as an array literal that starts with `'status'` | `tests/git-status-optional-locks.test.js` reads it as a git argument list; derive the list instead (see `bin-source-scan-conformance`) |
+| A live smoke or probe prompt that leaves the worker to phrase its own Bash commands | The model rewrites them (haiku appended an exit-status echo to each, #5268), so an exact allow rule stops matching and an allowed step is denied unrun; tell it to run each command exactly as written, as the `AC7` prompt does |
+| A second home-or-ancestor check for a new source of read paths | `reopensHome` in `roles.js` is the one rule for derived roots and caller `readPaths`, home real paths included; a hand-written copy (#5268's first review fix) drifts from it. Call it |
 
 ## Reference
 
