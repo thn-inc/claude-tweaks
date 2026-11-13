@@ -943,7 +943,9 @@ function readJobs(lines, jobsIdx, end, unparsed) {
     jobs.push(job);
     i++;
     let keyIndent = null;
-    let sawKey = false;
+    // Whether the last job key read has an empty value, so that a `- ` line at
+    // the key column can be its indentless sequence value.
+    let keyOpen = false;
     while (i < end) {
       const l = lines[i];
       if (isSkippable(l)) { i++; continue; }
@@ -953,13 +955,15 @@ function readJobs(lines, jobsIdx, end, unparsed) {
       if (kind < keyIndent) { unparsed.push(NOT_READ); return []; }
       if (kind > keyIndent) { i++; continue; } // a deeper line of a key not read here
       if (DASH.test(l)) {
-        if (!sawKey) { unparsed.push(NOT_READ); return []; }
-        i++; // an indentless sequence value of the key above
+        // An indentless sequence value of the key above when that key's value is
+        // empty; before any key, or after a key with a scalar value, unreadable.
+        if (!keyOpen) { unparsed.push(NOT_READ); return []; }
+        i++;
         continue;
       }
       const kv = splitKey(l.slice(kind));
       if (!kv) { unparsed.push(NOT_READ); return []; }
-      sawKey = true;
+      keyOpen = stripCommentQuoteAware(kv.rest) === '';
       i++;
       if (kv.key === 'if') {
         const r = readJoinedScalar(lines, i, end, keyIndent, kv.rest);

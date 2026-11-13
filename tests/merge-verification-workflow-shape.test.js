@@ -228,6 +228,12 @@ test('jobs: stepIfCount counts step keys only', () => {
       assert.deepEqual(s.unparsed, [], JSON.stringify(t));
     });
   }
+  // an indentless sequence under a job key with no inline value (valid YAML) is that key's value
+  bothEndings('on: push\njobs:\n  a:\n    needs:\n    - b\n    - c\n    if: x\n    runs-on: y\n', (t) => {
+    const s = shape(t);
+    assert.deepEqual(s.jobs, [{ id: 'a', if: 'x', stepIfCount: 0, concurrency: false }]);
+    assert.deepEqual(s.unparsed, []);
+  });
   // an indentless sequence value under a step key (valid YAML) is that key's value
   bothEndings('on: push\njobs:\n  a:\n    steps:\n      - name: n\n        args:\n        - a\n        if: x\n', (t) => {
     const s = shape(t);
@@ -324,6 +330,8 @@ test('unparsed: each reason fires on its own fixture', () => {
     // is no value of that key
     ['on: push\njobs:\n  a:\n    steps:\n      - args:\n      -\n        - if: x\n', 'jobs: not read'],
     ['on: push\njobs:\n  a:\n    steps:\n      - name: n\n        - a\n', 'jobs: not read'],
+    // the same at a job's key column: a `- ` line after a job key with a scalar value
+    ['on: push\njobs:\n  a:\n    runs-on: x\n    - y\n', 'jobs: not read'],
     ['on: push\njobs:\n  a:\n    steps:\n      - run: a\n        name: n\n        - b\n', 'jobs: not read'],
     // a quote that never closes is unread, never a stray quote kept as text
     ['on: push\njobs:\n  a:\n    if: "a && b\n    runs-on: x\n', 'job a if: not read'],
