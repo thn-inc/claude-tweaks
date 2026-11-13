@@ -12,9 +12,17 @@
 // result halts ends the record. Every record ends with a final line carrying the outcome
 // word for the stop's class (events.js's outcomeFor; `none` when nothing stopped), the
 // totals with and without the CI wait, the PR, the CI word, the worker's cost, turns and
-// denial count, and the structured stop the settle unit reads. A record that sets
-// ctx.shared.fatal (the policy, the run's repository or its integration branch cannot be
-// resolved) ends the run with exit 1.
+// denial count, and the structured stop. A halted record is then settled by settle.js
+// (comment, label, release the claim, remove what this run created), unless the run was
+// started with --no-settle, which leaves the stop to the caller; settle's events come before
+// the final line, and the final line's `settle` word says what happened (`done`,
+// `left-to-caller`, `none` or `interrupted`). An interrupted record settles nothing: a
+// signal queued during the halting step's synchronous child is delivered at the loop's yield
+// before settle, and one that lands during settle stops it before its next call (settle
+// yields between calls and reads shared.interrupted); either way the final line says
+// `interrupted` and the loop terminates. A record that sets ctx.shared.fatal (the policy,
+// the run's repository or its integration branch cannot be resolved) ends the run with
+// exit 1.
 //
 // Every side effect goes through `deps` (gh-api-module-pattern's CLI wrapper contract);
 // realDeps below is the real set. #5216's admission module and eligibility option are
@@ -52,8 +60,9 @@
 // supervisor should signal the process group, not the pid.
 const fs = require('fs');
 const { execFileSync, spawnSync } = require('child_process');
-const { createEventSink, outcomeFor, FINAL_STEP, STOP_CLASSES } = require('./events');
+const { createEventSink, outcomeFor, yieldToEventLoop, FINAL_STEP, STOP_CLASSES, OUTCOMES } = require('./events');
 const { STEPS } = require('./steps');
+const { toEscalationReason, planRow, SETTLE_ROWS, CLASS_BY_ROW, settle } = require('./settle');
 const { ghAvailable, remoteUrl, ghOptions } = require('../repo-resolve');
 const { lstatType } = require('../path-guard');
 const { defaultResolvePolicy } = require('../express/policy');
@@ -63,6 +72,7 @@ const sharedPrimitives = require('../shared-primitives');
 const USAGE = [
   'Usage: drive.js #N [#M…]',
   '       drive.js --help | -h   (prints this text; exit 0, before any probe)',
+  '       drive.js --no-settle #N [#M…]   (the caller settles stops: the final line carries settle: left-to-caller and the stop object)',
   'Takes each named record, one at a time and in order, from admission to a draft PR with',
   'CI read. Prints one JSON event line per step on stdout (and, once the run directory',
   'exists, to {run-dir}/driver-events.jsonl); each record ends with a final line carrying',
@@ -78,13 +88,19 @@ const RECORD_RE = /^#?(\d+)$/;
 const GIT_PROBE_TIMEOUT_MS = 10000;
 const MAX_BUFFER = sharedPrimitives.LARGE_MAX_BUFFER_BYTES;
 
-// argv -> { records } | { help: true } | { error }. `#N` or `N`, positive integers only,
-// de-duplicated in the order given. --help (or -h) anywhere wins.
+// argv -> { records, settle } | { help: true } | { error }. `#N` or `N`, positive integers only,
+// de-duplicated in the order given. --help (or -h) anywhere wins. `--no-settle` anywhere sets
+// settle false (the caller settles stops); any other option is an error.
 function parseArgs(argv) {
   if (argv.includes('--help') || argv.includes('-h')) return { help: true };
   if (argv.length === 0) return { error: 'at least one record reference (#N) is required' };
   const records = [];
+  let settleStops = true;
   for (const a of argv) {
+    if (a === '--no-settle') {
+      settleStops = false;
+      continue;
+    }
     const m = RECORD_RE.exec(String(a));
     const n = m ? Number(m[1]) : NaN;
     if (!Number.isSafeInteger(n) || n <= 0) {
@@ -92,7 +108,8 @@ function parseArgs(argv) {
     }
     if (!records.includes(n)) records.push(n);
   }
-  return { records };
+  if (records.length === 0) return { error: 'at least one record reference (#N) is required' };
+  return { records, settle: settleStops };
 }
 
 // `current` is the record being driven, `{ ctx, sink, started, step, inStep, stepStarted,
@@ -102,14 +119,14 @@ function parseArgs(argv) {
 // and `final` holds the final line an interrupt wrote. `interrupted` is the signal's name
 // once the handler has run, else false.
 function newShared() {
-  return { policy: null, ref: null, mainRoot: null, repo: null, ghRepo: null, fatal: false, activeWorker: null, current: null, interrupted: false };
+  return { policy: null, ref: null, mainRoot: null, repo: null, ghRepo: null, fatal: false, activeWorker: null, current: null, interrupted: false, settle: true };
 }
 
 function newCtx(record, shared) {
   return {
     record, runId: null, runDir: null, wt: null, branch: null, claimed: false,
     created: { worktree: false, branch: false }, pushed: false, configWritten: false,
-    pr: null, ci: null, ciWaitStartedAt: null, checkLogged: undefined, worker: null,
+    pr: null, ci: null, ciWaitStartedAt: null, pushedAt: null, checkLogged: undefined, worker: null,
     shared,
   };
 }
@@ -130,11 +147,37 @@ function eventFor(ctx, name, result, ms, deps) {
   return event;
 }
 
-function finalEvent(ctx, stop, sink, msTotal, deps) {
+const orNull = (v) => (v === undefined ? null : v);
+
+// The structured stop a settle (or a caller reading the final line) works from. Built here, once,
+// for both settle's input and the final line, so it never depends on the outcome. A pre-push
+// stop is one settle escalates, so its reason is the closed set escalate takes.
+function stopObject(ctx, stop) {
+  const stopClass = stop ? stop.result.stopClass : STOP_CLASSES.NONE;
+  return {
+    step: stop ? stop.name : null,
+    class: stopClass,
+    pushed: ctx.pushed === true,
+    created: { worktree: ctx.created.worktree === true, branch: ctx.created.branch === true },
+    reason: stop ? (stopClass === STOP_CLASSES.PRE_PUSH ? toEscalationReason(stop.result.reason) : stop.result.reason) : null,
+    detail: stop ? orNull(stop.result.detail) : null,
+    checkLogged: orNull(ctx.checkLogged),
+  };
+}
+
+// What settle did for a record, as the final line reports it. `mode` is the `settle` word.
+const SETTLE_NONE = Object.freeze({ mode: 'none', row: null, failed: [], settledClass: null, unclassified: false, note: null });
+const SETTLE_INTERRUPTED = Object.freeze({ ...SETTLE_NONE, mode: 'interrupted' });
+
+const KNOWN_CLASSES = new Set(Object.values(STOP_CLASSES));
+// outcomeFor throws on an unknown class, and a final line must always be written: a class
+// outside the set reads blocked (the same word settle's safety net gives it).
+const outcomeOf = (stopClass) => (KNOWN_CLASSES.has(stopClass) ? outcomeFor(stopClass) : OUTCOMES.BLOCKED);
+
+function finalEvent(ctx, stop, sink, msTotal, deps, settled = SETTLE_NONE) {
   const stopClass = stop ? stop.result.stopClass : STOP_CLASSES.NONE;
   const ciWaitMs = sink.events().reduce((sum, e) => sum + (Number.isFinite(e.ciWaitMs) ? e.ciWaitMs : 0), 0);
   const { worker } = ctx;
-  const orNull = (v) => (v === undefined ? null : v);
   const event = {
     ts: deps.date().toISOString(),
     run: ctx.runDir ? ctx.runId : null,
@@ -142,7 +185,9 @@ function finalEvent(ctx, stop, sink, msTotal, deps) {
     step: FINAL_STEP,
     status: stop ? stop.result.status : 'ok',
     ms: msTotal,
-    outcome: outcomeFor(stopClass),
+    // When settle ran (or --no-settle planned a row), the outcome is the class of that row (a
+    // failed escalate reads blocked).
+    outcome: outcomeOf(settled.settledClass || stopClass),
     msTotal,
     msWithoutCi: msTotal - ciWaitMs,
     pr: ctx.pr ? orNull(ctx.pr.number) : null,
@@ -151,26 +196,17 @@ function finalEvent(ctx, stop, sink, msTotal, deps) {
     costUsd: worker ? orNull(worker.costUsd) : null,
     turns: worker ? orNull(worker.turns) : null,
     denialCount: worker && Array.isArray(worker.denials) ? worker.denials.length : null,
-    stop: {
-      step: stop ? stop.name : null,
-      class: stopClass,
-      pushed: ctx.pushed === true,
-      created: { worktree: ctx.created.worktree === true, branch: ctx.created.branch === true },
-      reason: stop ? stop.result.reason : null,
-      detail: stop ? orNull(stop.result.detail) : null,
-      checkLogged: orNull(ctx.checkLogged),
-    },
+    stop: stopObject(ctx, stop),
+    settle: settled.mode,
+    settleFailed: settled.failed,
+    settleRow: settled.row,
   };
+  if (settled.unclassified === true) event.unclassified = true;
+  if (settled.note) event.settleNote = settled.note;
+  if (worker && worker.spendOverrun === true) event.spendOverrun = true;
   const fileError = sink.fileError();
   if (fileError !== null) event.eventsFileError = fileError;
   return event;
-}
-
-// Lets the event loop deliver a pending signal before the next step: every step before the
-// worker makes only synchronous calls, and an await that settles on microtasks alone never
-// turns the loop, so without this a SIGINT during the claim would wait for the worker.
-function yieldToEventLoop() {
-  return new Promise((resolve) => { setImmediate(resolve); });
 }
 
 // An interrupted record's stop class, from the side effects it holds: `none` once the run's
@@ -198,11 +234,41 @@ function reportInterrupt(shared, current, step, detail, ms, deps) {
     const extra = Number.isFinite(ctx.ciWaitStartedAt) ? { ciWaitMs: Math.max(0, deps.now() - ctx.ciWaitStartedAt) } : {};
     const result = { status: 'fail', detail, halt: true, stopClass: interruptClass(ctx), reason: 'fail', extra };
     sink.emit(eventFor(ctx, step.name, result, ms, deps));
-    current.final = finalEvent(ctx, { name: step.name, result }, sink, deps.now() - current.started, deps);
+    // An interrupted record settles nothing: its claim and what it created are the next session's.
+    current.final = finalEvent(ctx, { name: step.name, result }, sink, deps.now() - current.started, deps, SETTLE_INTERRUPTED);
     sink.emit(current.final);
   } finally {
     deps.terminate(shared.interrupted);
   }
+}
+
+// Settles a halted record (settle.js) unless the run was started with --no-settle, which only
+// names the row the caller will settle. `done` means the row had calls; a row with none is
+// `none` either way. settle's events go to the sink as they happen, before the final line.
+// A signal that lands during settle stops it before its next call (settle's `interrupted`
+// predicate): the result is then `interrupted`, naming the calls that failed so far.
+async function settleStop(ctx, stop, record, shared, sink, deps) {
+  const stopObj = stopObject(ctx, stop);
+  const pr = ctx.pr && ctx.pr.number;
+  if (shared.settle === true) {
+    // A successful call has no detail: the line omits the field, like any other step line.
+    const emit = (name, status, ms, detail) => { sink.emit(eventFor(ctx, name, { status, detail: detail || undefined, extra: {} }, ms, deps)); };
+    const result = await settle({
+      stop: stopObj, record, runId: ctx.runId, runDir: ctx.runDir, wt: ctx.wt, branch: ctx.branch,
+      pr, claimed: ctx.claimed, mainRoot: shared.mainRoot, ghRepo: shared.ghRepo, emit,
+      interrupted: () => shared.interrupted,
+    }, deps);
+    return {
+      mode: result.interrupted ? 'interrupted' : (result.calls.length > 0 ? 'done' : 'none'), row: result.row, failed: result.failed,
+      settledClass: result.settledClass, unclassified: result.unclassified, note: result.note,
+    };
+  }
+  // The row settle would use, from the same run-state read.
+  const plan = planRow({ stop: stopObj, runDir: ctx.runDir, pr }, deps);
+  return {
+    mode: SETTLE_ROWS[plan.row].length > 0 ? 'left-to-caller' : 'none', row: plan.row, failed: [],
+    settledClass: CLASS_BY_ROW[plan.row], unclassified: plan.unclassified, note: plan.unreadableNote,
+  };
 }
 
 // One record through the table; returns its final event (null when an interrupt landed
@@ -250,8 +316,21 @@ async function driveRecord(record, shared, deps, steps = STEPS) {
         break;
       }
     }
-    const final = finalEvent(ctx, stop, sink, deps.now() - started, deps);
+    let settled = SETTLE_NONE;
+    if (stop) {
+      // A signal that arrived during the halting step's synchronous child is delivered only when
+      // the event loop turns, and the handler ignores it here (no step is running): settle
+      // nothing if one is pending.
+      await yieldToEventLoop();
+      settled = shared.interrupted ? SETTLE_INTERRUPTED : await settleStop(ctx, stop, record, shared, sink, deps);
+    }
+    const final = finalEvent(ctx, stop, sink, deps.now() - started, deps, settled);
     sink.emit(final);
+    // The handler did not terminate for a signal that landed here: do it once the final line is out.
+    if (settled.mode === 'interrupted') {
+      current.final = final;
+      deps.terminate(shared.interrupted);
+    }
     return final;
   } finally {
     shared.current = null;
@@ -319,6 +398,7 @@ async function run(argv, deps) {
     return 2;
   }
   const shared = newShared();
+  shared.settle = parsed.settle;
   const unsubscribe = deps.onSignal((signal) => interrupt(shared, signal, deps));
   try {
     for (const record of parsed.records) {

@@ -97,7 +97,7 @@ launched has reported, and never end your turn with one outstanding. With no `Ag
 expires, judge that unit yourself, log the downgrade, and mark its findings `unconfirmed`; that
 child is abandoned and no longer counts as outstanding, so your final reply still ends with
 `STATUS: {WORD}`. For a `/claude-tweaks:review` lens unit, log that downgrade as the single-read
-coverage line, and carry its caveat, from `review/step3-lens-dispatch.md`'s partner-died
+coverage line, and carry its caveat, from `review/step3-tier-variants.md`'s partner-died
 paragraph. Ignore a late result; if a late notification re-wakes you after your final
 reply, repeat your whole final reply unchanged — the dispatcher keeps only your latest reply, so
 a bare `STATUS:` line would replace the report. A child that reports a failure (a `failed`
@@ -117,7 +117,9 @@ passes with no change, or at a ceiling of 3 windows (60 minutes) per wave, namin
 progress for one window` or `ceiling reached while progressing`) and every unchanged child. Children
 sharing a worktree progress together; a child whose prompt names no worktree counts as unchanged. A
 failed wait call counts as no wait but ends its window, and the probe runs as at any bound; a failed probe command counts
-as no change, never retried in another form. Read-only units keep the first-bound self-judge. A wait
+as no change, never retried in another form. Read-only units keep the first-bound self-judge.
+Exception: a rendered-UI unit (review Step 6/6.5) gets more windows while its artifact directory
+changes; stage its late result (`_shared/rendered-ui-units.md`). A wait
 call that is blocked or fails is not a wait and never counts toward the bound; never retry it in
 another form (a longer, wrapped or backgrounded sleep): treat every child still outstanding as
 silent at the bound. The full rule is in `subagent-dispatch-core.md`'s Foreground Execution

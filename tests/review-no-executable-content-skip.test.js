@@ -1,16 +1,17 @@
 'use strict';
 // At the `low` review tier, lenses 3b/3c skip a diff that ships no executable
 // content — and an executable snippet inside prose keeps them in scope (#2684).
+// The rule lives in step3-tier-variants.md, read only at `low`/`xhigh`/`max` (#4826).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
 
-const DISPATCH = readText(path.join(__dirname, '..', 'plugin/skills/review/step3-lens-dispatch.md'));
+const DISPATCH = readText(path.join(__dirname, '..', 'plugin/skills/review/step3-tier-variants.md'));
 
 function rule() {
   const m = DISPATCH.match(/^\*\*No executable content \(`low` only\)\.\*\*.*$/m);
-  assert.ok(m, 'step3-lens-dispatch.md must carry the "No executable content (`low` only)" paragraph');
+  assert.ok(m, 'step3-tier-variants.md must carry the "No executable content (`low` only)" paragraph');
   return m[0];
 }
 
@@ -33,8 +34,10 @@ test('the skip is logged in the auto-decision-log SKIP shape', () => {
   assert.match(rule(), /`SKIP \{HH:MM:SS\} — Step 3 lenses 3b, 3c \(skipped\): .* → .*\. Reversibility: n\/a\.`/);
 });
 
-test('the rule sits in the lens-scope section, before the low-tier dispatch paragraph', () => {
+test('the rule sits in the low-tier section, before the low-tier dispatch paragraph', () => {
   const at = DISPATCH.indexOf('**No executable content (`low` only).**');
-  assert.ok(at > DISPATCH.indexOf('## Lens scope and dispatch'));
+  const heading = DISPATCH.indexOf('## `low` tier');
+  assert.notEqual(heading, -1, 'step3-tier-variants.md lost its "## `low` tier" heading');
+  assert.ok(at > heading);
   assert.ok(at < DISPATCH.indexOf('**Low-tier single-read dispatch (`low` only).**'));
 });

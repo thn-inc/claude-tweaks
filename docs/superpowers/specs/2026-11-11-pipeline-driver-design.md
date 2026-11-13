@@ -118,9 +118,13 @@ The express lane leaves this to the dispatch session around it (`dispatch/settle
 | Stop | What the driver does |
 |---|---|
 | Refused before the claim (not eligible, not authorized, wrong state) | Nothing is written. The event line names every reason. |
-| `express-escalated` (before the push) | Writes the escalation line with `express-lane.js escalate`, comments on the record with the reason, releases the claim, and removes the worktree and its local branch. The record returns to the queue as if never started and the standard path builds it fresh. |
-| `blocked` (after the push, or a failed claim or check call) | Comments on the PR and the record with the failed step, labels the record `bot:blocked`, releases the claim. The draft PR, branch and worktree stay for a human. |
+| Claim held by another run or in flight (`claim-targets.js` exit 3) | Nothing is written. The driver never held the claim, and a label would hide the other run's live claim. The outcome is `blocked` and the event names the exit code. |
+| Any other claim failure (a non-zero exit other than 3, an exit 0 that did not claim the record, a killed or timed-out run) or a failed run-directory mint | Comments on the record with the step (and the exit code, when there is one) and labels it `bot:blocked`. No release call: no run directory exists, and a claim that may have been written lapses by its TTL, which the event says. |
+| `express-escalated` (before the push) | Writes the escalation line with `express-lane.js escalate`, comments on the record with the reason, releases the claim, removes the worktree and its local branch, and closes the run with `hooks.js close-run` as the last call. The record returns to the queue as if never started and the standard path builds it fresh. |
+| `blocked` (after the push, or a failed check or escalate call) | Comments on the PR and the record with the failed step, labels the record `bot:blocked`, releases the claim. The draft PR, branch and worktree stay for a human. |
 | `pending-review` | Leaves the PR for a human; the claim follows the express lane's existing rule for this outcome. |
+
+The source of truth for this table is `SETTLE_ROWS` in `plugin/bin/lib/driver/settle.js`; this table and `docs/driver.md` are copied from it by hand.
 
 Discarding the partial work on escalation is deliberate: an express-sized change is cheap to redo, and a standalone run that leaves a claimed record and an orphaned worktree behind is the costlier failure. Settle's `failure-check` judgment and its tombstone that closes the PR are not carried over.
 
