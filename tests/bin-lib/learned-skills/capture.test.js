@@ -309,7 +309,8 @@ test('stageEntry gate', (t) => {
 
 test('non-ASCII and dash-leading paths', (t) => {
   const cafe = '.claude/skills/café/SKILL.md';
-  const evil = '-evil/SKILL.md';
+  // Every target sits under .claude/skills/ (a bare `-evil/…` is refused there), so the dash leads a segment.
+  const evil = '.claude/skills/-evil/SKILL.md';
   const f = fixture(t, { [cafe]: '# cafe\n', [evil]: '# evil\n' });
   write(f.repo, cafe, '# cafe\nedited\n');
   write(f.repo, evil, '# evil\nedited\n');
@@ -334,6 +335,71 @@ test('a target outside the worktree is a usage error', (t) => {
   const f = fixture(t);
   assert.throws(() => capture(args(f, '../escape/SKILL.md')), /inside the worktree/);
   assert.throws(() => capture(args(f, '/etc/passwd')), /repo-relative/);
+});
+
+// Review fix wave item 4: only a file under .claude/skills/ rides the learned-skills PR. CLAUDE.md is the
+// stage-only claude-md row's, so capturing it would bypass that row's disposition.
+test('a target outside .claude/skills/ exits 2 and changes nothing', (t) => {
+  const f = fixture(t, { 'CLAUDE.md': '# rules\n', 'docs/a.md': '# a\n' });
+  write(f.repo, 'CLAUDE.md', '# rules\nan applied rule\n');
+  const summaryFile = path.join(f.repo, 'summary.txt');
+  fs.writeFileSync(summaryFile, 'a rule');
+  const err = [];
+  const code = cli.run(['capture', '--run', f.runDir, '--worktree', f.repo, '--merge-base', f.mergeBase, '--target', 'CLAUDE.md', '--summary-file', summaryFile, '--row', 'claude-md'], {
+    stdout: () => {}, stderr: (s) => err.push(s), mainRoot: f.repo,
+  });
+  assert.equal(code, 2);
+  assert.match(err.join(''), /target must be a file under \.claude\/skills\/: CLAUDE\.md/);
+  assert.equal(fs.readFileSync(path.join(f.repo, 'CLAUDE.md'), 'utf8'), '# rules\nan applied rule\n', 'the edit stays in the tree');
+  assert.equal(fs.existsSync(path.join(f.runDir, 'learned-skills')), false, 'no patch, no manifest');
+  for (const target of ['.claude/skills', '.claude/skills/', '.claude/skillsx/SKILL.md', '.claude/SKILL.md', './CLAUDE.md']) {
+    assert.throws(() => capture(args(f, target)), (e) => e.constructor.name === 'UsageError', target);
+  }
+  // A path under the prefix that really resolves elsewhere is refused after real-path resolution.
+  let linked = true;
+  try { fs.symlinkSync(path.join(f.repo, 'docs'), path.join(f.repo, '.claude', 'skills', 'out'), 'dir'); } catch { linked = false; }
+  if (linked) {
+    write(f.repo, 'docs/a.md', '# a\nedited\n');
+    assert.throws(() => capture(args(f, '.claude/skills/out/a.md')), /target must be a file under \.claude\/skills\//);
+    assert.equal(fs.readFileSync(path.join(f.repo, 'docs', 'a.md'), 'utf8'), '# a\nedited\n');
+  }
+});
+
+// Review fix wave item 3: a target is a literal pathspec. Globbed, `[xy]` also matches x/, so the diff
+// would take the sibling's edit and `rm --cached` would unstage x/SKILL.md.
+test('a target with glob characters is matched literally, never touching a sibling', (t) => {
+  const f = fixture(t);
+  const glob = '.claude/skills/[xy]/SKILL.md';
+  const sibling = fs.readFileSync(path.join(f.repo, X), 'utf8') + 'a sibling edit, not this capture\n';
+  write(f.repo, X, sibling);
+  write(f.repo, glob, '# bracket\n');
+  const res = capture(args(f, glob));
+  assert.equal(res.route, 'captured', JSON.stringify(res));
+  const patch = fs.readFileSync(res.patch, 'utf8');
+  assert.match(patch, /# bracket/);
+  assert.doesNotMatch(patch, /a sibling edit/, 'the sibling is not in the patch');
+  assert.equal(fs.existsSync(path.join(f.repo, glob)), false);
+  assert.equal(fs.readFileSync(path.join(f.repo, X), 'utf8'), sibling, 'the sibling edit stays in the tree');
+  assert.equal(status(f.repo, X), ` M ${X}\n`, 'and stays tracked, unstaged');
+});
+
+// Review fix wave item 2: an inherited GIT_DIR overrides `git -C`; the runner drops it (#4178).
+test('an inherited GIT_DIR does not redirect capture off the worktree repo', (t) => {
+  const f = fixture(t);
+  // Another tree, so the other repo's commits differ from this one's (same-content fixtures share a sha).
+  const other = fixture(t, { 'other.md': '# another repo\n' });
+  const original = fs.readFileSync(path.join(f.repo, X), 'utf8');
+  write(f.repo, X, original + 'learned\n');
+  const saved = process.env.GIT_DIR;
+  process.env.GIT_DIR = path.join(other.repo, '.git');
+  let res;
+  try { res = capture(args(f, X)); } finally {
+    if (saved === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = saved;
+  }
+  assert.equal(res.route, 'captured', JSON.stringify(res));
+  assert.match(fs.readFileSync(res.patch, 'utf8'), /\+learned/);
+  assert.equal(fs.readFileSync(path.join(f.repo, X), 'utf8'), original, 'the worktree repo was reverted');
+  assert.equal(status(f.repo, X), '');
 });
 
 test('CLI run with a missing --target exits 2', (t) => {

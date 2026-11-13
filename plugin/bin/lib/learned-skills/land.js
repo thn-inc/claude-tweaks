@@ -32,8 +32,9 @@ const { formatEntry } = require('../log-decision/append');
 const { neutralizeClosingPhrases } = require('../flow/closing-links');
 const { GIT_TIMEOUT_MS, GIT_PUSH_TIMEOUT_MS } = require('../shared-primitives');
 const {
-  UsageError, realDeps, readManifest, writeManifest, skillLabel, stageEntry, LOG_SECTION, STEP, rowLabel, entryFindings, oneLine, firstStderrLine,
+  UsageError, realDeps, gitEnv, readManifest, writeManifest, skillLabel, stageEntry, LOG_SECTION, STEP, rowLabel, entryFindings, oneLine, firstStderrLine,
 } = require('./learned-skills');
+const { STATUS, patchDir, localPatchPath } = require('./layout');
 
 const MARKER = '<!-- wrap-up-skills-pr -->';
 
@@ -56,11 +57,12 @@ function checkMergeBase(mergeBase) {
 
 // The manifest, with each captured patch read from the learned-skills/ dir beside it. Its stored
 // absolute path goes stale once the run dir is archived, and verify's learned-skills-delivered
-// remedy is a land or stage against the archived dir.
+// remedy is a land or stage against the archived dir. readManifest has already refused a malformed
+// entry (naming the manifest and the entry's index), so every captured entry names a patch.
 function readLocalManifest(runDir) {
   const manifest = readManifest(runDir);
   for (const e of manifest) {
-    if (e.status === 'captured' && e.patch) e.patch = path.join(runDir, 'learned-skills', path.basename(e.patch));
+    if (e.status === STATUS.CAPTURED) e.patch = localPatchPath(runDir, e.patch);
   }
   return manifest;
 }
@@ -71,8 +73,11 @@ function readLocalManifest(runDir) {
 // run branch changed some other way is delivered as usual. An entry a staged proposal already holds
 // (stagedCopyOf) is marked staged with that path, never staged again. Mutates `manifest` entries for
 // the superseded and already-staged ones.
+// Throws when the carried check itself cannot run (the temp index, read-tree, or a reverse-apply that
+// failed for any reason but refusing the patch): the caller writes no manifest, so every entry stays
+// captured and nothing is delivered on a guess.
 function triage({ runDir, worktree, mergeBase, manifest, deps }) {
-  const captured = manifest.filter((e) => e.status === 'captured');
+  const captured = manifest.filter((e) => e.status === STATUS.CAPTURED);
   const todo = [];
   const superseded = [];
   const already = [];
@@ -81,27 +86,35 @@ function triage({ runDir, worktree, mergeBase, manifest, deps }) {
   if (captured.length) {
     owned = splitNul(deps.git(['-C', worktree, '-c', 'core.quotePath=false', 'diff', '--name-only', '-z', '--end-of-options', mergeBase, 'HEAD', '--']));
   }
-  const checkIndex = path.join(runDir, 'learned-skills', 'index-check.tmp');
+  const checkIndex = path.join(patchDir(runDir), 'index-check.tmp');
+  // true: the patch reverse-applies to HEAD (the run branch carries it); false: git apply refused it
+  // (exit 1). Anything else throws, naming the entry.
   const carried = (e) => {
-    const env = { ...process.env, GIT_INDEX_FILE: checkIndex };
+    const env = gitEnv({ GIT_INDEX_FILE: checkIndex });
+    const cannot = (err) => new Error(`could not check whether the run branch already carries entry ${e.id} (${e.target}): ${firstStderrLine(err)}; every captured entry stays captured`);
     try {
       deps.mkdir(path.dirname(checkIndex));
       deps.git(['-C', worktree, 'read-tree', '--end-of-options', 'HEAD'], { env });
+    } catch (err) { throw cannot(err); }
+    try {
       deps.git(['-C', worktree, 'apply', '--cached', '--check', '-R', '--end-of-options', e.patch], { env });
       return true;
-    } catch { return false; }
+    } catch (err) {
+      if (err && err.status === 1) return false;
+      throw cannot(err);
+    }
   };
   try {
     for (const e of captured) {
       if (owned.includes(e.target) && carried(e)) {
-        e.status = 'superseded';
+        e.status = STATUS.SUPERSEDED;
         e.reason = 'the run branch already carries this edit, so it travels with the record';
         superseded.push({ id: e.id, target: e.target, reason: e.reason });
         continue;
       }
       const copy = stagedCopyOf(e, copies, deps);
       if (copy) {
-        e.status = 'staged';
+        e.status = STATUS.STAGED;
         e.stagePath = copy;
         e.reason = 'already staged by an earlier call whose manifest write failed';
         already.push({ id: e.id, target: e.target, stagePath: copy, reason: e.reason });
@@ -172,7 +185,7 @@ function stageOne({ runDir, worktree, entry, reason, deps }) {
     const res = stageEntry({
       runDir, worktree, entry: { target: entry.target, summary: entry.summary, patch, patchFile: entry.patch, findings: entryFindings(entry) }, reason,
     }, deps);
-    entry.status = 'staged';
+    entry.status = STATUS.STAGED;
     entry.stagePath = res.stagePath;
     entry.reason = oneLine(reason);
     const row = { id: entry.id, target: entry.target, stagePath: res.stagePath, reason: entry.reason };
@@ -231,10 +244,13 @@ function commitMessage(entry, records, runId) {
 
 // HTML comments in a summary could plant a marker (<!-- claude-tweaks-run: …) in the PR body.
 const defang = (text) => String(text).replace(/<!--/g, '&lt;!--').replace(/-->/g, '--&gt;');
+// An @ in a summary (@user, @org/team, @types/node) would notify that account when the PR opens; a
+// zero-width space after it keeps the text and drops the mention (driver/events.js's form).
+const unmention = (text) => String(text).replace(/@/g, '@\u200B');
 
 function prBody(records, entries) {
   const refs = records.map((r) => `refs #${r}`).join(', ');
-  const rows = entries.flatMap((e) => entryFindings(e).map((f) => `- \`${defang(skillLabel(e.target))}\` — ${defang(oneLine(f.summary))}`));
+  const rows = entries.flatMap((e) => entryFindings(e).map((f) => `- \`${defang(skillLabel(e.target))}\` — ${unmention(defang(oneLine(f.summary)))}`));
   const text = [
     MARKER,
     `Learned skill updates from wrap-up (${refs}).`,
@@ -268,7 +284,7 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
   const openOf = (rows) => rows.find((r) => r.state === 'OPEN') || null;
 
   const manifest = readLocalManifest(runDir);
-  const prior = [...manifest].reverse().find((e) => e.status === 'landed' && e.pr);
+  const prior = [...manifest].reverse().find((e) => e.status === STATUS.LANDED && e.pr);
   // pr is reported only when this call confirmed it open.
   const out = { branch, pr: null, landed: [], staged: [] };
   const confirmed = (pr) => ({ number: Number(pr.number), url: pr.url });
@@ -287,8 +303,8 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
     return finish();
   };
 
-  const indexFile = path.join(runDir, 'learned-skills', 'index.tmp');
-  const planEnv = () => ({ ...process.env, GIT_INDEX_FILE: indexFile });
+  const indexFile = path.join(patchDir(runDir), 'index.tmp');
+  const planEnv = () => gitEnv({ GIT_INDEX_FILE: indexFile });
   try {
     deps.mkdir(path.dirname(indexFile));
 
@@ -358,9 +374,9 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
       const stray = logError ? `its commits could not be read (${firstStderrLine(logError)})` : commits.map((c) => {
         const entry = c.run === runId && c.id ? manifest.find((e) => String(e.id) === c.id) : null;
         if (!entry) return `${c.sha.slice(0, 7)} maps to no entry of this run`;
-        if (entry.status !== 'captured' && entry.status !== 'landed') return `${c.sha.slice(0, 7)} belongs to entry ${entry.id}, which is ${entry.status}`;
+        if (entry.status !== STATUS.CAPTURED && entry.status !== STATUS.LANDED) return `${c.sha.slice(0, 7)} belongs to entry ${entry.id}, which is ${entry.status}`;
         if (!sameEdit(c.sha, entry)) return `${c.sha.slice(0, 7)} does not hold entry ${entry.id}'s current edit`;
-        if (entry.status === 'captured') onBranch.set(String(entry.id), c.sha);
+        if (entry.status === STATUS.CAPTURED) onBranch.set(String(entry.id), c.sha);
         return null;
       }).find(Boolean);
       const where = existingPr ? `open PR #${existingPr.number} (${existingPr.url})` : 'no PR';
@@ -450,8 +466,8 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
     const items = [];
     for (const b of built) {
       let short = b.commit.slice(0, 7);
-      try { short = String(git(['rev-parse', '--short', '--end-of-options', b.commit])).trim() || short; } catch { /* keep the slice */ }
-      b.entry.status = 'landed';
+      try { short = String(git(['rev-parse', '--verify', '--short', '--end-of-options', b.commit])).trim() || short; } catch { /* keep the slice */ }
+      b.entry.status = STATUS.LANDED;
       b.entry.commit = b.commit;
       b.entry.pr = prRef;
       out.landed.push({ id: b.entry.id, target: b.entry.target, commit: b.commit });
@@ -472,7 +488,7 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
     // every entry landed on it. The number is gh's own integer, never caller text. A failure leaves the
     // commits on the PR and is reported.
     if (existingPr && pushed) {
-      const onPr = manifest.filter((e) => e.status === 'landed' && e.pr && e.pr.number === prRef.number);
+      const onPr = manifest.filter((e) => e.status === STATUS.LANDED && e.pr && e.pr.number === prRef.number);
       try { deps.gh(['pr', 'edit', String(prRef.number), '--body-file', '-'], prBody(records, onPr)); } catch { out.prBodyStale = true; }
     }
     // The edits are on the PR by now: a failed manifest write is reported (finish), and a later land

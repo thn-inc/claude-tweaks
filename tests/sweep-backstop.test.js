@@ -221,35 +221,39 @@ test("item 9's filter never offers a wrap-up-skills-pr PR, even with a run marke
   assert.match(ITEM9, /<!-- wrap-up-skills-pr -->[^\n]*never/);
   const filterScript = extractNodeScripts(ITEM9)[0];
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-item9-skills-'));
-  const inputPath = path.join(tmpDir, 'pr-scan-unarmed.json');
-  const candidatesPath = path.join(tmpDir, 'pr-scan-unarmed-candidates.json');
-  const isolatedScript = isolateItem9(filterScript, { candidatesPath, inputPath });
+  try {
+    const inputPath = path.join(tmpDir, 'pr-scan-unarmed.json');
+    const candidatesPath = path.join(tmpDir, 'pr-scan-unarmed-candidates.json');
+    const isolatedScript = isolateItem9(filterScript, { candidatesPath, inputPath });
 
-  const oldEnough = new Date(Date.now() - 25 * 3600000).toISOString();
-  const base = {
-    isDraft: false,
-    autoMergeRequest: null,
-    updatedAt: oldEnough,
-    statusCheckRollup: [{ conclusion: 'SUCCESS' }],
-  };
-  fs.writeFileSync(inputPath, JSON.stringify([
-    { ...base, number: 3001, title: 'wrap-up learned skills', body: '<!-- wrap-up-skills-pr -->\n<!-- wrap-up-residue-pr -->' },
-    {
-      ...base,
-      number: 3002,
-      title: 'wrap-up learned skills (run-marked, granted)',
-      body: '<!-- wrap-up-skills-pr -->\n<!-- claude-tweaks-run: 2026-11-13T005701-spec-5290 -->',
-      closingIssuesReferences: [{ number: 5290 }],
-    },
-  ]));
+    const oldEnough = new Date(Date.now() - 25 * 3600000).toISOString();
+    const base = {
+      isDraft: false,
+      autoMergeRequest: null,
+      updatedAt: oldEnough,
+      statusCheckRollup: [{ conclusion: 'SUCCESS' }],
+    };
+    fs.writeFileSync(inputPath, JSON.stringify([
+      { ...base, number: 3001, title: 'wrap-up learned skills', body: '<!-- wrap-up-skills-pr -->\n<!-- wrap-up-residue-pr -->' },
+      {
+        ...base,
+        number: 3002,
+        title: 'wrap-up learned skills (run-marked, granted)',
+        body: '<!-- wrap-up-skills-pr -->\n<!-- claude-tweaks-run: 2026-11-13T005701-spec-5290 -->',
+        closingIssuesReferences: [{ number: 5290 }],
+      },
+    ]));
 
-  const scriptPath = path.join(tmpDir, 'item9-skills-filter.js');
-  fs.writeFileSync(scriptPath, isolatedScript);
-  execFileSync('node', [scriptPath], { env: { ...process.env, UNARMED_AGE: '24' }, stdio: 'pipe' });
+    const scriptPath = path.join(tmpDir, 'item9-skills-filter.js');
+    fs.writeFileSync(scriptPath, isolatedScript);
+    execFileSync('node', [scriptPath], { env: { ...process.env, UNARMED_AGE: '24' }, stdio: 'pipe' });
 
-  const candidateNumbers = JSON.parse(fs.readFileSync(candidatesPath, 'utf8')).map((c) => c.number);
-  assert.ok(!candidateNumbers.includes(3001), 'a housekeeping-marked wrap-up-skills-pr PR must not be a candidate');
-  assert.ok(!candidateNumbers.includes(3002), 'a run-marked, granted wrap-up-skills-pr PR must not be a candidate');
+    const candidateNumbers = JSON.parse(fs.readFileSync(candidatesPath, 'utf8')).map((c) => c.number);
+    assert.ok(!candidateNumbers.includes(3001), 'a housekeeping-marked wrap-up-skills-pr PR must not be a candidate');
+    assert.ok(!candidateNumbers.includes(3002), 'a run-marked, granted wrap-up-skills-pr PR must not be a candidate');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 });
 
 test('item 9 re-verifies unresolved threads per candidate, never against the full open-PR list', () => {

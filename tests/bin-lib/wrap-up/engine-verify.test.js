@@ -1748,9 +1748,12 @@ test('reference-repairs still judges the run-branch repairs beside one that rode
 
 // ---- learned-skills-delivered (#5290 final review I2) ----
 // A captured Skills-row edit exists only as {run}/learned-skills/{id}.patch until land or stage runs.
+// The manifest goes where the writers put it (layout.js), so a moved layout cannot leave this check
+// green on a skip.
+const { manifestPath: learnedManifestPath } = require('../../../plugin/bin/lib/learned-skills/layout');
 function writeLearnedManifest(runDir, entries) {
-  fs.mkdirSync(path.join(runDir, 'learned-skills'), { recursive: true });
-  fs.writeFileSync(path.join(runDir, 'learned-skills', 'manifest.json'), typeof entries === 'string' ? entries : JSON.stringify(entries));
+  fs.mkdirSync(path.dirname(learnedManifestPath(runDir)), { recursive: true });
+  fs.writeFileSync(learnedManifestPath(runDir), typeof entries === 'string' ? entries : JSON.stringify(entries));
 }
 const learnedRow = (runDir) => runVerify({ runDir, base: 'main', deps: { git: () => '', gh: () => '' } });
 
@@ -1782,6 +1785,21 @@ test('learned-skills-delivered fails on a captured entry and names each patch wh
   assert.strictEqual(row.result, 'fail');
   assert.strictEqual(row.detail, `2 captured learned-skills patch(es) never delivered: ${path.join(runDir, 'learned-skills', '1.patch')}, ${path.join(runDir, 'learned-skills', '3.patch')} — run learned-skills-pr.js land (pr-first) or stage (local-merge) with --run ${runDir}`);
   assert.strictEqual(result.exitCode, 3, 'a fail blocks the verdict');
+});
+
+// A null or unknown-status entry may be an undelivered edit: it fails, never reads as delivered.
+test('learned-skills-delivered fails on an entry no writer produces, naming it', () => {
+  for (const [bad, problem] of [
+    [null, 'is not an object'],
+    [{ id: '2', status: 'pending', patch: '/x/2.patch' }, 'has an unknown status ("pending")'],
+    [{ id: '2', status: 'captured' }, 'is captured but names no patch file'],
+  ]) {
+    const runDir = makeTmpDir('verify-learned-malformed-');
+    writeLearnedManifest(runDir, [{ id: '1', status: 'landed', patch: '/x/1.patch' }, bad]);
+    const row = learnedRow(runDir).rows.find((r) => r.check === 'learned-skills-delivered');
+    assert.strictEqual(row.result, 'fail', JSON.stringify(bad));
+    assert.strictEqual(row.detail, `learned-skills manifest entry 1 ${problem}: ${learnedManifestPath(runDir)}`);
+  }
 });
 
 test('learned-skills-delivered fails on an unreadable manifest', () => {

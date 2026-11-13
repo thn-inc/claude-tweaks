@@ -53,11 +53,17 @@
 //        branch and logs SKIP (degraded); merge-check's floor still holds that run. Also a failure
 //        after the diff that staging could not absorb: stderr says "staging failed too" and where the edit is —
 //        in the working tree (still committable on the run branch), or the patch file that holds it
-//      2 malformed invocation, an unreadable --summary-file, or a --run that is missing, not anchored
-//        under the main checkout (a worktree-local shadow), or not a directory
-// --run is anchored strictly through lib/stage-item/write.js's resolveTarget (the sanctioned writers'
-// predicate), with exit 2 for a refusal, as this CLI has no exit 3. The staged line is written to
-// decisions.md by the library, so the caller logs nothing on the staged route unless logFailed:true.
+//      2 malformed invocation, an unreadable --summary-file, a capture --target that is not a file under
+//        .claude/skills/ (any other file is its own row's to commit or stage), or a --run that is
+//        missing, not anchored under the main checkout (a worktree-local shadow), or not a directory —
+//        nothing was changed
+// The codes follow the Combined-2 vocabulary (.claude/skills/gh-api-module-pattern's CLI wrapper
+// contract): 0 ok, 1 an operation failure, 2 a call to fix. --run is anchored strictly through
+// lib/stage-item/write.js's resolveTarget (the sanctioned writers' predicate), but a refusal is exit 2,
+// not the Sanctioned-writer family's 3: --run is an argument of this call, so re-resolving it and
+// re-running the call is the whole recovery, the same as for any other bad flag. The staged line is
+// written to decisions.md by the library, so the caller logs nothing on the staged route unless
+// logFailed:true.
 'use strict';
 
 const fs = require('fs');
@@ -76,7 +82,7 @@ const USAGE = 'usage: learned-skills-pr.js capture --run <run-dir> --worktree <a
   + '  exit 0 ok (staged included)\n'
   + '       1 git failure before the diff was read (nothing changed), or a failure after it that staging could not\n'
   + '         absorb ("staging failed too"; stderr says the edit is in the working tree, or names the file holding it)\n'
-  + '       2 malformed invocation or refused --run\n';
+  + '       2 malformed invocation, a --target outside .claude/skills/, or refused --run\n';
 
 const VERBS = {
   capture: ['--run', '--worktree', '--merge-base', '--target', '--summary-file'],

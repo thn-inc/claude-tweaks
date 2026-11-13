@@ -1084,3 +1084,82 @@ test('an open PR whose branch carries a staged entry\'s commit is not added to',
   assertNothingRode(f, gh, again, tip1, createsBefore);
   assert.deepEqual(readManifest(f.runDir).map((m) => m.status), ['staged', 'staged']);
 });
+
+// Review fix wave item 1: only `git apply` refusing the reverse patch means "not carried". A carried
+// check that cannot run (here its read-tree, or an apply that fails some other way) holds every entry.
+test('a carried check that cannot run holds every entry captured and delivers nothing', (t) => {
+  for (const [label, fails] of [
+    ['read-tree', (args, opts) => args.includes('read-tree') && /index-check\.tmp$/.test(opts && opts.env && opts.env.GIT_INDEX_FILE)],
+    ['apply -R', (args) => args.includes('apply') && args.includes('-R') && args.includes('--cached')],
+  ]) {
+    const f = fixture(t);
+    commitCapturedOnRunBranch(f, X);
+    const gh = fakeGh();
+    const d = deps(gh.gh);
+    const inner = d.deps.git;
+    d.deps.git = (args, opts) => {
+      if (fails(args, opts)) throw new Error(`${label} refused to run`);
+      return inner(args, opts);
+    };
+    const want = new RegExp(`could not check whether the run branch already carries entry 1 \\(\\.claude/skills/x/SKILL\\.md\\): ${label} refused to run`);
+    assert.throws(() => land(landArgs(f), d.deps), want, label);
+    assert.throws(() => stage({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, reason: 'r' }, d.deps), want, label);
+    const err = [];
+    const io = { stdout: () => {}, stderr: (s) => err.push(s), mainRoot: f.repo, lib: d.deps };
+    assert.equal(cli.run(['land', '--run', f.runDir, '--worktree', f.repo, '--record', '5290', '--integration-branch', 'main', '--merge-base', f.mergeBase], io), 1, label);
+    assert.match(err.join(''), want);
+    assert.deepEqual(readManifest(f.runDir).map((m) => m.status), ['captured', 'captured'], `${label}: neither delivered nor superseded`);
+    assert.equal(remoteBranch(f), null, label);
+    assert.equal(gh.calls.length, 0, label);
+    assert.equal(fs.existsSync(path.join(f.runDir, 'staged')), false, label);
+  }
+});
+
+// Review fix wave item 2: an inherited GIT_DIR overrides `git -C`, the plumbing calls' temp-index env
+// included; every git env is built repo-pinned (#4178).
+test('an inherited GIT_DIR does not redirect land off the worktree repo', (t) => {
+  const f = fixture(t);
+  const other = path.join(f.root, 'other');
+  sh(f.root, ['init', '-q', other]);
+  const saved = process.env.GIT_DIR;
+  process.env.GIT_DIR = path.join(other, '.git');
+  let res;
+  try { res = land(landArgs(f), deps(fakeGh().gh).deps); } finally {
+    if (saved === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = saved;
+  }
+  assert.deepEqual(res.staged, [], JSON.stringify(res.staged));
+  assert.equal(res.landed.length, 2);
+  assert.equal(remoteBranch(f), res.landed[1].commit);
+  assert.deepEqual(readManifest(f.runDir).map((m) => m.status), ['landed', 'landed']);
+});
+
+// Review fix wave item 5: an @ in a finding's summary would notify that account when the PR opens.
+test('an @-mention in a summary is not a live mention in the PR body', (t) => {
+  const f = fixture(t, { capturedTargets: [] });
+  write(f.repo, X, fs.readFileSync(path.join(f.repo, X), 'utf8') + 'a line\n');
+  capture({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, target: X, summary: 'cc @someone and @org/team' }, { now: () => NOW });
+  const gh = fakeGh();
+  land(landArgs(f), deps(gh.gh).deps);
+  const body = gh.calls.find((c) => c.args[1] === 'create').input;
+  assert.doesNotMatch(body, /@[A-Za-z0-9]/);
+  assert.ok(body.includes('— cc @\u200Bsomeone and @\u200Borg/team'), body);
+});
+
+// Review fix wave item 6a: a malformed entry is refused naming the manifest and the entry, never a raw
+// TypeError from a dereference.
+test('a malformed manifest entry fails land and stage naming the manifest and the entry', (t) => {
+  const f = fixture(t);
+  const file = path.join(f.runDir, 'learned-skills', 'manifest.json');
+  const good = readManifest(f.runDir);
+  for (const [bad, problem] of [
+    [null, 'is not an object'],
+    [{ ...good[1], patch: 42 }, 'is captured but names no patch file'],
+    [{ ...good[1], status: 7 }, 'has an unknown status (7)'],
+  ]) {
+    fs.writeFileSync(file, JSON.stringify([good[0], bad]));
+    const want = (e) => e.constructor === Error && e.message === `learned-skills manifest entry 1 ${problem}: ${file}`;
+    assert.throws(() => land(landArgs(f), deps(fakeGh().gh).deps), want, problem);
+    assert.throws(() => stage({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, reason: 'r' }, { now: () => NOW }), want, problem);
+  }
+  assert.equal(remoteBranch(f), null);
+});

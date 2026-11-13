@@ -28,10 +28,12 @@ const { execFileSync } = require('child_process');
 const { writeFileAtomic, renameWithRetry } = require('../atomic-write');
 const { splitNul } = require('../git-z');
 const { formatEntry, appendEntries } = require('../log-decision/append');
+const { repoPinnedEnv } = require('../hooks/git-exec');
 const { lstatType, canonicalRealpath, resolveTarget, isAncestorOrSelf } = require('../path-guard');
 const { ghOptions } = require('../repo-resolve');
 const { GH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('../shared-primitives');
 const { rowById } = require('../wrap-up/registry');
+const { STATUS, patchDir, manifestPath, firstBadEntry } = require('./layout');
 
 const LOG_SECTION = '/wrap-up';
 const STEP = 'Skills row';
@@ -54,9 +56,11 @@ function entryFindings(entry) {
 // A bad invocation (CLI exit 2). Everything else thrown out of a verb is an exit-1 failure.
 class UsageError extends Error {}
 
-// A failure after the diff was read that staging could not absorb either: the edit is in the working
-// tree (restored: true) or is not, and `holder` is the absolute path of the confirmed patch copy
-// that holds it (restored: false). The message names the same place. Never "nothing changed".
+// A failure after the diff was read that staging could not absorb either. `holder` names where the
+// edit is: 'tree' when it is in the working tree (restored: true); the absolute path of the confirmed
+// patch copy that holds it (restored: false); or null when no copy could be confirmed (restored:
+// false), the message then saying so and, when the tree was never reset, naming it as the place left.
+// The message names the same place. Never "nothing changed".
 class StagingFailure extends Error {
   constructor(message, { restored, holder }) {
     super(message);
@@ -65,13 +69,22 @@ class StagingFailure extends Error {
   }
 }
 
+// Every git call's environment: `-C <worktree>` stays in charge of the repo (an inherited GIT_DIR,
+// GIT_WORK_TREE, GIT_INDEX_FILE or GIT_COMMON_DIR would override it, #4178), and every pathspec is
+// literal, so a target named `*` or `:(top)x` names that one file. `extra` adds a call's own
+// variables on top (land's temp index, GIT_INDEX_FILE).
+function gitEnv(extra = {}) {
+  return { ...repoPinnedEnv(), GIT_LITERAL_PATHSPECS: '1', ...extra };
+}
+
 const realDeps = {
   // Throwing runner: stdout on success (a string, or a Buffer with opts.encoding 'buffer'), a throw
   // on any non-zero exit. capture's calls are local-only (no timeout); `land`'s remote-contacting
-  // calls pass opts.timeout, and its plumbing calls opts.env (a GIT_INDEX_FILE on that call alone).
+  // calls pass opts.timeout, and its plumbing calls opts.env (gitEnv plus a GIT_INDEX_FILE on that
+  // call alone). With no opts.env the call runs under gitEnv().
   git: (args, opts = {}) => execFileSync('git', args, {
     cwd: opts.cwd,
-    env: opts.env,
+    env: opts.env || gitEnv(),
     timeout: opts.timeout,
     input: opts.input,
     encoding: opts.encoding || 'utf8',
@@ -103,10 +116,9 @@ const realDeps = {
 };
 
 // ---------------------------------------------------------------------------------------------
-// Manifest
+// Manifest (its path and the entry statuses live in layout.js)
 
-function manifestPath(runDir) { return path.join(runDir, 'learned-skills', 'manifest.json'); }
-
+// Every entry is checked on read, so no reader dereferences a null entry or a non-string patch.
 function readManifest(runDir) {
   let raw;
   try {
@@ -117,6 +129,8 @@ function readManifest(runDir) {
   }
   const parsed = JSON.parse(raw);
   if (!Array.isArray(parsed)) throw new Error(`learned-skills manifest is not an array: ${manifestPath(runDir)}`);
+  const bad = firstBadEntry(parsed);
+  if (bad) throw new Error(`learned-skills manifest entry ${bad.index} ${bad.problem}: ${manifestPath(runDir)}`);
   return parsed;
 }
 
@@ -147,12 +161,15 @@ function firstStderrLine(e) {
 
 function toBuffer(x) { return Buffer.isBuffer(x) ? x : Buffer.from(String(x == null ? '' : x), 'utf8'); }
 
-// '.claude/skills/x/SKILL.md' -> 'x/SKILL.md'; a target without the prefix keeps its whole path.
+// '.claude/skills/x/SKILL.md' -> 'x/SKILL.md'. capture takes only targets under the prefix
+// (normalizeTarget); one without it (a manifest entry from before that gate) keeps its whole path.
 function skillLabel(target) {
   return target.startsWith(SKILL_PREFIX) ? target.slice(SKILL_PREFIX.length) : target;
 }
 
-// A repo-relative posix target that cannot leave the worktree. Throws UsageError otherwise.
+// A repo-relative posix target under .claude/skills/ that cannot leave the worktree, compared both as
+// written and after real-path resolution. Throws UsageError otherwise: any other file (CLAUDE.md, a
+// rules file) is its own row's to commit or stage, never this PR's.
 function normalizeTarget(target, worktree) {
   if (typeof target !== 'string' || !target.trim()) throw new UsageError('target is required');
   if (target.includes('\0')) throw new UsageError('target contains a NUL byte');
@@ -169,6 +186,11 @@ function normalizeTarget(target, worktree) {
   const resolved = resolveTarget(path.join(worktree, rel));
   if (resolved.state !== 'resolved' || !isAncestorOrSelf(root, resolved.path)) {
     throw new UsageError(`target resolves outside the worktree: ${target}`);
+  }
+  const skills = resolveTarget(path.join(root, ...SKILL_PREFIX.split('/').filter(Boolean)));
+  if (!rel.startsWith(SKILL_PREFIX) || rel.length === SKILL_PREFIX.length || skills.state !== 'resolved'
+    || resolved.path === skills.path || !isAncestorOrSelf(skills.path, resolved.path)) {
+    throw new UsageError(`target must be a file under ${SKILL_PREFIX}: ${target}`);
   }
   return rel;
 }
@@ -406,7 +428,7 @@ function capture({ runDir, worktree, mergeBase, target, summary, row = DEFAULT_R
 
   const manifest = readManifest(runDir);
   // Only a still-captured entry can be joined; a landed one already left in a commit.
-  const existing = manifest.find((e) => e.target === rel && e.status === 'captured') || null;
+  const existing = manifest.find((e) => e.target === rel && e.status === STATUS.CAPTURED) || null;
   // A shared outcome records this finding on the entry, so land logs it as its own AUTO line.
   const shared = (id, patch) => {
     const out = { route: 'captured', id, patch, shared: true };
@@ -446,7 +468,7 @@ function capture({ runDir, worktree, mergeBase, target, summary, row = DEFAULT_R
   // From here the diff is in hand: no failure throws without naming where the edit is.
   const cx = {
     deps, git, worktree, runDir, rel, abs, tracked, statusOf, manifest, note, existing,
-    finding, D: diff, start, patchDir: path.join(runDir, 'learned-skills'),
+    finding, D: diff, start, patchDir: patchDir(runDir),
   };
   // plan: { mode, C: the whole change as a patch, full: the tree bytes that hold it }.
   const plan = existing ? joinPlan(cx) : { mode: 'new', C: diff, full: start };
@@ -477,7 +499,7 @@ function capture({ runDir, worktree, mergeBase, target, summary, row = DEFAULT_R
       deps.rename(L, final);
       L = final;
       if (plan.mode === 'new') {
-        writeManifest(runDir, [...manifest, { id: cx.id, target: rel, summary: note, patch: final, status: 'captured', findings: [finding] }], deps);
+        writeManifest(runDir, [...manifest, { id: cx.id, target: rel, summary: note, patch: final, status: STATUS.CAPTURED, findings: [finding] }], deps);
         return { route: 'captured', id: cx.id, patch: final, shared: false };
       }
       // A join: the patch already holds both edits, so a failed manifest write is reported, never a fallback.
@@ -617,7 +639,7 @@ function fallback(cx, plan, L, failure) {
       runDir: cx.runDir, deps, target: st.target, summary: st.summary, findings: [cx.finding], reason, gate, note, stageName: st.name,
     });
     const entries = [...cx.manifest, {
-      id: stageId, target: cx.rel, summary: cx.note, patch, status: 'staged', stagePath: st.stagePath, reason,
+      id: stageId, target: cx.rel, summary: cx.note, patch, status: STATUS.STAGED, stagePath: st.stagePath, reason,
     }];
     try { writeManifest(cx.runDir, entries, deps); } catch { /* the staged file and the log line are the record */ }
     // Superseded copies go last, once the home is confirmed.
@@ -631,10 +653,13 @@ function fallback(cx, plan, L, failure) {
     return out;
   };
 
+  // Set once the tree is about to be reset to HEAD (step 2 below); settle reads it.
+  let wasReset = false;
+
   // Staging cannot be the home: put this call's edit back in the tree as this call found it (the
   // state before the call, the earlier capture included), else name the confirmed copy holding it.
   // kept: how the gate went, for the case where the staged file's full diff stays as the only copy.
-  const settle = (why, kept = { gate: 'not-checked', note: why }) => {
+  const settle =(why, kept = { gate: 'not-checked', note: why }) => {
     const head = `${reason}; then ${why}`;
     const still = 'the edit is still in the working tree (not captured, not staged) — commit it on the run branch';
     let where = null;
@@ -667,7 +692,6 @@ function fallback(cx, plan, L, failure) {
       : 'no copy of the edit could be confirmed; the working tree was not reset, so it is the place left that should hold the edit, but a read could not confirm it';
     throw new StagingFailure(`${head}; ${left}`, { restored: false, holder: null });
   };
-  let wasReset = false;
 
   // A whole-change join's diff also holds the earlier captured edit, which stays captured: staging it
   // would schedule the earlier edit twice. The tree keeps both, for the run branch (land supersedes).
@@ -731,6 +755,6 @@ function pruneEmptyParents(abs, worktree, deps) {
 }
 
 module.exports = {
-  UsageError, StagingFailure, realDeps, readManifest, writeManifest, manifestPath, nextId, normalizeTarget, skillLabel,
+  UsageError, StagingFailure, realDeps, gitEnv, readManifest, writeManifest, manifestPath, nextId, normalizeTarget, skillLabel,
   stageEntry, capture, LOG_SECTION, STEP, rowLabel, entryFindings, oneLine, firstStderrLine,
 };
