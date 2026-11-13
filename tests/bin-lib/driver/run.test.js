@@ -175,7 +175,11 @@ test('#5352: www. and bare github.com URLs go where GitHub links them', () => {
 });
 
 test('#5352: a host-free owner/repo/issues/N path goes whatever precedes it', () => {
+  assert.equal(neutralize('o/r/issues/5 y'), 'y');
   assert.equal(neutralize('x o/r/issues/5 y'), 'x y');
+  // Removing the path leaves a boundary that makes a glued GH-N live; it goes too.
+  assert.equal(neutralize('x o/r/issues/5GH-1 y'), 'x y');
+  assert.equal(neutralize('Closes o/r/issues/5GH-3 now'), 'now');
   assert.equal(neutralize('x thn-inc/claude-tweaks/pull/5285 y'), 'x y');
   for (const host of ['example.com', 'gist.github.com', 'github.com:443', 'xhttps://github.com']) {
     assert.equal(neutralize(`x ${host}/o/r/issues/5 y`), `x ${host}/ y`, host);

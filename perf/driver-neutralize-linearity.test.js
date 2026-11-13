@@ -34,14 +34,15 @@
 //     `www\.[^\s/]+` URL alternative was quadratic (40k chars 1.0-1.5s, 200k 145s), also through the
 //     keyword lookahead (`fix:www.` x25k, 75s); the lookahead is gone. #5352 brought back the
 //     `www.` and bare-host alternatives and added PATH_REF, each with a guard that keeps it linear.
-//     Probed time with the guard reverted:
-//       - no `[\d_](?!www\.)` guard: `'_www.'.repeat(40000)` ~74s, `'1www.'.repeat(40000)` ~36s,
-//         `'_www.a'.repeat(35000)` ~11s;
-//       - no digit in the `www.`/bare-host boundary: `'www.g/o/r/issues/5'.repeat(11000)` ~95s,
-//         `'github.com/o/r/issues/5'.repeat(9000)` ~23s;
-//       - no PATH_REF length bounds: `'a-'.repeat(100000)` ~36s, `'1'.repeat(200000)` ~64s;
+//     Time with the guard reverted, measured in one session under heavy machine load (so an idle
+//     machine runs faster; each still blows its 500-1000ms budget by a wide margin):
+//       - no `[\d_](?!www\.)` guard: `'_www.'.repeat(40000)` ~74s, `'1www.'.repeat(40000)` ~71s,
+//         `'_www.a'.repeat(35000)` ~37s;
+//       - no digit in the `www.`/bare-host boundary: `'www.g/o/r/issues/5'.repeat(11000)` ~16s,
+//         `'github.com/o/r/issues/5'.repeat(9000)` ~12.5s;
+//       - no PATH_REF length bounds: `'a-'.repeat(100000)` ~17.5s, `'1'.repeat(200000)` ~32s;
 //       - no digit in the PATH_REF boundary: the verdict breaks rather than the time, leaving
-//         87,989 characters of `'o/r/issues/5'.repeat(16000)`.
+//         96,000 characters of `'o/r/issues/5'.repeat(16000)`.
 //   - back-to-back scheme URLs (`https://g/o/r/issues/5`*9000): with a `(?<![A-Za-z0-9])` boundary
 //     each URL follows a digit and was refused until the previous removal left a space, peeling one
 //     URL per loop pass (200k chars ~10.5s); the boundary is now letters-only.
