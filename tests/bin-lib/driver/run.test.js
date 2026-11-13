@@ -85,21 +85,24 @@ test('#5269 AC2: a closing keyword before a reference loses both', () => {
   assert.equal(neutralize('Closes (#4) now'), '() now');
   // The keyword goes when the token after it carries a reference marker, whatever the URL form;
   // the scheme boundary rewinds over letters only, so `_https://…` and `1https://…` are removed.
+  // GitHub reads the `owner/repo/issues/N` path inside a scheme URL it does not autolink
+  // (`xhttps://…`) as a reference, so the path goes and the host stays.
   assert.equal(neutralize('Closes _https://github.com/o/r/issues/5_'), '__');
   assert.equal(neutralize('Closes 1https://ghe.co/o/r/issues/5 now'), '1 now');
-  assert.equal(neutralize('Closes xhttps://github.com/o/r/issues/5 now'), 'xhttps://github.com/o/r/issues/5 now');
-  // Non-scheme URL forms stay as backlinks, as on base, but their keyword is gone.
-  assert.equal(neutralize('Closes www.github.com/o/r/issues/5 now'), 'www.github.com/o/r/issues/5 now');
-  assert.equal(neutralize('Closes github.com/o/r/issues/5 now'), 'github.com/o/r/issues/5 now');
-  assert.equal(neutralize('Closes www.ghe.example.com/o/r/issues/5 now'), 'www.ghe.example.com/o/r/issues/5 now');
+  assert.equal(neutralize('Closes xhttps://github.com/o/r/issues/5 now'), 'xhttps://github.com/ now');
+  // www. URLs on any host and bare github.com URLs go too (#5352).
+  assert.equal(neutralize('Closes www.github.com/o/r/issues/5 now'), 'now');
+  assert.equal(neutralize('Closes github.com/o/r/issues/5 now'), 'now');
+  assert.equal(neutralize('Closes www.ghe.example.com/o/r/issues/5 now'), 'now');
+  assert.equal(neutralize('see github.com/o/r/pull/7'), 'see');
   // Documented consequence of the token rule: a keyword before any `word#N` token goes too.
   assert.equal(neutralize('Fix foo#1 bar'), 'foo bar');
   // A keyword that is a whole path segment stays, so the URL still matches and goes.
   assert.equal(neutralize('x https://github.com/o/fix/issues/5 y'), 'x y');
   // A keyword chain goes whole when its last keyword goes; a word between breaks the chain.
-  assert.equal(neutralize('Fixes fixes: www.github.com/o/r/issues/5 now'), 'www.github.com/o/r/issues/5 now');
-  assert.equal(neutralize('Fix the fix www.github.com/o/r/issues/5 now'), 'Fix the www.github.com/o/r/issues/5 now');
-  assert.equal(neutralize('fix fix the www.github.com/o/r/issues/5'), 'fix fix the www.github.com/o/r/issues/5');
+  assert.equal(neutralize('Fixes fixes: www.github.com/o/r/issues/5 now'), 'now');
+  assert.equal(neutralize('Fix the fix www.github.com/o/r/issues/5 now'), 'Fix the now');
+  assert.equal(neutralize('fix fix the www.github.com/o/r/issues/5'), 'fix fix the');
 });
 
 test('#5269 AC2: a reference rebuilt by a removal is removed too', () => {
@@ -131,7 +134,7 @@ test('#5269 AC4: a comment opener spliced together by a removal is still escaped
 test('#5269 AC3: no keyword is ever left followed by a reference, in any case or shape', () => {
   const keywords = ['close', 'closes', 'closed', 'fix', 'fixes', 'fixed', 'resolve', 'resolves', 'resolved'];
   const refs = ['#12', 'owner/repo#3', 'https://github.com/o/r/issues/5', 'https://github.com/o/r/pull/5',
-    '_https://github.com/o/r/issues/5', 'www.github.com/o/r/issues/5', 'github.com/o/r/issues/5'];
+    '_https://github.com/o/r/issues/5', 'www.github.com/o/r/issues/5', 'github.com/o/r/issues/5', 'o/r/issues/5'];
   // No empty separator: `closehttps://…` has no word boundary, under either rule (the glued
   // `closes#5` form is pinned in AC2 above).
   const separators = [' ', ':', ': ', ' : '];
@@ -141,16 +144,56 @@ test('#5269 AC3: no keyword is ever left followed by a reference, in any case or
         for (const sep of separators) {
           const out = neutralize(`Add ${cased}${sep}${ref} now`);
           assert.doesNotMatch(out, LEFTOVER_KEYWORD_REFERENCE, JSON.stringify([cased, sep, ref, out]));
-          // The keyword always goes; the reference goes with it unless it is a URL form that stays a
-          // backlink (`www.`/bare `github.com`), and `_https://…` leaves its `_`.
-          let expected = 'Add now';
-          if (/^(?:www\.|github\.com)/.test(ref)) expected = `Add ${ref} now`;
-          else if (ref.startsWith('_')) expected = 'Add _ now';
+          // The keyword and the reference always go; `_https://…` keeps its `_`.
+          const expected = ref.startsWith('_') ? 'Add _ now' : 'Add now';
           assert.equal(out, expected, JSON.stringify([cased, sep, ref]));
         }
       }
     }
   }
+});
+
+test('#5352: www. and bare github.com URLs go where GitHub links them', () => {
+  assert.equal(neutralize('(www.github.com/o/r/issues/5)'), '()');
+  assert.equal(neutralize('www.github.com/o/r/issues/5.'), '.');
+  assert.equal(neutralize('x WWW.GitHub.com/o/r/issues/5 y'), 'x y');
+  assert.equal(neutralize('see www.github.com/o/r/issues/5#issuecomment-1 x'), 'see x');
+  assert.equal(neutralize('x www.github.com:443/o/r/issues/5 y'), 'x y');
+  // Back-to-back references go in the first pass: the boundary admits a digit.
+  assert.equal(neutralize('www.g/o/r/issues/5www.g/o/r/issues/6'), '');
+  assert.equal(neutralize('github.com/o/r/issues/5github.com/o/r/pull/6'), '');
+  // Glued to each neighbour: the whole URL goes after GitHub's www-autolink boundary (plus a digit);
+  // anywhere else only its path goes.
+  for (const host of ['www.github.com', 'github.com']) {
+    const ref = `${host}/o/r/issues/5`;
+    for (const n of ['_', '(', '*', '~', '1']) assert.equal(neutralize(`x ${n}${ref} y`), `x ${n} y`, n + ref);
+    for (const n of ['-', '.', 'a', '/', ':']) assert.equal(neutralize(`x ${n}${ref} y`), `x ${n}${host}/ y`, n + ref);
+  }
+  // A removal that rebuilds one of these forms is removed too.
+  assert.equal(neutralize('Add Closes w#7ww.github.com/o/r/issues/5 now'), 'Add now');
+  assert.equal(neutralize('Add Closes gith#7ub.com/o/r/pull/5 now'), 'Add now');
+});
+
+test('#5352: a host-free owner/repo/issues/N path goes whatever precedes it', () => {
+  assert.equal(neutralize('x o/r/issues/5 y'), 'x y');
+  assert.equal(neutralize('x thn-inc/claude-tweaks/pull/5285 y'), 'x y');
+  for (const host of ['example.com', 'gist.github.com', 'github.com:443', 'xhttps://github.com']) {
+    assert.equal(neutralize(`x ${host}/o/r/issues/5 y`), `x ${host}/ y`, host);
+  }
+  for (const n of ['-', '.', '/', ':', '(']) assert.equal(neutralize(`x ${n}o/r/issues/5 y`), `x ${n} y`, n);
+  // A letter or digit before the owner joins it; an underscore stops the reference, as on GitHub.
+  for (const n of ['a', '1']) assert.equal(neutralize(`x ${n}o/r/issues/5 y`), 'x y', n);
+  assert.equal(neutralize('x _o/r/issues/5 y'), 'x _o/r/issues/5 y');
+  // GitHub's length limits: an owner of at most 39 characters, a repo of at most 100.
+  assert.equal(neutralize(`x ${'a'.repeat(39)}/r/issues/5 y`), 'x y');
+  assert.equal(neutralize(`x ${'a'.repeat(40)}/r/issues/5 y`), `x ${'a'.repeat(40)}/r/issues/5 y`);
+  assert.equal(neutralize(`x a/${'r'.repeat(100)}/issues/5 y`), 'x y');
+  assert.equal(neutralize(`x a/${'r'.repeat(101)}/issues/5 y`), `x a/${'r'.repeat(101)}/issues/5 y`);
+  assert.equal(neutralize('x o/r/issues/5o/r/pull/6 y'), 'x y');
+  assert.equal(neutralize('Closes o/r/issues/5 now'), 'now');
+  // Run after the loop, the path pass neither eats a rebuilt URL's path nor splices a comment opener.
+  assert.equal(neutralize('Add the loop, Closes h#7ttps://github.com/o/r/issues/5 now'), 'Add the loop, now');
+  assert.equal(neutralize('a <!o/r/issues/5-- hidden'), 'a <! -- hidden');
 });
 
 test('AC7: outcomeFor maps every stop class', () => {
