@@ -1018,7 +1018,7 @@ test('AC1: the reviewer is launched with role reviewer and its result schema', a
     assert.deepStrictEqual(rig.calls[kinds.indexOf('mkdirSync')], { kind: 'mkdirSync', p: opts.settingsDir, opts: { recursive: true } });
     assert.ok(kinds.indexOf('mkdirSync') < kinds.indexOf('launchWorker'));
     assert.deepStrictEqual(ofKind(rig.calls, 'git').map((c) => [c.args, c.opts]), [[
-      ['-C', WT, '--no-optional-locks', 'diff', '--no-color', '--no-ext-diff', '--no-textconv', '--end-of-options', 'origin/main...HEAD'], { cwd: WT },
+      ['-C', WT, '--no-optional-locks', 'diff', '--no-color', '--no-ext-diff', '--no-textconv', '--end-of-options', 'origin/main...HEAD', '--'], { cwd: WT },
     ]]);
   }
 });

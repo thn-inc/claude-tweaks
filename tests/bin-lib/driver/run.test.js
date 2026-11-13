@@ -3079,6 +3079,37 @@ test('fix round: every evidence file must be at HEAD with its recorded content, 
   assert.equal(pushCalls(edited).length, 0);
 });
 
+test('fix round: the HEAD check sets CRLF against LF aside, and nothing else', async () => {
+  // Recorded with CRLF (built from the LF text); core.autocrlf stored the blob as LF.
+  const CRLF_CONTENT = EVIDENCE_CONTENT.replace(/\n/g, '\r\n');
+  assert.notEqual(CRLF_CONTENT, EVIDENCE_CONTENT);
+  const headIs = (blob) => [onGit('--no-optional-locks', 'cat-file', 'blob', '--end-of-options'), blob];
+  const crlfFinding = evidenceFinding(0, { evidence: { path: 'tests/new/r0.test.js', content: CRLF_CONTENT } });
+  const stored = fixRig({ findings: [crlfFinding], script: [headIs(EVIDENCE_CONTENT)] });
+  await run(['#7'], stored.deps);
+  assert.deepEqual([reviewLines(stored)[0].status, pushCalls(stored).length], ['ok', 1]);
+  // The other way round too: recorded LF, stored CRLF.
+  const back = fixRig({ script: [headIs(CRLF_CONTENT)] });
+  await run(['#7'], back.deps);
+  assert.equal(reviewLines(back)[0].status, 'ok');
+  // Any other difference still fails: a one-character edit, a lone CR, a trailing newline more or less.
+  const others = [
+    ['a one-character edit', EVIDENCE_CONTENT.replace('1 - 1', '1 + 1')],
+    ['a lone CR', EVIDENCE_CONTENT.replace('\n', '\r')],
+    ['a trailing newline more', `${EVIDENCE_CONTENT}\n`],
+    ['a trailing newline less', EVIDENCE_CONTENT.slice(0, -1)],
+  ];
+  for (const [name, blob] of others) {
+    assert.notEqual(blob, EVIDENCE_CONTENT, name);
+    for (const content of [EVIDENCE_CONTENT, CRLF_CONTENT]) {
+      const finding = evidenceFinding(0, { evidence: { path: 'tests/new/r0.test.js', content } });
+      const h = fixRig({ findings: [finding], script: [headIs(blob)] });
+      await run(['#7'], h.deps);
+      assert.deepEqual([lastLine(h).stop.detail, reviewLines(h)[0].status], [NOT_AT_HEAD, 'fail'], `${name} (${content === CRLF_CONTENT ? 'CRLF' : 'LF'} recorded)`);
+    }
+  }
+});
+
 test('fix round: an evidence file the worker committed itself, unchanged, passes', async () => {
   const selfCommit = (fx, rest) => {
     fx.hidden = true;

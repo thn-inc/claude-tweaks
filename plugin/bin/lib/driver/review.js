@@ -177,7 +177,8 @@
 //             first; the second check overwrites ctx.check, whose head the push guard reads.
 //   The commit step's "nothing to commit" stop (a stop that names no path) does not end the round:
 //   what the round changed is then already at HEAD. Either way every evidence file must then be
-//   tracked at HEAD with its recorded bytes (cat-file of HEAD:{evidencePath}), which catches one the
+//   tracked at HEAD with its recorded bytes, CRLF vs LF aside (cat-file of HEAD:{evidencePath}; autocrlf
+//   stores a CRLF file as LF, and only the CR-LF pair is normalized), which catches one the
 //   worker gitignored, deleted or changed, and passes one it committed itself unchanged.
 //   Stops, each class pre-push but a propagated test or check result, which keeps its own class
 //   and reason. `fail`: HEAD unreadable, the worker's `fail`/`timeout`, a rewrite refused or failed,
@@ -814,7 +815,7 @@ async function reviewPass(ctx, deps, { testCommand, isRunArtifact } = {}) {
     let diff;
     try {
       diff = String(deps.git(['-C', wt, '--no-optional-locks', 'diff', '--no-color', '--no-ext-diff', '--no-textconv',
-        '--end-of-options', `origin/${shared.ref}...HEAD`], { cwd: wt }));
+        '--end-of-options', `origin/${shared.ref}...HEAD`, '--'], { cwd: wt }));
     } catch (err) {
       return stop(`git diff failed: ${neutralize(errorText(err))}`);
     }
@@ -983,8 +984,10 @@ function rewriteEvidence({ wt, c, sensitivePaths, deps }) {
   return writeEvidence({ wt, rel: c.rel, content: c.content, sensitivePaths, deps });
 }
 
-// Whether the evidence file is tracked at HEAD with exactly the recorded bytes (cat-file reads the
-// stored blob, no filter or textconv). Any git failure (an absent path exits 128) reads as not.
+// Whether the evidence file is tracked at HEAD with the recorded bytes (cat-file reads the stored
+// blob, no filter or textconv), CRLF and LF aside: core.autocrlf stores a CRLF file as LF. Only the
+// \r\n pair is normalized, on both sides; a lone \r or any other byte still differs. Any git failure
+// (an absent path exits 128) reads as not.
 function atHeadAsRecorded(wt, c, deps) {
   let blob;
   try {
@@ -993,7 +996,8 @@ function atHeadAsRecorded(wt, c, deps) {
     return false;
   }
   // As written: a lone surrogate in the recorded string is written, and read back, as U+FFFD.
-  return blob === Buffer.from(c.content, 'utf8').toString('utf8');
+  const lf = (t) => t.replace(/\r\n/g, '\n');
+  return lf(blob) === lf(Buffer.from(c.content, 'utf8').toString('utf8'));
 }
 
 const FULL_SHA_RE = /^[0-9a-f]{40}$/;
