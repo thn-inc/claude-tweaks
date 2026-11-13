@@ -116,8 +116,9 @@
 //                  not missing (one that exists in any form, or is unreadable, each with its own
 //                  message), a run that cannot start, and an uncovered test command. A signal, on
 //                  entry or during the run, gives no verdict (`interrupted: true`). A child that
-//                  did not exit after its kill is `survived: true` with a fixed `detail`: it may
-//                  still be writing, so the caller stops rather than discarding the finding.
+//                  did not exit after its kill is `survived: true` with a fixed `detail`, an
+//                  interrupted run included: it may still be writing, so the caller stops, and
+//                  leaves the tree alone, rather than discarding the finding.
 //   treeDelta      git status against the expectation: every reported path that is neither a run
 //                  artifact nor an expected evidence file, plus every expected file git does not
 //                  report as untracked.
@@ -142,8 +143,9 @@
 // written. returned = reproduced + discarded whenever the pass does not stop; a stop leaves the
 // finding it stopped on, and those after it, uncounted. A stop takes back, best effort, every
 // evidence file the pass wrote (the current one and the confirmed ones, with the directories it
-// made), and a removal error never replaces the stop's detail; after a child that survived its
-// kill it touches nothing, since the child may still be writing.
+// made), resuming a removal that failed partway, and a removal error never replaces the stop's
+// detail; after a child that survived its kill, interrupted or not, it touches nothing, since the
+// child may still be writing. A stop's `confirmed` is always empty: a stop hands no evidence on.
 //   Stops, each `fail` with class pre-push: the envelope, the result, the diff read, a dirty tree,
 //   a check-ignore, write, run or remove failure, a child that survived its kill, a tree changed
 //   outside the evidence files, an interrupt. A stop's detail is fixed text, the module's own error
@@ -508,16 +510,32 @@ function writeEvidence({ wt, rel, content, sensitivePaths, deps }) {
 // A directory that is not empty (ENOTEMPTY, or EEXIST on some platforms) holds something the
 // tree check will name; it is not a removal failure.
 const RMDIR_NOT_EMPTY = ['ENOTEMPTY', 'EEXIST'];
-function removeEvidence({ abs, createdDirs, deps }) {
-  fsCall('remove', () => deps.rmFile(abs));
-  for (const dir of [...createdDirs].reverse()) {
-    try {
-      deps.rmdir(dir);
-    } catch (err) {
-      if (!(err && RMDIR_NOT_EMPTY.includes(err.code))) throw fsError('remove', err);
-    }
+function removeMadeDir(dir, deps) {
+  try {
+    deps.rmdir(dir);
+  } catch (err) {
+    if (!(err && RMDIR_NOT_EMPTY.includes(err.code))) throw fsError('remove', err);
   }
 }
+function removeEvidence({ abs, createdDirs, deps }) {
+  fsCall('remove', () => deps.rmFile(abs));
+  for (const dir of [...createdDirs].reverse()) removeMadeDir(dir, deps);
+}
+
+// removeEvidence for the review pass, which may retry after a failure: `tracked` ({ abs, fileGone,
+// dirsLeft }) records what is already gone, so a second call starts where the first one stopped
+// rather than failing on the file it already removed.
+function removeTracked(tracked, deps) {
+  if (!tracked.fileGone) {
+    fsCall('remove', () => deps.rmFile(tracked.abs));
+    tracked.fileGone = true;
+  }
+  while (tracked.dirsLeft.length > 0) {
+    removeMadeDir(tracked.dirsLeft[tracked.dirsLeft.length - 1], deps);
+    tracked.dirsLeft.pop();
+  }
+}
+const trackerFor = ({ abs, createdDirs }) => ({ abs, fileGone: false, dirsLeft: [...createdDirs] });
 
 const SURVIVED_DETAIL = 'the evidence run did not exit after its kill';
 
@@ -544,7 +562,12 @@ async function runEvidence({ wt, rel, dest, runDir, shared, testCommand, deps, w
   } finally {
     shared.activeWorker = null;
   }
-  if (shared.interrupted) return { verdict: 'unplaceable', interrupted: true };
+  // A child that did not exit after its kill may still be writing, interrupt or not: say so either way.
+  if (shared.interrupted) {
+    return outcome.timeoutDetail !== undefined
+      ? { verdict: 'unplaceable', interrupted: true, survived: true, detail: SURVIVED_DETAIL }
+      : { verdict: 'unplaceable', interrupted: true };
+  }
   if (outcome.spawnError !== undefined) {
     const code = outcome.spawnError && outcome.spawnError.code;
     throw new Error(`the evidence run did not start${code ? ` (${code})` : ''}`);
@@ -727,18 +750,20 @@ async function reviewPass(ctx, deps, { testCommand, isRunArtifact } = {}) {
   // The file written for the finding being judged, until it is kept or removed.
   let current = null;
   // Best effort: a removal that fails leaves the file for settle, and never replaces the stop's detail.
+  // `current` is a removal tracker, so this resumes a removal that already failed partway.
   const takeBackAll = () => {
-    for (const w of [current, ...[...confirmed].reverse()]) {
+    for (const w of [current, ...[...confirmed].reverse().map(trackerFor)]) {
       if (!w) continue;
-      try { removeEvidence({ abs: w.abs, createdDirs: w.createdDirs, deps }); } catch { /* the stop stands */ }
+      try { removeTracked(w, deps); } catch { /* the stop stands */ }
     }
     current = null;
   };
   const pass = (result, detail) => ({ result, confirmed, counts: { ...counts }, extra: extraOf(), detail });
-  // Every stop takes back what the pass wrote, except after a child that survived its kill.
+  // Every stop takes back what the pass wrote, except after a child that survived its kill. A stop
+  // never hands evidence on: its confirmed list is empty, whether the files were removed or kept.
   const stop = (detail, { keepTree = false } = {}) => {
     if (!keepTree) takeBackAll();
-    return pass({ status: 'fail', stopClass: STOP_CLASSES.PRE_PUSH, detail, extra: extraOf() }, detail);
+    return { ...pass({ status: 'fail', stopClass: STOP_CLASSES.PRE_PUSH, detail, extra: extraOf() }, detail), confirmed: [] };
   };
   const interrupted = () => stop(`interrupted by ${shared.interrupted}`);
 
@@ -817,16 +842,19 @@ async function reviewPass(ctx, deps, { testCommand, isRunArtifact } = {}) {
     let written;
     try { written = writeEvidence({ wt, rel, content, sensitivePaths, deps }); } catch (err) { return stop(ownErrorText(err, 'evidence write failed')); }
     wrote = true;
-    current = written;
+    current = trackerFor(written);
     // The spelling git reports: an existing parent's on-disk form, the leaf as written.
     const evidencePath = resolveCanonical(rel, opts);
     if (evidencePath === null) return stop('the evidence path does not resolve once written');
     const dest = path.join(runDir, 'review', `review-evidence-${i}.tap`);
     let run;
     try { run = await runEvidence({ wt, rel, dest, runDir, shared, testCommand, deps }); } catch (err) { return stop(ownErrorText(err, 'the evidence run failed')); }
+    // The child may still be writing: the tree is left alone, interrupted or not.
+    if (run.survived) {
+      const why = run.interrupted ? `interrupted by ${shared.interrupted}; ${run.detail}` : run.detail;
+      return stop(why, { keepTree: true });
+    }
     if (run.interrupted) return interrupted();
-    // The child may still be writing: the tree is left alone.
-    if (run.survived) return stop(run.detail, { keepTree: true });
     let changed;
     try { changed = delta(new Set([...gitPaths(), evidencePath])); } catch { return stop('git status failed after an evidence run'); }
     if (changed.length) return stop(`the evidence run changed the tree outside the evidence files: ${normalizeEventText(changed.join(', '))}`);
@@ -836,7 +864,8 @@ async function reviewPass(ctx, deps, { testCommand, isRunArtifact } = {}) {
       current = null;
       continue;
     }
-    try { removeEvidence({ ...written, deps }); } catch (err) { return stop(ownErrorText(err, 'evidence remove failed')); }
+    // On a failure `current` keeps what is left, so the stop's take-back resumes from there.
+    try { removeTracked(current, deps); } catch (err) { return stop(ownErrorText(err, 'evidence remove failed')); }
     current = null;
     counts.discarded += 1;
   }

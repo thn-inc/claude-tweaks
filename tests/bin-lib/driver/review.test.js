@@ -665,6 +665,18 @@ test('AC7: a child that survives its kill is reported as survived, not as a plai
   }
 });
 
+test('AC7: an interrupted run whose child survived its kill still says survived', async () => {
+  const timers = { setTimeout: (fn) => setImmediate(fn), clearTimeout: (h) => clearImmediate(h) };
+  for (const platform of ['darwin', 'win32']) {
+    const rig = evidenceRig({ deaf: true, tap: tapOf('assert-fail'), timers, platform });
+    const spawn = rig.deps.runner;
+    rig.deps.runner = (call) => { rig.shared.interrupted = 'SIGTERM'; return spawn(call); };
+    const got = await runEvidence(rig.args);
+    assert.deepStrictEqual(got, { verdict: 'unplaceable', interrupted: true, survived: true, detail: 'the evidence run did not exit after its kill' }, platform);
+    assert.ok(!rig.calls.some((x) => x.kind === 'readFile'), platform);
+  }
+});
+
 test('AC7: runEvidence yields to an interrupt on entry without spawning', async () => {
   const rig = evidenceRig({ outcome: { code: 1 }, tap: tapOf('assert-fail') });
   rig.shared.interrupted = 'SIGTERM';
@@ -914,7 +926,13 @@ function passRig({ findings = [], envelope, runs = [], ignored = [], ignoreThrow
     canonicalRealpath: canonical,
     mkdirSync: (p, o) => { calls.push({ kind: 'mkdirSync', p, opts: o }); if (!(o && o.recursive)) types.set(p, 'directory'); },
     writeFileExclusive: (p, s) => { calls.push({ kind: 'writeFileExclusive', p, content: s }); maybeFail('write', p); types.set(p, 'file'); },
-    rmFile: (p) => { calls.push({ kind: 'rmFile', p }); maybeFail('rm', p); types.delete(p); },
+    // Like fs.unlinkSync: a file that is already gone is ENOENT.
+    rmFile: (p) => {
+      calls.push({ kind: 'rmFile', p });
+      maybeFail('rm', p);
+      if (types.get(p) !== 'file') throw Object.assign(new Error(`ENOENT: no such file, unlink '${p}'`), { code: 'ENOENT' });
+      types.delete(p);
+    },
     // Like fs.rmdirSync: a directory that still holds an entry is not removed.
     rmdir: (p) => {
       calls.push({ kind: 'rmdir', p });
@@ -1308,6 +1326,76 @@ test('AC7, AC12: a mid-pass stop has fixed counts and takes back every evidence 
   const s = await stuck.run();
   assert.strictEqual(s.result.detail, 'the evidence run changed the tree outside the evidence files: second.txt');
   assert.strictEqual(ofKind(stuck.calls, 'rmFile').length, 2);
+});
+
+test('AC7: an interrupt during a run whose child survived its kill leaves the tree alone', async () => {
+  // The re-review's probe: the signal lands during the run and the child never exits.
+  const rig = passRig({
+    findings: [reviewFinding(0), reviewFinding(1)],
+    runs: ['reproduced'],
+    timers: IMMEDIATE_TIMERS,
+    onRun: (n, { ctx }) => { if (n === 1) ctx.shared.interrupted = 'SIGTERM'; },
+    handleFor: (n) => (n === 0
+      ? { pid: 1, kill() {}, exited: Promise.resolve({ code: 1, signal: null, stdout: '', stderr: '' }) }
+      : { pid: 9, kill() {}, exited: new Promise(() => {}) }),
+  });
+  const out = await rig.run();
+  assert.strictEqual(out.result.status, 'fail');
+  assert.strictEqual(out.result.detail, 'interrupted by SIGTERM; the evidence run did not exit after its kill');
+  assert.strictEqual(ofKind(rig.calls, 'rmFile').length, 0);
+  assert.strictEqual(ofKind(rig.calls, 'rmdir').length, 0);
+  assert.strictEqual(rig.types.get(at('tests/new/r0.test.js')), 'file');
+  assert.strictEqual(rig.types.get(at('tests/new/r1.test.js')), 'file');
+  // Finding 0 was confirmed before the stop, yet the stop hands no evidence on.
+  assert.deepStrictEqual(out.confirmed, []);
+});
+
+test('AC7: a stop never hands evidence on, whether its files were removed or kept', async () => {
+  // Kept: finding 0 confirmed, finding 1's child survives its kill.
+  const kept = passRig({
+    findings: [reviewFinding(0), reviewFinding(1)],
+    runs: ['reproduced'],
+    timers: IMMEDIATE_TIMERS,
+    handleFor: (n) => (n === 0
+      ? { pid: 1, kill() {}, exited: Promise.resolve({ code: 1, signal: null, stdout: '', stderr: '' }) }
+      : { pid: 9, kill() {}, exited: new Promise(() => {}) }),
+  });
+  const k = await kept.run();
+  assert.strictEqual(k.result.detail, 'the evidence run did not exit after its kill');
+  assert.strictEqual(k.counts.reproduced, 1);
+  assert.deepStrictEqual(k.confirmed, []);
+  assert.strictEqual(kept.types.get(at('tests/new/r0.test.js')), 'file');
+  // Removed: finding 0 confirmed, finding 1's run changes the tree.
+  const removed = passRig({ findings: [reviewFinding(0), reviewFinding(1)], runs: ['reproduced', 'reproduced'], status: (n) => (n === 2 ? '?? second.txt\0' : '') });
+  const r = await removed.run();
+  assert.strictEqual(r.counts.reproduced, 1);
+  assert.deepStrictEqual(r.confirmed, []);
+  // A pass that does not stop does hand its confirmed findings on.
+  const ok = passRig({ findings: [reviewFinding(0)], runs: ['reproduced'] });
+  assert.strictEqual((await ok.run()).confirmed.length, 1);
+});
+
+test('AC7: a discard removal that fails partway is resumed by the stop, not restarted', async () => {
+  // rmdir of the directory the write made fails once: the file is already gone, the directory is not.
+  const rig = passRig({ findings: [reviewFinding(0), reviewFinding(1)] });
+  const rmdir = rig.deps.rmdir;
+  let failed = false;
+  rig.deps.rmdir = (p) => {
+    if (!failed && p === at('tests/new')) {
+      failed = true;
+      rig.calls.push({ kind: 'rmdir', p });
+      throw Object.assign(new Error(`EACCES: permission denied, rmdir '${p}'`), { code: 'EACCES' });
+    }
+    return rmdir(p);
+  };
+  const out = await rig.run();
+  assert.strictEqual(out.result.detail, 'evidence remove failed (EACCES)');
+  // The take-back does not remove the file again (it is gone); it retries the directory.
+  assert.deepStrictEqual(ofKind(rig.calls, 'rmFile').map((c) => c.p), [at('tests/new/r0.test.js')]);
+  assert.deepStrictEqual(ofKind(rig.calls, 'rmdir').map((c) => c.p), [at('tests/new'), at('tests/new')]);
+  assert.deepStrictEqual([...rig.types.keys()].filter((p) => p.startsWith(WT)).sort(), [WT, at('tests')].sort());
+  // The second finding is never written.
+  assert.strictEqual(ofKind(rig.calls, 'writeFileExclusive').length, 1);
 });
 
 test('AC7: a stop takes back nested confirmed files newest first, and each file once', async () => {
