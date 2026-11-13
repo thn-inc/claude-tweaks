@@ -5,7 +5,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
-const { missingFactsOf, assertEachPatternGoesRed, lineStartingWith } =require('./helpers/conformance-asserts');
+const { missingFactsOf, assertEachPatternGoesRed, lineStartingWith } = require('./helpers/conformance-asserts');
 
 const STEPS = readText(path.join(__dirname, '..', 'plugin/skills/review/code-mode-steps.md'));
 const SUBFILE = readText(path.join(__dirname, '..', 'plugin/skills/review/pr-body-deliverables.md'));
