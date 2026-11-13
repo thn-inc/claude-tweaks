@@ -432,6 +432,52 @@ test('a .claude-tweaks or .github that resolves outside the checkout exits 1, le
   assert.deepEqual(JSON.parse(c.stdout).findings.map((f) => f.check), ['draft-skip-no-ready-for-review']);
 });
 
+// A parent that resolves to the checkout root itself (`.github -> .`) is
+// inside, so what sits under it is reviewed. Each root holds its leaf at the
+// root: `workflows/ci.yml` (no ready_for_review) for `.github`, and
+// `verify-scope.json` naming ci.yml (beside a real `.github/workflows/ci.yml`
+// that skips drafts) for `.claude-tweaks`.
+function parentIsRootFixture(parent) {
+  const root = tmpRoot();
+  if (parent === '.github') write(root, 'workflows/ci.yml', NO_READY);
+  else {
+    write(root, '.github/workflows/ci.yml', CLEAN);
+    write(root, 'verify-scope.json', CI_DECL);
+  }
+  return root;
+}
+const PARENT_IS_ROOT_CHECK = { '.github': 'draft-skip-no-ready-for-review', '.claude-tweaks': 'draft-skip-with-ci-source' };
+
+function assertParentIsRootReviewed(res, parent) {
+  assert.equal(res.status, 0, `${parent}: ${res.stderr}`);
+  assert.equal(res.stderr, '');
+  const out = JSON.parse(res.stdout);
+  assert.equal(out.reviewed, 1, parent);
+  assert.deepEqual(out.findings.map((f) => [f.workflow, f.check]), [['.github/workflows/ci.yml', PARENT_IS_ROOT_CHECK[parent]]], parent);
+}
+
+test('a .github or .claude-tweaks that resolves to the checkout root itself is inside and reviewed (real symlinks)', { skip: NO_SYMLINKS && 'symlink fixtures are POSIX-only' }, () => {
+  for (const parent of ['.github', '.claude-tweaks']) {
+    const root = parentIsRootFixture(parent);
+    link(root, parent, root);
+    assertParentIsRootReviewed(runCli(root, ['--drift', '--json']), parent);
+  }
+});
+
+test('a .github or .claude-tweaks that resolves to the checkout root itself is inside and reviewed (injected realpath, any platform)', () => {
+  for (const [parent, suffix] of [['.github', GITHUB_SUFFIX], ['.claude-tweaks', CT_SUFFIX]]) {
+    const root = parentIsRootFixture(parent);
+    const rootReal = fs.realpathSync.native(root);
+    // The parent resolves to the root; a path under it resolves as if the
+    // parent segment were not there (what `parent -> .` does on disk).
+    const realpath = (p) => {
+      const s = String(p);
+      return s.endsWith(suffix) ? rootReal : fs.realpathSync.native(s.replace(suffix + path.sep, path.sep));
+    };
+    assertParentIsRootReviewed(runInProcess(root, ['--drift', '--json'], { realpath }), parent);
+  }
+});
+
 test('a workflow file that vanishes between listing and read is unparsed, never absent (injected)', () => {
   const root = tmpRoot();
   write(root, '.github/workflows/ci.yml', CLEAN);
