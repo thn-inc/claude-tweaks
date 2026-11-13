@@ -242,3 +242,30 @@ test('disableReceiveAutoGc stops receive-pack maintenance', () => {
   assert.ok(!hasMaintenance(pushArgvs(true)), 'no maintenance after disableReceiveAutoGc');
   assert.ok(hasMaintenance(pushArgvs(false)), 'control: without the call, receive-pack starts maintenance');
 });
+
+// The per-test repo builders sit on templates (#5297): after one warm-up call
+// (which may build), a further call starts no git process.
+const preToolUse = require('./helpers/pre-tool-use');
+const gitFixtures = require('./helpers/git-fixtures');
+const builders = {
+  'pre-tool-use gitRepo': [() => preToolUse.gitRepo(), (d) => [d]],
+  'pre-tool-use gitRepoWithCommit': [() => preToolUse.gitRepoWithCommit(), (d) => [d]],
+  'git-fixtures gitRepo()': [() => gitFixtures.gitRepo(), (d) => [d]],
+  'git-fixtures gitRepo({ branch })': [() => gitFixtures.gitRepo({ branch: 'trunk' }), (d) => [d]],
+  'originWithTwoClones': [() => gitFixtures.originWithTwoClones('ct-gt-otc-'), (r) => [r.root]],
+};
+for (const [name, [make, dirsOf]] of Object.entries(builders)) {
+  test(`${name}: a second call starts no git process`, () => {
+    scratch.push(...dirsOf(make()));
+    const trace = mk('ct-gt-trace-');
+    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
+    scratch.push(...dirsOf(second));
+    assert.deepStrictEqual(fs.readdirSync(trace), []);
+  });
+}
+
+test('git-fixtures gitRepo({ branch }) keeps the requested branch', () => {
+  const dir = gitFixtures.gitRepo({ branch: 'trunk' });
+  scratch.push(dir);
+  assert.strictEqual(git(dir, ['symbolic-ref', '--short', 'HEAD']), 'trunk');
+});
