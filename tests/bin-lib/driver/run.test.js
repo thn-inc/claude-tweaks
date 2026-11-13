@@ -153,7 +153,7 @@ test('#5269 AC3: no keyword is ever left followed by a reference, in any case or
   }
 });
 
-test('#5352: www. and bare github.com URLs go where GitHub links them', () => {
+test('#5352: www. and bare github.com URLs go after the www-autolink boundary', () => {
   assert.equal(neutralize('(www.github.com/o/r/issues/5)'), '()');
   assert.equal(neutralize('www.github.com/o/r/issues/5.'), '.');
   assert.equal(neutralize('x WWW.GitHub.com/o/r/issues/5 y'), 'x y');
