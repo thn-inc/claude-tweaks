@@ -146,7 +146,7 @@ test('gather call names every flag', () => {
   const body = step4();
   for (const flag of [
     '--record', '--out', '--run', '--spec', '--report', '--stories-dir', '--story-results', '--ac-results',
-    '--base', '--head', '--links', '--surface', '--local-base-url', '--recordings',
+    '--base', '--head', '--links', '--surface', '--local-base-url',
   ]) {
     assert.ok(between(body, 'acceptance-packet.js" gather', 'Gather non-zero').includes(flag), `names ${flag}`);
   }
@@ -166,7 +166,6 @@ test('gather passes --stories-dir always, and render stops on any non-zero exit'
 });
 
 test('gather inputs resolve after cleanup', () => {
-  // The gather's own list: the screenshot routing above it names the archive path too.
   const inputs = between(step4(), 'acceptance-packet.js" gather', 'Gather non-zero');
   for (const literal of ['archive/{run-id}', 'packet-inputs', 'headRefOid', 'issue_read']) {
     assert.ok(inputs.includes(literal), `names ${literal}`);
@@ -184,6 +183,35 @@ test('wrap-up Phase 1 runs the snapshot', () => {
   }
 });
 
+// #4612: new prose, so each claim is proven red on a copy with only that claim stripped, the
+// throw matched to the claim's own message (skill-prose-conformance-tests).
+function assertClaim(text, pattern, label) {
+  assert.ok(pattern.test(text), label);
+}
+
+function assertClaimGoesRed(text, pattern, label) {
+  assertClaim(text, pattern, label);
+  const mutated = text.replace(pattern, '');
+  assert.notStrictEqual(mutated, text, `${label}: the control stripped nothing`);
+  assert.throws(() => assertClaim(mutated, pattern, label), { message: label });
+}
+
+test('snapshot encodes the recording', () => {
+  const phase1 = section(read('wrap-up/SKILL.md'), '## Phase 1: ESTABLISH — what happened here?', '## Phase 2: ROUTE — where does each learning belong?');
+  const snapshot = flat(between(phase1, '**Snapshot the packet inputs', '\n\n'));
+  assertClaimGoesRed(snapshot, /it also encodes the recording while the QA screenshots are on disk/, 'the snapshot paragraph names the recording');
+});
+
+test('gather reads the recording from the snapshot', () => {
+  const bullet = flat(between(step4(), '- `--run` —', '- `--spec` —'));
+  assertClaimGoesRed(bullet, /The automatic recording arrives through the snapshot, with no flag/, 'the --run bullet says the recording needs no flag');
+});
+
+test('the walk branch keeps its screenshots out of the packet', () => {
+  const walk = flat(between(step3(), '**`app-route`/`rendered-page` plans whose', '**Every other plan**'));
+  assertClaimGoesRed(walk, /2\. The walk's screenshots stay in the run's local artifacts and are never committed or linked/, 'Step 3 item 2 never commits or links a screenshot');
+});
+
 test('ac-results shape is stated, with one example of each id kind', () => {
   const body = flat(step3());
   assert.ok(body.includes('{ "1": "met", "2a": "not met", "AC1": "partially met" }'), 'a numbered id and a positional id');
@@ -194,7 +222,7 @@ test('ac-results shape is stated, with one example of each id kind', () => {
 
 test('Step 3 feeds gather from the same evidence sources', () => {
   const body = flat(step3());
-  for (const literal of ['`--recordings`', '`--run`', '`--report`', '`link` input', '`cli`/`flow`']) {
+  for (const literal of ['`--run`', '`--report`', '`link` input', '`cli`/`flow`']) {
     assert.ok(body.includes(literal), `names ${literal}`);
   }
 });
@@ -286,8 +314,27 @@ test('{LINKS} falls back to a command when no base URL resolves or the host woul
   assert.ok(bullet.includes('an `infra` or `backend` surface'), 'a commands-only surface refuses every url');
 });
 
+test('{LINKS} writes a credential-shaped path segment as a command holding {id}, since gather refuses the raw value in either form', () => {
+  assertClaimGoesRed(
+    linksBullet(),
+    /An Entry point with a credential-shaped path segment \(the bearer-segment rule, `_shared\/acceptance-packet\.md`'s `## Links and credentials`\) is a `"command"` too, holding the route with that segment replaced by the placeholder `\{id\}`/,
+    'the {LINKS} fallback replaces a credential-shaped path segment with {id}',
+  );
+  assertClaimGoesRed(linksBullet(), /The bearer-shaped value itself is never written/, 'the {LINKS} bullet never writes the value');
+  // The sentence this one replaced told the writer to hold the Entry point as stated, value included.
+  assert.ok(!linksBullet().includes('or the Entry point has a credential-shaped path segment'));
+});
+
+test('an Entry point with a credential-shaped path segment holds {id} in the plan, in the schema and in the Step that authors it', () => {
+  const sentence = /An Entry point with a credential-shaped path segment \(the bearer-segment rule, `_shared\/acceptance-packet\.md`'s `## Links and credentials`\) holds the route with that segment replaced by the placeholder `\{id\}`, since render screens the raw value out of the plan\. The bearer-shaped value itself is never written/;
+  const schema = flat(section(read('_shared/observation-plan.md'), '## Grammar rules', '## Per-kind semantics'));
+  assertClaimGoesRed(schema, sentence, 'the plan schema replaces a credential-shaped path segment with {id}');
+  const step2 = flat(between(brief(), '## Step 2: Author the observation plan', '## Step 2.5:'));
+  assertClaimGoesRed(step2, sentence, 'Step 2 replaces a credential-shaped path segment with {id}');
+});
+
 test('--local-base-url is keyed to the plan kind as well as the surface', () => {
-  const bullet = between(gatherList(), '- `--local-base-url` —', '- `--recordings`');
+  const bullet = between(gatherList(), '- `--local-base-url` —', 'Pass no `--scope`');
   assert.ok(bullet.includes('`app-route`/`rendered-page` plans'), bullet);
   assert.ok(bullet.includes('omitted when none resolves'), bullet);
 });
@@ -311,10 +358,11 @@ test('the whole render call is pinned', () => {
   assert.ok(step4().includes('bin/acceptance-packet.js" render --facts "{FACTS}" --narrative "{NARRATIVE}" --out "{PACKET}" --dropped-out "{DROPPED}" --observation-plan "{PLAN}" --poster "{poster}"\n```'));
 });
 
-test('--recordings follows the route, not the commit', () => {
-  const bullet = gatherList().slice(gatherList().indexOf('- `--recordings` —'));
-  assert.ok(bullet.includes('only when the embeds survive the route above'), bullet);
-  assert.ok(!bullet.includes('only when screenshots were committed'), bullet);
+test('Decision 1: the procedure commits no evidence and passes no recording link', () => {
+  const doc = brief();
+  for (const gone of ['docs/demo-evidence', 'evidence-route.js', 'evidence-pr', '--recordings', '{RECORDINGS}', 'raw.githubusercontent.com']) {
+    assert.ok(!doc.includes(gone), `still names ${gone}`);
+  }
 });
 
 test('the MCP branch states the outcome of a failed label write and a failed PR-line write', () => {
@@ -347,7 +395,6 @@ test('a claim citing the Entry point link names its group', () => {
   const doc = flat(brief());
   assert.ok(!doc.includes('citing the Entry point link'), 'ambiguous with entry-point-{n}');
   assert.ok(flat(step3()).includes("citing the first group's `link:entry-point-1`"), 'the browser-unavailable note');
-  assert.ok(flat(step4()).includes("citing the first group's `link:entry-point-1`, the URL in its text"), 'the evidence PR note');
 });
 
 test('{record-file} comes from a listing that holds closed records too', () => {
@@ -360,14 +407,6 @@ test('--surface falls back to the record body, so a no-header record keeps the c
   assert.ok(bullet.includes("the materialized header's `surface:`, else the record body's `Surface:` line"), bullet);
   assert.ok(bullet.includes('omitted with neither'), bullet);
   assert.ok(!bullet.includes('omitted with no header'), bullet);
-});
-
-test('evidence screenshots are links, with no image fence left to match', () => {
-  const body = step4();
-  assert.ok(!body.includes('![{description}]'), 'the fence is the plain url');
-  assert.ok(body.includes('\nhttps://raw.githubusercontent.com/{owner}/{repo}/{commit-sha}/docs/demo-evidence/{record}/{NN}-{description}.png\n'), 'the plain url');
-  assert.ok(flat(body).includes('The packet renders it as a plain link, not an embedded image'), 'states it');
-  assert.ok(!flat(body).includes('the embedded image'), 'no embedded image left to fail');
 });
 
 test('the snapshot paragraph cites where {integration-branch} comes from', () => {
@@ -706,3 +745,189 @@ test('the skill graph states the packet edges and no longer describes the brief 
   assert.ok(!wrapUp.includes('embedded in the brief for an above-floor record'), 'the old Try it placement');
   assert.ok(!graph.includes('`/wrap-up` (brief)'), 'the pr-run-comments row');
 });
+
+// ---- #4618 Task 14: the risk facts reach the packet ----
+// Each pin is an assertion function over the file's text. It runs once on the live text, and
+// once per literal on a copy with that literal removed, where it must throw (the go-red control).
+
+const SKILL = 'wrap-up/SKILL.md';
+const PHASE_1 = '## Phase 1: ESTABLISH — what happened here?';
+const PHASE_2 = '## Phase 2: ROUTE — where does each learning belong?';
+const PLAN_DIFF = 'git diff --name-only --diff-filter=AM "origin/{integration-branch}...HEAD" -- docs/superpowers/plans/';
+const FACTS_CALL = 'node "${CLAUDE_PLUGIN_ROOT}/bin/risk-flags.js" facts --spec-file "{spec}" --plan-file "{run-dir}/packet-inputs/plan.md" --flags-out "{FLAGS}" --proofs-out "{PROOFS}"';
+
+function step4Of(doc) {
+  const at = doc.indexOf(`\n${STEP_4}\n`);
+  assert.notStrictEqual(at, -1, `missing heading ${STEP_4}`);
+  return doc.slice(at);
+}
+const phase1Of = (skill) => section(skill, PHASE_1, PHASE_2);
+const planResolve = (skill) => flat(between(phase1Of(skill), `${PLAN_DIFF}\n\`\`\``, 'acceptance-packet.js" snapshot'));
+const riskFactsOf = (doc) => flat(between(step4Of(doc), '**Risk facts**', '**Gather**'));
+
+// A control is a literal to remove, or [label, mutate] for a pin a removal cannot reach (an
+// ordering, an exact line, a clause that must stay absent). A mutation must change the text.
+function goRed(check, doc, controls) {
+  for (const control of controls) {
+    if (typeof control === 'string') {
+      assert.ok(doc.includes(control), `the control literal is in the live text: ${control}`);
+      assert.throws(() => check(doc.split(control).join('')), `removing ${control} must fail the pin`);
+      continue;
+    }
+    const [label, mutate] = control;
+    const mutated = mutate(doc);
+    assert.notStrictEqual(mutated, doc, `the ${label} mutation changes the text`);
+    assert.throws(() => check(mutated), `the ${label} mutation must fail the pin`);
+  }
+}
+
+const RM_FENCE = '```bash\nrm -f "{FLAGS}" "{PROOFS}"\n```';
+const FACTS_FENCE = `\`\`\`bash\n${FACTS_CALL}\n\`\`\``;
+const FLAGS_BULLET = '- `--flags` and `--proofs` — `{FLAGS}` and `{PROOFS}` from the Risk facts call above, always.';
+
+function checkPlanSnapshot(skill) {
+  const phase1 = phase1Of(skill);
+  assert.ok(phase1.includes('snapshot --run "{run-dir}" --base "origin/{integration-branch}" --plan "{plan-file}"'), 'the snapshot passes the plan');
+  const diff = phase1.indexOf(`\`\`\`bash\n${PLAN_DIFF}\n\`\`\``);
+  assert.ok(diff !== -1, 'the plan diff is its own fenced call');
+  assert.ok(diff < phase1.indexOf('acceptance-packet.js" snapshot'), 'the plan resolves before the snapshot');
+}
+
+function checkPlanResolve(skill) {
+  const text = planResolve(skill);
+  for (const literal of [
+    'Exactly one printed path is the plan',
+    'Two or more (a multi-spec branch) narrow to the one whose text names `work/{n}-spec.md`',
+    'None, still not exactly one, a failed `rev-parse`, or a `{plan-file}` that fails the grammar: omit `--plan`',
+    '--status SKIP',
+    '--text-file "{text-file}"',
+    "`_shared/auto-decision-log.md`'s Text from git or a user paragraph",
+    '`{plan-file}`: none of `"`, backtick, `$`, `\\` or a line break',
+    '`condition: no single run plan ({reason}) → fallback: snapshot without --plan, risk proofs not read`',
+    '`{reason}` is the case that fired',
+    '`top level unreadable`',
+  ]) {
+    assert.ok(text.includes(literal), `the plan resolution states ${literal}`);
+  }
+  // `12-spec.md` is a substring of `112-spec.md`: the spec name is matched with its directory.
+  assert.ok(!/[^/]\{n\}-spec\.md/.test(text), 'every spec name the narrowing matches carries work/');
+  // Every placeholder in the SKIP line is defined in the same paragraph.
+  for (const placeholder of text.match(/\{[a-z-]+\}/g)) {
+    assert.ok(['{n}', '{plan-file}', '{run-dir}', '{integration-branch}', '{text-file}', '{reason}', '{count}'].includes(placeholder), `undefined placeholder ${placeholder}`);
+  }
+}
+
+function checkStaleClear(brief) {
+  const body = step4Of(brief);
+  const rm = body.indexOf(RM_FENCE);
+  assert.ok(rm !== -1, 'the removal is its own fenced call');
+  assert.ok(rm < body.indexOf(FACTS_FENCE), 'the removal precedes the producer');
+  assert.ok(rm > body.indexOf('**Risk facts**'), 'inside the Risk facts step');
+}
+
+function checkGatherAlwaysBoth(brief) {
+  const body = step4Of(brief);
+  const fence = between(body, 'acceptance-packet.js" gather', '\n```');
+  assert.ok(fence.includes('--flags "{FLAGS}" --proofs "{PROOFS}"'), fence);
+  assert.ok(body.split('\n').includes(FLAGS_BULLET), 'the input bullet is exactly the always line');
+  assert.ok(riskFactsOf(brief).includes('skips the producer call only, and the gather still passes both inputs, reads two missing files and states both as partial'), riskFactsOf(brief));
+}
+
+function checkNoNeitherClause(brief) {
+  const body = flat(step4Of(brief));
+  for (const stale of ['passes neither', 'only a skipped call']) {
+    assert.ok(!body.includes(stale), `gone: ${stale}`);
+  }
+}
+
+function checkFactsBeforeGather(brief) {
+  const body = step4Of(brief);
+  const facts = body.indexOf(FACTS_CALL);
+  assert.ok(facts !== -1 && facts < body.indexOf('acceptance-packet.js" gather'), 'producer before gather');
+  assert.ok(body.includes(`\`\`\`bash\n${FACTS_CALL}\n\`\`\``), 'the producer is its own fenced call');
+  const fence = between(body, 'acceptance-packet.js" gather', '\n```');
+  assert.ok(fence.includes('--flags "{FLAGS}" --proofs "{PROOFS}"'), fence);
+  assert.ok(body.includes('packet-inputs/plan.md'), 'the plan comes from the snapshot copy');
+}
+
+function checkPlanCopyGate(brief) {
+  const text = riskFactsOf(brief);
+  assert.ok(text.includes("Pass `--plan-file` only when `{run-dir}/packet-inputs/manifest.json`'s `files.plan` is `copied`"), text);
+  assert.ok(text.includes('a later snapshot without a plan copy leaves an earlier `plan.md` there'), text);
+}
+
+function checkEnvelopeOutcomes(brief) {
+  const text = riskFactsOf(brief);
+  for (const literal of [
+    '`{ status, flags, proofs, plan, planParse }`',
+    "`plan: 'absent'`: the risk proofs were not read because no plan copy exists",
+    "`planParse: 'could-not-parse'`: the risk proofs were not read because the plan copy could not be parsed",
+    'never as no proof written',
+  ]) {
+    assert.ok(text.includes(literal), `the envelope sentence states ${literal}`);
+  }
+}
+
+function checkNonZeroExit(brief) {
+  const text = riskFactsOf(brief);
+  for (const literal of [
+    'A non-zero exit removes both outputs',
+    'it never stops the packet',
+    '`--flags input not read — treated as absent`',
+  ]) {
+    assert.ok(text.includes(literal), `the exit sentence states ${literal}`);
+  }
+  const log = flat(between(step4Of(brief), '**Log a stop or a failure** when a run directory resolves', '```bash'));
+  assert.ok(log.includes('condition: packet {risk facts | gather | render | post | local} failed ({stderr line})'), log);
+}
+
+function checkGatherInputs(brief) {
+  const body = step4Of(brief);
+  assert.ok(body.includes('SPEC=packet-spec-{N}.md FLAGS=packet-flags-{N}.json PROOFS=packet-proofs-{N}.json'), 'the session-temp resolve names both files');
+  const list = flat(between(body, 'acceptance-packet.js" gather', 'Gather non-zero'));
+  assert.ok(list.includes('- `--flags` and `--proofs` — `{FLAGS}` and `{PROOFS}` from the Risk facts call above, always'), list);
+}
+
+function checkLine392(brief) {
+  const sentence = flat(between(step4Of(brief), 'Pass no `--scope`', 'Gather non-zero'));
+  assert.ok(!/`--flags`[^.]*passes none of them/.test(sentence), sentence);
+  assert.ok(sentence.includes('`--dev-base-url`, `--deploy` and `--decision-items` are filled by the dev-target and control-mode records, and none is passed here; `--flags` and `--proofs` come from the Risk facts call above.'), sentence);
+}
+
+function checkRiskNarration(brief) {
+  const narrate = flat(between(step4Of(brief), '**Narrate.**', '**Render**'));
+  assert.ok(narrate.includes('write one `risk-proofs` claim per flag that has a `proof` fact, citing both'), narrate);
+  assert.ok(narrate.includes('a flag no claim cites renders as `no proof shown`'), narrate);
+}
+
+const PINS = [
+  ['Phase 1 snapshots the run plan for the risk proofs', SKILL, checkPlanSnapshot, ['--plan "{plan-file}"', '--diff-filter=AM']],
+  ['Phase 1 resolves exactly one plan, else logs one SKIP', SKILL, checkPlanResolve, [
+    'Two or more (a multi-spec branch)', '--status SKIP', 'line break', 'a failed `rev-parse`', '`top level unreadable`',
+    ['bare spec name', (doc) => doc.replace('names `work/{n}-spec.md`', 'names `{n}-spec.md`')],
+    ['undefined {k}', (doc) => doc.replace('no single run plan ({reason})', 'no single run plan ({k} changed)')],
+  ]],
+  ['Step 4 removes both risk outputs before the producer runs', BRIEF, checkStaleClear, [
+    'rm -f "{FLAGS}" "{PROOFS}"',
+    ['removal after the producer', (doc) => doc.replace(`${RM_FENCE}\n`, '').replace(`${FACTS_FENCE}\n`, `${FACTS_FENCE}\n\n${RM_FENCE}\n`)],
+  ]],
+  ['the gather always passes both risk inputs, a skipped producer included', BRIEF, checkGatherAlwaysBoth, [
+    '--flags "{FLAGS}" --proofs "{PROOFS}"', 'the gather still passes both inputs',
+    ['bullet with a condition', (doc) => doc.replace(FLAGS_BULLET, FLAGS_BULLET.replace('always.', 'always, when the producer ran.'))],
+  ]],
+  ['no clause lets a skipped producer drop the risk inputs', BRIEF, checkNoNeitherClause, [
+    ['the neither clause restored', (doc) => doc.replace(FLAGS_BULLET, FLAGS_BULLET.replace('always.', 'always, whatever its exit; only a skipped call passes neither.'))],
+  ]],
+  ['Step 4 runs the risk facts producer before the gather and passes both files', BRIEF, checkFactsBeforeGather, ['risk-flags.js" facts', '--flags "{FLAGS}" --proofs "{PROOFS}"']],
+  ['the plan copy is read only when the manifest says copied', BRIEF, checkPlanCopyGate, ["`files.plan` is `copied`", 'leaves an earlier `plan.md` there']],
+  ['an absent or unparseable plan copy is never read as no proof written', BRIEF, checkEnvelopeOutcomes, ['because no plan copy exists', 'because the plan copy could not be parsed', 'never as no proof written']],
+  ['a non-zero facts exit is reported and logged and never stops the packet', BRIEF, checkNonZeroExit, ['it never stops the packet', 'removes both outputs', '{risk facts | gather']],
+  ['the gather inputs name the risk facts files', BRIEF, checkGatherInputs, ['FLAGS=packet-flags-{N}.json', 'from the Risk facts call above, always']],
+  ['line 392 no longer says the risk-flag inputs go unpassed', BRIEF, checkLine392, ['and none is passed here']],
+  ['the narration cites each planned proof', BRIEF, checkRiskNarration, ['citing both', 'renders as `no proof shown`']],
+];
+
+for (const [name, file, check, literals] of PINS) {
+  test(name, () => check(read(file)));
+  test(`${name} (go-red)`, () => goRed(check, read(file), literals));
+}

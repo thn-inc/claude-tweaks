@@ -11,8 +11,12 @@ const {
   PACKET_MARKER_RE,
   COMMANDS_ONLY_SURFACES,
   encodeFactKey,
+  NEGATIVE_ID_PREFIX,
 } = require('./packet-contract');
-const { checkLink, findCredentialInText } = require('./packet-links');
+const {
+  BEARER_SEGMENT_REASON, checkLink, findCredentialInText, hasBearerUrl,
+} = require('./packet-links');
+const { redactOrWithhold } = require('../walkthrough/redact');
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 const { SECTIONS: CONSOLE_SECTIONS, decisionLineHash } = require('../console/resolve');
 
@@ -38,7 +42,6 @@ const POSITIONAL_AC_PREFIX = 'AC';
 // code never swallows the rest of the section as a false fence.
 const FENCE_RE = /^ {0,3}(?:(`{3,})([^`]*)|(~{3,})(.*))$/;
 
-const NEGATIVE_ID_PREFIX = 'neg-';
 const NEGATIVE_TAG = 'negative';
 const STORIES_KEY_RE = /^stories:\s*(?:#.*)?$/;
 // A bare `-` opens an item too, its keys on the lines below it.
@@ -433,7 +436,8 @@ function linkOutcome({ id, label, url, command }, surface, allowedHosts) {
   });
   if (command) {
     const key = findCredentialInText(command);
-    return key ? refuse(`credential key in command: ${key}`) : accept({ command });
+    if (key) return refuse(`credential key in command: ${key}`);
+    return hasBearerUrl(command) ? refuse(BEARER_SEGMENT_REASON) : accept({ command });
   }
   if (COMMANDS_ONLY_SURFACES.includes(surface)) return refuse('infra surface lists commands, not links');
   const check = checkLink(url, { allowedHosts });
@@ -447,17 +451,45 @@ function deployFact(deploy) {
   return { id: 'deploy:status', kind: 'deploy', status: 'passed', source: 'deploy', text, target, live };
 }
 
-// A pass-through record may already spell its id with the kind.
-function passThroughFacts(kind, source, entries) {
+// A pass-through record may already spell its id with the kind. The status and reason come
+// from the call, never from the entry. Only a flag entry's `unconfirmed: true` is carried on.
+function passThroughFacts(kind, source, entries, { status = 'passed', reason } = {}) {
   const prefix = `${kind}:`;
-  return (entries ?? []).map(({ id, text, url }) => ({
+  return (entries ?? []).map(({ id, text, unconfirmed }) => ({
     id: `${prefix}${encodeFactKey(id.startsWith(prefix) ? id.slice(prefix.length) : id)}`,
     kind,
-    status: 'passed',
+    status,
+    ...(reason === undefined ? {} : { reason }),
     source,
     ...(text === undefined ? {} : { text }),
-    ...(url === undefined ? {} : { url }),
+    ...(kind === 'flag' && unconfirmed === true ? { unconfirmed: true } : {}),
   }));
+}
+
+const PROOF_NOT_RUN_REASON = 'planned in the plan, not yet run';
+
+// A recording's free strings as a narrator may read them, with the sum of what went from them.
+// A claim's text meets only the credential screen, which misses a bare token or an address.
+function redactedRecordingStrings({ text, captions, failure }) {
+  let redactions = 0;
+  const redacted = (value) => {
+    if (typeof value !== 'string') return value;
+    const result = redactOrWithhold(value);
+    redactions += result.count;
+    return result.text;
+  };
+  return { text: redacted(text), captions: captions?.map(redacted), failure: redacted(failure), redactions };
+}
+
+// The snapshot's outcome as a fact. A not-run one has no GIF, so no location.
+function recordingFact(recording, recordingPath) {
+  const { status, reason, exposure } = recording;
+  const { text, captions, failure, redactions } = redactedRecordingStrings(recording);
+  const common = { id: 'recording:walkthrough', kind: 'recording', status, source: 'walkthrough' };
+  if (status === 'not-run') return { ...common, reason, ...(failure === undefined ? {} : { failure }), redactions };
+  return {
+    ...common, text, url_or_path: recordingPath.live, archive_path: recordingPath.archived, captions, exposure, redactions,
+  };
 }
 
 function unmatchedAcKeys(acResults, criteria) {
@@ -508,8 +540,9 @@ function gatherPacketFacts(inputs) {
     })),
     ...linkOutcomes.flatMap(({ fact }) => (fact ? [fact] : [])),
     deployFact(inputs.deploy),
-    ...passThroughFacts('recording', 'recordings', inputs.recordings),
+    ...(inputs.recording ? [recordingFact(inputs.recording, inputs.recordingPath)] : []),
     ...passThroughFacts('flag', 'flags', inputs.flags),
+    ...passThroughFacts('proof', 'proofs', inputs.proofs, { status: 'not-run', reason: PROOF_NOT_RUN_REASON }),
     ...passThroughFacts('decision', 'decision-items', inputs.decisions),
   ];
 
@@ -575,6 +608,7 @@ module.exports = {
   parseStoryFile,
   storyResultsFromQaReport,
   storiesFromQaStamp,
+  redactedRecordingStrings,
   gatherPacketFacts,
   readPacket,
 };

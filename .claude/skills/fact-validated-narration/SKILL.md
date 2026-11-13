@@ -50,6 +50,19 @@ enumerated; you are patching.
 The rule this skill teaches is the enumeration discipline, not the list. The list is always longer
 than it looks.
 
+Test a neutralizer against each hostile shape glued to every allowed neighbouring character (`-`,
+`.`, `_`, `(`, a letter, the start of the string), not only after a space. The test must go red when
+the boundary is narrowed back. #5219's `reduceDetail` passed seven task reviews on space-separated
+inputs, while `-C/Users/me/x` and `foo./home/me/.ssh` reached a public comment untouched.
+
+A neutralizer that removes text can splice what was around it into a new hostile shape: removing `#7`
+from `h#7ttps://github.com/o/r/issues/5` leaves a live issue URL, and removing `#1` from `<!#1--`
+leaves a comment opener. #5269's `neutralize` in `plugin/bin/lib/driver/events.js` repeats its
+removals until the text stops changing, and escapes `<!--` only after that loop. Test each removal
+against an input built so that removing it forms the next shape (the `#5269 AC2` rebuilt-reference
+and `#5269 AC4` comment-opener tests in `tests/bin-lib/driver/run.test.js`), and keep the loop
+linear (`regex-scan-linearity`).
+
 ## A partial gather is never an empty period
 
 `failures.length === 0` belongs in the "nothing happened in this period" predicate. Without it, a
@@ -121,6 +134,22 @@ channel, and the output is a comment on the record. It adds four things to the r
 
 Pins: `tests/bin-lib/wrap-up/packet-validate.test.js`, `tests/bin-lib/wrap-up/packet-render.test.js`,
 `tests/acceptance-packet-cli.test.js`.
+
+The packet's recording fact (#4612) added two more channels, found the same way:
+
+- **The fact the narrator reads is a channel, not only the rendered page.** A render-time screen
+  keeps a secret off the record but not out of the model's context or the session transcript.
+  Gather writes the redacted form of the recording's `text`, `captions` and `failure` into the fact,
+  with the count in `redactions` (`redactText` in `plugin/bin/lib/walkthrough/redact.js`), and
+  `renderRecordingSection` in `packet-render.js` still redacts at one choke point, so a hand-built
+  fact cannot leak. The build first redacted only at render; the final review moved it into gather too.
+- **A link's path is a channel.** `checkLink` in `packet-links.js` refuses a bearer-shaped path
+  segment, and review found two spellings it read past: a `;` path parameter (`/a;{value}`) and a
+  route held in a hash-router fragment or a rooted query value (`#/reset/{value}`,
+  `?next=/reset/{value}`). `parameterRefusal` and `pathRefusal` read both now.
+
+Pins: `tests/bin-lib/walkthrough/redact.test.js`, `tests/bin-lib/wrap-up/packet-links.test.js`,
+`tests/bin-lib/wrap-up/packet-recording.test.js`.
 
 ## When to use
 

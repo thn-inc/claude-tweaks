@@ -8,7 +8,9 @@ const {
   partitionByOpenBodyBlockers, partitionByOpenNativeBlockers, openNativeBlockerRefs, partitionByOpenLinkedPR,
 } = require(path.join(LIB, 'issues', 'record-dependencies.js'));
 
-const ADMIT = { number: 5216, state: 'OPEN', labels: ['auto:build', 'ready'], openBlockerRefs: [], openLinkedPRs: [], routing: 'on' };
+const { hasDriverEscalationMarker, DRIVER_ESCALATION_MARKER } = require(path.join(LIB, 'driver', 'settle.js'));
+
+const ADMIT = { number: 5216, state: 'OPEN', labels: ['auto:build', 'ready'], openBlockerRefs: [], openLinkedPRs: [], routing: 'on', driverEscalated: false };
 const reasonsFor = (overrides) => evaluateAdmission({ ...ADMIT, ...overrides }).reasons;
 
 test('the base fact set admits', () => {
@@ -47,6 +49,7 @@ test('AC3.7: ADMISSION_REASONS exports exactly the documented keys', () => {
   assert.deepStrictEqual(Object.keys(R).sort(), [
     'noBuildGrant', 'parked', 'blocked', 'openBlocker', 'openPR', 'notOpen', 'blockerFactsUnreadable',
     'prFactsUnreadable', 'stateUnreadable', 'labelsUnreadable', 'routingOff', 'splitOdd', 'splitUnreadable', 'routingUnknown',
+    'escalatedByDriver', 'commentsUnreadable',
   ].sort());
   assert.ok(Object.isFrozen(R));
   assert.strictEqual(R.noBuildGrant, 'record lacks auto:build');
@@ -63,6 +66,35 @@ test('AC3.7: ADMISSION_REASONS exports exactly the documented keys', () => {
   assert.strictEqual(R.splitOdd, 'express-driver split: issue number is odd');
   assert.strictEqual(R.splitUnreadable, 'express-driver split: issue number unreadable');
   assert.strictEqual(R.routingUnknown('both'), 'express-driver value not recognised: both');
+  assert.strictEqual(R.escalatedByDriver, 'already escalated by the driver');
+  assert.strictEqual(R.commentsUnreadable, 'record comments unreadable');
+});
+
+test('AC11.2: a trusted marker refuses with its own reason', () => {
+  const result = evaluateAdmission({ ...ADMIT, driverEscalated: true });
+  assert.deepStrictEqual(result, { admitted: false, reasons: ['already escalated by the driver'] });
+});
+
+test('AC11.3: an untrusted marker does not refuse', () => {
+  const driverEscalated = hasDriverEscalationMarker([{ authorAssociation: 'NONE', body: DRIVER_ESCALATION_MARKER }]);
+  assert.strictEqual(driverEscalated, false);
+  assert.deepStrictEqual(evaluateAdmission({ ...ADMIT, driverEscalated }), { admitted: true, reasons: [] });
+});
+
+test('AC11.4: an unreadable comment list fails closed', () => {
+  for (const driverEscalated of [null, undefined, 'true', 1, {}, []]) {
+    assert.deepStrictEqual(reasonsFor({ driverEscalated }), ['record comments unreadable'], `driverEscalated=${JSON.stringify(driverEscalated)}`);
+  }
+});
+
+test('AC11.5: the gate alone refuses', () => {
+  assert.deepStrictEqual(reasonsFor({ driverEscalated: true }), [R.escalatedByDriver]);
+  assert.ok(!reasonsFor({ driverEscalated: true }).includes(R.commentsUnreadable));
+  assert.deepStrictEqual(reasonsFor({ driverEscalated: false }), []);
+});
+
+test('the escalation gate stacks with the existing gates in one verdict', () => {
+  assert.deepStrictEqual(reasonsFor({ state: 'CLOSED', driverEscalated: true }), [R.notOpen, R.escalatedByDriver]);
 });
 
 test('labels unreadable fails closed with its own reason', () => {
@@ -223,5 +255,5 @@ test('a null argument fails closed instead of throwing', () => {
   let out;
   assert.doesNotThrow(() => { out = evaluateAdmission(null); });
   assert.strictEqual(out.admitted, false);
-  for (const r of [R.labelsUnreadable, R.blockerFactsUnreadable, R.prFactsUnreadable, R.stateUnreadable]) assert.ok(out.reasons.includes(r), r);
+  for (const r of [R.labelsUnreadable, R.blockerFactsUnreadable, R.prFactsUnreadable, R.stateUnreadable, R.commentsUnreadable]) assert.ok(out.reasons.includes(r), r);
 });

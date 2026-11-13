@@ -744,8 +744,10 @@ test('AC4.1 (#3099) + AC3.1 (#3602): without --spec the envelope carries checkE 
     assert.deepStrictEqual(a.checkE, { ok: true, skipped: 'no-spec' });
     assert.deepStrictEqual(a.checkF, { ok: true, skipped: 'no-spec' });
     assert.deepStrictEqual(b.checkE.uncovered, []);
-    const { checkE: dropA, checkF: dropFA, ...restA } = a;
-    const { checkE: dropB, checkF: dropFB, ...restB } = b;
+    assert.deepStrictEqual(a.checkG, { ok: true, skipped: 'no-spec' });
+    assert.deepStrictEqual(b.checkG, { ok: true, skipped: 'unclassified' });
+    const { checkE: dropA, checkF: dropFA, checkG: dropGA, ...restA } = a;
+    const { checkE: dropB, checkF: dropFB, checkG: dropGB, ...restB } = b;
     assert.deepStrictEqual(restA, restB);
     assert.deepStrictEqual(Object.keys(restA), ['checkA', 'checkB', 'checkC', 'checkD', 'headroom', 'premiseRefs']);
     assert.strictEqual(without.exitCode, 0);
@@ -877,6 +879,296 @@ test('#3099: Check B never reports the audited plan file itself as unplanned, bu
     const reportSecond = JSON.parse(second.stdout.split('\n')[0]);
     assert.deepStrictEqual(reportSecond.checkB.unplanned, ['stray.js']);
     assert.notStrictEqual(second.exitCode, 0);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+// ── Check G (#4618) ──────────────────────────────────────────────────────
+
+const G_GOOD = 'Rehearse the migration against a copy of production data and diff row counts.';
+
+function gSpec(flagLine) {
+  return `---\nrecord: 1\n---\n# 1: t\n\nSurface: infra\n${flagLine}\n\n## Overview\n`;
+}
+
+function gPlan(body) {
+  return [
+    '### Task 1: Do a thing',
+    '**Files:**',
+    '- Modify: `plugin/bin/existing.js`',
+    '',
+    '- [ ] **Step 1: Do it**',
+    '',
+    body,
+    '',
+  ].join('\n');
+}
+
+function runG(repo, planBody, flagLine) {
+  const plan = writePlan(repo, gPlan(planBody));
+  const spec = path.join(repo, 'spec.md');
+  fs.writeFileSync(spec, gSpec(flagLine));
+  const result = runCliArgs([plan, '--repo-root', repo, '--spec', spec]);
+  const report = result.stdout ? JSON.parse(result.stdout.split('\n')[0]) : null;
+  return { ...result, report, summary: result.stdout.split('\n')[1] };
+}
+
+test('AC4.1 (#4618): a kept flag with no Proof line exits 1 and the summary names the slug and the plan', () => {
+  const repo = makeERepo();
+  try {
+    const r = runG(repo, 'nothing here', 'Risk-flags: migrations');
+    assert.strictEqual(r.exitCode, 1);
+    assert.deepStrictEqual(r.report.checkG.missing, [{ slug: 'migrations', plan: path.join(repo, 'plan.md'), reason: 'no-proof-line' }]);
+    assert.ok(r.summary.includes(`Check G: missing proof for migrations in ${path.join(repo, 'plan.md')}`), r.summary);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('AC4.1 (#4618): a Proof line per kept slug exits 0 and the summary is clean', () => {
+  const repo = makeERepo();
+  try {
+    const r = runG(repo, `Proof(migrations): ${G_GOOD}`, 'Risk-flags: migrations');
+    assert.strictEqual(r.exitCode, 0);
+    assert.strictEqual(r.report.checkG.ok, true);
+    assert.deepStrictEqual(r.report.checkG.proofs, [{ slug: 'migrations', task: '1' }]);
+    assert.ok(!r.summary.includes('Check G'), r.summary);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('AC4.1 (#4618): an unparseable flag line exits 1 with a could-not-parse summary part naming its source, however many proofs exist', () => {
+  const repo = makeERepo();
+  try {
+    const all = ['migrations', 'auth', 'public-contract', 'irreversible-side-effect'].map((s) => `Proof(${s}): ${G_GOOD}`).join('\n');
+    const r = runG(repo, all, 'Risk-flags: Auth');
+    assert.strictEqual(r.exitCode, 1);
+    assert.ok(r.summary.includes('Check G: could-not-parse 1 (flag-line).'), r.summary);
+    assert.ok(!r.summary.includes('missing proof'), r.summary);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('AC4.1 (#4618): a spec with no flag line, or none, leaves the audit clean', () => {
+  const repo = makeERepo();
+  try {
+    const none = runG(repo, 'x', 'Risk-flags: none');
+    assert.deepStrictEqual([none.exitCode, none.report.checkG], [0, { ok: true, skipped: 'no-flags' }]);
+    const absent = runG(repo, 'x', '');
+    assert.deepStrictEqual([absent.exitCode, absent.report.checkG], [0, { ok: true, skipped: 'unclassified' }]);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('#4618: control mode on reads the policy risk-categories, so a policy slug needs only its own proof; off it widens', () => {
+  const repo = makeERepo();
+  try {
+    fs.mkdirSync(path.join(repo, '.claude-tweaks'), { recursive: true });
+    const policy = path.join(repo, '.claude-tweaks', 'policy.yml');
+    fs.writeFileSync(policy, 'control-mode: on\nrisk-categories: pii\n');
+    const on = runG(repo, `Proof(pii): ${G_GOOD}`, 'Risk-flags: pii');
+    assert.deepStrictEqual([on.exitCode, on.report.checkG.status, on.report.checkG.required], [0, 'ok', ['pii']]);
+
+    fs.writeFileSync(policy, 'control-mode: off\nrisk-categories: pii\n');
+    const off = runG(repo, `Proof(pii): ${G_GOOD}`, 'Risk-flags: pii');
+    assert.strictEqual(off.exitCode, 1);
+    assert.strictEqual(off.report.checkG.status, 'unknown');
+    assert.deepStrictEqual(off.report.checkG.missing.map((m) => m.slug), ['migrations', 'auth', 'public-contract', 'irreversible-side-effect']);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('#4618: a policy file that cannot be read exits 2 with nothing on stdout, never as "no extra categories"', () => {
+  const repo = makeERepo();
+  try {
+    // A directory where policy.yml should be: readFileSync throws EISDIR, not ENOENT.
+    fs.mkdirSync(path.join(repo, '.claude-tweaks', 'policy.yml'), { recursive: true });
+    const r = runG(repo, `Proof(pii): ${G_GOOD}`, 'Risk-flags: pii');
+    assert.strictEqual(r.exitCode, 2);
+    assert.strictEqual(r.stdout, '');
+    assert.match(r.stderr, /cannot read policy/);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('#4618: without --spec the policy is never read, so an unreadable one does not fail the audit', () => {
+  const repo = makeERepo();
+  try {
+    fs.mkdirSync(path.join(repo, '.claude-tweaks', 'policy.yml'), { recursive: true });
+    const plan = writePlan(repo, gPlan('x'));
+    const r = runCliArgs([plan, '--repo-root', repo]);
+    assert.strictEqual(r.exitCode, 0);
+    assert.deepStrictEqual(JSON.parse(r.stdout.split('\n')[0]).checkG, { ok: true, skipped: 'no-spec' });
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('#4618: a spec with no flag line never reads the policy, so an unreadable one does not exit 2', () => {
+  const repo = makeERepo();
+  try {
+    fs.mkdirSync(path.join(repo, '.claude-tweaks', 'policy.yml'), { recursive: true });
+    const r = runG(repo, 'x', '');
+    assert.strictEqual(r.exitCode, 0, r.stderr);
+    assert.doesNotMatch(r.stderr, /cannot read policy/);
+    assert.deepStrictEqual(r.report.checkG, { ok: true, skipped: 'unclassified' });
+    assert.ok(r.report.checkE && r.report.checkF, 'Checks E and F still ran on the spec');
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('#4618: Check G reads a CRLF plan and spec the same as LF', () => {
+  const repo = makeERepo();
+  try {
+    const plan = writePlan(repo, gPlan(`Proof(migrations): ${G_GOOD}`).replace(/\n/g, '\r\n'));
+    const spec = path.join(repo, 'spec.md');
+    fs.writeFileSync(spec, gSpec('Risk-flags: migrations').replace(/\n/g, '\r\n'));
+    const r = runCliArgs([plan, '--repo-root', repo, '--spec', spec]);
+    assert.strictEqual(r.exitCode, 0);
+    assert.strictEqual(JSON.parse(r.stdout.split('\n')[0]).checkG.ok, true);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+// ── --risk-proofs (#4618) ────────────────────────────────────────────────
+
+function runProofs(repo, planBody, flagLine, extraArgs = []) {
+  const plan = writePlan(repo, gPlan(planBody));
+  const spec = path.join(repo, 'spec.md');
+  fs.writeFileSync(spec, gSpec(flagLine));
+  const result = runCliArgs([plan, '--repo-root', repo, '--spec', spec, '--risk-proofs', ...extraArgs]);
+  return { ...result, report: result.stdout ? JSON.parse(result.stdout) : null };
+}
+
+test('#4618: --risk-proofs exits 0 with a proof and 1 without, printing only checkG as one line', () => {
+  const repo = makeERepo();
+  try {
+    const ok = runProofs(repo, `Proof(migrations): ${G_GOOD}`, 'Risk-flags: migrations');
+    assert.strictEqual(ok.exitCode, 0);
+    assert.deepStrictEqual(Object.keys(ok.report), ['checkG']);
+    assert.strictEqual(ok.stdout.split('\n').length, 2, 'one JSON line and a trailing newline');
+    assert.deepStrictEqual(ok.report.checkG.proofs, [{ slug: 'migrations', task: '1' }]);
+    const bad = runProofs(repo, 'nothing here', 'Risk-flags: migrations');
+    assert.strictEqual(bad.exitCode, 1);
+    assert.deepStrictEqual(Object.keys(bad.report), ['checkG']);
+    assert.deepStrictEqual(bad.report.checkG.missing.map((m) => m.slug), ['migrations']);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('#4618: --risk-proofs on an unclassified or none spec exits 0 with the skipped result', () => {
+  const repo = makeERepo();
+  try {
+    const none = runProofs(repo, 'x', 'Risk-flags: none');
+    assert.deepStrictEqual([none.exitCode, none.report], [0, { checkG: { ok: true, skipped: 'no-flags' } }]);
+    const absent = runProofs(repo, 'x', '');
+    assert.deepStrictEqual([absent.exitCode, absent.report], [0, { checkG: { ok: true, skipped: 'unclassified' } }]);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('#4618: --risk-proofs on a trivial two-file plan for a flagged spec still exits 1 (the skip path bypass)', () => {
+  const repo = makeERepo();
+  try {
+    const plan = writePlan(repo, [
+      '### Task 1: Do a thing', '**Files:**', '- Modify: `plugin/bin/existing.js`', '- Create: `plugin/bin/other.js`', '',
+      '- [ ] **Step 1: Do it**', '',
+    ].join('\n'));
+    const spec = path.join(repo, 'spec.md');
+    fs.writeFileSync(spec, gSpec('Risk-flags: auth'));
+    const r = runCliArgs([plan, '--repo-root', repo, '--spec', spec, '--risk-proofs']);
+    assert.strictEqual(r.exitCode, 1);
+    assert.deepStrictEqual(JSON.parse(r.stdout).checkG.missing.map((m) => m.slug), ['auth']);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('#4618: --risk-proofs without --spec, or beside --count-tasks, --bytes or --task-markers, is a usage error (exit 2)', () => {
+  const repo = makeERepo();
+  try {
+    const plan = writePlan(repo, gPlan('x'));
+    const spec = path.join(repo, 'spec.md');
+    fs.writeFileSync(spec, gSpec('Risk-flags: migrations'));
+    const cases = [
+      [[plan, '--risk-proofs'], /--risk-proofs requires --spec/],
+      [[plan, '--risk-proofs', '--spec', spec, '--count-tasks'], /--risk-proofs cannot be combined with --count-tasks, --bytes, or --task-markers/],
+      [[plan, '--risk-proofs', '--spec', spec, '--bytes'], /--risk-proofs cannot be combined/],
+      [[plan, '--risk-proofs', '--spec', spec, '--task-markers'], /--risk-proofs cannot be combined/],
+      [[plan, '--risk-proofs', '--bytes'], /--risk-proofs cannot be combined/],
+    ];
+    for (const [args, pattern] of cases) {
+      const r = runCliArgs(args);
+      assert.strictEqual(r.exitCode, 2, `expected exit 2 for ${args.slice(1).join(' ')}`);
+      assert.strictEqual(r.stdout, '');
+      assert.match(r.stderr, pattern);
+      assert.match(r.stderr, /usage: plan-audit\.js .*\[--risk-proofs\]/);
+    }
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('#4618: --risk-proofs exits 2 on an unreadable spec and on an unreadable plan, never a skipped result', () => {
+  const repo = makeERepo();
+  try {
+    const plan = writePlan(repo, gPlan('x'));
+    const noSpec = runCliArgs([plan, '--repo-root', repo, '--spec', path.join(repo, 'missing-spec.md'), '--risk-proofs']);
+    assert.strictEqual(noSpec.exitCode, 2);
+    assert.strictEqual(noSpec.stdout, '');
+    assert.match(noSpec.stderr, /cannot read spec file/);
+    const spec = path.join(repo, 'spec.md');
+    fs.writeFileSync(spec, gSpec('Risk-flags: migrations'));
+    const noPlan = runCliArgs([path.join(repo, 'missing-plan.md'), '--repo-root', repo, '--spec', spec, '--risk-proofs']);
+    assert.strictEqual(noPlan.exitCode, 2);
+    assert.strictEqual(noPlan.stdout, '');
+    assert.match(noPlan.stderr, /cannot read plan file/);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('#4618: --risk-proofs reads the policy as the full audit does — control mode on with an extra slug, the verb equals the full audit checkG', () => {
+  const repo = makeERepo();
+  try {
+    fs.mkdirSync(path.join(repo, '.claude-tweaks'), { recursive: true });
+    const policy = path.join(repo, '.claude-tweaks', 'policy.yml');
+    fs.writeFileSync(policy, 'control-mode: on\nrisk-categories: pii\n');
+    const verb = runProofs(repo, `Proof(pii): ${G_GOOD}`, 'Risk-flags: pii');
+    const full = runG(repo, `Proof(pii): ${G_GOOD}`, 'Risk-flags: pii');
+    assert.strictEqual(verb.exitCode, 0);
+    assert.deepStrictEqual([verb.report.checkG.status, verb.report.checkG.required], ['ok', ['pii']]);
+    assert.deepStrictEqual(verb.report.checkG, full.report.checkG);
+
+    fs.writeFileSync(policy, 'control-mode: off\nrisk-categories: pii\n');
+    const off = runProofs(repo, `Proof(pii): ${G_GOOD}`, 'Risk-flags: pii');
+    const offFull = runG(repo, `Proof(pii): ${G_GOOD}`, 'Risk-flags: pii');
+    assert.strictEqual(off.exitCode, 1);
+    assert.strictEqual(off.report.checkG.status, 'unknown');
+    assert.deepStrictEqual(off.report.checkG, offFull.report.checkG);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('#4618: --risk-proofs exits 2 when the policy cannot be read, as the full audit does', () => {
+  const repo = makeERepo();
+  try {
+    fs.mkdirSync(path.join(repo, '.claude-tweaks', 'policy.yml'), { recursive: true });
+    const r = runProofs(repo, `Proof(pii): ${G_GOOD}`, 'Risk-flags: pii');
+    assert.strictEqual(r.exitCode, 2);
+    assert.strictEqual(r.stdout, '');
+    assert.match(r.stderr, /cannot read policy/);
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }

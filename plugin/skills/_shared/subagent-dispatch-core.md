@@ -87,8 +87,8 @@ self-judged at the bound is abandoned: it no longer counts as outstanding, and t
 reply still ends with `STATUS: {WORD}`; `INTERIM_STATUS:` is only for a turn that ends while a
 keep-alive wait is still in progress. An abandoned child cannot be stopped (`TaskStop` refuses a
 nested child), so it keeps running, and the harness may hold the
-agent's final result until it finishes: the bound caps the wait, not the delivery. A child result
-that arrives after its unit was self-judged is ignored; it never changes a verdict already reached,
+agent's final result until it finishes: the bound caps the wait, not the delivery. Outside the
+rendered-UI exception below, a child result that arrives after its unit was self-judged is ignored; it never changes a verdict already reached,
 and a late notification that re-wakes the agent after its final reply is answered by repeating its
 whole final reply unchanged: the dispatcher keeps only the agent's latest reply, so a bare `STATUS:`
 line would replace the report (#3722). A child that reports a failure (a `failed` notification, an
@@ -109,7 +109,9 @@ minutes) per wave, naming which fired (`no progress for one window` or `ceiling 
 progressing`) and every unchanged child. Children sharing a worktree progress together; a child
 whose prompt names no worktree counts as unchanged. A failed wait call counts as no wait but ends its window, and the
 probe runs as at any bound; a failed probe command counts as no change, never retried in another
-form. Read-only units keep the first-bound self-judge. A wait call that is blocked or fails (a
+form. Read-only units keep the first-bound self-judge. Exception: a rendered-UI unit (review Step
+6/6.5) gets more windows while its artifact directory changes; stage its late result
+(`_shared/rendered-ui-units.md`). A wait call that is blocked or fails (a
 harness or hook refusal) is not a wait and never counts toward the bound; never retry it in another
 form (a longer, wrapped or backgrounded sleep): treat every child still outstanding as silent at the
 bound and apply the fallback above.
@@ -281,7 +283,7 @@ API error: You've hit your session limit` will not succeed on an immediate retry
 transient 5xx/timeout might — the caller's account-level limit, not the agent's own work, caused
 the termination. A dispatch site handling a reproduction-pair partner's death this way retries
 once (to rule out a spurious one-off) and, on a second failure, degrades rather than retrying
-again in a loop — see `review/step3-lens-dispatch.md`'s reproduction-pair section for the
+again in a loop — see `review/step3-tier-variants.md`'s partner-died paragraph for the
 degrade procedure this classification feeds.
 
 **A subagent whose *parent* session was terminated leaves a 0-byte output file — not a readable

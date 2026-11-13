@@ -55,7 +55,6 @@ const inputs = (over = {}) => ({
   localBaseUrl: LOCAL,
   devBaseUrl: null,
   deploy: null,
-  recordings: [],
   flags: [],
   decisions: [],
   ...over,
@@ -74,6 +73,57 @@ function assertShapeOk(result) {
   assert.deepEqual(shape.errors, []);
   assert.equal(shape.ok, true);
 }
+
+// the walkthrough recording
+
+const RECORDING_PATH = {
+  live: '.claude-tweaks/pipelines/r/packet-inputs/walkthrough.gif',
+  archived: '.claude-tweaks/pipelines/archive/r/packet-inputs/walkthrough.gif',
+};
+const PASSED_RECORDING = {
+  status: 'passed', file: 'walkthrough.gif', text: 'Walkthrough of Sign in', captions: ['open', 'submit'], exposure: 'local-only', frames: 2,
+};
+
+test('a passed recording is a fact naming both locations', () => {
+  const result = gather({ recording: PASSED_RECORDING, recordingPath: RECORDING_PATH });
+  assert.deepEqual(factOf(result, 'recording:walkthrough'), {
+    id: 'recording:walkthrough',
+    kind: 'recording',
+    status: 'passed',
+    source: 'walkthrough',
+    text: 'Walkthrough of Sign in',
+    url_or_path: RECORDING_PATH.live,
+    archive_path: RECORDING_PATH.archived,
+    captions: ['open', 'submit'],
+    exposure: 'local-only',
+    redactions: 0,
+  });
+  assertShapeOk(result);
+});
+
+test('a not-run recording is a fact with its reason and failure', () => {
+  const result = gather({ recording: { status: 'not-run', reason: 'encoder-failed', failure: 'boom' }, recordingPath: null });
+  assert.deepEqual(factOf(result, 'recording:walkthrough'), {
+    id: 'recording:walkthrough', kind: 'recording', status: 'not-run', source: 'walkthrough', reason: 'encoder-failed', failure: 'boom', redactions: 0,
+  });
+  assertShapeOk(result);
+  assert.ok(!Object.hasOwn(factOf(gather({ recording: { status: 'not-run', reason: 'no-story' } }), 'recording:walkthrough'), 'failure'));
+});
+
+test('redactions counts text, captions and failure', () => {
+  const passed = gather({
+    recording: { ...PASSED_RECORDING, text: 'as me@example.test', captions: ['token=abc', 'plain', 'sk_live_123abc'] },
+    recordingPath: RECORDING_PATH,
+  });
+  assert.equal(factOf(passed, 'recording:walkthrough').redactions, 3);
+  const failed = gather({ recording: { status: 'not-run', reason: 'encoder-failed', failure: 'api_key=abc' } });
+  assert.equal(factOf(failed, 'recording:walkthrough').redactions, 1);
+});
+
+test('no recording adds no fact', () => {
+  assert.deepEqual(idsOf(gather({}), 'recording'), []);
+  assert.deepEqual(idsOf(gather({ recording: null }), 'recording'), []);
+});
 
 // parseAcceptanceCriteria
 
@@ -887,6 +937,48 @@ test('a command link carrying a credential flag is refused', () => {
   assert.ok(!JSON.stringify(result).includes('abc123'));
 });
 
+test('a command holding a URL with a bearer-shaped path segment is refused like the url would be', () => {
+  const bearer = 'Xk3j9f8s7d6f5g4h3j2k1';
+  const result = gather({ links: [{ id: 'd', label: 'd', command: `curl ${LOCAL}/reset/${bearer}` }] });
+  assert.deepEqual(result.refused, [{ id: 'link:d', reason: 'credential in path segment' }]);
+  assert.equal(factOf(result, 'link:d'), undefined);
+  assert.ok(!JSON.stringify(result).includes(bearer));
+});
+
+const BEARER_COMMAND_FORMS = [
+  `curl localhost:3000/reset/Xk3j9f8s7d6f5g4h3j2k1?next=http://x/y`,
+  `www.h.example/Xk3j9f8s7d6f5g4h3j2k1?u=https://x/y`,
+  `www.h.example/Xk3j9f8s7d6f5g4h3j2k1#http://x/y`,
+];
+
+test('a command whose bearer URL carries a later URL is refused, never a fact', () => {
+  for (const command of BEARER_COMMAND_FORMS) {
+    const result = gather({ links: [{ id: 'd', label: 'd', command }] });
+    assert.deepEqual(result.refused, [{ id: 'link:d', reason: 'credential in path segment' }], command);
+    assert.ok(!JSON.stringify(result).includes('Xk3j9f8s7d6f5g4h3j2k1'), command);
+  }
+});
+
+test('a command naming bare localhost, a bracketed IPv6 host or a signed scheme is refused, never a fact', () => {
+  for (const command of [
+    'curl localhost/reset/Xk3j9f8s7d6f5g4h3j2k1',
+    'curl [::1]:3000/reset/Xk3j9f8s7d6f5g4h3j2k1',
+    '-https://h.example/Xk3j9f8s7d6f5g4h3j2k1',
+    '+https://h.example/Xk3j9f8s7d6f5g4h3j2k1',
+  ]) {
+    const result = gather({ links: [{ id: 'd', label: 'd', command }] });
+    assert.deepEqual(result.refused, [{ id: 'link:d', reason: 'credential in path segment' }], command);
+    assert.ok(!JSON.stringify(result).includes('Xk3j9f8s7d6f5g4h3j2k1'), command);
+  }
+});
+
+test('the {id} form of that command is a fact, and so is a bare route', () => {
+  const placeholder = gather({ links: [{ id: 'd', label: 'd', command: `curl ${LOCAL}/reset/{id}` }] });
+  assert.deepEqual(placeholder.refused, []);
+  assert.equal(factOf(placeholder, 'link:d').command, `curl ${LOCAL}/reset/{id}`);
+  assert.deepEqual(gather({ links: [{ id: 'd', label: 'd', command: '/reset/{id}' }] }).refused, []);
+});
+
 test('a link naming both a command and a url carries only the command', () => {
   const result = gather({ links: [{ id: 'd', label: 'd', command: 'npm start', url: 'https://evil.example/x?token=abc' }] });
   assert.equal(factOf(result, 'link:d').command, 'npm start');
@@ -907,6 +999,13 @@ test('a link with a repeated id keeps the first; a link with a url fails on its 
   assert.deepEqual(result.refused, [{ id: 'link:b', reason: 'credential key in query: token' }]);
 });
 
+test('a link with a bearer-shaped path segment is refused, never a fact (#4612)', () => {
+  const result = gather({ links: [{ id: 'b', label: 'b', url: `${LOCAL}/a/Xk3j9f8s7d6f5g4h3j2k1/b` }] });
+  assert.deepEqual(result.refused, [{ id: 'link:b', reason: 'credential in path segment' }]);
+  assert.equal(factOf(result, 'link:b'), undefined);
+  assert.ok(!JSON.stringify(result).includes('Xk3j9f8s7d6f5g4h3j2k1'));
+});
+
 // deploy and pass-through kinds
 
 test('deploy defaults to local and states the dev confirmation', () => {
@@ -921,15 +1020,14 @@ test('deploy defaults to local and states the dev confirmation', () => {
   assert.equal(factOf(gather({ deploy: { target: 'dev', live: null } }), 'deploy:status').text, 'target: dev, not confirmed live');
 });
 
-test('pass-through kinds keep their text and url, status passed', () => {
+test('pass-through kinds keep their text, status passed, and carry no url the renderer would never show', () => {
   const result = gather({
-    recordings: [{ id: 'demo', text: 'Demo run', url: 'https://cdn.example/a.mp4' }],
-    flags: [{ id: 'auth', text: 'Touches auth' }],
-    decisions: [{ id: 'merge order', text: 'Pick a merge order' }],
+    flags: [{ id: 'auth', text: 'Touches auth', url: 'https://x.example/a?token=abc' }],
+    decisions: [{ id: 'merge order', text: 'Pick a merge order', url: 'https://x.example/b' }],
   });
-  assert.deepEqual(factOf(result, 'recording:demo'), { id: 'recording:demo', kind: 'recording', status: 'passed', source: 'recordings', text: 'Demo run', url: 'https://cdn.example/a.mp4' });
   assert.deepEqual(factOf(result, 'flag:auth'), { id: 'flag:auth', kind: 'flag', status: 'passed', source: 'flags', text: 'Touches auth' });
   assert.deepEqual(factOf(result, 'decision:merge%20order'), { id: 'decision:merge%20order', kind: 'decision', status: 'passed', source: 'decision-items', text: 'Pick a merge order' });
+  assert.ok(!JSON.stringify(result).includes('x.example'));
   assertShapeOk(result);
 });
 
@@ -978,15 +1076,18 @@ test('every gathered fact carries a source', () => {
     commits: [{ sha: 'abcdef0123', subject: 's' }],
     links: [{ id: 'l', label: 'l', url: `${LOCAL}/x` }],
     deploy: { target: 'dev', live: false },
-    recordings: [{ id: 'r', text: 't', url: 'https://cdn.example/a.mp4' }],
+    recording: PASSED_RECORDING,
+    recordingPath: RECORDING_PATH,
     flags: [{ id: 'f', text: 't' }],
+    proofs: [{ id: 'p', text: 't' }],
     decisions: [{ id: 'd', text: 't' }],
   });
   const kinds = new Set(result.facts.map((f) => f.kind));
-  assert.deepEqual([...kinds].sort(), ['change', 'check', 'decision', 'deploy', 'finding', 'flag', 'link', 'recording', 'story']);
+  assert.deepEqual([...kinds].sort(), ['change', 'check', 'decision', 'deploy', 'finding', 'flag', 'link', 'proof', 'recording', 'story']);
   for (const f of result.facts) assert.ok(typeof f.source === 'string' && f.source !== '', f.id);
   assert.deepEqual(factOf(result, 'finding:1'), { id: 'finding:1', kind: 'finding', status: 'passed', source: 'review', text: 'finding text' });
-  for (const f of result.facts.filter((x) => !['check', 'story'].includes(x.kind))) assert.equal(f.status, 'passed', f.id);
+  for (const f of result.facts.filter((x) => !['check', 'story', 'proof'].includes(x.kind))) assert.equal(f.status, 'passed', f.id);
+  assert.equal(factOf(result, 'proof:p').status, 'not-run');
   assert.equal(result.schemaVersion, 1);
   assert.equal(result.record, 4611);
   assertShapeOk(result);
@@ -1372,4 +1473,18 @@ test('AC2b stale run-dir copy is ignored', () => {
   assert.equal(result.status, 'found');
   assert.ok(result.comment.body.endsWith('LIVE'));
   assert.equal(readPacket.length, 1, 'the reader takes no path argument');
+});
+
+test('a flag entry keeps unconfirmed only when true, so old callers are unchanged', () => {
+  const result = gather({ flags: [{ id: 'auth', unconfirmed: true }, { id: 'pii', unconfirmed: false }, { id: 'migrations' }] });
+  assert.deepEqual(factOf(result, 'flag:auth'), { id: 'flag:auth', kind: 'flag', status: 'passed', source: 'flags', unconfirmed: true });
+  assert.deepEqual(factOf(result, 'flag:pii'), { id: 'flag:pii', kind: 'flag', status: 'passed', source: 'flags' });
+  assert.deepEqual(factOf(result, 'flag:migrations'), { id: 'flag:migrations', kind: 'flag', status: 'passed', source: 'flags' });
+  assertShapeOk(result);
+});
+
+test('a proof entry is a not-run proof fact, whatever status, kind or source it claims', () => {
+  const result = gather({ proofs: [{ id: 'auth', text: 'Refuses an unauthenticated request', url: 'https://example.test/x', unconfirmed: true, status: 'passed', kind: 'check', source: 'forged' }] });
+  assert.deepEqual(factOf(result, 'proof:auth'), { id: 'proof:auth', kind: 'proof', status: 'not-run', reason: 'planned in the plan, not yet run', source: 'proofs', text: 'Refuses an unauthenticated request' });
+  assertShapeOk(result);
 });
