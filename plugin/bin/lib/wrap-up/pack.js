@@ -13,7 +13,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFile: execFileCb, execFileSync } = require('child_process');
 const { promisify } = require('util');
-const { resolvePolicyConfig } = require('../policy-schema');
+const { resolvePolicyConfig, parseFlatLines } = require('../policy-schema');
 const { parseManifestYaml } = require('../flow/manifest');
 const { parseDependencies, withoutCrossRepoBlockers, foreignBlockerBlocks, DEFER_REASONS } = require('../issues/record');
 const { parseCrossRepoDependencies, foreignEntries, bodyOnlyForeign, distinctCrossRepoRefs } = require('../issues/cross-repo-refs');
@@ -184,7 +184,10 @@ function headerRecords(deps, dir) {
 
 // Which resolveRecords rungs may receive a closing keyword (Ruling R1): only
 // the header rungs. Manifest ids include not-run/failed specs, whose PR-body
-// line is `Refs`, not `Fixes`. Decided here once; consumers read the result.
+// line is `Refs`, not `Fixes`. The `config` rung is not closing either: a
+// config.yml `spec:` is the lowest of a run's records, so it names one record
+// of a multi-record run and carries no closing intent (an express run's PR
+// body already carries its own `Fixes`). Decided here once; consumers read the result.
 const CLOSING_RECORD_SOURCES = new Set(['headers', 'worktree-headers']);
 
 function closingRecords({ records, source }) {
@@ -223,6 +226,14 @@ function manifestRecords(deps, dir) {
   return sortedUnique(nums);
 }
 
+// Rung (e)'s read: the run dir's config.yml `spec:` pin as a one-element list,
+// or [] when absent or not a positive integer. parseFlatLines keeps the last
+// occurrence, the same semantics set-config.js's setConfigLever documents.
+function configRecords(deps, dir) {
+  const spec = parseFlatLines(readText(deps, path.join(dir, 'config.yml'))).spec;
+  return typeof spec === 'string' && /^[1-9][0-9]*$/.test(spec) ? [Number(spec)] : [];
+}
+
 // The record-resolution ladder, in order, reporting which rung won:
 // (a) the run dir's own materialized headers; (b) the worktree's mirror of the
 // same run dir; (c) a parent multi-spec run's manifest.yml ids plus any
@@ -230,7 +241,8 @@ function manifestRecords(deps, dir) {
 // materialize.md commits spec-{n}/work/{n}-spec.md on the feature branch, so
 // on a real pr-first dispatch group it exists only in the worktree, never in
 // the main-checkout run dir --run anchors to, same reason rung (b) mirrors
-// rung (a)); else none.
+// rung (a)); (e) last, the run dir's config.yml `spec:` pin (#5347, the express
+// lane — skipped for a spec-* subdirectory); else none.
 function resolveRecords(deps, runDir, worktree) {
   // `parkedAtShaping` (record number -> boolean) is populated for the two
   // header rungs only; the manifest rungs and `unavailable` carry `{}`.
@@ -255,6 +267,14 @@ function resolveRecords(deps, runDir, worktree) {
   if (mirror && path.resolve(mirror) !== path.resolve(runDir)) {
     const mirrored2 = manifestRecords(deps, mirror);
     if (mirrored2.length) return { records: mirrored2, source: 'worktree-manifest', parkedAtShaping: {} };
+  }
+
+  // (e) the run dir's config.yml `spec:` pin (#5347) — an express run writes no
+  // header or manifest. Never for a spec-* subdirectory: its config.yml is a
+  // byte copy of the parent's, so `spec:` names the parent's lowest record.
+  if (!/^spec-/.test(path.basename(runDir))) {
+    const pinned = configRecords(deps, runDir);
+    if (pinned.length) return { records: pinned, source: 'config', parkedAtShaping: {} };
   }
 
   return { records: [], source: 'unavailable', parkedAtShaping: {} };

@@ -295,7 +295,8 @@ function readJson(deps, file) {
 // Members: the fact pack's resolved record list when a pack exists (#1930
 // gathers it before the console), else pack.js's shared resolveRecords
 // ladder (run dir's own headers, the worktree mirror, a parent multi-spec
-// run's manifest.yml + spec-*/work/ headers — #2028).
+// run's manifest.yml + spec-*/work/ headers, then the run dir's config.yml
+// `spec:` — #2028, #5347).
 function readMembers(deps, runDir) {
   const pack = readJson(deps, path.join(runDir, 'wrap-up-pack.json'));
   const fromPack = pack && pack.inputs && Array.isArray(pack.inputs.records) ? pack.inputs.records.map(Number).filter(Number.isFinite) : [];
