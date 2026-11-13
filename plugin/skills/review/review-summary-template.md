@@ -7,6 +7,7 @@ Present this summary after completing all review steps.
 When **all** of the following hold, render the compact block below instead of the full template — a zero-findings review does not earn ten mostly-empty section headers:
 
 - Verdict is PASS
+- Every deliverable is `done` and every criterion `met` — a `partial`, `missing` or `unverifiable` item (Step 1 item 6) needs the full template's Spec Compliance tables
 - Zero findings in every category (code review, hindsight, visual, design quality, coverage, docs) and zero unresolved QA ledger entries. A non-empty skill load delta (3j) is informational and does not disqualify the compact form. A Coverage caveat (`step3-tier-variants.md`'s partner-died single-read degrade) is informational and does not disqualify the compact form either. An **Independence: degraded** line is informational the same way.
 - Zero tradeoffs accepted, zero autonomous actions performed (no fixes, no simplifier changes, no ledger resolutions)
 - No manual steps required
@@ -44,11 +45,11 @@ The compact form never suppresses information, only empty scaffolding: if any se
 ### Spec Compliance (spec-based only)
 | Deliverable | Status |
 |-------------|--------|
-| {deliverable} | {done/partial/missing} |
+| {deliverable} | {done/partial/missing/unverifiable} |
 
 | Acceptance Criterion | Status |
 |---------------------|--------|
-| {criterion} | {met/partially met/not met} |
+| {criterion} | {met/partially met/not met/unverifiable} |
 (or: No spec — file/commit-based review.)
 (or, when skipped: "Skipped — ceremony-profile: fast-lane.")
 
