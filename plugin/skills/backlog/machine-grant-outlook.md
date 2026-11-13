@@ -43,8 +43,8 @@ node -e "
   const line = bl.allRefusedOutlookLine(outlook, rows);
   if (line) console.log(line);
   else {
-    const refused = Object.entries(outlook.refused).map(([key, ids]) => [key, ids.length]).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
-    console.log(JSON.stringify({ eligible: outlook.eligible.length, refusedTotal: refused.reduce((sum, [, n]) => sum + n, 0), refused: Object.fromEntries(refused), excludedOrigin: outlook.excludedOrigin }));
+    const { counts, total } = bl.refusedKeyCounts(outlook.refused);
+    console.log(JSON.stringify({ eligible: outlook.eligible.length, refusedTotal: total, refused: Object.fromEntries(counts), excludedOrigin: outlook.excludedOrigin }));
   }
 "
 ```

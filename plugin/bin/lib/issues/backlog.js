@@ -364,16 +364,24 @@ function machineGrantOutlook(records, policy, trustRowsArray) {
   return { eligible, refused, excludedOrigin, trustRefusedClasses };
 }
 
+// machineGrantOutlook's `refused` map ({ failedKey: ids[] }) -> the one home for
+// the refused-key aggregation: [[key, n], ...] sorted descending by count (ties:
+// key ascending) plus the summed total. Shared by allRefusedOutlookLine and the
+// machine-grant-outlook.md fence's live-line JSON.
+function refusedKeyCounts(refused) {
+  const counts = Object.entries(refused || {}).map(([key, ids]) => [key, ids.length]);
+  counts.sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  return { counts, total: counts.reduce((sum, [, n]) => sum + n, 0) };
+}
+
 // machineGrantOutlook's output + trustRowsArray -> the one-line "why no machine
 // grants" note, or null when any candidate is eligible or nothing was refused.
 // Keys by descending count (ties: key ascending); trust-refused classes append
 // with the reason each failed (describeMixedReasons), so the line explains itself.
 function allRefusedOutlookLine(outlook, trustRowsArray) {
   const { eligible, refused, trustRefusedClasses } = outlook;
-  const counts = Object.entries(refused || {}).map(([key, ids]) => [key, ids.length]);
+  const { counts, total } = refusedKeyCounts(refused);
   if ((eligible || []).length > 0 || counts.length === 0) return null;
-  counts.sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
-  const total = counts.reduce((sum, [, n]) => sum + n, 0);
   let line = `# machine grants: none possible — all ${total} candidates refused (${counts.map(([k, n]) => `${k}: ${n}`).join(', ')})`;
   if (Array.isArray(trustRefusedClasses) && trustRefusedClasses.length > 0) {
     const rows = new Map((Array.isArray(trustRowsArray) ? trustRowsArray : []).map((row) => [row.key, row]));
@@ -433,6 +441,7 @@ module.exports = {
   funnelBuckets,
   machineGrantOutlook,
   allRefusedOutlookLine,
+  refusedKeyCounts,
   readyGrantedSubset,
   attachBodyForeignBlockers,
   foreignLookupSet,

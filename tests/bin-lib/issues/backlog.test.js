@@ -15,6 +15,7 @@ const {
   attachBodyForeignBlockers,
   foreignLookupSet,
   allRefusedOutlookLine,
+  refusedKeyCounts,
 } = require('../../../plugin/bin/lib/issues/backlog');
 const { parseRecordFacets, foreignBlockerRef } = require('../../../plugin/bin/lib/issues/record');
 const { bodyForeignBlockers } = require('../../../plugin/bin/lib/issues/cross-repo-states');
@@ -785,4 +786,13 @@ test('allRefusedOutlookLine lists every refusing key by count and returns null w
 test('allRefusedOutlookLine breaks count ties by key ascending', () => {
   const line = allRefusedOutlookLine({ eligible: [], refused: { zeta: [1], alpha: [2], mid: [3, 4] }, excludedOrigin: 0, trustRefusedClasses: [] }, []);
   assert.ok(line.includes('(mid: 2, alpha: 1, zeta: 1)'), line);
+});
+
+test('refusedKeyCounts sorts descending by count, breaks ties by key ascending, and sums the total', () => {
+  assert.deepStrictEqual(
+    refusedKeyCounts({ zeta: [1], alpha: [2], mid: [3, 4], big: [5, 6, 7] }),
+    { counts: [['big', 3], ['mid', 2], ['alpha', 1], ['zeta', 1]], total: 7 },
+  );
+  assert.deepStrictEqual(refusedKeyCounts({}), { counts: [], total: 0 });
+  assert.deepStrictEqual(refusedKeyCounts(undefined), { counts: [], total: 0 });
 });
