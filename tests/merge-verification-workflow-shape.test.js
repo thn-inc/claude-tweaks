@@ -130,6 +130,21 @@ test('push: absent, all, some, ignore and tags', () => {
     assert.equal(read(on).pushBranches, 'absent', on);
   }
   assert.deepEqual(read('on:\n  push:\n    branches:\n  pull_request:\n').unparsed, ['push branches not read']);
+  // a quoted `!` negation item is read, and any negated item makes the filter 'some', never 'all'
+  for (const on of ["on:\n  push:\n    branches: ['**', '!claims-registry']\n", 'on:\n  push:\n    branches: ["**", "!x"]\n',
+    "on:\n  push:\n    branches:\n      - '**'\n      - '!claims-registry'\n      - '!health-state'\n",
+    "on:\n  push:\n    branches: ['!**']\n", "on:\n  push:\n    branches: '!release/*'\n"]) {
+    const s = read(on);
+    assert.equal(s.pushBranches, 'some', on);
+    assert.deepEqual(s.unparsed, [], on);
+  }
+  // a bare `!x` is a YAML tag, not a negation pattern (GitHub requires the quotes);
+  // unbalanced quotes around a negation stay unread too
+  for (const on of ["on:\n  push:\n    branches: ['**', !x]\n", "on:\n  push:\n    branches:\n      - '**'\n      - !x\n",
+    "on:\n  push:\n    branches: ['!x\"]\n", "on:\n  push:\n    branches: ['**', '!!x']\n"]) {
+    assert.deepEqual(read(on).unparsed, ['push branches not read'], on);
+    assert.equal(read(on).pushBranches, 'absent', on);
+  }
   // the indentless top-level sequence stays inside the on: region
   assert.equal(read('on:\n- workflow_dispatch\n- push\n').pushTrigger, true);
   const none = read('on: pull_request\n');

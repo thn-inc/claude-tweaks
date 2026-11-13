@@ -148,6 +148,14 @@ test('a draft skip without a pull_request trigger counts for neither check', () 
   assert.deepEqual(r.unparsed, []);
 });
 
+test('a push-only workflow whose draft if: is not understood is not unparsed', () => {
+  const text = draftWf({ cond: 'github.event.pull_request.draft == false || always()' })
+    .replace('  pull_request:\n    types: [opened, synchronize]\n', '  push:\n    branches: [main]\n');
+  const r = review({ 'ci.yml': text });
+  assert.deepEqual(r.findings, []);
+  assert.deepEqual(r.unparsed, []);
+});
+
 test('ciSources null skips check 2; [] declares none', () => {
   for (const ciSources of [null, []]) {
     const r = review({ 'ci.yml': draftWf({ types: READY_TYPES }) }, ciSources);
@@ -179,6 +187,8 @@ test('any reader unparsed reason suppresses that workflow\'s findings: concurren
     ['concurrency not read', draftWf().replace(CONC, 'concurrency: {group: x\n')],
     ['push branches not read', draftWf().replace('    types: [opened, synchronize]\n', "    types: [opened, synchronize]\n  push:\n    branches: [main, 'x y']\n")],
     ['jobs: not read', draftWf().replace('    steps:\n      - run: npm test\n', '    steps: run-this\n')],
+    // A per-job reason keeps the other jobs, so job test's draft skip is still read.
+    ['job b if: not read', `${draftWf()}  b:\n    if:\n    runs-on: ubuntu-latest\n`],
   ];
   for (const [reason, text] of cases) {
     const r = review({ 'ci.yml': text, 'other.yml': draftWf() }, [{ suite: 'tests', workflow: 'ci.yml' }]);
@@ -214,7 +224,15 @@ test('the generated track-issue-fixes.yml is skipped (current or prior-generated
   const asOther = (xs) => xs.map((x) => ({ ...x, workflow: '.github/workflows/other.yml' }));
   assert.deepEqual(asOther(r.findings), other.findings);
   assert.deepEqual(asOther(r.unparsed), other.unparsed);
-  assert.ok(r.findings.length + r.unparsed.length > 0, 'the modified copy produces some output to compare');
+});
+
+test('a modified copy of the generated track-issue-fixes.yml reads its quoted !-negated push branches', () => {
+  const modified = generateWorkflowYaml().replace('        id: extract\n', '        id: extract\n        if: always()\n');
+  assert.equal(classifyExistingWorkflow(modified), 'modified');
+  assert.ok(/^ {6}- '!/m.test(modified), 'the fixture carries a quoted negated push branch');
+  const r = review({ 'track-issue-fixes.yml': modified });
+  assert.equal(r.reviewed, 1);
+  assert.deepEqual(r.unparsed, []);
 });
 
 test('a CRLF checkout reads the same: check 1 still fires and the generated workflow is still skipped', () => {

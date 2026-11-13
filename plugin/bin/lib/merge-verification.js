@@ -445,8 +445,10 @@ function readyRequirement(workflows) {
 const PR_FILTER_KEYS = Object.freeze(['branches', 'branches-ignore', 'paths', 'paths-ignore']);
 
 // A push branch-filter item, optionally quoted with balanced quotes: BLOCK_ITEM
-// widened with digits and the glob/path characters `*`, `/`, `.`, `-`.
-const BRANCH_ITEM = /^(['"]?)[A-Za-z0-9_*/.-]+\1$/;
+// widened with digits and the glob/path characters `*`, `/`, `.`, `-`. A quoted
+// item may lead with one `!` (a negation pattern); a bare `!x` is a YAML tag,
+// not a pattern, so it stays unread.
+const BRANCH_ITEM = /^(?:(['"])!?[A-Za-z0-9_*/.-]+\1|[A-Za-z0-9_*/.-]+)$/;
 const BLOCK_SCALAR = /^[|>][-+0-9]*$/;
 const PLAIN_KEY = /^[^\s#'"[\]{},&*!|>%@`-]\S*$/;
 // Every `(.*)` below carries the `s` flag: a stray `\r` or U+2028 left in a
