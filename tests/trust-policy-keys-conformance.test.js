@@ -90,21 +90,18 @@ function scanTree() {
   const siteFiles = [];
   let sites = 0;
   const offenders = [];
-  for (const file of walk(BIN_ROOT, '.js')) {
-    const rel = path.relative(ROOT, file);
-    if (rel === DEFINITION) continue;
-    const r = jsScan(readText(file), rel);
-    if (r.sites > 0) siteFiles.push(rel.split(path.sep).join('/'));
-    sites += r.sites;
-    offenders.push(...r.offenders);
-  }
-  for (const file of walk(SKILLS_ROOT, '.md')) {
-    const rel = path.relative(ROOT, file);
-    const r = mdScan(readText(file), rel);
-    if (r.sites > 0) siteFiles.push(rel.split(path.sep).join('/'));
-    sites += r.sites;
-    offenders.push(...r.offenders);
-  }
+  const scanFiles = (root, ext, scan) => {
+    for (const file of walk(root, ext)) {
+      const rel = path.relative(ROOT, file);
+      if (rel === DEFINITION) continue;
+      const r = scan(readText(file), rel);
+      if (r.sites > 0) siteFiles.push(rel.split(path.sep).join('/'));
+      sites += r.sites;
+      offenders.push(...r.offenders);
+    }
+  };
+  scanFiles(BIN_ROOT, '.js', jsScan);
+  scanFiles(SKILLS_ROOT, '.md', mdScan);
   return { siteFiles: siteFiles.sort(), sites, offenders };
 }
 
