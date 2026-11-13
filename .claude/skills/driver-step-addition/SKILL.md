@@ -51,6 +51,13 @@ The worker can shape strings such as its summary, a path it named, or CLI stderr
 2. Read back whether the first attempt landed.
 3. Retry once.
 
+### A step that waits on time
+
+The ci step polls until a settle window measured from the push has passed (`CI_SETTLE_WINDOW_MS`, #5277), and until a bound measured from its own start. A step that measures time follows the same shape:
+- A start time set by an earlier step travels on `ctx` (the push step sets `ctx.pushedAt = deps.now()`), starts as `null` in `newCtx`, and the reading step falls back when it is unset (`ctx.pushedAt ?? started`). A timestamp is not a side effect, so it gets no `interruptClass` rung.
+- The step's time constants are exported from `steps.js` and each is pinned by value in a test, as `CI_WAIT_BOUND_MS`, `CI_POLL_INTERVAL_MS` and `CI_SETTLE_WINDOW_MS` are. Poll and call counts in tests are derived from those constants (`WINDOW_POLLS`), never written as numbers, so a changed window changes the expectation with it.
+- The harness clock advances 1 per `now()` call and `ms` per `sleep(ms)`, and nowhere else. A test that records sleeps wraps the harness's own: `const tick = h.deps.sleep; h.deps.sleep = (ms) => { sleeps.push(ms); return tick(ms); };`. To place time at a point in the run, a scripted reply calls `h.deps.sleep(ms)` itself (the two `the settle window is measured from the push` tests move it inside `gh pr create` and inside `verify.js`).
+
 ## Anti-Patterns
 
 | Pattern | Why it fails here |
@@ -60,6 +67,8 @@ The worker can shape strings such as its summary, a path it named, or CLI stderr
 | A step-name literal in `run.js` | It breaks the table-only contract, and `AC13.1` fails on it |
 | Retrying outside the pr step, or retrying a create blind | `AC6.6` fails, and a lost response may already have landed, so a blind retry opens a duplicate PR |
 | Raw worker text in a `detail` | A `closes #N` or `@user` inside it reaches the forge (AC14.3) |
+| Passing `deps: { sleep }` to the harness to record sleeps | The replacement stops the harness clock, so a loop bounded on time only ends once `now()`'s one-per-call ticks cover the window or the bound. Two tests did this, and had to wrap the harness's `sleep` once the ci step waited on time (#5277) |
+| Keeping every intermediate read on `ctx` for the interrupt handler | The interrupted line reports it as the record's word, though the loop would not have ended on it. The ci step keeps `ctx.ci` at `pending` until a read is final (`AC14: an interrupt after an unsettled early read reports pending, never that read`) |
 
 ## Reference
 
