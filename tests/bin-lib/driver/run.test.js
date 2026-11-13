@@ -2651,6 +2651,13 @@ test('AC11: docs/plugin-structure.md lists drive.js', () => {
   assert.match(readText(DOC), /node plugin\/bin\/drive\.js #N/);
 });
 
+test('budget AC10.1: docs/plugin-structure.md names drive.js --budget and budget.js', () => {
+  const doc = readText(DOC);
+  assert.match(doc, /node plugin\/bin\/drive\.js --budget <n\|all>/);
+  assert.match(doc, /budget\.js — `runBudget/);
+  assert.match(doc, /budget\.test\.js/);
+});
+
 // --- gh repo target, transient classification, interrupt during the retry wait -----------------
 
 // A ghCreate whose first call throws the transient error and whose second prints the PR.
