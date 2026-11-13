@@ -42,7 +42,7 @@ files:
 - **Red flags:** a launch that never returns, or a `timeout` envelope with worker processes still running and no `detail` saying so.
 
 ### 5. Check it against a real worker — a terminal
-- **URL:** `DRIVER_LIVE_SMOKE=1 node --test --test-name-pattern="AC7: live smoke test" tests/bin-lib/driver/worker.test.js`
+- **URL:** `DRIVER_LIVE_SMOKE=1 node --test --test-name-pattern="live smoke test" tests/bin-lib/driver/worker.test.js`
 - **Action:** run it after a Claude Code upgrade, or before trusting the launcher on a new machine. It starts one small real worker in a temporary directory and spends a few tokens.
 - **Should feel:** like a seat-belt check: one command, well under a minute, a plain pass or fail.
 - **Should understand:** the test shows the write the worker is allowed, and that an `echo` redirect, a `curl`, a write into `.git` and two `git log --output` attempts leave nothing behind. On macOS it also runs `npm test` through the worker: the test file's read of a canary placed in the home directory must fail with a permission error, while `npm test` itself still runs on the same `node` as `PATH` names. Without the variable the test is skipped, so the ordinary suite never spends tokens.
