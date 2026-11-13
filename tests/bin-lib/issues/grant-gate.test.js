@@ -417,3 +417,52 @@ test('re-authorization (bot:blocked) path is unaffected by this module — it is
   });
   assert.equal(result.grant, true);
 });
+
+test('AC2 key 3b: a bare mixed row keeps the plain reason — no empty parentheses, no rate segment', () => {
+  const result = evaluateGrantGate({
+    record: baseRecord(),
+    policy: basePolicy(),
+    trustVerdicts: new Map([['producer:code-health|low', { verdict: 'mixed', kind: 'producer' }]]),
+    grantCheck: clearGrantCheck,
+  });
+  assert.equal(result.reason, 'class producer:code-health|low verdict is mixed — only a clean class earns a machine-originated grant');
+  assert.doesNotMatch(result.reason, /\(\)/);
+  assert.doesNotMatch(result.reason, /follow-up rate/);
+});
+
+test('AC7.1: a mixed row\'s deny reason names the rate and the threshold', () => {
+  const row = { key: 'producer:code-health|low', kind: 'producer', verdict: 'mixed', mixedReasons: ['follow-up-rate'], followUpRecords: 1, total: 3, followUpRate: 1 / 3, followUpRateMaxPercent: 30, changesRequested: 0, negativeEvidence: 0 };
+  const result = evaluateGrantGate({
+    record: baseRecord(),
+    policy: basePolicy(),
+    trustVerdicts: new Map([['producer:code-health|low', row]]),
+    grantCheck: clearGrantCheck,
+  });
+  assert.equal(result.failedKey, 'trust');
+  assert.match(result.reason, /33\.4%/);
+  assert.match(result.reason, /30%/);
+  assert.match(result.reason, /mixed/);
+});
+
+test('AC7.1: a mixed row pinned only by negative evidence still names the rate and the threshold', () => {
+  const row = { key: 'producer:code-health|low', kind: 'producer', verdict: 'mixed', mixedReasons: ['negative-evidence'], followUpRecords: 0, total: 3, followUpRate: 0, followUpRateMaxPercent: 30, changesRequested: 0, negativeEvidence: 1 };
+  const result = evaluateGrantGate({
+    record: baseRecord(),
+    policy: basePolicy(),
+    trustVerdicts: new Map([['producer:code-health|low', row]]),
+    grantCheck: clearGrantCheck,
+  });
+  assert.match(result.reason, /1 negative/);
+  assert.match(result.reason, /follow-up rate 0% \(max 30%\)/);
+});
+
+test('AC7.1: a non-mixed verdict keeps today\'s reason text', () => {
+  const row = { key: 'producer:code-health|low', kind: 'producer', verdict: 'insufficient-evidence', followUpRecords: 0, total: 1, followUpRateMaxPercent: 30 };
+  const result = evaluateGrantGate({
+    record: baseRecord(),
+    policy: basePolicy(),
+    trustVerdicts: new Map([['producer:code-health|low', row]]),
+    grantCheck: clearGrantCheck,
+  });
+  assert.equal(result.reason, 'class producer:code-health|low verdict is insufficient-evidence — only a clean class earns a machine-originated grant');
+});

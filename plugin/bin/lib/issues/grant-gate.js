@@ -20,7 +20,7 @@
 
 const { normalizeLabelNames, parseRecordFacets } = require('./record.js');
 const { resolveProvenance } = require('./provenance.js');
-const { riskBand } = require('./trust.js');
+const { riskBand, describeMixedReasons, followUpRatePercent } = require('./trust.js');
 const { permittedGrants } = require('./autonomy.js');
 const { isSensitivePath } = require('./blast-radius.js');
 const { exceedsOversightFloor } = require('./oversight-floor.js');
@@ -94,7 +94,16 @@ function evaluateGrantGate({ record, policy, trustVerdicts, grantCheck } = {}) {
   // string is what the audit log names, so it must not conflate them.
   const verdict = row ? row.verdict : 'no-cell';
   if (verdict !== 'clean') {
-    return deny('trust', `class ${classKey} verdict is ${verdict} — only a clean class earns a machine-originated grant`, { classKey, verdict });
+    // A mixed row names why (reasons) and how far from the bar (rate vs max);
+    // a bare hand-built row has neither, so each segment drops independently.
+    let detail = '';
+    if (verdict === 'mixed') {
+      const reasons = describeMixedReasons(row);
+      const rate = followUpRatePercent(row);
+      if (reasons) detail += ` (${reasons})`;
+      if (rate !== null) detail += ` — follow-up rate ${rate}% (max ${row.followUpRateMaxPercent}%)`;
+    }
+    return deny('trust', `class ${classKey} verdict is ${verdict}${detail} — only a clean class earns a machine-originated grant`, { classKey, verdict });
   }
 
   // Gate 3: record carries a by:* sweep origin (agent-filed) — a human-filed
