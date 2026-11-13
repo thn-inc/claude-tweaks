@@ -84,7 +84,8 @@ function branchOfWorktree(root, worktreePath) {
 // as 'abandoned' for steps 4-5: skip branch/ref deletion rather than guess intent). `opts.deps`
 // — test seam for the gh call and (`deps.runGit`) the dead-owner unlock call only; every other
 // git call goes through the real runGit (fixture repos are real git repos, matching this
-// codebase's existing convention for reconcile/archive tests).
+// codebase's existing convention for reconcile/archive tests). `opts.liveness` — passed through to
+// runLiveness as its `{ now, probes }` options (#5293), so a test can inject the owner verdict's probes.
 // #3023: a failed git call's best available cause — stderr when git wrote any,
 // else its exit status (plus stdout when present), else the failure category
 // (e.g. timeout, spawn), so "no error text" only appears when nothing at all
