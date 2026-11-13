@@ -20,6 +20,18 @@
 //   - A throw from fn is `{ status: 'fail', detail: err.message }` with the step's class.
 //
 // Every external call goes through `deps`; nothing here reads process state.
+//
+// The ci step holds every read other than `pending` or `stale` to a settle window of 2 minutes,
+// measured from the push (CI_SETTLE_WINDOW_MS); `pending` and `stale` keep polling. The step runs
+// seconds after `gh pr create`, before GitHub has created the test workflow for the pushed commit:
+// in the #5215 Phase 1 proof every ci step ended within ~5 seconds, recording `green` (#4198,
+// #4351) or `pending` (#3931) while the test shards had not started, because the only checks on
+// the PR were fast workflows already finished or skipped. "At least one run on the commit" alone
+// does not close that gap (#4198's commit had a finished skipped `label-fix-branch` run before the
+// test workflow existed), so the window does. A settled read also needs at least one workflow run
+// on the pushed sha (ctx.check.head, what express-lane.js check verified), read from the poll's
+// pr-checks envelope (headRunCount, trusted only when its headRefOid is that sha): a commit still
+// without one once the window has passed is recorded as `no-ci`, and an unreadable count is never `no-ci`.
 const path = require('node:path');
 const { STEP, STOP_CLASSES, neutralize, normalizeTitle, CLI_TIMEOUT_MS, firstLine, errorText } = require('./events');
 const { parseStatusPorcelainZ } = require('../git-z');
@@ -44,6 +56,8 @@ const TRANSPORT_RE = /^[a-z-]+$/;
 // How long the ci step waits for a pending or stale check state, and how often it polls.
 const CI_WAIT_BOUND_MS = 30 * 60 * 1000;
 const CI_POLL_INTERVAL_MS = 30 * 1000;
+// No ci read may end the step earlier than this after the push (see the header paragraph).
+const CI_SETTLE_WINDOW_MS = 2 * 60 * 1000;
 // On win32 the worker launcher's default `bin` (`claude`) does not find an npm-installed
 // `claude.cmd`, so a win32 caller passes this explicitly.
 const WIN32_CLAUDE_BIN = 'claude.cmd';
@@ -694,6 +708,7 @@ const pushStep = defineStep(STEP.push, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
     return { status: 'fail', detail };
   }
   ctx.pushed = true;
+  ctx.pushedAt = deps.now();
   return { status: 'ok' };
 });
 
@@ -824,46 +839,88 @@ const summaryStep = defineStep(STEP.summary, STOP_CLASSES.NONE, async (ctx, deps
 
 const CI_STATES = new Set(['red', 'inherited-red', 'pending', 'stale', 'green', 'no-ci', 'read-failed', 'no-pr', 'gh-absent']);
 
-// One pr-checks.js read in the worktree (it reads local HEAD from its cwd): the state word, or
-// `read-failed` for a non-zero exit, unparseable stdout or a word outside the vocabulary.
+// One pr-checks.js read in the worktree (it reads local HEAD from its cwd): `{ state, pending }`,
+// the state word (or `read-failed` for a non-zero exit, unparseable stdout or a word outside the
+// vocabulary) and the envelope's `pending` check names (strings only; anything else is empty).
 function readCiState(ctx, deps, args) {
   try {
     const r = deps.node(binScript('pr-checks.js'), args, { cwd: ctx.wt, timeout: CLI_TIMEOUT_MS, env: deps.env });
     const parsed = r.code === 0 ? JSON.parse(r.stdout) : null;
-    if (parsed && typeof parsed.state === 'string' && CI_STATES.has(parsed.state)) return parsed.state;
+    if (parsed && typeof parsed.state === 'string' && CI_STATES.has(parsed.state)) {
+      return {
+        state: parsed.state,
+        pending: Array.isArray(parsed.pending) ? parsed.pending.filter((n) => typeof n === 'string') : [],
+        runs: commitRuns(ctx, parsed),
+      };
+    }
   } catch { /* an unparseable read is read-failed */ }
-  return 'read-failed';
+  return { state: 'read-failed', pending: [], runs: 'unreadable' };
+}
+
+// The workflow runs on the pushed commit (ctx.check.head), from the pr-checks envelope's own
+// head-runs count (pr-checks.js already lists the head sha's runs on every read, so the step
+// makes no `gh run list` call of its own): `some` for at least one run, `none` for zero, and
+// `unreadable` when the count is absent or not a non-negative integer, or the envelope's
+// headRefOid is not the pushed sha (the PR head moved, or the read never reached the runs).
+function commitRuns(ctx, parsed) {
+  const count = parsed.headRunCount;
+  if (!Number.isInteger(count) || count < 0 || parsed.headRefOid !== ctx.check.head) return 'unreadable';
+  return count > 0 ? 'some' : 'none';
 }
 
 // Reads the PR's check rollup at the worktree's HEAD. Polls `pr-checks.js --pr {n}` (which
-// writes no decisions.md line) while the state is pending, then makes exactly one `--run` read
-// under the express-lane section: that read logs the gate's own line once, and its state is the
-// one recorded (`timeout` when it is still pending at the bound; only this read can say `stale`).
-// Never halts and always reports `ok`: the word it reads is data for the reviewer. The wait is
-// reported as extra.ciWaitMs, so the final line can exclude it without naming this step. A signal
-// during a sleep is delivered mid-step (run.js's handler writes the stop); polling then stops.
-// For that handler, ctx.ci holds the last polled state and ctx.ciWaitStartedAt the wait's start
-// while the step runs, so the interrupted line reports the state and the wait so far.
+// writes no decisions.md line) while the state is pending or stale, or until the settle window
+// (CI_SETTLE_WINDOW_MS, measured from ctx.pushedAt) has passed and the commit has a workflow run
+// (commitRuns, taken from each settled poll's envelope until one is seen), then makes exactly one `--run`
+// read under the express-lane section: that read logs the gate's own line once, and its state is
+// the one recorded (`timeout` when it is still pending or stale at the bound; only this read can
+// say `stale`; `no-ci` when the commit still has no run once the window has passed). The head-runs
+// count covers GitHub Actions runs only while pr-checks classifies the whole rollup, so with no Actions run
+// `red`/`inherited-red` stay as read (a failing non-Actions check is conclusive), a failed read
+// (`read-failed`, `gh-absent`, `no-pr`) stays as read (it never saw the non-Actions checks), and a
+// `pending` poll that names pending checks keeps polling (a non-Actions check is still running) until the bound.
+// The `--run` read writes its own decisions.md gate line (e.g. "checks pending — passed with
+// caveat"), which can therefore disagree with the recorded word when that is `no-ci` or `timeout`.
+// Never halts and always reports `ok`: the word it reads is data for the reviewer.
+// The wait is reported as extra.ciWaitMs, so the final line can exclude it without naming this
+// step. A signal during a sleep is delivered mid-step (run.js's handler writes the stop); polling
+// then stops. For that handler, ctx.ci holds the last polled state only once that read is final
+// (the loop is about to exit on it), else `pending` (finalEvent's word for a state never read as
+// final), and ctx.ciWaitStartedAt the wait's start while the step runs, so the interrupted line
+// reports the state and the wait so far.
 const ciStep = defineStep(STEP.ci, STOP_CLASSES.NONE, async (ctx, deps) => {
   const started = deps.now();
+  const settleFrom = ctx.pushedAt ?? started;
   ctx.ciWaitStartedAt = started;
-  let polled = 'read-failed';
   let timedOut = false;
+  let runs = null; // the commit-run read's last word, taken once the window has passed
+  ctx.ci = 'pending';
   for (;;) {
-    polled = readCiState(ctx, deps, ['--pr', String(ctx.pr.number)]);
-    ctx.ci = polled;
-    if (polled !== 'pending' || ctx.shared.interrupted) break;
-    if (deps.now() - started >= CI_WAIT_BOUND_MS) {
+    const read = readCiState(ctx, deps, ['--pr', String(ctx.pr.number)]);
+    const polled = read.state;
+    const now = deps.now();
+    const settled = now - settleFrom >= CI_SETTLE_WINDOW_MS;
+    if (settled && runs !== 'some') runs = read.runs;
+    const waiting = polled === 'pending' || polled === 'stale';
+    // With no Actions run, a pending poll that names pending checks is a non-Actions check still running.
+    const otherCheckRunning = polled === 'pending' && read.pending.length > 0;
+    const settledEnd = settled && (!waiting || (runs === 'none' && !otherCheckRunning));
+    const bound = !settledEnd && now - started >= CI_WAIT_BOUND_MS;
+    // Only a read the loop is about to exit on is final; any other is not what the run saw.
+    ctx.ci = (settledEnd || bound) && !ctx.shared.interrupted ? polled : 'pending';
+    if (settledEnd || ctx.shared.interrupted) break;
+    if (bound) {
       timedOut = true;
       break;
     }
     await deps.sleep(CI_POLL_INTERVAL_MS);
     if (ctx.shared.interrupted) break;
   }
-  let state = polled;
+  let state = ctx.ci;
   if (!ctx.shared.interrupted) {
-    state = readCiState(ctx, deps, ['--run', ctx.runDir, '--section', '/express-lane']);
-    if (timedOut && state === 'pending') state = 'timeout';
+    state = readCiState(ctx, deps, ['--run', ctx.runDir, '--section', '/express-lane']).state;
+    if (timedOut && (state === 'pending' || state === 'stale')) state = 'timeout';
+    if (runs === 'none' && (state === 'green' || state === 'pending' || state === 'stale')) state = 'no-ci';
   }
   ctx.ci = state;
   ctx.ciWaitStartedAt = null;
@@ -876,6 +933,6 @@ const STEPS = Object.freeze([
 ]);
 
 module.exports = {
-  STEPS, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, WIN32_CLAUDE_BIN,
+  STEPS, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN,
   VERIFY_TIMEOUT_MS,
 };
