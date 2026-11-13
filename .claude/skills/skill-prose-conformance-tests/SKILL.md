@@ -86,7 +86,7 @@ When skill prose carries a shell or `node -e` snippet the reader is told to run,
 
 ### Run a whole embedded fence as a parity oracle — lazy-loaded
 
-When a Node port of a skill's bash fence must match the fence, and the test runs the fence whole as the oracle, read `whole-fence-parity-oracle.md` alongside this file before writing the harness. It covers fence extraction with a named bash-4 skip, the explicit spawn env, git identity through env rather than `-c user.*`, PATH shims answered from one canned table, the per-pair escape guard, shared temp-name and clock seams, and the guard that fails when the port prints a diagnostic the reference did not.
+When a Node port of a skill's bash fence must match the fence, and the test runs the fence whole as the oracle, read `whole-fence-parity-oracle.md` alongside this file before writing the harness. It covers fence extraction with a named bash-4 skip, the explicit spawn env, git identity through env rather than `-c user.*`, PATH shims answered from one canned table, fork-free `sh` shims that behave alike under dash and macOS `/bin/sh`, the per-pair escape guard, shared temp-name and clock seams, and the guard that fails when the port prints a diagnostic the reference did not.
 
 ### Pin a mirrored copy or a clean-room-dispatched sub-file — lazy-loaded
 
