@@ -6,8 +6,10 @@
 // line, and that text is uncapped. These shapes were found when the closing-keyword rule narrowed to
 // "only before a reference" and the reference passes began repeating to a fixed point:
 //   - `fix` + a long whitespace run + a non-reference: the lookahead grammar `\s*:?\s*` split the run
-//     two ways at every length, quadratic (60k spaces took ~7.6s pre-fix; now `(?:\s*:)?\s*`).
-//   - a keyword + a whitespace run + a colon + a reference: same split, same pre-fix cost class.
+//     two ways at every length, quadratic (60k spaces took ~7.6s, 100k ~52s pre-fix; now
+//     `(?:\s*:)?\s*`).
+//   - a keyword + a whitespace run + a colon + a reference: not slow pre-fix (the greedy run reaches
+//     the colon at once); kept as a verdict guard that the rewritten grammar still removes it.
 //   - many fragments that each need a second removal pass (`h#7ttps://…` rebuilt into a URL): the
 //     fixed-point loop must stay linear in the number of fragments; pre-loop the verdict was wrong
 //     (a closing URL survived), so that case is guarded by its verdict as well as its time.
