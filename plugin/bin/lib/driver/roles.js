@@ -109,7 +109,14 @@
 // entry; the system temporary directory and the CLI's per-user scratch root under the
 // block alone). `git diff --no-index` reaches outside the working directory only as
 // far as that set does. With the network denied, the worker's own result text is the
-// remaining way out for what it read from that set. This is a stated residual.
+// remaining way out for what it read from that set. This is a stated residual. The
+// derived set has one of its own: when the first word or the shebang interpreter is a
+// real file directly in `<prefix>/bin`, the whole prefix is re-opened, e.g. `~/.cargo`
+// (which holds `credentials.toml`), `~/.local` (`share/`, `state/`), or `/usr/local`
+// under Intel Homebrew (`etc/`, `var/`). The driver's `npm test` derives narrow roots
+// under nvm, Homebrew, fnm and the official installer (the 2026-11-13 live run:
+// `~/.nvm/versions/node/v22.23.2` and npm's package directory inside it). Narrowing the
+// rule is tracked as a follow-up record.
 //
 // The read block, and what it rests on. Probed on Claude Code CLI 2.1.322, macOS,
 // 2026-11-12, under a subscription login with no TTY, using a test file the worker
@@ -135,11 +142,14 @@
 // plus the root of the interpreter its first word's shebang names, one level deep.
 // The shebang half exists because the driver's test command is `npm test`: npm's
 // real path, `…/lib/node_modules/npm/bin/npm-cli.js`, starts `#!/usr/bin/env node`,
-// and that `node` (`…/bin/node`) lies outside npm's own root. An `env` shebang is parsed
-// fail-safe: only known options are skipped, and an unknown option, `-P` or bundled
-// flags yield no interpreter root. A root that would be `/`, the home directory or an
-// ancestor of it falls back to the binary's own directory, else to nothing, since
-// re-opening home would undo the block. The readable paths go through
+// and that `node` (`…/bin/node`) lies outside npm's own root. An `env` shebang is
+// parsed fail-safe: only known options are skipped, and an unknown option, `-P` or
+// bundled flags yield no interpreter root. A root that would be `/`, the home directory
+// or an ancestor of it falls back to the binary's own directory, else to nothing, since
+// re-opening home would undo the block; home is both `HOME` and the account's passwd
+// home, so an unset or wrong `HOME` does not re-open it. The command and the
+// interpreter count only when their real path is an executable regular file, and a
+// root inside another derived root is dropped. The readable paths go through
 // `sandbox.filesystem.allowRead`, never `additionalDirectories` or `--add-dir`: the
 // CLI documentation says those directories also become writable by sandboxed
 // commands. The blocked `~/.npmrc` does not stop the test command: probed 2026-11-13
@@ -268,32 +278,37 @@ function implementerSettings({ testCommand, platform, readPaths = [] } = {}) {
 }
 
 // The first word of a command as a real path: an absolute word is the path, a relative
-// one (it has a `/`) is refused, a bare name goes through the PATH lookup seam. Any seam
-// throw, and any non-absolute answer, is a null, never an error: a missing toolchain just
-// re-opens nothing.
+// one (it has a `/`) is refused, a bare name goes through the PATH lookup seam. The real
+// path must be an executable regular file (`isExecutable` answers `true`): any other file
+// would re-open its directory for nothing it runs. Any seam throw, a missing
+// `isExecutable`, and any non-absolute answer is a null, never an error: a missing
+// toolchain just re-opens nothing.
 function resolveCommandWord(command, deps) {
   try {
+    if (typeof deps.isExecutable !== 'function') return null;
     const word = command.split(' ')[0];
     let found;
     if (word.includes('/')) found = path.posix.isAbsolute(word) ? word : null;
     else found = deps.lookup(word);
     if (typeof found !== 'string' || found === '') return null;
     const real = deps.realpath(found);
-    return typeof real === 'string' && path.posix.isAbsolute(real) && path.posix.normalize(real) === real ? real : null;
+    if (!(typeof real === 'string' && path.posix.isAbsolute(real) && path.posix.normalize(real) === real)) return null;
+    return deps.isExecutable(real) === true ? real : null;
   } catch (e) {
     return null;
   }
 }
 
 // The directory to re-open for a binary: the root above `bin/`, else the binary's own
-// directory. Never `/`, and never home or an ancestor of it, whether home is taken as
-// given or through its real path.
+// directory. Never `/`, and never a home (`deps.home`, one path or a list of them) or an
+// ancestor of one, whether that home is taken as given or through its real path.
 function rootOfReal(real, deps) {
   const homes = [];
-  if (typeof deps.home === 'string' && deps.home !== '') {
-    homes.push(deps.home);
+  for (const home of Array.isArray(deps.home) ? deps.home : [deps.home]) {
+    if (typeof home !== 'string' || home === '') continue;
+    homes.push(home);
     try {
-      const realHome = deps.realpath(deps.home);
+      const realHome = deps.realpath(home);
       if (typeof realHome === 'string' && realHome !== '') homes.push(realHome);
     } catch (e) { /* the home as given still guards */ }
   }
@@ -347,7 +362,11 @@ function toolchainReadPaths(testCommand, deps = {}) {
   let interpreter = null;
   try { interpreter = shebangInterpreter(deps.firstLine(real)); } catch (e) { /* adds nothing */ }
   if (interpreter !== null) roots.push(toolchainRoot(interpreter, deps));
-  return roots.filter((r, i) => r !== null && roots.indexOf(r) === i);
+  // A root inside another root (npm's package directory under the Node installation that
+  // holds its `node`) adds nothing; of two equal roots the first stays.
+  const found = roots.filter((r) => r !== null);
+  return found.filter((r, i) => !found.some((other, j) =>
+    (other === r ? j < i : isAncestorOrSelf(other, r, { pathImpl: path.posix }))));
 }
 
 // The one spend-ceiling rule, shared by composeArgs and the launcher: absent passes.

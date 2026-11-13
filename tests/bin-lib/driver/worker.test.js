@@ -10,7 +10,7 @@ const crypto = require('node:crypto');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const worker = require(path.join(LIB, 'driver', 'worker.js'));
 const { launchWorker, buildEnv, conformsTo, ENVELOPE_FIELDS, ENV_ALLOW, ENV_ALLOW_WIN32 } = worker;
-const { RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings } = require(path.join(LIB, 'driver', 'roles.js'));
+const { RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainReadPaths } = require(path.join(LIB, 'driver', 'roles.js'));
 const OK = require('./fixtures/worker-result.json');
 const BUDGET = require('./fixtures/worker-result-budget.json');
 
@@ -114,7 +114,7 @@ test('AC6: a result with permission denials stays ok, and the runner is called e
 
 test('AC4.1: with no readPaths the settings file\'s allowRead holds the derived toolchain root, and given readPaths are written exactly', async (t) => {
   const looked = [];
-  const toolchain = { lookup: (name) => { looked.push(name); return name === 'node' ? '/h/.nvm/versions/node/v22/bin/node' : null; }, realpath: (p) => p, firstLine: () => '' };
+  const toolchain = { lookup: (name) => { looked.push(name); return name === 'node' ? '/h/.nvm/versions/node/v22/bin/node' : null; }, realpath: (p) => p, firstLine: () => '', isExecutable: () => true };
   const derived = fakeRunner(okOut());
   await launchWorker(base(t), { runner: derived.runner, toolchain });
   assert.deepStrictEqual(JSON.parse(derived.calls[0].files['--settings'].text).sandbox.filesystem.allowRead, ['/h/.nvm/versions/node/v22']);
@@ -146,7 +146,7 @@ test('AC2.1: a bad readPaths is refused before anything is written', async (t) =
 
 test('a bad testCommand is refused with the testCommand TypeError before any lookup', async (t) => {
   const looked = [];
-  const toolchain = { lookup: (name) => { looked.push(name); return null; }, realpath: (p) => p, firstLine: () => '' };
+  const toolchain = { lookup: (name) => { looked.push(name); return null; }, realpath: (p) => p, firstLine: () => '', isExecutable: () => true };
   const { runner, calls } = fakeRunner(okOut());
   const opts = base(t, { testCommand: undefined, settingsDir: path.join(tmp(t), 'not-yet') });
   await assert.rejects(launchWorker(opts, { runner, toolchain }), (err) => err instanceof TypeError && /testCommand/.test(err.message));
@@ -158,7 +158,7 @@ test('a bad testCommand is refused with the testCommand TypeError before any loo
 test('off the probed platforms nothing is derived', async (t) => {
   // The derivation tolerates a throwing seam, so the probe records calls instead.
   const looked = [];
-  const toolchain = { lookup: (name) => { looked.push(name); return null; }, realpath: (p) => p, firstLine: () => '' };
+  const toolchain = { lookup: (name) => { looked.push(name); return null; }, realpath: (p) => p, firstLine: () => '', isExecutable: () => true };
   const { runner, calls } = fakeRunner(okOut());
   const env = await launchWorker(base(t, { platform: 'linux' }), { runner, toolchain });
   assert.strictEqual(env.status, 'ok');
@@ -179,13 +179,60 @@ test('realToolchainDeps skips relative and empty PATH entries and finds an execu
   assert.strictEqual(deps.lookup('plain'), null);
   assert.strictEqual(deps.lookup('missing'), null);
   assert.strictEqual(deps.firstLine(path.join(dir, 'tool')), '#!/usr/bin/env node');
-  assert.strictEqual(deps.home, '/h');
+  assert.deepStrictEqual(deps.home, ['/h', os.userInfo().homedir]);
   fs.symlinkSync(dir, path.join(dir, 'link'));
   assert.strictEqual(deps.realpath(path.join(dir, 'link')), fs.realpathSync.native(dir));
   assert.throws(() => deps.realpath(path.join(dir, 'missing')), /cannot resolve/);
   const only = worker.realToolchainDeps({ PATH: ['', rel].join(':') });
   assert.strictEqual(only.lookup('tool'), null);
   assert.strictEqual(worker.realToolchainDeps({}).lookup('tool'), null);
+});
+
+test('realToolchainDeps guards both HOME and the passwd home, and a passwd lookup that throws drops only that entry', (t) => {
+  assert.deepStrictEqual(worker.realToolchainDeps({ HOME: '/h' }, { userHome: '/u' }).home, ['/h', '/u']);
+  assert.deepStrictEqual(worker.realToolchainDeps({ HOME: '/h' }).home, ['/h', os.userInfo().homedir]);
+  assert.deepStrictEqual(worker.realToolchainDeps({}).home, [os.userInfo().homedir]);
+  t.mock.method(os, 'userInfo', () => { throw new Error('no passwd entry'); });
+  assert.deepStrictEqual(worker.realToolchainDeps({ HOME: '/h' }).home, ['/h']);
+});
+
+test('with HOME unset, a binary directly in the passwd home\'s bin never re-opens that home', { skip: process.platform === 'win32' && 'POSIX modes' }, (t) => {
+  const home = fs.realpathSync.native(tmp(t));
+  const bin = path.join(home, 'bin');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'npm'), 'x', { mode: 0o755 });
+  fs.chmodSync(path.join(bin, 'npm'), 0o755);
+  const readPaths = toolchainReadPaths('npm test', worker.realToolchainDeps({ PATH: bin }, { userHome: home }));
+  assert.deepStrictEqual(readPaths, [bin]);
+});
+
+test('realToolchainDeps.isExecutable is true only for an executable regular file, and never throws', { skip: process.platform === 'win32' && 'POSIX modes' }, (t) => {
+  const dir = tmp(t);
+  fs.writeFileSync(path.join(dir, 'tool'), 'x', { mode: 0o755 });
+  fs.chmodSync(path.join(dir, 'tool'), 0o755);
+  fs.writeFileSync(path.join(dir, 'key'), 'secret', { mode: 0o600 });
+  fs.chmodSync(path.join(dir, 'key'), 0o600);
+  const { isExecutable } = worker.realToolchainDeps({});
+  assert.strictEqual(isExecutable(path.join(dir, 'tool')), true);
+  assert.strictEqual(isExecutable(path.join(dir, 'key')), false);
+  assert.strictEqual(isExecutable(dir), false);
+  assert.strictEqual(isExecutable(path.join(dir, 'missing')), false);
+  assert.strictEqual(isExecutable(undefined), false);
+});
+
+test('an executable whose shebang names a non-executable file under home re-opens only its own root', { skip: process.platform === 'win32' && 'POSIX modes' }, (t) => {
+  const base = fs.realpathSync.native(tmp(t));
+  const home = path.join(base, 'home');
+  fs.mkdirSync(path.join(home, '.ssh'), { recursive: true });
+  const key = path.join(home, '.ssh', 'id_ed25519');
+  fs.writeFileSync(key, 'secret', { mode: 0o600 });
+  fs.chmodSync(key, 0o600);
+  const bin = path.join(base, 'wt', 'node_modules', '.bin');
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(path.join(bin, 'npm'), '#!' + key + '\n', { mode: 0o755 });
+  fs.chmodSync(path.join(bin, 'npm'), 0o755);
+  const readPaths = toolchainReadPaths('npm test', worker.realToolchainDeps({ PATH: bin, HOME: home }));
+  assert.deepStrictEqual(readPaths, [bin]);
 });
 
 test('AC12: a launch off the sandbox-probed platforms carries no Bash tool and no Bash rule', async (t) => {
@@ -861,7 +908,7 @@ test('AC7/AC6.1: live smoke test — the write runs, and the echo, curl and .git
   let expectedNode;
   let canary;
   if (probed) {
-    canary =path.join(os.homedir(), '.driver-smoke-canary-' + crypto.randomBytes(6).toString('hex'));
+    canary = path.join(os.homedir(), '.driver-smoke-canary-' + crypto.randomBytes(6).toString('hex'));
     fs.writeFileSync(canary, 'canary', { flag: 'wx' });
     t.after(() => fs.rmSync(canary, { force: true }));
     fs.writeFileSync(path.join(cwd, 'package.json'), JSON.stringify({ private: true, scripts: { test: 'node --test' } }));
@@ -886,7 +933,7 @@ test('AC7/AC6.1: live smoke test — the write runs, and the echo, curl and .git
     expectedVersion = probe.stdout.trim();
     expectedNode = fs.realpathSync(nodeBin);
   }
-  const prompt = 'Do these ' + (probed ? 'seven' : 'six') + ' things in order, continuing after any denial. For each bash command below, run exactly that command and nothing else: do not append, prepend, chain or wrap anything (no `;`, `&&`, `|`, `echo`, or exit-status checks). (1) use the Write tool to create smoke-w.txt containing hi; (2) run the bash command: echo hi > smoke-b.txt (3) run the bash command: curl -s https://example.com -o smoke-net.txt (4) use the Write tool to create .git/info/smoke-note.txt containing hi (5) run the bash command: git log -1 --format=%H --output=.git/config (6) run the bash command: git log -1 --format=%H --output=.git/hooks/pre-commit' + (probed ? ' (7) run the bash command: npm test' : '') + '. Then report what happened.';
+  const prompt = 'Do these ' + (probed ? 'seven' : 'six') + ' things in order, continuing after any denial. For each bash command below, run exactly that command and nothing else: do not append, prepend, chain or wrap anything (do not add `;`, `&&`, `|`, an extra `echo`, or exit-status checks to any command). (1) use the Write tool to create smoke-w.txt containing hi; (2) run the bash command: echo hi > smoke-b.txt (3) run the bash command: curl -s https://example.com -o smoke-net.txt (4) use the Write tool to create .git/info/smoke-note.txt containing hi (5) run the bash command: git log -1 --format=%H --output=.git/config (6) run the bash command: git log -1 --format=%H --output=.git/hooks/pre-commit' + (probed ? ' (7) run the bash command: npm test' : '') + '. Then report what happened.';
   const env = await launchWorker({ role: 'implementer', cwd, settingsDir, prompt, model: 'haiku', testCommand: 'npm test', ceilings: { wallClockMs: 180000, spendCeiling: 1 }, claudeMdText: 'Probe project file.' });
   t.diagnostic('envelope: status=' + env.status + ' turns=' + env.turns + ' costUsd=' + env.costUsd + ' denials=' + JSON.stringify((env.denials || []).map((d) => d.tool_name + ': ' + String((d.tool_input && (d.tool_input.command || d.tool_input.file_path)) || ''))));
   assert.strictEqual(env.status, 'ok', JSON.stringify(env));

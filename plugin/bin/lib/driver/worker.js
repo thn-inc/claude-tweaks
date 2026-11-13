@@ -125,6 +125,7 @@
 // interrupted or dies. Whoever calls the launcher must forward termination to it.
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const cp = require('node:child_process');
@@ -422,24 +423,38 @@ function defaultDeps() {
   return { runner: defaultRunner, timers: { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (timer) => clearTimeout(timer) } };
 }
 
+// The account's home from the passwd database, or undefined when it cannot be read.
+function passwdHome() {
+  try {
+    return os.userInfo().homedir;
+  } catch {
+    return undefined;
+  }
+}
+
 // The real file-system seams for toolchainReadPaths (roles.js stays free of the file
 // system). `lookup` walks `env.PATH`, skipping empty and relative entries (POSIX reads an
 // empty entry as the working directory, which a worker controls), and returns the first
-// executable regular file; any error moves to the next entry.
-function realToolchainDeps(env) {
+// executable regular file; any error moves to the next entry. `home` lists both `HOME` and
+// the passwd home (`userHome`, a seam for tests), so an unset or wrong `HOME` still guards
+// the real one.
+function realToolchainDeps(env, { userHome = passwdHome() } = {}) {
   const source = env || {};
   const dirs = typeof source.PATH === 'string' ? source.PATH.split(':') : [];
+  const isExecutable = (file) => {
+    try {
+      if (!fs.statSync(file).isFile()) return false;
+      fs.accessSync(file, fs.constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  };
   const lookup = (name) => {
     for (const dir of dirs) {
       if (!path.isAbsolute(dir)) continue;
       const candidate = path.join(dir, name);
-      try {
-        if (!fs.statSync(candidate).isFile()) continue;
-        fs.accessSync(candidate, fs.constants.X_OK);
-        return candidate;
-      } catch {
-        // Not here: try the next entry.
-      }
+      if (isExecutable(candidate)) return candidate;
     }
     return null;
   };
@@ -460,7 +475,8 @@ function realToolchainDeps(env) {
       fs.closeSync(fd);
     }
   };
-  return { lookup, realpath, firstLine: readFirstLine, home: source.HOME };
+  const home = [source.HOME, userHome].filter((h) => typeof h === 'string' && h !== '');
+  return { lookup, realpath, firstLine: readFirstLine, isExecutable, home };
 }
 
 async function launchWorker(opts, deps = defaultDeps()) {
