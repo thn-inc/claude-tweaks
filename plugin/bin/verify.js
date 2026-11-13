@@ -211,6 +211,23 @@ function slotReport(hold) {
   };
 }
 
+// The verify event's `ci` (#5369): one entry per CI-declared suite this run considered.
+function ciEventEntries(ciAttempts) {
+  return ciAttempts.map((a) => ({ suite: a.suite, used: a.used, fallback: a.fallback }));
+}
+
+// Verify event (#1928): resolves --run through the anchored-target guard and appends `fields`.
+// A refused target is reported aloud (never silently, never fatal) and returns null.
+function writeVerifyEvent(runArg, fields) {
+  const target = resolveTarget({ runDir: runArg });
+  if (!target.ok) {
+    process.stderr.write(`verify.js: --run ${runArg} refused (${target.reason}) — not an anchored run directory under the main checkout ([IL-127]); no verify event written\n`);
+    return null;
+  }
+  appendEvent(target.dir, 'verify', fields);
+  return target;
+}
+
 // --stamp-status (#1921): a read of the runner's own artifact. Status is data,
 // never a failure — exit 0 in every case, including "no checkout at all".
 // `dirty` and `head` are recomputed fresh from the live tree, never echoed
@@ -1221,29 +1238,29 @@ async function main() {
   // checkout's pipelines tree (a worktree-local shadow, [IL-127]) is refused
   // aloud — never written silently, never fatal to the run.
   if (parsed.run) {
-    const target = resolveTarget({ runDir: parsed.run });
-    if (!target.ok) {
-      process.stderr.write(`verify.js: --run ${parsed.run} refused (${target.reason}) — not an anchored run directory under the main checkout ([IL-127]); no verify event written\n`);
-    } else {
-      let preExistingVerdict = null;
-      if (preExistingAdjudicated) preExistingVerdict = preExistingPass ? 'pass' : 'ineligible';
-      appendEvent(target.dir, 'verify', {
-        mode: report.scope ? report.scope.mode : 'full',
-        suitesRun: results.filter((c) => !c.skipped).map((c) => c.name),
-        durationMs: report.durationMs,
-        // #5119: the part of durationMs spent queued for a suite slot (0 when none was waited for).
-        slotWaitedMs,
-        pass: report.pass,
-        baselineAdjudicated: baselineAdjudicated ? baselineAdjudicated.verdict || 'ineligible' : null,
-        preExistingAdjudicated: preExistingVerdict,
-        sha: git.sha,
-        flakyRetried: retriedFiles,
-        reportPath: jsonPath,
-        ...(sel && sel.impact ? { impact: {
-          suite: sel.impact.suite, fallback: sel.impact.fallback, superseded: sel.impact.superseded,
-          selected: sel.impact.selected, supersedingPaths: sel.impact.supersedingPaths,
-        } } : {}),
-      });
+    let preExistingVerdict = null;
+    if (preExistingAdjudicated) preExistingVerdict = preExistingPass ? 'pass' : 'ineligible';
+    const target = writeVerifyEvent(parsed.run, {
+      mode: report.scope ? report.scope.mode : 'full',
+      suitesRun: results.filter((c) => !c.skipped).map((c) => c.name),
+      durationMs: report.durationMs,
+      // #5119: the part of durationMs spent queued for a suite slot (0 when none was waited for).
+      slotWaitedMs,
+      pass: report.pass,
+      baselineAdjudicated: baselineAdjudicated ? baselineAdjudicated.verdict || 'ineligible' : null,
+      preExistingAdjudicated: preExistingVerdict,
+      sha: git.sha,
+      flakyRetried: retriedFiles,
+      reportPath: jsonPath,
+      ...(sel && sel.impact ? { impact: {
+        suite: sel.impact.suite, fallback: sel.impact.fallback, superseded: sel.impact.superseded,
+        selected: sel.impact.selected, supersedingPaths: sel.impact.supersedingPaths,
+      } } : {}),
+      // #5369: what CI answered per declared suite, and whether --local asked to skip it.
+      ...(ciAttempts.length ? { ci: ciEventEntries(ciAttempts) } : {}),
+      local: parsed.local === true,
+    });
+    if (target) {
       // #3062: a baseline-flaky file that reaches the escalation threshold
       // without being on flaky.files never joins the allowlist silently —
       // stage a proposal for the Review Console instead (the same

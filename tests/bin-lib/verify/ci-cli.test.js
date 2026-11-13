@@ -12,6 +12,8 @@ const fs = require('fs');
 const { execFile, execFileSync, spawn, spawnSync } = require('child_process');
 
 const { slotEnv } = require('../../helpers/suite-slot-env');
+const { anchoredRunDir } = require('./cli-helpers');
+const { derivePhases } = require('../../../plugin/bin/lib/timing/derive');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'verify.js');
 const SKIP = process.platform === 'win32' ? 'a PATH shim named gh is not spawnable on win32' : false;
@@ -100,6 +102,17 @@ function ciLogOf(r, files) {
 
 function localMarkerCmd(marker) {
   return `tests=node -e "require('fs').writeFileSync(process.argv[1], String(1))" "${marker}"`;
+}
+
+function ciRunDir(r) {
+  fs.mkdirSync(path.join(r.gitDir, 'info'), { recursive: true });
+  fs.appendFileSync(path.join(r.gitDir, 'info', 'exclude'), '.claude-tweaks/pipelines/\n');
+  return anchoredRunDir(r.repo);
+}
+const eventsOf = (runDir) => fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+function timingEntry(runDir) {
+  const events = [{ type: 'skill_invoked', skill: 'claude-tweaks:test', ts: '2000-01-01T00:00:00.000Z' }, ...eventsOf(runDir)];
+  return derivePhases({ events, now: new Date(Date.now() + 60000) }).phases.find((p) => p.phase === 'test').verify[0];
 }
 
 const readJson = (p) => JSON.parse(fs.readFileSync(p, 'utf8'));
@@ -193,6 +206,41 @@ test('without a ci block, report, stamp and stdout carry nothing new and gh is n
   const status = JSON.parse((await runCli(['--stamp-status'], { cwd: r.repo, env })).stdout);
   assert.ok(!('source' in status) && !('ci' in status));
   assert.ok(!fs.existsSync(calls));
+});
+
+test('AC7: a CI-answered run\'s verify event and timing entry carry ci and local: false (#5369)', { skip: SKIP }, async () => {
+  const r = repoWith();
+  const { env } = fakeGhEnv('green', ciLogOf(r, ['tests/ok.test.js']));
+  const runDir = ciRunDir(r);
+  const res = await runCli(['--run', runDir, '--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', r.branch, '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  const [ev] = eventsOf(runDir).filter((e) => e.type === 'verify');
+  assert.deepStrictEqual(ev.ci, [{ suite: 'tests', used: true, fallback: null }]);
+  assert.strictEqual(ev.local, false);
+  assert.strictEqual(Object.hasOwn(ev, 'noVerdict'), false);
+  assert.deepStrictEqual(timingEntry(runDir).ci, ev.ci);
+  assert.strictEqual(timingEntry(runDir).local, false);
+});
+
+test('AC7: a suite that fell back to a local run records used: false and the named fallback (#5369)', { skip: SKIP }, async () => {
+  const r = repoWith();
+  const { env } = fakeGhEnv('nopr', '');
+  const runDir = ciRunDir(r);
+  const res = await runCli(['--run', runDir, '--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', r.branch, '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  const [ev] = eventsOf(runDir).filter((e) => e.type === 'verify');
+  assert.deepStrictEqual(ev.ci, [{ suite: 'tests', used: false, fallback: 'no-open-pr-at-head' }]);
+});
+
+test('AC7: a run with no ci block carries local but no ci key (#5369)', async () => {
+  const r = repoWith({ ci: false });
+  const runDir = ciRunDir(r);
+  const { env } = fakeGhEnv('green', '');
+  const res = await runCli(['--run', runDir, '--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', r.branch, '--local', '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  const [ev] = eventsOf(runDir).filter((e) => e.type === 'verify');
+  assert.strictEqual(ev.local, true);
+  assert.strictEqual(Object.hasOwn(ev, 'ci'), false);
 });
 
 // #5119: the suite slot around CI-answered suites. slotEnv() strips the CT_TEST_SUITE_SLOT_HELD=1

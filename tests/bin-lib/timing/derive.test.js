@@ -40,6 +40,32 @@ test('a verify row drops an impact that is not an object (#4321)', () => {
   }
 });
 
+test('AC7: a verify row keeps ci, local and noVerdict only when the event carries them (#5369)', () => {
+  const ci = [{ suite: 'tests', used: false, fallback: 'head-not-pushed' }];
+  const events = fixtureEvents().map((e) => (e.type === 'verify' && e.mode === 'full' ? { ...e, ci, local: false, noVerdict: true } : e));
+  const p = byName(derivePhases({ events, manifest: fixtureManifest(), now: new Date('2026-09-05T14:13:00.000Z') }));
+  assert.deepEqual(p.test.verify[0].ci, ci);
+  assert.equal(p.test.verify[0].local, false);
+  assert.equal(p.test.verify[0].noVerdict, true);
+  for (const k of ['ci', 'local', 'noVerdict']) assert.equal(Object.hasOwn(p.tasks.verify[0], k), false, k);
+});
+
+test('#5369: a noVerdict verify event closes the tasks span like any other verify event', () => {
+  const base = byName(derivePhases({ events: fixtureEvents(), manifest: fixtureManifest(), now: new Date('2026-09-05T14:13:00.000Z') }));
+  const events = fixtureEvents().map((e) => (e.type === 'verify' && e.mode === 'scoped' ? { ...e, noVerdict: true, pass: null, suitesRun: [] } : e));
+  const p = byName(derivePhases({ events, manifest: fixtureManifest(), now: new Date('2026-09-05T14:13:00.000Z') }));
+  assert.equal(p.tasks.minutes, base.tasks.minutes);
+  assert.equal(p.tasks.end, base.tasks.end);
+  assert.equal(p.tasks.verify[0].noVerdict, true);
+  assert.equal(p.tasks.verify[0].pass, null);
+});
+
+test('#5369: a verify row drops a ci that is not an array and a local that is not a boolean', () => {
+  const events = fixtureEvents().map((e) => (e.type === 'verify' && e.mode === 'full' ? { ...e, ci: 'x', local: 'yes', noVerdict: 1 } : e));
+  const p = byName(derivePhases({ events, manifest: fixtureManifest(), now: new Date('2026-09-05T14:13:00.000Z') }));
+  for (const k of ['ci', 'local', 'noVerdict']) assert.equal(Object.hasOwn(p.test.verify[0], k), false, k);
+});
+
 test('#1928 AC3: the frozen fixture reproduces the reference boundaries within ±1 minute', () => {
   const out = derivePhases({ events: fixtureEvents(), manifest: fixtureManifest(), now: new Date('2026-09-05T14:13:00.000Z') });
   assert.deepEqual(out.phases.map((p) => p.phase), PHASES);
