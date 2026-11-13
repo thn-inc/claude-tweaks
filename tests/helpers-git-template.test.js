@@ -1,0 +1,203 @@
+// tests/helpers-git-template.test.js — the template-copy git fixture helper
+// (#5297): build a fixture once per process, hand every caller an fs.cpSync
+// copy whose git metadata paths were rewritten by plain file edits.
+'use strict';
+const { test, after } = require('node:test');
+const assert = require('node:assert');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { fixtureGit } = require('./helpers/git-fixtures');
+const {
+  fromTemplate,
+  fromTemplateSet,
+  rewriteTemplatePaths,
+  assertNoTemplatePaths,
+  disableReceiveAutoGc,
+} = require('./helpers/git-template');
+
+const scratch = [];
+after(() => {
+  for (const d of scratch) fs.rmSync(d, { recursive: true, force: true });
+});
+function mk(prefix) {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  scratch.push(d);
+  return d;
+}
+
+// An empty config file pinned as the global/system config, so a host's own
+// git config (maintenance.auto, receive.autogc, signing...) cannot leak in.
+const EMPTY_CONFIG = path.join(mk('ct-gt-cfg-'), 'empty');
+fs.writeFileSync(EMPTY_CONFIG, '');
+const ENV = {
+  ...process.env,
+  GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.test',
+  GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.test',
+  GIT_CONFIG_GLOBAL: EMPTY_CONFIG, GIT_CONFIG_SYSTEM: EMPTY_CONFIG,
+};
+function git(cwd, args, env = ENV) {
+  return fixtureGit(args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+}
+function commit(cwd, name) {
+  fs.writeFileSync(path.join(cwd, name), name);
+  git(cwd, ['add', name]);
+  git(cwd, ['commit', '-q', '-m', name]);
+}
+function repoBuild(dir) {
+  git(dir, ['init', '-q', '-b', 'main']);
+  commit(dir, 'base');
+}
+// Every `start` event's argv, one trace2 file per git process in `dir`.
+function tracedArgvs(dir) {
+  const out = [];
+  for (const f of fs.readdirSync(dir)) {
+    for (const line of fs.readFileSync(path.join(dir, f), 'utf8').split('\n')) {
+      if (!line.trim()) continue;
+      const ev = JSON.parse(line);
+      if (ev.event === 'start') out.push(ev.argv);
+    }
+  }
+  return out;
+}
+function withEnv(name, value, fn) {
+  const prev = process.env[name];
+  process.env[name] = value;
+  try { return fn(); } finally {
+    if (prev === undefined) delete process.env[name]; else process.env[name] = prev;
+  }
+}
+
+test('fromTemplate builds once and returns independent copies', () => {
+  let builds = 0;
+  const build = (dir) => { builds++; repoBuild(dir); };
+  const dirs = [1, 2, 3].map(() => fromTemplate('k1', build, { prefix: 'ct-gt-' }));
+  scratch.push(...dirs);
+  assert.strictEqual(builds, 1);
+  assert.strictEqual(new Set(dirs).size, 3);
+  for (const d of dirs) assert.ok(path.basename(d).startsWith('ct-gt-'), d);
+  const heads = dirs.map((d) => git(d, ['rev-parse', 'HEAD']));
+  assert.strictEqual(new Set(heads).size, 1);
+  commit(dirs[0], 'more');
+  assert.notStrictEqual(git(dirs[0], ['rev-parse', 'HEAD']), heads[0]);
+  assert.strictEqual(git(dirs[1], ['rev-parse', 'HEAD']), heads[1]);
+});
+
+test('a copy starts no git process', () => {
+  const build = repoBuild;
+  scratch.push(fromTemplate('k1', build, { prefix: 'ct-gt-' })); // warm-up: the build may spawn git
+  const trace = mk('ct-gt-trace-');
+  const copies = withEnv('GIT_TRACE2_EVENT', trace, () => [
+    fromTemplate('k1', build, { prefix: 'ct-gt-' }),
+    fromTemplate('k1', build, { prefix: 'ct-gt-' }),
+  ]);
+  scratch.push(...copies);
+  assert.deepStrictEqual(fs.readdirSync(trace), []);
+});
+
+test('fromTemplateSet rewires a clone to its own copied origin', () => {
+  const build = (d) => {
+    git(d.origin, ['init', '-q', '--bare', '-b', 'main']);
+    disableReceiveAutoGc(d.origin);
+    git(d.work, ['init', '-q', '-b', 'main']);
+    git(d.work, ['remote', 'add', 'origin', d.origin]);
+    commit(d.work, 'base');
+    git(d.work, ['push', '-q', 'origin', 'main']);
+  };
+  const layout = { origin: { prefix: 'ct-gts-o-' }, work: { prefix: 'ct-gts-w-' } };
+  const a = fromTemplateSet('s1', build, layout);
+  const b = fromTemplateSet('s1', build, layout);
+  scratch.push(...Object.values(a), ...Object.values(b));
+  const before = git(a.origin, ['rev-parse', 'main']);
+  assert.strictEqual(git(b.origin, ['rev-parse', 'main']), before);
+  commit(a.work, 'next');
+  git(a.work, ['push', '-q', 'origin', 'HEAD']);
+  assert.strictEqual(git(a.origin, ['rev-parse', 'main']), git(a.work, ['rev-parse', 'HEAD']));
+  assert.notStrictEqual(git(a.origin, ['rev-parse', 'main']), before);
+  assert.strictEqual(git(b.origin, ['rev-parse', 'main']), before);
+  assert.strictEqual(git(b.work, ['config', 'remote.origin.url']), b.origin);
+});
+
+test('a copied linked worktree resolves to the copy\'s main repo', () => {
+  const build = (dir) => {
+    repoBuild(dir);
+    git(dir, ['worktree', 'add', '-q', path.join(dir, '.claude', 'worktrees', 'feat'), '-b', 'feat']);
+  };
+  const copy = fromTemplate('wt1', build, { prefix: 'ct-gtw-', realpath: true });
+  scratch.push(copy);
+  const wt = path.join(copy, '.claude', 'worktrees', 'feat');
+  const common = git(wt, ['rev-parse', '--git-common-dir']);
+  assert.strictEqual(fs.realpathSync(path.resolve(wt, common)), path.join(copy, '.git'));
+  const listed = git(copy, ['worktree', 'list', '--porcelain'])
+    .split('\n').filter((l) => l.startsWith('worktree ')).map((l) => fs.realpathSync(l.slice(9)));
+  assert.ok(listed.includes(wt), listed.join(', '));
+});
+
+test('rewriteTemplatePaths does not corrupt a longer sibling path', () => {
+  const root = mk('ct-gtr-');
+  fs.mkdirSync(path.join(root, '.git'));
+  const cfg = path.join(root, '.git', 'config');
+  fs.writeFileSync(cfg, '[remote "a"]\n\turl = /T/tpl-1/o\n[remote "b"]\n\turl = /T/tpl-10/o\n');
+  rewriteTemplatePaths(root, [['/T/tpl-1', '/T/new']]);
+  assert.strictEqual(
+    fs.readFileSync(cfg, 'utf8'),
+    '[remote "a"]\n\turl = /T/new/o\n[remote "b"]\n\turl = /T/tpl-10/o\n',
+  );
+});
+
+test('realpath: true returns a resolved path', () => {
+  const d = fromTemplate('k1', repoBuild, { prefix: 'ct-gt-', realpath: true });
+  scratch.push(d);
+  assert.strictEqual(fs.realpathSync(d), d);
+});
+
+test('a throwing build is not cached', () => {
+  let builds = 0;
+  let firstDir;
+  const build = (dir) => {
+    builds++;
+    if (builds === 1) {
+      firstDir = dir;
+      fs.writeFileSync(path.join(dir, 'partial'), 'x');
+      throw new Error('boom from builder');
+    }
+    repoBuild(dir);
+  };
+  assert.throws(() => fromTemplate('k-throw', build, { prefix: 'ct-gt-' }), /boom from builder/);
+  assert.ok(firstDir && !fs.existsSync(firstDir), 'partial template dir was removed');
+  const d = fromTemplate('k-throw', build, { prefix: 'ct-gt-' });
+  scratch.push(d);
+  assert.strictEqual(builds, 2);
+  assert.ok(fs.existsSync(path.join(d, '.git')));
+});
+
+test('assertNoTemplatePaths catches a surviving template path', () => {
+  const root = mk('ct-gta-');
+  fs.mkdirSync(path.join(root, '.git'));
+  const cfg = path.join(root, '.git', 'config');
+  fs.writeFileSync(cfg, '[remote "a"]\n\turl = /T/tpl-1/o\n');
+  assert.throws(() => assertNoTemplatePaths(root, ['/T/tpl-1']), /survived rewrite/);
+  fs.writeFileSync(cfg, '[remote "a"]\n\turl = /T/new/o\n');
+  assert.doesNotThrow(() => assertNoTemplatePaths(root, ['/T/tpl-1']));
+});
+
+test('disableReceiveAutoGc stops receive-pack maintenance', () => {
+  // Push into a fresh bare origin from a fresh clone, tracing only the push
+  // (the clone's own commit would start maintenance on its side, which is not
+  // what is under test). Returns the argv of every git process the push began.
+  function pushArgvs(disable) {
+    const origin = mk('ct-gtg-o-');
+    const work = mk('ct-gtg-w-');
+    git(origin, ['init', '-q', '--bare', '-b', 'main']);
+    if (disable) disableReceiveAutoGc(origin);
+    git(work, ['init', '-q', '-b', 'main']);
+    git(work, ['remote', 'add', 'origin', origin]);
+    commit(work, 'base');
+    const trace = mk('ct-gtg-t-');
+    git(work, ['push', '-q', 'origin', 'main'], { ...ENV, GIT_TRACE2_EVENT: trace });
+    return tracedArgvs(trace);
+  }
+  const hasMaintenance = (argvs) => argvs.some((a) => a.includes('maintenance'));
+  assert.ok(!hasMaintenance(pushArgvs(true)), 'no maintenance after disableReceiveAutoGc');
+  assert.ok(hasMaintenance(pushArgvs(false)), 'control: without the call, receive-pack starts maintenance');
+});
