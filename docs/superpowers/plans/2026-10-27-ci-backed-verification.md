@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+, `node --test`, `gh api` (REST only).
 
-**Spec:** `.claude-tweaks/pipelines/2026-10-27T143545-record-4347/work/4347-spec.md`
+**Spec:** `.claude-tweaks/pipelines/archive/2026-10-27T143545-record-4347/work/4347-spec.md`
 
 ## Global Constraints
 

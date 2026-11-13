@@ -22,6 +22,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const { fromTemplate, disableReceiveAutoGc } = require('./git-template');
 
 // Ceiling for a single fixture git spawn.
 //
@@ -43,10 +44,21 @@ const FIXTURE_TIMEOUT_MS = 30000;
 // `opts` is spread into execFileSync's options AFTER the timeout, so a caller
 // can pin `env` (e.g. GIT_AUTHOR_DATE/GIT_COMMITTER_DATE for a fixture whose
 // assertions must not depend on the wall clock) without losing the bound.
-function fixtureGit(args, opts = {}) {
+// `opts.execFileSync` (optional) replaces the real spawn, so a test can inject a spawn-level failure.
+function fixtureGit(args, { execFileSync: run = execFileSync, ...opts } = {}) {
   try {
-    return execFileSync('git', args, { timeout: FIXTURE_TIMEOUT_MS, ...opts });
+    return run('git', args, { timeout: FIXTURE_TIMEOUT_MS, ...opts });
   } catch (err) {
+    // A maxBuffer overflow kills the child with SIGTERM too, so it is told apart by its code first:
+    // it is an output-size failure, not contention. A spawn-level ENOBUFS carries no signal and is not one.
+    if (err.code === 'ENOBUFS' && err.signal) {
+      const cap = opts.maxBuffer ?? 1024 * 1024;
+      throw Object.assign(new Error(
+        `git-fixtures: \`git ${args.join(' ')}\` printed more than its maxBuffer (${cap} bytes) and was killed. `
+        + 'Pass a larger maxBuffer for a real-sized output.',
+        { cause: err },
+      ), { code: 'ENOBUFS' });
+    }
     if (err.killed || err.code === 'ETIMEDOUT' || err.signal === 'SIGTERM') {
       throw new Error(
         `git-fixtures: \`git ${args.join(' ')}\` exceeded ${FIXTURE_TIMEOUT_MS}ms and was killed. `
@@ -60,11 +72,13 @@ function fixtureGit(args, opts = {}) {
 // A git repo initialized with one empty commit, so it always has a HEAD.
 // Optional `{ parent, branch }`: the directory the repo's temp dir is created
 // in (default os.tmpdir()) and the initial branch name (default: git's own).
+// Copied from a once-per-process template keyed on `branch` (#5297); `parent`
+// only chooses where the copy lands.
 function gitRepo({ parent = os.tmpdir(), branch } = {}) {
-  const dir = fs.mkdtempSync(path.join(parent, 'ct-wtd-'));
-  fixtureGit(['-C', dir, 'init', '-q', ...(branch ? ['-b', branch] : [])]);
-  fixtureGit(['-C', dir, 'commit', '--allow-empty', '-m', 'init', '-q']);
-  return fs.realpathSync(dir);
+  return fromTemplate(`git-fixtures:repo:${branch || ''}`, (dir) => {
+    fixtureGit(['-C', dir, 'init', '-q', ...(branch ? ['-b', branch] : [])]);
+    fixtureGit(['-C', dir, 'commit', '--allow-empty', '-m', 'init', '-q']);
+  }, { parent, prefix: 'ct-wtd-', realpath: true });
 }
 
 // A linked worktree of `main` (itself created via gitRepo()), placed OUTSIDE
@@ -100,12 +114,15 @@ function harnessWorktreeOf(main, name) {
 // blanks GH_REPO/GH_HOST so a caller that spawns `gh` against these local-path
 // remotes never resolves an exported repo instead. The temp root is removed if
 // setup itself throws; the caller removes it after the test.
+//
+// The whole root is built once per process and copied per call (#5297), with
+// the bare origin's `receive.autogc` off so a push into it starts no
+// maintenance process. `env`/`run`/`commit`/`gitIn` are rebuilt per call; the
+// copy's remote urls were rewritten to its own `origin.git`.
 function originWithTwoClones(prefix) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  try {
-    const origin = path.join(root, 'origin.git');
-    const work = path.join(root, 'work');
-    const other = path.join(root, 'other');
+  // Snapshots process.env when called, so the template build (which runs with
+  // auto-maintenance switched off in process.env) calls it again inside `build`.
+  const makeOps = () => {
     const env = {
       ...process.env,
       GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.test',
@@ -119,7 +136,15 @@ function originWithTwoClones(prefix) {
       run(cwd, ['add', name]);
       run(cwd, ['commit', '-q', '-m', name]);
     };
+    return { env, run, commit };
+  };
+  const root = fromTemplate('git-fixtures:origin-two-clones', (tplRoot) => {
+    const { env, run, commit } = makeOps();
+    const origin = path.join(tplRoot, 'origin.git');
+    const work = path.join(tplRoot, 'work');
+    const other = path.join(tplRoot, 'other');
     fixtureGit(['init', '-q', '--bare', '-b', 'main', origin], { env, stdio: 'ignore' });
+    disableReceiveAutoGc(origin);
     for (const dir of [work, other]) {
       fixtureGit(['init', '-q', '-b', 'main', dir], { env, stdio: 'ignore' });
       run(dir, ['remote', 'add', 'origin', origin]);
@@ -127,14 +152,12 @@ function originWithTwoClones(prefix) {
     commit(work, 'base');
     run(work, ['push', '-q', 'origin', 'main']);
     run(other, ['pull', '-q', 'origin', 'main']);
-    return {
-      root, work, other, env, run, commit,
-      gitIn: (cwd) => (args) => run(cwd, args),
-    };
-  } catch (err) {
-    fs.rmSync(root, { recursive: true, force: true });
-    throw err;
-  }
+  }, { prefix });
+  const { env, run, commit } = makeOps();
+  return {
+    root, work: path.join(root, 'work'), other: path.join(root, 'other'), env, run, commit,
+    gitIn: (cwd) => (args) => run(cwd, args),
+  };
 }
 
 module.exports = { gitRepo, linkedWorktreeOf, harnessWorktreeOf, originWithTwoClones, fixtureGit, FIXTURE_TIMEOUT_MS };

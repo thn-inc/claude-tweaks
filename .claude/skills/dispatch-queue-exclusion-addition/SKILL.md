@@ -22,6 +22,7 @@ Each exclusion pass in `plugin/skills/dispatch/queue-pull-script.md` writes `{re
 | 7 | `plugin/skills/dispatch/mcp-transport.md` | What the pass does on a `gh`-absent firing: an MCP mapping, or the stated limit and its fail-open line | Same per-reason test |
 | 8 | `docs/journeys/learn-why-a-named-record-wont-dispatch-3084.md` | The reason in Step 1 and in the Success state, and the count word ("for seven reasons") | The same named-form test, removing reasons only |
 | 9 | `docs/skill-graph.md`, `docs/plugin-structure.md` | A CLI the pass calls gets its skill-graph edge and its command line | Per-reason test |
+| 10 | `plugin/bin/lib/dispatch/queue-pull.js`, the script's Node twin (#5227) | A `PASSES` row at the pass's script position, its columns recording the decisions below (`removes`, `bypass`, `runsOnCacheHit`, `failOpen`, `mcp`), and a `RUNNERS` entry keyed by its `id` that reproduces the pass, quirks included | `tests/bin-lib/dispatch/queue-pull.test.js`: AC11.1 derives the reason set, `removes` and `bypass` from site 1's bullets; the parity tests run the fence and the module on the same fixtures, so add one that reaches the pass |
 
 ## Decisions each pass owes
 

@@ -8,6 +8,7 @@ const os = require('os');
 const path = require('path');
 const { localHasMerge } = require('../../plugin/bin/lib/reconcile/archive-merged');
 const { installStub } = require('./path-stub');
+const { fromTemplate, fromTemplateSet, disableReceiveAutoGc } = require('./git-template');
 
 const HOOKS =path.join(__dirname, '..', '..', 'plugin', 'bin', 'hooks.js');
 
@@ -18,37 +19,42 @@ function git(args, cwd) {
 }
 
 // Two-repo fixture: `origin` (bare) + a clone that plays the role of the
-// main checkout, both on `main`. Fully local — no network, no gh.
+// main checkout, both on `main`. Fully local — no network, no gh. Built once
+// per process and copied per call (#5297); the bare origin has receive.autogc
+// off so a push into it starts no maintenance process.
 function pairedFixture() {
-  const originDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-origin-'));
-  git(['init', '-q', '--bare', '--initial-branch=main'], originDir);
+  const dirs = fromTemplateSet('reconcile-fixtures:paired', ({ origin, seed, main }) => {
+    git(['init', '-q', '--bare', '--initial-branch=main'], origin);
+    disableReceiveAutoGc(origin);
 
-  const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-seed-'));
-  git(['clone', '-q', originDir, seedDir]);
-  git(['config', 'user.email', 'test@example.com'], seedDir);
-  git(['config', 'user.name', 'Test'], seedDir);
-  fs.writeFileSync(path.join(seedDir, 'a.txt'), 'one\n');
-  git(['add', 'a.txt'], seedDir);
-  git(['commit', '-q', '-m', 'seed'], seedDir);
-  git(['push', '-q', 'origin', 'main'], seedDir);
+    git(['clone', '-q', origin, seed]);
+    git(['config', 'user.email', 'test@example.com'], seed);
+    git(['config', 'user.name', 'Test'], seed);
+    fs.writeFileSync(path.join(seed, 'a.txt'), 'one\n');
+    git(['add', 'a.txt'], seed);
+    git(['commit', '-q', '-m', 'seed'], seed);
+    git(['push', '-q', 'origin', 'main'], seed);
 
-  const mainDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-main-'));
-  git(['clone', '-q', originDir, mainDir]);
-  git(['config', 'user.email', 'test@example.com'], mainDir);
-  git(['config', 'user.name', 'Test'], mainDir);
-
-  return { originDir, seedDir, mainDir };
+    git(['clone', '-q', origin, main]);
+    git(['config', 'user.email', 'test@example.com'], main);
+    git(['config', 'user.name', 'Test'], main);
+  }, {
+    origin: { prefix: 'ct-recon-origin-' },
+    seed: { prefix: 'ct-recon-seed-' },
+    main: { prefix: 'ct-recon-main-' },
+  });
+  return { originDir: dirs.origin, seedDir: dirs.seed, mainDir: dirs.main };
 }
 
 function bareRepoRoot() {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-orphan-')));
-  git(['init', '-q', '--initial-branch=main'], root);
-  git(['config', 'user.email', 'test@example.com'], root);
-  git(['config', 'user.name', 'Test'], root);
-  fs.writeFileSync(path.join(root, 'a.txt'), 'one\n');
-  git(['add', 'a.txt'], root);
-  git(['commit', '-q', '-m', 'seed'], root);
-  return root;
+  return fromTemplate('reconcile-fixtures:orphan', (root) => {
+    git(['init', '-q', '--initial-branch=main'], root);
+    git(['config', 'user.email', 'test@example.com'], root);
+    git(['config', 'user.name', 'Test'], root);
+    fs.writeFileSync(path.join(root, 'a.txt'), 'one\n');
+    git(['add', 'a.txt'], root);
+    git(['commit', '-q', '-m', 'seed'], root);
+  }, { prefix: 'ct-recon-orphan-', realpath: true });
 }
 
 function mintEmptyRunDir(root, runId, { ageMs = 0 } = {}) {

@@ -4,6 +4,7 @@ files:
   - plugin/bin/lib/driver/run.js
   - plugin/bin/lib/driver/steps.js
   - plugin/bin/lib/driver/events.js
+  - plugin/bin/lib/driver/settle.js
 ---
 
 # Drive a Named Record to a Draft PR
@@ -66,7 +67,7 @@ files:
 - **URL:** the `ci` event line and the final line `{ outcome, msTotal, msWithoutCi, pr, ci, stop, … }`
 - **Action:** read `outcome` and `ci`. `pending-review` covers green CI and every other CI state; `ci` says which one (`green`, `red`, `pending`, `timeout` and so on).
 - **Should feel:** measurable. `msWithoutCi` is the wall clock the driver itself spent, with the CI wait taken out, so the cost comparison does not depend on how busy CI was.
-- **Should understand:** `ci` is `null` only when no PR exists. Whenever a PR exists, `ci` is the last word `pr-checks` reported, or `pending` if CI was never read. `stop` carries the structured reason (`step`, `class`, `pushed`, `created`) for the settle unit.
+- **Should understand:** `ci` is `null` only when no PR exists. Whenever a PR exists, `ci` is the last word `pr-checks` reported, or `pending` if CI was never read. `stop` carries the structured reason (`step`, `class`, `pushed`, `created`, `reason`, `checkLogged`); for a stopped record the driver then settles it itself, and the final line's `settle` and `settleRow` say how (journey `find-a-stopped-driver-run-already-settled-5219`).
 - **Red flags:** `ci: null` beside a PR number; `msWithoutCi` that still includes the CI wait.
 
 ### 6. Interrupt it safely — Ctrl-C in the terminal
@@ -80,11 +81,12 @@ files:
   - `claim` once claimed;
   - otherwise `refused`.
 
-  A SIGTERM sent to drive.js alone waits for any running synchronous child: up to 30 minutes for the test run, 2 minutes for a CLI.
+  A SIGTERM sent to drive.js alone waits for any running synchronous child: up to 30 minutes for the test run, 2 minutes for a CLI. An interrupted record is never settled: its final line reads `settle: interrupted`, and `docs/driver.md`'s "After an interrupt" lists the manual cleanup.
 - **Red flags:** a worker process still running after the driver exited; an interrupt during the CI wait reported `blocked`.
 
 ## Origin
 - Created during the build of #5218 (run `2026-11-12T104316-spec-5218`), the pipeline driver's second unit. It drives the express lane's steps 1–8 and 10 as code over the #5217 worker launcher; step 9 (merge) is deliberately absent.
-- Settling a stopped record (releasing the claim, removing the locked worktree with `git worktree unlock` first, closing a tombstoned PR) belongs to the settle unit, not this journey.
+- Settling a stopped record belongs to the settle unit (#5219), documented in journey `find-a-stopped-driver-run-already-settled-5219`. It removes the locked worktree with `git worktree remove --force --force`, and it closes no PR.
 - Updated at wrap-up of #5218, after the review fixes. Step 1 says the origin-host gate runs before the policy read. Steps 3 and 4 now place a failed `check` call (`blocked` before any push) and a push that failed after reaching origin (`blocked`) where the code ends them.
+- Updated during the build of #5219: Steps 5 and 6 hand off to the driver's own settle and its `settle: interrupted` final line.
 - Updated during the build of #5269 (run `2026-11-13T000404-record-5269`): step 3 now says the commit subject keeps its leading verb, and that a closing keyword goes only when an issue reference follows it.
