@@ -54,6 +54,7 @@ const fs = require('fs');
 const { execFileSync, spawnSync } = require('child_process');
 const { createEventSink, outcomeFor, FINAL_STEP, STOP_CLASSES } = require('./events');
 const { STEPS } = require('./steps');
+const { toEscalationReason } = require('./settle');
 const { ghAvailable, remoteUrl, ghOptions } = require('../repo-resolve');
 const { lstatType } = require('../path-guard');
 const { defaultResolvePolicy } = require('../express/policy');
@@ -156,7 +157,8 @@ function finalEvent(ctx, stop, sink, msTotal, deps) {
       class: stopClass,
       pushed: ctx.pushed === true,
       created: { worktree: ctx.created.worktree === true, branch: ctx.created.branch === true },
-      reason: stop ? stop.result.reason : null,
+      // A pre-push stop is one settle escalates, so its reason is the closed set escalate takes.
+      reason: stop ? (stopClass === STOP_CLASSES.PRE_PUSH ? toEscalationReason(stop.result.reason) : stop.result.reason) : null,
       detail: stop ? orNull(stop.result.detail) : null,
       checkLogged: orNull(ctx.checkLogged),
     },

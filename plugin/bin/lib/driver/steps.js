@@ -27,7 +27,7 @@ const { gateOriginRepo, resolveRepoTarget } = require('../repo-resolve');
 const { isTimeoutError } = require('../shared-primitives');
 const { fenceFor } = require('../markdown-blocks');
 const { openBlockerRefs } = require('../issues/record-dependencies');
-const { hasDriverEscalationMarker } = require('./settle');
+const { hasDriverEscalationMarker, toEscalationReason } = require('./settle');
 const { sensitivePathsOf } = require('../express/policy');
 const { formatTimestamp } = require('../hooks/run-dir-resolve');
 const { claimLogText, CLAIM_LOG_SECTION, CLAIM_LOG_STEP } = require('../log-decision/claim-log');
@@ -180,7 +180,8 @@ const eligibilityStep = defineStep(STEP.eligibility, STOP_CLASSES.REFUSED, async
 });
 
 // Ports express-lane.md's Eligibility section: the driver lane's admission (state, grants,
-// open blockers, open linked PRs, and the express-driver routing, where `off` refuses).
+// open blockers, open linked PRs, whether a trusted driver-escalation marker is on the record,
+// and the express-driver routing, where `off` refuses).
 const admissionStep = defineStep(STEP.admission, STOP_CLASSES.REFUSED, async (ctx, deps) => {
   const { policy, repo: { host, owner, repo } } = ctx.shared;
   const n = ctx.record;
@@ -248,7 +249,7 @@ const claimStep = defineStep(STEP.claim, STOP_CLASSES.CLAIM, async (ctx, deps) =
   if (r.code !== 0) {
     const key = firstEnvelopeKey(r.stdout);
     const why = key || firstLine(r.stderr);
-    return { status: 'fail', detail: `claim-targets.js exited ${r.code}${why ? ` (${why})` : ''}` };
+    return { status: 'fail', reason: `claim-exit-${r.code}`, detail: `claim-targets.js exited ${r.code}${why ? ` (${why})` : ''}` };
   }
   let envelope;
   try { envelope = JSON.parse(r.stdout); } catch { envelope = null; }
@@ -476,13 +477,19 @@ const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async (ctx, de
     turns: orNull(envelope.turns),
     denials,
     costUsd: orNull(envelope.costUsd),
+    spendOverrun: envelope.spendOverrun === true,
   };
   // spendOverrun: an `ok` launch whose last turn crossed the spend ceiling (worker.js checks it
   // between turns); present only when the envelope says so.
   const extra = { usage: ctx.worker.usage, turns: ctx.worker.turns, denials, ...(envelope.spendOverrun === true ? { spendOverrun: true } : {}) };
   if (envelope.status !== 'ok') {
     const why = neutralize(envelope.detail);
-    return { status: 'fail', detail: `${neutralize(String(envelope.status))}/${neutralize(String(envelope.reason))}${why ? `: ${why}` : ''}`, extra };
+    const kind = `${neutralize(String(envelope.status))}/${neutralize(String(envelope.reason))}`;
+    // The two ceilings name themselves and their configured value; any other reason keeps its words.
+    let lead = kind;
+    if (kind === 'timeout/wall-clock-ceiling') lead = `${kind}: wall-clock ceiling of ${minutes} minutes reached`;
+    else if (kind === 'fail/spend-ceiling') lead = `${kind}: spend ceiling of ${dollars} dollars reached`;
+    return { status: 'fail', reason: 'express-error', detail: `${lead}${why ? `: ${why}` : ''}`, extra };
   }
   if (result && result.status === 'cannot-complete') {
     return { status: 'stop', detail: `worker could not complete${ctx.worker.summary ? `: ${ctx.worker.summary}` : ''}`, extra };
@@ -575,7 +582,7 @@ const testStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
   }
   // verify.js: exit 1 is a failed check (red tests); any other non-zero exit (2: usage or
   // infrastructure error) means the run itself failed, so it is a `fail`, not a gate saying no.
-  if (r.code === 1) return { status: 'stop', detail: 'red tests' };
+  if (r.code === 1) return { status: 'stop', reason: 'failing-test', detail: 'red tests' };
   if (r.code !== 0) return { status: 'fail', detail: neutralize(firstLine(r.stderr)) || `verify exited ${r.code}` };
   return { status: 'ok', detail };
 });
@@ -598,7 +605,9 @@ function logDecisionFile(ctx, deps, fileName, text, step, extraArgs) {
 const checkStep = defineStep(STEP.check, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => {
   const n = ctx.record;
   const recordFile = path.join(ctx.runDir, 'record.json');
-  deps.writeFile(recordFile, ctx.recordJson);
+  // The record's comments are untrusted text and grow with the thread; check reads only these fields.
+  const { number, title, body, labels, state } = ctx.issue;
+  deps.writeFile(recordFile, JSON.stringify({ number, title, body, labels, state }));
   const r = deps.node(binScript('express-lane.js'),
     ['check', '--run', ctx.runDir, '--issue', String(n), '--integration-branch', ctx.shared.ref, '--record-json', recordFile],
     { cwd: ctx.wt, timeout: CLI_TIMEOUT_MS, env: deps.env });
@@ -624,18 +633,8 @@ const checkStep = defineStep(STEP.check, STOP_CLASSES.PRE_PUSH, async (ctx, deps
     const reason = neutralize(envelope.reason);
     const why = neutralize(envelope.detail);
     ctx.check = { action: 'escalate', reason, detail: why };
-    let note = '';
-    if (!ctx.checkLogged) {
-      try {
-        const log = logDecisionFile(ctx, deps, 'check-escalate.txt',
-          `escalated #${n} to /flow (reason: ${reason}) — ${why}`, 'Express lane',
-          ['--reversibility', 'high (worktree and branch kept)']);
-        if (log.code !== 0) note = ` (escalation line not logged: log-decision.js exited ${log.code})`;
-      } catch (err) {
-        note = ` (escalation line not logged: ${neutralize(errorText(err))})`;
-      }
-    }
-    return { status: 'stop', detail: `${reason}: ${why}${note}` };
+    // A check that logged nothing (logged: false) is settled by settle's escalate, which writes the line.
+    return { status: 'stop', reason: toEscalationReason(envelope.reason), detail: `${reason}: ${why}` };
   }
   const bounds = envelope.bounds && typeof envelope.bounds === 'object' ? envelope.bounds : {};
   ctx.check = { action: 'proceed', head: envelope.head, configSet: envelope.configSet, mergeVerification: envelope.mergeVerification, bounds };
