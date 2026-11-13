@@ -39,6 +39,9 @@
 
 ### Task 1: The default run selects by impact
 
+**Role:** integration
+**Review risk:** high — the mode decision fails closed on computed selection state, and selection (including the declared `fetch`, up to 120 s) runs before the suite slot is taken, so the subset and whole-suite lanes are chosen after it.
+
 **Files:**
 - Modify: `tools/run-tests.js`
 - Create: `tests/run-tests-default-run.test.js`
@@ -56,6 +59,9 @@
   - subset: ``run-tests.js: impact-selected {k} of {n} test files for changes since {base9} — `npm test -- --full` runs the whole suite here; CI runs it on every PR``
   - none: ``run-tests.js: no test file selected for changes since {base9} — nothing to run; `npm test -- --full` runs the whole suite here``
   - whole: `run-tests.js: running the whole suite — impact selection could not narrow it: {reason}`
+- A reason is always one line: take the text up to the first line break and trim it before it goes into `reason` (Node's module-not-found message and a failed `git` call's message both span several lines).
+- `countTests` defaults to `listTestFiles(repoRoot, DEFAULT_ROOTS).length`, the set `--full` runs.
+- Spec AC7 ("one function of the arguments, the environment and the selection result") is met by the pair: `resolveRunMode` decides from arguments and environment whether selection is consulted at all, and `planDefaultRun` decides from the selection result. Both are pure and tested as tables; the main block only composes them.
 - Reasons: the `fallback` string `selectScope` returns (for example `map-missing`); `superseded by a full-suite rule ({up to three paths, comma-joined})` when `impact.superseded`; `no declaration` when `.claude-tweaks/verify-scope.json` is missing; `the declaration has no impact block`; the declaration's first validation error; the `ChangedFilesError` message when no base resolves.
 
 - [ ] **Step 1: Write the failing tests** in `tests/run-tests-default-run.test.js`
@@ -92,12 +98,12 @@ Selector tests use injected `deps`. Build a `fakeDeps(over)` helper whose defaul
 - `AC3.2: a path a full-suite rule matches runs the whole suite` — `changedFiles` returns `tools/run-tests.js`; `files === null`, `reason` matches `/^superseded by a full-suite rule \(tools\/run-tests\.js\)$/`.
 - `AC3.3: a base that does not resolve runs the whole suite` — `resolveBase` throws the real `ChangedFilesError`-shaped error; `files === null`, `reason` is its message.
 - `AC3.4: an unreadable declaration runs the whole suite` — `readDeclaration` returns `{ ok: false, errors: ['verify-scope.json: could not parse JSON: boom'] }`; `reason` is that first error. A missing declaration (`{ ok: true, decl: null, missing: true }`) gives `reason === 'no declaration'`.
-- `AC3.5: a thrown error becomes a reason, never an exception` — `changedFiles` throws `new Error('git exploded')`; `reason === 'selection failed: git exploded'`.
+- `AC3.5: a thrown error becomes a one-line reason, never an exception` — `changedFiles` throws `new Error('git exploded\nfatal: second line')`; `reason === 'selection failed: git exploded'`, and `planDefaultRun` of that result returns a `line` with no line break.
 - `AC4.1: no change selects nothing` — `changedFiles` returns `{ files: [], statuses: {} }`; `files` deep-equals `[]`, `reason === null`.
 - `selectChangedTests drops selected files that are not on disk` — `exists` returns false for `tests/one.test.js`; `files` deep-equals `[]`.
 - `AC1.3 / AC4.2 / AC3.6: planDefaultRun returns the action and the exact line` — three cases, asserting `line` against the exact strings in Interfaces above (with `base9 === 'aaaaaaaaa'`, `k = 1`, `n = 2`), `action`, and `files`.
 
-Also in this step: update the two `extractRunFlags` `deepStrictEqual` pins in `tests/run-tests-shard.test.js` to include `full: false`.
+Also in this step: update every `extractRunFlags` `deepStrictEqual` pin in `tests/run-tests-shard.test.js` (three, near lines 102 to 104) to include `full: false`.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -115,7 +121,7 @@ Expected: FAIL (the file's imports are `undefined`: `resolveRunMode is not a fun
 
 - [ ] **Step 4: Add the process-level test and pin the existing bare spawn**
 
-In `tests/run-tests-isolation.test.js`, beside the `--files-from` process tests and using the same copied-runner layout (`copyRunner(root)`, a probe fixture under `<root>/tests/`, `withSandbox` env with `CI` deleted): `AC3.7: a bare run that cannot select runs the whole suite and prints why`. Spawn `<root>/tools/run-tests.js` with no arguments. Assert exit 0, the probe ran (its output file exists), and stderr holds a line matching `/^run-tests\.js: running the whole suite — impact selection could not narrow it: /`. In that layout the verify modules are absent, so this is the selector's failure path running for real.
+In `tests/run-tests-isolation.test.js`, beside the `--files-from` process tests and using the same copied-runner layout (`copyRunner(root)`, a probe fixture under `<root>/tests/`, `withSandbox` env with `CI` deleted): `AC3.7: a bare run that cannot select runs the whole suite and prints why`. Spawn `<root>/tools/run-tests.js` with no arguments. Assert exit 0, the probe ran (its output file exists), and stderr holds a line matching `/^run-tests\.js: running the whole suite — impact selection could not narrow it: /`. Assert too that exactly one stderr line starts with `run-tests.js: running the whole suite`, so a multi-line error message never spills into extra lines. In that layout the verify modules are absent, so this is the selector's failure path running for real.
 
 In `tests/package-json-test-script.test.js`, the bare spawn near line 185 becomes `[ '-r', preload, path.join('tools', 'run-tests.js'), '--full' ]`, so the test keeps exercising the `buildTestArgs` error path whether or not `CI` is set.
 
@@ -152,7 +158,7 @@ git commit -m "Select by impact on a plain local npm test — --full or CI runs 
 
 In `tests/verify-scope-declaration.test.js`:
 - Change both `'npm test'` pins on `r.decl.checks.tests.tests` (near lines 29 and 90) to `'node tools/run-tests.js --full'`. Where the second pin's message says the shards run the suite the declaration names, also assert `pkg.scripts.test === 'node tools/run-tests.js'` (read `package.json`), so the shards (`npm test -- --shard`) and the declaration provably run the same runner.
-- Add `AC6.1: every workflow that runs the suite asks for the whole suite`. Read every `*.yml` under `.github/workflows/`. For each line that runs the suite (not a `#` comment line, and matching `/\bnpm test\b(?!:)/` or `/\bnode\s+\S*run-tests\.js/`; a `paths:` entry naming the file and `npm run test:perf` are not suite runs), assert it carries `--shard`, `--full` or `--record-durations`. Assert no workflow file matches `/^\s*CI:\s*(''|""|false)?\s*$/m` or `/\bunset CI\b/`, since the remaining whole-suite callers rely on `CI` being set. Assert the list of suite-running lines found is non-empty, and holds at least `test.yml`'s shard line and `windows-regression.yml`'s `npm test` line, so the scan cannot pass by matching nothing.
+- Add `AC6.1: every workflow that runs the suite asks for the whole suite`. Read every `*.yml` under `.github/workflows/`. For each line that runs the suite (not a `#` comment line, and matching `/\bnpm test\b(?!:)/` or `/\bnode\s+\S*run-tests\.js/`; a `paths:` entry naming the file and `npm run test:perf` are not suite runs), assert it carries `--shard`, `--full` or `--record-durations`. Assert no workflow file matches `/^\s*CI:\s*(''|""|false)?\s*$/m` or `/\bunset CI\b/`, since the remaining whole-suite callers rely on `CI` being set. Assert the list of suite-running lines found is non-empty, and holds at least `test.yml`'s shard line and `windows-regression.yml`'s `npm test` line, so the scan cannot pass by matching nothing. The tracer is a third suite caller: a line matching `/\bnode\s+\S*test-impact\.js\s+trace\b/` (`test-impact-map.yml`) is a suite run too, and its whole-suite guarantee is not on the workflow line but in `tools/test-impact.js`'s own spawn, so for that line assert instead that `tools/test-impact.js` source contains the `'--full'` argument in its `run-tests.js` spawn (the same argv `tests/test-impact-cli.test.js` pins), and require `test-impact-map.yml` in the non-empty set.
 
 - Add `AC5.1: verify.js's selection still picks a test that reads a changed module, and its full command runs every file`. Using the file's existing `sel(files, ctx)` helper and a context whose map says `tests/bin-lib/dispatch/queue-pull.test.js` content-reads `plugin/bin/lib/dispatch/queue-pull.js`: a change to that module selects that test file (`impact.files` includes it), a change to an unrelated traced module does not, and `r.decl.checks.tests.tests` ends with `--full` while `r.decl.impact.command` still contains `--files-from {files}`.
 
