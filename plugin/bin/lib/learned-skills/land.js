@@ -10,12 +10,14 @@
 //
 // Resume: an entry already `landed` is skipped. An existing remote branch is the base only when its
 // PRs say so: an open PR is reused; no PR ever (a crash between push and create) means the branch is
-// this run's own, so it is the base and the PR is opened on it; a closed PR leaves the branch
-// untouched and a merged PR is never reused, and both stage every entry with a reason. A patch whose
-// commit is already on the branch (a run that died before its manifest write) is reused only when it
-// carries this run's id and this entry's id in its trailers, no landed entry claims it, and its own
-// diff has the same `git patch-id --stable` as the entry's current patch file (a join can rewrite the
-// patch under the same id); otherwise it is built again and `apply --check` lands or stages it.
+// this run's own, so it is the base and the PR is opened on it, but only if every commit on it is a
+// still-captured entry's edit (else it is staged: a failed delete may have left staged entries'
+// commits). A closed PR leaves the branch untouched and a merged PR is never reused, and both stage
+// every entry with a reason. A patch whose commit is already on the branch (a run that died before its
+// manifest write) is reused only when it carries this run's id and this entry's id in its trailers and
+// its own diff has the same `git patch-id --stable` as the entry's current patch file (a join can
+// rewrite the patch under the same id); otherwise it is built again and `apply --check` lands or
+// stages it.
 // A `captured` entry is `superseded` only when the run branch changed its target after the merge base
 // AND its patch reverse-applies to HEAD (capture's bothInTree/stuck outcomes leave the edit in the
 // tree for the run branch); any other `captured` entry is delivered.
@@ -259,24 +261,6 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
     // A closed or merged PR means the branch's commits were rejected or shipped: never a base.
     if (orphanReason) return downgradeAll(todo, orphanReason);
 
-    // Commits already on the branch from a run that died before its manifest write: keyed by the
-    // entry id in their trailer, never one a landed entry already claims.
-    const onBranch = new Map();
-    if (branchExisted) {
-      const claimed = new Set(manifest.filter((e) => e.status === 'landed' && e.commit).map((e) => e.commit));
-      try {
-        const raw = String(git(['log', '-z', '--format=%H%x09%B', '--end-of-options', `${integrationSha}..${tip}`]));
-        for (const rec of splitNul(raw)) {
-          const tab = rec.indexOf('\t');
-          if (tab <= 0) continue;
-          const sha = rec.slice(0, tab);
-          const run = /^Learned-Skills-Run: (.+)$/m.exec(rec);
-          const id = /^Learned-Skills-Entry: (\S+)$/m.exec(rec);
-          if (run && run[1].trim() === runId && id && !claimed.has(sha)) onBranch.set(id[1], sha);
-        }
-      } catch { /* an unreadable log just means nothing is recognised; apply --check then decides */ }
-    }
-
     // A pushed commit is this entry's only when its own diff has the entry's current patch's patch-id.
     const patchId = (bytes) => String(git(['patch-id', '--stable'], { input: bytes })).trim().split(/\s+/)[0] || null;
     const sameEdit = (commit, entry) => {
@@ -286,6 +270,38 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
         return a !== null && a === patchId(deps.readFile(entry.patch));
       } catch { return false; }
     };
+
+    // Every commit on the branch, with the run id and entry id its trailers carry.
+    const onBranch = new Map(); // entry id -> commit, for this run's commits only
+    const commits = [];
+    let logError = null;
+    if (branchExisted) {
+      try {
+        const raw = String(git(['log', '-z', '--format=%H%x09%B', '--end-of-options', `${integrationSha}..${tip}`]));
+        for (const rec of splitNul(raw)) {
+          const tab = rec.indexOf('\t');
+          if (tab <= 0) continue;
+          const run = /^Learned-Skills-Run: (.+)$/m.exec(rec);
+          const id = /^Learned-Skills-Entry: (\S+)$/m.exec(rec);
+          const c = { sha: rec.slice(0, tab), run: run ? run[1].trim() : null, id: id ? id[1] : null };
+          commits.push(c);
+          if (c.run === runId && c.id) onBranch.set(c.id, c.sha);
+        }
+      } catch (err) { logError = err; /* with an open PR, nothing is recognised and apply --check decides */ }
+    }
+
+    // A branch with no PR ever is this run's own only if every commit on it is a still-captured entry's
+    // edit. Anything else (a staged or superseded entry's commit left by a failed delete, a foreign
+    // commit, an unreadable log) would ride the next PR.
+    if (branchExisted && !existingPr) {
+      const stray = logError ? `its commits could not be read (${firstLine(logError)})` : commits.map((c) => {
+        const entry = c.run === runId && c.id ? manifest.find((e) => String(e.id) === c.id) : null;
+        if (!entry) return `${c.sha.slice(0, 7)} maps to no entry of this run`;
+        if (entry.status !== 'captured') return `${c.sha.slice(0, 7)} belongs to entry ${entry.id}, which is ${entry.status}`;
+        return sameEdit(c.sha, entry) ? null : `${c.sha.slice(0, 7)} does not hold entry ${entry.id}'s current edit`;
+      }).find(Boolean);
+      if (stray) return downgradeAll(todo, `${branch} already exists on origin with no PR but cannot be reused as a base: ${stray}`);
+    }
 
     // 2. One plumbing commit per patch, on a temp index.
     let parent = tip || integrationSha;

@@ -631,3 +631,61 @@ test('a branch commit with a matching entry id but another run id is not reused'
   assert.equal(res.staged.length, 1);
   assert.match(res.staged[0].reason, /git apply --check/);
 });
+
+test('a same-run commit under another entry id, with an equal patch-id, is not matched to the entry', (t) => {
+  const f = fixture(t, { capturedTargets: [X] });
+  const gh = fakeGh();
+  const first = land(landArgs(f), deps(gh.gh).deps);
+  const tree = sh(f.repo, ['rev-parse', `${first.landed[0].commit}^{tree}`]).trim();
+  // Same diff, same run, but the trailer names entry 99: the entry id is part of the match.
+  const other = sh(f.repo, ['commit-tree', tree, '-p', f.mainTip, '-m',
+    `Add learned skill update\n\nLearned-Skills-Run: ${RUN_ID}\nLearned-Skills-Entry: 99\n`]).trim();
+  sh(f.repo, ['push', '-q', '-f', 'origin', `${other}:refs/heads/${BRANCH}`]);
+  loseManifest(f);
+  const res = land(landArgs(f), deps(gh.gh).deps);
+  assert.deepEqual(res.landed, []);
+  assert.equal(res.staged.length, 1);
+  assert.match(res.staged[0].reason, /git apply --check/);
+});
+
+test('a failed branch delete cannot make the staged entry\'s commit ride a later PR', (t) => {
+  const f = fixture(t, { capturedTargets: [X] });
+  const failing = deps(fakeGh({ createThrows: 'HTTP 502' }).gh);
+  const inner = failing.deps.git;
+  failing.deps.git = (args, opts) => {
+    if (args.includes('push') && args.includes(`:refs/heads/${BRANCH}`)) throw new Error('delete refused');
+    return inner(args, opts);
+  };
+  const r1 = land(landArgs(f), failing.deps);
+  assert.equal(r1.staged.length, 1);
+  assert.match(r1.staged[0].reason, /could not be deleted/);
+  const tip1 = remoteBranch(f);
+  assert.ok(tip1, 'the leftover branch holds the staged entry\'s commit');
+
+  captureMore(f, Z, (b) => b + 'z second\n', 'z finding');
+  const gh = fakeGh();
+  const again = deps(gh.gh);
+  const r2 = land(landArgs(f), again.deps);
+  assert.deepEqual(r2.landed, [], 'no PR may carry the staged entry\'s edit');
+  assert.equal(r2.staged.length, 1);
+  assert.equal(r2.staged[0].target, Z);
+  assert.match(r2.staged[0].reason, new RegExp(`${BRANCH} already exists on origin with no PR but cannot be reused as a base: [0-9a-f]{7} belongs to entry 1, which is staged`));
+  assert.equal(r2.pr, null);
+  assert.deepEqual(pushes(again.gitCalls), []);
+  assert.equal(gh.calls.some((c) => c.args[1] === 'create'), false);
+  assert.equal(remoteBranch(f), tip1);
+});
+
+test('a no-PR branch holding a foreign commit is not reused as a base', (t) => {
+  const f = fixture(t, { capturedTargets: [X] });
+  const gh = fakeGh();
+  const first = land(landArgs(f), deps(gh.gh).deps);
+  const tree = sh(f.repo, ['rev-parse', `${first.landed[0].commit}^{tree}`]).trim();
+  const foreign = sh(f.repo, ['commit-tree', tree, '-p', f.mainTip, '-m', 'someone else\'s commit\n']).trim();
+  sh(f.repo, ['push', '-q', '-f', 'origin', `${foreign}:refs/heads/${BRANCH}`]);
+  loseManifest(f);
+  gh.state.prs = [];
+  const res = land(landArgs(f), deps(gh.gh).deps);
+  assert.deepEqual(res.landed, []);
+  assert.match(res.staged[0].reason, /maps to no entry of this run/);
+});
