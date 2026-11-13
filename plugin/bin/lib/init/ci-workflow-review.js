@@ -6,10 +6,18 @@
 // (classifyDraftCondition). A workflow the reader could not follow, or whose
 // draft condition is not understood, is reported as `unparsed` and never judged.
 // Remedies are section names in `_shared/ci-skips-drafts.md`, never restated text.
+// readWorkflowSet / readCiSources discover the two inputs by convention under
+// the checkout root; every leaf is realpath-resolved and must stay inside it,
+// so a symlink out of the checkout is refused and never read.
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const { readWorkflowShape, DRAFT_REF } = require('../merge-verification');
 const { classifyExistingWorkflow } = require('../issue-branch-tracking');
+const { lstatType, resolveLeaf, canonicalRealpath } = require('../path-guard');
+const { isPathContained } = require('../shared-primitives');
+const { readDeclaration } = require('../verify/declaration');
 
 // Check id -> remedy, in report order.
 const CHECKS = Object.freeze({
@@ -201,4 +209,78 @@ function formatRemedy(remedy) {
   return remedy === 'see #5152' ? remedy : `\`_shared/ci-skips-drafts.md\` § ${remedy}`;
 }
 
-module.exports = { CHECKS, GENERATED_TRACKING_WORKFLOW, classifyDraftCondition, reviewWorkflows, formatRemedy };
+// path-guard options: `realpath` only when the caller injected one.
+const guardOpts = (fsImpl, realpath) => (realpath ? { fsImpl, realpath } : { fsImpl });
+
+// One workflow file's entry: `{workflow, text}`, or `{workflow, unreadable}`
+// naming why it was not read. Containment runs for a plain file too: a parent
+// directory can be the symlink.
+function readWorkflowEntry(dir, name, rootReal, fsImpl, opts) {
+  const workflow = `.github/workflows/${name}`;
+  const leaf = resolveLeaf(path.join(dir, name), opts);
+  if (leaf.state === 'dangling') return { workflow, unreadable: 'dangling symlink — not read' };
+  if (leaf.state === 'unreadable') return { workflow, unreadable: `unreadable: ${leaf.code}` };
+  if (leaf.state === 'missing') return { workflow, unreadable: 'vanished during the review' };
+  if (!isPathContained(leaf.path, rootReal, { orEqual: true })) {
+    return { workflow, unreadable: 'symlink resolves outside the checkout — not read' };
+  }
+  if (lstatType(leaf.path, { fsImpl }).type !== 'file') return { workflow, unreadable: 'not a regular file' };
+  try {
+    return { workflow, text: fsImpl.readFileSync(leaf.path, 'utf8') };
+  } catch (err) {
+    return { workflow, unreadable: `could not read: ${(err && err.code) || 'EUNKNOWN'}` };
+  }
+}
+
+// `.github/workflows/*.y{a,}ml` under `root`, sorted. A missing directory is
+// an empty set; a directory that exists but cannot be listed (or is not a
+// directory, or resolves outside the checkout) is an error, never empty.
+function readWorkflowSet(root, { fsImpl = fs, realpath } = {}) {
+  const opts = guardOpts(fsImpl, realpath);
+  const rootReal = canonicalRealpath(root, opts);
+  if (rootReal === null) return { ok: false, error: 'could not resolve --root' };
+  const leaf = resolveLeaf(path.join(root, '.github', 'workflows'), opts);
+  if (leaf.state === 'missing') return { ok: true, workflows: [] };
+  if (leaf.state === 'dangling') return { ok: false, error: '.github/workflows: dangling symlink — not read' };
+  if (leaf.state === 'unreadable') return { ok: false, error: `.github/workflows: unreadable: ${leaf.code} — not read` };
+  if (!isPathContained(leaf.path, rootReal, { orEqual: true })) {
+    return { ok: false, error: '.github/workflows resolves outside the checkout — not read' };
+  }
+  if (lstatType(leaf.path, { fsImpl }).type !== 'directory') return { ok: false, error: '.github/workflows is not a directory' };
+  let names;
+  try {
+    names = fsImpl.readdirSync(leaf.path);
+  } catch (err) {
+    return { ok: false, error: `.github/workflows could not be listed: ${(err && err.code) || 'EUNKNOWN'}` };
+  }
+  const dir = path.join(root, '.github', 'workflows');
+  const workflows = names.filter((n) => /\.ya?ml$/i.test(n)).sort()
+    .map((name) => readWorkflowEntry(dir, name, rootReal, fsImpl, opts));
+  return { ok: true, workflows };
+}
+
+// The `ci` verification sources declared in `.claude-tweaks/verify-scope.json`:
+// null when the file is absent (check 2 skipped), [] when declared without
+// `ci`. A declaration that is invalid, unreadable, dangling or outside the
+// checkout is an error, never absent.
+function readCiSources(root, { fsImpl = fs, realpath } = {}) {
+  const opts = guardOpts(fsImpl, realpath);
+  const rootReal = canonicalRealpath(root, opts);
+  if (rootReal === null) return { ok: false, errors: ['could not resolve --root'] };
+  const leaf = resolveLeaf(path.join(root, '.claude-tweaks', 'verify-scope.json'), opts);
+  if (leaf.state === 'missing') return { ok: true, ciSources: null };
+  if (leaf.state === 'dangling') return { ok: false, errors: ['verify-scope.json: dangling symlink — not read'] };
+  if (leaf.state === 'unreadable') return { ok: false, errors: [`verify-scope.json: unreadable: ${leaf.code}`] };
+  if (!isPathContained(leaf.path, rootReal, { orEqual: true })) {
+    return { ok: false, errors: ['verify-scope.json: resolves outside the checkout — not read'] };
+  }
+  const parsed = readDeclaration(leaf.path, fsImpl);
+  if (!parsed.ok) return { ok: false, errors: parsed.errors };
+  if (parsed.missing) return { ok: true, ciSources: null };
+  if (parsed.decl.ci === null) return { ok: true, ciSources: [] };
+  return { ok: true, ciSources: Object.entries(parsed.decl.ci).map(([suite, s]) => ({ suite, workflow: s.workflow })) };
+}
+
+module.exports = {
+  CHECKS, GENERATED_TRACKING_WORKFLOW, classifyDraftCondition, reviewWorkflows, formatRemedy, readWorkflowSet, readCiSources,
+};
