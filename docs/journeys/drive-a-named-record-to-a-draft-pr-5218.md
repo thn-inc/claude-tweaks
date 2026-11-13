@@ -47,8 +47,10 @@ files:
   - The worker event carries `usage`, `turns` and `denials`, plus `spendOverrun` when the spend ceiling was crossed. A denial is information, never a reason to relaunch.
   - A stop here ends the record `express-escalated`. Such stops include a worker `fail`, `timeout` or `cannot-complete`, no changed files, red tests, a refused scope file, an `escalate` verdict, a HEAD mismatch, a push that failed without reaching origin, or leftover state from an earlier run (a worktree, branch, remote branch or run directory named in the detail).
   - A failed claim, or a run directory that cannot be minted, ends the record `blocked`. So does a failed `express-lane.js check` call (a non-zero exit, or no check envelope), even though nothing is pushed yet: no escalation line landed, so the full pipeline would not know the record left the lane.
+  - The commit subject keeps the worker title's leading verb: `Fix the loop` stays `Fix the loop`. A closing keyword (`close`, `fix`, `resolve` and their forms, with an optional colon) is dropped only when the word after it carries an issue reference marker (`#N`, `owner/repo#N`, or an `/issues/N` or `/pull/N` path). Every `#N`, `owner/repo#N`, `GH-N` and `http(s)` issue or PR URL is dropped either way, so `Add the loop. Resolves #9.` becomes `Add the loop`. A `www.` or bare `github.com` issue URL stays in the subject, though a keyword before it still goes. Worker text in an event line, and every settle step's detail, passes the same filter.
 - **Red flags:**
   - A commit message carrying `Fixes #N`, or a push after a HEAD mismatch.
+  - A commit subject that lost its leading `Fix` or `Resolve` although no issue reference followed it.
   - A worker transcript with a `gh`, `git commit` or `git push` call.
   - A leftover branch silently reused.
 
@@ -99,3 +101,4 @@ files:
 - Updated at wrap-up of #5218, after the review fixes. Step 1 says the origin-host gate runs before the policy read. Steps 3 and 4 now place a failed `check` call (`blocked` before any push) and a push that failed after reaching origin (`blocked`) where the code ends them.
 - Updated during the build of #5219: Steps 5 and 6 hand off to the driver's own settle and its `settle: interrupted` final line.
 - Updated during the build of #5277 (run `2026-11-13T000412-spec-5277`). Step 5 now covers the CI step's settle window, the GitHub Actions run requirement and the `no-ci` rule with its exemptions. Step 6 now covers what an interrupt inside the window reports.
+- Updated during the build of #5269 (run `2026-11-13T000404-record-5269`): step 3 now says the commit subject keeps its leading verb, and that a closing keyword goes only when an issue reference follows it.
