@@ -23,7 +23,9 @@
 // full-suite rule matches, an unreadable declaration, an unresolvable base, any error — runs the
 // whole suite with the one-line reason on stderr, never a smaller run and never an exception. No
 // selected file exits 0 with one line. `--full` runs the whole suite here; `CI` set (any non-empty
-// value), `--shard`, `--record-durations`, root arguments and `--files-from` never consult the map.
+// value), `--shard`, `--record-durations`, root arguments and `--files-from` never consult the map,
+// and neither does a run that is a child of `verify.js` or of another run (CT_TEST_SUITE_SLOT_HELD=1):
+// it does what its parent asked, so only a top-level plain run selects.
 //
 // `--shard <i>/<n>` runs only the i-th of n disjoint slices of the root set, so CI can spread the suite
 // across parallel jobs (`.github/workflows/test.yml`). Every shard computes the same partition from the
@@ -345,8 +347,8 @@ function extractRunFlags(argv) {
 
 // What a run does about impact selection (#5319), from the arguments and the environment alone:
 // 'listed' (a `--files-from` list names the files), 'whole' (`--full`, a shard, a recording, explicit
-// roots, or CI set — any non-empty value, as resolveConcurrency reads it) or 'select' (consult the
-// impact map). `--full` and `--files-from` together are contradictory and throw.
+// roots, CI set — any non-empty value, as resolveConcurrency reads it — or a held suite slot,
+// CT_TEST_SUITE_SLOT_HELD=1) or 'select' (consult the impact map). `--full` and `--files-from` together are contradictory and throw.
 // Pure: `env` is a parameter, never read from `process`.
 function resolveRunMode({ rest, shard, recordDurations, full, env }) {
   if (rest.includes('--files-from')) {
@@ -354,6 +356,8 @@ function resolveRunMode({ rest, shard, recordDurations, full, env }) {
     return 'listed';
   }
   if (full || shard || recordDurations !== null || rest.length > 0 || (typeof env.CI === 'string' && env.CI !== '')) return 'whole';
+  // A bare run under a held slot is a child of verify.js or of another run: it does what its parent asked.
+  if (env.CT_TEST_SUITE_SLOT_HELD === '1') return 'whole';
   return 'select';
 }
 
@@ -375,13 +379,7 @@ function selectChangedTests({ repoRoot, deps = {} }) {
     const decl = read.decl;
     if (!decl.impact) return none('the declaration has no impact block');
     const execImpl = (cmd, args, options) => execFileSync(cmd, args, { ...options, cwd: repoRoot });
-    let base;
-    try {
-      base = d.resolveBase({ integrationBranch: 'main', execImpl });
-    } catch (err) {
-      if (err && err.name === 'ChangedFilesError') return none(err.message);
-      throw err;
-    }
+    const base = d.resolveBase({ integrationBranch: 'main', execImpl });
     const changed = d.changedFiles({ base, execImpl, withStatus: true });
     const where = d.gitLocations({ cwd: repoRoot });
     const impact = d.lazyImpactContext(() => (where === null
@@ -396,6 +394,8 @@ function selectChangedTests({ repoRoot, deps = {} }) {
     const otherSuites = Array.isArray(sel.suites) ? sel.suites.filter((s) => s !== decl.impact.suite).sort(byPath) : [];
     return { files: imp.files.filter((f) => d.exists(f)).sort(byPath), reason: null, base, total: d.countTests(), otherSuites };
   } catch (err) {
+    // A ChangedFilesError (an unresolvable base or diff) already names its own problem: bare, from either call.
+    if (err && err.name === 'ChangedFilesError') return none(err.message);
     return none(`selection failed: ${err.message}`);
   }
 }
@@ -411,6 +411,7 @@ function realSelectionDeps(repoRoot) {
     readDeclaration, resolveBase, changedFiles, gitLocations, loadImpactContext, lazyImpactContext, selectScope,
     // The same bounded, output-ignored fetch as `runImpactFetch` in plugin/bin/verify.js, and its result shape.
     runFetch: (command) => {
+      console.error('run-tests.js: fetching the test-impact map (up to 120 s)');
       const startedMs = Date.now();
       const r = spawnSync(command, { shell: true, cwd: repoRoot, timeout: 120000, stdio: 'ignore', windowsHide: true });
       return {
@@ -437,7 +438,7 @@ function realSelectionDeps(repoRoot) {
 // Pure: a function of the selection result alone.
 function planDefaultRun({ files, reason, base, total, otherSuites = [] }) {
   const base9 = base === null ? '' : String(base).slice(0, 9);
-  const also = otherSuites.length ? ` — also selected: ${otherSuites.join(', ')} (run by \`verify.js --scope\`, not here)` : '';
+  const also = otherSuites.length ? ` — also selected: ${otherSuites.join(', ')} (not run here; \`node plugin/bin/verify.js --scope .claude-tweaks/verify-scope.json --integration-branch main\` runs them)` : '';
   if (files === null) {
     return { action: 'whole', files: null, line: `run-tests.js: running the whole suite — impact selection could not narrow it: ${oneLine(reason)}` };
   }

@@ -59,6 +59,10 @@ test('AC2.2 / AC7.1: resolveRunMode table', () => {
   assert.strictEqual(mode({ recordDurations: 'out.json' }), 'whole');
   assert.strictEqual(mode({ rest: ['perf'] }), 'whole');
   assert.strictEqual(mode({ rest: ['--files-from', 'list.txt'] }), 'listed');
+  // A child of verify.js or of another run holds the slot (CT_TEST_SUITE_SLOT_HELD=1): it does what its parent asked.
+  assert.strictEqual(mode({ env: { CT_TEST_SUITE_SLOT_HELD: '1' } }), 'whole');
+  assert.strictEqual(mode({ env: { CT_TEST_SUITE_SLOT_HELD: '0' } }), 'select');
+  assert.strictEqual(mode({ env: { CT_TEST_SUITE_SLOT_HELD: '1' }, rest: ['--files-from', 'list.txt'] }), 'listed');
   assert.throws(() => mode({ full: true, rest: ['--files-from', 'list.txt'] }), /--full cannot be combined with --files-from/);
 });
 
@@ -115,6 +119,14 @@ test('AC3.5: a thrown error becomes a one-line reason, never an exception', () =
   assert.doesNotMatch(planDefaultRun(r).line, /[\r\n]/);
 });
 
+test('a ChangedFilesError from changedFiles is its bare first line, as from resolveBase', () => {
+  const err = new Error('no usable diff: main...HEAD failed\nfatal: second line');
+  err.name = 'ChangedFilesError';
+  const r = select({ changedFiles: () => { throw err; } });
+  assert.strictEqual(r.files, null);
+  assert.strictEqual(r.reason, 'no usable diff: main...HEAD failed');
+});
+
 test('AC4.1: no change selects nothing', () => {
   const r = select({ changedFiles: () => ({ files: [], statuses: {} }) });
   assert.deepStrictEqual(r.files, []);
@@ -127,7 +139,7 @@ test('selectChangedTests drops selected files that are not on disk', () => {
 });
 
 test('AC4.2: other selected suites are named, never silently dropped', () => {
-  const suffix = ' — also selected: journeys (run by `verify.js --scope`, not here)';
+  const suffix = ' — also selected: journeys (not run here; `node plugin/bin/verify.js --scope .claude-tweaks/verify-scope.json --integration-branch main` runs them)';
   const change = (files) => ({ files, statuses: Object.fromEntries(files.map((f) => [f, 'M'])) });
   const both = select({ changedFiles: () => change(['plugin/bin/x.js', 'docs/journeys/x.md']) });
   assert.deepStrictEqual(both.files, select().files);
