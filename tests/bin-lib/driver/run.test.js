@@ -213,6 +213,7 @@ function defaultScript(over) {
     [onGit('fetch'), ''],
     [onGit('worktree', 'add'), ''],
     [onGit('merge'), ''],
+    [onGit('diff', '--quiet'), ''],
     [on('node', /hooks\.js$/, 'record-worktree'), (c) => ({ code: 0, stderr: '', stdout: `claude-tweaks: worktree recorded for ${path.basename(c.args[3])}\n` })],
     // The worker and commit steps' happy path: a finished worker, one changed file, a commit.
     [on('worker'), (c) => ({ ...ENVELOPE, ...pick(over.worker, c) })],
@@ -1782,6 +1783,35 @@ test('AC12.3, AC12.4: a symlinked scope file is refused via lstatType, no test r
   }
 });
 
+const scopeDiff = (reply) => [onGit('diff', '--quiet'), reply];
+
+test('#5267: a scope file that differs from origin/{ref} stops before verify.js runs', async () => {
+  const h = harness({ script: [scopeIs('file'), scopeDiff(exitOne)] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status, final.stop.class], ['test', 'stop', 'pre-push']);
+  assert.match(final.stop.detail, /verify-scope\.json.*differs from origin\/main/);
+  assert.equal(verifyCalls(h).length, 0, 'no verify call');
+  const diff = gitCalls(h).find((c) => gitSub(c)[0] === 'diff');
+  assert.deepEqual(gitSub(diff), ['diff', '--quiet', 'origin/main', '--', '.claude-tweaks/verify-scope.json']);
+});
+
+test('#5267: an unchanged scope file, and an absent one, proceed to verify.js', async () => {
+  for (const script of [[scopeIs('file')], []]) {
+    const h = harness({ script });
+    await run(['#7'], h.deps);
+    assert.equal(verifyCalls(h).length, 1);
+  }
+});
+
+test('#5267: a git diff failure other than exit 1 fails the step, no verify call', async () => {
+  const h = harness({ script: [scopeDiff(() => { throw Object.assign(new Error('bad revision'), { status: 128 }); })] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status], ['test', 'fail']);
+  assert.equal(verifyCalls(h).length, 0);
+});
+
 test('AC6.2: red tests stop at test', async () => {
   const h = harness({ script: [[on('node', /verify\.js$/), { code: 1, stdout: '', stderr: 'boom' }]] });
   await run(['#7'], h.deps);
@@ -2133,7 +2163,8 @@ test('AC2.1: happy path calls run in the deliverable order', async () => {
     // The leftover check's local and remote branch probes run before the worktree's own fetch.
     'git rev-parse', 'git ls-remote', 'git fetch', 'git worktree add', 'git fetch', 'git merge', 'node hooks.js record-worktree',
     'worker', 'git status', 'git add', 'git commit',
-    'node verify.js', 'node express-lane.js check', 'git rev-parse', 'git push',
+    // The test step compares the scope file with origin/{ref} before verify.js reads it.
+    'git diff', 'node verify.js', 'node express-lane.js check', 'git rev-parse', 'git push',
     'node compose-pr-body.js', 'gh pr create', 'node hooks.js record-pr', 'node set-config.js',
     'node log-decision.js', 'node pr-checks.js', 'node pr-checks.js']);
   assert.equal(h.lines().at(-1).outcome, 'pending-review');

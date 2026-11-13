@@ -549,6 +549,18 @@ const commitStep = defineStep(STEP.commit, STOP_CLASSES.PRE_PUSH, async (ctx, de
   return { status: 'ok', detail: `${paths.length} file(s)` };
 });
 
+// `git diff --quiet` exits 1 when the path differs from the ref, 0 when it matches; any other
+// failure means the comparison itself failed.
+function scopeDiffersFromBase(deps, wt, ref, scopeRel) {
+  try {
+    gitIn(deps, wt, ['diff', '--quiet', `origin/${ref}`, '--', scopeRel]);
+    return false;
+  } catch (err) {
+    if (!err || err.status !== 1) throw new Error(`could not compare ${scopeRel} with origin/${ref}: ${errorText(err)}`);
+    return true;
+  }
+}
+
 // Ports express-lane.md step 4 (test): the runner pass stamp `check` reads is written by
 // verify.js, run in the worktree. A regular verify-scope.json scopes the run; an absent one
 // runs the full suite; anything else (a symlink, a directory) is refused, never followed.
@@ -563,6 +575,12 @@ const testStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
     return { status: 'stop', detail: `.claude-tweaks is not a directory (${parent.type}), so ${scopeRel} is refused; verify.js was not run` };
   }
   const state = deps.lstatType(path.join(wt, '.claude-tweaks', 'verify-scope.json'));
+  // The scope file names commands verify.js runs, so a worker-authored copy is never read: the
+  // worktree is compared with origin/{ref} (committed and uncommitted edits, a created or a
+  // deleted file) before any test command runs.
+  if ((state.type === 'file' || state.type === 'missing') && scopeDiffersFromBase(deps, wt, ref, scopeRel)) {
+    return { status: 'stop', detail: `${scopeRel} differs from origin/${ref}; the worker's copy is never read, verify.js was not run` };
+  }
   const base = ['--run', runDir, '--default-suite-slots', String(policy['verify-suite-slots'].value)];
   let args;
   let detail;
