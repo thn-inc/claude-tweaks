@@ -6,3 +6,4 @@
 | 2 | build | SDD ruling — unlock decision reads the Step-0 listing lock state, code stands: ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | open | — |
 | 3 | build | SDD ruling — cosmetic residuals routed to the Common Step 3 simplify pass: ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | open | — |
 | 4 | build/skill | Adding a consumer to a shared verdict module (run-liveness) also means updating its authoritative consumer lists (docs/hooks.md, the module header), because a recorded removal condition argues from them; no project skill covers this registration step [skill: NEW - shared-verdict-consumer-registration] | observation | Skill observation for /claude-tweaks:wrap-up's Skills curation row |
+| 5 | ops | Step 2.5 branch-divergence on handoff resume: origin/main is 2 ahead of HEAD (61ec59285 #5227, 51ba6c665 #4785); review's pre-review catch-up handles it | open | — |
