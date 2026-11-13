@@ -654,3 +654,40 @@ test('AC1.1: the core section carries the rendered-UI exception sentence once (#
   const section = coreForegroundSection(readText(CORE)).replace(/\s+/g, ' ');
   assert.equal(section.split(RENDERED_UI_EXCEPTION).length - 1, 1);
 });
+
+const RENDERED_UI_EXCEPTION_FACTS = [
+  [/Exception:\s+a\s+rendered-UI\s+unit\s+\(review\s+Step\s+6\/6\.5\)\s+gets\s+more\s+windows\s+while\s+its\s+artifact\s+directory\s+changes;/, 'names the rendered-UI unit exception and its extra windows'],
+  [/stage\s+its\s+late\s+result\s+\(`rendered-ui-units\.md`\)\./, 'stages the late result per rendered-ui-units.md'],
+];
+const missingRenderedUiException = missingFactsOf(RENDERED_UI_EXCEPTION_FACTS);
+
+test('AC1.1 AC2.1: every copy carries the rendered-UI exception sentence (#5280)', () => {
+  for (const [name, text] of Object.entries(primitiveCopies())) {
+    assert.deepEqual(missingRenderedUiException(text), [], name);
+  }
+});
+
+test('AC1.1: each exception assertion goes red when removed from any single copy (discrimination proof)', () => {
+  for (const text of Object.values(primitiveCopies())) {
+    assertEachPatternGoesRed(text, RENDERED_UI_EXCEPTION_FACTS, missingRenderedUiException);
+  }
+});
+
+const SELF_JUDGE_THEN_EXCEPTION = 'Read-only units keep the first-bound self-judge. Exception: a rendered-UI unit (review Step 6/6.5)';
+const exceptionMisplacedCopies = (copies) => Object.entries(copies)
+  .filter(([, text]) => !text.replace(/\s+/g, ' ').includes(SELF_JUDGE_THEN_EXCEPTION))
+  .map(([name]) => name);
+
+test('AC1.1: the exception sentence directly follows the read-only self-judge sentence in every copy', () => {
+  assert.deepEqual(exceptionMisplacedCopies(primitiveCopies()), []);
+});
+
+test('AC1.1: a copy with the exception sentence moved to its start goes red (discrimination proof)', () => {
+  const copies = primitiveCopies();
+  for (const [name, text] of Object.entries(copies)) {
+    const flat = text.replace(/\s+/g, ' ');
+    assert.ok(flat.includes(RENDERED_UI_EXCEPTION), `exception sentence not found in ${name}`);
+    const doctored = RENDERED_UI_EXCEPTION + ' ' + flat.replace(' ' + RENDERED_UI_EXCEPTION, '');
+    assert.deepEqual(exceptionMisplacedCopies({ ...copies, [name]: doctored }), [name], `moving the exception in only ${name} must turn exactly that copy red`);
+  }
+});
