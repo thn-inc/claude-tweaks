@@ -237,15 +237,18 @@ function readWorkflowEntry(dir, name, rootReal, fsImpl, opts) {
 const isAbsent = (leaf) => leaf.state === 'missing' && leaf.code === 'ENOENT';
 const isUnreadable = (leaf) => leaf.state === 'unreadable' || (leaf.state === 'missing' && !isAbsent(leaf));
 
-// resolveLeaf(p), except that an ENOENT leaf is absent only when its `parent`
+// resolveLeaf(p), after `parent` is resolved first: a parent that resolves
+// outside the checkout is `outside` with `parent: true`, and nothing under it
+// is touched, leaf or not. Then an ENOENT leaf is absent only when its parent
 // is absent or a real directory. A parent that resolves to a non-directory
 // reads as ENOTDIR (an OS that reports a path under a regular file as ENOENT,
 // win32, must not make that file read as absent); a dangling-symlink parent
 // is `dangling` with `parent: true`; an unreadable parent is unreadable.
-function resolveUnder(p, parent, fsImpl, opts) {
+function resolveUnder(p, parent, rootReal, fsImpl, opts) {
+  const up = resolveLeaf(parent, opts);
+  if (up.state === 'resolved' && !isPathContained(up.path, rootReal, { orEqual: true })) return { state: 'outside', parent: true };
   const leaf = resolveLeaf(p, opts);
   if (!isAbsent(leaf)) return leaf;
-  const up = resolveLeaf(parent, opts);
   if (up.state === 'dangling') return { state: 'dangling', parent: true };
   if (up.state === 'unreadable') return up;
   if (up.state === 'resolved' && lstatType(up.path, { fsImpl }).type !== 'directory') return { state: 'missing', code: 'ENOTDIR' };
@@ -254,13 +257,15 @@ function resolveUnder(p, parent, fsImpl, opts) {
 
 // `.github/workflows/*.y{a,}ml` under `root`, sorted. A missing directory is
 // an empty set; a directory that exists but cannot be listed (or is not a
-// directory, or resolves outside the checkout) is an error, never empty.
+// directory, or it or `.github` resolves outside the checkout) is an error,
+// never empty.
 function readWorkflowSet(root, { fsImpl = fs, realpath } = {}) {
   const opts = guardOpts(fsImpl, realpath);
   const rootReal = canonicalRealpath(root, opts);
   if (rootReal === null) return { ok: false, error: 'could not resolve --root' };
-  const leaf = resolveUnder(path.join(root, '.github', 'workflows'), path.join(root, '.github'), fsImpl, opts);
+  const leaf = resolveUnder(path.join(root, '.github', 'workflows'), path.join(root, '.github'), rootReal, fsImpl, opts);
   if (isAbsent(leaf)) return { ok: true, workflows: [] };
+  if (leaf.state === 'outside') return { ok: false, error: '.github/workflows: .github resolves outside the checkout — not read' };
   if (leaf.state === 'dangling') {
     return { ok: false, error: `.github/workflows: ${leaf.parent ? '.github is a dangling symlink' : 'dangling symlink'} — not read` };
   }
@@ -284,13 +289,15 @@ function readWorkflowSet(root, { fsImpl = fs, realpath } = {}) {
 // The `ci` verification sources declared in `.claude-tweaks/verify-scope.json`:
 // null when the file is absent (check 2 skipped), [] when declared without
 // `ci`. A declaration that is invalid, unreadable, dangling or outside the
-// checkout is an error, never absent.
+// checkout, or under a `.claude-tweaks` that resolves outside it, is an error,
+// never absent.
 function readCiSources(root, { fsImpl = fs, realpath } = {}) {
   const opts = guardOpts(fsImpl, realpath);
   const rootReal = canonicalRealpath(root, opts);
   if (rootReal === null) return { ok: false, errors: ['could not resolve --root'] };
-  const leaf = resolveUnder(path.join(root, '.claude-tweaks', 'verify-scope.json'), path.join(root, '.claude-tweaks'), fsImpl, opts);
+  const leaf = resolveUnder(path.join(root, '.claude-tweaks', 'verify-scope.json'), path.join(root, '.claude-tweaks'), rootReal, fsImpl, opts);
   if (isAbsent(leaf)) return { ok: true, ciSources: null };
+  if (leaf.state === 'outside') return { ok: false, errors: ['verify-scope.json: .claude-tweaks resolves outside the checkout — not read'] };
   if (leaf.state === 'dangling') {
     return { ok: false, errors: [`verify-scope.json: ${leaf.parent ? '.claude-tweaks is a dangling symlink' : 'dangling symlink'} — not read`] };
   }

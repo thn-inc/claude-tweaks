@@ -15,7 +15,7 @@ const { spawnSync } = require('child_process');
 
 const REPO = path.join(__dirname, '..', '..', '..');
 const CLI = path.join(REPO, 'plugin', 'bin', 'ci-workflow-review.js');
-const { toPosix } = require(path.join(REPO, 'plugin', 'bin', 'lib', 'shared-primitives.js'));
+const { toPosix, isPathContained } = require(path.join(REPO, 'plugin', 'bin', 'lib', 'shared-primitives.js'));
 const { generateWorkflowYaml } = require(path.join(REPO, 'plugin', 'bin', 'lib', 'issue-branch-tracking.js'));
 const { chmodDenialSkip } = require('../../helpers/root');
 
@@ -346,6 +346,92 @@ test('a dangling or unreadable parent over an ENOENT leaf exits 1, never absent 
   assert.deepEqual(JSON.parse(absent.stdout).findings, []);
 });
 
+// Every path handed to realpath, lstatSync, readdirSync or readFileSync, over
+// the real fs (realpath: the real one unless given).
+function traceFs(realpath = fs.realpathSync.native) {
+  const calls = [];
+  const rec = (fn) => (p, ...rest) => { calls.push(String(p)); return fn(p, ...rest); };
+  return {
+    calls,
+    deps: {
+      realpath: rec(realpath),
+      fsImpl: { ...fs, lstatSync: rec(fs.lstatSync), readdirSync: rec(fs.readdirSync), readFileSync: rec(fs.readFileSync) },
+    },
+  };
+}
+
+// The traced paths strictly under the in-checkout `parent`, or at or under
+// `outside` (as given or canonical): none may appear once the parent is refused.
+const touchedUnder = (calls, parent, outside) => calls.filter((p) => isPathContained(p, parent)
+  || [outside, fs.realpathSync.native(outside)].some((o) => isPathContained(p, o, { orEqual: true })));
+
+const OUTSIDE_PARENT = {
+  '.claude-tweaks': 'verify-scope.json: .claude-tweaks resolves outside the checkout — not read',
+  '.github': '.github/workflows: .github resolves outside the checkout — not read',
+};
+
+test('a .claude-tweaks or .github that resolves outside the checkout exits 1, leaf or not, and nothing under it is touched (real symlinks)', { skip: NO_SYMLINKS && 'symlink fixtures are POSIX-only' }, () => {
+  const cases = [
+    ['.claude-tweaks', () => {}],
+    ['.claude-tweaks', (out) => write(out, 'verify-scope.json', CI_DECL)],
+    ['.github', () => {}],
+    ['.github', (out) => write(out, 'workflows/ci.yml', NO_READY)],
+  ];
+  for (const [parent, populate] of cases) {
+    const root = tmpRoot();
+    const outside = tmpRoot('cwr-outside-');
+    populate(outside);
+    if (parent === '.claude-tweaks') write(root, '.github/workflows/ci.yml', NO_READY);
+    link(root, parent, outside);
+    const want = `ci-workflow-review.js: ${OUTSIDE_PARENT[parent]}\n`;
+    const res = runCli(root, ['--drift', '--json']);
+    assert.equal(res.status, 1, `${parent}: ${res.stdout}`);
+    assert.equal(res.stdout, '');
+    assert.equal(res.stderr, want);
+    const t = traceFs();
+    const inProc = runInProcess(root, ['--drift', '--json'], t.deps);
+    assert.equal(inProc.status, 1, `${parent}: ${inProc.stdout}`);
+    assert.equal(inProc.stdout, '');
+    assert.equal(inProc.stderr, want);
+    assert.deepEqual(touchedUnder(t.calls, path.join(root, parent), outside), [], `${parent}: touched under the refused parent`);
+  }
+});
+
+test('a .claude-tweaks or .github that resolves outside the checkout exits 1, leaf or not (injected realpath, any platform)', () => {
+  const outside = tmpRoot('cwr-outside-');
+  write(outside, 'verify-scope.json', CI_DECL);
+  write(outside, 'workflows/ci.yml', NO_READY);
+  const outsideReal = fs.realpathSync.native(outside);
+  const cases = [
+    // [parent, suffix the realpath stub redirects outside, the in-checkout leaf exists]
+    ['.claude-tweaks', CT_SUFFIX, false],
+    ['.claude-tweaks', CT_SUFFIX, true],
+    ['.github', GITHUB_SUFFIX, false],
+    ['.github', GITHUB_SUFFIX, true],
+  ];
+  for (const [parent, suffix, withLeaf] of cases) {
+    const root = tmpRoot();
+    if (parent === '.claude-tweaks' || withLeaf) write(root, '.github/workflows/ci.yml', NO_READY);
+    if (parent === '.claude-tweaks' && withLeaf) write(root, '.claude-tweaks/verify-scope.json', CI_DECL);
+    const t = traceFs((p) => (String(p).endsWith(suffix) ? outsideReal : fs.realpathSync.native(p)));
+    const res = runInProcess(root, ['--drift', '--json'], t.deps);
+    const label = `${parent} (leaf ${withLeaf ? 'present' : 'absent'})`;
+    assert.equal(res.status, 1, `${label}: ${res.stdout}`);
+    assert.equal(res.stdout, '');
+    assert.equal(res.stderr, `ci-workflow-review.js: ${OUTSIDE_PARENT[parent]}\n`);
+    assert.deepEqual(touchedUnder(t.calls, path.join(root, parent), outside), [], `${label}: touched under the refused parent`);
+  }
+  // Control: a parent the stub resolves to a directory inside the checkout is
+  // contained, so the same absent leaf stays silent.
+  const inside = tmpRoot();
+  write(inside, '.github/workflows/ci.yml', NO_READY);
+  fs.mkdirSync(path.join(inside, 'real-ct'));
+  const insideCt = fs.realpathSync.native(path.join(inside, 'real-ct'));
+  const c = runInProcess(inside, ['--drift', '--json'], { realpath: (p) => (String(p).endsWith(CT_SUFFIX) ? insideCt : fs.realpathSync.native(p)) });
+  assert.equal(c.status, 0, c.stderr);
+  assert.deepEqual(JSON.parse(c.stdout).findings.map((f) => f.check), ['draft-skip-no-ready-for-review']);
+});
+
 test('a workflow file that vanishes between listing and read is unparsed, never absent (injected)', () => {
   const root = tmpRoot();
   write(root, '.github/workflows/ci.yml', CLEAN);
@@ -563,7 +649,7 @@ test('AC10.2: a workflow or verify-scope.json symlinked outside the checkout is 
   const d = runCli(dc.root, ['--drift', '--json']);
   assert.equal(d.status, 1);
   assert.equal(d.stdout, '');
-  assert.match(d.stderr, /outside the checkout/);
+  assert.equal(d.stderr, 'ci-workflow-review.js: verify-scope.json: resolves outside the checkout — not read\n');
   const dSpy = spyFs();
   const dIn = runInProcess(dc.root, ['--drift', '--json'], { fsImpl: dSpy.fsImpl });
   assert.equal(dIn.status, 1);
@@ -580,7 +666,7 @@ test('AC10.3: a dangling symlink is unparsed (workflow) or exit 1 (declaration),
   const d = runCli(dRoot, ['--drift', '--json']);
   assert.equal(d.status, 1);
   assert.equal(d.stdout, '');
-  assert.match(d.stderr, /dangling symlink/);
+  assert.equal(d.stderr, 'ci-workflow-review.js: verify-scope.json: dangling symlink — not read\n');
 });
 
 test('AC10.4: one fixture per case', () => {
