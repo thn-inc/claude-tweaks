@@ -980,13 +980,16 @@ test('AC1.1/AC1.2: 10 in-window records, 6 dispositioned, 2 with one follow-up e
 test('AC2.1: three follow-ups on one record count one followUpRecord and three followUps', () => {
   const records = capturedClass(10, 15);
   const gitLog = records.slice(0, 6).map((r) => commitFor(r.number));
-  const [row] = trustRows(
-    [...records, reflectFollowUp(101, 1), reflectFollowUp(102, 1), reflectFollowUp(103, 1)],
-    gitLog, NOW, {},
-  );
+  const withFollowUps = [...records, reflectFollowUp(101, 1), reflectFollowUp(102, 1), reflectFollowUp(103, 1)];
+  const [row] = trustRows(withFollowUps, gitLog, NOW, {});
   assert.equal(row.followUps, 3);
   assert.equal(row.followUpRecords, 1);
   assert.equal(row.followUpRate, 1 / row.total);
+
+  // The verdict reads the distinct-record rate too: 1 of 10 is within 20%,
+  // where the 3 follow-ups alone would read 30%.
+  const [at20] = trustRows(withFollowUps, gitLog, NOW, { 'trust-follow-up-rate-max-percent': 20 });
+  assert.equal(at20.verdict, 'clean');
 });
 
 test('AC3.1: a record closed 31 days ago forms no cell under the default window and does under 45', () => {
@@ -1117,6 +1120,7 @@ test('describeMixedReasons renders every reason in order', () => {
   assert.equal(describeMixedReasons(row), '1 changes-requested, follow-up rate 33.4% > 30%, 2 negative, batch-only approvals');
   assert.equal(describeMixedReasons({ ...row, mixedReasons: ['follow-up-rate', 'negative-evidence'] }), 'follow-up rate 33.4% > 30%, 2 negative');
   assert.equal(describeMixedReasons({ verdict: 'clean', mixedReasons: [] }), '');
+  assert.equal(describeMixedReasons({ ...row, verdict: 'clean' }), '', 'a non-mixed row renders nothing whatever it carries');
   assert.equal(describeMixedReasons({ verdict: 'mixed' }), '');
 });
 
