@@ -55,6 +55,8 @@ const RULE_ANCHORS = [
   'one the promotion rule in Reading the reply marked',
   'never asked',
   'the reading that keeps the criterion as written',
+  'Among the readings that keep every existing Acceptance Criterion and recorded decision intact',
+  'through the intent-resolvable sequence above',
   'blocks, nothing is applied, settled rows included',
   'logs no `AUTO` entry for a settled row, and the question comment lists only the surviving rows',
 ];
@@ -71,8 +73,7 @@ const FIRST_ROUND = '**On a first round** (neither signal), routing is unchanged
 const GATE_SENTENCE = 'In a converged round, only the rows that survive the convergence rule above reach this gate; on a first round every needs-human row does.';
 const READING_QUALIFIER = 'In a converged round, only a row that survives the convergence rule reaches it (`### Converged round (#4958)` below).';
 
-// origin/main's needs-human opening, before #4958 (frozen, not read from history).
-const PRE_CHANGE_GATE = "The HARD-GATE: this plan-review needs-human spec gap is registered in `_shared/auto-mode-contract.md`'s HARD-GATE / BLOCKED / STOP row — a deliberate stop before Task 1 that `auto` never silences. Every needs-human finding in the reply is handled together, as one question set.";
+const gateSaysSurvivingOnly = (text) => norm(subsection(text, NEEDS_HUMAN)).includes(GATE_SENTENCE);
 
 test('AC1.1: a converged round is defined by exactly the two signals, and a failed comment read is not converged', () => {
   assert.deepStrictEqual(problems(SIGNAL_ANCHORS, subsection(REVIEW, CONVERGED)), []);
@@ -88,9 +89,11 @@ test('AC3.1: a settled row carries the attribution, names the reading not taken,
 
 test('AC4.1: a first round routes unchanged, and the gate and Reading the reply say only surviving rows reach it', () => {
   assert.ok(norm(subsection(REVIEW, CONVERGED)).includes(FIRST_ROUND));
-  assert.ok(norm(subsection(REVIEW, NEEDS_HUMAN)).includes(GATE_SENTENCE));
+  assert.ok(gateSaysSurvivingOnly(REVIEW));
   assert.ok(norm(REVIEW).includes(READING_QUALIFIER));
-  assert.ok(!norm(PRE_CHANGE_GATE).includes(GATE_SENTENCE));
+  // go-red: the same check fails once the sentence is removed from the gate subsection in memory.
+  assert.ok(REVIEW.includes(GATE_SENTENCE), 'control precondition: the sentence is in the live text verbatim');
+  assert.ok(!gateSaysSurvivingOnly(REVIEW.split(GATE_SENTENCE).join('')));
 });
 
 test('AC4.1: the Converged round subsection sits after the plan-amendment subsection and before the needs-human gate', () => {
@@ -107,7 +110,7 @@ test('AC5.1: the reviewer Dispatch prompt block is byte-identical to origin/main
 });
 
 test('AC7.1 go-red: each anchor set fails when one anchor is removed, and a one-byte prompt edit breaks AC5.1', () => {
-  const sub = subsection(REVIEW, CONVERGED);
+  const sub = norm(subsection(REVIEW, CONVERGED));
   for (const set of [SIGNAL_ANCHORS, RULE_ANCHORS, TRAIL_ANCHORS]) {
     for (const anchor of set) {
       const doctored = sub.split(anchor).join('removed');

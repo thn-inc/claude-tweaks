@@ -122,9 +122,9 @@ Under `work-backend: local-files` only the spec-line signal applies: there are n
 
 **Convergence rule.** In a converged round, a needs-human row — the reviewer's, or one the promotion rule in Reading the reply marked — stays needs-human only when settling it would alter or loosen an existing Acceptance Criterion, or contradict a recorded decision, under every available reading: the rule judges the reading chosen, not the row's suggested fix. A recorded decision is a `Decided by the user at plan review:` line, a `**Decision**` paragraph in the spec, or a Closed rule (`specify/spec-template.md`'s State-Classification Deliverables). Every other needs-human row is settled by plan review, never asked:
 
-1. Pick the reading closer to the spec's stated intent. When the row came from a criterion change, that is the reading that keeps the criterion as written.
+1. Among the readings that keep every existing Acceptance Criterion and recorded decision intact, pick the one closer to the spec's stated intent. When the row came from a criterion change, that is the reading that keeps the criterion as written.
 2. Apply it through the intent-resolvable sequence above, sharing its one commit, record comment and re-audit with every other amendment from this reply. Its clarification line quotes the row's Finding in place of an Evidence sentence, is attributed `Settled by plan review after an answered round:`, and names the reading not taken.
-3. Log one `AUTO` entry per settled row, so the Review Console lists it. The text carries reviewer-written prose (backticks, `$`, quotes), so never a double-quoted `--text` (`_shared/auto-decision-log.md`'s Text from git or a user). Resolve a path with `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" DECISION_TEXT=decision-text-{run-id}-plan-review-settled-{k}.md` (the path it prints is `{text-file}`), then run:
+3. Log one `AUTO` entry per settled row, so the Review Console lists it. The text carries reviewer-written prose (backticks, `$`, quotes), so never a double-quoted `--text` (`_shared/auto-decision-log.md`'s Text from git or a user). Resolve a path with `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" DECISION_TEXT=decision-text-{run-id}-plan-review-settled-{k}.md` (`{k}` numbers this reply's settled rows from 1; the path it prints is `{text-file}`), then run:
 
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO \
@@ -133,6 +133,8 @@ Under `work-backend: local-files` only the spec-line signal applies: there are n
    ```
 
    having first written `{text-file}` with the Write tool, holding the one line `settled after an answered round: {finding} — chose {reading taken}; not {reading not taken}` (`_shared/auto-decision-log.md`'s Text from git or a user rule).
+
+   The intent-resolvable sequence's own step-4 `AUTO` line counts settled rows in its `{N}`, so a settled row is logged twice: once in that count and once on its own line.
 
    A standalone `/build` with no run dir lists each settled row in the handoff's `### Plan review amendments (standalone build, if any)` section instead.
 
