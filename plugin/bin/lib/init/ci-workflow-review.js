@@ -97,10 +97,13 @@ function checkCiSource({ entry, shape, draftSkipIds, ciSources }) {
 // The reader reasons that leave a workflow's PR trigger unknown.
 const PR_TRIGGER_UNREAD = new Set(['pull_request trigger not read', 'on: block not read', 'tab indentation in on:', 'anchor or alias in on:']);
 
-// A reviewed, not-unparsed PR workflow with no filter and a job with no `if:`:
-// it reports on every PR, so a required check never waits on a paths filter.
+// A reviewed, not-unparsed PR workflow with no filter, types that cover every PR
+// head (opened and synchronize; undeclared types read as the default set, which
+// has both) and a job with no `if:`: it reports on every PR, so a required check
+// never waits on a paths filter.
 const isAlwaysReporting = (row) => row.reasons.length === 0 && row.shape.prTrigger
-  && row.shape.prFilters.length === 0 && row.shape.jobs.some((j) => j.if === null);
+  && row.shape.prFilters.length === 0 && ['opened', 'synchronize'].every((t) => row.shape.types.includes(t))
+  && row.shape.jobs.some((j) => j.if === null);
 
 // An unparsed workflow that could have been the always-reporting one: an
 // unreadable file (its trigger is unknown), a PR workflow, or one whose PR
@@ -111,12 +114,16 @@ const isPrCandidate = (row) => row.reasons.length > 0
 // Check 3: a paths filter, and no other workflow reports on every PR. An
 // unparsed workflow never counts; the ones that might have are named.
 function checkPathsFilter({ row, shape, rows }) {
-  const filters = shape.prFilters.filter((k) => k === 'paths' || k === 'paths-ignore');
-  if (!shape.prTrigger || filters.length === 0) return null;
+  const carried = [];
+  for (const [trigger, keys] of Object.entries(shape.prFiltersByTrigger)) {
+    const filters = keys.filter((k) => k === 'paths' || k === 'paths-ignore');
+    if (filters.length > 0) carried.push(`${filters.join(', ')} on ${trigger}`);
+  }
+  if (!shape.prTrigger || carried.length === 0) return null;
   const others = rows.filter((r) => r !== row);
   if (others.some(isAlwaysReporting)) return null;
   const files = others.filter(isPrCandidate).map((r) => r.entry.workflow);
-  return `${filters.join(', ')} on pull_request; no always-reporting workflow${files.length > 0 ? ` (unparsed, not counted: ${files.join(', ')})` : ''}`;
+  return `${carried.join('; ')}; no always-reporting workflow${files.length > 0 ? ` (unparsed, not counted: ${files.join(', ')})` : ''}`;
 }
 
 // Check 4: a PR workflow without workflow-level `cancel-in-progress: true`

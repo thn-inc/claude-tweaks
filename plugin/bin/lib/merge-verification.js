@@ -469,7 +469,7 @@ const afterColon = (line) => line.slice(line.indexOf(':') + 1);
 
 function emptyWorkflowShape() {
   return {
-    name: null, prTrigger: false, types: [], typesDeclared: false, draftReference: false, prFilters: [],
+    name: null, prTrigger: false, types: [], typesDeclared: false, draftReference: false, prFilters: [], prFiltersByTrigger: {},
     pushTrigger: false, pushBranches: 'absent', pushBranchesIgnore: false, pushTags: false,
     jobs: [], concurrency: 'absent', unparsed: [],
   };
@@ -1106,9 +1106,13 @@ function readWorkflowShape(text) {
       if (typeof triggers === 'string') {
         unparsed.push(triggers);
       } else {
+        // prFilters merges both PR triggers' filter keys; prFiltersByTrigger keeps
+        // each trigger's own, so a report can name the trigger carrying a filter.
         const filters = new Set();
         for (const t of ['pull_request', 'pull_request_target']) {
-          for (const k of (triggers.get(t) || new Map()).keys()) if (PR_FILTER_KEYS.includes(k)) filters.add(k);
+          const own = [...(triggers.get(t) || new Map()).keys()].filter((k) => PR_FILTER_KEYS.includes(k)).sort();
+          for (const k of own) filters.add(k);
+          if (own.length > 0) out.prFiltersByTrigger[t] = own;
         }
         out.prFilters = [...filters].sort();
         const push = triggers.get('push');

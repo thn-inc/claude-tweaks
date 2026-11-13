@@ -22,11 +22,11 @@ test('readWorkflowShape: every exported field is pinned by name — a rename fai
   assert.deepEqual([...mv.PR_FILTER_KEYS], ['branches', 'branches-ignore', 'paths', 'paths-ignore']);
   assert.ok(Object.isFrozen(mv.PR_FILTER_KEYS));
   const s = shape(MIN);
-  assert.deepEqual(Object.keys(s).sort(), ['concurrency', 'draftReference', 'jobs', 'name', 'prFilters', 'prTrigger',
-    'pushBranches', 'pushBranchesIgnore', 'pushTags', 'pushTrigger', 'types', 'typesDeclared', 'unparsed']);
+  assert.deepEqual(Object.keys(s).sort(), ['concurrency', 'draftReference', 'jobs', 'name', 'prFilters', 'prFiltersByTrigger',
+    'prTrigger', 'pushBranches', 'pushBranchesIgnore', 'pushTags', 'pushTrigger', 'types', 'typesDeclared', 'unparsed']);
   assert.deepEqual(Object.keys(s.jobs[0]).sort(), ['concurrency', 'id', 'if', 'stepIfCount']);
   bothEndings(MIN, (t) => assert.deepEqual(shape(t), {
-    name: null, prTrigger: false, types: [], typesDeclared: false, draftReference: false, prFilters: [],
+    name: null, prTrigger: false, types: [], typesDeclared: false, draftReference: false, prFilters: [], prFiltersByTrigger: {},
     pushTrigger: true, pushBranches: 'absent', pushBranchesIgnore: false, pushTags: false,
     jobs: [{ id: 'a', if: null, stepIfCount: 0, concurrency: false }], concurrency: 'absent', unparsed: [],
   }));
@@ -35,7 +35,7 @@ test('readWorkflowShape: every exported field is pinned by name — a rename fai
 test('readWorkflowShape: non-string or empty input is the empty shape with no on: block, never throws', () => {
   for (const v of [undefined, null, 5, {}, [], '']) {
     assert.deepEqual(mv.readWorkflowShape(v), {
-      name: null, prTrigger: false, types: [], typesDeclared: false, draftReference: false, prFilters: [],
+      name: null, prTrigger: false, types: [], typesDeclared: false, draftReference: false, prFilters: [], prFiltersByTrigger: {},
       pushTrigger: false, pushBranches: 'absent', pushBranchesIgnore: false, pushTags: false,
       jobs: [], concurrency: 'absent', unparsed: ['no on: block'],
     });
@@ -72,20 +72,26 @@ test('name: top-level name in bare, quoted and commented forms', () => {
   }
 });
 
+// prFiltersByTrigger keeps each PR trigger's own filter keys (sorted), keyed
+// pull_request then pull_request_target, a trigger with no filter key omitted.
 test('prFilters: block, flow-mapping and pull_request_target forms', () => {
   const cases = [
-    ["on:\n  pull_request:\n    paths: ['src/**']\n", ['paths']],
-    ['on: { pull_request: { branches: [main], paths-ignore: [docs/**] } }\n', ['branches', 'paths-ignore']],
-    ['on:\n  pull_request_target:\n    branches-ignore:\n      - x\n', ['branches-ignore']],
-    ['on: [push, pull_request]\n', []],
-    ["on:\n  push:\n    paths: ['src/**']\n  pull_request:\n", []],
+    ["on:\n  pull_request:\n    paths: ['src/**']\n", ['paths'], { pull_request: ['paths'] }],
+    ['on: { pull_request: { branches: [main], paths-ignore: [docs/**] } }\n', ['branches', 'paths-ignore'], { pull_request: ['branches', 'paths-ignore'] }],
+    ['on:\n  pull_request_target:\n    branches-ignore:\n      - x\n', ['branches-ignore'], { pull_request_target: ['branches-ignore'] }],
+    ['on: [push, pull_request]\n', [], {}],
+    ["on:\n  push:\n    paths: ['src/**']\n  pull_request:\n", [], {}],
     // both PR triggers contribute; the list is sorted and deduped
-    ['on:\n  pull_request_target:\n    paths: [a]\n  pull_request:\n    paths: [b]\n    branches: [main]\n', ['branches', 'paths']],
+    ['on:\n  pull_request_target:\n    paths: [a]\n  pull_request:\n    paths: [b]\n    branches: [main]\n', ['branches', 'paths'],
+      { pull_request: ['branches', 'paths'], pull_request_target: ['paths'] }],
+    ['on:\n  pull_request:\n    types: [opened]\n  pull_request_target:\n    paths-ignore: [a]\n', ['paths-ignore'], { pull_request_target: ['paths-ignore'] }],
   ];
-  for (const [c, want] of cases) {
+  for (const [c, want, byTrigger] of cases) {
     bothEndings(c + JOBS, (t) => {
       const s = shape(t);
       assert.deepEqual(s.prFilters, want, JSON.stringify(t));
+      assert.deepEqual(s.prFiltersByTrigger, byTrigger, JSON.stringify(t));
+      assert.deepEqual(Object.keys(s.prFiltersByTrigger), Object.keys(byTrigger), JSON.stringify(t));
       assert.deepEqual(s.unparsed, [], JSON.stringify(t));
     });
   }

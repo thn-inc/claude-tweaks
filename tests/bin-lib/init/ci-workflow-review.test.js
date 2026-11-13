@@ -288,19 +288,40 @@ test('AC3.1: a paths filter on pull_request with no other workflow yields exactl
   assert.equal(ignore.findings[0].detail, 'paths-ignore on pull_request; no always-reporting workflow');
 });
 
-test('AC3.2: a second unfiltered pull_request workflow with an if:-free job clears it', () => {
-  const r = review({ 'ci.yml': prWf({ on: PATHS_ON }), 'other.yml': prWf() });
-  assert.deepEqual(r.findings, []);
-  assert.deepEqual(r.unparsed, []);
+test('check 3\'s detail names the PR trigger(s) that carry the paths filter', () => {
+  const cases = [
+    ["  pull_request_target:\n    paths: ['src/**']\n", 'paths on pull_request_target; no always-reporting workflow'],
+    ['  pull_request:\n    branches: [main]\n  pull_request_target:\n    paths: [a]\n', 'paths on pull_request_target; no always-reporting workflow'],
+    ['  pull_request_target:\n    paths-ignore: [a]\n  pull_request:\n    paths: [b]\n',
+      'paths on pull_request; paths-ignore on pull_request_target; no always-reporting workflow'],
+  ];
+  for (const [on, detail] of cases) {
+    const r = review({ 'ci.yml': prWf({ on }) });
+    assert.deepEqual(checksOf(r, W), ['paths-filter-no-always-reporting-job'], on);
+    assert.equal(r.findings[0].detail, detail, on);
+  }
 });
 
-test('AC3.3: a second workflow whose every job skips drafts, or whose trigger has branches:, or that is push-only, does not count', () => {
+test('AC3.2: a second unfiltered pull_request workflow with an if:-free job clears it', () => {
+  // Undeclared types, or declared types that include opened and synchronize.
+  for (const other of [prWf(), prWf({ on: '  pull_request:\n    types: [opened, synchronize, reopened]\n' })]) {
+    const r = review({ 'ci.yml': prWf({ on: PATHS_ON }), 'other.yml': other });
+    assert.deepEqual(r.findings, [], other);
+    assert.deepEqual(r.unparsed, [], other);
+  }
+});
+
+test('AC3.3: a second workflow whose every job skips drafts, or whose trigger has branches:, or that is push-only, or whose types miss a PR head event, does not count', () => {
   const draftJobs = '  a:\n    if: github.event.pull_request.draft == false\n    runs-on: x\n    steps:\n      - run: t\n'
     + '  b:\n    if: ${{ !github.event.pull_request.draft }}\n    runs-on: x\n    steps:\n      - run: t\n';
   const others = [
     prWf({ on: `  pull_request:\n    ${READY_TYPES}\n`, jobs: draftJobs }),
     prWf({ on: '  pull_request:\n    branches: [main]\n' }),
     pushWf('on: push\n', JOBS),
+    // It must report on every PR head: opening the PR and every push to it.
+    prWf({ on: '  pull_request:\n    types: [labeled]\n' }),
+    prWf({ on: '  pull_request:\n    types: [opened, reopened]\n' }),
+    prWf({ on: '  pull_request:\n    types: [synchronize]\n' }),
   ];
   for (const other of others) {
     const r = review({ 'ci.yml': prWf({ on: PATHS_ON }), 'other.yml': other });
@@ -347,6 +368,8 @@ test('an entry whose PR trigger is unread is named, each reason on its own, and 
     ['on: block not read', pushWf('on: [push,\n  workflow_dispatch]\n', JOBS)],
     ['tab indentation in on:', pushWf('on:\n\tpush:\n', JOBS)],
     ['anchor or alias in on:', pushWf('on:\n  push: *x\n', JOBS)],
+    // A stray `\r` on the on: line makes readPullRequestWorkflow throw, which
+    // readWorkflowShape reports as `pull_request trigger not read` with prTrigger false.
     ['pull_request trigger not read', pushWf('on: pull_request\r\r\n', JOBS)],
   ];
   for (const [reason, other] of cases) {
@@ -446,5 +469,6 @@ test('AC7.1: a malformed on: yields an unparsed entry naming the file, never an 
   const r = review({ 'bad.yml': 'on: [push,\n  pull_request]\njobs:\n  a:\n    runs-on: x\n' });
   assert.equal(r.unparsed.length, 1);
   assert.equal(r.unparsed[0].workflow, '.github/workflows/bad.yml');
+  assert.equal(r.unparsed[0].reason, 'on: block not read; pull_request trigger not read');
   assert.deepEqual(r.findings, []);
 });
