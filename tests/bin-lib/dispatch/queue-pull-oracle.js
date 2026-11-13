@@ -334,8 +334,9 @@ function nodeShim() {
 // cannot walk it out. A gitFail prefix of the sub-argv exits 128, `remote get-url origin` prints
 // the canned URL, and anything else is logged and exec'd as the real git from the original cwd,
 // PWD and OLDPWD. A log record it cannot write stops the call (exit 97) before git runs.
-// The refused argv is cut at 300 bytes (LANG=C; dash counts bytes), where the old node shim cut at
-// 300 UTF-16 units: the two differ only past 300 characters with non-ASCII text before the cut.
+// The refused argv is cut at 300 bytes (the sandbox runs LANG=C, and dash always counts bytes),
+// where the old node shim cut at 300 UTF-16 units: the two cuts differ whenever the joined argv is
+// over 300 bytes and holds non-ASCII text before the cut.
 // No forks for its own checks: no $(...), subshell or pipe; dash and macOS /bin/sh alike.
 function gitShimScript({ root, realGit, table }) {
   const failTests = table.git.fail.map((prefix) => {
@@ -381,7 +382,7 @@ function gitShimScript({ root, realGit, table }) {
     '  done',
     '}',
     '',
-    '# qp_refuse WHY ARGV...: log REFUSED, print the argv cut at 300 characters, exit 97.',
+    '# qp_refuse WHY ARGV...: log REFUSED, print the argv cut at 300 bytes, exit 97.',
     'qp_refuse() {',
     '  qp_why=$1',
     '  qp_log REFUSED "$@"',

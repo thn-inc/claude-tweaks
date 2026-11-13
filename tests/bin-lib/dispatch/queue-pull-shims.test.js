@@ -199,6 +199,16 @@ test('the git shim stops before git runs when it cannot write its log', { skip: 
   assert.equal(git(['tag', '--list', 'qp-unlogged']).stdout, '', 'git never ran');
 });
 
+test('the git shim refuses a cwd outside the sandbox', { skip: oracleSkip() }, (t) => {
+  const { sb, git } = gitSandbox(t);
+  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'qp-shims-outside-')));
+  t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
+  const r = git(['status'], { cwd: outside, extra: { PWD: outside } });
+  assert.equal(r.status, 97, r.stderr);
+  assert.equal(r.stderr, `git-shim: refused (outside the sandbox: ${outside}): status\n`);
+  assert.deepEqual(readShimLog(sb.logs, 'git'), [{ tag: 'REFUSED', why: `outside the sandbox: ${outside}`, cwd: outside, argv: ['status'] }]);
+});
+
 test('the git shim refuses an unresolvable cwd', { skip: oracleSkip() }, (t) => {
   const { sb, env } = gitSandbox(t);
   const gone = path.join(sb.proj, 'gone');
