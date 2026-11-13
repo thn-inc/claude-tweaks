@@ -19,3 +19,4 @@
 | 15 | build | SDD ruling — ceiling raised from AC3 52,000 (rail - 500) to 52,200 (rail - 300); RAIL_BYTES 52,500 u...: ratify or reverse at the Review Console (staged/sdd-ruling-12.md) | open | — |
 | 16 | build | SDD ruling — accept docs/skill-graph.md in the revert pathspec (its rows describe the cutover); M5 c...: ratify or reverse at the Review Console (staged/sdd-ruling-13.md) | open | — |
 | 17 | build | SDD ruling — re-review out-of-scope note (queue-pull-notes.md native-support paragraphs still say "t...: ratify or reverse at the Review Console (staged/sdd-ruling-14.md) | open | — |
+| 18 | build/skill | skill-prose-conformance-tests (extends): a cutover that keeps a one-command revert must put the prose-pin tests written against the new text in the revert pathspec and rehearse the revert over every test that reads the reverted files — such pins go red on any revert by construction (#5230 final-review I1: a skill-only revert left 22 tests red) | open | — |
