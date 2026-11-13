@@ -169,12 +169,12 @@ test('off the probed platforms nothing is derived', async (t) => {
 test('realToolchainDeps skips relative and empty PATH entries and finds an executable', { skip: process.platform === 'win32' && 'POSIX modes' }, (t) => {
   const dir = tmp(t);
   fs.writeFileSync(path.join(dir, 'tool'), '#!/usr/bin/env node\nrest', { mode: 0o755 });
-  fs.chmodSync(path.join(dir, 'tool'), 0o755);
+  fs.chmodSync(path.join(dir, 'tool'), 0o755); // root-safe: mode setup, not a denial simulation
   fs.writeFileSync(path.join(dir, 'plain'), 'x', { mode: 0o644 });
-  fs.chmodSync(path.join(dir, 'plain'), 0o644);
+  fs.chmodSync(path.join(dir, 'plain'), 0o644); // root-safe: mode setup, not a denial simulation
   // A relative entry that would resolve against the cwd must not be searched.
   const rel = path.relative(process.cwd(), dir);
-  const deps = worker.realToolchainDeps({ PATH: ['', 'rel', rel, dir].join(':'), HOME: '/h' });
+  const deps = worker.realToolchainDeps({ PATH: ['', 'rel', rel, dir].join(path.delimiter), HOME: '/h' });
   assert.strictEqual(deps.lookup('tool'), path.join(dir, 'tool'));
   assert.strictEqual(deps.lookup('plain'), null);
   assert.strictEqual(deps.lookup('missing'), null);
@@ -183,7 +183,7 @@ test('realToolchainDeps skips relative and empty PATH entries and finds an execu
   fs.symlinkSync(dir, path.join(dir, 'link'));
   assert.strictEqual(deps.realpath(path.join(dir, 'link')), fs.realpathSync.native(dir));
   assert.throws(() => deps.realpath(path.join(dir, 'missing')), /cannot resolve/);
-  const only = worker.realToolchainDeps({ PATH: ['', rel].join(':') });
+  const only = worker.realToolchainDeps({ PATH: ['', rel].join(path.delimiter) });
   assert.strictEqual(only.lookup('tool'), null);
   assert.strictEqual(worker.realToolchainDeps({}).lookup('tool'), null);
 });
@@ -201,7 +201,7 @@ test('with HOME unset, a binary directly in the passwd home\'s bin never re-open
   const bin = path.join(home, 'bin');
   fs.mkdirSync(bin);
   fs.writeFileSync(path.join(bin, 'npm'), 'x', { mode: 0o755 });
-  fs.chmodSync(path.join(bin, 'npm'), 0o755);
+  fs.chmodSync(path.join(bin, 'npm'), 0o755); // root-safe: mode setup, not a denial simulation
   const readPaths = toolchainReadPaths('npm test', worker.realToolchainDeps({ PATH: bin }, { userHome: home }));
   assert.deepStrictEqual(readPaths, [bin]);
 });
@@ -209,9 +209,9 @@ test('with HOME unset, a binary directly in the passwd home\'s bin never re-open
 test('realToolchainDeps.isExecutable is true only for an executable regular file, and never throws', { skip: process.platform === 'win32' && 'POSIX modes' }, (t) => {
   const dir = tmp(t);
   fs.writeFileSync(path.join(dir, 'tool'), 'x', { mode: 0o755 });
-  fs.chmodSync(path.join(dir, 'tool'), 0o755);
+  fs.chmodSync(path.join(dir, 'tool'), 0o755); // root-safe: mode setup, not a denial simulation
   fs.writeFileSync(path.join(dir, 'key'), 'secret', { mode: 0o600 });
-  fs.chmodSync(path.join(dir, 'key'), 0o600);
+  fs.chmodSync(path.join(dir, 'key'), 0o600); // root-safe: mode setup, not a denial simulation
   const { isExecutable } = worker.realToolchainDeps({});
   assert.strictEqual(isExecutable(path.join(dir, 'tool')), true);
   assert.strictEqual(isExecutable(path.join(dir, 'key')), false);
@@ -226,11 +226,11 @@ test('an executable whose shebang names a non-executable file under home re-open
   fs.mkdirSync(path.join(home, '.ssh'), { recursive: true });
   const key = path.join(home, '.ssh', 'id_ed25519');
   fs.writeFileSync(key, 'secret', { mode: 0o600 });
-  fs.chmodSync(key, 0o600);
+  fs.chmodSync(key, 0o600); // root-safe: mode setup, not a denial simulation
   const bin = path.join(base, 'wt', 'node_modules', '.bin');
   fs.mkdirSync(bin, { recursive: true });
   fs.writeFileSync(path.join(bin, 'npm'), '#!' + key + '\n', { mode: 0o755 });
-  fs.chmodSync(path.join(bin, 'npm'), 0o755);
+  fs.chmodSync(path.join(bin, 'npm'), 0o755); // root-safe: mode setup, not a denial simulation
   const readPaths = toolchainReadPaths('npm test', worker.realToolchainDeps({ PATH: bin, HOME: home }));
   assert.deepStrictEqual(readPaths, [bin]);
 });
