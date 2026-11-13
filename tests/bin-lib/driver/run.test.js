@@ -2421,6 +2421,17 @@ test('ci: no workflow run on the pushed sha after the window records no-ci', asy
   }
 });
 
+test('ci: no workflow run after the window records no-ci for stale, read-failed and gh-absent reads too', async () => {
+  for (const state of ['stale', 'read-failed', 'gh-absent']) {
+    const h = harness({ script: [runListReply('[]'), prChecksReply(state)] });
+    await run(['#7'], h.deps);
+    assert.equal(lastLine(h).ci, 'no-ci', state);
+    assert.equal(h.lines().find((l) => l.step === 'ci').detail, 'no-ci', state);
+    assert.equal(checkPolls(h).length, WINDOW_POLLS, state);
+    assert.equal(checkRuns(h).length, 1, state);
+  }
+});
+
 const prChecksPendingReply = (state, pending) => [on('node', /pr-checks\.js$/), { code: 0, stderr: '', stdout: JSON.stringify({ state, pending }) }];
 
 test('ci: with no Actions run, red and inherited-red are conclusive and are not rewritten to no-ci', async () => {
