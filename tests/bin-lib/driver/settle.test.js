@@ -25,6 +25,17 @@ test('AC10.1, AC10.2: reduceDetail strips a hostile detail', () => {
   assert.ok(out.length <= 200);
 });
 
+test('AC10.2: reduceDetail redacts file URLs, paths after a closing paren, and prefixed tokens', () => {
+  const url = reduceDetail('file:///etc/passwd');
+  assert.ok(!url.includes('/etc/passwd') && !/file:\/*[A-Za-z]/.test(url), url);
+  assert.equal(url, 'file:<path>');
+  const paren = reduceDetail('see (x)/Users/alice/y');
+  assert.ok(!paren.includes('/Users/'), paren);
+  assert.equal(paren, 'see (x)<path>');
+  const tok = reduceDetail('my_ghp_' + 'a'.repeat(36) + ' end');
+  assert.ok(!tok.includes('ghp_') && tok.includes('<redacted>'), tok);
+});
+
 test('AC10.1: reduceDetail keeps only the allowed characters', () => {
   assert.match(reduceDetail('a\tb\nc$%^&*=+!?~|{}"\'é'), /^[A-Za-z0-9 .,:;_()/-]*$/);
 });
@@ -57,6 +68,20 @@ test('commentFor: template details per kind', () => {
   assert.throws(() => commentFor('nope', f));
 });
 
+test('commentFor: fields outside the closed sets render as unknown and nothing throws', () => {
+  const hostile = { step: '@bob closes #9', outcome: '@bob #9', reason: '@bob #9', exitCode: '4 @bob', detail: 'd' };
+  for (const kind of ['escalated', 'blocked-record', 'blocked-pr', 'claim']) {
+    const out = commentFor(kind, hostile);
+    assert.ok(out.includes('unknown'), kind);
+    assert.ok(!/@|#9|bob/.test(out), kind + ': ' + out);
+  }
+  assert.ok(!commentFor('claim', hostile).includes('claim-targets.js exit'));
+  assert.ok(!commentFor('claim', { ...hostile, exitCode: 1e300 }).includes('claim-targets.js exit'));
+  assert.ok(commentFor('claim', { step: 'claim', outcome: 'blocked', exitCode: 3, detail: 'd' }).includes('step claim failed (claim-targets.js exit 3)'));
+  assert.ok(commentFor('escalated', { step: 'push', reason: 'gate-denial', detail: 'd' }).includes('reason gate-denial'));
+  assert.ok(escalateDetailText({ step: '@bob closes #9', detail: 'd', removes: false }).startsWith('drive.js stopped at step unknown:'));
+});
+
 test('AC11.1: the escalated comment ends with the marker, no other kind contains it', () => {
   const f = { step: 'push', outcome: 'express-escalated', reason: 'r', detail: 'd' };
   assert.ok(commentFor('escalated', f).endsWith(MARKER));
@@ -71,6 +96,8 @@ test('AC11.1: hasDriverEscalationMarker trusts only OWNER/MEMBER/COLLABORATOR', 
   assert.equal(hasDriverEscalationMarker([{ authorAssociation: 'NONE', body }]), false);
   assert.equal(hasDriverEscalationMarker([{ body }]), false);
   assert.equal(hasDriverEscalationMarker([]), false);
+  assert.equal(hasDriverEscalationMarker([null, 'x', { body: MARKER }]), false);
+  assert.equal(hasDriverEscalationMarker([null, 'x', { authorAssociation: 'OWNER', body }]), true);
   for (const bad of ['x', null, {}]) assert.equal(hasDriverEscalationMarker(bad), null);
   assert.equal(hasDriverEscalationMarker([{ authorAssociation: 'MEMBER', body: MARKER + ' later text' }]), false);
 });
