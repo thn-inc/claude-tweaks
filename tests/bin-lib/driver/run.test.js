@@ -3095,9 +3095,14 @@ test('budget AC4.2: refused, contested, other claim failures and a failed mint a
   const claimExit = (code) => ({ script: [[on('node', /claim-targets\.js$/), { code, stdout: '{}', stderr: '' }]] });
   const cases = [
     [{ admission: { admitted: false, reasons: ['no'] } }, 'refused', null],
+    [claimExit(2), 'blocked', 2],
     [claimExit(3), 'blocked', 3], [claimExit(4), 'blocked', 4], [claimExit(5), 'blocked', 5],
     [claimExit(6), 'blocked', 6], [claimExit(7), 'blocked', 7], [claimExit(null), 'blocked', null],
     [{ script: [[on('resolveRunDir'), { ok: false, message: 'no' }]] }, 'blocked', 0],
+    // Exit 0 without claiming #7.
+    [{ script: [[on('node', /claim-targets\.js$/), { code: 0, stdout: '{"claimed":[],"transportByIssue":{}}', stderr: '' }]] }, 'blocked', 0],
+    // A mint whose basename does not match the claim's run id.
+    [{ script: [[on('resolveRunDir'), { ok: true, path: path.join(MAIN, '.claude-tweaks', 'pipelines', '2026-01-01T000000-drive-7') }]] }, 'blocked', 0],
   ];
   for (const [over, outcome, exit] of cases) {
     const h = harness(over);
@@ -3113,7 +3118,30 @@ test('budget: driveRecord still resolves to the same final event driveRecordFact
   const final = await driveRecord(7, await policyOnce(a), a.deps);
   const facts = await driveRecordFacts(7, await policyOnce(b), b.deps);
   assert.equal(final.step, FINAL_STEP);
-  assert.deepEqual(Object.keys(final).sort(), Object.keys(facts.final).sort());
+  const untimed = (e) => { const { ts, ms, msTotal, msWithoutCi, ...rest } = e; return rest; };
+  assert.deepEqual(untimed(final), untimed(facts.final));
+});
+
+test('budget: driveRecordFacts on an interrupt before the first step has no final and no claim', async () => {
+  const h = harness();
+  const shared = await policyOnce(h);
+  shared.interrupted = 'SIGINT';
+  const facts = await driveRecordFacts(7, shared, h.deps);
+  assert.deepEqual(facts, { final: null, outcome: null, claimed: false, claimExit: null });
+});
+
+test('budget: driveRecordFacts on an interrupt after the run directory exists is claimed', async () => {
+  let shared = null;
+  const h = harness({
+    script: [[on('node', /log-decision\.js$/), () => { setImmediate(() => { shared.interrupted = 'SIGINT'; }); return { code: 0, stdout: '', stderr: '' }; }]],
+  });
+  shared = await policyOnce(h);
+  const facts = await driveRecordFacts(7, shared, h.deps);
+  assert.equal(facts.final.step, FINAL_STEP);
+  assert.equal(facts.final.stop.step, 'worktree');
+  assert.equal(facts.claimed, true);
+  assert.equal(facts.claimExit, 0);
+  assert.deepEqual(h.calls.filter((c) => c.kind === 'terminate').map((c) => c.args), [['SIGINT']]);
 });
 
 test('budget pre-screen: eligibilityOptions is exactly what the eligibility step passes', async () => {
