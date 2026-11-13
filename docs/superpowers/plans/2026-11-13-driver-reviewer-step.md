@@ -299,7 +299,7 @@ No source change is expected. The push guard already reads the check head from t
 
 ### Task 9: `docs/driver.md` and the step-addition skill
 
-**Role:** transcription
+**Role:** integration
 
 **Files:**
 - Modify: `docs/driver.md` (the Event lines `step` list; a new "## The reviewer step" section; a policy row)
