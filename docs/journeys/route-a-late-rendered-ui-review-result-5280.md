@@ -19,7 +19,7 @@ files:
 
 ### 1. Name the unit and its screenshot directory at launch
 - **URL:** the dispatching turn in `visual-review/page-mode.md`, `visual-review/discover-mode.md`, or design-wrapper review's Step 3.7/3.8
-- **Action:** the launch site names each child a rendered-UI unit and gives its artifact directory as an absolute path: `.claude-tweaks/artifacts/screenshots/browse/{session}/` under the child's checkout for a page or journey agent. The design-wrapper Step 3.7/3.8 critics are named as rendered-UI units with no artifact directory. The dispatching agent takes a read-only launch probe of the directory (`ls -lR` piped to `git hash-object --stdin`).
+- **Action:** the launch site names each child a rendered-UI unit and gives its artifact directory as an absolute path: `.claude-tweaks/artifacts/screenshots/browse/{session}/` under the child's checkout for a page or journey agent, `.claude-tweaks/artifacts/screenshots/browse/` for a whole visual-review unit, and `.impeccable/review/` for a whole design-wrapper review unit. The design-wrapper Step 3.7/3.8 critics are named as rendered-UI units with no artifact directory. The dispatching agent takes a read-only launch probe of the directory (`ls -lR` piped to `git hash-object --stdin`).
 - **Should feel:** invisible. Nothing in the screenshot directory changes because it was looked at.
 - **Should understand:** lenses, single reads and judges are not rendered-UI units; they keep the old first-bound self-judge and their late results are still ignored.
 - **Red flags:**
@@ -47,12 +47,12 @@ files:
 
 ### 4. Find the late result at the Review Console
 - **URL:** the Wrap-Up Review Console's Pending review section, or the dispatched agent's reply
-- **Action:** when the abandoned unit finishes after all and the run is still active (`run-state.json` `status: active`, no `console.json`), the agent writes the findings to a session temp file, stages them with `stage-item.js --id visual-review-late-1 --allocate`, and logs one `STAGED` line naming `staged/visual-review-late-{n}.md`. When the run has closed, the console already rendered, there is no run directory, or `stage-item.js` exits 3, it writes nothing under the run dir and puts one `LATE_FINDING: {severity} — {one-line finding}` line per finding immediately before its reply's trailing `STATUS:` line.
+- **Action:** when the abandoned unit finishes after all and the run is still active (`run-state.json` `status: active`, no `console.json`), the agent writes the findings to a session temp file, stages them with `stage-item.js --id visual-review-late-1 --allocate`, and logs one `STAGED` line naming `staged/visual-review-late-{n}.md`. When the run has closed, the console already rendered, there is no run directory or no `run-state.json`, or `stage-item.js` exits non-zero (3 for an archived or unanchored run, or any other code), it writes nothing under the run dir and puts one `LATE_FINDING: {severity} — {one-line finding}` line per finding immediately before its reply's trailing `STATUS:` line. When the stage succeeds but `log-decision.js` exits non-zero, the staged file has no console row, so the agent puts the same `LATE_FINDING:` lines in its reply too.
 - **Should feel:** like a finding that arrived late but was not lost: one more row to approve or drop, not a surprise in a merged branch.
 - **Should understand:** a late result never changes a verdict already reached. `/claude-tweaks:release` routes `visual-review-late-` files as proposals, not skip notes. A dispatching session does not yet relay `LATE_FINDING:` lines to the human from a fixed-format dispatched reply; that relay is a follow-up.
 - **Red flags:**
   - a late result written into a closed or archived run directory;
-  - a staged file with no matching `STAGED` line in `decisions.md`;
+  - a staged file with no matching `STAGED` line in `decisions.md` and no `LATE_FINDING:` lines in the reply;
   - a late result that flips the review's verdict.
 
 ## Origin
