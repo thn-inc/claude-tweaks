@@ -823,6 +823,8 @@ test('AC5.1–AC5.6: red, draft-skip and read failures never merge', async () =>
     const h = mergeHarness({ prState: { state, statusCheckRollup: [FAILING_CHECK] } });
     const r = await merge(CTX, h.deps);
     assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'pr-not-open', mergeCommit: null, postMerge: null }, state);
+    // neutralize strips the closing keyword `closed`, so CLOSED is named in other words.
+    assert.equal(r.detail, state === 'CLOSED' ? 'PR state shut, not merged' : 'PR state MERGED', state);
     assert.deepEqual(after(h, isGateRead), [], `${state}: no further call`);
     noMerge(h);
   }
@@ -1372,8 +1374,9 @@ test('AC11.1: the auto-not-allowed signatures degrade to the wait row — a stat
     assert.deepEqual(then.map(shortOf), ['gh pr view', 'gh issue view', 'ghCreate', 'gh pr view'], stderr);
     assert.ok(isReread(then[0]), stderr);
     assert.equal(nodeCalls(h, 'compose-subject.js').length, 1, 'the merge call composes nothing');
+    // The degrade is a hand-off (ok), as the gate's are; the run goes on to the merge.
     const ev = h.events.filter((e) => e.step === 'merge-call');
-    assert.deepEqual(ev.map((e) => e.status), ['stop', 'ok'], stderr);
+    assert.deepEqual(ev.map((e) => e.status), ['ok', 'ok'], stderr);
     assert.match(ev[0].detail, /auto-not-allowed.*wait row/, stderr);
     assert.ok(!h.calls.some(isParkCall), stderr);
   }
@@ -1387,6 +1390,33 @@ test('AC11.1: the auto-not-allowed signatures degrade to the wait row — a stat
   const lastGate = w.calls.filter(isGateRead).pop();
   assert.deepEqual(after(w, (c) => c === lastGate).map(shortOf),
     ['gh run list', 'ready-run.js', 'gh pr view', 'gh issue view', 'ghCreate', 'gh pr view'], 'the immediate merge follows the green poll');
+  // A degrade at a late poll resumes the same watch at its original deadline (the head did not
+  // change): checks-pending-timeout after WATCH_POLLS polls in all, never a fresh 15 minutes.
+  const late = watchHarness({
+    prState: seq(...Array(1 + WATCH_POLLS - 3).fill(PENDING), BLOCKED_PENDING, PENDING),
+    prMerge: ghErr(SIG.notAllowed),
+  });
+  const lr = await merge(CTX, late.deps);
+  assert.deepEqual(pick(lr), { outcome: 'pending-review', reason: 'checks-pending-timeout', mergeCommit: null, postMerge: null });
+  assert.equal(late.sleeps.length, WATCH_POLLS, 'the bound counts from the first watch\'s start');
+  assert.equal(mergeCalls(late).length, 1, 'only the refused --auto call');
+  const lateWatches = late.events.filter((e) => e.step === 'merge-watch');
+  assert.equal(lateWatches.length, 2, 'the interrupted watch and the resumed one each report their own time');
+  // Single-counted: the result is the sum of the two watches' own times, about one bound in all.
+  assert.equal(lateWatches.reduce((n, e) => n + e.extra.ciWaitMs, 0), lr.ciWaitMs);
+  assert.ok(lr.ciWaitMs >= WATCH_POLLS * MERGE_WATCH_POLL_MS && lr.ciWaitMs < (WATCH_POLLS + 1) * MERGE_WATCH_POLL_MS, `ciWaitMs ${lr.ciWaitMs}`);
+  // A degrade from the gate's own arm starts the watch afresh: a full WATCH_POLLS of polls.
+  const fromGate = watchHarness({ prState: seq(BLOCKED_PENDING, PENDING), prMerge: ghErr(SIG.notAllowed) });
+  assert.equal((await merge(CTX, fromGate.deps)).reason, 'checks-pending-timeout');
+  assert.equal(fromGate.sleeps.length, WATCH_POLLS);
+  // A head change re-enters the gate, which owns no running watch: when the re-entry's arm is
+  // refused, its watch counts a fresh bound (as any re-entry's watch does), not the old watch's.
+  const reentered = watchHarness({
+    prState: seq(...Array(1 + 10).fill(PENDING), { ...PENDING, headRefOid: B }, BLOCKED_PENDING, PENDING),
+    prMerge: ghErr(SIG.notAllowed),
+  });
+  assert.equal((await merge(CTX, reentered.deps)).reason, 'checks-pending-timeout');
+  assert.equal(reentered.sleeps.length, 11 + WATCH_POLLS, 'eleven polls before the re-entry, then a full bound');
   // A re-entry after the degrade runs as wait too: no second --auto.
   const re = mergeHarness({ prMerge: seq(ghErr(SIG.notAllowed), ''), reread: seq({ headRefOid: B }, {}) });
   assert.equal((await merge(CTX, re.deps)).outcome, 'merged');
@@ -1453,6 +1483,10 @@ test('AC11.6: a conflict wording (with or without the mutation name) returns con
       assert.ok(!h.calls.some((c) => c.kind === 'git'));
       assert.ok(!h.calls.some(isUndo), 'PR left ready');
       assert.deepEqual([lastEvent(h).step, lastEvent(h).status], ['merge-conflict', 'stop']);
+      // One stop for one stop: the merge call's event is the hand-off (ok), the conflict path stops.
+      assert.deepEqual(h.events.filter((e) => e.status === 'stop').map((e) => e.step), ['merge-conflict'], stderr);
+      const handoff = h.events.find((e) => e.step === 'merge-call');
+      assert.deepEqual([handoff.status, /conflict path/.test(handoff.detail)], ['ok', true], stderr);
     }
   }
 });
@@ -1468,6 +1502,9 @@ test('classifyMergeFailure order: conflict and permission beat the bare mutation
     [SIG.conflict, 'conflict'], ['state CONFLICTING', 'conflict'], [SIG.unknown, 'unrecognized'], ['', 'unrecognized'],
     // `conflicting` in lower case is no CONFLICTING reason, and `not mergeable` alone names no class.
     ['the PR is conflicting', 'unrecognized'], ['not mergeable', 'unrecognized'], ['HTTP 4031', 'unrecognized'],
+    // A PR or issue number 403 is no HTTP 403.
+    ['X Pull request o/r#403 is not mergeable: the base branch policy requires 1 required status check.', 'checks'],
+    ['record #403 has no label', 'unrecognized'], ['HTTP 403 on #403', 'permission'],
     [undefined, 'unrecognized'], [null, 'unrecognized'],
   ];
   for (const [stderr, cls] of table) assert.equal(classifyMergeFailure(stderr), cls, String(stderr));
@@ -1510,6 +1547,16 @@ test('AC11.7: MERGED is merged with the merge commit; OPEN with autoMergeRequest
     assert.equal(mr.outcome, 'merged', detail);
     assert.equal(m.events.find((e) => e.step === 'merge-confirm').detail, detail);
     assert.equal(mr.detail, detail);
+  }
+  // The whole name list is bounded by reduceDetail's cap (200), not each name: ~40 checks.
+  const many = Array.from({ length: 40 }, (_, i) => ({ ...GREEN_CHECK, name: `integration-suite-${i}` }));
+  for (const statusCheckRollup of [many, [...many, PENDING_CHECK, ...many.map((c) => ({ ...c, status: 'QUEUED', conclusion: null }))]]) {
+    const m = mergeHarness({ confirm: { statusCheckRollup } });
+    const d = (await merge(CTX, m.deps)).detail;
+    const parts = /^merged, (.*) concluded (.*)$/.exec(d) || /^merged — (.*) had not concluded at merge time$/.exec(d);
+    assert.ok(parts, d);
+    for (const part of parts.slice(1)) assert.ok(part.length <= 200, `${part.length} chars`);
+    assert.ok(d.length <= 2 * 200 + 'merged,  concluded '.length, `${d.length} chars`);
   }
   // A hostile check name is reduced and neutralized before it reaches the result detail.
   const hostile = mergeHarness({ confirm: { statusCheckRollup: [{ ...GREEN_CHECK, name: '@octo `x` closes #5' }] } });

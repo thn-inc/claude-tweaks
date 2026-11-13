@@ -348,6 +348,12 @@ const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
 const hasStrings = (o, keys) => isObject(o) && keys.every((k) => typeof o[k] === 'string');
 const isConflicting = (read) => read.mergeStateStatus === 'DIRTY' || read.mergeable === 'CONFLICTING';
 
+// A PR state for a detail. `closed` is a closing keyword neutralize strips from every detail, so
+// CLOSED is named in other words; any other state is reduced free text.
+function prStateWords(state) {
+  return state === 'CLOSED' ? 'shut, not merged' : reduceDetail(state);
+}
+
 function parseJson(raw) {
   try {
     return JSON.parse(raw);
@@ -429,10 +435,13 @@ function classify(ctx, read, runs, ready) {
 async function gate(s) {
   const { ctx } = s;
   s.stage = 'merge-gate';
+  // A gate entry (the first, or a re-entry on a changed head) owns no running watch: a watch it
+  // starts, or a degrade from its own arm, counts its bound afresh.
+  s.watchBoundFrom = null;
   const g = gateReads(s, 'state-read-failed');
   if (g.stop) return stop(s, 'merge-gate', g.stop, g.detail);
   const { read } = g;
-  if (read.state !== 'OPEN') return stop(s, 'merge-gate', 'pr-not-open', `PR state ${reduceDetail(read.state)}`);
+  if (read.state !== 'OPEN') return stop(s, 'merge-gate', 'pr-not-open', `PR state ${prStateWords(read.state)}`);
   if (read.headRefOid !== ctx.head) return stop(s, 'merge-gate', 'moving-target', 'the PR head is not the verified head');
   if (isConflicting(read)) {
     emit(s, 'merge-gate', 'ok', `checks not read: conflicting; merge state ${reduceDetail(read.mergeStateStatus)}`);
@@ -602,7 +611,7 @@ function conflictComment({ pr, base } = {}) {
 // moves only once they pass, so the head comparison is against the prior read. Returns { step }
 // for a stop the watch owns, or { next } for a hand-off that runs after the watch's time is
 // accounted (a hand-off may itself re-enter the gate, which starts another watch).
-async function pollUntilDecided(s, started) {
+async function pollUntilDecided(s, boundFrom) {
   const { ctx, deps } = s;
   let polls = 0;
   for (;;) {
@@ -643,7 +652,7 @@ async function pollUntilDecided(s, started) {
     if (s.value === 'merge-when-green' && !s.autoRefused && read.mergeStateStatus === 'BLOCKED') {
       return { next: () => mergeCall(s, 'auto'), note: 'pending and BLOCKED; arming auto-merge', polls };
     }
-    if (deps.now() - started >= MERGE_WATCH_BOUND_MS) {
+    if (deps.now() - boundFrom >= MERGE_WATCH_BOUND_MS) {
       return { next: () => park(s, 'checks-pending-timeout'), note: 'checks still pending at the bound', polls };
     }
   }
@@ -651,16 +660,20 @@ async function pollUntilDecided(s, started) {
 
 // The watch's time is CI wait: summed on s.ciWaitMs across re-entries, and carried by this
 // watch's one exit event as extra.ciWaitMs (run.js's final line sums the events' values).
-async function watch(s) {
+// `boundFrom` is the start the 15-minute bound counts from: this watch's own start, or, when
+// Step 3's degrade resumes a watch it interrupted (same head), that watch's start, so the bound
+// stays fixed at the same deadline. The time counted here is always this watch's own.
+async function watch(s, boundFrom = null) {
   const { deps } = s;
   s.stage = 'merge-watch';
   const started = deps.now();
+  s.watchBoundFrom = typeof boundFrom === 'number' ? boundFrom : started;
   deps.watchClock(started);
   let out;
   let failure = null;
   let waited = 0;
   try {
-    out = await pollUntilDecided(s, started);
+    out = await pollUntilDecided(s, s.watchBoundFrom);
   } catch (err) {
     failure = { err };
   } finally {
@@ -702,7 +715,8 @@ const AUTO_NOT_ALLOWED_LITERALS = [
 function classifyMergeFailure(stderr) {
   const t = String(stderr || '');
   if ((/not mergeable/i.test(t) && /conflict/i.test(t)) || /CONFLICTING/.test(t)) return 'conflict';
-  if (/\b403\b/.test(t) || /not accessible/i.test(t) || /must have write access/i.test(t)) return 'permission';
+  // `#403` is a PR or issue number, not an HTTP status.
+  if (/(?<!#)\b403\b/.test(t) || /not accessible/i.test(t) || /must have write access/i.test(t)) return 'permission';
   if (AUTO_NOT_ALLOWED_LITERALS.some((l) => t.includes(l))
     || (/auto-merge/i.test(t) && /not allowed|not enabled/i.test(t))
     || t.includes('enablePullRequestAutoMerge')) return 'auto-not-allowed';
@@ -730,19 +744,21 @@ async function mergeCall(s, mode) {
   } catch (err) {
     const stderr = String((err && err.stderr) || '');
     const cls = classifyMergeFailure(stderr);
+    // A hand-off is an `ok` event; the step it hands to emits the real stop (the gate's convention).
     if (cls === 'conflict') {
-      emit(s, 'merge-call', 'stop', `gh pr merge refused (conflict) (mode ${mode})`);
+      emit(s, 'merge-call', 'ok', `gh pr merge refused with a conflict signature (mode ${mode}); handing off to the conflict path`);
       return conflictStop(s);
     }
     if (cls === 'auto-not-allowed' && auto) {
       // Step 3 item 1 under merge-when-green: degrade to Step 2.5's `wait` row, never to an
       // immediate merge. A green read re-reads and merges; a pending (BLOCKED) read lands in the
       // bounded watch. s.autoRefused keeps the rest of the run on the `wait` row, so no later
-      // read arms again and an immediate call never degrades.
+      // read arms again and an immediate call never degrades. An arm from a watch poll resumes
+      // that watch at its deadline (s.watchBoundFrom, null after a gate arm): the head is unchanged.
       s.autoRefused = true;
       const green = s.lastVerdict === 'green';
-      emit(s, 'merge-call', 'stop', `gh pr merge --auto refused (auto-not-allowed); degrading to the wait row (${green ? 're-read' : 'watch'})`);
-      return green ? rereadThenMerge(s, s.lastRead) : watch(s);
+      emit(s, 'merge-call', 'ok', `gh pr merge --auto refused (auto-not-allowed); degrading to the wait row (${green ? 're-read' : 'watch'})`);
+      return green ? rereadThenMerge(s, s.lastRead) : watch(s, s.watchBoundFrom);
     }
     // Only the immediate form reaches here with auto-not-allowed: an arm refusal on a call that
     // did not arm is a signature this procedure does not recognize.
@@ -763,9 +779,10 @@ function rollupSummary(rollup) {
   if (rollup.length === 0) return 'merged — no status checks on this PR';
   const entries = rollup.map(normalizeEntry);
   const open = entries.filter((e) => e.status !== 'COMPLETED');
-  const names = (es) => es.map((e) => reduceDetail(e.name || 'unnamed')).join(', ');
+  // Joined first, reduced once, so reduceDetail's length cap bounds the whole list, not each name.
+  const names = (es) => reduceDetail(es.map((e) => e.name || 'unnamed').join(', '));
   if (open.length) return `merged — ${names(open)} had not concluded at merge time`;
-  return `merged, ${names(entries)} concluded ${entries.map((e) => reduceDetail(e.conclusion || 'unknown')).join(', ')}`;
+  return `merged, ${names(entries)} concluded ${reduceDetail(entries.map((e) => e.conclusion || 'unknown').join(', '))}`;
 }
 
 function readConfirmation(s) {
@@ -808,9 +825,7 @@ async function confirm(s) {
     emit(s, 'merge-confirm', 'ok', detail);
     return { outcome: 'armed', mergeCommit: null, detail };
   }
-  // `closed` is a closing keyword neutralize strips from every detail, so CLOSED is named in other words.
-  const state = read.state === 'CLOSED' ? 'shut, not merged' : reduceDetail(read.state);
-  return stop(s, 'merge-confirm', 'merge-refused', `confirmation read state ${state}`);
+  return stop(s, 'merge-confirm', 'merge-refused', `confirmation read state ${prStateWords(read.state)}`);
 }
 
 // Task 6 replaces this stub with the post-merge sequence.
@@ -829,7 +844,7 @@ async function merge(ctx, deps) {
   const s = {
     ctx, deps, runDir: ctx.runDir, value: 'wait', source: 'unresolved', valueRaw: '', keepOpen: [],
     subject: null, reentries: 0, recomposeOnReentry: false, ciWaitMs: 0, lastRead: null, lastVerdict: null, autoRefused: false,
-    logFailures: [], logSeq: 0, stage: 'merge-entry',
+    watchBoundFrom: null, logFailures: [], logSeq: 0, stage: 'merge-entry',
     startedAt: typeof deps.now === 'function' ? deps.now() : 0,
   };
   try {
