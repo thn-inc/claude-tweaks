@@ -32,17 +32,10 @@ const { formatEntry } = require('../log-decision/append');
 const { neutralizeClosingPhrases } = require('../flow/closing-links');
 const { GIT_TIMEOUT_MS, GIT_PUSH_TIMEOUT_MS } = require('../shared-primitives');
 const {
-  UsageError, realDeps, readManifest, writeManifest, skillLabel, stageEntry, LOG_SECTION, STEP, rowLabel, entryFindings,
+  UsageError, realDeps, readManifest, writeManifest, skillLabel, stageEntry, LOG_SECTION, STEP, rowLabel, entryFindings, oneLine, firstStderrLine,
 } = require('./learned-skills');
 
 const MARKER = '<!-- wrap-up-skills-pr -->';
-
-function oneLine(s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); }
-
-function firstLine(e) {
-  const lines = (s) => String(s == null ? '' : s).split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  return lines(e && e.stderr)[0] || lines(e && e.message)[0] || String(e);
-}
 
 function normalizeRecords(record) {
   const list = (Array.isArray(record) ? record : [record]).map((r) => String(r == null ? '' : r).replace(/^#/, '').trim());
@@ -186,7 +179,7 @@ function stageOne({ runDir, worktree, entry, reason, deps }) {
     if (res.logFailed) row.logFailed = true;
     return { ok: true, row };
   } catch (err) {
-    return { ok: false, error: { id: entry.id, target: entry.target, error: firstLine(err) } };
+    return { ok: false, error: { id: entry.id, target: entry.target, error: firstStderrLine(err) } };
   }
 }
 
@@ -233,7 +226,7 @@ function stage({ runDir, worktree, reason, mergeBase }, overrides = {}) {
 function commitMessage(entry, records, runId) {
   const from = records.map((r) => `#${r}`).join(', ');
   const subject = `Add learned skill update to ${entry.target} — from ${from}'s wrap-up`;
-  return { full: `${subject}\n\nLearned-Skills-Run: ${runId}\nLearned-Skills-Entry: ${entry.id}\n` };
+  return `${subject}\n\nLearned-Skills-Run: ${runId}\nLearned-Skills-Entry: ${entry.id}\n`;
 }
 
 // HTML comments in a summary could plant a marker (<!-- claude-tweaks-run: …) in the PR body.
@@ -324,7 +317,7 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
         }
       }
     } catch (err) {
-      return downgradeAll(todo, `could not read the remote base (${firstLine(err)})`);
+      return downgradeAll(todo, `could not read the remote base (${firstStderrLine(err)})`);
     }
     const branchExisted = tip !== null;
     // A closed or merged PR means the branch's commits were rejected or shipped: never a base.
@@ -362,7 +355,7 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
     // the only ones a captured entry may reuse.
     const onBranch = new Map(); // captured entry id -> its verified commit
     if (branchExisted) {
-      const stray = logError ? `its commits could not be read (${firstLine(logError)})` : commits.map((c) => {
+      const stray = logError ? `its commits could not be read (${firstStderrLine(logError)})` : commits.map((c) => {
         const entry = c.run === runId && c.id ? manifest.find((e) => String(e.id) === c.id) : null;
         if (!entry) return `${c.sha.slice(0, 7)} maps to no entry of this run`;
         if (entry.status !== 'captured' && entry.status !== 'landed') return `${c.sha.slice(0, 7)} belongs to entry ${entry.id}, which is ${entry.status}`;
@@ -393,13 +386,13 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
         step = 'git write-tree';
         const tree = String(git(['write-tree'], { env: planEnv() })).trim();
         step = 'git commit-tree';
-        const commit = String(git(['commit-tree', tree, '-p', parent, '-F', '-'], { env: planEnv(), input: msg.full })).trim();
+        const commit = String(git(['commit-tree', tree, '-p', parent, '-F', '-'], { env: planEnv(), input: msg })).trim();
         parent = commit;
         built.push({ entry, commit, reused: false });
       } catch (err) {
         const why = step === 'git apply --check'
-          ? `the patch no longer applies to ${tip ? branch : `origin/${integrationBranch}`} (git apply --check: ${firstLine(err)})`
-          : `could not build the commit (${step}: ${firstLine(err)})`;
+          ? `the patch no longer applies to ${tip ? branch : `origin/${integrationBranch}`} (git apply --check: ${firstStderrLine(err)})`
+          : `could not build the commit (${step}: ${firstStderrLine(err)})`;
         stageAll({ runDir, worktree, entries: [entry], reason: why, deps, out });
       }
     }
@@ -414,7 +407,7 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
         pushed = true;
       } catch (err) {
         // The new commits are staged; reused commits already sit on the open PR's branch, so they land.
-        stageAll({ runDir, worktree, entries: fresh.map((b) => b.entry), reason: `push of ${branch} failed (${firstLine(err)})`, deps, out });
+        stageAll({ runDir, worktree, entries: fresh.map((b) => b.entry), reason: `push of ${branch} failed (${firstStderrLine(err)})`, deps, out });
         built.splice(0, built.length, ...built.filter((b) => b.reused));
         if (!built.length) return finish();
       }
@@ -437,7 +430,7 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
         try { open = openOf(listPrs()); } catch (readErr) {
           if (createErr) throw createErr;
           // The create went through: the downgrade names the failed read, not a failed create.
-          throw Object.assign(new Error(`the created PR could not be read back (${firstLine(readErr)})`), { readBack: true });
+          throw Object.assign(new Error(`the created PR could not be read back (${firstStderrLine(readErr)})`), { readBack: true });
         }
         if (!open) throw createErr || new Error('the created PR does not read OPEN');
         pr = open;
@@ -447,9 +440,9 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
       // a later run must not inherit commits whose patches are staged instead.
       let note = '';
       try { git(['push', '--end-of-options', 'origin', `:refs/heads/${branch}`], { timeout: GIT_PUSH_TIMEOUT_MS }); } catch (delErr) {
-        note = `; the branch ${branch} could not be deleted and still holds these commits (${firstLine(delErr)})`;
+        note = `; the branch ${branch} could not be deleted and still holds these commits (${firstStderrLine(delErr)})`;
       }
-      return downgradeAll(entries, `${err && err.readBack ? err.message : `gh pr create failed (${firstLine(err)})`}${note}`);
+      return downgradeAll(entries, `${err && err.readBack ? err.message : `gh pr create failed (${firstStderrLine(err)})`}${note}`);
     }
 
     // 5. Record and log.

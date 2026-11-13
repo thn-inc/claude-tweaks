@@ -302,43 +302,21 @@ function logStaged({ runDir, deps, target, summary, findings, reason, gate, note
 }
 
 function stagedLine({ deps, step, finding, reason, gate, note, stageName }) {
-  let line;
-  if (gate === 'check-failed-kept' || gate === 'not-checked') {
-    line = formatEntry({
-      status: 'STAGED',
-      now: deps.now(),
-      step,
-      text: gate === 'check-failed-kept'
-        ? `${finding} — patch failed \`git apply --check\` at staging (${note}); kept the diff at staged/${stageName}, not description-only: it is the edit's only copy and the working tree could not take it back`
-        : `${finding} — gate not run (${note}); kept the diff unchecked at staged/${stageName}: it is the edit's only copy`,
-      reversibility: 'high',
-    });
+  let text;
+  let reversibility = 'high';
+  if (gate === 'check-failed-kept') {
+    text = `${finding} — patch failed \`git apply --check\` at staging (${note}); kept the diff at staged/${stageName}, not description-only: it is the edit's only copy and the working tree could not take it back`;
+  } else if (gate === 'not-checked') {
+    text = `${finding} — gate not run (${note}); kept the diff unchecked at staged/${stageName}: it is the edit's only copy`;
   } else if (gate === 'description-only') {
-    line = formatEntry({
-      status: 'STAGED',
-      now: deps.now(),
-      step,
-      text: `${finding} — patch failed \`git apply --check\` at staging (${note}); staged description-only at staged/${stageName}`,
-      reversibility: 'high',
-    });
+    text = `${finding} — patch failed \`git apply --check\` at staging (${note}); staged description-only at staged/${stageName}`;
   } else if (gate === 'unvalidated') {
-    line = formatEntry({
-      status: 'STAGED',
-      now: deps.now(),
-      step,
-      text: `${finding} — gate could not run: ${note} — path/anchoring problem, not a composition error`,
-      reversibility: 'high',
-    });
+    text = `${finding} — gate could not run: ${note} — path/anchoring problem, not a composition error`;
   } else {
-    line = formatEntry({
-      status: 'STAGED',
-      now: deps.now(),
-      step,
-      text: `skill update for ${finding} could not ride a learned-skills PR (${oneLine(reason)}); staged instead`,
-      reversibility: `high (stage path: staged/${stageName})`,
-    });
+    text = `skill update for ${finding} could not ride a learned-skills PR (${oneLine(reason)}); staged instead`;
+    reversibility = `high (stage path: staged/${stageName})`;
   }
-  return line;
+  return formatEntry({ status: 'STAGED', now: deps.now(), step, text, reversibility });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -754,5 +732,5 @@ function pruneEmptyParents(abs, worktree, deps) {
 
 module.exports = {
   UsageError, StagingFailure, realDeps, readManifest, writeManifest, manifestPath, nextId, normalizeTarget, skillLabel,
-  stageEntry, capture, LOG_SECTION, STEP, rowLabel, entryFindings,
+  stageEntry, capture, LOG_SECTION, STEP, rowLabel, entryFindings, oneLine, firstStderrLine,
 };
