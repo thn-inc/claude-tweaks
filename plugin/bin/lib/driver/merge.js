@@ -18,7 +18,7 @@ const path = require('node:path');
 const {
   neutralize, errorText, firstLine, CLI_TIMEOUT_MS, MERGE_STEP_NAMES,
 } = require('./events');
-const { reduceDetail } = require('./settle');
+const { reduceDetail, canonicalWorktreePath } = require('./settle');
 const { confirmFromFile } = require('../dispatch/merge-verdict');
 const { classifyRollup, normalizeEntry } = require('../pr-checks/classify');
 const { ensureLabelPayload } = require('../issues/labels');
@@ -886,8 +886,18 @@ function runPostMergeRun(s, out) {
   out.failedSteps = Array.isArray(body.failedSteps) ? body.failedSteps.filter((x) => typeof x === 'string') : [];
   if (body.verdict === 'failed') {
     // A verdict, not a failed call: carried on the result and the event, never an entry on `failures`.
-    emit(s, 'merge-post-merge', 'fail', `post-merge steps failed: ${out.failedSteps.join(', ') || 'unnamed'}`,
-      { verdict: 'failed', failedSteps: out.failedSteps });
+    // A `failed` entry with no failedSteps is a skip (no-pr, claim-failed, gh-absent, ...): name its
+    // reason and the `next` routing field instead of an empty step list.
+    const extra = { verdict: 'failed', failedSteps: out.failedSteps };
+    let named = out.failedSteps.join(', ');
+    if (!named) {
+      const reason = typeof body.reason === 'string' && body.reason ? reduceDetail(body.reason) : 'unnamed';
+      const next = typeof body.next === 'string' && body.next ? reduceDetail(body.next) : null;
+      named = `${reason}${next ? ` (next ${next})` : ''}`;
+      extra.reason = reason;
+      if (next) extra.next = next;
+    }
+    emit(s, 'merge-post-merge', 'fail', `post-merge steps failed: ${named}`, extra);
   } else {
     emit(s, 'merge-post-merge', 'ok', `post-merge verdict ${reduceDetail(body.verdict)}`);
   }
@@ -900,9 +910,10 @@ function releaseStatus(s) {
   s.stage = 'merge-release-status';
   const failuresBefore = s.logFailures.length;
   const unavailable = (reason) => {
-    const text = `pr-first-merge Step 4.1: release status unavailable (${reduceDetail(reason)})`;
+    // log-decision.js writes the `{step}: ` prefix itself and refuses a text that repeats it.
+    const text = `release status unavailable (${reduceDetail(reason)})`;
     logDecision(s, 'pr-first-merge Step 4.1', text, 'AUTO', 'n/a');
-    return postFail(s, 'merge-release-status', 'release-status', `${text}${logNote(s, failuresBefore)}`);
+    return postFail(s, 'merge-release-status', 'release-status', `pr-first-merge Step 4.1: ${text}${logNote(s, failuresBefore)}`);
   };
   if (!s.mergeCommit) return unavailable('no merge commit was reported');
   try {
@@ -923,7 +934,7 @@ function releaseStatus(s) {
     }
     line = 'not yet in a release — bump pending';
   }
-  logDecision(s, 'pr-first-merge Step 4.1', `pr-first-merge Step 4.1: release status — ${line}.`, 'AUTO', 'n/a');
+  logDecision(s, 'pr-first-merge Step 4.1', `release status — ${line}.`, 'AUTO', 'n/a');
   // Create only: the run directory is minted fresh for each driver run and the merge runs once per
   // run, so no earlier release-status comment can exist on this PR to update.
   const file = path.join(s.runDir, 'release-status-comment.md');
@@ -931,7 +942,11 @@ function releaseStatus(s) {
     deps.writeFile(file, `<!-- run-comment: release-status -->\n${line}\n`);
     deps.gh(['pr', 'comment', String(ctx.pr), '--repo', ctx.repo, '--body-file', file]);
   } catch (err) {
-    return postFail(s, 'merge-release-status', 'release-status-comment', `${line}; run comment failed: ${errorText(err)}${logNote(s, failuresBefore)}`);
+    // The comment is the only surface for this line besides the event: keep it in decisions.md too.
+    logDecision(s, 'pr-first-merge Step 4.1',
+      `condition: release-status comment post failed (${reduceDetail(errorText(err))}) → fallback: release line kept in decisions.md and the event`,
+      'SKIP', 'n/a');
+    return postFail(s, 'merge-release-status', 'release-status-comment',`${line}; run comment failed: ${errorText(err)}${logNote(s, failuresBefore)}`);
   }
   emit(s, 'merge-release-status', 'ok', `${line}${logNote(s, failuresBefore)}`);
   return undefined;
@@ -978,15 +993,6 @@ function reconcile(s) {
   return undefined;
 }
 
-// A worktree path as git lists it (realpath'd): its own realpath, else its parent's plus the leaf
-// (a deleted directory), else as given — the canonicalization settle.js applies.
-function canonicalWorktreePath(worktree) {
-  const own = safeReal(worktree);
-  if (own) return own;
-  const parent = safeReal(path.dirname(worktree));
-  return parent ? path.join(parent, path.basename(worktree)) : worktree;
-}
-
 // Ports Step 4's teardown: remove the record's worktree, then its local branch. No force flag: a
 // worktree with modified or untracked files refuses removal, stays, and is named in the event.
 // Returns whether the worktree is gone (the remote delete runs only then).
@@ -999,8 +1005,10 @@ function teardown(s) {
   const notes = [];
   let gone = false;
   try {
+    // No worktree path to match is not "already gone": nothing was removed, so nothing downstream runs.
+    if (!worktree) throw new Error('the run records no worktree path');
     const listed = parseWorktreeList(runGit(s, ['worktree', 'list', '--porcelain']));
-    if (!worktree || !findWorktreeEntry(listed, canonicalWorktreePath(worktree))) {
+    if (!findWorktreeEntry(listed, canonicalWorktreePath(worktree, safeReal, path), path)) {
       notes.push('worktree already gone');
       gone = true;
     } else {

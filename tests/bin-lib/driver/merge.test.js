@@ -116,6 +116,17 @@ function defaultMergeScript(over, files, logs, applied) {
     [isNode('log-decision.js'), (c) => {
       const a = c.args;
       const file = a[a.indexOf('--text-file') + 1];
+      // The real CLI's refusals (log-decision.js run(): exit 2), so a call it would reject goes red here.
+      const flag = (name) => (a.includes(name) ? a[a.indexOf(name) + 1] : undefined);
+      const stepName = flag('--step');
+      const line = String(files[file]).replace(/\s+$/, '');
+      const reversibility = flag('--reversibility') === undefined ? 'n/a' : flag('--reversibility');
+      const refusal = !['AUTO', 'STAGED', 'KEPT-PROMPT', 'SCANNED', 'REFUSED', 'SKIP'].includes(flag('--status')) ? 'bad status'
+        : !line.trim() ? 'empty text'
+          : /[\r\n]/.test(line) ? 'interior line break'
+            : (typeof stepName === 'string' && stepName !== '' && line.trim().startsWith(`${stepName}:`)) ? 'text repeats step'
+              : !/^(?:high|med|low|n\/a)( \(.+\))?$/.test(reversibility) ? 'bad reversibility' : null;
+      if (refusal) return { code: 2, stdout: '', stderr: `log-decision.js: ${refusal}\n` };
       logs.push({ status: a[a.indexOf('--status') + 1], step: a[a.indexOf('--step') + 1], text: String(files[file]).trim(), args: a.slice(1) });
       return over.logReply || { code: 0, stdout: '', stderr: '' };
     }],
@@ -1639,7 +1650,7 @@ test('AC11.7: MERGED is merged with the merge commit; OPEN with autoMergeRequest
   assert.equal(log.text, ARMED_LOG);
   assert.equal(log.args[log.args.indexOf('--reversibility') + 1], 'high (gh pr merge --disable-auto)');
   assert.equal(log.args[log.args.indexOf('--lever') + 1], 'merge-verification=merge-when-green (run-config)');
-  assert.deepEqual(after(a, isConfirmRead).map(shortOf), ['log-decision.js'], 'no teardown, no post-merge');
+  assert.deepEqual(afterAll(a, isConfirmRead).map(shortOf), ['log-decision.js'], 'no teardown, no post-merge');
   assert.deepEqual([lastEvent(a).step, lastEvent(a).status], ['merge-confirm', 'ok']);
   assert.match(lastEvent(a).detail, /armed/);
   // Armed from a green read says what that read showed.
@@ -1658,7 +1669,7 @@ test('AC11.7: MERGED is merged with the merge commit; OPEN with autoMergeRequest
     assert.deepEqual(pick(cr), { outcome: 'pending-review', reason: 'merge-refused', mergeCommit: null, postMerge: null }, state);
     assert.equal(cr.detail, `confirmation read state ${shown}`);
     assert.equal(lastEvent(c).detail, `merge-refused: confirmation read state ${shown}`);
-    assert.deepEqual(after(c, isConfirmRead), [], state);
+    assert.deepEqual(afterAll(c, isConfirmRead), [], state);
   }
 });
 
@@ -1844,7 +1855,7 @@ test('AC12.2: a failure in any post-merge call stays merged and is listed', asyn
     const h = mergeHarness(over);
     await merge(CTX, h.deps);
     assert.ok(!h.calls.some((c) => isGh('pr', 'comment')(c)));
-    assert.match(h.logs.find((l) => l.step === 'pr-first-merge Step 4.1').text, /^pr-first-merge Step 4\.1: release status unavailable \(.+\)$/);
+    assert.match(h.logs.find((l) => l.step === 'pr-first-merge Step 4.1').text, /^release status unavailable \(.+\)$/);
   }
   const noFetchDescribe = mergeHarness({ fetch: gitFail('fatal: no remote') });
   await merge(CTX, noFetchDescribe.deps);
@@ -1910,7 +1921,7 @@ test('AC12.5: the release-status comment carries the run-comment marker and the 
     const c = h.calls.find((x) => isGh('pr', 'comment')(x));
     assert.deepEqual(c.args, ['pr', 'comment', '9', '--repo', 'o/r', '--body-file', path.join(CTX.runDir, 'release-status-comment.md')]);
     assert.equal(h.files[c.args[6]], `<!-- run-comment: release-status -->\n${line}\n`);
-    assert.equal(h.logs.find((l) => l.step === 'pr-first-merge Step 4.1').text, `pr-first-merge Step 4.1: release status — ${line}.`);
+    assert.equal(h.logs.find((l) => l.step === 'pr-first-merge Step 4.1').text, `release status — ${line}.`);
   }
   // A describe that prints something that is not a tag is unavailable, never a public comment.
   const odd = mergeHarness({ describe: 'not a tag @octo\n' });
@@ -2072,4 +2083,47 @@ test('AC8.5: armed tears nothing down and makes no post-merge call', async () =>
     assert.ok(!h.calls.some((c) => c.kind === 'git' || isNode('post-merge-run.js')(c) || isNode('hooks.js')(c) || isGh('api')(c)));
     assert.deepEqual(failureEvents(h), []);
   }
+});
+
+// ---- Task 6 fix round 1 ----
+
+test('every decision line the post-merge sequence writes is accepted by the log-decision.js rules the harness mirrors', async () => {
+  const h = mergeHarness();
+  await merge(CTX, h.deps);
+  assert.ok(!h.events.some((e) => /log:/.test(e.detail)), JSON.stringify(h.events.filter((e) => /log:/.test(e.detail))));
+  assert.deepEqual(h.logs.filter((l) => /Step 4\.1|Step 4 \(|Step 5/.test(l.step)).map((l) => l.step),
+    ['pr-first-merge Step 4.1', 'Step 4 (teardown)', 'Step 5 (delete remote branch)']);
+  // The harness fake refuses a text that repeats its step, as the real CLI does.
+  const refused = mergeHarness();
+  refused.files['/x.txt'] = 'Step 5 (delete remote branch): again';
+  const r = refused.deps.node(path.join(LIB, '..', 'log-decision.js'),
+    ['--run', CTX.runDir, '--status', 'AUTO', '--step', 'Step 5 (delete remote branch)', '--text-file', '/x.txt']);
+  assert.equal(r.code, 2);
+});
+
+test('a post-merge-run `failed` skip with no failedSteps names its reason and next routing', async () => {
+  const h = mergeHarness({ postMergeRun: { code: 0, stdout: JSON.stringify({ verdict: 'failed', reason: 'claim-failed', next: 'rerun' }), stderr: '' } });
+  const r = await merge(CTX, h.deps);
+  assert.deepEqual(r.postMerge, { verdict: 'failed', failedSteps: [], failures: [] });
+  const ev = failureEvents(h).find((e) => e.step === 'merge-post-merge');
+  assert.equal(ev.detail, 'post-merge steps failed: claim-failed (next rerun)');
+  assert.deepEqual(ev.extra, { verdict: 'failed', failedSteps: [], reason: 'claim-failed', next: 'rerun' });
+});
+
+test('an empty ctx.worktree is a teardown-worktree failure and skips the branch and remote delete', async () => {
+  const h = mergeHarness();
+  const r = await merge({ ...CTX, worktree: '' }, h.deps);
+  assert.equal(r.outcome, 'merged');
+  assert.deepEqual(r.postMerge.failures, ['teardown-worktree', 'delete-branch: worktree kept']);
+  assert.ok(!h.calls.some(isGit('worktree', 'remove')) && !h.calls.some(isGit('branch')) && !h.calls.some((c) => isGh('api')(c)));
+  assert.match(h.events.find((e) => e.step === 'merge-teardown').detail, /no worktree path/);
+});
+
+test('a failed release-status comment post is also logged to decisions.md as a SKIP degrade trace', async () => {
+  const h = mergeHarness({ script: [[isGh('pr', 'comment'), Object.assign(new Error('x'), { stderr: 'HTTP 502\n' })]] });
+  const r = await merge(CTX, h.deps);
+  assert.deepEqual(r.postMerge.failures, ['release-status-comment']);
+  const skip = h.logs.find((l) => l.status === 'SKIP' && l.step === 'pr-first-merge Step 4.1');
+  assert.equal(skip.text, 'condition: release-status comment post failed (HTTP 502) → fallback: release line kept in decisions.md and the event');
+  assert.ok(h.logs.some((l) => l.status === 'AUTO' && l.text.startsWith('release status — already carried by')));
 });
