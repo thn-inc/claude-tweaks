@@ -88,6 +88,17 @@ test('AC1.1 (f): runCli rejects when run calls os.homedir() while env.HOME diffe
   assert.deepStrictEqual(await leak('homedir', { env: { ...process.env } }), { code: 0, stdout: '', stderr: '' });
 });
 
+test('a listener the CLI removed is reported and registered again', async () => {
+  const mine = () => {};
+  process.on('SIGHUP', mine);
+  try {
+    await assert.rejects(leak('listener-remove'), /SIGHUP listeners \d+ -> \d+/);
+    assert.ok(process.listeners('SIGHUP').includes(mine));
+  } finally {
+    process.removeListener('SIGHUP', mine);
+  }
+});
+
 test('runCliSync applies the same leak guard', () => {
   assert.throws(() => runCliSync(path.join(FX, 'leaky-cli.js'), ['exitcode']), /process\.exitCode changed/);
   assert.strictEqual(process.exitCode, undefined);
@@ -107,8 +118,20 @@ test('AC2.2: allowRealRunner reaches the real runner, and a fake in deps replace
   assert.strictEqual(runCliSync(cli, [], { deps: { runner: () => 'fake' } }).stdout, 'fake');
 });
 
-test('refuses a CLI that exports no realDeps', () => {
+test('AC2.1: a real runner reach the CLI catches still fails the call', async () => {
+  await assert.rejects(runCli(path.join(FX, 'runner-cli.js'), ['catch']), REAL_RUNNER);
+  assert.throws(() => runCliSync(path.join(FX, 'runner-cli.js'), ['catch']), REAL_RUNNER);
+});
+
+test('refuses a CLI that exports no realDeps', async () => {
   assert.throws(() => runCliSync(path.join(FX, 'no-realdeps-cli.js'), []), /no-realdeps-cli\.js exports no realDeps/);
+  await assert.rejects(runCli(path.join(FX, 'no-realdeps-cli.js'), []), /no-realdeps-cli\.js exports no realDeps/);
+});
+
+test('refuses a CLI that exports no run function', async () => {
+  const NO_RUN = /runCli: no-run-cli\.js exports no run — see the entry contract in /;
+  assert.throws(() => runCliSync(path.join(FX, 'no-run-cli.js'), []), NO_RUN);
+  await assert.rejects(runCli(path.join(FX, 'no-run-cli.js'), []), NO_RUN);
 });
 
 test('rejects a run that returns a non-integer', () => {

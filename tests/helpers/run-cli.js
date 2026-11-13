@@ -9,13 +9,22 @@
 // - `runCli` / `runCliSync` require the CLI, merge `{ ...realDeps, ...fakes, ...deps }`
 //   (fakes: stdout/stderr collectors, cwd, a frozen env, stdin, homeDir) and call
 //   `run`. A real `runner`, `gh` or `spawn` still left in the merge throws when
-//   reached unless `allowRealRunner: true`.
+//   reached unless `allowRealRunner: true`, and the reach is also recorded, so a
+//   CLI that catches its runner's error (the per-call fail-safe posture) still
+//   fails the call.
+// - Failure precedence after `run` returns: an error `run` threw or rejected with
+//   is rethrown first; then a recorded real-runner reach; then (runCliSync only)
+//   the refusal of a promise-returning `run`; then the leak report; then the
+//   integer exit-code check.
 // - A leak guard fails the call when `run` touches process state the contract
 //   forbids: process.exitCode, process.cwd(), process.env, signal/exit listeners,
 //   a direct process.stdout/stderr write, or os.homedir() under an injected HOME.
 //   The state is put back first, so one leaky CLI cannot break later tests. Writes
 //   and homedir calls are attributed to the CLI through an AsyncLocalStorage, so
 //   the test runner's own output in the same window is not counted.
+// - When runCliSync refuses a promise-returning `run`, that `run` keeps going after
+//   the state was restored, so anything it changes after its first `await` is
+//   neither reported nor undone.
 // - `spawnCli` runs the same file as a real child, for the few smoke tests that
 //   prove the script entry.
 //
@@ -64,14 +73,28 @@ function prepare(cliPath, opts) {
     },
   };
   const merged = { ...cli.realDeps, ...fakes, ...deps };
+  const reached = new Set();
   if (!allowRealRunner) {
     for (const key of RUNNER_KEYS) {
       if (merged[key] !== undefined && merged[key] === cli.realDeps[key]) {
-        merged[key] = () => { throw new Error(`runCli: real ${key} reached — pass a fake in deps or allowRealRunner: true`); };
+        merged[key] = () => {
+          reached.add(key);
+          throw realReached(key);
+        };
       }
     }
   }
-  return { cli, name, merged, out, env };
+  return { cli, name, merged, out, env, reached };
+}
+
+function realReached(key) {
+  return new Error(`runCli: real ${key} reached — pass a fake in deps or allowRealRunner: true`);
+}
+
+// The recorded real-runner reach that outranks the leak report, or null.
+function reachedError(call) {
+  const [key] = call.reached;
+  return key === undefined ? null : realReached(key);
 }
 
 // Records process state and installs the recorders; marks a call pending.
@@ -139,8 +162,10 @@ function finish(snap, name) {
     for (const [event, before] of snap.listeners) {
       const now = process.listeners(event);
       const added = now.filter((fn) => !before.includes(fn));
-      if (added.length || now.length !== before.length) diffs.push(`${event} listeners ${before.length} -> ${now.length}`);
+      const removed = before.filter((fn) => !now.includes(fn));
+      if (added.length || removed.length || now.length !== before.length) diffs.push(`${event} listeners ${before.length} -> ${now.length}`);
       for (const fn of added) process.removeListener(event, fn);
+      for (const fn of removed) process.on(event, fn);
     }
     if (snap.hits.stdout) diffs.push('wrote to process.stdout directly');
     if (snap.hits.stderr) diffs.push('wrote to process.stderr directly');
@@ -171,6 +196,8 @@ function runCli(cliPath, argv, opts = {}) {
     try { code = await ret; } catch (err) { threw = true; error = err; }
     const leak = finish(snap, call.name);
     if (threw) throw error;
+    const reach = reachedError(call);
+    if (reach) throw reach;
     if (leak) throw leak;
     return result(call, code);
   })();
@@ -185,6 +212,8 @@ function runCliSync(cliPath, argv, opts = {}) {
   try { ret = storage.run(snap.token, () => call.cli.run(argv, call.merged)); } catch (err) { threw = true; error = err; }
   const leak = finish(snap, call.name);
   if (threw) throw error;
+  const reach = reachedError(call);
+  if (reach) throw reach;
   if (ret && typeof ret.then === 'function') {
     ret.then(() => {}, () => {}); // the abandoned promise must not surface as an unhandled rejection
     throw new Error('runCliSync: run returned a promise — use runCli');

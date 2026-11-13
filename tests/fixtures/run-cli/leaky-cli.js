@@ -7,6 +7,7 @@ const LEAKS = {
   'env-add': () => { process.env.CT_RUN_CLI_LEAK = '1'; },
   'env-change': () => { process.env.PATH = 'changed'; },
   listener: () => { process.on('SIGTERM', () => {}); },
+  'listener-remove': () => { process.removeAllListeners('SIGHUP'); },
   stdout: () => { process.stdout.write('leak'); },
   stderr: () => { process.stderr.write('leak'); },
   homedir: () => { require('os').homedir(); },
