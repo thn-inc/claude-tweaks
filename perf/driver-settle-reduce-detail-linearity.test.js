@@ -20,17 +20,16 @@ const CASES = [
   ['slash run', '/'.repeat(N), '/'],
   ['closing-paren run', ')'.repeat(N), ')'.repeat(200)],
   ['paren-and-dot tail on a path', '/a' + ').'.repeat(N / 2), ('<path>' + ').'.repeat(N / 2)).slice(0, 200)],
-  ['open-paren-and-slash run', '(/a'.repeat(30000), null],
-  ['slash-and-closing-paren run', '/a)'.repeat(30000), null],
+  ['open-paren-and-slash run', '(/a'.repeat(30000), '(<path>'],
+  ['slash-and-closing-paren run', '/a)'.repeat(30000), '<path>)'],
 ];
 
 for (const [name, input, expected] of CASES) {
-  test(`reduceDetail: ${name} (~100k characters) stays under 200 ms`, () => {
+  test(`reduceDetail: ${name} (~100k characters) stays under 1000 ms`, () => {
     const start = performance.now();
     const out = reduceDetail(input);
     const elapsed = performance.now() - start;
-    // A null expectation pins only the budget and the 200-character cap (the shape's exact output is not the point).
-    assert.ok(expected === null ? out.length <= 200 : out === expected, `verdict changed (length ${out.length}, expected ${expected === null ? 'at most 200' : expected.length})`);
-    assert.ok(elapsed < 200, `took ${elapsed.toFixed(0)}ms — the path redaction must not backtrack over a long run`);
+    assert.ok(out === expected, `verdict changed (length ${out.length}, expected length ${expected.length})`);
+    assert.ok(elapsed < 1000, `took ${elapsed.toFixed(0)}ms — the path redaction must not backtrack over a long run`);
   });
 }

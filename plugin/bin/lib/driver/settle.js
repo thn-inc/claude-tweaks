@@ -14,7 +14,7 @@ const { isTrustedComment } = require('../issues/comment-trust');
 const { STEP_NAMES, OUTCOMES, STOP_CLASSES, outcomeFor, neutralize, CLI_TIMEOUT_MS, firstLine, errorText } = require('./events');
 const { ESCALATION_REASONS } = require('../express/cli');
 const { LABELS } = require('../issues/record-vocabulary');
-const { canonicalRealpath } = require('../path-guard');
+const { parseWorktreeList, findWorktreeEntry } = require('../hooks/worktree-reap');
 
 const BIN_DIR = path.join(__dirname, '..', '..');
 
@@ -64,10 +64,11 @@ function commentFor(kind, fields) {
     case 'escalated':
       return `The pipeline driver (drive.js) stopped this record before pushing, at step ${step}: outcome express-escalated, reason ${reason}. Detail: ${detail}\n\nThe driver releases the claim and removes the worktree and local branch this run created. The driver will not take this record again while this comment stands; the standard path builds it. Delete this comment to let the driver take it again.\n\n${DRIVER_ESCALATION_MARKER}`;
     case 'blocked-record': {
-      // The blocked row removes nothing, so the branch and worktree are always kept; the draft
-      // PR is named only when one exists (kept: 'pr').
-      // kept: 'none' omits the sentence when the run never created a branch, worktree or PR.
-      const keptText = kept === 'none' ? '' : kept === 'pr' ? 'The draft PR, branch and worktree are kept for a human. ' : 'The branch and worktree are kept for a human. ';
+      // The blocked row removes nothing. The sentence names exactly what exists (kept is
+      // { pr, branch, worktree }) and is omitted when nothing does.
+      const names = [['pr', 'draft PR'], ['branch', 'branch'], ['worktree', 'worktree']].filter(([k]) => kept && kept[k] === true).map(([, n]) => n);
+      const list = names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : names.join('');
+      const keptText = names.length === 0 ? '' : `The ${list} ${names.length > 1 ? 'are' : 'is'} kept for a human. `;
       return `The pipeline driver (drive.js) stopped this record at step ${step}: outcome ${outcome}. Detail: ${detail}\n\nThe driver labels this record bot:blocked and releases the claim. ${keptText}Clear bot:blocked to let the record be driven again.`;
     }
     case 'blocked-pr':
@@ -152,24 +153,6 @@ function prStateOf(input, deps) {
   return { number: Number.isSafeInteger(n) ? n : null, unreadable: false };
 }
 
-// A comparable spelling of a path: symlinks resolved (macOS /private/var vs /var) through
-// path-guard when the path exists, else its parent's real path plus the leaf (a deleted
-// worktree directory), forward slashes, no trailing slash, case-folded on Windows.
-function comparablePath(p) {
-  const abs = path.resolve(String(p).replace(/\\/g, '/'));
-  const real = canonicalRealpath(abs)
-    ?? (() => { const parent = canonicalRealpath(path.dirname(abs)); return parent === null ? null : path.join(parent, path.basename(abs)); })()
-    ?? abs;
-  const s = real.replace(/\\/g, '/').replace(/\/+$/, '');
-  return process.platform === 'win32' ? s.toLowerCase() : s;
-}
-
-// Whether `wt` is one of the `worktree <path>` entries of `git worktree list --porcelain`.
-function isRegistered(porcelain, wt) {
-  const want = comparablePath(wt);
-  return String(porcelain ?? '').split(/\r?\n/).some((line) => line.startsWith('worktree ') && comparablePath(line.slice('worktree '.length)) === want);
-}
-
 // Performs the fixed calls for a stopped run, iterating SETTLE_ROWS[row]. Every call is made
 // at most once and a failure never stops the next; a worker is never launched (settle is
 // mechanical).
@@ -223,8 +206,7 @@ function settle(input, deps) {
       return commentFor('claim', { step: stop.step, outcome: outcome(), exitCode: m ? Number(m[1]) : undefined, detail: stop.detail });
     }
     if (row === 'pre-push') return commentFor('escalated', { step: stop.step, outcome: outcome(), reason, detail: stop.detail });
-    const nothingCreated = created.worktree !== true && created.branch !== true;
-    const kept = pr.number !== null ? 'pr' : nothingCreated ? 'none' : 'branch';
+    const kept = { pr: pr.number !== null, branch: created.branch === true, worktree: created.worktree === true };
     return commentFor('blocked-record', { step: stop.step, outcome: outcome(), detail: stop.detail, kept });
   };
 
@@ -270,7 +252,8 @@ function settle(input, deps) {
         // Registration is read from `worktree list --porcelain`, not from git's (localized)
         // error text. A registered worktree whose directory was deleted still gets the removal,
         // or `branch -D` would fail with "used by worktree".
-        if (!isRegistered(gitIn(['worktree', 'list', '--porcelain']), wt)) return 'already gone';
+        const listed = parseWorktreeList(gitIn(['worktree', 'list', '--porcelain']));
+        if (!findWorktreeEntry(listed, wt, deps.pathImpl || path)) return 'already gone';
         gitIn(['worktree', 'remove', '--force', '--force', wt]);
         return undefined;
       },

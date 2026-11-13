@@ -65,10 +65,15 @@ test('AC10.1: every comment kind is built from the template plus a reduced detai
 
 test('commentFor: template details per kind', () => {
   const f = { step: 'test', outcome: 'blocked', detail: 'red' };
-  assert.match(commentFor('blocked-record', { ...f, kept: 'pr' }), /The driver labels this record bot:blocked and releases the claim\. The draft PR, branch and worktree are kept for a human\. Clear/);
-  assert.match(commentFor('blocked-record', { ...f, kept: 'branch' }), /releases the claim\. The branch and worktree are kept for a human\. Clear bot:blocked/);
-  assert.ok(!commentFor('blocked-record', { ...f, kept: 'branch' }).includes('draft PR'));
-  assert.match(commentFor('blocked-record', f), /The branch and worktree are kept for a human\./);
+  assert.match(commentFor('blocked-record', { ...f, kept: { pr: true, branch: true, worktree: true } }), /The driver labels this record bot:blocked and releases the claim\. The draft PR, branch and worktree are kept for a human\. Clear/);
+  assert.match(commentFor('blocked-record', { ...f, kept: { pr: false, branch: true, worktree: true } }), /releases the claim\. The branch and worktree are kept for a human\. Clear bot:blocked/);
+  assert.ok(!commentFor('blocked-record', { ...f, kept: { pr: false, branch: true, worktree: true } }).includes('draft PR'));
+  assert.match(commentFor('blocked-record', { ...f, kept: { pr: false, branch: false, worktree: true } }), /releases the claim\. The worktree is kept for a human\. Clear/);
+  assert.match(commentFor('blocked-record', { ...f, kept: { pr: false, branch: true, worktree: false } }), /releases the claim\. The branch is kept for a human\. Clear/);
+  assert.match(commentFor('blocked-record', { ...f, kept: { pr: true, branch: false, worktree: false } }), /releases the claim\. The draft PR is kept for a human\. Clear/);
+  assert.match(commentFor('blocked-record', { ...f, kept: { pr: true, branch: false, worktree: true } }), /releases the claim\. The draft PR and worktree are kept for a human\. Clear/);
+  assert.match(commentFor('blocked-record', { ...f, kept: { pr: false, branch: false, worktree: false } }), /releases the claim\. Clear bot:blocked/);
+  assert.ok(!commentFor('blocked-record', f).includes('kept for a human'), 'no kept members, no sentence');
   assert.match(commentFor('escalated', f), /The driver releases the claim and removes the worktree and local branch this run created\. The driver will not take/);
   assert.match(commentFor('claim', { ...f, exitCode: 4 }), /failed \(claim-targets\.js exit 4\)\. Detail/);
   assert.match(commentFor('claim', { ...f, exitCode: 'x' }), /failed\. Detail/);
@@ -148,7 +153,7 @@ function stopOf(over = {}) {
 }
 
 // Fake deps recording every call in order; `answers` scripts gh/git/node.
-function harness({ stop, input = {}, answers = {}, readFile, lstat } = {}) {
+function harness({ stop, input = {}, answers = {}, readFile, pathImpl } = {}) {
   const calls = [];
   const trace = [];
   const files = {};
@@ -176,7 +181,7 @@ function harness({ stop, input = {}, answers = {}, readFile, lstat } = {}) {
     },
     writeFile: (p, s) => { files[p] = s; trace.push(['write', p]); },
     readFile: readFile || (() => { const e = new Error('ENOENT'); e.code = 'ENOENT'; throw e; }),
-    lstatType: lstat || (() => ({ type: 'directory' })),
+    pathImpl,
     now: () => (tick += 5),
     launchWorker: () => { throw new Error('launcher called'); },
   };
@@ -283,7 +288,7 @@ test('AC1.4: a failed escalate keeps the worktree and branch and settles by the 
   for (const answer of [() => ({ code: 1, stdout: '', stderr: 'boom\nmore' }), () => new Error('spawn failed')]) {
     const h = harness({ answers: { node: (s) => (s === 'express-lane.js' ? answer() : undefined) } });
     assert.deepStrictEqual(h.calls, [
-      ESCALATE(), COMMENT(blockedRecord({ kept: 'branch' })), LABEL, RELEASE('drive.js settle: blocked at test'),
+      ESCALATE(), COMMENT(blockedRecord({ kept: { pr: false, branch: true, worktree: true } })), LABEL, RELEASE('drive.js settle: blocked at test'),
     ]);
     assert.ok(!h.calls.some((c) => c.some((a) => a.includes(MARKER))), 'no escalation marker');
     assert.equal(h.res.row, 'blocked');
@@ -296,7 +301,7 @@ test('AC1.4: a failed escalate keeps the worktree and branch and settles by the 
 test('AC2.1: a blocked stop after the push comments on PR and record, labels, releases, removes nothing', () => {
   const stop = stopOf({ step: 'set-config', class: 'blocked', pushed: true });
   const h = harness({ stop, input: { pr: 9 } });
-  const rec = commentFor('blocked-record', { step: 'set-config', outcome: 'blocked', detail: 'red tests', kept: 'pr' });
+  const rec = commentFor('blocked-record', { step: 'set-config', outcome: 'blocked', detail: 'red tests', kept: { pr: true, branch: true, worktree: true } });
   assert.deepStrictEqual(h.calls, [
     PR_COMMENT(commentFor('blocked-pr', { step: 'set-config', outcome: 'blocked', detail: 'red tests' })),
     COMMENT(rec), LABEL, RELEASE('drive.js settle: blocked at set-config'),
@@ -311,7 +316,7 @@ test('AC2.2: a failed gh pr create (pushed, no PR) comments on the record only a
   const h = harness({ stop: stopOf({ step: 'pr', class: 'blocked', pushed: true }) });
   assert.ok(!h.calls.some((c) => c[1] === 'pr'));
   assert.deepStrictEqual(h.calls.map((c) => c[0] + ' ' + c[1]), ['gh issue', 'gh issue', 'node release-claim.js']);
-  const body = commentFor('blocked-record', { step: 'pr', outcome: 'blocked', detail: 'red tests', kept: 'branch' });
+  const body = commentFor('blocked-record', { step: 'pr', outcome: 'blocked', detail: 'red tests', kept: { pr: false, branch: true, worktree: true } });
   assert.deepStrictEqual(h.calls[0], COMMENT(body));
   assert.ok(body.includes('The branch and worktree are kept for a human.') && !body.includes('draft PR'));
   assert.deepStrictEqual(h.res.calls.map((c) => c.step), ['settle-comment-record', 'settle-label', 'settle-release']);
@@ -407,7 +412,7 @@ test('AC3.3: other claim failures write exactly the record comment and bot:block
 });
 
 test('AC3.4: a pre-push stop whose created says nothing was made removes nothing', () => {
-  const h = harness({ stop: stopOf({ created: { worktree: false, branch: false } }), lstat: () => { throw new Error('lstat called'); } });
+  const h = harness({ stop: stopOf({ created: { worktree: false, branch: false } }) });
   assert.deepStrictEqual(h.calls, [ESCALATE(), COMMENT(ESCALATED_BODY), RELEASE('drive.js settle: express-escalated at test')]);
   assert.ok(!h.calls.some((c) => c.includes('rev-parse')));
   const onlyBranch = harness({ stop: stopOf({ created: { worktree: false, branch: true } }) });
@@ -441,19 +446,34 @@ test('Review focus 5: a worktree or branch already gone is not a failure', () =>
   assert.deepStrictEqual(other.res.failed, ['settle-delete-branch']);
 });
 
-test('worktree registration matches across slash style and trailing slash, and an unreadable list is a fail', () => {
-  const listOf = (p) => `worktree ${MAIN}\n\nworktree ${p}\n`;
-  for (const spelled of [WT + '/', WT.replace(/\//g, '\\')]) {
-    const h = harness({ input: { wt: WT }, answers: { git: (a) => (a.includes('list') ? listOf(spelled) : undefined) } });
-    assert.ok(h.calls.some((c) => c.join(' ') === RM_WT.join(' ')), spelled);
-  }
+test('an unreadable worktree list is a fail and no removal is made', () => {
   const broken = harness({ answers: { git: (a) => (a.includes('list') ? new Error('fatal: list') : undefined) } });
   assert.deepStrictEqual(broken.res.failed, ['settle-remove-worktree']);
   assert.ok(!broken.calls.some((c) => c.includes('remove')));
 });
 
+test('win32: a backslash worktree path matches git\'s forward-slash, differently cased entry; a near-miss is already gone', () => {
+  const WIN_WT = 'D:\\a\\repo\\.claude\\worktrees\\drive-record-7';
+  const listed = (p) => `worktree D:/a/repo\n\nworktree ${p}\n`;
+  const run = (p) => harness({
+    input: { wt: WIN_WT }, pathImpl: path.win32,
+    answers: { git: (a) => (a.includes('list') ? listed(p) : undefined) },
+  });
+  const hit = run('d:/a/repo/.claude/worktrees/drive-record-7');
+  assert.ok(hit.calls.some((c) => c.join(' ') === ['git', '-C', MAIN, 'worktree', 'remove', '--force', '--force', WIN_WT].join(' ')), 'removal runs');
+  assert.deepStrictEqual(hit.res.failed, []);
+  const near = run('d:/a/repo/.claude/worktrees/drive-record-70');
+  assert.ok(!near.calls.some((c) => c.includes('remove')), 'a near-miss is not the worktree');
+  assert.equal(near.res.calls.find((c) => c.step === 'settle-remove-worktree').detail, 'already gone');
+  const trailing = run('D:/a/repo/.claude/worktrees/drive-record-7/');
+  assert.ok(trailing.calls.some((c) => c.includes('remove')), 'a trailing slash still matches');
+  // The host path matches exactly: posix does not fold case.
+  const posixCase = harness({ answers: { git: (a) => (a.includes('list') ? `worktree ${MAIN}\n\nworktree ${WT.toUpperCase()}\n` : undefined) } });
+  assert.ok(!posixCase.calls.some((c) => c.includes('remove')));
+});
+
 test('a blocked-record comment omits the kept sentence when nothing was created and there is no PR', () => {
-  assert.ok(!commentFor('blocked-record', { step: 'test', outcome: 'blocked', detail: 'd', kept: 'none' }).includes('kept for a human'));
+  assert.ok(!commentFor('blocked-record', { step: 'test', outcome: 'blocked', detail: 'd', kept: { pr: false, branch: false, worktree: false } }).includes('kept for a human'));
   const nothing = harness({
     stop: stopOf({ created: { worktree: false, branch: false } }),
     answers: { node: (s) => (s === 'express-lane.js' ? { code: 1, stdout: '', stderr: 'e' } : undefined) },
@@ -465,6 +485,10 @@ test('a blocked-record comment omits the kept sentence when nothing was created 
   assert.ok(!unknown.calls.find((c) => c[1] === 'issue' && c[2] === 'comment')[6].includes('kept for a human'));
   const made = harness({ stop: stopOf({ class: 'blocked', pushed: true, created: { worktree: true, branch: true } }) });
   assert.ok(made.calls.find((c) => c[1] === 'issue' && c[2] === 'comment')[6].includes('The branch and worktree are kept for a human.'));
+  const wtOnly = harness({ stop: stopOf({ class: 'blocked', pushed: true, created: { worktree: true, branch: false } }) });
+  assert.ok(wtOnly.calls.find((c) => c[1] === 'issue' && c[2] === 'comment')[6].includes('The worktree is kept for a human.'));
+  const failedEsc = harness({ stop: stopOf({ created: { worktree: true, branch: false } }), answers: { node: (s) => (s === 'express-lane.js' ? { code: 1, stdout: '', stderr: 'e' } : undefined) } });
+  assert.ok(failedEsc.calls.find((c) => c[1] === 'issue' && c[2] === 'comment')[6].includes('The worktree is kept for a human.'));
 });
 
 test('AC7.1: a failing call does not stop the rest and is never retried', () => {
@@ -556,8 +580,8 @@ test('Important 2: a node result with code null (a timeout) is a failure, for es
   assert.deepStrictEqual(rel.res.failed, ['settle-release']);
 });
 
-test('Minor 3: a missing worktree directory that is still registered gets the removal call; any removal failure is a fail', () => {
-  const h = harness({ lstat: () => ({ type: 'missing' }) });
+test('Minor 3: a registered worktree gets the removal call; any removal failure is a fail', () => {
+  const h = harness();
   assert.ok(h.calls.some((c) => c.join(' ') === RM_WT.join(' ')));
   assert.deepStrictEqual(h.res.failed, []);
   const rm = (err) => harness({ answers: { git: (a) => (a.includes('remove') ? err : undefined) } });
@@ -583,7 +607,6 @@ test('Important 1: a trailing closing paren, comma, semicolon or full stop stays
 // ---- real git (Task 3) ------------------------------------------------------------------
 const { execFileSync } = require('node:child_process');
 const { gitRepo } = require('../../helpers/git-fixtures');
-const { lstatType } = require('../../../plugin/bin/lib/path-guard');
 
 const IDENT = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.test', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.test' };
 
@@ -609,7 +632,6 @@ function realSettle({ repo, wt }, env) {
     node: () => ({ code: 0, stdout: '', stderr: '' }),
     writeFile: () => {},
     readFile: () => { const e = new Error('ENOENT'); e.code = 'ENOENT'; throw e; },
-    lstatType,
     now: () => Date.now(),
   };
   return settle({
