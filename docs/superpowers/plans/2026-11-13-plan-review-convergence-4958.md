@@ -43,7 +43,7 @@
 **Interfaces:**
 - Produces: `tests/plan-review-convergence-conformance.test.js` with helpers `dispatchBlock(text)`, `subsection(text, heading)`, `norm(t)`, `problems(anchors, text)`, and constants `REVIEW`, `TEMPLATE`, `CONTRACT` (Task 2 appends tests to this file using them).
 
-- [ ] **Step 1: Freeze the prompt fixture, then write the failing suite**
+- [ ] **Step 1: Write the failing test (freeze the prompt fixture first)**
 
 First run the existing pins once as a baseline (spec Gotcha: run all three before and after editing): `node --test tests/build-plan-review-conformance.test.js tests/plan-review-dispatch-relay-conformance.test.js tests/plan-review-hard-gate-conformance.test.js` — expected PASS.
 
@@ -110,9 +110,9 @@ const PRE_CHANGE_GATE = "The HARD-GATE: this plan-review needs-human spec gap is
 
 Tests (names carry the AC clause ids):
 
-- `AC1.1 + AC1.2: a converged round is defined by exactly the two signals, and a failed comment read is not converged` — `assert.deepStrictEqual(problems(SIGNAL_ANCHORS, subsection(REVIEW, CONVERGED)), [])`.
-- `AC2.1 + AC2.2: in a converged round only a criterion or recorded-decision conflict stays needs-human; the rest are settled, never asked` — `RULE_ANCHORS` over the subsection.
-- `AC3.1 + AC3.2: a settled row carries the attribution, names the reading not taken, and logs one AUTO entry (or a handoff line standalone)` — `TRAIL_ANCHORS` over the subsection.
+- `AC1.1: a converged round is defined by exactly the two signals, and a failed comment read is not converged` — `assert.deepStrictEqual(problems(SIGNAL_ANCHORS, subsection(REVIEW, CONVERGED)), [])`.
+- `AC2.1, AC2.2: in a converged round only a criterion or recorded-decision conflict stays needs-human; the rest are settled, never asked` — `RULE_ANCHORS` over the subsection.
+- `AC3.1: a settled row carries the attribution, names the reading not taken, and logs one AUTO entry (or a handoff line standalone)` — `TRAIL_ANCHORS` over the subsection.
 - `AC4.1: a first round routes unchanged, and the gate and Reading the reply say only surviving rows reach it` — `FIRST_ROUND` in the subsection; `GATE_SENTENCE` in `subsection(REVIEW, NEEDS_HUMAN)`; `READING_QUALIFIER` in `norm(REVIEW)`; `assert.ok(!norm(PRE_CHANGE_GATE).includes(GATE_SENTENCE))` (go-red against the frozen excerpt).
 - `AC4.1: the Converged round subsection sits after the plan-amendment subsection and before the needs-human gate` — `REVIEW.indexOf('### Undecided behaviour') < REVIEW.indexOf(CONVERGED) < REVIEW.indexOf(NEEDS_HUMAN)`, each index `!== -1`.
 - `AC5.1: the reviewer Dispatch prompt block is byte-identical to origin/main` — `assert.strictEqual(dispatchBlock(REVIEW), FROZEN_PROMPT)`; plus `assert.ok(FROZEN_PROMPT.length > 1000)` so an empty fixture cannot pass.
@@ -204,6 +204,7 @@ const contractRow = () => CONTRACT.split('\n').find((l) => l.startsWith('| HARD-
 - `AC6.1: the Closed rule section names the convergence rule` — `norm(closedRuleSection(TEMPLATE)).includes(CLOSED_RULE_SENTENCE)`; go-red: the same check on the section with the sentence removed is false.
 - `the HARD-GATE row limits the plan-review gate to first rounds and converged-round contradictions` — `contractRow().includes(CONTRACT_QUALIFIER)`; go-red: `contractRow().replace('#4958', '')` does not include it.
 - `auto-mode-contract.md stays within the rail` — `Buffer.byteLength(CONTRACT) <= RAIL_BYTES`.
+- AC6.2: `tests/specify-closed-rule.test.js` still passes — no new test; Step 4 runs that suite unchanged.
 
 - [ ] **Step 2: Run the suite to verify the new tests fail**
 
