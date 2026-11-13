@@ -89,7 +89,7 @@ function renderModel(input) {
 // common dir), an empty path, and a zero-byte commondir. Each is null here, so
 // git decides.
 function commonDirFromFs(dir, env = process.env) {
-  if (env.GIT_DIR !== undefined || env.GIT_COMMON_DIR !== undefined) return null;
+  if (env.GIT_DIR !== undefined || env.GIT_COMMON_DIR !== undefined || env.GIT_OBJECT_DIRECTORY !== undefined) return null;
   try {
     const gitFile = fs.readFileSync(path.join(dir, '.git'), 'utf8').replace(/[\r\n]+$/, '');
     if (!gitFile.startsWith('gitdir: ')) return null;
@@ -110,15 +110,38 @@ function commonDirFromFs(dir, env = process.env) {
     // Plain JS realpath, never .native / canonicalRealpath: git resolves
     // symlinks but keeps the input's letter case, as this does.
     const real = fs.realpathSync(common);
-    // is_git_directory, as read_gitfile applies it: HEAD in the gitdir and
-    // objects/ + refs/ directories in the common dir, else git refuses the
-    // gitfile ("does not point to a valid repository") — so git decides.
-    fs.statSync(path.join(gitdir, 'HEAD'));
-    if (!fs.statSync(path.join(real, 'objects')).isDirectory()) return null;
-    if (!fs.statSync(path.join(real, 'refs')).isDirectory()) return null;
+    // is_git_directory, as read_gitfile applies it: a valid HEAD in the gitdir
+    // and searchable objects/ + refs/ directories in the common dir, else git
+    // refuses the gitfile ("does not point to a valid repository") — so git
+    // decides.
+    if (!isValidHead(path.join(gitdir, 'HEAD'))) return null;
+    if (!isSearchableDir(path.join(real, 'objects'))) return null;
+    if (!isSearchableDir(path.join(real, 'refs'))) return null;
     return real;
   } catch {
     return null;
+  }
+}
+
+// validate_headref: a regular file (not a symlink) whose content, minus
+// trailing \r / \n, is `ref: refs/...` or a full lowercase hex object id.
+function isValidHead(file) {
+  try {
+    if (!fs.lstatSync(file).isFile()) return false;
+    const head = fs.readFileSync(file, 'utf8').replace(/[\r\n]+$/, '');
+    return head.startsWith('ref: refs/') || /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(head);
+  } catch {
+    return false;
+  }
+}
+
+// git checks objects/ and refs/ with access(X_OK).
+function isSearchableDir(p) {
+  try {
+    fs.accessSync(p, fs.constants.X_OK);
+    return fs.statSync(p).isDirectory();
+  } catch {
+    return false;
   }
 }
 

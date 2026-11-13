@@ -499,6 +499,9 @@ function withEisdirCommondir(fn) {
   try {
     const gitdir = path.join(root, 'admin');
     fs.mkdirSync(path.join(gitdir, 'commondir'), { recursive: true });
+    // Valid git-dir shape (also what an ENOENT fallback would land on), so only
+    // the EISDIR rule can reject it.
+    makeGitDirShape(gitdir);
     const dir = path.join(root, 'checkout');
     fs.mkdirSync(dir);
     fs.writeFileSync(path.join(dir, '.git'), `gitdir: ${gitdir}\n`);
@@ -597,9 +600,78 @@ test('commonDirFromFs: `gitdir:` on a second line defers to git (git rejects it)
   });
 });
 
-test('commonDirFromFs: a multi-line gitdir value defers to git', () => {
-  withLaxTrap('gitdir: admin\nextra\n', (dir) => {
+test('commonDirFromFs: a multi-line gitdir value defers to git', { skip: process.platform === 'win32' ? 'win32 paths cannot contain a newline' : false }, () => {
+  withLaxTrap('gitdir: admin\nextra\n', (dir, f) => {
+    // A real directory literally named `admin\nextra`: a reader without the
+    // newline check would resolve to it and answer non-null.
+    const odd = path.join(dir, 'admin\nextra');
+    makeGitDirShape(odd);
+    fs.writeFileSync(path.join(odd, 'commondir'), path.join(f.main, '.git'));
     assert.strictEqual(sl.commonDirFromFs(dir), null);
+  });
+});
+
+for (const [label, setup] of [
+  ['garbage content', (head) => fs.writeFileSync(head, 'garbage\n')],
+  ['empty content', (head) => fs.writeFileSync(head, '')],
+  ['a directory', (head) => fs.mkdirSync(head)],
+  ['a symlink to a valid HEAD', (head) => {
+    fs.writeFileSync(`${head}.real`, 'ref: refs/heads/x\n');
+    fs.symlinkSync(`${head}.real`, head);
+  }],
+]) {
+  test(`commonDirFromFs: a gitdir whose HEAD is ${label} is not a repository — defers to git`, { skip: label === 'a symlink to a valid HEAD' && process.platform === 'win32' ? 'symlinks need privileges on win32' : false }, () => {
+    withLaxTrap('gitdir: admin\n', (dir) => {
+      const head = path.join(dir, 'admin', 'HEAD');
+      fs.rmSync(head);
+      setup(head);
+      assert.strictEqual(sl.commonDirFromFs(dir), null);
+      const { launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(dir));
+      assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+    });
+  });
+}
+
+test('commonDirFromFs: a 40- or 64-hex HEAD (detached) is a valid repository', () => {
+  for (const hex of ['a'.repeat(40), 'b'.repeat(64)]) {
+    withLaxTrap('gitdir: admin\n', (dir, f) => {
+      fs.writeFileSync(path.join(dir, 'admin', 'HEAD'), `${hex}\r\n`);
+      assert.strictEqual(path.dirname(sl.commonDirFromFs(dir)), fs.realpathSync(f.main));
+    });
+  }
+});
+
+test('commonDirFromFs: an objects entry that is an executable FILE is not a repository — defers to git', { skip: process.platform === 'win32' ? 'win32 has no executable bit' : false }, () => {
+  withLaxTrap('gitdir: admin\n', (dir) => {
+    const common = path.join(dir, 'common2');
+    makeGitDirShape(common);
+    fs.rmSync(path.join(common, 'objects'), { recursive: true });
+    fs.writeFileSync(path.join(common, 'objects'), '', { mode: 0o755 }); // passes X_OK, is not a directory
+    fs.writeFileSync(path.join(dir, 'admin', 'commondir'), common);
+    assert.strictEqual(sl.commonDirFromFs(dir), null);
+  });
+});
+
+test('commonDirFromFs: GIT_OBJECT_DIRECTORY in the env defers to git', () => {
+  withWorktrees((f) => {
+    assert.strictEqual(sl.commonDirFromFs(f.wt, { GIT_OBJECT_DIRECTORY: '/x' }), null);
+    assert.strictEqual(sl.commonDirFromFs(f.wt, { GIT_OBJECT_DIRECTORY: '' }), null);
+  });
+});
+
+test('commonDirFromFs: an objects/ dir without search permission defers to git (access X_OK)', chmodDenialSkip('root ignores directory permissions'), () => {
+  withLaxTrap('gitdir: admin\n', (dir) => {
+    const common = path.join(dir, 'common2');
+    makeGitDirShape(common);
+    fs.writeFileSync(path.join(dir, 'admin', 'commondir'), common);
+    fs.chmodSync(path.join(common, 'objects'), 0o600);
+    try {
+      assert.strictEqual(sl.commonDirFromFs(dir), null);
+      const { launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(dir));
+      assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+    } finally {
+      fs.chmodSync(path.join(common, 'objects'), 0o755);
+    }
   });
 });
 
@@ -650,8 +722,10 @@ test('resolveMainProjectDir: a gitdir reached through a symlink resolves a relat
     const name = path.basename(fs.readFileSync(path.join(f.wt, '.git'), 'utf8').trim());
     assert.strictEqual(fs.readFileSync(path.join(adminRoot, name, 'commondir'), 'utf8').trim(), '../..');
     fs.writeFileSync(path.join(f.wt, '.git'), `gitdir: ${path.join(link, name)}\n`);
-    assert.strictEqual(sl.resolveMainProjectDir(f.wt), gitCommonMain(f.wt));
-    assert.strictEqual(sl.resolveMainProjectDir(f.wt), fs.realpathSync(f.main));
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt));
+    assert.deepStrictEqual(launches, []); // the fast path answered, no spawn
+    assert.strictEqual(result, gitCommonMain(f.wt));
+    assert.strictEqual(result, fs.realpathSync(f.main));
   });
 });
 
