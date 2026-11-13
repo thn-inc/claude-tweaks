@@ -214,7 +214,7 @@ function run(argv, overrides = {}) {
   // 11. A repair is worth a decisions.md line; a logging failure never changes the exit.
   let logFailed = false;
   if (repaired.restored.length > 0) {
-    const carried = repaired.restored.length === 3 ? 'none' : 'some';
+    const carried = ['run marker', 'phases block', 'fixes block'].every((p) => repaired.restored.includes(p)) ? 'none' : 'some';
     try {
       deps.appendDecision({
         runDir: o.run,

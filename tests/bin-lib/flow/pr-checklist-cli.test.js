@@ -137,6 +137,19 @@ test('missing markers are repaired and logged', () => {
   assert.ok(log.includes('restored run marker, phases block, fixes block on PR #7'));
   assert.match(log, /PR checklist refresh/);
   assert.match(log, /Reversibility: high/);
+  assert.ok(log.includes('(body carried none of the expected markers)'));
+});
+
+test('#5358: a body carrying only plain markers gets its HTML forms back and logs "carried some"', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { prBody: earlyBody().replace(/<!--[\s\S]*?-->/g, '') });
+  assert.equal(run(['--run', runDir, '--phase', 'build', '--fixes', '1'], h.deps), 0);
+  const written = h.edits[0].input;
+  assert.ok(written.startsWith(`<!-- claude-tweaks-run: ${RUN_ID} -->\nclaude-tweaks-run: ${RUN_ID}\n`));
+  assert.ok(written.includes('<!-- phases-start -->') && written.includes('<!-- fixes-end -->'));
+  assert.deepEqual(h.json().restored, ['run marker HTML form', 'phases HTML markers', 'fixes HTML markers']);
+  const log = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
+  assert.ok(log.includes('restored run marker HTML form, phases HTML markers, fixes HTML markers on PR #7 (body carried some of the expected markers)'));
 });
 
 test('a decisions.md write failure is swallowed into the envelope, never an exit change', () => {
