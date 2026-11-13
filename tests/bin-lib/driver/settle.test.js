@@ -402,6 +402,10 @@ test('AC3.3: other claim failures write exactly the record comment and bot:block
     assert.equal(h.res.note === null, n !== 5, `note for exit ${n}`);
     if (n === 5) assert.equal(h.res.note, 'a claim that may have been written lapses by its TTL');
   }
+  // A claim-targets.js killed or timed out (no integer exit) may have written its claim too.
+  const killed = harness({ stop: stopOf({ step: 'claim', class: 'claim', reason: 'claim-exit-none', detail: 'killed' }), input: { claimed: false } });
+  assert.equal(killed.res.row, 'claim');
+  assert.equal(killed.res.note, 'a claim that may have been written lapses by its TTL');
   const mint = harness({ stop: stopOf({ step: 'run-dir', class: 'claim', reason: 'fail', detail: 'no dir' }), input: { runDir: null, claimed: false } });
   const body = commentFor('claim', { step: 'run-dir', outcome: 'blocked', detail: 'no dir' });
   assert.ok(!body.includes('claim-targets.js exit'));

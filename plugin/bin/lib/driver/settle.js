@@ -300,7 +300,7 @@ function settle(input, deps) {
   runRow(SETTLE_ROWS[row]);
 
   let note = null;
-  if (row === 'claim' && (stop.reason === 'claim-exit-5' || input.claimed === true)) note = CLAIM_NOTE;
+  if (row === 'claim' && (stop.reason === 'claim-exit-5' || stop.reason === 'claim-exit-none' || input.claimed === true)) note = CLAIM_NOTE;
   else if (pr.unreadable && stop.class === STOP_CLASSES.PRE_PUSH && !stop.pushed) note = UNREADABLE_NOTE;
   return { row, settledClass: CLASS_BY_ROW[row], calls, failed, unclassified: picked.unclassified, note };
 }

@@ -249,7 +249,12 @@ const claimStep = defineStep(STEP.claim, STOP_CLASSES.CLAIM, async (ctx, deps) =
   if (r.code !== 0) {
     const key = firstEnvelopeKey(r.stdout);
     const why = key || firstLine(r.stderr);
-    return { status: 'fail', reason: `claim-exit-${Number.isInteger(r.code) ? r.code : r.code === null ? 'null' : 'none'}`,detail: `claim-targets.js exited ${r.code}${why ? ` (${why})` : ''}` };
+    // A killed or timed-out run has no integer exit; settle treats `claim-exit-none` as a possibly written claim.
+    return {
+      status: 'fail',
+      reason: Number.isInteger(r.code) ? `claim-exit-${r.code}` : 'claim-exit-none',
+      detail: `claim-targets.js exited ${r.code}${why ? ` (${why})` : ''}`,
+    };
   }
   let envelope;
   try { envelope = JSON.parse(r.stdout); } catch { envelope = null; }

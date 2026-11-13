@@ -2228,7 +2228,7 @@ test('a claim failure carries claim-exit-{code}', async () => {
     const final = lastLine(h);
     assert.deepEqual([final.stop.step, final.stop.class, final.stop.reason], ['claim', 'claim', `claim-exit-${code}`]);
   }
-  for (const [code, expected] of [[null, 'claim-exit-null'], [undefined, 'claim-exit-none'], ['x', 'claim-exit-none'], [1.5, 'claim-exit-none']]) {
+  for (const [code, expected] of [[null, 'claim-exit-none'], [undefined, 'claim-exit-none'], ['x', 'claim-exit-none'], [1.5, 'claim-exit-none']]) {
     const odd = harness({ script: [claimReply(code, '', '')] });
     await run(['#7'], odd.deps);
     assert.equal(lastLine(odd).stop.reason, expected, String(code));
