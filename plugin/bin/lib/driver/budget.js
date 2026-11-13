@@ -2,8 +2,8 @@
 // The pipeline driver's `--budget <n|all>` loop (drive.js, record #5229). runBudget reads the
 // policy through the table's own policy step (an unreadable policy exits 1; `express-driver:
 // off` refuses before any pull), then loops: pull the dispatch queue (deps.queuePull), pre-screen
-// every record of every group the ranking could select (a group the pull excluded as
-// `oversized` or `neighbour-in-flight` is left alone) with the eligibility step's own call, rank
+// every record of every group the ranking could select (a group the pull excluded for an
+// UNSELECTABLE_REASONS reason is left alone) with the eligibility step's own call, rank
 // (deps.rankNext) against the pull's exclusions plus this invocation's in-memory `firing`
 // entry, and drive the top group's members one at a time, in the group's own order, through
 // `driveOne` (run.js's driveRecordFacts). It never reorders, filters or re-derives the
@@ -14,8 +14,8 @@
 // Counting: from the claim. A record whose claim was obtained and whose run directory was
 // minted (`claimed` true) is `driven` and consumes budget, whatever its outcome; nothing else
 // does. Every handled record lands in exactly one COUNTERS entry (classifyFacts; a pre-screen
-// skip is `skipped`); a record only in a group the pull excluded as `oversized` or
-// `neighbour-in-flight` is never pre-screened, never handled and never counted. A claim stop
+// skip is `skipped`); a record only in a group the pull excluded for an UNSELECTABLE_REASONS
+// reason is never pre-screened, never handled and never counted. A claim stop
 // ends the run with the rest of the budget unused: claim-targets.js exit 7
 // (`permission-stop`), or exit 2 or 6 (`claim-stop`), whose cause every later claim would meet
 // too; exits 3, 4 and 5 and a failed mint are per-record.

@@ -3196,7 +3196,7 @@ test('budget AC4.4: --budget 2 over refused, blocked, contested, pending-review,
   const summary = h.lines().at(-1);
   assert.deepEqual({ ...summary, ts: 0, ms: 0 }, { ts: 0, run: null, record: null, step: 'budget', status: 'ok', ms: 0, budget: 2, driven: 2, refused: 1, skipped: 0, contested: 1, claimFailed: 0, permissionStopped: 0, ended: 'budget' });
   // AC9: every record handed to the loop is in exactly one counter.
-  assert.equal(COUNTER_KEYS.reduce((sum, k) => sum + summary[k], 0), 4);
+  assert.equal(COUNTER_KEYS.reduce((sum, k) => sum + summary[k], 0), finals(h).length);
   assert.ok(!h.calls.some((c) => c.kind === 'gh' && c.args[0] === 'issue' && c.args.at(-1) === '5'), 'no live fetch of #5');
   assert.ok(!h.calls.some((c) => c.kind === 'node' && /claim-targets\.js$/.test(c.args[0]) && claimTarget(c) === 5), 'no claim of #5');
   assert.equal(h.calls.filter((c) => c.kind === 'queuePull').length, 4);
@@ -3359,6 +3359,7 @@ test('budget: a signal during the pull ends the run with nothing further', async
   assert.equal(await run(['--budget', '1'], signalled.deps), 0);
   assert.deepEqual(signalled.calls.filter((c) => c.kind === 'terminate').map((c) => c.args), [['SIGTERM']]);
   assert.equal(issueViews(signalled, 1).length, 0);
+  assert.equal(signalled.calls.filter((c) => ['eligibility', 'rankNext'].includes(c.kind)).length, 0, 'no pre-screen or ranking after the signal');
   assert.equal(signalled.lines().filter((l) => l.step === BUDGET_STEP).length, 0);
 });
 
