@@ -49,19 +49,21 @@ files:
   - `bot:blocked` added to a record another run holds (`claim-targets.js` exit 3).
 
 ### 3. Trust an escalation, a pre-push stop
-- **URL:** the `settle-escalate`, `settle-release`, `settle-remove-worktree` and `settle-delete-branch` lines; `git worktree list`; the record's escalation comment
-- **Action:** check that the worktree and the local `drive-record-{n}` branch that the run created are gone, and that the run directory still holds the escalation line.
+- **URL:** the `settle-escalate`, `settle-release`, `settle-remove-worktree`, `settle-delete-branch` and `settle-close` lines; `git worktree list`; `{run-dir}/run-state.json`; the record's escalation comment
+- **Action:** check that the worktree and the local `drive-record-{n}` branch that the run created are gone, that the run is closed, and that the run directory still holds the escalation line.
 - **Should feel:** final and reversible in the right places.
   - The partial work is discarded on purpose, and the escalation stays on record.
   - The record returns to the standard path as if it had never been driven.
 - **Should understand:**
   - The escalation comment ends with `<!-- express-driver: escalated -->`. While that comment, from a trusted author, is on the record, admission refuses the record (`already escalated by the driver`).
   - To let the driver take the record again, delete that comment.
-  - If the escalate call itself fails, nothing is removed and the stop is settled as `blocked`.
+  - The last call, `settle-close`, runs `hooks.js close-run --run {run-dir}`. `run-state.json` then reads `status: clean`, with `worktree` null; a worktree path the run had recorded is kept as `worktreeAtClose`. The run directory itself stays, because it holds the escalation line.
+  - If the escalate call itself fails, nothing is removed, the run is not closed, and the stop is settled as `blocked`.
 - **Red flags:**
   - A worktree or branch removed with no escalation line on record.
   - An escalated record driven again on the next run.
   - A worktree or branch that this run did not create being removed.
+  - A run left `active` and still naming the removed worktree, with no `settle-close` in `settleFailed`.
 
 ### 4. Leave settling to a calling skill, `--no-settle`
 - **URL:** `node plugin/bin/drive.js --no-settle #N`, then the final line's `settle`, `settleRow` and `stop` fields
@@ -93,3 +95,4 @@ files:
 - Created during the build of #5219 (run `2026-11-13T000400-spec-5219`), the pipeline driver's settle unit. It continues `drive-a-named-record-to-a-draft-pr-5218`, picking up where that journey's final line hands the `stop` object to the settle.
 - Step 5 follows the plan-review decision that an interrupt settles nothing.
 - Step 4's `none` versus `left-to-caller` follows the plan-review decision that a row with no calls settles `none` even under `--no-settle`.
+- Updated at wrap-up of #5219: Step 3 names the `settle-close` call the review fixes added to the end of the pre-push row, so a removed worktree no longer leaves the run active.

@@ -53,6 +53,13 @@ The worker can shape strings such as its summary, a path it named, or CLI stderr
 2. Read back whether the first attempt landed.
 3. Retry once.
 
+## Adding a settle step
+
+A settle call is not a `STEPS` entry; it is a handler in one of `settle.js`'s `SETTLE_ROWS` rows (#5219). The rules for adding one:
+- Add it in four places: the row in `SETTLE_ROWS`, its name in `events.js`'s `SETTLE_STEP_NAMES`, and the hand-copied settle tables in `docs/driver.md` and the design document.
+- Settle handlers run under `step()`'s catch-all, so a failing call becomes a `fail` event and the row continues (AC7). A test fake that signals a forbidden call by throwing is swallowed the same way and the test stays green. Fakes for settle deps record their calls into an array that the test asserts on, and never throw. AC6.2 passed with a launcher call inside a handler until its fake was changed this way.
+- A row that removes the run's worktree ends with `hooks.js close-run --run`. Otherwise `run-state.json` stays `active` and names a worktree that no longer exists (`settle-close`, IL-116).
+
 ## Anti-Patterns
 
 | Pattern | Why it fails here |
