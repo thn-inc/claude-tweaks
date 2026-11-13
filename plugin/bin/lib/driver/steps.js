@@ -881,8 +881,9 @@ function commitRuns(ctx, parsed) {
 // the one recorded (`timeout` when it is still pending or stale at the bound; only this read can
 // say `stale`; `no-ci` when the commit still has no run once the window has passed). The head-runs
 // count covers GitHub Actions runs only while pr-checks classifies the whole rollup, so with no Actions run
-// `red`/`inherited-red` stay as read (a failing non-Actions check is conclusive), and a `pending`
-// poll that names pending checks keeps polling (a non-Actions check is still running) until the bound.
+// `red`/`inherited-red` stay as read (a failing non-Actions check is conclusive), a failed read
+// (`read-failed`, `gh-absent`, `no-pr`) stays as read (it never saw the non-Actions checks), and a
+// `pending` poll that names pending checks keeps polling (a non-Actions check is still running) until the bound.
 // The `--run` read writes its own decisions.md gate line (e.g. "checks pending — passed with
 // caveat"), which can therefore disagree with the recorded word when that is `no-ci` or `timeout`.
 // Never halts and always reports `ok`: the word it reads is data for the reviewer.
@@ -924,7 +925,7 @@ const ciStep = defineStep(STEP.ci, STOP_CLASSES.NONE, async (ctx, deps) => {
   if (!ctx.shared.interrupted) {
     state = readCiState(ctx, deps, ['--run', ctx.runDir, '--section', '/express-lane']).state;
     if (timedOut && (state === 'pending' || state === 'stale')) state = 'timeout';
-    if (runs === 'none' && state !== 'red' && state !== 'inherited-red' && state !== 'timeout') state = 'no-ci';
+    if (runs === 'none' && (state === 'green' || state === 'pending' || state === 'stale')) state = 'no-ci';
   }
   ctx.ci = state;
   ctx.ciWaitStartedAt = null;

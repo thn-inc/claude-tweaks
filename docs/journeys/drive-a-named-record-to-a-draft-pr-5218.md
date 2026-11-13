@@ -66,10 +66,11 @@ files:
 - **Should feel:** measurable. `msWithoutCi` is the wall clock the driver itself spent, with the CI wait taken out, so the cost comparison does not depend on how busy CI was.
 - **Should understand:**
   - `ci` is `null` only when no PR exists. Whenever a PR exists, `ci` is the last final word `pr-checks` reported, or `pending` if CI was never read as final.
-  - The CI wait lasts at least a 2-minute settle window, measured from the push. A read other than `pending`/`stale` counts as final only once the window has passed and the pushed sha has a GitHub Actions run. This stops a fast workflow that has already finished, or been skipped, from passing for the tests (#5277). Every record's CI wait therefore takes about 2 minutes longer, all of it left out of `msWithoutCi`.
-  - A commit that still has no Actions run after the window reads `no-ci`, even if the rollup says `green`.
-  - A `red`/`inherited-red` result keeps its word whatever produced it.
-  - A `pending` read that names checks still running outside Actions keeps polling to the bound (`timeout`). `stale` polls like `pending`.
+  - The CI wait lasts at least a 2-minute settle window, measured from the push: no read ends it sooner. This stops a fast workflow that has already finished, or been skipped, from passing for the tests (#5277). Every record's CI wait therefore takes about 2 minutes longer, all of it left out of `msWithoutCi`.
+  - Once the window has passed, the driver checks whether the pushed sha has a GitHub Actions run, using the run count each `pr-checks` read already carries, and checks again after each poll until it sees one. The first read other than `pending`/`stale` after the window ends the wait. It keeps its word when the sha has a run, and reads `no-ci` when it has none, even if the rollup says `green`. A `pending`/`stale` read on a sha with no run also ends as `no-ci`.
+  - A run count that cannot be read, or that belongs to a different head than the pushed sha, never makes the word `no-ci`: the read keeps its word.
+  - A `red`/`inherited-red` result keeps its word whatever produced it, and so does a failed read (`read-failed`, `gh-absent`, `no-pr`), which never saw the checks outside Actions.
+  - A `pending` read that names checks still running outside Actions keeps polling to the bound (`timeout`), and so does a `pending`/`stale` read on a sha that has a run.
   - `stop` carries the structured reason (`step`, `class`, `pushed`, `created`) for the settle unit.
 - **Red flags:**
   - `ci: null` beside a PR number, or `msWithoutCi` that still includes the CI wait.

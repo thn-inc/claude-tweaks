@@ -2422,8 +2422,8 @@ test('ci: no workflow run on the pushed sha after the window records no-ci', asy
   }
 });
 
-test('ci: no workflow run after the window records no-ci for stale, read-failed and gh-absent reads too', async () => {
-  for (const state of ['stale', 'read-failed', 'gh-absent']) {
+test('ci: no workflow run after the window records no-ci for a stale read too', async () => {
+  for (const state of ['stale']) {
     const h = harness({ script: [prChecksReply(state, 0)] });
     await run(['#7'], h.deps);
     assert.equal(lastLine(h).ci, 'no-ci', state);
@@ -2435,8 +2435,8 @@ test('ci: no workflow run after the window records no-ci for stale, read-failed 
 
 const prChecksPendingReply = (state, pending, runs = 1) => [on('node', /pr-checks\.js$/), { code: 0, stderr: '', stdout: prChecksEnvelope(state, runs, { pending }) }];
 
-test('ci: with no Actions run, red and inherited-red are conclusive and are not rewritten to no-ci', async () => {
-  for (const state of ['red', 'inherited-red']) {
+test('ci: with no Actions run, red, inherited-red and a failed read keep their word and are not rewritten to no-ci', async () => {
+  for (const state of ['red', 'inherited-red', 'read-failed', 'gh-absent']) {
     const h = harness({ script: [prChecksReply(state, 0)] });
     await run(['#7'], h.deps);
     assert.equal(lastLine(h).ci, state, state);

@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`, no dependencies.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-01T190716-record-4589/work/4589-spec.md` (record #4589). Revised 2026-11-12 against worktree HEAD `b1e0a332f` (the 2026-11-01 draft was written 158 commits earlier, at `16f5e8287`); Decisions 1-4 are binding and not reopened. Every size and count below was re-measured at `b1e0a332f`. Plan-review ruling (2026-11-12, user, reading B): "AC1 must hold for any consumer path: this record keeps the prompt dispatchable before it ships" — so no read-method cap near the Bash output limit; the read is chunked (Global Constraints).
+**Spec:** `.claude-tweaks/pipelines/archive/2026-11-01T190716-record-4589/work/4589-spec.md` (record #4589). Revised 2026-11-12 against worktree HEAD `b1e0a332f` (the 2026-11-01 draft was written 158 commits earlier, at `16f5e8287`); Decisions 1-4 are binding and not reopened. Every size and count below was re-measured at `b1e0a332f`. Plan-review ruling (2026-11-12, user, reading B): "AC1 must hold for any consumer path: this record keeps the prompt dispatchable before it ships" — so no read-method cap near the Bash output limit; the read is chunked (Global Constraints).
 
 Scope keywords: {context-pack}, Context pack, resume-context
 
