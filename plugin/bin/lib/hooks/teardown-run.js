@@ -82,8 +82,9 @@ function branchOfWorktree(root, worktreePath) {
 // `runDir` — the run directory (already resolved/anchored by the caller, same contract as
 // close-run). `opts.mode` — 'merged' | 'abandoned' | null (neither flag given — treated the same
 // as 'abandoned' for steps 4-5: skip branch/ref deletion rather than guess intent). `opts.deps`
-// — test seam for the gh call and (`deps.runGit`) the dead-owner unlock call only; every other git call goes through the real runGit (fixture repos
-// are real git repos, matching this codebase's existing convention for reconcile/archive tests).
+// — test seam for the gh call and (`deps.runGit`) the dead-owner unlock call only; every other
+// git call goes through the real runGit (fixture repos are real git repos, matching this
+// codebase's existing convention for reconcile/archive tests).
 // #3023: a failed git call's best available cause — stderr when git wrote any,
 // else its exit status (plus stdout when present), else the failure category
 // (e.g. timeout, spawn), so "no error text" only appears when nothing at all
@@ -255,7 +256,8 @@ function teardownRun(runDir, opts = {}) {
   // which git refuses ("worktree: skipped — removal failed (…locked…)").
   let unlockFailure = null;
   if (deadOwnerOverride && effectiveWorktreePath) {
-    // Reuse the Step-0 listing when the recorded path is the effective one; only a branch-recovered path needs its own.
+    // Reuse the Step-0 listing when the recorded path is the effective one; only a
+    // branch-recovered path needs its own.
     const lockedEntry = effectiveWorktreePath === worktreePath ? recordedEntry : listedWorktreeEntry(root, effectiveWorktreePath);
     if (lockedEntry && lockVerdict(lockedEntry) === 'orphaned') {
       const unlockGit = (opts.deps && opts.deps.runGit) || runGit;

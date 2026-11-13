@@ -562,8 +562,8 @@ test('#3695 AC3: no strict worktree-path compare remains at either call site', (
 // is the real writer's shape (context.js ownerBlock); run-liveness's probes are injected (pidAlive,
 // pidStartedAt) so those verdicts do not depend on the platform. The locked-worktree test is the
 // exception: teardown's lockVerdict and run-liveness's lock probe read the real isPidAlive there,
-// against an exited child's pid (a reused pid would fail red, never falsely green). `now` is pushed past LIVE_WINDOW_MS so the fixture's fresh
-// heartbeat and fresh commit read stale.
+// against an exited child's pid (a reused pid would fail red, never falsely green). `now` is
+// pushed past LIVE_WINDOW_MS so the fixture's fresh heartbeat and fresh commit read stale.
 const { spawnSync } = require('child_process');
 const { ownerBlock } = require('../plugin/bin/lib/hooks/context');
 const { LIVE_WINDOW_MS } = require('../plugin/bin/lib/run-liveness/constants');

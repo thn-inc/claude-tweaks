@@ -5,8 +5,9 @@
 // sweep, through `adHocSessionLiveness` (#4179), and its `abandoned-interrupted`
 // kind, through `defaultRunVerdict` (#4421), plus `blocksResume`'s two resume
 // callers (#4420), and teardown-run's `--merged` foreign-owner override (#5293: only a `dead`
-// verdict proceeds — the one consumer acting destructively on another session's run). runIdMs and LIVE_PROBES are exported so reconcile's
-// abandoned-interrupted decision reuses them rather than copying (#4421).
+// verdict proceeds — the one consumer acting destructively on another session's run).
+// runIdMs and LIVE_PROBES are exported so reconcile's abandoned-interrupted decision reuses
+// them rather than copying (#4421).
 //
 // Shape: gatherEvidence() asks every probe once and records a tagged entry
 // ({ probe, result: positive | negative | error, detail }) plus the "death
