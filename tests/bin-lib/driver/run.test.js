@@ -137,7 +137,9 @@ test('#5269 AC3: no keyword is ever left followed by a reference, in any case or
           assert.doesNotMatch(out, LEFTOVER_KEYWORD_REFERENCE, JSON.stringify([cased, sep, ref, out]));
           // The keyword always goes; the reference goes with it unless it is a URL form that stays a
           // backlink (`www.`/bare `github.com`), and `_https://…` leaves its `_`.
-          const expected = /^(?:www\.|github\.com)/.test(ref) ? `Add ${ref} now` : ref.startsWith('_') ? 'Add _ now' : 'Add now';
+          let expected = 'Add now';
+          if (/^(?:www\.|github\.com)/.test(ref)) expected = `Add ${ref} now`;
+          else if (ref.startsWith('_')) expected = 'Add _ now';
           assert.equal(out, expected, JSON.stringify([cased, sep, ref]));
         }
       }
