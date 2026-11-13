@@ -314,7 +314,8 @@ function assertRenderFailureStop(gate) {
 // (so `two-call-gate.md` stays whole) and on paragraph breaks.
 const SWEEP_GATE_MESSAGE = 'two-call-gate.md: a denied-twice clause says the firing ends';
 const SWEEP_SKILL_MESSAGE = 'SKILL.md Render-failure stop: a denied-twice clause says the firing ends';
-const FIRING_ENDS = /\b(ends the firing|the firing (then )?ends|stops the firing|end the firing)\b/i;
+// Both word orders and both verbs: "ends/stops the firing" and "the firing (then) ends/stops".
+const FIRING_ENDS = /\b((end|ends|ended|stop|stops|stopped) the firing|the firing (then )?(ends|ended|stops|stopped))\b/i;
 const FIRING_ENDS_NEGATED = /does not end the firing|is not this stop/i;
 function assertNoDeniedTwiceEnd(text, message) {
   for (const clause of text.split(/[.;:](?=\s|$)|\n\s*\n/)) {
@@ -386,6 +387,7 @@ test('AC6.1 go-red: making the denied-twice path end the firing fails the assert
     ['M3: a sentence after the section 5 continuation', GATE.replace(SEC5_DENIED, `${SEC5_DENIED} After a denied-twice call the firing ends.`)],
     ['M4: a new section 6 paragraph', GATE.replace(`${SEC6_LEAD} When this path`, `**Denied-twice stop.** When the second call was denied twice, the firing ends once item 1's call returns.\n\n${SEC6_LEAD} When this path`)],
     ['M5: a none-after clause widened', GATE.split(NONE_AFTER_BOTH).join(`${NONE_AFTER_BOTH} or a denied-twice call`)],
+    ['M6: "the firing stops" wording after the section 2 continuation', GATE.replace(SEC2_DENIED, `${SEC2_DENIED} After a denied-twice call the firing stops.`)],
   ]) {
     assert.notStrictEqual(mutated, GATE, `control must change the text: ${name}`);
     assert.throws(() => assertDeniedTwiceContinues(mutated), SWEEP, name);
