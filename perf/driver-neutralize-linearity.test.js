@@ -36,6 +36,10 @@
 //   - back-to-back scheme URLs (`https://g/o/r/issues/5`*9000): with a `(?<![A-Za-z0-9])` boundary
 //     each URL follows a digit and was refused until the previous removal left a space, peeling one
 //     URL per loop pass (200k chars ~10.5s); the boundary is now letters-only.
+//   - a keyword chain before a marker token that survives the reference passes
+//     (`fix `*k + `www.g/o/r/issues/5`): only the last keyword's token carried the marker, so each
+//     loop pass removed one keyword and exposed the next (100k chars ~81s); the chain is now decided
+//     right to left in one pass.
 //   - `h#1`*5k collapsing to `h`*5k: only a time budget for many bare-reference removals; it
 //     catches none of the mutants above and has no pre-fix time.
 // Dropped as no longer testing anything: the widened-host case (`www.` + 200k `a`, `_https://` +
@@ -143,6 +147,12 @@ test('neutralize: www. and keyword runs that match nothing stay linear and uncha
     assert.ok(value === input, `verdict changed on ${name} (length ${value.length})`);
     assert.ok(elapsed < 1000, `took ${elapsed.toFixed(0)}ms on ${name}`);
   }
+});
+
+test('neutralize: a keyword chain before a surviving marker token goes in one pass', () => {
+  const { value, elapsed } = timed(`${'fix '.repeat(25000)}www.g/o/r/issues/5`);
+  assert.ok(value === 'www.g/o/r/issues/5', `verdict changed (length ${value.length})`);
+  assert.ok(elapsed < 500, `took ${elapsed.toFixed(0)}ms — a keyword chain must be decided in one pass, not one keyword per loop pass`);
 });
 
 test('neutralize: back-to-back scheme URLs are all removed without a loop pass each', () => {

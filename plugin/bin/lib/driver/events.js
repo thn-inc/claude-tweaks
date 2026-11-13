@@ -117,6 +117,10 @@ const COMMENT_OPENER = /<!--/g;
 // and the marker pointer and the end of the current token only ever move forward, so each keyword
 // costs O(1) amortized (a lookahead regex, or a fresh whitespace search per keyword, rescans a long
 // non-space run from every keyword).
+// A keyword whose token is itself a removable keyword goes too (`Fixes fixes #4`): removing the
+// later one makes its token the earlier one's, so the fixed-point loop below would remove the chain
+// anyway, one keyword per pass over the whole text (quadratic in the chain length). Deciding the
+// chain right to left, in one pass over the collected matches, reaches that same result at once.
 const KEYWORD = new RegExp('\\b(' + CLOSING_KEYWORD_ALTERNATION + ')\\b(?:\\s*:)?\\s*', 'gi');
 const REF_MARKER = /#\d|\/(?:issues|pull)\/\d/gi;
 const WHITESPACE = /\s/g;
@@ -124,24 +128,39 @@ function removeKeywordsBeforeReferences(text, replacement) {
   const markers = [];
   for (const m of text.matchAll(REF_MARKER)) markers.push(m.index);
   if (markers.length === 0) return text;
-  let out = '';
-  let last = 0;
+  // Left to right: each keyword's span, and whether its own token carries a marker. A keyword past
+  // the last marker can neither carry one nor lead a chain to one, so collection stops there.
+  const keywords = [];
   let mi = 0;
   let tokenEnd = -1;
   for (const m of text.matchAll(KEYWORD)) {
     const tokenStart = m.index + m[0].length;
     while (mi < markers.length && markers[mi] < tokenStart) mi++;
     if (mi === markers.length) break;
-    if (text[m.index - 1] === '/' && text[m.index + m[1].length] === '/') continue;
-    if (tokenEnd < tokenStart) {
-      WHITESPACE.lastIndex = tokenStart;
-      const ws = WHITESPACE.exec(text);
-      tokenEnd = ws ? ws.index : text.length;
+    const segment = text[m.index - 1] === '/' && text[m.index + m[1].length] === '/';
+    let marked = false;
+    if (!segment) {
+      if (tokenEnd < tokenStart) {
+        WHITESPACE.lastIndex = tokenStart;
+        const ws = WHITESPACE.exec(text);
+        tokenEnd = ws ? ws.index : text.length;
+      }
+      marked = markers[mi] < tokenEnd;
     }
-    if (markers[mi] < tokenEnd) {
-      out += text.slice(last, m.index) + replacement;
-      last = tokenStart;
-    }
+    keywords.push({ start: m.index, tokenStart, segment, removable: marked });
+  }
+  // Right to left: a keyword whose token starts exactly at a removable keyword is removable too.
+  for (let i = keywords.length - 2; i >= 0; i--) {
+    const k = keywords[i];
+    const next = keywords[i + 1];
+    if (!k.removable && !k.segment && next.removable && next.start === k.tokenStart) k.removable = true;
+  }
+  let out = '';
+  let last = 0;
+  for (const k of keywords) {
+    if (!k.removable) continue;
+    out += text.slice(last, k.start) + replacement;
+    last = k.tokenStart;
   }
   return last === 0 ? text : out + text.slice(last);
 }
@@ -151,7 +170,8 @@ function removeKeywordsBeforeReferences(text, replacement) {
 // the loop each removal leaves a single space, which no reference, keyword or URL pattern can span,
 // so a removal cannot splice again across the gap and a nested splice settles in a few passes (a
 // plain deletion would peel one nesting layer per pass, quadratic); back-to-back URLs do not peel
-// either, as the URL boundary admits a digit before the scheme. The final whitespace collapse
+// either, as the URL boundary admits a digit before the scheme, and nor do keyword chains, which
+// removeKeywordsBeforeReferences decides whole in one pass. The final whitespace collapse
 // normalizes the spaces. Every removed match is at least two characters and is replaced by one, so
 // each changing pass strictly shortens the text and the loop terminates. Only removals loop: the
 // `@` transform is not idempotent, so it runs once, before the loop.

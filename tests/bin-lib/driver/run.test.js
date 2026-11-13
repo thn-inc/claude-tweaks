@@ -96,6 +96,10 @@ test('#5269 AC2: a closing keyword before a reference loses both', () => {
   assert.equal(neutralize('Fix foo#1 bar'), 'foo bar');
   // A keyword that is a whole path segment stays, so the URL still matches and goes.
   assert.equal(neutralize('x https://github.com/o/fix/issues/5 y'), 'x y');
+  // A keyword chain goes whole when its last keyword goes; a word between breaks the chain.
+  assert.equal(neutralize('Fixes fixes: www.github.com/o/r/issues/5 now'), 'www.github.com/o/r/issues/5 now');
+  assert.equal(neutralize('Fix the fix www.github.com/o/r/issues/5 now'), 'Fix the www.github.com/o/r/issues/5 now');
+  assert.equal(neutralize('fix fix the www.github.com/o/r/issues/5'), 'fix fix the www.github.com/o/r/issues/5');
 });
 
 test('#5269 AC2: a reference rebuilt by a removal is removed too', () => {
