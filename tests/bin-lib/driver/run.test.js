@@ -2978,6 +2978,42 @@ test('Review Focus 5: a fix worker that deletes the evidence and fixes the code 
   assert.equal(lastLine(h).outcome, 'pending-review');
 });
 
+// --- the push after a fix round (#5222, Task 8) ---------------------------------------
+// The first `check` answers HEAD_SHA, the second 'c' x 40: the second overwrites ctx.check, and the push compares HEAD with it.
+const SECOND_HEAD = 'c'.repeat(40);
+const checkNth = (n, head) => nthCall((c) => c.kind === 'node' && /express-lane\.js$/.test(c.args[0]) && c.args[1] === 'check', n, { code: 0, stderr: '', stdout: JSON.stringify(checkProceed({ head })) });
+const headRead = (headSha) => [onGit('rev-parse', '--verify', '--end-of-options', 'HEAD'), `${headSha}\n`];
+
+test('AC15: after a fix round the push guard compares HEAD with the second check\'s head', async () => {
+  const h = fixRig({ script: [checkNth(2, SECOND_HEAD), headRead(SECOND_HEAD)] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.equal(h.calls.filter((c) => c.kind === 'node' && /express-lane\.js$/.test(c.args[0]) && c.args[1] === 'check').length, 2);
+  assert.equal(pushCalls(h).length, 1);
+  assert.equal(lastLine(h).outcome, 'pending-review');
+});
+
+test('AC15: a HEAD that equals only the first head stops at the push with no push', async () => {
+  const h = fixRig({ script: [checkNth(2, SECOND_HEAD), headRead(HEAD_SHA)] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status, final.stop.class], ['push', 'stop', 'pre-push']);
+  assert.ok(final.stop.detail.includes(SECOND_HEAD));
+  assert.equal(pushCalls(h).length, 0);
+});
+
+test('AC15: the second check reads the second scoped run\'s stamp', async () => {
+  const h = fixRig({ script: [checkNth(2, SECOND_HEAD), headRead(SECOND_HEAD)] });
+  await run(['#7'], h.deps);
+  const isNode = (re) => (c) => c.kind === 'node' && re.test(c.args[0]);
+  const verifies = h.calls.filter(isNode(/verify\.js$/));
+  const checks = h.calls.filter((c) => isNode(/express-lane\.js$/)(c) && c.args[1] === 'check');
+  assert.equal(verifies.length, 2);
+  assert.equal(checks.length, 2);
+  assert.ok(h.calls.indexOf(verifies[0]) < h.calls.indexOf(checks[0]));
+  assert.ok(h.calls.indexOf(checks[0]) < h.calls.indexOf(verifies[1]), 'the first check precedes the second scoped run');
+  assert.ok(h.calls.indexOf(verifies[1]) < h.calls.indexOf(checks[1]), 'the second check follows the second scoped run');
+});
+
 test('AC15 (summary): after a fix round the summary lists both commits\' files and the PR body keeps the first summary', async () => {
   const h = fixRig();
   await run(['#7'], h.deps);
