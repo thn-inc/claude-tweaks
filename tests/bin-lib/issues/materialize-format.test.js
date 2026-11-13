@@ -722,3 +722,25 @@ test('shapeGate: answer 6 reads only the authored region, and a placeholder-only
   const placeholderOnly = SHAPED_BODY.replace('Fixed the thing.', 'Fixed the thing. TODO\n\n```\nnever closed');
   assert.deepEqual(shapeGate(placeholderOnly), { ok: false, missing: ['unresolved-placeholder'] });
 });
+
+// #4351: a fenced quoted `## Original request` heading does not end the authored scan.
+const FENCED_ORIGINAL = SHAPED_BODY.replace('## Deliverables\n', '## Deliverables\n```\n## Original request\nquoted\n```\n- [ ] exact set TBD\n');
+
+test('shapeGate: a fenced ## Original request before an unfenced placeholder reports unresolved-placeholder (#4351)', () => {
+  assert.deepEqual(shapeGate(FENCED_ORIGINAL), { ok: false, missing: ['unresolved-placeholder'] });
+  // A real, unfenced Original request after the fence still exempts the markers after it.
+  const clean = FENCED_ORIGINAL.replace('exact set TBD', 'exact set') + '\n\n## Original request\n\n- [ ] TBD';
+  assert.deepEqual(shapeGate(clean), { ok: true, missing: [] });
+});
+
+test('shapeGate, compose-record and ambiguity-resolve agree on the exempt tail past a fenced heading (#4351)', () => {
+  const { originalRequestOffset } = require('../../../plugin/bin/lib/issues/materialize-format');
+  const { validateShaped, splitSections } = require('../../../plugin/bin/lib/compose-record/compose');
+  const { countAmbiguityMarkers } = require('../../../plugin/bin/lib/issues/ambiguity-resolve');
+  const body = FENCED_ORIGINAL.replace('exact set TBD', 'exact set <!-- ambiguity: which? -->') + '\n\n## Original request\n\n<!-- ambiguity: old -->';
+  assert.equal(originalRequestOffset(body), body.lastIndexOf('## Original request'));
+  assert.deepEqual(shapeGate(body), { ok: false, missing: ['unresolved-placeholder'] });
+  assert.deepEqual(validateShaped(body).gaps, ['unresolved placeholder marker: <!-- ambiguity:']);
+  assert.equal(countAmbiguityMarkers(body), 1);
+  assert.ok(splitSections(body).Deliverables.includes('## Original request\nquoted'));
+});

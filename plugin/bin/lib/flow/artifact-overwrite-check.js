@@ -33,6 +33,16 @@
 //      in a parallel wave). An unusable manifest — no specs, or a present but
 //      unparseable `startedAt` / `phases[].at` — throws
 //      ArtifactOverwriteCheckError rather than falling back to refs-only.
+//      The walk covers `{base}..{head}`, minus everything reachable from
+//      `opts.integrationRef` when given (`^{integrationRef}`, #4845): the
+//      upstream commits a catch-up merge brought in are not the run's events.
+//      It never uses --first-parent or --no-merges, so a `parallel` wave's
+//      members, merged back --no-ff, stay run events. A deleted line blamed to
+//      a commit outside the run's own commits (the same range, minus the
+//      integration branch) is pre-run content, and the membership check
+//      clears that line. A walk emptied because the exclusion covers the
+//      whole range throws instead of reading clean: the run already reached
+//      the integration branch and nothing was judged.
 //   2. List reflow: every deleted line in the hunk is itself a `- ` list
 //      entry (a YAML frontmatter `files:` item, or a markdown bookkeeping
 //      bullet such as a running "Related specs: ..." line), and the hunk
@@ -74,10 +84,11 @@
 // Tests 4 and 5 are journey-shaped (numbered step headings, an `Origin:` line)
 // and simply never fire on a stories/*.yaml file's own shared list, which has
 // neither.
-// Fails closed: an unattributable deletion (no blame, no attribution from a
-// refs trailer or a manifest window, not a list reflow, step-markup reformat,
-// step renumber, or reference-preserving Origin line) is treated as an
-// overwrite.
+// Fails closed: an unattributable deletion (no blame, a line blamed to a merge
+// commit inside the run — a conflict resolution is never a spec's edit — no
+// attribution from a refs trailer or a manifest window, not a list reflow,
+// step-markup reformat, step renumber, or reference-preserving Origin line) is
+// treated as an overwrite.
 
 const { execFileSync } = require('child_process');
 const { splitLogZ, parseNameStatusTokens } = require('../git-z');
@@ -432,6 +443,8 @@ function blameShas(git, cwd, rev, path) {
  * @param {string} [opts.cwd] - repo root (default process.cwd())
  * @param {function} [opts.git] - injectable runner: (argv, cwd) => stdout string, throws on failure
  * @param {object} [opts.manifest] - parsed manifest.yml (parseManifestYaml's shape) for window attribution
+ * @param {string} [opts.integrationRef] - commit-ish whose history is not the run's own (the integration branch a
+ *   catch-up merge brought in): its commits are excluded from the walk, and a deleted line blamed to one is pre-run content
  * @returns {{ clean: boolean, overwrites: Array<{path: string, commit: string, reason: string}> }}
  */
 function checkArtifactOverwrite(opts) {
@@ -442,6 +455,7 @@ function checkArtifactOverwrite(opts) {
     cwd = process.cwd(),
     git = defaultGit,
     manifest,
+    integrationRef,
   } = opts;
 
   if (!base) {
@@ -459,12 +473,45 @@ function checkArtifactOverwrite(opts) {
   // (refs #2014 review).
   const paths = (rawPaths && rawPaths.length > 0) ? rawPaths : ['docs/journeys/', 'stories/'];
 
+  // `^{integrationRef}` drops the upstream commits a catch-up merge brought in (see the
+  // algorithm notes above for why the walk uses neither --first-parent nor --no-merges).
+  const exclude = integrationRef ? [`^${integrationRef}`] : [];
+
   const nameStatusOut = git(
-    ['log', '--reverse', '--diff-filter=AM', '--name-status', '-z', '--format=%H', '--end-of-options', `${base}..${head}`, '--', ...paths],
+    ['log', '--reverse', '--diff-filter=AM', '--name-status', '-z', '--format=%H', '--end-of-options', `${base}..${head}`, ...exclude, '--', ...paths],
     cwd,
   );
   const commits = parseNameStatusLog(nameStatusOut);
   const byPath = groupByPath(commits);
+
+  // An empty walk under `integrationRef` is "no journey edits" (clean) or "the exclusion swallowed the
+  // whole range": the run already reached the integration branch, so nothing was judged. Fail closed on
+  // the second, as the module's header promises; the first costs two `rev-list --count` calls.
+  if (integrationRef && commits.length === 0) {
+    const countRange = (extra) => Number(git(['rev-list', '--count', '--end-of-options', `${base}..${head}`, ...extra], cwd).trim());
+    if (countRange(exclude) === 0 && countRange([]) > 0) {
+      throw new ArtifactOverwriteCheckError(
+        `every commit in ${base}..${head} is reachable from ${integrationRef}, so the walk excluded the whole run and judged nothing — `
+        + 'the check ran after the run reached the integration branch; run it before the merge, or omit --integration-ref',
+      );
+    }
+  }
+
+  // The run's own commits, sha -> is-merge: the same {base}..{head} minus the
+  // integration branch the walk used, one `rev-list --parents` line per commit
+  // (a line with 2+ parent shas is a merge). Lazy, and cached: only a deleted
+  // line that reaches blame needs it, so a walk with no such line makes no call.
+  let runCommits = null;
+  const getRunCommits = () => {
+    if (runCommits) return runCommits;
+    runCommits = new Map();
+    const out = git(['rev-list', '--parents', '--end-of-options', `${base}..${head}`, ...exclude], cwd);
+    for (const line of out.split('\n')) {
+      const [sha, ...parents] = line.trim().split(/\s+/);
+      if (sha) runCommits.set(sha, parents.length > 1);
+    }
+    return runCommits;
+  };
 
   const overwrites = [];
   const attributionCache = new Map();
@@ -530,6 +577,15 @@ function checkArtifactOverwrite(opts) {
             culprit = { lineNo: d.lineNo, blamedSha: null };
             break;
           }
+          const inRun = getRunCommits();
+          // Gated on integrationRef on purpose: without it `inRun` is just {base}..{head}, and clearing a line
+          // blamed before the base would change every verdict a caller that omits the flag already gets.
+          if (integrationRef && !inRun.has(blamedSha)) continue; // pre-run content, not a run event
+          if (inRun.get(blamedSha) === true) {
+            overwrite = true;
+            culprit = { lineNo: d.lineNo, blamedSha, merge: true };
+            break;
+          }
           const bAttr = getAttribution(blamedSha);
           const selfEdit = dAttr.ids.size > 0 && setsIntersect(dAttr.ids, bAttr.ids);
           if (!selfEdit) {
@@ -552,6 +608,9 @@ function checkArtifactOverwrite(opts) {
         let reason;
         if (!culprit.blamedSha) {
           reason = `deleted line ${culprit.lineNo} has no blame attribution — cannot confirm self-edit or any extension test (list reflow, step-markup reformat, step renumber, reference-preserving Origin line)`;
+        } else if (culprit.merge) {
+          reason = `deleted line ${culprit.lineNo} (as of parent ${commit}~1) traces to merge commit ${culprit.blamedSha} — `
+            + `a merge's own lines (a conflict resolution) are never a spec's edit, so a same-spec self-edit cannot be confirmed, ${tail}`;
         } else if (culprit.deletingUnattributed || culprit.blamedUnattributed) {
           const sides = [];
           if (culprit.deletingUnattributed) sides.push(`deleting commit ${commit}`);
