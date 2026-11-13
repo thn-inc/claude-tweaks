@@ -68,6 +68,8 @@ const TRAIL_ANCHORS = [
   'settled after an answered round: {finding} — chose {reading taken}; not {reading not taken}',
   '--reversibility high',
   '### Plan review amendments (standalone build, if any)',
+  "`{k}` numbers this reply's settled rows from 1",
+  'so a settled row is logged twice: once in that count and once on its own line',
 ];
 const FIRST_ROUND = '**On a first round** (neither signal), routing is unchanged: every needs-human row reaches the HARD-GATE below.';
 const GATE_SENTENCE = 'In a converged round, only the rows that survive the convergence rule above reach this gate; on a first round every needs-human row does.';
@@ -122,4 +124,31 @@ test('AC7.1 go-red: each anchor set fails when one anchor is removed, and a one-
 
 test('plan-review.md stays within the rail', () => {
   assert.ok(Buffer.byteLength(REVIEW) <= RAIL_BYTES);
+});
+
+const CLOSED_RULE_SENTENCE = "The rule still matters on a record's first plan-review round; after one answered round, later rounds converge under `build/plan-review.md`'s convergence rule anyway, which treats a Closed rule as a recorded decision.";
+const CONTRACT_QUALIFIER = 'plan-review needs-human spec gap (`build/plan-review.md`, #3377; after one answered round, only a gap contradicting a criterion or recorded decision, #4958)';
+
+function closedRuleSection(text) {
+  const start = text.indexOf('## State-Classification Deliverables\n');
+  assert.notStrictEqual(start, -1);
+  return text.slice(start, text.indexOf('\n## ', start));
+}
+const contractRow = () => CONTRACT.split('\n').find((l) => l.startsWith('| HARD-GATE / BLOCKED / STOP conditions'));
+
+test('AC6.1: the Closed rule section names the convergence rule', () => {
+  const section = closedRuleSection(TEMPLATE);
+  assert.ok(norm(section).includes(CLOSED_RULE_SENTENCE));
+  // go-red: the same check fails on the section with the sentence removed.
+  assert.ok(!norm(section).split(CLOSED_RULE_SENTENCE).join('').includes(CLOSED_RULE_SENTENCE));
+});
+
+test('the HARD-GATE row limits the plan-review gate to first rounds and converged-round contradictions', () => {
+  assert.ok(contractRow().includes(CONTRACT_QUALIFIER));
+  // go-red: the qualifier fails once the record tag is removed.
+  assert.ok(!contractRow().replace('#4958', '').includes(CONTRACT_QUALIFIER));
+});
+
+test('auto-mode-contract.md stays within the rail', () => {
+  assert.ok(Buffer.byteLength(CONTRACT) <= RAIL_BYTES);
 });
