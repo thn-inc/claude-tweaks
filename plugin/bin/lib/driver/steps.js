@@ -22,18 +22,19 @@
 // (#5267), the allow-listed-environment option, best effort: the verify.js child gets worker.js's
 // allow-listed environment, not the driver's, plus GH_CONFIG_DIR pointing at an empty directory; and
 // a verify-scope.json whose bytes are not equal to origin/{ref}'s blob (line endings, CRLF vs LF,
-// ignored; no git filter ever applied) is refused before any command runs. That keeps the driver's credential env vars (GH_TOKEN, GITHUB_TOKEN, ...) and the config-file
-// auth of a plain `gh` call (the config file itself stays readable under HOME) away from the child,
-// and stops the worker choosing the command line verify.js runs through its scope file. It does not
-// stop the worker's code from running in the child: `npm test`, package.json scripts and worker-written
-// test files still run there. It does not contain: the
-// gh keyring entry reachable under HOME on a desktop setup, the git credential helper (git
-// credential fill, osxkeychain), the macOS `security` CLI, or any file the user can read. There is no
-// sandbox profile. Also uncontained: `git commit` and `git push` in the commit and push steps run
-// client hooks (husky, lefthook, pre-commit) that can be worker-authored, with the driver's env; a
-// known residual, with a follow-up record proposed at the Review Console. Cost: a project test command needing a variable outside the
-// allow-list (JAVA_HOME, NODE_OPTIONS, CI, HTTPS_PROXY, NODE_EXTRA_CA_CERTS, LC_ALL, XDG_*) fails at
-// the test step; it fails closed (red, escalate).
+// ignored; no git filter ever applied) is refused before any command runs. That keeps the driver's
+// credential env vars (GH_TOKEN, GITHUB_TOKEN, ...) and the config-file auth of a plain `gh` call
+// (the config file itself stays readable under HOME) away from the child, and stops the worker
+// choosing the command line verify.js runs through its scope file. It does not stop the worker's
+// code from running in the child: `npm test`, package.json scripts and worker-written test files
+// still run there. It does not contain: the gh keyring entry reachable under HOME on a desktop
+// setup, the git credential helper (git credential fill, osxkeychain), the macOS `security` CLI, or
+// any file the user can read. There is no sandbox profile. Also uncontained: `git commit` and
+// `git push` in the commit and push steps run client hooks (husky, lefthook, pre-commit) that can
+// be worker-authored, with the driver's env; a known residual, with a follow-up record proposed at
+// the Review Console. Cost: a project test command needing a variable outside the allow-list
+// (JAVA_HOME, NODE_OPTIONS, CI, HTTPS_PROXY, NODE_EXTRA_CA_CERTS, LC_ALL, XDG_*) fails at the test
+// step; it fails closed (red, escalate).
 //
 // Every external call goes through `deps`; nothing here reads process state.
 const path = require('node:path');

@@ -1799,6 +1799,7 @@ test('AC12.3, AC12.4: a symlinked scope file is refused via lstatType, no test r
 
 const emptyGhDir = (h) => path.join(runDirOf(h), 'gh-config-empty');
 const scopeHash = (sha) => [onGit('hash-object'), `${sha}\n`];
+const catBlob = (text) => [onGit('cat-file', 'blob'), text];
 
 test('#5267: a scope file whose bytes differ from origin/{ref}\'s blob stops before verify.js runs', async () => {
   const h = harness({ script: [scopeIs('file'), scopeSame(), scopeHash('c'.repeat(40)), catBlob('{"a":1}\n'), [on('readFile'), '{"a":2}\n']] });
@@ -1826,7 +1827,6 @@ test('#5267: an index flag (assume-unchanged / skip-worktree) cannot hide an edi
   assert.ok(!gitCalls(h).some((c) => gitSub(c)[0] === 'diff' || (gitSub(c)[0] === 'cat-file' && gitSub(c)[1] !== 'blob')), 'no index-based call is made');
 });
 
-const catBlob = (text) => [onGit('cat-file', 'blob'), text];
 const crlfRun = async (base, wtText, extra = []) => {
   const h = harness({ script: [scopeIs('file'), scopeSame(), scopeHash('e'.repeat(40)), ...extra, catBlob(base), [on('readFile'), wtText]] });
   await run(['#7'], h.deps);
