@@ -237,13 +237,17 @@ function readWorkflowEntry(dir, name, rootReal, fsImpl, opts) {
 const isAbsent = (leaf) => leaf.state === 'missing' && leaf.code === 'ENOENT';
 const isUnreadable = (leaf) => leaf.state === 'unreadable' || (leaf.state === 'missing' && !isAbsent(leaf));
 
-// resolveLeaf(p), except that an ENOENT leaf whose `parent` resolves to a
-// non-directory reads as ENOTDIR: an OS that reports a path under a regular
-// file as ENOENT (win32) must not make that file read as absent.
+// resolveLeaf(p), except that an ENOENT leaf is absent only when its `parent`
+// is absent or a real directory. A parent that resolves to a non-directory
+// reads as ENOTDIR (an OS that reports a path under a regular file as ENOENT,
+// win32, must not make that file read as absent); a dangling-symlink parent
+// is `dangling` with `parent: true`; an unreadable parent is unreadable.
 function resolveUnder(p, parent, fsImpl, opts) {
   const leaf = resolveLeaf(p, opts);
   if (!isAbsent(leaf)) return leaf;
   const up = resolveLeaf(parent, opts);
+  if (up.state === 'dangling') return { state: 'dangling', parent: true };
+  if (up.state === 'unreadable') return up;
   if (up.state === 'resolved' && lstatType(up.path, { fsImpl }).type !== 'directory') return { state: 'missing', code: 'ENOTDIR' };
   return leaf;
 }
@@ -257,7 +261,9 @@ function readWorkflowSet(root, { fsImpl = fs, realpath } = {}) {
   if (rootReal === null) return { ok: false, error: 'could not resolve --root' };
   const leaf = resolveUnder(path.join(root, '.github', 'workflows'), path.join(root, '.github'), fsImpl, opts);
   if (isAbsent(leaf)) return { ok: true, workflows: [] };
-  if (leaf.state === 'dangling') return { ok: false, error: '.github/workflows: dangling symlink — not read' };
+  if (leaf.state === 'dangling') {
+    return { ok: false, error: `.github/workflows: ${leaf.parent ? '.github is a dangling symlink' : 'dangling symlink'} — not read` };
+  }
   if (isUnreadable(leaf)) return { ok: false, error: `.github/workflows: unreadable: ${leaf.code} — not read` };
   if (!isPathContained(leaf.path, rootReal, { orEqual: true })) {
     return { ok: false, error: '.github/workflows resolves outside the checkout — not read' };
@@ -285,7 +291,9 @@ function readCiSources(root, { fsImpl = fs, realpath } = {}) {
   if (rootReal === null) return { ok: false, errors: ['could not resolve --root'] };
   const leaf = resolveUnder(path.join(root, '.claude-tweaks', 'verify-scope.json'), path.join(root, '.claude-tweaks'), fsImpl, opts);
   if (isAbsent(leaf)) return { ok: true, ciSources: null };
-  if (leaf.state === 'dangling') return { ok: false, errors: ['verify-scope.json: dangling symlink — not read'] };
+  if (leaf.state === 'dangling') {
+    return { ok: false, errors: [`verify-scope.json: ${leaf.parent ? '.claude-tweaks is a dangling symlink' : 'dangling symlink'} — not read`] };
+  }
   if (isUnreadable(leaf)) return { ok: false, errors: [`verify-scope.json: unreadable: ${leaf.code}`] };
   if (!isPathContained(leaf.path, rootReal, { orEqual: true })) {
     return { ok: false, errors: ['verify-scope.json: resolves outside the checkout — not read'] };

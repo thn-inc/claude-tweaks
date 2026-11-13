@@ -276,16 +276,104 @@ test('a directory named *.yml under .github/workflows is unparsed: not a regular
 // `suffix`: the leaf reads as unreadable (EIO) or as missing-but-not-ENOENT
 // (ENOTDIR), on every platform.
 function leafError(suffix, code) {
-  const hit = (p) => String(p).endsWith(suffix);
-  const fail = () => { throw Object.assign(new Error(code), { code }); };
+  return pathFaults({ [suffix]: code });
+}
+
+// pathFaults({ suffix: code | 'dangling' }): each path ending in a suffix
+// fails realpath and lstat with `code`; 'dangling' instead lstats as a
+// symlink while realpath fails ENOENT (a dangling link, on every platform).
+function pathFaults(faults) {
+  const find = (p) => Object.keys(faults).find((s) => String(p).endsWith(s));
+  const fail = (code) => { throw Object.assign(new Error(code), { code }); };
+  const SYMLINK = { isSymbolicLink: () => true, isFile: () => false, isDirectory: () => false };
   return {
-    realpath: (p) => (hit(p) ? fail() : fs.realpathSync.native(p)),
-    fsImpl: { ...fs, lstatSync: (p, ...rest) => (hit(p) ? fail() : fs.lstatSync(p, ...rest)) },
+    realpath: (p) => {
+      const s = find(p);
+      if (s === undefined) return fs.realpathSync.native(p);
+      return fail(faults[s] === 'dangling' ? 'ENOENT' : faults[s]);
+    },
+    fsImpl: {
+      ...fs,
+      lstatSync: (p, ...rest) => {
+        const s = find(p);
+        if (s === undefined) return fs.lstatSync(p, ...rest);
+        return faults[s] === 'dangling' ? SYMLINK : fail(faults[s]);
+      },
+    },
   };
 }
 
 const WORKFLOWS_SUFFIX = `${path.sep}.github${path.sep}workflows`;
 const DECL_SUFFIX = `${path.sep}.claude-tweaks${path.sep}verify-scope.json`;
+const GITHUB_SUFFIX = `${path.sep}.github`;
+const CT_SUFFIX = `${path.sep}.claude-tweaks`;
+
+test('a dangling-symlink .claude-tweaks or .github exits 1, never absent (real symlinks)', { skip: NO_SYMLINKS && 'symlink fixtures are POSIX-only' }, () => {
+  const decl = tmpRoot();
+  write(decl, '.github/workflows/ci.yml', NO_READY);
+  link(decl, '.claude-tweaks', path.join(decl, 'no-such-dir'));
+  const a = runCli(decl, ['--drift', '--json']);
+  assert.equal(a.status, 1, a.stdout);
+  assert.equal(a.stdout, '');
+  assert.equal(a.stderr, 'ci-workflow-review.js: verify-scope.json: .claude-tweaks is a dangling symlink — not read\n');
+
+  const gh = tmpRoot();
+  link(gh, '.github', path.join(gh, 'no-such-dir'));
+  const b = runCli(gh, ['--drift', '--json']);
+  assert.equal(b.status, 1, b.stdout);
+  assert.equal(b.stdout, '');
+  assert.equal(b.stderr, 'ci-workflow-review.js: .github/workflows: .github is a dangling symlink — not read\n');
+});
+
+test('a dangling or unreadable parent over an ENOENT leaf exits 1, never absent (injected, any platform)', () => {
+  const root = tmpRoot();
+  write(root, '.github/workflows/ci.yml', CLEAN);
+  const cases = [
+    [{ [DECL_SUFFIX]: 'ENOENT', [CT_SUFFIX]: 'dangling' }, 'verify-scope.json: .claude-tweaks is a dangling symlink — not read'],
+    [{ [DECL_SUFFIX]: 'ENOENT', [CT_SUFFIX]: 'EIO' }, 'verify-scope.json: unreadable: EIO'],
+    [{ [WORKFLOWS_SUFFIX]: 'ENOENT', [GITHUB_SUFFIX]: 'dangling' }, '.github/workflows: .github is a dangling symlink — not read'],
+    [{ [WORKFLOWS_SUFFIX]: 'ENOENT', [GITHUB_SUFFIX]: 'EIO' }, '.github/workflows: unreadable: EIO — not read'],
+  ];
+  for (const [faults, reason] of cases) {
+    const res = runInProcess(root, ['--drift', '--json'], pathFaults(faults));
+    assert.equal(res.status, 1, `${reason}: ${res.stdout}`);
+    assert.equal(res.stdout, '');
+    assert.equal(res.stderr, `ci-workflow-review.js: ${reason}\n`);
+  }
+  // Control: an ENOENT leaf under an ENOENT parent is the silent absent case.
+  const absent = runInProcess(root, ['--drift', '--json'], pathFaults({ [DECL_SUFFIX]: 'ENOENT', [CT_SUFFIX]: 'ENOENT' }));
+  assert.equal(absent.status, 0, absent.stderr);
+  assert.deepEqual(JSON.parse(absent.stdout).findings, []);
+});
+
+test('a workflow file that vanishes between listing and read is unparsed, never absent (injected)', () => {
+  const root = tmpRoot();
+  write(root, '.github/workflows/ci.yml', CLEAN);
+  write(root, '.github/workflows/late.yml', CLEAN);
+  const fsImpl = {
+    ...fs,
+    // gone.yml is listed but never on disk: it vanished before resolve.
+    readdirSync: (p, ...rest) => {
+      const names = fs.readdirSync(p, ...rest);
+      return String(p).endsWith(`${path.sep}workflows`) ? [...names, 'gone.yml'] : names;
+    },
+    // late.yml resolves, then vanishes before its read.
+    readFileSync: (p, ...rest) => {
+      if (String(p).endsWith(`${path.sep}late.yml`)) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      return fs.readFileSync(p, ...rest);
+    },
+  };
+  const res = runInProcess(root, ['--drift', '--json'], { fsImpl });
+  assert.equal(res.status, 0, res.stderr);
+  assert.deepEqual(JSON.parse(res.stdout), {
+    reviewed: 3,
+    findings: [],
+    unparsed: [
+      { workflow: '.github/workflows/gone.yml', reason: 'vanished during the review' },
+      { workflow: '.github/workflows/late.yml', reason: 'could not read: ENOENT' },
+    ],
+  });
+});
 
 test('a .claude-tweaks or .github that is a regular file exits 1: only ENOENT is silent (real ENOTDIR)', { skip: NO_REAL_ENOTDIR }, () => {
   const decl = tmpRoot();

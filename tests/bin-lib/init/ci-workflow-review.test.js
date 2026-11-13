@@ -1,6 +1,8 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const M = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'init', 'ci-workflow-review.js'));
 const { generateWorkflowYaml, classifyExistingWorkflow } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'issue-branch-tracking.js'));
@@ -471,4 +473,16 @@ test('AC7.1: a malformed on: yields an unparsed entry naming the file, never an 
   assert.equal(r.unparsed[0].workflow, '.github/workflows/bad.yml');
   assert.equal(r.unparsed[0].reason, 'on: block not read; pull_request trigger not read');
   assert.deepEqual(r.findings, []);
+});
+
+test('readCiSources: null with no verify-scope.json, [] when declared without ci, the sources when declared', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cwr-mod-'));
+  assert.deepEqual(M.readCiSources(root), { ok: true, ciSources: null });
+  const declPath = path.join(root, '.claude-tweaks', 'verify-scope.json');
+  fs.mkdirSync(path.dirname(declPath));
+  const base = { checks: { tests: 'npm test' }, rules: [{ match: '**', suites: ['tests'], static: false }] };
+  fs.writeFileSync(declPath, JSON.stringify(base));
+  assert.deepEqual(M.readCiSources(root), { ok: true, ciSources: [] });
+  fs.writeFileSync(declPath, JSON.stringify({ ...base, ci: { tests: { workflow: 'ci.yml', job: 'test' } } }));
+  assert.deepEqual(M.readCiSources(root), { ok: true, ciSources: [{ suite: 'tests', workflow: 'ci.yml' }] });
 });
