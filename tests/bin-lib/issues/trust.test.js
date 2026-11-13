@@ -644,6 +644,10 @@ test('AC4: no discoverable closing commit contributes nothing, asserted explicit
   const rows = trustRows([record], [], NOW, {});
   assert.equal(rows[0].operationalGood, 0);
   assert.equal(rows[0].undispositioned, 1);
+  // Age contrast: the same record with its closing commit in the log is known-good,
+  // so the zero above comes from the missing commit, not from a too-young record.
+  const withCommit = trustRows([record], [commitFor(1)], NOW, {});
+  assert.equal(withCommit[0].operationalGood, 1);
 });
 
 test('AC5: a configured window widens what counts; the default applies when absent; malformed falls back', () => {
@@ -684,6 +688,7 @@ test('AC8: two closing commits, one reverted, disqualifies the whole record (all
   const gitLog = [{ sha: sha40(999), message: `This reverts commit ${sha40(2)}.` }];
   const rows = trustRows([record], gitLog, NOW, {});
   assert.equal(rows[0].operationalGood, 0);
+  assert.equal(rows[0].negativeEvidence, 1);
 });
 
 test('gotcha: one operational known-good among 39 unknowns must not grade a class clean', () => {

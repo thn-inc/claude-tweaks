@@ -67,7 +67,9 @@ exported):
    — the same pure logic `bin/backlog-grant-gate.js` runs, called with MCP-sourced data instead of
    `gh`-sourced data. Pass `trustRows` a policy built from `TRUST_POLICY_KEYS`
    (`bin/lib/issues/trust.js`), each key set to the value
-   `resolve-policy.js --values {the three keys}` prints for it.
+   `resolve-policy.js --values {the three keys}` prints for it. A closed record must carry
+   `closedAt` (camelCase, renamed from MCP's `closed_at`) or it forms no trust cell: a closed record
+   with no parseable `closedAt` is outside the evaluation window.
 
 This reproduces the CLI's outcome rather than a rewritten one — a live run should confirm the MCP
 `list_issues` field shapes line up with `CANDIDATE_FIELDS`/`UNION_FIELDS` closely enough that no

@@ -442,6 +442,20 @@ test('AC7.1: a mixed row\'s deny reason names the rate and the threshold', () =>
   assert.match(result.reason, /33\.4%/);
   assert.match(result.reason, /30%/);
   assert.match(result.reason, /mixed/);
+  assert.doesNotMatch(result.reason, />/, 'plain words only: no shell metacharacter in the deny reason');
+  assert.equal(result.reason.match(/33\.4%/g).length, 1, 'the rate is stated exactly once');
+  assert.equal(result.reason, 'class producer:code-health|low verdict is mixed — follow-up rate 33.4% (max 30%) — only a clean class earns a machine-originated grant');
+});
+
+test('AC7.1: rate plus negative evidence keeps the other reason in parentheses and the rate once', () => {
+  const row = { key: 'producer:code-health|low', kind: 'producer', verdict: 'mixed', mixedReasons: ['follow-up-rate', 'negative-evidence'], followUpRecords: 1, total: 3, followUpRate: 1 / 3, followUpRateMaxPercent: 30, changesRequested: 0, negativeEvidence: 2 };
+  const result = evaluateGrantGate({
+    record: baseRecord(),
+    policy: basePolicy(),
+    trustVerdicts: new Map([['producer:code-health|low', row]]),
+    grantCheck: clearGrantCheck,
+  });
+  assert.equal(result.reason, 'class producer:code-health|low verdict is mixed (2 negative) — follow-up rate 33.4% (max 30%) — only a clean class earns a machine-originated grant');
 });
 
 test('AC7.1: a mixed row pinned only by negative evidence still names the rate and the threshold', () => {

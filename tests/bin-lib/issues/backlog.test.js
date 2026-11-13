@@ -14,9 +14,12 @@ const {
   readyGrantedSubset,
   attachBodyForeignBlockers,
   foreignLookupSet,
+  allRefusedOutlookLine,
 } = require('../../../plugin/bin/lib/issues/backlog');
 const { parseRecordFacets, foreignBlockerRef } = require('../../../plugin/bin/lib/issues/record');
 const { bodyForeignBlockers } = require('../../../plugin/bin/lib/issues/cross-repo-states');
+
+const range = (n) => Array.from({ length: n }, (_, i) => i + 1);
 
 function record(overrides) {
   return {
@@ -727,9 +730,6 @@ test('machineGrantOutlook: origin pre-filter does not engage under a non-unatten
 });
 
 // --- allRefusedOutlookLine + trustRefusedClasses (#5291) ---
-
-const { allRefusedOutlookLine } = require('../../../plugin/bin/lib/issues/backlog');
-const range = (n) => Array.from({ length: n }, (_, i) => i + 1);
 
 test('machineGrantOutlook reports the classes refused at trust', () => {
   const out = machineGrantOutlook(

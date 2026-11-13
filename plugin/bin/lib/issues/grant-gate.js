@@ -96,9 +96,14 @@ function evaluateGrantGate({ record, policy, trustVerdicts, grantCheck } = {}) {
   if (verdict !== 'clean') {
     // A mixed row names why (reasons) and how far from the bar (rate vs max);
     // a bare hand-built row has neither, so each segment drops independently.
+    // The rate is stated once, in the trailing segment, in plain words: the
+    // follow-up-rate entry is left out of the parenthesized reasons.
     let detail = '';
     if (verdict === 'mixed') {
-      const reasons = describeMixedReasons(row);
+      const otherReasons = Array.isArray(row.mixedReasons)
+        ? row.mixedReasons.filter((r) => r !== 'follow-up-rate')
+        : row.mixedReasons;
+      const reasons = describeMixedReasons({ ...row, mixedReasons: otherReasons });
       const rate = followUpRatePercent(row);
       if (reasons) detail += ` (${reasons})`;
       if (rate !== null) detail += ` — follow-up rate ${rate}% (max ${row.followUpRateMaxPercent}%)`;

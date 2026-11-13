@@ -310,7 +310,7 @@ function funnelBuckets(records) {
 // counts and the grant chain's own candidate-set size for the same backlog
 // state. Excluded records are counted via `excludedOrigin` rather than
 // folded into `refused`, so a reader can reconcile the funnel header's
-// `specified N` total against `eligible.length + refused-total +
+// `specified N` total against `eligible.length + refusedTotal +
 // excludedOrigin`. Outside that policy shape, every record — human- and
 // agent-filed alike — is refused under `ceiling` or
 // `grant-origination-opt-in` before gates 2/3 ever run, so the

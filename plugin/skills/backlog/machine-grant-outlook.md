@@ -13,8 +13,10 @@ two annotation lines below the header, which sit under it rather than inside it.
 
 ## `specified` stage — grant-gate outlook
 
-Compute the outlook mechanically — `machineGrantOutlook(funnel.specified, { ceiling, grantOriginationEnabled }, trustRows)`
-(`bin/lib/issues/backlog.js`), with `trustRows` = the rows Step 1.5 already computed. This file is
+Compute the outlook mechanically — `machineGrantOutlook(funnel.specified, { ceiling: 'unattended',
+grantOriginationEnabled: true }, trustRows)` (`bin/lib/issues/backlog.js`), with `trustRows` = the
+rows Step 1.5 already computed. The fence passes that literal policy because this file's load gate
+guarantees both values. This file is
 loaded separately from `overview-mode.md`'s own fence, so re-resolve the paths rather than
 assuming its shell variable survived (`_shared/session-tmp-root.md`; `sessionTmpPath` is
 idempotent per session+filename, so this resolves to the identical path Step 1.5 wrote):
@@ -60,8 +62,9 @@ future firing", not "will be granted". Render one extra `#`-comment line directl
 possible` (`allRefusedOutlookLine`) — it names each refusing gate with its count and, for a
 `trust` refusal, the class and why it is not `clean` (for a `mixed` class, its follow-up rate
 against the resolved maximum, `trust-follow-up-rate-max-percent`). Render it verbatim in place of
-the `# machine-grant live …` line below. The live line is never rendered alongside it. This form omits the excluded human-filed count
-(`excludedOrigin`) and the human-grant tail, so it does not say nothing was excluded.
+the `# machine-grant live …` line below. The live line is never rendered alongside it. This form
+omits the excluded human-filed count (`excludedOrigin`) and the human-grant tail, so it does not
+say nothing was excluded.
 
 **Otherwise** the fence prints one JSON object `{ eligible, refusedTotal, refused, excludedOrigin }`
 (`refused` maps each `failedKey` to its count, already in descending order) and the live line
