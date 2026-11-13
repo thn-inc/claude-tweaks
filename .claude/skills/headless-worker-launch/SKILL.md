@@ -67,6 +67,8 @@ Any step that executes worker-authored content (its tests, a `verify-scope.json`
 | Copying the probed facts into this skill or another document | They drift from the headers they came from; point at `roles.js` and `worker.js` instead |
 | Widening rights after reading a permission denial | There is no such path by design; a denial is reported, never retried with more rights |
 | Writing a schema `required` list or a field list as an array literal that starts with `'status'` | `tests/git-status-optional-locks.test.js` reads it as a git argument list; derive the list instead (see `bin-source-scan-conformance`) |
+| A live smoke or probe prompt that leaves the worker to phrase its own Bash commands | The model rewrites them (haiku appended an exit-status echo to each, #5268), so an exact allow rule stops matching and an allowed step is denied unrun; tell it to run each command exactly as written, as the `AC7` prompt does |
+| A second home-or-ancestor check for a new source of read paths | `reopensHome` in `roles.js` is the one rule for derived roots and caller `readPaths`, home real paths included; a hand-written copy (#5268's first review fix) drifts from it. Call it |
 
 ## Reference
 
