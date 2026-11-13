@@ -49,13 +49,13 @@ test('name: top-level name in bare, quoted and commented forms', () => {
   bothEndings(MIN, (t) => assert.equal(shape(t).name, null));
   bothEndings('on: push\njobs:\n  a:\n    name: CI\n    runs-on: x\n', (t) => assert.equal(shape(t).name, null));
   bothEndings(`name:\n${MIN}`, (t) => assert.equal(shape(t).name, null));
-  // an alias or a tab-indented line in the name: region is never read as a literal name;
-  // the brief's reason list has no name: reason, so the shape stays null with no reason added
-  for (const c of ['name: *n\n', 'name: CI\n\tmore\n']) {
+  // an alias or a tab-indented line in the name: region is never read as a literal name:
+  // the name stays null and the region reason is reported, like on:/jobs:/concurrency:
+  for (const [c, reason] of [['name: *n\n', 'anchor or alias in name:'], ['name: CI\n\tmore\n', 'tab indentation in name:']]) {
     bothEndings(c + MIN, (t) => {
       const s = shape(t);
       assert.equal(s.name, null, JSON.stringify(t));
-      assert.deepEqual(s.unparsed, [], JSON.stringify(t));
+      assert.deepEqual(s.unparsed, [reason], JSON.stringify(t));
     });
   }
 });
@@ -240,9 +240,15 @@ test('unparsed: each reason fires on its own fixture', () => {
     ['on: push\njobs:\n  a:\n    steps:\n      - *s\n', 'anchor or alias in jobs:'],
     [`${MIN}concurrency: *c\n`, 'anchor or alias in concurrency:'],
     [`${MIN}concurrency: &c\n  group: x\n`, 'anchor or alias in concurrency:'],
+    [`name: &n CI\n${MIN}`, 'anchor or alias in name:'],
+    [`name:\n\tCI\n${MIN}`, 'tab indentation in name:'],
     [`on: [push,\n  workflow_dispatch]\n${JOBS}`, 'on: block not read'],
     [`on: \${{ x }}\n${JOBS}`, 'on: block not read'],
     [`on:\n  push: nonsense\n${JOBS}`, 'on: block not read'],
+    // text after a flow map's closing brace is unread, at the on: line and at a trigger value
+    [`on: { push: {} } junk\n${JOBS}`, 'on: block not read'],
+    [`on: { push: {} junk }\n${JOBS}`, 'on: block not read'],
+    [`on:\n  push: {branches: [main]} junk\n${JOBS}`, 'on: block not read'],
     [`on:\n  pull_request:\n    types: "ready_for_review"\n${JOBS}`, 'pull_request trigger not read'],
     [`on:\n  push:\n    branches: \${{ x }}\n${JOBS}`, 'push branches not read'],
     // an empty value inside a one-line flow mapping has no block list beneath it

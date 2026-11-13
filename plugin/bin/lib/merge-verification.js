@@ -613,7 +613,8 @@ function readInlineTriggerKeys(value, line) {
   if (v === '' || v === 'null' || v === '~') return new Map();
   if (!v.startsWith('{')) return null;
   const { entries, balanced } = flowMappingEntries(v);
-  if (!balanced) return null;
+  // flowMappingEntries ignores text after the closing brace; that text is unread here.
+  if (!balanced || !v.endsWith('}')) return null;
   return new Map(entries.map((e) => [e.key, { rest: e.value, line }]));
 }
 
@@ -639,7 +640,7 @@ function readTriggerKeys(lines, onIdx, end) {
     }
     if (rest.startsWith('{')) {
       const { entries, balanced } = flowMappingEntries(rest);
-      if (!balanced) return NOT_READ;
+      if (!balanced || !rest.endsWith('}')) return NOT_READ;
       for (const e of entries) {
         if (!WANTED.has(e.key)) continue;
         const sub = readInlineTriggerKeys(e.value, onIdx);
@@ -916,11 +917,14 @@ function readWorkflowShape(text) {
   const nameR = region(/^(?:name|'name'|"name")[ \t]*:/, false);
 
   // A name: region with a tab or an anchor/alias leaves `name` null, never a
-  // literal like '*n'. It adds no reason: the name only matches `ci` sources, and
-  // a null name just matches none of them.
-  if (nameR && regionReasons(lines, nameR.start, nameR.end, 'name:').length === 0) {
-    const r = readJoinedScalar(lines, nameR.start + 1, nameR.end, 0, afterColon(lines[nameR.start]));
-    out.name = r.text === '' ? null : r.text;
+  // literal like '*n', and reports the region reason like the other regions.
+  if (nameR) {
+    const checks = regionReasons(lines, nameR.start, nameR.end, 'name:');
+    unparsed.push(...checks);
+    if (checks.length === 0) {
+      const r = readJoinedScalar(lines, nameR.start + 1, nameR.end, 0, afterColon(lines[nameR.start]));
+      out.name = r.text === '' ? null : r.text;
+    }
   }
 
   if (!onR) {
