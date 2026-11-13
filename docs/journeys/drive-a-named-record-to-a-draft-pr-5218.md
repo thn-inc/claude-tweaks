@@ -46,8 +46,10 @@ files:
   - The worker event carries `usage`, `turns` and `denials`, plus `spendOverrun` when the spend ceiling was crossed. A denial is information, never a reason to relaunch.
   - A stop here ends the record `express-escalated`. Such stops include a worker `fail`, `timeout` or `cannot-complete`, no changed files, red tests, a refused scope file, an `escalate` verdict, a HEAD mismatch, a push that failed without reaching origin, or leftover state from an earlier run (a worktree, branch, remote branch or run directory named in the detail).
   - A failed claim, or a run directory that cannot be minted, ends the record `blocked`. So does a failed `express-lane.js check` call (a non-zero exit, or no check envelope), even though nothing is pushed yet: no escalation line landed, so the full pipeline would not know the record left the lane.
+  - The commit subject keeps the worker title's leading verb: `Fix the loop` stays `Fix the loop`. A closing keyword (`close`, `fix`, `resolve` and their forms) is dropped only when the word after it carries an issue reference (`#N`, `owner/repo#N`, an issue or PR URL), and every reference is dropped either way, so `Add the loop. Resolves #9.` becomes `Add the loop`.
 - **Red flags:**
   - A commit message carrying `Fixes #N`, or a push after a HEAD mismatch.
+  - A commit subject that lost its leading `Fix` or `Resolve` although no issue reference followed it.
   - A worker transcript with a `gh`, `git commit` or `git push` call.
   - A leftover branch silently reused.
 
@@ -85,3 +87,4 @@ files:
 - Created during the build of #5218 (run `2026-11-12T104316-spec-5218`), the pipeline driver's second unit. It drives the express lane's steps 1–8 and 10 as code over the #5217 worker launcher; step 9 (merge) is deliberately absent.
 - Settling a stopped record (releasing the claim, removing the locked worktree with `git worktree unlock` first, closing a tombstoned PR) belongs to the settle unit, not this journey.
 - Updated at wrap-up of #5218, after the review fixes. Step 1 says the origin-host gate runs before the policy read. Steps 3 and 4 now place a failed `check` call (`blocked` before any push) and a push that failed after reaching origin (`blocked`) where the code ends them.
+- Updated during the build of #5269 (run `2026-11-13T000404-record-5269`): step 3 now says the commit subject keeps its leading verb, and that a closing keyword goes only when an issue reference follows it.
