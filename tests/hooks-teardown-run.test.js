@@ -556,3 +556,125 @@ test('#3695 AC3: no strict worktree-path compare remains at either call site', (
   assert.doesNotMatch(src, /\.path\s*[!=]==?/);
   assert.ok((src.match(/findWorktreeEntry\(/g) || []).length >= 2);
 });
+
+// #5293: a --merged teardown from a later session proceeds when run-liveness reads the recording
+// session's run `dead`; every other verdict/mode keeps the whole-teardown refusal. The owner block
+// is the real writer's shape (context.js ownerBlock); probes are injected so verdicts do not depend
+// on the platform or on pid reuse. `now` is pushed past LIVE_WINDOW_MS so the fixture's fresh
+// heartbeat and fresh commit read stale.
+const { spawnSync } = require('child_process');
+const { ownerBlock } = require('../plugin/bin/lib/hooks/context');
+const { LIVE_WINDOW_MS } = require('../plugin/bin/lib/run-liveness/constants');
+
+function deadPid() {
+  return spawnSync(process.execPath, ['-e', '']).pid;
+}
+
+function foreignOwnedRun(pid, deps = {}) {
+  const fx = fixtureRepo();
+  fs.writeFileSync(path.join(fx.runDir, 'events.jsonl'), '');
+  const owner = ownerBlock({ sessionId: 'someone-else', deps: { resolveOwnerPid: () => ({ pid, pidSource: 'env' }), ...deps } });
+  return { ...fx, state: { sessionId: 'someone-else', owner } };
+}
+
+function staleLiveness(probes) {
+  return { now: Date.now() + 2 * LIVE_WINDOW_MS, probes };
+}
+
+test('#5293: dead owner, merged — a later session tears the run down', () => {
+  const { root, wt, runDir, state } = foreignOwnedRun(deadPid());
+  writeRunState(runDir, { status: 'active', worktree: wt, ...state });
+  const calls = [];
+  const result = teardownRun(runDir, {
+    mode: 'merged', sessionId: 'me', liveness: staleLiveness({ pidAlive: () => false }),
+    deps: { ghApiDelete: fakeGhApiDelete(calls, { ok: true }) },
+  });
+
+  assert.match(result.lines[0], /^owner: session someone-else is not running \(run-liveness: dead\)/);
+  assert.ok(result.lines.some((l) => l.startsWith('state: closed')), result.lines.join('\n'));
+  assert.doesNotMatch(git(root, 'worktree', 'list'), /feat-branch/);
+  assert.strictEqual(git(root, 'branch', '--list', 'feat-branch').trim(), '');
+  assert.strictEqual(calls.length, 1);
+});
+
+test('#5293: dead owner, merged, worktree locked by the dead session — unlocks then removes', () => {
+  const pid = deadPid();
+  const { root, wt, runDir, state } = foreignOwnedRun(pid);
+  git(root, 'worktree', 'lock', '--reason', `claude session someone-else (pid ${pid})`, wt);
+  writeRunState(runDir, { status: 'active', worktree: wt, ...state });
+  const calls = [];
+  const result = teardownRun(runDir, {
+    mode: 'merged', sessionId: 'me', liveness: staleLiveness({ pidAlive: () => false }),
+    deps: { ghApiDelete: fakeGhApiDelete(calls, { ok: true }) },
+  });
+
+  assert.match(result.lines[0], /^owner: session someone-else is not running \(run-liveness: dead\)/);
+  assert.doesNotMatch(git(root, 'worktree', 'list'), /feat-branch/);
+  assert.strictEqual(git(root, 'branch', '--list', 'feat-branch').trim(), '');
+  assert.strictEqual(calls.length, 1);
+});
+
+test('#5293: live owner, merged — still refused', () => {
+  const pidStartTime = () => 'Mon Jan  1 00:00:00 2026';
+  const { root, wt, runDir, state } = foreignOwnedRun(process.pid, { pidStartTime });
+  writeRunState(runDir, { status: 'active', worktree: wt, ...state });
+  const calls = [];
+  const result = teardownRun(runDir, {
+    mode: 'merged', sessionId: 'me', liveness: staleLiveness({ pidAlive: () => true, pidStartTime }),
+    deps: { ghApiDelete: fakeGhApiDelete(calls, { ok: true }) },
+  });
+
+  assert.strictEqual(result.lines.length, 1);
+  assert.match(result.lines[0], /refused .* another session \(run-liveness: live\)/);
+  assert.match(git(root, 'worktree', 'list'), /feat-branch/);
+  assert.notStrictEqual(git(root, 'branch', '--list', 'feat-branch').trim(), '');
+  assert.strictEqual(calls.length, 0);
+});
+
+test('#5293: dead owner, abandoned — still refused', () => {
+  const { root, wt, runDir, state } = foreignOwnedRun(deadPid());
+  writeRunState(runDir, { status: 'active', worktree: wt, ...state });
+  const calls = [];
+  const result = teardownRun(runDir, {
+    mode: 'abandoned', sessionId: 'me', deps: { ghApiDelete: fakeGhApiDelete(calls, { ok: true }) },
+  });
+
+  assert.strictEqual(result.lines.length, 1);
+  assert.match(result.lines[0], /refused .* another session \(run-liveness: not checked\)/);
+  assert.match(git(root, 'worktree', 'list'), /feat-branch/);
+  assert.strictEqual(calls.length, 0);
+});
+
+test('#5293: unknown liveness, merged — still refused', () => {
+  const { root, wt, runDir, state } = foreignOwnedRun(deadPid());
+  state.owner.host = 'some-other-host';
+  writeRunState(runDir, { status: 'active', worktree: wt, ...state });
+  const calls = [];
+  const result = teardownRun(runDir, {
+    mode: 'merged', sessionId: 'me', liveness: staleLiveness({ pidAlive: () => false }),
+    deps: { ghApiDelete: fakeGhApiDelete(calls, { ok: true }) },
+  });
+
+  assert.strictEqual(result.lines.length, 1);
+  assert.match(result.lines[0], /refused .* another session \(run-liveness: unknown\)/);
+  assert.match(git(root, 'worktree', 'list'), /feat-branch/);
+  assert.strictEqual(calls.length, 0);
+});
+
+test('#5293: dead owner, merged, run already closed by Section C step 3.6', () => {
+  const { root, wt, runDir, state } = foreignOwnedRun(deadPid());
+  writeRunState(runDir, {
+    status: 'clean', worktree: null, worktreeAtClose: wt,
+    pr: { number: 1, branch: 'feat-branch' }, ...state,
+  });
+  const calls = [];
+  const result = teardownRun(runDir, {
+    mode: 'merged', sessionId: 'me', liveness: staleLiveness({ pidAlive: () => false }),
+    deps: { ghApiDelete: fakeGhApiDelete(calls, { ok: true }) },
+  });
+
+  assert.match(result.lines[0], /^owner: session someone-else is not running \(run-liveness: dead\)/);
+  assert.doesNotMatch(git(root, 'worktree', 'list'), /feat-branch/);
+  assert.strictEqual(git(root, 'branch', '--list', 'feat-branch').trim(), '');
+  assert.strictEqual(calls.length, 1);
+});

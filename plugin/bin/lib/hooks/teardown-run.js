@@ -16,10 +16,11 @@ const fs = require('fs');
 const { closeRunState } = require('./close-run-state');
 // repoSpecOf keeps the host a GitHub Enterprise Server remote carries, so Step 5's `gh api` call targets it, not github.com.
 const { runGit, repoSpecOf } = require('./git-exec');
-const { parseWorktreeList, findWorktreeEntry, isWorktreeLocked, resolveIntegrationBranch, bareIntegrationName } = require('./worktree-reap');
+const { parseWorktreeList, findWorktreeEntry, isWorktreeLocked, lockVerdict, resolveIntegrationBranch, bareIntegrationName } = require('./worktree-reap');
 const { mainCheckoutRoot } = require('./worktree-detect');
 const { fallbackBranch, worktreePathForBranch } = require('./run-integrity');
 const { ghOptions } = require('../repo-resolve');
+const { runLiveness } = require('../run-liveness');
 
 const GH_TIMEOUT_MS = 15000;
 
@@ -169,12 +170,17 @@ function teardownRun(runDir, opts = {}) {
   const integration = root ? bareIntegrationName(resolveIntegrationBranch(root)) : null;
   const isIntegrationBranch = !!(branch && integration && branch === integration);
 
-  // `explicit: false` here is deliberate, not a copy-paste of close-run's default: teardown-run
-  // has no "override the refusal" input of its own the way close-run's --run does (--run here
-  // just names which run to act on) — extending close-run's foreignOwner refusal means it applies
-  // unconditionally, the same shape as close-run's own implicit path. A foreign-owned run refuses
-  // the WHOLE teardown (no worktree removal, no branch/ref delete) rather than
-  // partially acting — tearing down another session's live run out from under it is the hazard.
+  // `explicit: false` on this first call is deliberate, not a copy-paste of close-run's default:
+  // teardown-run has no "override the refusal" input of its own the way close-run's --run does
+  // (--run here just names which run to act on). A foreign-owned run refuses the WHOLE teardown
+  // (no worktree removal, no branch/ref delete) rather than partially acting — tearing down another
+  // session's live run out from under it is the hazard. #5293 narrows that refusal by one case it
+  // was never meant to cover: a --merged teardown of a run whose recorded owner is provably dead.
+  // run-liveness's verdict (the shared owner-pid / heartbeat / worktree-lock / last-commit judgment)
+  // is asked only under --merged, and only `dead` overrides; `live`, `unknown`, and every non-merged
+  // mode keep the whole-teardown refusal. On `dead` the call is repeated with `explicit: true` (the
+  // override close-run's own --run takes) and Step 3 first unlocks a worktree lock whose recorded
+  // pid is no longer running.
   // `state.notYetArchived` (closeRunState's #1103 advisory field, surfaced as a warning by
   // hooks.js's standalone close-run verb) is deliberately left unread here — teardown-run never
   // archives (#3490), and Step 2's own line names `archive-run` as the archival step, so the
@@ -188,12 +194,19 @@ function teardownRun(runDir, opts = {}) {
   // (never a real signal) for any run whose sessionId was never recorded, permanently refusing
   // a legitimate self-teardown. The foreignOwner check just above is teardown-run's actual
   // protection and stays active.
-  const state = closeRunState(runDir, {
-    explicit: false, callerIdentity: { sessionId, cwd }, checkLiveWorktree: false,
-  });
+  const closeOpts = { explicit: false, callerIdentity: { sessionId, cwd }, checkLiveWorktree: false };
+  let state = closeRunState(runDir, closeOpts);
+  let deadOwnerOverride = false;
 
   if (state.status === 'refused-foreign') {
-    return { lines: ['state: refused — run recorded by another session; teardown-run does not override this'] };
+    const refusal = (verdict) => ({ lines: [`state: refused — run recorded by another session (run-liveness: ${verdict}); teardown-run overrides this only for a --merged teardown of a run whose owner is dead`] });
+    if (mode !== 'merged') return refusal('not checked');
+    const liveness = runLiveness(runDir, opts.liveness);
+    if (liveness.verdict !== 'dead') return refusal(liveness.verdict);
+    state = closeRunState(runDir, { ...closeOpts, explicit: true });
+    deadOwnerOverride = true;
+    const owner = typeof prevState.sessionId === 'string' && prevState.sessionId ? prevState.sessionId : 'unknown';
+    lines.push(`owner: session ${owner} is not running (run-liveness: dead) — merged teardown proceeds from this session`);
   }
   if (state.status === 'refused-live-worktree') {
     return { lines: ['state: refused — run has no recorded owner and its worktree still exists on disk; teardown-run does not override this'] };
@@ -226,8 +239,24 @@ function teardownRun(runDir, opts = {}) {
   // Step 3 (worktree removal) — never forced; a locked worktree means either a live session
   // (including this session's own ground, per [IL-58] — that removal path is ExitWorktree only)
   // or an unresolvable state, and worktree-reap.js's predicates fail CLOSED either way.
+  // #5293: on the dead-owner path only, a lock whose recorded pid is no longer running (lockVerdict
+  // 'orphaned') is the dead session's own leftover — unlock it so the removal below can proceed.
+  // An 'in-use' or pid-less ('unknown') lock stays locked and falls to the skip below.
+  let unlockFailure = null;
+  if (deadOwnerOverride && effectiveWorktreePath) {
+    const listLocked = runGit(['worktree', 'list', '--porcelain'], root);
+    const lockedEntry = (!listLocked.failure && listLocked.stdout !== null)
+      ? findWorktreeEntry(parseWorktreeList(listLocked.stdout), effectiveWorktreePath)
+      : null;
+    if (lockedEntry && lockVerdict(lockedEntry) === 'orphaned') {
+      const unlock = runGit(['worktree', 'unlock', effectiveWorktreePath], root);
+      if (unlock.failure) unlockFailure = unlock;
+    }
+  }
   if (!effectiveWorktreePath) {
     lines.push('worktree: skipped — no worktree recorded');
+  } else if (unlockFailure) {
+    lines.push(`worktree: skipped — unlock of the dead session's lock failed (${describeGitFailure(unlockFailure)})`);
   } else if (isWorktreeLocked(effectiveWorktreePath, { cwd: root })) {
     lines.push('worktree: skipped — worktree locked');
   } else {
