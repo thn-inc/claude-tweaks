@@ -32,7 +32,7 @@ Scope keywords: maintenance.auto, GIT_CONFIG_COUNT, fromTemplate, findOnPath
 - `git` absent from PATH, or present only as a non-executable file. `has('git')` must be false, so SessionStart still prints the "git not found" install hint. Test in Task 2.
 - A copied clone must fetch and push against its own copied origin, never the template's origin, which is deleted at process exit. A copied linked worktree must resolve to the copy's main repo (`git -C wt rev-parse --git-common-dir`). Tests in Task 3.
 - A template path that is a prefix of another path, e.g. `/T/tpl-1` and `/T/tpl-10`. The rewrite must not corrupt the longer path. Test in Task 3.
-- A builder whose output depends on its arguments: load-delta's `baseFiles`, and git-fixtures' `branch`/`parent`. The template key must include them, so two different argument sets never share a template. Tests in Tasks 5 and 7 (git-fixtures `branch` in Task 5).
+- A builder whose output depends on its arguments: load-delta's `baseFiles` and `origin`, and git-fixtures' `branch`/`parent`. The template key must include them, so two different argument sets never share a template. Tests: git-fixtures `branch` in Task 4, load-delta in Task 7.
 
 ---
 
@@ -43,19 +43,19 @@ Scope keywords: maintenance.auto, GIT_CONFIG_COUNT, fromTemplate, findOnPath
 - Test: `tests/run-tests-isolation.test.js`
 
 **Interfaces:**
-- Produces: `gitFixtureConfigEnv(env: object) -> object`, exported from `tools/run-tests.js`. It is pure: it returns a new object holding only the `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` keys to merge, never mutates `env`, and returns `{}` when `env.GIT_CONFIG_COUNT` is present but not `/^\d+$/`. The two entries are `maintenance.auto=false` and `gc.auto=0`, in that order, at indexes `N` and `N+1`, where `N` is the inherited count (0 when absent).
+- Produces: `gitFixtureConfigEnv(env: object) -> object`, exported from `tools/run-tests.js`. It is pure: it returns a **new, full env** — a copy of `env` plus the appended `GIT_CONFIG_*` keys — and never mutates `env`. When `env.GIT_CONFIG_COUNT` is present but not `/^\d+$/`, it returns an unchanged copy of `env`. The two entries are `maintenance.auto=false` and `gc.auto=0`, in that order, at indexes `N` and `N+1`, where `N` is the inherited count (0 when absent). The child env is `{ ...gitFixtureConfigEnv(process.env), TMPDIR: runRoot, ... }`.
 
 - [ ] **Step 1: Write the failing tests** (AC4.1) in `tests/run-tests-isolation.test.js`, importing `gitFixtureConfigEnv`:
-  - `gitFixtureConfigEnv({})` deep-equals `{ GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'maintenance.auto', GIT_CONFIG_VALUE_0: 'false', GIT_CONFIG_KEY_1: 'gc.auto', GIT_CONFIG_VALUE_1: '0' }`.
-  - `gitFixtureConfigEnv({ GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.autocrlf', GIT_CONFIG_VALUE_0: 'true' })` returns count `'3'`, keys at indexes 1 and 2, and no `GIT_CONFIG_KEY_0` key. The caller's index 0 stays untouched once merged.
-  - `gitFixtureConfigEnv({ GIT_CONFIG_COUNT: 'abc' })` deep-equals `{}`.
+  - `gitFixtureConfigEnv({ PATH: '/x' })` deep-equals `{ PATH: '/x', GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'maintenance.auto', GIT_CONFIG_VALUE_0: 'false', GIT_CONFIG_KEY_1: 'gc.auto', GIT_CONFIG_VALUE_1: '0' }`.
+  - `gitFixtureConfigEnv({ GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.autocrlf', GIT_CONFIG_VALUE_0: 'true' })` returns count `'3'`, `GIT_CONFIG_KEY_0` still `'core.autocrlf'` with value `'true'`, and the two new entries at indexes 1 and 2 (AC4.1).
+  - `gitFixtureConfigEnv({ GIT_CONFIG_COUNT: 'abc', PATH: '/x' })` deep-equals `{ GIT_CONFIG_COUNT: 'abc', PATH: '/x' }`.
   - The input object is unchanged after each call (deep-equal against a copy).
-  - A real-input probe: `execFileSync('git', ['config', '--get', 'maintenance.auto'], { env: { ...process.env, ...gitFixtureConfigEnv(process.env) }, encoding: 'utf8' }).trim()` equals `'false'`.
+  - A real-input probe: `execFileSync('git', ['config', '--get', 'maintenance.auto'], { env: gitFixtureConfigEnv(process.env), encoding: 'utf8' }).trim()` equals `'false'`.
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `node --test tests/run-tests-isolation.test.js`
 Expected: FAIL after Step 1, with `gitFixtureConfigEnv is not a function`
-- [ ] **Step 3: Implement `gitFixtureConfigEnv`** in `tools/run-tests.js`, add it to `module.exports`, and spread it into the child env: `env: { ...process.env, ...gitFixtureConfigEnv(process.env), TMPDIR: runRoot, ... }`. Add a two-line comment naming the measured cost: 391 `git maintenance run --auto` processes across six heavy files, #5297.
+- [ ] **Step 3: Implement `gitFixtureConfigEnv`** in `tools/run-tests.js`, add it to `module.exports`, and build the child env from it: `env: { ...gitFixtureConfigEnv(process.env), TMPDIR: runRoot, ... }`. Add a two-line comment naming the measured cost: 391 `git maintenance run --auto` processes across six heavy files, #5297.
 - [ ] **Step 4: Run to see it pass.** Run: `node --test tests/run-tests-isolation.test.js`. Expected: PASS.
 - [ ] **Step 5: Commit** `tools/run-tests.js tests/run-tests-isolation.test.js` with "Turn off git auto-maintenance for the suite's child env — env-carried config, appended (#5297)".
 
@@ -67,12 +67,20 @@ Expected: FAIL after Step 1, with `gitFixtureConfigEnv is not a function`
 
 **Interfaces:**
 - Consumes: `findOnPath(name, { env, platform, cwd })` from the same file.
-- Produces: `has(cmd: string) -> boolean`. It is `true` for `'node'`, and otherwise `findOnPath(cmd, { env: process.env, platform: process.platform, cwd: null }) !== null`. It never spawns a process.
+- Produces:
+  - `has(cmd: string) -> boolean`. It is `true` for `'node'`. Otherwise it is `findOnPath(cmd, { env: process.env, platform: process.platform, cwd: null })`, with one rule on top: on darwin, a hit at `/usr/bin/{cmd}` counts only when `hasAppleDeveloperTool(cmd)` is true. It never spawns a process.
+  - `hasAppleDeveloperTool(cmd: string, { readlink = fs.readlinkSync, exists = fs.existsSync } = {}) -> boolean`, exported for tests. It returns true when `{dir}/usr/bin/{cmd}` exists for either of two dirs: the target of `/var/db/xcode_select_link` (the symlink `xcode-select -s` maintains), or `/Library/Developer/CommandLineTools`. A missing or unreadable link counts as absent.
+  - Why: `/usr/bin/git` on macOS is an `xcode-select` shim that exists even without the Command Line Tools. Running it fails there, which is what today's `git --version` probe relies on to print the `xcode-select --install` hint. Decided by the user at plan review (Reading B).
 
 - [ ] **Step 1: Write the failing tests** (AC5.1, AC2.1) in `tests/lib.test.js`:
   - `deps: has() finds a command on PATH without spawning`. Write an executable stub `git` (`git.cmd` on win32) into a temp dir. Set `process.env.PATH` to that dir, and restore it in `finally`. Stub `child_process.execSync`, `execFileSync` and `spawnSync` to set a `called` flag, the same way the existing `has('node')` test stubs `execSync`. Reload `deps.js` fresh. Assert `has('git') === true` and `called === false`.
   - `deps: has() is false for a non-executable file on PATH` (skip on win32). The same dir holds `git` with mode `0o644`. Assert `has('git') === false`.
   - With `process.env.PATH` set to an empty temp dir, assert `has('git') === false`.
+  - `hasAppleDeveloperTool` with injected `readlink`/`exists`:
+    - The link resolves to `/Applications/Xcode.app/Contents/Developer` and `exists` is true for `/Applications/Xcode.app/Contents/Developer/usr/bin/git`: expect `true`.
+    - `readlink` throws ENOENT and `exists` is true only for `/Library/Developer/CommandLineTools/usr/bin/git`: expect `true`.
+    - `readlink` throws ENOENT and `exists` is always false (the stub-only Mac): expect `false`.
+  - `has()` applies the stub rule only to `/usr/bin` hits on darwin. A PATH stub dir that is not `/usr/bin` is found as before, which the first test already covers.
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `node --test tests/lib.test.js`
@@ -83,6 +91,8 @@ Expected: FAIL after Step 1, on the `called === false` assertion, because `has()
 
 ### Task 3: Template-copy fixture helper
 
+**Review risk:** high
+
 **Files:**
 - Create: `tests/helpers/git-template.js`
 - Test: `tests/helpers-git-template.test.js` (new; it neighbours `tests/helpers-git-fixtures.test.js`)
@@ -91,7 +101,9 @@ Expected: FAIL after Step 1, on the `called === false` assertion, because `has()
 - Produces:
   - `fromTemplate(key: string, build: (dir: string) => void, { parent = os.tmpdir(), prefix: string, realpath = false }) -> string`. On the first call for `key` in this process, it makes a template dir, runs `build(dir)` in it, and caches it. Every call then `fs.mkdtempSync(path.join(parent, prefix))`, copies the template's contents into it (`fs.cpSync`, `recursive: true`, timestamps **not** preserved), rewrites template paths (below), and returns the new dir (`fs.realpathSync`'d when `realpath`).
   - `fromTemplateSet(key: string, build: (dirs: Record<string,string>) => void, layout: Record<string, { parent?: string, prefix: string, realpath?: boolean }>) -> Record<string,string>`. The same, for several sibling dirs built together, such as an origin and its clones. Each name in `layout` gets its own mkdtemp dir, and the rewrite maps every template member path to the matching new member path.
-  - `rewriteTemplatePaths(root: string, mapping: Array<[from: string, to: string]>) -> void` (exported for tests). It visits only git path-bearing files under `root`: every `config` file inside a `.git` dir or a bare repo dir, every `gitdir` file under `.git/worktrees/*/`, and every `.git` *file* (a linked worktree's pointer). In each one it replaces every occurrence of each `from` with `to`, in four spellings: raw, `fs.realpathSync` form, forward-slash form, and git-config-escaped (`\` → `\\`).
+  - `rewriteTemplatePaths(root: string, mapping: Array<[from: string, to: string]>) -> void` (exported for tests). It visits only git path-bearing files under `root`: every `config` file inside a `.git` dir or a bare repo dir, every `gitdir` file under `.git/worktrees/*/`, and every `.git` *file* (a linked worktree's pointer). In each one it replaces every occurrence of each `from` with `to`. The spellings are raw, `fs.realpathSync` and `fs.realpathSync.native` (which expands Windows 8.3 short names such as `RUNNER~1` and gives canonical casing), each in its native, forward-slash and git-config-escaped (`\` → `\\`) form. After rewriting, it re-reads every visited file. If any spelling of any `from` survives, it throws `git-template: template path survived rewrite in {file}`, so a missed spelling fails the test loudly instead of silently sharing the template's state.
+  - Build failure: `fromTemplate`/`fromTemplateSet` cache a template only after `build` returns. When `build` throws, the template dir is removed, the error is rethrown, and the next call rebuilds.
+  - `assertNoTemplatePaths(root: string, froms: string[]) -> void`, exported for tests. It is the survivor check `rewriteTemplatePaths` runs last: it visits the same files, and throws `git-template: template path survived rewrite in {file}` when any spelling of any `from` remains.
   - `disableReceiveAutoGc(bareDir: string) -> void`. It appends `[receive]\n\tautogc = false\n` to `<bareDir>/config` with `fs.appendFileSync`, starting no process. A push into a local bare origin runs `git-receive-pack`, and git's local transport strips `GIT_CONFIG_*` from that side, so Task 1's env cannot stop the `maintenance run --auto` it starts. The origin's own config has to. Every bare origin a template or a test builds calls this.
 - Template dirs live under one `fs.mkdtempSync(path.join(os.tmpdir(), 'ct-git-template-'))` root per process, removed in a `process.on('exit')` handler (best effort, in try/catch).
 
@@ -102,6 +114,8 @@ Expected: FAIL after Step 1, on the `called === false` assertion, because `has()
   - `a copied linked worktree resolves to the copy's main repo`. The template holds a repo plus `git worktree add` at `<repo>/.claude/worktrees/feat`. In the copy, `git -C <copy>/.claude/worktrees/feat rev-parse --git-common-dir` resolves (realpath) to `<copy>/.git`, and `git -C <copy> worktree list --porcelain` names the copied worktree path.
   - `rewriteTemplatePaths does not corrupt a longer sibling path`. Use a temp tree with `.git/config` containing `url = /T/tpl-1/o` and `url = /T/tpl-10/o`, and mapping `[['/T/tpl-1', '/T/new']]`. Expect the first line rewritten and the second unchanged. The rewrite only replaces a `from` that is followed by `/`, `\`, a quote, whitespace or end of line.
   - `realpath: true returns a resolved path`. Expect `fs.realpathSync(result) === result`.
+  - `a throwing build is not cached`. `build` throws on its first call and succeeds on its second. The first `fromTemplate('k-throw', …)` rejects with the builder's error, the second returns a dir, `build` ran twice, and no partial template dir is left under the template root after the throw.
+  - `assertNoTemplatePaths catches a surviving template path`. Use a temp tree whose `.git/config` still holds `url = /T/tpl-1/o`. `assertNoTemplatePaths(root, ['/T/tpl-1'])` throws a message matching `/survived rewrite/`. After the file is rewritten to `/T/new/o`, the same call does not throw.
   - `disableReceiveAutoGc stops receive-pack maintenance`. Make a bare origin, call `disableReceiveAutoGc(origin)`, then commit and push into it from a clone with `GIT_TRACE2_EVENT` pointing at an empty dir. No trace file's `start` event argv contains `maintenance`. Without the call, as a control in the same test, one does.
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -196,7 +210,11 @@ Expected: FAIL after Step 1, on the new test
   - `gitProject()`: keeps `tmpProject()`'s prefix and realpath behaviour (read it), init only.
   - The three inline bare origins in `tests/hooks-session-start.test.js` (the `git init --bare` calls at ~lines 439, 907 and 1104) stay inline. Each is built once per process, so a template saves nothing. Each gets `disableReceiveAutoGc(originDir)` right after its `init`.
 
-- [ ] **Step 1: Covered by the existing suites.** These builders are file-local and unexported, so no new test is added. Their own suites are the regression oracle, and the controller's spawn measurement is the evidence of the cut.
+- [ ] **Step 1: Write the test for load-delta's template key** in `tests/load-delta-cli.test.js`, as `makeRepo templates are keyed by baseFiles and origin`:
+  - `makeRepo({ 'a.md': 'x' })` and `makeRepo({ 'b.md': 'y' })` produce different trees: `git ls-files` lists `a.md` in one and `b.md` in the other.
+  - `makeRepo({ 'a.md': 'x' }, { origin: false })` has no `refs/remotes/origin/main`: `git rev-parse --verify --quiet refs/remotes/origin/main` exits non-zero.
+
+  The other two builders are file-local and their suites are the regression oracle. The controller's spawn measurement is the evidence of the cut.
 - [ ] **Step 2: Implement** per the Interfaces block. Read each file's callers of the builder first. A test that mutates its fixture before asserting keeps working, because each copy is fresh.
 - [ ] **Step 3: Run to see it pass.** Run: `node --test tests/hooks-teardown-run.test.js tests/load-delta-cli.test.js tests/hooks-session-start.test.js`. Expected: PASS.
 - [ ] **Step 4: Commit** with "Copy teardown-run, load-delta and session-start fixture repos from templates (#5297)".
