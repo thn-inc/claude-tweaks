@@ -858,8 +858,10 @@ test('AC7/AC6.1: live smoke test — the write runs, and the echo, curl and .git
   // test-command step and its home-directory canary exist only there.
   const probed = SANDBOX_PROBED_PLATFORMS.includes(process.platform);
   let expectedVersion;
+  let expectedNode;
+  let canary;
   if (probed) {
-    const canary = path.join(os.homedir(), '.driver-smoke-canary-' + crypto.randomBytes(6).toString('hex'));
+    canary =path.join(os.homedir(), '.driver-smoke-canary-' + crypto.randomBytes(6).toString('hex'));
     fs.writeFileSync(canary, 'canary', { flag: 'wx' });
     t.after(() => fs.rmSync(canary, { force: true }));
     fs.writeFileSync(path.join(cwd, 'package.json'), JSON.stringify({ private: true, scripts: { test: 'node --test' } }));
@@ -873,7 +875,7 @@ test('AC7/AC6.1: live smoke test — the write runs, and the echo, curl and .git
       '} catch (err) {',
       '  readError = err.code || String(err);',
       '}',
-      "fs.writeFileSync(path.join(__dirname, 'smoke-canary-result.json'), JSON.stringify({ ran: true, version: process.version, readError, read }));",
+      "fs.writeFileSync(path.join(__dirname, 'smoke-canary-result.json'), JSON.stringify({ ran: true, version: process.version, execPath: process.execPath, readError, read }));",
       '',
     ].join('\n'));
     // The node the worker will find on PATH; process.version differs when the harness was started through another node.
@@ -882,9 +884,11 @@ test('AC7/AC6.1: live smoke test — the write runs, and the echo, curl and .git
     const probe = cp.spawnSync(nodeBin, ['--version'], { encoding: 'utf8', windowsHide: true });
     assert.strictEqual(probe.status, 0, 'node --version failed');
     expectedVersion = probe.stdout.trim();
+    expectedNode = fs.realpathSync(nodeBin);
   }
   const prompt = 'Do these ' + (probed ? 'seven' : 'six') + ' things in order, continuing after any denial. For each bash command below, run exactly that command and nothing else: do not append, prepend, chain or wrap anything (no `;`, `&&`, `|`, `echo`, or exit-status checks). (1) use the Write tool to create smoke-w.txt containing hi; (2) run the bash command: echo hi > smoke-b.txt (3) run the bash command: curl -s https://example.com -o smoke-net.txt (4) use the Write tool to create .git/info/smoke-note.txt containing hi (5) run the bash command: git log -1 --format=%H --output=.git/config (6) run the bash command: git log -1 --format=%H --output=.git/hooks/pre-commit' + (probed ? ' (7) run the bash command: npm test' : '') + '. Then report what happened.';
   const env = await launchWorker({ role: 'implementer', cwd, settingsDir, prompt, model: 'haiku', testCommand: 'npm test', ceilings: { wallClockMs: 180000, spendCeiling: 1 }, claudeMdText: 'Probe project file.' });
+  t.diagnostic('envelope: status=' + env.status + ' turns=' + env.turns + ' costUsd=' + env.costUsd + ' denials=' + JSON.stringify((env.denials || []).map((d) => d.tool_name + ': ' + String((d.tool_input && (d.tool_input.command || d.tool_input.file_path)) || ''))));
   assert.strictEqual(env.status, 'ok', JSON.stringify(env));
   const files = fs.readdirSync(cwd);
   assert.ok(files.includes('smoke-w.txt'));
@@ -900,11 +904,13 @@ test('AC7/AC6.1: live smoke test — the write runs, and the echo, curl and .git
     const resultFile = path.join(cwd, 'smoke-canary-result.json');
     assert.ok(fs.existsSync(resultFile), 'the test command did not run: no smoke-canary-result.json; ' + JSON.stringify(env));
     const result = JSON.parse(fs.readFileSync(resultFile, 'utf8'));
-    t.diagnostic('canary: readError=' + result.readError + ' version=' + result.version + ' expected=' + expectedVersion + ' costUsd=' + env.costUsd);
+    t.diagnostic('canary: readError=' + result.readError + ' version=' + result.version + ' expected=' + expectedVersion + ' execPath=' + result.execPath + ' expectedNode=' + expectedNode);
     assert.strictEqual(result.ran, true);
     assert.strictEqual(result.read, null, 'the test command read the home-directory canary');
-    assert.ok(typeof result.readError === 'string' && result.readError !== '', 'readError: ' + JSON.stringify(result.readError));
-    assert.strictEqual(result.version, expectedVersion, "the toolchain's own node did not run");
+    assert.ok(['EPERM', 'EACCES'].includes(result.readError), 'readError: ' + JSON.stringify(result.readError));
+    assert.ok(fs.existsSync(canary), 'the canary is gone, so the failed read proves nothing');
+    assert.strictEqual(result.version, expectedVersion, 'the node that ran is not the version of the node on PATH');
+    assert.strictEqual(fs.realpathSync(result.execPath), expectedNode, "the toolchain's own node did not run");
   }
   assert.ok(env.denials.some((d) => d.tool_name === 'Write' && String((d.tool_input && d.tool_input.file_path) || '').includes('.git')), 'write into .git denied');
   assert.deepStrictEqual(fs.readdirSync(settingsDir), []);

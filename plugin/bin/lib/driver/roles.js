@@ -59,9 +59,9 @@
 // writing: Operation not permitted`; a write to a directory under the system
 // temporary directory failed the same way; a write under the CLI's own per-user
 // scratch root in `/tmp` succeeded. Wherever the git rules exist, `git diff
-// --no-index` also reads files outside the working directory. Off the probed
-// platforms the worker can neither list nor search files, so its prompt must name
-// the files it is to work on.
+// --no-index` also reads files outside the working directory, as far as the read
+// block described below allows. Off the probed platforms the worker can neither list
+// nor search files, so its prompt must name the files it is to work on.
 //
 // Grep and Glob were probed for the implementer on Claude Code CLI 2.1.322, on a macOS
 // (darwin) host, on 2026-11-12, under a claude.ai subscription (max) login, launched
@@ -105,11 +105,11 @@
 // probed platforms), the sandbox confines writes to the working directory and the
 // CLI's own scratch root and denies the network, and the read block below confines
 // the reads of code the worker runs to the working directory, the derived toolchain
-// roots and the CLI's own carve-outs (in the probe: `.gitconfig`, the system
-// temporary directory and the CLI's per-user scratch root). `git diff --no-index`
-// reaches outside the working directory only as far as that set does. With the
-// network denied, the worker's own result text is the remaining way out for what it
-// read from that set. This is a stated residual.
+// roots and the CLI's own carve-outs (in the probes: `.gitconfig` with the `allowRead`
+// entry; the system temporary directory and the CLI's per-user scratch root under the
+// block alone). `git diff --no-index` reaches outside the working directory only as
+// far as that set does. With the network denied, the worker's own result text is the
+// remaining way out for what it read from that set. This is a stated residual.
 //
 // The read block, and what it rests on. Probed on Claude Code CLI 2.1.322, macOS,
 // 2026-11-12, under a subscription login with no TTY, using a test file the worker
@@ -123,19 +123,19 @@
 // With `permissions.blockReadsOutsideWorkingDirectories: true` and
 // `sandbox.filesystem.allowRead` set to the Node toolchain's root, the canary read,
 // the home listing, `.zshrc`, `.npmrc` and the `~/.ssh` listing all failed with
-// EPERM; the toolchain's own `node` still ran (the same version) and the toolchain
+// EPERM; a `node` of the same version as the toolchain's still ran and the toolchain
 // stayed unwritable; `.gitconfig` stayed openable, apparently a carve-out in the CLI
-// so that `git` works; the files under the system temporary directory and the
-// scratch root stayed readable. Without the `allowRead` entry, the earlier #5217
-// probe found that a Node installation under the home directory was no longer
-// reachable, so a different `node` ran. So the block is on for the implementer
-// wherever the sandbox was probed, and the readable set is derived at launch
-// (`toolchainReadPaths`): the test command's toolchain root (the directory above
-// `bin/` of the binary's real path, else the binary's own directory) plus the root of
-// the interpreter its first word's shebang names, one level deep. The shebang half
-// exists because the driver's test command is `npm test`: npm's real path,
-// `…/lib/node_modules/npm/bin/npm-cli.js`, starts `#!/usr/bin/env node`, and that
-// `node` (`…/bin/node`) lies outside npm's own root. An `env` shebang is parsed
+// so that `git` works. With the block alone and no `allowRead` entry (the earlier
+// #5217 probe, same CLI, host and date), the files under the system temporary
+// directory and the scratch root stayed readable, and a Node installation under the
+// home directory was no longer reachable, so a different `node` ran. So the block is
+// on for the implementer wherever the sandbox was probed, and the readable set is
+// derived at launch (`toolchainReadPaths`): the test command's toolchain root (the
+// directory above `bin/` of the binary's real path, else the binary's own directory)
+// plus the root of the interpreter its first word's shebang names, one level deep.
+// The shebang half exists because the driver's test command is `npm test`: npm's
+// real path, `…/lib/node_modules/npm/bin/npm-cli.js`, starts `#!/usr/bin/env node`,
+// and that `node` (`…/bin/node`) lies outside npm's own root. An `env` shebang is parsed
 // fail-safe: only known options are skipped, and an unknown option, `-P` or bundled
 // flags yield no interpreter root. A root that would be `/`, the home directory or an
 // ancestor of it falls back to the binary's own directory, else to nothing, since
@@ -145,11 +145,15 @@
 // commands. The blocked `~/.npmrc` does not stop the test command: probed 2026-11-13
 // on the same host, `npm test` ran with an unreadable user config file (exit 0).
 // The settings this module generates, with the readable set derived at launch, were
-// run live on 2026-11-13 with Claude Code CLI 2.1.322 on macOS, under a subscription
-// login with no TTY, through the launcher's `AC7` live smoke test: the worker ran
-// `npm test`, the test file's read of a canary under the home directory failed with
-// `EPERM`, and the `node` it ran was the toolchain's own (v22.23.2, the version the
-// `node` on PATH reports). Setting `CLAUDE_CODE_TMPDIR` in the worker's environment did not move the sandbox's
+// run live on 2026-11-13 with Claude Code CLI 2.1.322 on macOS, under a claude.ai
+// subscription (max) login, with the worker's standard streams piped (no TTY),
+// through the launcher's `AC7` live smoke test: the worker ran `npm test`, the test
+// file's read of a canary under the home directory failed with `EPERM`, and the
+// `node` it ran was the toolchain's own (its `process.execPath` resolved to the real
+// path of the `node` on PATH, v22.23.2).
+//
+// In the #5217 probe (Claude Code CLI 2.1.322, macOS, 2026-11-12), setting
+// `CLAUDE_CODE_TMPDIR` in the worker's environment did not move the sandbox's
 // writable temporary root.
 //
 // Permission denials are data for the driver's event line, never a reason to widen a
