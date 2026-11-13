@@ -19,6 +19,24 @@
 //   - `extra` fields merge into the step's event line (never over its core fields).
 //   - A throw from fn is `{ status: 'fail', detail: err.message }` with the step's class.
 //
+// The test step runs worker-authored code (the worker's test files) through verify.js. Containment
+// (#5267), the allow-listed-environment option, best effort: the verify.js child gets worker.js's
+// allow-listed environment, not the driver's, plus GH_CONFIG_DIR pointing at an empty directory; and
+// a verify-scope.json whose bytes are not equal to origin/{ref}'s blob (line endings, CRLF vs LF,
+// ignored; no git filter ever applied) is refused before any command runs. That keeps the driver's
+// credential env vars (GH_TOKEN, GITHUB_TOKEN, ...) and the config-file auth of a plain `gh` call
+// (the config file itself stays readable under HOME) away from the child, and stops the worker
+// choosing the command line verify.js runs through its scope file. It does not stop the worker's
+// code from running in the child: `npm test`, package.json scripts and worker-written test files
+// still run there. It does not contain: the gh keyring entry reachable under HOME on a desktop
+// setup, the git credential helper (git credential fill, osxkeychain), the macOS `security` CLI, or
+// any file the user can read. There is no sandbox profile. Also uncontained: `git commit` and
+// `git push` in the commit and push steps run client hooks (husky, lefthook, pre-commit) that can
+// be worker-authored, with the driver's env; a known residual, with a follow-up record proposed at
+// the Review Console. Cost: a project test command needing a variable outside the allow-list
+// (JAVA_HOME, NODE_OPTIONS, CI, HTTPS_PROXY, NODE_EXTRA_CA_CERTS, LC_ALL, XDG_*) fails at the test
+// step; it fails closed (red, escalate).
+//
 // Every external call goes through `deps`; nothing here reads process state.
 //
 // The ci step holds every read other than `pending` or `stale` to a settle window of 2 minutes,
@@ -39,6 +57,7 @@ const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { gateOriginRepo, resolveRepoTarget } = require('../repo-resolve');
 const { isTimeoutError } = require('../shared-primitives');
 const { fenceFor } = require('../markdown-blocks');
+const { buildEnv } = require('./worker');
 const { openBlockerRefs } = require('../issues/record-dependencies');
 const { hasDriverEscalationMarker } = require('./settle');
 const { merge } = require('./merge');
@@ -567,6 +586,57 @@ const commitStep = defineStep(STEP.commit, STOP_CLASSES.PRE_PUSH, async (ctx, de
   return { status: 'ok', detail: `${paths.length} file(s)` };
 });
 
+// The blob sha of the scope file on origin/{ref}, or null when the path is absent there. The
+// scope file is compared by bytes, never through the index: a worker's `git update-index
+// --assume-unchanged` / `--skip-worktree` makes `git diff` and `cat-file` report an edited file as
+// unchanged. `rev-parse --verify --quiet` exits 1 with no output for an absent path, but also for an
+// unresolvable ref, so an absent answer is only accepted once origin/{ref} itself resolves; any
+// other failure means the lookup failed.
+function scopeBaseBlob(deps, wt, ref, scopeRel) {
+  try {
+    return String(gitIn(deps, wt, ['rev-parse', '--verify', '--quiet', '--end-of-options', `origin/${ref}:${scopeRel}`])).trim();
+  } catch (err) {
+    if (!err || err.status !== 1) throw new Error(`could not read ${scopeRel} on origin/${ref}: ${errorText(err)}`);
+  }
+  try {
+    gitIn(deps, wt, ['rev-parse', '--verify', '--quiet', '--end-of-options', `origin/${ref}^{commit}`]);
+  } catch (err) {
+    throw new Error(`could not resolve origin/${ref}: ${errorText(err)}`);
+  }
+  return null;
+}
+
+// The sha git would store for the worktree's bytes of the scope file; --no-filters so a clean
+// filter or autocrlf cannot make the hash differ from the committed blob.
+function scopeWorktreeBlob(deps, wt, scopeRel) {
+  try {
+    return String(gitIn(deps, wt, ['hash-object', '--no-filters', '--', scopeRel])).trim();
+  } catch (err) {
+    throw new Error(`could not hash ${scopeRel}: ${errorText(err)}`);
+  }
+}
+
+// True when the worktree scope file differs from the base blob only in line endings. Read raw
+// (cat-file, readFile), never through a git filter: the worker controls .gitattributes and the shared
+// .git/config, so a filter-applying comparison could be told "unchanged". Only \r\n -> \n is
+// normalized, on both sides: a lone \r, a BOM, trailing whitespace or any other byte still differs.
+function scopeEqualIgnoringEol(deps, wt, baseBlob, scopeRel) {
+  const crlf = (t) => String(t).replace(/\r\n/g, '\n');
+  let base;
+  try {
+    base = gitIn(deps, wt, ['cat-file', 'blob', baseBlob]);
+  } catch (err) {
+    throw new Error(`could not read ${scopeRel} on the base: ${errorText(err)}`);
+  }
+  let current;
+  try {
+    current = deps.readFile(path.join(wt, scopeRel));
+  } catch (err) {
+    throw new Error(`could not read ${scopeRel}: ${errorText(err)}`);
+  }
+  return crlf(base) === crlf(current);
+}
+
 // Ports express-lane.md step 4 (test): the runner pass stamp `check` reads is written by
 // verify.js, run in the worktree. A regular verify-scope.json scopes the run; an absent one
 // runs the full suite; anything else (a symlink, a directory) is refused, never followed.
@@ -581,6 +651,22 @@ const testStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
     return { status: 'stop', detail: `.claude-tweaks is not a directory (${parent.type}), so ${scopeRel} is refused; verify.js was not run` };
   }
   const state = deps.lstatType(path.join(wt, '.claude-tweaks', 'verify-scope.json'));
+  // The scope file names commands verify.js runs, so a worker-authored copy is never read: the
+  // worktree file's bytes must equal origin/{ref}'s blob (an edit, a created file, a deleted file,
+  // index flags included; CRLF vs LF ignored, a checkout may rewrite it) before any test command runs.
+  if (state.type === 'file' || state.type === 'missing') {
+    const baseBlob = scopeBaseBlob(deps, wt, ref, scopeRel);
+    if (state.type === 'file' && baseBlob === null) {
+      return { status: 'stop', detail: `${scopeRel} is not on origin/${ref}; the worker's copy is never read, verify.js was not run` };
+    }
+    if (state.type === 'missing' && baseBlob !== null) {
+      return { status: 'stop', detail: `${scopeRel} differs from origin/${ref} (deleted); the worker's copy is never read, verify.js was not run` };
+    }
+    if (state.type === 'file' && scopeWorktreeBlob(deps, wt, scopeRel) !== baseBlob
+        && !scopeEqualIgnoringEol(deps, wt, baseBlob, scopeRel)) {
+      return { status: 'stop', detail: `${scopeRel} differs from origin/${ref}; the worker's copy is never read, verify.js was not run` };
+    }
+  }
   const base = ['--run', runDir, '--default-suite-slots', String(policy['verify-suite-slots'].value)];
   let args;
   let detail;
@@ -595,7 +681,11 @@ const testStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
   } else {
     return { status: 'stop', detail: `${scopeRel} is not a regular file (${state.type}); verify.js was not run` };
   }
-  const r = deps.node(binScript('verify.js'), args, { cwd: wt, timeout: VERIFY_TIMEOUT_MS, env: deps.env });
+  // An empty gh config dir: a worker test calling `gh` finds no config-file auth.
+  const ghConfigDir = path.join(runDir, 'gh-config-empty');
+  deps.mkdirSync(ghConfigDir, { recursive: true });
+  const env = { ...buildEnv(deps.env, deps.platform), GH_CONFIG_DIR: ghConfigDir };
+  const r = deps.node(binScript('verify.js'), args, { cwd: wt, timeout: VERIFY_TIMEOUT_MS, env });
   // A null code is no exit at all (a timeout, a spawn error): the suite never gave a verdict.
   if (r.code === null || r.code === undefined) {
     return { status: 'fail', detail: `verify.js did not finish: ${neutralize(firstLine(r.stderr)) || 'no exit code'}` };
