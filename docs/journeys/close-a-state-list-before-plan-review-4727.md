@@ -40,10 +40,12 @@ files:
 - **Should feel:** Like the review doing its job without waiting on a person.
 - **Should understand:**
   - The rule pre-empts the needs-human classification by deciding the question in the spec itself, before review asks it.
+  - The rule matters most on a record's first plan-review round. After one answered round, a later review is a converged round (`build/plan-review.md`, #4958): it settles any gap that some reading closes without altering an Acceptance Criterion or contradicting a recorded decision, and it counts a Closed rule as a recorded decision. Without the rule, the first round still stops on the unlisted states it finds.
 - **Red flags:**
   - A `plan-review-needs-human` stop whose open question is "what happens to state X", on a spec that names a state list.
 
 ## Origin
 - Created during build of #4727, a reflect-full finding from #4588's run `2026-10-30T200217-spec-4588`.
+- Updated during wrap-up of #4958: step 3 notes that a later round converges after one answered round and counts a Closed rule as a recorded decision, so the rule saves the first round's stop.
 - Pinned by `tests/specify-closed-rule.test.js`.
 - Related: `prove-an-absence-grep-can-match-3571.md` and `catch-mutually-unsatisfiable-acceptance-criteria-3463.md`, other spec-authoring checks in `spec-template.md`.
