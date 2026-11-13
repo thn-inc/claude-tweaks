@@ -30,6 +30,15 @@ const SKILL_PREFIX = '.claude/skills/';
 // A bad invocation (CLI exit 2). Everything else thrown out of a verb is an exit-1 failure.
 class UsageError extends Error {}
 
+// A failure after the diff was read that staging could not absorb either: the edit was put back in
+// the working tree (restored: true) or could not be (restored: false). Never "nothing changed".
+class StagingFailure extends Error {
+  constructor(message, { restored }) {
+    super(message);
+    this.restored = restored;
+  }
+}
+
 const realDeps = {
   // Throwing runner: stdout on success (a string, or a Buffer with opts.encoding 'buffer'), a throw
   // on any non-zero exit. Local-only calls, so no timeout.
@@ -150,9 +159,9 @@ function nextStageNumber(stagedDir, deps) {
 // the patch bytes. Gate per staged-patch.md's Staging-time gate, with the patch's own outcomes:
 //   `git apply --check` exit 0 -> 'ok'; an unreadable file -> 'unvalidated' (kept); otherwise
 //   recompose once from the patch file and, failing again, description-only (no diff).
-// The stacked check (bin/check-staged-stack.js) is NOT run: it walks only `*.patch` entries of
-// staged/ and exits 2 for any other --patch name, so against this `.md` artifact it could never
-// report a verdict — see the task report.
+// The stacked check (bin/check-staged-stack.js) is NOT run: it accepts only staged/*.patch, while
+// the spec fixes this artifact's name as staged/wrap-up-skill-{N}.md, so it could never report a
+// verdict against it.
 // entry: { target, summary, patch: Buffer|string, patchFile?: string }.
 function stageEntry({ runDir, worktree, entry, reason }, overrides = {}) {
   const deps = { ...realDeps, ...overrides };
@@ -196,7 +205,7 @@ function stageEntry({ runDir, worktree, entry, reason }, overrides = {}) {
     try { deps.readFile(stagePath); } catch { readable = false; }
     if (!readable) {
       gate = 'unvalidated';
-      note = `gate could not run: ${probe.text}; kept unvalidated`;
+      note = probe.text;
     } else {
       // Recompose once from the patch file the diff was captured to.
       let again = toBuffer(entry.patch);
@@ -208,27 +217,47 @@ function stageEntry({ runDir, worktree, entry, reason }, overrides = {}) {
       } else {
         deps.writeFile(stagePath, Buffer.from(preamble, 'utf8'));
         gate = 'description-only';
-        note = `patch failed \`git apply --check\` at staging (${probe.text}); staged description-only`;
+        note = probe.text;
       }
     }
   }
 
-  const logFailed = logStaged({ runDir, deps, target, summary, reason, note, stageName: `wrap-up-skill-${n}.md` });
+  const logFailed = logStaged({ runDir, deps, target, summary, reason, gate, note, stageName: `wrap-up-skill-${n}.md` });
   return { stagePath, gate, logFailed };
 }
 
 // STAGED line in the shape the Global Constraints fix:
 //   STAGED {time} — Skills row: skill update for {skill}/SKILL.md ({section}) could not ride a
 //   learned-skills PR ({reason}); staged instead. Reversibility: high (stage path: staged/…).
-function logStaged({ runDir, deps, target, summary, reason, note, stageName }) {
-  const why = [oneLine(reason), note].filter(Boolean).join('; ');
-  const line = formatEntry({
-    status: 'STAGED',
-    now: deps.now(),
-    step: STEP,
-    text: `skill update for ${skillLabel(target)} (${summary}) could not ride a learned-skills PR (${why}); staged instead`,
-    reversibility: `high (stage path: staged/${stageName})`,
-  });
+// A gate degrade logs staged-patch.md's own line for it instead (finding = `{skill}/SKILL.md ({section})`).
+function logStaged({ runDir, deps, target, summary, reason, gate, note, stageName }) {
+  const finding = `${skillLabel(target)} (${summary})`;
+  let line;
+  if (gate === 'description-only') {
+    line = formatEntry({
+      status: 'STAGED',
+      now: deps.now(),
+      step: STEP,
+      text: `${finding} — patch failed \`git apply --check\` at staging (${note}); staged description-only at staged/${stageName}`,
+      reversibility: 'high',
+    });
+  } else if (gate === 'unvalidated') {
+    line = formatEntry({
+      status: 'STAGED',
+      now: deps.now(),
+      step: STEP,
+      text: `${finding} — gate could not run: ${note} — path/anchoring problem, not a composition error`,
+      reversibility: 'high',
+    });
+  } else {
+    line = formatEntry({
+      status: 'STAGED',
+      now: deps.now(),
+      step: STEP,
+      text: `skill update for ${finding} could not ride a learned-skills PR (${oneLine(reason)}); staged instead`,
+      reversibility: `high (stage path: staged/${stageName})`,
+    });
+  }
   try {
     deps.appendEntries({ runDir, items: [{ section: LOG_SECTION, entry: line }] });
     return false;
@@ -259,7 +288,8 @@ function capture({ runDir, worktree, mergeBase, target, summary }, overrides = {
   if (owned.includes(rel)) return { route: 'run-branch', reason: 'record-owned' };
 
   const manifest = readManifest(runDir);
-  const existing = manifest.find((e) => e.target === rel && e.status !== 'staged') || null;
+  // Only a still-captured entry can be joined; a landed one already left in a commit.
+  const existing = manifest.find((e) => e.target === rel && e.status === 'captured') || null;
 
   // Only whether the output is empty is read, never a path from it.
   const statusOf = () => String(deps.git(['-C', worktree, '--no-optional-locks', 'status', '--porcelain', '--untracked-files=all', '--', rel])).trimEnd(); // git-path-read: not a path list (emptiness only)
@@ -294,6 +324,7 @@ function capture({ runDir, worktree, mergeBase, target, summary }, overrides = {
   // From here the diff is in hand: any failure stages it instead of throwing.
   let workDiff = diff; // the diff matching the working tree right now
   let combinedWith = null; // the existing entry whose patch this diff now contains
+  let restorePatch = null; // the earlier patch file's original bytes, once it is overwritten
   const patchDir = path.join(runDir, 'learned-skills');
   try {
     let id;
@@ -307,11 +338,13 @@ function capture({ runDir, worktree, mergeBase, target, summary }, overrides = {
         try { git(['apply', '--', existing.patch]); combined = true; } catch { combined = false; }
       }
       if (!combined) throw new Error(`could not join the earlier captured patch (${existing.id}) with this edit`);
-      combinedWith = existing;
       workDiff = toBuffer(git([
         '-c', 'core.quotePath=false', 'diff', '--no-color', '--no-ext-diff',
         '--src-prefix=a/', '--dst-prefix=b/', '--binary', 'HEAD', '--', rel,
       ], { encoding: 'buffer' }));
+      // Only now does the diff hold both edits; a failure before this leaves the earlier patch captured.
+      combinedWith = existing;
+      try { restorePatch = { file: existing.patch, bytes: deps.readFile(existing.patch) }; } catch { restorePatch = null; }
       id = existing.id;
       patchFile = existing.patch;
       record = existing;
@@ -338,7 +371,7 @@ function capture({ runDir, worktree, mergeBase, target, summary }, overrides = {
     return { route: 'captured', id, patch: patchFile, shared: Boolean(existing) };
   } catch (err) {
     return stageFallback({
-      err, deps, runDir, worktree, rel, note, manifest, existing: combinedWith, diff: workDiff, tracked, statusOf,
+      err, deps, runDir, worktree, rel, note, manifest, existing: combinedWith, diff: workDiff, origDiff: diff, restorePatch, tracked, statusOf,
     });
   }
 }
@@ -354,7 +387,9 @@ function pruneEmptyParents(abs, worktree, deps) {
 }
 
 // Puts the target back at HEAD (the edit is about to live in staged/ instead), then stages it.
-function stageFallback({ err, deps, runDir, worktree, rel, note, manifest, existing, diff, tracked, statusOf }) {
+function stageFallback({
+  err, deps, runDir, worktree, rel, note, manifest, existing, diff, origDiff, restorePatch, tracked, statusOf,
+}) {
   const git = (args, opts) => deps.git(['-C', worktree, ...args], opts);
   const abs = path.join(worktree, rel);
   let residue = false;
@@ -375,9 +410,25 @@ function stageFallback({ err, deps, runDir, worktree, rel, note, manifest, exist
   }
 
   const reason = `capture failed: ${errText(err)}`;
-  const staged = stageEntry({ runDir, worktree, entry: { target: rel, summary: note, patch: diff }, reason }, deps);
+  // A joined earlier capture is superseded by the staged superset: name both findings.
+  const summary = existing && existing.summary ? `${oneLine(existing.summary)}; ${note}` : note;
+  let staged;
+  try {
+    staged = stageEntry({ runDir, worktree, entry: { target: rel, summary, patch: diff }, reason }, deps);
+  } catch (stageErr) {
+    // Staging failed after the tree was reset: put the edit back so the caller can still commit it.
+    if (restorePatch) { try { deps.writeFile(restorePatch.file, restorePatch.bytes); } catch { /* best effort */ } }
+    let restored = true;
+    try { git(['apply', '-'], { input: origDiff }); } catch { restored = false; }
+    throw new StagingFailure(
+      `${reason}; then staging failed (${errText(stageErr)}); ${restored
+        ? 'the edit was restored in the working tree (not captured, not staged) — commit it on the run branch'
+        : 'restoring the edit in the working tree failed too — it is lost from the tree; recover it from the run dir\'s learned-skills/*.patch if present'}`,
+      { restored },
+    );
+  }
 
-  // Record the outcome. A joined earlier capture is superseded by the staged superset.
+  // Record the outcome.
   const entries = manifest.map((e) => (existing && e.id === existing.id
     ? { ...e, status: 'staged', stagePath: staged.stagePath, reason }
     : e));
@@ -390,10 +441,11 @@ function stageFallback({ err, deps, runDir, worktree, rel, note, manifest, exist
 
   const out = { route: 'staged', stagePath: staged.stagePath, reason };
   if (residue) out.residue = true;
+  if (staged.logFailed) out.logFailed = true;
   return out;
 }
 
 module.exports = {
-  UsageError, realDeps, readManifest, writeManifest, manifestPath, nextId, normalizeTarget, skillLabel,
+  UsageError, StagingFailure, realDeps, readManifest, writeManifest, manifestPath, nextId, normalizeTarget, skillLabel,
   stageEntry, capture, LOG_SECTION, STEP,
 };

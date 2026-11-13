@@ -252,3 +252,135 @@ test('CLI run exits 1 with nothing changed when git fails before the diff', (t) 
   assert.match(err.join(''), /nothing was changed/);
   assert.equal(fs.readFileSync(path.join(f.repo, X), 'utf8'), original + 'untouched\n');
 });
+
+// --- fix round 1 ---------------------------------------------------------------------------------
+
+const { StagingFailure } = require('../../../plugin/bin/lib/learned-skills/learned-skills.js');
+const baseDeps = { now: () => Date.UTC(2026, 10, 13, 12, 0, 0) };
+const failCheckout = (a, o) => {
+  if (a.includes('checkout')) throw new Error('simulated checkout failure');
+  return realDeps.git(a, o);
+};
+const diffOf = (repo, rel) => sh(repo, ['-c', 'core.quotePath=false', 'diff', '--no-color', '--no-ext-diff', '--src-prefix=a/', '--dst-prefix=b/', '--binary', 'HEAD', '--', rel]);
+
+test('both writers failing restores the edit and exits 1 without claiming nothing changed', (t) => {
+  const f = fixture(t);
+  const original = fs.readFileSync(path.join(f.repo, X), 'utf8');
+  write(f.repo, X, original + 'precious edit\n');
+  const deps = {
+    ...baseDeps,
+    git: failCheckout,
+    mkdir: (p) => {
+      if (path.basename(p) === 'staged') throw Object.assign(new Error('EACCES: staged'), { code: 'EACCES' });
+      fs.mkdirSync(p, { recursive: true });
+    },
+  };
+  assert.throws(() => capture(args(f, X), deps), (e) => e instanceof StagingFailure && e.restored === true);
+  assert.equal(fs.readFileSync(path.join(f.repo, X), 'utf8'), original + 'precious edit\n');
+
+  const summaryFile = path.join(f.repo, 'summary.txt');
+  fs.writeFileSync(summaryFile, 'a note');
+  const err = [];
+  const code = cli.run(['capture', '--run', f.runDir, '--worktree', f.repo, '--merge-base', f.mergeBase, '--target', X, '--summary-file', summaryFile], {
+    stdout: () => {}, stderr: (s) => err.push(s), mainRoot: f.repo, lib: deps,
+  });
+  assert.equal(code, 1);
+  const msg = err.join('');
+  assert.match(msg, /staging failed too/);
+  assert.match(msg, /restored in the working tree/);
+  assert.doesNotMatch(msg, /nothing was changed/);
+  assert.equal(fs.readFileSync(path.join(f.repo, X), 'utf8'), original + 'precious edit\n');
+});
+
+test('a failed re-diff after a join leaves the earlier patch captured', (t) => {
+  const f = fixture(t);
+  const body = fs.readFileSync(path.join(f.repo, X), 'utf8');
+  write(f.repo, X, body.replace('# x\n', '# x\nfirst edit near the top\n'));
+  const first = capture(args(f, X, 'first finding'));
+  write(f.repo, X, body + 'second edit at the bottom\n');
+  let diffs = 0;
+  const deps = {
+    ...baseDeps,
+    git: (a, o) => {
+      if (a.includes('--binary') && ++diffs === 2) throw new Error('simulated re-diff failure');
+      return realDeps.git(a, o);
+    },
+  };
+  const res = capture(args(f, X, 'second finding'), deps);
+  assert.equal(res.route, 'staged');
+  const manifest = readManifest(f.runDir);
+  assert.equal(manifest[0].status, 'captured');
+  assert.match(fs.readFileSync(first.patch, 'utf8'), /first edit near the top/);
+  assert.equal(manifest[1].status, 'staged');
+  const staged = fs.readFileSync(res.stagePath, 'utf8');
+  assert.match(staged, /second edit at the bottom/);
+  assert.doesNotMatch(staged, /first edit near the top/);
+  assert.equal(status(f.repo, X), '');
+});
+
+test('a landed entry is not joined: a fresh capture gets a new id', (t) => {
+  const f = fixture(t);
+  fs.mkdirSync(path.join(f.runDir, 'learned-skills'), { recursive: true });
+  const landedPatch = path.join(f.runDir, 'learned-skills', '1.patch');
+  fs.writeFileSync(landedPatch, 'landed bytes');
+  fs.writeFileSync(path.join(f.runDir, 'learned-skills', 'manifest.json'), JSON.stringify([
+    { id: '1', target: X, summary: 'old', patch: landedPatch, status: 'landed', commit: 'abc' },
+  ]));
+  write(f.repo, X, fs.readFileSync(path.join(f.repo, X), 'utf8') + 'fresh edit\n');
+  const res = capture(args(f, X));
+  assert.equal(res.route, 'captured');
+  assert.equal(res.id, '2');
+  assert.equal(res.shared, false);
+  assert.equal(fs.readFileSync(landedPatch, 'utf8'), 'landed bytes');
+  assert.equal(readManifest(f.runDir).length, 2);
+});
+
+test('a failed STAGED log write surfaces logFailed', (t) => {
+  const f = fixture(t);
+  write(f.repo, X, fs.readFileSync(path.join(f.repo, X), 'utf8') + 'edit\n');
+  const res = capture(args(f, X), {
+    ...baseDeps,
+    git: failCheckout,
+    appendEntries: () => { throw new Error('decisions.md unwritable'); },
+  });
+  assert.equal(res.route, 'staged');
+  assert.equal(res.logFailed, true);
+});
+
+test('shared-target fallback preamble names both findings', (t) => {
+  const f = fixture(t);
+  const body = fs.readFileSync(path.join(f.repo, X), 'utf8');
+  write(f.repo, X, body.replace('# x\n', '# x\nfirst edit near the top\n'));
+  capture(args(f, X, 'first finding'));
+  write(f.repo, X, body + 'second edit at the bottom\n');
+  const res = capture(args(f, X, 'second finding'), { ...baseDeps, git: failCheckout });
+  assert.equal(res.route, 'staged');
+  const text = fs.readFileSync(res.stagePath, 'utf8');
+  assert.match(text, /^Invariant: first finding; second finding$/m);
+  assert.match(text, /^Finding: Skills row — first finding; second finding$/m);
+  const m = readManifest(f.runDir);
+  assert.equal(m.length, 1);
+  assert.equal(m[0].status, 'staged');
+});
+
+test('degraded gates log staged-patch.md lines', (t) => {
+  const f = fixture(t);
+  write(f.repo, X, fs.readFileSync(path.join(f.repo, X), 'utf8') + 'gate edit\n');
+  const diff = diffOf(f.repo, X);
+  sh(f.repo, ['checkout', 'HEAD', '--', X]);
+  const bad = stageEntry({
+    runDir: f.runDir, worktree: f.repo, entry: { target: X, summary: 'garbled', patch: 'not a patch\n' }, reason: 'r',
+  }, baseDeps);
+  assert.equal(bad.gate, 'description-only');
+  const unv = stageEntry({
+    runDir: f.runDir, worktree: f.repo, entry: { target: X, summary: 'unchecked', patch: diff }, reason: 'r',
+  }, {
+    ...baseDeps,
+    git: (a, o) => { if (a.includes('--check')) throw new Error('boom'); return realDeps.git(a, o); },
+    readFile: () => { throw new Error('unreadable'); },
+  });
+  assert.equal(unv.gate, 'unvalidated');
+  const log = fs.readFileSync(path.join(f.runDir, 'decisions.md'), 'utf8');
+  assert.match(log, /- STAGED \d\d:\d\d:\d\d — Skills row: x\/SKILL\.md \(garbled\) — patch failed `git apply --check` at staging \(.*\); staged description-only at staged\/wrap-up-skill-1\.md\. Reversibility: high\.$/m);
+  assert.match(log, /- STAGED \d\d:\d\d:\d\d — Skills row: x\/SKILL\.md \(unchecked\) — gate could not run: .* — path\/anchoring problem, not a composition error\. Reversibility: high\.$/m);
+});

@@ -15,7 +15,9 @@
 //                                                 staged as staged/wrap-up-skill-{N}.md instead
 // Exit 0 ok (every route above, staged included)
 //      1 a git failure before the diff was read — nothing was changed; the caller commits on the run
-//        branch and logs FAILED (merge-check's floor still holds that run)
+//        branch and logs FAILED (merge-check's floor still holds that run). Also a failure after the
+//        diff that staging could not absorb: stderr says "staging failed too" and whether the edit
+//        was restored in the working tree (restored: it is still committable on the run branch)
 //      2 malformed invocation, an unreadable --summary-file, or a --run that is missing, not anchored
 //        under the main checkout (a worktree-local shadow), or not a directory
 // --run is anchored strictly through lib/stage-item/write.js's resolveTarget (the sanctioned writers'
@@ -25,7 +27,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { capture, realDeps: libDeps, UsageError } = require('./lib/learned-skills/learned-skills');
+const { capture, realDeps: libDeps, UsageError, StagingFailure } = require('./lib/learned-skills/learned-skills');
 const { resolveTarget } = require('./lib/stage-item/write');
 
 const USAGE = 'usage: learned-skills-pr.js capture --run <run-dir> --worktree <abs> --merge-base <sha> --target <repo-rel> --summary-file <path>\n'
@@ -100,6 +102,10 @@ function run(argv, overrides = {}) {
     return 0;
   } catch (e) {
     if (e instanceof UsageError) return usageError(e.message);
+    if (e instanceof StagingFailure) {
+      deps.stderr(`learned-skills-pr.js: capture failed after the diff was read and staging failed too: ${e.message}\n`);
+      return 1;
+    }
     deps.stderr(`learned-skills-pr.js: capture failed before the diff was read — nothing was changed: ${(e && e.message) || e}\n`);
     return 1;
   }
