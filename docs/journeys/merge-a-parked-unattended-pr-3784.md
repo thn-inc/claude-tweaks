@@ -10,13 +10,14 @@ files:
   - plugin/bin/post-merge-run.js
   - plugin/bin/lib/reconcile/post-merge.js
   - plugin/bin/lib/hooks/teardown-run.js
+  - plugin/bin/lib/run-liveness/index.js
   - plugin/skills/wrap-up/cleanup-procedures-execution.md
   - tests/wrap-up-merge-mode-conformance.test.js
 ---
 
 # Merge a Parked Unattended PR
 
-**Persona:** a maintainer whose repo runs at `autonomy: unattended`. A `/claude-tweaks:flow` run ended with its PR parked as `pending-review`. They read the summary and say "go ahead, merge it", in the same session, while the run's context is still loaded.
+**Persona:** a maintainer whose repo runs at `autonomy: unattended`. A `/claude-tweaks:flow` run ended with its PR parked as `pending-review`. They read the summary and say "go ahead, merge it", in the same session, while the run's context is still loaded. Or the run was parked by another session, such as a `/claude-tweaks:dispatch` firing, and they merge it later from their own session; step 6 covers how that run is torn down.
 
 **Goal:** the PR merges now, in this session. That means acceptance labeling, the merge-verification gate, worktree teardown, claim release, and archival, with no Review Console question and no hand-run merge procedure. If the PR has gone `DIRTY` since the run parked, the agent resolves the conflict when both sides' intent survives, and otherwise stops cleanly.
 
@@ -28,6 +29,8 @@ files:
 - The claim is released, and the run dir is archived last.
 
 When it cannot merge, the outcome is `pending-review` with the PR ready and a stated reason, never a silent park.
+
+When it merges a run another session parked while run-liveness still reads that session `live` or `unknown`, the outcome is `merged` with a `cleanup: teardown-run failed — {line}` entry, and the worktree and branches stay for that session or the reconciler.
 
 ## Steps
 
@@ -120,7 +123,7 @@ When it cannot merge, the outcome is `pending-review` with the PR ready and a st
   4. The worktree teardown, which covers close-run, the containment proof, `ExitWorktree`, and the remote-ref delete.
   5. The claim release.
   6. Step 4.2's reconcile, last.
-- **Should feel:** finished. Nothing is left for a later session to tidy.
+- **Should feel:** finished. Nothing is left for a later session to tidy, except a teardown the report names as refused because the parking session is not yet provably dead.
 - **Should understand:**
   - The reconcile runs last because its archive check moves the run dir, and a `decisions.md` line written after it would recreate it.
   - **A run parked by another session.** A dispatch-parked run is recorded by the session that parked it, so a later session's `teardown-run --merged` acts on it only when run-liveness reads that owner `dead`. It then prints `owner: session {owner} is not running (run-liveness: dead) — merged teardown proceeds from this session`, unlocks the dead session's orphaned worktree lock, and removes the worktree, local branch and remote branch (#5293).
