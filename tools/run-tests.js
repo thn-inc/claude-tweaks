@@ -366,7 +366,7 @@ const oneLine = (text) => String(text).split(/\r?\n/)[0].trim();
 // becomes a `selection failed: ...` reason, so a failure can only widen the run. The verify modules
 // load lazily, so a checkout without them degrades to that reason instead of failing at require time.
 function selectChangedTests({ repoRoot, deps = {} }) {
-  const none = (reason, base = null) => ({ files: null, reason: oneLine(reason), base, total: 0 });
+  const none = (reason, base = null) => ({ files: null, reason: oneLine(reason), base, total: 0, otherSuites: [] });
   try {
     const d = { ...realSelectionDeps(repoRoot), ...deps };
     const read = d.readDeclaration(path.join(repoRoot, '.claude-tweaks', 'verify-scope.json'));
@@ -392,7 +392,9 @@ function selectChangedTests({ repoRoot, deps = {} }) {
     if (!imp) return none('the declaration has no impact block', base);
     if (imp.superseded) return none(`superseded by a full-suite rule (${imp.supersedingPaths.slice(0, 3).join(', ')})`, base);
     if (imp.files === null) return none(imp.fallback || 'impact selection returned no file list', base);
-    return { files: imp.files.filter((f) => d.exists(f)).sort(byPath), reason: null, base, total: d.countTests() };
+    // Suites besides the impact suite that the changes select (this repo's `journeys`): not run here, so named.
+    const otherSuites = Array.isArray(sel.suites) ? sel.suites.filter((s) => s !== decl.impact.suite).sort(byPath) : [];
+    return { files: imp.files.filter((f) => d.exists(f)).sort(byPath), reason: null, base, total: d.countTests(), otherSuites };
   } catch (err) {
     return none(`selection failed: ${err.message}`);
   }
@@ -433,18 +435,19 @@ function realSelectionDeps(repoRoot) {
 // What to do with a selection and the one stderr line that says so: 'whole' (no narrowing — run
 // everything, naming why), 'none' (nothing selected — exit 0 before taking a slot) or 'subset'.
 // Pure: a function of the selection result alone.
-function planDefaultRun({ files, reason, base, total }) {
+function planDefaultRun({ files, reason, base, total, otherSuites = [] }) {
   const base9 = base === null ? '' : String(base).slice(0, 9);
+  const also = otherSuites.length ? ` — also selected: ${otherSuites.join(', ')} (run by \`verify.js --scope\`, not here)` : '';
   if (files === null) {
     return { action: 'whole', files: null, line: `run-tests.js: running the whole suite — impact selection could not narrow it: ${oneLine(reason)}` };
   }
   if (files.length === 0) {
-    return { action: 'none', files, line: `run-tests.js: no test file selected for changes since ${base9} — nothing to run; \`npm test -- --full\` runs the whole suite here` };
+    return { action: 'none', files, line: `run-tests.js: no test file selected for changes since ${base9} — nothing to run; \`npm test -- --full\` runs the whole suite here${also}` };
   }
   return {
     action: 'subset',
     files,
-    line: `run-tests.js: impact-selected ${files.length} of ${total} test files for changes since ${base9} — \`npm test -- --full\` runs the whole suite here; CI runs it on every PR`,
+    line: `run-tests.js: impact-selected ${files.length} of ${total} test files for changes since ${base9} — \`npm test -- --full\` runs the whole suite here; CI runs it on every PR${also}`,
   };
 }
 

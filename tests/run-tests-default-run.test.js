@@ -63,7 +63,7 @@ test('AC2.2 / AC7.1: resolveRunMode table', () => {
 });
 
 test('AC1.1: a changed plugin module selects only the test files the map names for it', () => {
-  assert.deepStrictEqual(select(), { files: ['tests/one.test.js'], reason: null, base: BASE, total: 2 });
+  assert.deepStrictEqual(select(), { files: ['tests/one.test.js'], reason: null, base: BASE, total: 2, otherSuites: [] });
 });
 
 test('AC1.2: a heavy test file is selected only when the map says it reads a changed path', () => {
@@ -124,6 +124,23 @@ test('AC4.1: no change selects nothing', () => {
 test('selectChangedTests drops selected files that are not on disk', () => {
   const r = select({ exists: (f) => f !== 'tests/one.test.js' });
   assert.deepStrictEqual(r.files, []);
+});
+
+test('AC4.2: other selected suites are named, never silently dropped', () => {
+  const suffix = ' — also selected: journeys (run by `verify.js --scope`, not here)';
+  const change = (files) => ({ files, statuses: Object.fromEntries(files.map((f) => [f, 'M'])) });
+  const both = select({ changedFiles: () => change(['plugin/bin/x.js', 'docs/journeys/x.md']) });
+  assert.deepStrictEqual(both.files, select().files);
+  assert.deepStrictEqual(both.otherSuites, ['journeys']);
+  assert.ok(planDefaultRun(both).line.endsWith(suffix), planDefaultRun(both).line);
+  const alone = select({ changedFiles: () => change(['docs/journeys/x.md']) });
+  assert.deepStrictEqual(alone.files, []);
+  assert.deepStrictEqual(alone.otherSuites, ['journeys']);
+  const plan = planDefaultRun(alone);
+  assert.strictEqual(plan.action, 'none');
+  assert.ok(plan.line.endsWith(suffix), plan.line);
+  // A whole-suite result names no other suite.
+  assert.deepStrictEqual(select({ loadImpactContext: () => ({ map: null, problem: 'map-missing', headTests: [], driftTests: [] }) }).otherSuites, []);
 });
 
 test('AC1.3 / AC4.2 / AC3.6: planDefaultRun returns the action and the exact line', () => {
