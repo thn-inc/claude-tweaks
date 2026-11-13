@@ -47,13 +47,14 @@ If a spec number was provided, read the spec file and verify the implementation 
    outcome `partial` even when every criterion is `met` — it counts toward the Gate below like a
    partial deliverable. #3002 met every criterion while the three gates its Current State named
    still read bare `--stamp-status`.
+6. **PR-body deliverables** — a deliverable or criterion whose content must appear in the PR body (or PR description), such as "the PR body reports X", is judged against the live PR body, never the codebase, per `pr-body-deliverables.md` in this skill's directory; items 1 and 2 skip it. Mark it `missing` when the body lacks it, `partial` when it carries part; no PR or a failed read is `unverifiable`, which never blocks.
 
 ### Gate:
 
 | Result | Action |
 |--------|--------|
 | All deliverables done + all criteria met | Proceed to Step 1.5 |
-| Minor gaps (1-2 partial items) | Flag gaps, proceed — they may be addressed in Implementation Hindsight |
+| Minor gaps (1-2 partial items, or any `unverifiable` ones) | Flag gaps, proceed — they may be addressed in Implementation Hindsight |
 | Any risk marker `unresolved` after independent verification | **BLOCKED** — same tier as Significant gaps. Name the unverified marker(s) (file:line or table row) so the user knows exactly what still needs ground-truth confirmation |
 | Significant gaps (missing deliverables or criteria) | **BLOCKED** — the spec isn't fully built yet. List what's missing so the user can resume `/claude-tweaks:build` |
 
@@ -144,11 +145,11 @@ git log --merges {base}..{branch} --oneline # detect
 - **No merge commits detected** (the common case) — this check is a no-op: no further computation, no new output section. The rest of Step 2 proceeds exactly as before, against the full diff.
 - **Merge commits detected** — read `merge-provenance-check.md` in this skill's directory: the own-work file-set computation, how to report the excluded files, and the own-work scope that replaces the raw `git diff` scope for Steps 3, 3.5, and 5.
 
-Not to be confused with "Reusing a Prior Whole-Branch Review" below — that handles a *later spec's* review citing an *earlier spec's already-completed* whole-branch review in a multi-spec batch; this check handles what's *in the diff at all* for a single review, independent of whether any prior review exists.
+Not to be confused with "Reusing a Prior Whole-Branch Review" below, which governs citing an earlier spec's completed review: this check governs what is in the diff at all.
 
 ### Cherry-Pick Provenance Check
 
-The Merge-Provenance Check above fires only on `git log --merges`. A cherry-pick, a manual port, or any other whole-hunk reuse of *another record's* branch leaves no merge commit at all, so that gate is a no-op and the reused content is reviewed as this branch's own work. On record (#1821): a build cherry-picked `1893db5b7` from `origin/worktree-record-1224`, whose still-open PR #1852 already carried a byte-identical, already-review-passed fix — two open PRs, one implementation. Step 3's lenses (3a-3f) all passed; none of them asks whether this work is already in flight elsewhere, so the duplication surfaced only through an off-lens manual cross-reference.
+A cherry-pick or manual port of *another record's* branch leaves no merge commit, so the Merge-Provenance Check above misses it and the reused content is reviewed as this branch's own work (#1821: two open PRs, one implementation, and no Step 3 lens asks whether the work is already in flight).
 
 Run alongside the merge detect above, unconditionally:
 
@@ -172,7 +173,7 @@ git diff {base}...{branch} --name-only   # bare path list, for path-pattern matc
 - Whether schema, API surface, or infrastructure changed
 - Whether new dependencies were introduced
 
-**Do not read the full diff in the main thread.** Measured on a 20-commit branch: `git diff` is ~89.5 KB against ~0.9 KB for `--stat` — a ~100x difference, and 30-commit branches are routine in this repo. Everything this step classifies, and everything Step 2.5's diff heuristic consumes, comes from the two commands above.
+**Do not read the full diff in the main thread.** The full diff runs about 100x the size of `--stat`. Everything this step classifies, and everything Step 2.5's diff heuristic consumes, comes from the two commands above.
 
 The one exception is the dependency question, which needs manifest *content* rather than just a filename: when `--name-only` shows a dependency manifest (`package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`, or equivalent), read a **targeted** diff of just that file (`git diff {base}...{branch} -- package.json`). That is bounded by construction — it is not a licence to widen back to the full diff.
 
@@ -381,7 +382,7 @@ This pass never replays Step 3.5 (each source's findings have no peers to debate
 
 ## Step 7: Present Review Summary
 
-Present a structured summary covering spec compliance, test results (from `/claude-tweaks:test`), code review findings, browser review (if run), implementation hindsight, tradeoffs, simplification, and a verdict (PASS or BLOCKED). The summary must include an Actions Performed table (when autonomous fixes were applied) and a Next Actions block (always). For the complete template, the context-signal rules, and the **compact clean-PASS form** (rendered instead of the full template when the verdict is PASS with zero findings, zero actions, and zero manual steps), read `review-summary-template.md` in this skill's directory.
+Present a structured summary covering spec compliance, test results (from `/claude-tweaks:test`), code review findings, browser review (if run), implementation hindsight, tradeoffs, simplification, and a verdict (PASS or BLOCKED). The summary must include an Actions Performed table (when autonomous fixes were applied) and a Next Actions block (always). For the complete template, the context-signal rules, and the **compact clean-PASS form** (rendered instead of the full template only when every condition that file lists holds, spec compliance and the Current-State outcome included), read `review-summary-template.md` in this skill's directory.
 
 **Not run by /build (#3767).** When `$PIPELINE_RUN_DIR` is set, collect the plan steps `/build` logged as not run from its `decisions.md` per `review-summary-template.md`'s "Not run by /build" section, before choosing the compact or full form.
 

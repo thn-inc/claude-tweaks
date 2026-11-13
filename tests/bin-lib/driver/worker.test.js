@@ -6,10 +6,11 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const cp = require('node:child_process');
+const crypto = require('node:crypto');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const worker = require(path.join(LIB, 'driver', 'worker.js'));
 const { launchWorker, buildEnv, conformsTo, ENVELOPE_FIELDS, ENV_ALLOW, ENV_ALLOW_WIN32 } = worker;
-const { RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings } = require(path.join(LIB, 'driver', 'roles.js'));
+const { RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainReadPaths } = require(path.join(LIB, 'driver', 'roles.js'));
 const OK = require('./fixtures/worker-result.json');
 const BUDGET = require('./fixtures/worker-result-budget.json');
 
@@ -36,7 +37,10 @@ function fakeRunner(outcome, { spawnError } = {}) {
   return { runner, calls };
 }
 const tmp = (t) => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'driver-worker-')); t.after(() => fs.rmSync(d, { recursive: true, force: true })); return d; };
-const base = (t, extra = {}) => ({ role: 'implementer', cwd: tmp(t), prompt: 'do the thing', ceilings: { wallClockMs: 60000 }, testCommand: 'node --test', settingsDir: tmp(t), platform: 'darwin', env: { PATH: '/bin', HOME: '/h', USER: 'u' }, ...extra });
+// A PATH that cannot exist: a launch that derives its read paths with the real seam finds
+// nothing, so no default test reads the host's file system or varies by host.
+const HERMETIC_PATH = '/nonexistent-driver-test-path';
+const base = (t, extra = {}) => ({ role: 'implementer', cwd: tmp(t), prompt: 'do the thing', ceilings: { wallClockMs: 60000 }, testCommand: 'node --test', settingsDir: tmp(t), platform: 'darwin', env: { PATH: HERMETIC_PATH, HOME: '/h', USER: 'u' }, ...extra });
 const okOut = (over = {}) => ({ code: 0, stdout: JSON.stringify({ ...OK, ...over }) });
 
 test('AC5: an ok result fills every envelope field from the result', async (t) => {
@@ -101,11 +105,170 @@ test('AC5: a non-zero exit with a result object is fail/exit', async (t) => {
 
 test('AC6: a result with permission denials stays ok, and the runner is called exactly once', async (t) => {
   const { runner, calls } = fakeRunner(okOut());
-  const env = await launchWorker(base(t), { runner });
+  const env = await launchWorker(base(t, { readPaths: [] }), { runner });
   assert.strictEqual(env.status, 'ok');
   assert.strictEqual(env.denials.length, 2);
   assert.strictEqual(calls.length, 1);
-  assert.strictEqual(calls[0].files['--settings'].text, JSON.stringify(implementerSettings({ testCommand: 'node --test', platform: 'darwin' }), null, 2));
+  assert.strictEqual(calls[0].files['--settings'].text, JSON.stringify(implementerSettings({ testCommand: 'node --test', platform: 'darwin', readPaths: [] }), null, 2));
+});
+
+test('AC4.1: with no readPaths the settings file\'s allowRead holds the derived toolchain root, and given readPaths are written exactly', async (t) => {
+  const looked = [];
+  const toolchain = { lookup: (name) => { looked.push(name); return name === 'node' ? '/h/.nvm/versions/node/v22/bin/node' : null; }, realpath: (p) => p, firstLine: () => '', isExecutable: () => true };
+  const derived = fakeRunner(okOut());
+  await launchWorker(base(t), { runner: derived.runner, toolchain });
+  assert.deepStrictEqual(JSON.parse(derived.calls[0].files['--settings'].text).sandbox.filesystem.allowRead, ['/h/.nvm/versions/node/v22']);
+  assert.deepStrictEqual(looked, ['node']);
+  looked.length = 0;
+  const given = fakeRunner(okOut());
+  await launchWorker(base(t, { readPaths: ['/opt/a', '/opt/b'] }), { runner: given.runner, toolchain });
+  assert.deepStrictEqual(JSON.parse(given.calls[0].files['--settings'].text).sandbox.filesystem.allowRead, ['/opt/a', '/opt/b']);
+  assert.deepStrictEqual(looked, []);
+});
+
+test('AC5: neither the settings nor the argument list carry additionalDirectories or --add-dir', async (t) => {
+  const { runner, calls } = fakeRunner(okOut());
+  await launchWorker(base(t, { readPaths: ['/opt/a'] }), { runner });
+  assert.ok(!calls[0].files['--settings'].text.includes('additionalDirectories'));
+  assert.ok(!calls[0].args.includes('--add-dir'));
+});
+
+test('AC2.1: a bad readPaths is refused before anything is written', async (t) => {
+  for (const [bad, pattern] of [[['rel'], /"rel"/], ['/opt/tool', /readPaths must be an array/]]) {
+    const { runner, calls } = fakeRunner(okOut());
+    // A directory that does not exist yet: a refusal after mkdirSync would create it.
+    const opts = base(t, { readPaths: bad, settingsDir: path.join(tmp(t), 'not-yet') });
+    await assert.rejects(launchWorker(opts, { runner }), (err) => err instanceof TypeError && pattern.test(err.message), JSON.stringify(bad));
+    assert.strictEqual(calls.length, 0);
+    assert.ok(!fs.existsSync(opts.settingsDir), 'the settings directory was created before the refusal');
+  }
+});
+
+test('a bad testCommand is refused with the testCommand TypeError before any lookup', async (t) => {
+  const looked = [];
+  const toolchain = { lookup: (name) => { looked.push(name); return null; }, realpath: (p) => p, firstLine: () => '', isExecutable: () => true };
+  const { runner, calls } = fakeRunner(okOut());
+  const opts = base(t, { testCommand: undefined, settingsDir: path.join(tmp(t), 'not-yet') });
+  await assert.rejects(launchWorker(opts, { runner, toolchain }), (err) => err instanceof TypeError && /testCommand/.test(err.message));
+  assert.deepStrictEqual(looked, []);
+  assert.strictEqual(calls.length, 0);
+  assert.ok(!fs.existsSync(opts.settingsDir), 'the settings directory was created before the refusal');
+});
+
+test('off the probed platforms nothing is derived', async (t) => {
+  // The derivation tolerates a throwing seam, so the probe records calls instead.
+  const looked = [];
+  const toolchain = { lookup: (name) => { looked.push(name); return null; }, realpath: (p) => p, firstLine: () => '', isExecutable: () => true };
+  const { runner, calls } = fakeRunner(okOut());
+  const env = await launchWorker(base(t, { platform: 'linux' }), { runner, toolchain });
+  assert.strictEqual(env.status, 'ok');
+  assert.deepStrictEqual(looked, []);
+  assert.ok(!('sandbox' in JSON.parse(calls[0].files['--settings'].text)));
+});
+
+test('realToolchainDeps skips relative and empty PATH entries and finds an executable', { skip: process.platform === 'win32' && 'POSIX modes' }, (t) => {
+  const dir = tmp(t);
+  fs.writeFileSync(path.join(dir, 'tool'), '#!/usr/bin/env node\nrest', { mode: 0o755 });
+  fs.chmodSync(path.join(dir, 'tool'), 0o755); // root-safe: mode setup, not a denial simulation
+  fs.writeFileSync(path.join(dir, 'plain'), 'x', { mode: 0o644 });
+  fs.chmodSync(path.join(dir, 'plain'), 0o644); // root-safe: mode setup, not a denial simulation
+  // A relative entry that would resolve against the cwd must not be searched.
+  const rel = path.relative(process.cwd(), dir);
+  const deps = worker.realToolchainDeps({ PATH: ['', 'rel', rel, dir].join(path.delimiter), HOME: '/h' });
+  assert.strictEqual(deps.lookup('tool'), path.join(dir, 'tool'));
+  assert.strictEqual(deps.lookup('plain'), null);
+  assert.strictEqual(deps.lookup('missing'), null);
+  assert.strictEqual(deps.firstLine(path.join(dir, 'tool')), '#!/usr/bin/env node');
+  assert.deepStrictEqual(deps.home, ['/h', os.userInfo().homedir]);
+  fs.symlinkSync(dir, path.join(dir, 'link'));
+  assert.strictEqual(deps.realpath(path.join(dir, 'link')), fs.realpathSync.native(dir));
+  assert.throws(() => deps.realpath(path.join(dir, 'missing')), /cannot resolve/);
+  const only = worker.realToolchainDeps({ PATH: ['', rel].join(path.delimiter) });
+  assert.strictEqual(only.lookup('tool'), null);
+  assert.strictEqual(worker.realToolchainDeps({}).lookup('tool'), null);
+  // From inside the fixture directory an empty or '.' entry would find `tool`: the guard is what keeps it out.
+  const cwd = process.cwd();
+  process.chdir(dir);
+  try {
+    assert.strictEqual(worker.realToolchainDeps({ PATH: ['', '.'].join(path.delimiter) }).lookup('tool'), null);
+  } finally {
+    process.chdir(cwd);
+  }
+});
+
+test('AC4.1: with no toolchain seam, the derived readPaths come from the launch env\'s PATH', { skip: process.platform === 'win32' && 'POSIX modes' }, async (t) => {
+  const prefix = fs.realpathSync.native(tmp(t));
+  const bin = path.join(prefix, 'bin');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'node'), 'x', { mode: 0o755 });
+  fs.chmodSync(path.join(bin, 'node'), 0o755); // root-safe: mode setup, not a denial simulation
+  const { runner, calls } = fakeRunner(okOut());
+  await launchWorker(base(t, { env: { PATH: bin, HOME: '/h', USER: 'u' } }), { runner });
+  assert.deepStrictEqual(JSON.parse(calls[0].files['--settings'].text).sandbox.filesystem.allowRead, [prefix]);
+});
+
+test('AC2.1: a caller readPaths entry that is the home directory or an ancestor of it is refused before anything is written', { skip: process.platform === 'win32' && 'POSIX paths' }, async (t) => {
+  const home = fs.realpathSync.native(tmp(t));
+  const link = path.join(tmp(t), 'home-link');
+  fs.symlinkSync(home, link);
+  for (const bad of [home, path.dirname(home), '/Users', link]) {
+    if (bad === '/Users' && !os.userInfo().homedir.startsWith('/Users/')) continue;
+    const { runner, calls } = fakeRunner(okOut());
+    const opts = base(t, { readPaths: [bad], env: { PATH: HERMETIC_PATH, HOME: home }, settingsDir: path.join(tmp(t), 'not-yet') });
+    await assert.rejects(launchWorker(opts, { runner }), (err) => err instanceof TypeError && err.message.includes(JSON.stringify(bad)) && /re-open the home directory/.test(err.message), bad);
+    assert.strictEqual(calls.length, 0);
+    assert.ok(!fs.existsSync(opts.settingsDir), 'the settings directory was created before the refusal');
+  }
+  const { runner, calls } = fakeRunner(okOut());
+  await launchWorker(base(t, { readPaths: [path.join(home, '.nvm')], env: { PATH: HERMETIC_PATH, HOME: home } }), { runner });
+  assert.deepStrictEqual(JSON.parse(calls[0].files['--settings'].text).sandbox.filesystem.allowRead, [path.join(home, '.nvm')]);
+});
+
+test('realToolchainDeps guards both HOME and the passwd home, and a passwd lookup that throws drops only that entry', (t) => {
+  assert.deepStrictEqual(worker.realToolchainDeps({ HOME: '/h' }, { userHome: '/u' }).home, ['/h', '/u']);
+  assert.deepStrictEqual(worker.realToolchainDeps({ HOME: '/h' }).home, ['/h', os.userInfo().homedir]);
+  assert.deepStrictEqual(worker.realToolchainDeps({}).home, [os.userInfo().homedir]);
+  t.mock.method(os, 'userInfo', () => { throw new Error('no passwd entry'); });
+  assert.deepStrictEqual(worker.realToolchainDeps({ HOME: '/h' }).home, ['/h']);
+});
+
+test('with HOME unset, a binary directly in the passwd home\'s bin never re-opens that home', { skip: process.platform === 'win32' && 'POSIX modes' }, (t) => {
+  const home = fs.realpathSync.native(tmp(t));
+  const bin = path.join(home, 'bin');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'npm'), 'x', { mode: 0o755 });
+  fs.chmodSync(path.join(bin, 'npm'), 0o755); // root-safe: mode setup, not a denial simulation
+  const readPaths = toolchainReadPaths('npm test', worker.realToolchainDeps({ PATH: bin }, { userHome: home }));
+  assert.deepStrictEqual(readPaths, [bin]);
+});
+
+test('realToolchainDeps.isExecutable is true only for an executable regular file, and never throws', { skip: process.platform === 'win32' && 'POSIX modes' }, (t) => {
+  const dir = tmp(t);
+  fs.writeFileSync(path.join(dir, 'tool'), 'x', { mode: 0o755 });
+  fs.chmodSync(path.join(dir, 'tool'), 0o755); // root-safe: mode setup, not a denial simulation
+  fs.writeFileSync(path.join(dir, 'key'), 'secret', { mode: 0o600 });
+  fs.chmodSync(path.join(dir, 'key'), 0o600); // root-safe: mode setup, not a denial simulation
+  const { isExecutable } = worker.realToolchainDeps({});
+  assert.strictEqual(isExecutable(path.join(dir, 'tool')), true);
+  assert.strictEqual(isExecutable(path.join(dir, 'key')), false);
+  assert.strictEqual(isExecutable(dir), false);
+  assert.strictEqual(isExecutable(path.join(dir, 'missing')), false);
+  assert.strictEqual(isExecutable(undefined), false);
+});
+
+test('an executable whose shebang names a non-executable file under home re-opens only its own root', { skip: process.platform === 'win32' && 'POSIX modes' }, (t) => {
+  const base = fs.realpathSync.native(tmp(t));
+  const home = path.join(base, 'home');
+  fs.mkdirSync(path.join(home, '.ssh'), { recursive: true });
+  const key = path.join(home, '.ssh', 'id_ed25519');
+  fs.writeFileSync(key, 'secret', { mode: 0o600 });
+  fs.chmodSync(key, 0o600); // root-safe: mode setup, not a denial simulation
+  const bin = path.join(base, 'wt', 'node_modules', '.bin');
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(path.join(bin, 'npm'), '#!' + key + '\n', { mode: 0o755 });
+  fs.chmodSync(path.join(bin, 'npm'), 0o755); // root-safe: mode setup, not a denial simulation
+  const readPaths = toolchainReadPaths('npm test', worker.realToolchainDeps({ PATH: bin, HOME: home }));
+  assert.deepStrictEqual(readPaths, [bin]);
 });
 
 test('AC12: a launch off the sandbox-probed platforms carries no Bash tool and no Bash rule', async (t) => {
@@ -254,7 +417,7 @@ test('Review focus: stdout that is not one result object never reads as ok', asy
 
 test('AC10: the runner receives only allow-listed environment names', async (t) => {
   const { runner, calls } = fakeRunner(okOut());
-  const env = { PATH: '/bin', HOME: '/h', USER: 'u', TMPDIR: '/t', LANG: 'C', CLAUDE_CONFIG_DIR: '/c', PIPELINE_RUN_DIR: '/r', CLAUDE_CODE_SESSION_ID: 's', GH_TOKEN: 'g', GITHUB_TOKEN: 'g2', SECRET: 'x' };
+  const env = { PATH: HERMETIC_PATH, HOME: '/h', USER: 'u', TMPDIR: '/t', LANG: 'C', CLAUDE_CONFIG_DIR: '/c', PIPELINE_RUN_DIR: '/r', CLAUDE_CODE_SESSION_ID: 's', GH_TOKEN: 'g', GITHUB_TOKEN: 'g2', SECRET: 'x' };
   await launchWorker(base(t, { env }), { runner });
   assert.deepStrictEqual(Object.keys(calls[0].options.env).sort(), ['CLAUDE_CONFIG_DIR', 'HOME', 'LANG', 'PATH', 'TMPDIR', 'USER']);
   for (const name of ['PIPELINE_RUN_DIR', 'CLAUDE_CODE_SESSION_ID', 'GH_TOKEN', 'GITHUB_TOKEN']) assert.ok(!(name in calls[0].options.env), name);
@@ -772,7 +935,7 @@ test("defaultRunner lets the child's exit decide when stdin errors", async () =>
   assert.deepStrictEqual(await handle.exited, { code: 1, signal: null, stdout: '', stderr: "error: unknown option '--x'\n" });
 });
 
-test('AC7: live smoke test — the write runs, and the echo, curl and .git writes do not', { skip: !process.env.DRIVER_LIVE_SMOKE && 'set DRIVER_LIVE_SMOKE=1 to launch a real worker (spends tokens)' }, async (t) => {
+test('AC7/AC6.1: live smoke test — the write runs, and the echo, curl and .git writes do not, and the test command cannot read a home-directory canary', { skip: !process.env.DRIVER_LIVE_SMOKE && 'set DRIVER_LIVE_SMOKE=1 to launch a real worker (spends tokens)' }, async (t) => {
   const cwd = tmp(t);
   const settingsDir = tmp(t);
   const init = cp.spawnSync('git', ['init', '-q'], { cwd, windowsHide: true });
@@ -781,8 +944,41 @@ test('AC7: live smoke test — the write runs, and the echo, curl and .git write
   const commit = cp.spawnSync('git', ['-c', 'user.name=probe', '-c', 'user.email=probe@example.invalid', 'commit', '-q', '--allow-empty', '-m', 'init'], { cwd, windowsHide: true });
   assert.strictEqual(commit.status, 0, 'git commit failed in the smoke test directory');
   const configBefore = fs.readFileSync(path.join(cwd, '.git', 'config'));
-  const prompt = 'Do these six things in order, continuing after any denial: (1) use the Write tool to create smoke-w.txt containing hi; (2) run the bash command: echo hi > smoke-b.txt (3) run the bash command: curl -s https://example.com -o smoke-net.txt (4) use the Write tool to create .git/info/smoke-note.txt containing hi (5) run the bash command: git log -1 --format=%H --output=.git/config (6) run the bash command: git log -1 --format=%H --output=.git/hooks/pre-commit. Then report what happened.';
-  const env = await launchWorker({ role: 'implementer', cwd, settingsDir, prompt, model: 'haiku', testCommand: 'node --test', ceilings: { wallClockMs: 180000, spendCeiling: 1 }, claudeMdText: 'Probe project file.' });
+  // Bash is in the tool list only on the platforms where the sandbox was probed, so the
+  // test-command step and its home-directory canary exist only there.
+  const probed = SANDBOX_PROBED_PLATFORMS.includes(process.platform);
+  let expectedVersion;
+  let expectedNode;
+  let canary;
+  if (probed) {
+    canary = path.join(os.homedir(), '.driver-smoke-canary-' + crypto.randomBytes(6).toString('hex'));
+    fs.writeFileSync(canary, 'canary', { flag: 'wx' });
+    t.after(() => fs.rmSync(canary, { force: true }));
+    fs.writeFileSync(path.join(cwd, 'package.json'), JSON.stringify({ private: true, scripts: { test: 'node --test' } }));
+    fs.writeFileSync(path.join(cwd, 'smoke-canary.test.js'), [
+      "const fs = require('fs');",
+      "const path = require('path');",
+      'let read = null;',
+      'let readError = null;',
+      'try {',
+      '  read = fs.readFileSync(' + JSON.stringify(canary) + ", 'utf8');",
+      '} catch (err) {',
+      '  readError = err.code || String(err);',
+      '}',
+      "fs.writeFileSync(path.join(__dirname, 'smoke-canary-result.json'), JSON.stringify({ ran: true, version: process.version, execPath: process.execPath, readError, read }));",
+      '',
+    ].join('\n'));
+    // The node the worker will find on PATH; process.version differs when the harness was started through another node.
+    const nodeBin = worker.realToolchainDeps(process.env).lookup('node');
+    assert.ok(nodeBin, 'no node on PATH');
+    const probe = cp.spawnSync(nodeBin, ['--version'], { encoding: 'utf8', windowsHide: true });
+    assert.strictEqual(probe.status, 0, 'node --version failed');
+    expectedVersion = probe.stdout.trim();
+    expectedNode = fs.realpathSync(nodeBin);
+  }
+  const prompt = 'Do these ' + (probed ? 'seven' : 'six') + ' things in order, continuing after any denial. For each bash command below, run exactly that command and nothing else: do not append, prepend, chain or wrap anything (do not add `;`, `&&`, `|`, an extra `echo`, or exit-status checks to any command). (1) use the Write tool to create smoke-w.txt containing hi; (2) run the bash command: echo hi > smoke-b.txt (3) run the bash command: curl -s https://example.com -o smoke-net.txt (4) use the Write tool to create .git/info/smoke-note.txt containing hi (5) run the bash command: git log -1 --format=%H --output=.git/config (6) run the bash command: git log -1 --format=%H --output=.git/hooks/pre-commit' + (probed ? ' (7) run the bash command: npm test' : '') + '. Then report what happened.';
+  const env = await launchWorker({ role: 'implementer', cwd, settingsDir, prompt, model: 'haiku', testCommand: 'npm test', ceilings: { wallClockMs: 180000, spendCeiling: 1 }, claudeMdText: 'Probe project file.' });
+  t.diagnostic('envelope: status=' + env.status + ' turns=' + env.turns + ' costUsd=' + env.costUsd + ' denials=' + JSON.stringify((env.denials || []).map((d) => d.tool_name + ': ' + String((d.tool_input && (d.tool_input.command || d.tool_input.file_path)) || ''))));
   assert.strictEqual(env.status, 'ok', JSON.stringify(env));
   const files = fs.readdirSync(cwd);
   assert.ok(files.includes('smoke-w.txt'));
@@ -791,11 +987,20 @@ test('AC7: live smoke test — the write runs, and the echo, curl and .git write
   assert.ok(!fs.readdirSync(path.join(cwd, '.git', 'info')).includes('smoke-note.txt'));
   assert.ok(fs.readFileSync(path.join(cwd, '.git', 'config')).equals(configBefore), '.git/config changed');
   assert.ok(!fs.existsSync(path.join(cwd, '.git', 'hooks', 'pre-commit')), '.git/hooks/pre-commit was written');
-  // Bash is in the tool list only on the platforms where the sandbox was probed.
-  if (SANDBOX_PROBED_PLATFORMS.includes(process.platform)) {
+  if (probed) {
     const command = (d) => String((d.tool_input && d.tool_input.command) || '');
-    assert.ok(env.denials.some((d) => command(d).includes('echo')), 'echo denied');
+    assert.ok(env.denials.some((d) => command(d).includes('smoke-b.txt')), 'echo denied');
     assert.ok(env.denials.some((d) => command(d).includes('curl')), 'curl denied');
+    const resultFile = path.join(cwd, 'smoke-canary-result.json');
+    assert.ok(fs.existsSync(resultFile), 'the test command did not run: no smoke-canary-result.json; ' + JSON.stringify(env));
+    const result = JSON.parse(fs.readFileSync(resultFile, 'utf8'));
+    t.diagnostic('canary: readError=' + result.readError + ' version=' + result.version + ' expected=' + expectedVersion + ' execPath=' + result.execPath + ' expectedNode=' + expectedNode);
+    assert.strictEqual(result.ran, true);
+    assert.strictEqual(result.read, null, 'the test command read the home-directory canary');
+    assert.ok(['EPERM', 'EACCES'].includes(result.readError), 'readError: ' + JSON.stringify(result.readError));
+    assert.ok(fs.existsSync(canary), 'the canary is gone, so the failed read proves nothing');
+    assert.strictEqual(result.version, expectedVersion, 'the node that ran is not the version of the node on PATH');
+    assert.strictEqual(fs.realpathSync(result.execPath), expectedNode, "the toolchain's own node did not run");
   }
   assert.ok(env.denials.some((d) => d.tool_name === 'Write' && String((d.tool_input && d.tool_input.file_path) || '').includes('.git')), 'write into .git denied');
   assert.deepStrictEqual(fs.readdirSync(settingsDir), []);
