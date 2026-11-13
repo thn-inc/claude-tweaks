@@ -7,6 +7,7 @@ files:
   - plugin/skills/dispatch/queue-pull-script.md
   - plugin/skills/dispatch/blocked-exclusion-report.md
   - plugin/skills/dispatch/mcp-transport.md
+  - plugin/bin/queue-pull.js
   - plugin/bin/lib/dispatch/queue-order.js
   - plugin/bin/dispatch-resume.js
   - plugin/bin/lib/preflight-records/blocker-landing.js
@@ -54,10 +55,10 @@ files:
 
 ### 4. From a gh-absent sandbox
 - **URL:** `plugin/skills/dispatch/mcp-transport.md` (body-text pass states file); `plugin/skills/backlog/mcp-transport.md`; `plugin/skills/flow/multispec-preflight-failure.md`
-- **Action:** In a cloud Routine with no `gh`, the agent reads `upstream-org/lib#42` with `issue_read` and writes `{ "upstream-org/lib#42": "closed" }` to a states file. It runs `export DISPATCH_FOREIGN_STATES={path}` at the top of the same Bash call as the pass. `/flow` takes the same map through `--blocker-states-json`. A state copied in any case counts.
+- **Action:** In a cloud Routine with no `gh`, the agent reads `upstream-org/lib#42` with `issue_read` and writes `{ "upstream-org/lib#42": "closed" }` to the `{dispatch-foreign-states.json}` states file. It passes `--foreign-states {path}` on the `queue-pull.js --transport files` call. `/flow` takes the same map through `--blocker-states-json`. A state copied in any case counts.
 - **Should feel:** Unblocked. The sandbox can still release the record once the foreign issue closes.
 - **Should understand:** A ref left out of the file, or given `null`, still reads unreadable and holds the record. Supplying states can only release a record whose blocker really is closed.
-- **Red flags:** Every foreign-blocked record excluded forever in a Routine although the agent wrote the states file, for example because the variable was set on an earlier line instead of exported. A ref missing from the file releasing the record.
+- **Red flags:** Every foreign-blocked record excluded forever in a Routine although the agent wrote the states file, for example because the states file was written but `--foreign-states` was left off the call. A ref missing from the file releasing the record.
 
 ### 5. The blocker closes
 - **URL:** `plugin/bin/lib/dispatch/queue-order.js` (`cacheUsable`)
@@ -68,4 +69,5 @@ files:
 
 ## Origin
 - Created during `/claude-tweaks:build` of record #4793 (2026-11-04): native and body-declared cross-repository blockers block unless exactly CLOSED, are named `owner/name#N` on every blocker surface, and can be supplied by gh-absent transports.
+- Updated during #5230 (the dispatch queue-pull cutover): step 4's gh-absent sandbox passes the states file to `queue-pull.js` as `--foreign-states`, replacing the `DISPATCH_FOREIGN_STATES` export.
 - Related records: #4553 (closed blocker that never landed), #3691 (gh-absent dispatch), #5084-#5087 (follow-ups filed from this build).

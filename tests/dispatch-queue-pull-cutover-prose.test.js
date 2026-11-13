@@ -354,7 +354,12 @@ test('#5230 AC5: mcp-transport.md Step 2 names every files input with its flag, 
 // parity matrix's `createSandbox(PARITY_S1(), { transport: 'files' })`: no gh anywhere on PATH, the
 // frozen clock, its own TMPDIR), never the real repo or wall clock. Each `{name}` resolves under
 // <root>/agent-in rather than the session dir, so no input sits at a CLI default path and a flag the
-// call drops reads nothing instead of the default. The reference is the S1-files-miss parity row's
+// call drops reads nothing instead of the default. On S1 that turns this run red for a dropped
+// --queue-raw, --dep-freshness, --open-numbers, --in-flight-raw or --in-flight-claims, but not for
+// --verified-open-deps or --foreign-states: S1's inputs for those two are empty (no OPEN unresolved
+// dependency, no foreign ref), so reading nothing changes no output. Those two rest on
+// assertFilesCall's pair pin alone (each flag dropped by a scratch mutation, #5230 fix round 1).
+// The reference is the S1-files-miss parity row's
 // module run (`--transport files`, the same agentInputs staged at the default session paths), which
 // that row holds equal to the oracle.
 const { createSandbox, runModuleCli, normalize, oracleSkip } = require('./bin-lib/dispatch/queue-pull-oracle');
