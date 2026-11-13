@@ -158,6 +158,18 @@ test('a second in-process call while one is pending throws', async () => {
   await p;
 });
 
+test('fresh: true reloads the modules under plugin/bin', () => {
+  const cli = path.join(__dirname, '..', 'plugin', 'bin', 'resolve-policy.js');
+  const dir = mk();
+  const opts = { cwd: dir, env: { ...process.env } };
+  require(cli).__marker = 1;
+  runCliSync(cli, ['--values', 'autonomy'], { ...opts, fresh: true });
+  assert.strictEqual(require(cli).__marker, undefined);
+  require(cli).__marker = 1;
+  runCliSync(cli, ['--values', 'autonomy'], opts);
+  assert.strictEqual(require(cli).__marker, 1);
+});
+
 test('spawnCli returns the same shape from a real process', () => {
   const dir = mk();
   const cli = path.join(FX, 'script-cli.js');

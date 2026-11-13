@@ -232,11 +232,22 @@ test('Review Focus 3: a cwd outside any git repository reads that directory\'s p
     return;
   }
   fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
-  fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'autonomy: unattended\n');
+  // `trusted`, not this repo's own `unattended`: the value must differ from the policy.yml at process.cwd().
+  fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'autonomy: trusted\n');
   const args = ['--values', 'autonomy'];
   const res = runCliSync(CLI, args, { cwd: dir, env: ENV });
-  assert.equal(res.stdout, 'unattended\n');
+  assert.equal(res.stdout, 'trusted\n');
   assert.deepStrictEqual(res, spawnCli(CLI, args, { cwd: dir, env: ENV }));
+});
+
+test('the repo-root lookup runs git with the injected env', () => {
+  const a = repo();
+  const b = repo('autonomy: unattended\n');
+  const env = { ...ENV, GIT_DIR: path.join(b, '.git'), GIT_WORK_TREE: b };
+  assert.deepStrictEqual(
+    runCliSync(CLI, ['--values', 'autonomy'], { cwd: a, env }),
+    { code: 0, stdout: 'unattended\n', stderr: '' },
+  );
 });
 
 test('two fixture repos back to back in one process each get their own answer', { skip: STUB_SKIP }, () => {
