@@ -106,6 +106,9 @@ function checkedPull(result) {
   if (!result.groups.every((g) => g.every(isRecord))) {
     throw new Error('malformed result: a group member is not a record with a positive integer number');
   }
+  // An empty group is no candidate: the ranking returns [] for it (not null), so the loop would
+  // attempt nothing and pull again without end.
+  if (!result.groups.every((g) => g.length > 0)) throw new Error('malformed result: a group is empty');
   if (!Array.isArray(result.exclusions)) throw new Error('malformed result: exclusions is not an array');
   return result;
 }

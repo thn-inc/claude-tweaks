@@ -279,9 +279,12 @@ test('pull-failed: a malformed pull is not an empty queue', async () => {
     { groups: [[pulled(1)], [null]], exclusions: [] }, { groups: [[pulled(1), 'x']], exclusions: [] },
     { groups: [[{ ...pulled(1), number: undefined }]], exclusions: [] }, { groups: [[{ ...pulled(1), number: 1.5 }]], exclusions: [] },
     { groups: [[{ ...pulled(1), number: '1' }]], exclusions: [] },
+    // An empty group: the ranking returns [] for it, which would loop forever without this refusal.
+    { groups: [[]], exclusions: [] }, { groups: [[pulled(1)], []], exclusions: [] },
   ];
   for (const pull of malformed) {
-    const f = fake({ pulls: [pull] });
+    // A second pull is an error, so a pull wrongly accepted ends red here rather than looping on the last pull forever.
+    const f = fake({ pulls: [pull, new Error('pulled again after a malformed pull')] });
     assert.equal(await run(f), 1, JSON.stringify(pull));
     assert.equal(summaryOf(f).ended, 'pull-failed', JSON.stringify(pull));
     assert.match(f.err, /^drive\.js: queue pull failed: malformed result/, JSON.stringify(pull));
