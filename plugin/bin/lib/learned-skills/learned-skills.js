@@ -110,6 +110,13 @@ function errText(e) {
   return [e && e.message, e && e.stderr].filter(Boolean).map((s) => String(s).trim().split('\n')[0]).join(' — ') || String(e);
 }
 
+// `{first stderr line}`: the first non-empty line of the child's stderr, else the message's first line
+// (execFileSync's message is "Command failed: git -C /abs/… " — an absolute path and the full argv).
+function firstStderrLine(e) {
+  const lines = (s) => String(s == null ? '' : s).split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  return lines(e && e.stderr)[0] || lines(e && e.message)[0] || String(e);
+}
+
 function toBuffer(x) { return Buffer.isBuffer(x) ? x : Buffer.from(String(x == null ? '' : x), 'utf8'); }
 
 // '.claude/skills/x/SKILL.md' -> 'x/SKILL.md'; a target without the prefix keeps its whole path.
@@ -192,34 +199,40 @@ function stageEntry({ runDir, worktree, entry, reason }, overrides = {}) {
 
   const check = () => {
     try { deps.git(['-C', worktree, 'apply', '--check', stagePath]); return { ok: true }; } catch (err) {
-      return { ok: false, text: errText(err) };
+      return { ok: false, text: firstStderrLine(err) };
     }
   };
   let gate;
   let note = '';
-  let probe = check();
-  if (probe.ok) {
-    gate = 'ok';
-  } else {
-    let readable = true;
-    try { deps.readFile(stagePath); } catch { readable = false; }
-    if (!readable) {
-      gate = 'unvalidated';
-      note = probe.text;
+  try {
+    let probe = check();
+    if (probe.ok) {
+      gate = 'ok';
     } else {
-      // Recompose once from the patch file the diff was captured to.
-      let again = toBuffer(entry.patch);
-      if (entry.patchFile) { try { again = deps.readFile(entry.patchFile); } catch { /* keep the bytes in hand */ } }
-      deps.writeFile(stagePath, compose(again));
-      probe = check();
-      if (probe.ok) {
-        gate = 'ok';
-      } else {
-        deps.writeFile(stagePath, Buffer.from(preamble, 'utf8'));
-        gate = 'description-only';
+      let readable = true;
+      try { deps.readFile(stagePath); } catch { readable = false; }
+      if (!readable) {
+        gate = 'unvalidated';
         note = probe.text;
+      } else {
+        // Recompose once from the patch file the diff was captured to.
+        let again = toBuffer(entry.patch);
+        if (entry.patchFile) { try { again = deps.readFile(entry.patchFile); } catch { /* keep the bytes in hand */ } }
+        deps.writeFile(stagePath, compose(again));
+        probe = check();
+        if (probe.ok) {
+          gate = 'ok';
+        } else {
+          deps.writeFile(stagePath, Buffer.from(preamble, 'utf8'));
+          gate = 'description-only';
+          note = probe.text;
+        }
       }
     }
+  } catch (err) {
+    // No half-written proposal stays behind: the caller treats a throw as "nothing staged".
+    try { if (deps.lstatType(stagePath).type !== 'missing') deps.unlink(stagePath); } catch { /* best effort */ }
+    throw err;
   }
 
   const logFailed = logStaged({ runDir, deps, target, summary, reason, gate, note, stageName: `wrap-up-skill-${n}.md` });
@@ -325,6 +338,7 @@ function capture({ runDir, worktree, mergeBase, target, summary }, overrides = {
   let workDiff = diff; // the diff matching the working tree right now
   let combinedWith = null; // the existing entry whose patch this diff now contains
   let restorePatch = null; // the earlier patch file's original bytes, once it is overwritten
+  let newPatchFile = null; // a patch file this call wrote with no manifest entry yet
   const patchDir = path.join(runDir, 'learned-skills');
   try {
     let id;
@@ -356,6 +370,7 @@ function capture({ runDir, worktree, mergeBase, target, summary }, overrides = {
 
     deps.mkdir(patchDir);
     deps.writeFile(patchFile, workDiff);
+    if (!existing) newPatchFile = patchFile;
 
     // Revert: a path in HEAD is checked out again; a new file leaves the index and the disk.
     if (tracked) {
@@ -371,7 +386,7 @@ function capture({ runDir, worktree, mergeBase, target, summary }, overrides = {
     return { route: 'captured', id, patch: patchFile, shared: Boolean(existing) };
   } catch (err) {
     return stageFallback({
-      err, deps, runDir, worktree, rel, note, manifest, existing: combinedWith, diff: workDiff, origDiff: diff, restorePatch, tracked, statusOf,
+      err, deps, runDir, worktree, rel, note, manifest, existing: combinedWith, diff: workDiff, origDiff: diff, restorePatch, newPatchFile, tracked, statusOf,
     });
   }
 }
@@ -388,7 +403,7 @@ function pruneEmptyParents(abs, worktree, deps) {
 
 // Puts the target back at HEAD (the edit is about to live in staged/ instead), then stages it.
 function stageFallback({
-  err, deps, runDir, worktree, rel, note, manifest, existing, diff, origDiff, restorePatch, tracked, statusOf,
+  err, deps, runDir, worktree, rel, note, manifest, existing, diff, origDiff, restorePatch, newPatchFile, tracked, statusOf,
 }) {
   const git = (args, opts) => deps.git(['-C', worktree, ...args], opts);
   const abs = path.join(worktree, rel);
@@ -409,6 +424,11 @@ function stageFallback({
     residue = true;
   }
 
+  // The edit lives in staged/ (or back in the tree) from here on, so an unrecorded patch file is an orphan.
+  if (newPatchFile) {
+    try { if (deps.lstatType(newPatchFile).type !== 'missing') deps.unlink(newPatchFile); } catch { /* best effort */ }
+  }
+
   const reason = `capture failed: ${errText(err)}`;
   // A joined earlier capture is superseded by the staged superset: name both findings.
   const summary = existing && existing.summary ? `${oneLine(existing.summary)}; ${note}` : note;
@@ -418,14 +438,22 @@ function stageFallback({
   } catch (stageErr) {
     // Staging failed after the tree was reset: put the edit back so the caller can still commit it.
     if (restorePatch) { try { deps.writeFile(restorePatch.file, restorePatch.bytes); } catch { /* best effort */ } }
+    // If the tree still holds the edit (the reset left residue), there is nothing to put back.
+    let inTree = false;
+    try { inTree = Boolean(statusOf()); } catch { inTree = false; }
     let restored = true;
-    try { git(['apply', '-'], { input: origDiff }); } catch { restored = false; }
-    throw new StagingFailure(
-      `${reason}; then staging failed (${errText(stageErr)}); ${restored
-        ? 'the edit was restored in the working tree (not captured, not staged) — commit it on the run branch'
-        : 'restoring the edit in the working tree failed too — it is lost from the tree; recover it from the run dir\'s learned-skills/*.patch if present'}`,
-      { restored },
-    );
+    let how = 'the edit is still in the working tree (the reset left it there; not captured, not staged) — commit it on the run branch';
+    if (!inTree) {
+      try {
+        git(['apply', '-'], { input: origDiff });
+        how = 'the edit was restored in the working tree (not captured, not staged) — commit it on the run branch';
+      } catch {
+        restored = false;
+        how = 'restoring the edit in the working tree failed too — it is not in the tree; recover it from the run dir\'s learned-skills/*.patch if present';
+      }
+    }
+    if (inTree && restorePatch) how += `; the earlier captured patch ${existing ? existing.id : ''} may overlap it`;
+    throw new StagingFailure(`${reason}; then staging failed (${errText(stageErr)}); ${how}`, { restored });
   }
 
   // Record the outcome.

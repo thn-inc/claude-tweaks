@@ -381,6 +381,81 @@ test('degraded gates log staged-patch.md lines', (t) => {
   });
   assert.equal(unv.gate, 'unvalidated');
   const log = fs.readFileSync(path.join(f.runDir, 'decisions.md'), 'utf8');
-  assert.match(log, /- STAGED \d\d:\d\d:\d\d — Skills row: x\/SKILL\.md \(garbled\) — patch failed `git apply --check` at staging \(.*\); staged description-only at staged\/wrap-up-skill-1\.md\. Reversibility: high\.$/m);
+  const m = /- STAGED \d\d:\d\d:\d\d — Skills row: x\/SKILL\.md \(garbled\) — patch failed `git apply --check` at staging \((.*)\); staged description-only at staged\/wrap-up-skill-1\.md\. Reversibility: high\.$/m.exec(log);
+  assert.ok(m, log);
+  assert.notEqual(m[1], '');
+  assert.doesNotMatch(m[1], /Command failed/);
+  assert.equal(m[1].includes(f.repo), false, 'no absolute path in the first stderr line');
+  assert.equal(m[1].includes(f.runDir), false);
   assert.match(log, /- STAGED \d\d:\d\d:\d\d — Skills row: x\/SKILL\.md \(unchecked\) — gate could not run: .* — path\/anchoring problem, not a composition error\. Reversibility: high\.$/m);
+});
+
+// --- fix round 2 ---------------------------------------------------------------------------------
+
+const failMkdirStaged = (p) => {
+  if (path.basename(p) === 'staged') throw Object.assign(new Error('EACCES: staged'), { code: 'EACCES' });
+  fs.mkdirSync(p, { recursive: true });
+};
+
+test('residue plus a failed staging reports the edit as still in the tree, not lost', (t) => {
+  const f = fixture(t);
+  const original = fs.readFileSync(path.join(f.repo, X), 'utf8');
+  write(f.repo, X, original + 'stuck edit\n');
+  const calls = [];
+  const deps = {
+    ...baseDeps,
+    // checkout is a no-op (residue), and the fallback's own resets fail too
+    git: (a, o) => {
+      calls.push(a);
+      if (a.includes('checkout')) return '';
+      if (a.includes('restore') || (a.includes('apply') && a.includes('-R'))) throw new Error('simulated reset failure');
+      return realDeps.git(a, o);
+    },
+    mkdir: failMkdirStaged,
+  };
+  let caught;
+  try { capture(args(f, X), deps); } catch (e) { caught = e; }
+  assert.ok(caught instanceof StagingFailure);
+  assert.equal(caught.restored, true);
+  assert.match(caught.message, /still in the working tree/);
+  assert.doesNotMatch(caught.message, /lost|not in the tree/);
+  assert.equal(calls.some((a) => a.includes('apply') && a.includes('-') && a[a.length - 1] === '-' && !a.includes('-R')), false, 'no re-apply on top of the edit');
+  assert.equal(fs.readFileSync(path.join(f.repo, X), 'utf8'), original + 'stuck edit\n');
+});
+
+test('a throw after the staged file was created leaves no partial proposal', (t) => {
+  const f = fixture(t);
+  const original = fs.readFileSync(path.join(f.repo, X), 'utf8');
+  write(f.repo, X, original + 'edit\n');
+  const deps = {
+    ...baseDeps,
+    git: (a, o) => {
+      if (a.includes('checkout')) throw new Error('simulated checkout failure');
+      if (a.includes('--check')) throw new Error('simulated check failure');
+      return realDeps.git(a, o);
+    },
+    writeFile: (p, data) => {
+      if (p.endsWith('.md')) throw new Error('disk full');
+      return realDeps.writeFile(p, data);
+    },
+  };
+  assert.throws(() => capture(args(f, X), deps), (e) => e instanceof StagingFailure && e.restored === true);
+  const stagedDir = path.join(f.runDir, 'staged');
+  const left = fs.existsSync(stagedDir) ? fs.readdirSync(stagedDir) : [];
+  assert.deepEqual(left, []);
+  assert.equal(fs.readFileSync(path.join(f.repo, X), 'utf8'), original + 'edit\n');
+});
+
+test('a fallback leaves no orphan patch file', (t) => {
+  const f = fixture(t);
+  write(f.repo, X, fs.readFileSync(path.join(f.repo, X), 'utf8') + 'edit\n');
+  const orphan = path.join(f.runDir, 'learned-skills', '1.patch');
+  const res = capture(args(f, X), { ...baseDeps, git: failCheckout });
+  assert.equal(res.route, 'staged');
+  assert.equal(fs.existsSync(orphan), false);
+
+  const g = fixture(t);
+  write(g.repo, X, fs.readFileSync(path.join(g.repo, X), 'utf8') + 'edit\n');
+  assert.throws(() => capture(args(g, X), { ...baseDeps, git: failCheckout, mkdir: (p) => { failMkdirStaged(p); } }), StagingFailure);
+  assert.equal(fs.existsSync(path.join(g.runDir, 'learned-skills', '1.patch')), false);
 });

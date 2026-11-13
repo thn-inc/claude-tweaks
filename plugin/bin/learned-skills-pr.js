@@ -11,8 +11,12 @@
 //   {route:'captured', id, patch, shared}         patch written, tree reverted; shared:true when the
 //                                                 target was already captured in this run
 //   {route:'clean'}                               nothing changed and nothing captured before
-//   {route:'staged', stagePath, reason[, residue]} a failure after the diff was read: the edit is
-//                                                 staged as staged/wrap-up-skill-{N}.md instead
+//   {route:'staged', stagePath, reason[, residue][, logFailed]}
+//                                                 a failure after the diff was read: the edit is
+//                                                 staged as staged/wrap-up-skill-{N}.md instead.
+//                                                 residue:true — the tree could not be reset to HEAD;
+//                                                 logFailed:true — the STAGED line did not land in
+//                                                 decisions.md, the caller hand-logs it
 // Exit 0 ok (every route above, staged included)
 //      1 a git failure before the diff was read — nothing was changed; the caller commits on the run
 //        branch and logs FAILED (merge-check's floor still holds that run). Also a failure after the
@@ -22,7 +26,7 @@
 //        under the main checkout (a worktree-local shadow), or not a directory
 // --run is anchored strictly through lib/stage-item/write.js's resolveTarget (the sanctioned writers'
 // predicate), with exit 2 for a refusal, as this CLI has no exit 3. The staged line is written to
-// decisions.md by the library, so the caller logs nothing on the staged route.
+// decisions.md by the library, so the caller logs nothing on the staged route unless logFailed:true.
 'use strict';
 
 const fs = require('fs');
@@ -32,7 +36,11 @@ const { resolveTarget } = require('./lib/stage-item/write');
 
 const USAGE = 'usage: learned-skills-pr.js capture --run <run-dir> --worktree <abs> --merge-base <sha> --target <repo-rel> --summary-file <path>\n'
   + '  prints {route: run-branch | captured | clean | staged, ...}\n'
-  + '  exit 0 ok, 1 git failure before the diff was read (nothing changed), 2 malformed invocation or refused --run\n';
+  + '  staged results may carry residue:true (tree not reset) and logFailed:true (hand-log the STAGED line)\n'
+  + '  exit 0 ok (staged included)\n'
+  + '       1 git failure before the diff was read (nothing changed), or a failure after it that staging could not\n'
+  + '         absorb ("staging failed too"; stderr says whether the edit is back in the working tree)\n'
+  + '       2 malformed invocation or refused --run\n';
 
 const VERBS = new Set(['capture']);
 const FLAGS = {
