@@ -131,3 +131,26 @@ test('Task0: evidenceArgs covers npm test only', () => {
   assert.deepStrictEqual(Object.keys(EVIDENCE_COMMANDS), ['npm test']);
   assert.ok(Object.isFrozen(EVIDENCE_COMMANDS));
 });
+
+const { REVIEW_RESULT_SCHEMA, ROLES, composeArgs } = require(path.join(LIB, 'driver', 'roles.js'));
+const { conformsTo, superviseChild } = require(path.join(LIB, 'driver', 'worker.js'));
+
+test('AC1: the reviewer launch has --restricted, no Bash, no bypass flag and no settings file', () => {
+  for (const platform of ['darwin', 'linux', 'win32']) {
+    const args = composeArgs({ role: 'reviewer', schema: REVIEW_RESULT_SCHEMA, platform });
+    assert.ok(args.includes('--restricted'), platform);
+    assert.ok(!args[args.indexOf('--tools') + 1].split(',').includes('Bash'), platform);
+    assert.ok(!args.some((a) => /dangerously-skip-permissions|bypassPermissions/.test(a)), platform);
+    assert.ok(!args.includes('--settings'), platform);
+  }
+  assert.strictEqual(ROLES.reviewer.settings, false);
+});
+
+test('Task1: the reviewer result schema and the exported superviseChild', () => {
+  assert.strictEqual(conformsTo(REVIEW_RESULT_SCHEMA, { findings: [] }), true);
+  assert.strictEqual(conformsTo(REVIEW_RESULT_SCHEMA, {}), false);
+  assert.strictEqual(conformsTo(REVIEW_RESULT_SCHEMA, { findings: {} }), false);
+  assert.strictEqual(conformsTo(REVIEW_RESULT_SCHEMA, { findings: [], extra: 1 }), false);
+  assert.ok(Object.isFrozen(REVIEW_RESULT_SCHEMA) && Object.isFrozen(REVIEW_RESULT_SCHEMA.properties));
+  assert.strictEqual(typeof superviseChild, 'function');
+});

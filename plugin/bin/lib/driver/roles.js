@@ -153,7 +153,19 @@ const RESULT_SCHEMA = deepFreeze({
   additionalProperties: false,
 });
 
-const SANDBOX_PROBED_PLATFORMS = deepFreeze(['darwin']);
+// The reviewer's result: one array, each element checked one by one in review.js (the
+// launcher's schema subset has no `items`). `required` is derived for the same reason.
+const REVIEW_PROPERTIES = {
+  findings: { type: 'array' },
+};
+const REVIEW_RESULT_SCHEMA = deepFreeze({
+  type: 'object',
+  properties: REVIEW_PROPERTIES,
+  required: Object.keys(REVIEW_PROPERTIES),
+  additionalProperties: false,
+});
+
+const SANDBOX_PROBED_PLATFORMS =deepFreeze(['darwin']);
 
 const ROLES = deepFreeze({
   implementer: { tools: ['Read', 'Write', 'Edit', 'Bash'], settings: true },
@@ -238,4 +250,4 @@ function composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeilin
   return args;
 }
 
-module.exports = { RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, ROLES, implementerSettings, composeArgs, toolsFor, assertSpendCeiling };
+module.exports = { RESULT_SCHEMA, REVIEW_RESULT_SCHEMA,SANDBOX_PROBED_PLATFORMS, ROLES, implementerSettings, composeArgs, toolsFor, assertSpendCeiling };

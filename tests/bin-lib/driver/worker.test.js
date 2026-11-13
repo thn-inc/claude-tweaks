@@ -427,7 +427,6 @@ test('conformsTo covers the schema subset and refuses the rest', () => {
   assert.strictEqual(conformsTo(RESULT_SCHEMA, []), false);
   assert.throws(() => conformsTo({ type: 'object', patternProperties: {} }, {}), /patternProperties/);
   for (const [schema, pattern] of [
-    [{ type: 'array' }, /type "array"/],
     [{ type: 'object', properties: { n: { type: 'integer' } } }, /type "integer"/],
     [{ type: 'object', additionalProperties: {} }, /additionalProperties/],
     [{ type: 'object', properties: [] }, /properties/],
@@ -437,6 +436,14 @@ test('conformsTo covers the schema subset and refuses the rest', () => {
   ]) {
     assert.throws(() => conformsTo(schema, {}), pattern, JSON.stringify(schema));
   }
+});
+
+test('conformsTo covers type array', () => {
+  assert.strictEqual(conformsTo({ type: 'array' }, []), true);
+  assert.strictEqual(conformsTo({ type: 'array' }, [1, 'x']), true);
+  assert.strictEqual(conformsTo({ type: 'array' }, {}), false);
+  assert.strictEqual(conformsTo({ type: 'array' }, 'a'), false);
+  assert.throws(() => conformsTo({ type: 'array', items: {} }, []), /items/);
 });
 
 test('Review: each schema failure names its cause in detail', async (t) => {
