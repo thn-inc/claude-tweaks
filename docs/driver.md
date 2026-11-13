@@ -77,7 +77,7 @@ Notes:
 - A stop class outside the table is settled by the `blocked` row and flagged `unclassified`.
 - `git worktree remove` runs with `--force --force` because the driver creates the worktree locked. A worktree that is no longer registered is "already gone", not a failure; so is a branch that no longer exists.
 - A `release-claim.js` exit 3 (already released) or 4 (held by another run) is not a failure.
-- Comments and the escalate detail file are built from fixed templates. The worker, test and `check` detail is reduced first: allow-listed characters only, at most 200 characters, `@` neutralized, paths replaced by `<path>`, token-shaped strings by `<redacted>`.
+- Comments and the escalate detail file are built from fixed templates. The worker, test and `check` detail is reduced first: allow-listed characters only, at most 200 characters, `@` neutralized, paths replaced by `<path>`, token-shaped strings by `<redacted>`, and `GH-N` and `www.` shapes split (`GH N`, `www `) so GitHub neither backlinks nor autolinks them. A bare host such as `evil.com` is left as is; GitHub links only `www.` and scheme forms.
 - No settle call uses a model.
 
 ## After an interrupt
