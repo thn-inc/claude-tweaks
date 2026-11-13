@@ -88,6 +88,7 @@ Manual cleanup for an interrupted record:
 
 - Release the claim: `node plugin/bin/release-claim.js {n} --run {run-dir} --reason interrupted`. The claim also lapses by its TTL.
 - Remove the worktree and branch the run created: `git worktree remove --force --force {wt}`, then `git branch -D {branch}`. Or leave them for the standard path.
+- If you removed the worktree, close the run: `node plugin/bin/hooks.js close-run --run {run-dir}`. Otherwise the run stays active, naming a worktree that is gone. This is the same call settle makes last on a pre-push stop.
 
 ## Taking an escalated record again
 
