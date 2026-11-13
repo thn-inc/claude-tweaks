@@ -18,30 +18,122 @@
 // CLI's seam.
 'use strict';
 
+const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { substituteFile, describePath } = require('./file-template');
 const { toPosix } = require('../shared-primitives');
+const { lstatType, canonicalRealpath, resolveWithin } = require('../path-guard');
+const { ensureOwnDir } = require('../suite-slot');
 const {
   sniffFamily, extractFailingFiles, countUnmatchedFailures, fileLevelFailures, failingTestsByFile, parseCounts, stripAnsi,
-  specEntryCount, cancelledCount, testTree,
+  specEntryCount, cancelledCount, testTree, timeoutEvidence,
 } = require('./extract');
 
-// `warn` and `rmSync` are injectable so a test can force a failed cleanup.
-function realGit(cwd, { warn = (line) => process.stderr.write(line), rmSync = fs.rmSync } = {}) {
+// #5150: the one scratch path a held suite slot owns — keyed by the repository (its git common
+// dir, shared by every worktree) and the slot's lock dir, so holders of the same slot index under
+// two lock dirs never share a path. Pure; callers pass both directories already canonical.
+function slotScratchPath({ tmpdir, commonDir, slotBase, slot }) {
+  const repoKey = crypto.createHash('sha256').update(`${commonDir}\n${slotBase}`).digest('hex').slice(0, 12);
+  return path.join(tmpdir, 'ct-verify-base', repoKey, `slot-${slot}`, 'wt');
+}
+
+// `warn` and `rmSync` are injectable so a test can force a failed cleanup; `tmpdir` is where
+// every scratch worktree is made, so a test can keep them out of the real temp dir.
+function realGit(cwd, { warn = (line) => process.stderr.write(line), rmSync = fs.rmSync, tmpdir = os.tmpdir() } = {}) {
   // `input`, when given, is piped to the child's stdin (the two batch-check
   // / hash-object calls below); every other call site passes none, and stdin
   // stays closed exactly as it did before `input` existed.
-  const git = (args, input) => String(execFileSync('git', args, {
+  // `env`, when given, replaces the inherited environment for that one call (headOf's ceiling).
+  const git = (args, input, env) => String(execFileSync('git', args, {
     cwd, encoding: 'utf8', stdio: input === undefined ? ['ignore', 'pipe', 'pipe'] : ['pipe', 'pipe', 'pipe'], input, windowsHide: true,
+    ...(env === undefined ? {} : { env }),
   })).trim();
+  // Every worktree `git` currently has registered against this repo, as
+  // absolute paths — read-only, so the caller can name a stale one without
+  // ever sweeping it itself (#3064).
+  const listWorktrees = () => {
+    try {
+      return [...git(['worktree', 'list', '--porcelain']).matchAll(/^worktree (.+)$/gm)].map((m) => m[1]);
+    } catch { return []; }
+  };
+  // A fresh `ct-verify-base-*` parent of its own: every run without a held slot, and every run
+  // whose slot path a guard refused.
+  const freshWorktree = (sha) => {
+    const parent = fs.mkdtempSync(path.join(tmpdir, 'ct-verify-base-'));
+    const dir = path.join(parent, 'wt');
+    try {
+      git(['worktree', 'add', '--detach', dir, sha]);
+    } catch (err) {
+      // The caller never learns `dir` on a throw, so its cleanup cannot run — remove the parent here.
+      try { rmSync(parent, { recursive: true, force: true }); } catch { /* best effort */ }
+      throw err;
+    }
+    return dir;
+  };
+  // A registered worktree path in canonical form; one whose directory is gone keeps its basename
+  // under its parent's canonical form, so a leftover whose checkout was deleted still matches.
+  const canonicalListed = (listed) => {
+    const real = canonicalRealpath(listed);
+    if (real !== null) return real;
+    const parent = canonicalRealpath(path.dirname(listed));
+    return parent === null ? null : path.join(parent, path.basename(listed));
+  };
+  // #5150: the slot's stable path and whether a leftover sits there, or the reason it cannot be
+  // used. Every guard runs before anything is removed, so a refusal removes nothing.
+  const slotWorktree = (slot, slotBase) => {
+    const base = slotBase === null ? null : canonicalRealpath(slotBase);
+    if (base === null) return { reason: 'no-slot-lock-dir' };
+    let commonDir = null;
+    try {
+      const out = git(['rev-parse', '--git-common-dir']);
+      if (out !== '') commonDir = canonicalRealpath(path.resolve(cwd, out));
+    } catch { /* not a repository: null */ }
+    if (commonDir === null) return { reason: 'no-common-dir' };
+    const root = path.join(tmpdir, 'ct-verify-base');
+    try {
+      ensureOwnDir(root);
+    } catch (err) {
+      return { reason: `root-unusable: ${String((err && err.message) || err)}` };
+    }
+    const dir = slotScratchPath({ tmpdir, commonDir, slotBase: base, slot });
+    // A symlinked `<repo-key>` or `slot-<index>` resolves outside the root: refused before
+    // anything is made, removed or checked out there — so `<repo-key>` is made and checked
+    // alone before `slot-<index>` is made inside it.
+    const slotDir = path.dirname(dir);
+    let parent = null;
+    for (const level of [path.dirname(slotDir), slotDir]) {
+      try {
+        fs.mkdirSync(level, { recursive: true, mode: 0o700 });
+      } catch (err) {
+        return { reason: `slot-dir-unusable: ${String((err && err.message) || err)}` };
+      }
+      parent = resolveWithin(level, root);
+      if (parent === null) return { reason: 'parent-outside-root' };
+    }
+    const target = path.join(parent, path.basename(dir));
+    const leaf = lstatType(dir).type;
+    const registered = listWorktrees().some((listed) => canonicalListed(listed) === target);
+    // The parent is proven inside the root, so the leaf alone decides: a symlinked or file `wt`
+    // is never removed through.
+    if (leaf !== 'missing' && leaf !== 'directory') return { reason: 'leftover-not-a-directory' };
+    return { dir, leftover: registered || leaf !== 'missing' };
+  };
   return {
     repoRoot: () => git(['rev-parse', '--show-toplevel']),
     resolveCommit: (ref) => {
       // --end-of-options: a ref spelled like a flag is a (non-existent) ref, never a git option.
       try { return git(['rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`]) || null; } catch { return null; }
+    },
+    // #5150: the sha a checkout's HEAD is at, or null on any failure (a missing directory, not a
+    // checkout) — a base-side run counts as evidence only while the scratch is at the base sha.
+    // The ceiling stops git at `dir`: a half-removed scratch never reads an enclosing repo's HEAD.
+    headOf: (dir) => {
+      try {
+        return git(['-C', dir, 'rev-parse', '--verify', 'HEAD'], undefined, { ...process.env, GIT_CEILING_DIRECTORIES: path.dirname(dir) }) || null;
+      } catch { return null; }
     },
     // `git merge-base --is-ancestor`: exit 0 → true, exit 1 → false; any
     // other failure throws (the caller's adjudication-error path), never a
@@ -105,37 +197,46 @@ function realGit(cwd, { warn = (line) => process.stderr.write(line), rmSync = fs
     // `tests/../../x` verbatim), is never inside it.
     inCheckout: (dir, rel) => !path.posix.isAbsolute(rel) && !/^[A-Za-z]:/.test(rel)
       && !rel.split('/').includes('..') && fs.existsSync(path.join(dir, rel)),
-    addWorktree: (sha) => {
-      const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-verify-base-'));
-      const dir = path.join(parent, 'wt');
+    // #5150: with a held slot (`slot` its index, `slotBase` its lock dir) the checkout goes to the
+    // slot's stable path, clearing a leftover a killed run on this slot left there (`reused`).
+    // A guard that refuses that path warns once and falls back to a fresh path, recording why
+    // in `fallback`; without a slot it is the fresh path, silently.
+    addWorktree: (sha, { slot = null, slotBase = null } = {}) => {
+      if (slot === null) return { dir: freshWorktree(sha), reused: false };
+      const chosen = slotWorktree(slot, slotBase);
+      if (chosen.reason !== undefined) {
+        warn(`verify.js: baseline scratch: the per-slot path is unavailable (${chosen.reason}) — using a fresh ct-verify-base-* path for this run\n`);
+        return { dir: freshWorktree(sha), reused: false, fallback: chosen.reason };
+      }
+      const { dir, leftover } = chosen;
+      if (leftover) {
+        try { git(['worktree', 'remove', '--force', dir]); } catch { /* best effort — rm below */ }
+        try { rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
+        try { git(['worktree', 'prune']); } catch { /* best effort */ }
+      }
       try {
         git(['worktree', 'add', '--detach', dir, sha]);
       } catch (err) {
-        // The caller never learns `dir` on a throw, so its cleanup cannot run — remove the parent here.
-        try { rmSync(parent, { recursive: true, force: true }); } catch { /* best effort */ }
+        // The caller never learns `dir` on a throw; `slot-<index>/` stays for the next run.
+        try { rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
         throw err;
       }
-      return dir;
+      return { dir, reused: leftover };
     },
     // Never silent: a scratch that survives every attempt is named on stderr
     // with the manual cleanup command. No startup sweep — it could delete a
-    // sibling session's live scratch.
+    // sibling session's live scratch. A fresh path's `ct-verify-base-*` parent
+    // goes with it; a slot path's `slot-<index>/` stays (#5150).
     removeWorktree: (dir) => {
       try { git(['worktree', 'remove', '--force', dir]); } catch { /* best effort — rm below */ }
-      try { rmSync(path.dirname(dir), { recursive: true, force: true }); } catch { /* best effort */ }
+      const owned = path.basename(path.dirname(dir)).startsWith('ct-verify-base-') ? path.dirname(dir) : dir;
+      try { rmSync(owned, { recursive: true, force: true }); } catch { /* best effort */ }
       try { git(['worktree', 'prune']); } catch { /* best effort */ }
       if (fs.existsSync(dir)) {
         warn(`verify.js: could not remove the baseline scratch worktree ${dir} — remove it manually: git worktree remove --force ${dir}\n`);
       }
     },
-    // Every worktree `git` currently has registered against this repo, as
-    // absolute paths — read-only, so the caller can name a stale one without
-    // ever sweeping it itself (#3064).
-    listWorktrees: () => {
-      try {
-        return [...git(['worktree', 'list', '--porcelain']).matchAll(/^worktree (.+)$/gm)].map((m) => m[1]);
-      } catch { return []; }
-    },
+    listWorktrees,
   };
 }
 
@@ -309,15 +410,50 @@ function absentFromCheckoutReason(n, checkName) {
 // to report (#3064).
 const SIGNAL_EXIT_CODES = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 };
 
+// #5150: the back-off reasons `concurrency.reason` carries, defined once so the sites that set them
+// in adjudicate() and backOffRan() below, which reads them, cannot drift apart.
+const TIMEOUT_EVIDENCE_REASON = 'timeout-evidence: '; // followed by the check's name
+const PHASE_TIMEOUT_REASON = { baseline: 'phase-timeout: baseline', isolated: 'phase-timeout: isolated' };
+// The phases a back-off from the declared reruns governs — every phase for evidence on a
+// failing check, only the phases after the one that timed out for a phase timeout.
+const BACKED_OFF_PHASES = {
+  [PHASE_TIMEOUT_REASON.baseline]: ['isolated', 'retry'],
+  [PHASE_TIMEOUT_REASON.isolated]: ['retry'],
+};
+// Whether a result's `concurrency` record shows a back-off that some phase actually ran under
+// (a non-null `used`): the condition for verify.js's back-off stdout line.
+function backOffRan(concurrency) {
+  if (!concurrency || typeof concurrency.reason !== 'string' || !concurrency.used) return false;
+  const phases = concurrency.reason.startsWith(TIMEOUT_EVIDENCE_REASON)
+    ? ['baseline', 'isolated', 'retry'] : BACKED_OFF_PHASES[concurrency.reason];
+  return Boolean(phases) && phases.some((phase) => concurrency.used[phase] !== null);
+}
+
 async function adjudicate({
   checks, baselineCmds, base, baseSha, cwd = null, logDir, runOne, spawnImpl, now = Date.now,
-  envOf = () => null, timeoutOf = () => null, git, concurrency = 4, env = process.env, computeFixed = true,
+  envOf = () => null, timeoutOf = () => null, git, env = process.env, computeFixed = true,
   platform = process.platform,
+  // #5150: the declared rerun limit — null (undeclared) runs one rerun at a time. A declared limit
+  // above 1 drops to 1 for every later phase once timeout evidence appears (a failing check's own
+  // log, or a rerun's), because load-induced timeouts are what concurrency causes.
+  concurrency = null,
+  // #5150: project-declared substrings counted as timeout evidence beside the runner's own markers.
+  timeoutPatterns = [],
+  // #5119: takes the full-lane suite slot and returns it as `{ index, base }` (null when none was
+  // taken). Called at most once, just before the first rerun spawns, never when nothing will; the
+  // caller releases.
+  takeSlot = () => null,
 }) {
+  // #5150: any other limit would run silently wrong (NaN spawns nothing), so it throws — the
+  // caller's adjudication-error path, like every other adjudicator failure.
+  if (concurrency !== null && !(Number.isInteger(concurrency) && concurrency >= 1)) {
+    throw new TypeError(`concurrency must be null or a positive integer, got ${typeof concurrency} ${String(concurrency)}`);
+  }
   const header = { base, baseSha };
   const ineligible = (reason) => ({ ...header, eligible: false, reason });
   const work = [];
   const acceptedChecks = [];
+  let evidenceCheck = null;
   const headDir = tryRealpath(cwd || process.cwd());
   // Every log is read against the checkout it ran in, and only a path present
   // there names a failing file (#3153).
@@ -377,6 +513,7 @@ async function adjudicate({
       }
     }
     acceptedChecks.push(c);
+    if (evidenceCheck === null && (c.timedOut || timeoutEvidence(text, family, timeoutPatterns) !== null)) evidenceCheck = c.name;
     const headFileLevel = fileLevelFailures(text, family, at(headDir));
     const headTests = failingTestsByFile(text, family, at(headDir));
     const headLocated = failingTestsByFile(text, family, { ...at(headDir), located: true });
@@ -412,6 +549,9 @@ async function adjudicate({
   const atBase = work.map((w) => baseInfo.get(repoRel(w.file)).exists);
   const unchanged = work.map((w) => baseInfo.get(repoRel(w.file)).same);
   let scratch = null;
+  // #5150: whether addWorktree cleared a leftover at the slot path, and why it fell back, if it did.
+  let scratchReused = false;
+  let scratchFallback;
   let signalHandlers = [];
   // #3063: a single-file run bounds at the same timeout as the check's own
   // full-suite --cmd-timeout (a generous bound — one file should finish
@@ -422,6 +562,19 @@ async function adjudicate({
     env: envOf(w.check), timeout: timeoutOf(w.check),
   });
   const headResolvesDeps = Boolean(env.NODE_PATH) || hasNodeModulesUpward(headDir);
+  // #5119: every rerun below needs a failing file present at base — its base run, its isolated
+  // HEAD run, a retry of that, the base full run — so with none nothing spawns and no slot is
+  // taken. Taken before the signal handlers below exist, so a signal during the wait exits by
+  // default and leaves no scratch worktree behind.
+  // The slot this process took, as `{ index, base }` — its index and the lock dir it was taken
+  // under — which together pick the scratch worktree's stable path (#5150). Only what takeSlot
+  // returns sets it, so a stable path is never used without the slot that makes it exclusive;
+  // null keeps a fresh ct-verify-base-* path.
+  let slot = null;
+  if (atBase.some(Boolean)) {
+    const taken = takeSlot();
+    if (taken !== null && taken !== undefined) slot = taken;
+  }
   try {
     if (atBase.some(Boolean)) {
       // While the scratch worktree exists, a Ctrl-C or kill removes it
@@ -438,10 +591,45 @@ async function adjudicate({
       signalHandlers = Object.entries(SIGNAL_EXIT_CODES).map(([sig, code]) => [sig, () => { if (scratch) git.removeWorktree(scratch); process.exit(code); }]);
       for (const [sig, handler] of signalHandlers) process.on(sig, handler);
       // Realpath'd like headDir (#3167): addWorktree may return a symlinked path.
-      scratch = tryRealpath(git.addWorktree(baseSha));
+      const added = git.addWorktree(baseSha, { slot: slot === null ? null : slot.index, slotBase: slot === null ? null : slot.base });
+      scratch = tryRealpath(added.dir);
+      scratchReused = added.reused;
+      scratchFallback = added.fallback;
     }
     const baseDir = scratch && (sub ? path.join(scratch, ...sub.split('/')) : scratch);
-    const baseRuns = await pool(work, concurrency, (w, k) => (atBase[k] ? run(w, 'baseline', baseDir) : null));
+    // #5150: the limit each phase's pool runs under, lowered to 1 for good by timeout evidence.
+    let limit = concurrency === null ? 1 : concurrency;
+    let reason = concurrency === null ? 'default-serial' : 'declared';
+    if (limit > 1 && evidenceCheck !== null) { limit = 1; reason = `${TIMEOUT_EVIDENCE_REASON}${evidenceCheck}`; }
+    // A rerun's own log carrying timeout evidence is that phase timing out, like a process timeout.
+    const timedOutRun = (r) => {
+      if (!r) return false;
+      if (r.timedOut) return true;
+      const log = readLog(r.logPath);
+      return log !== null && timeoutEvidence(log, sniffFamily(log), timeoutPatterns) !== null;
+    };
+    // #5150: every base-side run (each per-file rerun and each base full run) goes through here. It
+    // counts as evidence only when the scratch's HEAD is the base sha both just before it spawns and
+    // once it settles — a sibling's cleanup may replace the checkout at a shared path at any moment.
+    // Otherwise nothing of the run is kept — not even a clean exit, which would read as "passes at
+    // base" — only a `moved` marker with no exit code, and a run that never started is not spawned.
+    let scratchMoved = false;
+    // Whether any base-side run got past the check before it — `used.baseline` counts spawns only.
+    let baseSpawned = false;
+    const runAtBase = async (args) => {
+      const refused = () => { scratchMoved = true; return { moved: true, exitCode: null }; };
+      if (git.headOf(scratch) !== baseSha) return refused();
+      baseSpawned = true;
+      const r = await runOne(args);
+      return git.headOf(scratch) !== baseSha ? refused() : r;
+    };
+    const used = { baseline: null, isolated: null, retry: null };
+    const baseRuns = await pool(work, limit, (w, k) => (atBase[k] ? runAtBase({
+      name: `${w.check}-baseline-${slug(w.file)}`, command: w.command, logDir, spawnImpl, now, cwd: baseDir,
+      env: envOf(w.check), timeout: timeoutOf(w.check),
+    }) : null));
+    if (baseSpawned) used.baseline = limit;
+    if (limit > 1 && baseRuns.some(timedOutRun)) { limit = 1; reason = PHASE_TIMEOUT_REASON.baseline; }
     // A numeric non-zero exit alone proves nothing (a typo'd template, a scratch
     // tree with no node_modules and a shell syntax error all exit non-zero):
     // the base run's own log must name this very file as failing, under the
@@ -468,7 +656,9 @@ async function adjudicate({
     // Every file present at base takes one isolated HEAD run. A file absent
     // at base is new on this branch: attributable outright — an isolated pass
     // must never let a flaky verdict cover a new file.
-    const headRuns = await pool(work, concurrency, (w, k) => (atBase[k] ? run(w, 'isolated', cwd) : null));
+    const headRuns = await pool(work, limit, (w, k) => (atBase[k] ? run(w, 'isolated', cwd) : null));
+    if (headRuns.some(Boolean)) used.isolated = limit;
+    if (limit > 1 && headRuns.some(timedOutRun)) { limit = 1; reason = PHASE_TIMEOUT_REASON.isolated; }
     // A test file that does not load at all has no tests to compare, so it is
     // baseline only when it is wholly file-level at base and in the full run,
     // unchanged, failing at the same sites (a load failure at 1:1 never covers
@@ -549,7 +739,8 @@ async function adjudicate({
       Boolean(headRuns[k]) && typeof headRuns[k].exitCode === 'number' && headRuns[k].exitCode !== 0
       && !headLoadFail[k] && !headRanClean[k] && !headBaselineIso[k]
     ));
-    const retryRuns = await pool(work, concurrency, (w, k) => (needsRetry[k] ? run(w, 'isolated-retry', cwd) : null));
+    const retryRuns = await pool(work, limit, (w, k) => (needsRetry[k] ? run(w, 'isolated-retry', cwd) : null));
+    if (retryRuns.some(Boolean)) used.retry = limit;
     const baselineFailing = [];
     const flakyPassed = [];
     const flakyLogs = {};
@@ -599,9 +790,10 @@ async function adjudicate({
       for (const c of acceptedChecks) {
         const checkEnv = envOf(c.name);
         if (!c.command) { fixedReason = `${c.name} has no command to run at base`; break; }
-        const r = await runOne({
+        const r = await runAtBase({
           name: `${c.name}-base-full`, command: c.command, logDir, spawnImpl, now, cwd: baseDir, env: checkEnv, timeout: timeoutOf(c.name),
         });
+        if (r.moved) { fixedReason = `${c.name} base full run: the scratch checkout was not at the base commit`; break; }
         if (typeof r.exitCode !== 'number') {
           fixedReason = `${c.name} base full run exited without a numeric code${r.timedOut ? ' (timed out)' : ''}`; break;
         }
@@ -637,6 +829,10 @@ async function adjudicate({
       fixed,
       ...(fixed === null ? { fixedReason } : {}),
       timedOut,
+      concurrency: { declared: concurrency, used, reason },
+      scratch: {
+        path: scratch, reused: scratchReused, ...(scratchFallback !== undefined ? { fallback: scratchFallback } : {}), ...(scratchMoved ? { moved: true } : {}),
+      },
     };
   } finally {
     for (const [sig, handler] of signalHandlers) process.removeListener(sig, handler);
@@ -644,4 +840,4 @@ async function adjudicate({
   }
 }
 
-module.exports = { adjudicate, realGit, findStaleBaselineWorktrees, RUNNER_ERROR_RE };
+module.exports = { adjudicate, realGit, findStaleBaselineWorktrees, slotScratchPath, backOffRan, RUNNER_ERROR_RE };

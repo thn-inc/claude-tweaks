@@ -53,7 +53,7 @@ const {
   CarryOverInputError, classifyRolloverResume, planCarryOver,
 } = require('./lib/health-core/materiality-digest');
 const { ghAvailable, ghOptions } = require('./lib/repo-resolve');
-const { GH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
+const { GH_BATCH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
 const { resolvePrinted } = require('./session-tmp-resolve');
 
 const USAGE = `usage: digest-rollover.js verdict --old <n> --candidates <n>[,<n>...]
@@ -71,8 +71,6 @@ const VERB_FLAGS = {
 const POSITIVE = /^[1-9]\d*$/;
 const NUMBER_FLAGS = new Set(['--old', '--new']);
 const COUNT_FLAGS = new Set(['--count', '--new-count']);
-// A paged comment read of a full digest walks several pages, so it earns more than a single call's bound.
-const PAGED_READ_TIMEOUT_MS = 30000;
 
 function parseArgs(argv) {
   if (argv.includes('--help') || argv.includes('-h')) return { help: true };
@@ -116,7 +114,8 @@ function defaultGh(args) {
   return execFileSync('gh', args, ghOptions(args, {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
-    timeout: Math.max(GH_TIMEOUT_MS, PAGED_READ_TIMEOUT_MS),
+    // A paged comment read of a full digest walks several pages, so it gets the batched bound.
+    timeout: GH_BATCH_TIMEOUT_MS,
     maxBuffer: LARGE_MAX_BUFFER_BYTES,
     windowsHide: true,
   }));

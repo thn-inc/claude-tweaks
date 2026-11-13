@@ -24,6 +24,22 @@ test('a verify row carries the adjudication verdict beside the raw pass (#3043)'
   assert.equal(p.tasks.verify[0].baselineAdjudicated, null, 'an event without the field reads null');
 });
 
+test('a verify row keeps the impact outcome only when the event carries one (#4321)', () => {
+  const impact = { suite: 'tests', fallback: 'map-missing', superseded: false, selected: null, supersedingPaths: [] };
+  const events = fixtureEvents().map((e) => (e.type === 'verify' && e.mode === 'full' ? { ...e, impact } : e));
+  const p = byName(derivePhases({ events, manifest: fixtureManifest(), now: new Date('2026-09-05T14:13:00.000Z') }));
+  assert.deepEqual(p.test.verify[0].impact, impact);
+  assert.equal(Object.hasOwn(p.tasks.verify[0], 'impact'), false);
+});
+
+test('a verify row drops an impact that is not an object (#4321)', () => {
+  for (const bad of ['map-missing', 7, true, null, []]) {
+    const events = fixtureEvents().map((e) => (e.type === 'verify' && e.mode === 'full' ? { ...e, impact: bad } : e));
+    const p = byName(derivePhases({ events, manifest: fixtureManifest(), now: new Date('2026-09-05T14:13:00.000Z') }));
+    assert.equal(Object.hasOwn(p.test.verify[0], 'impact'), false, JSON.stringify(bad));
+  }
+});
+
 test('#1928 AC3: the frozen fixture reproduces the reference boundaries within ±1 minute', () => {
   const out = derivePhases({ events: fixtureEvents(), manifest: fixtureManifest(), now: new Date('2026-09-05T14:13:00.000Z') });
   assert.deepEqual(out.phases.map((p) => p.phase), PHASES);
@@ -359,6 +375,16 @@ test('#4029: verifyMinutes sums every verify durationMs to one decimal, 0 with n
   assert.equal(derivePhases({ events: [ev(100000), ev(50000)] }).totals.verifyMinutes, 2.5);
   assert.equal(derivePhases({ events: [ev(null), { ts: '2026-10-24T10:21:00.000Z', type: 'verify' }] }).totals.verifyMinutes, 0);
   assert.equal(derivePhases({ events: [] }).totals.verifyMinutes, 0);
+});
+
+test('#5119: verifyMinutes counts work, not suite-slot queue wait — each event\'s slotWaitedMs is subtracted, clamped at 0', () => {
+  const ev = (d, w) => ({ ts: '2026-10-24T10:20:00.000Z', type: 'verify', durationMs: d, ...(w === undefined ? {} : { slotWaitedMs: w }) });
+  // 10 min wall-clock of which 7.5 queued, plus 1 min that never waited: 3.5 min of work.
+  assert.equal(derivePhases({ events: [ev(600000, 450000), ev(60000, 0)] }).totals.verifyMinutes, 3.5);
+  // A wait longer than the event's own duration contributes 0, never a negative.
+  assert.equal(derivePhases({ events: [ev(60000, 120000), ev(60000)] }).totals.verifyMinutes, 1);
+  // A non-numeric or negative wait subtracts nothing; an event with no duration still adds 0.
+  assert.equal(derivePhases({ events: [ev(60000, 'x'), ev(60000, -5000), ev(null, 1000)] }).totals.verifyMinutes, 2);
 });
 
 test('#1929: countGuardEvents counts the three guard event types and ignores the rest', () => {

@@ -29,8 +29,8 @@ none of the PR's closing keywords, so the CLI also closes each still-open `Fixes
 `pendingClose[]` record (the merge may still close it — re-run the step once, then reopen it by
 hand if it closed) in the closing summary, never as anything but `merged`. A `baseUnchecked: true`
 envelope means the PR's base or the default branch could not be read, so nothing was closed and the
-`Fixes` records were not checked: name the envelope's `unchecked[]` records in the closing summary. Exit
-5 or `gh-absent`: the CLI logged its own `SKIP` line; exit 3: the run dir is untrusted and `log-decision.js` refuses it too, so name the gap in the closing summary. Then continue to Step 4.0b. An `armed` outcome never reaches
+`Fixes` records were not checked: name the envelope's `unchecked[]` records in the closing summary. Exit 4
+(run-marker mismatch: the PR body names another run, or none, so nothing was reopened or closed): name the mismatch and PR #{n} in the closing summary, and ask for no hand close of its `Fixes` records, which may belong to another run. Exit 4, exit 5 or `gh-absent`: the CLI logged its own `SKIP` line; exit 3: the run dir is untrusted and `log-decision.js` refuses it too, so name the gap in the closing summary. Then continue to Step 4.0b. An `armed` outcome never reaches
 this step in-session: the reconciler's `post-merge` check (`gh` only) runs the CLI for that run once GitHub has merged the PR for 10 minutes (the merge grace),
 with no settle poll and reopens bounded to 10 minutes after `mergedAt`; with `--keep-open` on the composer, only a
 Development-sidebar link can still close a kept-open record there, a gap tracked in the run's ledger.
@@ -90,7 +90,9 @@ This step is the Parent-Gate Procedure's post-merge sub-issue-side entry
 
   Otherwise, use `closingSet[]` as printed; never re-read the PR's links here.
 
-  After a no-PR local merge, read the `Fixes #{n}` lines of the pushed merge commit's message,
+  After a no-PR local merge, read the bare same-repo `Fixes #{n}` lines of the pushed merge commit's message —
+  a `Fixes {owner}/{repo}#{n}` line naming any repository is not in the set
+  (the merge-message composer `bin/compose-subject.js` renders only the bare form, in `bin/lib/release/subject.js`) —
   taking the union across every merge commit when a call site pushes several:
 
   ```bash

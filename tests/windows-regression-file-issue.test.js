@@ -948,8 +948,8 @@ test('F4: issues: write is granted only to the file job; the windows job is cont
 test('F4: the windows job uploads verify-report and the file job downloads it, tolerating a miss', () => {
   const windows = jobBlock('windows');
   const file = jobBlock('file');
-  assert.match(stepContaining(windows, 'upload-artifact@v4'), /name: verify-report/);
-  const dlAt = file.indexOf('download-artifact@v4');
+  assert.match(stepContaining(windows, 'upload-artifact@v7'), /name: verify-report/);
+  const dlAt = file.indexOf('download-artifact@v8');
   const download = file.slice(dlAt, file.indexOf(stepAnchor(file), dlAt));
   assert.ok(dlAt !== -1 && /name: verify-report/.test(download) && /continue-on-error:\s*true/.test(download), 'download step tolerates a missing artifact');
   assert.match(file, /--report "\$RUNNER_TEMP\/verify\/verify-report\.json"/);
@@ -959,7 +959,7 @@ test('F4: the windows job uploads verify-report and the file job downloads it, t
   assert.match(windows, /outputs:\s*\n      base:\s*\$\{\{\s*steps\.base\.outputs\.base\s*\}\}/);
 });
 
-test('F2b: verify opts out of the base full run — nothing here reads `fixed`, and the job budget has no room for another suite (#3313)', () => {
+test('F2b: verify opts out of the base full run — nothing here reads `fixed`, so another suite run would only spend job budget (#3313)', () => {
   const windows = jobBlock('windows');
   assert.match(windows, /--baseline-cmd tests="node --test \{file\}"\s+--no-baseline-fixed/);
 });
@@ -1073,11 +1073,11 @@ test('no ${{ }} is interpolated into any run: script body — inline or block sc
   for (const body of scripts) assert.ok(!body.includes('${{'), `interpolation in a run script: ${body}`);
 });
 
-test('R7: verify bounds each tests run with a 20-minute --cmd-timeout inside the 90-minute job limit', () => {
+test('R7: verify bounds each tests run with a 20-minute --cmd-timeout inside the 150-minute job limit — two hung files under serial reruns (#5150)', () => {
   const windows = jobBlock('windows');
   assert.match(windows, /--cmd-timeout tests=1200000/);
   assert.doesNotMatch(windows, /2700000/);
-  assert.match(windows, /^    timeout-minutes:\s*90\s*$/m);
+  assert.match(windows, /^    timeout-minutes:\s*150\s*$/m);
 });
 
 test('the workflow no longer claims linear history', () => {

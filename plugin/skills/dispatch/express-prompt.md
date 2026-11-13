@@ -1,6 +1,6 @@
 # Dispatch — Express Lane Task() Prompt Templates (#4025)
 
-Referenced by `skills/dispatch/SKILL.md` Step 5 (the express call) and Step 3's loop termination (the post-merge sample review call). The same rules as `task-prompt.md` bind both templates: inline each fenced block verbatim into its own `Task()` call, never paraphrased and never both in one call, substituting its placeholders. `{context-pack}` is `task-prompt.md`'s Context pack section, resolved and substituted as that section directs. Neither of Templates A/B/C fits an agent that runs a procedure rather than returning findings, so these are their own minimal templates, as `task-prompt.md`'s are: minimal input, the literal output format inlined, and the four-value status line.
+Referenced by `skills/dispatch/SKILL.md` Step 5 (the express call) and Step 3's loop termination (the post-merge sample review call). `task-prompt.md`'s template rules bind both templates: inline each fenced block verbatim into its own `Task()` call, never paraphrased and never both in one call. Unlike `task-prompt.md`'s, its placeholders are substituted by hand, since `dispatch-prompt.js` renders only that file (#4735). `{context-pack}` is `task-prompt.md`'s Context pack section, each numbered item resolved as it states (item 3's `{policy-values}`: its command's five values as `key=value`, joined by `, `). Neither of Templates A/B/C fits an agent that runs a procedure rather than returning findings, so these are their own minimal templates, as `task-prompt.md`'s are: minimal input, the literal output format inlined, and the four-value status line.
 
 ## Express call
 
@@ -28,7 +28,7 @@ special case (a `DISPATCH_HEADLESS=1` first line on this prompt is the marker it
 otherwise its numbered steps 1-7, with `--reason "failed: express-{step}"`, where `{step}` is the
 bold name of the Procedure step that stopped, lowercased and hyphenated (e.g. `check`, `pr`).
 
-Foreground execution (required): run `npm test` and every other long-running command in the
+Foreground execution (required): run the project's test command and every other long-running command in the
 foreground of this turn, output redirected to a file if it's long -- never with `run_in_background`.
 Never end this turn waiting on a background test run or fix-round you started this way -- you cannot
 count on being re-woken by either, and the run stalls silently when you are not (#1965). A nested
@@ -99,6 +99,7 @@ GROUP: {issue}
 OUTCOME: {merged | armed | pending-review | express-escalated | blocked}
 MANIFEST: {absolute path to this group's run-dir decisions.md -- a human-readable trace only;
   the dispatching session already holds this run's identity as {minted-run-dir}}
+ISSUE #{issue}: failed:claim-permission-denied -- only when step 1's claim-targets.js exited 7; omit otherwise
 
 Status line (required): on its own trailing line, after everything above -- the reply's last
 non-empty line -- write exactly `STATUS: {WORD}`, where {WORD} is one of: DONE /
@@ -127,7 +128,7 @@ last paragraph says.
 Of its last bullet, log the posted review's `AUTO` line but do not run `close-run`: the
 dispatching session closes the run dir after you report.
 
-Foreground execution (required): run `npm test` and every other long-running command in the
+Foreground execution (required): run the project's test command and every other long-running command in the
 foreground of this turn, output redirected to a file if it's long -- never with `run_in_background`.
 Never end this turn waiting on a background test run or fix-round you started this way -- you cannot
 count on being re-woken by either, and the run stalls silently when you are not (#1965). A nested

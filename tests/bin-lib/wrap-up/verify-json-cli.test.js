@@ -27,7 +27,7 @@ function tmpDir(prefix) {
   return d;
 }
 
-// Same shape as tests/integration-model.test.js's ghAbsentPath(), plus node:
+// Same shape as tests/helpers/integration-model.js's ghAbsentPath(), plus node:
 // `gh` is absent even where it sits beside git (Homebrew).
 function ghAbsentPath() {
   const binDir = tmpDir('ct-nogh-bin-');

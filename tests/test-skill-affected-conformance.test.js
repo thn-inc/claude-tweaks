@@ -174,3 +174,124 @@ test('go-red: adding --ignore-stamp to qa affected step 1 fails the AC4 pin', ()
   const mutated = mutateLine(skill, '1. Read the changed-file set:', '--changed-files --integration-branch', '--changed-files --ignore-stamp --integration-branch');
   assert.throws(() => assertIgnoreStampSites(mutated, gate), { message: /qa affected step 1 keeps the stamp anchor/ });
 });
+
+// Frozen pre-#4395 text (hand-built): the VERIFICATION_SHA row promised a re-run and the bullets skipped outright.
+const PRE_4395_SKILL_EXCERPT = `| \`VERIFICATION_SHA\` | Set by \`/claude-tweaks:build\` Common Step 5, alongside \`VERIFICATION_PASSED\` | The commit build's verification ran against. Compared to current \`HEAD\` before honoring the skip (see \`verification.md\`'s "Skip-if-recent") — a mismatch means the tree changed since build passed, and verification re-runs instead of skipping. |
+
+**Pipeline behavior:**`;
+
+const PARAGRAPH_START = 'A `VERIFICATION_PASSED=true` bullet below applies its skip only when `VERIFICATION_SHA` equals `HEAD`';
+const MISMATCH_FIRST = /A `VERIFICATION_PASSED=true` bullet below applies its skip only when `VERIFICATION_SHA` equals `HEAD`\. On a mismatch, run `verification\.md`'s Mismatch branch in place of that skip[^\n]*re-stamps `HEAD`/;
+const TAIL_CLAUSE = 'once it passes, the rest of the bullet (QA selection, `skip-qa`, `TEST_PASSED=true`) applies as written';
+const NOTE_CLAUSE = `, except that when suites re-ran the Mismatch branch's own note ("Verification re-run — tree changed since build's pass …") replaces a "passed in build" report.`;
+const ROW_CLAUSE = 'so the Mismatch branch runs the scoped verify (the full procedure without a scope declaration) instead of skipping.';
+const STALE_ROW = 'verification re-runs instead of skipping';
+const PASSED_ROW_SKIP = 'Skip types/lint/tests when `VERIFICATION_SHA` equals `HEAD`';
+
+// Each clause is its own assertion with its own message, so a go-red mutation that breaks one clause names that clause.
+function assertMismatchRoute(text) {
+  assert.match(text, MISMATCH_FIRST, 'the paragraph opens with the VERIFICATION_PASSED scope clause and routes a mismatch to the Mismatch branch');
+  const at = text.indexOf(PARAGRAPH_START);
+  assert.ok(at !== -1 && at < text.indexOf('**Pipeline behavior:**'), 'the paragraph precedes the Pipeline behavior bullets');
+  const end = text.indexOf('\n\n', at);
+  const para = text.slice(at, end === -1 ? text.length : end);
+  const shaRow = text.split('\n').find(line => line.startsWith('| `VERIFICATION_SHA` |'));
+  assert.ok(shaRow !== undefined && shaRow.includes(ROW_CLAUSE), 'the VERIFICATION_SHA row says the Mismatch branch runs the scoped verify');
+  assert.ok(!text.includes(STALE_ROW), 'the stale VERIFICATION_SHA row text is absent');
+  const passedRow = text.split('\n').find(line => line.startsWith('| `VERIFICATION_PASSED` |'));
+  assert.ok(passedRow !== undefined && passedRow.includes(PASSED_ROW_SKIP), 'the VERIFICATION_PASSED row conditions its skip on the SHA check');
+  assert.ok(para.includes(TAIL_CLAUSE), 'the tail clause keeps the rest of the bullet applying as written after the Mismatch branch passes');
+  assert.ok(para.includes(NOTE_CLAUSE), 'the paragraph ends with the re-run note replacing a passed-in-build report');
+}
+
+test('AC1.1: test/SKILL.md routes a moved HEAD through the runner before any VERIFICATION_PASSED skip (#4395)', () => {
+  const skill = read('plugin/skills/test/SKILL.md');
+  assertMismatchRoute(skill);
+  assert.doesNotMatch(PRE_4395_SKILL_EXCERPT, MISMATCH_FIRST);
+  assert.throws(() => assertMismatchRoute(PRE_4395_SKILL_EXCERPT), /the paragraph opens with the VERIFICATION_PASSED scope clause/);
+});
+
+test('go-red: a scope clause that drops the VERIFICATION_PASSED anchor fails the route assertion', () => {
+  const skill = read('plugin/skills/test/SKILL.md');
+  const mutated = skill.replace('A `VERIFICATION_PASSED=true` bullet below applies', 'The first `VERIFICATION_PASSED=true` bullet below applies');
+  assert.notEqual(mutated, skill);
+  assert.throws(() => assertMismatchRoute(mutated), /the paragraph opens with the VERIFICATION_PASSED scope clause/);
+});
+
+test('go-red: moving the paragraph below the Pipeline behavior label fails the position assertion', () => {
+  const skill = read('plugin/skills/test/SKILL.md');
+  const start = skill.indexOf(PARAGRAPH_START);
+  const end = skill.indexOf('\n\n', start) + 2;
+  const para = skill.slice(start, end);
+  const without = skill.slice(0, start) + skill.slice(end);
+  const label = '**Pipeline behavior:**\n\n';
+  const at = without.indexOf(label) + label.length;
+  const mutated = without.slice(0, at) + para + without.slice(at);
+  assert.notEqual(mutated, skill);
+  assert.throws(() => assertMismatchRoute(mutated), /the paragraph precedes the Pipeline behavior bullets/);
+});
+
+test('go-red: a VERIFICATION_SHA row without the scoped-verify wording fails the row assertion', () => {
+  const skill = read('plugin/skills/test/SKILL.md');
+  const mutated = skill.replace('runs the scoped verify (the full procedure without a scope declaration) instead of skipping', 'runs the scoped verify instead of skipping');
+  assert.notEqual(mutated, skill);
+  assert.throws(() => assertMismatchRoute(mutated), /the VERIFICATION_SHA row says the Mismatch branch runs the scoped verify/);
+});
+
+test('go-red: the scoped-verify clause moved out of the VERIFICATION_SHA row fails the row assertion', () => {
+  const skill = read('plugin/skills/test/SKILL.md');
+  const mutated = skill.replace(` ${ROW_CLAUSE}`, '') + `\n${ROW_CLAUSE}\n`;
+  assert.notEqual(mutated, skill);
+  assert.ok(mutated.includes(ROW_CLAUSE), 'the clause is still present, only outside its row');
+  assert.throws(() => assertMismatchRoute(mutated), /the VERIFICATION_SHA row says the Mismatch branch runs the scoped verify/);
+});
+
+test('go-red: re-adding the stale re-runs wording to the row fails the stale-text assertion', () => {
+  const skill = read('plugin/skills/test/SKILL.md');
+  const mutated = skill.replace('so the Mismatch branch runs', 'verification re-runs instead of skipping; so the Mismatch branch runs');
+  assert.notEqual(mutated, skill);
+  assert.throws(() => assertMismatchRoute(mutated), /the stale VERIFICATION_SHA row text is absent/);
+});
+
+test('go-red: an unconditional VERIFICATION_PASSED row skip fails the row-condition assertion', () => {
+  const skill = read('plugin/skills/test/SKILL.md');
+  const mutated = skill.replace('Skip types/lint/tests when `VERIFICATION_SHA` equals `HEAD` — they already passed', 'Skip types/lint/tests — they already passed');
+  assert.notEqual(mutated, skill);
+  assert.throws(() => assertMismatchRoute(mutated), /the VERIFICATION_PASSED row conditions its skip on the SHA check/);
+});
+
+test('go-red: an unconditional VERIFICATION_PASSED row with the phrase elsewhere in the file fails the row-condition assertion', () => {
+  const skill = read('plugin/skills/test/SKILL.md');
+  const unconditional = skill.replace('Skip types/lint/tests when `VERIFICATION_SHA` equals `HEAD` — they already passed', 'Skip types/lint/tests — they already passed');
+  const mutated = unconditional + `\n${PASSED_ROW_SKIP}\n`;
+  assert.notEqual(mutated, skill);
+  assert.throws(() => assertMismatchRoute(mutated), /the VERIFICATION_PASSED row conditions its skip on the SHA check/);
+});
+
+test('go-red: dropping the tail clause fails the tail assertion', () => {
+  const skill = read('plugin/skills/test/SKILL.md');
+  const mutated = skill.replace('once it passes, the rest of the bullet', 'once it passes, the other parts of the bullet');
+  assert.notEqual(mutated, skill);
+  assert.throws(() => assertMismatchRoute(mutated), /the tail clause keeps the rest of the bullet/);
+});
+
+test('go-red: changing the re-run note clause fails the note assertion', () => {
+  const skill = read('plugin/skills/test/SKILL.md');
+  const mutated = skill.replace('replaces a "passed in build" report.', 'replaces a "passed in build" line.');
+  assert.notEqual(mutated, skill);
+  assert.throws(() => assertMismatchRoute(mutated), /the paragraph ends with the re-run note/);
+});
+
+test('go-red: moving the tail clause out of the paragraph to the end of the file fails the tail assertion', () => {
+  const skill = read('plugin/skills/test/SKILL.md');
+  const mutated = skill.replace(TAIL_CLAUSE, 'once it passes, the QA selection applies') + '\n' + TAIL_CLAUSE + '\n';
+  assert.notEqual(mutated, skill);
+  assert.throws(() => assertMismatchRoute(mutated), /the tail clause keeps the rest of the bullet/);
+});
+
+test('go-red: moving the note clause out of the paragraph to the end of the file fails the note assertion', () => {
+  const skill = read('plugin/skills/test/SKILL.md');
+  const mutated = skill.replace(NOTE_CLAUSE, '.') + '\n' + NOTE_CLAUSE + '\n';
+  assert.notEqual(mutated, skill);
+  assert.throws(() => assertMismatchRoute(mutated), /the paragraph ends with the re-run note/);
+});

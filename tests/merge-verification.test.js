@@ -107,6 +107,293 @@ test('readWorkflowFiles: reads .yml and .yaml under .github/workflows, [] when t
   assert.equal(mv.hasPullRequestCi(dir), true);
 });
 
+// --- Workflow reader: trigger types, draft reference, unparsed (#5153) ---
+
+// Every fixture runs LF and CRLF (windows-checkout-test-parity).
+function bothEndings(text, fn) {
+  fn(text);
+  fn(text.replace(/\n/g, '\r\n'));
+}
+const readyWf = (name, text) => ({ file: `.github/workflows/${name}`, ...mv.readPullRequestWorkflow(text) });
+
+test('AC5.1: readPullRequestWorkflow reads a flow-list types: [opened, ready_for_review]', () => {
+  for (const trig of ['pull_request', 'pull_request_target']) {
+    bothEndings(`name: a\non:\n  push:\n  ${trig}:\n    types: [opened, ready_for_review]\n`, (t) => {
+      const r = mv.readPullRequestWorkflow(t);
+      assert.equal(r.prTrigger, true);
+      assert.deepEqual(r.types, ['opened', 'ready_for_review']);
+      assert.equal(r.typesDeclared, true);
+      assert.equal(r.unparsed, false);
+    });
+  }
+});
+
+test('AC5.1: readPullRequestWorkflow reads a block-list types:', () => {
+  const cases = [
+    'on:\n  pull_request:\n    types:\n      - opened\n      - ready_for_review\n',
+    'on:\n  pull_request:\n    types:\n    - opened\n    - ready_for_review\n',
+    "on:\n  pull_request:\n    types:\n      - opened\n      - 'ready_for_review'  # trailing\n",
+  ];
+  for (const c of cases) {
+    bothEndings(c, (t) => {
+      const r = mv.readPullRequestWorkflow(t);
+      assert.deepEqual(r.types, ['opened', 'ready_for_review'], JSON.stringify(t));
+      assert.equal(r.typesDeclared, true);
+      assert.equal(r.unparsed, false);
+    });
+  }
+});
+
+test('AC5.1: readPullRequestWorkflow reads a bare pull_request: as default types', () => {
+  const cases = [
+    'on:\n  pull_request:\n',
+    'on: [push, pull_request]\n',
+    'on: pull_request\n',
+    'on:\n  - push\n  - pull_request\n',
+    'on:\n- push\n- pull_request\n', // indentless top-level sequence
+    'on:\n  pull_request:\n    branches: [main]\n',
+    'on:\n  pull_request: {}\n',
+    'on:\n  pull_request: null\n',
+    'on: { pull_request: {} }\n',
+  ];
+  for (const c of cases) {
+    bothEndings(c, (t) => {
+      const r = mv.readPullRequestWorkflow(t);
+      assert.equal(r.prTrigger, true, JSON.stringify(t));
+      assert.deepEqual(r.types, [...mv.DEFAULT_PR_TYPES], JSON.stringify(t));
+      assert.equal(r.typesDeclared, false);
+      assert.equal(r.unparsed, false);
+    });
+  }
+});
+
+test('readPullRequestWorkflow: flow-mapping on: reads a one-line types, unions undeclared and declared triggers', () => {
+  bothEndings('on: { pull_request: { types: [ready_for_review] } }\n', (t) => {
+    const one = mv.readPullRequestWorkflow(t);
+    assert.deepEqual(one.types, ['ready_for_review']);
+    assert.equal(one.typesDeclared, true);
+    assert.equal(one.unparsed, false);
+  });
+  bothEndings('on:\n  pull_request:\n    types: [labeled]\n  pull_request_target:\n', (t) => {
+    const both = mv.readPullRequestWorkflow(t);
+    assert.deepEqual(both.types, ['labeled', 'opened', 'synchronize', 'reopened']);
+    assert.equal(both.typesDeclared, true);
+  });
+  bothEndings('on: { pull_request: { types: ${{ x }} } }\n', (t) => assert.equal(mv.readPullRequestWorkflow(t).unparsed, true));
+});
+
+test('I1: readPullRequestWorkflow reads an unreadable on: as an unparsed PR trigger, never as "no PR trigger"', () => {
+  const draft = 'jobs:\n  a:\n    if: github.event.pull_request.draft == false\n';
+  const cases = [
+    `on: {\n  pull_request: { types: [ready_for_review] } }\n${draft}`,
+    `on: { push: {}, pull_request: {\n  types: [ready_for_review] } }\n${draft}`,
+    `on: [push,\n  pull_request]\n${draft}`,
+    `on: *triggers\n${draft}`,
+    `on: \${{ fromJSON(x) }}\n${draft}`,
+    `on:\n  <<: *base\n${draft}`,
+    `on:\n  push:\n  <<: *base\n${draft}`,
+    // an alias inside a list is as unreadable as an alias scalar
+    `on:\n  - push\n  - *pr\n${draft}`,
+    `on: [push, *pr]\n${draft}`,
+    `on:\n  - push\n  - \${{ x }}\n${draft}`,
+    `on:\n- push\n- *pr\n${draft}`,
+  ];
+  for (const c of cases) {
+    bothEndings(c, (t) => {
+      const r = mv.readPullRequestWorkflow(t);
+      assert.equal(r.prTrigger, true, JSON.stringify(t));
+      assert.equal(r.unparsed, true, JSON.stringify(t));
+      assert.deepEqual(mv.readyRequirement([{ file: 'f.yml', ...r }]), { readyWorkflows: ['f.yml'], draftSkipWithoutReadyTrigger: [], unparsed: ['f.yml'] });
+    });
+  }
+  // controls: a readable push-only on: in each shape stays "no PR trigger"
+  for (const c of ['on: push\n', 'on: [push, workflow_dispatch]\n', 'on: { push: {} }\n', 'on:\n  push:\n',
+    'on:\n  - push\n  - workflow_dispatch\n',
+    'on:\n- push\njobs:\n  a: {}\n', // an indentless list ends at the next top-level key
+    // the on: block ends at a col-0 key: a later job or key named pull_request is not a trigger
+    'on:\n  push:\njobs:\n  pull_request:\n    runs-on: x\n',
+    'on:\n- push\nx:\n- pull_request\n',
+    // a quoted '#' on the on: line is not a comment start
+    "on: { push: { branches: ['rel #1'] } }\n",
+    'on: &t\n  push:\n']) {
+    bothEndings(c, (t) => assert.deepEqual(mv.readPullRequestWorkflow(t), { prTrigger: false, types: [], typesDeclared: false, draftReference: false, unparsed: false }, JSON.stringify(t)));
+  }
+});
+
+test('readPullRequestWorkflow: a file that never spells pull_request is no PR trigger, whatever its on: shape', () => {
+  const none = { prTrigger: false, types: [], typesDeclared: false, draftReference: false, unparsed: false };
+  for (const c of [
+    'x: &t\n  push: {}\non: *t\n',
+    'x: &b\n  push: {}\non:\n  <<: *b\n',
+    "on:\n  schedule:\n  - cron: '0 0 * * *'\n",
+    'on: [push,\n  workflow_dispatch]\n',
+    'on:\n  - push\n  - *t\n',
+  ]) {
+    bothEndings(c, (t) => assert.deepEqual(mv.readPullRequestWorkflow(t), none, JSON.stringify(t)));
+  }
+  // a double-quoted escape can spell the name without the literal: the read stays fail-closed
+  bothEndings('x: &t { "pull\\u005frequest": {} }\non: *t\n', (t) => {
+    const r = mv.readPullRequestWorkflow(t);
+    assert.equal(r.prTrigger, true);
+    assert.equal(r.unparsed, true);
+  });
+});
+
+test('readPullRequestWorkflow: an indentless sequence value under a trigger key is that key\'s value, never a trigger', () => {
+  // `  schedule:\n  - cron: …` puts the cron item at the trigger indent; it must not read as an
+  // unreadable PR trigger, or a schedule-only workflow would demand a ready run on every merge.
+  // The job's `pull_request` text keeps the reader's no-literal shortcut from answering first.
+  bothEndings('name: nightly\non:\n  schedule:\n  - cron: "0 3 * * *"\n  workflow_dispatch:\njobs:\n  a:\n    if: github.event_name != \'pull_request\'\n    runs-on: x\n', (t) => {
+    assert.deepEqual(mv.readPullRequestWorkflow(t), { prTrigger: false, types: [], typesDeclared: false, draftReference: false, unparsed: false }, JSON.stringify(t));
+  });
+  bothEndings('on:\n  schedule:\n  - cron: "x"\n  pull_request:\n    types: [opened, ready_for_review]\n', (t) => {
+    const r = mv.readPullRequestWorkflow(t);
+    assert.deepEqual(r.types, ['opened', 'ready_for_review'], JSON.stringify(t));
+    assert.equal(r.unparsed, false, JSON.stringify(t));
+  });
+  // A top-level sequence still reads its items as triggers.
+  bothEndings('on:\n- push\n- pull_request\n', (t) => assert.equal(mv.readPullRequestWorkflow(t).prTrigger, true));
+});
+
+test('readPullRequestWorkflow: an on: &anchor node name does not hide the block beneath it', () => {
+  bothEndings('on: &t\n  pull_request:\n    types: [opened]\n', (t) => {
+    const r = mv.readPullRequestWorkflow(t);
+    assert.equal(r.prTrigger, true);
+    assert.deepEqual(r.types, ['opened']);
+    assert.equal(r.unparsed, false);
+  });
+  // the anchor name ends at a flow indicator: `&t[..]` is anchor t plus a list
+  bothEndings('on: &t[push,pull_request]\n', (t) => {
+    const r = mv.readPullRequestWorkflow(t);
+    assert.equal(r.prTrigger, true);
+    assert.deepEqual(r.types, [...mv.DEFAULT_PR_TYPES]);
+    assert.equal(r.unparsed, false);
+  });
+  bothEndings('on: &t[push,workflow_dispatch]\n', (t) => assert.equal(mv.readPullRequestWorkflow(t).prTrigger, false));
+});
+
+test('M2: readPullRequestWorkflow reads a non-empty inline trigger scalar and a quoted types scalar as unparsed', () => {
+  const cases = [
+    'on:\n  pull_request: *pr\n',
+    'on:\n  pull_request: nonsense\n',
+    'on:\n  pull_request:\n    types: "ready_for_review"\n',
+    "on:\n  pull_request:\n    types: 'x'\n",
+  ];
+  for (const c of cases) {
+    bothEndings(c, (t) => {
+      const r = mv.readPullRequestWorkflow(t);
+      assert.equal(r.prTrigger, true, JSON.stringify(t));
+      assert.equal(r.unparsed, true, JSON.stringify(t));
+    });
+  }
+  // an unbalanced flow mapping after a PR key was already seen on the line
+  bothEndings('on: { pull_request: {}, push: {\n  branches: [main] } }\n', (t) => assert.equal(mv.readPullRequestWorkflow(t).unparsed, true));
+});
+
+test('AC5.2: readPullRequestWorkflow detects a draft reference in if: == false and ${{ !… }} forms', () => {
+  const yes = [
+    'on: pull_request\njobs:\n  a:\n    if: github.event.pull_request.draft == false\n',
+    'on: pull_request\njobs:\n  a:\n    if: ${{ !github.event.pull_request.draft }}\n',
+    // M3: a quoted ' #' before the reference is not a comment start
+    "on: pull_request\njobs:\n  a:\n    if: contains(github.event.pull_request.title, ' #wip') == false && !github.event.pull_request.draft\n",
+    // an escaped quote inside a double-quoted string does not close it
+    'on: pull_request\njobs:\n  a:\n    if: "x == \\" #\\" || github.event.pull_request.draft == false"\n',
+    // M3: the index form
+    "on: pull_request\njobs:\n  a:\n    if: github.event.pull_request['draft'] == false\n",
+    'on: pull_request\njobs:\n  a:\n    if: ${{ !github.event.pull_request["draft"] }}\n',
+  ];
+  for (const c of yes) bothEndings(c, (t) => assert.equal(mv.readPullRequestWorkflow(t).draftReference, true, JSON.stringify(t)));
+  const no = [
+    'on: pull_request\n# github.event.pull_request.draft\n',
+    'on: pull_request\njobs:\n  a:\n    # if: github.event.pull_request.draft == false\n',
+    'on: pull_request\njobs:\n  a:\n    runs-on: x # github.event.pull_request.draft\n',
+    'on: pull_request\njobs:\n  a:\n    if: github.event.pull_request.drafted == false\n',
+    "on: pull_request\njobs:\n  a:\n    if: github.event.pull_request['drafted'] == false\n",
+    // an in-word apostrophe does not open a quote that hides the real comment
+    "on: pull_request\nname: Don't run # github.event.pull_request.draft\n",
+    "on: pull_request\njobs:\n  a:\n    steps:\n      - run: echo can't # github.event.pull_request.draft\n",
+    // a non-ASCII letter before the apostrophe is still in-word
+    "on: pull_request\nname: Zoë's run # github.event.pull_request.draft\n",
+    "on: pull_request\njobs:\n  a:\n    steps:\n      - run: echo café's # github.event.pull_request.draft\n",
+    // a combining mark (NFD é = e + U+0301) before the apostrophe is still in-word
+    "on: pull_request\nname: Zoe\u0301's run # github.event.pull_request.draft\n",
+    // a backslash escapes nothing inside single quotes; '\' closes there
+    "on: pull_request\nx: contains(a, '\\') # github.event.pull_request.draft\n",
+    // an escaped backslash inside double quotes does not escape the closing quote
+    'on: pull_request\nx: "a\\\\" # github.event.pull_request.draft\n',
+  ];
+  for (const c of no) bothEndings(c, (t) => assert.equal(mv.readPullRequestWorkflow(t).draftReference, false, JSON.stringify(t)));
+});
+
+test('AC5.3: readPullRequestWorkflow returns unparsed for a types: value it cannot read', () => {
+  const cases = [
+    'on:\n  pull_request:\n    types: *defaults\n',
+    'on:\n  pull_request:\n    types: [opened,\n      ready_for_review]\n',
+    'on:\n  pull_request:\n    types: ${{ fromJSON(x) }}\n',
+    'on:\n  pull_request:\n    types:\n      - *alias\n',
+  ];
+  for (const c of cases) {
+    bothEndings(c, (t) => {
+      const r = mv.readPullRequestWorkflow(t);
+      assert.equal(r.unparsed, true, JSON.stringify(t));
+      assert.equal(r.prTrigger, true);
+      assert.equal(r.typesDeclared, true);
+    });
+  }
+  // another trigger's readable types survive; they are not collapsed into defaults
+  bothEndings('on:\n  pull_request:\n    types: *d\n  pull_request_target:\n    types: [labeled]\n', (t) => {
+    const mixed = mv.readPullRequestWorkflow(t);
+    assert.equal(mixed.unparsed, true);
+    assert.deepEqual(mixed.types, ['labeled']);
+  });
+});
+
+test('readPullRequestWorkflow: ready_for_review is matched exactly, not as a prefix', () => {
+  bothEndings('on:\n  pull_request:\n    types: [opened, ready_for_review_x]\n', (t) => {
+    assert.deepEqual(mv.readyRequirement([readyWf('a.yml', t)]), { readyWorkflows: [], draftSkipWithoutReadyTrigger: [], unparsed: [] });
+  });
+  bothEndings('on:\n  pull_request:\n    types: [ready_for_review]\n', (t) => {
+    assert.deepEqual(mv.readyRequirement([readyWf('a.yml', t)]).readyWorkflows, ['.github/workflows/a.yml']);
+  });
+});
+
+test('readPullRequestWorkflow: a push-only workflow has no PR trigger and is ignored by readyRequirement', () => {
+  bothEndings('on: push\njobs:\n  a:\n    if: github.event.pull_request.draft == false\n', (t) => {
+    const r = mv.readPullRequestWorkflow(t);
+    assert.equal(r.prTrigger, false);
+    assert.deepEqual(r.types, []);
+    assert.deepEqual(mv.readyRequirement([{ file: '.github/workflows/p.yml', ...r }]), { readyWorkflows: [], draftSkipWithoutReadyTrigger: [], unparsed: [] });
+  });
+});
+
+test('readyRequirement: ready_for_review → readyWorkflows; unparsed → readyWorkflows and unparsed; draft ref without ready_for_review → draftSkipWithoutReadyTrigger; neither → nothing', () => {
+  const draftIf = 'jobs:\n  a:\n    if: github.event.pull_request.draft == false\n';
+  for (const eol of ['\n', '\r\n']) {
+    const w = (name, text) => readyWf(name, text.replace(/\n/g, eol));
+    const wfs = [
+      w('ready.yml', 'on:\n  pull_request:\n    types: [opened, ready_for_review]\n'),
+      w('bad.yml', 'on:\n  pull_request:\n    types: *x\n'),
+      w('draft-default.yml', `on: pull_request\n${draftIf}`),
+      w('draft-declared.yml', `on:\n  pull_request:\n    types: [opened, synchronize]\n${draftIf}`),
+      w('ready-and-draft.yml', `on:\n  pull_request:\n    types: [ready_for_review]\n${draftIf}`),
+      w('plain.yml', 'on: pull_request\n'),
+      w('push.yml', `on: push\n${draftIf}`),
+    ];
+    assert.deepEqual(mv.readyRequirement(wfs), {
+      readyWorkflows: ['.github/workflows/ready.yml', '.github/workflows/bad.yml', '.github/workflows/ready-and-draft.yml'],
+      draftSkipWithoutReadyTrigger: ['.github/workflows/draft-default.yml', '.github/workflows/draft-declared.yml'],
+      unparsed: ['.github/workflows/bad.yml'],
+    });
+  }
+  assert.deepEqual(mv.readyRequirement([]), { readyWorkflows: [], draftSkipWithoutReadyTrigger: [], unparsed: [] });
+});
+
+test('readPullRequestWorkflow: non-string or empty input is all-false, never throws', () => {
+  const empty = { prTrigger: false, types: [], typesDeclared: false, draftReference: false, unparsed: false };
+  for (const v of [undefined, null, 5, {}, [], '']) assert.deepEqual(mv.readPullRequestWorkflow(v), empty);
+  assert.deepEqual(mv.readyRequirement(undefined), { readyWorkflows: [], draftSkipWithoutReadyTrigger: [], unparsed: [] });
+});
+
 // --- Derivation ladder ---
 
 // A lookup that must never run: records the call AND throws, so a

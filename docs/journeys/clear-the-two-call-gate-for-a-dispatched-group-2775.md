@@ -9,6 +9,7 @@ files:
   - plugin/skills/dispatch/task-prompt.md
   - plugin/skills/dispatch/continuation-call.md
   - plugin/skills/flow/context-handoff.md
+  - plugin/bin/dispatch-prompt.js
 ---
 
 # Clear the Two-Call Gate for a Dispatched Group
@@ -40,6 +41,7 @@ files:
 - **Should feel:** Mechanical and quiet on the happy path — the self-report is confirmed against files, not trusted.
 - **Should understand:**
   - A `{ ok: false, reason: 'materialized-header-missing' }` names the unmaterialized member(s). It is gated exactly like a malformed status line: the second call is never dispatched, and the group routes to §5's terminal path with one `REFUSED` decisions line.
+  - A call whose prompt never rendered (`dispatch-prompt.js` exited non-zero) or was denied twice by the prompt hook never reaches this check: §2 logs one `REFUSED` line and treats it as a call with no parseable report, going to §5 (first call) or §6 (second call). A first call that never dispatched adds `(prompt-not-dispatched: skip the claim release)` to §5's cleanup call, since no claim was ever made.
   - A `{ ok: false, reason: 'claim-log-missing' }` names the first member whose canonical line is absent, with the same gating. A batch-summary or paraphrased claim line does not satisfy it, even though the lenient stamps-gate reader accepts one. The `missing-config` repair branch (step 4) returns before check 6 runs.
   - The PR check (check 4) runs when the run's `config.yml` carries the `integration-model: pr-first` pin, which the Manifesto writes (#3350).
   - With no valid pin, the check emits one `first-call-artifact-check: degraded — … carries no valid integration-model pin` line on stderr and skips check 4; its result is unchanged. The dispatching session logs that line as a `SKIP` decision, never as a failure.
@@ -80,12 +82,12 @@ files:
 
 ### 6. Dispatching session continues a call that handed off at the context cap
 - **URL:** `plugin/skills/dispatch/two-call-gate.md` §8; `plugin/skills/dispatch/continuation-call.md` (`task-prompt.md`'s "Continuation call" heading points at it); `plugin/skills/flow/context-handoff.md`'s "Dispatched call"; `plugin/bin/lib/dispatch/first-call-artifact-check.js`'s `resolveFirstCallGate` and `parseNextSteps`
-- **Action:** **Dispatched call:** `/flow` Step 4 gauges its own context at a phase boundary (`bin/context-gauge.js`), finds it past the cap with a step left, pushes its branch, keeps its claim and worktree, and reports `OUTCOME: handoff` plus a `NEXT_STEPS:` line, ending `STATUS: DONE`. **Dispatching session:** reads that as neither a pass nor a failure. For a first call, `resolveFirstCallGate` returns `handoff` before any artifact check, only when `NEXT_STEPS` parses within `build`, `stories` and `test`. It then dispatches a fresh Task call in the same worktree: the call's own template, with the step list replaced by `NEXT_STEPS`. The gate (steps 3 to 5 above) runs on the last continuation's report.
+- **Action:** **Dispatched call:** `/flow` Step 4 gauges its own context at a phase boundary (`bin/context-gauge.js`), finds it past the cap with a step left, pushes its branch, keeps its claim and worktree, and reports `OUTCOME: handoff` plus a `NEXT_STEPS:` line, ending `STATUS: DONE`. **Dispatching session:** reads that as neither a pass nor a failure. For a first call, `resolveFirstCallGate` returns `handoff` before any artifact check, only when `NEXT_STEPS` parses within `build`, `stories` and `test`. It then dispatches a fresh Task call in the same worktree: the call's own template, rendered by `dispatch-prompt.js --next-steps` with the step list replaced by `NEXT_STEPS`, which a bundle reports per record and continues as a `record-steps=` token (`parseNextSteps`'s `stepArg`), targets unchanged. The gate (steps 3 to 5 above) runs on the last continuation's report.
 - **Should feel:** Invisible when it works. A long build finishes in a few fresh contexts instead of one slow one, and nothing is torn down or re-claimed between them.
 - **Should understand:**
   - The artifact check, claim-log check and stamp read all wait for the report that carries `build-test-ok`. A handoff report has not run every step yet, so none of them can pass or fail on it.
   - A handoff is bounded at three per run (`HANDOFF_BOUND`, counted in `handoff.json`'s `handoffCount`, shared by both calls). At the bound the gauge writes nothing and the call continues in place, so a fourth handoff report is not continued: the call is reported `build-test-blocked` (first call, §5) or `blocked` (second call, §6).
-  - A missing, empty, unknown or duplicated `NEXT_STEPS` entry fails closed to `blocked` rather than becoming a continuation that skips or repeats a step.
+  - A missing, empty, unknown or duplicated `NEXT_STEPS` entry, or a flat list from a bundle (the gate passes the bundle's records as `{ targets }`), fails closed to `blocked` rather than becoming a continuation that skips or repeats a step.
 - **Red flags:**
   - A handoff report routed to §5's teardown, which would release a claim the continuation needs.
   - The artifact check run on a handoff report.
@@ -101,4 +103,5 @@ files:
 - Updated during build of #4006: step 5. Bare `verify.js --stamp-status` discovers `.claude-tweaks/verify-scope.json`, and `checkFirstCallStamp` accepts a complete composed per-suite verdict as verified, so a chunked first call no longer logs a degraded stamp note.
 - Updated during build of #4027: step 6. A dispatched call that crosses `/flow`'s context cap reports `OUTCOME: handoff` and is continued in a fresh Task call, bounded at three handoffs per run, instead of being gated as a failure.
 - Updated during build of #4548: step 6. The Continuation call's body moved from `dispatch/task-prompt.md` to `dispatch/continuation-call.md`. The rule did not change.
+- Updated during build of #4589: steps 3 and 6. A render failure or a second prompt deny takes the no-report path before the artifact check, and a handoff continuation is rendered by `dispatch-prompt.js --next-steps`. See `dispatch-a-group-with-rendered-task-prompts-4589.md`.
 - Related: #2837 (introduced the first-call artifact check), #2861 (claim-log line parser), #2391 (worktree-mirror rung of the record-resolution ladder).

@@ -1,24 +1,22 @@
 # Dispatch Step 5 — Task() Prompt Template
 
-Referenced by `skills/dispatch/SKILL.md` Step 5. **Each of this file's two templates must be inlined verbatim into its own `Task()` tool call** when dispatching a group — they are the operative templates, not supplementary reading. Never inline both into one call. Copy each fenced block below exactly, substituting `{issue list}`, `{minted-run-dir}`, `{plugin-root}`, `{context-pack}`, etc. as SKILL.md's Step 5 directs.
+Referenced by `skills/dispatch/SKILL.md` Step 5. **Each of this file's two templates must be inlined verbatim into its own `Task()` tool call** when dispatching a group — they are the operative templates, not supplementary reading. Never inline both into one call. `bin/dispatch-prompt.js` renders each call's prompt (SKILL.md Step 5): these fenced blocks and the Context pack's numbered items are its only template source, so an edited sentence here reaches every rendered prompt with no code change. Nothing is substituted by hand; a render failure blocks the group (`two-call-gate.md` §2).
 
 Each group is dispatched as **two sequential `Task()` calls**, not one (per `_shared/subagent-output-contract.md`'s input discipline — minimal input, literal output template inlined, no conversation history). The single-assistant-message rule (`_shared/subagent-dispatch-core.md`'s fan-out section) creates no batching decision here — these two calls are sequential by design, never emitted together.
 
-## Context pack (#1542 — resolve once, substitute into both calls)
+## Context pack (#1542 — resolved once by `dispatch-prompt.js` for both calls)
 
 A dispatched Task agent inherits no shell environment (`_shared/subagent-output-contract.md`'s
 Input Discipline), so an env-var reference such as `${CLAUDE_PLUGIN_ROOT}` embedded in a template
-resolves to nothing in its shell. The dispatching session already resolved seven of these facts
-earlier in the same firing (Steps 1-4); it resolves them **once more here, as literals**, before
-composing either call — plus one standing instruction (item 7) that needs no resolution, only
-inclusion:
+resolves to nothing in its shell. `dispatch-prompt.js` resolves these facts as literals for both
+calls — plus one standing instruction (item 7) that needs no resolution, only inclusion:
 
 1. **`{plugin-root}`** — this session's own already-resolved `$CLAUDE_PLUGIN_ROOT` value,
    substituted as a literal absolute path everywhere this file used to embed the env-var
    reference `${CLAUDE_PLUGIN_ROOT}` — never left as `${CLAUDE_PLUGIN_ROOT}` for the dispatched
    agent's shell to expand.
 2. **`{minted-run-dir}`** — unchanged from before this section existed (Step 4's mint).
-3. **Resolved policy values** — one call, before either dispatch: `node "{plugin-root}/bin/resolve-policy.js" --values autonomy,integration-model,merge-verification,risk-floor,size-floor`. The five values this call's own Settle/Auto-merge procedures need downstream. **Scope note (#2413):** these are read-only facts for Settle/Auto-merge only — they never substitute for `/flow`'s own Step 3 Manifesto, which independently computes and writes the full 13-lever `config.yml` (including its own `merge-verification` entry) on the first call regardless of what is handed here. A lever already resolved above is never grounds for that call to skip the Manifesto's `config.yml` write.
+3. **Resolved policy values** — `{policy-values}`, from `node "{plugin-root}/bin/resolve-policy.js" --values autonomy,integration-model,merge-verification,risk-floor,size-floor`. The five values this call's own Settle/Auto-merge procedures need downstream. **Scope note (#2413):** these are read-only facts for Settle/Auto-merge only — they never substitute for `/flow`'s own Step 3 Manifesto, which independently computes and writes the full 13-lever `config.yml` (including its own `merge-verification` entry) on the first call regardless of what is handed here. A lever already resolved above is never grounds for that call to skip the Manifesto's `config.yml` write.
 4. **Canonical CLI invocation table** — the argument shapes and enums a dispatched call has
    historically had to rediscover by trial and error:
 
@@ -96,13 +94,12 @@ inclusion:
    against the holder's `claimedAt` to tell a missing projection from a claim race. An unreadable
    file → `Selected at: unknown`; never block the dispatch on it.
 
-Substitute this whole block, filled in with this firing's actual resolved values, as
-`{context-pack}` immediately after each call's opening `Task scope:` paragraph below. This is
-environment facts and tool signatures only — never a prior call's conclusions (test results,
-verdicts) — so it does not weaken the two-call gate's fresh-context independence property (see
-each template's own "CRITICAL"/re-derive-from-artifacts language, unchanged by this section).
+Substitute this whole block, resolved, as each call's `{context-pack}` — `dispatch-prompt.js`
+does. It is environment facts and tool signatures only — never a prior call's conclusions (test
+results, verdicts) — so it keeps the two-call gate's fresh-context independence (each template's
+own "CRITICAL"/re-derive-from-artifacts language).
 
-**Before substituting `{context-pack}` into a call, compose that call's phase** into the minted
+**Before running `dispatch-prompt.js` for a call, compose that call's phase** into the minted
 run directory with one physical line — before the first call:
 `node "{plugin-root}/bin/compose-context.js" --run "{minted-run-dir}" --phase first-call`
 and before the second call:
@@ -118,15 +115,13 @@ composed-bytes scanner expands each `--phase` line into the phase's registered b
 two lines are measured call sites; if the compose command is unavailable or exits non-zero, read the named source files directly — which, for the dispatched agent, each template citation's own fallback already says.
 
 **Log each group's resolved first-call model (#3212).** This is a dispatching-session step, not
-part of `{context-pack}`. When resolving the first call's profile
-(`node "{plugin-root}/bin/resolve-profile.js" capable`, the template below), keep the resolved
-`model` and `source`; after the first call returns — never before it is dispatched — write one
+part of `{context-pack}`. Keep the `model` and `source` of the first call's `dispatch-prompt.js`
+envelope `profile`; after the first call returns — never before it is dispatched — write one
 line per group to that group's `{minted-run-dir}/decisions.md` by running
 `node "{plugin-root}/bin/log-decision.js" --run "{minted-run-dir}" --status AUTO --step "Dispatch group {group}" --text "first-call model resolved to {model} (source: {source})" --reversibility n/a`,
 which produces, per `_shared/auto-decision-log.md`'s canonical entry schema:
 `- AUTO {time} — Dispatch group {group}: first-call model resolved to {model} (source: {source}). Reversibility: n/a.`
-where `{model}` and `{source}` are the `model` and `source` fields of the `resolve-profile.js
-capable` JSON, and `{group}` is the group's comma-joined issue list in brackets (e.g. `[42]` or
+where `{model}` and `{source}` are that `profile`'s fields, and `{group}` is the group's comma-joined issue list in brackets (e.g. `[42]` or
 `[42,43]`). The timing matters: before the first call, the minted directory's `decisions.md` may
 hold only `/flow` Step 2.8's claim-log lines, and any other line makes `/flow` Step 3 treat the
 directory as a recovery (adoption case 3, `bin/lib/flow/preflight.js` via
@@ -138,11 +133,11 @@ template applied.
 
 **No handoff to capture from this call's report.** Dispatch Step 4 already minted this group's run directory before either call — `{minted-run-dir}` below is that same directory, substituted literally, on both calls. There is nothing to parse out of this call's prose report to construct the second call's input; the gate between calls (`two-call-gate.md`) reduces to reading the status line and `OUTCOME` (plus `NEXT_STEPS` on a handoff).
 
-**Before substituting this template**, the dispatching session decides whether to add `DISPATCH_HEADLESS=1 ` immediately before `/claude-tweaks:flow` on the invocation line below — a decision made once, here, never left in the copy-pasted text for the dispatched agent to reason about. Add it when this firing came from a scheduled Routine — a bare drain, or its deprecated `next` alias — with nobody present; omit it entirely (no `{headless-marker}` placeholder, no trailing space) when a human typed the command directly, in any form (bare, `next`, `#N`, or explicit-list) — the same human-present/Routine discriminator `SKILL.md`'s Next Actions render rule already uses. When set, it tells this call's Settle procedure (`settle-and-merge.md`) that nobody is present to read a Step 2.8 claim-contest stop, so a contest there self-reports via `_shared/headless-self-report.md`. It stays outside the fenced block below because only the dispatching session knows the firing form.
+**Before rendering this template**, the dispatching session decides whether to pass `--headless`, which adds `DISPATCH_HEADLESS=1 ` immediately before `/claude-tweaks:flow` on both invocation lines below. Add it when this firing came from a scheduled Routine — a bare drain, or its deprecated `next` alias — with nobody present; omit it when a human typed the command directly, in any form (bare, `next`, `#N`, or explicit-list) — the same human-present/Routine discriminator `SKILL.md`'s Next Actions render rule already uses. When set, it tells this call's Settle procedure (`settle-and-merge.md`) that nobody is present to read a Step 2.8 claim-contest stop, so a contest there self-reports via `_shared/headless-self-report.md`.
 
 A dispatched call is headless and cannot answer `interactive` prompts, so both calls pass `auto` explicitly; an explicit mode argument outranks the project's `auto-mode` policy, and the `autonomy` ceiling still bounds what the run may do. The `auto` suffix after the step list is independent of the `DISPATCH_HEADLESS=1 ` prefix before `/claude-tweaks:flow`.
 
-**Resume (#4588).** Only `dispatch resume` (`resume.md`) adds `RESUME_PR="{pr-url}" ` immediately before `/claude-tweaks:flow` on the first call's line; the second call and its continuations carry neither it nor `{resume-context}`. `dispatch resume` is typed by a human, so no call of a resume carries `DISPATCH_HEADLESS=1 `, exactly as for the explicit `#N` form above. The same session appends `{resume-context}` after the filled first-call template, never inside the fenced block, and omits it entirely outside resume: `Resuming stalled run {priorRunId} on PR {prUrl}; last logged phase: {section} {step}; open defects: {each}`. A null `lastPhase` renders `last logged phase: none recorded`; an empty `openDefects` renders `open defects: none recorded`. A first-call continuation keeps both, since the Continuation call inlines the template verbatim; `RESUME_PR` is then a no-op, because Step 2.8 returns the run's own claim as `alreadyOwned` before the `'stale'` branch.
+**Resume (#4588).** Only `dispatch resume` (`resume.md`) adds `RESUME_PR="{pr-url}" ` immediately before `/claude-tweaks:flow` on the first call's line; the second call and its continuations carry neither it nor `{resume-context}`. `dispatch resume` is typed by a human, so no call of a resume carries `DISPATCH_HEADLESS=1 `, exactly as for the explicit `#N` form above. `dispatch-prompt.js --resume-verdict {file}` adds that prefix and appends `{resume-context}` after the filled first-call template, never inside the fenced block, and omits it entirely outside resume: `Resuming stalled run {priorRunId} on PR {prUrl}; last logged phase: {section} {step}; open defects: {each}`. A null `lastPhase` renders `last logged phase: none recorded`; an empty `openDefects` renders `open defects: none recorded`. A first-call continuation keeps both, since the Continuation call inlines the template verbatim; `RESUME_PR` is then a no-op, because Step 2.8 returns the run's own claim as `alreadyOwned` before the `'stale'` branch.
 
 ```
 Task scope: Execute claude-tweaks build+test for this dispatch group of
@@ -154,7 +149,7 @@ once, comma-joined. Stop after the test gate -- do not proceed to review, polish
 a separate Task call handles those. If you reference any of these issue numbers in an
 intermediate commit message, write "refs #N" -- never "closes #N" or "fixes #N".
 
-Foreground execution (required): run `npm test` and every other long-running command in the
+Foreground execution (required): run the project's test command and every other long-running command in the
 foreground of this turn, output redirected to a file if it's long -- never with `run_in_background`.
 Never end this turn waiting on a background test run or fix-round you started this way -- you cannot
 count on being re-woken by either, and the run stalls silently when you are not (#1965). A nested
@@ -252,7 +247,7 @@ The actual artifact is the runner-written pass stamp verifying HEAD (`verify.js 
 reports `verifiedHead: true`) and its `report.json` -- or a complete composed verdict
 (`suiteComposed.complete: true`), whose per-suite records carry their own report paths and are
 the same artifact. Both exist only when the test phase runs through `/claude-tweaks:test`. A raw
-`npm test` log is not that artifact: it leaves no stamp, and the second call then re-runs the
+test-command log is not that artifact: it leaves no stamp, and the second call then re-runs the
 full suite (#3661). Never report a result from narrative or memory of an earlier pass in this same
 call -- if `--stamp-status` does not report `verifiedHead: true` (no stamp, no complete
 composition, or neither verifies HEAD), re-run the test phase through `/claude-tweaks:test` once
@@ -282,13 +277,14 @@ OUTPUT FORMAT (required) -- return ONLY these lines, no preamble:
 
 GROUP: {comma-joined issue numbers}
 OUTCOME: {build-test-ok | build-test-failed | build-test-blocked | already-shipped | handoff}
-NEXT_STEPS: {only with OUTCOME: handoff -- the comma-joined steps still to run; omit otherwise}
+NEXT_STEPS: {only with OUTCOME: handoff -- the steps still to run; omit otherwise}
 MANIFEST: {absolute path to this group's run-dir manifest.yml/decisions.md -- a
   human-readable trace only; the dispatching session already holds this run's identity as
   {minted-run-dir} and derives nothing from this line}
 
 One line per issue in this group that hit a HARD-GATE (omit if none):
 ISSUE #{n}: failed:{gate}
+  (a claim-targets.js exit 7 uses the gate value `claim-permission-denied`, exactly, with `OUTCOME: build-test-blocked`)
 
 Status line (required): on its own trailing line, after everything above -- the reply's last
 non-empty line -- write exactly `STATUS: {WORD}`, where {WORD} is one of: DONE /
@@ -326,7 +322,7 @@ this agent, so it is not the basis for the clause.
 
 **Only dispatch this call if the first call's status line was DONE or DONE_WITH_CONCERNS AND its OUTCOME was `build-test-ok`.** A `NEEDS_CONTEXT`/`BLOCKED` status, an `OUTCOME` of `build-test-failed`/`build-test-blocked`, or no parseable report at all means this second call is never dispatched — the first call's own agent settles its own failure (its template above instructs it to), and the dispatching session takes the terminal path in `two-call-gate.md` section 5 (fail-loud reporting plus the `/claude-tweaks:wrap-up {target} cleanup-only` teardown call). An `OUTCOME` of `already-shipped` (#2502) is a **third, distinct** case, neither success nor failure: this second call is never dispatched here either, but the reason is that the first call already finished the record (staged a Close proposal, closed any draft PR, released the claim) — there is nothing left to review, polish, or wrap up. Take `two-call-gate.md` §7's terminal path for it, never section 5's — §7 tears the worktree down the same way section 5 does, but never invokes Settle's failure classification, retry counting, or failure comment, and the dispatching session's own report surfaces the group as a no-op, not `pending-review`. An `OUTCOME` of `handoff` (#4027) is none of these: the first call stopped at a phase boundary past `/flow`'s context cap and is continued (Continuation call, below), and this gate reads the last continuation's report.
 
-**Substitute `{minted-run-dir}` into this call's command line**, exactly as `{issue list}` is substituted — not exported as a shell variable in the dispatching session, which would never reach the agent: a dispatched Task agent is a clean room that inherits no environment (`_shared/subagent-output-contract.md`'s Input Discipline). It is the same value substituted into the first call — dispatch Step 4 minted it once, before either call, so there is nothing to derive from the first call's report this time. Omit it and `/flow` starts a fresh run directory instead of resuming the one the first call adopted.
+**`{minted-run-dir}` rides this call's command line** (`dispatch-prompt.js` fills it), never exported as a shell variable in the dispatching session, which would never reach the agent: a dispatched Task agent is a clean room that inherits no environment (`_shared/subagent-output-contract.md`'s Input Discipline). It is the first call's value, minted once by dispatch Step 4, so nothing is derived from the first call's report; without it `/flow` starts a fresh run directory instead of resuming the one the first call adopted.
 
 This call's prompt names ONLY the record number(s) and the `PIPELINE_RUN_DIR` path above — never a summary of the first call's outcome. Both are resolution targets, not findings; that is what keeps the no-echo rule intact while the run itself is handed over. It is a fresh Task-tool dispatch with zero conversation history from the first call, and its own review step must re-derive its verdict from raw artifacts (the actual diff, the actual test-output artifact — via the same shape `bin/lib/dispatch/artifact-verdict.js`'s `deriveTestVerdict` pins as a testable invariant) rather than trusting any claim the first call made, including claims written to `decisions.md`, ledger entries, or staged proposals the first call produced. File-based state is readable across the two calls even though conversation history is not.
 
@@ -343,7 +339,7 @@ _shared/run-dir-resolution.md's resolution order step 1 (the env var, its docume
 path) feeding flow/SKILL.md Step 3's adopt-if-set branch. You need no other input about what
 the prior call did or found.
 
-Foreground execution (required): run `npm test` and every other long-running command in the
+Foreground execution (required): run the project's test command and every other long-running command in the
 foreground of this turn, output redirected to a file if it's long -- never with `run_in_background`.
 Never end this turn waiting on a background test run or fix-round you started this way -- you cannot
 count on being re-woken by either, and the run stalls silently when you are not (#1965). A nested
@@ -496,7 +492,7 @@ OUTPUT FORMAT (required), before the trailing status line -- return ONLY these l
 
 GROUP: {comma-joined issue numbers}
 OUTCOME: {merged | armed | pending-review | ready-to-merge | failed | blocked | handoff}
-NEXT_STEPS: {only with OUTCOME: handoff -- the comma-joined steps still to run; omit otherwise}
+NEXT_STEPS: {only with OUTCOME: handoff -- the steps still to run; omit otherwise}
 MANIFEST: {path to this group's run-dir manifest.yml/decisions.md -- a human-readable trace
   only; the dispatching session already holds this run's identity as {minted-run-dir} and
   derives nothing from this line}

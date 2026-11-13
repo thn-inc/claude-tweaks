@@ -47,9 +47,13 @@ no longer applies, never applied blind, per `_shared/staged-patch.md`; an unreco
 prefix lands in Pending review as `pending — unmapped-prefix`, never auto-approved; an
 `sdd-ruling-*` item whose staged header does not show it safe lands as
 `pending — sdd-ruling-deferral-no-defer-reason`, `pending — sdd-ruling-needs-human-decision`,
-`pending — sdd-ruling-unclassified`, or `pending — sdd-ruling-unreadable` (the `sdd-ruling-*` bullet below); a `wrap-up-reference-*` item whose header
-carries a `Held:` line (`reference-sweep.md` Step 4), or whose file cannot be read, lands as
-`pending — reference-repair-held` or `pending — reference-repair-unreadable`, never auto-approved; a staged item named by a `REFUSED` line in `decisions.md` is classified under **Refused — no defer reason**
+`pending — sdd-ruling-unclassified`, or `pending — sdd-ruling-unreadable` (the `sdd-ruling-*` bullet below); a `wrap-up-reference-*` item the initiative floor held (a `references` finding with
+`hold: true`, a header carrying `Hold: yes` or a `Held:` line, or a staged diff naming a test file
+or a merge-sensitive path — `reference-sweep.md` Step 4) lands as `pending — reference-repair-held`;
+one whose finding or header is missing, duplicated or malformed, so the two cannot agree on
+`Hold: no`, whose staged diff is missing or unparseable, or whose `merge-sensitive-paths` policy value cannot be read, lands as
+`pending — reference-repair-unclassified`; one whose file cannot be read lands as
+`pending — reference-repair-unreadable`; none is auto-approved; a staged item named by a `REFUSED` line in `decisions.md` is classified under **Refused — no defer reason**
 before any prefix rule runs and resolves to `refused` — those rows are in the CLI's table like
 every other row, and a `refused` item is never applied, at any tier, per `refused-proposals.md`.
 The CLI also computes the merge half with both carve-outs (`merge.resolution` = `merge` |
@@ -60,7 +64,7 @@ The CLI also computes the merge half with both carve-outs (`merge.resolution` = 
 the write the reconciler's archival needs, #1854; `droppedByTiebreak` holds the read-only Dropped
 by tiebreak block's rows, `filings` one `{item, fingerprint, title}` per planned can't-tell
 filing, with no proposal text, #3949). That file may later gain an optional
-`residueAcknowledgedAt`, written only by `console-residue.js --ack`/`--ack-all` (#3370); an item's stored resolution may later be rewritten by `console-resolve.js --set-item` (`refused-proposals.md`'s failed-execution rewrite — `apply` → `keep-staged`, adding `rewrittenFrom`/`rewrittenAt`, and dropping a stale `residueAcknowledgedAt`), and a `filings` entry whose fingerprint has no filed line in that dir's `decisions.md` reads as `filing-pending` residue (#4170); and
+`residueAcknowledgedAt`, written only by `console-residue.js --ack`/`--ack-all` (#3370); an item's stored resolution may later be rewritten by `console-resolve.js --set-item` (`refused-proposals.md`'s failed-execution rewrite — `apply` → `keep-staged`, adding `rewrittenFrom`/`rewrittenAt`, and dropping a stale `residueAcknowledgedAt`; a reference repair whose diff no longer applies at Phase 4 is rewritten `approve` → `pending — reference-repair-stale` the same way, per `execution-and-verification.md`'s Reference repairs bullet), and a `filings` entry whose fingerprint has no filed line in that dir's `decisions.md` reads as `filing-pending` residue (#4170); and
 `console-resolve.js --json` on a fresh resolution carries an `unresolved` array (the
 `pending`/`keep-staged` items, `[]` when none); the idempotent re-render of an already-resolved
 console prints the stored table and the `Needs a human` block as text whatever the flags.
@@ -77,12 +81,39 @@ procedure — no row is left unrouted:
   `Invariant:` re-derivation below), and a staged `.md` proposal (`polish-suggestion-*`,
   `visual-review-*`, `design-decision-*`, `build-deviation-*`, `simplify-*`, `deepen-*`, `sdd-ruling-*`) applied
   as that step already describes for a non-patch item.
-- `apply` on an `sdd-ruling-*` item — still step 1, but it executes no code change: it
-  writes the item's `Ledger:` row back to `accepted`, Resolution
-  `ratified at Review Console — {the ruling's own "— why" clause, or "no — why clause on the ruling line" when it carries none}`
-  — never an empty clause: `finish-console` rejects an `accepted` entry with no resolution text
-  before writing anything (under Approve all,
-  through `finish-console`'s existing `ledger` array — `review-console.md` step 11).
+- `apply` on an `sdd-ruling-*` item — ratify. It executes no code change, and what it writes
+  depends on the staged header, classified by `bin/lib/console/sdd-ruling.js`'s
+  `sddRulingRatifyAction` (#3942):
+  - `accept` — a settled design decision (`Defers: no` with no `Defer-reason:` header line,
+    or several `Defers:` lines, every one `no`, with no `Defer-reason:` line — agreeing lines
+    ratify as one does, though the console-auto gate below holds them for a human).
+    Still step 1: it writes the item's `Ledger:` row back to `accepted`, Resolution
+    `ratified at Review Console — {the ruling's own "— why" clause, or "no — why clause on the ruling line" when it carries none}`
+    — never an empty clause: `finish-console` rejects an `accepted` entry with no resolution text
+    before writing anything (under Approve all,
+    through `finish-console`'s existing `ledger` array — `review-console.md` step 11).
+  - `file-record` — a deferral (`Defers: yes`, or any `Defer-reason:` header line) and, when a
+    human ratifies (a tick, or Approve all at a human-present console), every ruling the
+    console-auto gate below withholds — no `Defer-reason:` line, more than one, an invalid one,
+    `needs-human-decision`, a missing `Defers:` line in a non-empty file, conflicting `Defers:`
+    lines (`yes` and `no`), or a `Defers:` value other than `yes`/`no`: a human ratify of a
+    gate-withheld ruling files the record too. Ratifying it files the deferred work, so it never
+    ends as a bare `accepted` row: it composes a born-ready record proposal exactly as `reverse`
+    does below (`specShapedBody`; Current State = the ruling and the finding it deferred;
+    Deliverables = the deferred work; `Origin: SDD ruling ratified at Review Console`;
+    `Defer-reason:` = the staged file's own `Defer-reason:` value when the header carries exactly
+    one valid one (`needs-human-decision` included — the human's tick is the decision), else
+    derived from `_shared/deferral-gate.md`'s Fix-now criteria exactly as `reverse` derives it
+    below), stages it as `staged/ledger-record-sdd-ruling-{N}.md`, routes it
+    through step 7 in the same pass, and — once step 7 has created the record — writes the row
+    back to `deferred`, Resolution `ratified → #{new record}` (under Approve all, through
+    `finish-console`'s `ledger` array, which refuses a `ratified` deferral with no record
+    number). When step 7 declines or fails to create it, the row stays `open` with the cause
+    logged — never `accepted`, never `deferred` without a record number.
+  - Neither — a ruling whose staged file is empty, blank, or cannot be read
+    (`sddRulingRatifyAction` returns `null`) is not ratifiable: nothing is filed or written, and
+    the row stays `open` with the cause logged (on a PR console, `_shared/console-execution.md`'s
+    Execution routing names it in `--filing-failed`).
   `reverse` (the Override vocabulary for a ruling row, `review-console-interactive.md`)
   composes a born-ready record proposal exactly as
   `_shared/ledger-format.md`'s Phase 3 `Keep` does (`specShapedBody`; Current State = the
@@ -101,10 +132,10 @@ procedure — no row is left unrouted:
   `deferred` without a record number, since terminal statuses are final. The console
   cannot change code for a reversal — the fix wave is closed — so filing is the only
   reverse action.
-  Outside Approve all, a ratify writes the row directly at step 1
+  Outside Approve all, an `accept` ratify writes the row directly at step 1
   per `_shared/staged-patch.md`'s Write-back to the ledger — the same per-item write that
-  step already performs for a `.patch`; a `reverse` on any path writes it at step 7, as
-  above, never at step 1.
+  step already performs for a `.patch`; a `file-record` ratify and a `reverse` on any path
+  write it at step 7, as above, never at step 1.
   Under `console-resolve.js --policy console-auto` (unattended) an `sdd-ruling-*` item resolves
   `apply` (ratify) only when its staged header shows it is safe (#3880): `Defers: no` with no
   `Defer-reason:` header line — a settled design decision, resolved exactly as before — or a
@@ -119,6 +150,14 @@ procedure — no row is left unrouted:
   `pending — sdd-ruling-unreadable` (the reconciler's gap names why: `no-staged-path`, `path-rejected`,
   `not-found`, or `read-failed`). None is ever auto-ratified, and the reconciler's
   `consoleAutoResolve` path withholds the same rows (`_shared/console-execution.md`).
+  Not auto-ratifiable is not the same as not ratifiable: a human ratify of any of them is a `file-record`
+  ratify (above) — `accept` for agreeing `Defers: no` lines — unless its staged file is empty,
+  blank, or unreadable, which is not ratifiable.
+  A `file-record` ruling that does auto-ratify resolves `apply` with the reason
+  `ratify files a deferral record …`, and its record is filed at step 7 like a `Q#`; a failed
+  filing follows `refused-proposals.md`'s failed-execution rewrite with `{name}` = the ruling
+  item `sdd-ruling-{N}.md` — `console.json`'s item, never the derived
+  `ledger-record-sdd-ruling-{N}.md` proposal — so the row stays `open`.
 - `apply` on a `Q#` item — step 7 (record creation), whose `refused-proposals.md` check still
   runs first (a `.shadow-dup` copy is composed by `shadow-dup-proposal.js` before that, as that step states); on an `M#` item — step 8 (the `_shared/learning-routing.md` memory write plus its
   `MEMORY.md` index line).
