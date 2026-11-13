@@ -19,3 +19,5 @@
 | 15 | review | Test Quality (low): the as-built refusal of a -C into a regular file had no test (queue-pull-oracle.js:552) | fixed | Fixed in 59bdfa888: shims test pins the refusal; a delegate-the-file mutant went red (128 vs 97) |
 | 16 | review | Test Quality (low): the 15-digit mktemp counter limit was pinned only on the refused side (queue-pull-oracle.js:335) | fixed | Fixed in 59bdfa888: a 15-digit counter is asserted accepted; a 14-digit-limit mutant went red |
 | 17 | review | Convention (low): the sh shims' dash vs macOS sh pitfalls were not in the parity-oracle skill (whole-fence-parity-oracle.md:10) | fixed | Fixed in 1f6fcd5ac: rule 7 added to whole-fence-parity-oracle.md, SKILL.md pointer updated |
+| 18 | wrap-up | Reflect: context-gauge.js writes a stale handoff.json for a one-step --next-steps on a non-dispatched run | deferred | → backlog; staged/reflect-1.md (Queue writes). Defer-reason: tangential |
+| 19 | wrap-up | Reflect: one linked-PR gh graphql call in the queue-pull oracle starts the gh shim twice and logs once | deferred | → backlog; staged/reflect-2.md (Queue writes). Defer-reason: tangential |
