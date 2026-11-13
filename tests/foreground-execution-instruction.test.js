@@ -630,6 +630,10 @@ const RENDERED_UI_CONTRACT = [
   [/late\s+rendered-UI\s+result\s+from\s+\{unit\}\s+staged\s+to\s+staged\/\{written-file\}\./, 'the decision log text'],
   [/`status`\s+is\s+anything\s+but\s+`active`[\s\S]{0,240}?`console\.json`\s+exists[\s\S]{0,240}?exits\s+3[\s\S]{0,240}?write\s+nothing\s+under\s+the\s+run\s+dir[\s\S]{0,240}?name\s+the\s+findings\s+in\s+your\s+reply\s+instead/, 'a closed run stages nothing and names the findings in the reply'],
   [/never\s+changes\s+a\s+verdict\s+already\s+reached/, 'a late result never changes a verdict already reached'],
+  [/`\{section\}`\s+is\s+`\/review`/, 'binds the log-decision {section}'],
+  [/basename\s+of\s+the\s+first\s+path\s+stage-item\s+printed/, '{written-file} is the basename of the first path stage-item printed'],
+  [/`\{text-file\}`\s+is\s+a\s+path\s+`bin\/session-tmp-resolve\.js`\s+prints/, 'binds the {text-file} location'],
+  [/as\s+an\s+absolute\s+path/, 'the artifact directory is named as an absolute path'],
 ];
 const renderedUiMissing = missingFactsOf(RENDERED_UI_CONTRACT);
 
