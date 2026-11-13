@@ -151,6 +151,11 @@ function assertRankExitRouted(t) {
   assert.match(next, /A non-zero exit (?:\([^)]*\) )?is never a `null` pick: stop the firing, quoting its stderr line; Step 1's close-out runs/,
     'the next bullet must route a non-zero --rank exit to a stop, never a null pick');
 }
+// The Loop's repeat-until list names the queue-pull/--rank stop, as the loop-termination close-out
+// does (#5230 final review M3, follow-up).
+function assertLoopEndsOnPullStop(t) {
+  assert.match(loopLine(t), /repeat until [^.]*a queue-pull\/`--rank` stop[^.]*ends the firing/, "the Loop's repeat-until list must name the queue-pull/--rank stop");
+}
 function assertPriorityOmitted(t) {
   assert.match(nextBullet(t), /omitting `--priority` when no band is set/, 'the next bullet must say to omit --priority with no band');
 }
@@ -175,6 +180,10 @@ test('a non-zero --rank exit stops the firing with the close-out, never a null p
   assertGoesRed(assertRankExitRouted, SKILL, ', quoting its stderr line, never a `null` pick)', (t) => t.replace(', quoting its stderr line, never a `null` pick)', ', never a `null` pick)'));
   assertGoesRed(assertRankExitRouted, SKILL, ', quoting its stderr line, never a `null` pick)', (t) => t.replace(', quoting its stderr line, never a `null` pick)', ', quoting its stderr line)'));
   assertGoesRed(assertRankExitRouted, SKILL, "is never a `null` pick: stop the firing, quoting its stderr line; Step 1's close-out runs");
+});
+
+test("#5230 final review M3: the Loop's repeat-until list names the queue-pull/--rank stop", () => {
+  assertGoesRed(assertLoopEndsOnPullStop, SKILL, ' a queue-pull/`--rank` stop,');
 });
 
 test('Review Focus 4: with no band set the prose omits --priority, and no call passes it empty', () => {
