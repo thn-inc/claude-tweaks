@@ -507,7 +507,7 @@ is `plugin/skills/_shared/integration-branch.md`. Paths outside the payload (`do
 | `review/code-mode-steps.md` | Step 8's disposition inventories the `reflect-` and `simplify-` files its Steps 4-5 produce, routed by the review staging roster in `release/disposition.md`'s Inventory. |
 | `_shared/multi-agent-coordination.md` | Step 8's disposition inventories each entry of `staged/review-unconfirmed-{n}.md` as a finding the tiebreak left unconfirmed. |
 | `design-wrapper/modes/review.md` | Step 8's disposition inventories its `staged/design-decision-*.md` files (Step 6.5) as proposals, routed through the review staging roster. |
-| `visual-review/SKILL.md` | Step 8's disposition reads its `staged/visual-review-*.md` skip notes as `note` roster rows, kept out of the findings. |
+| `visual-review/SKILL.md` | Step 8's disposition reads its `staged/visual-review-*.md` skip notes as `note` roster rows, kept out of the findings. A `staged/visual-review-late-{n}.md` file is not one of them: it matches the longer `visual-review-late-` prefix and counts as a `proposal` finding (`_shared/rendered-ui-units.md`'s row under `## dispatch`, #5280). |
 | `test/fix-mode.md` | Step 8's disposition inventories its `staged/test-fix-{n}.patch` files (Step 1.5's test gate) as proposals. |
 | `test/flake-handling.md` | Step 8's disposition inventories its `staged/flaky-allowlist-{slug}.md` files (Step 1.5's test gate) as proposals. |
 | `_shared/materiality-floor.md` | Step 8's disposition routes a below-floor finding to the digest container instead of an ordinary record, and surfaces the digest comment URL and count in its own output. |
