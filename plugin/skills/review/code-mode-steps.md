@@ -54,7 +54,7 @@ If a spec number was provided, read the spec file and verify the implementation 
 | Result | Action |
 |--------|--------|
 | All deliverables done + all criteria met | Proceed to Step 1.5 |
-| Minor gaps (1-2 partial items) | Flag gaps, proceed — they may be addressed in Implementation Hindsight |
+| Minor gaps (1-2 partial or `unverifiable` items) | Flag gaps, proceed — they may be addressed in Implementation Hindsight |
 | Any risk marker `unresolved` after independent verification | **BLOCKED** — same tier as Significant gaps. Name the unverified marker(s) (file:line or table row) so the user knows exactly what still needs ground-truth confirmation |
 | Significant gaps (missing deliverables or criteria) | **BLOCKED** — the spec isn't fully built yet. List what's missing so the user can resume `/claude-tweaks:build` |
 

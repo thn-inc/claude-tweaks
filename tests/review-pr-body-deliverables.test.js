@@ -50,6 +50,26 @@ test('the PR-body item is read from Step 1, not file-wide', () => {
   assert.deepEqual(missingFactsOf(FACTS)(step1(moved)), FACTS.map(([, f]) => f));
 });
 
+const GATE_ROW = /\| Minor gaps \(1-2 partial or `unverifiable` items\) \|/;
+
+function gateTable(text) {
+  const start = text.indexOf('### Gate:', text.indexOf('## Step 1: Spec Compliance Check'));
+  const end = text.indexOf('> **Why this is Step 1:**', start);
+  assert.ok(start >= 0 && end > start, 'Step 1 Gate table must precede the Why-this-is-Step-1 note');
+  return text.slice(start, end);
+}
+
+function assertGateCountsUnverifiable(text) {
+  assert.match(gateTable(text), GATE_ROW, 'Gate Minor gaps row must count unverifiable items');
+}
+
+test('the Gate counts unverifiable as a minor gap', () => {
+  assertGateCountsUnverifiable(STEPS);
+  const old = STEPS.replace('| Minor gaps (1-2 partial or `unverifiable` items) |', '| Minor gaps (1-2 partial items) |');
+  assert.notEqual(old, STEPS);
+  assert.throws(() => assertGateCountsUnverifiable(old), /Gate Minor gaps row must count unverifiable items/);
+});
+
 test('grep for "PR body" names the check in Step 1', () => {
   const s = step1(STEPS);
   const hits = STEPS.split('\n').filter((l) => /PR body/i.test(l));
