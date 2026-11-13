@@ -314,8 +314,8 @@ When mechanizing a prose heuristic into a deterministic check:
     blanks comments to spaces before its callers' scans count tokens. Its
     callers, by test-file stem: `accept-label-reader`, `backfill-cli`, `below-floor-parent-close`, `cli`, `exit-code`, `gh-host-seam`, `git-status-optional-locks`,
     `hooks-harness-refusal`, `hooks-pre-tool-use`, `markdown-blocks`, `owner-pid-probe`, `path-containment`, `path-guard`, `phase-exit`, `phase-exit-call-sites`, `porcelain-cwd-compare`, `post-merge`,
-    `precondition`, `raw-markdown-read`, `release-notes`, `run`, `run-liveness-callers`, `staged-id-producers`, `subprocess-timing`, `wall-clock-budget` and
-    `windows-hide-spawn`.
+    `precondition`, `raw-markdown-read`, `release-notes`, `run`, `run-liveness-callers`, `staged-id-producers`, `subprocess-timing`, `wall-clock-budget`,
+    `windows-hide-spawn` and `wrap-up-learned-skills-pr`.
     `tests/strip-comments-callers-twin.test.js` pins this list and the helper header's to the
     tree. It models regex literals (#3585); its residual
     ambiguity is a regex right after `)` or `}`, which it reads as division. In

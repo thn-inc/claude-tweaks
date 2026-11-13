@@ -38,7 +38,7 @@
 //
 // Exit 0 ok (every route above, staged included)
 //      1 a git failure before the diff was read — nothing was changed; the caller commits on the run
-//        branch and logs FAILED (merge-check's floor still holds that run). Also a failure after the
+//        branch and logs SKIP (degraded) (merge-check's floor still holds that run). Also a failure after the
 //        diff that staging could not absorb: stderr says "staging failed too" and where the edit is —
 //        in the working tree (still committable on the run branch), or the patch file that holds it
 //      2 malformed invocation, an unreadable --summary-file, or a --run that is missing, not anchored

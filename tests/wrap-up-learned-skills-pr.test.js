@@ -6,7 +6,8 @@
 // before any record call), the payload contract row for findings[].pr, skill-curation.md's AUTO and
 // STAGED shapes, and the short-circuit FYI. The prose is new in this change, so every fact list is
 // proved red by stripping one fact from the live text in memory (assertEachPatternGoesRed), and the
-// ordering pin by permuting it. The fences are run through the CLI's own run() for their flags, and
+// ordering pin by permuting it. The fences are run through the CLI's own run() for their flags, the
+// log-line templates' fixed segments are checked against the library's comment-stripped code, and
 // the PR URL is asserted end to end through wrap-up-engine.js record and render.
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -16,6 +17,8 @@ const { spawnSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
 const { missingFactsOf, assertEachPatternGoesRed, sectionOf } = require('./helpers/conformance-asserts');
 const { gitRepo } = require('./helpers/git-fixtures');
+const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('./helpers/strip-comments');
+const { STEP } = require('../plugin/bin/lib/learned-skills/learned-skills');
 
 const ROOT = path.join(__dirname, '..');
 const WRAP = path.join(ROOT, 'plugin', 'skills', 'wrap-up');
@@ -31,7 +34,10 @@ const collapse = (s) => s.replace(/\s+/g, ' ');
 const PROC_FACTS = [
   [/learned-skills-pr\.js" capture --run /, 'runs capture per finding'],
   [/learned-skills-pr\.js" land --run /, 'runs land under pr-first'],
-  [/learned-skills-pr\.js" stage --run "\$PIPELINE_RUN_DIR" --worktree "\{worktree\}" --reason "integration-model is local-merge"/, 'runs stage under local-merge with the fixed reason'],
+  [/learned-skills-pr\.js" stage --run "\{run\}" --worktree "\{worktree\}" --reason "integration-model is local-merge"/, 'runs stage under local-merge with the fixed reason'],
+  [/In a multi-spec consolidated wrap-up it is the \*\*parent\*\* run dir, `\$MULTISPEC_PARENT_DIR`'s path \(`flow\/multispec-batch-curation\.md`\), never `\$PIPELINE_RUN_DIR`/, 'multi-spec --run is the parent run dir, never PIPELINE_RUN_DIR'],
+  [/- `\{integration-branch\}`: per `_shared\/integration-branch\.md`\. `land` always takes it, whichever source the merge-base came from/, 'integration-branch is resolved on its own, not only in the merge-base fallback'],
+  [/For `stage` \(the direct `local-merge` call or that fallback\): every captured patch still sits only in `\{run\}\/learned-skills\/`\. Handle each as capture's patch-file case: a SKIP line naming its patch file, and an open wrap-up ledger item/, 'a stage exit 1 with no JSON is handled per patch'],
   [/The body carries the `<!-- wrap-up-skills-pr -->` marker and names each record only as `refs #\{n\}`/, 'the PR body marker and refs-only naming'],
   [/The record-owned rule: the record's own commits already touch this file, so the edit stays on the run branch/, 'the record-owned rule'],
   [/\*\*Never armed\.\*\* This file and its CLI run no merge command, and `housekeeping-auto-merge` is never read for this PR/, 'the PR is never armed'],
@@ -118,6 +124,17 @@ test('learned-skills-pr.md fences: capture, land and stage each pass the CLI\'s 
   }
 });
 
+// Fix round 1, finding 1: in a multi-spec consolidated wrap-up $PIPELINE_RUN_DIR names one member's
+// spec-{N}/ dir, so no fence may hard-code it. Every fence takes the {run} placeholder resolved once.
+const runValues = (text) => fences(text).map((f) => { const a = argvOf(f); return a[a.indexOf('--run') + 1]; });
+
+test('learned-skills-pr.md fences: every --run is the {run} placeholder, never $PIPELINE_RUN_DIR', () => {
+  assert.deepEqual(runValues(PROC), ['{run}', '{run}', '{run}']);
+  const doctored = PROC.replace('land --run "{run}"', 'land --run "$PIPELINE_RUN_DIR"');
+  assert.notEqual(doctored, PROC);
+  assert.deepEqual(runValues(doctored), ['{run}', '$PIPELINE_RUN_DIR', '{run}'], 'control: a hard-coded fence is seen');
+});
+
 test('control: a fence missing --merge-base fails the CLI\'s flag check', () => {
   const land = fences(PROC)[1];
   const doctored = land.replace(/ --merge-base "\{merge-base\}"/, '');
@@ -139,6 +156,7 @@ const PASS_FACTS = [
   [/an earlier same-pass capture of this same `targetPath` counts like an earlier same-pass commit: run `capture` for it too, which returns `shared: true`, and never treat that as a payload violation/, 'step (1) treats an earlier same-pass capture like an earlier same-pass commit'],
   [/\(2\) \*\*commit\*\* — for a `skills`-row finding, or one whose `targetPath` an earlier same-pass capture took, run `learned-skills-pr\.md`'s `capture` instead/, 'step (2) routes a skills-row finding to learned-skills-pr.md'],
   [/Once the pass ends, the controller runs `learned-skills-pr\.md`'s `land` \(`pr-first`\) or `stage` \(`local-merge`\) call and rewrites the captured findings' payloads from its output, still \*\*before any `record` call\*\*\./, 'land/stage runs after the pass, before any record call'],
+  [/— except a captured finding, which has no hash yet: write no AUTO line for it at this step, because it is attributed from `land`'s output instead \(`learned-skills-pr\.md`'s Payload rewrite\) and `land` writes its AUTO line/, 'step (3) does not attribute or log a captured finding'],
 ];
 const missingPass = missingFactsOf(PASS_FACTS);
 
@@ -158,6 +176,13 @@ test('curation-engine.md step (1) names the same-pass capture beside the same-pa
   assert.match(audit, /an earlier same-pass capture of this same `targetPath` counts like an earlier same-pass commit/);
 });
 
+test('curation-engine.md step (3) carries the captured-finding exception inside its own slice', () => {
+  const para = passParagraph(ENGINE);
+  const attribute = para.slice(para.indexOf('(3) **attribute**'), para.indexOf('Once the pass ends'));
+  assert.ok(attribute.length > 0, 'step (3) slice resolves');
+  assert.match(attribute, /except a captured finding, which has no hash yet: write no AUTO line for it at this step/);
+});
+
 // Ordering (Reachability): the steps the pass orders, chained end to end. The land/stage sentence must
 // sit after step (3) and before the paragraph's closing "before any record call".
 const LAST_RECORD = '**before any `record` call**.';
@@ -167,6 +192,7 @@ const CHAIN = [
   '(2) **commit**',
   "run `learned-skills-pr.md`'s `capture` instead",
   '(3) **attribute**',
+  '— except a captured finding, which has no hash yet',
   "Once the pass ends, the controller runs `learned-skills-pr.md`'s `land`",
   LAST_RECORD,
 ];
@@ -255,6 +281,44 @@ const missingCuration = missingFactsOf(CURATION_FACTS);
 test('skill-curation.md 7.6 step 2 carries the AUTO and STAGED shapes', () => {
   assert.deepEqual(missingCuration(stepTwo(CURATION)), []);
   assertEachPatternGoesRed(stepTwo(CURATION), CURATION_FACTS, missingCuration);
+});
+
+// Fix round 1, finding 5: the prose templates are a second producer (the controller hand-logs from
+// them on logFailed), so their fixed segments must also be what the library emits. The library is
+// read as text with comments stripped (the shared stripper, bin-source-scan-conformance), so a
+// segment surviving only in a comment does not count.
+const LIB_FILES = ['land.js', 'learned-skills.js'].map((f) => path.join(ROOT, 'plugin', 'bin', 'lib', 'learned-skills', f));
+const SEGMENTS = [
+  'applied additive update to ',
+  ') on learned-skills PR #',
+  'high; commit: ',
+  'skill update for ',
+  ' could not ride a learned-skills PR (',
+  '); staged instead',
+  'high (stage path: staged/',
+];
+const missingSegments = (text) => SEGMENTS.filter((s) => !text.includes(s));
+
+function libraryCode() {
+  return LIB_FILES.map((f) => {
+    const raw = readText(f);
+    const stripped = stripComments(raw);
+    assert.equal(stripperVerdict(raw, stripped), 'ok', `${path.basename(f)}: ${STRIPPER_VERDICT_MESSAGES[stripperVerdict(raw, stripped)] || 'stripper verdict not ok'}`);
+    return stripped;
+  }).join('\n');
+}
+
+test('the AUTO and STAGED template segments are both in skill-curation.md and in the library\'s code', () => {
+  const code = libraryCode();
+  const prose = stepTwo(CURATION);
+  assert.deepEqual(missingSegments(prose), [], 'prose carries every segment');
+  assert.deepEqual(missingSegments(code), [], 'library code carries every segment');
+  assert.equal(STEP, 'Skills row', 'the library step label is the prose\'s "Skills row"');
+  for (const s of SEGMENTS) {
+    assert.deepEqual(missingSegments(code.split(s).join('')), [s], `control: "${s}" stripped from the library goes red`);
+    assert.deepEqual(missingSegments(prose.split(s).join('')), [s], `control: "${s}" stripped from the prose goes red`);
+  }
+  assert.deepEqual(missingSegments(stripComments('// on learned-skills PR #\n')), SEGMENTS, 'control: a comment-only copy does not count');
 });
 
 // ---- auto-merge-short-circuit.md: the pr-first FYI ----------------------------

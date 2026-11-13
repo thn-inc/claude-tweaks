@@ -13,14 +13,15 @@ Console-approved skill updates (the Review Console's "On approval" step) are out
 
 Resolve these once per pass, each as its own plain call, and paste each value literally into the commands below:
 
-- `{merge-base}`: `pack.blastRadius.value.mergeBase` from `{run-dir}/wrap-up-pack.json`. In a multi-spec consolidated wrap-up, use the batch merge-base from `flow/multispec-batch-curation.md` step 1 instead. With neither, use what `git merge-base --end-of-options HEAD "origin/{integration-branch}"` prints, `{integration-branch}` per `_shared/integration-branch.md`.
+- `{run}`: the main-checkout run dir every call below writes into — `$PIPELINE_RUN_DIR`'s path on a single-spec run. In a multi-spec consolidated wrap-up it is the **parent** run dir, `$MULTISPEC_PARENT_DIR`'s path (`flow/multispec-batch-curation.md`), never `$PIPELINE_RUN_DIR`, which there names one member's `{parent}/spec-{N}/` and would put the patches, the manifest and `staged/` under that member and name the branch `learned-skills/spec-{N}`. Substitute the literal path, not a `$VAR`.
+- `{integration-branch}`: per `_shared/integration-branch.md`. `land` always takes it, whichever source the merge-base came from.
+- `{merge-base}`: `pack.blastRadius.value.mergeBase` from `{run-dir}/wrap-up-pack.json`. In a multi-spec consolidated wrap-up, use the batch merge-base from `flow/multispec-batch-curation.md` step 1 instead. With neither, use what `git merge-base --end-of-options HEAD "origin/{integration-branch}"` prints.
 - `{worktree}`: the run worktree's absolute root.
-- `--run`: `$PIPELINE_RUN_DIR`, the main-checkout run dir. In a multi-spec consolidated wrap-up it is the **parent** run dir.
 
 **Per finding, in the serial-commit pass's own order.** Write the finding's `summary` with the Write tool to a session-tmp file (`_shared/session-tmp-root.md`), then run:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/learned-skills-pr.js" capture --run "$PIPELINE_RUN_DIR" --worktree "{worktree}" --merge-base "{merge-base}" --target "{targetPath}" --summary-file "{tmp-summary-file}"
+node "${CLAUDE_PLUGIN_ROOT}/bin/learned-skills-pr.js" capture --run "{run}" --worktree "{worktree}" --merge-base "{merge-base}" --target "{targetPath}" --summary-file "{tmp-summary-file}"
 ```
 
 It prints one JSON line. Act on its `route`, or on its exit code:
@@ -44,13 +45,13 @@ Run this once when any finding was captured. Pick the verb by `integration-model
 - `pr-first` → `land`. Pass `--record` once per record. In a multi-spec consolidated wrap-up, repeat it once per member (`--record 5290 --record 5291`). When no record resolves, run `stage --reason "no record resolved"` instead.
 
   ```bash
-  node "${CLAUDE_PLUGIN_ROOT}/bin/learned-skills-pr.js" land --run "$PIPELINE_RUN_DIR" --worktree "{worktree}" --record {n} --integration-branch "{integration-branch}" --merge-base "{merge-base}"
+  node "${CLAUDE_PLUGIN_ROOT}/bin/learned-skills-pr.js" land --run "{run}" --worktree "{worktree}" --record {n} --integration-branch "{integration-branch}" --merge-base "{merge-base}"
   ```
 
 - `local-merge` → `stage`:
 
   ```bash
-  node "${CLAUDE_PLUGIN_ROOT}/bin/learned-skills-pr.js" stage --run "$PIPELINE_RUN_DIR" --worktree "{worktree}" --reason "integration-model is local-merge" --merge-base "{merge-base}"
+  node "${CLAUDE_PLUGIN_ROOT}/bin/learned-skills-pr.js" stage --run "{run}" --worktree "{worktree}" --reason "integration-model is local-merge" --merge-base "{merge-base}"
   ```
 
 Both print one JSON line. `land` commits each patch to `learned-skills/{run-id}` through git plumbing on a temp index, so the worktree's own branch, index and files are never touched. It then pushes that branch and opens one ready PR, or reuses the open one on a resumed run. A patch that cannot ride it (a failed `git apply --check`, push or PR create) is staged instead.
@@ -58,7 +59,9 @@ Both print one JSON line. `land` commits each patch to `learned-skills/{run-id}`
 The CLI writes the log lines itself: one AUTO line per landed finding, in `skill-curation.md`'s learned-skills PR shape, and one STAGED line per staged one. A stage whose gate wrote the description-only form, or could not run, logs `_shared/staged-patch.md`'s own line for that case instead of the STAGED shape. Hand-log the AUTO lines only on a top-level `logFailed: true`, and a STAGED line only on that `staged[]` row's `logFailed: true`.
 
 - A `failed[]` entry (exit 1) is one whose staged write failed too. Its edit is only in its patch file, so handle it as capture's patch-file case above.
-- A `land` exit 1 with no JSON line means a git or gh failure escaped the per-entry downgrades. Run `stage` with `--reason "land exited 1"`, never the stderr text on the command line. Log `SKIP {time} — Learned-skills PR land (degraded): condition: land exited 1 ({stderr line}) → fallback: every captured patch staged. Reversibility: n/a.` the same way as the capture SKIP line.
+- A `land` or `stage` exit 1 with no JSON line means a git or gh failure escaped the per-entry downgrades.
+  - For `land`: run `stage` with `--reason "land exited 1"`, never the stderr text on the command line. Log `SKIP {time} — Learned-skills PR land (degraded): condition: land exited 1 ({stderr line}) → fallback: every captured patch staged. Reversibility: n/a.` the same way as the capture SKIP line.
+  - For `stage` (the direct `local-merge` call or that fallback): every captured patch still sits only in `{run}/learned-skills/`. Handle each as capture's patch-file case: a SKIP line naming its patch file, and an open wrap-up ledger item so Phase 3's nothing-left-behind gate sees it.
 
 ## Payload rewrite
 
