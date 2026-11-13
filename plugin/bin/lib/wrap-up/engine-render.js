@@ -70,8 +70,9 @@ function formatDetailCell(entry) {
   if (!entry) return '';
   const parts = [];
   if (entry.detail) parts.push(entry.detail);
-  // Learned-skills PR: each distinct non-empty finding.pr is named once.
-  const prs = [...new Set((entry.findings || []).map((f) => f.pr).filter(hasPr))];
+  // Learned-skills PR: each distinct non-empty pr on an applied finding is
+  // named once (matches dispositionFor — a staged finding is not on the PR).
+  const prs = [...new Set((entry.findings || []).filter((f) => f.action === 'applied').map((f) => f.pr).filter(hasPr))];
   for (const pr of prs) parts.push(`learned-skills PR ${pr}`);
   return parts.join(' · ');
 }

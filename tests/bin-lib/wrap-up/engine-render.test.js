@@ -469,6 +469,21 @@ test('two distinct prs each print once in the Detail cell', () => {
   assert.match(trace, new RegExp(`Read 2 · learned-skills PR ${LS_PR} · learned-skills PR ${other} \\|`));
 });
 
+test('a staged finding carrying pr does not put the PR in the Detail cell', () => {
+  const staged = { kind: 'new', summary: 'S', targetPath: 'p', action: 'staged', stagePath: 'staged/s.md', commit: null, pr: LS_PR };
+  const trace = renderTrace(skillsState([staged]));
+  assert.match(trace, /\| Skills \| 1 staged \| Read 2 \|/);
+  assert.doesNotMatch(trace, /learned-skills PR/);
+});
+
+test('with one applied and one staged finding each carrying a different pr, only the applied pr is named', () => {
+  const stagedPr = 'https://github.com/o/r/pull/99';
+  const staged = { kind: 'new', summary: 'S', targetPath: 'p', action: 'staged', stagePath: 'staged/s.md', commit: null, pr: stagedPr };
+  const trace = renderTrace(skillsState([appliedFinding({ pr: LS_PR }), staged]));
+  assert.match(trace, new RegExp(`Read 2 · learned-skills PR ${LS_PR} \\|`));
+  assert.doesNotMatch(trace, /pull\/99/);
+});
+
 test('an empty detail with a pr renders just the PR segment, no leading separator', () => {
   const state = skillsState([appliedFinding({ pr: LS_PR })], '');
   assert.match(renderTrace(state), /\| learned-skills PR https:\/\/github\.com\/o\/r\/pull\/77 \|/);
