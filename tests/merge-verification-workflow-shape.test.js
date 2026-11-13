@@ -49,6 +49,15 @@ test('name: top-level name in bare, quoted and commented forms', () => {
   bothEndings(MIN, (t) => assert.equal(shape(t).name, null));
   bothEndings('on: push\njobs:\n  a:\n    name: CI\n    runs-on: x\n', (t) => assert.equal(shape(t).name, null));
   bothEndings(`name:\n${MIN}`, (t) => assert.equal(shape(t).name, null));
+  // an alias or a tab-indented line in the name: region is never read as a literal name;
+  // the brief's reason list has no name: reason, so the shape stays null with no reason added
+  for (const c of ['name: *n\n', 'name: CI\n\tmore\n']) {
+    bothEndings(c + MIN, (t) => {
+      const s = shape(t);
+      assert.equal(s.name, null, JSON.stringify(t));
+      assert.deepEqual(s.unparsed, [], JSON.stringify(t));
+    });
+  }
 });
 
 test('prFilters: block, flow-mapping and pull_request_target forms', () => {
@@ -102,6 +111,12 @@ test('push: absent, all, some, ignore and tags', () => {
   assert.equal(read("on:\n  push:\n    tags: ['v*']\n").pushTags, true);
   assert.equal(read('on:\n  push:\n    tags-ignore: [x]\n').pushTags, true);
   assert.deepEqual(read('on:\n  push:\n    branches: ${{ x }}\n').unparsed, ['push branches not read']);
+  // quotes around an item must balance; an unbalanced item is never read as '**'
+  for (const on of ["on:\n  push:\n    branches: ['**]\n", "on:\n  push:\n    branches: ['**\"]\n",
+    "on:\n  push:\n    branches: '**\"\n", "on:\n  push:\n    branches:\n      - \"**'\n"]) {
+    assert.deepEqual(read(on).unparsed, ['push branches not read'], on);
+    assert.equal(read(on).pushBranches, 'absent', on);
+  }
   assert.deepEqual(read('on:\n  push:\n    branches:\n  pull_request:\n').unparsed, ['push branches not read']);
   // the indentless top-level sequence stays inside the on: region
   assert.equal(read('on:\n- workflow_dispatch\n- push\n').pushTrigger, true);
@@ -120,6 +135,9 @@ test('jobs: job-level if in inline, quoted, wrapped, block and folded forms', ()
     ['    if: >-\n      a\n      && b\n', 'a && b'],
     ['    if: a\n      && b\n', 'a && b'],
     ['    if:\n      a && b\n', 'a && b'],
+    // YAML quote escapes are undone: '' in single quotes, \" and \\ in double quotes
+    ["    if: 'github.actor != ''bot'''\n", "github.actor != 'bot'"],
+    ['    if: "a == \\"b\\" && c == \'\\\\\'"\n', 'a == "b" && c == \'\\\''],
   ];
   for (const [body, want] of cases) {
     bothEndings(`on: pull_request\njobs:\n  a:\n${body}    runs-on: x\n  b:\n    runs-on: y\n`, (t) => {
@@ -233,9 +251,17 @@ test('unparsed: each reason fires on its own fixture', () => {
     ['on: push\njobs:\n', 'jobs: not read'],
     ['on: push\njobs:\n  a: {}\n', 'jobs: not read'],
     ['on: push\njobs:\n  a:\n    steps: [x]\n', 'jobs: not read'],
+    // a step whose content is no `key:` entry is unreadable, never "a step with no if:"
+    ['on: push\njobs:\n  a:\n    steps:\n      - {if: x, run: y}\n', 'jobs: not read'],
+    ['on: push\njobs:\n  a:\n    steps:\n      - { name: n, if: "x" }\n', 'jobs: not read'],
+    ['on: push\njobs:\n  a:\n    steps:\n      - run: x\n        not a key\n', 'jobs: not read'],
+    ['on: push\njobs:\n  a:\n    steps:\n      -\n        {if: x}\n', 'jobs: not read'],
     ['on: push\njobs:\n  a:\n    if:\n    runs-on: x\n', 'job a if: not read'],
     [`${MIN}concurrency: {group: x,\n`, 'concurrency not read'],
     [`${MIN}concurrency:\n`, 'concurrency not read'],
+    // text after a flow map's closing brace, and a sub-key shallower than the first one
+    [`${MIN}concurrency: {group: x} cancel-in-progress: true\n`, 'concurrency not read'],
+    [`${MIN}concurrency:\n    group: x\n  cancel-in-progress: true\n`, 'concurrency not read'],
     [`${MIN}concurrency:\n  group: x\n  cancel-in-progress: 'true'\n`, 'cancel-in-progress value not read'],
   ];
   for (const [c, reason] of cases) {

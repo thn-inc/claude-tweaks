@@ -444,9 +444,9 @@ function readyRequirement(workflows) {
 
 const PR_FILTER_KEYS = Object.freeze(['branches', 'branches-ignore', 'paths', 'paths-ignore']);
 
-// A push branch-filter item, optionally quoted: BLOCK_ITEM widened with digits
-// and the glob/path characters `*`, `/`, `.`, `-`.
-const BRANCH_ITEM = /^['"]?[A-Za-z0-9_*/.-]+['"]?$/;
+// A push branch-filter item, optionally quoted with balanced quotes: BLOCK_ITEM
+// widened with digits and the glob/path characters `*`, `/`, `.`, `-`.
+const BRANCH_ITEM = /^(['"]?)[A-Za-z0-9_*/.-]+\1$/;
 const BLOCK_SCALAR = /^[|>][-+0-9]*$/;
 const PLAIN_KEY = /^[^\s#'"[\]{},&*!|>%@`-]\S*$/;
 // Every `(.*)` below carries the `s` flag: a stray `\r` or U+2028 left in a
@@ -469,9 +469,12 @@ function emptyWorkflowShape() {
 const leadSpaces = (line) => /^ */.exec(line)[0].length;
 const isSkippable = (line) => { const t = line.trim(); return t === '' || t.startsWith('#'); };
 
-// One pair of surrounding quotes off, else the text unchanged.
+// One pair of surrounding quotes off, with that quote style's escapes undone
+// (`''` in single quotes; `\"` and `\\` in double quotes), else the text unchanged.
 function stripQuotePair(s) {
-  return s.length >= 2 && (s[0] === "'" || s[0] === '"') && s[s.length - 1] === s[0] ? s.slice(1, -1) : s;
+  if (s.length < 2 || (s[0] !== "'" && s[0] !== '"') || s[s.length - 1] !== s[0]) return s;
+  const inner = s.slice(1, -1);
+  return s[0] === "'" ? inner.replace(/''/g, "'") : inner.replace(/\\(["\\])/g, '$1');
 }
 
 // `{key, rest}` for a block-mapping entry's content (indentation and any `- `
@@ -735,12 +738,19 @@ function readBranchItems(lines, entry, end) {
 // A step list under `steps:` (key at `keyIndent`, items deeper or an
 // indentless `- ` sequence at it): the number of `if:` keys at each step's key
 // column, or null when the list's shape cannot be followed. Deeper lines (a
-// `with:` child, a `run: |` script) are skipped.
+// `with:` child, a `run: |` script) are skipped. Step content at a key column
+// that is no `key:` entry (a flow-mapping step `- {if: x}`, a stray scalar) is
+// unreadable, never "a step with no if:".
 function walkSteps(lines, i, end, keyIndent) {
   let stepIndent = null;
   let stepKeyCol = null;
   let count = 0;
-  const isIf = (content) => { const kv = splitKey(content); return kv !== null && kv.key === 'if'; };
+  let unreadable = false;
+  const isIf = (content) => {
+    const kv = splitKey(content);
+    if (kv === null) unreadable = true;
+    return kv !== null && kv.key === 'if';
+  };
   for (; i < end; i++) {
     const line = lines[i];
     if (isSkippable(line)) continue;
@@ -764,12 +774,16 @@ function walkSteps(lines, i, end, keyIndent) {
       } else {
         stepKeyCol = ind + 1 + sp;
         if (isIf(content)) count++;
+        if (unreadable) return null;
       }
       continue;
     }
     if (stepKeyCol === null) stepKeyCol = ind;
     if (ind < stepKeyCol) return null;
-    if (ind === stepKeyCol && isIf(line.slice(ind))) count++;
+    if (ind === stepKeyCol) {
+      if (isIf(line.slice(ind))) count++;
+      if (unreadable) return null;
+    }
   }
   return { count, next: i };
 }
@@ -852,7 +866,8 @@ function readConcurrency(lines, idx, end, unparsed) {
   const inline = stripCommentQuoteAware(afterColon(lines[idx]));
   if (inline.startsWith('{')) {
     const { entries, balanced } = flowMappingEntries(inline);
-    if (!balanced) { unparsed.push('concurrency not read'); return null; }
+    // flowMappingEntries ignores text after the closing brace; that text is unread here.
+    if (!balanced || !inline.endsWith('}')) { unparsed.push('concurrency not read'); return null; }
     const e = entries.find((x) => x.key === 'cancel-in-progress');
     return e ? cancel(e.value) : 'no-cancel';
   }
@@ -863,7 +878,8 @@ function readConcurrency(lines, idx, end, unparsed) {
     if (isSkippable(l)) continue;
     const ind = leadSpaces(l);
     if (subIndent === null) subIndent = ind;
-    if (ind !== subIndent) continue;
+    if (ind < subIndent) { unparsed.push('concurrency not read'); return null; }
+    if (ind > subIndent) continue;
     const kv = splitKey(l.slice(ind));
     if (kv && kv.key === 'cancel-in-progress') return cancel(kv.rest);
   }
@@ -899,7 +915,10 @@ function readWorkflowShape(text) {
   const concR = region(/^(?:concurrency|'concurrency'|"concurrency")[ \t]*:/, false);
   const nameR = region(/^(?:name|'name'|"name")[ \t]*:/, false);
 
-  if (nameR) {
+  // A name: region with a tab or an anchor/alias leaves `name` null, never a
+  // literal like '*n'. It adds no reason: the name only matches `ci` sources, and
+  // a null name just matches none of them.
+  if (nameR && regionReasons(lines, nameR.start, nameR.end, 'name:').length === 0) {
     const r = readJoinedScalar(lines, nameR.start + 1, nameR.end, 0, afterColon(lines[nameR.start]));
     out.name = r.text === '' ? null : r.text;
   }

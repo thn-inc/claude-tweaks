@@ -9,7 +9,9 @@
 //   - 40,000 blank lines between `on:` and `jobs:` (the region walk never rescans blank runs);
 //   - a 40,000-line `run: |` block under one step (block-scalar content is skipped once);
 //   - a 200,000-space run inside one `if:` value (no regex backtracks across the spaces);
-//   - 5,000 jobs (the jobs walk keeps one persistent position; it never restarts at `jobs:`).
+//   - 20,000 jobs (the jobs walk keeps one persistent position; it never restarts at `jobs:`).
+//     At 5,000 a per-job restart took only 2.0–3.5 s, too close to the budget to stay red on a
+//     faster machine; 20,000 makes the quadratic walk about 16 times slower again.
 // Lives outside tests/ for the same reason the other perf/ files do: a wall-clock assertion
 // flakes under sibling-suite load.
 'use strict';
@@ -53,11 +55,11 @@ test('a 200,000-space run inside one if: value stays linear', () => {
   assert.ok(ms < 2000, `took ${ms.toFixed(0)}ms`);
 });
 
-test('5,000 jobs are read in one forward pass', () => {
-  const jobs = Array.from({ length: 5000 }, (_, i) => `  j${i}:\n    runs-on: x\n`).join('');
+test('20,000 jobs are read in one forward pass', () => {
+  const jobs = Array.from({ length: 20000 }, (_, i) => `  j${i}:\n    runs-on: x\n`).join('');
   const { shape, ms } = timed(`on: push\njobs:\n${jobs}`);
-  assert.equal(shape.jobs.length, 5000);
-  assert.equal(shape.jobs[4999].id, 'j4999');
+  assert.equal(shape.jobs.length, 20000);
+  assert.equal(shape.jobs[19999].id, 'j19999');
   assert.deepEqual(shape.unparsed, []);
   assert.ok(ms < 2000, `took ${ms.toFixed(0)}ms`);
 });
