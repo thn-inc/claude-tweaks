@@ -48,11 +48,11 @@
 // --help (or -h) prints the usage on stdout and exits 0 before anything is probed (gh, git, policy)
 // and before any other argument is read; it wins over every mode.
 //
-// Decision (R4): 3 stays in the vocabulary but nothing produces it, and 4 is the only code above
-// the base. The caller that branches on 4 is the cutover unit's Step 2 prose (the dispatch skill's
-// queue pull), which stops and reports on 4 and switches to `--transport files` on 2. Reopen
-// when the cutover has landed: nothing then branches on 4 differently from 1, so 4 folds into the
-// base codes unless a caller wants a stop reported apart from a bad call.
+// Decision (R4), settled by #5230: 3 stays in the vocabulary but nothing produces it, and 4 stays
+// distinct from 1. The dispatch skill's Step 2 and Step 3 prose branch on them differently: exit 4
+// stops the firing (quoting the stop and its cause, then the close-out runs), exit 1 is a
+// malformed call to fix and re-run, and exit 2 switches to `--transport files`. Folding 4 into 1
+// would turn a pull that stopped over a corrupt file or an internal throw into a retried call.
 //
 // Departure (R5) from .claude/skills/gh-api-module-pattern/cli-wrapper-contract.md's "gh-absent
 // caller hands the CLI already-fetched records" rules (1) and (2): on `files` the module makes

@@ -38,6 +38,9 @@ const MCP_FACTS = [
   // #5230: the path rides on the queue-pull.js call as --foreign-states, so no shell variable has to survive between Bash calls.
   [/Pass its path as `--foreign-states \{path\}` on that call: the flag names the file for that one CLI run, so no shell variable has to survive between Bash calls/i, 'the MCP agent passes the states file as --foreign-states {path} on the queue-pull.js call, so no shell variable has to survive between calls'],
   [/A ref left out of the file, or `null`, still excludes the record as `owner\/name#N \(state unreadable\)` \(fail closed\)/i, 'a ref left out or null still excludes the record (state unreadable)'],
+  // #5230 final review M2: the set is the `blocked` pass's, computable before the pull, and a ref outside it is still safe.
+  [/collect the body-declared foreign refs \(`Blocked by owner\/name#N` lines\) of every queue record that carries none of `bot:in-progress`, `bot:blocked` or `bot:parked`/, 'the MCP agent collects the foreign refs of every queue record with no bot:* label'],
+  [/the CLI asks `bin\/resolve-foreign-blockers\.js` for a ref left out of the file, a lookup that needs `gh` and fails on this transport with one `Warning:` line/, 'a ref left out of the file is asked of resolve-foreign-blockers.js, which fails on this transport'],
 ];
 const NOTES_FACTS = [
   [/suffixed ` \(state unreadable\)` when its state could not be read/, 'the queue notes name an unreadable foreign state with the suffix'],

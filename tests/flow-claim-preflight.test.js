@@ -425,7 +425,8 @@ test('the other "move on" sites name the Claim permission stop (#4899)', () => {
   assert.match(read('plugin/skills/dispatch/sequential-execution.md'), /group N\+1 \(none after a Claim permission stop/);
   assert.match(read('plugin/skills/dispatch/two-call-gate.md'), /next group's worktree \(none after a Claim permission stop or a render-failure stop: the firing ends, `SKILL\.md`\)\.\n\n## 8\./);
   assert.match(read('plugin/skills/_shared/express-lane.md'), /on a Claim permission stop, exit 7, Settle skips steps 1-7/);
-  assert.match(read('plugin/skills/dispatch/SKILL.md'), /the ranking returns `null`, or a Claim permission stop or Render-failure stop\), close/);
+  // #5230 final review M3: a queue-pull or --rank stop also ends the drain into this close-out.
+  assert.match(read('plugin/skills/dispatch/SKILL.md'), /the ranking returns `null`, or a Claim permission stop, Render-failure stop or queue-pull\/`--rank` stop\), close/);
 });
 
 test('dispatch/SKILL.md loop, move-on and close-out sites carve out the Claim permission stop (#4899)', () => {

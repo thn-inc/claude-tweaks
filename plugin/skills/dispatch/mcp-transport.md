@@ -84,7 +84,7 @@ A Node subprocess cannot call MCP tools, so on this transport the agent fetches 
 - `--verified-open-deps "{dispatch-verified-open-deps.txt}"`: each of those dependencies that is missing from the open-numbers file and whose `issue_read` state is open (any case); this replaces the `gh issue view "$DEP" --json state` loop. Plain text, one number per line; empty when there is none.
 - `--in-flight-raw "{dispatch-in-flight-raw.json}"`: the neighbour-in-flight pool (section below). Shape `[{number, title, body, labels}]`.
 - `--in-flight-claims "{dispatch-in-flight-claims.json}"`: the claim of every record in that pool (section below). Shape `{"<n>": <claim>}`, keyed by issue number.
-- `--foreign-states "{dispatch-foreign-states.json}"`: the states of the candidates' body-declared foreign refs (the #2523 section below). Shape `{"owner/name#N": "<state>"}`; `{}` when no candidate declares one.
+- `--foreign-states "{dispatch-foreign-states.json}"`: the state of each `Blocked by owner/name#N` ref in the body of a queue record that carries none of `bot:in-progress`, `bot:blocked` or `bot:parked` (the #2523 section below). Shape `{"owner/name#N": "<state>"}`; `{}` when no such record declares one.
 
 When every file is written, run this, each `{name}` replaced by its resolved path:
 
@@ -192,17 +192,19 @@ already had an open PR (#2450), and #2051, #2329, #1135, plus the #2267/#2268/#2
 (natively blocked by open #2265) were all falsely eligible until this manual check caught them.
 
 Supply those foreign states to the queue pull instead of leaving the body-text pass blind (#4793):
-before Step 2's `queue-pull.js --transport files` call above, collect each eligible candidate's
-body-declared foreign refs (`Blocked by owner/name#N` lines), read each with `issue_read` (`get`
-method; its `owner`, `repo` and `issue_number`), and write the states as one JSON object keyed by
-`owner/name#N`, each value copied from `issue_read`'s `state` (any case) or `null` for a ref
+before Step 2's `queue-pull.js --transport files` call above, collect the body-declared foreign
+refs (`Blocked by owner/name#N` lines) of every queue record that carries none of `bot:in-progress`,
+`bot:blocked` or `bot:parked` (the records the CLI's `blocked` pass reads, known before the pull),
+read each with `issue_read` (`get` method; its `owner`, `repo` and `issue_number`), and write the
+states as one JSON object keyed by `owner/name#N`, each value copied from `issue_read`'s `state` (any case) or `null` for a ref
 `issue_read` cannot read, with the Write tool to the session-scoped `{dispatch-foreign-states.json}`
-file (`_shared/session-tmp-root.md`), `{}` when no candidate declares one. Pass its path as
+file (`_shared/session-tmp-root.md`), `{}` when no such record declares one. Pass its path as
 `--foreign-states {path}` on that call: the flag names the file for that one CLI run, so no shell
 variable has to survive between Bash calls. A closed ref no longer blocks, and an open one excludes
 the record as `owner/name#N`. A ref left out of the file, or `null`, still excludes the record as
-`owner/name#N (state unreadable)` (fail closed), and an omitted `--foreign-states` or an unreadable
-file changes nothing.
+`owner/name#N (state unreadable)` (fail closed): the CLI asks `bin/resolve-foreign-blockers.js` for
+a ref left out of the file, a lookup that needs `gh` and fails on this transport with one `Warning:`
+line. An omitted `--foreign-states` or an unreadable file changes nothing.
 
 Re-open this section if the GitHub MCP server ever adds a generic GraphQL passthrough tool or
 batched equivalents of `buildNativeDependencyQuery`/`buildLinkedPRQuery`.

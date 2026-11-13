@@ -71,12 +71,21 @@ function assertFilesSelectedByPreflight(t) {
   // A literal reader on a GraphQL-blocked Preflight meets the files condition before the gh command.
   assert.ok(s.indexOf('GraphQL-blocked') < s.indexOf('bin/queue-pull.js" --transport gh'), 'the MCP condition must come before the --transport gh call');
 }
+// The MCP path runs mcp-transport.md Step 2's own files call, every input flag included: the call
+// written in Step 2 is the gh one, and --foreign-states has no session default (#5230 final review I2).
+function assertFilesRunsMcpCall(t) {
+  const s = step2(t).replace(/\s+/g, ' ');
+  assert.match(s, /`mcp-transport\.md` Step 2 names and run its `--transport files` call \(every input flag\)/,
+    "the MCP path must run mcp-transport.md Step 2's own files call, every input flag included");
+  assert.ok(!s.includes('run the call below with `--transport files`'), 'Step 2 must not send the MCP path to the gh call with the transport swapped');
+}
 function assertExit2ToFiles(t) {
   assert.match(step2(t), /Exit 2\b[^.]*`files` path/, 'exit 2 must route to the files path');
 }
 function assertExit4Stops(t) {
-  assert.match(step2(t).replace(/\s+/g, ' '), /Exit 4\b[^.]*stop the firing, quoting its last stderr line; Step 1's close-out runs/,
-    'exit 4 must stop the firing, quote stderr and run the close-out');
+  // A `see error above` stop prints its cause on the line before it (#5230 final review M1).
+  assert.match(step2(t).replace(/\s+/g, ' '), /Exit 4\b[^;]*stop the firing, quoting the stop line and, when it says `see error above`, the cause line\(s\) above it; Step 1's close-out runs/,
+    'exit 4 must stop the firing, quote the stop line and its cause line, and run the close-out');
 }
 function assertExit1Malformed(t) {
   assert.match(step2(t), /Exit 1\b[^.]*malformed call: fix it and re-run/, 'exit 1 must read as a malformed call to fix and re-run');
@@ -100,12 +109,22 @@ test('Review Focus 1: a gh-absent or GraphQL-blocked Preflight selects --transpo
   assertGoesRed(assertFilesSelectedByPreflight, SKILL, GH_SENTENCE, (t) => t.replace(GH_SENTENCE, '').replace('When Preflight took the MCP path', `${GH_SENTENCE.trim()} When Preflight took the MCP path`));
 });
 
+test("#5230 final review I2: the MCP path runs mcp-transport.md Step 2's own --transport files call, every input flag included", () => {
+  const RUN_ITS_CALL = ' and run its `--transport files` call (every input flag).';
+  assertGoesRed(assertFilesRunsMcpCall, SKILL, ' (every input flag)');
+  // The pre-fix sentence: the gh call below, with only the transport swapped.
+  assertGoesRed(assertFilesRunsMcpCall, SKILL, RUN_ITS_CALL, (t) => t.replace(RUN_ITS_CALL, ', then run the call below with `--transport files`.'));
+});
+
 test('Review Focus 1: exit 2 routes to the files path', () => {
   assertGoesRed(assertExit2ToFiles, SKILL, 'Exit 2 (no `gh`): take the `files` path.');
 });
 
 test('Review Focus 2: exit 4 stops the firing, quoting stderr, with Step 1\'s close-out; exit 1 is a malformed call', () => {
-  assertGoesRed(assertExit4Stops, SKILL, "stop the firing, quoting its last stderr line; Step 1's close-out runs");
+  const QUOTES_CAUSE = 'quoting the stop line and, when it says `see error above`, the cause line(s) above it';
+  assertGoesRed(assertExit4Stops, SKILL, ", the cause line(s) above it; Step 1's close-out runs", (t) => t.replace(', the cause line(s) above it;', ';'));
+  // The pre-fix wording quoted only the last stderr line, which for a `see error above` stop is the stop line.
+  assertGoesRed(assertExit4Stops, SKILL, QUOTES_CAUSE, (t) => t.replace(QUOTES_CAUSE, 'quoting its last stderr line'));
   assertGoesRed(assertExit1Malformed, SKILL, 'Exit 1 is a malformed call: fix it and re-run.');
 });
 
@@ -333,6 +352,28 @@ function assertNoScriptRunInMcpStep2(t) {
   assert.doesNotMatch(pull.replace(/\s+/g, ' '), /\bone (?:`[^`]*` )?call\b/i, 'the MCP path is never described as one call');
   assert.ok(pull.includes('with the Write tool'), 'the agent still writes each fetched file with the Write tool');
 }
+
+// The --foreign-states refs are the set the module's `blocked` pass reads (bodyForeignBlockers over
+// the queue records with no bot:* label), stated in terms the agent can compute before the pull --
+// never "eligible", which only the pull decides (#5230 final review M2).
+const FOREIGN_BULLET = '- `--foreign-states "{dispatch-foreign-states.json}"`';
+const NO_BOT_LABELS = 'carries none of `bot:in-progress`, `bot:blocked` or `bot:parked`';
+function assertForeignSetDefined(t) {
+  const bullet = mcpStep2(t).split('\n').find((l) => l.startsWith(FOREIGN_BULLET));
+  assert.ok(bullet, 'no --foreign-states bullet');
+  assert.ok(bullet.includes('`Blocked by owner/name#N` ref in the body of a queue record that'), 'the --foreign-states bullet must name the refs in queue records\' bodies');
+  assert.ok(bullet.includes(NO_BOT_LABELS), 'the --foreign-states bullet must define the set by the three bot:* labels');
+  const s = mcpStep2(t).replace(/\s+/g, ' ');
+  for (const vague of ["eligible candidate's body-declared foreign refs", "the candidates' body-declared foreign refs"]) {
+    assert.ok(!s.includes(vague), `mcp-transport.md Step 2 still says ${vague}`);
+  }
+}
+
+test('#5230 final review M2: the --foreign-states set is the queue records with no bot:* label, known before the pull', () => {
+  assertGoesRed(assertForeignSetDefined, MCP, null, (t) => t.split('\n').map((l) => (l.startsWith(FOREIGN_BULLET) ? l.split(NO_BOT_LABELS).join('carries no label') : l)).join('\n'));
+  assertGoesRed(assertForeignSetDefined, MCP, null, (t) => t.replace('the state of each `Blocked by owner/name#N` ref in the body of a queue record that', "the states of the candidates' body-declared foreign refs, each in a record that"));
+  assertGoesRed(assertForeignSetDefined, MCP, null, (t) => `${t}\ncollect each eligible candidate's body-declared foreign refs\n`);
+});
 
 test('#5230 AC5: mcp-transport.md Step 2 names every files input with its flag, placeholder and shape, and ends in the one files-transport call', () => {
   assertGoesRed(assertFilesCall, MCP, null, (t) => t.split('--in-flight-claims "{dispatch-in-flight-claims.json}" \\').join('--in-flight-claims "{dispatch-in-flight-raw.json}" \\'));
