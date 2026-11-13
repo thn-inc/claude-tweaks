@@ -162,7 +162,7 @@ test('the git shim normalizes an unresolvable relative -C', { skip: oracleSkip()
   assert.equal(r.stderr, `git-shim: refused (unresolvable directory ${sb.proj}/gone): -C ./missing/../gone/ status\n`);
 });
 
-test('the git shim cuts the refused argv at 300 characters and logs it whole', { skip: oracleSkip() }, (t) => {
+test('the git shim cuts the refused argv at 300 bytes and logs it whole', { skip: oracleSkip() }, (t) => {
   const { sb, git } = gitSandbox(t);
   const argv = ['--bare', 'x'.repeat(400)];
   const r = git(argv);
@@ -236,6 +236,42 @@ for (const [name, extra] of [
     assert.deepEqual(readShimLog(sb.logs, 'git').map((e) => [e.tag, e.why]), [['REFUSED', 'GIT_CONFIG_COUNT/GIT_CONFIG_PARAMETERS set']]);
   });
 }
+
+for (const name of ['GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES']) {
+  test(`the git shim refuses a repository moved by ${name}`, { skip: oracleSkip() }, (t) => {
+    const { sb, git } = gitSandbox(t);
+    const r = git(['status'], { extra: { [name]: path.join(REPO, '.git') } });
+    assert.equal(r.status, 97);
+    assert.equal(r.stderr, 'git-shim: refused (GIT_COMMON_DIR/GIT_OBJECT_DIRECTORY/GIT_ALTERNATE_OBJECT_DIRECTORIES set): status\n');
+    assert.deepEqual(readShimLog(sb.logs, 'git').map((e) => [e.tag, e.why]), [['REFUSED', 'GIT_COMMON_DIR/GIT_OBJECT_DIRECTORY/GIT_ALTERNATE_OBJECT_DIRECTORIES set']]);
+  });
+}
+
+test('the git shim refuses a GIT_INDEX_FILE outside the sandbox', { skip: oracleSkip() }, (t) => {
+  const { sb, git } = gitSandbox(t);
+  // Plainly outside, and outside through a .. that only reads as inside.
+  const outside = [path.join(path.dirname(sb.root), 'qp-index'), `${sb.root}/tmp/../../qp-index`];
+  for (const index of outside) {
+    const r = git(['read-tree', 'HEAD'], { extra: { GIT_INDEX_FILE: index } });
+    assert.equal(r.status, 97, index);
+    assert.equal(r.stderr, `git-shim: refused (GIT_INDEX_FILE outside the sandbox: ${index}): read-tree HEAD\n`);
+  }
+  assert.deepEqual(readShimLog(sb.logs, 'git').map((e) => [e.tag, e.why]), outside.map((index) => ['REFUSED', `GIT_INDEX_FILE outside the sandbox: ${index}`]));
+  assert.equal(fs.existsSync(path.join(path.dirname(sb.root), 'qp-index')), false, 'git never wrote it');
+});
+
+test('the git shim delegates with a GIT_INDEX_FILE inside the sandbox', { skip: oracleSkip() }, (t) => {
+  const { sb, git } = gitSandbox(t);
+  // The plugin's scratch index (claims-git-cas.js, ledger-residue.js): absolute, under TMPDIR.
+  const index = path.join(sb.root, 'tmp', 'qp-scratch-index');
+  const r = git(['read-tree', 'HEAD'], { extra: { GIT_INDEX_FILE: index } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(fs.existsSync(index), true, 'git wrote the scratch index');
+  // A relative one resolves inside the repo the -C walk already contained.
+  const relative = git(['read-tree', 'HEAD'], { extra: { GIT_INDEX_FILE: 'qp-rel-index' } });
+  assert.equal(relative.status, 0, relative.stderr);
+  assert.deepEqual(readShimLog(sb.logs, 'git').map((e) => e.tag), ['delegated', 'delegated']);
+});
 
 test('the git shim requires QP_LOG_DIR', { skip: oracleSkip() }, (t) => {
   const { git } = gitSandbox(t);

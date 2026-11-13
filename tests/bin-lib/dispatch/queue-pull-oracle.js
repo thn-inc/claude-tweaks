@@ -378,7 +378,10 @@ function nodeShim() {
 // bin/git: the sandbox's containment guard, a POSIX sh script with root, the real git, the canned
 // origin URL and the injected-failure prefixes baked in. It refuses (exit 97, logged REFUSED) an
 // exported GIT_DIR/GIT_WORK_TREE, config carried in the env (GIT_CONFIG_PARAMETERS, or
-// GIT_CONFIG_COUNT, which git needs before it reads any GIT_CONFIG_KEY_<n>), an unknown leading
+// GIT_CONFIG_COUNT, which git needs before it reads any GIT_CONFIG_KEY_<n>), a repository moved by
+// the env (GIT_COMMON_DIR, GIT_OBJECT_DIRECTORY, GIT_ALTERNATE_OBJECT_DIRECTORIES), an absolute
+// GIT_INDEX_FILE that is lexically outside root (the plugin's scratch indexes live under the
+// sandbox TMPDIR; a relative one resolves inside the contained repo), an unknown leading
 // global option, any -c key but core.quotePath
 // (the one key any plugin call path sets, review-context's; an allow-list, because a deny-list of
 // the keys that run a command or move git's view off the sandbox always misses one: include.path
@@ -391,6 +394,9 @@ function nodeShim() {
 // The refused argv is cut at 300 bytes (the sandbox runs LANG=C, and dash always counts bytes),
 // where the old node shim cut at 300 UTF-16 units: the two cuts differ whenever the joined argv is
 // over 300 bytes and holds non-ASCII text before the cut.
+// The shim contains where git acts (directories, repository, config), not which programs git may
+// run: GIT_SSH_COMMAND, GIT_EXTERNAL_DIFF, GIT_ASKPASS, GIT_PAGER/GIT_EDITOR and GIT_EXEC_PATH stay
+// unchecked, and withEscapeGuard backs it up.
 // No forks for its own checks: no $(...), subshell or pipe; dash and macOS /bin/sh alike.
 function gitShimScript({ root, realGit, table }) {
   const failTests = table.git.fail.map((prefix) => {
@@ -485,6 +491,12 @@ function gitShimScript({ root, realGit, table }) {
     '',
     'if [ -n "$GIT_DIR" ] || [ -n "$GIT_WORK_TREE" ]; then qp_refuse \'GIT_DIR/GIT_WORK_TREE set\' "$@"; fi',
     'if [ -n "$GIT_CONFIG_COUNT" ] || [ -n "$GIT_CONFIG_PARAMETERS" ]; then qp_refuse \'GIT_CONFIG_COUNT/GIT_CONFIG_PARAMETERS set\' "$@"; fi',
+    'if [ -n "$GIT_COMMON_DIR" ] || [ -n "$GIT_OBJECT_DIRECTORY" ] || [ -n "$GIT_ALTERNATE_OBJECT_DIRECTORIES" ]; then qp_refuse \'GIT_COMMON_DIR/GIT_OBJECT_DIRECTORY/GIT_ALTERNATE_OBJECT_DIRECTORIES set\' "$@"; fi',
+    '# An absolute GIT_INDEX_FILE, its .. resolved lexically (qp_norm ignores qp_cur for one), must be',
+    '# root or under it.',
+    'case $GIT_INDEX_FILE in',
+    '  /*) qp_norm "$GIT_INDEX_FILE"; qp_inside "$qp_p" || qp_refuse "GIT_INDEX_FILE outside the sandbox: $GIT_INDEX_FILE" "$@" ;;',
+    'esac',
     '',
     "# The leading global options (queue-pull-fixtures.js's gitSubArgv): qp_n counts their tokens.",
     'qp_n=0',
@@ -684,7 +696,7 @@ function createSandbox(scenario, { transport = 'gh', origin = null, name = scena
 
     const onFiles = transport === 'files';
     const shimDir = dir('shim');
-    fs.writeFileSync(tablePath, JSON.stringify({ ...table, root, realGit }));
+    fs.writeFileSync(tablePath, JSON.stringify(table));
     writeShims({ bin, shimDir, root, realGit, table, gh: !onFiles });
     const agentDir = dir('agent');
     for (const [file, content] of Object.entries(agent)) fs.writeFileSync(path.join(agentDir, file), content);
@@ -731,7 +743,7 @@ function createSandbox(scenario, { transport = 'gh', origin = null, name = scena
     };
     const setScenario = (next) => {
       const nextTable = shimTable(next);
-      fs.writeFileSync(tablePath, JSON.stringify({ ...nextTable, root, realGit }));
+      fs.writeFileSync(tablePath, JSON.stringify(nextTable));
       writeShims({ bin, shimDir, root, realGit, table: nextTable, gh: !onFiles });
     };
     return {
