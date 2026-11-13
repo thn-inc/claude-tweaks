@@ -728,6 +728,15 @@ function branchRecoveredRun(pid, lockReason) {
   return fx;
 }
 
+// A branch-recovered worktree is unlocked under git's own spelling of its path, as
+// `git worktree list --porcelain` prints it: D:/a/... on Git for Windows, where `wt` is D:\a\...
+// (#5338). Read it before teardown removes the entry.
+function listedWorktreePath(root, branch) {
+  const entry = parseWorktreeList(git(root, 'worktree', 'list', '--porcelain')).find((e) => e.branch === branch);
+  assert.ok(entry, `git worktree list --porcelain lists no worktree on ${branch}`);
+  return entry.path;
+}
+
 function teardownMergedRecordingGit(runDir) {
   const gitCalls = [];
   const recordingGit = (args, cwd) => { gitCalls.push(args); return runGit(args, cwd); };
@@ -741,11 +750,12 @@ function teardownMergedRecordingGit(runDir) {
 
 test('#5293: dead owner, merged, branch-recovered worktree with an orphaned lock — unlocks, removes, deletes the branch', () => {
   const pid = deadPid();
-  const { root, wt, runDir } = branchRecoveredRun(pid, `claude session someone-else (pid ${pid})`);
+  const { root, runDir } = branchRecoveredRun(pid, `claude session someone-else (pid ${pid})`);
+  const listedWt = listedWorktreePath(root, 'feat-branch');
   const { result, gitCalls, calls } = teardownMergedRecordingGit(runDir);
 
   assert.match(result.lines[0], /^owner: session someone-else is not running \(run-liveness: dead\)/);
-  assert.deepStrictEqual(gitCalls, [['worktree', 'unlock', wt]]);
+  assert.deepStrictEqual(gitCalls, [['worktree', 'unlock', listedWt]]);
   assert.ok(result.lines.some((l) => l.startsWith('worktree: removed')), result.lines.join('\n'));
   assert.doesNotMatch(git(root, 'worktree', 'list'), /feat-branch/);
   assert.strictEqual(git(root, 'branch', '--list', 'feat-branch').trim(), '');
