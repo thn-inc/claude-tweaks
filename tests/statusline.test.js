@@ -646,7 +646,11 @@ test('commonDirFromFs: an objects entry that is an executable FILE is not a repo
     const common = path.join(dir, 'common2');
     makeGitDirShape(common);
     fs.rmSync(path.join(common, 'objects'), { recursive: true });
-    fs.writeFileSync(path.join(common, 'objects'), '', { mode: 0o755 }); // passes X_OK, is not a directory
+    const objectsFile = path.join(common, 'objects');
+    fs.writeFileSync(objectsFile, '', { mode: 0o755 }); // passes X_OK, is not a directory
+    fs.chmodSync(objectsFile, 0o755); // the write mode above is masked by the umask
+    // Fail loudly rather than pass vacuously (restrictive umask, noexec mount).
+    fs.accessSync(objectsFile, fs.constants.X_OK);
     fs.writeFileSync(path.join(dir, 'admin', 'commondir'), common);
     assert.strictEqual(sl.commonDirFromFs(dir), null);
   });
@@ -787,6 +791,186 @@ test('commonDirFromFs: CRLF .git and commondir files parse the same', () => {
     fs.writeFileSync(path.join(dir, '.git'), `gitdir: ${fake}\r\n`);
     assert.strictEqual(path.dirname(sl.commonDirFromFs(dir)), gitCommonMain(f.wt));
   });
+});
+
+// --- originUrlFromConfig / readOriginRemote (spawn-free origin URL) ---
+
+function gitOrigin(dir) {
+  try {
+    return execFileSync('git', ['config', '--get', 'remote.origin.url'], { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+const LOCAL_URL = 'https://github.com/o/local.git';
+const ORIGIN_LAUNCH = { fn: 'execFileSync', file: 'git', args: ['config', '--get', 'remote.origin.url'] };
+
+// Fast-path case: the reader answers `expected`, equals git, and spawns nothing.
+function assertFastOrigin(dir, expected) {
+  assert.strictEqual(sl.originUrlFromConfig(dir), expected);
+  assert.strictEqual(gitOrigin(dir), expected);
+  const { result, launches } = recordLaunches((fresh) => fresh.readOriginRemote(dir));
+  assert.strictEqual(result, expected);
+  assert.deepStrictEqual(launches, []);
+}
+
+// Fallback case: the reader answers null ("ask git"), and readOriginRemote
+// launches exactly one `git config --get remote.origin.url` and equals git.
+function assertFallbackOrigin(dir, env) {
+  assert.strictEqual(sl.originUrlFromConfig(dir, env), null);
+  const { result, launches } = recordLaunches((fresh) => fresh.readOriginRemote(dir, { env }));
+  assert.deepStrictEqual(launches, [ORIGIN_LAUNCH]);
+  assert.strictEqual(result, gitOrigin(dir));
+}
+
+test('originUrlFromConfig: plain origin matches git config --get', () => {
+  withRepo('git@github.com:owner/repo.git', (dir) => assertFastOrigin(dir, 'git@github.com:owner/repo.git'));
+});
+
+test('originUrlFromConfig: several url lines — the last wins, as git config --get does', () => {
+  withRepo(LOCAL_URL, (dir) => {
+    fs.appendFileSync(path.join(dir, '.git', 'config'), '[remote "origin"]\n\turl = https://github.com/o/second.git\n');
+    assertFastOrigin(dir, 'https://github.com/o/second.git');
+  });
+});
+
+test('originUrlFromConfig: section and key names are case-insensitive', () => {
+  withRepo(LOCAL_URL, (dir) => {
+    const cfg = path.join(dir, '.git', 'config');
+    fs.writeFileSync(cfg, fs.readFileSync(cfg, 'utf8').replace('[remote "origin"]', '[Remote "origin"]').replace('\turl =', '\tURL ='));
+    assertFastOrigin(dir, LOCAL_URL);
+  });
+});
+
+test('originUrlFromConfig: CRLF config parses the same', () => {
+  withRepo(LOCAL_URL, (dir) => {
+    const cfg = path.join(dir, '.git', 'config');
+    fs.writeFileSync(cfg, fs.readFileSync(cfg, 'utf8').replace(/\n/g, '\r\n'));
+    assertFastOrigin(dir, LOCAL_URL);
+  });
+});
+
+test('originUrlFromConfig: a url in another remote or section is not origin\'s', () => {
+  withRepo(LOCAL_URL, (dir) => {
+    fs.appendFileSync(path.join(dir, '.git', 'config'), '[remote "upstream"]\n\turl = https://github.com/o/up.git\n[core]\n\turl = https://github.com/o/core.git\n');
+    assertFastOrigin(dir, LOCAL_URL);
+  });
+});
+
+test('originUrlFromConfig: no origin section — null, git also answers nothing', () => {
+  withRepo(null, (dir) => {
+    assert.strictEqual(sl.originUrlFromConfig(dir), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.readOriginRemote(dir));
+    assert.deepStrictEqual(launches, [ORIGIN_LAUNCH]);
+    assert.strictEqual(result, gitOrigin(dir));
+    assert.strictEqual(result, null);
+  });
+});
+
+// Each case: a trigger appended/applied to a repo whose origin is LOCAL_URL.
+// Removing the trigger's check from the reader must make it answer something
+// non-null (usually the local url, which git does NOT answer), so the test goes red.
+const origCfg = (dir) => path.join(dir, '.git', 'config');
+const appendCfg = (dir, text) => fs.appendFileSync(origCfg(dir), text);
+const ORIGIN_FALLBACKS = [
+  ['an [include] after the local origin (git answers the included url)', (dir) => {
+    fs.writeFileSync(path.join(dir, '.git', 'extra'), '[remote "origin"]\n\turl = https://github.com/o/included.git\n');
+    appendCfg(dir, '[include]\n\tpath = extra\n');
+    assert.strictEqual(gitOrigin(dir), 'https://github.com/o/included.git');
+  }],
+  ['an [includeIf] after the local origin (git answers the included url)', (dir) => {
+    fs.writeFileSync(path.join(dir, '.git', 'extra'), '[remote "origin"]\n\turl = https://github.com/o/included.git\n');
+    appendCfg(dir, '[includeIf "gitdir:**"]\n\tpath = extra\n');
+    assert.strictEqual(gitOrigin(dir), 'https://github.com/o/included.git');
+  }],
+  ['a value containing ;', (dir) => appendCfg(dir, '[remote "origin"]\n\turl = https://github.com/o/r.git;x\n')],
+  ['a value containing a backslash', (dir) => appendCfg(dir, '[remote "origin"]\n\turl = https://github.com/o/r\\.git\n')],
+  ['a quoted value', (dir) => appendCfg(dir, '[remote "origin"]\n\turl = "https://github.com/o/r.git"\n')],
+  ['a value containing #', (dir) => appendCfg(dir, '[remote "origin"]\n\turl = https://github.com/o/r.git # note\n')],
+  ['an old-style [remote.origin] header (git answers it)', (dir) => {
+    appendCfg(dir, '[remote.origin]\n\turl = https://github.com/o/old.git\n');
+    assert.strictEqual(gitOrigin(dir), 'https://github.com/o/old.git');
+  }],
+  ['text after a section header (git answers the inline url)', (dir) => {
+    appendCfg(dir, '[remote "origin"] url = https://github.com/o/inline.git\n');
+    assert.strictEqual(gitOrigin(dir), 'https://github.com/o/inline.git');
+  }],
+  ['a continuation line in an unrelated key', (dir) => appendCfg(dir, '[core]\n\tfoo = bar \\\n\tbaz\n')],
+  ['a continuation inside a comment line (git swallows the next line)', (dir) => {
+    appendCfg(dir, '# note \\\n[remote "origin"]\n\turl = https://github.com/o/swallowed.git\n');
+    appendCfg(dir, '[remote "origin"]\n\turl = https://github.com/o/after.git\n');
+  }],
+  ['a line matching no config shape', (dir) => appendCfg(dir, '!!not config\n')],
+  ['a key line before any section', (dir) => {
+    const cfg = origCfg(dir);
+    fs.writeFileSync(cfg, `url = https://github.com/o/stray.git\n${fs.readFileSync(cfg, 'utf8')}`);
+  }],
+  ['a url key with no = (a valueless boolean)', (dir) => appendCfg(dir, '[remote "origin"]\n\turl\n')],
+  ['a .git/config.worktree file', (dir) => fs.writeFileSync(path.join(dir, '.git', 'config.worktree'), '')],
+];
+for (const [label, setup] of ORIGIN_FALLBACKS) {
+  test(`originUrlFromConfig: ${label} defers to git`, () => {
+    withRepo(LOCAL_URL, (dir) => {
+      setup(dir);
+      assertFallbackOrigin(dir);
+    });
+  });
+}
+
+test('originUrlFromConfig: an unreadable config (a directory at .git/config) defers to git and never throws', () => {
+  withRepo(LOCAL_URL, (dir) => {
+    fs.rmSync(origCfg(dir));
+    fs.mkdirSync(origCfg(dir));
+    assertFallbackOrigin(dir);
+    assert.strictEqual(gitOrigin(dir), null);
+  });
+});
+
+test('originUrlFromConfig: GIT_CONFIG* in the env defers to git', () => {
+  withRepo(LOCAL_URL, (dir) => {
+    assertFallbackOrigin(dir, { GIT_CONFIG_GLOBAL: '/dev/null' });
+    assert.strictEqual(sl.originUrlFromConfig(dir, { GIT_CONFIG_COUNT: '0' }), null);
+    assert.strictEqual(sl.originUrlFromConfig(dir, { GIT_CONFIG_GLOBAL: '' }), null);
+  });
+});
+
+test('originUrlFromConfig: GIT_DIR in the env defers to git (even empty)', () => {
+  withRepo(LOCAL_URL, (dir) => {
+    assertFallbackOrigin(dir, { GIT_DIR: '/nonexistent' });
+    assert.strictEqual(sl.originUrlFromConfig(dir, { GIT_DIR: '' }), null);
+  });
+});
+
+test('originUrlFromConfig: an unrelated env var does not defer', () => {
+  withRepo(LOCAL_URL, (dir) => assert.strictEqual(sl.originUrlFromConfig(dir, { PATH: '/x', GITHUB_TOKEN: 'y' }), LOCAL_URL));
+});
+
+test('originUrlFromConfig: a .git FILE (linked worktree) defers to git', () => {
+  withWorktrees((f) => {
+    assert.strictEqual(sl.originUrlFromConfig(f.wt), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.readOriginRemote(f.wt));
+    assert.deepStrictEqual(launches, [ORIGIN_LAUNCH]);
+    assert.strictEqual(result, gitOrigin(f.wt));
+  });
+});
+
+test('readOriginRemote: fast:false skips the filesystem read and asks git', () => {
+  withRepo(LOCAL_URL, (dir) => {
+    const { result, launches } = recordLaunches((fresh) => fresh.readOriginRemote(dir, { fast: false }));
+    assert.deepStrictEqual(launches, [ORIGIN_LAUNCH]);
+    assert.strictEqual(result, LOCAL_URL);
+  });
+});
+
+test('readOriginRemote: a directory that is not a repo answers null without throwing', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-norepo-'));
+  try {
+    assert.strictEqual(sl.originUrlFromConfig(dir), null);
+    assert.strictEqual(sl.readOriginRemote(path.join(dir, 'missing')), null);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // Fixture: a fake $HOME with a default `~/.claude/` config dir and, optionally,

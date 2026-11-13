@@ -190,9 +190,67 @@ function githubRepoUrl(remoteUrl) {
   return `https://github.com/${repoPath}`;
 }
 
-function readOriginRemote(dir) {
+// originUrlFromConfig answers `git config --get remote.origin.url` from the
+// repo-local .git/config alone, no spawn. It returns the last origin `url`, or
+// null meaning "ask git": anything that could make git's answer differ from this
+// plain read — env redirects, an include, a config.worktree, a value with
+// quoting / escape / comment syntax, a continuation line, a header or line shape
+// this parser does not model, a .git that is not a directory, an unreadable
+// config — is null, as is a config with no origin url.
+function originUrlFromConfig(mainDir, env = process.env) {
+  for (const key of Object.keys(env)) {
+    if (key.startsWith('GIT_CONFIG')) return null;
+  }
+  if (env.GIT_DIR !== undefined) return null;
   try {
-    const url = execSync('git config --get remote.origin.url', {
+    const gitDir = path.join(mainDir, '.git');
+    if (!fs.statSync(gitDir).isDirectory()) return null;
+    try {
+      fs.statSync(path.join(gitDir, 'config.worktree'));
+      return null;
+    } catch {
+      // absent — the common case
+    }
+    let url = null;
+    let inOrigin = false;
+    let inSection = false;
+    for (const line of fs.readFileSync(path.join(gitDir, 'config'), 'utf8').split(/\r?\n/)) {
+      if (line.endsWith('\\')) return null; // git continues a comment line too
+      const trimmed = line.trim();
+      if (!trimmed || trimmed[0] === '#' || trimmed[0] === ';') continue;
+      const header = line.match(/^\s*\[([^\]]*)\]\s*(.*)$/);
+      if (header) {
+        if (header[2]) return null;
+        const inside = header[1].match(/^([A-Za-z0-9-]+)(?:\s+"([^"\\]*)")?$/);
+        if (!inside) return null;
+        const name = inside[1].toLowerCase();
+        if (name === 'include') return null;
+        if (name === 'includeif') return null;
+        inSection = true;
+        inOrigin = name === 'remote' && inside[2] === 'origin';
+        continue;
+      }
+      const kv = line.match(/^\s*([A-Za-z][A-Za-z0-9-]*)\s*(?:=\s*(.*))?$/);
+      if (!kv) return null;
+      if (!inSection) return null;
+      if (!inOrigin || kv[1].toLowerCase() !== 'url') continue;
+      if (kv[2] === undefined) return null;
+      if (/["\\#;]/.test(kv[2])) return null;
+      url = kv[2].trim();
+    }
+    return url || null;
+  } catch {
+    return null;
+  }
+}
+
+function readOriginRemote(dir, opts = {}) {
+  if (opts.fast !== false) {
+    const fast = originUrlFromConfig(dir, opts.env);
+    if (fast) return fast;
+  }
+  try {
+    const url = execFileSync('git', ['config', '--get', 'remote.origin.url'], {
       stdio: ['ignore', 'pipe', 'ignore'],
       encoding: 'utf8',
       cwd: dir,
@@ -562,6 +620,8 @@ module.exports = {
   main,
   commonDirFromFs,
   resolveMainProjectDir,
+  originUrlFromConfig,
+  readOriginRemote,
   renderModel,
   renderProject,
   githubRepoUrl,
