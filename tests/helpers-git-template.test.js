@@ -30,13 +30,15 @@ function mk(prefix) {
 // git config (maintenance.auto, receive.autogc, signing...) cannot leak in.
 const EMPTY_CONFIG = path.join(mk('ct-gt-cfg-'), 'empty');
 fs.writeFileSync(EMPTY_CONFIG, '');
-const ENV = {
+// Built per call, never at load: a template build appends maintenance-off keys
+// to process.env at build time, and a load-time snapshot would miss them.
+const gitEnv = () => ({
   ...process.env,
   GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.test',
   GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.test',
   GIT_CONFIG_GLOBAL: EMPTY_CONFIG, GIT_CONFIG_SYSTEM: EMPTY_CONFIG,
-};
-function git(cwd, args, env = ENV) {
+});
+function git(cwd, args, env = gitEnv()) {
   return fixtureGit(args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
 function commit(cwd, name) {
@@ -255,7 +257,7 @@ test('disableReceiveAutoGc stops receive-pack maintenance', () => {
     git(work, ['remote', 'add', 'origin', origin]);
     commit(work, 'base');
     const trace = mk('ct-gtg-t-');
-    git(work, ['push', '-q', 'origin', 'main'], { ...ENV, GIT_TRACE2_EVENT: trace });
+    git(work, ['push', '-q', 'origin', 'main'], { ...gitEnv(), GIT_TRACE2_EVENT: trace });
     return tracedArgvs(trace);
   }
   const hasMaintenance = (argvs) => argvs.some((a) => a.includes('maintenance'));
@@ -295,13 +297,8 @@ test('template build runs with auto-maintenance off', () => {
     process.env.GIT_CONFIG_GLOBAL = EMPTY_CONFIG;
     process.env.GIT_CONFIG_SYSTEM = EMPTY_CONFIG;
     withEnv('GIT_TRACE2_EVENT', trace, () => {
-      scratch.push(fromTemplate('maint-off', (dir) => {
-        const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.test', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.test' };
-        git(dir, ['init', '-q', '-b', 'main'], env);
-        fs.writeFileSync(path.join(dir, 'f'), 'f');
-        git(dir, ['add', 'f'], env);
-        git(dir, ['commit', '-q', '-m', 'f'], env);
-      }, { prefix: 'ct-gt-' }));
+      // The file's own repoBuild path (call-time gitEnv), as every other build here.
+      scratch.push(fromTemplate('maint-off', repoBuild, { prefix: 'ct-gt-' }));
     });
   } finally {
     for (const k of Object.keys(process.env)) if (mine.test(k)) delete process.env[k];
