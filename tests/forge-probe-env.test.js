@@ -9,15 +9,15 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
 const {
   detectIntegrationModel, resolveForgeProbeTimeoutMs, resolvePolicyConfig,
 } = require('../plugin/bin/lib/policy-schema');
 const { computeDerivedDefaults } = require('../plugin/bin/lib/policy-derived-defaults');
 const { deriveMergeVerification } = require('../plugin/bin/lib/merge-verification');
 const { resolveIntegrationBranch } = require('../plugin/bin/lib/hooks/worktree-reap');
-const { _resetGhHostCache } = require('../plugin/bin/lib/repo-resolve');
+const { _resetGhHostCache, resolveGhHost } = require('../plugin/bin/lib/repo-resolve');
 const { STUB_SKIP, pathWithOnly } = require('./helpers/path-stub');
+const { fixtureGit } = require('./helpers/git-fixtures');
 
 const GH_ORIGIN = 'https://github.com/o/r.git';
 const GHE_ORIGIN = 'https://ghe.example.test/o/r.git';
@@ -32,7 +32,7 @@ function tmp(prefix) {
 function git(cwd, args) {
   const env = { ...process.env };
   for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete env[k];
-  return execFileSync('git', args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  return fixtureGit(args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
 }
 
 function initRepo(prefix) {
@@ -117,6 +117,21 @@ test('detectIntegrationModel: hosts.yml is read under opts.homeDir() when the en
   assert.equal(fs.readFileSync(marker, 'utf8').trim(), '');
 });
 
+test('resolveGhHost: two lookups for one cwd with different injected env each get their own answer', () => {
+  _resetGhHostCache();
+  const root = initRepo('memo');
+  git(root, ['remote', 'add', 'origin', GHE_ORIGIN]);
+  const knownCfg = tmp('ghcfg-known');
+  fs.writeFileSync(path.join(knownCfg, 'hosts.yml'), `${GHE_HOST}:\n`);
+  const unknownCfg = tmp('ghcfg-unknown');
+  fs.writeFileSync(path.join(unknownCfg, 'hosts.yml'), 'other.example.test:\n');
+  const known = injectedEnv({ GH_CONFIG_DIR: knownCfg });
+  const unknown = injectedEnv({ GH_CONFIG_DIR: unknownCfg });
+  assert.equal(resolveGhHost(root, { env: known }), GHE_HOST);
+  assert.equal(resolveGhHost(root, { env: unknown }), null);
+  assert.equal(resolveGhHost(root, { env: known }), GHE_HOST);
+});
+
 test('detectIntegrationModel: a homeDir that throws never escapes', { skip: STUB_SKIP }, () => {
   _resetGhHostCache();
   const { a, gitDir } = forgePair({ origin: GHE_ORIGIN });
@@ -176,7 +191,7 @@ test('computeDerivedDefaults forwards deps.env and deps.stderr, and adds no key 
 
   const absent = recordModel();
   computeDerivedDefaults(fresh(), ['integration-model'], '/r', { detectIntegrationModel: absent.fn });
-  assert.deepEqual(Object.keys(absent.seen[0]).sort(), ['mcpReachable', 'onDegrade']);
+  for (const k of ['env', 'homeDir', 'stderr']) assert.equal(k in absent.seen[0], false);
 
   const mvSeen = [];
   const deriveMergeVerification = (root, deps) => { mvSeen.push(deps); return 'off'; };
@@ -197,7 +212,7 @@ test('computeDerivedDefaults forwards deps.env and deps.stderr, and adds no key 
   assert.equal('homeDir' in mvSeen[1], false);
   assert.equal('stderr' in mvSeen[1], false);
   mvSeen[1].integrationModel('/r');
-  assert.deepEqual(Object.keys(modelSeen[1]).sort(), ['mcpReachable', 'onDegrade']);
+  for (const k of ['env', 'homeDir', 'stderr']) assert.equal(k in modelSeen[1], false);
 });
 
 test('resolveIntegrationBranch reads origin/HEAD through opts.env', () => {

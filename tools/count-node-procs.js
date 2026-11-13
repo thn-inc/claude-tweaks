@@ -195,6 +195,8 @@ function run(argv, deps) {
     d.stdout.write(formatTable(result));
     if (result.skippedLines) d.stderr.write(`count-node-procs: skipped ${result.skippedLines} unreadable log line(s)\n`);
     const status = child && typeof child.status === 'number' ? child.status : 1;
+    if (child && child.error) d.stderr.write(`count-node-procs: test run failed to start: ${child.error.message}\n`);
+    else if (child && child.signal) d.stderr.write(`count-node-procs: test run was killed by ${child.signal}\n`);
     if (opts.json) {
       try {
         fs.writeFileSync(opts.json, JSON.stringify(result.files));

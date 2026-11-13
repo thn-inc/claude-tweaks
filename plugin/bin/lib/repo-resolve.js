@@ -199,7 +199,10 @@ function originSpecOf(remote) {
 // is looked up from; absent, the inherited one.
 function resolveGhSpec(cwd, deps = {}) {
   const key = path.resolve(cwd);
-  if (ghHostSpecs.has(key)) return ghHostSpecs.get(key);
+  // The memo is keyed by cwd alone, but the answer also depends on an injected env (origin read,
+  // gh config dir) and homedir, so a call that injects either neither reads nor writes it.
+  const useMemo = !deps.env && !deps.homedir;
+  if (useMemo && ghHostSpecs.has(key)) return ghHostSpecs.get(key);
   let spec = null;
   try {
     const url = deps.remoteUrl ? deps.remoteUrl(key) : originUrl(key, deps.env);
@@ -223,7 +226,7 @@ function resolveGhSpec(cwd, deps = {}) {
       return null;
     }
   }
-  ghHostSpecs.set(key, spec);
+  if (useMemo) ghHostSpecs.set(key, spec);
   return spec;
 }
 
@@ -305,6 +308,17 @@ function injectedGhDeps({ env, stderr, homeDir } = {}) {
   return deps;
 }
 
+// The injected-environment keys of a `deps` object (#5374): `env`, `homeDir` and `stderr`, each
+// only when truthy, so a key absent from deps is absent from the result. The one list a caller
+// handing them on to another lookup reads, so a future injected key is added here.
+function pickInjected(deps = {}) {
+  return {
+    ...(deps.env ? { env: deps.env } : {}),
+    ...(deps.homeDir ? { homeDir: deps.homeDir } : {}),
+    ...(deps.stderr ? { stderr: deps.stderr } : {}),
+  };
+}
+
 // #4794: the exported GH_HOST as a normalized host, or null when it is unset or normalizes to
 // nothing (empty, whitespace-only, all dots). The one GH_HOST reader: gateOriginRepo, ghOptions,
 // explicitRepoGhHost, resolveRepoTarget and every caller comparing a host against it.
@@ -353,6 +367,6 @@ function pinExplicitRepoHost(repoSpec, deps = {}) {
 
 module.exports = {
   parseRepo, ghAvailable, remoteUrl, repoSlug, repoResolutionNote,
-  ghOptions, injectedGhDeps, resolveGhHost, explicitRepoGhHost, pinExplicitRepoHost, _resetGhHostCache,
+  ghOptions, injectedGhDeps, pickInjected, resolveGhHost, explicitRepoGhHost, pinExplicitRepoHost, _resetGhHostCache,
   isKnownGhHost, gateOriginRepo, normalizeHost, originUrl, ghHostIn, resolveRepoTarget, hostPathOf, originSpecOf,
 };

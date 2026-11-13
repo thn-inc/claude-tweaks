@@ -21,7 +21,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { resolveIntegrationModel } = require('./policy-schema');
 const { resolveIntegrationBranch, bareIntegrationName } = require('./hooks/worktree-reap');
-const { ghOptions, injectedGhDeps } = require('./repo-resolve');
+const { ghOptions, injectedGhDeps, pickInjected } = require('./repo-resolve');
 
 const PR_TRIGGERS = new Set(['pull_request', 'pull_request_target']);
 
@@ -478,11 +478,7 @@ function readDefaultBranch(repoRoot, env, homeDir, stderr) {
 // lookup and the default-branch lookup, `env` alone to the integration-branch lookup. A key
 // absent from deps is absent from what is handed on.
 function deriveMergeVerification(repoRoot, deps = {}) {
-  const injected = {
-    ...(deps.env ? { env: deps.env } : {}),
-    ...(deps.homeDir ? { homeDir: deps.homeDir } : {}),
-    ...(deps.stderr ? { stderr: deps.stderr } : {}),
-  };
+  const injected = pickInjected(deps);
   const anyInjected = Object.keys(injected).length > 0;
   const integrationModel = deps.integrationModel
     || (anyInjected ? (r) => resolveIntegrationModel(r, injected) : resolveIntegrationModel);

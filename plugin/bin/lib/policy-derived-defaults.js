@@ -38,6 +38,7 @@
 'use strict';
 const { detectIntegrationModel, resolveIntegrationModel, resolvePolicyKeys } = require('./policy-schema');
 const { deriveMergeVerification } = require('./merge-verification');
+const { pickInjected } = require('./repo-resolve');
 
 // The run's integration-model pin (a valid run-config value), else null.
 function runPinnedIntegrationModel(runConfigRaw) {
@@ -58,11 +59,7 @@ function computeDerivedDefaults(result, keys, root, deps = {}) {
   const resolveModel = deps.resolveIntegrationModel || resolveIntegrationModel;
   const deriveVerification = deps.deriveMergeVerification || deriveMergeVerification;
   const mcpReachable = deps.mcpReachable === true;
-  const injected = {
-    ...(deps.env ? { env: deps.env } : {}),
-    ...(deps.homeDir ? { homeDir: deps.homeDir } : {}),
-    ...(deps.stderr ? { stderr: deps.stderr } : {}),
-  };
+  const injected = pickInjected(deps);
   const reportDegrade = (key, degrade) => {
     if (typeof deps.onDegrade !== 'function') return;
     try {

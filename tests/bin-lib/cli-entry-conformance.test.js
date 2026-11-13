@@ -59,19 +59,25 @@ function lineOf(text, index) {
   return text.slice(0, index).split('\n').length;
 }
 
-// Does the stripped text export `run`: `module.exports = { … run … }` with `run` as a
-// whole word (shorthand or `run:`), `module.exports.run =` or `exports.run =`.
+// Does the stripped text export `run`: `module.exports = { … }` with `run` as an exported
+// property name at the object's top level (shorthand `run`, or the key `run:`),
+// `module.exports.run =` or `exports.run =`. A `run` in value position (`main: run`) or
+// inside a nested call or literal (`main: (a) => run(a)`) is not an export of `run`.
 function exportsRun(stripped) {
   if (/\b(?:module\.)?exports\.run\s*=/.test(stripped)) return true;
   for (const m of stripped.matchAll(/module\.exports\s*=\s*\{/g)) {
+    // Keep only the object's own top level: drop everything inside nested ( [ {.
     let depth = 0;
-    let i = m.index + m[0].length - 1;
-    const start = i;
-    for (; i < stripped.length; i++) {
-      if (stripped[i] === '{') depth++;
-      else if (stripped[i] === '}' && --depth === 0) break;
+    let top = '';
+    for (let i = m.index + m[0].length - 1; i < stripped.length; i++) {
+      const c = stripped[i];
+      if (c === '{' || c === '(' || c === '[') {
+        if (++depth === 1) top += c;
+      } else if (c === '}' || c === ')' || c === ']') {
+        if (--depth === 0) break;
+      } else if (depth === 1) top += c;
     }
-    if (/\brun\b/.test(stripped.slice(start, i))) return true;
+    if (/(?:^|[{,])\s*run\s*(?:[,:]|$)/.test(top)) return true;
   }
   return false;
 }
@@ -130,8 +136,12 @@ test('AC9.1: every top-level plugin/bin CLI meets the entry rules, except the fi
   for (const name of files) assertFile(name, readText(path.join(BIN_DIR, name)), NOT_YET);
 });
 
-test('AC9.4: NOT_YET holds 27 existing files, sorted, without duplicates', () => {
-  assert.strictEqual(NOT_YET.length, 27);
+// The landing size of NOT_YET. A ratchet, not a pin: the list only shrinks, and the
+// sibling records of #5373 delete their own lines without ever editing this constant.
+const NOT_YET_CEILING = 27;
+
+test('AC9.4: NOT_YET only shrinks, and stays sorted, without duplicates, naming existing files', () => {
+  assert.ok(NOT_YET.length <= NOT_YET_CEILING, `NOT_YET grew to ${NOT_YET.length} (ceiling ${NOT_YET_CEILING}) — the list only shrinks`);
   assert.deepStrictEqual(NOT_YET, [...NOT_YET].sort());
   assert.strictEqual(new Set(NOT_YET).size, NOT_YET.length);
   for (const name of NOT_YET) assert.ok(fs.existsSync(path.join(BIN_DIR, name)), `NOT_YET names ${name}, which does not exist in plugin/bin`);
@@ -143,7 +153,8 @@ test('AC9.2: a conforming file listed in NOT_YET fails the walk', () => {
 });
 
 test('AC9.3: a non-conforming file missing from NOT_YET fails the walk', () => {
-  assert.throws(() => assertFile('verify.js', readText(path.join(BIN_DIR, 'verify.js')), []));
+  const neverConforms = ["'use strict';", 'function main() {}', 'module.exports = { main };', 'process.exit(1);'].join('\n');
+  assert.throws(() => assertFile('never-conforms.js', neverConforms, []), /never-conforms\.js breaks the CLI entry contract:\nexports no run/);
 });
 
 test('checkEntry: a conforming text has no offences', () => {
@@ -181,6 +192,10 @@ test('checkEntry flags each rule on the exact line', () => {
   assert.deepStrictEqual(checkEntry(assigned).offences, []);
   const lookalike = ["'use strict';", 'module.exports = { runner, rerun };', 'if (require.main === module) runner();'].join('\n');
   assert.deepStrictEqual(checkEntry(lookalike).offences, ['exports no run']);
+  const valuePosition = ["'use strict';", 'const run = () => 0;', 'module.exports = { main: run };', 'if (require.main === module) run();'].join('\n');
+  assert.deepStrictEqual(checkEntry(valuePosition).offences, ['exports no run']);
+  const inCall = ["'use strict';", 'const run = () => 0;', 'module.exports = { main: (a) => run(a) };', 'if (require.main === module) run();'].join('\n');
+  assert.deepStrictEqual(checkEntry(inCall).offences, ['exports no run']);
 });
 
 test('checkEntry ignores the tokens in comments, and allows them from the guard line down', () => {

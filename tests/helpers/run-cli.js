@@ -172,9 +172,15 @@ function finish(snap, name) {
       diffs.push(`process.exitCode changed (${snap.exitCode} -> ${process.exitCode})`);
       process.exitCode = snap.exitCode;
     }
-    if (process.cwd() !== snap.cwd) {
-      diffs.push('process.cwd() changed');
-      process.chdir(snap.cwd);
+    // process.cwd() throws when the CLI removed its own cwd, and chdir throws for a removed
+    // snap.cwd: record either as a leak so the env and listener restores below still run.
+    try {
+      if (process.cwd() !== snap.cwd) {
+        diffs.push('process.cwd() changed');
+        process.chdir(snap.cwd);
+      }
+    } catch (err) {
+      diffs.push(`process.cwd() could not be read or restored (${err.code || err.message})`);
     }
     for (const key of new Set([...Object.keys(snap.env), ...Object.keys(process.env)])) {
       const before = snap.env[key];

@@ -16,6 +16,10 @@ try {
       pid: process.pid,
       ppid: process.ppid,
       t: Date.now(),
+      // tools/count-node-procs.js's analyze depends on these slices: argv[0] must be the script path,
+      // and the node --test runner is recognised by `--test` appearing in the logged execArgv, which
+      // works because tools/run-tests.js puts `--test` first. Widening/narrowing a slice or moving
+      // `--test` in the launcher silently miscounts.
       argv: process.argv.slice(1, 6),
       execArgv: process.execArgv.slice(0, 3),
     }) + '\n');
