@@ -30,9 +30,11 @@ test('AC12: on a sandbox-probed platform the sandbox block is present with these
 });
 
 test('AC1.1: on darwin the read block is on and allowRead deep-equals readPaths', () => {
-  const s = implementerSettings({ testCommand: 'node --test', platform: 'darwin', readPaths: ['/opt/tool'] });
+  const input = ['/opt/tool'];
+  const s = implementerSettings({ testCommand: 'node --test', platform: 'darwin', readPaths: input });
   assert.strictEqual(s.permissions.blockReadsOutsideWorkingDirectories, true);
   assert.deepStrictEqual(s.sandbox.filesystem.allowRead, ['/opt/tool']);
+  assert.notStrictEqual(s.sandbox.filesystem.allowRead, input);
 });
 
 test('AC1.2: on linux and win32 neither key is present', () => {
@@ -59,6 +61,32 @@ test('AC2.1: validation runs on every platform, and win32 judges absoluteness by
   assert.throws(() => implementerSettings({ testCommand: 'node --test', platform: 'win32', readPaths: ['opt/tool'] }), TypeError);
   assert.doesNotThrow(() => implementerSettings({ testCommand: 'node --test', platform: 'win32', readPaths: ['C:\\tool'] }));
   assert.throws(() => implementerSettings({ testCommand: 'node --test', platform: 'linux', readPaths: 'x' }), /readPaths/);
+  assert.throws(
+    () => implementerSettings({ testCommand: 'node --test', platform: 'darwin', readPaths: ['C:\\tool'] }),
+    (e) => e instanceof TypeError && e.message.includes(JSON.stringify('C:\\tool')),
+  );
+});
+
+test('AC2.1: an entry that would void the block is refused: a filesystem root or a path that is not normalized', () => {
+  for (const bad of ['/', '/opt/../..', '/opt/./tool', '/opt/../x', '/opt//tool']) {
+    assert.throws(
+      () => implementerSettings({ testCommand: 'node --test', platform: 'darwin', readPaths: [bad] }),
+      (e) => e instanceof TypeError && e.message.includes(JSON.stringify(bad)),
+      bad,
+    );
+  }
+  for (const bad of ['C:\\', 'C:\\opt\\..\\x', 'C:/tool']) {
+    assert.throws(() => implementerSettings({ testCommand: 'node --test', platform: 'win32', readPaths: [bad] }), (e) => e instanceof TypeError && e.message.includes(JSON.stringify(bad)), bad);
+  }
+  assert.deepStrictEqual(implementerSettings({ testCommand: 'node --test', platform: 'darwin', readPaths: ['/opt/tool/'] }).sandbox.filesystem.allowRead, ['/opt/tool/']);
+  assert.doesNotThrow(() => implementerSettings({ testCommand: 'node --test', platform: 'win32', readPaths: ['C:\\tool\\'] }));
+});
+
+test('AC2.1: an entry JSON.stringify cannot serialize is still named in the TypeError', () => {
+  const cyclic = []; cyclic.push(cyclic);
+  assert.throws(() => implementerSettings({ testCommand: 'node --test', platform: 'darwin', readPaths: [10n] }), (e) => e instanceof TypeError && e.message.includes('10'));
+  assert.throws(() => implementerSettings({ testCommand: 'node --test', platform: 'darwin', readPaths: [cyclic] }), (e) => e instanceof TypeError && /readPaths/.test(e.message));
+  assert.throws(() => implementerSettings({ testCommand: 'node --test', platform: 'darwin', readPaths: [Object.assign(Object.create(null), { toJSON() { throw new Error('x'); } })] }), (e) => e instanceof TypeError && e.message.includes('[object Object]'));
 });
 
 test('AC2.2: an empty readPaths keeps the block on and re-opens nothing', () => {
@@ -70,7 +98,7 @@ test('AC2.2: an empty readPaths keeps the block on and re-opens nothing', () => 
 
 test('AC5.1: no role settings or arguments carry additionalDirectories or --add-dir', () => {
   for (const platform of ['darwin', 'linux', 'win32']) {
-    assert.ok(!JSON.stringify(implementerSettings({ testCommand: 'node --test', platform, readPaths: ['/opt/tool'] })).includes('additionalDirectories'), platform);
+    assert.ok(!JSON.stringify(implementerSettings({ testCommand: 'node --test', platform, readPaths: [platform === 'win32' ? 'C:\\tool' : '/opt/tool'] })).includes('additionalDirectories'), platform);
     for (const role of Object.keys(ROLES)) {
       const args = composeArgs({ role, settingsFile: '/s/settings.json', schema: RESULT_SCHEMA, platform });
       assert.ok(!args.includes('--add-dir'), role + ' ' + platform);

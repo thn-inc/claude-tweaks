@@ -1,5 +1,4 @@
 'use strict';
-const path = require('node:path');
 // Worker roles for the driver's headless `claude -p` launcher: the per-role tool
 // list, the argument list the launcher composes, and the generated settings for
 // the one role that may run commands (the implementer). Pure data and builders;
@@ -131,6 +130,8 @@ const path = require('node:path');
 // Permission denials are data for the driver's event line, never a reason to widen a
 // list: there is no path here that composes wider rights after a denial.
 
+const path = require('node:path');
+
 function deepFreeze(value) {
   if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
     Object.freeze(value);
@@ -181,13 +182,32 @@ function assertTestCommand(testCommand) {
   if (reason) throw new TypeError('testCommand ' + reason + ', got ' + JSON.stringify(testCommand));
 }
 
+// A readPaths entry in an error message: JSON.stringify throws on a BigInt or a cycle.
+function describeEntry(entry) {
+  try {
+    const json = JSON.stringify(entry);
+    if (typeof json === 'string') return json;
+  } catch (e) { /* fall through to String */ }
+  try {
+    return String(entry);
+  } catch (e) {
+    return Object.prototype.toString.call(entry);
+  }
+}
+
+// Every entry must be an absolute, already-normalized path that is not the filesystem
+// root: a root or a `..` that collapses to it would re-open every read the block closes.
 function assertReadPaths(readPaths, platform) {
-  if (!Array.isArray(readPaths)) throw new TypeError('readPaths must be an array, got ' + JSON.stringify(readPaths));
-  const isAbsolute = platform === 'win32' ? path.win32.isAbsolute : path.posix.isAbsolute;
+  if (!Array.isArray(readPaths)) throw new TypeError('readPaths must be an array, got ' + describeEntry(readPaths));
+  const pathModule = platform === 'win32' ? path.win32 : path.posix;
+  const trailing = platform === 'win32' ? /[\\/]$/ : /\/$/;
   for (const entry of readPaths) {
-    if (typeof entry !== 'string' || !isAbsolute(entry)) {
-      throw new TypeError('readPaths entries must be absolute path strings, got ' + JSON.stringify(entry));
-    }
+    const reason =
+      typeof entry !== 'string' || !pathModule.isAbsolute(entry) ? 'must be an absolute path string'
+      : pathModule.parse(entry).root === entry ? 'must not be the filesystem root'
+      : pathModule.normalize(entry).replace(trailing, '') !== entry.replace(trailing, '') ? 'must already be normalized'
+      : null;
+    if (reason) throw new TypeError('readPaths entries ' + reason + ', got ' + describeEntry(entry));
   }
 }
 
