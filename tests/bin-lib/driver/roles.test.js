@@ -387,3 +387,32 @@ test('toolchainRoot treats a non-normalized resolved path as unresolved', () => 
   const d = fakeDeps({ lookup: { node: '/x/bin/node' }, realpath: { '/x/bin/node': '/x/../bin/node' } });
   assert.strictEqual(toolchainRoot('node', d), null);
 });
+
+test('toolchainReadPaths adds no interpreter for any env option it does not know', () => {
+  const only = ['/h/.nvm/v22/lib/node_modules/npm'];
+  const lines = [
+    '#!/usr/bin/env -iP /opt/alt node', '#!/usr/bin/env -iC /opt/proj node',
+    '#!/usr/bin/env -a /opt/x node', '#!/usr/bin/env --argv0 /opt/x node', '#!/usr/bin/env --chd /opt/proj node',
+    '#!/usr/bin/env --bogus node', '#!/usr/bin/env -z node',
+  ];
+  for (const line of lines) {
+    // A lookup that would resolve the option token itself: taking it as the interpreter must show.
+    const lookup = { ...NPM_DEPS.lookup };
+    for (const tok of line.split(/\s+/)) if (tok.startsWith('-')) lookup[tok] = '/zzz/bin/tool';
+    const d = fakeDeps({ ...NPM_DEPS, lookup, firstLine: { [NPM_REAL]: line } });
+    assert.deepStrictEqual(toolchainReadPaths('npm test', d), only, line);
+  }
+});
+
+test('toolchainReadPaths still reads the interpreter past the known env flags and attached arguments', () => {
+  const both = ['/h/.nvm/v22/lib/node_modules/npm', '/h/.nvm/v22'];
+  const lines = [
+    '#!/usr/bin/env node', '#!/usr/bin/env -i node', '#!/usr/bin/env - node', '#!/usr/bin/env -0 -v node',
+    '#!/usr/bin/env --ignore-environment --null --debug node', '#!/usr/bin/env -uFOO node', '#!/usr/bin/env -C/opt/proj node',
+    '#!/usr/bin/env --unset=FOO node', '#!/usr/bin/env --chdir=/opt/proj node', '#!/usr/bin/env -i -S node --flag',
+  ];
+  for (const line of lines) {
+    const d = fakeDeps({ ...NPM_DEPS, firstLine: { [NPM_REAL]: line } });
+    assert.deepStrictEqual(toolchainReadPaths('npm test', d), both, line);
+  }
+});

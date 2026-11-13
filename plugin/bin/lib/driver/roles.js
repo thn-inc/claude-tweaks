@@ -281,12 +281,17 @@ function toolchainRoot(command, deps = {}) {
   return real === null ? null : rootOfReal(real, deps);
 }
 
-// The interpreter a `#!` line names: for `env`, the first argument that is not an option,
-// an option's own argument (`-u NAME`, `-C DIR`, `--unset NAME`, `--chdir DIR`) or a
-// `NAME=value` assignment, with an attached `-Sstring` read as `-S string`; otherwise the
-// first token. BSD env's `-P altpath` searches somewhere other than PATH, so the
-// interpreter cannot be located from PATH: no interpreter then.
+// The interpreter a `#!` line names; for `env`, only what is positively understood is
+// skipped, and anything else means no interpreter (the command's own root still stands):
+// the no-argument flags, `-S` (separate or attached, the string's tokens follow),
+// options with an argument (`-u NAME`, `-C DIR`, `--unset NAME`, `--chdir DIR`, or the
+// attached `-uNAME`, `-C/dir`, `--unset=NAME`, `--chdir=DIR`), and `NAME=value`. Every other
+// token that starts with `-` (`-P` in any form, bundled flags, `-a`, `--argv0`, an
+// abbreviated long option) may carry an argument or move the lookup off PATH, so reading
+// the next word as the interpreter could re-open the wrong directory.
+const ENV_FLAGS = ['-i', '-0', '-v', '-', '--ignore-environment', '--null', '--debug'];
 const ENV_OPTIONS_WITH_ARGUMENT = ['-u', '-C', '--unset', '--chdir'];
+const ENV_ATTACHED_ARGUMENT = /^(-[uC].|--(unset|chdir)=)/;
 function shebangInterpreter(line) {
   if (typeof line !== 'string' || !line.startsWith('#!')) return null;
   const tokens = line.slice(2).split(/\s+/).filter(Boolean);
@@ -295,9 +300,10 @@ function shebangInterpreter(line) {
   const args = tokens.slice(1).flatMap((t) => (/^-S./.test(t) ? ['-S', t.slice(2)] : [t]));
   for (let i = 0; i < args.length; i++) {
     const token = args[i];
-    if (token.startsWith('-P')) return null;
+    if (token === '-S' || ENV_FLAGS.includes(token) || ENV_ATTACHED_ARGUMENT.test(token)) continue;
     if (ENV_OPTIONS_WITH_ARGUMENT.includes(token)) i++;
-    else if (!token.startsWith('-') && !token.includes('=')) return token;
+    else if (token.startsWith('-')) return null;
+    else if (!token.includes('=')) return token;
   }
   return null;
 }
