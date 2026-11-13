@@ -18,6 +18,7 @@ test('AC10.1, AC10.2: reduceDetail strips a hostile detail', () => {
     assert.ok(!out.includes(bad), `output contains ${bad}: ${out}`);
   }
   assert.ok(!/<!--/.test(out));
+  assert.ok(!out.includes('C:'), `drive letter survived: ${out}`);
   assert.ok(out.includes('at octocat'));
   assert.ok(out.includes('<path>'));
   assert.ok(out.includes('<redacted>'));
