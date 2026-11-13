@@ -154,8 +154,20 @@ test('checkEntry flags each rule on the exact line', () => {
   const noRun = ["'use strict';", 'function main() {}', 'module.exports = { main };', 'if (require.main === module) main();'].join('\n');
   assert.deepStrictEqual(checkEntry(noRun).offences, ['exports no run']);
 
-  const noGuard = ["'use strict';", 'function run() { return 0; }', 'module.exports = { run };'].join('\n');
-  assert.deepStrictEqual(checkEntry(noGuard).offences, ['no require.main === module guard']);
+  // With no guard every occurrence is above it: the token on the last line is still reported.
+  const noGuard = ["'use strict';", 'function run() { return 0; }', 'module.exports = { run };', 'process.exitCode = 1;'].join('\n');
+  assert.deepStrictEqual(checkEntry(noGuard).offences, ['no require.main === module guard', 'process.exitCode above the guard (line 4)']);
+
+  // The entry is the last guard: an exit between an earlier guard and it is above the entry.
+  const twoGuards = [
+    "'use strict';",
+    'function run() { return 0; }',
+    'module.exports = { run };',
+    'if (require.main === module) run();',
+    'process.exit(1);',
+    'if (require.main === module) process.exitCode = run();',
+  ].join('\n');
+  assert.deepStrictEqual(checkEntry(twoGuards).offences, ['process.exit( above the guard (line 5)']);
 
   const exitCode = ["'use strict';", 'function run() { return 0; }', 'module.exports = { run };', 'process.exitCode = 1;', '', '', '', '', 'if (require.main === module) run();'].join('\n');
   assert.deepStrictEqual(checkEntry(exitCode).offences, ['process.exitCode above the guard (line 4)']);

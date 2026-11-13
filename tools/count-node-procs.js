@@ -9,8 +9,9 @@
 // (`tests` and `tools/upstream-drift/tests`) explicitly. --json writes the per-file rows.
 // Exit code: the test run's (1 when it has none); 2 for a malformed invocation.
 //
-// The counts are a floor: a child started with a replaced env drops NODE_OPTIONS and is not logged, and
-// a node process started through a non-node parent (a shell) is not attributed to a test file. The
+// The counts are a floor: a child started with a replaced env drops NODE_OPTIONS and is not logged,
+// a node process started through a non-node parent (a shell) is not attributed to a test file, and
+// a detached child whose parent's exit line precedes the child's start line is unattributed. The
 // `node --test` runner is never a test file; it counts as unattributed unless a test file is above it.
 
 const fs = require('fs');
@@ -24,7 +25,7 @@ const PRELOAD_PATH = path.join(__dirname, 'count-node-procs-preload.js');
 const RUN_TESTS_PATH = path.join(__dirname, 'run-tests.js');
 const DEFAULT_ROOTS = ['tests', path.join('tools', 'upstream-drift', 'tests')];
 const USAGE = 'usage: node tools/count-node-procs.js [--files-from <list>] [--json <out>]\n';
-const FLOOR_NOTE = '# counts are a floor: a child started with a replaced env drops NODE_OPTIONS and is not logged; a node process started through a non-node parent (a shell) is not attributed to a test file; the node --test runner itself is counted as unattributed';
+const FLOOR_NOTE = '# counts are a floor: a child started with a replaced env drops NODE_OPTIONS and is not logged; a node process started through a non-node parent (a shell) is not attributed to a test file; a detached child whose parent\'s exit line precedes the child\'s start line is unattributed; the node --test runner itself is counted as unattributed';
 const MAX_HOPS = 12;
 
 const fwd = (p) => String(p).split(path.sep).join('/').replace(/\\/g, '/');

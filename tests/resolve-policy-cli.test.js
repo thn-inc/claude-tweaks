@@ -149,10 +149,19 @@ test('model-profiles malformed block resolves to null/default with invalid: true
 });
 
 test('AC 10: CLAUDE_PLUGIN_ROOT is never read — deleted env and decoy env both resolve the fixture', () => {
+  // A real process: in-process this would only prove the CLI reads the injected env, since the
+  // leak guard catches env writes, not reads of process.env.
+  const spawnOk = (args, cwd, env) => {
+    const res = spawnCli(CLI, args, { cwd, env });
+    assert.strictEqual(res.code, 0, `expected exit 0, got ${res.code}; stderr: ${res.stderr}`);
+    assert.strictEqual(res.stderr, '', 'success paths write nothing to stderr');
+    assert.strictEqual(res.stdout, `${res.stdout.trim()}\n`, 'stdout is one JSON line, no trailing prose');
+    return JSON.parse(res.stdout);
+  };
   const { tmp } = makeFixtureRepo({ policy: 'policy-basic.yml' });
   const deleted = { ...process.env };
   delete deleted.CLAUDE_PLUGIN_ROOT;
-  const out = runOk(['autonomy'], tmp, deleted);
+  const out = spawnOk(['autonomy'], tmp, deleted);
   assert.deepStrictEqual(out, { autonomy: { value: 'unattended', source: 'policy' } });
 
   // Discriminating half: point the var at a decoy repo whose policy.yml holds
@@ -162,7 +171,7 @@ test('AC 10: CLAUDE_PLUGIN_ROOT is never read — deleted env and decoy env both
   tempDirs.push(decoy);
   fs.mkdirSync(path.join(decoy, '.claude-tweaks'));
   fs.writeFileSync(path.join(decoy, '.claude-tweaks', 'policy.yml'), 'autonomy: trusted\n');
-  const out2 = runOk(['autonomy'], tmp, { ...process.env, CLAUDE_PLUGIN_ROOT: decoy });
+  const out2 = spawnOk(['autonomy'], tmp, { ...process.env, CLAUDE_PLUGIN_ROOT: decoy });
   assert.deepStrictEqual(out2, { autonomy: { value: 'unattended', source: 'policy' } });
 });
 

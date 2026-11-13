@@ -39,7 +39,8 @@
 // non-degraded entry keeps exactly { value, source }. merge-verification's
 // own detection honours a valid --run config.yml integration-model pin first.
 // Repo root comes from `git rev-parse --show-toplevel` at the
-// process cwd (cwd itself outside a git repo) — never from CLAUDE_PLUGIN_ROOT
+// injected cwd (`deps.cwd()`, the process cwd when run as a script; that cwd
+// itself outside a git repo) — never from CLAUDE_PLUGIN_ROOT
 // (observed unset in Bash tool environments, #170) and never from a
 // positional path argument.
 // --mcp-reachable asserts the caller has already confirmed GitHub

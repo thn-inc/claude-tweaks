@@ -232,9 +232,14 @@ test('Review Focus 3: a cwd outside any git repository reads that directory\'s p
     return;
   }
   fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
-  // `trusted`, not this repo's own `unattended`: the value must differ from the policy.yml at process.cwd().
+  // The value must differ from the policy.yml at process.cwd(), or reading the wrong one goes unseen.
   fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'autonomy: trusted\n');
   const args = ['--values', 'autonomy'];
+  assert.notStrictEqual(
+    runCliSync(CLI, args, { cwd: process.cwd(), env: ENV }).stdout,
+    'trusted\n',
+    'the autonomy value at process.cwd() equals the fixture\'s: pick another fixture value',
+  );
   const res = runCliSync(CLI, args, { cwd: dir, env: ENV });
   assert.equal(res.stdout, 'trusted\n');
   assert.deepStrictEqual(res, spawnCli(CLI, args, { cwd: dir, env: ENV }));
