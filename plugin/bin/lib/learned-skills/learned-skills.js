@@ -681,7 +681,7 @@ function fallback(cx, plan, L, failure) {
   // Staging cannot be the home: put this call's edit back in the tree as this call found it (the
   // state before the call, the earlier capture included), else name the confirmed copy holding it.
   // kept: how the gate went, for the case where the staged file's full diff stays as the only copy.
-  const settle =(why, kept = { gate: 'not-checked', note: why }) => {
+  const settle = (why, kept = { gate: 'not-checked', note: why }) => {
     const head = `${reason}; then ${why}`;
     const still = 'the edit is still in the working tree (not captured, not staged) — commit it on the run branch';
     let where = null;
