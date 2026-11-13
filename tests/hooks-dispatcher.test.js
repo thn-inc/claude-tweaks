@@ -760,6 +760,51 @@ test('AC6.1: hooks.json registers a PreToolUse matcher for AskUserQuestion (unfi
   assert.match(entry.hooks[0].command, /bin\/hooks\.js" pre-tool-use$/);
 });
 
+// #4589: the dispatch-prompt fidelity gate. CLI 2.1.322 reports the tool as `Agent`; `Task` covers a
+// CLI that still reports the older name (docs/reference/pretooluse-agent-tool-probe.md).
+test('AC5.1: hooks.json registers PreToolUse matchers for Agent and Task (unfiltered, literal tool-name match)', () => {
+  const config = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugin', 'hooks', 'hooks.json'), 'utf8'));
+  for (const name of ['Agent', 'Task']) {
+    const entry = config.hooks.PreToolUse.find((e) => e.matcher === name);
+    assert.ok(entry, `expected a PreToolUse ${name} matcher entry`);
+    assert.strictEqual(entry.hooks.length, 1);
+    assert.strictEqual(entry.hooks[0].type, 'command');
+    assert.ok(!('if' in entry.hooks[0]), `${name} matcher must be a literal tool-name match, not pattern-filtered`);
+    assert.match(entry.hooks[0].command, /bin\/hooks\.js" pre-tool-use$/);
+  }
+});
+
+test('AC5.1: dispatcher: an Agent prompt that differs from the rendered file is denied end to end', () => {
+  const { run: renderPrompt } = require('../plugin/bin/dispatch-prompt');
+  const project = gitRepo();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-11-01T181353-record-4589');
+  fs.mkdirSync(run, { recursive: true });
+  assert.strictEqual(runHook(['record-worktree', '--run', run, '/tmp/wt-4589', '--dispatch'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'S' } }).code, 0);
+  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-disp-dpg-')), 'first.md');
+  let err = '';
+  const code = renderPrompt(['--call', 'first', '--run', run, '--issues', '4589', '--out', out], {
+    cwd: () => project,
+    env: {},
+    resolvePolicyValues: () => 'autonomy=unattended',
+    resolveProfile: () => ({ model: 'opus', effort: 'high', source: 'default', effortLine: '' }),
+    selectedAt: () => 'unknown',
+    now: () => '2026-11-12T10:00:01.000Z',
+    defaultOut: () => null,
+    stdout: () => {},
+    stderr: (s) => { err += s; },
+  });
+  assert.strictEqual(code, 0, err);
+  const prompt = fs.readFileSync(out, 'utf8').replace(/\bExecute\b/, 'Run');
+  const result = runHook(['pre-tool-use'], {
+    input: JSON.stringify({ tool_name: 'Agent', session_id: 'S', cwd: project, tool_input: { subagent_type: 'general-purpose', prompt } }),
+    cwd: project,
+  });
+  assert.strictEqual(result.code, 0);
+  const json = JSON.parse(result.stdout);
+  assert.strictEqual(json.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(json.hookSpecificOutput.permissionDecisionReason, /byte-for-byte/);
+});
+
 test('dispatcher: AskUserQuestion with no owned run exits 0 with no deny', () => {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-disp-ask-'));
   const result = runHook(['pre-tool-use'], {

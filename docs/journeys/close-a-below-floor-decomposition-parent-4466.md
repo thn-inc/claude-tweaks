@@ -23,6 +23,7 @@ files:
   - plugin/bin/lib/issues/mcp-parent-gate-shape.js
   - plugin/bin/lib/issues/local-parent-gate-shape.js
   - plugin/bin/lib/hooks/session-start.js
+  - plugin/bin/hooks.js
 ---
 
 # Close a Below-Floor Decomposition Parent
@@ -63,12 +64,14 @@ files:
   - After a PR merge, a Step 4.0 result with no `closingSet` (a non-zero exit, `not-merged`, `no-fixes-span`, `no-pr`, `gh-absent`, `base-unchecked`) skips the whole step with a logged `SKIP`; tidy's `parent-gate` backstop (step 4) recovers the parent.
   - A gh-absent run that has the GitHub MCP server, such as a cloud Routine on the local-merge path, closes the parent the same way. The gate file's **Transport (#4602).** paragraph routes every call through `_shared/github-write-transport.md`'s MCP rows: `issue_read` for reads, `add_issue_comment` for the comment, and `issue_write` with `state_reason` for the close. The default-branch check reads `git remote show origin`.
   - A token that cannot read its own identity does not stop the close. When `gh api user` fails or prints no login (a GitHub App installation token, say), or the facts file's `get_me` result carries no login, the parent still closes: only a trusted author's `## Closed below the oversight floor` comment counts as already posted. When none does, the step posts the comment before closing, and the verdict's `skipped` names `identity probe failed — close marker matched against trusted authors only`; a trusted comment already there means a plain close with no such note. The accepted cost is one duplicate comment when an earlier attempt posted under an untrusted association and its close then failed.
+  - The comment and the close go to the repository the gate read from. The verdict's `repo` field names the slug the CLI's reads used (`{owner}/{repo}`, or `{host}/{owner}/{repo}` off github.com), and each `gh` line of the Close and Apply sections passes it as `--repo "{parent-repo}"`. On a checkout whose `gh` default repository differs from `origin`, the parent is still closed in `origin`'s repository (#4824). A `repo` of `null` is expected off the `gh` path (local-files, or a facts file with no qualified token), which runs none of those `gh` lines. On the `gh` path a `null`, empty or absent `repo` stops those lines, and the entry is reported as a failing `gh` call.
   - The close is one of the two named exceptions in `_shared/auto-mode-contract.md`'s never-reversible list (the other is Step 4.0's close of the `Fixes` records after a merge into a non-default base). Its restore contract is a human `gh issue reopen`.
 - **Red flags:**
   - A second listing comment on a re-run.
   - A Try it block or `demo:pending` posted by this post-merge step.
   - A failed `gh` call that falls back to labeling the sub-issue as if it had no parent.
   - A due parent left open, or skipped as `gh-failed`, only because the identity read failed.
+  - A listing comment or close that lands in a different repository than the gate's reads, or a `gh` write run with an empty `--repo ""`, which `gh` sends to its default repository.
   - On the MCP path, a due parent left open because the facts file carried a lowercase `closed` state the CLI did not normalize. Another MCP-path red flag is a close call that passes `labels` and wipes the parent's labels.
 
 ### 3. A merge no session saw land is closed by the reconciler's post-merge check
@@ -77,6 +80,8 @@ files:
 - **Should feel:** invisible until it is reported. The parent is closed without anyone approving a tidy row, and the session after that pass says so.
 - **Should understand:**
   - The SessionStart prior-pass line reads `post-merge steps ran for N merged run(s), closing M parent record(s) below the oversight floor`. A Step 4.0 failure or non-clean word such as `close-failed`, or a check that threw, reads `post-merge steps failed for N merged run(s) (records #101, #102 need a hand reopen or close per _shared/pr-first-merge-post-merge.md Step 4.0, each with its action in the run's decisions.md, and no later pass retries them; tidy's parent-gate backstop recovers the parents)`, with the record clause only when Step 4.0 named records.
+  - When Step 4.0b left a parent open, whatever the run's verdict (a run whose marker write failed or whose check threw after the closes ran included), the next line names it: `post-merge Step 4.0b left parent record(s) open: #100 (gh-failed, PR #11) — tidy's parent-gate backstop recovers them` (#4798). A Step 4.0b that skipped step-wide with nothing left to close (a rejected `risk-floor` value on a run whose closing records were all closed after the window, say) adds `post-merge Step 4.0b skipped step-wide, leaving no parent open (nothing left to close): invalid-risk-floor (PR #13)`, and that line alone never reads as a failed run.
+  - A pass holds the run's post-merge claim and refreshes it before every `gh` call. A later pass takes over the claim of a holder that died, or that stopped refreshing it for `CLAIM_MAX_IDLE_MS`, and the taken-over pass stops before its next `gh` call or `decisions.md` write. The pass that took over writes the run's marker. When the taken-over pass had already changed GitHub, a further line names what it changed: `post-merge steps in run(s) whose claim another pass took over had already changed GitHub: PR #12 closed 1 parent record(s) below the oversight floor, reopened #7` (#4797).
   - A PR that merged no more than 10 minutes ago (`MERGE_GRACE_MS`) is left for its merging session, which may still be running Step 4.0b. Archive keeps a run whose steps are still pending (`post-merge-pending`) until a later pass runs them.
   - The late pass runs the same `bin/lib/issues/parent-gate.js` core the CLI does, and judges every closing record by its live state, so a sub-issue a human reopened since keeps its parent open (`selfInclude: false`).
   - It decides the parent-level skips before reading any sub-issue: the parent's labels first (`not-parent-issue-labeled`, `needs-label`), then its sub-issue list (`sibling-unsettled`). A parent skipped there costs no per-sub-issue `gh issue view`, so a catch-up pass over many skipped parents does not drain the REST core limit (#4799).
@@ -129,3 +134,9 @@ Updated by record #4770 (run `2026-11-01T182348-spec-4770`): a failed or empty i
 Updated by record #4799 (run `2026-11-01T205251-record-4799`): the reconciler's late pass decides the parent-level skips before any per-sub-issue read; step 3 notes it.
 
 Updated during wrap-up of #4692 (run `2026-11-01T182340-spec-4692`): step 3 notes that the pass never reaches an archived run, and that merge mode's Already merged section runs Steps 4.0 and 4.0b for one under the same marker and claim.
+
+Updated by record #4824 (run `2026-11-03T082955-record-4824`): the gate verdict carries `repo`, and the Close and Apply sections' `gh` writes pass it as `--repo "{parent-repo}"` behind a stop rule for an empty value; step 2 notes it.
+
+Updated by record #4798 (run `2026-11-03T201056-record-4798`): a loop entry whose Step 4.0b left a parent open carries `parentFailures`, a parentless skip on an empty effective closing set goes to `stepSkips`, and a failed marker write or a throw after the closes keeps both; step 3 names the SessionStart lines that report them.
+
+Updated during wrap-up of #4797 (run `2026-11-04T064811-record-4797`): the post-merge claim is heartbeated and taken over when its holder dies or goes idle past `CLAIM_MAX_IDLE_MS`; step 3 names the takeover and the line that reports a taken-over pass's GitHub changes, which `session-start-fast-background-reconcile.md` points here for.

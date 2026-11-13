@@ -7,6 +7,7 @@ files:
   - plugin/skills/dispatch/open-pr-exclusion-report.md
   - plugin/skills/flow/SKILL.md
   - plugin/skills/dispatch/task-prompt.md
+  - plugin/bin/dispatch-prompt.js
 ---
 
 # Resume a Stalled Dispatched Build
@@ -48,7 +49,7 @@ files:
 
 ### 5. Continue the build with the prior run's context — `dispatch/task-prompt.md`
 - **URL:** `https://github.com/{owner}/{repo}/pull/{pr}`
-- **Action:** The first call's prompt carries `Resuming stalled run {priorRunId} on PR {prUrl}; last logged phase: {section} {step}; open defects: {each}` (or `none recorded`). `/flow` adopts the run, `pr-early-open.js` rebinds the reused PR body to the new run, and the two-call sequence proceeds as for `#N`.
+- **Action:** **Dispatching session** renders the first call with `dispatch-prompt.js --resume-verdict {file} --selected-at unknown` (`resume.md` Step 7; `{file}` is Step 2's JSON line), then `cat`s the parts and sends them unchanged, the same render-and-resend discipline as `dispatch-a-group-with-rendered-task-prompts-4589.md`. The rendered prompt carries `Resuming stalled run {priorRunId} on PR {prUrl}; last logged phase: {section} {step}; open defects: {each}` (or `none recorded`). `/flow` adopts the run, `pr-early-open.js` rebinds the reused PR body to the new run, and the two-call sequence proceeds as for `#N`.
 - **Should feel:** Continuous: the new call starts knowing where the last one stopped.
 - **Should understand:** Resume never adds or removes a grant label and never commits, stashes, discards or pushes the stalled worktree's state on its own.
 - **Red flags:** A second PR opened for the branch; a `DISPATCH_HEADLESS=1` prefix on a resume call.
@@ -59,4 +60,5 @@ files:
 - Updated during build of #4729 (dispatch resume: name close-run when the conflicting bound run belongs to this session) — Step 3's same-session leftover line
 - Updated during build of #4849 (a stale open PR on any head resumes) — Step 2's PR read through the closing-reference connection
 - Updated during build of #4809 (Settle 7 digest findings in review): step 2 now states that an existing but unlistable pipelines dir exits 4 instead of passing the bound-run and sibling scans as clean
-- Related: `learn-why-a-named-record-wont-dispatch-3084.md` (the refusal that now names the remedy), `resume-a-run-on-a-pr-an-earlier-run-opened-4580.md` (the PR-body rebind step 5 relies on), `act-on-a-contested-claim.md` (the in-flight stop step 4 narrows)
+- Updated during build of #4589 (render dispatch Task prompts through a CLI): step 5 — the resume first call is rendered by `dispatch-prompt.js --resume-verdict`, not filled by hand
+- Related: `dispatch-a-group-with-rendered-task-prompts-4589.md` (the render, join and gate), `learn-why-a-named-record-wont-dispatch-3084.md` (the refusal that now names the remedy), `resume-a-run-on-a-pr-an-earlier-run-opened-4580.md` (the PR-body rebind step 5 relies on), `act-on-a-contested-claim.md` (the in-flight stop step 4 narrows)

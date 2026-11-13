@@ -3,7 +3,8 @@
 // batched, aliased GraphQL query builder for work-links: native's blocked-by
 // check — via an injectable runner, and parses the response into the
 // {blockedBy: number[], openBlocker: boolean, openBlockerIds: number[]} shape
-// every caller expects. Extracted from
+// every caller expects, plus `crossRepoBlockers: [{number, repository, state}]`
+// when a blocker lives in another repository (#4793). Extracted from
 // bin/lib/preflight-records/preflight-records.js (#538) so
 // bin/resolve-blockers.js's single-record CLI and preflight-records.js's own
 // N-record batch call the same underlying function instead of each carrying
@@ -12,10 +13,14 @@
 // pure, no-network module.
 'use strict';
 
-const { buildNativeDependencyQuery, hasOpenNativeBlocker, buildNativeSubIssuesQuery, buildNativeParentQuery } = require('./record');
+const {
+  buildNativeDependencyQuery, hasOpenNativeBlocker, buildNativeSubIssuesQuery, buildNativeParentQuery, crossRepositoryBlockers,
+} = require('./record');
 
 // { numbers, owner, repo, runner } -> Map<number, {blockedBy: number[],
-// openBlocker: boolean, openBlockerIds: number[]}>.
+// openBlocker: boolean, openBlockerIds: number[]}> — plus
+// `crossRepoBlockers: [{number, repository, state}]` when a blocker lives in
+// another repository (#4793).
 // ONE batched, aliased GraphQL call (buildNativeDependencyQuery) resolving
 // every candidate's native blockedBy connection at once — work-links: native.
 // owner/repo are already-resolved String! values, so -f (never -F — -F would
@@ -55,15 +60,25 @@ function fetchNativeDependencies({
   for (const n of numbers) {
     const node = repository[`i${n}`];
     const nodes = (node.blockedBy && node.blockedBy.nodes) || [];
-    result.set(n, {
+    const entry = {
       blockedBy: nodes.map((b) => b && b.number).filter((v) => v !== undefined),
       openBlocker: hasOpenNativeBlocker(node),
-      // The identical OPEN-state filter partitionByOpenNativeBlockers
-      // (bin/lib/issues/record.js) applies, precomputed here so a caller holding
+      // Every OPEN blockedBy node's number, foreign ones included (#4793), so
+      // existing consumers keep their values. Precomputed here so a caller holding
       // only this output — dispatch/queue-pull-script.md via resolve-blockers.js
-      // — names the blocker ids without a raw GraphQL response (#1309).
+      // — names the blocker ids without a raw GraphQL response (#1309). Unlike
+      // partitionByOpenNativeBlockers (bin/lib/issues/record.js), this list is
+      // not foreign-aware: that partition strips foreign OPEN numbers,
+      // deduplicates, appends qualified refs and blocks on an unreadable foreign
+      // state, so a foreign-aware reader combines this with crossRepoBlockers
+      // through openBlockerRefs.
       openBlockerIds: nodes.filter((b) => b && b.state === 'OPEN').map((b) => b.number),
-    });
+    };
+    // Present only when a blocker lives in another repository (#4793); the three
+    // fields above keep their values for every consumer, foreign blockers included.
+    const crossRepoBlockers = crossRepositoryBlockers(node);
+    if (crossRepoBlockers.length) entry.crossRepoBlockers = crossRepoBlockers;
+    result.set(n, entry);
   }
   return result;
 }

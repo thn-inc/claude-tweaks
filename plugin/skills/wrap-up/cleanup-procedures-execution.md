@@ -76,12 +76,12 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    the header reaches the main checkout by merge — and is empty on a `manifest`/`worktree-manifest`
    rung, whose ids include `not-run`/`failed` specs with no closing keyword to stamp. Every other
    closing-keyword reader cites this field rather than restating the rule. Only when the pack
-   could not be produced (Section E's production step failed) or lacks that field, list the
+   could not be produced (Section E's production step failed, or this section was skipped) or lacks that field, list the
    worktree mirror's spec headers instead —
    `{worktree}/.claude-tweaks/pipelines/{run-id}/work/*-spec.md`, where `{worktree}` is
    `run-state.json`'s `worktree` (else `worktreeAtClose`) and `{run-id}` is the run dir's path
    after its `.claude-tweaks/pipelines/` segment (for a per-spec dir, `{run-id}/spec-{N}`) — and
-   read each `{n}-spec.md` match's numeric header `record:` field, skipping a file whose
+   read each `{n}-spec.md` match's numeric frontmatter `record:` field, skipping a file whose
    `record:` is missing or not a number (`pack.js`'s header reader accepts the same names and values):
 
    ```bash
@@ -91,7 +91,7 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    if [ -f "$PACK" ] && CLOSING=$(node -e 'const p=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const c=p.inputs&&p.inputs.closingRecords;if(!Array.isArray(c))process.exit(1);console.log(c.join("\n"))' -- "$PACK" 2>/dev/null); then
      while IFS= read -r n; do [ -n "$n" ] && ISSUES+=("$n"); done <<<"$CLOSING"
    else
-     RECORDS=$(node -e 'const fs=require("fs"),path=require("path"),dir=path.join(process.argv[1],"work");let names=[];try{names=fs.readdirSync(dir).filter(f=>/^\d+-spec\.md$/.test(f)).sort()}catch(e){if(e.code!=="ENOENT")throw e}for(const f of names){const m=fs.readFileSync(path.join(dir,f),"utf8").match(/^record:\s*(\d+)\s*$/m);if(m)console.log(m[1])}' -- "$MIRROR") || exit 1
+     RECORDS=$(node -e 'const fs=require("fs"),path=require("path"),dir=path.join(process.argv[1],"work");let names=[];try{names=fs.readdirSync(dir).filter(f=>/^\d+-spec\.md$/.test(f)).sort()}catch(e){if(e.code!=="ENOENT")throw e}for(const f of names){const h=/^---\r?\n([\s\S]*?)\r?\n---/.exec(fs.readFileSync(path.join(dir,f),"utf8")),m=h&&h[1].match(/^record:\s*(\d+)\s*$/m);if(m)console.log(m[1])}' -- "$MIRROR") || exit 1
      while IFS= read -r n; do [ -n "$n" ] && ISSUES+=("$n"); done <<<"$RECORDS"
    fi
    if [ "${#ISSUES[@]}" -gt 0 ]; then
@@ -107,6 +107,8 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    was never an issue to close. Skip the commit if one for these issues already exists on the
    branch (`git log {branch} --grep="Fixes #{issue}"` — avoids duplicate empty commits if this
    step re-runs after an interruption).
+
+   **A failed mirror read is not that no-op.** The fence's `|| exit 1` means the `work/` directory or a spec file could not be read, so the record set is unknown. Stop here with no carrier commit: skip steps 3, 3.6, 4, and 5 below and Section E, the same posture as "Kept as-is" below, because a merge with no closing keyword leaves the record open. Report one `cleanup: closing-keyword carrier failed — {stderr's Error: line}` line in the closing report.
 
    **Why a dedicated commit, not the merge artifact** — see
    `cleanup-procedures-execution-appendix.md`'s "Step 2" section; read only if the rationale
@@ -134,7 +136,7 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
      - **`merged`** → proceed to step 4, same as "Merged, PR created, or discarded" below.
      - **`pending-review`** → any of that file's Park reasons (an abort, a composer failure, a
        predicted or actual merge conflict, a failed merged-result verification, or a push failure)
-       — do NOT proceed to step 4. Skip steps 3.5, 3.6, 4, and 5 below entirely for this spec (do
+       — do NOT proceed to step 4. Skip steps 3.6, 4, and 5 below entirely for this spec (do
        NOT close the run, do NOT remove the worktree, do NOT delete the branch) and skip Section E
        (issue claim release) — same posture as "Kept as-is" below, since the worktree and branch
        are exactly as `local-merge-auto-finish.md` left them, awaiting a human: unmerged — except
@@ -149,21 +151,12 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
      regardless of which option is chosen, so this skill's own literal git commands need no
      adaptation. Then branch on the outcome:
      - **Merged, PR created, or discarded** → proceed to step 4.
-     - **Kept as-is** → the user is deliberately continuing work in this worktree. Skip steps 3.5, 3.6, 4, and 5 below entirely for this spec (do NOT close the run, do NOT remove the worktree, do NOT delete the branch) and skip Section E (issue claim release) — the claim stays held since the work is still in progress; releasing it here would let another agent claim an issue that's still mid-work. Note in the wrap-up summary that this spec's worktree/branch/claim cleanup is deliberately incomplete, pending a future finish decision (a later re-run of `/superpowers:finishing-a-development-branch`, directly or via `/claude-tweaks:wrap-up`).
+     - **Kept as-is** → the user is deliberately continuing work in this worktree. Skip steps 3.6, 4, and 5 below entirely for this spec (do NOT close the run, do NOT remove the worktree, do NOT delete the branch) and skip Section E (issue claim release) — the claim stays held since the work is still in progress; releasing it here would let another agent claim an issue that's still mid-work. Note in the wrap-up summary that this spec's worktree/branch/claim cleanup is deliberately incomplete, pending a future finish decision (a later re-run of `/superpowers:finishing-a-development-branch`, directly or via `/claude-tweaks:wrap-up`).
    In `current-branch` mode (no worktree, no branch finish) there is no feature branch to stamp
    — the carrier is the final wrap-up commit message instead: include the same
    `Fixes #{issue}` lines there; GitHub closes the issues when that commit reaches the default
    branch (the operative instruction lives in `execution-and-verification.md`'s commit procedure,
    since Section C is skipped when no worktree exists).
-3.5. **Transitional guard — a run directory whose only copy is inside this worktree.**
-   Applies only to a run directory created **before** 2026-08-07 (run-dir anchoring,
-   `_shared/pipeline-run-dir.md`'s Anchoring section) — every run created after that date keeps its
-   gitignored half in the main checkout already, where step 4 below cannot touch it, so this step
-   is a no-op for it. For a pre-anchoring run, read
-   `cleanup-procedures-execution-appendix.md`'s "Step 3.5" section and run its copy-out procedure
-   now, before step 4 — skipping it there is unrecoverable data loss, `[IL-46]`'s shape. Scheduled
-   for deletion 2026-11-07 regardless of remaining pre-anchoring runs (see that section's Removal
-   condition); until then, check it on every run.
 3.6. **Close the pipeline run — the sanctioned exit the teardown gate checks for.** If a pipeline
    run directory was established for this work (Phase 1's carried path — this step is what marks
    it `clean`, so nothing after it re-resolves it, #4151), run `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" close-run --run "$RUN_DIR"` now, from inside the
@@ -274,6 +267,7 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    (item 8, `cleanup-procedures.md`'s Ordering rule). `teardown-run` stopped archiving altogether in
    #3490; `--remote-ref-only` says so at the call site and stays, inert, for the transition (removal
    condition: `bin/hooks.js`'s `KNOWN_FLAGS` comment).
+   A run recorded by another session (a parked run under `merge-mode.md`) is torn down only under `--merged`, and only when run-liveness's verdict for it is `dead`; otherwise the whole call refuses, naming the verdict, and removes nothing (#5293).
    A `worktree: registration pruned but directory still present at {path}` line
    is not a completed removal: surface the path in the report and leave the directory for manual
    removal — never retry-delete it. **Own-worktree carve-out:** never call `teardown-run` against the worktree
@@ -329,6 +323,12 @@ If no `ephemeral-server.txt` exists, skip this section silently (the run used an
 ---
 
 ## E. Issue claim release (v5.3.0)
+
+**Skip this whole section when the invocation names `claim-permission-denied: skip the claim release` (#4899)** — `/claude-tweaks:dispatch`'s teardown after a `claim-targets.js` exit 7: the CLI already attempted any release, and `release-claim.js` would post a false release comment on a record this run never claimed. Log the skip: `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status SKIP --section "/wrap-up" --step "Section E" --text "condition: claim-permission-denied named by the cleanup-only call → fallback: claim release skipped" --reversibility n/a` (`flags.md`'s `cleanup-only` entry declares the phrase).
+
+**Skip it too when the invocation names `blocker-landing: skip the claim release` (#4792)** — `/claude-tweaks:dispatch`'s teardown after `/flow`'s pre-claim blocker-landing stop (`dispatch/two-call-gate.md` §5 or §6): Settle already released any claim this run took (`dispatch/settle-and-merge.md`'s Blocker-landing special case), and `release-claim.js` would post a release comment anyway — a false one for a record this run never claimed, a duplicate for one Settle already released. Log the skip: `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status SKIP --section "/wrap-up" --step "Section E" --text "condition: blocker-landing named by the cleanup-only call → fallback: claim release skipped" --reversibility n/a` (`flags.md`'s `cleanup-only` entry declares the phrase).
+
+**Skip it too when the invocation names `prompt-not-dispatched: skip the claim release` (#4589)** — `/claude-tweaks:dispatch`'s teardown after a first call that never dispatched (`dispatch/two-call-gate.md` §2 and §5): its `/flow` Step 2.8 never ran, and `release-claim.js` would post a false release comment on a record this run never claimed. Log the skip: `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status SKIP --section "/wrap-up" --step "Section E" --text "condition: prompt-not-dispatched named by the cleanup-only call → fallback: claim release skipped" --reversibility n/a` (`flags.md`'s `cleanup-only` entry declares the phrase).
 
 This spec's record is identified whenever this section runs (`SKILL.md` Phase 1 — an argument, a
 branch/commit reference, or, when `skills/flow/materialize.md` wrote one, a materialized header's

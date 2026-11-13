@@ -8,12 +8,16 @@ files:
   - plugin/bin/lib/hooks/run-dir-resolve.js
   - plugin/skills/_shared/pipeline-run-dir.md
   - plugin/bin/post-merge-run.js
+  - plugin/bin/lib/reconcile/post-merge.js
+  - plugin/bin/lib/hooks/teardown-run.js
+  - plugin/bin/lib/run-liveness/index.js
+  - plugin/skills/wrap-up/cleanup-procedures-execution.md
   - tests/wrap-up-merge-mode-conformance.test.js
 ---
 
 # Merge a Parked Unattended PR
 
-**Persona:** a maintainer whose repo runs at `autonomy: unattended`. A `/claude-tweaks:flow` run ended with its PR parked as `pending-review`. They read the summary and say "go ahead, merge it", in the same session, while the run's context is still loaded.
+**Persona:** a maintainer whose repo runs at `autonomy: unattended`. A `/claude-tweaks:flow` run ended with its PR parked as `pending-review`. They read the summary and say "go ahead, merge it", in the same session, while the run's context is still loaded. Or the run was parked by another session, such as a `/claude-tweaks:dispatch` firing, and they merge it later from their own session; step 6 covers how that run is torn down.
 
 **Goal:** the PR merges now, in this session. That means acceptance labeling, the merge-verification gate, worktree teardown, claim release, and archival, with no Review Console question and no hand-run merge procedure. If the PR has gone `DIRTY` since the run parked, the agent resolves the conflict when both sides' intent survives, and otherwise stops cleanly.
 
@@ -25,6 +29,8 @@ files:
 - The claim is released, and the run dir is archived last.
 
 When it cannot merge, the outcome is `pending-review` with the PR ready and a stated reason, never a silent park.
+
+When it merges a run another session parked while run-liveness still reads that session `live` or `unknown`, the outcome is `merged` with a `cleanup: teardown-run failed — {line}` entry, and the worktree and branches stay for that session or the reconciler.
 
 ## Steps
 
@@ -66,9 +72,12 @@ When it cannot merge, the outcome is `pending-review` with the PR ready and a st
 - **Should understand:**
   - **Failed preconditions.** Each one is named, and none of them runs a merge step first. A `CLOSED` PR stops with no cleanup.
   - **Already merged.** The outcome is `merged`, led by an `already merged {mergedAt} by {mergedBy}` line. A post-merge close that failed gets its own `cleanup:` line, never `ran`.
-  - **In flight.** If another process holds the run's post-merge claim, the line reads `in-flight`, never `ran`. For an archived run that holder can only be another merge-mode invocation, so the line also names `/claude-tweaks:wrap-up #{n} merge` again once the claim is past its 10-minute stale window.
+  - **In flight.** If another process holds the run's post-merge claim, the line reads `in-flight`, never `ran`. For an archived run that holder can only be another merge-mode invocation, so the line also names `/claude-tweaks:wrap-up #{n} merge` again in case that holder died or stalled: a re-run takes over a dead holder's claim at once, a live holder's claim it has not refreshed for `CLAIM_MAX_IDLE_MS`, and a claim naming no holder once it is past its 10-minute stale window. When this invocation's own pass had its claim taken over by another pass after changing GitHub, the `in-flight` line also states what it changed (parents closed below the oversight floor, records reopened or closed), so it never reads as a pass that did nothing.
   - **Which step failed.** The CLI's `verdict` and `failedSteps` pick the lines. A Step 4.0 failure names the records it left unsettled, a Step 4.0b failure names each parent it could not close, and a step that ran clean is never reported failed. A CLI crash, or output that will not parse, still reports `cleanup: post-merge closes failed` and names the re-run.
   - **No retry after a recorded failure.** Once the closes ran, their marker is written, so a re-run reports `already done` and retries nothing. That failure line names `/claude-tweaks:tidy`'s `parent-gate` backstop instead of a re-run.
+  - **Closes ran, marker missing.** When the marker write fails, or the CLI throws after Step 4.0b's closes ran, the entry is a `cleanup:` failure line that adds `, Step 4.0b {reason} on #{parent}` for each parent Step 4.0b left open. No marker was written, so this line does name the re-run, which tries the closes again (#4798).
+  - **Nothing left to close.** A Step 4.0b skip that names no parent, such as an `invalid-risk-floor`, on a merge whose closing records were all closed after the close window, leaves no parent open. The line still reads `ran` and adds `, Step 4.0b skipped — {reason}`. The same skip on a merge with records still to close is a Step 4.0b failure (#4798).
+  - **What pins this.** `tests/wrap-up-merge-mode-conformance.test.js` reads this journey and fails if this step stops naming the `## Already merged` route. It also pins the merge-mode, Conflict and summary-row prose the other steps cite.
 - **Red flags:**
   - A merge or acceptance-label step on a closed or merged PR.
   - An already-merged PR that stops with no cleanup, or reports a failed post-merge close as `ran`.
@@ -114,9 +123,15 @@ When it cannot merge, the outcome is `pending-review` with the PR ready and a st
   4. The worktree teardown, which covers close-run, the containment proof, `ExitWorktree`, and the remote-ref delete.
   5. The claim release.
   6. Step 4.2's reconcile, last.
-- **Should feel:** finished. Nothing is left for a later session to tidy.
-- **Should understand:** the reconcile runs last because its archive check moves the run dir, and a `decisions.md` line written after it would recreate it.
-- **Red flags:** a run dir re-created under `.claude-tweaks/pipelines/` after archival, or a worktree removed without the containment proof.
+- **Should feel:** finished. Nothing is left for a later session to tidy, except a teardown the report names as refused because the parking session is not yet provably dead.
+- **Should understand:**
+  - The reconcile runs last because its archive check moves the run dir, and a `decisions.md` line written after it would recreate it.
+  - **A run parked by another session.** A dispatch-parked run is recorded by the session that parked it, so a later session's `teardown-run --merged` acts on it only when run-liveness reads that owner `dead`. It then prints `owner: session {owner} is not running (run-liveness: dead) — merged teardown proceeds from this session`, unlocks the dead session's orphaned worktree lock, and removes the worktree, local branch and remote branch (#5293).
+  - **A live or unknown owner.** If the owner reads `live` (for example, it died within the last 10 minutes) or `unknown`, the call removes nothing and prints `state: refused — run recorded by another session (run-liveness: {verdict}); …`. The report relays that as `cleanup: teardown-run failed — {line}`, and the outcome stays `merged`. A later `/claude-tweaks:wrap-up #{n} merge` re-run finishes once the owner reads `dead`. A persistent `unknown` leaves it to the reconciler's reap.
+- **Red flags:**
+  - A run dir re-created under `.claude-tweaks/pipelines/` after archival, or a worktree removed without the containment proof.
+  - A later-session merge whose parking session is long dead that still ends with the worktree, local branch and remote branch in place (#5293's incident: PRs #4948 and #4963).
+  - A teardown that removes anything while the owning session reads `live` or `unknown`.
 
 ## Origin
 - Created during build of #3784. The record adds `wrap-up/merge-mode.md` and the `merge` routing token, an attended Conflict-path branch, and the `consoleAutoResolve` summary row. It was observed on #3712's run (PR #3749): the summary recommended a resume that would have re-parked the PR, and the human's "go ahead" had to be honored by running the merge procedure by hand.
@@ -124,3 +139,6 @@ When it cannot merge, the outcome is `pending-review` with the PR ready and a st
 - Updated during build of #4677. Step 2 now falls back to `resolve-run-dir --archived` for a parked run that wrap-up already closed and archived. On #4437's run (PR #4662), the summary's recommended `/claude-tweaks:wrap-up #4437 merge` stopped at resolution, and the run dir had to be bound by hand. The build's review then made the fallback refuse when a newer run of the same record is still open.
 - Updated during build of #4692. Step 3 now finishes a PR that something else already merged: merge mode's `## Already merged` section runs the post-merge closes through `bin/post-merge-run.js`, then the teardown. Before this, such a PR stopped the command with no cleanup.
 - Updated during wrap-up of #4692, after its review's fix wave. Step 3 now covers the `in-flight` result, a failure line per failed step, a CLI crash or unparseable output, and why a failure in closes that already ran is not retried.
+- Updated during wrap-up of #4798 (run `2026-11-03T201056-record-4798`). Step 3 now covers a failed marker write that names the parents Step 4.0b left open, and a step-wide Step 4.0b skip with nothing left to close, which reads `ran` with a note instead of a failure.
+- Updated during build of #4797 (run `2026-11-04T064811-record-4797`). Step 3's **In flight.** case now names all three takeovers a re-run makes (a dead holder at once, a live holder idle past `CLAIM_MAX_IDLE_MS`, an ownerless claim past the 10-minute stale window) and states the GitHub changes this invocation's own pass made before another pass took its claim over.
+- Updated during build of #5293 (run `2026-11-13T003948-spec-5293`). Step 6 now covers a run parked by another session: `teardown-run --merged` tears it down from the later session when run-liveness reads the owner `dead`, unlocking its orphaned worktree lock first, and otherwise refuses with the verdict named. Observed on PRs #4948 and #4963, where both merges landed but each left its worktree, local branch, remote branch and run directory behind.

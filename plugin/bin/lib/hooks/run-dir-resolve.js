@@ -216,8 +216,8 @@ function resolve(opts = {}) {
 
   // --root-only: just the anchored main-checkout root, no run resolution at
   // all. For call sites that only ever needed $RUN_ROOT itself (a `find`
-  // backstop scoped to the whole pipelines/ tree, the wrap-up transitional
-  // copy-out guard's DEST computation), not a specific run's directory.
+  // backstop scoped to the whole pipelines/ tree), not a specific run's
+  // directory.
   if (opts.rootOnly) return ok(mainRoot, false);
 
   // #4677: `--archived` is read-only — it returns an existing run dir or fails, never mints one —
@@ -336,8 +336,10 @@ function resolve(opts = {}) {
     if (opts.standalone) {
       // The step-4 standalone-auto-fallback shape: {ts}-{name}-standalone,
       // pre-populated with decisions.md and staged/ — byte-for-byte what the
-      // reference snippet's own standalone branch does.
-      const dir = path.join(pipelinesRoot, `${formatTimestamp(now)}-${opts.standalone}-standalone`);
+      // reference snippet's own standalone branch does. A {name} already ending in
+      // `-standalone` is used as-is, not suffixed twice (#4807).
+      const name = opts.standalone.endsWith('-standalone') ? opts.standalone : `${opts.standalone}-standalone`;
+      const dir = path.join(pipelinesRoot, `${formatTimestamp(now)}-${name}`);
       // #208: never (re-)create a run-id that already exists under archive/ — archived is
       // terminal. Checked immediately before the mkdir, the one writer chokepoint.
       if (archiveStatus(pipelinesRoot, path.basename(dir)) === 'archived') {

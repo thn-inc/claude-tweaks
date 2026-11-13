@@ -1,6 +1,6 @@
 # Advanced Proof Patterns — skill-prose-conformance-tests
 
-Lazy-loaded from `SKILL.md` (this skill's directory). Read this file when a go-red proof needs zero-mutation verification, a change adds or removes an Anti-Patterns row, a new detection signal needs corpus validation before it's trusted, a sweep ships with an exemption list, or a suite builds throwaway git repos.
+Lazy-loaded from `SKILL.md` (this skill's directory). Read this file when a go-red proof needs zero-mutation verification, a change adds or removes an Anti-Patterns row, a new detection signal needs corpus validation before it's trusted, a sweep ships with an exemption list, a negative claim needs a clause sweep, or a suite builds throwaway git repos.
 
 ## Proving discrimination without editing the tree
 
@@ -85,9 +85,21 @@ When a resolver has a deliberate special case that excludes one source from prec
 
 ## Fixture repos come from the shared helper
 
-`tests/helpers/git-fixtures.js` exports `gitRepo`, `linkedWorktreeOf`, `harnessWorktreeOf`, `fixtureGit`, and `FIXTURE_TIMEOUT_MS`. Adoption is partial, not universal — many suites under `tests/` still build their throwaway repo from a local `git init` ladder of their own (`tests/bin-lib/reconcile/archive-merged.test.js`'s `makeRepo()` among them), so never assume the suite you are editing already imports the helper: read its requires first, and when you factor a fixture helper out inside such a suite, build it on `gitRepo` rather than on the local ladder you found there. Build throwaway repos from the helper rather than hand-rolling another `spawnSync('git', ['init'])` ladder, and take `FIXTURE_TIMEOUT_MS` from it too so one machine-speed knob governs the suite.
+`tests/helpers/git-fixtures.js` exports `gitRepo`, `linkedWorktreeOf`, `harnessWorktreeOf`, `fixtureGit`, and `FIXTURE_TIMEOUT_MS`. Adoption is partial, not universal — many suites under `tests/` still build their throwaway repo from a local `git init` ladder of their own (`tests/bin-lib/reconcile/archive-merged-helpers.js`'s `makeRepo()` among them), so never assume the suite you are editing already imports the helper: read its requires first, and when you factor a fixture helper out inside such a suite, build it on `gitRepo` rather than on the local ladder you found there. Build throwaway repos from the helper rather than hand-rolling another `spawnSync('git', ['init'])` ladder, and take `FIXTURE_TIMEOUT_MS` from it too so one machine-speed knob governs the suite.
 
 A named base branch or a suite-owned scratch directory is not a reason to hand-roll the ladder: `gitRepo({ parent, branch })` creates the repo's temp dir under `parent` (default `os.tmpdir()`) and runs `git init -b {branch}` when `branch` is given (default: git's own initial branch). `tests/local-merge-close-run-ordering.test.js`'s `makeRepo()` builds on `gitRepo({ parent: SCRATCH, branch: 'main' })`, so every fixture lands under the one `SCRATCH` dir its `process.on('exit')` removes; commit identity for its later commits still comes from a suite-local wrapper that passes `-c user.email=… -c user.name=…` to `fixtureGit` (#3762).
+
+## Pinning a negative claim: sweep every clause, not only the negating sentence
+
+A claim of the form "X does not do Y" (a denied-twice call does not end the firing) is not pinned by asserting that the negating sentence is present. A presence pin stays green when a contradicting sentence lands anywhere else in the file. #5255's first pins held the section 2 and section 5 denied-twice sentences in place, and its final review's mutants still passed every suite: a sentence after each of those two saying a denied-twice call ends the firing, a new section 6 paragraph saying so, and a `(none after …)` clause widened to name a denied-twice call. Pair the presence pin with a whole-file clause sweep:
+
+1. Split the file into clauses on `.`, `;` or `:` followed by whitespace, and on blank lines, so a filename such as `two-call-gate.md` stays whole.
+2. Fail on any clause that names X and states Y, unless the clause carries the claim's own negation (`does not end the firing`). Match X by its own spelling (`denied[- ]twice`), never by a bare word another rule shares: bare `denied` trips on `claim-permission-denied`.
+3. Sweep separately every other form the file uses to list what causes Y, such as a `(none after …)` parenthetical, since the clause split cuts it into pieces.
+4. Prove the sweep with one mutant per placement: after each existing negating sentence, a new paragraph in another section, and a widened list form. Each mutant leaves the presence pins intact and is matched to the sweep's own message.
+5. Build Y's matcher from the claim's grammar, not from the mutants you happen to try: every verb that can state it (end, stop) in every tense, in both word orders ("ends the firing", "the firing stops"), and add one mutant per verb and word order, each proved red against a matcher that lacks that form. #5255's sweep matched only the "ends" forms its mutants used; review lens 3f showed "After a denied-twice call the firing stops." passing every suite (fixed in `75fc0771a`, mutant M6).
+
+`assertNoDeniedTwiceEnd` and its M2-M6 mutants in `tests/dispatch-prompt-cli-prose.test.js` are the worked instance.
 
 ## Reference instances
 

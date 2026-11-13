@@ -26,10 +26,10 @@ files:
 
 ### 1. Preview — `--dry-run`
 - **URL:** `/claude-tweaks:release --dry-run`
-- **Action:** Step 1 runs the preflight fact pack into the run directory; Step 3 runs `/claude-tweaks:review base:v1.2.0` over the first-parent history since the last tag; Step 4 renders the console — records shipped, the driving commit, the review verdict, CI on the tip, whether a publish hook is configured, the overrides — and stops before Step 5.
+- **Action:** Step 1 runs the preflight fact pack into the run directory; Step 3 runs `/claude-tweaks:review base:v1.2.0` over the first-parent history since the last tag; Step 4 renders the console — records shipped, the driving commit, the review verdict, CI on the tip, whether a publish hook is configured, the overrides — and stops before Step 5. A record named only by a `Refs` line, never by a `Fixes` line, is not booked: it renders on the `Kept open (not booked)` line and stays open.
 - **Should feel:** Like reading the release before it exists — nothing merged, nothing tagged, but every finding the real run would block on is already staged.
 - **Should understand:** The review is not optional and not skippable by `--dry-run`, `--train` or `--allow-blocking`; a Critical or High finding marks the run `review: blocking` and only a human who has read it can override.
-- **Red flags:** A console row rendered green from a degraded pack field; a `Records shipped` row that silently dropped a commit with no `(#N)` suffix instead of listing it as unattributed; the console reporting no publish hook on a Windows (CRLF) checkout of a repo whose workflow fires on `release: published` — the verify step would then skip the hook check silently (#3040).
+- **Red flags:** A console row rendered green from a degraded pack field; a `Records shipped` row that silently dropped a commit with neither a `Fixes`/`Refs` line nor a `(#N)` suffix instead of listing it as unattributed; the console reporting no publish hook on a Windows (CRLF) checkout of a repo whose workflow fires on `release: published` — the verify step would then skip the hook check silently (#3040).
 
 ### 2. Nothing to release — a quiet stop
 - **URL:** the same command on a `main` with only `chore:`/`docs:` commits since the tag
@@ -102,4 +102,5 @@ files:
 - Steps 6-7 updated for #4157 (the review-tree check resolves the tip once, in its own first call, prints it as the recorded reviewed tip, and compares the trees against that pasted sha; Step 5's delta takes the new tip from that same printed sha)
 - Step 5 updated for #4151 (Step 0's refusal moved from an inline `node -e` probe into `resolve-run-dir`'s step 2, which also refuses a directory whose `run-state.json` cannot be read; the `refused: {dir}` line and its log line are gone)
 - Step 7 updated for #4152 (the comparison now runs as the tested CLI `bin/release-tip-check.js`; the arrived-commit major is gated per delta, and an interactive Proceed continues with the verdict)
+- Step 1 updated for #4634 (the shipped set comes from each commit's `Fixes`/`Refs` lines, so a bundled merge books every `Fixes` record and a `Refs`-only record renders on the `Kept open (not booked)` line instead of being closed)
 - Step 6 updated for #4139 (the `--as` anchor re-runs Step 3's review-tree check instead of requiring `HEAD == origin/main`, and builds the override with `commit-tree` on the fetched tip so archive commits never reach origin)

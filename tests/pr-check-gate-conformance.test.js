@@ -175,3 +175,52 @@ test('#3770 go-red control: removing the entry with `conclusion` in anchor fails
   assert.notEqual(mutated, MERGE, 'the entry with `conclusion` in anchor is present to remove');
   assert.throws(() => assertStatusContextNormalization(mutated), /entry with `conclusion` in/);
 });
+
+// #5153: Step 2.5's ready-run bullet routes every `state` bin/ready-run.js can print. Both
+// directions: a state the CLI gained with no prose routing, and a prose state the CLI never emits.
+const { STATES: READY_RUN_STATES } = require('../plugin/bin/lib/pr-checks/ready-run');
+const READY_RUN_BULLET_START = "- The ready-run read's `state`";
+
+function readyRunBulletStates(text) {
+  const start = text.indexOf(READY_RUN_BULLET_START);
+  assert.notEqual(start, -1, 'pr-first-merge.md Step 2.5 ready-run bullet not found — the twin pin would pass vacuously');
+  const end = text.indexOf('\n- ', start + 1);
+  assert.notEqual(end, -1, 'the ready-run bullet must be followed by another bullet');
+  const bullet = text.slice(start, end).replace(/\s+/g, ' ');
+  const states = [];
+  for (const m of bullet.matchAll(/((?:`[a-z-]+`, )*`[a-z-]+`) →/g)) {
+    for (const [, state] of m[1].matchAll(/`([a-z-]+)`/g)) states.push(state);
+  }
+  assert.ok(states.length > 0, 'the ready-run bullet routed no state words — the parser found nothing');
+  return states;
+}
+
+function assertReadyRunStatesTwin(text) {
+  const parsed = readyRunBulletStates(text);
+  assert.equal(new Set(parsed).size, parsed.length, 'the ready-run bullet routes each state once');
+  assert.deepEqual([...new Set(parsed)].sort(), [...READY_RUN_STATES].sort(), 'the ready-run bullet\'s state words differ from bin/ready-run.js STATES');
+}
+
+test('the ready-run bullet\'s state words equal bin/ready-run.js STATES (code twin, both directions)', () => {
+  assertReadyRunStatesTwin(MERGE);
+  // Prose drops a state the CLI emits.
+  const dropped = MERGE.replace('`awaiting` →', 'awaiting →');
+  assert.notEqual(dropped, MERGE, 'the awaiting routing is present to drop');
+  assert.throws(() => assertReadyRunStatesTwin(dropped), { message: /differ from bin\/ready-run\.js STATES/ });
+  // Prose routes a state the CLI never emits.
+  const invented = MERGE.replace('`met`, `not-applicable` →', '`met`, `not-applicable`, `stalled` →');
+  assert.notEqual(invented, MERGE, 'the met/not-applicable routing is present to extend');
+  assert.throws(() => assertReadyRunStatesTwin(invented), { message: /differ from bin\/ready-run\.js STATES/ });
+  // A reworded anchor trips the parse-signal guard instead of passing vacuously.
+  const reworded = MERGE.replace(READY_RUN_BULLET_START, "- The ready run's `state`");
+  assert.notEqual(reworded, MERGE);
+  assert.throws(() => assertReadyRunStatesTwin(reworded), { message: /ready-run bullet not found/ });
+});
+
+test('the ready-run bullet names readyRunVerdict and classify.js exports it', () => {
+  const start = MERGE.indexOf(READY_RUN_BULLET_START);
+  assert.notEqual(start, -1, 'ready-run bullet found');
+  const bullet = MERGE.slice(start, MERGE.indexOf('\n- ', start + 1)).replace(/\s+/g, ' ');
+  assert.ok(bullet.includes('`classify.js`\'s `readyRunVerdict`'), 'the bullet names its code twin');
+  assert.equal(typeof require('../plugin/bin/lib/pr-checks/classify').readyRunVerdict, 'function');
+});

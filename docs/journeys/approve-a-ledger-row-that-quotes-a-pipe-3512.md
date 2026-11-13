@@ -2,6 +2,7 @@
 files:
   - plugin/bin/lib/wrap-up/ledger-cells.js
   - plugin/bin/lib/wrap-up/ledger-write.js
+  - plugin/bin/lib/stage-item/ledger.js
   - plugin/bin/lib/wrap-up/pack.js
   - plugin/bin/claude-tweaks-statusline.js
   - plugin/bin/wrap-up-engine.js
@@ -22,10 +23,10 @@ files:
 
 ### 1. Write the row with the pipe escaped
 - **URL:** `docs/plans/{date}-{slug}-ledger.md` (or `{run-dir}/ledger.md`)
-- **Action:** Append the row as usual, writing every `|` inside an Item or Resolution cell as `\|`, per `_shared/ledger-format.md`'s Format section. Each writer's own instructions cite that rule rather than restating it.
-- **Should feel:** Like writing any other row. One escape, applied once, and the file still reads naturally on GitHub.
-- **Should understand:** A raw `|` inside a cell creates an extra column. A row with a raw pipe no longer has five columns, and nothing downstream can tell which cell is which.
-- **Red flags:** A ruling one-liner copied in with a raw `a|b`. A double-escaped `\\|` written by hand into a `finish-console` payload (the payload's `resolution` is passed raw; the CLI escapes it).
+- **Action:** With a run dir, append the row through `hooks.js ledger-row` (`_shared/ledger-format.md`'s Writer section) and pass the Item and Resolution text raw: the verb writes every `|` as `\|` itself. On the standalone no-run-dir path, which writes the row by hand, write every `|` as `\|` per the Format section. Each writer's own instructions cite those rules rather than restating them.
+- **Should feel:** Like writing any other row. One escape, applied once by whoever writes the line, and the file still reads naturally on GitHub.
+- **Should understand:** A raw `|` inside a cell creates an extra column. A row with a raw pipe no longer has five columns, and nothing downstream can tell which cell is which. Pre-escaping text you hand to `ledger-row` double-escapes it (`\\|`), leaving a stray backslash.
+- **Red flags:** A ruling one-liner copied in with a raw `a|b` on the standalone path. A `\\|` in a row written by `ledger-row` (the text was pre-escaped). A double-escaped `\\|` written by hand into a `finish-console` payload (the payload's `resolution` is passed raw; the CLI escapes it).
 
 ### 2. See the row counted correctly before wrap-up
 - **URL:** the statusline's `ledger: N open` segment, and `jq .ledger.value "$PIPELINE_RUN_DIR/wrap-up-pack.json"`
@@ -53,4 +54,5 @@ files:
 - All steps were built in this session. The producer that made this common is #3401's SDD ruling carry-forward, whose `Ruling:` one-liners routinely quote regexes.
 - Updated during the build of #3684, run `2026-10-20T185239-record-3684`. A row written *without* the rule (a raw pipe) used to make step 3 fail after steps 1-2 had landed. `finish-console` now pre-flights every flip before step 1, so the same row refuses with nothing written (step 3's Red flags).
 - Updated during the build of #3834, run `2026-10-22T132803-record-3834`. A ledger holding two rows with the same number used to lose one of them silently on any flip. `flipLedgerRow` now refuses the write-back instead (step 3's Red flags).
+- Updated during the build of #4439, run `2026-11-03T204945-record-4439`. With a run dir, rows are now written through `hooks.js ledger-row`, which escapes the pipe itself, so step 1 passes raw text; only the standalone no-run-dir path still escapes by hand. See `docs/journeys/record-or-settle-a-ledger-row-from-a-worktree-4439.md`.
 - Related: `docs/journeys/ratify-or-reverse-an-sdd-ruling-at-the-review-console-3401.md` (the ruling rows this protects) and `docs/journeys/close-a-run-whose-ledger-holds-an-incomplete-deferral-3327.md` (the same `parseLedger` reader).

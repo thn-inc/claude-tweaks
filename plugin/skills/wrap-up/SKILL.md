@@ -109,6 +109,12 @@ Carry that verdict as a run-scoped fact for the rest of the run, alongside the r
 
 **Every exit runs the close-out.** Every path after the mint reaches cleanup item 8's `close-run` and `archive-run` — a verify exit 3 too, since Execute approved actions runs item 8 before its Verify execution — except two. A `--dry-run` run skips execution entirely and stops after the phase-trace report (`execution-and-verification.md`), so on a **created** directory it runs `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" close-run --run "{run-dir}"` itself and archives nothing — `{run-dir}` is the absolute path Phase 1 printed, carried as a run-scoped fact, never re-resolved here, where Phase 1's `--create` snippet could mint a fresh directory. The Review Console's "Stop and re-engage" is the deliberate pause `/claude-tweaks:wrap-up resume` re-enters (`resume-halted-run.md`), which leaves the directory open. A wrap-up directory records no owning session, so session end never marks it `interrupted`: left alone, it stays `active`. A later `/claude-tweaks:wrap-up #{n}` can re-adopt a closed directory through step 2 only until the next `/claude-tweaks:tidy` pass auto-archives it. An **inherited** directory is the pipeline's, but item 8 still closes and archives it by design — wrap-up is that pipeline's own closer.
 
+**Snapshot the packet inputs** (record mode only, and not on `--dry-run`, which posts nothing): `_shared/acceptance-packet.md`'s `## Pipeline` starts here, because `verification-brief.md`'s Step 4 can run after the worktree holding the verify and QA reports is removed, and it also encodes the recording while the QA screenshots are on disk. Run it as its own Bash call; a non-zero exit is logged via `log-decision.js` (`--text-file`) and never stops the run, and gather's partial notes state what is missing, with `{integration-branch}` per `_shared/integration-branch.md`:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/acceptance-packet.js" snapshot --run "{run-dir}" --base "origin/{integration-branch}"
+```
+
 ### Diff-derived ceremony default (auto-mode firings, #1545)
 
 Read `ceremony-derivation.md` in this skill's directory and follow it, before the Reflect step below reads `config.yml`'s `ceremony-profile` — it can narrow an auto-mode run's `standard` default down to `fast-lane` when the diff itself is low-surface, so Reflect's own mode selection just below sees the derived value.

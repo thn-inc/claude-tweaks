@@ -10,6 +10,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
+const { missingFactsOf, assertEachPatternGoesRed, lineStartingWith } = require('./helpers/conformance-asserts');
 const { toPosix } = require('../plugin/bin/lib/shared-primitives');
 
 const PLUGIN = path.join(__dirname, '..', 'plugin');
@@ -17,22 +18,8 @@ const SKILLS = path.join(PLUGIN, 'skills');
 const STEP3 = path.join(SKILLS, 'review', 'step3-lens-dispatch.md');
 const TIER_VARIANTS = path.join(SKILLS, 'review', 'step3-tier-variants.md');
 
-// A fact-list predicate: the facts whose pattern the text no longer matches.
-const missingFactsOf = (patterns) => (text) => patterns.filter(([pattern]) => !pattern.test(text)).map(([, fact]) => fact);
-
-// Per-assertion go-red proof (the 6bb1bb695 shape): strip one pattern's matched phrase from the live
-// text, and the shared predicate must report exactly that one fact missing.
-function assertEachPatternGoesRed(text, patterns, missingOf) {
-  for (const [pattern, fact] of patterns) {
-    const doctored = text.replace(pattern, '');
-    assert.notEqual(doctored, text, `anchor text for "${fact}" not found — proof cannot discriminate`);
-    assert.deepEqual(missingOf(doctored), [fact], `removing only "${fact}" must turn exactly that assertion red`);
-  }
-}
-
 const FOREGROUND_NOTE_PREFIX = '> **Foreground Execution Discipline:**';
 const PARTNER_DIED_PREFIX = '> **Reproduction-pair partner dies or is unavailable.**';
-const lineStartingWith = (text, prefix) => text.split('\n').find((line) => line.startsWith(prefix)) || '';
 
 const DEGRADE_SENTENCE = /When the reviewer is itself a dispatched agent,.*?\(findings `unconfirmed`, logged\)\./;
 function degradeSentence(text) {

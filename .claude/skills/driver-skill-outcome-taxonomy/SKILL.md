@@ -75,9 +75,10 @@ means there:
   squash names the PR, not a record — only an `/issues/N` payload carrying `pull_request`
   distinguishes them (row 108).
 - **Bind an adopted target to the identity the caller named before anything irreversible acts on
-  it.** A lookup that adopts a run dir or record — an inherited `PIPELINE_RUN_DIR`, a
-  `resolve-run-dir --spec-slug` match — can return a neighbour: the slug match is a substring, so
-  `spec-378` also matches a `spec-3784` dir. Re-read the target's own identity field and stop on a
+  it.** A lookup that adopts a run dir or record can return a neighbour. An inherited
+  `PIPELINE_RUN_DIR` can name another run, and `resolve-run-dir --spec-slug` matches a whole
+  `-`-delimited name segment: `spec-378` never reaches a `spec-3784` dir (#3865), but does reach
+  `…-spec-378-379`. Re-read the target's own identity field and stop on a
   mismatch, naming both (`plugin/skills/wrap-up/merge-mode.md`'s `config.yml` `spec:` check, #3784).
 - **A gate's own evidence is weaker than a direct read.** Screen with the bulk/cached value, then
   re-confirm per item before anything destructive.
@@ -103,6 +104,8 @@ means there:
 | Extracting a prose gate into a CLI that returns the verdict for a branch the prose answers with an operator question (an interactive `Proceed`) | Report that branch's fact beside the verdict (`arrived` next to `merge`/`delta`/`held`) and let the prose gate it before routing, so a `Proceed` still has a verdict to continue with. #4152's first design returned `held` on an arrived major before any comparison, so an interactive `Proceed` had nothing to route on and every re-run held again; the final review caught it (`plugin/bin/lib/release-tip/check.js`, `e836498f8`) |
 | Driver prose that routes an engine's outcome by hand-listing its raw action or reason words: which mean clean, which mean failed, which earn a re-run | Have the engine classify its own outcome, route the prose only on that field, and quote the raw word in the report. `plugin/bin/lib/reconcile/post-merge.js`'s `classifyEntry` gives every single-run entry a `verdict` and a `next`, plus `failedSteps` on a failed `ran` entry so a clean Step 4.0 is never reported failed, and `plugin/skills/wrap-up/merge-mode.md`'s Already merged section reads only those. Its clean set is an allowlist, so an unknown word classifies `failed` with `next` `none`, and `tests/bin-lib/reconcile/post-merge.test.js` collects the words `closing-links.js` emits from its source, so a new word fails until it is classified. #4692's first draft hand-listed the words and review moved the verdict into code (`d8762b5bb`, `af779917d`, `docs/donts.md` `[IL-168]`) |
 | Giving one path an outcome classifier while a sibling path over the same entries keeps its own narrower test | Grep every reader of those entries and route them through the classifier in the same change, checking what it says of entries only the new reader sees. #4692 gave the single-run path `classifyEntry`, while `plugin/bin/hooks.js`'s background summary and `plugin/bin/lib/reconcile/format-summary.js` still tested `step40Failed`, so a `close-failed` run read as ran until #4897. Its `isFailedRun` keeps to `ran` entries, since `classifyEntry` reads a retrying `transient-failure` skip as failed |
+| Reporting an engine's refusal by its exit code or reason word alone, when only its message names the remedy the user must act on | Relay the engine's own text beside the code. `stuck-open-prs.js`'s exit 2 covers a missing `gh`, an unreadable snapshot and an unknown origin host, and only `failed.message` names the `GH_HOST` opt-in, so `plugin/skills/backlog/attention-mode.md`'s note reads `(exit 2: {failed.message})` (#4951). `plugin/skills/wrap-up/merge-mode.md`'s `unknown-host` skip line carries the entry's `{detail}` (#4933) |
+| Writing the report rule for a field the engine attaches to several entry kinds by listing those kinds, or by example reason words | Key the rule on the entry carrying the field, whatever its action, and render each element by its shape (a step-wide skip names no target). `plugin/bin/lib/reconcile/post-merge.js`'s `flattenStepFields` reads `parentFailures`/`stepSkips` off any entry; `plugin/skills/wrap-up/merge-mode.md`'s draft named `unreadable-policy`/`invalid-risk-floor` as the target-less skip, so a target-less `internal-error` had no rendering rule (#4798, `d6a45d6b4`) |
 
 ## When not to use
 

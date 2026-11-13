@@ -68,7 +68,7 @@ If this run's active ledger already exists (resuming a pipeline — resolved per
 
 ### Add Item
 
-Append a row to the ledger table.
+Append a row to the ledger table with `hooks.js ledger-row` (`_shared/ledger-format.md`'s Writer section — the command shape, text transport, and what to do on a non-zero exit).
 
 **Required fields:**
 - **Phase** — from the phase taxonomy above
@@ -80,11 +80,11 @@ Append a row to the ledger table.
 
 **De-duplication:** per `_shared/ledger-format.md`'s De-duplication on Append rule — same phase + substantially similar description = skip the add and say so, never silently.
 
-- **Pipes:** escape every `|` in the Item or Resolution text as `\|` — `_shared/ledger-format.md`'s Format section.
+- **Pipes:** with a run dir, `ledger-row` escapes every `|` in the Item or Resolution text as `\|` itself, so pass the raw text; on the standalone no-run-dir path, which writes the row by hand, escape it as `\|` — `_shared/ledger-format.md`'s Format section.
 
 ### Update Item
 
-Change an item's status and/or resolution. Legal transitions, terminality, and the per-status resolution-text requirements: `_shared/ledger-format.md`'s Status Lifecycle section (Resolution-text requirements). A rewritten Resolution follows the same pipe rule (`_shared/ledger-format.md`'s Format section).
+Change an item's status and/or resolution. Legal transitions, terminality, and the per-status resolution-text requirements: `_shared/ledger-format.md`'s Status Lifecycle section (Resolution-text requirements). Write it with `ledger-row --row {N}` (`_shared/ledger-format.md`'s Writer section). A rewritten Resolution follows the same pipe rule (`_shared/ledger-format.md`'s Format section).
 
 ### Query
 
@@ -144,7 +144,7 @@ Render as plain markdown (docs/skill-authoring.md's Skill handoffs convention):
 
 ## Invocation Model
 
-`/ledger` is consumed as a **knowledge dependency** by `/build`, `/test`, `/review`, `/wrap-up`, and `/flow` — they read `_shared/ledger-format.md` (not this file) to learn the ledger file format and resolve-gate procedure, then write directly, using file operations, to the location `_shared/ledger-format.md` resolves. There is no programmatic invocation API, so the standard Component-Skill Contract (which suppresses `## Next Actions` when a parent skill is driving the interaction via `$PIPELINE_RUN_DIR`) does not apply here: no parent skill ever invokes `/claude-tweaks:ledger` through the Skill tool, so every actual run of this skill's own procedure is a direct, standalone invocation — `## Next Actions` always renders. The format contract itself (entry schema, statuses, phase taxonomy, resolve-gate procedure) lives in `_shared/ledger-format.md` — this file covers only the two standalone human commands and the mutation operations (Create/Add/Update/Query/Delete).
+`/ledger` is consumed as a **knowledge dependency** by `/build`, `/test`, `/review`, `/wrap-up`, and `/flow` — they read `_shared/ledger-format.md` (not this file) to learn the ledger file format and resolve-gate procedure, then read the ledger file directly and append and settle its rows through `hooks.js ledger-row` (`_shared/ledger-format.md`'s Writer section), at the location that file resolves. There is no programmatic invocation API, so the standard Component-Skill Contract (which suppresses `## Next Actions` when a parent skill is driving the interaction via `$PIPELINE_RUN_DIR`) does not apply here: no parent skill ever invokes `/claude-tweaks:ledger` through the Skill tool, so every actual run of this skill's own procedure is a direct, standalone invocation — `## Next Actions` always renders. The format contract itself (entry schema, statuses, phase taxonomy, resolve-gate procedure) lives in `_shared/ledger-format.md` — this file covers only the two standalone human commands and the mutation operations (Create/Add/Update/Query/Delete).
 
 ## Anti-Patterns
 

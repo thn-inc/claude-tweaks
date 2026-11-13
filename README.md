@@ -84,9 +84,10 @@ a way to wrap an existing marketplace plugin instead of requiring a rewrite.
                             superpowers-plans-retention: prune-after-wrapup;
                             legacy spec file deleted too — a record-mode build's materialized file
                             stays on the branch as committed audit trail instead;
-                            applies demo:pending + posts a Verification Brief on
-                            the record — or, for a sub-issue of a /specify
-                            decomposition, on the parent once the last
+                            posts an acceptance packet on the record, with
+                            demo:pending above the oversight floor — or, for a
+                            sub-issue of a /specify decomposition, demo:pending +
+                            a Verification Brief on the parent once the last
                             sub-issue closes; record mode only)
      │
   release ──────────────►  Tag + Release      (on demand, suggested when unreleased commits exist, or the train)
@@ -182,7 +183,7 @@ behind CLAUDE.md's `## Don'ts` rules.
 | playwright-cli | `npm install -g @playwright/cli` | Optional — browser automation for /stories, /visual-review, /review qa |
 | Node 18+ | brew/winget/scoop install nodejs | Yes — statusline. `/claude-tweaks:init` Step 8 offers to install via your package manager. |
 | git CLI | brew/winget/apt install git | Optional — required only for the git segment in the statusline; everything else degrades gracefully. |
-| `gh` CLI | `brew/winget/apt install gh`, then `gh auth login` | Yes, for most `work-backend: github-issues` write paths — required, unauthenticated is a hard gate. `/dispatch`'s whole queue/claim/settle/merge path is dual-transport, falling back to GitHub MCP tools automatically when `gh` isn't on PATH — see `_shared/github-write-transport.md` — but `gh` is still required for every other GitHub-write path in the plugin. |
+| `gh` CLI | `brew/winget/apt install gh`, then `gh auth login` | Yes, for most `work-backend: github-issues` write paths — required, unauthenticated is a hard gate. `/dispatch`'s whole queue/claim/settle/merge path is dual-transport, falling back to GitHub MCP tools automatically when `gh` isn't on PATH — see `_shared/github-write-transport.md`, the operation-level `gh`-to-MCP mapping. Other skills fall back the same way only where they document an MCP route against that mapping; a path that documents none, or needs an operation the mapping does not cover (PR review-thread or CI-check reads), still requires `gh`. |
 
 ## Configuration
 

@@ -6,7 +6,7 @@ A target may declare prerequisite records — `blocked-by:` on the record (mater
 
 ## Procedure
 
-1. **Build the DAG** — for each target in the list, add edges from each prerequisite to the target itself, from its `blocked-by:` entries
+1. **Build the DAG** — for each target in the list, add edges from each prerequisite to the target itself, from its `blocked-by:` entries — a `blocked-by:` entry written `owner/name#N` names another repository's issue and never adds an edge, whatever its number: `preflight-records.js` builds the DAG from each record's `blockedBy`, which carries this repository's numbers only (#4793)
 2. **Detect cycles** — if any cycle exists across the listed specs, **hard fail**:
    ```
    Cycle detected in dependency graph:
@@ -34,7 +34,7 @@ A target may declare prerequisite records — `blocked-by:` on the record (mater
 
 ## Targets with a dependency on a target NOT in the run
 
-If record 159 depends on record 142 (not in the run list) — via `blocked-by:` — Validation step 3's `--blocker-landing` call has already judged 142: each record's `blockerLanding` lists `{blocker, verdict, commit, via}` for every blocker that is not one of the run's targets. A closed blocker is not enough — its closing commit must have reached `origin/{integration-branch}`, or the run builds on code the integration branch never received. Read the verdict (a call that carried no `--blocker-landing` — a multi-record resume whose step list has neither `build` nor `test`, as `validation.md`'s 2.7b skips — leaves no `blockerLanding` to read, and nothing here applies):
+If record 159 depends on record 142 (not in the run list) — via `blocked-by:` — Validation step 3's `--blocker-landing` call has already judged 142: each record's `blockerLanding` lists `{blocker, verdict, commit, via}` (plus `repository` (`owner/name`) on a cross-repository entry) for every blocker that is not one of the run's targets. A closed blocker is not enough — its closing commit must have reached `origin/{integration-branch}`, or the run builds on code the integration branch never received. Read the verdict (a call that carried no `--blocker-landing` — a multi-record resume whose step list has neither `build` nor `test`, as `validation.md`'s 2.7b skips — leaves no `blockerLanding` to read, and nothing here applies):
 
 | Verdict | Outcome |
 |---|---|
@@ -49,6 +49,10 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --sec
 ```
 
 `{text-file}` holds one line, `condition: #{blocker} blocker landing undetermined (via {via}) → fallback: proceeded without confirming its closing commit reached origin/{integration-branch}`, written per `_shared/auto-decision-log.md`'s Text from git or a user paragraph — the integration branch is git-derived, so the text never passes through shell quoting. With several blockers, write the file, log it, then rewrite it for the next blocker.
+
+An `open` or `unlanded` verdict's stop is gate `blocker-landing`; under `/claude-tweaks:dispatch` report it per `failure-cards.md`'s blocker-landing row.
+
+An entry with `via: cross-repository` or `via: cross-repository-state-unreadable` is a blocker in another repository, linked natively or declared by a `Blocked by owner/name#N` body line; its `repository` key holds `owner/name`, and its number names that repository's issue, so write it as `{repository}#{blocker}`. An `open` entry stops as the table says, its stop line naming `{repository}#{blocker}`; with `via: cross-repository-state-unreadable` the stop line reads "159 depends on {repository}#{blocker} (state unreadable) — read as open (fail closed)". An `undetermined` entry writes the SKIP line `condition: {repository}#{blocker} lives in another repository (via cross-repository) → fallback: proceeded without judging its landing — blocker landing reads only this repository's integration branch` (#4793, Decisions Q1 and Q5).
 
 A failed blocker query is not `undetermined` — the call exits non-zero and the run stops before claiming (`multispec-preflight-failure.md`).
 

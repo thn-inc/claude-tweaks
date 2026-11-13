@@ -16,6 +16,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
+const { missingFactsOf, assertEachPatternGoesRed } = require('./helpers/conformance-asserts');
 
 const PLUGIN = path.join(__dirname, '..', 'plugin');
 const TASK_PROMPT = path.join(PLUGIN, 'skills', 'dispatch', 'task-prompt.md');
@@ -49,19 +50,6 @@ function fencedBlocks(text) {
   }
   assert.equal(start, -1, 'unbalanced ``` fences — the last fenced block is unclosed');
   return blocks;
-}
-
-// A fact-list predicate: the facts whose pattern the text no longer matches.
-const missingFactsOf = (patterns) => (text) => patterns.filter(([pattern]) => !pattern.test(text)).map(([, fact]) => fact);
-
-// Per-assertion go-red proof (the 6bb1bb695 shape): strip one pattern's matched phrase from the live
-// text, and the shared predicate must report exactly that one fact missing.
-function assertEachPatternGoesRed(text, patterns, missingOf) {
-  for (const [pattern, fact] of patterns) {
-    const doctored = text.replace(pattern, '');
-    assert.notEqual(doctored, text, `anchor text for "${fact}" not found — proof cannot discriminate`);
-    assert.deepEqual(missingOf(doctored), [fact], `removing only "${fact}" must turn exactly that assertion red`);
-  }
 }
 
 const TEMPLATE_LABELS = ['first call (build,test)', 'second call (review,polish,wrap-up)'];

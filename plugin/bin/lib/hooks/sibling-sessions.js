@@ -30,7 +30,7 @@
 const path = require('path');
 const { parseWorktreeList, lockVerdict } = require('./worktree-reap');
 const { safeReal } = require('./worktree-detect');
-const { runGit, repoSlugOf } = require('./git-exec');
+const { runGit, repoTargetOf } = require('./git-exec');
 const ctxLib = require('./context');
 
 // `git worktree list --porcelain` canonicalizes symlinks in its `path` field;
@@ -195,15 +195,21 @@ function firstForeignInUse(matches, opts) {
 // lazy — claim-store/claims-git-cas pull in the whole claim transport, and most
 // callers (tests, the worktree-lock half) never read a claim. `createClaimReader`
 // turns an unresolved repo slug into a `{failure}` rather than a
-// `repos/null/...` request; a failure and an absent claim both read as null
-// here — fail open, same posture as the rest of this module.
+// `repos/null/...` request, and an origin the #4933 gate refuses (`repoRefusal`)
+// into `unknown-host` with no request; a failure and an absent claim both read as
+// null here — fail open, same posture as the rest of this module. The contents
+// read is bound to `cwd`, so its gh host follows the origin the gate judged, not
+// process.cwd()'s.
 function defaultReadClaim(cwd) {
   return (n) => {
-    const { createClaimReader } = require('../issues/claim-store');
+    const { createClaimReader, defaultGhApi } = require('../issues/claim-store');
     const { defaultRunner } = require('../issues/claims-git-cas');
+    const t = repoTargetOf(cwd);
     const r = createClaimReader({
       gitRunner: (args, o) => defaultRunner(args, { cwd, ...o }),
-      repoSlug: repoSlugOf(cwd),
+      ghApi: (args) => defaultGhApi(args, { cwd }),
+      repoSlug: t && !t.refusal ? t.slug : null,
+      ...(t && t.refusal ? { repoRefusal: t.refusal } : {}),
     }).read(n);
     return r.failure ? null : r.content;
   };

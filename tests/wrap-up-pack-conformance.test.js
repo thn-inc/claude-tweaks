@@ -61,6 +61,153 @@ test('every pack field the pack produces has a prose consumer that reads it (#19
   for (const n of PROBE_NAMES) assert.ok(corpus.includes(`pack.${n}`), `no prose consumer reads pack.${n}`);
 });
 
+// #4793 Q2: the `work-links: native` snippet in unblocked-records.md carries the
+// same cross-repository filter pack.js applies. Each check has its own message,
+// so a control can prove the check it targets (not whichever fails first).
+const NATIVE_SNIPPET_MESSAGES = {
+  require: 'native snippet requires { withoutCrossRepoBlockers, foreignBlockerBlocks } from bin/lib/issues/record.js',
+  strip: 'native snippet removes crossRepoBlockers numbers before the includes(closedNum) test',
+  foreign: 'native snippet keeps a dependent blocked by a foreign blocker that is not CLOSED',
+  legacy: 'native snippet no longer tests the raw blockedBy.includes(closedNum)',
+};
+
+function nativeSnippetOf(text) {
+  const at = text.indexOf("bin/resolve-blockers.js', records");
+  assert.notStrictEqual(at, -1, 'the work-links: native snippet is present in unblocked-records.md');
+  const start = text.lastIndexOf('```bash', at);
+  const end = text.indexOf('\n```', at);
+  assert.ok(start !== -1 && end !== -1, 'the native snippet sits in a bash fence');
+  return text.slice(start, end);
+}
+
+function assertNativeSnippetSkipsCrossRepo(text) {
+  // Collapse whitespace so a hard-wrapped snippet still matches.
+  const snippet = nativeSnippetOf(text).replace(/\s+/g, ' ');
+  assert.ok(
+    snippet.includes("const { withoutCrossRepoBlockers, foreignBlockerBlocks } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js')"),
+    NATIVE_SNIPPET_MESSAGES.require,
+  );
+  assert.ok(
+    snippet.includes('withoutCrossRepoBlockers(byNumber[r.number].blockedBy, byNumber[r.number].crossRepoBlockers).includes(closedNum)'),
+    NATIVE_SNIPPET_MESSAGES.strip,
+  );
+  assert.ok(
+    snippet.includes('!(byNumber[r.number].crossRepoBlockers || []).some(foreignBlockerBlocks)'),
+    NATIVE_SNIPPET_MESSAGES.foreign,
+  );
+  assert.ok(!snippet.includes('byNumber[r.number].blockedBy.includes(closedNum)'), NATIVE_SNIPPET_MESSAGES.legacy);
+}
+
+test('#4793 Q2: the unblocked-records.md native snippet skips cross-repository blocker numbers', () => {
+  assertNativeSnippetSkipsCrossRepo(read('plugin/skills/wrap-up/unblocked-records.md'));
+});
+
+test('#4793 Q2 go-red: each native-snippet check throws with its own message on a mutated copy', () => {
+  const original = read('plugin/skills/wrap-up/unblocked-records.md');
+  const call = 'withoutCrossRepoBlockers(byNumber[r.number].blockedBy, byNumber[r.number].crossRepoBlockers)';
+  const mutations = {
+    require: original.replace('const { withoutCrossRepoBlockers, foreignBlockerBlocks } = require(', 'const { withoutCrossRepoBlockers } = require('),
+    strip: original.replace(call, 'byNumber[r.number].blockedBy'),
+    foreign: original.replace(' && !(byNumber[r.number].crossRepoBlockers || []).some(foreignBlockerBlocks)', ''),
+    legacy: original.replace('.map((r) => ({ number: r.number, title: r.title }));', '.map((r) => ({ number: r.number, title: r.title })); /* byNumber[r.number].blockedBy.includes(closedNum) */'),
+  };
+  for (const [key, mutated] of Object.entries(mutations)) {
+    assert.notEqual(mutated, original, `${key}: the mutation matched nothing`);
+    assert.throws(() => assertNativeSnippetSkipsCrossRepo(mutated), { message: NATIVE_SNIPPET_MESSAGES[key] }, key);
+  }
+});
+
+// #4793: the body-declared half. Both snippets that decide dependents in a node
+// body keep a dependent blocked by a `Blocked by owner/name#N` foreign blocker that
+// is open or unreadable. A fact list (conformance-asserts.js) gives each check its
+// own name, and assertEachPatternGoesRed proves each one by stripping only it. Each
+// pass's facts are matched only within that pass's own `node -e "` body, so a require
+// moved into the wrong pass turns its check red.
+const { missingFactsOf, assertEachPatternGoesRed } = require('./helpers/conformance-asserts');
+
+const collapsed = (text) => text.replace(/\s+/g, ' ');
+const REFS_JS = "require\\('\\$\\{CLAUDE_PLUGIN_ROOT\\}/bin/lib/issues/cross-repo-refs\\.js'\\)";
+const STATES_JS = "require\\('\\$\\{CLAUDE_PLUGIN_ROOT\\}/bin/lib/issues/cross-repo-states\\.js'\\)";
+
+// The body-text paragraph's two `node -e "` bodies, each from its opener to the next one (or the
+// native paragraph): pass 1 holds the sentence between the fences, pass 2 runs to the region's end.
+function bodyTextPassesOf(text) {
+  const start = text.indexOf('`work-links: body-text`');
+  const end = text.indexOf('`work-links: native`');
+  assert.ok(start !== -1 && end > start, 'the work-links: body-text region is present in unblocked-records.md');
+  const parts = collapsed(text.slice(start, end)).split('node -e "');
+  assert.strictEqual(parts.length, 3, 'the body-text region holds exactly two node -e bodies');
+  return { pass1: parts[1], pass2: parts[2] };
+}
+
+// The native snippet's single `node -e "` body (the bash fence before it only resolves paths).
+function nativeBodyOf(text) {
+  const parts = collapsed(nativeSnippetOf(text)).split('node -e "');
+  assert.strictEqual(parts.length, 2, 'the native snippet holds exactly one node -e body');
+  return parts[1];
+}
+
+const BODY_PASS1_FACTS = [
+  [new RegExp(`const \\{ parseCrossRepoDependencies \\} = ${REFS_JS}`), 'body-text pass 1 requires parseCrossRepoDependencies from cross-repo-refs.js'],
+  [/foreignRefs: parseCrossRepoDependencies\(r\.body\)/, 'body-text pass 1 maps foreignRefs: parseCrossRepoDependencies(r.body)'],
+];
+
+const BODY_PASS2_FACTS = [
+  [new RegExp(`const \\{ resolveForeignStates \\} = ${STATES_JS}`), 'body-text pass 2 requires resolveForeignStates from cross-repo-states.js'],
+  [new RegExp(`const \\{ foreignEntries \\} = ${REFS_JS}`), 'body-text pass 2 requires foreignEntries from cross-repo-refs.js'],
+  [/const \{ foreignBlockerBlocks \} = require\('\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/lib\/issues\/record\.js'\)/, 'body-text pass 2 requires foreignBlockerBlocks from record.js'],
+  [/const states = resolveForeignStates\(dependents\.flatMap\(\(d\) => d\.foreignRefs\)\)/, 'body-text pass 2 resolves every dependent foreignRefs in one resolveForeignStates call'],
+  [/!foreignEntries\(d\.foreignRefs, states\)\.some\(foreignBlockerBlocks\)/, 'body-text pass 2 keeps a dependent blocked by a foreign blocker that is not CLOSED'],
+];
+
+const NATIVE_BODY_FACTS = [
+  [new RegExp(`const \\{ parseCrossRepoDependencies, foreignEntries, bodyOnlyForeign \\} = ${REFS_JS}`), 'native snippet requires parseCrossRepoDependencies, foreignEntries, bodyOnlyForeign from cross-repo-refs.js'],
+  [new RegExp(`const \\{ resolveForeignStates \\} = ${STATES_JS}`), 'native snippet requires resolveForeignStates from cross-repo-states.js'],
+  [/bodyOnlyForeign\(byNumber\[r\.number\]\.crossRepoBlockers \|\| \[\], foreignEntries\(parseCrossRepoDependencies\(r\.body\), new Map\(\)\)\)/, 'native snippet drops body refs already natively linked before the lookup'],
+  [/const states = resolveForeignStates\(candidates\.flatMap\(bodyRefs\)\)/, 'native snippet resolves every candidate body ref in one resolveForeignStates call'],
+  [/!foreignEntries\(bodyRefs\(r\), states\)\.some\(foreignBlockerBlocks\)/, 'native snippet keeps a dependent blocked by a body-declared foreign blocker that is not CLOSED'],
+];
+
+// The prose around the snippets. The old "every one of the record's blockers" wording contradicts the
+// foreign rule, so its absence is a check of its own (with its own control below).
+const WORDING_FACTS = [
+  [/no `Blocked by owner\/name#N` line names another repository's blocker that is still open or whose state is unreadable/, 'body-text sentence names the foreign check'],
+  [/every one of this repository's blockers/, 'native paragraph speaks of this repository\'s blockers'],
+];
+const STALE_WORDING = "every one of the record's blockers";
+const assertNoStaleWording = (text) => assert.ok(!collapsed(text).includes(STALE_WORDING), 'the contradictory "every one of the record\'s blockers" wording is gone');
+
+test('#4793: both unblocked-records.md snippets keep a dependent blocked by a body-declared foreign blocker', () => {
+  const text = read('plugin/skills/wrap-up/unblocked-records.md');
+  const { pass1, pass2 } = bodyTextPassesOf(text);
+  assert.deepStrictEqual(missingFactsOf(BODY_PASS1_FACTS)(pass1), []);
+  assert.deepStrictEqual(missingFactsOf(BODY_PASS2_FACTS)(pass2), []);
+  assert.deepStrictEqual(missingFactsOf(NATIVE_BODY_FACTS)(nativeBodyOf(text)), []);
+  assert.deepStrictEqual(missingFactsOf(WORDING_FACTS)(collapsed(text)), []);
+  assertNoStaleWording(text);
+});
+
+test('#4793 go-red: stripping any one body-declared foreign check turns exactly that check red', () => {
+  const text = read('plugin/skills/wrap-up/unblocked-records.md');
+  const { pass1, pass2 } = bodyTextPassesOf(text);
+  assertEachPatternGoesRed(pass1, BODY_PASS1_FACTS, missingFactsOf(BODY_PASS1_FACTS));
+  assertEachPatternGoesRed(pass2, BODY_PASS2_FACTS, missingFactsOf(BODY_PASS2_FACTS));
+  assertEachPatternGoesRed(nativeBodyOf(text), NATIVE_BODY_FACTS, missingFactsOf(NATIVE_BODY_FACTS));
+  assertEachPatternGoesRed(collapsed(text), WORDING_FACTS, missingFactsOf(WORDING_FACTS));
+});
+
+test('#4793 go-red: a require moved into the wrong body-text pass, or the stale wording restored, turns its check red', () => {
+  const text = read('plugin/skills/wrap-up/unblocked-records.md');
+  // pass 1's require moved into pass 2 must not satisfy pass 1.
+  const pass1Require = "  const { parseCrossRepoDependencies } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/cross-repo-refs.js');\n";
+  const moved = text.replace(pass1Require, '').replace("  const dependents = require('$WRAPUP_DEPENDENTS');\n", `${pass1Require}  const dependents = require('$WRAPUP_DEPENDENTS');\n`);
+  assert.notEqual(moved, text, 'the require move matched nothing');
+  assert.deepStrictEqual(missingFactsOf(BODY_PASS1_FACTS)(bodyTextPassesOf(moved).pass1), [BODY_PASS1_FACTS[0][1]]);
+  const stale = text.replace("every one of this repository's blockers", STALE_WORDING);
+  assert.notEqual(stale, text, 'the stale-wording mutation matched nothing');
+  assert.throws(() => assertNoStaleWording(stale), { message: /contradictory/ });
+});
+
 test('every inputs field a closing-keyword reader relies on is produced by resolveInputs and read by prose (#3399)', () => {
   const { resolveInputs } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'wrap-up', 'pack.js'));
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-3399-'));

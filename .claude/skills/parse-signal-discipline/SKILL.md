@@ -190,6 +190,15 @@ When mechanizing a prose heuristic into a deterministic check:
    "no citation" result, with any other non-zero exit keeping the plan as cited-unverified.
    Branch on the exit code, not the output, and on a destructive path make the failure arm fail
    closed.
+   A write gate owes the same split, and there the harm is a leak. `destinationHold` in
+   `plugin/bin/acceptance-packet.js` (#4612) asks `git check-ignore -q` whether an unredacted GIF's
+   destination is ignored before writing it. Its first version held the write only on exit 1, so
+   any other failure (a timeout, a missing binary, a 128 for dubious ownership) wrote the GIF where
+   git could commit it. Review caught it. The write now goes ahead only on exit 0, or on an exit 128
+   whose stderr says `not a git repository`, where nothing can commit the file; every other answer
+   holds it. When a benign answer shares the fatal exit code, require the code and the message
+   together, and pin each half alone: `tests/acceptance-packet-cli.test.js` feeds 128 with another
+   message and exit 2 with the benign message, and both must hold the write.
 9. **A probe that skill prose tells the agent to run owes the same split, and two things break it
    that a code check never meets.** Each Bash tool call starts a fresh shell, so a variable an
    earlier call set is unset in the probe's call: the probe reads an empty path and reports the
@@ -314,7 +323,7 @@ When mechanizing a prose heuristic into a deterministic check:
     blanks comments to spaces before its callers' scans count tokens. Its
     callers, by test-file stem: `accept-label-reader`, `backfill-cli`, `below-floor-parent-close`, `cli`, `exit-code`, `gh-host-seam`, `git-status-optional-locks`,
     `hooks-harness-refusal`, `hooks-pre-tool-use`, `markdown-blocks`, `owner-pid-probe`, `path-containment`, `path-guard`, `phase-exit`, `phase-exit-call-sites`, `porcelain-cwd-compare`, `post-merge`,
-    `precondition`, `raw-markdown-read`, `run-liveness-callers`, `staged-id-producers`, `subprocess-timing`, `wall-clock-budget` and
+    `precondition`, `raw-markdown-read`, `recording-no-embed`, `release-notes`, `run`, `run-liveness-callers`, `staged-id-producers`, `subprocess-timing`, `wall-clock-budget` and
     `windows-hide-spawn`.
     `tests/strip-comments-callers-twin.test.js` pins this list and the helper header's to the
     tree. It models regex literals (#3585); its residual
@@ -367,7 +376,7 @@ When mechanizing a prose heuristic into a deterministic check:
     arm, classified by the thrown error's shape, and pin "main probe times out, precondition probe
     succeeds" with its own assertion (`tests/verify-run-bookends.test.js`'s
     `catFileTimeoutRevParseOk`).
-Items 17-26 live in `fix-shape-late-items.md` in this skill's directory, with their numbers
+Items 17-28 live in `fix-shape-late-items.md` in this skill's directory, with their numbers
 kept. Read it when your case matches one of these:
 
 17. **A start/end snapshot guard sees only the window between its two reads, and each value it records has an unsafe direction.**
@@ -380,6 +389,8 @@ kept. Read it when your case matches one of these:
 24. **A composer's validator owes its reader's sentinels and delimiters too, not only its skip set (item 18).**
 25. **An unanchored extractor with a narrow character class truncates instead of failing, so an out-of-class input yields a confident wrong value, not "no match".**
 26. **A recogniser that must ignore a marker shown as code owes a rule the host format guarantees, not a home-made model of that format.**
+27. **A parse problem that hides content owes its own report, found by a second read under the relaxed reading and credited only to a cause the author can edit.**
+28. **A parser that fails closed owes a cheap precondition that proves the signal absent, so its gaps cost only on inputs that could hold the signal.**
 
 ## When to use
 
