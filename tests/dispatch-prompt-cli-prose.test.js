@@ -255,3 +255,116 @@ test('the Section E skip clause sits inside Section E, before the record is iden
 test('the CLI file named in prose exists', () => {
   assert.ok(fs.statSync(path.join(ROOT, 'plugin/bin/dispatch-prompt.js')).isFile());
 });
+
+// #5255: a dispatch-prompt.js non-zero exit ends the firing, for any call; a denied-twice call does
+// not. All of this prose is new in the same change, so each control mutates the live text in
+// memory and matches the throw to its own assertion's message (skill-prose-conformance-tests).
+const RENDER_PARA = '**A prompt that does not render, or is denied twice (#4589).**';
+const SEC2_STOP_LEAD = '**A render failure ends the firing (#5255).**';
+const SEC2_ANY_CALL = 'for any call (a first call, a second call, or a continuation of either)';
+const SEC2_STOP = 'ends the firing once that group\'s section 5 or section 6 cleanup call returns';
+const SEC2_DENIED = 'A denied-twice call does not end the firing: the fault is in that one call, so the firing goes on to the next group.';
+const SEC5_STOP = 'On a render failure the firing then ends (section 2\'s render-failure stop)';
+const SEC5_DENIED = 'on a denied-twice call it goes on to the next group.';
+const SEC6_LEAD = '**Render-failure stop (#5255).**';
+const SEC6_STOP = 'the firing ends once it returns (`SKILL.md`\'s Render-failure stop)';
+const NONE_AFTER = 'none after a Claim permission stop';
+
+// Replace `needle` inside the one paragraph starting with `lead`, so a phrase another paragraph
+// shares (the Claim permission stop's own wording) cannot satisfy the control.
+function mutateInParagraph(text, lead, needle, replacement) {
+  const paras = text.split('\n\n');
+  const i = paras.findIndex((p) => p.startsWith(lead));
+  assert.notStrictEqual(i, -1, `paragraph not found: ${lead}`);
+  paras[i] = paras[i].replace(needle, replacement);
+  const out = paras.join('\n\n');
+  assert.notStrictEqual(out, text, `control must change the text: ${needle}`);
+  return out;
+}
+const NONE_AFTER_BOTH = 'none after a Claim permission stop or a render-failure stop';
+
+function section2Para(gate) {
+  const para = region(gate, '## 2.', '## 5.').split('\n\n').find((p) => p.startsWith(RENDER_PARA));
+  assert.ok(para, 'section 2: render-failure paragraph missing');
+  return para;
+}
+function section5Para(gate) {
+  const para = region(gate, '## 5.', '## 6.').split('\n').find((l) => l.trim().startsWith('**Prompt not dispatched (#4589).**'));
+  assert.ok(para, 'section 5: Prompt not dispatched paragraph missing');
+  return para;
+}
+
+function assertRenderFailureStop(gate) {
+  const para = section2Para(gate);
+  assert.ok(para.includes(SEC2_STOP_LEAD), 'section 2: render-failure stop sentence missing');
+  assert.ok(para.includes(SEC2_ANY_CALL), 'section 2: any-call scope missing');
+  assert.ok(para.includes(SEC2_STOP), 'section 2: ends-the-firing clause missing');
+  assert.ok(section5Para(gate).includes(SEC5_STOP), 'section 5: render-failure stop clause missing');
+  const sec6 = region(gate, '## 6.', '## 7.').split('\n\n').find((p) => p.startsWith(SEC6_LEAD));
+  assert.ok(sec6 && sec6.includes(SEC6_STOP), 'section 6: render-failure stop paragraph missing');
+  // Every "none after a Claim permission stop" clause names the render-failure stop too.
+  const clauses = gate.split(NONE_AFTER).length - 1;
+  assert.ok(clauses >= 2, 'expected at least two none-after clauses');
+  assert.strictEqual(gate.split(NONE_AFTER_BOTH).length - 1, clauses, 'a none-after clause does not name the render-failure stop');
+}
+
+function assertDeniedTwiceContinues(gate) {
+  const para = section2Para(gate);
+  assert.ok(para.includes(SEC2_DENIED), 'section 2: denied-twice continuation missing');
+  const start = para.indexOf(SEC2_STOP_LEAD);
+  const end = para.indexOf(SEC2_DENIED);
+  assert.ok(start !== -1 && end > start, 'section 2: the stop sentence must precede the denied-twice sentence');
+  assert.ok(!/denied/i.test(para.slice(start, end)), 'section 2: the render-failure stop sentence must not cover a denied-twice call');
+  assert.ok(section5Para(gate).includes(SEC5_DENIED), 'section 5: denied-twice continuation missing');
+}
+
+test('AC1.1, AC5.1: a render failure for any call ends the firing after its section 5 or 6 cleanup (#5255)', () => {
+  assertRenderFailureStop(GATE);
+});
+
+test('AC5.1 go-red: removing the ends-the-firing sentence, or any one clause, fails its own assertion (#5255)', () => {
+  const para = section2Para(GATE);
+  const start = para.indexOf(SEC2_STOP_LEAD);
+  const end = para.indexOf(SEC2_DENIED);
+  assert.ok(start !== -1 && end > start, 'the stop sentence must precede the denied-twice sentence');
+  const reverted = GATE.replace(para.slice(start, end), '');
+  assert.notStrictEqual(reverted, GATE);
+  assert.throws(() => assertRenderFailureStop(reverted), { message: 'section 2: render-failure stop sentence missing' });
+  for (const [needle, message] of [
+    [SEC2_ANY_CALL, 'section 2: any-call scope missing'],
+    [SEC2_STOP, 'section 2: ends-the-firing clause missing'],
+    [SEC5_STOP, 'section 5: render-failure stop clause missing'],
+    [SEC6_STOP, 'section 6: render-failure stop paragraph missing'],
+  ]) {
+    const mutated = GATE.replace(needle, 'x');
+    assert.notStrictEqual(mutated, GATE);
+    assert.throws(() => assertRenderFailureStop(mutated), { message });
+  }
+  const narrowed = GATE.replace(NONE_AFTER_BOTH, NONE_AFTER);
+  assert.notStrictEqual(narrowed, GATE);
+  assert.throws(() => assertRenderFailureStop(narrowed), { message: /a none-after clause does not name the render-failure stop/ });
+});
+
+test('AC1.1, AC6.1: a denied-twice call still ends only its own group (#5255)', () => {
+  assertDeniedTwiceContinues(GATE);
+});
+
+test('AC6.1 go-red: making the denied-twice path end the firing fails the assertion (#5255)', () => {
+  const sec2 = GATE.replace(SEC2_DENIED, 'A denied-twice call ends the firing too.');
+  assert.notStrictEqual(sec2, GATE);
+  assert.throws(() => assertDeniedTwiceContinues(sec2), { message: 'section 2: denied-twice continuation missing' });
+  const sec5 = GATE.replace(SEC5_DENIED, 'on a denied-twice call it ends the firing too.');
+  assert.notStrictEqual(sec5, GATE);
+  assert.throws(() => assertDeniedTwiceContinues(sec5), { message: 'section 5: denied-twice continuation missing' });
+  // Widening the stop sentence to cover a denied-twice call, with both continuation sentences left in place.
+  const widened = GATE.replace('A `dispatch-prompt.js` non-zero exit, for any call', 'A `dispatch-prompt.js` non-zero exit or a denied-twice call, for any call');
+  assert.notStrictEqual(widened, GATE);
+  assert.throws(() => assertDeniedTwiceContinues(widened), { message: 'section 2: the render-failure stop sentence must not cover a denied-twice call' });
+});
+
+test('task-prompt.md says a render failure ends the firing (#5255)', () => {
+  const NEEDLE = 'a render failure blocks the group and ends the firing (`two-call-gate.md` §2)';
+  const check = (text) => assert.ok(text.includes(NEEDLE), 'task-prompt.md: render failure must end the firing');
+  check(TASK_PROMPT);
+  assert.throws(() => check(TASK_PROMPT.replace(' and ends the firing', '')), { message: 'task-prompt.md: render failure must end the firing' });
+});

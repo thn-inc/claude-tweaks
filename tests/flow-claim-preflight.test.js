@@ -423,7 +423,7 @@ test('a dispatched first call learns the exact gate value, and teardown skips th
 
 test('the other "move on" sites name the Claim permission stop (#4899)', () => {
   assert.match(read('plugin/skills/dispatch/sequential-execution.md'), /group N\+1 \(none after a Claim permission stop/);
-  assert.match(read('plugin/skills/dispatch/two-call-gate.md'), /next group's worktree \(none after a Claim permission stop: the firing ends, `SKILL\.md`\)\.\n\n## 8\./);
+  assert.match(read('plugin/skills/dispatch/two-call-gate.md'), /next group's worktree \(none after a Claim permission stop or a render-failure stop: the firing ends, `SKILL\.md`\)\.\n\n## 8\./);
   assert.match(read('plugin/skills/_shared/express-lane.md'), /on a Claim permission stop, exit 7, Settle skips steps 1-7/);
   assert.match(read('plugin/skills/dispatch/SKILL.md'), /the ranking returns `null`, or a Claim permission stop\), close/);
 });
