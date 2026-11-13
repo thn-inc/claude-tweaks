@@ -2752,7 +2752,46 @@ test('AC4.4: parseArgs accepts --no-settle in any position and still refuses oth
     '       drive.js --no-settle #N [#M…]   (the caller settles stops: the final line carries settle: left-to-caller and the stop object)');
 });
 
-test('AC4.1: --no-settle makes no settle call and leaves the stop to the caller', async () => {
+test('budget AC2.1: a bad --budget value is a usage error with no call at all', async () => {
+  for (const argv of [['--budget', '0'], ['--budget', '-1'], ['--budget', '1.5'], ['--budget', ''], ['--budget', 'abc'], ['--budget', 'ALL'], ['--budget', '01'], ['--budget']]) {
+    const h = harness();
+    assert.equal(await run(argv, h.deps), 2, JSON.stringify(argv));
+    assert.match(h.err.join(''), /Usage: drive\.js #N/);
+    assert.equal(h.calls.length, 0);
+    assert.equal(h.probes, 0);
+    assert.deepEqual(h.out, []);
+  }
+});
+
+test('budget AC3.1, AC3.2, AC3.3: --budget with a record, --budget twice, and neither form are usage errors', async () => {
+  for (const argv of [['--budget', '2', '#12'], ['#12', '--budget', '2'], ['--budget', '2', '--budget', '3'], ['--budget', 'all', '--budget', 'all'], [], ['--no-settle']]) {
+    const h = harness();
+    assert.equal(await run(argv, h.deps), 2, JSON.stringify(argv));
+    assert.equal(h.calls.length, 0);
+    assert.equal(h.probes, 0);
+  }
+});
+
+test('budget parseArgs: the accepted forms', () => {
+  assert.deepEqual(parseArgs(['--budget', '3']), { budget: 3, settle: true });
+  assert.deepEqual(parseArgs(['--budget', 'all']), { budget: 'all', settle: true });
+  assert.deepEqual(parseArgs(['--no-settle', '--budget', '1']), { budget: 1, settle: false });
+  assert.deepEqual(parseArgs(['--budget', '2', '--no-settle']), { budget: 2, settle: false });
+  assert.deepEqual(parseArgs(['--budget', '0', '--help']), { help: true });
+  assert.match(parseArgs(['--budget', '2', '#12']).error, /exclusive/);
+  assert.match(parseArgs(['--budget', '2', '--budget', '3']).error, /more than once/);
+});
+
+test('budget usage: USAGE and the drive.js header state the --budget form and that --no-settle applies to each driven record', () => {
+  const header = readText(DRIVE).split('\n').filter((l) => l.startsWith('//')).join('\n');
+  for (const text of [USAGE, header]) {
+    assert.match(text, /drive\.js \[--no-settle\] --budget <n\|all>/);
+    assert.match(text, /--no-settle applies to each driven record/);
+    assert.match(text, /with --budget, also a failed queue pull/);
+  }
+});
+
+test('AC4.1:--no-settle makes no settle call and leaves the stop to the caller', async () => {
   const h = harness(REDTESTS);
   assert.equal(await run(['--no-settle', '#7'], h.deps), 0);
   assert.deepEqual(settleCalls(h), [], 'no comment, label, release, escalate, worktree removal or branch delete');

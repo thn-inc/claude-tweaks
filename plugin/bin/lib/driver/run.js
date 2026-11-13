@@ -73,14 +73,15 @@ const USAGE = [
   'Usage: drive.js #N [#M…]',
   '       drive.js --help | -h   (prints this text; exit 0, before any probe)',
   '       drive.js --no-settle #N [#M…]   (the caller settles stops: the final line carries settle: left-to-caller and the stop object)',
+  '       drive.js [--no-settle] --budget <n|all>   (picks records from the dispatch queue and drives up to n of them, or all that are admitted; --no-settle applies to each driven record)',
   'Takes each named record, one at a time and in order, from admission to a draft PR with',
   'CI read. Prints one JSON event line per step on stdout (and, once the run directory',
   'exists, to {run-dir}/driver-events.jsonl); each record ends with a final line carrying',
   'its outcome: pending-review, express-escalated, blocked or refused. Nothing merges.',
   'Exit codes (Combined-2):',
-  '  0  every named record reached its final event, whatever its outcome',
-  '  1  when the policy, or the run\'s repository or integration branch, cannot be resolved and no further record is attempted',
-  '  2  malformed invocation (no record reference, a non-numeric one) or gh or git absent, or an internal error (run itself failed)',
+  '  0  every named record reached its final event, whatever its outcome; with --budget, the loop ended normally (budget spent, queue exhausted, a claim stop on claim-targets.js exit 2, 6 or 7, or express-driver off), whatever each record\'s outcome',
+  '  1  when the policy, or the run\'s repository or integration branch, cannot be resolved and no further record is attempted; with --budget, also a failed queue pull',
+  '  2  malformed invocation (no record reference, a non-numeric one) or gh or git absent, or an internal error (run itself failed); a bad or repeated --budget value, or --budget with a named record',
   '',
 ].join('\n');
 
@@ -88,17 +89,32 @@ const RECORD_RE = /^#?(\d+)$/;
 const GIT_PROBE_TIMEOUT_MS = 10000;
 const MAX_BUFFER = sharedPrimitives.LARGE_MAX_BUFFER_BYTES;
 
-// argv -> { records, settle } | { help: true } | { error }. `#N` or `N`, positive integers only,
-// de-duplicated in the order given. --help (or -h) anywhere wins. `--no-settle` anywhere sets
-// settle false (the caller settles stops); any other option is an error.
+// argv -> { records, settle } | { budget, settle } | { help: true } | { error }. `#N` or `N`,
+// positive integers only, de-duplicated in the order given. `--budget <n|all>` (n a positive
+// integer without a leading zero) names a queue-pulled run instead of records and is exclusive
+// with them. --help (or -h) anywhere wins. `--no-settle` anywhere sets settle false (the caller
+// settles stops); any other option is an error.
+const BUDGET_NEEDS_RECORD = 'a record reference (#N) or --budget <n|all> is required';
 function parseArgs(argv) {
   if (argv.includes('--help') || argv.includes('-h')) return { help: true };
-  if (argv.length === 0) return { error: 'at least one record reference (#N) is required' };
+  if (argv.length === 0) return { error: BUDGET_NEEDS_RECORD };
   const records = [];
+  let budget;
   let settleStops = true;
-  for (const a of argv) {
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i];
     if (a === '--no-settle') {
       settleStops = false;
+      continue;
+    }
+    if (a === '--budget') {
+      if (budget !== undefined) return { error: '--budget given more than once' };
+      if (i + 1 >= argv.length) return { error: '--budget needs a value: a positive integer or all' };
+      const v = String(argv[i + 1]);
+      i += 1;
+      if (v === 'all') budget = 'all';
+      else if (/^[1-9][0-9]*$/.test(v) && Number.isSafeInteger(Number(v))) budget = Number(v);
+      else return { error: `--budget must be a positive integer or all, got: ${JSON.stringify(v)}` };
       continue;
     }
     const m = RECORD_RE.exec(String(a));
@@ -108,7 +124,11 @@ function parseArgs(argv) {
     }
     if (!records.includes(n)) records.push(n);
   }
-  if (records.length === 0) return { error: 'at least one record reference (#N) is required' };
+  if (budget !== undefined) {
+    if (records.length > 0) return { error: '--budget and a named record (#N) are exclusive' };
+    return { budget, settle: settleStops };
+  }
+  if (records.length === 0) return { error: BUDGET_NEEDS_RECORD };
   return { records, settle: settleStops };
 }
 
