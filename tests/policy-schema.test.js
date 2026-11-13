@@ -998,7 +998,8 @@ test('AC8.1: each ceiling resolves its default when unset, at or above the desig
 });
 
 test('AC8.2: a ceiling below 1, negative or non-integer falls back invalid', () => {
-  for (const { key, def } of DRIVER_KEYS.slice(1)) {
+  const ceilings = ['express-driver-wall-clock-minutes', 'express-driver-spend-ceiling-dollars'];
+  for (const { key, def } of DRIVER_KEYS.filter((k) => ceilings.includes(k.key))) {
     for (const bad of ['0', '-3', '1.5', 'abc']) {
       assert.deepStrictEqual(resolvePolicyKeys([key], { policyRaw: `${key}: ${bad}\n`, runConfigRaw: null })[key], { value: def, source: 'default', invalid: true }, `${key}=${bad}`);
     }
@@ -1035,7 +1036,7 @@ test('AC8.3: each ceiling\'s doc row states its unit', () => {
   assert.match(summaryOf('express-driver-spend-ceiling-dollars'), /\bwhole dollars\b/i);
 });
 
-test('AC11.4: the policyOnly bullet names all three keys', () => {
+test('AC11.4: the policyOnly bullet names all four keys', () => {
   const line = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'policy-schema-coverage.md')).split('\n').find((l) => l.includes('are `policyOnly`'));
   for (const { key } of DRIVER_KEYS) assert.ok(line.includes('`' + key + '`'), key);
 });
