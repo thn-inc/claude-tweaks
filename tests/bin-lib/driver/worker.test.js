@@ -333,7 +333,7 @@ test('Review focus: stdout that is not one result object never reads as ok', asy
 
 test('AC10: the runner receives only allow-listed environment names', async (t) => {
   const { runner, calls } = fakeRunner(okOut());
-  const env = { PATH: '/bin', HOME: '/h', USER: 'u', TMPDIR: '/t', LANG: 'C', CLAUDE_CONFIG_DIR: '/c', PIPELINE_RUN_DIR: '/r', CLAUDE_CODE_SESSION_ID: 's', GH_TOKEN: 'g', GITHUB_TOKEN: 'g2', SECRET: 'x' };
+  const env = { PATH: HERMETIC_PATH, HOME: '/h', USER: 'u', TMPDIR: '/t', LANG: 'C', CLAUDE_CONFIG_DIR: '/c', PIPELINE_RUN_DIR: '/r', CLAUDE_CODE_SESSION_ID: 's', GH_TOKEN: 'g', GITHUB_TOKEN: 'g2', SECRET: 'x' };
   await launchWorker(base(t, { env }), { runner });
   assert.deepStrictEqual(Object.keys(calls[0].options.env).sort(), ['CLAUDE_CONFIG_DIR', 'HOME', 'LANG', 'PATH', 'TMPDIR', 'USER']);
   for (const name of ['PIPELINE_RUN_DIR', 'CLAUDE_CODE_SESSION_ID', 'GH_TOKEN', 'GITHUB_TOKEN']) assert.ok(!(name in calls[0].options.env), name);
