@@ -7,7 +7,13 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { readText } = require('../../helpers/read-skill');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
-const { classifyEvidenceRun, evidenceArgs, EVIDENCE_COMMANDS } = require(path.join(LIB, 'driver', 'review.js'));
+const {
+  classifyEvidenceRun, evidenceArgs, EVIDENCE_COMMANDS, reviewRequired, findingShapeViolation, evidenceShapeViolation,
+  pathRuleViolation, contentViolation, PATH_RULES, MAX_FINDINGS, EVIDENCE_PATH_MAX_CHARS, EVIDENCE_CONTENT_MAX_BYTES,
+  EVIDENCE_RUN_TIMEOUT_MS, EVENT_TEXT_MAX_CHARS,
+} = require(path.join(LIB, 'driver', 'review.js'));
+const { EXPRESS_MAX_KEY_FILES } = require(path.join(LIB, 'express', 'eligibility.js'));
+const { POLICY_KEYS } = require(path.join(LIB, 'policy-schema.js'));
 const { REVIEW_RESULT_SCHEMA, ROLES, composeArgs } = require(path.join(LIB, 'driver', 'roles.js'));
 const { conformsTo, superviseChild } = require(path.join(LIB, 'driver', 'worker.js'));
 
@@ -152,4 +158,200 @@ test('Task1: the reviewer result schema and the exported superviseChild', () => 
   assert.strictEqual(conformsTo(REVIEW_RESULT_SCHEMA, { findings: [], extra: 1 }), false);
   assert.ok(Object.isFrozen(REVIEW_RESULT_SCHEMA) && Object.isFrozen(REVIEW_RESULT_SCHEMA.properties));
   assert.strictEqual(typeof superviseChild, 'function');
+});
+
+const isReason = (r) => typeof r === 'string' && r.trim() !== '';
+
+test('AC13: reviewRequired', () => {
+  const issue = (...names) => ({ labels: names.map((name) => ({ name })) });
+  const keys = (n) => Array.from({ length: n }, (_, i) => `src/f${i}.js`);
+  const within = keys(EXPRESS_MAX_KEY_FILES);
+  const expect = (args, on) => {
+    const r = reviewRequired(args);
+    assert.strictEqual(r.on, on, JSON.stringify(args));
+    assert.ok(isReason(r.reason), JSON.stringify(r));
+  };
+  for (const policyValue of ['beyond-express', undefined, 'junk']) {
+    expect({ issue: issue('size:low'), keyFiles: within, policyValue }, false);
+    expect({ issue: issue('size:medium'), keyFiles: within, policyValue }, true);
+    expect({ issue: issue(), keyFiles: within, policyValue }, true);
+    expect({ issue: issue('size:low'), keyFiles: keys(EXPRESS_MAX_KEY_FILES + 1), policyValue }, true);
+    // keyFiles that are not an array count as beyond the bounds.
+    expect({ issue: issue('size:low'), keyFiles: undefined, policyValue }, true);
+    expect({ issue: issue('size:low'), keyFiles: 'src/a.js', policyValue }, true);
+  }
+  expect({ issue: issue('size:medium'), keyFiles: keys(EXPRESS_MAX_KEY_FILES + 1), policyValue: 'off' }, false);
+  expect({ issue: issue('size:low'), keyFiles: within, policyValue: 'on' }, true);
+});
+
+const VALID_EVIDENCE = Object.freeze({ path: 'tests/a.test.js', content: "require('node:test')('x', () => { throw new Error('x'); });\n" });
+
+test('AC2: finding shape', () => {
+  const valid = { path: 'src/a.js', line: 3, claim: 'Adds the wrong total.', evidence: { ...VALID_EVIDENCE } };
+  assert.strictEqual(findingShapeViolation(valid), null);
+  const { line: _line, ...missingLine } = valid;
+  class Finding {}
+  const bad = {
+    'missing key': missingLine,
+    'extra key': { ...valid, extra: 1 },
+    'line 0': { ...valid, line: 0 },
+    'line 1.5': { ...valid, line: 1.5 },
+    "line '3'": { ...valid, line: '3' },
+    'line past safe integers': { ...valid, line: Number.MAX_SAFE_INTEGER + 1 },
+    'path not a string': { ...valid, path: 5 },
+    'empty claim': { ...valid, claim: '' },
+    'blank claim': { ...valid, claim: '   ' },
+    'claim with \\n': { ...valid, claim: 'Adds.\nAlso subtracts.' },
+    'claim with \\r': { ...valid, claim: 'Adds.\rAlso subtracts.' },
+    'claim not a string': { ...valid, claim: ['x'] },
+    'evidence a string': { ...valid, evidence: 'tests/a.test.js' },
+    'evidence null': { ...valid, evidence: null },
+    'evidence an array': { ...valid, evidence: [] },
+    'finding null': null,
+    "finding 'x'": 'x',
+    'finding []': [],
+    'finding a class instance': Object.assign(new Finding(), valid),
+  };
+  for (const [name, f] of Object.entries(bad)) assert.ok(isReason(findingShapeViolation(f)), name);
+});
+
+test('AC3: evidence shape', () => {
+  const { path: p, content } = VALID_EVIDENCE;
+  assert.strictEqual(evidenceShapeViolation({ path: p, content }), null);
+  const bad = [
+    { command: 'touch marker' }, { cmd: 'x', path: p, content }, 'tests/a.test.js', { path: p },
+    { path: p, content, run: 'x' }, { path: 5, content }, { path: p, content: 5 }, null, [], { content },
+  ];
+  for (const e of bad) assert.ok(isReason(evidenceShapeViolation(e)), JSON.stringify(e));
+});
+
+// Path rules run against a fake file system: `types` maps a worktree-relative path to its lstatType
+// answer (the worktree itself is a directory; anything unlisted is missing), and `real` overrides
+// canonicalRealpath (an existing path otherwise resolves to itself, a missing one to null).
+const WT = path.resolve('/wt');
+const at = (rel) => path.join(WT, ...rel.split('/'));
+function pathOpts({ types = {}, real = {}, sensitivePaths = [] } = {}) {
+  const typeOf = new Map([[WT, 'directory'], ...Object.entries(types).map(([rel, t]) => [at(rel), t])]);
+  const realOf = new Map(Object.entries(real).map(([rel, r]) => [rel === '' ? WT : at(rel), r]));
+  return {
+    wt: WT,
+    sensitivePaths,
+    deps: {
+      lstatType: (p) => ({ type: typeOf.get(p) || 'missing', code: null }),
+      canonicalRealpath: (p) => (realOf.has(p) ? realOf.get(p) : (typeOf.has(p) ? p : null)),
+    },
+  };
+}
+
+const testPathOfLength = (n) => `tests/${'a'.repeat(n - 'tests/'.length - '.test.js'.length)}.test.js`;
+
+// One row per PATH_RULES entry; each input trips that rule and no other, so dropping the rule
+// turns its row (and only its row) red.
+const PATH_RULE_ROWS = [
+  { rule: 'empty-or-too-long', input: testPathOfLength(EVIDENCE_PATH_MAX_CHARS + 1) },
+  { rule: 'absolute-or-scheme', input: '/abs/a.test.js' },
+  { rule: 'backslash', input: 'tests\\a.test.js' },
+  { rule: 'percent-encoded', input: 'tests/%2e%2e/a.test.js' },
+  { rule: 'dot-segment-or-not-normal', input: 'tests/../a.test.js' },
+  { rule: 'trailing-slash', input: 'tests/' },
+  { rule: 'flag-shaped', input: '-a.test.js' },
+  { rule: 'git-segment', input: '.git/info/a.test.js' },
+  { rule: 'not-test-path', input: 'src/contest.js' },
+  { rule: 'protected-or-sensitive', input: 'hooks/a.test.js' },
+  { rule: 'exists', input: 'tests/a.test.js', fs: { types: { tests: 'directory', 'tests/a.test.js': 'file' } } },
+  { rule: 'parent-escapes', input: 'tests/link/a.test.js', fs: { types: { tests: 'directory', 'tests/link': 'symlink' } } },
+];
+
+test('AC4: each path rule refuses its own case', async (t) => {
+  for (const row of PATH_RULE_ROWS) {
+    await t.test(row.rule, () => {
+      const opts = pathOpts(row.fs);
+      const tripped = PATH_RULES.filter((r) => r.test(row.input, opts)).map((r) => r.name);
+      assert.deepStrictEqual(tripped, [row.rule], JSON.stringify(row.input));
+      assert.strictEqual(pathRuleViolation(row.input, opts), row.rule);
+    });
+  }
+  assert.strictEqual(pathRuleViolation('tests/new/a.test.js', pathOpts()), null);
+  assert.strictEqual(pathRuleViolation(testPathOfLength(EVIDENCE_PATH_MAX_CHARS), pathOpts()), null);
+});
+
+test('AC4: PATH_RULES is frozen, ordered, and names each rule once', () => {
+  assert.ok(Object.isFrozen(PATH_RULES) && PATH_RULES.every(Object.isFrozen));
+  assert.deepStrictEqual(PATH_RULES.map((r) => r.name), PATH_RULE_ROWS.map((r) => r.rule));
+});
+
+test('AC4: every listed shape is refused by the first rule it trips', () => {
+  const rows = [
+    ['', 'empty-or-too-long'],
+    [5, 'empty-or-too-long'],
+    ['C:/a.test.js', 'absolute-or-scheme'],
+    ['c:\\a.test.js', 'absolute-or-scheme'],
+    ['file:///a.test.js', 'absolute-or-scheme'],
+    ['FILE:a.test.js', 'absolute-or-scheme'],
+    ['https://x/a.test.js', 'absolute-or-scheme'],
+    ['tests%2Fa.test.js', 'percent-encoded'],
+    ['tests/%2E%2E/a.test.js', 'percent-encoded'],
+    ['tests%5ca.test.js', 'percent-encoded'],
+    ['tests/./a.test.js', 'dot-segment-or-not-normal'],
+    ['./tests/a.test.js', 'dot-segment-or-not-normal'],
+    ['tests//a.test.js', 'dot-segment-or-not-normal'],
+    ['tests/a/..', 'dot-segment-or-not-normal'],
+    ['src/latest/widget.js', 'not-test-path'],
+    ['skills/test/a.md', 'not-test-path'],
+    ['.github/x.test.js', 'protected-or-sensitive'],
+    ['x/.GIT/a.test.js', 'git-segment'],
+  ];
+  for (const [input, rule] of rows) assert.strictEqual(pathRuleViolation(input, pathOpts()), rule, JSON.stringify(input));
+  // A configured merge-sensitive glob, and a sensitive-path setting that is not a list (fails closed).
+  assert.strictEqual(pathRuleViolation('secure/a.test.js', pathOpts({ sensitivePaths: ['secure/**'] })), 'protected-or-sensitive');
+  assert.strictEqual(pathRuleViolation('secure/a.test.js', pathOpts()), null);
+  assert.strictEqual(pathRuleViolation('tests/a.test.js', { ...pathOpts(), sensitivePaths: 'secure/**' }), 'protected-or-sensitive');
+  // An existing leaf of any kind (a dangling symlink lstats as a symlink).
+  for (const type of ['file', 'directory', 'symlink', 'unreadable', 'other']) {
+    const opts = pathOpts({ types: { tests: 'directory', 'tests/a.test.js': type } });
+    assert.strictEqual(pathRuleViolation('tests/a.test.js', opts), 'exists', type);
+  }
+});
+
+test('AC4: the resolved parent must stay inside the worktree', () => {
+  const file = 'tests/sub/a.test.js';
+  const verdict = (fs, p = file) => pathRuleViolation(p, pathOpts(fs));
+  // The parent is a symlink.
+  assert.strictEqual(verdict({ types: { tests: 'directory', 'tests/sub': 'symlink' } }), 'parent-escapes');
+  // The parent is a directory that resolves outside the worktree.
+  assert.strictEqual(verdict({ types: { tests: 'directory', 'tests/sub': 'directory' }, real: { 'tests/sub': path.resolve('/elsewhere/sub') } }), 'parent-escapes');
+  // The parent, or the worktree itself, does not resolve.
+  assert.strictEqual(verdict({ types: { tests: 'directory', 'tests/sub': 'directory' }, real: { 'tests/sub': null } }), 'parent-escapes');
+  assert.strictEqual(verdict({ types: { tests: 'directory', 'tests/sub': 'directory' }, real: { '': null } }), 'parent-escapes');
+  // The nearest existing ancestor is not a directory.
+  assert.strictEqual(verdict({ types: { tests: 'file' } }), 'parent-escapes');
+  assert.strictEqual(verdict({ types: { tests: 'unreadable' } }), 'parent-escapes');
+  // Containment compares canonical forms: a worktree whose real path differs.
+  const realWt = path.resolve('/private/wt');
+  assert.strictEqual(verdict({ types: { tests: 'directory', 'tests/sub': 'directory' }, real: { '': realWt, 'tests/sub': path.join(realWt, 'tests', 'sub') } }), null);
+  assert.strictEqual(verdict({ types: { tests: 'directory', 'tests/sub': 'directory' }, real: { '': realWt } }), 'parent-escapes');
+  // A missing parent whose nearest existing ancestor is inside, and a file at the worktree root.
+  assert.strictEqual(verdict({ types: { tests: 'directory' } }, 'tests/new/deeper/a.test.js'), null);
+  assert.strictEqual(verdict({}, 'tests/new/a.test.js'), null);
+  assert.strictEqual(verdict({}, 'a.test.js'), null);
+});
+
+test('AC5: content rules at the edge', () => {
+  const max = EVIDENCE_CONTENT_MAX_BYTES;
+  for (const c of ['', 5, null, undefined, 'a'.repeat(max + 1), 'é'.repeat(max / 2) + 'a', 'é'.repeat(max / 2 + 1)]) {
+    assert.ok(isReason(contentViolation(c)), typeof c === 'string' ? `${c.length} chars` : String(c));
+  }
+  assert.strictEqual(contentViolation('a'.repeat(max)), null);
+  assert.strictEqual(Buffer.byteLength('é'.repeat(max / 2), 'utf8'), max);
+  assert.strictEqual(contentViolation('é'.repeat(max / 2)), null);
+});
+
+test('AC5: named bounds', () => {
+  assert.strictEqual(EVIDENCE_PATH_MAX_CHARS, 200);
+  assert.strictEqual(EVIDENCE_CONTENT_MAX_BYTES, 65536);
+  assert.strictEqual(MAX_FINDINGS, 5);
+  assert.strictEqual(EVENT_TEXT_MAX_CHARS, 200);
+  const wallClock = POLICY_KEYS.find((k) => k.key === 'express-driver-wall-clock-minutes');
+  assert.ok(Number.isSafeInteger(wallClock.min) && wallClock.min >= 1);
+  assert.ok(EVIDENCE_RUN_TIMEOUT_MS < 60000 * wallClock.min);
 });

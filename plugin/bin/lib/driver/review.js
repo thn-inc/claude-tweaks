@@ -70,6 +70,30 @@
 // 'ERR_TEST_FAILURE' just as a file-level point does. A hook failure ('hookFailed') is not a test
 // case. Text the evidence file prints is folded into `# ` comments. The parse is one pass over the
 // lines, with anchored per-line regexes only, because the evidence test controls part of the text.
+//
+// On or off (reviewRequired): policy `off` and `on` decide alone; any other value is the beyond
+// rule, on when the size label is not `low` or the Key Files (the eligibility verdict's own
+// extraction; a non-array counts as beyond) exceed EXPRESS_MAX_KEY_FILES.
+//
+// The reviewer's result is untrusted, and an evidence path names a file the driver writes into the
+// worktree, so every rule here fails closed and no reason string echoes reviewer text.
+//   finding   a plain object with exactly path (string), line (safe integer >= 1), claim (string,
+//             non-blank, one line) and evidence (plain object)
+//   evidence  a plain object with exactly path and content, both strings: a command, an extra key
+//             or a missing content is discarded, never run
+//   content   a non-empty string of at most EVIDENCE_CONTENT_MAX_BYTES UTF-8 bytes
+//   path      PATH_RULES, in order; the first rule that trips names the discard. Lexical rules come
+//             first, then isTestPath and the protected / merge-sensitive check (both through
+//             classifyDiffFiles and isProtectedPath, the eligibility gate's own checks), then the
+//             file-system rules through deps (lstatType, canonicalRealpath): the leaf must not
+//             exist in any form, and the nearest existing ancestor of its parent must be a real
+//             directory whose canonical path lies inside the worktree's.
+
+const path = require('path');
+const { parseRecordFacets } = require('../issues/record');
+const { EXPRESS_MAX_KEY_FILES, isProtectedPath } = require('../express/eligibility');
+const { classifyDiffFiles } = require('../issues/blast-radius');
+const { isAncestorOrSelf } = require('../path-guard');
 
 const MAX_FINDINGS = 5;
 const EVIDENCE_PATH_MAX_CHARS = 200;
@@ -149,6 +173,113 @@ function classifyEvidenceRun({ code, timedOut, tap }) {
   return result('unplaceable');
 }
 
+// Whether the reviewer runs for this record. keyFiles is the eligibility verdict's own
+// extractKeyFiles result (ctx.keyFiles).
+function reviewRequired({ issue, keyFiles, policyValue } = {}) {
+  if (policyValue === 'off') return { on: false, reason: 'express-driver-review is off' };
+  if (policyValue === 'on') return { on: true, reason: 'express-driver-review is on' };
+  const { size } = parseRecordFacets((issue && issue.labels) || []);
+  if (size !== 'low') return { on: true, reason: `size ${size || 'unlabelled'} is beyond size:low` };
+  if (!Array.isArray(keyFiles)) return { on: true, reason: 'Key Files unreadable' };
+  if (keyFiles.length > EXPRESS_MAX_KEY_FILES) {
+    return { on: true, reason: `${keyFiles.length} Key Files is beyond ${EXPRESS_MAX_KEY_FILES}` };
+  }
+  return { on: false, reason: `size:low and ${keyFiles.length} Key Files are inside the express bounds` };
+}
+
+function isPlainObject(v) {
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
+}
+
+// Exactly the keys named. The reason names only our own key names, never the reviewer's.
+function keysViolation(what, v, keys) {
+  if (!isPlainObject(v)) return `${what} is not an object`;
+  const missing = keys.find((k) => !Object.hasOwn(v, k));
+  if (missing) return `${what} has no ${missing}`;
+  if (Object.keys(v).length !== keys.length) return `${what} has an unexpected key`;
+  return null;
+}
+
+function findingShapeViolation(f) {
+  const keys = keysViolation('finding', f, ['path', 'line', 'claim', 'evidence']);
+  if (keys) return keys;
+  if (typeof f.path !== 'string') return 'finding path is not a string';
+  if (!Number.isSafeInteger(f.line) || f.line < 1) return 'finding line is not an integer of at least 1';
+  if (typeof f.claim !== 'string' || f.claim.trim() === '' || /[\r\n]/.test(f.claim)) {
+    return 'finding claim is not one non-blank line';
+  }
+  if (!isPlainObject(f.evidence)) return 'finding evidence is not an object';
+  return null;
+}
+
+function evidenceShapeViolation(evidence) {
+  const keys = keysViolation('evidence', evidence, ['path', 'content']);
+  if (keys) return keys;
+  if (typeof evidence.path !== 'string') return 'evidence path is not a string';
+  if (typeof evidence.content !== 'string') return 'evidence content is not a string';
+  return null;
+}
+
+function contentViolation(content) {
+  if (typeof content !== 'string') return 'evidence content is not a string';
+  if (content === '') return 'evidence content is empty';
+  if (Buffer.byteLength(content, 'utf8') > EVIDENCE_CONTENT_MAX_BYTES) {
+    return `evidence content is over ${EVIDENCE_CONTENT_MAX_BYTES} bytes`;
+  }
+  return null;
+}
+
+// The eligibility gate's own test-path and merge-sensitive checks, for one path.
+const classifyPath = (p, sensitivePaths) => classifyDiffFiles([{ path: p, additions: 0, deletions: 0 }], sensitivePaths)[0];
+const absoluteIn = (wt, p) => path.join(path.resolve(wt), ...p.split('/'));
+
+// From the parent up, the first ancestor that exists (stopping at the worktree) must be a real
+// directory whose canonical path lies inside the worktree's canonical path.
+function parentEscapes(p, { wt, deps }) {
+  const root = path.resolve(wt);
+  const rootReal = deps.canonicalRealpath(root);
+  if (typeof rootReal !== 'string') return true;
+  let current = path.dirname(absoluteIn(root, p));
+  let type = deps.lstatType(current).type;
+  while (type === 'missing' && current !== root) {
+    const up = path.dirname(current);
+    if (up === current) break;
+    current = up;
+    type = deps.lstatType(current).type;
+  }
+  if (type !== 'directory') return true;
+  const real = deps.canonicalRealpath(current);
+  return typeof real !== 'string' || !isAncestorOrSelf(rootReal, real);
+}
+
+// test(p, { wt, sensitivePaths, deps }) is true when p violates the rule.
+const PATH_RULES = Object.freeze([
+  { name: 'empty-or-too-long', test: (p) => typeof p !== 'string' || p === '' || p.length > EVIDENCE_PATH_MAX_CHARS },
+  { name: 'absolute-or-scheme', test: (p) => /^\//.test(p) || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(p) },
+  { name: 'backslash', test: (p) => p.includes('\\') },
+  { name: 'percent-encoded', test: (p) => /%(2e|2f|5c)/i.test(p) },
+  { name: 'dot-segment-or-not-normal', test: (p) => p.split('/').some((s) => s === '.' || s === '..') || path.posix.normalize(p) !== p },
+  { name: 'trailing-slash', test: (p) => p.endsWith('/') },
+  { name: 'flag-shaped', test: (p) => p.startsWith('-') },
+  { name: 'git-segment', test: (p) => p.split('/').some((s) => s.toLowerCase() === '.git') },
+  { name: 'not-test-path', test: (p) => !classifyPath(p, []).isTest },
+  {
+    name: 'protected-or-sensitive',
+    // A sensitive-path setting that is not a list fails closed.
+    test: (p, { sensitivePaths = [] }) => !Array.isArray(sensitivePaths) || isProtectedPath(p) || classifyPath(p, sensitivePaths).isSensitive,
+  },
+  { name: 'exists', test: (p, { wt, deps }) => deps.lstatType(absoluteIn(wt, p)).type !== 'missing' },
+  { name: 'parent-escapes', test: parentEscapes },
+].map(Object.freeze));
+
+// The first violated rule's name, or null when the path may be written.
+function pathRuleViolation(p, opts) {
+  const rule = PATH_RULES.find((r) => r.test(p, opts));
+  return rule ? rule.name : null;
+}
+
 module.exports = {
   MAX_FINDINGS,
   EVIDENCE_PATH_MAX_CHARS,
@@ -159,4 +290,10 @@ module.exports = {
   EVIDENCE_COMMANDS,
   evidenceArgs,
   classifyEvidenceRun,
+  reviewRequired,
+  findingShapeViolation,
+  evidenceShapeViolation,
+  contentViolation,
+  PATH_RULES,
+  pathRuleViolation,
 };
