@@ -150,6 +150,8 @@ test('deps: has() applies the /usr/bin stub rule on darwin', { skip: process.pla
   const modulePath = require.resolve('../plugin/bin/lib/deps');
   const clt = '/Library/Developer/CommandLineTools/usr/bin/git';
   const origPath = process.env.PATH;
+  const origDevDir = process.env.DEVELOPER_DIR; // an exported DEVELOPER_DIR would decide alone
+  delete process.env.DEVELOPER_DIR;
   const origReadlink = fs.readlinkSync;
   const origExists = fs.existsSync;
   const originals = {};
@@ -174,6 +176,7 @@ test('deps: has() applies the /usr/bin stub rule on darwin', { skip: process.pla
     fs.existsSync = origExists;
     for (const k of Object.keys(originals)) childProcess[k] = originals[k];
     process.env.PATH = origPath;
+    if (origDevDir === undefined) delete process.env.DEVELOPER_DIR; else process.env.DEVELOPER_DIR = origDevDir;
     delete require.cache[modulePath];
   }
 });
@@ -181,6 +184,7 @@ test('deps: has() applies the /usr/bin stub rule on darwin', { skip: process.pla
 test('deps: hasAppleDeveloperTool follows the xcode-select link', () => {
   const target = '/Applications/Xcode.app/Contents/Developer';
   assert.strictEqual(deps.hasAppleDeveloperTool('git', {
+    env: {},
     readlink: () => target,
     exists: (p) => p === `${target}/usr/bin/git`,
   }), true);
@@ -189,6 +193,7 @@ test('deps: hasAppleDeveloperTool follows the xcode-select link', () => {
 test('deps: hasAppleDeveloperTool falls back to the Command Line Tools dir', () => {
   const enoent = () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); };
   assert.strictEqual(deps.hasAppleDeveloperTool('git', {
+    env: {},
     readlink: enoent,
     exists: (p) => p === '/Library/Developer/CommandLineTools/usr/bin/git',
   }), true);
@@ -196,7 +201,7 @@ test('deps: hasAppleDeveloperTool falls back to the Command Line Tools dir', () 
 
 test('deps: hasAppleDeveloperTool is false for the stub-only Mac', () => {
   const enoent = () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); };
-  assert.strictEqual(deps.hasAppleDeveloperTool('git', { readlink: enoent, exists: () => false }), false);
+  assert.strictEqual(deps.hasAppleDeveloperTool('git', { env: {}, readlink: enoent, exists: () => false }), false);
 });
 
 // xcode-select's own order: $DEVELOPER_DIR alone when set, else the link, else Xcode.app, then CLT.
@@ -344,14 +349,21 @@ test('deps: findOnPath accepts a win32 alias that statSync throws on', () => {
     const realStat = fs.statSync;
     const realLstat = fs.lstatSync;
     fs.statSync = (p, ...a) => {
-      if (p === candidate) throw Object.assign(new Error('UNKNOWN'), { code: 'UNKNOWN' });
+      if (p === candidate) throw Object.assign(new Error(errCode), { code: errCode });
       return realStat(p, ...a);
     };
     fs.lstatSync = (p, ...a) => (p === candidate ? { isFile: () => true, isSymbolicLink: () => false } : realLstat(p, ...a));
+    let errCode = 'UNKNOWN';
     try {
       assert.strictEqual(
         deps.findOnPath('winget', { env: { PATH: dir, PATHEXT: '.EXE' }, platform: 'win32', cwd }),
         candidate,
+      );
+      // An ENOENT miss (or a dangling link) is not rescued by lstat.
+      errCode = 'ENOENT';
+      assert.strictEqual(
+        deps.findOnPath('winget', { env: { PATH: dir, PATHEXT: '.EXE' }, platform: 'win32', cwd }),
+        null,
       );
       assert.strictEqual(
         deps.findOnPath('winget', { env: { PATH: dir, PATHEXT: '.EXE' }, platform: 'darwin', cwd }),

@@ -103,10 +103,10 @@ function findOnPath(name, { env, platform, cwd }) {
       try {
         const st = fs.statSync(candidate);
         if (st.isFile() && (win || (st.mode & 0o111))) return candidate;
-      } catch {
+      } catch (err) {
         // Windows App Execution Aliases (winget) are zero-byte reparse points that statSync can
-        // throw on; the link entry itself still proves the command is installed.
-        if (win) {
+        // throw on (not ENOENT); the link entry itself still proves the command is installed.
+        if (win && err.code !== 'ENOENT') {
           try {
             const ls = fs.lstatSync(candidate);
             if (ls.isFile() || ls.isSymbolicLink()) return candidate;

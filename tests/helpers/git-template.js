@@ -14,10 +14,11 @@
 // pointer) — in each spelling git or the OS may have written (raw, realpath,
 // Windows 8.3-expanded `realpath.native`; native, forward-slash and
 // git-config-escaped `\\` forms). A listed spelling that survives throws. So does
-// any visited file that still holds, in any case and any spelling, the template's
-// random names (the per-process root `ct-git-template-*` and the member base dir
-// `tN-*`), so a spelling the list lacks also fails the test loudly instead of
-// silently sharing the template's state.
+// any visited file that still holds, in any case, the template's random names (the
+// per-process root `ct-git-template-*` and the member base dir `tN-*`), so a
+// separator, escaping, case or 8.3-shortened-ancestor variant the list lacks also
+// fails the test loudly instead of silently sharing the template's state. Not
+// caught: an 8.3 form of those random segments themselves, which no tool here makes.
 //
 // Timestamps are deliberately NOT preserved: copies get fresh mtimes, as a
 // freshly built repo did, because some tests order worktrees by mtime. Git
@@ -106,8 +107,8 @@ function pathFiles(dir, out = []) {
 }
 
 // Two independent nets: the known spellings (the rewrite's own list), and — so a spelling
-// the list lacks (8.3 short name, drive-letter case, doubled slash) cannot slip through both
-// — a case-insensitive scan for `uniqueNames`, the spelling-free random names the template
+// the list lacks (8.3-shortened ancestor, drive-letter case, doubled slash) cannot slip
+// through both — a case-insensitive scan for `uniqueNames`, the spelling-free random names the template
 // lives under (its per-process root and each member's base dir).
 function assertNoTemplatePaths(rootDir, froms, uniqueNames = []) {
   const { re } = matcher(froms);

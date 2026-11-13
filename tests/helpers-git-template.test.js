@@ -198,6 +198,13 @@ test('assertNoTemplatePaths catches an unlisted spelling by the template\'s uniq
   assert.doesNotThrow(() => assertNoTemplatePaths(root, ['/T/tpl-1'], names));
 });
 
+test('fromTemplate hands the unique template names to the survivor check', () => {
+  // A .git pointer holding a doubled-slash, upper-cased member path: no generated spelling
+  // matches it, only the case-insensitive unique-name scan can.
+  const build = (dir) => fs.writeFileSync(path.join(dir, '.git'), `gitdir: //${dir.toUpperCase()}/.git/worktrees/w\n`);
+  assert.throws(() => fromTemplate('k-unique', build, { prefix: 'ct-gtq-' }), /survived rewrite/);
+});
+
 test('rewriteTemplatePaths rewrites every Windows-shaped spelling', () => {
   const root = mk('ct-gtwin-');
   fs.mkdirSync(path.join(root, '.git', 'worktrees', 'w'), { recursive: true });
