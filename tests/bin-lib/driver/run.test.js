@@ -274,6 +274,14 @@ const gitSub = (c) => (c.args[0] === '-C' ? c.args.slice(2) : c.args);
 const onGit = (...prefix) => (c) => c.kind === 'git' && prefix.every((p, i) => gitSub(c)[i] === p);
 const claimTarget = (c) => Number(c.args[c.args.indexOf('--targets') + 1]);
 const exitOne = () => { throw Object.assign(new Error('exit 1'), { status: 1 }); };
+// The test step's scope-file guard: the base blob (`rev-parse origin/{ref}:{scope}`, exit 1 when
+// absent), the ref check that tells "absent" from "no such ref", and the worktree file's hash.
+const SCOPE_REL = '.claude-tweaks/verify-scope.json';
+const SCOPE_SHA = 'b'.repeat(40);
+const blobCall = (ref) => (c) => onGit('rev-parse', '--verify', '--quiet', '--end-of-options')(c) && gitSub(c)[4] === `origin/${ref}:${SCOPE_REL}`;
+const refCall = (ref) => (c) => onGit('rev-parse', '--verify', '--quiet', '--end-of-options')(c) && gitSub(c)[4] === `origin/${ref}^{commit}`;
+// The scope file is on origin/{ref} with the same bytes as the worktree's copy.
+const scopeSame = (ref = 'main') => [blobCall(ref), `${SCOPE_SHA}\n`];
 
 // The launcher's envelope for a worker that finished (worker.js's ENVELOPE_FIELDS).
 const ENVELOPE = Object.freeze({
@@ -306,11 +314,15 @@ function defaultScript(over) {
     [on('lstatType'), { type: 'missing', code: 'ENOENT' }],
     [on('readdir'), []],
     [onGit('rev-parse', '--verify', '--end-of-options', 'HEAD'), `${HEAD_SHA}\n`],
+    // The test step's scope guard: no scope blob on origin by default, and the ref resolves.
+    [blobCall('main'), exitOne],
+    [refCall('main'), `${HEAD_SHA}\n`],
     [onGit('rev-parse'), exitOne],
     [onGit('ls-remote'), ''],
     [onGit('fetch'), ''],
     [onGit('worktree', 'add'), ''],
     [onGit('merge'), ''],
+    [onGit('hash-object'), `${SCOPE_SHA}\n`],
     [on('node', /hooks\.js$/, 'record-worktree'), (c) => ({ code: 0, stderr: '', stdout: `claude-tweaks: worktree recorded for ${path.basename(c.args[3])}\n` })],
     // The worker and commit steps' happy path: a finished worker, one changed file, a commit.
     [on('worker'), (c) => ({ ...ENVELOPE, ...pick(over.worker, c) })],
@@ -1129,7 +1141,7 @@ test('Review Focus 5: a non-main integration branch flows into fetch and worktre
   assert.deepEqual(gitCalls(h).find((c) => gitSub(c)[0] === 'worktree').args.slice(-1), ['origin/develop']);
 });
 
-test('Gotcha: a run with CLAUDE_CODE_SESSION_ID unset drives normally, and every CLI call gets deps.env', async () => {
+test('Gotcha: a run with CLAUDE_CODE_SESSION_ID unset drives normally, and every CLI call but verify.js gets deps.env (verify.js gets an allow-listed copy)', async () => {
   const env = { PATH: '/usr/bin' };
   const h = harness({ deps: { env } });
   assert.equal(await run(['#7'], h.deps), 0);
@@ -1138,7 +1150,9 @@ test('Gotcha: a run with CLAUDE_CODE_SESSION_ID unset drives normally, and every
   const cli = calls(h, 'node');
   assert.equal(cli.length, 10 + WINDOW_POLLS, 'claim, claim log, record-worktree, verify, check, compose-pr-body, record-pr, set-config, summary log, pr-checks --pr ×WINDOW_POLLS, pr-checks --run');
   for (const c of cli) {
-    assert.equal(c.env, env, c.args[0]);
+    // The verify.js child gets an allow-listed copy (#5267); every other CLI the driver's own env.
+    if (/verify\.js$/.test(c.args[0])) assert.deepEqual(c.env, { ...env, GH_CONFIG_DIR: emptyGhDir(h) }, c.args[0]);
+    else assert.equal(c.env, env, c.args[0]);
     assert.ok(!('CLAUDE_CODE_SESSION_ID' in c.env));
   }
 });
@@ -1883,7 +1897,7 @@ const checkReply = (env, code = 0) => [on('node', /express-lane\.js$/, 'check'),
 const lastLine = (h) => h.lines().at(-1);
 
 test('AC12.1: a regular verify-scope.json runs the scoped invocation', async () => {
-  const h = harness({ script: [scopeIs('file')] });
+  const h = harness({ script: [scopeIs('file'), scopeSame()] });
   const { ctx } = await driveCapturing(h);
   const [v] = verifyCalls(h);
   assert.deepEqual(v.args.slice(1), ['--run', runDirOf(h), '--default-suite-slots', '1', '--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', 'main']);
@@ -1921,6 +1935,143 @@ test('AC12.3, AC12.4: a symlinked scope file is refused via lstatType, no test r
   }
 });
 
+const emptyGhDir = (h) => path.join(runDirOf(h), 'gh-config-empty');
+const scopeHash = (sha) => [onGit('hash-object'), `${sha}\n`];
+const catBlob = (text) => [onGit('cat-file', 'blob'), text];
+
+test('#5267: a scope file whose bytes differ from origin/{ref}\'s blob stops before verify.js runs', async () => {
+  const h = harness({ script: [scopeIs('file'), scopeSame(), scopeHash('c'.repeat(40)), catBlob('{"a":1}\n'), [on('readFile'), '{"a":2}\n']] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status, final.stop.class], ['test', 'stop', 'pre-push']);
+  assert.match(final.stop.detail, /verify-scope\.json.*differs from origin\/main/);
+  assert.equal(verifyCalls(h).length, 0, 'no verify call');
+  const hash = gitCalls(h).find((c) => gitSub(c)[0] === 'hash-object');
+  assert.deepEqual(gitSub(hash), ['hash-object', '--no-filters', '--', SCOPE_REL]);
+  assert.equal(hash.cwd, WT);
+  const blob = gitCalls(h).find((c) => blobCall('main')(c));
+  assert.deepEqual(gitSub(blob), ['rev-parse', '--verify', '--quiet', '--end-of-options', `origin/main:${SCOPE_REL}`]);
+});
+
+test('#5267: an index flag (assume-unchanged / skip-worktree) cannot hide an edited scope file — bytes are compared, not the index', async () => {
+  // Under the flag `git diff --quiet` and `cat-file -e` exit 0 for an edited file; the fixture answers
+  // both with success and the working-tree hash still differs from the base blob.
+  const h = harness({ script: [scopeIs('file'), scopeSame(), scopeHash('d'.repeat(40)), [onGit('diff'), ''], [on('readFile'), '{"edited":true}\n'], [onGit('cat-file'), (c) => (gitSub(c)[1] === 'blob' ? '{"a":1}\n' : '')]] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status, final.stop.class], ['test', 'stop', 'pre-push']);
+  assert.match(final.stop.detail, /verify-scope\.json.*differs from origin\/main/);
+  assert.equal(verifyCalls(h).length, 0, 'no verify call');
+  assert.ok(!gitCalls(h).some((c) => gitSub(c)[0] === 'diff' || (gitSub(c)[0] === 'cat-file' && gitSub(c)[1] !== 'blob')), 'no index-based call is made');
+});
+
+const crlfRun = async (base, wtText, extra = []) => {
+  const h = harness({ script: [scopeIs('file'), scopeSame(), scopeHash('e'.repeat(40)), ...extra, catBlob(base), [on('readFile'), wtText]] });
+  await run(['#7'], h.deps);
+  return h;
+};
+
+test('#5267: a CRLF checkout of the unchanged scope file (different hash, equal after CRLF to LF) proceeds to verify.js', async () => {
+  const h = await crlfRun('{\n  "a": 1\n}\n', '{\r\n  "a": 1\r\n}\r\n');
+  assert.equal(verifyCalls(h).length, 1, 'verify runs');
+  const cat = gitCalls(h).find((c) => gitSub(c)[0] === 'cat-file');
+  assert.deepEqual(gitSub(cat), ['cat-file', 'blob', SCOPE_SHA]);
+  assert.deepEqual(calls(h, 'readFile').map((c) => c.args[0]), [path.join(WT, SCOPE_REL)]);
+});
+
+test('#5267: any difference beyond CRLF vs LF (a byte, a lone CR, a trailing newline, a BOM) still stops before verify.js', async () => {
+  const base = '{\n"a": 1\n}\n';
+  for (const wt of ['{\r\n"a": 2\r\n}\r\n', '{\r\n"a": 1\r\n}\r', '{\r\n"a": 1\r\n}\r\n\r\n', '{\n"a": 1\n}\n ', '\uFEFF{\n"a": 1\n}\n', '{\n"a": 1\n}\r\r\n']) {
+    const h = await crlfRun(base, wt);
+    const final = lastLine(h);
+    assert.deepEqual([final.stop.step, final.status, final.stop.class], ['test', 'stop', 'pre-push'], JSON.stringify(wt));
+    assert.match(final.stop.detail, /verify-scope\.json.*differs from origin\/main/);
+    assert.equal(verifyCalls(h).length, 0, `no verify call for ${JSON.stringify(wt)}`);
+  }
+});
+
+test('#5267: identical hashes never read either side (no cat-file, no readFile)', async () => {
+  const h = harness({ script: [scopeIs('file'), scopeSame()] });
+  await run(['#7'], h.deps);
+  assert.equal(verifyCalls(h).length, 1);
+  assert.equal(calls(h, 'readFile').length, 0);
+  assert.ok(!gitCalls(h).some((c) => gitSub(c)[0] === 'cat-file'));
+});
+
+test('#5267: a failed read of the scope file, or of the base blob, fails the step with no verify call', async () => {
+  for (const extra of [[[on('readFile'), new Error('EACCES: denied')]], [[onGit('cat-file'), new Error('fatal: bad object')]]]) {
+    const h = await crlfRun('x', 'x', extra);
+    const final = lastLine(h);
+    assert.equal(final.status, 'fail');
+    assert.match(final.stop.detail, /could not read/);
+    assert.equal(verifyCalls(h).length, 0, 'no verify call');
+  }
+});
+
+test('#5267: a scope file the worker deleted (missing on disk, present on origin) stops before verify.js', async () => {
+  const h = harness({ script: [scopeIs('missing'), scopeSame()] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status, final.stop.class], ['test', 'stop', 'pre-push']);
+  assert.match(final.stop.detail, /verify-scope\.json.*differs from origin\/main/);
+  assert.equal(verifyCalls(h).length, 0, 'no verify call');
+});
+
+test('#5267: the verify.js child gets only allow-listed variables, never the driver credentials', async () => {
+  const h = harness();
+  h.deps.env = { PATH: '/bin', HOME: '/home/u', GH_TOKEN: 'x', GITHUB_TOKEN: 'y', GH_HOST: 'h', AWS_SECRET_ACCESS_KEY: 'z' };
+  await run(['#7'], h.deps);
+  const [v] = verifyCalls(h);
+  assert.deepEqual(v.env, { PATH: '/bin', HOME: '/home/u', GH_CONFIG_DIR: emptyGhDir(h) });
+  assert.ok(calls(h, 'mkdirSync').some((c) => c.args[0] === emptyGhDir(h) && c.args[1].recursive === true), 'the empty gh config dir is created');
+  for (const name of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_HOST', 'AWS_SECRET_ACCESS_KEY']) assert.ok(!(name in v.env), name);
+  // The other steps keep the driver env: the claim call still sees GH_TOKEN.
+  assert.equal(calls(h, 'node', /claim-targets\.js$/)[0].env.GH_TOKEN, 'x');
+});
+
+test('#5267: on win32 the verify.js child keeps Path and SystemRoot, never GH_TOKEN', async () => {
+  const h = harness();
+  h.deps.platform = 'win32';
+  h.deps.env = { Path: 'C:\\bin', SystemRoot: 'C:\\Windows', GH_TOKEN: 'x' };
+  await run(['#7'], h.deps);
+  const [v] = verifyCalls(h);
+  assert.deepEqual(v.env, { Path: 'C:\\bin', SystemRoot: 'C:\\Windows', GH_CONFIG_DIR: emptyGhDir(h) });
+});
+
+test('#5267: a worker-created scope file that is not on origin/{ref} stops before verify.js', async () => {
+  const h = harness({ script: [scopeIs('file')] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status, final.stop.class], ['test', 'stop', 'pre-push']);
+  assert.match(final.stop.detail, /verify-scope\.json.*not on origin\/main/);
+  assert.equal(verifyCalls(h).length, 0, 'no verify call');
+});
+
+test('#5267: a git failure that is not "path absent" fails the step, no verify call', async () => {
+  const boom = (status) => () => { throw Object.assign(new Error('fatal: bad object'), { status }); };
+  const cases = [
+    ['blob lookup, status 128', [scopeIs('file'), [blobCall('main'), boom(128)]]],
+    ['blob lookup, status 2', [scopeIs('file'), [blobCall('main'), boom(2)]]],
+    ['hash-object', [scopeIs('file'), scopeSame(), [onGit('hash-object'), boom(128)]]],
+    ['absent blob but no such ref', [scopeIs('missing'), [refCall('main'), exitOne]]],
+  ];
+  for (const [label, script] of cases) {
+    const h = harness({ script });
+    await run(['#7'], h.deps);
+    const final = lastLine(h);
+    assert.deepEqual([final.stop.step, final.status], ['test', 'fail'], label);
+    assert.equal(verifyCalls(h).length, 0, label);
+  }
+});
+
+test('#5267: an unchanged scope file, and an absent one, proceed to verify.js', async () => {
+  for (const script of [[scopeIs('file'), scopeSame()], []]) {
+    const h = harness({ script });
+    await run(['#7'], h.deps);
+    assert.equal(verifyCalls(h).length, 1);
+  }
+});
+
 test('AC6.2: red tests stop at test', async () => {
   const h = harness({ script: [[on('node', /verify\.js$/), { code: 1, stdout: '', stderr: 'boom' }]] });
   await run(['#7'], h.deps);
@@ -1938,13 +2089,13 @@ test('a verify run that never exits (timeout, spawn error) is a fail, not red te
   assert.match(final.stop.detail, /did not finish/);
 });
 
-test('check and verify run in the worktree, with deps.env and a generous bound on verify', async () => {
+test('check and verify run in the worktree, check with deps.env and verify with an allow-listed copy plus GH_CONFIG_DIR, and a generous bound on verify', async () => {
   const env = { PATH: '/usr/bin' };
   const h = harness({ deps: { env } });
   await run(['#7'], h.deps);
   assert.equal(verifyCalls(h)[0].cwd, WT);
   assert.equal(checkCalls(h)[0].cwd, WT);
-  assert.equal(verifyCalls(h)[0].env, env);
+  assert.deepEqual(verifyCalls(h)[0].env, { ...env, GH_CONFIG_DIR: emptyGhDir(h) }, 'an allow-listed copy of deps.env plus an empty gh config dir (#5267)');
   assert.equal(checkCalls(h)[0].env, env);
   assert.equal(verifyCalls(h)[0].timeout, VERIFY_TIMEOUT_MS);
   assert.ok(VERIFY_TIMEOUT_MS >= 30 * 60 * 1000);
@@ -1969,7 +2120,7 @@ test('verify exit 1 is the red-tests stop; any other non-zero exit is a fail car
 test('a symlinked (or non-directory) .claude-tweaks parent refuses the scope file, no test run', async () => {
   const parent = path.join(WT, '.claude-tweaks');
   for (const type of ['symlink', 'file', 'other', 'unreadable']) {
-    const h = harness({ script: [[(c) => c.kind === 'lstatType' && c.args[0] === parent, { type, code: null }], scopeIs('file')] });
+    const h = harness({ script: [[(c) => c.kind === 'lstatType' && c.args[0] === parent, { type, code: null }], scopeIs('file'), scopeSame()] });
     await run(['#7'], h.deps);
     const final = lastLine(h);
     assert.deepEqual([final.stop.step, final.status, final.stop.class], ['test', 'stop', 'pre-push'], type);
@@ -2027,7 +2178,7 @@ test('a signal queued during the last record\'s final synchronous call is delive
 });
 
 test('check runs express-lane.js check with the run, issue, integration ref and a record.json holding the fetched record without its comments', async () => {
-  const h = harness({ policy: { 'integration-branch': 'develop' }, script: [scopeIs('file')] });
+  const h = harness({ policy: { 'integration-branch': 'develop' }, script: [scopeIs('file'), scopeSame('develop')] });
   await run(['#7'], h.deps);
   const runDir = runDirOf(h);
   const recordFile = path.join(runDir, 'record.json');
@@ -2264,7 +2415,8 @@ test('AC2.1: happy path calls run in the deliverable order', async () => {
     // The leftover check's local and remote branch probes run before the worktree's own fetch.
     'git rev-parse', 'git ls-remote', 'git fetch', 'git worktree add', 'git fetch', 'git merge', 'node hooks.js record-worktree',
     'worker', 'git status', 'git add', 'git commit',
-    'node verify.js', 'node express-lane.js check', 'git rev-parse', 'git push',
+    // The test step looks up the scope blob on origin/{ref} (absent here, so the ref check follows) before verify.js.
+    'git rev-parse', 'git rev-parse', 'node verify.js', 'node express-lane.js check', 'git rev-parse', 'git push',
     'node compose-pr-body.js', 'gh pr create', 'node hooks.js record-pr', 'node set-config.js',
     'node log-decision.js',
     // The polls up to the settled one, then the one --run read; the commit-run answer rides each poll's envelope.
