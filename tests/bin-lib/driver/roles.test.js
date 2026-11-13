@@ -416,3 +416,28 @@ test('toolchainReadPaths still reads the interpreter past the known env flags an
     assert.deepStrictEqual(toolchainReadPaths('npm test', d), both, line);
   }
 });
+
+test('toolchainReadPaths keeps its -S, bundled-flag and -- readings', () => {
+  const only = ['/h/.nvm/v22/lib/node_modules/npm'];
+  const cases = [
+    ['#!/usr/bin/env -S node --flag', [...only, '/h/.nvm/v22']], ['#!/usr/bin/env -Snode --flag', [...only, '/h/.nvm/v22']],
+    ['#!/usr/bin/env -S-i node', [...only, '/h/.nvm/v22']], ['#!/usr/bin/env -S -P /opt/a node', only],
+    ['#!/usr/bin/env -iv node', only], ['#!/usr/bin/env --', only], ['#!/usr/bin/env -- node', only],
+    ['#!/usr/bin/env -uC node', [...only, '/h/.nvm/v22']], ['#!/usr/bin/env -v -i node', [...only, '/h/.nvm/v22']],
+    ['#!/usr/bin/env -uFOO node', [...only, '/h/.nvm/v22']], ['#!/usr/bin/env --unset=FOO node', [...only, '/h/.nvm/v22']],
+    ['#!/usr/bin/env -0 node', [...only, '/h/.nvm/v22']], ['#!/usr/bin/env - node', [...only, '/h/.nvm/v22']],
+    ['#!/usr/bin/env -S /opt/py/bin/python3 -u', [...only, '/opt/py']],
+  ];
+  for (const [line, expected] of cases) {
+    const d = fakeDeps({ ...NPM_DEPS, firstLine: { [NPM_REAL]: line } });
+    assert.deepStrictEqual(toolchainReadPaths('npm test', d), expected, line);
+  }
+});
+
+test('toolchainReadPaths never splits a -S… token that is an env option\'s argument', () => {
+  const both = ['/h/.nvm/v22/lib/node_modules/npm', '/h/.nvm/v22'];
+  for (const line of ['#!/usr/bin/env -u -Sfoo node', '#!/usr/bin/env -C -Sfoo node', '#!/usr/bin/env --chdir -Sfoo node']) {
+    const d = fakeDeps({ ...NPM_DEPS, lookup: { ...NPM_DEPS.lookup, foo: '/foo/bin/foo' }, firstLine: { [NPM_REAL]: line } });
+    assert.deepStrictEqual(toolchainReadPaths('npm test', d), both, line);
+  }
+});

@@ -297,9 +297,11 @@ function shebangInterpreter(line) {
   const tokens = line.slice(2).split(/\s+/).filter(Boolean);
   if (tokens.length === 0) return null;
   if (path.posix.basename(tokens[0]) !== 'env') return tokens[0];
-  const args = tokens.slice(1).flatMap((t) => (/^-S./.test(t) ? ['-S', t.slice(2)] : [t]));
+  const args = tokens.slice(1);
   for (let i = 0; i < args.length; i++) {
-    const token = args[i];
+    // An attached -S in option position (`-Snode`): its string is read as the next token. A
+    // token consumed as an option's argument (`-u -Sfoo`) never reaches here, so is never split.
+    const token = /^-S./.test(args[i]) ? args[i].slice(2) : args[i];
     if (token === '-S' || ENV_FLAGS.includes(token) || ENV_ATTACHED_ARGUMENT.test(token)) continue;
     if (ENV_OPTIONS_WITH_ARGUMENT.includes(token)) i++;
     else if (token.startsWith('-')) return null;
