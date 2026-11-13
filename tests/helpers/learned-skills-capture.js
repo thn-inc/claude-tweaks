@@ -154,7 +154,7 @@ const WRITES = ['patch-write', 'patch-write-partial', 'patch-write-silent', 'sta
 const POINTS = {
   tracked: [...WRITES, 'checkout', 'promote', 'manifest', 'gate', 're-apply', 'reverse-apply'],
   untracked: [...WRITES, 'rm-cached', 'unlink', 'promote', 'manifest', 'gate', 're-apply', 'reverse-apply'],
-  joined: [...WRITES, 'checkout', 'join-apply', 're-diff', 'promote', 'restore-earlier', 'manifest', 'gate', 're-apply', 'reverse-apply'],
+  joined: [...WRITES, 'checkout', 'join-apply', 're-diff', 'promote', 'manifest', 'gate', 're-apply', 'reverse-apply'],
 };
 // One write cannot fail two ways at once.
 const EXCLUSIVE = [
@@ -180,9 +180,7 @@ const CHAINS = {
   ],
   joined: [
     ['checkout', 'staged-write', 're-apply'],
-    ['checkout', 'staged-write', 're-apply', 'restore-earlier'],
     ['promote', 'staged-write', 're-apply'],
-    ['promote', 'staged-write', 're-apply', 'restore-earlier'],
     ['re-diff', 'reverse-apply'],
     ['re-diff', 'reverse-apply', 'staged-write'],
     ['re-diff', 'staged-write', 're-apply'],
@@ -276,7 +274,8 @@ function faultyDeps(s, faults, fired) {
         return undefined;
       }
     }
-    if (s.existingPatch && p === s.existingPatch && has('restore-earlier')) throw boom('restore-earlier');
+    // The earlier captured patch is replaced only by a rename (the promote step), never written in place.
+    if (s.existingPatch && p === s.existingPatch) s.rewroteEarlier = true;
     if (path.basename(p) === 'manifest.json' && has('manifest')) throw boom('manifest');
     for (const [where, n] of [[inLs, 'patch-write'], [inStaged, 'staged-write']]) {
       if (!where) continue;
@@ -354,6 +353,7 @@ function breaches(s, res, err) {
   // (a) a durable place holds the whole change.
   if (!(treeHolds || lsFiles.some(holdsFile) || stagedFiles.some(holdsStaged))) out.push('(a) no durable place holds the whole change');
   if (s.joined && !(eq(earlierBytes, s.P1) || eq(earlierBytes, s.C))) out.push('(a) the earlier captured patch file was damaged');
+  if (s.rewroteEarlier) out.push('(a) the earlier captured patch file was written in place');
 
   // (b) the outcome names a place that holds it.
   if (err) {
@@ -447,10 +447,8 @@ function registerMatrix(kind, part, shardOpts, { autocrlf } = {}) {
     assert.deepEqual(red, []);
     if (part === 'chains') {
       // Every point is reached somewhere in this part, so the matrix exercises it.
-      assert.deepEqual([...P, ...GATE_POINTS].filter((p) => !fired.has(p) && p !== 'restore-earlier'), [], 'fault points that never fired');
+      assert.deepEqual([...P, ...GATE_POINTS].filter((p) => !fired.has(p)), [], 'fault points that never fired');
     }
-    // The earlier captured patch is never rewritten in place: that step no longer exists.
-    assert.equal(fired.has('restore-earlier'), false);
   });
 }
 
