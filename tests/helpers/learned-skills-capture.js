@@ -174,8 +174,13 @@ const CHAINS = {
     ['patch-write-silent', 'staged-write-silent', 're-apply'],
   ],
 };
-CHAINS.tracked.push(['patch-write-silent', 'staged-write', 're-apply'], ['patch-write-silent', 'gate', 're-apply']);
-CHAINS.untracked.push(['patch-write-silent', 'staged-write', 're-apply']);
+// Silent writes: only a re-read can tell the pending copy or the staged file was not written whole.
+CHAINS.tracked.push(
+  ['patch-write-silent', 'staged-write', 're-apply'], ['patch-write-silent', 'gate', 're-apply'],
+  ['patch-write', 'staged-write-silent', 're-apply'],
+);
+CHAINS.untracked.push(['patch-write-silent', 'staged-write', 're-apply'], ['patch-write', 'staged-write-silent', 're-apply']);
+CHAINS.joined.push(['patch-write', 'staged-write-silent', 're-apply']);
 
 function combos(points, k) {
   const out = [];
