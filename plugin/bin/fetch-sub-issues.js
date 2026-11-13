@@ -17,7 +17,8 @@
 // {"byParent":{},"retry":[]} (exit 0) — the empty envelope. Exit 0 on success; 1 on a malformed
 // invocation (non-positive-integer positional, unknown flag); 2 when `gh`
 // is absent or owner/repo cannot be resolved (no `--repo` and no readable
-// `origin` remote); 3 when the GraphQL call itself throws (network/API
+// `origin` remote, or an origin host with no GitHub signal — refused before any
+// gh call, #4933); 3 when the GraphQL call itself throws (network/API
 // failure, or fetchNativeSubIssues' own missing-repository guard) — or when
 // capabilities-probe.js's probeSchemaStrict call fails outright (runner
 // throw, JSON.parse failure): a transient/network probe failure, distinct
@@ -36,8 +37,9 @@ const { execFileSync } = require('child_process');
 const { fetchNativeSubIssues } = require('./lib/issues/native-dependencies');
 const { probeSchemaStrict } = require('./lib/issues/capabilities-probe');
 const {
-  parseRepo, ghAvailable, remoteUrl, ghOptions, pinExplicitRepoHost,
+  parseRepo, ghAvailable, remoteUrl, ghOptions, pinExplicitRepoHost, gateOriginRepo,
 } = require('./lib/repo-resolve');
+const sharedPrimitives = require('./lib/shared-primitives');
 
 const USAGE = 'usage: fetch-sub-issues.js [<n> ...] [--repo owner/name] [--resolve-retries] [--help]\n';
 
@@ -71,15 +73,27 @@ function parseArgs(argv) {
 const realDeps = {
   ghAvailable,
   remoteUrl,
-  // #4505: an explicit --repo's host reaches the schema probe and GraphQL batch,
-  // which thread no host, and the REST retry's github.com case.
+  // #4505: an explicit --repo's host reaches the github.com case of the schema probe, GraphQL
+  // batch and REST retry; off github.com the probe and batch carry their own --hostname (#4806).
   pinGhHost: (repoSpec) => pinExplicitRepoHost(repoSpec),
-  // 30s bound: a 50-alias GraphQL batch outweighs the 5s single-call convention
-  // (gh-api-module-pattern's "bound every remote-contacting call" rule).
-  runner: (args) => execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', timeout: 30000, windowsHide: true })),
+  // One aliased batch (50 aliases) outweighs the 5s single-call convention, so it gets the shared
+  // batched bound (gh-api-module-pattern's "bound every remote-contacting call" rule), read per call.
+  runner: (args) => execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', timeout: sharedPrimitives.GH_BATCH_TIMEOUT_MS, windowsHide: true })),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
+
+// The probe and the batch (#4806) build their `gh api graphql` argv without a host, so off
+// github.com the host goes in right after `graphql`; a dropped flag silently queries github.com.
+function withGraphqlHost(runner, host) {
+  if (host === 'github.com') return runner;
+  return (args) => {
+    if (args[0] === 'api' && args[1] === 'graphql') {
+      return runner(['api', 'graphql', '--hostname', host, ...args.slice(2)]);
+    }
+    return runner(args);
+  };
+}
 
 // argv -> exit code. All I/O through deps so tests never touch gh or git —
 // same seam as bin/resolve-blockers.js's run(argv, deps).
@@ -97,7 +111,13 @@ function run(argv, deps = realDeps) {
 
   let remote = null;
   if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-  const repoSpec = opts.repo ? parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : parseRepo(remote);
+  let repoSpec;
+  if (opts.repo) repoSpec = parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`);
+  else {
+    const gated = gateOriginRepo(remote, deps.gateDeps);
+    if (gated.refusal) { deps.stderr(`fetch-sub-issues.js: ${gated.refusal}\n`); return 2; }
+    repoSpec = gated.spec;
+  }
   if (!repoSpec) { deps.stderr('fetch-sub-issues.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
   if (opts.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
   const { host, owner, repo } = repoSpec;
@@ -112,9 +132,11 @@ function run(argv, deps = realDeps) {
     return 2;
   }
 
+  const runner = withGraphqlHost(deps.runner, host);
+
   let schema;
   try {
-    schema = probeSchemaStrict(deps.runner);
+    schema = probeSchemaStrict(runner);
   } catch (err) {
     deps.stderr(`fetch-sub-issues.js: subIssues capability probe failed — ${err && err.message ? err.message : String(err)}\n`);
     return 3;
@@ -128,7 +150,7 @@ function run(argv, deps = realDeps) {
   try {
     for (let i = 0; i < opts.numbers.length; i += 50) {
       const chunk = opts.numbers.slice(i, i + 50);
-      const res = fetchNativeSubIssues({ numbers: chunk, owner, repo, runner: deps.runner });
+      const res = fetchNativeSubIssues({ numbers: chunk, owner, repo, runner });
       for (const [n, subs] of res.byParent) byParent[n] = subs;
       retry.push(...res.retry);
     }

@@ -37,16 +37,18 @@
 //                fetched, written unreshaped (bin/lib/issues/mcp-parent-gate-shape.js's
 //                FACTS_KEYS), normalized in Node and then evaluated by the same functions
 //                the gh path runs. This path makes zero gh calls and never probes for gh.
-//                `parentComments` and `me` are required and guarded only under --idempotence,
-//                and only for an open, non-reopened parent that is due below the floor (where
-//                the gh path makes its two reads); any other verdict never looks at them. The
+//                `parentComments` (required and guarded) and `me` (required only; a login-less one
+//                reads as no identity) are read only under --idempotence, and only for an open,
+//                non-reopened parent that is due below the floor (where the gh path makes its
+//                two reads); any other verdict never looks at them. The
 //                origin remote (a git read) supplies owner/repo only when a --closing token is
 //                qualified; otherwise no remote is read. Refused with --backend local-files.
 //
 // Output: one JSON line on stdout, the verdict in the order of VERDICT_FIELDS
-// (bin/lib/issues/parent-gate.js): {parent, state, exceeds, closeReason, idempotence,
-// maxTier, riskFloor, parentIssue, needs, held, subIssues, skipped}. The verdict is data,
-// never an exit code: every `state`, `no-parent` included, is exit 0.
+// (bin/lib/issues/parent-gate.js): {parent, repo, state, exceeds, closeReason, idempotence,
+// maxTier, riskFloor, parentIssue, needs, held, subIssues, skipped}. `repo` is the slug its
+// reads used (`owner/repo`, host-qualified off github.com), null where no remote was read.
+// The verdict is data, never an exit code: every `state`, `no-parent` included, is exit 0.
 //
 // Exit codes (Split-1/2, fetch-sub-issues.js's vocabulary): 0 a verdict was printed;
 // 1 a malformed invocation; 2 `gh` is absent, owner/repo or the repo root cannot be
@@ -74,13 +76,18 @@
 // read of the gate names them (`--repo` on each `gh issue view`, host-qualified off
 // github.com; the GraphQL variables and the REST path, with `--hostname` on each `gh api`
 // read off github.com), so one gate reads one repository on one host however many remotes
-// the checkout has. On github.com every argv is the bare `owner/repo` one.
+// the checkout has. On github.com every argv is the bare `owner/repo` one. An origin host with
+// no GitHub signal (not github.com, *.ghe.com, a gh hosts.yml key or an exported GH_HOST) is
+// refused on the gh path, exit 2, before any gh call (#4933); the --facts-json path makes no gh
+// call and is never refused.
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { parseRepo, ghAvailable, remoteUrl, ghOptions } = require('./lib/repo-resolve');
+const {
+  ghAvailable, remoteUrl, ghOptions, gateOriginRepo, repoSlug, originSpecOf,
+} = require('./lib/repo-resolve');
 const { POLICY_KEYS, resolvePolicyKeys } = require('./lib/policy-schema');
 const { readWorkBackend } = require('./lib/work-backend');
 const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
@@ -321,7 +328,17 @@ function run(argv, deps = realDeps) {
   if (opts.factsJson === null || tokens.some((token) => !/^\d+$/.test(token))) {
     let remote = null;
     try { remote = deps.remoteUrl(); } catch { remote = null; }
-    const repoSpec = parseRepo(remote);
+    // #4933: only the gh path is gated (an origin host with no GitHub signal is refused before
+    // any gh call). The facts path makes no gh call and reads origin only to judge a qualified
+    // --closing token, so it never refuses; its host is normalized all the same.
+    let repoSpec;
+    if (opts.factsJson === null) {
+      const gated = gateOriginRepo(remote, deps.gateDeps);
+      if (gated.refusal) { deps.stderr(`parent-gate.js: ${gated.refusal}\n`); return 2; }
+      repoSpec = gated.spec;
+    } else {
+      repoSpec = originSpecOf(remote);
+    }
     if (!repoSpec) { deps.stderr('parent-gate.js: could not resolve owner/repo from the origin remote\n'); return 2; }
     ({ host, owner, repo } = repoSpec);
     // parseRepo accepts any non-'/' segment, '.' and '..' included; the gate's REST paths interpolate
@@ -372,7 +389,12 @@ function run(argv, deps = realDeps) {
       ? withIdempotenceReads(mcp.raw, mcp.idempotence)
       : gatherIdempotenceFacts({ parent: gate.parent, owner, repo, host, caller }));
     verdict = evaluateGateWithIdempotence({
-      ...facts, closingSet: closing.numbers, held: opts.held, mergingPr: opts.mergingPr, riskFloor,
+      ...facts,
+      closingSet: closing.numbers,
+      held: opts.held,
+      mergingPr: opts.mergingPr,
+      riskFloor,
+      slug: owner && repo ? repoSlug({ host, owner, repo }) : null,
     }, { idempotence: opts.idempotence, readIdempotenceFacts });
   } catch (err) {
     if (err instanceof FactsError) {

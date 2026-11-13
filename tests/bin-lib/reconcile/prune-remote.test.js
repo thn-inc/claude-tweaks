@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { decideRemotePrune, pruneRemote } = require('../../../plugin/bin/lib/reconcile/prune-remote');
 const { readText } = require('../../helpers/read-skill');
 const { STUB_SKIP, installStub } = require('../../helpers/path-stub');
+const { gateOriginRepo } = require('../../../plugin/bin/lib/repo-resolve');
 
 // The delete bar is deliberately stricter than archive-branches' local -D:
 // a pushed deletion is unrecoverable from this checkout once origin GCs the
@@ -55,8 +56,8 @@ function git(cwd, ...args) {
 
 // Screen-then-confirm (#1082): every pre-existing test below injects only
 // `resolvePr` (the confirm step). Without an injected screen, the default
-// resolvePrStatesBulk would run for real: repoSlugOf happily parses a bogus
-// 'owner/repo' out of the fixture's file-path origin URL, so the default
+// resolvePrStatesBulk would run for real: the origin read (repoTargetOf)
+// happily takes a bogus 'owner/repo' out of the fixture's file-path origin URL, so the default
 // screen would spawn a live `gh api graphql` from tests. Inject a permissive
 // fake so every branch takes the candidate path and each test's own
 // resolvePr fake keeps governing.
@@ -315,7 +316,9 @@ test('pruneRemote: skipFetch=true never calls fetch, trusts already-fetched refs
   git(dir, 'fetch', '--prune', 'origin'); // caller already fetched, simulating the shared-fetch path
   git(dir, 'remote', 'set-url', 'origin', 'https://example.invalid/nope.git');
 
-  const r = pruneRemote({ cwd: dir, integration: 'main', dryRun: false, skipFetch: true, resolvePr: () => ({ number: 1, state: 'MERGED' }), resolvePrBulk: permissiveScreen });
+  // The gate now refuses example.invalid; exporting it as GH_HOST admits it, so the case still tests "no second fetch".
+  const gateDeps = { env: { GH_HOST: 'example.invalid' }, readFile: () => { throw new Error('ENOENT'); } };
+  const r = pruneRemote({ cwd: dir, integration: 'main', dryRun: false, skipFetch: true, gateDeps, resolvePr: () => ({ number: 1, state: 'MERGED' }), resolvePrBulk: permissiveScreen });
   assert.strictEqual(r.failure, null);
   void originUrl;
 });
@@ -343,7 +346,7 @@ test('pruneRemote: branch attached to a live worktree is silently out of scope',
 // Reassigning `gitExec.runGit` afterward only changes what a fresh
 // `require('../hooks/git-exec').runGit` property lookup returns — the
 // already-bound local `runGit` inside prune-remote.js keeps pointing at the
-// original function (see tests/reconcile.test.js's identical note on
+// original function (see tests/reconcile-preflight-fetch.test.js's identical note on
 // classify.js/shared-fetch.js, #820 D2). Intercept at the process-spawn
 // boundary instead: a `git` wrapper placed first on PATH.
 function installPushWrapper(failMultiBranch) {
@@ -513,7 +516,7 @@ test('index: pr-first repo with a working remote actually reaches the remote-pru
   // 2s timeout; that live network call flaked in CI (observed failures at
   // ~2051ms, right at the ceiling), skipping the remote-prune dispatch and
   // leaving remoteBranches null regardless of this fixture. Stub it the
-  // same way tests/reconcile.test.js does throughout, so this test only
+  // same way the tests/reconcile*.test.js suites do throughout, so this test only
   // discriminates on the dispatch block itself.
   const preflight = require('../../../plugin/bin/lib/reconcile/preflight');
   const originalHealth = preflight.ghHealthCheck;
@@ -677,6 +680,67 @@ test('screen failure is check-level and fail-closed: network -> pr-screen-failed
   assert.deepEqual(absent, { entries: [], failure: 'gh-absent' });
   assert.equal(confirmCalls, 0);
   assert.match(git(dir, 'ls-remote', '--heads', 'origin', 'build/screened'), /refs\/heads\/build\/screened/);
+});
+
+// #4794: the origin goes through the #4933 gate before the screen. A refused origin (an SSH alias)
+// fails the check unknown-host with the gate's own text and screens nothing.
+const ALIAS_ORIGIN = 'git@github-work:acme/w.git';
+const NO_HOSTS_GATE_DEPS = { env: {}, readFile: () => { throw new Error('ENOENT'); } };
+
+test('#4794: an SSH-alias origin fails the check unknown-host with the refusal and screens nothing', () => {
+  const dir = buildScreenFixture();
+  const realOrigin = git(dir, 'remote', 'get-url', 'origin').trim();
+  git(dir, 'remote', 'set-url', 'origin', ALIAS_ORIGIN); // after the fetch: the tracking ref stays
+  const calls = [];
+  const r = pruneRemote({
+    cwd: dir, integration: 'main', dryRun: false, skipFetch: true, gateDeps: NO_HOSTS_GATE_DEPS,
+    resolvePrBulk: (...a) => { calls.push(['bulk', ...a]); return new Map(); },
+    resolvePr: (...a) => { calls.push(['confirm', ...a]); return MERGED_PR; },
+  });
+  assert.equal(r.failure, 'unknown-host');
+  assert.equal(r.detail, gateOriginRepo(ALIAS_ORIGIN, NO_HOSTS_GATE_DEPS).refusal);
+  assert.deepEqual(r.entries, []);
+  assert.deepEqual(calls, [], 'a refused origin screens and confirms nothing');
+  assert.match(git(dir, 'ls-remote', '--heads', realOrigin, 'build/screened'), /refs\/heads\/build\/screened/); // the remote branch survives
+});
+
+test('#4794: with no in-scope branch a refused origin is not a failure (no gh call needed)', () => {
+  const dir = makeRepoWithOrigin();
+  git(dir, 'remote', 'set-url', 'origin', ALIAS_ORIGIN);
+  let bulkCalls = 0;
+  const r = pruneRemote({ cwd: dir, integration: 'main', dryRun: false, skipFetch: true, gateDeps: NO_HOSTS_GATE_DEPS, resolvePrBulk: () => { bulkCalls += 1; return new Map(); } });
+  assert.deepEqual(r, { entries: [], failure: null });
+  assert.equal(bulkCalls, 0);
+});
+
+// The throw this task closes: the default screen returns the string 'unknown-host' for a refused
+// origin, and the Map branch below it called `.get` on it. The pre-gate keeps the default screen
+// from ever seeing a refused origin, and a screen that still answers 'unknown-host' is a check
+// failure, never a Map.
+test('#4794: a refused origin never reaches the default screen as a string, and a string screen is never read as a Map', () => {
+  const dir = buildScreenFixture();
+  git(dir, 'remote', 'set-url', 'origin', ALIAS_ORIGIN);
+  const viaDefault = pruneRemote({ cwd: dir, integration: 'main', dryRun: false, skipFetch: true, gateDeps: NO_HOSTS_GATE_DEPS, resolvePr: () => MERGED_PR });
+  assert.equal(viaDefault.failure, 'unknown-host');
+  assert.deepEqual(viaDefault.entries, []);
+  git(dir, 'remote', 'set-url', 'origin', 'git@github.com:acme/w.git');
+  const viaString = pruneRemote({ cwd: dir, integration: 'main', dryRun: false, skipFetch: true, gateDeps: NO_HOSTS_GATE_DEPS, resolvePr: () => MERGED_PR, resolvePrBulk: () => 'unknown-host' });
+  assert.equal(viaString.failure, 'unknown-host');
+  assert.deepEqual(viaString.entries, []);
+});
+
+test('#4794: an admitted origin screens with the bare owner/name slug, never the host-qualified --repo form', () => {
+  const dir = buildScreenFixture();
+  for (const [origin, slug] of [['git@github.com:acme/w.git', 'acme/w'], ['https://acme.ghe.com/acme/w.git', 'acme/w']]) {
+    git(dir, 'remote', 'set-url', 'origin', origin);
+    const seen = [];
+    const r = pruneRemote({
+      cwd: dir, integration: 'main', dryRun: true, skipFetch: true, gateDeps: NO_HOSTS_GATE_DEPS, resolvePr: () => MERGED_PR,
+      resolvePrBulk: (root, branches, opts) => { seen.push({ branches, opts }); return new Map([['build/screened', MERGED_PR]]); },
+    });
+    assert.equal(r.failure, null);
+    assert.deepEqual(seen, [{ branches: ['build/screened'], opts: { preferOpen: true, repoSlug: slug } }]);
+  }
 });
 
 test('decideRemotePrune order pin: OPEN prState -> pr-open regardless of cherryEquivalent value (sentinel safety)', () => {

@@ -8,7 +8,7 @@ const USAGE =
   'usage: verify.js --cmd <name>=<command> [--cmd <name>=<command> ...] '
   + '[--cmd-env <name>=<KEY=VALUE> ...] [--cmd-timeout <name>=<ms> ...] [--json <path>] '
   + '[--log-dir <dir>] [--count-stamp <path>] [--no-stamp] [--git-dir <dir>] [--run <dir>] '
-  + '[--cwd <dir>] '
+  + '[--cwd <dir>] [--default-suite-slots <n>] '
   + '[--baseline <ref> --baseline-cmd <name>=<template-with-{file}> ... [--no-baseline-fixed]] '
   + '[--scope <path> [--base <ref>] [--integration-branch <name>]] [--stamp-suite] '
   + '| verify.js --stamp-status [--git-dir <dir>] [--scope <path>] '
@@ -33,7 +33,7 @@ const USAGE =
   + 'declared suite falls back to the declaration\'s retry.{suite} template (#3511).'
   + '\nnote: --cwd must stay inside the checkout verify.js runs from (a subdirectory, e.g. a monorepo package); a --cwd in another repository or worktree is a usage error (exit 2), since the pass stamp and report always belong to the invoking checkout (#3799).';
 
-const VALUE_FLAGS = new Set(['--cmd', '--cmd-env', '--cmd-timeout', '--json', '--log-dir', '--count-stamp', '--git-dir', '--scope', '--base', '--integration-branch', '--run', '--cwd', '--baseline', '--baseline-cmd']);
+const VALUE_FLAGS = new Set(['--cmd', '--cmd-env', '--cmd-timeout', '--json', '--log-dir', '--count-stamp', '--git-dir', '--scope', '--base', '--integration-branch', '--run', '--cwd', '--baseline', '--baseline-cmd', '--default-suite-slots']);
 
 // --cmd-env (#2779): <check-name>=<KEY=VALUE>, repeatable. Split on the first
 // two `=` only, so VALUE keeps any later `=` intact.
@@ -97,6 +97,7 @@ function tokenize(argv) {
   let run = null;
   let cwd = null;
   let baseline = null;
+  let defaultSuiteSlots = null;
   const baselineCmds = [];
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
@@ -134,6 +135,12 @@ function tokenize(argv) {
       }
       if (flag === '--cmd-env') { cmdEnvs.push(parseCmdEnv(value)); continue; }
       if (flag === '--cmd-timeout') { cmdTimeouts.push(parseCmdTimeout(value)); continue; }
+      if (flag === '--default-suite-slots') {
+        // #5119: the project-wide slot count when verify-scope.json declares none.
+        if (!/^[1-9]\d*$/.test(value)) throw new UsageError(`--default-suite-slots must be a positive integer, got: ${value}`);
+        defaultSuiteSlots = Number(value);
+        continue;
+      }
       const eq = value.indexOf('=');
       if (eq === -1) throw new UsageError(`--cmd value must be <name>=<command>, got: ${value}`);
       if (eq === 0) throw new UsageError(`--cmd value has an empty name: ${value}`);
@@ -151,7 +158,7 @@ function tokenize(argv) {
   }
   return {
     cmds, cmdEnvs, cmdTimeouts, json, logDir, countStamp, gitDir, stampStatus, noStamp, scope, base, integrationBranch,
-    changedFiles, ignoreStamp, stampSuite, run, cwd, baseline, baselineCmds, noBaselineFixed,
+    changedFiles, ignoreStamp, stampSuite, run, cwd, baseline, baselineCmds, noBaselineFixed, defaultSuiteSlots,
   };
 }
 
@@ -209,11 +216,11 @@ function attachCmdEnvAndTimeout(raw) {
 function toResult(raw) {
   const {
     cmds, json, logDir, countStamp, gitDir, stampStatus, noStamp, scope, base, integrationBranch, changedFiles,
-    ignoreStamp, stampSuite, run, cwd, baseline, baselineCmds, cmdEnvs, noBaselineFixed,
+    ignoreStamp, stampSuite, run, cwd, baseline, baselineCmds, cmdEnvs, noBaselineFixed, defaultSuiteSlots,
   } = raw;
   return {
     cmds, json, logDir, countStamp, gitDir, stampStatus, noStamp, scope, base, integrationBranch, changedFiles,
-    ignoreStamp, stampSuite, run, cwd, baseline, baselineCmds, noBaselineFixed,
+    ignoreStamp, stampSuite, run, cwd, baseline, baselineCmds, noBaselineFixed, defaultSuiteSlots,
     // #3022: every --cmd-env entry, matched or not — verify.js's own
     // --scope block uses the unmatched ones to bind env vars onto a
     // declared-only suite (no --cmd) once it has read the declaration.
@@ -233,6 +240,8 @@ const IGNORE_STAMP_MODE_CONFLICT = '--ignore-stamp applies only to --changed-fil
 // declared list) — the two read-only modes reject it, same posture as
 // --ignore-stamp above.
 const STAMP_SUITE_MODE_CONFLICT = '--stamp-suite applies only to a check run, alongside --scope';
+// #5119: the suite slot is held only by a check run that runs local checks.
+const DEFAULT_SUITE_SLOTS_MODE_CONFLICT = '--default-suite-slots applies to a check run — not to --stamp-status or --changed-files';
 
 function hasBaselineFlags(raw) {
   return raw.baseline !== null || raw.baselineCmds.length > 0 || raw.noBaselineFixed;
@@ -261,6 +270,7 @@ function validateStampStatus(raw) {
   if (raw.cwd !== null) throw new UsageError(CWD_MODE_CONFLICT);
   if (raw.ignoreStamp) throw new UsageError(IGNORE_STAMP_MODE_CONFLICT);
   if (raw.stampSuite) throw new UsageError(STAMP_SUITE_MODE_CONFLICT);
+  if (raw.defaultSuiteSlots !== null) throw new UsageError(DEFAULT_SUITE_SLOTS_MODE_CONFLICT);
   return toResult(raw);
 }
 
@@ -275,6 +285,7 @@ function validateChangedFiles(raw) {
   if (raw.run !== null) throw new UsageError(RUN_MODE_CONFLICT);
   if (raw.cwd !== null) throw new UsageError(CWD_MODE_CONFLICT);
   if (raw.stampSuite) throw new UsageError(STAMP_SUITE_MODE_CONFLICT);
+  if (raw.defaultSuiteSlots !== null) throw new UsageError(DEFAULT_SUITE_SLOTS_MODE_CONFLICT);
   return toResult(raw);
 }
 

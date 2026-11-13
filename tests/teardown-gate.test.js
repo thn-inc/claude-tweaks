@@ -583,7 +583,16 @@ test('AC5: a foreign-owned run warns instead of denying, and logs wd-foreign-tea
   const events = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split('\n');
   const last = JSON.parse(events[events.length - 1]);
   assert.strictEqual(last.type, 'wd-foreign-teardown');
-  assert.strictEqual(last.path, wt);
+  // The expected path comes from git's own listing, spelled the way git prints it
+  // (forward slashes on Git for Windows), so it matches the hook's recorded path on every platform.
+  const porcelain = sh(root, 'worktree', 'list', '--porcelain');
+  const wtSuffix = `/${path.basename(path.dirname(wt))}/wt`;
+  const listedWt = porcelain.split('\n')
+    .filter((line) => line.startsWith('worktree '))
+    .map((line) => line.slice('worktree '.length))
+    .find((p) => p.replace(/\\/g, '/').endsWith(wtSuffix));
+  assert.ok(listedWt, porcelain);
+  assert.strictEqual(last.path, listedWt);
 });
 
 test('AC5: an unowned run with a payload carrying no session_id is denied', () => {

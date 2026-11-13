@@ -15,7 +15,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { ownedPlansFiles } = require('./ledger-ownership');
-const { splitLedgerRow, escapeLedgerCell } = require('./ledger-cells');
+const { splitLedgerRow, escapeLedgerCell, collapseLineBreaks } = require('./ledger-cells');
 const { isPathContained } = require('../shared-primitives');
 
 const TERMINAL_STATUSES = ['fixed', 'deferred', 'accepted', 'acknowledged', 'observation'];
@@ -168,8 +168,11 @@ function serializeLedgerTable(table) {
 // leaving the `#`/Phase/Item cells and every other row untouched. Throws
 // when `item` has no matching row, or `status` is not one of the five
 // terminal statuses (`open` is never a valid target here — this function
-// only resolves items, never reopens one; ledger-format.md's lifecycle has
-// no terminal-to-open transition). `resolution` is required unless `status`
+// only resolves items, never reopens one. ledger-format.md's one
+// terminal-to-open transition, a `deferred` row whose staged proposal the
+// Review Console refuses, is specified by wrap-up/refused-proposals.md's
+// Ledger origin and applied through rewriteLedgerRow by stage-item/ledger.js's
+// settleRow, not here). `resolution` is required unless `status`
 // is `observation`, matching ledger-format.md's Resolution-text requirement.
 function flipLedgerRow(text, { item, status, resolution }) {
   if (!TERMINAL_STATUSES.includes(status)) {
@@ -178,6 +181,14 @@ function flipLedgerRow(text, { item, status, resolution }) {
   if (status !== 'observation' && !String(resolution || '').trim()) {
     throw new Error(`resolution text is required for status '${status}'`);
   }
+  return rewriteLedgerRow(text, { item, status, resolution });
+}
+
+// flipLedgerRow's rewrite with no status validation: the caller owns the
+// status rules (`flipLedgerRow` above for the terminal-only flip,
+// stage-item/ledger.js's settleRow for the plain-row writer). A missing row
+// and a row that is not the 5-column shape still throw.
+function rewriteLedgerRow(text, { item, status, resolution }) {
   const table = parseLedgerTable(text);
   const key = String(item);
   const row = table.rows.get(key);
@@ -193,10 +204,10 @@ function flipLedgerRow(text, { item, status, resolution }) {
   }
   cells[4] = ` ${status} `;
   // Line breaks collapse to one space: a raw newline would split the row across lines.
-  const singleLine = String(resolution || '').replace(/\s*\r?\n\s*/g, ' ').trim();
+  const singleLine = collapseLineBreaks(resolution || '');
   cells[5] = ` ${escapeLedgerCell(singleLine) || '—'} `;
   table.rows.set(key, cells.join('|'));
   return serializeLedgerTable(table);
 }
 
-module.exports = { TERMINAL_STATUSES, resolveLedgerPath, describeRunLedgers, formatLedgerReport, parseLedgerTable, serializeLedgerTable, flipLedgerRow };
+module.exports = { TERMINAL_STATUSES, resolveLedgerPath, describeRunLedgers, formatLedgerReport, parseLedgerTable, serializeLedgerTable, flipLedgerRow, rewriteLedgerRow };

@@ -17,7 +17,7 @@ own text names as acting on what it flags, an action item 11 itself, being flag-
 | Form | Behavior |
 |---|---|
 | `close-out` (bare) | Discover every open, plugin-created PR carrying the `claude-tweaks-run` marker (the same marker `_shared/github-pr-scan.md` item 9/11 detect), excluding housekeeping-marker PRs (mechanical, never a parked record) — no draft-status filter, unlike item 9's own arm-ready scope, since a still-draft `pending-review` PR is exactly one of this mode's target cases (AC2). Run the per-candidate procedure below, one PR at a time. |
-| `close-out #N[,#M,...]` | Direct — resolve `#N`'s (or the named group's) own `pending-review` PR from its still-held claim (`_shared/issue-claims.md`; parking never releases a claim) rather than searching the whole open-PR list, then run the same per-candidate procedure against just that one. |
+| `close-out #N[,#M,...]` | Direct — resolve `#N`'s (or the named group's) own `pending-review` PR rather than searching the whole open-PR list: from its still-held claim (`_shared/issue-claims.md`; parking never releases a claim); with no claim held (a stuck record's released claim), take the PR from `bin/dispatch-resume.js --issue {N}` — `prNumber` when eligible, else its single `prNumbers` entry only when the refused verdict's `remedy` names `/claude-tweaks:dispatch close-out #{N}`; any other verdict (several PRs, a by-hand or close remedy, no PR, a failed read) prints the verdict's `remedy`, or its `line` when `remedy` is null, and stops for that record. Then run the same per-candidate procedure against just that one. |
 
 **Preflight.** Same Detection Ladder as the rest of dispatch (`_shared/forge-detection.md` checks
 1-3). `work-backend: local-files` stops the same way `SKILL.md`'s own Preflight does — there is no
@@ -34,7 +34,12 @@ touching shared state runs one member at a time.
 1. **Re-verify CI is currently green — never trust the parked state (AC1).** Read fresh via `gh pr
    checks {number}` (or `gh pr view {number} --json statusCheckRollup`), summarized as
    `passing`/`failing`/`pending`, plus `_shared/pr-first-merge.md` Step 2.5's head-run `gh run list`
-   read (a not-yet-completed head run is `pending`, not green) — the identical read `resume-confirmation.md`'s own live-value-
+   read (a not-yet-completed head run is `pending`, not green), plus Step 2.5's ready-run read
+   (`bin/ready-run.js`: `awaiting` reads `pending`, `red` or `draft-skip-without-ready-trigger` reads
+   `failing`, and `read-failed` — or a non-zero exit or output with no `state` — stops this candidate
+   as `stopped: CI unreadable`; on a `DIRTY`/`CONFLICTING` PR — step 2's read — `awaiting`,
+   `draft-skip-without-ready-trigger` and an empty rollup's `pending` do not stop here but fall through to step 2, since a
+   conflicting PR gets no workflow run, per Step 2.5's conflict-first rule) — the identical read `resume-confirmation.md`'s own live-value-
    sourcing paragraph already performs for its confirmation, reused rather than re-implemented.
    `failing`: report the failure and stop for this candidate — do not treat a stale prior green as
    current. `pending`: report and stop for this candidate too; a headless close-out that waited on
@@ -77,6 +82,12 @@ touching shared state runs one member at a time.
    Then, when `isDraft`, run `_shared/pr-first-merge.md`'s Step 2 (Mark ready) now, before the
    confirmation gate — the gate's own question states the PR's current state, and "still draft"
    would already be stale by the time a human reads it otherwise.
+
+   **Re-read CI after Mark ready.** When Mark ready ran, re-run step 1's read — the rollup, the
+   head-run read and the ready-run read — against the now-ready PR before the confirmation gate,
+   with step 1's stop rules (#5153). Right after `gh pr ready`, a workflow that declares
+   `ready_for_review` has no run since the undraft yet, so this read is `pending` and stops the
+   candidate; a later `close-out #{number}` reads the finished ready run.
 4. **Confirmation gate.** Read `close-out-confirmation.md` in this skill's directory and follow it
    (AC4). Declining stops here — the PR stays `pending-review` as it was (an update that already ran stays pushed), and nothing below
    runs for this candidate.
@@ -113,7 +124,7 @@ touching shared state runs one member at a time.
 ## Reporting
 
 One line per candidate: `#{number} — {outcome}` where `{outcome}` is one of `merged`, `armed`,
-`stopped: CI {status}`, `stopped: mergeStateStatus {DIRTY | BEHIND} — update declined`,
+`stopped: CI {status}`, `stopped: CI unreadable`, `stopped: mergeStateStatus {DIRTY | BEHIND} — update declined`,
 `stopped: update failed — {conflict not resolved | verification | push rejected | update-branch rejected | head moved | base not fetched | marker unreadable | marker not written | gh absent | command failed}`,
 `stopped: CI {status} after update`, `stopped: mergeStateStatus {status} after update`,
 `stopped: acceptance labeling unverifiable — no run dir`, or `declined at confirmation gate`.

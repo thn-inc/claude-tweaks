@@ -11,13 +11,9 @@ const { shellQuote } = require('./helpers/shell-quote');
 const { STUB_SKIP } = require('./helpers/path-stub');
 const { fakeGh } = require('./helpers/fake-gh');
 const { readText } = require('./helpers/read-skill');
+const { gitRepo, gitRepoWithCommit, withoutGhTimeoutEnv, unpinnedRepoWithOrigin } = require('./helpers/pre-tool-use');
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('./helpers/strip-comments');
 
-function gitRepo() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-'));
-  execFileSync('git', ['-C', dir, 'init', '-q']);
-  return fs.realpathSync(dir);
-}
 function mkRun(worktree, sessionId) {
   const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1run-'));
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
@@ -330,12 +326,6 @@ test('deny reason substitutes CLAUDE_PLUGIN_ROOT when set, else keeps the litera
     else process.env.CLAUDE_PLUGIN_ROOT = orig;
   }
 });
-
-function gitRepoWithCommit() {
-  const dir = gitRepo();
-  execFileSync('git', ['-C', dir, 'commit', '--allow-empty', '-m', 'init', '-q']);
-  return dir;
-}
 
 function linkedWorktreeOf(main) {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-wtparent-'));
@@ -1261,27 +1251,6 @@ test('resolveRunPinnedIntegrationModel: exported for reuse by the phase-boundary
 
 // --- #4578: timeout + degrade parameters on resolveRunPinnedIntegrationModel ---
 
-const GH_TIMEOUT_ENV = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
-
-// Runs fn with CLAUDE_TWEAKS_GH_TIMEOUT_MS deleted so detection's ladder falls
-// to policy / the 5000 ms default, then restores the original value.
-function withoutGhTimeoutEnv(fn) {
-  const original = process.env[GH_TIMEOUT_ENV];
-  delete process.env[GH_TIMEOUT_ENV];
-  try {
-    return fn();
-  } finally {
-    if (original !== undefined) process.env[GH_TIMEOUT_ENV] = original;
-  }
-}
-
-// An unpinned repo whose origin looks like a GitHub remote, so detection reaches the fake `gh`.
-function unpinnedRepoWithOrigin() {
-  const repo = gitRepoWithCommit();
-  execFileSync('git', ['-C', repo, 'remote', 'add', 'origin', 'https://github.com/o/n.git']);
-  return repo;
-}
-
 test('resolveRunPinnedIntegrationModel forwards opts.timeoutMs to forge detection (#4578 AC8.1, AC13.1)', { skip: STUB_SKIP }, () => {
   const repo = unpinnedRepoWithOrigin();
   const runDir = runDirForId('2026-10-31T000000-spec-4578');
@@ -1300,7 +1269,7 @@ test('resolveRunPinnedIntegrationModel forwards opts.timeoutMs to forge detectio
   }
 });
 
-const GATE_CALL_SHAPE = /resolveRunPinnedIntegrationModel\(mainRoot,\s*ctx\.runDir,\s*\{\s*timeoutMs:\s*HOOK_FORGE_PROBE_TIMEOUT_MS,\s*onDegrade\s*\}\)/;
+const GATE_CALL_SHAPE = /resolveRunPinnedIntegrationModel\(mainRoot,\s*ctx\.runDir,\s*\{\s*timeoutMs:\s*HOOK_FORGE_PROBE_TIMEOUT_MS,\s*degradeMemoTtlMs:\s*FORGE_DEGRADE_MEMO_TTL_MS,\s*onDegrade\s*\}\)/;
 
 test('the PreToolUse gate passes HOOK_FORGE_PROBE_TIMEOUT_MS within the 15 s hook budget (#4578 AC8.1, AC12.1, AC12.2)', () => {
   const { HOOK_FORGE_PROBE_TIMEOUT_MS, GIT_REMOTE_PROBE_TIMEOUT_MS, FORGE_PROBE_ATTEMPTS } = require('../plugin/bin/lib/policy-schema');
@@ -1321,7 +1290,7 @@ test('the PreToolUse gate passes HOOK_FORGE_PROBE_TIMEOUT_MS within the 15 s hoo
 });
 
 test('the gate call-shape matcher sees live code only (#4578 go-red self-test)', () => {
-  const live = 'x = o ? o(m, { onDegrade }) : resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir, { timeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS, onDegrade });';
+  const live = 'x = o ? o(m, { onDegrade }) : resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir, { timeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS, degradeMemoTtlMs: FORGE_DEGRADE_MEMO_TTL_MS, onDegrade });';
   const scan = (src) => GATE_CALL_SHAPE.test(stripComments(src, { literals: 'blank' }));
   assert.strictEqual(scan(live), true);
   // The same text only in a line comment, a block comment, or a string: the live call is gone.
@@ -1466,6 +1435,50 @@ test('#4559: `git stash drop` from the main checkout is silent', () => {
   const out = pre.run({ input: bashInput('git stash drop', main), runDir: null, runState: null, cwd: main });
   assert.deepStrictEqual(out, {});
 });
+
+// #4548: killing a process by image or name matches every process of that name on the
+// machine, sibling sessions' dev servers included. The warning is run- and
+// location-independent, so every fixture runs in a plain temp dir (no git repo, no
+// policy file — which also keeps checkPowershellOpaqueCommand's deny out of the way).
+const killDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-4548-'));
+const runKill = (cmd) => pre.run({ input: bashInput(cmd, killDir), runDir: null, runState: null, cwd: killDir });
+const assertKillWarning = (out) => {
+  assert.ok(out.json, 'expected a hook response');
+  assert.match(out.json.systemMessage, /by image or name/);
+  assert.match(out.json.systemMessage, /-sTCP:LISTEN/);
+  assert.ok(!(out.json.hookSpecificOutput && out.json.hookSpecificOutput.permissionDecision), 'a warning must not decide permission');
+};
+const silentKill = (out) => !out.json || (!out.json.systemMessage && !out.json.hookSpecificOutput);
+
+for (const cmd of [
+  'pkill node', 'killall node', 'taskkill /F /IM node.exe', 'taskkill /im node.exe /f',
+  'Stop-Process -Name node', 'kill $(pgrep node)', 'pgrep -f x | xargs kill',
+  'taskkill /FI "IMAGENAME eq node.exe"', 'taskkill /FI "WINDOWTITLE eq dev*"',
+  'Get-Process node | Stop-Process', 'TASKKILL /IM node.exe',
+  'powershell -Command "Stop-Process -Name node"', 'powershell -c "Stop-Process -Name node"',
+  'pwsh -Command "Get-Process node | Stop-Process"', 'pwsh -c "Stop-Process -Name node"',
+  'cmd /c taskkill /IM node.exe', "sh -c 'pkill node'", 'bash -c "killall node"',
+]) {
+  test(`#4548: \`${cmd}\` warns about killing by image or name`, () => {
+    assertKillWarning(runKill(cmd));
+  });
+}
+
+test('#4548: a compound command with several name kills warns once', () => {
+  const out = runKill('npm run dev & sleep 1; pkill -f vite; killall node');
+  assertKillWarning(out);
+  assert.strictEqual(out.json.systemMessage.split('by image or name').length - 1, 1);
+});
+
+for (const cmd of [
+  'kill 12345', 'taskkill /PID 12345 /T /F', 'kill -- -12345', 'taskkill /FI "PID eq 123"',
+  'lsof -nP -iTCP:3000 -sTCP:LISTEN -t | xargs kill',
+]) {
+  test(`#4548: \`${cmd}\` is PID-scoped and stays silent`, () => {
+    const out = runKill(cmd);
+    assert.ok(silentKill(out), `expected no warning for: ${cmd}, got ${JSON.stringify(out)}`);
+  });
+}
 
 // #3225: checkDispatchConfigGate — a dispatched run (record-worktree
 // --dispatch) bound to a REAL linked worktree denies git writes there until

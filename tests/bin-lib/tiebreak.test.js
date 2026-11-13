@@ -373,6 +373,69 @@ test('evidence verification: an evidence path mismatch is unverified (AC10.1)', 
   assert.equal(r.reason, 'evidence-path-mismatch');
 });
 
+// ---- skill-relative Location (#4164) ----
+
+const SKILL_FINDING = { lens: '3a', path: 'wrap-up/x.md', line: 10, claim: 'c', reporterSeverity: 'high', kind: 'unconfirmed' };
+const SKILL_LINES = Array.from({ length: 20 }, (_, i) => `// filler line ${i + 1}`);
+SKILL_LINES[9] = 'const answer = compute(input);'; // line 10
+const SKILL_FULL_PATH = 'plugin/skills/wrap-up/x.md';
+const SKILL_QUOTE = 'const answer = compute(input);';
+const only = (served) => (asked) => {
+  if (asked !== served) throw new Error(`ENOENT: ${asked}`);
+  return SKILL_LINES.join('\n');
+};
+const every = () => SKILL_LINES.join('\n');
+const cite = (p) => `${p}:10 \`${SKILL_QUOTE}\``;
+
+test('AC1.1 AC1.2 skill-relative Location with full-path Evidence resolves confirmed (#4164)', () => {
+  const r = resolveTiebreak(SKILL_FINDING, reply({ evidence: cite(SKILL_FULL_PATH) }), { readFile: only(SKILL_FULL_PATH), now: NOW });
+  assert.equal(r.outcome, 'confirmed');
+});
+
+test('same reply with verdict refuted resolves drop (#4164)', () => {
+  const r = resolveTiebreak(SKILL_FINDING, reply({ verdict: 'refuted', evidence: cite(SKILL_FULL_PATH) }), { readFile: only(SKILL_FULL_PATH), now: NOW });
+  assert.equal(r.outcome, 'drop');
+});
+
+test('AC2.1 AC2.2 another file is still a mismatch (#4164)', () => {
+  for (const p of ['plugin/skills/review/x.md', 'plugin/bin/x.md']) {
+    const r = resolveTiebreak(SKILL_FINDING, reply({ evidence: cite(p) }), { readFile: every, now: NOW });
+    assert.ok(isCantTell(r), p);
+    assert.equal(r.reason, 'evidence-path-mismatch', p);
+  }
+});
+
+test('AC3.1 a plugin/ finding never gains the skills prefix (#4164)', () => {
+  const f = { ...SKILL_FINDING, path: 'plugin/bin/x.md' };
+  const r = resolveTiebreak(f, reply({ evidence: cite('plugin/skills/plugin/bin/x.md') }), { readFile: every, now: NOW });
+  assert.equal(r.reason, 'evidence-path-mismatch');
+});
+
+test('a skill-relative finding citing the path as given still verifies (#4164)', () => {
+  const r = resolveTiebreak(SKILL_FINDING, reply({ evidence: cite('wrap-up/x.md') }), { readFile: only('wrap-up/x.md'), now: NOW });
+  assert.equal(r.outcome, 'confirmed');
+});
+
+test('the canonical file missing is unverified (#4164)', () => {
+  const r = resolveTiebreak(SKILL_FINDING, reply({ evidence: cite(SKILL_FULL_PATH) }), { readFile: only('wrap-up/x.md'), now: NOW });
+  assert.equal(r.reason, 'evidence-unverified');
+});
+
+test('the id and logged Location stay the finding\'s own (#4164)', () => {
+  const r = resolveTiebreak(SKILL_FINDING, reply({ evidence: cite(SKILL_FULL_PATH) }), { readFile: only(SKILL_FULL_PATH), now: NOW });
+  assert.equal(r.id, findingId(SKILL_FINDING));
+  assert.match(r.logLine, /wrap-up\/x\.md:10/);
+  assert.ok(!r.logLine.includes('plugin/skills/'));
+});
+
+test('AC4.1 a single-backtick wrap of a backtick-bearing line resolves confirmed (#4164)', () => {
+  const lines = [...SKILL_LINES];
+  lines[9] = 'Run `foo` then `bar` now';
+  const f = { ...SKILL_FINDING, path: 'plugin/bin/foo.js' };
+  const r = resolveTiebreak(f, reply({ evidence: 'plugin/bin/foo.js:10 `Run `foo` then `bar` now`' }), { readFile: () => lines.join('\n'), now: NOW });
+  assert.equal(r.outcome, 'confirmed');
+});
+
 test('line forms: a range uses its first line, an absent line is cant-tell (AC9.1)', () => {
   const range = resolve({ ...FINDING, line: '20-24' }, reply());
   assert.equal(range.outcome, 'confirmed');
@@ -480,8 +543,9 @@ test('same lens+path:line, different claims → two ids, two lines needed (AC7.1
   const b = { ...RAW[0], claim: 'never closes the fd' };
   assert.notEqual(findingId(a), findingId(b));
   writeFindings(dir, buildFindingsArtifact([a, b]));
-  // The #3772 matcher (console/resolve.js findingKey) keys on lens + first
-  // path:line, which these two share — coverage keys on the id instead.
+  // The console/resolve.js matcher keys on lens + path:line (a verdict's whole
+  // path, a STAGED line's longest named candidate, #4632), which these two
+  // share — coverage keys on the id instead.
   fs.writeFileSync(path.join(dir, 'decisions.md'), `${verdictFor(a)}\n`);
   assert.deepEqual(checkTiebreakCoverage(dir).missing, [findingId(b)]);
   fs.appendFileSync(path.join(dir, 'decisions.md'), `${verdictFor(b)}\n`);
@@ -742,6 +806,18 @@ test('coverage counts only a verdict-shaped line, never the marker quoted elsewh
   assert.deepEqual(checkTiebreakCoverage(dir).missing, [b.id]);
 });
 
+test('AC3.2: coverage does not count a confirmed line with text after Confirmed., as the console does not (#4632)', (t) => {
+  const dir = tmpDir(t);
+  writeFindings(dir, buildFindingsArtifact([FINDING]));
+  const r = resolve(FINDING, reply());
+  assert.equal(r.outcome, 'confirmed');
+  const line = formatEntry({ status: r.logStatus, now: NOW, step: r.logStep, text: r.logText, reversibility: 'high' });
+  fs.writeFileSync(path.join(dir, 'decisions.md'), `${line.replace(' Reversibility:', ' Then more. Reversibility:')}\n`);
+  assert.deepEqual(checkTiebreakCoverage(dir).missing, [findingId(FINDING)]);
+  fs.writeFileSync(path.join(dir, 'decisions.md'), `${line}\n`);
+  assert.deepEqual(checkTiebreakCoverage(dir).missing, []);
+});
+
 test("every resolver outcome's written line counts as coverage", (t) => {
   const outcomes = [
     resolve(FINDING, reply()),
@@ -808,6 +884,36 @@ test('a path:line token wrapped in one pair of backticks parses like the bare to
   for (const ev of ['`plugin/bin/foo.js`:20 `const x = readSync(fd);`', '`plugin/bin/foo.js:20` `const x = readSync(fd);`']) {
     assert.equal(resolve(FINDING, reply({ evidence: ev })).outcome, 'confirmed', ev);
   }
+});
+
+test('AC2.1: evidence at a space-holding finding path resolves drop and confirmed (#4632)', () => {
+  const f = { ...RAW[0], path: 'a dir/x.ts', line: 3 };
+  for (const [verdict, outcome] of [['refuted', 'drop'], ['confirmed', 'confirmed']]) {
+    for (const ev of ['a dir/x.ts:3 `quote text here`', '`a dir/x.ts`:3 `quote text here`', '`a dir/x.ts:3` `quote text here`']) {
+      const r = resolveTiebreak(f, `Verdict: ${verdict}\nEvidence: ${ev}\nSeverity: medium\nSTATUS: DONE`, { readFile: () => 'line1\nline2\nquote text here\n', now: NOW });
+      assert.strictEqual(r.outcome, outcome, `${verdict} ${ev}`);
+    }
+  }
+});
+test('PRC1: parseTiebreakReply with findingPath returns the finding path as the evidence path (#4632)', () => {
+  for (const ev of ['a dir/x.ts:3 `quote text here`', '`a dir/x.ts`:3 `quote text here`', '`a dir/x.ts:3` `quote text here`']) {
+    assert.deepEqual(parseTiebreakReply(`Verdict: confirmed\nEvidence: ${ev}\nSTATUS: DONE`, { findingPath: 'a dir/x.ts' }).evidence, { path: 'a dir/x.ts', line: 3, quote: 'quote text here' }, ev);
+  }
+});
+test('PRC1: parseTiebreakReply treats null options like no options (#4632)', () => {
+  assert.strictEqual(parseTiebreakReply('Verdict: confirmed\nEvidence: a dir/x.ts:3 x\nSTATUS: DONE', null).evidence, null);
+  assert.deepEqual(parseTiebreakReply('Verdict: confirmed\nEvidence: a.js:3 x\nSTATUS: DONE', null).evidence, { path: 'a.js', line: 3, quote: 'x' });
+});
+test('PRC1: resolveTiebreak of a non-object finding still throws the findingId error (#4632)', () => {
+  assert.throws(() => resolveTiebreak(null, 'Verdict: confirmed\nSTATUS: DONE', { now: NOW }), /findingId: finding must be an object/);
+});
+test('PRC1: a space-holding evidence path for a different finding path still fails (#4632)', () => {
+  const f = { ...RAW[0], path: 'b dir/x.ts', line: 3 };
+  const r = resolveTiebreak(f, 'Verdict: refuted\nEvidence: a dir/x.ts:3 `quote text here`\nSeverity: medium\nSTATUS: DONE', { readFile: () => 'line1\nline2\nquote text here\n', now: NOW });
+  assert.strictEqual(r.outcome, 'console');
+});
+test('PRC1: parseTiebreakReply without findingPath keeps today\'s evidence parse (#4632)', () => {
+  assert.strictEqual(parseTiebreakReply('Verdict: confirmed\nEvidence: a dir/x.ts:3 x\nSTATUS: DONE').evidence, null);
 });
 
 test('Recommendation reasons split on an en dash and a comma like the other separators', () => {

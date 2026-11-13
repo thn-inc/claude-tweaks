@@ -154,14 +154,33 @@ test('AC2.1: a github.com origin returns the same opts object', () => {
   const opts = { cwd: '/r' };
   assert.strictEqual(ghOptions(['pr', 'view'], opts, { ...ghe, remoteUrl: () => 'git@github.com:acme/widgets.git' }), opts);
 });
-test('AC4.1: an exported GH_HOST is never overwritten (process-style env and opts.env, empty string included)', () => {
+test('AC4.1: an exported non-empty GH_HOST is never overwritten; an empty one is unset (#4794)', () => {
   _resetGhHostCache();
   const o1 = { cwd: '/r' };
   assert.strictEqual(ghOptions(['api', 'graphql'], o1, { ...ghe, env: { GH_HOST: 'other.example' } }), o1);
-  const o2 = { cwd: '/r', env: { GH_HOST: '' } };
-  assert.strictEqual(ghOptions(['api', 'graphql'], o2, ghe), o2);
+  for (const GH_HOST of ['', '  ']) {
+    _resetGhHostCache();
+    const out = ghOptions(['api', 'graphql'], { cwd: '/r', env: { GH_HOST } }, ghe);
+    assert.equal(out.env.GH_HOST, 'acme.ghe.com', JSON.stringify(GH_HOST)); // the origin host replaces the empty value
+  }
 });
-test('AC5.1, AC5.2 (Decision Q1): an SSH alias host is not injected, even with an enterprise token; a hosts.yml-known GHES host is; a token admits an HTTPS host', () => {
+test('#4794 AC2.1: a github.com origin with GH_HOST exported empty keeps its env untouched', () => {
+  _resetGhHostCache();
+  const dotcomOrigin = { ...ghe, remoteUrl: () => 'https://github.com/acme/widgets.git' };
+  for (const GH_HOST of ['', '  ']) {
+    const o = { cwd: '/d', env: { GH_HOST } };
+    assert.strictEqual(ghOptions(['pr', 'list'], o, dotcomOrigin), o, JSON.stringify(GH_HOST));
+    assert.equal(o.env.GH_HOST, GH_HOST);
+  }
+});
+test('#4794: a GH_HOST that normalizes to nothing ("." or whitespace) is unset in the seam too, and the injection is on the call\'s own env copy', () => {
+  _resetGhHostCache();
+  const env = { PATH: '/p', GH_HOST: '.' };
+  const out = ghOptions(['pr', 'list'], { cwd: '/r', env }, ghe);
+  assert.equal(out.env.GH_HOST, 'acme.ghe.com');
+  assert.equal(env.GH_HOST, '.', 'the caller\'s env is never written');
+});
+test('AC5.1, AC5.2 (Decision Q1): an SSH alias host is not injected, even with an enterprise token; a hosts.yml-known GHES host is; a token alone admits no HTTPS host (#4854)', () => {
   _resetGhHostCache();
   const alias = { ...ghe, remoteUrl: () => 'git@github.com-work:acme/widgets.git' };
   const o = { cwd: '/a' };
@@ -170,7 +189,8 @@ test('AC5.1, AC5.2 (Decision Q1): an SSH alias host is not injected, even with a
   const o2 = { cwd: '/t' };
   assert.strictEqual(ghOptions(['pr', 'list'], o2, { ...alias, env: { GH_ENTERPRISE_TOKEN: 't' } }), o2);
   _resetGhHostCache();
-  assert.equal(ghOptions(['pr', 'list'], { cwd: '/u' }, { ...ghe, remoteUrl: () => 'https://git.corp.example/acme/widgets.git', env: { GITHUB_ENTERPRISE_TOKEN: 't' } }).env.GH_HOST, 'git.corp.example');
+  const o4 = { cwd: '/u' };
+  assert.strictEqual(ghOptions(['pr', 'list'], o4, { ...ghe, remoteUrl: () => 'https://git.corp.example/acme/widgets.git', env: { GITHUB_ENTERPRISE_TOKEN: 't' } }), o4);
   _resetGhHostCache();
   const o3 = { cwd: '/m' };
   assert.strictEqual(ghOptions(['pr', 'list'], o3, { ...ghe, remoteUrl: () => 'https://GitHub.com/acme/widgets.git' }), o3); // mixed-case github.com is github.com
@@ -213,13 +233,15 @@ test('review focus: memoized per cwd, probe failure is "no host", note logged on
   assert.equal(notes.length, 1);
   assert.match(notes[0], /resolved repo acme\.ghe\.com\/acme\/widgets \(host: acme\.ghe\.com\) — gh calls get GH_HOST=acme\.ghe\.com/);
 });
-test('review (#4505): the enterprise-token clause never admits a non-GitHub forge, so the token is not sent there; a hosts.yml key still does', () => {
-  const tokenEnv = { GH_ENTERPRISE_TOKEN: 't' };
+test('#4854: an enterprise token alone admits no host, forge or not, so the token is never sent there; a hosts.yml key still does', () => {
   for (const url of ['https://gitlab.com/acme/widgets.git', 'https://bitbucket.org/acme/widgets.git', 'https://dev.azure.com/acme/widgets.git',
-    'https://acme.visualstudio.com/acme/widgets.git', 'https://codeberg.org/acme/widgets.git']) {
-    _resetGhHostCache();
-    const o = { cwd: '/f' };
-    assert.strictEqual(ghOptions(['pr', 'list'], o, { ...ghe, remoteUrl: () => url, env: tokenEnv }), o, url);
+    'https://acme.visualstudio.com/acme/widgets.git', 'https://codeberg.org/acme/widgets.git', 'https://git.corp.invalid/o/r.git']) {
+    for (const env of [{ GH_ENTERPRISE_TOKEN: 't' }, { GITHUB_ENTERPRISE_TOKEN: 't' }]) {
+      _resetGhHostCache();
+      const o = { cwd: '/f' }; const notes = [];
+      assert.strictEqual(ghOptions(['pr', 'list'], o, { ...ghe, remoteUrl: () => url, env, stderr: (s) => notes.push(s) }), o, url);
+      assert.deepEqual(notes, [], url); // the silent seam: a token with an unknown origin host prints no note
+    }
   }
   _resetGhHostCache();
   const configured = { ...ghe, remoteUrl: () => 'https://gitlab.com/acme/widgets.git', env: { GH_CONFIG_DIR: '/cfg' }, readFile: () => 'gitlab.com:\n    user: me\n' };
@@ -253,11 +275,38 @@ test("resolveGhHost: hosts.yml is read from gh's own config-dir order, keys matc
     assert.equal(host, 'git.corp.example');
   }
 });
-test('resolveGhHost: a user-less scp-style remote is SSH, so the token clause skips it; an unknown HTTPS host without a token is null', () => {
+test('resolveGhHost: a user-less scp-style remote with a token is not admitted; an unknown HTTPS host without a token is null', () => {
   _resetGhHostCache();
   assert.equal(resolveGhHost('/s', { ...ghe, remoteUrl: () => 'git.corp.example:acme/widgets.git', env: { GH_ENTERPRISE_TOKEN: 't' } }), null);
   _resetGhHostCache();
   assert.equal(resolveGhHost('/n', { ...ghe, remoteUrl: () => 'https://git.corp.example/acme/widgets.git' }), null);
+});
+
+// #4854: the enterprise-token clause is gone, so no spelling of an SSH remote or a
+// non-GitHub forge can sidestep a guard: a token alone admits nothing.
+test('#4854: a token admits no trailing-dot forge or git+ssh/ssh+git alias host', () => {
+  for (const url of ['https://gitlab.com./o/r.git', 'https://GITLAB.COM./o/r.git', 'git+ssh://alias/o/r', 'ssh+git://alias/o/r', 'git+ssh://git@alias/o/r.git']) {
+    _resetGhHostCache();
+    const o = { cwd: '/b' }; const notes = [];
+    assert.strictEqual(ghOptions(['pr', 'list'], o, { ...ghe, remoteUrl: () => url, env: { GH_ENTERPRISE_TOKEN: 't' }, stderr: (s) => notes.push(s) }), o, url);
+    assert.deepEqual(notes, [], url); // the silent seam: an unknown host prints no note
+  }
+});
+test('#4854: the origin host is normalized (case, trailing dots) before the .ghe.com and hosts.yml checks, and GH_HOST carries the normalized host', () => {
+  _resetGhHostCache();
+  assert.equal(ghOptions(['pr', 'list'], { cwd: '/r' }, { ...ghe, remoteUrl: () => 'https://acme.ghe.com./acme/widgets.git' }).env.GH_HOST, 'acme.ghe.com');
+  _resetGhHostCache();
+  assert.equal(ghOptions(['pr', 'list'], { cwd: '/r' }, { ...ghe, remoteUrl: () => 'https://ACME.ghe.com../acme/widgets.git' }).env.GH_HOST, 'acme.ghe.com');
+  _resetGhHostCache();
+  assert.equal(resolveGhHost('/c', { ...ghe, remoteUrl: () => 'https://git.corp.example./acme/widgets.git', readFile: () => 'git.corp.example:\n' }), 'git.corp.example');
+  _resetGhHostCache();
+  assert.equal(resolveGhHost('/c', { ...ghe, remoteUrl: () => 'https://git.corp.example/acme/widgets.git', readFile: () => 'Git.Corp.Example.:\n' }), 'git.corp.example');
+  _resetGhHostCache();
+  assert.equal(ghOptions(['pr', 'list'], { cwd: '/g' }, { ...ghe, remoteUrl: () => 'https://gitlab.com./acme/widgets.git', env: { GH_ENTERPRISE_TOKEN: 't' }, readFile: () => 'gitlab.com:\n' }).env.GH_HOST, 'gitlab.com');
+  _resetGhHostCache();
+  const dot = { cwd: '/d' }; const notes = [];
+  assert.strictEqual(ghOptions(['pr', 'list'], dot, { ...ghe, remoteUrl: () => 'https://github.com./o/r.git', readFile: () => 'github.com:\n', stderr: (s) => notes.push(s) }), dot); // github.com. is github.com
+  assert.deepEqual(notes, []);
 });
 
 // Fix round 1: an explicit --repo's host against the host ghOptions would reach from cwd.
@@ -269,31 +318,75 @@ test('explicitRepoGhHost: a bare github.com --repo on a GHE origin pins github.c
   assert.equal(explicitRepoGhHost({ owner: 'acme', repo: 'widgets' }, '/r', ghe), 'github.com'); // a missing host reads as github.com
   assert.equal(explicitRepoGhHost({ host: 'ACME.ghe.com', owner: 'acme', repo: 'widgets' }, '/r', ghe), null);
   assert.equal(explicitRepoGhHost({ host: 'other.ghe.com', owner: 'acme', repo: 'widgets' }, '/r', ghe), 'other.ghe.com');
+  assert.equal(explicitRepoGhHost({ host: 'ACME.ghe.com.', owner: 'acme', repo: 'widgets' }, '/r', ghe), null); // trailing dot: same host, not a new pin
   _resetGhHostCache();
   assert.equal(explicitRepoGhHost({ host: 'github.com', owner: 'acme', repo: 'widgets' }, '/d', dotcom), null); // AC2: github.com origin
   assert.equal(explicitRepoGhHost({ host: 'acme.ghe.com', owner: 'acme', repo: 'widgets' }, '/d', dotcom), 'acme.ghe.com');
+  assert.equal(explicitRepoGhHost({ host: 'github.com.', owner: 'acme', repo: 'widgets' }, '/d', dotcom), null); // trailing dot: still github.com, nothing pinned
   assert.equal(explicitRepoGhHost(null, '/d', dotcom), null);
 });
-test('explicitRepoGhHost AC4: an exported GH_HOST (empty string included) always wins', () => {
+test('explicitRepoGhHost AC4: an exported non-empty GH_HOST wins; an empty or whitespace-only one is unset and the explicit host still pins (#4794)', () => {
   _resetGhHostCache();
-  for (const env of [{ GH_HOST: 'mine.example' }, { GH_HOST: '' }]) {
-    assert.equal(explicitRepoGhHost({ host: 'github.com', owner: 'acme', repo: 'widgets' }, '/r', { ...ghe, env }), null, JSON.stringify(env));
+  const spec = { host: 'github.com', owner: 'acme', repo: 'widgets' };
+  assert.equal(explicitRepoGhHost(spec, '/r', { ...ghe, env: { GH_HOST: 'mine.example' } }), null);
+  for (const GH_HOST of ['', '  ', '.']) {
+    assert.equal(explicitRepoGhHost(spec, '/r', { ...ghe, env: { GH_HOST } }), 'github.com', JSON.stringify(GH_HOST));
   }
 });
-test('pinExplicitRepoHost: exports the pinned host on deps.env, leaves it alone otherwise, and then ghOptions steps back', () => {
+test('AC1.1 (#4795): pinExplicitRepoHost records the host; ghOptions adds it to each call\'s own env and never touches process env', () => {
   _resetGhHostCache();
+  const before = process.env.GH_HOST;
   const env = { PATH: '/p' };
   assert.equal(pinExplicitRepoHost({ host: 'github.com', owner: 'acme', repo: 'widgets' }, { ...ghe, cwd: '/r', env }), 'github.com');
-  assert.deepEqual(env, { PATH: '/p', GH_HOST: 'github.com' });
-  const opts = { cwd: '/r', env };
-  assert.strictEqual(ghOptions(['api', 'repos/acme/widgets/issues/7'], opts, ghe), opts);
+  assert.deepEqual(env, { PATH: '/p' }, 'the pin never writes the env it was handed');
+  assert.strictEqual(process.env.GH_HOST, before, 'the pin never writes process.env');
+  // a call with no host flag, and one naming --repo, both get the pinned host (Review Focus 2)
+  for (const args of [['api', 'user'], ['issue', 'view', '7', '--repo', 'acme/widgets']]) {
+    assert.equal(ghOptions(args, { cwd: '/r', env }, ghe).env.GH_HOST, 'github.com', args.join(' '));
+  }
+  // a call's own env without GH_HOST still gets it (Review Focus 3)
+  assert.deepEqual(ghOptions(['api', 'user'], { env: { PATH: '/x' } }, ghe).env, { PATH: '/x', GH_HOST: 'github.com' });
+  _resetGhHostCache();
+});
+test('#4795: a non-empty GH_HOST already in the call env beats the recorded pin; an empty one gets the pin (Review Focus 1, #4794)', () => {
+  _resetGhHostCache();
+  pinExplicitRepoHost({ host: 'github.com', owner: 'acme', repo: 'widgets' }, { ...ghe, cwd: '/r', env: {} });
+  const mine = { cwd: '/r', env: { GH_HOST: 'mine.example' } };
+  assert.strictEqual(ghOptions(['api', 'user'], mine, ghe), mine);
+  for (const GH_HOST of ['', '  ']) {
+    assert.equal(ghOptions(['api', 'user'], { cwd: '/r', env: { GH_HOST } }, ghe).env.GH_HOST, 'github.com', JSON.stringify(GH_HOST));
+  }
+  _resetGhHostCache();
+});
+test('#4795: deps.explicitHost scopes the host to one call; _resetGhHostCache clears a recorded pin (Review Focus 5)', () => {
+  _resetGhHostCache();
+  assert.equal(ghOptions(['api', 'user'], { cwd: '/d' }, { ...dotcom, env: {}, explicitHost: 'github.com' }).env.GH_HOST, 'github.com');
+  const next = { cwd: '/d', env: {} };
+  assert.strictEqual(ghOptions(['api', 'user'], next, dotcom), next, 'a later call without explicitHost gets none');
+  pinExplicitRepoHost({ host: 'other.ghe.com', owner: 'acme', repo: 'widgets' }, { ...dotcom, cwd: '/d', env: {} });
+  _resetGhHostCache();
+  const opts = { cwd: '/d', env: {} };
+  assert.strictEqual(ghOptions(['api', 'user'], opts, dotcom), opts);
+});
+test('#4795: deps.explicitHost takes precedence over a recorded pin for that call', () => {
+  _resetGhHostCache();
+  pinExplicitRepoHost({ host: 'pinned.ghe.com', owner: 'acme', repo: 'widgets' }, { ...dotcom, cwd: '/d', env: {} });
+  assert.equal(ghOptions(['api', 'user'], { cwd: '/d', env: {} }, dotcom).env.GH_HOST, 'pinned.ghe.com');
+  assert.equal(ghOptions(['api', 'user'], { cwd: '/d', env: {} }, { ...dotcom, explicitHost: 'call.ghe.com' }).env.GH_HOST, 'call.ghe.com');
+  _resetGhHostCache();
+});
+test('#4795: a --repo agreeing with the origin host records nothing, so origin injection continues (Review Focus 4)', () => {
+  _resetGhHostCache();
+  assert.equal(pinExplicitRepoHost({ host: 'acme.ghe.com', owner: 'acme', repo: 'widgets' }, { ...ghe, cwd: '/r', env: {} }), null);
+  assert.equal(ghOptions(['api', 'user'], { cwd: '/r', env: {} }, ghe).env.GH_HOST, 'acme.ghe.com');
+  // nothing was recorded: a call from a github.com-origin cwd is left alone (a recorded
+  // acme.ghe.com would be added to it)
+  const plain = { cwd: '/d', env: {} };
+  assert.strictEqual(ghOptions(['api', 'user'], plain, dotcom), plain);
   const mine = { GH_HOST: 'mine.example' };
   assert.equal(pinExplicitRepoHost({ host: 'github.com', owner: 'acme', repo: 'widgets' }, { ...ghe, cwd: '/r', env: mine }), null);
   assert.deepEqual(mine, { GH_HOST: 'mine.example' });
   _resetGhHostCache();
-  const untouched = {};
-  assert.equal(pinExplicitRepoHost({ host: 'github.com', owner: 'acme', repo: 'widgets' }, { ...dotcom, cwd: '/d', env: untouched }), null);
-  assert.deepEqual(untouched, {});
 });
 
 // Final review item 1: an origin URL with an ssh:// scheme, userinfo or a :port
@@ -311,7 +404,7 @@ test('final review: ssh://, user[:pass]@ and :port origins on *.ghe.com inject G
     assert.doesNotMatch(notes[0], /tok|user|git@|:443|:8443|:22/, url);
   }
 });
-test('final review: an ssh:// remote stays SSH for the token clause; hosts.yml admits it; a token admits an https:// remote with userinfo and a port', () => {
+test('final review: an ssh:// remote with a token is not admitted; hosts.yml admits it; a token does not admit an https:// remote with userinfo and a port (#4854)', () => {
   _resetGhHostCache();
   assert.equal(resolveGhHost('/s', { ...ghe, remoteUrl: () => 'ssh://git@git.corp.example/acme/widgets.git', env: { GH_ENTERPRISE_TOKEN: 't' } }), null);
   _resetGhHostCache();
@@ -319,7 +412,7 @@ test('final review: an ssh:// remote stays SSH for the token clause; hosts.yml a
   _resetGhHostCache();
   assert.equal(resolveGhHost('/s', { ...ghe, remoteUrl: () => 'ssh://git@git.corp.example/acme/widgets.git', readFile: () => 'git.corp.example:\n' }), 'git.corp.example');
   _resetGhHostCache();
-  assert.equal(resolveGhHost('/s', { ...ghe, remoteUrl: () => 'https://x:tok@git.corp.example:8443/acme/widgets.git', env: { GH_ENTERPRISE_TOKEN: 't' } }), 'git.corp.example');
+  assert.equal(resolveGhHost('/s', { ...ghe, remoteUrl: () => 'https://x:tok@git.corp.example:8443/acme/widgets.git', env: { GH_ENTERPRISE_TOKEN: 't' } }), null);
   _resetGhHostCache();
   assert.equal(resolveGhHost('/s', { ...ghe, remoteUrl: () => 'ssh://git@github.com/acme/widgets.git' }), null); // github.com stays github.com
 });
@@ -364,6 +457,186 @@ test('final review: requiring repo-resolve reads no GH_TIMEOUT_MS; ghAvailable r
   assert.equal(overridden.timeout, 7777);
 });
 
+// #4933: the origin-host gate. Every case injects env and readFile, so no real
+// GH_HOST or hosts.yml reaches it.
+const { gateOriginRepo, isKnownGhHost } = require('../../plugin/bin/lib/repo-resolve');
+const noHosts = { env: {}, readFile: () => { throw new Error('ENOENT'); }, platform: 'linux', homedir: '/h' };
+const hostsYml = (text) => ({ ...noHosts, readFile: () => text });
+const refusalOf = (host) => `origin host ${host} is not a known GitHub host (not github.com, not *.ghe.com, not a gh hosts.yml key) — refusing to send it to gh; if it is GitHub Enterprise, export GH_HOST=${host}`;
+// #4794: an SSH origin's refusal never interpolates its host after GH_HOST=.
+const sshRefusalOf = (host) => `origin host ${host} is not a known GitHub host (not github.com, not *.ghe.com, not a gh hosts.yml key) — refusing to send it to gh; if it is an SSH host alias, export GH_HOST as the real host it maps to (e.g. export GH_HOST=github.com), not the alias name; if it is GitHub Enterprise, export GH_HOST as that server's host`;
+
+test('AC1.1: an unknown origin host with only GH_ENTERPRISE_TOKEN set is refused', () => {
+  const out = gateOriginRepo('https://git.corp.invalid/o/r.git', { ...noHosts, env: { GH_ENTERPRISE_TOKEN: 't' } });
+  assert.equal(out.spec, null);
+  assert.equal(out.refusal, refusalOf('git.corp.invalid'));
+  assert.ok(out.refusal.includes('git.corp.invalid'));
+  assert.ok(out.refusal.includes('GH_HOST=git.corp.invalid'));
+});
+test('AC1.2: a *.ghe.com origin passes', () => {
+  assert.deepEqual(gateOriginRepo('https://acme.ghe.com/o/r.git', noHosts), { spec: { host: 'acme.ghe.com', owner: 'o', repo: 'r' }, refusal: null });
+});
+test('AC1.3: a hosts.yml key passes', () => {
+  const out = gateOriginRepo('https://ghes.corp.invalid/o/r.git', hostsYml('ghes.corp.invalid:\n    user: x\n'));
+  assert.deepEqual(out, { spec: { host: 'ghes.corp.invalid', owner: 'o', repo: 'r' }, refusal: null });
+});
+test('AC1.4: GH_HOST matching the origin host passes it through', () => {
+  const out = gateOriginRepo('https://git.corp.invalid/o/r.git', { ...noHosts, env: { GH_HOST: 'git.corp.invalid' } });
+  assert.deepEqual(out, { spec: { host: 'git.corp.invalid', owner: 'o', repo: 'r' }, refusal: null });
+});
+test('AC1.5: github.com with a trailing dot normalizes', () => {
+  assert.deepEqual(gateOriginRepo('https://GitHub.com./o/r.git', noHosts), { spec: { host: 'github.com', owner: 'o', repo: 'r' }, refusal: null });
+});
+test('AC1.6: a mixed-case *.ghe.com with a trailing dot normalizes', () => {
+  assert.deepEqual(gateOriginRepo('https://ACME.ghe.com./o/r.git', noHosts), { spec: { host: 'acme.ghe.com', owner: 'o', repo: 'r' }, refusal: null });
+});
+test('GH_HOST naming another host gives a github.com spec', () => {
+  const out = gateOriginRepo('https://git.corp.invalid/o/r.git', { ...noHosts, env: { GH_HOST: 'github.com' } });
+  assert.deepEqual(out, { spec: { host: 'github.com', owner: 'o', repo: 'r' }, refusal: null });
+});
+test('review focus 1: empty GH_HOST is no opt-in', () => {
+  for (const GH_HOST of ['', '  ', '.']) { // '.' normalizes to nothing: the one reader (ghHostIn) treats it as unset (#4794)
+    const out = gateOriginRepo('https://git.corp.invalid/o/r.git', { ...noHosts, env: { GH_HOST } });
+    assert.deepEqual(out, { spec: null, refusal: refusalOf('git.corp.invalid') }, JSON.stringify(GH_HOST));
+  }
+});
+test('review focus 2: GH_HOST is normalized (case, trailing dot) before it is compared', () => {
+  const out = gateOriginRepo('https://git.corp.invalid/o/r.git', { ...noHosts, env: { GH_HOST: 'Git.Corp.Invalid.' } });
+  assert.deepEqual(out, { spec: { host: 'git.corp.invalid', owner: 'o', repo: 'r' }, refusal: null });
+});
+test('review focus 4: an scp-style origin on an unknown host is refused', () => {
+  assert.deepEqual(gateOriginRepo('git@git.corp.invalid:o/r.git', noHosts), { spec: null, refusal: sshRefusalOf('git.corp.invalid') });
+});
+
+// #4794: an SSH origin's refusal names no host value; the gate judges the normalized host alone.
+test('#4794: an SSH origin gets the alias advice and the generic GHE opt-in, never its own host as a GH_HOST value', () => {
+  const cases = [
+    ['git@github-work:o/r.git', 'github-work'], ['github-work:o/r.git', 'github-work'],
+    ['git@github.com-work:o/r.git', 'github.com-work'], ['git@git.corp.invalid:o/r.git', 'git.corp.invalid'],
+    ['git@10.0.0.5:o/r.git', '10.0.0.5'], ['ssh://git@github-work/o/r.git', 'github-work'],
+    ['ssh://git@git.corp.invalid:2222/o/r.git', 'git.corp.invalid'], ['git+ssh://git@github-work/o/r.git', 'github-work'],
+    ['ssh+git://github-work/o/r', 'github-work'],
+  ];
+  for (const [remote, host] of cases) {
+    const out = gateOriginRepo(remote, noHosts);
+    assert.deepEqual(out, { spec: null, refusal: sshRefusalOf(host) }, remote);
+    assert.match(out.refusal, /export GH_HOST=github\.com/, remote);
+    assert.match(out.refusal, /export GH_HOST as that server's host/, remote);
+    assert.doesNotMatch(out.refusal, new RegExp('GH_HOST=' + host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), remote);
+  }
+});
+test('#4794: a non-SSH origin keeps the refusal text byte-identical, credentials, ports and a dotless host included', () => {
+  for (const remote of ['https://git.corp.invalid/o/r.git', 'https://oauth2@git.corp.invalid/o/r.git',
+    'https://x:tok@git.corp.invalid:8443/o/r.git', 'http://git.corp.invalid/o/r.git']) {
+    const out = gateOriginRepo(remote, noHosts);
+    assert.deepEqual(out, { spec: null, refusal: refusalOf('git.corp.invalid') }, remote);
+    for (const leak of ['oauth2', 'tok', '8443']) assert.ok(!out.refusal.includes(leak), `${remote} leaks ${leak}`);
+  }
+  assert.deepEqual(gateOriginRepo('https://github-work/o/r.git', noHosts), { spec: null, refusal: refusalOf('github-work') });
+});
+test('#4794 blanket rule 1: every spelling of one origin gets its plain spelling\'s verdict', () => {
+  const groups = [
+    ['git@git.corp.invalid:acme/w.git', 'ssh://git@git.corp.invalid/acme/w.git', 'ssh://git@git.corp.invalid:22/acme/w.git', 'git+ssh://git@git.corp.invalid/acme/w.git'],
+    ['https://git.corp.invalid/acme/w.git', 'https://oauth2@git.corp.invalid/acme/w.git', 'https://git.corp.invalid:8443/acme/w.git'],
+    ['git@github-work:acme/w.git', 'ssh://git@github-work/acme/w.git'],
+    ['git@acme.ghe.com:acme/w.git', 'ssh://git@acme.ghe.com/acme/w.git', 'https://oauth2@acme.ghe.com/acme/w.git'],
+  ];
+  const withGhHost = { ...noHosts, env: { GH_HOST: 'git.corp.invalid' } };
+  for (const deps of [noHosts, withGhHost]) {
+    for (const group of groups) {
+      for (const member of group) assert.deepEqual(gateOriginRepo(member, deps), gateOriginRepo(group[0], deps), member);
+    }
+  }
+  for (const group of groups.slice(0, 3)) assert.equal(gateOriginRepo(group[0], noHosts).spec, null);
+  for (const group of groups.slice(0, 3)) assert.equal(typeof gateOriginRepo(group[0], noHosts).refusal, 'string');
+  assert.deepEqual(gateOriginRepo(groups[3][0], noHosts), { spec: { host: 'acme.ghe.com', owner: 'acme', repo: 'w' }, refusal: null });
+  for (const group of groups.slice(0, 2)) {
+    assert.deepEqual(gateOriginRepo(group[0], withGhHost), { spec: { host: 'git.corp.invalid', owner: 'acme', repo: 'w' }, refusal: null });
+  }
+});
+test('#4794: no cloud sandbox proxy remote parses under the normalized read — the gate neither admits nor refuses it', () => {
+  const proxies = ['http://local_proxy@127.0.0.1:43210/git/thn-inc/claude-tweaks', 'http://local_proxy@127.0.0.1:43215/git/acme/w',
+    'http://local_proxy@127.0.0.1:43215/git/acme/w.git', 'http://local_proxy@127.0.0.1:43215/git/acme/w/',
+    'http://127.0.0.1:43215/git/acme/w', 'http://local_proxy@localhost:43215/git/acme/w'];
+  for (const url of proxies) {
+    for (const deps of [noHosts, { ...noHosts, env: { GH_HOST: 'github.com' } }]) {
+      assert.deepEqual(gateOriginRepo(url, deps), { spec: null, refusal: null }, url);
+    }
+  }
+  // Contrast: without the /git/ segment the shape parses, so the null verdict above comes from that segment, not the loopback host.
+  assert.deepEqual(gateOriginRepo('http://local_proxy@127.0.0.1:43215/acme/w', noHosts), { spec: null, refusal: refusalOf('127.0.0.1') });
+});
+test('#4794: the gate reads a credentialed, ported or ssh:// origin the way the seam does', () => {
+  const urls = ['https://oauth2@acme.ghe.com/acme/w.git', 'https://x:tok@acme.ghe.com/acme/w.git', 'https://acme.ghe.com:8443/acme/w.git',
+    'ssh://git@acme.ghe.com/acme/w.git', 'ssh://git@acme.ghe.com:22/acme/w.git'];
+  urls.forEach((url, i) => {
+    assert.deepEqual(gateOriginRepo(url, noHosts), { spec: { host: 'acme.ghe.com', owner: 'acme', repo: 'w' }, refusal: null }, url);
+    _resetGhHostCache();
+    assert.equal(gateOriginRepo(url, noHosts).spec.host, resolveGhHost('/n-' + i, { ...ghe, remoteUrl: () => url }), url);
+    _resetGhHostCache();
+  });
+  assert.equal(gateOriginRepo('ssh://git@github.com/acme/w.git', noHosts).spec.host, 'github.com');
+});
+test('unparseable or absent origin is neither spec nor refusal', () => {
+  for (const remote of [null, undefined, '', 'not a url']) {
+    assert.deepEqual(gateOriginRepo(remote, noHosts), { spec: null, refusal: null }, String(remote));
+  }
+});
+test('gate isolates the .ghe.com branch: no GH_HOST, readFile throwing', () => {
+  assert.equal(gateOriginRepo('https://acme.ghe.com/o/r.git', noHosts).spec.host, 'acme.ghe.com');
+  assert.equal(isKnownGhHost('acme.ghe.com', noHosts), true);
+});
+test('gate isolates the hosts.yml branch: no GH_HOST, the host not *.ghe.com', () => {
+  assert.equal(gateOriginRepo('https://ghes.corp.invalid/o/r.git', hostsYml('ghes.corp.invalid:\n')).spec.host, 'ghes.corp.invalid');
+  assert.equal(isKnownGhHost('ghes.corp.invalid', hostsYml('ghes.corp.invalid:\n')), true);
+  assert.equal(isKnownGhHost('ghes.corp.invalid', noHosts), false);
+});
+test('gate refuses an origin host that is only a substring, prefix or value of a hosts.yml entry', () => {
+  const cases = [
+    ['https://corp.invalid/o/r.git', 'corp.invalid', 'ghes.corp.invalid:\n    user: x\n'], // key contains the host
+    ['https://git.corp.invalid/o/r.git', 'git.corp.invalid', 'git.corp.invalid.evil:\n    user: x\n'], // host is a key prefix
+    ['https://git.corp.invalid/o/r.git', 'git.corp.invalid', 'github.com:\n    user: git.corp.invalid\n'], // host only in a value line
+  ];
+  for (const [remote, host, text] of cases) {
+    const out = gateOriginRepo(remote, hostsYml(text));
+    assert.equal(out.spec, null, remote + ' / ' + JSON.stringify(text));
+    assert.equal(out.refusal, refusalOf(host), remote + ' / ' + JSON.stringify(text));
+    assert.equal(isKnownGhHost(host, hostsYml(text)), false, host + ' / ' + JSON.stringify(text));
+  }
+});
+test('gate isolates the GH_HOST branch: readFile throwing, the host not *.ghe.com', () => {
+  assert.equal(gateOriginRepo('https://ghes.corp.invalid/o/r.git', { ...noHosts, env: { GH_HOST: 'ghes.corp.invalid' } }).spec.host, 'ghes.corp.invalid');
+});
+test('gate defaults env to process.env when deps carries none', () => {
+  const saved = process.env.GH_HOST;
+  process.env.GH_HOST = 'git.corp.invalid';
+  try {
+    const { env, ...rest } = noHosts; // eslint-disable-line no-unused-vars
+    assert.equal(gateOriginRepo('https://git.corp.invalid/o/r.git', rest).spec.host, 'git.corp.invalid');
+  } finally {
+    if (saved === undefined) delete process.env.GH_HOST; else process.env.GH_HOST = saved;
+  }
+});
+test('gate takes a null deps argument without throwing, reading process.env', () => {
+  const saved = process.env.GH_HOST;
+  try {
+    process.env.GH_HOST = 'git.corp.invalid';
+    assert.deepEqual(gateOriginRepo('https://git.corp.invalid/o/r.git', null), { spec: { host: 'git.corp.invalid', owner: 'o', repo: 'r' }, refusal: null });
+    delete process.env.GH_HOST;
+    assert.deepEqual(gateOriginRepo('https://github.com/o/r.git', null), { spec: { host: 'github.com', owner: 'o', repo: 'r' }, refusal: null });
+  } finally {
+    if (saved === undefined) delete process.env.GH_HOST; else process.env.GH_HOST = saved;
+  }
+});
+// The binding order: a non-empty exported GH_HOST is checked first, so one naming
+// another host yields a bare github.com slug even for a known GitHub origin.
+test('gate order: GH_HOST naming another host wins over a *.ghe.com or hosts.yml-key origin', () => {
+  assert.deepEqual(gateOriginRepo('https://acme.ghe.com/o/r.git', { ...noHosts, env: { GH_HOST: 'github.com' } }),
+    { spec: { host: 'github.com', owner: 'o', repo: 'r' }, refusal: null });
+  assert.deepEqual(gateOriginRepo('https://ghes.corp.invalid/o/r.git', { ...hostsYml('ghes.corp.invalid:\n'), env: { GH_HOST: 'other.corp.invalid' } }),
+    { spec: { host: 'github.com', owner: 'o', repo: 'r' }, refusal: null });
+});
+
 // Re-review: the free-text value flags --comment, --subject, --notes and --description
 // are values too. `gh pr review --comment` is gh's one boolean --comment, so there the
 // next token is still scanned.
@@ -380,4 +653,70 @@ test('re-review: --comment/--subject/--notes/--description values are not an exp
     ['pr', 'review', '1', '--comment', '--repo', 'acme/widgets'], ['pr', 'review', '1', '--comment', '-b', '-R', '-Racme/widgets']]) {
     assert.strictEqual(ghOptions(args, o, ghe), o, args.join(' '));
   }
+});
+
+// #4794: the one host resolver. Precedence: a typed --repo host, then a non-empty
+// (after trim) exported GH_HOST, then the origin host, then github.com; the slug is
+// host-qualified only when that host differs from gh's own default host.
+const { resolveRepoTarget, ghHostIn, originSpecOf } = require('../../plugin/bin/lib/repo-resolve');
+
+// #4794: the one origin read. Every spelling of one origin reads as the same
+// { host, owner, repo } with the host normalized; a remote that read does not parse is null.
+test('#4794: originSpecOf — every spelling of one origin reads the same, host normalized', () => {
+  const want = { host: 'acme.ghe.com', owner: 'acme', repo: 'w' };
+  assert.deepEqual(originSpecOf('https://oauth2:s3cret@ACME.ghe.com/acme/w.git'), want); // credentialed https, credential dropped
+  assert.deepEqual(originSpecOf('ssh://git@acme.ghe.com:2222/acme/w.git'), want);        // ssh:// with a port
+  assert.deepEqual(originSpecOf('git@acme.ghe.com:acme/w.git'), want);                   // scp-style
+  assert.deepEqual(originSpecOf('https://ACME.ghe.com./acme/w'), want);                  // trailing-dot FQDN host
+  assert.deepEqual(originSpecOf('  https://acme.ghe.com:8443/acme/w.git\n'), want);      // a port and the newline `git remote get-url` adds
+  assert.deepEqual(originSpecOf('git@GitHub.com.:o/r.git'), { host: 'github.com', owner: 'o', repo: 'r' });
+});
+
+test('#4794: originSpecOf — a remote the seam read does not parse is null (a sandbox proxy remote, a path, nothing)', () => {
+  assert.equal(originSpecOf('http://local_proxy@127.0.0.1:8080/git/acme/w'), null);
+  assert.equal(originSpecOf('/srv/git/w.git'), null);
+  assert.equal(originSpecOf('not a url'), null);
+  assert.equal(originSpecOf(''), null);
+  assert.equal(originSpecOf(null), null);
+  assert.equal(originSpecOf(undefined), null);
+});
+
+test('#4794: resolveRepoTarget — one host: typed --repo host, then GH_HOST, then the origin host, then github.com', () => {
+  const T = (o, env) => resolveRepoTarget({ owner: 'acme', repo: 'w', ...o }, { env });
+  assert.deepEqual(T({}, {}), { host: 'github.com', ghRepo: 'acme/w' });
+  assert.deepEqual(T({ originHost: 'ACME.ghe.com.' }, {}), { host: 'acme.ghe.com', ghRepo: 'acme.ghe.com/acme/w' });
+  // The host is GH_HOST, gh's default, so the slug stays bare (round 5 Q1).
+  assert.deepEqual(T({ originHost: 'acme.ghe.com' }, { GH_HOST: ' MINE.example. ' }), { host: 'mine.example', ghRepo: 'acme/w' });
+  // An empty (whitespace-only) GH_HOST is unset.
+  assert.deepEqual(T({ originHost: 'acme.ghe.com' }, { GH_HOST: '  ' }), { host: 'acme.ghe.com', ghRepo: 'acme.ghe.com/acme/w' });
+  // A qualified -R beats GH_HOST in gh, so it must stay qualified.
+  assert.deepEqual(T({ explicitHost: 'github.com' }, { GH_HOST: 'mine.example' }), { host: 'github.com', ghRepo: 'github.com/acme/w' });
+  assert.deepEqual(T({ explicitHost: 'mine.example' }, { GH_HOST: 'MINE.example' }), { host: 'mine.example', ghRepo: 'acme/w' });
+  // A bare typed --repo follows GH_HOST (spec round 4 Q2) and keeps today's bare argv.
+  assert.deepEqual(T({}, { GH_HOST: 'mine.example' }), { host: 'mine.example', ghRepo: 'acme/w' });
+  // AC2 with GH_HOST exported: today's bare argv (round 5 Q1).
+  assert.deepEqual(T({ originHost: 'github.com' }, { GH_HOST: 'mine.example' }), { host: 'mine.example', ghRepo: 'acme/w' });
+  assert.deepEqual(T({ originHost: 'github.com' }, { GH_HOST: 'github.com' }), { host: 'github.com', ghRepo: 'acme/w' });
+  assert.deepEqual(T({ explicitHost: 'GHE.Example.com' }, {}), { host: 'ghe.example.com', ghRepo: 'ghe.example.com/acme/w' });
+});
+
+test('#4794: resolveRepoTarget reads the process env when no deps.env is given', () => {
+  const saved = process.env.GH_HOST;
+  try {
+    process.env.GH_HOST = 'mine.example';
+    assert.deepEqual(resolveRepoTarget({ owner: 'acme', repo: 'w', originHost: 'acme.ghe.com' }), { host: 'mine.example', ghRepo: 'acme/w' });
+    delete process.env.GH_HOST;
+    assert.deepEqual(resolveRepoTarget({ owner: 'acme', repo: 'w', originHost: 'acme.ghe.com' }), { host: 'acme.ghe.com', ghRepo: 'acme.ghe.com/acme/w' });
+  } finally {
+    if (saved === undefined) delete process.env.GH_HOST; else process.env.GH_HOST = saved;
+  }
+});
+
+test('#4794: ghHostIn — the one GH_HOST reader: trimmed and normalized, empty or whitespace-only is unset', () => {
+  assert.equal(ghHostIn({}), null);
+  assert.equal(ghHostIn({ GH_HOST: '' }), null);
+  assert.equal(ghHostIn({ GH_HOST: '   ' }), null);
+  assert.equal(ghHostIn({ GH_HOST: ' MINE.example. ' }), 'mine.example');
+  assert.equal(ghHostIn({ GH_HOST: 'github.com' }), 'github.com');
+  assert.equal(ghHostIn({ GH_HOST: '.' }), null); // normalizes to nothing: unset
 });

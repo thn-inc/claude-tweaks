@@ -64,6 +64,15 @@ test('Section C step 2 takes its issue set from wrap-up-pack.json inputs.closing
   assert.match(block, /\{worktree\}\/\.claude-tweaks\/pipelines\/\{run-id\}\/work\/\*-spec\.md/);
 });
 
+test('AC1.1: Section C step 2 tells the agent what a failed mirror read means (#4814)', () => {
+  const block = step2Block();
+  const exit = block.indexOf('|| exit 1');
+  const instruction = block.indexOf('**A failed mirror read is not that no-op.**');
+  assert.ok(exit !== -1 && instruction > exit, 'the instruction follows the fence');
+  assert.match(block, /Stop here with no carrier commit: skip steps 3, 3\.6, 4, and 5 below and Section E/);
+  assert.match(block, /`cleanup: closing-keyword carrier failed — \{stderr's Error: line\}`/);
+});
+
 // Corpus-wide: no file under plugin/skills/wrap-up/ reads the main-checkout run dir's work/.
 const WRAPUP_DIR = 'plugin/skills/wrap-up';
 const WRAPUP_FILES = fs.readdirSync(path.join(ROOT, WRAPUP_DIR)).filter((f) => f.endsWith('.md'));

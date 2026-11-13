@@ -287,6 +287,10 @@ function teardownRun(runDir, opts = {}) {
     const repoSpec = repoSpecOf(root);
     if (!repoSpec) {
       lines.push('remote ref: skipped — could not resolve owner/repo');
+    } else if (repoSpec.refusal) {
+      // #4933: an origin on a host that is not a known GitHub host never reaches gh. The reason
+      // word is the one every other gated path reports (#4794).
+      lines.push(`remote ref: skipped (unknown-host) — ${repoSpec.refusal}`);
     } else {
       const result = ghApiDelete(
         [`repos/${repoSpec.owner}/${repoSpec.repo}/git/refs/heads/${branch}`],

@@ -5,7 +5,7 @@
 // fakes, assert after `run()` returns.
 'use strict';
 
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -26,6 +26,11 @@ const { hasClaimLogFor, classifyDecisions } = require('../../../plugin/bin/lib/l
 // reintroducing the I1/C1 false-contest / lost-update bug in production.
 const claimStore = require('../../../plugin/bin/lib/issues/claim-store');
 const { composePrEarlyBody, composeExpressBody } = require('../../../plugin/bin/lib/flow/pr-body');
+
+const tmpRoots = [];
+after(() => {
+  for (const d of tmpRoots) fs.rmSync(d, { recursive: true, force: true });
+});
 
 const REPO = 'acme/w';
 const NOW = Date.parse('2026-08-17T00:00:00.000Z');
@@ -731,6 +736,29 @@ test('staleClaimInFlightPr: a no-match listing at the 1000-entry limit reaches o
   assert.equal(errors.length, 1, 'a no-match listing under the limit is a clean no-match');
 });
 
+test('#4794: staleClaimInFlightPr lists and matches on one target host', () => {
+  const target = { host: 'mine.example', ghRepo: 'mine.example/acme/w' };
+  const marked = (url) => [{ url, body: `claude-tweaks-run: ${RUN}`, isCrossRepository: false }];
+  const record = (listing) => {
+    const argvs = [];
+    const gh = (args) => { argvs.push(args); return JSON.stringify(listing); };
+    return { argvs, gh };
+  };
+  const same = 'https://mine.example/acme/w/pull/3';
+  const a = record(marked(same));
+  assert.deepEqual(claimStore.staleClaimInFlightPr(staleMarker(RUN), a.gh, 'acme', 'w', undefined, target), { link: same });
+  assert.equal(a.argvs.length, 1);
+  assert.equal(a.argvs[0][a.argvs[0].indexOf('--repo') + 1], 'mine.example/acme/w', 'the listing carries the target ghRepo');
+  assert.equal(a.argvs[0].filter((x) => x === '--repo').length, 1);
+  const b = record(marked('https://github.com/acme/w/pull/3'));
+  assert.equal(claimStore.staleClaimInFlightPr(staleMarker(RUN), b.gh, 'acme', 'w', undefined, target), null, 'a github.com url under the mine.example target is not a match');
+  assert.equal(b.argvs[0][b.argvs[0].indexOf('--repo') + 1], 'mine.example/acme/w');
+  // No target: today's bare listing and github.com match.
+  const c = record(marked('https://github.com/acme/w/pull/3'));
+  assert.deepEqual(claimStore.staleClaimInFlightPr(staleMarker(RUN), c.gh, 'acme', 'w'), { link: 'https://github.com/acme/w/pull/3' });
+  assert.equal(c.argvs[0][c.argvs[0].indexOf('--repo') + 1], 'acme/w');
+});
+
 test('staleClaimInFlightPr: a throwing onError is swallowed — the check still returns null (fail open)', () => {
   const throwingOnError = () => { throw new Error('reporter broke'); };
   assert.equal(
@@ -1064,6 +1092,7 @@ test('(resume-pr-8b) a matched stale claim whose write loses the race is skipped
 
 test('(resume-pr-9) defaultAppendClaimLog with resumePr writes the resume-pr claim line, still claim-log-only', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-claim-log-resume-'));
+  tmpRoots.push(root);
   fs.mkdirSync(path.join(root, '.git'));
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', 'run-4588');
   fs.mkdirSync(runDir, { recursive: true });
@@ -1838,6 +1867,7 @@ test('--run: appendClaimLog is called once per claimed issue with its transport,
 // the shared test-runner process, and never a write into the real repo).
 test('defaultAppendClaimLog round-trip: an anchored run dir (real child-process cwd inside a fake checkout) ends up claim-log-only, hasClaimLogFor true for both issues', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-claim-log-anchored-'));
+  tmpRoots.push(root);
   fs.mkdirSync(path.join(root, '.git')); // a real checkout root: mainCheckoutRoot(cwd) anchors here
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', 'run-2775');
   fs.mkdirSync(runDir, { recursive: true });
@@ -1864,6 +1894,7 @@ test('defaultAppendClaimLog round-trip: an anchored run dir (real child-process 
 // os.tmpdir()'s own ancestry has no `.git` to find.
 test('defaultAppendClaimLog on an unanchored run dir (no .git anywhere above it): throws, naming the not-anchored reason', () => {
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-claim-log-unanchored-'));
+  tmpRoots.push(runDir);
 
   assert.throws(
     () => defaultAppendClaimLog({ runDir, issue: 2775, transport: 'git' }),
@@ -1876,6 +1907,7 @@ test('defaultAppendClaimLog on an unanchored run dir (no .git anywhere above it)
 // stand, and claimLogFailures must name the issue and carry the reason.
 test('--run pointed at an unanchored dir, with the real defaultAppendClaimLog: claim stands, claimLogFailures names the issue and the not-anchored reason', () => {
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-claim-log-unanchored-run-'));
+  tmpRoots.push(runDir);
   const runId = path.basename(runDir);
   const { ghApi } = makeGhApi({
     reads: { 752: [readAbsent, confirmRead(runId)] },
@@ -2202,8 +2234,14 @@ test('(bm1) branchless remote, git transport: bootstraps claims-registry from th
 
 // A stateful contents-API fake for a repo whose claims-registry branch is absent
 // until the git/refs POST flips it. `postResponse` overrides that POST's answer
-// (a refusal) and leaves the branch absent.
-function makeBranchlessGhApi({ postResponse = null } = {}) {
+// (a refusal) and leaves the branch absent. `branchesAfterPost` answers the
+// `branches/claims-registry` read once a POST has happened (the 422 re-read);
+// before it that read still answers 404 while the branch is absent.
+// `defaultBranchResponse` / `tipResponse` override the `.default_branch` and
+// `git/ref/heads/main` answers.
+function makeBranchlessGhApi({
+  postResponse = null, branchesAfterPost = null, defaultBranchResponse = null, tipResponse = null,
+} = {}) {
   const state = { branch: false, blobs: {}, refPosts: 0 };
   const ok = { stdout: '{}', failure: null, status: null };
   const readIssue = (args) => (/^repos\/[^/]+\/[^/]+\/contents\/claims\/issue-(\d+)\.json\?ref=/.exec(args[0]) || [])[1];
@@ -2221,10 +2259,11 @@ function makeBranchlessGhApi({ postResponse = null } = {}) {
       return ok;
     }
     if (args[0] === `repos/${REPO}/branches/claims-registry`) {
+      if (branchesAfterPost && state.refPosts > 0) return branchesAfterPost;
       return state.branch ? { stdout: 'claims-registry\n', failure: null, status: null } : readAbsent;
     }
-    if (args[0] === `repos/${REPO}` && args[2] === '.default_branch') return { stdout: 'main\n', failure: null, status: null };
-    if (args[0] === `repos/${REPO}/git/ref/heads/main`) return { stdout: 'abc123\n', failure: null, status: null };
+    if (args[0] === `repos/${REPO}` && args[2] === '.default_branch') return defaultBranchResponse || { stdout: 'main\n', failure: null, status: null };
+    if (args[0] === `repos/${REPO}/git/ref/heads/main`) return tipResponse || { stdout: 'abc123\n', failure: null, status: null };
     if (args[0] === '--method' && args[1] === 'POST' && args[2] === `repos/${REPO}/git/refs`) {
       state.refPosts += 1;
       if (postResponse) return postResponse;
@@ -2271,10 +2310,10 @@ test('(bm3) two first claims (different records) against one branchless remote: 
 const REFUSED_SUFFIX = '— create it from the default branch\n';
 const REFUSAL_PREFIX = 'claim-targets: claims-registry branch missing on origin and could not be created:';
 
-test('(bm4) bootstrap refused on both legs: exit 6, stderr names the missing branch and the remedy, stdout branchMissing.reason is verbatim, never exit 3', () => {
+test('AC3.1: (bm4) bootstrap refused on both legs: exit 6, stderr names the missing branch and the remedy, stdout branchMissing.reason is verbatim, never exit 3', () => {
   const remote = makeBranchlessRemote();
   const { ghApi } = makeBranchlessGhApi({
-    postResponse: { stdout: null, failure: 'network-failure', status: null, error: 'HTTP 403: Resource not accessible by integration' },
+    postResponse: { stdout: null, failure: 'permission-denied', status: 403, error: 'HTTP 403: Resource not accessible by integration' },
   });
   const { gh } = makeGh({});
   const { deps, io } = baseDeps({ ghApi, gh });
@@ -2298,7 +2337,7 @@ test('(bm4c) a refusal reason carrying line breaks, control characters and a ver
   const remote = makeBranchlessRemote();
   const hostile = `remote: denied\n\u001b[31mFORGED claim-targets: exit 0\u001b[0m\r\n${'x'.repeat(2000)}`;
   const { ghApi } = makeBranchlessGhApi({
-    postResponse: { stdout: null, failure: 'network-failure', status: null, error: hostile },
+    postResponse: { stdout: null, failure: 'permission-denied', status: 403, error: hostile },
   });
   const { gh } = makeGh({});
   const { deps, io } = baseDeps({ ghApi, gh });
@@ -2335,7 +2374,7 @@ test('(bm4b) ruleset refusal: git push "[remote rejected] ... (push declined due
 test('(bm5) --keep-going with a refused bootstrap still exits 6', () => {
   const remote = makeBranchlessRemote();
   const { ghApi } = makeBranchlessGhApi({
-    postResponse: { stdout: null, failure: 'network-failure', status: null, error: 'HTTP 403: Resource not accessible by integration' },
+    postResponse: { stdout: null, failure: 'permission-denied', status: 403, error: 'HTTP 403: Resource not accessible by integration' },
   });
   const { gh } = makeGh({});
   const { deps, io } = baseDeps({ ghApi, gh });
@@ -2368,7 +2407,7 @@ const POST_OK = { stdout: '{}', failure: null, status: null };
 
 test('(bm7) write site, contents-API only (no gitRunner): bootstrap refused -> exit 6, reason verbatim, no git leg named', () => {
   const { ghApi, state } = makeBranchlessGhApi({
-    postResponse: { stdout: null, failure: 'network-failure', status: null, error: 'HTTP 403: Resource not accessible by integration' },
+    postResponse: { stdout: null, failure: 'permission-denied', status: 403, error: 'HTTP 403: Resource not accessible by integration' },
   });
   const { gh } = makeGh({});
   const { deps, io } = baseDeps({ ghApi, gh });
@@ -2399,7 +2438,7 @@ test('(bm8) write site, second sighting after a bootstrap that reported success:
   assert.equal(state.refPosts, 1, 'bootstrap is attempted once per run');
 });
 
-test('(bm8b) write site, bootstrap POST hits a secondary rate limit: transient exit 4, never the exit-6 refusal', () => {
+test('(bm8b) AC4.1: write site, bootstrap POST hits a secondary rate limit: transient exit 4, never the exit-6 refusal', () => {
   const { ghApi, state } = makeBranchlessGhApi({
     postResponse: { stdout: null, failure: 'secondary-rate-limit', status: 403, error: 'HTTP 403: You have exceeded a secondary rate limit' },
   });
@@ -2410,8 +2449,470 @@ test('(bm8b) write site, bootstrap POST hits a secondary rate limit: transient e
 
   assert.equal(code, 4, io.err.join(''));
   assert.equal(JSON.parse(io.out[0]).transient[0].error, 'claims-branch-bootstrap-rate-limited');
-  assert.ok(!io.err.join('').includes(REFUSAL_PREFIX), 'no exit-6 stderr line');
+  const stderr = io.err.join('');
+  assert.ok(!stderr.includes(REFUSAL_PREFIX), 'no exit-6 stderr line');
+  assert.ok(stderr.startsWith('claim-targets: claims-registry bootstrap failed transiently:'), stderr);
+  assert.ok(stderr.includes('secondary rate limit'), stderr);
   assert.equal(state.refPosts, 1, 'bootstrap is attempted once per run');
+});
+
+const TRANSPORT_FAILURE = { stdout: null, failure: 'network-failure', status: null, error: 'connect ETIMEDOUT 140.82.112.6:443' };
+const TRANSIENT_PREFIX = 'claim-targets: claims-registry bootstrap failed transiently:';
+const POST_422_EXISTS = { stdout: null, failure: null, status: 422, error: 'HTTP 422: Reference already exists' };
+
+test('(bm10) AC2.1: bootstrap POST fails with a transport error (no HTTP status): exit 4 claims-branch-bootstrap-network-failure, never the exit-6 refusal', () => {
+  const { ghApi, state } = makeBranchlessGhApi({ postResponse: TRANSPORT_FAILURE });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assert.equal(code, 4, io.err.join(''));
+  assert.equal(JSON.parse(io.out[0]).transient[0].error, 'claims-branch-bootstrap-network-failure');
+  const stderr = io.err.join('');
+  assert.ok(!stderr.includes(REFUSAL_PREFIX), 'no exit-6 stderr line');
+  assert.ok(stderr.startsWith(TRANSIENT_PREFIX), stderr);
+  assert.ok(stderr.includes('ETIMEDOUT'), stderr);
+  assert.equal(stderr.trimEnd().split('\n').length, 1, 'exactly one stderr line');
+  assert.equal(state.refPosts, 1);
+});
+
+test('(bm10c) a transient reason carrying line breaks, control characters and a very long body reaches stderr as one bounded line', () => {
+  const hostile = `connect ETIMEDOUT\n\u001b[31mFORGED claim-targets: exit 0\u001b[0m\r\n${'x'.repeat(2000)}`;
+  const { ghApi } = makeBranchlessGhApi({ postResponse: { ...TRANSPORT_FAILURE, error: hostile } });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  assert.equal(run(['--run-id', 'r1', '--targets', '720'], deps), 4, io.err.join(''));
+  const stderr = io.err.join('');
+  assert.ok(stderr.startsWith(TRANSIENT_PREFIX), stderr);
+  assert.equal(stderr.trimEnd().split('\n').length, 1, 'the transient line is exactly one stderr line');
+  assert.doesNotMatch(stderr.trimEnd(), /[\p{Cc}]/u, 'no control characters or line breaks survive');
+  assert.ok(stderr.length <= 700, `bounded, got ${stderr.length}`);
+  assert.match(stderr, /ETIMEDOUT/, 'the leading text is still verbatim');
+});
+
+test('(bm10b) AC2.1: the same transport failure under --keep-going skips the target', () => {
+  const { ghApi } = makeBranchlessGhApi({ postResponse: TRANSPORT_FAILURE });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720', '--keep-going'], deps);
+
+  assert.equal(code, 0, io.err.join(''));
+  const body = JSON.parse(io.out[0]);
+  assert.deepEqual(body.claimed, []);
+  assert.deepEqual(body.skipped, [{ issue: 720, reason: 'transient', error: 'claims-branch-bootstrap-network-failure' }]);
+});
+
+test('(bm11) AC7.1: POST 422 + a network-failure re-read: exit 4 claims-branch-bootstrap-network-failure', () => {
+  const { ghApi } = makeBranchlessGhApi({
+    postResponse: POST_422_EXISTS,
+    branchesAfterPost: { stdout: null, failure: 'network-failure', status: null, error: 'connect ECONNRESET' },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assert.equal(code, 4, io.err.join(''));
+  assert.equal(JSON.parse(io.out[0]).transient[0].error, 'claims-branch-bootstrap-network-failure');
+});
+
+test('(bm12) AC8.1: POST 422 + a permission-403 re-read: exit 6', () => {
+  const { ghApi } = makeBranchlessGhApi({
+    postResponse: POST_422_EXISTS,
+    branchesAfterPost: { stdout: null, failure: 'permission-denied', status: 403, error: 'HTTP 403: Resource not accessible by integration' },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assert.equal(code, 6, io.err.join(''));
+  const stderr = io.err.join('');
+  assert.ok(stderr.includes(REFUSAL_PREFIX), stderr);
+  assert.ok(stderr.endsWith(REFUSED_SUFFIX), stderr);
+  assert.match(JSON.parse(io.out[0]).branchMissing.reason, /Reference already exists/);
+});
+
+test('(bm13) AC11.1: POST 422 + a primary-rate-limit re-read: exit 4 claims-branch-bootstrap-network-failure', () => {
+  const e = new Error('gh: API rate limit exceeded for installation ID 4242. (HTTP 403)');
+  const { ghApi } = makeBranchlessGhApi({
+    postResponse: POST_422_EXISTS,
+    branchesAfterPost: { stdout: null, ...claimStore.classifyGhApiError(e), error: e.message },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assert.equal(code, 4, io.err.join(''));
+  assert.equal(JSON.parse(io.out[0]).transient[0].error, 'claims-branch-bootstrap-network-failure');
+});
+
+test('(bm13b) a bootstrap POST failing with an unrecognised HTTP status (400), classified by the real classifier: transient exit 4, never the exit-6 refusal', () => {
+  const e = new Error('gh: Bad Request (HTTP 400)');
+  const { ghApi } = makeBranchlessGhApi({
+    postResponse: { stdout: null, ...claimStore.classifyGhApiError(e), error: e.message },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assert.equal(code, 4, io.err.join(''));
+  assert.equal(JSON.parse(io.out[0]).transient[0].error, 'claims-branch-bootstrap-network-failure');
+  assert.ok(!io.err.join('').includes(REFUSAL_PREFIX), 'no exit-6 stderr line');
+});
+
+test('(bm14) AC9.1: gh-absent, no-default-branch and no-tip-sha bootstraps still exit 6', () => {
+  const overrides = [
+    { defaultBranchResponse: { stdout: null, failure: 'gh-absent', status: null, error: 'spawn gh ENOENT' } },
+    { defaultBranchResponse: { stdout: '\n', failure: null, status: null } },
+    { tipResponse: { stdout: '\n', failure: null, status: null } },
+  ];
+  for (const override of overrides) {
+    const name = Object.keys(override)[0];
+    const { ghApi, state } = makeBranchlessGhApi(override);
+    const { gh } = makeGh({});
+    const { deps, io } = baseDeps({ ghApi, gh });
+
+    const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+    assert.equal(code, 6, `${name}: ${io.err.join('')}`);
+    assert.ok(io.err.join('').includes(REFUSAL_PREFIX), `${name}: ${io.err.join('')}`);
+    assert.equal(state.refPosts, 0, `${name}: no POST attempted`);
+  }
+});
+
+test('(bm15) AC12.1: bootstrap POST answers 409: exit 6', () => {
+  const { ghApi } = makeBranchlessGhApi({
+    postResponse: { stdout: null, failure: null, status: 409, error: 'HTTP 409: Git Repository is empty.' },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assert.equal(code, 6, io.err.join(''));
+  const stderr = io.err.join('');
+  assert.ok(stderr.includes(REFUSAL_PREFIX), stderr);
+  assert.ok(stderr.endsWith(REFUSED_SUFFIX), stderr);
+  assert.match(JSON.parse(io.out[0]).branchMissing.reason, /Git Repository is empty/);
+});
+
+test('(bm16) AC10.1: two targets under --keep-going, first bootstrap fails with a transport error: both skipped as claims-branch-bootstrap-network-failure, never claims-branch-missing', () => {
+  const { ghApi, state } = makeBranchlessGhApi({ postResponse: TRANSPORT_FAILURE });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720,721', '--keep-going'], deps);
+
+  assert.equal(code, 0, io.err.join(''));
+  assert.deepEqual(JSON.parse(io.out[0]).skipped, [
+    { issue: 720, reason: 'transient', error: 'claims-branch-bootstrap-network-failure' },
+    { issue: 721, reason: 'transient', error: 'claims-branch-bootstrap-network-failure' },
+  ]);
+  assert.equal(state.refPosts, 1, 'bootstrap is attempted once per run');
+  const stderr = io.err.join('');
+  assert.equal(stderr.split(TRANSIENT_PREFIX).length - 1, 1, 'the transient line is written once, not once per target');
+});
+
+test('(bm17) two targets under --keep-going, first bootstrap hits a secondary rate limit: both skipped as claims-branch-bootstrap-rate-limited', () => {
+  const { ghApi, state } = makeBranchlessGhApi({
+    postResponse: { stdout: null, failure: 'secondary-rate-limit', status: 403, error: 'HTTP 403: You have exceeded a secondary rate limit' },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720,721', '--keep-going'], deps);
+
+  assert.equal(code, 0, io.err.join(''));
+  assert.deepEqual(JSON.parse(io.out[0]).skipped, [
+    { issue: 720, reason: 'transient', error: 'claims-branch-bootstrap-rate-limited' },
+    { issue: 721, reason: 'transient', error: 'claims-branch-bootstrap-rate-limited' },
+  ]);
+  assert.equal(state.refPosts, 1, 'bootstrap is attempted once per run');
+});
+
+// ---- #4899: GitHub refusing a claim read or write is exit 7, not a transient 4 ----
+// The refusal is a standing condition (a token without access to the repo or the
+// claims-registry branch), so a retry cannot help; it carries the forge's own
+// text in `permissionDenied.reason` and, unlike a transient, stops even under
+// --keep-going.
+const PERM_403 = { stdout: null, failure: 'permission-denied', status: 403, error: 'HTTP 403: Resource not accessible by integration' };
+const PERM_401 = { stdout: null, failure: 'permission-denied', status: 401, error: 'HTTP 401: Bad credentials' };
+const NET_FAIL = { stdout: null, failure: 'network-failure', status: null, error: 'connect ETIMEDOUT 140.82.112.6:443' };
+const SECONDARY_LIMIT = { stdout: null, failure: 'secondary-rate-limit', status: 403, error: 'HTTP 403: You have exceeded a secondary rate limit' };
+
+function assertPermissionStop(code, io, { issue, operation, reason }) {
+  assert.equal(code, 7, io.err.join(''));
+  const body = JSON.parse(io.out[0]);
+  assert.equal(body.permissionDenied.issue, issue);
+  assert.equal(body.permissionDenied.operation, operation);
+  assert.equal(body.permissionDenied.reason, reason);
+  assert.equal(body.transient, undefined, 'a permission refusal is not a transient');
+  const stderr = io.err.join('');
+  assert.ok(stderr.includes(`#${issue}`), stderr);
+  assert.match(stderr, /token/);
+  return body;
+}
+
+test('AC1.1: a 403 claim read exits 7 with operation read', () => {
+  const { ghApi } = makeGhApi({ reads: { 720: [PERM_403] } });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  const body = assertPermissionStop(code, io, { issue: 720, operation: 'read', reason: 'HTTP 403: Resource not accessible by integration' });
+  assert.deepEqual(body.released, []);
+  assert.deepEqual(body.releaseFailed, []);
+});
+
+test('AC1.1: a 401 claim read exits 7 with operation read', () => {
+  const { ghApi } = makeGhApi({ reads: { 720: [PERM_401] } });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assertPermissionStop(code, io, { issue: 720, operation: 'read', reason: 'HTTP 401: Bad credentials' });
+});
+
+test('AC2.1: a 403 claim write exits 7 with operation write', () => {
+  const { ghApi } = makeGhApi({ reads: { 720: [readAbsent] }, writes: { 720: [PERM_403] } });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assertPermissionStop(code, io, { issue: 720, operation: 'write', reason: 'HTTP 403: Resource not accessible by integration' });
+});
+
+test('AC2.1: a 401 claim write exits 7 with operation write', () => {
+  const { ghApi } = makeGhApi({ reads: { 720: [readAbsent] }, writes: { 720: [PERM_401] } });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assertPermissionStop(code, io, { issue: 720, operation: 'write', reason: 'HTTP 401: Bad credentials' });
+});
+
+test('AC3.1: --keep-going with a 403 on the second target exits 7 and releases the first', () => {
+  const { ghApi } = makeGhApi({
+    reads: { 720: [readAbsent, confirmRead()], 721: [PERM_403] },
+    writes: { 720: [writeOk] },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720,721', '--keep-going'], deps);
+
+  const body = assertPermissionStop(code, io, { issue: 721, operation: 'read', reason: 'HTTP 403: Resource not accessible by integration' });
+  assert.deepEqual(body.released, [720]);
+  assert.deepEqual(body.releaseFailed, []);
+  assert.equal(body.skipped, undefined, 'the refusal is run-level, never a per-target skip');
+});
+
+test('AC4.1: network-failure and secondary rate limit claim reads and writes still exit 4', () => {
+  const cases = [
+    ['read network-failure', { reads: { 720: [NET_FAIL] } }, 'network-failure'],
+    ['read secondary-rate-limit', { reads: { 720: [SECONDARY_LIMIT] } }, 'secondary-rate-limit'],
+    ['write network-failure', { reads: { 720: [readAbsent] }, writes: { 720: [NET_FAIL] } }, 'network-failure'],
+    ['write secondary-rate-limit', { reads: { 720: [readAbsent] }, writes: { 720: [SECONDARY_LIMIT] } }, 'secondary-rate-limit'],
+  ];
+  for (const [label, fixture, error] of cases) {
+    const { ghApi } = makeGhApi(fixture);
+    const { gh } = makeGh({});
+    const { deps, io } = baseDeps({ ghApi, gh });
+
+    const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+    assert.equal(code, 4, `${label}: ${io.err.join('')}`);
+    const body = JSON.parse(io.out[0]);
+    assert.equal(body.transient[0].error, error, label);
+    assert.equal(body.permissionDenied, undefined, label);
+  }
+});
+
+test('AC5.1: a bootstrap refused by a permission 403 still exits 6 with branchMissing', () => {
+  const { ghApi } = makeBranchlessGhApi({
+    postResponse: { stdout: null, failure: 'permission-denied', status: 403, error: 'HTTP 403' },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assert.equal(code, 6, io.err.join(''));
+  const body = JSON.parse(io.out[0]);
+  assert.equal(body.branchMissing.branch, 'claims-registry');
+  assert.equal(body.permissionDenied, undefined);
+});
+
+test('git-leg fallback: git read transport failure then contents-API 403 exits 7 operation read', () => {
+  const { ghApi } = makeGhApi({ reads: { 720: [PERM_403] } });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+  deps.gitRunner = () => { throw new Error('fatal: unable to access the remote'); };
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assertPermissionStop(code, io, { issue: 720, operation: 'read', reason: 'HTTP 403: Resource not accessible by integration' });
+});
+
+test('write fallback re-read: git push transport failure then a 403 re-read exits 7 operation write', () => {
+  // The git read finds a released (reclaimable) claim, so the write is a
+  // conditional one; the git push fails at the transport, and the contents-API
+  // re-read that verifies the content before the fallback PUT answers 403.
+  const { ghApi } = makeGhApi({ reads: { 720: [PERM_403] } });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+  deps.gitRunner = (args) => {
+    if (args[0] === 'fetch' || args[0] === 'update-ref' || args[0] === 'read-tree' || args[0] === 'update-index') return '';
+    if (args[0] === 'rev-parse') return 'tip0\n';
+    if (args[0] === 'show') return tombstoneMarker('other');
+    if (args[0] === 'hash-object') return 'blobsha\n';
+    if (args[0] === 'write-tree') return 'treesha\n';
+    if (args[0] === 'commit-tree') return 'commit-1\n';
+    if (args[0] === 'push') throw new Error('fatal: unable to access the remote');
+    throw new Error(`unexpected git call: ${args.join(' ')}`);
+  };
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assertPermissionStop(code, io, { issue: 720, operation: 'write', reason: 'HTTP 403: Resource not accessible by integration' });
+});
+
+test('reason flattened: error text with newlines and control characters is one line in reason and on stderr', () => {
+  const { ghApi } = makeGhApi({ reads: { 720: [{ ...PERM_403, error: 'HTTP 403\nforged line\u0007' }] } });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assertPermissionStop(code, io, { issue: 720, operation: 'read', reason: 'HTTP 403 forged line' });
+  assert.equal(io.err.join('').trimEnd().split('\n').length, 1, 'the refusal is exactly one stderr line');
+});
+
+test('reason falls back to permission-denied when the store carries no error text', () => {
+  const { ghApi } = makeGhApi({ reads: { 720: [{ stdout: null, failure: 'permission-denied', status: 403 }] } });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assertPermissionStop(code, io, { issue: 720, operation: 'read', reason: 'permission-denied' });
+});
+
+// The store's real `error` is the failed command's message plus its stderr
+// (defaultGhApi's ghErrorText joins message, stderr and stdout with a space): a
+// `Command failed: gh api ... -f content=<base64 claim>` line, then gh's own
+// stderr, repeated with a leading space, then the stdout JSON body. The reason
+// keeps GitHub's text once.
+const COMMAND_LINE = 'Command failed: gh api --method PUT repos/a/b/contents/claims/issue-720.json -f content=ewogICJydW5JZCI6';
+const GH_REFUSAL = 'gh: Resource not accessible by personal access token (HTTP 403)';
+const GH_BODY = '{"message":"Resource not accessible by personal access token","status":"403"}';
+
+test('real-shape refusal: the Command failed line and the repeated stderr line are dropped from reason and stderr', () => {
+  const error = `${COMMAND_LINE}\n${GH_REFUSAL}\n ${GH_REFUSAL}\n ${GH_BODY}\n`;
+  const { ghApi } = makeGhApi({ reads: { 720: [readAbsent] }, writes: { 720: [{ ...PERM_403, error }] } });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  const body = assertPermissionStop(code, io, { issue: 720, operation: 'write', reason: `${GH_REFUSAL} ${GH_BODY}` });
+  for (const text of [JSON.stringify(body), io.err.join('')]) {
+    assert.doesNotMatch(text, /Command failed/);
+    assert.doesNotMatch(text, /ewogICJydW5JZCI6/);
+  }
+});
+
+test('reason falls back to permission-denied when the error is only the Command failed line', () => {
+  const { ghApi } = makeGhApi({ reads: { 720: [{ ...PERM_403, error: `${COMMAND_LINE}\n` }] } });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assertPermissionStop(code, io, { issue: 720, operation: 'read', reason: 'permission-denied' });
+});
+
+test('refused branch lookup: PUT 404, absent re-read, then the branches lookup answers 403 exits 7 operation write with its text', () => {
+  const ghApi = (args) => {
+    if (isRead(args, '720')) return readAbsent;
+    if (isWrite(args, '720')) return { stdout: null, failure: null, status: 404 };
+    if (args[0] === `repos/${REPO}/branches/claims-registry`) return { ...PERM_403, error: 'HTTP 403: branch lookup refused' };
+    throw new Error(`unexpected ghApi ${args.join(' ')}`);
+  };
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assertPermissionStop(code, io, { issue: 720, operation: 'write', reason: 'HTTP 403: branch lookup refused' });
+});
+
+test('release refused: the earlier claim\'s release read answers 403 — exit stays 7, target in releaseFailed', () => {
+  const { ghApi } = makeGhApi({
+    reads: { 720: [readAbsent, confirmRead(), PERM_403], 721: [PERM_403] },
+    writes: { 720: [writeOk] },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720,721'], deps);
+
+  const body = assertPermissionStop(code, io, { issue: 721, operation: 'read', reason: 'HTTP 403: Resource not accessible by integration' });
+  assert.deepEqual(body.released, []);
+  assert.deepEqual(body.releaseFailed, [{ issue: 720, error: 'permission-denied' }]);
+});
+
+test('resume-pr: a stale in-flight claim re-claimed with --resume-pr whose write answers 403 exits 7', () => {
+  const { ghApi } = makeGhApi({
+    reads: { 780: [readOk(staleMarker(RUN), 'sha780')] },
+    writes: { 780: [PERM_403] },
+  });
+  const { gh } = makeGh({ openPrs: [resumeMarkedPr] });
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '780', '--resume-pr', RESUME_PR], deps);
+
+  assertPermissionStop(code, io, { issue: 780, operation: 'write', reason: 'HTTP 403: Resource not accessible by integration' });
+});
+
+test('refused re-read: a PUT 404 whose self-write re-read answers 403 exits 7 operation write, never contested', () => {
+  const { ghApi } = makeGhApi({
+    reads: { 720: [readAbsent, PERM_403] },
+    writes: { 720: [{ stdout: null, failure: null, status: 404 }] },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  const body = assertPermissionStop(code, io, { issue: 720, operation: 'write', reason: 'HTTP 403: Resource not accessible by integration' });
+  assert.equal(body.contested, undefined);
+});
+
+test('refused read-back: a claim write that succeeded but whose read-back answers 403 keeps exit 5', () => {
+  const { ghApi } = makeGhApi({
+    reads: { 720: [readAbsent, PERM_403] },
+    writes: { 720: [writeOk] },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assert.equal(code, 5, io.err.join(''));
+  const body = JSON.parse(io.out[0]);
+  assert.deepEqual(body.unverified, [{ issue: 720 }]);
+  assert.equal(body.permissionDenied, undefined);
 });
 
 test('(bm9) write-site second sighting under --keep-going discards the git tip chain: the next target fetches fresh', () => {
@@ -2442,4 +2943,233 @@ test('(bm9) write-site second sighting under --keep-going discards the git tip c
   ]);
   assert.equal(bootstrapPushes(remote).length, 1, 'bootstrap is attempted once per run');
   assert.equal(claimsFetches.length, 3, '720 fetches twice (missing, then after the bootstrap); 721 fetches fresh instead of reusing 720\'s tip');
+});
+
+// ---- #4794: the origin gate and the run's one repo target ----------------------------------------
+// `deps.gateOrigin` is the origin-host gate's verdict (bin/claim-targets.js's realDeps); a refusal
+// is run-level, so it stops before the first gh call, claim read or write, label or claim-log line.
+// `deps.repoTarget(owner, repo)` is the gh seam's one `resolveRepoTarget` result, which the stale
+// listing, the stale match and the tombstone's PR-url check all share.
+
+const GATE_REFUSAL = 'origin host git.corp.invalid is not a known GitHub host (test refusal text)';
+
+test('#4794: a refused origin exits 2 unknown-host before any gh call, with or without --keep-going', () => {
+  for (const extra of [[], ['--keep-going'], ['--keep-going', '--run', '/some/run/r1']]) {
+    const r = recordingRefusers();
+    const { deps, io } = baseDeps({ ghApi: r.ghApi, gh: r.gh });
+    deps.gitRunner = r.gitRunner;
+    deps.appendClaimLog = r.appendClaimLog;
+    deps.gateOrigin = () => ({ spec: null, refusal: GATE_REFUSAL });
+
+    const code = run(['--run-id', 'r1', '--targets', '720,721', ...extra], deps);
+
+    assert.equal(code, 2, extra.join(' '));
+    assert.deepEqual(io.err, [`claim-targets: unknown-host — ${GATE_REFUSAL}\n`], extra.join(' '));
+    assert.deepEqual(io.out, [], 'a refusal prints no envelope');
+    assert.deepEqual(r.calls, { ghApi: [], gh: [], gitRunner: [], appendClaimLog: [] }, `${extra.join(' ')}: no gh call, claim read or write, label or claim-log line`);
+  }
+});
+
+test('#4794: the --steps skip guard answers before the origin gate is consulted', () => {
+  const r = recordingRefusers();
+  const { deps, io } = baseDeps({ ghApi: r.ghApi, gh: r.gh });
+  deps.gitRunner = r.gitRunner;
+  deps.appendClaimLog = r.appendClaimLog;
+  deps.gateOrigin = () => { throw new Error('gateOrigin must not be called'); };
+
+  const code = run(['--run-id', 'r1', '--targets', '720', '--steps', 'review,wrap-up'], deps);
+
+  assert.equal(code, 0);
+  assert.deepEqual(io.out, [SKIP_GUARD_ENVELOPE]);
+  assert.deepEqual(r.calls, { ghApi: [], gh: [], gitRunner: [], appendClaimLog: [] });
+});
+
+test('#4794: a gate verdict with no refusal (an unparseable or absent origin) claims as today', () => {
+  for (const gateOrigin of [() => ({ spec: null, refusal: null }), () => null, undefined]) {
+    const { ghApi, calls: apiCalls } = makeGhApi({
+      reads: { 720: [readAbsent, confirmRead()] },
+      writes: { 720: [writeOk] },
+    });
+    const { gh, calls: ghCalls } = makeGh({});
+    const { deps, io } = baseDeps({ ghApi, gh });
+    if (gateOrigin) deps.gateOrigin = gateOrigin;
+
+    const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+    assert.equal(code, 0, io.err.join(''));
+    assert.deepEqual(JSON.parse(io.out[0]).claimed, [720]);
+    assert.ok(ghCalls.some((a) => a[0] === 'repo' && a[1] === 'view'), 'the repo still comes from gh repo view');
+    assert.ok(apiCalls.some((a) => isWrite(a, '720')));
+  }
+});
+
+// A same-repo PR url on `acme.ghe.com`, marked with the stale claim's run.
+const GHE_PR_URL = 'https://acme.ghe.com/acme/w/pull/12';
+const GHE_TARGET = { host: 'acme.ghe.com', ghRepo: 'acme.ghe.com/acme/w' };
+const markedPrAt = (url) => ({ url, body: `<!-- claude-tweaks-run: ${RUN} -->\n`, isCrossRepository: false });
+
+test('#4794: under a GHE repo target the stale-claim listing carries the host-qualified --repo once and a same-host PR url is in flight', () => {
+  const { ghApi, calls } = makeGhApi({ reads: { 770: [readOk(staleMarker(RUN), 'sha770')] }, writes: {} });
+  const { gh, calls: ghCalls } = makeGh({ openPrs: [markedPrAt(GHE_PR_URL)] });
+  const { deps, io } = baseDeps({ ghApi, gh });
+  const targetArgs = [];
+  deps.repoTarget = (owner, repo) => { targetArgs.push([owner, repo]); return GHE_TARGET; };
+
+  const code = run(['--run-id', 'r1', '--targets', '770'], deps);
+
+  assert.equal(code, 3, io.err.join(''));
+  assert.deepEqual(JSON.parse(io.out[0]).inFlight, [{ issue: 770, link: GHE_PR_URL }]);
+  assert.deepEqual(targetArgs, [['acme', 'w']], 'the target is resolved once, from the gh-resolved slug');
+  const list = ghCalls.filter(isPrList);
+  assert.equal(list.length, 1);
+  assert.deepEqual(list[0], ['pr', 'list', '--repo', 'acme.ghe.com/acme/w', '--state', 'open', '--json', 'url,body,isCrossRepository', '--limit', '1000']);
+  assert.equal(list[0].filter((a) => a === '--repo').length, 1);
+  assert.ok(!calls.some((a) => isWrite(a, '770')));
+});
+
+test('#4794: under a GHE repo target a marked github.com PR url is not in flight', () => {
+  const { ghApi, calls } = makeGhApi({
+    reads: { 770: [readOk(staleMarker(RUN), 'sha770'), confirmRead()] },
+    writes: { 770: [writeOk] },
+  });
+  const { gh } = makeGh({ openPrs: [markedPrAt(PR_URL)] });
+  const { deps, io } = baseDeps({ ghApi, gh });
+  deps.repoTarget = () => GHE_TARGET;
+
+  const code = run(['--run-id', 'r1', '--targets', '770'], deps);
+
+  assert.equal(code, 0, io.err.join(''));
+  assert.deepEqual(JSON.parse(io.out[0]).claimed, [770]);
+  assert.ok(calls.some((a) => isWrite(a, '770')), 'the github.com url is not the origin host, so the stale claim is reclaimed');
+});
+
+test('#4794: a pr-opened tombstone is matched against the same target host as the stale listing', () => {
+  const { ghApi, calls } = makeGhApi({
+    reads: { 760: [readOk(prOpenedTombstoneMarker('otherRun', GHE_PR_URL), 'sha760')] },
+    writes: {},
+  });
+  const { gh, calls: ghCalls } = makeGh({ prState: 'OPEN' });
+  const { deps, io } = baseDeps({ ghApi, gh });
+  deps.repoTarget = () => GHE_TARGET;
+
+  const code = run(['--run-id', 'r1', '--targets', '760'], deps);
+
+  assert.equal(code, 3, io.err.join(''));
+  assert.deepEqual(JSON.parse(io.out[0]).inFlight, [{ issue: 760, link: GHE_PR_URL }]);
+  assert.ok(ghCalls.some((a) => a[0] === 'pr' && a[1] === 'view' && a[2] === GHE_PR_URL), 'the tombstone link reached gh pr view');
+  assert.ok(!calls.some((a) => isWrite(a, '760')));
+});
+
+test('#4794: under a GHE repo target a github.com tombstone link is never sent to gh pr view', () => {
+  const { ghApi } = makeGhApi({
+    reads: { 760: [readOk(prOpenedTombstoneMarker('otherRun', 'https://github.com/acme/w/pull/304'), 'sha760'), confirmRead()] },
+    writes: { 760: [writeOk] },
+  });
+  const { gh, calls: ghCalls } = makeGh({ prState: 'OPEN' });
+  const { deps, io } = baseDeps({ ghApi, gh });
+  deps.repoTarget = () => GHE_TARGET;
+
+  const code = run(['--run-id', 'r1', '--targets', '760'], deps);
+
+  assert.equal(code, 0, io.err.join(''));
+  assert.deepEqual(JSON.parse(io.out[0]).claimed, [760]);
+  assert.ok(!ghCalls.some((a) => a[0] === 'pr' && a[1] === 'view'), 'a link off the target host is rejected before any gh call');
+});
+
+test('#4794: under GH_HOST=mine.example on a bare slug the listing stays bare while the PR-url match follows mine.example', () => {
+  const MINE = { host: 'mine.example', ghRepo: 'acme/w' };
+  const listing = (url) => {
+    const { ghApi } = makeGhApi({
+      reads: { 770: [readOk(staleMarker(RUN), 'sha770'), confirmRead()] },
+      writes: { 770: [writeOk] },
+    });
+    const { gh, calls: ghCalls } = makeGh({ openPrs: [markedPrAt(url)] });
+    const { deps, io } = baseDeps({ ghApi, gh });
+    deps.repoTarget = () => MINE;
+    return { code: run(['--run-id', 'r1', '--targets', '770'], deps), io, ghCalls };
+  };
+
+  const hit = listing('https://mine.example/acme/w/pull/12');
+  assert.equal(hit.code, 3, hit.io.err.join(''));
+  assert.deepEqual(hit.ghCalls.filter(isPrList)[0].slice(0, 4), ['pr', 'list', '--repo', 'acme/w']);
+
+  const miss = listing(PR_URL);
+  assert.equal(miss.code, 0, miss.io.err.join(''));
+  assert.deepEqual(JSON.parse(miss.io.out[0]).claimed, [770], 'a github.com url is not the GH_HOST host');
+});
+
+test('#4794: with no repo target the listing is today\'s bare --repo acme/w and the match is github.com', () => {
+  const { ghApi } = makeGhApi({ reads: { 770: [readOk(staleMarker(RUN), 'sha770')] }, writes: {} });
+  const { gh, calls: ghCalls } = makeGh({ openPrs: [markedPr] });
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '770'], deps);
+
+  assert.equal(code, 3, io.err.join(''));
+  assert.deepEqual(ghCalls.filter(isPrList)[0], ['pr', 'list', '--repo', 'acme/w', '--state', 'open', '--json', 'url,body,isCrossRepository', '--limit', '1000']);
+});
+
+// The one host rule: the gate's admitted host decides, never a second origin read. `seamTarget`
+// models bin/claim-targets.js's realDeps.repoTarget with its own fallback read simulated as
+// timing out (`fallbackHost` null = resolveGhHost answers github.com): the gate's host, when it
+// passes one, must win over it.
+const { resolveRepoTarget } = require('../../../plugin/bin/lib/repo-resolve');
+const seamTarget = (argsSeen, fallbackHost = null) => (owner, repo, gateHost) => {
+  argsSeen.push([owner, repo, gateHost]);
+  return resolveRepoTarget({ owner, repo, originHost: gateHost || fallbackHost }, { env: {} });
+};
+const gheGate = () => ({ spec: { host: 'acme.ghe.com', owner: 'acme', repo: 'w' }, refusal: null });
+
+test('#4794: the gate\'s admitted GHE host reaches the repo target, so the stale listing and its PR-url match use it although a second origin read would answer github.com', () => {
+  const { ghApi, calls } = makeGhApi({ reads: { 770: [readOk(staleMarker(RUN), 'sha770')] }, writes: {} });
+  const { gh, calls: ghCalls } = makeGh({ openPrs: [markedPrAt(GHE_PR_URL)] });
+  const { deps, io } = baseDeps({ ghApi, gh });
+  const seen = [];
+  deps.gateOrigin = gheGate;
+  deps.repoTarget = seamTarget(seen);
+
+  const code = run(['--run-id', 'r1', '--targets', '770'], deps);
+
+  assert.equal(code, 3, io.err.join(''));
+  assert.deepEqual(seen, [['acme', 'w', 'acme.ghe.com']], 'the gate host is the third argument');
+  assert.deepEqual(JSON.parse(io.out[0]).inFlight, [{ issue: 770, link: GHE_PR_URL }]);
+  assert.deepEqual(ghCalls.filter(isPrList)[0].slice(0, 4), ['pr', 'list', '--repo', 'acme.ghe.com/acme/w']);
+  assert.ok(!calls.some((a) => isWrite(a, '770')));
+});
+
+test('#4794: the gate\'s admitted GHE host also decides the tombstone\'s PR-url match', () => {
+  const { ghApi, calls } = makeGhApi({
+    reads: { 760: [readOk(prOpenedTombstoneMarker('otherRun', GHE_PR_URL), 'sha760')] },
+    writes: {},
+  });
+  const { gh, calls: ghCalls } = makeGh({ prState: 'OPEN' });
+  const { deps, io } = baseDeps({ ghApi, gh });
+  deps.gateOrigin = gheGate;
+  deps.repoTarget = seamTarget([]);
+
+  const code = run(['--run-id', 'r1', '--targets', '760'], deps);
+
+  assert.equal(code, 3, io.err.join(''));
+  assert.deepEqual(JSON.parse(io.out[0]).inFlight, [{ issue: 760, link: GHE_PR_URL }]);
+  assert.ok(ghCalls.some((a) => a[0] === 'pr' && a[1] === 'view' && a[2] === GHE_PR_URL));
+  assert.ok(!calls.some((a) => isWrite(a, '760')));
+});
+
+test('#4794: a gate with no spec passes a null host so the seam keeps its own fallback read; a github.com spec passes github.com', () => {
+  for (const [gate, expected, listed, prUrl] of [
+    [() => ({ spec: null, refusal: null }), null, 'acme.ghe.com/acme/w', GHE_PR_URL],
+    [() => ({ spec: { host: 'github.com', owner: 'acme', repo: 'w' }, refusal: null }), 'github.com', 'acme/w', PR_URL],
+  ]) {
+    const { ghApi } = makeGhApi({ reads: { 770: [readOk(staleMarker(RUN), 'sha770')] }, writes: {} });
+    const { gh, calls: ghCalls } = makeGh({ openPrs: [markedPrAt(prUrl)] });
+    const { deps, io } = baseDeps({ ghApi, gh });
+    const seen = [];
+    deps.gateOrigin = gate;
+    deps.repoTarget = seamTarget(seen, expected === null ? 'acme.ghe.com' : null);
+
+    run(['--run-id', 'r1', '--targets', '770'], deps);
+
+    assert.deepEqual(seen, [['acme', 'w', expected]], io.err.join(''));
+    assert.equal(ghCalls.filter(isPrList)[0][3], listed);
+  }
 });

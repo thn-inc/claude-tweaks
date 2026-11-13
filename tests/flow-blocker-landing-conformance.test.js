@@ -480,3 +480,162 @@ test('2.7b checks run in the stated order: local-files, step list, work-links re
     assert.throws(() => requireOrder(permuted, CHAIN), /must come after/, `swapping steps ${i} and ${i + 1} must go red`);
   }
 });
+
+// ---- #4792: the blocker-landing gate name and both calls' dispatch report ----
+const { missingFactsOf, assertEachPatternGoesRed, lineStartingWith } = require('./helpers/conformance-asserts');
+
+const FAILURE_CARDS = path.join(FLOW_DIR, 'failure-cards.md');
+const TASK_PROMPT = path.join(__dirname, '..', 'plugin', 'skills', 'dispatch', 'task-prompt.md');
+
+const CARD_ROW_PREFIX = '| Step 2.7b blocker landing';
+function cardRow(text) {
+  const row = lineStartingWith(text, CARD_ROW_PREFIX);
+  assert.ok(row, 'failure-cards.md has no line starting "| Step 2.7b blocker landing"');
+  return row;
+}
+
+const SECOND_CALL_FACT = "AC6.1: a second call's continuation reports blocked";
+const CARD_FACTS = [
+  [/`open` or `unlanded` out-of-run blocker/, 'AC1.1: the row names both stopping verdicts'],
+  [/gate `blocker-landing`/, 'AC1.1: the row names the gate'],
+  [/when the run already holds claims \(a continuation re-running the pre-claim checks\), the claims rules below still apply/, "AC5.1: a continuation's held claims keep the claims rules"],
+  [/`OUTCOME: build-test-blocked`, one `ISSUE #\{n\}: failed:blocker-landing` line per target, and `STATUS: BLOCKED`/, 'AC2.1: the dispatch report line'],
+  [/a second call's handoff continuation \(its step list includes `test`\) reports `OUTCOME: blocked` with the same `ISSUE` line/, SECOND_CALL_FACT],
+  [/Settle treats it as a non-failing stop \(`dispatch\/settle-and-merge\.md`'s Blocker-landing special case\)/, 'AC2.1: cites the Settle special case'],
+];
+
+test("AC1.1 AC2.1 AC5.1 AC6.1: failure-cards.md names the blocker-landing gate and both calls' dispatch reports (#4792)", () => {
+  assert.deepEqual(missingFactsOf(CARD_FACTS)(cardRow(readText(FAILURE_CARDS))), []);
+});
+
+test("AC6.1: the row's second-call outcome is one the second call's template can report", () => {
+  const prompt = readText(TASK_PROMPT);
+  const secondCall = lineStartingWith(prompt, 'OUTCOME: {merged');
+  assert.ok(secondCall, 'task-prompt.md has no line starting "OUTCOME: {merged"');
+  assert.ok(secondCall.includes('| blocked |'), "the second call's OUTCOME vocabulary includes blocked");
+  const firstCall = lineStartingWith(prompt, 'OUTCOME: {build-test-ok');
+  assert.ok(firstCall, 'task-prompt.md has no line starting "OUTCOME: {build-test-ok"');
+  assert.ok(firstCall.includes('build-test-blocked'), "the first call's OUTCOME vocabulary includes build-test-blocked");
+  const row = cardRow(readText(FAILURE_CARDS));
+  const drifted = mutate(row, 'OUTCOME: blocked', 'OUTCOME: stopped');
+  assert.deepEqual(missingFactsOf(CARD_FACTS)(drifted), [SECOND_CALL_FACT]);
+});
+
+test('AC1.2: each failure-cards blocker-landing fact can go red', () => {
+  assertEachPatternGoesRed(cardRow(readText(FAILURE_CARDS)), CARD_FACTS, missingFactsOf(CARD_FACTS));
+});
+
+const LOADED_BY_FACTS = [[/or Step 2's blocker-landing stop\) \*\*only when a gate fails\*\*/, "AC1.1: failure-cards.md's Loaded by line names the blocker-landing stop"]];
+test('AC1.1: failure-cards.md is loaded on the blocker-landing stop', () => {
+  const text = readText(FAILURE_CARDS);
+  const loadedBy = (t) => lineStartingWith(t, 'Loaded by');
+  assert.ok(loadedBy(text), 'failure-cards.md has no line starting "Loaded by"');
+  assert.deepEqual(missingFactsOf(LOADED_BY_FACTS)(loadedBy(text)), []);
+  const mutated = mutate(text, ", or Step 2's blocker-landing stop", '');
+  assert.deepEqual(missingFactsOf(LOADED_BY_FACTS)(loadedBy(mutated)), [LOADED_BY_FACTS[0][1]]);
+});
+
+const GATE_SENTENCE = "An `open` or `unlanded` verdict's stop is gate `blocker-landing`";
+function assertRoutesToGate(text) {
+  const section = outOfRunSection(text);
+  assert.match(
+    section,
+    /An `open` or `unlanded` verdict's stop is gate `blocker-landing`; under `\/claude-tweaks:dispatch` report it per `failure-cards\.md`'s blocker-landing row\./,
+    'ordering section routes the open and unlanded stops to the blocker-landing gate',
+  );
+  requireOrder(section, ['| `undetermined` |', GATE_SENTENCE, 'A failed blocker query is not']);
+}
+test('AC1.1: the out-of-run section names the open and unlanded stops as gate blocker-landing, after the verdict table and before the failed-query line (#4792)', () => {
+  const text = readText(ORDERING);
+  assertRoutesToGate(text);
+  assert.throws(
+    () => assertRoutesToGate(mutate(text, /An `open` or `unlanded` verdict's stop is gate[^\n]*\n\n/, '')),
+    /ordering section routes the open and unlanded stops/,
+  );
+  // Permutation, not deletion: the sentence moves directly below the failed-query line.
+  const sentenceLine = lineStartingWith(text, GATE_SENTENCE);
+  const without = mutate(text, `${sentenceLine}\n\n`, '');
+  const failedQueryLine = lineStartingWith(without, 'A failed blocker query is not');
+  const permuted = mutate(without, `${failedQueryLine}\n`, `${failedQueryLine}\n${sentenceLine}\n`);
+  assert.notEqual(permuted, text);
+  assert.throws(() => assertRoutesToGate(permuted), /must come after the previous marker/);
+});
+
+// ---- #4793: a blocker in another repository, linked natively or declared by a body line ----
+const collapseWs = (s) => s.replace(/\s+/g, ' ');
+
+function assertCrossRepositoryNaming(text) {
+  const section = collapseWs(outOfRunSection(text));
+  assert.ok(section.includes('`{repository}#{blocker}`'), 'the section names a cross-repository blocker as `{repository}#{blocker}`');
+  assert.ok(section.includes('`via: cross-repository`'), 'the section names the plain cross-repository via value');
+  assert.ok(section.includes('`via: cross-repository-state-unreadable`'), 'the section names the state-unreadable cross-repository via value');
+  assert.ok(
+    section.includes('is a blocker in another repository, linked natively or declared by a `Blocked by owner/name#N` body line'),
+    'the section says a cross-repository entry is linked natively or declared by a body line',
+  );
+  assert.ok(
+    section.includes("`condition: {repository}#{blocker} lives in another repository (via cross-repository) → fallback: proceeded without judging its landing — blocker landing reads only this repository's integration branch`"),
+    'the section carries the cross-repository SKIP line',
+  );
+  assert.ok(
+    section.includes('"159 depends on {repository}#{blocker} (state unreadable) — read as open (fail closed)"'),
+    'the section carries the state-unreadable stop line',
+  );
+}
+
+function dagStep(text) {
+  const at = text.indexOf('1. **Build the DAG**');
+  if (at === -1) return '';
+  const next = text.indexOf('\n2. **', at);
+  return collapseWs(text.slice(at, next === -1 ? text.length : next));
+}
+
+function assertDagSkipsQualified(text) {
+  const step = dagStep(text);
+  assert.ok(step, 'the DAG step is present');
+  assert.ok(step.includes('`owner/name#N`'), 'the DAG step names a qualified `owner/name#N` blocked-by entry');
+  assert.ok(step.includes('never adds an edge'), 'the DAG step says a qualified entry never adds an edge');
+}
+
+test('cross-repository entries are named {repository}#{blocker} in the stop line and the SKIP text, and a qualified blocked-by entry adds no DAG edge (#4793)', () => {
+  const text = readText(ORDERING);
+  assertCrossRepositoryNaming(text);
+  assertUndeterminedSkip(text);
+  assertDagSkipsQualified(text);
+  assert.throws(
+    () => assertCrossRepositoryNaming(mutate(text, /\{repository\}#\{blocker\}/g, '#{blocker}')),
+    { message: 'the section names a cross-repository blocker as `{repository}#{blocker}`' },
+  );
+  assert.throws(
+    () => assertCrossRepositoryNaming(mutate(text, /`via: cross-repository-state-unreadable`/g, '`via: unreadable`')),
+    { message: 'the section names the state-unreadable cross-repository via value' },
+  );
+  assert.throws(
+    () => assertCrossRepositoryNaming(mutate(text, /`via: cross-repository`/g, '`via: elsewhere`')),
+    { message: 'the section names the plain cross-repository via value' },
+  );
+  assert.throws(
+    () => assertCrossRepositoryNaming(mutate(text, ', linked natively or declared by a `Blocked by owner/name#N` body line', '')),
+    { message: 'the section says a cross-repository entry is linked natively or declared by a body line' },
+  );
+  assert.throws(
+    () => assertDagSkipsQualified(mutate(text, '1. **Build the DAG**', '1. **Build the graph**')),
+    { message: 'the DAG step is present' },
+  );
+  assert.throws(
+    () => assertCrossRepositoryNaming(mutate(text, 'lives in another repository (via cross-repository)', 'is undetermined')),
+    { message: 'the section carries the cross-repository SKIP line' },
+  );
+  assert.throws(
+    () => assertCrossRepositoryNaming(mutate(text, '(state unreadable) — read as open (fail closed)', 'which is still open')),
+    { message: 'the section carries the state-unreadable stop line' },
+  );
+  assert.throws(
+    () => assertDagSkipsQualified(mutate(text, 'never adds an edge', 'adds an edge')),
+    { message: 'the DAG step says a qualified entry never adds an edge' },
+  );
+  assert.throws(
+    () => assertDagSkipsQualified(mutate(text, '`owner/name#N`', '`#N`')),
+    { message: 'the DAG step names a qualified `owner/name#N` blocked-by entry' },
+  );
+});

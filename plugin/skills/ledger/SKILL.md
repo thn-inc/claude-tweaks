@@ -68,7 +68,7 @@ If this run's active ledger already exists (resuming a pipeline — resolved per
 
 ### Add Item
 
-Append a row to the ledger table.
+Append a row to the ledger table with `hooks.js ledger-row` (`_shared/ledger-format.md`'s Writer section — the command shape, text transport, and what to do on a non-zero exit).
 
 **Required fields:**
 - **Phase** — from the phase taxonomy above
@@ -80,11 +80,11 @@ Append a row to the ledger table.
 
 **De-duplication:** per `_shared/ledger-format.md`'s De-duplication on Append rule — same phase + substantially similar description = skip the add and say so, never silently.
 
-- **Pipes:** escape every `|` in the Item or Resolution text as `\|` — `_shared/ledger-format.md`'s Format section.
+- **Pipes:** with a run dir, `ledger-row` escapes every `|` in the Item or Resolution text as `\|` itself, so pass the raw text; on the standalone no-run-dir path, which writes the row by hand, escape it as `\|` — `_shared/ledger-format.md`'s Format section.
 
 ### Update Item
 
-Change an item's status and/or resolution. Legal transitions, terminality, and the per-status resolution-text requirements: `_shared/ledger-format.md`'s Status Lifecycle section (Resolution-text requirements). A rewritten Resolution follows the same pipe rule (`_shared/ledger-format.md`'s Format section).
+Change an item's status and/or resolution. Legal transitions, terminality, and the per-status resolution-text requirements: `_shared/ledger-format.md`'s Status Lifecycle section (Resolution-text requirements). Write it with `ledger-row --row {N}` (`_shared/ledger-format.md`'s Writer section). A rewritten Resolution follows the same pipe rule (`_shared/ledger-format.md`'s Format section).
 
 ### Query
 
@@ -103,7 +103,7 @@ The critical gate that prevents dropped work — three phases (Phase 1 fix-exhau
 
 ### Delete
 
-Delete the ledger file after all items are resolved — `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" delete-ledger --run "$PIPELINE_RUN_DIR"` (#2544; exits 0, and reports `not found` rather than failing when the ledger is already gone). Called at `/claude-tweaks:wrap-up`'s Phase 4 execution step (planned in that phase's cleanup-planning step) — except a multi-spec `auto`/`hybrid` run's shared ledger, which `/claude-tweaks:flow` deletes once in `flow/multispec-review-console.md`'s Shared teardown step 0 (#3420).
+Delete the ledger file after all items are resolved — `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" delete-ledger --run "$PIPELINE_RUN_DIR"` (#2544; exits 0 on every printed report, and reports `not found` rather than failing when the ledger is already gone). Called at `/claude-tweaks:wrap-up`'s Phase 4 execution step (planned in that phase's cleanup-planning step) — except a multi-spec `auto`/`hybrid` run's shared ledger, which `/claude-tweaks:flow` deletes once in `flow/multispec-review-console.md`'s Shared teardown step 0 (#3420).
 
 Only delete when the resolve gate has passed — all items must have terminal statuses (an incomplete deferral — a `deferred` row naming no staged path or record reference — is not terminal).
 
@@ -144,7 +144,7 @@ Render as plain markdown (docs/skill-authoring.md's Skill handoffs convention):
 
 ## Invocation Model
 
-`/ledger` is consumed as a **knowledge dependency** by `/build`, `/test`, `/review`, `/wrap-up`, and `/flow` — they read `_shared/ledger-format.md` (not this file) to learn the ledger file format and resolve-gate procedure, then write directly, using file operations, to the location `_shared/ledger-format.md` resolves. There is no programmatic invocation API, so the standard Component-Skill Contract (which suppresses `## Next Actions` when a parent skill is driving the interaction via `$PIPELINE_RUN_DIR`) does not apply here: no parent skill ever invokes `/claude-tweaks:ledger` through the Skill tool, so every actual run of this skill's own procedure is a direct, standalone invocation — `## Next Actions` always renders. The format contract itself (entry schema, statuses, phase taxonomy, resolve-gate procedure) lives in `_shared/ledger-format.md` — this file covers only the two standalone human commands and the mutation operations (Create/Add/Update/Query/Delete).
+`/ledger` is consumed as a **knowledge dependency** by `/build`, `/test`, `/review`, `/wrap-up`, and `/flow` — they read `_shared/ledger-format.md` (not this file) to learn the ledger file format and resolve-gate procedure, then read the ledger file directly and append and settle its rows through `hooks.js ledger-row` (`_shared/ledger-format.md`'s Writer section), at the location that file resolves. There is no programmatic invocation API, so the standard Component-Skill Contract (which suppresses `## Next Actions` when a parent skill is driving the interaction via `$PIPELINE_RUN_DIR`) does not apply here: no parent skill ever invokes `/claude-tweaks:ledger` through the Skill tool, so every actual run of this skill's own procedure is a direct, standalone invocation — `## Next Actions` always renders. The format contract itself (entry schema, statuses, phase taxonomy, resolve-gate procedure) lives in `_shared/ledger-format.md` — this file covers only the two standalone human commands and the mutation operations (Create/Add/Update/Query/Delete).
 
 ## Anti-Patterns
 
@@ -160,7 +160,7 @@ Render as plain markdown (docs/skill-authoring.md's Skill handoffs convention):
 | Resolving as "accepted" without a reason | Acceptance requires a stated rationale — "it's fine" is not one |
 | Deferring items introduced by the current build | Fix what you introduced — defer is for pre-existing or genuinely larger scope |
 | Creating duplicate ledger entries | Check semantic duplicates before adding — same phase + similar description = skip |
-| Reopening resolved items | Terminal statuses are final — if the fix was wrong, create a new item |
+| Reopening resolved items | Terminal statuses are final — if the fix was wrong, create a new item. The one exception — a `deferred` row returning to `open` when the console refuses its staged proposal — is defined in `_shared/ledger-format.md`'s Resolution-text requirements |
 | Modifying the ledger file format | Multiple skills parse the table — structural changes break them |
 | Using the ledger for feature tracking | The ledger covers one pipeline run. Cross-spec/cross-run tracking belongs on the decomposition's parent record's `## Cross-Spec Promises` section (`_shared/work-record.md`). |
 | Skipping the resolve gate | Non-negotiable — no pipeline completes with open items |

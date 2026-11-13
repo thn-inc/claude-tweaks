@@ -40,6 +40,9 @@ function stripComment(s) {
 // inside another trigger's value sits at depth 2+ and is never returned.
 // Quoted spans are tracked so a colon inside a quoted value can't be mistaken
 // for a key separator.
+// Twin: flowMappingEntries (below) scans the same shape for readPullRequestWorkflow.
+// This one feeds workflowHasPullRequestTrigger and fails toward "no PR trigger"
+// (off); the twin's callers fail toward "unparsed" (wait for a ready run).
 function flowMappingKeysAtDepth1(s) {
   const keys = [];
   let depth = 0;
@@ -72,6 +75,12 @@ function flowMappingKeysAtDepth1(s) {
 // (`  pull_request:`). Keys nested deeper than the trigger level (e.g. a
 // `branches:` under push:) never count. Trigger PRESENCE is the proxy for "CI
 // verification is requested" — enforcement (branch protection) is out of scope.
+// Twin: readPullRequestWorkflow (below) repeats this `on:` walk, and the two
+// have diverged on purpose. This one is unchanged and fails toward `false` ("no
+// PR trigger", the permissive `off` direction) on any shape it cannot read; the
+// twin additionally strips a leading `&anchor`, reads the `on:` line with a
+// quote-aware comment strip, walks an indentless top-level sequence, and
+// reports every unreadable shape as `unparsed` (fail closed) instead.
 function workflowHasPullRequestTrigger(text) {
   if (typeof text !== 'string' || !text) return false;
   // Strip a leading UTF-8 BOM (some editors/tools save workflow YAML with
@@ -137,6 +146,289 @@ function hasPullRequestCi(repoRoot, { readWorkflows = readWorkflowFiles } = {}) 
   } catch {
     return false;
   }
+}
+
+// --- Workflow reader: PR trigger `types:`, draft reference, unparsed (#5153) ---
+//
+// The merge gate must wait for the CI run `gh pr ready` starts, but only when a
+// workflow actually runs on ready_for_review. This reader answers, per workflow
+// file and line-based like workflowHasPullRequestTrigger (no YAML library):
+// which activity types its pull_request/pull_request_target triggers fire on,
+// and whether any job `if:` references the PR's draft flag.
+//
+// Two failure directions, both deliberate. A miss — a trigger or draft guard
+// that lives in a reusable workflow (`uses:`) this reader never opens — leaves
+// today's behaviour (no ready-run wait). A false hit — an `on:` it cannot read
+// (an unbalanced flow list/mapping, an alias or expression scalar, a `<<:`
+// merge key) or a `types:` value it cannot read — is reported as `unparsed`
+// with prTrigger true: the gate waits for a ready run and parks with a named
+// reason (spec Gotcha 3). Unreadable is never read as "no PR trigger" and never
+// collapsed into the default types. (workflowHasPullRequestTrigger, by
+// contrast, keeps its fail-toward-off direction.)
+
+// GitHub's default activity types for pull_request / pull_request_target.
+const DEFAULT_PR_TYPES = Object.freeze(['opened', 'synchronize', 'reopened']);
+
+// `github.event.pull_request.draft` and its index forms `['draft']` / `["draft"]`.
+const DRAFT_REF = /\bgithub\.event\.pull_request(?:\.draft\b(?!\w)|\[\s*['"]draft['"]\s*\])/;
+
+// stripComment, but a `#` inside a quoted string is not a comment start (an `if:`
+// expression such as contains(x, ' #wip') carries one). A quote opens only after
+// a non-word character, so an in-word apostrophe (`Don't`) never swallows a
+// later real comment.
+function stripCommentQuoteAware(s) {
+  let quote = null;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (quote) {
+      if (quote === '"' && ch === '\\') i++; // an escaped character never closes the quote
+      else if (ch === quote) quote = null;
+      continue;
+    }
+    if ((ch === "'" || ch === '"') && (i === 0 || !/[\p{L}\p{M}\p{N}_]/u.test(s[i - 1]))) { quote = ch; continue; }
+    if (ch === '#' && (i === 0 || /\s/.test(s[i - 1]))) return s.slice(0, i).trim();
+  }
+  return s.trim();
+}
+const TYPE_ITEM = /^[A-Za-z_]+$/;
+const BLOCK_ITEM = /^['"]?[A-Za-z_]+['"]?$/;
+
+// A trigger that fires on GitHub's default activity types.
+const defaultTrigger = () => ({ types: [...DEFAULT_PR_TYPES], declared: false, unparsed: false });
+
+// A trigger the reader knows exists but cannot read: contributes no types, sets
+// prTrigger and unparsed.
+const UNREADABLE_TRIGGER = () => ({ types: [], declared: false, unparsed: true });
+
+function emptyWorkflowRead() {
+  return { prTrigger: false, types: [], typesDeclared: false, draftReference: false, unparsed: false };
+}
+
+// Entries {key, value} sitting directly inside the outer `{ }` of a one-line
+// flow mapping, plus whether the braces balanced on this line. Commas and
+// colons inside nested braces/brackets or quotes never split an entry.
+// Twin: flowMappingKeysAtDepth1 (above) — it feeds workflowHasPullRequestTrigger
+// and fails toward "no PR trigger"; this one's callers fail toward `unparsed`.
+function flowMappingEntries(s) {
+  const entries = [];
+  let depth = 0;
+  let bracket = 0;
+  let quote = null;
+  let cur = '';
+  let key = null;
+  const flush = () => {
+    if (key !== null) entries.push({ key, value: cur.trim() });
+    key = null;
+    cur = '';
+  };
+  for (const ch of s) {
+    if (quote) {
+      cur += ch;
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"') { quote = ch; cur += ch; continue; }
+    if (ch === '{') {
+      depth++;
+      if (depth === 1) cur = ''; else cur += ch;
+      continue;
+    }
+    if (ch === '}') {
+      if (depth === 1) flush(); else cur += ch;
+      depth--;
+      continue;
+    }
+    if (ch === '[') bracket++;
+    else if (ch === ']') bracket--;
+    if (depth === 1 && bracket === 0) {
+      if (ch === ',') { flush(); continue; }
+      if (ch === ':' && key === null) { key = stripQuotes(cur); cur = ''; continue; }
+    }
+    cur += ch;
+  }
+  flush();
+  return { entries, balanced: depth === 0 };
+}
+
+// Items of a one-line `[a, b]`; null when any item is not a plain identifier.
+function readFlowItems(inner) {
+  const items = inner.split(',').map(stripQuotes).filter((x) => x !== '');
+  return items.every((x) => TYPE_ITEM.test(x)) ? items : null;
+}
+
+// The effective types of a PR trigger whose value sits on the trigger's own
+// line (scalar-less key value or a flow-mapping value): {} / null / ~ / empty
+// are the defaults; a value mentioning `types` is read only from a one-line
+// `types: [..]`; a value without `types` declares none (defaults).
+function readInlineTriggerValue(value) {
+  const v = stripComment(value);
+  if (v === '' || v === '{}' || v === 'null' || v === '~') return defaultTrigger();
+  if (!/\btypes\b/.test(v)) {
+    return v.startsWith('{')
+      ? defaultTrigger()
+      : { types: [], declared: false, unparsed: true };
+  }
+  const m = /\btypes\s*:\s*\[([^\][]*)\]/.exec(v);
+  const items = m ? readFlowItems(m[1]) : null;
+  return items ? { types: items, declared: true, unparsed: false } : { types: [], declared: true, unparsed: true };
+}
+
+// The effective types of a block-form trigger key at lines[at] (indent
+// `indent`, text after the colon `rest`): scan its sub-block for a `types:` key
+// at the sub-block's first indent.
+function readBlockTrigger(lines, at, indent, rest) {
+  if (stripComment(rest) !== '') return readInlineTriggerValue(rest);
+  let subIndent = null;
+  for (let j = at + 1; j < lines.length; j++) {
+    const line = lines[j];
+    if (!line.trim() || line.trim().startsWith('#')) continue;
+    const ind = /^(\s*)/.exec(line)[1].length;
+    if (ind <= indent) break;
+    if (subIndent === null) subIndent = ind;
+    if (ind !== subIndent) continue;
+    const km = /^\s*(?:types|'types'|"types")\s*:(.*)$/.exec(line);
+    if (!km) continue;
+    const val = stripComment(km[1]);
+    if (val.startsWith('[')) {
+      const items = val.endsWith(']') ? readFlowItems(val.slice(1, -1)) : null;
+      return items ? { types: items, declared: true, unparsed: false } : { types: [], declared: true, unparsed: true };
+    }
+    if (val !== '') {
+      return TYPE_ITEM.test(val)
+        ? { types: [val], declared: true, unparsed: false }
+        : { types: [], declared: true, unparsed: true };
+    }
+    // Empty value: `- item` lines at an indent >= the key's (the indentless
+    // `types:\n- opened` form included).
+    const items = [];
+    for (let k = j + 1; k < lines.length; k++) {
+      const l = lines[k];
+      if (!l.trim() || l.trim().startsWith('#')) continue;
+      const lind = /^(\s*)/.exec(l)[1].length;
+      const im = /^\s*-\s+(.*)$/.exec(l);
+      if (lind < ind || !im) break;
+      const item = stripComment(im[1]);
+      if (!BLOCK_ITEM.test(item)) return { types: [], declared: true, unparsed: true };
+      items.push(stripQuotes(item));
+    }
+    return items.length > 0
+      ? { types: items, declared: true, unparsed: false }
+      : { types: [], declared: true, unparsed: true };
+  }
+  return defaultTrigger();
+}
+
+// Never throws; a non-string or empty input reads as all-false.
+function readPullRequestWorkflow(text) {
+  const out = emptyWorkflowRead();
+  if (typeof text !== 'string' || !text) return out;
+  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+  const lines = text.split(/\r?\n/);
+  out.draftReference = lines.some((l) => !l.trim().startsWith('#') && DRAFT_REF.test(stripCommentQuoteAware(l)));
+  // A file that never spells `pull_request` cannot name a PR trigger, however
+  // its `on:` is shaped, so a shape this reader cannot follow (an alias, a merge
+  // key, an indentless schedule list) costs no ready-run wait there. A
+  // double-quoted escape is the one way to spell the name without the literal,
+  // so a backslash inside double quotes keeps the full, fail-closed read.
+  if (!text.includes('pull_request') && !/"[^"]*\\/.test(text)) return out;
+
+  const triggers = [];
+  const onIdx = lines.findIndex((l) => /^(?:on|'on'|"on")\s*:/.test(l));
+  if (onIdx >= 0) {
+    // A leading `&anchor` only names the node; the block (if any) still follows.
+    const rest = stripCommentQuoteAware(/^(?:on|'on'|"on")\s*:(.*)$/.exec(lines[onIdx])[1]).replace(/^&[^\s[\]{},]+\s*/, '');
+    if (rest) {
+      if (rest.startsWith('[')) {
+        if (!rest.endsWith(']')) {
+          triggers.push(UNREADABLE_TRIGGER()); // multi-line flow list
+        } else {
+          const names = rest.slice(1, -1).split(',').map(stripQuotes).filter((k) => k !== '');
+          if (!names.every((k) => TYPE_ITEM.test(k))) {
+            triggers.push(UNREADABLE_TRIGGER()); // *alias, ${{ … }} or another non-name item
+          } else if (names.some((k) => PR_TRIGGERS.has(k))) {
+            triggers.push(defaultTrigger());
+          }
+        }
+      } else if (rest.startsWith('{')) {
+        const { entries, balanced } = flowMappingEntries(rest);
+        for (const e of entries) {
+          if (PR_TRIGGERS.has(e.key)) triggers.push(readInlineTriggerValue(e.value));
+        }
+        // Multi-line flow mapping: the PR key may sit on a later line.
+        if (!balanced) triggers.push(UNREADABLE_TRIGGER());
+      } else if (!TYPE_ITEM.test(stripQuotes(rest))) {
+        triggers.push(UNREADABLE_TRIGGER()); // *alias, ${{ … }}, anything but a name (a leading &anchor was stripped above)
+      } else if (PR_TRIGGERS.has(stripQuotes(rest))) {
+        triggers.push(defaultTrigger());
+      }
+    } else {
+      let triggerIndent = null;
+      let sequence = false;
+      for (let j = onIdx + 1; j < lines.length; j++) {
+        const line = lines[j];
+        if (!line.trim() || line.trim().startsWith('#')) continue;
+        const indent = /^(\s*)/.exec(line)[1].length;
+        // An indentless top-level sequence (`on:\n- push`) keeps `- ` items at col 0.
+        if (indent === 0 && !/^-(?:\s|$)/.test(line)) break;
+        if (triggerIndent === null) {
+          triggerIndent = indent;
+          // The first item decides the `on:` value's shape. Under a mapping, a `- ` line at
+          // the trigger indent is an indentless sequence value of the key above it
+          // (`  schedule:\n  - cron: …`), never a trigger.
+          sequence = /^\s*-(?:\s|$)/.test(line);
+        }
+        if (indent !== triggerIndent) continue;
+        if (!sequence && /^\s*-(?:\s|$)/.test(line)) continue;
+        if (/^\s*<<\s*:/.test(line)) { // merge key: triggers come from an anchor
+          triggers.push(UNREADABLE_TRIGGER());
+          continue;
+        }
+        const li = /^\s*-\s*(.*)$/.exec(line);
+        if (li) {
+          const item = stripCommentQuoteAware(li[1]);
+          if (!BLOCK_ITEM.test(item)) triggers.push(UNREADABLE_TRIGGER()); // `- *pr`, `- ${{ … }}`
+          else if (PR_TRIGGERS.has(stripQuotes(item))) triggers.push(defaultTrigger());
+          continue;
+        }
+        const key = /^\s*(['"]?[A-Za-z_]+['"]?)\s*:(.*)$/.exec(line);
+        if (key && PR_TRIGGERS.has(stripQuotes(key[1]))) triggers.push(readBlockTrigger(lines, j, indent, key[2]));
+      }
+    }
+  }
+
+  if (triggers.length === 0) return out;
+  out.prTrigger = true;
+  const union = new Set();
+  for (const t of triggers) {
+    for (const ty of t.types) union.add(ty);
+    if (t.declared) out.typesDeclared = true;
+    if (t.unparsed) out.unparsed = true;
+  }
+  out.types = [...union];
+  return out;
+}
+
+// Classifies readPullRequestWorkflow rows ({ file, ...result }, input order,
+// PR-triggered rows only): a workflow that fires on ready_for_review — or whose
+// `types:` could not be read — needs the ready run's CI waited on; one that
+// references the draft flag without firing on ready_for_review skips drafts
+// with nothing re-running at ready. `unparsed` rows are listed in both
+// readyWorkflows and unparsed so the caller can name the reason.
+function readyRequirement(workflows) {
+  const out = { readyWorkflows: [], draftSkipWithoutReadyTrigger: [], unparsed: [] };
+  if (!Array.isArray(workflows)) return out;
+  for (const w of workflows) {
+    if (!w || !w.prTrigger) continue;
+    if (w.unparsed) {
+      out.readyWorkflows.push(w.file);
+      out.unparsed.push(w.file);
+    } else if (Array.isArray(w.types) && w.types.includes('ready_for_review')) {
+      out.readyWorkflows.push(w.file);
+    } else if (w.draftReference) {
+      out.draftSkipWithoutReadyTrigger.push(w.file);
+    }
+  }
+  return out;
 }
 
 // The repository's default branch — skills/_shared/integration-branch.md's
@@ -219,5 +511,6 @@ function deriveMergeVerification(repoRoot, deps = {}) {
 // real lookup on its own.
 module.exports = {
   workflowHasPullRequestTrigger, readWorkflowFiles, hasPullRequestCi,
-  deriveMergeVerification,
+  DEFAULT_PR_TYPES, readPullRequestWorkflow, readyRequirement,
+  deriveMergeVerification, PR_TRIGGERS,
 };

@@ -1,8 +1,11 @@
 // tests/resolve-policy-control-mode.test.js — #4609: the thirteen flat
 // control-mode policy keys, the `element` list validation they introduced,
-// isControlModeOn, and the `risk-path-globs` block key. Every test builds a
+// isControlModeOn, and the `risk-path-globs` block key. JSON-shape checks run
+// resolvePolicyKeys in-process via json() (pinned equal to the CLI by the parity
+// test; json()'s own comment says which keys need cliJson() instead);
+// --values output, stderr warnings and invocation errors still build a
 // throwaway fixture repo under os.tmpdir() (never inside this repo — IL-80),
-// writes policy.yml into it, and spawns bin/resolve-policy.js with cwd set
+// write policy.yml into it, and spawn bin/resolve-policy.js with cwd set
 // there. The keys are inert: nothing reads them yet, so this file pins only
 // resolution and validation.
 'use strict';
@@ -41,11 +44,64 @@ function values(policy, ...keys) {
   return { stdout: res.stdout, stderr: res.stderr, status: res.status };
 }
 
-function json(policy, ...keys) {
+function cliJson(policy, ...keys) {
   const res = spawnSync(process.execPath, [CLI, ...keys], { cwd: makeRepo(policy), encoding: 'utf8' });
   assert.strictEqual(res.status, 0, `expected exit 0, got ${res.status}; stderr: ${res.stderr}`);
   return JSON.parse(res.stdout);
 }
+
+const CLI_SPECIAL_KEYS = ['integration-model', 'merge-verification', 'model-profiles'];
+
+// In-process twin of cliJson. The JSON round-trip mirrors the CLI's
+// JSON.stringify(result): it drops an `undefined` value, which the release-hook
+// test's `{ source: 'policy' }` expectation relies on. Use it for single-name
+// keys other than CLI_SPECIAL_KEYS, which the CLI derives or special-cases after
+// resolvePolicyKeys, so tests of those keys must use cliJson(). The parity test
+// below runs every other schema key through both paths, so a key the CLI starts
+// special-casing turns it red instead of drifting silently.
+function json(policy, ...keys) {
+  if (keys.length === 0) throw new Error('json() needs at least one key, as the CLI does: use cliJson() to exercise the usage error');
+  for (const key of keys) {
+    if (CLI_SPECIAL_KEYS.includes(key) || key.includes(',')) {
+      throw new Error(`json() cannot resolve ${key}: use cliJson() — the CLI derives or special-cases it after resolvePolicyKeys`);
+    }
+  }
+  return JSON.parse(JSON.stringify(resolvePolicyKeys(keys, { policyRaw: policy === undefined ? null : policy, runConfigRaw: null })));
+}
+
+test('the in-process json() helper matches the CLI JSON output', () => {
+  const cases = [
+    [undefined, 'control-mode', 'owned-owners'],
+    ['control-mode: maybe\n', 'control-mode'],
+    ['release-hook: ""\n', 'release-hook'],
+    ['deploy-command: "never closed\n', 'deploy-command'],
+    ['risk-path-globs:\r\n  auth: [src/auth/**]\r\nautonomy: trusted\r\n', 'risk-path-globs', 'autonomy'],
+    ['risk-categories: data-export,pii\n', 'risk-categories'],
+  ];
+  for (const [policy, ...keys] of cases) {
+    assert.deepStrictEqual(json(policy, ...keys), cliJson(policy, ...keys), `${JSON.stringify(policy)} ${keys.join(',')}`);
+  }
+});
+
+test('the in-process json() helper matches the CLI for every other schema key', () => {
+  const res = spawnSync(process.execPath, [CLI, '--all'], { cwd: makeRepo(undefined), encoding: 'utf8' });
+  assert.strictEqual(res.status, 0, `expected exit 0, got ${res.status}; stderr: ${res.stderr}`);
+  const viaCli = JSON.parse(res.stdout);
+  const keys = POLICY_KEYS.map((row) => row.key).filter((key) => !CLI_SPECIAL_KEYS.includes(key));
+  const inProcess = json(undefined, ...keys);
+  for (const key of keys) {
+    // --all decorates each entry with its schema metadata; json() returns the bare entry.
+    const { summary, category, tier, type, default: dflt, ...entry } = viaCli[key];
+    assert.deepStrictEqual(inProcess[key], entry, key);
+  }
+});
+
+test('json() refuses keys the CLI derives or special-cases, comma-joined keys, and an empty key list', () => {
+  for (const k of [...CLI_SPECIAL_KEYS, 'control-mode,autonomy']) {
+    assert.throws(() => json(undefined, k), /use cliJson\(\)/);
+  }
+  assert.throws(() => json(undefined), /use cliJson\(\)/);
+});
 
 test('AC1.1: with no keys set, control-mode, acceptance-target and deploy-reach print their defaults', () => {
   const res = values(undefined, 'control-mode', 'acceptance-target', 'deploy-reach');
@@ -230,6 +286,24 @@ test('AC4.8: isControlModeOn is true only for the exact string on', () => {
   for (const v of ['ON', 'On', 'yes', 'off', '', ' on', undefined, null, true, 1]) {
     assert.strictEqual(isControlModeOn(v), false, String(v));
   }
+});
+
+// Control-mode keys no plugin code acts on yet; the #4608 leaves wire them
+// (policy-schema.js's Control mode comment names which). The record that wires
+// a key removes it from this list and drops "Not yet used" from its summary.
+const NOT_YET_USED = ['control-mode', 'acceptance-target', 'deploy-reach', 'deploy-command', 'deploy-live-workflow', 'deploy-version-url', 'dev-base-url', 'dev-test-account', 'deploy-wait-seconds', 'deploy-poll-seconds', 'owned-owners', 'trusted-authors', 'risk-categories', 'risk-path-globs'];
+
+test('every control-mode key nothing consumes yet says so in its summary (#4816)', () => {
+  for (const key of NOT_YET_USED) {
+    const row = POLICY_KEYS.find((r) => r.key === key);
+    assert.ok(row, `${key} missing from POLICY_KEYS`);
+    assert.match(row.summary, /^Not yet used[.;] /, key);
+  }
+});
+
+test('no key outside NOT_YET_USED opens its summary with "Not yet used" (#4816)', () => {
+  const marked = POLICY_KEYS.filter((r) => /^Not yet used\b/.test(r.summary)).map((r) => r.key);
+  assert.deepStrictEqual(marked.sort(), [...NOT_YET_USED].sort());
 });
 
 test('risk-categories accepts extra slugs and rejects a non-slug', () => {

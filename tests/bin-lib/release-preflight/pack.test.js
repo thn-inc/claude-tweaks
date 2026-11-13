@@ -6,7 +6,7 @@ const { gatherReleasePreflight, PROBE_NAMES, isBotAuthor, isReleasePr } = requir
 
 const ROOT = '/repo';
 const SHA = 'a'.repeat(40);
-const LOG = (subjects) => subjects.map((s, i) => `${String(i).repeat(40)}\x1f${s}\x1f\x1e\n`).join('');
+const LOG = (subjects, bodies = []) => subjects.map((s, i) => `${String(i).repeat(40)}\x1f${s}\x1f${bodies[i] || ''}\x1e\n`).join('');
 
 function fakeDeps(o = {}) {
   const workflowFiles = Object.fromEntries(Object.entries(o.workflows || {}).map(([name, text]) => [path.join(ROOT, '.github/workflows', name), text]));
@@ -51,7 +51,7 @@ function fakeDeps(o = {}) {
               ? LOG(['Merge pull request #1 from org/feat'])
               : LOG(['Merge pull request #1 from org/feat', 'feat(x): y']);
           }
-          return LOG(o.subjects === undefined ? ['feat: a'] : o.subjects);
+          return LOG(o.subjects === undefined ? ['feat: a'] : o.subjects, o.bodies);
         }
         if (key === 'tag -l v*') return `${(o.tags === undefined ? ['v1.2.0'] : o.tags).join('\n')}\n`;
         if (key.startsWith('show ')) {
@@ -71,7 +71,7 @@ function fakeDeps(o = {}) {
         const key = args.join(' ');
         if (key.startsWith('pr list')) return JSON.stringify(o.prs || []);
         if (key.startsWith('pr view')) return JSON.stringify({ commits: o.prCommits || [] });
-        if (key.startsWith('repo view')) return JSON.stringify({ nameWithOwner: 'o/r' });
+        if (key.startsWith('repo view')) return JSON.stringify({ nameWithOwner: 'o/r', url: o.repoUrl || 'https://github.com/o/r' });
         if (/^api repos\/o\/r\/commits\/.*\/check-runs/.test(key)) return JSON.stringify(o.checkRuns || { total_count: 0, check_runs: [] });
         // `gh api … --jq .sha` prints the bare value, not a JSON document.
         if (key.startsWith('api repos/o/r/commits/')) return `${o.headSha || SHA}\n`;
@@ -351,9 +351,52 @@ test('isBotAuthor / isReleasePr helpers', () => {
   assert.strictEqual(isBotAuthor({ login: 'github-actions', name: 'github-actions[bot]', email: '41898282+github-actions[bot]@users.noreply.github.com' }), true);
   assert.strictEqual(isBotAuthor({ login: 'release-please[bot]', name: '', email: '' }), true);
   assert.strictEqual(isBotAuthor({ login: 'thomas', name: 'Thomas', email: 't@x' }), false);
-  assert.strictEqual(isReleasePr({ headRefName: 'release-please--branches--main', title: 'x' }), true);
-  assert.strictEqual(isReleasePr({ headRefName: 'feature', title: 'chore(main): release 1.3.0' }), true);
-  assert.strictEqual(isReleasePr({ headRefName: 'feature', title: 'chore: release notes' }), false);
+  assert.strictEqual(isReleasePr({ headRefName: 'release-please--branches--main', title: 'x' }, 'main'), true);
+  assert.strictEqual(isReleasePr({ headRefName: 'release-please--branches--main--components--web', title: 'x' }, 'main'), true);
+  // #3931: the title never selects, and another target branch's release PR is not this one.
+  assert.strictEqual(isReleasePr({ headRefName: 'feature', title: 'chore(main): release 1.3.0' }, 'main'), false);
+  assert.strictEqual(isReleasePr({ headRefName: 'release-please--branches--develop', title: 'x' }, 'main'), false);
+  assert.strictEqual(isReleasePr({ headRefName: 'release-please--branches--main-next', title: 'x' }, 'main'), false);
+  assert.strictEqual(isReleasePr({ headRefName: 'feature', title: 'chore: release notes' }, 'main'), false);
+});
+
+const DEVELOP = { policy: 'integration-model: pr-first\nintegration-branch: develop\n' };
+const HUMAN = { number: 12, state: 'OPEN', mergeable: 'MERGEABLE', headRefName: 'feature/x', title: 'chore: release 1.4.0 review follow-ups' };
+const RP = { number: 10, state: 'OPEN', mergeable: 'MERGEABLE', headRefName: 'release-please--branches--develop', title: 'chore(develop): release 1.4.0' };
+
+test('#3931: a newer human PR with a release title never outranks release-please\'s own PR', async () => {
+  const both = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ ...DEVELOP, prs: [HUMAN, RP] }).deps });
+  assert.strictEqual(both.releasePr.value.number, 10);
+});
+
+test('#3931: a title-only match alone is never the release PR — the probe degrades naming it', async () => {
+  const alone = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ ...DEVELOP, prs: [HUMAN] }).deps });
+  assert.strictEqual(alone.releasePr.ok, false);
+  assert.match(alone.releasePr.error, /release PR not identified: #12 has a release title but head feature\/x/);
+});
+
+test('#3931: two open PRs on release-please--branches--{branch} heads are inconclusive', async () => {
+  const two = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ ...DEVELOP, prs: [{ ...RP, number: 11, headRefName: 'release-please--branches--develop--components--web' }, RP] }).deps });
+  assert.strictEqual(two.releasePr.ok, false);
+  assert.match(two.releasePr.error, /release PR search inconclusive: 2 open PRs .*#11, #10/);
+});
+
+test('#3931: ciTip\'s gh api calls carry an Enterprise origin\'s host; an exported GH_HOST wins', async () => {
+  const ghe = fakeDeps({ repoUrl: 'https://ghe.example.com/o/r' });
+  ghe.deps.env = {};
+  const a = await gatherReleasePreflight({ cwd: ROOT, deps: ghe.deps });
+  assert.strictEqual(a.ciTip.ok, true, a.ciTip.error);
+  const api = ghe.calls.gh.filter((c) => c.startsWith('gh api '));
+  assert.strictEqual(api.length, 2, api.join(' | '));
+  for (const c of api) assert.ok(c.endsWith(' --hostname ghe.example.com'), c);
+  const pinned = fakeDeps({ repoUrl: 'https://ghe.example.com/o/r' });
+  pinned.deps.env = { GH_HOST: 'other.example.com' };
+  await gatherReleasePreflight({ cwd: ROOT, deps: pinned.deps });
+  assert.ok(!pinned.calls.gh.some((c) => c.includes('--hostname')), pinned.calls.gh.join(' | '));
+  const dotcom = fakeDeps();
+  dotcom.deps.env = {};
+  await gatherReleasePreflight({ cwd: ROOT, deps: dotcom.deps });
+  assert.ok(!dotcom.calls.gh.some((c) => c.includes('--hostname')), dotcom.calls.gh.join(' | '));
 });
 
 test('releasePr (pr-first): the open release-please PR, or none', async () => {
@@ -461,4 +504,16 @@ test('a hung probe is bounded by the timeout and degrades itself only', async ()
   assert.strictEqual(pack.releasePr.ok, false);
   assert.match(pack.releasePr.error, /timeout after 20ms/);
   assert.strictEqual(pack.lastTag.ok, true);
+});
+
+test('AC7.1: the unreleased probe returns fixes and refs for each commit — [10, 12] and [11] for a bundle with #11 kept open', async () => {
+  const pack = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ subjects: ['fix: bundle (#10)', 'chore: plain'], bodies: ['Release-Note: A.\n\nFixes #10\nRefs #11\nFixes #12', ''] }).deps });
+  const [bundle] = pack.unreleased.value.commits;
+  assert.deepStrictEqual([bundle.fixes, bundle.refs], [[10, 12], [11]]);
+});
+
+test('AC7.2: the unreleased probe returns two empty lists for a commit with neither line', async () => {
+  const pack = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ subjects: ['fix: bundle (#10)', 'chore: plain'], bodies: ['Fixes #10', ''] }).deps });
+  const plain = pack.unreleased.value.commits[1];
+  assert.deepStrictEqual([plain.fixes, plain.refs], [[], []]);
 });

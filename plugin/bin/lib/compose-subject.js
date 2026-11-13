@@ -8,9 +8,9 @@
 // Overview's first sentence, falling back to ## Current State's first
 // sentence for shaping-mode/specShapedBody records, which carry no ##
 // Overview; migrationNote = the ## Breaking Change section; releaseNote =
-// the subject record's own ## Release Note section, never aggregated across
-// a bundle — every record in the bundle must still carry a non-empty
-// section, but only the subject's text is rendered), and prints
+// every record's own ## Release Note section, one per record, lowest number
+// first (#4634 — formerly only the lowest-numbered record's note reached the
+// commit; every record in the bundle must carry a non-empty section), and prints
 // bin/lib/release/subject.js's composeSubject() output. Skill prose reaches
 // the composer only through this CLI — the pure module has no shell surface.
 //
@@ -32,10 +32,13 @@
 // malformed invocation (including --range with --pr, commit-scope-paths set
 // with neither, or a --keep-open number missing from the positional list) OR a
 // policy misconfiguration (a malformed commit-scope-paths entry, a
-// commit-scope token composeSubject rejects) OR a record that cannot be composed (no resolvable Type, `breaking` label with no
-// ## Breaking Change section — the composer's own usage error, message on
-// stderr); 2 `gh` absent or owner/repo unresolvable (no --repo and no readable
-// origin remote); 3 an external read failed — a `gh issue view` call, the
+// commit-scope token composeSubject rejects) OR a record that cannot be composed
+// (no resolvable Type, `breaking` label with no ## Breaking Change section — the
+// composer's own usage error, message on stderr; a Release Note or Breaking Change
+// section hidden behind an unclosed code fence is named as `unclosed-fence at line
+// N` rather than as missing, #4350); 2 `gh` absent or owner/repo unresolvable (no
+// --repo and no readable origin remote, or an origin host with no GitHub signal —
+// refused before any gh call, #4933); 3 an external read failed — a `gh issue view` call, the
 // `git diff --name-only -z` behind --range, or the `gh pr diff --name-only`
 // behind --pr, or an `--out-dir` write failed.
 // --range is read with -z and --end-of-options so a C-quoted (non-ASCII) path
@@ -61,11 +64,13 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { composeSubject, ComposeSubjectError } = require('./release/subject');
+const { hiddenByUnclosedFence } = require('./markdown-blocks');
+const { UNCLOSED_FENCE_PREFIX } = require('./issues/materialize-format');
 const {
   parseRecordFacets, typeOf, extractSection: extractSectionShared,
 } = require('./issues/record');
 const {
-  parseRepo, ghAvailable, remoteUrl, repoSlug, ghOptions, pinExplicitRepoHost,
+  parseRepo, ghAvailable, remoteUrl, repoSlug, ghOptions, pinExplicitRepoHost, gateOriginRepo,
 } = require('./repo-resolve');
 const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('./shared-primitives');
 const { readCommitScope, readListKey } = require('./policy');
@@ -146,8 +151,31 @@ function shellQuote(s) {
 // default used by decomposition-crossref.js and grouping.js) — bound once so
 // every call site here (and this module's own re-export) gets it without
 // restating the options.
+const SECTION_OPTIONS = { levelPattern: '2', stopPattern: '2', trim: true };
 function extractSection(body, heading) {
-  return extractSectionShared(body, heading, { levelPattern: '2', stopPattern: '2', trim: true });
+  return extractSectionShared(body, heading, SECTION_OPTIONS);
+}
+
+// 1-based line of the unclosed code fence hiding `heading`, or null when the
+// section is found, present-but-empty, or genuinely absent (#4350).
+function hiddenLine(body, heading) {
+  return hiddenByUnclosedFence(body, heading, SECTION_OPTIONS);
+}
+
+// Splits `failing` records into the ones whose `heading` section an unclosed
+// fence hides — each as "#N (unclosed-fence at line L)" — and the rest.
+function splitHidden(failing, heading) {
+  const hidden = [];
+  const rest = [];
+  for (const r of failing) {
+    const line = hiddenLine(r.body, heading);
+    if (line === null) {
+      rest.push(r);
+    } else {
+      hidden.push(`#${r.number} (${UNCLOSED_FENCE_PREFIX}${line})`);
+    }
+  }
+  return { hidden, rest };
 }
 
 // The release note is the ## Release Note section cut at its trailing italic
@@ -278,7 +306,13 @@ function run(argv, deps = realDeps) {
 
   let remote = null;
   if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-  const repoSpec = opts.repo ? parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : parseRepo(remote);
+  let repoSpec;
+  if (opts.repo) repoSpec = parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`);
+  else {
+    const gated = gateOriginRepo(remote, deps.gateDeps);
+    if (gated.refusal) { deps.stderr(`compose-subject.js: ${gated.refusal}\n`); return 2; }
+    repoSpec = gated.spec;
+  }
   if (!repoSpec) { deps.stderr('compose-subject.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
   if (opts.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
   const slug = repoSlug(repoSpec);
@@ -329,16 +363,20 @@ function run(argv, deps = realDeps) {
   const breakingRecords = records.filter((r) => parseRecordFacets(r.labels).breaking);
   const missing = breakingRecords.filter((r) => !extractSection(r.body, 'Breaking Change'));
   if (missing.length) {
-    deps.stderr(`compose-subject.js: breaking is set on #${missing.map((r) => r.number).join(', #')} but the record carries no non-empty "## Breaking Change" section\n`);
+    const { hidden, rest } = splitHidden(missing, 'Breaking Change');
+    if (rest.length) deps.stderr(`compose-subject.js: breaking is set on #${rest.map((r) => r.number).join(', #')} but the record carries no non-empty "## Breaking Change" section\n`);
+    if (hidden.length) deps.stderr(`compose-subject.js: breaking is set on ${hidden.join(', ')} but an unclosed code fence hides the "## Breaking Change" section — close the fence\n`);
     return 1;
   }
   const releaseNoteMissing = records.filter((r) => !releaseNoteOf(r.body));
   if (releaseNoteMissing.length) {
-    deps.stderr(`compose-subject.js: record(s) #${releaseNoteMissing.map((r) => r.number).join(', #')} carry no non-empty "## Release Note" section\n`);
+    const { hidden, rest } = splitHidden(releaseNoteMissing, 'Release Note');
+    if (rest.length) deps.stderr(`compose-subject.js: record(s) #${rest.map((r) => r.number).join(', #')} carry no non-empty "## Release Note" section\n`);
+    if (hidden.length) deps.stderr(`compose-subject.js: record(s) ${hidden.join(', ')} hide their "## Release Note" section behind an unclosed code fence — close the fence\n`);
     return 1;
   }
   const migrationNote = breakingRecords.map((r) => extractSection(r.body, 'Breaking Change')).filter(Boolean).join('\n\n');
-  const releaseNote = releaseNoteOf(subjectRecord.body);
+  const releaseNotes = records.map((r) => releaseNoteOf(r.body));
 
   let scope = opts.scope;
   if (scope === null) {
@@ -382,7 +420,7 @@ function run(argv, deps = realDeps) {
       breaking: breakingRecords.length > 0,
       summary: firstSentence(extractSection(subjectRecord.body, 'Overview') || extractSection(subjectRecord.body, 'Current State')),
       migrationNote,
-      releaseNote,
+      releaseNote: releaseNotes,
       fixes: opts.numbers,
       keepOpen: opts.keepOpen,
       tag: opts.tag,
