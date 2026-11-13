@@ -446,6 +446,77 @@ test('a throw after the staged file was created leaves no partial proposal', (t)
   assert.equal(fs.readFileSync(path.join(f.repo, X), 'utf8'), original + 'edit\n');
 });
 
+test('triple failure keeps the patch file and names it', (t) => {
+  const f = fixture(t);
+  write(f.repo, X, fs.readFileSync(path.join(f.repo, X), 'utf8') + 'edit\n');
+  const deps = {
+    ...baseDeps,
+    git: (a, o) => {
+      if (a.includes('checkout')) throw new Error('simulated checkout failure');
+      if (a[a.length - 1] === '-' && !a.includes('-R')) throw new Error('simulated re-apply failure');
+      return realDeps.git(a, o);
+    },
+    mkdir: failMkdirStaged,
+  };
+  let caught;
+  try { capture(args(f, X), deps); } catch (e) { caught = e; }
+  assert.ok(caught instanceof StagingFailure);
+  assert.equal(caught.restored, false);
+  const kept = path.join(f.runDir, 'learned-skills', '1.patch');
+  assert.ok(caught.message.includes(kept), caught.message);
+  assert.match(fs.readFileSync(kept, 'utf8'), /^diff --git/);
+});
+
+test('reason carries the first stderr line only', (t) => {
+  const f = fixture(t);
+  write(f.repo, X, fs.readFileSync(path.join(f.repo, X), 'utf8') + 'edit\n');
+  const fail = {
+    ...baseDeps,
+    git: (a, o) => {
+      if (a.includes('checkout')) return realDeps.git(['-C', f.repo, 'checkout', 'no-such-ref-xyz', '--', X], o);
+      return realDeps.git(a, o);
+    },
+  };
+  const res = capture(args(f, X), fail);
+  assert.equal(res.route, 'staged');
+  assert.doesNotMatch(res.reason, /Command failed/);
+  assert.equal(res.reason.includes(f.repo), false, res.reason);
+  assert.match(res.reason, /^capture failed: (fatal|error): /);
+});
+
+test('an intent-to-add entry with no file is not read as the edit being in the tree', (t) => {
+  const f = fixture(t);
+  const y = '.claude/skills/y/SKILL.md';
+  write(f.repo, y, '# y\n\nbrand new\n');
+  const deps = {
+    ...baseDeps,
+    git: (a, o) => {
+      if (a.includes('rm') && a.includes('--cached')) throw new Error('simulated rm failure');
+      return realDeps.git(a, o);
+    },
+    mkdir: failMkdirStaged,
+  };
+  let caught;
+  try { capture(args(f, y), deps); } catch (e) { caught = e; }
+  assert.ok(caught instanceof StagingFailure);
+  assert.match(caught.message, /restored in the working tree/);
+  assert.equal(fs.readFileSync(path.join(f.repo, y), 'utf8'), '# y\n\nbrand new\n');
+});
+
+test('a patch write that dies partway leaves no partial patch file', (t) => {
+  const f = fixture(t);
+  write(f.repo, X, fs.readFileSync(path.join(f.repo, X), 'utf8') + 'edit\n');
+  const res = capture(args(f, X), {
+    ...baseDeps,
+    writeFile: (p, d) => {
+      if (p.endsWith('.patch')) { fs.writeFileSync(p, 'partial'); throw new Error('disk full'); }
+      return realDeps.writeFile(p, d);
+    },
+  });
+  assert.equal(res.route, 'staged');
+  assert.equal(fs.existsSync(path.join(f.runDir, 'learned-skills', '1.patch')), false);
+});
+
 test('a fallback leaves no orphan patch file', (t) => {
   const f = fixture(t);
   write(f.repo, X, fs.readFileSync(path.join(f.repo, X), 'utf8') + 'edit\n');

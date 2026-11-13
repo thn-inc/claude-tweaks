@@ -106,10 +106,6 @@ function nextId(entries) {
 
 function oneLine(s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); }
 
-function errText(e) {
-  return [e && e.message, e && e.stderr].filter(Boolean).map((s) => String(s).trim().split('\n')[0]).join(' — ') || String(e);
-}
-
 // `{first stderr line}`: the first non-empty line of the child's stderr, else the message's first line
 // (execFileSync's message is "Command failed: git -C /abs/… " — an absolute path and the full argv).
 function firstStderrLine(e) {
@@ -369,8 +365,8 @@ function capture({ runDir, worktree, mergeBase, target, summary }, overrides = {
     }
 
     deps.mkdir(patchDir);
+    if (!existing) newPatchFile = patchFile; // set first: a write that dies partway leaves a partial file
     deps.writeFile(patchFile, workDiff);
-    if (!existing) newPatchFile = patchFile;
 
     // Revert: a path in HEAD is checked out again; a new file leaves the index and the disk.
     if (tracked) {
@@ -424,12 +420,31 @@ function stageFallback({
     residue = true;
   }
 
-  // The edit lives in staged/ (or back in the tree) from here on, so an unrecorded patch file is an orphan.
-  if (newPatchFile) {
+  // An unrecorded patch file is an orphan, but only once the edit has another home (staged/ or the tree).
+  const dropNewPatch = () => {
+    if (!newPatchFile) return;
     try { if (deps.lstatType(newPatchFile).type !== 'missing') deps.unlink(newPatchFile); } catch { /* best effort */ }
-  }
+  };
 
-  const reason = `capture failed: ${errText(err)}`;
+  // Is the whole edit still in the tree? Judged by content, not by a non-empty status: an intent-to-add
+  // entry whose file is gone reads as dirty with nothing in it.
+  const editInTree = () => {
+    try {
+      if (!tracked) {
+        if (deps.lstatType(abs).type === 'missing') return false;
+        try { git(['add', '-N', '--', rel]); } catch { /* already intent-to-add */ }
+      }
+      const now = toBuffer(git([
+        '-c', 'core.quotePath=false', 'diff', '--no-color', '--no-ext-diff',
+        '--src-prefix=a/', '--dst-prefix=b/', '--binary', 'HEAD', '--', rel,
+      ], { encoding: 'buffer' }));
+      return now.length > 0 && (now.equals(origDiff) || now.equals(diff));
+    } catch {
+      return false;
+    }
+  };
+
+  const reason = `capture failed: ${firstStderrLine(err)}`;
   // A joined earlier capture is superseded by the staged superset: name both findings.
   const summary = existing && existing.summary ? `${oneLine(existing.summary)}; ${note}` : note;
   let staged;
@@ -439,8 +454,7 @@ function stageFallback({
     // Staging failed after the tree was reset: put the edit back so the caller can still commit it.
     if (restorePatch) { try { deps.writeFile(restorePatch.file, restorePatch.bytes); } catch { /* best effort */ } }
     // If the tree still holds the edit (the reset left residue), there is nothing to put back.
-    let inTree = false;
-    try { inTree = Boolean(statusOf()); } catch { inTree = false; }
+    const inTree = editInTree();
     let restored = true;
     let how = 'the edit is still in the working tree (the reset left it there; not captured, not staged) — commit it on the run branch';
     if (!inTree) {
@@ -449,12 +463,17 @@ function stageFallback({
         how = 'the edit was restored in the working tree (not captured, not staged) — commit it on the run branch';
       } catch {
         restored = false;
-        how = 'restoring the edit in the working tree failed too — it is not in the tree; recover it from the run dir\'s learned-skills/*.patch if present';
+        how = newPatchFile && deps.lstatType(newPatchFile).type !== 'missing'
+          ? `restoring the edit in the working tree failed too — it is not in the tree; recover it from ${newPatchFile}`
+          : 'restoring the edit in the working tree failed too — it is not in the tree and no patch file holds it';
       }
     }
     if (inTree && restorePatch) how += `; the earlier captured patch ${existing ? existing.id : ''} may overlap it`;
-    throw new StagingFailure(`${reason}; then staging failed (${errText(stageErr)}); ${how}`, { restored });
+    // The edit has another home (the tree) only when it is in the tree; otherwise the patch file stays.
+    if (restored) dropNewPatch();
+    throw new StagingFailure(`${reason}; then staging failed (${firstStderrLine(stageErr)}); ${how}`, { restored });
   }
+  dropNewPatch();
 
   // Record the outcome.
   const entries = manifest.map((e) => (existing && e.id === existing.id
