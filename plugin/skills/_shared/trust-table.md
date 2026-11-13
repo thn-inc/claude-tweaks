@@ -301,7 +301,7 @@ export FETCH_LIMIT="$LIMIT"
  with {tmp-records-file} = {tmp-records}}
 node -e "
   const fs = require('fs');
-  const { trustRows, parseGitLog } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/trust.js');
+  const { trustRows, parseGitLog, TRUST_POLICY_KEYS } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/trust.js');
   const issues = require('{tmp-records}');
   const subIssues = new Set(require('{tmp-sub-issues}'));
   if (issues.length >= Number(process.env.FETCH_LIMIT)) {
@@ -309,16 +309,18 @@ node -e "
   }
   const records = issues.map((i) => ({ ...i, labels: i.labels.map((l) => l.name), hasParent: subIssues.has(i.number) }));
   const gitLog = parseGitLog(fs.readFileSync('{tmp-git-log}', 'utf8'));
-  const policy = { 'trust-revert-window-days': process.argv[1] };
+  const policy = Object.fromEntries(TRUST_POLICY_KEYS.map((k, i) => [k, process.argv[1 + i]]));
   console.log(JSON.stringify(trustRows(records, gitLog, Date.now(), policy)));
-" -- "{resolved-window}"
+" -- "{resolved-window}" "{resolved-eval-window}" "{resolved-follow-up-rate}"
 ```
 
-Resolve `trust-revert-window-days` with
-`node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values trust-revert-window-days` and
-substitute its literal value for `{resolved-window}` above — the resolver applies the schema
-default, so the substitution is never empty (`trustRows` tolerates one anyway). It reaches the script
-as a `process.argv` arg after `--`, never spliced into the JS source — a value containing a quote
+Resolve the three trust keys with
+`node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values trust-revert-window-days trust-evaluation-window-days trust-follow-up-rate-max-percent`
+(one value per line, in that order) and substitute the lines' literal values for
+`{resolved-window}`, `{resolved-eval-window}` and `{resolved-follow-up-rate}` above, in the order
+`TRUST_POLICY_KEYS` lists them — the resolver applies each schema default, so no substitution is
+ever empty (`trustRows` tolerates one anyway). They reach the script as `process.argv` args after
+`--`, never spliced into the JS source — a value containing a quote
 character would otherwise break out of the string literal, the same reason
 `code-health/focus-mode.md`'s F1 block passes its own values that way.
 

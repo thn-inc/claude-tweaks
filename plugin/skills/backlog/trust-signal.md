@@ -33,9 +33,11 @@ Re-resolve that path (and the records snapshot's) here rather than trusting a sh
 the earlier Bash call to survive — it won't (see `_shared/session-tmp-root.md`); `sessionTmpPath`
 is deterministic per session id + filename, so re-resolving returns the identical path the Fetch
 section already populated in this same session.
-`{resolved-window}` reaches the script as a `process.argv` arg after `--`, never spliced into the
-JS source — a value containing a quote character would otherwise break out of the string literal,
-the same reason `code-health/focus-mode.md`'s F1 block passes its own values that way.
+`{resolved-window}`, `{resolved-eval-window}` and `{resolved-follow-up-rate}` (the three trust
+values `refine-mode.md` Step 1's resolve call prints, in `TRUST_POLICY_KEYS` order) reach the script
+as `process.argv` args after `--`, never spliced into the JS source — a value containing a quote
+character would otherwise break out of the string literal, the same reason
+`code-health/focus-mode.md`'s F1 block passes its own values that way.
 
 ```bash
 BACKLOG_REFINE_TRUST="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-refine-trust.json)"
@@ -44,12 +46,12 @@ TT_COMMIT_LOG="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value
 node -e "
   const fs = require('fs');
   const root = '${CLAUDE_PLUGIN_ROOT}';
-  const { trustRows, riskBand, parseGitLog } = require(root + '/bin/lib/issues/trust.js');
+  const { trustRows, riskBand, parseGitLog, TRUST_POLICY_KEYS } = require(root + '/bin/lib/issues/trust.js');
   const { resolveProvenance } = require(root + '/bin/lib/issues/provenance.js');
   const { resolveCeiling } = require(root + '/bin/lib/issues/autonomy.js');
   const issues = require('$TT_RECORDS').map((i) => ({ ...i, labels: i.labels.map((l) => l.name) }));
   const gitLog = parseGitLog(fs.readFileSync('$TT_COMMIT_LOG', 'utf8'));
-  const policy = { 'trust-revert-window-days': process.argv[1] };
+  const policy = Object.fromEntries(TRUST_POLICY_KEYS.map((k, i) => [k, process.argv[1 + i]]));
   const rows = new Map(trustRows(issues, gitLog, Date.now(), policy).map((r) => [r.key, r]));
   const ceiling = resolveCeiling({ policy: '{resolved-ceiling}' });
   const out = {};
@@ -65,7 +67,7 @@ node -e "
     };
   }
   console.log(JSON.stringify(out));
-" -- "{resolved-window}" > "$BACKLOG_REFINE_TRUST"
+" -- "{resolved-window}" "{resolved-eval-window}" "{resolved-follow-up-rate}" > "$BACKLOG_REFINE_TRUST"
 ```
 
 **This signal never changes what the gate recommends.** `/claude-tweaks:assess-agent-autonomy`'s

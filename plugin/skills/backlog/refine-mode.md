@@ -17,20 +17,21 @@ leaves every population at its full whole-queue scope.
 
 *(Narration allowance: no "running"/"passed" line for this step — only the run's one opening line and any failure/degradation line, per `overview-mode.md`'s convention this file shares.)*
 
-Resolve the `autonomy` ceiling and `trust-revert-window-days` once, before any fetch below — the
+Resolve the `autonomy` ceiling and the three trust keys once, before any fetch below — the
 same canonical read the Trust signal section further down and Step 3.6's born-ready check both
 need, so resolving it here means neither has to run its own `resolve-policy.js` call:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values autonomy trust-revert-window-days
-# line 1: autonomy -> {resolved-ceiling}; line 2: trust-revert-window-days -> {resolved-window}
+node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values autonomy trust-revert-window-days trust-evaluation-window-days trust-follow-up-rate-max-percent
+# line 1: autonomy -> {resolved-ceiling}; line 2: trust-revert-window-days -> {resolved-window};
+# line 3: trust-evaluation-window-days -> {resolved-eval-window}; line 4: trust-follow-up-rate-max-percent -> {resolved-follow-up-rate}
 ```
 
-**Substitute the literal values** for `{resolved-ceiling}` and `{resolved-window}` everywhere
+**Substitute the literal values** for `{resolved-ceiling}`, `{resolved-window}`, `{resolved-eval-window}` and `{resolved-follow-up-rate}` everywhere
 below in this file. Do **not** `export` them in an earlier Bash call and read `process.env` in a
 later one: shell environment does not survive between Bash calls and never reaches a subagent, so
 that expansion always resolves empty and a later block would report `supervised` on a repo
-configured for `trusted`. Resolving `trust-revert-window-days` even when the Trust signal section's
+configured for `trusted`. Resolving the trust keys even when the Trust signal section's
 fetch ends up skipped (ceiling below `trusted` and no `--trust`) is accepted overhead — one
 canonical read is simpler than conditioning the resolve call itself on the value it exists to
 produce.

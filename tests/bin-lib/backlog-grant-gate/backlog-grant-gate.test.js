@@ -195,7 +195,7 @@ test('computeOutlook: ceiling clears but zero candidates are eligible -> zero-el
   const runner = ghRunner({ candidates });
   const gitRunner = () => '';
   const out = computeOutlook(
-    { ceiling: 'unattended', grantOriginationEnabled: true, windowDays: 14 },
+    { ceiling: 'unattended', grantOriginationEnabled: true, trust: { 'trust-revert-window-days': 14 } },
     { limit: 100, workLinks: 'body-text', integrationBranch: 'main', runner, gitRunner },
   );
   assert.strictEqual(out.shortcut, 'zero-eligible');
@@ -213,7 +213,7 @@ test('computeOutlook: a clean-trust class produces an eligible candidate (matche
   const runner = ghRunner({ candidates, records });
   const gitRunner = () => '';
   const out = computeOutlook(
-    { ceiling: 'unattended', grantOriginationEnabled: true, windowDays: 14 },
+    { ceiling: 'unattended', grantOriginationEnabled: true, trust: { 'trust-revert-window-days': 14 } },
     { limit: 100, workLinks: 'body-text', integrationBranch: 'main', runner, gitRunner },
   );
   assert.strictEqual(out.shortcut, null);
@@ -236,7 +236,7 @@ test('computeOutlook: a sub-issue is excluded from trustRows\' cell totals (neve
   const runner = ghRunner({ candidates, records, parents });
   const gitRunner = () => '';
   const out = computeOutlook(
-    { ceiling: 'unattended', grantOriginationEnabled: true, windowDays: 14 },
+    { ceiling: 'unattended', grantOriginationEnabled: true, trust: { 'trust-revert-window-days': 14 } },
     { limit: 100, workLinks: 'body-text', integrationBranch: 'main', runner, gitRunner },
   );
   const row = out.trustRows.find((r) => r.key === 'producer:code-health|low');
@@ -280,7 +280,7 @@ test('#4793: a foreign blocker never collides with this repository\'s same bare 
 
 function foreignOutlook(candidates, foreignDeps) {
   return computeOutlook(
-    { ceiling: 'unattended', grantOriginationEnabled: true, windowDays: 14 },
+    { ceiling: 'unattended', grantOriginationEnabled: true, trust: { 'trust-revert-window-days': 14 } },
     {
       limit: 100, workLinks: 'body-text', integrationBranch: 'main', runner: ghRunner({ candidates }), gitRunner: () => '', foreignDeps,
     },
@@ -325,7 +325,7 @@ test('#4793: computeOutlook looks up only the foreign refs of candidates that su
 test('#4793: a candidate already blocked by an open this-repository #N makes no foreign lookup, even when its body also declares a foreign ref', () => {
   const spawned = [];
   const out = computeOutlook(
-    { ceiling: 'unattended', grantOriginationEnabled: true, windowDays: 14 },
+    { ceiling: 'unattended', grantOriginationEnabled: true, trust: { 'trust-revert-window-days': 14 } },
     {
       limit: 100,
       workLinks: 'body-text',

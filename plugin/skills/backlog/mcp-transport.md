@@ -65,7 +65,9 @@ exported):
    `computePhaseA` / `machineGrantOutlook` / `trustRows` directly, via a `node -e` snippet
    `require`-ing `bin/lib/backlog-grant-gate/backlog-grant-gate.js` and `bin/lib/issues/backlog.js`
    — the same pure logic `bin/backlog-grant-gate.js` runs, called with MCP-sourced data instead of
-   `gh`-sourced data.
+   `gh`-sourced data. Pass `trustRows` a policy built from `TRUST_POLICY_KEYS`
+   (`bin/lib/issues/trust.js`), each key set to the value
+   `resolve-policy.js --values {the three keys}` prints for it.
 
 This reproduces the CLI's outcome rather than a rewritten one — a live run should confirm the MCP
 `list_issues` field shapes line up with `CANDIDATE_FIELDS`/`UNION_FIELDS` closely enough that no
