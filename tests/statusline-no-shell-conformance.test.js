@@ -18,13 +18,19 @@ const { readText } = require('./helpers/read-skill');
 //   `['exec']`.
 // - `.exec` on a name bound to `require('child_process')`, or on that require
 //   expression itself. `.exec` on anything else, such as a RegExp, is not flagged.
+// - a `shell` option, which makes execFileSync and spawn* run through a shell: a
+//   `shell` key or property assigned anything but a falsy literal (`false`, `null`,
+//   `undefined`, `0`, an empty string), quoted keys included, and the `{ shell }`
+//   shorthand. A message string holding `shell:` flags too.
 // Recall limits: `.exec` on a child_process object reached through another name (a
 // parameter, a property, a deps seam) is not seen, nor a computed key such as
-// `['ex' + 'ec']`.
+// `['ex' + 'ec']` or `['sh' + 'ell']`, nor a `shell` option arriving inside a spread
+// (`{ ...opts }`) or an options object built in another file.
 const FILE = path.join(__dirname, '..', 'plugin', 'bin', 'claude-tweaks-statusline.js');
 // The import and the three git calls when this scan landed. Fewer means the read or
 // the strip lost code, not that the calls went away. Raise it when sites are added.
 const FLOOR = 4;
+const SHELL_OPTION = /(?<![\w$])['"]?shell['"]?\s*(?::|=(?![=>]))(?!\s*(?:(?:false|null|undefined|0)\b|''|""|``))|(?<=[{,]\s*)shell(?=\s*[,}])/;
 
 // -> { offenders: [{ line, text }], execFileSites }
 function shellCalls(raw) {
@@ -32,7 +38,7 @@ function shellCalls(raw) {
   const verdict = stripperVerdict(raw, src);
   const objs = [...src.matchAll(/([A-Za-z_$][\w$]*)\s*=\s*require\(\s*['"](?:node:)?child_process['"]\s*\)/g)].map((m) => m[1]);
   const owners = [`require\\(\\s*['"](?:node:)?child_process['"]\\s*\\)`, ...objs.map((o) => `(?<![\\w$.])${o}`)];
-  const re = new RegExp(`\\bexecSync\\b|(?<![\\w$.])exec\\b|(?:${owners.join('|')})\\s*\\.\\s*exec\\b`, 'g');
+  const re = new RegExp(`\\bexecSync\\b|(?<![\\w$.])exec\\b|(?:${owners.join('|')})\\s*\\.\\s*exec\\b|${SHELL_OPTION.source}`, 'g');
   const offenders = [];
   for (const m of src.matchAll(re)) {
     const line = src.slice(0, m.index).split('\n').length;
@@ -74,6 +80,35 @@ test('scanner ignores comments, RegExp#exec, other objects and execFileSync', ()
   ].join('\n')), []);
 });
 
+test('scanner flags `.exec` on a child_process binding or require expression, never on a RegExp', () => {
+  assert.deepEqual(lines([
+    "const child_process = require('child_process');",
+    "child_process.exec('git status', cb);",
+    "const m = /x/.exec(text); child_process.exec('git status', cb);",
+    "require('node:child_process').exec('git status', cb);",
+    'const n = /y/.exec(text);',
+  ].join('\n')), [2, 3, 4]);
+});
+
+test('scanner flags a shell option set to anything but a falsy literal', () => {
+  assert.deepEqual(lines([
+    "execFileSync('git', ['status'], { shell: true });",
+    "spawn('git', [], { 'shell': '/bin/sh' });",
+    'const o = { cwd, shell: useShell };',
+    'opts.shell = true;',
+    'const p = { cwd, shell };',
+    "spawnSync('git', [], { \"shell\" : 1 });",
+  ].join('\n')), [1, 2, 3, 4, 5, 6]);
+  assert.deepEqual(lines([
+    "execFileSync('git', ['status'], { shell: false, windowsHide: true });",
+    'const a = { shell: null, b: undefined, c: 0 };',
+    "const d = { shell: '' };",
+    'const shellOut = 1; const noshell = { shellish: true };',
+    'if (x.shell === true) f(shell => shell);',
+    '// { shell: true } in a comment',
+  ].join('\n')), []);
+});
+
 test('scanner still sees a call after a literal holding a comment opener', () => {
   assert.deepEqual(lines([
     "const g = '/*';",
@@ -91,10 +126,10 @@ test('a comment-stripper mis-parse is reported, not passed as a file with no cal
     [{ line: 0, text: STRIPPER_VERDICT_MESSAGES.unparseable }]);
 });
 
-test('claude-tweaks-statusline.js calls neither execSync nor exec', () => {
+test('claude-tweaks-statusline.js calls neither execSync nor exec, and passes no shell option', () => {
   const raw = readText(FILE);
   const { offenders, execFileSites } = shellCalls(raw);
-  assert.deepEqual(offenders, [], 'the status line must launch no shell: use execFileSync with an argv array');
+  assert.deepEqual(offenders, [], 'the status line must launch no shell: use execFileSync with an argv array and no shell option');
   assert.ok(execFileSites >= FLOOR, `expected at least ${FLOOR} execFileSync sites, saw ${execFileSites}: the scan lost code`);
   // The same text with one exec call added goes red at that line.
   const added = `${raw}\nrequire('child_process').execSync('git status');\n`;

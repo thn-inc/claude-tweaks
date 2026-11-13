@@ -89,10 +89,12 @@ function renderModel(input) {
 // common dir), an empty path, and a zero-byte commondir. Each is null here, so
 // git decides. So is a `.git` or `commondir` that is not a regular file (git
 // refuses a non-file `.git`; a FIFO would block the read), a `.git` holding a NUL
-// (git reads only up to it), and a repo git's ownership check could refuse.
+// (git reads only up to it), a repo git's ownership check could refuse, and a
+// main config parseLocalConfig rejects (git checks the repository format there
+// and dies on a version or extension it does not accept). A missing main config
+// is fine: git accepts it and answers the same common dir.
 function commonDirFromFs(dir, env = process.env, currentUid = processUid()) {
-  if (envHas(env, 'GIT_DIR') || envHas(env, 'GIT_COMMON_DIR') || envHas(env, 'GIT_OBJECT_DIRECTORY')) return null;
-  if (currentUid === 0 && envHas(env, 'SUDO_UID')) return null;
+  if (envDefers(env, currentUid, false)) return null;
   try {
     const gitPath = path.join(dir, '.git');
     // lstat, as git's ownership check does; a symlinked .git is left to git too.
@@ -134,6 +136,14 @@ function commonDirFromFs(dir, env = process.env, currentUid = processUid()) {
     if (!isSearchableDir(path.join(real, 'refs'))) return null;
     const owners = [fs.statSync(dir), gitStat, ...[...new Set([gitdir, real])].map((p) => fs.statSync(p))];
     if (!ownedByCurrentUser(owners, currentUid)) return null;
+    const mainConfig = path.join(real, 'config');
+    let configStat = null;
+    try {
+      configStat = fs.statSync(mainConfig);
+    } catch (err) {
+      if (!err || err.code !== 'ENOENT') return null;
+    }
+    if (configStat && (!configStat.isFile() || !parseLocalConfig(fs.readFileSync(mainConfig, 'utf8')))) return null;
     return real;
   } catch {
     return null;
@@ -143,9 +153,9 @@ function commonDirFromFs(dir, env = process.env, currentUid = processUid()) {
 // git's ensure_valid_ownership refuses a repo whose worktree, .git or gitdir is
 // not owned by the current user (under sudo, by SUDO_UID). The readers compare
 // each stat's uid with currentUid and defer to git on any mismatch, ignoring
-// safe.directory (git honours it once asked). Under sudo they always defer. On
-// win32 (no geteuid) currentUid is null and the check is skipped: git compares
-// SIDs there, which this does not model, an accepted divergence.
+// safe.directory (git honours it once asked). Under sudo they always defer (see
+// envDefers). On win32 (no geteuid) currentUid is null and the check is skipped:
+// git compares SIDs there, which this does not model, an accepted divergence.
 function processUid() {
   return typeof process.geteuid === 'function' ? process.geteuid() : null;
 }
@@ -154,10 +164,20 @@ function ownedByCurrentUser(stats, currentUid) {
   return currentUid === null || stats.every((st) => st.uid === currentUid);
 }
 
-// An env passed in as a plain object is case-sensitive, while git on win32 (and
-// process.env there) reads names case-insensitively, so match them that way.
-function envHas(env, name) {
-  return Object.keys(env).some((key) => key.toUpperCase() === name);
+// One pass over the env, each name upper-cased: an env passed in as a plain
+// object is case-sensitive, while git on win32 (and process.env there) reads
+// names case-insensitively. True when a name redirects git's repo lookup, when
+// running under sudo (currentUid 0 with SUDO_UID set), or, with `config`, when a
+// GIT_CONFIG* name changes what git config reads.
+const REDIRECT_ENV = new Set(['GIT_DIR', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY']);
+function envDefers(env, currentUid, config) {
+  for (const key of Object.keys(env)) {
+    const name = key.toUpperCase();
+    if (REDIRECT_ENV.has(name)) return true;
+    if (name === 'SUDO_UID' && currentUid === 0) return true;
+    if (config && name.startsWith('GIT_CONFIG')) return true;
+  }
+  return false;
 }
 
 // validate_headref: a regular file (not a symlink) whose content, minus
@@ -227,77 +247,91 @@ function githubRepoUrl(remoteUrl) {
   return `https://github.com/${repoPath}`;
 }
 
+// parseLocalConfig reads a repo-local config's text the way git would, for the
+// shapes it models. It returns null when git might refuse the file or read it
+// differently, otherwise { url }: origin's last url, or null when there is none.
+// Null covers: a header or key line shape this parser does not model (git allows
+// only space and tab as whitespace there), a value with quote or escape syntax
+// anywhere, an origin url with comment syntax, a NUL (git cuts a value there), an
+// include, an [extensions] section (git refuses an extension it does not know, and
+// a v1-only one at version 0), and a [core] repositoryformatversion other than
+// literally 0 or 1 (git refuses a higher version and dies on a non-number).
+function parseLocalConfig(text) {
+  if (text.includes('\0')) return null;
+  let url = null;
+  let inOrigin = false;
+  let inCore = false;
+  let inSection = false;
+  for (const line of text.split(/\r?\n/)) {
+    if (/^[ \t]*$/.test(line) || /^[ \t]*[#;]/.test(line)) continue;
+    const header = line.match(/^[ \t]*\[([^\]]*)\][ \t]*(.*)$/);
+    if (header) {
+      if (header[2]) return null;
+      const inside = header[1].match(/^([A-Za-z0-9-]+)(?:[ \t]+"([^"\\]*)")?$/);
+      if (!inside) return null;
+      const name = inside[1].toLowerCase();
+      if (name === 'include') return null;
+      if (name === 'includeif') return null;
+      if (name === 'extensions') return null;
+      inSection = true;
+      inOrigin = name === 'remote' && inside[2] === 'origin';
+      inCore = name === 'core' && inside[2] === undefined;
+      continue;
+    }
+    const kv = line.match(/^[ \t]*([A-Za-z][A-Za-z0-9-]*)[ \t]*(?:=[ \t]*(.*))?$/);
+    if (!kv) return null;
+    // git accepts a key line before any section; ask git anyway (conservative).
+    if (!inSection) return null;
+    // Any value, in any section: git rejects a bad quote or escape for the whole
+    // file.
+    if (kv[2] !== undefined && /["\\]/.test(kv[2])) return null;
+    const key = kv[1].toLowerCase();
+    if (inCore && key === 'repositoryformatversion') {
+      const version = kv[2] === undefined ? undefined : kv[2].replace(/[ \t]+$/, '');
+      if (version !== '0' && version !== '1') return null;
+    }
+    if (!inOrigin || key !== 'url') continue;
+    if (kv[2] === undefined) return null;
+    if (/[#;]/.test(kv[2])) return null;
+    const value = kv[2].replace(/[ \t]+$/, '');
+    // git keeps whitespace other than space and tab (\v, \f, NBSP...) that the
+    // git path's .trim() would strip, so the two paths would differ: ask git.
+    if (value !== value.trim()) return null;
+    url = value;
+  }
+  return { url: url || null };
+}
+
 // originUrlFromConfig answers `git config --get remote.origin.url` from the
 // repo-local .git/config alone, no spawn. It returns the last origin `url`, or
 // null meaning "ask git": anything that could make git's answer differ from this
-// plain read — an env that redirects git's config or repo lookup, an include, a
-// config.worktree, a header or key line shape this parser does not model (git
-// allows only space and tab as whitespace there), a value with quote or escape
-// syntax anywhere, an origin url with comment syntax, an unreadable config (which
-// is also what a `.git` that is not a directory yields), a config that is not a
-// regular file (a FIFO would block the read) or holds a NUL (git cuts a value
-// there), an [extensions] section (git refuses an extension it does not know), a
-// `.git` that is not a valid git dir (git walks past it to a parent repo), and a
-// repo git's ownership check could refuse — is null, as is a config with no
-// origin url.
+// plain read — an env that redirects git's config or repo lookup, a .git/commondir
+// (git then reads the config, and checks the repo, at the dir it names), a config
+// parseLocalConfig rejects, an unreadable config (which is also what a `.git` that
+// is not a directory yields), a config that is not a regular file (a FIFO would
+// block the read), a `.git` that is not a valid git dir (git walks past it to a
+// parent repo), and a repo git's ownership check could refuse — is null, as is a
+// config with no origin url.
 function originUrlFromConfig(mainDir, env = process.env, currentUid = processUid()) {
-  for (const key of Object.keys(env)) {
-    if (key.toUpperCase().startsWith('GIT_CONFIG')) return null;
-  }
-  if (envHas(env, 'GIT_DIR') || envHas(env, 'GIT_COMMON_DIR') || envHas(env, 'GIT_OBJECT_DIRECTORY')) return null;
-  if (currentUid === 0 && envHas(env, 'SUDO_UID')) return null;
+  if (envDefers(env, currentUid, true)) return null;
   try {
     const gitDir = path.join(mainDir, '.git');
     if (!ownedByCurrentUser([fs.statSync(mainDir), fs.lstatSync(gitDir)], currentUid)) return null;
+    // get_common_dir: present in any form, git reads through it.
+    try {
+      fs.lstatSync(path.join(gitDir, 'commondir'));
+      return null;
+    } catch (err) {
+      if (!err || err.code !== 'ENOENT') return null;
+    }
     // is_git_directory, as commonDirFromFs applies it.
     if (!isValidHead(path.join(gitDir, 'HEAD'))) return null;
     if (!isSearchableDir(path.join(gitDir, 'objects'))) return null;
     if (!isSearchableDir(path.join(gitDir, 'refs'))) return null;
-    try {
-      fs.statSync(path.join(gitDir, 'config.worktree'));
-      return null;
-    } catch {
-      // absent — the common case
-    }
     const configPath = path.join(gitDir, 'config');
     if (!fs.statSync(configPath).isFile()) return null;
-    const text = fs.readFileSync(configPath, 'utf8');
-    if (text.includes('\0')) return null;
-    let url = null;
-    let inOrigin = false;
-    let inSection = false;
-    for (const line of text.split(/\r?\n/)) {
-      if (/^[ \t]*$/.test(line) || /^[ \t]*[#;]/.test(line)) continue;
-      const header = line.match(/^[ \t]*\[([^\]]*)\][ \t]*(.*)$/);
-      if (header) {
-        if (header[2]) return null;
-        const inside = header[1].match(/^([A-Za-z0-9-]+)(?:[ \t]+"([^"\\]*)")?$/);
-        if (!inside) return null;
-        const name = inside[1].toLowerCase();
-        if (name === 'include') return null;
-        if (name === 'includeif') return null;
-        if (name === 'extensions') return null;
-        inSection = true;
-        inOrigin = name === 'remote' && inside[2] === 'origin';
-        continue;
-      }
-      const kv = line.match(/^[ \t]*([A-Za-z][A-Za-z0-9-]*)[ \t]*(?:=[ \t]*(.*))?$/);
-      if (!kv) return null;
-      // git accepts a key line before any section; ask git anyway (conservative).
-      if (!inSection) return null;
-      // Any value, in any section: git rejects a bad quote or escape for the whole
-      // file.
-      if (kv[2] !== undefined && /["\\]/.test(kv[2])) return null;
-      if (!inOrigin || kv[1].toLowerCase() !== 'url') continue;
-      if (kv[2] === undefined) return null;
-      if (/[#;]/.test(kv[2])) return null;
-      const value = kv[2].replace(/[ \t]+$/, '');
-      // git keeps whitespace other than space and tab (\v, \f, NBSP...) that the
-      // git path's .trim() would strip, so the two paths would differ: ask git.
-      if (value !== value.trim()) return null;
-      url = value;
-    }
-    return url || null;
+    const parsed = parseLocalConfig(fs.readFileSync(configPath, 'utf8'));
+    return parsed && parsed.url;
   } catch {
     return null;
   }
