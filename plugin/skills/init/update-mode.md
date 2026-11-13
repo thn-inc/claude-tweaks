@@ -413,9 +413,9 @@ already covers — most commonly a re-added `server.port: 3000` after a merge or
 
 | Signal | Detection | Surfacing |
 |---|---|---|
-| An existing PR-triggered workflow skips drafts without `ready_for_review` or beside a declared `ci` source, filters by `paths:` with no always-reporting workflow, lacks workflow-level `cancel-in-progress: true`, gates a push-all trigger only at step level, or cannot be parsed | `node "${CLAUDE_PLUGIN_ROOT}/bin/ci-workflow-review.js" --root . --drift --json` — one JSON line `{reviewed, findings, unparsed}` over `.github/workflows/*.yml` and `*.yaml`; `reviewed: 0` → no workflows, nothing to report; exit 1 → `verify-scope.json` is invalid, or `.github/workflows` is not a directory, or either of them or its `.claude-tweaks`/`.github` parent is unreadable (a parent that is a regular file included), a dangling symlink or outside the checkout (the reason is on stderr, stdout is empty) — surface `ci-workflow-review: could not review — {stderr}` as its own finding, never as "no drift"; stdout that is not that one JSON line → `ci-workflow-review: output unreadable — {first line}`, its own finding too | Report-only: one line per finding, "ci-workflow-review: `{workflow}` — `{check}`: {detail} (remedy: `_shared/ci-skips-drafts.md` § {remedy}, or `see #5152`)", and one per `unparsed` entry, "ci-workflow-review: `{workflow}` unparsed — {reason}"; never "no drift" while `unparsed` is non-empty — never rewritten, no workflow is ever edited |
+| An existing PR-triggered workflow skips drafts without `ready_for_review` or beside a declared `ci` source, filters by `paths:` with no always-reporting workflow, lacks workflow-level `cancel-in-progress: true`, gates a push-all trigger only at step level, or cannot be parsed | `node "${CLAUDE_PLUGIN_ROOT}/bin/ci-workflow-review.js" --root . --drift --json` — one JSON line `{reviewed, findings, unparsed}` over `.github/workflows/*.yml` and `*.yaml`; `reviewed: 0` → no workflows, nothing to report; exit 1 → `verify-scope.json` is invalid, or `.github/workflows` is not a directory, or either of them or its `.claude-tweaks`/`.github` parent is unreadable (a parent that is a regular file included), a dangling symlink or outside the checkout (the reason is on stderr, stdout is empty) — surface `ci-workflow-review: could not review — {stderr}` as its own finding, never as "no drift"; stdout that is not that one JSON line → `ci-workflow-review: output unreadable — {first line}`, its own finding too | Report-only: one line per finding, "ci-workflow-review: `{workflow}` — `{check}`: {detail} (remedy: {remedy} as-is when it is `see #5152`, otherwise `_shared/ci-skips-drafts.md` § {remedy})", and one per `unparsed` entry, "ci-workflow-review: `{workflow}` unparsed — {reason}"; never "no drift" while `unparsed` is non-empty — never rewritten, no workflow is ever edited |
 
-This row does not count toward Phase 1u.6's Total drift count: a finding or `unparsed` entry can last across re-runs (a deliberate `cancel-in-progress` expression stays unparsed), and counting it would force the full pass on every re-run. Its lines are listed in Phase 1u.6's Quick Audit block instead, never dropped.
+This row does not count toward Phase 1u.6's Total drift count: a finding or `unparsed` entry can last across re-runs (a deliberate `cancel-in-progress` expression stays unparsed), and counting it would force the full pass on every re-run. Its lines are never dropped: on the early exit they are listed in Phase 1u.6's Quick Audit block, and on the full pass they are presented as their own report-only block before Phase 2 (Phase 1u.6's "On full pass").
 
 ### Routine Relevance
 
@@ -567,7 +567,7 @@ After Phase 1u (inventory) and Phase 1u.5 (contract drift) complete, evaluate th
 
 **Early-exit criteria:**
 
-- `$ARGUMENTS` contains `--full` → skip this gate entirely, go straight to the full pass (Phase 2 onward) regardless of drift/gap counts. This is the override the early-exit output text and `SKILL.md` both advertise as the way to force the complete reconnaissance pass.
+- `$ARGUMENTS` contains `--full` → skip this gate entirely, go straight to the full pass (Phase 2 onward) regardless of drift/gap counts, still presenting the CI Workflow Review row's lines first, as "On full pass" below says. This is the override the early-exit output text and `SKILL.md` both advertise as the way to force the complete reconnaissance pass.
 - Otherwise: Total drift count = 0 **AND** preliminary gap signal < 3 → **early-exit fast path**
 
 **On early-exit:**
@@ -604,7 +604,7 @@ After Phase 1u (inventory) and Phase 1u.5 (contract drift) complete, evaluate th
 
 3. Skip directly to Phase 9 (Summary). Phase 9's summary template adapts: "Update Mode — no patches needed" instead of the full patch list.
 
-**On full pass (criteria not met):** drift > 0 OR preliminary gap signal >= 3 → continue to Phase 2 (Codebase Reconnaissance) as normal.
+**On full pass (criteria not met):** drift > 0 OR preliminary gap signal >= 3 → first present every line the CI Workflow Review row surfaced (Phase 1u.5), verbatim, under the Quick Audit's `CI workflow review` heading line, as its own report-only block outside the drift count — the one point every full-pass path reaches, since some scopes skip Phase 3 and an Interactive "Done" can stop before Phase 9 — then continue to Phase 2 (Codebase Reconnaissance) as normal.
 
 The gate is automatic — no user prompt. The user always sees the audit findings, just without the ceremony when there's nothing to act on.
 

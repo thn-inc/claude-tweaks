@@ -25,7 +25,7 @@ Call `AskUserQuestion` (see "Phases at a Glance" above for the full table):
 - Option 2 — `label`: `"Skip Phase {next phase}"`, `description`: `"Move to Phase {phase after next}"`
 - Option 3 — `label`: `"Done"`, `description`: `"Stop here"`
 
-If the user selects this template's "Done" and Step 6 queued a `worktree-always` decision, write it now — see "Finalizing the worktree-always Decision" above. If Step 22 held its CI workflow review (`bootstrap/step-22-ci-workflow-review.md`'s re-run gate) and Phase 1 has not run yet, run it now too, before this exit.
+If the user selects this template's "Done" and Step 6 queued a `worktree-always` decision, write it now — see "Finalizing the worktree-always Decision" above. If Step 22 held its CI workflow review (`bootstrap/step-22-ci-workflow-review.md`'s re-run gate) and Phase 1 has not run yet, run it now too, before this exit. Choosing "Skip Phase 1" releases a held Step 22 review the same way: run it before Phase 2.
 
 **Option 3 (Essentials):** Runs phases 2, 3, 5 only — the same phase set as the `config` goal-based Phase scope (see "Input" above; Phase 0 always runs first regardless of scope, so the two are equivalent). Produces CLAUDE.md with proper philosophy and Don'ts. Defers skills, rules, journeys, and doc registry for later (suggest running `/init config` directly next time to skip this gate).
 

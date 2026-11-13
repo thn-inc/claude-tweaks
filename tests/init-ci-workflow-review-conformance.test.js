@@ -67,6 +67,7 @@ const ROW_FACTS = [
   [/as its own finding, never as "no drift"/, 'row: exit 1 is its own finding, never "no drift"'],
   [/output unreadable/, 'row: unreadable stdout is its own finding'],
   [/never "no drift" while `unparsed` is non-empty/, 'row: never "no drift" while unparsed is non-empty'],
+  [/\{remedy\} as-is when it is `see #5152`, otherwise `_shared\/ci-skips-drafts\.md` § \{remedy\}/, 'row: the remedy reads as formatRemedy prints it'],
 ];
 const missingRowFacts = missingFactsOf(ROW_FACTS);
 
@@ -85,6 +86,16 @@ test('AC11.1: init/SKILL.md carries a Step 22 paragraph after Step 21 and before
   assert.throws(() => step22Block(permuted), /out of order/);
   // Deletion control: no Step 22 heading fails on the missing marker.
   assert.throws(() => step22Block(SKILL.replace(STEP22, '### Step 2x: CI Workflow Review')), /marker missing/);
+  // Each body guard fails on its own mutated copy.
+  const s22 = SKILL.indexOf(STEP22);
+  const withBody = (newBody) => SKILL.slice(0, s22) + newBody + SKILL.slice(fin);
+  assert.throws(() => step22Block(withBody(body.replace('bootstrap/step-22-ci-workflow-review.md', 'bootstrap/step-22.md'))), /does not cite its sub-file/);
+  assert.throws(() => step22Block(withBody(body.replace('report-only', 'read-only'))), /does not say report-only/);
+  assert.throws(() => step22Block(withBody(body.replace('\n\n---', '\nline three\nline four\nline five\n\n---'))), /more than 4 lines/);
+  // Paragraph removed, heading kept: fails on the missing citation.
+  const headingOnly = `${STEP22} (Optional)\n\n---\n\n`;
+  assert.ok(body.endsWith('---\n\n'), 'the block ends with the --- separator');
+  assert.throws(() => step22Block(withBody(headingOnly)), /does not cite its sub-file/);
 });
 
 test('AC11.2: removing the Update Mode row or the SKILL.md paragraph turns these checks red', () => {
@@ -106,6 +117,9 @@ const STEP_FACTS = [
   [/_shared\/ci-skips-drafts\.md/, 'step: cites the remedy doc'],
   [/update-mode\.md`'s `CI Workflow Review`/, 'step: cites the Update Mode row'],
   [/ci-workflow-review: reported by Update Mode/, 'step: the skip line'],
+  [/never reviews the plugin's generated `track-issue-fixes\.yml` while it is the current or an earlier generated version/, 'step: only the generated tracking workflow is skipped'],
+  [/a hand-modified copy is reviewed like any project workflow/, 'step: a hand-modified copy is reviewed'],
+  [/A single workflow file that is unreadable, a dangling symlink, or resolves outside the checkout is not an exit 1: it is an `unparsed` row under exit 0/, 'step: a per-file failure is unparsed under exit 0'],
 ];
 const missingStepFacts = missingFactsOf(STEP_FACTS);
 
@@ -140,6 +154,7 @@ const RUN_FACTS = [
   [/In every other case it runs now: Initial Mode, the `bootstrap` scope, or Enhancement filter tokens with no Phase scope/, 'gate: runs now otherwise'],
   [/no Phase scope and no Enhancement filter token, the Scope Selection Gate decides, so hold the review/, 'gate: holds for the Scope Selection Gate'],
   [/the gate's Option 4 \("Done"\), or an Interactive "Done" chosen before Phase 1 runs, runs it before that exit/, 'gate: the early exits run it'],
+  [/an Interactive "Skip Phase 1" runs it before Phase 2/, 'gate: Skip Phase 1 runs it'],
 ];
 const missingRunFacts = missingFactsOf(RUN_FACTS);
 
@@ -155,7 +170,10 @@ function gateHoldSentences(text) {
   const second = text.indexOf(HOLD_SENTENCE, first + 1);
   if (!(opt2 < first && first < opt3)) throw new Error('scope-selection-gate.md: the first held-review sentence is not in Option 2');
   if (!(opt4 < second)) throw new Error('scope-selection-gate.md: the second held-review sentence is not in Option 4');
+  const skip = text.indexOf(SKIP_PHASE_1_SENTENCE);
+  if (!(opt2 < skip && skip < opt3)) throw new Error('scope-selection-gate.md: Option 2 does not release the held review on "Skip Phase 1"');
 }
+const SKIP_PHASE_1_SENTENCE = 'Choosing "Skip Phase 1" releases a held Step 22 review the same way: run it before Phase 2.';
 
 test('step-22 re-run gate: runs whenever the run stops before Phase 1u.5', () => {
   const gate = rerunGateOf(STEP);
@@ -165,23 +183,28 @@ test('step-22 re-run gate: runs whenever the run stops before Phase 1u.5', () =>
   const opt4 = GATE.indexOf('**Option 4 (Done):**');
   const withoutOpt4 = GATE.slice(0, opt4) + GATE.slice(opt4).replace(HOLD_SENTENCE, 'If Step 22 skipped');
   assert.throws(() => gateHoldSentences(withoutOpt4), /expected the held-review sentence exactly twice, found 1/);
+  assert.throws(() => gateHoldSentences(GATE.replace(SKIP_PHASE_1_SENTENCE, '')), /does not release the held review on "Skip Phase 1"/);
 });
 
 // --- Phase 1u.6's drift count --------------------------------------------------
 
 const EXCLUSION_FACTS = [
   [/does not count toward Phase 1u\.6's Total drift count/, 'row: not counted as drift'],
-  [/listed in Phase 1u\.6's Quick Audit block instead, never dropped/, 'row: listed in the Quick Audit instead'],
+  [/Its lines are never dropped: on the early exit they are listed in Phase 1u\.6's Quick Audit block/, 'row: listed in the Quick Audit on the early exit'],
+  [/on the full pass they are presented as their own report-only block before Phase 2/, 'row: presented on the full pass too'],
 ];
 const missingExclusionFacts = missingFactsOf(EXCLUSION_FACTS);
 const QUICK_AUDIT_FACTS = [
   [/if the CI Workflow Review row surfaced any line/, 'quick audit: conditional on the row surfacing a line'],
   [/CI workflow review — report-only, not counted as drift:/, 'quick audit: its own heading line'],
   [/Never print "No drift detected\." while the CI Workflow Review row surfaced any line/, 'quick audit: never "No drift detected."'],
+  [/first present every line the CI Workflow Review row surfaced \(Phase 1u\.5\), verbatim/, 'full pass: presents the lines first'],
+  [/as its own report-only block outside the drift count/, 'full pass: report-only, not drift'],
+  [/still presenting the CI Workflow Review row's lines first/, 'full pass: --full presents them too'],
 ];
 const missingQuickAuditFacts = missingFactsOf(QUICK_AUDIT_FACTS);
 
-test('drift count: the CI Workflow Review row does not count toward Phase 1u.6\'s Total drift count, and the Quick Audit never prints "No drift detected" while it surfaced a line', () => {
+test('drift count: the CI Workflow Review row does not count toward Phase 1u.6\'s Total drift count, its lines surface on the early exit and on the full pass, and the Quick Audit never prints "No drift detected" while it surfaced a line', () => {
   const row = subsectionOf(UPDATE, ROW_HEADING);
   const phase = sectionOf(UPDATE, PHASE_1U6);
   assert.deepEqual(missingExclusionFacts(row), []);
@@ -203,6 +226,12 @@ test('ci-review: the Enhancement filter token is listed in SKILL.md\'s token lin
   assert.match(GRAMMAR, GRAMMAR_ROW);
   assert.ok(hintLeaves(SKILL).includes('ci-review'), 'argument-hint carries ci-review');
   assert.ok(cardInitLine(CARD).includes('\\|ci-review]'), 'reference card Takes cell carries ci-review');
+  // Every Enhancement filter token on SKILL.md's token line is a hint leaf, release included.
+  const tokenLine = lineStartingWith(SKILL, '**Enhancement filter tokens**');
+  const tokens = [...tokenLine.split('. Each narrows')[0].matchAll(/`([a-z-]+)`/g)].map((m) => m[1]);
+  assert.ok(tokens.includes('release') && tokens.includes('ci-review'), 'the token line lists release and ci-review');
+  assert.deepEqual(tokens.filter((t) => !hintLeaves(SKILL).includes(t)), []);
+  assert.deepEqual(tokens.filter((t) => !hintLeaves(SKILL.replace('|release|', '|')).includes(t)), ['release']);
   // Controls: each surface without the token fails its own check.
   const skillNoToken = SKILL.replace(', `ci-review`', '');
   assert.notEqual(skillNoToken, SKILL);
