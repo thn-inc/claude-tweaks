@@ -137,6 +137,7 @@ const KEEP_ALIVE = [
   [/no\s+`Agent`\/`Task`\s+tool/i, 'the fallback covers the no-Agent/Task-tool case'],
   [/`unconfirmed`/, 'findings from a self-judged unit are marked unconfirmed'],
   [/arrives\s+after\s+its\s+unit\s+was\s+self-judged\s+is\s+ignored;\s+it\s+never\s+changes\s+a\s+verdict/, 'a late child result is ignored and never changes a verdict'],
+  [/Outside\s+the\s+rendered-UI\s+exception\s+below,\s+a\s+child\s+result/, 'the ignore sentence carries its own rendered-UI scope (#5280)'],
   ...SHARED_RULE,
 ];
 
@@ -628,7 +629,7 @@ const RENDERED_UI_CONTRACT = [
   [/staged\/visual-review-late-\{n\}\.md/, 'names the staged file'],
   [/--status\s+STAGED[\s\S]*?--reversibility\s+high\s+--text-file/, 'logs the staging decision'],
   [/late\s+rendered-UI\s+result\s+from\s+\{unit\}\s+staged\s+to\s+staged\/\{written-file\}\./, 'the decision log text'],
-  [/`status`\s+is\s+anything\s+but\s+`active`[\s\S]{0,240}?`console\.json`\s+exists[\s\S]{0,240}?exits\s+3[\s\S]{0,240}?write\s+nothing\s+under\s+the\s+run\s+dir[\s\S]{0,240}?name\s+the\s+findings\s+in\s+your\s+reply\s+instead/, 'a closed run stages nothing and names the findings in the reply'],
+  [/`status`\s+is\s+anything\s+but\s+`active`[\s\S]{0,240}?`console\.json`\s+exists[\s\S]{0,240}?exits\s+3\s+\(archived\s+or\s+unanchored\)\s+or\s+with\s+any\s+other\s+non-zero\s+code,\s+write\s+nothing\s+under\s+the\s+run\s+dir[\s\S]{0,240}?name\s+the\s+findings\s+in\s+your\s+reply\s+instead/, 'a closed run, or any non-zero stage-item.js exit, stages nothing and names the findings in the reply'],
   [/never\s+changes\s+a\s+verdict\s+already\s+reached/, 'a late result never changes a verdict already reached'],
   [/`\{section\}`\s+is\s+`\/review`/, 'binds the log-decision {section}'],
   [/basename\s+of\s+the\s+first\s+path\s+stage-item\s+printed/, '{written-file} is the basename of the first path stage-item printed'],
@@ -640,6 +641,8 @@ const RENDERED_UI_CONTRACT = [
   [/no\s+pipeline\s+run\s+directory,\s+or\s+no\s+`run-state\.json`\s+in\s+it,\s+treat\s+the\s+run\s+as\s+not\s+active/, 'no run dir or no run-state.json counts as not active'],
   [/downgrade\s+line\s+\(`decisions\.md`,\s+under\s+the\s+dispatching\s+skill's\s+section\)[\s\S]{0,120}?review\s+summary's\s+Visual\s+Review\s+or\s+Design\s+Quality\s+section/, 'the explicit decline lands in the downgrade line and the review summary'],
   [/`\{unit\}`\s+is\s+the\s+child\s+as\s+its\s+launch\s+site\s+named\s+it[^.]*?`\{unit-slug\}`\s+is\s+its\s+lowercase,\s+hyphen-joined\s+form/, 'binds {unit} and {unit-slug}'],
+  [/every\s+character\s+outside\s+`a-z`,\s+`0-9`\s+and\s+`-`\s+replaced\s+by\s+`-`/, '{unit-slug} is restricted to a-z, 0-9 and - before it reaches a shell command'],
+  [/non-zero\s+`log-decision\.js`\s+exit[\s\S]{0,120}?name\s+the\s+findings\s+in\s+your\s+reply/, 'a failed log-decision.js call also names the findings in the reply'],
 ];
 const renderedUiMissing = missingFactsOf(RENDERED_UI_CONTRACT);
 

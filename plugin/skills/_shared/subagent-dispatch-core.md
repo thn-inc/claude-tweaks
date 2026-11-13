@@ -87,8 +87,8 @@ self-judged at the bound is abandoned: it no longer counts as outstanding, and t
 reply still ends with `STATUS: {WORD}`; `INTERIM_STATUS:` is only for a turn that ends while a
 keep-alive wait is still in progress. An abandoned child cannot be stopped (`TaskStop` refuses a
 nested child), so it keeps running, and the harness may hold the
-agent's final result until it finishes: the bound caps the wait, not the delivery. A child result
-that arrives after its unit was self-judged is ignored; it never changes a verdict already reached,
+agent's final result until it finishes: the bound caps the wait, not the delivery. Outside the
+rendered-UI exception below, a child result that arrives after its unit was self-judged is ignored; it never changes a verdict already reached,
 and a late notification that re-wakes the agent after its final reply is answered by repeating its
 whole final reply unchanged: the dispatcher keeps only the agent's latest reply, so a bare `STATUS:`
 line would replace the report (#3722). A child that reports a failure (a `failed` notification, an
