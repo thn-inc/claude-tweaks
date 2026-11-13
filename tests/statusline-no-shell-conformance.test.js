@@ -20,7 +20,7 @@ const { readText } = require('./helpers/read-skill');
 //   expression itself. `.exec` on anything else, such as a RegExp, is not flagged.
 // - a `shell` option, which makes execFileSync and spawn* run through a shell: a
 //   `shell` key or property assigned anything but a falsy literal (`false`, `null`,
-//   `undefined`, `0`, an empty string), quoted keys included, and the `{ shell }`
+//   `undefined`, `0`, an empty string) that ends the value (`,`, `}`, `;` or `)` follows), quoted keys included, and the `{ shell }`
 //   shorthand. A message string holding `shell:` flags too.
 // Recall limits: `.exec` on a child_process object reached through another name (a
 // parameter, a property, a deps seam) is not seen, nor a computed key such as
@@ -30,7 +30,7 @@ const FILE = path.join(__dirname, '..', 'plugin', 'bin', 'claude-tweaks-statusli
 // The import and the three git calls when this scan landed. Fewer means the read or
 // the strip lost code, not that the calls went away. Raise it when sites are added.
 const FLOOR = 4;
-const SHELL_OPTION = /(?<![\w$])['"]?shell['"]?\s*(?::|=(?![=>]))(?!\s*(?:(?:false|null|undefined|0)\b|''|""|``))|(?<=[{,]\s*)shell(?=\s*[,}])/;
+const SHELL_OPTION = /(?<![\w$])['"]?shell['"]?\s*(?::|=(?![=>]))(?!\s*(?:false|null|undefined|0|''|""|``)\s*(?=[,};)]))|(?<=[{,]\s*)shell(?=\s*[,}])/;
 
 // -> { offenders: [{ line, text }], execFileSites }
 function shellCalls(raw) {
@@ -98,13 +98,17 @@ test('scanner flags a shell option set to anything but a falsy literal', () => {
     'opts.shell = true;',
     'const p = { cwd, shell };',
     "spawnSync('git', [], { \"shell\" : 1 });",
-  ].join('\n')), [1, 2, 3, 4, 5, 6]);
+    "const q = { shell: null ?? '/bin/sh' };",
+    'const r = { shell: false || x };',
+  ].join('\n')), [1, 2, 3, 4, 5, 6, 7, 8]);
   assert.deepEqual(lines([
     "execFileSync('git', ['status'], { shell: false, windowsHide: true });",
     'const a = { shell: null, b: undefined, c: 0 };',
     "const d = { shell: '' };",
     'const shellOut = 1; const noshell = { shellish: true };',
     'if (x.shell === true) f(shell => shell);',
+    'opts.shell = false;',
+    'const e = { shell: false };',
     '// { shell: true } in a comment',
   ].join('\n')), []);
 });
