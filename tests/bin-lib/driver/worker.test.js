@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const cp = require('node:child_process');
+const crypto = require('node:crypto');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const worker = require(path.join(LIB, 'driver', 'worker.js'));
 const { launchWorker, buildEnv, conformsTo, ENVELOPE_FIELDS, ENV_ALLOW, ENV_ALLOW_WIN32 } = worker;
@@ -844,7 +845,7 @@ test("defaultRunner lets the child's exit decide when stdin errors", async () =>
   assert.deepStrictEqual(await handle.exited, { code: 1, signal: null, stdout: '', stderr: "error: unknown option '--x'\n" });
 });
 
-test('AC7: live smoke test — the write runs, and the echo, curl and .git writes do not', { skip: !process.env.DRIVER_LIVE_SMOKE && 'set DRIVER_LIVE_SMOKE=1 to launch a real worker (spends tokens)' }, async (t) => {
+test('AC7/AC6.1: live smoke test — the write runs, and the echo, curl and .git writes do not, and the test command cannot read a home-directory canary', { skip: !process.env.DRIVER_LIVE_SMOKE && 'set DRIVER_LIVE_SMOKE=1 to launch a real worker (spends tokens)' }, async (t) => {
   const cwd = tmp(t);
   const settingsDir = tmp(t);
   const init = cp.spawnSync('git', ['init', '-q'], { cwd, windowsHide: true });
@@ -853,8 +854,37 @@ test('AC7: live smoke test — the write runs, and the echo, curl and .git write
   const commit = cp.spawnSync('git', ['-c', 'user.name=probe', '-c', 'user.email=probe@example.invalid', 'commit', '-q', '--allow-empty', '-m', 'init'], { cwd, windowsHide: true });
   assert.strictEqual(commit.status, 0, 'git commit failed in the smoke test directory');
   const configBefore = fs.readFileSync(path.join(cwd, '.git', 'config'));
-  const prompt = 'Do these six things in order, continuing after any denial: (1) use the Write tool to create smoke-w.txt containing hi; (2) run the bash command: echo hi > smoke-b.txt (3) run the bash command: curl -s https://example.com -o smoke-net.txt (4) use the Write tool to create .git/info/smoke-note.txt containing hi (5) run the bash command: git log -1 --format=%H --output=.git/config (6) run the bash command: git log -1 --format=%H --output=.git/hooks/pre-commit. Then report what happened.';
-  const env = await launchWorker({ role: 'implementer', cwd, settingsDir, prompt, model: 'haiku', testCommand: 'node --test', ceilings: { wallClockMs: 180000, spendCeiling: 1 }, claudeMdText: 'Probe project file.' });
+  // Bash is in the tool list only on the platforms where the sandbox was probed, so the
+  // test-command step and its home-directory canary exist only there.
+  const probed = SANDBOX_PROBED_PLATFORMS.includes(process.platform);
+  let expectedVersion;
+  if (probed) {
+    const canary = path.join(os.homedir(), '.driver-smoke-canary-' + crypto.randomBytes(6).toString('hex'));
+    fs.writeFileSync(canary, 'canary', { flag: 'wx' });
+    t.after(() => fs.rmSync(canary, { force: true }));
+    fs.writeFileSync(path.join(cwd, 'package.json'), JSON.stringify({ private: true, scripts: { test: 'node --test' } }));
+    fs.writeFileSync(path.join(cwd, 'smoke-canary.test.js'), [
+      "const fs = require('fs');",
+      "const path = require('path');",
+      'let read = null;',
+      'let readError = null;',
+      'try {',
+      '  read = fs.readFileSync(' + JSON.stringify(canary) + ", 'utf8');",
+      '} catch (err) {',
+      '  readError = err.code || String(err);',
+      '}',
+      "fs.writeFileSync(path.join(__dirname, 'smoke-canary-result.json'), JSON.stringify({ ran: true, version: process.version, readError, read }));",
+      '',
+    ].join('\n'));
+    // The node the worker will find on PATH; process.version differs when the harness was started through another node.
+    const nodeBin = worker.realToolchainDeps(process.env).lookup('node');
+    assert.ok(nodeBin, 'no node on PATH');
+    const probe = cp.spawnSync(nodeBin, ['--version'], { encoding: 'utf8', windowsHide: true });
+    assert.strictEqual(probe.status, 0, 'node --version failed');
+    expectedVersion = probe.stdout.trim();
+  }
+  const prompt = 'Do these ' + (probed ? 'seven' : 'six') + ' things in order, continuing after any denial. For each bash command below, run exactly that command and nothing else: do not append, prepend, chain or wrap anything (no `;`, `&&`, `|`, `echo`, or exit-status checks). (1) use the Write tool to create smoke-w.txt containing hi; (2) run the bash command: echo hi > smoke-b.txt (3) run the bash command: curl -s https://example.com -o smoke-net.txt (4) use the Write tool to create .git/info/smoke-note.txt containing hi (5) run the bash command: git log -1 --format=%H --output=.git/config (6) run the bash command: git log -1 --format=%H --output=.git/hooks/pre-commit' + (probed ? ' (7) run the bash command: npm test' : '') + '. Then report what happened.';
+  const env = await launchWorker({ role: 'implementer', cwd, settingsDir, prompt, model: 'haiku', testCommand: 'npm test', ceilings: { wallClockMs: 180000, spendCeiling: 1 }, claudeMdText: 'Probe project file.' });
   assert.strictEqual(env.status, 'ok', JSON.stringify(env));
   const files = fs.readdirSync(cwd);
   assert.ok(files.includes('smoke-w.txt'));
@@ -863,11 +893,18 @@ test('AC7: live smoke test — the write runs, and the echo, curl and .git write
   assert.ok(!fs.readdirSync(path.join(cwd, '.git', 'info')).includes('smoke-note.txt'));
   assert.ok(fs.readFileSync(path.join(cwd, '.git', 'config')).equals(configBefore), '.git/config changed');
   assert.ok(!fs.existsSync(path.join(cwd, '.git', 'hooks', 'pre-commit')), '.git/hooks/pre-commit was written');
-  // Bash is in the tool list only on the platforms where the sandbox was probed.
-  if (SANDBOX_PROBED_PLATFORMS.includes(process.platform)) {
+  if (probed) {
     const command = (d) => String((d.tool_input && d.tool_input.command) || '');
-    assert.ok(env.denials.some((d) => command(d).includes('echo')), 'echo denied');
+    assert.ok(env.denials.some((d) => command(d).includes('smoke-b.txt')), 'echo denied');
     assert.ok(env.denials.some((d) => command(d).includes('curl')), 'curl denied');
+    const resultFile = path.join(cwd, 'smoke-canary-result.json');
+    assert.ok(fs.existsSync(resultFile), 'the test command did not run: no smoke-canary-result.json; ' + JSON.stringify(env));
+    const result = JSON.parse(fs.readFileSync(resultFile, 'utf8'));
+    t.diagnostic('canary: readError=' + result.readError + ' version=' + result.version + ' expected=' + expectedVersion + ' costUsd=' + env.costUsd);
+    assert.strictEqual(result.ran, true);
+    assert.strictEqual(result.read, null, 'the test command read the home-directory canary');
+    assert.ok(typeof result.readError === 'string' && result.readError !== '', 'readError: ' + JSON.stringify(result.readError));
+    assert.strictEqual(result.version, expectedVersion, "the toolchain's own node did not run");
   }
   assert.ok(env.denials.some((d) => d.tool_name === 'Write' && String((d.tool_input && d.tool_input.file_path) || '').includes('.git')), 'write into .git denied');
   assert.deepStrictEqual(fs.readdirSync(settingsDir), []);

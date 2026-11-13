@@ -102,30 +102,55 @@
 //
 // The residual, stated plainly: the driver's own test step runs worker-written code
 // with the driver's rights, as every other lane does today. Where Bash exists (the
-// probed platforms), code the worker runs can read files outside the working
-// directory, because the sandbox as configured confines writes to the working
-// directory and the CLI's own scratch root and denies the network, but does not
-// restrict reads, and so can `git diff --no-index`. With the network denied, the
-// worker's own result text is the remaining way out for what it read. This is a
-// stated residual.
+// probed platforms), the sandbox confines writes to the working directory and the
+// CLI's own scratch root and denies the network, and the read block below confines
+// the reads of code the worker runs to the working directory, the derived toolchain
+// roots and the CLI's own carve-outs (in the probe: `.gitconfig`, the system
+// temporary directory and the CLI's per-user scratch root). `git diff --no-index`
+// reaches outside the working directory only as far as that set does. With the
+// network denied, the worker's own result text is the remaining way out for what it
+// read from that set. This is a stated residual.
 //
-// What the worker's code can read and write today, probed on Claude Code CLI
-// 2.1.322, macOS, 2026-11-12, under a subscription login with no TTY, using a test
-// file the worker ran through the allowed test command with the sandbox on. With the
-// settings as generated, the test read a file in a directory under the system
-// temporary directory and a file under the CLI's per-user scratch root, listed the
-// home directory, and opened shell and package-manager dotfiles there. It wrote
-// under the CLI's per-user scratch root, which is also what the sandbox sets as the
-// temporary directory for the commands it runs. With the setting
-// `permissions.blockReadsOutsideWorkingDirectories: true` added, listing the home
-// directory, opening a shell profile there and listing the SSH directory failed with
-// EPERM; the files under the system temporary directory and the scratch root stayed
-// readable; `node --test` and `git status` still ran, but a Node installation under
-// the home directory was no longer reachable, so a different `node` ran. That read
-// block is not turned on here: it protects the home directory but cuts off a
-// toolchain installed there, so it needs a per-project list of readable paths, which
-// is a decision for the project and is not made here. Setting `CLAUDE_CODE_TMPDIR`
-// in the worker's environment did not move the sandbox's writable temporary root.
+// The read block, and what it rests on. Probed on Claude Code CLI 2.1.322, macOS,
+// 2026-11-12, under a subscription login with no TTY, using a test file the worker
+// ran through the allowed test command with the sandbox on. With the settings as
+// generated before the block, that code read a canary file under the home directory,
+// listed the home directory, opened `.zshrc` and `.npmrc` there and listed `~/.ssh`;
+// the worker's own Read tool was already refused outside the working directory. It
+// also read a file in a directory under the system temporary directory and a file
+// under the CLI's per-user scratch root, and wrote under that scratch root, which is
+// also what the sandbox sets as the temporary directory for the commands it runs.
+// With `permissions.blockReadsOutsideWorkingDirectories: true` and
+// `sandbox.filesystem.allowRead` set to the Node toolchain's root, the canary read,
+// the home listing, `.zshrc`, `.npmrc` and the `~/.ssh` listing all failed with
+// EPERM; the toolchain's own `node` still ran (the same version) and the toolchain
+// stayed unwritable; `.gitconfig` stayed openable, apparently a carve-out in the CLI
+// so that `git` works; the files under the system temporary directory and the
+// scratch root stayed readable. Without the `allowRead` entry, the earlier #5217
+// probe found that a Node installation under the home directory was no longer
+// reachable, so a different `node` ran. So the block is on for the implementer
+// wherever the sandbox was probed, and the readable set is derived at launch
+// (`toolchainReadPaths`): the test command's toolchain root (the directory above
+// `bin/` of the binary's real path, else the binary's own directory) plus the root of
+// the interpreter its first word's shebang names, one level deep. The shebang half
+// exists because the driver's test command is `npm test`: npm's real path,
+// `…/lib/node_modules/npm/bin/npm-cli.js`, starts `#!/usr/bin/env node`, and that
+// `node` (`…/bin/node`) lies outside npm's own root. An `env` shebang is parsed
+// fail-safe: only known options are skipped, and an unknown option, `-P` or bundled
+// flags yield no interpreter root. A root that would be `/`, the home directory or an
+// ancestor of it falls back to the binary's own directory, else to nothing, since
+// re-opening home would undo the block. The readable paths go through
+// `sandbox.filesystem.allowRead`, never `additionalDirectories` or `--add-dir`: the
+// CLI documentation says those directories also become writable by sandboxed
+// commands. The blocked `~/.npmrc` does not stop the test command: probed 2026-11-13
+// on the same host, `npm test` ran with an unreadable user config file (exit 0).
+// The settings this module generates, with the readable set derived at launch, were
+// run live on 2026-11-13 with Claude Code CLI 2.1.322 on macOS, under a subscription
+// login with no TTY, through the launcher's `AC7` live smoke test: the worker ran
+// `npm test`, the test file's read of a canary under the home directory failed with
+// `EPERM`, and the `node` it ran was the toolchain's own (v22.23.2, the version the
+// `node` on PATH reports). Setting `CLAUDE_CODE_TMPDIR` in the worker's environment did not move the sandbox's
+// writable temporary root.
 //
 // Permission denials are data for the driver's event line, never a reason to widen a
 // list: there is no path here that composes wider rights after a denial.

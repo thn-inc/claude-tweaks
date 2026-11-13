@@ -54,7 +54,7 @@ Any step that executes worker-authored content (its tests, a `verify-scope.json`
 |---|---|
 | Adding a command to the implementer's allow list | List its write, read, exec and network flags; probe each through the launcher with the sandbox on and off; add the worst case to the live smoke test; record the results in the `roles.js` header |
 | Adding a tool to a role (for example Grep or Glob off macOS) | Probe that the tool stays inside the working directory under that role's flags on each platform it ships to, before adding it to `ROLES` |
-| Turning on `permissions.blockReadsOutsideWorkingDirectories` | It blocks the home directory, including a toolchain installed there (a different `node` ran); it needs a per-project list of readable paths, which is a project decision |
+| Changing which paths the implementer may read | The read block is on; the readable set is the derived toolchain roots (`toolchainReadPaths` in `roles.js`). Never re-open a path through `additionalDirectories` or `--add-dir` — those also become writable. Re-run the `AC7` live smoke test's canary step after any change |
 | A new platform | Run the sandbox probes there, then add it to `SANDBOX_PROBED_PLATFORMS`; until then the implementer has no Bash there |
 | A new CLI version changes a flag's behavior | Re-run the probes the header names for that flag and update the version and date beside each result |
 
