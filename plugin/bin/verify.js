@@ -190,18 +190,30 @@ function discoverDeclaration(cwd) {
 // named in one stderr line.
 function defaultConcurrency(cwd) {
   const none = { suiteSlots: null, reruns: null, timeoutPatterns: [] };
+  const { decl, error } = readDefaultDeclaration(cwd);
+  if (error) {
+    process.stderr.write(`verify.js: concurrency ignored — ${error}\n`);
+    return none;
+  }
+  return decl ? decl.concurrency : none;
+}
+
+// The default declaration, read once per process and cwd (#5369): the unscoped
+// localRuns refusal and defaultConcurrency both need it. `decl` is null when it
+// is absent, unreadable or invalid; `error` carries the text defaultConcurrency prints.
+const defaultDeclarations = new Map();
+function readDefaultDeclaration(cwd) {
+  if (defaultDeclarations.has(cwd)) return defaultDeclarations.get(cwd);
+  let result;
   const found = discoverDeclaration(cwd);
-  if (found.error) {
-    process.stderr.write(`verify.js: concurrency ignored — ${found.error}\n`);
-    return none;
+  if (found.error) result = { decl: null, error: found.error };
+  else if (found.path === null) result = { decl: null, error: null };
+  else {
+    const read = readDeclaration(found.path, undefined, { selfPath: scopeSelfPath(found.path, cwd) });
+    result = read.ok ? { decl: read.decl || null, error: null } : { decl: null, error: read.errors[0] };
   }
-  if (found.path === null) return none;
-  const read = readDeclaration(found.path, undefined, { selfPath: scopeSelfPath(found.path, cwd) });
-  if (!read.ok) {
-    process.stderr.write(`verify.js: concurrency ignored — ${read.errors[0]}\n`);
-    return none;
-  }
-  return read.decl ? read.decl.concurrency : none;
+  defaultDeclarations.set(cwd, result);
+  return result;
 }
 
 // report.json's `slot` (and baselineAdjudicated.slot) for a held suite slot.
@@ -489,6 +501,20 @@ async function main() {
       return;
     }
   }
+  // #5369: under localRuns "on-request" an unscoped run naming a CI-declared suite is a run on
+  // this machine, so it needs --local (or --scope, which takes the suite from CI). An unreadable
+  // or invalid default declaration has decl null and is never refused.
+  if (!parsed.scope && parsed.local !== true) {
+    const { decl: defaultDecl } = readDefaultDeclaration(parsed.cwd || process.cwd());
+    if (defaultDecl && defaultDecl.localRuns === 'on-request' && defaultDecl.ci) {
+      const ciCmd = parsed.cmds.find((c) => Object.hasOwn(defaultDecl.ci, c.name));
+      if (ciCmd) {
+        process.stderr.write(`verify.js: ${DECLARATION_PATH} sets localRuns "on-request", so the CI-declared suite "${ciCmd.name}" runs on this machine only when asked: pass --scope ${DECLARATION_PATH} to take it from CI, or --local to run it here.\n${USAGE}\n`);
+        process.exitCode = 2;
+        return;
+      }
+    }
+  }
   const gitDir = parsed.gitDir || ownGitDir;
   const logDir = parsed.logDir
     || (gitDir ? path.join(gitDir, 'claude-tweaks-verify') : fs.mkdtempSync(path.join(os.tmpdir(), 'claude-tweaks-verify-')));
@@ -645,6 +671,16 @@ async function main() {
     // in THIS invocation's --cmd list, defeating the whole point of
     // chunking. `cmds` stays `parsed.cmds` unchanged; `sel`/`resolvedBase`/
     // `files` stay at their no-scope defaults.
+    // #5369: under localRuns "on-request" a chunk naming a CI-declared suite is a run on this
+    // machine, so it needs --local; it never consults CI. Before any gh call, check or slot hold.
+    if (parsed.stampSuite && decl && decl.localRuns === 'on-request' && decl.ci && parsed.local !== true) {
+      const ciCmd = parsed.cmds.find((c) => Object.hasOwn(decl.ci, c.name));
+      if (ciCmd) {
+        scopeUsageExit(`verify.js: ${parsed.scope} sets localRuns "on-request", so the --stamp-suite chunk of the CI-declared suite "${ciCmd.name}" is a run on this machine: pass --local to run it here.`);
+        return;
+      }
+    }
+
     if (!parsed.stampSuite) {
       // M5 (review): the anchor always reads THIS checkout's OWN git dir,
       // never an explicit --git-dir — the identical rule stampStatus() applies

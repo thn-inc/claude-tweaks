@@ -4,6 +4,7 @@
 // spawn, never the network. POSIX only: a PATH shim named `gh` is not
 // spawnable by execFileSync on win32 (no .exe/.cmd), and ci-source.test.js
 // covers the same branches through the injected runner on every platform.
+// Tests that do not depend on the fake `gh` running are not skipped on win32.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
@@ -631,4 +632,100 @@ test('an exit-3 run takes no suite slot (#5369)', { skip: SKIP }, async () => {
   const res = await runCli([...SCOPE(r), '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env: withSlots(env, dir) });
   assert.strictEqual(res.code, 3, res.stdout + res.stderr);
   assert.strictEqual(fs.existsSync(dir), false, 'no slot was tried for');
+});
+
+// #5369: an unscoped run, or a --stamp-suite chunk, of a CI-declared suite under localRuns "on-request".
+// None of these needs the fake gh to run, so none takes SKIP.
+const DECL_PATH = '.claude-tweaks/verify-scope.json';
+
+test('AC3.1: under the key an unscoped --cmd tests run exits 2 naming --scope and --local, and runs nothing (#5369)', async () => {
+  const r = repoWith({ declExtra: KEY });
+  const { env } = fakeGhEnv('green', '');
+  const marker = path.join(tmpDir(), 'm');
+  const res = await runCli(['--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 2, res.stdout + res.stderr);
+  assert.strictEqual(res.stderr.split('\n')[0], `verify.js: ${DECL_PATH} sets localRuns "on-request", so the CI-declared suite "tests" runs on this machine only when asked: pass --scope ${DECL_PATH} to take it from CI, or --local to run it here.`);
+  assert.ok(!fs.existsSync(marker));
+});
+
+test('AC3.2: under the key an unscoped --local run runs the full command here (#5369)', async () => {
+  const r = repoWith({ declExtra: KEY });
+  const { env } = fakeGhEnv('green', '');
+  const marker = path.join(tmpDir(), 'm');
+  const res = await runCli(['--local', '--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(fs.existsSync(marker), 'the suite runs here');
+});
+
+test('AC6.1: under the key --stamp-status and --changed-files need no --local (#5369)', async () => {
+  const r = repoWith({ declExtra: KEY });
+  const { env } = fakeGhEnv('green', '');
+  const status = await runCli(['--stamp-status'], { cwd: r.repo, env });
+  assert.strictEqual(status.code, 0, status.stdout + status.stderr);
+  assert.strictEqual(typeof JSON.parse(status.stdout).verifiedHead, 'boolean');
+  const changed = await runCli(['--changed-files', '--integration-branch', r.branch], { cwd: r.repo, env });
+  assert.strictEqual(changed.code, 0, changed.stdout + changed.stderr);
+  assert.ok(Array.isArray(JSON.parse(changed.stdout).files));
+});
+
+test('an unscoped run naming only non-CI checks runs under the key (#5369)', async () => {
+  const r = repoWith({ declExtra: KEY });
+  const { env } = fakeGhEnv('green', '');
+  const marker = path.join(tmpDir(), 'm');
+  const res = await runCli(['--cmd', `lint=${markerCommand(marker)}`], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(fs.existsSync(marker));
+});
+
+test('Decision 2: under the key a --stamp-suite chunk of a CI-declared suite exits 2 naming --local, calls no gh and runs nothing (#5369)', async () => {
+  const r = repoWith({ declExtra: KEY });
+  const { env, calls } = fakeGhEnv('green', '');
+  const marker = path.join(tmpDir(), 'm');
+  const res = await runCli([...SCOPE(r), '--no-stamp', '--stamp-suite', '--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 2, res.stdout + res.stderr);
+  assert.ok(!fs.existsSync(marker));
+  assert.ok(!fs.existsSync(calls), 'gh must not be called');
+  assert.strictEqual(res.stderr.split('\n')[0], `verify.js: ${DECL_PATH} sets localRuns "on-request", so the --stamp-suite chunk of the CI-declared suite "tests" is a run on this machine: pass --local to run it here.`);
+});
+
+test('Decision 2: under the key a --stamp-suite chunk with --local runs here, and a chunk naming only non-CI checks needs no --local (#5369)', async () => {
+  const r = repoWith({ declExtra: KEY });
+  const { env, calls } = fakeGhEnv('green', '');
+  const marker = path.join(tmpDir(), 'm');
+  const withLocal = await runCli([...SCOPE(r), '--no-stamp', '--stamp-suite', '--local', '--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  assert.strictEqual(withLocal.code, 0, withLocal.stdout + withLocal.stderr);
+  assert.ok(fs.existsSync(marker), 'the chunk runs here');
+  assert.ok(!fs.existsSync(calls), 'gh must not be called');
+  const m2 = path.join(tmpDir(), 'm2');
+  const nonCi = await runCli([...SCOPE(r), '--no-stamp', '--stamp-suite', '--cmd', `lint=${markerCommand(m2)}`], { cwd: r.repo, env });
+  assert.strictEqual(nonCi.code, 0, nonCi.stdout + nonCi.stderr);
+  assert.ok(fs.existsSync(m2));
+});
+
+test('Decision 2: without the key a --stamp-suite chunk runs as today (#5369)', async () => {
+  const r = repoWith();
+  const { env } = fakeGhEnv('green', '');
+  const marker = path.join(tmpDir(), 'm');
+  const res = await runCli([...SCOPE(r), '--no-stamp', '--stamp-suite', '--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(fs.existsSync(marker));
+});
+
+test('an invalid default declaration never refuses an unscoped run (#5369)', async () => {
+  const r = repoWith({ ci: false, declExtra: KEY });
+  const { env } = fakeGhEnv('green', '');
+  const marker = path.join(tmpDir(), 'm');
+  const res = await runCli(['--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(fs.existsSync(marker));
+});
+
+test('an invalid default declaration prints its concurrency-ignored line exactly once (#5369)', async () => {
+  const r = repoWith({ ci: false, declExtra: KEY });
+  const { env } = fakeGhEnv('green', '');
+  const marker = path.join(tmpDir(), 'm');
+  const res = await runCli(['--cmd', localMarkerCmd(marker)], { cwd: r.repo, env: withSlots(env, path.join(tmpDir(), 'slots')) });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.strictEqual((res.stderr.match(/verify\.js: concurrency ignored — /g) || []).length, 1, res.stderr);
+  assert.ok(res.stderr.includes('localRuns: needs a ci block'), res.stderr);
 });
