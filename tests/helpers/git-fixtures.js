@@ -43,10 +43,21 @@ const FIXTURE_TIMEOUT_MS = 30000;
 // `opts` is spread into execFileSync's options AFTER the timeout, so a caller
 // can pin `env` (e.g. GIT_AUTHOR_DATE/GIT_COMMITTER_DATE for a fixture whose
 // assertions must not depend on the wall clock) without losing the bound.
-function fixtureGit(args, opts = {}) {
+// `opts.execFileSync` (optional) replaces the real spawn, so a test can inject a spawn-level failure.
+function fixtureGit(args, { execFileSync: run = execFileSync, ...opts } = {}) {
   try {
-    return execFileSync('git', args, { timeout: FIXTURE_TIMEOUT_MS, ...opts });
+    return run('git', args, { timeout: FIXTURE_TIMEOUT_MS, ...opts });
   } catch (err) {
+    // A maxBuffer overflow kills the child with SIGTERM too, so it is told apart by its code first:
+    // it is an output-size failure, not contention. A spawn-level ENOBUFS carries no signal and is not one.
+    if (err.code === 'ENOBUFS' && err.signal) {
+      const cap = opts.maxBuffer ?? 1024 * 1024;
+      throw Object.assign(new Error(
+        `git-fixtures: \`git ${args.join(' ')}\` printed more than its maxBuffer (${cap} bytes) and was killed. `
+        + 'Pass a larger maxBuffer for a real-sized output.',
+        { cause: err },
+      ), { code: 'ENOBUFS' });
+    }
     if (err.killed || err.code === 'ETIMEDOUT' || err.signal === 'SIGTERM') {
       throw new Error(
         `git-fixtures: \`git ${args.join(' ')}\` exceeded ${FIXTURE_TIMEOUT_MS}ms and was killed. `
