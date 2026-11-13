@@ -278,5 +278,9 @@
   "skill:removal-condition-execution": {
     "lastAuditedSha": null,
     "lastAuditedMs": 1794542654104
+  },
+  "skill:blocker-surface-parity": {
+    "lastAuditedSha": null,
+    "lastAuditedMs": 1794546960476
   }
 }
