@@ -56,7 +56,7 @@ Behavior-change prose sweep (`git grep -i -E "bare .?github\.com|www\.(github|gh
 - Consumes: nothing new.
 - Produces: `URL_REF` keeps its name and its `gi` flags; `neutralize(text: string) => string` keeps its signature.
 
-- [ ] **Step 1: Flip the AC2/AC3 assertions and add the Review Focus pins in `tests/bin-lib/driver/run.test.js`**
+- [ ] **Step 1: Write the failing tests (AC1.1): flip the AC2/AC3 assertions and add the Review Focus pins in `tests/bin-lib/driver/run.test.js`**
 
 In `#5269 AC2: a closing keyword before a reference loses both`, replace the "Non-scheme URL forms stay as backlinks" comment and its three assertions, and the three chain assertions, with:
 
@@ -120,7 +120,7 @@ Rewrite the comment above it. Keep the scheme sentences, and replace "Other URL 
 - A bare host is exactly `github.com`: it follows the same boundary, so `gist.github.com` and `xhttps://github.com/…` are not matched.
 - Each alternative scans at most its host and the three path segments that follow, so the scan stays linear.
 
-- [ ] **Step 4: Run the driver suites**
+- [ ] **Step 4: Run the driver test suites to verify they pass (AC3.1)**
 
 Run: `node --test tests/bin-lib/driver/*.test.js`
 Expected: PASS, 0 failures.
@@ -134,7 +134,7 @@ Expected: PASS, 0 failures.
 - Add a test, `neutralize: back-to-back www. and bare github.com references are all removed in one pass`. It asserts `value === ''` with `elapsed < 500` for both `'www.g/o/r/issues/5'.repeat(11000)` and `'github.com/o/r/issues/5'.repeat(9000)`.
 - Keyword-chain test: the expected value becomes `''`, and its name becomes `neutralize: a keyword chain before a marker token goes in one pass`.
 
-- [ ] **Step 6: Prove each new perf case goes red with its guard reverted**
+- [ ] **Step 6: Run the perf tests and verify each new case goes red with its guard reverted (AC2.1)**
 
 Run: `npm run test:perf` → PASS.
 Then revert the guards one at a time, re-run, and restore the file in the same step:
