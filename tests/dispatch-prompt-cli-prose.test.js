@@ -269,6 +269,7 @@ const SEC5_DENIED = 'on a denied-twice call it goes on to the next group.';
 const SEC6_LEAD = '**Render-failure stop (#5255).**';
 const SEC6_STOP = 'the firing ends once it returns (`SKILL.md`\'s Render-failure stop)';
 const NONE_AFTER = 'none after a Claim permission stop';
+const NONE_AFTER_BOTH = 'none after a Claim permission stop or a render-failure stop';
 
 // Replace `needle` inside the one paragraph starting with `lead`, so a phrase another paragraph
 // shares (the Claim permission stop's own wording) cannot satisfy the control.
@@ -281,7 +282,6 @@ function mutateInParagraph(text, lead, needle, replacement) {
   assert.notStrictEqual(out, text, `control must change the text: ${needle}`);
   return out;
 }
-const NONE_AFTER_BOTH = 'none after a Claim permission stop or a render-failure stop';
 
 function section2Para(gate) {
   const para = region(gate, '## 2.', '## 5.').split('\n\n').find((p) => p.startsWith(RENDER_PARA));
