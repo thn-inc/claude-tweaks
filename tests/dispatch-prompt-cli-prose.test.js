@@ -308,6 +308,23 @@ function assertRenderFailureStop(gate) {
   assert.strictEqual(gate.split(NONE_AFTER_BOTH).length - 1, clauses, 'a none-after clause does not name the render-failure stop');
 }
 
+// Clause sweep: no clause naming a denied-twice call says the firing ends (unless it negates that),
+// and no `(none after ...)` parenthetical names one. Matches denied-twice / denied twice only, never
+// bare "denied", so `claim-permission-denied` cannot trip it. Splits on . ; : followed by whitespace
+// (so `two-call-gate.md` stays whole) and on paragraph breaks.
+const SWEEP_GATE_MESSAGE = 'two-call-gate.md: a denied-twice clause says the firing ends';
+const SWEEP_SKILL_MESSAGE = 'SKILL.md Render-failure stop: a denied-twice clause says the firing ends';
+const FIRING_ENDS = /\b(ends the firing|the firing (then )?ends|stops the firing|end the firing)\b/i;
+const FIRING_ENDS_NEGATED = /does not end the firing|is not this stop/i;
+function assertNoDeniedTwiceEnd(text, message) {
+  for (const clause of text.split(/[.;:](?=\s|$)|\n\s*\n/)) {
+    if (/denied[- ]twice/i.test(clause) && FIRING_ENDS.test(clause) && !FIRING_ENDS_NEGATED.test(clause)) assert.fail(message);
+  }
+  for (const m of text.matchAll(/\(none after [^)]*\)/g)) {
+    if (/denied/i.test(m[0])) assert.fail(message);
+  }
+}
+
 function assertDeniedTwiceContinues(gate) {
   const para = section2Para(gate);
   assert.ok(para.includes(SEC2_DENIED), 'section 2: denied-twice continuation missing');
@@ -316,6 +333,7 @@ function assertDeniedTwiceContinues(gate) {
   assert.ok(start !== -1 && end > start, 'section 2: the stop sentence must precede the denied-twice sentence');
   assert.ok(!/denied/i.test(para.slice(start, end)), 'section 2: the render-failure stop sentence must not cover a denied-twice call');
   assert.ok(section5Para(gate).includes(SEC5_DENIED), 'section 5: denied-twice continuation missing');
+  assertNoDeniedTwiceEnd(gate, SWEEP_GATE_MESSAGE);
 }
 
 test('AC1.1, AC5.1: a render failure for any call ends the firing after its section 5 or 6 cleanup (#5255)', () => {
@@ -360,6 +378,18 @@ test('AC6.1 go-red: making the denied-twice path end the firing fails the assert
   const widened = GATE.replace('A `dispatch-prompt.js` non-zero exit, for any call', 'A `dispatch-prompt.js` non-zero exit or a denied-twice call, for any call');
   assert.notStrictEqual(widened, GATE);
   assert.throws(() => assertDeniedTwiceContinues(widened), { message: 'section 2: the render-failure stop sentence must not cover a denied-twice call' });
+  // The whole-file clause sweep: a denied-twice call made to end the firing anywhere in the file, with
+  // both continuation sentences left intact, fails the sweep's own message.
+  const SWEEP = { message: SWEEP_GATE_MESSAGE };
+  for (const [name, mutated] of [
+    ['M2: a sentence after the section 2 continuation', GATE.replace(SEC2_DENIED, `${SEC2_DENIED} A denied-twice call then ends the firing too.`)],
+    ['M3: a sentence after the section 5 continuation', GATE.replace(SEC5_DENIED, `${SEC5_DENIED} After a denied-twice call the firing ends.`)],
+    ['M4: a new section 6 paragraph', GATE.replace(`${SEC6_LEAD} When this path`, `**Denied-twice stop.** When the second call was denied twice, the firing ends once item 1's call returns.\n\n${SEC6_LEAD} When this path`)],
+    ['M5: a none-after clause widened', GATE.split(NONE_AFTER_BOTH).join(`${NONE_AFTER_BOTH} or a denied-twice call`)],
+  ]) {
+    assert.notStrictEqual(mutated, GATE, `control must change the text: ${name}`);
+    assert.throws(() => assertDeniedTwiceContinues(mutated), SWEEP, name);
+  }
 });
 
 test('task-prompt.md says a render failure ends the firing (#5255)', () => {
@@ -378,14 +408,20 @@ const SKILL_STOP_FACTS = [
   'any named records after it as not attempted',
   'A headless firing (one that passes `--headless`, `task-prompt.md`) also sends one `PushNotification` naming the record and the stderr line.',
   'A denied-twice call is not this stop.',
+  // The trigger. It overlaps the first fact, so a dropped fact reports the first missing one.
+  'A `dispatch-prompt.js` non-zero exit for any call (`two-call-gate.md` §2) stops the firing',
 ];
 function assertSkillStop(skill) {
   const para = skill.split('\n\n').find((p) => p.startsWith(SKILL_STOP_LEAD));
   assert.ok(para, 'SKILL.md: Render-failure stop paragraph missing');
   for (const f of SKILL_STOP_FACTS) assert.ok(para.includes(f), `SKILL.md Render-failure stop: missing ${JSON.stringify(f)}`);
+  assertNoDeniedTwiceEnd(para, SWEEP_SKILL_MESSAGE);
   const lists = skill.split('\n').filter((l) => l.includes('Claim permission stop') && !l.startsWith('**Claim permission stop (#4899).**'));
   assert.ok(lists.length >= 4, `expected at least four firing-ending exit lists, found ${lists.length}`);
-  for (const l of lists) assert.ok(/render-failure stop/i.test(l), `SKILL.md exit list does not name the render-failure stop: ${l.slice(0, 80)}`);
+  for (const l of lists) {
+    assert.ok(/render-failure stop/i.test(l), `SKILL.md exit list does not name the render-failure stop: ${l.slice(0, 80)}`);
+    assert.ok(!/\bnot (a |the )?render-failure stop/i.test(l), `SKILL.md exit list negates the render-failure stop: ${l.slice(0, 80)}`);
+  }
 }
 
 test('AC2.1: SKILL.md carries the Render-failure stop paragraph and every exit list names it (#5255)', () => {
@@ -395,11 +431,24 @@ test('AC2.1: SKILL.md carries the Render-failure stop paragraph and every exit l
 test('AC2.1 go-red: a dropped fact or an exit list without the stop fails its own assertion (#5255)', () => {
   for (const f of SKILL_STOP_FACTS) {
     const mutated = mutateInParagraph(SKILL, SKILL_STOP_LEAD, f, 'x');
-    assert.throws(() => assertSkillStop(mutated), { message: `SKILL.md Render-failure stop: missing ${JSON.stringify(f)}` });
+    const para = mutated.split('\n\n').find((p) => p.startsWith(SKILL_STOP_LEAD));
+    const firstMissing = SKILL_STOP_FACTS.find((g) => !para.includes(g));
+    assert.ok(firstMissing, 'the mutation must drop at least one fact');
+    assert.throws(() => assertSkillStop(mutated), { message: `SKILL.md Render-failure stop: missing ${JSON.stringify(firstMissing)}` });
   }
   const unlisted = SKILL.replace('or a Claim permission stop or Render-failure stop ends the firing', 'or a Claim permission stop ends the firing');
   assert.notStrictEqual(unlisted, SKILL);
   assert.throws(() => assertSkillStop(unlisted), { message: /SKILL\.md exit list does not name the render-failure stop/ });
+  // M6: the stop's trigger widened to a denied-twice call, with every pinned fact left in place.
+  const TRIGGER = SKILL_STOP_FACTS[SKILL_STOP_FACTS.length - 1];
+  const widened = mutateInParagraph(SKILL, SKILL_STOP_LEAD, TRIGGER, `A denied-twice call, like ${TRIGGER}`);
+  assert.throws(() => assertSkillStop(widened), { message: SWEEP_SKILL_MESSAGE });
+  // F7: an exit list that names the stop only to negate it.
+  const negated = SKILL.split('\n').find((l) => l.includes('the Claim permission stop, a queue-pull'));
+  assert.ok(negated && /render-failure stop/i.test(negated), 'the control line must already name the render-failure stop');
+  const negatedSkill = SKILL.replace(negated, `${negated}, but not a render-failure stop`);
+  assert.notStrictEqual(negatedSkill, SKILL);
+  assert.throws(() => assertSkillStop(negatedSkill), { message: /SKILL\.md exit list negates the render-failure stop/ });
 });
 
 // firing-exclusion.md, sequential-execution.md, next-ranking.md: each names the stop where it
@@ -437,7 +486,7 @@ const RELAY_FACTS = [
   'quotes the exit code and the first stderr line from that call\'s `Prompt render failed:` `REFUSED` line',
   'says the firing stopped',
   'lists any named records after it as not attempted',
-  'It closes with the remedy on its own line: fix the named cause (the template, a policy value or the environment), then re-run `/claude-tweaks:dispatch #{n}`.',
+  'It closes with the remedy on its own line: fix the named cause (the template, a policy value or the environment), then re-run `/claude-tweaks:dispatch #{n}` (when #{n} still has an open draft PR, that command\'s open-PR line names the next step).',
 ];
 const PUSH_CASE = 'for a headless render-failure stop (a firing that passes `--headless`, `task-prompt.md`; one notification naming the record and the stderr line';
 function assertRelay(reporting) {
