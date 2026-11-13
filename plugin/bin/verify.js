@@ -515,7 +515,11 @@ async function main() {
     for (const dir of findStaleBaselineWorktrees(bgit.listWorktrees)) {
       staleWarnings.push(`verify.js: a stale baseline scratch worktree is registered at ${dir} from an earlier interrupted run — remove it manually: git worktree remove --force ${dir}\n`);
     }
-    if (staleWarnings.length) process.once('exit', flushStaleWarnings);
+    // Held only when a --scope declaration may turn out to carry localRuns
+    // "on-request"; any other run prints them now, or right after the
+    // declaration is read, exactly as before.
+    if (!parsed.scope) flushStaleWarnings();
+    else if (staleWarnings.length) process.once('exit', flushStaleWarnings);
   }
   const jsonPath = parsed.json || path.join(logDir, 'report.json');
   const countStampPath = parsed.countStamp || (gitDir ? path.join(gitDir, 'claude-tweaks-test-count.json') : null);
@@ -587,6 +591,7 @@ async function main() {
       return;
     }
     decl = read.decl;
+    if (!(decl && decl.localRuns === 'on-request')) flushStaleWarnings();
 
     // AC5 (review L13): the --cmd-name-vs-declaration check only needs decl,
     // so it runs immediately after the declaration is read — before any

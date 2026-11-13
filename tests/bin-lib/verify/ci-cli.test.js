@@ -526,6 +526,16 @@ test('under the key a stale baseline worktree warning is printed after the no-ve
   assert.match(lines[3], /^verify\.js: a stale baseline scratch worktree is registered at /);
 });
 
+test('without the key the stale baseline worktree warning is still stderr line 1 of a CI-declared --scope run (#5369 AC4)', { skip: SKIP }, async () => {
+  const r = repoWith();
+  const { env } = fakeGhEnv('unpushed', '');
+  const staleParent = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-verify-base-')));
+  r.git('worktree', 'add', '--detach', path.join(staleParent, 'wt'), 'HEAD');
+  const res = await runCli([...SCOPE(r), '--baseline', 'HEAD', '--baseline-cmd', 'tests=node -e 0 {file}', '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.match(res.stderr.split('\n')[0], /^verify\.js: a stale baseline scratch worktree is registered at /);
+});
+
 test('a dirty tree under the key exits 3 with dirty-tree and calls no gh (#5369)', { skip: SKIP }, async () => {
   const r = repoWith({ declExtra: KEY });
   const { env, calls } = fakeGhEnv('green', '');
