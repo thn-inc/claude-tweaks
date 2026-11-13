@@ -25,10 +25,10 @@ Scope keywords: repairPrBody, repaired.restored
 ## Review Focus
 
 1. **Repeated MCP read-repair-write cycles.** Each MCP read turns a comment line into an empty line. A repair that inserts a new line each time would add one blank line per phase exit. Expected: three strip-and-repair cycles leave the body byte-identical to the composed one (Task 1, test `#5358: repeated MCP read-repair-write cycles leave the body unchanged`).
-2. **A plain marker with no blank line beside it.** The comment line is gone entirely, for example after a hand edit. Expected: the HTML token is inserted on its own new line, directly above the plain start token or run marker, or directly below the plain end token (Task 1, test `#5358: a plain marker with no blank neighbour gets the HTML form on a new line`).
+2. **A plain marker with no blank line beside it.** The comment line is gone and the neighbour on the restore side is text, for example a heading hand-edited up against the plain token. Expected: the HTML token is spliced in on its own new line, directly above the plain start token or run marker, or directly below the plain end token, and the neighbour text is kept. A blank neighbour is filled instead, except the empty string after the body's final newline, which is never filled, so the body keeps its trailing newline (Task 1, tests `#5358: a plain marker whose neighbour is text gets the HTML form spliced on a new line` and `#5358: a plain marker with no blank neighbour gets the HTML form on a new line`).
 3. **A plain run marker naming another run.** Expected: the restored HTML marker names that other run's id, not the caller's `runId` (Task 1, test `#5358: the restored HTML run marker keeps the run id its plain companion names`).
 4. **Half of one HTML pair present.** For example, `<!-- phases-start -->` survived and `<!-- phases-end -->` did not. Expected: only the missing token is written, and `restored` is `['phases HTML markers']` (Task 1, test `#5358: only the missing HTML token of a half-present pair is restored`).
-5. **A CRLF body.** Expected: every HTML token comes back once, and every plain marker line keeps its bytes (Task 1, test `#5358: a CRLF body gets its HTML markers back with its plain lines untouched`).
+5. **A CRLF body.** Expected: every HTML token comes back once, every plain marker line keeps its bytes, and every written HTML line ends in `\r` like its neighbours, so line endings stay uniform (Task 1, test `#5358: a CRLF body gets its HTML markers back with its plain lines untouched`).
 
 ---
 
@@ -44,6 +44,7 @@ Scope keywords: repairPrBody, repaired.restored
 - Modify: `plugin/skills/_shared/pr-checklist-refresh.md` (the `<!-- when: transport=mcp -->` paragraph "`gh`-absent: `mcp__github__update_pull_request` with the same composed body — unsanitized … so both delimiter pairs survive regardless of which located the span.")
 - Modify: `plugin/skills/_shared/pr-early-run-lifecycle.md` (the sentence "Neither form is ever removed once written, so a run that starts `gh`-absent and later gains `gh` (or vice versa) never loses recognition.")
 - Test: `tests/pr-early-run-lifecycle.test.js` is run unchanged in Step 4. It composes and repairs through `pr-body.js`.
+- Test: `tests/bin-lib/flow/pr-early-open.test.js` (append one test after `AC2.1: a reused PR whose body field is absent cannot be judged …`) pins the `namesOtherRun` outcome change below.
 - No change, consumer classified: `plugin/bin/lib/flow/pr-early-open.js`'s `namesOtherRun` reads only `firstLineRunId(repairPrBody(...).body)`. It is a pick-one consumer. On an MCP-stripped body, line 0 used to be blank, so it read "another run" and rebound the PR. It now reads the restored HTML marker's id, which matches `pr-checklist.js` no longer refusing that body. That is the rule `namesOtherRun` states.
 - No change: `docs/plans/2026-11-13-pr-body-deliverable-check-ledger.md` is #5340's ledger. Its row 2 is the terminal observation this record was filed from.
 - No change: `plugin/skills/dispatch/settle-parked.md` and `plugin/skills/_shared/health-issue-index.md` describe which form a reader keys on, not what a repair restores.
@@ -80,12 +81,18 @@ test('#5358: repeated MCP read-repair-write cycles leave the body unchanged', ()
   - line 0 is `<!-- claude-tweaks-run: r1 -->` and line 1 is `claude-tweaks-run: r1`;
   - the line before `[claude-tweaks-phases-start]` is `<!-- phases-start -->`, and the line after `[claude-tweaks-phases-end]` is `<!-- phases-end -->`;
   - the same holds for the fixes pair;
-  - each of the five HTML tokens occurs exactly once (count with `split(token).length - 1`).
+  - each of the five HTML tokens occurs exactly once (count with `split(token).length - 1`);
+  - the output still ends with `\n`.
+- `#5358: a plain marker whose neighbour is text gets the HTML form spliced on a new line`. Input, joined with `\n`: `['claude-tweaks-run: r1', '### Phases', '[claude-tweaks-phases-start]', '- [ ] build', '[claude-tweaks-phases-end]', 'after phases', '[claude-tweaks-fixes-start]', 'Fixes #1', '[claude-tweaks-fixes-end]', 'after fixes']`. Assert the repaired body equals, joined with `\n`, `['<!-- claude-tweaks-run: r1 -->', 'claude-tweaks-run: r1', '### Phases', '<!-- phases-start -->', '[claude-tweaks-phases-start]', '- [ ] build', '[claude-tweaks-phases-end]', '<!-- phases-end -->', 'after phases', '<!-- fixes-start -->', '[claude-tweaks-fixes-start]', 'Fixes #1', '[claude-tweaks-fixes-end]', '<!-- fixes-end -->', 'after fixes']`, so all five tokens take the splice branch and no neighbour text is lost.
 - `#5358: the restored HTML run marker keeps the run id its plain companion names`. Input: `mcpRead` of a composed body with `runId: 'other-run'`, repaired with `runId: 'r1'`. Assert the body's first line is `<!-- claude-tweaks-run: other-run -->` and the body contains no `r1` marker.
 - `#5358: only the missing HTML token of a half-present pair is restored`. Input: `early` with only the `<!-- phases-end -->` line replaced by an empty line. Assert `restored` deep-equals `['phases HTML markers']` and the body equals `early`.
 - `#5358: a CRLF body gets its HTML markers back with its plain lines untouched`. Input: `mcpRead(early.replace(/\n/g, '\r\n'))`. Assert:
   - each of the five HTML tokens occurs exactly once;
-  - every line of the input that contains `claude-tweaks-` and no `<!--` is still present, unchanged, in the output split on `\n`.
+  - every line of the input that contains `claude-tweaks-` and no `<!--` is still present, unchanged, in the output split on `\n`;
+  - every output line except the last (the empty string after the final newline) ends in `\r`.
+- In `tests/bin-lib/flow/pr-early-open.test.js`, add `#5358: a reused PR whose MCP-stripped body names this run is adopted, not rebound; naming another run it is still rebound`. Set `stripped = (b) => b.replace(/<!--[\s\S]*?-->/g, '')`. Then, on both reuse paths (`list` and `runState`+`view`, as the neighbouring AC2.1 test does):
+  - `stripped(bodyFor(RUN_ID))` gets no `gh pr edit` and no `rebound`/`rebind` line;
+  - `stripped(bodyFor(OTHER_RUN))` gets one `gh pr edit` and a `rebound reused PR` line.
 
 - [ ] **Step 2: Run the tests to verify they fail (AC2.1)**
 
@@ -97,8 +104,9 @@ Expected: FAIL after Step 1. `AC1.1` fails on `assert.equal(a.body, early)`, bec
 Add a private helper `restoreHtmlForm(lines, htmlToken, plainToken, side)`. Here `lines` is the body split on `\n`, `side` is `'above'` or `'below'`, and it returns `true` when it wrote. The algorithm:
 1. Do nothing when any line contains `htmlToken`.
 2. Otherwise find the first line whose `.trim()` equals `plainToken`. Do nothing if there is none.
-3. Take the neighbour on `side`. If that neighbour exists and its `.trim()` is `''`, overwrite it with `htmlToken`.
+3. Take the neighbour on `side`. If it exists, its `.trim()` is `''`, and it is not the last element of `lines` (the empty string after a final newline), overwrite it with `htmlToken`.
 4. Otherwise splice a new `htmlToken` line in on that side.
+5. Line ending: when the overwritten line, or for a splice the plain line, ends in `\r`, write `htmlToken + '\r'`.
 
 For the run marker, the plain line is the first one matching `/^claude-tweaks-run:\s*(\S+)$/` after `.trim()`. The HTML token is `runMarkerHtml(match[1])`, written only when the body has no line matching `/<!--\s*claude-tweaks-run:\s*\S+\s*-->/`. The run marker and start tokens use `'above'`; end tokens use `'below'`.
 
@@ -106,8 +114,8 @@ Run the pass after the existing fixes-block step, on one `split('\n')` / `join('
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `node --test tests/bin-lib/flow/pr-body.test.js tests/pr-early-run-lifecycle.test.js tests/bin-lib/flow/pr-checklist-cli.test.js`
-Expected: PASS, every test in all three files.
+Run: `node --test tests/bin-lib/flow/pr-body.test.js tests/pr-early-run-lifecycle.test.js tests/bin-lib/flow/pr-checklist-cli.test.js tests/bin-lib/flow/pr-early-open.test.js`
+Expected: PASS, every test in all four files.
 
 - [ ] **Step 5: Update the three prose lines**
 
@@ -121,16 +129,18 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add plugin/bin/lib/flow/pr-body.js tests/bin-lib/flow/pr-body.test.js docs/plugin-structure.md plugin/skills/_shared/pr-checklist-refresh.md plugin/skills/_shared/pr-early-run-lifecycle.md
+git add plugin/bin/lib/flow/pr-body.js tests/bin-lib/flow/pr-body.test.js tests/bin-lib/flow/pr-early-open.test.js docs/plugin-structure.md plugin/skills/_shared/pr-checklist-refresh.md plugin/skills/_shared/pr-early-run-lifecycle.md
 git commit -m "Restore stripped HTML-comment PR-body markers in repairPrBody — an MCP read-repair-write keeps both forms (#5358)" -m "Claude-Session: https://claude.ai/code/session_016yg3zrGQB1yk3fGi1qfrJ2"
 ```
 
 ### Task 2: Derive `pr-checklist.js`'s "carried none/some" from whole pieces, not a count
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/pr-checklist.js:216-217` (`const carried = repaired.restored.length === 3 ? 'none' : 'some';`)
+- Modify: `plugin/skills/_shared/pr-checklist-refresh.md:76-77`. The gh-absent MCP path writes this log line by hand from the same `restored` list, so it needs the same rule in prose.
 - Test: `tests/bin-lib/flow/pr-checklist-cli.test.js` (extend `missing markers are repaired and logged`, and add one test after it)
 
 **Interfaces:**
@@ -164,6 +174,8 @@ Expected: FAIL after Step 1, on the new test's log assertion. With Task 1 landed
 
 In `plugin/bin/pr-checklist.js`, compute `carried` as `'none'` only when `restored` includes all of `'run marker'`, `'phases block'` and `'fixes block'`; otherwise use `'some'`.
 
+In `plugin/skills/_shared/pr-checklist-refresh.md`, after "carried none/some of the expected markers). Reversibility: high (gh pr edit).`", insert: "`none` only when `restored` names all of `run marker`, `phases block` and `fixes block`; otherwise `some`." Then run `node --test tests/pr-early-run-lifecycle.test.js tests/build-pr-body-claim.test.js` and expect PASS.
+
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `node --test tests/bin-lib/flow/pr-checklist-cli.test.js tests/bin-lib/flow/pr-body.test.js`
@@ -172,6 +184,6 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/bin/pr-checklist.js tests/bin-lib/flow/pr-checklist-cli.test.js
+git add plugin/bin/pr-checklist.js tests/bin-lib/flow/pr-checklist-cli.test.js plugin/skills/_shared/pr-checklist-refresh.md
 git commit -m "Derive pr-checklist's carried none/some from restored pieces — HTML-form restores no longer read as an empty body (#5358)" -m "Claude-Session: https://claude.ai/code/session_016yg3zrGQB1yk3fGi1qfrJ2"
 ```
