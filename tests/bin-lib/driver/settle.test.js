@@ -153,7 +153,7 @@ function stopOf(over = {}) {
 }
 
 // Fake deps recording every call in order; `answers` scripts gh/git/node.
-function harness({ stop, input = {}, answers = {}, readFile, pathImpl } = {}) {
+function harness({ stop, input = {}, answers = {}, readFile, pathImpl, realpath } = {}) {
   const calls = [];
   const trace = [];
   const files = {};
@@ -182,6 +182,7 @@ function harness({ stop, input = {}, answers = {}, readFile, pathImpl } = {}) {
     writeFile: (p, s) => { files[p] = s; trace.push(['write', p]); },
     readFile: readFile || (() => { const e = new Error('ENOENT'); e.code = 'ENOENT'; throw e; }),
     pathImpl,
+    realpath,
     now: () => (tick += 5),
     launchWorker: () => { throw new Error('launcher called'); },
   };
@@ -452,6 +453,28 @@ test('an unreadable worktree list is a fail and no removal is made', () => {
   assert.ok(!broken.calls.some((c) => c.includes('remove')));
 });
 
+test('wt is canonicalized before matching git\'s realpath\'d list: own realpath, else parent realpath plus leaf, else as given', () => {
+  const REAL = '/real/work/wt';
+  const listing = { git: (a) => (a.includes('list') ? `worktree ${MAIN}\n\nworktree ${REAL}\n` : undefined) };
+  const removed = (h) => h.calls.some((c) => c.includes('remove'));
+  const own = harness({ answers: listing, realpath: (p) => (p === WT ? REAL : null) });
+  assert.ok(removed(own), 'own realpath');
+  const parent = harness({ answers: listing, realpath: (p) => (p === path.dirname(WT) ? '/real/work' : null) });
+  assert.ok(removed(parent), 'parent realpath plus leaf');
+  const none = harness({ answers: listing, realpath: () => null });
+  assert.ok(!removed(none), 'nothing resolves: wt stays as given and does not match');
+  assert.equal(none.res.calls.find((c) => c.step === 'settle-remove-worktree').detail, 'already gone');
+});
+
+test('K7: with run-state.json unreadable the record comment names no draft PR and keeps the rest of the wording', () => {
+  const eacces = () => { throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); };
+  const h = harness({ readFile: eacces });
+  const body = h.calls.find((c) => c[1] === 'issue' && c[2] === 'comment')[6];
+  assert.ok(!body.includes('draft PR'), body);
+  assert.ok(body.includes('The branch and worktree are kept for a human. Clear bot:blocked to let the record be driven again.'), body);
+  assert.ok(body.includes('The driver labels this record bot:blocked and releases the claim. '), body);
+});
+
 test('win32: a backslash worktree path matches git\'s forward-slash, differently cased entry; a near-miss is already gone', () => {
   const WIN_WT = 'D:\\a\\repo\\.claude\\worktrees\\drive-record-7';
   const listed = (p) => `worktree D:/a/repo\n\nworktree ${p}\n`;
@@ -611,9 +634,15 @@ const { gitRepo } = require('../../helpers/git-fixtures');
 const IDENT = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.test', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.test' };
 
 // A repo with a locked driver worktree on drive-record-7 holding one commit of local work.
-function lockedDriverWorktree() {
+function lockedDriverWorktree({ symlinked = false } = {}) {
   const repo = gitRepo();
   const wt = path.join(repo, '.claude', 'worktrees', 'drive-record-7');
+  if (symlinked) {
+    // .claude/worktrees is a link to a directory elsewhere in the fixture: git lists the realpath'd target.
+    fs.mkdirSync(path.join(repo, '.claude'));
+    fs.mkdirSync(path.join(repo, 'elsewhere'));
+    fs.symlinkSync(path.join(repo, 'elsewhere'), path.join(repo, '.claude', 'worktrees'), 'junction');
+  }
   const env = { ...process.env, ...IDENT };
   const git = (args, extra = {}) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env, ...extra });
   git(['-C', repo, 'worktree', 'add', '--lock', '--reason', 'drive.js record 7 (pid 1)', '-b', 'drive-record-7', wt]);
@@ -672,6 +701,21 @@ test('AC1.5: real git — a locked worktree whose directory was deleted but is s
     assert.deepStrictEqual(res.failed, []);
     assert.equal(branchExists(fx.git, fx.repo), false);
     assert.deepStrictEqual(branchLines(fx.git, fx.repo), []);
+  } finally {
+    fs.rmSync(fx.repo, { recursive: true, force: true });
+  }
+});
+
+test('AC1.5: real git — a worktree under a symlinked .claude/worktrees is removed, not reported already gone', () => {
+  const fx = lockedDriverWorktree({ symlinked: true });
+  try {
+    assert.ok(fs.existsSync(fx.wt));
+    const res = realSettle(fx);
+    assert.deepStrictEqual(res.failed, []);
+    assert.notEqual(res.calls.find((x) => x.step === 'settle-remove-worktree').detail, 'already gone');
+    assert.equal(fs.existsSync(fx.wt), false);
+    assert.equal(fs.existsSync(path.join(fx.repo, 'elsewhere', 'drive-record-7')), false);
+    assert.equal(branchExists(fx.git, fx.repo), false);
   } finally {
     fs.rmSync(fx.repo, { recursive: true, force: true });
   }

@@ -15,6 +15,7 @@ const { STEP_NAMES, OUTCOMES, STOP_CLASSES, outcomeFor, neutralize, CLI_TIMEOUT_
 const { ESCALATION_REASONS } = require('../express/cli');
 const { LABELS } = require('../issues/record-vocabulary');
 const { parseWorktreeList, findWorktreeEntry } = require('../hooks/worktree-reap');
+const { safeReal } = require('../hooks/worktree-detect');
 
 const BIN_DIR = path.join(__dirname, '..', '..');
 
@@ -153,6 +154,16 @@ function prStateOf(input, deps) {
   return { number: Number.isSafeInteger(n) ? n : null, unreadable: false };
 }
 
+// git lists realpath'd worktree paths, so a `wt` joined through a symlinked .claude or
+// .claude/worktrees directory must be canonicalized before matching: its own realpath when it
+// resolves, else its parent's realpath plus the leaf (the directory was deleted), else as given.
+function canonicalWorktreePath(wt, realpath, pathImpl) {
+  const own = realpath(wt);
+  if (own) return own;
+  const parent = realpath(pathImpl.dirname(wt));
+  return parent ? pathImpl.join(parent, pathImpl.basename(wt)) : wt;
+}
+
 // Performs the fixed calls for a stopped run, iterating SETTLE_ROWS[row]. Every call is made
 // at most once and a failure never stops the next; a worker is never launched (settle is
 // mechanical).
@@ -253,7 +264,7 @@ function settle(input, deps) {
         // error text. A registered worktree whose directory was deleted still gets the removal,
         // or `branch -D` would fail with "used by worktree".
         const listed = parseWorktreeList(gitIn(['worktree', 'list', '--porcelain']));
-        if (!findWorktreeEntry(listed, wt, deps.pathImpl || path)) return 'already gone';
+        if (!findWorktreeEntry(listed, canonicalWorktreePath(wt, deps.realpath || safeReal, deps.pathImpl || path), deps.pathImpl || path)) return 'already gone';
         gitIn(['worktree', 'remove', '--force', '--force', wt]);
         return undefined;
       },
