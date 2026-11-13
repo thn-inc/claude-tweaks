@@ -168,8 +168,13 @@ changed-file list includes UI, route, or rendered-content code: `app-route`/`ren
 precedence there, and choosing `cli`/`flow`/`diff` anyway needs a one-line justification written
 into the plan's own text.
 
-Author the plan's Entry point, Prepare, and Inspect fields per that schema. For a run with no
-UI/route surface, the old non-interactive guidance still applies, folded into the matching kind:
+Author the plan's Entry point, Prepare, and Inspect fields per that schema. An Entry point with a
+credential-shaped path segment (the bearer-segment rule, `_shared/acceptance-packet.md`'s
+`## Links and credentials`) holds the route with that segment replaced by the placeholder `{id}`,
+since render screens the raw value out of the plan. The bearer-shaped value itself is never written.
+
+For a run with no UI/route surface, the old non-interactive guidance still applies, folded into the
+matching kind:
 
 - A changed skill or harness file — pick `flow`; the Inspect pointer names the specific behavior
   to exercise (a step number, a branch, a template section), not "read the skill."
@@ -249,7 +254,10 @@ Write each with the Write tool:
   `"command"` in place of `"url"`, holding the Entry point as the Try it block states it, for
   `cli`/`flow` plans and a `diff` plan's file path, on an `infra` or `backend` surface, and
   when no base URL resolves or the host would be refused: a refused link leaves the Test guide with
-  no step to cite.
+  no step to cite. An Entry point with a credential-shaped path segment (the bearer-segment rule,
+  `_shared/acceptance-packet.md`'s `## Links and credentials`) is a `"command"` too, holding the route
+  with that segment replaced by the placeholder `{id}`, since gather refuses the raw value in either
+  form. The bearer-shaped value itself is never written.
 
 **`app-route`/`rendered-page` plans whose Step 2.5 walk completed** (resolved clean with an
 actual walk — not the browser-unavailable fallback):
@@ -257,9 +265,8 @@ actual walk — not the browser-unavailable fallback):
 1. Read the visual-review report (from Step 2.5's trigger, or `/review`'s existing Step 6 report
    when no trigger was needed) for its headline: `clean`, or `found and fixed: {N} issues` (name
    each in one line). Step 4's narrative states it as a `test-guide` claim.
-2. Select 1-3 of the walk's most representative screenshots — the primary journey step's final
-   state, or the single-page review's key screenshot(s). Hand them to Step 4's screenshot-commit
-   procedure; their URLs become `recording` inputs (`--recordings`).
+2. The walk's screenshots stay in the run's local artifacts and are never committed or linked,
+   since the packet's media is the automatic recording (`_shared/acceptance-packet.md`'s `## Recording`).
 
 **Every other plan** (`cli`/`flow`/`diff`, or `app-route`/`rendered-page` with no completed walk:
 the browser-unavailable fallback, or a below-floor record, where Step 2.5 did not run):
@@ -274,110 +281,40 @@ the browser-unavailable fallback, or a below-floor record, where Step 2.5 did no
 
 ## Step 4: Compose and post the brief
 
-The packet replaced the brief, so where the routing below says "brief" it means the packet, an
-"embed" is a `--recordings` entry, and a note it puts "in the brief" is a `test-guide` claim in the
-narrative.
-
-**Screenshot commit** (`app-route`/`rendered-page` plans whose Step 2.5 walk completed, with screenshots from Step 3): commit the 1-3 selected
-screenshots to `docs/demo-evidence/{record}/{NN}-{description}.png` — `{record}` is the issue
-number (`github-issues`) or record id (`local-files`); `{NN}` is a zero-padded sequence starting
-at `01`; `{description}` is a short kebab-case label matching the screenshot's content (e.g.
-`settings-toggle-persisted`). Commit before gathering below — the embed needs the
-committed SHA. Which branch the commit lands on is decided first.
-
-**`integration-model: local-merge` or `current-branch` mode** — no PR to read: commit on the current branch with the fence below, with no push and no PR (`_shared/git-discipline.md`: no phase-exit push there).
-
-**Route the commit (`integration-model: pr-first`, #4039, #4125).**
-Step 4 never commits to or pushes `{integration-branch}`, and the session's current branch is not
-proof that the run's PR is still open. Acceptance labeling reaches Step 4 after wrap-up's cleanup items
-(`execution-and-verification.md`): on the console's "Approve all + merge" path and
-`dispatch/close-out.md` step 3, item 4 has already removed the merged run's worktree and branch and
-item 8 has archived its run directory, so Step 4 runs from the main checkout on the integration
-branch. A re-run after a `BLOCKED` verify verdict can find the PR merged too. A commit on a merged
-branch never reaches the integration branch. `bin/evidence-route.js` makes the decision from the
-current branch, the worktree `run-state.json` records, the run's own PR (read through
-`bin/pr-merge-state.js`, which also appends its own "Post-push merge-state check" entry to `decisions.md`, which is expected),
-the branch's PR as the fallback, and `console.json`'s merge resolution. Its rules live in `decideEvidenceRoute` in `bin/lib/wrap-up/evidence-route.js` (its `--help` lists the route, reason, and state vocabularies), not restated here. Run it as its own Bash call:
-
-```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/evidence-route.js" --run "{run-dir}"
-```
-
-`{run-dir}` is `$PIPELINE_RUN_DIR`, or `$RUN_ROOT/.claude-tweaks/pipelines/archive/{run-id}/` once
-cleanup item 8 archived it (`_shared/timing-render.md`'s archive-path rule). Drop `--run` when no run
-directory resolves. Add `--in-run` only when this file was reached from Phase 4 execution's
-Acceptance-labeling bullet (the Routing table's first row), and `--leave-open` only when an attended
-Review Console chose "Approve all, leave PR open" this run.
-
-It prints one JSON line `{route, branch, state, reason}`. Route on `route` alone; `state` feeds the
-log line below. A non-zero exit, or output that does not parse as that line, takes the evidence-PR route, and the log line's `{state}` then reads `unavailable`.
-
-- **`current-branch`** — commit on the current branch (the fence below), then push that commit straight away, as its own Bash call: `git push origin {branch}`, with `{branch}` the JSON's `branch`. The run's later phase-exit push would carry it, but a re-run after that push has none. If the push fails, compose the brief without embedded screenshots and say why — an unpushed SHA does not resolve; the commit stays on the branch.
-- **`evidence-pr`** — never commit to the dead branch or the integration branch, and never switch the session's branch in place. Provision a scratch worktree (`_shared/scratch-worktree.md` §2 create, §3 catch-up) the way `wrap-up/residue-sweep.md`'s `pr-first` landing does ("Landing the batch"), on branch `demo-evidence/{record}` cut from the freshly fetched `origin/{integration-branch}` (`_shared/integration-branch.md`). When that name is already taken locally or on `origin` (check with `git branch --list 'demo-evidence/{record}*'` and `git ls-remote --heads origin 'demo-evidence/{record}*'`, each its own call), append `-2`, `-3`, … and use the first free name. Write the screenshots into that worktree's `docs/demo-evidence/{record}/`, stage them with `git add docs/demo-evidence/{record}/` as its own call (a pathspec commit only takes paths git already tracks), then commit with a pathspec so nothing else rides along: `git commit -m "Add demo evidence screenshots for #{record}" -- docs/demo-evidence/{record}/`. Record `git rev-parse HEAD` — `{commit-sha}` in the embed below is this evidence commit's SHA, never the dead branch's. Then `git push -u origin demo-evidence/{record}` and open an evidence-only PR with `gh pr create --base {integration-branch} --head demo-evidence/{record} --body-file …` — or `mcp__github__create_pull_request` with `gh` absent (`_shared/github-write-transport.md`'s PR create exception). Its body references the record as `Refs #{record}` — never `Fixes`, `Closes`, or `Resolves`: the record's closure belongs to its original PR. The evidence PR is left open for a human to merge and is never auto-merged — no `auto:merge` grant covers it. Tear the worktree down per `_shared/scratch-worktree.md` §6 via `ExitWorktree`; that section's ancestry check would refuse this unmerged commit, so the proof before discarding is that the branch's HEAD is on `origin` — `git ls-remote --heads origin demo-evidence/{record}` returns the recorded SHA. Call `ExitWorktree` with `discard_changes: true` only after the ls-remote proof, stating it as the reason. If provisioning, the commit, or the push fails, nothing reached `origin`: compose the brief without embedded screenshots, say in it why they are missing, and tear the worktree down per `_shared/scratch-worktree.md` §6 — when its ancestry check refuses an unpushed commit, leave the worktree and name its path in the brief and the summary. If the push succeeded but the PR create fails, the commit is on `origin`, so keep the embeds and the teardown, and name the pushed branch and the failure in the brief and the summary row in place of the PR link, for a human to open the PR. If the ls-remote proof does not return the recorded SHA (empty, a different SHA, or an error), do not discard: leave the worktree and name its path in the brief and the summary.
-
-Log the route when a run directory resolves (`_shared/pipeline-run-dir.md`), passing `{run-dir}` as
-resolved above — the live or archive path, never a bare `$PIPELINE_RUN_DIR` that item 8 may have
-archived:
-
-```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "{run-dir}" --section "/wrap-up" --status AUTO --step "Verification Brief Step 4" --reversibility high --text-file "{text-file}"
-```
-
-`{text-file}` holds one line, `screenshot commit for #{record}: PR state {state} → {current branch | evidence PR #{m} ({url})}`, written per `_shared/auto-decision-log.md`'s Text from git or a user paragraph — `{url}` comes back from the forge, so it never passes through shell quoting.
-
-On the evidence-PR route, name the evidence PR's URL in the packet's Test guide (a `test-guide`
-claim citing the first group's `link:entry-point-1`, the URL in its text) and in wrap-up's Actions Performed
-(`summary-template.md`'s evidence-PR row).
-
-The commit, for the `current-branch` route and the `local-merge` / `current-branch` integration modes:
-
-```bash
-git add docs/demo-evidence/{record}/
-git commit -m "Add demo evidence screenshots for #{record}"
-```
-
-Link via a commit-SHA-pinned raw URL (not branch-pinned — resolves regardless of which branch
-this lands on, as soon as the commit is pushed to origin, sidestepping any question of "which
-branch is this brief rendering against"). The packet renders it as a plain link, not an embedded
-image (`_shared/acceptance-packet.md`'s `## Untrusted content`):
-
-```
-https://raw.githubusercontent.com/{owner}/{repo}/{commit-sha}/docs/demo-evidence/{record}/{NN}-{description}.png
-```
-
-Resolve `{owner}/{repo}` from `git remote get-url origin`; `{commit-sha}` is the screenshot
-commit's own SHA (`git rev-parse HEAD` immediately after the commit above). This resolves once
-that commit is pushed to origin — the normal case for `github-issues`-backend work (which always
-eventually pushes for the record to close via merge). If this run's work is later discarded
-without ever pushing, the link simply won't resolve, same as any broken link — the
-brief's text content is unaffected.
-
-Each URL is one entry of Step 4's `{RECORDINGS}` input below:
-`[{ "id": "{NN}-{description}", "text": "{description}", "url": "{raw url}" }]`.
-
-`work-backend: local-files` — no comment mechanism (existing constraint, per
-`_shared/work-record.md`), and a recording's `url` must be http(s), so pass no `--recordings`: name
-each committed screenshot's relative repo path in a `test-guide` claim instead,
-`../../demo-evidence/{record}/{NN}-{description}.png` (adjust the relative depth to the record
-file's actual location under `specs/`).
+The packet replaced the brief, so where this file's routing says "brief" it means the packet, and a
+note it puts "in the brief" is a `test-guide` claim in the narrative.
 
 **Branch (`integration-model: pr-first` only, `_shared/integration-model.md`).** Nothing to render here — the packet sits on the record, not on the run's own PR (opened at run start by `_shared/pr-early-run-lifecycle.md`, kept current at every phase exit), and `post` links the two through the PR's `Acceptance packet:` body line, so a reader of either reaches the other. No separate `### Branch` section is composed.
 
 **Compose and post the packet** (`_shared/acceptance-packet.md`'s `## Pipeline`; its contract is cited here, not restated). The packet lives on the record whether or not the run has a PR: `post` appends its `Acceptance packet:` line to the PR's body and posts no comment on the PR. Under a multi-spec run each spec's packet lands on its own record. Resolve the session-temp paths as its own call (`_shared/session-tmp-root.md`), and paste each printed path where a call below names `{FACTS}` and so on:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" FACTS=packet-facts-{N}.json NARRATIVE=packet-narrative-{N}.json PACKET=packet-{N}.md DROPPED=packet-dropped-{N}.json RECORDINGS=packet-recordings-{N}.json SPEC=packet-spec-{N}.md
+node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" FACTS=packet-facts-{N}.json NARRATIVE=packet-narrative-{N}.json PACKET=packet-{N}.md DROPPED=packet-dropped-{N}.json SPEC=packet-spec-{N}.md FLAGS=packet-flags-{N}.json PROOFS=packet-proofs-{N}.json
 ```
+
+**Risk facts**, as its own Bash call before the gather: `risk-flags.js facts` reads the record's `Risk-flags:` line from `{spec}` and the plan's `Proof(<slug>):` lines, and writes the gather's `--flags` and `--proofs` inputs. `{spec}` is the value the `--spec` bullet below resolves, the same one the gather gets, so resolve it here. Pass `--plan-file` only when `{run-dir}/packet-inputs/manifest.json`'s `files.plan` is `copied` (read the manifest first: a later snapshot without a plan copy leaves an earlier `plan.md` there); otherwise, or with no run directory, drop it. `{spec}` and `{run-dir}` follow the path grammar below the gather fence. A `{run-dir}` that fails it drops `--plan-file`; a `{spec}` that fails it skips the producer call only, and the gather still passes both inputs, reads two missing files and states both as partial. First remove both outputs, as its own Bash call with the two printed paths pasted, so a file an earlier run left at the same path is never read as this run's:
+
+```bash
+rm -f "{FLAGS}" "{PROOFS}"
+```
+
+Then the producer, as its own Bash call:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/risk-flags.js" facts --spec-file "{spec}" --plan-file "{run-dir}/packet-inputs/plan.md" --flags-out "{FLAGS}" --proofs-out "{PROOFS}"
+```
+
+It prints one JSON line `{ status, flags, proofs, plan, planParse }`, with `flags` and `proofs` as counts. With `flags` above 0, say in the summary, for `plan: 'absent'`: the risk proofs were not read because no plan copy exists; for `planParse: 'could-not-parse'`: the risk proofs were not read because the plan copy could not be parsed. Either case reads as proofs not read, never as no proof written: the producer leaves `{PROOFS}` unwritten (exit 0), so the gather's partial states `--proofs input not read — treated as absent` and Risk proofs says each uncited flag's proofs were not read. A non-zero exit removes both outputs: 1 is an unreadable `{spec}` or a plan read failure other than absence, 2 a malformed call, an unreadable policy or an output that is also an input, 3 an unwritable output. Report it in the summary and log it (**Log a stop or a failure** below), then go on: it never stops the packet. The gather still passes `--flags` and `--proofs`, and its partial states each missing file, as `--flags input not read — treated as absent` and the same for `--proofs`.
 
 **Gather**, as its own Bash call, dropping an optional flag whose source this list says is absent, or whose value fails its grammar (below the fence):
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/acceptance-packet.js" gather --record {N} --out "{FACTS}" --run "{run-dir}" --spec "{spec}" --report "{report}" --story-results "{qa-report}" --stories-dir "{stories-dir}" --ac-results "{AC_RESULTS}" --base "origin/{integration-branch}" --head "{head}" --links "{LINKS}" --surface "{surface}" --local-base-url "{local-url}" --recordings "{RECORDINGS}"
+node "${CLAUDE_PLUGIN_ROOT}/bin/acceptance-packet.js" gather --record {N} --out "{FACTS}" --run "{run-dir}" --spec "{spec}" --report "{report}" --story-results "{qa-report}" --stories-dir "{stories-dir}" --ac-results "{AC_RESULTS}" --base "origin/{integration-branch}" --head "{head}" --links "{LINKS}" --surface "{surface}" --local-base-url "{local-url}" --flags "{FLAGS}" --proofs "{PROOFS}"
 ```
 
 Several pasted values come from text the plugin did not write — the record body, a git branch name, project config — and inside double quotes `$(…)` or a backtick still runs (`docs/skill-authoring.md`'s untrusted-text rule). Paste a value only when it matches its grammar; otherwise omit its flag and say so in the summary, as for any absent input. `{N}` and `{pr-number}`: digits only. `{surface}`: exactly one of `web`, `mobile`, `desktop`, `backend`, `infra`, `terminal`. `{integration-branch}` and `{head}`: letters, digits and `.` `_` `/` `-` only. `{local-url}`: an `http://` or `https://` URL with no `"`, backtick, `$`, `\` or whitespace. Every path (`{run-dir}`, `{spec}`, `{report}`, `{qa-report}`, `{stories-dir}`, and Post's `{record-file}`): none of `"`, backtick, `$`, `\` or a line break, since a space is safe between the quotes.
 
-- `--run` — `{run-dir}` as resolved above, `$PIPELINE_RUN_DIR` or `$RUN_ROOT/.claude-tweaks/pipelines/archive/{run-id}/` once cleanup item 8 archived it. It supplies `decisions.md`, the Review Console's finding set, and the `packet-inputs/` snapshot wrap-up Phase 1 took. Omitted when no run directory resolves.
+- `--run` — `{run-dir}`, `$PIPELINE_RUN_DIR` or `$RUN_ROOT/.claude-tweaks/pipelines/archive/{run-id}/` once cleanup item 8 archived it (`_shared/timing-render.md`'s archive-path rule). It supplies `decisions.md`, the Review Console's finding set, and the `packet-inputs/` snapshot wrap-up Phase 1 took. The automatic recording arrives through the snapshot, with no flag. Omitted when no run directory resolves.
 - `--spec` — the first that exists: the current checkout's `work/{N}-spec.md` at the run dir's relative path, then `{run-dir}/work/{N}-spec.md`, else the record body written with the Write tool to `{SPEC}` (read with `gh issue view {N} --json body`, or MCP `issue_read`), or under `work-backend: local-files` the record file itself, since a record body carries the same `## Acceptance Criteria`.
 - `--report` and `--story-results` — only when the current branch is not the integration branch (the run's own checkout). `--report` is `{git-dir}/claude-tweaks-verify/report.json`, with `{git-dir}` from `git rev-parse --git-dir` as its own call. `--story-results` is the QA run's `report.json` (the QA stamp's `reportPath`, else the newest `.claude-tweaks/artifacts/screenshots/qa/*/report.json`), whose `stories[]` is the set `/test` selected, passed only when QA ran. From the main checkout both are omitted, because its files belong to other runs, and gather reads the snapshot.
 - `--stories-dir` always — the project's stories directory (`STORIES_DIR`, else `stories/`). Without it a tag-only negative story reads as a routine pass. It supplies negative flags only (Decision Q13), and a missing directory is a project with no stories.
@@ -387,13 +324,13 @@ Several pasted values come from text the plugin did not write — the record bod
 - `--links` — Step 3's `{LINKS}`.
 - `--surface` — the materialized header's `surface:`, else the record body's `Surface:` line, so a no-header record keeps the commands-only rule; omitted with neither.
 - `--local-base-url` — the dev URL `_shared/dev-url-detection.md` resolves, on UI surfaces and `app-route`/`rendered-page` plans, omitted when none resolves.
-- `--recordings` — `{RECORDINGS}`, only when the embeds survive the route above.
+- `--flags` and `--proofs` — `{FLAGS}` and `{PROOFS}` from the Risk facts call above, always.
 
-Pass no `--scope` (the CLI reads the default verify-scope declaration itself, Decision Q6), no expected-checks list, and no QA-stamp flag (the CLI reads the QA pass stamp from the checkout's git dir or the snapshot itself, Decision Q13). `--dev-base-url`, `--deploy`, `--flags` and `--decision-items` are filled by the dev-target, risk-flag and control-mode records, and this record passes none of them.
+Pass no `--scope` (the CLI reads the default verify-scope declaration itself, Decision Q6), no expected-checks list, and no QA-stamp flag (the CLI reads the QA pass stamp from the checkout's git dir or the snapshot itself, Decision Q13). `--dev-base-url`, `--deploy` and `--decision-items` are filled by the dev-target and control-mode records, and none is passed here; `--flags` and `--proofs` come from the Risk facts call above.
 
 Gather non-zero: report it in the summary and log it, post nothing, apply no label.
 
-**Narrate.** Write `{NARRATIVE}` with the Write tool as the envelope `validateNarrativeShape` requires, `{ "schemaVersion": 1, "claims": [{ "section": "test-guide", "text": "…", "refs": ["link:entry-point-1"] }] }`, every claim citing fact ids copied from `{FACTS}` (encoded ids included), never inventing one; the contract's section table says which kinds each section may cite, and the `fact-validated-narration` project skill, where present, is the checklist. A section with no claim reads as empty, so write `what-changed` claims over the `change` facts (the record's problem and what shipped), one `least-confident` claim per `finding` fact, and `tried-to-break` claims over the `negative` and `failed` facts. Each Try it step (re-run the **Try it block** resolve line and read the file) becomes one `test-guide` claim citing its own group's `link:entry-point-{n}`, with its Precondition, Access and Expected in the claim text; a step needing a login names the vault entry, never a value.
+**Narrate.** Write `{NARRATIVE}` with the Write tool as the envelope `validateNarrativeShape` requires, `{ "schemaVersion": 1, "claims": [{ "section": "test-guide", "text": "…", "refs": ["link:entry-point-1"] }] }`, every claim citing fact ids copied from `{FACTS}` (encoded ids included), never inventing one; the contract's section table says which kinds each section may cite, and the `fact-validated-narration` project skill, where present, is the checklist. A section with no claim reads as empty, so write `what-changed` claims over the `change` facts (the record's problem and what shipped), one `least-confident` claim per `finding` fact, and `tried-to-break` claims over the `negative` and `failed` facts. Over the `flag` and `proof` facts, write one `risk-proofs` claim per flag that has a `proof` fact, citing both (a `proof` fact is `not-run`, so the claim renders `planned, not verified`); a flag no claim cites renders as `no proof shown` (as `proofs not read` when `--proofs` is in the partial). Each Try it step (re-run the **Try it block** resolve line and read the file) becomes one `test-guide` claim citing its own group's `link:entry-point-{n}`, with its Precondition, Access and Expected in the claim text; a step needing a login names the vault entry, never a value.
 
 **Render**, as its own Bash call:
 
@@ -439,7 +376,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/acceptance-packet.js" post --record {N} --body-f
 node "${CLAUDE_PLUGIN_ROOT}/bin/acceptance-packet.js" local --record-file "{record-file}" --body-file "{PACKET}" --pending
 ```
 
-**Log a stop or a failure** when a run directory resolves, as its own Bash call, with `{text-file}` holding one line, `condition: packet {gather | render | post | local} failed ({stderr line}) → fallback: {what happened to the packet and the label}`, written per `_shared/auto-decision-log.md`'s Text from git or a user paragraph:
+**Log a stop or a failure** when a run directory resolves, as its own Bash call, with `{text-file}` holding one line, `condition: packet {risk facts | gather | render | post | local} failed ({stderr line}) → fallback: {what happened to the packet and the label}`, written per `_shared/auto-decision-log.md`'s Text from git or a user paragraph:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "{run-dir}" --section "/wrap-up" --status SKIP --step "Acceptance packet Step 4" --reversibility n/a --text-file "{text-file}"

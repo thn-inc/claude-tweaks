@@ -25,6 +25,14 @@
 // `{flag} input not read` note this file adds, so a lost input is never read as an
 // empty one. Snapshot copies live in `{run}/packet-inputs/`, and gather reads a copy
 // only when the manifest says `copied`, since a later snapshot leaves earlier files.
+// Given --plan, snapshot also copies the run's plan there as `plan.md` (text, not JSON)
+// for `risk-flags.js facts`, which gather itself never reads. A later snapshot without a
+// plan copy leaves an earlier `plan.md`, so read it only when the manifest's `files.plan`
+// is `copied`.
+//
+// Snapshot also encodes the walkthrough GIF (#4612), the last moment the QA screenshots are
+// guaranteed on disk, and says why not in the manifest's `recording` when it cannot. A failed
+// encode or GIF write is that outcome, never a non-zero exit. Gather reads only the manifest.
 'use strict';
 
 const { execFileSync } = require('child_process');
@@ -38,15 +46,22 @@ const {
   parseRepo, ghAvailable, ghOptions, pinExplicitRepoHost,
 } = require('./lib/repo-resolve');
 const { sessionTmpPath } = require('./lib/session-tmp');
-const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
+const {
+  GH_TIMEOUT_MS, GIT_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES, relativeDisplayId,
+} = require('./lib/shared-primitives');
 const { safeReal } = require('./lib/hooks/worktree-detect');
 const { resolveTarget, findGitRoot } = require('./lib/stage-item/write');
 const { readDeclaration, DECLARATION_PATH } = require('./lib/verify/declaration');
 const { readQaStamp, QA_STAMP_NAME } = require('./lib/verify/qa-stamp');
 const { gitDir } = require('./lib/verify/report');
 const { parseNameStatusZ } = require('./lib/git-z');
+const { encodeWalkthrough } = require('./lib/walkthrough/encode');
+const { decideExposure, readRepoVisibility } = require('./lib/walkthrough/exposure');
 const {
-  CLAIM_SECTIONS, MAX_PACKET_CHARS, PACKET_MARKER, SCHEMA_VERSION,
+  RECORDING_FILE, planRecording, encodeSpec, scrubPaths, recordingLocations,
+} = require('./lib/walkthrough/record');
+const {
+  CLAIM_SECTIONS, EXPOSURES, MAX_PACKET_CHARS, NOT_RUN_REASON, PACKET_MARKER, RECORDING_NOT_RUN_REASONS, SCHEMA_VERSION, notReadNote,
 } = require('./lib/wrap-up/packet-contract');
 const {
   gatherPacketFacts,
@@ -54,6 +69,7 @@ const {
   qaSelectionFromDecisions,
   expectedChecksFromDeclaration,
   parseStoryFile,
+  redactedRecordingStrings,
   storyResultsFromQaReport,
   storiesFromQaStamp,
 } = require('./lib/wrap-up/packet-gather');
@@ -62,10 +78,10 @@ const { renderPacket } = require('./lib/wrap-up/packet-render');
 const { REASON_KINDS } = require('./lib/wrap-up/packet-validate');
 
 const USAGE = [
-  'usage: acceptance-packet.js snapshot --run <dir> --base <ref>',
+  'usage: acceptance-packet.js snapshot --run <dir> --base <ref> [--plan <file>]',
   '       acceptance-packet.js gather --record <n> --out <file> [--run <dir>] [--spec <file>] [--report <file>] [--scope <file>]',
   '         [--stories-dir <dir>] [--story-results <file>] [--ac-results <file>] [--base <ref>] [--head <ref>] [--links <file>]',
-  '         [--surface <s>] [--local-base-url <u>] [--dev-base-url <u>] [--deploy <file>] [--recordings <file>] [--flags <file>] [--decision-items <file>]',
+  '         [--surface <s>] [--local-base-url <u>] [--dev-base-url <u>] [--deploy <file>] [--flags <file>] [--proofs <file>] [--decision-items <file>]',
   '       acceptance-packet.js render --facts <file> --narrative <file> --out <file> [--dropped-out <file>] [--observation-plan <file>] [--poster <text>]',
   '       acceptance-packet.js post --record <n> --body-file <file> [--pr <n>] [--label <name>] [--repo <owner/name>]',
   '       acceptance-packet.js local --record-file <file> --body-file <file> [--pending]',
@@ -75,12 +91,12 @@ const USAGE = [
 ].join('\n');
 
 const SUBCOMMANDS = Object.freeze({
-  snapshot: { required: ['--run', '--base'], optional: [] },
+  snapshot: { required: ['--run', '--base'], optional: ['--plan'] },
   gather: {
     required: ['--record', '--out'],
     optional: [
       '--run', '--spec', '--report', '--scope', '--stories-dir', '--story-results', '--ac-results', '--base', '--head', '--links',
-      '--surface', '--local-base-url', '--dev-base-url', '--deploy', '--recordings', '--flags', '--decision-items',
+      '--surface', '--local-base-url', '--dev-base-url', '--deploy', '--flags', '--proofs', '--decision-items',
     ],
   },
   render: { required: ['--facts', '--narrative', '--out'], optional: ['--dropped-out', '--observation-plan', '--poster'] },
@@ -94,13 +110,20 @@ const MANIFEST = 'manifest.json';
 const VERIFY_REPORT_COPY = 'verify-report.json';
 const QA_REPORT_COPY = 'qa-report.json';
 const QA_STAMP_COPY = 'qa-stamp.json';
+const PLAN_COPY = 'plan.md';
 const VERIFY_REPORT_SOURCE = path.join('claude-tweaks-verify', 'report.json');
 const QA_REPORTS_DIR = path.join('.claude-tweaks', 'artifacts', 'screenshots', 'qa');
 const QA_REPORT_NAME = 'report.json';
+const DEFAULT_STORIES_DIR = 'stories';
 const STORY_FILE_RE = /\.ya?ml$/;
 const LOG_LINE_RE = /^([0-9a-f]+)\t(.*)$/;
 const GH_ABSENT = "gh absent — follow _shared/acceptance-packet.md's MCP path";
 const FINDINGS_NOT_READ = 'review findings not read — low-confidence findings not listed';
+const RECORDING_NOT_READ = 'manifest recording entry not read — treated as absent';
+const ENCODER_FAILED = NOT_RUN_REASON.ENCODER_FAILED;
+const CHECK_IGNORE_NOT_IGNORED = 1;
+const CHECK_IGNORE_FATAL = 128;
+const NOT_A_REPOSITORY = /not a git repository/i;
 const UNKNOWN_SECTION = 'unknown';
 // What --dropped-out says for a dropped claim whose validator entry carries no known
 // `reasonKind`: the free-form `reason` may hold a narrator's value, so it is never written.
@@ -111,7 +134,6 @@ const flagKey = (flag) => flag.slice(2).replace(/-([a-z])/g, (_, letter) => lett
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const messageOf = (err) => (err && err.message ? err.message : String(err));
 const isAbsentError = (err) => err?.code === 'ENOENT' || err?.code === 'ENOTDIR';
-const notReadNote = (flag) => `${flag} input not read — treated as absent`;
 
 function parseArgs(argv) {
   const [command, ...rest] = argv;
@@ -167,6 +189,8 @@ const realDeps = {
   writeAtomic: (p, s) => writeFileAtomic(p, s),
   removeFile: (p) => fs.unlinkSync(p),
   mkdir: (p) => fs.mkdirSync(p, { recursive: true }),
+  // Frames are binary, and deps.readFile is utf8.
+  encodeWalkthrough: (spec) => encodeWalkthrough(spec, { readFile: (p) => fs.readFileSync(p) }),
   readRecord,
   writeRecord,
   // A range's output grows with the branch, and a comment list with the record.
@@ -259,6 +283,15 @@ function readSource(deps, file) {
   }
 }
 
+// A text source (the plan): any text copies as it is read, so a plan is never judged by its content.
+function readTextSource(deps, file) {
+  try {
+    return { status: 'copied', text: deps.readFile(file) };
+  } catch (err) {
+    return { status: isAbsentError(err) ? 'absent' : 'unreadable' };
+  }
+}
+
 function stampSource(gitDirPath, head, deps) {
   if (!gitDirPath) return { status: 'absent' };
   const stamp = readQaStamp(gitDirPath, readerOf(deps));
@@ -302,6 +335,89 @@ function cwdIsMainCheckout(runDir, deps) {
   return Boolean(cwd) && findGitRoot(cwd)?.dir === findGitRoot(runDir)?.dir;
 }
 
+// Each story's screenshot dir as an absolute path, since the frames are read from it directly.
+function withAbsoluteScreenshotDirs(report, cwd) {
+  if (!Array.isArray(report?.stories)) return report;
+  const stories = report.stories.map((story) => (
+    typeof story?.screenshot_dir === 'string' && story.screenshot_dir !== ''
+      ? { ...story, screenshot_dir: path.resolve(cwd, story.screenshot_dir) }
+      : story
+  ));
+  return { ...report, stories };
+}
+
+function planSnapshotRecording({ qaReport, qaStamp, runDir }, deps) {
+  const cwd = deps.cwd();
+  const report = qaReport.status === 'copied' ? JSON.parse(qaReport.text) : null;
+  const storiesDir = typeof report?.stories_dir === 'string' && report.stories_dir.trim() ? report.stories_dir : DEFAULT_STORIES_DIR;
+  const indexNotes = [];
+  const storyIndex = readStoryIndex(path.resolve(cwd, storiesDir), true, deps, indexNotes);
+  return planRecording({
+    report: withAbsoluteScreenshotDirs(report, cwd),
+    qaExpected: qaReport.status === 'unreadable' || qaStamp.status === 'copied' || qaStamp.status === 'unreadable'
+      || qaSelectionFromDecisions(readTextOrNull(deps, path.join(runDir, 'decisions.md'))) > 0,
+    storyIndexLost: indexNotes.length > 0,
+    storyIndex,
+    listFrames: deps.listDir,
+  });
+}
+
+// An encoder failure names frames by absolute path, and none may reach the fact. They go by
+// their known spelling first: a path can hold a space, which scrubPaths cannot see past unquoted.
+function recordingFailure(err, framePaths) {
+  const named = framePaths.reduce((text, frame) => text.split(frame).join(path.basename(frame)), messageOf(err));
+  return { status: 'not-run', reason: ENCODER_FAILED, failure: scrubPaths(named) };
+}
+
+// Why a GIF may not be written here, or null when it may: the stored pixels are unredacted, so
+// git must not be able to commit them. check-ignore exits 1 for not ignored, and exits 128 with
+// "not a git repository" for a `.git` that git itself rejects, where nothing can commit the file.
+// Any other failure (a timeout or missing binary, which carry no exit 128, or a 128 for a reason
+// like a refused checkout) is no answer, and holds the write too: the run dir always has a `.git`
+// above it, so a silent write could leave committable pixels.
+// `-C`, since the run dir sits in the main checkout and the cwd may be a worktree.
+function destinationHold(dir, deps) {
+  const shown = () => relativeDisplayId(findGitRoot(dir).dir, path.join(dir, RECORDING_FILE));
+  try {
+    deps.git(['-C', dir, 'check-ignore', '-q', '--', RECORDING_FILE]);
+    return null;
+  } catch (err) {
+    if (err?.status === CHECK_IGNORE_NOT_IGNORED) return `${shown()} is not ignored by git, so the GIF was not written`;
+    if (err?.status === CHECK_IGNORE_FATAL && NOT_A_REPOSITORY.test(String(err.stderr ?? ''))) return null;
+    return `git could not say whether ${shown()} is ignored, so the GIF was not written`;
+  }
+}
+
+function snapshotRecording(sources, dir, deps) {
+  const plan = planSnapshotRecording(sources, deps);
+  if (plan.status !== 'ready') return plan;
+  const hold = destinationHold(dir, deps);
+  if (hold !== null) return { status: 'not-run', reason: ENCODER_FAILED, failure: hold };
+  try {
+    const { buffer } = deps.encodeWalkthrough(encodeSpec(plan.frames));
+    deps.writeAtomic(path.join(dir, RECORDING_FILE), buffer);
+    return {
+      status: 'passed',
+      file: RECORDING_FILE,
+      text: plan.text,
+      captions: plan.captions,
+      // v1 stores the GIF locally and never probes a remote store, so this is `local-only` whatever
+      // the visibility; the read stays so a store probe wired in later decides on a fail-closed answer.
+      exposure: decideExposure({ repoVisibility: readRepoVisibility(deps.gh), storeProbe: null }),
+      frames: plan.frames.length,
+    };
+  } catch (err) {
+    return recordingFailure(err, plan.frames);
+  }
+}
+
+// The manifest on disk stays raw, as local input. Stdout reaches the transcript, so it prints
+// the form a fact would hold.
+function printableManifest(manifest) {
+  const { redactions: _count, ...strings } = redactedRecordingStrings(manifest.recording);
+  return { ...manifest, recording: { ...manifest.recording, ...strings } };
+}
+
 function runSnapshot(opts, deps) {
   const target = anchoredRun(opts.run, deps);
   if (!target) return 3;
@@ -330,33 +446,57 @@ function runSnapshot(opts, deps) {
   const verifyReport = gitDirPath ? readSource(deps, path.join(gitDirPath, VERIFY_REPORT_SOURCE)) : { status: 'absent' };
   const qaStamp = stampSource(gitDirPath, head, deps);
   const qaReport = qaReportSource(qaStamp.stamp, target.dir, deps);
+  const plan = opts.plan === undefined ? null : readTextSource(deps, opts.plan);
   const manifest = {
     schemaVersion: SCHEMA_VERSION,
     head,
     mergeBase,
-    files: { verifyReport: verifyReport.status, qaReport: qaReport.status, qaStamp: qaStamp.status },
+    files: {
+      verifyReport: verifyReport.status,
+      qaReport: qaReport.status,
+      qaStamp: qaStamp.status,
+      ...(plan === null ? {} : { plan: plan.status }),
+    },
   };
 
   const dir = path.join(target.dir, PACKET_INPUTS);
   try {
     deps.mkdir(dir);
-    for (const [name, source] of [[VERIFY_REPORT_COPY, verifyReport], [QA_REPORT_COPY, qaReport], [QA_STAMP_COPY, qaStamp]]) {
+    const copies = [[VERIFY_REPORT_COPY, verifyReport], [QA_REPORT_COPY, qaReport], [QA_STAMP_COPY, qaStamp]];
+    if (plan !== null) copies.push([PLAN_COPY, plan]);
+    for (const [name, source] of copies) {
       if (source.status === 'copied') deps.writeAtomic(path.join(dir, name), source.text);
     }
+    manifest.recording = snapshotRecording({ qaReport, qaStamp, runDir: target.dir }, dir, deps);
     deps.writeAtomic(path.join(dir, MANIFEST), `${JSON.stringify(manifest, null, 2)}\n`);
+    // An earlier GIF is unredacted pixels that nothing links any more.
+    if (manifest.recording.status !== 'passed') removeIfPresent(deps, path.join(dir, RECORDING_FILE));
   } catch (err) {
     deps.stderr(`acceptance-packet.js: could not write ${dir} (${messageOf(err)})\n`);
+    // A recording here means only the manifest failed: an earlier manifest must not describe this GIF.
+    if (manifest.recording?.status === 'passed') removeIfPresent(deps, path.join(dir, RECORDING_FILE));
     return 3;
   }
-  deps.stdout(`${JSON.stringify(manifest)}\n`);
+  deps.stdout(`${JSON.stringify(printableManifest(manifest))}\n`);
   return 0;
 }
 
 // ---- gather ----
 
 const NO_SNAPSHOT = Object.freeze({
-  head: null, mergeBase: null, report: null, qaReport: null, qaReportUnreadable: false, stamp: null,
+  head: null, mergeBase: null, report: null, qaReport: null, qaReportUnreadable: false, stamp: null, recording: null, recordingUnread: false,
 });
+
+// A damaged manifest entry would otherwise fail the render's fact check, or name another file.
+const isStringList = (value) => Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+function isRecordingEntry(value) {
+  if (!isObject(value)) return false;
+  if (value.status === 'not-run') {
+    return RECORDING_NOT_RUN_REASONS.includes(value.reason) && (value.failure === undefined || typeof value.failure === 'string');
+  }
+  return value.status === 'passed' && value.file === RECORDING_FILE && typeof value.text === 'string'
+    && isStringList(value.captions) && EXPOSURES.includes(value.exposure);
+}
 
 function readSnapshot(runDir, deps) {
   const dir = path.join(runDir, PACKET_INPUTS);
@@ -373,7 +513,15 @@ function readSnapshot(runDir, deps) {
     qaReport,
     qaReportUnreadable: files.qaReport === 'unreadable' || (files.qaReport === 'copied' && storyResultsFromQaReport(qaReport) === null),
     stamp: files.qaStamp === 'copied' ? readQaStamp(dir, stampCopy) : null,
+    recording: isRecordingEntry(manifest.recording) ? manifest.recording : null,
+    recordingUnread: manifest.recording !== undefined && !isRecordingEntry(manifest.recording),
   };
+}
+
+// Relative to the checkout root, and `/`-joined on every platform: a packet path is a display id.
+function recordingPathOf(recording, runDir) {
+  if (recording?.status !== 'passed') return null;
+  return recordingLocations(relativeDisplayId(findGitRoot(runDir).dir, path.join(runDir, PACKET_INPUTS, recording.file)));
 }
 
 function readExpectedChecks(opts, deps) {
@@ -455,6 +603,8 @@ const isEntryList = (value) => Array.isArray(value) && value.every((entry) => (
   isObject(entry) && typeof entry.id === 'string' && entry.id !== ''
   && ['text', 'url', 'command', 'label'].every((field) => optionalString(entry[field]))
 ));
+const isFlagEntryList = (value) => isEntryList(value)
+  && value.every((entry) => entry.unconfirmed === undefined || typeof entry.unconfirmed === 'boolean');
 const isDeploy = (value) => isObject(value) && typeof value.target === 'string';
 
 function runGather(opts, deps) {
@@ -488,6 +638,7 @@ function gatherToFile(opts, deps) {
   };
 
   const snapshot = runDir === null ? NO_SNAPSHOT : readSnapshot(runDir, deps);
+  if (snapshot.recordingUnread) notes.push(RECORDING_NOT_READ);
   // A named --report that will not read falls back to the snapshot's copy, and says so.
   const reportFlag = readObject(opts.report);
   if (opts.report !== undefined && reportFlag === null) notes.push(notReadNote('--report'));
@@ -510,8 +661,8 @@ function gatherToFile(opts, deps) {
       acResults: optionalJson('--ac-results', isObject),
       links: optionalJson('--links', isEntryList),
       deploy: optionalJson('--deploy', isDeploy),
-      recordings: optionalJson('--recordings', isEntryList),
-      flags: optionalJson('--flags', isEntryList),
+      flags: optionalJson('--flags', isFlagEntryList),
+      proofs: optionalJson('--proofs', isEntryList),
       decisions: optionalJson('--decision-items', isEntryList),
       decisionsText: runDir === null ? null : readTextOrNull(deps, path.join(runDir, 'decisions.md')),
       lowConfidence: runDir === null ? null : readLowConfidence(runDir, deps, notes),
@@ -519,6 +670,8 @@ function gatherToFile(opts, deps) {
       storyResults,
       stampStories,
       qaReportUnread: (opts.storyResults !== undefined && storyResults === null) || snapshot.qaReportUnreadable,
+      recording: snapshot.recording,
+      recordingPath: recordingPathOf(snapshot.recording, runDir),
       ...readChanges(base, head, deps),
     });
   } catch (err) {

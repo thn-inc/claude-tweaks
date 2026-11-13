@@ -107,7 +107,7 @@ The implementer may read, edit and write inside the worktree, run the project's 
 
 **Structured result, never trusted.** The implementer is given the record body, the Key Files and its limits, and returns a small JSON object (`--json-schema`): a status, a one-line change title, a one-to-two-sentence summary. The driver takes the changed files from git, not from the worker, and applies the diff bounds to what is actually on disk.
 
-The record body is untrusted input. The narrow rights and the bounds check are what contain it.
+The record body is untrusted input. The narrow rights and the bounds check contain the worker; worker-authored code at the test step is contained separately (an allow-listed environment, an empty gh config dir, a refused scope file), with a named residual risk (record #5267; see the header comment at the top of `plugin/bin/lib/driver/steps.js`).
 
 These rules bind every worker in every phase, including the Phase 2 judgment workers: no worker runs `gh`, writes a label, posts a comment or merges. A judgment worker reads and returns a verdict or a text; the driver acts on it.
 
@@ -118,9 +118,13 @@ The express lane leaves this to the dispatch session around it (`dispatch/settle
 | Stop | What the driver does |
 |---|---|
 | Refused before the claim (not eligible, not authorized, wrong state) | Nothing is written. The event line names every reason. |
-| `express-escalated` (before the push) | Writes the escalation line with `express-lane.js escalate`, comments on the record with the reason, releases the claim, and removes the worktree and its local branch. The record returns to the queue as if never started and the standard path builds it fresh. |
-| `blocked` (after the push, or a failed claim or check call) | Comments on the PR and the record with the failed step, labels the record `bot:blocked`, releases the claim. The draft PR, branch and worktree stay for a human. |
+| Claim held by another run or in flight (`claim-targets.js` exit 3) | Nothing is written. The driver never held the claim, and a label would hide the other run's live claim. The outcome is `blocked` and the event names the exit code. |
+| Any other claim failure (a non-zero exit other than 3, an exit 0 that did not claim the record, a killed or timed-out run) or a failed run-directory mint | Comments on the record with the step (and the exit code, when there is one) and labels it `bot:blocked`. No release call: no run directory exists, and a claim that may have been written lapses by its TTL, which the event says. |
+| `express-escalated` (before the push) | Writes the escalation line with `express-lane.js escalate`, comments on the record with the reason, releases the claim, removes the worktree and its local branch, and closes the run with `hooks.js close-run` as the last call. The record returns to the queue as if never started and the standard path builds it fresh. |
+| `blocked` (after the push, or a failed check or escalate call) | Comments on the PR and the record with the failed step, labels the record `bot:blocked`, releases the claim. The draft PR, branch and worktree stay for a human. |
 | `pending-review` | Leaves the PR for a human; the claim follows the express lane's existing rule for this outcome. |
+
+The source of truth for this table is `SETTLE_ROWS` in `plugin/bin/lib/driver/settle.js`; this table and `docs/driver.md` are copied from it by hand.
 
 Discarding the partial work on escalation is deliberate: an express-sized change is cheap to redo, and a standalone run that leaves a claimed record and an orphaned worktree behind is the costlier failure. Settle's `failure-check` judgment and its tombstone that closes the PR are not carried over.
 
@@ -235,7 +239,7 @@ The scoreboard is a view in the dispatch hub, designed and built in the dispatch
 Each came out of a record's red-team pass and is written into the record named.
 
 1. `split` ends at 20 merged records per arm; the Phase 4 parent (#5221) owns removing it (#5216).
-2. The implementer keeps its test command and its Bash runs under Claude Code's sandbox, subject to an escape probe; if a test can still reach `curl`, `gh` or `git push`, the test command is dropped from its allow list. Stated residual: the driver's own test step runs worker-written code with the driver's rights, as every lane does today (#5217).
+2. The implementer keeps its test command and its Bash runs under Claude Code's sandbox, subject to an escape probe; if a test can still reach `curl`, `gh` or `git push`, the test command is dropped from its allow list. Stated residual: the driver's own test step runs worker-written code with the driver's rights, as every lane does today (#5217); #5267 later narrowed that residual by running the test step under an allow-listed environment, an empty gh config dir and a refused scope file.
 3. An escalation comment carries a marker and admission refuses a record that has one, so an escalated record is not driven again until a human removes the comment (#5219).
 4. The judgment-parity criterion needs at least 30 recorded verdicts, at least 10 of them not `auto-merge`, or a recorded waiver; a later change to a judgment prompt, its source skill file or the role's model re-runs it (#5228).
 5. Acceptance labels are derived by driver code from the parent gate and the oversight-floor gate; the acceptance worker returns text only (#5228).

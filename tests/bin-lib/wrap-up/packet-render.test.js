@@ -438,10 +438,10 @@ test('a deploy fact with no text states its own target', () => {
 test('a decision or recording with blank text falls back to its id', () => {
   const { markdown } = render([
     fact('decision:a', 'passed', { text: '  ' }),
-    fact('recording:b', 'passed', { url: 'https://cdn.example/b.gif' }),
+    fact('recording:b', 'passed', { url: 'https://cdn.example/b', exposure: 'linked-private' }),
   ]);
   assert.deepEqual(sectionLines(markdown, 'Decisions left for you'), ['- `decision:a`']);
-  assert.deepEqual(sectionLines(markdown, 'Recording'), ['- `recording:b`: <https://cdn.example/b.gif>']);
+  assert.deepEqual(sectionLines(markdown, 'Recording'), ['- `recording:b`: <https://cdn.example/b>']);
 });
 
 test('kept claims cite their ids in the three narrated sections', () => {
@@ -628,7 +628,7 @@ test('a moved claim withholds the reason of the fact that moved it', () => {
   assert.ok(!markdown.includes(SECRET));
 });
 
-test('decision, recording, deploy, refused and partial free text are screened too', () => {
+test('decision, deploy, refused and partial free text are screened too, and recording text is redacted', () => {
   const text = `the password=${SECRET}`;
   const { markdown } = render(
     [
@@ -641,7 +641,7 @@ test('decision, recording, deploy, refused and partial free text are screened to
   );
   assert.ok(!markdown.includes(SECRET));
   assert.deepEqual(sectionLines(markdown, 'Decisions left for you'), [`- ${WITHHELD_TEXT}`]);
-  assert.deepEqual(sectionLines(markdown, 'Recording'), [`- ${WITHHELD_TEXT}: <https://cdn.example/r.gif>`]);
+  assert.deepEqual(sectionLines(markdown, 'Recording'), ['- the password=\\[redacted]: (recording url refused)', '  redacted values: 1']);
   assert.deepEqual(sectionLines(markdown, 'Deploy status'), [WITHHELD_TEXT]);
   assert.ok(sectionLines(markdown, 'Test guide').includes(`- 1 link(s) refused: link:a (${WITHHELD_REASON})`));
   assert.ok(markdown.includes(`> partial gather: ${WITHHELD_TEXT}; verify report not found`));
@@ -834,6 +834,18 @@ test('a link that fails the recheck renders its refusal, not its url', () => {
   assert.ok(!markdown.includes('https://evil.example'));
 });
 
+test('a link with a bearer-shaped path segment renders its refusal, never the url (#4612)', () => {
+  const { markdown } = render(
+    [fact('link:b', 'passed', { url: 'http://localhost:3000/a/Xk3j9f8s7d6f5g4h3j2k1/b' })],
+    [claim('test-guide', 'Open', ['link:b'])],
+  );
+  assert.equal(
+    sectionLines(markdown, 'Test guide')[0],
+    '1. Open (`link:b`): (link refused: credential in path segment)',
+  );
+  assert.ok(!markdown.includes('Xk3j9f8s7d6f5g4h3j2k1'));
+});
+
 test('a command carrying a credential is refused at render too, never shown', () => {
   const { markdown } = render(
     [fact('link:cmd', 'passed', { command: 'curl --token hunter2 http://localhost' })],
@@ -841,6 +853,111 @@ test('a command carrying a credential is refused at render too, never shown', ()
   );
   assert.ok(markdown.includes('(link refused: credential key in command: token)'));
   assert.ok(!markdown.includes('hunter2'));
+});
+
+const BEARER = 'Xk3j9f8s7d6f5g4h3j2k1';
+
+test('a command with a bearer-shaped URL segment is refused at render, never shown', () => {
+  const { markdown } = render(
+    [fact('link:cmd', 'passed', { command: `curl http://localhost:3000/reset/${BEARER}` })],
+    [claim('test-guide', 'Run', ['link:cmd'])],
+  );
+  assert.ok(markdown.includes('(link refused: credential in path segment)'), markdown);
+  assert.ok(!markdown.includes(BEARER));
+});
+
+const BEARER_COMMAND_FORMS = [
+  `curl localhost:3000/reset/${BEARER}?next=http://x/y`,
+  `www.h.example/${BEARER}?u=https://x/y`,
+  `www.h.example/${BEARER}#http://x/y`,
+];
+
+test('a command whose bearer URL carries a later URL is refused at render, never shown', () => {
+  for (const command of BEARER_COMMAND_FORMS) {
+    const { markdown } = render(
+      [fact('link:cmd', 'passed', { command })],
+      [claim('test-guide', 'Run', ['link:cmd'])],
+    );
+    assert.ok(markdown.includes('(link refused: credential in path segment)'), command);
+    assert.ok(!markdown.includes(BEARER), command);
+  }
+});
+
+test('a plan line whose bearer URL carries a later URL is screened', () => {
+  for (const line of BEARER_COMMAND_FORMS) {
+    const { markdown, screened } = render([], [], { options: { observationPlan: `- ${line}\n- Other` } });
+    assert.ok(!markdown.includes(BEARER), line);
+    assert.deepEqual(screened, [{ section: 'observation-plan', key: 'path segment' }], line);
+  }
+});
+
+test('a command naming bare localhost, a bracketed IPv6 host or a signed scheme is refused at render, never shown', () => {
+  for (const command of [
+    `curl localhost/reset/${BEARER}`,
+    `curl [::1]:3000/reset/${BEARER}`,
+    `-https://h.example/${BEARER}`,
+    `+https://h.example/${BEARER}`,
+  ]) {
+    const { markdown } = render(
+      [fact('link:cmd', 'passed', { command })],
+      [claim('test-guide', 'Run', ['link:cmd'])],
+    );
+    assert.ok(markdown.includes('(link refused: credential in path segment)'), command);
+    assert.ok(!markdown.includes(BEARER), command);
+  }
+});
+
+test('the {id} form of that command renders', () => {
+  const { markdown } = render(
+    [fact('link:cmd', 'passed', { command: 'curl http://localhost:3000/reset/{id}' })],
+    [claim('test-guide', 'Run', ['link:cmd'])],
+  );
+  assert.ok(markdown.includes('`curl http://localhost:3000/reset/{id}`'), markdown);
+  assert.ok(!markdown.includes('link refused'), markdown);
+});
+
+test('a plan line with a bearer-shaped URL segment is screened, and what it holds goes with it', () => {
+  const plan = `- Entry point: http://localhost:3000/reset/${BEARER}\n  - under it\n- Other`;
+  const { markdown, screened } = render([], [], { options: { observationPlan: plan } });
+  assert.ok(!markdown.includes(BEARER), markdown);
+  assert.deepEqual(sectionLines(markdown, 'Observation plan'), ['- Other']);
+  assert.deepEqual(screened, [{ section: 'observation-plan', key: 'path segment' }]);
+  assert.match(markdown, /^1 entry omitted for credential-shaped content: Observation plan \(path segment\)$/m);
+});
+
+test('a plan Entry point holding a bare route with a bearer-shaped segment is screened, and what it holds goes with it', () => {
+  const plan = `- Entry point: /reset/${BEARER}\n  - under it\n- Other`;
+  const { markdown, screened } = render([], [], { options: { observationPlan: plan } });
+  assert.ok(!markdown.includes(BEARER), markdown);
+  assert.deepEqual(sectionLines(markdown, 'Observation plan'), ['- Other']);
+  assert.deepEqual(screened, [{ section: 'observation-plan', key: 'path segment' }]);
+  assert.match(markdown, /^1 entry omitted for credential-shaped content: Observation plan \(path segment\)$/m);
+});
+
+test('a plan Entry point with the placeholder or an ordinary route renders, and other lines keep the URL rule', () => {
+  for (const plan of [
+    '- Entry point: /reset/{id}',
+    '- Entry point: /orders/new',
+    `- Inspect: /reset/${BEARER}`,
+  ]) {
+    const { markdown, screened } = render([], [], { options: { observationPlan: plan } });
+    assert.deepEqual(screened, [], plan);
+    assert.ok(markdown.includes(plan), plan);
+  }
+});
+
+test('a plan line with an ordinary URL, a placeholder or a bare long word is unchanged', () => {
+  for (const plan of [
+    '- Entry point: http://localhost:3000/settings',
+    '- Entry point: http://localhost:3000/reset/{id}',
+    `- run the seed for ${BEARER}`,
+    '- Check .claude-tweaks/pipelines/2026-11-02T223727-record-4612/work/spec.md',
+  ]) {
+    const { markdown, screened } = render([], [], { options: { observationPlan: plan } });
+    assert.deepEqual(screened, [], plan);
+    assert.equal(sectionLines(markdown, 'Observation plan').length, 1, plan);
+    assert.ok(markdown.replaceAll('`', '').includes(plan), plan);
+  }
 });
 
 test('a link that needs no render still cites its id', () => {
@@ -884,14 +1001,14 @@ test('an allowed IPv6 host renders as a link', () => {
 
 test('recording rows render an http(s) url inert and refuse the rest', () => {
   const { markdown } = render([
-    fact('recording:a', 'passed', { text: 'Walkthrough [x]', url: 'https://cdn.example/a.gif' }),
-    fact('recording:b', 'passed', { text: 'Bad', url: 'javascript:alert(1)' }),
-    fact('recording:c', 'passed', { text: 'Junk', url: 'not a url' }),
-    fact('recording:d', 'passed', { text: 'Shaped', url: 'https://cdn.example/a)[click](https://evil.example' }),
-    fact('recording:e', 'passed', { text: 'None' }),
+    fact('recording:a', 'passed', { text: 'Walkthrough [x]', url: 'https://cdn.example/a', exposure: 'linked-private' }),
+    fact('recording:b', 'passed', { text: 'Bad', url: 'javascript:alert(1)', exposure: 'linked-private' }),
+    fact('recording:c', 'passed', { text: 'Junk', url: 'not a url', exposure: 'linked-private' }),
+    fact('recording:d', 'passed', { text: 'Shaped', url: 'https://cdn.example/a)[click](https://evil.example', exposure: 'linked-private' }),
+    fact('recording:e', 'passed', { text: 'None', exposure: 'linked-private' }),
   ]);
   assert.deepEqual(sectionLines(markdown, 'Recording'), [
-    '- Walkthrough \\[x\\]: <https://cdn.example/a.gif>',
+    '- Walkthrough \\[x\\]: <https://cdn.example/a>',
     '- Bad: (recording url refused)',
     '- Junk: (recording url refused)',
     '- Shaped: <https://cdn.example/a)[click](https://evil.example>',
@@ -945,7 +1062,7 @@ test('an underline escape is whole-line only, on every path through inline', () 
   assert.deepEqual(sectionLines(markdown, 'Decisions left for you'), ['- \\---']);
 });
 
-test('a recording url carrying a credential is refused, never shown', () => {
+test('a recording url carrying a credential is withheld, never shown', () => {
   const urls = [
     'https://u:p@cdn.example/a.gif?X-Amz-Signature=abc&token=def',
     'https://u@cdn.example/a.gif',
@@ -955,7 +1072,7 @@ test('a recording url carrying a credential is refused, never shown', () => {
   ];
   for (const url of urls) {
     const { markdown } = render([fact('recording:a', 'passed', { text: 'Rec', url })]);
-    assert.deepEqual(sectionLines(markdown, 'Recording'), ['- Rec: (recording url refused)'], url);
+    assert.deepEqual(sectionLines(markdown, 'Recording'), ['- Rec: recording withheld: link contained a credential-shaped value'], url);
     assert.ok(!markdown.includes('cdn.example'), url);
   }
 });
@@ -963,14 +1080,14 @@ test('a recording url carrying a credential is refused, never shown', () => {
 test('a recording url needs no allowed host', () => {
   const { markdown } = render(
     [
-      fact('recording:a', 'passed', { text: 'A', url: 'https://cdn.example/a.gif?t=1#start' }),
-      fact('recording:b', 'passed', { text: 'B', url: 'http://[::1]:3000/b.webm' }),
+      fact('recording:a', 'passed', { text: 'A', url: 'https://cdn.example/a?t=1#start', exposure: 'linked-private' }),
+      fact('recording:b', 'passed', { text: 'B', url: 'http://[::1]:3000/b.webm', exposure: 'linked-private' }),
     ],
     [],
     { extra: { allowedHosts: [] } },
   );
   assert.deepEqual(sectionLines(markdown, 'Recording'), [
-    '- A: <https://cdn.example/a.gif?t=1#start>',
+    '- A: <https://cdn.example/a?t=1#start>',
     '- B: <http://[::1]:3000/b.webm>',
   ]);
 });
@@ -1311,4 +1428,100 @@ test('the return reports every field', () => {
   assert.deepEqual(Object.keys(result).sort(), ['chars', 'dropped', 'markdown', 'screened', 'truncated']);
   assert.equal(result.truncated, 0);
   assert.ok(!result.markdown.includes('truncated:'));
+});
+
+const PLANNED = fact('proof:auth', 'not-run', { reason: 'planned in the plan, not yet run' });
+test('Reading B: a planned risk proof renders in Risk proofs as not verified, after the kept claims', () => {
+  const { markdown } = render([fact('flag:auth', 'passed'), fact('check:unit', 'passed'), PLANNED], [
+    claim('risk-proofs', 'Auth verified', ['flag:auth', 'proof:auth']),
+    claim('risk-proofs', 'Auth covered', ['flag:auth', 'check:unit']),
+  ]);
+  assert.match(markdown, /### Risk proofs\n- Auth covered \([^\n]*\)\n- Auth verified \(planned, not verified: cites `proof:auth` — not run: planned in the plan, not yet run\)/);
+});
+test('Reading B: one planned claim and no kept one does not render the no-kept-flags placeholder', () => {
+  const { markdown } = render([fact('flag:auth', 'passed'), PLANNED], [claim('risk-proofs', 'Auth verified', ['flag:auth', 'proof:auth'])]);
+  assert.doesNotMatch(markdown, /not applicable: no kept risk flags/);
+});
+test('Round 3 Reading A: a Risk-proofs line citing an unconfirmed flag is labelled, kept and planned alike', () => {
+  const UNCONFIRMED = fact('flag:auth', 'passed', { unconfirmed: true });
+  const { markdown } = render([UNCONFIRMED, fact('check:unit', 'passed'), PLANNED], [
+    claim('risk-proofs', 'Auth covered', ['flag:auth', 'check:unit']),
+    claim('risk-proofs', 'Auth verified', ['flag:auth', 'proof:auth']),
+  ]);
+  assert.match(markdown, /### Risk proofs\n- Auth covered \([^\n]*\) \(flag unconfirmed\)\n- Auth verified \(planned, not verified: [^\n]*\) \(flag unconfirmed\)\n/);
+});
+test('Round 3 Reading A: a confirmed flag gets no label, and claim text cannot forge one', () => {
+  const { markdown } = render([fact('flag:auth', 'passed'), fact('check:unit', 'passed')], [
+    claim('risk-proofs', 'Auth covered (flag unconfirmed)', ['flag:auth', 'check:unit']),
+  ]);
+  const line = markdown.split('\n').find((l) => l.startsWith('- Auth covered'));
+  assert.ok(line && !/\) \(flag unconfirmed\)$/.test(line), line);
+});
+test('a kept flag no claim cites is listed, labelled when unconfirmed, and never hidden behind the placeholder', () => {
+  const { markdown } = render([fact('flag:auth', 'passed', { unconfirmed: true }), fact('flag:migrations', 'passed')], []);
+  assert.match(markdown, /### Risk proofs\n- auth: no proof shown \(flag unconfirmed\)\n- migrations: no proof shown\n/);
+  assert.doesNotMatch(markdown, /not applicable: no kept risk flags/);
+});
+test('truncation drops kept Risk-proofs items and never a kept flag no claim cites', () => {
+  const claims = Array.from({ length: 400 }, (_, i) => claim('risk-proofs', `Auth covered ${i} ${'x'.repeat(200)}`, ['flag:auth', 'check:unit']));
+  const { markdown, truncated } = render(
+    [fact('flag:auth', 'passed'), fact('flag:migrations', 'passed', { unconfirmed: true }), fact('check:unit', 'passed')],
+    claims,
+  );
+  assert.ok(truncated > 0, 'the fixture must overflow the cap');
+  const lines = sectionLines(markdown, 'Risk proofs');
+  assert.ok(lines.length < 400, `kept items were dropped: ${lines.length}`);
+  assert.ok(lines.includes('- migrations: no proof shown (flag unconfirmed)'), lines.slice(-3).join('\n'));
+});
+test('a flag cited only by a claim that moved to Couldn\'t test is listed in Risk proofs, labelled, and the moved line is not', () => {
+  const { markdown } = render(
+    [fact('flag:auth', 'passed', { unconfirmed: true }), fact('story:login', 'skipped', { reason: 'no browser' })],
+    [claim('risk-proofs', 'Auth verified', ['flag:auth', 'story:login'])],
+  );
+  assert.deepEqual(sectionLines(markdown, 'Risk proofs'), ['- auth: no proof shown (flag unconfirmed)']);
+  assert.ok(sectionLines(markdown, "Couldn't test").includes('- Auth verified (moved: cites `story:login` — skipped: no browser)'));
+});
+test('a flag cited only by a claim that moved to Tried to break is listed in Risk proofs, labelled, and the moved line is not', () => {
+  const { markdown } = render(
+    [fact('flag:auth', 'passed', { unconfirmed: true }), fact('story:login', 'failed', { reason: 'bad token' })],
+    [claim('risk-proofs', 'Auth verified', ['flag:auth', 'story:login'])],
+  );
+  assert.deepEqual(sectionLines(markdown, 'Risk proofs'), ['- auth: no proof shown (flag unconfirmed)']);
+  assert.ok(sectionLines(markdown, 'Tried to break').includes('- Auth verified (moved: cites `story:login` — failed: bad token)'));
+});
+test('the no-kept-flags placeholder renders only when no flag fact exists', () => {
+  const { markdown } = render([fact('check:unit', 'passed')], []);
+  assert.match(markdown, /### Risk proofs\n[^\n]*not applicable: no kept risk flags/);
+});
+test('finding 5: a widened flag\'s text follows its no-proof-shown note, screened, and survives truncation', () => {
+  const widened = (slug, extra = {}) => fact(`flag:${slug}`, 'passed', { text: 'unreadable flag line', ...extra });
+  const { markdown } = render([widened('migrations', { unconfirmed: true }), widened('auth', { text: 'token=ghp_abcdefghijklmnopqrstuvwxyz0123456789' }), fact('flag:public-contract', 'passed')], []);
+  assert.deepEqual(sectionLines(markdown, 'Risk proofs'), [
+    '- migrations: no proof shown — unreadable flag line (flag unconfirmed)',
+    '- auth: no proof shown — (text withheld: credential-shaped)',
+    '- public-contract: no proof shown',
+  ]);
+  const claims = Array.from({ length: 400 }, (_, i) => claim('risk-proofs', `Auth covered ${i} ${'x'.repeat(200)}`, ['flag:auth', 'check:unit']));
+  const big = render([fact('flag:auth', 'passed'), widened('migrations'), fact('check:unit', 'passed')], claims);
+  assert.ok(big.truncated > 0, 'the fixture must overflow the cap');
+  assert.ok(sectionLines(big.markdown, 'Risk proofs').includes('- migrations: no proof shown — unreadable flag line'));
+});
+test('finding 6: with --flags in partial, Risk proofs says the flags were not read, never no kept flags', () => {
+  const { markdown } = render([fact('check:unit', 'passed')], [], { extra: { partial: ['--flags input not read — treated as absent'] } });
+  assert.deepEqual(sectionLines(markdown, 'Risk proofs'), ['risk flags not read: the --flags input did not read, so kept flags are unknown']);
+  assert.doesNotMatch(markdown, /no kept risk flags/);
+  const other = render([fact('check:unit', 'passed')], [], { extra: { partial: ['--proofs input not read — treated as absent'] } });
+  assert.deepEqual(sectionLines(other.markdown, 'Risk proofs'), ['not applicable: no kept risk flags']);
+});
+
+test('with --proofs in partial, an uncited kept flag says its proofs were not read, never no proof shown', () => {
+  const flags = [fact('flag:auth', 'passed', { unconfirmed: true }), fact('flag:migrations', 'passed', { text: 'unreadable flag line' })];
+  const { markdown } = render(flags, [], { extra: { partial: ['--proofs input not read — treated as absent'] } });
+  assert.deepEqual(sectionLines(markdown, 'Risk proofs'), [
+    '- auth: proofs not read (the --proofs input did not read) (flag unconfirmed)',
+    '- migrations: proofs not read (the --proofs input did not read) — unreadable flag line',
+  ]);
+  assert.doesNotMatch(markdown, /no proof shown/);
+  const unrelated = render(flags, [], { extra: { partial: ['--flags input not read — treated as absent'] } });
+  assert.ok(sectionLines(unrelated.markdown, 'Risk proofs').every((line) => line.includes(': no proof shown')));
 });

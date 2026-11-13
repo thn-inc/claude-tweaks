@@ -330,7 +330,23 @@ function extractRunFlags(argv) {
   return { rest, shard, recordDurations };
 }
 
+// Returns a new env with git's auto-maintenance switched off, via env-carried config (appended after
+// any inherited GIT_CONFIG_* so it never clobbers them). Never mutates `env`; a malformed inherited
+// GIT_CONFIG_COUNT is left alone rather than guessed at.
+function gitFixtureConfigEnv(env) {
+  const out = { ...env };
+  if (env.GIT_CONFIG_COUNT !== undefined && !/^\d+$/.test(env.GIT_CONFIG_COUNT)) return out;
+  const n = env.GIT_CONFIG_COUNT === undefined ? 0 : Number(env.GIT_CONFIG_COUNT);
+  out.GIT_CONFIG_COUNT = String(n + 2);
+  out[`GIT_CONFIG_KEY_${n}`] = 'maintenance.auto';
+  out[`GIT_CONFIG_VALUE_${n}`] = 'false';
+  out[`GIT_CONFIG_KEY_${n + 1}`] = 'gc.auto';
+  out[`GIT_CONFIG_VALUE_${n + 1}`] = '0';
+  return out;
+}
+
 module.exports = {
+  gitFixtureConfigEnv,
   listTestFiles, buildTestArgs, resolveConcurrency, resolveSlots, subsetFallbackReason, WIN32_COMMAND_LINE_MAX,
   isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, createRunRoot, sweepStaleRoots, readFileList, slotLane,
   parseShard, readDurations, assignShards, extractRunFlags, durationsPartialPath, finishRecording,
@@ -526,7 +542,9 @@ if (require.main === module) {
     child = spawn(process.execPath, testArgs, {
       cwd: REPO_ROOT,
       stdio: 'inherit',
-      env: { ...process.env, TMPDIR: runRoot, TMP: runRoot, TEMP: runRoot, CT_TEST_SUITE_SLOT_HELD: '1' },
+      // Every fixture git commit/push started `git maintenance run --auto` (391 processes across six
+      // heavy test files, #5297); the env-carried config turns that off for the whole child tree.
+      env: { ...gitFixtureConfigEnv(process.env), TMPDIR: runRoot, TMP: runRoot, TEMP: runRoot, CT_TEST_SUITE_SLOT_HELD: '1' },
     });
   } catch (err) {
     cleanup();

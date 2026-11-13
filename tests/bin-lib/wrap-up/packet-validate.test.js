@@ -44,7 +44,7 @@ const validate = (claims, changes, added) => validatePacket(factsDoc(changes, ad
 
 // Exactly one bucket holds the one claim; the others stay empty.
 function assertOnly(result, bucket) {
-  for (const name of ['kept', 'moved', 'dropped', 'screened']) {
+  for (const name of ['kept', 'moved', 'dropped', 'screened', 'planned']) {
     assert.equal(result[name].length, name === bucket ? 1 : 0, `${name}: ${JSON.stringify(result[name])}`);
   }
 }
@@ -217,7 +217,7 @@ test('only check and story facts route', () => {
     const recording = validate(
       [claim('risk-proofs', 'Auth verified', ['flag:auth', 'recording:demo'])],
       {},
-      [fact('recording:demo', status)],
+      [fact('recording:demo', status, { reason: 'encoder-failed' })],
     );
     assertOnly(recording, 'kept');
   }
@@ -499,6 +499,46 @@ test('validateFactsShape refuses an optional text field that is not a string', (
   }
 });
 
+test('validateFactsShape checks the recording fields', () => {
+  const one = (extra) => factsErrorPaths({ ...factsDoc(), facts: [{ ...fact('recording:r', 'passed'), ...extra }] });
+  assert.deepEqual(one({
+    url_or_path: 'a/b.gif',
+    archive_path: 'archive/a/b.gif',
+    captions: ['one'],
+    failure: 'boom',
+    redactions: 0,
+    exposure: 'local-only',
+  }), []);
+  assert.deepEqual(one({ captions: [] }), []);
+  for (const exposure of ['local-only', 'linked-private', 'withheld']) assert.deepEqual(one({ exposure }), [], exposure);
+  for (const [extra, at] of [
+    [{ exposure: 'bogus' }, 'exposure'],
+    [{ exposure: 3 }, 'exposure'],
+    [{ redactions: -1 }, 'redactions'],
+    [{ redactions: 1.5 }, 'redactions'],
+    [{ redactions: '1' }, 'redactions'],
+    [{ captions: 'x' }, 'captions'],
+    [{ captions: [1] }, 'captions[0]'],
+    [{ url_or_path: 3 }, 'url_or_path'],
+    [{ archive_path: 3 }, 'archive_path'],
+    [{ failure: 3 }, 'failure'],
+  ]) {
+    assert.deepEqual(one(extra), [`facts.facts[0].${at}`], JSON.stringify(extra));
+  }
+});
+
+test('validateFactsShape holds a not-run recording to its four reasons', () => {
+  const one = (entry) => factsErrorPaths({ ...factsDoc(), facts: [entry] });
+  for (const reason of ['no-story', 'no-local-base-url', 'no-happy-path-screenshots', 'encoder-failed']) {
+    assert.deepEqual(one(fact('recording:r', 'not-run', { reason })), [], reason);
+  }
+  for (const reason of ['sk_live_abc', 'bogus', '', undefined]) {
+    assert.deepEqual(one(fact('recording:r', 'not-run', { reason })), ['facts.facts[0].reason'], String(reason));
+  }
+  assert.deepEqual(one(fact('recording:r', 'passed', { reason: 'adjudicated' })), [], 'another status');
+  assert.deepEqual(one(fact('check:r', 'not-run', { reason: 'no result recorded' })), [], 'another kind');
+});
+
 test('validateFactsShape refuses a repeated id', () => {
   const repeat = fact('story:login', 'failed');
   assert.deepEqual(factsErrorPaths(factsDoc({}, [repeat])), ['facts.facts[8].id']);
@@ -524,3 +564,37 @@ test('validatePacket refuses a malformed claim instead of throwing a TypeError',
   assert.throws(() => validatePacket(factsDoc(), narrativeDoc([{ section: 'test-guide', text: 'x' }])), SchemaError);
   assert.throws(() => validatePacket(null, null), SchemaError);
 });
+
+const PROOF_PLANNED = fact('proof:auth', 'not-run', { reason: 'planned in the plan, not yet run' });
+test('Reading B: a claim citing a flag and only a not-run proof is planned, never kept', () => {
+  const result = validate([claim('risk-proofs', 'Refuses an unauthenticated request', ['flag:auth', 'proof:auth'])], {}, [PROOF_PLANNED]);
+  assertOnly(result, 'planned');
+  assert.equal(result.planned[0].because.id, 'proof:auth');
+});
+test('Reading B: verification wording does not lift a planned proof to kept', () => {
+  assertOnly(validate([claim('risk-proofs', 'Auth verified', ['flag:auth', 'proof:auth'])], {}, [PROOF_PLANNED]), 'planned');
+});
+test('Reading B: a skipped proof is planned, a failed one moves to tried-to-break, a passed one is kept', () => {
+  assertOnly(validate([claim('risk-proofs', 'x', ['flag:auth', 'proof:auth'])], {}, [fact('proof:auth', 'skipped')]), 'planned');
+  assertMoved(validate([claim('risk-proofs', 'x', ['flag:auth', 'proof:auth'])], {}, [fact('proof:auth', 'failed')]), 'tried-to-break', 'proof:auth');
+  assertOnly(validate([claim('risk-proofs', 'x', ['flag:auth', 'proof:auth'])], {}, [fact('proof:auth', 'passed')]), 'kept');
+});
+test('Reading B: a planned proof beside a passed check is kept on the check, beside a not-run check it routes on the check', () => {
+  assertOnly(validate([claim('risk-proofs', 'x', ['flag:auth', 'proof:auth', 'check:unit-tests'])], {}, [PROOF_PLANNED]), 'kept');
+  assertMoved(validate([claim('risk-proofs', 'x', ['flag:auth', 'proof:auth', 'story:signup'])], {}, [PROOF_PLANNED, SIGNUP_NOT_RUN]), 'couldnt-test', 'story:signup');
+});
+test('Reading B: a proof outside risk-proofs is an incompatible fact', () => {
+  assertDropped(validate([claim('what-changed', 'x', ['proof:auth'])], {}, [PROOF_PLANNED]), 'incompatible fact proof:auth (proof) for what-changed');
+});
+test('Reading B: a cited failed proof outranks a cited not-run proof, whichever comes first', () => {
+  const added = [fact('proof:a', 'failed'), fact('proof:b', 'not-run')];
+  assertMoved(validate([claim('risk-proofs', 'x', ['flag:auth', 'proof:a', 'proof:b'])], {}, added), 'tried-to-break', 'proof:a');
+  assertMoved(validate([claim('risk-proofs', 'x', ['flag:auth', 'proof:b', 'proof:a'])], {}, added), 'tried-to-break', 'proof:a');
+});
+test('Reading B: a failed proof beside a passed check stays kept, proof refs do not route beside other evidence', () => {
+  assertOnly(validate([claim('risk-proofs', 'x', ['flag:auth', 'proof:auth', 'check:unit-tests'])], {}, [fact('proof:auth', 'failed')]), 'kept');
+});
+test('Reading B: a proof fact passes the facts shape check', () => {
+  assert.equal(validateFactsShape({ schemaVersion: 1, record: 1, partial: [], facts: [PROOF_PLANNED] }).ok, true);
+});
+

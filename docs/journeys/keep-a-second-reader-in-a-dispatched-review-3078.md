@@ -3,6 +3,7 @@ files:
   - plugin/skills/_shared/subagent-dispatch-core.md
   - plugin/skills/dispatch/task-prompt.md
   - plugin/skills/review/step3-lens-dispatch.md
+  - plugin/skills/review/step3-tier-variants.md
   - plugin/skills/_shared/subagent-output-contract.md
   - plugin/skills/review/review-summary-template.md
   - plugin/skills/review/code-mode-steps.md
