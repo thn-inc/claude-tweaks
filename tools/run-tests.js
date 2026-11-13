@@ -381,10 +381,8 @@ function selectChangedTests({ repoRoot, deps = {} }) {
     const execImpl = (cmd, args, options) => execFileSync(cmd, args, { ...options, cwd: repoRoot });
     const base = d.resolveBase({ integrationBranch: 'main', execImpl });
     const changed = d.changedFiles({ base, execImpl, withStatus: true });
-    const where = d.gitLocations({ cwd: repoRoot });
-    const impact = d.lazyImpactContext(() => (where === null
-      ? { map: null, problem: 'map-unlocatable', headTests: [], driftTests: [], mapPath: null, mapCommit: null, mapDirty: null, distance: null, fetch: null }
-      : d.loadImpactContext({ decl, ...where, runFetch: d.runFetch })));
+    // The context verify.js --scope builds, from the same helper, so the two select alike.
+    const impact = d.checkoutImpactContext({ decl, cwd: repoRoot, runFetch: d.runFetch, locate: d.gitLocations, load: d.loadImpactContext });
     const sel = d.selectScope({ decl, files: changed.files, stamp: null, statuses: changed.statuses || null, impact, fallbackBase: base });
     const imp = sel.impact;
     if (!imp) return none('the declaration has no impact block', base);
@@ -405,22 +403,14 @@ function realSelectionDeps(repoRoot) {
   const verifyLib = (name) => require(`../plugin/bin/lib/verify/${name}`);
   const { readDeclaration } = verifyLib('declaration');
   const { resolveBase, changedFiles } = verifyLib('changed-files');
-  const { gitLocations, loadImpactContext, lazyImpactContext } = verifyLib('impact');
+  const { gitLocations, loadImpactContext, checkoutImpactContext, runImpactFetch } = verifyLib('impact');
   const { selectScope } = verifyLib('scope');
   return {
-    readDeclaration, resolveBase, changedFiles, gitLocations, loadImpactContext, lazyImpactContext, selectScope,
-    // The same bounded, output-ignored fetch as `runImpactFetch` in plugin/bin/verify.js, and its result shape.
-    runFetch: (command) => {
+    readDeclaration, resolveBase, changedFiles, gitLocations, loadImpactContext, checkoutImpactContext, selectScope,
+    // verify.js's bounded fetch, announced first: a fetch can take up to 120 s of a plain run.
+    runFetch: (command, cwd) => {
       console.error('run-tests.js: fetching the test-impact map (up to 120 s)');
-      const startedMs = Date.now();
-      const r = spawnSync(command, { shell: true, cwd: repoRoot, timeout: 120000, stdio: 'ignore', windowsHide: true });
-      return {
-        ran: true,
-        exitCode: typeof r.status === 'number' ? r.status : null,
-        durationMs: Date.now() - startedMs,
-        timedOut: Boolean(r.error && r.error.code === 'ETIMEDOUT'),
-        signal: r.signal || null,
-      };
+      return runImpactFetch(command, cwd);
     },
     exists: (entry) => {
       try {
@@ -452,6 +442,15 @@ function planDefaultRun({ files, reason, base, total, otherSuites = [] }) {
   };
 }
 
+// The bare run's selection step (#5319): prints the plan's one line, exits 0 when nothing is selected
+// (before the caller takes any slot), and returns the subset to run, or null for the whole suite.
+function applyDefaultSelection({ select, log, exit }) {
+  const plan = planDefaultRun(select());
+  log(plan.line);
+  if (plan.action === 'none') exit(0);
+  return plan.action === 'subset' ? plan.files : null;
+}
+
 // Returns a new env with git's auto-maintenance switched off, via env-carried config (appended after
 // any inherited GIT_CONFIG_* so it never clobbers them). Never mutates `env`; a malformed inherited
 // GIT_CONFIG_COUNT is left alone rather than guessed at.
@@ -472,7 +471,7 @@ module.exports = {
   listTestFiles, buildTestArgs, resolveConcurrency, resolveSlots, subsetFallbackReason, WIN32_COMMAND_LINE_MAX,
   isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, createRunRoot, sweepStaleRoots, readFileList, slotLane,
   parseShard, readDurations, assignShards, extractRunFlags, durationsPartialPath, finishRecording,
-  resolveRunMode, selectChangedTests, planDefaultRun,
+  resolveRunMode, selectChangedTests, realSelectionDeps, planDefaultRun, applyDefaultSelection,
   DURATIONS_FILE, PER_FILE_OVERHEAD_MS, DEFAULT_FILE_MS,
 };
 
@@ -502,10 +501,11 @@ if (require.main === module) {
   // run never queues and the subset and whole-suite lanes are chosen after it.
   let impactSubset = null;
   if (mode === 'select') {
-    const plan = planDefaultRun(selectChangedTests({ repoRoot: REPO_ROOT }));
-    console.error(plan.line);
-    if (plan.action === 'none') process.exit(0);
-    if (plan.action === 'subset') impactSubset = plan.files;
+    impactSubset = applyDefaultSelection({
+      select: () => selectChangedTests({ repoRoot: REPO_ROOT }),
+      log: (line) => console.error(line),
+      exit: (code) => process.exit(code),
+    });
   }
   if (impactSubset !== null) {
     roots = null;

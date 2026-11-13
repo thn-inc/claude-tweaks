@@ -8,9 +8,11 @@ const assert = require('node:assert');
 const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
-const { extractRunFlags, resolveRunMode, selectChangedTests, planDefaultRun } = require(path.join(ROOT, 'tools', 'run-tests.js'));
+const {
+  extractRunFlags, resolveRunMode, selectChangedTests, planDefaultRun, applyDefaultSelection, realSelectionDeps,
+} = require(path.join(ROOT, 'tools', 'run-tests.js'));
 const { readDeclaration } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'verify', 'declaration.js'));
-const { lazyImpactContext, encodeImpactMap, parseImpactMap } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'verify', 'impact.js'));
+const { checkoutImpactContext, encodeImpactMap, parseImpactMap } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'verify', 'impact.js'));
 const { selectScope } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'verify', 'scope.js'));
 
 const REAL = readDeclaration(path.join(ROOT, '.claude-tweaks', 'verify-scope.json'));
@@ -33,7 +35,7 @@ function fakeDeps(over = {}) {
     changedFiles: () => ({ files: ['plugin/bin/x.js'], statuses: { 'plugin/bin/x.js': 'M' } }),
     gitLocations: () => ({ repoRoot: ROOT, commonDir: ROOT }),
     loadImpactContext: () => ({ map, problem: null, headTests: ['tests/one.test.js', 'tests/two.test.js'], driftTests: [] }),
-    lazyImpactContext,
+    checkoutImpactContext,
     selectScope,
     runFetch: () => ({ ran: false }),
     exists: () => true,
@@ -84,6 +86,58 @@ test('AC3.1: a map problem runs the whole suite and names it', () => {
   const r = select({ loadImpactContext: () => ({ map: null, problem: 'map-missing', headTests: [], driftTests: [] }) });
   assert.strictEqual(r.files, null);
   assert.strictEqual(r.reason, 'map-missing');
+});
+
+test('AC3.1: a checkout git cannot locate runs the whole suite and names map-unlocatable', () => {
+  const r = select({ gitLocations: () => null });
+  assert.strictEqual(r.files, null);
+  assert.match(r.reason, /map-unlocatable/);
+});
+
+test('a map fetch is announced on stderr before it runs', () => {
+  const { runFetch } = realSelectionDeps(ROOT);
+  const lines = [];
+  const original = console.error;
+  console.error = (line) => lines.push(line);
+  let result;
+  try {
+    result = runFetch(`"${process.execPath}" -e "process.exit(0)"`, ROOT);
+  } finally {
+    console.error = original;
+  }
+  assert.deepStrictEqual(lines, ['run-tests.js: fetching the test-impact map (up to 120 s)']);
+  assert.strictEqual(result.ran, true);
+  assert.strictEqual(result.exitCode, 0);
+});
+
+test('AC1.3 / AC4.2: the bare-run wiring exits 0 on no selection, hands a subset on, and runs whole otherwise', () => {
+  const run = (selection) => {
+    const log = [];
+    let exitCode = null;
+    const exit = (code) => {
+      exitCode = code;
+      throw new Error('exited');
+    };
+    let subset;
+    try {
+      subset = applyDefaultSelection({ select: () => selection, log: (line) => log.push(line), exit });
+    } catch (err) {
+      if (err.message !== 'exited') throw err;
+    }
+    return { log, exitCode, subset };
+  };
+  const none = run({ files: [], reason: null, base: BASE, total: 2, otherSuites: [] });
+  assert.strictEqual(none.exitCode, 0);
+  assert.strictEqual(none.log.length, 1);
+  assert.match(none.log[0], /no test file selected/);
+  const subset = run({ files: ['tests/one.test.js'], reason: null, base: BASE, total: 2, otherSuites: [] });
+  assert.strictEqual(subset.exitCode, null);
+  assert.deepStrictEqual(subset.subset, ['tests/one.test.js']);
+  assert.match(subset.log[0], /impact-selected 1 of 2/);
+  const whole = run({ files: null, reason: 'map-missing', base: BASE, total: 0, otherSuites: [] });
+  assert.strictEqual(whole.exitCode, null);
+  assert.strictEqual(whole.subset, null);
+  assert.match(whole.log[0], /running the whole suite — impact selection could not narrow it: map-missing/);
 });
 
 test('AC3.2: a path a full-suite rule matches runs the whole suite', () => {

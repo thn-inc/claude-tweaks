@@ -19,7 +19,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn, spawnSync, execFileSync } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 
 const { parseArgs, UsageError, USAGE } = require('./lib/verify/args');
 const { runChecks, runOne, stopTrees } = require('./lib/verify/run');
@@ -49,7 +49,7 @@ const {
   changedFiles, resolveBase, usableAnchor, mergeNarrowing, ChangedFilesError,
 } = require('./lib/verify/changed-files');
 const { selectScope } = require('./lib/verify/scope');
-const { gitLocations, loadImpactContext, lazyImpactContext } = require('./lib/verify/impact');
+const { checkoutImpactContext } = require('./lib/verify/impact');
 const { substituteFile, describePath } = require('./lib/verify/file-template');
 const { fetchCiVerdict } = require('./lib/verify/ci-source');
 const { resolveTarget, writeStagedItem } = require('./lib/stage-item/write');
@@ -106,21 +106,6 @@ function enrich(result) {
     // only when a count-stamp comparison is actually in play (main() gates
     // this on countStampPath before it reaches composeReport).
     ...(result.name === 'tests' && counts === null ? { countsFamily: family } : {}),
-  };
-}
-
-// #4024: impact.fetch downloads a ready map (never a trace) — at most once per
-// run, bounded, its output ignored (never piped, so no maxBuffer can kill a
-// verbose fetch); the report keeps its exit code, time, timeout and signal.
-function runImpactFetch(command, cwd) {
-  const startedMs = Date.now();
-  const r = spawnSync(command, { shell: true, cwd, timeout: 120000, stdio: 'ignore', windowsHide: true });
-  return {
-    ran: true,
-    exitCode: typeof r.status === 'number' ? r.status : null,
-    durationMs: Date.now() - startedMs,
-    timedOut: Boolean(r.error && r.error.code === 'ETIMEDOUT'),
-    signal: r.signal || null,
   };
 }
 
@@ -675,12 +660,7 @@ async function main() {
       // so the suite runs its full command. With no usable stamp anchor, the
       // --integration-branch merge-base anchors; an explicit --base never does
       // (it runs full, as before).
-      if (decl.impact) {
-        const where = gitLocations({ cwd: parsed.cwd || process.cwd() });
-        impactCtx = lazyImpactContext(() => (where === null
-          ? { map: null, problem: 'map-unlocatable', headTests: [], driftTests: [], mapPath: null, mapCommit: null, mapDirty: null, distance: null, fetch: null }
-          : loadImpactContext({ decl, ...where, runFetch: (command) => runImpactFetch(command, where.repoRoot) })));
-      }
+      if (decl.impact) impactCtx = checkoutImpactContext({ decl, cwd: parsed.cwd || process.cwd() });
       const fallbackBase = !anchorSha && parsed.integrationBranch && !parsed.base ? resolvedBase : null;
       const select = (impact) => selectScope({ decl, files, stamp: anchorSha ? priorStamp : null, statuses, impact, fallbackBase });
       sel = select(impactCtx);
