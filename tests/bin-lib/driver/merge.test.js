@@ -1204,6 +1204,30 @@ test('watch: an interrupt during a sleep makes no further call', async () => {
   assert.equal(h.sleeps.length, 1);
   assert.equal(h.calls.length, seenAtInterrupt, 'no gh, node or file call after the interrupted sleep');
   assert.equal(h.watchClock[h.watchClock.length - 1], null);
+  assert.ok(!h.events.some((e) => e.step === 'merge-watch'), 'an interrupted watch emits nothing after the handler');
+  assert.equal(r.ciWaitMs > 0, true, 'the time is still summed on the result');
+  noMerge(h);
+});
+
+test('watch: a throw inside the watch emits a fail merge-watch event carrying ciWaitMs and is unclassified', async () => {
+  const h = watchHarness({ verification: WAIT, prState: PENDING });
+  const realSleep = h.deps.sleep;
+  let n = 0;
+  h.deps.sleep = async (ms) => {
+    await realSleep(ms);
+    n += 1;
+    if (n === 2) throw new Error('sleep rejected');
+  };
+  const r = await merge(CTX, h.deps);
+  assert.equal(r.outcome, 'pending-review');
+  assert.equal(r.reason, 'unclassified');
+  assert.match(r.detail, /^merge-watch: /);
+  const ev = h.events.filter((e) => e.step === 'merge-watch');
+  assert.equal(ev.length, 1);
+  assert.equal(ev[0].status, 'fail');
+  assert.ok(ev[0].extra.ciWaitMs >= 2 * MERGE_WATCH_POLL_MS);
+  assert.equal(ev[0].extra.ciWaitMs, r.ciWaitMs);
+  assert.equal(h.watchClock[h.watchClock.length - 1], null);
   noMerge(h);
 });
 

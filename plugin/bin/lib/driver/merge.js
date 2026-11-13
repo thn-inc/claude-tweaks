@@ -607,7 +607,7 @@ async function pollUntilDecided(s, started) {
     await deps.sleep(MERGE_WATCH_POLL_MS);
     if (deps.interrupted()) {
       // run.js's handler already wrote the final line: no further call, and no hand-off.
-      return { step: { stop: 'unclassified', detail: 'watch: interrupted' }, polls };
+      return { step: { stop: 'unclassified', detail: 'watch: interrupted' }, interrupted: true, polls };
     }
     polls += 1;
     const g = gateReads(s, 'checks-read-failed');
@@ -653,15 +653,26 @@ async function watch(s) {
   const started = deps.now();
   deps.watchClock(started);
   let out;
+  let failure = null;
   let waited = 0;
   try {
     out = await pollUntilDecided(s, started);
+  } catch (err) {
+    failure = { err };
   } finally {
     waited = Math.max(0, deps.now() - started);
     s.ciWaitMs += waited;
     deps.watchClock(null);
   }
   const extra = { ciWaitMs: waited };
+  if (failure) {
+    // The time still counts as CI wait on the final line, which sums events: report it, then rethrow
+    // so merge's own catch classifies the step.
+    emit(s, 'merge-watch', 'fail', `watch threw: ${errorText(failure.err)}`, extra);
+    throw failure.err;
+  }
+  // An interrupt was already reported by run.js's handler: nothing further is emitted or driven.
+  if (out.interrupted) return out.step;
   if (out.step) {
     emit(s, 'merge-watch', 'stop', `${out.step.stop}: ${out.step.detail || ''} (after ${out.polls} polls)`.trim(), extra);
     return { stop: out.step.stop, detail: neutralize(String(out.step.detail || '')) };
