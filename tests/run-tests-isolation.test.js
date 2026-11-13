@@ -784,6 +784,27 @@ test('run-tests.js holds the suite slot for the runner pid while the suite runs,
   });
 });
 
+// #5297: the maintenance-off entries must reach the spawned `node --test` tree, appended after the
+// caller's own GIT_CONFIG_* entry — the unit tests of gitFixtureConfigEnv cannot see the wiring.
+test('run-tests.js gives the suite maintenance-off git config after a caller-exported entry', async () => {
+  await withSandbox(...PROBE, (sb) => {
+    const env = { ...sb.env };
+    for (const k of Object.keys(env)) if (k.startsWith('GIT_CONFIG_')) delete env[k];
+    Object.assign(env, { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.autocrlf', GIT_CONFIG_VALUE_0: 'true' });
+    const result = runRunner(sb, { env, timeout: 120000 });
+    assert.strictEqual(result.status, 0, result.stdout + result.stderr);
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(sb.probeOut, 'utf8')).git, {
+      GIT_CONFIG_COUNT: '3',
+      GIT_CONFIG_KEY_0: 'core.autocrlf',
+      GIT_CONFIG_VALUE_0: 'true',
+      GIT_CONFIG_KEY_1: 'maintenance.auto',
+      GIT_CONFIG_VALUE_1: 'false',
+      GIT_CONFIG_KEY_2: 'gc.auto',
+      GIT_CONFIG_VALUE_2: '0',
+    });
+  });
+});
+
 test('a failing suite makes run-tests.js exit non-zero, and it still frees its slot and run root', async () => {
   await withSandbox('fail-probe.fixture.js', 'fail.test.js', (sb) => {
     const result = runRunner(sb, { timeout: 120000 });
