@@ -62,6 +62,11 @@ test('AC3.4: normalizeTitle keeps first line, drops period and keyword-reference
 test('#5269 AC1: normalizeTitle keeps a leading closing keyword with no reference after it', () => {
   assert.equal(normalizeTitle('Fix the loop'), 'Fix the loop');
   assert.equal(normalizeTitle('Resolves the race in the sink'), 'Resolves the race in the sink');
+  // A reference later in the sentence is removed, but the keyword stays: only the token right
+  // after the keyword decides whether it goes.
+  assert.equal(normalizeTitle('Fix the loop for #12'), 'Fix the loop for');
+  assert.equal(neutralize('Fixes the race, see owner/repo#9'), 'Fixes the race, see');
+  assert.equal(neutralize('Resolve the sink, then https://github.com/o/r/issues/5 later'), 'Resolve the sink, then later');
 });
 
 test('#5269 AC2: a closing keyword before a reference loses both', () => {
