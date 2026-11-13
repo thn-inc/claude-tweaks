@@ -5,6 +5,7 @@ files:
   - plugin/bin/lib/driver/steps.js
   - plugin/bin/lib/driver/events.js
   - plugin/bin/lib/driver/settle.js
+  - plugin/bin/lib/driver/review.js
 ---
 
 # Drive a Named Record to a Draft PR
@@ -47,6 +48,8 @@ files:
   - The worker event carries `usage`, `turns` and `denials`, plus `spendOverrun` when the spend ceiling was crossed. A denial is information, never a reason to relaunch.
   - A stop here ends the record `express-escalated`. Such stops include a worker `fail`, `timeout` or `cannot-complete`, no changed files, red tests, a refused scope file (one that is not a regular file, or whose bytes differ from `origin/{integration branch}`'s copy, line endings aside), an `escalate` verdict, a HEAD mismatch, a push that failed without reaching origin, or leftover state from an earlier run (a worktree, branch, remote branch or run directory named in the detail).
   - The scoped tests run with the worker's allow-listed environment, not the driver's, and an empty `gh` config directory, so the driver's credentials do not reach worker-authored test code. A project test command that needs a variable outside that list (`JAVA_HOME`, `NODE_OPTIONS`, `CI`, a proxy variable) fails red at this step and the record escalates. This is best-effort containment, not a sandbox.
+  - The `review` step runs only when `express-driver-review` says so. Under its default, `beyond-express`, it never runs today, because eligibility already refuses every record it would review; set it to `on` to see it. When it does not run, it writes no line at all, so the event stream reads exactly as it did before the step existed. When it runs, its one line carries `returned`, `reproduced` and `discarded` counts, the reviewer's `usage`, `denials`, `costUsd` and `turns`. The final line's cost covers the two implementer launches only.
+  - A reviewer finding is kept only when its evidence test file fails a real `node --test` run. Every other outcome discards it: a passing run, a load failure, no test case, a timeout, output the rule cannot place, or a path the path rules refuse, such as one holding a glob character or naming an existing file. Confirmed findings get one fix round: a second implementer launch, the evidence rewritten from the reviewer's bytes, a commit, the scoped tests, a direct run of each kept test, then a second `check`. The push compares HEAD with that second `check`'s `head`. Any failure in the round stops the record with the finding named, `express-escalated` except a failed `check` call, which ends it `blocked` as above. No third implementer ever starts.
   - A failed claim, or a run directory that cannot be minted, ends the record `blocked`. So does a failed `express-lane.js check` call (a non-zero exit, or no check envelope), even though nothing is pushed yet: no escalation line landed, so the full pipeline would not know the record left the lane.
   - The commit subject keeps the worker title's leading verb: `Fix the loop` stays `Fix the loop`. A closing keyword (`close`, `fix`, `resolve` and their forms, with an optional colon) is dropped only when the word after it carries an issue reference marker (`#N`, `owner/repo#N`, or an `/issues/N` or `/pull/N` path). Every `#N`, `owner/repo#N`, `GH-N` and `http(s)` issue or PR URL is dropped either way, so `Add the loop. Resolves #9.` becomes `Add the loop`. A `www.` issue or PR URL, a bare `github.com/` one, and an `owner/repo/issues/N` or `/pull/N` path that GitHub links go too. Worker text in an event line, and every settle step's detail, passes the same filter, so the summary line's changed-file list is filtered like a commit subject: a path with an `owner/repo/issues/N`-shaped segment (`lib/api/pull/3.js`) is shortened (`.js`).
 - **Red flags:**
@@ -55,6 +58,8 @@ files:
   - A commit subject, PR body or event line that still carries a `www.` issue URL or an `owner/repo/issues/N` path, which would backlink the issue.
   - A worker transcript with a `gh`, `git commit` or `git push` call.
   - A leftover branch silently reused.
+  - A `review` line under the default policy, or a pushed record whose reviewer finding never had a red evidence run.
+  - A third implementer launch, or an evidence file left in the worktree after its finding was discarded.
 
 ### 4. Get the draft PR — after the push
 - **URL:** the `pr`, `record-pr`, `set-config` and `summary` event lines; the draft PR on GitHub
@@ -105,3 +110,4 @@ files:
 - Updated during the build of #5277 (run `2026-11-13T000412-spec-5277`). Step 5 now covers the CI step's settle window, the GitHub Actions run requirement and the `no-ci` rule with its exemptions. Step 6 now covers what an interrupt inside the window reports.
 - Updated during the build of #5269 (run `2026-11-13T000404-record-5269`): step 3 now says the commit subject keeps its leading verb, and that a closing keyword goes only when an issue reference follows it.
 - Updated during the build of #5352 (run `2026-11-13T093429-spec-5352`). Step 3 now says that `www.` and bare `github.com/` issue URLs and host-free `owner/repo/issues/N` paths are dropped too, and that the summary's changed-file list is filtered the same way. A matching red flag was added.
+- Updated during the build of #5222 (run `2026-11-13T093607-spec-5222`). Step 3 now covers the `review` step: when the policy runs it, what its line carries, the red-test rule and the one fix round, with matching red flags.
