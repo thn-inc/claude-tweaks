@@ -9,6 +9,8 @@ files:
   - plugin/skills/_shared/pipeline-run-dir.md
   - plugin/bin/post-merge-run.js
   - plugin/bin/lib/reconcile/post-merge.js
+  - plugin/bin/lib/hooks/teardown-run.js
+  - plugin/skills/wrap-up/cleanup-procedures-execution.md
   - tests/wrap-up-merge-mode-conformance.test.js
 ---
 
@@ -119,8 +121,14 @@ When it cannot merge, the outcome is `pending-review` with the PR ready and a st
   5. The claim release.
   6. Step 4.2's reconcile, last.
 - **Should feel:** finished. Nothing is left for a later session to tidy.
-- **Should understand:** the reconcile runs last because its archive check moves the run dir, and a `decisions.md` line written after it would recreate it.
-- **Red flags:** a run dir re-created under `.claude-tweaks/pipelines/` after archival, or a worktree removed without the containment proof.
+- **Should understand:**
+  - The reconcile runs last because its archive check moves the run dir, and a `decisions.md` line written after it would recreate it.
+  - **A run parked by another session.** A dispatch-parked run is recorded by the session that parked it, so a later session's `teardown-run --merged` acts on it only when run-liveness reads that owner `dead`. It then prints `owner: session {owner} is not running (run-liveness: dead) — merged teardown proceeds from this session`, unlocks the dead session's orphaned worktree lock, and removes the worktree, local branch and remote branch (#5293).
+  - **A live or unknown owner.** If the owner reads `live` (for example, it died within the last 10 minutes) or `unknown`, the call removes nothing and prints `state: refused — run recorded by another session (run-liveness: {verdict}); …`. The report relays that as `cleanup: teardown-run failed — {line}`, and the outcome stays `merged`. A later `/claude-tweaks:wrap-up #{n} merge` re-run finishes once the owner reads `dead`. A persistent `unknown` leaves it to the reconciler's reap.
+- **Red flags:**
+  - A run dir re-created under `.claude-tweaks/pipelines/` after archival, or a worktree removed without the containment proof.
+  - A later-session merge whose parking session is long dead that still ends with the worktree, local branch and remote branch in place (#5293's incident: PRs #4948 and #4963).
+  - A teardown that removes anything while the owning session reads `live` or `unknown`.
 
 ## Origin
 - Created during build of #3784. The record adds `wrap-up/merge-mode.md` and the `merge` routing token, an attended Conflict-path branch, and the `consoleAutoResolve` summary row. It was observed on #3712's run (PR #3749): the summary recommended a resume that would have re-parked the PR, and the human's "go ahead" had to be honored by running the merge procedure by hand.
@@ -130,3 +138,4 @@ When it cannot merge, the outcome is `pending-review` with the PR ready and a st
 - Updated during wrap-up of #4692, after its review's fix wave. Step 3 now covers the `in-flight` result, a failure line per failed step, a CLI crash or unparseable output, and why a failure in closes that already ran is not retried.
 - Updated during wrap-up of #4798 (run `2026-11-03T201056-record-4798`). Step 3 now covers a failed marker write that names the parents Step 4.0b left open, and a step-wide Step 4.0b skip with nothing left to close, which reads `ran` with a note instead of a failure.
 - Updated during build of #4797 (run `2026-11-04T064811-record-4797`). Step 3's **In flight.** case now names all three takeovers a re-run makes (a dead holder at once, a live holder idle past `CLAIM_MAX_IDLE_MS`, an ownerless claim past the 10-minute stale window) and states the GitHub changes this invocation's own pass made before another pass took its claim over.
+- Updated during build of #5293 (run `2026-11-13T003948-spec-5293`). Step 6 now covers a run parked by another session: `teardown-run --merged` tears it down from the later session when run-liveness reads the owner `dead`, unlocking its orphaned worktree lock first, and otherwise refuses with the verdict named. Observed on PRs #4948 and #4963, where both merges landed but each left its worktree, local branch, remote branch and run directory behind.
