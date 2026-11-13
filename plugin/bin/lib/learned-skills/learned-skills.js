@@ -25,7 +25,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { writeFileAtomic } = require('../atomic-write');
+const { writeFileAtomic, renameWithRetry } = require('../atomic-write');
 const { splitNul } = require('../git-z');
 const { formatEntry, appendEntries } = require('../log-decision/append');
 const { lstatType, canonicalRealpath, resolveTarget, isAncestorOrSelf } = require('../path-guard');
@@ -78,7 +78,8 @@ const realDeps = {
   writeFile: (p, data) => writeFileAtomic(p, data),
   writeFileExclusive: (p, data) => fs.writeFileSync(p, data, { flag: 'wx' }),
   unlink: (p) => fs.unlinkSync(p),
-  rename: (from, to) => fs.renameSync(from, to),
+  // Retried on Windows' transient EPERM/EACCES/EBUSY rename races, as atomic writes are.
+  rename: (from, to) => renameWithRetry(from, to),
   rmdir: (p) => fs.rmdirSync(p),
   lstatType,
 };
@@ -227,8 +228,9 @@ function writeStage({ runDir, worktree, entry }, deps) {
 }
 
 // The Staging-time gate: { gate: 'ok' | 'unvalidated' | 'description-only', note }. With
-// mayDegrade false a twice-failed check returns { gate: null } and leaves the full diff in place,
-// for a caller whose staged file is the only copy of the patch outside the working tree.
+// mayDegrade false a failed check returns { gate: null } without rewriting the file (no recompose,
+// no description-only), for a caller whose staged file is the only copy of the patch outside the
+// working tree.
 function gateStage(st, entry, worktree, deps, { mayDegrade = true } = {}) {
   const check = () => {
     try { deps.git(['-C', worktree, 'apply', '--check', st.stagePath]); return { ok: true }; } catch (err) {
@@ -238,13 +240,14 @@ function gateStage(st, entry, worktree, deps, { mayDegrade = true } = {}) {
   let probe = check();
   if (probe.ok) return { gate: 'ok', note: '' };
   try { deps.readFile(st.stagePath); } catch { return { gate: 'unvalidated', note: probe.text }; }
+  // No rewrite of a file that is the caller's only copy (it was just confirmed to hold these bytes).
+  if (!mayDegrade) return { gate: null, note: probe.text };
   // Recompose once from the patch file the diff was captured to.
   let again = toBuffer(entry.patch);
   if (entry.patchFile) { try { again = deps.readFile(entry.patchFile); } catch { /* keep the bytes in hand */ } }
   deps.writeFile(st.stagePath, st.compose(again));
   probe = check();
   if (probe.ok) return { gate: 'ok', note: '' };
-  if (!mayDegrade) return { gate: null, note: probe.text };
   deps.writeFile(st.stagePath, Buffer.from(st.preamble, 'utf8'));
   return { gate: 'description-only', note: probe.text };
 }
@@ -253,10 +256,24 @@ function gateStage(st, entry, worktree, deps, { mayDegrade = true } = {}) {
 //   STAGED {time} — Skills row: skill update for {skill}/SKILL.md ({section}) could not ride a
 //   learned-skills PR ({reason}); staged instead. Reversibility: high (stage path: staged/…).
 // A gate degrade logs staged-patch.md's own line for it instead (finding = `{skill}/SKILL.md ({section})`).
+// Two capture-only outcomes keep the diff where staged-patch.md would degrade or validate it, because
+// the staged file is then the edit's only copy: 'check-failed-kept' (the check ran and failed twice,
+// and the working tree could not take the edit back) and 'not-checked' (the gate never ran: the
+// working tree could not be reset to HEAD for it).
 function logStaged({ runDir, deps, target, summary, reason, gate, note, stageName }) {
   const finding = `${skillLabel(target)} (${summary})`;
   let line;
-  if (gate === 'description-only') {
+  if (gate === 'check-failed-kept' || gate === 'not-checked') {
+    line = formatEntry({
+      status: 'STAGED',
+      now: deps.now(),
+      step: STEP,
+      text: gate === 'check-failed-kept'
+        ? `${finding} — patch failed \`git apply --check\` at staging (${note}); kept the diff at staged/${stageName}, not description-only: it is the edit's only copy and the working tree could not take it back`
+        : `${finding} — gate not run (${note}); kept the diff unchecked at staged/${stageName}: it is the edit's only copy`,
+      reversibility: 'high',
+    });
+  } else if (gate === 'description-only') {
     line = formatEntry({
       status: 'STAGED',
       now: deps.now(),
@@ -402,6 +419,7 @@ function capture({ runDir, worktree, mergeBase, target, summary }, overrides = {
   if (plan.mode === 'stuck') {
     throw new StagingFailure(`capture failed: ${plan.reason}; ${bothInTree(existing)}`, { restored: true, holder: 'tree' });
   }
+  if (plan.mode === 'unread') unreadJoin(cx, plan);
   cx.id = plan.mode === 'join' ? existing.id : allocateId(manifest, cx.patchDir, deps);
 
   // 4. A confirmed copy outside the tree, before the tree is touched.
@@ -453,10 +471,33 @@ function joinPlan(cx) {
     return { mode: 'join', C: toBuffer(git(diffArgs(cx.rel), { encoding: 'buffer' })), full };
   } catch (err) {
     // Undo the join, so the tree holds this edit alone again.
-    try { git(['apply', '-R', '--', existing.patch]); } catch { /* judged below */ }
+    let undone = false;
+    try { git(['apply', '-R', '--', existing.patch]); undone = true; } catch { /* judged below */ }
     if (treeHolds(cx, cx.start)) return separate(firstStderrLine(err));
-    return { mode: 'stuck', reason: `could not read the joined diff (${firstStderrLine(err)}) and could not undo the join` };
+    // Both edits, confirmed by a read of the tree.
+    if (full !== null && treeHolds(cx, full)) {
+      return { mode: 'stuck', reason: `could not read the joined diff (${firstStderrLine(err)}) and could not undo the join` };
+    }
+    // The tree could not be read back, so neither claim can be made about it.
+    return {
+      mode: 'unread', undone,
+      reason: `could not read the joined diff (${firstStderrLine(err)}); the join was ${undone ? '' : 'not '}undone, and the working tree could not be read back to confirm what it holds`,
+    };
   }
+}
+
+// joinPlan's 'unread' outcome: the edit's bytes are in hand, so they go to a confirmed copy that is
+// named. Only when that copy fails too is the tree named, and then only as unconfirmed.
+function unreadJoin(cx, plan) {
+  const { existing } = cx;
+  const id = allocateId(cx.manifest, cx.patchDir, cx.deps);
+  const copy = writeConfirmedCopy(cx.patchDir, `${id}.pending`, cx.D, cx.deps);
+  const earlier = `the earlier captured patch ${existing.id} (${existing.patch}) is unchanged and stays captured`;
+  const tree = plan.undone ? 'the working tree should hold it alone again' : 'the working tree may hold it joined with the earlier edit';
+  if (copy.path) {
+    throw new StagingFailure(`capture failed: ${plan.reason}; this edit is held in ${copy.path} (${tree}, unconfirmed); ${earlier}`, { restored: false, holder: copy.path });
+  }
+  throw new StagingFailure(`capture failed: ${plan.reason}; no copy of the edit could be written either (${firstStderrLine(copy.err)}) — ${tree}, but in the working tree it is unconfirmed; ${earlier}`, { restored: plan.undone, holder: plan.undone ? 'tree' : null });
 }
 
 const bothInTree = (existing) => `the edit is in the working tree together with the earlier captured patch ${existing.id} (${existing.patch}), which stays captured as well, so the earlier edit is in both (not staged) — commit the tree on the run branch`;
@@ -557,7 +598,8 @@ function fallback(cx, plan, L, failure) {
 
   // Staging cannot be the home: put this call's edit back in the tree as this call found it (the
   // state before the call, the earlier capture included), else name the confirmed copy holding it.
-  const settle = (why) => {
+  // kept: how the gate went, for the case where the staged file's full diff stays as the only copy.
+  const settle = (why, kept = { gate: 'not-checked', note: why }) => {
     const head = `${reason}; then ${why}`;
     const still = 'the edit is still in the working tree (not captured, not staged) — commit it on the run branch';
     let where = null;
@@ -581,8 +623,8 @@ function fallback(cx, plan, L, failure) {
         : `; it holds this edit together with the earlier captured patch ${existing.id} (${existing.patch}), which stays captured, so the earlier edit is in both`;
       throw new StagingFailure(`${head}; restoring the edit in the working tree failed too — it is not in the tree; recover it from ${L}${tail}`, { restored: false, holder: L });
     }
-    // The staged file holds the whole diff, ungated: it is the home.
-    if (sHolds()) return finish('staged', 'unvalidated', why);
+    // The staged file holds the whole diff: it is the home, logged with how its gate went.
+    if (sHolds()) return finish('staged', kept.gate, kept.note);
     throw new StagingFailure(`${head}; no copy of the edit could be confirmed`, { restored: false, holder: null });
   };
 
@@ -592,7 +634,11 @@ function fallback(cx, plan, L, failure) {
     if (err) return settle(`staging failed (${firstStderrLine(err)})`);
   }
   // 2. The gate needs the tree at HEAD, and the edit must leave the run branch.
-  if (!resetToHead(cx, plan)) return settle('the working tree could not be reset to HEAD, so the edit was not staged');
+  if (!resetToHead(cx, plan)) {
+    return settle('the working tree could not be reset to HEAD, so the edit was not staged', {
+      gate: 'not-checked', note: 'the working tree could not be reset to HEAD',
+    });
+  }
   if (!st) {
     const err = stage();
     if (err) return settle(`staging failed (${firstStderrLine(err)})`);
@@ -603,12 +649,27 @@ function fallback(cx, plan, L, failure) {
   try {
     g = gateStage(st, { ...entry, patchFile: exact ? L : undefined }, cx.worktree, deps, { mayDegrade: exact });
   } catch (err) {
+    // A throw comes from a rewrite of the staged file, which happens only after a failed check.
     if (lHolds()) { removeQuiet(deps, st.stagePath); st = null; }
-    return settle(`staging failed (${firstStderrLine(err)})`);
+    return settle(`staging failed (${firstStderrLine(err)})`, {
+      gate: 'check-failed-kept', note: `then recomposing it failed: ${firstStderrLine(err)}`,
+    });
   }
-  if (g.gate === 'ok' && sHolds()) return finish('staged', 'ok', '');
-  if ((g.gate === 'description-only' || g.gate === 'unvalidated') && lExact()) return finish(L, g.gate, g.note);
-  return settle(`the staged patch failed \`git apply --check\` (${g.note || 'unconfirmed'})`);
+  if (g.gate === 'ok') {
+    if (sHolds()) return finish('staged', 'ok', '');
+    removeQuiet(deps, st.stagePath);
+    st = null;
+    return settle('the staged file did not read back intact after its gate');
+  }
+  if (g.gate === 'description-only' && lExact()) {
+    // A description-only stage counts only when it reads back as the whole preamble.
+    if (fileHolds(deps, st.stagePath, Buffer.from(st.preamble, 'utf8'))) return finish(L, 'description-only', g.note);
+    removeQuiet(deps, st.stagePath);
+    st = null;
+    return settle('the description-only stage did not read back intact');
+  }
+  if (g.gate === 'unvalidated' && lExact()) return finish(L, 'unvalidated', g.note);
+  return settle(`the staged patch failed \`git apply --check\` (${g.note || 'unconfirmed'})`, { gate: 'check-failed-kept', note: g.note });
 }
 
 // An emptied directory left by deleting a new file is removed up to (never including) the worktree.
