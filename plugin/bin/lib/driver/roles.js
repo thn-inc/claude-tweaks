@@ -1,4 +1,5 @@
 'use strict';
+const path = require('node:path');
 // Worker roles for the driver's headless `claude -p` launcher: the per-role tool
 // list, the argument list the launcher composes, and the generated settings for
 // the one role that may run commands (the implementer). Pure data and builders;
@@ -180,7 +181,18 @@ function assertTestCommand(testCommand) {
   if (reason) throw new TypeError('testCommand ' + reason + ', got ' + JSON.stringify(testCommand));
 }
 
-function implementerSettings({ testCommand, platform } = {}) {
+function assertReadPaths(readPaths, platform) {
+  if (!Array.isArray(readPaths)) throw new TypeError('readPaths must be an array, got ' + JSON.stringify(readPaths));
+  const isAbsolute = platform === 'win32' ? path.win32.isAbsolute : path.posix.isAbsolute;
+  for (const entry of readPaths) {
+    if (typeof entry !== 'string' || !isAbsolute(entry)) {
+      throw new TypeError('readPaths entries must be absolute path strings, got ' + JSON.stringify(entry));
+    }
+  }
+}
+
+function implementerSettings({ testCommand, platform, readPaths = [] } = {}) {
+  assertReadPaths(readPaths, platform);
   assertTestCommand(testCommand);
   const sandboxed = SANDBOX_PROBED_PLATFORMS.includes(platform);
   const allow = ['Read', 'Edit', 'Write'];
@@ -193,12 +205,14 @@ function implementerSettings({ testCommand, platform } = {}) {
   const deny = ['Bash(gh *)', 'Bash(git push *)', 'Bash(git commit *)', 'Bash(git add *)', 'Bash(curl *)', 'Bash(wget *)'];
   const settings = { permissions: { defaultMode: 'dontAsk', allow, deny } };
   if (sandboxed) {
+    settings.permissions.blockReadsOutsideWorkingDirectories = true;
     settings.sandbox = {
       enabled: true,
       autoAllowBashIfSandboxed: false,
       allowUnsandboxedCommands: false,
       failIfUnavailable: true,
       network: { allowedDomains: [], strictAllowlist: true },
+      filesystem: { allowRead: readPaths.slice() },
     };
   }
   return settings;

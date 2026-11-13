@@ -8,7 +8,7 @@ const { ROLES, RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, com
 const ALLOW_SANDBOXED = ['Read', 'Edit', 'Write', 'Bash(node --test *)', 'Bash(git status *)', 'Bash(git diff *)', 'Bash(git log *)', 'Bash(git show *)', 'Bash(git ls-files *)'];
 const ALLOW_EDIT_ONLY = ['Read', 'Edit', 'Write'];
 const DENY = ['Bash(gh *)', 'Bash(git push *)', 'Bash(git commit *)', 'Bash(git add *)', 'Bash(curl *)', 'Bash(wget *)'];
-const SANDBOX = { enabled: true, autoAllowBashIfSandboxed: false, allowUnsandboxedCommands: false, failIfUnavailable: true, network: { allowedDomains: [], strictAllowlist: true } };
+const SANDBOX = { enabled: true, autoAllowBashIfSandboxed: false, allowUnsandboxedCommands: false, failIfUnavailable: true, network: { allowedDomains: [], strictAllowlist: true }, filesystem: { allowRead: [] } };
 
 test('AC2: implementer settings on a sandbox-probed platform pin defaultMode and the exact allow and deny lists', () => {
   const s = implementerSettings({ testCommand: 'node --test', platform: 'darwin' });
@@ -27,6 +27,55 @@ test('AC2: the test command is a parameter, and no other interpreter rule exists
 test('AC12: on a sandbox-probed platform the sandbox block is present with these exact keys', () => {
   assert.deepStrictEqual(SANDBOX_PROBED_PLATFORMS, ['darwin']);
   assert.deepStrictEqual(implementerSettings({ testCommand: 'node --test', platform: 'darwin' }).sandbox, SANDBOX);
+});
+
+test('AC1.1: on darwin the read block is on and allowRead deep-equals readPaths', () => {
+  const s = implementerSettings({ testCommand: 'node --test', platform: 'darwin', readPaths: ['/opt/tool'] });
+  assert.strictEqual(s.permissions.blockReadsOutsideWorkingDirectories, true);
+  assert.deepStrictEqual(s.sandbox.filesystem.allowRead, ['/opt/tool']);
+});
+
+test('AC1.2: on linux and win32 neither key is present', () => {
+  for (const [platform, readPaths] of [['linux', ['/opt/tool']], ['win32', ['C:\\tool']]]) {
+    const s = implementerSettings({ testCommand: 'node --test', platform, readPaths });
+    assert.ok(!('blockReadsOutsideWorkingDirectories' in s.permissions), platform);
+    assert.ok(!('sandbox' in s), platform);
+  }
+});
+
+test('AC2.1: a readPaths entry that is not a string or not absolute throws a TypeError naming it', () => {
+  for (const bad of [5, null, 'relative/dir', '', './x']) {
+    assert.throws(
+      () => implementerSettings({ testCommand: 'node --test', platform: 'darwin', readPaths: ['/opt/ok', bad] }),
+      (e) => e instanceof TypeError && e.message.includes(JSON.stringify(bad)),
+      JSON.stringify(bad),
+    );
+  }
+  assert.throws(() => implementerSettings({ testCommand: 'node --test', platform: 'darwin', readPaths: '/opt/tool' }), (e) => e instanceof TypeError && /readPaths/.test(e.message));
+});
+
+test('AC2.1: validation runs on every platform, and win32 judges absoluteness by win32 rules', () => {
+  assert.throws(() => implementerSettings({ testCommand: 'node --test', platform: 'linux', readPaths: ['relative'] }), TypeError);
+  assert.throws(() => implementerSettings({ testCommand: 'node --test', platform: 'win32', readPaths: ['opt/tool'] }), TypeError);
+  assert.doesNotThrow(() => implementerSettings({ testCommand: 'node --test', platform: 'win32', readPaths: ['C:\\tool'] }));
+  assert.throws(() => implementerSettings({ testCommand: 'node --test', platform: 'linux', readPaths: 'x' }), /readPaths/);
+});
+
+test('AC2.2: an empty readPaths keeps the block on and re-opens nothing', () => {
+  const empty = implementerSettings({ testCommand: 'node --test', platform: 'darwin', readPaths: [] });
+  assert.strictEqual(empty.permissions.blockReadsOutsideWorkingDirectories, true);
+  assert.deepStrictEqual(empty.sandbox.filesystem.allowRead, []);
+  assert.deepStrictEqual(implementerSettings({ testCommand: 'node --test', platform: 'darwin' }), empty);
+});
+
+test('AC5.1: no role settings or arguments carry additionalDirectories or --add-dir', () => {
+  for (const platform of ['darwin', 'linux', 'win32']) {
+    assert.ok(!JSON.stringify(implementerSettings({ testCommand: 'node --test', platform, readPaths: ['/opt/tool'] })).includes('additionalDirectories'), platform);
+    for (const role of Object.keys(ROLES)) {
+      const args = composeArgs({ role, settingsFile: '/s/settings.json', schema: RESULT_SCHEMA, platform });
+      assert.ok(!args.includes('--add-dir'), role + ' ' + platform);
+    }
+  }
 });
 
 test('AC12: off the sandbox-probed platforms the implementer has no Bash at all', () => {
@@ -94,6 +143,7 @@ test('Minor: the exported tables are frozen, and the builders return fresh objec
   const b = implementerSettings({ testCommand: 'node --test', platform: 'darwin' });
   assert.notStrictEqual(a.permissions.allow, b.permissions.allow);
   assert.ok(!Object.isFrozen(a.permissions.allow));
+  assert.notStrictEqual(a.sandbox.filesystem.allowRead, b.sandbox.filesystem.allowRead);
   const args = composeArgs({ role: 'reviewer', schema: RESULT_SCHEMA, platform: 'darwin' });
   assert.ok(!Object.isFrozen(args));
 });
