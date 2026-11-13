@@ -160,9 +160,10 @@ test('AC7: outcomeFor maps every stop class', () => {
 });
 
 test('constants: step vocabulary, camelCase map and frozen shapes', () => {
-  assert.equal(STEP_NAMES.length, 17);
+  assert.equal(STEP_NAMES.length, 18);
   assert.equal(STEP_NAMES[0], 'policy');
   assert.equal(STEP_NAMES[STEP_NAMES.length - 1], 'ci');
+  assert.equal(STEP_NAMES.indexOf('review'), STEP_NAMES.indexOf('check') + 1, 'the reviewer sits right after check');
   assert.equal(FINAL_STEP, 'final');
   assert.equal(STEP.runDir, 'run-dir');
   assert.equal(STEP.recordPr, 'record-pr');
@@ -235,6 +236,7 @@ test('sink: an appendFile that always throws never aborts, stdout keeps every li
 // (merged over every fake last).
 // Clock: deps.now advances 1 ms per read; deps.sleep resolves at once and advances it.
 
+const EVIDENCE_TAP = (name) => readText(path.join(__dirname, 'fixtures', 'review-evidence', `${name}.tap`));
 const FIXTURE_ROOTS = [];
 test.after(() => { for (const root of FIXTURE_ROOTS) fs.rmSync(root, { recursive: true, force: true }); });
 function tmpDir(prefix) {
@@ -261,7 +263,7 @@ const POLICY = {
 };
 
 function issueFor(n) {
-  return { number: n, title: `record ${n}`, body: `Body of #${n}.`, labels: [{ name: 'risk:low' }], state: 'OPEN', comments: [] };
+  return { number: n, title: `record ${n}`, body: `Body of #${n}.`, labels: [{ name: 'risk:low' }, { name: 'size:low' }], state: 'OPEN', comments: [] };
 }
 
 function on(kind, ...prefix) {
@@ -298,7 +300,7 @@ const checkProceed = (over = {}) => ({
   bounds: { withinBounds: true, violations: [], implLines: 3, changedFiles: ['a.js'] }, ...over,
 });
 
-function defaultScript(over) {
+function defaultScript(over, fx) {
   const policy = { ...POLICY, ...(over.policy || {}) };
   return [
     // The claim, run-dir and worktree steps' happy path: a claimed record, a minted dir named
@@ -321,15 +323,20 @@ function defaultScript(over) {
     [onGit('rev-parse'), exitOne],
     [onGit('ls-remote'), ''],
     [onGit('fetch'), ''],
-    [onGit('worktree', 'add'), ''],
+    [onGit('worktree', 'add'), () => { fx.committed = false; fx.dirty = ''; fx.files.clear(); return ''; }],
     [onGit('merge'), ''],
     [onGit('hash-object'), `${SCOPE_SHA}\n`],
     [on('node', /hooks\.js$/, 'record-worktree'), (c) => ({ code: 0, stderr: '', stdout: `claude-tweaks: worktree recorded for ${path.basename(c.args[3])}\n` })],
     // The worker and commit steps' happy path: a finished worker, one changed file, a commit.
+    // The reviewer (role 'reviewer') finds nothing by default; over.reviewer is merged over its envelope.
+    [(c) => c.kind === 'worker' && c.args[0].role === 'reviewer', (c) => ({ ...ENVELOPE, result: { findings: [] }, ...pick(over.reviewer, c) })],
     [on('worker'), (c) => ({ ...ENVELOPE, ...pick(over.worker, c) })],
-    [onGit('--no-optional-locks', 'status'), ' M a.js\0'],
+    // Before the commit the worker's file is changed; after it the tree holds only the evidence files the review step wrote.
+    [onGit('--no-optional-locks', 'status'), (c) => (fx.committed ? fx.written(c.args[1]) + fx.dirty : ' M a.js\0')],
+    [onGit('--no-optional-locks', 'diff'), ''],
+    [onGit('check-ignore'), exitOne],
     [onGit('--literal-pathspecs', 'add'), ''],
-    [onGit('commit'), ''],
+    [onGit('commit'), () => { fx.committed = true; return ''; }],
     // The test, check and push steps' happy path: green tests, a check that proceeds with
     // HEAD_SHA, a HEAD that is that sha, a push that lands.
     [on('node', /verify\.js$/), { code: 0, stdout: '', stderr: '' }],
@@ -347,6 +354,7 @@ function defaultScript(over) {
     [onGit('worktree', 'list'), ''],
     [onGit('worktree', 'remove'), ''],
     [onGit('branch', '-D'), ''],
+    [(c) => c.kind === 'readFile' && fx.taps.has(c.args[0]), (c) => fx.taps.get(c.args[0])],
     [on('readFile'), () => { throw Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' }); }],
     // The PR, record-pr, set-config, summary and ci steps' happy path: a draft PR #9, a
     // recorded run, a config write, a green CI read.
@@ -376,7 +384,15 @@ function harness(over = {}) {
   const files = {};
   const signals = [];
   const state = { probes: 0, clock: NOW };
-  const script = [...(over.script || []), ...defaultScript(over)];
+  // The review step's file system: the evidence files it wrote (abs paths) and the TAP each evidence run left.
+  const fx = {
+    committed: false,
+    files: new Set(),
+    taps: new Map(),
+    dirty: '',
+    written: (wt) => [...fx.files].map((abs) => `?? ${path.relative(wt, abs).split(path.sep).join('/')}\0`).join(''),
+  };
+  const script = [...(over.script || []), ...defaultScript(over, fx)];
   function dispatch(kind, args, cwd, env, timeout, extra = {}) {
     const call = { kind, args, cwd, env, timeout, ...extra };
     calls.push(call);
@@ -413,6 +429,21 @@ function harness(over = {}) {
     writeFile: (p, s) => { record('writeFile', [p]); files[p] = s; },
     appendFile: (p, s) => { record('appendFile', [p]); files[p] = (files[p] || '') + s; },
     mkdirSync: (p, o) => { record('mkdirSync', [p, o]); },
+    // The review step's seams, each recorded. The runner's reply is { code, signal?, tap? }: tap is what
+    // the evidence run writes to its --test-reporter-destination.
+    writeFileExclusive: (p, s) => { record('writeFileExclusive', [p, s]); fx.files.add(p); },
+    rmFile: (p) => { record('rmFile', [p]); fx.files.delete(p); },
+    rmdir: (p) => { record('rmdir', [p]); },
+    canonicalRealpath: (p) => p,
+    execPath: '/node',
+    timers: { setTimeout: (fn) => setImmediate(fn), clearTimeout: (t) => clearImmediate(t) },
+    runner: (call) => {
+      const reply = dispatch('runner', [call]);
+      const dest = (call.args || []).find((a) => a.startsWith('--test-reporter-destination='));
+      if (reply.dirty) fx.dirty = reply.dirty;
+      if (dest && reply.tap !== undefined) fx.taps.set(dest.slice('--test-reporter-destination='.length), reply.tap);
+      return { pid: 4343, kill() {}, exited: Promise.resolve({ signal: null, stdout: '', stderr: '', ...reply }) };
+    },
     remoteUrl: () => (over.remoteUrl === undefined ? REMOTE : pick(over.remoteUrl)),
     ghAvailable: () => { state.probes += 1; return over.ghAvailable === undefined ? true : over.ghAvailable; },
     gitAvailable: () => { state.probes += 1; return over.gitAvailable === undefined ? true : over.gitAvailable; },
@@ -431,7 +462,7 @@ function harness(over = {}) {
   const lines = () => out.join('').split('\n').filter(Boolean).map((l) => JSON.parse(l));
   const writes = () => calls.filter((c) => ['writeFile', 'appendFile', 'mkdirSync', 'resolveRunDir'].includes(c.kind));
   return {
-    deps, calls, out, err, files, signals, lines, writes,
+    deps, calls, out, err, files, signals, lines, writes, fx,
     get probes() { return state.probes; },
   };
 }
@@ -612,7 +643,7 @@ test('admission reads blockers and linked PRs from the shared repo and passes th
   assert.deepEqual(h.calls.filter((c) => c.kind === 'ghBatch').map((c) => c.args.at(-1)), ['query=blockers', 'query=linked']);
   assert.equal(h.calls.filter((c) => c.kind === 'gh' && c.args[0] === 'api').length, 0);
   assert.deepEqual(h.calls.find((c) => c.kind === 'admission').args[0], {
-    number: 7, state: 'OPEN', labels: [{ name: 'risk:low' }],
+    number: 7, state: 'OPEN', labels: issueFor(7).labels,
     openBlockerRefs: openBlockerRefs(entry), openLinkedPRs: [12], routing: 'on', driverEscalated: false,
   });
   assert.equal(h.lines().at(-1).outcome, 'pending-review');
@@ -765,7 +796,8 @@ test('every step emits one event line with the core fields; the final line carri
   const h = harness();
   assert.equal(await run(['7'], h.deps), 0);
   const lines = h.lines();
-  assert.deepEqual(lines.map((l) => l.step), [...STEPS.map((s) => s.name), FINAL_STEP]);
+  // The review step does not apply to a size:low record inside the express bounds: it emits no line.
+  assert.deepEqual(lines.map((l) => l.step), [...STEPS.map((s) => s.name).filter((n) => n !== STEP.review), FINAL_STEP]);
   for (const l of lines) {
     assert.deepEqual(Object.keys(l).slice(0, 6), ['ts', 'run', 'record', 'step', 'status', 'ms']);
     assert.ok(!Number.isNaN(Date.parse(l.ts)));
@@ -2390,6 +2422,13 @@ const SCENARIOS = {
   'record-pr fails': { script: [recordPrReply('claude-tweaks: usage: x — PR not recorded')] },
   'set-config fails': { script: [[on('node', /set-config\.js$/), { code: 2, stdout: '', stderr: 'bad' }]] },
   'summary fails': { script: [[logsSummary, { code: 1, stdout: '', stderr: 'no' }]] },
+  'review fail': { policy: { 'express-driver-review': 'on' }, reviewer: { status: 'fail', reason: 'exit', result: null, detail: 'x' } },
+  // Two findings (the first is not a finding at all); the second's evidence run leaves a tracked file modified.
+  'review tree changed': {
+    policy: { 'express-driver-review': 'on' },
+    reviewer: { result: { findings: [{ path: 'x' }, { path: 'src/a.js', line: 1, claim: 'Subtracts.', evidence: { path: 'tests/new/r1.test.js', content: 'test' } }] } },
+    script: [[on('runner'), () => ({ code: 1, tap: EVIDENCE_TAP('assert-fail'), dirty: ' M other.js\0' })]],
+  },
   'ci red': { script: [prChecksReply('red')] },
   'ci green': {},
 };
@@ -2635,6 +2674,7 @@ test('AC7.1, AC7.7: outcome and stop class for every stop (table-driven)', async
     ['worker fail', 'express-escalated', 'pre-push'], ['worker timeout', 'express-escalated', 'pre-push'], ['no changed files', 'express-escalated', 'pre-push'],
     ['commit fails', 'express-escalated', 'pre-push'], ['red tests', 'express-escalated', 'pre-push'], ['scope symlink', 'express-escalated', 'pre-push'],
     ['check escalate', 'express-escalated', 'pre-push'], ['head mismatch', 'express-escalated', 'pre-push'], ['push fails', 'express-escalated', 'pre-push'],
+    ['review fail', 'express-escalated', 'pre-push'], ['review tree changed', 'express-escalated', 'pre-push'],
     ['check exit 1', 'blocked', 'blocked'], ['pr create fails twice', 'blocked', 'blocked'], ['record-pr fails', 'blocked', 'blocked'], ['set-config fails', 'blocked', 'blocked'],
     ['summary fails', 'pending-review', 'none'], ['ci red', 'pending-review', 'none'], ['ci green', 'pending-review', 'none'],
   ];
@@ -2647,6 +2687,168 @@ test('AC7.1, AC7.7: outcome and stop class for every stop (table-driven)', async
     assert.equal(f.outcome, outcome, name);
     assert.equal(f.stop.class, cls, name);
   }
+});
+
+// --- the review step (#5222, Task 6) -------------------------------------------------
+//
+// The reviewer's own envelope is over.reviewer; each evidence run's reply is a `runner` script entry
+// ({ code, tap, dirty? }: dirty is a porcelain record the tree holds after the run). A record inside
+// the express bounds (size:low, few Key Files) starts no reviewer.
+const { EXPRESS_MAX_KEY_FILES } = require(path.join(LIB, 'express', 'eligibility.js'));
+const EVIDENCE_CONTENT = "const test = require('node:test');\nconst assert = require('node:assert');\ntest('adds', () => { assert.strictEqual(1 - 1, 2); });\n";
+const evidenceFinding = (i, over = {}) => ({
+  path: 'src/a.js', line: i + 1, claim: `Finding ${i} subtracts.`, evidence: { path: `tests/new/r${i}.test.js`, content: EVIDENCE_CONTENT }, ...over,
+});
+const reviewerEnvelope = (findings, over = {}) => ({ result: { findings }, ...over });
+const sizeIssue = (size) => [on('gh', 'issue', 'view'), (c) => JSON.stringify({ ...issueFor(Number(c.args.at(-1))), labels: [{ name: 'risk:low' }, ...(size ? [{ name: `size:${size}` }] : [])] })];
+const rolesOf = (h) => h.calls.filter((c) => c.kind === 'worker').map((c) => c.args[0].role);
+const reviewLines = (h) => h.lines().filter((l) => l.step === STEP.review);
+const evidenceRuns = (h) => h.calls.filter((c) => c.kind === 'runner');
+const REPRODUCED = [on('runner'), () => ({ code: 1, tap: EVIDENCE_TAP('assert-fail') })];
+const PASSED = [on('runner'), () => ({ code: 0, tap: EVIDENCE_TAP('pass') })];
+
+test('AC13: with the default and a record inside the express bounds, the review step starts no worker and emits no line', async () => {
+  const h = harness({ eligibility: { keyFiles: Array.from({ length: EXPRESS_MAX_KEY_FILES }, (_, i) => `f${i}.js`) } });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.deepEqual(rolesOf(h), ['implementer']);
+  assert.equal(evidenceRuns(h).length, 0);
+  assert.deepEqual(h.lines().map((l) => l.step), [...STEP_NAMES.filter((n) => n !== STEP.review), FINAL_STEP]);
+  assert.equal(lastLine(h).outcome, 'pending-review');
+});
+
+test('AC13: with the default, size:medium, no size label, or one Key File too many starts the reviewer', async () => {
+  const tooMany = { eligibility: { keyFiles: Array.from({ length: EXPRESS_MAX_KEY_FILES + 1 }, (_, i) => `f${i}.js`) } };
+  const cases = [['size:medium', { script: [sizeIssue('medium')] }], ['no size label', { script: [sizeIssue(null)] }], ['Key File count', tooMany]];
+  for (const [name, over] of cases) {
+    const h = harness(over);
+    assert.equal(await run(['#7'], h.deps), 0, name);
+    assert.deepEqual(rolesOf(h), ['implementer', 'reviewer'], name);
+    const lines = h.lines().map((l) => l.step);
+    assert.equal(lines.filter((s) => s === STEP.review).length, 1, name);
+    assert.equal(lines.indexOf(STEP.review), lines.indexOf(STEP.check) + 1, name);
+    assert.equal(lines.indexOf(STEP.push), lines.indexOf(STEP.review) + 1, name);
+    assert.deepEqual([reviewLines(h)[0].status, reviewLines(h)[0].detail], ['ok', '0 reproduced of 0'], name);
+    assert.equal(lastLine(h).outcome, 'pending-review', name);
+  }
+});
+
+test('AC13: with express-driver-review off no reviewer starts even for size:medium; with on a size:low record starts it', async () => {
+  const off = harness({ policy: { 'express-driver-review': 'off' }, script: [sizeIssue('medium')] });
+  await run(['#7'], off.deps);
+  assert.deepEqual(rolesOf(off), ['implementer']);
+  assert.equal(reviewLines(off).length, 0);
+  const forced = harness({ policy: { 'express-driver-review': 'on' } });
+  await run(['#7'], forced.deps);
+  assert.deepEqual(rolesOf(forced), ['implementer', 'reviewer']);
+  assert.equal(reviewLines(forced).length, 1);
+});
+
+test('AC12: the review event line carries returned, reproduced, discarded, usage and denials', async () => {
+  const h = harness({ policy: { 'express-driver-review': 'on' }, reviewer: reviewerEnvelope([], { usage: { input_tokens: 4 }, denials: [{ tool_name: 'Bash', tool_input: { command: 'ls' } }] }) });
+  await run(['#7'], h.deps);
+  const [line] = reviewLines(h);
+  assert.deepEqual([line.returned, line.reproduced, line.discarded], [0, 0, 0]);
+  assert.deepEqual(line.usage, { input_tokens: 4 });
+  assert.ok(Array.isArray(line.denials) && line.denials.length === 1 && line.denials[0].tool_name === 'Bash');
+  const plain = harness({ policy: { 'express-driver-review': 'on' } });
+  await run(['#7'], plain.deps);
+  assert.ok(Array.isArray(reviewLines(plain)[0].denials) && 'usage' in reviewLines(plain)[0]);
+});
+
+test('AC12: a review step that stops still carries its counts', async () => {
+  const h = harness(SCENARIOS['review tree changed']);
+  await run(['#7'], h.deps);
+  const [line] = reviewLines(h);
+  assert.equal(line.status, 'fail');
+  assert.equal(line.returned, 2);
+  assert.ok('usage' in line && Array.isArray(line.denials));
+  assert.equal(lastLine(h).stop.step, STEP.review);
+});
+
+test('AC12: a confirmed finding stops at the placeholder, with its counts, until the fix round exists', async () => {
+  const h = harness({ policy: { 'express-driver-review': 'on' }, reviewer: reviewerEnvelope([evidenceFinding(0)]), script: [REPRODUCED] });
+  await run(['#7'], h.deps);
+  const [line] = reviewLines(h);
+  assert.deepEqual([line.status, line.detail, line.returned, line.reproduced, line.discarded], ['stop', 'fix round not built', 1, 1, 0]);
+  assert.equal(pushCalls(h).length, 0);
+  assert.deepEqual([lastLine(h).stop.class, lastLine(h).outcome], ['pre-push', 'express-escalated']);
+});
+
+test('AC12: a discarded finding is counted, its evidence file removed, and the record goes on to the push', async () => {
+  const h = harness({ policy: { 'express-driver-review': 'on' }, reviewer: reviewerEnvelope([evidenceFinding(0), { path: 'x' }]), script: [PASSED] });
+  await run(['#7'], h.deps);
+  const [line] = reviewLines(h);
+  assert.deepEqual([line.status, line.returned, line.reproduced, line.discarded, line.detail], ['ok', 2, 0, 2, '0 reproduced of 2']);
+  assert.equal(h.fx.files.size, 0, 'no evidence file is left');
+  assert.equal(h.calls.filter((c) => c.kind === 'writeFileExclusive').length, 1);
+  assert.equal(h.calls.filter((c) => c.kind === 'rmFile').length, 1);
+  assert.equal(pushCalls(h).length, 1);
+  assert.equal(lastLine(h).outcome, 'pending-review');
+});
+
+test('AC2: a reviewer envelope fail stops before the push', async () => {
+  const h = harness(SCENARIOS['review fail']);
+  await run(['#7'], h.deps);
+  assert.equal(pushCalls(h).length, 0);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.stop.class, final.outcome], [STEP.review, 'pre-push', 'express-escalated']);
+  assert.equal(reviewLines(h)[0].status, 'fail');
+  assert.equal(settleLines(h)[0].step, 'settle-escalate', 'the pre-push settle row ran');
+});
+
+test('review: an interrupt during the reviewer launch is reported at once, as for the implementer', async () => {
+  const h = harness({
+    policy: { 'express-driver-review': 'on' },
+    script: [[(c) => c.kind === 'worker' && c.args[0].role === 'reviewer', () => { h.signals[0]('SIGTERM'); return { ...ENVELOPE, result: { findings: [] } }; }]],
+  });
+  await run(['#7'], h.deps);
+  const lines = h.lines();
+  assert.deepEqual(lines.slice(-2).map((l) => [l.step, l.status]), [[STEP.review, 'fail'], [FINAL_STEP, 'fail']]);
+  assert.equal(lines.at(-2).detail, 'interrupted by SIGTERM');
+  assert.equal(lines.at(-1).stop.class, 'pre-push');
+  assert.equal(lines.at(-1).settle, 'interrupted');
+  assert.deepEqual(h.calls.filter((c) => c.kind === 'terminate').map((c) => c.args), [['SIGTERM']]);
+  assert.equal(pushCalls(h).length, 0);
+});
+
+test('realDeps: the review step\'s seams create exclusively, remove one entry and resolve canonically', () => {
+  const { realDeps } = require(path.join(LIB, 'driver', 'run'));
+  const dir = tmpDir('drive-run-seams-');
+  const file = path.join(dir, 'e.test.js');
+  realDeps.writeFileExclusive(file, 'one');
+  assert.throws(() => realDeps.writeFileExclusive(file, 'two'), { code: 'EEXIST' });
+  assert.equal(fs.readFileSync(file, 'utf8'), 'one');
+  const sub = path.join(dir, 'sub');
+  fs.mkdirSync(sub);
+  fs.writeFileSync(path.join(sub, 'f'), '');
+  assert.throws(() => realDeps.rmdir(sub), (e) => ['ENOTEMPTY', 'EEXIST'].includes(e.code));
+  assert.throws(() => realDeps.rmFile(sub));
+  realDeps.rmFile(path.join(sub, 'f'));
+  realDeps.rmdir(sub);
+  realDeps.rmFile(file);
+  assert.deepEqual(fs.readdirSync(dir), []);
+  assert.equal(realDeps.canonicalRealpath(dir), dir);
+  assert.equal(realDeps.canonicalRealpath(path.join(dir, 'missing')), null);
+  assert.equal(realDeps.execPath, process.execPath);
+  assert.equal(typeof realDeps.timers.setTimeout, 'function');
+  const timer = realDeps.timers.setTimeout(() => {}, 100000);
+  realDeps.timers.clearTimeout(timer);
+});
+
+test('skip: a skipped step emits no line and the loop goes on', async () => {
+  const ran = [];
+  const table = [
+    defineStep('one', STOP_CLASSES.PRE_PUSH, () => { ran.push('one'); return { status: 'ok', skip: true, detail: 'never printed' }; }),
+    defineStep('two', STOP_CLASSES.PRE_PUSH, () => { ran.push('two'); return { status: 'ok' }; }),
+  ];
+  const h = harness();
+  const final = await driveRecord(7, newShared(), h.deps, table);
+  assert.deepEqual(ran, ['one', 'two']);
+  assert.deepEqual(h.lines().map((l) => l.step), ['two', FINAL_STEP]);
+  assert.equal(final.outcome, 'pending-review');
+  // Only the boolean true is a skip.
+  const loose = defineStep('x', STOP_CLASSES.PRE_PUSH, () => ({ status: 'ok', skip: 'yes' }));
+  assert.equal((await loose.run({}, {})).skip, false);
 });
 
 test('summary: the line is logged from a file with the changed files, test mode and PR; a failure never halts', async () => {

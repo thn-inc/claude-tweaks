@@ -877,6 +877,20 @@ async function reviewPass(ctx, deps, { testCommand, isRunArtifact } = {}) {
   return pass(null, summary());
 }
 
+// The step (see the header): the wiring object carries what steps.js owns (the steps the fix round
+// reuses, the implementer launch, the test command and run-artifact test), so this module never
+// requires steps.js. Off, it is a skip: no line, no worker. A stop carries the pass's counts.
+// A confirmed finding awaits the fix round: until it exists the record stops.
+async function reviewRecord(ctx, deps, wiring) {
+  const { testCommand, isRunArtifact } = wiring;
+  const need = reviewRequired({ issue: ctx.issue, keyFiles: ctx.keyFiles, policyValue: ctx.shared.policy['express-driver-review'].value });
+  if (!need.on) return { status: 'ok', skip: true };
+  const pass = await reviewPass(ctx, deps, { testCommand, isRunArtifact });
+  if (pass.result) return pass.result;
+  if (pass.confirmed.length === 0) return { status: 'ok', detail: pass.detail, extra: pass.extra };
+  return { status: 'stop', detail: 'fix round not built', extra: pass.extra };
+}
+
 module.exports = {
   MAX_FINDINGS,
   EVIDENCE_PATH_MAX_CHARS,
@@ -901,4 +915,5 @@ module.exports = {
   normalizeEventText,
   buildReviewerPrompt,
   reviewPass,
+  reviewRecord,
 };

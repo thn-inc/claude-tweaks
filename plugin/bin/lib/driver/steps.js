@@ -9,7 +9,7 @@
 //
 //   defineStep(name, stopClass, fn) -> { name, run }
 //     fn(ctx, deps) -> Promise<StepResult>, where
-//     StepResult = { status: 'ok'|'stop'|'fail', detail?, halt?, stopClass?, reason?, extra? }
+//     StepResult = { status: 'ok'|'stop'|'fail', detail?, halt?, stopClass?, reason?, extra?, skip? }
 //   - `stop` means a gate said no; `fail` means a call failed.
 //   - `halt` defaults to `status !== 'ok'`; a step that must never end the record (a
 //     failed summary entry) returns `halt: false`.
@@ -17,6 +17,7 @@
 //   - `reason` defaults to the status; it is the final line's `stop.reason`, except that
 //     run.js's finalEvent maps a pre-push stop's reason through settle's toEscalationReason.
 //   - `extra` fields merge into the step's event line (never over its core fields).
+//   - `skip: true` (an ok result of a step that did not apply) emits no event line and does not halt.
 //   - A throw from fn is `{ status: 'fail', detail: err.message }` with the step's class.
 //
 // The test step runs worker-authored code (the worker's test files) through verify.js. Containment
@@ -62,6 +63,7 @@ const { openBlockerRefs } = require('../issues/record-dependencies');
 const { hasDriverEscalationMarker } = require('./settle');
 const { sensitivePathsOf } = require('../express/policy');
 const { formatTimestamp } = require('../hooks/run-dir-resolve');
+const { reviewRecord } = require('./review');
 const { claimLogText, CLAIM_LOG_SECTION, CLAIM_LOG_STEP } = require('../log-decision/claim-log');
 
 // The worker's test command and the full verify invocation's `--cmd tests=…` value.
@@ -117,6 +119,7 @@ function defineStep(name, stopClass, fn) {
       stopClass: result.stopClass || stopClass,
       reason: result.reason || result.status,
       extra: result.extra || {},
+      skip: result.skip === true,
     };
   }
   return Object.freeze({ name, run: runStep });
@@ -455,7 +458,8 @@ function workerPrompt(ctx, { minutes, dollars, maxLines }) {
 // the worker's handle shared.activeWorker for the launch, so run.js's signal handler can
 // forward an interrupt to the worker's process group (headless-worker-launch, "What the
 // consumer owes").
-const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => {
+// The body is shared with the review step's fix round, which appends `extraPrompt` to the same prompt.
+async function runImplementer(ctx, deps, { extraPrompt = '' } = {}) {
   const { shared } = ctx;
   const minutesKey = 'express-driver-wall-clock-minutes';
   const dollarsKey = 'express-driver-spend-ceiling-dollars';
@@ -490,7 +494,7 @@ const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async (ctx, de
     envelope = await deps.launchWorker({
       role: 'implementer',
       cwd: ctx.wt,
-      prompt: workerPrompt(ctx, { minutes, dollars, maxLines }),
+      prompt: workerPrompt(ctx, { minutes, dollars, maxLines }) + extraPrompt,
       ceilings: { wallClockMs: minutes * 60000, spendCeiling: dollars },
       testCommand: TEST_COMMAND,
       settingsDir,
@@ -536,7 +540,8 @@ const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async (ctx, de
     return { status: 'fail', detail: `worker result status is neither done nor cannot-complete: ${neutralize(String(result && result.status))}`, extra };
   }
   return { status: 'ok', extra };
-});
+}
+const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, (ctx, deps) => runImplementer(ctx, deps, {}));
 
 // Run artifacts the worktree may hold; never committed.
 const PIPELINES_DIR = '.claude-tweaks/pipelines';
@@ -1017,9 +1022,20 @@ const ciStep = defineStep(STEP.ci, STOP_CLASSES.NONE, async (ctx, deps) => {
   return { status: 'ok', detail: state, extra: { ciWaitMs: Math.max(0, deps.now() - started) } };
 });
 
+// The reviewer step (#5222, review.js): between check and push. `isRunArtifact` reaches it through this
+// wiring only. Its skip result (reviewRequired off) emits no event line.
+const reviewStep = defineStep(STEP.review, STOP_CLASSES.PRE_PUSH, (ctx, deps) => reviewRecord(ctx, deps, {
+  commit: commitStep,
+  test: testStep,
+  check: checkStep,
+  launchImplementer: (c, d, extraPrompt) => runImplementer(c, d, { extraPrompt }),
+  testCommand: TEST_COMMAND,
+  isRunArtifact,
+}));
+
 const STEPS = Object.freeze([
   policyStep, fetchStep, eligibilityStep, admissionStep, claimStep, runDirStep, worktreeStep, workerStep, commitStep,
-  testStep, checkStep, pushStep, prStep, recordPrStep, setConfigStep, summaryStep, ciStep,
+  testStep, checkStep, reviewStep, pushStep, prStep, recordPrStep, setConfigStep, summaryStep, ciStep,
 ]);
 
 module.exports = {

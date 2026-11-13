@@ -23,7 +23,7 @@ const { CLOSING_KEYWORD_ALTERNATION } = require('../issue-branch-tracking');
 
 const STEP_NAMES = Object.freeze([
   'policy', 'fetch', 'eligibility', 'admission', 'claim', 'run-dir', 'worktree', 'worker',
-  'commit', 'test', 'check', 'push', 'pr', 'record-pr', 'set-config', 'summary', 'ci',
+  'commit', 'test', 'check', 'review', 'push', 'pr', 'record-pr', 'set-config', 'summary', 'ci',
 ]);
 const FINAL_STEP = 'final';
 
