@@ -36,11 +36,11 @@
 //   - back-to-back scheme URLs (`https://g/o/r/issues/5`*9000): with a `(?<![A-Za-z0-9])` boundary
 //     each URL follows a digit and was refused until the previous removal left a space, peeling one
 //     URL per loop pass (200k chars ~10.5s); the boundary is now letters-only.
+//   - `h#1`*5k collapsing to `h`*5k: only a time budget for many bare-reference removals; it
+//     catches none of the mutants above and has no pre-fix time.
 // Dropped as no longer testing anything: the widened-host case (`www.` + 200k `a`, `_https://` +
 // 200k `a`, `github.com/` + `a/`*100k) belonged to the `www.`/`github.com` URL alternatives, which
 // no longer exist.
-//   - `h#1`*5k collapsing to `h`*5k: only a time budget for many bare-reference removals; it
-//     catches none of the mutants above and has no pre-fix time.
 // Lives outside tests/ for the same reason the other perf/ files do: a wall-clock assertion flakes
 // under sibling-suite load.
 'use strict';

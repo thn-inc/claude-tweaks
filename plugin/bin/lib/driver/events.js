@@ -135,14 +135,15 @@ function removeReferencesToFixedPoint(text) {
 
 function neutralize(text) {
   if (typeof text !== 'string') return '';
-  // The comment opener is escaped after the loop: a removal can splice `<!` and `--` together.
-  return removeReferencesToFixedPoint(removeKeywordsBeforeReferences(text.replace(/[\r\n\t]+/g, ' '), '')
+  const firstPass = removeKeywordsBeforeReferences(text.replace(/[\r\n\t]+/g, ' '), '')
     .replace(URL_REF, '')
     .replace(GH_REF, '')
     .replace(/`/g, "'")
     .replace(/@/g, '@\u200B')
     .replace(QUALIFIED_REF, '')
-    .replace(BARE_REF, ''))
+    .replace(BARE_REF, '');
+  // The comment opener is escaped after the loop: a removal can splice `<!` and `--` together.
+  return removeReferencesToFixedPoint(firstPass)
     .replace(COMMENT_OPENER, '<\\!--')
     .replace(/\s+/g, ' ')
     .trim();

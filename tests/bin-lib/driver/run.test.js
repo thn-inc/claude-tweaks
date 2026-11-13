@@ -19,6 +19,10 @@ const {
 } = require(path.join(LIB, 'driver', 'steps'));
 const { openBlockerRefs } = require(path.join(LIB, 'issues', 'record-dependencies'));
 const { formatTimestamp } = require(path.join(LIB, 'hooks', 'run-dir-resolve'));
+const { CLOSING_KEYWORD_ALTERNATION } = require(path.join(LIB, 'issue-branch-tracking'));
+// Matches a closing keyword still followed by a reference (or a bare github.com path) in neutralized output.
+const LEFTOVER_KEYWORD_REFERENCE = new RegExp(
+  `\\b${CLOSING_KEYWORD_ALTERNATION}\\s*:?\\s*(?:#\\d|\\S*\\/\\S*#\\d|\\S*github\\.com\\/)`, 'i');
 
 test('AC14.3: neutralize strips closing refs, mentions, fences, newlines', () => {
   const s = neutralize('Fixes #12 and closes owner/repo#3\n@alice ```rm```');
@@ -96,15 +100,13 @@ test('#5269 AC2: a reference rebuilt by a removal is removed too', () => {
   // Back-to-back qualified references both go.
   assert.equal(neutralize('a/b#1x/y#2'), '');
   assert.equal(neutralize('x a/b#12c/d#3 y'), 'x y');
-  const { CLOSING_KEYWORD_ALTERNATION } = require(path.join(LIB, 'issue-branch-tracking'));
-  const leftover = new RegExp(`\\b${CLOSING_KEYWORD_ALTERNATION}\\s*:?\\s*(?:#\\d|\\S*\\/\\S*#\\d|\\S*github\\.com\\/)`, 'i');
   for (const s of [
     'Add the loop, Closes h#7ttps://github.com/o/r/issues/5 now',
     'Add Closes h#7ttps://github.com/o/r/issues/5 now',
     'Add Closes h#7ttps://github.com/o/r/pull/5 now',
     'Clo#5ses h#7ttps://github.com/o/r/issues/5 now',
     'Add Closes h#7ttps://g/o/r/issues/5 now',
-  ]) assert.doesNotMatch(neutralize(s), leftover, s);
+  ]) assert.doesNotMatch(neutralize(s), LEFTOVER_KEYWORD_REFERENCE, s);
 });
 
 test('#5269 AC4: a comment opener spliced together by a removal is still escaped', () => {
@@ -116,20 +118,18 @@ test('#5269 AC4: a comment opener spliced together by a removal is still escaped
 });
 
 test('#5269 AC3: no keyword is ever left followed by a reference, in any case or shape', () => {
-  const { CLOSING_KEYWORD_ALTERNATION } = require(path.join(LIB, 'issue-branch-tracking'));
   const keywords = ['close', 'closes', 'closed', 'fix', 'fixes', 'fixed', 'resolve', 'resolves', 'resolved'];
   const refs = ['#12', 'owner/repo#3', 'https://github.com/o/r/issues/5', 'https://github.com/o/r/pull/5',
     '_https://github.com/o/r/issues/5', 'www.github.com/o/r/issues/5', 'github.com/o/r/issues/5'];
   // No empty separator: `closehttps://…` has no word boundary, under either rule (the glued
   // `closes#5` form is pinned in AC2 above).
   const separators = [' ', ':', ': ', ' : '];
-  const leftover = new RegExp(`\\b${CLOSING_KEYWORD_ALTERNATION}\\s*:?\\s*(?:#\\d|\\S*\\/\\S*#\\d|\\S*github\\.com\\/)`, 'i');
   for (const kw of keywords) {
     for (const cased of [kw, kw[0].toUpperCase() + kw.slice(1), kw.toUpperCase()]) {
       for (const ref of refs) {
         for (const sep of separators) {
           const out = neutralize(`Add ${cased}${sep}${ref} now`);
-          assert.doesNotMatch(out, leftover, JSON.stringify([cased, sep, ref, out]));
+          assert.doesNotMatch(out, LEFTOVER_KEYWORD_REFERENCE, JSON.stringify([cased, sep, ref, out]));
           // The keyword always goes; the reference goes with it unless it is a URL form that stays a
           // backlink (`www.`/bare `github.com`), and `_https://…` leaves its `_`.
           const expected = /^(?:www\.|github\.com)/.test(ref) ? `Add ${ref} now` : ref.startsWith('_') ? 'Add _ now' : 'Add now';
