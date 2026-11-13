@@ -378,6 +378,9 @@ test('AC3.4: a pre-push stop whose created says nothing was made removes nothing
   assert.deepStrictEqual(onlyBranch.calls.slice(-2), [BR_PROBE, RM_BR]);
   const onlyWt = harness({ stop: stopOf({ created: { worktree: true, branch: false } }) });
   assert.deepStrictEqual(onlyWt.calls.slice(-1), [RM_WT]);
+  for (const part of [onlyBranch, onlyWt]) {
+    assert.equal(part.files[ESC_DETAIL], escalateDetailText({ step: 'test', detail: 'red tests', removes: true }));
+  }
   const noCreated = harness({ stop: stopOf({ created: undefined }) });
   assert.ok(!noCreated.calls.some((c) => c[0] === 'git'));
 });
