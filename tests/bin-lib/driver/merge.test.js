@@ -1157,6 +1157,12 @@ test('AC5.9: a read failure during the watch is checks-read-failed and parks not
     assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'checks-read-failed', mergeCommit: null, postMerge: null }, name);
     assert.equal(h.sleeps.length, 1, name);
     assert.ok(!h.calls.some((c) => isGh('issue', 'edit')(c) || isGh('issue', 'comment')(c) || isUndo(c)), `${name}: parks nothing`);
+    // The stop the watch itself returns still reports its time: one stop event carrying ciWaitMs.
+    const stops = h.events.filter((e) => e.step === 'merge-watch');
+    assert.equal(stops.length, 1, name);
+    assert.equal(stops[0].status, 'stop', name);
+    assert.ok(stops[0].extra.ciWaitMs > 0, name);
+    assert.equal(stops[0].extra.ciWaitMs, r.ciWaitMs, name);
     noMerge(h);
   }
 });
@@ -1249,6 +1255,9 @@ test('watch: a head change mid-watch re-enters the gate once; a second change is
   assert.ok(!two.calls.some(isParkCall));
   noMerge(two);
   // The ciWaitMs of both watches is summed.
+  const watchStops = two.events.filter((e) => e.step === 'merge-watch' && e.status === 'stop');
+  assert.equal(watchStops.length, 1, 'the second watch ends in a stop event');
+  assert.ok(watchStops[0].extra.ciWaitMs > 0);
   assert.ok(tr.ciWaitMs >= 2 * MERGE_WATCH_POLL_MS);
   // A change onto a head that is not the verified one is moving-target at the re-entry's first read.
   const off = watchHarness({ verification: WAIT, prState: seq(PENDING, { ...PENDING, headRefOid: B }, { ...PENDING, headRefOid: B }) });
