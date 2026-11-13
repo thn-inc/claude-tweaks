@@ -22,7 +22,7 @@ const path = require('node:path');
 
 const STEP_NAMES = Object.freeze([
   'policy', 'fetch', 'eligibility', 'admission', 'claim', 'run-dir', 'worktree', 'worker',
-  'commit', 'test', 'check', 'push', 'pr', 'record-pr', 'set-config', 'summary', 'ci',
+  'commit', 'test', 'check', 'push', 'pr', 'record-pr', 'set-config', 'summary', 'ci', 'merge',
 ]);
 const FINAL_STEP = 'final';
 
@@ -64,6 +64,8 @@ const OUTCOMES = Object.freeze({
   EXPRESS_ESCALATED: 'express-escalated',
   BLOCKED: 'blocked',
   REFUSED: 'refused',
+  MERGED: 'merged',
+  ARMED: 'armed',
 });
 
 const STOP_CLASSES = Object.freeze({
@@ -167,7 +169,13 @@ function createEventSink({ stdout, appendFile }) {
     flush();
   }
 
-  return { emit, bindRunDir, events: () => emitted.slice(), fileError: () => firstError };
+  // Goes stdout-only (the run directory and its archive twin are both gone): held lines stay
+  // queued and are never written, and later lines are only held.
+  function unbind() {
+    eventsFile = null;
+  }
+
+  return { emit, bindRunDir, unbind, events: () => emitted.slice(), fileError: () => firstError };
 }
 
 module.exports = {

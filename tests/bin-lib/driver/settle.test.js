@@ -215,7 +215,7 @@ const noThrow = (fn) => assert.doesNotReject(fn);
 test('SETTLE_STEP_NAMES is the eight settle calls and STEP_NAMES is unchanged', async () => {
   assert.deepStrictEqual([...SETTLE_STEP_NAMES], ['settle-escalate', 'settle-comment-pr', 'settle-comment-record', 'settle-label', 'settle-release', 'settle-remove-worktree', 'settle-delete-branch', 'settle-close']);
   assert.ok(Object.isFrozen(SETTLE_STEP_NAMES));
-  assert.equal(STEP_NAMES.length, 17);
+  assert.equal(STEP_NAMES.length, 18);
   for (const rows of Object.values(SETTLE_ROWS)) for (const s of rows) assert.ok(SETTLE_STEP_NAMES.includes(s), s);
 });
 

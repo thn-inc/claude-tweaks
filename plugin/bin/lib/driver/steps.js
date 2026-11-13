@@ -1,7 +1,7 @@
 'use strict';
 // The pipeline driver's step table (drive.js, record #5218).
 //
-// Ports plugin/skills/_shared/express-lane.md Procedure steps 1–8 and 10 (step 9, merge, omitted by design); each step function names the step it ports. No test reads that prose — keep the two in step by hand.
+// Ports plugin/skills/_shared/express-lane.md Procedure steps 1–10 (step 9's merge lives in merge.js and runs as the `merge` entry); each step function names the step it ports. No test reads that prose — keep the two in step by hand.
 //
 // STEPS is a frozen, ordered array of { name, run }. run.js walks it once per record and
 // owns only event emission and stop handling between steps, so a later unit adds a step
@@ -41,6 +41,7 @@ const { isTimeoutError } = require('../shared-primitives');
 const { fenceFor } = require('../markdown-blocks');
 const { openBlockerRefs } = require('../issues/record-dependencies');
 const { hasDriverEscalationMarker } = require('./settle');
+const { merge } = require('./merge');
 const { sensitivePathsOf } = require('../express/policy');
 const { formatTimestamp } = require('../hooks/run-dir-resolve');
 const { claimLogText, CLAIM_LOG_SECTION, CLAIM_LOG_STEP } = require('../log-decision/claim-log');
@@ -829,10 +830,13 @@ const summaryStep = defineStep(STEP.summary, STOP_CLASSES.NONE, async (ctx, deps
     const text = `#${ctx.record} built on the express lane: ${files}; tests ${ctx.testMode}; PR #${ctx.pr.number}.`;
     const log = logDecisionFile(ctx, deps, 'summary.txt', text, 'Express lane', []);
     if (log.code !== 0) {
+      ctx.summaryLogged = false;
       return { status: 'fail', halt: false, detail: `summary line not logged: log-decision.js exited ${log.code} (${neutralize(firstLine(log.stderr)) || 'no output'})` };
     }
+    ctx.summaryLogged = true;
     return { status: 'ok' };
   } catch (err) {
+    ctx.summaryLogged = false;
     return { status: 'fail', halt: false, detail: `summary line not logged: ${neutralize(errorText(err))}` };
   }
 });
@@ -927,9 +931,39 @@ const ciStep = defineStep(STEP.ci, STOP_CLASSES.NONE, async (ctx, deps) => {
   return { status: 'ok', detail: state, extra: { ciWaitMs: Math.max(0, deps.now() - started) } };
 });
 
+// Ports express-lane.md step 9, the merge: entered only when the CI wait ended green, then
+// merge.js owns every decision (no supplier configured, no merge). The result rides on ctx.merge
+// for the final line. The step never halts: merge() reports every stop as a result, so the
+// record's outcome comes from it (finalEvent), not from a stop class. Class `none` is for a throw
+// in this entry itself. There is no interruptClass rung for it: ctx.configWritten is already true
+// whenever this step runs, so an interrupt here is class `none`. The consequence: a signal that
+// arrives after a merge landed reports pending-review, and the reconciler's merged-evidence
+// checks complete the run. The watch's wait is reported on each merge-watch sub-event
+// (extra.ciWaitMs, summed by finalEvent), never on this step's own line, so it is counted once.
+const mergeStep = defineStep(STEP.merge, STOP_CLASSES.NONE, async (ctx, deps) => {
+  if (ctx.ci !== 'green') return { status: 'ok', detail: `not entered: ci ${ctx.ci}` };
+  const mctx = {
+    record: ctx.record, pr: ctx.pr.number, repo: ctx.shared.ghRepo, branch: ctx.branch, base: ctx.shared.ref,
+    head: ctx.check.head, runDir: ctx.runDir, runRoot: ctx.shared.mainRoot, mainCheckout: ctx.shared.mainRoot,
+    worktree: ctx.wt, summaryLogged: ctx.summaryLogged,
+  };
+  const mdeps = {
+    ...deps,
+    emit: ctx.events.emit,
+    rebindEvents: ctx.events.rebind,
+    interrupted: () => ctx.shared.interrupted,
+    watchClock: (t) => { ctx.ciWaitStartedAt = t; },
+  };
+  const r = await merge(mctx, mdeps);
+  ctx.merge = r;
+  if (r.runDir !== ctx.runDir) ctx.runDir = r.runDir;
+  if (r.eventsStdoutOnly) ctx.eventsStdoutOnly = true;
+  return { status: 'ok', detail: neutralize(r.outcome + (r.reason ? `: ${r.reason}` : '')), extra: {} };
+});
+
 const STEPS = Object.freeze([
   policyStep, fetchStep, eligibilityStep, admissionStep, claimStep, runDirStep, worktreeStep, workerStep, commitStep,
-  testStep, checkStep, pushStep, prStep, recordPrStep, setConfigStep, summaryStep, ciStep,
+  testStep, checkStep, pushStep, prStep, recordPrStep, setConfigStep, summaryStep, ciStep, mergeStep,
 ]);
 
 module.exports = {

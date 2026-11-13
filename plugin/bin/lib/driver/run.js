@@ -60,7 +60,7 @@
 // supervisor should signal the process group, not the pid.
 const fs = require('fs');
 const { execFileSync, spawnSync } = require('child_process');
-const { createEventSink, outcomeFor, yieldToEventLoop, FINAL_STEP, STOP_CLASSES, OUTCOMES } = require('./events');
+const { createEventSink, outcomeFor, neutralize, yieldToEventLoop, FINAL_STEP, STOP_CLASSES, OUTCOMES } = require('./events');
 const { STEPS } = require('./steps');
 const { toEscalationReason, planRow, SETTLE_ROWS, CLASS_BY_ROW, settle } = require('./settle');
 const { ghAvailable, remoteUrl, ghOptions } = require('../repo-resolve');
@@ -76,7 +76,7 @@ const USAGE = [
   'Takes each named record, one at a time and in order, from admission to a draft PR with',
   'CI read. Prints one JSON event line per step on stdout (and, once the run directory',
   'exists, to {run-dir}/driver-events.jsonl); each record ends with a final line carrying',
-  'its outcome: pending-review, express-escalated, blocked or refused. Nothing merges.',
+  'its outcome: pending-review, express-escalated, blocked, refused, merged or armed. A record merges only when a judgment supplier is configured; none is by default.',
   'Exit codes (Combined-2):',
   '  0  every named record reached its final event, whatever its outcome',
   '  1  when the policy, or the run\'s repository or integration branch, cannot be resolved and no further record is attempted',
@@ -127,6 +127,7 @@ function newCtx(record, shared) {
     record, runId: null, runDir: null, wt: null, branch: null, claimed: false,
     created: { worktree: false, branch: false }, pushed: false, configWritten: false,
     pr: null, ci: null, ciWaitStartedAt: null, pushedAt: null, checkLogged: undefined, worker: null,
+    summaryLogged: false, merge: null, events: null, eventsStdoutOnly: false,
     shared,
   };
 }
@@ -187,7 +188,7 @@ function finalEvent(ctx, stop, sink, msTotal, deps, settled = SETTLE_NONE) {
     ms: msTotal,
     // When settle ran (or --no-settle planned a row), the outcome is the class of that row (a
     // failed escalate reads blocked).
-    outcome: outcomeOf(settled.settledClass || stopClass),
+    outcome: !stop && ctx.merge ? ctx.merge.outcome : outcomeOf(settled.settledClass || stopClass),
     msTotal,
     msWithoutCi: msTotal - ciWaitMs,
     pr: ctx.pr ? orNull(ctx.pr.number) : null,
@@ -204,6 +205,13 @@ function finalEvent(ctx, stop, sink, msTotal, deps, settled = SETTLE_NONE) {
   if (settled.unclassified === true) event.unclassified = true;
   if (settled.note) event.settleNote = settled.note;
   if (worker && worker.spendOverrun === true) event.spendOverrun = true;
+  if (ctx.merge) {
+    event.merge = {
+      outcome: ctx.merge.outcome, reason: ctx.merge.reason === null ? null : neutralize(String(ctx.merge.reason)),
+      mergeCommit: ctx.merge.mergeCommit, postMerge: ctx.merge.postMerge,
+    };
+  }
+  if (ctx.eventsStdoutOnly) event.eventsFile = 'stdout-only';
   const fileError = sink.fileError();
   if (fileError !== null) event.eventsFileError = fileError;
   return event;
@@ -230,7 +238,7 @@ function reportInterrupt(shared, current, step, detail, ms, deps) {
   const { ctx, sink } = current;
   try {
     // A step that set ctx.runDir may not have had its sink bound yet; binding twice is harmless.
-    if (ctx.runDir) sink.bindRunDir(ctx.runDir);
+    if (ctx.runDir && !ctx.eventsStdoutOnly) sink.bindRunDir(ctx.runDir);
     const extra = Number.isFinite(ctx.ciWaitStartedAt) ? { ciWaitMs: Math.max(0, deps.now() - ctx.ciWaitStartedAt) } : {};
     const result = { status: 'fail', detail, halt: true, stopClass: interruptClass(ctx), reason: 'fail', extra };
     sink.emit(eventFor(ctx, step.name, result, ms, deps));
@@ -276,6 +284,21 @@ async function settleStop(ctx, stop, record, shared, sink, deps) {
 async function driveRecord(record, shared, deps, steps = STEPS) {
   const sink = createEventSink({ stdout: deps.stdout, appendFile: deps.appendFile });
   const ctx = newCtx(record, shared);
+  // The writer a step uses to emit sub-step lines (before its own result line) and to follow the
+  // run directory when it moves; rebind(null) goes stdout-only.
+  ctx.events = {
+    emit: (name, status, ms, detail, extra) => {
+      sink.emit(eventFor(ctx, name, { status, detail: detail || undefined, extra: extra || {} }, ms, deps));
+    },
+    rebind: (dir) => {
+      if (dir) {
+        sink.bindRunDir(dir);
+      } else {
+        sink.unbind();
+        ctx.eventsStdoutOnly = true;
+      }
+    },
+  };
   const current = { ctx, sink, started: null, step: null, inStep: false, stepStarted: null, final: null };
   shared.current = current;
   try {
@@ -426,7 +449,7 @@ const realDeps = {
   ghBatch: (args) => execFileSync('gh', args, ghOptions(args, {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: sharedPrimitives.GH_BATCH_TIMEOUT_MS, maxBuffer: MAX_BUFFER, windowsHide: true,
   })),
-  // `gh pr create` writes to GitHub and takes longer than a read, so it gets the batched bound too.
+  // Writes to GitHub (`gh pr create`, the merge step's `gh pr merge`) take longer than a read, so they get the batched bound too.
   ghCreate: (args) => execFileSync('gh', args, ghOptions(args, {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: sharedPrimitives.GH_BATCH_TIMEOUT_MS, maxBuffer: MAX_BUFFER, windowsHide: true,
   })),
