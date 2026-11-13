@@ -172,12 +172,19 @@
 //   ctx       ctx.worker is merged once the launch returns (the fix round's title, the two summaries
 //             as `{first} Review fix: {fix}`, cost and turns summed, denials concatenated,
 //             spendOverrun OR-ed), so the second commit's message is the fix round's title and the
-//             final line counts both launches; ctx.changedFiles becomes both commits' paths, first
-//             seen first; the second check overwrites ctx.check, whose head the push guard reads.
+//             final line counts both launches; once the name-only diff is read, ctx.changedFiles
+//             becomes the first commit's paths plus every path differing from preFixHead, first seen
+//             first; the second check overwrites ctx.check, whose head the push guard reads.
+//   The commit step's "nothing to commit" stop (a stop that names no path) does not end the round:
+//   what the round changed is then already at HEAD. Either way every evidence file must then be
+//   tracked at HEAD with its recorded bytes (cat-file of HEAD:{evidencePath}), which catches one the
+//   worker gitignored, deleted or changed, and passes one it committed itself unchanged.
 //   Stops, each class pre-push but a propagated test or check result, which keeps its own class
 //   and reason. `fail`: HEAD unreadable, the worker's `fail`/`timeout`, a rewrite refused or failed,
-//   the commit failing, a commit that does not hold every evidence file, a kept run that throws,
-//   survives its kill or changes the tree, the name-only diff failing. `stop`: the worker's
+//   the commit failing, an evidence file not at HEAD as recorded, a kept run that throws or survives
+//   its kill, the tree changed during the checks (after the scoped run and each kept run; neither is
+//   singled out), the name-only diff failing (it ends with `--`, so a file named HEAD or after the
+//   sha is never read as a revision). `stop`: the worker's
 //   cannot-complete, a kept evidence test that does not pass (reason failing-test), no path outside
 //   the evidence files differing from preFixHead once every run has passed (judged only then), and
 //   check's escalate. An interrupt after any await yields. Every detail is `{cause}: {path}:{line}
@@ -976,6 +983,19 @@ function rewriteEvidence({ wt, c, sensitivePaths, deps }) {
   return writeEvidence({ wt, rel: c.rel, content: c.content, sensitivePaths, deps });
 }
 
+// Whether the evidence file is tracked at HEAD with exactly the recorded bytes (cat-file reads the
+// stored blob, no filter or textconv). Any git failure (an absent path exits 128) reads as not.
+function atHeadAsRecorded(wt, c, deps) {
+  let blob;
+  try {
+    blob = String(deps.git(['-C', wt, '--no-optional-locks', 'cat-file', 'blob', '--end-of-options', `HEAD:${c.evidencePath}`], { cwd: wt }));
+  } catch {
+    return false;
+  }
+  // As written: a lone surrogate in the recorded string is written, and read back, as U+FFFD.
+  return blob === Buffer.from(c.content, 'utf8').toString('utf8');
+}
+
 const FULL_SHA_RE = /^[0-9a-f]{40}$/;
 const codeSuffix = (err) => (err && typeof err.code === 'string' && /^[A-Z0-9_]+$/.test(err.code) ? ` (${err.code})` : '');
 
@@ -1011,7 +1031,7 @@ async function fixRound(ctx, deps, wiring, pass) {
     if (shared.interrupted) return interrupted();
     if (!launched || launched.status !== 'ok') {
       const status = launched && launched.status === 'stop' ? 'stop' : 'fail';
-      return end(status, `fix round worker ${launched ? launched.detail : 'returned nothing'}`);
+      return end(status, `fix round launch: ${launched ? launched.detail : 'returned nothing'}`);
     }
 
     const sensitivePaths = sensitivePathsOf(shared.policy['merge-sensitive-paths']);
@@ -1025,14 +1045,14 @@ async function fixRound(ctx, deps, wiring, pass) {
 
     const committed = await commit.run(ctx, deps);
     if (shared.interrupted) return interrupted();
-    if (committed.status !== 'ok') return end(committed.status, `fix round commit: ${committed.detail}`);
-    const fixPaths = Array.isArray(ctx.changedFiles) ? ctx.changedFiles : [];
-    // An evidence file git does not report (ignored by a .gitignore the worker wrote) is not committed.
-    const uncommitted = confirmed.find((c) => !fixPaths.includes(c.evidencePath));
-    if (uncommitted) return end('fail', 'the fix round commit does not hold the evidence file', { c: uncommitted });
-    const union = [...(Array.isArray(first.changedFiles) ? first.changedFiles : [])];
-    for (const p of fixPaths) if (!union.includes(p)) union.push(p);
-    ctx.changedFiles = union;
+    // The commit step names what it found before it stops: a stop with no path is "nothing to commit"
+    // (everything the round changed is already at HEAD), which the evidence check below then judges.
+    const nothingToCommit = committed.status === 'stop' && Array.isArray(ctx.changedFiles) && ctx.changedFiles.length === 0;
+    if (committed.status !== 'ok' && !nothingToCommit) return end(committed.status, `fix round commit: ${committed.detail}`);
+    // Every evidence file must be at HEAD with its recorded bytes, whoever committed it: one git does not
+    // report (ignored by a .gitignore the worker wrote) is not, and neither is one changed after the rewrite.
+    const notAtHead = confirmed.find((c) => !atHeadAsRecorded(wt, c, deps));
+    if (notAtHead) return end('fail', 'the evidence file is not at HEAD with its recorded content', { c: notAtHead });
 
     const tested = await test.run(ctx, deps);
     if (shared.interrupted) return interrupted();
@@ -1055,22 +1075,28 @@ async function fixRound(ctx, deps, wiring, pass) {
       } catch {
         return end('fail', 'git status failed after a kept evidence run', { c });
       }
-      if (changed.length) return end('fail', `the kept evidence run changed the tree: ${normalizeEventText(changed.join(', '))}`, { c });
+      // The scoped test run or this evidence run may have left it: neither is singled out.
+      if (changed.length) return end('fail', `the tree changed during the fix-round checks: ${normalizeEventText(changed.join(', '))}`);
       if (run.verdict !== 'passed') return end('stop', `the kept evidence test did not pass (${run.verdict})`, { c, reason: 'failing-test' });
     }
 
     // Judged only now (the plan review's Reading A): every rerun has passed.
     let diffed;
     try {
-      const args = ['-C', wt, '--no-optional-locks', 'diff', '--name-only', '-z', '--no-renames', '--end-of-options', preFixHead, 'HEAD'];
+      const args = ['-C', wt, '--no-optional-locks', 'diff', '--name-only', '-z', '--no-renames', '--end-of-options', preFixHead, 'HEAD', '--'];
       diffed = String(deps.git(args, { cwd: wt }));
     } catch {
       return end('fail', 'git diff failed after the fix round');
     }
     const evidence = new Set(confirmed.map((c) => c.evidencePath));
-    if (!diffed.split('\0').some((p) => p !== '' && !evidence.has(p))) {
+    const fixPaths = diffed.split('\0').filter((p) => p !== '');
+    if (!fixPaths.some((p) => !evidence.has(p))) {
       return end('stop', 'the fix round changed nothing outside the evidence files');
     }
+    // Both commits' paths, first seen first: the round's are what differs from preFixHead, whoever committed it.
+    const union = [...(Array.isArray(first.changedFiles) ? first.changedFiles : [])];
+    for (const p of fixPaths) if (!union.includes(p)) union.push(p);
+    ctx.changedFiles = union;
 
     const checked = await check.run(ctx, deps);
     if (shared.interrupted) return interrupted();

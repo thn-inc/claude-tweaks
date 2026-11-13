@@ -2807,13 +2807,29 @@ function fixRig({ findings = [evidenceFinding(0)], fix = {}, effect = () => {}, 
       [onGit('commit'), () => {
         commits += 1;
         h.fx.committed = true;
-        if (commits === 2) { h.fx.files.clear(); h.fx.dirty = ''; }
+        if (commits === 2) {
+          // What the commit stored for each evidence file: the bytes last written to it.
+          for (const p of staged) {
+            const last = h.calls.filter((k) => k.kind === 'writeFileExclusive' && k.args[0] === path.join(WT, ...p.split('/'))).at(-1);
+            if (last) h.fx.atHead.set(p, last.args[1]);
+          }
+          h.fx.files.clear();
+          h.fx.dirty = '';
+        }
         return '';
       }],
-      [onGit('--no-optional-locks', 'diff', '--name-only'), () => staged.map((p) => `${p}\0`).join('')],
+      // The blob at HEAD: fx.atHead, else git's exit 128 for a path HEAD does not hold.
+      [onGit('--no-optional-locks', 'cat-file', 'blob', '--end-of-options'), (c) => {
+        const p = gitSub(c)[4].slice('HEAD:'.length);
+        if (h.fx.atHead.has(p)) return h.fx.atHead.get(p);
+        throw Object.assign(new Error(`fatal: path '${p}' does not exist in 'HEAD'`), { status: 128 });
+      }],
+      // What differs from preFixHead: fx.diff when a test says (a worker that committed), else what the second commit staged.
+      [onGit('--no-optional-locks', 'diff', '--name-only'), () => (h.fx.diff || staged).map((p) => `${p}\0`).join('')],
       [on('runner'), () => { runs += 1; return runs <= findings.length ? RED : direct(runs - findings.length - 1); }],
     ],
   });
+  h.fx.atHead = new Map();
   return h;
 }
 const FINDING_0 = `${normalizeEventText('src/a.js')}:1 ${normalizeEventText(evidenceFinding(0).claim)}`;
@@ -2854,6 +2870,13 @@ test('AC8: one fix round, in order', async () => {
   const rewrite = h.calls.filter((c) => c.kind === 'writeFileExclusive').at(-1);
   assert.deepEqual(rewrite.args, [evidenceAbs(0), EVIDENCE_CONTENT]);
   assert.deepEqual(evidenceRuns(h)[1].args[0].args, evidenceArgs('npm test', 'tests/new/r0.test.js', fixDest(h, 0)));
+  // The name-only diff ends with `--`: a worker-made root file named HEAD, or after the sha, is never a revision.
+  const diffs = gitCalls(h).filter((c) => gitSub(c).includes('--name-only'));
+  assert.deepEqual(diffs.map((c) => c.args), [['-C', WT, '--no-optional-locks', 'diff', '--name-only', '-z', '--no-renames', '--end-of-options', HEAD_SHA, 'HEAD', '--']]);
+  // Each evidence file is read back from HEAD, once the commit has run.
+  const blobs = gitCalls(h).filter((c) => gitSub(c).includes('cat-file'));
+  assert.deepEqual(blobs.map((c) => c.args), [['-C', WT, '--no-optional-locks', 'cat-file', 'blob', '--end-of-options', 'HEAD:tests/new/r0.test.js']]);
+  assert.ok(h.calls.indexOf(blobs[0]) > h.calls.indexOf(commitGit(h).filter((c) => gitSub(c)[0] === 'commit')[1]));
   assert.deepEqual([reviewLines(h)[0].status, reviewLines(h)[0].detail], ['ok', '1 reproduced of 1; fixed in one round']);
   assert.equal(lastLine(h).outcome, 'pending-review');
 });
@@ -2870,6 +2893,7 @@ test('AC8: the second round never launches a third implementer', async () => {
     assert.equal(implementerCalls(h).length, 2, name);
     assert.equal(h.calls.filter((c) => c.kind === 'worker').length, 3, `${name}: implementer, reviewer, fix round`);
     assert.equal(reviewLines(h)[0].status, status, name);
+    if (name === 'cannot-complete') assert.equal(lastLine(h).stop.detail, `fix round launch: worker could not complete: no: ${FINDING_0}`);
   }
 });
 
@@ -2900,11 +2924,11 @@ test('AC10: each escalation names the finding and runs no second round', async (
     ['kept evidence still red', { direct: () => RED }, 'stop', 'pre-push', 'failing-test', 'the kept evidence test did not pass (reproduced)'],
     ['verify.js exit 1', { script: [nthCall(on('node', /verify\.js$/), 2, { code: 1, stdout: '', stderr: '' })] }, 'stop', 'pre-push', 'failing-test', 'fix round test: red tests'],
     ['check escalate out-of-bounds', { script: [nthCall(checkCall, 2, { code: 0, stderr: '', stdout: JSON.stringify({ action: 'escalate', reason: 'out-of-bounds', detail: 'too many lines', logged: true }) })] }, 'stop', 'pre-push', 'out-of-bounds', 'fix round check: out-of-bounds: too many lines'],
-    ['fix worker fail', { fix: { status: 'fail', reason: 'exit', result: null, detail: 'x' } }, 'fail', 'pre-push', 'express-error', 'fix round worker fail/exit: x'],
-    ['fix worker timeout', { fix: { status: 'timeout', reason: 'wall-clock-ceiling', result: null, detail: 'x' } }, 'fail', 'pre-push', 'express-error', 'fix round worker timeout/wall-clock-ceiling: wall-clock ceiling of 30 minutes reached: x'],
+    ['fix worker fail', { fix: { status: 'fail', reason: 'exit', result: null, detail: 'x' } }, 'fail', 'pre-push', 'express-error', 'fix round launch: fail/exit: x'],
+    ['fix worker timeout', { fix: { status: 'timeout', reason: 'wall-clock-ceiling', result: null, detail: 'x' } }, 'fail', 'pre-push', 'express-error', 'fix round launch: timeout/wall-clock-ceiling: wall-clock ceiling of 30 minutes reached: x'],
     ['changed nothing outside the evidence files', { effect: (fx) => { fx.dirty = ''; } }, 'stop', 'pre-push', 'express-error', 'the fix round changed nothing outside the evidence files'],
     ['git commit fails', { script: [nthCall(onGit('commit'), 2, new Error('hook failed'))] }, 'fail', 'pre-push', 'express-error', 'fix round commit: git commit failed: hook failed'],
-    ['kept evidence changes the tree', { direct: () => ({ ...GREEN, dirty: ' M other.js\0' }) }, 'fail', 'pre-push', 'express-error', 'the kept evidence run changed the tree: other.js'],
+    ['kept evidence changes the tree', { direct: () => ({ ...GREEN, dirty: ' M other.js\0' }) }, 'fail', 'pre-push', 'express-error', 'the tree changed during the fix-round checks: other.js'],
     ['check exit non-zero', { script: [nthCall(checkCall, 2, { code: 1, stdout: '', stderr: 'boom' })] }, 'fail', 'blocked', 'fail', 'fix round check: express-lane.js check exited 1: boom'],
   ];
   for (const [name, over, status, cls, reason, cause] of rows) {
@@ -3029,14 +3053,56 @@ test('fix round: a parent the fix worker turned into a symlink out of the worktr
   assert.ok(!afterFixLaunch(dir).some((c) => ['rmFile', 'writeFileExclusive'].includes(c.kind)));
 });
 
-test('fix round: a commit that does not hold the evidence file (ignored by the worker) fails', async () => {
-  // git status no longer reports the evidence file once the worker wrote a .gitignore for it.
-  const h = fixRig({ effect: (fx) => { fx.dirty = ' M a.js\0 M .gitignore\0'; fx.ignored = true; } });
-  h.fx.written = (wt) => (h.fx.ignored ? '' : [...h.fx.files].map((abs) => `?? ${path.relative(wt, abs).split(path.sep).join('/')}\0`).join(''));
-  await run(['#7'], h.deps);
-  assert.deepEqual([lastLine(h).stop.step, reviewLines(h)[0].status], [STEP.review, 'fail']);
-  assert.equal(lastLine(h).stop.detail, `the fix round commit does not hold the evidence file: ${FINDING_0}`);
-  assert.equal(verifyCalls(h).length, 1, 'no second scoped run');
+// git status stops reporting the evidence file once fx.hidden is set: the worker gitignored it,
+// committed it, or hid a change to it behind an index flag (skip-worktree).
+const hideEvidence = (h) => {
+  h.fx.written = (wt) => (h.fx.hidden ? '' : [...h.fx.files].map((abs) => `?? ${path.relative(wt, abs).split(path.sep).join('/')}\0`).join(''));
+  return h;
+};
+const NOT_AT_HEAD = `the evidence file is not at HEAD with its recorded content: ${FINDING_0}`;
+
+test('fix round: every evidence file must be at HEAD with its recorded content, whoever committed it', async () => {
+  // Gitignored, with a code change: the commit holds the code only.
+  const ignored = hideEvidence(fixRig({ effect: (fx) => { fx.dirty = ' M a.js\0 M .gitignore\0'; fx.hidden = true; } }));
+  await run(['#7'], ignored.deps);
+  assert.deepEqual([lastLine(ignored).stop.step, lastLine(ignored).stop.class, reviewLines(ignored)[0].status], [STEP.review, 'pre-push', 'fail']);
+  assert.equal(lastLine(ignored).stop.detail, NOT_AT_HEAD);
+  assert.equal(verifyCalls(ignored).length, 1, 'no second scoped run');
+  // Gitignored and nothing else: the commit step finds nothing to commit, and the same check stops it.
+  const ignoredOnly = hideEvidence(fixRig({ effect: (fx) => { fx.dirty = ''; fx.hidden = true; } }));
+  await run(['#7'], ignoredOnly.deps);
+  assert.deepEqual([lastLine(ignoredOnly).stop.detail, reviewLines(ignoredOnly)[0].status], [NOT_AT_HEAD, 'fail']);
+  // Committed by the worker with other bytes, the change in the worktree hidden by an index flag.
+  const edited = hideEvidence(fixRig({ effect: (fx) => { fx.hidden = true; fx.atHead.set('tests/new/r0.test.js', "require('node:test')('ok', () => {});\n"); } }));
+  await run(['#7'], edited.deps);
+  assert.deepEqual([lastLine(edited).stop.detail, reviewLines(edited)[0].status], [NOT_AT_HEAD, 'fail']);
+  assert.equal(pushCalls(edited).length, 0);
+});
+
+test('fix round: an evidence file the worker committed itself, unchanged, passes', async () => {
+  const selfCommit = (fx, rest) => {
+    fx.hidden = true;
+    fx.atHead.set('tests/new/r0.test.js', EVIDENCE_CONTENT);
+    fx.diff = ['a.js', 'tests/new/r0.test.js'];
+    if (!rest) fx.dirty = '';
+  };
+  // The evidence committed, the code change left for the driver's commit.
+  const partly = hideEvidence(fixRig({ effect: (fx) => selfCommit(fx, true) }));
+  await run(['#7'], partly.deps);
+  assert.deepEqual([reviewLines(partly)[0].status, pushCalls(partly).length, lastLine(partly).outcome], ['ok', 1, 'pending-review']);
+  assert.equal(commitGit(partly).filter((c) => gitSub(c)[0] === 'commit').length, 2);
+  // Everything committed: the commit step finds nothing to commit and the round goes on, with no second commit.
+  const wholly = hideEvidence(fixRig({ effect: (fx) => selfCommit(fx, false) }));
+  await run(['#7'], wholly.deps);
+  assert.deepEqual([reviewLines(wholly)[0].status, pushCalls(wholly).length, lastLine(wholly).outcome], ['ok', 1, 'pending-review']);
+  assert.equal(commitGit(wholly).filter((c) => gitSub(c)[0] === 'commit').length, 1);
+  assert.equal(verifyCalls(wholly).length, 2);
+  // The summary still lists what the round changed, read from the diff against preFixHead.
+  assert.equal(wholly.files[wholly.calls.filter(logsSummary)[0].args.at(-1)], '#7 built on the express lane: a.js, tests/new/r0.test.js; tests full; PR #9.\n');
+  // A commit-step stop that names a path (an empty title) is still the commit's own stop.
+  const untitled = fixRig({ fix: { result: { ...FIX_RESULT, title: '   ' } } });
+  await run(['#7'], untitled.deps);
+  assert.equal(lastLine(untitled).stop.detail, `fix round commit: the worker's title is empty once normalized: ${FINDING_0}`);
 });
 
 test('fix round: a kept evidence run that throws or survives its kill fails, and an interrupt yields', async () => {

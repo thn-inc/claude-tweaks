@@ -1656,6 +1656,8 @@ async function fixOnDisk(t, swap) {
   const outside = mk('review-outside-');
   const rig = passRig({ findings: [reviewFinding(0)], runs: ['reproduced', 'passed'] });
   const committed = new Set();
+  // What the commit stand-in stored for each path, as cat-file of HEAD:{path} reads it.
+  const atHead = new Map();
   // Every untracked entry under wt as git status lists it: a symlink is an entry, never followed.
   const untracked = (dir = wt) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const abs = path.join(dir, e.name);
@@ -1669,6 +1671,11 @@ async function fixOnDisk(t, swap) {
     git: (args, opts) => {
       if (args.includes('status')) return untracked().map((p) => `?? ${p}\0`).join('');
       if (args.includes('rev-parse')) return `${HEAD_SHA}\n`;
+      if (args.includes('cat-file')) {
+        const p = args.at(-1).slice('HEAD:'.length);
+        if (atHead.has(p)) return atHead.get(p);
+        throw Object.assign(new Error('fatal: path does not exist'), { status: 128 });
+      }
       if (args.includes('--name-only')) return 'src/a.js\0tests/new/r0.test.js\0';
       return git(args, opts);
     },
@@ -1679,7 +1686,7 @@ async function fixOnDisk(t, swap) {
     testCommand: 'npm test',
     isRunArtifact: isPipelineArtifact,
     launchImplementer: async (ctx) => { steps.push('launch'); swap(wt, outside, state); ctx.worker = { title: 'Fix', summary: 'Fixed.' }; return { status: 'ok' }; },
-    commit: { run: async (ctx) => { steps.push('commit'); ctx.changedFiles = untracked(); for (const p of ctx.changedFiles) committed.add(p); return { status: 'ok' }; } },
+    commit: { run: async (ctx) => { steps.push('commit'); ctx.changedFiles = untracked(); for (const p of ctx.changedFiles) { committed.add(p); atHead.set(p, fs.readFileSync(path.join(wt, ...p.split('/')), 'utf8')); } return { status: 'ok' }; } },
     test: { run: async () => { steps.push('test'); return { status: 'ok' }; } },
     check: { run: async () => { steps.push('check'); return { status: 'ok' }; } },
   };
