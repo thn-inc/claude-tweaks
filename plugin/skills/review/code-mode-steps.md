@@ -47,14 +47,14 @@ If a spec number was provided, read the spec file and verify the implementation 
    outcome `partial` even when every criterion is `met` — it counts toward the Gate below like a
    partial deliverable. #3002 met every criterion while the three gates its Current State named
    still read bare `--stamp-status`.
-6. **PR-body deliverables** — check a deliverable or criterion that names the PR body (or PR description) against the live body of the run's PR, never the codebase (item 1 skips it): `gh pr view {pr} --json body`, or `mcp__github__pull_request_read` without `gh`; `{pr}` is `pr.number` in `run-state.json` (a bundle's parent run dir), else the current branch's PR. Mark it `missing` when the body lacks it, `partial` when it carries part; no PR or a failed read is `unverifiable`, a partial gap, never present.
+6. **PR-body deliverables** — a deliverable or criterion whose content must appear in the PR body (or PR description), such as "the PR body reports X", is judged against the live PR body, never the codebase, per `pr-body-deliverables.md` in this skill's directory; items 1 and 2 skip it. Mark it `missing` when the body lacks it, `partial` when it carries part; no PR or a failed read is `unverifiable`, which never blocks.
 
 ### Gate:
 
 | Result | Action |
 |--------|--------|
 | All deliverables done + all criteria met | Proceed to Step 1.5 |
-| Minor gaps (1-2 partial or `unverifiable` items) | Flag gaps, proceed — they may be addressed in Implementation Hindsight |
+| Minor gaps (1-2 partial items, or any `unverifiable` ones) | Flag gaps, proceed — they may be addressed in Implementation Hindsight |
 | Any risk marker `unresolved` after independent verification | **BLOCKED** — same tier as Significant gaps. Name the unverified marker(s) (file:line or table row) so the user knows exactly what still needs ground-truth confirmation |
 | Significant gaps (missing deliverables or criteria) | **BLOCKED** — the spec isn't fully built yet. List what's missing so the user can resume `/claude-tweaks:build` |
 

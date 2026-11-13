@@ -157,6 +157,8 @@ Proceed to **Common Step 1.5**.
 
 ## Common Steps (both modes)
 
+**PR-body claims, any step.** A decision line that says the PR body carries something follows `architecture-alignment.md`'s `## Claims about the PR body` first, whether or not Common Step 4.5 runs.
+
 ### Common Step 1: Set Up Worktree (worktree strategy only)
 
 If the user specified `worktree`, set up the isolated workspace via `/superpowers:using-git-worktrees` after a pre-flight branch-divergence check and (when in auto mode) pre-authorizing the consent prompt.
@@ -300,8 +302,6 @@ After successful build, read `handoff-template.md` in this skill's directory and
 **Bookkeeping assertion (`worktree` mode, before the phase-exit push below — #2311).** `phase-exit.js` (next paragraph) runs it as its bookkeeping sub-step, before it pushes: a `run-state.json` with no `worktree` field gets `record-worktree`, and under `integration-model: pr-first` one with no `pr` field gets the branch's one open PR recorded, or a push-and-open-draft-PR route (`_shared/pr-early-run-lifecycle.md`) when none is open — never assume an earlier attempt already succeeded: a denied bookkeeping-stamp write earlier in this phase can leave a field missing with no downstream signal until the next push is rejected (`[IL-131]`). This mirrors `flow/steps-and-gates.md`'s case-3 adoption-recovery backfill exactly (cite it, never restate its mechanics) — the difference is this check runs unconditionally at the end of every build phase, not only when a later call adopts this run directory from an earlier one, so a single continuous `/flow` session gets the same protection a two-call `dispatch build,test` → `review,polish,wrap-up` handoff already had. It logs a decision entry only when a backfill actually ran — a clean pass (both fields already present) writes nothing. Skipped under `MULTISPEC_PARALLEL_WAVE=1` (`flow/multispec-parallel-waves.md`): the parent run's stamp stays the shared worktree.
 
 **Phase exit (any run with a run dir, `_shared/integration-model.md`):** one call, `node "${CLAUDE_PLUGIN_ROOT}/bin/phase-exit.js" --run "$PIPELINE_RUN_DIR" --phase build --worktree "{worktree-path}" --fixes {n}[,{m}...]`, in any model or mode; it pushes only under `pr-first` in `worktree` mode — route its output per `_shared/git-discipline.md`'s Phase exit section and `_shared/pr-checklist-refresh.md`'s Phase-checklist update section. **On skip** (`local-merge`, or `current-branch` with `--worktree` naming the checkout), it writes the `SKIP` entry itself. Under `MULTISPEC_PARALLEL_WAVE=1` do not call it; write one `SKIP` entry naming the marker.
-
-**PR-body claims, any step.** A decision line that says the PR body carries something follows `architecture-alignment.md`'s `## Claims about the PR body` first, whether or not Common Step 4.5 runs.
 
 ## Git Strategy
 

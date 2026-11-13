@@ -1,6 +1,6 @@
 'use strict';
-// Review Step 1 checks a deliverable that names the PR body against the live
-// PR body, never the codebase; an unreadable body is unverifiable, not present.
+// Review Step 1 judges a deliverable whose content must appear in the PR body against the live
+// PR body, never the codebase; an unreadable body is unverifiable, not present and never a block.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -8,17 +8,29 @@ const { readText } = require('./helpers/read-skill');
 const { missingFactsOf, assertEachPatternGoesRed } = require('./helpers/conformance-asserts');
 
 const STEPS = readText(path.join(__dirname, '..', 'plugin/skills/review/code-mode-steps.md'));
+const SUBFILE = readText(path.join(__dirname, '..', 'plugin/skills/review/pr-body-deliverables.md'));
 
 const FACTS = [
   [/\*\*PR-body deliverables\*\*/, 'item heading'],
-  [/names the PR body \(or PR description\)/, 'PR body or PR description triggers the check'],
-  [/against the live body of the run's PR, never the codebase/, 'evidence is the live PR body, not the codebase'],
-  [/\(item 1 skips it\)/, 'item 6 replaces item 1 for these'],
-  [/`gh pr view \{pr\} --json body`/, 'read command'],
-  [/`mcp__github__pull_request_read` without `gh`/, 'gh-absent read'],
-  [/`\{pr\}` is `pr\.number` in `run-state\.json` \(a bundle's parent run dir\), else the current branch's PR/, 'PR source, run, bundle and standalone'],
+  [/whose content must appear in the PR body \(or PR description\), such as "the PR body reports X"/, 'trigger is required body content'],
+  [/judged against the live PR body, never the codebase, per `pr-body-deliverables\.md` in this skill's directory/, 'evidence source and sub-file'],
+  [/items 1 and 2 skip it/, 'items 1 and 2 defer to item 6'],
   [/Mark it `missing` when the body lacks it, `partial` when it carries part/, 'missing / partial verdicts'],
-  [/no PR or a failed read is `unverifiable`, a partial gap, never present/, 'unreadable is unverifiable, not present, not a block'],
+  [/no PR or a failed read is `unverifiable`, which never blocks/, 'unverifiable never blocks'],
+];
+
+const SUB_FACTS = [
+  [/does not qualify, however often it says "PR body": items 1 and 2 judge it in the codebase/, 'code-deliverable exclusion'],
+  [/`pr\.number` in `run-state\.json` \(a bundle's parent run dir\)/, 'PR source'],
+  [/`gh pr view --json number` with no number/, 'no-number gh lookup'],
+  [/`mcp__github__list_pull_requests` \(open PRs\) filtered to the one whose head is the current branch/, 'gh-absent lookup'],
+  [/`gh pr view \{pr\} --json body -q \.body`, or, without `gh`, `mcp__github__pull_request_read` \(`get`\)/, 'body read'],
+  [/- `done` — the body carries everything the item requires/, 'done verdict'],
+  [/- `partial` — it carries part of it/, 'partial verdict'],
+  [/- `missing` — the body was read and lacks it/, 'missing verdict'],
+  [/- `unverifiable` — no PR was found, or the read failed/, 'unverifiable verdict'],
+  [/never counted as present and never blocks/, 'unverifiable never blocks'],
+  [/A build decision line claiming the body carries the item is not evidence; only the body is/, 'decision line is not evidence'],
 ];
 
 function step1(text) {
@@ -50,7 +62,7 @@ test('the PR-body item is read from Step 1, not file-wide', () => {
   assert.deepEqual(missingFactsOf(FACTS)(step1(moved)), FACTS.map(([, f]) => f));
 });
 
-const GATE_ROW = /\| Minor gaps \(1-2 partial or `unverifiable` items\) \|/;
+const GATE_ROW = /\| Minor gaps \(1-2 partial items, or any `unverifiable` ones\) \|/;
 
 function gateTable(text) {
   const start = text.indexOf('### Gate:', text.indexOf('## Step 1: Spec Compliance Check'));
@@ -63,9 +75,9 @@ function assertGateCountsUnverifiable(text) {
   assert.match(gateTable(text), GATE_ROW, 'Gate Minor gaps row must count unverifiable items');
 }
 
-test('the Gate counts unverifiable as a minor gap', () => {
+test('the Gate counts any unverifiable item as a minor gap', () => {
   assertGateCountsUnverifiable(STEPS);
-  const old = STEPS.replace('| Minor gaps (1-2 partial or `unverifiable` items) |', '| Minor gaps (1-2 partial items) |');
+  const old = STEPS.replace('| Minor gaps (1-2 partial items, or any `unverifiable` ones) |', '| Minor gaps (1-2 partial or `unverifiable` items) |');
   assert.notEqual(old, STEPS);
   assert.throws(() => assertGateCountsUnverifiable(old), /Gate Minor gaps row must count unverifiable items/);
 });
@@ -74,4 +86,12 @@ test('grep for "PR body" names the check in Step 1', () => {
   const s = step1(STEPS);
   const hits = STEPS.split('\n').filter((l) => /PR body/i.test(l));
   assert.ok(hits.some((l) => s.includes(l) && l.includes('PR-body deliverables')));
+});
+
+test('the pr-body-deliverables sub-file states every fact', () => {
+  assert.deepEqual(missingFactsOf(SUB_FACTS)(SUBFILE), []);
+});
+
+test('each sub-file fact can go red', () => {
+  assertEachPatternGoesRed(SUBFILE, SUB_FACTS, missingFactsOf(SUB_FACTS));
 });
