@@ -297,6 +297,7 @@ function harness(over = {}) {
     resolveRunDir: (opts) => dispatch('resolveRunDir', [opts]),
     lstatType: (p) => dispatch('lstatType', [p]),
     readdir: (p) => dispatch('readdir', [p]),
+    readFile: (p) => dispatch('readFile', [p]),
     writeFile: (p, s) => { record('writeFile', [p]); files[p] = s; },
     appendFile: (p, s) => { record('appendFile', [p]); files[p] = (files[p] || '') + s; },
     mkdirSync: (p, o) => { record('mkdirSync', [p, o]); },
@@ -1800,7 +1801,7 @@ const emptyGhDir = (h) => path.join(runDirOf(h), 'gh-config-empty');
 const scopeHash = (sha) => [onGit('hash-object'), `${sha}\n`];
 
 test('#5267: a scope file whose bytes differ from origin/{ref}\'s blob stops before verify.js runs', async () => {
-  const h = harness({ script: [scopeIs('file'), scopeSame(), scopeHash('c'.repeat(40))] });
+  const h = harness({ script: [scopeIs('file'), scopeSame(), scopeHash('c'.repeat(40)), catBlob('{"a":1}\n'), [on('readFile'), '{"a":2}\n']] });
   await run(['#7'], h.deps);
   const final = lastLine(h);
   assert.deepEqual([final.stop.step, final.status, final.stop.class], ['test', 'stop', 'pre-push']);
@@ -1816,13 +1817,57 @@ test('#5267: a scope file whose bytes differ from origin/{ref}\'s blob stops bef
 test('#5267: an index flag (assume-unchanged / skip-worktree) cannot hide an edited scope file — bytes are compared, not the index', async () => {
   // Under the flag `git diff --quiet` and `cat-file -e` exit 0 for an edited file; the fixture answers
   // both with success and the working-tree hash still differs from the base blob.
-  const h = harness({ script: [scopeIs('file'), scopeSame(), scopeHash('d'.repeat(40)), [onGit('diff'), ''], [onGit('cat-file'), '']] });
+  const h = harness({ script: [scopeIs('file'), scopeSame(), scopeHash('d'.repeat(40)), [onGit('diff'), ''], [on('readFile'), '{"edited":true}\n'], [onGit('cat-file'), (c) => (gitSub(c)[1] === 'blob' ? '{"a":1}\n' : '')]] });
   await run(['#7'], h.deps);
   const final = lastLine(h);
   assert.deepEqual([final.stop.step, final.status, final.stop.class], ['test', 'stop', 'pre-push']);
   assert.match(final.stop.detail, /verify-scope\.json.*differs from origin\/main/);
   assert.equal(verifyCalls(h).length, 0, 'no verify call');
-  assert.ok(!gitCalls(h).some((c) => ['diff', 'cat-file'].includes(gitSub(c)[0])), 'no index-based call is made');
+  assert.ok(!gitCalls(h).some((c) => gitSub(c)[0] === 'diff' || (gitSub(c)[0] === 'cat-file' && gitSub(c)[1] !== 'blob')), 'no index-based call is made');
+});
+
+const catBlob = (text) => [onGit('cat-file', 'blob'), text];
+const crlfRun = async (base, wtText, extra = []) => {
+  const h = harness({ script: [scopeIs('file'), scopeSame(), scopeHash('e'.repeat(40)), ...extra, catBlob(base), [on('readFile'), wtText]] });
+  await run(['#7'], h.deps);
+  return h;
+};
+
+test('#5267: a CRLF checkout of the unchanged scope file (different hash, equal after CRLF to LF) proceeds to verify.js', async () => {
+  const h = await crlfRun('{\n  "a": 1\n}\n', '{\r\n  "a": 1\r\n}\r\n');
+  assert.equal(verifyCalls(h).length, 1, 'verify runs');
+  const cat = gitCalls(h).find((c) => gitSub(c)[0] === 'cat-file');
+  assert.deepEqual(gitSub(cat), ['cat-file', 'blob', SCOPE_SHA]);
+  assert.deepEqual(calls(h, 'readFile').map((c) => c.args[0]), [path.join(WT, SCOPE_REL)]);
+});
+
+test('#5267: any difference beyond CRLF vs LF (a byte, a lone CR, a trailing newline, a BOM) still stops before verify.js', async () => {
+  const base = '{\n"a": 1\n}\n';
+  for (const wt of ['{\r\n"a": 2\r\n}\r\n', '{\r\n"a": 1\r\n}\r', '{\r\n"a": 1\r\n}\r\n\r\n', '{\n"a": 1\n}\n ', '\uFEFF{\n"a": 1\n}\n', '{\n"a": 1\n}\r\r\n']) {
+    const h = await crlfRun(base, wt);
+    const final = lastLine(h);
+    assert.deepEqual([final.stop.step, final.status, final.stop.class], ['test', 'stop', 'pre-push'], JSON.stringify(wt));
+    assert.match(final.stop.detail, /verify-scope\.json.*differs from origin\/main/);
+    assert.equal(verifyCalls(h).length, 0, `no verify call for ${JSON.stringify(wt)}`);
+  }
+});
+
+test('#5267: identical hashes never read either side (no cat-file, no readFile)', async () => {
+  const h = harness({ script: [scopeIs('file'), scopeSame()] });
+  await run(['#7'], h.deps);
+  assert.equal(verifyCalls(h).length, 1);
+  assert.equal(calls(h, 'readFile').length, 0);
+  assert.ok(!gitCalls(h).some((c) => gitSub(c)[0] === 'cat-file'));
+});
+
+test('#5267: a failed read of the scope file, or of the base blob, fails the step with no verify call', async () => {
+  for (const extra of [[[on('readFile'), new Error('EACCES: denied')]], [[onGit('cat-file'), new Error('fatal: bad object')]]]) {
+    const h = await crlfRun('x', 'x', extra);
+    const final = lastLine(h);
+    assert.equal(final.status, 'fail');
+    assert.match(final.stop.detail, /could not read/);
+    assert.equal(verifyCalls(h).length, 0, 'no verify call');
+  }
 });
 
 test('#5267: a scope file the worker deleted (missing on disk, present on origin) stops before verify.js', async () => {

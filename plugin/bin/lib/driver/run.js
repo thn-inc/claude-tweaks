@@ -376,6 +376,7 @@ const realDeps = {
   resolveRunDir: (opts) => require('../hooks/run-dir-resolve').resolve(opts),
   lstatType: (p) => lstatType(p),
   readdir: (p) => fs.readdirSync(p),
+  readFile: (p) => fs.readFileSync(p, 'utf8'),
   writeFile: (p, s) => fs.writeFileSync(p, s),
   appendFile: (p, s) => fs.appendFileSync(p, s),
   mkdirSync: (p, opts) => fs.mkdirSync(p, opts),

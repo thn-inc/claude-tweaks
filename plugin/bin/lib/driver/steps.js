@@ -21,8 +21,8 @@
 // The test step runs worker-authored code (the worker's test files) through verify.js. Containment
 // (#5267), the allow-listed-environment option, best effort: the verify.js child gets worker.js's
 // allow-listed environment, not the driver's, plus GH_CONFIG_DIR pointing at an empty directory; and
-// a verify-scope.json whose bytes are not equal to origin/{ref}'s blob is refused before any command
-// runs. That keeps the driver's credential env vars (GH_TOKEN, GITHUB_TOKEN, ...) and the config-file
+// a verify-scope.json whose bytes are not equal to origin/{ref}'s blob (line endings, CRLF vs LF,
+// ignored; no git filter ever applied) is refused before any command runs. That keeps the driver's credential env vars (GH_TOKEN, GITHUB_TOKEN, ...) and the config-file
 // auth of a plain `gh` call (the config file itself stays readable under HOME) away from the child,
 // and stops the worker choosing the command line verify.js runs through its scope file. It does not
 // stop the worker's code from running in the child: `npm test`, package.json scripts and worker-written
@@ -597,6 +597,27 @@ function scopeWorktreeBlob(deps, wt, scopeRel) {
   }
 }
 
+// True when the worktree scope file differs from the base blob only in line endings. Read raw
+// (cat-file, readFile), never through a git filter: the worker controls .gitattributes and the shared
+// .git/config, so a filter-applying comparison could be told "unchanged". Only \r\n -> \n is
+// normalized, on both sides: a lone \r, a BOM, trailing whitespace or any other byte still differs.
+function scopeEqualIgnoringEol(deps, wt, baseBlob, scopeRel) {
+  const crlf = (t) => String(t).replace(/\r\n/g, '\n');
+  let base;
+  try {
+    base = gitIn(deps, wt, ['cat-file', 'blob', baseBlob]);
+  } catch (err) {
+    throw new Error(`could not read ${scopeRel} on the base: ${errorText(err)}`);
+  }
+  let current;
+  try {
+    current = deps.readFile(path.join(wt, scopeRel));
+  } catch (err) {
+    throw new Error(`could not read ${scopeRel}: ${errorText(err)}`);
+  }
+  return crlf(base) === crlf(current);
+}
+
 // Ports express-lane.md step 4 (test): the runner pass stamp `check` reads is written by
 // verify.js, run in the worktree. A regular verify-scope.json scopes the run; an absent one
 // runs the full suite; anything else (a symlink, a directory) is refused, never followed.
@@ -613,7 +634,7 @@ const testStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
   const state = deps.lstatType(path.join(wt, '.claude-tweaks', 'verify-scope.json'));
   // The scope file names commands verify.js runs, so a worker-authored copy is never read: the
   // worktree file's bytes must equal origin/{ref}'s blob (an edit, a created file, a deleted file,
-  // index flags included) before any test command runs.
+  // index flags included; CRLF vs LF ignored, a checkout may rewrite it) before any test command runs.
   if (state.type === 'file' || state.type === 'missing') {
     const baseBlob = scopeBaseBlob(deps, wt, ref, scopeRel);
     if (state.type === 'file' && baseBlob === null) {
@@ -622,7 +643,8 @@ const testStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
     if (state.type === 'missing' && baseBlob !== null) {
       return { status: 'stop', detail: `${scopeRel} differs from origin/${ref} (deleted); the worker's copy is never read, verify.js was not run` };
     }
-    if (state.type === 'file' && scopeWorktreeBlob(deps, wt, scopeRel) !== baseBlob) {
+    if (state.type === 'file' && scopeWorktreeBlob(deps, wt, scopeRel) !== baseBlob
+        && !scopeEqualIgnoringEol(deps, wt, baseBlob, scopeRel)) {
       return { status: 'stop', detail: `${scopeRel} differs from origin/${ref}; the worker's copy is never read, verify.js was not run` };
     }
   }
