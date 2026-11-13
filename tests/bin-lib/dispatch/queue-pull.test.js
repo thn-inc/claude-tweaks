@@ -313,7 +313,9 @@ test('#5227 oracle: withEscapeGuard rejects a run that moves the guarded repo HE
     assert.equal(await withEscapeGuard(repo, async () => { fixtureGit(['-C', repo, 'branch', 'sibling-branch']); return 'ok'; }), 'ok');
     await assert.rejects(
       withEscapeGuard(repo, async () => {
-        const sha = fixtureGit(['-C', repo, '-c', 'user.name=qp-oracle', '-c', 'user.email=qp@example.invalid', 'commit-tree', 'HEAD^{tree}', '-m', 'escaped'], { encoding: 'utf8' }).trim();
+        // Pin the identity via env: CI exports GIT_AUTHOR_*/GIT_COMMITTER_*, which beat `-c user.*`.
+        const qpEnv = { ...process.env, GIT_AUTHOR_NAME: 'qp-oracle', GIT_AUTHOR_EMAIL: 'qp@example.invalid', GIT_COMMITTER_NAME: 'qp-oracle', GIT_COMMITTER_EMAIL: 'qp@example.invalid' };
+        const sha = fixtureGit(['-C', repo, '-c', 'user.name=qp-oracle', '-c', 'user.email=qp@example.invalid', 'commit-tree', 'HEAD^{tree}', '-m', 'escaped'], { encoding: 'utf8', env: qpEnv }).trim();
         fixtureGit(['-C', repo, 'update-ref', 'refs/heads/escaped-ref', sha]);
       }),
       /escape guard/, 'a new ref made by the sandbox identity trips it',
