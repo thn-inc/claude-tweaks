@@ -376,6 +376,186 @@ test('renderProject: resolves a linked worktree to the main project name', () =>
   }
 });
 
+// Fixture for the spawn-free main-checkout resolution: one mkdtemp base holding
+// a main repo, an absolute linked worktree, a --relative-paths worktree (null
+// when this git lacks the flag), a submodule checkout and a symlink to the
+// absolute worktree. fn receives { base, main, wt, relWt, sub, link }.
+function withWorktrees(fn) {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-shapes-'));
+  const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const init = (dir) => {
+    fs.mkdirSync(dir);
+    git(['init', '-q', '-b', 'main'], dir);
+    git(['config', 'user.email', 'test@example.com'], dir);
+    git(['config', 'user.name', 'Test'], dir);
+    fs.writeFileSync(path.join(dir, 'README.md'), 'hi');
+    git(['add', '.'], dir);
+    git(['commit', '-q', '-m', 'init'], dir);
+  };
+  const main = path.join(base, 'main-repo');
+  const inner = path.join(base, 'inner-repo');
+  init(main);
+  init(inner);
+  const wt = path.join(base, 'abs-wt');
+  git(['worktree', 'add', '-q', wt, '-b', 'a'], main);
+  let relWt = null;
+  try {
+    const p = path.join(base, 'rel-wt');
+    git(['worktree', 'add', '-q', '--relative-paths', p, '-b', 'b'], main);
+    relWt = p;
+  } catch {
+    relWt = null;
+  }
+  git(['-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', inner, 'sub'], main);
+  const sub = path.join(main, 'sub');
+  const link = path.join(base, 'link-wt');
+  fs.symlinkSync(wt, link);
+  try {
+    return fn({ base, main, wt, relWt, sub, link });
+  } finally {
+    try { git(['worktree', 'remove', '--force', wt], main); } catch {}
+    if (relWt) { try { git(['worktree', 'remove', '--force', relWt], main); } catch {} }
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+}
+
+function gitCommonMain(dir) {
+  const out = execFileSync('git', ['rev-parse', '--git-common-dir'], { cwd: dir, encoding: 'utf8' }).trim();
+  return path.dirname(fs.realpathSync(path.resolve(dir, out)));
+}
+
+function shapeDirs(f) {
+  return [f.wt, f.relWt, f.sub, f.link].filter(Boolean);
+}
+
+// Runs fn(freshModule) with every child_process launcher wrapped by a
+// recording call-through, re-requiring the status line so its destructured
+// bindings capture the wrappers. Returns { result, launches }.
+function recordLaunches(fn) {
+  const cp = require('node:child_process');
+  const names = ['spawn', 'spawnSync', 'execFile', 'execFileSync', 'exec', 'execSync'];
+  const originals = {};
+  const launches = [];
+  const modPath = require.resolve('../plugin/bin/claude-tweaks-statusline.js');
+  const savedEntry = require.cache[modPath];
+  for (const n of names) {
+    originals[n] = cp[n];
+    cp[n] = function (file, args, ...rest) {
+      launches.push({ fn: n, file, args: Array.isArray(args) ? args : [] });
+      return originals[n].call(this, file, args, ...rest);
+    };
+  }
+  try {
+    delete require.cache[modPath];
+    const fresh = require(modPath);
+    return { result: fn(fresh), launches };
+  } finally {
+    for (const n of names) cp[n] = originals[n];
+    delete require.cache[modPath];
+    if (savedEntry) require.cache[modPath] = savedEntry;
+  }
+}
+
+test('commonDirFromFs: matches git rev-parse --git-common-dir for every worktree shape', () => {
+  withWorktrees((f) => {
+    for (const dir of shapeDirs(f)) {
+      assert.strictEqual(path.dirname(sl.commonDirFromFs(dir)), gitCommonMain(dir), dir);
+    }
+  });
+});
+
+test('resolveMainProjectDir: equals git\'s answer for every worktree shape', () => {
+  withWorktrees((f) => {
+    for (const dir of shapeDirs(f)) {
+      assert.strictEqual(sl.resolveMainProjectDir(dir), gitCommonMain(dir), dir);
+    }
+  });
+});
+
+test('commonDirFromFs: GIT_DIR or GIT_COMMON_DIR in the env defers to git', () => {
+  withWorktrees((f) => {
+    assert.strictEqual(sl.commonDirFromFs(f.wt, { GIT_DIR: '/x' }), null);
+    assert.strictEqual(sl.commonDirFromFs(f.wt, { GIT_COMMON_DIR: '/x' }), null);
+    assert.strictEqual(sl.commonDirFromFs(f.wt, { GIT_DIR: '' }), null);
+    assert.strictEqual(sl.commonDirFromFs(f.wt, { GIT_COMMON_DIR: '' }), null);
+  });
+});
+
+// A temp dir whose `.git` FILE holds `content`; fn receives the dir.
+function withGitFile(content, fn) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-gitfile-'));
+  try {
+    fs.writeFileSync(path.join(dir, '.git'), content);
+    return fn(dir);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// A fake gitdir whose `commondir` is a directory (EISDIR on read).
+function withEisdirCommondir(fn) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-eisdir-'));
+  try {
+    const gitdir = path.join(root, 'admin');
+    fs.mkdirSync(path.join(gitdir, 'commondir'), { recursive: true });
+    const dir = path.join(root, 'checkout');
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, '.git'), `gitdir: ${gitdir}\n`);
+    return fn(dir);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test('commonDirFromFs: an unparseable .git file defers to git', () => {
+  withGitFile('not a gitdir line\n', (dir) => assert.strictEqual(sl.commonDirFromFs(dir), null));
+});
+
+test('commonDirFromFs: a gitdir that does not exist defers to git', () => {
+  withGitFile('gitdir: /nonexistent/x/.git/worktrees/y\n', (dir) => assert.strictEqual(sl.commonDirFromFs(dir), null));
+});
+
+test('commonDirFromFs: an unreadable commondir defers to git', () => {
+  withEisdirCommondir((dir) => assert.strictEqual(sl.commonDirFromFs(dir), null));
+});
+
+test('resolveMainProjectDir: each fallback reaches git', () => {
+  const expectedLaunch = { fn: 'execFileSync', file: 'git', args: ['rev-parse', '--git-common-dir'] };
+  const check = (dir) => {
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(dir));
+    assert.deepStrictEqual(launches, [expectedLaunch]);
+    assert.strictEqual(result, dir);
+  };
+  withGitFile('not a gitdir line\n', check);
+  withGitFile('gitdir: /nonexistent/x/.git/worktrees/y\n', check);
+  withEisdirCommondir(check);
+  withWorktrees((f) => {
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt));
+    assert.deepStrictEqual(launches, []);
+    assert.strictEqual(result, gitCommonMain(f.wt));
+  });
+});
+
+test('resolveMainProjectDir: fast:false skips the filesystem read and asks git', () => {
+  withWorktrees((f) => {
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt, { fast: false }));
+    assert.deepStrictEqual(launches, [{ fn: 'execFileSync', file: 'git', args: ['rev-parse', '--git-common-dir'] }]);
+    assert.strictEqual(result, gitCommonMain(f.wt));
+  });
+});
+
+test('commonDirFromFs: CRLF .git and commondir files parse the same', () => {
+  withWorktrees((f) => {
+    const fake = path.join(f.base, 'crlf-admin');
+    fs.mkdirSync(fake);
+    fs.writeFileSync(path.join(fake, 'commondir'), `${path.join(f.main, '.git')}\r\n`);
+    const dir = path.join(f.base, 'crlf-checkout');
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, '.git'), `gitdir: ${fake}\r\n`);
+    assert.strictEqual(path.dirname(sl.commonDirFromFs(dir)), gitCommonMain(f.wt));
+  });
+});
+
 // Fixture: a fake $HOME with a default `~/.claude/` config dir and, optionally,
 // `~/.claude.json` (rootJson) and/or `~/.claude/.claude.json` (dotClaudeJson).
 // Caller removes the returned home.

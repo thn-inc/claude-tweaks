@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { pathToFileURL } = require('url');
-const { execSync } = require('child_process');
+const { execSync, execFileSync } = require('child_process');
 const color = require('./lib/color');
 const { splitLedgerRow } = require('./lib/wrap-up/ledger-cells');
 
@@ -72,7 +72,41 @@ function renderModel(input) {
 // file (`gitdir: ...`), not a directory — that's how git itself tells a
 // worktree checkout apart from the main one, with no `git` invocation
 // needed for the common (non-worktree) case.
-function resolveMainProjectDir(dir) {
+//
+// commonDirFromFs reads that file the way git does (`.git` -> `gitdir:` ->
+// `commondir`) so a linked worktree costs no spawn. It returns the realpath of
+// the common dir — what `git rev-parse --git-common-dir` prints — or null
+// meaning "ask git": GIT_DIR / GIT_COMMON_DIR set (even empty) redirect git's
+// own lookup, and any file that is missing, unparseable or unreadable could
+// mean a shape this reader does not model.
+function commonDirFromFs(dir, env = process.env) {
+  if (env.GIT_DIR !== undefined || env.GIT_COMMON_DIR !== undefined) return null;
+  try {
+    const gitFile = fs.readFileSync(path.join(dir, '.git'), 'utf8');
+    let match = null;
+    for (const line of gitFile.split('\n')) {
+      match = /^gitdir:\s*(.+?)\s*$/.exec(line.replace(/\r$/, ''));
+      if (match) break;
+    }
+    if (!match) return null;
+    const gitdir = path.resolve(dir, match[1]);
+    let common;
+    try {
+      const content = fs.readFileSync(path.join(gitdir, 'commondir'), 'utf8');
+      common = path.resolve(gitdir, content.split('\n')[0].replace(/\r$/, '').trim());
+    } catch (err) {
+      if (!err || err.code !== 'ENOENT') return null;
+      common = gitdir;
+    }
+    // Plain JS realpath, never .native / canonicalRealpath: git resolves
+    // symlinks but keeps the input's letter case, as this does.
+    return fs.realpathSync(common);
+  } catch {
+    return null;
+  }
+}
+
+function resolveMainProjectDir(dir, opts = {}) {
   let stat;
   try {
     stat = fs.statSync(path.join(dir, '.git'));
@@ -80,8 +114,12 @@ function resolveMainProjectDir(dir) {
     return dir;
   }
   if (stat.isDirectory()) return dir;
+  if (opts.fast !== false) {
+    const common = commonDirFromFs(dir);
+    if (common) return path.dirname(common);
+  }
   try {
-    const commonDir = execSync('git rev-parse --git-common-dir', {
+    const commonDir = execFileSync('git', ['rev-parse', '--git-common-dir'], {
       stdio: ['ignore', 'pipe', 'ignore'],
       encoding: 'utf8',
       cwd: dir,
@@ -483,6 +521,8 @@ if (require.main === module) {
 
 module.exports = {
   main,
+  commonDirFromFs,
+  resolveMainProjectDir,
   renderModel,
   renderProject,
   githubRepoUrl,
