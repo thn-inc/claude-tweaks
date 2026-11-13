@@ -119,7 +119,7 @@ function defineStep(name, stopClass, fn) {
       stopClass: result.stopClass || stopClass,
       reason: result.reason || result.status,
       extra: result.extra || {},
-      skip: result.skip === true,
+      skip: result.skip === true && result.status === 'ok',
     };
   }
   return Object.freeze({ name, run: runStep });

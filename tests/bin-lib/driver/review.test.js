@@ -1625,3 +1625,21 @@ test('AC5: DIFF_PROMPT_MAX_BYTES at its edge', () => {
   assert.ok(!wide.includes('�'));
   assert.strictEqual(DIFF_PROMPT_MAX_BYTES, 100000);
 });
+
+test('review: a raw error from a dep after an evidence write is a stop that takes the file back and keeps the counts', async () => {
+  const rig = passRig({ findings: [reviewFinding(0)], runs: ['reproduced'], timers: IMMEDIATE_TIMERS });
+  const real = rig.deps.canonicalRealpath;
+  // The path-resolving call made once the file is written throws an error whose message names the path.
+  rig.deps.canonicalRealpath = (p) => {
+    if (ofKind(rig.calls, 'writeFileExclusive').length > 0 && p === at('tests/new')) throw Object.assign(new Error(`EACCES: '${p}' SECRET`), { code: 'EACCES' });
+    return real(p);
+  };
+  const out = await rig.run();
+  assert.strictEqual(out.result.status, 'fail');
+  assert.strictEqual(out.result.detail, 'the review pass failed unexpectedly (EACCES)');
+  assert.doesNotMatch(JSON.stringify(out), /SECRET|wt/);
+  assert.deepStrictEqual(out.confirmed, []);
+  assert.deepStrictEqual(out.extra, { returned: 1, reproduced: 0, discarded: 0, usage: { input_tokens: 7 }, denials: [] });
+  assert.strictEqual(ofKind(rig.calls, 'rmFile').length, 1, 'the written file was removed');
+  assert.strictEqual(rig.types.get(at('tests/new/r0.test.js')), undefined);
+});

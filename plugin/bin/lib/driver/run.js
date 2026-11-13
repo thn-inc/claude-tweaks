@@ -9,8 +9,9 @@
 // Per record: one event line per step ({ ts, run, record, step, status, ms, ...extra,
 // detail? }) on stdout, held in memory until a step first sets ctx.runDir and from then
 // on appended to {run-dir}/driver-events.jsonl as well (events.js's sink). A step whose
-// result halts ends the record; a result with skip: true (a step that did not apply) emits no line. Every record ends with a final line carrying the outcome
-// word for the stop's class (events.js's outcomeFor; `none` when nothing stopped), the
+// result halts ends the record; an ok result with skip: true (a step that did not apply)
+// emits no line. Every record ends with a final line carrying the outcome word for the
+// stop's class (events.js's outcomeFor; `none` when nothing stopped), the
 // totals with and without the CI wait, the PR, the CI word, the worker's cost, turns and
 // denial count, and the structured stop. A halted record is then settled by settle.js
 // (comment, label, release the claim, remove what this run created), unless the run was

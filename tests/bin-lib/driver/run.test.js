@@ -2835,6 +2835,28 @@ test('realDeps: the review step\'s seams create exclusively, remove one entry an
   realDeps.timers.clearTimeout(timer);
 });
 
+test('AC12: a throw inside the review pass is a pre-push stop whose line keeps the five keys and no error text', async () => {
+  const h = harness({ policy: { 'express-driver-review': 'on' } });
+  const mkdir = h.deps.mkdirSync;
+  h.deps.mkdirSync = (p, o) => {
+    if (String(p).endsWith('reviewer')) throw Object.assign(new Error(`EACCES: permission denied, mkdir '${p}' SECRET`), { code: 'EACCES' });
+    return mkdir(p, o);
+  };
+  await run(['#7'], h.deps);
+  const [line] = reviewLines(h);
+  assert.deepEqual([line.status, line.detail], ['fail', 'the review pass failed unexpectedly (EACCES)']);
+  assert.deepEqual([line.returned, line.reproduced, line.discarded, line.usage, line.denials], [0, 0, 0, null, []]);
+  assert.doesNotMatch(JSON.stringify(h.lines()), /SECRET/);
+  assert.deepEqual([lastLine(h).stop.class, lastLine(h).outcome], ['pre-push', 'express-escalated']);
+  assert.equal(pushCalls(h).length, 0);
+  // A missing wiring member escapes the pass itself: the step still returns the five keys.
+  const { reviewRecord } = require(path.join(LIB, 'driver', 'review'));
+  const ctx = { issue: issueFor(7), keyFiles: [], shared: { policy: { 'express-driver-review': { value: 'on' } } } };
+  const res = await reviewRecord(ctx, {}, { testCommand: 'npm test' });
+  assert.deepEqual([res.status, res.stopClass, res.extra], ['fail', 'pre-push', { returned: 0, reproduced: 0, discarded: 0, usage: null, denials: [] }]);
+  assert.equal(res.detail, 'the review pass failed before it started');
+});
+
 test('skip: a skipped step emits no line and the loop goes on', async () => {
   const ran = [];
   const table = [
@@ -2846,6 +2868,16 @@ test('skip: a skipped step emits no line and the loop goes on', async () => {
   assert.deepEqual(ran, ['one', 'two']);
   assert.deepEqual(h.lines().map((l) => l.step), ['two', FINAL_STEP]);
   assert.equal(final.outcome, 'pending-review');
+  // Only an ok result's boolean true is a skip: a stop that says skip still prints its line and halts.
+  const stopping = [
+    defineStep('one', STOP_CLASSES.PRE_PUSH, () => ({ status: 'stop', skip: true, detail: 'gate said no' })),
+    defineStep('two', STOP_CLASSES.PRE_PUSH, () => { ran.push('never'); return { status: 'ok' }; }),
+  ];
+  const g = harness();
+  const stopped = await driveRecord(7, newShared(), g.deps, stopping);
+  assert.deepEqual(g.lines().filter((l) => !SETTLE_STEP_NAMES.includes(l.step)).map((l) => [l.step, l.status]), [['one', 'stop'], [FINAL_STEP, 'stop']]);
+  assert.equal(stopped.stop.step, 'one');
+  assert.ok(!ran.includes('never'));
   // Only the boolean true is a skip.
   const loose = defineStep('x', STOP_CLASSES.PRE_PUSH, () => ({ status: 'ok', skip: 'yes' }));
   assert.equal((await loose.run({}, {})).skip, false);

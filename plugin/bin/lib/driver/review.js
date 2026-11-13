@@ -767,114 +767,121 @@ async function reviewPass(ctx, deps, { testCommand, isRunArtifact } = {}) {
   };
   const interrupted = () => stop(`interrupted by ${shared.interrupted}`);
 
-  let diff;
+  // Anything that escapes (a raw error from a dep) is a stop too: the pass takes back what it wrote
+  // and the line keeps its counts. The detail is fixed text plus the error code, never its message.
   try {
-    diff = String(deps.git(['-C', wt, '--no-optional-locks', 'diff', '--no-color', '--no-ext-diff', '--no-textconv',
-      '--end-of-options', `origin/${shared.ref}...HEAD`], { cwd: wt }));
-  } catch (err) {
-    return stop(`git diff failed: ${neutralize(errorText(err))}`);
-  }
-  const launch = await launchReviewer(ctx, deps, diff);
-  if (shared.interrupted) return interrupted();
-  if (launch.stop) return stop(launch.stop);
-  const { envelope, minutes, dollars } = launch;
-  if (!envelope || typeof envelope !== 'object') return stop('reviewer launch returned no envelope');
-  usage = envelope.usage === undefined ? null : envelope.usage;
-  denials = (Array.isArray(envelope.denials) ? envelope.denials : []).map((d) => ({
-    tool_name: d && typeof d.tool_name === 'string' ? d.tool_name : null,
-    tool_input: neutralize(JSON.stringify(d && d.tool_input)),
-  }));
-  if (envelope.status !== 'ok') {
-    const kind = `${neutralize(String(envelope.status))}/${neutralize(String(envelope.reason))}`;
-    let lead = kind;
-    if (kind === 'timeout/wall-clock-ceiling') lead = `${kind}: wall-clock ceiling of ${minutes} minutes reached`;
-    else if (kind === 'fail/spend-ceiling') lead = `${kind}: spend ceiling of ${dollars} dollars reached`;
-    const why = typeof envelope.detail === 'string' ? normalizeEventText(envelope.detail) : '';
-    return stop(`reviewer ${lead}${why ? `: ${why}` : ''}`);
-  }
-  const { result } = envelope;
-  if (!isPlainObject(result) || !Array.isArray(result.findings)) return stop('reviewer result holds no findings list');
-  const { findings } = result;
-  counts.returned = findings.length;
-  const summary = () => `${counts.reproduced} reproduced of ${counts.returned}`;
+    let diff;
+    try {
+      diff = String(deps.git(['-C', wt, '--no-optional-locks', 'diff', '--no-color', '--no-ext-diff', '--no-textconv',
+        '--end-of-options', `origin/${shared.ref}...HEAD`], { cwd: wt }));
+    } catch (err) {
+      return stop(`git diff failed: ${neutralize(errorText(err))}`);
+    }
+    const launch = await launchReviewer(ctx, deps, diff);
+    if (shared.interrupted) return interrupted();
+    if (launch.stop) return stop(launch.stop);
+    const { envelope, minutes, dollars } = launch;
+    if (!envelope || typeof envelope !== 'object') return stop('reviewer launch returned no envelope');
+    usage = envelope.usage === undefined ? null : envelope.usage;
+    denials = (Array.isArray(envelope.denials) ? envelope.denials : []).map((d) => ({
+      tool_name: d && typeof d.tool_name === 'string' ? d.tool_name : null,
+      tool_input: neutralize(JSON.stringify(d && d.tool_input)),
+    }));
+    if (envelope.status !== 'ok') {
+      const kind = `${neutralize(String(envelope.status))}/${neutralize(String(envelope.reason))}`;
+      let lead = kind;
+      if (kind === 'timeout/wall-clock-ceiling') lead = `${kind}: wall-clock ceiling of ${minutes} minutes reached`;
+      else if (kind === 'fail/spend-ceiling') lead = `${kind}: spend ceiling of ${dollars} dollars reached`;
+      const why = typeof envelope.detail === 'string' ? normalizeEventText(envelope.detail) : '';
+      return stop(`reviewer ${lead}${why ? `: ${why}` : ''}`);
+    }
+    const { result } = envelope;
+    if (!isPlainObject(result) || !Array.isArray(result.findings)) return stop('reviewer result holds no findings list');
+    const { findings } = result;
+    counts.returned = findings.length;
+    const summary = () => `${counts.reproduced} reproduced of ${counts.returned}`;
 
-  if (evidenceArgs(testCommand, '', '') === null) {
-    counts.discarded = findings.length;
-    return pass(null, `${summary()}: the evidence rule does not cover the test command ${normalizeEventText(testCommand)}, so every finding was discarded unrun`);
-  }
+    if (evidenceArgs(testCommand, '', '') === null) {
+      counts.discarded = findings.length;
+      return pass(null, `${summary()}: the evidence rule does not cover the test command ${normalizeEventText(testCommand)}, so every finding was discarded unrun`);
+    }
 
-  const sensitivePaths = sensitivePathsOf(shared.policy['merge-sensitive-paths']);
-  const opts = { wt, sensitivePaths, deps };
-  const seen = new Set();
-  const gitPaths = () => new Set(confirmed.map((c) => c.evidencePath));
-  const delta = (expected) => treeDelta({ wt, expected, deps, isRunArtifact });
-  let baselined = false;
-  let wrote = false;
-  counts.discarded = Math.max(0, findings.length - MAX_FINDINGS);
-  for (let i = 0; i < Math.min(findings.length, MAX_FINDINGS); i += 1) {
-    const f = findings[i];
-    if (findingShapeViolation(f) || evidenceShapeViolation(f.evidence) || contentViolation(f.evidence.content)) {
-      counts.discarded += 1;
-      continue;
-    }
-    const { path: rel, content } = f.evidence;
-    if (seen.has(rel)) {
-      counts.discarded += 1;
-      continue;
-    }
-    seen.add(rel);
-    if (pathRuleViolation(rel, opts) !== null) {
-      counts.discarded += 1;
-      continue;
-    }
-    if (!baselined) {
-      let dirty;
-      try { dirty = delta(new Set()); } catch { return stop('git status failed before the first evidence write'); }
-      if (dirty.length) return stop(`the worktree is not clean before the first evidence write: ${normalizeEventText(dirty.join(', '))}`);
-      baselined = true;
-    }
-    let ignored;
-    try { ignored = isIgnored({ wt, rel, deps }); } catch { return stop('git check-ignore failed for an evidence path'); }
-    if (ignored) {
-      counts.discarded += 1;
-      continue;
-    }
-    let written;
-    try { written = writeEvidence({ wt, rel, content, sensitivePaths, deps }); } catch (err) { return stop(ownErrorText(err, 'evidence write failed')); }
-    wrote = true;
-    current = trackerFor(written);
-    // The spelling git reports: an existing parent's on-disk form, the leaf as written.
-    const evidencePath = resolveCanonical(rel, opts);
-    if (evidencePath === null) return stop('the evidence path does not resolve once written');
-    const dest = path.join(runDir, 'review', `review-evidence-${i}.tap`);
-    let run;
-    try { run = await runEvidence({ wt, rel, dest, runDir, shared, testCommand, deps }); } catch (err) { return stop(ownErrorText(err, 'the evidence run failed')); }
-    // The child may still be writing: the tree is left alone, interrupted or not.
-    if (run.survived) {
-      const why = run.interrupted ? `interrupted by ${shared.interrupted}; ${run.detail}` : run.detail;
-      return stop(why, { keepTree: true });
-    }
-    if (run.interrupted) return interrupted();
-    let changed;
-    try { changed = delta(new Set([...gitPaths(), evidencePath])); } catch { return stop('git status failed after an evidence run'); }
-    if (changed.length) return stop(`the evidence run changed the tree outside the evidence files: ${normalizeEventText(changed.join(', '))}`);
-    if (run.verdict === 'reproduced') {
-      confirmed.push({ path: f.path, line: f.line, claim: f.claim, content, abs: written.abs, createdDirs: written.createdDirs, evidencePath });
-      counts.reproduced += 1;
+    const sensitivePaths = sensitivePathsOf(shared.policy['merge-sensitive-paths']);
+    const opts = { wt, sensitivePaths, deps };
+    const seen = new Set();
+    const gitPaths = () => new Set(confirmed.map((c) => c.evidencePath));
+    const delta = (expected) => treeDelta({ wt, expected, deps, isRunArtifact });
+    let baselined = false;
+    let wrote = false;
+    counts.discarded = Math.max(0, findings.length - MAX_FINDINGS);
+    for (let i = 0; i < Math.min(findings.length, MAX_FINDINGS); i += 1) {
+      const f = findings[i];
+      if (findingShapeViolation(f) || evidenceShapeViolation(f.evidence) || contentViolation(f.evidence.content)) {
+        counts.discarded += 1;
+        continue;
+      }
+      const { path: rel, content } = f.evidence;
+      if (seen.has(rel)) {
+        counts.discarded += 1;
+        continue;
+      }
+      seen.add(rel);
+      if (pathRuleViolation(rel, opts) !== null) {
+        counts.discarded += 1;
+        continue;
+      }
+      if (!baselined) {
+        let dirty;
+        try { dirty = delta(new Set()); } catch { return stop('git status failed before the first evidence write'); }
+        if (dirty.length) return stop(`the worktree is not clean before the first evidence write: ${normalizeEventText(dirty.join(', '))}`);
+        baselined = true;
+      }
+      let ignored;
+      try { ignored = isIgnored({ wt, rel, deps }); } catch { return stop('git check-ignore failed for an evidence path'); }
+      if (ignored) {
+        counts.discarded += 1;
+        continue;
+      }
+      let written;
+      try { written = writeEvidence({ wt, rel, content, sensitivePaths, deps }); } catch (err) { return stop(ownErrorText(err, 'evidence write failed')); }
+      wrote = true;
+      current = trackerFor(written);
+      // The spelling git reports: an existing parent's on-disk form, the leaf as written.
+      const evidencePath = resolveCanonical(rel, opts);
+      if (evidencePath === null) return stop('the evidence path does not resolve once written');
+      const dest = path.join(runDir, 'review', `review-evidence-${i}.tap`);
+      let run;
+      try { run = await runEvidence({ wt, rel, dest, runDir, shared, testCommand, deps }); } catch (err) { return stop(ownErrorText(err, 'the evidence run failed')); }
+      // The child may still be writing: the tree is left alone, interrupted or not.
+      if (run.survived) {
+        const why = run.interrupted ? `interrupted by ${shared.interrupted}; ${run.detail}` : run.detail;
+        return stop(why, { keepTree: true });
+      }
+      if (run.interrupted) return interrupted();
+      let changed;
+      try { changed = delta(new Set([...gitPaths(), evidencePath])); } catch { return stop('git status failed after an evidence run'); }
+      if (changed.length) return stop(`the evidence run changed the tree outside the evidence files: ${normalizeEventText(changed.join(', '))}`);
+      if (run.verdict === 'reproduced') {
+        confirmed.push({ path: f.path, line: f.line, claim: f.claim, content, abs: written.abs, createdDirs: written.createdDirs, evidencePath });
+        counts.reproduced += 1;
+        current = null;
+        continue;
+      }
+      // On a failure `current` keeps what is left, so the stop's take-back resumes from there.
+      try { removeTracked(current, deps); } catch (err) { return stop(ownErrorText(err, 'evidence remove failed')); }
       current = null;
-      continue;
+      counts.discarded += 1;
     }
-    // On a failure `current` keeps what is left, so the stop's take-back resumes from there.
-    try { removeTracked(current, deps); } catch (err) { return stop(ownErrorText(err, 'evidence remove failed')); }
-    current = null;
-    counts.discarded += 1;
+    if (wrote) {
+      let left;
+      try { left = delta(gitPaths()); } catch { return stop('git status failed after the review'); }
+      if (left.length) return stop(`the tree is not as the review left it: ${normalizeEventText(left.join(', '))}`);
+    }
+    return pass(null, summary());
+  } catch (err) {
+    const code = err && typeof err.code === 'string' && /^[A-Z0-9_]+$/.test(err.code) ? ` (${err.code})` : '';
+    return stop(`the review pass failed unexpectedly${code}`);
   }
-  if (wrote) {
-    let left;
-    try { left = delta(gitPaths()); } catch { return stop('git status failed after the review'); }
-    if (left.length) return stop(`the tree is not as the review left it: ${normalizeEventText(left.join(', '))}`);
-  }
-  return pass(null, summary());
 }
 
 // The step (see the header): the wiring object carries what steps.js owns (the steps the fix round
@@ -885,7 +892,16 @@ async function reviewRecord(ctx, deps, wiring) {
   const { testCommand, isRunArtifact } = wiring;
   const need = reviewRequired({ issue: ctx.issue, keyFiles: ctx.keyFiles, policyValue: ctx.shared.policy['express-driver-review'].value });
   if (!need.on) return { status: 'ok', skip: true };
-  const pass = await reviewPass(ctx, deps, { testCommand, isRunArtifact });
+  let pass;
+  try {
+    pass = await reviewPass(ctx, deps, { testCommand, isRunArtifact });
+  } catch (err) {
+    // A throw before the pass can take anything back (its setup, a missing wiring member) writes nothing: the
+    // pass's own catch covers every throw after its first evidence write. The line keeps the five keys.
+    const code = err && typeof err.code === 'string' && /^[A-Z0-9_]+$/.test(err.code) ? ` (${err.code})` : '';
+    const detail = `the review pass failed before it started${code}`;
+    return { status: 'fail', stopClass: STOP_CLASSES.PRE_PUSH, detail, extra: { returned: 0, reproduced: 0, discarded: 0, usage: null, denials: [] } };
+  }
   if (pass.result) return pass.result;
   if (pass.confirmed.length === 0) return { status: 'ok', detail: pass.detail, extra: pass.extra };
   return { status: 'stop', detail: 'fix round not built', extra: pass.extra };
