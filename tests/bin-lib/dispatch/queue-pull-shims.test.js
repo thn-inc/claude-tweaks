@@ -11,9 +11,11 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const {
-  appendShimRecord, readShimLog, SHIM_LOGS, createSandbox, oracleSkip, REPO,
+  appendShimRecord, readShimLog, SHIM_LOGS, createSandbox, writeShims, oracleSkip, REPO,
 } = require('./queue-pull-oracle');
-const { S0 } = require('./queue-pull-fixtures');
+const {
+  S0, S1, S2, SEmpty, SMalformed, SPortable, D1Second, S1LiveDep, FAULTS, QUEUE_ARGV, ghAnswer, shimTable,
+} = require('./queue-pull-fixtures');
 
 // A fresh logs dir, removed when the test ends.
 const tmpLogs = (t) => {
@@ -348,4 +350,115 @@ test('the mktemp shim refuses a counter past 15 digits', { skip: oracleSkip() },
 test('bin/node is a sh script', { skip: oracleSkip() }, (t) => {
   const { sb } = mktempSandbox(t);
   assert.equal(fs.readFileSync(path.join(sb.bin, 'node'), 'utf8').split('\n')[0], '#!/bin/sh');
+});
+
+// --- the gh shim ------------------------------------------------------------------
+
+// The shims for `scenario` written by writeShims into a fresh temp root, removed when the test ends
+// (no clone: only bin/gh runs here, so the git shim's real-git path is never used), and
+// `gh(args, { extra })`: that bin/gh run with QP_SHIM_TABLE holding the table and a fresh
+// QP_LOG_DIR, `extra` merged over the env.
+const ghShims = (t, scenario) => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'qp-gh-shim-')));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const [bin, shimDir, logs] = ['bin', 'shim', 'logs'].map((d) => {
+    fs.mkdirSync(path.join(root, d));
+    return path.join(root, d);
+  });
+  const table = shimTable(scenario);
+  const tablePath = path.join(root, 'shim-table.json');
+  fs.writeFileSync(tablePath, JSON.stringify(table));
+  writeShims({ bin, shimDir, root, realGit: '/usr/bin/git', table });
+  const env = { PATH: [bin, '/usr/bin', '/bin'].join(path.delimiter), QP_LOG_DIR: logs, QP_SHIM_TABLE: tablePath };
+  const gh = (args, { extra = {} } = {}) => spawnSync(path.join(bin, 'gh'), args, { cwd: root, env: { ...env, ...extra }, encoding: 'utf8' });
+  return { root, shimDir, logs, gh };
+};
+
+test('the gh shim is a sh script', { skip: oracleSkip() }, (t) => {
+  const sb = createSandbox(S0());
+  t.after(() => sb.cleanup());
+  assert.equal(fs.readFileSync(path.join(sb.bin, 'gh'), 'utf8').split('\n')[0], '#!/bin/sh');
+  assert.equal(fs.existsSync(path.join(sb.bin, 'gh-fallback')), false, 'the node fallback is off PATH');
+  assert.equal(fs.existsSync(path.join(sb.root, 'shim', 'gh-fallback')), true);
+});
+
+test('the sh gh shim agrees with ghAnswer on every exact entry', { skip: oracleSkip() }, (t) => {
+  const scenarios = [S0(), S1(), S1({ full: true }), S1({ parity: true }), S2(), SEmpty(), SMalformed(), SMalformed('labels'), SMalformed('body'),
+    SMalformed('blocker'), SPortable(), D1Second(), S1LiveDep(), ...FAULTS.map((f) => f.scenario())];
+  const checked = new Set();
+  let longest = 0;
+  let sourced = 0;
+  scenarios.forEach((scenario, n) => {
+    const table = shimTable(scenario);
+    const fresh = [];
+    for (const entry of table.gh) {
+      if (!Array.isArray(entry.argv)) continue;
+      const answer = ghAnswer(table.gh, entry.argv);
+      const key = JSON.stringify([entry.argv, answer]);
+      if (answer.effect || checked.has(key)) continue;
+      checked.add(key);
+      fresh.push([entry.argv, answer]);
+    }
+    if (!fresh.length) return;
+    const { shimDir, logs, gh } = ghShims(t, scenario);
+    // With the node fallback gone, a call that only it could answer fails instead of agreeing.
+    fs.rmSync(path.join(shimDir, 'gh-fallback'));
+    for (const [argv, answer] of fresh) {
+      const label = `scenario ${n} (${scenario.name}): gh ${argv.join(' ').slice(0, 120)}`;
+      const r = gh(argv);
+      assert.deepEqual({ stdout: r.stdout, stderr: r.stderr, status: r.status }, { stdout: answer.stdout, stderr: answer.stderr, status: answer.status }, label);
+      assert.deepEqual(readShimLog(logs, 'gh').at(-1), { tag: answer.status ? 'injected' : 'ok', argv }, label);
+      longest = Math.max(longest, argv.length);
+    }
+    sourced += fs.readdirSync(path.join(shimDir, 'gh-answers')).length;
+  });
+  assert.ok(longest >= 10, `the longest checked argv has ${longest} elements, so \${10} is never exercised`);
+  assert.ok(sourced > 0, 'no checked answer was long enough to be read from gh-answers/');
+});
+
+test('a near miss of an exact entry falls back and fails loudly', { skip: oracleSkip() }, (t) => {
+  const { logs, gh } = ghShims(t, S0());
+  for (const argv of [[...QUEUE_ARGV.slice(0, -1), '501'], [...QUEUE_ARGV, '--paginate']]) {
+    const r = gh(argv);
+    assert.equal(r.status, 97, r.stderr);
+    assert.equal(r.stdout, '');
+    assert.equal(r.stderr, `gh-shim: no canned response for: ${argv.join(' ').slice(0, 300)}\n`);
+    assert.deepEqual(readShimLog(logs, 'gh').at(-1), { tag: 'UNHANDLED', argv });
+  }
+});
+
+test('an effect entry keeps its argv on the node path, shadowing a later entry with the same argv', { skip: oracleSkip() }, (t) => {
+  const { root, gh } = ghShims(t, { gh: [{ argv: ['dup'], stdout: 'x\n', effect: 'delete-session-file:probe.txt' }, { argv: ['dup'], stdout: 'y\n' }] });
+  const probe = path.join(root, 'ct-session-qp-gh-shadow', 'probe.txt');
+  fs.mkdirSync(path.dirname(probe));
+  fs.writeFileSync(probe, 'x');
+  const r = gh(['dup'], { extra: { TMPDIR: root, CLAUDE_CODE_SESSION_ID: 'qp-gh-shadow' } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, 'x\n', 'ghAnswer returns the first entry, the effect one');
+  assert.equal(fs.existsSync(probe), false, 'the fallback applied the effect');
+});
+
+test('the sh gh shim answers nothing when it cannot write its log', { skip: oracleSkip() }, (t) => {
+  const { root, gh } = ghShims(t, S0());
+  const missing = path.join(root, 'no-such-logs');
+  const r = gh(['--version'], { extra: { QP_LOG_DIR: missing } });
+  assert.equal(r.status, 97);
+  assert.equal(r.stdout, '');
+  assert.equal(r.stderr, `gh-shim: cannot write ${missing}/gh-argv.nul\n`);
+  const unset = gh(['--version'], { extra: { QP_LOG_DIR: '' } });
+  assert.equal(unset.status, 97);
+  assert.equal(unset.stderr, 'gh-shim: QP_LOG_DIR is required\n');
+});
+
+test('setScenario regenerates the gh answers', { skip: oracleSkip() }, (t) => {
+  const probe = (stdout) => ({ ...S0(), gh: [...S0().gh, { argv: ['probe'], stdout }] });
+  const sb = createSandbox(probe('a\n'));
+  t.after(() => sb.cleanup());
+  const env = sb.runEnv({ tmpdir: path.join(sb.root, 'tmp'), sessionId: 'qp-gh-shim' });
+  const gh = () => spawnSync(path.join(sb.bin, 'gh'), ['probe'], { cwd: sb.proj, env, encoding: 'utf8' });
+  const before = gh();
+  assert.equal(before.status, 0, before.stderr);
+  assert.equal(before.stdout, 'a\n');
+  sb.setScenario(probe('b\n'));
+  assert.equal(gh().stdout, 'b\n');
 });

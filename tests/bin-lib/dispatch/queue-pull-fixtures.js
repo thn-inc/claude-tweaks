@@ -10,8 +10,11 @@
 // GraphQL error; a graphql entry's own `stdout` (and `stderr`) replaces that output, so a fault can
 // fail the call with no data at all. `effect` mutates a session file before the answer: `corrupt-exclusions`,
 // `corrupt-groups` or `delete-session-file:<name>`.
-// An unmatched call fails on both sides: the PATH shim exits 97 with
-// `gh-shim: no canned response for: …`, and fakeRun throws 'unexpected gh ' + args.join(' ').
+// The PATH shim is a sh script generated from this table (queue-pull-oracle.js's ghShimScript): it
+// answers an exact, effect-free entry itself and hands graphql calls, effect entries and misses
+// to its node fallback, which answers through ghAnswer. An unmatched call fails on both sides: the
+// fallback exits 97 with `gh-shim: no canned response for: …`, and fakeRun throws
+// 'unexpected gh ' + args.join(' ').
 //
 // The parity tables were filled by running each pair over the table and answering every UNHANDLED
 // argv in turn (Task 1's loop). The final gh argv each pair makes, both sides, all answered (a
@@ -62,9 +65,11 @@ function graphqlAnswer(entry, query) {
   return JSON.stringify({ data: kind.inRepository ? { repository: out } : out }) + '\n';
 }
 
-// (entries, argv) -> { stdout, stderr, status, effect } | null. The one matcher the PATH shim
-// and fakeRun share: an exact-argv entry first, then the first graphql entry of the query's
-// kind that answers every alias the query requests.
+// (entries, argv) -> { stdout, stderr, status, effect } | null: an exact-argv entry first, then
+// the first graphql entry of the query's kind that answers every alias the query requests. fakeRun
+// and the PATH shim's node fallback (graphql, effects, misses) match through it; the sh shim's
+// exact, effect-free answers are generated from the same table and pinned to it by the agreement
+// test in queue-pull-shims.test.js.
 function ghAnswer(entries, argv) {
   (entries || []).forEach(validateEntry);
   const exact = (entries || []).find((e) => Array.isArray(e.argv)
