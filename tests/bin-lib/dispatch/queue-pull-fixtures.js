@@ -736,7 +736,7 @@ function fakeSpawnCli(scenario, overrides = {}) {
     }
     if (name === 'resolve-policy.js') {
       const key = args[args.indexOf('--values') + 1];
-      // Lazy: the PATH shims re-enter this file and never answer a policy read.
+      // Lazy: the gh shim's node fallback re-enters this file and never answers a policy read.
       const { POLICY_KEYS } = require('../../../plugin/bin/lib/policy-schema');
       const set = (scenario.policy || {})[key];
       const entry = POLICY_KEYS.find((k) => k.key === key);

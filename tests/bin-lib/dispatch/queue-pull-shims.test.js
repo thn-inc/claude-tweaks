@@ -11,11 +11,15 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const {
-  appendShimRecord, readShimLog, SHIM_LOGS, createSandbox, writeShims, oracleSkip, REPO,
+  appendShimRecord, readShimLog, SHIM_LOGS, createSandbox, writeShims, REPO,
 } = require('./queue-pull-oracle');
 const {
   S0, S1, S2, SEmpty, SMalformed, SPortable, D1Second, S1LiveDep, FAULTS, QUEUE_ARGV, ghAnswer, shimTable,
 } = require('./queue-pull-fixtures');
+
+// The shims are #!/bin/sh scripts and need no bash, so unlike the parity suite's oracleSkip these
+// tests run wherever /bin/sh exists, a stock-macOS machine with only bash 3.2 included.
+const shimSkip = (platform = process.platform) => (platform === 'win32' ? 'no /bin/sh on win32' : false);
 
 // A fresh logs dir, removed when the test ends.
 const tmpLogs = (t) => {
@@ -82,12 +86,12 @@ const gitSandbox = (t, scenario = S0()) => {
 // [tag, why] of each record in the sandbox's git log.
 const gitTagsAndWhys = (sb) => readShimLog(sb.logs, 'git').map((e) => [e.tag, e.why]);
 
-test('the git shim is a sh script', { skip: oracleSkip() }, (t) => {
+test('the git shim is a sh script', { skip: shimSkip() }, (t) => {
   const { sb } = gitSandbox(t);
   assert.equal(fs.readFileSync(path.join(sb.bin, 'git'), 'utf8').split('\n')[0], '#!/bin/sh');
 });
 
-test('the git shim refuses a -C that leaves the sandbox through a symlink', { skip: oracleSkip() }, (t) => {
+test('the git shim refuses a -C that leaves the sandbox through a symlink', { skip: shimSkip() }, (t) => {
   const { sb, git } = gitSandbox(t);
   const out = path.join(sb.root, 'out');
   fs.symlinkSync(REPO, out);
@@ -96,7 +100,7 @@ test('the git shim refuses a -C that leaves the sandbox through a symlink', { sk
   assert.equal(r.stderr, `git-shim: refused (outside the sandbox: ${fs.realpathSync(REPO)}): -C ${out} rev-parse HEAD\n`);
 });
 
-test('the git shim resolves chained relative -C like git', { skip: oracleSkip() }, (t) => {
+test('the git shim resolves chained relative -C like git', { skip: shimSkip() }, (t) => {
   const { sb, git } = gitSandbox(t);
   const above = path.dirname(sb.root);
   const up = git(['-C', 'proj', '-C', '..', '-C', '..', 'rev-parse', 'HEAD'], { cwd: sb.root });
@@ -119,7 +123,7 @@ test('the git shim resolves chained relative -C like git', { skip: oracleSkip() 
   assert.equal(oneValue.stderr, `git-shim: refused (outside the sandbox: ${above}): -C proj/root/.. rev-parse HEAD\n`);
 });
 
-test('the git shim treats -C "" as a no-op and a trailing -c as an empty key', { skip: oracleSkip() }, (t) => {
+test('the git shim treats -C "" as a no-op and a trailing -c as an empty key', { skip: shimSkip() }, (t) => {
   const { sb, git } = gitSandbox(t);
   const empty = git(['-C', '', 'rev-parse', '--show-toplevel']);
   assert.equal(empty.status, 0, empty.stderr);
@@ -129,14 +133,14 @@ test('the git shim treats -C "" as a no-op and a trailing -c as an empty key', {
   assert.equal(trailing.stderr, 'git-shim: refused (config key not allowed: ): -c\n');
 });
 
-test('the git shim refuses an unknown option before a bad -c key', { skip: oracleSkip() }, (t) => {
+test('the git shim refuses an unknown option before a bad -c key', { skip: shimSkip() }, (t) => {
   const { git } = gitSandbox(t);
   const r = git(['-c', 'core.hooksPath=/x', '--bare', 'status']);
   assert.equal(r.status, 97);
   assert.equal(r.stderr, 'git-shim: refused (unknown global option --bare): -c core.hooksPath=/x --bare status\n');
 });
 
-test('the git shim logs a delegated call with its physical cwd and execs git', { skip: oracleSkip() }, (t) => {
+test('the git shim logs a delegated call with its physical cwd and execs git', { skip: shimSkip() }, (t) => {
   const { sb, git } = gitSandbox(t);
   const r = git(['rev-parse', '--show-toplevel']);
   assert.equal(r.status, 0, r.stderr);
@@ -150,7 +154,7 @@ test('the git shim logs a delegated call with its physical cwd and execs git', {
   assert.deepEqual(readShimLog(sb.logs, 'git'), [record, record]);
 });
 
-test('the git shim refuses -C - through a symlink named -', { skip: oracleSkip() }, (t) => {
+test('the git shim refuses -C - through a symlink named -', { skip: shimSkip() }, (t) => {
   const { sb, git } = gitSandbox(t);
   fs.symlinkSync(REPO, path.join(sb.proj, '-'));
   const r = git(['-C', '-', 'rev-parse', 'HEAD']);
@@ -158,14 +162,31 @@ test('the git shim refuses -C - through a symlink named -', { skip: oracleSkip()
   assert.equal(r.stderr, `git-shim: refused (outside the sandbox: ${fs.realpathSync(REPO)}): -C - rev-parse HEAD\n`);
 });
 
-test('the git shim normalizes an unresolvable relative -C', { skip: oracleSkip() }, (t) => {
+test('the git shim normalizes an unresolvable relative -C', { skip: shimSkip() }, (t) => {
   const { sb, git } = gitSandbox(t);
   const r = git(['-C', './missing/../gone/', 'status']);
   assert.equal(r.status, 97);
   assert.equal(r.stderr, `git-shim: refused (unresolvable directory ${sb.proj}/gone): -C ./missing/../gone/ status\n`);
 });
 
-test('the git shim cuts the refused argv at 300 bytes and logs it whole', { skip: oracleSkip() }, (t) => {
+test('the git shim refuses a -C into a regular file', { skip: shimSkip() }, (t) => {
+  const { sb, git } = gitSandbox(t);
+  fs.writeFileSync(path.join(sb.proj, 'afile'), '');
+  const r = git(['-C', 'afile', 'status']);
+  assert.equal(r.status, 97);
+  assert.equal(r.stderr, `git-shim: refused (unresolvable directory ${sb.proj}/afile): -C afile status\n`);
+});
+
+test('the git shim logs an awkward argv byte for byte', { skip: shimSkip() }, (t) => {
+  const { sb, git } = gitSandbox(t);
+  // Refused before git runs, so every element reaches the sh writer's printf '%s\0' as given.
+  const argv = ['--bare', 'a\nb', '"q" \'s\'', '$HOME', '`id`', '\\', '', 'tail', ''];
+  const r = git(argv);
+  assert.equal(r.status, 97);
+  assert.deepEqual(readShimLog(sb.logs, 'git'), [{ tag: 'REFUSED', why: 'unknown global option --bare', cwd: sb.proj, argv }]);
+});
+
+test('the git shim cuts the refused argv at 300 bytes and logs it whole', { skip: shimSkip() }, (t) => {
   const { sb, git } = gitSandbox(t);
   const argv = ['--bare', 'x'.repeat(400)];
   const r = git(argv);
@@ -174,7 +195,7 @@ test('the git shim cuts the refused argv at 300 bytes and logs it whole', { skip
   assert.deepEqual(readShimLog(sb.logs, 'git'), [{ tag: 'REFUSED', why: 'unknown global option --bare', cwd: sb.proj, argv }]);
 });
 
-test('the git shim hands git the OLDPWD and PWD it was started with', { skip: oracleSkip() }, (t) => {
+test('the git shim hands git the OLDPWD and PWD it was started with', { skip: shimSkip() }, (t) => {
   const { sb, env, git } = gitSandbox(t);
   // A repo-local alias (the shim checks -c values, not the repo's config): git execs env with
   // the environment it inherited.
@@ -195,7 +216,7 @@ test('the git shim hands git the OLDPWD and PWD it was started with', { skip: or
   assert.deepEqual(seen(viaShim), expected);
 });
 
-test('the git shim stops before git runs when it cannot write its log', { skip: oracleSkip() }, (t) => {
+test('the git shim stops before git runs when it cannot write its log', { skip: shimSkip() }, (t) => {
   const { sb, git } = gitSandbox(t);
   const missing = path.join(sb.root, 'no-such-logs');
   const r = git(['tag', 'qp-unlogged'], { extra: { QP_LOG_DIR: missing } });
@@ -204,7 +225,7 @@ test('the git shim stops before git runs when it cannot write its log', { skip: 
   assert.equal(git(['tag', '--list', 'qp-unlogged']).stdout, '', 'git never ran');
 });
 
-test('the git shim refuses a cwd outside the sandbox', { skip: oracleSkip() }, (t) => {
+test('the git shim refuses a cwd outside the sandbox', { skip: shimSkip() }, (t) => {
   const { sb, git } = gitSandbox(t);
   const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'qp-shims-outside-')));
   t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
@@ -214,7 +235,7 @@ test('the git shim refuses a cwd outside the sandbox', { skip: oracleSkip() }, (
   assert.deepEqual(readShimLog(sb.logs, 'git'), [{ tag: 'REFUSED', why: `outside the sandbox: ${outside}`, cwd: outside, argv: ['status'] }]);
 });
 
-test('the git shim refuses an unresolvable cwd', { skip: oracleSkip() }, (t) => {
+test('the git shim refuses an unresolvable cwd', { skip: shimSkip() }, (t) => {
   const { sb, env } = gitSandbox(t);
   const gone = path.join(sb.proj, 'gone');
   fs.mkdirSync(gone);
@@ -227,11 +248,19 @@ test('the git shim refuses an unresolvable cwd', { skip: oracleSkip() }, (t) => 
   assert.deepEqual(gitTagsAndWhys(sb), [['REFUSED', 'unresolvable cwd']]);
 });
 
+test('the git shim refuses an exported GIT_WORK_TREE, even one inside the sandbox', { skip: shimSkip() }, (t) => {
+  const { sb, git } = gitSandbox(t);
+  const r = git(['status'], { extra: { GIT_WORK_TREE: sb.proj } });
+  assert.equal(r.status, 97);
+  assert.equal(r.stderr, 'git-shim: refused (GIT_DIR/GIT_WORK_TREE set): status\n');
+  assert.deepEqual(gitTagsAndWhys(sb), [['REFUSED', 'GIT_DIR/GIT_WORK_TREE set']]);
+});
+
 for (const [name, extra] of [
   ['GIT_CONFIG_COUNT', { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.hooksPath', GIT_CONFIG_VALUE_0: '/x' }],
   ['GIT_CONFIG_PARAMETERS', { GIT_CONFIG_PARAMETERS: "'core.hooksPath'='/x'" }],
 ]) {
-  test(`the git shim refuses config carried in ${name}`, { skip: oracleSkip() }, (t) => {
+  test(`the git shim refuses config carried in ${name}`, { skip: shimSkip() }, (t) => {
     const { sb, git } = gitSandbox(t);
     const r = git(['status'], { extra });
     assert.equal(r.status, 97);
@@ -241,7 +270,7 @@ for (const [name, extra] of [
 }
 
 for (const name of ['GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES']) {
-  test(`the git shim refuses a repository moved by ${name}`, { skip: oracleSkip() }, (t) => {
+  test(`the git shim refuses a repository moved by ${name}`, { skip: shimSkip() }, (t) => {
     const { sb, git } = gitSandbox(t);
     const r = git(['status'], { extra: { [name]: path.join(REPO, '.git') } });
     assert.equal(r.status, 97);
@@ -259,7 +288,7 @@ const escapeTarget = (t, sb, suffix) => {
   return { name, file };
 };
 
-test('the git shim refuses a GIT_INDEX_FILE outside the sandbox', { skip: oracleSkip() }, (t) => {
+test('the git shim refuses a GIT_INDEX_FILE outside the sandbox', { skip: shimSkip() }, (t) => {
   const { sb, git } = gitSandbox(t);
   const { name, file } = escapeTarget(t, sb, 'qp-index');
   // Plainly outside, and outside through a .. that only reads as inside.
@@ -273,7 +302,7 @@ test('the git shim refuses a GIT_INDEX_FILE outside the sandbox', { skip: oracle
   assert.equal(fs.existsSync(file), false, 'git never wrote it');
 });
 
-test('the git shim refuses a relative GIT_INDEX_FILE with a .. segment', { skip: oracleSkip() }, (t) => {
+test('the git shim refuses a relative GIT_INDEX_FILE with a .. segment', { skip: shimSkip() }, (t) => {
   const { sb, git } = gitSandbox(t);
   const { name, file } = escapeTarget(t, sb, 'qp-rel-index');
   // git resolves a relative GIT_INDEX_FILE from the worktree top (the clone, root/proj): the first
@@ -290,7 +319,7 @@ test('the git shim refuses a relative GIT_INDEX_FILE with a .. segment', { skip:
   assert.equal(fs.existsSync(file), false, 'git never wrote it');
 });
 
-test('the git shim delegates with a GIT_INDEX_FILE inside the sandbox', { skip: oracleSkip() }, (t) => {
+test('the git shim delegates with a GIT_INDEX_FILE inside the sandbox', { skip: shimSkip() }, (t) => {
   const { sb, git } = gitSandbox(t);
   // The plugin's scratch index (claims-git-cas.js, ledger-residue.js): absolute, under TMPDIR.
   const index = path.join(sb.root, 'tmp', 'qp-scratch-index');
@@ -304,14 +333,14 @@ test('the git shim delegates with a GIT_INDEX_FILE inside the sandbox', { skip: 
   assert.deepEqual(readShimLog(sb.logs, 'git').map((e) => e.tag), ['delegated', 'delegated']);
 });
 
-test('the git shim requires QP_LOG_DIR', { skip: oracleSkip() }, (t) => {
+test('the git shim requires QP_LOG_DIR', { skip: shimSkip() }, (t) => {
   const { git } = gitSandbox(t);
   const r = git(['status'], { extra: { QP_LOG_DIR: '' } });
   assert.equal(r.status, 97);
   assert.equal(r.stderr, 'git-shim: QP_LOG_DIR is required\n');
 });
 
-test('setScenario regenerates the git fail prefixes', { skip: oracleSkip() }, (t) => {
+test('setScenario regenerates the git fail prefixes', { skip: shimSkip() }, (t) => {
   const { sb, git } = gitSandbox(t);
   const before = git(['status']);
   assert.equal(before.status, 0, before.stderr);
@@ -335,7 +364,7 @@ const mktempSandbox = (t) => {
   return { sb, tmpdir, counter: env.QP_TMPNAME_COUNTER_FILE, mktemp };
 };
 
-test('the mktemp shim is a sh script and counts', { skip: oracleSkip() }, (t) => {
+test('the mktemp shim is a sh script and counts', { skip: shimSkip() }, (t) => {
   const { sb, tmpdir, counter, mktemp } = mktempSandbox(t);
   assert.equal(fs.readFileSync(path.join(sb.bin, 'mktemp'), 'utf8').split('\n')[0], '#!/bin/sh');
   for (const k of [1, 2]) {
@@ -349,7 +378,7 @@ test('the mktemp shim is a sh script and counts', { skip: oracleSkip() }, (t) =>
   assert.equal(fs.readFileSync(counter, 'utf8'), '2');
 });
 
-test('the mktemp shim reads a leading-zero counter as decimal', { skip: oracleSkip() }, (t) => {
+test('the mktemp shim reads a leading-zero counter as decimal', { skip: shimSkip() }, (t) => {
   const { tmpdir, counter, mktemp } = mktempSandbox(t);
   fs.writeFileSync(counter, '08');
   assert.equal(mktemp().stdout, `${path.join(tmpdir, 'tmp.qp00000009')}\n`);
@@ -361,7 +390,7 @@ test('the mktemp shim reads a leading-zero counter as decimal', { skip: oracleSk
   assert.equal(mktemp().stdout, `${path.join(tmpdir, 'tmp.qp00000001')}\n`, 'an absent counter is 0');
 });
 
-test('the mktemp shim refuses', { skip: oracleSkip() }, (t) => {
+test('the mktemp shim refuses', { skip: shimSkip() }, (t) => {
   const { tmpdir, counter, mktemp } = mktempSandbox(t);
   const arg = mktemp(['-d']);
   assert.equal(arg.status, 97);
@@ -384,7 +413,7 @@ test('the mktemp shim refuses', { skip: oracleSkip() }, (t) => {
   }
 });
 
-test('the mktemp shim refuses a TMPDIR it cannot create in', { skip: oracleSkip() }, (t) => {
+test('the mktemp shim refuses a TMPDIR it cannot create in', { skip: shimSkip() }, (t) => {
   const { tmpdir, counter, mktemp } = mktempSandbox(t);
   fs.writeFileSync(counter, '4');
   const missing = path.join(tmpdir, 'absent');
@@ -394,7 +423,7 @@ test('the mktemp shim refuses a TMPDIR it cannot create in', { skip: oracleSkip(
   assert.equal(fs.readFileSync(counter, 'utf8'), '4');
 });
 
-test('the mktemp shim refuses a counter it cannot write, leaving the created file', { skip: oracleSkip() }, (t) => {
+test('the mktemp shim refuses a counter it cannot write, leaving the created file', { skip: shimSkip() }, (t) => {
   const { tmpdir, mktemp } = mktempSandbox(t);
   const counter = path.join(tmpdir, 'no-such-dir', 'counter');
   const r = mktemp([], { extra: { QP_TMPNAME_COUNTER_FILE: counter } });
@@ -404,7 +433,7 @@ test('the mktemp shim refuses a counter it cannot write, leaving the created fil
   assert.equal(fs.existsSync(path.join(tmpdir, 'tmp.qp00000001')), true, 'the created file stays');
 });
 
-test('the mktemp shim refuses a counter past 15 digits', { skip: oracleSkip() }, (t) => {
+test('the mktemp shim refuses a counter past 15 digits', { skip: shimSkip() }, (t) => {
   const { tmpdir, counter, mktemp } = mktempSandbox(t);
   fs.writeFileSync(counter, '1234567890123456');
   const r = mktemp();
@@ -412,9 +441,11 @@ test('the mktemp shim refuses a counter past 15 digits', { skip: oracleSkip() },
   assert.equal(r.stderr, 'mktemp-shim: refused (counter file holds "1234567890123456"): \n');
   fs.writeFileSync(counter, '0000000000000000007');
   assert.equal(mktemp().stdout, `${path.join(tmpdir, 'tmp.qp00000008')}\n`, 'zeros do not count toward the 15');
+  fs.writeFileSync(counter, '100000000000000');
+  assert.equal(mktemp().stdout, `${path.join(tmpdir, 'tmp.qp100000000000001')}\n`, '15 digits are accepted');
 });
 
-test('bin/node is a sh script', { skip: oracleSkip() }, (t) => {
+test('bin/node is a sh script', { skip: shimSkip() }, (t) => {
   const { sb } = mktempSandbox(t);
   assert.equal(fs.readFileSync(path.join(sb.bin, 'node'), 'utf8').split('\n')[0], '#!/bin/sh');
 });
@@ -441,7 +472,7 @@ const ghShims = (t, scenario) => {
   return { root, shimDir, logs, gh };
 };
 
-test('the gh shim is a sh script', { skip: oracleSkip() }, (t) => {
+test('the gh shim is a sh script', { skip: shimSkip() }, (t) => {
   const sb = createSandbox(S0());
   t.after(() => sb.cleanup());
   assert.equal(fs.readFileSync(path.join(sb.bin, 'gh'), 'utf8').split('\n')[0], '#!/bin/sh');
@@ -449,7 +480,7 @@ test('the gh shim is a sh script', { skip: oracleSkip() }, (t) => {
   assert.equal(fs.existsSync(path.join(sb.root, 'shim', 'gh-fallback')), true);
 });
 
-test('the sh gh shim agrees with ghAnswer on every exact entry', { skip: oracleSkip() }, (t) => {
+test('the sh gh shim agrees with ghAnswer on every exact entry', { skip: shimSkip() }, (t) => {
   const scenarios = [S0(), S1(), S1({ full: true }), S1({ parity: true }), S2(), SEmpty(), SMalformed(), SMalformed('labels'), SMalformed('body'),
     SMalformed('blocker'), SPortable(), D1Second(), S1LiveDep(), ...FAULTS.map((f) => f.scenario())];
   const checked = new Set();
@@ -480,7 +511,7 @@ test('the sh gh shim agrees with ghAnswer on every exact entry', { skip: oracleS
   assert.ok(longest >= 10, `the longest checked argv has ${longest} elements, so \${10} is never exercised`);
 });
 
-test('a near miss of an exact entry falls back and fails loudly', { skip: oracleSkip() }, (t) => {
+test('a near miss of an exact entry falls back and fails loudly', { skip: shimSkip() }, (t) => {
   const { logs, gh } = ghShims(t, S0());
   for (const argv of [[...QUEUE_ARGV.slice(0, -1), '501'], [...QUEUE_ARGV, '--paginate']]) {
     const r = gh(argv);
@@ -491,7 +522,7 @@ test('a near miss of an exact entry falls back and fails loudly', { skip: oracle
   }
 });
 
-test('an effect entry keeps its argv on the node path, shadowing a later entry with the same argv', { skip: oracleSkip() }, (t) => {
+test('an effect entry keeps its argv on the node path, shadowing a later entry with the same argv', { skip: shimSkip() }, (t) => {
   const { root, gh } = ghShims(t, { gh: [{ argv: ['dup'], stdout: 'x\n', effect: 'delete-session-file:probe.txt' }, { argv: ['dup'], stdout: 'y\n' }] });
   const probe = path.join(root, 'ct-session-qp-gh-shadow', 'probe.txt');
   fs.mkdirSync(path.dirname(probe));
@@ -502,7 +533,7 @@ test('an effect entry keeps its argv on the node path, shadowing a later entry w
   assert.equal(fs.existsSync(probe), false, 'the fallback applied the effect');
 });
 
-test('the sh gh shim answers nothing when it cannot write its log', { skip: oracleSkip() }, (t) => {
+test('the sh gh shim answers nothing when it cannot write its log', { skip: shimSkip() }, (t) => {
   const { root, gh } = ghShims(t, S0());
   const missing = path.join(root, 'no-such-logs');
   const r = gh(['--version'], { extra: { QP_LOG_DIR: missing } });
@@ -514,7 +545,7 @@ test('the sh gh shim answers nothing when it cannot write its log', { skip: orac
   assert.equal(unset.stderr, 'gh-shim: QP_LOG_DIR is required\n');
 });
 
-test('the sh gh shim refuses an empty QP_LOG_DIR before a miss reaches the fallback', { skip: oracleSkip() }, (t) => {
+test('the sh gh shim refuses an empty QP_LOG_DIR before a miss reaches the fallback', { skip: shimSkip() }, (t) => {
   const { root, gh } = ghShims(t, S0());
   const r = gh(['issue', 'view', '1'], { extra: { QP_LOG_DIR: '' } });
   assert.equal(r.status, 97);
@@ -523,7 +554,7 @@ test('the sh gh shim refuses an empty QP_LOG_DIR before a miss reaches the fallb
   assert.equal(fs.existsSync(path.join(root, 'gh-argv.nul')), false, 'no relative log in the cwd');
 });
 
-test('setScenario regenerates the gh answers', { skip: oracleSkip() }, (t) => {
+test('setScenario regenerates the gh answers', { skip: shimSkip() }, (t) => {
   const probe = (stdout) => ({ ...S0(), gh: [...S0().gh, { argv: ['probe'], stdout }] });
   const sb = createSandbox(probe('a\n'));
   t.after(() => sb.cleanup());

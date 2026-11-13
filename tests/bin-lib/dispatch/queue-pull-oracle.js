@@ -850,7 +850,7 @@ function readShimLog(logsDir, kind) {
 
 // The session dir a run's node processes resolve under its TMPDIR: plugin/bin/lib/session-tmp.js's
 // sessionTmpRoot rule, which this test process cannot call directly (its os.tmpdir() differs), over
-// the plugin's own session-id rule (required here, not at the top, as the shims re-enter this file).
+// the plugin's own session-id rule (required here, not at the top, as the gh fallback re-enters this file).
 const sessionDirUnder = (tmpdir, sessionId) => {
   const { resolveSessionId } = require(path.join(REPO, 'plugin', 'bin', 'lib', 'session-tmp.js'));
   return path.join(tmpdir, `ct-session-${resolveSessionId(sessionId)}`);
