@@ -181,7 +181,8 @@ test('entry passing: the tail stays pending-review/unclassified until later task
   assert.equal(r.eventsStdoutOnly, false);
   assert.deepEqual(kindsOf(h), ['ghAvailable', 'gh', 'node', 'readFile', 'node', 'judgments']);
   assert.deepEqual(h.calls[1].args, ['issue', 'view', '7', '--repo', 'o/r', '--json', 'labels']);
-  const [a, , , b] = [h.calls[2], 0, 0, h.calls[4]];
+  const a = h.calls[2];
+  const b = h.calls[4];
   assert.equal(path.basename(a.args[0]), 'resolve-policy.js');
   assert.deepEqual(a.args.slice(1), ['--run', CTX.runDir, '--values', 'integration-model']);
   assert.deepEqual(b.args.slice(1), ['--run', CTX.runDir, 'merge-verification']);
@@ -236,9 +237,9 @@ test('AC1.2, AC1.3: labels without auto:merge, empty, auto:merge-pending only �
 });
 
 test('AC2.1–AC2.6: entry refusals with their residue', async () => {
-  const merged = { mergeCheck: { verdict: 'auto-merge' } };
+  const noAcceptance = { mergeCheck: { verdict: 'auto-merge' } };
   const rows = [
-    // [name, over, ctx override, reason, expected call kinds that must be absent]
+    // [name, over, ctx override, reason]
     ['summaryLogged false', {}, { summaryLogged: false }, 'summary-entry-missing'],
     ['summaryLogged "true"', {}, { summaryLogged: 'true' }, 'summary-entry-missing'],
     ['summaryLogged undefined', {}, { summaryLogged: undefined }, 'summary-entry-missing'],
@@ -258,7 +259,7 @@ test('AC2.1–AC2.6: entry refusals with their residue', async () => {
     ['judgments returns null', { supplier: null }, {}, 'supplier-failed'],
     ['verdict not a string', { supplier: { mergeCheck: { verdict: 1 }, acceptance: { completed: true } } }, {}, 'supplier-failed'],
     ['completed not boolean', { supplier: { acceptance: { completed: 'yes' }, mergeCheck: { verdict: 'auto-merge' } } }, {}, 'supplier-failed'],
-    ['acceptance missing', { supplier: merged }, {}, 'supplier-failed'],
+    ['acceptance missing', { supplier: noAcceptance }, {}, 'supplier-failed'],
     ['verdict needs-human', { supplier: { mergeCheck: { verdict: 'needs-human' }, acceptance: { completed: true } } }, {}, 'verdict-not-confirmed'],
     ['acceptance not completed', { supplier: { mergeCheck: { verdict: 'auto-merge' }, acceptance: { completed: false } } }, {}, 'acceptance-not-completed'],
   ];
@@ -370,6 +371,15 @@ test('AC8.1: a lever log that fails never stops entry; it is named in the entry 
   assert.equal(r.reason, 'unclassified');
   assert.ok(kindsOf(h).includes('judgments'));
   assert.match(h.events.find((e) => e.step === 'merge-entry').detail, /log:Step 2\.5/);
+});
+
+test('a thrown error is classified on its stderr, never on the argv-bearing message', async () => {
+  const err = Object.assign(new Error('Command failed: gh issue view 7 --repo o/r --json labels'), { stderr: 'HTTP 502 bad gateway\n' });
+  const h = mergeHarness({ script: [[isNode('resolve-policy.js'), err]] });
+  const r = await merge(CTX, h.deps);
+  assert.equal(r.reason, 'unclassified');
+  assert.equal(r.detail, 'merge-entry: HTTP 502 bad gateway');
+  assert.doesNotMatch(r.detail, /Command failed|--repo/);
 });
 
 test('merge never throws: a throw inside a step is unclassified naming the sub-step; a throwing emit is swallowed', async () => {

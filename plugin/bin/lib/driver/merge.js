@@ -10,12 +10,13 @@
 // spec's Gotchas); each step function's comment names the section it ports, by symbol.
 //
 // Every external call goes through `deps` (gh, git, node, readFile, lstatType, ...), so this
-// module spawns nothing itself. `merge` never throws: an unexpected throw in any step becomes
+// module spawns nothing itself (except decisions.md, read in-process by `confirmFromFile`,
+// spec AC3). `merge` never throws: an unexpected throw in any step becomes
 // `pending-review` / `unclassified` naming the sub-step.
 
 const path = require('node:path');
 const {
-  neutralize, firstLine, errorText, CLI_TIMEOUT_MS, MERGE_STEP_NAMES,
+  neutralize, errorText, CLI_TIMEOUT_MS, MERGE_STEP_NAMES,
 } = require('./events');
 const { confirmFromFile } = require('../dispatch/merge-verdict');
 
@@ -218,7 +219,7 @@ async function merge(ctx, deps) {
     // the merge call itself.
     return result(s, 'pending-review', 'unclassified', 'not implemented past entry');
   } catch (err) {
-    return result(s, 'pending-review', 'unclassified', `${s.stage}: ${neutralize(firstLine(err && err.message) || String(err))}`);
+    return result(s, 'pending-review', 'unclassified', `${s.stage}: ${neutralize(errorText(err))}`);
   }
 }
 
