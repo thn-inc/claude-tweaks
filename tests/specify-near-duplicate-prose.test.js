@@ -3,8 +3,8 @@
 // Pins record #1944's prose wiring: shaping-mode.md must run the
 // near-duplicate finder before composition and route a ready+in-flight
 // candidate to needs:decision; next-mode-shape.md must cite the same step
-// for the headless drain; dispatch/queue-pull-script.md and SKILL.md must
-// carry the cross-group warning. The mechanical half (the three signals,
+// for the headless drain; dispatch's queue pull and SKILL.md must carry the
+// cross-group warning. The mechanical half (the three signals,
 // exclusions, thresholds) is pinned separately in
 // tests/bin-lib/issues/near-duplicate.test.js.
 'use strict';
@@ -23,7 +23,7 @@ const SHAPING_MODE = read('plugin/skills/specify/shaping-mode.md');
 // Actions Performed moved to shaping-mode-readback.md (#2841's split).
 const SHAPING_STAMPING = read('plugin/skills/specify/shaping-mode-stamping.md') + read('plugin/skills/specify/shaping-mode-readback.md');
 const NEXT_MODE_SHAPE = read('plugin/skills/specify/next-mode-shape.md');
-const QUEUE_PULL = read('plugin/skills/dispatch/queue-pull-script.md');
+const { PASSES } = require('../plugin/bin/lib/dispatch/queue-pull');
 const DISPATCH_SKILL = read('plugin/skills/dispatch/SKILL.md');
 
 test('shaping-mode.md runs the near-duplicate check before composition and cites the module', () => {
@@ -58,14 +58,16 @@ test('next-mode-shape.md cites the near-duplicate check for the headless drain a
   assert.match(section.slice(0, 600), /`failed`\s+bucket/);
 });
 
-test('dispatch/queue-pull-script.md runs the cross-group near-duplicate warning after the cross-PR overlap block', () => {
-  assert.match(QUEUE_PULL, /#1944: cross-group near-duplicate candidate warning/);
-  assert.match(QUEUE_PULL, /findNearDuplicates/);
-  const crossPrIdx = QUEUE_PULL.indexOf('#1579: cross-PR root-cause overlap report');
-  const nearDupIdx = QUEUE_PULL.indexOf('#1944: cross-group near-duplicate candidate warning');
+// #5230: the warning is the queue-pull module's near-dup-pairs pass; its AUTO line is pinned in
+// tests/dispatch-near-dup-pairs-script.test.js and tests/bin-lib/dispatch/queue-pull.test.js.
+test('the dispatch queue pull runs the cross-group near-duplicate warning after the cross-PR overlap pass, last', () => {
+  const ids = PASSES.map((p) => p.id);
+  const crossPrIdx = ids.indexOf('cross-pr-overlap');
+  const nearDupIdx = ids.indexOf('near-dup-pairs');
   assert.ok(crossPrIdx !== -1 && nearDupIdx !== -1);
   assert.ok(crossPrIdx < nearDupIdx, 'the cross-group warning runs after the cross-PR overlap report');
-  assert.match(QUEUE_PULL, /near-duplicate candidates across groups/);
+  assert.equal(nearDupIdx, ids.length - 1, 'the cross-group warning is the final pass');
+  assert.equal(PASSES[nearDupIdx].kind, 'informational', 'the pass writes no exclusion reason');
 });
 
 test('dispatch/SKILL.md Step 3 documents the near-duplicate candidate warning, with strong pairs feeding the neighbour guard (#3520)', () => {

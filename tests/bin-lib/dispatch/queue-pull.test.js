@@ -3669,3 +3669,52 @@ test('#5230 blocker-landing: the argv the module hands dispatch-unlanded-blocker
   assert.equal(flagValue(args, '--groups'), paths['dispatch-groups.json']);
   assert.equal(flagValue(args, '--exclusions'), paths['dispatch-exclusions.json']);
 });
+
+// #5230 (moved from tests/bin-lib/express/queue.test.js, which read the script's three call sites):
+// a recording expressQueuePolicy whose grouping no default produces and whose keepSingleton keeps
+// #9101 out of the fast-lane bundle. Each of the three sites goes red on its own if it reads
+// anything but the injected policy.
+function recordingExpress() {
+  const seen = { calls: 0, kept: [] };
+  const dep = () => {
+    seen.calls += 1;
+    return { enabled: true, grouping: 'recorded-grouping', keepSingleton: (c) => { seen.kept.push(c.number); return c.number === 9101; } };
+  };
+  return { seen, dep };
+}
+
+test('#5230 express: the grouping pass, the write-back blob and the cache check each consume the injected expressQueuePolicy', () => {
+  const off = pull(SFast());
+  assert.deepEqual(groupNumbers(off), [[9101, 9102, 9103]], 'control: with the policy off the three singletons bundle');
+
+  const express = recordingExpress();
+  const miss = pull(SFast(), { deps: { expressQueuePolicy: express.dep } });
+  assert.deepEqual(groupNumbers(miss), [[9101], [9102, 9103]], 'buildDispatchGroups takes keepSingleton from the policy');
+  assert.ok(express.seen.kept.includes(9101), 'keepSingleton was asked about #9101');
+  assert.equal(miss.store.written.length, 1);
+  assert.equal(miss.store.written[0].blob.grouping, 'recorded-grouping', 'the write-back blob stamps the policy grouping');
+
+  const blob = miss.store.written[0].blob;
+  const hit = pull(SFast(), { persisted: blob, deps: { expressQueuePolicy: recordingExpress().dep } });
+  assert.equal(hit.state.cacheHit, true, 'the cache check compares the blob against the policy grouping');
+  assert.deepEqual(groupNumbers(hit), [[9101], [9102, 9103]]);
+  const otherMode = pull(SFast(), { persisted: blob });
+  assert.equal(otherMode.state.cacheHit, false, 'a blob stamped under another grouping is never reused');
+});
+
+// #5230 (moved from tests/bin-lib/stage-item/cli.test.js, #3488): the shipped Close proposal's
+// stage-item.js call drops its stdout but forwards its stderr, so a staging failure reaches the
+// firing's log.
+test('#5230 shipped: the stage-item.js stderr of a shipped Close proposal reaches deps.stderr; its stdout does not reach deps.stdout', () => {
+  const spawn = {
+    'stage-item.js': (args) => {
+      const id = args[args.indexOf('--id') + 1];
+      return { status: 1, stdout: `staged ${id}\n`, stderr: `stage-item: refused ${id}\n` };
+    },
+  };
+  const r = pull4(FULL(), { spawn });
+  assert.ok(r.errs.includes('stage-item: refused shipped-close-9010\n'), r.stderr);
+  assert.ok(!r.cap.stdout.includes('staged shipped-close-9010\n'), 'the shipped stage-item stdout is dropped');
+  assert.ok(r.cap.stdout.includes('staged dispatch-target-missing-9009\n'), 'control: the target-missing call forwards its stdout');
+  assert.equal(r.thrown, null, 'a failed staging call does not stop the pull');
+});
