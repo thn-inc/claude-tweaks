@@ -163,4 +163,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { has, hasAppleDeveloperTool,detectPackageManager, detectVersionManager, installCommand, findOnPath, playwrightCliMessage, collect, main };
+module.exports = { has, hasAppleDeveloperTool, detectPackageManager, detectVersionManager, installCommand, findOnPath, playwrightCliMessage, collect, main };

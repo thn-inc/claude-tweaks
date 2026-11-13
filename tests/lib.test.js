@@ -142,6 +142,42 @@ test('deps: has() is false when PATH holds no such command', () => {
   });
 });
 
+// The user-chosen rule (#5297, Reading B): a PATH hit at /usr/bin/git on macOS is the xcode-select
+// shim, so it counts only when a real developer dir holds git.
+test('deps: has() applies the /usr/bin stub rule on darwin', { skip: process.platform !== 'darwin' }, () => {
+  const fs = require('node:fs');
+  const childProcess = require('node:child_process');
+  const modulePath = require.resolve('../plugin/bin/lib/deps');
+  const clt = '/Library/Developer/CommandLineTools/usr/bin/git';
+  const origPath = process.env.PATH;
+  const origReadlink = fs.readlinkSync;
+  const origExists = fs.existsSync;
+  const originals = {};
+  let spawned = false;
+  for (const k of ['execSync', 'execFileSync', 'spawnSync']) {
+    originals[k] = childProcess[k];
+    childProcess[k] = () => { spawned = true; throw new Error(`${k} must not be called`); };
+  }
+  let cltPresent = false;
+  fs.readlinkSync = () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); };
+  fs.existsSync = (p) => (p === clt ? cltPresent : false);
+  process.env.PATH = '/usr/bin';
+  delete require.cache[modulePath];
+  try {
+    const d = require('../plugin/bin/lib/deps');
+    assert.strictEqual(d.has('git'), false, 'a stub-only /usr/bin/git must not count');
+    cltPresent = true;
+    assert.strictEqual(d.has('git'), true, '/usr/bin/git counts once the Command Line Tools hold git');
+    assert.strictEqual(spawned, false);
+  } finally {
+    fs.readlinkSync = origReadlink;
+    fs.existsSync = origExists;
+    for (const k of Object.keys(originals)) childProcess[k] = originals[k];
+    process.env.PATH = origPath;
+    delete require.cache[modulePath];
+  }
+});
+
 test('deps: hasAppleDeveloperTool follows the xcode-select link', () => {
   const target = '/Applications/Xcode.app/Contents/Developer';
   assert.strictEqual(deps.hasAppleDeveloperTool('git', {
