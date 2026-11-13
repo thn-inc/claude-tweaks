@@ -12,6 +12,7 @@
 //     line in a commit, PR body or event.
 
 const path = require('node:path');
+const { CLOSING_KEYWORD_ALTERNATION } = require('../issue-branch-tracking');
 
 const STEP_NAMES = Object.freeze([
   'policy', 'fetch', 'eligibility', 'admission', 'claim', 'run-dir', 'worktree', 'worker',
@@ -53,13 +54,20 @@ function outcomeFor(stopClass) {
   return OUTCOME_BY_CLASS[stopClass];
 }
 
-const CLOSING_KEYWORDS = /\b(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\b/gi;
 const QUALIFIED_REF = /[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#\d+/g;
 const BARE_REF = /#\d+/g;
 // An issue or PR URL on any host, with any tail (`/files`, `#issuecomment-…`): it backlinks
-// like `#N`. Removed before the keywords, which could otherwise cut a path segment out of it.
+// like `#N`. The keyword pass runs first and removes a keyword only when a reference starts
+// right after it, so it never cuts into a URL path.
 // The tail stops before trailing punctuation (`)`, `.`, `,` …), which belongs to the sentence.
 const URL_REF = /\bhttps?:\/\/[^\s/]+\/[^\s/]+\/[^\s/]+\/(?:issues|pull)\/\d+(?:[/#?]\S*[^\s)\].,;:!?'">])?/gi;
+// A closing keyword (and an optional colon) only where a reference starts right after it; the
+// lookahead leaves the reference for its own pass. A keyword with no reference is plain prose.
+const KEYWORD_BEFORE_REF = new RegExp(
+  '\\b' + CLOSING_KEYWORD_ALTERNATION + '\\b\\s*:?\\s*(?='
+  + [URL_REF, QUALIFIED_REF, BARE_REF].map((r) => r.source).join('|') + ')',
+  'gi',
+);
 const GH_REF = /\bGH-\d+\b/gi;
 // An HTML comment opener hides the rest of a rendered body; `<\!--` renders as the text `<!--`.
 const COMMENT_OPENER = /<!--/g;
@@ -68,12 +76,12 @@ function neutralize(text) {
   if (typeof text !== 'string') return '';
   return text
     .replace(/[\r\n\t]+/g, ' ')
+    .replace(KEYWORD_BEFORE_REF, '')
     .replace(URL_REF, '')
     .replace(GH_REF, '')
     .replace(COMMENT_OPENER, '<\\!--')
     .replace(/`/g, "'")
     .replace(/@/g, '@\u200B')
-    .replace(CLOSING_KEYWORDS, '')
     .replace(QUALIFIED_REF, '')
     .replace(BARE_REF, '')
     .replace(/\s+/g, ' ')

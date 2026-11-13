@@ -31,7 +31,7 @@ test('neutralize: non-string is empty, whitespace runs collapse, result is trimm
   assert.equal(neutralize(42), '');
   assert.equal(neutralize('  a\r\n\t b  '), 'a b');
   assert.equal(neutralize('a `b` c'), "a 'b' c");
-  assert.equal(neutralize('x CLOSED y Resolved z'), 'x y z');
+  assert.equal(neutralize('x CLOSED y Resolved z'), 'x CLOSED y Resolved z');
   assert.equal(neutralize('prefixes and fixture'), 'prefixes and fixture');
 });
 
@@ -49,10 +49,50 @@ test('neutralize: HTML comment openers render inert; issue and PR URLs and GH-N 
   assert.equal(neutralize('https://github.com/o/r/blob/main/a.js'), 'https://github.com/o/r/blob/main/a.js');
 });
 
-test('AC3.4: normalizeTitle keeps first line, drops period and keywords', () => {
+test('AC3.4: normalizeTitle keeps first line, drops period and keyword-reference pairs', () => {
   assert.equal(normalizeTitle('Add the loop. Resolves #9.\nsecond line'), 'Add the loop');
   assert.equal(normalizeTitle('Closes #4\n'), '');
   assert.equal(normalizeTitle(null), '');
+});
+
+test('#5269 AC1: normalizeTitle keeps a leading closing keyword with no reference after it', () => {
+  assert.equal(normalizeTitle('Fix the loop'), 'Fix the loop');
+  assert.equal(normalizeTitle('Resolves the race in the sink'), 'Resolves the race in the sink');
+});
+
+test('#5269 AC2: a closing keyword before a reference loses both', () => {
+  assert.equal(normalizeTitle('Add the loop. Resolves #9.\nsecond line'), 'Add the loop');
+  assert.equal(normalizeTitle('Closes #4'), '');
+  assert.equal(neutralize('Fixes: #12'), '');
+  assert.equal(neutralize('fixes owner/repo#3'), '');
+  assert.equal(neutralize('Closes https://github.com/o/r/issues/5'), '');
+  assert.equal(neutralize('a Fixed https://github.com/o/r/pull/7 b'), 'a b');
+  // Review Focus 1-3.
+  assert.equal(neutralize('closes#5 x'), 'x');
+  assert.equal(neutralize('Fixes\n#5 x'), 'x');
+  assert.equal(neutralize('Fix #abc'), 'Fix #abc');
+  assert.equal(neutralize('Closes (#4) now'), 'Closes () now');
+});
+
+test('#5269 AC3: no keyword is ever left followed by a reference, in any case or shape', () => {
+  const { CLOSING_KEYWORD_ALTERNATION } = require(path.join(LIB, 'issue-branch-tracking'));
+  const keywords = ['close', 'closes', 'closed', 'fix', 'fixes', 'fixed', 'resolve', 'resolves', 'resolved'];
+  const refs = ['#12', 'owner/repo#3', 'https://github.com/o/r/issues/5', 'https://github.com/o/r/pull/5'];
+  // No empty separator: `closehttps://…` has no word boundary, under either rule (the glued
+  // `closes#5` form is pinned in AC2 above).
+  const separators = [' ', ':', ': ', ' : '];
+  const leftover = new RegExp(`\\b${CLOSING_KEYWORD_ALTERNATION}\\s*:?\\s*(?:#\\d|\\S*\\/\\S*#\\d|\\S*github\\.com\\/)`, 'i');
+  for (const kw of keywords) {
+    for (const cased of [kw, kw[0].toUpperCase() + kw.slice(1), kw.toUpperCase()]) {
+      for (const ref of refs) {
+        for (const sep of separators) {
+          const out = neutralize(`Add ${cased}${sep}${ref} now`);
+          assert.doesNotMatch(out, leftover, JSON.stringify([cased, sep, ref, out]));
+          assert.equal(out, 'Add now', JSON.stringify([cased, sep, ref]));
+        }
+      }
+    }
+  }
 });
 
 test('AC7: outcomeFor maps every stop class', () => {
