@@ -212,15 +212,22 @@ test('the generated track-issue-fixes.yml is skipped (current or prior-generated
     assert.deepEqual(r.unparsed, []);
   }
 
+  // The hand edit: a pull_request trigger, a job's if: replaced by a draft skip,
+  // and a step if: added, so checks 1 and 2 have something to flag.
   const modified = current
-    .replace(/^ {4}if: github\.ref != .*\n/m, '')
+    .replace('on:\n  push:\n', 'on:\n  pull_request:\n    types: [opened, synchronize]\n  push:\n')
+    .replace(/^ {4}if: github\.ref != .*\n/m, '    if: github.event.pull_request.draft == false\n')
     .replace('        id: extract\n', '        id: extract\n        if: always()\n');
   assert.notEqual(modified, current);
   assert.equal(classifyExistingWorkflow(modified), 'modified');
-  const r = review({ 'track-issue-fixes.yml': modified });
+  const ciSources = [{ suite: 'tests', workflow: 'Track issue fixes across branches' }];
+  const r = M.reviewWorkflows({ workflows: [wf('track-issue-fixes.yml', modified)], ciSources });
   assert.equal(r.reviewed, 1);
   assert.deepEqual(r.skipped, []);
-  const other = review({ 'other.yml': modified });
+  assert.deepEqual(checksOf(r, T), ['draft-skip-no-ready-for-review', 'draft-skip-with-ci-source']);
+  assert.ok(r.findings[0].detail.includes('label-fix-branch'), r.findings[0].detail);
+  assert.deepEqual(r.unparsed, []);
+  const other = M.reviewWorkflows({ workflows: [wf('other.yml', modified)], ciSources });
   const asOther = (xs) => xs.map((x) => ({ ...x, workflow: '.github/workflows/other.yml' }));
   assert.deepEqual(asOther(r.findings), other.findings);
   assert.deepEqual(asOther(r.unparsed), other.unparsed);

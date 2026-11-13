@@ -145,6 +145,22 @@ test('push: absent, all, some, ignore and tags', () => {
     assert.deepEqual(read(on).unparsed, ['push branches not read'], on);
     assert.equal(read(on).pushBranches, 'absent', on);
   }
+  // GitHub's filter-pattern characters `?`, `+` and `[]` are read: quoted anywhere,
+  // plain where YAML allows them (a plain `[` or `]` only outside a flow sequence)
+  for (const on of ["on:\n  push:\n    branches: ['release/v[0-9]*']\n", "on:\n  push:\n    branches: 'v?.x'\n",
+    'on:\n  push:\n    branches: v?.x\n', 'on:\n  push:\n    branches: release/v[0-9]+.x\n',
+    "on:\n  push:\n    branches:\n      - release/v[0-9]*\n      - 'v+.x'\n      - feat?\n",
+    "on:\n  push:\n    branches: [v?.x, 'feature/**', v1+]\n", 'on:\n  push:\n    branches: ["!release/v[0-9]+"]\n']) {
+    const s = read(on);
+    assert.equal(s.pushBranches, 'some', on);
+    assert.deepEqual(s.unparsed, [], on);
+  }
+  // outside that set, or a plain bracket inside a flow sequence, stays unread
+  for (const on of ['on:\n  push:\n    branches: [release/v[0-9]*]\n', "on:\n  push:\n    branches: ['feat~x']\n",
+    'on:\n  push:\n    branches: [main, v^1]\n', "on:\n  push:\n    branches:\n      - 'a b'\n", 'on:\n  push:\n    branches: ?x\n']) {
+    assert.deepEqual(read(on).unparsed, ['push branches not read'], on);
+    assert.equal(read(on).pushBranches, 'absent', on);
+  }
   // the indentless top-level sequence stays inside the on: region
   assert.equal(read('on:\n- workflow_dispatch\n- push\n').pushTrigger, true);
   const none = read('on: pull_request\n');

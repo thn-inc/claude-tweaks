@@ -445,10 +445,14 @@ function readyRequirement(workflows) {
 const PR_FILTER_KEYS = Object.freeze(['branches', 'branches-ignore', 'paths', 'paths-ignore']);
 
 // A push branch-filter item, optionally quoted with balanced quotes: BLOCK_ITEM
-// widened with digits and the glob/path characters `*`, `/`, `.`, `-`. A quoted
-// item may lead with one `!` (a negation pattern); a bare `!x` is a YAML tag,
-// not a pattern, so it stays unread.
-const BRANCH_ITEM = /^(?:(['"])!?[A-Za-z0-9_*/.-]+\1|[A-Za-z0-9_*/.-]+)$/;
+// widened with digits, the path characters `/`, `.`, `-` and GitHub's filter
+// pattern characters `*`, `?`, `+`, `[`, `]`. A quoted item may lead with one
+// `!` (a negation pattern); a bare `!x` is a YAML tag, not a pattern, so it
+// stays unread. A plain item starts with a name or path character (a leading
+// `?`, `+`, `[` or `]` is YAML syntax or no pattern), and inside a flow sequence
+// (BRANCH_FLOW_ITEM) a plain `[` or `]` is YAML syntax, so it stays unread too.
+const BRANCH_ITEM = /^(?:(['"])!?[A-Za-z0-9_*/.?+[\]-]+\1|[A-Za-z0-9_*/.-][A-Za-z0-9_*/.?+[\]-]*)$/;
+const BRANCH_FLOW_ITEM = /^(?:(['"])!?[A-Za-z0-9_*/.?+[\]-]+\1|[A-Za-z0-9_*/.-][A-Za-z0-9_*/.?+-]*)$/;
 const BLOCK_SCALAR = /^[|>][-+0-9]*$/;
 const PLAIN_KEY = /^[^\s#'"[\]{},&*!|>%@`-]\S*$/;
 // Every `(.*)` below carries the `s` flag: a stray `\r` or U+2028 left in a
@@ -845,7 +849,7 @@ function readBranchItems(lines, entry, end) {
     for (const raw of v.slice(1, -1).split(',')) {
       const it = raw.trim();
       if (it === '') continue;
-      if (!BRANCH_ITEM.test(it)) return null;
+      if (!BRANCH_FLOW_ITEM.test(it)) return null;
       items.push(stripQuotes(it));
     }
     return items;
