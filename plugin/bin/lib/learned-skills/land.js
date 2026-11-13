@@ -313,7 +313,7 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
         if (entry.status === 'captured') onBranch.set(String(entry.id), c.sha);
         return null;
       }).find(Boolean);
-      const where = existingPr ? `open PR #${existingPr.number}` : 'no PR';
+      const where = existingPr ? `open PR #${existingPr.number} (${existingPr.url})` : 'no PR';
       if (stray) return downgradeAll(todo, `${branch} already exists on origin with ${where} but cannot be reused as a base: ${stray}`);
     }
 
@@ -350,9 +350,11 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
     const fresh = built.filter((b) => !b.reused);
 
     // 3. Push the new tip.
+    let pushed = false;
     if (fresh.length) {
       try {
         git(['push', '--end-of-options', 'origin', `${parent}:refs/heads/${branch}`], { timeout: GIT_PUSH_TIMEOUT_MS });
+        pushed = true;
       } catch (err) {
         // The new commits are staged; reused commits already sit on the open PR's branch, so they land.
         stageAll({ runDir, worktree, entries: fresh.map((b) => b.entry), reason: `push of ${branch} failed (${firstLine(err)})`, deps, out });
@@ -368,9 +370,16 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
     try {
       if (!pr) {
         const title = neutralizeClosingPhrases(`Add learned skill updates from wrap-up of ${records.map((r) => `#${r}`).join(', ')}`).text;
-        deps.gh(['pr', 'create', '--base', integrationBranch, '--head', branch, '--title', title, '--body-file', '-'], prBody(records, entries));
-        pr = openOf(listPrs());
-        if (!pr) throw new Error('the created PR does not read OPEN');
+        let createErr = null;
+        try {
+          deps.gh(['pr', 'create', '--base', integrationBranch, '--head', branch, '--title', title, '--body-file', '-'], prBody(records, entries));
+        } catch (err) { createErr = err; }
+        // Re-read before trusting the create, or before taking the branch down after it errored: gh
+        // can error after GitHub opened the PR, and an OPEN PR on this run's branch is this call's.
+        let open = null;
+        try { open = openOf(listPrs()); } catch (readErr) { if (!createErr) throw readErr; }
+        if (!open) throw createErr || new Error('the created PR does not read OPEN');
+        pr = open;
       }
     } catch (err) {
       // Every entry is staged, so take the branch down (it is this call's or this run's own, with no PR):
@@ -405,6 +414,13 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
       }
     }
     out.pr = prRef;
+    // Commits added to an open PR: its body lists only the earlier call's entries, so rewrite it with
+    // every entry landed on it. The number is gh's own integer, never caller text. A failure leaves the
+    // commits on the PR and is reported.
+    if (existingPr && pushed) {
+      const onPr = manifest.filter((e) => e.status === 'landed' && e.pr && e.pr.number === prRef.number);
+      try { deps.gh(['pr', 'edit', String(prRef.number), '--body-file', '-'], prBody(records, onPr)); } catch { out.prBodyStale = true; }
+    }
     // The edits are on the PR by now, so a failed manifest write is reported, never thrown: a throw
     // reads as "nothing landed" and the caller would stage edits the PR already carries. A later land
     // reuses the verified commits and records them.

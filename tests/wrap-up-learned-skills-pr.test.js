@@ -360,6 +360,28 @@ test('curation-engine.md section 3 commit row says record refuses a commit-less 
   assert.doesNotMatch(row.replace(claim, ''), claim, 'control: the claim stripped from the row goes red');
 });
 
+// ---- M4: reverting a learned-skills item from the console -------------------------
+// The commit is on the learned-skills PR's branch, not the run branch, so `git revert` there conflicts.
+const INTERACTIVE = readText(path.join(WRAP, 'review-console-interactive.md'));
+const PRE_CHANGE_ITEM_3 = '3. Auto-applied items the user wants reverted: `git revert {commit}` (one revert commit per item, to keep history clean)';
+const REVERT_CLAIM = /except an item whose disposition names a learned-skills PR \(`applied \(\{commit\}, learned-skills PR \{url\}\)`\): its commit is on that PR's branch, not the run branch, so revert it by dropping it from that PR or by closing the PR, never by `git revert` on the run branch/;
+const overrideItem3 = (text) => {
+  const item = sectionOf(text, '## On override (option 2)').split('\n').find((l) => l.startsWith('3. ')) || '';
+  assert.ok(item, 'the override list\'s item 3 resolves');
+  return item;
+};
+
+test('review-console-interactive.md: a learned-skills item is reverted on its PR, never by git revert on the run branch', () => {
+  const item = overrideItem3(INTERACTIVE);
+  assert.ok(item.startsWith(PRE_CHANGE_ITEM_3.replace(/\)$/, '')), 'item 3 keeps its git revert rule for run-branch commits');
+  assert.match(item, REVERT_CLAIM);
+  assert.doesNotMatch(PRE_CHANGE_ITEM_3, REVERT_CLAIM, 'control: the pre-change item does not satisfy the pin');
+  const moved = INTERACTIVE.replace(item, PRE_CHANGE_ITEM_3).replace('## On stop (option 3)', `## On stop (option 3)\n\n${item}`);
+  assert.notEqual(moved, INTERACTIVE);
+  assert.match(moved, REVERT_CLAIM, 'the sentence is still in the file');
+  assert.doesNotMatch(overrideItem3(moved), REVERT_CLAIM, 'control: the sentence moved out of item 3 goes red');
+});
+
 // ---- auto-merge-short-circuit.md: the pr-first FYI ----------------------------
 
 function prFirstFyi(text) {

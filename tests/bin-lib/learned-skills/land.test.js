@@ -60,7 +60,7 @@ function fixture(t, { capturedTargets = [X, Z] } = {}) {
 }
 
 // A gh fake. State: the open PR list. Throws on any argv it does not handle.
-function fakeGh({ prs = [], createThrows = null } = {}) {
+function fakeGh({ prs = [], createThrows = null, editThrows = null } = {}) {
   const calls = [];
   const state = { prs: [...prs] };
   const gh = (args, input) => {
@@ -76,6 +76,12 @@ function fakeGh({ prs = [], createThrows = null } = {}) {
       if (createThrows) throw new Error(createThrows);
       state.prs = [{ number: 77, url: 'https://github.com/o/r/pull/77', state: 'OPEN' }];
       return 'https://github.com/o/r/pull/77\n';
+    }
+    // The body refresh: exactly this argv, the body on stdin.
+    if (args[0] === 'pr' && args[1] === 'edit') {
+      if (args.join(' ') !== 'pr edit 77 --body-file -' || typeof input !== 'string') throw new Error('unexpected ' + args.join(' '));
+      if (editThrows) throw new Error(editThrows);
+      return '';
     }
     throw new Error('unexpected ' + args.join(' '));
   };
@@ -456,6 +462,59 @@ test('an existing branch with an open PR is the base: a later capture adds one c
   assert.equal(res.pr.number, 77);
 });
 
+// M6 (final review): a land that adds commits to an open PR rewrites its body with every landed entry.
+test('commits added to an open PR refresh its body with every landed entry', (t) => {
+  const f = fixture(t, { capturedTargets: [X] });
+  const gh = fakeGh();
+  land(landArgs(f), deps(gh.gh).deps);
+  captureMore(f, Z, (b) => b + 'z second\n', 'z finding');
+  const res = land(landArgs(f), deps(gh.gh).deps);
+  assert.equal(res.prBodyStale, undefined);
+  const edits = gh.calls.filter((c) => c.args[1] === 'edit');
+  assert.equal(edits.length, 1);
+  assert.deepEqual(edits[0].args, ['pr', 'edit', '77', '--body-file', '-']);
+  const body = edits[0].input;
+  assert.ok(body.startsWith('<!-- wrap-up-skills-pr -->'));
+  assert.ok(body.includes('- `x/SKILL.md` — adds a note') && body.includes('- `z/SKILL.md` — z finding'), body);
+  assert.ok(body.includes('refs #5290'));
+
+  // A resume that adds no commit leaves the body alone.
+  const callsBefore = gh.calls.length;
+  land(landArgs(f), deps(gh.gh).deps);
+  assert.equal(gh.calls.slice(callsBefore).some((c) => c.args[1] === 'edit'), false);
+});
+
+test('a failed body refresh is reported, and the landed commits still stand', (t) => {
+  const f = fixture(t, { capturedTargets: [X] });
+  const gh = fakeGh({ editThrows: 'HTTP 502' });
+  land(landArgs(f), deps(gh.gh).deps);
+  captureMore(f, Z, (b) => b + 'z second\n', 'z finding');
+  const res = land(landArgs(f), deps(gh.gh).deps);
+  assert.equal(res.prBodyStale, true);
+  assert.deepEqual(res.landed.map((l) => l.target), [Z]);
+  assert.deepEqual(readManifest(f.runDir).map((m) => m.status), ['landed', 'landed']);
+});
+
+// Triage 5 (final review): gh pr create can error after GitHub opened the PR. The list is re-read
+// before the branch is taken down, and an OPEN PR there is the one this call created.
+test('a create that errors while the PR opened is treated as created', (t) => {
+  const f = fixture(t);
+  const gh = fakeGh();
+  const opensThenFails = (args, input) => {
+    const r = gh.gh(args, input);
+    if (args[1] === 'create') throw new Error('HTTP 502 after the PR opened');
+    return r;
+  };
+  const d = deps(opensThenFails);
+  const res = land(landArgs(f), d.deps);
+  assert.deepEqual(res.staged, []);
+  assert.equal(res.landed.length, 2);
+  assert.equal(res.pr.number, 77);
+  assert.ok(remoteBranch(f), 'the branch is not taken down');
+  assert.equal(d.gitCalls.some((c) => c.args.includes(`:refs/heads/${BRANCH}`)), false, 'no delete push');
+  assert.deepEqual(readManifest(f.runDir).map((m) => m.status), ['landed', 'landed']);
+});
+
 for (const [state, reason] of [
   ['CLOSED', (b) => new RegExp(`${b} already exists on origin and PR #77 was closed`)],
   ['MERGED', () => /the earlier learned-skills PR #77 was merged/],
@@ -662,7 +721,7 @@ test('a join that rewrites a pushed entry\'s patch under the same id is not matc
   const res = land(landArgs(f), again.deps);
   assert.deepEqual(res.landed, [], 'the old commit does not hold the joined edit');
   assert.equal(res.staged.length, 1);
-  assert.match(res.staged[0].reason, /with open PR #77 but cannot be reused as a base: [0-9a-f]{7} does not hold entry 1's current edit/);
+  assert.match(res.staged[0].reason, /with open PR #77 \(https:\/\/github\.com\/o\/r\/pull\/77\) but cannot be reused as a base: [0-9a-f]{7} does not hold entry 1's current edit/);
   assert.equal(readManifest(f.runDir)[0].status, 'staged');
   assert.ok(fs.readFileSync(res.staged[0].stagePath, 'utf8').includes('second edit at the top'), 'the second edit is not lost');
   assert.equal(remoteBranch(f), tip1);
@@ -723,7 +782,7 @@ test('a branch commit with a matching entry id but another run id is not reused'
   const res = land(landArgs(f), deps(gh.gh).deps);
   assert.deepEqual(res.landed, [], 'the other run\'s commit is not this run\'s');
   assert.equal(res.staged.length, 1);
-  assert.match(res.staged[0].reason, /with open PR #77 but cannot be reused as a base: [0-9a-f]{7} maps to no entry of this run/);
+  assert.match(res.staged[0].reason, /with open PR #77 \(https:\/\/github\.com\/o\/r\/pull\/77\) but cannot be reused as a base: [0-9a-f]{7} maps to no entry of this run/);
 });
 
 test('a same-run commit under another entry id, with an equal patch-id, is not matched to the entry', (t) => {
@@ -739,7 +798,7 @@ test('a same-run commit under another entry id, with an equal patch-id, is not m
   const res = land(landArgs(f), deps(gh.gh).deps);
   assert.deepEqual(res.landed, []);
   assert.equal(res.staged.length, 1);
-  assert.match(res.staged[0].reason, /with open PR #77 but cannot be reused as a base: [0-9a-f]{7} maps to no entry of this run/);
+  assert.match(res.staged[0].reason, /with open PR #77 \(https:\/\/github\.com\/o\/r\/pull\/77\) but cannot be reused as a base: [0-9a-f]{7} maps to no entry of this run/);
 });
 
 test('a failed branch delete cannot make the staged entry\'s commit ride a later PR', (t) => {
@@ -787,7 +846,7 @@ test('a no-PR branch holding a foreign commit is not reused as a base', (t) => {
 // The stray-commit guard runs on every existing branch, whatever its PR. Each case: X landed on PR #77,
 // the manifest write was then lost, the PR list reads `prs`, and Z is captured before landing again.
 const OPEN_77 = { number: 77, url: 'https://github.com/o/r/pull/77', state: 'OPEN' };
-const unusable = (pr, stray) => new RegExp(`^${BRANCH} already exists on origin with ${pr ? 'open PR #77' : 'no PR'} but cannot be reused as a base: ${stray}`);
+const unusable = (pr, stray) => new RegExp(`^${BRANCH} already exists on origin with ${pr ? 'open PR #77 \\(https://github\\.com/o/r/pull/77\\)' : 'no PR'} but cannot be reused as a base: ${stray}`);
 function landedThenLost(t, prs) {
   const f = fixture(t, { capturedTargets: [X] });
   const gh = fakeGh();
@@ -838,13 +897,16 @@ for (const prs of [[], [OPEN_77]]) {
 }
 
 test('an open PR whose branch carries a staged entry\'s commit is not added to', (t) => {
-  // gh pr create errors after GitHub opened the PR, and the branch delete is refused: X is staged,
-  // yet its commit sits on the branch behind open PR #77.
+  // gh pr create errors after GitHub opened the PR, the re-read that would adopt it fails too (triage
+  // 5's deferred leftover), and the branch delete is refused: X is staged, yet its commit sits on the
+  // branch behind open PR #77.
   const f = fixture(t, { capturedTargets: [X] });
   const gh = fakeGh();
+  let created = false;
   const opensThenFails = (args, input) => {
+    if (created && args[1] === 'list') { created = false; throw new Error('HTTP 502 on the re-read'); }
     const r = gh.gh(args, input);
-    if (args[1] === 'create') throw new Error('HTTP 502 after the PR opened');
+    if (args[1] === 'create') { created = true; throw new Error('HTTP 502 after the PR opened'); }
     return r;
   };
   const failing = deps(opensThenFails);

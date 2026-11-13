@@ -1711,6 +1711,41 @@ test('reference-repairs check still fails under pr-first when a repair genuinely
   assert.match(row.detail, /no Initiative-Fix: commit found on PR #1201/);
 });
 
+// #5290 final review M5: a reference repair whose file a learned-skills capture took rides that PR's
+// commit, with no Initiative-Fix: trailer and nothing on the run branch, so it is not this check's.
+test('reference-repairs skips an applied repair that rode the learned-skills PR, calling neither git nor gh', () => {
+  const runDir = makeTmpDir('verify-refrepair-ls-pr-');
+  fs.writeFileSync(path.join(runDir, 'engine-state.json'), JSON.stringify({
+    version: 1,
+    results: { references: { findings: [{ action: 'applied', kind: 'broken-link', summary: 'fix', targetPath: '.claude/skills/x/SKILL.md', commit: 'abc1234', pr: 'https://github.com/o/r/pull/77' }] } },
+  }));
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ pr: { number: 1202 } }));
+  const calls = [];
+  const record = (tool) => (args) => { calls.push(`${tool} ${args.join(' ')}`); return ''; };
+  const result = runVerify({ runDir, base: 'main', deps: { git: record('git'), gh: record('gh') } });
+  const row = result.rows.find((r) => r.check === 'reference-repairs');
+  assert.deepStrictEqual(row, { check: 'reference-repairs', result: 'skip', detail: 'every applied reference repair rode the learned-skills PR, not the run branch' });
+  assert.ok(!calls.some((c) => c.includes('--json commits') || c.includes('Initiative-Fix')), calls.join('\n'));
+});
+
+test('reference-repairs still judges the run-branch repairs beside one that rode the learned-skills PR', () => {
+  const runDir = makeTmpDir('verify-refrepair-ls-mixed-');
+  fs.writeFileSync(path.join(runDir, 'engine-state.json'), JSON.stringify({
+    version: 1,
+    results: { references: { findings: [
+      { action: 'applied', kind: 'broken-link', summary: 'fix', targetPath: 'docs/a.md', commit: 'def5678' },
+      { action: 'applied', kind: 'broken-link', summary: 'fix', targetPath: '.claude/skills/x/SKILL.md', commit: 'abc1234', pr: 'https://github.com/o/r/pull/77' },
+    ] } },
+  }));
+  const fakeGit = (args) => {
+    if (args[0] === 'log' && args.includes('--grep=Initiative-Fix:')) return 'def5678\n';
+    if (args[0] === 'diff-tree') return 'docs/a.md\0';
+    return '';
+  };
+  const row = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } }).rows.find((r) => r.check === 'reference-repairs');
+  assert.strictEqual(row.result, 'pass', row.detail);
+});
+
 // ---- learned-skills-delivered (#5290 final review I2) ----
 // A captured Skills-row edit exists only as {run}/learned-skills/{id}.patch until land or stage runs.
 function writeLearnedManifest(runDir, entries) {

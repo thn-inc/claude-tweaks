@@ -623,8 +623,15 @@ registerCheck('reference-repairs', ({ runDir, base, deps, cwd }) => {
     return { result: 'unknown', detail: `could not parse engine-state.json: ${err.message}` };
   }
   const findings = (state.results && state.results.references && state.results.references.findings) || [];
-  const applied = findings.filter((f) => f.action === 'applied').map((f) => f.targetPath).filter(Boolean);
-  if (!applied.length) return { result: 'skip', detail: 'no applied reference-repair findings this run' };
+  // A repair whose file a learned-skills capture took (`pr` set, #5290) rode that PR's commit, with no
+  // Initiative-Fix: trailer and nothing on the run branch: not this check's to scope.
+  const appliedAll = findings.filter((f) => f.action === 'applied');
+  const applied = appliedAll.filter((f) => !f.pr).map((f) => f.targetPath).filter(Boolean);
+  if (!applied.length) {
+    return appliedAll.some((f) => f.pr)
+      ? { result: 'skip', detail: 'every applied reference repair rode the learned-skills PR, not the run branch' }
+      : { result: 'skip', detail: 'no applied reference-repair findings this run' };
+  }
   const appliedSet = new Set(applied);
 
   const prNumber = resolvePrNumber(runDir);

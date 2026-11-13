@@ -175,6 +175,35 @@ test('a failed re-capture of an edit the patch already holds is not staged besid
   assert.ok(fs.readFileSync(first.patch).equals(earlier));
 });
 
+// Triage 1 (final review): the gate's second rewrite (the description-only stage) failing is named as
+// that step, not as the recompose (learned-skills.js fallback's gateStep branch).
+test('a failed description-only rewrite at the gate is named as that step', (t) => {
+  const f = fixture(t);
+  const original = fs.readFileSync(path.join(f.repo, X), 'utf8');
+  write(f.repo, X, original + 'edit\n');
+  let rewrites = 0;
+  const deps = {
+    ...baseDeps,
+    git: (a, o) => {
+      if (a.includes('checkout')) throw new Error('simulated checkout failure');
+      if (a.includes('--check') && !a.includes('-R')) throw new Error('simulated check failure');
+      return realDeps.git(a, o);
+    },
+    // The gate's rewrites of the staged file: the recompose succeeds, the description-only one throws.
+    writeFile: (p, data) => {
+      if (p.endsWith('.md') && ++rewrites === 2) throw new Error('disk full');
+      return realDeps.writeFile(p, data);
+    },
+  };
+  let caught;
+  try { capture(args(f, X), deps); } catch (e) { caught = e; }
+  assert.equal(rewrites, 2, 'both rewrites were attempted');
+  assert.ok(caught && caught.restored === true, caught && caught.message);
+  assert.match(caught.message, /staging failed \(writing the description-only stage: disk full\)/);
+  assert.doesNotMatch(caught.message, /recomposing the staged file/);
+  assert.equal(fs.readFileSync(path.join(f.repo, X), 'utf8'), original + 'edit\n');
+});
+
 test('CLI capture passes --row through', (t) => {
   const f = fixture(t);
   write(f.repo, X, fs.readFileSync(path.join(f.repo, X), 'utf8') + 'cli edit\n');
