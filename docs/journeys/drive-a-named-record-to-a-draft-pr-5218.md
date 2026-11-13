@@ -52,6 +52,7 @@ files:
 - **Red flags:**
   - A commit message carrying `Fixes #N`, or a push after a HEAD mismatch.
   - A commit subject that lost its leading `Fix` or `Resolve` although no issue reference followed it.
+  - A commit subject, PR body or event line that still carries a `www.` issue URL or an `owner/repo/issues/N` path, which would backlink the issue.
   - A worker transcript with a `gh`, `git commit` or `git push` call.
   - A leftover branch silently reused.
 
@@ -103,3 +104,4 @@ files:
 - Updated during the build of #5219: Steps 5 and 6 hand off to the driver's own settle and its `settle: interrupted` final line.
 - Updated during the build of #5277 (run `2026-11-13T000412-spec-5277`). Step 5 now covers the CI step's settle window, the GitHub Actions run requirement and the `no-ci` rule with its exemptions. Step 6 now covers what an interrupt inside the window reports.
 - Updated during the build of #5269 (run `2026-11-13T000404-record-5269`): step 3 now says the commit subject keeps its leading verb, and that a closing keyword goes only when an issue reference follows it.
+- Updated during the build of #5352 (run `2026-11-13T093429-spec-5352`). Step 3 now says that `www.` and bare `github.com/` issue URLs and host-free `owner/repo/issues/N` paths are dropped too, and that the summary's changed-file list is filtered the same way. A matching red flag was added.
