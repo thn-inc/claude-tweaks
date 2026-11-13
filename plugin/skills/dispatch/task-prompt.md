@@ -71,7 +71,9 @@ calls — plus one standing instruction (item 7) that needs no resolution, only 
    every unchanged child. Children sharing a worktree progress together; a child whose prompt names
    no worktree counts as unchanged. A failed wait call counts as no wait but ends its window, and the probe runs as at any
    bound; a failed probe command counts as no change, never retried in another form. Read-only units
-   keep the first-bound self-judge. A wait call that is blocked or fails is not a wait and never
+   keep the first-bound self-judge.
+   Exception: a rendered-UI unit (review Step 6/6.5) gets more windows while its artifact directory
+   changes; stage its late result (`_shared/rendered-ui-units.md`). A wait call that is blocked or fails is not a wait and never
    counts toward the bound; never retry it in another form (a longer, wrapped or backgrounded
    sleep): treat every child still outstanding as silent at the bound. The full rule is in
    `subagent-dispatch-core.md`'s Foreground Execution Discipline section. Give any agent you
@@ -182,7 +184,9 @@ passes with no change, or at a ceiling of 3 windows (60 minutes) per wave, namin
 progress for one window` or `ceiling reached while progressing`) and every unchanged child. Children
 sharing a worktree progress together; a child whose prompt names no worktree counts as unchanged. A
 failed wait call counts as no wait but ends its window, and the probe runs as at any bound; a failed probe command counts
-as no change, never retried in another form. Read-only units keep the first-bound self-judge. A wait
+as no change, never retried in another form. Read-only units keep the first-bound self-judge.
+Exception: a rendered-UI unit (review Step 6/6.5) gets more windows while its artifact directory
+changes; stage its late result (`_shared/rendered-ui-units.md`). A wait
 call that is blocked or fails is not a wait and never counts toward the bound; never retry it in
 another form (a longer, wrapped or backgrounded sleep): treat every child still outstanding as
 silent at the bound. A reply that ends without a tool call ends the turn.
@@ -372,7 +376,9 @@ passes with no change, or at a ceiling of 3 windows (60 minutes) per wave, namin
 progress for one window` or `ceiling reached while progressing`) and every unchanged child. Children
 sharing a worktree progress together; a child whose prompt names no worktree counts as unchanged. A
 failed wait call counts as no wait but ends its window, and the probe runs as at any bound; a failed probe command counts
-as no change, never retried in another form. Read-only units keep the first-bound self-judge. A wait
+as no change, never retried in another form. Read-only units keep the first-bound self-judge.
+Exception: a rendered-UI unit (review Step 6/6.5) gets more windows while its artifact directory
+changes; stage its late result (`_shared/rendered-ui-units.md`). A wait
 call that is blocked or fails is not a wait and never counts toward the bound; never retry it in
 another form (a longer, wrapped or backgrounded sleep): treat every child still outstanding as
 silent at the bound. A reply that ends without a tool call ends the turn.

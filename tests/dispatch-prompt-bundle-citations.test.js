@@ -27,8 +27,9 @@ const CONTRACT = path.join(PLUGIN, 'skills', '_shared', 'subagent-output-contrac
 // still occur on a governed line with no fallback clause on it — a stale-exemption check
 // (parse-signal-discipline): if a gap's file is ever composed and its citation moves to a
 // bundle path (or gains a "read directly" fallback of its own), this list must shrink with it,
-// or a rotted exemption starts silently covering something new.
-const GAPS = ['_shared/run-dir-resolution.md', '_shared/integration-model.md'];
+// or a rotted exemption starts silently covering something new. The list lives in
+// tests/helpers/dispatch-prompt-bundle-gaps.js so suites restating this rule share it.
+const { GAPS } = require('./helpers/dispatch-prompt-bundle-gaps');
 
 // The agent-side fallback shape: a `_shared/` mention is allowed only when it is the source
 // named by a "read `_shared/<file>` directly" fallback clause on the same physical line — every
@@ -134,11 +135,11 @@ test('the gap stale-check can detect a fallback-shaped or vanished gap (discrimi
     const idx = lines.findIndex((l) => l.includes(gap));
     assert.ok(idx !== -1, `setup: gap citation not found in the file: ${gap}`);
     assert.equal(gapStatus(text, gap), 'ok', `setup: gap must not already be stale before doctoring: ${gap}`);
-    const shaped = lines.slice();
-    shaped[idx] = `if that bundle is absent, read \`${gap}\` directly`;
+    // In place on every occurrence, so the doctored lines keep their indent (and stay governed).
+    const shaped = lines.map((l) => l.split(gap).join(`if that bundle is absent, read \`${gap}\` directly`));
     assert.equal(gapStatus(shaped.join('\n'), gap), 'fallback-shaped', `doctored fallback-shaped gap was not caught as stale: ${gap}`);
-    const vanished = lines.slice();
-    vanished[idx] = lines[idx].replace(gap, '{minted-run-dir}/context/gone.md');
+    // Every occurrence goes: a gap cited on several lines has vanished only when all of them do.
+    const vanished = lines.map((l) => l.split(gap).join('{minted-run-dir}/context/gone.md'));
     assert.equal(gapStatus(vanished.join('\n'), gap), 'missing', `doctored vanished gap was not caught as missing: ${gap}`);
   }
 });

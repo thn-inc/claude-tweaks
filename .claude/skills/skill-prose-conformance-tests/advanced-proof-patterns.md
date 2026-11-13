@@ -56,12 +56,16 @@ A sweep with an exemption list has a failure mode `SKILL.md`'s empty-extraction 
 cover: the exemptions rot. The condition that justified an entry goes away — the gap gets closed,
 the citation moves, the prose is reworded — and the entry silently starts covering something new,
 or covers nothing at all while reading as a live carve-out. `tests/dispatch-prompt-bundle-citations.test.js`
-(#1995) is the shape to copy. Its `GAPS` array names two `_shared/` citations with no compose step
+(#1995) is the shape to copy. Its `GAPS` list names the `_shared/` citations with no compose step
 behind them yet; alongside the offender sweep it ships a `gapStatus(text, gap)` returning
 `ok` | `fallback-shaped` | `missing`, one test asserting every gap is still `ok`, and — the part
 that makes it discriminate — a proof that doctors each gap **both** ways in memory and asserts the
-status flips: rewrite the citation line into a fallback clause and it must read `fallback-shaped`;
-replace the path with a composed-bundle path and it must read `missing`. Write the stale-check in
+status flips: rewrite the citation into a fallback clause and it must read `fallback-shaped`;
+replace the path with a composed-bundle path and it must read `missing`. Doctor every occurrence,
+in place: a gap cited on several lines has vanished only when all of them go, and replacing a
+whole line drops its indent and can move it out of the governed region. When a second suite
+restates the rule, keep the list in one helper both import (`tests/helpers/dispatch-prompt-bundle-gaps.js`),
+so the two can never disagree about what is exempt. Write the stale-check in
 the same change as the allowlist, and make its failure message say *shrink the list*, not *fix the
 sweep* — the entry going stale is the success case for the work the exemption was waiting on.
 

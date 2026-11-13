@@ -137,6 +137,7 @@ const KEEP_ALIVE = [
   [/no\s+`Agent`\/`Task`\s+tool/i, 'the fallback covers the no-Agent/Task-tool case'],
   [/`unconfirmed`/, 'findings from a self-judged unit are marked unconfirmed'],
   [/arrives\s+after\s+its\s+unit\s+was\s+self-judged\s+is\s+ignored;\s+it\s+never\s+changes\s+a\s+verdict/, 'a late child result is ignored and never changes a verdict'],
+  [/Outside\s+the\s+rendered-UI\s+exception\s+below,\s+a\s+child\s+result/, 'the ignore sentence carries its own rendered-UI scope (#5280)'],
   ...SHARED_RULE,
 ];
 
@@ -603,5 +604,103 @@ test('AC1.3: a copy with an unrelated sentence between the stop sentence and the
     const stopEnd = stopAt + STOP_SENTENCE.length;
     const doctored = text.slice(0, stopEnd) + ' Then redo the child in-session.' + text.slice(stopEnd);
     assert.deepEqual(misorderedCopies({ ...copies, [name]: doctored }), [name], `an unrelated sentence before the passage in only ${name} must turn exactly that copy red`);
+  }
+});
+
+// #5280: a rendered-UI unit (review Step 6 / 6.5) outlives the wait bound more often than a lens: it
+// gets artifact-directory progress windows and its late result is staged. The rule lives in its own
+// _shared file (headroom-forced); the core section carries one exception sentence pointing at it.
+const RENDERED_UI = path.join(PLUGIN, 'skills', '_shared', 'rendered-ui-units.md');
+const RENDERED_UI_EXCEPTION = 'Exception: a rendered-UI unit (review Step 6/6.5) gets more windows while its artifact directory changes; stage its late result (`_shared/rendered-ui-units.md`).';
+const RENDERED_UI_CONTRACT = [
+  [/review\s+Step\s+6\s+\(visual-review\)\s+and\s+Step\s+6\.5\s+\(design-wrapper\s+review\)/, 'names review Step 6 and Step 6.5 as the rendered-UI units'],
+  [/Steps?\s+3\.7\s+and\s+3\.8[^.]*?no\s+artifact\s+directory/, 'the 3.7/3.8 children have no artifact directory'],
+  [/`\.claude-tweaks\/artifacts\/screenshots\/browse\/\{session\}\/`/, 'names the visual-review artifact directory'],
+  [/`\.impeccable\/review\/`/, 'names the design-wrapper review artifact directory'],
+  [/`ls\s+-lR\s+"\{artifact-dir\}"`\s+piped\s+to\s+`git\s+hash-object\s+--stdin`/, 'the read-only artifact-directory probe'],
+  [/ceiling\s+of\s+3\s+windows\s+\(60\s+minutes\)/, 'the 3-window ceiling'],
+  [/names\s+no\s+artifact\s+directory\s+counts\s+as\s+unchanged/, 'a unit naming no artifact directory counts as unchanged'],
+  [/missing\s+directory\s+or\s+a\s+failed\s+probe\s+counts\s+as\s+no\s+change/, 'a missing directory or failed probe counts as no change'],
+  [/Lenses,\s+single\s+reads\s+and\s+judges\s+are\s+not\s+rendered-UI\s+units/, 'lenses, single reads and judges are not rendered-UI units'],
+  [/never\s+satisfies\s+the\s+rendered-UI\s+check\s+before\s+merge/, 'a self-judged unit never satisfies the rendered-UI check'],
+  [/explicit\s+decline/, 'it surfaces as an explicit decline'],
+  [/session-tmp-resolve\.js[\s\S]*?never\s+under\s+the\s+run\s+dir/, 'the findings file is a session temp path, never under the run dir'],
+  [/stage-item\.js"\s+--run\s+"\{run-dir\}"\s+--id\s+visual-review-late-1\s+--allocate/, 'stages with the allocated visual-review-late- id'],
+  [/staged\/visual-review-late-\{n\}\.md/, 'names the staged file'],
+  [/--status\s+STAGED[\s\S]*?--reversibility\s+high\s+--text-file/, 'logs the staging decision'],
+  [/late\s+rendered-UI\s+result\s+from\s+\{unit\}\s+staged\s+to\s+staged\/\{written-file\}\./, 'the decision log text'],
+  [/`status`\s+is\s+anything\s+but\s+`active`[\s\S]{0,240}?`console\.json`\s+exists[\s\S]{0,240}?exits\s+3\s+\(archived\s+or\s+unanchored\)\s+or\s+with\s+any\s+other\s+non-zero\s+code,\s+write\s+nothing\s+under\s+the\s+run\s+dir[\s\S]{0,240}?name\s+the\s+findings\s+in\s+your\s+reply\s+instead/, 'a closed run, or any non-zero stage-item.js exit, stages nothing and names the findings in the reply'],
+  [/never\s+changes\s+a\s+verdict\s+already\s+reached/, 'a late result never changes a verdict already reached'],
+  [/`\{section\}`\s+is\s+`\/review`/, 'binds the log-decision {section}'],
+  [/basename\s+of\s+the\s+first\s+path\s+stage-item\s+printed/, '{written-file} is the basename of the first path stage-item printed'],
+  [/`\{text-file\}`\s+is\s+a\s+path\s+`bin\/session-tmp-resolve\.js`\s+prints/, 'binds the {text-file} location'],
+  [/artifact\s+directory\s+in\s+its\s+prompt\s+as\s+an\s+absolute\s+path/, 'the artifact directory is named as an absolute path'],
+  [/`LATE_FINDING:\s+\{severity\}\s+—\s+\{one-line\s+finding\}`/, 'a closed-run finding is one LATE_FINDING: {severity} — {one-line finding} line'],
+  [/immediately\s+before\s+the\s+reply's\s+trailing\s+`STATUS:`\s+line/, 'the LATE_FINDING lines sit immediately before the trailing STATUS: line'],
+  [/re-woken\s+agent\s+after\s+its\s+final\s+reply\s+repeats\s+the\s+whole\s+final\s+reply\s+with\s+those\s+lines\s+inserted\s+before\s+`STATUS:`/, 'a re-wake after a closed run repeats the reply with the lines inserted before STATUS:'],
+  [/no\s+pipeline\s+run\s+directory,\s+or\s+no\s+`run-state\.json`\s+in\s+it,\s+treat\s+the\s+run\s+as\s+not\s+active/, 'no run dir or no run-state.json counts as not active'],
+  [/downgrade\s+line\s+\(`decisions\.md`,\s+under\s+the\s+dispatching\s+skill's\s+section\)[\s\S]{0,120}?review\s+summary's\s+Visual\s+Review\s+or\s+Design\s+Quality\s+section/, 'the explicit decline lands in the downgrade line and the review summary'],
+  [/`\{unit\}`\s+is\s+the\s+child\s+as\s+its\s+launch\s+site\s+named\s+it[^.]*?`\{unit-slug\}`\s+is\s+its\s+lowercase,\s+hyphen-joined\s+form/, 'binds {unit} and {unit-slug}'],
+  [/every\s+character\s+outside\s+`a-z`,\s+`0-9`\s+and\s+`-`\s+replaced\s+by\s+`-`/, '{unit-slug} is restricted to a-z, 0-9 and - before it reaches a shell command'],
+  [/non-zero\s+`log-decision\.js`\s+exit[\s\S]{0,120}?name\s+the\s+findings\s+in\s+your\s+reply/, 'a failed log-decision.js call also names the findings in the reply'],
+];
+const renderedUiMissing = missingFactsOf(RENDERED_UI_CONTRACT);
+
+test('AC1.1 AC1.2 AC2.1 AC3.1 AC4.1 AC5.1 AC5.2: rendered-ui-units.md states the rendered-UI unit rule (#5280)', () => {
+  assert.deepEqual(renderedUiMissing(readText(RENDERED_UI)), []);
+});
+
+test('AC1.1: each rendered-UI contract assertion goes red on its own (discrimination proof)', () => {
+  assertEachPatternGoesRed(readText(RENDERED_UI), RENDERED_UI_CONTRACT, renderedUiMissing);
+});
+
+test('AC3.1: the contract stage-item id classifies to a mapped console section (#5280)', () => {
+  const id = readText(RENDERED_UI).match(/--id\s+(\S+)/)[1];
+  const { classifyStagedItem, SECTIONS } = require('../plugin/bin/lib/console/resolve');
+  const mapped = classifyStagedItem(`${id}.md`, '');
+  assert.equal(mapped.section, SECTIONS.PENDING);
+  assert.notEqual(mapped.reason, 'unmapped-prefix');
+  assert.equal(classifyStagedItem('rendered-late-1.md', '').reason, 'unmapped-prefix');
+});
+
+test('AC1.1: the core section carries the rendered-UI exception sentence once (#5280)', () => {
+  const section = coreForegroundSection(readText(CORE)).replace(/\s+/g, ' ');
+  assert.equal(section.split(RENDERED_UI_EXCEPTION).length - 1, 1);
+});
+
+const RENDERED_UI_EXCEPTION_FACTS = [
+  [/Exception:\s+a\s+rendered-UI\s+unit\s+\(review\s+Step\s+6\/6\.5\)\s+gets\s+more\s+windows\s+while\s+its\s+artifact\s+directory\s+changes;/, 'names the rendered-UI unit exception and its extra windows'],
+  [/stage\s+its\s+late\s+result\s+\(`_shared\/rendered-ui-units\.md`\)\./, 'stages the late result per _shared/rendered-ui-units.md'],
+];
+const missingRenderedUiException = missingFactsOf(RENDERED_UI_EXCEPTION_FACTS);
+
+test('AC1.1 AC2.1: every copy carries the rendered-UI exception sentence (#5280)', () => {
+  for (const [name, text] of Object.entries(primitiveCopies())) {
+    assert.deepEqual(missingRenderedUiException(text), [], name);
+  }
+});
+
+test('AC1.1: each exception assertion goes red when removed from any single copy (discrimination proof)', () => {
+  for (const text of Object.values(primitiveCopies())) {
+    assertEachPatternGoesRed(text, RENDERED_UI_EXCEPTION_FACTS, missingRenderedUiException);
+  }
+});
+
+const SELF_JUDGE_THEN_EXCEPTION = 'Read-only units keep the first-bound self-judge. Exception: a rendered-UI unit (review Step 6/6.5)';
+const exceptionMisplacedCopies = (copies) => Object.entries(copies)
+  .filter(([, text]) => !text.replace(/\s+/g, ' ').includes(SELF_JUDGE_THEN_EXCEPTION))
+  .map(([name]) => name);
+
+test('AC1.1: the exception sentence directly follows the read-only self-judge sentence in every copy', () => {
+  assert.deepEqual(exceptionMisplacedCopies(primitiveCopies()), []);
+});
+
+test('AC1.1: a copy with the exception sentence moved to its start goes red (discrimination proof)', () => {
+  const copies = primitiveCopies();
+  for (const [name, text] of Object.entries(copies)) {
+    const flat = text.replace(/\s+/g, ' ');
+    assert.ok(flat.includes(RENDERED_UI_EXCEPTION), `exception sentence not found in ${name}`);
+    const doctored = RENDERED_UI_EXCEPTION + ' ' + flat.replace(' ' + RENDERED_UI_EXCEPTION, '');
+    assert.deepEqual(exceptionMisplacedCopies({ ...copies, [name]: doctored }), [name], `moving the exception in only ${name} must turn exactly that copy red`);
   }
 });
