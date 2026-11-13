@@ -289,6 +289,12 @@ test('toolchainRoot returns null when lookup returns an empty string', () => {
   assert.strictEqual(toolchainRoot('node', fakeDeps({ lookup: { node: '' }, realpath: { '': '/x/bin/node' } })), null);
 });
 
+const NPM_DEPS = {
+  lookup: { npm: '/h/.nvm/v22/bin/npm', node: '/h/.nvm/v22/bin/node' },
+  realpath: { '/h/.nvm/v22/bin/npm': '/h/.nvm/v22/lib/node_modules/npm/bin/npm-cli.js' },
+};
+const NPM_REAL = '/h/.nvm/v22/lib/node_modules/npm/bin/npm-cli.js';
+
 test('toolchainReadPaths resolves the command once and derives root and shebang from that one answer', () => {
   let lookups = 0;
   const d = fakeDeps({ ...NPM_DEPS, firstLine: { [NPM_REAL]: '#!/usr/bin/env node' } });
@@ -299,7 +305,7 @@ test('toolchainReadPaths resolves the command once and derives root and shebang 
 });
 
 test('toolchainReadPaths skips env assignments and env options that take an argument', () => {
-  for (const line of ['#!/usr/bin/env NAME=1 node', '#!/usr/bin/env -u FOO node', '#!/usr/bin/env -C /x -P /y A=b node --flag']) {
+  for (const line of ['#!/usr/bin/env NAME=1 node', '#!/usr/bin/env -u FOO node', '#!/usr/bin/env -C /x A=b node --flag']) {
     const d = fakeDeps({ ...NPM_DEPS, firstLine: { [NPM_REAL]: line } });
     assert.deepStrictEqual(toolchainReadPaths('npm test', d), ['/h/.nvm/v22/lib/node_modules/npm', '/h/.nvm/v22'], line);
   }
@@ -338,12 +344,6 @@ test('toolchainRoot returns null when realpath throws', () => {
   assert.strictEqual(toolchainRoot('node', d), null);
 });
 
-const NPM_DEPS = {
-  lookup: { npm: '/h/.nvm/v22/bin/npm', node: '/h/.nvm/v22/bin/node' },
-  realpath: { '/h/.nvm/v22/bin/npm': '/h/.nvm/v22/lib/node_modules/npm/bin/npm-cli.js' },
-};
-const NPM_REAL = '/h/.nvm/v22/lib/node_modules/npm/bin/npm-cli.js';
-
 test('toolchainReadPaths follows an env shebang one level', () => {
   const d = fakeDeps({ ...NPM_DEPS, firstLine: { [NPM_REAL]: '#!/usr/bin/env node' } });
   assert.deepStrictEqual(toolchainReadPaths('npm test', d), ['/h/.nvm/v22/lib/node_modules/npm', '/h/.nvm/v22']);
@@ -362,4 +362,28 @@ test('toolchainReadPaths drops nulls and duplicates, and a throwing firstLine ad
   assert.deepStrictEqual(toolchainReadPaths('tool run', same), ['/o']);
   const boom = fakeDeps({ ...NPM_DEPS, firstLine: { [NPM_REAL]: new Error('boom') } });
   assert.deepStrictEqual(toolchainReadPaths('npm test', boom), ['/h/.nvm/v22/lib/node_modules/npm']);
+});
+
+test('toolchainReadPaths skips GNU env long options with a separate argument', () => {
+  for (const line of ['#!/usr/bin/env --chdir /opt/proj node', '#!/usr/bin/env --unset FOO node']) {
+    const d = fakeDeps({ ...NPM_DEPS, firstLine: { [NPM_REAL]: line } });
+    assert.deepStrictEqual(toolchainReadPaths('npm test', d), ['/h/.nvm/v22/lib/node_modules/npm', '/h/.nvm/v22'], line);
+  }
+});
+
+test('toolchainReadPaths adds no interpreter when env searches an alternate path', () => {
+  for (const line of ['#!/usr/bin/env -P /opt/alt node', '#!/usr/bin/env -P/opt/alt node', '#!/usr/bin/env -i -P /opt/alt node']) {
+    const d = fakeDeps({ ...NPM_DEPS, firstLine: { [NPM_REAL]: line } });
+    assert.deepStrictEqual(toolchainReadPaths('npm test', d), ['/h/.nvm/v22/lib/node_modules/npm'], line);
+  }
+});
+
+test('toolchainReadPaths reads an attached -S string', () => {
+  const d = fakeDeps({ ...NPM_DEPS, firstLine: { [NPM_REAL]: '#!/usr/bin/env -Snode --flag' } });
+  assert.deepStrictEqual(toolchainReadPaths('npm test', d), ['/h/.nvm/v22/lib/node_modules/npm', '/h/.nvm/v22']);
+});
+
+test('toolchainRoot treats a non-normalized resolved path as unresolved', () => {
+  const d = fakeDeps({ lookup: { node: '/x/bin/node' }, realpath: { '/x/bin/node': '/x/../bin/node' } });
+  assert.strictEqual(toolchainRoot('node', d), null);
 });

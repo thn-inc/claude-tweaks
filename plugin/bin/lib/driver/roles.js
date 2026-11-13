@@ -250,7 +250,7 @@ function resolveCommandWord(command, deps) {
     else found = deps.lookup(word);
     if (typeof found !== 'string' || found === '') return null;
     const real = deps.realpath(found);
-    return typeof real === 'string' && path.posix.isAbsolute(real) ? real : null;
+    return typeof real === 'string' && path.posix.isAbsolute(real) && path.posix.normalize(real) === real ? real : null;
   } catch (e) {
     return null;
   }
@@ -282,16 +282,20 @@ function toolchainRoot(command, deps = {}) {
 }
 
 // The interpreter a `#!` line names: for `env`, the first argument that is not an option,
-// an option's own argument (`-u NAME`, `-C DIR`, `-P PATH`) or a `NAME=value` assignment;
-// otherwise the first token.
-const ENV_OPTIONS_WITH_ARGUMENT = ['-u', '-C', '-P'];
+// an option's own argument (`-u NAME`, `-C DIR`, `--unset NAME`, `--chdir DIR`) or a
+// `NAME=value` assignment, with an attached `-Sstring` read as `-S string`; otherwise the
+// first token. BSD env's `-P altpath` searches somewhere other than PATH, so the
+// interpreter cannot be located from PATH: no interpreter then.
+const ENV_OPTIONS_WITH_ARGUMENT = ['-u', '-C', '--unset', '--chdir'];
 function shebangInterpreter(line) {
   if (typeof line !== 'string' || !line.startsWith('#!')) return null;
   const tokens = line.slice(2).split(/\s+/).filter(Boolean);
   if (tokens.length === 0) return null;
   if (path.posix.basename(tokens[0]) !== 'env') return tokens[0];
-  for (let i = 1; i < tokens.length; i++) {
-    const token = tokens[i];
+  const args = tokens.slice(1).flatMap((t) => (/^-S./.test(t) ? ['-S', t.slice(2)] : [t]));
+  for (let i = 0; i < args.length; i++) {
+    const token = args[i];
+    if (token.startsWith('-P')) return null;
     if (ENV_OPTIONS_WITH_ARGUMENT.includes(token)) i++;
     else if (!token.startsWith('-') && !token.includes('=')) return token;
   }
