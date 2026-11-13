@@ -79,6 +79,23 @@ Three conventions follow from how this repo works, and all are visible below:
 * Skip a fenced "## Original request" heading when… ([#4351](https://github.com/thn-inc/claude-tweaks/issues/4351)) ([20e09a1](https://github.com/thn-inc/claude-tweaks/commit/20e09a14f41942d6b00eb86d447d8a606a25fd7d))
 * Windows regression: 1 test file(s) newly failing after… ([#5338](https://github.com/thn-inc/claude-tweaks/issues/5338)) ([599dd39](https://github.com/thn-inc/claude-tweaks/commit/599dd390a3d4567e59b48054b0fddbcdbb72abc3))
 
+### Highlights
+* Added risk-flag classification when you shape work, so changes touching migrations, auth, public contracts or irreversible actions require a specific proof and a local check before merge.
+* Wait longer for visual and design review agents while they are still working, and route any findings they return after the wait to the Review Console instead of dropping them.
+* Plan review no longer stops a build round after round. Once a record's plan-review question has been answered, later reviews stop only for a gap that contradicts an acceptance criterion or a recorded decision, and settle the rest themselves, listed at the Review Console.
+* Session start checks that git is installed with a PATH lookup instead of starting a shell and git on every session.
+* Added standalone settle behavior to the pipeline driver: a stopped run now releases its claim and cleans up or labels the record by fixed rules, and a usage page explains how to run it.
+* Merging a parked pull request from a later session now also removes its worktree and branches.
+* A dispatch firing now stops and tells you why when it cannot render a Task prompt, instead of quietly retrying the same record on every later firing.
+* Added an automatic walkthrough recording to the acceptance packet. The GIF stays in the run's local directory and is linked, never embedded or uploaded, with secret-shaped text redacted. The public demo-evidence screenshot route and its CLI are retired.
+* Stop the multi-spec artifact-overwrite check from flagging a run's edit to a journey that a catch-up merge brought in from upstream.
+* Settle 7 small deferred findings in docs.
+* A record that quotes an "Original request" heading inside a code block can no longer hide an unresolved placeholder from the shape gate.
+* Release preflight now finds the real release-please PR by its branch rather than its title, and reads CI status correctly on GitHub Enterprise.
+* Console backfill no longer files a reproduction step's coordination note as a finding, and finding claims no longer end in a stray connective.
+* Added `drive.js`, a command that takes a named record from admission to a green draft pull request without a model carrying the steps.
+* The pipeline's context gauge no longer hands wrap-up to a fresh agent in a run a human started, where the wrap-up console needs that session.
+
 ## [6.166.0](https://github.com/thn-inc/claude-tweaks/compare/v6.165.0...v6.166.0) (2026-11-12)
 
 
