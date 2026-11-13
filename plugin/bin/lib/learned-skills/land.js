@@ -32,7 +32,7 @@ const { formatEntry } = require('../log-decision/append');
 const { neutralizeClosingPhrases } = require('../flow/closing-links');
 const { GIT_TIMEOUT_MS, GIT_PUSH_TIMEOUT_MS } = require('../shared-primitives');
 const {
-  UsageError, realDeps, readManifest, writeManifest, skillLabel, stageEntry, LOG_SECTION, STEP,
+  UsageError, realDeps, readManifest, writeManifest, skillLabel, stageEntry, LOG_SECTION, STEP, rowLabel, entryFindings,
 } = require('./learned-skills');
 
 const MARKER = '<!-- wrap-up-skills-pr -->';
@@ -171,7 +171,7 @@ const defang = (text) => String(text).replace(/<!--/g, '&lt;!--').replace(/-->/g
 
 function prBody(records, entries) {
   const refs = records.map((r) => `refs #${r}`).join(', ');
-  const rows = entries.map((e) => `- \`${defang(skillLabel(e.target))}\` — ${defang(oneLine(e.summary))}`);
+  const rows = entries.flatMap((e) => entryFindings(e).map((f) => `- \`${defang(skillLabel(e.target))}\` — ${defang(oneLine(f.summary))}`));
   const text = [
     MARKER,
     `Learned skill updates from wrap-up (${refs}).`,
@@ -381,14 +381,17 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
       b.entry.commit = b.commit;
       b.entry.pr = prRef;
       out.landed.push({ id: b.entry.id, target: b.entry.target, commit: b.commit });
-      items.push({
-        section: LOG_SECTION,
-        entry: formatEntry({
-          status: 'AUTO', now: deps.now(), step: STEP,
-          text: `applied additive update to ${skillLabel(b.entry.target)} (${oneLine(b.entry.summary)}) on learned-skills PR #${prRef.number}`,
-          reversibility: `high; commit: ${short}`,
-        }),
-      });
+      // One AUTO line per finding the entry carries, each under its own row, all naming the one commit.
+      for (const f of entryFindings(b.entry)) {
+        items.push({
+          section: LOG_SECTION,
+          entry: formatEntry({
+            status: 'AUTO', now: deps.now(), step: rowLabel(f.row),
+            text: `applied additive update to ${skillLabel(b.entry.target)} (${oneLine(f.summary)}) on learned-skills PR #${prRef.number}`,
+            reversibility: `high; commit: ${short}`,
+          }),
+        });
+      }
     }
     out.pr = prRef;
     const result = finish();

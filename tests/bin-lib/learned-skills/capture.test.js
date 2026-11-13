@@ -72,6 +72,53 @@ test('second finding on the same target reuses the patch', (t) => {
   assert.equal(readManifest(f.runDir).length, 1);
 });
 
+// I1 (final review): every finding a capture absorbs is recorded on its entry, so land can log each.
+test('a shared capture appends its own row and summary to the entry, once', (t) => {
+  const f = fixture(t);
+  const body = fs.readFileSync(path.join(f.repo, X), 'utf8');
+  write(f.repo, X, BOTTOM(body));
+  capture(args(f, X, 'first finding'));
+  const findingsOf = () => readManifest(f.runDir)[0].findings;
+  assert.deepEqual(findingsOf(), [{ row: 'skills', summary: 'first finding' }]);
+  write(f.repo, X, TOP(body));
+  const joined = capture(args(f, X, 'second finding'));
+  assert.deepEqual(joined, { route: 'captured', id: '1', patch: joined.patch, shared: true }, 'the join route');
+  const clean = capture({ ...args(f, X, 'repairs a link'), row: 'references' });
+  assert.equal(clean.shared, true, 'the clean route');
+  capture({ ...args(f, X, 'repairs a link'), row: 'references' });
+  assert.deepEqual(findingsOf(), [
+    { row: 'skills', summary: 'first finding' },
+    { row: 'skills', summary: 'second finding' },
+    { row: 'references', summary: 'repairs a link' },
+  ], 'a repeated finding is not added twice');
+  assert.equal(readManifest(f.runDir)[0].summary, 'first finding', 'the entry keeps its first summary');
+  assert.throws(() => capture({ ...args(f, X), row: 'no-such-row' }), /row must be a wrap-up registry row id/);
+});
+
+test('a shared capture whose manifest write fails says so and keeps the patch', (t) => {
+  const f = fixture(t);
+  write(f.repo, X, fs.readFileSync(path.join(f.repo, X), 'utf8') + 'one\n');
+  const first = capture(args(f, X));
+  const res = capture(args(f, X, 'a second finding'), {
+    ...baseDeps,
+    writeFile: (p, d) => { if (p.endsWith('manifest.json')) throw new Error('disk full'); return realDeps.writeFile(p, d); },
+  });
+  assert.deepEqual(res, { route: 'captured', id: '1', patch: first.patch, shared: true, manifestFailed: true });
+  assert.equal(readManifest(f.runDir)[0].findings.length, 1);
+});
+
+test('CLI capture passes --row through', (t) => {
+  const f = fixture(t);
+  write(f.repo, X, fs.readFileSync(path.join(f.repo, X), 'utf8') + 'cli edit\n');
+  const summaryFile = path.join(f.repo, 'summary.txt');
+  fs.writeFileSync(summaryFile, 'repairs a link\n');
+  const code = cli.run(['capture', '--run', f.runDir, '--worktree', f.repo, '--merge-base', f.mergeBase, '--target', X, '--summary-file', summaryFile, '--row', 'references'], {
+    stdout: () => {}, stderr: () => {}, mainRoot: f.repo,
+  });
+  assert.equal(code, 0);
+  assert.deepEqual(readManifest(f.runDir)[0].findings, [{ row: 'references', summary: 'repairs a link' }]);
+});
+
 test('clean target', (t) => {
   const f = fixture(t);
   assert.deepEqual(capture(args(f, X)), { route: 'clean' });

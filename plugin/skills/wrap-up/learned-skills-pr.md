@@ -18,10 +18,10 @@ Resolve these once per pass, each as its own plain call, and paste each value li
 - `{merge-base}`: `pack.blastRadius.value.mergeBase` from `{run-dir}/wrap-up-pack.json`. In a multi-spec consolidated wrap-up, use the batch merge-base from `flow/multispec-batch-curation.md` step 1 instead. With neither, use what `git merge-base --end-of-options HEAD "origin/{integration-branch}"` prints.
 - `{worktree}`: the run worktree's absolute root.
 
-**Per finding, in the serial-commit pass's own order.** Write the finding's `summary` with the Write tool to a session-tmp file (`_shared/session-tmp-root.md`), then run:
+**Per finding, in the serial-commit pass's own order.** Write the finding's `summary` with the Write tool to a session-tmp file (`_shared/session-tmp-root.md`), then run it with the finding's own `rowId` (`skills`, or the later row whose finding rides the capture):
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/learned-skills-pr.js" capture --run "{run}" --worktree "{worktree}" --merge-base "{merge-base}" --target "{targetPath}" --summary-file "{tmp-summary-file}"
+node "${CLAUDE_PLUGIN_ROOT}/bin/learned-skills-pr.js" capture --run "{run}" --worktree "{worktree}" --merge-base "{merge-base}" --target "{targetPath}" --summary-file "{tmp-summary-file}" --row "{rowId}"
 ```
 
 It prints one JSON line. Act on its `route`, or on its exit code:
@@ -29,7 +29,7 @@ It prints one JSON line. Act on its `route`, or on its exit code:
 | Outcome | What the controller does |
 |---|---|
 | `run-branch` (`reason: "record-owned"`) | The record-owned rule: the record's own commits already touch this file, so the edit stays on the run branch. Commit it there as section 4's step (2) does, and log `skill-curation.md`'s run-branch AUTO line. `merge-check`'s floor applies to that diff, by design. |
-| `captured` (`shared: true` included) | The edit has left the tree as a patch. Do not commit it. Its `commit` and `pr` are filled from `land` (Payload rewrite, below). |
+| `captured` (`shared: true` included) | The edit has left the tree as a patch. Do not commit it. Keep the `id` it printed: the finding's `commit` and `pr` are filled from `land` by that id (Payload rewrite, below). Its entry records the finding's row and summary, so `land` logs it. On `manifestFailed: true` that record could not be written, so `land` logs no AUTO line for this finding: hand-log one in `skill-curation.md`'s learned-skills PR shape, with this finding's own row and summary, from `land`'s output. |
 | `staged` | The edit is staged at `stagePath`, and the library wrote its STAGED line. Hand-log that line only on `logFailed: true`. On `residue: true` the target still shows in `git status`, so add a wrap-up ledger item (status `open`) naming it: a later catch-all commit would sweep it onto the run branch. Rewrite the payload as a staged finding. |
 | `clean` | Nothing changed and nothing was captured before. This is the audit's clean-path case, handled exactly as section 4's step (1) says. |
 | Exit 1, stderr "nothing was changed" | Commit on the run branch as today, and log `SKIP {time} — Learned-skills PR capture (degraded): condition: capture exited 1 ({stderr line}) → fallback: committed on the run branch. Reversibility: n/a.` through `log-decision.js --status SKIP`, the stderr line passed by `--text-file` (`_shared/auto-decision-log.md`'s Degrade-trace rule). This is the one fail-safe exception, and `merge-check`'s floor still holds that run. |
@@ -56,7 +56,7 @@ Run this once when any finding was captured. Pick the verb by `integration-model
 
 Both print one JSON line. `land` commits each patch to `learned-skills/{run-id}` through git plumbing on a temp index, so the worktree's own branch, index and files are never touched. It then pushes that branch and opens one ready PR, or reuses the open one on a resumed run. A patch that cannot ride it (a failed `git apply --check`, push or PR create) is staged instead.
 
-The CLI writes the log lines itself: one AUTO line per landed finding, in `skill-curation.md`'s learned-skills PR shape, and one STAGED line per staged one. A stage whose gate wrote the description-only form, or could not run, logs `_shared/staged-patch.md`'s own line for that case instead of the STAGED shape. Hand-log the AUTO lines only on a top-level `logFailed: true`, and a STAGED line only on that `staged[]` row's `logFailed: true`.
+The CLI writes the log lines itself: one AUTO line per landed finding, in `skill-curation.md`'s learned-skills PR shape, and one STAGED line per staged entry. Every finding a landed entry carries, each `shared: true` one included, gets its own AUTO line under its own row and summary, all naming that entry's one commit, and the PR body lists every finding's summary. A stage whose gate wrote the description-only form, or could not run, logs `_shared/staged-patch.md`'s own line for that case instead of the STAGED shape. Hand-log the AUTO lines only on a top-level `logFailed: true`, and a STAGED line only on that `staged[]` row's `logFailed: true`.
 
 - A `failed[]` entry (exit 1) is one whose staged write failed too. Its edit is only in its patch file, so handle it as capture's patch-file case above.
 - A `land` or `stage` exit 1 with no JSON line means a git or gh failure escaped the per-entry downgrades.
@@ -65,7 +65,7 @@ The CLI writes the log lines itself: one AUTO line per landed finding, in `skill
 
 ## Payload rewrite
 
-Match each finding to the output by `targetPath` (findings that shared one capture share one entry):
+Match each finding to the output by the `id` its `capture` printed. Findings that shared one capture share one entry, so they share its commit:
 
 - **Landed** (`landed[]`): `action` stays `applied`. Set `commit` to `landed[].commit`, shortened to the hash its AUTO line prints, and `pr` to `pr.url`.
 - **Staged** (`staged[]`): set `action: "staged"` and `stagePath` to the absolute `staged[].stagePath`, and remove `commit`. A staged finding carries no `pr`.

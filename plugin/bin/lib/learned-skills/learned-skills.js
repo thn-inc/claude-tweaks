@@ -31,10 +31,25 @@ const { formatEntry, appendEntries } = require('../log-decision/append');
 const { lstatType, canonicalRealpath, resolveTarget, isAncestorOrSelf } = require('../path-guard');
 const { ghOptions } = require('../repo-resolve');
 const { GH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('../shared-primitives');
+const { rowById } = require('../wrap-up/registry');
 
 const LOG_SECTION = '/wrap-up';
 const STEP = 'Skills row';
 const SKILL_PREFIX = '.claude/skills/';
+const DEFAULT_ROW = 'skills';
+
+// A finding's log location: the registry row's own name ('skills' -> 'Skills row').
+function rowLabel(row) {
+  const r = rowById(row);
+  return r ? `${r.target} row` : STEP;
+}
+
+// The findings an entry carries: [{ row, summary }]. An entry written before the list existed holds
+// one finding, the Skills row's, under its own summary.
+function entryFindings(entry) {
+  return Array.isArray(entry.findings) && entry.findings.length
+    ? entry.findings : [{ row: DEFAULT_ROW, summary: entry.summary }];
+}
 
 // A bad invocation (CLI exit 2). Everything else thrown out of a verb is an exit-1 failure.
 class UsageError extends Error {}
@@ -368,16 +383,31 @@ function writeConfirmedCopy(dir, base, bytes, deps) {
   }
 }
 
-function capture({ runDir, worktree, mergeBase, target, summary }, overrides = {}) {
+// Records one more finding on a still-captured entry (a shared capture), unless the same row already
+// gave the same summary (a re-run of the pass). Returns false when the manifest could not be written.
+function addFinding(runDir, manifest, existing, finding, deps) {
+  const list = entryFindings(existing);
+  if (list.some((f) => f.row === finding.row && f.summary === finding.summary)) return true;
+  try {
+    writeManifest(runDir, manifest.map((e) => (e === existing ? { ...e, findings: [...list, finding] } : e)), deps);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function capture({ runDir, worktree, mergeBase, target, summary, row = DEFAULT_ROW }, overrides = {}) {
   const deps = { ...realDeps, ...overrides };
   if (typeof runDir !== 'string' || !runDir) throw new UsageError('runDir is required');
   if (typeof worktree !== 'string' || !worktree) throw new UsageError('worktree is required');
   if (typeof mergeBase !== 'string' || !mergeBase.trim() || mergeBase.startsWith('-')) {
     throw new UsageError('mergeBase must be a commit id');
   }
+  if (!rowById(row)) throw new UsageError(`row must be a wrap-up registry row id: ${row}`);
   const rel = normalizeTarget(target, worktree);
   const note = oneLine(summary);
   if (!note) throw new UsageError('summary is required');
+  const finding = { row, summary: note };
 
   const git = (args, opts) => deps.git(['-C', worktree, ...args], opts);
   const abs = path.join(worktree, rel);
@@ -389,6 +419,12 @@ function capture({ runDir, worktree, mergeBase, target, summary }, overrides = {
   const manifest = readManifest(runDir);
   // Only a still-captured entry can be joined; a landed one already left in a commit.
   const existing = manifest.find((e) => e.target === rel && e.status === 'captured') || null;
+  // A shared outcome records this finding on the entry, so land logs it as its own AUTO line.
+  const shared = (id, patch) => {
+    const out = { route: 'captured', id, patch, shared: true };
+    if (!addFinding(runDir, manifest, existing, finding, deps)) out.manifestFailed = true;
+    return out;
+  };
 
   // Only whether the output is empty is read, never a path from it.
   const statusOf = () => String(deps.git(['-C', worktree, '--no-optional-locks', 'status', '--porcelain', '--untracked-files=all', '--', rel])).trimEnd(); // git-path-read: not a path list (emptiness only)
@@ -398,7 +434,7 @@ function capture({ runDir, worktree, mergeBase, target, summary }, overrides = {
   const before = statusOf();
   if (!before) {
     if (!existing) return { route: 'clean' };
-    return { route: 'captured', id: existing.id, patch: existing.patch, shared: true };
+    return shared(existing.id, existing.patch);
   }
 
   // 3. Read the tree and the diff. An untracked file first becomes intent-to-add, so it diffs as new.
@@ -416,7 +452,7 @@ function capture({ runDir, worktree, mergeBase, target, summary }, overrides = {
   }
   if (diff.length === 0) {
     if (addedIntent) { try { git(['rm', '--cached', '--quiet', '--', rel]); } catch { /* best effort */ } }
-    return existing ? { route: 'captured', id: existing.id, patch: existing.patch, shared: true } : { route: 'clean' };
+    return existing ? shared(existing.id, existing.patch) : { route: 'clean' };
   }
 
   // From here the diff is in hand: no failure throws without naming where the edit is.
@@ -453,9 +489,11 @@ function capture({ runDir, worktree, mergeBase, target, summary }, overrides = {
       deps.rename(L, final);
       L = final;
       if (plan.mode === 'new') {
-        writeManifest(runDir, [...manifest, { id: cx.id, target: rel, summary: note, patch: final, status: 'captured' }], deps);
+        writeManifest(runDir, [...manifest, { id: cx.id, target: rel, summary: note, patch: final, status: 'captured', findings: [finding] }], deps);
+        return { route: 'captured', id: cx.id, patch: final, shared: false };
       }
-      return { route: 'captured', id: cx.id, patch: final, shared: plan.mode === 'join' };
+      // A join: the patch already holds both edits, so a failed manifest write is reported, never a fallback.
+      return shared(cx.id, final);
     } catch (err) {
       failure = err;
     }
@@ -695,5 +733,5 @@ function pruneEmptyParents(abs, worktree, deps) {
 
 module.exports = {
   UsageError, StagingFailure, realDeps, readManifest, writeManifest, manifestPath, nextId, normalizeTarget, skillLabel,
-  stageEntry, capture, LOG_SECTION, STEP,
+  stageEntry, capture, LOG_SECTION, STEP, rowLabel, entryFindings,
 };

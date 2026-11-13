@@ -2,14 +2,20 @@
 // bin/learned-skills-pr.js — keeps wrap-up's Skills-row edits off the run branch (#5290).
 //
 //   node bin/learned-skills-pr.js capture --run <run-dir> --worktree <abs> --merge-base <sha>
-//     --target <repo-rel> --summary-file <path> [--help]
+//     --target <repo-rel> --summary-file <path> [--row <row-id>] [--help]
 //
 // `capture` moves one working-tree edit of a skill file into {run-dir}/learned-skills/{id}.patch and
-// reverts it in the worktree. Stdout is one JSON line:
+// reverts it in the worktree. --row is the finding's wrap-up registry row id (default skills); the
+// manifest entry records every finding's {row, summary}, so `land` logs one AUTO line per finding.
+// Stdout is one JSON line:
 //   {route:'run-branch', reason:'record-owned'}   the record's own commits already touched the file —
 //                                                 the edit stays on the run branch (caller commits it)
-//   {route:'captured', id, patch, shared}         patch written, tree reverted; shared:true when the
-//                                                 target was already captured in this run
+//   {route:'captured', id, patch, shared[, manifestFailed]}
+//                                                 patch written, tree reverted; shared:true when the
+//                                                 target was already captured in this run;
+//                                                 manifestFailed:true — a shared finding could not be
+//                                                 added to the manifest, so land logs no AUTO line for
+//                                                 it and the caller hand-logs one
 //   {route:'clean'}                               nothing changed and nothing captured before
 //   {route:'staged', stagePath, reason[, patch][, residue][, logFailed]}
 //                                                 a failure after the diff was read: the edit is
@@ -54,7 +60,7 @@ const { capture, realDeps: libDeps, UsageError, StagingFailure } = require('./li
 const { land, stage } = require('./lib/learned-skills/land');
 const { resolveTarget } = require('./lib/stage-item/write');
 
-const USAGE = 'usage: learned-skills-pr.js capture --run <run-dir> --worktree <abs> --merge-base <sha> --target <repo-rel> --summary-file <path>\n'
+const USAGE = 'usage: learned-skills-pr.js capture --run <run-dir> --worktree <abs> --merge-base <sha> --target <repo-rel> --summary-file <path> [--row <row-id>]\n'
   + '       learned-skills-pr.js land --run <run-dir> --worktree <abs> --record <n> [--record <m> ...] --integration-branch <name> --merge-base <sha>\n'
   + '       learned-skills-pr.js stage --run <run-dir> --worktree <abs> --reason <text> --merge-base <sha>\n'
   + '  land / stage print one JSON line ({branch, pr, landed, staged} / {staged}); exit 1 when a staged write failed\n'
@@ -73,7 +79,7 @@ const VERBS = {
 };
 const FLAGS = {
   '--run': 'run', '--worktree': 'worktree', '--merge-base': 'mergeBase', '--target': 'target', '--summary-file': 'summaryFile',
-  '--record': 'record', '--integration-branch': 'integrationBranch', '--reason': 'reason',
+  '--record': 'record', '--integration-branch': 'integrationBranch', '--reason': 'reason', '--row': 'row',
 };
 const REPEATABLE = new Set(['--record']);
 
@@ -137,6 +143,7 @@ function run(argv, overrides = {}) {
   try {
     const result = capture({
       runDir: target.dir, worktree: path.resolve(deps.cwd(), o.worktree), mergeBase: o.mergeBase, target: o.target, summary,
+      ...(o.row ? { row: o.row } : {}),
     }, deps.lib);
     deps.stdout(JSON.stringify(result) + '\n');
     return 0;

@@ -53,6 +53,11 @@ const PROC_FACTS = [
   [/set `action: "staged"` and `stagePath` to the absolute `staged\[\]\.stagePath`, and remove `commit`/, 'a staged finding is rewritten to staged (ruling 4)'],
   [/the FYI `PushNotification` carries that same engine-rendered section/, 'the FYI carries the PR URL'],
   [/appends `learned-skills PR \{url\}` to the Skills row's Detail cell/, 'the final summary trace carries the PR URL'],
+  // Final-review I1: every finding on a shared target gets its own AUTO line.
+  [/--summary-file "\{tmp-summary-file\}" --row "\{rowId\}"/, 'capture passes the finding\'s own row (I1)'],
+  [/Every finding a landed entry carries, each `shared: true` one included, gets its own AUTO line under its own row and summary, all naming that entry's one commit, and the PR body lists every finding's summary/, 'one AUTO line per finding of a landed entry (I1)'],
+  [/Match each finding to the output by the `id` its `capture` printed\. Findings that shared one capture share one entry, so they share its commit/, 'the payload rewrite maps by capture id (I1)'],
+  [/On `manifestFailed: true` that record could not be written, so `land` logs no AUTO line for this finding: hand-log one/, 'a capture manifestFailed finding is hand-logged (I1)'],
 ];
 const missingProc = missingFactsOf(PROC_FACTS);
 

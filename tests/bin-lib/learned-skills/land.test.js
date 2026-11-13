@@ -193,6 +193,43 @@ test('logs the AUTO line per landed patch', (t) => {
   }
 });
 
+// I1 (final review): a second finding on a captured target shares its patch, and each finding still
+// gets its own AUTO line — its own row and summary, the shared commit's short hash.
+test('every finding on a shared target gets its own AUTO line and PR body row', (t) => {
+  const f = fixture(t, { capturedTargets: [] });
+  const body = fs.readFileSync(path.join(f.repo, X), 'utf8');
+  const cap = (summary, row) => capture({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, target: X, summary, row }, { now: () => NOW });
+  write(f.repo, X, body + 'first learning\n');
+  assert.equal(cap('first learning').shared, false);
+  write(f.repo, X, atTop(body));
+  assert.equal(cap('second learning').shared, true, 'the second edit joins the first patch');
+  assert.equal(cap('repairs a link', 'references').shared, true, 'a later row on the captured target rides it too');
+  const gh = fakeGh();
+  const res = land(landArgs(f), deps(gh.gh).deps);
+  assert.equal(res.landed.length, 1);
+  const lines = decisions(f).split('\n').filter((l) => l.startsWith('- AUTO'));
+  assert.equal(lines.length, 3, lines.join('\n'));
+  const hashes = new Set(lines.map((l) => /commit: ([0-9a-f]+)\.$/.exec(l)[1]));
+  assert.equal(hashes.size, 1, 'one shared commit');
+  assert.ok(res.landed[0].commit.startsWith([...hashes][0]));
+  for (const [row, summary] of [['Skills row', 'first learning'], ['Skills row', 'second learning'], ['Broken references row', 'repairs a link']]) {
+    assert.ok(lines.some((l) => l.includes(`— ${row}: applied additive update to x/SKILL.md (${summary}) on learned-skills PR #77.`)), `${row} (${summary})`);
+  }
+  const prBody = gh.calls.find((c) => c.args[1] === 'create').input;
+  for (const summary of ['first learning', 'second learning', 'repairs a link']) assert.ok(prBody.includes(`— ${summary}`), summary);
+});
+
+test('a manifest entry written before findings existed still lands with one AUTO line', (t) => {
+  const f = fixture(t, { capturedTargets: [X] });
+  const file = path.join(f.runDir, 'learned-skills', 'manifest.json');
+  fs.writeFileSync(file, JSON.stringify(readManifest(f.runDir).map(({ findings, ...rest }) => rest), null, 2));
+  assert.equal(readManifest(f.runDir)[0].findings, undefined, 'the legacy shape');
+  land(landArgs(f), deps(fakeGh().gh).deps);
+  const lines = decisions(f).split('\n').filter((l) => l.startsWith('- AUTO'));
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /— Skills row: applied additive update to x\/SKILL\.md \(adds a note\) on learned-skills PR #77\./);
+});
+
 test('resumed land is idempotent', (t) => {
   const f = fixture(t);
   const gh = fakeGh();
