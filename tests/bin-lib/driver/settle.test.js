@@ -406,6 +406,9 @@ test('AC3.3: other claim failures write exactly the record comment and bot:block
   const killed = harness({ stop: stopOf({ step: 'claim', class: 'claim', reason: 'claim-exit-none', detail: 'killed' }), input: { claimed: false } });
   assert.equal(killed.res.row, 'claim');
   assert.equal(killed.res.note, 'a claim that may have been written lapses by its TTL');
+  // The same calls as the integer-exit loop above: the comment (no exit number) and the label, no release.
+  assert.deepStrictEqual(killed.calls, [COMMENT(commentFor('claim', { step: 'claim', outcome: 'blocked', detail: 'killed' })), LABEL]);
+  assert.ok(!killed.calls.some((c) => c[1] === 'release-claim.js'));
   const mint = harness({ stop: stopOf({ step: 'run-dir', class: 'claim', reason: 'fail', detail: 'no dir' }), input: { runDir: null, claimed: false } });
   const body = commentFor('claim', { step: 'run-dir', outcome: 'blocked', detail: 'no dir' });
   assert.ok(!body.includes('claim-targets.js exit'));

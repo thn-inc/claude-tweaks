@@ -10,7 +10,7 @@ const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('.
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const DRIVE = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'drive.js');
 const {
-  STEP_NAMES, FINAL_STEP, STEP, OUTCOMES, STOP_CLASSES,
+  STEP_NAMES, SETTLE_STEP_NAMES, FINAL_STEP, STEP, OUTCOMES, STOP_CLASSES,
   outcomeFor, neutralize, normalizeTitle, createEventSink,
 } = require(path.join(LIB, 'driver', 'events'));
 const { run, parseArgs, USAGE, driveRecord, newShared, interruptClass, reraiseAfterFlush } = require(path.join(LIB, 'driver', 'run'));
@@ -224,6 +224,18 @@ function defaultScript(over) {
     [on('node', /verify\.js$/), { code: 0, stdout: '', stderr: '' }],
     [on('node', /express-lane\.js$/, 'check'), { code: 0, stderr: '', stdout: JSON.stringify(checkProceed()) }],
     [onGit('push'), ''],
+    // The settle calls (settle.js, #5219): the escalate and release CLIs succeed, the forge
+    // writes land, the worktree list shows nothing registered, and a probe for the branch finds
+    // it absent through the `rev-parse` default above.
+    [on('node', /express-lane\.js$/, 'escalate'), { code: 0, stdout: '', stderr: '' }],
+    [on('node', /release-claim\.js$/), { code: 0, stdout: '', stderr: '' }],
+    [on('gh', 'issue', 'comment'), ''],
+    [on('gh', 'pr', 'comment'), ''],
+    [on('gh', 'issue', 'edit'), ''],
+    [onGit('worktree', 'list'), ''],
+    [onGit('worktree', 'remove'), ''],
+    [onGit('branch', '-D'), ''],
+    [on('readFile'), () => { throw Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' }); }],
     // The PR, record-pr, set-config, summary and ci steps' happy path: a draft PR #9, a
     // recorded run, a config write, a green CI read.
     [on('node', /compose-pr-body\.js$/), (c) => ({ code: 0, stderr: '', stdout: JSON.stringify({ out: c.args.at(-1), bytes: 10 }) })],
@@ -285,6 +297,7 @@ function harness(over = {}) {
     resolveRunDir: (opts) => dispatch('resolveRunDir', [opts]),
     lstatType: (p) => dispatch('lstatType', [p]),
     readdir: (p) => dispatch('readdir', [p]),
+    readFile: (p) => dispatch('readFile', [p]),
     writeFile: (p, s) => { record('writeFile', [p]); files[p] = s; },
     appendFile: (p, s) => { record('appendFile', [p]); files[p] = (files[p] || '') + s; },
     mkdirSync: (p, o) => { record('mkdirSync', [p, o]); },
@@ -337,7 +350,7 @@ test('AC10.2: --help exits 0 before any probe', async () => {
 });
 
 test('parseArgs: #N or N, positive integers, de-duplicated in given order', () => {
-  assert.deepEqual(parseArgs(['#7', '8', '#7', '9', '8']), { records: [7, 8, 9] });
+  assert.deepEqual(parseArgs(['#7', '8', '#7', '9', '8']), { records: [7, 8, 9], settle: true });
   assert.deepEqual(parseArgs(['--help']), { help: true });
   for (const argv of [[], ['#'], ['0'], ['#-1'], [''], [' 7'], ['#7x']]) {
     assert.equal(typeof parseArgs(argv).error, 'string', JSON.stringify(argv));
@@ -709,7 +722,10 @@ test('defineStep: a throw is a fail with the step class', async () => {
     defineStep('three', 'none', async () => { throw new Error('never reached'); }),
   ];
   const h = harness();
-  const final = await driveRecord(7, newShared(), h.deps, table);
+  // The table is about the step's own stop, not its settle (a bare table has no main root to settle in).
+  const shared = newShared();
+  shared.settle = false;
+  const final = await driveRecord(7, shared, h.deps, table);
   assert.deepEqual(h.lines().map((l) => [l.step, l.status]), [['one', 'ok'], ['two', 'fail'], [FINAL_STEP, 'fail']]);
   assert.equal(final.outcome, 'express-escalated');
   assert.deepEqual([final.stop.step, final.stop.class, final.stop.reason, final.stop.detail], ['two', 'pre-push', 'express-error', 'boom']);
@@ -1460,6 +1476,10 @@ test('AC14.1, AC14.2: SIGINT during the worker signals the worker handle, writes
   assert.deepEqual([finalLine.stop.step, finalLine.stop.class, finalLine.stop.reason, finalLine.stop.detail, finalLine.status],
     ['worker', 'pre-push', 'express-error', 'interrupted by SIGINT', 'fail']);
   assert.deepEqual(finalLine.stop.created, { worktree: true, branch: true });
+  // An interrupted record settles nothing: its claim, worktree and branch stay for the next session.
+  assert.deepEqual([finalLine.settle, finalLine.settleRow, finalLine.settleFailed], ['interrupted', null, []]);
+  assert.deepEqual(h.calls.filter(isSettleCall), []);
+  assert.ok(!file.split('\n').some((l) => l.includes('"step":"settle-')), 'no settle event');
   void pending;
 });
 
@@ -1481,6 +1501,10 @@ test('AC14: a signal while the claim runs is delivered before run-dir, which it 
   assert.equal(stopLine.detail, 'interrupted by SIGTERM before run-dir');
   assert.deepEqual([final.stop.step, final.stop.class, final.outcome, final.stop.detail, final.run], ['run-dir', 'claim', 'blocked', 'interrupted by SIGTERM before run-dir', null]);
   assert.deepEqual(order, ['terminate:SIGTERM']);
+  // Interrupted between steps after the claim: the held claim is not released by the driver.
+  assert.deepEqual([final.settle, final.settleRow, final.settleFailed], ['interrupted', null, []]);
+  assert.deepEqual(h.calls.filter(isSettleCall), []);
+  assert.deepEqual(lines.filter((l) => String(l.step).startsWith('settle-')), []);
   assert.equal(calls(h, 'resolveRunDir').length, 0, 'nothing is minted after the interrupt');
   assert.equal(lines.filter((l) => l.record === 8).length, 0, 'no further record');
   assert.equal(h.signals.length, 0, 'unsubscribed before run resolved');
@@ -1753,7 +1777,8 @@ const SCOPE = path.join(WT, '.claude-tweaks', 'verify-scope.json');
 // A lstatType answer for the scope file alone (the worktree leftover check also asks lstatType).
 const scopeIs = (type) => [(c) => c.kind === 'lstatType' && c.args[0] === SCOPE, { type, code: null }];
 const verifyCalls = (h) => calls(h, 'node', /verify\.js$/);
-const checkCalls = (h) => calls(h, 'node', /express-lane\.js$/);
+// express-lane.js check calls only: a settled pre-push stop also calls its escalate subcommand.
+const checkCalls = (h) => calls(h, 'node', /express-lane\.js$/).filter((c) => c.args[1] === 'check');
 const pushCalls = (h) => gitCalls(h).filter((c) => gitSub(c)[0] === 'push');
 const checkReply = (env, code = 0) => [on('node', /express-lane\.js$/, 'check'), { code, stderr: '', stdout: typeof env === 'string' ? env : JSON.stringify(env) }];
 const lastLine = (h) => h.lines().at(-1);
@@ -2693,4 +2718,205 @@ test('the harness refuses a pr merge or pr ready call in every test', () => {
   for (const kind of ['gh', 'ghBatch', 'ghCreate']) {
     for (const sub of ['merge', 'ready']) assert.throws(() => h.deps[kind](['pr', sub, '9']), /forbidden/, `${kind} ${sub}`);
   }
+});
+
+// --- settle from the run loop (settle.js, #5219) ----------------------------------------------------
+
+// A call that writes to the forge, releases the claim or removes what the run created: the
+// calls settle.js makes and --no-settle, an interrupt and a refusal must not.
+const isSettleCall = (c) => {
+  if (c.kind === 'gh') return (c.args[0] === 'issue' && ['comment', 'edit'].includes(c.args[1])) || (c.args[0] === 'pr' && c.args[1] === 'comment');
+  if (c.kind === 'node') return /release-claim\.js$/.test(c.args[0]) || (/express-lane\.js$/.test(c.args[0]) && c.args[1] === 'escalate');
+  if (c.kind === 'git') return (gitSub(c)[0] === 'worktree' && gitSub(c)[1] === 'remove') || (gitSub(c)[0] === 'branch' && gitSub(c)[1] === '-D');
+  return false;
+};
+const settleCalls = (h) => h.calls.filter(isSettleCall);
+const settleLines = (h) => h.lines().filter((l) => SETTLE_STEP_NAMES.includes(l.step));
+const ghCallsOf = (h) => h.calls.filter((c) => c.kind === 'gh');
+const REDTESTS = { script: [[on('node', /verify\.js$/), { code: 1, stdout: '', stderr: '' }]] };
+
+test('AC4.4: parseArgs accepts --no-settle in any position and still refuses other options', () => {
+  assert.deepEqual(parseArgs(['#7']), { records: [7], settle: true });
+  assert.deepEqual(parseArgs(['#7', '--no-settle']), { records: [7], settle: false });
+  assert.deepEqual(parseArgs(['--no-settle', '#7', '#8']), { records: [7, 8], settle: false });
+  assert.deepEqual(parseArgs(['#7', '--no-settle', '8']), { records: [7, 8], settle: false });
+  for (const argv of [['--settle'], ['--no-settle', '--settle', '#7'], ['--no-settle=1', '#7']]) {
+    assert.match(parseArgs(argv).error, /unknown option/, JSON.stringify(argv));
+  }
+  assert.ok(parseArgs(['--no-settle']).error, 'no record reference is still an error');
+  assert.deepEqual(parseArgs(['--no-settle', '--help']), { help: true });
+  const lines = USAGE.split('\n');
+  assert.equal(lines[0], 'Usage: drive.js #N [#M…]');
+  assert.equal(lines[lines.indexOf('       drive.js --help | -h   (prints this text; exit 0, before any probe)') + 1],
+    '       drive.js --no-settle #N [#M…]   (the caller settles stops: the final line carries settle: left-to-caller and the stop object)');
+});
+
+test('AC4.1: --no-settle makes no settle call and leaves the stop to the caller', async () => {
+  const h = harness(REDTESTS);
+  assert.equal(await run(['--no-settle', '#7'], h.deps), 0);
+  assert.deepEqual(settleCalls(h), [], 'no comment, label, release, escalate, worktree removal or branch delete');
+  assert.deepEqual(settleLines(h), []);
+  assert.equal(calls(h, 'readFile').length, 0, 'nothing is read either');
+  const final = lastLine(h);
+  assert.equal(final.settle, 'left-to-caller');
+  assert.deepEqual(final.settleFailed, []);
+  assert.equal(final.settleRow, 'pre-push');
+  assert.equal(final.outcome, 'express-escalated');
+  assert.deepEqual(final.stop, {
+    step: 'test', class: 'pre-push', pushed: false, created: { worktree: true, branch: true },
+    reason: 'failing-test', detail: 'red tests', checkLogged: null,
+  });
+});
+
+test('AC4.1: a stop outside pre-push keeps its class outcome under --no-settle, and an unknown class reads blocked', async () => {
+  const h = harness({ script: [checkReply('', 1)] });
+  await run(['--no-settle', '#7'], h.deps);
+  assert.deepEqual([lastLine(h).settle, lastLine(h).settleRow, lastLine(h).outcome], ['left-to-caller', 'blocked', 'blocked']);
+  assert.deepEqual(settleCalls(h), []);
+  const odd = harness();
+  const shared = newShared();
+  shared.settle = false;
+  const final = await driveRecord(7, shared, odd.deps, [{ name: 'claim', run: async () => ({ status: 'fail', halt: true, stopClass: 'bogus', reason: 'fail', extra: {} }) }]);
+  assert.deepEqual([final.settle, final.settleRow, final.unclassified, final.outcome, final.stop.class], ['left-to-caller', 'blocked', true, 'blocked', 'bogus']);
+  assert.deepEqual(settleCalls(odd), []);
+});
+
+test('AC4.2: a stop whose row has no calls has settle none', async () => {
+  const h = harness({ eligibility: { eligible: false, reasons: ['too big'] } });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.settle, final.settleRow, final.settleFailed, final.outcome], ['none', 'refused', [], 'refused']);
+  assert.deepEqual(ghCallsOf(h).map((c) => `${c.args[0]} ${c.args[1]}`), ['issue view']);
+  assert.deepEqual(settleLines(h), []);
+});
+
+test('AC4.5: --no-settle with a row that has no calls gives settle none', async () => {
+  const refused = harness({ admission: { admitted: false, reasons: ['open blocker #3'] } });
+  await run(['--no-settle', '#7'], refused.deps);
+  assert.deepEqual([lastLine(refused).settle, lastLine(refused).settleRow], ['none', 'refused']);
+  const contested = harness({ script: [claimReply(3, JSON.stringify({ contested: [7] }))] });
+  await run(['--no-settle', '#7'], contested.deps);
+  assert.deepEqual([lastLine(contested).settle, lastLine(contested).settleRow], ['none', 'claim-contested']);
+  // The same stop class with calls reads left-to-caller, so none is not a default.
+  const failed = harness({ script: [claimReply(4, '', 'boom')] });
+  await run(['--no-settle', '#7'], failed.deps);
+  assert.deepEqual([lastLine(failed).settle, lastLine(failed).settleRow], ['left-to-caller', 'claim']);
+});
+
+test('a record that did not stop has settle none and no settle row', async () => {
+  for (const argv of [['#7'], ['--no-settle', '#7']]) {
+    const h = harness();
+    await run(argv, h.deps);
+    const final = lastLine(h);
+    assert.deepEqual([final.settle, final.settleRow, final.settleFailed, final.outcome], ['none', null, [], 'pending-review'], argv.join(' '));
+    assert.deepEqual(settleCalls(h), []);
+    for (const key of ['unclassified', 'settleNote', 'spendOverrun']) assert.ok(!(key in final), key);
+  }
+});
+
+test('AC4.3: a settled stop has settle done and its events come before the final line', async () => {
+  const h = harness(REDTESTS);
+  await run(['#7'], h.deps);
+  const lines = h.lines();
+  const final = lines.at(-1);
+  assert.deepEqual([final.settle, final.settleRow, final.settleFailed, final.outcome], ['done', 'pre-push', [], 'express-escalated']);
+  const at = (step) => lines.findIndex((l) => l.step === step);
+  const settleAt = lines.map((l, i) => (SETTLE_STEP_NAMES.includes(l.step) ? i : -1)).filter((i) => i >= 0);
+  assert.ok(settleAt.length > 0, 'settle events exist');
+  assert.ok(settleAt.every((i) => i > at('test') && i < at(FINAL_STEP)), 'between the stop line and the final line');
+  assert.equal(at(FINAL_STEP), lines.length - 1);
+  assert.deepEqual(settleLines(h).map((l) => l.step),
+    ['settle-escalate', 'settle-comment-record', 'settle-release', 'settle-remove-worktree', 'settle-delete-branch']);
+  assert.ok(settleLines(h).every((l) => l.record === 7 && l.run === mintedRunId(h) && l.status === 'ok'));
+  assert.equal(h.files[path.join(runDirOf(h), 'driver-events.jsonl')], h.out.join(''), 'the jsonl holds the settle lines too');
+});
+
+test('AC5.3: a ceiling stop is settled as an escalation', async () => {
+  const h = harness({ worker: { status: 'timeout', reason: 'wall-clock-ceiling', result: null, detail: null } });
+  await run(['#7'], h.deps);
+  const escalate = nodeCalls(h, /express-lane\.js$/, 'escalate');
+  assert.equal(escalate.length, 1);
+  assert.equal(escalate[0].args[escalate[0].args.indexOf('--reason') + 1], 'express-error');
+  assert.match(h.files[escalate[0].args[escalate[0].args.indexOf('--detail-file') + 1]], /wall-clock ceiling of 30 minutes/);
+  assert.deepEqual([lastLine(h).settle, lastLine(h).settleRow, lastLine(h).outcome], ['done', 'pre-push', 'express-escalated']);
+});
+
+test('AC5.4: an overspend after a normal return settles nothing and is named in the final event', async () => {
+  const h = harness({ worker: { status: 'ok', spendOverrun: true } });
+  await run(['#7'], h.deps);
+  assert.deepEqual(settleLines(h), []);
+  assert.deepEqual(settleCalls(h), []);
+  const final = lastLine(h);
+  assert.equal(final.spendOverrun, true);
+  assert.deepEqual([final.settle, final.outcome], ['none', 'pending-review']);
+  assert.ok(h.lines().some((l) => l.step === 'commit'), 'the run reached the commit step');
+  assert.ok(h.lines().some((l) => l.step === 'ci'), 'and went beyond it');
+  const plain = harness();
+  await run(['#7'], plain.deps);
+  assert.ok(!('spendOverrun' in lastLine(plain)));
+  // A halted record that overspent says so on its final line too.
+  const red = harness({ ...REDTESTS, worker: { spendOverrun: true } });
+  await run(['#7'], red.deps);
+  assert.equal(lastLine(red).spendOverrun, true);
+});
+
+test('AC7.3: failed settle steps are listed on the final line', async () => {
+  const h = harness({ script: [[on('gh', 'issue', 'comment'), new Error('HTTP 502')], ...REDTESTS.script] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const final = lastLine(h);
+  assert.deepEqual(final.settleFailed, ['settle-comment-record']);
+  assert.equal(final.settle, 'done');
+  const event = settleLines(h).find((l) => l.step === 'settle-comment-record');
+  assert.equal(event.status, 'fail');
+  assert.match(event.detail, /HTTP 502/);
+  assert.deepEqual(settleLines(h).filter((l) => l.status === 'ok').map((l) => l.step),
+    ['settle-escalate', 'settle-release', 'settle-remove-worktree', 'settle-delete-branch'], 'the failure stops no later call');
+});
+
+test('AC1.6: a failed escalate makes the outcome blocked', async () => {
+  const h = harness({ script: [[on('node', /express-lane\.js$/, 'escalate'), { code: 1, stdout: '', stderr: 'no' }], ...REDTESTS.script] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.outcome, final.settleRow, final.settle, final.settleFailed], ['blocked', 'blocked', 'done', ['settle-escalate']]);
+  assert.equal(final.stop.class, 'pre-push', 'the stop object is the run\'s own, whatever the row');
+  assert.ok(!gitCalls(h).some((c) => gitSub(c)[0] === 'worktree' && gitSub(c)[1] === 'remove'), 'the work is kept');
+});
+
+test('AC3.5: a refusal before the claim makes no forge write', async () => {
+  const refused = harness({ admission: { admitted: false, reasons: ['no'] } });
+  await run(['#7'], refused.deps);
+  assert.deepEqual(ghCallsOf(refused).map((c) => `${c.args[0]} ${c.args[1]}`), ['issue view']);
+  assert.deepEqual(settleCalls(refused), []);
+  const contested = harness({ script: [claimReply(3, JSON.stringify({ contested: [7] }))] });
+  await run(['#7'], contested.deps);
+  assert.deepEqual(ghCallsOf(contested).map((c) => `${c.args[0]} ${c.args[1]}`), ['issue view']);
+  assert.deepEqual(settleCalls(contested), []);
+  assert.deepEqual([lastLine(contested).settle, lastLine(contested).settleRow], ['none', 'claim-contested']);
+});
+
+test('AC8.3: an unclassified stop through the run loop is settled by the blocked row', async () => {
+  const h = harness();
+  const shared = newShared();
+  shared.mainRoot = MAIN;
+  shared.ghRepo = 'acme/widgets';
+  const runDir = path.join(MAIN, '.claude-tweaks', 'pipelines', 'seam-run');
+  const steps = [
+    { name: 'run-dir', run: async (ctx) => { ctx.runDir = runDir; ctx.runId = 'seam-run'; ctx.claimed = true; return { status: 'ok', halt: false, stopClass: 'none', reason: 'ok', extra: {} }; } },
+    { name: 'test', run: async () => ({ status: 'fail', halt: true, stopClass: 'bogus', reason: 'fail', extra: {} }) },
+  ];
+  const final = await driveRecord(7, shared, h.deps, steps);
+  assert.deepEqual([final.settleRow, final.unclassified, final.outcome, final.settle], ['blocked', true, 'blocked', 'done']);
+  assert.equal(final.stop.class, 'bogus');
+  assert.deepEqual(settleLines(h).map((l) => l.step), ['settle-comment-record', 'settle-label', 'settle-release']);
+});
+
+test('settle notes ride the final line: a claim that may lapse by TTL', async () => {
+  const h = harness({ script: [claimReply(5, '', 'x')] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.equal(final.settleRow, 'claim');
+  assert.match(final.settleNote, /lapses by its TTL/);
+  const killed = harness({ script: [[on('node', /claim-targets\.js$/), { code: null, stdout: '', stderr: '' }]] });
+  await run(['#7'], killed.deps);
+  assert.match(lastLine(killed).settleNote, /lapses by its TTL/);
 });
