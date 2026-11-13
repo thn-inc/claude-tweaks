@@ -296,3 +296,31 @@ test('git-fixtures gitRepo({ branch }) keeps the requested branch', () => {
   scratch.push(dir);
   assert.strictEqual(git(dir, ['symbolic-ref', '--short', 'HEAD']), 'trunk');
 });
+
+// reconcile's fixtures (#5297): same shape, plus the rewired origin/seed/main triple.
+const reconcileFixtures = require('./helpers/reconcile-fixtures');
+for (const [name, make, dirsOf] of [
+  ['reconcile pairedFixture', () => reconcileFixtures.pairedFixture(), (r) => Object.values(r)],
+  ['reconcile bareRepoRoot', () => reconcileFixtures.bareRepoRoot(), (d) => [d]],
+]) {
+  test(`${name}: a second call starts no git process`, () => {
+    scratch.push(...dirsOf(make()));
+    const trace = mk('ct-gt-trace-');
+    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
+    scratch.push(...dirsOf(second));
+    assert.deepStrictEqual(fs.readdirSync(trace), []);
+  });
+}
+
+test('pairedFixture copies point at their own origin and sync through it', () => {
+  const a = reconcileFixtures.pairedFixture();
+  const b = reconcileFixtures.pairedFixture();
+  scratch.push(...Object.values(a), ...Object.values(b));
+  assert.strictEqual(git(a.mainDir, ['remote', 'get-url', 'origin']), a.originDir);
+  assert.strictEqual(git(b.mainDir, ['remote', 'get-url', 'origin']), b.originDir);
+  commit(a.seedDir, 'next');
+  git(a.seedDir, ['push', '-q', 'origin', 'main']);
+  git(a.mainDir, ['fetch', '-q', 'origin']);
+  assert.strictEqual(git(a.mainDir, ['rev-parse', 'origin/main']), git(a.seedDir, ['rev-parse', 'HEAD']));
+  assert.notStrictEqual(git(b.mainDir, ['rev-parse', 'origin/main']), git(a.seedDir, ['rev-parse', 'HEAD']));
+});
