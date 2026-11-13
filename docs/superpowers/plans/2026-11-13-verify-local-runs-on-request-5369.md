@@ -189,7 +189,7 @@ git commit -m "Parse verify.js --local — a check-run flag, absent from the res
 
 **Interfaces:**
 - Consumes: `decl.localRuns` (Task 1), passed in by Task 5.
-- Produces: `fetchCiVerdict({ ..., localRuns = null })`. Exports `LOG_ESCAPE_FLAG = '--allow-escape-sequences'` and `LOCAL_REQUESTED = 'local-requested'` (the reason string Task 5's `skipCi` writes and Task 7's doc test pins). Under `localRuns === 'on-request'`, a `failure` job whose log cannot be downloaded returns `{ used: true, ci: { ..., used: true, conclusion: 'failure', logUnavailable: true }, result: { exitCode: 1, logPath, ... } }`. The log file body is `CI job {job.html_url || job.id} failed; its log could not be fetched ({errText(err)}). Run verify.js with --local to reproduce the failure on this machine.\n`. Without the key, that case still returns `fallback('ci-log-unavailable')`.
+- Produces: `fetchCiVerdict({ ..., localRuns = null })`. Exports `LOG_ESCAPE_FLAG = '--allow-escape-sequences'` and `LOCAL_REQUESTED = 'local-requested'` (the reason string Task 5's `skipCi` writes and Task 7's doc test pins). Under `localRuns === 'on-request'`, a `failure` job whose log cannot be downloaded returns `{ used: true, ci: { ..., used: true, conclusion: 'failure', logUnavailable: true }, result: { exitCode: 1, logPath, ... } }`. The log file body names the run URL, as AC9.3 asks: `CI run {ci.runUrl || run id} failed (job {job.html_url || job.id}); its log could not be fetched ({errText(err)}). Run verify.js with --local to reproduce the failure on this machine.\n`. Without the key, that case still returns `fallback('ci-log-unavailable')`.
 
 - [ ] **Step 1: Write the failing tests.** In `tests/bin-lib/verify/ci-source.test.js`, change the log routes so they behave like gh 2.103.3: add a helper and use it in place of every `[/\/jobs\/99\/logs$/, …]` route.
 
@@ -233,7 +233,7 @@ test('#5369: a refusal other than the unknown-flag one is not retried', async ()
   assert.strictEqual(calls.filter((c) => c.includes('/logs')).length, 1);
 });
 
-test('AC9.3: under localRuns "on-request" a red job with no downloadable log is a CI failure naming the job URL (#5369)', async () => {
+test('AC9.3: under localRuns "on-request" a red job with no downloadable log is a CI failure naming the run URL (#5369)', async () => {
   const { runner } = fakeGh([PULLS, PR, RUNS, jobs('failure'), [/\/jobs\/99\/logs$/, new Error('HTTP 410')]]);
   const { v, logDir } = await call({ localRuns: 'on-request' }, { runner });
   assert.strictEqual(v.used, true);
@@ -241,7 +241,7 @@ test('AC9.3: under localRuns "on-request" a red job with no downloadable log is 
   assert.strictEqual(v.ci.fallback, null);
   assert.strictEqual(v.result.exitCode, 1);
   assert.strictEqual(fs.readFileSync(path.join(logDir, 'tests.log'), 'utf8'),
-    'CI job https://example.test/job/99 failed; its log could not be fetched (HTTP 410). Run verify.js with --local to reproduce the failure on this machine.\n');
+    'CI run https://example.test/runs/41 failed (job https://example.test/job/99); its log could not be fetched (HTTP 410). Run verify.js with --local to reproduce the failure on this machine.\n');
 });
 
 test('AC4.1: without the key a red job with no log still falls back, and a green one carries no logUnavailable (#5369)', async () => {
@@ -264,7 +264,7 @@ Expected: FAIL after Step 1 — the green and red log tests and AC9.1 fail on th
   - Replace the single log `gh(...)` call with `gh([...logArgs, LOG_ESCAPE_FLAG], LOG_TIMEOUT_MS)`. When that throws and `/unknown flag: --allow-escape-sequences/` matches `err.stderr || err.message`, retry once with `gh(logArgs, LOG_TIMEOUT_MS)`. `logArgs` is `['api', \`repos/{owner}/{repo}/actions/jobs/${Number(job.id)}/logs\`]`. The flag goes after the path, so `args[1]` stays the endpoint for every fake that keys on it.
   - Keep the `gh-unavailable` rethrow. In the red-job catch, branch on `localRuns === 'on-request'`: with the key, set `ci.logUnavailable = true` and write the Step 1 body (keep the caught error for `errText`). Without it, keep `return fallback('ci-log-unavailable')`.
   - Update the file's header comment: under the key, a red job with no log is CI's verdict, not a fallback.
-  - Export `LOG_ESCAPE_FLAG` and `LOCAL_REQUESTED`.
+  - Export `LOG_ESCAPE_FLAG`, `LOCAL_REQUESTED` and `NOT_CONSULTED = 'not-consulted'` (the reason Task 5 records for a selected CI-declared suite after the one that stopped the run).
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -292,6 +292,7 @@ git commit -m "Download CI job logs with --allow-escape-sequences — one retry 
   - Also `ciEventEntries(ciAttempts)`, which returns `[{ suite, used, fallback }]`.
   - Event fields added: `ci` (only when `ciAttempts.length`), `local: parsed.local === true` (always), and `noVerdict: true` (only on exit 3, Task 5).
   - `derive.js` copies `ci` when it is an array, `local` when it is a boolean, and `noVerdict` when it is `true`.
+  - Decided: a `noVerdict` verify event still closes the tasks span (`derive.js:163`'s `verifies.find`, unchanged). Verification was attempted at that moment, and the test phase it opens is where the exit-3 row is listed. Pinned by the derive test below.
 
 - [ ] **Step 1: Write the failing tests.**
   - In `tests/bin-lib/timing/derive.test.js`, beside the #4321 impact tests:
@@ -305,6 +306,11 @@ test('AC7: a verify row keeps ci, local and noVerdict only when the event carrie
   assert.equal(p.test.verify[0].local, false);
   assert.equal(p.test.verify[0].noVerdict, true);
   for (const k of ['ci', 'local', 'noVerdict']) assert.equal(Object.hasOwn(p.tasks.verify[0], k), false, k);
+});
+
+test('#5369: a noVerdict verify event closes the tasks span like any other verify event', () => {
+  /* the fixture with its first post-SDD verify event marked { noVerdict: true, pass: null, suitesRun: [] }:
+     the tasks phase ends at that event's ts, and p.test.verify[0].noVerdict === true */
 });
 
 test('#5369: a verify row drops a ci that is not an array and a local that is not a boolean', () => {
@@ -386,7 +392,7 @@ git commit -m "Record each CI-declared suite's outcome and --local in the verify
 - Test: `tests/bin-lib/verify/ci-cli.test.js`, `tests/bin-lib/verify/impact-cli.test.js`
 
 **Interfaces:**
-- Consumes: `decl.localRuns` (Task 1), `parsed.local` and `EXIT_NO_VERDICT` (Task 2), `fetchCiVerdict({ localRuns })`, `LOCAL_REQUESTED` and `ci.logUnavailable` (Task 3), `writeVerifyEvent` and `ciEventEntries` (Task 4).
+- Consumes: `decl.localRuns` (Task 1), `parsed.local` and `EXIT_NO_VERDICT` (Task 2), `fetchCiVerdict({ localRuns })`, `LOCAL_REQUESTED`, `NOT_CONSULTED` and `ci.logUnavailable` (Task 3), `writeVerifyEvent` and `ciEventEntries` (Task 4).
 - Produces:
   - `noVerdictLines(attempt)` returns three lines, exact text:
     1. `` verify.js: no verdict yet for suite "${suite}" — CI could not answer (${fallback}), and the declaration's localRuns "on-request" keeps it off this machine; no check ran and no pass stamp was written. ``
@@ -434,6 +440,12 @@ test('AC6.1: under the key a suite with no ci source runs here without --local (
   /* declExtra: { ...KEY, checks: { tests: { tests: 'npm test', other: markerCommand(otherMarker) } }, retry: { tests: '…{file}' } };
      ci stays keyed on tests; green mode; --cmd overrides tests with localMarkerCmd(testsMarker);
      code 0, testsMarker absent (CI answered), otherMarker present */
+});
+
+test('two CI suites under the key, the first unanswered: exit 3 names it, the second is not-consulted and never fetched (#5369)', { skip: SKIP }, async () => {
+  /* unpushed mode + KEY + both suites CI-declared, with --run ciRunDir(r); code 3, stderr line 1 names suite "tests" and (head-not-pushed),
+     the verify event's ci deepStrictEqual [{ suite: 'tests', used: false, fallback: 'head-not-pushed' }, { suite: 'other', used: false, fallback: 'not-consulted' }],
+     and the calls file holds no request for job "other" (its runs/jobs endpoint was never queried) */
 });
 
 test('two CI suites under the key: the second unanswered one exits 3 naming it, neither runs here (#5369)', { skip: SKIP }, async () => {
@@ -493,11 +505,11 @@ Expected: FAIL after Step 1 — the unpushed run under the key exits 0 and runs 
   - Compute `const onRequest = Boolean(decl && decl.localRuns === 'on-request');` before the CI loop.
   - Inside the loop:
     - `if (parsed.local) { skipCi(LOCAL_REQUESTED); continue; }` comes first.
-    - After the dirty-tree `skipCi`, and after a `!verdict.used` push, `break` when `onRequest`.
+    - After the dirty-tree `skipCi`, and after a `!verdict.used` push, stop consulting CI when `onRequest`: every later selected CI-declared suite (one whose name is in `cmds`) gets `skipCi(NOT_CONSULTED)` and no `gh` call, so the `verify` event still carries one entry per selected CI-declared suite (AC7). A suite the selection left out of `cmds` is not part of the run and gets no entry, as today.
     - Pass `localRuns: decl.localRuns` to `fetchCiVerdict`.
     - For a used verdict with `verdict.ci.logUnavailable`, push `{ ...ciResult, retryDecision: { retry: false, reason: 'ci-log-unavailable' } }` and skip `retryHook`.
     - Under the key, a red used verdict is pushed to `ciResults` without calling `retryHook` inside the loop, and marked for a deferred retry. Without the key the in-loop `await retryHook(...)` stays exactly as today.
-  - After the loop, `const noVerdict = onRequest ? ciAttempts.find((a) => !a.used && a.fallback !== LOCAL_REQUESTED) : undefined;`. Only when it is unset, run the deferred `retryHook` calls (same arguments as today's in-loop call, in suite order) and replace each marked entry with the hook's result. When it is set:
+  - After the loop, `const noVerdict = onRequest ? ciAttempts.find((a) => !a.used && a.fallback !== LOCAL_REQUESTED && a.fallback !== NOT_CONSULTED) : undefined;` (the first unanswered suite, never a `not-consulted` one). Only when it is unset, run the deferred `retryHook` calls (same arguments as today's in-loop call, in suite order) and replace each marked entry with the hook's result. When it is set:
     1. Write `noVerdictLines(noVerdict).join('\n')` plus `\n` to stderr, then remove `jsonPath` (`fs.rmSync(jsonPath, { force: true })`).
     2. Call `writeVerifyEvent` with `{ mode: sel.mode, suitesRun: [], durationMs: Date.now() - startMs, slotWaitedMs: 0, pass: null, noVerdict: true, baselineAdjudicated: null, preExistingAdjudicated: null, sha: startSha, flakyRetried: [], reportPath: null, ...impact subset as in the normal event, ci: ciEventEntries(ciAttempts), local: false }`.
     3. Set `process.exitCode = EXIT_NO_VERDICT` and `return`.
@@ -629,7 +641,7 @@ Content each file must state:
 - **`stamp-composition.md` appended sentence.** "Under the declaration's `localRuns: "on-request"` (`ci-source.md`), a chunk whose `--cmd` set names a CI-declared suite is a run on this machine, so it needs `--local` and exits 2 without it; a chunk of `types`, `lint` or a suite with no `ci` source is unaffected."
 - **`ci-source.md` line 64, last sentence.** "A change whose risk is platform-specific still runs locally: the caller passes `--local`, and CI is not consulted (under `localRuns`, a run without `--scope` that names a CI-declared suite needs `--local` too)."
 - **The 4347 journey, line 24.** After "runs the suite locally", insert "(without the declaration's `localRuns` key; under it the run exits 3 with no verdict, `plugin/skills/test/ci-source.md`)".
-- **`ci-source.md` reason table.** The row `` | `local-requested` | `--local` was passed, so CI was not consulted. | ``. Line 40 becomes "Without `localRuns`, every other outcome runs the suite locally…" plus "under it, the run exits 3 (`## Local runs on request`)". The `ci-log-unavailable` row gains "(without `localRuns`)".
+- **`ci-source.md` reason table.** The row `` | `local-requested` | `--local` was passed, so CI was not consulted. | `` and the row `` | `not-consulted` | Under `localRuns`, an earlier suite already left the run with no verdict, so CI was not asked about this one. | ``. Line 40 becomes "Without `localRuns`, every other outcome runs the suite locally…" plus "under it, the run exits 3 (`## Local runs on request`)". The `ci-log-unavailable` row gains "(without `localRuns`)".
 - **`suite-slots.md` Lanes bullet.** Under `localRuns: "on-request"` (`ci-source.md`) a CI-declared suite runs here only with `--local`. A run that exits 3 has taken no slot.
 - **`verification.md:100`.** "…and, without the declaration's `localRuns` key, falls back to the local run with a named reason otherwise (under it the run exits 3 or needs `--local`)."
 - **`ci-skips-drafts.md:51` appended sentence.** "Under `localRuns: "on-request"` (`test/ci-source.md`) neither shape degrades quietly: each of those verifies stops with exit 3 instead of running the suite here."
@@ -649,10 +661,10 @@ Content each file must state:
     - `/names the run URL/`
     - `/--stamp-suite/`
   - **Facts for `stamp-composition.md`'s Chunked verification paragraph** (sliced from `**Chunked verification (#3002).**` to the next blank line): `/localRuns: "on-request"/` and `/needs `--local`/`.
-  - **Facts for the `## Fallback reasons` section**: the `local-requested` row.
+  - **Facts for the `## Fallback reasons` section**: the `local-requested` and `not-consulted` rows.
   - **Facts for `suite-slots.md`'s `## Lanes` section**: the `localRuns` bullet.
   - **Facts for `docs/plugin-structure.md`**: the `node plugin/bin/verify.js` line (via `lineStartingWith`) holds `[--local]`, `exits 3` and `exits 2`, and line 58's `ci-source.js (#4347` entry holds `localRuns` and `--allow-escape-sequences`.
-  - **Twin pins:** `` assert.ok(reasonTable.includes(`| \`${LOCAL_REQUESTED}\` |`)) `` and `assert.strictEqual(EXIT_NO_VERDICT, 3)` beside a literal `/exits 3/` pin.
+  - **Twin pins:** `` assert.ok(reasonTable.includes(`| \`${LOCAL_REQUESTED}\` |`)) ``, the same for `NOT_CONSULTED`, and `assert.strictEqual(EXIT_NO_VERDICT, 3)` beside a literal `/exits 3/` pin.
   - **Retirement sweep.** Walk every `.md` under `plugin/skills/` and `.claude/skills/`, plus `docs/plugin-structure.md`, whitespace-collapsed. Assert none contains any of these retired sentences, case-sensitive:
     - `Every other outcome runs the suite locally, exactly as selected`
     - `and falls back to the local run with a named reason otherwise.`
