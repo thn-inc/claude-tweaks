@@ -151,8 +151,9 @@ function composeExpressBody({ runId, specSummary, fixesLines }) {
 // needs to know which form a given read actually returned (gh-present vs.
 // gh-absent/MCP, _shared/pr-early-run-lifecycle.md's Root cause section),
 // only whether the pair survived onto whatever body this call was handed.
+const HTML_RUN_MARKER_RE = /<!--\s*claude-tweaks-run:\s*\S+\s*-->/;
 function hasRunMarker(body) {
-  return /<!--\s*claude-tweaks-run:\s*\S+\s*-->/.test(body) || /^claude-tweaks-run:\s*\S+/m.test(body);
+  return HTML_RUN_MARKER_RE.test(body) || /^claude-tweaks-run:\s*\S+/m.test(body);
 }
 function hasPhasesPair(body) {
   const html = body.includes('<!-- phases-start -->') && body.includes('<!-- phases-end -->');
@@ -263,14 +264,14 @@ function repairPrBody({ body, runId, fixesLines }) {
 
   // The run marker's HTML form takes the plain line's own id, never `runId`:
   // a body naming another run keeps naming it, so firstLineRunId's mismatch
-  // refusal still fires. Its presence check is the same whole-body regex
-  // hasRunMarker uses, so an HTML marker with other spacing counts as present
+  // refusal still fires. Its presence check is hasRunMarker's whole-body
+  // HTML_RUN_MARKER_RE, so an HTML marker with other spacing counts as present
   // (restoreHtmlForm's exact-token check would miss it and add a second one).
   const lines = result.split('\n');
   const plainRunPattern = /^claude-tweaks-run:\s*(\S+)$/;
   const plainRunAt = lines.findIndex((l) => plainRunPattern.test(l.trim()));
   const plainRun = plainRunAt === -1 ? null : plainRunPattern.exec(lines[plainRunAt].trim());
-  if (plainRun && SAFE_RUN_ID_RE.test(plainRun[1]) && !/<!--\s*claude-tweaks-run:\s*\S+\s*-->/.test(result)
+  if (plainRun && SAFE_RUN_ID_RE.test(plainRun[1]) && !HTML_RUN_MARKER_RE.test(result)
     && restoreHtmlForm(lines, runMarkerHtml(plainRun[1]), lines[plainRunAt].trim(), 'above')) {
     restored.push('run marker HTML form');
   }
