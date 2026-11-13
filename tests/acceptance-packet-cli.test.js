@@ -421,7 +421,7 @@ test('--flags, --decision-items, --links, the base urls, --surface, --deploy and
   assert.equal(factOf(facts, 'check:ac-1').status, 'passed');
 });
 
-for (const flag of ['--flags', '--decision-items', '--links']) {
+for (const flag of ['--flags', '--proofs', '--decision-items', '--links']) {
   test(`an unparseable or mis-shaped ${flag} file is a stated partial, not a crash`, (t) => {
     const ws = workspace(t);
     const note = `${flag} input not read — treated as absent`;
@@ -1926,4 +1926,115 @@ test('real subprocess: snapshot then gather over a real repo', (t) => {
   assert.equal(rerun.status, 0, rerun.stderr);
   assert.deepEqual(JSON.parse(rerun.stdout), MAIN_RERUN);
   assert.equal(readJson(path.join(runDir, 'packet-inputs', 'manifest.json')).head, head);
+});
+
+// ---- risk facts: unconfirmed flags, planned proofs, the plan copy ----
+
+test('--flags keeps unconfirmed: true on the flag fact and no other flag gains the field', (t) => {
+  const ws = workspace(t);
+  const flags = writeJson(ws.file('flags.json'), [{ id: 'f1', unconfirmed: true }, { id: 'f2', unconfirmed: false }, { id: 'f3' }]);
+  const { facts } = gather(ws, ['--flags', flags]);
+  assert.equal(factOf(facts, 'flag:f1').unconfirmed, true);
+  assert.equal(Object.hasOwn(factOf(facts, 'flag:f2'), 'unconfirmed'), false);
+  assert.equal(Object.hasOwn(factOf(facts, 'flag:f3'), 'unconfirmed'), false);
+});
+
+for (const bad of ['yes', 1]) {
+  test(`--flags with a non-boolean unconfirmed (${JSON.stringify(bad)}) is a stated partial and no flag fact`, (t) => {
+    const ws = workspace(t);
+    const flags = writeJson(ws.file('flags.json'), [{ id: 'f1', unconfirmed: bad }]);
+    const { facts } = gather(ws, ['--flags', flags]);
+    assert.ok(facts.partial.includes('--flags input not read — treated as absent'));
+    assert.deepEqual(idsOf(facts, 'flag'), []);
+  });
+}
+
+test('--proofs reaches the facts as a not-run proof fact', (t) => {
+  const ws = workspace(t);
+  const proofs = writeJson(ws.file('proofs.json'), [{ id: 'auth', text: 't' }]);
+  const { facts } = gather(ws, ['--proofs', proofs]);
+  assert.deepEqual(factOf(facts, 'proof:auth'), {
+    id: 'proof:auth', kind: 'proof', status: 'not-run', reason: 'planned in the plan, not yet run', source: 'proofs', text: 't',
+  });
+});
+
+test('--help names --proofs and --plan', () => {
+  const out = [];
+  assert.equal(run(['--help'], { stdout: (s) => out.push(s), stderr: () => {} }), 0);
+  const usage = out.join('');
+  assert.match(usage, /--proofs <file>/);
+  assert.match(usage, /snapshot --run <dir> --base <ref> \[--plan <file>\]/);
+});
+
+function snapshotWithPlan(ws, planFile, overrides) {
+  const h = harness(ws, { git: fakeGit({ revParse: { HEAD: H }, mergeBase: MB }).git, ...overrides });
+  const code = run(['snapshot', '--run', ws.runDir, '--base', 'B', ...(planFile === undefined ? ['--plan'] : ['--plan', planFile])], h.deps);
+  return { code, stdout: h.stdout(), stderr: h.stderr() };
+}
+
+test('snapshot --plan copies the plan byte-for-byte and the manifest says copied', (t) => {
+  const ws = workspace(t);
+  const text = '# Plan\r\n\r\nProof(auth): refuses an unauthenticated request\né\n';
+  const plan = writeText(ws.file('plan.md'), text);
+  const { code, stdout, stderr } = snapshotWithPlan(ws, plan);
+  assert.equal(code, 0, stderr);
+  assert.equal(fs.readFileSync(inputs(ws, 'plan.md'), 'utf8'), text);
+  assert.equal(JSON.parse(stdout).files.plan, 'copied');
+  assert.equal(readJson(inputs(ws, 'manifest.json')).files.plan, 'copied');
+  assert.deepEqual(fs.readdirSync(path.join(ws.runDir, 'packet-inputs')).filter((n) => n.includes('.tmp-')), []);
+});
+
+test('snapshot --plan with a missing plan says absent and writes no plan.md', (t) => {
+  const ws = workspace(t);
+  const { code, stdout, stderr } = snapshotWithPlan(ws, ws.file('nope.md'));
+  assert.equal(code, 0, stderr);
+  assert.equal(JSON.parse(stdout).files.plan, 'absent');
+  assert.equal(readJson(inputs(ws, 'manifest.json')).files.plan, 'absent');
+  assert.throws(() => fs.statSync(inputs(ws, 'plan.md')));
+});
+
+test('snapshot --plan with a directory says unreadable and writes no plan.md', (t) => {
+  const ws = workspace(t);
+  const dir = ws.file('a-dir');
+  fs.mkdirSync(dir, { recursive: true });
+  const { code, stdout, stderr } = snapshotWithPlan(ws, dir);
+  assert.equal(code, 0, stderr);
+  assert.equal(JSON.parse(stdout).files.plan, 'unreadable');
+  assert.throws(() => fs.statSync(inputs(ws, 'plan.md')));
+});
+
+test('snapshot --plan with no value exits 2 and runs nothing', (t) => {
+  const ws = workspace(t);
+  const { code, stderr } = snapshotWithPlan(ws, undefined);
+  assert.equal(code, 2);
+  assert.match(stderr, /--plan requires a value/);
+  assert.throws(() => fs.statSync(inputs(ws, 'manifest.json')));
+});
+
+test('snapshot without --plan leaves files.plan out of the manifest', (t) => {
+  const ws = workspace(t);
+  const { stdout } = snapshot(ws, { git: fakeGit({ revParse: { HEAD: H }, mergeBase: MB }).git });
+  assert.equal(Object.hasOwn(JSON.parse(stdout).files, 'plan'), false);
+  assert.throws(() => fs.statSync(inputs(ws, 'plan.md')));
+});
+
+test('a re-run from the main checkout keeps the earlier plan.md', (t) => {
+  const ws = workspace(t);
+  const earlier = writeText(inputs(ws, 'plan.md'), 'EARLIER PLAN\n');
+  writeJson(inputs(ws, 'manifest.json'), { schemaVersion: 1, head: OTHER, mergeBase: MB, files: { plan: 'copied' } });
+  const plan = writeText(ws.file('plan.md'), 'LATER PLAN\n');
+  const { code, stdout, stderr } = snapshotWithPlan(ws, plan);
+  assert.equal(code, 0, stderr);
+  assert.deepEqual(JSON.parse(stdout), MAIN_RERUN);
+  assert.equal(fs.readFileSync(earlier, 'utf8'), 'EARLIER PLAN\n');
+});
+
+test('snapshot --plan with nothing ahead of the base keeps the earlier plan.md', (t) => {
+  const ws = workspace(t);
+  const earlier = writeText(inputs(ws, 'plan.md'), 'EARLIER PLAN\n');
+  const plan = writeText(ws.file('plan.md'), 'LATER PLAN\n');
+  const { code, stdout } = snapshotWithPlan(ws, plan, { git: fakeGit({ revParse: { HEAD: H }, mergeBase: H }).git });
+  assert.equal(code, 0);
+  assert.deepEqual(JSON.parse(stdout), { skipped: 'no commits ahead of base' });
+  assert.equal(fs.readFileSync(earlier, 'utf8'), 'EARLIER PLAN\n');
 });

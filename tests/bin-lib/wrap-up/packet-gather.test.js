@@ -1079,13 +1079,15 @@ test('every gathered fact carries a source', () => {
     recording: PASSED_RECORDING,
     recordingPath: RECORDING_PATH,
     flags: [{ id: 'f', text: 't' }],
+    proofs: [{ id: 'p', text: 't' }],
     decisions: [{ id: 'd', text: 't' }],
   });
   const kinds = new Set(result.facts.map((f) => f.kind));
-  assert.deepEqual([...kinds].sort(), ['change', 'check', 'decision', 'deploy', 'finding', 'flag', 'link', 'recording', 'story']);
+  assert.deepEqual([...kinds].sort(), ['change', 'check', 'decision', 'deploy', 'finding', 'flag', 'link', 'proof', 'recording', 'story']);
   for (const f of result.facts) assert.ok(typeof f.source === 'string' && f.source !== '', f.id);
   assert.deepEqual(factOf(result, 'finding:1'), { id: 'finding:1', kind: 'finding', status: 'passed', source: 'review', text: 'finding text' });
-  for (const f of result.facts.filter((x) => !['check', 'story'].includes(x.kind))) assert.equal(f.status, 'passed', f.id);
+  for (const f of result.facts.filter((x) => !['check', 'story', 'proof'].includes(x.kind))) assert.equal(f.status, 'passed', f.id);
+  assert.equal(factOf(result, 'proof:p').status, 'not-run');
   assert.equal(result.schemaVersion, 1);
   assert.equal(result.record, 4611);
   assertShapeOk(result);
@@ -1471,4 +1473,18 @@ test('AC2b stale run-dir copy is ignored', () => {
   assert.equal(result.status, 'found');
   assert.ok(result.comment.body.endsWith('LIVE'));
   assert.equal(readPacket.length, 1, 'the reader takes no path argument');
+});
+
+test('a flag entry keeps unconfirmed only when true, so old callers are unchanged', () => {
+  const result = gather({ flags: [{ id: 'auth', unconfirmed: true }, { id: 'pii', unconfirmed: false }, { id: 'migrations' }] });
+  assert.deepEqual(factOf(result, 'flag:auth'), { id: 'flag:auth', kind: 'flag', status: 'passed', source: 'flags', unconfirmed: true });
+  assert.deepEqual(factOf(result, 'flag:pii'), { id: 'flag:pii', kind: 'flag', status: 'passed', source: 'flags' });
+  assert.deepEqual(factOf(result, 'flag:migrations'), { id: 'flag:migrations', kind: 'flag', status: 'passed', source: 'flags' });
+  assertShapeOk(result);
+});
+
+test('a proof entry is a not-run proof fact, whatever status, kind or source it claims', () => {
+  const result = gather({ proofs: [{ id: 'auth', text: 'Refuses an unauthenticated request', url: 'https://example.test/x', unconfirmed: true, status: 'passed', kind: 'check', source: 'forged' }] });
+  assert.deepEqual(factOf(result, 'proof:auth'), { id: 'proof:auth', kind: 'proof', status: 'not-run', reason: 'planned in the plan, not yet run', source: 'proofs', text: 'Refuses an unauthenticated request' });
+  assertShapeOk(result);
 });

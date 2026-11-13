@@ -214,8 +214,8 @@ Built-in risk slugs: `migrations`, `auth`, `public-contract`, `irreversible-side
 | `deploy-poll-seconds` | `policy.yml` | none yet (#4608) | `30` | Integer >= 1 |
 | `owned-owners` | `policy.yml`, base branch only | none yet (#4608) | `[]` | Logins, `[A-Za-z0-9_-]`, optional `[bot]` |
 | `trusted-authors` | `policy.yml`, base branch only | none yet (#4608) | `[]` | Logins, as `owned-owners` |
-| `risk-categories` | `policy.yml` | none yet (#4608) | `[]` | Extra lowercase slugs |
-| `risk-path-globs` | `policy.yml`, block | none yet (#4608) | `{}` | Slug to glob list, indented: `slug: [a, b,]` (one trailing comma; may span lines) or `slug:` then `- a` lines. A slug is built-in or from `risk-categories`; a glob is a string (quote `{a,b}`, `k: v`; a quoted one is literal, no escapes). Rejected whole: a respelled key line, a column-0 row, quoted keys, `slug : [a]`, doubled-quote escapes. Read it only through the resolver, never `resolveValue`: `null` with `invalid` means malformed, never unset |
+| `risk-categories` | `policy.yml` | `risk-flags.js`, `plan-audit.js` | `[]` | Extra lowercase slugs |
+| `risk-path-globs` | `policy.yml`, block | `risk-flags.js` | `{}` | Slug to glob list, indented: `slug: [a, b,]` (one trailing comma; may span lines) or `slug:` then `- a` lines. A slug is built-in or from `risk-categories`; a glob is a string (quote `{a,b}`, `k: v`; a quoted one is literal, no escapes). Rejected whole: a respelled key line, a column-0 row, quoted keys, `slug : [a]`, doubled-quote escapes. Read it only through the resolver, never `resolveValue`: `null` with `invalid` means malformed, never unset |
 
 ## Additional levers
 

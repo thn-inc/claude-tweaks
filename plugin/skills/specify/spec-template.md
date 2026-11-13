@@ -12,6 +12,8 @@ Every record body opens with a short metadata block — plain body-metadata line
 
 `Ui-stack:` names the UI component library / styling approach a frontend build should use — e.g. `shadcn/ui + Tailwind`, or an explicit `none — no preference, defer to reference codebase` when the record's author genuinely has no opinion. `/claude-tweaks:specify`'s Step 2.5c2 (`design-pre-steps.md`, immediately after the Design-intent question) writes it, following the same auto-mode/`ui-stack` policy-key precedence Step 2.5c already uses for `Design-intent:`. Omitted for backend/infra/terminal records — the same frontend-only gate that already governs `Design-intent:`.
 
+`Risk-flags:` and `Risk-flags-unconfirmed:` are written only through `bin/risk-flags.js`: `/claude-tweaks:specify`'s Risk flags step settles them (`shaping-mode-stamping.md`'s `### Risk flags`), and `/claude-tweaks:backlog refine` confirms them with its `confirm` verb (`backlog/refine-risk-flags.md`); never hand-edit either line. The grammar is `Risk-flags: migrations, auth` (comma-separated lowercase slugs from the built-ins `migrations`, `auth`, `public-contract` and `irreversible-side-effect`, plus the policy `risk-categories`) or `Risk-flags: none` (classified, nothing flagged). No line means an unclassified legacy record, read as no flags; a line that is malformed or names an unknown slug reads as unknown, which is all four built-in categories flagged, never as no flags. `Risk-flags-unconfirmed: true` marks a set a headless run kept with no human to confirm it. Each kept flag needs a plan step carrying `Proof(<slug>): <text>`, at least 20 characters and more than the category's name (`/claude-tweaks:build`'s plan audit, Check G). A removal does not persist: a flag the classifier detects again on a later shaping is re-added and asked about again. These flags are not the `risk:low|medium|high` labels, the scoring axis (`## Facets`), which is a different axis.
+
 ````markdown
 Surface: {web | mobile | desktop | backend | infra | terminal}
 Design-intent: {one or more of bold | quiet | minimal | delightful | onboarding, comma-separated — or none alone}
@@ -19,6 +21,8 @@ Ui-stack: {free-form component-library/styling-approach string (e.g. "shadcn/ui 
 Design-seed: {the seed key from the surface brief's Impeccable direction contract, copied verbatim — NOT written by /specify; see below}
 Visual-reference: {path to an accepted shape-time scaffold file — omitted when /specify's Step 2.5b-ii variant-exploration step was skipped, declined, or not offered (non-frontend records)}
 Parent: {#N — decomposition-mode sub-issues under work-links: body-text only, and only when Step 2.6 kept a parent; omitted otherwise (a collapsed decomposition, native links, work-backend: local-files, and Shaping mode)}
+Risk-flags: {comma-separated slugs, or none — settled by /specify's Risk flags step, confirmed by /backlog refine}
+Risk-flags-unconfirmed: {true — headless-kept flags awaiting a human; omitted otherwise}
 
 ## Overview
 
