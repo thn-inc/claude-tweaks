@@ -360,6 +360,8 @@ test('Minor 7: an unreadable or unparseable run-state.json settles a pre-push st
   }
   // A class that never reads for a reason (blocked, not pre-push) carries no such note.
   assert.equal(harness({ stop: stopOf({ class: 'blocked', pushed: true }), readFile: eacces }).res.note, null);
+  // A pre-push stop that pushed was blocked anyway: the unreadable note would be misleading.
+  assert.equal(harness({ stop: stopOf({ pushed: true }), readFile: eacces }).res.note, null);
   // A caller-supplied PR number is not read from the file at all.
   assert.equal(harness({ input: { pr: 9 }, readFile: eacces }).res.note, null);
 });
