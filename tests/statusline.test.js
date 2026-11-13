@@ -1861,16 +1861,15 @@ test('rendered project and git segments are byte-identical with the fast paths o
       git(['remote', 'add', 'origin', GH], f.main);
       return run(f.wt);
     })],
-    ['submodule checkout', (run) => withWorktrees((f) => {
-      git(['remote', 'set-url', 'origin', GH], f.sub);
-      return run(f.sub);
-    })],
+    // Pins the name and the link only: the project segment for a submodule checkout resolves to the superproject's .git/modules on both paths.
+    ['submodule checkout', (run) => withWorktrees((f) => run(f.sub))],
     ['no origin', (run) => withRepo(null, run)],
     ['non-GitHub origin', (run) => withRepo('git@gitlab.com:o/r.git', run)],
     ['origin only in an included file', (run) => withRepo(null, (dir) => {
       const extra = path.join(dir, '.git', 'extra');
       fs.writeFileSync(extra, `[remote "origin"]\n\turl = ${GH}\n`);
-      appendCfg(dir, `[include]\n\tpath = ${extra}\n`);
+      // A local non-GitHub url BEFORE the include: git answers the included GitHub url (last wins), a reader that ignores the include would answer this one.
+      appendCfg(dir, `[remote "origin"]\n\turl = https://gitlab.com/o/main.git\n[include]\n\tpath = ${extra}\n`);
       return run(dir);
     })],
     ['origin with a quoted value', (run) => withRepo(null, (dir) => {
@@ -1897,13 +1896,14 @@ test('rendered project and git segments are byte-identical with the fast paths o
       build((dir) => {
         const input = { workspace: { project_dir: dir } };
         const on = `${m.renderProject(input, dir)}|${m.renderGit(dir)}`;
-        const off = `${m.renderProject(input, dir, { fast: false })}|${m.renderGit(dir)}`;
-        assert.strictEqual(on, off, label);
+        // The off side runs in its own recording so each case proves it reached git for the origin url.
+        const offRun = recordLaunches((fresh) => `${fresh.renderProject(input, dir, { fast: false })}|${fresh.renderGit(dir)}`);
+        assert.strictEqual(on, offRun.result, label);
+        assert.deepStrictEqual(offRun.launches.filter((l) => l.file === ORIGIN_LAUNCH.file && l.fn === ORIGIN_LAUNCH.fn && l.args.join(' ') === ORIGIN_LAUNCH.args.join(' ')), [ORIGIN_LAUNCH], label);
         compared.push(label);
       });
     }
   });
   assert.strictEqual(compared.length, 11);
   assert.deepStrictEqual(launches.filter((l) => l.fn === 'exec' || l.fn === 'execSync'), []);
-  assert.ok(launches.length > 0, 'the off side must have launched git');
 });
