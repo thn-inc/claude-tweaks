@@ -87,11 +87,20 @@ function renderModel(input) {
 // are part of the path). Git also refuses a gitfile whose target is not a valid
 // repository (is_git_directory: HEAD in the gitdir, objects/ and refs/ in the
 // common dir), an empty path, and a zero-byte commondir. Each is null here, so
-// git decides.
-function commonDirFromFs(dir, env = process.env) {
-  if (env.GIT_DIR !== undefined || env.GIT_COMMON_DIR !== undefined || env.GIT_OBJECT_DIRECTORY !== undefined) return null;
+// git decides. So is a `.git` or `commondir` that is not a regular file (git
+// refuses a non-file `.git`; a FIFO would block the read), a `.git` holding a NUL
+// (git reads only up to it), and a repo git's ownership check could refuse.
+function commonDirFromFs(dir, env = process.env, currentUid = processUid()) {
+  if (envHas(env, 'GIT_DIR') || envHas(env, 'GIT_COMMON_DIR') || envHas(env, 'GIT_OBJECT_DIRECTORY')) return null;
+  if (currentUid === 0 && envHas(env, 'SUDO_UID')) return null;
   try {
-    const gitFile = fs.readFileSync(path.join(dir, '.git'), 'utf8').replace(/[\r\n]+$/, '');
+    const gitPath = path.join(dir, '.git');
+    // lstat, as git's ownership check does; a symlinked .git is left to git too.
+    const gitStat = fs.lstatSync(gitPath);
+    if (!gitStat.isFile()) return null;
+    const raw = fs.readFileSync(gitPath, 'utf8');
+    if (raw.includes('\0')) return null;
+    const gitFile = raw.replace(/[\r\n]+$/, '');
     if (!gitFile.startsWith('gitdir: ')) return null;
     const target = gitFile.slice('gitdir: '.length);
     if (!target || target.includes('\n')) return null;
@@ -100,15 +109,21 @@ function commonDirFromFs(dir, env = process.env) {
     const gitdir = fs.realpathSync(path.resolve(fs.realpathSync(dir), target));
     let common;
     try {
-      const content = fs.readFileSync(path.join(gitdir, 'commondir'), 'utf8').replace(/[\r\n]+$/, '');
+      const commondir = path.join(gitdir, 'commondir');
+      if (!fs.statSync(commondir).isFile()) return null;
+      const content = fs.readFileSync(commondir, 'utf8').replace(/[\r\n]+$/, '');
       if (!content) return null; // a zero-byte commondir makes git die
       common = path.resolve(gitdir, content);
     } catch (err) {
       if (!err || err.code !== 'ENOENT') return null;
       common = gitdir;
     }
-    // Plain JS realpath, never .native / canonicalRealpath: git resolves
-    // symlinks but keeps the input's letter case, as this does.
+    // Plain JS realpath, never .native / canonicalRealpath. On POSIX that matches
+    // git, which resolves symlinks and keeps the input's letter case. On win32
+    // Git for Windows resolves through GetFinalPathNameByHandleW (on-disk case,
+    // subst and mapped drives resolved), so the file:// link built from this may
+    // differ from git's in case or drive spelling: an accepted divergence, since
+    // the visible name is the basename of a path git wrote.
     const real = fs.realpathSync(common);
     // is_git_directory, as read_gitfile applies it: a valid HEAD in the gitdir
     // and searchable objects/ + refs/ directories in the common dir, else git
@@ -117,10 +132,32 @@ function commonDirFromFs(dir, env = process.env) {
     if (!isValidHead(path.join(gitdir, 'HEAD'))) return null;
     if (!isSearchableDir(path.join(real, 'objects'))) return null;
     if (!isSearchableDir(path.join(real, 'refs'))) return null;
+    const owners = [fs.statSync(dir), gitStat, ...[...new Set([gitdir, real])].map((p) => fs.statSync(p))];
+    if (!ownedByCurrentUser(owners, currentUid)) return null;
     return real;
   } catch {
     return null;
   }
+}
+
+// git's ensure_valid_ownership refuses a repo whose worktree, .git or gitdir is
+// not owned by the current user (under sudo, by SUDO_UID). The readers compare
+// each stat's uid with currentUid and defer to git on any mismatch, ignoring
+// safe.directory (git honours it once asked). Under sudo they always defer. On
+// win32 (no geteuid) currentUid is null and the check is skipped: git compares
+// SIDs there, which this does not model, an accepted divergence.
+function processUid() {
+  return typeof process.geteuid === 'function' ? process.geteuid() : null;
+}
+
+function ownedByCurrentUser(stats, currentUid) {
+  return currentUid === null || stats.every((st) => st.uid === currentUid);
+}
+
+// An env passed in as a plain object is case-sensitive, while git on win32 (and
+// process.env there) reads names case-insensitively, so match them that way.
+function envHas(env, name) {
+  return Object.keys(env).some((key) => key.toUpperCase() === name);
 }
 
 // validate_headref: a regular file (not a symlink) whose content, minus
@@ -154,7 +191,7 @@ function resolveMainProjectDir(dir, opts = {}) {
   }
   if (stat.isDirectory()) return dir;
   if (opts.fast !== false) {
-    const common = commonDirFromFs(dir, opts.env);
+    const common = commonDirFromFs(dir, opts.env, opts.currentUid);
     if (common) return path.dirname(common);
   }
   try {
@@ -197,26 +234,39 @@ function githubRepoUrl(remoteUrl) {
 // config.worktree, a header or key line shape this parser does not model (git
 // allows only space and tab as whitespace there), a value with quote or escape
 // syntax anywhere, an origin url with comment syntax, an unreadable config (which
-// is also what a `.git` that is not a directory yields) — is null, as is a config
-// with no origin url.
-function originUrlFromConfig(mainDir, env = process.env) {
+// is also what a `.git` that is not a directory yields), a config that is not a
+// regular file (a FIFO would block the read) or holds a NUL (git cuts a value
+// there), an [extensions] section (git refuses an extension it does not know), a
+// `.git` that is not a valid git dir (git walks past it to a parent repo), and a
+// repo git's ownership check could refuse — is null, as is a config with no
+// origin url.
+function originUrlFromConfig(mainDir, env = process.env, currentUid = processUid()) {
   for (const key of Object.keys(env)) {
-    if (key.startsWith('GIT_CONFIG')) return null;
+    if (key.toUpperCase().startsWith('GIT_CONFIG')) return null;
   }
-  if (env.GIT_DIR !== undefined) return null;
-  if (env.GIT_COMMON_DIR !== undefined) return null;
+  if (envHas(env, 'GIT_DIR') || envHas(env, 'GIT_COMMON_DIR') || envHas(env, 'GIT_OBJECT_DIRECTORY')) return null;
+  if (currentUid === 0 && envHas(env, 'SUDO_UID')) return null;
   try {
     const gitDir = path.join(mainDir, '.git');
+    if (!ownedByCurrentUser([fs.statSync(mainDir), fs.lstatSync(gitDir)], currentUid)) return null;
+    // is_git_directory, as commonDirFromFs applies it.
+    if (!isValidHead(path.join(gitDir, 'HEAD'))) return null;
+    if (!isSearchableDir(path.join(gitDir, 'objects'))) return null;
+    if (!isSearchableDir(path.join(gitDir, 'refs'))) return null;
     try {
       fs.statSync(path.join(gitDir, 'config.worktree'));
       return null;
     } catch {
       // absent — the common case
     }
+    const configPath = path.join(gitDir, 'config');
+    if (!fs.statSync(configPath).isFile()) return null;
+    const text = fs.readFileSync(configPath, 'utf8');
+    if (text.includes('\0')) return null;
     let url = null;
     let inOrigin = false;
     let inSection = false;
-    for (const line of fs.readFileSync(path.join(gitDir, 'config'), 'utf8').split(/\r?\n/)) {
+    for (const line of text.split(/\r?\n/)) {
       if (/^[ \t]*$/.test(line) || /^[ \t]*[#;]/.test(line)) continue;
       const header = line.match(/^[ \t]*\[([^\]]*)\][ \t]*(.*)$/);
       if (header) {
@@ -226,6 +276,7 @@ function originUrlFromConfig(mainDir, env = process.env) {
         const name = inside[1].toLowerCase();
         if (name === 'include') return null;
         if (name === 'includeif') return null;
+        if (name === 'extensions') return null;
         inSection = true;
         inOrigin = name === 'remote' && inside[2] === 'origin';
         continue;
@@ -254,7 +305,7 @@ function originUrlFromConfig(mainDir, env = process.env) {
 
 function readOriginRemote(dir, opts = {}) {
   if (opts.fast !== false) {
-    const fast = originUrlFromConfig(dir, opts.env);
+    const fast = originUrlFromConfig(dir, opts.env, opts.currentUid);
     if (fast) return fast;
   }
   try {
