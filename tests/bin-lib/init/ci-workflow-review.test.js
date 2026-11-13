@@ -186,7 +186,8 @@ test('any reader unparsed reason suppresses that workflow\'s findings: concurren
   const cases = [
     ['concurrency not read', draftWf().replace(CONC, 'concurrency: {group: x\n')],
     ['push branches not read', draftWf().replace('    types: [opened, synchronize]\n', "    types: [opened, synchronize]\n  push:\n    branches: [main, 'x y']\n")],
-    ['jobs: not read', draftWf().replace('    steps:\n      - run: npm test\n', '    steps: run-this\n')],
+    // No concurrency key, so check 4 would flag this one if the gate let it through.
+    ['jobs: not read', draftWf().replace(CONC, '').replace('    steps:\n      - run: npm test\n', '    steps: run-this\n')],
     // A per-job reason keeps the other jobs, so job test's draft skip is still read.
     ['job b if: not read', `${draftWf()}  b:\n    if:\n    runs-on: ubuntu-latest\n`],
   ];
@@ -213,7 +214,8 @@ test('the generated track-issue-fixes.yml is skipped (current or prior-generated
   }
 
   // The hand edit: a pull_request trigger, a job's if: replaced by a draft skip,
-  // and a step if: added, so checks 1 and 2 have something to flag.
+  // and a step if: added, so checks 1 and 2 have something to flag; its
+  // generated `cancel-in-progress: false` is check 4's once a PR triggers it.
   const modified = current
     .replace('on:\n  push:\n', 'on:\n  pull_request:\n    types: [opened, synchronize]\n  push:\n')
     .replace(/^ {4}if: github\.ref != .*\n/m, '    if: github.event.pull_request.draft == false\n')
@@ -224,8 +226,9 @@ test('the generated track-issue-fixes.yml is skipped (current or prior-generated
   const r = M.reviewWorkflows({ workflows: [wf('track-issue-fixes.yml', modified)], ciSources });
   assert.equal(r.reviewed, 1);
   assert.deepEqual(r.skipped, []);
-  assert.deepEqual(checksOf(r, T), ['draft-skip-no-ready-for-review', 'draft-skip-with-ci-source']);
+  assert.deepEqual(checksOf(r, T), ['draft-skip-no-ready-for-review', 'draft-skip-with-ci-source', 'no-cancel-in-progress-concurrency']);
   assert.ok(r.findings[0].detail.includes('label-fix-branch'), r.findings[0].detail);
+  assert.equal(r.findings[2].detail, 'cancel-in-progress: false');
   assert.deepEqual(r.unparsed, []);
   const other = M.reviewWorkflows({ workflows: [wf('other.yml', modified)], ciSources });
   const asOther = (xs) => xs.map((x) => ({ ...x, workflow: '.github/workflows/other.yml' }));
@@ -263,4 +266,185 @@ test('findings run in workflow input order, then CHECKS order', () => {
 test('formatRemedy renders a section citation and passes the #5152 pointer through', () => {
   assert.equal(M.formatRemedy('Path filters'), '`_shared/ci-skips-drafts.md` § Path filters');
   assert.equal(M.formatRemedy('see #5152'), 'see #5152');
+});
+
+const JOBS = '  a:\n    runs-on: x\n    steps:\n      - run: t\n';
+const prWf = ({ on = '  pull_request:\n', conc = CONC, jobs = JOBS } = {}) => `on:\n${on}${conc}jobs:\n${jobs}`;
+const pushWf = (onBlock, jobs) => `${onBlock}jobs:\n${jobs}`;
+const PATHS_ON = "  pull_request:\n    paths: ['src/**']\n";
+const STEP_GATED = "  deploy:\n    runs-on: x\n    steps:\n      - if: github.ref == 'refs/heads/main'\n        run: d\n";
+const EXPR_CONC = "concurrency:\n  group: x\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n";
+const OTHER = '.github/workflows/other.yml';
+const NO_ALWAYS = 'paths on pull_request; no always-reporting workflow';
+
+test('AC3.1: a paths filter on pull_request with no other workflow yields exactly paths-filter-no-always-reporting-job', () => {
+  const r = review({ 'ci.yml': prWf({ on: PATHS_ON }) });
+  assert.deepEqual(checksOf(r, W), ['paths-filter-no-always-reporting-job']);
+  assert.equal(r.findings[0].remedy, 'Path filters');
+  assert.equal(r.findings[0].detail, NO_ALWAYS);
+  assert.deepEqual(r.unparsed, []);
+  const ignore = review({ 'ci.yml': prWf({ on: '  pull_request:\n    branches: [main]\n    paths-ignore: [docs/**]\n' }) });
+  assert.deepEqual(checksOf(ignore, W), ['paths-filter-no-always-reporting-job']);
+  assert.equal(ignore.findings[0].detail, 'paths-ignore on pull_request; no always-reporting workflow');
+});
+
+test('AC3.2: a second unfiltered pull_request workflow with an if:-free job clears it', () => {
+  const r = review({ 'ci.yml': prWf({ on: PATHS_ON }), 'other.yml': prWf() });
+  assert.deepEqual(r.findings, []);
+  assert.deepEqual(r.unparsed, []);
+});
+
+test('AC3.3: a second workflow whose every job skips drafts, or whose trigger has branches:, or that is push-only, does not count', () => {
+  const draftJobs = '  a:\n    if: github.event.pull_request.draft == false\n    runs-on: x\n    steps:\n      - run: t\n'
+    + '  b:\n    if: ${{ !github.event.pull_request.draft }}\n    runs-on: x\n    steps:\n      - run: t\n';
+  const others = [
+    prWf({ on: `  pull_request:\n    ${READY_TYPES}\n`, jobs: draftJobs }),
+    prWf({ on: '  pull_request:\n    branches: [main]\n' }),
+    pushWf('on: push\n', JOBS),
+  ];
+  for (const other of others) {
+    const r = review({ 'ci.yml': prWf({ on: PATHS_ON }), 'other.yml': other });
+    assert.deepEqual(checksOf(r, W), ['paths-filter-no-always-reporting-job'], other);
+    assert.equal(r.findings[0].detail, NO_ALWAYS, other);
+    assert.deepEqual(checksOf(r, OTHER), [], other);
+    assert.deepEqual(r.unparsed, [], other);
+  }
+});
+
+// G6: an unparsed workflow never counts as the always-reporting one. The last
+// two would count if read as clean (pull_request, no filter, an if:-free job).
+test('an unparsed second workflow is not counted, and the detail names it', () => {
+  const cases = [
+    ['no jobs: key', `on:\n  pull_request:\n${CONC}`],
+    ['concurrency not read', prWf({ conc: 'concurrency: {group: x\n' })],
+    ['cancel-in-progress expression not evaluated', prWf({ conc: EXPR_CONC })],
+  ];
+  for (const [reason, other] of cases) {
+    const r = review({ 'ci.yml': prWf({ on: PATHS_ON }), 'other.yml': other });
+    assert.deepEqual(checksOf(r, W), ['paths-filter-no-always-reporting-job'], reason);
+    assert.equal(r.findings[0].detail, `${NO_ALWAYS} (unparsed, not counted: ${OTHER})`, reason);
+    assert.deepEqual(r.unparsed, [{ workflow: OTHER, reason }], reason);
+  }
+});
+
+test('an unreadable second workflow is a PR-candidate: not counted, and the detail names it; a read push-only unparsed file is not named', () => {
+  const ci = wf('ci.yml', prWf({ on: PATHS_ON }));
+  const r = M.reviewWorkflows({ workflows: [ci, { workflow: OTHER, unreadable: 'could not read: EACCES' }], ciSources: null });
+  assert.deepEqual(checksOf(r, W), ['paths-filter-no-always-reporting-job']);
+  assert.ok(r.findings[0].detail.endsWith(`(unparsed, not counted: ${OTHER})`), r.findings[0].detail);
+  assert.ok(r.unparsed.some((u) => u.workflow === OTHER && u.reason === 'could not read: EACCES'), JSON.stringify(r.unparsed));
+
+  const push = M.reviewWorkflows({ workflows: [ci, wf('push.yml', 'on: push\n')], ciSources: null });
+  assert.deepEqual(checksOf(push, W), ['paths-filter-no-always-reporting-job']);
+  assert.equal(push.findings[0].detail, NO_ALWAYS);
+  assert.deepEqual(push.unparsed, [{ workflow: '.github/workflows/push.yml', reason: 'no jobs: key' }]);
+});
+
+// A read entry with no pull_request trigger read is still a candidate when its
+// PR trigger itself was not read; each fixture carries only that one reason.
+test('an entry whose PR trigger is unread is named, each reason on its own, and named files run in input order', () => {
+  const cases = [
+    ['on: block not read', pushWf('on: [push,\n  workflow_dispatch]\n', JOBS)],
+    ['tab indentation in on:', pushWf('on:\n\tpush:\n', JOBS)],
+    ['anchor or alias in on:', pushWf('on:\n  push: *x\n', JOBS)],
+    ['pull_request trigger not read', pushWf('on: pull_request\r\r\n', JOBS)],
+  ];
+  for (const [reason, other] of cases) {
+    const r = review({ 'ci.yml': prWf({ on: PATHS_ON }), 'other.yml': other });
+    assert.deepEqual(r.unparsed, [{ workflow: OTHER, reason }], reason);
+    assert.equal(r.findings[0].detail, `${NO_ALWAYS} (unparsed, not counted: ${OTHER})`, reason);
+  }
+  const r = review({ 'z.yml': cases[0][1], 'ci.yml': prWf({ on: PATHS_ON }), 'a.yml': cases[1][1] });
+  assert.equal(r.findings[0].detail, `${NO_ALWAYS} (unparsed, not counted: .github/workflows/z.yml, .github/workflows/a.yml)`);
+});
+
+test('AC4.1: a pull_request workflow with no concurrency key yields exactly no-cancel-in-progress-concurrency', () => {
+  const r = review({ 'ci.yml': prWf({ conc: '' }) });
+  assert.deepEqual(checksOf(r, W), ['no-cancel-in-progress-concurrency']);
+  assert.equal(r.findings[0].remedy, 'Concurrency');
+  assert.equal(r.findings[0].detail, 'no workflow-level concurrency');
+  assert.deepEqual(r.unparsed, []);
+});
+
+test('AC4.2: flow-form and block-form cancel-in-progress: true yield none', () => {
+  for (const conc of ['concurrency: {group: x, cancel-in-progress: true}\n', CONC]) {
+    const r = review({ 'ci.yml': prWf({ conc }) });
+    assert.deepEqual(r.findings, [], conc);
+    assert.deepEqual(r.unparsed, [], conc);
+  }
+});
+
+test('AC4.3: cancel-in-progress: false, a scalar concurrency and job-level concurrency only each yield one', () => {
+  const cases = [
+    ['cancel-in-progress: false', prWf({ conc: 'concurrency:\n  group: x\n  cancel-in-progress: false\n' })],
+    ['concurrency has no cancel-in-progress', prWf({ conc: 'concurrency: x\n' })],
+    ['job-level concurrency only', prWf({ conc: '', jobs: JOBS.replace('    runs-on: x\n', '    runs-on: x\n    concurrency: y\n') })],
+  ];
+  for (const [detail, text] of cases) {
+    const r = review({ 'ci.yml': text });
+    assert.deepEqual(checksOf(r, W), ['no-cancel-in-progress-concurrency'], detail);
+    assert.equal(r.findings[0].detail, detail);
+    assert.deepEqual(r.unparsed, [], detail);
+  }
+});
+
+test('AC4.4: a cancel-in-progress expression is unparsed', () => {
+  const r = review({ 'ci.yml': prWf({ conc: EXPR_CONC }) });
+  assert.deepEqual(r.findings, []);
+  assert.deepEqual(r.unparsed, [{ workflow: W, reason: 'cancel-in-progress expression not evaluated' }]);
+  // Check 4 applies to PR workflows only, so a push-only one is not unparsed.
+  const push = review({ 'ci.yml': pushWf(`on:\n  push:\n    branches: [main]\n${EXPR_CONC}`, JOBS) });
+  assert.deepEqual(push.findings, []);
+  assert.deepEqual(push.unparsed, []);
+});
+
+test('AC5.1: on: push with only a step-level if: yields exactly push-all-step-gated', () => {
+  for (const onBlock of ['on: push\n', "on:\n  push:\n    branches: ['**']\n"]) {
+    const r = review({ 'ci.yml': pushWf(onBlock, STEP_GATED) });
+    assert.deepEqual(checksOf(r, W), ['push-all-step-gated'], onBlock);
+    assert.equal(r.findings[0].remedy, 'see #5152');
+    assert.equal(r.findings[0].detail, 'push on every branch; no job-level if:, 1 step-level if:');
+    assert.deepEqual(r.unparsed, [], onBlock);
+  }
+  const two = review({ 'ci.yml': pushWf('on: push\n', STEP_GATED + STEP_GATED.replace('deploy', 'notify')) });
+  assert.equal(two.findings[0].detail, 'push on every branch; no job-level if:, 2 step-level if:');
+});
+
+test('AC5.2: branches: [main], branches-ignore, tags only, a job-level if:, or no if: anywhere yield none', () => {
+  const jobIf = STEP_GATED.replace('    runs-on: x\n', "    if: github.ref == 'refs/heads/main'\n    runs-on: x\n");
+  const cases = [
+    pushWf('on:\n  push:\n    branches: [main]\n', STEP_GATED),
+    pushWf('on:\n  push:\n    branches-ignore: [wip]\n', STEP_GATED),
+    pushWf('on:\n  push:\n    tags: [v*]\n', STEP_GATED),
+    pushWf('on: push\n', jobIf),
+    pushWf('on: push\n', JOBS),
+    // No push trigger at all: the step-gated jobs run on pull_request only.
+    prWf({ jobs: STEP_GATED }),
+  ];
+  for (const text of cases) {
+    const r = review({ 'ci.yml': text });
+    assert.deepEqual(r.findings, [], text);
+    assert.deepEqual(r.unparsed, [], text);
+  }
+  const tagsAll = review({ 'ci.yml': pushWf("on:\n  push:\n    tags: [v*]\n    branches: ['**']\n", STEP_GATED) });
+  assert.deepEqual(checksOf(tagsAll, W), ['push-all-step-gated']);
+});
+
+test('AC6.1: a workflow set valid on every check yields an empty findings list', () => {
+  const r = review({
+    'ci.yml': draftWf({ types: READY_TYPES }),
+    'docs.yml': prWf({ on: PATHS_ON }),
+    'always.yml': prWf(),
+    'deploy.yml': pushWf('on:\n  push:\n    branches: [main]\n', STEP_GATED),
+  }, []);
+  assert.deepEqual(r.findings, []);
+  assert.deepEqual(r.unparsed, []);
+  assert.equal(r.reviewed, 4);
+});
+
+test('AC7.1: a malformed on: yields an unparsed entry naming the file, never an empty list', () => {
+  const r = review({ 'bad.yml': 'on: [push,\n  pull_request]\njobs:\n  a:\n    runs-on: x\n' });
+  assert.equal(r.unparsed.length, 1);
+  assert.equal(r.unparsed[0].workflow, '.github/workflows/bad.yml');
+  assert.deepEqual(r.findings, []);
 });

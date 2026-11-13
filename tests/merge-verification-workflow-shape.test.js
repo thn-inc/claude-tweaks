@@ -179,8 +179,10 @@ test('push: absent, all, some, ignore and tags', () => {
     assert.equal(read(on).pushBranches, 'all', on);
     assert.deepEqual(read(on).unparsed, [], on);
   }
-  // a lone `-` is a sequence indicator, and a plain lead that YAML treats as an
-  // indicator (`?`, `:`, `|`, `>`, `%`, `@`, backtick) is never a pattern; `&x` is an anchor
+  // a lone `-` is a sequence indicator; a plain item led by a YAML indicator
+  // character (`?`, `:`, `|`, `>`, `%`, `@`, backtick) is refused deliberately,
+  // failing closed on the indicator lead even where YAML reads it as a valid
+  // plain scalar (`?x`, `:x`); `&x` is an anchor
   for (const [on, reason] of [
     ['on:\n  push:\n    branches: -\n', 'push branches not read'],
     ['on:\n  push:\n    branches:\n      - -\n', 'push branches not read'],

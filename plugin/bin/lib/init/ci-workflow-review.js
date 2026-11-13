@@ -94,10 +94,59 @@ function checkCiSource({ entry, shape, draftSkipIds, ciSources }) {
   return `ci source ${suites.join(', ')} names this workflow; job(s) ${draftSkipIds.join(', ')} skip drafts`;
 }
 
+// The reader reasons that leave a workflow's PR trigger unknown.
+const PR_TRIGGER_UNREAD = new Set(['pull_request trigger not read', 'on: block not read', 'tab indentation in on:', 'anchor or alias in on:']);
+
+// A reviewed, not-unparsed PR workflow with no filter and a job with no `if:`:
+// it reports on every PR, so a required check never waits on a paths filter.
+const isAlwaysReporting = (row) => row.reasons.length === 0 && row.shape.prTrigger
+  && row.shape.prFilters.length === 0 && row.shape.jobs.some((j) => j.if === null);
+
+// An unparsed workflow that could have been the always-reporting one: an
+// unreadable file (its trigger is unknown), a PR workflow, or one whose PR
+// trigger was not read.
+const isPrCandidate = (row) => row.reasons.length > 0
+  && (row.shape === null || row.shape.prTrigger || row.reasons.some((r) => PR_TRIGGER_UNREAD.has(r)));
+
+// Check 3: a paths filter, and no other workflow reports on every PR. An
+// unparsed workflow never counts; the ones that might have are named.
+function checkPathsFilter({ row, shape, rows }) {
+  const filters = shape.prFilters.filter((k) => k === 'paths' || k === 'paths-ignore');
+  if (!shape.prTrigger || filters.length === 0) return null;
+  const others = rows.filter((r) => r !== row);
+  if (others.some(isAlwaysReporting)) return null;
+  const files = others.filter(isPrCandidate).map((r) => r.entry.workflow);
+  return `${filters.join(', ')} on pull_request; no always-reporting workflow${files.length > 0 ? ` (unparsed, not counted: ${files.join(', ')})` : ''}`;
+}
+
+// Check 4: a PR workflow without workflow-level `cancel-in-progress: true`
+// (an expression never reaches here: it is unparsed).
+function checkConcurrency({ shape }) {
+  if (!shape.prTrigger || shape.concurrency === 'cancel-true') return null;
+  if (shape.concurrency === 'absent') {
+    return shape.jobs.some((j) => j.concurrency) ? 'job-level concurrency only' : 'no workflow-level concurrency';
+  }
+  if (shape.concurrency === 'no-cancel') return 'concurrency has no cancel-in-progress';
+  return 'cancel-in-progress: false';
+}
+
+// Check 5: push on every branch, gated only at step level.
+function checkPushStepGated({ shape }) {
+  if (!shape.pushTrigger || shape.pushBranchesIgnore) return null;
+  if (shape.pushBranches !== 'absent' && shape.pushBranches !== 'all') return null;
+  if (shape.pushTags && shape.pushBranches === 'absent') return null;
+  if (shape.jobs.some((j) => j.if !== null)) return null;
+  const n = shape.jobs.reduce((sum, j) => sum + j.stepIfCount, 0);
+  return n > 0 ? `push on every branch; no job-level if:, ${n} step-level if:` : null;
+}
+
 // Per-workflow checks, in CHECKS order.
 const WORKFLOW_CHECKS = [
   ['draft-skip-no-ready-for-review', checkNoReadyForReview],
   ['draft-skip-with-ci-source', checkCiSource],
+  ['paths-filter-no-always-reporting-job', checkPathsFilter],
+  ['no-cancel-in-progress-concurrency', checkConcurrency],
+  ['push-all-step-gated', checkPushStepGated],
 ];
 
 function isGeneratedTrackingWorkflow(entry) {
@@ -109,31 +158,36 @@ function isGeneratedTrackingWorkflow(entry) {
 // `workflows`: `{workflow, text}` or `{workflow, unreadable: reason}` entries,
 // `workflow` the repo-display ID. `ciSources`: the declared `ci` sources, or
 // null when no verify-scope.json was read (check 2 skipped).
+// Every shape is read first: check 3 looks across the whole reviewed set.
 function reviewWorkflows({ workflows, ciSources }) {
   const findings = [];
   const unparsed = [];
   const skipped = [];
-  let reviewed = 0;
+  const rows = [];
   for (const entry of workflows) {
     if (isGeneratedTrackingWorkflow(entry)) { skipped.push(entry.workflow); continue; }
-    reviewed++;
-    if (typeof entry.text !== 'string') { unparsed.push({ workflow: entry.workflow, reason: entry.unreadable }); continue; }
+    if (typeof entry.text !== 'string') { rows.push({ entry, shape: null, reasons: [entry.unreadable] }); continue; }
     const shape = readWorkflowShape(entry.text);
     const reasons = [...shape.unparsed];
     if (shape.prTrigger && shape.jobs.some((j) => j.if !== null && classifyDraftCondition(j.if) === 'unparsed')) {
       reasons.push('draft condition not understood');
     }
+    if (shape.prTrigger && shape.concurrency === 'cancel-expression') reasons.push('cancel-in-progress expression not evaluated');
+    rows.push({ entry, shape, reasons });
+  }
+  for (const row of rows) {
+    const { entry, shape, reasons } = row;
     if (reasons.length > 0) { unparsed.push({ workflow: entry.workflow, reason: reasons.join('; ') }); continue; }
     const draftSkipIds = shape.prTrigger
       ? shape.jobs.filter((j) => j.if !== null && classifyDraftCondition(j.if) === 'skip').map((j) => j.id)
       : [];
-    const ctx = { entry, shape, draftSkipIds, ciSources };
+    const ctx = { entry, shape, draftSkipIds, ciSources, row, rows };
     for (const [check, fn] of WORKFLOW_CHECKS) {
       const detail = fn(ctx);
       if (detail !== null) findings.push({ workflow: entry.workflow, check, remedy: CHECKS[check], detail });
     }
   }
-  return { reviewed, findings, unparsed, skipped };
+  return { reviewed: rows.length, findings, unparsed, skipped };
 }
 
 function formatRemedy(remedy) {
