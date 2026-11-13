@@ -2,3 +2,6 @@
 
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
+| 1 | build | SDD ruling — keychain residual: the test child still reaches the user gh keyring entry, the git credential helper and the macOS security CLI through HOME; only a sandbox profile (spec option 1) closes them. Ratify the accepted residual risk, or request the sandbox profile; the record Release Note should be narrowed either way | open | Defer-reason: needs-human-decision — spec Defer-reason stays open; header at the top of steps.js names every residual route |
+| 2 | build | Follow-up: git commit and git push in the driver commit/push steps run client hooks (husky, lefthook, pre-commit local) that can be worker-authored, with the full driver environment — needs a record | deferred | Defer-reason: needs-human-decision. The choice between --no-verify, core.hooksPath to an empty dir, or buildEnv on the git calls is a design call; to be filed via /claude-tweaks:capture at wrap-up and named in the steps.js header residual-risk text. |
+| 3 | build | Branch ride-along: PR #5329 carries local reconcile commit de6a19cdc (archive rename of run 2026-11-02T223727-record-4612) inherited from local main being ahead of origin/main | observation | Harmless rename-only commit inside .claude-tweaks/pipelines/archive; left in place to avoid a force-push on the open PR branch |

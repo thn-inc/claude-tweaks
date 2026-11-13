@@ -19,11 +19,12 @@
 //   - A throw from fn is `{ status: 'fail', detail: err.message }` with the step's class.
 //
 // The test step runs worker-authored code (the worker's test files) through verify.js. Containment
-// (#5267), option 2 and best effort: the verify.js child gets worker.js's allow-listed environment,
-// not the driver's, plus GH_CONFIG_DIR pointing at an empty directory; and a verify-scope.json that
-// is not equal to origin/{ref}'s is refused before any command runs. That keeps the driver's
-// credential env vars (GH_TOKEN, GITHUB_TOKEN, ...), gh's config-file auth, and a worker-edited
-// scope file naming the commands verify.js executes away from the child. It does not contain: the
+// (#5267), the allow-listed-environment option, best effort: the verify.js child gets worker.js's
+// allow-listed environment, not the driver's, plus GH_CONFIG_DIR pointing at an empty directory; and
+// a verify-scope.json that is not equal to origin/{ref}'s is refused before any command runs. That
+// keeps the driver's credential env vars (GH_TOKEN, GITHUB_TOKEN, ...), the config-file auth of a
+// plain `gh` call (the config file itself stays readable under HOME), and a worker-edited scope
+// file naming the commands verify.js executes away from the child. It does not contain: the
 // gh keyring entry reachable under HOME on a desktop setup, the git credential helper (git
 // credential fill, osxkeychain), the macOS `security` CLI, or any file the user can read. There is no
 // sandbox profile. Also uncontained: `git commit` and `git push` in the commit and push steps run
@@ -577,8 +578,9 @@ function scopeDiffersFromBase(deps, wt, ref, scopeRel) {
 }
 
 // The scope file must also exist on origin/{ref}: a worker-created copy that git ignores is
-// invisible to `git diff`. `cat-file -e` exits 128 for a missing path; any other failure means the
-// check itself failed.
+// invisible to `git diff`. `cat-file -e` exits 128 for a missing path (and for an unresolvable ref,
+// which the `git diff` guard that runs first already turns into a `fail`); any other failure means
+// the check itself failed.
 function scopeOnBase(deps, wt, ref, scopeRel) {
   try {
     gitIn(deps, wt, ['cat-file', '-e', `origin/${ref}:${scopeRel}`]);
