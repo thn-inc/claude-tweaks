@@ -556,6 +556,14 @@ test('merge never throws: a throw inside a step is unclassified naming the sub-s
   assert.equal(r2.runDir, CTX.runDir);
 });
 
+test('merge never throws: a throwing clock reads 0 for event timing and the merge still lands', async () => {
+  const h = mergeHarness({ deps: { now: () => { throw new Error('clock broke'); } } });
+  const r = await merge(CTX, h.deps);
+  assert.equal(r.outcome, 'merged');
+  assert.ok(h.events.length > 0);
+  assert.ok(h.events.every((e) => e.ms === 0), JSON.stringify(h.events.map((e) => e.ms)));
+});
+
 // ---- Task 2: closing links, subject composition, mark ready ----
 
 const isReadyCall = (c) => c.kind === 'gh' && c.args[0] === 'pr' && c.args[1] === 'ready';

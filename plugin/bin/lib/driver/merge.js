@@ -38,11 +38,21 @@ function bin(name) {
   return path.join(BIN_DIR, name);
 }
 
+// The clock as event timing reads it: a missing or throwing deps.now reads 0, so neither merge()'s
+// start nor an emit can throw outside merge()'s catch.
+function clock(deps) {
+  try {
+    return typeof deps.now === 'function' ? deps.now() : 0;
+  } catch {
+    return 0;
+  }
+}
+
 // One event per sub-step call. An emit that throws never breaks the step it describes.
 function emit(s, step, status, detail, extra) {
   if (!MERGE_STEP_NAMES.includes(step)) throw new Error(`unknown merge step name: ${step}`);
   if (typeof s.deps.emit !== 'function') return;
-  const ms = typeof s.deps.now === 'function' ? s.deps.now() - s.startedAt : 0;
+  const ms = clock(s.deps) - s.startedAt;
   try {
     s.deps.emit(step, status, ms, neutralize(String(detail || '')), extra);
   } catch {
@@ -1194,7 +1204,7 @@ async function merge(ctx, deps) {
     ctx, deps, runDir: ctx.runDir, value: 'wait', source: 'unresolved', valueRaw: '', keepOpen: [],
     subject: null, reentries: 0, recomposeOnReentry: false, ciWaitMs: 0, lastRead: null, lastVerdict: null, autoRefused: false,
     watchBoundFrom: null, logFailures: [], logSeq: 0, eventsStdoutOnly: false, mergeCommit: null, pmFailures: [], stage: 'merge-entry',
-    startedAt: typeof deps.now === 'function' ? deps.now() : 0,
+    startedAt: clock(deps),
   };
   try {
     const e = await entry(s);
