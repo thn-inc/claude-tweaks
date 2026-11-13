@@ -64,7 +64,8 @@
 //   reproduced   exit 1, summary fail >= 1, and at least one failed test case
 //   load-failure exit 1, a summary, at least one `not ok` point (TODO aside), each a file-level point
 //   passed       exit 0, summary fail 0
-//   unplaceable  anything else (a point with no closed block counts toward neither of the first two)
+//   unplaceable  anything else (a point with no block has none of the keys; a block that never
+//                closes hides the summary)
 // The error class and the `code:` key are not read: a test case that throws a TypeError carries
 // 'ERR_TEST_FAILURE' just as a file-level point does. A hook failure ('hookFailed') is not a test
 // case. Text the evidence file prints is folded into `# ` comments. The parse is one pass over the
@@ -93,8 +94,9 @@ function evidenceArgs(testCommand, rel, dest) {
 const POINT_RE = /^\s*(not ok|ok) \d+ - /;
 const SUMMARY_RE = /^# (pass|fail) (\d+)$/;
 
-// One pass over the TAP lines: the `not ok` points other than TODO ones (each with whether its
-// block closed and which of the rule's keys it holds) and the last column-0 pass/fail counts.
+// One pass over the TAP lines: the `not ok` points other than TODO ones (each with which of the
+// rule's keys its block holds) and the last column-0 pass/fail counts. A block that never closes
+// runs to the end and hides the summary, so such a run is unplaceable whatever its keys.
 function parseTap(tap) {
   const failed = [];
   const counts = { pass: null, fail: null };
@@ -105,10 +107,8 @@ function parseTap(tap) {
     if (block) {
       const p = block.point;
       const key = line.startsWith(block.indent) ? line.slice(block.indent.length) : null;
-      if (line === block.end) {
-        p.closed = true;
-        block = null;
-      } else if (key === "failureType: 'testCodeFailure'") p.testCode = true;
+      if (line === block.end) block = null;
+      else if (key === "failureType: 'testCodeFailure'") p.testCode = true;
       else if (key === "type: 'suite'") p.suite = true;
       else if (key !== null && key.startsWith('exitCode:')) p.fileLevel = true;
       continue;
@@ -122,7 +122,7 @@ function parseTap(tap) {
     }
     const point = POINT_RE.exec(line);
     if (point) {
-      opened = { closed: false, testCode: false, suite: false, fileLevel: false };
+      opened = { testCode: false, suite: false, fileLevel: false };
       // Node escapes a `#` in a test name as `\#`, so ` # TODO` is the directive.
       if (point[1] === 'not ok' && !line.includes(' # TODO')) failed.push(opened);
       continue;
@@ -133,8 +133,8 @@ function parseTap(tap) {
   return { failed, ...counts };
 }
 
-const isFailedTestCase = (p) => p.closed && p.testCode && !p.fileLevel && !p.suite;
-const isFileLevel = (p) => p.closed && p.fileLevel;
+const isFailedTestCase = (p) => p.testCode && !p.fileLevel && !p.suite;
+const isFileLevel = (p) => p.fileLevel;
 
 // Classify one evidence run. Callers may pass more fields (the supervised run's outcome); the
 // rule reads only `code`, `timedOut` and `tap`.
