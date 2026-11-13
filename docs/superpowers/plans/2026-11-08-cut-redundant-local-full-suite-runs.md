@@ -8,7 +8,7 @@
 
 **Tech Stack:** Markdown skill prose; Node 18+ `node --test`; YAML manifest.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-08T122847-spec-5117/work/5117-spec.md` (record #5117)
+**Spec:** `.claude-tweaks/pipelines/archive/2026-11-08T122847-spec-5117/work/5117-spec.md` (record #5117)
 
 Scope keywords: `baseline test verification`, `Verify Clean Baseline`, `full suite once before committing`
 

@@ -10,12 +10,21 @@ namespacing rule:
 Before the Consolidated Review Console renders, run (once, over the whole run's commit range):
 
 ```bash
-git -C "$WORKTREE" log --name-status --diff-filter=AM "{EXPECTED_BASE}..HEAD" -- docs/journeys/ stories/
+git -C "$WORKTREE" log --name-status --diff-filter=AM "{EXPECTED_BASE}..HEAD" "^origin/{integration-branch}" -- docs/journeys/ stories/
 ```
 
 `{EXPECTED_BASE}` is the same value `worktree-setup.md`'s Step 0 captured when the shared
 worktree was created (the commit before spec 1's materialize commit) — the run's own commit
-range, never the whole repo history. Walk the output: if any path under `docs/journeys/` or
+range, never the whole repo history. `{integration-branch}` resolves per
+`_shared/integration-branch.md`. `^origin/{integration-branch}` drops every commit that branch
+already carries — what a catch-up merge (or a fast-forward catch-up) brought in from upstream —
+so none reads as one of the run's events; the catch-up merge commit itself is not on that branch
+and stays in the range, but this raw walk lists no merge commit because git prints no diff for a
+merge by default (the tool fails a line a merge's own resolution wrote closed, below); `parallel`
+wave members merged back with `--no-ff` are not on that branch and stay run events. A local-only
+commit riding along from a local integration branch ahead of origin is not excluded and can still
+fail closed. With no `origin/{integration-branch}` ref (no remote), drop that token: every commit
+in the range is then a run event. Walk the output: if any path under `docs/journeys/` or
 `stories/` shows status `A` (added) in one commit and status `M` (modified) in a **later** commit
 within this same range, that later commit is a candidate — not yet a confirmed overwrite (see
 "Append vs. overwrite" below) — for "a spec's journey/story artifact was silently overwritten by
@@ -41,7 +50,7 @@ Before treating an `A`-then-`M` path as a HARD-GATE, run the mechanized check in
 hand:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/check-artifact-overwrite.js" --base "{EXPECTED_BASE}" --run "{parent}" --path docs/journeys/ --path stories/
+node "${CLAUDE_PLUGIN_ROOT}/bin/check-artifact-overwrite.js" --base "{EXPECTED_BASE}" --run "{parent}" --integration-ref "origin/{integration-branch}" --path docs/journeys/ --path stories/
 ```
 
 `{parent}` is the multi-spec parent run dir that holds `manifest.yml` (`$MULTISPEC_PARENT_DIR`).
@@ -50,24 +59,40 @@ Omit `--run` only when this run's `parallel` waves actually ran with two or more
 their own worktrees, so their windows overlap and the check stays refs-only. Every other run
 passes `--run`, including each no-op `parallel` case `multispec-parallel-waves.md` lists and a
 run whose waves each had one member; the tool also turns windows off itself when the manifest's
-transitions interleave, the backstop for a parallel run that reaches it with `--run`.
+transitions interleave, the backstop for a parallel run that reaches it with `--run`. Pass
+`--integration-ref` whenever `origin/{integration-branch}` resolves; omit it only when it does
+not (the same no-remote case as the raw walk) — the check then keeps upstream commits as run
+events and fails closed on them. Run the check before any of the run's own commits reach
+`origin/{integration-branch}`: a run commit that branch already carries leaves the walk too, and
+the check would pass without judging it (a squash merge never makes the run's own commits
+reachable). When the branch carries the whole range and the walk comes back empty, the tool
+exits 3 instead of passing; a partly landed run is not detected, so the ordering is the guard.
 
 It re-runs the same walk and, for every `A`-then-`M` path it finds, judges each later modifying
-commit's own deletions on that path (via `git log --numstat`) by five independent tests — any
-one is enough to call the commit an extension rather than an overwrite:
+commit's own deletions on that path (via `git log --numstat`). With `--integration-ref`, a path
+that upstream added has no in-run `A`, so it drops out of the walk and is never blame-checked.
+Every deletion is judged by five independent tests — any one is enough to call the commit an
+extension rather than an overwrite. Tests 2-5 judge a hunk's shape, not its authorship, and run
+first: a hunk any of them clears is never blamed. Test 1 blames the lines of a hunk the others
+did not clear, and on each such line the run-commit check runs before attribution. When
+`--integration-ref` is passed, a deleted line whose blamed commit is not one of the run's own
+commits (`{EXPECTED_BASE}..HEAD` minus `^origin/{integration-branch}`, merges included) is
+pre-run content, from the base or from upstream, and is cleared without attribution; with or
+without it, a line blamed to a merge commit inside the run is never cleared by attribution — a
+merge's own lines are a conflict resolution, not a spec's edit — and fails closed.
 
-1. **Same-spec self-edit.** Every deleted line traces, via `git blame` on the commit's parent
-   revision, back to a commit of the *same* spec as the deleting commit itself — a spec
-   correcting its own prior content (a typo fix, a follow-up within the same build). Attribution
-   sources, in order: the deleting commit's and each blamed commit's own `refs #{N}` trailer
-   first; otherwise the one spec whose `manifest.yml` window (first recorded transition up to the
-   next spec's) holds the commit's author date; otherwise unattributed (a date in no window, in
-   two, or in the same second as a later spec's first transition). Windows are off — refs-only —
-   when a spec is not `complete`/`running` (e.g. `not-run`, `failed`, `pending`), a spec has no
-   recorded transition, or the specs' transitions interleave. A deletion that traces to a
-   *different* spec's commit fails this test, and so does an unattributable one, with a reason
-   saying `unattributable` so the manual ruling can tell a missing attribution from a confirmed
-   cross-spec deletion.
+1. **Same-spec self-edit.** Every deleted line, for a hunk tests 2-5 did not clear, passes the
+   run-commit check above and then traces, via `git blame` on the commit's parent revision, back
+   to a commit of the *same* spec as the deleting commit itself — a spec correcting its own prior
+   content (a typo fix, a follow-up within the same build). Attribution sources, in order: the
+   deleting commit's and each blamed commit's own `refs #{N}` trailer first; otherwise the one
+   spec whose `manifest.yml` window (first recorded transition up to the next spec's) holds the
+   commit's author date; otherwise unattributed (a date in no window, in two, or in the same
+   second as a later spec's first transition). Windows are off — refs-only — when a spec is not
+   `complete`/`running` (e.g. `not-run`, `failed`, `pending`), a spec has no recorded transition,
+   or the specs' transitions interleave. A deletion that traces to a *different* spec's commit
+   fails this test, and so does an unattributable one, with a reason saying `unattributable` so
+   the manual ruling can tell a missing attribution from a confirmed cross-spec deletion.
 2. **List reflow.** Every deleted line in the hunk is itself a `- ` list entry (a YAML frontmatter
    `files:` item, or a markdown bookkeeping bullet such as a running "Related specs: …" line), and
    the hunk replaces it with at least as many list-entry lines as it removed. This is the
@@ -98,16 +123,21 @@ add, a list it shrinks rather than reflows, a step-markup change that also alter
 renumbered heading whose text changed, or an `Origin:` rewrite that drops a reference —
 is a real overwrite. HARD-GATE: stop before rendering the
 console and report the offending path, commit, and reason (the tool's `overwrites[]` array — exit
-code `1`) plus each commit's spec attribution the `reason` text gives (a mismatch names both sides; an
-unattributable reason names the side or sides with no attribution; a deleted line with no blame names no
-commit's attribution). A clean run (exit `0`, `overwrites: []`, or no
+code `1`) plus each commit's spec attribution the `reason` text gives (a mismatch names both
+sides; an unattributable reason names the side or sides with no attribution; a deleted line with
+no blame names no commit's attribution). A clean run (exit `0`, `overwrites: []`, or no
 `A`-then-`M` path at all) passes with no manual ruling and the console renders normally. Exit `2`
 is a malformed invocation of the tool itself (never a verdict about the walk); exit `3` means the
-walk could not run at all (an unresolvable `{EXPECTED_BASE}`, or a missing, unreadable,
-unparseable or unusable `manifest.yml` named by `--run` — no specs, or a `startedAt`/`phases[].at`
-that is present but not a valid date) — treat both as this check's own
-failure to run, not as a clean result, and fall back to the raw `git log --name-status` walk above
-plus a manual `git log --numstat` ruling. Algorithm: `bin/lib/flow/artifact-overwrite-check.js`;
-fixture coverage (append-only, self-correction, list reflow, step-markup reformat (pass and
-drop-a-step), step renumber, reference-preserving Origin line, and a genuine cross-spec overwrite,
-plus live replays of the #1988–#1997 range and the `729a5ae5e..4706f21db` step insertion): `tests/bin-lib/flow/artifact-overwrite-check.test.js`.
+walk could not run at all (an unresolvable `{EXPECTED_BASE}`, an unresolvable
+`--integration-ref`, a range the integration ref already carries whole, or a missing, unreadable, unparseable or unusable `manifest.yml` named by
+`--run` — no specs, or a `startedAt`/`phases[].at` that is present but not a valid date) — treat
+both as this check's own failure to run, not as a clean result, and fall back to the raw
+`git log --name-status` walk above plus a manual `git log --numstat` ruling (drop its
+`^origin/{integration-branch}` token when the cause was a range that ref already carries, since
+the token would empty that walk too). Algorithm:
+`bin/lib/flow/artifact-overwrite-check.js`; fixture coverage (append-only, self-correction, list
+reflow, step-markup reformat (pass and drop-a-step), step renumber, reference-preserving Origin
+line, and a genuine cross-spec overwrite, plus live replays of the #1988–#1997 range and the
+`729a5ae5e..4706f21db` step insertion, and the #4845 catch-up fixtures: integration-ref
+exclusion, wave members that stay run events, and merge fail-closed with and without the flag):
+`tests/bin-lib/flow/artifact-overwrite-check.test.js`.
