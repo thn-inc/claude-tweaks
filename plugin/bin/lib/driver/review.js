@@ -105,12 +105,18 @@
 //                  made; the caller stops the record.
 //   removeEvidence removes the file, then each directory writeEvidence made, deepest first; a
 //                  directory something else now holds a file in stays (ENOTEMPTY / EEXIST).
+//   Their error messages are fixed text (a rule name, `evidence write failed (CODE)`, `evidence
+//   remove failed (CODE)`) and never carry the path: a file-system error is rethrown with its code,
+//   and the original, which names the path, only as `cause`.
 //   runEvidence    runs `node --test` (deps.execPath, an argument list, no shell) on the relative
 //                  path in the worktree, with the launcher's allow-listed environment plus
 //                  GH_CONFIG_DIR at an empty directory, under the launcher's wall-clock kill
 //                  (superviseChild). The child is shared.activeWorker while it runs, so a signal to
-//                  the driver reaches its process group. A run that cannot start throws; a run
-//                  interrupted by a signal gives no verdict.
+//                  the driver reaches its process group. A TAP destination that already exists, a
+//                  run that cannot start, and an uncovered test command throw. A signal, on entry
+//                  or during the run, gives no verdict (`interrupted: true`). A child that did not
+//                  exit after its kill is `survived: true` with a fixed `detail`: it may still be
+//                  writing, so the caller stops rather than discarding the finding.
 //   treeDelta      git status against the expectation: every reported path that is neither a run
 //                  artifact nor an expected evidence file, plus every expected file git does not
 //                  report as untracked.
@@ -417,8 +423,25 @@ function takeBack(createdDirs, deps) {
   }
 }
 
+// A file-system error rethrown with a fixed message and the original code: fs's own message names
+// the path. The original error is kept as `cause`, which does carry the path, so only the message
+// may reach an event or a stop detail.
+function fsError(what, err) {
+  const code = err && typeof err.code === 'string' ? err.code : null;
+  const wrapped = new Error(`evidence ${what} failed${code ? ` (${code})` : ''}`, { cause: err });
+  if (code) wrapped.code = code;
+  return wrapped;
+}
+function fsCall(what, fn) {
+  try {
+    return fn();
+  } catch (err) {
+    throw fsError(what, err);
+  }
+}
+
 // Writes one evidence file (see the header). rel is the validated, `/`-separated path relative to
-// the worktree root. No message carries rel or any other reviewer text.
+// the worktree root.
 function writeEvidence({ wt, rel, content, sensitivePaths, deps }) {
   const opts = { wt, sensitivePaths, deps };
   refuseOnViolation(rel, opts, 'at write time');
@@ -430,7 +453,7 @@ function writeEvidence({ wt, rel, content, sensitivePaths, deps }) {
     for (let i = 1; i < segs.length; i += 1) {
       const dir = absoluteIn(root, segs.slice(0, i).join('/'));
       if (deps.lstatType(dir).type !== 'missing') continue;
-      deps.mkdirSync(dir);
+      fsCall('write', () => deps.mkdirSync(dir));
       createdDirs.push(dir);
     }
     const rootReal = deps.canonicalRealpath(root);
@@ -439,7 +462,7 @@ function writeEvidence({ wt, rel, content, sensitivePaths, deps }) {
       throw new Error('evidence parent directory resolves outside the worktree');
     }
     refuseOnViolation(rel, opts, 'once its parents exist');
-    deps.writeFileExclusive(abs, content);
+    fsCall('write', () => deps.writeFileExclusive(abs, content));
   } catch (err) {
     takeBack(createdDirs, deps);
     throw err;
@@ -451,21 +474,25 @@ function writeEvidence({ wt, rel, content, sensitivePaths, deps }) {
 // tree check will name; it is not a removal failure.
 const RMDIR_NOT_EMPTY = ['ENOTEMPTY', 'EEXIST'];
 function removeEvidence({ abs, createdDirs, deps }) {
-  deps.rmFile(abs);
+  fsCall('remove', () => deps.rmFile(abs));
   for (const dir of [...createdDirs].reverse()) {
     try {
       deps.rmdir(dir);
     } catch (err) {
-      if (!(err && RMDIR_NOT_EMPTY.includes(err.code))) throw err;
+      if (!(err && RMDIR_NOT_EMPTY.includes(err.code))) throw fsError('remove', err);
     }
   }
 }
 
-// Runs one evidence file (see the header). dest is the TAP destination, fresh for each run: a
-// stale file left there by an earlier run would be read as this run's stream.
+const SURVIVED_DETAIL = 'the evidence run did not exit after its kill';
+
+// Runs one evidence file (see the header). dest is the TAP destination; one that already exists is
+// refused, so a stream an earlier run left there is never read as this run's.
 async function runEvidence({ wt, rel, dest, runDir, shared, testCommand, deps, wallClockMs = EVIDENCE_RUN_TIMEOUT_MS }) {
+  if (shared.interrupted) return { verdict: 'unplaceable', interrupted: true };
   const args = evidenceArgs(testCommand, rel, dest);
   if (args === null) throw new Error('the evidence rule does not cover the test command');
+  if (deps.lstatType(dest).type !== 'missing') throw new Error('the evidence run\'s TAP destination already exists');
   deps.mkdirSync(path.dirname(dest), { recursive: true });
   // An empty gh config dir: an evidence test calling `gh` finds no config-file auth.
   const ghConfigDir = path.join(runDir, 'gh-config-empty');
@@ -484,6 +511,8 @@ async function runEvidence({ wt, rel, dest, runDir, shared, testCommand, deps, w
     const code = outcome.spawnError && outcome.spawnError.code;
     throw new Error(`the evidence run did not start${code ? ` (${code})` : ''}`);
   }
+  // superviseChild gave up: the child may still be running and writing to the worktree.
+  if (outcome.timeoutDetail !== undefined) return { verdict: 'timeout', timedOut: true, survived: true, detail: SURVIVED_DETAIL };
   let tap = '';
   try {
     tap = deps.readFile(dest);

@@ -474,24 +474,25 @@ test('AC5: named bounds', () => {
 // An evidence run over fakes. The runner records every call and answers with `outcome`; with
 // `hang` its child never exits until killed (by the handle's kill, or on win32 by a taskkill call
 // through the same runner). `tap` is what deps.readFile returns for the destination (undefined:
-// it throws). Every call lands in `calls` in order.
+// it throws). With `deaf` the hanging child survives every kill. `existing` lists the paths
+// deps.lstatType reports as files; every other path is missing. Every call lands in `calls` in order.
 const RUN_DIR = path.resolve('/run');
 const DEST = path.join(RUN_DIR, 'review', 'evidence-0.tap');
 const REL = 'tests/new/a.test.js';
-function evidenceRig({ outcome = { code: 0 }, tap, platform = 'darwin', hang = false, exited } = {}) {
+function evidenceRig({ outcome = { code: 0 }, tap, platform = 'darwin', hang = false, deaf = false, exited, existing = [], timers } = {}) {
   const calls = [];
   const kills = [];
   let settle = null;
   const runner = (call) => {
     calls.push({ kind: 'runner', ...call });
     if (call.file === 'taskkill') {
-      if (settle) settle({ code: 1, signal: null, stdout: '', stderr: '' });
+      if (settle && !deaf) settle({ code: 1, signal: null, stdout: '', stderr: '' });
       return { pid: 99, kill() {}, exited: Promise.resolve({ code: 0, signal: null }) };
     }
-    if (hang) {
+    if (hang || deaf) {
       return {
         pid: 4242,
-        kill(signal) { kills.push(signal); if (settle) settle({ code: null, signal, stdout: '', stderr: '' }); },
+        kill(signal) { kills.push(signal); if (settle && !deaf) settle({ code: null, signal, stdout: '', stderr: '' }); },
         exited: new Promise((resolve) => { settle = resolve; }),
       };
     }
@@ -501,8 +502,9 @@ function evidenceRig({ outcome = { code: 0 }, tap, platform = 'darwin', hang = f
     execPath: path.resolve('/opt/node/bin/node'),
     platform,
     env: { PATH: '/bin', HOME: '/h', GH_TOKEN: 'gho_secret', Path: 'C:\\bin', SystemRoot: 'C:\\Windows' },
-    timers: { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (timer) => clearTimeout(timer) },
+    timers: timers || { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (timer) => clearTimeout(timer) },
     runner,
+    lstatType: (p) => { calls.push({ kind: 'lstatType', p }); return { type: existing.includes(p) ? 'file' : 'missing', code: null }; },
     mkdirSync: (p, opts) => { calls.push({ kind: 'mkdirSync', args: [p, opts] }); },
     readFile: (p) => {
       calls.push({ kind: 'readFile', p });
@@ -568,7 +570,9 @@ test('AC7: runEvidence creates the TAP destination\'s directory before the spawn
   const rig = evidenceRig({ outcome: { code: 0 }, tap: tapOf('pass') });
   await runEvidence(rig.args);
   const kinds = rig.calls.map((x) => x.kind);
-  assert.deepStrictEqual(rig.calls[0], { kind: 'mkdirSync', args: [path.dirname(DEST), { recursive: true }] });
+  const first = kinds.indexOf('mkdirSync');
+  assert.deepStrictEqual(rig.calls[first], { kind: 'mkdirSync', args: [path.dirname(DEST), { recursive: true }] });
+  assert.ok(first < kinds.indexOf('runner'));
   // The empty gh config directory the child is pointed at exists too, before the spawn.
   const ghDir = rig.calls.findIndex((x) => x.kind === 'mkdirSync' && x.args[0] === path.join(RUN_DIR, 'gh-config-empty'));
   assert.ok(ghDir > 0 && ghDir < kinds.indexOf('runner'), JSON.stringify(rig.calls));
@@ -612,6 +616,48 @@ test('AC7: an evidence run that cannot start, or a command the rule does not cov
   const uncovered = evidenceRig();
   await assert.rejects(runEvidence({ ...uncovered.args, testCommand: 'pytest' }), /does not cover/);
   assert.ok(!uncovered.calls.some((x) => x.kind === 'runner'));
+});
+
+// Timers that record each armed delay and never fire on their own.
+function recordingTimers() {
+  const armed = [];
+  return { armed, timers: { setTimeout: (fn, ms) => { armed.push(ms); return armed.length; }, clearTimeout: () => {} } };
+}
+
+test('AC5: runEvidence arms EVIDENCE_RUN_TIMEOUT_MS when no wallClockMs is passed', async () => {
+  const { armed, timers } = recordingTimers();
+  const rig = evidenceRig({ outcome: { code: 0 }, tap: tapOf('pass'), timers });
+  assert.deepStrictEqual(await runEvidence(rig.args), { verdict: 'passed', timedOut: false });
+  assert.strictEqual(armed[0], EVIDENCE_RUN_TIMEOUT_MS);
+  const given = recordingTimers();
+  await runEvidence({ ...evidenceRig({ outcome: { code: 0 }, tap: tapOf('pass'), timers: given.timers }).args, wallClockMs: 1234 });
+  assert.strictEqual(given.armed[0], 1234);
+});
+
+test('AC7: runEvidence refuses a TAP destination that already exists, before the spawn', async () => {
+  const rig = evidenceRig({ outcome: { code: 1 }, tap: tapOf('assert-fail'), existing: [DEST] });
+  await assert.rejects(runEvidence(rig.args), (err) => /TAP destination already exists/.test(err.message) && !err.message.includes(DEST));
+  assert.ok(!rig.calls.some((x) => x.kind === 'runner' || x.kind === 'readFile'));
+  assert.ok(rig.calls.some((x) => x.kind === 'lstatType' && x.p === DEST));
+});
+
+test('AC7: a child that survives its kill is reported as survived, not as a plain timeout', async () => {
+  // Timers that fire at once: the ceiling, the grace kill and the reap deadline all elapse.
+  const timers = { setTimeout: (fn) => setImmediate(fn), clearTimeout: (h) => clearImmediate(h) };
+  for (const platform of ['darwin', 'win32']) {
+    const rig = evidenceRig({ deaf: true, tap: tapOf('assert-fail'), timers, platform });
+    const got = await runEvidence(rig.args);
+    assert.deepStrictEqual(got, { verdict: 'timeout', timedOut: true, survived: true, detail: 'the evidence run did not exit after its kill' }, platform);
+    assert.ok(!rig.calls.some((x) => x.kind === 'readFile'), platform);
+    assert.strictEqual(rig.shared.activeWorker, null, platform);
+  }
+});
+
+test('AC7: runEvidence yields to an interrupt on entry without spawning', async () => {
+  const rig = evidenceRig({ outcome: { code: 1 }, tap: tapOf('assert-fail') });
+  rig.shared.interrupted = 'SIGTERM';
+  assert.deepStrictEqual(await runEvidence(rig.args), { verdict: 'unplaceable', interrupted: true });
+  assert.deepStrictEqual(rig.calls, []);
 });
 
 // The real file system, through the path-guard primitives realDeps uses, with every write and
@@ -666,6 +712,15 @@ test('AC7: writeEvidence is create-only', (t) => {
   const racing = { ...fsDeps(), lstatType: (p) => (p === target ? { type: 'missing', code: 'ENOENT' } : lstatType(p)) };
   assert.throws(() => writeEvidence({ wt, rel: 'tests/a.test.js', content: CONTENT, sensitivePaths: [], deps: racing }), { code: 'EEXIST' });
   assert.strictEqual(fs.readFileSync(target, 'utf8'), 'original');
+  // The raw fs error names the path; the thrown message does not.
+  assert.throws(() => writeEvidence({ wt, rel: 'tests/a.test.js', content: CONTENT, sensitivePaths: [], deps: racing }), (err) => {
+    assert.strictEqual(err.message, 'evidence write failed (EEXIST)');
+    assert.ok(!err.message.includes('a.test.js') && !err.message.includes(wt));
+    return true;
+  });
+  // A failing mkdir is wrapped the same way.
+  const noMkdir = { ...fsDeps(), mkdirSync: (p) => { throw Object.assign(new Error(`EACCES: permission denied, mkdir '${p}'`), { code: 'EACCES' }); } };
+  assert.throws(() => writeEvidence({ wt, rel: 'tests/new/a.test.js', content: CONTENT, sensitivePaths: [], deps: noMkdir }), { message: 'evidence write failed (EACCES)', code: 'EACCES' });
 });
 
 test('AC7: writeEvidence re-checks the whole path rule chain at write time', (t) => {
@@ -718,10 +773,11 @@ test('AC7: removeEvidence: a non-empty directory is not a failure, any other err
   const createdDirs = [path.join(WT, 'tests'), path.join(WT, 'tests', 'new')];
   const rig = (rmdirCode, rmFileCode) => {
     const log = [];
-    const fail = (code) => { throw Object.assign(new Error(code), { code }); };
+    // Errors shaped like fs's own, naming the path.
+    const fail = (code, p) => { throw Object.assign(new Error(`${code}: failed, '${p}'`), { code }); };
     const deps = {
-      rmFile: (p) => { log.push(['rmFile', p]); if (rmFileCode) fail(rmFileCode); },
-      rmdir: (p) => { log.push(['rmdir', p]); if (rmdirCode && p === createdDirs[1]) fail(rmdirCode); },
+      rmFile: (p) => { log.push(['rmFile', p]); if (rmFileCode) fail(rmFileCode, p); },
+      rmdir: (p) => { log.push(['rmdir', p]); if (rmdirCode && p === createdDirs[1]) fail(rmdirCode, p); },
     };
     return { log, deps };
   };
@@ -730,9 +786,9 @@ test('AC7: removeEvidence: a non-empty directory is not a failure, any other err
     assert.doesNotThrow(() => removeEvidence({ abs, createdDirs, deps }), code);
     assert.deepStrictEqual(log, [['rmFile', abs], ['rmdir', createdDirs[1]], ['rmdir', createdDirs[0]]], code);
   }
-  assert.throws(() => removeEvidence({ abs, createdDirs, deps: rig('EACCES').deps }), { code: 'EACCES' });
+  assert.throws(() => removeEvidence({ abs, createdDirs, deps: rig('EACCES').deps }), { message: 'evidence remove failed (EACCES)', code: 'EACCES' });
   const noFile = rig(null, 'ENOENT');
-  assert.throws(() => removeEvidence({ abs, createdDirs, deps: noFile.deps }), { code: 'ENOENT' });
+  assert.throws(() => removeEvidence({ abs, createdDirs, deps: noFile.deps }), { message: 'evidence remove failed (ENOENT)', code: 'ENOENT' });
   assert.deepStrictEqual(noFile.log, [['rmFile', abs]]);
 });
 
