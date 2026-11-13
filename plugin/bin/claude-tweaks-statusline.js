@@ -235,12 +235,16 @@ function originUrlFromConfig(mainDir, env = process.env) {
       // git accepts a key line before any section; ask git anyway (conservative).
       if (!inSection) return null;
       // Any value, in any section: git rejects a bad quote or escape for the whole
-      // file, and trims trailing \v / \f that this reader would keep.
-      if (kv[2] !== undefined && /["\\\v\f]/.test(kv[2])) return null;
+      // file.
+      if (kv[2] !== undefined && /["\\]/.test(kv[2])) return null;
       if (!inOrigin || kv[1].toLowerCase() !== 'url') continue;
       if (kv[2] === undefined) return null;
       if (/[#;]/.test(kv[2])) return null;
-      url = kv[2].replace(/[ \t]+$/, '');
+      const value = kv[2].replace(/[ \t]+$/, '');
+      // git keeps whitespace other than space and tab (\v, \f, NBSP...) that the
+      // git path's .trim() would strip, so the two paths would differ: ask git.
+      if (value !== value.trim()) return null;
+      url = value;
     }
     return url || null;
   } catch {

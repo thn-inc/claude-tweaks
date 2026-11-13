@@ -909,12 +909,14 @@ const ORIGIN_FALLBACKS = [
     assert.strictEqual(gitOrigin(dir), null);
   }],
   ['a line starting with a form feed (git rejects the line)', (dir) => appendCfg(dir, '[core]\n\f\tbar = 1\n')],
-  ['an origin url value with a trailing vertical tab (git trims it, the reader would not)', (dir) => appendCfg(dir, '[remote "origin"]\n\turl = https://github.com/o/vtab.git\v\n')],
+  ['an origin url value with a trailing NBSP (git keeps it; the git path trims its output, so the reader defers)', (dir) => appendCfg(dir, '[remote "origin"]\n\turl = https://github.com/o/nb.git\u00a0\n')],
+  ['an origin url value with a leading U+3000 (git keeps it; the git path trims its output, so the reader defers)', (dir) => appendCfg(dir, '[remote "origin"]\n\turl = \u3000https://github.com/o/ideo.git\n')],
+  ['an origin url value with a trailing vertical tab (git keeps it; the git path trims its output, so the reader defers)', (dir) => appendCfg(dir, '[remote "origin"]\n\turl = https://github.com/o/vtab.git\v\n')],
   ['a line holding only a form feed (git allows only space and tab as blank)', (dir) => appendCfg(dir, '[core]\n\f\n')],
   ['a comment line preceded by a form feed (not a comment to git)', (dir) => appendCfg(dir, '[core]\n\f# note\n')],
   ['a section header preceded by a form feed', (dir) => appendCfg(dir, '\f[core]\n')],
   ['a section header followed by a form feed', (dir) => appendCfg(dir, '[core]\f\n')],
-  ['an origin url value with a trailing form feed (git trims it, the reader would not)', (dir) => appendCfg(dir, '[remote "origin"]\n\turl = https://github.com/o/ff.git\f\n')],
+  ['an origin url value with a trailing form feed (git keeps it; the git path trims its output, so the reader defers)', (dir) => appendCfg(dir, '[remote "origin"]\n\turl = https://github.com/o/ff.git\f\n')],
   ['a line matching no config shape', (dir) => appendCfg(dir, '!!not config\n')],
   ['a key line before any section (git accepts it; a conservative fallback)', (dir) => {
     const cfg = origCfg(dir);
