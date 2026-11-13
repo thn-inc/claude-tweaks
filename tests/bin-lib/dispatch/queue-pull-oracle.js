@@ -9,7 +9,8 @@
 //   <root>/bin        PATH shims: gh (answers from QP_SHIM_TABLE, never the real gh), git (the
 //                     real git, only inside <root>), mktemp (counter-file names) and node (the real
 //                     node, logging two CLIs' inputs first: nodeShim)
-//   <root>/logs       gh-argv.jsonl, git-argv.jsonl, cli-calls/ and the mktemp counter
+//   <root>/logs       gh-argv.nul, git-argv.nul (NUL-framed records: SHIM_LOGS), cli-calls/ and the
+//                     mktemp counter
 //   <root>/agent      files transport only: what the agent fetched through MCP (QP_AGENT_DIR), which
 //                     filesOracleScript's agent writes copy from, and DISPATCH_FOREIGN_STATES
 //   <root>/sysbin     files transport only: links to the system tools the fence runs, so the PATH
@@ -476,7 +477,40 @@ const readOrNull = (file) => {
     throw err;
   }
 };
-const readJsonl = (file) => (readOrNull(file) || '').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+
+// The shim logs (under <root>/logs). One record per shim call, every writer alike: the fields tag,
+// why, cwd, argc (a decimal string) and then each argv element, every one followed by one NUL byte.
+// NUL cannot occur in an argv element, so no escaping is needed and the sh shims can write a record
+// with one `printf '%s\0' "$tag" "$why" "$cwd" "$#" "$@"`.
+const SHIM_LOGS = { gh: 'gh-argv.nul', git: 'git-argv.nul' };
+
+function appendShimRecord(file, { tag, why = '', cwd = '', argv }) {
+  const fields = [tag, why, cwd, String(argv.length), ...argv];
+  fs.appendFileSync(file, fields.map((f) => `${f}\0`).join(''));
+}
+
+// readShimLog(logsDir, kind) -> [{ tag, argv }] for 'gh'; [{ tag, cwd, argv }] for 'git', plus `why`
+// when it is non-empty. An absent log reads as []; a record that is cut short or whose argc is not
+// a decimal integer throws.
+function readShimLog(logsDir, kind) {
+  const file = path.join(logsDir, SHIM_LOGS[kind]);
+  const text = readOrNull(file) || '';
+  const malformed = (detail) => new Error(`readShimLog: malformed record in ${file}: ${detail}`);
+  if (text !== '' && !text.endsWith('\0')) throw malformed('file ends mid-field');
+  const fields = text === '' ? [] : text.slice(0, -1).split('\0');
+  const records = [];
+  for (let i = 0; i < fields.length;) {
+    if (i + 4 > fields.length) throw malformed('file ends mid-record');
+    const [tag, why, cwd, argc] = fields.slice(i, i + 4);
+    if (!/^\d+$/.test(argc)) throw malformed(`argc is not a decimal integer: ${JSON.stringify(argc)}`);
+    const end = i + 4 + Number(argc);
+    if (end > fields.length) throw malformed(`argc ${argc} but the file ends after ${fields.length - i - 4} argument(s)`);
+    const argv = fields.slice(i + 4, end);
+    records.push(kind === 'git' ? { tag, ...(why ? { why } : {}), cwd, argv } : { tag, argv });
+    i = end;
+  }
+  return records;
+}
 
 // The session dir a run's node processes resolve under its TMPDIR: plugin/bin/lib/session-tmp.js's
 // sessionTmpRoot rule, which this test process cannot call directly (its os.tmpdir() differs), over
@@ -500,7 +534,7 @@ async function runOracle(sandbox, script, { sessionId = `qp-${sandbox.name}`, tm
     fs.mkdirSync(tmpdir, { recursive: true });
     const scriptFile = path.join(sandbox.root, `queue-pull-${sandbox.runs}.sh`);
     fs.writeFileSync(scriptFile, script);
-    for (const log of ['gh-argv.jsonl', 'git-argv.jsonl']) fs.writeFileSync(path.join(sandbox.logs, log), '');
+    for (const log of Object.values(SHIM_LOGS)) fs.writeFileSync(path.join(sandbox.logs, log), '');
     fs.rmSync(path.join(sandbox.logs, 'cli-calls'), { recursive: true, force: true });
 
     const run = await spawnBounded(bash, ['--noprofile', '--norc', '-c', 'ulimit -f 4096; exec "$0" --noprofile --norc "$1"', bash, scriptFile],
@@ -521,7 +555,7 @@ async function runModuleCli(sandbox, argv, { sessionId = `qp-${sandbox.name}`, s
     sandbox.runs += 1;
     const tmpdir = path.join(sandbox.root, 'tmp', tmp || `run-${sandbox.runs}`);
     fs.mkdirSync(tmpdir, { recursive: true });
-    for (const log of ['gh-argv.jsonl', 'git-argv.jsonl']) fs.writeFileSync(path.join(sandbox.logs, log), '');
+    for (const log of Object.values(SHIM_LOGS)) fs.writeFileSync(path.join(sandbox.logs, log), '');
     fs.rmSync(path.join(sandbox.logs, 'cli-calls'), { recursive: true, force: true });
     if (Object.keys(stage).length) {
       const sessionDir = sessionDirUnder(tmpdir, sessionId);
@@ -554,8 +588,8 @@ function collectResult(sandbox, run, tmpdir, sessionId) {
     staged,
     decisions: readOrNull(path.join(sandbox.runDir, 'decisions.md')),
     orderBlob: sandbox.orderBlob(),
-    ghArgv: readJsonl(path.join(sandbox.logs, 'gh-argv.jsonl')),
-    gitArgv: readJsonl(path.join(sandbox.logs, 'git-argv.jsonl')),
+    ghArgv: readShimLog(sandbox.logs, 'gh'),
+    gitArgv: readShimLog(sandbox.logs, 'git'),
     cliCalls: readCliCalls(path.join(sandbox.logs, 'cli-calls')),
   };
 }
@@ -790,15 +824,15 @@ async function runPair({ name, scenario, transport = 'gh', origin = null, agent 
 
 // --- the shims (each bin/ file re-enters here) -------------------------------------
 
-function shimLog(file, entry) {
-  fs.appendFileSync(path.join(process.env.QP_LOG_DIR, file), JSON.stringify(entry) + '\n');
+function shimLog(kind, entry) {
+  appendShimRecord(path.join(process.env.QP_LOG_DIR, SHIM_LOGS[kind]), entry);
 }
 
 function ghShim(table) {
   const argv = process.argv.slice(2);
   const answer = ghAnswer(table.gh, argv);
   if (!answer) {
-    shimLog('gh-argv.jsonl', { tag: 'UNHANDLED', argv });
+    shimLog('gh', { tag: 'UNHANDLED', argv });
     process.stderr.write(`gh-shim: no canned response for: ${argv.join(' ').slice(0, 300)}\n`);
     process.exitCode = 97;
     return;
@@ -806,7 +840,7 @@ function ghShim(table) {
   // The plugin's own rule; its os.tmpdir() reads the sandbox TMPDIR this shim runs under.
   const { sessionTmpRoot } = require(path.join(REPO, 'plugin', 'bin', 'lib', 'session-tmp.js'));
   applyEffect(answer.effect, sessionTmpRoot(process.env.CLAUDE_CODE_SESSION_ID));
-  shimLog('gh-argv.jsonl', { tag: answer.status ? 'injected' : 'ok', argv });
+  shimLog('gh', { tag: answer.status ? 'injected' : 'ok', argv });
   process.stdout.write(answer.stdout);
   process.stderr.write(answer.stderr);
   process.exitCode = answer.status;
@@ -823,7 +857,7 @@ function gitShim(table) {
   const argv = process.argv.slice(2);
   const cwd = process.cwd();
   const refuse = (why) => {
-    shimLog('git-argv.jsonl', { tag: 'REFUSED', why, cwd, argv });
+    shimLog('git', { tag: 'REFUSED', why, cwd, argv });
     process.stderr.write(`git-shim: refused (${why}): ${argv.join(' ').slice(0, 300)}\n`);
     process.exitCode = 97;
   };
@@ -846,18 +880,18 @@ function gitShim(table) {
   }
   const { sub } = parsed;
   if (gitFailMatch(table.git.fail, sub)) {
-    shimLog('git-argv.jsonl', { tag: 'injected', cwd, argv });
+    shimLog('git', { tag: 'injected', cwd, argv });
     process.stderr.write(`git-shim: injected failure: ${sub.join(' ')}\n`);
     process.exitCode = 128;
     return undefined;
   }
   if (isGetUrlOrigin(sub)) {
-    shimLog('git-argv.jsonl', { tag: 'canned', cwd, argv });
+    shimLog('git', { tag: 'canned', cwd, argv });
     process.stdout.write(table.git.remoteUrl + '\n');
     return undefined;
   }
   const r = spawnSync(table.realGit, argv, { stdio: 'inherit', env: process.env });
-  shimLog('git-argv.jsonl', { tag: 'delegated', status: r.status, cwd, argv });
+  shimLog('git', { tag: 'delegated', cwd, argv });
   process.exitCode = r.status === null ? 1 : r.status;
   return undefined;
 }
@@ -895,5 +929,5 @@ module.exports = {
   REPO, SCRIPT_MD, MCP_MD, FENCE_FIRST_LINE, RUN_DIR_NAME,
   findBash, oracleSkip, extractFence, fenceSessionFiles, sessionFileNames, filesOracleScript,
   createSandbox, runOracle, runModuleCli, runPair, withEscapeGuard, normalize, reported, assertParity, runAll, failedJobs, shimMain, shQuote,
-  STREAM_TRUNCATED, TAIL_LINES,
+  STREAM_TRUNCATED, TAIL_LINES, SHIM_LOGS, appendShimRecord, readShimLog,
 };
