@@ -6,12 +6,13 @@
 //   <root>/tmp/run-N  a fresh TMPDIR per run, so session files never leak across runs
 //   <root>/proj       a clone of <root>/origin.git: the cwd, with policy.yml and the pre-minted
 //                     dispatch-standalone run dir
-//   <root>/bin        PATH shims (writeShims), each a sh script: gh (the table's exact answers baked
-//                     in, never the real gh: ghShimScript), git (exec'ing the real git, only inside
-//                     <root>: gitShimScript), mktemp (counter-file names, mktempShimScript) and node
-//                     (the real node, logging two CLIs' inputs first: nodeShim)
+//   <root>/bin        PATH shims (writeShims), each a sh script: gh (the table's exact, effect-free
+//                     answers baked in, never the real gh: ghShimScript), git (exec'ing the real git,
+//                     only inside <root>: gitShimScript), mktemp (counter-file names,
+//                     mktempShimScript) and node (the real node, logging two CLIs' inputs first:
+//                     nodeShim)
 //   <root>/shim       not on PATH: gh-fallback (the node gh shim bin/gh execs for graphql, effects and
-//                     misses, answering from QP_SHIM_TABLE) and gh-answers/ (bin/gh's long answers)
+//                     misses, answering from QP_SHIM_TABLE)
 //   <root>/logs       gh-argv.nul, git-argv.nul (NUL-framed records: SHIM_LOGS), cli-calls/ and the
 //                     mktemp counter
 //   <root>/agent      files transport only: what the agent fetched through MCP (QP_AGENT_DIR), which
@@ -279,8 +280,8 @@ function writeSystemBin(sysbin) {
 // writeShims({ bin, shimDir, root, realGit, table, gh }) writes the PATH shims into `bin`: git
 // (gitShimScript, `table` baked in), mktemp (mktempShimScript), node and, when `gh` is true, gh
 // (ghShimScript). `shimDir` (<root>/shim, not on PATH) holds what bin/gh needs beside it: the node
-// fallback gh-fallback and the gh-answers dir. createSandbox calls this once and setScenario again
-// for each new table, so the baked values follow the scenario.
+// fallback gh-fallback. createSandbox calls this once and setScenario again for each new table, so
+// the baked values follow the scenario.
 function writeShims({ bin, shimDir, root, realGit, table, gh = true }) {
   if (/\s/.test(process.execPath)) {
     throw new Error(`queue-pull oracle: the node path ${process.execPath} holds whitespace, so it cannot stand in a #! line`);
@@ -288,12 +289,7 @@ function writeShims({ bin, shimDir, root, realGit, table, gh = true }) {
   if (gh) {
     const fallback = `#!${process.execPath}\n'use strict';\nrequire(${JSON.stringify(__filename)}).shimMain('gh');\n`;
     fs.writeFileSync(path.join(shimDir, 'gh-fallback'), fallback, { mode: 0o755 });
-    const { script, answers } = ghShimScript({ shimDir, table });
-    const answerDir = path.join(shimDir, 'gh-answers');
-    fs.rmSync(answerDir, { recursive: true, force: true });
-    fs.mkdirSync(answerDir);
-    for (const [name, text] of Object.entries(answers)) fs.writeFileSync(path.join(answerDir, name), text);
-    fs.writeFileSync(path.join(bin, 'gh'), script, { mode: 0o755 });
+    fs.writeFileSync(path.join(bin, 'gh'), ghShimScript({ shimDir, table }), { mode: 0o755 });
   }
   fs.writeFileSync(path.join(bin, 'git'), gitShimScript({ root, realGit, table }), { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'mktemp'), mktempShimScript(), { mode: 0o755 });
@@ -579,16 +575,14 @@ function gitShimScript({ root, realGit, table }) {
 // gets no arm (ghAnswer never returns it), and an effect entry gets none either, so the calls they
 // would answer fall through. A hit logs one SHIM_LOGS.gh record (tag injected for a non-zero
 // status, else ok; why and cwd empty), writes stdout then stderr and exits with the status, as
-// ghShim does. An answer over GH_INLINE_MAX bytes is returned in `answers` under the entry's index,
-// for writeShims to write to <shimDir>/gh-answers/<index>, and the arm reads it with `.`: a long
-// issue list is then parsed only by the call it answers (a 270 KB inline list cost every later
-// call ~7 ms under macOS /bin/sh). Every other call (api graphql, an effect entry, a miss) execs
-// <shimDir>/gh-fallback, the node shim (ghShim), so ghAnswer still answers it and a miss still
-// exits 97, logged UNHANDLED. A log record it cannot write stops the call (exit 97) before any
-// output. No forks: no $(...), subshell or pipe; dash and macOS /bin/sh alike.
-const GH_INLINE_MAX = 4096;
+// ghShim does. Every answer is inline (measured: a 277 KB inline answer added ~7 ms to each call
+// that parses past it under macOS /bin/sh, nothing measurable under dash or at fixture sizes).
+// Every other call (api graphql, an effect entry, a miss) execs <shimDir>/gh-fallback, the node
+// shim (ghShim), so ghAnswer still answers it and a miss still exits 97, logged UNHANDLED. An
+// empty QP_LOG_DIR is refused (exit 97) before any arm or the fallback, and a log record it cannot
+// write stops the call (exit 97) before any output. No forks: no $(...), subshell or pipe; dash
+// and macOS /bin/sh alike.
 function ghShimScript({ shimDir, table }) {
-  const answers = {};
   const arms = [];
   const held = new Set();
   table.gh.forEach((entry, i) => {
@@ -608,27 +602,23 @@ function ghShimScript({ shimDir, table }) {
     const writes = [];
     if (stdout) writes.push(`printf '%s' ${shQuote(stdout)}`);
     if (stderr) writes.push(`printf '%s' ${shQuote(stderr)} >&2`);
-    let body = writes;
-    if (Buffer.byteLength(stdout + stderr) > GH_INLINE_MAX) {
-      answers[String(i)] = writes.map((line) => `${line}\n`).join('');
-      body = [`. ${shQuote(path.join(shimDir, 'gh-answers', String(i)))}`];
-    }
     const tests = [`[ $# -eq ${entry.argv.length} ]`, ...entry.argv.map((a, k) => `[ "\${${k + 1}}" = ${shQuote(a)} ]`)];
-    arms.push(`if ${tests.join(' && ')}; then`, `  qp_log ${status ? 'injected' : 'ok'} "$@"`, ...body.map((line) => `  ${line}`), `  exit ${status}`, 'fi');
+    arms.push(`if ${tests.join(' && ')}; then`, `  qp_log ${status ? 'injected' : 'ok'} "$@"`, ...writes.map((line) => `  ${line}`), `  exit ${status}`, 'fi');
   });
-  const script = [
+  return [
     '#!/bin/sh',
     '# Generated by tests/bin-lib/dispatch/queue-pull-oracle.js (ghShimScript); rewritten by setScenario.',
+    '# An empty QP_LOG_DIR would send the fallback\'s record to a relative gh-argv.nul in the cwd.',
+    'if [ -z "$QP_LOG_DIR" ]; then',
+    "  printf 'gh-shim: QP_LOG_DIR is required\\n' >&2",
+    '  exit 97',
+    'fi',
     '',
     '# qp_log TAG ARGV...: one NUL-framed record (SHIM_LOGS), why and cwd empty. A write that fails',
     '# stops the call: an unlogged answer would read as a call that never happened.',
     'qp_log() {',
     '  qp_tag=$1',
     '  shift',
-    '  if [ -z "$QP_LOG_DIR" ]; then',
-    "    printf 'gh-shim: QP_LOG_DIR is required\\n' >&2",
-    '    exit 97',
-    '  fi',
     `  { printf '%s\\0' "$qp_tag" '' '' "$#" "$@" >> "$QP_LOG_DIR/gh-argv.nul"; } 2>/dev/null && return`,
     "  printf 'gh-shim: cannot write %s\\n' \"$QP_LOG_DIR/gh-argv.nul\" >&2",
     '  exit 97',
@@ -638,7 +628,6 @@ function ghShimScript({ shimDir, table }) {
     `exec ${shQuote(path.join(shimDir, 'gh-fallback'))} "$@"`,
     '',
   ].join('\n');
-  return { script, answers };
 }
 
 // createSandbox(scenario, { transport, origin, name, agent }) -> sandbox. `origin` is another

@@ -387,7 +387,6 @@ test('the sh gh shim agrees with ghAnswer on every exact entry', { skip: oracleS
     SMalformed('blocker'), SPortable(), D1Second(), S1LiveDep(), ...FAULTS.map((f) => f.scenario())];
   const checked = new Set();
   let longest = 0;
-  let sourced = 0;
   scenarios.forEach((scenario, n) => {
     const table = shimTable(scenario);
     const fresh = [];
@@ -410,10 +409,8 @@ test('the sh gh shim agrees with ghAnswer on every exact entry', { skip: oracleS
       assert.deepEqual(readShimLog(logs, 'gh').at(-1), { tag: answer.status ? 'injected' : 'ok', argv }, label);
       longest = Math.max(longest, argv.length);
     }
-    sourced += fs.readdirSync(path.join(shimDir, 'gh-answers')).length;
   });
   assert.ok(longest >= 10, `the longest checked argv has ${longest} elements, so \${10} is never exercised`);
-  assert.ok(sourced > 0, 'no checked answer was long enough to be read from gh-answers/');
 });
 
 test('a near miss of an exact entry falls back and fails loudly', { skip: oracleSkip() }, (t) => {
@@ -448,6 +445,15 @@ test('the sh gh shim answers nothing when it cannot write its log', { skip: orac
   const unset = gh(['--version'], { extra: { QP_LOG_DIR: '' } });
   assert.equal(unset.status, 97);
   assert.equal(unset.stderr, 'gh-shim: QP_LOG_DIR is required\n');
+});
+
+test('the sh gh shim refuses an empty QP_LOG_DIR before a miss reaches the fallback', { skip: oracleSkip() }, (t) => {
+  const { root, gh } = ghShims(t, S0());
+  const r = gh(['issue', 'view', '1'], { extra: { QP_LOG_DIR: '' } });
+  assert.equal(r.status, 97);
+  assert.equal(r.stdout, '');
+  assert.equal(r.stderr, 'gh-shim: QP_LOG_DIR is required\n');
+  assert.equal(fs.existsSync(path.join(root, 'gh-argv.nul')), false, 'no relative log in the cwd');
 });
 
 test('setScenario regenerates the gh answers', { skip: oracleSkip() }, (t) => {
