@@ -16,24 +16,29 @@ const { readText } = require('./helpers/read-skill');
 // A "site" is a call to trustRows whose first argument starts with an identifier
 // (`trustRows(records, …)`). A prose mention (`trustRows()`, `` `trustRows` ``)
 // and trust.js's own definition are not sites.
-//   - plugin/bin/**/*.js: a file with a site must name TRUST_POLICY_KEYS in its
+//   - plugin/bin/**/*.js: a file with a site must build a policy from the list,
+//     `TRUST_POLICY_KEYS.map` or `Object.fromEntries(TRUST_POLICY_KEYS`, in its
 //     comment-stripped text. File granularity, because a bin module builds its
 //     policy once; a second site in the same file would share it.
-//   - plugin/skills/**/*.md: a fenced block with a site must name
-//     TRUST_POLICY_KEYS in the same fence. Block granularity, because each
-//     snippet is run on its own by a reader who never sees the others.
+//   - plugin/skills/**/*.md: a fenced block with a site must build a policy the
+//     same way in the same fence. Block granularity, because each snippet is run
+//     on its own by a reader who never sees the others.
+// A bare mention (a require that names TRUST_POLICY_KEYS beside a hand-written
+// `{ 'trust-revert-window-days': … }`) is flagged.
 // Recall limits: a call whose first argument is not an identifier (an inline
 // array literal, a call expression), or one reached through an alias
-// (`const t = trustRows; t(…)`), is not seen; a name TRUST_POLICY_KEYS appearing
-// anywhere in the file or fence satisfies the check without proving it feeds the
-// call. The floor below and the exact site-file roster are what show the matcher
-// still matches.
+// (`const t = trustRows; t(…)`), is not seen; a `TRUST_POLICY_KEYS.map` anywhere
+// in the file or fence satisfies the check without proving its result is the
+// policy handed to the call (a second site in one file or fence that hand-builds
+// its own policy beside a compliant one passes; the CLI behavior tests catch the
+// bin case). The floor below and the exact site-file roster are what show the
+// matcher still matches.
 const ROOT = path.join(__dirname, '..');
 const BIN_ROOT = path.join(ROOT, 'plugin', 'bin');
 const SKILLS_ROOT = path.join(ROOT, 'plugin', 'skills');
 const DEFINITION = path.join('plugin', 'bin', 'lib', 'issues', 'trust.js');
 const SITE_RE = /\btrustRows\(\s*[A-Za-z_$]/g;
-const KEYS_RE = /\bTRUST_POLICY_KEYS\b/;
+const KEYS_RE = /\bTRUST_POLICY_KEYS\s*\.\s*map\b|\bObject\.fromEntries\(\s*TRUST_POLICY_KEYS\b/;
 const FENCE_RE = /```[^\n]*\r?\n([\s\S]*?)```/g;
 
 // Manual withFileTypes walk: readdirSync's `recursive` option is ignored before
@@ -60,7 +65,7 @@ function jsScan(raw, label) {
   if (verdict !== 'ok') return { sites: 0, offenders: [`${label}: ${STRIPPER_VERDICT_MESSAGES[verdict]}`] };
   const sites = siteCount(stripped);
   if (sites > 0 && !KEYS_RE.test(stripped)) {
-    return { sites, offenders: [`${label}: ${sites} trustRows call site(s) but no TRUST_POLICY_KEYS in the file`] };
+    return { sites, offenders: [`${label}: ${sites} trustRows call site(s) but no policy built from TRUST_POLICY_KEYS in the file`] };
   }
   return { sites, offenders: [] };
 }
@@ -75,7 +80,7 @@ function mdScan(raw, label) {
     const here = siteCount(m[1]);
     sites += here;
     if (here > 0 && !KEYS_RE.test(m[1])) {
-      offenders.push(`${label}: fenced block ${n} has ${here} trustRows call site(s) but no TRUST_POLICY_KEYS`);
+      offenders.push(`${label}: fenced block ${n} has ${here} trustRows call site(s) but no policy built from TRUST_POLICY_KEYS`);
     }
   }
   return { sites, offenders };
@@ -132,7 +137,23 @@ test('AC8.2 go-red: the block checker flags a fence that hand-builds the policy'
   const r = mdScan(md, 'planted.md');
   assert.equal(r.sites, 1);
   assert.equal(r.offenders.length, 1);
-  assert.match(r.offenders[0], /fenced block 1 .*no TRUST_POLICY_KEYS/);
+  assert.match(r.offenders[0], /fenced block 1 .*no policy built from TRUST_POLICY_KEYS/);
+});
+
+test('AC8.2 go-red: a fence that imports TRUST_POLICY_KEYS but hand-builds the policy is flagged', () => {
+  const md = [
+    '```bash',
+    'node -e "',
+    '  const { trustRows, TRUST_POLICY_KEYS } = require(root + \'/bin/lib/issues/trust.js\');',
+    '  const policy = { \'trust-revert-window-days\': process.argv[1] };',
+    '  trustRows(records, gitLog, Date.now(), policy);',
+    '" -- "{resolved-window}"',
+    '```',
+    '',
+  ].join('\n');
+  const r = mdScan(md, 'bare-mention.md');
+  assert.equal(r.sites, 1);
+  assert.equal(r.offenders.length, 1);
 });
 
 test('AC8.2 control: the block checker passes a fence that names TRUST_POLICY_KEYS, and a prose-only mention', () => {
@@ -167,7 +188,18 @@ test('AC8.2 go-red: the js checker flags a call with a hand-built policy', () =>
   const r = jsScan('const rows = trustRows(records, log, now, {});\n', 'planted.js');
   assert.equal(r.sites, 1);
   assert.equal(r.offenders.length, 1);
-  assert.match(r.offenders[0], /no TRUST_POLICY_KEYS in the file/);
+  assert.match(r.offenders[0], /no policy built from TRUST_POLICY_KEYS in the file/);
+});
+
+test('AC8.2 go-red: a js file that imports TRUST_POLICY_KEYS but hand-builds the policy is flagged', () => {
+  const src = [
+    "const { trustRows, TRUST_POLICY_KEYS } = require('./trust');",
+    "const rows = trustRows(records, log, now, { 'trust-revert-window-days': pol.windowDays });",
+    '',
+  ].join('\n');
+  const r = jsScan(src, 'bare-mention.js');
+  assert.equal(r.sites, 1);
+  assert.equal(r.offenders.length, 1);
 });
 
 test('AC8.2 control: the js checker passes a file that names TRUST_POLICY_KEYS, ignores a comment-only mention, and skips a definition-free file', () => {

@@ -17,7 +17,8 @@ behind by a prior `--trust` invocation.
 When fetching: run `_shared/trust-table.md`'s Fetch section in full (including its
 `backlog-fetch-limit` resolution, its `work-links` resolution — which decides which of the two
 parent-issue branches to run — and its truncation warning), then look up each worklist record's
-class. `{resolved-ceiling}` and `{resolved-window}` below are the literal values Step 1 already
+class. `{resolved-ceiling}` and the three trust placeholders below (`{resolved-window}`,
+`{resolved-eval-window}`, `{resolved-follow-up-rate}`) are the literal values Step 1 already
 resolved — do not re-run `resolve-policy.js` here, and do not `export` them in an earlier Bash call
 and read `process.env` here: shell environment does not survive between Bash calls and never
 reaches a subagent, so that expansion always resolves empty and this block would report
