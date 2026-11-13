@@ -39,7 +39,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { CANONICAL_PHASES, repairPrBody, reviseSpecSummary } = require('./lib/flow/pr-body');
+const { CANONICAL_PHASES, repairPrBody, reviseSpecSummary, WHOLE_PIECE_RESTORES } = require('./lib/flow/pr-body');
 const { setPhaseRow, firstLineRunId, readRunReversals } = require('./lib/flow/pr-checklist');
 const { readManifest } = require('./lib/flow/manifest');
 const { resolveTarget, appendEntry, formatEntry } = require('./lib/log-decision/append');
@@ -214,7 +214,7 @@ function run(argv, overrides = {}) {
   // 11. A repair is worth a decisions.md line; a logging failure never changes the exit.
   let logFailed = false;
   if (repaired.restored.length > 0) {
-    const carried = ['run marker', 'phases block', 'fixes block'].every((p) => repaired.restored.includes(p)) ? 'none' : 'some';
+    const carried = WHOLE_PIECE_RESTORES.every((p) => repaired.restored.includes(p)) ? 'none' : 'some';
     try {
       deps.appendDecision({
         runDir: o.run,

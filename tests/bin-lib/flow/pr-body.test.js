@@ -276,6 +276,25 @@ test('#5358: an end token quoted in the Spec summary does not pull the HTML end 
   assert.equal(htmlEnd, realEnd + 1);
 });
 
+test('#5358: a start and end token quoted in the Spec summary leave the HTML pair on the real Phases block', () => {
+  const quoted = composePrEarlyBody({
+    runId: 'r1', specSummary: 'quote:\n[claude-tweaks-phases-start]\n[claude-tweaks-phases-end]\nend quote', target: '#1', nextStep: 'test', fixesLines: ['Fixes #1'],
+  });
+  const lines = repairPrBody({ body: mcpRead(quoted), runId: 'r1', fixesLines: ['Fixes #1'] }).body.split('\n');
+  const realStart = lines.lastIndexOf('[claude-tweaks-phases-start]');
+  assert.ok(realStart > lines.indexOf('### Phases'), 'the last plain start is the real block');
+  assert.equal(lines.indexOf('<!-- phases-start -->'), realStart - 1);
+  assert.equal(lines.indexOf('<!-- phases-end -->'), lines.indexOf('[claude-tweaks-phases-end]', realStart) + 1);
+  assert.equal(count(lines.join('\n'), '<!-- phases-start -->'), 1);
+});
+
+test('#5358: a plain run marker whose id could close an HTML comment gets no HTML form', () => {
+  const input = mcpRead(earlyR1()).replace('claude-tweaks-run: r1', 'claude-tweaks-run: r1--><b>x</b>');
+  const out = repairPrBody({ body: input, runId: 'r1', fixesLines: ['Fixes #1'] });
+  assert.ok(!out.restored.includes('run marker HTML form'));
+  assert.ok(!out.body.includes('<!-- claude-tweaks-run:'));
+});
+
 test('#5358: the restored HTML run marker keeps the run id its plain companion names', () => {
   const other = composePrEarlyBody({ runId: 'other-run', specSummary: 's', target: '#1', nextStep: 'test', fixesLines: ['Fixes #1'] });
   const out = repairPrBody({ body: mcpRead(other), runId: 'r1', fixesLines: ['Fixes #1'] }).body;

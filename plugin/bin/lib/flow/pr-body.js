@@ -195,12 +195,26 @@ const PHASES_END_TOKENS = ['<!-- phases-end -->', '[claude-tweaks-phases-end]'];
 const FIXES_START_TOKENS = ['<!-- fixes-start -->', '[claude-tweaks-fixes-start]'];
 const FIXES_END_TOKENS = ['<!-- fixes-end -->', '[claude-tweaks-fixes-end]'];
 
+// The `restored` names for a whole piece appended because neither marker form
+// survived. bin/pr-checklist.js reads this list to word its log line ("carried
+// none" only when all three came back), so a rename here reaches it.
+const WHOLE_PIECE_RESTORES = ['run marker', 'phases block', 'fixes block'];
+const [RESTORED_RUN_MARKER, RESTORED_PHASES_BLOCK, RESTORED_FIXES_BLOCK] = WHOLE_PIECE_RESTORES;
+
+// A run id restored into an HTML comment comes from the PR body, which is
+// untrusted: only the characters a minted run id uses, so no `>` or `!` can
+// close the comment early and no `<` can open another.
+const SAFE_RUN_ID_RE = /^[A-Za-z0-9._+-]+$/;
+
 // Puts `htmlToken` back next to its plain companion on `side` ('above' |
 // 'below') of `lines` (mutated); true when it wrote. A blank neighbour (the
 // newline a stripped comment leaves behind) is filled; otherwise a new line is
-// spliced in, so no existing text is touched. A CRLF body keeps its endings.
-// `after` (an index) limits the plain companion to a line past it, so an end
-// token is placed against the first plain end following its start.
+// spliced in, so no existing text is touched. The final element is never
+// filled even when blank: it is the empty string a trailing newline leaves
+// after split('\n'), and filling it would drop the body's terminating newline.
+// A CRLF body keeps its endings. `after` (an index) limits the plain companion
+// to a line past it, so an end token is placed against the first plain end
+// following its start.
 function restoreHtmlForm(lines, htmlToken, plainToken, side, after = -1) {
   if (lines.some((l) => l.includes(htmlToken))) return false;
   const at = lines.findIndex((l, i) => i > after && l.trim() === plainToken);
@@ -232,33 +246,42 @@ function repairPrBody({ body, runId, fixesLines }) {
 
   if (!hasRunMarker(result)) {
     result = `${runMarkerHtml(runId)}\n${runMarkerPlain(runId)}\n\n${result}`;
-    restored.push('run marker');
+    restored.push(RESTORED_RUN_MARKER);
   }
   result = stripOrphanedHalf(result, PHASES_START_TOKENS, PHASES_END_TOKENS);
   if (!hasPhasesPair(result)) {
     const sep = result.endsWith('\n') ? '\n' : '\n\n';
     result = `${result}${sep}### Phases\n\n${composePhasesBlock()}\n`;
-    restored.push('phases block');
+    restored.push(RESTORED_PHASES_BLOCK);
   }
   result = stripOrphanedHalf(result, FIXES_START_TOKENS, FIXES_END_TOKENS);
   if (!hasFixesPair(result)) {
     const sep = result.endsWith('\n') ? '\n' : '\n\n';
     result = `${result}${sep}${composeFixesSpan(fixesLines)}\n`;
-    restored.push('fixes block');
+    restored.push(RESTORED_FIXES_BLOCK);
   }
 
+  // The run marker's HTML form takes the plain line's own id, never `runId`:
+  // a body naming another run keeps naming it, so firstLineRunId's mismatch
+  // refusal still fires. Its presence check is the same whole-body regex
+  // hasRunMarker uses, so an HTML marker with other spacing counts as present
+  // (restoreHtmlForm's exact-token check would miss it and add a second one).
   const lines = result.split('\n');
   const plainRunPattern = /^claude-tweaks-run:\s*(\S+)$/;
   const plainRunAt = lines.findIndex((l) => plainRunPattern.test(l.trim()));
   const plainRun = plainRunAt === -1 ? null : plainRunPattern.exec(lines[plainRunAt].trim());
-  if (plainRun && !/<!--\s*claude-tweaks-run:\s*\S+\s*-->/.test(result)
+  if (plainRun && SAFE_RUN_ID_RE.test(plainRun[1]) && !/<!--\s*claude-tweaks-run:\s*\S+\s*-->/.test(result)
     && restoreHtmlForm(lines, runMarkerHtml(plainRun[1]), lines[plainRunAt].trim(), 'above')) {
     restored.push('run marker HTML form');
   }
+  // A span's real start is its last plain start token: the Spec summary, where
+  // a record quoting these markers puts them, sits above Phases and Fixes, and a
+  // repair appends any missing block at the end. Its end is the first plain end
+  // after that start.
   const restoreSpan = (start, end) => {
-    const startRestored = restoreHtmlForm(lines, start[0], start[1], 'above');
-    const startAt = lines.findIndex((l) => l.trim() === start[1]);
-    return [startRestored, restoreHtmlForm(lines, end[0], end[1], 'below', startAt)];
+    const lastStart = () => lines.findLastIndex((l) => l.trim() === start[1]);
+    const startRestored = restoreHtmlForm(lines, start[0], start[1], 'above', lastStart() - 1);
+    return [startRestored, restoreHtmlForm(lines, end[0], end[1], 'below', lastStart())];
   };
   const phases = restoreSpan(PHASES_START_TOKENS, PHASES_END_TOKENS);
   if (phases.some(Boolean)) restored.push('phases HTML markers');
@@ -385,6 +408,7 @@ module.exports = {
   hasPhasesPair,
   hasFixesPair,
   repairPrBody,
+  WHOLE_PIECE_RESTORES,
   PREMISE_REVERSED_MARKER,
   REVISION_PREFIX,
   parsePremiseReversals,

@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { run, parseArgs } = require('../../../plugin/bin/pr-checklist');
-const { composePrEarlyBody } = require('../../../plugin/bin/lib/flow/pr-body');
+const { composePrEarlyBody, composePhasesBlock } = require('../../../plugin/bin/lib/flow/pr-body');
 
 const RUN_ID = '2026-10-19T000001-record-1';
 const FOREIGN_RUN_ID = '2026-01-01T000000-record-9';
@@ -150,6 +150,23 @@ test('#5358: a body carrying only plain markers gets its HTML forms back and log
   assert.deepEqual(h.json().restored, ['run marker HTML form', 'phases HTML markers', 'fixes HTML markers']);
   const log = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
   assert.ok(log.includes('restored run marker HTML form, phases HTML markers, fixes HTML markers on PR #7 (body carried some of the expected markers)'));
+});
+
+test('#5358: a body missing two of the three whole pieces logs "carried some"', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { prBody: `### Phases\n\n${composePhasesBlock()}\n` });
+  assert.equal(run(['--run', runDir, '--phase', 'build', '--fixes', '1'], h.deps), 0);
+  assert.deepEqual(h.json().restored, ['run marker', 'fixes block']);
+  const log = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
+  assert.ok(log.includes('restored run marker, fixes block on PR #7 (body carried some of the expected markers)'));
+});
+
+test('#5358: an MCP-stripped body naming a different run is still refused and nothing is written', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { prBody: earlyBody(FOREIGN_RUN_ID).replace(/<!--[\s\S]*?-->/g, '') });
+  assert.equal(run(['--run', runDir, '--phase', 'build'], h.deps), 4);
+  assert.equal(h.edits.length, 0);
+  assert.ok(h.err.join('').includes(`body names run ${FOREIGN_RUN_ID}, expected ${RUN_ID}`));
 });
 
 test('a decisions.md write failure is swallowed into the envelope, never an exit change', () => {
