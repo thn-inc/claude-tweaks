@@ -2803,6 +2803,19 @@ test('AC4.5: --no-settle with a row that has no calls gives settle none', async 
   assert.deepEqual([lastLine(failed).settle, lastLine(failed).settleRow], ['left-to-caller', 'claim']);
 });
 
+test('AC4.1: under --no-settle a pre-push stop that holds a recorded PR names the blocked row', async () => {
+  const h = harness();
+  const shared = newShared();
+  shared.settle = false;
+  const steps = [
+    { name: 'pr', run: async (ctx) => { ctx.pr = { number: 9 }; return { status: 'ok', halt: false, stopClass: 'none', reason: 'ok', extra: {} }; } },
+    { name: 'ci', run: async () => ({ status: 'fail', halt: true, stopClass: 'pre-push', reason: 'fail', extra: {} }) },
+  ];
+  const final = await driveRecord(7, shared, h.deps, steps);
+  assert.deepEqual([final.settle, final.settleRow, final.stop.class, final.pr], ['left-to-caller', 'blocked', 'pre-push', 9]);
+  assert.deepEqual(settleCalls(h), []);
+});
+
 test('a record that did not stop has settle none and no settle row', async () => {
   for (const argv of [['#7'], ['--no-settle', '#7']]) {
     const h = harness();
