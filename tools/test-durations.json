@@ -668,7 +668,6 @@
     "tests/dispatch-named-form-exclusion-reasons.test.js": 130,
     "tests/dispatch-named-target-exclusion-fixture.test.js": 376,
     "tests/dispatch-near-dup-neighbour-prose.test.js": 8,
-    "tests/dispatch-near-dup-pairs-script.test.js": 193,
     "tests/dispatch-neighbour-in-flight-mcp.test.js": 765,
     "tests/dispatch-no-name-kill-conformance.test.js": 62,
     "tests/dispatch-no-stash-conformance.test.js": 25,

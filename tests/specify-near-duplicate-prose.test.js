@@ -59,7 +59,7 @@ test('next-mode-shape.md cites the near-duplicate check for the headless drain a
 });
 
 // #5230: the warning is the queue-pull module's near-dup-pairs pass; its AUTO line is pinned in
-// tests/dispatch-near-dup-pairs-script.test.js and tests/bin-lib/dispatch/queue-pull.test.js.
+// tests/bin-lib/dispatch/queue-pull.test.js (the `#5227 near-dup` test).
 test('the dispatch queue pull runs the cross-group near-duplicate warning after the cross-PR overlap pass, last', () => {
   const ids = PASSES.map((p) => p.id);
   const crossPrIdx = ids.indexOf('cross-pr-overlap');
