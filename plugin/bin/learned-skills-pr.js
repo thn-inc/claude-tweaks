@@ -29,7 +29,8 @@
 // `land` commits each captured patch (plumbing, on a temp index) to learned-skills/{run-id}, pushes it and
 // opens a ready PR that is never armed; a patch that cannot ride it is staged instead. `stage` stages
 // every captured patch (local-merge). --merge-base (required) marks a captured entry whose edit the
-// run branch already carries (its patch reverse-applies to HEAD) as superseded, never delivered twice; pr is set only when confirmed open in this call. Stdout is one JSON line:
+// run branch already carries (its patch reverse-applies to HEAD) as superseded, never delivered twice.
+// Stdout is one JSON line (pr is set only when confirmed open in this call):
 //   land:  {branch, pr: {number,url}|null, landed: [{id,target,commit}], staged: [{id,target,stagePath,reason}]
 //           [, superseded][, failed][, logFailed]}
 //   stage: {staged: [...][, superseded][, failed]}

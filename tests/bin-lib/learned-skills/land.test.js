@@ -65,7 +65,13 @@ function fakeGh({ prs = [], createThrows = null } = {}) {
   const state = { prs: [...prs] };
   const gh = (args, input) => {
     calls.push({ args, input });
-    if (args[0] === 'pr' && args[1] === 'list') return JSON.stringify(state.prs);
+    if (args[0] === 'pr' && args[1] === 'list') {
+      // A fake that ignored these flags would hide a wrong field list or state filter: pin both.
+      if (args[args.indexOf('--state') + 1] !== 'all') throw new Error('unexpected state filter ' + args.join(' '));
+      if (args[args.indexOf('--json') + 1] !== 'number,url,state') throw new Error('unexpected field list ' + args.join(' '));
+      if (args[args.indexOf('--head') + 1] !== BRANCH) throw new Error('unexpected head ' + args.join(' '));
+      return JSON.stringify(state.prs);
+    }
     if (args[0] === 'pr' && args[1] === 'create') {
       if (createThrows) throw new Error(createThrows);
       state.prs = [{ number: 77, url: 'https://github.com/o/r/pull/77', state: 'OPEN' }];
@@ -145,8 +151,8 @@ test('opens a ready unarmed PR with the marker and refs-only link', (t) => {
   assert.doesNotMatch(body, /\b(close[sd]?|fix(e[sd])?|resolve[sd]?)\s+#\d/i);
   assert.equal(gh.calls.some((c) => c.args[0] === 'pr' && c.args[1] === 'merge'), false, 'never armed');
   const confirm = gh.calls.findIndex((c, i) => i > create && c.args[0] === 'pr' && c.args[1] === 'list'
-    && c.args.includes('--head') && c.args.includes(BRANCH) && c.args[c.args.indexOf('--state') + 1] === 'open');
-  assert.ok(confirm > create, 'a confirming open-PR read follows the create');
+    && c.args.includes('--head') && c.args.includes(BRANCH) && c.args[c.args.indexOf('--state') + 1] === 'all');
+  assert.ok(confirm > create, 'a confirming PR read follows the create');
 });
 
 test('a summary carrying a closing phrase is neutralized in the PR body', (t) => {
@@ -413,23 +419,46 @@ test('an existing branch with an open PR is the base: a later capture adds one c
   assert.equal(res.pr.number, 77);
 });
 
-test('an existing branch with no open PR is not reused as a base: new patches are staged, naming the branch', (t) => {
-  const f = fixture(t, { capturedTargets: [X] });
+for (const [state, reason] of [
+  ['CLOSED', (b) => new RegExp(`${b} already exists on origin and PR #77 was closed`)],
+  ['MERGED', () => /the earlier learned-skills PR #77 was merged/],
+]) {
+  test(`an existing branch whose PR is ${state} is not reused as a base: new patches are staged`, (t) => {
+    const f = fixture(t, { capturedTargets: [X] });
+    const gh = fakeGh();
+    land(landArgs(f), deps(gh.gh).deps);
+    const tip1 = remoteBranch(f);
+    gh.state.prs = [{ number: 77, url: 'https://github.com/o/r/pull/77', state }];
+    captureMore(f, Z, (b) => b + 'z second\n', 'z finding');
+    const again = deps(gh.gh);
+    const createsBefore = gh.calls.filter((c) => c.args[1] === 'create').length;
+    const res = land(landArgs(f), again.deps);
+    assert.deepEqual(res.landed, []);
+    assert.equal(res.staged.length, 1);
+    assert.match(res.staged[0].reason, reason(BRANCH));
+    assert.equal(res.pr, null);
+    assert.deepEqual(pushes(again.gitCalls), []);
+    assert.equal(gh.calls.filter((c) => c.args[1] === 'create').length, createsBefore);
+    assert.equal(remoteBranch(f), tip1, 'the branch is left untouched');
+  });
+}
+
+test('an existing branch that never had a PR is this run\'s own: it is the base and the PR opens on it', (t) => {
+  const f = fixture(t);
   const gh = fakeGh();
-  land(landArgs(f), deps(gh.gh).deps);
+  const first = land(landArgs(f), deps(gh.gh).deps);
   const tip1 = remoteBranch(f);
-  gh.state.prs = []; // a human closed the PR
-  captureMore(f, Z, (b) => b + 'z second\n', 'z finding');
+  // A crash between push and create: the branch is there, no PR was ever opened, the manifest is lost.
+  gh.state.prs = [];
+  fs.writeFileSync(path.join(f.runDir, 'learned-skills', 'manifest.json'),
+    JSON.stringify(readManifest(f.runDir).map(({ commit, pr, ...rest }) => ({ ...rest, status: 'captured' })), null, 2));
   const again = deps(gh.gh);
-  const createsBefore = gh.calls.filter((c) => c.args[1] === 'create').length;
   const res = land(landArgs(f), again.deps);
-  assert.deepEqual(res.landed, []);
-  assert.equal(res.staged.length, 1);
-  assert.match(res.staged[0].reason, new RegExp(`${BRANCH} already exists on origin with no open PR`));
-  assert.equal(res.pr, null);
+  assert.deepEqual(res.landed.map((l) => l.commit).sort(), first.landed.map((l) => l.commit).sort(), 'the pushed commits are reused');
   assert.deepEqual(pushes(again.gitCalls), []);
-  assert.equal(gh.calls.filter((c) => c.args[1] === 'create').length, createsBefore);
   assert.equal(remoteBranch(f), tip1);
+  assert.equal(gh.calls.filter((c) => c.args[1] === 'create').length, 2, 'one create per land that opened a PR');
+  assert.equal(res.pr.number, 77);
 });
 
 test('nothing to do reports pr null when the earlier PR is no longer open', (t) => {
@@ -545,4 +574,60 @@ test('CLI land and stage print one JSON line; a missing --record exits 2', (t) =
   });
   assert.equal(code2, 0);
   assert.equal(JSON.parse(out2.join('')).staged.length, 2);
+});
+
+const loseManifest = (f) => fs.writeFileSync(path.join(f.runDir, 'learned-skills', 'manifest.json'),
+  JSON.stringify(readManifest(f.runDir).map(({ commit, pr, ...rest }) => ({ ...rest, status: 'captured' })), null, 2));
+
+test('a join that rewrites a pushed entry\'s patch under the same id is not matched to the old commit', (t) => {
+  const f = fixture(t, { capturedTargets: [X] });
+  const gh = fakeGh();
+  // Push and PR succeed, but the manifest write is lost (injected through the deps seam).
+  const lossy = deps(gh.gh);
+  lossy.deps.writeFile = (p, data) => {
+    if (p.endsWith('manifest.json')) throw new Error('disk full');
+    return realDeps.writeFile(p, data);
+  };
+  assert.throws(() => land(landArgs(f), lossy.deps), /disk full/);
+  const tip1 = remoteBranch(f);
+  assert.equal(readManifest(f.runDir)[0].status, 'captured');
+  // A second edit on X joins into entry 1 and rewrites 1.patch under the same id.
+  const joined = captureMore(f, X, atTop);
+  assert.equal(joined.shared, true);
+
+  const again = deps(gh.gh);
+  const res = land(landArgs(f), again.deps);
+  assert.deepEqual(res.landed, [], 'the old commit does not hold the joined edit');
+  assert.equal(res.staged.length, 1);
+  assert.match(res.staged[0].reason, /git apply --check/);
+  assert.equal(readManifest(f.runDir)[0].status, 'staged');
+  assert.ok(fs.readFileSync(res.staged[0].stagePath, 'utf8').includes('second edit at the top'), 'the second edit is not lost');
+  assert.equal(remoteBranch(f), tip1);
+  const ids = again.gitCalls.filter((c) => c.args.includes('patch-id'));
+  assert.equal(ids.length, 2, 'the commit diff and the patch file are each normalised');
+  for (const c of ids) assert.deepEqual(c.args.slice(2), ['patch-id', '--stable']);
+});
+
+test('an entry is not superseded when the run branch never changed its target after the merge base', (t) => {
+  const f = fixture(t);
+  commitCapturedOnRunBranch(f, X);
+  const newBase = sh(f.repo, ['rev-parse', 'HEAD']).trim(); // the edit is already in the base: owned is empty
+  const res = land(landArgs(f, { mergeBase: newBase }), deps(fakeGh().gh).deps);
+  assert.equal(res.superseded, undefined);
+  assert.deepEqual(res.landed.map((l) => l.target).sort(), [X, Z]);
+});
+
+test('a branch commit with a matching entry id but another run id is not reused', (t) => {
+  const f = fixture(t, { capturedTargets: [X] });
+  const gh = fakeGh();
+  const first = land(landArgs(f), deps(gh.gh).deps);
+  const tree = sh(f.repo, ['rev-parse', `${first.landed[0].commit}^{tree}`]).trim();
+  const foreign = sh(f.repo, ['commit-tree', tree, '-p', f.mainTip, '-m',
+    'Add learned skill update\n\nLearned-Skills-Run: 2026-01-01T000000-other-run\nLearned-Skills-Entry: 1\n']).trim();
+  sh(f.repo, ['push', '-q', '-f', 'origin', `${foreign}:refs/heads/${BRANCH}`]);
+  loseManifest(f);
+  const res = land(landArgs(f), deps(gh.gh).deps);
+  assert.deepEqual(res.landed, [], 'the other run\'s commit is not this run\'s');
+  assert.equal(res.staged.length, 1);
+  assert.match(res.staged[0].reason, /git apply --check/);
 });

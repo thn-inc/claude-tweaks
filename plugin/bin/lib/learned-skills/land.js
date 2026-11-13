@@ -8,11 +8,17 @@
 // touched: commits are built on a temp index (GIT_INDEX_FILE on the plumbing calls' own env), and a
 // commit built for an entry that is then staged is simply abandoned (an unreferenced object).
 //
-// Resume: an entry already `landed` is skipped; an existing remote branch is the base; an open PR is
-// reused; a patch whose commit is already on that branch (a run that died before its manifest write)
-// is recognised by its Learned-Skills-Entry trailer (never one a landed entry claims) and marked landed instead of being committed twice.
-// A `captured` entry whose target the run branch changed after the merge base is `superseded`, never
-// delivered (capture's bothInTree/stuck outcomes leave the edit in the tree for the run branch).
+// Resume: an entry already `landed` is skipped. An existing remote branch is the base only when its
+// PRs say so: an open PR is reused; no PR ever (a crash between push and create) means the branch is
+// this run's own, so it is the base and the PR is opened on it; a closed PR leaves the branch
+// untouched and a merged PR is never reused, and both stage every entry with a reason. A patch whose
+// commit is already on the branch (a run that died before its manifest write) is reused only when it
+// carries this run's id and this entry's id in its trailers, no landed entry claims it, and its own
+// diff has the same `git patch-id --stable` as the entry's current patch file (a join can rewrite the
+// patch under the same id); otherwise it is built again and `apply --check` lands or stages it.
+// A `captured` entry is `superseded` only when the run branch changed its target after the merge base
+// AND its patch reverse-applies to HEAD (capture's bothInTree/stuck outcomes leave the edit in the
+// tree for the run branch); any other `captured` entry is delivered.
 //
 // Every side effect goes through `deps` (git, gh, now, appendEntries, fs seams) so tests inject fakes.
 'use strict';
@@ -187,11 +193,13 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
   const branch = `learned-skills/${runId}`;
   const git = (args, opts) => deps.git(['-C', worktree, ...args], opts);
 
-  const listOpen = () => {
-    const rows = JSON.parse(deps.gh(['pr', 'list', '--head', branch, '--state', 'open', '--json', 'number,url,state']));
+  // Every PR this branch ever had, whatever its state.
+  const listPrs = () => {
+    const rows = JSON.parse(deps.gh(['pr', 'list', '--head', branch, '--state', 'all', '--json', 'number,url,state']));
     if (!Array.isArray(rows)) throw new Error('gh pr list did not return an array');
-    return rows.find((r) => r.state === 'OPEN') || null;
+    return rows;
   };
+  const openOf = (rows) => rows.find((r) => r.state === 'OPEN') || null;
 
   const manifest = readManifest(runDir);
   const prior = [...manifest].reverse().find((e) => e.status === 'landed' && e.pr);
@@ -206,7 +214,7 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
     return out;
   };
   if (!todo.length) {
-    if (prior) { try { const open = listOpen(); if (open) out.pr = confirmed(open); } catch { /* unconfirmed: reported as null */ } }
+    if (prior) { try { const open = openOf(listPrs()); if (open) out.pr = confirmed(open); } catch { /* unconfirmed: reported as null */ } }
     return finish();
   }
 
@@ -224,6 +232,7 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
     let integrationSha;
     let tip = null;
     let existingPr = null;
+    let orphanReason = null;
     try {
       git(['fetch', '--end-of-options', 'origin', integrationBranch], { timeout: GIT_TIMEOUT_MS });
       integrationSha = String(git(['rev-parse', '--verify', '--end-of-options', `origin/${integrationBranch}^{commit}`])).trim();
@@ -233,17 +242,22 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
         git(['fetch', '--end-of-options', 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`], { timeout: GIT_TIMEOUT_MS });
         tip = String(git(['rev-parse', '--verify', '--end-of-options', `origin/${branch}^{commit}`])).trim();
         if (tip !== line[0]) throw new Error(`the remote ${branch} moved while it was fetched`);
-        existingPr = listOpen();
+        const rows = listPrs();
+        existingPr = openOf(rows);
+        if (!existingPr) {
+          const merged = rows.find((r) => r.state === 'MERGED');
+          const closed = rows.find((r) => r.state === 'CLOSED');
+          if (merged) orphanReason = `the earlier learned-skills PR #${merged.number} was merged, so ${branch} is not reused as a base`;
+          else if (closed) orphanReason = `${branch} already exists on origin and PR #${closed.number} was closed; the branch is left untouched`;
+          // No PR ever: the branch is this run's own (a crash between push and create) and stays the base.
+        }
       }
     } catch (err) {
       return downgradeAll(todo, `could not read the remote base (${firstLine(err)})`);
     }
     const branchExisted = tip !== null;
-    // An existing branch is a base only with an open PR attached; otherwise its commits (rejected, or
-    // never offered) would ride the next PR.
-    if (branchExisted && !existingPr) {
-      return downgradeAll(todo, `${branch} already exists on origin with no open PR (closed or never opened), so it is not reused as a base; its commits stay on it`);
-    }
+    // A closed or merged PR means the branch's commits were rejected or shipped: never a base.
+    if (orphanReason) return downgradeAll(todo, orphanReason);
 
     // Commits already on the branch from a run that died before its manifest write: keyed by the
     // entry id in their trailer, never one a landed entry already claims.
@@ -263,12 +277,22 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
       } catch { /* an unreadable log just means nothing is recognised; apply --check then decides */ }
     }
 
+    // A pushed commit is this entry's only when its own diff has the entry's current patch's patch-id.
+    const patchId = (bytes) => String(git(['patch-id', '--stable'], { input: bytes })).trim().split(/\s+/)[0] || null;
+    const sameEdit = (commit, entry) => {
+      try {
+        const committed = git(['-c', 'core.quotePath=false', 'diff', '--no-color', '--no-ext-diff', '--src-prefix=a/', '--dst-prefix=b/', '--binary', '--end-of-options', `${commit}^`, commit], { encoding: 'buffer' });
+        const a = patchId(committed);
+        return a !== null && a === patchId(deps.readFile(entry.patch));
+      } catch { return false; }
+    };
+
     // 2. One plumbing commit per patch, on a temp index.
     let parent = tip || integrationSha;
     const built = [];
     for (const entry of todo) {
       const msg = commitMessage(entry, records, runId);
-      if (onBranch.has(String(entry.id))) {
+      if (onBranch.has(String(entry.id)) && sameEdit(onBranch.get(String(entry.id)), entry)) {
         built.push({ entry, commit: onBranch.get(String(entry.id)), reused: true });
         continue;
       }
@@ -315,12 +339,12 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
       if (!pr) {
         const title = neutralizeClosingPhrases(`Add learned skill updates from wrap-up of ${records.map((r) => `#${r}`).join(', ')}`).text;
         deps.gh(['pr', 'create', '--base', integrationBranch, '--head', branch, '--title', title, '--body-file', '-'], prBody(records, entries));
-        pr = listOpen();
+        pr = openOf(listPrs());
         if (!pr) throw new Error('the created PR does not read OPEN');
       }
     } catch (err) {
-      // The branch exists only because of this call (an existing one always has its PR): take it down,
-      // so a later run cannot inherit commits whose patches are staged instead.
+      // Every entry is staged, so take the branch down (it is this call's or this run's own, with no PR):
+      // a later run must not inherit commits whose patches are staged instead.
       let note = '';
       try { git(['push', '--end-of-options', 'origin', `:refs/heads/${branch}`], { timeout: GIT_PUSH_TIMEOUT_MS }); } catch (delErr) {
         note = `; the branch ${branch} could not be deleted and still holds these commits (${firstLine(delErr)})`;
