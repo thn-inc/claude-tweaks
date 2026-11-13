@@ -12,7 +12,7 @@ const {
 const { BUDGET_STEP, STEP } = require(path.join(LIB, 'driver', 'events'));
 const { defineStep, eligibilityOptions } = require(path.join(LIB, 'driver', 'steps'));
 const { newShared } = require(path.join(LIB, 'driver', 'run'));
-const { rankNext } = require(path.join(LIB, 'dispatch', 'queue-pull'));
+const { rankNext, PASSES } = require(path.join(LIB, 'dispatch', 'queue-pull'));
 
 const POLICY_RESOLVED = Object.freeze({
   'express-driver': { value: 'on' },
@@ -223,6 +223,15 @@ test('UNSELECTABLE_REASONS: every reason is one the real rankNext never selects'
   for (const reason of UNSELECTABLE_REASONS) {
     assert.equal(rankNext([group], [{ reason, records: [1] }], {}), null, reason);
   }
+});
+
+// The other direction: a new non-removing exclusion pass in queue-pull.js (which rankNext must
+// then skip too) must land in UNSELECTABLE_REASONS, or the loop would pre-screen and count
+// records the ranking can never select.
+test('UNSELECTABLE_REASONS is exactly the PASSES registry\'s non-removing exclusion reasons', () => {
+  const staying = [...new Set(PASSES.filter((p) => p.kind === 'exclusion' && !p.removes).map((p) => p.reason))];
+  assert.ok(staying.length > 0, 'the registry has non-removing exclusion reasons');
+  assert.deepEqual([...UNSELECTABLE_REASONS].sort(), staying.sort());
 });
 
 test('AC6.5: a queue that never shrinks still ends', async () => {
