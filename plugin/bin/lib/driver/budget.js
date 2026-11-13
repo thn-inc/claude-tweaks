@@ -2,8 +2,10 @@
 // The pipeline driver's `--budget <n|all>` loop (drive.js, record #5229). runBudget reads the
 // policy through the table's own policy step (an unreadable policy exits 1; `express-driver:
 // off` refuses before any pull), then loops: pull the dispatch queue (deps.queuePull), pre-screen
-// every pulled record with the eligibility step's own call, rank (deps.rankNext) against the
-// pull's exclusions plus this invocation's in-memory `firing` entry, and drive the top group's
+// every record of every group the ranking could select (a group the pull excluded as
+// `oversized` or `neighbour-in-flight` is left alone) with the eligibility step's own call, rank
+// (deps.rankNext) against the pull's exclusions plus this invocation's in-memory `firing`
+// entry, and drive the top group's
 // members one at a time, in the group's own order, through `driveOne` (run.js's
 // driveRecordFacts). It never reorders, filters or re-derives the selection beyond the
 // pre-screen and the `firing` entry. One summary line (BUDGET_STEP) closes the run, except on
@@ -12,14 +14,16 @@
 // Counting: from the claim. A record whose claim was obtained and whose run directory was
 // minted (`claimed` true) is `driven` and consumes budget, whatever its outcome; nothing else
 // does. Every handled record lands in exactly one COUNTERS entry (classifyFacts; a pre-screen
-// skip is `skipped`). A claim stop ends the run with the rest of the budget unused:
-// claim-targets.js exit 7 (`permission-stop`), or exit 2 or 6 (`claim-stop`), whose cause every
+// skip is `skipped`); a record only in a group the pull excluded as `oversized` or
+// `neighbour-in-flight` is never pre-screened, never handled and never counted. A claim stop
+// ends the run with the rest of the budget unused: claim-targets.js exit 7 (`permission-stop`), or exit 2 or 6 (`claim-stop`), whose cause every
 // later claim would meet too; exits 3, 4 and 5 and a failed mint are per-record.
 //
-// Termination: every member of every handled group, and every member of a group whose members
-// the pre-screen all skips, joins the in-memory `firing` set handed to the ranking, so no record
-// is selected twice in one invocation and a queue that never shrinks still ends. A failed or
-// malformed pull, or a ranking that throws, is `pull-failed` (exit 1), never an empty queue.
+// Termination: every member of every handled group, and every member of a selectable group whose
+// members the pre-screen all skips, joins the in-memory `firing` set handed to the ranking, so no
+// record is selected twice in one invocation and a queue that never shrinks still ends. A failed
+// or malformed pull (a group that is not an array, a member that is not an object with a positive
+// integer `number`), or a ranking that throws, is `pull-failed` (exit 1), never an empty queue.
 //
 // Every effect goes through `deps`: this module makes no file call and spawns nothing. The
 // queue-pull module's own stdout (Warnings, AUTO lines) is routed to deps.stderr, so the
@@ -28,6 +32,11 @@
 const { STEP, BUDGET_STEP, createEventSink, yieldToEventLoop, firstLine, errorText } = require('./events');
 const { STEPS, eligibilityOptions } = require('./steps');
 const { formatTimestamp } = require('../hooks/run-dir-resolve');
+const { groupIsExcluded } = require('../dispatch/exclusions');
+
+// The pull's exclusion reasons whose groups stay in the pulled groups yet are never selectable
+// (rankNext skips them too); `firing` is this loop's own and is handled by `attempted`.
+const UNSELECTABLE_REASONS = Object.freeze(['oversized', 'neighbour-in-flight']);
 
 const ENDED = Object.freeze({
   BUDGET: 'budget',
@@ -92,6 +101,10 @@ function checkedPull(result) {
   if (!Array.isArray(result.groups) || !result.groups.every((g) => Array.isArray(g))) {
     throw new Error('malformed result: groups is not an array of arrays');
   }
+  const isRecord = (r) => r !== null && typeof r === 'object' && Number.isSafeInteger(r.number) && r.number > 0;
+  if (!result.groups.every((g) => g.every(isRecord))) {
+    throw new Error('malformed result: a group member is not a record with a positive integer number');
+  }
   if (!Array.isArray(result.exclusions)) throw new Error('malformed result: exclusions is not an array');
   return result;
 }
@@ -143,10 +156,13 @@ async function runBudget(budget, shared, deps, { driveOne, steps = STEPS }) {
   // The ranking's in-memory `firing` set, and each record's pre-screen verdict by number.
   const attempted = new Set();
   const verdicts = new Map();
-  // Pre-screens each member not yet attempted, once per record per invocation. A group whose
-  // members are all `skip` joins `firing` now, each new member counted `skipped`.
-  const screenGroups = (groups) => {
+  // Pre-screens each member not yet attempted, once per record per invocation, in the groups the
+  // ranking could select: a group the pull excluded as `oversized` or `neighbour-in-flight` is
+  // never screened, counted or added to `firing`. A screened group whose members are all `skip`
+  // joins `firing` now, each new member counted `skipped`.
+  const screenGroups = (groups, exclusions) => {
     for (const group of groups) {
+      if (groupIsExcluded(group, exclusions, UNSELECTABLE_REASONS)) continue;
       const fresh = group.filter((r) => !attempted.has(r.number));
       for (const r of fresh) {
         if (verdicts.has(r.number)) continue;
@@ -177,11 +193,11 @@ async function runBudget(budget, shared, deps, { driveOne, steps = STEPS }) {
     await yieldToEventLoop();
     if (shared.interrupted) return 0;
 
-    // A member the module would never write (not an object) throws here, as it would in the
-    // ranking: a malformed pull either way.
+    // checkedPull has already refused a member that is not a numbered record, so a throw from
+    // the pre-screen pass is a defect here and propagates as an internal error.
+    screenGroups(pull.groups, pull.exclusions);
     let top;
     try {
-      screenGroups(pull.groups);
       top = deps.rankNext(pull.groups, [...pull.exclusions, { reason: 'firing', records: [...attempted] }], {});
     } catch (err) {
       return pullFailed(err);

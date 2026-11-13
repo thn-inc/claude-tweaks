@@ -121,6 +121,20 @@ test('AC1.1, AC1.2, AC1.3: --budget all drives the module-iterated order, restri
   assert.deepEqual([summary.ended, summary.driven, summary.refused], ['exhausted', reference.length - 1, 1]);
 });
 
+test('AC4.1, AC4.2, AC4.4: only a claimed record consumes budget — refused and contested records do not', async () => {
+  const byRecord = {
+    1: { final: null, outcome: 'refused', claimed: false, claimExit: null },
+    2: { final: null, outcome: 'blocked', claimed: true, claimExit: 0 },
+    3: { final: null, outcome: 'blocked', claimed: false, claimExit: 3 },
+  };
+  const f = fake({ pulls: [{ groups: singletons(1, 2, 3, 4, 5), exclusions: [] }], facts: (n) => byRecord[n] });
+  assert.equal(await run(f, 2), 0);
+  assert.deepEqual(f.driven(), [1, 2, 3, 4]);
+  assert.ok(!f.driven().includes(5), '#5 is never driven');
+  const summary = summaryOf(f);
+  assert.deepEqual([summary.driven, summary.refused, summary.contested, summary.ended], [2, 1, 1, 'budget']);
+});
+
 test('AC4.3: a record handled once is never selected again in this invocation', async () => {
   const f = fake({
     pulls: [{ groups: singletons(1, 2), exclusions: [] }],
@@ -178,6 +192,25 @@ test('AC6.4: a top record the pre-screen rules out is skipped once and the run r
   for (const c of f.calls.eligibility) assert.deepEqual(c.opts, eligibilityOptions(POLICY_RESOLVED));
 });
 
+test('pre-screen: a group the pull excluded as oversized or neighbour-in-flight is never screened, counted or driven', async () => {
+  const groups = [[pulled(1)], [pulled(40), pulled(41)], [pulled(50)]];
+  const exclusions = [
+    { reason: 'oversized', records: [40, 41], detail: { size: 2, threshold: 1 } },
+    { reason: 'neighbour-in-flight', records: [50] },
+  ];
+  const f = fake({
+    pulls: [{ groups, exclusions }],
+    eligibility: (issue) => ({ eligible: ![40, 41, 50].includes(issue.number), reasons: ['no'] }),
+  });
+  assert.equal(await run(f), 0);
+  assert.deepEqual(f.driven(), [1]);
+  assert.deepEqual(f.calls.eligibility.map((c) => c.issue.number), [1], 'only the selectable group is pre-screened');
+  const summary = summaryOf(f);
+  assert.deepEqual([summary.skipped, summary.driven, summary.ended], [0, 1, 'exhausted']);
+  assert.ok(f.calls.rankNext.every((entries) => entries.filter((e) => e.reason === 'firing').every((e) => !e.records.some((n) => [40, 41, 50].includes(n)))),
+    'the excluded records never join firing');
+});
+
 test('AC6.5: a queue that never shrinks still ends', async () => {
   const f = fake({ pulls: [{ groups: singletons(1, 2, 3), exclusions: [] }] });
   assert.equal(await run(f), 0);
@@ -217,11 +250,20 @@ test('AC8.2: a failed re-pull keeps what was driven', async () => {
 });
 
 test('pull-failed: a malformed pull is not an empty queue', async () => {
-  for (const pull of [{ groups: 'x', exclusions: [] }, { groups: [[{ number: 1 }], 'x'], exclusions: [] }, { groups: [], exclusions: 'x' }, null]) {
+  const malformed = [
+    { groups: 'x', exclusions: [] }, { groups: [[{ number: 1 }], 'x'], exclusions: [] }, { groups: [], exclusions: 'x' }, null,
+    // A member that is not a numbered record: null, a primitive, no number, a non-integer or string number.
+    { groups: [[pulled(1)], [null]], exclusions: [] }, { groups: [[pulled(1), 'x']], exclusions: [] },
+    { groups: [[{ ...pulled(1), number: undefined }]], exclusions: [] }, { groups: [[{ ...pulled(1), number: 1.5 }]], exclusions: [] },
+    { groups: [[{ ...pulled(1), number: '1' }]], exclusions: [] },
+  ];
+  for (const pull of malformed) {
     const f = fake({ pulls: [pull] });
     assert.equal(await run(f), 1, JSON.stringify(pull));
     assert.equal(summaryOf(f).ended, 'pull-failed', JSON.stringify(pull));
+    assert.match(f.err, /^drive\.js: queue pull failed: malformed result/, JSON.stringify(pull));
     assert.deepEqual(f.driven(), []);
+    assert.deepEqual(f.calls.eligibility, [], 'nothing pre-screened from a malformed pull');
   }
 });
 
@@ -308,6 +350,11 @@ test('AC11.1: a pulled record lacking a field the eligibility function needs pas
   assert.deepEqual(f.driven(), [1, 2]);
   assert.deepEqual(f.calls.eligibility, [], 'the eligibility function is never called for them');
   assert.equal(summaryOf(f).skipped, 0);
+  // The unparseable case is surfaced on stderr, never silently, and stdout stays JSON-only.
+  assert.match(f.err, /drive\.js: pre-screen could not read #1 \(labels is not an array\); taking the full path/);
+  assert.match(f.err, /drive\.js: pre-screen could not read #2 \(body is not a string\); taking the full path/);
+  for (const line of f.out.split('\n').filter(Boolean)) assert.doesNotThrow(() => JSON.parse(line), line);
+  assert.doesNotMatch(f.out, /pre-screen/);
 
   const throwing = { evaluateRecordEligibility: () => { throw new Error('bad record'); } };
   const verdict = preScreen(pulled(3), eligibilityOptions(POLICY_RESOLVED), throwing);
