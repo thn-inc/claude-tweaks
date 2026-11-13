@@ -10,6 +10,10 @@ const {
   computeOutlook,
 } = require('../../../plugin/bin/lib/backlog-grant-gate/backlog-grant-gate');
 
+// computeOutlook grades trust on the real clock, so a closed fixture must sit
+// inside trustRows' default 30-day evaluation window to form a cell.
+const CLOSED_20_DAYS_AGO = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000).toISOString();
+
 function issue(number, overrides = {}) {
   return {
     number, title: 'untitled', body: '', labels: [], createdAt: '2026-01-01T00:00:00Z', ...overrides,
@@ -204,7 +208,7 @@ test('computeOutlook: a clean-trust class produces an eligible candidate (matche
   // 8 closed, approved, non-batch records in the same class -> clean cell
   // (trust.js: MIN_SAMPLES=8, MIN_VERDICTS=5, no changesRequested/negativeEvidence/followUps).
   const records = Array.from({ length: 8 }, (_, i) => issue(100 + i, {
-    labels: ['by:code-health', 'risk:low', 'demo:approved'], state: 'CLOSED', closedAt: '2026-01-01T00:00:00Z',
+    labels: ['by:code-health', 'risk:low', 'demo:approved'], state: 'CLOSED', closedAt: CLOSED_20_DAYS_AGO,
   }));
   const runner = ghRunner({ candidates, records });
   const gitRunner = () => '';
@@ -224,9 +228,9 @@ test('computeOutlook: a sub-issue is excluded from trustRows\' cell totals (neve
   // 8 real closed+approved records, plus one decomposed sub-issue that would
   // otherwise dilute/undercount the same cell if it weren't excluded.
   const graded = Array.from({ length: 8 }, (_, i) => issue(100 + i, {
-    labels: ['by:code-health', 'risk:low', 'demo:approved'], state: 'CLOSED', closedAt: '2026-01-01T00:00:00Z',
+    labels: ['by:code-health', 'risk:low', 'demo:approved'], state: 'CLOSED', closedAt: CLOSED_20_DAYS_AGO,
   }));
-  const subIssue = issue(200, { labels: ['by:code-health', 'risk:low'], state: 'CLOSED', closedAt: '2026-01-01T00:00:00Z' });
+  const subIssue = issue(200, { labels: ['by:code-health', 'risk:low'], state: 'CLOSED', closedAt: CLOSED_20_DAYS_AGO });
   const records = [...graded, subIssue];
   const parents = [{ number: 300, body: '- [ ] #200' }];
   const runner = ghRunner({ candidates, records, parents });

@@ -5,8 +5,14 @@ const assert = require('node:assert');
 const {
   riskBand, trustRows, MIN_SAMPLES, MIN_VERDICTS, parseGitLog, discoverClosingCommits,
   isClosingCommitReverted, resolveOperationalOutcome, DEFAULT_REVERT_WINDOW_DAYS,
+  TRUST_POLICY_KEYS, followUpRatePercent, describeMixedReasons,
 } = require('../../../plugin/bin/lib/issues/trust.js');
 const { attemptFailedCommentBody } = require('../../../plugin/bin/lib/issues/retry.js');
+const { POLICY_KEYS } = require('../../../plugin/bin/lib/policy-schema.js');
+
+// A close inside the default evaluation window for fixtures that run on the
+// default clock: a closed record with no parseable closedAt forms no cell.
+const RECENT = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
 test('riskBand splits low from everything else', () => {
   assert.equal(riskBand(['risk:low']), 'low');
@@ -28,8 +34,8 @@ test('conflicting risk labels resolve to elevated, not low', () => {
 
 test('rows key on provenance and band together', () => {
   const rows = trustRows([
-    { number: 1, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED' },
-    { number: 2, labels: ['by:capture', 'risk:high', 'demo:approved'], body: '', state: 'CLOSED' },
+    { number: 1, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED', closedAt: RECENT },
+    { number: 2, labels: ['by:capture', 'risk:high', 'demo:approved'], body: '', state: 'CLOSED', closedAt: RECENT },
   ]);
   assert.equal(rows.length, 2);
   assert.deepEqual(rows.map((r) => r.key).sort(), ['producer:capture|elevated', 'producer:capture|low']);
@@ -37,8 +43,8 @@ test('rows key on provenance and band together', () => {
 
 test('approved and changes-requested are tallied separately', () => {
   const rows = trustRows([
-    { number: 1, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED' },
-    { number: 2, labels: ['by:capture', 'risk:low', 'demo:changes-requested'], body: '', state: 'CLOSED' },
+    { number: 1, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED', closedAt: RECENT },
+    { number: 2, labels: ['by:capture', 'risk:low', 'demo:changes-requested'], body: '', state: 'CLOSED', closedAt: RECENT },
   ]);
   assert.equal(rows[0].approved, 1);
   assert.equal(rows[0].changesRequested, 1);
@@ -46,7 +52,7 @@ test('approved and changes-requested are tallied separately', () => {
 
 test('an undispositioned record counts as unknown, never as success', () => {
   const rows = trustRows([
-    { number: 1, labels: ['by:capture', 'risk:low'], body: '', state: 'CLOSED' },
+    { number: 1, labels: ['by:capture', 'risk:low'], body: '', state: 'CLOSED', closedAt: RECENT },
   ]);
   assert.equal(rows[0].undispositioned, 1);
   assert.equal(rows[0].approved, 0);
@@ -55,7 +61,7 @@ test('an undispositioned record counts as unknown, never as success', () => {
 
 test('a cell with many records but no verdicts is still insufficient evidence', () => {
   const many = Array.from({ length: MIN_SAMPLES + 10 }, (_, i) => ({
-    number: i + 1, labels: ['by:capture', 'risk:low'], body: '', state: 'CLOSED',
+    number: i + 1, labels: ['by:capture', 'risk:low'], body: '', state: 'CLOSED', closedAt: RECENT,
   }));
   const rows = trustRows(many);
   assert.equal(rows[0].total, MIN_SAMPLES + 10);
@@ -64,7 +70,7 @@ test('a cell with many records but no verdicts is still insufficient evidence', 
 
 test('a follow-up record counts against the record it names', () => {
   const rows = trustRows([
-    { number: 7, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED' },
+    { number: 7, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED', closedAt: RECENT },
     { number: 8, labels: [], body: 'Origin: demo changes-requested from #7', state: 'OPEN' },
   ]);
   const capture = rows.find((r) => r.key === 'producer:capture|low');
@@ -74,7 +80,7 @@ test('a follow-up record counts against the record it names', () => {
 test('a follow-up record still counts despite trailing punctuation after #N', () => {
   for (const suffix of ['.', ',', ')']) {
     const rows = trustRows([
-      { number: 7, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED' },
+      { number: 7, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED', closedAt: RECENT },
       { number: 8, labels: [], body: `Origin: demo changes-requested from #7${suffix}`, state: 'OPEN' },
     ]);
     const capture = rows.find((r) => r.key === 'producer:capture|low');
@@ -84,14 +90,46 @@ test('a follow-up record still counts despite trailing punctuation after #N', ()
 
 test('a follow-up reference to #71 counts against #71, not #7', () => {
   const rows = trustRows([
-    { number: 7, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED' },
-    { number: 71, labels: ['by:docs-health', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED' },
+    { number: 7, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED', closedAt: RECENT },
+    { number: 71, labels: ['by:docs-health', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED', closedAt: RECENT },
     { number: 8, labels: [], body: 'Origin: demo changes-requested from #71', state: 'OPEN' },
   ]);
   const capture = rows.find((r) => r.key === 'producer:capture|low');
   const docsHealth = rows.find((r) => r.key === 'producer:docs-health|low');
   assert.equal(capture.followUps, 0);
   assert.equal(docsHealth.followUps, 1);
+});
+
+test('characterization: every follow-up naming a record adds one to followUps', () => {
+  const rows = trustRows([
+    { number: 7, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED', closedAt: RECENT },
+    { number: 8, labels: [], body: 'Origin: demo changes-requested from #7', state: 'OPEN' },
+    { number: 9, labels: [], body: 'Origin: demo changes-requested from #7', state: 'OPEN' },
+    { number: 10, labels: [], body: 'Origin: demo changes-requested from #7', state: 'OPEN' },
+  ]);
+  assert.equal(rows.length, 1, 'open follow-ups form no cell of their own');
+  assert.equal(rows[0].followUps, 3);
+});
+
+test('characterization: a closed record carrying a corrective Origin is scanned as a follow-up source', () => {
+  const rows = trustRows([
+    { number: 7, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED', closedAt: RECENT },
+    { number: 8, labels: ['by:docs-health', 'risk:low'], body: 'Origin: demo changes-requested from #7', state: 'CLOSED', closedAt: RECENT },
+  ]);
+  assert.equal(rows.find((r) => r.key === 'producer:capture|low').followUps, 1);
+});
+
+test('characterization: a follow-up naming a sub-issue or an open record counts against no cell', () => {
+  const rows = trustRows([
+    { number: 5, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED', closedAt: RECENT, hasParent: true },
+    { number: 6, labels: ['by:capture', 'risk:low'], body: '', state: 'OPEN' },
+    { number: 7, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED', closedAt: RECENT },
+    { number: 8, labels: [], body: 'Origin: demo changes-requested from #5', state: 'OPEN' },
+    { number: 9, labels: [], body: 'Origin: demo changes-requested from #6', state: 'OPEN' },
+  ]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].total, 1);
+  assert.equal(rows[0].followUps, 0);
 });
 
 test('only corrective Origin markers count as follow-ups', () => {
@@ -104,7 +142,7 @@ test('only corrective Origin markers count as follow-ups', () => {
   ];
   for (const [context, expected] of cases) {
     const rows = trustRows([
-      { number: 7, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED' },
+      { number: 7, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED', closedAt: RECENT },
       { number: 8, labels: [], body: `Origin: ${context} from #7`, state: 'OPEN' },
     ]);
     const capture = rows.find((r) => r.key === 'producer:capture|low');
@@ -113,21 +151,22 @@ test('only corrective Origin markers count as follow-ups', () => {
 });
 
 test('a scope-fork alone leaves a cell clean; a changes-requested does not', () => {
-  // The verdict consequence of the rule above: one miscounted scope-fork is
-  // enough to force a whole cell from 'clean' to 'mixed'.
+  // The verdict consequence of the rule above: at zero tolerance, one
+  // miscounted scope-fork is enough to force a whole cell from 'clean' to 'mixed'.
+  const zeroTolerance = { 'trust-follow-up-rate-max-percent': 0 };
   const closed = Array.from({ length: MIN_SAMPLES }, (_, i) => ({
-    number: i + 1, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED',
+    number: i + 1, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED', closedAt: RECENT,
   }));
   const scopeFork = trustRows([
     ...closed,
     { number: 100, labels: [], body: 'Origin: demo scope-fork from #1', state: 'OPEN' },
-  ]);
+  ], [], undefined, zeroTolerance);
   assert.equal(scopeFork[0].verdict, 'clean');
 
   const changesRequested = trustRows([
     ...closed,
     { number: 100, labels: [], body: 'Origin: demo changes-requested from #1', state: 'OPEN' },
-  ]);
+  ], [], undefined, zeroTolerance);
   assert.equal(changesRequested[0].verdict, 'mixed');
 });
 
@@ -135,7 +174,7 @@ test('an unrecognized "from #N" context still counts as a follow-up', () => {
   // Denylist, not allowlist: undercounting follow-ups flips a cell from
   // 'mixed' to 'clean', so an unknown marker is treated as corrective.
   const rows = trustRows([
-    { number: 7, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED' },
+    { number: 7, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED', closedAt: RECENT },
     { number: 8, labels: [], body: 'Origin: some future corrective flow from #7', state: 'OPEN' },
   ]);
   assert.equal(rows.find((r) => r.key === 'producer:capture|low').followUps, 1);
@@ -147,7 +186,7 @@ test('the unstructured cell is ungradable at any sample count', () => {
   // dispositioned, and clean on every negative signal — still ungradable.
   const overlong = 'Origin: ' + 'x'.repeat(80);
   const many = Array.from({ length: MIN_SAMPLES + 4 }, (_, i) => ({
-    number: i + 1, labels: ['risk:low', 'demo:approved'], body: overlong, state: 'CLOSED',
+    number: i + 1, labels: ['risk:low', 'demo:approved'], body: overlong, state: 'CLOSED', closedAt: RECENT,
   }));
   const rows = trustRows(many);
   assert.equal(rows.length, 1);
@@ -164,14 +203,14 @@ test('an identically-shaped classified cell does grade — the pin is the kind, 
   // Control for the test above: same counts, same signals, real provenance.
   // Without this, "insufficient-evidence" could be coming from anything.
   const many = Array.from({ length: MIN_SAMPLES + 4 }, (_, i) => ({
-    number: i + 1, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED',
+    number: i + 1, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED', closedAt: RECENT,
   }));
   assert.equal(trustRows(many)[0].verdict, 'clean');
 });
 
 test('the empty-origin cell is ungradable too — same kind, same pin', () => {
   const many = Array.from({ length: MIN_SAMPLES + 4 }, (_, i) => ({
-    number: i + 1, labels: ['risk:low', 'demo:approved'], body: 'Origin: .', state: 'CLOSED',
+    number: i + 1, labels: ['risk:low', 'demo:approved'], body: 'Origin: .', state: 'CLOSED', closedAt: RECENT,
   }));
   const rows = trustRows(many);
   assert.equal(rows[0].provenance, 'unstructured:empty-origin');
@@ -180,7 +219,7 @@ test('the empty-origin cell is ungradable too — same kind, same pin', () => {
 
 test('NOT_PLANNED is tallied as its own negative-ish signal', () => {
   const rows = trustRows([
-    { number: 1, labels: ['by:capture', 'risk:low'], body: '', state: 'CLOSED', stateReason: 'NOT_PLANNED' },
+    { number: 1, labels: ['by:capture', 'risk:low'], body: '', state: 'CLOSED', closedAt: RECENT, stateReason: 'NOT_PLANNED' },
   ]);
   assert.equal(rows[0].notPlanned, 1);
 });
@@ -196,9 +235,9 @@ test('parent-linked sub-issues do not count toward a cell reaching MIN_SAMPLES',
   // Seven un-dispositioned sub-issues plus one approved parent must not grade a cell
   // `clean` — the sub-issues were never judged, and total is what makes 8 mean 8.
   const subIssues = Array.from({ length: 7 }, (_, i) => ({
-    number: i + 1, state: 'CLOSED', labels: [], body: '', hasParent: true,
+    number: i + 1, state: 'CLOSED', closedAt: RECENT, labels: [], body: '', hasParent: true,
   }));
-  const parent = { number: 99, state: 'CLOSED', labels: ['demo:approved'], body: '' };
+  const parent = { number: 99, state: 'CLOSED', closedAt: RECENT, labels: ['demo:approved'], body: '' };
   const rows = trustRows([...subIssues, parent]);
   assert.equal(rows.every((r) => r.total < MIN_SAMPLES), true);
   assert.equal(rows.every((r) => r.verdict === 'insufficient-evidence'), true);
@@ -206,8 +245,8 @@ test('parent-linked sub-issues do not count toward a cell reaching MIN_SAMPLES',
 
 test('rows are returned in a stable order', () => {
   const input = [
-    { number: 1, labels: ['by:docs-health', 'risk:low'], body: '', state: 'CLOSED' },
-    { number: 2, labels: ['by:capture', 'risk:low'], body: '', state: 'CLOSED' },
+    { number: 1, labels: ['by:docs-health', 'risk:low'], body: '', state: 'CLOSED', closedAt: RECENT },
+    { number: 2, labels: ['by:capture', 'risk:low'], body: '', state: 'CLOSED', closedAt: RECENT },
   ];
   assert.deepEqual(trustRows(input).map((r) => r.key), trustRows(input.reverse()).map((r) => r.key));
 });
@@ -217,7 +256,7 @@ test('one verdict cannot grade a class of forty', () => {
   // let a single approval grade a 40-record cell 'clean' — 1 known, 39 unknown.
   // Harmless while the table only rendered; a live grant once a governor reads it.
   const records = Array.from({ length: 40 }, (_, i) => ({
-    number: i + 1, labels: ['by:capture', 'risk:low'], body: '', state: 'CLOSED',
+    number: i + 1, labels: ['by:capture', 'risk:low'], body: '', state: 'CLOSED', closedAt: RECENT,
   }));
   records[0].labels = ['by:capture', 'risk:low', 'demo:approved'];
   const row = trustRows(records)[0];
@@ -229,7 +268,7 @@ test('one verdict cannot grade a class of forty', () => {
 test('the verdict floor is MIN_VERDICTS, and it is a floor on verdicts not records', () => {
   const build = (approvals) => {
     const records = Array.from({ length: 40 }, (_, i) => ({
-      number: i + 1, labels: ['by:capture', 'risk:low'], body: '', state: 'CLOSED',
+      number: i + 1, labels: ['by:capture', 'risk:low'], body: '', state: 'CLOSED', closedAt: RECENT,
     }));
     for (let i = 0; i < approvals; i += 1) {
       records[i].labels = ['by:capture', 'risk:low', 'demo:approved'];
@@ -243,7 +282,7 @@ test('the verdict floor is MIN_VERDICTS, and it is a floor on verdicts not recor
 test('sample floor and verdict floor are both required', () => {
   // MIN_VERDICTS verdicts in a cell too small to be a class yet: still ungraded.
   const records = Array.from({ length: MIN_VERDICTS }, (_, i) => ({
-    number: i + 1, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED',
+    number: i + 1, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED', closedAt: RECENT,
   }));
   const row = trustRows(records)[0];
   assert.ok(row.total < MIN_SAMPLES, 'fixture must sit below the sample floor');
@@ -254,13 +293,14 @@ test('sample floor and verdict floor are both required', () => {
 test('a declined record is not a quality failure and never blocks a verdict', () => {
   // NOT_PLANNED means the record was declined — no work product exists to judge.
   // Counting it as a negative made two of this repo's four real cells
-  // permanently ungradable, since the table has no time window to age it out.
+  // ungradable until it aged out of the evaluation window, and a decline is
+  // not a quality outcome at any window.
   const records = Array.from({ length: MIN_SAMPLES }, (_, i) => ({
-    number: i + 1, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED',
+    number: i + 1, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED', closedAt: RECENT,
   }));
   records.push({
     number: 99, labels: ['by:capture', 'risk:low'], body: '',
-    state: 'CLOSED', stateReason: 'NOT_PLANNED',
+    state: 'CLOSED', closedAt: RECENT, stateReason: 'NOT_PLANNED',
   });
   const row = trustRows(records)[0];
   assert.equal(row.notPlanned, 1, 'still counted and still rendered');
@@ -271,20 +311,21 @@ test('changes-requested and follow-ups remain verdict inputs', () => {
   // Control for the test above: removing notPlanned from the clean test must not
   // remove the two signals that ARE about work quality.
   const base = () => Array.from({ length: MIN_SAMPLES }, (_, i) => ({
-    number: i + 1, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED',
+    number: i + 1, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED', closedAt: RECENT,
   }));
 
   const rejected = base();
   rejected[0].labels = ['by:capture', 'risk:low', 'demo:changes-requested'];
   assert.equal(trustRows(rejected)[0].verdict, 'mixed');
 
+  // Follow-ups are a rate input now; zero tolerance makes one follow-up decisive.
   const followedUp = [...base(), { number: 100, labels: [], body: 'Origin: demo changes-requested from #1', state: 'OPEN' }];
-  assert.equal(trustRows(followedUp)[0].verdict, 'mixed');
+  assert.equal(trustRows(followedUp, [], undefined, { 'trust-follow-up-rate-max-percent': 0 })[0].verdict, 'mixed');
 });
 
 test('coverage is reported and is dispositioned over total', () => {
   const records = Array.from({ length: 10 }, (_, i) => ({
-    number: i + 1, labels: ['by:capture', 'risk:low'], body: '', state: 'CLOSED',
+    number: i + 1, labels: ['by:capture', 'risk:low'], body: '', state: 'CLOSED', closedAt: RECENT,
   }));
   for (let i = 0; i < 5; i += 1) records[i].labels = ['by:capture', 'risk:low', 'demo:approved'];
   const row = trustRows(records)[0];
@@ -297,7 +338,7 @@ test('an unstructured cell stays ungradable however many verdicts it collects', 
   // after the floor change, so the two defenses stay genuinely independent.
   const overlong = 'Origin: ' + 'x'.repeat(80);
   const records = Array.from({ length: MIN_SAMPLES + MIN_VERDICTS }, (_, i) => ({
-    number: i + 1, labels: ['risk:low', 'demo:approved'], body: overlong, state: 'CLOSED',
+    number: i + 1, labels: ['risk:low', 'demo:approved'], body: overlong, state: 'CLOSED', closedAt: RECENT,
   }));
   const row = trustRows(records)[0];
   assert.equal(row.provenance, 'unstructured:unstructured');
@@ -659,7 +700,7 @@ test('gotcha: one operational known-good among 39 unknowns must not grade a clas
 
 test('backward compatibility: trustRows(records) with no gitLog/now/policy behaves exactly as before', () => {
   const rows = trustRows([
-    { number: 1, labels: ['by:capture', 'risk:low'], body: '', state: 'CLOSED', closedAt: '2020-01-01T00:00:00Z' },
+    { number: 1, labels: ['by:capture', 'risk:low'], body: '', state: 'CLOSED', closedAt: RECENT },
   ]);
   assert.equal(rows[0].undispositioned, 1);
   assert.equal(rows[0].operationalGood, 0);
@@ -778,7 +819,7 @@ test('a demo:approved record carrying an earlier failed-attempt marker keeps its
   // path) — an eventual approval is not retroactively contradicted by an
   // earlier failed attempt on the way to it.
   const record = {
-    number: 1, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED',
+    number: 1, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED', closedAt: RECENT,
     comments: [{ body: attemptFailedCommentBody({ attemptNumber: 1, reason: 'x', classification: 'correctness' }) }],
   };
   const rows = trustRows([record]);
@@ -788,8 +829,8 @@ test('a demo:approved record carrying an earlier failed-attempt marker keeps its
 
 test('approvedBatch is tallied from the demo:approved-batch marker, and only from it', () => {
   const rows = trustRows([
-    { number: 1, labels: ['by:capture', 'risk:low', 'demo:approved', 'demo:approved-batch'], body: '', state: 'CLOSED' },
-    { number: 2, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED' },
+    { number: 1, labels: ['by:capture', 'risk:low', 'demo:approved', 'demo:approved-batch'], body: '', state: 'CLOSED', closedAt: RECENT },
+    { number: 2, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED', closedAt: RECENT },
   ]);
   assert.equal(rows[0].approved, 2, 'both records are approved regardless of provenance');
   assert.equal(rows[0].approvedBatch, 1, 'only the batch-marked record counts toward approvedBatch');
@@ -797,9 +838,9 @@ test('approvedBatch is tallied from the demo:approved-batch marker, and only fro
 
 test('AC3.2: accept:approved-batch counts as approvedBatch and batchOnly, exactly as demo:approved-batch does', () => {
   const rows = trustRows([
-    { number: 1, labels: ['by:capture', 'risk:low', 'accept:approved', 'accept:approved-batch'], body: '', state: 'CLOSED' },
-    { number: 2, labels: ['by:capture', 'risk:low', 'accept:approved'], body: '', state: 'CLOSED' },
-    { number: 3, labels: ['by:capture', 'risk:low', 'demo:approved', 'accept:approved-batch'], body: '', state: 'CLOSED' },
+    { number: 1, labels: ['by:capture', 'risk:low', 'accept:approved', 'accept:approved-batch'], body: '', state: 'CLOSED', closedAt: RECENT },
+    { number: 2, labels: ['by:capture', 'risk:low', 'accept:approved'], body: '', state: 'CLOSED', closedAt: RECENT },
+    { number: 3, labels: ['by:capture', 'risk:low', 'demo:approved', 'accept:approved-batch'], body: '', state: 'CLOSED', closedAt: RECENT },
   ]);
   assert.equal(rows[0].approved, 3, 'all three records are approved regardless of spelling');
   assert.equal(rows[0].approvedBatch, 2, 'both accept:approved-batch markers count, beside a demo:approved verdict too');
@@ -807,7 +848,7 @@ test('AC3.2: accept:approved-batch counts as approvedBatch and batchOnly, exactl
   const batchOnly = trustRows(Array.from({ length: MIN_SAMPLES }, (_, i) => ({
     number: i + 1,
     labels: ['by:capture', 'risk:low', 'accept:approved', 'accept:approved-batch'],
-    body: '', state: 'CLOSED',
+    body: '', state: 'CLOSED', closedAt: RECENT,
   })))[0];
   assert.equal(batchOnly.approved, MIN_SAMPLES);
   assert.equal(batchOnly.approvedBatch, MIN_SAMPLES);
@@ -818,7 +859,7 @@ test('AC3.2: accept:approved-batch counts as approvedBatch and batchOnly, exactl
   const walkthroughBacked = trustRows(Array.from({ length: MIN_SAMPLES }, (_, i) => ({
     number: i + 1,
     labels: i === 0 ? ['by:capture', 'risk:low', 'accept:approved'] : ['by:capture', 'risk:low', 'accept:approved', 'accept:approved-batch'],
-    body: '', state: 'CLOSED',
+    body: '', state: 'CLOSED', closedAt: RECENT,
   })))[0];
   assert.equal(walkthroughBacked.approvedBatch, MIN_SAMPLES - 1);
   assert.equal(walkthroughBacked.batchOnly, false);
@@ -861,7 +902,7 @@ test('#431: a cell resting entirely on batch sign-offs demotes from clean to mix
   const records = Array.from({ length: MIN_SAMPLES }, (_, i) => ({
     number: i + 1,
     labels: ['by:capture', 'risk:low', 'demo:approved', 'demo:approved-batch'],
-    body: '', state: 'CLOSED',
+    body: '', state: 'CLOSED', closedAt: RECENT,
   }));
   const row = trustRows(records)[0];
   assert.equal(row.approved, MIN_SAMPLES);
@@ -878,7 +919,7 @@ test('#431: one walkthrough-backed approval among otherwise-batch evidence keeps
   const records = Array.from({ length: MIN_SAMPLES }, (_, i) => ({
     number: i + 1,
     labels: ['by:capture', 'risk:low', 'demo:approved', 'demo:approved-batch'],
-    body: '', state: 'CLOSED',
+    body: '', state: 'CLOSED', closedAt: RECENT,
   }));
   records[0].labels = ['by:capture', 'risk:low', 'demo:approved'];
   const row = trustRows(records)[0];
@@ -892,10 +933,225 @@ test('#431: a pre-existing demo:approved with no marker is walkthrough-backed an
   // Backward compatibility: every demo:approved label applied before this
   // signal existed carries no demo:approved-batch marker at all.
   const records = Array.from({ length: MIN_SAMPLES }, (_, i) => ({
-    number: i + 1, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED',
+    number: i + 1, labels: ['by:capture', 'risk:low', 'demo:approved'], body: '', state: 'CLOSED', closedAt: RECENT,
   }));
   const row = trustRows(records)[0];
   assert.equal(row.approvedBatch, 0);
   assert.equal(row.batchOnly, false);
   assert.equal(row.verdict, 'clean');
+});
+
+// --- Evaluation window and follow-up rate (#5291) --------------------------
+
+function capturedClass(count, daysAgo, firstNumber = 1) {
+  return Array.from({ length: count }, (_, i) => operationalFixture(firstNumber + i, daysAgo));
+}
+
+function reflectFollowUp(number, target, extra = {}) {
+  return { number, labels: [], body: `Origin: reflect full from #${target}`, state: 'OPEN', ...extra };
+}
+
+// 10 in-window records, 6 of them operationally dispositioned, plus 2 open
+// follow-ups naming #1 and #2 — a 20% follow-up rate.
+function ac1Fixture() {
+  const records = capturedClass(10, 15);
+  const gitLog = records.slice(0, 6).map((r) => commitFor(r.number));
+  return { records: [...records, reflectFollowUp(101, 1), reflectFollowUp(102, 2)], gitLog };
+}
+
+test('AC1.1/AC1.2: 10 in-window records, 6 dispositioned, 2 with one follow-up each read clean at the default and mixed at 10%', () => {
+  const { records, gitLog } = ac1Fixture();
+  const [row] = trustRows(records, gitLog, NOW, {});
+  assert.equal(row.total, 10);
+  assert.equal(row.dispositioned, 6);
+  assert.equal(row.followUps, 2);
+  assert.equal(row.followUpRecords, 2);
+  assert.equal(row.followUpRate, 0.2);
+  assert.equal(row.verdict, 'clean');
+  assert.deepEqual(row.mixedReasons, []);
+  assert.equal(row.followUpRateMaxPercent, 30);
+
+  const [strict] = trustRows(records, gitLog, NOW, { 'trust-follow-up-rate-max-percent': 10 });
+  assert.equal(strict.verdict, 'mixed');
+  assert.deepEqual(strict.mixedReasons, ['follow-up-rate']);
+  assert.equal(strict.followUpRateMaxPercent, 10);
+});
+
+test('AC2.1: three follow-ups on one record count one followUpRecord and three followUps', () => {
+  const records = capturedClass(10, 15);
+  const gitLog = records.slice(0, 6).map((r) => commitFor(r.number));
+  const [row] = trustRows(
+    [...records, reflectFollowUp(101, 1), reflectFollowUp(102, 1), reflectFollowUp(103, 1)],
+    gitLog, NOW, {},
+  );
+  assert.equal(row.followUps, 3);
+  assert.equal(row.followUpRecords, 1);
+  assert.equal(row.followUpRate, 1 / row.total);
+});
+
+test('AC3.1: a record closed 31 days ago forms no cell under the default window and does under 45', () => {
+  const r31 = operationalFixture(1, 31);
+  assert.deepEqual(trustRows([r31], [], NOW, {}), []);
+  const widened = trustRows([r31], [], NOW, { 'trust-evaluation-window-days': 45 });
+  assert.equal(widened.length, 1);
+  assert.equal(widened[0].total, 1);
+  assert.equal(widened[0].evaluationWindowDays, 45);
+  assert.deepEqual(widened[0].mixedReasons, [], 'a non-mixed row carries no reasons');
+});
+
+test('AC3.2: a changes-requested record ages out — 31 days ago no longer pins, 29 days ago still does', () => {
+  const good = capturedClass(MIN_SAMPLES, 15);
+  const gitLog = good.map((r) => commitFor(r.number));
+  const rejectedAt = (daysAgo) => ({
+    number: 50, labels: ['by:capture', 'risk:low', 'demo:changes-requested'], body: '',
+    state: 'CLOSED', closedAt: closedDaysAgo(daysAgo),
+  });
+
+  const [aged] = trustRows([...good, rejectedAt(31)], gitLog, NOW, {});
+  assert.equal(aged.total, MIN_SAMPLES);
+  assert.equal(aged.changesRequested, 0);
+  assert.equal(aged.verdict, 'clean');
+
+  const [recent] = trustRows([...good, rejectedAt(29)], gitLog, NOW, {});
+  assert.equal(recent.verdict, 'mixed');
+  assert.deepEqual(recent.mixedReasons, ['changes-requested']);
+
+  const [boundary] = trustRows([...good, rejectedAt(30)], gitLog, NOW, {});
+  assert.equal(boundary.changesRequested, 1, 'exactly windowDays old is still in-window (inclusive)');
+  assert.equal(boundary.verdict, 'mixed');
+});
+
+test('AC4.1: an out-of-window closed follow-up still counts against an in-window target', () => {
+  const target = operationalFixture(1, 10);
+  const followUp = {
+    number: 2, labels: ['by:docs-health', 'risk:low'], body: 'Origin: reflect full from #1',
+    state: 'CLOSED', closedAt: closedDaysAgo(60),
+  };
+  const rows = trustRows([target, followUp], [], NOW, {});
+  assert.equal(rows.length, 1, 'the out-of-window follow-up forms no cell of its own');
+  assert.equal(rows[0].key, 'producer:capture|low');
+  assert.equal(rows[0].followUps, 1);
+  assert.equal(rows[0].followUpRecords, 1);
+});
+
+test('AC5.1: one in-window negative-evidence record pins the class at any rate threshold', () => {
+  const good = capturedClass(MIN_SAMPLES, 15);
+  const reverted = operationalFixture(9, 20);
+  const gitLog = [
+    ...good.map((r) => commitFor(r.number)),
+    commitFor(9),
+    { sha: sha40(999), message: `This reverts commit ${sha40(9)}.` },
+  ];
+  const [row] = trustRows([...good, reverted], gitLog, NOW, { 'trust-follow-up-rate-max-percent': 100 });
+  assert.equal(row.negativeEvidence, 1);
+  assert.equal(row.verdict, 'mixed');
+  assert.ok(row.mixedReasons.includes('negative-evidence'));
+});
+
+test('AC6.1: malformed window and rate fall back to the schema defaults', () => {
+  const records = [...capturedClass(MIN_SAMPLES, 15), operationalFixture(20, 31)];
+  const gitLog = records.map((r) => commitFor(r.number));
+  const defaults = trustRows(records, gitLog, NOW, {});
+  assert.deepEqual(trustRows(records, gitLog, NOW, { 'trust-evaluation-window-days': 0 }), defaults);
+  assert.equal(defaults[0].evaluationWindowDays, 30);
+  assert.equal(defaults[0].total, MIN_SAMPLES);
+
+  const [banana] = trustRows(records, gitLog, NOW, { 'trust-follow-up-rate-max-percent': 'banana' });
+  assert.equal(banana.followUpRateMaxPercent, 30);
+});
+
+test('threshold 0 restores zero tolerance', () => {
+  const { records, gitLog } = ac1Fixture();
+  const [row] = trustRows(records, gitLog, NOW, { 'trust-follow-up-rate-max-percent': 0 });
+  assert.equal(row.verdict, 'mixed');
+  assert.deepEqual(row.mixedReasons, ['follow-up-rate']);
+});
+
+test('a closed record with no parseable closedAt forms no cell but still counts as a follow-up source', () => {
+  const target = operationalFixture(1, 10);
+  const undated = { number: 2, labels: ['by:docs-health', 'risk:low'], body: 'Origin: reflect full from #1', state: 'CLOSED' };
+  const unparseable = { number: 3, labels: ['by:docs-health', 'risk:low'], body: '', state: 'CLOSED', closedAt: 'not-a-date' };
+  const rows = trustRows([target, undated, unparseable], [], NOW, {});
+  assert.equal(rows.length, 1, 'neither undated record forms a cell');
+  assert.equal(rows[0].key, 'producer:capture|low');
+  assert.equal(rows[0].followUps, 1);
+  assert.equal(rows[0].followUpRecords, 1);
+});
+
+test('oldestClosedAt reports the earliest graded close and evaluationWindowDays echoes the window', () => {
+  const records = [operationalFixture(1, 12), operationalFixture(2, 20), operationalFixture(3, 3)];
+  const [row] = trustRows(records, [], NOW, {});
+  assert.equal(row.oldestClosedAt, closedDaysAgo(20));
+  assert.equal(row.evaluationWindowDays, 30);
+});
+
+test('mixedReasons lists every failing input in the fixed order', () => {
+  // Batch-only approvals, one changes-requested, one negative-evidence marker,
+  // and follow-ups on 4 of 10 records (40% > 30%).
+  const batch = Array.from({ length: MIN_SAMPLES }, (_, i) => ({
+    number: i + 1, labels: ['by:capture', 'risk:low', 'demo:approved', 'demo:approved-batch'], body: '',
+    state: 'CLOSED', closedAt: closedDaysAgo(5),
+  }));
+  const rejected = {
+    number: 20, labels: ['by:capture', 'risk:low', 'demo:changes-requested'], body: '',
+    state: 'CLOSED', closedAt: closedDaysAgo(5),
+  };
+  const negative = negativeEvidenceFixture(21, 'correctness');
+  const followUps = [1, 2, 3, 4].map((target) => reflectFollowUp(100 + target, target));
+  const [row] = trustRows([...batch, rejected, negative, ...followUps], [], NOW, {});
+  assert.equal(row.total, 10);
+  assert.equal(row.verdict, 'mixed');
+  assert.deepEqual(row.mixedReasons, ['changes-requested', 'follow-up-rate', 'negative-evidence', 'batch-only']);
+  assert.equal(
+    describeMixedReasons(row),
+    '1 changes-requested, follow-up rate 40% > 30%, 1 negative, batch-only approvals',
+  );
+});
+
+test('describeMixedReasons renders every reason in order', () => {
+  const row = {
+    verdict: 'mixed',
+    mixedReasons: ['changes-requested', 'follow-up-rate', 'negative-evidence', 'batch-only'],
+    changesRequested: 1, followUpRecords: 1, total: 3, followUpRate: 1 / 3, followUpRateMaxPercent: 30, negativeEvidence: 2,
+  };
+  assert.equal(describeMixedReasons(row), '1 changes-requested, follow-up rate 33.4% > 30%, 2 negative, batch-only approvals');
+  assert.equal(describeMixedReasons({ ...row, mixedReasons: ['follow-up-rate', 'negative-evidence'] }), 'follow-up rate 33.4% > 30%, 2 negative');
+  assert.equal(describeMixedReasons({ verdict: 'clean', mixedReasons: [] }), '');
+  assert.equal(describeMixedReasons({ verdict: 'mixed' }), '');
+});
+
+test('followUpRatePercent rounds up at one decimal so a failing rate never reads as the threshold', () => {
+  assert.equal(followUpRatePercent({ followUpRecords: 7, total: 23 }), 30.5);
+  assert.equal(followUpRatePercent({ followUpRecords: 6, total: 20 }), 30);
+  assert.equal(followUpRatePercent({ followUpRecords: 1, total: 3 }), 33.4);
+  assert.equal(followUpRatePercent({ total: 0 }), null);
+  assert.equal(followUpRatePercent({ followUpRecords: 1, total: 0 }), null);
+  assert.equal(followUpRatePercent({ followUpRecords: 1.5, total: 3 }), null);
+
+  const records = capturedClass(23, 15);
+  const gitLog = records.map((r) => commitFor(r.number));
+  const followUps = [1, 2, 3, 4, 5, 6, 7].map((target) => reflectFollowUp(100 + target, target));
+  const [row] = trustRows([...records, ...followUps], gitLog, NOW, {});
+  assert.equal(row.followUpRecords, 7);
+  assert.equal(row.verdict, 'mixed');
+  assert.ok(describeMixedReasons(row).includes('follow-up rate 30.5% > 30%'), describeMixedReasons(row));
+});
+
+test('a follow-up rate exactly at the threshold stays clean (inclusive integer compare)', () => {
+  const records = capturedClass(20, 15);
+  const gitLog = records.map((r) => commitFor(r.number));
+  const followUps = [1, 2, 3, 4, 5, 6].map((target) => reflectFollowUp(100 + target, target));
+  const [row] = trustRows([...records, ...followUps], gitLog, NOW, {});
+  assert.equal(row.followUpRecords, 6);
+  assert.equal(followUpRatePercent(row), 30);
+  assert.equal(row.verdict, 'clean');
+});
+
+test('TRUST_POLICY_KEYS lists the three trust keys in order and every one is a POLICY_KEYS key', () => {
+  assert.deepEqual([...TRUST_POLICY_KEYS], [
+    'trust-revert-window-days', 'trust-evaluation-window-days', 'trust-follow-up-rate-max-percent',
+  ]);
+  assert.ok(Object.isFrozen(TRUST_POLICY_KEYS));
+  const known = new Set(POLICY_KEYS.map((entry) => entry.key));
+  for (const key of TRUST_POLICY_KEYS) assert.ok(known.has(key), `${key} must be a POLICY_KEYS key`);
 });

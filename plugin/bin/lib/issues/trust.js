@@ -285,21 +285,57 @@ function resolveOperationalOutcome(record, gitLog, now, windowDays) {
 
 // raw policy['trust-revert-window-days'] -> a validated integer >= 1.
 // Malformed-value coercion is owned centrally by bin/lib/policy-schema.js —
-// this is the one place trust.js asks it, and the caller of this function
+// this is the one place trust.js asks it for this key, and the caller of this function
 // (trustRows, below) trusts what comes back without re-checking it.
 function resolveRevertWindowDays(policy) {
   const raw = policy && policy['trust-revert-window-days'];
   return resolveValue('trust-revert-window-days', raw);
 }
 
+// Every policy key trustRows reads. A caller builds the policy it passes from
+// this list, so a new trust key reaches every caller at once.
+const TRUST_POLICY_KEYS = Object.freeze([
+  'trust-revert-window-days', 'trust-evaluation-window-days', 'trust-follow-up-rate-max-percent',
+]);
+
+// The fixed order a mixed row lists the verdict inputs it fails.
+const MIXED_REASON_ORDER = Object.freeze(['changes-requested', 'follow-up-rate', 'negative-evidence', 'batch-only']);
+
+// Defaults and malformed-value coercion for both come from policy-schema.js,
+// like the revert window above.
+function resolveEvaluationWindowDays(policy) {
+  return resolveValue('trust-evaluation-window-days', policy && policy['trust-evaluation-window-days']);
+}
+
+function resolveFollowUpRateMaxPercent(policy) {
+  return resolveValue('trust-follow-up-rate-max-percent', policy && policy['trust-follow-up-rate-max-percent']);
+}
+
+function closedAtMsOf(record) {
+  return typeof record.closedAt === 'string' ? Date.parse(record.closedAt) : NaN;
+}
+
+// The lookback window: a class is graded on its recent records, so an old
+// changes-requested or follow-up stops pinning it once it ages out. Inclusive at
+// exactly windowDays, and a future closedAt counts as in-window. A closed record
+// with no parseable closedAt is out of window: every live caller reads the record
+// snapshot, which carries closedAt, so only a hand-built record lacks one.
+function inEvaluationWindow(record, clock, windowDays) {
+  const closedAtMs = closedAtMsOf(record);
+  return Number.isFinite(closedAtMs) && clock - closedAtMs <= windowDays * MS_PER_DAY;
+}
+
 function trustRows(records, gitLog, now, policy) {
   const all = Array.isArray(records) ? records : [];
   const clock = Number.isFinite(now) ? now : Date.now();
   const windowDays = resolveRevertWindowDays(policy);
+  const evaluationWindowDays = resolveEvaluationWindowDays(policy);
+  const followUpRateMaxPercent = resolveFollowUpRateMaxPercent(policy);
   // A decomposed sub-issue is not independently graded work — its parent issue
   // carries the one verdict. Counting sub-issues here would let `total >= 8` be
   // satisfied by records nobody judged.
-  const closed = all.filter((r) => r && r.state === 'CLOSED' && r.hasParent !== true);
+  const closed = all.filter((r) => r && r.state === 'CLOSED' && r.hasParent !== true
+    && inEvaluationWindow(r, clock, evaluationWindowDays));
 
   // Build cells from closed records only. Key on kind:source (never source
   // alone — see provenance.js) plus the risk band, joined with '|'.
@@ -331,11 +367,16 @@ function trustRows(records, gitLog, now, policy) {
         undispositioned: 0,
         notPlanned: 0,
         followUps: 0,
+        // Distinct record numbers a corrective follow-up names, and the earliest
+        // close among the cell's records — row inputs, not row fields.
+        followUpTargets: new Set(),
+        oldestClosedAtMs: Infinity,
       };
       cells.set(key, cell);
     }
 
     cell.total += 1;
+    cell.oldestClosedAtMs = Math.min(cell.oldestClosedAtMs, closedAtMsOf(record));
     if (record.stateReason === 'NOT_PLANNED') cell.notPlanned += 1;
 
     const disposition = dispositionState(record.labels);
@@ -378,17 +419,25 @@ function trustRows(records, gitLog, now, policy) {
     cellByNumber.set(record.number, cell);
   }
 
-  // Open records are still scanned for follow-up Origin references — an open
-  // follow-up is evidence about the closed record it names, even though the
-  // follow-up itself never forms a cell of its own.
+  // Open records, and closed ones outside the window, are still scanned for
+  // follow-up Origin references — a follow-up is evidence about the in-window
+  // record it names, even when the follow-up itself forms no cell of its own.
   for (const record of all) {
     const target = correctiveFollowUpTarget(record.body);
     if (target === null) continue;
     const cell = cellByNumber.get(target);
-    if (cell) cell.followUps += 1;
+    if (cell) {
+      cell.followUps += 1;
+      cell.followUpTargets.add(target);
+    }
   }
 
-  const rows = Array.from(cells.values()).map((cell) => {
+  const rows = Array.from(cells.values()).map(({ followUpTargets, oldestClosedAtMs, ...cell }) => {
+    // The rate counts records that drew a follow-up, not follow-ups: three
+    // corrections to one record are one record's worth of rework.
+    const followUpRecords = followUpTargets.size;
+    const followUpRate = cell.total === 0 ? 0 : followUpRecords / cell.total;
+    const oldestClosedAt = Number.isFinite(oldestClosedAtMs) ? new Date(oldestClosedAtMs).toISOString() : null;
     // negativeEvidence counts toward dispositioned like every other real
     // outcome signal — a known-bad record is not "unknown", so folding it
     // into undispositioned instead would understate coverage in the safe
@@ -404,6 +453,7 @@ function trustRows(records, gitLog, now, policy) {
     // does not earn 'clean' — see the verdict computation below.
     const batchOnly = cell.approved > 0 && cell.approvedBatch === cell.approved && cell.operationalGood === 0;
     let verdict = 'insufficient-evidence';
+    let mixedReasons = [];
     if (
       cell.kind !== UNGRADABLE_KIND &&
       cell.total >= MIN_SAMPLES &&
@@ -411,32 +461,74 @@ function trustRows(records, gitLog, now, policy) {
     ) {
       // notPlanned is deliberately absent. A record closed NOT_PLANNED was
       // declined — no work product was ever produced for this class to be judged
-      // on — so reading it as a quality failure is a category error. It was also
-      // an unrecoverable one: this table has no time window, so the single
-      // NOT_PLANNED in this repo's `human:human|elevated` cell and the three in
-      // `producer:capture|elevated` would have pinned both to 'mixed' forever,
-      // whatever evidence arrived afterward. It stays counted and stays rendered
-      // — it says something real about a class's filing precision — but it is not
-      // a verdict input.
+      // on — so reading it as a quality failure is a category error. Records now
+      // age out of the evaluation window, so a decline would no longer pin a class
+      // forever, but inside the window it would still grade a class on work that
+      // was never done. It stays counted and stays rendered — it says something
+      // real about a class's filing precision — but it is not a verdict input.
+      //
+      // Follow-ups are a rate, not a zero-tolerance count: the share of the
+      // cell's records that drew corrective work may reach
+      // `trust-follow-up-rate-max-percent` and still read clean. Compared as
+      // integers so a rate exactly at the threshold never fails on float error.
       //
       // negativeEvidence (#268) is a precedence rule layered on top of this
-      // same clean/mixed split, not a reuse of the changesRequested/followUps
+      // same clean/mixed split, not a reuse of the changesRequested/follow-up
       // check it sits beside: a correctness/ambiguous-classified failure or a
       // discovered revert pins the verdict below 'clean' regardless of how
       // many positive (approved/operationalGood) outcomes the cell also
       // holds — one known-bad outcome in the sample is disqualifying, full
       // stop, the same as one changes-requested already was.
-      const clean = cell.changesRequested === 0 && cell.followUps === 0 && cell.negativeEvidence === 0 && !batchOnly;
-      verdict = clean ? 'clean' : 'mixed';
+      const failing = {
+        'changes-requested': cell.changesRequested !== 0,
+        'follow-up-rate': followUpRecords * 100 > followUpRateMaxPercent * cell.total,
+        'negative-evidence': cell.negativeEvidence !== 0,
+        'batch-only': batchOnly,
+      };
+      mixedReasons = MIXED_REASON_ORDER.filter((reason) => failing[reason]);
+      verdict = mixedReasons.length === 0 ? 'clean' : 'mixed';
     }
-    return { ...cell, dispositioned, coverage, batchOnly, verdict };
+    return {
+      ...cell, followUpRecords, followUpRate, dispositioned, coverage, batchOnly, verdict,
+      mixedReasons, evaluationWindowDays, followUpRateMaxPercent, oldestClosedAt,
+    };
   });
 
   rows.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   return rows;
 }
 
+// A row's follow-up rate in percent, one decimal, rounded up: a rate that fails
+// the integer compare in trustRows never renders equal to the threshold (7/23 is
+// 30.5, never 30.4 or 30). null when the row cannot carry a rate.
+function followUpRatePercent(row) {
+  const total = row && row.total;
+  const followUpRecords = row && row.followUpRecords;
+  if (typeof total !== 'number' || !Number.isFinite(total) || total <= 0) return null;
+  if (!Number.isInteger(followUpRecords)) return null;
+  return Math.ceil((followUpRecords * 1000) / total) / 10;
+}
+
+const MIXED_REASON_TEXT = {
+  'changes-requested': (row) => `${row.changesRequested} changes-requested`,
+  'follow-up-rate': (row) => `follow-up rate ${followUpRatePercent(row)}% > ${row.followUpRateMaxPercent}%`,
+  'negative-evidence': (row) => `${row.negativeEvidence} negative`,
+  'batch-only': () => 'batch-only approvals',
+};
+
+// Why a mixed row is not clean, in mixedReasons order, e.g.
+// "follow-up rate 33.4% > 30%, 2 negative". '' for a non-mixed row and for a
+// mixed row with no mixedReasons array; callers drop their parentheses on ''.
+function describeMixedReasons(row) {
+  if (!row || row.verdict !== 'mixed' || !Array.isArray(row.mixedReasons)) return '';
+  return row.mixedReasons
+    .filter((reason) => Object.prototype.hasOwnProperty.call(MIXED_REASON_TEXT, reason))
+    .map((reason) => MIXED_REASON_TEXT[reason](row))
+    .join(', ');
+}
+
 module.exports = {
   riskBand, trustRows, MIN_SAMPLES, MIN_VERDICTS, DEFAULT_REVERT_WINDOW_DAYS,
   parseGitLog, discoverClosingCommits, isClosingCommitReverted, resolveOperationalOutcome,
+  TRUST_POLICY_KEYS, followUpRatePercent, describeMixedReasons,
 };
