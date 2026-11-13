@@ -601,7 +601,7 @@ function conflictStop(s) {
 }
 
 // Ports Step 3 items 2, 4 and 5, "degrade to ready+comment": a `merge-refused` stop leaves the PR
-// ready with one PR comment from the fixed template, and parks nothing. `detail` is the result's
+// as the last call left it, with one PR comment from the fixed template, and parks nothing. `detail` is the result's
 // detail (the stop event's too, after `eventHead`), `said` the free text the comment reduces. A
 // failed post never changes the reason: the detail names it, and a SKIP degrade trace keeps it in
 // decisions.md.
