@@ -79,21 +79,24 @@ function renderModel(input) {
 // meaning "ask git": GIT_DIR / GIT_COMMON_DIR set (even empty) redirect git's
 // own lookup, and any file that is missing, unparseable or unreadable could
 // mean a shape this reader does not model.
+//
+// The parse mirrors git: read_gitfile strips only trailing \n / \r from the
+// whole file, requires it to start with exactly `gitdir: `, and resolves a
+// relative path against the PHYSICAL directory holding the file;
+// get_common_dir_noenv strips only trailing \n / \r from `commondir` (spaces
+// are part of the path). Anything git would reject is null, so git decides.
 function commonDirFromFs(dir, env = process.env) {
   if (env.GIT_DIR !== undefined || env.GIT_COMMON_DIR !== undefined) return null;
   try {
-    const gitFile = fs.readFileSync(path.join(dir, '.git'), 'utf8');
-    let match = null;
-    for (const line of gitFile.split('\n')) {
-      match = /^gitdir:\s*(.+?)\s*$/.exec(line.replace(/\r$/, ''));
-      if (match) break;
-    }
-    if (!match) return null;
-    const gitdir = path.resolve(dir, match[1]);
+    const gitFile = fs.readFileSync(path.join(dir, '.git'), 'utf8').replace(/[\r\n]+$/, '');
+    if (!gitFile.startsWith('gitdir: ')) return null;
+    const target = gitFile.slice('gitdir: '.length);
+    if (!target || target.includes('\n')) return null;
+    const gitdir = path.resolve(fs.realpathSync(dir), target);
     let common;
     try {
-      const content = fs.readFileSync(path.join(gitdir, 'commondir'), 'utf8');
-      common = path.resolve(gitdir, content.split('\n')[0].replace(/\r$/, '').trim());
+      const content = fs.readFileSync(path.join(gitdir, 'commondir'), 'utf8').replace(/[\r\n]+$/, '');
+      common = path.resolve(gitdir, content);
     } catch (err) {
       if (!err || err.code !== 'ENOENT') return null;
       common = gitdir;
@@ -115,7 +118,7 @@ function resolveMainProjectDir(dir, opts = {}) {
   }
   if (stat.isDirectory()) return dir;
   if (opts.fast !== false) {
-    const common = commonDirFromFs(dir);
+    const common = commonDirFromFs(dir, opts.env);
     if (common) return path.dirname(common);
   }
   try {

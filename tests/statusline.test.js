@@ -12,6 +12,7 @@ const sl = require('../plugin/bin/claude-tweaks-statusline.js');
 const color = require('../plugin/bin/lib/color');
 const { readText } = require('./helpers/read-skill');
 const { fixtureHomeEnv } = require('./helpers/fixture-home');
+const { chmodDenialSkip } = require('./helpers/root');
 
 // The project segment wraps text in OSC 8 hyperlinks (\x1b]8;;URL\x07text\x1b]8;;\x07).
 // Assertions about segment order/content strip those wrappers first; the link
@@ -509,6 +510,87 @@ function withEisdirCommondir(fn) {
 
 test('commonDirFromFs: an unparseable .git file defers to git', () => {
   withGitFile('not a gitdir line\n', (dir) => assert.strictEqual(sl.commonDirFromFs(dir), null));
+});
+
+// A checkout dir holding a real `admin/` dir whose commondir names a real main
+// .git, plus a `.git` file with the given content. A lax parser that slices the
+// content blindly would land on `admin` and return a WRONG non-null answer.
+function withLaxTrap(content, fn) {
+  withWorktrees((f) => {
+    const dir = path.join(f.base, 'trap-checkout');
+    fs.mkdirSync(path.join(dir, 'admin'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'admin', 'commondir'), path.join(f.main, '.git'));
+    fs.writeFileSync(path.join(dir, '.git'), content);
+    fn(dir, f);
+  });
+}
+
+test('commonDirFromFs: `gitdir:` without the space defers to git (git rejects it)', () => {
+  // 'gitdir:' is 7 chars; a parser that skips 8 would read `admin` from here.
+  withLaxTrap('gitdir:Xadmin\n', (dir) => {
+    assert.strictEqual(sl.commonDirFromFs(dir), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(dir));
+    assert.deepStrictEqual(launches.map((l) => l.file), ['git']);
+    assert.strictEqual(result, dir);
+  });
+});
+
+test('commonDirFromFs: `gitdir:` on a second line defers to git (git rejects it)', () => {
+  withLaxTrap('# comment\ngitdir: admin\n', (dir) => {
+    assert.strictEqual(sl.commonDirFromFs(dir), null);
+  });
+});
+
+test('commonDirFromFs: a multi-line gitdir value defers to git', () => {
+  withLaxTrap('gitdir: admin\nextra\n', (dir) => {
+    assert.strictEqual(sl.commonDirFromFs(dir), null);
+  });
+});
+
+test('commonDirFromFs: sanity — the trap fixture resolves when the line is well formed', () => {
+  withLaxTrap('gitdir: admin\n', (dir, f) => {
+    assert.strictEqual(path.dirname(sl.commonDirFromFs(dir)), fs.realpathSync(f.main));
+  });
+});
+
+test('commonDirFromFs: a commondir with a trailing space is not trimmed (git fails on it too)', () => {
+  withWorktrees((f) => {
+    const admin = fs.readFileSync(path.join(f.wt, '.git'), 'utf8').replace(/^gitdir: /, '').trim();
+    fs.writeFileSync(path.join(admin, 'commondir'), '../.. \n');
+    assert.throws(() => execFileSync('git', ['rev-parse', '--git-common-dir'], { cwd: f.wt, stdio: 'pipe' }));
+    assert.strictEqual(sl.commonDirFromFs(f.wt), null);
+  });
+});
+
+test('resolveMainProjectDir: an env redirect reaches git, not the file read', () => {
+  withWorktrees((f) => {
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt, { env: { GIT_DIR: '' } }));
+    assert.deepStrictEqual(launches, [{ fn: 'execFileSync', file: 'git', args: ['rev-parse', '--git-common-dir'] }]);
+    assert.strictEqual(result, gitCommonMain(f.wt));
+  });
+});
+
+test('resolveMainProjectDir: an unreadable .git file reaches git', chmodDenialSkip('root ignores file permissions'), () => {
+  withGitFile('gitdir: /x\n', (dir) => {
+    fs.chmodSync(path.join(dir, '.git'), 0);
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(dir));
+    assert.deepStrictEqual(launches, [{ fn: 'execFileSync', file: 'git', args: ['rev-parse', '--git-common-dir'] }]);
+    assert.strictEqual(result, dir);
+  });
+});
+
+test('commonDirFromFs: a symlink at another depth to a --relative-paths worktree matches git (physical resolve)', (t) => {
+  withWorktrees((f) => {
+    if (!f.relWt) return t.skip('git lacks --relative-paths');
+    const deep = path.join(f.base, 'b', 'c');
+    fs.mkdirSync(deep, { recursive: true });
+    const link = path.join(deep, 'link');
+    fs.symlinkSync(f.relWt, link);
+    // Decoy at the LEXICALLY resolved admin path (<deep>/main-repo/.git/worktrees/rel-wt).
+    fs.mkdirSync(path.join(deep, 'main-repo', '.git', 'worktrees', 'rel-wt'), { recursive: true });
+    assert.strictEqual(path.dirname(sl.commonDirFromFs(link)), gitCommonMain(link));
+    assert.strictEqual(sl.resolveMainProjectDir(link), gitCommonMain(link));
+  });
 });
 
 test('commonDirFromFs: a gitdir that does not exist defers to git', () => {
