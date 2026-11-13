@@ -33,6 +33,20 @@ const { readText } = require('./helpers/read-skill');
 // its own policy beside a compliant one passes; the CLI behavior tests catch the
 // bin case). The floor below and the exact site-file roster are what show the
 // matcher still matches.
+//
+// The skill fences do not hand the policy to TRUST_POLICY_KEYS directly: they map
+// it onto `process.argv[1 + i]`, filled from a hand-written `-- "{resolved-…}" …`
+// arg list, whose values come from a hand-listed `resolve-policy.js --values` key
+// line. Two more checks keep those positional chains aligned with the array, so a
+// key appended to it cannot read `undefined` and silently fall back to its default:
+//   - every fence that reads `process.argv[1 + i]` passes exactly
+//     TRUST_POLICY_KEYS.length `{resolved-…}` args after its `--`;
+//   - every `--values` line in the files that feed those placeholders lists its
+//     `trust-` keys equal to TRUST_POLICY_KEYS, in order (non-trust keys such as
+//     `autonomy` are ignored).
+// Not caught: that each placeholder NAME maps to the right key (the count and the
+// key order are checked, the names are prose), and a feeding line in a file
+// outside the roster below.
 const ROOT = path.join(__dirname, '..');
 const BIN_ROOT = path.join(ROOT, 'plugin', 'bin');
 const SKILLS_ROOT = path.join(ROOT, 'plugin', 'skills');
@@ -207,6 +221,110 @@ test('AC8.2 control: the js checker passes a file that names TRUST_POLICY_KEYS, 
   const commentOnly = jsScan('// TRUST_POLICY_KEYS\nconst rows = trustRows(records, log, now, {});\n', 'comment.js');
   assert.equal(commentOnly.offenders.length, 1, 'a comment naming the list must not satisfy the check');
   assert.deepEqual(jsScan('// trustRows(records) is called elsewhere\nmodule.exports = {};\n', 'none.js'), { sites: 0, offenders: [] });
+});
+
+// --- positional-arg and --values alignment with TRUST_POLICY_KEYS ---
+
+const { TRUST_POLICY_KEYS } = require(path.join(ROOT, DEFINITION));
+const ARGV_RE = /process\.argv\s*\[\s*1\s*\+\s*\w+\s*\]/;
+const ARGS_RE = /\s--((?:[ \t]+"\{resolved-[^}"]+\}")+)/g;
+const VALUES_RE = /resolve-policy\.js"?[ \t]+--values[ \t]+([^`\r\n]*)/g;
+// The files whose `--values` lines feed the `{resolved-…}` trust placeholders.
+const FEEDER_FILES = [
+  'plugin/skills/_shared/trust-table.md',
+  'plugin/skills/backlog/refine-mode.md',
+  'plugin/skills/capture/SKILL.md',
+];
+
+// raw markdown -> { fences, offenders: string[] } over fences reading process.argv[1 + i]
+function argCountScan(raw, label, expected = TRUST_POLICY_KEYS.length) {
+  let fences = 0;
+  const offenders = [];
+  let n = 0;
+  for (const m of raw.matchAll(FENCE_RE)) {
+    n += 1;
+    if (siteCount(m[1]) === 0 || !ARGV_RE.test(m[1])) continue;
+    fences += 1;
+    const lists = [...m[1].matchAll(ARGS_RE)];
+    const got = lists.length ? lists[lists.length - 1][1].match(/"\{resolved-[^}"]+\}"/g).length : 0;
+    if (got !== expected) {
+      offenders.push(`${label}: fenced block ${n} passes ${got} {resolved-…} arg(s) after \`--\`, TRUST_POLICY_KEYS has ${expected}`);
+    }
+  }
+  return { fences, offenders };
+}
+
+// raw markdown -> { lines, offenders: string[] } over `resolve-policy.js --values` lines naming a trust- key
+function valuesScan(raw, label, expected = TRUST_POLICY_KEYS) {
+  let lines = 0;
+  const offenders = [];
+  for (const m of raw.matchAll(VALUES_RE)) {
+    const trust = m[1].split(/\s+/).filter((k) => k.startsWith('trust-'));
+    if (trust.length === 0) continue;
+    lines += 1;
+    if (trust.join(' ') !== expected.join(' ')) {
+      offenders.push(`${label}: --values lists [${trust.join(', ')}], TRUST_POLICY_KEYS is [${expected.join(', ')}]`);
+    }
+  }
+  return { lines, offenders };
+}
+
+function alignmentScan() {
+  let fences = 0;
+  let lines = 0;
+  const offenders = [];
+  for (const file of walk(SKILLS_ROOT, '.md')) {
+    const rel = path.relative(ROOT, file).split(path.sep).join('/');
+    const raw = readText(file);
+    const a = argCountScan(raw, rel);
+    fences += a.fences;
+    offenders.push(...a.offenders);
+    if (FEEDER_FILES.includes(rel)) {
+      const v = valuesScan(raw, rel);
+      lines += v.lines;
+      offenders.push(...v.offenders);
+    }
+  }
+  return { fences, lines, offenders };
+}
+
+test('AC8.3: every positional-arg fence passes one placeholder per TRUST_POLICY_KEYS entry, and every --values line lists the keys in order', () => {
+  assert.deepEqual(alignmentScan().offenders, []);
+});
+
+test('AC8.3 floor: the known arg-list fences and --values lines are still matched', () => {
+  const { fences, lines } = alignmentScan();
+  // Three fences (trust-table, trust-signal, capture); three feeding lines (trust-table, refine-mode, capture).
+  assert.ok(fences >= 3, `expected at least 3 positional-arg fences, matched ${fences}`);
+  assert.ok(lines >= 3, `expected at least 3 --values lines, matched ${lines}`);
+});
+
+test('AC8.3 go-red: a fence with one placeholder too few is flagged', () => {
+  const mk = (args) => [
+    '```bash',
+    'node -e "const policy = Object.fromEntries(TRUST_POLICY_KEYS.map((k, i) => [k, process.argv[1 + i]])); trustRows(r, g, n, policy)"' + ` -- ${args}`,
+    '```',
+    '',
+  ].join('\n');
+  const full = Array.from({ length: TRUST_POLICY_KEYS.length }, (_, i) => `"{resolved-${i}}"`);
+  assert.deepEqual(argCountScan(mk(full.join(' ')), 'ok.md'), { fences: 1, offenders: [] });
+  const short = argCountScan(mk(full.slice(0, -1).join(' ')), 'short.md');
+  assert.equal(short.fences, 1);
+  assert.equal(short.offenders.length, 1);
+  assert.match(short.offenders[0], /passes \d+ \{resolved-…\} arg\(s\)/);
+  assert.equal(argCountScan(mk(''), 'none.md').offenders.length, 1, 'a fence with no arg list at all is flagged');
+});
+
+test('AC8.3 go-red: a --values list with two keys swapped, or one dropped, is flagged; non-trust keys are ignored', () => {
+  const line = (keys) => `\`node "\${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values ${keys.join(' ')}\`\n`;
+  assert.deepEqual(valuesScan(line(['autonomy', ...TRUST_POLICY_KEYS]), 'ok.md'), { lines: 1, offenders: [] });
+  const swapped = [...TRUST_POLICY_KEYS];
+  [swapped[0], swapped[1]] = [swapped[1], swapped[0]];
+  const s = valuesScan(line(swapped), 'swapped.md');
+  assert.equal(s.lines, 1);
+  assert.equal(s.offenders.length, 1);
+  assert.equal(valuesScan(line(TRUST_POLICY_KEYS.slice(1)), 'dropped.md').offenders.length, 1);
+  assert.deepEqual(valuesScan(line(['autonomy']), 'other.md'), { lines: 0, offenders: [] });
 });
 
 test('AC8.2 go-red: the js checker reports a stripper mis-parse as an offender', () => {
