@@ -1,8 +1,8 @@
 'use strict';
 
 // The pipeline driver's own settle for stopped runs (#5219). This module's
-// SETTLE_ROWS (added with the settle table) is the settle table's source of
-// truth; docs/driver.md and the design document copy it by hand.
+// SETTLE_ROWS is the settle table's source of truth; docs/driver.md and the
+// design document copy it by hand.
 //
 // Forge-facing text (reduceDetail, commentFor, escalateDetailText) is built from fixed
 // templates plus a reduced worker detail: the reduction keeps a small character set, so a
@@ -32,8 +32,8 @@ function sentenceTail(token) {
   return token.slice(i);
 }
 
-// Reduce free text to a short, inert string. Order is fixed (see the task
-// brief): separators, mentions, character allow-list, tokens, paths, cap.
+// Reduce free text to a short, inert string. Order is fixed: separators, mentions,
+// character allow-list, tokens, paths, autolinks, cap.
 function reduceDetail(text) {
   let s = String(text ?? '').replace(/\\/g, '/');
   s = s.replace(/@/g, 'at ');
