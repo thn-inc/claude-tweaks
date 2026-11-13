@@ -95,7 +95,7 @@ function withPathStub(mode, fn) {
   if (mode !== 'empty') {
     const name = process.platform === 'win32' ? 'git.cmd' : 'git';
     fs.writeFileSync(path.join(dir, name), '@echo off\n', { mode });
-    fs.chmodSync(path.join(dir, name), mode);
+    fs.chmodSync(path.join(dir, name), mode); // root-safe: root does not change the mode bits findOnPath reads
   }
   const origPath = process.env.PATH;
   const origWinPath = process.env.Path;
