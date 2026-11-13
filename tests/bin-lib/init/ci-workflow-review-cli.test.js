@@ -17,10 +17,14 @@ const REPO = path.join(__dirname, '..', '..', '..');
 const CLI = path.join(REPO, 'plugin', 'bin', 'ci-workflow-review.js');
 const { toPosix } = require(path.join(REPO, 'plugin', 'bin', 'lib', 'shared-primitives.js'));
 const { generateWorkflowYaml } = require(path.join(REPO, 'plugin', 'bin', 'lib', 'issue-branch-tracking.js'));
+const { chmodDenialSkip } = require('../../helpers/root');
 
 const loadCli = () => require(CLI);
 const NO_SYMLINKS = process.platform === 'win32';
-const NO_CHMOD = process.platform === 'win32' || process.getuid?.() === 0;
+// A path under a regular file is ENOTDIR on POSIX; win32 is not relied on to
+// report the same code, so the real-fixture case is POSIX-only and an
+// injected ENOTDIR covers every platform.
+const NO_REAL_ENOTDIR = process.platform === 'win32' && 'a path under a regular file is pinned as ENOTDIR on POSIX only';
 const USAGE = 'usage: ci-workflow-review.js --root <dir> [--drift] [--json]';
 
 const CONC = 'concurrency:\n  group: ci-${{ github.ref }}\n  cancel-in-progress: true\n';
@@ -58,8 +62,8 @@ function link(root, rel, target) {
 }
 
 // Recursive lstat walk keyed by toPosix relative path: a file's bytes, a
-// symlink's target. A file the walk cannot read (chmod 0) keeps its size and
-// mtime instead, so a write to it still shows.
+// symlink's target. A file or directory the walk cannot read (chmod 0) keeps
+// its mtime (and a file its size) instead, so a write to it still shows.
 function snapshot(root) {
   const out = {};
   (function walk(dir) {
@@ -68,8 +72,17 @@ function snapshot(root) {
       const rel = toPosix(path.relative(root, full));
       const st = fs.lstatSync(full);
       if (st.isSymbolicLink()) out[rel] = { type: 'symlink', target: fs.readlinkSync(full) };
-      else if (st.isDirectory()) { out[rel] = { type: 'directory' }; walk(full); }
-      else {
+      else if (st.isDirectory()) {
+        try {
+          fs.readdirSync(full);
+        } catch (err) {
+          if (err.code !== 'EACCES') throw err;
+          out[rel] = { type: 'directory', unlistable: true, mtimeMs: st.mtimeMs };
+          continue;
+        }
+        out[rel] = { type: 'directory' };
+        walk(full);
+      } else {
         try {
           out[rel] = { type: 'file', bytes: fs.readFileSync(full).toString('base64') };
         } catch (err) {
@@ -214,7 +227,7 @@ test('AC8.4: a .github/workflows that is a regular file exits 1 the same way', (
   assert.equal(res.stderr, 'ci-workflow-review.js: .github/workflows is not a directory\n');
 });
 
-test('AC8.5: a single unreadable workflow file is an unparsed entry with exit 0 (real EACCES)', { skip: NO_CHMOD && 'chmod 0 does not deny reads here (win32 or root)' }, () => {
+test('AC8.5: a single unreadable workflow file is an unparsed entry with exit 0 (real EACCES)', chmodDenialSkip('root reads through mode 0'), () => {
   const root = tmpRoot();
   write(root, '.github/workflows/a.yml', CLEAN);
   const locked = write(root, '.github/workflows/b.yml', CLEAN);
@@ -257,6 +270,123 @@ test('a directory named *.yml under .github/workflows is unparsed: not a regular
   const res = runCli(root, ['--drift', '--json']);
   assert.equal(res.status, 0, res.stderr);
   assert.deepEqual(JSON.parse(res.stdout).unparsed, [{ workflow: '.github/workflows/dir.yml', reason: 'not a regular file' }]);
+});
+
+// path-guard sees `code` from both realpath and lstat for any path ending in
+// `suffix`: the leaf reads as unreadable (EIO) or as missing-but-not-ENOENT
+// (ENOTDIR), on every platform.
+function leafError(suffix, code) {
+  const hit = (p) => String(p).endsWith(suffix);
+  const fail = () => { throw Object.assign(new Error(code), { code }); };
+  return {
+    realpath: (p) => (hit(p) ? fail() : fs.realpathSync.native(p)),
+    fsImpl: { ...fs, lstatSync: (p, ...rest) => (hit(p) ? fail() : fs.lstatSync(p, ...rest)) },
+  };
+}
+
+const WORKFLOWS_SUFFIX = `${path.sep}.github${path.sep}workflows`;
+const DECL_SUFFIX = `${path.sep}.claude-tweaks${path.sep}verify-scope.json`;
+
+test('a .claude-tweaks or .github that is a regular file exits 1: only ENOENT is silent (real ENOTDIR)', { skip: NO_REAL_ENOTDIR }, () => {
+  const decl = tmpRoot();
+  write(decl, '.github/workflows/ci.yml', NO_READY);
+  write(decl, '.claude-tweaks', 'not a directory');
+  const a = runCli(decl, ['--drift', '--json']);
+  assert.equal(a.status, 1);
+  assert.equal(a.stdout, '');
+  assert.equal(a.stderr, 'ci-workflow-review.js: verify-scope.json: unreadable: ENOTDIR\n');
+
+  const gh = tmpRoot();
+  write(gh, '.github', 'not a directory');
+  const b = runCli(gh, ['--drift', '--json']);
+  assert.equal(b.status, 1);
+  assert.equal(b.stdout, '');
+  assert.equal(b.stderr, 'ci-workflow-review.js: .github/workflows: unreadable: ENOTDIR — not read\n');
+});
+
+test('a non-ENOENT miss or an unreadable leaf exits 1 for the declaration and the workflows directory (injected)', () => {
+  const root = tmpRoot();
+  write(root, '.github/workflows/ci.yml', CLEAN);
+  write(root, '.claude-tweaks/verify-scope.json', CI_DECL);
+  const cases = [
+    [DECL_SUFFIX, 'ENOTDIR', 'verify-scope.json: unreadable: ENOTDIR'],
+    [DECL_SUFFIX, 'EIO', 'verify-scope.json: unreadable: EIO'],
+    [WORKFLOWS_SUFFIX, 'ENOTDIR', '.github/workflows: unreadable: ENOTDIR — not read'],
+    [WORKFLOWS_SUFFIX, 'EIO', '.github/workflows: unreadable: EIO — not read'],
+  ];
+  for (const [suffix, code, reason] of cases) {
+    const res = runInProcess(root, ['--drift', '--json'], leafError(suffix, code));
+    assert.equal(res.status, 1, `${suffix} ${code}`);
+    assert.equal(res.stdout, '', `${suffix} ${code}`);
+    assert.equal(res.stderr, `ci-workflow-review.js: ${reason}\n`);
+  }
+  // Control: ENOENT on the same leaves is the silent absent case.
+  const absent = runInProcess(root, ['--drift', '--json'], leafError(DECL_SUFFIX, 'ENOENT'));
+  assert.equal(absent.status, 0, absent.stderr);
+  assert.deepEqual(JSON.parse(absent.stdout).findings, []);
+  const noDir = runInProcess(root, ['--drift', '--json'], leafError(WORKFLOWS_SUFFIX, 'ENOENT'));
+  assert.equal(noDir.status, 0, noDir.stderr);
+  assert.equal(JSON.parse(noDir.stdout).reviewed, 0);
+});
+
+test('a workflows directory that cannot be listed exits 1 (injected readdirSync throw)', () => {
+  const root = tmpRoot();
+  write(root, '.github/workflows/ci.yml', CLEAN);
+  const fsImpl = {
+    ...fs,
+    readdirSync: (p, ...rest) => {
+      if (String(p).endsWith(`${path.sep}workflows`)) throw Object.assign(new Error('x'), { code: 'EIO' });
+      return fs.readdirSync(p, ...rest);
+    },
+  };
+  const res = runInProcess(root, ['--drift', '--json'], { fsImpl });
+  assert.equal(res.status, 1);
+  assert.equal(res.stdout, '');
+  assert.equal(res.stderr, 'ci-workflow-review.js: .github/workflows could not be listed: EIO\n');
+});
+
+test('a workflows directory or declaration the user cannot read exits 1 (real EACCES)', chmodDenialSkip('root reads through mode 0'), () => {
+  const locked = (root, rel, fn) => {
+    const p = path.join(root, ...rel.split('/'));
+    fs.chmodSync(p, 0o000);
+    try { fn(); } finally { fs.chmodSync(p, 0o755); }
+  };
+  const expectExit1 = (root, reason) => {
+    const res = runCli(root, ['--drift', '--json']);
+    assert.equal(res.status, 1, res.stdout);
+    assert.equal(res.stdout, '');
+    assert.equal(res.stderr, `ci-workflow-review.js: ${reason}\n`);
+  };
+
+  // .github mode 0: the workflows leaf can neither be resolved nor lstat'd.
+  const a = tmpRoot();
+  write(a, '.github/workflows/ci.yml', CLEAN);
+  locked(a, '.github', () => expectExit1(a, '.github/workflows: unreadable: EACCES — not read'));
+
+  // workflows mode 0: resolved and a directory, but cannot be listed.
+  const b = tmpRoot();
+  write(b, '.github/workflows/ci.yml', CLEAN);
+  locked(b, '.github/workflows', () => expectExit1(b, '.github/workflows could not be listed: EACCES'));
+
+  // .claude-tweaks mode 0: the declaration leaf can neither be resolved nor lstat'd.
+  const c = tmpRoot();
+  write(c, '.github/workflows/ci.yml', CLEAN);
+  write(c, '.claude-tweaks/verify-scope.json', CI_DECL);
+  locked(c, '.claude-tweaks', () => expectExit1(c, 'verify-scope.json: unreadable: EACCES'));
+});
+
+test('discovery: .yml and .yaml in any case, sorted; every other name is ignored', () => {
+  const root = tmpRoot();
+  for (const name of ['x.Yaml', 'ci.yaml', 'Upper.YML', 'notes.txt', 'ci.yml.bak', 'yml', 'README.md']) {
+    write(root, `.github/workflows/${name}`, BAD);
+  }
+  const res = runCli(root, ['--drift', '--json']);
+  assert.equal(res.status, 0, res.stderr);
+  const out = JSON.parse(res.stdout);
+  assert.equal(out.reviewed, 3);
+  assert.deepEqual(out.unparsed.map((u) => u.workflow), [
+    '.github/workflows/Upper.YML', '.github/workflows/ci.yaml', '.github/workflows/x.Yaml',
+  ]);
 });
 
 test('AC10.1: a missing workflows directory and a missing verify-scope.json are silent', () => {

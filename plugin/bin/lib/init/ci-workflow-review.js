@@ -232,6 +232,11 @@ function readWorkflowEntry(dir, name, rootReal, fsImpl, opts) {
   }
 }
 
+// path-guard's `missing` covers ENOENT and ENOTDIR; only ENOENT is absent. An
+// ENOTDIR (a regular file where a parent directory belongs) is unreadable.
+const isAbsent = (leaf) => leaf.state === 'missing' && leaf.code === 'ENOENT';
+const isUnreadable = (leaf) => leaf.state === 'unreadable' || (leaf.state === 'missing' && !isAbsent(leaf));
+
 // `.github/workflows/*.y{a,}ml` under `root`, sorted. A missing directory is
 // an empty set; a directory that exists but cannot be listed (or is not a
 // directory, or resolves outside the checkout) is an error, never empty.
@@ -240,9 +245,9 @@ function readWorkflowSet(root, { fsImpl = fs, realpath } = {}) {
   const rootReal = canonicalRealpath(root, opts);
   if (rootReal === null) return { ok: false, error: 'could not resolve --root' };
   const leaf = resolveLeaf(path.join(root, '.github', 'workflows'), opts);
-  if (leaf.state === 'missing') return { ok: true, workflows: [] };
+  if (isAbsent(leaf)) return { ok: true, workflows: [] };
   if (leaf.state === 'dangling') return { ok: false, error: '.github/workflows: dangling symlink — not read' };
-  if (leaf.state === 'unreadable') return { ok: false, error: `.github/workflows: unreadable: ${leaf.code} — not read` };
+  if (isUnreadable(leaf)) return { ok: false, error: `.github/workflows: unreadable: ${leaf.code} — not read` };
   if (!isPathContained(leaf.path, rootReal, { orEqual: true })) {
     return { ok: false, error: '.github/workflows resolves outside the checkout — not read' };
   }
@@ -268,9 +273,9 @@ function readCiSources(root, { fsImpl = fs, realpath } = {}) {
   const rootReal = canonicalRealpath(root, opts);
   if (rootReal === null) return { ok: false, errors: ['could not resolve --root'] };
   const leaf = resolveLeaf(path.join(root, '.claude-tweaks', 'verify-scope.json'), opts);
-  if (leaf.state === 'missing') return { ok: true, ciSources: null };
+  if (isAbsent(leaf)) return { ok: true, ciSources: null };
   if (leaf.state === 'dangling') return { ok: false, errors: ['verify-scope.json: dangling symlink — not read'] };
-  if (leaf.state === 'unreadable') return { ok: false, errors: [`verify-scope.json: unreadable: ${leaf.code}`] };
+  if (isUnreadable(leaf)) return { ok: false, errors: [`verify-scope.json: unreadable: ${leaf.code}`] };
   if (!isPathContained(leaf.path, rootReal, { orEqual: true })) {
     return { ok: false, errors: ['verify-scope.json: resolves outside the checkout — not read'] };
   }
@@ -282,5 +287,5 @@ function readCiSources(root, { fsImpl = fs, realpath } = {}) {
 }
 
 module.exports = {
-  CHECKS, GENERATED_TRACKING_WORKFLOW, classifyDraftCondition, reviewWorkflows, formatRemedy, readWorkflowSet, readCiSources,
+  CHECKS, GENERATED_TRACKING_WORKFLOW, classifyDraftCondition, reviewWorkflows, formatRemedy, readWorkflowSet, readCiSources, guardOpts,
 };

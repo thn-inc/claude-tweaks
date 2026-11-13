@@ -19,7 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const { lstatType, resolveLeaf } = require('./lib/path-guard');
 const {
-  reviewWorkflows, formatRemedy, readWorkflowSet, readCiSources,
+  reviewWorkflows, formatRemedy, readWorkflowSet, readCiSources, guardOpts,
 } = require('./lib/init/ci-workflow-review');
 
 const USAGE = 'usage: ci-workflow-review.js --root <dir> [--drift] [--json]';
@@ -83,7 +83,7 @@ function run(argv, deps = {}) {
   const stdout = deps.stdout || ((s) => process.stdout.write(s));
   const stderr = deps.stderr || ((s) => process.stderr.write(s));
   const fsImpl = deps.fsImpl || fs;
-  const guard = deps.realpath ? { fsImpl, realpath: deps.realpath } : { fsImpl };
+  const guard = guardOpts(fsImpl, deps.realpath);
 
   if (argv.includes('--help')) {
     try { stdout(`${USAGE}\n`); return 0; } catch (_err) { return 1; }
