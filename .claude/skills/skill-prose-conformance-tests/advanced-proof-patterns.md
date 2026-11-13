@@ -1,6 +1,6 @@
 # Advanced Proof Patterns — skill-prose-conformance-tests
 
-Lazy-loaded from `SKILL.md` (this skill's directory). Read this file when a go-red proof needs zero-mutation verification, a change adds or removes an Anti-Patterns row, a new detection signal needs corpus validation before it's trusted, a sweep ships with an exemption list, a negative claim needs a clause sweep, or a suite builds throwaway git repos.
+Lazy-loaded from `SKILL.md` (this skill's directory). Read this file when a go-red proof needs zero-mutation verification, a claim reworded across several copies needs a ban and a positive twin, a change adds or removes an Anti-Patterns row, a new detection signal needs corpus validation before it's trusted, a sweep ships with an exemption list, a negative claim needs a clause sweep, or a suite builds throwaway git repos.
 
 ## Proving discrimination without editing the tree
 
@@ -102,6 +102,10 @@ A claim of the form "X does not do Y" (a denied-twice call does not end the firi
 5. Build Y's matcher from the claim's grammar, not from the mutants you happen to try: every verb that can state it (end, stop) in every tense, in both word orders ("ends the firing", "the firing stops"), and add one mutant per verb and word order, each proved red against a matcher that lacks that form. #5255's sweep matched only the "ends" forms its mutants used; review lens 3f showed "After a denied-twice call the firing stops." passing every suite (fixed in `75fc0771a`, mutant M6).
 
 `assertNoDeniedTwiceEnd` and its M2-M6 mutants in `tests/dispatch-prompt-cli-prose.test.js` are the worked instance.
+
+## Retiring a claim's wording across several copies
+
+**Retiring a claim's wording across several copies needs a ban and a positive twin, each proved per copy.** When a change rewords one claim everywhere it is restated, a sweep that bans the old phrasing passes any third phrasing: a copy reworded to neither the old nor the new text can still say the old thing and stays green. Pair the ban with a positive pin that every site carries the replacement wording, over the same site map. `tests/foreground-execution-instruction.test.js` (#3722) does this twice: over its `claimSites()` map, `UNQUALIFIED` bans the "never re-woken" family while `QUALIFIED` requires "cannot count on being re-woken" at every site; and `STATUS_ONLY` bans the bare-`STATUS:` re-wake answer while `SHARED_RULE`, spread into each copy's own fact list, requires the whole-final-reply wording. Prove each half per site, not once: doctor exactly one site in memory (append the banned phrase, or strip the required one) and assert the predicate returns exactly `[name]`, with an `assert.notEqual` on the doctored text so a strip that matched nothing cannot pass. The ban's go-red proof appends the exact banned phrase, so it proves only that spelling; the positive twin is what catches a reworded copy — the ruling #3722's build review recorded for its `STATUS_ONLY` proof.
 
 ## Reference instances
 
