@@ -437,7 +437,10 @@ function passwdHome() {
 // empty entry as the working directory, which a worker controls), and returns the first
 // executable regular file; any error moves to the next entry. `home` lists both `HOME` and
 // the passwd home (`userHome`, a seam for tests), so an unset or wrong `HOME` still guards
-// the real one.
+// the real one. Not deps.js's findOnPath: that one searches relative entries and checks no
+// execute bit, and either would let the working directory pick the toolchain. The ':' split
+// and X_OK are POSIX-only on purpose — launchWorker derives only on SANDBOX_PROBED_PLATFORMS
+// (darwin), so a win32 entry there must rework this lookup (';', PATHEXT, .cmd launchers).
 function realToolchainDeps(env, { userHome = passwdHome() } = {}) {
   const source = env || {};
   const dirs = typeof source.PATH === 'string' ? source.PATH.split(':') : [];
@@ -511,6 +514,19 @@ async function launchWorker(opts, deps = defaultDeps()) {
     readPaths = toolchainReadPaths(testCommand, deps.toolchain || realToolchainDeps(env));
   }
   const settingsText = spec.settings ? JSON.stringify(implementerSettings({ testCommand, platform, readPaths }), null, 2) : null;
+  // A caller's readPaths may not re-open the home directory the read block exists to close:
+  // an entry that is HOME, the passwd home, or an ancestor of either, lexically or through a
+  // link, is refused (toolchainRoot refuses the same roots on the derived side).
+  if (spec.settings && opts.readPaths !== undefined && SANDBOX_PROBED_PLATFORMS.includes(platform)) {
+    for (const h of realToolchainDeps(env).home) {
+      const realHome = canonicalRealpath(h) || h;
+      for (const entry of readPaths) {
+        if (isAncestorOrSelf(entry, h) || isAncestorOrSelf(canonicalRealpath(entry) || entry, realHome)) {
+          throw new TypeError('readPaths entry ' + JSON.stringify(entry) + ' would re-open the home directory ' + h);
+        }
+      }
+    }
+  }
   const withAppend = typeof claudeMdText === 'string' && claudeMdText !== '';
 
   const written = [];

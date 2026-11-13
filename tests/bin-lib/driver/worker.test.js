@@ -186,6 +186,42 @@ test('realToolchainDeps skips relative and empty PATH entries and finds an execu
   const only = worker.realToolchainDeps({ PATH: ['', rel].join(path.delimiter) });
   assert.strictEqual(only.lookup('tool'), null);
   assert.strictEqual(worker.realToolchainDeps({}).lookup('tool'), null);
+  // From inside the fixture directory an empty or '.' entry would find `tool`: the guard is what keeps it out.
+  const cwd = process.cwd();
+  process.chdir(dir);
+  try {
+    assert.strictEqual(worker.realToolchainDeps({ PATH: ['', '.'].join(path.delimiter) }).lookup('tool'), null);
+  } finally {
+    process.chdir(cwd);
+  }
+});
+
+test('AC4.1: with no toolchain seam, the derived readPaths come from the launch env\'s PATH', { skip: process.platform === 'win32' && 'POSIX modes' }, async (t) => {
+  const prefix = fs.realpathSync.native(tmp(t));
+  const bin = path.join(prefix, 'bin');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'node'), 'x', { mode: 0o755 });
+  fs.chmodSync(path.join(bin, 'node'), 0o755); // root-safe: mode setup, not a denial simulation
+  const { runner, calls } = fakeRunner(okOut());
+  await launchWorker(base(t, { env: { PATH: bin, HOME: '/h', USER: 'u' } }), { runner });
+  assert.deepStrictEqual(JSON.parse(calls[0].files['--settings'].text).sandbox.filesystem.allowRead, [prefix]);
+});
+
+test('AC2.1: a caller readPaths entry that is the home directory or an ancestor of it is refused before anything is written', { skip: process.platform === 'win32' && 'POSIX paths' }, async (t) => {
+  const home = fs.realpathSync.native(tmp(t));
+  const link = path.join(tmp(t), 'home-link');
+  fs.symlinkSync(home, link);
+  for (const bad of [home, path.dirname(home), '/Users', link]) {
+    if (bad === '/Users' && !os.userInfo().homedir.startsWith('/Users/')) continue;
+    const { runner, calls } = fakeRunner(okOut());
+    const opts = base(t, { readPaths: [bad], env: { PATH: HERMETIC_PATH, HOME: home }, settingsDir: path.join(tmp(t), 'not-yet') });
+    await assert.rejects(launchWorker(opts, { runner }), (err) => err instanceof TypeError && err.message.includes(JSON.stringify(bad)) && /re-open the home directory/.test(err.message), bad);
+    assert.strictEqual(calls.length, 0);
+    assert.ok(!fs.existsSync(opts.settingsDir), 'the settings directory was created before the refusal');
+  }
+  const { runner, calls } = fakeRunner(okOut());
+  await launchWorker(base(t, { readPaths: [path.join(home, '.nvm')], env: { PATH: HERMETIC_PATH, HOME: home } }), { runner });
+  assert.deepStrictEqual(JSON.parse(calls[0].files['--settings'].text).sandbox.filesystem.allowRead, [path.join(home, '.nvm')]);
 });
 
 test('realToolchainDeps guards both HOME and the passwd home, and a passwd lookup that throws drops only that entry', (t) => {
