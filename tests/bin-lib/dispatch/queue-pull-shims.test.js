@@ -274,8 +274,10 @@ test('the git shim refuses a relative GIT_INDEX_FILE with a .. segment', { skip:
   const { sb, git } = gitSandbox(t);
   const { name, file } = escapeTarget(t, sb, 'qp-rel-index');
   // git resolves a relative GIT_INDEX_FILE from the worktree top (the clone, root/proj): the first
-  // two climb to the file beside the sandbox; the last two are refused by shape alone.
-  const relative = [`../../${name}`, `sub/../../../${name}`, '..', 'sub/..'];
+  // two climb to the file beside the sandbox (sub exists, so the kernel can resolve the second);
+  // the other three land inside it and are refused by shape alone, one per case pattern.
+  fs.mkdirSync(path.join(sb.proj, 'sub'));
+  const relative = [`../../${name}`, `sub/../../../${name}`, `../${name}`, '..', 'sub/..'];
   for (const index of relative) {
     const r = git(['read-tree', 'HEAD'], { extra: { GIT_INDEX_FILE: index } });
     assert.equal(r.status, 97, index);
