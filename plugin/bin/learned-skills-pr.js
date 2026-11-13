@@ -11,17 +11,21 @@
 //   {route:'captured', id, patch, shared}         patch written, tree reverted; shared:true when the
 //                                                 target was already captured in this run
 //   {route:'clean'}                               nothing changed and nothing captured before
-//   {route:'staged', stagePath, reason[, residue][, logFailed]}
+//   {route:'staged', stagePath, reason[, patch][, residue][, logFailed]}
 //                                                 a failure after the diff was read: the edit is
-//                                                 staged as staged/wrap-up-skill-{N}.md instead.
-//                                                 residue:true — the tree could not be reset to HEAD;
+//                                                 staged as staged/wrap-up-skill-{N}.md instead (in a
+//                                                 join, this edit alone; the earlier capture stays).
+//                                                 patch — when the staged file is description-only
+//                                                 or unvalidated, the patch file that holds the edit;
+//                                                 residue:true — git status still lists the target
+//                                                 (an index entry could not be cleared);
 //                                                 logFailed:true — the STAGED line did not land in
 //                                                 decisions.md, the caller hand-logs it
 // Exit 0 ok (every route above, staged included)
 //      1 a git failure before the diff was read — nothing was changed; the caller commits on the run
 //        branch and logs FAILED (merge-check's floor still holds that run). Also a failure after the
-//        diff that staging could not absorb: stderr says "staging failed too" and whether the edit
-//        was restored in the working tree (restored: it is still committable on the run branch)
+//        diff that staging could not absorb: stderr says "staging failed too" and where the edit is —
+//        in the working tree (still committable on the run branch), or the patch file that holds it
 //      2 malformed invocation, an unreadable --summary-file, or a --run that is missing, not anchored
 //        under the main checkout (a worktree-local shadow), or not a directory
 // --run is anchored strictly through lib/stage-item/write.js's resolveTarget (the sanctioned writers'
@@ -36,10 +40,11 @@ const { resolveTarget } = require('./lib/stage-item/write');
 
 const USAGE = 'usage: learned-skills-pr.js capture --run <run-dir> --worktree <abs> --merge-base <sha> --target <repo-rel> --summary-file <path>\n'
   + '  prints {route: run-branch | captured | clean | staged, ...}\n'
-  + '  staged results may carry residue:true (tree not reset) and logFailed:true (hand-log the STAGED line)\n'
+  + '  staged results may carry patch (the file holding the edit when the stage is description-only or unvalidated),\n'
+  + '  residue:true (git status still lists the target) and logFailed:true (hand-log the STAGED line)\n'
   + '  exit 0 ok (staged included)\n'
   + '       1 git failure before the diff was read (nothing changed), or a failure after it that staging could not\n'
-  + '         absorb ("staging failed too"; stderr says whether the edit is back in the working tree)\n'
+  + '         absorb ("staging failed too"; stderr says the edit is in the working tree, or names the file holding it)\n'
   + '       2 malformed invocation or refused --run\n';
 
 const VERBS = new Set(['capture']);
