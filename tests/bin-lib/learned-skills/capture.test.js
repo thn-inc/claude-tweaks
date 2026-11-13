@@ -602,36 +602,103 @@ test('a kept diff whose gate never ran is logged as not run', (t) => {
   assert.doesNotMatch(log, /gate could not run|unvalidated/);
 });
 
-test('a join whose tree cannot be read back is not reported as holding both edits', (t) => {
+// A joined capture whose re-diff fails; `deps` adds faults on top. Returns what the tests compare.
+function joinedReDiffFails(t, extra = () => ({})) {
   const f = fixture(t);
   const body = fs.readFileSync(path.join(f.repo, X), 'utf8');
   write(f.repo, X, TOP(body));
   const first = capture(args(f, X, 'first finding'), baseDeps);
+  const earlier = fs.readFileSync(first.patch);
   write(f.repo, X, BOTTOM(body));
   const D = diffOf(f.repo, X);
   const abs = path.join(f.repo, X);
+  const state = { blind: false };
   let diffs = 0;
-  let blind = false;
+  const more = extra({ f, abs, state, first });
   const deps = {
     ...baseDeps,
+    ...more,
     git: (a, o) => {
-      if (a.includes('--binary') && ++diffs === 2) { blind = true; throw new Error('simulated re-diff failure'); }
-      return realDeps.git(a, o);
-    },
-    readFile: (p) => {
-      if (blind && p === abs) throw Object.assign(new Error('EIO: read'), { code: 'EIO' });
-      return realDeps.readFile(p);
+      if (a.includes('--binary') && ++diffs === 2) { state.blind = true; throw new Error('simulated re-diff failure'); }
+      return (more.git || realDeps.git)(a, o);
     },
   };
+  let res;
   let caught;
-  try { capture(args(f, X, 'second finding'), deps); } catch (e) { caught = e; }
-  assert.ok(caught instanceof StagingFailure);
-  assert.doesNotMatch(caught.message, /together with the earlier captured patch/);
-  assert.equal(path.dirname(caught.holder), path.join(f.runDir, 'learned-skills'));
-  assert.ok(caught.message.includes(caught.holder), caught.message);
-  assert.equal(fs.readFileSync(caught.holder, 'utf8'), D);
-  // The undo did run: the tree holds this edit alone, and the earlier capture is untouched.
-  assert.equal(fs.readFileSync(abs, 'utf8'), BOTTOM(body));
-  assert.equal(readManifest(f.runDir)[0].status, 'captured');
-  assert.match(fs.readFileSync(first.patch, 'utf8'), /first edit near the top/);
+  try { res = capture(args(f, X, 'second finding'), deps); } catch (e) { caught = e; }
+  return { f, body, first, earlier, D, abs, res, caught };
+}
+const blindRead = ({ abs, state }) => ({
+  readFile: (p) => {
+    if (state.blind && p === abs) throw Object.assign(new Error('EIO: read'), { code: 'EIO' });
+    return realDeps.readFile(p);
+  },
+});
+const stagedDiff = (p) => { const s = fs.readFileSync(p, 'utf8'); return s.slice(s.indexOf('diff --git')); };
+
+test('a join whose tree cannot be read back stages this edit from a confirmed copy, never claiming the tree', (t) => {
+  const r = joinedReDiffFails(t, blindRead);
+  assert.equal(r.caught, undefined, r.caught && r.caught.message);
+  assert.equal(r.res.route, 'staged');
+  assert.match(r.res.reason, /the join was undone, and the working tree could not be read back \(EIO: read\)/);
+  assert.doesNotMatch(r.res.reason, /holds neither/);
+  assert.equal(stagedDiff(r.res.stagePath), r.D);
+  assert.deepEqual(readManifest(r.f.runDir).map((e) => [e.id, e.status]), [['1', 'captured'], ['2', 'staged']]);
+  assert.ok(fs.readFileSync(r.first.patch).equals(r.earlier), 'the earlier patch file is untouched');
+  assert.equal(fs.readFileSync(r.abs, 'utf8'), r.body, 'the tree was reset only after a copy was confirmed');
+});
+
+test('a join whose tree cannot be read back and whose patch copy fails is homed in a confirmed staged file', (t) => {
+  const r = joinedReDiffFails(t, (ctx) => ({ ...blindRead(ctx), writeFileExclusive: failPatchCopy }));
+  assert.equal(r.caught, undefined, r.caught && r.caught.message);
+  assert.equal(r.res.route, 'staged');
+  assert.equal(r.res.patch, undefined);
+  assert.equal(stagedDiff(r.res.stagePath), r.D);
+  assert.deepEqual(fs.readdirSync(path.join(r.f.runDir, 'learned-skills')).filter((n) => n.endsWith('.patch')), ['1.patch']);
+});
+
+test('with no copy confirmable and the tree unreadable, no holder is claimed and the unreset tree is named', (t) => {
+  const r = joinedReDiffFails(t, (ctx) => ({ ...blindRead(ctx), writeFileExclusive: () => { throw Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' }); } }));
+  assert.ok(r.caught instanceof StagingFailure, r.res && JSON.stringify(r.res));
+  assert.equal(r.caught.holder, null);
+  assert.equal(r.caught.restored, false);
+  assert.match(r.caught.message, /the working tree was not reset, so it is the place left that should hold the edit, but a read could not confirm it/);
+  assert.doesNotMatch(r.caught.message, /in the working tree \(|together with the earlier captured patch/);
+  // The invariant held: the tree, untouched, still holds this edit alone.
+  assert.equal(fs.readFileSync(r.abs, 'utf8'), BOTTOM(r.body));
+  assert.equal(fs.existsSync(path.join(r.f.runDir, 'staged')) ? fs.readdirSync(path.join(r.f.runDir, 'staged')).length : 0, 0);
+});
+
+test('a join whose tree reads back as neither expected state says so, not that it could not be read', (t) => {
+  const r = joinedReDiffFails(t, ({ f, first }) => ({
+    git: (a, o) => {
+      // The undo of the join "succeeds" but leaves something else in the file.
+      if (a.includes('apply') && a.includes('-R') && a[a.length - 1] === first.patch) {
+        write(f.repo, X, '# x\n\nsomething else\n');
+        return '';
+      }
+      return realDeps.git(a, o);
+    },
+  }));
+  assert.equal(r.caught, undefined, r.caught && r.caught.message);
+  assert.equal(r.res.route, 'staged');
+  assert.match(r.res.reason, /the join was undone, and the working tree holds neither this edit alone nor both edits/);
+  assert.doesNotMatch(r.res.reason, /could not be read back/);
+  assert.equal(stagedDiff(r.res.stagePath), r.D);
+  assert.ok(fs.readFileSync(r.first.patch).equals(r.earlier));
+});
+
+test('stageEntry recomposes from the patch file once and passes the gate on the recomposed diff', (t) => {
+  const f = fixture(t);
+  write(f.repo, X, fs.readFileSync(path.join(f.repo, X), 'utf8') + 'recompose edit\n');
+  const diff = diffOf(f.repo, X);
+  sh(f.repo, ['checkout', 'HEAD', '--', X]);
+  const patchFile = path.join(f.runDir, 'good.patch');
+  fs.writeFileSync(patchFile, diff);
+  const res = stageEntry({
+    runDir: f.runDir, worktree: f.repo, entry: { target: X, summary: 'recompose', patch: 'not a patch\n', patchFile }, reason: 'r',
+  }, baseDeps);
+  assert.equal(res.gate, 'ok');
+  assert.equal(stagedDiff(res.stagePath), diff);
+  assert.match(fs.readFileSync(path.join(f.runDir, 'decisions.md'), 'utf8'), /staged instead\. Reversibility: high \(stage path: staged\/wrap-up-skill-1\.md\)\./);
 });

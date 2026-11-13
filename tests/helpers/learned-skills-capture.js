@@ -182,6 +182,32 @@ CHAINS.tracked.push(
 CHAINS.untracked.push(['patch-write-silent', 'staged-write', 're-apply'], ['patch-write', 'staged-write-silent', 're-apply']);
 CHAINS.joined.push(['patch-write', 'staged-write-silent', 're-apply']);
 
+// Gate-path points, run in the chains part only. A gate rewrite happens only after a main-path
+// failure (to reach staging) AND a failed check, so no pair can reach one: in a pair these points
+// never fire, and a fault that never fires leaves the run identical to the run without it.
+//   gate-once              the first `apply --check` fails, later ones are real
+//   staged-rewrite-silent  a rewrite of an existing staged file leaves half the bytes, returns normally
+//   staged-rewrite-partial ... leaves half and throws
+//   staged-rewrite-mangle  ... keeps the diff whole but drops the preamble's Invariant line
+const GATE_POINTS = ['gate-once', 'staged-rewrite-silent', 'staged-rewrite-partial', 'staged-rewrite-mangle'];
+// The main-path failure that reaches staging with a copy of exactly this edit (in a join, only the
+// 'separate' route has one: the joined copy holds both edits).
+const PRIMARY = { tracked: 'checkout', untracked: 'rm-cached', joined: 'join-apply' };
+for (const kind of Object.keys(CHAINS)) {
+  const p = PRIMARY[kind];
+  CHAINS[kind].push(
+    // An exact copy exists: description-only may be written, and must read back whole.
+    [p, 'gate', 'staged-rewrite-silent'],
+    [p, 'gate', 'staged-rewrite-partial'],
+    // The recompose passes the re-check, but the rewrite is not what was confirmed.
+    [p, 'gate-once', 'staged-rewrite-mangle'],
+    [p, 'gate-once'],
+    // No copy but the staged file: the gate must not rewrite it.
+    ['patch-write', 'gate', 'staged-rewrite-silent', 're-apply'],
+    ['patch-write', 'gate', 'staged-rewrite-partial', 're-apply'],
+  );
+}
+
 function combos(points, k) {
   const out = [];
   const rec = (from, acc) => {
@@ -217,6 +243,17 @@ function faultyDeps(s, faults, fired) {
   const writer = (real, exclusive) => (p, d) => {
     const inLs = path.dirname(p) === ls && p.endsWith('.patch');
     const inStaged = path.dirname(p) === staged;
+    // A rewrite of a staged file that already exists (the gate's recompose or description-only write).
+    if (inStaged && !exclusive && fs.existsSync(p)) {
+      if (has('staged-rewrite-partial')) { fs.writeFileSync(p, half(d)); throw boom('staged-rewrite-partial'); }
+      if (has('staged-rewrite-silent')) { fired.add('staged-rewrite-silent'); fs.writeFileSync(p, half(d)); return undefined; }
+      if (has('staged-rewrite-mangle')) {
+        // The diff stays whole (so a check still passes); the preamble loses its Invariant line.
+        fired.add('staged-rewrite-mangle');
+        fs.writeFileSync(p, String(Buffer.isBuffer(d) ? d.toString('utf8') : d).replace(/^Invariant: .*\n/m, ''));
+        return undefined;
+      }
+    }
     if (s.existingPatch && p === s.existingPatch && has('restore-earlier')) throw boom('restore-earlier');
     if (path.basename(p) === 'manifest.json' && has('manifest')) throw boom('manifest');
     for (const [where, n] of [[inLs, 'patch-write'], [inStaged, 'staged-write']]) {
@@ -236,6 +273,7 @@ function faultyDeps(s, faults, fired) {
     return real(p, d);
   };
   let diffs = 0;
+  let checks = 0;
   return {
     ...baseDeps,
     git: (a, o) => {
@@ -243,7 +281,10 @@ function faultyDeps(s, faults, fired) {
       if (a.includes('checkout') && has('checkout')) throw boom('checkout');
       if (a.includes('rm') && a.includes('--cached') && has('rm-cached')) throw boom('rm-cached');
       if (a.includes('apply')) {
-        if (a.includes('--check')) { if (has('gate')) throw boom('gate'); }
+        if (a.includes('--check')) {
+          if (has('gate')) throw boom('gate');
+          if (++checks === 1 && has('gate-once')) throw boom('gate-once');
+        }
         else if (a.includes('-R')) { if (has('reverse-apply')) throw boom('reverse-apply'); }
         else if (a[a.length - 1] === '-') { if (has('re-apply')) throw boom('re-apply'); }
         else if (has('join-apply')) throw boom('join-apply');
@@ -316,9 +357,12 @@ function breaches(s, res, err) {
     if (stagedFiles.length !== 1 || stagedFiles[0] !== res.stagePath) out.push(`(c) staged/ holds ${stagedFiles.length} files`);
     for (const p of stagedFiles) {
       const block = diffBlock(p);
-      // A description-only stage is the whole preamble, and only with a named patch beside it.
-      const wholeDescription = /^Target: .*\nInvariant: .*\nFinding: .*\nStaged-at: .*\n\n$/.test(fs.readFileSync(p, 'utf8'));
-      if (block === null ? !(res.patch && wholeDescription) : !holdsStaged(p)) out.push(`(c) partial proposal ${path.basename(p)}`);
+      // A description-only stage is the whole preamble, and only with a named patch beside it; a
+      // stage with a diff carries the whole preamble ahead of it.
+      const text = fs.readFileSync(p, 'utf8');
+      const wholeDescription = /^Target: .*\nInvariant: .*\nFinding: .*\nStaged-at: .*\n\n$/.test(text);
+      const wholePreamble = /^Target: .*\nInvariant: .*\nFinding: .*\nStaged-at: .*\n\ndiff --git /.test(text);
+      if (block === null ? !(res.patch && wholeDescription) : !(holdsStaged(p) && wholePreamble)) out.push(`(c) partial proposal ${path.basename(p)}`);
     }
   }
   if (split && stagedFiles.some((p) => eq(diffBlock(p), s.C))) out.push('(c) the earlier edit is both captured and staged');
@@ -373,7 +417,7 @@ function registerMatrix(kind, part, shardOpts) {
     assert.deepEqual(red, []);
     if (part === 'chains') {
       // Every point is reached somewhere in this part, so the matrix exercises it.
-      assert.deepEqual(P.filter((p) => !fired.has(p) && p !== 'restore-earlier'), [], 'fault points that never fired');
+      assert.deepEqual([...P, ...GATE_POINTS].filter((p) => !fired.has(p) && p !== 'restore-earlier'), [], 'fault points that never fired');
     }
     // The earlier captured patch is never rewritten in place: that step no longer exists.
     assert.equal(fired.has('restore-earlier'), false);
