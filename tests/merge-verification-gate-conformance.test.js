@@ -9,6 +9,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
 const { toPosix } = require('../plugin/bin/lib/shared-primitives');
+const { sectionOf } = require('./helpers/conformance-asserts');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
 const GATE_FILE = path.join(SKILLS, '_shared', 'pr-first-merge.md');
@@ -97,7 +98,9 @@ test('the gate cross-checks head-sha workflow runs before reading green (#3405)'
   const signatures = appendix.slice(appendix.indexOf('## Signatures'), appendix.indexOf('\n## ', appendix.indexOf('## Signatures') + 1));
   assert.ok(signatures.includes('#3390') && signatures.includes('39042323352'), 'Signatures list missing the #3390 capture (run 39042323352)');
   // The resume confirmation's one read-then-decide classifies from both reads, not the rollup alone.
-  const resume = section.slice(section.indexOf('**Resume-to-merge is one-shot.**'));
+  // The rule moved to the appendix (#5153, composed-bundle byte rail); Step 2.5 keeps a labeled stub that points at it.
+  assert.ok(section.includes('**Resume-to-merge is one-shot.**') && section.includes('"Resume-to-merge"'), 'Step 2.5 must keep the resume stub and its pointer to the appendix');
+  const resume = sectionOf(appendix, '## Resume-to-merge');
   assert.ok(resume.includes('gh run list') && resume.includes('not-yet-completed head run reads pending'), 'resume paragraph must classify from the head-run read too');
   // The RC=0 re-read names the not-yet-completed head run case and resumes the watch, never a blind merge.
   const rc0 = section.slice(section.indexOf('`RC=0` → **green**'), section.indexOf('`RC=1` (a check failed'));
@@ -108,6 +111,52 @@ test('the gate cross-checks head-sha workflow runs before reading green (#3405)'
   }
   // The 0) branch breaks only at zero pending head runs, and a failed runs read stops the watch rather than breaking green.
   assert.ok(zeroBranch.includes('"${PENDING_RUNS:-x}" = 0 ] && break') && zeroBranch.includes('RC=2; break'), 'bounded-watch 0) branch must gate its break on zero pending head runs and stop on a failed read');
+  // #5153: the 0) arm re-runs bin/ready-run.js and an `awaiting` read keeps the watch going.
+  assert.ok(zeroBranch.includes('bin/ready-run.js'), 'bounded-watch 0) branch must re-run bin/ready-run.js');
+  const awaitingAt = zeroBranch.indexOf('[ "$READY" = awaiting ] && PENDING_RUNS=1');
+  const breakAt = zeroBranch.indexOf('"${PENDING_RUNS:-x}" = 0 ] && break');
+  assert.ok(awaitingAt !== -1 && breakAt !== -1 && awaitingAt < breakAt, 'the awaiting line must sit before the PENDING_RUNS break line');
+  assert.ok(!zeroBranch.slice(zeroBranch.indexOf('bin/ready-run.js'), breakAt).includes('1)'), 'the inserted ready-run lines must not contain a 1) that truncates the 0) arm slice');
+  assert.ok(section.includes('awaitingReadyRun'), 'the watch prose names awaitingReadyRun');
+});
+
+// #5153 AC7.2: every clause of the watch's ready-run edit, one message each, so a mutation control
+// can prove the clause it removed is the clause that throws.
+function assertReadyRunWatchClauses(gateText) {
+  const step25 = gateText.indexOf('## Step 2.5: Merge-verification gate');
+  const section = gateText.slice(step25, gateText.indexOf('## Step 3:'));
+  const rc0 = section.slice(section.indexOf('`RC=0` → **green**'), section.indexOf('`RC=1` (a check failed'));
+  assert.ok(rc0.includes('awaitingReadyRun') && rc0.includes('resumes the bounded watch'), 'RC=0 clause: the bullet must resume the bounded watch on awaitingReadyRun');
+  assert.ok(rc0.includes('; any other ready-run state routes per Step 2.5; otherwise merge'), 'RC=0 re-read clause: any other ready-run state (read-failed included) must route per Step 2.5 before the merge');
+  assert.equal(section.split('DEADLINE=$(( $(date +%s) + 900 ))').length - 1, 1, 'deadline clause: the 15-minute literal must appear exactly once');
+  assert.ok(/^\*\*Bounded watch \([^\n]*— 15 minutes, fixed\.\*\*$/m.test(section), 'deadline clause: the heading must end — 15 minutes, fixed.**');
+  const rc3Start = section.indexOf('- `RC=3`');
+  const rc3 = section.slice(rc3Start, section.indexOf('- `RC=124`'));
+  assert.ok(rc3Start !== -1 && rc3.includes('(ready-run `red` or `draft-skip-without-ready-trigger`)') && rc3.includes('Red path'), 'RC=3 clause: the bullet must name draft-skip-without-ready-trigger and the Red path');
+  assert.ok(section.includes('checks, head runs or an awaited ready run still pending at the bound'), 'RC=124 clause: the bullet must name an awaited ready run');
+  const printf = section.split('\n').find((l) => l.includes("printf 'Parked by merge-verification"));
+  assert.ok(printf, 'park clause: the printf line must exist');
+  assert.ok(!printf.includes('Resume once green'), 'park clause: the format string must not hard-code Resume once green');
+  assert.ok(printf.includes(". %s\\n'") && printf.includes('"$VALUE" "$REASON" "$PR" "$RESUME"'), 'park clause: the format string must end %s\\n and take $RESUME as the fourth argument');
+}
+
+test('AC7.2: the RC=0 bullet resumes the bounded watch on awaitingReadyRun and the 15-minute deadline literal is unchanged', () => {
+  const gate = readText(GATE_FILE);
+  assertReadyRunWatchClauses(gate);
+  const mutate = (from, to, message) => {
+    assert.ok(gate.includes(from), `control needs the live text: ${from}`);
+    const mutated = gate.replace(from, to);
+    assert.notEqual(mutated, gate);
+    assert.throws(() => assertReadyRunWatchClauses(mutated), { message: new RegExp(message.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) }, message);
+  };
+  mutate(', as does an `awaiting` ready-run read (`awaitingReadyRun`)', '', 'RC=0 clause: the bullet must resume the bounded watch on awaitingReadyRun');
+  mutate('; any other ready-run state routes per Step 2.5', '', 'RC=0 re-read clause: any other ready-run state (read-failed included) must route per Step 2.5 before the merge');
+  mutate('DEADLINE=$(( $(date +%s) + 900 ))', 'DEADLINE=$(( $(date +%s) + 1800 ))', 'deadline clause: the 15-minute literal must appear exactly once');
+  mutate('— 15 minutes, fixed.**', '— 30 minutes.**', 'deadline clause: the heading must end — 15 minutes, fixed.**');
+  mutate('- `RC=3` (ready-run `red` or `draft-skip-without-ready-trigger`)', '- `RC=3` (ready-run `red`)', 'RC=3 clause: the bullet must name draft-skip-without-ready-trigger and the Red path');
+  mutate('checks, head runs or an awaited ready run still pending at the bound', 'checks or head runs still running at the bound', 'RC=124 clause: the bullet must name an awaited ready run');
+  mutate('"$PR" "$RESUME" >', '"$PR" >', 'park clause: the format string must end %s\\n and take $RESUME as the fourth argument');
+  mutate('PR #%s. %s\\n\'', 'PR #%s. Resume once green.\\n\'', 'park clause: the format string must not hard-code Resume once green');
 });
 
 // #4550: `gh pr checks` on a PR whose checks have not registered yet prints "no checks reported on

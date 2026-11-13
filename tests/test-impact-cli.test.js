@@ -617,6 +617,9 @@ function traceFixture(tmp, runTests) {
   for (const dir of ['tests', 'lib', path.join('tools', 'test-impact')]) fs.mkdirSync(path.join(root, dir), { recursive: true });
   for (const dir of ['slots', 'tmp']) fs.mkdirSync(path.join(tmp, dir));
   fs.copyFileSync(path.join(ROOT, 'tools', 'run-tests.js'), path.join(root, 'tools', 'run-tests.js'));
+  // run-tests.js requires the slot-lock module relative to itself, so the fixture carries it too.
+  fs.mkdirSync(path.join(root, 'plugin', 'bin', 'lib'), { recursive: true });
+  fs.copyFileSync(path.join(ROOT, 'plugin', 'bin', 'lib', 'suite-slot.js'), path.join(root, 'plugin', 'bin', 'lib', 'suite-slot.js'));
   if (runTests) fs.writeFileSync(path.join(root, 'tools', 'run-tests.js'), runTests);
   fs.copyFileSync(path.join(ROOT, 'tools', 'test-impact', 'tracer.js'), path.join(root, 'tools', 'test-impact', 'tracer.js'));
   const fixture = path.join(ROOT, 'tests', 'fixtures', 'test-impact');
@@ -742,7 +745,7 @@ test('the test-impact-map workflow uploads the artifact fetch downloads, traced 
   assert.deepStrictEqual(missingWorkflowFacts(text), []);
   assert.doesNotMatch(text, /^\s*run:.*--allow-dirty/m, 'CI traces a fresh checkout; --allow-dirty would hide a dirtied tree');
   // The exit-code check runs after the upload, so a red-suite map is still uploaded for inspection.
-  assert.ok(text.indexOf('uses: actions/upload-artifact@v4') < text.indexOf('- name: Fail the run when the traced suite failed'),
+  assert.ok(text.indexOf('uses: actions/upload-artifact@v7') < text.indexOf('- name: Fail the run when the traced suite failed'),
     'the exit-code check must follow the upload');
   // Run the check's own command line: exit 0 for a green map, 1 for a red one.
   const line = text.split('\n').find((l) => /^ {10}node -e "const m = require/.test(l)).trim();

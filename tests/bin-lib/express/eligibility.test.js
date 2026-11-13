@@ -240,3 +240,48 @@ test('resolveBlastRadiusConfig reads merge-sensitive-paths and auto-merge-max-li
   assert.strictEqual(out.autoMergeMaxLines, 12);
   assert.strictEqual(typeof out.autoMergeMaxFiles, 'number');
 });
+
+const DRIVER = { ...OPTS, allowAbsentCeremony: true };
+
+test('AC2.1: with allowAbsentCeremony, an otherwise-eligible record with no ceremony:* label is eligible', () => {
+  const out = evaluateRecordEligibility(record(['risk:low', 'size:low', 'type:task']), DRIVER);
+  assert.strictEqual(out.eligible, true);
+  assert.deepStrictEqual(out.reasons, []);
+});
+
+test('AC2.2: with allowAbsentCeremony, ceremony:standard is not eligible and names the ceremony reason', () => {
+  const out = evaluateRecordEligibility(record(['risk:low', 'size:low', 'ceremony:standard', 'type:task']), DRIVER);
+  assert.deepStrictEqual(out.reasons, [REASONS.ceremony]);
+});
+
+test('AC2.3: with allowAbsentCeremony, risk:medium and no ceremony label is not eligible (only ceremony relaxes)', () => {
+  const out = evaluateRecordEligibility(record(['risk:medium', 'size:low', 'type:task']), DRIVER);
+  assert.deepStrictEqual(out.reasons, [REASONS.risk]);
+});
+
+test('AC2.4: with allowAbsentCeremony, an unrecognised ceremony label is not eligible', () => {
+  for (const bad of ['ceremony:fastlane', 'ceremony:Standard', 'Ceremony:fast-lane']) {
+    const out = evaluateRecordEligibility(record(['risk:low', 'size:low', 'type:task', bad]), DRIVER);
+    assert.deepStrictEqual(out.reasons, [REASONS.ceremony], bad);
+  }
+});
+
+test('allowAbsentCeremony: ceremony:fast-lane passes with the option set or absent', () => {
+  assert.strictEqual(evaluateRecordEligibility(record(), DRIVER).eligible, true);
+  assert.strictEqual(evaluateRecordEligibility(record(), OPTS).eligible, true);
+});
+
+test('allowAbsentCeremony: only a literal true relaxes', () => {
+  const out = evaluateRecordEligibility(record(['risk:low', 'size:low', 'type:task']), { ...OPTS, allowAbsentCeremony: 'yes' });
+  assert.deepStrictEqual(out.reasons, [REASONS.ceremony]);
+});
+
+test('allowAbsentCeremony: gh {name} label objects take the same ceremony rule as strings', () => {
+  const objs = (names) => names.map((name) => ({ name }));
+  const base = ['risk:low', 'size:low', 'type:task'];
+  assert.strictEqual(evaluateRecordEligibility(record(objs(base)), DRIVER).eligible, true);
+  for (const bad of ['ceremony:standard', 'ceremony:Standard', 'Ceremony:fast-lane', 'ceremony:fastlane']) {
+    const out = evaluateRecordEligibility(record(objs([...base, bad])), DRIVER);
+    assert.deepStrictEqual(out.reasons, [REASONS.ceremony], bad);
+  }
+});

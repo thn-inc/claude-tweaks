@@ -173,6 +173,25 @@ test('validateShaped: one gap per distinct placeholder marker, fixture built fro
   assert.deepEqual(shapeGate(body), { ok: false, missing: ['unresolved-placeholder'] });
 });
 
+// The Release Note section sits after an unclosed fence, so it is hidden, not missing (#4350).
+const HIDDEN = '## Current State\nx\n\n```\nnever closed\n\n## Deliverables\n- [ ] d\n\n## Acceptance Criteria\n1. a\n\n## Release Note\nn';
+
+test('validateShaped: a section hidden by an unclosed fence prints the fence gap, not an empty list (#4350)', () => {
+  assert.deepEqual(validateShaped(HIDDEN), { ok: false, gaps: ['unclosed-fence at line 4'] });
+});
+
+test('validateShaped: the fence gap sits after the section gaps and before the marker gaps (#4350)', () => {
+  const body = '## Current State\nTODO later\n\n## Deliverables\n- [ ] d\n\n## Acceptance Criteria\n1. a\n\n```\nnever closed\n';
+  assert.deepEqual(validateShaped(body), {
+    ok: false,
+    gaps: [
+      'missing section: ## Release Note',
+      'unclosed-fence at line 10',
+      'unresolved placeholder marker: TODO',
+    ],
+  });
+});
+
 test('PLACEHOLDER_PATTERNS union equals the gate\'s existing combined regex', () => {
   assert.equal(
     PLACEHOLDER_PATTERNS.map((p) => p.re.source).join('|'),

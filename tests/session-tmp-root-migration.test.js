@@ -44,6 +44,7 @@ const MIGRATED_FILES = [
   // #923's remaining skills/** sweep:
   '_shared/github-pr-scan-acceptance.md',
   '_shared/github-pr-scan.md',
+  '_shared/github-pr-scan-triage.md', // #4820: the triage-queue scope split out of github-pr-scan.md
   '_shared/github-pr-scan-unsettled-resume.md', // #4804: item 10's split; resolves its per-run path via session-tmp-resolve.js
   '_shared/harness-health-analysis.md',
   '_shared/label-bootstrap.md',
@@ -158,8 +159,8 @@ test('bin/lib/session-tmp.js is a pure module (no gh/MCP/network calls)', () => 
   assert.doesNotMatch(text, /execFileSync|execSync|spawn|fetch\(/, 'must stay pure filesystem helpers, no network/process calls');
 });
 
-// #4173: pr-first-merge.md Step 2.5 writes three scratch files -- the bounded watch's checks and
-// head-runs captures and the Red path's park-comment body. All resolve through bin/session-tmp-resolve.js, and the
+// #4173: pr-first-merge.md Step 2.5 writes four scratch files -- the bounded watch's checks and
+// head-runs captures, the ready-run read, and the Red path's park-comment body. All resolve through bin/session-tmp-resolve.js, and the
 // printed literal is substituted into the fence. PRE_CHANGE_PARK_FENCE is the Red path's
 // printf + --body-file pair as it stood at HEAD before #4173 (the go-red half).
 const PRE_CHANGE_PARK_FENCE = String.raw`printf 'Parked by merge-verification (%s): %s on PR #%s. Resume once green.\n' "$VALUE" "$REASON" "$PR" > /tmp/park-comment-{n}.md
@@ -180,8 +181,8 @@ test('#4173: Step 2.5 resolves its checks and head-runs captures and park-commen
   assert.doesNotMatch(text, FIXED_PARK_PATH_RE, 'no literal /tmp/park-comment- path remains');
   assert.doesNotMatch(text, FIXED_CHECKS_PATH_RE, 'no literal /tmp/pr-checks- path remains');
   assert.doesNotMatch(text, FIXED_RUNS_PATH_RE, 'no literal /tmp/pr-runs- path remains');
-  const COMBINED_RESOLVE = 'node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PR_CHECKS=pr-checks-{n}.txt PR_RUNS=pr-runs-{n}.json PARK_COMMENT=park-comment-{n}.md';
-  assert.ok(text.includes(COMBINED_RESOLVE), 'Step 2.5 resolves all three scratch paths in one bin/session-tmp-resolve.js call');
+  const COMBINED_RESOLVE = 'node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PR_CHECKS=pr-checks-{n}.txt PR_RUNS=pr-runs-{n}.json PARK_COMMENT=park-comment-{n}.md PR_READY=pr-ready-{n}.json';
+  assert.ok(text.includes(COMBINED_RESOLVE), 'Step 2.5 resolves all four scratch paths in one bin/session-tmp-resolve.js call');
   const stateAnchor = text.indexOf('**Read state first');
   const stateFence = text.indexOf('```bash\ngh pr view', stateAnchor);
   assert.ok(stateAnchor >= 0 && stateFence > stateAnchor, 'the state-read section and its gh pr view fence are present');
@@ -190,7 +191,7 @@ test('#4173: Step 2.5 resolves its checks and head-runs captures and park-commen
   assert.match(text, /> "\{pr-checks-path\}" 2>&1; RC=\$\?/, 'the watch loop redirects into the resolved {pr-checks-path}');
   assert.match(text, /--json status > "\{pr-runs-path\}" \|\|/, 'the watch loop writes head runs to the resolved {pr-runs-path}');
   assert.match(text, /-- "\{pr-runs-path\}"\)/, 'the pending-runs count reads the resolved {pr-runs-path}');
-  assert.match(text, /printf .* "\$VALUE" "\$REASON" "\$PR" > "\{park-comment-path\}"/, 'the printf redirect writes the resolved {park-comment-path}');
+  assert.match(text, /printf .* "\$VALUE" "\$REASON" "\$PR" "\$RESUME" > "\{park-comment-path\}"/, 'the printf redirect writes the resolved {park-comment-path}');
   assert.match(text, /--body-file "\{park-comment-path\}"/, '--body-file reads the resolved {park-comment-path}');
   assert.doesNotMatch(PRE_CHANGE_PARK_FENCE, /session-tmp-resolve\.js/, 'go-red: the pre-change park fence does not resolve through session-tmp-resolve.js');
   assert.match(PRE_CHANGE_PARK_FENCE, FIXED_PARK_PATH_RE, 'go-red: the park-path ban matches the frozen pre-change fence');

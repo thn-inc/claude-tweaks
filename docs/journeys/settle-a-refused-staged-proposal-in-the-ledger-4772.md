@@ -2,6 +2,7 @@
 files:
   - plugin/skills/wrap-up/refused-proposals.md
   - plugin/skills/_shared/ledger-format.md
+  - plugin/bin/lib/stage-item/ledger.js
   - plugin/skills/ledger/SKILL.md
   - plugin/skills/review/step3-routing.md
   - tests/deferral-gate-conformance.test.js
@@ -25,12 +26,13 @@ files:
 
 ### 2. Reopen the row that named the staged path
 - **URL:** `plugin/skills/wrap-up/refused-proposals.md` → "## Ledger origin"
-- **Action:** Resolve the run's active ledger (`_shared/ledger-format.md`'s Location section's resolution rule; in a multi-spec run, the one shared ledger). Find the `deferred` row whose Resolution names the exact refused path: `staged/review-followup-3.md` in a single-spec run, or `spec-2/staged/review-followup-3.md` in a multi-spec run. Set that row to `open` with note `proposal refused — no defer reason`. Delete the staged file and log the ledger-origin `REFUSED` line.
+- **Action:** Resolve the run's active ledger (`_shared/ledger-format.md`'s Location section's resolution rule; in a multi-spec run, the one shared ledger). Find the `deferred` row whose Resolution names the exact refused path: `staged/review-followup-3.md` in a single-spec run, or `spec-2/staged/review-followup-3.md` in a multi-spec run. Set that row to `open` with `hooks.js ledger-row --row {N} --status open`, its `--resolution` carrying the note `proposal refused — no defer reason` (`_shared/ledger-format.md`'s Writer section). Delete the staged file and log the ledger-origin `REFUSED` line.
 - **Should feel:** Mechanical and unambiguous. One exact path names one row, even when two specs each staged a `review-followup-1.md`.
 - **Should understand:**
   - This is the one reopen `_shared/ledger-format.md`'s Resolution-text requirements allow, and the rule is stated there. The deferral never completed, so returning the row to `open` restores its true state, not a reversal of a decision.
   - Only a `deferred` row reopens. A row in another status, such as an `acknowledged` ops item whose staged proposal was refused, falls through to the no-origin branch.
-  - The staged file is deleted only after the status write lands. When the active ledger does not resolve to one file, or the write fails, neither changes: the proposal stays staged as if no row named it, and its `REFUSED` line keeps the `kept staged.` ending.
+  - The verb performs the reopen under the run's ledger lock and accepts it only when all three conditions hold: the row is `deferred`, its Resolution names a `staged/` path, and the new Resolution carries the note. Any other move to `open` exits 1 with nothing written.
+  - The staged file is deleted only after the status write lands. When the active ledger does not resolve to one file, or the write fails (a non-zero `ledger-row` exit, the Writer section's refusal rule), neither changes: the proposal stays staged as if no row named it, and its `REFUSED` line keeps the `kept staged.` ending.
   - Under `--dry-run`, the status flip and the staged-file deletion are previewed, not applied.
   - The producers write the path this step matches. `review/step3-routing.md`'s record-proposal paragraph and `_shared/ledger-format.md`'s Defer/Keep bullets both record the staged path in the row's Resolution, spec-qualified in a multi-spec run.
   - `ledger/SKILL.md`'s "Reopening resolved items" anti-pattern row points at this exception instead of restating it.
@@ -57,4 +59,5 @@ files:
 ## Origin
 - Created during the build of #4772 (settle refused review-followup- proposals in the open-items ledger), run `2026-11-01T182343-record-4772`.
 - Steps 1, 3 and 4 describe existing behavior. Step 2 is what this build changed: the reopen used to cover only `staged/ledger-record-*.md` and keyed on the filename prefix. It now keys on the exact staged path named in a `deferred` row's Resolution, spec-qualified in multi-spec runs.
+- Updated during the build of #4439, run `2026-11-03T204945-record-4439`: step 2's status write now goes through `hooks.js ledger-row`. The verb holds the ledger lock and enforces the three reopen conditions, so a refused write is the existing "write fails" case. See `docs/journeys/record-or-settle-a-ledger-row-from-a-worktree-4439.md`.
 - Related: `docs/journeys/close-a-run-whose-ledger-holds-an-incomplete-deferral-3327.md` (the incomplete-deferral rule this sits beside) and `docs/journeys/recover-a-queue-write-the-unattended-console-could-not-file-4170.md` (the failed-create path a refusal is distinct from).

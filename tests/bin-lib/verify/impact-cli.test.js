@@ -16,6 +16,8 @@ const { execFile, execFileSync } = require('child_process');
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'verify.js');
 const { encodeImpactMap, DEFAULT_MAP_NAME } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'impact.js'));
 const { substituteFile } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'file-template.js'));
+const { derivePhases } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'timing', 'derive.js'));
+const { slotEnv } = require('../../helpers/suite-slot-env');
 
 const TMP_DIRS = [];
 after(() => { for (const d of TMP_DIRS) fs.rmSync(d, { recursive: true, force: true }); });
@@ -27,9 +29,13 @@ function tmpDir(prefix = 'verify-impact-cli-') {
   return dir;
 }
 
-function runCli(args, cwd) {
+// With no `opts.env`, the child skips the machine-wide suite slot exactly as under
+// tools/run-tests.js (#5119), so a direct `node --test` of this file never queues on the real lock.
+function runCli(args, cwd, opts = {}) {
   return new Promise((resolve) => {
-    execFile(process.execPath, [CLI, ...args], { maxBuffer: 10 * 1024 * 1024, cwd },
+    execFile(process.execPath, [CLI, ...args], {
+      maxBuffer: 10 * 1024 * 1024, cwd, env: { ...process.env, CT_TEST_SUITE_SLOT_HELD: '1' }, ...opts,
+    },
       (err, stdout, stderr) => resolve({ code: err ? err.code : 0, stdout, stderr }));
   });
 }
@@ -121,6 +127,28 @@ function commitFile(r, rel, content) {
 
 const ARGS = ['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', 'main'];
 
+// A run dir for --run (#4321). Its parent is excluded in the temp repo so the
+// dir never reads as a changed path under the `.claude-tweaks/**` fixture rule.
+function runDirOf(r) {
+  const runDir = path.join(r.repo, '.claude-tweaks', 'pipelines', '2026-11-02T000000-record-1');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.mkdirSync(path.join(r.gitDir, 'info'), { recursive: true });
+  fs.appendFileSync(path.join(r.gitDir, 'info', 'exclude'), '.claude-tweaks/pipelines/\n');
+  return runDir;
+}
+
+function readEvents(runDir) {
+  return fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+}
+
+// The test-phase verify entry timing.json would hold for the run, derived from
+// the real writer's events.jsonl behind a synthetic /test invocation.
+function timingEntry(runDir) {
+  const events = [{ type: 'skill_invoked', skill: 'claude-tweaks:test', ts: '2000-01-01T00:00:00.000Z' }, ...readEvents(runDir)];
+  const out = derivePhases({ events, now: new Date(Date.now() + 60000) });
+  return out.phases.find((p) => p.phase === 'test').verify[0];
+}
+
 test('selects the subset (AC1.1 report shape)', async () => {
   const r = impactRepo();
   writeMap(r);
@@ -150,6 +178,24 @@ test('selects the subset (AC1.1 report shape)', async () => {
   const stamp = r.stamp();
   assert.strictEqual(stamp.scope, 'scoped');
   assert.strictEqual(stamp.fullSha, r.base, 'the merge-base anchors the stamp');
+});
+
+test('AC4.1: a run whose only suite runs its impact subset takes the subset lane and never waits behind a held full-lane slot (#5119)', async () => {
+  const r = impactRepo();
+  writeMap(r);
+  commitFile(r, 'src/x.js', 'x2\n');
+  // Held by this live test process for the whole run: a full-lane waiter would never get it.
+  const slotDir = tmpDir('verify-impact-slots-');
+  const fullLock = path.join(slotDir, 'slot-0.lock');
+  fs.writeFileSync(fullLock, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(), cwd: '/holder-cwd' }));
+  const run = await runCli(ARGS, r.repo, { env: slotEnv(slotDir), timeout: 60000 });
+  assert.strictEqual(run.code, 0, run.stderr + run.stdout);
+  assert.strictEqual(r.marker(), 'tests/a.test.js\n', 'the subset command ran');
+  const { waitedMs, ...slot } = r.report().slot;
+  assert.deepStrictEqual(slot, { lane: 'subset', index: 0, slots: 1, source: 'default' });
+  assert.ok(Number.isInteger(waitedMs));
+  assert.doesNotMatch(run.stderr, /waiting for a test-suite slot/);
+  assert.ok(fs.existsSync(fullLock), 'the full-lane holder is untouched');
 });
 
 test('a test edited after the map commit to read src/x.js is selected when src/x.js changes, map older than the base (#4132)', async () => {
@@ -431,4 +477,140 @@ test('no impact block → no scope.impact key', async () => {
   assert.strictEqual(Object.hasOwn(report.scope, 'impact'), false);
   assert.doesNotMatch(run.stdout, /^Impact:/m);
   assert.strictEqual(fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify', 'impact-files.txt')), false);
+});
+
+// #4638 round 2, Reading A: "any narrowing" means merge narrowing only. Deleting a
+// test file no other test reads gives an empty impact subset with no merge
+// involved; the suite drops, nothing runs, and the run still stamps `none`.
+test('#4638 round-2 Reading A: an empty impact subset with no merge narrowing still stamps none', async () => {
+  const r = impactRepo();
+  writeMap(r);
+  r.git('rm', '-q', 'tests/b.test.js');
+  r.git('commit', '-q', '-m', 'delete b');
+  const run = await runCli(ARGS, r.repo);
+  assert.strictEqual(run.code, 0, run.stderr + run.stdout);
+  assert.strictEqual(fs.existsSync(path.join(r.gitDir, 'impact-marker')), false, 'no test command ran');
+  const report = r.report();
+  assert.strictEqual(report.scope.mode, 'none');
+  assert.deepStrictEqual(report.scope.suites, []);
+  assert.deepStrictEqual(report.scope.changedFiles, ['tests/b.test.js']);
+  assert.strictEqual(report.scope.mergeNarrowing, null);
+  assert.deepStrictEqual(report.scope.impact.files, []);
+  const stamp = r.stamp();
+  assert.strictEqual(stamp.scope, 'none');
+  assert.deepStrictEqual(stamp.suitesRun, []);
+});
+
+// #4638: the outcome guard drops a narrowing that selects no suite and
+// re-selects over the full set; under an impact declaration it must restore
+// each path's A/M/D status too, or a restored M path reads as A and also
+// reaches tests that only stat it.
+test('#4638: a merge narrowing the zero-suite guard drops restores each path\'s status for impact selection', async () => {
+  const r = impactRepo(declOf({}, { rules: [...RULES, { match: 'docs/**', suites: [], static: false }] }));
+  fs.writeFileSync(path.join(r.gitDir, DEFAULT_MAP_NAME), mapJson(r.base, {
+    tests: { 'tests/a.test.js': { f: ['src/x.js'] }, 'tests/b.test.js': { f: ['src/y.js'], s: ['src/x.js'] } },
+  }));
+  // Anchor: a first run on the unchanged branch is a `none` run whose stamp
+  // carries fullSha = the merge-base, so the second run is anchored there.
+  const first = await runCli(ARGS, r.repo);
+  assert.strictEqual(first.code, 0, first.stderr + first.stdout);
+  assert.strictEqual(r.stamp().fullSha, r.base, 'fixture: the first run anchors at the base');
+  r.git('checkout', '-q', 'main');
+  commitFile(r, 'src/x.js', 'x2\n');
+  r.git('checkout', '-q', 'feature');
+  r.git('merge', '-q', '--no-ff', '--no-edit', 'main');
+  fs.mkdirSync(path.join(r.repo, 'docs'), { recursive: true });
+  commitFile(r, 'docs/a.md', 'docs\n');
+  const run = await runCli(ARGS, r.repo);
+  assert.strictEqual(run.code, 0, run.stderr + run.stdout);
+  assert.doesNotMatch(run.stdout, /merge-narrowed/);
+  assert.strictEqual(r.marker(), 'tests/a.test.js\n', 'M status reaches only the content reader');
+  const report = r.report();
+  assert.strictEqual(report.scope.mergeNarrowing, null);
+  assert.deepStrictEqual(report.scope.changedFiles, ['docs/a.md', 'src/x.js']);
+  assert.deepStrictEqual(report.scope.impact.files, ['tests/a.test.js']);
+});
+
+test('AC1.1 AC1.2: a subset run records its selected count in the timing entry (#4321)', async () => {
+  const r = impactRepo();
+  const runDir = runDirOf(r);
+  writeMap(r);
+  commitFile(r, 'src/x.js', 'x2\n');
+  const run = await runCli([...ARGS, '--run', runDir], r.repo);
+  assert.strictEqual(run.code, 0, run.stderr + run.stdout);
+  assert.deepStrictEqual(timingEntry(runDir).impact, { suite: 'tests', fallback: null, superseded: false, selected: 1, supersedingPaths: [] });
+});
+
+test('AC1.1 AC1.2: a fallback records its reason in the timing entry (#4321)', async () => {
+  const r = impactRepo();
+  const runDir = runDirOf(r);
+  commitFile(r, 'src/x.js', 'x2\n');
+  const run = await runCli([...ARGS, '--run', runDir], r.repo);
+  assert.strictEqual(run.code, 0, run.stderr + run.stdout);
+  assert.deepStrictEqual(timingEntry(runDir).impact, { suite: 'tests', fallback: 'map-missing', superseded: false, selected: null, supersedingPaths: [] });
+});
+
+test('AC1.1 AC1.2: a superseded run records its paths in the timing entry (#4321)', async () => {
+  const r = impactRepo();
+  const runDir = runDirOf(r);
+  writeMap(r);
+  fs.mkdirSync(path.join(r.repo, 'notes'), { recursive: true });
+  fs.writeFileSync(path.join(r.repo, 'scripts', 'extra.js'), '\n');
+  fs.writeFileSync(path.join(r.repo, 'notes', 'u.txt'), 'u\n');
+  r.git('add', 'scripts/extra.js', 'notes/u.txt');
+  r.git('commit', '-q', '-m', 'extra and unmatched');
+  const run = await runCli([...ARGS, '--run', runDir], r.repo);
+  assert.strictEqual(run.code, 0, run.stderr + run.stdout);
+  assert.deepStrictEqual(timingEntry(runDir).impact, { suite: 'tests', fallback: null, superseded: true, selected: null, supersedingPaths: ['notes/u.txt', 'scripts/extra.js'] });
+});
+
+test('an unanchored run records no-anchor in the timing entry (#4321)', async () => {
+  const r = impactRepo();
+  const runDir = runDirOf(r);
+  writeMap(r);
+  commitFile(r, 'src/x.js', 'x2\n');
+  const run = await runCli(['--scope', '.claude-tweaks/verify-scope.json', '--base', r.base, '--run', runDir], r.repo);
+  assert.strictEqual(run.code, 0, run.stderr + run.stdout);
+  assert.strictEqual(timingEntry(runDir).impact.fallback, 'no-anchor');
+});
+
+test('a list-file problem records the re-selected fallback in the timing entry (#4321)', { skip: process.platform === 'win32' }, async () => {
+  const odd = 'tests/we\nird.test.js';
+  const r = impactRepo(declOf(), { [odd]: 'odd\n' });
+  const runDir = runDirOf(r);
+  fs.writeFileSync(path.join(r.gitDir, DEFAULT_MAP_NAME), mapJson(r.base, {
+    tests: { 'tests/a.test.js': { f: ['src/y.js'] }, [odd]: { f: ['src/x.js'] } },
+  }));
+  commitFile(r, 'src/x.js', 'x2\n');
+  const run = await runCli([...ARGS, '--run', runDir], r.repo);
+  assert.strictEqual(run.code, 0, run.stderr + run.stdout);
+  assert.match(timingEntry(runDir).impact.fallback, /^files-list-unwritable: /);
+});
+
+test('no impact block leaves the impact field off the event and the timing entry (#4321)', async () => {
+  const decl = {
+    checks: { tests: { tests: 'node scripts/full.js' } },
+    rules: [{ match: '**', suites: ['tests'], static: false }],
+  };
+  const r = impactRepo(decl);
+  const runDir = runDirOf(r);
+  const first = await runCli(ARGS, r.repo);
+  assert.strictEqual(first.code, 0, first.stderr + first.stdout);
+  commitFile(r, 'src/x.js', 'x2\n');
+  const run = await runCli([...ARGS, '--run', runDir], r.repo);
+  assert.strictEqual(run.code, 0, run.stderr + run.stdout);
+  assert.strictEqual(Object.hasOwn(timingEntry(runDir), 'impact'), false);
+  const verifyEvents = readEvents(runDir).filter((e) => e.type === 'verify');
+  assert.strictEqual(verifyEvents.length, 1, 'only the --run invocation wrote an event');
+  assert.strictEqual(Object.hasOwn(verifyEvents[0], 'impact'), false, 'the event itself carries no impact key');
+});
+
+test('an untraced changed path records its named reason in the timing entry (#4321)', async () => {
+  const r = impactRepo();
+  const runDir = runDirOf(r);
+  writeMap(r);
+  commitFile(r, 'src/z.js', 'z\n');
+  const run = await runCli([...ARGS, '--run', runDir], r.repo);
+  assert.strictEqual(run.code, 0, run.stderr + run.stdout);
+  assert.deepStrictEqual(timingEntry(runDir).impact, { suite: 'tests', fallback: 'untraced-path: src/z.js', superseded: false, selected: null, supersedingPaths: [] });
 });
