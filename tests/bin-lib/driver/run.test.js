@@ -174,7 +174,7 @@ test('#5352: www. and bare github.com URLs go after the www-autolink boundary', 
   assert.equal(neutralize('Add Closes gith#7ub.com/o/r/pull/5 now'), 'Add now');
 });
 
-test('#5352: a host-free owner/repo/issues/N path goes whatever precedes it', () => {
+test('#5352: a host-free owner/repo/issues/N path goes unless an underscore precedes it', () => {
   assert.equal(neutralize('o/r/issues/5 y'), 'y');
   assert.equal(neutralize('x o/r/issues/5 y'), 'x y');
   // Removing the path leaves a boundary that makes a glued GH-N live; it goes too.
