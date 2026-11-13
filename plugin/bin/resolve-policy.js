@@ -56,6 +56,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { POLICY_KEYS, resolvePolicyConfig, formatForgeDegrade } = require('./lib/policy-schema');
 const { computeDerivedDefaults } = require('./lib/policy-derived-defaults');
+const { pickInjected } = require('./lib/repo-resolve');
 const { parsePolicyModelConfig } = require('./lib/model-profiles/policy-fragment');
 const { anchoredOrOutsideMessage } = require('./lib/run-dir-guard');
 
@@ -140,9 +141,7 @@ function resolvePolicy({ keys, runDir = null, mcpReachable = false }, deps) {
     mcpReachable,
     runConfigRaw,
     onDegrade: (key, degrade) => degrades.set(key, degrade),
-    env: deps.env,
-    ...(deps.stderr ? { stderr: deps.stderr } : {}),
-    ...(deps.homeDir ? { homeDir: deps.homeDir } : {}),
+    ...pickInjected(deps),
   });
 
   // model-profiles is a block-style key — policy-only (the --run
