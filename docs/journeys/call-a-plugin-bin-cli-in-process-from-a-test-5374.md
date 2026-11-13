@@ -27,6 +27,7 @@ files:
 - **Red flags:**
   - `listed entry "…" is not a repo-relative path`. The list file holds an absolute path. Write paths relative to the checkout root.
   - A row for a file you did not list, or the whole run attributed to the first file. The runner is being counted as a test file, which the tool's own tests rule out.
+  - `count-node-procs: test run failed to start: …` or `count-node-procs: test run was killed by <signal>` on stderr. The test run itself did not finish, the tool exits 1, and the table's counts are not a measurement of the file. Fix the run and measure again.
 
 ### 2. Swap the file's spawn helper for an adapter over `runCliSync`
 - **URL:** the test file's local helper, and `tests/helpers/run-cli.js`.
@@ -52,6 +53,7 @@ files:
   - Catching the helper's throw in the test, or loosening an assertion, to get back to green. A leak is a defect in the CLI's path, and the test just found it.
   - A CLI whose `realDeps` holds a seam that can start `gh` or an arbitrary command under another name (`execFileSync`, `runPremiseCheck`). Add that name to `FAIL_CLOSED_KEYS` in the helper in the same change, or the test can reach the real tool.
   - A stub on an injected `PATH` that never runs. A child on the CLI's path is started without `env: deps.env`, so it inherits the test runner's environment.
+  - `process.cwd() could not be read or restored (…)` in the leak list. The CLI removed its own working directory, or the directory the test started in, so the helper could not put the cwd back. It still restored the env and the listeners. Work from `deps.cwd()` instead of changing or removing the process's directory.
 
 ### 4. Keep the script entry covered by real processes
 - **URL:** the same test file.
