@@ -23,6 +23,8 @@ const { confirmFromFile } = require('../dispatch/merge-verdict');
 const { classifyRollup, normalizeEntry } = require('../pr-checks/classify');
 const { ensureLabelPayload } = require('../issues/labels');
 const { LABELS } = require('../issues/record-vocabulary');
+const { parseWorktreeList, findWorktreeEntry } = require('../hooks/worktree-reap');
+const { safeReal } = require('../hooks/worktree-detect');
 
 const BIN_DIR = path.join(__dirname, '..', '..');
 const AUTHORIZING_LABEL = 'auto:merge';
@@ -56,6 +58,11 @@ function stop(s, step, reason, detail) {
 // merge: it is recorded on s.logFailures and named in the sub-step's event.
 function logDecision(s, step, text, status = 'AUTO', reversibility = null, lever = null) {
   const { ctx, deps } = s;
+  // No run directory to write into once the events went stdout-only: skipped, and named.
+  if (s.eventsStdoutOnly) {
+    s.logFailures.push(`log:${step}`);
+    return;
+  }
   s.logSeq += 1;
   const file = path.join(s.runDir, `merge-log-${s.logSeq}.txt`);
   try {
@@ -828,15 +835,267 @@ async function confirm(s) {
   return stop(s, 'merge-confirm', 'merge-refused', `confirmation read state ${prStateWords(read.state)}`);
 }
 
-// Task 6 replaces this stub with the post-merge sequence.
-async function postMerge() {
-  return { verdict: null, failedSteps: [], failures: [] };
+// ---- The post-merge sequence: _shared/pr-first-merge-post-merge.md Steps 4 and 5 ----
+
+// The reconcile call mirrors, checks the release and archives the run: it gets a long bound.
+const RECONCILE_TIMEOUT_MS = 150000;
+const NOT_LOCKED = /not locked/i;
+
+// The ONLY git call site in this module: every git argv is a literal array passed here (the
+// source scan relies on it). settle.js's gitIn shape; `remoteWrite` is for the fetch alone.
+function runGit(s, args, { remoteWrite = false } = {}) {
+  const { ctx, deps } = s;
+  return deps.git(['-C', ctx.mainCheckout, ...args], remoteWrite ? { cwd: ctx.mainCheckout, remoteWrite: true } : { cwd: ctx.mainCheckout });
+}
+
+// A post-merge failure: a `fail` event and an entry on the result's failures. It never changes
+// the outcome from `merged`.
+function postFail(s, step, name, detail, extra) {
+  s.pmFailures.push(name);
+  emit(s, step, 'fail', `${name}: ${detail}`, extra);
+}
+
+// Each sub-step is fail-safe: a throw inside one is that sub-step's failure and the sequence goes on.
+function guarded(s, step, name, fn) {
+  try {
+    fn();
+  } catch (err) {
+    postFail(s, step, name, `threw: ${errorText(err)}`);
+  }
+}
+
+// The decision lines a sub-step could not write (named by logDecision), for its event detail.
+function logNote(s, failuresBefore) {
+  return s.logFailures.length > failuresBefore ? ` (${s.logFailures.slice(failuresBefore).join(', ')})` : '';
+}
+
+// Ports Steps 4.0 and 4.0b: post-merge-run.js is routed on its `verdict`, never on exit 0 alone
+// (exit 2 and 3 are malformed and unanchored calls).
+function runPostMergeRun(s, out) {
+  const { ctx, deps } = s;
+  s.stage = 'merge-post-merge';
+  const r = deps.node(bin('post-merge-run.js'), ['--run', s.runDir], { cwd: ctx.mainCheckout, timeout: CLI_TIMEOUT_MS, env: deps.env });
+  if (r.code !== 0) {
+    return postFail(s, 'merge-post-merge', 'post-merge-run', `post-merge-run.js exited ${r.code === null ? 'without finishing (timed out)' : r.code}`);
+  }
+  const body = parseJson(String(r.stdout).trim());
+  if (!isObject(body) || typeof body.verdict !== 'string') {
+    return postFail(s, 'merge-post-merge', 'post-merge-run', 'post-merge-run.js printed no verdict');
+  }
+  out.verdict = body.verdict;
+  out.failedSteps = Array.isArray(body.failedSteps) ? body.failedSteps.filter((x) => typeof x === 'string') : [];
+  if (body.verdict === 'failed') {
+    // A verdict, not a failed call: carried on the result and the event, never an entry on `failures`.
+    emit(s, 'merge-post-merge', 'fail', `post-merge steps failed: ${out.failedSteps.join(', ') || 'unnamed'}`,
+      { verdict: 'failed', failedSteps: out.failedSteps });
+  } else {
+    emit(s, 'merge-post-merge', 'ok', `post-merge verdict ${reduceDetail(body.verdict)}`);
+  }
+  return undefined;
+}
+
+// Ports Step 4.1: which release carried this merge, from tag ancestry, then the run comment.
+function releaseStatus(s) {
+  const { ctx, deps } = s;
+  s.stage = 'merge-release-status';
+  const failuresBefore = s.logFailures.length;
+  const unavailable = (reason) => {
+    const text = `pr-first-merge Step 4.1: release status unavailable (${reduceDetail(reason)})`;
+    logDecision(s, 'pr-first-merge Step 4.1', text, 'AUTO', 'n/a');
+    return postFail(s, 'merge-release-status', 'release-status', `${text}${logNote(s, failuresBefore)}`);
+  };
+  if (!s.mergeCommit) return unavailable('no merge commit was reported');
+  try {
+    runGit(s, ['fetch', 'origin', ctx.base], { remoteWrite: true });
+  } catch (err) {
+    return unavailable(`fetch failed: ${errorText(err)}`);
+  }
+  let line;
+  try {
+    const out = runGit(s, ['describe', '--tags', '--contains', '--first-parent', '--match', 'v*', s.mergeCommit]);
+    // `git describe` suffixes every ancestor of the tagged commit with ~N or ^N.
+    const tag = firstLine(out).replace(/(?:[~^]\d*)+$/, '');
+    if (!/^v[0-9A-Za-z._+-]+$/.test(tag)) return unavailable('git describe printed no tag');
+    line = `already carried by ${tag}`;
+  } catch (err) {
+    if (!String((err && err.stderr) || '').startsWith('fatal: cannot describe')) {
+      return unavailable(`git describe failed: ${errorText(err)}`);
+    }
+    line = 'not yet in a release — bump pending';
+  }
+  logDecision(s, 'pr-first-merge Step 4.1', `pr-first-merge Step 4.1: release status — ${line}.`, 'AUTO', 'n/a');
+  // Create only: the run directory is minted fresh for each driver run and the merge runs once per
+  // run, so no earlier release-status comment can exist on this PR to update.
+  const file = path.join(s.runDir, 'release-status-comment.md');
+  try {
+    deps.writeFile(file, `<!-- run-comment: release-status -->\n${line}\n`);
+    deps.gh(['pr', 'comment', String(ctx.pr), '--repo', ctx.repo, '--body-file', file]);
+  } catch (err) {
+    return postFail(s, 'merge-release-status', 'release-status-comment', `${line}; run comment failed: ${errorText(err)}${logNote(s, failuresBefore)}`);
+  }
+  emit(s, 'merge-release-status', 'ok', `${line}${logNote(s, failuresBefore)}`);
+  return undefined;
+}
+
+// `lstatType` answers `{ type, code }`; only a directory counts as a run dir (a file or a symlink
+// at the path does not), and an unreadable answer is "not there".
+function isDirectory(deps, p) {
+  try {
+    const st = deps.lstatType(p);
+    return !!st && st.type === 'directory';
+  } catch {
+    return false;
+  }
+}
+
+// Ports Step 4.2: reconcile, then follow the run directory, which reconcile may have archived.
+// Neither the original nor its archive twin existing leaves the original path in use and sends
+// the events to stdout only.
+function reconcile(s) {
+  const { ctx, deps } = s;
+  s.stage = 'merge-reconcile';
+  const r = deps.node(bin('hooks.js'), ['reconcile', '--checks', 'mirror,release,archive'],
+    { cwd: ctx.mainCheckout, timeout: RECONCILE_TIMEOUT_MS, env: deps.env });
+  if (r.code !== 0) {
+    // null: killed by the timeout. The original path stays in use.
+    return postFail(s, 'merge-reconcile', 'reconcile',
+      r.code === null || r.code === undefined ? 'reconcile did not finish (timed out or killed)' : `reconcile exited ${r.code}`);
+  }
+  let where = 'run directory kept in place';
+  if (!isDirectory(deps, s.runDir)) {
+    const archive = path.join(ctx.mainCheckout, '.claude-tweaks', 'pipelines', 'archive', path.basename(s.runDir));
+    if (isDirectory(deps, archive)) {
+      s.runDir = archive;
+      where = 'run directory followed into the archive';
+    } else {
+      s.eventsStdoutOnly = true;
+      where = 'run directory and its archive are both missing; events go to stdout only';
+    }
+  }
+  // Before the reconcile event, so it lands where the rest of the run writes (or on stdout alone).
+  deps.rebindEvents(s.eventsStdoutOnly ? null : s.runDir);
+  emit(s, 'merge-reconcile', 'ok', where);
+  return undefined;
+}
+
+// A worktree path as git lists it (realpath'd): its own realpath, else its parent's plus the leaf
+// (a deleted directory), else as given — the canonicalization settle.js applies.
+function canonicalWorktreePath(worktree) {
+  const own = safeReal(worktree);
+  if (own) return own;
+  const parent = safeReal(path.dirname(worktree));
+  return parent ? path.join(parent, path.basename(worktree)) : worktree;
+}
+
+// Ports Step 4's teardown: remove the record's worktree, then its local branch. No force flag: a
+// worktree with modified or untracked files refuses removal, stays, and is named in the event.
+// Returns whether the worktree is gone (the remote delete runs only then).
+function teardown(s) {
+  const { ctx } = s;
+  s.stage = 'merge-teardown';
+  const { worktree, branch, base } = ctx;
+  const failuresBefore = s.logFailures.length;
+  const failedBefore = s.pmFailures.length;
+  const notes = [];
+  let gone = false;
+  try {
+    const listed = parseWorktreeList(runGit(s, ['worktree', 'list', '--porcelain']));
+    if (!worktree || !findWorktreeEntry(listed, canonicalWorktreePath(worktree))) {
+      notes.push('worktree already gone');
+      gone = true;
+    } else {
+      try {
+        runGit(s, ['worktree', 'unlock', worktree]);
+      } catch (err) {
+        // A worktree that is not locked is fine; any other refusal is left for the removal to surface.
+        if (!NOT_LOCKED.test(String((err && err.stderr) || ''))) notes.push(`unlock failed: ${errorText(err)}`);
+      }
+      runGit(s, ['worktree', 'remove', worktree]);
+      notes.push('worktree removed');
+      gone = true;
+    }
+  } catch (err) {
+    s.pmFailures.push('teardown-worktree');
+    notes.push(`worktree kept (${worktree || 'unnamed'}): ${errorText(err)}`);
+  }
+  if (gone) {
+    let present = true;
+    if (!branch || branch === base) {
+      present = false;
+      s.pmFailures.push('teardown-branch');
+      notes.push(`local branch not deleted: ${branch ? 'refused (integration branch)' : 'no branch name'}`);
+    } else {
+      try {
+        runGit(s, ['rev-parse', '--verify', '--quiet', '--end-of-options', `refs/heads/${branch}`]);
+      } catch (err) {
+        if (err && err.status === 1) {
+          present = false;
+          notes.push('local branch already gone');
+        } else {
+          present = false;
+          s.pmFailures.push('teardown-branch');
+          notes.push(`local branch lookup failed: ${errorText(err)}`);
+        }
+      }
+    }
+    if (present) {
+      try {
+        runGit(s, ['branch', '-D', '--end-of-options', branch]);
+        notes.push('local branch deleted');
+      } catch (err) {
+        s.pmFailures.push('teardown-branch');
+        notes.push(`local branch kept: ${errorText(err)}`);
+      }
+    }
+  }
+  logDecision(s, 'Step 4 (teardown)', `teardown: ${notes.join('; ')}`, 'AUTO', 'n/a');
+  emit(s, 'merge-teardown', s.pmFailures.length > failedBefore ? 'fail' : 'ok', `${notes.join('; ')}${logNote(s, failuresBefore)}`);
+  return gone;
+}
+
+// Ports Step 5: the remote branch delete, only once the worktree is gone and never for the
+// integration branch. "reference does not exist" (already deleted) is success.
+function deleteRemoteBranch(s, worktreeGone) {
+  const { ctx, deps } = s;
+  s.stage = 'merge-delete-branch';
+  const failuresBefore = s.logFailures.length;
+  if (!worktreeGone) return postFail(s, 'merge-delete-branch', 'delete-branch: worktree kept', 'no remote delete while the worktree is kept');
+  if (!ctx.branch || ctx.branch === ctx.base) {
+    return postFail(s, 'merge-delete-branch', 'delete-branch: refused (integration branch)',
+      'no remote delete for the integration branch or an empty branch name');
+  }
+  let detail = 'deleted the remote branch';
+  try {
+    deps.gh(['api', '-X', 'DELETE', `repos/${ctx.repo}/git/refs/heads/${ctx.branch}`]);
+  } catch (err) {
+    // Unverified wording: the post-merge prose names only the phrase, matched case-insensitively.
+    if (!/reference does not exist/i.test(String((err && err.stderr) || ''))) {
+      return postFail(s, 'merge-delete-branch', 'delete-branch', `delete failed: ${errorText(err)}`);
+    }
+    detail = 'the remote branch was already gone';
+  }
+  logDecision(s, 'Step 5 (delete remote branch)', `${detail}.`, 'AUTO', 'n/a');
+  emit(s, 'merge-delete-branch', 'ok', `${detail}${logNote(s, failuresBefore)}`);
+  return undefined;
+}
+
+// The sequence, in the spec's order (AC12). It never throws and never changes the outcome.
+async function postMerge(s) {
+  const out = { verdict: null, failedSteps: [] };
+  s.pmFailures = [];
+  guarded(s, 'merge-post-merge', 'post-merge-run', () => runPostMergeRun(s, out));
+  guarded(s, 'merge-release-status', 'release-status', () => releaseStatus(s));
+  guarded(s, 'merge-reconcile', 'reconcile', () => reconcile(s));
+  let gone = false;
+  guarded(s, 'merge-teardown', 'teardown-worktree', () => { gone = teardown(s); });
+  guarded(s, 'merge-delete-branch', 'delete-branch', () => deleteRemoteBranch(s, gone));
+  return { verdict: out.verdict, failedSteps: out.failedSteps, failures: [...s.pmFailures] };
 }
 
 function result(s, outcome, reason, detail, extra = {}) {
   return {
-    outcome, reason, detail: detail || '', mergeCommit: null, runDir: s.ctx.runDir, ciWaitMs: s.ciWaitMs, postMerge: null,
-    eventsStdoutOnly: false, ...extra,
+    outcome, reason, detail: detail || '', mergeCommit: null, runDir: s.runDir, ciWaitMs: s.ciWaitMs, postMerge: null,
+    eventsStdoutOnly: s.eventsStdoutOnly === true, ...extra,
   };
 }
 
@@ -844,7 +1103,7 @@ async function merge(ctx, deps) {
   const s = {
     ctx, deps, runDir: ctx.runDir, value: 'wait', source: 'unresolved', valueRaw: '', keepOpen: [],
     subject: null, reentries: 0, recomposeOnReentry: false, ciWaitMs: 0, lastRead: null, lastVerdict: null, autoRefused: false,
-    watchBoundFrom: null, logFailures: [], logSeq: 0, stage: 'merge-entry',
+    watchBoundFrom: null, logFailures: [], logSeq: 0, eventsStdoutOnly: false, mergeCommit: null, pmFailures: [], stage: 'merge-entry',
     startedAt: typeof deps.now === 'function' ? deps.now() : 0,
   };
   try {
@@ -861,6 +1120,7 @@ async function merge(ctx, deps) {
     if (g.outcome === 'armed') return result(s, 'armed', null, g.detail);
     if (g.outcome !== 'merged') throw new Error(`the gate returned no stop and no outcome (${String(g.outcome)})`);
     s.stage = 'merge-post-merge';
+    s.mergeCommit = g.mergeCommit;
     const pm = await postMerge(s);
     return result(s, 'merged', null, g.detail, { mergeCommit: g.mergeCommit, postMerge: pm });
   } catch (err) {
@@ -869,5 +1129,5 @@ async function merge(ctx, deps) {
 }
 
 module.exports = {
-  merge, parkComment, conflictComment, classifyMergeFailure, MERGE_WATCH_BOUND_MS, MERGE_WATCH_POLL_MS,
+  merge, parkComment, conflictComment, classifyMergeFailure, MERGE_WATCH_BOUND_MS, MERGE_WATCH_POLL_MS, RECONCILE_TIMEOUT_MS,
 };

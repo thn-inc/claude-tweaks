@@ -10,7 +10,7 @@ const os = require('node:os');
 const path = require('node:path');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const {
-  merge, parkComment, conflictComment, classifyMergeFailure, MERGE_WATCH_BOUND_MS, MERGE_WATCH_POLL_MS,
+  merge, parkComment, conflictComment, classifyMergeFailure, MERGE_WATCH_BOUND_MS, MERGE_WATCH_POLL_MS, RECONCILE_TIMEOUT_MS,
 } = require(path.join(LIB, 'driver', 'merge'));
 const { MERGE_STEP_NAMES } = require(path.join(LIB, 'driver', 'events'));
 const { VERDICT_STEPS, verdictMarker } = require(path.join(LIB, 'dispatch', 'merge-verdict'));
@@ -75,8 +75,22 @@ const MET = { state: 'met', failing: [], draftSkipWithoutReadyTrigger: [] };
 const CONFIRM_FIELDS = 'state,mergedAt,autoMergeRequest,statusCheckRollup,mergeCommit';
 const MERGE_SHA = 'f'.repeat(40);
 const TITLE = 'feat: composed title';
-// Task 6 replaces the post-merge stub; until then a merged run carries this.
-const POST_MERGE_STUB = { verdict: null, failedSteps: [], failures: [] };
+// What a merged run carries when every post-merge call succeeds (post-merge-run.js verdict clean).
+const POST_MERGE_STUB = { verdict: 'clean', failedSteps: [], failures: [] };
+// lstatType's real answer shape, `{ type, code }` (path-guard's lstatType), read from the real
+// filesystem so a test that moves or deletes a fixture directory is seen as it would be.
+function realLstat(p) {
+  try {
+    const st = fs.lstatSync(p);
+    return { type: st.isSymbolicLink() ? 'symlink' : st.isDirectory() ? 'directory' : st.isFile() ? 'file' : 'other', code: null };
+  } catch (err) {
+    return { type: err.code === 'ENOENT' ? 'missing' : 'unreadable', code: err.code };
+  }
+}
+const isGit = (...words) => (c) => c.kind === 'git' && words.every((w, i) => c.args[i + 2] === w);
+// `git worktree list --porcelain` as the post-merge teardown reads it: the main checkout plus the record's worktree.
+const worktreeListing = (f) => `worktree ${f.main}\nHEAD ${'1'.repeat(40)}\nbranch refs/heads/main\n\n`
+  + `worktree ${f.worktree}\nHEAD ${'2'.repeat(40)}\nbranch refs/heads/drive-7\nlocked\n`;
 // A knob may be a function (evaluated per call, so a test can script a sequence with seq()).
 const knob = (v) => (typeof v === 'function' ? v() : v);
 // An object is merged over the default reply; a string is the raw stdout; an Error throws.
@@ -127,8 +141,7 @@ function defaultMergeScript(over, files, logs, applied) {
       if (over.ready instanceof Error) throw over.ready;
       return '';
     }],
-    [(c) => c.kind === 'lstatType', (c) => (
-      [fx.main, fx.runDir].includes(c.args[0]) ? { type: 'directory', code: null } : { type: 'missing', code: 'ENOENT' })],
+    [(c) => c.kind === 'lstatType', (c) => realLstat(c.args[0])],
     [(c) => isGh('pr', 'view')(c) && c.args.includes(GATE_FIELDS), () => jsonReply(knob(over.prState), {
       state: 'OPEN', mergeStateStatus: 'CLEAN', mergeable: 'MERGEABLE', headRefOid: CTX.head, statusCheckRollup: [GREEN_CHECK],
     })],
@@ -168,6 +181,37 @@ function defaultMergeScript(over, files, logs, applied) {
     [(c) => isGh('pr', 'view')(c) && c.args.includes(CONFIRM_FIELDS), () => jsonReply(knob(over.confirm), {
       state: 'MERGED', mergedAt: '2026-11-13T09:30:00Z', autoMergeRequest: null, statusCheckRollup: [GREEN_CHECK], mergeCommit: { oid: MERGE_SHA },
     })],
+    // The post-merge sequence (Task 6). Each knob may be a function; an Error throws, `{code}` is a CLI reply.
+    [isNode('post-merge-run.js'), () => {
+      const r = knob(over.postMergeRun);
+      if (r instanceof Error) throw r;
+      return r || { code: 0, stdout: `${JSON.stringify({ verdict: 'clean', next: 'none' })}\n`, stderr: '' };
+    }],
+    [isGit('fetch'), () => { if (over.fetch instanceof Error) throw over.fetch; return ''; }],
+    [isGit('describe'), () => {
+      const d = knob(over.describe);
+      if (d instanceof Error) throw d;
+      return d === undefined ? 'v6.170.0~2\n' : d;
+    }],
+    [isNode('hooks.js'), (c) => {
+      const r = knob(over.reconcile);
+      if (r instanceof Error) throw r;
+      if (typeof r === 'function') return r(c);
+      return r || { code: 0, stdout: '', stderr: '' };
+    }],
+    [isGit('worktree', 'list'), () => {
+      const l = knob(over.worktreeList);
+      if (l instanceof Error) throw l;
+      return l === undefined ? worktreeListing(over.fx || fx) : l;
+    }],
+    [isGit('worktree', 'unlock'), () => { if (over.unlock instanceof Error) throw over.unlock; return ''; }],
+    [isGit('worktree', 'remove'), () => { if (over.remove instanceof Error) throw over.remove; return ''; }],
+    [isGit('rev-parse'), () => { if (over.revParse instanceof Error) throw over.revParse; return `${'3'.repeat(40)}\n`; }],
+    [isGit('branch'), () => { if (over.branchDelete instanceof Error) throw over.branchDelete; return ''; }],
+    [(c) => isGh('api')(c) && c.args[1] === '-X' && c.args[2] === 'DELETE', () => {
+      if (over.deleteBranch instanceof Error) throw over.deleteBranch;
+      return '';
+    }],
   ];
 }
 
@@ -183,6 +227,10 @@ function defaultMergeScript(over, files, logs, applied) {
 // Merge-call knobs (each may be a function): labels (also per call, so seq() splits the entry read
 // from the pre-merge read), prMerge (the ghCreate `pr merge` reply: '' or an Error carrying stderr),
 // confirm (the confirmation read: an object merged over the MERGED default, a raw string or an Error).
+// Post-merge knobs (each may be a function): fx (a fixture other than the module's, whose decisions.md
+// is written and whose worktree the default listing names), postMergeRun / reconcile (full CLI replies;
+// a reconcile function runs real fs moves and returns the reply), fetch / unlock / remove / revParse /
+// branchDelete / deleteBranch (an Error throws), describe (stdout or an Error), worktreeList (stdout or Error).
 function mergeHarness(over = {}) {
   const calls = [];
   const events = [];
@@ -190,7 +238,7 @@ function mergeHarness(over = {}) {
   const files = {};
   const applied = [];
   const clock = { t: CLOCK_START };
-  fx.writeDecisions(over.decisions === undefined ? CONFIRMED : over.decisions);
+  (over.fx || fx).writeDecisions(over.decisions === undefined ? CONFIRMED : over.decisions);
   const script = [...(over.script || []), ...defaultMergeScript(over, files, logs, applied)];
   function dispatch(kind, args, cwd, extra = {}) {
     const call = { kind, args, cwd, ...extra };
@@ -496,7 +544,7 @@ test('AC4.1: the tail runs closing links, compose, the isDraft read, gh pr ready
   const h = mergeHarness();
   const r = await merge(CTX, h.deps);
   assert.equal(r.outcome, 'merged');
-  const seq = h.calls.slice(h.calls.findIndex((c) => c.kind === 'judgments') + 1).map((c) => (
+  const seq = beforePostMerge(h.calls.slice(h.calls.findIndex((c) => c.kind === 'judgments') + 1)).map((c) => (
     c.kind === 'node' ? base(c.args[0]) : c.kind === 'gh' ? `gh ${c.args.slice(0, 2).join(' ')}` : c.kind));
   assert.deepEqual(seq, ['closing-links.js', 'compose-subject.js', 'readFile', 'gh pr view', 'gh pr ready', 'log-decision.js',
     'gh pr view', 'gh run list', 'ready-run.js', 'gh issue view', 'ghCreate', 'gh pr view']);
@@ -715,7 +763,17 @@ const modeOf = (h) => {
   return m[m.length - 1].args.includes('--auto') ? 'auto' : 'immediate';
 };
 const shortOf = (c) => (c.kind === 'node' ? base(c.args[0]) : c.kind === 'gh' ? `gh ${c.args.slice(0, 2).join(' ')}` : c.kind);
-const after = (h, pred) => h.calls.slice(h.calls.findIndex(pred) + 1);
+// Calls after the first match, up to the post-merge sequence (which the Task 6 tests below read in full via afterAll).
+const beforePostMerge = (calls) => {
+  const pm = calls.findIndex(isNode('post-merge-run.js'));
+  return pm === -1 ? calls : calls.slice(0, pm);
+};
+const afterAll = (h, pred) => h.calls.slice(h.calls.findIndex(pred) + 1);
+const after = (h, pred) => {
+  const rest = afterAll(h, pred);
+  const pm = rest.findIndex(isNode('post-merge-run.js'));
+  return pm === -1 ? rest : rest.slice(0, pm);
+};
 const noMerge = (h) => assert.ok(!h.calls.some(isMergeCall), 'no gh pr merge');
 
 test('AC4.2: the gate reads state, the head runs and ready-run, each as specified', async () => {
@@ -732,7 +790,7 @@ test('AC4.2: the gate reads state, the head runs and ready-run, each as specifie
   assert.equal(rr.cwd, CTX.mainCheckout);
   assert.equal(rr.timeout, 120000);
   assert.deepEqual(rr.env, { HARNESS: '1' });
-  assert.deepEqual(h.calls.slice(g + 3).map(shortOf), ['gh issue view', 'ghCreate', 'gh pr view'],
+  assert.deepEqual(beforePostMerge(h.calls.slice(g + 3)).map(shortOf), ['gh issue view', 'ghCreate', 'gh pr view'],
     'then the pre-merge label read, the merge call and the confirmation read');
   assert.deepEqual(h.events.filter((e) => e.step === 'merge-gate').map((e) => e.status), ['ok']);
   assert.match(h.events.find((e) => e.step === 'merge-gate').detail, /green/);
@@ -1341,7 +1399,7 @@ const ARMED_LOG = 'armed — forge holds the merge (mergeStateStatus BLOCKED, ch
 
 // Each recorded call from the supplier call on, as a short label; log-decision.js calls are dropped.
 function sequenceFromSupplier(calls) {
-  return calls.slice(calls.findIndex((c) => c.kind === 'judgments')).filter((c) => !isNode('log-decision.js')(c)).map((c) => {
+  return calls.slice(Math.max(0, calls.findIndex((c) => c.kind === 'judgments'))).filter((c) => !isNode('log-decision.js')(c)).map((c) => {
     if (c.kind === 'judgments') return 'judgments';
     if (c.kind === 'readFile') return `readFile ${base(c.args[0])}`;
     if (c.kind === 'node') {
@@ -1355,6 +1413,8 @@ function sequenceFromSupplier(calls) {
     if (a[0] === 'issue' && a[1] === 'view') return `gh issue view ${a[2]} ${json}`;
     if (a[0] === 'run' && a[1] === 'list') return 'gh run list --commit';
     if (a[0] === 'pr' && a[1] === 'ready') return `gh pr ready ${a[2]}`;
+    if (c.kind === 'git') return `git ${a.slice(2).join(' ')}`;
+    if (a[0] === 'pr' && a[1] === 'comment') return 'gh pr comment --body-file';
     return `${c.kind} ${describeArgs(a)}`;
   });
 }
@@ -1565,7 +1625,9 @@ test('AC11.7: MERGED is merged with the merge commit; OPEN with autoMergeRequest
   assert.doesNotMatch(hr.detail, /@|`|#5|closes/i);
   for (const mergeCommit of [null, {}, { oid: '' }, 'abc']) {
     const m = mergeHarness({ confirm: { mergeCommit } });
-    assert.deepEqual(pick(await merge(CTX, m.deps)), { outcome: 'merged', reason: null, mergeCommit: null, postMerge: POST_MERGE_STUB });
+    // No merge commit to describe: the release status is unavailable, the merge is still merged.
+    assert.deepEqual(pick(await merge(CTX, m.deps)),
+      { outcome: 'merged', reason: null, mergeCommit: null, postMerge: { ...POST_MERGE_STUB, failures: ['release-status'] } });
   }
   // Armed: the forge holds the merge. Logged once, nothing torn down, no post-merge.
   const a = mergeHarness({ prState: BLOCKED_PENDING, confirm: ARMED });
@@ -1697,9 +1759,317 @@ test('AC4.1, AC4.2: the happy path calls happen in this order', async () => {
     'gh pr view state,mergeStateStatus,mergeable,headRefOid,statusCheckRollup', 'gh run list --commit', 'ready-run.js --pr 9',
     'gh issue view 7 labels', 'ghCreate pr merge 9 --auto --squash',
     'gh pr view state,mergedAt,autoMergeRequest,statusCheckRollup,mergeCommit',
-    // Task 6: 'post-merge-run.js --run',
+    'post-merge-run.js --run', 'git fetch origin main', `git describe --tags --contains --first-parent --match v* ${MERGE_SHA}`,
+    'gh pr comment --body-file', 'hooks.js reconcile', `lstatType ${CTX.runDir}`,
+    'git worktree list --porcelain', `git worktree unlock ${CTX.worktree}`, `git worktree remove ${CTX.worktree}`,
+    'git rev-parse --verify --quiet --end-of-options refs/heads/drive-7', 'git branch -D --end-of-options drive-7',
+    'gh api -X DELETE repos/o/r/git/refs/heads/drive-7',
   ]);
   const m = h.calls.find(isMergeCall);
   assert.deepEqual(argAfter(m, ['-t', '--body-file', '--match-head-commit']), [TITLE, path.join(CTX.runDir, 'merge-subject', 'body.md'), CTX.head]);
-  assert.deepEqual(h.events.slice(-2).map((e) => [e.step, e.status]), [['merge-call', 'ok'], ['merge-confirm', 'ok']]);
+  assert.deepEqual(h.events.slice(-7).map((e) => [e.step, e.status]), [
+    ['merge-call', 'ok'], ['merge-confirm', 'ok'], ['merge-post-merge', 'ok'], ['merge-release-status', 'ok'],
+    ['merge-reconcile', 'ok'], ['merge-teardown', 'ok'], ['merge-delete-branch', 'ok'],
+  ]);
+});
+
+// ---- Task 6: the post-merge sequence ----
+
+const postCalls = (h) => afterAll(h, isConfirmRead).filter((c) => !isNode('log-decision.js')(c));
+const failureEvents = (h) => h.events.filter((e) => e.status === 'fail');
+const SEQ_AFTER_CONFIRM = [
+  'post-merge-run.js --run', 'git fetch origin main', `git describe --tags --contains --first-parent --match v* ${MERGE_SHA}`,
+  'gh pr comment --body-file', 'hooks.js reconcile', `lstatType ${CTX.runDir}`, 'git worktree list --porcelain', `git worktree unlock ${CTX.worktree}`,
+  `git worktree remove ${CTX.worktree}`, 'git rev-parse --verify --quiet --end-of-options refs/heads/drive-7',
+  'git branch -D --end-of-options drive-7', 'gh api -X DELETE repos/o/r/git/refs/heads/drive-7',
+];
+
+test('AC12.1: on merged the post-merge sequence runs in order', async () => {
+  const h = mergeHarness();
+  const r = await merge(CTX, h.deps);
+  assert.deepEqual(pick(r), { outcome: 'merged', reason: null, mergeCommit: MERGE_SHA, postMerge: POST_MERGE_STUB });
+  assert.deepEqual(sequenceFromSupplier(postCalls(h)), SEQ_AFTER_CONFIRM);
+  const by = (name) => postCalls(h).find((c) => (c.kind === 'node' ? base(c.args[0]) : '') === name);
+  assert.deepEqual(by('post-merge-run.js').args.slice(1), ['--run', CTX.runDir]);
+  const rc = by('hooks.js');
+  assert.deepEqual(rc.args.slice(1), ['reconcile', '--checks', 'mirror,release,archive']);
+  assert.ok(rc.timeout >= 150000, `reconcile timeout ${rc.timeout}`);
+  assert.equal(rc.cwd, CTX.mainCheckout);
+  assert.equal(RECONCILE_TIMEOUT_MS, 150000);
+  // Every git call is `git -C {main} …` run in the main checkout; only the fetch writes to the remote.
+  const gits = postCalls(h).filter((c) => c.kind === 'git');
+  assert.equal(gits.length, 7);
+  for (const g of gits) {
+    assert.deepEqual(g.args.slice(0, 2), ['-C', CTX.mainCheckout]);
+    assert.equal(g.cwd, CTX.mainCheckout);
+    assert.equal(g.remoteWrite === true, g.args[2] === 'fetch', g.args.join(' '));
+  }
+  // The worktree is removed without a force flag, and the branch deleted behind --end-of-options.
+  assert.ok(!gits.some((g) => g.args.includes('--force') || g.args.includes('-f')));
+  assert.deepEqual(failureEvents(h), []);
+  assert.equal(r.eventsStdoutOnly, false);
+  assert.equal(r.runDir, CTX.runDir);
+});
+
+test('AC12.2: a failure in any post-merge call stays merged and is listed', async () => {
+  const gitFail = (stderr, status = 128) => Object.assign(new Error(`Command failed: git -C /x ${stderr}`), { stderr: `${stderr}\n`, status });
+  const rows = [
+    ['post-merge-run exit 3', { postMergeRun: { code: 3, stdout: '', stderr: 'x' } }, 'post-merge-run', 'merge-post-merge'],
+    ['post-merge-run unparseable', { postMergeRun: { code: 0, stdout: 'nope', stderr: '' } }, 'post-merge-run', 'merge-post-merge'],
+    ['post-merge-run no verdict', { postMergeRun: { code: 0, stdout: '{"action":"ran"}', stderr: '' } }, 'post-merge-run', 'merge-post-merge'],
+    ['post-merge-run throws', { postMergeRun: new Error('spawn failed') }, 'post-merge-run', 'merge-post-merge'],
+    ['describe fails generically', { describe: gitFail('fatal: bad object') }, 'release-status', 'merge-release-status'],
+    ['fetch fails', { fetch: gitFail('fatal: could not read from remote') }, 'release-status', 'merge-release-status'],
+    ['run comment fails', { script: [[isGh('pr', 'comment'), new Error('boom')]] }, 'release-status-comment', 'merge-release-status'],
+    ['reconcile code null', { reconcile: { code: null, stdout: '', stderr: '' } }, 'reconcile', 'merge-reconcile'],
+    ['reconcile exit 1', { reconcile: { code: 1, stdout: '', stderr: 'x' } }, 'reconcile', 'merge-reconcile'],
+    ['worktree remove throws', { remove: gitFail('fatal: contains modified or untracked files') }, 'teardown-worktree', 'merge-teardown'],
+    ['worktree list throws', { worktreeList: gitFail('fatal: not a git repository') }, 'teardown-worktree', 'merge-teardown'],
+    ['branch -D throws', { branchDelete: gitFail('error: branch not fully merged') }, 'teardown-branch', 'merge-teardown'],
+    ['rev-parse fails other than 1', { revParse: gitFail('fatal: bad', 128) }, 'teardown-branch', 'merge-teardown'],
+    ['DELETE throws HTTP 500', { deleteBranch: Object.assign(new Error('Command failed'), { stderr: 'gh: Server Error (HTTP 500)\n' }) }, 'delete-branch', 'merge-delete-branch'],
+  ];
+  for (const [name, over, failure, step] of rows) {
+    const h = mergeHarness(over);
+    const r = await merge(CTX, h.deps);
+    assert.equal(r.outcome, 'merged', name);
+    assert.equal(r.mergeCommit, MERGE_SHA, name);
+    assert.ok(r.postMerge.failures.includes(failure), `${name}: ${JSON.stringify(r.postMerge.failures)}`);
+    assert.ok(failureEvents(h).some((e) => e.step === step), name);
+    // The run keeps going: the later sub-steps still ran (the delete only when its worktree is gone).
+    assert.ok(h.events.some((e) => e.step === 'merge-delete-branch'), name);
+  }
+  // A failed describe or fetch posts no comment, and logs the reason once.
+  for (const over of [{ describe: gitFail('fatal: bad object') }, { fetch: gitFail('fatal: no remote') }]) {
+    const h = mergeHarness(over);
+    await merge(CTX, h.deps);
+    assert.ok(!h.calls.some((c) => isGh('pr', 'comment')(c)));
+    assert.match(h.logs.find((l) => l.step === 'pr-first-merge Step 4.1').text, /^pr-first-merge Step 4\.1: release status unavailable \(.+\)$/);
+  }
+  const noFetchDescribe = mergeHarness({ fetch: gitFail('fatal: no remote') });
+  await merge(CTX, noFetchDescribe.deps);
+  assert.ok(!noFetchDescribe.calls.some(isGit('describe')), 'no describe after a failed fetch');
+  // No merge commit: nothing to describe, a failure, no git release call.
+  const nm = mergeHarness({ confirm: { mergeCommit: null } });
+  const nr = await merge(CTX, nm.deps);
+  assert.equal(nr.outcome, 'merged');
+  assert.ok(nr.postMerge.failures.includes('release-status'));
+  assert.ok(!nm.calls.some(isGit('fetch')) && !nm.calls.some(isGit('describe')));
+  // A post-merge-run `failed` verdict is carried, and is not a `failures` entry.
+  const fv = mergeHarness({ postMergeRun: { code: 0, stdout: JSON.stringify({ verdict: 'failed', failedSteps: ['4.0', '4.0b'], next: 'none' }), stderr: '' } });
+  const fr = await merge(CTX, fv.deps);
+  assert.deepEqual(fr.postMerge, { verdict: 'failed', failedSteps: ['4.0', '4.0b'], failures: [] });
+  const ev = failureEvents(fv).find((e) => e.step === 'merge-post-merge');
+  assert.deepEqual([ev.extra.verdict, ev.extra.failedSteps], ['failed', ['4.0', '4.0b']]);
+  // already-done and in-flight are not failures either.
+  for (const verdict of ['already-done', 'in-flight']) {
+    const v = mergeHarness({ postMergeRun: { code: 0, stdout: JSON.stringify({ verdict, next: 'none' }), stderr: '' } });
+    assert.deepEqual((await merge(CTX, v.deps)).postMerge, { verdict, failedSteps: [], failures: [] });
+  }
+  // A throw out of a sub-step (here the git dep itself) is that sub-step's failure.
+  const th = mergeHarness({ deps: { git: () => { throw new Error('git dep exploded'); } } });
+  const tr = await merge(CTX, th.deps);
+  assert.equal(tr.outcome, 'merged');
+  assert.deepEqual(tr.postMerge.failures, ['release-status', 'teardown-worktree', 'delete-branch: worktree kept']);
+});
+
+test('AC12.3: the remote delete never targets the integration branch', async () => {
+  for (const branch of ['main', '']) {
+    const h = mergeHarness();
+    const r = await merge({ ...CTX, branch }, h.deps);
+    assert.equal(r.outcome, 'merged');
+    assert.ok(!h.calls.some((c) => isGh('api')(c)), `no DELETE for branch ${JSON.stringify(branch)}`);
+    assert.ok(r.postMerge.failures.includes('delete-branch: refused (integration branch)'), JSON.stringify(r.postMerge.failures));
+    assert.ok(!h.calls.some(isGit('branch')), 'the local integration branch is never deleted either');
+  }
+});
+
+test('AC12.4: "Reference does not exist" counts as success', async () => {
+  for (const stderr of ['gh: Reference does not exist (HTTP 422)\n', 'REFERENCE DOES NOT EXIST\n']) {
+    const h = mergeHarness({ deleteBranch: Object.assign(new Error('Command failed: gh api -X DELETE'), { stderr }) });
+    const r = await merge(CTX, h.deps);
+    assert.deepEqual(r.postMerge, POST_MERGE_STUB, stderr);
+    assert.deepEqual(failureEvents(h), []);
+  }
+  // The phrase is matched on stderr, never on the argv-bearing message.
+  const m = mergeHarness({ deleteBranch: Object.assign(new Error('Reference does not exist'), { stderr: 'gh: Server Error (HTTP 500)\n' }) });
+  assert.deepEqual((await merge(CTX, m.deps)).postMerge.failures, ['delete-branch']);
+});
+
+test('AC12.5: the release-status comment carries the run-comment marker and the human line', async () => {
+  const cases = [
+    [{ describe: 'v6.170.0~2\n' }, 'already carried by v6.170.0'],
+    [{ describe: 'v6.170.0^0\n' }, 'already carried by v6.170.0'],
+    [{ describe: 'v6.170.0\n' }, 'already carried by v6.170.0'],
+    [{ describe: Object.assign(new Error('Command failed'), { stderr: "fatal: cannot describe 'abc'\n", status: 128 }) }, 'not yet in a release — bump pending'],
+  ];
+  for (const [over, line] of cases) {
+    const h = mergeHarness(over);
+    const r = await merge(CTX, h.deps);
+    assert.deepEqual(r.postMerge, POST_MERGE_STUB, line);
+    const c = h.calls.find((x) => isGh('pr', 'comment')(x));
+    assert.deepEqual(c.args, ['pr', 'comment', '9', '--repo', 'o/r', '--body-file', path.join(CTX.runDir, 'release-status-comment.md')]);
+    assert.equal(h.files[c.args[6]], `<!-- run-comment: release-status -->\n${line}\n`);
+    assert.equal(h.logs.find((l) => l.step === 'pr-first-merge Step 4.1').text, `pr-first-merge Step 4.1: release status — ${line}.`);
+  }
+  // A describe that prints something that is not a tag is unavailable, never a public comment.
+  const odd = mergeHarness({ describe: 'not a tag @octo\n' });
+  assert.deepEqual((await merge(CTX, odd.deps)).postMerge.failures, ['release-status']);
+  assert.ok(!odd.calls.some((c) => isGh('pr', 'comment')(c)));
+});
+
+// A fixture of its own: these tests move or delete the run directory for real.
+function movingFixture(reply) {
+  const f = fixture();
+  const archive = path.join(f.main, '.claude-tweaks', 'pipelines', 'archive', path.basename(f.runDir));
+  const h = mergeHarness({ fx: f, reconcile: () => { reply(f, archive); return { code: 0, stdout: '', stderr: '' }; } });
+  const order = [];
+  h.deps.rebindEvents = (dir) => { h.events.push({ step: 'REBIND', dir }); order.push(dir); };
+  return { f, archive, h, order };
+}
+const logRunArgs = (h, from) => h.calls.slice(from).filter(isNode('log-decision.js')).map((c) => c.args[c.args.indexOf('--run') + 1]);
+const reconcileAt = (h) => h.calls.findIndex(isNode('hooks.js'));
+
+test('AC12.6: after reconcile archives the run dir, later writes and runDir follow the archive', async () => {
+  const { f, archive, h, order } = movingFixture((fx2, arch) => {
+    fs.mkdirSync(path.dirname(arch), { recursive: true });
+    fs.renameSync(fx2.runDir, arch);
+  });
+  const r = await merge(f.ctx, h.deps);
+  assert.equal(r.outcome, 'merged');
+  assert.equal(r.runDir, archive);
+  assert.equal(r.eventsStdoutOnly, false);
+  assert.deepEqual(order, [archive]);
+  const names = h.events.map((e) => e.step);
+  assert.ok(names.indexOf('REBIND') < names.indexOf('merge-reconcile'), 'rebind before the reconcile event');
+  // post-merge-run.js and the release log ran on the original path, before the move.
+  assert.deepEqual(h.calls.find(isNode('post-merge-run.js')).args.slice(1), ['--run', f.runDir]);
+  const later = logRunArgs(h, reconcileAt(h));
+  assert.ok(later.length >= 2, 'the teardown and remote-delete lines were written after reconcile');
+  assert.ok(later.every((p) => p === archive), JSON.stringify(later));
+  const lines = Object.keys(h.files).filter((p) => /merge-log-\d+\.txt$/.test(p));
+  assert.ok(lines.some((p) => path.dirname(p) === archive), 'a decision text file lives in the archive dir');
+  assert.deepEqual(r.postMerge, POST_MERGE_STUB);
+});
+
+test('AC12.7: neither path existing sends the final event to stdout only', async () => {
+  const { f, h, order } = movingFixture((fx2) => { fs.rmSync(fx2.runDir, { recursive: true, force: true }); });
+  const r = await merge(f.ctx, h.deps);
+  assert.equal(r.outcome, 'merged');
+  assert.equal(typeof r.runDir, 'string');
+  assert.equal(r.runDir, f.runDir);
+  assert.equal(r.eventsStdoutOnly, true);
+  assert.deepEqual(order, [null]);
+  assert.deepEqual(logRunArgs(h, reconcileAt(h)), [], 'no log-decision call after reconcile');
+  const logged = h.calls.filter(isNode('log-decision.js')).length;
+  assert.equal(Object.keys(h.files).filter((p) => /merge-log-\d+\.txt$/.test(p)).length, logged, 'no decision text file is written either');
+  // Each skipped decision line is named, and the sequence still finished.
+  const teardown = h.events.find((e) => e.step === 'merge-teardown');
+  assert.match(teardown.detail, /log:Step 4 \(teardown\)/);
+  assert.deepEqual(r.postMerge, POST_MERGE_STUB);
+  assert.deepEqual(h.calls.slice(reconcileAt(h) + 1).filter((c) => c.kind === 'gh').map((c) => c.args[0]), ['api']);
+});
+
+test('reconcile follow reads lstatType as an object: a directory keeps the path, a file at the path does not count', async () => {
+  // The shape the real dep answers (path-guard's lstatType), through the harness's real-fs wrapper.
+  const sample = mergeHarness();
+  assert.deepEqual(sample.deps.lstatType(fx.runDir), { type: 'directory', code: null });
+  assert.deepEqual(sample.deps.lstatType(path.join(fx.runDir, 'absent')), { type: 'missing', code: 'ENOENT' });
+  // A directory at the run-dir path: kept, no rebind to anything else.
+  const kept = movingFixture(() => {});
+  const kr = await merge(kept.f.ctx, kept.h.deps);
+  assert.equal(kr.runDir, kept.f.runDir);
+  assert.equal(kr.eventsStdoutOnly, false);
+  assert.deepEqual(kept.order, [kept.f.runDir]);
+  // A file where the run dir was, and a directory at the archive path: the archive wins.
+  const swapped = movingFixture((fx2, arch) => {
+    fs.rmSync(fx2.runDir, { recursive: true, force: true });
+    fs.writeFileSync(fx2.runDir, 'not a directory');
+    fs.mkdirSync(arch, { recursive: true });
+  });
+  const sr = await merge(swapped.f.ctx, swapped.h.deps);
+  assert.equal(sr.runDir, swapped.archive);
+  assert.equal(sr.eventsStdoutOnly, false);
+  // A file at the run-dir path and nothing at the archive: neither counts.
+  const none = movingFixture((fx2) => {
+    fs.rmSync(fx2.runDir, { recursive: true, force: true });
+    fs.writeFileSync(fx2.runDir, 'not a directory');
+  });
+  const nr = await merge(none.f.ctx, none.h.deps);
+  assert.deepEqual([nr.runDir, nr.eventsStdoutOnly], [none.f.runDir, true]);
+  // A lstat that throws is "not there", never a throw out of merge.
+  const th = mergeHarness({ deps: { lstatType: () => { throw new Error('lstat exploded'); } } });
+  const tr = await merge(CTX, th.deps);
+  assert.deepEqual([tr.outcome, tr.runDir, tr.eventsStdoutOnly], ['merged', CTX.runDir, true]);
+});
+
+test('AC12.8: a failed or timed-out reconcile keeps the original path', async () => {
+  for (const reconcile of [{ code: null, stdout: '', stderr: '' }, { code: 1, stdout: '', stderr: 'x' }]) {
+    const rebinds = [];
+    const h = mergeHarness({ reconcile, deps: { rebindEvents: (d) => rebinds.push(d) } });
+    const r = await merge(CTX, h.deps);
+    assert.equal(r.outcome, 'merged');
+    assert.equal(r.runDir, CTX.runDir);
+    assert.equal(r.eventsStdoutOnly, false);
+    assert.deepEqual(rebinds, []);
+    assert.deepEqual(r.postMerge.failures, ['reconcile']);
+    assert.ok(logRunArgs(h, reconcileAt(h)).every((p) => p === CTX.runDir));
+    // The teardown still ran after the failed reconcile.
+    assert.ok(h.calls.some(isGit('worktree', 'remove')));
+  }
+});
+
+test('teardown: a worktree that refuses removal stays, is named, and the branch and remote delete are skipped', async () => {
+  const stderr = 'fatal: contains modified or untracked files, use --force to delete it\n';
+  const h = mergeHarness({ remove: Object.assign(new Error('Command failed: git -C x worktree remove'), { stderr, status: 128 }) });
+  const r = await merge(CTX, h.deps);
+  assert.equal(r.outcome, 'merged');
+  assert.deepEqual(r.postMerge.failures, ['teardown-worktree', 'delete-branch: worktree kept']);
+  const rm = h.calls.find(isGit('worktree', 'remove'));
+  assert.deepEqual(rm.args, ['-C', CTX.mainCheckout, 'worktree', 'remove', CTX.worktree], 'no force flag');
+  assert.ok(!h.calls.some(isGit('rev-parse')) && !h.calls.some(isGit('branch')));
+  assert.ok(!h.calls.some((c) => isGh('api')(c)));
+  const ev = h.events.find((e) => e.step === 'merge-teardown');
+  assert.equal(ev.status, 'fail');
+  assert.ok(ev.detail.includes(CTX.worktree), ev.detail);
+  assert.match(ev.detail, /modified or untracked/);
+});
+
+test('teardown: unlock tolerates "not locked", an absent worktree is already gone, rev-parse status 1 skips branch -D', async () => {
+  const notLocked = mergeHarness({ unlock: Object.assign(new Error('Command failed'), { stderr: 'fatal: The working tree is not locked\n', status: 128 }) });
+  const nr = await merge(CTX, notLocked.deps);
+  assert.deepEqual(nr.postMerge, POST_MERGE_STUB);
+  assert.ok(notLocked.calls.some(isGit('worktree', 'remove')));
+  // Another unlock refusal does not stop the removal attempt, and is named.
+  const otherUnlock = mergeHarness({ unlock: Object.assign(new Error('Command failed'), { stderr: 'fatal: permission denied\n', status: 128 }) });
+  const or = await merge(CTX, otherUnlock.deps);
+  assert.deepEqual(or.postMerge, POST_MERGE_STUB);
+  assert.match(otherUnlock.events.find((e) => e.step === 'merge-teardown').detail, /unlock failed: fatal: permission denied/);
+  // The worktree is not in the listing: already gone, nothing unlocked or removed, the rest proceeds.
+  const gone = mergeHarness({ worktreeList: `worktree ${fx.main}\nHEAD ${'1'.repeat(40)}\nbranch refs/heads/main\n\n` });
+  const gr = await merge(CTX, gone.deps);
+  assert.deepEqual(gr.postMerge, POST_MERGE_STUB);
+  assert.ok(!gone.calls.some(isGit('worktree', 'unlock')) && !gone.calls.some(isGit('worktree', 'remove')));
+  assert.ok(gone.calls.some(isGit('branch')) && gone.calls.some((c) => isGh('api')(c)));
+  assert.match(gone.events.find((e) => e.step === 'merge-teardown').detail, /worktree already gone/);
+  // The branch is already gone (rev-parse --quiet exits 1): no branch -D, no failure, the remote delete still runs.
+  const noBranch = mergeHarness({ revParse: Object.assign(new Error('Command failed'), { stderr: '', status: 1 }) });
+  const br = await merge(CTX, noBranch.deps);
+  assert.deepEqual(br.postMerge, POST_MERGE_STUB);
+  assert.ok(!noBranch.calls.some(isGit('branch')));
+  assert.ok(noBranch.calls.some((c) => isGh('api')(c)));
+  // A branch -D that itself exits 1 is a failure, never "already gone".
+  const bd = mergeHarness({ branchDelete: Object.assign(new Error('Command failed'), { stderr: 'error: not found\n', status: 1 }) });
+  assert.deepEqual((await merge(CTX, bd.deps)).postMerge.failures, ['teardown-branch']);
+});
+
+test('AC8.5: armed tears nothing down and makes no post-merge call', async () => {
+  for (const over of [{ prState: BLOCKED_PENDING, confirm: ARMED }, { confirm: ARMED }]) {
+    const h = mergeHarness(over);
+    const r = await merge(CTX, h.deps);
+    assert.deepEqual(pick(r), { outcome: 'armed', reason: null, mergeCommit: null, postMerge: null });
+    assert.deepEqual(afterAll(h, isConfirmRead).filter((c) => !isNode('log-decision.js')(c)), []);
+    assert.ok(!h.calls.some((c) => c.kind === 'git' || isNode('post-merge-run.js')(c) || isNode('hooks.js')(c) || isGh('api')(c)));
+    assert.deepEqual(failureEvents(h), []);
+  }
 });
