@@ -30,7 +30,7 @@ files:
 
 ### 4. If it's red — read the log, don't rerun blindly
 - **Action:** Find the `not ok` block in the `test` job's log (or the red shard's own log); it names the failing assertion and file.
-- **Expect:** A genuine failure reproduces locally with `npm test` (or `node --test <file>`). A failure that passes locally and only flaps under load is the #104 class: surface it on that issue rather than retrying until green, so the gate stays trustworthy.
+- **Expect:** A genuine failure reproduces locally with `npm test -- --full` (or `node --test <file>`), because a plain `npm test` runs only the impact-selected subset and may not select the failing file. A failure that passes locally and only flaps under load is the #104 class: surface it on that issue rather than retrying until green, so the gate stays trustworthy.
 
 ### 5. Merge to `main` — the post-merge run
 - **Action:** Merge the PR.
@@ -39,3 +39,6 @@ files:
 ### 6. Keep the shards balanced — after adding or splitting slow test files
 - **Action:** `node tools/run-tests.js --record-durations tools/test-durations.json` on a quiet machine, then commit the file.
 - **Expect:** The file maps each test file to its measured time. A file it does not list weighs the median measured file, and the shard line on stderr counts how many were unmeasured; `tests/run-tests-shard.test.js` fails when the file names a test file that no longer exists.
+
+## Origin
+- Updated during build of #5319: step 4 now reproduces a CI failure with `npm test -- --full`, because a plain local `npm test` runs only the impact-selected subset (`run-a-plain-npm-test-on-the-impact-subset-5319.md`). CI runs the whole suite on every PR and is what catches a test the map failed to select.
