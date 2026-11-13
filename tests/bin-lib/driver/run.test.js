@@ -233,6 +233,7 @@ function defaultScript(over) {
     [on('node', /hooks\.js$/, 'record-pr'), (c) => ({ code: 0, stderr: '', stdout: `claude-tweaks: PR #${c.args[4]} recorded for ${path.basename(c.args[3])}\n` })],
     [on('node', /set-config\.js$/), { code: 0, stdout: '', stderr: '' }],
     [on('node', /pr-checks\.js$/), { code: 0, stderr: '', stdout: JSON.stringify({ state: 'green' }) }],
+    [on('gh', 'run', 'list'), JSON.stringify([{ databaseId: 1 }])],
     [on('policy'), (c) => Object.fromEntries(c.args.map((k) => [k, { value: policy[k], source: 'policy' }]))],
     [on('gh', 'issue', 'view'), (c) => JSON.stringify(issueFor(Number(c.args.at(-1))))],
     [on('git', 'symbolic-ref'), 'origin/main\n'],
@@ -2082,6 +2083,8 @@ const transient = (text = 'HTTP 502: Bad Gateway', title = 'record 7 (#7)') => O
   { stderr: `${text}\n` },
 );
 const prChecksReply = (state) => [on('node', /pr-checks\.js$/), { code: 0, stderr: '', stdout: JSON.stringify({ state }) }];
+const runListCalls = (h) => h.calls.filter((c) => c.kind === 'gh' && c.args[0] === 'run' && c.args[1] === 'list');
+const runListReply = (reply) => [on('gh', 'run', 'list'), reply];
 const recordPrReply = (stdout) => [on('node', /hooks\.js$/, 'record-pr'), { code: 0, stderr: '', stdout }];
 const logsSummary = (c) => c.kind === 'node' && /log-decision\.js$/.test(c.args[0]) && c.args.some((a) => /summary\.txt$/.test(a));
 
@@ -2137,7 +2140,9 @@ test('AC2.1: happy path calls run in the deliverable order', async () => {
     'worker', 'git status', 'git add', 'git commit',
     'node verify.js', 'node express-lane.js check', 'git rev-parse', 'git push',
     'node compose-pr-body.js', 'gh pr create', 'node hooks.js record-pr', 'node set-config.js',
-    'node log-decision.js', ...Array(WINDOW_POLLS + 1).fill('node pr-checks.js')]);
+    'node log-decision.js',
+    // The settled poll is followed by the commit-run read, then the one --run read.
+    ...Array(WINDOW_POLLS).fill('node pr-checks.js'), 'gh run list', 'node pr-checks.js']);
   assert.equal(h.lines().at(-1).outcome, 'pending-review');
 });
 
@@ -2394,6 +2399,44 @@ test('ci: the settle window is measured from the push', async () => {
 
 test('ci: the settle window constant', () => {
   assert.equal(CI_SETTLE_WINDOW_MS, 2 * 60 * 1000);
+});
+
+test('ci: no workflow run on the pushed sha after the window records no-ci', async () => {
+  for (const polled of ['green', 'pending']) {
+    const h = harness({ script: [runListReply('[]'), prChecksReply(polled)] });
+    await run(['#7'], h.deps);
+    assert.equal(lastLine(h).ci, 'no-ci', polled);
+    assert.equal(h.lines().find((l) => l.step === 'ci').detail, 'no-ci', polled);
+    assert.equal(checkPolls(h).length, WINDOW_POLLS, polled);
+    assert.equal(checkRuns(h).length, 1, polled);
+  }
+});
+
+test('ci: the commit-run read uses the pushed sha, never the branch', async () => {
+  const h = harness();
+  await run(['#7'], h.deps);
+  assert.deepEqual(runListCalls(h).map((c) => c.args),
+    [['run', 'list', '--repo', 'acme/widgets', '--commit', HEAD_SHA, '--limit', '1', '--json', 'databaseId']]);
+});
+
+test('ci: an unreadable commit-run read is never no-ci', async () => {
+  for (const reply of [new Error('HTTP 502'), 'not json', '{"a":1}']) {
+    const green = harness({ script: [runListReply(reply)] });
+    await run(['#7'], green.deps);
+    assert.equal(lastLine(green).ci, 'green', String(reply));
+    const pending = harness({ script: [runListReply(reply), prChecksReply('pending')] });
+    await run(['#7'], pending.deps);
+    assert.equal(lastLine(pending).ci, 'timeout', String(reply));
+  }
+});
+
+test('ci: the commit-run read stops once a run is seen', async () => {
+  const seq = Array(WINDOW_POLLS + 3).fill('pending');
+  const h = harness({ script: [[on('node', /pr-checks\.js$/), (c) => ({ code: 0, stderr: '',
+    stdout: JSON.stringify({ state: c.args.includes('--run') ? 'green' : (seq.shift() ?? 'green') }) })]] });
+  await run(['#7'], h.deps);
+  assert.equal(lastLine(h).ci, 'green');
+  assert.equal(runListCalls(h).length, 1);
 });
 
 test('every record gets exactly one pr-checks --run read, carrying the express-lane section', async () => {

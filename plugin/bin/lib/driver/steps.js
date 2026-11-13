@@ -20,13 +20,16 @@
 //
 // Every external call goes through `deps`; nothing here reads process state.
 //
-// The ci step holds its first read to a settle window of 2 minutes, measured from the push
-// (CI_SETTLE_WINDOW_MS). The step runs seconds after `gh pr create`, before GitHub has created
-// the test workflow for the pushed commit: in the #5215 Phase 1 proof every ci step ended within
-// ~5 seconds, recording `green` (#4198, #4351) or `pending` (#3931) while the test shards had not
-// started, because the only checks on the PR were fast workflows already finished or skipped.
-// "At least one run on the commit" alone does not close that gap (#4198's commit had a finished
-// skipped `label-fix-branch` run before the test workflow existed), so the window does.
+// The ci step holds every read other than `pending` or `stale` to a settle window of 2 minutes,
+// measured from the push (CI_SETTLE_WINDOW_MS); `pending` and `stale` keep polling. The step runs
+// seconds after `gh pr create`, before GitHub has created the test workflow for the pushed commit:
+// in the #5215 Phase 1 proof every ci step ended within ~5 seconds, recording `green` (#4198,
+// #4351) or `pending` (#3931) while the test shards had not started, because the only checks on
+// the PR were fast workflows already finished or skipped. "At least one run on the commit" alone
+// does not close that gap (#4198's commit had a finished skipped `label-fix-branch` run before the
+// test workflow existed), so the window does. A settled read also needs at least one workflow run
+// on the pushed sha (ctx.check.head, what express-lane.js check verified): a commit still without
+// one once the window has passed is recorded as `no-ci`, and an unreadable run read is never `no-ci`.
 const path = require('node:path');
 const { STEP, STOP_CLASSES, neutralize, normalizeTitle } = require('./events');
 const { parseStatusPorcelainZ } = require('../git-z');
@@ -851,12 +854,24 @@ function readCiState(ctx, deps, args) {
   return 'read-failed';
 }
 
+// The workflow runs on the pushed commit (ctx.check.head): `some` for at least one run, `none`
+// for an empty list, `unreadable` for a gh failure, unparseable output or a non-array. Never throws.
+function readCommitRuns(ctx, deps) {
+  try {
+    const runs = JSON.parse(deps.gh(['run', 'list', '--repo', ctx.shared.ghRepo, '--commit', ctx.check.head, '--limit', '1', '--json', 'databaseId']));
+    if (!Array.isArray(runs)) return 'unreadable';
+    return runs.length > 0 ? 'some' : 'none';
+  } catch { return 'unreadable'; }
+}
+
 // Reads the PR's check rollup at the worktree's HEAD. Polls `pr-checks.js --pr {n}` (which
 // writes no decisions.md line) while the state is pending or stale, or until the settle window
-// (CI_SETTLE_WINDOW_MS, measured from ctx.pushedAt) has passed, then makes exactly one `--run`
+// (CI_SETTLE_WINDOW_MS, measured from ctx.pushedAt) has passed and the commit has a workflow run
+// (readCommitRuns, read after each settled poll until one is seen), then makes exactly one `--run`
 // read under the express-lane section: that read logs the gate's own line once, and its state is
 // the one recorded (`timeout` when it is still pending or stale at the bound; only this read can
-// say `stale`). Never halts and always reports `ok`: the word it reads is data for the reviewer.
+// say `stale`; `no-ci` when the commit still has no run once the window has passed). Never halts
+// and always reports `ok`: the word it reads is data for the reviewer.
 // The wait is reported as extra.ciWaitMs, so the final line can exclude it without naming this
 // step. A signal during a sleep is delivered mid-step (run.js's handler writes the stop); polling
 // then stops. For that handler, ctx.ci holds the last polled state and ctx.ciWaitStartedAt the
@@ -867,12 +882,15 @@ const ciStep = defineStep(STEP.ci, STOP_CLASSES.NONE, async (ctx, deps) => {
   ctx.ciWaitStartedAt = started;
   let polled = 'read-failed';
   let timedOut = false;
+  let runs = null; // the commit-run read's last word, taken once the window has passed
   for (;;) {
     polled = readCiState(ctx, deps, ['--pr', String(ctx.pr.number)]);
     ctx.ci = polled;
     const now = deps.now();
     const settled = now - settleFrom >= CI_SETTLE_WINDOW_MS;
-    if ((polled !== 'pending' && polled !== 'stale' && settled) || ctx.shared.interrupted) break;
+    if (settled && runs !== 'some') runs = readCommitRuns(ctx, deps);
+    const waiting = polled === 'pending' || polled === 'stale';
+    if ((settled && (!waiting || runs === 'none')) || ctx.shared.interrupted) break;
     if (now - started >= CI_WAIT_BOUND_MS) {
       timedOut = true;
       break;
@@ -884,6 +902,7 @@ const ciStep = defineStep(STEP.ci, STOP_CLASSES.NONE, async (ctx, deps) => {
   if (!ctx.shared.interrupted) {
     state = readCiState(ctx, deps, ['--run', ctx.runDir, '--section', '/express-lane']);
     if (timedOut && (state === 'pending' || state === 'stale')) state = 'timeout';
+    if (runs === 'none') state = 'no-ci';
   }
   ctx.ci = state;
   ctx.ciWaitStartedAt = null;
