@@ -8,8 +8,8 @@
 //                     dispatch-standalone run dir
 //   <root>/bin        PATH shims (writeShims): gh (answers from QP_SHIM_TABLE, never the real gh),
 //                     git (a sh script exec'ing the real git, only inside <root>: gitShimScript),
-//                     mktemp (a sh script: counter-file names, mktempShimScript) and node (the real node, logging two CLIs' inputs
-//                     first: nodeShim)
+//                     mktemp (a sh script: counter-file names, mktempShimScript) and node (the real
+//                     node, logging two CLIs' inputs first: nodeShim)
 //   <root>/shim       not on PATH: anything a shim needs beside bin/ (empty so far)
 //   <root>/logs       gh-argv.nul, git-argv.nul (NUL-framed records: SHIM_LOGS), cli-calls/ and the
 //                     mktemp counter
@@ -276,9 +276,9 @@ function writeSystemBin(sysbin) {
 }
 
 // writeShims({ bin, shimDir, root, realGit, table, gh }) writes the PATH shims into `bin`: git
-// (gitShimScript, `table` baked in), mktemp (mktempShimScript), node and, when `gh` is true, gh. `shimDir` (<root>/shim,
-// not on PATH) is for anything a shim needs beside them; no shim needs it yet. createSandbox calls
-// this once and setScenario again for each new table, so the baked values follow the scenario.
+// (gitShimScript, `table` baked in), mktemp (mktempShimScript), node and, when `gh` is true, gh.
+// `shimDir` (<root>/shim, not on PATH) is for anything a shim needs beside them; no shim needs it
+// yet. createSandbox calls this once and setScenario again for each new table, so the baked values follow the scenario.
 function writeShims({ bin, root, realGit, table, gh = true }) {
   if (/\s/.test(process.execPath)) {
     throw new Error(`queue-pull oracle: the node path ${process.execPath} holds whitespace, so it cannot stand in a #! line`);
@@ -300,8 +300,10 @@ function shQuote(text) {
 // bin/mktemp: a POSIX sh script taking no arguments: <TMPDIR>/tmp.qp<8-digit counter>, the counter
 // read from and written back to QP_TMPNAME_COUNTER_FILE -- the name and counter format deps.tmpName
 // (queue-pull.js) emits under the same env var, which also reads an absent or empty counter as 0.
-// Any other counter must be one or more digits (leading zeros are decimal). The file is created
-// exclusively with mode 0600 and the counter written only after that. Refuses (exit 97,
+// Any other counter must be one or more digits (leading zeros are decimal), at most 15 once those
+// are stripped (the module refuses past Number.MAX_SAFE_INTEGER; shell arithmetic overflows past
+// 18). The file is created exclusively with mode 0600 and the counter written only after that; a
+// counter write that fails refuses too, leaving the created file behind. Refuses (exit 97,
 // `mktemp-shim: refused ({why}): {args}`): an argument, a missing TMPDIR or counter path, a counter
 // that is not digits, a next name that already exists (the old node shim died on EEXIST, exit 1).
 // No forks: no $(...), subshell or pipe; dash and macOS /bin/sh alike.
@@ -326,6 +328,7 @@ function mktempShimScript() {
     'while :; do',
     '  case "$n" in 0?*) n=${n#0} ;; *) break ;; esac',
     'done',
+    '[ ${#n} -le 15 ] || qp_refuse "counter file holds \\"$n\\""',
     'n=$((${n:-0} + 1))',
     'p=$n',
     'while [ ${#p} -lt 8 ]; do p=0$p; done',
@@ -337,7 +340,7 @@ function mktempShimScript() {
     '  qp_refuse "cannot create: $f"',
     '}',
     'set +C',
-    'printf \'%s\' "$n" > "$QP_TMPNAME_COUNTER_FILE"',
+    'printf \'%s\' "$n" 2>/dev/null > "$QP_TMPNAME_COUNTER_FILE" || qp_refuse "cannot write counter: $QP_TMPNAME_COUNTER_FILE"',
     'printf \'%s\\n\' "$f"',
     '',
   ].join('\n');

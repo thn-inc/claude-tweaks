@@ -315,6 +315,36 @@ test('the mktemp shim refuses', { skip: oracleSkip() }, (t) => {
   }
 });
 
+test('the mktemp shim refuses a TMPDIR it cannot create in', { skip: oracleSkip() }, (t) => {
+  const { tmpdir, counter, mktemp } = mktempSandbox(t);
+  fs.writeFileSync(counter, '4');
+  const missing = path.join(tmpdir, 'absent');
+  const r = mktemp([], { extra: { TMPDIR: missing } });
+  assert.equal(r.status, 97);
+  assert.equal(r.stderr, `mktemp-shim: refused (cannot create: ${path.join(missing, 'tmp.qp00000005')}): \n`);
+  assert.equal(fs.readFileSync(counter, 'utf8'), '4');
+});
+
+test('the mktemp shim refuses a counter it cannot write, leaving the created file', { skip: oracleSkip() }, (t) => {
+  const { tmpdir, mktemp } = mktempSandbox(t);
+  const counter = path.join(tmpdir, 'no-such-dir', 'counter');
+  const r = mktemp([], { extra: { QP_TMPNAME_COUNTER_FILE: counter } });
+  assert.equal(r.status, 97);
+  assert.equal(r.stdout, '');
+  assert.equal(r.stderr, `mktemp-shim: refused (cannot write counter: ${counter}): \n`);
+  assert.equal(fs.existsSync(path.join(tmpdir, 'tmp.qp00000001')), true, 'the created file stays');
+});
+
+test('the mktemp shim refuses a counter past 15 digits', { skip: oracleSkip() }, (t) => {
+  const { tmpdir, counter, mktemp } = mktempSandbox(t);
+  fs.writeFileSync(counter, '1234567890123456');
+  const r = mktemp();
+  assert.equal(r.status, 97);
+  assert.equal(r.stderr, 'mktemp-shim: refused (counter file holds "1234567890123456"): \n');
+  fs.writeFileSync(counter, '0000000000000000007');
+  assert.equal(mktemp().stdout, `${path.join(tmpdir, 'tmp.qp00000008')}\n`, 'zeros do not count toward the 15');
+});
+
 test('bin/node is a sh script', { skip: oracleSkip() }, (t) => {
   const { sb } = mktempSandbox(t);
   assert.equal(fs.readFileSync(path.join(sb.bin, 'node'), 'utf8').split('\n')[0], '#!/bin/sh');
