@@ -84,7 +84,7 @@ What each outcome leaves behind:
 
 - `merged`: the post-merge sequence ran. Reconcile archived the run (the later decision lines and the final event follow it into `archive/{run-id}/`), and released the claim; the worktree, the local branch and the remote branch were removed. A post-merge failure never changes the outcome from `merged`; it is named in `postMerge.failures`.
 - `armed`: the claim, the worktree and the run directory all stay. The reconciler completes cleanup on merged evidence once the forge has merged the PR, and the locked worktree is reaped after its owner pid dies (24h orphan grace).
-- `pending-review`: the PR is left as the table above says. The claim is left alone and lapses by its TTL.
+- `pending-review`: the PR is left as the table above says. `merge.js` makes no release, label-removal or git call that would undo the claim, so the claim is left as it was (the settle `none` row below makes none either).
 
 The final line carries a `merge` field (`{ outcome, reason, mergeCommit, postMerge }`) and, when the events could no longer be written to a run directory, `eventsFile: 'stdout-only'`. An interrupt (SIGINT, SIGTERM) during the merge step makes no further call. A signal that arrives after a merge landed still reports `pending-review` (stop class `none`), because the step has no interrupt rung of its own; the reconciler's merged-evidence checks complete such a run. The watch's wait is reported on each `merge-watch` event and added to `msTotal - msWithoutCi`.
 

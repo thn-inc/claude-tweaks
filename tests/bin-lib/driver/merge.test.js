@@ -2189,6 +2189,9 @@ test('codeOf self-test: a comment never matches, code after a literal opener sti
   assert.ok(codeOf(MERGE).length > 10000, 'merge.js is read whole');
 });
 
+// Recall limits: a require built from a variable or a computed string (`require(name)`), and a model
+// reached through a differently named binding, are invisible to this regex scan; it pins the spellings
+// merge.js would plausibly use, and review owns the rest.
 function noModelCall(src) {
   return !/require\([^)]*\b(worker|roles|judgments?)\b/.test(src) && !/\blaunchWorker\b/.test(src) && !/['"`]claude(\.cmd)?['"`]/.test(src);
 }
@@ -2209,6 +2212,8 @@ test('AC14.1–AC14.3: merge.js requires no worker, roles or judgments module, n
 test('AC14 twin pin: the rollup verdict comes from classify.js classifyRollup, never a local re-implementation', () => {
   const twinImport = (src) => /\{[^}]*\bclassifyRollup\b[^}]*\}\s*=\s*require\(\s*['"]\.\.\/pr-checks\/classify['"]\s*\)/.test(src);
   const twinCall = (src) => /\bclassifyRollup\(/.test(src);
+  // Recall limit: a copy of the conclusion list under another name (`const FAILED = [...]`) is not seen;
+  // the scan names the identifiers the twin owns, and the Step 2.5 conformance suite owns the list itself.
   const reimplements = (src) => /\bFAILING_CONCLUSIONS\b/.test(src) || /\bfunction\s+(?:normalizeEntry|classifyRollup)\b/.test(src)
     || /\b(?:const|let|var)\s+(?:normalizeEntry|classifyRollup)\s*=/.test(src);
   const code = codeOf(MERGE);
@@ -2306,7 +2311,9 @@ test('AC6.3: a conflict run leaves the branch tip and the integration branch tip
   const r = await merge(f.ctx, h.deps);
   assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'conflict', mergeCommit: null, postMerge: null });
   assert.deepEqual(tips(), before, 'both branch tips and HEAD are unchanged');
-  assert.ok(!real.some((a) => a.some((w) => ['merge', 'push', 'rebase', 'reset', 'checkout', 'switch', 'commit'].includes(w))), JSON.stringify(real));
+  // The conflict path makes no git call at all (it reads the PR through gh and comments on it), so the
+  // contract is an empty list, not a filter over one: any git call here is a change to review.
+  assert.deepEqual(real, []);
   assert.ok(!h.calls.some(isMergeCall), 'no gh pr merge went out');
 });
 
