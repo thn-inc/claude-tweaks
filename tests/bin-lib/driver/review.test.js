@@ -267,6 +267,8 @@ const PATH_RULE_ROWS = [
   { rule: 'win32-alias', input: 'tests/a.test.js:x.test.js' },
   // A printable reserved character: control characters and DEL trip non-ascii first.
   { rule: 'reserved-char', input: 'tests/a?.test.js' },
+  // node --test would run tests/a.test.js or tests/b.test.js, not this file.
+  { rule: 'glob-char', input: 'tests/[ab].test.js' },
   { rule: 'node-modules-segment', input: 'tests/node_modules/a.test.js' },
   { rule: 'not-test-path', input: 'src/contest.js' },
   // A case variant of a protected name that does not exist yet.
@@ -348,6 +350,11 @@ test('AC4: every listed shape is refused by the first rule it trips', () => {
     ...['\n', '\r', '\t', '\x00', '\x1b', '\x7f'].map((c) => [`tests/a${c}b.test.js`, 'non-ascii']),
     // The printable characters Windows forbids in a name.
     ...['<', '>', '"', '|', '?', '*'].map((c) => [`tests/a${c}b.test.js`, 'reserved-char']),
+    // The glob shapes node --test expands: classes, braces, extglob groups, and those that reach
+    // outside the worktree or into a reserved directory once expanded.
+    ...['[', ']', '{', '}', '(', ')', '!', '+', '@'].map((c) => [`tests/a${c}b.test.js`, 'glob-char']),
+    ...['tests/{a,zz}.test.js', 'tests/+(a).test.js', 'tests/@(a).test.js', 'tests/!(zz).test.js', '[.][.]/tests/a.test.js',
+      '{..,zz}/tests/a.test.js', 'node_module[s]/a.test.js', '.gi[t]/a.test.js', 'app/[id]/page.test.js', 'tests/$(touch x).test.js'].map((p) => [p, 'glob-char']),
     ['tests/Node_Modules/a.test.js', 'node-modules-segment'],
     // Protected names, in any letter case.
     ['hooks/a.test.js', 'protected-or-sensitive'],
@@ -1314,7 +1321,7 @@ test('AC7, AC12: a mid-pass stop has fixed counts and takes back every evidence 
   assert.strictEqual(out.result.detail, 'the evidence run changed the tree outside the evidence files: second.txt');
   // The finding the pass stopped on, and those after it, are not counted.
   assert.deepStrictEqual(out.counts, { returned: 3, reproduced: 1, discarded: 0 });
-  assert.deepStrictEqual(out.extra, { returned: 3, reproduced: 1, discarded: 0, usage: { input_tokens: 7 }, denials: [] });
+  assert.deepStrictEqual(out.extra, { returned: 3, reproduced: 1, discarded: 0, usage: { input_tokens: 7 }, denials: [], costUsd: 0.1, turns: 2 });
   assert.deepStrictEqual(out.result.extra, out.extra);
   // The current file first, then the confirmed ones, newest first, with the directories the pass made.
   assert.deepStrictEqual(ofKind(rig.calls, 'rmFile').map((c) => c.p), [at('tests/new/r1.test.js'), at('tests/new/r0.test.js')]);
@@ -1481,7 +1488,11 @@ test('AC3: reviewer strings never reach a spawn', async () => {
   collect(findings);
   const opts = { wt: WT, sensitivePaths: [], deps: rig.deps };
   const spawns = evidenceSpawns(rig.calls);
-  assert.ok(spawns.length >= 3, `only ${spawns.length} hostile paths ran`);
+  // The `;` and backtick paths run; `$(...)` is refused by glob-char and the newline by non-ascii,
+  // each before any write.
+  assert.ok(spawns.length >= 2, `only ${spawns.length} hostile paths ran`);
+  assert.strictEqual(pathRuleViolation(hostile[1], opts), 'glob-char');
+  assert.ok(!ofKind(rig.calls, 'writeFileExclusive').some((c) => c.p.includes('$(')));
   for (const call of spawns) {
     const dest = call.args.find((a) => a.startsWith(DEST_FLAG)).slice(DEST_FLAG.length);
     const i = Number(/review-evidence-(\d+)\.tap$/.exec(dest)[1]);
@@ -1502,6 +1513,41 @@ test('AC3: reviewer strings never reach a spawn', async () => {
       assert.ok(!String(a).includes('touch marker') && !String(a).includes('touch claim'), `${call.kind} carried ${JSON.stringify(a)}`);
     }
   }
+});
+
+test('AC7: the real node --test expands a bracketed path, so glob-char refuses it before any write', async () => {
+  const rel = 'tests/[ab].test.js';
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'review-glob-'));
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  try {
+    // A failing tests/a.test.js beside a passing file literally named tests/[ab].test.js.
+    fs.mkdirSync(path.join(dir, 'tests'));
+    fs.copyFileSync(path.join(FIXTURES, 'assert-fail.js.txt'), path.join(dir, 'tests', 'a.test.js'));
+    fs.writeFileSync(path.join(dir, 'tests', '[ab].test.js'), "const test = require('node:test');\ntest('the literal file ran', () => {});\n");
+    const dest = path.join(dir, 'glob.tap');
+    const r = spawnSync(process.execPath, evidenceArgs('npm test', rel, dest), { cwd: dir, env, windowsHide: true, timeout: 30000, killSignal: 'SIGKILL', encoding: 'utf8' });
+    assert.ifError(r.error);
+    const tap = fs.readFileSync(dest, 'utf8');
+    const { verdict } = classifyEvidenceRun({ code: r.status, signal: r.signal, timedOut: false, tap, file: rel });
+    if (Number(process.versions.node.split('.')[0]) >= 21) {
+      // The glob runs the failing a.test.js, never the file written: a finding confirmed by another file.
+      assert.strictEqual(verdict, 'reproduced', tap);
+      assert.doesNotMatch(tap, /the literal file ran/);
+    } else {
+      // Node 20 reads the argument as a path: the refusal is conservative there.
+      assert.strictEqual(verdict, 'passed', tap);
+      assert.match(tap, /the literal file ran/);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  // The driver refuses the path by name, before it writes or runs anything.
+  const rig = passRig({ findings: [reviewFinding(0, { evidence: { path: rel, content: CONTENT } })] });
+  const out = await rig.run();
+  assert.strictEqual(pathRuleViolation(rel, { wt: WT, sensitivePaths: [], deps: rig.deps }), 'glob-char');
+  assert.deepStrictEqual(out.counts, { returned: 1, reproduced: 0, discarded: 1 });
+  assert.deepStrictEqual([ofKind(rig.calls, 'writeFileExclusive').length, evidenceSpawns(rig.calls).length], [0, 0]);
 });
 
 test('AC11: reviewer text in a detail is one line, bounded, with no reference or mention', async () => {
@@ -1550,17 +1596,32 @@ test('AC12: counts add up', async () => {
   assert.strictEqual(out.result, null);
   assert.deepStrictEqual(out.counts, { returned: 7, reproduced: 1, discarded: 6 });
   assert.strictEqual(out.counts.returned, out.counts.reproduced + out.counts.discarded);
-  assert.deepStrictEqual(Object.keys(out.extra).sort(), ['denials', 'discarded', 'reproduced', 'returned', 'usage']);
+  assert.deepStrictEqual(Object.keys(out.extra).sort(), ['costUsd', 'denials', 'discarded', 'reproduced', 'returned', 'turns', 'usage']);
   assert.deepStrictEqual(out.extra, {
-    returned: 7, reproduced: 1, discarded: 6, usage: { input_tokens: 7 },
+    returned: 7, reproduced: 1, discarded: 6, usage: { input_tokens: 7 }, costUsd: 0.1, turns: 2,
     denials: [{ tool_name: 'Read', tool_input: neutralize(JSON.stringify(denials[0].tool_input)) }],
   });
   assert.ok(!out.extra.denials[0].tool_input.includes('#3') && out.extra.denials[0].tool_input.includes('@​bob'));
-  // A stop carries the same five keys, on the result's extra too.
-  const stopped = passRig({ envelope: { ...okEnvelope([]), status: 'fail', reason: 'exit', result: null, denials, usage: null } });
+  // A stop carries the same seven keys, on the result's extra too: a reviewer that failed after
+  // spending reports its cost and turns.
+  const stopped = passRig({ envelope: { ...okEnvelope([]), status: 'fail', reason: 'exit', result: null, denials, usage: null, costUsd: 0.25, turns: 3 } });
   const s = await stopped.run();
-  assert.deepStrictEqual(Object.keys(s.extra).sort(), ['denials', 'discarded', 'reproduced', 'returned', 'usage']);
+  assert.deepStrictEqual(Object.keys(s.extra).sort(), ['costUsd', 'denials', 'discarded', 'reproduced', 'returned', 'turns', 'usage']);
   assert.deepStrictEqual(s.result.extra, s.extra);
+  assert.deepStrictEqual([s.extra.costUsd, s.extra.turns], [0.25, 3]);
+  // An envelope that reports neither gives null for both, as for usage.
+  const bare = okEnvelope([]);
+  delete bare.costUsd;
+  delete bare.turns;
+  const b = await passRig({ envelope: bare }).run();
+  assert.deepStrictEqual([b.extra.costUsd, b.extra.turns, b.extra.usage], [null, null, { input_tokens: 7 }]);
+  // A pass that stops before the reviewer launches (an unreadable diff) has null for both.
+  const early = passRig();
+  const git = early.deps.git;
+  early.deps.git = (args, opts) => { if (args.includes('diff')) throw Object.assign(new Error('fatal'), { status: 128 }); return git(args, opts); };
+  const e = await early.run();
+  assert.strictEqual(ofKind(early.calls, 'launchWorker').length, 0);
+  assert.deepStrictEqual([e.result.status, e.extra.costUsd, e.extra.turns, e.extra.usage], ['fail', null, null, null]);
 });
 
 test('Task0: an uncovered test command discards every finding and says so', async () => {
@@ -1639,7 +1700,7 @@ test('review: a raw error from a dep after an evidence write is a stop that take
   assert.strictEqual(out.result.detail, 'the review pass failed unexpectedly (EACCES)');
   assert.doesNotMatch(JSON.stringify(out), /SECRET|wt/);
   assert.deepStrictEqual(out.confirmed, []);
-  assert.deepStrictEqual(out.extra, { returned: 1, reproduced: 0, discarded: 0, usage: { input_tokens: 7 }, denials: [] });
+  assert.deepStrictEqual(out.extra, { returned: 1, reproduced: 0, discarded: 0, usage: { input_tokens: 7 }, denials: [], costUsd: 0.1, turns: 2 });
   assert.strictEqual(ofKind(rig.calls, 'rmFile').length, 1, 'the written file was removed');
   assert.strictEqual(rig.types.get(at('tests/new/r0.test.js')), undefined);
 });

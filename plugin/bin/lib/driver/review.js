@@ -84,7 +84,8 @@
 //   content   a non-empty string of at most EVIDENCE_CONTENT_MAX_BYTES UTF-8 bytes
 //   path      PATH_RULES, in order; the first rule that trips names the discard. Lexical rules come
 //             first (printable ASCII only; Windows aliases and reserved characters, after git's
-//             core.protectNTFS), then isTestPath and the protected / merge-sensitive check (the
+//             core.protectNTFS; the glob characters `node --test` expands, so the file run is the
+//             file written), then isTestPath and the protected / merge-sensitive check (the
 //             eligibility gate's own isTestPath, isProtectedPath and isSensitivePath, applied without
 //             regard to letter case, since the input is not git's and the volume may be
 //             case-insensitive), then the file-system rules through deps (lstatType,
@@ -172,7 +173,8 @@
 //   ctx       ctx.worker is merged once the launch returns (the fix round's title, the two summaries
 //             as `{first} Review fix: {fix}`, cost and turns summed, denials concatenated,
 //             spendOverrun OR-ed), so the second commit's message is the fix round's title and the
-//             final line counts both launches; once the name-only diff is read, ctx.changedFiles
+//             final line counts both implementer launches (the reviewer's costUsd and turns are on
+//             the review line alone, null when it never returned an envelope); once the name-only diff is read, ctx.changedFiles
 //             becomes the first commit's paths plus every path differing from preFixHead, first seen
 //             first; the second check overwrites ctx.check, whose head the push guard reads.
 //   The commit step's "nothing to commit" stop (a stop that names no path) does not end the round:
@@ -440,6 +442,12 @@ const PATH_RULES = Object.freeze([
   { name: 'git-segment', test: (p) => hasSegment(p, ['.git']) },
   { name: 'win32-alias', test: isWin32Alias },
   { name: 'reserved-char', test: (p) => /[\x00-\x1f\x7f<>"|?*]/.test(p) },
+  // `node --test` (v21+) reads its path as a glob, so a bracket or brace class, or an extglob
+  // `!( +( @(` group, runs other files than the one written (`tests/[ab].test.js` runs
+  // `tests/a.test.js`; `{..,x}/` reaches outside the worktree). Probed on v22.23.2 and v26.13.1
+  // over every printable ASCII character: these, with reserved-char's `*` `?` and backslash's `\`,
+  // are the ones that make a path match anything but itself.
+  { name: 'glob-char', test: (p) => /[[\]{}()!+@]/.test(p) },
   // A kept file under node_modules/ would shadow a dependency.
   { name: 'node-modules-segment', test: (p) => hasSegment(p, ['node_modules']) },
   { name: 'not-test-path', test: notTestFile },
@@ -788,7 +796,9 @@ async function reviewPass(ctx, deps, { testCommand, isRunArtifact } = {}) {
   const confirmed = [];
   let usage = null;
   let denials = [];
-  const extraOf = () => ({ ...counts, usage, denials });
+  let costUsd = null;
+  let turns = null;
+  const extraOf = () => ({ ...counts, usage, denials, costUsd, turns });
   // The file written for the finding being judged, until it is kept or removed.
   let current = null;
   // Best effort: a removal that fails leaves the file for settle, and never replaces the stop's detail.
@@ -825,6 +835,8 @@ async function reviewPass(ctx, deps, { testCommand, isRunArtifact } = {}) {
     const { envelope, minutes, dollars } = launch;
     if (!envelope || typeof envelope !== 'object') return stop('reviewer launch returned no envelope');
     usage = envelope.usage === undefined ? null : envelope.usage;
+    costUsd = envelope.costUsd === undefined ? null : envelope.costUsd;
+    turns = envelope.turns === undefined ? null : envelope.turns;
     denials = (Array.isArray(envelope.denials) ? envelope.denials : []).map((d) => ({
       tool_name: d && typeof d.tool_name === 'string' ? d.tool_name : null,
       tool_input: neutralize(JSON.stringify(d && d.tool_input)),
@@ -1124,10 +1136,10 @@ async function reviewRecord(ctx, deps, wiring) {
     pass = await reviewPass(ctx, deps, { testCommand, isRunArtifact });
   } catch (err) {
     // A throw before the pass can take anything back (its setup, a missing wiring member) writes nothing: the
-    // pass's own catch covers every throw after its first evidence write. The line keeps the five keys.
+    // pass's own catch covers every throw after its first evidence write. The line keeps the seven keys.
     const code = err && typeof err.code === 'string' && /^[A-Z0-9_]+$/.test(err.code) ? ` (${err.code})` : '';
     const detail = `the review pass failed before it started${code}`;
-    return { status: 'fail', stopClass: STOP_CLASSES.PRE_PUSH, detail, extra: { returned: 0, reproduced: 0, discarded: 0, usage: null, denials: [] } };
+    return { status: 'fail', stopClass: STOP_CLASSES.PRE_PUSH, detail, extra: { returned: 0, reproduced: 0, discarded: 0, usage: null, denials: [], costUsd: null, turns: null } };
   }
   if (pass.result) return pass.result;
   if (pass.confirmed.length === 0) return { status: 'ok', detail: pass.detail, extra: pass.extra };

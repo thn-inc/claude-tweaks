@@ -2790,12 +2790,15 @@ test('AC13: with express-driver-review off no reviewer starts even for size:medi
   assert.equal(reviewLines(forced).length, 1);
 });
 
-test('AC12: the review event line carries returned, reproduced, discarded, usage and denials', async () => {
-  const h = harness({ policy: { 'express-driver-review': 'on' }, reviewer: reviewerEnvelope([], { usage: { input_tokens: 4 }, denials: [{ tool_name: 'Bash', tool_input: { command: 'ls' } }] }) });
+test('AC12: the review event line carries returned, reproduced, discarded, usage, denials, costUsd and turns', async () => {
+  const h = harness({ policy: { 'express-driver-review': 'on' }, reviewer: reviewerEnvelope([], { usage: { input_tokens: 4 }, denials: [{ tool_name: 'Bash', tool_input: { command: 'ls' } }], costUsd: 1.5, turns: 6 }) });
   await run(['#7'], h.deps);
   const [line] = reviewLines(h);
   assert.deepEqual([line.returned, line.reproduced, line.discarded], [0, 0, 0]);
   assert.deepEqual(line.usage, { input_tokens: 4 });
+  // The reviewer's spend is on its own line; the final line counts the implementer alone.
+  assert.deepEqual([line.costUsd, line.turns], [1.5, 6]);
+  assert.deepEqual([lastLine(h).costUsd, lastLine(h).turns], [ENVELOPE.costUsd, ENVELOPE.turns]);
   assert.ok(Array.isArray(line.denials) && line.denials.length === 1 && line.denials[0].tool_name === 'Bash');
   const plain = harness({ policy: { 'express-driver-review': 'on' } });
   await run(['#7'], plain.deps);
@@ -2809,6 +2812,7 @@ test('AC12: a review step that stops still carries its counts', async () => {
   assert.equal(line.status, 'fail');
   assert.equal(line.returned, 2);
   assert.ok('usage' in line && Array.isArray(line.denials));
+  assert.deepEqual([line.costUsd, line.turns], [ENVELOPE.costUsd, ENVELOPE.turns]);
   assert.equal(lastLine(h).stop.step, STEP.review);
 });
 
@@ -2986,11 +2990,12 @@ test('AC10: each escalation names the finding and runs no second round', async (
     assert.equal(stop.detail, `${cause}: ${FINDING_0}`, name);
     assert.equal(implementerCalls(h).length, 2, name);
     assert.equal(pushCalls(h).length, 0, name);
-    // AC12: the one review line keeps the pass's counts and the reviewer's own usage and denials.
+    // AC12: the one review line keeps the pass's counts and the reviewer's own usage, denials, cost and turns,
+    // a propagated test or check result included.
     const lines = reviewLines(h);
     assert.equal(lines.length, 1, name);
-    assert.deepEqual([lines[0].status, lines[0].returned, lines[0].reproduced, lines[0].discarded, lines[0].usage, lines[0].denials],
-      [status, 1, 1, 0, REVIEWER_USAGE, []], name);
+    assert.deepEqual([lines[0].status, lines[0].returned, lines[0].reproduced, lines[0].discarded, lines[0].usage, lines[0].denials, lines[0].costUsd, lines[0].turns],
+      [status, 1, 1, 0, REVIEWER_USAGE, [], ENVELOPE.costUsd, ENVELOPE.turns], name);
   }
 });
 
@@ -3076,10 +3081,13 @@ test('fix round: ctx.worker merges both launches: the fix title commits, cost an
   const h = fixRig({
     script: [nthCall((c) => c.kind === 'worker' && c.args[0].role === 'implementer', 1, { ...ENVELOPE, denials: denial('Bash') })],
     fix: { denials: denial('WebFetch'), spendOverrun: true, costUsd: 0.5, turns: 4 },
+    reviewer: reviewerEnvelope([evidenceFinding(0)], { usage: REVIEWER_USAGE, denials: [], costUsd: 2, turns: 6 }),
   });
   await run(['#7'], h.deps);
   const final = lastLine(h);
+  // Both implementer launches, not the reviewer's: its cost and turns are on the review line.
   assert.deepEqual([final.costUsd, final.turns, final.denialCount, final.spendOverrun], [0.75, 7, 2, true]);
+  assert.deepEqual([reviewLines(h)[0].status, reviewLines(h)[0].costUsd, reviewLines(h)[0].turns], ['ok', 2, 6]);
   assert.equal(h.files[path.join(runDirOf(h), 'commit-msg.txt')], 'Fix the subtraction — refs #7\n');
   assert.equal(h.calls.filter((c) => c.kind === 'writeFile' && c.args[0] === path.join(runDirOf(h), 'commit-msg.txt')).length, 2);
   // A launch that reported no cost leaves the other launch's; neither reporting one stays null.
@@ -3310,7 +3318,7 @@ test('realDeps: the review step\'s seams create exclusively, remove one entry an
   realDeps.timers.clearTimeout(timer);
 });
 
-test('AC12: a throw inside the review pass is a pre-push stop whose line keeps the five keys and no error text', async () => {
+test('AC12: a throw inside the review pass is a pre-push stop whose line keeps the seven keys and no error text', async () => {
   const h = harness({ policy: { 'express-driver-review': 'on' } });
   const mkdir = h.deps.mkdirSync;
   h.deps.mkdirSync = (p, o) => {
@@ -3320,15 +3328,15 @@ test('AC12: a throw inside the review pass is a pre-push stop whose line keeps t
   await run(['#7'], h.deps);
   const [line] = reviewLines(h);
   assert.deepEqual([line.status, line.detail], ['fail', 'the review pass failed unexpectedly (EACCES)']);
-  assert.deepEqual([line.returned, line.reproduced, line.discarded, line.usage, line.denials], [0, 0, 0, null, []]);
+  assert.deepEqual([line.returned, line.reproduced, line.discarded, line.usage, line.denials, line.costUsd, line.turns], [0, 0, 0, null, [], null, null]);
   assert.doesNotMatch(JSON.stringify(h.lines()), /SECRET/);
   assert.deepEqual([lastLine(h).stop.class, lastLine(h).outcome], ['pre-push', 'express-escalated']);
   assert.equal(pushCalls(h).length, 0);
-  // A missing wiring member escapes the pass itself: the step still returns the five keys.
+  // A missing wiring member escapes the pass itself: the step still returns the seven keys.
   const { reviewRecord } = require(path.join(LIB, 'driver', 'review'));
   const ctx = { issue: issueFor(7), keyFiles: [], shared: { policy: { 'express-driver-review': { value: 'on' } } } };
   const res = await reviewRecord(ctx, {}, { testCommand: 'npm test' });
-  assert.deepEqual([res.status, res.stopClass, res.extra], ['fail', 'pre-push', { returned: 0, reproduced: 0, discarded: 0, usage: null, denials: [] }]);
+  assert.deepEqual([res.status, res.stopClass, res.extra], ['fail', 'pre-push', { returned: 0, reproduced: 0, discarded: 0, usage: null, denials: [], costUsd: null, turns: null }]);
   assert.equal(res.detail, 'the review pass failed before it started');
 });
 
