@@ -40,6 +40,11 @@ function worklistRows(worklist) {
   return worklist && Array.isArray(worklist.rows) ? worklist.rows : worklist;
 }
 
+// finding.pr (the learned-skills PR URL) counts only as a non-empty string.
+function hasPr(pr) {
+  return typeof pr === 'string' && pr !== '';
+}
+
 function findingCounts(findings) {
   const applied = (findings || []).filter((f) => f.action === 'applied').length;
   const staged = (findings || []).filter((f) => f.action === 'staged').length;
@@ -63,7 +68,12 @@ function formatResultCell(entry) {
 
 function formatDetailCell(entry) {
   if (!entry) return '';
-  return entry.detail || '';
+  const parts = [];
+  if (entry.detail) parts.push(entry.detail);
+  // Learned-skills PR: each distinct non-empty finding.pr is named once.
+  const prs = [...new Set((entry.findings || []).map((f) => f.pr).filter(hasPr))];
+  for (const pr of prs) parts.push(`learned-skills PR ${pr}`);
+  return parts.join(' · ');
 }
 
 // A row is "empty" for collapse purposes when it produced nothing worth a
@@ -125,7 +135,11 @@ const SECTION_SPECS = [
 ];
 
 function dispositionFor(finding) {
-  if (finding.action === 'applied') return `applied (${finding.commit})`;
+  if (finding.action === 'applied') {
+    return hasPr(finding.pr)
+      ? `applied (${finding.commit}, learned-skills PR ${finding.pr})`
+      : `applied (${finding.commit})`;
+  }
   if (finding.action === 'staged') return `staged (${finding.stagePath})`;
   return String(finding.action);
 }
