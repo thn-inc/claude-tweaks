@@ -247,8 +247,9 @@ function writeManifesto({ runDir, records, levers, integrationModel = null, inte
   }
   try {
     for (const { key, value } of pairs) set({ runDir, key, value });
-    // spec:/created: are run bookkeeping, not levers — set-config refuses
-    // them by design, so they are appended after the batch (Write mechanism).
+    // created: is run bookkeeping that set-config refuses by design; spec: is
+    // a run pin set-config accepts since #5347, but is still appended here
+    // beside created: (behavior unchanged — the Write mechanism).
     const spec = Math.min(...records.map((r) => r.n));
     fs.appendFileSync(configPath, `spec: ${spec}\ncreated: ${created}\n`);
   } catch (err) {

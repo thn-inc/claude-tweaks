@@ -137,6 +137,14 @@ test('manifesto.md Write mechanism: a degraded resolve line is handled like the 
   assert.match(para, /`merge-verification` entry carries a `degraded` field[^.]*`wait`/, 'Write mechanism must write a degraded-derived merge-verification lever as wait');
 });
 
+test('AC1.1: the Write mechanism writes spec: through a single-key set-config call', () => {
+  const para = writeMechanismParagraph(readText(MANIFESTO));
+  assert.match(para, /--key spec --value \{lowest record number\}/, 'Write mechanism must write spec: via a single-key set-config call');
+  const setMatch = /--set "([^"]*)"/.exec(para);
+  assert.ok(setMatch, 'Write mechanism paragraph has no --set "..." argument');
+  assert.ok(!/(^|,)spec=/.test(setMatch[1]), 'the 14-pair --set batch must not carry a spec= pair');
+});
+
 test('integration-model.md Run-scoped stability: a degraded detection is never pinned (#4578 Q10, AC20.2)', () => {
   const text = readText(path.join(REPO_ROOT, 'plugin', 'skills', '_shared', 'integration-model.md'));
   const start = text.indexOf('## Run-scoped stability');
