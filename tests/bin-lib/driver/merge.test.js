@@ -10,7 +10,8 @@ const os = require('node:os');
 const path = require('node:path');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const {
-  merge, parkComment, conflictComment, classifyMergeFailure, MERGE_WATCH_BOUND_MS, MERGE_WATCH_POLL_MS, RECONCILE_TIMEOUT_MS,
+  merge, parkComment, conflictComment, refusedComment, classifyMergeFailure, REASONS, PREFIXED_REASONS, isReason,
+  MERGE_WATCH_BOUND_MS, MERGE_WATCH_POLL_MS, RECONCILE_TIMEOUT_MS,
 } = require(path.join(LIB, 'driver', 'merge'));
 const { MERGE_STEP_NAMES } = require(path.join(LIB, 'driver', 'events'));
 const { VERDICT_STEPS, verdictMarker } = require(path.join(LIB, 'dispatch', 'merge-verdict'));
@@ -72,7 +73,7 @@ function leverReply(entry) {
 
 // The gate's two pr view field sets: the first read and the `wait` row's re-read.
 const GATE_FIELDS = 'state,mergeStateStatus,mergeable,headRefOid,statusCheckRollup';
-const REREAD_FIELDS = 'state,mergeStateStatus,headRefOid';
+const REREAD_FIELDS = 'state,mergeStateStatus,mergeable,headRefOid';
 const GREEN_CHECK = { __typename: 'CheckRun', name: 'unit', status: 'COMPLETED', conclusion: 'SUCCESS', detailsUrl: 'u' };
 const GREEN_RUN = { name: 'CI', workflowName: 'CI', status: 'completed', conclusion: 'success', url: 'u' };
 const MET = { state: 'met', failing: [], draftSkipWithoutReadyTrigger: [] };
@@ -164,7 +165,7 @@ function defaultMergeScript(over, files, logs, applied) {
       state: 'OPEN', mergeStateStatus: 'CLEAN', mergeable: 'MERGEABLE', headRefOid: CTX.head, statusCheckRollup: [GREEN_CHECK],
     })],
     [(c) => isGh('pr', 'view')(c) && c.args.includes(REREAD_FIELDS), () => jsonReply(knob(over.reread), {
-      state: 'OPEN', mergeStateStatus: 'CLEAN', headRefOid: CTX.head,
+      state: 'OPEN', mergeStateStatus: 'CLEAN', mergeable: 'MERGEABLE', headRefOid: CTX.head,
     })],
     [isGh('run', 'list'), () => {
       const runs = knob(over.runs);
@@ -274,7 +275,7 @@ function mergeHarness(over = {}) {
   const deps = {
     gh: (args) => dispatch('gh', args),
     ghCreate: (args) => dispatch('ghCreate', args),
-    git: (args, opts = {}) => dispatch('git', args, opts.cwd, { remoteWrite: opts.remoteWrite }),
+    git: (args, opts = {}) => dispatch('git', args, opts.cwd, { remoteWrite: opts.remoteWrite, env: opts.env }),
     node: (script_, args, opts = {}) => dispatch('node', [script_, ...args], opts.cwd, { env: opts.env, timeout: opts.timeout }),
     readFile: (p) => dispatch('readFile', [p]),
     lstatType: (p) => dispatch('lstatType', [p]),
@@ -981,11 +982,18 @@ test('AC6.1: DIRTY or CONFLICTING on the first read is conflict: one PR comment,
       assert.deepEqual([lastEvent(h).step, lastEvent(h).status], ['merge-conflict', 'stop']);
     }
   }
-  // AC6: "on any read" — a DIRTY wait re-read is conflict too.
-  const w = mergeHarness({ verification: WAIT, reread: { mergeStateStatus: 'DIRTY' } });
-  const r = await merge(CTX, w.deps);
-  assert.equal(r.reason, 'conflict');
-  assert.deepEqual(afterAll(w, isReread).map((c) => c.args), [['pr', 'comment', '--repo', 'o/r', '--body', text, '--', '9']]);
+  // AC6: "on any read" — a DIRTY or CONFLICTING wait re-read is conflict too, with no merge call.
+  for (const reread of [{ mergeStateStatus: 'DIRTY' }, { mergeable: 'CONFLICTING' }]) {
+    const w = mergeHarness({ verification: WAIT, reread });
+    const r = await merge(CTX, w.deps);
+    assert.equal(r.reason, 'conflict', JSON.stringify(reread));
+    assert.deepEqual(afterAll(w, isReread).map((c) => c.args), [['pr', 'comment', '--repo', 'o/r', '--body', text, '--', '9']], JSON.stringify(reread));
+    noMerge(w);
+  }
+  // The re-read asks for mergeable, and a re-read without it is unusable, never a guess.
+  const noField = mergeHarness({ verification: WAIT, reread: JSON.stringify({ state: 'OPEN', mergeStateStatus: 'CLEAN', headRefOid: CTX.head }) });
+  assert.equal((await merge(CTX, noField.deps)).reason, 'state-read-failed');
+  noMerge(noField);
   // A failed comment still stops as conflict, and the event says the comment failed.
   const f = mergeHarness({ prState: { mergeable: 'CONFLICTING' }, script: [[isGh('pr', 'comment'), new Error('HTTP 502')]] });
   assert.equal((await merge(CTX, f.deps)).reason, 'conflict');
@@ -1323,6 +1331,34 @@ test('watch: an interrupt during a sleep makes no further call', async () => {
   noMerge(h);
 });
 
+test('supplier: an interrupt during the supplier call makes no further call and emits nothing (resolved, thrown or rejected)', async () => {
+  const good = { mergeCheck: { verdict: 'auto-merge' }, acceptance: { completed: true } };
+  const rows = [
+    ['resolves', () => good],
+    ['throws', () => { throw new Error('supplier aborted'); }],
+    ['rejects', () => Promise.reject(new Error('supplier aborted'))],
+    ['resolves unusable', () => null],
+  ];
+  for (const lever of [undefined, WAIT]) {
+    for (const [name, reply] of rows) {
+      let signal = null;
+      // The signal lands while the supplier is awaited, as run.js's handler would set it.
+      const h = mergeHarness({ verification: lever, supplier: (ctx) => { signal = 'SIGTERM'; return reply(ctx); } });
+      h.deps.interrupted = () => signal;
+      const r = await merge(CTX, h.deps);
+      assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'unclassified', mergeCommit: null, postMerge: null }, name);
+      assert.equal(r.detail, 'supplier: interrupted', name);
+      assert.equal(h.calls[h.calls.length - 1].kind, 'judgments', `${name}: no gh, node, git or file call after the supplier`);
+      assert.deepEqual(h.events.map((e) => [e.step, e.status]), [['merge-entry', 'ok']], `${name}: nothing emitted after the supplier`);
+      assert.ok(!h.calls.some((c) => isNode('closing-links.js')(c) || isReadyCall(c)), name);
+      noMerge(h);
+    }
+  }
+  // No interrupt: the same supplier replies run on as before.
+  const plain = mergeHarness({ supplier: () => good });
+  assert.equal((await merge(CTX, plain.deps)).outcome, 'merged');
+});
+
 test('watch: a throw inside the watch emits a fail merge-watch event carrying ciWaitMs and is unclassified', async () => {
   const h = watchHarness({ verification: WAIT, prState: PENDING });
   const realSleep = h.deps.sleep;
@@ -1509,7 +1545,7 @@ test('AC11.2: an immediate call never degrades again', async () => {
   assert.match(r.detail, /^merge-refused \(unrecognized\): /);
   assert.equal(mergeCalls(h).length, 1, 'exactly one immediate merge call');
   assert.equal(h.calls.filter(isReread).length, 1);
-  assert.deepEqual(afterAll(h, isMergeCall), []);
+  assert.deepEqual(afterAll(h, isMergeCall).map(shortOf), ['gh pr comment'], 'only the merge-refused PR comment follows');
   // After a degrade, the immediate call's own refusal is final too: --auto once, immediate once.
   const d = mergeHarness({ prMerge: ghErr(SIG.notAllowed) });
   const dr = await merge(CTX, d.deps);
@@ -1518,7 +1554,12 @@ test('AC11.2: an immediate call never degrades again', async () => {
   assert.deepEqual(mergeCalls(d).map((c) => c.args.includes('--auto')), [true, false]);
 });
 
-test('AC11.3–AC11.5: checks, permission and unrecognized are merge-refused with the class named, nothing parked', async () => {
+// _shared/pr-first-merge.md Step 3 items 2, 4 and 5 "degrade to ready+comment": the contract beats
+// the spec's residue row ("merge-refused → comments none"), so every merge-refused stop leaves one
+// PR comment from refusedComment's fixed template, and nothing parked.
+const refusedPost = (cls, detail) => ['gh', ['pr', 'comment', '--repo', 'o/r', '--body', refusedComment({ pr: 9, cls, detail }), '--', '9']];
+
+test('AC11.3–AC11.5: checks, permission and unrecognized are merge-refused with the class named, one PR comment, nothing parked', async () => {
   const rows = [
     [SIG.checks, 'checks'],
     ['X Pull request o/r#9 is not mergeable: review required', 'checks'],
@@ -1540,11 +1581,19 @@ test('AC11.3–AC11.5: checks, permission and unrecognized are merge-refused wit
       assert.deepEqual([ev.step, ev.status], ['merge-call', 'stop'], name);
       assert.match(ev.detail, new RegExp(`\\(${cls}\\)`), name);
       assert.equal(mergeCalls(h).length, 1, name);
-      assert.deepEqual(afterAll(h, isMergeCall), [], `${name}: no call after the refused merge`);
+      const said = r.detail.slice(`merge-refused (${cls}): `.length);
+      assert.deepEqual(afterAll(h, isMergeCall).map((c) => [c.kind, c.args]), [refusedPost(cls, said)], `${name}: one PR comment after the refused merge`);
       assert.ok(!h.calls.some(isParkCall), `${name}: nothing parked`);
-      assert.ok(!h.calls.some((c) => isGh('pr', 'comment')(c) || isUndo(c)), `${name}: no comment, no re-draft`);
+      assert.ok(!h.calls.some(isUndo), `${name}: no re-draft`);
+      assert.ok(!h.calls.some((c) => describeArgs(c.args).includes('bot:parked')), `${name}: no bot:parked`);
+      assert.deepEqual(h.logs.filter((l) => l.status === 'SKIP'), [], `${name}: a posted comment logs no degrade trace`);
     }
   }
+  // The immediate call's own auto-not-allowed refusal is unrecognized, and comments too.
+  const imm = mergeHarness({ verification: WAIT, prMerge: ghErr(SIG.notAllowed) });
+  const ir = await merge(CTX, imm.deps);
+  assert.deepEqual(afterAll(imm, isMergeCall).map((c) => [c.kind, c.args]),
+    [refusedPost('unrecognized', ir.detail.slice('merge-refused (unrecognized): '.length))]);
   assert.equal((await merge(CTX, mergeHarness({ prMerge: ghErr(SIG.checks) }).deps)).detail,
     'merge-refused (checks): X Pull request o/r 9 is not mergeable: the base branch policy requires 1 required status check.');
 });
@@ -1684,7 +1733,7 @@ test('AC11.7: MERGED is merged with the merge commit; OPEN with autoMergeRequest
     assert.deepEqual(pick(cr), { outcome: 'pending-review', reason: 'merge-refused', mergeCommit: null, postMerge: null }, state);
     assert.equal(cr.detail, `confirmation read state ${shown}`);
     assert.equal(lastEvent(c).detail, `merge-refused: confirmation read state ${shown}`);
-    assert.deepEqual(afterAll(c, isConfirmRead), [], state);
+    assert.deepEqual(afterAll(c, isConfirmRead).map((x) => [x.kind, x.args]), [refusedPost('unconfirmed', `confirmation read state ${shown}`)], state);
   }
 });
 
@@ -1695,7 +1744,53 @@ test('AC11.8: exit 0 alone is never merged', async () => {
     assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'merge-refused', mergeCommit: null, postMerge: null });
     assert.equal(r.detail, 'confirmation read state OPEN');
     assert.deepEqual([lastEvent(h).step, lastEvent(h).status], ['merge-confirm', 'stop']);
+    assert.deepEqual(afterAll(h, isConfirmRead).map((x) => [x.kind, x.args]), [refusedPost('unconfirmed', 'confirmation read state OPEN')]);
   }
+});
+
+test('refusedComment is a fixed template: closed-set class words, reduced free text, nothing parked', () => {
+  assert.equal(refusedComment({ pr: 9, cls: 'checks', detail: 'X Pull request o/r 9 is not mergeable: review required' }),
+    'Merge stopped: PR #9 was not merged (checks: checks are red or still running, and there is no auto-merge to arm around them). '
+    + 'Detail: X Pull request o/r 9 is not mergeable: review required. The PR stays ready for a human to decide; nothing was parked.');
+  assert.match(refusedComment({ pr: 9, cls: 'permission', detail: 'HTTP 403' }), /\(permission: a permission gap needs a human with the right access, not a retry\)/);
+  assert.match(refusedComment({ pr: 9, cls: 'unrecognized', detail: 'x' }), /\(unrecognized: an error this procedure does not recognize/);
+  assert.match(refusedComment({ pr: 9, cls: 'unconfirmed', detail: 'confirmation read state OPEN' }),
+    /\(unconfirmed: the merge call exited 0 but the PR read back neither merged nor holding auto-merge\)\. Detail: confirmation read state OPEN\./);
+  // Any class outside the set, and a non-integer PR, render as closed-set words.
+  for (const cls of ['auto-not-allowed', 'closes #5', undefined, 'toString', '__proto__']) {
+    assert.match(refusedComment({ pr: 9, cls, detail: 'x' }), /^Merge stopped: PR #9 was not merged \(unrecognized: /, String(cls));
+  }
+  assert.match(refusedComment({ pr: '9; @octo', cls: 'checks', detail: 'x' }), /^Merge stopped: PR #unknown /);
+  assert.match(refusedComment({ pr: 9, cls: 'checks' }), /Detail: none\./);
+  const hostile = refusedComment({ pr: 9, cls: 'checks', detail: '@octo `x` closes #5 www.evil.com /Users/me/x ghp_abcdefghijklmnopqrstu' });
+  assert.doesNotMatch(hostile, /@|`|#5|www\.|\/Users|ghp_/);
+});
+
+test('merge-refused: a failed PR comment never changes the reason; the detail names it and a SKIP degrade trace is logged', async () => {
+  const postFails = [[isGh('pr', 'comment'), Object.assign(new Error('Command failed: gh pr comment --body x'), { stderr: 'HTTP 502\n' })]];
+  const rows = [
+    ['merge call (permission)', { prMerge: ghErr(SIG.permission) }, 'merge-call', /^merge-refused \(permission\): HTTP 403/],
+    ['confirmation read', { confirm: { state: 'OPEN', autoMergeRequest: null } }, 'merge-confirm', /^confirmation read state OPEN/],
+  ];
+  for (const [name, over, step, head] of rows) {
+    const h = mergeHarness({ ...over, script: postFails });
+    const r = await merge(CTX, h.deps);
+    assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'merge-refused', mergeCommit: null, postMerge: null }, name);
+    assert.match(r.detail, head, name);
+    assert.match(r.detail, /\(PR comment failed: HTTP 502\)$/, name);
+    assert.doesNotMatch(r.detail, /Command failed|--body/, name);
+    assert.deepEqual([lastEvent(h).step, lastEvent(h).status], [step, 'stop'], name);
+    assert.match(lastEvent(h).detail, /PR comment failed: HTTP 502/, name);
+    const skips = h.logs.filter((l) => l.status === 'SKIP');
+    assert.deepEqual(skips.map((l) => [l.step, l.text]), [['Step 3 (merge refused) (degraded)',
+      'condition: merge-refused PR comment post failed (HTTP 502) → fallback: refusal kept in the event and the result only']], name);
+    assert.ok(!h.calls.some(isParkCall) && !h.calls.some(isUndo), `${name}: still nothing parked, no re-draft`);
+  }
+  // A SKIP line that could not be written is named too.
+  const lf = mergeHarness({ prMerge: ghErr(SIG.permission), script: postFails, logReply: { code: 1, stdout: '', stderr: 'x' } });
+  const lr = await merge(CTX, lf.deps);
+  assert.equal(lr.reason, 'merge-refused');
+  assert.match(lr.detail, /PR comment failed: HTTP 502 \(log:Step 3 \(merge refused\) \(degraded\)\)\)$/);
 });
 
 test('AC11.9: a confirmation read that fails twice is state-read-failed, detail says unconfirmed, no post-merge call', async () => {
@@ -1908,6 +2003,35 @@ test('AC12.3: the remote delete never targets the integration branch', async () 
     assert.ok(r.postMerge.failures.includes('delete-branch: refused (integration branch)'), JSON.stringify(r.postMerge.failures));
     assert.ok(!h.calls.some(isGit('branch')), 'the local integration branch is never deleted either');
   }
+});
+
+test('AC12: the remote delete takes a bare owner/name path; a host-qualified repo slug sends its host as --hostname', async () => {
+  const gheRepo = 'ghe.example.com/acme/w';
+  const h = mergeHarness();
+  const r = await merge({ ...CTX, repo: gheRepo }, h.deps);
+  assert.equal(r.outcome, 'merged');
+  assert.deepEqual(r.postMerge.failures, []);
+  const del = h.calls.filter((c) => isGh('api')(c));
+  assert.deepEqual(del.map((c) => c.args), [['api', '-X', 'DELETE', 'repos/acme/w/git/refs/heads/drive-7', '--hostname', 'ghe.example.com']]);
+  // Every --repo still carries the qualified slug.
+  const repoArgs = h.calls.filter((c) => c.args.includes('--repo')).map((c) => c.args[c.args.indexOf('--repo') + 1]);
+  assert.ok(repoArgs.length > 0 && repoArgs.every((x) => x === gheRepo), JSON.stringify(repoArgs));
+  // github.com (a bare slug): the path as before, no --hostname.
+  const gh = mergeHarness();
+  await merge(CTX, gh.deps);
+  assert.deepEqual(gh.calls.filter((c) => isGh('api')(c)).map((c) => c.args), [['api', '-X', 'DELETE', 'repos/o/r/git/refs/heads/drive-7']]);
+});
+
+test('AC12: the release-status describe runs in the C locale; the fetch keeps the inherited env', async () => {
+  const h = mergeHarness();
+  await merge(CTX, h.deps);
+  const describe = h.calls.find(isGit('describe'));
+  assert.deepEqual(describe.env, { HARNESS: '1', LC_ALL: 'C' }, 'the caller env, plus LC_ALL=C');
+  assert.equal(h.calls.find(isGit('fetch')).env, undefined, 'only the describe is pinned');
+  // A not-yet-tagged answer still reads as such (the C-locale wording).
+  const untagged = mergeHarness({ describe: Object.assign(new Error('Command failed'), { stderr: "fatal: cannot describe 'abc'\n", status: 128 }) });
+  await merge(CTX, untagged.deps);
+  assert.equal(untagged.logs.find((l) => l.step === 'pr-first-merge Step 4.1').text, 'release status — not yet in a release — bump pending.');
 });
 
 test('AC12.4: "Reference does not exist" counts as success', async () => {
@@ -2294,6 +2418,90 @@ test('AC6.2: merge.js names no rebase, no --force, and passes no merge or push t
   assert.equal(literalArgv("s, ['fetch']"), true);
   assert.equal(gitCallSites("deps.git(['status']); d.git(['push']);"), 2, 'go-red: a second call site');
   assert.ok(!GIT_SUBCOMMANDS.includes(subcommandOf("s, ['gc']")), 'go-red: an unreviewed subcommand');
+});
+
+// The spec's closed rule, mechanically: every reason merge.js can report is in REASONS. The extractor
+// reads, over comment-stripped code, the reason argument of these shapes: stop(s, '<step>', R),
+// halt(R), park(s, R), gateReads(s, R), result(s, '<outcome>', R) and an object's `stop: R`. A literal
+// R (a template is read up to its first `${`, so `check-failed:${…}` reads as the stem plus a colon)
+// must be in the set; a non-literal R must be one of the reviewed pass-throughs below, each of which
+// only forwards a value some literal site produced. Recall limits: a reason built from a constant, or
+// handed out through any other call or property name, is invisible here, and review owns it.
+const REASON_PASSTHROUGHS = {
+  stop: ['reason', 'g.stop'], halt: [], park: [], gateReads: [], result: ['e.stop', 'c.stop', 'ready.stop', 'g.stop', 'null'],
+  'stop:': ['reason', 'word', 'out.step.stop'],
+};
+const REASON_SHAPES = [
+  ['stop', /(?<![.\w])stop\(\s*\w+\s*,\s*['"`][^'"`]*['"`]\s*,\s*([^,)]+)/g],
+  ['halt', /(?<![.\w])halt\(\s*([^,)]+)/g],
+  ['park', /(?<![.\w])park\(\s*\w+\s*,\s*([^,)]+)/g],
+  ['gateReads', /(?<![.\w])gateReads\(\s*\w+\s*,\s*([^,)]+)/g],
+  ['result', /(?<![.\w])result\(\s*\w+\s*,\s*['"`][^'"`]*['"`]\s*,\s*([^,)]+)/g],
+  ['stop:', /(?<![.\w])stop:\s*([^,}]+)/g],
+];
+function reasonSites(src) {
+  const sites = [];
+  for (const [shape, re] of REASON_SHAPES) {
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(src))) {
+      if (/\bfunction\s+$/.test(src.slice(Math.max(0, m.index - 12), m.index))) continue;
+      const arg = m[1].trim();
+      const line = src.slice(0, m.index).split('\n').length;
+      const literal = /^['"`]/.test(arg) ? /^['"`]([^'"`$]*)/.exec(arg)[1] : null;
+      sites.push({ shape, line, literal, expr: literal === null ? arg : null });
+    }
+  }
+  return sites;
+}
+const reasonOk = (site) => (site.literal === null
+  ? REASON_PASSTHROUGHS[site.shape].includes(site.expr)
+  : (site.literal.endsWith(':') ? PREFIXED_REASONS.includes(site.literal.slice(0, -1)) : isReason(site.literal)));
+
+test('REASONS: the frozen closed set is the spec\'s 20 reasons plus unclassified, and isReason reads both prefix forms', () => {
+  assert.ok(Object.isFrozen(REASONS) && Object.isFrozen(PREFIXED_REASONS));
+  assert.equal(REASONS.length, 21);
+  assert.equal(new Set(REASONS).size, 21);
+  assert.equal(REASONS[REASONS.length - 1], 'unclassified');
+  assert.ok(PREFIXED_REASONS.every((p) => REASONS.includes(p)));
+  for (const ok of ['conflict', 'merge-refused', 'unclassified', 'check-failed:unit,lint', 'draft-skip-without-ready-trigger:.github/workflows/t.yml']) {
+    assert.equal(isReason(ok), true, ok);
+  }
+  for (const bad of ['check-failed', 'check-failed:', 'draft-skip-without-ready-trigger', 'conflict:x', 'nope', '', null, undefined, 7]) {
+    assert.equal(isReason(bad), false, String(bad));
+  }
+});
+
+test('REASONS: every reason literal and pass-through merge.js reports is in the closed set', () => {
+  const sites = reasonSites(codeOf(MERGE));
+  const literals = sites.filter((x) => x.literal !== null);
+  // 41 literal reason sites when this scan landed. Fewer means a shape stopped matching, not that
+  // the stops went away; raise it when stops are added, never lower it to go green.
+  assert.ok(literals.length >= 41, `literal reason sites seen: ${literals.length}`);
+  assert.deepEqual(sites.filter((x) => !reasonOk(x)).map((x) => `${x.shape} line ${x.line}: ${x.literal ?? x.expr}`), []);
+  // Every reason in the set except unclassified's own literal forms is produced at some literal site.
+  const produced = new Set(literals.map((x) => (x.literal.endsWith(':') ? x.literal.slice(0, -1) : x.literal)));
+  assert.deepEqual(REASONS.filter((r) => !produced.has(r)), [], 'every reason in the set has a producer');
+  // go-red controls: one planted offender per shape, flagged at its exact line.
+  const planted = [
+    "x;\nreturn stop(s, 'merge-gate', 'brand-new-reason', 'd');",
+    "x;\nreturn halt('compose-borked', d);",
+    "x;\nreturn park(s, `checks-red:${names}`, {});",
+    "x;\nconst g = gateReads(s, 'read-borked');",
+    "x;\nreturn result(s, 'pending-review', 'shiny', d);",
+    "x;\nreturn { stop: 'other-word', detail };",
+    "x;\nreturn stop(s, 'merge-gate', someVar, d);",
+    "x;\nreturn { stop: unreviewed.value, detail };",
+  ];
+  for (const src of planted) {
+    const bad = reasonSites(src).filter((x) => !reasonOk(x));
+    assert.deepEqual(bad.map((x) => x.line), [2], `go-red: ${src}`);
+  }
+  // The compliant forms pass, and a definition is not a site.
+  const clean = "function park(s, reason, o) {}\nfunction stop(s, step, reason, detail) {}\npark(s, `check-failed:${n}`, {});\nstop(s, 'merge-gate', 'conflict', d);\n({ stop: 'unclassified', detail: 'x' });";
+  const cs = reasonSites(clean);
+  assert.equal(cs.length, 3);
+  assert.deepEqual(cs.filter((x) => !reasonOk(x)), []);
 });
 
 test('AC6.3: a conflict run leaves the branch tip and the integration branch tip unchanged (real git)', async () => {

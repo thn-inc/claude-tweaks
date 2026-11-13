@@ -1312,11 +1312,14 @@ test('realDeps.git runs under the shared git bound, and under the push bound onl
     const fresh = require(runPath);
     fresh.realDeps.git(['status'], { cwd: '/x' });
     fresh.realDeps.git(['push', 'origin', 'b'], { cwd: '/x', remoteWrite: true });
+    fresh.realDeps.git(['describe'], { cwd: '/x', env: { ONLY: '1', LC_ALL: 'C' } });
   } finally {
     cp.execFileSync = original;
     delete require.cache[runPath];
   }
-  assert.deepEqual(seen.map((s) => [s.bin, s.args[0]]), [['git', 'status'], ['git', 'push']]);
+  assert.deepEqual(seen.map((s) => [s.bin, s.args[0]]), [['git', 'status'], ['git', 'push'], ['git', 'describe']]);
+  // A caller env (the merge step's C-locale describe) is forwarded; a call without one inherits process.env.
+  assert.deepEqual(seen.map((s) => s.options.env), [undefined, undefined, { ONLY: '1', LC_ALL: 'C' }]);
   assert.equal(seen[0].options.timeout, primitives.GIT_TIMEOUT_MS);
   assert.equal(seen[1].options.timeout, primitives.GIT_PUSH_TIMEOUT_MS);
   assert.ok(seen.every((s) => s.options.maxBuffer === primitives.LARGE_MAX_BUFFER_BYTES && s.options.windowsHide === true));
@@ -3578,7 +3581,7 @@ const MERGE_RUN = path.join(MAIN, '.claude-tweaks', 'pipelines', MERGE_RUN_ID);
 const MERGE_ARCHIVE = path.join(MAIN, '.claude-tweaks', 'pipelines', 'archive', MERGE_RUN_ID);
 const MERGE_SHA = 'f'.repeat(40);
 const GATE_FIELDS = 'state,mergeStateStatus,mergeable,headRefOid,statusCheckRollup';
-const REREAD_FIELDS = 'state,mergeStateStatus,headRefOid';
+const REREAD_FIELDS = 'state,mergeStateStatus,mergeable,headRefOid';
 const CONFIRM_FIELDS = 'state,mergedAt,autoMergeRequest,statusCheckRollup,mergeCommit';
 const GREEN_CHECK = { __typename: 'CheckRun', name: 'unit', status: 'COMPLETED', conclusion: 'SUCCESS', detailsUrl: 'u' };
 const PENDING_CHECK = { __typename: 'CheckRun', name: 'unit', status: 'IN_PROGRESS', conclusion: '', detailsUrl: 'u' };
@@ -3631,7 +3634,7 @@ function mergeHarness(over = {}) {
       [isPrView(GATE_FIELDS), () => JSON.stringify({
         state: 'OPEN', mergeStateStatus: 'CLEAN', mergeable: 'MERGEABLE', headRefOid: HEAD_SHA, statusCheckRollup: [over.rollup || GREEN_CHECK],
       })],
-      [isPrView(REREAD_FIELDS), JSON.stringify({ state: 'OPEN', mergeStateStatus: 'CLEAN', headRefOid: HEAD_SHA })],
+      [isPrView(REREAD_FIELDS), JSON.stringify({ state: 'OPEN', mergeStateStatus: 'CLEAN', mergeable: 'MERGEABLE', headRefOid: HEAD_SHA })],
       [on('gh', 'run', 'list'), JSON.stringify([GREEN_RUN])],
       [isNode('ready-run.js'), { code: 0, stdout: `${JSON.stringify({ state: 'met', failing: [], draftSkipWithoutReadyTrigger: [] })}\n`, stderr: '' }],
       [on('ghCreate', 'pr', 'merge'), ''],

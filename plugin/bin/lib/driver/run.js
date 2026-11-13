@@ -455,9 +455,10 @@ const realDeps = {
   })),
   // The shared git bounds, read at call time (env, then policy, then the default): a call that
   // writes to the remote passes `remoteWrite: true` for GIT_PUSH_TIMEOUT_MS, every other call
-  // gets GIT_TIMEOUT_MS.
-  git: (args, { cwd, remoteWrite } = {}) => execFileSync('git', args, {
-    cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+  // gets GIT_TIMEOUT_MS. `env` (the merge step's C-locale describe) replaces the inherited env
+  // for that call only; a call that omits it inherits process.env as before.
+  git: (args, { cwd, remoteWrite, env } = {}) => execFileSync('git', args, {
+    cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
     timeout: remoteWrite === true ? sharedPrimitives.GIT_PUSH_TIMEOUT_MS : sharedPrimitives.GIT_TIMEOUT_MS,
     maxBuffer: MAX_BUFFER, windowsHide: true,
   }),

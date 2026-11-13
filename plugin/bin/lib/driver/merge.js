@@ -163,11 +163,19 @@ function readLever(s) {
 async function consultSupplier(s) {
   const { ctx, deps } = s;
   let j;
+  let threw = null;
   try {
     j = await deps.judgments(ctx);
   } catch (err) {
-    return stop(s, 'merge-supplier', 'supplier-failed', `judgments threw: ${errorText(err)}`);
+    threw = err;
   }
+  // The supplier await is one of this module's two yields (the other is the watch's sleep): a
+  // signal that landed during it was already reported by run.js's handler, so, as the watch does,
+  // no further call is made and nothing is emitted, whether the supplier resolved or threw.
+  if (typeof deps.interrupted === 'function' && deps.interrupted()) {
+    return { stop: 'unclassified', detail: 'supplier: interrupted' };
+  }
+  if (threw) return stop(s, 'merge-supplier', 'supplier-failed', `judgments threw: ${errorText(threw)}`);
   const mc = j && typeof j === 'object' ? j.mergeCheck : null;
   const ac = j && typeof j === 'object' ? j.acceptance : null;
   if (!mc || typeof mc.verdict !== 'string' || !ac || typeof ac.completed !== 'boolean') {
@@ -343,7 +351,8 @@ function markReady(s) {
 // columns only (the `off` column is not ported; readLever runs `off` as `wait`). ----
 
 const GATE_FIELDS = 'state,mergeStateStatus,mergeable,headRefOid,statusCheckRollup';
-const REREAD_FIELDS = 'state,mergeStateStatus,headRefOid';
+// `mergeable` rides on the re-read too (AC6: conflicting "on any read"), beyond the prose's three fields.
+const REREAD_FIELDS = 'state,mergeStateStatus,mergeable,headRefOid';
 const RUN_FIELDS = 'name,workflowName,status,conclusion,url';
 // The ready-run.js states classify reads; `read-failed`, and any state not named here, is a read failure.
 const READY_RUN_USED = ['not-applicable', 'met', 'awaiting', 'red', 'draft-skip-without-ready-trigger'];
@@ -491,7 +500,7 @@ async function rereadThenMerge(s, first) {
   } catch (err) {
     return stop(s, 'merge-gate', 'state-read-failed', `state re-read failed: ${errorText(err)}`);
   }
-  if (!hasStrings(read, ['state', 'mergeStateStatus', 'headRefOid'])) {
+  if (!hasStrings(read, ['state', 'mergeStateStatus', 'mergeable', 'headRefOid'])) {
     return stop(s, 'merge-gate', 'state-read-failed', 'state re-read returned an unusable shape');
   }
   if (read.headRefOid !== first.headRefOid || read.state !== 'OPEN') {
@@ -501,7 +510,7 @@ async function rereadThenMerge(s, first) {
     emit(s, 'merge-gate', 'ok', `${read.state !== 'OPEN' ? 'state' : 'head'} changed between reads; re-entering the gate once`);
     return gate(s);
   }
-  if (read.mergeStateStatus === 'DIRTY') return conflictStop(s);
+  if (isConflicting(read)) return conflictStop(s);
   return mergeCall(s, 'immediate');
 }
 
@@ -591,6 +600,28 @@ function conflictStop(s) {
   return stop(s, 'merge-conflict', 'conflict', `the PR conflicts with its base; left ready${note}`);
 }
 
+// Ports Step 3 items 2, 4 and 5, "degrade to ready+comment": a `merge-refused` stop leaves the PR
+// ready with one PR comment from the fixed template, and parks nothing. `detail` is the result's
+// detail (the stop event's too, after `eventHead`), `said` the free text the comment reduces. A
+// failed post never changes the reason: the detail names it, and a SKIP degrade trace keeps it in
+// decisions.md.
+function refusedStop(s, step, cls, { detail: base, said, eventHead = '' }) {
+  const { ctx, deps } = s;
+  let note = '';
+  try {
+    deps.gh(['pr', 'comment', '--repo', ctx.repo, '--body', refusedComment({ pr: ctx.pr, cls, detail: said }), '--', String(ctx.pr)]);
+  } catch (err) {
+    const failuresBefore = s.logFailures.length;
+    logDecision(s, 'Step 3 (merge refused) (degraded)',
+      `condition: merge-refused PR comment post failed (${reduceDetail(errorText(err))}) → fallback: refusal kept in the event and the result only`,
+      'SKIP', 'n/a');
+    note = ` (PR comment failed: ${errorText(err)}${logNote(s, failuresBefore)})`;
+  }
+  const detail = `${base}${note}`;
+  emit(s, step, 'stop', `${eventHead}${detail}`);
+  return { stop: 'merge-refused', detail: neutralize(detail) };
+}
+
 // Fixed public templates: closed-set words, free text (check and file names, the base branch)
 // reduced by settle.js's reduceDetail.
 function parkComment({ value, reason, pr, names = [], files = [] } = {}) {
@@ -610,6 +641,21 @@ function parkComment({ value, reason, pr, names = [], files = [] } = {}) {
 function conflictComment({ pr, base } = {}) {
   return `Merge stopped: PR #${isPositiveInteger(pr) ? pr : 'unknown'} conflicts with ${reduceDetail(base)}. `
     + 'The driver does not update a conflicting branch; resolve the conflict and run the record again.';
+}
+
+// Step 3 items 2, 4 and 5 (and item 6's read that shows neither merged nor armed): the class word
+// and its fixed phrase, worded after the prose. Any other class renders as `unrecognized`.
+const REFUSED_PHRASES = Object.freeze({
+  checks: 'checks are red or still running, and there is no auto-merge to arm around them',
+  permission: 'a permission gap needs a human with the right access, not a retry',
+  unrecognized: 'an error this procedure does not recognize, so it does not guess at its meaning',
+  unconfirmed: 'the merge call exited 0 but the PR read back neither merged nor holding auto-merge',
+});
+
+function refusedComment({ pr, cls, detail } = {}) {
+  const c = Object.prototype.hasOwnProperty.call(REFUSED_PHRASES, cls) ? cls : 'unrecognized';
+  return `Merge stopped: PR #${isPositiveInteger(pr) ? pr : 'unknown'} was not merged (${c}: ${REFUSED_PHRASES[c]}). `
+    + `Detail: ${reduceDetail(detail)}. The PR stays ready for a human to decide; nothing was parked.`;
 }
 
 // Ports Step 2.5 "Bounded watch", deliberately not the prose loop's shape (#5179): every poll
@@ -773,9 +819,8 @@ async function mergeCall(s, mode) {
     const shown = cls === 'auto-not-allowed' ? 'unrecognized' : cls;
     const first = firstLine(stderr);
     const code = err && typeof err.code === 'string' ? ` (${reduceDetail(err.code)})` : '';
-    const detail = `merge-refused (${shown}): ${first ? reduceDetail(first) : `gh pr merge failed with no stderr${code}`}`;
-    emit(s, 'merge-call', 'stop', detail);
-    return { stop: 'merge-refused', detail: neutralize(detail) };
+    const said = first ? reduceDetail(first) : `gh pr merge failed with no stderr${code}`;
+    return refusedStop(s, 'merge-call', shown, { detail: `merge-refused (${shown}): ${said}`, said });
   }
   emit(s, 'merge-call', 'ok', `gh pr merge exited 0 (mode ${mode})`);
   return confirm(s);
@@ -833,7 +878,8 @@ async function confirm(s) {
     emit(s, 'merge-confirm', 'ok', detail);
     return { outcome: 'armed', mergeCommit: null, detail };
   }
-  return stop(s, 'merge-confirm', 'merge-refused', `confirmation read state ${prStateWords(read.state)}`);
+  const said = `confirmation read state ${prStateWords(read.state)}`;
+  return refusedStop(s, 'merge-confirm', 'unconfirmed', { detail: said, said, eventHead: 'merge-refused: ' });
 }
 
 // ---- The post-merge sequence: _shared/pr-first-merge-post-merge.md Steps 4 and 5 ----
@@ -843,10 +889,14 @@ const RECONCILE_TIMEOUT_MS = 150000;
 const NOT_LOCKED = /not locked/i;
 
 // The ONLY git call site in this module: every git argv is a literal array passed here (the
-// source scan relies on it). settle.js's gitIn shape; `remoteWrite` is for the fetch alone.
-function runGit(s, args, { remoteWrite = false } = {}) {
+// source scan relies on it). settle.js's gitIn shape; `remoteWrite` is for the fetch alone, and
+// `env` for a call whose stderr is classified (the describe, pinned to the C locale).
+function runGit(s, args, { remoteWrite = false, env = null } = {}) {
   const { ctx, deps } = s;
-  return deps.git(['-C', ctx.mainCheckout, ...args], remoteWrite ? { cwd: ctx.mainCheckout, remoteWrite: true } : { cwd: ctx.mainCheckout });
+  const opts = { cwd: ctx.mainCheckout };
+  if (remoteWrite) opts.remoteWrite = true;
+  if (env) opts.env = env;
+  return deps.git(['-C', ctx.mainCheckout, ...args], opts);
 }
 
 // A post-merge failure: a `fail` event and an entry on the result's failures. It never changes
@@ -924,7 +974,10 @@ function releaseStatus(s) {
   }
   let line;
   try {
-    const out = runGit(s, ['describe', '--tags', '--contains', '--first-parent', '--match', 'v*', s.mergeCommit]);
+    // The "not yet tagged" answer is read off git's English stderr, so the call runs in the C
+    // locale (LC_ALL also overrides LANGUAGE there), as run-liveness/process-probe.js pins ps.
+    const out = runGit(s, ['describe', '--tags', '--contains', '--first-parent', '--match', 'v*', s.mergeCommit],
+      { env: { ...(deps.env || process.env), LC_ALL: 'C' } });
     // `git describe` suffixes every ancestor of the tagged commit with ~N or ^N.
     const tag = firstLine(out).replace(/(?:[~^]\d*)+$/, '');
     if (!/^v[0-9A-Za-z._+-]+$/.test(tag)) return unavailable('git describe printed no tag');
@@ -1064,6 +1117,14 @@ function teardown(s) {
 
 // Ports Step 5: the remote branch delete, only once the worktree is gone and never for the
 // integration branch. "reference does not exist" (already deleted) is success.
+// ctx.repo is the run's `--repo` slug, host-qualified off github.com (`{host}/owner/name`,
+// repo-resolve.js resolveRepoTarget). A REST path takes the bare owner/name, so the host is split
+// off and travels as --hostname, which also keeps ghOptions from injecting another host.
+function apiTarget(repo) {
+  const parts = String(repo || '').split('/');
+  return parts.length === 3 ? { slug: `${parts[1]}/${parts[2]}`, host: ['--hostname', parts[0]] } : { slug: String(repo || ''), host: [] };
+}
+
 function deleteRemoteBranch(s, worktreeGone) {
   const { ctx, deps } = s;
   s.stage = 'merge-delete-branch';
@@ -1075,7 +1136,8 @@ function deleteRemoteBranch(s, worktreeGone) {
   }
   let detail = 'deleted the remote branch';
   try {
-    deps.gh(['api', '-X', 'DELETE', `repos/${ctx.repo}/git/refs/heads/${ctx.branch}`]);
+    const target = apiTarget(ctx.repo);
+    deps.gh(['api', '-X', 'DELETE', `repos/${target.slug}/git/refs/heads/${ctx.branch}`, ...target.host]);
   } catch (err) {
     // Unverified wording: the post-merge prose names only the phrase, matched case-insensitively.
     if (!/reference does not exist/i.test(String((err && err.stderr) || ''))) {
@@ -1137,6 +1199,25 @@ async function merge(ctx, deps) {
   }
 }
 
+// The spec's closed rule: every `pending-review` reason `merge` reports, plus `unclassified` for a
+// stop outside it. Two always carry a detail after a colon (`check-failed:{names}`,
+// `draft-skip-without-ready-trigger:{files}`) and are listed by their stem; isReason reads both forms.
+const REASONS = Object.freeze([
+  'no-supplier', 'labels-unreadable', 'not-authorized', 'summary-entry-missing', 'not-pr-first', 'gh-absent',
+  'supplier-failed', 'verdict-not-confirmed', 'acceptance-not-completed', 'compose-refused', 'ready-failed',
+  'state-read-failed', 'pr-not-open', 'moving-target', 'checks-read-failed', 'check-failed', 'checks-pending-timeout',
+  'draft-skip-without-ready-trigger', 'conflict', 'merge-refused', 'unclassified',
+]);
+const PREFIXED_REASONS = Object.freeze(['check-failed', 'draft-skip-without-ready-trigger']);
+
+function isReason(reason) {
+  if (typeof reason !== 'string') return false;
+  const i = reason.indexOf(':');
+  if (i === -1) return REASONS.includes(reason) && !PREFIXED_REASONS.includes(reason);
+  return PREFIXED_REASONS.includes(reason.slice(0, i)) && reason.length > i + 1;
+}
+
 module.exports = {
-  merge, parkComment, conflictComment, classifyMergeFailure, MERGE_WATCH_BOUND_MS, MERGE_WATCH_POLL_MS, RECONCILE_TIMEOUT_MS,
+  merge, parkComment, conflictComment, refusedComment, classifyMergeFailure, REASONS, PREFIXED_REASONS, isReason,
+  MERGE_WATCH_BOUND_MS, MERGE_WATCH_POLL_MS, RECONCILE_TIMEOUT_MS,
 };
