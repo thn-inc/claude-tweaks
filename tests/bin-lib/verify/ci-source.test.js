@@ -45,7 +45,16 @@ function jobs(conclusion, status = 'completed') {
 }
 const LOG = '2026-10-25T17:27:01.1234567Z ✖ failing tests:\n2026-10-25T17:27:02.0000000Z test at /home/runner/work/claude-tweaks/claude-tweaks/tests/a.test.js:3:1\n';
 
-function call(over, { runner, clk = clock(), source = SOURCE } = {}) {
+// gh 2.103.3 refuses a job log carrying terminal escapes unless --allow-escape-sequences is passed (#5369).
+const ESCAPE_REFUSAL = 'the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway';
+function logRoute(body) {
+  return [/\/jobs\/99\/logs$/, (args) => {
+    if (!args.includes('--allow-escape-sequences')) return Object.assign(new Error(ESCAPE_REFUSAL), { stderr: ESCAPE_REFUSAL });
+    return body;
+  }];
+}
+
+function call(over,{ runner, clk = clock(), source = SOURCE } = {}) {
   const logDir = tmpDir();
   return fetchCiVerdict({
     suite: 'tests', source, headSha: SHA, logDir, localRoot: '/local/root', runner, sleep: clk.sleep, now: clk.now, ...over,
@@ -53,7 +62,7 @@ function call(over, { runner, clk = clock(), source = SOURCE } = {}) {
 }
 
 test('a green CI job on HEAD is used: exit 0, log written, run id and url recorded (#4347)', async () => {
-  const { runner } = fakeGh([PULLS, PR, RUNS, jobs('success'), [/\/jobs\/99\/logs$/, '2026-10-25T17:30:00.0Z ℹ tests 3\n']]);
+  const { runner } = fakeGh([PULLS, PR, RUNS, jobs('success'), logRoute('2026-10-25T17:30:00.0Z ℹ tests 3\n')]);
   const { v, logDir } = await call({}, { runner });
   assert.strictEqual(v.used, true);
   assert.strictEqual(v.result.exitCode, 0);
@@ -67,7 +76,7 @@ test('a green CI job on HEAD is used: exit 0, log written, run id and url record
 });
 
 test('a red CI job is used with exit 1 and its log normalized to the local checkout (#4347)', async () => {
-  const { runner } = fakeGh([PULLS, PR, RUNS, jobs('failure'), [/\/jobs\/99\/logs$/, LOG]]);
+  const { runner } = fakeGh([PULLS, PR, RUNS, jobs('failure'), logRoute(LOG)]);
   const { v, logDir } = await call({}, { runner });
   assert.strictEqual(v.used, true);
   assert.strictEqual(v.result.exitCode, 1);
@@ -109,7 +118,7 @@ test('a run still in progress is polled until its job completes (#4347)', async 
   let hits = 0;
   const { runner } = fakeGh([PULLS, PR, RUNS,
     [/\/actions\/runs\/41\/jobs/, () => { hits += 1; return jobs(hits < 3 ? null : 'success', hits < 3 ? 'in_progress' : 'completed')[1]; }],
-    [/\/jobs\/99\/logs$/, 'ok\n']]);
+    logRoute('ok\n')]);
   const { v } = await call({}, { runner });
   assert.strictEqual(v.used, true);
   assert.strictEqual(hits, 3);
@@ -140,10 +149,54 @@ test('a red job whose log cannot be fetched falls back — nothing names its fai
 });
 
 test('only REST endpoints with {owner}/{repo} placeholders are called (#4347)', async () => {
-  const { runner, calls } = fakeGh([PULLS, PR, RUNS, jobs('success'), [/\/jobs\/99\/logs$/, '']]);
+  const { runner, calls } = fakeGh([PULLS, PR, RUNS, jobs('success'), logRoute('')]);
   await call({}, { runner });
   assert.ok(calls.length >= 4);
   for (const c of calls) assert.match(c, /^api repos\/\{owner\}\/\{repo\}\//);
+});
+
+test('AC9.1: the job-log download passes --allow-escape-sequences after the path, and the escape-refusing fake answers it (#5369)', async () => {
+  const { runner, calls } = fakeGh([PULLS, PR, RUNS, jobs('success'), logRoute('ok\n')]);
+  const { v } = await call({}, { runner });
+  assert.strictEqual(v.used, true);
+  assert.strictEqual(calls.filter((c) => c.includes('/logs')).length, 1);
+  assert.strictEqual(calls.find((c) => c.includes('/logs')), 'api repos/{owner}/{repo}/actions/jobs/99/logs --allow-escape-sequences');
+});
+
+test('AC9.2: a gh that rejects the flag as unknown gets exactly one retry without it (#5369)', async () => {
+  const unknown = 'unknown flag: --allow-escape-sequences';
+  const { runner, calls } = fakeGh([PULLS, PR, RUNS, jobs('failure'), [/\/jobs\/99\/logs$/, (args) => (args.includes('--allow-escape-sequences') ? Object.assign(new Error(unknown), { stderr: unknown }) : LOG)]]);
+  const { v, logDir } = await call({}, { runner });
+  assert.deepStrictEqual(calls.filter((c) => c.includes('/logs')), [
+    'api repos/{owner}/{repo}/actions/jobs/99/logs --allow-escape-sequences',
+    'api repos/{owner}/{repo}/actions/jobs/99/logs',
+  ]);
+  assert.strictEqual(v.used, true);
+  assert.match(fs.readFileSync(path.join(logDir, 'tests.log'), 'utf8'), /\/local\/root\/tests\/a\.test\.js/);
+});
+
+test('#5369: a refusal other than the unknown-flag one is not retried', async () => {
+  const { runner, calls } = fakeGh([PULLS, PR, RUNS, jobs('failure'), [/\/jobs\/99\/logs$/, new Error('HTTP 410')]]);
+  await call({}, { runner });
+  assert.strictEqual(calls.filter((c) => c.includes('/logs')).length, 1);
+});
+
+test('AC9.3: under localRuns "on-request" a red job with no downloadable log is a CI failure naming the run URL (#5369)', async () => {
+  const { runner } = fakeGh([PULLS, PR, RUNS, jobs('failure'), [/\/jobs\/99\/logs$/, new Error('HTTP 410')]]);
+  const { v, logDir } = await call({ localRuns: 'on-request' }, { runner });
+  assert.strictEqual(v.used, true);
+  assert.strictEqual(v.ci.logUnavailable, true);
+  assert.strictEqual(v.ci.fallback, null);
+  assert.strictEqual(v.result.exitCode, 1);
+  assert.strictEqual(fs.readFileSync(path.join(logDir, 'tests.log'), 'utf8'),
+    'CI run https://example.test/runs/41 failed (job https://example.test/job/99); its log could not be fetched (HTTP 410). Run verify.js with --local to reproduce the failure on this machine.\n');
+});
+
+test('AC4.1: without the key a red job with no log still falls back, and a green one carries no logUnavailable (#5369)', async () => {
+  const red = await call({}, { runner: fakeGh([PULLS, PR, RUNS, jobs('failure'), [/\/jobs\/99\/logs$/, new Error('HTTP 410')]]).runner });
+  assert.strictEqual(red.v.ci.fallback, 'ci-log-unavailable');
+  const green = await call({ localRuns: 'on-request' }, { runner: fakeGh([PULLS, PR, RUNS, jobs('success'), logRoute('ok\n')]).runner });
+  assert.strictEqual(Object.hasOwn(green.v.ci, 'logUnavailable'), false);
 });
 
 test('normalizeCiLog strips the timestamp prefix and remaps both runner roots (#4347)', () => {
