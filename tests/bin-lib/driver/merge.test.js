@@ -15,6 +15,7 @@ const {
 const { MERGE_STEP_NAMES } = require(path.join(LIB, 'driver', 'events'));
 const { VERDICT_STEPS, verdictMarker } = require(path.join(LIB, 'dispatch', 'merge-verdict'));
 const { formatEntry } = require(path.join(LIB, 'log-decision', 'append'));
+const { aggregateReproductionProblem } = require(path.join(LIB, 'log-decision', 'aggregate-reproduction'));
 
 const MAIN_NOW = new Date(2026, 10, 13, 9, 0, 0);
 const CLOCK_START = 1000;
@@ -121,7 +122,9 @@ function defaultMergeScript(over, files, logs, applied) {
       const stepName = flag('--step');
       const line = String(files[file]).replace(/\s+$/, '');
       const reversibility = flag('--reversibility') === undefined ? 'n/a' : flag('--reversibility');
-      const refusal = !['AUTO', 'STAGED', 'KEPT-PROMPT', 'SCANNED', 'REFUSED', 'SKIP'].includes(flag('--status')) ? 'bad status'
+      // The CLI's aggregate-reproduction check, called as it calls it (a pure function; STAGED lines only).
+      const aggregate = aggregateReproductionProblem({ status: flag('--status'), step: stepName, text: line });
+      const refusal = aggregate ? 'aggregate reproduction' : !['AUTO', 'STAGED', 'KEPT-PROMPT', 'SCANNED', 'REFUSED', 'SKIP'].includes(flag('--status')) ? 'bad status'
         : !line.trim() ? 'empty text'
           : /[\r\n]/.test(line) ? 'interior line break'
             : (typeof stepName === 'string' && stepName !== '' && line.trim().startsWith(`${stepName}:`)) ? 'text repeats step'
@@ -894,7 +897,7 @@ test('AC5.1–AC5.6: red, draft-skip and read failures never merge', async () =>
     assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'pr-not-open', mergeCommit: null, postMerge: null }, state);
     // neutralize strips the closing keyword `closed`, so CLOSED is named in other words.
     assert.equal(r.detail, state === 'CLOSED' ? 'PR state shut, not merged' : 'PR state MERGED', state);
-    assert.deepEqual(after(h, isGateRead), [], `${state}: no further call`);
+    assert.deepEqual(afterAll(h, isGateRead), [], `${state}: no further call`);
     noMerge(h);
   }
 });
@@ -968,7 +971,7 @@ test('AC6.1: DIRTY or CONFLICTING on the first read is conflict: one PR comment,
       const h = mergeHarness({ prState, verification: lever });
       const r = await merge(CTX, h.deps);
       assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'conflict', mergeCommit: null, postMerge: null }, JSON.stringify(prState));
-      assert.deepEqual(after(h, isGateRead).map((c) => [c.kind, c.args]), [['gh', ['pr', 'comment', '--repo', 'o/r', '--body', text, '--', '9']]]);
+      assert.deepEqual(afterAll(h, isGateRead).map((c) => [c.kind, c.args]), [['gh', ['pr', 'comment', '--repo', 'o/r', '--body', text, '--', '9']]]);
       assert.ok(!h.calls.some((c) => c.kind === 'git'));
       assert.ok(!h.calls.some(isUndo), 'PR left ready');
       assert.deepEqual([lastEvent(h).step, lastEvent(h).status], ['merge-conflict', 'stop']);
@@ -978,7 +981,7 @@ test('AC6.1: DIRTY or CONFLICTING on the first read is conflict: one PR comment,
   const w = mergeHarness({ verification: WAIT, reread: { mergeStateStatus: 'DIRTY' } });
   const r = await merge(CTX, w.deps);
   assert.equal(r.reason, 'conflict');
-  assert.deepEqual(after(w, isReread).map((c) => c.args), [['pr', 'comment', '--repo', 'o/r', '--body', text, '--', '9']]);
+  assert.deepEqual(afterAll(w, isReread).map((c) => c.args), [['pr', 'comment', '--repo', 'o/r', '--body', text, '--', '9']]);
   // A failed comment still stops as conflict, and the event says the comment failed.
   const f = mergeHarness({ prState: { mergeable: 'CONFLICTING' }, script: [[isGh('pr', 'comment'), new Error('HTTP 502')]] });
   assert.equal((await merge(CTX, f.deps)).reason, 'conflict');
@@ -990,7 +993,7 @@ test('AC9.1: a first read whose headRefOid differs from ctx.head is moving-targe
     const h = mergeHarness({ prState: { headRefOid: B }, verification: lever });
     const r = await merge(CTX, h.deps);
     assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'moving-target', mergeCommit: null, postMerge: null });
-    assert.deepEqual(after(h, isGateRead), []);
+    assert.deepEqual(afterAll(h, isGateRead), []);
     assert.ok(!h.events.some((e) => e.step === 'merge-call'));
     noMerge(h);
   }
@@ -1049,7 +1052,7 @@ test('AC9.3: two changes return moving-target', async () => {
   assert.equal(h.calls.filter(isGateRead).length, 2);
   assert.equal(h.calls.filter(isReread).length, 2);
   assert.equal(nodeCalls(h, 'compose-subject.js').length, 2);
-  assert.deepEqual(after(h, (c) => h.calls.filter(isReread)[1] === c), []);
+  assert.deepEqual(afterAll(h, (c) => h.calls.filter(isReread)[1] === c), []);
   assert.ok(!h.events.some((e) => e.step === 'merge-call'));
   noMerge(h);
 });
@@ -1174,7 +1177,7 @@ test('AC10.2: a PR that turns conflicting mid-watch returns conflict at that pol
     assert.equal(h.sleeps.length, 3);
     assert.equal(h.calls.filter(isGateRead).length, 4, 'the first read and three polls');
     // The conflicting poll decides before the checks are read: only the PR comment follows its read.
-    assert.deepEqual(after(h, (c) => h.calls.filter(isGateRead)[3] === c).map(shortOf), ['gh pr comment']);
+    assert.deepEqual(afterAll(h, (c) => h.calls.filter(isGateRead)[3] === c).map(shortOf), ['gh pr comment']);
     assert.ok(!h.calls.some((c) => isGh('issue', 'edit')(c)), 'nothing parked');
     noMerge(h);
   }
@@ -1502,7 +1505,7 @@ test('AC11.2: an immediate call never degrades again', async () => {
   assert.match(r.detail, /^merge-refused \(unrecognized\): /);
   assert.equal(mergeCalls(h).length, 1, 'exactly one immediate merge call');
   assert.equal(h.calls.filter(isReread).length, 1);
-  assert.deepEqual(after(h, isMergeCall), []);
+  assert.deepEqual(afterAll(h, isMergeCall), []);
   // After a degrade, the immediate call's own refusal is final too: --auto once, immediate once.
   const d = mergeHarness({ prMerge: ghErr(SIG.notAllowed) });
   const dr = await merge(CTX, d.deps);
@@ -1533,7 +1536,7 @@ test('AC11.3–AC11.5: checks, permission and unrecognized are merge-refused wit
       assert.deepEqual([ev.step, ev.status], ['merge-call', 'stop'], name);
       assert.match(ev.detail, new RegExp(`\\(${cls}\\)`), name);
       assert.equal(mergeCalls(h).length, 1, name);
-      assert.deepEqual(after(h, isMergeCall), [], `${name}: no call after the refused merge`);
+      assert.deepEqual(afterAll(h, isMergeCall), [], `${name}: no call after the refused merge`);
       assert.ok(!h.calls.some(isParkCall), `${name}: nothing parked`);
       assert.ok(!h.calls.some((c) => isGh('pr', 'comment')(c) || isUndo(c)), `${name}: no comment, no re-draft`);
     }
@@ -1549,7 +1552,7 @@ test('AC11.6: a conflict wording (with or without the mutation name) returns con
       const h = mergeHarness({ verification: lever, prMerge: ghErr(stderr) });
       const r = await merge(CTX, h.deps);
       assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'conflict', mergeCommit: null, postMerge: null }, stderr);
-      assert.deepEqual(after(h, isMergeCall).map((c) => [c.kind, c.args]), [['gh', ['pr', 'comment', '--repo', 'o/r', '--body', text, '--', '9']]], stderr);
+      assert.deepEqual(afterAll(h, isMergeCall).map((c) => [c.kind, c.args]), [['gh', ['pr', 'comment', '--repo', 'o/r', '--body', text, '--', '9']]], stderr);
       assert.equal(mergeCalls(h).length, 1, `${stderr}: a conflict never degrades`);
       assert.ok(!h.calls.some((c) => c.kind === 'git'));
       assert.ok(!h.calls.some(isUndo), 'PR left ready');
@@ -1691,7 +1694,7 @@ test('AC11.9: a confirmation read that fails twice is state-read-failed, detail 
     assert.equal(r.detail, 'merge call exited 0; state unconfirmed');
     const reads = h.calls.filter(isConfirmRead);
     assert.equal(reads.length, 2, 'retried once');
-    assert.deepEqual(after(h, (c) => c === reads[1]), [], 'no call after the second read');
+    assert.deepEqual(afterAll(h, (c) => c === reads[1]), [], 'no call after the second read');
     assert.deepEqual([lastEvent(h).step, lastEvent(h).status], ['merge-confirm', 'stop']);
   }
   // One failure, then a good read: merged on the retry.
@@ -1708,7 +1711,7 @@ test('AC1.4: auto:merge removed between the two label reads is not-authorized wi
     const reads = h.calls.filter(isLabelRead);
     assert.equal(reads.length, 2);
     assert.ok(h.calls.indexOf(reads[1]) > h.calls.findIndex(isGateRead), 'the second read is the pre-merge read');
-    assert.deepEqual(after(h, (c) => c === reads[1]), []);
+    assert.deepEqual(afterAll(h, (c) => c === reads[1]), []);
     noMerge(h);
     assert.deepEqual([lastEvent(h).step, lastEvent(h).status], ['merge-call', 'stop']);
   }
@@ -2099,6 +2102,36 @@ test('every decision line the post-merge sequence writes is accepted by the log-
   const r = refused.deps.node(path.join(LIB, '..', 'log-decision.js'),
     ['--run', CTX.runDir, '--status', 'AUTO', '--step', 'Step 5 (delete remote branch)', '--text-file', '/x.txt']);
   assert.equal(r.code, 2);
+  // ... and the aggregate-reproduction rule, which applies to STAGED lines only.
+  refused.files['/y.txt'] = 'Reproduction: 3 single-agent findings';
+  const agg = (status) => refused.deps.node(path.join(LIB, '..', 'log-decision.js'),
+    ['--run', CTX.runDir, '--status', status, '--step', 'Lens 3', '--text-file', '/y.txt']).code;
+  assert.deepEqual([agg('STAGED'), agg('AUTO')], [2, 0]);
+});
+
+test('teardown canonicalizes the worktree path through the realpath seam before matching git\'s listing', async () => {
+  const listing = (listed) => `worktree ${CTX.mainCheckout}\nHEAD ${'1'.repeat(40)}\nbranch refs/heads/main\n\n`
+    + `worktree ${listed}\nHEAD ${'2'.repeat(40)}\nbranch refs/heads/drive-7\nlocked\n`;
+  // (i) the worktree's own realpath resolves: git lists the canonical path.
+  const own = '/canon/own/drive-7';
+  const a = mergeHarness({ worktreeList: listing(own), deps: { realpath: (p) => (p === CTX.worktree ? own : null) } });
+  const ar = await merge(CTX, a.deps);
+  assert.deepEqual(ar.postMerge, POST_MERGE_STUB);
+  assert.deepEqual(a.calls.filter((c) => isGit('worktree', 'unlock')(c) || isGit('worktree', 'remove')(c)).map((c) => c.args.slice(2)),
+    [['worktree', 'unlock', CTX.worktree], ['worktree', 'remove', CTX.worktree]]);
+  // (ii) the directory is gone, its parent resolves: the parent's realpath plus the leaf.
+  const parent = '/canon/parent';
+  const b = mergeHarness({
+    worktreeList: listing(`${parent}/drive-7`),
+    deps: { realpath: (p) => (p === path.dirname(CTX.worktree) ? parent : null) },
+  });
+  const br = await merge(CTX, b.deps);
+  assert.deepEqual(br.postMerge, POST_MERGE_STUB);
+  assert.ok(b.calls.some(isGit('worktree', 'unlock')) && b.calls.some(isGit('worktree', 'remove')));
+  // Neither resolves: the path as given matches a listing that names it as given (the fixture's own case).
+  const c = mergeHarness({ deps: { realpath: () => null } });
+  assert.deepEqual((await merge(CTX, c.deps)).postMerge, POST_MERGE_STUB);
+  assert.ok(c.calls.some(isGit('worktree', 'remove')));
 });
 
 test('a post-merge-run `failed` skip with no failedSteps names its reason and next routing', async () => {
@@ -2123,7 +2156,7 @@ test('a failed release-status comment post is also logged to decisions.md as a S
   const h = mergeHarness({ script: [[isGh('pr', 'comment'), Object.assign(new Error('x'), { stderr: 'HTTP 502\n' })]] });
   const r = await merge(CTX, h.deps);
   assert.deepEqual(r.postMerge.failures, ['release-status-comment']);
-  const skip = h.logs.find((l) => l.status === 'SKIP' && l.step === 'pr-first-merge Step 4.1');
+  const skip = h.logs.find((l) => l.status === 'SKIP' && l.step === 'pr-first-merge Step 4.1 (degraded)');
   assert.equal(skip.text, 'condition: release-status comment post failed (HTTP 502) → fallback: release line kept in decisions.md and the event');
   assert.ok(h.logs.some((l) => l.status === 'AUTO' && l.text.startsWith('release status — already carried by')));
 });

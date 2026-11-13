@@ -943,10 +943,10 @@ function releaseStatus(s) {
     deps.gh(['pr', 'comment', String(ctx.pr), '--repo', ctx.repo, '--body-file', file]);
   } catch (err) {
     // The comment is the only surface for this line besides the event: keep it in decisions.md too.
-    logDecision(s, 'pr-first-merge Step 4.1',
+    logDecision(s, 'pr-first-merge Step 4.1 (degraded)',
       `condition: release-status comment post failed (${reduceDetail(errorText(err))}) → fallback: release line kept in decisions.md and the event`,
       'SKIP', 'n/a');
-    return postFail(s, 'merge-release-status', 'release-status-comment',`${line}; run comment failed: ${errorText(err)}${logNote(s, failuresBefore)}`);
+    return postFail(s, 'merge-release-status', 'release-status-comment', `${line}; run comment failed: ${errorText(err)}${logNote(s, failuresBefore)}`);
   }
   emit(s, 'merge-release-status', 'ok', `${line}${logNote(s, failuresBefore)}`);
   return undefined;
@@ -997,7 +997,7 @@ function reconcile(s) {
 // worktree with modified or untracked files refuses removal, stays, and is named in the event.
 // Returns whether the worktree is gone (the remote delete runs only then).
 function teardown(s) {
-  const { ctx } = s;
+  const { ctx, deps } = s;
   s.stage = 'merge-teardown';
   const { worktree, branch, base } = ctx;
   const failuresBefore = s.logFailures.length;
@@ -1008,7 +1008,7 @@ function teardown(s) {
     // No worktree path to match is not "already gone": nothing was removed, so nothing downstream runs.
     if (!worktree) throw new Error('the run records no worktree path');
     const listed = parseWorktreeList(runGit(s, ['worktree', 'list', '--porcelain']));
-    if (!findWorktreeEntry(listed, canonicalWorktreePath(worktree, safeReal, path), path)) {
+    if (!findWorktreeEntry(listed, canonicalWorktreePath(worktree, deps.realpath || safeReal, deps.pathImpl || path), deps.pathImpl || path)) {
       notes.push('worktree already gone');
       gone = true;
     } else {
