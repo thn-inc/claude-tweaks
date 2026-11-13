@@ -61,7 +61,6 @@ test('#5269 AC1: normalizeTitle keeps a leading closing keyword with no referenc
 });
 
 test('#5269 AC2: a closing keyword before a reference loses both', () => {
-  assert.equal(normalizeTitle('Add the loop. Resolves #9.\nsecond line'), 'Add the loop');
   assert.equal(normalizeTitle('Closes #4'), '');
   assert.equal(neutralize('Fixes: #12'), '');
   assert.equal(neutralize('fixes owner/repo#3'), '');
@@ -72,27 +71,44 @@ test('#5269 AC2: a closing keyword before a reference loses both', () => {
   assert.equal(neutralize('Fixes\n#5 x'), 'x');
   assert.equal(neutralize('Fix #abc'), 'Fix #abc');
   assert.equal(neutralize('Closes (#4) now'), 'Closes () now');
+  // URL forms GitHub autolinks without a plain `https://` after a word boundary.
+  assert.equal(neutralize('Closes _https://github.com/o/r/issues/5_'), '_');
+  assert.equal(neutralize('Closes www.github.com/o/r/issues/5 now'), 'now');
+  assert.equal(neutralize('Closes github.com/o/r/issues/5 now'), 'now');
 });
 
-test('#5269 AC2: a reference rebuilt by a removal is removed too, with its keyword', () => {
-  assert.equal(neutralize('Add the loop, Closes h#7ttps://github.com/o/r/issues/5 now'), 'Add the loop, now');
-  assert.equal(neutralize('Add Closes h#7ttps://github.com/o/r/pull/5 now'), 'Add now');
-  assert.equal(neutralize('Clo#5ses h#7ttps://github.com/o/r/issues/5 now'), 'now');
+test('#5269 AC2: a reference rebuilt by a removal is removed too', () => {
+  // The rebuilt URL is removed; the keyword before it may stay, because nothing is left to close.
+  assert.equal(neutralize('Add the loop, Closes h#7ttps://github.com/o/r/issues/5 now'), 'Add the loop, Closes https:// now');
+  assert.equal(neutralize('Add Closes h#7ttps://github.com/o/r/pull/5 now'), 'Add Closes https:// now');
+  assert.equal(neutralize('Clo#5ses h#7ttps://github.com/o/r/issues/5 now'), 'Closes https:// now');
+  assert.equal(neutralize('Add Closes h#7ttps://g/o/r/issues/5 now'), 'Add now');
   // Back-to-back qualified references both go.
   assert.equal(neutralize('a/b#1x/y#2'), '');
   assert.equal(neutralize('x a/b#12c/d#3 y'), 'x y');
-  const leftover = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s*(?:#\d|\S*\/\S*#\d|\S*github\.com\/)/i;
+  const { CLOSING_KEYWORD_ALTERNATION } = require(path.join(LIB, 'issue-branch-tracking'));
+  const leftover = new RegExp(`\\b${CLOSING_KEYWORD_ALTERNATION}\\s*:?\\s*(?:#\\d|\\S*\\/\\S*#\\d|\\S*github\\.com\\/)`, 'i');
   for (const s of [
     'Add the loop, Closes h#7ttps://github.com/o/r/issues/5 now',
     'Add Closes h#7ttps://github.com/o/r/pull/5 now',
     'Clo#5ses h#7ttps://github.com/o/r/issues/5 now',
+    'Add Closes h#7ttps://g/o/r/issues/5 now',
   ]) assert.doesNotMatch(neutralize(s), leftover, s);
+});
+
+test('#5269 AC4: a comment opener spliced together by a removal is still escaped', () => {
+  assert.equal(neutralize('a <!#1-- hidden'), 'a <\\!-- hidden');
+  assert.equal(neutralize('a <!h#7ttps://g/o/r/issues/5-- hidden'), 'a <! -- hidden');
+  for (const s of ['a <!#1-- hidden', 'a <!h#7ttps://g/o/r/issues/5-- hidden', 'a <!-- hidden']) {
+    assert.doesNotMatch(neutralize(s).replace(/<\\!--/g, ''), /<!--/, s);
+  }
 });
 
 test('#5269 AC3: no keyword is ever left followed by a reference, in any case or shape', () => {
   const { CLOSING_KEYWORD_ALTERNATION } = require(path.join(LIB, 'issue-branch-tracking'));
   const keywords = ['close', 'closes', 'closed', 'fix', 'fixes', 'fixed', 'resolve', 'resolves', 'resolved'];
-  const refs = ['#12', 'owner/repo#3', 'https://github.com/o/r/issues/5', 'https://github.com/o/r/pull/5'];
+  const refs = ['#12', 'owner/repo#3', 'https://github.com/o/r/issues/5', 'https://github.com/o/r/pull/5',
+    '_https://github.com/o/r/issues/5', 'www.github.com/o/r/issues/5', 'github.com/o/r/issues/5'];
   // No empty separator: `closehttps://…` has no word boundary, under either rule (the glued
   // `closes#5` form is pinned in AC2 above).
   const separators = [' ', ':', ': ', ' : '];

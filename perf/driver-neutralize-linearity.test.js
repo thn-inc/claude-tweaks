@@ -22,8 +22,14 @@
 //     ~158s and `#` + `1`*200k + `a` ~94s).
 //   - back-to-back qualified references (`a/b#1`*50k): the verdict (everything removed) is the
 //     guard, since a plain left-boundary lookbehind leaves `a/b#a/b#…` behind.
-//   - `h#1`*5k collapsing to `h`*5k: a verdict guard for the fixed-point loop on a many-fragment
-//     input, with no separate pre-fix time.
+//   - nested splices (`https://g/o/r/`*k + `https://h/o/r/issues/1` + `issues/2`*k): each removal
+//     rebuilt the enclosing URL, and with plain deletion the loop peeled one layer per pass over
+//     the whole text (k=4000 ~3.2s, k=9000 ~12.2s); a single space per in-loop removal ends it.
+//   - a keyword in a long non-space run (`a.fix:https://g/o/r/issues/1/`*8000): the keyword
+//     lookahead embedded URL_REF's greedy tail and scanned to the run's end from every keyword
+//     (232k chars ~1.0s pre-fix, 0.3ms on the base code); it now embeds only the URL head.
+//   - `h#1`*5k collapsing to `h`*5k: only a time budget for many bare-reference removals; it
+//     catches none of the mutants above and has no pre-fix time.
 // Lives outside tests/ for the same reason the other perf/ files do: a wall-clock assertion flakes
 // under sibling-suite load.
 'use strict';
@@ -53,7 +59,7 @@ test('neutralize: a keyword, a long whitespace run, a colon and a reference stay
 test('neutralize: many fragments that each need a second removal pass stay linear', () => {
   const fragment = 'Add Closes h#7ttps://github.com/o/r/issues/5 now ';
   const { value, elapsed } = timed(fragment.repeat(2000));
-  const expected = 'Add now '.repeat(2000).trim();
+  const expected = 'Add Closes https:// now '.repeat(2000).trim();
   assert.ok(value === expected, `verdict changed (length ${value.length})`);
   assert.ok(elapsed < 1000, `took ${elapsed.toFixed(0)}ms — the fixed-point loop must not rescan per fragment`);
 });
@@ -96,4 +102,27 @@ test('neutralize: a long identifier run with a slash tail and no # stays linear'
   const { value, elapsed } = timed(input);
   assert.ok(value === input, `verdict changed (length ${value.length})`);
   assert.ok(elapsed < 500, `took ${elapsed.toFixed(0)}ms — QUALIFIED_REF must not rescan the run from every start`);
+});
+
+test('neutralize: deeply nested splices settle without a pass per layer', () => {
+  const k = 4000;
+  const input = `${'https://g/o/r/'.repeat(k)}https://h/o/r/issues/1${'issues/2'.repeat(k)}`;
+  const { value, elapsed } = timed(input);
+  const expected = `${'https://g/o/r/'.repeat(k - 1)} ${'issues/2'.repeat(k - 1)}`;
+  assert.ok(value === expected, `verdict changed (length ${value.length})`);
+  assert.ok(elapsed < 500, `took ${elapsed.toFixed(0)}ms — in-loop removals must leave a space, not splice again`);
+});
+
+test('neutralize: keywords inside one long non-space run stay linear', () => {
+  const { value, elapsed } = timed('a.fix:https://g/o/r/issues/1/'.repeat(8000));
+  assert.ok(value === 'a.', `verdict changed (length ${value.length})`);
+  assert.ok(elapsed < 500, `took ${elapsed.toFixed(0)}ms — the keyword lookahead must not scan the URL tail`);
+});
+
+test('neutralize: the widened URL hosts stay linear on long non-matching runs', () => {
+  for (const input of [`www.${'a'.repeat(200000)}`, `_https://${'a'.repeat(200000)}`, `github.com/${'a/'.repeat(100000)}`]) {
+    const { value, elapsed } = timed(input);
+    assert.ok(value === input, `verdict changed (length ${value.length})`);
+    assert.ok(elapsed < 500, `took ${elapsed.toFixed(0)}ms on ${input.slice(0, 12)}`);
+  }
 });

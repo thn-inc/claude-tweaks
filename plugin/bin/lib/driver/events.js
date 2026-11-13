@@ -55,23 +55,29 @@ function outcomeFor(stopClass) {
 }
 
 // A match may start only where an owner name can start: at the start of an identifier run, or
-// exactly where a previous `#N` match ended (a global replace resumes there, so back-to-back
-// references like `a/b#1x/y#2` both go). Any other start fails whenever those two fail, so
-// refusing them changes no result but stops a long identifier run being rescanned from every
-// start (quadratic). The cheap `(?!\d)` keeps the variable-length `(?<=#\d+)` scan-back from
-// running at every digit of a long digit run.
+// right after any `#\d+` (a superset of "where a previous match ended" — a global replace resumes
+// there, so back-to-back references like `a/b#1x/y#2` both go; the extra starts never match where
+// the replace would not have). A match from any other start implies a match from an earlier
+// allowed start, so refusing them changes no result but stops a long identifier run being
+// rescanned from every start (quadratic). The cheap `(?!\d)` keeps the variable-length
+// `(?<=#\d+)` scan-back from running at every digit of a long digit run.
 const QUALIFIED_REF = /(?:(?<![A-Za-z0-9_.-])|(?!\d)(?<=#\d+))[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#\d+/g;
 const BARE_REF = /#\d+/g;
-// An issue or PR URL on any host, with any tail (`/files`, `#issuecomment-…`): it backlinks
-// like `#N`. The keyword pass runs first and removes a keyword only when a reference starts
-// right after it, so it never cuts into a URL path.
-// The tail stops before trailing punctuation (`)`, `.`, `,` …), which belongs to the sentence.
-const URL_REF = /\bhttps?:\/\/[^\s/]+\/[^\s/]+\/[^\s/]+\/(?:issues|pull)\/\d+(?:[/#?]\S*[^\s)\].,;:!?'">])?/gi;
-// A closing keyword (and an optional colon) only where a reference starts right after it; the
-// lookahead leaves the reference for its own pass. A keyword with no reference is plain prose.
+// An issue or PR URL, with any tail (`/files`, `#issuecomment-…`): it backlinks like `#N`. The host
+// is a scheme URL on any host, `www.…`, or bare `github.com` (GitHub autolinks all three); the left
+// boundary is any non-alphanumeric, so `_https://…_` is caught too. Over-removal is the safe side.
+// The keyword pass runs first and removes a keyword only when a reference starts right after it, so
+// it never cuts into a URL path. The tail stops before trailing punctuation (`)`, `.`, `,` …), which
+// belongs to the sentence. The keyword lookahead embeds only the head: it matches exactly when the
+// whole URL_REF would, without scanning the optional greedy tail from every keyword.
+const URL_HEAD = String.raw`(?<![A-Za-z0-9])(?:https?:\/\/[^\s/]+|www\.[^\s/]+|github\.com)\/[^\s/]+\/[^\s/]+\/(?:issues|pull)\/\d+`;
+const URL_TAIL = String.raw`(?:[/#?]\S*[^\s)\].,;:!?'">])?`;
+const URL_REF = new RegExp(URL_HEAD + URL_TAIL, 'gi');
+// A closing keyword (and an optional colon, and any `_` emphasis markers) only where a reference
+// starts right after it; the lookahead leaves the reference for its own pass. A keyword with no reference is plain prose.
 const KEYWORD_BEFORE_REF = new RegExp(
-  '\\b' + CLOSING_KEYWORD_ALTERNATION + '\\b(?:\\s*:)?\\s*(?='
-  + [URL_REF, QUALIFIED_REF, BARE_REF].map((r) => r.source).join('|') + ')',
+  '\\b' + CLOSING_KEYWORD_ALTERNATION + '\\b(?:\\s*:)?\\s*_*(?='
+  + [URL_HEAD, QUALIFIED_REF.source, BARE_REF.source].join('|') + ')',
   'gi',
 );
 const GH_REF = /\bGH-\d+\b/gi;
@@ -79,18 +85,22 @@ const GH_REF = /\bGH-\d+\b/gi;
 const COMMENT_OPENER = /<!--/g;
 
 // Removing a reference can splice the text around it into a new one (`h#7ttps://…` becomes a URL,
-// `Clo#5ses` a keyword). The removal passes therefore repeat until the text stops changing; every
-// pass that changes anything strictly shortens the text, so the loop terminates. Only removals
-// loop: the `@`, backtick and comment-opener transforms are not idempotent.
+// `Clo#5ses` a keyword). The removal passes therefore repeat until the text stops changing. Inside
+// the loop each removal leaves a single space, which no reference, keyword or URL pattern can span,
+// so a removal cannot splice again across the gap and the loop settles in a few passes (a plain
+// deletion would peel one nesting layer per pass, quadratic); the final whitespace collapse
+// normalizes the spaces. Every removed match is at least two characters and is replaced by one, so
+// each changing pass strictly shortens the text and the loop terminates. Only removals loop: the
+// `@` transform is not idempotent, so it runs once, before the loop.
 function removeReferencesToFixedPoint(text) {
   let out = text;
   for (;;) {
     const next = out
-      .replace(KEYWORD_BEFORE_REF, '')
-      .replace(URL_REF, '')
-      .replace(GH_REF, '')
-      .replace(QUALIFIED_REF, '')
-      .replace(BARE_REF, '');
+      .replace(KEYWORD_BEFORE_REF, ' ')
+      .replace(URL_REF, ' ')
+      .replace(GH_REF, ' ')
+      .replace(QUALIFIED_REF, ' ')
+      .replace(BARE_REF, ' ');
     if (next === out) return out;
     out = next;
   }
@@ -98,16 +108,17 @@ function removeReferencesToFixedPoint(text) {
 
 function neutralize(text) {
   if (typeof text !== 'string') return '';
+  // The comment opener is escaped after the loop: a removal can splice `<!` and `--` together.
   return removeReferencesToFixedPoint(text
     .replace(/[\r\n\t]+/g, ' ')
     .replace(KEYWORD_BEFORE_REF, '')
     .replace(URL_REF, '')
     .replace(GH_REF, '')
-    .replace(COMMENT_OPENER, '<\\!--')
     .replace(/`/g, "'")
     .replace(/@/g, '@\u200B')
     .replace(QUALIFIED_REF, '')
     .replace(BARE_REF, ''))
+    .replace(COMMENT_OPENER, '<\\!--')
     .replace(/\s+/g, ' ')
     .trim();
 }
