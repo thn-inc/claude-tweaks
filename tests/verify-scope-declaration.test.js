@@ -116,7 +116,7 @@ const WHOLE_SUITE_FLAG = /--(shard|full|record-durations)\b/;
 function workflowSuiteLines() {
   const found = [];
   for (const name of fs.readdirSync(WORKFLOW_DIR).filter((f) => f.endsWith('.yml')).sort()) {
-    const text = fs.readFileSync(path.join(WORKFLOW_DIR, name), 'utf8');
+    const text = readText(path.join(WORKFLOW_DIR, name));
     for (const line of text.split(/\r?\n/)) {
       if (/^\s*#/.test(line)) continue;
       if (SUITE_RUN.test(line)) found.push({ name, line, kind: 'suite' });
@@ -136,11 +136,11 @@ test('AC6.1: every workflow that runs the suite asks for the whole suite (#5319)
     assert.match(f.line, WHOLE_SUITE_FLAG, `${f.name} runs the suite without --shard, --full or --record-durations: ${f.line.trim()}`);
   }
   // The tracer's whole-suite guarantee is its own spawn of run-tests.js, not the workflow line.
-  const tracer = fs.readFileSync(path.join(REPO_ROOT, 'tools', 'test-impact.js'), 'utf8');
+  const tracer = readText(path.join(REPO_ROOT, 'tools', 'test-impact.js'));
   assert.match(tracer, /'run-tests\.js'\)\s*,\s*'--full'\s*\]/, "tools/test-impact.js must spawn run-tests.js with '--full'");
   // The remaining whole-suite callers rely on CI being set.
   for (const name of fs.readdirSync(WORKFLOW_DIR).filter((f) => f.endsWith('.yml'))) {
-    const text = fs.readFileSync(path.join(WORKFLOW_DIR, name), 'utf8');
+    const text = readText(path.join(WORKFLOW_DIR, name));
     assert.doesNotMatch(text, /^\s*CI:\s*(''|""|false)?\s*$/m, `${name} blanks CI`);
     assert.doesNotMatch(text, /\bunset CI\b/, `${name} unsets CI`);
   }
