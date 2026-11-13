@@ -4,10 +4,12 @@
 // SETTLE_ROWS (added with the settle table) is the settle table's source of
 // truth; docs/driver.md and the design document copy it by hand.
 //
-// Pure helpers only here: forge-facing text is built from fixed templates plus
-// a reduced worker detail, so a hostile worker string can never reach a comment
-// as a mention, link, closing reference, path, token or HTML comment. No model
-// module (worker, roles) is required: settle is mechanical.
+// Forge-facing text (reduceDetail, commentFor, escalateDetailText) is built from fixed
+// templates plus a reduced worker detail: the reduction keeps a small character set, so a
+// mention, markdown or HTML link, closing reference, HTML comment or backtick cannot survive,
+// and it rewrites absolute paths, gh token shapes, GH-N backlinks and www. autolinks. A
+// bare URL host (evil.com) is not rewritten. settle() makes the forge, git and node calls.
+// No model module (worker, roles) is required: settle is mechanical.
 
 const path = require('node:path');
 const { isTrustedComment } = require('../issues/comment-trust');
@@ -43,7 +45,14 @@ function reduceDetail(text) {
   // match stays greedy (linear); the tail is split off by hand, not by a regex that would
   // restart at every character of a long run.
   s = s.replace(/\b[A-Za-z]:\/\S*/g, (m) => '<path>' + sentenceTail(m));
-  s = s.replace(/(^|[\s():,;])\/{1,2}[A-Za-z0-9._-]\S*/g, (m, pre) => pre + '<path>' + sentenceTail(m));
+  // A path after anything but a letter or digit (so a glued -, ., _ or ( counts; `a/b` does not),
+  // after a lone flag letter (`-C/x`), or a home-directory path wherever it sits (`cd5/Users/x`).
+  s = s.replace(/(^|[^A-Za-z0-9])\/{1,2}[A-Za-z0-9._-]\S*/g, (m, pre) => pre + '<path>' + sentenceTail(m));
+  s = s.replace(/((?:^|\s)-[A-Za-z])\/{1,2}[A-Za-z0-9._-]\S*/g, (m, pre) => pre + '<path>' + sentenceTail(m));
+  s = s.replace(/\/(?:Users|home)\/[A-Za-z0-9._-]+\S*/g, (m) => '<path>' + sentenceTail(m));
+  // GitHub turns GH-12 into an issue backlink and www. into an autolink.
+  s = s.replace(/\bGH-(\d+)/gi, 'GH $1');
+  s = s.replace(/\bwww\./gi, 'www ');
   s = s.replace(/\s+/g, ' ').trim().slice(0, DETAIL_MAX);
   s = s.replace(/<[a-z]*$/, '').trim();
   return s === '' ? 'none' : s;
@@ -75,6 +84,11 @@ function commentFor(kind, fields) {
     case 'blocked-pr':
       return `The pipeline driver (drive.js) stopped at step ${step}: outcome ${outcome}. Detail: ${detail}\n\nThis draft PR, its branch and its worktree are kept for a human.`;
     case 'claim': {
+      // A claim-class stop at any step but claim (a run-directory failure, an interrupt after the
+      // claim) happened with the claim held: it lapses by its TTL.
+      if (step !== 'claim') {
+        return `The pipeline driver (drive.js) stopped after claiming this record, at step ${step}. Detail: ${detail}\n\nThe claim lapses by its TTL. Labelled bot:blocked. Clear bot:blocked to let the record be driven again.`;
+      }
       const exit = exitCode !== undefined ? ` (claim-targets.js exit ${exitCode})` : '';
       return `The pipeline driver (drive.js) could not claim this record: step ${step} failed${exit}. Detail: ${detail}\n\nLabelled bot:blocked. Clear bot:blocked to let the record be driven again.`;
     }
@@ -324,5 +338,5 @@ async function settle(input, deps) {
 
 module.exports = {
   DRIVER_ESCALATION_MARKER, reduceDetail, commentFor, escalateDetailText, hasDriverEscalationMarker,
-  toEscalationReason, selectRow, planRow, SETTLE_ROWS, settle,
+  toEscalationReason, selectRow, planRow, SETTLE_ROWS, CLASS_BY_ROW, settle,
 };

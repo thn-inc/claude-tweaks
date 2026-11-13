@@ -10,11 +10,12 @@ const {
 } = require(SETTLE);
 
 const HOSTILE = '@octocat see [here](https://evil.example/x) /Users/alice/.ssh/id_rsa ghp_' + 'a'.repeat(36)
-  + ' C:\\Users\\bob\\x ' + 'f'.repeat(40) + ' closes #12 <!-- hi --> `code`';
+  + ' C:\\Users\\bob\\x ' + 'f'.repeat(40) + ' closes #12 <!-- hi --> `code`'
+  + ' x-/Users/thomas/secret tar -C/Users/me/x a_/Users/me/x foo./home/me/.ssh/id_rsa';
 
 test('AC10.1, AC10.2: reduceDetail strips a hostile detail', async () => {
   const out = reduceDetail(HOSTILE);
-  for (const bad of ['@', '[', '](', '/Users/', 'ghp_', 'f'.repeat(40), '#', 'C:/Users', '`']) {
+  for (const bad of ['@', '[', '](', '/Users/', 'ghp_', 'f'.repeat(40), '#', 'C:/Users', '`', '/home/', '.ssh']) {
     assert.ok(!out.includes(bad), `output contains ${bad}: ${out}`);
   }
   assert.ok(!/<!--/.test(out));
@@ -75,8 +76,8 @@ test('commentFor: template details per kind', async () => {
   assert.match(commentFor('blocked-record', { ...f, kept: { pr: false, branch: false, worktree: false } }), /releases the claim\. Clear bot:blocked/);
   assert.ok(!commentFor('blocked-record', f).includes('kept for a human'), 'no kept members, no sentence');
   assert.match(commentFor('escalated', f), /The driver releases the claim and removes the worktree and local branch this run created\. The driver will not take/);
-  assert.match(commentFor('claim', { ...f, exitCode: 4 }), /failed \(claim-targets\.js exit 4\)\. Detail/);
-  assert.match(commentFor('claim', { ...f, exitCode: 'x' }), /failed\. Detail/);
+  assert.match(commentFor('claim', { ...f, step: 'claim', exitCode: 4 }), /could not claim this record: step claim failed \(claim-targets\.js exit 4\)\. Detail/);
+  assert.match(commentFor('claim', { ...f, step: 'claim', exitCode: 'x' }), /failed\. Detail/);
   assert.throws(() => commentFor('nope', f));
 });
 
@@ -657,6 +658,41 @@ test('Important 1: a trailing closing paren, comma, semicolon or full stop stays
   assert.equal(reduceDetail('/a.b,;).'), '<path>,;).');
   assert.equal(reduceDetail('x /a(b)c y'), 'x <path> y');
   // The timing budgets for 100k-character inputs live in perf/ (tests/ may not assert wall-clock).
+});
+
+test('I1 characterization: relative paths, a lone slash and fractions are not over-redacted', async () => {
+  for (const same of ['a/b', 'a/b/c', 'src/lib/x.js', 'rate 1/2 done', '/', '/ alone', 'a-b c_d']) assert.equal(reduceDetail(same), same);
+  assert.equal(reduceDetail('see /tmp/x'), 'see <path>');
+});
+
+test('I1 (AC10.2): an absolute path glued to -, ., _ or a flag letter is redacted', async () => {
+  assert.equal(reduceDetail('x-/Users/thomas/secret'), 'x-<path>');
+  assert.equal(reduceDetail('tar -C/Users/me/x'), 'tar -C<path>');
+  assert.equal(reduceDetail('a_/Users/me/x'), 'a_<path>');
+  assert.equal(reduceDetail('foo./home/me/.ssh/id_rsa'), 'foo.<path>');
+  assert.equal(reduceDetail('tar -I/opt/inc x'), 'tar -I<path> x');
+  assert.equal(reduceDetail('cd5/Users/me/x'), 'cd5<path>');
+  for (const hostile of ['x-/Users/thomas/secret', 'tar -C/Users/me/x', 'a_/Users/me/x', 'foo./home/me/.ssh/id_rsa', 'build/home/me/.ssh']) {
+    const out = reduceDetail(hostile);
+    assert.ok(!/\/(Users|home)\//.test(out), out);
+  }
+});
+
+test('M3: a claim-class stop after the claim says so and names the TTL; a claim-step stop keeps "could not claim"', async () => {
+  const after = commentFor('claim', { step: 'run-dir', outcome: 'blocked', detail: 'mint failed', exitCode: 4 });
+  assert.match(after, /stopped after claiming this record, at step run-dir\. Detail: mint failed/);
+  assert.match(after, /The claim lapses by its TTL\./);
+  assert.ok(!after.includes('could not claim') && !after.includes('claim-targets.js exit'), after);
+  const at = commentFor('claim', { step: 'claim', outcome: 'blocked', detail: 'boom' });
+  assert.match(at, /could not claim this record: step claim failed\. Detail: boom/);
+  assert.ok(!at.includes('lapses'), at);
+});
+
+test('M1: GH-N and www. shapes are neutralized so a detail never backlinks or autolinks', async () => {
+  assert.equal(reduceDetail('see GH-12 and gh-34'), 'see GH 12 and GH 34');
+  assert.equal(reduceDetail('visit www.evil.com/phish now'), 'visit www evil.com/phish now');
+  assert.equal(reduceDetail('WWW.evil.com'), 'www evil.com');
+  assert.ok(!/\bGH-\d/i.test(commentFor('blocked-record', { step: 'test', outcome: 'blocked', detail: 'GH-1' })));
 });
 
 // ---- real git (Task 3) ------------------------------------------------------------------

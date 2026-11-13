@@ -2814,6 +2814,7 @@ test('AC4.1: under --no-settle a pre-push stop that holds a recorded PR names th
   ];
   const final = await driveRecord(7, shared, h.deps, steps);
   assert.deepEqual([final.settle, final.settleRow, final.stop.class, final.pr], ['left-to-caller', 'blocked', 'pre-push', 9]);
+  assert.equal(final.outcome, 'blocked', 'the outcome follows the planned row, as it does when settle runs');
   assert.deepEqual(settleCalls(h), []);
 });
 
@@ -2822,13 +2823,13 @@ test('Minor 3: under --no-settle an unreadable run-state.json names the blocked 
   const h = harness({ script: [eacces, ...REDTESTS.script] });
   await run(['--no-settle', '#7'], h.deps);
   const final = lastLine(h);
-  assert.deepEqual([final.settle, final.settleRow], ['left-to-caller', 'blocked']);
+  assert.deepEqual([final.settle, final.settleRow, final.outcome], ['left-to-caller', 'blocked', 'blocked']);
   assert.match(final.settleNote, /run-state\.json unreadable/);
   assert.deepEqual(settleCalls(h), []);
   // The same stop settled reports the same row and note.
   const settled = harness({ script: [eacces, ...REDTESTS.script] });
   await run(['#7'], settled.deps);
-  assert.deepEqual([lastLine(settled).settleRow, lastLine(settled).settleNote], [final.settleRow, final.settleNote]);
+  assert.deepEqual([lastLine(settled).settleRow, lastLine(settled).settleNote, lastLine(settled).outcome], [final.settleRow, final.settleNote, final.outcome]);
 });
 
 test('Minor 1: a stop after the PR exists settles with a comment on that PR', async () => {

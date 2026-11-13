@@ -22,6 +22,9 @@ const CASES = [
   ['paren-and-dot tail on a path', '/a' + ').'.repeat(N / 2), ('<path>' + ').'.repeat(N / 2)).slice(0, 200)],
   ['open-paren-and-slash run', '(/a'.repeat(30000), '(<path>'],
   ['slash-and-closing-paren run', '/a)'.repeat(30000), '<path>)'],
+  ['glued path: dash-and-home-directory run', 'x-/Users/a'.repeat(10000), 'x-<path>'],
+  ['flag-glued path run', '-C/a '.repeat(20000), ('-C<path> '.repeat(20000)).trim().slice(0, 200)],
+  ['GH-N and www. run', 'GH-1 www.'.repeat(10000), ('GH 1 www '.repeat(10000)).trim().slice(0, 200)],
 ];
 
 for (const [name, input, expected] of CASES) {

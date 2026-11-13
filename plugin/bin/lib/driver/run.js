@@ -62,7 +62,7 @@ const fs = require('fs');
 const { execFileSync, spawnSync } = require('child_process');
 const { createEventSink, outcomeFor, yieldToEventLoop, FINAL_STEP, STOP_CLASSES, OUTCOMES } = require('./events');
 const { STEPS } = require('./steps');
-const { toEscalationReason, planRow, SETTLE_ROWS, settle } = require('./settle');
+const { toEscalationReason, planRow, SETTLE_ROWS, CLASS_BY_ROW, settle } = require('./settle');
 const { ghAvailable, remoteUrl, ghOptions } = require('../repo-resolve');
 const { lstatType } = require('../path-guard');
 const { defaultResolvePolicy } = require('../express/policy');
@@ -185,7 +185,8 @@ function finalEvent(ctx, stop, sink, msTotal, deps, settled = SETTLE_NONE) {
     step: FINAL_STEP,
     status: stop ? stop.result.status : 'ok',
     ms: msTotal,
-    // When settle ran, the outcome is the class it settled to (a failed escalate reads blocked).
+    // When settle ran (or --no-settle planned a row), the outcome is the class of that row (a
+    // failed escalate reads blocked).
     outcome: outcomeOf(settled.settledClass || stopClass),
     msTotal,
     msWithoutCi: msTotal - ciWaitMs,
@@ -266,7 +267,7 @@ async function settleStop(ctx, stop, record, shared, sink, deps) {
   const plan = planRow({ stop: stopObj, runDir: ctx.runDir, pr }, deps);
   return {
     mode: SETTLE_ROWS[plan.row].length > 0 ? 'left-to-caller' : 'none', row: plan.row, failed: [],
-    settledClass: null, unclassified: plan.unclassified, note: plan.unreadableNote,
+    settledClass: CLASS_BY_ROW[plan.row], unclassified: plan.unclassified, note: plan.unreadableNote,
   };
 }
 
