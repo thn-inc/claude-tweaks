@@ -291,3 +291,12 @@ for (const [id, why, titlePrefix] of [
 // #3488: the shipped-close staging call must not silence stderr (`2>&1` hid a real staging failure
 // from the firing's log). #5230: that call is the queue-pull module's; the stderr forwarding is
 // pinned in tests/bin-lib/dispatch/queue-pull.test.js ("#5230 shipped: … stage-item.js stderr …").
+
+test('AC4.1: cli: --run naming an archived (no longer present) run dir is refused (exit 3), nothing recreated (#5280)', () => {
+  const { main, runDir, sourceFile } = fixture();
+  fs.rmSync(runDir, { recursive: true });
+  const { deps } = fakeDeps(main);
+  const code = run(['--run', runDir, '--id', 'visual-review-late-1', '--allocate', '--file', sourceFile], deps);
+  assert.equal(code, 3);
+  assert.equal(fs.existsSync(runDir), false);
+});

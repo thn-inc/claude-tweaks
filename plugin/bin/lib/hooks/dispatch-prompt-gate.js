@@ -78,17 +78,6 @@ function pipelinesDir(cwd, d) {
   return canonicalRealpath(path.join(main, '.claude-tweaks', 'pipelines'), { fsImpl: d.fsImpl });
 }
 
-function latestLineFor(text, call) {
-  let latest = null;
-  for (const line of text.split('\n')) {
-    if (!line.trim()) continue;
-    let o;
-    try { o = JSON.parse(line); } catch { continue; }
-    if (o && typeof o === 'object' && o.call === call) latest = o;
-  }
-  return latest;
-}
-
 function checkMismatch(ctx, prompt, marker, tp, d, deny) {
   const [, runId, call] = marker;
   if (!ctxLib.RUN_ID_RE.test(runId)) return {};
@@ -105,11 +94,11 @@ function checkMismatch(ctx, prompt, marker, tp, d, deny) {
     if (!err || err.code !== 'ENOENT') return {};
     text = '';
   }
-  const latest = latestLineFor(text, call);
+  const latest = tp.latestRegistryEntry(text, call);
   const current = latest !== null && latest.sha256 === tp.promptDigest(prompt);
   if (current) return {};
   const parts = latest && isNonEmptyString(latest.out) && Number.isInteger(latest.chunks) && latest.chunks > 0
-    ? `"${latest.out}.part1".."${latest.out}.part${latest.chunks}"`
+    ? `"${tp.partPath(latest.out, 1)}".."${tp.partPath(latest.out, latest.chunks)}"`
     : 'the files dispatch-prompt.js wrote';
   ctxLib.appendEvent(real, 'gate-denial', { tool: ctx.input.tool_name, gate: GATE, reason: 'mismatch', ...testTag() });
   return deny(
