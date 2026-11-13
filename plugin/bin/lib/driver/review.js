@@ -83,7 +83,7 @@
 //             or a missing content is discarded, never run
 //   content   a non-empty string of at most EVIDENCE_CONTENT_MAX_BYTES UTF-8 bytes
 //   path      PATH_RULES, in order; the first rule that trips names the discard. Lexical rules come
-//             first (Windows aliases and reserved characters included, after git's
+//             first (printable ASCII only; Windows aliases and reserved characters, after git's
 //             core.protectNTFS), then isTestPath and the protected / merge-sensitive check (the
 //             eligibility gate's own isTestPath, isProtectedPath and isSensitivePath, applied without
 //             regard to letter case, since the input is not git's and the volume may be
@@ -92,7 +92,7 @@
 //             of its parent must be a directory whose canonical path lies inside the worktree's, and
 //             the path rebuilt from that canonical ancestor (an in-tree symlink, a case variant or a
 //             short-name alias of an existing directory resolved) is judged again for the `.git` and
-//             `node_modules` segments and the protected / merge-sensitive check.
+//             `node_modules` segments, isTestPath, and the protected / merge-sensitive check.
 
 const path = require('path');
 const { parseRecordFacets } = require('../issues/record');
@@ -242,9 +242,13 @@ const isTestFile = (p) => classifyDiffFiles([{ path: p, additions: 0, deletions:
 const absoluteIn = (wt, p) => path.join(path.resolve(wt), ...p.split('/'));
 const segments = (p) => p.split('/');
 const hasSegment = (p, names) => segments(p).some((s) => names.includes(s.toLowerCase()));
+// Options as an object: undefined, null or any other non-object reads as none.
+const optsOf = (opts) => (opts !== null && typeof opts === 'object' ? opts : {});
 // The file-system rules need the worktree and both deps; without them they refuse.
-const fsReady = ({ wt, deps } = {}) => typeof wt === 'string' && !!deps
-  && typeof deps.lstatType === 'function' && typeof deps.canonicalRealpath === 'function';
+const fsReady = (opts) => {
+  const { wt, deps } = optsOf(opts);
+  return typeof wt === 'string' && !!deps && typeof deps.lstatType === 'function' && typeof deps.canonicalRealpath === 'function';
+};
 
 // The protected and merge-sensitive checks without regard to letter case: the path is the
 // reviewer's, not git's, and on a case-insensitive volume `.GITHUB/` is `.github/`. Each protected
@@ -261,9 +265,10 @@ function isProtectedOrSensitive(p, sensitivePaths = []) {
 // Names Windows reads as another file or a device, the shapes git's core.protectNTFS refuses in a
 // checkout: a `:` anywhere (an NTFS stream, `a.test.js::$DATA`), a segment ending in `.` or a space
 // (Win32 drops them, so `.git.` is `.git`), an 8.3 short name (`GITHUB~1` for `.github`), and a
-// reserved device name with or without an extension (`con.test.js`). The `.` and `..` segments are
+// reserved device name, git's is_valid_win32_path list with CONIN$ and CONOUT$, with or without
+// spaces and an extension after it (`con.test.js`, `nul .test.js`). The `.` and `..` segments are
 // dot-segment-or-not-normal's.
-const WIN32_DEVICE_RE = /^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(\..*)?$/i;
+const WIN32_DEVICE_RE = /^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³]|conin\$|conout\$) *(\..*)?$/i;
 const isDotSegment = (s) => s === '.' || s === '..';
 const isWin32Alias = (p) => p.includes(':')
   || segments(p).some((s) => (/[. ]$/.test(s) && !isDotSegment(s)) || /~\d/.test(s) || WIN32_DEVICE_RE.test(s));
@@ -273,32 +278,32 @@ const isWin32Alias = (p) => p.includes(':')
 // stopping at the worktree, which stands for its own canonical path (so a symlinked worktree root
 // still works). Any other ancestor must be a directory whose canonical path lies inside the
 // worktree's. The result is that canonical ancestor relative to the canonical worktree,
-// `/`-joined, plus the missing tail as given. The length guard keeps a direct call linear: the walk
-// takes one dirname per segment.
-function resolveCanonical(p, opts = {}) {
+// `/`-joined, plus the missing tail as given. The length guard keeps a direct call bounded: the walk
+// joins one prefix per segment.
+function resolveCanonical(p, opts) {
   if (!fsReady(opts) || typeof p !== 'string' || p.length > EVIDENCE_PATH_MAX_CHARS) return null;
   const { wt, deps } = opts;
   const root = path.resolve(wt);
   const rootReal = deps.canonicalRealpath(root);
   if (typeof rootReal !== 'string') return null;
-  const tail = [segments(p).pop()];
-  let current = path.dirname(absoluteIn(root, p));
+  // The walk runs over p's own segments, so the rebuilt path keeps them exactly as given (an empty
+  // last segment included): segs[0, i) is the ancestor under test, segs[i, end) the missing tail.
+  const segs = segments(p);
+  let i = segs.length - 1;
   let type = null;
-  while (current !== root) {
-    type = deps.lstatType(current).type;
+  while (i > 0) {
+    type = deps.lstatType(absoluteIn(root, segs.slice(0, i).join('/'))).type;
     if (type !== 'missing') break;
-    const up = path.dirname(current);
-    if (up === current) return null;
-    tail.unshift(path.basename(current));
-    current = up;
+    i -= 1;
   }
   let real = rootReal;
-  if (current !== root) {
+  if (i > 0) {
     if (type !== 'directory') return null;
-    real = deps.canonicalRealpath(current);
+    real = deps.canonicalRealpath(absoluteIn(root, segs.slice(0, i).join('/')));
     if (typeof real !== 'string' || !isAncestorOrSelf(rootReal, real)) return null;
   }
-  return [relativeDisplayId(rootReal, real), ...tail].filter((s) => s !== '').join('/');
+  const rel = relativeDisplayId(rootReal, real);
+  return (rel === '' ? segs.slice(i) : [rel, ...segs.slice(i)]).join('/');
 }
 
 // A resolved form that differs from the given path; when the two are equal the lexical rules have
@@ -310,9 +315,17 @@ function canonicalVariant(p, opts) {
 
 const RESERVED_SEGMENTS = ['.git', 'node_modules'];
 
+// Over-length (a direct call stays linear: isTestPath's `[^/]+_test\.py$` is quadratic) or not a
+// test file by the eligibility gate's isTestPath.
+const notTestFile = (p) => typeof p !== 'string' || p.length > EVIDENCE_PATH_MAX_CHARS || !isTestFile(p);
+
 // test(p, { wt, sensitivePaths, deps }) is true when p violates the rule.
 const PATH_RULES = Object.freeze([
   { name: 'empty-or-too-long', test: (p) => typeof p !== 'string' || p === '' || p.length > EVIDENCE_PATH_MAX_CHARS },
+  // Printable ASCII only. Anything else can alias on a volume that folds Unicode (APFS reads `ſ` as
+  // `s` and the Kelvin sign as `k`, so `hookſ/` is `hooks/`), and a lone surrogate is written as
+  // U+FFFD. It covers the control characters and DEL too; reserved-char keeps them for a direct call.
+  { name: 'non-ascii', test: (p) => /[^\x20-\x7e]/.test(p) },
   { name: 'absolute-or-scheme', test: (p) => /^\//.test(p) || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(p) },
   { name: 'backslash', test: (p) => p.includes('\\') },
   { name: 'percent-encoded', test: (p) => /%(2e|2f|5c)/i.test(p) },
@@ -324,24 +337,29 @@ const PATH_RULES = Object.freeze([
   { name: 'reserved-char', test: (p) => /[\x00-\x1f\x7f<>"|?*]/.test(p) },
   // A kept file under node_modules/ would shadow a dependency.
   { name: 'node-modules-segment', test: (p) => hasSegment(p, ['node_modules']) },
-  // The length guard keeps a direct call linear: isTestPath's `[^/]+_test\.py$` is quadratic.
-  { name: 'not-test-path', test: (p) => typeof p !== 'string' || p.length > EVIDENCE_PATH_MAX_CHARS || !isTestFile(p) },
-  { name: 'protected-or-sensitive', test: (p, opts = {}) => isProtectedOrSensitive(p, opts.sensitivePaths) },
-  { name: 'exists', test: (p, opts = {}) => !fsReady(opts) || opts.deps.lstatType(absoluteIn(opts.wt, p)).type !== 'missing' },
+  { name: 'not-test-path', test: notTestFile },
+  { name: 'protected-or-sensitive', test: (p, opts) => isProtectedOrSensitive(p, optsOf(opts).sensitivePaths) },
+  { name: 'exists', test: (p, opts) => !fsReady(opts) || opts.deps.lstatType(absoluteIn(opts.wt, p)).type !== 'missing' },
   { name: 'parent-escapes', test: (p, opts) => resolveCanonical(p, opts) === null },
   {
     name: 'canonical-reserved-segment',
     test: (p, opts) => { const c = canonicalVariant(p, opts); return c !== null && hasSegment(c, RESERVED_SEGMENTS); },
   },
   {
+    // Through an in-tree symlink the file can land outside every test path (`tests/l/` -> `src/`).
+    name: 'canonical-not-test-path',
+    test: (p, opts) => { const c = canonicalVariant(p, opts); return c !== null && notTestFile(c); },
+  },
+  {
     name: 'canonical-protected-or-sensitive',
-    test: (p, opts = {}) => { const c = canonicalVariant(p, opts); return c !== null && isProtectedOrSensitive(c, opts.sensitivePaths); },
+    test: (p, opts) => { const c = canonicalVariant(p, opts); return c !== null && isProtectedOrSensitive(c, optsOf(opts).sensitivePaths); },
   },
 ].map(Object.freeze));
 
-// The first violated rule's name, or null when the path may be written.
-function pathRuleViolation(p, opts = {}) {
-  const rule = PATH_RULES.find((r) => r.test(p, opts));
+// The first violated rule's name, or null when the path may be written. Options that are absent,
+// null or not an object read as none, and the file-system rules then refuse.
+function pathRuleViolation(p, opts) {
+  const rule = PATH_RULES.find((r) => r.test(p, optsOf(opts)));
   return rule ? rule.name : null;
 }
 
