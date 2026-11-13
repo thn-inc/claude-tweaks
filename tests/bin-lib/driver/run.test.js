@@ -2756,7 +2756,8 @@ test('AC4.1: --no-settle makes no settle call and leaves the stop to the caller'
   assert.equal(await run(['--no-settle', '#7'], h.deps), 0);
   assert.deepEqual(settleCalls(h), [], 'no comment, label, release, escalate, worktree removal or branch delete');
   assert.deepEqual(settleLines(h), []);
-  assert.equal(calls(h, 'readFile').length, 0, 'nothing is read either');
+  // The row is planned from settle's own run-state read; a read is not a settle call.
+  assert.ok(calls(h, 'readFile').every((c) => /run-state\.json$/.test(c.args[0])), 'only run-state.json is read');
   const final = lastLine(h);
   assert.equal(final.settle, 'left-to-caller');
   assert.deepEqual(final.settleFailed, []);
@@ -2814,6 +2815,88 @@ test('AC4.1: under --no-settle a pre-push stop that holds a recorded PR names th
   const final = await driveRecord(7, shared, h.deps, steps);
   assert.deepEqual([final.settle, final.settleRow, final.stop.class, final.pr], ['left-to-caller', 'blocked', 'pre-push', 9]);
   assert.deepEqual(settleCalls(h), []);
+});
+
+test('Minor 3: under --no-settle an unreadable run-state.json names the blocked row and carries settle\'s note', async () => {
+  const eacces = [on('readFile'), () => { throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }); }];
+  const h = harness({ script: [eacces, ...REDTESTS.script] });
+  await run(['--no-settle', '#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.settle, final.settleRow], ['left-to-caller', 'blocked']);
+  assert.match(final.settleNote, /run-state\.json unreadable/);
+  assert.deepEqual(settleCalls(h), []);
+  // The same stop settled reports the same row and note.
+  const settled = harness({ script: [eacces, ...REDTESTS.script] });
+  await run(['#7'], settled.deps);
+  assert.deepEqual([lastLine(settled).settleRow, lastLine(settled).settleNote], [final.settleRow, final.settleNote]);
+});
+
+test('Minor 1: a stop after the PR exists settles with a comment on that PR', async () => {
+  const h = harness({ script: [[on('node', /set-config\.js$/), { code: 2, stdout: '', stderr: 'bad' }]] });
+  await run(['#7'], h.deps);
+  const prComments = h.calls.filter((c) => c.kind === 'gh' && c.args[0] === 'pr' && c.args[1] === 'comment');
+  assert.equal(prComments.length, 1);
+  assert.equal(prComments[0].args.at(-1), '9');
+  assert.equal(prComments[0].args.at(-2), '--');
+  assert.equal(lastLine(h).settleRow, 'blocked');
+});
+
+test('Minor 2: a claim the run holds is named in the settle note when the stop follows it', async () => {
+  const h = harness({ script: [[on('resolveRunDir'), { ok: false, message: 'no' }]] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.equal(final.stop.step, 'run-dir');
+  assert.equal(final.settleRow, 'claim');
+  assert.match(final.settleNote, /lapses by its TTL/);
+  // The same row without a held claim carries no note.
+  const refusedClaim = harness({ script: [claimReply(4, '', 'boom')] });
+  await run(['#7'], refusedClaim.deps);
+  assert.ok(!('settleNote' in lastLine(refusedClaim)));
+});
+
+test('Minor 4: a successful settle line omits detail; a failed one carries it', async () => {
+  const h = harness({ script: [[on('gh', 'issue', 'comment'), new Error('HTTP 502')], ...REDTESTS.script] });
+  await run(['#7'], h.deps);
+  const lines = settleLines(h);
+  assert.ok(lines.length >= 3);
+  for (const l of lines) {
+    // A detail is never the empty string; an ok call with something to say (already gone) keeps it.
+    if (l.status === 'ok') assert.notEqual(l.detail, '', `${l.step} has no empty detail`);
+    else assert.ok(typeof l.detail === 'string' && l.detail.length > 0, `${l.step} keeps its detail`);
+  }
+  assert.ok(lines.some((l) => l.status === 'ok' && !('detail' in l)), 'a plain success omits the field');
+  assert.ok(lines.some((l) => l.status === 'fail'));
+});
+
+test('Important 1: a signal queued during the halting step\'s synchronous child settles nothing', async () => {
+  let h = null;
+  h = harness({ script: [[on('node', /verify\.js$/), () => { fireSoon(h, 'SIGINT'); return { code: null, stdout: '', stderr: 'killed' }; }]] });
+  assert.equal(await run(['#7', '#8'], h.deps), 0);
+  assert.deepEqual(settleCalls(h), [], 'no escalate, comment, release, removal or delete');
+  assert.deepEqual(settleLines(h), []);
+  const fs_ = finals(h);
+  assert.equal(fs_.length, 1, 'exactly one final line');
+  assert.deepEqual([fs_[0].settle, fs_[0].settleRow, fs_[0].stop.step, fs_[0].stop.class], ['interrupted', null, 'test', 'pre-push']);
+  assert.equal(h.lines().at(-1).step, FINAL_STEP, 'and it is the last line');
+  assert.deepEqual(h.calls.filter((c) => c.kind === 'terminate').map((c) => c.args), [['SIGINT']]);
+  assert.equal(h.lines().filter((l) => l.record === 8).length, 0, 'no further record');
+});
+
+test('Ruling: a signal during settle itself stops it before the next call', async () => {
+  let h = null;
+  h = harness({ script: [
+    [on('node', /express-lane\.js$/, 'escalate'), () => { fireSoon(h, 'SIGTERM'); return { code: 0, stdout: '', stderr: '' }; }],
+    ...REDTESTS.script,
+  ] });
+  assert.equal(await run(['#7', '#8'], h.deps), 0);
+  assert.deepEqual(settleCalls(h).map((c) => `${c.kind} ${path.basename(String(c.args[0]))} ${c.args[1]}`), ['node express-lane.js escalate'], 'only the call in flight');
+  assert.deepEqual(settleLines(h).map((l) => l.step), ['settle-escalate']);
+  const fs_ = finals(h);
+  assert.equal(fs_.length, 1);
+  assert.equal(h.lines().at(-1).step, FINAL_STEP);
+  assert.deepEqual([fs_[0].settle, fs_[0].settleFailed, fs_[0].stop.step, fs_[0].stop.class], ['interrupted', [], 'test', 'pre-push']);
+  assert.deepEqual(h.calls.filter((c) => c.kind === 'terminate').map((c) => c.args), [['SIGTERM']]);
+  assert.equal(h.lines().filter((l) => l.record === 8).length, 0);
 });
 
 test('a record that did not stop has settle none and no settle row', async () => {

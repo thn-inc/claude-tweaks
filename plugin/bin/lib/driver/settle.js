@@ -164,16 +164,32 @@ function canonicalWorktreePath(wt, realpath, pathImpl) {
   return parent ? pathImpl.join(parent, pathImpl.basename(wt)) : wt;
 }
 
+// The row settle would use for a stop, from the same run-state read settle makes: the caller
+// (--no-settle) reports what settle would do. `unreadableNote` is the note settle carries when
+// run-state.json could not be read for a stop that has not pushed.
+function planRow(input, deps) {
+  const pr = prStateOf(input, deps);
+  const picked = selectRow(input.stop, { prRecorded: pr.number !== null || pr.unreadable });
+  const unreadableNote = pr.unreadable && input.stop.class === STOP_CLASSES.PRE_PUSH && !input.stop.pushed ? UNREADABLE_NOTE : null;
+  return { row: picked.row, unclassified: picked.unclassified, pr, unreadableNote };
+}
+
+const yieldTurn = () => new Promise((resolve) => { setImmediate(resolve); });
+
 // Performs the fixed calls for a stopped run, iterating SETTLE_ROWS[row]. Every call is made
 // at most once and a failure never stops the next; a worker is never launched (settle is
-// mechanical).
-function settle(input, deps) {
+// mechanical). When the caller passes `input.interrupted` (a predicate), settle yields to the
+// event loop before each call and stops, with no further call, once it returns truthy: the
+// result then carries `interrupted: true` and the calls and failures made so far.
+async function settle(input, deps) {
   const { stop, record, runDir, wt, branch, mainRoot, ghRepo } = input;
   const calls = [];
   const failed = [];
-  const pr = prStateOf(input, deps);
-  const picked = selectRow(stop, { prRecorded: pr.number !== null || pr.unreadable });
+  const plan = planRow(input, deps);
+  const { pr } = plan;
+  const picked = plan;
   let row = picked.row;
+  let interrupted = false;
   const created = stop.created || {};
   const stepName = oneOf(STEP_NAMES, stop.step);
   const reason = toEscalationReason(stop.reason);
@@ -284,28 +300,32 @@ function settle(input, deps) {
     },
   };
 
-  function runRow(names) {
+  async function runRow(names) {
     for (const name of names) {
       const h = HANDLERS[name];
       if (h.when && !h.when()) continue;
+      if (typeof input.interrupted === 'function') {
+        await yieldTurn();
+        if (input.interrupted()) { interrupted = true; return; }
+      }
       const status = step(name, h.run);
       // A failed escalate means the work cannot be removed safely: keep it, settle as blocked.
       if (name === 'settle-escalate' && status === 'fail') {
         row = 'blocked';
-        runRow(SETTLE_ROWS.blocked);
+        await runRow(SETTLE_ROWS.blocked);
         return;
       }
     }
   }
-  runRow(SETTLE_ROWS[row]);
+  await runRow(SETTLE_ROWS[row]);
 
   let note = null;
   if (row === 'claim' && (stop.reason === 'claim-exit-5' || stop.reason === 'claim-exit-none' || input.claimed === true)) note = CLAIM_NOTE;
-  else if (pr.unreadable && stop.class === STOP_CLASSES.PRE_PUSH && !stop.pushed) note = UNREADABLE_NOTE;
-  return { row, settledClass: CLASS_BY_ROW[row], calls, failed, unclassified: picked.unclassified, note };
+  else if (plan.unreadableNote) note = plan.unreadableNote;
+  return { row, settledClass: CLASS_BY_ROW[row], calls, failed, unclassified: picked.unclassified, note, ...(interrupted ? { interrupted: true } : {}) };
 }
 
 module.exports = {
   DRIVER_ESCALATION_MARKER, reduceDetail, commentFor, escalateDetailText, hasDriverEscalationMarker,
-  toEscalationReason, selectRow, SETTLE_ROWS, settle,
+  toEscalationReason, selectRow, planRow, SETTLE_ROWS, settle,
 };
