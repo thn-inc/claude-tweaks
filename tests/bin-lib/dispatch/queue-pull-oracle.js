@@ -323,7 +323,9 @@ function nodeShim() {
 
 // bin/git: the sandbox's containment guard, a POSIX sh script with root, the real git, the canned
 // origin URL and the injected-failure prefixes baked in. It refuses (exit 97, logged REFUSED) an
-// exported GIT_DIR/GIT_WORK_TREE, an unknown leading global option, any -c key but core.quotePath
+// exported GIT_DIR/GIT_WORK_TREE, config carried in the env (GIT_CONFIG_PARAMETERS, or
+// GIT_CONFIG_COUNT, which git needs before it reads any GIT_CONFIG_KEY_<n>), an unknown leading
+// global option, any -c key but core.quotePath
 // (the one key any plugin call path sets, review-context's; an allow-list, because a deny-list of
 // the keys that run a command or move git's view off the sandbox always misses one: include.path
 // pulls in a config file that can set any of them, remote.<name>.receivepack runs a program on
@@ -331,7 +333,9 @@ function nodeShim() {
 // entered with `cd -P` from where the one before it landed, as git's own chdir does, so a symlink
 // cannot walk it out. A gitFail prefix of the sub-argv exits 128, `remote get-url origin` prints
 // the canned URL, and anything else is logged and exec'd as the real git from the original cwd,
-// PWD and OLDPWD.
+// PWD and OLDPWD. A log record it cannot write stops the call (exit 97) before git runs.
+// The refused argv is cut at 300 bytes (LANG=C; dash counts bytes), where the old node shim cut at
+// 300 UTF-16 units: the two differ only past 300 characters with non-ASCII text before the cut.
 // No forks for its own checks: no $(...), subshell or pipe; dash and macOS /bin/sh alike.
 function gitShimScript({ root, realGit, table }) {
   const failTests = table.git.fail.map((prefix) => {
@@ -345,23 +349,27 @@ function gitShimScript({ root, realGit, table }) {
     'qp_pwd=$PWD',
     'qp_oldpwd_set=${OLDPWD+1}',
     'qp_oldpwd=$OLDPWD',
-    'if ! cd -P . 2>/dev/null; then',
-    "  printf 'git-shim: the cwd cannot be resolved\\n' >&2",
-    '  exit 97',
+    '# The physical cwd; empty (refused below) when it cannot be resolved. In a deleted cwd both',
+    '# shells let `cd -P .` succeed and leave PWD non-absolute (`.` or empty).',
+    'qp_cwd=',
+    'if cd -P . 2>/dev/null; then',
+    '  case $PWD in /*) qp_cwd=$PWD ;; esac',
     'fi',
-    'qp_cwd=$PWD',
     'if [ -z "$QP_LOG_DIR" ]; then',
     "  printf 'git-shim: QP_LOG_DIR is required\\n' >&2",
     '  exit 97',
     'fi',
     `qp_root=${shQuote(root)}`,
     '',
-    '# qp_log TAG WHY ARGV...: one NUL-framed record (SHIM_LOGS) carrying the physical cwd.',
+    '# qp_log TAG WHY ARGV...: one NUL-framed record (SHIM_LOGS) carrying the physical cwd. A write',
+    '# that fails stops the call: an unlogged call would read as one that never happened.',
     'qp_log() {',
     '  qp_tag=$1',
-    '  qp_why=$2',
+    '  qp_lwhy=$2',
     '  shift 2',
-    `  printf '%s\\0' "$qp_tag" "$qp_why" "$qp_cwd" "$#" "$@" >> "$QP_LOG_DIR/git-argv.nul"`,
+    `  { printf '%s\\0' "$qp_tag" "$qp_lwhy" "$qp_cwd" "$#" "$@" >> "$QP_LOG_DIR/git-argv.nul"; } 2>/dev/null && return`,
+    "  printf 'git-shim: cannot write %s\\n' \"$QP_LOG_DIR/git-argv.nul\" >&2",
+    '  exit 97',
     '}',
     '',
     "# qp_join ARGS...: qp_j = the args joined by single spaces (JS argv.join(' ')).",
@@ -375,6 +383,7 @@ function gitShimScript({ root, realGit, table }) {
     '',
     '# qp_refuse WHY ARGV...: log REFUSED, print the argv cut at 300 characters, exit 97.',
     'qp_refuse() {',
+    '  qp_why=$1',
     '  qp_log REFUSED "$@"',
     '  shift',
     '  qp_join "$@"',
@@ -420,6 +429,7 @@ function gitShimScript({ root, realGit, table }) {
     '}',
     '',
     'if [ -n "$GIT_DIR" ] || [ -n "$GIT_WORK_TREE" ]; then qp_refuse \'GIT_DIR/GIT_WORK_TREE set\' "$@"; fi',
+    'if [ -n "$GIT_CONFIG_COUNT" ] || [ -n "$GIT_CONFIG_PARAMETERS" ]; then qp_refuse \'GIT_CONFIG_COUNT/GIT_CONFIG_PARAMETERS set\' "$@"; fi',
     '',
     "# The leading global options (queue-pull-fixtures.js's gitSubArgv): qp_n counts their tokens.",
     'qp_n=0',
@@ -450,6 +460,7 @@ function gitShimScript({ root, realGit, table }) {
     '',
     '# The physical cwd, then each -C entered from where the one before it landed. An empty -C is',
     '# a no-op (as in git); a relative one gets ./ so `cd -P -- -` cannot mean $OLDPWD.',
+    'if [ -z "$qp_cwd" ]; then qp_refuse \'unresolvable cwd\' "$@"; fi',
     'qp_inside "$qp_cwd" || qp_refuse "outside the sandbox: $qp_cwd" "$@"',
     'qp_cur=$qp_cwd',
     'qp_i=0',
@@ -476,10 +487,7 @@ function gitShimScript({ root, realGit, table }) {
     'done',
     '# Back to the cwd, PWD and OLDPWD this shim started with (cd moved OLDPWD), which the real',
     '# git inherits.',
-    'if ! cd -P -- "$qp_cwd" 2>/dev/null; then',
-    "  printf 'git-shim: cannot return to %s\\n' \"$qp_cwd\" >&2",
-    '  exit 97',
-    'fi',
+    'cd -P -- "$qp_cwd" 2>/dev/null || qp_refuse "cannot return to $qp_cwd" "$@"',
     'PWD=$qp_pwd',
     'if [ -n "$qp_oldpwd_set" ]; then OLDPWD=$qp_oldpwd; else unset OLDPWD; fi',
     '',

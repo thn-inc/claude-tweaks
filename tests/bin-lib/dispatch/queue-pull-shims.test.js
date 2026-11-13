@@ -63,14 +63,18 @@ test('an absent log reads as []', (t) => {
 
 // --- the git shim ---------------------------------------------------------------
 
-// A sandbox built from `scenario`, removed when the test ends, and `git(args, { cwd, extra })`:
-// its bin/git run from `cwd` (default: the clone) with the sandbox's own env, `extra` merged over it.
+// The shell bin/git's #! line names, for the tests that start it (or a baseline) from a wrapper.
+const SHIM_SHELL = '/bin/sh';
+
+// A sandbox built from `scenario`, removed when the test ends, its run env, and
+// `git(args, { cwd, extra })`: its bin/git run from `cwd` (default: the clone) with that env,
+// `extra` merged over it.
 const gitSandbox = (t, scenario = S0()) => {
   const sb = createSandbox(scenario);
   t.after(() => sb.cleanup());
   const env = sb.runEnv({ tmpdir: path.join(sb.root, 'tmp'), sessionId: 'qp-git-shim' });
   const git = (args, { cwd = sb.proj, extra = {} } = {}) => spawnSync(path.join(sb.bin, 'git'), args, { cwd, env: { ...env, ...extra }, encoding: 'utf8' });
-  return { sb, git };
+  return { sb, env, git };
 };
 
 test('the git shim is a sh script', { skip: oracleSkip() }, (t) => {
@@ -103,6 +107,11 @@ test('the git shim resolves chained relative -C like git', { skip: oracleSkip() 
   const viaLink = git(['-C', 'proj/root', '-C', '..', 'rev-parse', 'HEAD'], { cwd: sb.root });
   assert.equal(viaLink.status, 97, viaLink.stderr);
   assert.equal(viaLink.stderr, `git-shim: refused (outside the sandbox: ${above}): -C proj/root -C .. rev-parse HEAD\n`);
+  // The same walk in one value: the kernel resolves proj/root/.. from the link's target, as git's
+  // chdir does, so it lands above the sandbox too (real git there: "not a git repository").
+  const oneValue = git(['-C', 'proj/root/..', 'rev-parse', 'HEAD'], { cwd: sb.root });
+  assert.equal(oneValue.status, 97, oneValue.stderr);
+  assert.equal(oneValue.stderr, `git-shim: refused (outside the sandbox: ${above}): -C proj/root/.. rev-parse HEAD\n`);
 });
 
 test('the git shim treats -C "" as a no-op and a trailing -c as an empty key', { skip: oracleSkip() }, (t) => {
@@ -159,6 +168,62 @@ test('the git shim cuts the refused argv at 300 characters and logs it whole', {
   assert.equal(r.stderr, `git-shim: refused (unknown global option --bare): ${argv.join(' ').slice(0, 300)}\n`);
   assert.deepEqual(readShimLog(sb.logs, 'git'), [{ tag: 'REFUSED', why: 'unknown global option --bare', cwd: sb.proj, argv }]);
 });
+
+test('the git shim hands git the OLDPWD and PWD it was started with', { skip: oracleSkip() }, (t) => {
+  const { sb, env, git } = gitSandbox(t);
+  // A repo-local alias (the shim checks -c values, not the repo's config): git execs env with
+  // the environment it inherited.
+  fs.appendFileSync(path.join(sb.proj, '.git', 'config'), '[alias]\n\tshowenv = !env\n');
+  const alias = path.join(sb.root, 'alias');
+  fs.symlinkSync(sb.root, alias);
+  const extra = { OLDPWD: '/x', PWD: alias };
+  const seen = (r) => r.stdout.split('\n').filter((l) => /^(OLDPWD|PWD)=/.test(l)).sort();
+  const viaShim = git(['-C', 'proj', 'showenv'], { cwd: alias, extra });
+  assert.equal(viaShim.status, 0, viaShim.stderr);
+  // The baseline is the same shell exec'ing git with no shim: macOS /bin/sh (bash 3.2) drops an
+  // inherited OLDPWD at startup, dash keeps it, so the baseline says which of the two git sees.
+  const direct = spawnSync(SHIM_SHELL, ['-c', 'exec git "$@"', SHIM_SHELL, '-C', 'proj', 'showenv'],
+    { cwd: alias, env: { ...env, ...extra, PATH: process.env.PATH }, encoding: 'utf8' });
+  assert.equal(direct.status, 0, direct.stderr);
+  const expected = seen(direct);
+  assert.ok([`OLDPWD=/x\nPWD=${alias}`, `PWD=${alias}`].includes(expected.join('\n')), `baseline: ${expected.join(' ')}`);
+  assert.deepEqual(seen(viaShim), expected);
+});
+
+test('the git shim stops before git runs when it cannot write its log', { skip: oracleSkip() }, (t) => {
+  const { sb, git } = gitSandbox(t);
+  const missing = path.join(sb.root, 'no-such-logs');
+  const r = git(['tag', 'qp-unlogged'], { extra: { QP_LOG_DIR: missing } });
+  assert.equal(r.status, 97);
+  assert.equal(r.stderr, `git-shim: cannot write ${missing}/git-argv.nul\n`);
+  assert.equal(git(['tag', '--list', 'qp-unlogged']).stdout, '', 'git never ran');
+});
+
+test('the git shim refuses an unresolvable cwd', { skip: oracleSkip() }, (t) => {
+  const { sb, env } = gitSandbox(t);
+  const gone = path.join(sb.proj, 'gone');
+  fs.mkdirSync(gone);
+  // A wrapper removes its own cwd, then starts the shim there.
+  const r = spawnSync(SHIM_SHELL, ['-c', 'rmdir "$1" && exec "$0" "$2" status', SHIM_SHELL, gone, path.join(sb.bin, 'git')],
+    { cwd: gone, env: { ...env, PWD: gone }, encoding: 'utf8' });
+  assert.equal(r.status, 97, r.stderr);
+  // Each shell first prints its own getcwd complaint at startup.
+  assert.match(r.stderr, /git-shim: refused \(unresolvable cwd\): status\n$/);
+  assert.deepEqual(readShimLog(sb.logs, 'git').map((e) => [e.tag, e.why]), [['REFUSED', 'unresolvable cwd']]);
+});
+
+for (const [name, extra] of [
+  ['GIT_CONFIG_COUNT', { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.hooksPath', GIT_CONFIG_VALUE_0: '/x' }],
+  ['GIT_CONFIG_PARAMETERS', { GIT_CONFIG_PARAMETERS: "'core.hooksPath'='/x'" }],
+]) {
+  test(`the git shim refuses config carried in ${name}`, { skip: oracleSkip() }, (t) => {
+    const { sb, git } = gitSandbox(t);
+    const r = git(['status'], { extra });
+    assert.equal(r.status, 97);
+    assert.equal(r.stderr, 'git-shim: refused (GIT_CONFIG_COUNT/GIT_CONFIG_PARAMETERS set): status\n');
+    assert.deepEqual(readShimLog(sb.logs, 'git').map((e) => [e.tag, e.why]), [['REFUSED', 'GIT_CONFIG_COUNT/GIT_CONFIG_PARAMETERS set']]);
+  });
+}
 
 test('the git shim requires QP_LOG_DIR', { skip: oracleSkip() }, (t) => {
   const { git } = gitSandbox(t);
