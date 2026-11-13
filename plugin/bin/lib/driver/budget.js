@@ -23,8 +23,8 @@
 // Termination: every member of every handled group, and every member of a selectable group whose
 // members the pre-screen all skips, joins the in-memory `firing` set handed to the ranking, so no
 // record is selected twice in one invocation and a queue that never shrinks still ends. A failed
-// or malformed pull (a group that is not an array, a member that is not an object with a positive
-// integer `number`), or a ranking that throws, is `pull-failed` (exit 1), never an empty queue.
+// or malformed pull (a group that is not an array or is empty, a member that is not an object with a
+// positive integer `number`), or a ranking that throws, is `pull-failed` (exit 1), never an empty queue.
 //
 // Every effect goes through `deps`: this module makes no file call and spawns nothing. The
 // queue-pull module's own stdout (Warnings, AUTO lines) is routed to deps.stderr, so the

@@ -267,7 +267,8 @@ const claimStep = defineStep(STEP.claim, STOP_CLASSES.CLAIM, async (ctx, deps) =
     ['--run-id', ctx.runId, '--targets', String(n), '--steps', 'build,test'],
     { cwd: mainRoot, timeout: CLI_TIMEOUT_MS, env: deps.env });
   // A recorded fact, not a side effect: the budget loop reads it to tell a contested claim (3) from
-  // other claim failures (4, 5, a failed mint) and from the run-ending claim stops (7, and 2 and 6).
+  // other claim failures (4, 5, an exit 0 that claimed nothing, a killed claim with a null exit, a
+  // failed mint) and from the run-ending claim stops (7, and 2 and 6).
   ctx.claimExit = Number.isInteger(r.code) ? r.code : null;
   if (r.code !== 0) {
     const key = firstEnvelopeKey(r.stdout);
