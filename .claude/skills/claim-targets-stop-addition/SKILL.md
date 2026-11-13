@@ -1,6 +1,6 @@
 ---
 name: claim-targets-stop-addition
-description: Use when adding an exit code or a new stop to `plugin/bin/claim-targets.js`, or re-routing an existing claim failure to a different exit, or adding a `/flow` pre-claim stop that `/dispatch`'s Settle must settle (such as the blocker-landing stop) — every site the stop must land in across the CLI, `/flow`, `/dispatch` and wrap-up teardown, plus the decisions it owes (run-level or per-target, whether "never claimed" holds, whether the firing continues, how forge text travels). Keywords - claim-targets, exit code, stop, card, Settle, pre-claim stop, blocker-landing, non-failing stop, settle-and-merge, firing stop, two-call-gate, cleanup-only, Section E, release-claim, false release comment, keep-going, claims-registry.
+description: Use when adding an exit code or a new stop to `plugin/bin/claim-targets.js`, or re-routing an existing claim failure to a different exit, or adding a `/flow` pre-claim stop that `/dispatch`'s Settle must settle (such as the blocker-landing stop), or adding any stop that ends the whole `/dispatch` firing whatever its source (such as #5255's `dispatch-prompt.js` render failure) — every site the stop must land in across the CLI, `/flow`, `/dispatch` and wrap-up teardown, plus the decisions it owes (run-level or per-target, whether "never claimed" holds, whether the firing continues, how forge text travels). Keywords - claim-targets, exit code, stop, card, Settle, pre-claim stop, blocker-landing, non-failing stop, settle-and-merge, firing stop, two-call-gate, cleanup-only, Section E, release-claim, false release comment, keep-going, claims-registry, render-failure stop, firing-ending stop, dispatch-prompt.js.
 ---
 
 # claim-targets.js stop addition
@@ -57,6 +57,21 @@ Two decisions it owes beyond the six above:
 
 - **"Pre-claim" does not mean "never claimed".** A handoff continuation re-runs the pre-claim checks after the first call claimed. Settle tells the cases apart by a `Step 2.8: claimed #{n}` line in this run's `decisions.md`, and an unreadable `decisions.md` counts as claimed so step 1's ownership check decides the release (a review fix, `714ae3285`).
 - **In the claimed case a draft PR exists.** Close it with step 5's tombstone, or the `open-pr` exclusion strands the record. Skip the tombstone when step 2's ownership read exits 4: the PR may be the successor's.
+
+### A firing-ending stop from another source
+
+#5255's Render-failure stop (`dispatch-prompt.js` exiting non-zero for any call) ends the firing like the Claim permission stop, but it comes from neither `claim-targets.js` nor `/flow`, so it needs no CLI exit, card or Settle special case. It lands at every dispatch site that names the Claim permission stop as firing-ending:
+
+| Site | What it owes |
+|---|---|
+| `plugin/skills/dispatch/two-call-gate.md` sections 2, 5 and 6 | The stop's trigger and scope (which calls), the cleanup call it follows, and every `(none after a Claim permission stop …)` clause naming the new stop too |
+| `plugin/skills/dispatch/SKILL.md` | The stop's own paragraph beside "Claim permission stop (#4899)", plus the close-out exit list, the bare-drain Loop line, the loop-termination paragraph and Step 6's none-after clause |
+| `firing-exclusion.md`, `sequential-execution.md`, `next-ranking.md` | One sentence each beside the claim-permission one |
+| `plugin/skills/dispatch/reporting.md` | A relay paragraph shaped like the claim-permission relay, and the `PushNotification` sentence naming a headless case when every later firing would stop at the same point |
+| Journeys 2775, 3026, 3278, 4219 | The new termination where each names the Claim permission stop |
+| `tests/flow-claim-preflight.test.js` | Its #4899 exact-text regexes, widened to the new list wording |
+
+When a sibling path must **not** end the firing (a denied-twice call), pin that with a whole-file clause sweep, not a presence pin (`skill-prose-conformance-tests`' advanced-proof-patterns.md, "Pinning a negative claim").
 
 ## Decision Framework
 
