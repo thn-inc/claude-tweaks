@@ -93,7 +93,7 @@ function renderModel(input) {
 // main config parseLocalConfig rejects (git checks the repository format there
 // and dies on a version or extension it does not accept). A missing main config
 // is fine: git accepts it and answers the same common dir.
-function commonDirFromFs(dir, env = process.env, currentUid = processUid()) {
+function commonDirFromFs(dir, env = process.env, currentUid = processUid(), platform = process.platform) {
   if (envDefers(env, currentUid, false)) return null;
   try {
     const gitPath = path.join(dir, '.git');
@@ -108,7 +108,12 @@ function commonDirFromFs(dir, env = process.env, currentUid = processUid()) {
     if (!target || target.includes('\n')) return null;
     // read_gitfile returns the REALPATH of the gitdir; a relative commondir
     // resolves against that, not against a symlinked spelling of it.
-    const gitdir = fs.realpathSync(path.resolve(fs.realpathSync(dir), target));
+    const lexicalGitdir = path.resolve(fs.realpathSync(dir), target);
+    const gitdir = fs.realpathSync(lexicalGitdir);
+    // Git for Windows refuses a gitfile whose gitdir path crosses a symlink or
+    // junction ("gitfile does not point to a valid repository", windows-latest
+    // run 43393630819), so on win32 any such path is left to git.
+    if (platform === 'win32' && path.resolve(lexicalGitdir).toLowerCase() !== path.resolve(gitdir).toLowerCase()) return null;
     let common;
     try {
       const commondir = path.join(gitdir, 'commondir');
@@ -211,7 +216,7 @@ function resolveMainProjectDir(dir, opts = {}) {
   }
   if (stat.isDirectory()) return dir;
   if (opts.fast !== false) {
-    const common = commonDirFromFs(dir, opts.env, opts.currentUid);
+    const common = commonDirFromFs(dir, opts.env, opts.currentUid, opts.platform);
     if (common) return path.dirname(common);
   }
   try {

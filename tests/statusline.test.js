@@ -739,18 +739,50 @@ test('resolveMainProjectDir: an unreadable .git file reaches git', chmodDenialSk
   });
 });
 
+// Points f.wt's `.git` at `gitdir: <linkParent>/link/<name>`, where `link` is a
+// directory symlink to main/.git/worktrees and the admin dir's commondir is `../..`.
+function pointGitdirThroughSymlink(f, linkParent = f.base) {
+  const adminRoot = path.join(f.main, '.git', 'worktrees');
+  const link = path.join(linkParent, 'link');
+  fs.symlinkSync(adminRoot, link);
+  const name = path.basename(fs.readFileSync(path.join(f.wt, '.git'), 'utf8').trim());
+  assert.strictEqual(fs.readFileSync(path.join(adminRoot, name, 'commondir'), 'utf8').trim(), '../..');
+  overwriteGitFile(path.join(f.wt, '.git'), `gitdir: ${path.join(link, name)}\n`);
+}
+
 test('resolveMainProjectDir: a gitdir reached through a symlink resolves a relative commondir against its realpath', () => {
   withWorktrees((f) => {
-    const adminRoot = path.join(f.main, '.git', 'worktrees');
-    const link = path.join(f.base, 'link');
-    fs.symlinkSync(adminRoot, link);
-    const name = path.basename(fs.readFileSync(path.join(f.wt, '.git'), 'utf8').trim());
-    assert.strictEqual(fs.readFileSync(path.join(adminRoot, name, 'commondir'), 'utf8').trim(), '../..');
-    overwriteGitFile(path.join(f.wt, '.git'), `gitdir: ${path.join(link, name)}\n`);
+    pointGitdirThroughSymlink(f);
     const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt));
+    if (process.platform === 'win32') {
+      // Git for Windows refuses this gitfile (run 43393630819), so the reader defers.
+      assert.strictEqual(sl.commonDirFromFs(f.wt), null);
+      assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+      assert.strictEqual(dirKey(result), dirKey(sl.resolveMainProjectDir(f.wt, { fast: false })));
+      return;
+    }
     assert.deepStrictEqual(launches, []); // the fast path answered, no spawn
     assert.strictEqual(result, gitCommonMain(f.wt));
     assert.strictEqual(result, fs.realpathSync(f.main));
+  });
+});
+
+test('commonDirFromFs: on win32, a gitdir path that crosses a symlink defers to git (Git for Windows refuses it)', () => {
+  withWorktrees((f) => {
+    // Built on the real base, so the link is the only symlink on the gitdir path.
+    pointGitdirThroughSymlink(f, fs.realpathSync(f.base));
+    assert.strictEqual(sl.commonDirFromFs(f.wt, undefined, undefined, 'win32'), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt, { platform: 'win32' }));
+    assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+    assert.strictEqual(dirKey(result), dirKey(sl.resolveMainProjectDir(f.wt, { fast: false })));
+  });
+});
+
+test('commonDirFromFs: on win32, a gitdir path with no symlink still answers from the file read', () => {
+  withWorktrees((f) => {
+    const answer = sl.commonDirFromFs(f.wt, undefined, undefined, 'win32');
+    assert.notStrictEqual(answer, null);
+    assert.strictEqual(answer, sl.commonDirFromFs(f.wt));
   });
 });
 
