@@ -21,7 +21,7 @@ files:
 
 ### 1. Preview the release — `--dry-run`
 - **URL:** `node plugin/bin/release-local.js --dry-run`
-- **Action:** Runs the branch and clean-tree guard, reads first-parent commits since the last `v*` tag, derives the bump, runs the collision pre-check against sibling worktrees and plan documents, and prints the plan: the proposed version and part, counts of feat/fix/breaking, the hook that will run, the manifest files that will change, any `unconventional` subjects, and the exact CHANGELOG section — including a `### Highlights` block, right after any `### ⚠ BREAKING CHANGES` block, collecting each commit's `Release-Note:` trailer as a flat bullet list (#2581); a release with no commit carrying a non-empty `Release-Note:` renders no Highlights block at all, not an empty one.
+- **Action:** Runs the branch and clean-tree guard, reads first-parent commits since the last `v*` tag, derives the bump, runs the collision pre-check against sibling worktrees and plan documents, and prints the plan: the proposed version and part, counts of feat/fix/breaking, the hook that will run, the manifest files that will change, any `unconventional` subjects, and the exact CHANGELOG section — including a `### Highlights` block, right after any `### ⚠ BREAKING CHANGES` block, collecting the commits' `Release-Note:` lines as a flat bullet list (#2581); a bundled merge carries one line per record and so gives several bullets, `No user-visible change` notes and exact duplicates are dropped (#4634), and a release with no renderable note left renders no Highlights block at all, not an empty one.
 - **Should feel:** Trustworthy — what is printed is what a live run writes, byte for byte, and nothing on disk moved.
 - **Should understand:** `--first-parent` means a `--no-ff` merge counts once, with the composer-written subject; branch-internal commits never reach the changelog. An `unconventional` line is a signal that someone bypassed the merge-time composer, not a formatting nit.
 - **Red flags:** A plan that silently omits a commit; a "manifest: none" line on a repo that has a stack manifest; the preview and the later live output differing.
@@ -53,5 +53,6 @@ files:
 - Related specs: #2253 (Step 21 bootstrap writes the config this engine reads), #2255 (the `/claude-tweaks:release` skill that fronts this CLI), #2250 (design)
 - Step 2's bump precedence updated during build of #2327 (0.x pre-major bump softening)
 - Steps 1 and 3 updated during build of #2581 (`### Highlights` block, sourced from each commit's `Release-Note:` trailer via the new shared `plugin/bin/lib/release-notes.js`)
+- Step 1 updated during build of #4634 (a bundled merge carries one `Release-Note:` line per record; the Highlights block drops `No user-visible change` notes and exact duplicates)
 - Step 3 updated during build of #4282 (the symlink refusal holds on Windows, where `O_NOFOLLOW` does not exist)
 - Step 4 updated during build of #4288 (a plan claimant's path prints with `/` on Windows too)

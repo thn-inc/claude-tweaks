@@ -217,6 +217,177 @@ test('finish-console rejects an invalid ledger status (e.g. "open") at payload v
   assert.ok(!fs.existsSync(path.join(runDir, 'verify-expectations.json')), 'validation failure must precede any write, including step 1');
 });
 
+// #3942: a ratified deferral ruling's row goes deferred only with the record its ratify filed.
+test('AC3.1: finish-console rejects a deferred "ratified" ledger entry with no record number before any write (#3942)', () => {
+  const runDir = makeRunDir();
+  fs.writeFileSync(path.join(runDir, 'ledger.md'), LEDGER_SAMPLE);
+  const before = snapshotArtifacts(runDir);
+  const payload = JSON.stringify({ ledger: [{ item: 1, status: 'deferred', resolution: 'ratified at Review Console — deferral' }] });
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: payload });
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /ledger\[0\]: a ratified deferral needs its record number \(ratified → #\{n\}\)/);
+  assert.deepStrictEqual(snapshotArtifacts(runDir), before, 'nothing written');
+});
+
+test('AC1.1: finish-console accepts a deferred "ratified → #4501" ledger entry and an accepted ratify (#3942)', () => {
+  const runDir = makeRunDir();
+  fs.writeFileSync(path.join(runDir, 'ledger.md'), LEDGER_SAMPLE);
+  const payload = JSON.stringify({ ledger: [
+    { item: 1, status: 'deferred', resolution: 'ratified → #4501' },
+    { item: 2, status: 'accepted', resolution: 'ratified at Review Console — settled' },
+  ] });
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: payload });
+  assert.strictEqual(r.status, 0, r.stderr);
+  const ledgerText = fs.readFileSync(path.join(runDir, 'ledger.md'), 'utf8');
+  assert.match(ledgerText, /\| 1 \| review \| Needs a memory capture \| deferred \| ratified → #4501 \|/);
+  assert.match(ledgerText, /\| 2 \| test \| Flaky selector \| accepted \| ratified at Review Console — settled \|/);
+});
+
+test('AC3.1: finish-console rejects a deferred "ratified" entry whose only #n is not the ratified → #{n} shape (#3942)', () => {
+  const runDir = makeRunDir();
+  fs.writeFileSync(path.join(runDir, 'ledger.md'), LEDGER_SAMPLE);
+  const before = snapshotArtifacts(runDir);
+  const payload = JSON.stringify({ ledger: [{ item: 1, status: 'deferred', resolution: 'ratified (see PR #12)' }] });
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: payload });
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /ledger\[0\]: a ratified deferral needs its record number \(ratified → #\{n\}\)/);
+  assert.deepStrictEqual(snapshotArtifacts(runDir), before, 'nothing written');
+});
+
+// A run dir whose ledger row 1 is an SDD ruling staged as stage-item.js --ledger stages one:
+// the file's `Ledger:` header names the row, and the row's Item names the file.
+function makeRulingRun(rulingText) {
+  const runDir = makeRunDir();
+  fs.writeFileSync(path.join(runDir, 'ledger.md'), LEDGER_SAMPLE.replace('Needs a memory capture', 'SDD ruling — x: ratify or reverse at the Review Console (staged/sdd-ruling-1.md)'));
+  fs.mkdirSync(path.join(runDir, 'staged'));
+  fs.writeFileSync(path.join(runDir, 'staged', 'sdd-ruling-1.md'), rulingText);
+  return runDir;
+}
+const rulingHeader = (lines) => `Title: x\nKind: sdd-ruling\nRuling: x — why\n${lines}Staged-at: abc1234\nLedger: ledger.md#1\n\nThe ruling text.\n`;
+
+test('AC3.1: finish-console rejects an accepted entry for a deferral ruling before any write (#3942)', () => {
+  const runDir = makeRulingRun(rulingHeader('Defers: yes\nDefer-reason: genuinely-larger\n'));
+  const before = snapshotArtifacts(runDir);
+  const payload = JSON.stringify({ ledger: [{ item: 1, status: 'accepted', resolution: 'accepted, ratified at Review Console — why' }] });
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: payload });
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /ledger\[0\]: sdd-ruling-1\.md is not a settled `Defers: no` ruling — its ratify files a record \(deferred, ratified → #\{n\}\), never accepted/);
+  assert.match(r.stderr, /nothing written/);
+  assert.deepStrictEqual(snapshotArtifacts(runDir), before, 'nothing written');
+});
+
+test('AC3.1: the ruling a row\'s Item names wins over a stray deferral ruling whose Ledger: header carries the same number (#3942)', () => {
+  // The Item-named ruling is a settled `Defers: no`; the stray one is a deferral that a header-number-only
+  // lookup would also match. Only the Item-first rule lets this accepted entry through.
+  const runDir = makeRunDir();
+  fs.writeFileSync(path.join(runDir, 'ledger.md'), LEDGER_SAMPLE.replace('Needs a memory capture', 'SDD ruling — x: ratify or reverse at the Review Console (staged/sdd-ruling-2.md)'));
+  fs.mkdirSync(path.join(runDir, 'staged'));
+  fs.writeFileSync(path.join(runDir, 'staged', 'sdd-ruling-1.md'), rulingHeader('Defers: yes\nDefer-reason: genuinely-larger\n').replace('Ledger: ledger.md#1', 'Ledger: other-ledger.md#1'));
+  fs.writeFileSync(path.join(runDir, 'staged', 'sdd-ruling-2.md'), rulingHeader('Defers: no\n'));
+  const payload = JSON.stringify({ ledger: [{ item: 1, status: 'accepted', resolution: 'ratified at Review Console — why' }] });
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: payload });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(fs.readFileSync(path.join(runDir, 'ledger.md'), 'utf8'), /\| 1 \| review \| .* \| accepted \| ratified at Review Console — why \|/);
+});
+
+test('AC3.1: with no Item-named file, every ruling carrying the row\'s Ledger: number must be a settled Defers: no, whatever the list order (#3942)', () => {
+  const deferral = rulingHeader('Defers: yes\nDefer-reason: genuinely-larger\n');
+  const settled = rulingHeader('Defers: no\n');
+  for (const [first, second, refused] of [[settled, deferral, 'sdd-ruling-2'], [deferral, settled, 'sdd-ruling-1']]) {
+    const runDir = makeRunDir();
+    fs.writeFileSync(path.join(runDir, 'ledger.md'), LEDGER_SAMPLE);
+    fs.mkdirSync(path.join(runDir, 'staged'));
+    fs.writeFileSync(path.join(runDir, 'staged', 'sdd-ruling-1.md'), first);
+    fs.writeFileSync(path.join(runDir, 'staged', 'sdd-ruling-2.md'), second);
+    const before = snapshotArtifacts(runDir);
+    const payload = JSON.stringify({ ledger: [{ item: 1, status: 'accepted', resolution: 'ratified at Review Console — why' }] });
+    const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: payload });
+    assert.strictEqual(r.status, 1, r.stderr);
+    assert.match(r.stderr, new RegExp(`ledger\\[0\\]: ${refused}\\.md is not a settled`));
+    assert.deepStrictEqual(snapshotArtifacts(runDir), before, 'nothing written');
+  }
+});
+
+test('AC3.1: a staged ruling symlinked out of the run dir reads as unreadable, never as ruling text (#3942, IL-161)', (t) => {
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'finish-console-outside-'));
+  t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(outside, 'ruling.md'), rulingHeader('Defers: no\n'));
+  const runDir = makeRulingRun(rulingHeader('Defers: no\n'));
+  const link = path.join(runDir, 'staged', 'sdd-ruling-1.md');
+  fs.rmSync(link);
+  try { fs.symlinkSync(path.join(outside, 'ruling.md'), link); } catch (e) { t.skip(`cannot create a symlink here: ${e.code}`); return; }
+  const before = snapshotArtifacts(runDir);
+  const payload = JSON.stringify({ ledger: [{ item: 1, status: 'accepted', resolution: 'ratified at Review Console — why' }] });
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: payload });
+  assert.strictEqual(r.status, 1, r.stderr);
+  assert.match(r.stderr, /ledger\[0\]: sdd-ruling-1\.md is not ratifiable \(empty, blank, or unreadable\)/);
+  assert.deepStrictEqual(snapshotArtifacts(runDir), before, 'nothing written');
+});
+
+test('AC3.1: a ruling mapped by its Ledger: header alone (the row\'s Item names no staged file) is refused accepted (#3942)', () => {
+  const runDir = makeRunDir();
+  fs.writeFileSync(path.join(runDir, 'ledger.md'), LEDGER_SAMPLE);
+  fs.mkdirSync(path.join(runDir, 'staged'));
+  fs.writeFileSync(path.join(runDir, 'staged', 'sdd-ruling-1.md'), rulingHeader('Defers: yes\nDefer-reason: genuinely-larger\n'));
+  const before = snapshotArtifacts(runDir);
+  const payload = JSON.stringify({ ledger: [{ item: 1, status: 'accepted', resolution: 'ratified at Review Console — why' }] });
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: payload });
+  assert.strictEqual(r.status, 1, r.stderr);
+  assert.match(r.stderr, /ledger\[0\]: sdd-ruling-1\.md is not a settled `Defers: no` ruling/);
+  assert.deepStrictEqual(snapshotArtifacts(runDir), before, 'nothing written');
+});
+
+test('AC6.3: an accepted entry whose row names a staged ruling that is gone is refused (#3942)', () => {
+  const runDir = makeRulingRun('');
+  fs.rmSync(path.join(runDir, 'staged', 'sdd-ruling-1.md'));
+  const before = snapshotArtifacts(runDir);
+  const payload = JSON.stringify({ ledger: [{ item: 1, status: 'accepted', resolution: 'ratified at Review Console — why' }] });
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: payload });
+  assert.strictEqual(r.status, 1, r.stderr);
+  assert.match(r.stderr, /ledger\[0\]: sdd-ruling-1\.md is not ratifiable \(empty, blank, or unreadable\)/);
+  assert.deepStrictEqual(snapshotArtifacts(runDir), before, 'nothing written');
+});
+
+// chmod cannot make a file unreadable on win32 or for root.
+test('AC6.3: an accepted entry for an unreadable staged ruling is refused (#3942)', chmodDenialSkip('root ignores file permissions'), (t) => {
+  const runDir = makeRulingRun(rulingHeader('Defers: no\n'));
+  const file = path.join(runDir, 'staged', 'sdd-ruling-1.md');
+  fs.chmodSync(file, 0o000);
+  t.after(() => fs.chmodSync(file, 0o644));
+  const before = snapshotArtifacts(runDir);
+  const payload = JSON.stringify({ ledger: [{ item: 1, status: 'accepted', resolution: 'ratified at Review Console — why' }] });
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: payload });
+  assert.strictEqual(r.status, 1, r.stderr);
+  assert.match(r.stderr, /ledger\[0\]: sdd-ruling-1\.md is not ratifiable \(empty, blank, or unreadable\)/);
+  assert.deepStrictEqual(snapshotArtifacts(runDir), before, 'nothing written');
+});
+
+test('AC6.3: finish-console rejects an accepted entry for an empty staged ruling before any write (#3942)', () => {
+  const runDir = makeRulingRun('');
+  const before = snapshotArtifacts(runDir);
+  const payload = JSON.stringify({ ledger: [{ item: 1, status: 'accepted', resolution: 'ratified at Review Console — why' }] });
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: payload });
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /ledger\[0\]: sdd-ruling-1\.md is not ratifiable \(empty, blank, or unreadable\) — its row stays open, never accepted/);
+  assert.deepStrictEqual(snapshotArtifacts(runDir), before, 'nothing written');
+});
+
+test('AC1.1: finish-console accepts an accepted entry for a Defers: no ruling (#3942)', () => {
+  const runDir = makeRulingRun(rulingHeader('Defers: no\n'));
+  const payload = JSON.stringify({ ledger: [{ item: 1, status: 'accepted', resolution: 'ratified at Review Console — why' }] });
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: payload });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(fs.readFileSync(path.join(runDir, 'ledger.md'), 'utf8'), /\| 1 \| review \| .* \| accepted \| ratified at Review Console — why \|/);
+});
+
+test('AC1.1: finish-console accepts a non-ruling accepted entry beside a staged deferral ruling (#3942)', () => {
+  const runDir = makeRulingRun(rulingHeader('Defers: yes\nDefer-reason: genuinely-larger\n'));
+  const payload = JSON.stringify({ ledger: [{ item: 2, status: 'accepted', resolution: 'accepted — not a ruling' }] });
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: payload });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(fs.readFileSync(path.join(runDir, 'ledger.md'), 'utf8'), /\| 2 \| test \| Flaky selector \| accepted \| accepted — not a ruling \|/);
+});
+
 test('finish-console validates the stdin payload shape before writing anything (malformed memory entry)', () => {
   const runDir = makeRunDir();
   const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: '{"memory":[{"file":"m.md"}]}' });

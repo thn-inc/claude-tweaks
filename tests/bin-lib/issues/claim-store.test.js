@@ -6,6 +6,7 @@ const {
   isWellFormedClaimContent, createClaimReader, resolveRepoSlug, resolveRepoSlugOrThrow,
   ensureClaimsBranch, claimsBranchExists,
 } = require('../../../plugin/bin/lib/issues/claim-store');
+const { STUB_SKIP, installStub } = require('../../helpers/path-stub');
 
 // Fake ghApi functions mirror release-merged.js's own ghApi shape: a
 // non-throwing function returning {stdout, failure, status} — never the
@@ -368,9 +369,30 @@ test('classifyGhApiError: Retry-After signature also reads as secondary rate lim
   assert.deepEqual(classifyGhApiError(err), { failure: 'secondary-rate-limit', status: 403 });
 });
 
-test('classifyGhApiError: a plain 403 with no rate-limit text still falls to network-failure', () => {
+test('AC1.1: classifyGhApiError: a plain HTTP 403 (no rate-limit text) -> permission-denied, never network-failure', () => {
   const err = new Error('gh: Resource not accessible by integration (HTTP 403)');
+  assert.deepEqual(classifyGhApiError(err), { failure: 'permission-denied', status: 403 });
+});
+
+test('AC1.1: classifyGhApiError: HTTP 401 -> permission-denied', () => {
+  const err = new Error('gh: Bad credentials (HTTP 401)');
+  assert.deepEqual(classifyGhApiError(err), { failure: 'permission-denied', status: 401 });
+});
+
+test('AC6.1: classifyGhApiError: a primary rate-limit 403 ("API rate limit exceeded", no Retry-After) is network-failure, never permission-denied', () => {
+  const err = new Error('gh: API rate limit exceeded for installation ID 4242. (HTTP 403)');
   assert.deepEqual(classifyGhApiError(err), { failure: 'network-failure', status: null });
+});
+
+test('AC6.1: classifyGhApiError: a 403/429 carrying X-RateLimit-Remaining: 0 is network-failure', () => {
+  const e403 = new Error('gh: HTTP 403'); e403.stderr = 'HTTP 403\nX-RateLimit-Remaining: 0';
+  const e429 = new Error('gh: HTTP 429'); e429.stderr = 'HTTP 429\nX-RateLimit-Remaining: 0';
+  assert.deepEqual(classifyGhApiError(e403), { failure: 'network-failure', status: null });
+  assert.deepEqual(classifyGhApiError(e429), { failure: 'network-failure', status: null });
+});
+
+test('classifyGhApiError: a transport error with no HTTP status stays network-failure', () => {
+  assert.deepEqual(classifyGhApiError(new Error('connect ETIMEDOUT 140.82.112.6:443')), { failure: 'network-failure', status: null });
 });
 
 // Git-CAS-first, contents-API-fallback behavior (#787's amendment). These
@@ -928,6 +950,24 @@ test('AC1.1: createClaimReader: unresolved slug with a failing git read is a fai
   assert.deepEqual(reader.read(42), { failure: 'repo-slug-unresolved' });
 });
 
+test('#4794: createClaimReader with a repoRefusal fails the contents leg unknown-host with the refusal and makes no request', () => {
+  const calls = [];
+  const ghApi = (args) => { calls.push(args); return { stdout: null, failure: null, status: 404 }; };
+  const reader = createClaimReader({ gitRunner: fakeGitRunnerAlwaysFails(), ghApi, repoSlug: null, repoRefusal: 'R' });
+  assert.deepEqual(reader.read(7), { failure: 'unknown-host', detail: 'R' });
+  assert.deepEqual(calls, []);
+  // no refusal: an unresolved slug keeps its own failure word
+  const bare = createClaimReader({ gitRunner: fakeGitRunnerAlwaysFails(), ghApi, repoSlug: null });
+  assert.deepEqual(bare.read(7), { failure: 'repo-slug-unresolved' });
+  assert.deepEqual(calls, []);
+});
+
+test('#4794: createClaimReader with a repoRefusal still answers from the git leg when git succeeds', () => {
+  const ghApi = (args) => { throw new Error(`no request on a refused origin: ${args[0]}`); };
+  const gitRunner = fakeGitRunnerAlwaysWorks('a'.repeat(40), '{"runId":"r1"}');
+  assert.deepEqual(createClaimReader({ gitRunner, ghApi, repoSlug: null, repoRefusal: 'R' }).read(42), { content: '{"runId":"r1"}' });
+});
+
 test('createClaimReader: a contents-API transport failure propagates as {failure}', () => {
   const ghApi = () => ({ stdout: null, failure: 'network-failure', status: null });
   assert.deepEqual(createClaimReader({ gitRunner: fakeGitRunnerAlwaysFails(), ghApi, repoSlug: 'acme/w' }).read(42), { failure: 'network-failure' });
@@ -965,6 +1005,49 @@ test('openPrListArgs builds the gh pr list argv staleClaimInFlightPr uses', () =
   assert.deepEqual(openPrListArgs('acme', 'w'), [
     'pr', 'list', '--repo', 'acme/w', '--state', 'open', '--json', 'url,body,isCrossRepository', '--limit', '1000',
   ]);
+});
+
+test('#4794: openPrListArgs takes one { host, ghRepo } target for --repo; no target keeps the bare owner/repo argv (AC2.1)', () => {
+  const { openPrListArgs } = require('../../../plugin/bin/lib/issues/claim-store');
+  const bare = ['pr', 'list', '--repo', 'acme/w', '--state', 'open', '--json', 'url,body,isCrossRepository', '--limit', '1000'];
+  assert.deepEqual(openPrListArgs('acme', 'w', { host: 'acme.ghe.com', ghRepo: 'acme.ghe.com/acme/w' }), [
+    'pr', 'list', '--repo', 'acme.ghe.com/acme/w', '--state', 'open', '--json', 'url,body,isCrossRepository', '--limit', '1000',
+  ]);
+  assert.deepEqual(openPrListArgs('acme', 'w'), bare);
+  assert.deepEqual(openPrListArgs('acme', 'w', null), bare);
+  // A github.com target whose ghRepo is bare (gh's default host) stays byte-identical.
+  assert.deepEqual(openPrListArgs('acme', 'w', { host: 'github.com', ghRepo: 'acme/w' }), bare);
+});
+
+test('#4794: isSameRepoPrUrl compares the url host, normalized, against the one resolved host (Review Focus 5)', () => {
+  const { isSameRepoPrUrl } = require('../../../plugin/bin/lib/issues/claim-store');
+  assert.equal(isSameRepoPrUrl('https://acme.ghe.com/acme/w/pull/7', 'acme', 'w', 'acme.ghe.com'), true);
+  assert.equal(isSameRepoPrUrl('https://ACME.ghe.com./acme/w/pull/7', 'acme', 'w', 'acme.ghe.com'), true, 'case and trailing dot in the url');
+  assert.equal(isSameRepoPrUrl('https://acme.ghe.com/acme/w/pull/7', 'acme', 'w', 'ACME.ghe.com.'), true, 'case and trailing dot in the host argument');
+  assert.equal(isSameRepoPrUrl('https://github.com/acme/w/pull/7', 'acme', 'w', 'acme.ghe.com'), false, 'cross-host');
+  assert.equal(isSameRepoPrUrl('https://acmeXghe.com/acme/w/pull/7', 'acme', 'w', 'acme.ghe.com'), false, 'look-alike host');
+  assert.equal(isSameRepoPrUrl('https://acme.ghe.com/acme/w/pull/7', 'acme', 'w'), false, 'a GHE url with no host reads as github.com');
+  assert.equal(isSameRepoPrUrl('https://acme.ghe.com/acme/w/pull/7', 'acme', 'w', null), false);
+  assert.equal(isSameRepoPrUrl('https://github.com/acme/w/pull/7', 'acme', 'w'), true, 'no host: today\'s github.com match');
+  assert.equal(isSameRepoPrUrl('https://GitHub.com./acme/w/pull/7', 'acme', 'w'), true);
+  assert.equal(isSameRepoPrUrl('https://acme.ghe.com/acme/other/pull/7', 'acme', 'w', 'acme.ghe.com'), false, 'owner/repo stay exact');
+  assert.equal(isSameRepoPrUrl('http://acme.ghe.com/acme/w/pull/7', 'acme', 'w', 'acme.ghe.com'), false, 'https only');
+  assert.equal(isSameRepoPrUrl('https://x@github.com/acme/w/pull/7', 'acme', 'w'), false, 'userinfo look-alike');
+  assert.equal(isSameRepoPrUrl('https://github.com:443/acme/w/pull/7', 'acme', 'w'), false, 'port look-alike');
+});
+
+test('#4794: matchStaleClaimPr and tombstoneInFlightPr thread the host into the url match', () => {
+  const { matchStaleClaimPr, tombstoneInFlightPr } = require('../../../plugin/bin/lib/issues/claim-store');
+  const url = 'https://acme.ghe.com/acme/w/pull/7';
+  assert.equal(matchStaleClaimPr(SC_RUN, [scListed({ url })], 'acme', 'w', 'acme.ghe.com').url, url);
+  assert.equal(matchStaleClaimPr(SC_RUN, [scListed({ url })], 'acme', 'w'), null, 'no host: a GHE url is not a github.com match');
+  assert.equal(matchStaleClaimPr(SC_RUN, [scListed()], 'acme', 'w', 'acme.ghe.com'), null, 'a github.com url under a GHE host');
+  const tomb = (link) => JSON.stringify({ reason: 'pr-opened: x', link });
+  const gh = () => 'OPEN\n';
+  assert.deepEqual(tombstoneInFlightPr(tomb(url), gh, 'acme', 'w', 'acme.ghe.com'), { link: url });
+  assert.equal(tombstoneInFlightPr(tomb(url), gh, 'acme', 'w'), null);
+  assert.equal(tombstoneInFlightPr(tomb('https://github.com/acme/w/pull/7'), gh, 'acme', 'w', 'acme.ghe.com'), null);
+  assert.deepEqual(tombstoneInFlightPr(tomb('https://github.com/acme/w/pull/7'), gh, 'acme', 'w'), { link: 'https://github.com/acme/w/pull/7' });
 });
 
 test('staleClaimRunId returns a shaped runId, null for a bad shape, and throws on malformed JSON', () => {
@@ -1091,6 +1174,27 @@ test('writeClaimBlob: create-only PUT rejected + absent re-read + branches read 
   assert.deepEqual(w, { ok: false, failure: 'network-failure' });
 });
 
+test('writeClaimBlob: create-only PUT rejected + absent re-read + branches read denied (403) → permission-denied, the lookup\'s own failure kind', () => {
+  const ghApi = (args) => {
+    if (args[0] === '--method') return { stdout: null, failure: null, status: 404 };
+    if (sameArgs(args, BRANCHES_ARGS)) return { stdout: null, failure: 'permission-denied', status: 403 };
+    return { stdout: null, failure: null, status: 404 }; // contents re-read: absent
+  };
+  const w = writeClaimBlob({ ghApi }, 'acme/w', 7, { content: '{"a":1}', sha: null, createOnly: true, message: 'm' });
+  assert.deepEqual(w, { ok: false, failure: 'permission-denied' });
+});
+
+// (#4899) Same lookup, but the refusal carries the forge's text: it rides on the result.
+test('writeClaimBlob: a branches read denied (403) WITH error text carries that error on the permission-denied result', () => {
+  const ghApi = (args) => {
+    if (args[0] === '--method') return { stdout: null, failure: null, status: 404 };
+    if (sameArgs(args, BRANCHES_ARGS)) return { stdout: null, failure: 'permission-denied', status: 403, error: 'HTTP 403: branch lookup refused' };
+    return { stdout: null, failure: null, status: 404 }; // contents re-read: absent
+  };
+  const w = writeClaimBlob({ ghApi }, 'acme/w', 7, { content: '{"a":1}', sha: null, createOnly: true, message: 'm' });
+  assert.deepEqual(w, { ok: false, failure: 'permission-denied', error: 'HTTP 403: branch lookup refused' });
+});
+
 test('writeClaimBlob: a rejected PUT whose re-read shows ANOTHER holder\'s blob never consults the branches endpoint', () => {
   const calls = [];
   const ghApi = (args) => {
@@ -1125,10 +1229,60 @@ test('defaultGhApi: a failed call carries the thrown error text as `error` (gh a
   assert.match(r.error, /ENOENT/);
 });
 
+// #4794: defaultGhApi's optional `cwd` rides into the seam's options, so the gh host follows the
+// caller's repo (the sibling-sessions hook's cwd), not process.cwd(). A PATH-stub gh logs what it saw.
+test('#4794: defaultGhApi passes a given cwd to the seam and none otherwise', { skip: STUB_SKIP }, (t) => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { execFileSync } = require('node:child_process');
+  const { _resetGhHostCache } = require('../../../plugin/bin/lib/repo-resolve');
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'claim-store-cwd-')));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const repo = path.join(dir, 'repo');
+  fs.mkdirSync(repo);
+  execFileSync('git', ['init', '-q'], { cwd: repo, stdio: 'ignore', windowsHide: true });
+  execFileSync('git', ['remote', 'add', 'origin', 'https://acme.ghe.com/acme/widgets.git'], { cwd: repo, stdio: 'ignore', windowsHide: true });
+  const log = path.join(dir, 'gh.log');
+  const restoreGh = installStub('gh', [
+    '#!/bin/sh',
+    `printf 'GH_HOST=%s PWD=%s\\n' "\${GH_HOST-unset}" "$(pwd -P)" >> '${log}'`,
+    'echo "{}"',
+    '',
+  ].join('\n'));
+  const had = Object.prototype.hasOwnProperty.call(process.env, 'GH_HOST');
+  const saved = process.env.GH_HOST;
+  delete process.env.GH_HOST;
+  _resetGhHostCache();
+  const write = process.stderr.write;
+  process.stderr.write = function capture(chunk, ...rest) {
+    if (String(chunk).startsWith('claude-tweaks: resolved repo ')) return true; // the seam's once-per-host note
+    return write.call(this, chunk, ...rest);
+  };
+  t.after(() => {
+    process.stderr.write = write;
+    restoreGh();
+    if (had) process.env.GH_HOST = saved;
+    else delete process.env.GH_HOST;
+    _resetGhHostCache();
+  });
+  const lines = () => fs.readFileSync(log, 'utf8').split('\n').filter(Boolean);
+
+  defaultGhApi(['repos/acme/widgets'], { cwd: repo });
+  assert.deepEqual(lines(), [`GH_HOST=acme.ghe.com PWD=${repo}`]);
+
+  fs.rmSync(log);
+  defaultGhApi(['repos/acme/widgets']);
+  assert.equal(lines().length, 1);
+  assert.match(lines()[0], /^GH_HOST=unset PWD=/);
+  assert.notEqual(lines()[0], `GH_HOST=unset PWD=${repo}`);
+});
+
 test('claimsBranchExists: 404 → false, any failure → null, a name → true', () => {
   assert.equal(claimsBranchExists(() => ({ stdout: null, failure: null, status: 404 }), 'acme/w'), false);
   assert.equal(claimsBranchExists(() => ({ stdout: null, failure: 'network-failure', status: null }), 'acme/w'), null);
   assert.equal(claimsBranchExists(() => ({ stdout: null, failure: 'gh-absent', status: null }), 'acme/w'), null);
+  assert.equal(claimsBranchExists(() => ({ stdout: null, failure: 'permission-denied', status: 403 }), 'acme/w'), null);
   assert.equal(claimsBranchExists((args) => { assert.deepEqual(args, BRANCHES_ARGS); return { stdout: 'claims-registry\n', failure: null, status: null }; }, 'acme/w'), true);
 });
 
@@ -1173,15 +1327,61 @@ test('ensureClaimsBranch: POST git/refs 422 from a ruleset while the branch is s
   assert.equal(r.ok, false);
   assert.match(r.reason, /Repository rule violations found/);
   assert.match(r.reason, /Cannot create ref/);
+  assert.doesNotMatch(r.reason, /branch re-read:/);
 });
 
-test('ensureClaimsBranch: POST git/refs 422 with an unreadable branches endpoint is a refusal, never a guessed lost race', () => {
-  const ghApi = bootstrapGhApi([], {
-    post: { stdout: null, failure: null, status: 422, error: 'HTTP 422: Reference already exists' },
-    branches: { stdout: null, failure: 'network-failure', status: null },
-  });
-  const r = ensureClaimsBranch({ ghApi }, 'acme/w');
+const POST_422 = { stdout: null, failure: null, status: 422, error: 'HTTP 422: Reference already exists' };
+const reread422 = (branches) => ensureClaimsBranch({ ghApi: bootstrapGhApi([], { post: POST_422, branches }) }, 'acme/w');
+
+test('AC7.1: POST git/refs 422 + a network-failure branch re-read is transient, POST reason kept', () => {
+  const r = reread422({ stdout: null, failure: 'network-failure', status: null, error: 'connect ETIMEDOUT' });
   assert.equal(r.ok, false);
+  assert.equal(r.transient, true);
+  assert.equal(r.failure, 'network-failure');
+  assert.match(r.reason, /Reference already exists/);
+  assert.match(r.reason, /ETIMEDOUT/);
+});
+
+test('AC8.1: POST git/refs 422 + a permission-403 branch re-read is a refusal', () => {
+  const r = reread422({ stdout: null, failure: 'permission-denied', status: 403, error: 'HTTP 403: Resource not accessible by integration' });
+  assert.equal(r.ok, false);
+  assert.equal('transient' in r, false);
+  assert.equal('failure' in r, false);
+});
+
+test('AC11.1: POST git/refs 422 + a primary-rate-limit branch re-read is transient network-failure', () => {
+  const e = new Error('gh: API rate limit exceeded for user ID 1. (HTTP 403)');
+  const r = reread422({ stdout: null, ...classifyGhApiError(e), error: e.message });
+  assert.equal(r.ok, false);
+  assert.equal(r.transient, true);
+  assert.equal(r.failure, 'network-failure');
+});
+
+test('ensureClaimsBranch: POST git/refs 422 + a secondary-rate-limit re-read is transient secondary-rate-limit', () => {
+  const r = reread422({ stdout: null, failure: 'secondary-rate-limit', status: 403, error: 'HTTP 403: secondary rate limit' });
+  assert.equal(r.ok, false);
+  assert.equal(r.transient, true);
+  assert.equal(r.failure, 'secondary-rate-limit');
+});
+
+test('ensureClaimsBranch: POST git/refs 422 + a gh-absent re-read is a refusal', () => {
+  const r = reread422({ stdout: null, failure: 'gh-absent', status: null, error: 'spawn gh ENOENT' });
+  assert.equal(r.ok, false);
+  assert.equal('transient' in r, false);
+  assert.equal('failure' in r, false);
+});
+
+test('ensureClaimsBranch: POST git/refs 422 + a re-read answering 409 with failure null is a refusal, never a lost race', () => {
+  const r = reread422({ stdout: null, failure: null, status: 409, error: 'HTTP 409: Conflict' });
+  assert.equal(r.ok, false);
+  assert.equal('transient' in r, false);
+  assert.match(r.reason, /Reference already exists/);
+});
+
+test('ensureClaimsBranch: POST git/refs 422 + a re-read answering 422 with failure null is a refusal, never a lost race', () => {
+  const r = reread422({ stdout: null, failure: null, status: 422, error: 'HTTP 422: Unprocessable' });
+  assert.equal(r.ok, false);
+  assert.equal('transient' in r, false);
   assert.match(r.reason, /Reference already exists/);
 });
 
@@ -1201,19 +1401,36 @@ test('ensureClaimsBranch: a POST result with no error text falls back to the fai
   assert.match(noText({ stdout: null, failure: null, status: 409 }).reason, /HTTP 409/);
 });
 
-test('ensureClaimsBranch: an unresolvable default branch is a refusal, no POST', () => {
+test('ensureClaimsBranch: a network-failure default-branch read is transient, no POST', () => {
   const calls = [];
   const ghApi = (args) => { calls.push(args); return { stdout: null, failure: 'network-failure', status: null, error: 'HTTP 502: Bad Gateway' }; };
   const r = ensureClaimsBranch({ ghApi }, 'acme/w');
   assert.equal(r.ok, false);
   assert.match(r.reason, /HTTP 502/);
+  assert.equal(r.transient, true);
+  assert.equal(r.failure, 'network-failure');
   assert.equal(calls.length, 1);
+});
+
+test('ensureClaimsBranch: a network-failure tip-sha read is transient, no POST', () => {
+  const calls = [];
+  const ghApi = (args) => {
+    calls.push(args);
+    if (sameArgs(args, DEFAULT_BRANCH_ARGS)) return { stdout: 'main\n', failure: null, status: null };
+    if (sameArgs(args, MAIN_TIP_ARGS)) return { stdout: null, failure: 'network-failure', status: null, error: 'HTTP 503' };
+    throw new Error(`unexpected ${args.join(' ')}`);
+  };
+  const r = ensureClaimsBranch({ ghApi }, 'acme/w');
+  assert.equal(r.ok, false);
+  assert.equal(r.transient, true);
+  assert.equal(r.failure, 'network-failure');
+  assert.equal(calls.some((a) => sameArgs(a, POST_REFS_ARGS)), false);
 });
 
 test('ensureClaimsBranch: both legs refused → ok:false with both reasons verbatim', () => {
   const gitRunner = (args) => { if (args[0] === 'push') throw gitError('remote: Permission to acme/w.git denied'); return args[0] === 'rev-parse' ? 'abc\n' : ''; };
   const ghApi = bootstrapGhApi([], {
-    post: { stdout: null, failure: 'network-failure', status: null, error: 'HTTP 403: Resource not accessible by integration' },
+    post: { stdout: null, failure: 'permission-denied', status: 403, error: 'HTTP 403: Resource not accessible by integration' },
   });
   const r = ensureClaimsBranch({ ghApi, gitRunner }, 'acme/w');
   assert.equal(r.ok, false);
@@ -1223,15 +1440,27 @@ test('ensureClaimsBranch: both legs refused → ok:false with both reasons verba
   assert.equal('transient' in r, false, 'a non-rate-limit refusal carries no transient key');
 });
 
-test('ensureClaimsBranch: a secondary-rate-limit POST is transient (reason verbatim); a 403 network-failure POST is not', () => {
-  const rateLimited = ensureClaimsBranch({
-    ghApi: bootstrapGhApi([], { post: { stdout: null, failure: 'secondary-rate-limit', status: 403, error: 'HTTP 403: secondary rate limit' } }),
+test('AC2.1/AC4.1: POST classified secondary-rate-limit / network-failure is transient with its kind; permission-denied is a refusal', () => {
+  const run = (post) => ensureClaimsBranch({ ghApi: bootstrapGhApi([], { post }) }, 'acme/w');
+  assert.deepEqual(run({ stdout: null, failure: 'secondary-rate-limit', status: 403, error: 'HTTP 403: secondary rate limit' }),
+    { ok: false, reason: 'contents-api: HTTP 403: secondary rate limit', transient: true, failure: 'secondary-rate-limit' });
+  assert.deepEqual(run({ stdout: null, failure: 'network-failure', status: null, error: 'connect ETIMEDOUT' }),
+    { ok: false, reason: 'contents-api: connect ETIMEDOUT', transient: true, failure: 'network-failure' });
+  assert.deepEqual(run({ stdout: null, failure: 'permission-denied', status: 403, error: 'HTTP 403: Forbidden' }),
+    { ok: false, reason: 'contents-api: HTTP 403: Forbidden' });
+});
+
+test('ensureClaimsBranch: a real-shape refusal reason (the exit-6 route) drops the Command failed line and the repeated stderr line', () => {
+  const commandLine = 'Command failed: gh api --method POST repos/acme/w/git/refs -f ref=refs/heads/claims-registry -f sha=abc123';
+  const refusal = 'gh: Resource not accessible by integration (HTTP 403)';
+  const refuse = (error) => ensureClaimsBranch({
+    ghApi: bootstrapGhApi([], { post: { stdout: null, failure: 'permission-denied', status: 403, error } }),
   }, 'acme/w');
-  assert.deepEqual(rateLimited, { ok: false, reason: 'contents-api: HTTP 403: secondary rate limit', transient: true });
-  const refused = ensureClaimsBranch({
-    ghApi: bootstrapGhApi([], { post: { stdout: null, failure: 'network-failure', status: 403, error: 'HTTP 403: Forbidden' } }),
-  }, 'acme/w');
-  assert.deepEqual(refused, { ok: false, reason: 'contents-api: HTTP 403: Forbidden' });
+  const r = refuse(`${commandLine}\n${refusal}\n ${refusal}\n`);
+  assert.deepEqual(r, { ok: false, reason: `contents-api: ${refusal}` });
+  assert.doesNotMatch(r.reason, /Command failed/);
+  // Nothing but the command line left: fall back to the classified failure, not an empty reason.
+  assert.deepEqual(refuse(`${commandLine}\n`), { ok: false, reason: 'contents-api: permission-denied' });
 });
 
 // (#4495) A git-CAS rejection whose verification read finds the claims-registry
@@ -1250,4 +1479,37 @@ test('writeClaimBlob: a git-CAS rejection whose fresh read finds the claims-regi
   });
   assert.deepEqual(result, { ok: false, branchMissing: true, failure: null });
   assert.equal(state.pushCount, 1, 'no retry against a branch that no longer exists');
+});
+
+// (#4899) A permission refusal carries the forge's own error text on the read
+// and write results so a caller can name WHY the claim registry refused it.
+// Only `permission-denied` carries it: every other failure keeps its exact shape.
+test('readClaimBlob carries error on a permission-denied read only', () => {
+  const answer = (failure) => (args) => {
+    if (isRead(args, 'claims/issue-42.json')) return { stdout: null, failure, status: 403, error: 'HTTP 403: Resource not accessible by integration' };
+    throw new Error(`unexpected ${args.join(' ')}`);
+  };
+  assert.deepEqual(
+    readClaimBlob({ ghApi: answer('permission-denied') }, 'acme/w', 42),
+    { content: null, sha: null, failure: 'permission-denied', absent: false, error: 'HTTP 403: Resource not accessible by integration' },
+  );
+  assert.deepEqual(
+    readClaimBlob({ ghApi: answer('network-failure') }, 'acme/w', 42),
+    { content: null, sha: null, failure: 'network-failure', absent: false },
+  );
+});
+
+test('writeClaimBlob carries error on a permission-denied PUT only', () => {
+  const answer = (failure) => (args) => {
+    if (isWrite(args, 'claims/issue-7.json')) return { stdout: null, failure, status: 403, error: 'HTTP 403: Resource not accessible by integration' };
+    throw new Error(`unexpected ${args.join(' ')}`);
+  };
+  assert.deepEqual(
+    writeClaimBlob({ ghApi: answer('permission-denied') }, 'acme/w', 7, { content: '{}', message: 'x' }),
+    { ok: false, failure: 'permission-denied', error: 'HTTP 403: Resource not accessible by integration' },
+  );
+  assert.deepEqual(
+    writeClaimBlob({ ghApi: answer('network-failure') }, 'acme/w', 7, { content: '{}', message: 'x' }),
+    { ok: false, failure: 'network-failure' },
+  );
 });

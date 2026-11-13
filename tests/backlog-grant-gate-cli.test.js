@@ -99,6 +99,18 @@ test('--repo owner/.. under work-links: native is rejected before any REST call 
   assert.deepStrictEqual(d.calls, []);
 });
 
+// #4933: the origin-derived spec passes the host gate and then meets the same guard.
+test('an origin whose owner is ".." under work-links: native is rejected after the host gate, before any REST call', () => {
+  const d = deps({
+    readPolicyRaw: () => 'autonomy: unattended\ngrant-origination-enabled: true\nwork-links: native\nintegration-branch: main\n',
+    remoteUrl: () => 'git@github.com:../r.git',
+    runner: () => { throw new Error('should not be called'); },
+  });
+  assert.strictEqual(run([], d), 2);
+  assert.match(d.err.join(''), /invalid --repo value/);
+  assert.deepStrictEqual(d.calls, []);
+});
+
 test('--repo ../evil under work-links: native is rejected before any REST call', () => {
   const d = deps({
     readPolicyRaw: () => 'autonomy: unattended\ngrant-origination-enabled: true\nwork-links: native\nintegration-branch: main\n',

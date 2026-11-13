@@ -221,6 +221,8 @@ dependencies:
       - "skills/using-git-worktrees/SKILL.md"
       - "skills/finishing-a-development-branch/SKILL.md"
       - "skills/writing-plans/SKILL.md"
+      - "skills/test-driven-development/SKILL.md"
+      - "skills/executing-plans/SKILL.md"
     assertions:
       - file: "plugin/skills/_shared/subagent-output-contract.md"
         claims: "the four-status vocabulary mirrors SDD's implementer statuses"
@@ -318,6 +320,22 @@ dependencies:
         claims: "will rely on (record #3386): the final-review capture records the fix wave as FIX_BASE..HEAD, the name SDD gives the head the previous review saw — line first appeared in superpowers 6.2.0 or earlier"
         upstream-path: "skills/subagent-driven-development/SKILL.md"
         must-match: "where FIX_BASE is the head the previous review saw"
+      - file: "plugin/skills/build/dispatch.md"
+        claims: "will rely on (record #5117): SDD's implementer prompt tells each implementer to run the full suite once before committing — the line the affected-set rule overrides"
+        upstream-path: "skills/subagent-driven-development/implementer-prompt.md"
+        must-match: "full suite once before committing, not after every edit."
+      - file: "plugin/skills/build/dispatch.md"
+        claims: "will rely on (record #5117): test-driven-development reads 'Other tests' as the project's whole suite — the line the affected-set rule overrides"
+        upstream-path: "skills/test-driven-development/SKILL.md"
+        must-match: "means the project's suite, not just your file."
+      - file: "plugin/skills/build/worktree-setup.md"
+        claims: "will rely on (record #5117): using-git-worktrees has a Step 3 named Verify Clean Baseline — the baseline test run worktree-setup skips inside a pipeline"
+        upstream-path: "skills/using-git-worktrees/SKILL.md"
+        must-match: "## Step 3: Verify Clean Baseline"
+      - file: "plugin/skills/build/dispatch.md"
+        claims: "will rely on (record #5117): executing-plans runs the whole suite after each task — the line the batched affected-set rule overrides"
+        upstream-path: "skills/executing-plans/SKILL.md"
+        must-match: "make it pass, then run the whole suite."
     # fixtures: [] — frozen-artifact rationale: an installed plugin cache dir is
     # immutable post-install, so version movement is the only mechanical change
     # signal; there is no runtime surface to replay (the impeccable-plugin

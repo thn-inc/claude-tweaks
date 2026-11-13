@@ -17,7 +17,7 @@ const { BACKFILL_OUTCOMES, BACKFILL_SOURCES } = require('../../../plugin/bin/lib
 const { findingFingerprint } = require('../../../plugin/bin/lib/console/finding-filing');
 const { extractFingerprint } = require('../../../plugin/bin/lib/issues/record');
 const { fingerprintFromBasis } = require('../../../plugin/bin/lib/health-core/fingerprint');
-const { materialityFingerprint, parseMaterialityFingerprints } = require('../../../plugin/bin/lib/health-core/materiality-digest');
+const { materialityFingerprint, parseMaterialityFingerprints, planCarryOver } = require('../../../plugin/bin/lib/health-core/materiality-digest');
 const { readText } = require('../../helpers/read-skill');
 
 const MAIN_SHA = '0123456789abcdef0123456789abcdef01234567';
@@ -626,6 +626,23 @@ test('I1: a finding digested under one claim is a digest duplicate, not a second
   const other = { ...after, itemId: 'bf:00000000000000e2' };
   assert.deepStrictEqual(plan({ workList: workList([other]), verdicts: { [other.itemId]: digestV }, digestComments }).digest.duplicates, []);
   assert.deepStrictEqual(plan({ workList: workList([after]), verdicts: {}, digestComments: [{ ...digestComments[0], authorAssociation: 'NONE' }] }).awaitingVerdict, [after.itemId]);
+});
+
+test('AC8.1 (held half): a tombstone keeps a promoted console-backfill finding held against the new container', () => {
+  const before = findingItem({ itemId: 'bf:00000000000000e1', itemHash: 'he1' });
+  const after = { ...before, claimText: 'The guard runs after the read, as a later cleaner leaves it' };
+  const line = plan({ workList: workList([before]), verdicts: { [before.itemId]: digestV } }).digest.lines[0];
+  const old = [{ body: `${line} → expired`, authorAssociation: 'OWNER', createdAt: '2026-10-25T00:00:00Z', url: 'https://x/issues/1426#issuecomment-1' }];
+  const carry = planCarryOver(old, [], { oldCommentCount: old.length });
+  assert.strictEqual(carry.tombstones, 1);
+  assert.ok(carry.bodies.every((b) => !b.includes('- [')), 'a tombstone holds no entry line');
+  const digestComments = carry.bodies.map((body, i) => ({ body, authorAssociation: 'MEMBER', url: `https://x/issues/1500#issuecomment-${i + 1}` }));
+  for (const verdicts of [{ [after.itemId]: digestV }, {}]) {
+    const out = plan({ workList: workList([after]), verdicts, digestComments });
+    assert.deepStrictEqual(out.digest.lines, [], JSON.stringify(verdicts));
+    assert.deepStrictEqual(out.digest.duplicates, [after.itemId]);
+    assert.deepStrictEqual(out.awaitingVerdict, []);
+  }
 });
 
 test('planBatch accepts the verdicts as a Map too', () => {

@@ -76,7 +76,7 @@ So the one measured refused shape inline-literal-assignment turns into an accept
 
 ## What the plugin does with it
 
-`plugin/bin/lib/hooks/guard-rewrite.js` rewrites five shapes, only inside a linked worktree, and returns the rewrite as `hookSpecificOutput.updatedInput` from both PreToolUse paths (the prefilter fast path and `pre-tool-use.js`'s `run()`). Rule ids: `inline-literal-assignment`, `plugin-root-placeholder`, `node-eval-separator`, `quote-escaped-space`, `drop-redundant-cd`. Rules 1 and 2 apply only when every command-position word is a plain literal outside the runner, reserved-word and computed-name-assigning builtin sets and the command has no arithmetic context; rule 2 inlines only files under `bin/`. It never emits `permissionDecision`, and it never throws (any failure is a silent skip). `docs/hooks.md` carries the dispatcher-side contract; the module header carries the residuals.
+`plugin/bin/lib/hooks/guard-rewrite.js` rewrites five shapes, only inside a linked worktree, and returns the rewrite as `hookSpecificOutput.updatedInput` from both PreToolUse paths (the prefilter fast path and `pre-tool-use.js`'s `run()`). Rule ids: `inline-literal-assignment`, `plugin-root-placeholder`, `node-eval-separator`, `quote-escaped-space`, `drop-redundant-cd`. Rules 1 and 2 apply only when every command-position word is a plain literal outside the runner, reserved-word and computed-name-assigning builtin sets and the command has no arithmetic context; rule 2 inlines only files under `bin/`. On Windows, rule 2 inlines the root forward-slashed (`toPosix`, `D:/p/root/bin/x.js`), and `shippedUnder` still lstats the native join; a win32 root with no drive or UNC prefix (a drive-relative `\p\root`, which would become `/p/root`, drive `P:` to Git Bash) declines. It never emits `permissionDecision`, and it never throws (any failure is a silent skip). `docs/hooks.md` carries the dispatcher-side contract; the module header carries the residuals.
 
 Two things the rewrites are *not*:
 
@@ -86,5 +86,6 @@ Two things the rewrites are *not*:
 ## Not measured
 
 - **Not measured:** interactive mode, how a prompt in a non-bypass permission mode evaluates the rewritten input, and other Claude Code versions.
+- **Not measured:** a Windows session. Whether the guard treats the forward-slashed plugin root `D:/…` like a native root is unprobed, and so is what Git Bash sets `$PWD` to after a native-spelled `cd "D:\w\cwd"` (the form `drop-redundant-cd` drops), so "same argv" for that Windows form is a premise, not a measurement; a refusal there is the same refusal an unrewritten command gets.
 - Probe 2 ran under `--dangerously-skip-permissions`; the permission mode of probe 1 was not recorded. In a mode that prompts, whether the prompt shows the original or the rewritten command is unknown.
 - A Claude Code release that reorders the hook and the guard would turn every rewrite into a no-op (the guard would see the original). Re-run probe 2 after a Claude Code upgrade that touches hooks or the guard.

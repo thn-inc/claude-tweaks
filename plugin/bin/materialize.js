@@ -22,7 +22,8 @@
 // determinable git repository root; #959 — a --run-dir resolving INSIDE the
 // current linked worktree is anchored-equivalent and accepted, since this
 // CLI only ever writes to that worktree's own work/{n}-spec.md), an
-// unresolved record, or when `gh` is absent. #1210: when cwd is itself
+// unresolved record, an origin host that is not a known GitHub host (refused before any
+// gh call, #4933; an exported `GH_HOST` opts in), or when `gh` is absent. #1210: when cwd is itself
 // inside a linked worktree but --run-dir resolves somewhere else — the main
 // checkout (the standard $PIPELINE_RUN_DIR shape every other --run/--run-dir
 // consumer expects, passed unmodified from inside a worktree) or a DIFFERENT
@@ -45,13 +46,14 @@ const { execFileSync } = require('child_process');
 const {
   parseRecordFacets, extractFingerprint, extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, parseDependencies,
 } = require('./lib/issues/record');
+const { parseCrossRepoDependencies } = require('./lib/issues/cross-repo-refs');
 const {
   shapeGate, liftMetadata, composeHeader, composeFile, describeDesignIntentError,
 } = require('./lib/issues/materialize-format');
 const { findSiblingPremiseDisproof } = require('./lib/issues/sibling-premise');
 const wtDetect = require('./lib/hooks/worktree-detect');
 const {
-  parseRepo, ghAvailable, repoSlug, repoResolutionNote, ghOptions, pinExplicitRepoHost,
+  parseRepo, ghAvailable, repoSlug, repoResolutionNote, ghOptions, pinExplicitRepoHost, gateOriginRepo,
 } = require('./lib/repo-resolve');
 const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
 const { formatEntry, appendEntry, resolveTarget: resolveDecisionTarget } = require('./lib/log-decision/append');
@@ -144,19 +146,10 @@ function resolveCheckoutRoot(cwd) {
 // it was read before filing. A non-zero exit is a normal outcome; no exit
 // code at all (ENOENT when no POSIX sh resolves — /bin/sh, or sh from PATH on
 // Windows — or a timeout) re-throws for computePremise's own catch to degrade
-// to null. `env` (optional) is the command's whole environment.
-function runPremiseCheckDefault(command, { cwd, env } = {}) {
-  return runPremiseCommand(command, { cwd, timeoutMs: PREMISE_SELF_CHECK_TIMEOUT_MS, env });
-}
-
-// #4505: the process env minus the GH_HOST this run pinned for an explicit
-// --repo (deps.pinGhHost). The pin is for materialize's own gh calls; the
-// record-authored command gets the env it had before it, where a
-// remote-inferring gh call reaches cwd's host. pinExplicitRepoHost never pins
-// over an exported GH_HOST, so a user's own value is never what is removed.
-function envBeforeGhHostPin() {
-  const { GH_HOST: _pinned, ...env } = process.env;
-  return env;
+// to null. The command inherits the process env as is: the --repo host pin
+// lives only in each gh call's own env (ghOptions), never in process.env (#4795).
+function runPremiseCheckDefault(command, { cwd } = {}) {
+  return runPremiseCommand(command, { cwd, timeoutMs: PREMISE_SELF_CHECK_TIMEOUT_MS });
 }
 
 // command -> { command, exit, satisfiedAtBase } | null. null means "no
@@ -169,15 +162,14 @@ function envBeforeGhHostPin() {
 // contract, the command is written to exit 0 while the premise (the
 // record's Current State claim) still holds, so a non-zero exit means the
 // claim no longer holds at this checkout's base — the record's work may
-// already be done. `pinnedGhHost` (the host deps.pinGhHost exported, or null)
-// keeps that pin out of the command's env.
-function computePremise(command, deps, pinnedGhHost = null) {
+// already be done.
+function computePremise(command, deps) {
   if (!command) return null;
   let exit;
   try {
     const cwd = deps.checkoutRoot(deps.cwd());
     if (!cwd) return null;
-    exit = deps.runPremiseCheck(command, pinnedGhHost ? { cwd, env: envBeforeGhHostPin() } : { cwd });
+    exit = deps.runPremiseCheck(command, { cwd });
   } catch {
     return null;
   }
@@ -380,7 +372,6 @@ function run(argv, deps = realDeps) {
   // Populated only on the gh-backed path below — carries owner/repo/host for
   // the author-association lookup the premise-check gate needs further down.
   let repoSpec = null;
-  let pinnedGhHost = null;
   if (opts.recordJson) {
     // #1459: the gh-absent path — deps.ghAvailable()/deps.ghView() are never
     // consulted here, and no owner/repo resolution is needed since nothing
@@ -399,9 +390,14 @@ function run(argv, deps = realDeps) {
 
     let remote = null;
     if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-    repoSpec = opts.repo ? parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : parseRepo(remote);
+    if (opts.repo) repoSpec = parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`);
+    else {
+      const gated = gateOriginRepo(remote, deps.gateDeps);
+      if (gated.refusal) { deps.stderr(`materialize.js: ${gated.refusal}\n`); return 2; }
+      repoSpec = gated.spec;
+    }
     if (!repoSpec) { deps.stderr('materialize.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
-    if (opts.repo && deps.pinGhHost) pinnedGhHost = deps.pinGhHost(repoSpec) || null;
+    if (opts.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
     const { host, owner, repo } = repoSpec;
     // #2538 Deliverable 3 — visible only for a resolved non-github.com host.
     const repoNote = repoResolutionNote(repoSpec);
@@ -439,7 +435,7 @@ function run(argv, deps = realDeps) {
   if (opts.check) {
     deps.stdout(JSON.stringify({
       record: opts.n, check: 'passed', title: record.title, ceremony: parseRecordFacets(record.labels).ceremony || null, surface: meta.surface || null,
-      bodyBlockedBy: parseDependencies(record.body),
+      bodyBlockedBy: [...parseDependencies(record.body), ...parseCrossRepoDependencies(record.body)], // #4793, Decisions Q7: a foreign-only body still runs 2.7b's call
     }) + '\n');
     return 0;
   }
@@ -487,7 +483,7 @@ function run(argv, deps = realDeps) {
       association = record.authorAssociation;
     }
     if (association && TRUSTED_AUTHOR_ASSOCIATIONS.has(association)) {
-      premise = computePremise(premiseCommand, deps, pinnedGhHost);
+      premise = computePremise(premiseCommand, deps);
     } else {
       deps.stderr(
         `materialize.js: Record #${opts.n} has a Premise-check: line but its author's repo `
@@ -632,7 +628,7 @@ function run(argv, deps = realDeps) {
     ceremony,
     grants: facets.grants,
     fingerprint: extractFingerprint(record.body),
-    blockedBy: parseDependencies(record.body),
+    blockedBy: [...parseDependencies(record.body), ...parseCrossRepoDependencies(record.body)], // #4793, Decisions Q7: foreign refs as owner/name#N, after this repository's numbers
     surface: meta.surface,
     designIntent: meta.designIntent,
     uiStack: meta.uiStack,

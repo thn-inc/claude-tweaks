@@ -1,5 +1,5 @@
 'use strict';
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const {
   classifyGitError, readClaimBlobGit, writeClaimBlobGit, readClaimBlobsGitBatch, bootstrapClaimsBranchGit,
@@ -86,8 +86,14 @@ function setupGit(args) {
   return execFileSync('git', args, { encoding: 'utf8', stdio: PIPE_ALL });
 }
 
+const fixtureRoots = [];
+after(() => {
+  for (const d of fixtureRoots) fs.rmSync(d, { recursive: true, force: true });
+});
+
 function makeBareOriginAndClone() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'claims-git-cas-'));
+  fixtureRoots.push(root);
   const originDir = path.join(root, 'origin.git');
   const cloneDir = path.join(root, 'clone');
   setupGit(['init', '--bare', '-q', '-b', 'main', originDir]);
@@ -512,6 +518,7 @@ test('bootstrapClaimsBranchGit: a timeout-shaped error is transport-failure AND 
 // real remote, which the fake-runner tests above cannot.
 function makeBranchlessOriginAndClone() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'claims-git-cas-branchless-'));
+  fixtureRoots.push(root);
   const originDir = path.join(root, 'origin.git');
   const cloneDir = path.join(root, 'clone');
   setupGit(['init', '--bare', '-q', '-b', 'main', originDir]);

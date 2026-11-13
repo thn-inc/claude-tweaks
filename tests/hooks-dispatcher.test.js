@@ -248,9 +248,10 @@ test('record-worktree accepts --run before or after the worktree positional', ()
 //
 // #1012 note: a `--`-prefixed positional (the original `--bogus-flag`) is
 // now intercepted even earlier, by the KNOWN_FLAGS unknown-flag guard shared
-// by all five mutating verbs (any undeclared `--*` argument prints usage and
-// exits 0, before this branch — or resolveRunArg itself — ever runs; see
-// tests/hooks-help-guard.test.js and the KNOWN_FLAGS-specific cases below).
+// by every VERBS verb (#4834: any undeclared `--*` argument is refused on
+// stderr with exit 1, before this branch — or resolveRunArg itself — ever
+// runs; see tests/hooks-help-guard.test.js and the KNOWN_FLAGS-specific cases
+// below).
 // This test now uses a single-dash shape (`-x`), which that scan does not
 // classify (it only recognizes `--`-prefixed tokens), so it still reaches
 // and exercises this deeper, single-dash-specific safety net.
@@ -271,7 +272,7 @@ test('record-worktree with an explicit --run still rejects a flag-shaped worktre
 // #1012: the new, broader guard's own coverage of the `--`-prefixed shape —
 // any undeclared `--*` argument anywhere in a KNOWN_FLAGS verb's arguments
 // (including one that LOOKS like it could be a worktree-path positional)
-// prints usage and exits 0 before resolveRunArg or any write ever runs.
+// is refused on stderr with exit 1 (#4834) before resolveRunArg or any write ever runs.
 test('#1012: record-worktree rejects an undeclared --* argument (e.g. --bogus-flag) via the KNOWN_FLAGS guard, before any write', () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
@@ -280,8 +281,9 @@ test('#1012: record-worktree rejects an undeclared --* argument (e.g. --bogus-fl
   const before = readRunState(run);
 
   const result = runHook(['record-worktree', '--run', run, '--bogus-flag'], { cwd: project });
-  assert.strictEqual(result.code, 0);
-  assert.strictEqual(result.stdout, 'claude-tweaks: usage: record-worktree --run <dir> <worktree-path> [--dispatch]\n');
+  assert.strictEqual(result.code, 1);
+  assert.strictEqual(result.stdout, '');
+  assert.strictEqual(result.stderr, "claude-tweaks: record-worktree: unknown flag '--bogus-flag'\nclaude-tweaks: usage: record-worktree --run <dir> <worktree-path> [--dispatch]\n");
   assert.deepStrictEqual(readRunState(run), before, 'run-state.json must be byte-unchanged');
 });
 
@@ -756,6 +758,51 @@ test('AC6.1: hooks.json registers a PreToolUse matcher for AskUserQuestion (unfi
   assert.strictEqual(entry.hooks[0].type, 'command');
   assert.ok(!('if' in entry.hooks[0]), 'AskUserQuestion matcher must be a literal tool-name match, not pattern-filtered');
   assert.match(entry.hooks[0].command, /bin\/hooks\.js" pre-tool-use$/);
+});
+
+// #4589: the dispatch-prompt fidelity gate. CLI 2.1.322 reports the tool as `Agent`; `Task` covers a
+// CLI that still reports the older name (docs/reference/pretooluse-agent-tool-probe.md).
+test('AC5.1: hooks.json registers PreToolUse matchers for Agent and Task (unfiltered, literal tool-name match)', () => {
+  const config = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugin', 'hooks', 'hooks.json'), 'utf8'));
+  for (const name of ['Agent', 'Task']) {
+    const entry = config.hooks.PreToolUse.find((e) => e.matcher === name);
+    assert.ok(entry, `expected a PreToolUse ${name} matcher entry`);
+    assert.strictEqual(entry.hooks.length, 1);
+    assert.strictEqual(entry.hooks[0].type, 'command');
+    assert.ok(!('if' in entry.hooks[0]), `${name} matcher must be a literal tool-name match, not pattern-filtered`);
+    assert.match(entry.hooks[0].command, /bin\/hooks\.js" pre-tool-use$/);
+  }
+});
+
+test('AC5.1: dispatcher: an Agent prompt that differs from the rendered file is denied end to end', () => {
+  const { run: renderPrompt } = require('../plugin/bin/dispatch-prompt');
+  const project = gitRepo();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-11-01T181353-record-4589');
+  fs.mkdirSync(run, { recursive: true });
+  assert.strictEqual(runHook(['record-worktree', '--run', run, '/tmp/wt-4589', '--dispatch'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'S' } }).code, 0);
+  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-disp-dpg-')), 'first.md');
+  let err = '';
+  const code = renderPrompt(['--call', 'first', '--run', run, '--issues', '4589', '--out', out], {
+    cwd: () => project,
+    env: {},
+    resolvePolicyValues: () => 'autonomy=unattended',
+    resolveProfile: () => ({ model: 'opus', effort: 'high', source: 'default', effortLine: '' }),
+    selectedAt: () => 'unknown',
+    now: () => '2026-11-12T10:00:01.000Z',
+    defaultOut: () => null,
+    stdout: () => {},
+    stderr: (s) => { err += s; },
+  });
+  assert.strictEqual(code, 0, err);
+  const prompt = fs.readFileSync(out, 'utf8').replace(/\bExecute\b/, 'Run');
+  const result = runHook(['pre-tool-use'], {
+    input: JSON.stringify({ tool_name: 'Agent', session_id: 'S', cwd: project, tool_input: { subagent_type: 'general-purpose', prompt } }),
+    cwd: project,
+  });
+  assert.strictEqual(result.code, 0);
+  const json = JSON.parse(result.stdout);
+  assert.strictEqual(json.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(json.hookSpecificOutput.permissionDecisionReason, /byte-for-byte/);
 });
 
 test('dispatcher: AskUserQuestion with no owned run exits 0 with no deny', () => {

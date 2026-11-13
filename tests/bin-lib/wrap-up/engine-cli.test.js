@@ -704,7 +704,7 @@ test('render --section procedure:cleanup-procedures-execution emits the head fil
   const r = run(['render', '--section', 'procedure:cleanup-procedures-execution']);
   assert.strictEqual(r.status, 0, r.stderr);
   assert.match(r.stdout, /# Wrap-Up Cleanup Procedures — execution detail/);
-  assert.doesNotMatch(r.stdout, /Delete unconditionally after \*\*2026-11-07\*\*/);
+  assert.doesNotMatch(r.stdout, /producing \*\*no merge commit at all\*\*/);
 });
 
 test('render --section procedure:pr-first-merge emits the head file and excludes its appendix content', () => {

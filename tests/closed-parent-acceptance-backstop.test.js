@@ -181,7 +181,11 @@ function runFetchBlock(login, { raw = false } = {}) {
 }
 
 test('AC1.1: the parent-gate fetch block merges open and closed parents inside the 30-day window and marks the #4466 close', () => {
-  const parents = runFetchBlock('bot-self');
+  const { res, parentsFile } = runFetchBlock('bot-self', { raw: true });
+  assert.equal(res.status, 0, res.stderr);
+  // A healthy login degrades nothing, so the identity WARNING must not print.
+  assert.deepEqual(lines(res.stderr).filter((l) => l.startsWith('WARNING: ')), [], res.stderr);
+  const parents = JSON.parse(fs.readFileSync(parentsFile, 'utf8'));
   assert.deepEqual(parents.map((x) => x.number).sort((a, b) => a - b), [10, 11, 13, 15, 17, 18, 19, 20]);
   const marked = parents.filter((x) => x.belowFloorClose === true).map((x) => x.number).sort((a, b) => a - b);
   assert.deepEqual(marked, [11, 17]);
@@ -189,13 +193,24 @@ test('AC1.1: the parent-gate fetch block merges open and closed parents inside t
   for (const x of parents) assert.ok(!('comments' in x), '#' + x.number + ' carries no comments key');
 });
 
-test('AC2.1: the parent-gate fetch block stops, writing no parents, when the gh login is empty', () => {
-  // A failed `gh api user` leaves the login file empty; with no login a #4466 marker posted by the
-  // current identity would go unrecognised and a below-floor close would read as a gap.
-  const { res, parentsFile } = runFetchBlock('', { raw: true });
-  assert.notEqual(res.status, 0);
-  assert.match(res.stderr, /gh api user returned no login/);
-  assert.equal(fs.existsSync(parentsFile), false, 'no parents file is written on the stop');
+test('AC2.1: the parent-gate fetch block degrades an empty gh login to trusted-author marker matching, keeps every row, and warns', () => {
+  // A failed `gh api user` leaves the login file empty. The block does not stop: with no login only
+  // trusted-author close markers match, so #11's MEMBER marker still counts and #17's NONE-association
+  // marker (posted by the current identity) reads as absent, and one WARNING names the cause.
+  const { IDENTITY_PROBE_FAILED_NOTE } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'issues', 'parent-gate.js'));
+  // A whitespace-only login trims to empty, so it takes the same degraded path as an empty one.
+  for (const login of ['', '   ']) {
+    const label = JSON.stringify(login);
+    const { res, parentsFile } = runFetchBlock(login, { raw: true });
+    assert.equal(res.status, 0, label + ': ' + res.stderr);
+    const parents = JSON.parse(fs.readFileSync(parentsFile, 'utf8'));
+    assert.deepEqual(parents.map((x) => x.number).sort((a, b) => a - b), [10, 11, 13, 15, 17, 18, 19, 20], label);
+    assert.deepEqual(parents.filter((x) => x.belowFloorClose === true).map((x) => x.number), [11], label);
+    const warnings = lines(res.stderr).filter((l) => l.startsWith('WARNING: '));
+    assert.equal(warnings.length, 1, label + ': ' + res.stderr);
+    assert.ok(warnings[0].includes(IDENTITY_PROBE_FAILED_NOTE), warnings[0]);
+    assert.ok(warnings[0].includes('[acceptance-gap] row may be a false positive'), warnings[0]);
+  }
 });
 
 test('AC1.1: the closed-parent fetches are bounded to the window and carry what the gate reads', () => {
@@ -320,6 +335,68 @@ test('AC2.1: Shape 7 prints no row for a #4466-closed or below-floor local paren
   t.parent(9, 'Closed above floor', { closed: true });
   t.subIssue(91, 9, 'high');
   const r = t.run();
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(localCols(r.stdout).map((c) => c[1]), [localRow(9, 'Closed above floor')]);
+});
+
+// #4802: a local-files reader of the close heading requires the one exported regex. The excerpts
+// are the bytes each fence carried before the change, so a green pin is proven able to go red.
+const PRE_4802_SHAPE_7 = `  const { TIERS } = require('\${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
+      belowFloorClose: /^## Closed below the oversight floor\\s*$/m.test(p.body || ''),`;
+const PRE_4802_CLOSE = `const { readRecord, writeRecord, closeRecord } = require('\${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/local-store.js');
+  if (!/^## Closed below the oversight floor\\s*$/m.test(parentRecord.body)) {`;
+const SHARED_REQUIRE = "const { HEADING_LINE_RE } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/parent-gate.js');";
+
+function localFilesCloseSection() {
+  return section(read('wrap-up/verification-brief-parent-gate.md'), '**5. `work-backend: local-files`**', 'A parent whose `facets.closed` is already set');
+}
+
+function assertSharedHeadingRe(text, use) {
+  assert.ok(!text.includes('/^## Closed below the oversight floor'), 'inline copy of the heading regex');
+  assert.ok(text.includes(SHARED_REQUIRE), 'require of the exported regex');
+  assert.ok(text.includes(use), 'the fence tests through the exported regex');
+}
+
+test('AC1.1: Shape 7 requires the exported heading regex, not a literal', () => {
+  const use = "belowFloorClose: HEADING_LINE_RE.test(p.body || ''),";
+  assertSharedHeadingRe(LOCAL, use);
+  assert.throws(() => assertSharedHeadingRe(PRE_4802_SHAPE_7, use), /inline copy of the heading regex/);
+});
+
+test('AC1.1: the local-files close requires the exported heading regex, not a literal', () => {
+  const use = 'if (!HEADING_LINE_RE.test(parentRecord.body)) {';
+  assertSharedHeadingRe(localFilesCloseSection(), use);
+  assert.throws(() => assertSharedHeadingRe(PRE_4802_CLOSE, use), /inline copy of the heading regex/);
+});
+
+test('AC1.1: the local-files close fence appends the section once and closes the parent', () => {
+  const m = /```js\r?\n([\s\S]*?)\r?\n```/.exec(localFilesCloseSection());
+  assert.ok(m, 'the local-files close section carries a js fence');
+  const commentFile = path.join(mkTmp('cp-close-'), 'comment.md');
+  fs.writeFileSync(commentFile, MARKER);
+  const script = 'const parentPath = process.argv[1];\n' + m[1]
+    .split('${CLAUDE_PLUGIN_ROOT}').join(PLUGIN_ROOT.replace(/\\/g, '/'))
+    .split('{parent-close-comment}').join(commentFile.replace(/\\/g, '/'));
+  const { readRecord } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'issues', 'local-store.js'));
+  const heading = '## Closed below the oversight floor';
+  const t = localFixture();
+  const parents = [t.parent(1, 'Fresh'), t.parent(2, 'Marked', { body: 'Parent body.\n\n' + MARKER })];
+  for (const file of parents) {
+    const r = spawnSync('node', ['-e', script, '--', file], { cwd: t.cwd, encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    const rec = readRecord(file);
+    assert.equal(rec.facets.closed, true, file);
+    assert.equal(rec.body.split(heading).length - 1, 1, file);
+  }
+});
+
+test('AC2.1: Shape 7 loads the exported heading regex with no gh on PATH', () => {
+  const t = localFixture();
+  t.parent(9, 'Closed above floor', { closed: true });
+  t.subIssue(91, 9, 'high');
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k.toLowerCase() !== 'path'));
+  env.PATH = mkTmp('cp-nopath-');
+  const r = spawnSync(process.execPath, ['-e', scanScript(LOCAL, "'\\t[parent-gate] '"), '--', 'high'], { cwd: t.cwd, env, encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(localCols(r.stdout).map((c) => c[1]), [localRow(9, 'Closed above floor')]);
 });

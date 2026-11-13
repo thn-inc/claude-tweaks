@@ -11,10 +11,18 @@ const crypto = require('crypto');
 const path = require('path');
 const { evaluateMaturation } = require('../issues/grant-maturation');
 const { resolveRecords } = require('../wrap-up/pack');
-const { SDD_RULING_REASONS, sddRulingDeferralReason } = require('./sdd-ruling');
+const {
+  SDD_RULING_REASONS, sddRulingDeferralReason, SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction,
+} = require('./sdd-ruling');
+const { REFERENCE_REPAIR_REASONS, referenceRepairHoldReason, referenceFindingsByFile, readableGlobs } = require('./reference-repair');
 const { planFilings } = require('./finding-filing');
+const { FINDING_PATH_CLASS, FINDING_LENS_CLASS, FINDING_PATH, FINDING_LOCATION, FINDING_LENS, parseCoincidence } = require('./finding-path');
 const { FINDINGS_ARTIFACT, VERDICT_LINE_END } = require('../tiebreak');
 const { parseCategory, isApplicableReflect, parseReflectDestination, deferReasonProblem } = require('./reflect-destination');
+
+// #3942: the apply reason on a deferral ruling — its ratify files a backlog record
+// (review-console-appendix.md's sdd-ruling-* bullet), not a bare accepted write-back.
+const RATIFY_FILES_RECORD_REASON = 'ratify files a deferral record (Defer-reason carried) — ledger row deferred once it exists';
 
 // Section names exactly as the console renders them (console-template.md;
 // engine-render.js's SECTION_SPECS for the five curation sections).
@@ -349,7 +357,9 @@ function readSnapshot({ runDir, deps }) {
   const patchChecks = deps.checkPatchStack
     ? deps.checkPatchStack(patchItems.map((item) => item.path))
     : Object.fromEntries(patchItems.map((item) => [item.name, deps.gitApplyCheck(item.path)]));
-  return { ...files, members, grants, grantsError, patchChecks };
+  // The merge-sensitive globs, for the reference-repair floor (#4636). Anything but a list of strings
+  // reads as null, so a caller that omits it holds the repair rather than approves it.
+  return { ...files, members, grants, grantsError, patchChecks, sensitivePaths: readableGlobs(deps.sensitivePaths) };
 }
 
 function decisionLines(decisions) {
@@ -500,7 +510,7 @@ function approveAllDefault(recommendation) {
 }
 
 // A STAGED line's finding keys: its first location's, plus the second location of a
-// two-finding coincidence line (step3-lens-dispatch.md: `lens "L" findings P:A / P:B share a location …`).
+// two-finding coincidence line (finding-path.js parseCoincidence, the clause the aggregate detector exempts).
 // Each location takes its longest candidate (locationCandidates) a settler's key names, else the
 // FINDING_PATH match (#4632). The second location's candidates start after the ` / `. A second
 // location FINDING_PATH cannot read keys as its raw text, which no settler names, so the line stays open.
@@ -510,27 +520,22 @@ function lineKeys(line, known = new Set()) {
   const lens = FINDING_LENS_RE.exec(line);
   const loc = FINDING_LOC_RE.exec(line);
   if (lens && loc) keys.push(namedCandidate(locationCandidates(line, loc, lens[1]), known));
-  const co = COINCIDENCE_RE.exec(line);
-  const second = co && FINDING_LOC_RE.exec(co[2]);
-  if (second) keys.push(namedCandidate(locationCandidates(co[2], second, co[1]), known));
-  else if (co) keys.push(`${co[1]}|${co[2]}`);
+  const co = parseCoincidence(line);
+  const second = co && FINDING_LOC_RE.exec(co.second);
+  if (second) keys.push(namedCandidate(locationCandidates(co.second, second, co.lens), known));
+  else if (co) keys.push(`${co.lens}|${co.second}`);
   return keys;
 }
 
 // A converged-positive cross-lens debate (review step 3: `AUTO … Debate: cross-lens disagreement on P:N
 // converged positive after R round(s) (lens "L" finding P:N; lens "M" finding P:M — both confirmed)`) settles
 // every finding its lens list names (#4563). A list entry's path defaults to the region path P (the
-// as-recorded `lens 3a :5` shape). A line with no lens list, or any other debate outcome, names nothing.
+// as-recorded `lens 3a :5` shape); a quoted multi-word lens keys on its first token (FINDING_LENS, #4581).
+// A line with no lens list, or any other debate outcome, names nothing.
 // The optional `Step N: ` prefix is the shape log-decision.js writes when the line is logged with `--step`.
-// The path of a finding key `{lens}|{path}:{line}` (#4582): `@ + ~ % $` join the plain class, and `[id]` / `(group)` count only as a
-// closed group inside one segment, so a citation wrapped in them (`[src/a.ts:4]`) still keys the bare path. A space, `=` and `,` stay out.
-const FINDING_PATH_CLASS = String.raw`A-Za-z0-9_./@+~%$-`; // the plain class, also locationCandidates' boundary test (#4632)
-const FINDING_LENS_CLASS = String.raw`A-Za-z0-9_-`; // a lens token, on STAGED and verdict lines alike (#4632)
-const FINDING_PATH = String.raw`(?:[${FINDING_PATH_CLASS}]|\[{1,2}[A-Za-z0-9_.@+~%$-]+\]{1,2}|\([A-Za-z0-9_.@+~%$-]+\))+\.[A-Za-z0-9]+`;
 const DEBATE_CONVERGED_RE = new RegExp(String.raw`^- AUTO \d{2}:\d{2}:\d{2} — (?:Step [\d.]+: )?Debate: cross-lens disagreement on (${FINDING_PATH}):(\d+) converged positive\b(.*)$`);
-const DEBATE_ENTRY_RE = new RegExp(String.raw`\blens\s+"?([${FINDING_LENS_CLASS}]+)"?\s+(?:finding\s+)?(${FINDING_PATH})?:(\d+)`, 'gi');
-const COINCIDENCE_RE = new RegExp(String.raw`\blens\s+"?([${FINDING_LENS_CLASS}]+)"?\s+findings\s+.+?:\d+\s+\/\s+(.+?:\d+\s+share a location)`);
-const FINDING_LOC_RE = new RegExp(String.raw`(${FINDING_PATH}):(\d+)`);
+const DEBATE_ENTRY_RE = new RegExp(String.raw`\b${FINDING_LENS}\s+(?:finding\s+)?(${FINDING_PATH})?:(\d+)`, 'gi');
+const FINDING_LOC_RE = new RegExp(FINDING_LOCATION);
 const FINDING_LENS_RE = new RegExp(String.raw`\blens\s+"?([${FINDING_LENS_CLASS}]+)"?`, 'i');
 const VERDICT_LENS_RE = new RegExp(`^[${FINDING_LENS_CLASS}]+`);
 const FINDING_PATH_CHAR = new RegExp(`[${FINDING_PATH_CLASS}]`);
@@ -559,7 +564,7 @@ function namedCandidate(candidates, known) {
 function debateConvergedKeys(line) {
   const m = DEBATE_CONVERGED_RE.exec(line);
   if (!m) return [];
-  return Array.from(m[3].matchAll(DEBATE_ENTRY_RE), (e) => `${e[1]}|${e[2] || m[1]}:${e[3]}`);
+  return Array.from(m[3].matchAll(DEBATE_ENTRY_RE), (e) => `${e[1] ?? e[2]}|${e[3] || m[1]}:${e[4]}`);
 }
 
 const FINDING_SECTIONS = [SECTIONS.LOW, SECTIONS.CONTESTED];
@@ -717,23 +722,10 @@ function settledFileResolution(v) {
   return consoleVerdictResolution(v);
 }
 
-// #4585: approving a reference repair at `unattended` applies it with no click,
-// so one the initiative budget's floor keeps from running unapproved (a test
-// file, a merge-sensitive path) or whose target is ambiguous stays pending. The
-// sweep marks those with a `Held:` line in the header — the lines before the
-// first blank line — and a file that could not be read proves nothing either.
-// Prose twin: wrap-up/reference-sweep.md Step 4.
-function referenceRepairHoldReason(item) {
-  if (item.readError || item.text === null) return 'reference-repair-unreadable';
-  for (const line of item.text.split(/\r?\n/)) {
-    if (line.trim() === '') return null;
-    if (/^held:/i.test(line)) return 'reference-repair-held';
-  }
-  return null;
-}
-
 function stagedItems(snapshot) {
   const model = tiebreakModel(snapshot);
+  // The `references` findings grouped by staged file: each repair's JSON `hold` must agree with its header (#4636).
+  const referenceFindings = referenceFindingsByFile(snapshot.engineState);
   // Refusal is a decisions.md fact about the item, not a fact about its name —
   // so it is decided before SECTION_MAP ever runs and outranks every stance.
   const refused = refusedStagedNames(snapshot.decisions);
@@ -748,17 +740,21 @@ function stagedItems(snapshot) {
     const { section, reason, outcome } = classifyStagedItem(s.name, s.text, siblingText);
     if (outcome) return { id: s.name, section, resolution: SECTION_STANCES[section].resolution, reason: `${outcome} — ${SHADOW_DUP_OUTCOMES[outcome].note}` };
     if (reason) return { id: s.name, section, resolution: 'pending', reason };
+    let ratifyReason = null;
     if (/^sdd-ruling-/.test(s.name)) {
       const r = s.readError ? SDD_RULING_REASONS.UNREADABLE : sddRulingDeferralReason(s.text);
       if (r) return { id: s.name, section, resolution: 'pending', reason: r };
+      // #3942: ratifying a deferral files a record at step 7 — the reason says so.
+      if (sddRulingRatifyAction(s.text) === SDD_RULING_RATIFY_ACTIONS.FILE_RECORD) ratifyReason = RATIFY_FILES_RECORD_REASON;
     }
     if (/^wrap-up-reference-/.test(s.name)) {
-      const r = referenceRepairHoldReason(s);
+      const r = referenceRepairHoldReason(s, referenceFindings.get(s.name) || [], snapshot.sensitivePaths);
       if (r) return { id: s.name, section, resolution: 'pending', reason: r };
     }
     const settled = model.settledFiles.get(s.name);
     if (settled) return { id: s.name, section, ...settledFileResolution(settled) };
     const stance = SECTION_STANCES[section];
+    if (ratifyReason) return { id: s.name, section, resolution: stance.resolution, reason: ratifyReason };
     if (s.name.endsWith('.patch')) {
       const check = snapshot.patchChecks[s.name] || { ok: false, error: 'not checked' };
       if (!check.ok) {
@@ -784,9 +780,15 @@ function engineItems(snapshot, stagedIds) {
     for (const f of entry.findings || []) {
       const label = f.targetPath || f.target || entry.target;
       if (f.action === 'staged') {
-        const base = f.stagePath ? path.basename(f.stagePath) : null;
-        if (base && stagedIds.has(base)) continue; // already an item via staged/
-        out.push({ id: `${rowId}:${label}`, section, resolution: SECTION_STANCES[section].resolution, reason: SECTION_STANCES[section].reason });
+        // A non-string stagePath counts as no staged file (#4636).
+        const base = typeof f.stagePath === 'string' && f.stagePath ? path.basename(f.stagePath) : null;
+        // Already an item via staged/ — except a references finding naming a staged file that is not a
+        // wrap-up-reference- repair: only those run the hold rule, so that file's own section would approve
+        // it with the finding's hold never read. That finding stays its own row, held below.
+        if (base && stagedIds.has(base) && !(rowId === 'references' && !/^wrap-up-reference-/.test(base))) continue;
+        // A staged repair with no staged file has no header to agree with its JSON verdict, so it holds.
+        const stance = rowId === 'references' ? { resolution: 'pending', reason: REFERENCE_REPAIR_REASONS.UNCLASSIFIED } : SECTION_STANCES[section];
+        out.push({ id: `${rowId}:${label}`, section, resolution: stance.resolution, reason: stance.reason });
       } else if (f.action === 'applied') {
         out.push({ id: `${rowId}:${label}`, section, resolution: 'applied', reason: `applied (${f.commit || 'commit unknown'})` });
       }
@@ -827,6 +829,12 @@ function findingKey(line) {
 // Stored ids are opaque to every reader, so a console.json written with the old 58-character id
 // still reads and re-renders unchanged. Old-shape ids are not unique (several stored items can
 // share one), so never join a stored old-shape id to a recomputed one.
+// The 8-hex hash suffix of a coordination item's id, derived from the full decisions line.
+// Exported so a reader that recovers a line from its item id mints the same hash.
+function decisionLineHash(line) {
+  return crypto.createHash('sha256').update(line).digest('hex').slice(0, 8);
+}
+
 function coordinationItems(snapshot, stagedIds) {
   const out = [];
   const model = tiebreakModel(snapshot);
@@ -850,7 +858,7 @@ function coordinationItems(snapshot, stagedIds) {
     if (!section) continue;
     const seen = (occurrences.get(line) || 0) + 1;
     occurrences.set(line, seen);
-    const hash = crypto.createHash('sha256').update(line).digest('hex').slice(0, 8);
+    const hash = decisionLineHash(line);
     const repeatSuffix = seen > 1 ? `-${seen}` : '';
     out.push({ id: `decision:${line.slice(2, 60)}#${hash}${repeatSuffix}`, section, resolution: 'keep-staged', reason: SECTION_STANCES[section].reason });
   }
@@ -964,4 +972,4 @@ function resolveAll({ runDir, policy, deps }) {
   return result;
 }
 
-module.exports = { FINDING_PATH, SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, classifyStagedItem, readSnapshot, resolveAll, findingItems, refusedStagedNames, runIdOf, cell, renderDroppedBlock, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs };
+module.exports = { decisionLineHash, SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction, RATIFY_FILES_RECORD_REASON, REFERENCE_REPAIR_REASONS, classifyStagedItem, readSnapshot, resolveAll, findingItems, refusedStagedNames, runIdOf, cell, renderDroppedBlock, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs };

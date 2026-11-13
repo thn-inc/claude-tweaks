@@ -11,7 +11,7 @@
 // proving the gate fires only on the overwrite shape, not merely that the
 // parsers agree with themselves.
 
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
@@ -30,13 +30,26 @@ const {
   isStepMarkupReformat,
   isStepRenumber,
   isReferencePreservingOriginLine,
+  computeSpecWindows,
+  attributeByWindow,
   ArtifactOverwriteCheckError,
 } = require(MOD);
+const { manifestInit, transitionSpec, readManifest } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'flow', 'manifest.js'));
 
 const FIXTURE_TIMEOUT_MS = 30000;
 
+const fixtureDirs = [];
+after(() => {
+  for (const d of fixtureDirs) fs.rmSync(d, { recursive: true, force: true });
+});
+
+// An inherited GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE outranks the fixture's cwd, which would aim
+// the fixture commits at the checkout running this suite (tests/stash-guard.test.js does the same).
+for (const name of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE']) delete process.env[name];
+
 function repo() {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-artifact-overwrite-')));
+  fixtureDirs.push(dir);
   const git = (...a) => execFileSync('git', a, {
     cwd: dir, encoding: 'utf8', timeout: FIXTURE_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -59,6 +72,38 @@ function commit(fx, message) {
   fx.git('commit', '-q', '-m', message);
   return fx.git('rev-parse', 'HEAD').trim();
 }
+
+const T0 = '2026-01-01T10:00:00.000Z'; // spec 10 first transition
+const T1 = '2026-01-01T12:00:00.000Z'; // spec 11 first transition
+function commitAt(fx, message, iso, committerIso = iso) {
+  fx.git('add', '-A');
+  execFileSync('git', ['commit', '-q', '-m', message], {
+    cwd: fx.dir, encoding: 'utf8', timeout: FIXTURE_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, GIT_AUTHOR_DATE: iso, GIT_COMMITTER_DATE: committerIso },
+  });
+  return fx.git('rev-parse', 'HEAD').trim();
+}
+// Real writer: manifestInit + transitionSpec with a pinned clock.
+function manifestRun(transitions /* [[id, status, phase, iso], ...] */, ids = [10, 11]) {
+  const runDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-artifact-manifest-')));
+  fixtureDirs.push(runDir);
+  manifestInit({ runDir, specs: ids, parent: 'p/' });
+  for (const [specId, status, phase, iso] of transitions) {
+    const res = transitionSpec({ runDir, specId, status, phase, now: new Date(iso) });
+    assert.ok(res.ok, `fixture transition rejected: ${JSON.stringify([specId, status, phase, res.reason])}`);
+  }
+  return { runDir, manifest: readManifest(runDir) };
+}
+function checkStories(fx, manifest) {
+  return checkArtifactOverwrite({ base: fx.base, paths: ['stories/'], cwd: fx.dir, manifest });
+}
+const SPEC_10_DONE = [[10, 'running', 'build', T0], [10, 'complete', 'wrap-up', '2026-01-01T11:59:00.000Z']];
+const SEQUENTIAL = [...SPEC_10_DONE, [11, 'running', 'build', T1], [11, 'complete', 'wrap-up', '2026-01-01T14:00:00.000Z']];
+// A parallel wave: both members move to running, then spec 10 keeps transitioning after spec 11 started.
+const INTERLEAVED = [[10, 'running', 'build', T0], [11, 'running', 'build', T1], [10, 'running', 'test', '2026-01-01T12:30:00.000Z'], [10, 'complete', 'wrap-up', '2026-01-01T13:00:00.000Z'], [11, 'complete', 'wrap-up', '2026-01-01T14:00:00.000Z']];
+const STORY = 'stories/x-10.yaml';
+const STORY_V1 = 'name: x\nsteps:\n  locator: old-a\n  other: keep\n';
+const STORY_V2 = 'name: x\nsteps:\n  locator: new-a\n  other: keep\n';
 
 // --- Unit tests: the small parsers ---
 
@@ -340,6 +385,47 @@ test('the top-level walk guards the interpolated {base}..{head} range with --end
   const rangeIdx = calls[0].indexOf('main..HEAD');
   assert.ok(rangeIdx > 0, 'range token should be present');
   assert.strictEqual(calls[0][rangeIdx - 1], '--end-of-options', 'the range token must be immediately preceded by --end-of-options');
+  assert.strictEqual(calls[0][rangeIdx + 1], '--', 'with no integrationRef the pathspec separator follows the range directly');
+});
+
+test('integrationRef appends ^{ref} right after the range, and an empty walk makes only the two guard count calls', () => {
+  const calls = [];
+  const fakeGit = (args) => {
+    calls.push(args);
+    return ''; // empty name-status log and empty counts — clean, no A/M events, no commits at all
+  };
+  const result = checkArtifactOverwrite({ base: 'main', head: 'HEAD', integrationRef: 'up', git: fakeGit, cwd: '/fake' });
+  assert.strictEqual(result.clean, true);
+  assert.strictEqual(calls.length, 3, 'the walk plus the two empty-walk guard counts; the --parents rev-list stays lazy');
+  assert.ok(calls.slice(1).every((c) => c[0] === 'rev-list' && c.includes('--count') && !c.includes('--parents')));
+  const rangeIdx = calls[0].indexOf('main..HEAD');
+  assert.ok(rangeIdx > 0, 'range token should be present');
+  assert.strictEqual(calls[0][rangeIdx + 1], '^up', 'the exclusion token follows the range');
+  assert.strictEqual(calls[0][rangeIdx + 2], '--', 'the pathspec separator follows the exclusion token');
+});
+
+test('an empty walk whose whole range is reachable from integrationRef fails closed instead of reading clean', () => {
+  const fakeGit = (args) => {
+    if (args[0] === 'log') return ''; // the exclusion swallowed every event
+    if (args[0] === 'rev-list' && args.includes('--count')) return args.includes('^up') ? '0\n' : '3\n';
+    throw new Error(`unexpected git call: ${args.join(' ')}`);
+  };
+  assert.throws(
+    () => checkArtifactOverwrite({ base: 'main', head: 'HEAD', integrationRef: 'up', git: fakeGit, cwd: '/fake' }),
+    (err) => err instanceof ArtifactOverwriteCheckError && /reachable from up/.test(err.message) && /omit --integration-ref/.test(err.message),
+  );
+});
+
+test('an empty walk with run commits outside integrationRef stays clean (no journey edits is not a mis-timed run)', () => {
+  const fakeGit = (args) => {
+    if (args[0] === 'log') return '';
+    if (args[0] === 'rev-list' && args.includes('--count')) return args.includes('^up') ? '2\n' : '5\n';
+    throw new Error(`unexpected git call: ${args.join(' ')}`);
+  };
+  assert.deepStrictEqual(
+    checkArtifactOverwrite({ base: 'main', head: 'HEAD', integrationRef: 'up', git: fakeGit, cwd: '/fake' }),
+    { clean: true, overwrites: [] },
+  );
 });
 
 test('a git-command failure (e.g. an unresolvable --base) throws ArtifactOverwriteCheckError, not a raw Error', () => {
@@ -369,7 +455,7 @@ test('paths: [] falls back to the default scope (docs/journeys/, stories/) rathe
   assert.strictEqual(withEmptyArray.clean, true, 'the src/ overwrite is outside the default scope and must not be walked');
 });
 
-test('the real #1988-#1997 journey history in this repo passes with no manual ruling (AC1)', () => {
+test('the real #1988-#1997 journey history in this repo passes with no manual ruling (AC1)', (t) => {
   const repoRoot = path.join(__dirname, '..', '..', '..');
   let head;
   try {
@@ -381,7 +467,9 @@ test('the real #1988-#1997 journey history in this repo passes with no manual ru
     // The specific historical commits this AC names are not reachable in
     // whatever checkout is running the suite (a shallow clone, or a fork
     // whose history was rewritten) — skip rather than fail on an
-    // environment precondition this test doesn't control.
+    // environment precondition this test doesn't control. Reported as a
+    // visible skip, because a silent pass would read as a verified replay.
+    t.skip('b247a02d3 not reachable in this checkout');
     return;
   }
   const result = checkArtifactOverwrite({
@@ -459,7 +547,7 @@ test('cross-spec step-markup conversion that also drops a step still HARD-GATEs 
   assert.strictEqual(JSON.parse(spawned.stdout).overwrites[0].commit, commitB);
 });
 
-test('the real #2702/#2727/#2776 journey reformat (d81250829..80e3dad2d) passes with no manual ruling', () => {
+test('the real #2702/#2727/#2776 journey reformat (d81250829..80e3dad2d) passes with no manual ruling', (t) => {
   const repoRoot = path.join(__dirname, '..', '..', '..');
   let head;
   try {
@@ -469,7 +557,9 @@ test('the real #2702/#2727/#2776 journey reformat (d81250829..80e3dad2d) passes 
   }
   if (head !== 'commit') {
     // Same environment-precondition skip as the AC1 test above: the commit
-    // is not reachable in this checkout, so there is nothing to replay.
+    // is not reachable in this checkout, so there is nothing to replay. Reported
+    // as a visible skip, because a silent pass would read as a verified replay.
+    t.skip('80e3dad2d not reachable in this checkout');
     return;
   }
   const result = checkArtifactOverwrite({
@@ -718,7 +808,11 @@ test('isReferencePreservingOriginLine: a deleted Origin: line with no added Orig
   assert.strictEqual(isReferencePreservingOriginLine(hunks[0]), false);
 });
 
-test('isReferencePreservingOriginLine: a deleted non-Origin line beside the Origin rewrite is not reference-preserving', () => {
+// This does not isolate the non-`Origin:` guard: `Body line.` is not an
+// `Origin:` line, cites no `#N`, and the hunk adds back one `Origin:` line for
+// two deleted. Any of those checks rejects it. The `#N`-carrying test further
+// down (`a deleted non-Origin line carrying a #N ...`) is the one that pins the guard.
+test('isReferencePreservingOriginLine: a deleted body line citing no #N beside the Origin rewrite is not reference-preserving', () => {
   const diff = [
     '--- a/docs/journeys/demo.md',
     '+++ b/docs/journeys/demo.md',
@@ -936,4 +1030,495 @@ test('isStepRenumber: a blank deleted line beside the renumbered heading is igno
   ].join('\n');
   const hunks = parseHunks(diff);
   assert.strictEqual(isStepRenumber(hunks[0]), true);
+});
+
+// --- Manifest-window attribution (refs #4593) ---
+
+test('AC1.1, AC1.2, AC1.3: untrailered self-edit inside spec 10\'s window is clean with the manifest', () => {
+  const fx = repo();
+  write(fx.dir, STORY, STORY_V1); commitAt(fx, 'Add story', '2026-01-01T10:30:00Z');
+  write(fx.dir, STORY, STORY_V2); commitAt(fx, 'Review fix: locator', '2026-01-01T11:30:00Z');
+  const { manifest } = manifestRun(SEQUENTIAL);
+  const result = checkStories(fx, manifest);
+  assert.deepStrictEqual(result, { clean: true, overwrites: [] });
+});
+
+test('window attribution reads the author date, not the committer date', () => {
+  // The modifying commit is authored in spec 10's window but committed in spec
+  // 11's: by author date both commits are spec 10 (clean); by committer date
+  // the modify would be spec 11 (an overwrite).
+  const fx = repo();
+  write(fx.dir, STORY, STORY_V1); commitAt(fx, 'Add story', '2026-01-01T10:30:00Z');
+  write(fx.dir, STORY, STORY_V2); commitAt(fx, 'Review fix: locator', '2026-01-01T11:30:00Z', '2026-01-01T12:30:00Z');
+  const { manifest } = manifestRun(SEQUENTIAL);
+  const result = checkStories(fx, manifest);
+  assert.deepStrictEqual(result, { clean: true, overwrites: [] });
+});
+
+test('AC2.1, AC2.2: the modifying commit in spec 11\'s window is still one overwrite, reported as a spec mismatch', () => {
+  const fx = repo();
+  write(fx.dir, STORY, STORY_V1); commitAt(fx, 'Add story', '2026-01-01T10:30:00Z');
+  write(fx.dir, STORY, STORY_V2); const modifySha = commitAt(fx, 'Review fix: locator', '2026-01-01T12:30:00Z');
+  const { manifest } = manifestRun(SEQUENTIAL);
+  const result = checkStories(fx, manifest);
+  assert.strictEqual(result.clean, false);
+  assert.strictEqual(result.overwrites.length, 1);
+  assert.strictEqual(result.overwrites[0].path, STORY);
+  assert.strictEqual(result.overwrites[0].commit, modifySha);
+  const { reason } = result.overwrites[0];
+  assert.match(reason, /#10/);
+  assert.match(reason, /#11/);
+  assert.match(reason, /by manifest window/);
+  assert.doesNotMatch(reason, /unattributable/);
+});
+
+test('AC3.1, AC3.2: the untrailered self-edit with no manifest reports an unattributable overwrite', () => {
+  const fx = repo();
+  write(fx.dir, STORY, STORY_V1); const addSha = commitAt(fx, 'Add story', '2026-01-01T10:30:00Z');
+  write(fx.dir, STORY, STORY_V2); const modifySha = commitAt(fx, 'Review fix: locator', '2026-01-01T11:30:00Z');
+  const result = checkArtifactOverwrite({ base: fx.base, paths: ['stories/'], cwd: fx.dir });
+  assert.strictEqual(result.clean, false);
+  assert.strictEqual(result.overwrites.length, 1);
+  const { reason } = result.overwrites[0];
+  assert.ok(reason.includes('unattributable — no refs trailer and no manifest window'), reason);
+  assert.ok(!reason.includes('refs trailer does not match'), reason);
+  assert.ok(reason.includes(`deleting commit ${modifySha} and blamed commit ${addSha}`), reason);
+  assert.ok(reason.includes('(manifest windows off: no manifest)'), reason);
+});
+
+test('AC4.1: a refs #N trailer wins over a different spec\'s manifest window', () => {
+  const fx = repo();
+  write(fx.dir, STORY, STORY_V1); commitAt(fx, 'Add story', '2026-01-01T10:30:00Z');
+  write(fx.dir, STORY, STORY_V2); commitAt(fx, 'Fix locator (refs #10)', '2026-01-01T12:30:00Z');
+  const { manifest } = manifestRun(SEQUENTIAL);
+  const result = checkStories(fx, manifest);
+  assert.strictEqual(result.clean, true, JSON.stringify(result.overwrites));
+});
+
+test('AC5.1: an author date before every spec\'s first transition leaves that commit unattributed', () => {
+  const fx = repo();
+  write(fx.dir, STORY, STORY_V1); const addSha = commitAt(fx, 'Add story', '2026-01-01T09:00:00Z');
+  write(fx.dir, STORY, STORY_V2); commitAt(fx, 'Review fix: locator', '2026-01-01T10:30:00Z');
+  const { manifest } = manifestRun(SEQUENTIAL);
+  const result = checkStories(fx, manifest);
+  assert.strictEqual(result.clean, false);
+  assert.strictEqual(result.overwrites.length, 1);
+  const { reason } = result.overwrites[0];
+  assert.ok(reason.includes(`blamed commit ${addSha}`), reason);
+  assert.ok(reason.includes('unattributable'), reason);
+  assert.ok(!reason.includes('deleting commit'), reason);
+});
+
+test('Q2/Q4: a manifest naming a failed spec keeps refs-only behavior for the AC1 history', () => {
+  const fx = repo();
+  write(fx.dir, STORY, STORY_V1); commitAt(fx, 'Add story', '2026-01-01T10:30:00Z');
+  write(fx.dir, STORY, STORY_V2); commitAt(fx, 'Review fix: locator', '2026-01-01T11:30:00Z');
+  const { manifest } = manifestRun([...SPEC_10_DONE, [11, 'running', 'build', T1], [11, 'failed', 'wrap-up', '2026-01-01T14:00:00.000Z']]);
+  const result = checkStories(fx, manifest);
+  assert.strictEqual(result.clean, false);
+  assert.ok(result.overwrites[0].reason.includes('(manifest windows off: spec #11 is failed)'), result.overwrites[0].reason);
+});
+
+test('Q6: an interleaved (parallel-wave) manifest keeps refs-only behavior for the AC1 history', () => {
+  // Under INTERLEAVED windows both commits would fall in spec 10's [T0, T1)
+  // window — a clean — if the interleave guard were absent.
+  const fx = repo();
+  write(fx.dir, STORY, STORY_V1); commitAt(fx, 'Add story', '2026-01-01T10:30:00Z');
+  write(fx.dir, STORY, STORY_V2); commitAt(fx, 'Review fix: locator', '2026-01-01T11:30:00Z');
+  const { manifest } = manifestRun(INTERLEAVED);
+  const result = checkStories(fx, manifest);
+  assert.strictEqual(result.clean, false);
+  assert.ok(result.overwrites[0].reason.includes('(manifest windows off: spec transitions interleave'), result.overwrites[0].reason);
+});
+
+test('Q10: a modifying commit authored in the same second as spec 11\'s first transition stays unattributed', () => {
+  // The ordinary lookup would put 12:00:00.000 inside spec 10's window (spec 11
+  // starts at 12:00:00.400) — a clean — so this goes red without the Q10 rule.
+  const fx = repo();
+  write(fx.dir, STORY, STORY_V1); commitAt(fx, 'Add story', '2026-01-01T11:00:00Z');
+  write(fx.dir, STORY, STORY_V2); const modifySha = commitAt(fx, 'Review fix: locator', '2026-01-01T12:00:00Z');
+  const { manifest } = manifestRun([...SPEC_10_DONE, [11, 'running', 'build', '2026-01-01T12:00:00.400Z'], [11, 'complete', 'wrap-up', '2026-01-01T14:00:00.000Z']]);
+  const result = checkStories(fx, manifest);
+  assert.strictEqual(result.clean, false);
+  assert.strictEqual(result.overwrites.length, 1);
+  const { reason } = result.overwrites[0];
+  assert.ok(reason.includes(`deleting commit ${modifySha}`), reason);
+  assert.ok(reason.includes('unattributable'), reason);
+});
+
+test('Q8: a complete spec with no recorded transition turns windows off, never throws', () => {
+  const fx = repo();
+  write(fx.dir, STORY, STORY_V1); commitAt(fx, 'Add story', '2026-01-01T10:30:00Z');
+  write(fx.dir, STORY, STORY_V2); commitAt(fx, 'Review fix: locator', '2026-01-01T11:30:00Z');
+  const manifest = { multispec: { parent: 'p/', specs: [{ id: 10, status: 'complete', startedAt: T0 }, { id: 11, status: 'complete' }] } };
+  let result;
+  assert.doesNotThrow(() => { result = checkArtifactOverwrite({ base: fx.base, paths: ['stories/'], cwd: fx.dir, manifest }); });
+  assert.strictEqual(result.clean, false);
+  assert.ok(result.overwrites[0].reason.includes('(manifest windows off: spec #11 has no recorded transition)'), result.overwrites[0].reason);
+});
+
+test('Q5: checkArtifactOverwrite throws ArtifactOverwriteCheckError on an unusable manifest before walking', () => {
+  const stub = () => { throw new Error('git must not be called'); };
+  const manifest = { multispec: { parent: 'p/', specs: [] } };
+  assert.throws(
+    () => checkArtifactOverwrite({ base: 'x', git: stub, manifest }),
+    (e) => e instanceof ArtifactOverwriteCheckError && /manifest unusable: manifest names no specs/.test(e.message),
+  );
+});
+
+test('computeSpecWindows: sequential specs tile [start, next start) with an open-ended last window', () => {
+  const { windows, off } = computeSpecWindows(manifestRun(SEQUENTIAL).manifest);
+  assert.strictEqual(off, null);
+  assert.deepStrictEqual(windows, [
+    { id: 10, start: Date.parse(T0), end: Date.parse(T1) },
+    { id: 11, start: Date.parse(T1), end: Infinity },
+  ]);
+});
+
+test('computeSpecWindows: phases[].at gives the first transition when startedAt is absent', () => {
+  const manifest = { multispec: { parent: 'p/', specs: [{ id: 10, status: 'complete', phases: [{ phase: 'build', status: 'running', at: T1 }, { phase: 'test', status: 'running', at: T0 }] }] } };
+  const { windows, off } = computeSpecWindows(manifest);
+  assert.strictEqual(off, null);
+  assert.deepStrictEqual(windows, [{ id: 10, start: Date.parse(T0), end: Infinity }]);
+});
+
+test('computeSpecWindows: off for a not-run, failed or pending spec, an interleaved run, and no manifest', () => {
+  const notRun = computeSpecWindows(manifestRun([[10, 'running', 'build', T0], [10, 'complete', 'wrap-up', '2026-01-01T11:00:00.000Z'], [11, 'not-run', 'build', T1]]).manifest);
+  assert.deepStrictEqual(notRun, { windows: null, off: 'spec #11 is not-run' });
+  const failed = computeSpecWindows(manifestRun([[10, 'running', 'build', T0], [10, 'complete', 'wrap-up', '2026-01-01T11:00:00.000Z'], [11, 'failed', 'build', T1]]).manifest);
+  assert.deepStrictEqual(failed, { windows: null, off: 'spec #11 is failed' });
+  const pending = computeSpecWindows(manifestRun([[10, 'running', 'build', T0]]).manifest);
+  assert.deepStrictEqual(pending, { windows: null, off: 'spec #11 is pending' });
+  const interleaved = computeSpecWindows(manifestRun(INTERLEAVED).manifest);
+  assert.deepStrictEqual(interleaved, { windows: null, off: 'spec transitions interleave (spec #10 has a transition at or after spec #11\'s first transition)' });
+  const equalStarts = computeSpecWindows({ multispec: { parent: 'p/', specs: [{ id: 10, status: 'complete', startedAt: T0 }, { id: 11, status: 'complete', startedAt: T0 }] } });
+  assert.strictEqual(equalStarts.windows, null);
+  assert.ok(equalStarts.off.startsWith('spec transitions interleave'), equalStarts.off);
+  assert.deepStrictEqual(computeSpecWindows(null), { windows: null, off: 'no manifest' });
+});
+
+test('computeSpecWindows (Q8): a spec with no recorded transition turns windows off for any status, never throws', () => {
+  const expected = {
+    complete: 'spec #11 has no recorded transition',
+    running: 'spec #11 has no recorded transition',
+    'not-run': 'spec #11 is not-run',
+    'wrap-up-done (hand-written)': 'spec #11 is wrap-up-done (hand-written)',
+  };
+  for (const [status, off] of Object.entries(expected)) {
+    const manifest = { multispec: { parent: 'p/', specs: [{ id: 10, status: 'complete', startedAt: T0 }, { id: 11, status, phases: [] }] } };
+    let result;
+    assert.doesNotThrow(() => { result = computeSpecWindows(manifest); }, status);
+    assert.deepStrictEqual(result, { windows: null, off }, status);
+  }
+  const noAt = { multispec: { parent: 'p/', specs: [{ id: 11, status: 'complete', phases: [{ phase: 'build', status: 'running' }] }] } };
+  let result;
+  assert.doesNotThrow(() => { result = computeSpecWindows(noAt); });
+  assert.deepStrictEqual(result, { windows: null, off: 'spec #11 has no recorded transition' });
+});
+
+test('computeSpecWindows: throws manifest unusable for no specs, a bad startedAt, and a bad phases[].at', () => {
+  // Each fixture differs from a valid one in exactly that one field, so each
+  // assertion isolates its own guard.
+  const unusable = (re) => (e) => e instanceof ArtifactOverwriteCheckError && re.test(e.message);
+  assert.throws(
+    () => computeSpecWindows({ multispec: { parent: 'p/', specs: [] } }),
+    unusable(/manifest unusable: manifest names no specs/),
+  );
+  assert.throws(
+    () => computeSpecWindows({ multispec: { parent: 'p/', specs: [{ id: 10, status: 'complete', startedAt: 'not-a-date' }] } }),
+    unusable(/manifest unusable: spec #10 startedAt is not a valid date \(not-a-date\)/),
+  );
+  assert.throws(
+    () => computeSpecWindows({ multispec: { parent: 'p/', specs: [{ id: 10, status: 'complete', startedAt: T0, phases: [{ phase: 'build', status: 'running', at: 'garbage' }] }] } }),
+    unusable(/manifest unusable: spec #10 phases\[0\]\.at is not a valid date \(garbage\)/),
+  );
+  // Guard order: validation precedes the status off check.
+  assert.throws(
+    () => computeSpecWindows({ multispec: { parent: 'p/', specs: [{ id: 10, status: 'not-run', startedAt: 'not-a-date' }] } }),
+    unusable(/manifest unusable: spec #10 startedAt is not a valid date \(not-a-date\)/),
+  );
+});
+
+test('attributeByWindow: start is inclusive, the next start exclusive; no match and two matches are both unattributed', () => {
+  // Whole-second values: a later window's own start second falls under the Q10
+  // rule (pinned separately below), so 200000 is unattributed here.
+  const windows = [{ id: 10, start: 100000, end: 200000 }, { id: 11, start: 200000, end: Infinity }];
+  assert.deepStrictEqual([...attributeByWindow(windows, 100000)], [10]);
+  assert.deepStrictEqual([...attributeByWindow(windows, 199999)], [10]);
+  assert.deepStrictEqual([...attributeByWindow(windows, 201000)], [11]);
+  assert.deepStrictEqual([...attributeByWindow(windows, 200000)], []);
+  assert.deepStrictEqual([...attributeByWindow(windows, 99999)], []);
+  assert.deepStrictEqual([...attributeByWindow(windows, NaN)], []);
+  assert.deepStrictEqual([...attributeByWindow(null, 150)], []);
+  // Whole seconds, so the 2+ matches rule (not the Q10 rule) decides this.
+  const tied = [{ id: 10, start: 100000, end: Infinity }, { id: 11, start: 100000, end: Infinity }];
+  assert.deepStrictEqual([...attributeByWindow(tied, 150000)], []);
+});
+
+test('attributeByWindow (Q10): a commit second equal to a later window start\'s whole second is unattributed', () => {
+  const windows = [{ id: 10, start: 1000, end: 5400 }, { id: 11, start: 5400, end: Infinity }];
+  assert.deepStrictEqual([...attributeByWindow(windows, 5000)], []); // 5.000 s: ordinary lookup says #10
+  assert.deepStrictEqual([...attributeByWindow(windows, 4000)], [10]); // previous second: unaffected
+  assert.deepStrictEqual([...attributeByWindow(windows, 6000)], [11]); // next second: unaffected
+  assert.deepStrictEqual([...attributeByWindow(windows, 1000)], [10]); // earliest window's own start second: no Q10 rule
+});
+
+test('AC4.1 (disagreeing direction): a refs #11 trailer wins over spec 10\'s window, so deleting spec 10\'s line is an overwrite', () => {
+  // Both commits are authored in spec 10's window. If the trailer were unioned
+  // with the window (#11 ∪ #10) the modify would intersect the add's #10 — a
+  // false clean on a HARD-GATE.
+  const fx = repo();
+  write(fx.dir, STORY, STORY_V1); const addSha = commitAt(fx, 'Add story', '2026-01-01T10:30:00Z');
+  write(fx.dir, STORY, STORY_V2); const modifySha = commitAt(fx, 'Fix locator (refs #11)', '2026-01-01T11:30:00Z');
+  const { manifest } = manifestRun(SEQUENTIAL);
+  const result = checkStories(fx, manifest);
+  assert.strictEqual(result.clean, false);
+  assert.strictEqual(result.overwrites.length, 1);
+  assert.strictEqual(result.overwrites[0].commit, modifySha);
+  const { reason } = result.overwrites[0];
+  assert.ok(reason.includes(`traces to commit ${addSha}, attributed to #10 (by manifest window)`), reason);
+  assert.ok(reason.includes(`${modifySha}'s own #11 (by refs trailer)`), reason);
+});
+
+test('computeSpecWindows: windows are sorted by first transition, not by manifest order', () => {
+  const manifest = { multispec: { parent: 'p/', specs: [{ id: 11, status: 'complete', startedAt: T1 }, { id: 10, status: 'complete', startedAt: T0 }] } };
+  const { windows, off } = computeSpecWindows(manifest);
+  assert.strictEqual(off, null);
+  assert.deepStrictEqual(windows, [
+    { id: 10, start: Date.parse(T0), end: Date.parse(T1) },
+    { id: 11, start: Date.parse(T1), end: Infinity },
+  ]);
+});
+
+test('computeSpecWindows: a present startedAt wins over an earlier phases[].at', () => {
+  // Hand-edited shape: the writer sets both from one clock, so they only differ here.
+  const manifest = { multispec: { parent: 'p/', specs: [{ id: 10, status: 'complete', startedAt: T1, phases: [{ phase: 'build', status: 'running', at: T0 }] }] } };
+  const { windows, off } = computeSpecWindows(manifest);
+  assert.strictEqual(off, null);
+  assert.deepStrictEqual(windows, [{ id: 10, start: Date.parse(T1), end: Infinity }]);
+});
+
+test('computeSpecWindows: an empty-string startedAt is absent data, so phases[].at gives the first transition', () => {
+  const manifest = { multispec: { parent: 'p/', specs: [{ id: 10, status: 'complete', startedAt: '', phases: [{ phase: 'build', status: 'running', at: T0 }] }] } };
+  let result;
+  assert.doesNotThrow(() => { result = computeSpecWindows(manifest); });
+  assert.deepStrictEqual(result, { windows: [{ id: 10, start: Date.parse(T0), end: Infinity }], off: null });
+});
+
+// --- Integration-ref exclusion and run-commit membership (refs #4845) ---
+//
+// A catch-up merge (the integration branch merged into the run's branch) brings
+// upstream commits into {base}..{head}. `integrationRef` excludes everything
+// reachable from the integration branch from the walk, so those commits are
+// never a run event; a deleted line blamed to a commit outside the run's own
+// rev-list is pre-run content; a line blamed to a merge commit inside the run
+// fails closed. The walk deliberately keeps merge-back (`--no-ff`) wave members
+// as run events, so it never uses --first-parent or --no-merges.
+
+// A repo with branch `up` (the integration branch) at base and the run on `run`.
+function upstreamRepo() {
+  const fx = repo();
+  fx.git('branch', 'up');
+  fx.git('checkout', '-q', '-b', 'run');
+  return fx;
+}
+function onUp(fx, fn) {
+  fx.git('checkout', '-q', 'up');
+  const value = fn();
+  fx.git('checkout', '-q', 'run');
+  return value;
+}
+function mergeIn(fx, branch) {
+  fx.git('merge', '-q', '--no-ff', '--no-edit', branch);
+  return fx.git('rev-parse', 'HEAD').trim();
+}
+function check(fx, extra) {
+  return checkArtifactOverwrite({ base: fx.base, paths: ['docs/journeys/'], cwd: fx.dir, ...extra });
+}
+
+test('AC1.1: an upstream journey a catch-up merge brought in, edited by a run spec, is clean with integrationRef', () => {
+  const fx = upstreamRepo();
+  write(fx.dir, 'docs/journeys/a.md', '# A\n\n## Step 1\nFirst content.\n');
+  commit(fx, 'Add journey a (refs #1)');
+  onUp(fx, () => {
+    write(fx.dir, 'docs/journeys/up.md', '# Up\nline 1\nline 2\n');
+    commit(fx, 'Upstream adds up.md (refs #999)');
+  });
+  mergeIn(fx, 'up');
+  write(fx.dir, 'docs/journeys/up.md', '# Up\nline 1 changed\nline 2\n');
+  commit(fx, 'Spec B edits the upstream journey (refs #2)');
+
+  assert.deepStrictEqual(check(fx, { integrationRef: 'up' }), { clean: true, overwrites: [] });
+  assert.strictEqual(check(fx).clean, false, 'without integrationRef the upstream add reads as a run event (today\'s false positive)');
+});
+
+test('AC4.1: variant — spec B deleting spec A\'s post-merge line in an upstream-added journey is clean with integrationRef', () => {
+  const fx = upstreamRepo();
+  onUp(fx, () => {
+    write(fx.dir, 'docs/journeys/up.md', '# Up\nline 1\n');
+    commit(fx, 'Upstream adds up.md (refs #999)');
+  });
+  mergeIn(fx, 'up');
+  write(fx.dir, 'docs/journeys/up.md', '# Up\nline 1\nspec A line\n');
+  commit(fx, 'Spec A appends a line (refs #1)');
+  write(fx.dir, 'docs/journeys/up.md', '# Up\nline 1\n');
+  commit(fx, 'Spec B deletes spec A\'s line (refs #2)');
+
+  assert.strictEqual(check(fx, { integrationRef: 'up' }).clean, true);
+  assert.strictEqual(check(fx).clean, false, 'without the exclusion the upstream add is in the set, so spec B\'s deletion blames spec A');
+});
+
+test('AC3.1: a genuine cross-spec overwrite after a catch-up merge is still reported, naming the overwriting commit', () => {
+  const fx = upstreamRepo();
+  write(fx.dir, 'docs/journeys/a.md', '# A\n\n## Step 1\nFirst content.\n');
+  commit(fx, 'Spec A adds a.md (refs #1)');
+  onUp(fx, () => {
+    write(fx.dir, 'docs/journeys/other.md', '# Other\nunrelated\n');
+    commit(fx, 'Upstream adds other.md (refs #999)');
+  });
+  mergeIn(fx, 'up');
+  write(fx.dir, 'docs/journeys/a.md', '# A\n\n## Step 1\nReplaced content.\n');
+  const specB = commit(fx, 'Spec B replaces spec A\'s line (refs #2)');
+
+  const result = check(fx, { integrationRef: 'up' });
+  assert.strictEqual(result.clean, false);
+  assert.strictEqual(result.overwrites.length, 1);
+  assert.strictEqual(result.overwrites[0].commit, specB);
+  assert.strictEqual(result.overwrites[0].path, 'docs/journeys/a.md');
+});
+
+test('Q1: a wave member overwriting another member, both merged back --no-ff, is still an overwrite', () => {
+  const fx = upstreamRepo();
+  fx.git('checkout', '-q', '-b', 'm1');
+  write(fx.dir, 'docs/journeys/w.md', '# W\nmember one line\n');
+  commit(fx, 'Member 1 adds w.md (refs #1)');
+  fx.git('checkout', '-q', 'run');
+  mergeIn(fx, 'm1');
+  fx.git('checkout', '-q', '-b', 'm2');
+  write(fx.dir, 'docs/journeys/w.md', '# W\nmember two line\n');
+  const member2 = commit(fx, 'Member 2 replaces the line (refs #2)');
+  fx.git('checkout', '-q', 'run');
+  mergeIn(fx, 'm2');
+
+  const result = check(fx, { integrationRef: 'up' });
+  assert.strictEqual(result.clean, false);
+  assert.strictEqual(result.overwrites[0].commit, member2);
+});
+
+test('Q1: a first-parent spec deleting a merged-back wave member\'s line is still an overwrite', () => {
+  const fx = upstreamRepo();
+  fx.git('checkout', '-q', '-b', 'm1');
+  write(fx.dir, 'docs/journeys/w.md', '# W\nmember one line\nmember one second line\n');
+  commit(fx, 'Member 1 adds w.md (refs #1)');
+  fx.git('checkout', '-q', 'run');
+  mergeIn(fx, 'm1');
+  write(fx.dir, 'docs/journeys/w.md', '# W\nmember one line\n');
+  const spec2 = commit(fx, 'Spec 2 deletes member 1\'s second line (refs #2)');
+
+  const result = check(fx, { integrationRef: 'up' });
+  assert.strictEqual(result.clean, false, 'the member\'s sha is in the rev-list set, so membership does not clear it');
+  assert.strictEqual(result.overwrites[0].commit, spec2);
+});
+
+test('Q3: a fast-forward catch-up\'s commits are excluded by integrationRef', () => {
+  const fx = upstreamRepo();
+  onUp(fx, () => {
+    write(fx.dir, 'docs/journeys/up.md', '# Up\nline 1\nline 2\n');
+    commit(fx, 'Upstream adds up.md (refs #999)');
+  });
+  fx.git('merge', '-q', '--ff-only', 'up');
+  write(fx.dir, 'docs/journeys/up.md', '# Up\nline 1 changed\nline 2\n');
+  commit(fx, 'Spec B edits the upstream journey (refs #2)');
+
+  assert.strictEqual(check(fx, { integrationRef: 'up' }).clean, true);
+  assert.strictEqual(check(fx).clean, false);
+});
+
+test('a run whose commits all reached the integration branch fails closed under integrationRef, not clean', () => {
+  const fx = upstreamRepo();
+  write(fx.dir, 'docs/journeys/a.md', '# A\n\n## Step 1\nFirst content.\n');
+  commit(fx, 'Spec A adds a.md (refs #1)');
+  fx.git('branch', '-f', 'up', 'run');
+
+  assert.throws(() => check(fx, { integrationRef: 'up' }), ArtifactOverwriteCheckError);
+  assert.strictEqual(check(fx).clean, true, 'without the flag the same range is walked and judged (nothing to overwrite here)');
+});
+
+test('AC2.1 (manifest): a line a catch-up merge\'s own resolution wrote fails closed even when a manifest window would attribute the merge', () => {
+  const fx = upstreamRepo();
+  write(fx.dir, 'docs/journeys/a.md', '# A\nkeep\n');
+  commitAt(fx, 'Spec 10 adds a.md', '2026-01-01T10:10:00Z');
+  onUp(fx, () => {
+    write(fx.dir, 'docs/journeys/other.md', '# Other\nunrelated\n');
+    commitAt(fx, 'Upstream adds other.md', '2026-01-01T10:20:00Z');
+  });
+  fx.git('merge', '-q', '--no-ff', '--no-commit', 'up');
+  write(fx.dir, 'docs/journeys/a.md', '# A\nkeep\nresolution line\n');
+  commitAt(fx, 'Merge up into run', '2026-01-01T10:30:00Z');
+  write(fx.dir, 'docs/journeys/a.md', '# A\nkeep\n');
+  commitAt(fx, 'Spec 10 deletes the resolution line', '2026-01-01T10:40:00Z');
+  const { manifest } = manifestRun(SPEC_10_DONE, [10]);
+
+  const result = check(fx, { integrationRef: 'up', manifest });
+  assert.strictEqual(result.clean, false);
+  assert.match(result.overwrites[0].reason, /merge commit/);
+});
+
+// fakeGit: no repo. Routes on argv; `blamedSha` is the commit blame attributes the deleted line to
+// (null: blame carries no entry for it).
+const C1 = '1'.repeat(40);
+const C2 = '2'.repeat(40);
+const MERGE = '3'.repeat(40);
+const OUTSIDE = '4'.repeat(40);
+const UPSHA = '5'.repeat(40);
+function membershipGit(blamedSha) {
+  const calls = [];
+  const git = (args) => {
+    calls.push(args);
+    const cmd = args[0];
+    if (cmd === 'log' && args.includes('--name-status')) return `${C1}\0\nA\0docs/journeys/x.md\0${C2}\0\nM\0docs/journeys/x.md\0`;
+    if (cmd === 'log' && args.includes('--numstat')) return '0\t1\tdocs/journeys/x.md\n';
+    if (cmd === 'diff') return '@@ -2 +1,0 @@\n-deleted line\n';
+    if (cmd === 'blame') return blamedSha === null ? `${C1} 1 1 1\n\tline one\n` : `${C1} 1 1 1\n\tline one\n${blamedSha} 2 2 1\n\tdeleted line\n`;
+    if (cmd === 'rev-list') return `${C2} ${C1}\n${MERGE} ${C1} ${UPSHA}\n${C1} ${'0'.repeat(40)}\n`;
+    if (cmd === 'log' && args.includes('-1')) return args[args.length - 1] === C2 ? '2026-01-01T10:00:00Z\nmsg (refs #2)\n' : '2026-01-01T10:00:00Z\nupstream (refs #999)\n';
+    throw new Error(`unexpected git call: ${args.join(' ')}`);
+  };
+  return { git, calls };
+}
+
+test('AC2.1: a deleted line blamed to a SHA outside the run\'s commits is clean', () => {
+  const { git, calls } = membershipGit(OUTSIDE);
+  const result = checkArtifactOverwrite({ base: 'b', head: 'h', integrationRef: 'up', git, cwd: '/f' });
+  assert.strictEqual(result.clean, true, JSON.stringify(result.overwrites));
+  const revList = calls.filter((c) => c[0] === 'rev-list');
+  assert.deepStrictEqual(revList, [['rev-list', '--parents', '--end-of-options', 'b..h', '^up']]);
+});
+
+test('AC2.1: the same deletion blamed to a run merge commit is an overwrite', () => {
+  const { git } = membershipGit(MERGE);
+  const result = checkArtifactOverwrite({ base: 'b', head: 'h', integrationRef: 'up', git, cwd: '/f' });
+  assert.strictEqual(result.clean, false);
+  assert.match(result.overwrites[0].reason, /merge commit/);
+});
+
+test('the same deletion blamed to a run merge commit is an overwrite without integrationRef too', () => {
+  const { git } = membershipGit(MERGE);
+  const result = checkArtifactOverwrite({ base: 'b', head: 'h', git, cwd: '/f' });
+  assert.strictEqual(result.clean, false);
+  assert.match(result.overwrites[0].reason, /merge commit/);
+});
+
+test('a deleted line with no blame attribution still fails closed ahead of the membership test', () => {
+  const { git } = membershipGit(null);
+  const result = checkArtifactOverwrite({ base: 'b', head: 'h', integrationRef: 'up', git, cwd: '/f' });
+  assert.strictEqual(result.clean, false);
+  assert.match(result.overwrites[0].reason, /no blame attribution/);
+});
+
+test('without integrationRef a line blamed outside the range is not cleared', () => {
+  const { git, calls } = membershipGit(OUTSIDE);
+  const result = checkArtifactOverwrite({ base: 'b', head: 'h', git, cwd: '/f' });
+  assert.strictEqual(result.clean, false);
+  assert.deepStrictEqual(calls.filter((c) => c[0] === 'rev-list'), [['rev-list', '--parents', '--end-of-options', 'b..h']]);
 });
