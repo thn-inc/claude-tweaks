@@ -9,6 +9,9 @@ files:
   - plugin/skills/wrap-up/learned-skills-pr.md
   - plugin/skills/wrap-up/curation-engine.md
   - plugin/skills/_shared/github-pr-scan.md
+  - plugin/skills/wrap-up/auto-merge-short-circuit.md
+  - plugin/bin/console-residue.js
+  - plugin/bin/lib/reconcile/archive-branches.js
 ---
 
 # Review a Run's Learned Skill Edits on Their Own PR
@@ -30,6 +33,7 @@ files:
 - **Should understand:**
   - A second finding on the same skill file joins the earlier patch (`shared: true`). The two share one commit later, and each still gets its own log line.
   - A record-owned skill file stays on the run branch on purpose: splitting it would make the two branches conflict, and merge-check's floor rightly applies to the record's own instruction edit.
+  - `capture` fails closed. A git failure before the diff was read exits 1 with "nothing was changed": the edit commits on the run branch, a `SKIP … Learned-skills PR capture (degraded)` line names the failure, and merge-check's floor still holds that run. A `--target` outside `.claude/skills/` exits 2 and changes nothing, because that file belongs to its own row's commit or stage.
 - **Red flags:**
   - a `.claude/skills/` path in `git diff --name-only {merge-base}..HEAD` of the record's branch after the pass
   - a `captured` finding that was also committed on the run branch
