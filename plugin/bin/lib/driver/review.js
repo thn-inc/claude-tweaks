@@ -933,8 +933,7 @@ async function reviewPass(ctx, deps, { testCommand, isRunArtifact } = {}) {
     }
     return pass(null, summary());
   } catch (err) {
-    const code = err && typeof err.code === 'string' && /^[A-Z0-9_]+$/.test(err.code) ? ` (${err.code})` : '';
-    return stop(`the review pass failed unexpectedly${code}`);
+    return stop(`the review pass failed unexpectedly${codeSuffix(err)}`);
   }
 }
 
@@ -1137,8 +1136,7 @@ async function reviewRecord(ctx, deps, wiring) {
   } catch (err) {
     // A throw before the pass can take anything back (its setup, a missing wiring member) writes nothing: the
     // pass's own catch covers every throw after its first evidence write. The line keeps the seven keys.
-    const code = err && typeof err.code === 'string' && /^[A-Z0-9_]+$/.test(err.code) ? ` (${err.code})` : '';
-    const detail = `the review pass failed before it started${code}`;
+    const detail = `the review pass failed before it started${codeSuffix(err)}`;
     return { status: 'fail', stopClass: STOP_CLASSES.PRE_PUSH, detail, extra: { returned: 0, reproduced: 0, discarded: 0, usage: null, denials: [], costUsd: null, turns: null } };
   }
   if (pass.result) return pass.result;
