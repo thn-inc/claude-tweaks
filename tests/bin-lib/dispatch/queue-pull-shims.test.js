@@ -247,17 +247,42 @@ for (const name of ['GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJ
   });
 }
 
+// The file an escaping GIT_INDEX_FILE would land on beside the sandbox, named after it so a
+// leftover never fails a later run, and removed when the test ends.
+const escapeTarget = (t, sb, suffix) => {
+  const name = `${path.basename(sb.root)}-${suffix}`;
+  const file = path.join(path.dirname(sb.root), name);
+  t.after(() => fs.rmSync(file, { force: true }));
+  return { name, file };
+};
+
 test('the git shim refuses a GIT_INDEX_FILE outside the sandbox', { skip: oracleSkip() }, (t) => {
   const { sb, git } = gitSandbox(t);
+  const { name, file } = escapeTarget(t, sb, 'qp-index');
   // Plainly outside, and outside through a .. that only reads as inside.
-  const outside = [path.join(path.dirname(sb.root), 'qp-index'), `${sb.root}/tmp/../../qp-index`];
+  const outside = [file, `${sb.root}/tmp/../../${name}`];
   for (const index of outside) {
     const r = git(['read-tree', 'HEAD'], { extra: { GIT_INDEX_FILE: index } });
     assert.equal(r.status, 97, index);
     assert.equal(r.stderr, `git-shim: refused (GIT_INDEX_FILE outside the sandbox: ${index}): read-tree HEAD\n`);
   }
   assert.deepEqual(readShimLog(sb.logs, 'git').map((e) => [e.tag, e.why]), outside.map((index) => ['REFUSED', `GIT_INDEX_FILE outside the sandbox: ${index}`]));
-  assert.equal(fs.existsSync(path.join(path.dirname(sb.root), 'qp-index')), false, 'git never wrote it');
+  assert.equal(fs.existsSync(file), false, 'git never wrote it');
+});
+
+test('the git shim refuses a relative GIT_INDEX_FILE with a .. segment', { skip: oracleSkip() }, (t) => {
+  const { sb, git } = gitSandbox(t);
+  const { name, file } = escapeTarget(t, sb, 'qp-rel-index');
+  // git resolves a relative GIT_INDEX_FILE from the worktree top (the clone, root/proj): the first
+  // two climb to the file beside the sandbox; the last two are refused by shape alone.
+  const relative = [`../../${name}`, `sub/../../../${name}`, '..', 'sub/..'];
+  for (const index of relative) {
+    const r = git(['read-tree', 'HEAD'], { extra: { GIT_INDEX_FILE: index } });
+    assert.equal(r.status, 97, index);
+    assert.equal(r.stderr, `git-shim: refused (GIT_INDEX_FILE outside the sandbox: ${index}): read-tree HEAD\n`);
+  }
+  assert.deepEqual(readShimLog(sb.logs, 'git').map((e) => [e.tag, e.why]), relative.map((index) => ['REFUSED', `GIT_INDEX_FILE outside the sandbox: ${index}`]));
+  assert.equal(fs.existsSync(file), false, 'git never wrote it');
 });
 
 test('the git shim delegates with a GIT_INDEX_FILE inside the sandbox', { skip: oracleSkip() }, (t) => {
@@ -267,7 +292,8 @@ test('the git shim delegates with a GIT_INDEX_FILE inside the sandbox', { skip: 
   const r = git(['read-tree', 'HEAD'], { extra: { GIT_INDEX_FILE: index } });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(fs.existsSync(index), true, 'git wrote the scratch index');
-  // A relative one resolves inside the repo the -C walk already contained.
+  // A relative one with no .. segment stays under the worktree top git resolves it from, inside
+  // the repo the -C walk already contained.
   const relative = git(['read-tree', 'HEAD'], { extra: { GIT_INDEX_FILE: 'qp-rel-index' } });
   assert.equal(relative.status, 0, relative.stderr);
   assert.deepEqual(readShimLog(sb.logs, 'git').map((e) => e.tag), ['delegated', 'delegated']);
