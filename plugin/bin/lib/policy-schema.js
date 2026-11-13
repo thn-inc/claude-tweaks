@@ -196,6 +196,8 @@ const POLICY_KEYS = [
   { key: 'owned-owners', type: 'list', default: [], element: 'login', policyOnly: true, summary: "Not yet used; control mode only, from base-branch policy: orgs and users, beside the repo owner, whose repos are owned. Pairs with nothing.", category: 'autonomy-trust', tier: 'advanced' },
   { key: 'trusted-authors', type: 'list', default: [], element: 'login', policyOnly: true, summary: "Not yet used; control mode only, from base-branch policy: GitHub logins trusted as record roots, beside the repo owner. Pairs with nothing.", category: 'autonomy-trust', tier: 'advanced' },
   { key: 'trust-revert-window-days', type: 'integer', min: 1, default: 14, summary: "Sets how many days a closed record must age before its outcome counts as proven-good evidence toward earned trust.", category: 'autonomy-trust', tier: 'advanced' },
+  { key: 'trust-evaluation-window-days', type: 'integer', min: 1, default: 30, summary: "Sets how many days back a closed record still counts toward its class's trust verdict.", category: 'autonomy-trust', tier: 'advanced' },
+  { key: 'trust-follow-up-rate-max-percent', type: 'integer', min: 0, max: 100, default: 30, summary: "Sets the largest share of a class's recent records, in percent, that may draw a corrective follow-up while the class still reads clean.", category: 'autonomy-trust', tier: 'advanced' },
   // The reserved second opt-in named by skills/_shared/autonomy-ceiling.md —
   // read by permittedGrants as grantOriginationEnabled. false by default: the
   // 'unattended' ceiling alone never authorizes a machine-originated grant.
