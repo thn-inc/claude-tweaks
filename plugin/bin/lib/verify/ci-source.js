@@ -35,6 +35,21 @@ const UNKNOWN_ESCAPE_FLAG_RE = /unknown flag: --allow-escape-sequences/;
 const LOCAL_REQUESTED = 'local-requested';
 const NOT_CONSULTED = 'not-consulted';
 
+// LOG_ESCAPE_FLAG hands over the job log's raw bytes, and a PR's test output is
+// text this tool did not write: every terminal control sequence except SGR
+// colour (which extract.js's stripAnsi removes before a region is read) is
+// dropped, so an OSC title or clipboard write, a cursor move or a screen clear
+// in a CI log never reaches the terminal through the printed failing region.
+// Each pattern is linear: ESC is outside every repeated class, so no two
+// attempts rescan the same run (perf/ci-log-controls-linearity.test.js).
+const OSC_RE = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?/g;
+const NON_SGR_CSI_RE = /\x1b\[[0-?]*[ -/]*[@-ln-~]/g;
+const CONTROL_RE = /[\x00-\x08\x0b-\x1a\x1c-\x1f\x7f\u0080-\u009f]|\x1b(?!\[[0-9;]*m)/g;
+
+function stripTerminalControls(line) {
+  return line.replace(OSC_RE, '').replace(NON_SGR_CSI_RE, '').replace(CONTROL_RE, '');
+}
+
 function defaultRunner(args, { cwd = null, timeout = GH_TIMEOUT_MS } = {}) {
   return execFileSync('gh', args, ghOptions(args, {
     encoding: 'utf8', cwd: cwd || undefined, timeout, maxBuffer: LARGE_MAX_BUFFER_BYTES, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
@@ -51,6 +66,7 @@ function normalizeCiLog(text, localRoot) {
   const root = String(localRoot || '').replace(/[\\/]+$/, '');
   return String(text)
     .split(/\r?\n/)
+    .map(stripTerminalControls)
     .map((line) => line.replace(/^\uFEFF?\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z ?/, ''))
     .map((line) => (root
       ? line

@@ -224,3 +224,23 @@ test('normalizeCiLog strips the timestamp prefix and remaps both runner roots (#
   const out = normalizeCiLog('2026-10-25T17:27:01.1234567Z at /home/runner/work/x/x/tests/a.js:1\nD:\\a\\x\\x\\tests\\b.js\nplain', '/r/');
   assert.strictEqual(out, 'at /r/tests/a.js:1\n/r\\tests\\b.js\nplain');
 });
+
+test('normalizeCiLog drops every terminal control from a CI log but SGR colour and tabs (#5369)', () => {
+  const ESC = '\x1b';
+  const raw = [
+    `2026-10-25T17:27:01.1234567Z ${ESC}]0;owned title${ESC}\\not ok 1 - a`,
+    `${ESC}]52;c;cGF5bG9hZA==\x07clip`,
+    `${ESC}[2J${ESC}[1Acursor${ESC}[?25l`,
+    `${ESC}[31mred${ESC}[0m\tkept`,
+    `bell\x07 cr\r back \x9b2J c1`,
+    `${ESC}]8;;https://x.test${ESC}\\link${ESC}]8;;${ESC}\\ unterminated ${ESC}]2;tail`,
+  ].join('\n');
+  assert.strictEqual(normalizeCiLog(raw, ''), [
+    'not ok 1 - a',
+    'clip',
+    'cursor',
+    `${ESC}[31mred${ESC}[0m\tkept`,
+    'bell cr back 2J c1',
+    'link unterminated ',
+  ].join('\n'));
+});
