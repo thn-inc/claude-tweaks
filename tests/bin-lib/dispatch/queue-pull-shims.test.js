@@ -79,6 +79,9 @@ const gitSandbox = (t, scenario = S0()) => {
   return { sb, env, git };
 };
 
+// [tag, why] of each record in the sandbox's git log.
+const gitTagsAndWhys = (sb) => readShimLog(sb.logs, 'git').map((e) => [e.tag, e.why]);
+
 test('the git shim is a sh script', { skip: oracleSkip() }, (t) => {
   const { sb } = gitSandbox(t);
   assert.equal(fs.readFileSync(path.join(sb.bin, 'git'), 'utf8').split('\n')[0], '#!/bin/sh');
@@ -221,7 +224,7 @@ test('the git shim refuses an unresolvable cwd', { skip: oracleSkip() }, (t) => 
   assert.equal(r.status, 97, r.stderr);
   // Each shell first prints its own getcwd complaint at startup.
   assert.match(r.stderr, /git-shim: refused \(unresolvable cwd\): status\n$/);
-  assert.deepEqual(readShimLog(sb.logs, 'git').map((e) => [e.tag, e.why]), [['REFUSED', 'unresolvable cwd']]);
+  assert.deepEqual(gitTagsAndWhys(sb), [['REFUSED', 'unresolvable cwd']]);
 });
 
 for (const [name, extra] of [
@@ -233,7 +236,7 @@ for (const [name, extra] of [
     const r = git(['status'], { extra });
     assert.equal(r.status, 97);
     assert.equal(r.stderr, 'git-shim: refused (GIT_CONFIG_COUNT/GIT_CONFIG_PARAMETERS set): status\n');
-    assert.deepEqual(readShimLog(sb.logs, 'git').map((e) => [e.tag, e.why]), [['REFUSED', 'GIT_CONFIG_COUNT/GIT_CONFIG_PARAMETERS set']]);
+    assert.deepEqual(gitTagsAndWhys(sb), [['REFUSED', 'GIT_CONFIG_COUNT/GIT_CONFIG_PARAMETERS set']]);
   });
 }
 
@@ -243,7 +246,7 @@ for (const name of ['GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJ
     const r = git(['status'], { extra: { [name]: path.join(REPO, '.git') } });
     assert.equal(r.status, 97);
     assert.equal(r.stderr, 'git-shim: refused (GIT_COMMON_DIR/GIT_OBJECT_DIRECTORY/GIT_ALTERNATE_OBJECT_DIRECTORIES set): status\n');
-    assert.deepEqual(readShimLog(sb.logs, 'git').map((e) => [e.tag, e.why]), [['REFUSED', 'GIT_COMMON_DIR/GIT_OBJECT_DIRECTORY/GIT_ALTERNATE_OBJECT_DIRECTORIES set']]);
+    assert.deepEqual(gitTagsAndWhys(sb), [['REFUSED', 'GIT_COMMON_DIR/GIT_OBJECT_DIRECTORY/GIT_ALTERNATE_OBJECT_DIRECTORIES set']]);
   });
 }
 
@@ -266,7 +269,7 @@ test('the git shim refuses a GIT_INDEX_FILE outside the sandbox', { skip: oracle
     assert.equal(r.status, 97, index);
     assert.equal(r.stderr, `git-shim: refused (GIT_INDEX_FILE outside the sandbox: ${index}): read-tree HEAD\n`);
   }
-  assert.deepEqual(readShimLog(sb.logs, 'git').map((e) => [e.tag, e.why]), outside.map((index) => ['REFUSED', `GIT_INDEX_FILE outside the sandbox: ${index}`]));
+  assert.deepEqual(gitTagsAndWhys(sb), outside.map((index) => ['REFUSED', `GIT_INDEX_FILE outside the sandbox: ${index}`]));
   assert.equal(fs.existsSync(file), false, 'git never wrote it');
 });
 
@@ -283,7 +286,7 @@ test('the git shim refuses a relative GIT_INDEX_FILE with a .. segment', { skip:
     assert.equal(r.status, 97, index);
     assert.equal(r.stderr, `git-shim: refused (GIT_INDEX_FILE outside the sandbox: ${index}): read-tree HEAD\n`);
   }
-  assert.deepEqual(readShimLog(sb.logs, 'git').map((e) => [e.tag, e.why]), relative.map((index) => ['REFUSED', `GIT_INDEX_FILE outside the sandbox: ${index}`]));
+  assert.deepEqual(gitTagsAndWhys(sb), relative.map((index) => ['REFUSED', `GIT_INDEX_FILE outside the sandbox: ${index}`]));
   assert.equal(fs.existsSync(file), false, 'git never wrote it');
 });
 
