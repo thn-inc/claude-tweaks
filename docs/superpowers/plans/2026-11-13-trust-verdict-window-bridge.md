@@ -101,7 +101,8 @@ Scope keywords: trustRows, trust-revert-window-days, followUps, machineGrantOutl
 **Files:**
 - Modify: `plugin/bin/lib/issues/grant-gate.js` (gate 2 deny reason)
 - Modify: `plugin/bin/lib/issues/backlog.js` (`machineGrantOutlook` return shape; new `allRefusedOutlookLine`; export it)
-- Test: `tests/bin-lib/issues/grant-gate.test.js`, `tests/bin-lib/issues/backlog.test.js`
+- Test: `tests/bin-lib/issues/grant-gate.test.js`
+- Test: `tests/bin-lib/issues/backlog.test.js`
 
 **Interfaces:**
 - Consumes: `describeMixedReasons(row)` from Task 2.
@@ -133,6 +134,8 @@ Scope keywords: trustRows, trust-revert-window-days, followUps, machineGrantOutl
 - Modify: `plugin/skills/backlog/refine-mode.md` (resolve line becomes `--values autonomy trust-revert-window-days trust-evaluation-window-days trust-follow-up-rate-max-percent`, with the line-to-placeholder comment updated)
 - Modify: `plugin/skills/capture/SKILL.md` (same resolve-line widening and snippet change)
 - Modify: `docs/journeys/refine-the-backlog-through-decision-lanes.md` (its quoted `resolve-policy.js --values autonomy trust-revert-window-days` line)
+- Modify: `docs/plugin-structure.md` (the `backlog-grant-gate.js` CLI line's list of resolved keys gains the two new keys)
+- Modify: `plugin/skills/backlog/mcp-transport.md` (step 3's "call `trustRows` directly" sentence: pass a policy built from `TRUST_POLICY_KEYS` with the values `resolve-policy.js --values` prints for those keys)
 - Modify: `tests/bin-lib/backlog-grant-gate/backlog-grant-gate.test.js` (`windowDays: 14` → `trust: { 'trust-revert-window-days': 14 }` in every `computeOutlook` call; fixtures with `closedAt: '2026-01-01T00:00:00Z'` → a date 20 days before `Date.now()`)
 - Modify: `tests/helpers/strip-comments.js` header list and `.claude/skills/parse-signal-discipline/SKILL.md` item 15 list (add stem `trust-policy-keys`, alphabetical)
 - Create: `tests/trust-policy-keys-conformance.test.js`
@@ -148,7 +151,7 @@ Snippet shape for the three skill files (placeholders `{resolved-window}`, `{res
   - Walks `plugin/skills/**/*.md` through `readText`; for each fenced code block containing a site, the same block must contain `TRUST_POLICY_KEYS`.
   - `AC8.1: every trustRows call site builds its policy from TRUST_POLICY_KEYS` — offenders `[]`.
   - Floor: total sites ≥ 4, and the site files equal exactly `['plugin/bin/lib/backlog-grant-gate/backlog-grant-gate.js', 'plugin/skills/_shared/trust-table.md', 'plugin/skills/backlog/trust-signal.md', 'plugin/skills/capture/SKILL.md']` (sorted).
-  - Go-red: the block-checker flags a planted fence `node -e "trustRows(r, g, n, { 'trust-revert-window-days': process.argv[1] })"`; the js-checker flags a planted `const rows = trustRows(records, log, now, {});`; the js-checker reports a planted mis-parse (`if (b) /"/.test(b); trustRows(x);`) as an offender.
+  - `AC8.2` go-red rows: the block-checker flags a planted fence `node -e "trustRows(r, g, n, { 'trust-revert-window-days': process.argv[1] })"`; the js-checker flags a planted `const rows = trustRows(records, log, now, {});`; the js-checker reports a planted mis-parse (`if (b) /"/.test(b); trustRows(x);`) as an offender.
 - [ ] **Step 2: Run** `node --test tests/trust-policy-keys-conformance.test.js tests/strip-comments-callers-twin.test.js` — Expected: FAIL on the four real sites (go-red rows pass).
 - [ ] **Step 3: Apply the call-site changes** listed in Files, then update the grant-gate test fixtures.
 - [ ] **Step 4: Run** `node --test tests/trust-policy-keys-conformance.test.js tests/strip-comments-callers-twin.test.js tests/bin-lib/backlog-grant-gate/backlog-grant-gate.test.js tests/backlog-grant-gate-cli.test.js` — Expected: PASS.
@@ -174,6 +177,12 @@ Snippet shape for the three skill files (placeholders `{resolved-window}`, `{res
 - After the build, post one comment on #4623 linking #5291 and stating the removal condition (Deliverable 7).
 - AC10: quote the before run (2026-11-13 shaping: 104 candidates, 0 eligible, all refused at `trust`) and an after run of the worktree's `node plugin/bin/backlog-grant-gate.js` in the PR description, with per-class verdicts for every `producer:*` class; if the after run shows 0 eligible, name the blocking condition.
 - AC11: full `npm test` runs at Common Step 5 (verify).
+
+Waived AC10.1: operational evidence in the PR description, not a test — recorded by the orchestrator from a live CLI run.
+Waived AC10.2: same — the orchestrator names the blocking condition if the after run shows 0 eligible.
+Waived AC11.1: the full suite is Common Step 5's verify run, not a task test.
+
+Check B classification (2026-11-13 audit): no change needed — `CHANGELOG.md` (release-please), `docs/journeys/resolve-a-policy-key.md` and `tests/resolve-policy-*.test.js` + `tests/fixtures/resolve-policy/*.yml` (use `trust-revert-window-days` only as an example key), `docs/skill-graph.md` (describes the table generically), `plugin/bin/lib/issues/autonomy.js` (comment only), `plugin/bin/lib/issues/merge-lane-breaker.js` and `plugin/skills/backlog/refine-headless.md` (revert window, unchanged), `plugin/skills/_shared/policy-schema-coverage.md` (`resolveRevertWindowDays` still the first caller), `tests/accept-label-reader-conformance.test.js` and `tests/bin-lib/issues/grant-sampling.test.js` (run in Task 2 Step 4, no edit), the ledger file.
 
 ## Spec coverage map
 
