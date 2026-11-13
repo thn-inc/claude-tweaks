@@ -520,8 +520,64 @@ function withLaxTrap(content, fn) {
     const dir = path.join(f.base, 'trap-checkout');
     fs.mkdirSync(path.join(dir, 'admin'), { recursive: true });
     fs.writeFileSync(path.join(dir, 'admin', 'commondir'), path.join(f.main, '.git'));
+    fs.writeFileSync(path.join(dir, 'admin', 'HEAD'), 'ref: refs/heads/main\n');
     fs.writeFileSync(path.join(dir, '.git'), content);
     fn(dir, f);
+  });
+}
+
+// Marks `root` as a valid git directory (HEAD file, objects/ and refs/ dirs).
+function makeGitDirShape(root) {
+  fs.mkdirSync(path.join(root, 'objects'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'refs'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'HEAD'), 'ref: refs/heads/main\n');
+}
+
+const GIT_LAUNCH = { fn: 'execFileSync', file: 'git', args: ['rev-parse', '--git-common-dir'] };
+
+test('commonDirFromFs: an empty `gitdir: ` path defers to git (git: no path in gitfile)', () => {
+  withGitFile('gitdir: \n', (dir) => {
+    makeGitDirShape(dir); // without the guard, the checkout itself would pass as a git dir
+    assert.strictEqual(sl.commonDirFromFs(dir), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(dir));
+    assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+    assert.strictEqual(result, dir);
+  });
+});
+
+test('commonDirFromFs: a zero-byte commondir defers to git (git dies on it)', () => {
+  withLaxTrap('gitdir: admin\n', (dir) => {
+    makeGitDirShape(path.join(dir, 'admin')); // without the guard, the admin dir itself would pass
+    fs.writeFileSync(path.join(dir, 'admin', 'commondir'), '');
+    assert.strictEqual(sl.commonDirFromFs(dir), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(dir));
+    assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+    assert.strictEqual(result, dir);
+  });
+});
+
+test('commonDirFromFs: a gitdir without HEAD is not a repository — defers to git', () => {
+  withLaxTrap('gitdir: admin\n', (dir) => {
+    fs.rmSync(path.join(dir, 'admin', 'HEAD'));
+    assert.strictEqual(sl.commonDirFromFs(dir), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(dir));
+    assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+    assert.strictEqual(result, dir);
+  });
+});
+
+for (const missing of ['objects', 'refs']) {
+  test(`commonDirFromFs: a common dir without ${missing}/ is not a repository — defers to git`, () => {
+    withLaxTrap('gitdir: admin\n', (dir) => {
+      const common = path.join(dir, 'common2');
+      makeGitDirShape(common);
+      fs.rmSync(path.join(common, missing), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'admin', 'commondir'), common);
+      assert.strictEqual(sl.commonDirFromFs(dir), null);
+      const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(dir));
+      assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+      assert.strictEqual(result, dir);
+    });
   });
 }
 
@@ -571,11 +627,18 @@ test('resolveMainProjectDir: an env redirect reaches git, not the file read', ()
 });
 
 test('resolveMainProjectDir: an unreadable .git file reaches git', chmodDenialSkip('root ignores file permissions'), () => {
-  withGitFile('gitdir: /x\n', (dir) => {
-    fs.chmodSync(path.join(dir, '.git'), 0);
-    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(dir));
-    assert.deepStrictEqual(launches, [{ fn: 'execFileSync', file: 'git', args: ['rev-parse', '--git-common-dir'] }]);
-    assert.strictEqual(result, dir);
+  withWorktrees((f) => {
+    // A REAL worktree's gitdir line: readable, it takes the fast path (no spawn).
+    const gitFile = path.join(f.wt, '.git');
+    assert.deepStrictEqual(recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt)).launches, []);
+    fs.chmodSync(gitFile, 0);
+    try {
+      const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt));
+      assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+      assert.strictEqual(result, f.wt); // git cannot read it either
+    } finally {
+      fs.chmodSync(gitFile, 0o644);
+    }
   });
 });
 
@@ -644,6 +707,7 @@ test('commonDirFromFs: CRLF .git and commondir files parse the same', () => {
     const fake = path.join(f.base, 'crlf-admin');
     fs.mkdirSync(fake);
     fs.writeFileSync(path.join(fake, 'commondir'), `${path.join(f.main, '.git')}\r\n`);
+    fs.writeFileSync(path.join(fake, 'HEAD'), 'ref: refs/heads/main\n');
     const dir = path.join(f.base, 'crlf-checkout');
     fs.mkdirSync(dir);
     fs.writeFileSync(path.join(dir, '.git'), `gitdir: ${fake}\r\n`);
