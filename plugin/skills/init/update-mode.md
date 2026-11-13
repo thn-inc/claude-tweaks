@@ -604,7 +604,7 @@ After Phase 1u (inventory) and Phase 1u.5 (contract drift) complete, evaluate th
 
 3. Skip directly to Phase 9 (Summary). Phase 9's summary template adapts: "Update Mode — no patches needed" instead of the full patch list.
 
-**On full pass (criteria not met):** drift > 0 OR preliminary gap signal >= 3 → first present every line the CI Workflow Review row surfaced (Phase 1u.5), verbatim, under the Quick Audit's `CI workflow review` heading line, as its own report-only block outside the drift count — the one point every full-pass path reaches, since some scopes skip Phase 3 and an Interactive "Done" can stop before Phase 9 — then continue to Phase 2 (Codebase Reconnaissance) as normal.
+**On full pass (criteria not met):** drift > 0 OR preliminary gap signal >= 3 → first present every line the CI Workflow Review row surfaced (Phase 1u.5), verbatim, under the header line `CI workflow review — report-only, not counted as drift:` printed on its own (the Quick Audit's phrase without its "Config is current." lead, which a full pass cannot claim), as its own report-only block outside the drift count — the one point every full-pass path reaches, since some scopes skip Phase 3 and an Interactive "Done" can stop before Phase 9 — then continue to Phase 2 (Codebase Reconnaissance) as normal.
 
 The gate is automatic — no user prompt. The user always sees the audit findings, just without the ceremony when there's nothing to act on.
 

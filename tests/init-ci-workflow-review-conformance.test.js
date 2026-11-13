@@ -196,9 +196,10 @@ const EXCLUSION_FACTS = [
 const missingExclusionFacts = missingFactsOf(EXCLUSION_FACTS);
 const QUICK_AUDIT_FACTS = [
   [/if the CI Workflow Review row surfaced any line/, 'quick audit: conditional on the row surfacing a line'],
-  [/CI workflow review — report-only, not counted as drift:/, 'quick audit: its own heading line'],
+  [/preliminary gap signals \(below threshold\)\. CI workflow review — report-only, not counted as drift:"/, 'quick audit: its own heading line'],
   [/Never print "No drift detected\." while the CI Workflow Review row surfaced any line/, 'quick audit: never "No drift detected."'],
   [/first present every line the CI Workflow Review row surfaced \(Phase 1u\.5\), verbatim/, 'full pass: presents the lines first'],
+  [/under the header line `CI workflow review — report-only, not counted as drift:` printed on its own \(the Quick Audit's phrase without its "Config is current\." lead, which a full pass cannot claim\)/, 'full pass: names its exact header line'],
   [/as its own report-only block outside the drift count/, 'full pass: report-only, not drift'],
   [/still presenting the CI Workflow Review row's lines first/, 'full pass: --full presents them too'],
 ];
@@ -212,6 +213,8 @@ test('drift count: the CI Workflow Review row does not count toward Phase 1u.6\'
   assertEachPatternGoesRed(row, EXCLUSION_FACTS, missingExclusionFacts);
   assertEachPatternGoesRed(phase, QUICK_AUDIT_FACTS, missingQuickAuditFacts);
   assert.ok(phase.includes('Config is current. No drift detected.'), 'the unchanged path keeps its line');
+  // The full pass once pointed at a "CI workflow review heading line" the Quick Audit never prints on its own.
+  assert.doesNotMatch(phase, /under the Quick Audit's `CI workflow review` heading line/);
 });
 
 // --- the ci-review token -------------------------------------------------------
@@ -289,4 +292,57 @@ const INDEX_ROW = /^\| 22 \| `step-22-ci-workflow-review\.md` \|/m;
 test('bootstrap-steps.md lists step 22', () => {
   assert.match(INDEX, INDEX_ROW);
   assert.doesNotMatch(INDEX.replace('| 22 |', '| 2x |'), INDEX_ROW);
+});
+
+// --- maintainer docs: skill-graph edges and plugin-structure entries ------------
+
+const GRAPH = read('docs/skill-graph.md');
+const STRUCTURE = read('docs/plugin-structure.md');
+
+// Each init-owned edge Step 22 adds, as [row prefix, a fact its Relationship cell must carry].
+const GRAPH_ROWS = [
+  ['| `_shared/ci-skips-drafts.md` |', 'Step 22'],
+  ['| `bin/ci-workflow-review.js` |', 'Step 22'],
+];
+const missingGraphRows = (section) => GRAPH_ROWS
+  .filter(([prefix, fact]) => !section.split('\n').some((l) => l.startsWith(prefix) && l.includes(fact)))
+  .map(([prefix]) => prefix);
+
+test('docs/skill-graph.md\'s init section carries the ci-skips-drafts edge', () => {
+  const section = sectionOf(GRAPH, '## init');
+  assert.deepEqual(missingGraphRows(section), []);
+  // Control: each row removed from the section turns exactly its own check red.
+  for (const [prefix] of GRAPH_ROWS) {
+    const without = section.split('\n').filter((l) => !l.startsWith(prefix)).join('\n');
+    assert.notEqual(without, section, `row ${prefix} not found — control cannot discriminate`);
+    assert.deepEqual(missingGraphRows(without), [prefix]);
+  }
+});
+
+// Facts per line of docs/plugin-structure.md, each read from the one line its prefix starts.
+const INIT_LIB_LINE = 'plugin/bin/lib/init/ ';
+const READER_LINE = 'plugin/bin/lib/merge-verification.js ';
+const CLI_LINE = 'node plugin/bin/ci-workflow-review.js ';
+const STRUCTURE_FACTS = [
+  [INIT_LIB_LINE, /ci-workflow-review\.js \(#5162\) — init Step 22's and Update Mode's report-only review/, 'module: entry'],
+  [INIT_LIB_LINE, /CHECKS maps each to its _shared\/ci-skips-drafts\.md section/, 'module: CHECKS to remedy sections'],
+  [INIT_LIB_LINE, /; consumed by plugin\/bin\/ci-workflow-review\.js/, 'module: its consumer'],
+  [READER_LINE, /→ Three line-based GitHub Actions workflow readers \(no YAML library\); the first fails toward off, the other two toward unparsed\./, 'reader: three readers'],
+  [READER_LINE, /readWorkflowShape\(text\) → \{name, prTrigger, types, typesDeclared, draftReference, prFilters, prFiltersByTrigger, pushTrigger, pushBranches, pushBranchesIgnore, pushTags, jobs\[\{id, if, stepIfCount, concurrency\}\], concurrency, unparsed\[reason\]\}/, 'reader: the shape fields'],
+  [READER_LINE, /Tests in tests\/merge-verification-workflow-shape\.test\.js\./, 'reader: its test suite'],
+  // With CLI_LINE as the line's prefix, this completes the command `node plugin/bin/ci-workflow-review.js --root <dir> [--drift] [--json]`.
+  [CLI_LINE, /--root <dir> \[--drift\] \[--json\] {3}# Init's CI-workflow review \(#5162\)/, 'cli: the command'],
+  [CLI_LINE, /reads \.github\/workflows\/\*\.yml and \*\.yaml \(extension matched case-insensitively\)/, 'cli: workflow discovery'],
+  [CLI_LINE, /one JSON line \{reviewed, findings, unparsed\} under --json \(with or without --drift\)/, 'cli: the JSON envelope'],
+  [CLI_LINE, /exit 0 report printed, findings or not \(a per-file read failure is an unparsed entry\), 1 /, 'cli: exit 0'],
+  [CLI_LINE, /— reason on stderr, empty stdout — 2 usage/, 'cli: exit 1 and 2'],
+];
+const missingStructureFacts = (text) => STRUCTURE_FACTS
+  .filter(([prefix, pattern]) => !pattern.test(lineStartingWith(text, prefix)))
+  .map(([, , fact]) => fact);
+
+test('docs/plugin-structure.md lists the CLI, the module and the reader', () => {
+  assert.deepEqual(missingStructureFacts(STRUCTURE), []);
+  assertEachPatternGoesRed(STRUCTURE, STRUCTURE_FACTS.map(([, pattern, fact]) => [pattern, fact]), missingStructureFacts);
+  assert.doesNotMatch(STRUCTURE, /Two line-based GitHub Actions workflow readers/);
 });
