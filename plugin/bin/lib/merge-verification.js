@@ -499,13 +499,57 @@ function decodeDoubleQuoted(inner) {
   return out;
 }
 
-// One pair of surrounding quotes off, with that quote style's escapes undone
-// (`''` in single quotes; YAML's escape set in double quotes), else the text
-// unchanged. null when a double-quoted escape cannot be decoded.
-function stripQuotePair(s) {
-  if (s.length < 2 || (s[0] !== "'" && s[0] !== '"') || s[s.length - 1] !== s[0]) return s;
-  const inner = s.slice(1, -1);
-  return s[0] === "'" ? inner.replace(/''/g, "'") : decodeDoubleQuoted(inner);
+// readQuotedScalar's answer when the value is not one quoted scalar.
+const NOT_QUOTED = Symbol('not quoted');
+
+// A quoted scalar whose text starts with `first` (its opening quote included),
+// continuing on deeper lines from `k`. Only one quoted scalar spanning the whole
+// value counts: text after the closing quote other than a comment, or a deeper
+// line after it, returns NOT_QUOTED and the caller reads the value as plain text.
+// Line breaks fold the YAML way: one break is a space, each empty line a newline,
+// and a double-quoted escaped line break (`\` at a line's end) joins with nothing.
+// Escapes are undone: `''` in single quotes, decodeDoubleQuoted's set in double.
+// A quote that never closes, or an escape that cannot be decoded, is unread.
+function readQuotedScalar(lines, k, end, keyIndent, first) {
+  const q = first[0];
+  let body = '';
+  let cur = first.slice(1);
+  for (;;) {
+    let close = -1;
+    let escapedBreak = false;
+    for (let c = 0; c < cur.length; c++) {
+      if (q === '"' && cur[c] === '\\') {
+        if (c === cur.length - 1) { escapedBreak = true; break; }
+        c++; // an escaped character never closes the quote
+        continue;
+      }
+      if (cur[c] !== q) continue;
+      if (q === "'" && cur[c + 1] === "'") { c++; continue; } // `''` is a quote, not the close
+      close = c;
+      break;
+    }
+    if (close >= 0) {
+      body += cur.slice(0, close);
+      const after = cur.slice(close + 1);
+      if (after.trim() !== '' && !/^[ \t]+#/.test(after)) return NOT_QUOTED;
+      for (let n = k; n < end; n++) {
+        const t = lines[n].trim();
+        if (t === '' || t.startsWith('#')) continue;
+        if (leadSpaces(lines[n]) > keyIndent) return NOT_QUOTED;
+        break;
+      }
+      if (q === "'") return { text: body.replace(/''/g, "'"), next: k, unread: false };
+      const text = decodeDoubleQuoted(body);
+      return text === null ? { text: '', next: k, unread: true } : { text, next: k, unread: false };
+    }
+    body += escapedBreak ? cur.slice(0, -1) : cur.trimEnd();
+    let blanks = 0;
+    while (k < end && lines[k].trim() === '') { blanks++; k++; }
+    if (k >= end || leadSpaces(lines[k]) <= keyIndent) return { text: '', next: k, unread: true };
+    body += blanks > 0 ? '\n'.repeat(blanks) : escapedBreak ? '' : ' ';
+    cur = lines[k].trimStart();
+    k++;
+  }
 }
 
 // `{key, rest}` for a block-mapping entry's content (indentation and any `- `
@@ -615,32 +659,55 @@ function regionReasons(lines, start, end, region) {
   return out;
 }
 
-// A scalar's text from its inline value plus every deeper line before `end`
-// (block, folded or plain continuation): the trimmed lines joined by one space.
-// A flow scalar (inline value plus plain continuation lines) then has one pair
-// of surrounding quotes stripped and unescaped; block and folded text carries no
-// quoting and is kept as written. `next` is the first unread line.
+// A scalar's text from its inline value plus every deeper line before `end`, as
+// {text, next, unread}; `next` is the first unread line, and `text` is always ''
+// when `unread` is set.
+//   - block (`|`) and folded (`>`) text: the trimmed lines joined by one space,
+//     kept as written (no quoting applies);
+//   - one quoted scalar spanning the whole value: readQuotedScalar, where a
+//     quote that never closes or an undecodable escape sets `unread`;
+//   - anything else, two quoted scalars or text after a closing quote included:
+//     plain text, its comment-stripped lines joined by one space, as written.
 function readJoinedScalar(lines, i, end, keyIndent, inline) {
   const v = stripCommentQuoteAware(inline);
-  const block = BLOCK_SCALAR.test(v);
-  const parts = block || v === '' ? [] : [v];
-  for (; i < end; i++) {
-    const line = lines[i];
-    const t = line.trim();
-    if (t === '') continue;
-    const deeper = leadSpaces(line) > keyIndent;
-    if (t.startsWith('#')) {
-      if (block && deeper) parts.push(t);
-      continue;
+  if (BLOCK_SCALAR.test(v)) {
+    const parts = [];
+    for (; i < end; i++) {
+      const t = lines[i].trim();
+      if (t === '') continue;
+      const deeper = leadSpaces(lines[i]) > keyIndent;
+      if (t.startsWith('#')) {
+        if (deeper) parts.push(t);
+        continue;
+      }
+      if (!deeper) break;
+      parts.push(t);
     }
-    if (!deeper) break;
-    parts.push(block ? t : stripCommentQuoteAware(t));
+    return { text: parts.join(' ').trim(), next: i, unread: false };
   }
-  const text = parts.join(' ').trim();
-  if (block) return { text, next: i };
-  // An undecodable escape reads like an empty value: unread, never literal text.
-  const unquoted = stripQuotePair(text);
-  return { text: unquoted === null ? '' : unquoted, next: i };
+  // The value starts on the key's line, or else on the first deeper line.
+  let first = v === '' ? '' : inline.trim();
+  if (first === '') {
+    for (; i < end; i++) {
+      const t = lines[i].trim();
+      if (t === '' || t.startsWith('#')) continue;
+      if (leadSpaces(lines[i]) > keyIndent) { first = t; i++; }
+      break;
+    }
+    if (first === '') return { text: '', next: i, unread: false };
+  }
+  if (first[0] === '"' || first[0] === "'") {
+    const quoted = readQuotedScalar(lines, i, end, keyIndent, first);
+    if (quoted !== NOT_QUOTED) return quoted;
+  }
+  const parts = [stripCommentQuoteAware(first)];
+  for (; i < end; i++) {
+    const t = lines[i].trim();
+    if (t === '' || t.startsWith('#')) continue;
+    if (leadSpaces(lines[i]) <= keyIndent) break;
+    parts.push(stripCommentQuoteAware(t));
+  }
+  return { text: parts.join(' ').trim(), next: i, unread: false };
 }
 
 // Whether a one-line flow mapping `v` is one whole mapping: its outer `{` closes
@@ -801,12 +868,17 @@ function walkSteps(lines, i, end, keyIndent) {
   let stepIndent = null;
   let stepKeyCol = null;
   let count = 0;
-  let unreadable = false;
-  let stepHasKey = false;
-  const isIf = (content) => {
+  // Whether the last key read in this step has an empty value, so that a `- `
+  // line at the key column can be its indentless sequence value.
+  let keyOpen = false;
+  // Reads one step key: counts an `if:`, records whether its value is empty, and
+  // returns false when the content is no `key:` entry.
+  const readKey = (content) => {
     const kv = splitKey(content);
-    if (kv === null) unreadable = true;
-    return kv !== null && kv.key === 'if';
+    if (kv === null) return false;
+    if (kv.key === 'if') count++;
+    keyOpen = stripCommentQuoteAware(kv.rest) === '';
+    return true;
   };
   for (; i < end; i++) {
     const line = lines[i];
@@ -828,27 +900,24 @@ function walkSteps(lines, i, end, keyIndent) {
       const content = after.slice(sp);
       if (content === '' || content.startsWith('#')) {
         stepKeyCol = null; // the item's keys start on the next line
-        stepHasKey = false;
+        keyOpen = false;
       } else {
         stepKeyCol = ind + 1 + sp;
-        if (isIf(content)) count++;
-        if (unreadable) return null;
-        stepHasKey = true;
+        if (!readKey(content)) return null;
       }
       continue;
     }
     if (stepKeyCol === null) stepKeyCol = ind;
     if (ind < stepKeyCol) return null;
     if (ind === stepKeyCol) {
-      // A `- ` line at the key column after a key is an indentless sequence
-      // value of that key (valid YAML); before any key it is unreadable.
+      // A `- ` line at the key column is an indentless sequence value of the key
+      // above when that key's value is empty (valid YAML). Before any key, or
+      // after a key with a scalar value, it is unreadable.
       if (dash) {
-        if (!stepHasKey) return null;
+        if (!keyOpen) return null;
         continue;
       }
-      if (isIf(line.slice(ind))) count++;
-      if (unreadable) return null;
-      stepHasKey = true;
+      if (!readKey(line.slice(ind))) return null;
     }
   }
   return { count, next: i };
@@ -895,7 +964,7 @@ function readJobs(lines, jobsIdx, end, unparsed) {
       if (kv.key === 'if') {
         const r = readJoinedScalar(lines, i, end, keyIndent, kv.rest);
         i = r.next;
-        if (r.text === '') unparsed.push(`job ${job.id} if: not read`);
+        if (r.text === '') unparsed.push(`job ${job.id} if: not read`); // empty or unread
         else job.if = r.text;
       } else if (kv.key === 'concurrency') {
         job.concurrency = true;
@@ -980,12 +1049,15 @@ function readWorkflowShape(text) {
   const nameR = region(/^(?:name|'name'|"name")[ \t]*:/, false);
 
   // A name: region with a tab or an anchor/alias leaves `name` null, never a
-  // literal like '*n', and reports the region reason like the other regions.
+  // literal like '*n', and reports the region reason like the other regions. A
+  // quoted name that never closes or holds an undecodable escape is `name: not
+  // read`; an empty name is simply absent.
   if (nameR) {
     const checks = regionReasons(lines, nameR.start, nameR.end, 'name:');
     unparsed.push(...checks);
     if (checks.length === 0) {
       const r = readJoinedScalar(lines, nameR.start + 1, nameR.end, 0, afterColon(lines[nameR.start]));
+      if (r.unread) unparsed.push('name: not read');
       out.name = r.text === '' ? null : r.text;
     }
   }

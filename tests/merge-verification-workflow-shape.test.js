@@ -51,14 +51,18 @@ test('name: top-level name in bare, quoted and commented forms', () => {
   bothEndings(`name:\n${MIN}`, (t) => assert.equal(shape(t).name, null));
   // an alias or a tab-indented line in the name: region is never read as a literal name:
   // the name stays null and the region reason is reported, like on:/jobs:/concurrency:
-  // a double-quoted name decodes its escapes; one it cannot decode leaves name null, with no
-  // reason, because neither name: reason (tab, anchor/alias) describes it
+  // a double-quoted name decodes its escapes; one it cannot decode, or a quote that never
+  // closes, leaves name null with the reason `name: not read`
   bothEndings(`name: "C\\u0049 \\"x\\""\n${MIN}`, (t) => assert.equal(shape(t).name, 'CI "x"'));
-  bothEndings(`name: "C\\qI"\n${MIN}`, (t) => {
-    const s = shape(t);
-    assert.equal(s.name, null);
-    assert.deepEqual(s.unparsed, []);
-  });
+  for (const c of ['name: "C\\qI"\n', 'name: "CI\n', "name: 'CI\n"]) {
+    bothEndings(c + MIN, (t) => {
+      const s = shape(t);
+      assert.equal(s.name, null, JSON.stringify(t));
+      assert.deepEqual(s.unparsed, ['name: not read'], JSON.stringify(t));
+    });
+  }
+  // a value is quoted only when one quoted scalar spans all of it; otherwise it is plain text
+  bothEndings(`name: 'a' b\n${MIN}`, (t) => assert.equal(shape(t).name, "'a' b"));
   for (const [c, reason] of [['name: *n\n', 'anchor or alias in name:'], ['name: CI\n\tmore\n', 'tab indentation in name:']]) {
     bothEndings(c + MIN, (t) => {
       const s = shape(t);
@@ -147,6 +151,18 @@ test('jobs: job-level if in inline, quoted, wrapped, block and folded forms', ()
     ["    if: \"contains(x, '\\n')\"\n", "contains(x, '\n')"],
     ['    if: "a\\tb\\/c\\u00e9\\x41\\U0001F600\\ d\\_e\\0f\\\tg"\n', 'a\tb/c\u00e9A\u{1F600} d\u00a0e\0f\tg'],
     ['    if: "\\a\\b\\v\\f\\r\\e\\N\\L\\P"\n', '\x07\b\v\f\r\x1b\u0085\u2028\u2029'],
+    // a multi-line double-quoted scalar: an escaped line break joins with nothing, a plain line
+    // break folds to one space, an empty line folds to a newline, and `#` inside it is text
+    ['    if: "a\\\n      b"\n', 'ab'],
+    ['    if: "a &&\n      b"\n', 'a && b'],
+    ['    if: "a\n\n      b"\n', 'a\nb'],
+    ['    if: "a &&\n      b # c"\n', 'a && b # c'],
+    ["    if: 'it''s &&\n      x'\n", "it's && x"],
+    ['    if:\n      "a == b"\n', 'a == b'],
+    // two quoted scalars, or text after the closing quote, are plain text kept as written
+    ["    if: 'a' != 'b'\n", "'a' != 'b'"],
+    ['    if: "a" == "b"\n', '"a" == "b"'],
+    ['    if: "a"\n      && b\n', '"a" && b'],
     // block and folded scalars carry no quoting: their text is never quote-stripped or unescaped
     ["    if: >-\n      'x''' == y'\n", "'x''' == y'"],
     ["    if: |\n      'a' != 'b'\n", "'a' != 'b'"],
@@ -203,6 +219,15 @@ test('jobs: stepIfCount counts step keys only', () => {
   bothEndings('on: push\njobs:\n  a:\n    steps:\n    - if: x\n      run: y\n    -\n      if: z\n    runs-on: x\n', (t) => {
     assert.deepEqual(shape(t).jobs, [{ id: 'a', if: null, stepIfCount: 2, concurrency: false }]);
   });
+  // the indentless sequence may follow the step's first key on its `- ` line, or a key on the
+  // line after a bare `-`
+  for (const steps of ['      - args:\n        - a\n        if: x\n', '      -\n        args:\n        - a\n        if: x\n']) {
+    bothEndings(`on: push\njobs:\n  a:\n    steps:\n${steps}`, (t) => {
+      const s = shape(t);
+      assert.deepEqual(s.jobs, [{ id: 'a', if: null, stepIfCount: 1, concurrency: false }], JSON.stringify(t));
+      assert.deepEqual(s.unparsed, [], JSON.stringify(t));
+    });
+  }
   // an indentless sequence value under a step key (valid YAML) is that key's value
   bothEndings('on: push\njobs:\n  a:\n    steps:\n      - name: n\n        args:\n        - a\n        if: x\n', (t) => {
     const s = shape(t);
@@ -229,6 +254,8 @@ test('concurrency: scalar, block and flow forms', () => {
     ["concurrency:\n  group: x\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n", 'cancel-expression'],
     ['concurrency: {group: x, cancel-in-progress: true}\n', 'cancel-true'],
     ['concurrency: { group: x }\n', 'no-cancel'],
+    // a brace inside a quoted value neither closes nor opens the flow map
+    ["concurrency: {group: 'a}b', cancel-in-progress: true}\n", 'cancel-true'],
     // a deeper line under a sub-key is that sub-key's value, never a cancel-in-progress key
     ['concurrency:\n  group: >-\n    cancel-in-progress: true\n', 'no-cancel'],
   ];
@@ -276,6 +303,8 @@ test('unparsed: each reason fires on its own fixture', () => {
     [`on: { push: { branches: [main] }\n${JOBS}`, 'on: block not read'],
     [`on:\n  push: {branches: [main]} {tags: [v1]}\n${JOBS}`, 'on: block not read'],
     [`on:\n  push: {branches: {x: y}\n${JOBS}`, 'on: block not read'],
+    // a trigger value that does not start with `{` is no flow map, though it ends in one
+    [`on:\n  push: x {}\n${JOBS}`, 'on: block not read'],
     [`on:\n  push: {branches: [main]} junk\n${JOBS}`, 'on: block not read'],
     [`on:\n  pull_request:\n    types: "ready_for_review"\n${JOBS}`, 'pull_request trigger not read'],
     [`on:\n  push:\n    branches: \${{ x }}\n${JOBS}`, 'push branches not read'],
@@ -290,6 +319,15 @@ test('unparsed: each reason fires on its own fixture', () => {
     ['on: push\njobs:\n  a:\n    steps:\n      - { name: n, if: "x" }\n', 'jobs: not read'],
     ['on: push\njobs:\n  a:\n    steps:\n      - run: x\n        not a key\n', 'jobs: not read'],
     ['on: push\njobs:\n  a:\n    steps:\n      -\n        {if: x}\n', 'jobs: not read'],
+    // a `- ` line at a step's key column after a bare `-` that follows a keyed step is still a
+    // nested sequence (each step starts with no key), and one after a key with a scalar value
+    // is no value of that key
+    ['on: push\njobs:\n  a:\n    steps:\n      - args:\n      -\n        - if: x\n', 'jobs: not read'],
+    ['on: push\njobs:\n  a:\n    steps:\n      - name: n\n        - a\n', 'jobs: not read'],
+    ['on: push\njobs:\n  a:\n    steps:\n      - run: a\n        name: n\n        - b\n', 'jobs: not read'],
+    // a quote that never closes is unread, never a stray quote kept as text
+    ['on: push\njobs:\n  a:\n    if: "a && b\n    runs-on: x\n', 'job a if: not read'],
+    ["on: push\njobs:\n  a:\n    if: 'a\n", 'job a if: not read'],
     // a `- ` line at a step's key column before any key is a nested sequence, not a value
     ['on: push\njobs:\n  a:\n    steps:\n      -\n        - if: x\n', 'jobs: not read'],
     ['on: push\njobs:\n  a:\n    if:\n    runs-on: x\n', 'job a if: not read'],
@@ -306,6 +344,9 @@ test('unparsed: each reason fires on its own fixture', () => {
     [`${MIN}concurrency: {group: x} {cancel-in-progress: true}\n`, 'concurrency not read'],
     [`${MIN}concurrency: {group: x} junk {cancel-in-progress: false}\n`, 'concurrency not read'],
     [`${MIN}concurrency: {group: {x: y}\n`, 'concurrency not read'],
+    // a brace inside a quoted value is text: here the outer map closes before the value ends
+    [`${MIN}concurrency: {group: '{'}}\n`, 'concurrency not read'],
+    [`name: "C\\qI"\n${MIN}`, 'name: not read'],
     [`${MIN}concurrency:\n    group: x\n  cancel-in-progress: true\n`, 'concurrency not read'],
     [`${MIN}concurrency:\n  group: x\n  cancel-in-progress: 'true'\n`, 'cancel-in-progress value not read'],
   ];
