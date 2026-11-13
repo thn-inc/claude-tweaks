@@ -19,6 +19,14 @@
 //   - A throw from fn is `{ status: 'fail', detail: err.message }` with the step's class.
 //
 // Every external call goes through `deps`; nothing here reads process state.
+//
+// The ci step holds its first read to a settle window of 2 minutes, measured from the push
+// (CI_SETTLE_WINDOW_MS). The step runs seconds after `gh pr create`, before GitHub has created
+// the test workflow for the pushed commit: in the #5215 Phase 1 proof every ci step ended within
+// ~5 seconds, recording `green` (#4198, #4351) or `pending` (#3931) while the test shards had not
+// started, because the only checks on the PR were fast workflows already finished or skipped.
+// "At least one run on the commit" alone does not close that gap (#4198's commit had a finished
+// skipped `label-fix-branch` run before the test workflow existed), so the window does.
 const path = require('node:path');
 const { STEP, STOP_CLASSES, neutralize, normalizeTitle } = require('./events');
 const { parseStatusPorcelainZ } = require('../git-z');
@@ -44,6 +52,8 @@ const TRANSPORT_RE = /^[a-z-]+$/;
 // How long the ci step waits for a pending or stale check state, and how often it polls.
 const CI_WAIT_BOUND_MS = 30 * 60 * 1000;
 const CI_POLL_INTERVAL_MS = 30 * 1000;
+// No ci read may end the step earlier than this after the push (see the header paragraph).
+const CI_SETTLE_WINDOW_MS = 2 * 60 * 1000;
 // On win32 the worker launcher's default `bin` (`claude`) does not find an npm-installed
 // `claude.cmd`, so a win32 caller passes this explicitly.
 const WIN32_CLAUDE_BIN = 'claude.cmd';
@@ -699,6 +709,7 @@ const pushStep = defineStep(STEP.push, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
     return { status: 'fail', detail };
   }
   ctx.pushed = true;
+  ctx.pushedAt = deps.now();
   return { status: 'ok' };
 });
 
@@ -841,24 +852,28 @@ function readCiState(ctx, deps, args) {
 }
 
 // Reads the PR's check rollup at the worktree's HEAD. Polls `pr-checks.js --pr {n}` (which
-// writes no decisions.md line) while the state is pending, then makes exactly one `--run` read
-// under the express-lane section: that read logs the gate's own line once, and its state is the
-// one recorded (`timeout` when it is still pending at the bound; only this read can say `stale`).
-// Never halts and always reports `ok`: the word it reads is data for the reviewer. The wait is
-// reported as extra.ciWaitMs, so the final line can exclude it without naming this step. A signal
-// during a sleep is delivered mid-step (run.js's handler writes the stop); polling then stops.
-// For that handler, ctx.ci holds the last polled state and ctx.ciWaitStartedAt the wait's start
-// while the step runs, so the interrupted line reports the state and the wait so far.
+// writes no decisions.md line) while the state is pending or stale, or until the settle window
+// (CI_SETTLE_WINDOW_MS, measured from ctx.pushedAt) has passed, then makes exactly one `--run`
+// read under the express-lane section: that read logs the gate's own line once, and its state is
+// the one recorded (`timeout` when it is still pending or stale at the bound; only this read can
+// say `stale`). Never halts and always reports `ok`: the word it reads is data for the reviewer.
+// The wait is reported as extra.ciWaitMs, so the final line can exclude it without naming this
+// step. A signal during a sleep is delivered mid-step (run.js's handler writes the stop); polling
+// then stops. For that handler, ctx.ci holds the last polled state and ctx.ciWaitStartedAt the
+// wait's start while the step runs, so the interrupted line reports the state and the wait so far.
 const ciStep = defineStep(STEP.ci, STOP_CLASSES.NONE, async (ctx, deps) => {
   const started = deps.now();
+  const settleFrom = ctx.pushedAt ?? started;
   ctx.ciWaitStartedAt = started;
   let polled = 'read-failed';
   let timedOut = false;
   for (;;) {
     polled = readCiState(ctx, deps, ['--pr', String(ctx.pr.number)]);
     ctx.ci = polled;
-    if (polled !== 'pending' || ctx.shared.interrupted) break;
-    if (deps.now() - started >= CI_WAIT_BOUND_MS) {
+    const now = deps.now();
+    const settled = now - settleFrom >= CI_SETTLE_WINDOW_MS;
+    if ((polled !== 'pending' && polled !== 'stale' && settled) || ctx.shared.interrupted) break;
+    if (now - started >= CI_WAIT_BOUND_MS) {
       timedOut = true;
       break;
     }
@@ -868,7 +883,7 @@ const ciStep = defineStep(STEP.ci, STOP_CLASSES.NONE, async (ctx, deps) => {
   let state = polled;
   if (!ctx.shared.interrupted) {
     state = readCiState(ctx, deps, ['--run', ctx.runDir, '--section', '/express-lane']);
-    if (timedOut && state === 'pending') state = 'timeout';
+    if (timedOut && (state === 'pending' || state === 'stale')) state = 'timeout';
   }
   ctx.ci = state;
   ctx.ciWaitStartedAt = null;
@@ -881,6 +896,6 @@ const STEPS = Object.freeze([
 ]);
 
 module.exports = {
-  STEPS, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, WIN32_CLAUDE_BIN,
+  STEPS, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN,
   VERIFY_TIMEOUT_MS,
 };

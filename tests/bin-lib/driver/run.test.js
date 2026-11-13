@@ -15,8 +15,10 @@ const {
 } = require(path.join(LIB, 'driver', 'events'));
 const { run, parseArgs, USAGE, driveRecord, newShared, interruptClass, reraiseAfterFlush } = require(path.join(LIB, 'driver', 'run'));
 const {
-  STEPS, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, WIN32_CLAUDE_BIN, VERIFY_TIMEOUT_MS,
+  STEPS, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN, VERIFY_TIMEOUT_MS,
 } = require(path.join(LIB, 'driver', 'steps'));
+// Polls taken before the first one at or past the settle window (the harness clock moves 1 per now(), ms per sleep).
+const WINDOW_POLLS = CI_SETTLE_WINDOW_MS / CI_POLL_INTERVAL_MS + 1;
 const { openBlockerRefs } = require(path.join(LIB, 'issues', 'record-dependencies'));
 const { formatTimestamp } = require(path.join(LIB, 'hooks', 'run-dir-resolve'));
 
@@ -1006,7 +1008,7 @@ test('Gotcha: a run with CLAUDE_CODE_SESSION_ID unset drives normally, and every
   assert.equal(calls(h, 'node', /hooks\.js$/).length, 2, 'record-worktree and record-pr');
   assert.equal(h.lines().at(-1).outcome, 'pending-review');
   const cli = calls(h, 'node');
-  assert.equal(cli.length, 11, 'claim, claim log, record-worktree, verify, check, compose-pr-body, record-pr, set-config, summary log, pr-checks --pr, pr-checks --run');
+  assert.equal(cli.length, 10 + WINDOW_POLLS, 'claim, claim log, record-worktree, verify, check, compose-pr-body, record-pr, set-config, summary log, pr-checks --pr ×WINDOW_POLLS, pr-checks --run');
   for (const c of cli) {
     assert.equal(c.env, env, c.args[0]);
     assert.ok(!('CLAUDE_CODE_SESSION_ID' in c.env));
@@ -2135,7 +2137,7 @@ test('AC2.1: happy path calls run in the deliverable order', async () => {
     'worker', 'git status', 'git add', 'git commit',
     'node verify.js', 'node express-lane.js check', 'git rev-parse', 'git push',
     'node compose-pr-body.js', 'gh pr create', 'node hooks.js record-pr', 'node set-config.js',
-    'node log-decision.js', 'node pr-checks.js', 'node pr-checks.js']);
+    'node log-decision.js', ...Array(WINDOW_POLLS + 1).fill('node pr-checks.js')]);
   assert.equal(h.lines().at(-1).outcome, 'pending-review');
 });
 
@@ -2181,9 +2183,10 @@ test('AC6.4: transient pr create retries once after finding no open PR', async (
   let n = 0;
   const sleeps = [];
   const h = harness({
-    deps: { sleep: async (ms) => { sleeps.push(ms); } },
     script: [[on('ghCreate', 'pr', 'create'), () => { n += 1; if (n === 1) throw transient(); return `${PR_URL}\n`; }], [on('gh', 'pr', 'list'), '[]']],
   });
+  const tick = h.deps.sleep;
+  h.deps.sleep = (ms) => { sleeps.push(ms); return tick(ms); };
   await run(['#7'], h.deps);
   assert.equal(lastLine(h).outcome, 'pending-review');
   assert.equal(createCalls(h).length, 2);
@@ -2311,7 +2314,7 @@ test('AC7.6: ci word is the pr-checks state, timeout at the bound, null with no 
     await run(['#7'], h.deps);
     assert.deepEqual([lastLine(h).ci, lastLine(h).outcome], [state, 'pending-review'], state);
     assert.equal(h.lines().find((l) => l.step === 'ci').detail, state);
-    assert.equal(checkPolls(h).length, 1);
+    assert.equal(checkPolls(h).length, WINDOW_POLLS);
     assert.equal(checkRuns(h).length, 1);
   }
   const forever = harness({ script: [prChecksReply('pending')] });
@@ -2346,17 +2349,51 @@ test('ci polls --pr while pending, then makes one --run read under the express-l
   const polls = ['pending', 'pending', 'green'];
   const sleeps = [];
   const h = harness({
-    deps: { sleep: async (ms) => { sleeps.push(ms); } },
-    script: [[on('node', /pr-checks\.js$/), (c) => ({ code: 0, stderr: '', stdout: JSON.stringify({ state: c.args.includes('--run') ? 'stale' : polls.shift() }) })]],
+    script: [[on('node', /pr-checks\.js$/), (c) => ({ code: 0, stderr: '', stdout: JSON.stringify({ state: c.args.includes('--run') ? 'stale' : (polls.shift() ?? 'green') }) })]],
   });
+  const tick = h.deps.sleep;
+  h.deps.sleep = (ms) => { sleeps.push(ms); return tick(ms); };
   await run(['#7'], h.deps);
   assert.equal(lastLine(h).ci, 'stale');
-  assert.deepEqual(sleeps, [CI_POLL_INTERVAL_MS, CI_POLL_INTERVAL_MS]);
+  assert.deepEqual(sleeps, Array(WINDOW_POLLS - 1).fill(CI_POLL_INTERVAL_MS));
   const all = nodeCalls(h, /pr-checks\.js$/);
   assert.deepEqual(all.map((c) => c.args.slice(1)), [
-    ['--pr', '9'], ['--pr', '9'], ['--pr', '9'], ['--run', runDirOf(h), '--section', '/express-lane'],
+    ...Array(WINDOW_POLLS).fill(['--pr', '9']), ['--run', runDirOf(h), '--section', '/express-lane'],
   ]);
   assert.ok(all.every((c) => c.cwd === WT), 'every read runs in the worktree');
+});
+
+test('ci: a non-pending read inside the settle window does not end the step', async () => {
+  for (const early of ['green', 'no-ci', 'stale']) {
+    const seq = [early, 'pending'];
+    const h = harness({ script: [[on('node', /pr-checks\.js$/), (c) => ({ code: 0, stderr: '',
+      stdout: JSON.stringify({ state: c.args.includes('--run') ? 'green' : (seq.shift() ?? 'green') }) })]] });
+    await run(['#7'], h.deps);
+    assert.equal(lastLine(h).ci, 'green', early);
+    assert.equal(checkPolls(h).length, WINDOW_POLLS, early);
+    assert.equal(checkRuns(h).length, 1, early);
+  }
+});
+
+test('ci: stale keeps polling like pending and times out at the bound', async () => {
+  const h = harness({ script: [prChecksReply('stale')] });
+  await run(['#7'], h.deps);
+  assert.equal(lastLine(h).ci, 'timeout');
+  assert.equal(checkPolls(h).length, CI_WAIT_BOUND_MS / CI_POLL_INTERVAL_MS + 1);
+  assert.equal(checkRuns(h).length, 1);
+});
+
+test('ci: the settle window is measured from the push', async () => {
+  let h = null;
+  // The PR step takes the whole window: the first CI poll is already past it, so it is final.
+  h = harness({ script: [[on('ghCreate', 'pr', 'create'), () => { h.deps.sleep(CI_SETTLE_WINDOW_MS); return `${PR_URL}\n`; }]] });
+  await run(['#7'], h.deps);
+  assert.equal(lastLine(h).ci, 'green');
+  assert.equal(checkPolls(h).length, 1);
+});
+
+test('ci: the settle window constant', () => {
+  assert.equal(CI_SETTLE_WINDOW_MS, 2 * 60 * 1000);
 });
 
 test('every record gets exactly one pr-checks --run read, carrying the express-lane section', async () => {
