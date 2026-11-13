@@ -64,7 +64,7 @@ const URL_REF = /\bhttps?:\/\/[^\s/]+\/[^\s/]+\/[^\s/]+\/(?:issues|pull)\/\d+(?:
 // A closing keyword (and an optional colon) only where a reference starts right after it; the
 // lookahead leaves the reference for its own pass. A keyword with no reference is plain prose.
 const KEYWORD_BEFORE_REF = new RegExp(
-  '\\b' + CLOSING_KEYWORD_ALTERNATION + '\\b\\s*:?\\s*(?='
+  '\\b' + CLOSING_KEYWORD_ALTERNATION + '\\b(?:\\s*:)?\\s*(?='
   + [URL_REF, QUALIFIED_REF, BARE_REF].map((r) => r.source).join('|') + ')',
   'gi',
 );
@@ -72,9 +72,27 @@ const GH_REF = /\bGH-\d+\b/gi;
 // An HTML comment opener hides the rest of a rendered body; `<\!--` renders as the text `<!--`.
 const COMMENT_OPENER = /<!--/g;
 
+// Removing a reference can splice the text around it into a new one (`h#7ttps://…` becomes a URL,
+// `Clo#5ses` a keyword). The removal passes therefore repeat until the text stops changing; every
+// pass that changes anything strictly shortens the text, so the loop terminates. Only removals
+// loop: the `@`, backtick and comment-opener transforms are not idempotent.
+function removeReferencesToFixedPoint(text) {
+  let out = text;
+  for (;;) {
+    const next = out
+      .replace(KEYWORD_BEFORE_REF, '')
+      .replace(URL_REF, '')
+      .replace(GH_REF, '')
+      .replace(QUALIFIED_REF, '')
+      .replace(BARE_REF, '');
+    if (next === out) return out;
+    out = next;
+  }
+}
+
 function neutralize(text) {
   if (typeof text !== 'string') return '';
-  return text
+  return removeReferencesToFixedPoint(text
     .replace(/[\r\n\t]+/g, ' ')
     .replace(KEYWORD_BEFORE_REF, '')
     .replace(URL_REF, '')
@@ -83,7 +101,7 @@ function neutralize(text) {
     .replace(/`/g, "'")
     .replace(/@/g, '@\u200B')
     .replace(QUALIFIED_REF, '')
-    .replace(BARE_REF, '')
+    .replace(BARE_REF, ''))
     .replace(/\s+/g, ' ')
     .trim();
 }

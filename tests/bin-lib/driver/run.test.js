@@ -74,6 +74,18 @@ test('#5269 AC2: a closing keyword before a reference loses both', () => {
   assert.equal(neutralize('Closes (#4) now'), 'Closes () now');
 });
 
+test('#5269 AC2: a reference rebuilt by a removal is removed too, with its keyword', () => {
+  assert.equal(neutralize('Add the loop, Closes h#7ttps://github.com/o/r/issues/5 now'), 'Add the loop, now');
+  assert.equal(neutralize('Add Closes h#7ttps://github.com/o/r/pull/5 now'), 'Add now');
+  assert.equal(neutralize('Clo#5ses h#7ttps://github.com/o/r/issues/5 now'), 'now');
+  const leftover = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s*(?:#\d|\S*\/\S*#\d|\S*github\.com\/)/i;
+  for (const s of [
+    'Add the loop, Closes h#7ttps://github.com/o/r/issues/5 now',
+    'Add Closes h#7ttps://github.com/o/r/pull/5 now',
+    'Clo#5ses h#7ttps://github.com/o/r/issues/5 now',
+  ]) assert.doesNotMatch(neutralize(s), leftover, s);
+});
+
 test('#5269 AC3: no keyword is ever left followed by a reference, in any case or shape', () => {
   const { CLOSING_KEYWORD_ALTERNATION } = require(path.join(LIB, 'issue-branch-tracking'));
   const keywords = ['close', 'closes', 'closed', 'fix', 'fixes', 'fixed', 'resolve', 'resolves', 'resolved'];
