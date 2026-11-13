@@ -674,6 +674,7 @@ test('machineGrantOutlook: needs:definition refuses ahead of trust (gate order p
     [],
   );
   assert.deepEqual(out.refused, { 'needs-definition': [5] });
+  assert.deepEqual(out.trustRefusedClasses, []);
 });
 
 test('machineGrantOutlook: refused ids aggregate per failedKey in input order alongside eligibles', () => {
