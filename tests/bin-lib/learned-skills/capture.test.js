@@ -8,7 +8,7 @@ const path = require('node:path');
 const { capture, stageEntry, readManifest, realDeps } = require('../../../plugin/bin/lib/learned-skills/learned-skills.js');
 const cli = require('../../../plugin/bin/learned-skills-pr.js');
 const {
-  X, sh, write, fixture, status, args, baseDeps, diffOf, TOP, BOTTOM,
+  X, sh, write, read, lf, fixture, status, args, baseDeps, diffOf, TOP, BOTTOM,
 } = require('../../helpers/learned-skills-capture.js');
 
 function recorder() {
@@ -33,7 +33,7 @@ test('record-owned target stays on the run branch', (t) => {
 
 test('captures a tracked edit and reverts it', (t) => {
   const f = fixture(t);
-  const original = fs.readFileSync(path.join(f.repo, X), 'utf8');
+  const original = read(f.repo, X);
   write(f.repo, X, original + 'learned: a new anti-pattern\n');
   const res = capture(args(f, X));
   assert.equal(res.route, 'captured');
@@ -44,7 +44,7 @@ test('captures a tracked edit and reverts it', (t) => {
   assert.ok(patch.startsWith(`diff --git a/${X} b/${X}`), patch.slice(0, 80));
   sh(f.repo, ['apply', '--check', res.patch]);
   assert.equal(status(f.repo, X), '');
-  assert.equal(fs.readFileSync(path.join(f.repo, X), 'utf8'), original);
+  assert.equal(read(f.repo, X), original);
   const manifest = readManifest(f.runDir);
   assert.equal(manifest.length, 1);
   assert.equal(manifest[0].status, 'captured');
@@ -65,7 +65,7 @@ test('captures a new untracked skill file and deletes it', (t) => {
 
 test('second finding on the same target reuses the patch', (t) => {
   const f = fixture(t);
-  write(f.repo, X, fs.readFileSync(path.join(f.repo, X), 'utf8') + 'one\n');
+  write(f.repo, X, read(f.repo, X) + 'one\n');
   const first = capture(args(f, X));
   const second = capture(args(f, X, 'a second finding'));
   assert.deepEqual(second, { route: 'captured', id: '1', patch: first.patch, shared: true });
@@ -75,7 +75,7 @@ test('second finding on the same target reuses the patch', (t) => {
 // I1 (final review): every finding a capture absorbs is recorded on its entry, so land can log each.
 test('a shared capture appends its own row and summary to the entry, once', (t) => {
   const f = fixture(t);
-  const body = fs.readFileSync(path.join(f.repo, X), 'utf8');
+  const body = read(f.repo, X);
   write(f.repo, X, BOTTOM(body));
   capture(args(f, X, 'first finding'));
   const findingsOf = () => readManifest(f.runDir)[0].findings;
@@ -97,7 +97,7 @@ test('a shared capture appends its own row and summary to the entry, once', (t) 
 
 test('a shared capture whose manifest write fails says so and keeps the patch', (t) => {
   const f = fixture(t);
-  write(f.repo, X, fs.readFileSync(path.join(f.repo, X), 'utf8') + 'one\n');
+  write(f.repo, X, read(f.repo, X) + 'one\n');
   const first = capture(args(f, X));
   const res = capture(args(f, X, 'a second finding'), {
     ...baseDeps,
@@ -114,7 +114,7 @@ const stagedFiles = (f) => (fs.existsSync(path.join(f.runDir, 'staged')) ? fs.re
 
 test('the same edit captured again replaces the patch as a shared join and stages nothing', (t) => {
   const f = fixture(t);
-  const body = fs.readFileSync(path.join(f.repo, X), 'utf8');
+  const body = read(f.repo, X);
   write(f.repo, X, BOTTOM(body));
   const first = capture(args(f, X, 'first finding'));
   const earlier = fs.readFileSync(first.patch);
@@ -137,7 +137,7 @@ test('the same edit captured again replaces the patch as a shared join and stage
   assert.deepEqual(readManifest(f.runDir).map((e) => [e.id, e.status]), [['1', 'captured']]);
   assert.equal(readManifest(f.runDir)[0].findings.length, 2);
   assert.deepEqual(stagedFiles(f), []);
-  assert.equal(fs.readFileSync(path.join(f.repo, X), 'utf8'), body);
+  assert.equal(read(f.repo, X), body);
 });
 
 test('a new file captured again is joined the same way', (t) => {
@@ -169,7 +169,7 @@ test('a different edit to a captured new file is staged on its own, naming why',
 
 test('a failed re-capture of an edit the patch already holds is not staged beside it', (t) => {
   const f = fixture(t);
-  const body = fs.readFileSync(path.join(f.repo, X), 'utf8');
+  const body = read(f.repo, X);
   write(f.repo, X, BOTTOM(body));
   const first = capture(args(f, X, 'first finding'));
   const earlier = fs.readFileSync(first.patch);
@@ -183,7 +183,7 @@ test('a failed re-capture of an edit the patch already holds is not staged besid
   assert.ok(caught && caught.name === 'Error' && caught.holder === 'tree' && caught.restored === true, `staging this diff would schedule the earlier edit twice (${caught && caught.message})`);
   assert.equal(caught.holder, 'tree');
   assert.match(caught.message, /still in the working tree/);
-  assert.equal(fs.readFileSync(path.join(f.repo, X), 'utf8'), TOP(BOTTOM(body)), 'the tree keeps both edits, to commit on the run branch');
+  assert.equal(read(f.repo, X), TOP(BOTTOM(body)), 'the tree keeps both edits, to commit on the run branch');
   assert.deepEqual(stagedFiles(f), []);
   assert.deepEqual(readManifest(f.runDir).map((e) => [e.id, e.status]), [['1', 'captured']]);
   assert.ok(fs.readFileSync(first.patch).equals(earlier));
@@ -193,7 +193,7 @@ test('a failed re-capture of an edit the patch already holds is not staged besid
 // that step, not as the recompose (learned-skills.js fallback's gateStep branch).
 test('a failed description-only rewrite at the gate is named as that step', (t) => {
   const f = fixture(t);
-  const original = fs.readFileSync(path.join(f.repo, X), 'utf8');
+  const original = read(f.repo, X);
   write(f.repo, X, original + 'edit\n');
   let rewrites = 0;
   const deps = {
@@ -215,12 +215,12 @@ test('a failed description-only rewrite at the gate is named as that step', (t) 
   assert.ok(caught && caught.restored === true, caught && caught.message);
   assert.match(caught.message, /staging failed \(writing the description-only stage: disk full\)/);
   assert.doesNotMatch(caught.message, /recomposing the staged file/);
-  assert.equal(fs.readFileSync(path.join(f.repo, X), 'utf8'), original + 'edit\n');
+  assert.equal(read(f.repo, X), original + 'edit\n');
 });
 
 test('CLI capture passes --row through', (t) => {
   const f = fixture(t);
-  write(f.repo, X, fs.readFileSync(path.join(f.repo, X), 'utf8') + 'cli edit\n');
+  write(f.repo, X, read(f.repo, X) + 'cli edit\n');
   const summaryFile = path.join(f.repo, 'summary.txt');
   fs.writeFileSync(summaryFile, 'repairs a link\n');
   const code = cli.run(['capture', '--run', f.runDir, '--worktree', f.repo, '--merge-base', f.mergeBase, '--target', X, '--summary-file', summaryFile, '--row', 'references'], {
@@ -238,7 +238,7 @@ test('clean target', (t) => {
 
 test("a later row's edit to a captured target joins the same patch", (t) => {
   const f = fixture(t);
-  const body = fs.readFileSync(path.join(f.repo, X), 'utf8');
+  const body = read(f.repo, X);
   write(f.repo, X, body.replace('# x\n', '# x\nfirst edit near the top\n'));
   const first = capture(args(f, X));
   write(f.repo, X, body + 'second edit at the bottom\n');
@@ -251,14 +251,14 @@ test("a later row's edit to a captured target joins the same patch", (t) => {
   assert.match(patch, /second edit at the bottom/);
   sh(f.repo, ['apply', '--check', first.patch]);
   assert.equal(status(f.repo, X), '');
-  assert.equal(fs.readFileSync(path.join(f.repo, X), 'utf8'), body);
+  assert.equal(read(f.repo, X), body);
   assert.equal(readManifest(f.runDir).length, 1);
 });
 
 test('failure after the diff stages instead of committing', (t) => {
   const f = fixture(t);
   const head = sh(f.repo, ['rev-parse', 'HEAD']).trim();
-  const original = fs.readFileSync(path.join(f.repo, X), 'utf8');
+  const original = read(f.repo, X);
   write(f.repo, X, original + 'will be staged\n');
   const { deps } = recorder();
   const failing = {
@@ -279,7 +279,7 @@ test('failure after the diff stages instead of committing', (t) => {
   assert.equal(text.slice(text.indexOf('diff --git')), diff);
   assert.match(text, /^Target: \.claude\/skills\/x\/SKILL\.md\nInvariant: adds a note\n/);
   assert.equal(status(f.repo, X), '');
-  assert.equal(fs.readFileSync(path.join(f.repo, X), 'utf8'), original);
+  assert.equal(read(f.repo, X), original);
   assert.equal(sh(f.repo, ['rev-parse', 'HEAD']).trim(), head, 'no commit on the branch');
   const log = fs.readFileSync(path.join(f.runDir, 'decisions.md'), 'utf8');
   assert.match(log, /- STAGED \d\d:\d\d:\d\d — Skills row: skill update for x\/SKILL\.md \(adds a note\) could not ride a learned-skills PR \(capture failed: .*simulated checkout failure.*\); staged instead\. Reversibility: high \(stage path: staged\/wrap-up-skill-1\.md\)\./);
@@ -288,7 +288,7 @@ test('failure after the diff stages instead of committing', (t) => {
 
 test('stageEntry gate', (t) => {
   const f = fixture(t);
-  const original = fs.readFileSync(path.join(f.repo, X), 'utf8');
+  const original = read(f.repo, X);
   write(f.repo, X, original + 'gate edit\n');
   const diff = sh(f.repo, ['-c', 'core.quotePath=false', 'diff', '--no-color', '--no-ext-diff', '--src-prefix=a/', '--dst-prefix=b/', '--binary', 'HEAD', '--', X]);
   sh(f.repo, ['checkout', 'HEAD', '--', X]);
@@ -370,7 +370,7 @@ test('a target outside .claude/skills/ exits 2 and changes nothing', (t) => {
 test('a target with glob characters is matched literally, never touching a sibling', (t) => {
   const f = fixture(t);
   const glob = '.claude/skills/[xy]/SKILL.md';
-  const sibling = fs.readFileSync(path.join(f.repo, X), 'utf8') + 'a sibling edit, not this capture\n';
+  const sibling = read(f.repo, X) + 'a sibling edit, not this capture\n';
   write(f.repo, X, sibling);
   write(f.repo, glob, '# bracket\n');
   const res = capture(args(f, glob));
@@ -379,7 +379,7 @@ test('a target with glob characters is matched literally, never touching a sibli
   assert.match(patch, /# bracket/);
   assert.doesNotMatch(patch, /a sibling edit/, 'the sibling is not in the patch');
   assert.equal(fs.existsSync(path.join(f.repo, glob)), false);
-  assert.equal(fs.readFileSync(path.join(f.repo, X), 'utf8'), sibling, 'the sibling edit stays in the tree');
+  assert.equal(read(f.repo, X), sibling, 'the sibling edit stays in the tree');
   assert.equal(status(f.repo, X), ` M ${X}\n`, 'and stays tracked, unstaged');
 });
 
@@ -388,7 +388,7 @@ test('an inherited GIT_DIR does not redirect capture off the worktree repo', (t)
   const f = fixture(t);
   // Another tree, so the other repo's commits differ from this one's (same-content fixtures share a sha).
   const other = fixture(t, { 'other.md': '# another repo\n' });
-  const original = fs.readFileSync(path.join(f.repo, X), 'utf8');
+  const original = read(f.repo, X);
   write(f.repo, X, original + 'learned\n');
   const saved = process.env.GIT_DIR;
   process.env.GIT_DIR = path.join(other.repo, '.git');
@@ -398,7 +398,7 @@ test('an inherited GIT_DIR does not redirect capture off the worktree repo', (t)
   }
   assert.equal(res.route, 'captured', JSON.stringify(res));
   assert.match(fs.readFileSync(res.patch, 'utf8'), /\+learned/);
-  assert.equal(fs.readFileSync(path.join(f.repo, X), 'utf8'), original, 'the worktree repo was reverted');
+  assert.equal(read(f.repo, X), original, 'the worktree repo was reverted');
   assert.equal(status(f.repo, X), '');
 });
 
@@ -416,7 +416,7 @@ test('CLI run with a missing --target exits 2', (t) => {
 
 test('CLI run captures and prints one JSON line', (t) => {
   const f = fixture(t);
-  write(f.repo, X, fs.readFileSync(path.join(f.repo, X), 'utf8') + 'cli edit\n');
+  write(f.repo, X, read(f.repo, X) + 'cli edit\n');
   const summaryFile = path.join(f.repo, 'summary.txt');
   fs.writeFileSync(summaryFile, 'a note\n');
   const out = [];
@@ -431,7 +431,7 @@ test('CLI run captures and prints one JSON line', (t) => {
 
 test('CLI run exits 1 with nothing changed when git fails before the diff', (t) => {
   const f = fixture(t);
-  const original = fs.readFileSync(path.join(f.repo, X), 'utf8');
+  const original = read(f.repo, X);
   write(f.repo, X, original + 'untouched\n');
   const summaryFile = path.join(f.repo, 'summary.txt');
   fs.writeFileSync(summaryFile, 'a note');
@@ -441,7 +441,7 @@ test('CLI run exits 1 with nothing changed when git fails before the diff', (t) 
   });
   assert.equal(code, 1);
   assert.match(err.join(''), /nothing was changed/);
-  assert.equal(fs.readFileSync(path.join(f.repo, X), 'utf8'), original + 'untouched\n');
+  assert.equal(read(f.repo, X), original + 'untouched\n');
 });
 
 // --- fix round 1 ---------------------------------------------------------------------------------
@@ -454,7 +454,7 @@ const failCheckout = (a, o) => {
 
 test('both writers failing restores the edit and exits 1 without claiming nothing changed', (t) => {
   const f = fixture(t);
-  const original = fs.readFileSync(path.join(f.repo, X), 'utf8');
+  const original = read(f.repo, X);
   write(f.repo, X, original + 'precious edit\n');
   const deps = {
     ...baseDeps,
@@ -465,7 +465,7 @@ test('both writers failing restores the edit and exits 1 without claiming nothin
     },
   };
   assert.throws(() => capture(args(f, X), deps), (e) => e instanceof StagingFailure && e.restored === true);
-  assert.equal(fs.readFileSync(path.join(f.repo, X), 'utf8'), original + 'precious edit\n');
+  assert.equal(read(f.repo, X), original + 'precious edit\n');
 
   const summaryFile = path.join(f.repo, 'summary.txt');
   fs.writeFileSync(summaryFile, 'a note');
@@ -478,12 +478,12 @@ test('both writers failing restores the edit and exits 1 without claiming nothin
   assert.match(msg, /staging failed too/);
   assert.match(msg, /restored in the working tree/);
   assert.doesNotMatch(msg, /nothing was changed/);
-  assert.equal(fs.readFileSync(path.join(f.repo, X), 'utf8'), original + 'precious edit\n');
+  assert.equal(read(f.repo, X), original + 'precious edit\n');
 });
 
 test('a failed re-diff after a join leaves the earlier patch captured', (t) => {
   const f = fixture(t);
-  const body = fs.readFileSync(path.join(f.repo, X), 'utf8');
+  const body = read(f.repo, X);
   write(f.repo, X, body.replace('# x\n', '# x\nfirst edit near the top\n'));
   const first = capture(args(f, X, 'first finding'));
   write(f.repo, X, body + 'second edit at the bottom\n');
@@ -517,7 +517,7 @@ test('a landed entry is not joined: a fresh capture gets a new id', (t) => {
   fs.writeFileSync(path.join(f.runDir, 'learned-skills', 'manifest.json'), JSON.stringify([
     { id: '1', target: X, summary: 'old', patch: landedPatch, status: 'landed', commit: 'abc' },
   ]));
-  write(f.repo, X, fs.readFileSync(path.join(f.repo, X), 'utf8') + 'fresh edit\n');
+  write(f.repo, X, read(f.repo, X) + 'fresh edit\n');
   const res = capture(args(f, X));
   assert.equal(res.route, 'captured');
   assert.equal(res.id, '2');
@@ -528,7 +528,7 @@ test('a landed entry is not joined: a fresh capture gets a new id', (t) => {
 
 test('a failed STAGED log write surfaces logFailed', (t) => {
   const f = fixture(t);
-  write(f.repo, X, fs.readFileSync(path.join(f.repo, X), 'utf8') + 'edit\n');
+  write(f.repo, X, read(f.repo, X) + 'edit\n');
   const res = capture(args(f, X), {
     ...baseDeps,
     git: failCheckout,
@@ -543,7 +543,7 @@ test('a failed STAGED log write surfaces logFailed', (t) => {
 // then be flipped to 'staged' (fault matrix, joined [checkout, manifest]).
 test('a failed joined capture stages only the new edit and keeps the earlier capture', (t) => {
   const f = fixture(t);
-  const body = fs.readFileSync(path.join(f.repo, X), 'utf8');
+  const body = read(f.repo, X);
   write(f.repo, X, body.replace('# x\n', '# x\nfirst edit near the top\n'));
   const first = capture(args(f, X, 'first finding'));
   const earlier = fs.readFileSync(first.patch);
@@ -563,7 +563,7 @@ test('a failed joined capture stages only the new edit and keeps the earlier cap
 
 test('degraded gates log staged-patch.md lines', (t) => {
   const f = fixture(t);
-  write(f.repo, X, fs.readFileSync(path.join(f.repo, X), 'utf8') + 'gate edit\n');
+  write(f.repo, X, read(f.repo, X) + 'gate edit\n');
   const diff = diffOf(f.repo, X);
   sh(f.repo, ['checkout', 'HEAD', '--', X]);
   const bad = stageEntry({
@@ -597,7 +597,7 @@ const failMkdirStaged = (p) => {
 
 test('residue plus a failed staging reports the edit as still in the tree, not lost', (t) => {
   const f = fixture(t);
-  const original = fs.readFileSync(path.join(f.repo, X), 'utf8');
+  const original = read(f.repo, X);
   write(f.repo, X, original + 'stuck edit\n');
   const calls = [];
   const deps = {
@@ -618,12 +618,12 @@ test('residue plus a failed staging reports the edit as still in the tree, not l
   assert.match(caught.message, /still in the working tree/);
   assert.doesNotMatch(caught.message, /lost|not in the tree/);
   assert.equal(calls.some((a) => a.includes('apply') && a.includes('-') && a[a.length - 1] === '-' && !a.includes('-R')), false, 'no re-apply on top of the edit');
-  assert.equal(fs.readFileSync(path.join(f.repo, X), 'utf8'), original + 'stuck edit\n');
+  assert.equal(read(f.repo, X), original + 'stuck edit\n');
 });
 
 test('a throw after the staged file was created leaves no partial proposal', (t) => {
   const f = fixture(t);
-  const original = fs.readFileSync(path.join(f.repo, X), 'utf8');
+  const original = read(f.repo, X);
   write(f.repo, X, original + 'edit\n');
   const deps = {
     ...baseDeps,
@@ -641,12 +641,12 @@ test('a throw after the staged file was created leaves no partial proposal', (t)
   const stagedDir = path.join(f.runDir, 'staged');
   const left = fs.existsSync(stagedDir) ? fs.readdirSync(stagedDir) : [];
   assert.deepEqual(left, []);
-  assert.equal(fs.readFileSync(path.join(f.repo, X), 'utf8'), original + 'edit\n');
+  assert.equal(read(f.repo, X), original + 'edit\n');
 });
 
 test('triple failure keeps the patch file and names it', (t) => {
   const f = fixture(t);
-  write(f.repo, X, fs.readFileSync(path.join(f.repo, X), 'utf8') + 'edit\n');
+  write(f.repo, X, read(f.repo, X) + 'edit\n');
   const deps = {
     ...baseDeps,
     git: (a, o) => {
@@ -669,7 +669,7 @@ test('triple failure keeps the patch file and names it', (t) => {
 
 test('reason carries the first stderr line only', (t) => {
   const f = fixture(t);
-  write(f.repo, X, fs.readFileSync(path.join(f.repo, X), 'utf8') + 'edit\n');
+  write(f.repo, X, read(f.repo, X) + 'edit\n');
   const fail = {
     ...baseDeps,
     git: (a, o) => {
@@ -700,12 +700,12 @@ test('an intent-to-add entry with no file is not read as the edit being in the t
   try { capture(args(f, y), deps); } catch (e) { caught = e; }
   assert.ok(caught instanceof StagingFailure);
   assert.match(caught.message, /restored in the working tree/);
-  assert.equal(fs.readFileSync(path.join(f.repo, y), 'utf8'), '# y\n\nbrand new\n');
+  assert.equal(read(f.repo, y), '# y\n\nbrand new\n');
 });
 
 test('a patch write that dies partway leaves no partial patch file', (t) => {
   const f = fixture(t);
-  write(f.repo, X, fs.readFileSync(path.join(f.repo, X), 'utf8') + 'edit\n');
+  write(f.repo, X, read(f.repo, X) + 'edit\n');
   const res = capture(args(f, X), {
     ...baseDeps,
     writeFileExclusive: (p, d) => {
@@ -719,14 +719,14 @@ test('a patch write that dies partway leaves no partial patch file', (t) => {
 
 test('a fallback leaves no orphan patch file', (t) => {
   const f = fixture(t);
-  write(f.repo, X, fs.readFileSync(path.join(f.repo, X), 'utf8') + 'edit\n');
+  write(f.repo, X, read(f.repo, X) + 'edit\n');
   const orphan = path.join(f.runDir, 'learned-skills', '1.patch');
   const res = capture(args(f, X), { ...baseDeps, git: failCheckout });
   assert.equal(res.route, 'staged');
   assert.equal(fs.existsSync(orphan), false);
 
   const g = fixture(t);
-  write(g.repo, X, fs.readFileSync(path.join(g.repo, X), 'utf8') + 'edit\n');
+  write(g.repo, X, read(g.repo, X) + 'edit\n');
   assert.throws(() => capture(args(g, X), { ...baseDeps, git: failCheckout, mkdir: (p) => { failMkdirStaged(p); } }), StagingFailure);
   assert.equal(fs.existsSync(path.join(g.runDir, 'learned-skills', '1.patch')), false);
 });
@@ -734,7 +734,7 @@ test('a fallback leaves no orphan patch file', (t) => {
 
 test('a tree holding some other change is not read as holding the edit', (t) => {
   const f = fixture(t);
-  const original = fs.readFileSync(path.join(f.repo, X), 'utf8');
+  const original = read(f.repo, X);
   write(f.repo, X, original + 'the captured edit\n');
   // checkout leaves a different, non-empty change in the tree; staging fails too.
   const deps = {
@@ -756,7 +756,7 @@ test('a tree holding some other change is not read as holding the edit', (t) => 
 
 test('a joined tree that holds both edits is reported as holding both', (t) => {
   const f = fixture(t);
-  const body = fs.readFileSync(path.join(f.repo, X), 'utf8');
+  const body = read(f.repo, X);
   write(f.repo, X, TOP(body));
   const first = capture(args(f, X, 'first finding'), baseDeps);
   write(f.repo, X, BOTTOM(body));
@@ -775,7 +775,7 @@ test('a joined tree that holds both edits is reported as holding both', (t) => {
   assert.equal(caught.restored, true);
   assert.equal(caught.holder, 'tree');
   assert.match(caught.message, /in the working tree together with the earlier captured patch 1/);
-  assert.equal(fs.readFileSync(path.join(f.repo, X), 'utf8'), BOTTOM(TOP(body)));
+  assert.equal(read(f.repo, X), BOTTOM(TOP(body)));
   assert.equal(readManifest(f.runDir)[0].status, 'captured');
   assert.match(fs.readFileSync(first.patch, 'utf8'), /first edit near the top/);
 });
@@ -789,7 +789,7 @@ const failPatchCopy = (p, d) => {
 
 test('a kept diff whose gate ran and failed is logged as that, not as unvalidated', (t) => {
   const f = fixture(t);
-  write(f.repo, X, fs.readFileSync(path.join(f.repo, X), 'utf8') + 'edit\n');
+  write(f.repo, X, read(f.repo, X) + 'edit\n');
   const diff = diffOf(f.repo, X);
   const res = capture(args(f, X), {
     ...baseDeps,
@@ -809,7 +809,7 @@ test('a kept diff whose gate ran and failed is logged as that, not as unvalidate
 
 test('a kept diff whose gate never ran is logged as not run', (t) => {
   const f = fixture(t);
-  const original = fs.readFileSync(path.join(f.repo, X), 'utf8');
+  const original = read(f.repo, X);
   write(f.repo, X, original + 'edit\n');
   const res = capture(args(f, X), {
     ...baseDeps,
@@ -831,7 +831,7 @@ test('a kept diff whose gate never ran is logged as not run', (t) => {
 // A joined capture whose re-diff fails; `deps` adds faults on top. Returns what the tests compare.
 function joinedReDiffFails(t, extra = () => ({})) {
   const f = fixture(t);
-  const body = fs.readFileSync(path.join(f.repo, X), 'utf8');
+  const body = read(f.repo, X);
   write(f.repo, X, TOP(body));
   const first = capture(args(f, X, 'first finding'), baseDeps);
   const earlier = fs.readFileSync(first.patch);
@@ -871,7 +871,7 @@ test('a join whose tree cannot be read back stages this edit from a confirmed co
   assert.equal(stagedDiff(r.res.stagePath), r.D);
   assert.deepEqual(readManifest(r.f.runDir).map((e) => [e.id, e.status]), [['1', 'captured'], ['2', 'staged']]);
   assert.ok(fs.readFileSync(r.first.patch).equals(r.earlier), 'the earlier patch file is untouched');
-  assert.equal(fs.readFileSync(r.abs, 'utf8'), r.body, 'the tree was reset only after a copy was confirmed');
+  assert.equal(lf(fs.readFileSync(r.abs, 'utf8')), r.body, 'the tree was reset only after a copy was confirmed');
 });
 
 test('a join whose tree cannot be read back and whose patch copy fails is homed in a confirmed staged file', (t) => {
@@ -891,7 +891,7 @@ test('with no copy confirmable and the tree unreadable, no holder is claimed and
   assert.match(r.caught.message, /the working tree was not reset, so it is the place left that should hold the edit, but a read could not confirm it/);
   assert.doesNotMatch(r.caught.message, /in the working tree \(|together with the earlier captured patch/);
   // The invariant held: the tree, untouched, still holds this edit alone.
-  assert.equal(fs.readFileSync(r.abs, 'utf8'), BOTTOM(r.body));
+  assert.equal(lf(fs.readFileSync(r.abs, 'utf8')), BOTTOM(r.body));
   assert.equal(fs.existsSync(path.join(r.f.runDir, 'staged')) ? fs.readdirSync(path.join(r.f.runDir, 'staged')).length : 0, 0);
 });
 
@@ -916,7 +916,7 @@ test('a join whose tree reads back as neither expected state says so, not that i
 
 test('stageEntry recomposes from the patch file once and passes the gate on the recomposed diff', (t) => {
   const f = fixture(t);
-  write(f.repo, X, fs.readFileSync(path.join(f.repo, X), 'utf8') + 'recompose edit\n');
+  write(f.repo, X, read(f.repo, X) + 'recompose edit\n');
   const diff = diffOf(f.repo, X);
   sh(f.repo, ['checkout', 'HEAD', '--', X]);
   const patchFile = path.join(f.runDir, 'good.patch');
@@ -927,4 +927,85 @@ test('stageEntry recomposes from the patch file once and passes the gate on the 
   assert.equal(res.gate, 'ok');
   assert.equal(stagedDiff(res.stagePath), diff);
   assert.match(fs.readFileSync(path.join(f.runDir, 'decisions.md'), 'utf8'), /staged instead\. Reversibility: high \(stage path: staged\/wrap-up-skill-1\.md\)\./);
+});
+
+// --- core.autocrlf=true checkouts ------------------------------------------------------------------
+// CI runs on ubuntu with autocrlf off, so these build a Windows checkout on any host: the fixture's own
+// config sets core.autocrlf=true and its tree holds CRLF, as a Git for Windows clone does. Every git
+// apply and checkout then writes the file back with CRLF, and an edit written with LF is the same content.
+const CRLF = { autocrlf: 'true' };
+const rawTree = (f) => fs.readFileSync(path.join(f.repo, X), 'utf8');
+
+test('core.autocrlf=true: an LF edit is captured as an LF patch and the CRLF tree is back at HEAD', (t) => {
+  const f = fixture(t, {}, CRLF);
+  const checkedOut = rawTree(f);
+  assert.ok(checkedOut.includes('\r\n'), 'the fixture tree holds CRLF, as a Windows clone does');
+  write(f.repo, X, read(f.repo, X) + 'learned: an LF edit\n');
+  const res = capture(args(f, X));
+  assert.equal(res.route, 'captured');
+  const patch = fs.readFileSync(res.patch);
+  assert.equal(patch.includes('\r'), false, 'the patch holds the content git records');
+  assert.match(patch.toString('utf8'), /^\+learned: an LF edit$/m);
+  assert.equal(rawTree(f), checkedOut, 'the tree is the checkout it started from');
+  assert.equal(status(f.repo, X), '');
+  sh(f.repo, ['apply', '--check', res.patch]);
+});
+
+// treeHolds: the restore's `git apply` writes the edit back with CRLF. Compared by bytes, the LF edit
+// read before it no longer matched, and the edit was reported as not in the tree.
+test('core.autocrlf=true: an LF edit git restored with CRLF is named as in the working tree', (t) => {
+  const f = fixture(t, {}, CRLF);
+  const edited = read(f.repo, X) + 'precious edit\n';
+  write(f.repo, X, edited);
+  let caught;
+  try { capture(args(f, X), { ...baseDeps, git: failCheckout, mkdir: failMkdirStaged }); } catch (e) { caught = e; }
+  assert.ok(caught instanceof StagingFailure, caught && caught.message);
+  assert.equal(caught.holder, 'tree', caught.message);
+  assert.equal(caught.restored, true);
+  assert.match(caught.message, /restored in the working tree/);
+  assert.equal(read(f.repo, X), edited);
+  assert.ok(rawTree(f).includes('\r\n'), 'git wrote the restored edit with CRLF');
+  assert.deepEqual(fs.readdirSync(path.join(f.runDir, 'learned-skills')).filter((n) => n.endsWith('.patch')), [], 'no copy is left once the tree holds the edit');
+});
+
+// joinPlan's undo check: the undone join is written back with CRLF, so a byte compare with the LF edit
+// read before the join answered "neither this edit alone nor both edits".
+test('core.autocrlf=true: a failed re-diff after a join is undone to this edit alone', (t) => {
+  const f = fixture(t, {}, CRLF);
+  const body = read(f.repo, X);
+  write(f.repo, X, TOP(body));
+  const first = capture(args(f, X, 'first finding'));
+  write(f.repo, X, BOTTOM(body));
+  let diffs = 0;
+  const res = capture(args(f, X, 'second finding'), {
+    ...baseDeps,
+    git: (a, o) => {
+      if (a.includes('--binary') && ++diffs === 2) throw new Error('simulated re-diff failure');
+      return realDeps.git(a, o);
+    },
+  });
+  assert.equal(res.route, 'staged');
+  assert.equal(res.reason, 'capture failed: could not join the earlier captured patch (1) with this edit: simulated re-diff failure');
+  assert.match(fs.readFileSync(first.patch, 'utf8'), /first edit near the top/);
+  assert.equal(res.residue, undefined);
+  assert.equal(status(f.repo, X), '');
+  assert.equal(read(f.repo, X), body);
+});
+
+// resetToHead: a file whose index stat came from an LF write (added from a tool that writes LF, and not
+// checked out since) changes size when `apply -R` writes it back with CRLF, and git status then lists it
+// although its content is HEAD's. The reset re-records the entry, so no false residue is reported.
+test('core.autocrlf=true: a reset by reverse-apply leaves no residue when the index stat came from an LF file', (t) => {
+  const f = fixture(t, {}, CRLF);
+  const body = read(f.repo, X);
+  write(f.repo, X, body);
+  sh(f.repo, ['add', '--', X]);
+  assert.equal(status(f.repo, X), '', 'the LF file reads clean against its own stat');
+  write(f.repo, X, body + 'will be staged\n');
+  const res = capture(args(f, X), { ...baseDeps, git: failCheckout });
+  assert.equal(res.route, 'staged');
+  assert.equal(res.residue, undefined, 'the target is back at HEAD, not left for a catch-all commit');
+  assert.equal(status(f.repo, X), '');
+  assert.equal(read(f.repo, X), body);
+  assert.equal(sh(f.repo, ['diff', '--cached', '--name-only']), '', 'nothing is staged');
 });

@@ -31,9 +31,13 @@ function write(repo, rel, text) {
   fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
   fs.writeFileSync(path.join(repo, rel), text);
 }
+// A tree file's text with its line endings as git records them (a core.autocrlf=true checkout holds CRLF).
+const read = (repo, rel) => fs.readFileSync(path.join(repo, rel), 'utf8').replace(/\r\n/g, '\n');
 
 // origin (bare) + a clone with main pushed, two skill files, a run dir, and one captured patch per file.
-function fixture(t, { capturedTargets = [X, Z] } = {}) {
+// autocrlf: 'true' pins core.autocrlf in the clone's config, a Windows checkout on any host. The
+// committed files are checked out again, so the tree holds what a clone writes (CRLF under autocrlf).
+function fixture(t, { capturedTargets = [X, Z], autocrlf } = {}) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ls-land-')));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const origin = path.join(root, 'origin.git');
@@ -41,18 +45,21 @@ function fixture(t, { capturedTargets = [X, Z] } = {}) {
   sh(root, ['init', '-q', '--bare', '-b', 'main', origin]);
   fs.mkdirSync(repo);
   sh(repo, ['init', '-q', '-b', 'main']);
+  if (autocrlf) sh(repo, ['config', 'core.autocrlf', autocrlf]);
   sh(repo, ['remote', 'add', 'origin', origin]);
   write(repo, X, BODY.replace('# s', '# x'));
   write(repo, Z, BODY.replace('# s', '# z'));
   sh(repo, ['add', '-A']);
   sh(repo, ['commit', '-q', '-m', 'base']);
+  for (const rel of [X, Z]) fs.rmSync(path.join(repo, rel));
+  sh(repo, ['checkout', '-q', '--', '.']);
   sh(repo, ['push', '-q', 'origin', 'main']);
   const runDir = path.join(repo, '.claude-tweaks', 'pipelines', RUN_ID);
   fs.mkdirSync(runDir, { recursive: true });
   const mergeBase = sh(repo, ['rev-parse', 'HEAD']).trim();
   const f = { root, origin, repo, runDir, mergeBase, mainTip: mergeBase };
   for (const target of capturedTargets) {
-    write(repo, target, fs.readFileSync(path.join(repo, target), 'utf8') + `learned: note for ${path.basename(path.dirname(target))}\n`);
+    write(repo, target, read(repo, target) + `learned: note for ${path.basename(path.dirname(target))}\n`);
     const res = capture({ runDir, worktree: repo, mergeBase, target, summary: 'adds a note' }, { now: () => NOW });
     assert.equal(res.route, 'captured');
   }
@@ -163,7 +170,7 @@ test('opens a ready unarmed PR with the marker and refs-only link', (t) => {
 
 test('a summary carrying a closing phrase is neutralized in the PR body', (t) => {
   const f = fixture(t, { capturedTargets: [] });
-  write(f.repo, X, fs.readFileSync(path.join(f.repo, X), 'utf8') + 'a line\n');
+  write(f.repo, X, read(f.repo, X) + 'a line\n');
   capture({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, target: X, summary: 'fixes #12 in the trigger' }, { now: () => NOW });
   const gh = fakeGh();
   land(landArgs(f), deps(gh.gh).deps);
@@ -203,7 +210,7 @@ test('logs the AUTO line per landed patch', (t) => {
 // gets its own AUTO line — its own row and summary, the shared commit's short hash.
 test('every finding on a shared target gets its own AUTO line and PR body row', (t) => {
   const f = fixture(t, { capturedTargets: [] });
-  const body = fs.readFileSync(path.join(f.repo, X), 'utf8');
+  const body = read(f.repo, X);
   const cap = (summary, row) => capture({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, target: X, summary, row }, { now: () => NOW });
   write(f.repo, X, body + 'first learning\n');
   assert.equal(cap('first learning').shared, false);
@@ -228,7 +235,7 @@ test('every finding on a shared target gets its own AUTO line and PR body row', 
 // Residual (5): a staged entry logs one STAGED line per finding it carries, all naming one stage path.
 test('every finding on a staged entry gets its own STAGED line naming the one stage path', (t) => {
   const f = fixture(t, { capturedTargets: [] });
-  const body = fs.readFileSync(path.join(f.repo, X), 'utf8');
+  const body = read(f.repo, X);
   const cap = (summary, row) => capture({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, target: X, summary, row }, { now: () => NOW });
   write(f.repo, X, body + 'first learning\n');
   cap('first learning');
@@ -420,7 +427,7 @@ test('land and stage require a merge base', (t) => {
 // A later edit to a target whose first edit already landed is a new manifest entry with the same
 // subject line. It must be delivered (or staged) on its own, never matched to the first entry's commit.
 function captureMore(f, target, edit, summary = 'second finding') {
-  write(f.repo, target, edit(fs.readFileSync(path.join(f.repo, target), 'utf8')));
+  write(f.repo, target, edit(read(f.repo, target)));
   const res = capture({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, target, summary }, { now: () => NOW });
   assert.equal(res.route, 'captured');
   return res;
@@ -445,6 +452,30 @@ test('a re-captured edit on an already-landed target lands as its own commit, ne
   const onBranch = sh(f.origin, ['show', `${tip2}:${X}`]);
   assert.ok(onBranch.includes('second edit at the top') && onBranch.includes('learned: note for x'), 'both edits are on the branch');
   assert.match(sh(f.origin, ['log', '-1', '--format=%B', tip2]), /Learned-Skills-Entry: 2/);
+});
+
+// CI runs on ubuntu with autocrlf off: this builds a Windows checkout (core.autocrlf=true, a CRLF tree,
+// edits written with LF) on any host. Capture's reverts write the tree back with CRLF; the patches and
+// the commits land builds from them on its temp index hold the LF content git records.
+test('core.autocrlf=true: captured edits and a re-captured edit land as LF blobs, the CRLF tree left at HEAD', (t) => {
+  const f = fixture(t, { autocrlf: 'true' });
+  const checkedOut = fs.readFileSync(path.join(f.repo, X), 'utf8');
+  assert.ok(checkedOut.includes('\r\n'), 'the fixture tree holds CRLF, as a Windows clone does');
+  const gh = fakeGh();
+  const first = land(landArgs(f), deps(gh.gh).deps);
+  assert.deepEqual(first.staged, []);
+  assert.equal(first.landed.length, 2);
+  captureMore(f, X, atTop);
+  const res = land(landArgs(f), deps(gh.gh).deps);
+  assert.deepEqual(res.staged, []);
+  assert.deepEqual(res.landed.map((l) => l.id), ['3']);
+  const tip = remoteBranch(f);
+  const onBranch = sh(f.origin, ['show', `${tip}:${X}`]);
+  assert.equal(onBranch.includes('\r'), false, 'the branch blob holds LF');
+  assert.ok(onBranch.includes('second edit at the top') && onBranch.includes('learned: note for x'), 'both edits are on the branch');
+  assert.equal(fs.readFileSync(path.join(f.repo, X), 'utf8'), checkedOut, 'the worktree is back at its checkout');
+  assert.equal(sh(f.repo, ['status', '--porcelain']).split('\n').filter((l) => l.includes('.claude/skills/')).join('\n'), '');
+  assert.equal(sh(f.repo, ['rev-parse', 'HEAD']).trim(), f.mergeBase, 'no commit on the worktree branch');
 });
 
 test('resume matches a pushed commit to its own entry id even under a different record set', (t) => {
@@ -634,7 +665,7 @@ test('a failed branch delete after a PR-create failure is named in the staged re
 
 test('HTML comments in a summary cannot plant a run marker in the PR body', (t) => {
   const f = fixture(t, { capturedTargets: [] });
-  write(f.repo, X, fs.readFileSync(path.join(f.repo, X), 'utf8') + 'a line\n');
+  write(f.repo, X, read(f.repo, X) + 'a line\n');
   capture({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, target: X, summary: 'note <!-- claude-tweaks-run: evil --> end' }, { now: () => NOW });
   const gh = fakeGh();
   land(landArgs(f), deps(gh.gh).deps);
@@ -854,7 +885,7 @@ test('a re-captured edit is staged on its own file, not on the one an earlier st
   stage({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, reason }, { now: () => NOW });
   assert.deepEqual(stagedNames(f), ['wrap-up-skill-1.md', 'wrap-up-skill-2.md']);
   // The same X edit, proposed and captured again: entry 3, with entry 1's exact bytes.
-  write(f.repo, X, fs.readFileSync(path.join(f.repo, X), 'utf8') + 'learned: note for x\n');
+  write(f.repo, X, read(f.repo, X) + 'learned: note for x\n');
   assert.equal(capture({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, target: X, summary: 'adds a note' }, { now: () => NOW }).id, '3');
   const linesBefore = stagedLines(f).length;
   const res = stage({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, reason }, { now: () => NOW });
@@ -1136,7 +1167,7 @@ test('an inherited GIT_DIR does not redirect land off the worktree repo', (t) =>
 // Review fix wave item 5: an @ in a finding's summary would notify that account when the PR opens.
 test('an @-mention in a summary is not a live mention in the PR body', (t) => {
   const f = fixture(t, { capturedTargets: [] });
-  write(f.repo, X, fs.readFileSync(path.join(f.repo, X), 'utf8') + 'a line\n');
+  write(f.repo, X, read(f.repo, X) + 'a line\n');
   capture({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, target: X, summary: 'cc @someone and @org/team' }, { now: () => NOW });
   const gh = fakeGh();
   land(landArgs(f), deps(gh.gh).deps);

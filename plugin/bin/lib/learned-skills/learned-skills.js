@@ -363,6 +363,24 @@ function readTree(deps, abs) {
   return deps.lstatType(abs).type === 'missing' ? null : toBuffer(deps.readFile(abs));
 }
 
+// Do two working-tree reads of the target hold the same content, as git would record it? Equal bytes
+// always do. Otherwise both go through the target's clean filters (`hash-object --stdin --path`, which
+// writes nothing): on a core.autocrlf=true checkout every `apply` and `checkout` writes the file back
+// with CRLF, while an edit read before that may hold LF or mixed endings, and the two are one edit.
+// safecrlf is off for the call alone, so a mixed-ending read is hashed rather than refused. A failed
+// hash is "not the same", so no place is ever claimed on a guess. null (absent) matches only null.
+function sameContent(cx, a, b) {
+  if (a === null || b === null) return a === b;
+  if (a.equals(b)) return true;
+  try {
+    const blob = (bytes) => String(cx.git(['-c', 'core.safecrlf=false', 'hash-object', '--stdin', `--path=${cx.rel}`], { input: bytes })).trim();
+    const x = blob(a);
+    return Boolean(x) && x === blob(b);
+  } catch {
+    return false;
+  }
+}
+
 // The next free id: one above the manifest's highest that no file in learned-skills/ already uses
 // (a leftover {id}.patch may be an earlier failure's named copy, never to be overwritten).
 function allocateId(manifest, patchDir, deps) {
@@ -546,7 +564,7 @@ function joinPlan(cx) {
       // later read confirms it.
       return separate(`${why}; the join was ${undone ? '' : 'not '}undone, and the working tree could not be read back (${firstStderrLine(readErr)})`);
     }
-    const same = (bytes) => (bytes === null ? now === null : now !== null && now.equals(bytes));
+    const same = (bytes) => sameContent(cx, now, bytes);
     if (same(cx.start)) return separate(why);
     // Both edits, confirmed by that read.
     if (full !== null && same(full)) {
@@ -561,8 +579,7 @@ const bothInTree = (existing) => `the edit is in the working tree together with 
 
 function treeHolds(cx, bytes) {
   try {
-    const now = readTree(cx.deps, cx.abs);
-    return bytes === null ? now === null : now !== null && now.equals(bytes);
+    return sameContent(cx, readTree(cx.deps, cx.abs), bytes);
   } catch {
     return false;
   }
@@ -591,8 +608,13 @@ function resetToHead(cx, plan) {
     try { git(['rm', '--cached', '--quiet', '--', cx.rel]); } catch { /* not in the index, or residue */ }
     try { if (deps.lstatType(cx.abs).type !== 'missing') deps.unlink(cx.abs); } catch { /* judged below */ }
     pruneEmptyParents(cx.abs, cx.worktree, deps);
-  } else if (!atHead(cx)) {
-    try { git(['checkout', 'HEAD', '--', cx.rel]); } catch { /* judged below */ }
+  } else {
+    if (!atHead(cx)) { try { git(['checkout', 'HEAD', '--', cx.rel]); } catch { /* judged below */ } }
+    // An `apply -R` on a core.autocrlf=true checkout writes the file back with CRLF. When the index
+    // recorded the file's stat from an LF write, the size no longer matches, and git status keeps
+    // listing the target although its content is HEAD's (no content check runs on a size change).
+    // Re-recording the entry from a tree already at HEAD writes HEAD's blob, as checkout would.
+    try { if (atHead(cx) && cx.statusOf()) git(['add', '--', cx.rel]); } catch { /* the residue check reports it */ }
   }
   return atHead(cx);
 }

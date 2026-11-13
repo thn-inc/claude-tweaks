@@ -25,16 +25,35 @@ function write(repo, rel, text) {
   fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
   fs.writeFileSync(path.join(repo, rel), text);
 }
+// A tree file's text with its line endings as git records them. Under core.autocrlf=true every
+// checkout and apply writes CRLF, so a test compares content, never the checkout's line endings.
+const lf = (text) => text.replace(/\r\n/g, '\n');
+const read = (repo, rel) => lf(fs.readFileSync(path.join(repo, rel), 'utf8'));
+
+// The core.autocrlf the plugin's own git runner sees in this repo, before the fixture sets one: ENV's
+// /dev/null config files hide the system and global config from `sh`, and Git for Windows ships
+// `core.autocrlf=true` in its system config. null when unset.
+function hostAutocrlf(repo) {
+  try { return String(realDeps.git(['-C', repo, 'config', '--get', 'core.autocrlf'])).trim() || null; } catch { return null; }
+}
 
 // A repo with one commit holding x/SKILL.md, a run dir under .claude-tweaks/pipelines, a merge base.
-function fixture(t, extraFiles = {}) {
+// opts.autocrlf pins core.autocrlf in the repo's own config ('true' builds a Windows checkout on any
+// host); by default the repo pins what the plugin's runner sees, so `sh` and capture agree on it. The
+// committed files are then checked out again, so the tree and the index stat are what a clone writes
+// (CRLF under autocrlf=true), never the LF bytes the fixture wrote.
+function fixture(t, extraFiles = {}, { autocrlf } = {}) {
   const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ls-capture-')));
   t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
   sh(repo, ['init', '-q']);
+  const eol = autocrlf === undefined ? hostAutocrlf(repo) : autocrlf;
+  if (eol) sh(repo, ['config', 'core.autocrlf', eol]);
   write(repo, X, '# x\n\nline one\nline two\nline three\nline four\nline five\nline six\nline seven\n');
   for (const [rel, text] of Object.entries(extraFiles)) write(repo, rel, text);
   sh(repo, ['add', '-A']);
   sh(repo, ['commit', '-q', '-m', 'base']);
+  for (const rel of [X, ...Object.keys(extraFiles)]) fs.rmSync(path.join(repo, rel));
+  sh(repo, ['checkout', '-q', '--', '.']);
   const runDir = path.join(repo, '.claude-tweaks', 'pipelines', '2026-11-13T000000-spec-1');
   fs.mkdirSync(runDir, { recursive: true });
   return { repo, runDir, mergeBase: sh(repo, ['rev-parse', 'HEAD']).trim() };
@@ -61,19 +80,22 @@ const TOP = (b) => b.replace('# x\n', '# x\nfirst edit near the top\n');
 const BOTTOM = (b) => b + 'second edit at the bottom\n';
 
 // kind: 'tracked' (an edit to X), 'untracked' (a new Y), 'joined' (X captured once, then edited again).
+// autocrlf: the fixture's core.autocrlf pin ('true' builds a Windows checkout whose tree holds CRLF,
+// while every edit below is written with LF, so each git rewrite of the tree changes its bytes).
 // Each kind is built once; every combination runs on a fresh copy of it.
 const templates = new Map();
 const templateCleanups = [];
 after(() => { for (const fn of templateCleanups) fn(); });
 
-function scenario(t, kind) {
-  if (!templates.has(kind)) {
-    const tpl = buildScenario({ after: (fn) => templateCleanups.push(fn) }, kind);
+function scenario(t, kind, autocrlf) {
+  const key = `${kind}:${autocrlf || ''}`;
+  if (!templates.has(key)) {
+    const tpl = buildScenario({ after: (fn) => templateCleanups.push(fn) }, kind, autocrlf);
     // git needs no sample hooks; dropping them halves what every copy below has to copy.
     fs.rmSync(path.join(tpl.f.repo, '.git', 'hooks'), { recursive: true, force: true });
-    templates.set(kind, tpl);
+    templates.set(key, tpl);
   }
-  const tpl = templates.get(kind);
+  const tpl = templates.get(key);
   const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ls-matrix-')));
   t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
   fs.cpSync(tpl.f.repo, repo, { recursive: true });
@@ -87,9 +109,9 @@ function scenario(t, kind) {
   return s;
 }
 
-function buildScenario(t, kind) {
-  const f = fixture(t);
-  const body = fs.readFileSync(path.join(f.repo, X), 'utf8');
+function buildScenario(t, kind, autocrlf) {
+  const f = fixture(t, {}, autocrlf ? { autocrlf } : {});
+  const body = read(f.repo, X);
   const s = { f, kind, joined: kind === 'joined', head: sh(f.repo, ['rev-parse', 'HEAD']).trim() };
   if (kind === 'untracked') {
     s.target = '.claude/skills/y/SKILL.md';
@@ -313,7 +335,9 @@ function breaches(s, res, err) {
   const bytes = (p) => (fs.existsSync(p) ? fs.readFileSync(p) : null);
   const diffBlock = (p) => { const b = fs.readFileSync(p); const i = b.indexOf('diff --git'); return i < 0 ? null : b.subarray(i); };
   const eq = (a, b) => a !== null && b !== null && a.equals(b);
-  const tree = bytes(abs);
+  // The tree's content: git writes it back with CRLF under core.autocrlf=true, the same edit.
+  const raw = bytes(abs);
+  const tree = raw === null ? null : Buffer.from(lf(raw.toString('utf8')));
   let manifest = [];
   try { manifest = readManifest(s.f.runDir); } catch (e) { out.push(`manifest unreadable: ${e.message}`); }
   const earlier = s.joined ? manifest.find((e) => e.id === '1') : null;
@@ -385,11 +409,11 @@ function headOf(repo) {
   return ref.startsWith('ref: ') ? fs.readFileSync(path.join(repo, '.git', ref.slice(5)), 'utf8').trim() : ref;
 }
 
-function runMatrix(t, kind, list) {
+function runMatrix(t, kind, list, autocrlf) {
   const fired = new Set();
   const red = [];
   for (const faults of list) {
-    const s = scenario(t, kind);
+    const s = scenario(t, kind, autocrlf);
     let res;
     let err;
     try { res = capture(args(s.f, s.target, 'second finding'), faultyDeps(s, faults, fired)); } catch (e) { err = e; }
@@ -412,13 +436,14 @@ function matrixList(kind, part, { shard = 1, of = 1 } = {}) {
 }
 
 // Registers one part of one kind's matrix as a test (one matrix file per part, so they run in parallel).
-function registerMatrix(kind, part, shardOpts) {
+// { autocrlf: 'true' } runs it on a Windows-style checkout (see scenario), on any host.
+function registerMatrix(kind, part, shardOpts, { autocrlf } = {}) {
   const P = POINTS[kind];
   const label = part === 'chains'
     ? 'no fault, every single, named chains, sampled triples and four-way faults'
     : `every pair${shardOpts ? ` (shard ${shardOpts.shard} of ${shardOpts.of})` : ''}`;
-  test(`fault matrix (${kind}): ${label}`, (t) => {
-    const { red, fired } = runMatrix(t, kind, matrixList(kind, part, shardOpts));
+  test(`fault matrix (${kind}${autocrlf ? `, core.autocrlf=${autocrlf}` : ''}): ${label}`, (t) => {
+    const { red, fired } = runMatrix(t, kind, matrixList(kind, part, shardOpts), autocrlf);
     assert.deepEqual(red, []);
     if (part === 'chains') {
       // Every point is reached somewhere in this part, so the matrix exercises it.
@@ -430,5 +455,5 @@ function registerMatrix(kind, part, shardOpts) {
 }
 
 module.exports = {
-  ENV, X, sh, write, fixture, status, args, baseDeps, diffOf, TOP, BOTTOM, registerMatrix,
+  ENV, X, sh, write, read, lf, fixture, status, args, baseDeps, diffOf, TOP, BOTTOM, registerMatrix,
 };
