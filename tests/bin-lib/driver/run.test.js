@@ -3011,6 +3011,17 @@ test('fix round: a parent the fix worker turned into a symlink out of the worktr
     assert.equal(stop.detail, `evidence path refused before the rewrite: parent-escapes: ${FINDING_0}`, name);
     assert.equal(commitGit(h).filter((c) => gitSub(c)[0] === 'commit').length, 1, `${name}: no fix-round commit`);
   }
+  // An ancestor swapped for an in-tree symlink to another test directory: every path rule passes, but
+  // the file would land elsewhere than the one git reported, so it is refused before anything is removed.
+  const moved = { on: false };
+  const elsewhere = fixRig({
+    script: [[(c) => moved.on && c.kind === 'lstatType' && c.args[0] === parent, { type: 'directory', code: null }]],
+    deps: { canonicalRealpath: (p) => (moved.on && p === parent ? path.join(WT, 'tests', 'other') : p) },
+    effect: () => { moved.on = true; },
+  });
+  await run(['#7'], elsewhere.deps);
+  assert.equal(lastLine(elsewhere).stop.detail, `evidence path no longer resolves where it was confirmed: ${FINDING_0}`);
+  assert.ok(!afterFixLaunch(elsewhere).some((c) => ['rmFile', 'writeFileExclusive', 'mkdirSync'].includes(c.kind)));
   // The evidence path itself turned into a directory: refused, nothing removed.
   const dir = fixRig({ script: [[(c) => c.kind === 'lstatType' && c.args[0] === evidenceAbs(0) && implementerCalls(dir).length === 2, { type: 'directory', code: null }]] });
   await run(['#7'], dir.deps);
