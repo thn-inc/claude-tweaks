@@ -14,7 +14,8 @@
 //   - `halt` defaults to `status !== 'ok'`; a step that must never end the record (a
 //     failed summary entry) returns `halt: false`.
 //   - `stopClass` defaults to the step's own class and may be overridden per result.
-//   - `reason` defaults to the status; it is the final line's `stop.reason`.
+//   - `reason` defaults to the status; it is the final line's `stop.reason`, except that
+//     run.js's finalEvent maps a pre-push stop's reason through settle's toEscalationReason.
 //   - `extra` fields merge into the step's event line (never over its core fields).
 //   - A throw from fn is `{ status: 'fail', detail: err.message }` with the step's class.
 //
@@ -27,7 +28,7 @@ const { gateOriginRepo, resolveRepoTarget } = require('../repo-resolve');
 const { isTimeoutError } = require('../shared-primitives');
 const { fenceFor } = require('../markdown-blocks');
 const { openBlockerRefs } = require('../issues/record-dependencies');
-const { hasDriverEscalationMarker, toEscalationReason } = require('./settle');
+const { hasDriverEscalationMarker } = require('./settle');
 const { sensitivePathsOf } = require('../express/policy');
 const { formatTimestamp } = require('../hooks/run-dir-resolve');
 const { claimLogText, CLAIM_LOG_SECTION, CLAIM_LOG_STEP } = require('../log-decision/claim-log');
@@ -158,7 +159,6 @@ const fetchStep = defineStep(STEP.fetch, STOP_CLASSES.REFUSED, async (ctx, deps)
   if (!issue || typeof issue !== 'object' || issue.number !== ctx.record) {
     return { status: 'fail', detail: `gh issue view returned no record #${ctx.record}` };
   }
-  ctx.recordJson = raw;
   ctx.issue = issue;
   return { status: 'ok' };
 });
@@ -249,7 +249,7 @@ const claimStep = defineStep(STEP.claim, STOP_CLASSES.CLAIM, async (ctx, deps) =
   if (r.code !== 0) {
     const key = firstEnvelopeKey(r.stdout);
     const why = key || firstLine(r.stderr);
-    return { status: 'fail', reason: `claim-exit-${r.code}`, detail: `claim-targets.js exited ${r.code}${why ? ` (${why})` : ''}` };
+    return { status: 'fail', reason: `claim-exit-${Number.isInteger(r.code) ? r.code : r.code === null ? 'null' : 'none'}`,detail: `claim-targets.js exited ${r.code}${why ? ` (${why})` : ''}` };
   }
   let envelope;
   try { envelope = JSON.parse(r.stdout); } catch { envelope = null; }
@@ -481,7 +481,7 @@ const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async (ctx, de
   };
   // spendOverrun: an `ok` launch whose last turn crossed the spend ceiling (worker.js checks it
   // between turns); present only when the envelope says so.
-  const extra = { usage: ctx.worker.usage, turns: ctx.worker.turns, denials, ...(envelope.spendOverrun === true ? { spendOverrun: true } : {}) };
+  const extra = { usage: ctx.worker.usage, turns: ctx.worker.turns, denials, ...(ctx.worker.spendOverrun ? { spendOverrun: true } : {}) };
   if (envelope.status !== 'ok') {
     const why = neutralize(envelope.detail);
     const kind = `${neutralize(String(envelope.status))}/${neutralize(String(envelope.reason))}`;
@@ -489,7 +489,7 @@ const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async (ctx, de
     let lead = kind;
     if (kind === 'timeout/wall-clock-ceiling') lead = `${kind}: wall-clock ceiling of ${minutes} minutes reached`;
     else if (kind === 'fail/spend-ceiling') lead = `${kind}: spend ceiling of ${dollars} dollars reached`;
-    return { status: 'fail', reason: 'express-error', detail: `${lead}${why ? `: ${why}` : ''}`, extra };
+    return { status: 'fail', detail: `${lead}${why ? `: ${why}` : ''}`, extra };
   }
   if (result && result.status === 'cannot-complete') {
     return { status: 'stop', detail: `worker could not complete${ctx.worker.summary ? `: ${ctx.worker.summary}` : ''}`, extra };
@@ -634,7 +634,7 @@ const checkStep = defineStep(STEP.check, STOP_CLASSES.PRE_PUSH, async (ctx, deps
     const why = neutralize(envelope.detail);
     ctx.check = { action: 'escalate', reason, detail: why };
     // A check that logged nothing (logged: false) is settled by settle's escalate, which writes the line.
-    return { status: 'stop', reason: toEscalationReason(envelope.reason), detail: `${reason}: ${why}` };
+    return { status: 'stop', reason: envelope.reason, detail: `${reason}: ${why}` };
   }
   const bounds = envelope.bounds && typeof envelope.bounds === 'object' ? envelope.bounds : {};
   ctx.check = { action: 'proceed', head: envelope.head, configSet: envelope.configSet, mergeVerification: envelope.mergeVerification, bounds };

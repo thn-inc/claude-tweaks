@@ -3,7 +3,8 @@
 // driver's run loop (#5216, from the pipeline driver design's "Eligibility"
 // section), as one pure verdict.
 // No I/O: the caller fetches the record's state, labels, open blockers, open
-// linked PRs and whether a trusted driver-escalation marker is on it, and resolves the `express-driver` routing value, then passes them in.
+// linked PRs and whether a trusted driver-escalation marker is on it, and resolves the
+// `express-driver` routing value, then passes them in.
 //
 // The closed rule. The refusals in ADMISSION_REASONS are the complete set; adding
 // a refusal is the only amendment this rule may take. A claimed record

@@ -2179,6 +2179,16 @@ test('AC5.2: a spend ceiling stop names the spend ceiling', async () => {
   assert.ok(final.stop.detail.startsWith('fail/spend-ceiling: spend ceiling of 5 dollars reached'), final.stop.detail);
 });
 
+test('AC5: the ceiling details name the configured values, not the defaults or the envelope text', async () => {
+  const policy = { 'express-driver-wall-clock-minutes': 45, 'express-driver-spend-ceiling-dollars': 2.5 };
+  const wall = harness({ policy, worker: { status: 'timeout', reason: 'wall-clock-ceiling', result: null, detail: null } });
+  await run(['#7'], wall.deps);
+  assert.match(lastLine(wall).stop.detail, /wall-clock ceiling of 45 minutes reached/);
+  const spend = harness({ policy, worker: { status: 'fail', reason: 'spend-ceiling', result: null, detail: 'Reached maximum budget' } });
+  await run(['#7'], spend.deps);
+  assert.match(lastLine(spend).stop.detail, /spend ceiling of 2\.5 dollars reached/);
+});
+
 test('every pre-push stop carries a closed-set reason', async () => {
   const mismatch = harness({ script: [[onGit('rev-parse', '--verify', '--end-of-options', 'HEAD'), `${'b'.repeat(40)}\n`]] });
   await run(['#7'], mismatch.deps);
@@ -2217,6 +2227,11 @@ test('a claim failure carries claim-exit-{code}', async () => {
     await run(['#7'], h.deps);
     const final = lastLine(h);
     assert.deepEqual([final.stop.step, final.stop.class, final.stop.reason], ['claim', 'claim', `claim-exit-${code}`]);
+  }
+  for (const [code, expected] of [[null, 'claim-exit-null'], [undefined, 'claim-exit-none'], ['x', 'claim-exit-none'], [1.5, 'claim-exit-none']]) {
+    const odd = harness({ script: [claimReply(code, '', '')] });
+    await run(['#7'], odd.deps);
+    assert.equal(lastLine(odd).stop.reason, expected, String(code));
   }
   const h = harness({ script: [claimReply(0, 'not json')] });
   await run(['#7'], h.deps);
