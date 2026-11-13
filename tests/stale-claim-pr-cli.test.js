@@ -12,7 +12,7 @@ const os = require('os');
 const path = require('path');
 const { run, parseArgs, realDeps } = require('../plugin/bin/stale-claim-pr');
 const { classifyPriorRun } = require('../plugin/bin/dispatch-resume');
-const { parseRepo } = require('../plugin/bin/lib/repo-resolve');
+const { parseRepo, gateOriginRepo } = require('../plugin/bin/lib/repo-resolve');
 const { composePrEarlyBody, composeResumeLine } = require('../plugin/bin/lib/flow/pr-body');
 
 const RUN = '2026-10-31T005940-record-4596';
@@ -38,6 +38,10 @@ function mcpEntry({ url = PR_URL, body, fullName = 'acme/w' }) {
   return { html_url: url, body, head: { repo: fullName === null ? null : { full_name: fullName } } };
 }
 
+// The origin-host gate's and the host resolver's deps (#4794): no exported GH_HOST and no hosts.yml,
+// so a developer's own GH_HOST or ~/.config/gh/hosts.yml cannot change a case's verdict.
+const GATE_DEPS = { env: {}, readFile: () => { throw new Error('ENOENT'); } };
+
 function fakeDeps(files, overrides = {}) {
   const calls = { gh: [], readFile: [], stdout: [], stderr: [], ghAvailable: 0, pipelinesRoot: 0, exists: 0 };
   return {
@@ -55,6 +59,7 @@ function fakeDeps(files, overrides = {}) {
     exists: () => { calls.exists++; throw new Error('must not probe the run dir'); },
     stdout: (s) => calls.stdout.push(s),
     stderr: (s) => calls.stderr.push(s),
+    gateDeps: GATE_DEPS,
     ...overrides,
   };
 }
@@ -343,32 +348,143 @@ test('an unresolved repo exits 3 naming --repo, with no stdout; --repo resolves 
   assert.equal(run(['--claim-file', CLAIM, '--listing', LISTING, '--repo', 'acme/w'], withRepo), 0);
 });
 
-test('a non-github.com host is the failure verdict, never a clean no-match, and nothing is read', () => {
-  const ghes = 'https://ghe.example.com/acme/w/pull/7';
-  const files = { ...claimFile(), [LISTING]: JSON.stringify([ghEntry({ url: ghes, body: MARKED })]) };
-  const want = { match: false, link: null, failure: 'stale-claim matching supports github.com only' };
-  const sources = [
-    ['--repo host/owner/name', ['--repo', 'ghe.example.com/acme/w'], undefined],
-    ['a GHES https origin', [], { remoteUrl: () => 'https://ghe.example.com/acme/w.git' }],
-    ['a GHES ssh origin', [], { remoteUrl: () => 'git@ghe.example.com:acme/w.git' }],
-  ];
-  for (const [name, extra, overrides] of sources) {
-    const deps = fakeDeps(files, overrides || {});
-    assert.equal(run(['--claim-file', CLAIM, '--listing', LISTING, ...extra], deps), 0, name);
-    assert.deepEqual(verdictOf(deps), want, name);
-    assert.deepEqual(deps.calls.readFile, [], `${name}: no claim or listing read`);
-    assert.deepEqual(deps.calls.gh, [], `${name}: no gh call`);
-    assert.equal(deps.calls.ghAvailable, 0, `${name}: no gh probe`);
+// #4794: one host for the listing and the PR-url match. Precedence: a typed host-qualified --repo,
+// a non-empty exported GH_HOST, the origin's host (through the gate), then github.com.
+const prUrl = (host) => `https://${host}/acme/w/pull/7`;
+const GH_HOST_MINE = { env: { GH_HOST: 'mine.example' }, readFile: GATE_DEPS.readFile };
+const listedBy = (host) => [ghEntry({ url: prUrl(host), body: MARKED })];
+const repoArgOf = (args) => args[args.indexOf('--repo') + 1];
+
+// Runs the CLI once through --listing (the match half) and once through gh (the listing half,
+// a fake gh answering `entries`): -> { listing, viaGh, ghDeps } with each verdict and the gh argv.
+function runListingAndGh(entries, extraArgs, overrides = {}) {
+  const listing = fakeDeps({ ...claimFile(), [LISTING]: JSON.stringify(entries) }, overrides);
+  assert.equal(run(['--claim-file', CLAIM, '--listing', LISTING, ...extraArgs], listing), 0);
+  const ghDeps = fakeDeps(claimFile(), { ...overrides, gh: (args) => { ghDeps.calls.gh.push(args); return JSON.stringify(entries); } });
+  assert.equal(run(['--claim-file', CLAIM, ...extraArgs], ghDeps), 0);
+  return { listing: verdictOf(listing), viaGh: verdictOf(ghDeps), ghDeps };
+}
+const matched = (host) => ({ match: true, link: prUrl(host), failure: null });
+
+test('#4794: a typed host-qualified --repo is trusted for any host and matches that host\'s PR urls', () => {
+  const r = runListingAndGh(listedBy('ghe.example.com'), ['--repo', 'ghe.example.com/acme/w'], { remoteUrl: () => { throw new Error('no remote'); } });
+  assert.deepEqual(r.listing, matched('ghe.example.com'));
+  assert.deepEqual(r.viaGh, matched('ghe.example.com'));
+  assert.equal(repoArgOf(r.ghDeps.calls.gh[0]), 'ghe.example.com/acme/w');
+  const wrongHost = fakeDeps({ ...claimFile(), [LISTING]: JSON.stringify(listedBy('github.com')) });
+  assert.equal(run(['--claim-file', CLAIM, '--listing', LISTING, '--repo', 'ghe.example.com/acme/w'], wrongHost), 0);
+  assert.deepEqual(verdictOf(wrongHost), NO_MATCH, 'a github.com PR is not the typed GHES host\'s');
+});
+
+test('#4794: --repo github.com/acme/w lists bare, and stays qualified when GH_HOST names another host', () => {
+  const plain = runListingAndGh(listedBy('github.com'), ['--repo', 'github.com/acme/w']);
+  assert.deepEqual(plain.viaGh, matched('github.com'));
+  assert.equal(repoArgOf(plain.ghDeps.calls.gh[0]), 'acme/w');
+  const exported = runListingAndGh(listedBy('github.com'), ['--repo', 'github.com/acme/w'], { gateDeps: GH_HOST_MINE });
+  assert.deepEqual(exported.listing, matched('github.com'));
+  assert.deepEqual(exported.viaGh, matched('github.com'));
+  assert.equal(repoArgOf(exported.ghDeps.calls.gh[0]), 'github.com/acme/w', 'a qualified -R beats GH_HOST, so it stays qualified');
+});
+
+test('#4794: a bare --repo acme/w follows an exported GH_HOST for the listing and the match', () => {
+  const r = runListingAndGh(listedBy('mine.example'), ['--repo', 'acme/w'], { gateDeps: GH_HOST_MINE });
+  assert.deepEqual(r.listing, matched('mine.example'));
+  assert.deepEqual(r.viaGh, matched('mine.example'));
+  assert.equal(repoArgOf(r.ghDeps.calls.gh[0]), 'acme/w', 'gh sends a bare -R to GH_HOST');
+  const dotcom = runListingAndGh(listedBy('github.com'), ['--repo', 'acme/w'], { gateDeps: GH_HOST_MINE });
+  assert.deepEqual(dotcom.listing, NO_MATCH, 'a github.com PR is not GH_HOST\'s');
+});
+
+test('#4794: a github.com origin with GH_HOST exported lists bare and matches GH_HOST\'s PR urls', () => {
+  const r = runListingAndGh(listedBy('mine.example'), [], { gateDeps: GH_HOST_MINE });
+  assert.deepEqual(r.listing, matched('mine.example'));
+  assert.deepEqual(r.viaGh, matched('mine.example'));
+  assert.equal(repoArgOf(r.ghDeps.calls.gh[0]), 'acme/w');
+  const dotcom = runListingAndGh(listedBy('github.com'), [], { gateDeps: GH_HOST_MINE });
+  assert.deepEqual(dotcom.viaGh, NO_MATCH);
+});
+
+test('#4794: a *.ghe.com or hosts.yml origin lists host-qualified and matches its own PR urls', () => {
+  const ghe = runListingAndGh(listedBy('acme.ghe.com'), [], { remoteUrl: () => 'https://acme.ghe.com/acme/w.git' });
+  assert.deepEqual(ghe.listing, matched('acme.ghe.com'));
+  assert.deepEqual(ghe.viaGh, matched('acme.ghe.com'));
+  assert.deepEqual(ghe.ghDeps.calls.gh.map(repoArgOf), ['acme.ghe.com/acme/w']);
+  const dotcom = runListingAndGh(listedBy('github.com'), [], { remoteUrl: () => 'https://acme.ghe.com/acme/w.git' });
+  assert.deepEqual(dotcom.listing, NO_MATCH, 'a github.com PR is not the GHE origin\'s');
+  const keyed = { env: {}, readFile: () => 'ghe.example.com:\n' };
+  for (const remote of ['https://ghe.example.com/acme/w.git', 'git@ghe.example.com:acme/w.git']) {
+    const r = runListingAndGh(listedBy('ghe.example.com'), [], { remoteUrl: () => remote, gateDeps: keyed });
+    assert.deepEqual(r.listing, matched('ghe.example.com'), remote);
+    assert.deepEqual(r.viaGh, matched('ghe.example.com'), remote);
+    assert.deepEqual(r.ghDeps.calls.gh.map(repoArgOf), ['ghe.example.com/acme/w'], remote);
   }
-  const ghDeps = fakeDeps(claimFile(), { remoteUrl: () => 'https://ghe.example.com/acme/w.git' });
-  assert.equal(run(['--claim-file', CLAIM], ghDeps), 0);
-  assert.deepEqual(verdictOf(ghDeps), want);
-  assert.deepEqual(ghDeps.calls.gh, [], 'the gh path never lists a GHES repo either');
-  assert.equal(ghDeps.calls.ghAvailable, 0, 'the gh path never probes gh for a GHES repo');
-  assert.deepEqual(ghDeps.calls.readFile, [], 'the gh path reads no claim file for a GHES repo');
-  const explicit = fakeDeps({ ...claimFile(), [LISTING]: JSON.stringify([ghEntry({ body: MARKED })]) });
-  assert.equal(run(['--claim-file', CLAIM, '--listing', LISTING, '--repo', 'github.com/acme/w'], explicit), 0);
-  assert.equal(verdictOf(explicit).match, true, 'an explicit github.com host still matches');
+});
+
+test('#4794: a *.ghe.com origin with GH_HOST exported follows GH_HOST, not the origin', () => {
+  const r = runListingAndGh(listedBy('mine.example'), [], { remoteUrl: () => 'https://acme.ghe.com/acme/w.git', gateDeps: GH_HOST_MINE });
+  assert.deepEqual(r.listing, matched('mine.example'));
+  assert.deepEqual(r.viaGh, matched('mine.example'));
+  assert.equal(repoArgOf(r.ghDeps.calls.gh[0]), 'acme/w');
+  const origin = runListingAndGh(listedBy('acme.ghe.com'), [], { remoteUrl: () => 'https://acme.ghe.com/acme/w.git', gateDeps: GH_HOST_MINE });
+  assert.deepEqual(origin.listing, NO_MATCH, 'the origin host\'s PR is not GH_HOST\'s');
+});
+
+test('#4794: a credentialed origin reads as its host (one origin read, verdict by host alone)', () => {
+  const r = runListingAndGh(listedBy('acme.ghe.com'), [], { remoteUrl: () => 'https://oauth2@acme.ghe.com/acme/w.git' });
+  assert.deepEqual(r.listing, matched('acme.ghe.com'));
+  assert.deepEqual(r.viaGh, matched('acme.ghe.com'));
+  assert.deepEqual(r.ghDeps.calls.gh.map(repoArgOf), ['acme.ghe.com/acme/w']);
+});
+
+test('#4794: an origin the gate refuses is the unknown-host verdict, exit 0, and nothing is read or called', () => {
+  const origins = [
+    'https://ghe.example.com/acme/w.git',
+    'git@github-work:acme/w.git',
+    'ssh://git@github-work/acme/w.git',
+  ];
+  const verdicts = {};
+  for (const remote of origins) {
+    const refusal = gateOriginRepo(remote, GATE_DEPS).refusal;
+    assert.ok(refusal, `${remote}: the gate must refuse it`);
+    const want = { match: false, link: null, failure: `unknown-host: ${refusal}` };
+    for (const extra of [['--listing', LISTING], []]) {
+      const deps = fakeDeps({ ...claimFile(), [LISTING]: JSON.stringify(listedBy('github.com')) }, { remoteUrl: () => remote });
+      assert.equal(run(['--claim-file', CLAIM, ...extra], deps), 0, remote);
+      assert.deepEqual(verdictOf(deps), want, remote);
+      assert.deepEqual(deps.calls.stderr, [`stale-claim-pr.js: ${refusal}\n`], remote);
+      assert.deepEqual(deps.calls.readFile, [], `${remote}: no claim or listing read`);
+      assert.deepEqual(deps.calls.gh, [], `${remote}: no gh call`);
+      assert.equal(deps.calls.ghAvailable, 0, `${remote}: no gh probe`);
+      verdicts[remote] = out(deps);
+    }
+  }
+  assert.match(verdicts['git@github-work:acme/w.git'], /GH_HOST=github\.com/);
+  assert.doesNotMatch(verdicts['git@github-work:acme/w.git'], /GH_HOST=github-work/);
+  assert.equal(verdicts['ssh://git@github-work/acme/w.git'], verdicts['git@github-work:acme/w.git'], 'the ssh:// spelling is refused with the same verdict');
+});
+
+test('#4794: a cloud sandbox proxy remote is not an origin the gate reads: exit 3 naming --repo, nothing called', () => {
+  const deps = fakeDeps(claimFile(), { remoteUrl: () => 'http://local_proxy@127.0.0.1:43215/git/acme/w' });
+  assert.equal(run(['--claim-file', CLAIM], deps), 3);
+  assert.match(deps.calls.stderr.join(''), /--repo/);
+  assert.equal(out(deps), '');
+  assert.deepEqual(deps.calls.gh, []);
+});
+
+// #4794: a bare `--repo owner/name` means github.com, so the exit-3 hint must never offer one — an
+// agent on a GHE sandbox-proxy origin that followed it would re-run against the wrong host.
+test('#4794: the exit-3 stderr hint asks for a host-qualified --repo, never a bare owner/name', () => {
+  const deps = fakeDeps(claimFile(), { remoteUrl: () => 'http://local_proxy@127.0.0.1:43215/git/acme/w' });
+  assert.equal(run(['--claim-file', CLAIM], deps), 3);
+  assert.equal(deps.calls.stderr.join(''), 'stale-claim-pr.js: could not resolve owner/repo — pass --repo host/owner/name\n');
+  assert.doesNotMatch(deps.calls.stderr.join(''), /--repo owner\/name/);
+});
+
+test('#4794: the usage line advertises --repo as [host/]owner/name', () => {
+  const deps = fakeDeps(claimFile());
+  assert.equal(run(['--help'], deps), 0);
+  assert.ok(out(deps).includes('[--repo [host/]owner/name]'), 'a host-qualified --repo is the form the prose passes');
+  assert.doesNotMatch(out(deps), /\[--repo owner\/name\]/);
 });
 
 test('--repo owner/name is the repo the same-repo check runs against', () => {

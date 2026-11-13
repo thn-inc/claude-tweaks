@@ -114,7 +114,7 @@ test('reconcile-background: a stale (dead-pid) lock is reclaimed; a completed pa
   assert.equal(fs.existsSync(lockFile), false, 'the lock must be released once the pass completes');
 });
 
-// #1687: mirrors tests/bin-lib/reconcile/archive-merged.test.js's own
+// #1687: mirrors tests/bin-lib/reconcile/archive-merged-helpers.js's own
 // fixtureAbandonedShippedRun (an abandoned, stale, shipped 'interrupted' run
 // whose worktree was torn down) — but this test drives the real
 // `reconcile-background` CLI subcommand, not archiveMerged() in-process. The
@@ -132,7 +132,7 @@ function fixtureAbandonedShippedRun({ runId, ownerSessionId } = {}) {
   git(['commit', '-q', '-m', 'init'], root);
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   // `integration-model: pr-first` is load-bearing here beyond what
-  // archive-merged.test.js's own fixture needs: that file calls
+  // archive-merged-helpers.js's own fixture needs: its callers call
   // archiveMerged() directly, bypassing reconcile()'s own
   // resolveIntegrationModel gate entirely, but this test drives the real
   // reconcile-background CLI, which skips every check (including 'archive')
@@ -199,7 +199,7 @@ test('reconcile-background: the same abandoned interrupted run IS archived when 
 
 // The status file's `summary` is built from reconcile()'s result. Drives the
 // real `reconcile-background` branch of main() in-process with reconcile()
-// stubbed (the same module-object stub tests/reconcile.test.js's AC3.1 uses),
+// stubbed (the same module-object stub tests/reconcile-dispatch.test.js's AC3.1 uses),
 // so no git remote or `gh` is involved. process.cwd() is what that branch
 // reads, so the test switches into the fixture repo and back.
 async function backgroundSummaryFor(result) {
@@ -249,7 +249,7 @@ test('reconcile-background summary: counts post-merge runs and the parents they 
       { runDir: '/r/c', pr: 3, action: 'skipped', reason: 'merge-grace' },
       { runDir: '/r/d', pr: 4, action: 'skipped', reason: 'marker-write-failed', parentsClosed: 5 },
       { runDir: '/r/e', pr: 5, action: 'ran', closingLinks: 'exit 5', parentsClosed: 0, step40Failed: true },
-      { runDir: '/r/f', pr: 6, action: 'ran', closingLinks: 'an unreadable envelope', parentsClosed: 0, step40Failed: true },
+      { runDir: '/r/f', pr: 6, action: 'ran', closingLinks: 'exit 3', parentsClosed: 0, step40Failed: true },
       { runDir: '/r/g', pr: 7, action: 'skipped', reason: 'error', detail: 'boom' },
     ],
   });
@@ -265,7 +265,49 @@ test('reconcile-background summary: counts post-merge runs and the parents they 
     assert.deepEqual(none.postMergeFailedRecords, []);
     assert.equal(none.postMergeParentsClosed, 0);
     assert.equal(none.postMergeUnmarkedParentsClosed, 0);
+    assert.deepEqual(none.postMergeParentsLeftOpen, []);
+    assert.deepEqual(none.postMergeStepSkips, []);
   }
+});
+
+test('AC1.1 + Q5: the summary lists each parent Step 4.0b left open and each step skip, a marker-write-failed entry\'s included, whatever the verdict (#4798)', async () => {
+  const summary = await backgroundSummaryFor({ postMerge: [
+    { runDir: '/r/a', pr: 11, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 1, parentFailures: [{ parent: 100, reason: 'gh-failed', detail: 'HTTP 502' }, { issue: 103, reason: 'internal-error' }] },
+    { runDir: '/r/b', pr: 12, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 0, stepSkips: [{ reason: 'unreadable-policy', detail: '.claude-tweaks/policy.yml: EISDIR' }] },
+    { runDir: '/r/c', pr: 13, action: 'ran', closingLinks: 'close-failed', parentsClosed: 0, stepSkips: [{ reason: 'internal-error' }] },
+    { runDir: '/r/d', pr: 14, action: 'skipped', reason: 'marker-write-failed', parentsClosed: 0, parentFailures: [{ parent: 200, reason: 'gh-failed' }], stepSkips: [{ reason: 'invalid-risk-floor' }] },
+    { runDir: '/r/e', pr: 15, action: 'skipped', reason: 'error', detail: 'boom', parentsClosed: 2, parentFailures: [{ parent: 300, reason: 'gh-failed' }], stepSkips: [{ reason: 'unreadable-policy' }] },
+  ] });
+  assert.equal(summary.postMergeFailed, 3, 'the error entry counts; the marker-write-failed one stays out of it');
+  assert.equal(summary.postMergeRan, 1, 'a step skip alone never leaves a parent open');
+  assert.deepEqual(summary.postMergeParentsLeftOpen, [{ pr: 11, parent: 100, reason: 'gh-failed' }, { pr: 11, issue: 103, reason: 'internal-error' }, { pr: 14, parent: 200, reason: 'gh-failed' }, { pr: 15, parent: 300, reason: 'gh-failed' }]);
+  assert.deepEqual(summary.postMergeStepSkips, [{ pr: 12, reason: 'unreadable-policy' }, { pr: 13, reason: 'internal-error' }, { pr: 14, reason: 'invalid-risk-floor' }, { pr: 15, reason: 'unreadable-policy' }]);
+});
+
+test('Ruling 1: an error entry\'s parentsClosed counts with the unmarked closes, not the marked ones (#4798)', async () => {
+  const summary = await backgroundSummaryFor({ postMerge: [
+    { runDir: '/r/a', pr: 11, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 1 },
+    { runDir: '/r/b', pr: 12, action: 'skipped', reason: 'marker-write-failed', parentsClosed: 3 },
+    { runDir: '/r/c', pr: 13, action: 'skipped', reason: 'error', detail: 'boom', parentsClosed: 2 },
+    { runDir: '/r/d', pr: 14, action: 'skipped', reason: 'error', detail: 'thrown before Step 4.0b' },
+  ] });
+  assert.equal(summary.postMergeParentsClosed, 1);
+  assert.equal(summary.postMergeUnmarkedParentsClosed, 5, 'marker-write-failed (3) + error (2); an error entry with no parentsClosed adds 0');
+});
+
+test('round 5: a taken-over holder\'s GitHub changes reach the summary on their own, in no other count (#4797)', async () => {
+  const { CLAIM_LOST_DETAIL } = require('../../../plugin/bin/lib/reconcile/post-merge');
+  const summary = await backgroundSummaryFor({ postMerge: [
+    { runDir: '/r/a', pr: 11, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 1 },
+    { runDir: '/r/b', pr: 12, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL, parentsClosed: 2, recordsReopened: [7] },
+    { runDir: '/r/c', pr: 13, action: 'skipped', reason: 'in-flight' },
+    { runDir: '/r/d', pr: 14, action: 'skipped', reason: 'marker-write-failed', parentsClosed: 3 },
+  ] });
+  assert.deepEqual(summary.postMergeSuperseded, [{ pr: 12, parentsClosed: 2, recordsReopened: [7] }]);
+  assert.equal(summary.postMergeParentsClosed, 1);
+  assert.equal(summary.postMergeUnmarkedParentsClosed, 3);
+  assert.equal(summary.postMergeFailed, 0, 'a taken-over holder is not a failed run');
+  assert.deepEqual((await backgroundSummaryFor({})).postMergeSuperseded, []);
 });
 
 test('AC1.1 AC1.2 AC1.3: a close-failed ran entry counts as failed and names its records (#4897)', async () => {

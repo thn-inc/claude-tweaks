@@ -183,7 +183,7 @@ behind CLAUDE.md's `## Don'ts` rules.
 | playwright-cli | `npm install -g @playwright/cli` | Optional — browser automation for /stories, /visual-review, /review qa |
 | Node 18+ | brew/winget/scoop install nodejs | Yes — statusline. `/claude-tweaks:init` Step 8 offers to install via your package manager. |
 | git CLI | brew/winget/apt install git | Optional — required only for the git segment in the statusline; everything else degrades gracefully. |
-| `gh` CLI | `brew/winget/apt install gh`, then `gh auth login` | Yes, for most `work-backend: github-issues` write paths — required, unauthenticated is a hard gate. `/dispatch`'s whole queue/claim/settle/merge path is dual-transport, falling back to GitHub MCP tools automatically when `gh` isn't on PATH — see `_shared/github-write-transport.md` — but `gh` is still required for every other GitHub-write path in the plugin. |
+| `gh` CLI | `brew/winget/apt install gh`, then `gh auth login` | Yes, for most `work-backend: github-issues` write paths — required, unauthenticated is a hard gate. `/dispatch`'s whole queue/claim/settle/merge path is dual-transport, falling back to GitHub MCP tools automatically when `gh` isn't on PATH — see `_shared/github-write-transport.md`, the operation-level `gh`-to-MCP mapping. Other skills fall back the same way only where they document an MCP route against that mapping; a path that documents none, or needs an operation the mapping does not cover (PR review-thread or CI-check reads), still requires `gh`. |
 
 ## Configuration
 

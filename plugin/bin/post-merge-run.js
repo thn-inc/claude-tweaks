@@ -13,23 +13,35 @@
 //
 // Prints exactly one JSON line, `postMergeOne`'s entry:
 //   {runDir, pr, action: ran | skipped, reason?, detail?, closingLinks?,
-//    parentsClosed?, attempt?, step40Failed?, records?, logFailed?, parentFailures?,
-//    verdict, next, failedSteps?}
+//    parentsClosed?, recordsReopened?, recordsClosed?, attempt?, step40Failed?, records?,
+//    logFailed?, parentFailures?, stepSkips?, verdict, next, failedSteps?}
 // ran: Steps 4.0 and 4.0b ran and the marker is written; `closingLinks` is Step
 //   4.0's action. `step40Failed` marks a Step 4.0 that itself failed. `records`
 //   ({failed, closeFailed, pendingClose, unchecked}, issue numbers) is on every
-//   `ran` entry Step 4.0 printed a readable envelope for, so it is absent only
-//   when `step40Failed` comes from a non-zero exit or unparseable output;
+//   `ran` entry Step 4.0 returned an envelope for, so it is absent only when
+//   `step40Failed` comes from a non-zero exit;
 //   `logFailed: true` when Step 4.0 could not append a decisions.md line.
 //   `parentFailures` ([{parent | issue, reason, detail?}]) is on every `ran`
 //   entry Step 4.0b ran for: every skip that is not a deliberate gate outcome
-//   (`gh-failed`, `internal-error`, the step-wide `unreadable-policy` /
-//   `invalid-risk-floor` with no parent key, or any unlisted reason); a
-//   non-empty one is a failure to report.
+//   (`gh-failed`, `internal-error`, or any unlisted reason) that names a parent
+//   or a record, or names neither on a merge whose closing set (after the close
+//   window) was not empty (the step-wide `unreadable-policy` /
+//   `invalid-risk-floor` among them); a non-empty one is a failure to report.
+//   A skip naming neither on a merge whose closing set was empty (after the
+//   close window) leaves no parent open, so it goes to `stepSkips`
+//   ([{reason, detail?}], only when non-empty) instead; that leaves a
+//   clean-word entry `clean`. A `marker-write-failed` or `error` entry keeps
+//   both fields when Step 4.0b ran: the closes ran, only the marker is missing.
 //   already-done: a marker is already in the run's decisions.md.
-//   in-flight: another process holds the run's claim. Any other reason (no-pr,
+//   in-flight: another process holds the run's claim. When this invocation's own
+//   pass had its claim another pass took over after changing GitHub, the entry also
+//   carries `parentsClosed` (parents Step 4.0b closed) and `recordsReopened` /
+//   `recordsClosed` (records Step 4.0 reopened or closed), each only when non-empty.
+//   Any other reason (no-pr,
 //   not-merged, claim-failed, transient-failure, network-failure,
-//   marker-write-failed, error, not-github-issues, no-remote, no-pr-states,
+//   marker-write-failed, error, not-github-issues, no-remote, unknown-host (the origin
+//   names a host that is not a known GitHub host, #4933: nothing was sent to gh; `detail`
+//   is the refusal text, which names the `GH_HOST` opt-in), no-pr-states,
 //   merged-at-unreadable (a MERGED PR whose mergedAt does not parse: its age is
 //   unknown, so nothing runs),
 //   no-pr-state, pr-not-found, invalid-arguments -- the last three are the PR-state
@@ -62,10 +74,12 @@ const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
 
 const USAGE = 'usage: post-merge-run.js --run <run-dir> [--help]\n'
   + '  runs the post-merge closes (Step 4.0 closing-links, Step 4.0b below-floor parent close) once for the one named run dir, archived included\n'
-  + '  prints one JSON line {runDir, pr, action, reason?, closingLinks?, parentsClosed?, step40Failed?, records?, logFailed?, parentFailures?, verdict, next, failedSteps?}; action:\n'
-  + '    ran: the steps ran and the marker is written (step40Failed when Step 4.0 itself failed; records {failed, closeFailed, pendingClose, unchecked} whenever Step 4.0 printed a readable envelope;\n'
-  + '         logFailed when Step 4.0 could not append a decisions.md line; parentFailures [{parent|issue, reason, detail?}] when Step 4.0b ran, non-empty = a failed close)\n'
-  + '    skipped: reason already-done (a marker is present) | in-flight (another process holds the claim); any other reason is a failure to report\n'
+  + '  prints one JSON line {runDir, pr, action, reason?, closingLinks?, parentsClosed?, recordsReopened?, recordsClosed?, step40Failed?, records?, logFailed?, parentFailures?, stepSkips?, verdict, next, failedSteps?}; action:\n'
+  + '    ran: the steps ran and the marker is written (step40Failed when Step 4.0 itself failed; records {failed, closeFailed, pendingClose, unchecked} whenever Step 4.0 returned an envelope;\n'
+  + '         logFailed when Step 4.0 could not append a decisions.md line; parentFailures [{parent|issue, reason, detail?}] when Step 4.0b ran, non-empty = a failed close;\n'
+  + '         stepSkips [{reason, detail?}] = a parentless Step 4.0b skip on a merge whose closing set was empty (after the close window), which leaves no parent open;\n'
+  + '         a skipped marker-write-failed or error entry can carry both fields)\n'
+  + '    skipped: reason already-done (a marker is present) | in-flight (another process holds the claim; when this invocation\'s own pass had its claim another pass took over after changing GitHub, the entry also carries parentsClosed (parents Step 4.0b closed) and recordsReopened / recordsClosed (records Step 4.0 reopened or closed), each only when non-empty); any other reason is a failure to report\n'
   + '  route on verdict (clean | failed | already-done | in-flight) and next (rerun | rerun-where-gh | rerun-after-stale-claim | none), never on the words above\n'
   + '  failedSteps on a failed ran entry: the steps that failed, 4.0 and/or 4.0b; report only those\n'
   + '  exit 0 an entry was printed (every action and reason is data)\n'

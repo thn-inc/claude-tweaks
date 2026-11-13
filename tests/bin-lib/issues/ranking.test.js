@@ -239,3 +239,30 @@ test('priorityBandOf: an out-of-vocabulary priority value falls back to band 3 i
   assert.equal(priorityBandOf({ facets: { priority: 'urgent' } }), 3);
   assert.ok(Number.isFinite(priorityBandOf({ facets: { priority: 'urgent' } })));
 });
+
+test('a qualified foreign blocker ref (#4793) never credits this repository\'s same-numbered record, yet counts as wired', () => {
+  const foreign = candidate({ id: 9, body: 'Blocked by other/repo#5', blockedBy: ['other/repo#5'] });
+  const five = candidate({ id: 5 });
+  assert.deepStrictEqual(rankNextToBuild([foreign, five]).map((c) => c.id), [9, 5]);
+  assert.deepStrictEqual(findUnresolvedDependencyProse([foreign, five]), []);
+  // Control: a bare number does credit #5 and moves it first.
+  const local = candidate({ id: 9, blockedBy: [5] });
+  assert.deepStrictEqual(rankNextToBuild([local, five]).map((c) => c.id), [5, 9]);
+});
+
+test('Plan Review Clarifications: a canonical Blocked by owner/name#N line is wired — never flagged as unwired prose', () => {
+  assert.deepStrictEqual(findUnresolvedDependencyProse([candidate({ id: 9, body: 'Blocked by other/repo#5' })]), []);
+  assert.deepStrictEqual(findUnresolvedDependencyProse([candidate({ id: 9, body: 'Blocked by other/repo#5\nalso blocked by #7 upstream' })]), []);
+});
+
+test('a mid-line qualified mention is never read as this repository\'s #N; a bare #N beside it still flags', () => {
+  assert.deepStrictEqual(findUnresolvedDependencyProse([candidate({ id: 9, body: 'This is blocked by other/repo#5 upstream' })]), []);
+  assert.deepStrictEqual(findUnresolvedDependencyProse([candidate({ id: 9, body: 'blocked by other/repo#5 and #7' })]), [{ id: 9, mention: 'blocked by other/repo#5 and #7' }]);
+});
+
+test('mention is the first line whose stripped form matches — a qualified-only line before it is skipped', () => {
+  assert.deepStrictEqual(
+    findUnresolvedDependencyProse([candidate({ id: 9, body: 'This is blocked by other/repo#5 upstream\nblocked by #7' })]),
+    [{ id: 9, mention: 'blocked by #7' }],
+  );
+});

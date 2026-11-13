@@ -330,9 +330,10 @@ test('an Enterprise origin puts the host on every gh read; the verdict is the gi
       if (args[0] === 'api' && args[n - 2] === '--hostname' && args[n - 1] === GHE) return gh(args.slice(0, -2));
       return gh(args.map((a) => (a === `${GHE}/o/r` ? 'o/r' : a)));
     };
-    const r = go(argv, world, { remoteUrl: () => `git@${GHE}:o/r.git`, runner });
+    const r = go(argv, world, { remoteUrl: () => `git@${GHE}:o/r.git`, runner, gateDeps: { env: { GH_HOST: GHE } } });
     assert.equal(r.code, 0, r.stderr);
-    assert.deepEqual(r.verdict, go(argv, world).verdict);
+    assert.equal(r.verdict.repo, `${GHE}/o/r`);
+    assert.deepEqual(r.verdict, { ...go(argv, world).verdict, repo: `${GHE}/o/r` });
     assert.ok(sent.some(isShape8), 'the login read is reached');
     for (const a of sent) {
       if (leadsHost(a)) assert.equal(a.filter((x) => x === '--hostname').length, 1, a.join(' '));
@@ -340,6 +341,25 @@ test('an Enterprise origin puts the host on every gh read; the verdict is the gi
       else assert.deepEqual(a.slice(3, 5), ['--repo', `${GHE}/o/r`], a.join(' '));
     }
   }
+});
+
+test('the verdict names the repository its reads used', (t) => {
+  assert.equal(go(['--sub-issue', '11'], {}).verdict.repo, 'o/r');
+  // The local-files path reads no remote at all.
+  const { dir, parent } = family(t);
+  assert.equal(goLocal(['--parent', String(parent.id)], dir).verdict.repo, null);
+  // The reads' host, never the remote's: an Enterprise remote the gh login resolves to github.com stays bare.
+  const reroute = go(['--sub-issue', '11'], {}, { remoteUrl: () => 'git@ghe.example.com:o/r.git', gateDeps: { env: { GH_HOST: 'github.com' } } });
+  assert.equal(reroute.code, 0, reroute.stderr);
+  assert.equal(reroute.verdict.repo, 'o/r');
+  // The facts path reads no remote without a qualified token, so there is no slug to name.
+  const file = writeFacts(t, worldAsMcp({}, 11));
+  const unqualified = go(['--sub-issue', '11', '--closing', '11,12', '--facts-json', file], {}, { ...NO_GH, remoteUrl: boom });
+  assert.equal(unqualified.code, 0, unqualified.stderr);
+  assert.equal(unqualified.verdict.repo, null);
+  const qualified = go(['--sub-issue', '11', '--closing', 'o/r#11,o/r#12', '--facts-json', file], {}, NO_GH);
+  assert.equal(qualified.code, 0, qualified.stderr);
+  assert.equal(qualified.verdict.repo, 'o/r');
 });
 
 test('stdout is one JSON line in VERDICT_FIELDS order', () => {
@@ -557,7 +577,10 @@ test('AC1.6: the gh path and the facts-json path give the same verdict', (t) => 
     const viaFacts = go([...argv, '--idempotence', '--facts-json', file], world, NO_GH);
     assert.equal(viaGh.code, 0, `${label}: ${viaGh.stderr}`);
     assert.equal(viaFacts.code, 0, `${label}: ${viaFacts.stderr}`);
-    assert.deepEqual(viaFacts.verdict, viaGh.verdict, label);
+    // The facts path reads the origin remote only for a qualified --closing token, so only such a
+    // row's verdict names the repository (the table has one: `other/r#11,12`); every other row's is null.
+    const qualified = argv.some((a) => a.includes('#'));
+    assert.deepEqual(viaFacts.verdict, { ...viaGh.verdict, repo: qualified ? 'o/r' : null }, label);
     seenIdempotence.add(viaGh.verdict.idempotence);
     for (const s of viaGh.verdict.subIssues) seenPr.add(s.pr);
   }
@@ -582,6 +605,37 @@ test('--facts-json reads no remote without a qualified closing token', (t) => {
   assert.equal(qualified.code, 2);
   assert.equal(qualified.stdout, '');
   assert.match(qualified.stderr, /owner\/repo/);
+});
+
+// #4933: the facts path makes no gh call, so an origin host with no GitHub signal is not refused;
+// the origin is read only to judge a qualified --closing token.
+test('facts-json path: the facts path is not refused for an unknown origin host', (t) => {
+  const file = writeFacts(t, worldAsMcp({ issues: { 12: OPEN } }, 11)); // 12 is open: only a closing token covers it
+  const over = { ...NO_GH, remoteUrl: () => 'https://Git.Corp.Invalid./o/r.git', gateDeps: { env: {} } };
+  const r = go(['--sub-issue', '11', '--closing', 'o/r#11,o/r#12', '--facts-json', file], {}, over);
+  assert.equal(r.code, 0, r.stderr);
+  assert.ok(!r.stderr.includes('is not a known GitHub host'), r.stderr);
+  assert.equal(r.verdict.state, 'due'); // both tokens judged this repo's: the closing set is {11, 12}
+  const foreign = go(['--sub-issue', '11', '--closing', 'x/r#11,x/r#12', '--facts-json', file], {}, over);
+  assert.equal(foreign.code, 0, foreign.stderr);
+  assert.notEqual(foreign.verdict.state, 'due'); // a foreign-repo token is still dropped
+});
+
+// #4794: the facts path reads origin the seam's way (hostPathOf, then parseRepo), so an ssh:// or
+// credentialed spelling judges a qualified token exactly as the scp spelling does.
+test('#4794: the facts path reads an ssh:// or credentialed origin like its scp spelling', (t) => {
+  const file = writeFacts(t, worldAsMcp({ issues: { 12: OPEN } }, 11));
+  const argv = ['--sub-issue', '11', '--closing', 'o/r#11,o/r#12', '--facts-json', file];
+  const scp = go(argv, {}, { ...NO_GH, remoteUrl: () => 'git@github.com:o/r.git' });
+  assert.equal(scp.code, 0, scp.stderr);
+  assert.equal(scp.verdict.state, 'due');
+  for (const remote of ['ssh://git@github.com/o/r.git', 'https://x:tok@github.com/o/r.git']) {
+    const r = go(argv, {}, { ...NO_GH, remoteUrl: () => remote });
+    assert.doesNotMatch(r.stderr, /could not resolve owner\/repo/, remote);
+    assert.equal(r.code, scp.code, `${remote}: ${r.stderr}`);
+    assert.equal(r.stdout, scp.stdout, remote);
+    assert.doesNotMatch(r.stdout + r.stderr, /tok/, remote);
+  }
 });
 
 test('a parent that reads closed needs no comments or me', (t) => {
@@ -617,7 +671,7 @@ test('--idempotence guards parentComments and requires me only where the verdict
   const r = go(argv(writeFacts(t, incomplete)), {}, NO_GH);
   assert.equal(r.code, 0, r.stderr);
   assert.equal(r.verdict.state, 'incomplete');
-  assert.deepEqual(r.verdict, viaGh.verdict);
+  assert.deepEqual(r.verdict, { ...viaGh.verdict, repo: null });
   // So do a gated parent, one above the floor, and an already-closed parent.
   const above = go(argv(writeFacts(t, { ...worldAsMcp({ issues: { 12: { labels: ['risk:high'] } } }, null), ...errored })), {}, NO_GH);
   assert.equal(above.code, 0, above.stderr);
@@ -785,7 +839,7 @@ test('local-files: due below the floor closes completed', (t) => {
   assert.deepEqual(
     { ...r.verdict, subIssues: undefined },
     {
-      parent: parent.id, state: 'due', exceeds: false, closeReason: 'completed', idempotence: 'comment-and-close', maxTier: 'low', riskFloor: 'high', parentIssue: true, needs: [], held: [], subIssues: undefined, skipped: [],
+      parent: parent.id, repo: null, state: 'due', exceeds: false, closeReason: 'completed', idempotence: 'comment-and-close', maxTier: 'low', riskFloor: 'high', parentIssue: true, needs: [], held: [], subIssues: undefined, skipped: [],
     },
   );
   assert.equal(goLocal(['--parent', String(parent.id)], dir).verdict.idempotence, null);

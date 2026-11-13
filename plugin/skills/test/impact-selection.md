@@ -74,11 +74,13 @@ Changed paths are diffed from the stamp's `fullSha`, as every scoped run is. Wit
 
 ## Report
 
-`scope.impact` holds `{suite, files, fallback, selected, changedTests, untracedTests, driftTests, driftSelected, superseded, mapPath, mapCommit, mapAgeCommits, mapDirty, fetch, listPath, selectedFiles}`. `driftTests` names the drift-selected tests and `driftSelected` their count (`null` when no selection ran). `fetch` is `{ran, exitCode, durationMs, timedOut, signal}` when a fetch ran, else `null`: `timedOut` is `true` when the 120 s timeout killed it, and `signal` names the signal that ended it (`null` for a normal exit). `listPath` and `selectedFiles` are set only when a subset ran. The map is read only when selection needs it, so a delta no impact rule matches (or that a full-suite rule already supersedes) never reads the map or runs `fetch`: `mapPath`, `mapCommit`, `mapAgeCommits`, `mapDirty` and `fetch` are then `null`. Under `Scope:`, stdout prints one of:
+`scope.impact` holds `{suite, files, fallback, selected, changedTests, untracedTests, driftTests, driftSelected, superseded, supersedingPaths, mapPath, mapCommit, mapAgeCommits, mapDirty, fetch, listPath, selectedFiles}`. `driftTests` names the drift-selected tests and `driftSelected` their count (`null` when no selection ran). `supersedingPaths` names the files that superseded the subset: unmatched paths and files a non-impact rule sends to the suite; `[]` otherwise. `fetch` is `{ran, exitCode, durationMs, timedOut, signal}` when a fetch ran, else `null`: `timedOut` is `true` when the 120 s timeout killed it, and `signal` names the signal that ended it (`null` for a normal exit). `listPath` and `selectedFiles` are set only when a subset ran. The map is read only when selection needs it, so a delta no impact rule matches (or that a full-suite rule already supersedes) never reads the map or runs `fetch`: `mapPath`, `mapCommit`, `mapAgeCommits`, `mapDirty` and `fetch` are then `null`. Under `Scope:`, stdout prints one of:
 
 - `Impact: {selected} of {n} test file(s) selected (map {commit9}, {age} commit(s) old)`, with `, {driftSelected} drift` inside the parentheses when any drift-selected test ran
 - `Impact: {selected} of the {suite} test file(s) selected — no impact-rule path changed, map not read`
 - `Impact: full {suite} — {fallback | superseded by a full-suite rule}`
+
+The `verify` event, and through it `timing.json`'s verify entry, carries `impact: {suite, fallback, superseded, selected, supersedingPaths}`, so the outcome outlives `report.json`, which each run overwrites.
 
 ## Refresh
 

@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { PROFILES } = require('./model-profiles/profiles');
+const { stripComment } = require('./model-profiles/policy-fragment');
 const { parseRiskPathGlobs } = require('./risk-path-globs');
 
 const PROFILE_NAMES = Object.keys(PROFILES);
@@ -87,13 +88,17 @@ const POLICY_KEYS = [
   // #4025: the express lane — opt-in, plus the post-merge review sampling cadence (skills/_shared/express-lane.md).
   { key: 'express-lane', type: 'boolean', default: false, summary: "Opts into the express lane: a small, low-risk singleton record builds, tests and merges-on-green in one agent, not the full /flow frame.", category: 'merge-safety', tier: 'advanced' },
   { key: 'express-review-sample-every', type: 'integer', min: 1, default: 5, summary: "Sends every Nth express-lane merge through the normal review lenses after merge, filing what they find as records.", category: 'merge-safety', tier: 'advanced' },
+  // #5216: the pipeline driver's admission lane (express-lane's driver design). policyOnly: the ceilings bound autonomous spend and express-driver routes records to autonomous machinery, so a --run config must never loosen them.
+  { key: 'express-driver', type: 'enum', values: ['off', 'split', 'on'], default: 'off', policyOnly: true, summary: "Routes admitted records to the pipeline driver: off, on, or split by record-number parity.", category: 'merge-safety', tier: 'advanced' },
+  { key: 'express-driver-wall-clock-minutes', type: 'integer', min: 1, default: 30, policyOnly: true, summary: "Per-record wall-clock ceiling in minutes before the driver stops.", category: 'merge-safety', tier: 'advanced' },
+  { key: 'express-driver-spend-ceiling-dollars', type: 'integer', min: 1, default: 10, policyOnly: true, summary: "Per-record spend ceiling in whole dollars before the driver stops.", category: 'merge-safety', tier: 'advanced' },
   { key: 'auto-merge-max-lines', type: 'integer', default: 40, summary: "Bounds how large a diff an unattended merge will accept before a human is required — a weighted guideline, not a hard cutoff.", category: 'merge-safety', tier: 'core' },
   { key: 'auto-merge-max-files', type: 'integer', default: 2, summary: "Bounds how many changed files an unattended merge will accept before a human is required — the same weighted guideline, by file count.", category: 'merge-safety', tier: 'core' },
   { key: 'merge-sensitive-paths', type: 'list', default: [], summary: "Lists path patterns that always require a human to sign off on a merge, no matter how small the change looks.", category: 'merge-safety', tier: 'advanced' },
   // risk-categories (#4609): project-added invisible-risk slugs, beside the four BUILTIN_RISK_CATEGORIES. `element: 'slug'` validates each comma-separated entry. policyOnly: risk-path-globs validates against it from policy.yml, so the two can never disagree.
-  { key: 'risk-categories', type: 'list', default: [], element: 'slug', policyOnly: true, summary: "Read only with control mode on: extra risk categories added to the four built-in ones; pairs with risk-path-globs.", category: 'merge-safety', tier: 'advanced' },
+  { key: 'risk-categories', type: 'list', default: [], element: 'slug', policyOnly: true, summary: "Not yet used; control mode only: extra risk categories added to the four built-in ones; pairs with risk-path-globs.", category: 'merge-safety', tier: 'advanced' },
   // risk-path-globs (#4609): the second block-style key. A slug -> glob-list map, read by parseRiskPathGlobs (not parseFlatLines, which ignores indented lines); `keys` names the built-in slugs, and risk-categories adds more at resolve time.
-  { key: 'risk-path-globs', type: 'map', keys: BUILTIN_RISK_CATEGORIES, default: {}, summary: "Read only with control mode on: maps each risk category to its signal path globs, as an indented block; pairs with risk-categories.", category: 'merge-safety', tier: 'advanced' },
+  { key: 'risk-path-globs', type: 'map', keys: BUILTIN_RISK_CATEGORIES, default: {}, summary: "Not yet used; control mode only: maps each risk category to its signal path globs, as an indented block; pairs with risk-categories.", category: 'merge-safety', tier: 'advanced' },
   // commit-scope / commit-scope-paths (#3298): the merge-subject scope source bin/compose-subject.js resolves when --scope is absent — explicit flag > a commit-scope-paths match over the changed files > commit-scope > unscoped. Both advanced: the core tier is at its cap.
   { key: 'commit-scope', type: 'string', summary: "Names the one Conventional-Commits scope every merge subject carries, and the fallback when a path rule is ambiguous.", category: 'merge-safety', tier: 'advanced' },
   { key: 'commit-scope-paths', type: 'list', default: [], summary: "Maps changed-path prefixes to the Conventional-Commits scope a merge subject carries when the matched files all agree on one scope.", category: 'merge-safety', tier: 'advanced' },
@@ -138,7 +143,7 @@ const POLICY_KEYS = [
   { key: 'specify-decomposition-log', type: 'boolean', default: false, summary: "When on, /specify logs each decomposition yielding 2+ ceremony:standard sub-issues to a git-tracked file for later confirmation.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'tidy-aggressiveness', type: 'enum', values: ['conservative', 'moderate', 'aggressive'], default: 'moderate', summary: "Sets how boldly cleanup sweeps act on what they find — from keep-unless-certain to delete-unless-doubtful.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'auto-mode', type: 'enum', values: ['default-on', 'default-off'], summary: "Sets whether a pipeline run (/flow), a standalone build, or an unattended cleanup run starts hands-off by default, without being asked.", category: 'pipeline-behavior', tier: 'advanced' },
-  { key: 'backlog-fetch-limit', type: 'integer', default: 1000, summary: "Caps how many backlog issues one scan pulls before warning that the list was truncated.", category: 'housekeeping', tier: 'advanced' },
+  { key: 'backlog-fetch-limit', type: 'integer', default: 1000, summary: "Caps how many backlog issues or PRs one scan pulls (every queue, PR-scan, and triage fetch) before warning that the list was truncated.", category: 'housekeeping', tier: 'advanced' },
   // Session-scoped record snapshot (#645) — how long /tmp/ct-records-{session-id}.json stays
   // fresh before a consumer (backlog/capture/specify/trust-table/help/tidy/visualize) re-fetches
   // instead of reading the cached snapshot. See _shared/record-queue-fetch.md.
@@ -151,7 +156,7 @@ const POLICY_KEYS = [
   // before its one automatic retry even starts. CLAUDE_TWEAKS_GH_TIMEOUT_MS
   // (an env var, not a policy key) takes precedence over this when both are
   // set — see shared-primitives.js's resolution order.
-  { key: 'gh-timeout-ms', type: 'integer', min: 1000, max: 60000, default: 5000, summary: "Bounds how long a single `gh` subprocess call may run before it is killed and retried once.", category: 'housekeeping', tier: 'advanced' },
+  { key: 'gh-timeout-ms', type: 'integer', min: 1000, max: 60000, default: 5000, summary: "Bounds how long one `gh` call may run before it is killed and retried once; batched calls outside reconcile get max(30000, this value).", category: 'housekeeping', tier: 'advanced' },
   // #3051: the `git` subprocess timeout for claims-git-cas.js's compare-and-
   // swap reads/writes against the claims-registry branch, routed through
   // bin/lib/shared-primitives.js's GIT_TIMEOUT_MS export — mirrors
@@ -176,20 +181,20 @@ const POLICY_KEYS = [
   // semantics live in _shared/record-batch-input.md, not restated here.
   { key: 'specify-budget', type: 'integer', default: 5, summary: "Caps how many eligible backlog records one bare /specify drain attempts before stopping.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'autonomy', type: 'enum', values: ['supervised', 'trusted', 'unattended'], default: 'supervised', summary: "Caps how much the pipeline may do without a human — trust that classes earn can never exceed this ceiling.", category: 'autonomy-trust', tier: 'core' },
-  // Control mode (#4609, human-in-control #4608): twelve inert flat keys here, plus `risk-categories` and `risk-path-globs` in the merge-safety group above. Nothing reads them yet; later records consume them, always behind isControlModeOn (bin/lib/policy.js). All but `control-mode` itself are consulted only with control mode on. All advanced — the core tier is at its cap.
-  { key: 'control-mode', type: 'enum', values: ['off', 'on'], default: 'off', summary: "The single human-in-control switch; implied levers default at skill-default precedence, so any explicitly set lever wins.", category: 'autonomy-trust', tier: 'advanced' },
-  { key: 'acceptance-target', type: 'enum', values: ['local', 'dev'], default: 'local', summary: "Read only with control mode on: where a human accepts work, locally or on the dev environment; pairs with deploy-reach when dev.", category: 'pipeline-behavior', tier: 'advanced' },
-  { key: 'deploy-reach', type: 'enum', values: ['on-merge', 'command', 'none'], default: 'none', summary: "Read only with control mode on: how a merge reaches the dev environment, if at all; pairs with acceptance-target set to dev.", category: 'pipeline-behavior', tier: 'advanced' },
+  // Control mode (#4609, human-in-control #4608): twelve flat keys here, plus `risk-categories` and `risk-path-globs` in the merge-safety group above. No plugin code acts on them yet, so each summary opens "Not yet used". The #4608 leaves wire them: control-mode -> #4624, and every control-mode-gated leaf through isControlModeOn (bin/lib/policy.js); acceptance-target -> #4615; deploy-reach, deploy-command, deploy-live-workflow, deploy-version-url, dev-base-url, dev-test-account, deploy-wait-seconds, deploy-poll-seconds -> #4616; owned-owners -> #4621; trusted-authors -> #4622; risk-categories, risk-path-globs -> #4618, #4619. The record that wires a key drops its marker and its entry in tests/resolve-policy-control-mode.test.js's NOT_YET_USED. All but `control-mode` itself are consulted only with control mode on. All advanced — the core tier is at its cap.
+  { key: 'control-mode', type: 'enum', values: ['off', 'on'], default: 'off', summary: "Not yet used. The single human-in-control switch; implied levers default at skill-default precedence, so any explicitly set lever wins.", category: 'autonomy-trust', tier: 'advanced' },
+  { key: 'acceptance-target', type: 'enum', values: ['local', 'dev'], default: 'local', summary: "Not yet used; control mode only: where a human accepts work, locally or on the dev environment; pairs with deploy-reach when dev.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'deploy-reach', type: 'enum', values: ['on-merge', 'command', 'none'], default: 'none', summary: "Not yet used; control mode only: how a merge reaches the dev environment, if at all; pairs with acceptance-target set to dev.", category: 'pipeline-behavior', tier: 'advanced' },
   // deploy-command is an executed string: consumers read it from the base branch's policy only (never from a PR's own copy). policyOnly (here and on the two trust lists below) — the resolver skips the --run overlay, so a run config can name neither what executes nor who is trusted; the base-branch read stays the consumer's, since the resolver only sees the checkout it runs in. allowWhitespace — it is a shell command, like release-hook. closedQuote on the three allowWhitespace rows below: a quoted value holding a `#` is cut mid-quote by parseFlatLines, so an opening quote that never closes is invalid rather than a malformed command.
-  { key: 'deploy-command', type: 'string', allowWhitespace: true, closedQuote: true, policyOnly: true, summary: "Executed string, read only from the base branch's policy; meaningful only with deploy-reach command and control mode on.", category: 'pipeline-behavior', tier: 'advanced' },
-  { key: 'deploy-live-workflow', type: 'string', allowWhitespace: true, closedQuote: true, summary: "Read only with control mode on: names the CI workflow whose success means dev is live; pairs with deploy-reach other than none.", category: 'pipeline-behavior', tier: 'advanced' },
-  { key: 'deploy-version-url', type: 'string', pattern: HTTP_URL, summary: "Read only with control mode on: a URL returning the deployed version; pairs with deploy-reach other than none.", category: 'pipeline-behavior', tier: 'advanced' },
-  { key: 'dev-base-url', type: 'string', pattern: HTTP_URL, summary: "Read only with control mode on: the dev environment's base URL, where acceptance runs; pairs with acceptance-target set to dev.", category: 'pipeline-behavior', tier: 'advanced' },
-  { key: 'dev-test-account', type: 'string', allowWhitespace: true, closedQuote: true, summary: "Read only with control mode on: the vault entry name of the dedicated test account the smoke check signs in with; pairs with dev-base-url.", category: 'pipeline-behavior', tier: 'advanced' },
-  { key: 'deploy-wait-seconds', type: 'integer', min: 0, default: 900, summary: "Read only with control mode on: how long to wait for a deploy to go live; 0 skips the wait. Pairs with a live signal.", category: 'pipeline-behavior', tier: 'advanced' },
-  { key: 'deploy-poll-seconds', type: 'integer', min: 1, default: 30, summary: "Read only with control mode on: how often the live signal is polled while waiting; pairs with deploy-wait-seconds.", category: 'pipeline-behavior', tier: 'advanced' },
-  { key: 'owned-owners', type: 'list', default: [], element: 'login', policyOnly: true, summary: "Read only with control mode on, from base-branch policy: orgs and users, beside the repo owner, whose repos are owned. Pairs with nothing.", category: 'autonomy-trust', tier: 'advanced' },
-  { key: 'trusted-authors', type: 'list', default: [], element: 'login', policyOnly: true, summary: "Read only with control mode on, from base-branch policy: GitHub logins trusted as record roots, beside the repo owner. Pairs with nothing.", category: 'autonomy-trust', tier: 'advanced' },
+  { key: 'deploy-command', type: 'string', allowWhitespace: true, closedQuote: true, policyOnly: true, summary: "Not yet used. Executed string, read only from the base branch's policy; meaningful only with deploy-reach command and control mode on.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'deploy-live-workflow', type: 'string', allowWhitespace: true, closedQuote: true, summary: "Not yet used; control mode only: names the CI workflow whose success means dev is live; pairs with deploy-reach other than none.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'deploy-version-url', type: 'string', pattern: HTTP_URL, summary: "Not yet used; control mode only: a URL returning the deployed version; pairs with deploy-reach other than none.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'dev-base-url', type: 'string', pattern: HTTP_URL, summary: "Not yet used; control mode only: the dev environment's base URL, where acceptance runs; pairs with acceptance-target set to dev.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'dev-test-account', type: 'string', allowWhitespace: true, closedQuote: true, summary: "Not yet used; control mode only: the vault entry name of the dedicated test account the smoke check signs in with; pairs with dev-base-url.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'deploy-wait-seconds', type: 'integer', min: 0, default: 900, summary: "Not yet used; control mode only: how long to wait for a deploy to go live; 0 skips the wait. Pairs with a live signal.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'deploy-poll-seconds', type: 'integer', min: 1, default: 30, summary: "Not yet used; control mode only: how often the live signal is polled while waiting; pairs with deploy-wait-seconds.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'owned-owners', type: 'list', default: [], element: 'login', policyOnly: true, summary: "Not yet used; control mode only, from base-branch policy: orgs and users, beside the repo owner, whose repos are owned. Pairs with nothing.", category: 'autonomy-trust', tier: 'advanced' },
+  { key: 'trusted-authors', type: 'list', default: [], element: 'login', policyOnly: true, summary: "Not yet used; control mode only, from base-branch policy: GitHub logins trusted as record roots, beside the repo owner. Pairs with nothing.", category: 'autonomy-trust', tier: 'advanced' },
   { key: 'trust-revert-window-days', type: 'integer', min: 1, default: 14, summary: "Sets how many days a closed record must age before its outcome counts as proven-good evidence toward earned trust.", category: 'autonomy-trust', tier: 'advanced' },
   // The reserved second opt-in named by skills/_shared/autonomy-ceiling.md —
   // read by permittedGrants as grantOriginationEnabled. false by default: the
@@ -278,6 +283,9 @@ const POLICY_KEYS = [
   { key: 'standard-run-round-trip-ceiling', type: 'integer', min: 0, default: 900, summary: "Sets how many tool round trips a standard run may use before it is flagged as over budget; 0 turns the check off.", category: 'housekeeping', tier: 'advanced' },
   { key: 'standard-run-procedure-kb-ceiling', type: 'integer', min: 0, default: 580, summary: "Sets how many kilobytes of skill procedure a standard run may read before it is flagged as over budget; 0 turns the check off.", category: 'housekeeping', tier: 'advanced' },
   { key: 'standard-run-verify-minutes-ceiling', type: 'integer', min: 0, default: 37, summary: "Sets how many minutes of verification a standard run may spend before it is flagged as over budget; 0 turns the check off.", category: 'housekeeping', tier: 'advanced' },
+  // #5119: reaches verify.js only as --default-suite-slots (verify.js never reads
+  // policy.yml); a declared concurrency.suiteSlots wins. Not a Manifesto lever; policyOnly so a run config never sets it.
+  { key: 'verify-suite-slots', type: 'integer', min: 1, default: 1, summary: "Sets how many test suites verify.js may run at once on one machine when verify-scope.json declares no concurrency.suiteSlots.", category: 'housekeeping', tier: 'advanced', policyOnly: true },
 ];
 
 const SCHEMA_BY_KEY = new Map(POLICY_KEYS.map((entry) => [entry.key, entry]));
@@ -711,6 +719,9 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, onInvalid }
 // names — parseFlatLines only sees flat `key: value` lines, so a block-style
 // value (model-profiles, the one caller) is otherwise invisible to auditPolicy.
 // risk-path-globs, the other block key, has its own parser: bin/lib/risk-path-globs.js.
+// Shares stripComment with the resolver (model-profiles/policy-fragment.js) so the
+// two never disagree on a comment (the old `/#.*$/` missed one on a CRLF line,
+// since `.` does not match `\r`, #4816).
 // Returns undefined when the block is absent, distinct from an empty map.
 function extractMapEntry(raw, topKey) {
   if (!raw) return undefined;
@@ -719,7 +730,7 @@ function extractMapEntry(raw, topKey) {
   const map = {};
   for (let i = 0; i < lines.length; i += 1) {
     const rawLine = lines[i];
-    const stripped = rawLine.replace(/#.*$/, '').trimEnd();
+    const stripped = stripComment(rawLine);
     if (!found) {
       if (/^\S/.test(rawLine) && new RegExp(`^${topKey}:\\s*$`).test(stripped.trim())) found = true;
       continue;

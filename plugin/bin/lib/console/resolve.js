@@ -11,11 +11,18 @@ const crypto = require('crypto');
 const path = require('path');
 const { evaluateMaturation } = require('../issues/grant-maturation');
 const { resolveRecords } = require('../wrap-up/pack');
-const { SDD_RULING_REASONS, sddRulingDeferralReason } = require('./sdd-ruling');
+const {
+  SDD_RULING_REASONS, sddRulingDeferralReason, SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction,
+} = require('./sdd-ruling');
+const { REFERENCE_REPAIR_REASONS, referenceRepairHoldReason, referenceFindingsByFile, readableGlobs } = require('./reference-repair');
 const { planFilings } = require('./finding-filing');
 const { FINDING_PATH_CLASS, FINDING_LENS_CLASS, FINDING_PATH, FINDING_LOCATION, FINDING_LENS, parseCoincidence } = require('./finding-path');
 const { FINDINGS_ARTIFACT, VERDICT_LINE_END } = require('../tiebreak');
 const { parseCategory, isApplicableReflect, parseReflectDestination, deferReasonProblem } = require('./reflect-destination');
+
+// #3942: the apply reason on a deferral ruling — its ratify files a backlog record
+// (review-console-appendix.md's sdd-ruling-* bullet), not a bare accepted write-back.
+const RATIFY_FILES_RECORD_REASON = 'ratify files a deferral record (Defer-reason carried) — ledger row deferred once it exists';
 
 // Section names exactly as the console renders them (console-template.md;
 // engine-render.js's SECTION_SPECS for the five curation sections).
@@ -350,7 +357,9 @@ function readSnapshot({ runDir, deps }) {
   const patchChecks = deps.checkPatchStack
     ? deps.checkPatchStack(patchItems.map((item) => item.path))
     : Object.fromEntries(patchItems.map((item) => [item.name, deps.gitApplyCheck(item.path)]));
-  return { ...files, members, grants, grantsError, patchChecks };
+  // The merge-sensitive globs, for the reference-repair floor (#4636). Anything but a list of strings
+  // reads as null, so a caller that omits it holds the repair rather than approves it.
+  return { ...files, members, grants, grantsError, patchChecks, sensitivePaths: readableGlobs(deps.sensitivePaths) };
 }
 
 function decisionLines(decisions) {
@@ -713,23 +722,10 @@ function settledFileResolution(v) {
   return consoleVerdictResolution(v);
 }
 
-// #4585: approving a reference repair at `unattended` applies it with no click,
-// so one the initiative budget's floor keeps from running unapproved (a test
-// file, a merge-sensitive path) or whose target is ambiguous stays pending. The
-// sweep marks those with a `Held:` line in the header — the lines before the
-// first blank line — and a file that could not be read proves nothing either.
-// Prose twin: wrap-up/reference-sweep.md Step 4.
-function referenceRepairHoldReason(item) {
-  if (item.readError || item.text === null) return 'reference-repair-unreadable';
-  for (const line of item.text.split(/\r?\n/)) {
-    if (line.trim() === '') return null;
-    if (/^held:/i.test(line)) return 'reference-repair-held';
-  }
-  return null;
-}
-
 function stagedItems(snapshot) {
   const model = tiebreakModel(snapshot);
+  // The `references` findings grouped by staged file: each repair's JSON `hold` must agree with its header (#4636).
+  const referenceFindings = referenceFindingsByFile(snapshot.engineState);
   // Refusal is a decisions.md fact about the item, not a fact about its name —
   // so it is decided before SECTION_MAP ever runs and outranks every stance.
   const refused = refusedStagedNames(snapshot.decisions);
@@ -744,17 +740,21 @@ function stagedItems(snapshot) {
     const { section, reason, outcome } = classifyStagedItem(s.name, s.text, siblingText);
     if (outcome) return { id: s.name, section, resolution: SECTION_STANCES[section].resolution, reason: `${outcome} — ${SHADOW_DUP_OUTCOMES[outcome].note}` };
     if (reason) return { id: s.name, section, resolution: 'pending', reason };
+    let ratifyReason = null;
     if (/^sdd-ruling-/.test(s.name)) {
       const r = s.readError ? SDD_RULING_REASONS.UNREADABLE : sddRulingDeferralReason(s.text);
       if (r) return { id: s.name, section, resolution: 'pending', reason: r };
+      // #3942: ratifying a deferral files a record at step 7 — the reason says so.
+      if (sddRulingRatifyAction(s.text) === SDD_RULING_RATIFY_ACTIONS.FILE_RECORD) ratifyReason = RATIFY_FILES_RECORD_REASON;
     }
     if (/^wrap-up-reference-/.test(s.name)) {
-      const r = referenceRepairHoldReason(s);
+      const r = referenceRepairHoldReason(s, referenceFindings.get(s.name) || [], snapshot.sensitivePaths);
       if (r) return { id: s.name, section, resolution: 'pending', reason: r };
     }
     const settled = model.settledFiles.get(s.name);
     if (settled) return { id: s.name, section, ...settledFileResolution(settled) };
     const stance = SECTION_STANCES[section];
+    if (ratifyReason) return { id: s.name, section, resolution: stance.resolution, reason: ratifyReason };
     if (s.name.endsWith('.patch')) {
       const check = snapshot.patchChecks[s.name] || { ok: false, error: 'not checked' };
       if (!check.ok) {
@@ -780,9 +780,15 @@ function engineItems(snapshot, stagedIds) {
     for (const f of entry.findings || []) {
       const label = f.targetPath || f.target || entry.target;
       if (f.action === 'staged') {
-        const base = f.stagePath ? path.basename(f.stagePath) : null;
-        if (base && stagedIds.has(base)) continue; // already an item via staged/
-        out.push({ id: `${rowId}:${label}`, section, resolution: SECTION_STANCES[section].resolution, reason: SECTION_STANCES[section].reason });
+        // A non-string stagePath counts as no staged file (#4636).
+        const base = typeof f.stagePath === 'string' && f.stagePath ? path.basename(f.stagePath) : null;
+        // Already an item via staged/ — except a references finding naming a staged file that is not a
+        // wrap-up-reference- repair: only those run the hold rule, so that file's own section would approve
+        // it with the finding's hold never read. That finding stays its own row, held below.
+        if (base && stagedIds.has(base) && !(rowId === 'references' && !/^wrap-up-reference-/.test(base))) continue;
+        // A staged repair with no staged file has no header to agree with its JSON verdict, so it holds.
+        const stance = rowId === 'references' ? { resolution: 'pending', reason: REFERENCE_REPAIR_REASONS.UNCLASSIFIED } : SECTION_STANCES[section];
+        out.push({ id: `${rowId}:${label}`, section, resolution: stance.resolution, reason: stance.reason });
       } else if (f.action === 'applied') {
         out.push({ id: `${rowId}:${label}`, section, resolution: 'applied', reason: `applied (${f.commit || 'commit unknown'})` });
       }
@@ -966,4 +972,4 @@ function resolveAll({ runDir, policy, deps }) {
   return result;
 }
 
-module.exports = { decisionLineHash, SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, classifyStagedItem, readSnapshot, resolveAll, findingItems, refusedStagedNames, runIdOf, cell, renderDroppedBlock, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs };
+module.exports = { decisionLineHash, SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction, RATIFY_FILES_RECORD_REASON, REFERENCE_REPAIR_REASONS, classifyStagedItem, readSnapshot, resolveAll, findingItems, refusedStagedNames, runIdOf, cell, renderDroppedBlock, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs };

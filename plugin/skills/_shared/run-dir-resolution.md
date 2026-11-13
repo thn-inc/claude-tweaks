@@ -63,7 +63,7 @@ if [ -z "$RUN_DIR" ] && [ "$MODE" = "auto" ] && [ -n "$STANDALONE_SKILL" ]; then
   # Standalone auto fallback — see resolution order step 4 (step 3, the record-mode
   # materialization exception, is /build-specific and handled separately in materialize.md)
   TS=$(date -u +%Y-%m-%dT%H%M%S)
-  RUN_DIR="$RUN_ROOT/.claude-tweaks/pipelines/${TS}-${STANDALONE_SKILL}-standalone"
+  RUN_DIR="$RUN_ROOT/.claude-tweaks/pipelines/${TS}-${STANDALONE_SKILL%-standalone}-standalone"
   mkdir -p "$RUN_DIR/staged"
   touch "$RUN_DIR/decisions.md"
 fi

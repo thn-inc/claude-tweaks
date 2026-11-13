@@ -1,11 +1,17 @@
 // plugin/bin/lib/repo-resolve.js — shared owner/repo resolution for the bin/
 // gh CLIs: the one parseRepo (#1177), the injectable `gh --version` probe, and the
-// gh host seam (#4505). ghOptions(args, opts) returns opts itself when GH_HOST is set,
-// args name -R/--repo/--hostname, or origin's host is not a known GHE host; a known
-// one (*.ghe.com or a gh hosts.yml key) gets a copy whose env adds GH_HOST, memoized
-// per cwd. An enterprise token alone admits nothing, because gh sends it to whatever
-// GH_HOST names (#4854). It adds no timeout or windowsHide and there is no seam
-// spawn helper: each wrapped site's own `timeout` carries its bound.
+// gh host seam (#4505). ghOptions(args, opts) returns opts itself when a non-empty GH_HOST is set,
+// when args name -R/--repo/--hostname (unless an explicit repo host is recorded, below),
+// or when origin's host is not a known GHE host; a known one (*.ghe.com or a gh
+// hosts.yml key) gets a copy whose env adds GH_HOST, memoized per cwd. An explicit
+// --repo's host (pinExplicitRepoHost, or deps.explicitHost for one call, which takes
+// precedence over the recorded host) is added the same way, to the call's own env and
+// never to process.env (#4795). An enterprise token alone admits nothing, because gh
+// sends it to whatever GH_HOST names (#4854). It adds no timeout or windowsHide and
+// there is no seam spawn helper: each wrapped site's own `timeout` carries its bound.
+// The origin-host gate (#4933), gateOriginRepo(remote, deps), is what a CLI's
+// origin-derived repo goes through; the comment above it is the one statement of its rules.
+// originSpecOf(remote) (#4794) is the one origin read every gate and reader shares.
 'use strict';
 const { execFileSync } = require('child_process');
 const fs = require('fs');
@@ -77,10 +83,12 @@ function repoResolutionNote(repoSpec) {
 // object; every key of `deps` is optional and defaults to the real thing.
 const ghHostSpecs = new Map(); // path.resolve(cwd) -> { host, owner, repo } | null
 const notedGhHosts = new Set(); // hosts whose repoResolutionNote this process printed
+let explicitRepoHost = null; // the host pinExplicitRepoHost recorded for this process's explicit --repo (#4795)
 
 function _resetGhHostCache() {
   ghHostSpecs.clear();
   notedGhHosts.clear();
+  explicitRepoHost = null;
 }
 
 function originUrl(cwd) {
@@ -117,6 +125,54 @@ function ghConfigHosts(deps) {
   return new Set([...String(text).matchAll(/^([^\s#:][^:\s]*):\s*$/gm)].map((m) => normalizeHost(m[1])));
 }
 
+// An already-normalized host that is GitHub Enterprise by a positive signal: a
+// *.ghe.com host, or a gh hosts.yml key. Shared by resolveGhSpec and gateOriginRepo.
+function isKnownGhHost(host, deps = {}) {
+  return host.endsWith('.ghe.com') || ghConfigHosts(deps).has(host);
+}
+
+// #4933: an origin remote -> { spec, refusal }. An absent or unparseable remote is
+// { spec: null, refusal: null } (the caller's own no-repo path). An exported GH_HOST
+// that normalizes to a host (ghHostIn) decides first: the origin host when it names that host, else github.com.
+// An exported but empty (or whitespace-only) GH_HOST is no opt-in here, so an unknown origin
+// host is still refused (decided at #4933's plan review); since #4794 ghOptions reads it the
+// same way, through ghHostIn.
+// Then github.com or isKnownGhHost passes; any other host is refused. Never throws.
+// #4794: the gate judges `originSpecOf(remote)` alone (parseRepo of hostPathOf: userinfo, port and scheme
+// dropped, the read the seam makes), so its verdict depends only on the host; a remote that
+// read does not parse, such as a cloud sandbox's `http://local_proxy@127.0.0.1:{port}/git/{owner}/{repo}`
+// proxy remote, is neither admitted nor refused. Two refusal texts: an SSH host may be an
+// alias that resolves only through ~/.ssh/config, whatever its shape (`github.com-work` and
+// `git.corp.invalid` look alike), so an SSH remote is told to export GH_HOST as the real host
+// the alias maps to (or, for GitHub Enterprise, that server's host) and its own name is never
+// offered as a GH_HOST value; an HTTPS host is a real DNS name the remote already reaches, so
+// it keeps `export GH_HOST=${host}`.
+function gateOriginRepo(remote, deps) {
+  const d = deps || {};
+  const parsed = originSpecOf(remote);
+  if (!parsed) return { spec: null, refusal: null };
+  const host = parsed.host;
+  const ghHost = ghHostIn(d.env || process.env);
+  if (ghHost) {
+    return { spec: { ...parsed, host: ghHost === host ? host : 'github.com' }, refusal: null };
+  }
+  if (host === 'github.com' || isKnownGhHost(host, d)) return { spec: parsed, refusal: null };
+  const prefix = `origin host ${host} is not a known GitHub host (not github.com, not *.ghe.com, not a gh hosts.yml key) — refusing to send it to gh`;
+  return {
+    spec: null,
+    refusal: isSshRemote(remote)
+      ? `${prefix}; if it is an SSH host alias, export GH_HOST as the real host it maps to (e.g. export GH_HOST=github.com), not the alias name; if it is GitHub Enterprise, export GH_HOST as that server's host`
+      : `${prefix}; if it is GitHub Enterprise, export GH_HOST=${host}`,
+  };
+}
+
+// An scp-style (`[user@]host:path`, no `//` after the colon) or `ssh://`, `git+ssh://`,
+// `ssh+git://` remote: its host resolves through ~/.ssh/config, so it may be an alias.
+function isSshRemote(remote) {
+  const r = String(remote || '').trim();
+  return /^(?:[^@\s/:]+@)?[^@\s/:]+:(?!\/)/.test(r) || /^(?:ssh|git\+ssh|ssh\+git):\/\//i.test(r);
+}
+
 // A `scheme://[user[:pass]@]host[:port]/path` URL -> `host/path`, the shape
 // parseRepo reads. Its userinfo (a credential, never logged) and port are dropped;
 // an scp-style or scheme-less remote is returned as is.
@@ -128,20 +184,27 @@ function hostPathOf(url) {
   return `${authority}${m[2]}`;
 }
 
+// #4794: the one origin read. An origin remote URL -> { host, owner, repo } with the host
+// normalized (hostPathOf drops userinfo, port and scheme; normalizeHost lower-cases and strips
+// trailing dots), or null when the remote does not parse. Every reader of an origin remote goes
+// through it, so a verdict depends only on the normalized host, never on how the URL is spelled.
+function originSpecOf(remote) {
+  const parsed = parseRepo(hostPathOf(remote));
+  return parsed && { ...parsed, host: normalizeHost(parsed.host) };
+}
+
 function resolveGhSpec(cwd, deps = {}) {
   const key = path.resolve(cwd);
   if (ghHostSpecs.has(key)) return ghHostSpecs.get(key);
   let spec = null;
   try {
     const url = (deps.remoteUrl || originUrl)(key);
-    const parsed = parseRepo(hostPathOf(url));
-    const host = parsed && normalizeHost(parsed.host);
-    if (host && host !== 'github.com') {
+    const parsed = originSpecOf(url);
+    if (parsed && parsed.host && parsed.host !== 'github.com') {
       // Positive signals only. Any other host stays silent (no note), token or not,
       // decided at #4854's plan review; its opt-in is an exported GH_HOST, or a
       // hosts.yml key from `gh auth login --hostname` (run with the token unset).
-      const known = host.endsWith('.ghe.com') || ghConfigHosts(deps).has(host);
-      if (known) spec = { ...parsed, host };
+      if (isKnownGhHost(parsed.host, deps)) spec = parsed;
     }
   } catch (err) {
     // No origin or no git is an answer (no host), remembered below. A probe timeout
@@ -168,7 +231,9 @@ function resolveGhHost(cwd, deps = {}) {
 }
 
 // Decision Q2: any -R/--repo/--hostname (also `--repo=x`, `--hostname=x` and
-// pflag's attached `-Rx`) names the host itself, so the seam stays out of it.
+// pflag's attached `-Rx`) names the host itself, so the seam's origin-host injection
+// stays out of it (an explicit repo host recorded or passed to ghOptions is still
+// added: see ghOptions below).
 // A `-f repo=widgets` value starts with neither flag; nothing after `--` is a flag,
 // and the token after a value-taking flag is its value (a `--body` text that opens
 // `-R`), never a flag. `gh pr review --comment` is gh's one boolean --comment.
@@ -191,15 +256,29 @@ function hasExplicitHostArg(args) {
   return false;
 }
 
-// -> `opts` itself when nothing is injected (an effective env that already has
-// GH_HOST, even empty; an explicit host arg; no known GHE host for opts.cwd), else
-// a copy whose env is opts.env (or process env) plus GH_HOST. The first injection
-// per host prints repoResolutionNote, since GH_HOST also picks gh's auth host.
-// The arg scan runs before the host probe, so an explicit-host call spawns no git.
+// -> `opts` itself when nothing is injected, else a copy whose env is the effective
+// env (opts.env, deps.env, or process env) plus GH_HOST. In order: an effective env
+// that already has a non-empty GH_HOST wins and injects nothing (an empty, whitespace-only or
+// '.' value is unset, #4794, so the injections below write over it in the call's own env copy;
+// with nothing to inject, opts itself comes back and the empty value stays as it was); then
+// the explicit repo host (`deps.explicitHost`, else the one pinExplicitRepoHost recorded) is
+// injected, before the arg check, and prints no note. That order is deliberate (#4795,
+// #4505): a host-less `-R owner/name` call on a pinned CLI must still reach the pinned
+// host, as it did when the pin was an exported GH_HOST (which returned at the first
+// check above, ahead of the arg scan), and a host-qualified flag beats GH_HOST in gh
+// itself; checking args first would reintroduce #4505's split across two hosts.
+// `deps.explicitHost` exists beside the recorded host for a caller that scopes the
+// host to some calls only (backlog-grant-gate.js), and it wins over the recorded one.
+// Then an explicit host arg injects nothing; then a known GHE origin host for
+// opts.cwd is injected and its first injection per host prints repoResolutionNote,
+// since GH_HOST also picks gh's auth host. The arg scan runs before the host probe,
+// so an explicit-host call spawns no git.
 function ghOptions(args, opts, deps = {}) {
   const o = opts || {};
   const base = o.env || deps.env || process.env;
-  if ('GH_HOST' in base) return opts;
+  if (ghHostIn(base)) return opts;
+  const explicitHost = deps.explicitHost || explicitRepoHost;
+  if (explicitHost) return { ...o, env: { ...base, GH_HOST: explicitHost } };
   if (hasExplicitHostArg(args)) return opts;
   const spec = resolveGhSpec(o.cwd || process.cwd(), deps);
   if (!spec) return opts;
@@ -211,31 +290,54 @@ function ghOptions(args, opts, deps = {}) {
   return { ...o, env: { ...base, GH_HOST: spec.host } };
 }
 
+// #4794: the exported GH_HOST as a normalized host, or null when it is unset or normalizes to
+// nothing (empty, whitespace-only, all dots). The one GH_HOST reader: gateOriginRepo, ghOptions,
+// explicitRepoGhHost, resolveRepoTarget and every caller comparing a host against it.
+function ghHostIn(env) {
+  return normalizeHost(String((env || {}).GH_HOST || '').trim()) || null;
+}
+
+// #4794: the one host a command's gh calls and host comparisons use, and the `--repo` slug
+// for it. The host is, in order: a typed host-qualified --repo (`explicitHost`), a non-empty
+// exported GH_HOST (gh itself sends a bare -R there), the caller's gated origin host
+// (`originHost`), then github.com. The slug is bare `owner/repo` when that host is gh's own
+// default host for a bare -R (GH_HOST, else github.com), else `host/owner/repo`: qualifying a
+// slug gh already routes to the host would change a github.com origin's argv under an exported
+// GH_HOST for no change in the host reached. Never reads origin: the caller passes the host
+// the #4933 gate admitted (repoTargetOf), or none for a bare typed --repo.
+function resolveRepoTarget({ owner, repo, explicitHost = null, originHost = null }, deps = {}) {
+  const ghHost = ghHostIn(deps.env || process.env);
+  const defaultHost = ghHost || 'github.com';
+  const host = (explicitHost && normalizeHost(explicitHost)) || ghHost || (originHost && normalizeHost(originHost)) || 'github.com';
+  return { host, ghRepo: host === defaultHost ? `${owner}/${repo}` : `${host}/${owner}/${repo}` };
+}
+
 // A CLI's explicit --repo names its own host, and a bare `owner/name` means
 // github.com (Decision Q2). Its calls that carry no host flag (a github.com
 // spec threads no --hostname; a GraphQL owner/repo pair; `gh api user`) would
 // otherwise get ghOptions's origin host. -> the host those calls must reach,
 // or null when ghOptions already reaches it from `cwd` (github.com when it
-// injects nothing) or GH_HOST is exported (AC4: the user's value wins).
+// injects nothing) or a non-empty GH_HOST is exported (AC4: the user's value wins).
 function explicitRepoGhHost(repoSpec, cwd, deps = {}) {
   const env = deps.env || process.env;
-  if (!repoSpec || 'GH_HOST' in env) return null;
+  if (!repoSpec || ghHostIn(env)) return null;
   const host = normalizeHost(repoSpec.host || 'github.com');
   return host === (resolveGhHost(cwd || process.cwd(), deps) || 'github.com') ? null : host;
 }
 
 // For a single-invocation CLI whose every gh call targets its explicit --repo:
-// exports explicitRepoGhHost's answer as GH_HOST on `deps.env` (process.env),
-// so every later gh spawn, ghOptions-wrapped or a library default, reaches
-// that host. -> the host pinned, or null. Called from a CLI's realDeps only.
+// records explicitRepoGhHost's answer (or null) as this module's explicit repo
+// host, which ghOptions adds as GH_HOST to each wrapped call's own env. Writes
+// neither process.env nor `deps.env`, so a gh spawn that skips ghOptions is not
+// reached by it. -> the host recorded, or null. Called from a CLI's realDeps only.
 function pinExplicitRepoHost(repoSpec, deps = {}) {
   const env = deps.env || process.env;
-  const host = explicitRepoGhHost(repoSpec, deps.cwd, { ...deps, env });
-  if (host) env.GH_HOST = host;
-  return host;
+  explicitRepoHost = explicitRepoGhHost(repoSpec, deps.cwd, { ...deps, env });
+  return explicitRepoHost;
 }
 
 module.exports = {
   parseRepo, ghAvailable, remoteUrl, repoSlug, repoResolutionNote,
   ghOptions, resolveGhHost, explicitRepoGhHost, pinExplicitRepoHost, _resetGhHostCache,
+  isKnownGhHost, gateOriginRepo, normalizeHost, originUrl, ghHostIn, resolveRepoTarget, hostPathOf, originSpecOf,
 };

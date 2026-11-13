@@ -1,6 +1,6 @@
 ---
 name: claim-targets-stop-addition
-description: Use when adding an exit code or a new stop to `plugin/bin/claim-targets.js`, or re-routing an existing claim failure to a different exit — every site the stop must land in across the CLI, `/flow`, `/dispatch` and wrap-up teardown, plus the decisions it owes (run-level or per-target, whether "never claimed" holds, whether the firing continues, how forge text travels). Keywords - claim-targets, exit code, stop, card, Settle, settle-and-merge, firing stop, two-call-gate, cleanup-only, Section E, release-claim, false release comment, keep-going, claims-registry.
+description: Use when adding an exit code or a new stop to `plugin/bin/claim-targets.js`, or re-routing an existing claim failure to a different exit, or adding a `/flow` pre-claim stop that `/dispatch`'s Settle must settle (such as the blocker-landing stop) — every site the stop must land in across the CLI, `/flow`, `/dispatch` and wrap-up teardown, plus the decisions it owes (run-level or per-target, whether "never claimed" holds, whether the firing continues, how forge text travels). Keywords - claim-targets, exit code, stop, card, Settle, pre-claim stop, blocker-landing, non-failing stop, settle-and-merge, firing stop, two-call-gate, cleanup-only, Section E, release-claim, false release comment, keep-going, claims-registry.
 ---
 
 # claim-targets.js stop addition
@@ -42,6 +42,22 @@ Tests: `tests/bin-lib/claim-targets/claim-targets.test.js` (the exit and its env
 5. **Does the firing continue?** A cause specific to the record excludes it and moves on (`firing-exclusion.md`). A cause shared by every group, such as a token, ends the firing in every selection form, which brings in row 13.
 6. **Does the stop carry forge text?** Build the reason with `claim-store.js`'s `refusalText`, then `oneLineReason`: a real `gh` error opens with a `Command failed:` line holding the claim payload. Text from GitHub can keep backticks, `$(` and `"`, so a headless self-report writes the body with the Write tool and passes `--body-file`, never the template's `--body` (`settle-and-merge.md`'s Claim permission denied paragraph).
 
+### A `/flow` pre-claim stop that is not a `claim-targets.js` exit
+
+#4792's blocker-landing stop (`/flow` Step 2.7b, gate `blocker-landing`, reported as `ISSUE #{n}: failed:blocker-landing`) exits no `claim-targets.js` code, yet it needed rows 8 and 11 above and four more sites. Its spec named 3 Key Files; the build touched 13 skill files. Take rows 8 and 11 (its own Settle special case, not the Claim-contest one), then:
+
+| Site | What it owes |
+|---|---|
+| `plugin/skills/flow/failure-cards.md` | A row naming the gate and each call's `OUTCOME`: the first call's `build-test-blocked`, and `blocked` from a second call's handoff continuation whose step list includes `test` |
+| `plugin/skills/assess-agent-autonomy/failure-check.md` | The class the stop gets if it reaches that mode anyway, though Settle skips the mode (`transient` for blocker-landing: no build ran, so no diff is at fault) |
+| `plugin/skills/dispatch/two-call-gate.md` section 6 | The skip phrase section 5 appends, for the second call's handoff continuation, which re-runs `/flow`'s pre-claim checks |
+| `plugin/skills/dispatch/queue-pull-script.md` | When Settle counts no retry and keeps the grants, a selection-time exclusion for the same cause, or the drain re-dispatches the record on every pull until it clears (#4792's Q1) |
+
+Two decisions it owes beyond the six above:
+
+- **"Pre-claim" does not mean "never claimed".** A handoff continuation re-runs the pre-claim checks after the first call claimed. Settle tells the cases apart by a `Step 2.8: claimed #{n}` line in this run's `decisions.md`, and an unreadable `decisions.md` counts as claimed so step 1's ownership check decides the release (a review fix, `714ae3285`).
+- **In the claimed case a draft PR exists.** Close it with step 5's tombstone, or the `open-pr` exclusion strands the record. Skip the tombstone when step 2's ownership read exits 4: the PR may be the successor's.
+
 ## Decision Framework
 
 | The stop is | Rows it takes |
@@ -50,6 +66,8 @@ Tests: `tests/bin-lib/claim-targets/claim-targets.test.js` (the exit and its env
 | Run-level, record not at fault, firing continues (exit 6) | 1-10 |
 | Run-level, shared cause, teardown must not release, firing ends (exit 7) | All 13 |
 | An existing failure re-routed to another code | Every row that names the old code, plus row 7's restatements of it |
+| A new cause folded into an existing code (#4794's `unknown-host` origin refusal on exit 2) | Rows 1, 2 and 4, row 7's command line, and every sentence that characterizes the code's old meaning, reworded so it does not misdescribe the new cause. Exit 2's bullet called every exit 2 "a bug in this call" until review reworded it as an environment stop with its remedy (`f1d8d79f6`). The shared code answers none of the six decisions above; answer them for the new cause |
+| A `/flow` pre-claim stop that is not a `claim-targets.js` exit (blocker-landing) | 8, 11, and the four sites in the section above |
 
 ## Project Conventions
 

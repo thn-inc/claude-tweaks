@@ -69,7 +69,7 @@ test('AC1.1: Section C step 2 tells the agent what a failed mirror read means (#
   const exit = block.indexOf('|| exit 1');
   const instruction = block.indexOf('**A failed mirror read is not that no-op.**');
   assert.ok(exit !== -1 && instruction > exit, 'the instruction follows the fence');
-  assert.match(block, /Stop here with no carrier commit: skip steps 3, 3\.5, 3\.6, 4, and 5 below and Section E/);
+  assert.match(block, /Stop here with no carrier commit: skip steps 3, 3\.6, 4, and 5 below and Section E/);
   assert.match(block, /`cleanup: closing-keyword carrier failed — \{stderr's Error: line\}`/);
 });
 

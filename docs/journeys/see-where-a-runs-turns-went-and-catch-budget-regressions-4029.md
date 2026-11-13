@@ -45,7 +45,7 @@ files:
 - **URL:** `{run-dir}/timing.json`, each phase's `turnClasses` and `context`
 - **Action:** Compare a phase's ceremony classes against its `edit`/`read` counts.
 - **Should feel:** The overhead has an address, such as "plan read 40 procedure files", not a run-wide average.
-- **Should understand:** Rows join phases the same way tokens do, to the innermost phase containing the timestamp. `totals.verifyMinutes` is the summed duration of the run's recorded verify runs, the value the verify-minutes budget reads.
+- **Should understand:** Rows join phases the same way tokens do, to the innermost phase containing the timestamp. `totals.verifyMinutes` is the summed duration of the run's recorded verify runs, less the time each spent queued for a suite slot (the event's `slotWaitedMs`, #5119), the value the verify-minutes budget reads.
 - **Red flags:** Every count on one phase and zeros elsewhere: the run's `events.jsonl` phase windows are missing or collapsed.
 
 ### 3. Let wrap-up check the budget

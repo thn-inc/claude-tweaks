@@ -7,6 +7,12 @@
 // runtime npm deps.
 'use strict';
 
+// The flat-key comment rule (parseFlatLines' `[^#]*`): a `#` anywhere ends the
+// line. That is exact here because no `model-profiles` row name or field value
+// can hold a `#`. `trimEnd()` also drops a CRLF's trailing `\r`. Both readers of
+// the block use this one function: parsePolicyModelConfig below and
+// policy-schema.js's extractMapEntry. risk-path-globs.js keeps its own
+// quote-aware rule on purpose (a glob may hold `#`).
 function stripComment(line) {
   const hash = line.indexOf('#');
   return (hash === -1 ? line : line.slice(0, hash)).trimEnd();
@@ -56,4 +62,4 @@ function parsePolicyModelConfig(raw) {
   return out;
 }
 
-module.exports = { parsePolicyModelConfig };
+module.exports = { parsePolicyModelConfig, stripComment };
