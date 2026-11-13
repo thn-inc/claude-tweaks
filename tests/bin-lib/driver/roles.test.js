@@ -250,6 +250,7 @@ function fakeDeps({ lookup = {}, realpath = {}, firstLine = {}, home, lookupThro
 
 test('AC3.1: toolchainRoot returns the root above bin, the binary\'s own directory, or null', () => {
   const d = fakeDeps({ lookup: { node: '/h/.nvm/versions/node/v22/bin/node', tool: '/opt/tools/node' } });
+  assert.strictEqual(toolchainRoot('node --test', d), '/h/.nvm/versions/node/v22');
   assert.strictEqual(toolchainRoot('node', d), '/h/.nvm/versions/node/v22');
   assert.strictEqual(toolchainRoot('tool', d), '/opt/tools');
   assert.strictEqual(toolchainRoot('missing', d), null);
@@ -269,11 +270,49 @@ test('toolchainRoot never returns home, an ancestor of it, or /', () => {
   assert.strictEqual(toolchainRoot('bash', fakeDeps({ lookup: { bash: '/bin/bash' } })), '/bin');
 });
 
-test('toolchainRoot compares against the real path of home', () => {
-  const d = fakeDeps({ lookup: { tool: '/link/tool' }, home: '/link', realpath: { '/link': '/real/home' } });
-  assert.strictEqual(toolchainRoot('tool', d), '/link');
-  const d2 = fakeDeps({ lookup: { tool: '/real/tool' }, home: '/link', realpath: { '/link': '/real/home' } });
-  assert.strictEqual(toolchainRoot('tool', d2), null);
+test('toolchainRoot compares against home as given and through its real path', () => {
+  const real = { '/link': '/real/home' };
+  assert.strictEqual(toolchainRoot('tool', fakeDeps({ lookup: { tool: '/link/tool' }, home: '/link', realpath: real })), null);
+  assert.strictEqual(toolchainRoot('tool', fakeDeps({ lookup: { tool: '/real/tool' }, home: '/link', realpath: real })), null);
+  assert.strictEqual(toolchainRoot('tool', fakeDeps({ lookup: { tool: '/link/bin/tool' }, home: '/link', realpath: real })), '/link/bin');
+  const broken = fakeDeps({ lookup: { tool: '/h/tool' }, home: '/h', realpath: { '/h': new Error('boom') } });
+  assert.strictEqual(toolchainRoot('tool', broken), null);
+});
+
+test('toolchainRoot treats a non-absolute resolved path as unresolved', () => {
+  const d = fakeDeps({ lookup: { node: '/x/bin/node' }, realpath: { '/x/bin/node': 'rel/bin/node' } });
+  assert.strictEqual(toolchainRoot('node', d), null);
+  assert.deepStrictEqual(toolchainReadPaths('node --test', d), []);
+});
+
+test('toolchainRoot returns null when lookup returns an empty string', () => {
+  assert.strictEqual(toolchainRoot('node', fakeDeps({ lookup: { node: '' }, realpath: { '': '/x/bin/node' } })), null);
+});
+
+test('toolchainReadPaths resolves the command once and derives root and shebang from that one answer', () => {
+  let lookups = 0;
+  const d = fakeDeps({ ...NPM_DEPS, firstLine: { [NPM_REAL]: '#!/usr/bin/env node' } });
+  const lookup = d.lookup;
+  d.lookup = (name) => { if (name === 'npm') lookups++; return lookup(name); };
+  assert.deepStrictEqual(toolchainReadPaths('npm test', d), ['/h/.nvm/v22/lib/node_modules/npm', '/h/.nvm/v22']);
+  assert.strictEqual(lookups, 1);
+});
+
+test('toolchainReadPaths skips env assignments and env options that take an argument', () => {
+  for (const line of ['#!/usr/bin/env NAME=1 node', '#!/usr/bin/env -u FOO node', '#!/usr/bin/env -C /x -P /y A=b node --flag']) {
+    const d = fakeDeps({ ...NPM_DEPS, firstLine: { [NPM_REAL]: line } });
+    assert.deepStrictEqual(toolchainReadPaths('npm test', d), ['/h/.nvm/v22/lib/node_modules/npm', '/h/.nvm/v22'], line);
+  }
+});
+
+test('toolchainReadPaths adds nothing for a bare shebang, an env with no name, or a non-shebang line, and reads a CRLF shebang', () => {
+  const only = ['/h/.nvm/v22/lib/node_modules/npm'];
+  for (const line of ['#!', '#!   ', '#!/usr/bin/env', '#!/usr/bin/env -S', '#!/usr/bin/env -u FOO', 'console.log(1)']) {
+    const d = fakeDeps({ ...NPM_DEPS, firstLine: { [NPM_REAL]: line } });
+    assert.deepStrictEqual(toolchainReadPaths('npm test', d), only, JSON.stringify(line));
+  }
+  const crlf = fakeDeps({ ...NPM_DEPS, firstLine: { [NPM_REAL]: '#!/usr/bin/env node\r' } });
+  assert.deepStrictEqual(toolchainReadPaths('npm test', crlf), [...only, '/h/.nvm/v22']);
 });
 
 test('toolchainRoot returns null when lookup throws', () => {

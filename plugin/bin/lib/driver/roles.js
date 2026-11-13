@@ -240,7 +240,8 @@ function implementerSettings({ testCommand, platform, readPaths = [] } = {}) {
 
 // The first word of a command as a real path: an absolute word is the path, a relative
 // one (it has a `/`) is refused, a bare name goes through the PATH lookup seam. Any seam
-// throw is a null, never an error: a missing toolchain just re-opens nothing.
+// throw, and any non-absolute answer, is a null, never an error: a missing toolchain just
+// re-opens nothing.
 function resolveCommandWord(command, deps) {
   try {
     const word = command.split(' ')[0];
@@ -249,21 +250,26 @@ function resolveCommandWord(command, deps) {
     else found = deps.lookup(word);
     if (typeof found !== 'string' || found === '') return null;
     const real = deps.realpath(found);
-    return typeof real === 'string' && real !== '' ? real : null;
+    return typeof real === 'string' && path.posix.isAbsolute(real) ? real : null;
   } catch (e) {
     return null;
   }
 }
 
 // The directory to re-open for a binary: the root above `bin/`, else the binary's own
-// directory. Never `/`, and never home or an ancestor of it.
+// directory. Never `/`, and never home or an ancestor of it, whether home is taken as
+// given or through its real path.
 function rootOfReal(real, deps) {
-  let home = null;
+  const homes = [];
   if (typeof deps.home === 'string' && deps.home !== '') {
-    try { home = deps.realpath(deps.home); } catch (e) { home = deps.home; }
+    homes.push(deps.home);
+    try {
+      const realHome = deps.realpath(deps.home);
+      if (typeof realHome === 'string' && realHome !== '') homes.push(realHome);
+    } catch (e) { /* the home as given still guards */ }
   }
   const tooWide = (candidate) =>
-    candidate === '/' || (home !== null && isAncestorOrSelf(candidate, home, { pathImpl: path.posix }));
+    candidate === '/' || homes.some((h) => isAncestorOrSelf(candidate, h, { pathImpl: path.posix }));
   const dir = path.posix.dirname(real);
   const root = path.posix.basename(dir) === 'bin' ? path.posix.dirname(dir) : dir;
   if (!tooWide(root)) return root;
@@ -275,24 +281,31 @@ function toolchainRoot(command, deps = {}) {
   return real === null ? null : rootOfReal(real, deps);
 }
 
-// The interpreter a `#!` line names: `env`'s first non-option argument, else the first token.
+// The interpreter a `#!` line names: for `env`, the first argument that is not an option,
+// an option's own argument (`-u NAME`, `-C DIR`, `-P PATH`) or a `NAME=value` assignment;
+// otherwise the first token.
+const ENV_OPTIONS_WITH_ARGUMENT = ['-u', '-C', '-P'];
 function shebangInterpreter(line) {
   if (typeof line !== 'string' || !line.startsWith('#!')) return null;
   const tokens = line.slice(2).split(/\s+/).filter(Boolean);
   if (tokens.length === 0) return null;
   if (path.posix.basename(tokens[0]) !== 'env') return tokens[0];
-  return tokens.slice(1).find((t) => !t.startsWith('-')) || null;
+  for (let i = 1; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (ENV_OPTIONS_WITH_ARGUMENT.includes(token)) i++;
+    else if (!token.startsWith('-') && !token.includes('=')) return token;
+  }
+  return null;
 }
 
 function toolchainReadPaths(testCommand, deps = {}) {
   assertTestCommand(testCommand);
-  const roots = [toolchainRoot(testCommand, deps)];
   const real = resolveCommandWord(testCommand, deps);
-  if (real !== null) {
-    let interpreter = null;
-    try { interpreter = shebangInterpreter(deps.firstLine(real)); } catch (e) { /* adds nothing */ }
-    if (interpreter !== null) roots.push(toolchainRoot(interpreter, deps));
-  }
+  if (real === null) return [];
+  const roots = [rootOfReal(real, deps)];
+  let interpreter = null;
+  try { interpreter = shebangInterpreter(deps.firstLine(real)); } catch (e) { /* adds nothing */ }
+  if (interpreter !== null) roots.push(toolchainRoot(interpreter, deps));
   return roots.filter((r, i) => r !== null && roots.indexOf(r) === i);
 }
 
