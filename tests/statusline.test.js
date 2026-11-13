@@ -873,19 +873,23 @@ function gitOrigin(dir, env = process.env) {
 
 const LOCAL_URL = 'https://github.com/o/local.git';
 const ORIGIN_LAUNCH = { fn: 'execFileSync', file: 'git', args: ['config', '--get', 'remote.origin.url'] };
+// tools/run-tests.js sets GIT_CONFIG_COUNT/KEY_n/VALUE_n for every test process,
+// and any GIT_CONFIG* var makes the origin reader defer to git. The reader calls
+// below take this env so a fallback test proves its own trigger, not the runner's.
+const READER_ENV = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^GIT_CONFIG/i.test(k)));
 
 // Fast-path case: the reader answers `expected`, equals git, and spawns nothing.
 function assertFastOrigin(dir, expected) {
-  assert.strictEqual(sl.originUrlFromConfig(dir), expected);
+  assert.strictEqual(sl.originUrlFromConfig(dir, READER_ENV), expected);
   assert.strictEqual(gitOrigin(dir), expected);
-  const { result, launches } = recordLaunches((fresh) => fresh.readOriginRemote(dir));
+  const { result, launches } = recordLaunches((fresh) => fresh.readOriginRemote(dir, { env: READER_ENV }));
   assert.strictEqual(result, expected);
   assert.deepStrictEqual(launches, []);
 }
 
 // Fallback case: the reader answers null ("ask git"), and readOriginRemote
 // launches exactly one `git config --get remote.origin.url` and equals git.
-function assertFallbackOrigin(dir, env) {
+function assertFallbackOrigin(dir, env = READER_ENV) {
   assert.strictEqual(sl.originUrlFromConfig(dir, env), null);
   const { result, launches } = recordLaunches((fresh) => fresh.readOriginRemote(dir, { env }));
   assert.deepStrictEqual(launches, [ORIGIN_LAUNCH]);
@@ -928,8 +932,8 @@ test('originUrlFromConfig: a url in another remote or section is not origin\'s',
 
 test('originUrlFromConfig: no origin section — null, git also answers nothing', () => {
   withRepo(null, (dir) => {
-    assert.strictEqual(sl.originUrlFromConfig(dir), null);
-    const { result, launches } = recordLaunches((fresh) => fresh.readOriginRemote(dir));
+    assert.strictEqual(sl.originUrlFromConfig(dir, READER_ENV), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.readOriginRemote(dir, { env: READER_ENV }));
     assert.deepStrictEqual(launches, [ORIGIN_LAUNCH]);
     assert.strictEqual(result, gitOrigin(dir));
     assert.strictEqual(result, null);
@@ -1068,8 +1072,8 @@ test('originUrlFromConfig: an unrelated env var does not defer', () => {
 
 test('originUrlFromConfig: a .git FILE (linked worktree) defers to git', () => {
   withWorktrees((f) => {
-    assert.strictEqual(sl.originUrlFromConfig(f.wt), null);
-    const { result, launches } = recordLaunches((fresh) => fresh.readOriginRemote(f.wt));
+    assert.strictEqual(sl.originUrlFromConfig(f.wt, READER_ENV), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.readOriginRemote(f.wt, { env: READER_ENV }));
     assert.deepStrictEqual(launches, [ORIGIN_LAUNCH]);
     assert.strictEqual(result, gitOrigin(f.wt));
   });
@@ -1086,8 +1090,8 @@ test('readOriginRemote: fast:false skips the filesystem read and asks git', () =
 test('readOriginRemote: an existing directory that is not a repo answers null (git exits non-zero)', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-norepo-'));
   try {
-    assert.strictEqual(sl.originUrlFromConfig(dir), null);
-    const { result, launches } = recordLaunches((fresh) => fresh.readOriginRemote(dir));
+    assert.strictEqual(sl.originUrlFromConfig(dir, READER_ENV), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.readOriginRemote(dir, { env: READER_ENV }));
     assert.deepStrictEqual(launches, [ORIGIN_LAUNCH]);
     assert.strictEqual(result, null);
     assert.strictEqual(gitOrigin(dir), null);
@@ -1115,7 +1119,7 @@ test('originUrlFromConfig: a main checkout owned by another user defers to git (
     assert.strictEqual(gitOrigin(dir, DIFFERENT_OWNER_ENV), null); // git really refuses it
     assert.strictEqual(sl.originUrlFromConfig(dir, {}, process.geteuid()), LOCAL_URL);
     assert.strictEqual(sl.originUrlFromConfig(dir, {}, OTHER_UID), null);
-    const { result, launches } = recordLaunches((fresh) => fresh.readOriginRemote(dir, { currentUid: OTHER_UID }));
+    const { result, launches } = recordLaunches((fresh) => fresh.readOriginRemote(dir, { env: READER_ENV, currentUid: OTHER_UID }));
     assert.deepStrictEqual(launches, [ORIGIN_LAUNCH]);
     assert.strictEqual(result, gitOrigin(dir));
   });
@@ -2081,7 +2085,7 @@ test('render launches exactly one child process — git status, no shell — in 
     execFileSync('git', ['worktree', 'add', '-q', wt, '-b', 'feature'], { cwd: dir });
     for (const where of [dir, wt]) {
       const { launches } = recordLaunches((fresh) => {
-        fresh.renderProject({ workspace: { project_dir: where } }, where);
+        fresh.renderProject({ workspace: { project_dir: where } }, where, { env: READER_ENV });
         return fresh.renderGit(where);
       });
       assert.deepStrictEqual(launches, [STATUS_LAUNCH], where);
@@ -2167,7 +2171,7 @@ test('rendered project and git segments are byte-identical with the fast paths o
     for (const [label, build] of cases) {
       build((dir) => {
         const input = { workspace: { project_dir: dir } };
-        const on = `${m.renderProject(input, dir)}|${m.renderGit(dir)}`;
+        const on = `${m.renderProject(input, dir, { env: READER_ENV })}|${m.renderGit(dir)}`;
         // The off side runs in its own recording so each case proves it reached git for the origin url.
         const offRun = recordLaunches((fresh) => `${fresh.renderProject(input, dir, { fast: false })}|${fresh.renderGit(dir)}`);
         assert.strictEqual(on, offRun.result, label);
