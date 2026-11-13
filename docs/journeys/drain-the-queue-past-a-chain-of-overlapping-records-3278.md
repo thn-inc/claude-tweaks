@@ -40,7 +40,7 @@ files:
 - **Action:** Bare drain's ranking skips groups with an `oversized`, `neighbour-in-flight` or this-firing exclusion, picks the best remaining group, and dispatches it. The queue pull then re-runs. A record that was waiting becomes eligible again on the pull after its neighbour's claim ends.
 - **Should feel:** Steady. The firing spends its budget on records it can build now, rather than stopping on a group it may not touch.
 - **Should understand:** Records that share a file but were both idle at the pull can still build one after the other in the same firing. The later one meets the earlier one's changes at merge, through `_shared/pr-first-merge.md`'s Conflict path. That is the accepted trade for not starving records.
-- **Red flags:** Bare drain selecting a group with a `neighbour-in-flight` member. A firing ending with budget left while eligible, non-waiting groups remain, other than on a Claim permission stop, which ends the firing because every group uses the same token (#4899).
+- **Red flags:** Bare drain selecting a group with a `neighbour-in-flight` member. A firing ending with budget left while eligible, non-waiting groups remain, other than on a Claim permission stop, which ends the firing because every group uses the same token (#4899), or a Render-failure stop, which ends it because `dispatch-prompt.js`'s inputs are nearly all firing-wide (#5255).
 
 ### 4. Read the report
 - **URL:** `plugin/skills/dispatch/neighbour-in-flight-report.md`
@@ -56,4 +56,5 @@ files:
 - Updated during `/claude-tweaks:build` of record #3520 (2026-10-19). Steps 2 and 4: a strong near-duplicate of an in-flight record now counts as a neighbour, which closes the no-Key-Files blind spot behind the 2026-10-17 #3417/#3419 merge conflict.
 - Updated during `/claude-tweaks:build` of record #3024 (2026-10-19). Step 1 red flag: the pull prints no `: No such file or directory` noise. The open-PR pass's dead `$DISPATCH_OPEN_PR_EXCLUDED` redirect is gone, and `tests/bin-lib/dispatch/exclusions.test.js` now fails on any undeclared `$DISPATCH_*` reference.
 - Updated during wrap-up of #4899: Step 3's budget-left red flag excepts a Claim permission stop.
+- Updated during build of #5255: the same red flag excepts a Render-failure stop.
 - Related specs: #1365 (hub-path exclusion), #1420 (bare-directory exclusion), #2066 (fast-lane bundles), #1228 (oversized guard in bare drain)
