@@ -13,9 +13,9 @@ const {
   STEP_NAMES, SETTLE_STEP_NAMES, FINAL_STEP, STEP, OUTCOMES, STOP_CLASSES,
   outcomeFor, neutralize, normalizeTitle, createEventSink,
 } = require(path.join(LIB, 'driver', 'events'));
-const { run, parseArgs, USAGE, driveRecord, newShared, interruptClass, reraiseAfterFlush } = require(path.join(LIB, 'driver', 'run'));
+const { run, parseArgs, USAGE, driveRecord, driveRecordFacts, newShared, interruptClass, reraiseAfterFlush } = require(path.join(LIB, 'driver', 'run'));
 const {
-  STEPS, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, WIN32_CLAUDE_BIN, VERIFY_TIMEOUT_MS,
+  STEPS, eligibilityOptions, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, WIN32_CLAUDE_BIN, VERIFY_TIMEOUT_MS,
 } = require(path.join(LIB, 'driver', 'steps'));
 const { openBlockerRefs } = require(path.join(LIB, 'issues', 'record-dependencies'));
 const { formatTimestamp } = require(path.join(LIB, 'hooks', 'run-dir-resolve'));
@@ -3069,4 +3069,57 @@ test('settle notes ride the final line: a claim that may lapse by TTL', async ()
   const killed = harness({ script: [[on('node', /claim-targets\.js$/), { code: null, stdout: '', stderr: '' }]] });
   await run(['#7'], killed.deps);
   assert.match(lastLine(killed).settleNote, /lapses by its TTL/);
+});
+
+const policyOnce = async (h) => { const shared = newShared(); await driveRecordFacts(1, shared, h.deps, [STEPS[0]]); return shared; };
+
+test('budget AC4.1: a record whose claim was obtained and run dir minted counts as claimed, whatever its outcome', async () => {
+  const cases = [
+    [{}, 'pending-review'],
+    [REDTESTS, 'express-escalated'],
+    [{ script: [[on('node', /express-lane\.js$/, 'check'), { code: 1, stdout: '', stderr: 'boom' }]] }, 'blocked'],
+    [{ script: [[on('node', /log-decision\.js$/), { code: 1, stdout: '', stderr: 'nope' }]] }, 'express-escalated'],
+  ];
+  for (const [over, outcome] of cases) {
+    const h = harness(over);
+    const shared = await policyOnce(h);
+    const facts = await driveRecordFacts(7, shared, h.deps);
+    assert.equal(facts.outcome, outcome);
+    assert.equal(facts.claimed, true);
+    assert.equal(facts.claimExit, 0);
+    assert.equal(facts.final.step, FINAL_STEP);
+  }
+});
+
+test('budget AC4.2: refused, contested, other claim failures and a failed mint are not claimed', async () => {
+  const claimExit = (code) => ({ script: [[on('node', /claim-targets\.js$/), { code, stdout: '{}', stderr: '' }]] });
+  const cases = [
+    [{ admission: { admitted: false, reasons: ['no'] } }, 'refused', null],
+    [claimExit(3), 'blocked', 3], [claimExit(4), 'blocked', 4], [claimExit(5), 'blocked', 5],
+    [claimExit(6), 'blocked', 6], [claimExit(7), 'blocked', 7], [claimExit(null), 'blocked', null],
+    [{ script: [[on('resolveRunDir'), { ok: false, message: 'no' }]] }, 'blocked', 0],
+  ];
+  for (const [over, outcome, exit] of cases) {
+    const h = harness(over);
+    const facts = await driveRecordFacts(7, await policyOnce(h), h.deps);
+    assert.equal(facts.outcome, outcome, JSON.stringify(over));
+    assert.equal(facts.claimed, false);
+    assert.equal(facts.claimExit, exit);
+  }
+});
+
+test('budget: driveRecord still resolves to the same final event driveRecordFacts carries', async () => {
+  const a = harness(); const b = harness();
+  const final = await driveRecord(7, await policyOnce(a), a.deps);
+  const facts = await driveRecordFacts(7, await policyOnce(b), b.deps);
+  assert.equal(final.step, FINAL_STEP);
+  assert.deepEqual(Object.keys(final).sort(), Object.keys(facts.final).sort());
+});
+
+test('budget pre-screen: eligibilityOptions is exactly what the eligibility step passes', async () => {
+  const h = harness();
+  await run(['#7'], h.deps);
+  const live = h.calls.find((c) => c.kind === 'eligibility').args[1];
+  const shared = await policyOnce(harness());
+  assert.deepEqual(eligibilityOptions(shared.policy), live);
 });

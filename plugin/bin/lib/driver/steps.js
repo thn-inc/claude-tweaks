@@ -163,15 +163,21 @@ const fetchStep = defineStep(STEP.fetch, STOP_CLASSES.REFUSED, async (ctx, deps)
   return { status: 'ok' };
 });
 
-// Ports express-lane.md's Eligibility section, with the driver's relaxed ceremony gate.
-const eligibilityStep = defineStep(STEP.eligibility, STOP_CLASSES.REFUSED, async (ctx, deps) => {
-  const { policy } = ctx.shared;
-  const verdict = deps.evaluateRecordEligibility(ctx.issue, {
+// The options the eligibility step hands deps.evaluateRecordEligibility, so a caller that
+// pre-screens a record (the budget loop) asks the same question the step does.
+function eligibilityOptions(policy) {
+  return {
     enabled: true,
     allowAbsentCeremony: true,
     integrationModel: policy['integration-model'].value,
     sensitivePaths: sensitivePathsOf(policy['merge-sensitive-paths']),
-  });
+  };
+}
+
+// Ports express-lane.md's Eligibility section, with the driver's relaxed ceremony gate.
+const eligibilityStep = defineStep(STEP.eligibility, STOP_CLASSES.REFUSED, async (ctx, deps) => {
+  const { policy } = ctx.shared;
+  const verdict = deps.evaluateRecordEligibility(ctx.issue, eligibilityOptions(policy));
   ctx.keyFiles = (verdict && verdict.keyFiles) || [];
   if (!verdict || verdict.eligible !== true) {
     return { status: 'stop', detail: ((verdict && verdict.reasons) || []).join('; ') || 'not eligible' };
@@ -246,6 +252,8 @@ const claimStep = defineStep(STEP.claim, STOP_CLASSES.CLAIM, async (ctx, deps) =
   const r = deps.node(binScript('claim-targets.js'),
     ['--run-id', ctx.runId, '--targets', String(n), '--steps', 'build,test'],
     { cwd: mainRoot, timeout: CLI_TIMEOUT_MS, env: deps.env });
+  // A recorded fact, not a side effect: the budget loop reads it to tell a contested claim from a refused one.
+  ctx.claimExit = Number.isInteger(r.code) ? r.code : null;
   if (r.code !== 0) {
     const key = firstEnvelopeKey(r.stdout);
     const why = key || firstLine(r.stderr);
@@ -876,6 +884,6 @@ const STEPS = Object.freeze([
 ]);
 
 module.exports = {
-  STEPS, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, WIN32_CLAUDE_BIN,
+  STEPS, eligibilityOptions, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, WIN32_CLAUDE_BIN,
   VERIFY_TIMEOUT_MS,
 };

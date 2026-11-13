@@ -144,7 +144,7 @@ function newShared() {
 
 function newCtx(record, shared) {
   return {
-    record, runId: null, runDir: null, wt: null, branch: null, claimed: false,
+    record, runId: null, runDir: null, wt: null, branch: null, claimed: false, claimExit: null,
     created: { worktree: false, branch: false }, pushed: false, configWritten: false,
     pr: null, ci: null, ciWaitStartedAt: null, checkLogged: undefined, worker: null,
     shared,
@@ -291,9 +291,9 @@ async function settleStop(ctx, stop, record, shared, sink, deps) {
   };
 }
 
-// One record through the table; returns its final event (null when an interrupt landed
-// before its first step). `steps` is a test seam.
-async function driveRecord(record, shared, deps, steps = STEPS) {
+// One record through the table; resolves to `{ final, ctx }` — the final event (null when an
+// interrupt landed before its first step) and the record's context. `steps` is a test seam.
+async function driveWithCtx(record, shared, deps, steps) {
   const sink = createEventSink({ stdout: deps.stdout, appendFile: deps.appendFile });
   const ctx = newCtx(record, shared);
   const current = { ctx, sink, started: null, step: null, inStep: false, stepStarted: null, final: null };
@@ -311,7 +311,7 @@ async function driveRecord(record, shared, deps, steps = STEPS) {
         if (current.step !== null) {
           reportInterrupt(shared, current, step, `interrupted by ${shared.interrupted} before ${step.name}`, 0, deps);
         }
-        return current.final;
+        return { final: current.final, ctx };
       }
       const t0 = deps.now();
       current.step = step;
@@ -324,7 +324,7 @@ async function driveRecord(record, shared, deps, steps = STEPS) {
         current.inStep = false;
       }
       // The handler already wrote this record's stop and final line.
-      if (shared.interrupted) return current.final;
+      if (shared.interrupted) return { final: current.final, ctx };
       const ms = deps.now() - t0;
       if (!bound && ctx.runDir) {
         sink.bindRunDir(ctx.runDir);
@@ -351,10 +351,28 @@ async function driveRecord(record, shared, deps, steps = STEPS) {
       current.final = final;
       deps.terminate(shared.interrupted);
     }
-    return final;
+    return { final, ctx };
   } finally {
     shared.current = null;
   }
+}
+
+// One record through the table; returns its final event (null when an interrupt landed
+// before its first step).
+async function driveRecord(record, shared, deps, steps = STEPS) {
+  return (await driveWithCtx(record, shared, deps, steps)).final;
+}
+
+// The final event plus the claim facts the budget loop counts from: whether the claim was
+// obtained and its run dir minted, and the claim step's exit code.
+async function driveRecordFacts(record, shared, deps, steps = STEPS) {
+  const { final, ctx } = await driveWithCtx(record, shared, deps, steps);
+  return {
+    final,
+    outcome: final ? final.outcome : null,
+    claimed: ctx.claimed === true && typeof ctx.runDir === 'string' && ctx.runDir !== '',
+    claimExit: ctx.claimExit,
+  };
 }
 
 // The signal handler run() subscribes (see the header's Interrupts paragraph). A second
@@ -516,4 +534,4 @@ const realDeps = {
   remoteUrl: () => remoteUrl(),
 };
 
-module.exports = { run, parseArgs, USAGE, realDeps, driveRecord, newShared, interruptClass, reraiseAfterFlush };
+module.exports = { run, parseArgs, USAGE, realDeps, driveRecord, driveRecordFacts, newShared, interruptClass, reraiseAfterFlush };
