@@ -10,11 +10,13 @@
 
 **Spec:** `.claude-tweaks/pipelines/2026-11-13T021643-spec-5230/work/5230-spec.md` (record #5230)
 
-Scope keywords: queue-pull-script, next-ranking, alias_mcp_timestamps
+Scope keywords: run its script verbatim, run it verbatim, next-ranking.md` verbatim, script verbatim, run the script as written, alias_mcp_timestamps
 
-Check B classification (no change): the `queue-pull-script`/`next-ranking` citations under `plugin/bin/lib/**`, `plugin/bin/queue-pull.js`, `plugin/skills/_shared/{issue-claims,policy-schema,session-tmp-root}.md`, `plugin/skills/build/already-shipped-assessment.md`, `plugin/skills/specify/next-mode.md` and `plugin/skills/tidy/scan-procedures.md` describe the script and never instruct running it. They belong to the removal unit's sweep (Non-Goals). In the dispatch sub-files, only `SKILL.md` L132/L181/L189, `firing-exclusion.md` L59 and `mcp-transport.md` Step 2 instruct a run; the other dispatch citations (`*-report.md`, `reporting.md`, `task-prompt.md`, `settle-and-merge.md`, `drain-pr-overlap.md`, `near-duplicate-pairs.md`, `exclusions-unreadable-report.md`, `design-notes.md`) describe outputs and stay.
+The keywords name the mechanism this unit changes: an instruction to run a script. They do not name the scripts, whose descriptive citations the Non-Goals assign to the removal unit. Check B classification (no change): the `queue-pull-script`/`next-ranking` citations under `plugin/bin/lib/**`, `plugin/bin/queue-pull.js`, `plugin/skills/_shared/{issue-claims,policy-schema,session-tmp-root}.md`, `plugin/skills/build/already-shipped-assessment.md`, `plugin/skills/specify/next-mode.md` and `plugin/skills/tidy/scan-procedures.md` describe the script and never instruct running it. They belong to the removal unit's sweep (Non-Goals). In the dispatch sub-files, only `SKILL.md` L132/L181/L189, `firing-exclusion.md` L59 and `mcp-transport.md` Step 2 instruct a run; the other dispatch citations (`*-report.md`, `reporting.md`, `task-prompt.md`, `settle-and-merge.md`, `drain-pr-overlap.md`, `near-duplicate-pairs.md`, `exclusions-unreadable-report.md`, `design-notes.md`) describe outputs and stay.
 
 Waived plugin/skills/dispatch/queue-pull-script.md: read-only — Task 1 runs its fence; Global Constraints keep it unmodified.
+Check B residue (no change): `plugin/bin/lib/dispatch/queue-pull.js` names `alias_mcp_timestamps` in a comment as the script twin it reproduces, and stays. `plugin/skills/dispatch/queue-pull-script.md` is unmodified by Global Constraints.
+
 Waived plugin/bin/queue-pull.js: read-only — Tasks 4 and 5 read its usage text (`--help`) and header for the call shapes.
 
 ## AC coverage map
@@ -137,7 +139,15 @@ Verification: `cat ".../live-comparison.md"` shows `## Verdict` → `identical`.
 AC6. Each test below stops extracting `queue-pull-script.md` or `next-ranking.md` text and takes the module (`plugin/bin/lib/dispatch/queue-pull.js`) or CLI as its subject. An assertion `queue-pull.test.js` already covers is dropped from the old file only after that fixture is proven to discriminate: revert the module behavior it names (scratch edit) and see red, then restore it. An uncovered assertion gets a new fixture in `queue-pull.test.js` first. Drive fixtures through the existing helpers (`pull4`, the `inOwnTmp`/sandbox helpers, `RANK_CASES`); never through bash.
 
 **Files:**
-- Modify: `tests/dispatch-not-spec-shaped-exclusion-fixture.test.js`, `tests/dispatch-named-target-exclusion-fixture.test.js`, `tests/dispatch-unlanded-blocker-exclusion-fixture.test.js`, `tests/dispatch-cross-repo-blocker-exclusion-fixture.test.js`, `tests/dispatch-near-dup-pairs-script.test.js`, `tests/bin-lib/dispatch/near-dup-pairs.test.js` (comment at L27 only: the reference is now the module's near-dup pass), `tests/dispatch-firing-exclusion.test.js`, `tests/dispatch-near-dup-neighbour-prose.test.js`, `tests/flow-claim-preflight.test.js:451-461`
+- Modify: `tests/dispatch-not-spec-shaped-exclusion-fixture.test.js`
+- Modify: `tests/dispatch-named-target-exclusion-fixture.test.js`
+- Modify: `tests/dispatch-unlanded-blocker-exclusion-fixture.test.js`
+- Modify: `tests/dispatch-cross-repo-blocker-exclusion-fixture.test.js`
+- Modify: `tests/dispatch-near-dup-pairs-script.test.js`
+- Modify: `tests/bin-lib/dispatch/near-dup-pairs.test.js` (comment at L27 only: the reference is now the module's near-dup pass)
+- Modify: `tests/dispatch-firing-exclusion.test.js`
+- Modify: `tests/dispatch-near-dup-neighbour-prose.test.js`
+- Modify: `tests/flow-claim-preflight.test.js` (L451-461)
 - Modify: `tests/bin-lib/dispatch/queue-pull.test.js` (new fixtures)
 - Create: `/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-13T021643-spec-5230/test-mapping.md` (gitignored; one row per test file: old assertion → new subject | dropped + reason). Tasks 4–5 append to it.
 
@@ -171,7 +181,14 @@ AC6. Each test below stops extracting `queue-pull-script.md` or `next-ranking.md
 **Files:**
 - Modify: `plugin/skills/dispatch/SKILL.md` — L107 (close-out list: "a queue-pull `exit 1`" → the CLI's stop, exit 4), L132 (Step 2 pull), L181 (Loop), L189 (`next` alias), and the citations at L121, L149, L153, L156, L168, L191, L225
 - Modify: `plugin/skills/dispatch/firing-exclusion.md` (L51, L59)
-- Modify: group-2 tests: `tests/dispatch-named-form-exclusion-reasons.test.js`, `tests/dispatch-shipped-candidate-prose.test.js`, `tests/dispatch-tidy-named-target-coordination.test.js`, `tests/dispatch-per-record-groups-prose.test.js`, `tests/specify-near-duplicate-prose.test.js`, `tests/bin-lib/express/queue.test.js:102-110`, `tests/bin-lib/stage-item/cli.test.js:292-307`, `tests/bin-lib/dispatch/reporting-fastlane-bundle-citation.test.js`
+- Modify: `tests/dispatch-named-form-exclusion-reasons.test.js`
+- Modify: `tests/dispatch-shipped-candidate-prose.test.js`
+- Modify: `tests/dispatch-tidy-named-target-coordination.test.js`
+- Modify: `tests/dispatch-per-record-groups-prose.test.js`
+- Modify: `tests/specify-near-duplicate-prose.test.js`
+- Modify: `tests/bin-lib/express/queue.test.js` (L102-110)
+- Modify: `tests/bin-lib/stage-item/cli.test.js` (L292-307)
+- Modify: `tests/bin-lib/dispatch/reporting-fastlane-bundle-citation.test.js`
 - Create: `tests/dispatch-queue-pull-cutover-prose.test.js`
 
 **Interfaces:**
@@ -220,7 +237,11 @@ AC6. Each test below stops extracting `queue-pull-script.md` or `next-ranking.md
   - L195-205: foreign states, passed as `--foreign-states <p>`
 
   The section headings stay.
-- Modify: `tests/dispatch-neighbour-in-flight-mcp.test.js`, `tests/dispatch-mcp-timestamp-alias.test.js`, `tests/dispatch-cross-repo-blocker-exclusion-fixture.test.js` (`MCP_FACTS` L222-230), `tests/dispatch-unlanded-blocker-consumers-conformance.test.js` (`MCP_FACTS` L115-122)
+- Modify: `docs/journeys/dispatch-the-oldest-record-from-a-gh-absent-sandbox-3691.md` (Check B scope-creep add: it describes the `alias_mcp_timestamps` re-run on the MCP path; restate it as the CLI aliasing on `--transport files`)
+- Modify: `tests/dispatch-neighbour-in-flight-mcp.test.js`
+- Modify: `tests/dispatch-mcp-timestamp-alias.test.js`
+- Modify: `tests/dispatch-cross-repo-blocker-exclusion-fixture.test.js` (`MCP_FACTS` L222-230)
+- Modify: `tests/dispatch-unlanded-blocker-consumers-conformance.test.js` (`MCP_FACTS` L115-122)
 - Modify: `tests/dispatch-queue-pull-cutover-prose.test.js` (AC5 test)
 
 **Interfaces:**
