@@ -631,7 +631,7 @@ test('AC2: the revert window is inclusive at the boundary, both directions', () 
 });
 
 test('AC3 (#267): a reverted closing commit does not count as known-good — it counts as negative evidence instead (#268)', () => {
-  const record = operationalFixture(1, 30);
+  const record = operationalFixture(1, 20);
   const gitLog = [commitFor(1), { sha: sha40(999), message: `This reverts commit ${sha40(1)}.` }];
   const rows = trustRows([record], gitLog, NOW, {});
   assert.equal(rows[0].operationalGood, 0);
@@ -640,7 +640,7 @@ test('AC3 (#267): a reverted closing commit does not count as known-good — it 
 });
 
 test('AC4: no discoverable closing commit contributes nothing, asserted explicitly', () => {
-  const record = operationalFixture(1, 30);
+  const record = operationalFixture(1, 20);
   const rows = trustRows([record], [], NOW, {});
   assert.equal(rows[0].operationalGood, 0);
   assert.equal(rows[0].undispositioned, 1);
@@ -680,14 +680,14 @@ test('AC7: only closedAt (whatever the caller supplies as the latest close) and 
 });
 
 test('AC8: two closing commits, one reverted, disqualifies the whole record (all-or-nothing)', () => {
-  const record = { ...operationalFixture(1, 30), closingCommitShas: [sha40(1), sha40(2)] };
+  const record = { ...operationalFixture(1, 20), closingCommitShas: [sha40(1), sha40(2)] };
   const gitLog = [{ sha: sha40(999), message: `This reverts commit ${sha40(2)}.` }];
   const rows = trustRows([record], gitLog, NOW, {});
   assert.equal(rows[0].operationalGood, 0);
 });
 
 test('gotcha: one operational known-good among 39 unknowns must not grade a class clean', () => {
-  const good = operationalFixture(1, 30);
+  const good = operationalFixture(1, 20);
   const rest = Array.from({ length: 39 }, (_, i) => operationalFixture(i + 2, 1)); // too young to count
   const records = [good, ...rest];
   const gitLog = [commitFor(1), ...rest.map((r) => commitFor(r.number))];
@@ -698,7 +698,7 @@ test('gotcha: one operational known-good among 39 unknowns must not grade a clas
   assert.equal(rows[0].verdict, 'insufficient-evidence', 'MIN_VERDICTS=5 must still gate a single operational sample');
 });
 
-test('backward compatibility: trustRows(records) with no gitLog/now/policy behaves exactly as before', () => {
+test('backward compatibility: trustRows(records) with no gitLog/now/policy grades no operational evidence', () => {
   const rows = trustRows([
     { number: 1, labels: ['by:capture', 'risk:low'], body: '', state: 'CLOSED', closedAt: RECENT },
   ]);
@@ -710,7 +710,7 @@ test('backward compatibility: trustRows(records) with no gitLog/now/policy behav
 test('demo-descent still wins over operational evidence when both are present', () => {
   // A demo:approved record never falls through to the operational path —
   // dispositionState resolves it first, exactly as before this leaf.
-  const record = { ...operationalFixture(1, 30), labels: ['by:capture', 'risk:low', 'demo:approved'] };
+  const record = { ...operationalFixture(1, 20), labels: ['by:capture', 'risk:low', 'demo:approved'] };
   const gitLog = [commitFor(1)];
   const rows = trustRows([record], gitLog, NOW, {});
   assert.equal(rows[0].approved, 1);
@@ -723,7 +723,7 @@ test('regression: a demo:pending record is never promoted to operational known-g
   // with no operational evidence at all, never silently graded known-good
   // just because a human hasn't run /demo yet.
   const record = {
-    ...operationalFixture(1, 30),
+    ...operationalFixture(1, 20),
     labels: ['by:capture', 'risk:low', 'demo:pending'],
   };
   const gitLog = [commitFor(1)];
@@ -753,7 +753,7 @@ function negativeEvidenceFixture(number, classification) {
 }
 
 test('AC1 (#268): one correctness-classified failure marker pins a class below clean; removing it restores clean', () => {
-  const goodOperational = Array.from({ length: 7 }, (_, i) => operationalFixture(i + 1, 30));
+  const goodOperational = Array.from({ length: 7 }, (_, i) => operationalFixture(i + 1, 20));
   const gitLog = goodOperational.map((r) => commitFor(r.number));
 
   const withMarker = [...goodOperational, negativeEvidenceFixture(100, 'correctness')];
@@ -771,7 +771,7 @@ test('AC1 (#268): one correctness-classified failure marker pins a class below c
 });
 
 test('AC2 (#268): a transient-classified failure writes no negative evidence and leaves the verdict unchanged', () => {
-  const goodOperational = Array.from({ length: 7 }, (_, i) => operationalFixture(i + 1, 30));
+  const goodOperational = Array.from({ length: 7 }, (_, i) => operationalFixture(i + 1, 20));
   const gitLog = goodOperational.map((r) => commitFor(r.number));
 
   const withTransient = [...goodOperational, negativeEvidenceFixture(100, 'transient')];
@@ -782,7 +782,7 @@ test('AC2 (#268): a transient-classified failure writes no negative evidence and
 });
 
 test('AC3 (#268): a revert on a previously-counted known-good record downgrades the class verdict with no other state change', () => {
-  const good = Array.from({ length: 8 }, (_, i) => operationalFixture(i + 1, 30));
+  const good = Array.from({ length: 8 }, (_, i) => operationalFixture(i + 1, 20));
   const cleanLog = good.map((r) => commitFor(r.number));
   const clean = trustRows(good, cleanLog, NOW, {});
   assert.equal(clean[0].verdict, 'clean');
@@ -799,7 +799,7 @@ test('AC3 (#268): a revert on a previously-counted known-good record downgrades 
 });
 
 test('AC4 (#268): two failed attempts on the same record still contribute one unit of negative evidence, not two', () => {
-  const goodOperational = Array.from({ length: 7 }, (_, i) => operationalFixture(i + 1, 30));
+  const goodOperational = Array.from({ length: 7 }, (_, i) => operationalFixture(i + 1, 20));
   const gitLog = goodOperational.map((r) => commitFor(r.number));
 
   const record = {
@@ -871,7 +871,7 @@ test('AC3.2: accept:* verdicts land in the same buckets as their demo:* twins', 
   // commit), so a label read as "no acceptance state" lands in operationalGood and
   // is told apart from a pending one.
   const bucket = (labels) => {
-    const record = { ...operationalFixture(1, 30), labels: ['by:capture', 'risk:low', ...labels] };
+    const record = { ...operationalFixture(1, 20), labels: ['by:capture', 'risk:low', ...labels] };
     const [row] = trustRows([record], [commitFor(1)], NOW, {});
     return { approved: row.approved, changesRequested: row.changesRequested, undispositioned: row.undispositioned, operationalGood: row.operationalGood };
   };
@@ -886,7 +886,7 @@ test('AC3.2: accept:* verdicts land in the same buckets as their demo:* twins', 
 });
 
 test('AC3.2: an accept:pending record is never promoted to operational known-good', () => {
-  const record = { ...operationalFixture(1, 30), labels: ['by:capture', 'risk:low', 'accept:pending'] };
+  const record = { ...operationalFixture(1, 20), labels: ['by:capture', 'risk:low', 'accept:pending'] };
   const rows = trustRows([record], [commitFor(1)], NOW, {});
   assert.equal(rows[0].operationalGood, 0);
   assert.equal(rows[0].undispositioned, 1);
@@ -1000,6 +1000,13 @@ test('AC3.1: a record closed 31 days ago forms no cell under the default window 
   assert.equal(widened[0].total, 1);
   assert.equal(widened[0].evaluationWindowDays, 45);
   assert.deepEqual(widened[0].mixedReasons, [], 'a non-mixed row carries no reasons');
+});
+
+test('a record closed after now (a future closedAt) is in-window and forms a cell', () => {
+  const future = operationalFixture(1, -1);
+  const rows = trustRows([future], [], NOW, {});
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].total, 1);
 });
 
 test('AC3.2: a changes-requested record ages out — 31 days ago no longer pins, 29 days ago still does', () => {
