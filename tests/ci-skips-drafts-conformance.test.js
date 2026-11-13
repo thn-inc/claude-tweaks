@@ -63,8 +63,13 @@ const SECTIONS = [
   ['## Concurrency', [
     [/cancel-in-progress: true\n```/, 'concurrency: the workflow-level block with cancel-in-progress true'],
     [/cancels the superseded run/, 'concurrency: what it buys'],
-    [/Job-level `concurrency` alone, a scalar `concurrency: \{group\}` and `cancel-in-progress: false` all let superseded runs finish/, 'concurrency: the three shapes that do not cancel'],
+    [/The merge gate reads only runs on the head it merges/, 'concurrency: the merge gate ignores superseded heads'],
+    [/A scalar `concurrency: \{group\}`, a block without `cancel-in-progress` or `cancel-in-progress: false` cancels only a superseded run still queued: one already running keeps going/, 'concurrency: the shapes that let a running superseded run finish'],
+    [/Job-level `concurrency` cancels only the jobs that declare it, and init's CI-workflow review reads only the workflow-level block, so job-level `concurrency` alone is still reported/, 'concurrency: job-level concurrency alone is still reported'],
+    [/an unconditional `cancel-in-progress: true` also cancels a running default-branch run/, 'concurrency: the push-to-default-branch tradeoff'],
+    [/`cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}`/, 'concurrency: the usual guard expression'],
     [/A `cancel-in-progress` expression is read as unparsed/, 'concurrency: an expression is unparsed'],
+    [/`unparsed` \(`cancel-in-progress expression not evaluated`\), not as a finding/, 'concurrency: the unparsed reason, not a finding'],
   ]],
   ['## Why projects skip drafts', [
     [/Actions-minute cost of per-phase pushes/, 'why: the Actions-minute cost of per-phase pushes'],

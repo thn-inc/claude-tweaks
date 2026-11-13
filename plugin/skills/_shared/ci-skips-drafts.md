@@ -60,7 +60,9 @@ concurrency:
   cancel-in-progress: true
 ```
 
-The merge gate reads only runs on the head it merges (`_shared/pr-first-merge.md` Step 2.5), so a run cancelled on a superseded head costs it nothing. Job-level `concurrency` alone, a scalar `concurrency: {group}` and `cancel-in-progress: false` all let superseded runs finish. A `cancel-in-progress` expression is read as unparsed by init's CI-workflow review, which cannot evaluate it.
+The merge gate reads only runs on the head it merges (`_shared/pr-first-merge.md` Step 2.5), so a run cancelled on a superseded head costs it nothing. A scalar `concurrency: {group}`, a block without `cancel-in-progress` or `cancel-in-progress: false` cancels only a superseded run still queued: one already running keeps going, holding a runner and billing Actions minutes until it finishes. With no `concurrency` at all, nothing is cancelled. Job-level `concurrency` cancels only the jobs that declare it, and init's CI-workflow review reads only the workflow-level block, so job-level `concurrency` alone is still reported.
+
+In a workflow that also runs on `push` to the default branch, an unconditional `cancel-in-progress: true` also cancels a running default-branch run when the next merge lands. The usual guard is `cancel-in-progress: ${{ github.event_name == 'pull_request' }}`. A `cancel-in-progress` expression is read as unparsed by init's CI-workflow review, which cannot evaluate it: the workflow is reported as `unparsed` (`cancel-in-progress expression not evaluated`), not as a finding.
 
 ## Why projects skip drafts
 
