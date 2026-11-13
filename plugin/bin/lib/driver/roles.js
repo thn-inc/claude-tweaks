@@ -131,6 +131,7 @@
 // list: there is no path here that composes wider rights after a denial.
 
 const path = require('node:path');
+const { isAncestorOrSelf } = require('../path-guard');
 
 function deepFreeze(value) {
   if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -237,6 +238,64 @@ function implementerSettings({ testCommand, platform, readPaths = [] } = {}) {
   return settings;
 }
 
+// The first word of a command as a real path: an absolute word is the path, a relative
+// one (it has a `/`) is refused, a bare name goes through the PATH lookup seam. Any seam
+// throw is a null, never an error: a missing toolchain just re-opens nothing.
+function resolveCommandWord(command, deps) {
+  try {
+    const word = command.split(' ')[0];
+    let found;
+    if (word.includes('/')) found = path.posix.isAbsolute(word) ? word : null;
+    else found = deps.lookup(word);
+    if (typeof found !== 'string' || found === '') return null;
+    const real = deps.realpath(found);
+    return typeof real === 'string' && real !== '' ? real : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// The directory to re-open for a binary: the root above `bin/`, else the binary's own
+// directory. Never `/`, and never home or an ancestor of it.
+function rootOfReal(real, deps) {
+  let home = null;
+  if (typeof deps.home === 'string' && deps.home !== '') {
+    try { home = deps.realpath(deps.home); } catch (e) { home = deps.home; }
+  }
+  const tooWide = (candidate) =>
+    candidate === '/' || (home !== null && isAncestorOrSelf(candidate, home, { pathImpl: path.posix }));
+  const dir = path.posix.dirname(real);
+  const root = path.posix.basename(dir) === 'bin' ? path.posix.dirname(dir) : dir;
+  if (!tooWide(root)) return root;
+  return tooWide(dir) ? null : dir;
+}
+
+function toolchainRoot(command, deps = {}) {
+  const real = resolveCommandWord(command, deps);
+  return real === null ? null : rootOfReal(real, deps);
+}
+
+// The interpreter a `#!` line names: `env`'s first non-option argument, else the first token.
+function shebangInterpreter(line) {
+  if (typeof line !== 'string' || !line.startsWith('#!')) return null;
+  const tokens = line.slice(2).split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return null;
+  if (path.posix.basename(tokens[0]) !== 'env') return tokens[0];
+  return tokens.slice(1).find((t) => !t.startsWith('-')) || null;
+}
+
+function toolchainReadPaths(testCommand, deps = {}) {
+  assertTestCommand(testCommand);
+  const roots = [toolchainRoot(testCommand, deps)];
+  const real = resolveCommandWord(testCommand, deps);
+  if (real !== null) {
+    let interpreter = null;
+    try { interpreter = shebangInterpreter(deps.firstLine(real)); } catch (e) { /* adds nothing */ }
+    if (interpreter !== null) roots.push(toolchainRoot(interpreter, deps));
+  }
+  return roots.filter((r, i) => r !== null && roots.indexOf(r) === i);
+}
+
 // The one spend-ceiling rule, shared by composeArgs and the launcher: absent passes.
 function assertSpendCeiling(value) {
   if (value !== undefined && !(typeof value === 'number' && Number.isFinite(value) && value > 0)) {
@@ -271,4 +330,4 @@ function composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeilin
   return args;
 }
 
-module.exports = { RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, ROLES, implementerSettings, composeArgs, toolsFor, assertSpendCeiling };
+module.exports = { RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, ROLES, implementerSettings, toolchainRoot, toolchainReadPaths, composeArgs, toolsFor, assertSpendCeiling };

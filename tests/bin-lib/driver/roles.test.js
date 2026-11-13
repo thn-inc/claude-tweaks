@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
-const { ROLES, RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, composeArgs, toolsFor, assertSpendCeiling } = require(path.join(LIB, 'driver', 'roles.js'));
+const { ROLES, RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainRoot, toolchainReadPaths, composeArgs, toolsFor, assertSpendCeiling } = require(path.join(LIB, 'driver', 'roles.js'));
 
 const ALLOW_SANDBOXED = ['Read', 'Edit', 'Write', 'Bash(node --test *)', 'Bash(git status *)', 'Bash(git diff *)', 'Bash(git log *)', 'Bash(git show *)', 'Bash(git ls-files *)'];
 const ALLOW_EDIT_ONLY = ['Read', 'Edit', 'Write'];
@@ -225,4 +225,102 @@ test('Task 0 fixtures carry the field names the launcher reads', () => {
   for (const k of ['type', 'subtype', 'is_error', 'num_turns', 'total_cost_usd', 'usage', 'permission_denials', 'structured_output']) assert.ok(k in ok, k);
   assert.strictEqual(budget.subtype, 'error_max_budget_usd');
   assert.ok(!('structured_output' in budget));
+});
+
+function fakeDeps({ lookup = {}, realpath = {}, firstLine = {}, home, lookupThrows = false } = {}) {
+  const calls = [];
+  return {
+    calls,
+    home,
+    lookup(name) {
+      calls.push(name);
+      if (lookupThrows) throw new Error('lookup boom');
+      return name in lookup ? lookup[name] : null;
+    },
+    realpath(p) {
+      if (realpath[p] instanceof Error) throw realpath[p];
+      return p in realpath ? realpath[p] : p;
+    },
+    firstLine(p) {
+      if (firstLine[p] instanceof Error) throw firstLine[p];
+      return p in firstLine ? firstLine[p] : '';
+    },
+  };
+}
+
+test('AC3.1: toolchainRoot returns the root above bin, the binary\'s own directory, or null', () => {
+  const d = fakeDeps({ lookup: { node: '/h/.nvm/versions/node/v22/bin/node', tool: '/opt/tools/node' } });
+  assert.strictEqual(toolchainRoot('node', d), '/h/.nvm/versions/node/v22');
+  assert.strictEqual(toolchainRoot('tool', d), '/opt/tools');
+  assert.strictEqual(toolchainRoot('missing', d), null);
+});
+
+test('toolchainRoot resolves through realpath', () => {
+  const d = fakeDeps({ lookup: { npm: '/h/.nvm/v22/bin/npm' }, realpath: { '/h/.nvm/v22/bin/npm': '/h/.nvm/v22/lib/node_modules/npm/bin/npm-cli.js' } });
+  assert.strictEqual(toolchainRoot('npm test', d), '/h/.nvm/v22/lib/node_modules/npm');
+});
+
+test('toolchainRoot never returns home, an ancestor of it, or /', () => {
+  assert.strictEqual(toolchainRoot('tool', fakeDeps({ lookup: { tool: '/h/bin/tool' }, home: '/h' })), '/h/bin');
+  assert.strictEqual(toolchainRoot('tool', fakeDeps({ lookup: { tool: '/bin/tool' }, home: '/h/x' })), '/bin');
+  assert.strictEqual(toolchainRoot('tool', fakeDeps({ lookup: { tool: '/h/tool' }, home: '/h' })), null);
+  assert.strictEqual(toolchainRoot('tool', fakeDeps({ lookup: { tool: '/tool' }, home: '/h' })), null);
+  assert.strictEqual(toolchainRoot('tool', fakeDeps({ lookup: { tool: '/tool' } })), null);
+  assert.strictEqual(toolchainRoot('bash', fakeDeps({ lookup: { bash: '/bin/bash' } })), '/bin');
+});
+
+test('toolchainRoot compares against the real path of home', () => {
+  const d = fakeDeps({ lookup: { tool: '/link/tool' }, home: '/link', realpath: { '/link': '/real/home' } });
+  assert.strictEqual(toolchainRoot('tool', d), '/link');
+  const d2 = fakeDeps({ lookup: { tool: '/real/tool' }, home: '/link', realpath: { '/link': '/real/home' } });
+  assert.strictEqual(toolchainRoot('tool', d2), null);
+});
+
+test('toolchainRoot returns null when lookup throws', () => {
+  assert.strictEqual(toolchainRoot('node', fakeDeps({ lookupThrows: true })), null);
+});
+
+test('toolchainReadPaths refuses a bad testCommand before any seam runs', () => {
+  const d = fakeDeps({ lookup: { node: '/x/bin/node' } });
+  assert.throws(() => toolchainReadPaths(undefined, d), (e) => e instanceof TypeError && /testCommand/.test(e.message));
+  assert.throws(() => toolchainReadPaths('node -e', d), (e) => e instanceof TypeError && /testCommand/.test(e.message));
+  assert.deepStrictEqual(d.calls, []);
+});
+
+test('toolchainRoot takes an absolute first word as the path and refuses a relative one', () => {
+  const d = fakeDeps();
+  assert.strictEqual(toolchainRoot('/opt/t/bin/run --x', d), '/opt/t');
+  assert.strictEqual(toolchainRoot('./node_modules/.bin/jest', d), null);
+  assert.deepStrictEqual(d.calls, []);
+});
+
+test('toolchainRoot returns null when realpath throws', () => {
+  const d = fakeDeps({ lookup: { node: '/x/bin/node' }, realpath: { '/x/bin/node': new Error('boom') } });
+  assert.strictEqual(toolchainRoot('node', d), null);
+});
+
+const NPM_DEPS = {
+  lookup: { npm: '/h/.nvm/v22/bin/npm', node: '/h/.nvm/v22/bin/node' },
+  realpath: { '/h/.nvm/v22/bin/npm': '/h/.nvm/v22/lib/node_modules/npm/bin/npm-cli.js' },
+};
+const NPM_REAL = '/h/.nvm/v22/lib/node_modules/npm/bin/npm-cli.js';
+
+test('toolchainReadPaths follows an env shebang one level', () => {
+  const d = fakeDeps({ ...NPM_DEPS, firstLine: { [NPM_REAL]: '#!/usr/bin/env node' } });
+  assert.deepStrictEqual(toolchainReadPaths('npm test', d), ['/h/.nvm/v22/lib/node_modules/npm', '/h/.nvm/v22']);
+});
+
+test('toolchainReadPaths follows an absolute shebang and skips env options', () => {
+  const abs = fakeDeps({ ...NPM_DEPS, firstLine: { [NPM_REAL]: '#!/usr/local/bin/python3' } });
+  assert.deepStrictEqual(toolchainReadPaths('npm test', abs), ['/h/.nvm/v22/lib/node_modules/npm', '/usr/local']);
+  const opts = fakeDeps({ ...NPM_DEPS, firstLine: { [NPM_REAL]: '#!/usr/bin/env -S node --flag' } });
+  assert.deepStrictEqual(toolchainReadPaths('npm test', opts), ['/h/.nvm/v22/lib/node_modules/npm', '/h/.nvm/v22']);
+});
+
+test('toolchainReadPaths drops nulls and duplicates, and a throwing firstLine adds nothing', () => {
+  assert.deepStrictEqual(toolchainReadPaths('npm test', fakeDeps()), []);
+  const same = fakeDeps({ lookup: { tool: '/o/bin/tool', node: '/o/bin/node' }, firstLine: { '/o/bin/tool': '#!/usr/bin/env node' } });
+  assert.deepStrictEqual(toolchainReadPaths('tool run', same), ['/o']);
+  const boom = fakeDeps({ ...NPM_DEPS, firstLine: { [NPM_REAL]: new Error('boom') } });
+  assert.deepStrictEqual(toolchainReadPaths('npm test', boom), ['/h/.nvm/v22/lib/node_modules/npm']);
 });
