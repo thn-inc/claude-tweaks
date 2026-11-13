@@ -10,7 +10,7 @@ const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('.
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const DRIVE = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'drive.js');
 const {
-  STEP_NAMES, SETTLE_STEP_NAMES, FINAL_STEP, STEP, OUTCOMES, STOP_CLASSES,
+  STEP_NAMES, SETTLE_STEP_NAMES, FINAL_STEP, BUDGET_STEP, STEP, OUTCOMES, STOP_CLASSES,
   outcomeFor, neutralize, normalizeTitle, createEventSink,
 } = require(path.join(LIB, 'driver', 'events'));
 const { run, parseArgs, USAGE, driveRecord, driveRecordFacts, newShared, interruptClass, reraiseAfterFlush } = require(path.join(LIB, 'driver', 'run'));
@@ -66,6 +66,8 @@ test('constants: step vocabulary, camelCase map and frozen shapes', () => {
   assert.equal(STEP_NAMES[0], 'policy');
   assert.equal(STEP_NAMES[STEP_NAMES.length - 1], 'ci');
   assert.equal(FINAL_STEP, 'final');
+  assert.equal(BUDGET_STEP, 'budget');
+  assert.ok(!STEP_NAMES.includes(BUDGET_STEP) && !SETTLE_STEP_NAMES.includes(BUDGET_STEP) && BUDGET_STEP !== FINAL_STEP);
   assert.equal(STEP.runDir, 'run-dir');
   assert.equal(STEP.recordPr, 'record-pr');
   assert.equal(STEP.setConfig, 'set-config');
