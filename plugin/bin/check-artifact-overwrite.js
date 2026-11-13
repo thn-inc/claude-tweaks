@@ -8,7 +8,7 @@
 // different spec's commit, as opposed to append-only extension. See
 // bin/lib/flow/artifact-overwrite-check.js for the algorithm.
 //
-// Usage: check-artifact-overwrite.js --base <ref> [--head <ref>] [--path <pathspec>]... [--run <dir>]
+// Usage: check-artifact-overwrite.js --base <ref> [--head <ref>] [--path <pathspec>]... [--run <dir>] [--integration-ref <ref>]
 //   --base is required (exclusive lower bound of the range, e.g. EXPECTED_BASE)
 //   --head defaults to HEAD
 //   --path may repeat; defaults to docs/journeys/ and stories/
@@ -17,14 +17,23 @@
 //          manifest window holds its author date (refs #4593). Omitted only
 //          for a run whose `parallel` waves ran with two or more members —
 //          there the windows interleave and attribution stays refs-only.
+//   --integration-ref  a ref whose history is not the run's own —
+//          `origin/{integration-branch}`; commits reachable from it leave the
+//          walk, and a deleted line blamed to one is pre-run content (refs
+//          #4845). Omitted, every commit in the range is a run event (upstream
+//          commits fail closed, as before #4845); a line blamed to a merge
+//          commit fails closed either way. Both checks run on a deleted line
+//          that reaches blame, i.e. in a hunk the shape tests did not clear.
 //
 // Exit codes (this CLI's own vocabulary — not portable to any other):
 //   0  clean — no overwrite found; stdout carries {clean:true, overwrites:[]}
 //   1  overwrite detected — the HARD-GATE case; stdout carries the offending
 //      paths/commits/reasons, caller stops before rendering the console
 //   2  malformed invocation (missing --base, unknown flag, missing value, a
-//      --run that is empty or looks like a flag)
-//   3  the walk itself failed (unresolvable ref, git not on PATH, etc.) —
+//      --run or --integration-ref that is empty or looks like a flag)
+//   3  the walk itself failed (unresolvable ref, an unresolvable
+//      --integration-ref included, an empty walk because --integration-ref
+//      already carries the whole range, git not on PATH, etc.) —
 //      stderr names the failure, nothing meaningful on stdout. Also: a
 //      manifest named by --run that is missing, unreadable or does not parse,
 //      lists no specs, or carries a present-but-invalid transition timestamp.
@@ -42,7 +51,7 @@ const path = require('path');
 const { checkArtifactOverwrite, ArtifactOverwriteCheckError } = require('./lib/flow/artifact-overwrite-check.js');
 const { parseManifestYaml } = require('./lib/flow/manifest.js');
 
-const USAGE = 'usage: check-artifact-overwrite.js --base <ref> [--head <ref>] [--path <pathspec>]... [--run <dir>]';
+const USAGE = 'usage: check-artifact-overwrite.js --base <ref> [--head <ref>] [--path <pathspec>]... [--run <dir>] [--integration-ref <ref>]';
 
 function run(argv, deps = {}) {
   const {
@@ -72,6 +81,13 @@ function run(argv, deps = {}) {
           return 2;
         }
         opts.run = value;
+        break;
+      case '--integration-ref':
+        if (!value.trim() || value.startsWith('-')) {
+          stderr.write(`check-artifact-overwrite: --integration-ref requires a ref not starting with -\n${USAGE}\n`);
+          return 2;
+        }
+        opts.integrationRef = value;
         break;
       default:
         stderr.write(`check-artifact-overwrite: unknown argument: ${arg}\n${USAGE}\n`);
