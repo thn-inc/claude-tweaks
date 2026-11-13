@@ -162,7 +162,9 @@ function harness({ stop, input = {}, answers = {}, readFile, lstat } = {}) {
       calls.push(['git', ...args]);
       trace.push(calls[calls.length - 1]);
       assert.deepStrictEqual(opts, { cwd: MAIN }, 'git is called with cwd mainRoot');
-      return reply(answers.git?.(args)) ?? '';
+      // `worktree list` defaults to the main checkout plus WT registered.
+      const dflt = args.includes('list') ? `worktree ${MAIN}\nHEAD abc\nbranch refs/heads/main\n\nworktree ${WT}\nHEAD abc\nbranch refs/heads/drive-record-7\n` : '';
+      return reply(answers.git?.(args)) ?? dflt;
     },
     node: (script, args, opts) => {
       calls.push(['node', path.basename(script), ...args]);
@@ -192,6 +194,7 @@ const COMMENT = (body) => ['gh', 'issue', 'comment', '--repo', R, '--body', body
 const PR_COMMENT = (body, n = 9) => ['gh', 'pr', 'comment', '--repo', R, '--body', body, '--', String(n)];
 const LABEL = ['gh', 'issue', 'edit', '--repo', R, '--add-label', 'bot:blocked', '--', '7'];
 const RELEASE = (reason) => ['node', 'release-claim.js', '7', '--run', RD, '--reason', reason];
+const LIST_WT = ['git', '-C', MAIN, 'worktree', 'list', '--porcelain'];
 const RM_WT = ['git', '-C', MAIN, 'worktree', 'remove', '--force', '--force', WT];
 const RM_BR = ['git', '-C', MAIN, 'branch', '-D', '--end-of-options', 'drive-record-7'];
 const BR_PROBE = ['git', '-C', MAIN, 'rev-parse', '--verify', '--quiet', '--end-of-options', 'refs/heads/drive-record-7'];
@@ -239,7 +242,7 @@ test('SETTLE_ROWS is frozen and holds the table', () => {
 test('AC1.1, AC11.9: a pre-push stop check did not log runs escalate, comment, release, worktree removal, branch deletion in order', () => {
   const h = harness();
   assert.deepStrictEqual(h.calls, [
-    ESCALATE(), COMMENT(ESCALATED_BODY), RELEASE('drive.js settle: express-escalated at test'), RM_WT, BR_PROBE, RM_BR,
+    ESCALATE(), COMMENT(ESCALATED_BODY), RELEASE('drive.js settle: express-escalated at test'), LIST_WT, RM_WT, BR_PROBE, RM_BR,
   ]);
   assert.equal(h.files[ESC_DETAIL], escalateDetailText({ step: 'test', detail: 'red tests', removes: true }));
   assert.ok(!h.calls.some((c) => c.includes('--remove-grants')));
@@ -255,7 +258,7 @@ test('AC1.2: a check verdict that logged its own line skips escalate', () => {
   const h = harness({ stop: stopOf({ step: 'check', checkLogged: true, reason: 'out-of-bounds' }) });
   assert.ok(!h.calls.some((c) => c[1] === 'express-lane.js'));
   const body = commentFor('escalated', { step: 'check', outcome: 'express-escalated', reason: 'out-of-bounds', detail: 'red tests' });
-  assert.deepStrictEqual(h.calls, [COMMENT(body), RELEASE('drive.js settle: express-escalated at check'), RM_WT, BR_PROBE, RM_BR]);
+  assert.deepStrictEqual(h.calls, [COMMENT(body), RELEASE('drive.js settle: express-escalated at check'), LIST_WT, RM_WT, BR_PROBE, RM_BR]);
   assert.deepStrictEqual(h.res.calls.map((c) => c.step), SETTLE_ROWS['pre-push'].slice(1));
 });
 
@@ -410,7 +413,7 @@ test('AC3.4: a pre-push stop whose created says nothing was made removes nothing
   const onlyBranch = harness({ stop: stopOf({ created: { worktree: false, branch: true } }) });
   assert.deepStrictEqual(onlyBranch.calls.slice(-2), [BR_PROBE, RM_BR]);
   const onlyWt = harness({ stop: stopOf({ created: { worktree: true, branch: false } }) });
-  assert.deepStrictEqual(onlyWt.calls.slice(-1), [RM_WT]);
+  assert.deepStrictEqual(onlyWt.calls.slice(-2), [LIST_WT, RM_WT]);
   for (const part of [onlyBranch, onlyWt]) {
     assert.equal(part.files[ESC_DETAIL], escalateDetailText({ step: 'test', detail: 'red tests', removes: true }));
   }
@@ -419,19 +422,17 @@ test('AC3.4: a pre-push stop whose created says nothing was made removes nothing
 });
 
 test('Review focus 5: a worktree or branch already gone is not a failure', () => {
-  const gone = Object.assign(new Error('Command failed: git worktree remove'), { stderr: `fatal: '${WT}' is not a working tree\n` });
+  // Unregistered worktree: no remove call at all (registration is read from the porcelain list, not from git's error text).
   const h = harness({
-    lstat: () => ({ type: 'missing' }),
     answers: {
       git: (args) => {
         if (args.includes('rev-parse')) return Object.assign(new Error('x'), { status: 1 });
-        if (args.includes('worktree')) return gone;
+        if (args.includes('list')) return `worktree ${MAIN}\nHEAD abc\nbranch refs/heads/main\n`;
         return undefined;
       },
     },
   });
-  // The removal is still attempted when the directory is missing (the registration may remain).
-  assert.deepStrictEqual(h.calls.filter((c) => c[0] === 'git'), [RM_WT, BR_PROBE]);
+  assert.deepStrictEqual(h.calls.filter((c) => c[0] === 'git'), [LIST_WT, BR_PROBE]);
   const wt = h.res.calls.find((c) => c.step === 'settle-remove-worktree');
   const br = h.res.calls.find((c) => c.step === 'settle-delete-branch');
   assert.deepStrictEqual([wt.status, wt.detail, br.status, br.detail], ['ok', 'already gone', 'ok', 'already gone']);
@@ -440,9 +441,35 @@ test('Review focus 5: a worktree or branch already gone is not a failure', () =>
   assert.deepStrictEqual(other.res.failed, ['settle-delete-branch']);
 });
 
+test('worktree registration matches across slash style and trailing slash, and an unreadable list is a fail', () => {
+  const listOf = (p) => `worktree ${MAIN}\n\nworktree ${p}\n`;
+  for (const spelled of [WT + '/', WT.replace(/\//g, '\\')]) {
+    const h = harness({ input: { wt: WT }, answers: { git: (a) => (a.includes('list') ? listOf(spelled) : undefined) } });
+    assert.ok(h.calls.some((c) => c.join(' ') === RM_WT.join(' ')), spelled);
+  }
+  const broken = harness({ answers: { git: (a) => (a.includes('list') ? new Error('fatal: list') : undefined) } });
+  assert.deepStrictEqual(broken.res.failed, ['settle-remove-worktree']);
+  assert.ok(!broken.calls.some((c) => c.includes('remove')));
+});
+
+test('a blocked-record comment omits the kept sentence when nothing was created and there is no PR', () => {
+  assert.ok(!commentFor('blocked-record', { step: 'test', outcome: 'blocked', detail: 'd', kept: 'none' }).includes('kept for a human'));
+  const nothing = harness({
+    stop: stopOf({ created: { worktree: false, branch: false } }),
+    answers: { node: (s) => (s === 'express-lane.js' ? { code: 1, stdout: '', stderr: 'e' } : undefined) },
+  });
+  assert.equal(nothing.res.row, 'blocked');
+  const body = nothing.calls.find((c) => c[1] === 'issue' && c[2] === 'comment')[6];
+  assert.ok(!body.includes('kept for a human'), body);
+  const unknown = harness({ stop: stopOf({ class: 'weird', created: undefined }) });
+  assert.ok(!unknown.calls.find((c) => c[1] === 'issue' && c[2] === 'comment')[6].includes('kept for a human'));
+  const made = harness({ stop: stopOf({ class: 'blocked', pushed: true, created: { worktree: true, branch: true } }) });
+  assert.ok(made.calls.find((c) => c[1] === 'issue' && c[2] === 'comment')[6].includes('The branch and worktree are kept for a human.'));
+});
+
 test('AC7.1: a failing call does not stop the rest and is never retried', () => {
   const h = harness({ answers: { gh: (args) => (args[1] === 'comment' ? Object.assign(new Error('gh down'), { stderr: 'HTTP 502\nbody' }) : undefined) } });
-  assert.deepStrictEqual(h.calls, [ESCALATE(), COMMENT(ESCALATED_BODY), RELEASE('drive.js settle: express-escalated at test'), RM_WT, BR_PROBE, RM_BR]);
+  assert.deepStrictEqual(h.calls, [ESCALATE(), COMMENT(ESCALATED_BODY), RELEASE('drive.js settle: express-escalated at test'), LIST_WT, RM_WT, BR_PROBE, RM_BR]);
   assert.deepStrictEqual(h.res.failed, ['settle-comment-record']);
   assert.equal(h.emitted.length, h.res.calls.length);
   assert.equal(h.emitted.length, 5);
@@ -529,14 +556,13 @@ test('Important 2: a node result with code null (a timeout) is a failure, for es
   assert.deepStrictEqual(rel.res.failed, ['settle-release']);
 });
 
-test('Minor 3: a missing worktree directory still gets the removal call, and a plain success is ok', () => {
+test('Minor 3: a missing worktree directory that is still registered gets the removal call; any removal failure is a fail', () => {
   const h = harness({ lstat: () => ({ type: 'missing' }) });
   assert.ok(h.calls.some((c) => c.join(' ') === RM_WT.join(' ')));
   assert.deepStrictEqual(h.res.failed, []);
-  const other = harness({ answers: { git: (a) => (a.includes('worktree') ? new Error('fatal: cannot lock') : undefined) } });
-  assert.deepStrictEqual(other.res.failed, ['settle-remove-worktree']);
-  const plain = harness({ answers: { git: (a) => (a.includes('worktree') ? Object.assign(new Error('x'), { stderr: 'fatal: not a working tree' }) : undefined) } });
-  assert.deepStrictEqual(plain.res.failed, ['settle-remove-worktree'], 'only "is not a working tree" counts as gone');
+  const rm = (err) => harness({ answers: { git: (a) => (a.includes('remove') ? err : undefined) } });
+  assert.deepStrictEqual(rm(new Error('fatal: cannot lock')).res.failed, ['settle-remove-worktree']);
+  assert.deepStrictEqual(rm(Object.assign(new Error('x'), { stderr: `fatal: '${WT}' is not a working tree` })).res.failed, ['settle-remove-worktree'], 'a registered worktree that fails to remove is a fail whatever git says');
 });
 
 test('Minor 4: the release reason names the step from the closed set', () => {
@@ -552,4 +578,94 @@ test('Important 1: a trailing closing paren, comma, semicolon or full stop stays
   assert.equal(reduceDetail('/a.b,;).'), '<path>,;).');
   assert.equal(reduceDetail('x /a(b)c y'), 'x <path> y');
   // The timing budgets for 100k-character inputs live in perf/ (tests/ may not assert wall-clock).
+});
+
+// ---- real git (Task 3) ------------------------------------------------------------------
+const { execFileSync } = require('node:child_process');
+const { gitRepo } = require('../../helpers/git-fixtures');
+const { lstatType } = require('../../../plugin/bin/lib/path-guard');
+
+const IDENT = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.test', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.test' };
+
+// A repo with a locked driver worktree on drive-record-7 holding one commit of local work.
+function lockedDriverWorktree() {
+  const repo = gitRepo();
+  const wt = path.join(repo, '.claude', 'worktrees', 'drive-record-7');
+  const env = { ...process.env, ...IDENT };
+  const git = (args, extra = {}) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env, ...extra });
+  git(['-C', repo, 'worktree', 'add', '--lock', '--reason', 'drive.js record 7 (pid 1)', '-b', 'drive-record-7', wt]);
+  fs.writeFileSync(path.join(wt, 'work.txt'), 'local work');
+  git(['-C', wt, 'add', 'work.txt']);
+  git(['-C', wt, 'commit', '-q', '-m', 'local work']);
+  return { repo, wt, git };
+}
+
+function realSettle({ repo, wt }, env) {
+  const runEnv = { ...process.env, ...IDENT, ...env };
+  const deps = {
+    env: runEnv,
+    git: (args, opts) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: runEnv, ...opts }),
+    gh: () => '',
+    node: () => ({ code: 0, stdout: '', stderr: '' }),
+    writeFile: () => {},
+    readFile: () => { const e = new Error('ENOENT'); e.code = 'ENOENT'; throw e; },
+    lstatType,
+    now: () => Date.now(),
+  };
+  return settle({
+    stop: stopOf(), record: 7, runId: 'r1', runDir: path.join(repo, 'run'), wt, branch: 'drive-record-7', pr: null, claimed: false,
+    mainRoot: repo, ghRepo: R, emit: () => {},
+  }, deps);
+}
+
+const branchExists = (git, repo) => { try { git(['-C', repo, 'rev-parse', '--verify', '--quiet', 'refs/heads/drive-record-7']); return true; } catch (e) { if (e.status === 1) return false; throw e; } };
+const branchLines = (git, repo) => git(['-C', repo, 'worktree', 'list', '--porcelain']).split(/\r?\n/).filter((l) => l === 'branch refs/heads/drive-record-7');
+
+test('AC1.5: real git — a pre-push settle removes the locked worktree and the local branch', () => {
+  const fx = lockedDriverWorktree();
+  try {
+    assert.ok(fs.existsSync(fx.wt));
+    const res = realSettle(fx);
+    assert.deepStrictEqual(res.failed, []);
+    assert.equal(fs.existsSync(fx.wt), false);
+    assert.equal(branchExists(fx.git, fx.repo), false);
+    assert.deepStrictEqual(branchLines(fx.git, fx.repo), []);
+    const again = realSettle(fx);
+    assert.deepStrictEqual(again.failed, []);
+    for (const step of ['settle-remove-worktree', 'settle-delete-branch']) {
+      const c = again.calls.find((x) => x.step === step);
+      assert.deepStrictEqual([c.status, c.detail], ['ok', 'already gone'], step);
+    }
+  } finally {
+    fs.rmSync(fx.repo, { recursive: true, force: true });
+  }
+});
+
+test('AC1.5: real git — a locked worktree whose directory was deleted but is still registered settles ok and the branch goes', () => {
+  const fx = lockedDriverWorktree();
+  try {
+    fs.rmSync(fx.wt, { recursive: true, force: true });
+    assert.deepStrictEqual(branchLines(fx.git, fx.repo), ['branch refs/heads/drive-record-7'], 'precondition: still registered');
+    const res = realSettle(fx);
+    assert.deepStrictEqual(res.failed, []);
+    assert.equal(branchExists(fx.git, fx.repo), false);
+    assert.deepStrictEqual(branchLines(fx.git, fx.repo), []);
+  } finally {
+    fs.rmSync(fx.repo, { recursive: true, force: true });
+  }
+});
+
+test('AC1.5: real git — already-gone is recognised under a non-English locale', () => {
+  const fx = lockedDriverWorktree();
+  try {
+    const loc = { LC_ALL: 'fr_FR.UTF-8', LANG: 'fr_FR.UTF-8', LANGUAGE: 'fr' };
+    assert.deepStrictEqual(realSettle(fx, loc).failed, []);
+    const again = realSettle(fx, loc);
+    assert.deepStrictEqual(again.failed, []);
+    for (const step of ['settle-remove-worktree', 'settle-delete-branch']) {
+      assert.equal(again.calls.find((x) => x.step === step).detail, 'already gone', step);
+    }
+  } finally {
+    fs.rmSync(fx.repo, { recursive: true, force: true });
+  }
 });
