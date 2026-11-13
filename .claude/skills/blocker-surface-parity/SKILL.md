@@ -16,7 +16,7 @@ Many surfaces read a record's blockers, and each must reach the same verdict, or
 | Parse | `plugin/bin/lib/issues/cross-repo-refs.js` (`parseCrossRepoDependencies`, `stripCrossRepoRefs`); this repository's `#N` stays with `parseDependencies` | — |
 | Shared verdict | `plugin/bin/lib/issues/record-dependencies.js` (`foreignBlockerBlocks`, `openBlockerRefs`, `openNativeBlockerRefs`, `partitionByOpenBodyBlockers`), re-exported by `record.js` | — |
 | Foreign state lookup | `plugin/bin/lib/issues/cross-repo-states.js` (`bodyForeignBlockers`, `suppliedStates`), `plugin/bin/resolve-foreign-blockers.js`; native links via `plugin/bin/resolve-blockers.js` | — |
-| Dispatch queue pull | the body-text and native passes | `plugin/skills/dispatch/queue-pull-script.md`, `queue-pull-notes.md`, `blocked-exclusion-report.md` |
+| Dispatch queue pull | the body-text and native passes (`plugin/bin/lib/dispatch/queue-pull.js`'s `blocked` pass) | the dispatch skill's Step 2 call to `plugin/bin/queue-pull.js` (retained mirror, until the removal unit: `plugin/skills/dispatch/queue-pull-script.md`), `queue-pull-notes.md`, `blocked-exclusion-report.md` |
 | Queue-order cache | `plugin/bin/lib/dispatch/queue-order.js` (`cacheUsable`) | `queue-pull-notes.md` |
 | Unlanded-blocker pass | `plugin/bin/dispatch-unlanded-blockers.js`, `plugin/bin/lib/dispatch/unlanded-blockers.js` | `queue-pull-notes.md` |
 | Dispatch resume | `plugin/bin/dispatch-resume.js`, `plugin/bin/lib/dispatch/resume-eligibility.js` | — |

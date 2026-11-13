@@ -51,7 +51,7 @@ Tests: `tests/bin-lib/claim-targets/claim-targets.test.js` (the exit and its env
 | `plugin/skills/flow/failure-cards.md` | A row naming the gate and each call's `OUTCOME`: the first call's `build-test-blocked`, and `blocked` from a second call's handoff continuation whose step list includes `test` |
 | `plugin/skills/assess-agent-autonomy/failure-check.md` | The class the stop gets if it reaches that mode anyway, though Settle skips the mode (`transient` for blocker-landing: no build ran, so no diff is at fault) |
 | `plugin/skills/dispatch/two-call-gate.md` section 6 | The skip phrase section 5 appends, for the second call's handoff continuation, which re-runs `/flow`'s pre-claim checks |
-| `plugin/skills/dispatch/queue-pull-script.md` | When Settle counts no retry and keeps the grants, a selection-time exclusion for the same cause, or the drain re-dispatches the record on every pull until it clears (#4792's Q1) |
+| `plugin/bin/lib/dispatch/queue-pull.js` (the exclusion's `PASSES` row and its `RUNNERS` entry; mirrored in the retained `plugin/skills/dispatch/queue-pull-script.md` until the removal unit lands, so #5227's parity test stays green) | When Settle counts no retry and keeps the grants, a selection-time exclusion for the same cause, or the drain re-dispatches the record on every pull until it clears (#4792's Q1) |
 
 Two decisions it owes beyond the six above:
 
