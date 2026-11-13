@@ -3704,8 +3704,9 @@ test('#5230 express: the grouping pass, the write-back blob and the cache check 
 
 // #5230 (moved from tests/bin-lib/stage-item/cli.test.js, #3488): the shipped Close proposal's
 // stage-item.js call drops its stdout but forwards its stderr, so a staging failure reaches the
-// firing's log.
-test('#5230 shipped: the stage-item.js stderr of a shipped Close proposal reaches deps.stderr; its stdout does not reach deps.stdout', () => {
+// firing's log. And the pass only stages the Close (moved from dispatch-shipped-candidate-prose,
+// #1984): no gh call closes the record directly, even when staging fails.
+test('#5230 shipped: the stage-item.js stderr of a shipped Close proposal reaches deps.stderr; its stdout does not reach deps.stdout; nothing closes the record directly', () => {
   const spawn = {
     'stage-item.js': (args) => {
       const id = args[args.indexOf('--id') + 1];
@@ -3717,4 +3718,5 @@ test('#5230 shipped: the stage-item.js stderr of a shipped Close proposal reache
   assert.ok(!r.cap.stdout.includes('staged shipped-close-9010\n'), 'the shipped stage-item stdout is dropped');
   assert.ok(r.cap.stdout.includes('staged dispatch-target-missing-9009\n'), 'control: the target-missing call forwards its stdout');
   assert.equal(r.thrown, null, 'a failed staging call does not stop the pull');
+  assert.deepEqual(r.ghCalls.filter((a) => a[0] === 'issue' && a[1] !== 'list'), [], 'the pass stages a Close proposal, never a direct gh issue close');
 });
