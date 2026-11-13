@@ -217,7 +217,7 @@ test('only check and story facts route', () => {
     const recording = validate(
       [claim('risk-proofs', 'Auth verified', ['flag:auth', 'recording:demo'])],
       {},
-      [fact('recording:demo', status)],
+      [fact('recording:demo', status, { reason: 'encoder-failed' })],
     );
     assertOnly(recording, 'kept');
   }
@@ -497,6 +497,46 @@ test('validateFactsShape refuses an optional text field that is not a string', (
     assert.deepEqual(one({ ...good, [field]: 3 }), [`facts.facts[0].${field}`], field);
     assert.deepEqual(one({ ...good, [field]: null }), [`facts.facts[0].${field}`], field);
   }
+});
+
+test('validateFactsShape checks the recording fields', () => {
+  const one = (extra) => factsErrorPaths({ ...factsDoc(), facts: [{ ...fact('recording:r', 'passed'), ...extra }] });
+  assert.deepEqual(one({
+    url_or_path: 'a/b.gif',
+    archive_path: 'archive/a/b.gif',
+    captions: ['one'],
+    failure: 'boom',
+    redactions: 0,
+    exposure: 'local-only',
+  }), []);
+  assert.deepEqual(one({ captions: [] }), []);
+  for (const exposure of ['local-only', 'linked-private', 'withheld']) assert.deepEqual(one({ exposure }), [], exposure);
+  for (const [extra, at] of [
+    [{ exposure: 'bogus' }, 'exposure'],
+    [{ exposure: 3 }, 'exposure'],
+    [{ redactions: -1 }, 'redactions'],
+    [{ redactions: 1.5 }, 'redactions'],
+    [{ redactions: '1' }, 'redactions'],
+    [{ captions: 'x' }, 'captions'],
+    [{ captions: [1] }, 'captions[0]'],
+    [{ url_or_path: 3 }, 'url_or_path'],
+    [{ archive_path: 3 }, 'archive_path'],
+    [{ failure: 3 }, 'failure'],
+  ]) {
+    assert.deepEqual(one(extra), [`facts.facts[0].${at}`], JSON.stringify(extra));
+  }
+});
+
+test('validateFactsShape holds a not-run recording to its four reasons', () => {
+  const one = (entry) => factsErrorPaths({ ...factsDoc(), facts: [entry] });
+  for (const reason of ['no-story', 'no-local-base-url', 'no-happy-path-screenshots', 'encoder-failed']) {
+    assert.deepEqual(one(fact('recording:r', 'not-run', { reason })), [], reason);
+  }
+  for (const reason of ['sk_live_abc', 'bogus', '', undefined]) {
+    assert.deepEqual(one(fact('recording:r', 'not-run', { reason })), ['facts.facts[0].reason'], String(reason));
+  }
+  assert.deepEqual(one(fact('recording:r', 'passed', { reason: 'adjudicated' })), [], 'another status');
+  assert.deepEqual(one(fact('check:r', 'not-run', { reason: 'no result recorded' })), [], 'another kind');
 });
 
 test('validateFactsShape refuses a repeated id', () => {

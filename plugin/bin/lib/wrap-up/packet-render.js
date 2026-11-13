@@ -5,9 +5,15 @@
 // Pure: no git, gh or fs.
 'use strict';
 
-const { PACKET_MARKER, SECTIONS, MAX_PACKET_CHARS, COMMANDS_ONLY_SURFACES } = require('./packet-contract');
-const { checkLink, findCredentialInText, normalizeKey } = require('./packet-links');
+const {
+  PACKET_MARKER, SECTIONS, MAX_PACKET_CHARS, COMMANDS_ONLY_SURFACES, WITHHELD_TEXT, EXPOSURE, NOT_RUN_REASON,
+} = require('./packet-contract');
+const {
+  BEARER_SEGMENT_REASON, PLAN_LIST_MARKER_RE, checkLink, entryPointHasBearerRoute, findCredentialInText, hasBearerUrl, isCredentialRefusal, isImageUrl,
+  normalizeKey,
+} =require('./packet-links');
 const { validatePacket } = require('./packet-validate');
+const { redactText, redactOrWithhold } = require('../walkthrough/redact');
 const { escapeRegExp } = require('../shared-primitives');
 
 // Every shape GitHub can turn into a link or a notification. A plain `word:value` is
@@ -34,15 +40,22 @@ const CHECKS_PASSED_LABEL = 'Checks that passed:';
 const ROW_KINDS = Object.freeze(['check', 'story']);
 
 const WITHHELD_REASON = '(reason withheld: credential-shaped)';
-const WITHHELD_TEXT = '(text withheld: credential-shaped)';
 const WITHHELD_ID_NOTE = 'id withheld: credential-shaped';
 const WITHHELD_ID = `(${WITHHELD_ID_NOTE})`;
+const RECORDING_WITHHELD = 'recording withheld: link contained a credential-shaped value';
+const RECORDING_REFUSED = '(recording url refused)';
+const NOT_RECORDED = 'not recorded';
+const NO_STORY = NOT_RUN_REASON.NO_STORY;
+const LINKED_PRIVATE = EXPOSURE.LINKED_PRIVATE;
+const WITHHELD_EXPOSURE = EXPOSURE.WITHHELD;
 
 const PLAN_SECTION = 'observation-plan';
 const PLAN_HEADING = 'Observation plan';
 const PLAN_ALL_SCREENED = 'all lines omitted for credential-shaped content';
+// What the screened line names for a plan line whose URL has a bearer-shaped path segment.
+// An Entry point's bare route counts as that URL.
+const PLAN_BEARER_KEY = 'path segment';
 const PLAN_HEADING_RE = /^#{1,6}[ \t]+observation plan[ \t]*$/i;
-const PLAN_LIST_MARKER_RE = /^(?:[-+*]|\d{1,9}[.)])[ \t]+(?=\S)/;
 // One backtick each side and none inside: a linear scan, since a failed opener reads no
 // further than the next backtick. Any other run stays escaped, and inert either way.
 const PLAN_CODE_SPAN_RE = /(?<!`)`([^`]+)`(?!`)/g;
@@ -138,24 +151,113 @@ function rowPlace(fact) {
   return 'checks-passed';
 }
 
+// inline() escapes both brackets. Only the closer comes back, so the raw comment holds the
+// fixed token and the escaped opener keeps a `[redacted]: x` line from defining a link.
+const ESCAPED_PLACEHOLDER = '\\[redacted\\]';
+const RENDERED_PLACEHOLDER = '\\[redacted]';
+
+// Every free string of the section comes through here. Gather has already redacted a gathered
+// fact, and a second pass changes nothing; a hand-built fact still must not leak.
+function recordingText(raw, tally) {
+  const { text, count } = redactOrWithhold(raw ?? '');
+  tally.redacted += count;
+  return inline(text).replaceAll(ESCAPED_PLACEHOLDER, RENDERED_PLACEHOLDER);
+}
+
 // A recording may live on any host, so its own hostname is the allowed one: checkLink
-// then screens the scheme, userinfo, query and fragment with no host rule.
-function recordingHref(url) {
+// then screens the scheme, userinfo, path segments, query and fragment with no host rule.
+function recordingHref(url, exposure) {
   let hostname;
   try {
     ({ hostname } = new URL(url));
   } catch {
-    return '(recording url refused)';
+    return { place: RECORDING_REFUSED, live: false };
   }
-  return checkLink(url, { allowedHosts: [hostname] }).ok ? liveLink(url) : '(recording url refused)';
+  const { ok, reason } = checkLink(url, { allowedHosts: [hostname] });
+  if (isCredentialRefusal(reason)) return { place: RECORDING_WITHHELD, live: false };
+  if (!ok || isImageUrl(url) || exposure !== LINKED_PRIVATE) return { place: RECORDING_REFUSED, live: false };
+  return { place: liveLink(url), live: true };
 }
 
-const recordingLine = (fact) => `- ${factText(fact)}: ${recordingHref(fact.url)}`;
+// A blank value is an absent one.
+const filled = (value) => (value?.trim() ? value : undefined);
+
+// A shape, not a parse: `new URL` throws on `https://h:99999/x`, which is still a URL to the
+// reader. A scheme of one letter is a Windows drive unless `//` follows it. The two strips are
+// what `new URL` itself ignores, so `ht\ttps://h` and a leading control character read the same.
+const URL_IGNORED_RE = /[\t\r\n]/g;
+const REMOTE_PATH_RE = /^[\s\u0000-\u001f]*(?:[a-z][a-z0-9+.-]+:|(?:[a-z]:)?\/\/)/i;
+const isRemotePath = (path) => REMOTE_PATH_RE.test(path.replace(URL_IGNORED_RE, ''));
+
+const WITHHELD_PLACE = Object.freeze({ place: RECORDING_WITHHELD, live: false });
+
+// A remote location meets the link rules. A local one meets the credential screen and the
+// redactor, and never the bearer rule, which a run id or a dated slug would trip.
+function recordingLocation(path, exposure) {
+  if (isRemotePath(path)) return recordingHref(path, exposure);
+  if (findCredentialInText(path) || redactText(path).count > 0) return WITHHELD_PLACE;
+  return { place: codeSpan(path), live: false, local: true };
+}
+
+// Where the head line points, and what its archive line says. Either location being withheld
+// withholds both, since the line would otherwise point at what the screen refused.
+function recordingPlace(fact) {
+  const { exposure } = fact;
+  if (exposure === WITHHELD_EXPOSURE) return WITHHELD_PLACE;
+  const archivePath = filled(fact.archive_path);
+  const archive = archivePath === undefined ? null : recordingLocation(archivePath, exposure);
+  if (archive?.place === RECORDING_WITHHELD) return WITHHELD_PLACE;
+  const path = filled(fact.url_or_path);
+  // The link rules judge the head when the fact names a `url` (a hand-built or legacy fact), when
+  // it names no location at all (`new URL(undefined)` throws, which reads as a refused link), and
+  // when the exposure says it is linked, so a location that is not a link fails the link rules
+  // instead of printing as a path. Any other fact holds a local path.
+  const main = fact.url !== undefined || path === undefined || exposure === LINKED_PRIVATE
+    ? recordingHref(fact.url ?? path, exposure)
+    : recordingLocation(path, exposure);
+  if (main.place === RECORDING_WITHHELD) return WITHHELD_PLACE;
+  const tag = main.local && exposure !== undefined ? ` (${exposure})` : '';
+  return { place: `${main.place}${tag}`, live: main.live, archived: archive?.place };
+}
+
+// An id the redactor would change is withheld wherever this section's facts print one.
+const recordingIdSpan = (id) => (redactText(id).count > 0 ? WITHHELD_ID : idSpan(id));
+
+function recordingHeadLines(fact, tally) {
+  if (fact.status === 'not-run') {
+    const reason = recordingText(fact.reason, tally);
+    return [reason ? `${NOT_RECORDED}: ${reason}` : NOT_RECORDED];
+  }
+  const { place, live, archived } = recordingPlace(fact);
+  const text = recordingText(live ? filled(fact.label) ?? fact.text : fact.text, tally) || recordingIdSpan(fact.id);
+  const head = `- ${text}: ${place}`;
+  return archived === undefined ? [head] : [head, `  once archived: ${archived}`];
+}
+
+function recordingItem(fact) {
+  const tally = { redacted: 0 };
+  const lines = recordingHeadLines(fact, tally);
+  // Numbered from 1 with no gap: a list that starts anywhere else cannot interrupt the line above it.
+  (fact.captions ?? []).filter(filled).forEach((caption, index) => {
+    lines.push(`  ${index + 1}. ${recordingText(caption, tally)}`);
+  });
+  if (fact.status === 'not-run' && filled(fact.failure)) lines.push(`  failure: ${recordingText(fact.failure, tally)}`);
+  // Gather's count, since a second pass over its strings finds nothing left to count.
+  const redacted = Number.isInteger(fact.redactions) ? fact.redactions : tally.redacted;
+  if (redacted > 0) lines.push(`  redacted values: ${redacted}`);
+  return lines.join('\n');
+}
+
+// A recording that was expected and could not be made also renders a Couldn't test row.
+const recordingCouldNotRun = (fact) => fact.status === 'not-run' && fact.reason !== NO_STORY;
+// Validation holds its reason to the vocabulary, so only the id needs more than rowLine gives.
+const recordingRow = (fact) => `- ${recordingIdSpan(fact.id)} — ${statusWithReason(fact)}`;
 
 function renderLinkFact(fact, facts, deploy) {
   if (fact.command) {
     const key = findCredentialInText(fact.command);
-    return key ? `(link refused: credential key in command: ${inline(key)})` : codeSpan(fact.command);
+    if (key) return `(link refused: credential key in command: ${inline(key)})`;
+    return hasBearerUrl(fact.command) ? `(link refused: ${BEARER_SEGMENT_REASON})` : codeSpan(fact.command);
   }
   if (COMMANDS_ONLY_SURFACES.includes(facts.surface)) return null;
   const check = checkLink(fact.url, { allowedHosts: facts.allowedHosts });
@@ -169,6 +271,13 @@ function renderLinkFact(fact, facts, deploy) {
 const item = (text) => ({ text, droppable: true });
 const note = (text) => ({ text, droppable: false });
 const itemsOr = (lines, reason) => (lines.length > 0 ? lines.map(item) : [note(reason)]);
+
+// The packet's one redacting choke point (#4612): nothing from a recording fact reaches the
+// markdown except through recordingText, a screened link or a screened code span.
+function renderRecordingSection(recordingFacts) {
+  const rendered = recordingFacts.filter((fact) => !(fact.status === 'not-run' && fact.reason === NO_STORY));
+  return itemsOr(rendered.map(recordingItem), NOT_RECORDED);
+}
 
 function testGuideBody(ctx) {
   const { facts, deploy, factsById, keptIn, rowsIn } = ctx;
@@ -197,10 +306,14 @@ const SECTION_BODIES = Object.freeze({
     keptIn('what-changed').map(claimLine),
     'not applicable: no change facts were gathered',
   ),
-  recording: ({ ofKind }) => itemsOr(ofKind('recording').map(recordingLine), 'not recorded'),
+  recording: ({ ofKind }) => renderRecordingSection(ofKind('recording')),
   'test-guide': testGuideBody,
-  'couldnt-test': ({ rowsIn, movedTo }) => itemsOr(
-    [...rowsIn('couldnt-test').map(rowLine), ...movedTo('couldnt-test').map(movedLine)],
+  'couldnt-test': ({ ofKind, rowsIn, movedTo }) => itemsOr(
+    [
+      ...rowsIn('couldnt-test').map(rowLine),
+      ...ofKind('recording').filter(recordingCouldNotRun).map(recordingRow),
+      ...movedTo('couldnt-test').map(movedLine),
+    ],
     'not applicable: every expected check ran',
   ),
   'tried-to-break': ({ keptIn, movedTo, rowsIn }) => itemsOr(
@@ -312,7 +425,7 @@ function screenPlanLines(lines, screened) {
   return lines.filter((line) => {
     const blank = line.trim() === '';
     const indent = indentWidth(line);
-    const key = findCredentialInText(line);
+    const key = findCredentialInText(line) ?? (hasBearerUrl(line) || entryPointHasBearerRoute(line) ? PLAN_BEARER_KEY : null);
     if (key) screened.push({ section: PLAN_SECTION, key });
     const held = droppedIndent !== null && !blank && indent > droppedIndent;
     const valueLine = awaitsValue && !blank;
@@ -428,4 +541,5 @@ module.exports = {
   inline,
   codeSpan,
   renderPacket,
+  renderRecordingSection,
 };
