@@ -1654,6 +1654,23 @@ test('reference-repairs check fails when Initiative-Fix commit diff touches a fi
   assert.strictEqual(row.detail, 'Initiative-Fix: commit touches unrelated file(s): docs/b.md');
 });
 
+test('reference-repairs check fails on the range path when an applied repair has no Initiative-Fix: commit in range', () => {
+  const runDir = makeTmpDir('verify-refrepair-nocommit-');
+  fs.writeFileSync(path.join(runDir, 'engine-state.json'), JSON.stringify({
+    version: 1,
+    results: { references: { findings: [{ action: 'applied', kind: 'broken-link', summary: 'fix', targetPath: 'docs/a.md' }] } },
+  }));
+  const calls = [];
+  const fakeGit = (args) => {
+    calls.push(args);
+    return '';
+  };
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } });
+  const row = result.rows.find((r) => r.check === 'reference-repairs');
+  assert.deepStrictEqual(row, { check: 'reference-repairs', result: 'fail', detail: 'no Initiative-Fix: commit found in range' });
+  assert.ok(!calls.some((a) => a[0] === 'diff-tree'), `no commit to inspect, so no diff-tree call: ${JSON.stringify(calls)}`);
+});
+
 // ---- reference-repairs: pr-first verification via the PR's own (pre-squash)
 // commit list (#2552 AC3/AC6) ----
 
