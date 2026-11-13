@@ -52,9 +52,12 @@ class StagingFailure extends Error {
 
 const realDeps = {
   // Throwing runner: stdout on success (a string, or a Buffer with opts.encoding 'buffer'), a throw
-  // on any non-zero exit. Local-only calls, so no timeout.
+  // on any non-zero exit. capture's calls are local-only (no timeout); `land`'s remote-contacting
+  // calls pass opts.timeout, and its plumbing calls opts.env (a GIT_INDEX_FILE on that call alone).
   git: (args, opts = {}) => execFileSync('git', args, {
     cwd: opts.cwd,
+    env: opts.env,
+    timeout: opts.timeout,
     input: opts.input,
     encoding: opts.encoding || 'utf8',
     stdio: ['pipe', 'pipe', 'pipe'],

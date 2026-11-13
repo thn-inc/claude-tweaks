@@ -21,6 +21,20 @@
 //                                                 (an index entry could not be cleared);
 //                                                 logFailed:true — the STAGED line did not land in
 //                                                 decisions.md, the caller hand-logs it
+//
+//   node bin/learned-skills-pr.js land --run <run-dir> --worktree <abs> --record <n> [--record <m> …]
+//     --integration-branch <name> [--merge-base <sha>]
+//   node bin/learned-skills-pr.js stage --run <run-dir> --worktree <abs> --reason <text> [--merge-base <sha>]
+//
+// `land` commits each captured patch (plumbing, on a temp index) to learned-skills/{run-id}, pushes it and
+// opens a ready PR that is never armed; a patch that cannot ride it is staged instead. `stage` stages
+// every captured patch (local-merge). --merge-base, when given, marks a captured entry whose target the
+// run branch already changed as superseded (never delivered twice). Stdout is one JSON line:
+//   land:  {branch, pr: {number,url}|null, landed: [{id,target,commit}], staged: [{id,target,stagePath,reason}]
+//           [, superseded][, failed][, logFailed]}
+//   stage: {staged: [...][, superseded][, failed]}
+//   failed — entries whose staged write failed too (they stay captured; the CLI exits 1)
+//
 // Exit 0 ok (every route above, staged included)
 //      1 a git failure before the diff was read — nothing was changed; the caller commits on the run
 //        branch and logs FAILED (merge-check's floor still holds that run). Also a failure after the
@@ -36,9 +50,13 @@
 const fs = require('fs');
 const path = require('path');
 const { capture, realDeps: libDeps, UsageError, StagingFailure } = require('./lib/learned-skills/learned-skills');
+const { land, stage } = require('./lib/learned-skills/land');
 const { resolveTarget } = require('./lib/stage-item/write');
 
 const USAGE = 'usage: learned-skills-pr.js capture --run <run-dir> --worktree <abs> --merge-base <sha> --target <repo-rel> --summary-file <path>\n'
+  + '       learned-skills-pr.js land --run <run-dir> --worktree <abs> --record <n> [--record <m> ...] --integration-branch <name> [--merge-base <sha>]\n'
+  + '       learned-skills-pr.js stage --run <run-dir> --worktree <abs> --reason <text> [--merge-base <sha>]\n'
+  + '  land / stage print one JSON line ({branch, pr, landed, staged} / {staged}); exit 1 when a staged write failed\n'
   + '  prints {route: run-branch | captured | clean | staged, ...}\n'
   + '  staged results may carry patch (the file holding the edit when the stage is description-only or unvalidated),\n'
   + '  residue:true (git status still lists the target) and logFailed:true (hand-log the STAGED line)\n'
@@ -47,11 +65,16 @@ const USAGE = 'usage: learned-skills-pr.js capture --run <run-dir> --worktree <a
   + '         absorb ("staging failed too"; stderr says the edit is in the working tree, or names the file holding it)\n'
   + '       2 malformed invocation or refused --run\n';
 
-const VERBS = new Set(['capture']);
+const VERBS = {
+  capture: ['--run', '--worktree', '--merge-base', '--target', '--summary-file'],
+  land: ['--run', '--worktree', '--record', '--integration-branch'],
+  stage: ['--run', '--worktree', '--reason'],
+};
 const FLAGS = {
   '--run': 'run', '--worktree': 'worktree', '--merge-base': 'mergeBase', '--target': 'target', '--summary-file': 'summaryFile',
+  '--record': 'record', '--integration-branch': 'integrationBranch', '--reason': 'reason',
 };
-const REQUIRED = ['--run', '--worktree', '--merge-base', '--target', '--summary-file'];
+const REPEATABLE = new Set(['--record']);
 
 function parseArgs(argv) {
   const o = { help: false, verb: null };
@@ -62,7 +85,8 @@ function parseArgs(argv) {
     if (!Object.hasOwn(FLAGS, a)) return { error: `unknown argument: ${a}` };
     const v = argv[i + 1];
     if (typeof v !== 'string' || !v.trim() || v.startsWith('--')) return { error: `${a} needs a value` };
-    o[FLAGS[a]] = v;
+    if (REPEATABLE.has(a)) (o[FLAGS[a]] = o[FLAGS[a]] || []).push(v);
+    else o[FLAGS[a]] = v;
     i++;
   }
   return o;
@@ -85,9 +109,9 @@ function run(argv, overrides = {}) {
   const o = parseArgs(argv);
   if (o.error) return usageError(o.error);
   if (o.help) { deps.stdout(USAGE); return 0; }
-  if (!o.verb) return usageError('a verb is required (capture)');
-  if (!VERBS.has(o.verb)) return usageError(`unknown verb: ${o.verb}`);
-  for (const flag of REQUIRED) if (!o[FLAGS[flag]]) return usageError(`${flag} is required`);
+  if (!o.verb) return usageError('a verb is required (capture, land, stage)');
+  if (!Object.hasOwn(VERBS, o.verb)) return usageError(`unknown verb: ${o.verb}`);
+  for (const flag of VERBS[o.verb]) if (!o[FLAGS[flag]]) return usageError(`${flag} is required`);
 
   let target;
   try {
@@ -101,6 +125,8 @@ function run(argv, overrides = {}) {
       ? `--run dir does not exist or is not a directory: ${o.run}`
       : `--run ${o.run} is not anchored under the main checkout (a worktree-local shadow, or outside every checkout) — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path`);
   }
+
+  if (o.verb !== 'capture') return runDelivery(o, target, deps, usageError);
 
   let summary;
   try { summary = deps.readFile(o.summaryFile); } catch (e) {
@@ -120,6 +146,27 @@ function run(argv, overrides = {}) {
       return 1;
     }
     deps.stderr(`learned-skills-pr.js: capture failed before the diff was read — nothing was changed: ${(e && e.message) || e}\n`);
+    return 1;
+  }
+}
+
+// land / stage: one JSON line; exit 1 when a staged write failed (those entries stay captured) or a git/gh
+// failure escaped the per-entry downgrades.
+function runDelivery(o, target, deps, usageError) {
+  const common = { runDir: target.dir, worktree: path.resolve(deps.cwd(), o.worktree), mergeBase: o.mergeBase };
+  try {
+    const result = o.verb === 'land'
+      ? land({ ...common, record: o.record, integrationBranch: o.integrationBranch }, deps.lib)
+      : stage({ ...common, reason: o.reason }, deps.lib);
+    deps.stdout(JSON.stringify(result) + '\n');
+    if (result.failed && result.failed.length) {
+      deps.stderr(`learned-skills-pr.js: ${o.verb}: a staged write failed for ${result.failed.map((f) => `#${f.id} (${f.error})`).join(', ')} — those entries stay captured\n`);
+      return 1;
+    }
+    return 0;
+  } catch (e) {
+    if (e instanceof UsageError) return usageError(e.message);
+    deps.stderr(`learned-skills-pr.js: ${o.verb} failed: ${(e && e.message) || e}\n`);
     return 1;
   }
 }
