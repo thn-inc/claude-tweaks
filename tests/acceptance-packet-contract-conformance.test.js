@@ -32,6 +32,7 @@ const {
   EXPOSURES,
   RECORDING_NOT_RUN_REASONS,
   VERIFICATION_WORDS,
+  notReadNote,
 } = require('../plugin/bin/lib/wrap-up/packet-contract');
 const { checkLink, findCredentialInText } = require('../plugin/bin/lib/wrap-up/packet-links');
 const { validatePacket } = require('../plugin/bin/lib/wrap-up/packet-validate');
@@ -129,6 +130,40 @@ test('each section states the line the renderer prints when it is empty', () => 
     assert.ok(items.has(heading), `${heading} is in the Sections list`);
     assert.ok(items.get(heading).includes(`\`${line}\``), `${heading} must state its empty line: ${line}`);
   }
+});
+
+// The Risk proofs placeholder for an unread --flags input (#4618): the renderer prints a
+// different line than the plain empty one, and the Sections item must state it too.
+const riskProofsLine = (markdown) => {
+  const block = markdown.split('\n### ').slice(1).map((b) => b.split('\n')).find(([heading]) => heading === 'Risk proofs');
+  assert.ok(block, 'the Risk proofs section rendered');
+  return block[1];
+};
+const statesLine = (itemText, line) => itemText.includes(`\`${line}\``);
+
+test('Risk proofs states the placeholder the renderer prints when the --flags input did not read', () => {
+  const plain = riskProofsLine(renderPacket(facts([]), narrative([])).markdown);
+  const unread = riskProofsLine(renderPacket(facts([], { partial: [notReadNote('--flags')] }), narrative([])).markdown);
+  assert.notStrictEqual(unread, plain, 'the unread render differs from the plain empty one');
+  assert.match(unread, /^risk flags not read/);
+  const item = sectionItems().find(({ heading }) => heading === 'Risk proofs');
+  assert.ok(statesLine(item.text, unread), `Risk proofs must state its not-read line: ${unread}`);
+});
+
+test('go-red (Risk proofs not-read line): the Sections item without that line fails the check', () => {
+  const unread = riskProofsLine(renderPacket(facts([], { partial: [notReadNote('--flags')] }), narrative([])).markdown);
+  const item = sectionItems().find(({ heading }) => heading === 'Risk proofs');
+  assert.ok(statesLine(item.text, unread));
+  assert.ok(!statesLine(item.text.split(`\`${unread}\``).join(''), unread));
+});
+
+test('Risk proofs states the note the renderer prints for an uncited flag when the --proofs input did not read', () => {
+  const unread = riskProofsLine(renderPacket(facts([fact('flag:auth', 'flag')], { partial: [notReadNote('--proofs')] }), narrative([])).markdown);
+  assert.match(unread, /^- auth: /);
+  const note = unread.slice('- auth: '.length);
+  assert.doesNotMatch(note, /no proof shown/);
+  const item = sectionItems().find(({ heading }) => heading === 'Risk proofs');
+  assert.ok(statesLine(item.text, note), `Risk proofs must state its proofs-not-read note: ${note}`);
 });
 
 test('Decisions left for you is omitted when empty, heading included', () => {
@@ -352,6 +387,7 @@ const VALIDATION_FACTS = [
   ['a risk proof routes whatever its wording', /A risk proof citing a failed or skipped `check` or `story` proof routes to Tried to break or Couldn't test whatever its wording/],
   ['the dropped list is in the working copy', /The dropped list lives in the working copy/],
   ['the screen runs ahead of the evidence rules', /goes to `screened` ahead of every evidence rule below, whatever its section/],
+  ['a planned proof is not verified (round 2, Reading B)', /only `proof` facts besides its flags[^.]*`planned, not verified`/],
 ];
 for (const [label, pattern] of VALIDATION_FACTS) {
   test(`Validation policy states: ${label}`, () => assert.match(inSection('## Validation policy'), pattern));

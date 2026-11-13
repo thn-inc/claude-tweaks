@@ -38,6 +38,8 @@ A scan that re-reads the input once per match is the same cost without a regex: 
 - **A quoted value taking a backslash run with `\\+`.** Over 30 s on `token="` followed by 200k backslashes and no closing quote: a run of the escape character has many ways to split, and an unterminated value tries them all. Fix: unroll the loop so one run has one way to match, `"[^"\\]*(?:\\[\s\S][^"\\]*)*"` (`quoted` in `redact.js`).
 - **Reading the value before checking the name.** A `name=value` scan that read the value first rescanned the rest of the text once per `a=` in `a=a=a=`, about 4 s at 50k repeats. Fix: split it. `assignmentRule` matches the key alone (`ASSIGNMENT_KEY_RE`), checks the name, and only then runs a sticky value regex (`ASSIGNMENT_VALUE_RE`, flag `y`) from the key's end.
 
+#5219's `reduceDetail` in `plugin/bin/lib/driver/settle.js` met shape 2 while keeping trailing sentence punctuation out of a path match. `\S*?(?=[),;.]*(?:\s|$))` re-ran its lookahead over the rest of the run at every lazy step: 7.3 s at 32k and 29 s at 64k characters on `'/a' + '.'.repeat(n) + 'x'`. Fix: match greedily with `\S*` and split the trailing run off by hand in the replacer (`sentenceTail`). `perf/driver-settle-reduce-detail-linearity.test.js` holds this case and nine other adversarial shapes.
+
 ### A line under `m` is JS's line, not git's
 
 This one is a wrong answer, not a slow one. A commit body's line ends at LF, but JS `^` and `$` under `m` also break on U+2028 and U+2029, so `Release-Note: A Fixes #99` read as a `Fixes #99` footer and booked #99 (#4634, a review probe, one fix wave). Split on `'\n'` and match each line without `m`, as `parseCommit` in `plugin/bin/lib/release-local/commits.js` and `extractReleaseNotes` in `plugin/bin/lib/release-notes.js` do. Three details come with the split:
@@ -89,5 +91,6 @@ Run the perf suite: `npm run test:perf`.
 - `perf/aggregate-reproduction-linearity.test.js`, `perf/closing-keyword-linearity.test.js`, `perf/heredoc-scan-linearity.test.js`, `perf/scale-readiness-linearity.test.js`
 - `perf/packet-gather-linearity.test.js`, `perf/packet-render-linearity.test.js`, `perf/packet-links-post-linearity.test.js`
 - `perf/recording-redact-linearity.test.js`
+- `perf/driver-settle-reduce-detail-linearity.test.js`
 - `plugin/bin/lib/console/finding-path.js`, `plugin/bin/lib/log-decision/aggregate-reproduction.js`
 - Domain detail stays in `code-health-focus-vertical` (item 6, generators) and `shell-scanner-bash-differential` (the write gate's caps)

@@ -6,6 +6,7 @@
 //
 //   Usage: drive.js #N [#M…]
 //          drive.js --help | -h
+//          drive.js --no-settle #N [#M…]   (the caller settles stops: the final line carries settle: left-to-caller and the stop object)
 //
 // One JSON event line per step on stdout (and, once the run directory exists, in
 // {run-dir}/driver-events.jsonl); each record's final line carries its outcome word.

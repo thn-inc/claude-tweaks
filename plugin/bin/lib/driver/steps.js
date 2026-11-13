@@ -14,19 +14,33 @@
 //   - `halt` defaults to `status !== 'ok'`; a step that must never end the record (a
 //     failed summary entry) returns `halt: false`.
 //   - `stopClass` defaults to the step's own class and may be overridden per result.
-//   - `reason` defaults to the status; it is the final line's `stop.reason`.
+//   - `reason` defaults to the status; it is the final line's `stop.reason`, except that
+//     run.js's finalEvent maps a pre-push stop's reason through settle's toEscalationReason.
 //   - `extra` fields merge into the step's event line (never over its core fields).
 //   - A throw from fn is `{ status: 'fail', detail: err.message }` with the step's class.
 //
 // Every external call goes through `deps`; nothing here reads process state.
+//
+// The ci step holds every read other than `pending` or `stale` to a settle window of 2 minutes,
+// measured from the push (CI_SETTLE_WINDOW_MS); `pending` and `stale` keep polling. The step runs
+// seconds after `gh pr create`, before GitHub has created the test workflow for the pushed commit:
+// in the #5215 Phase 1 proof every ci step ended within ~5 seconds, recording `green` (#4198,
+// #4351) or `pending` (#3931) while the test shards had not started, because the only checks on
+// the PR were fast workflows already finished or skipped. "At least one run on the commit" alone
+// does not close that gap (#4198's commit had a finished skipped `label-fix-branch` run before the
+// test workflow existed), so the window does. A settled read also needs at least one workflow run
+// on the pushed sha (ctx.check.head, what express-lane.js check verified), read from the poll's
+// pr-checks envelope (headRunCount, trusted only when its headRefOid is that sha): a commit still
+// without one once the window has passed is recorded as `no-ci`, and an unreadable count is never `no-ci`.
 const path = require('node:path');
-const { STEP, STOP_CLASSES, neutralize, normalizeTitle } = require('./events');
+const { STEP, STOP_CLASSES, neutralize, normalizeTitle, CLI_TIMEOUT_MS, firstLine, errorText } = require('./events');
 const { parseStatusPorcelainZ } = require('../git-z');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { gateOriginRepo, resolveRepoTarget } = require('../repo-resolve');
 const { isTimeoutError } = require('../shared-primitives');
 const { fenceFor } = require('../markdown-blocks');
 const { openBlockerRefs } = require('../issues/record-dependencies');
+const { hasDriverEscalationMarker } = require('./settle');
 const { sensitivePathsOf } = require('../express/policy');
 const { formatTimestamp } = require('../hooks/run-dir-resolve');
 const { claimLogText, CLAIM_LOG_SECTION, CLAIM_LOG_STEP } = require('../log-decision/claim-log');
@@ -35,8 +49,6 @@ const { claimLogText, CLAIM_LOG_SECTION, CLAIM_LOG_STEP } = require('../log-deci
 const TEST_COMMAND = 'npm test';
 // The plugin's bin/ directory (steps.js lives in bin/lib/driver), where the CLIs the steps run live.
 const BIN_DIR = path.join(__dirname, '..', '..');
-// Bound on one plugin/bin CLI call (claim-targets.js talks to GitHub; the rest are local).
-const CLI_TIMEOUT_MS = 120000;
 // Bound on the verify.js run: it is a suite run, so it gets far longer than a local CLI.
 const VERIFY_TIMEOUT_MS = 30 * 60 * 1000;
 // claim-log.js's own transport shape: `transport: [a-z-]+`.
@@ -44,6 +56,8 @@ const TRANSPORT_RE = /^[a-z-]+$/;
 // How long the ci step waits for a pending or stale check state, and how often it polls.
 const CI_WAIT_BOUND_MS = 30 * 60 * 1000;
 const CI_POLL_INTERVAL_MS = 30 * 1000;
+// No ci read may end the step earlier than this after the push (see the header paragraph).
+const CI_SETTLE_WINDOW_MS = 2 * 60 * 1000;
 // On win32 the worker launcher's default `bin` (`claude`) does not find an npm-installed
 // `claude.cmd`, so a win32 caller passes this explicitly.
 const WIN32_CLAUDE_BIN = 'claude.cmd';
@@ -56,20 +70,11 @@ const POLICY_KEYS = Object.freeze([
   'auto-merge-max-lines',
 ]);
 // The one record read: its JSON feeds eligibility, admission, the worker and check.
-const ISSUE_JSON_FIELDS = 'number,title,body,labels,state';
+const ISSUE_JSON_FIELDS = 'number,title,body,labels,state,comments';
 const RESULT_STATUSES = new Set(['ok', 'stop', 'fail']);
 const STOP_CLASS_SET = new Set(Object.values(STOP_CLASSES));
 // A branch name the integration ref may take: never empty, never flag-shaped, no whitespace.
 const REF_RE = /^[^\s-]\S*$/;
-
-// An execFileSync error's own words: gh and git put the cause on stderr, while the
-// message leads with "Command failed: …". First non-empty line of whichever has text.
-function firstLine(s) {
-  return String(s || '').split(/\r?\n/).map((l) => l.trim()).find(Boolean) || '';
-}
-function errorText(err) {
-  return firstLine(err && err.stderr) || firstLine(err && err.message) || String(err);
-}
 
 function defineStep(name, stopClass, fn) {
   if (!STOP_CLASS_SET.has(stopClass)) throw new Error(`defineStep ${name}: unknown stop class ${String(stopClass)}`);
@@ -168,7 +173,6 @@ const fetchStep = defineStep(STEP.fetch, STOP_CLASSES.REFUSED, async (ctx, deps)
   if (!issue || typeof issue !== 'object' || issue.number !== ctx.record) {
     return { status: 'fail', detail: `gh issue view returned no record #${ctx.record}` };
   }
-  ctx.recordJson = raw;
   ctx.issue = issue;
   return { status: 'ok' };
 });
@@ -190,7 +194,8 @@ const eligibilityStep = defineStep(STEP.eligibility, STOP_CLASSES.REFUSED, async
 });
 
 // Ports express-lane.md's Eligibility section: the driver lane's admission (state, grants,
-// open blockers, open linked PRs, and the express-driver routing, where `off` refuses).
+// open blockers, open linked PRs, whether a trusted driver-escalation marker is on the record,
+// and the express-driver routing, where `off` refuses).
 const admissionStep = defineStep(STEP.admission, STOP_CLASSES.REFUSED, async (ctx, deps) => {
   const { policy, repo: { host, owner, repo } } = ctx.shared;
   const n = ctx.record;
@@ -220,6 +225,7 @@ const admissionStep = defineStep(STEP.admission, STOP_CLASSES.REFUSED, async (ct
     openBlockerRefs: blockerEntry ? openBlockerRefs(blockerEntry) : null,
     openLinkedPRs,
     routing: policy['express-driver'].value,
+    driverEscalated: hasDriverEscalationMarker(ctx.issue.comments),
   });
   if (!verdict || verdict.admitted !== true) {
     return { status: 'stop', detail: ((verdict && verdict.reasons) || []).join('; ') || 'not admitted' };
@@ -257,7 +263,12 @@ const claimStep = defineStep(STEP.claim, STOP_CLASSES.CLAIM, async (ctx, deps) =
   if (r.code !== 0) {
     const key = firstEnvelopeKey(r.stdout);
     const why = key || firstLine(r.stderr);
-    return { status: 'fail', detail: `claim-targets.js exited ${r.code}${why ? ` (${why})` : ''}` };
+    // A killed or timed-out run has no integer exit; settle treats `claim-exit-none` as a possibly written claim.
+    return {
+      status: 'fail',
+      reason: Number.isInteger(r.code) ? `claim-exit-${r.code}` : 'claim-exit-none',
+      detail: `claim-targets.js exited ${r.code}${why ? ` (${why})` : ''}`,
+    };
   }
   let envelope;
   try { envelope = JSON.parse(r.stdout); } catch { envelope = null; }
@@ -485,13 +496,19 @@ const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async (ctx, de
     turns: orNull(envelope.turns),
     denials,
     costUsd: orNull(envelope.costUsd),
+    spendOverrun: envelope.spendOverrun === true,
   };
   // spendOverrun: an `ok` launch whose last turn crossed the spend ceiling (worker.js checks it
   // between turns); present only when the envelope says so.
-  const extra = { usage: ctx.worker.usage, turns: ctx.worker.turns, denials, ...(envelope.spendOverrun === true ? { spendOverrun: true } : {}) };
+  const extra = { usage: ctx.worker.usage, turns: ctx.worker.turns, denials, ...(ctx.worker.spendOverrun ? { spendOverrun: true } : {}) };
   if (envelope.status !== 'ok') {
     const why = neutralize(envelope.detail);
-    return { status: 'fail', detail: `${neutralize(String(envelope.status))}/${neutralize(String(envelope.reason))}${why ? `: ${why}` : ''}`, extra };
+    const kind = `${neutralize(String(envelope.status))}/${neutralize(String(envelope.reason))}`;
+    // The two ceilings name themselves and their configured value; any other reason keeps its words.
+    let lead = kind;
+    if (kind === 'timeout/wall-clock-ceiling') lead = `${kind}: wall-clock ceiling of ${minutes} minutes reached`;
+    else if (kind === 'fail/spend-ceiling') lead = `${kind}: spend ceiling of ${dollars} dollars reached`;
+    return { status: 'fail', detail: `${lead}${why ? `: ${why}` : ''}`, extra };
   }
   if (result && result.status === 'cannot-complete') {
     return { status: 'stop', detail: `worker could not complete${ctx.worker.summary ? `: ${ctx.worker.summary}` : ''}`, extra };
@@ -584,7 +601,7 @@ const testStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
   }
   // verify.js: exit 1 is a failed check (red tests); any other non-zero exit (2: usage or
   // infrastructure error) means the run itself failed, so it is a `fail`, not a gate saying no.
-  if (r.code === 1) return { status: 'stop', detail: 'red tests' };
+  if (r.code === 1) return { status: 'stop', reason: 'failing-test', detail: 'red tests' };
   if (r.code !== 0) return { status: 'fail', detail: neutralize(firstLine(r.stderr)) || `verify exited ${r.code}` };
   return { status: 'ok', detail };
 });
@@ -607,7 +624,9 @@ function logDecisionFile(ctx, deps, fileName, text, step, extraArgs) {
 const checkStep = defineStep(STEP.check, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => {
   const n = ctx.record;
   const recordFile = path.join(ctx.runDir, 'record.json');
-  deps.writeFile(recordFile, ctx.recordJson);
+  // The record's comments are untrusted text and grow with the thread; check reads only these fields.
+  const { number, title, body, labels, state } = ctx.issue;
+  deps.writeFile(recordFile, JSON.stringify({ number, title, body, labels, state }));
   const r = deps.node(binScript('express-lane.js'),
     ['check', '--run', ctx.runDir, '--issue', String(n), '--integration-branch', ctx.shared.ref, '--record-json', recordFile],
     { cwd: ctx.wt, timeout: CLI_TIMEOUT_MS, env: deps.env });
@@ -633,18 +652,8 @@ const checkStep = defineStep(STEP.check, STOP_CLASSES.PRE_PUSH, async (ctx, deps
     const reason = neutralize(envelope.reason);
     const why = neutralize(envelope.detail);
     ctx.check = { action: 'escalate', reason, detail: why };
-    let note = '';
-    if (!ctx.checkLogged) {
-      try {
-        const log = logDecisionFile(ctx, deps, 'check-escalate.txt',
-          `escalated #${n} to /flow (reason: ${reason}) — ${why}`, 'Express lane',
-          ['--reversibility', 'high (worktree and branch kept)']);
-        if (log.code !== 0) note = ` (escalation line not logged: log-decision.js exited ${log.code})`;
-      } catch (err) {
-        note = ` (escalation line not logged: ${neutralize(errorText(err))})`;
-      }
-    }
-    return { status: 'stop', detail: `${reason}: ${why}${note}` };
+    // A check that logged nothing (logged: false) is settled by settle's escalate, which writes the line.
+    return { status: 'stop', reason: envelope.reason, detail: `${reason}: ${why}` };
   }
   const bounds = envelope.bounds && typeof envelope.bounds === 'object' ? envelope.bounds : {};
   ctx.check = { action: 'proceed', head: envelope.head, configSet: envelope.configSet, mergeVerification: envelope.mergeVerification, bounds };
@@ -699,6 +708,7 @@ const pushStep = defineStep(STEP.push, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
     return { status: 'fail', detail };
   }
   ctx.pushed = true;
+  ctx.pushedAt = deps.now();
   return { status: 'ok' };
 });
 
@@ -829,46 +839,88 @@ const summaryStep = defineStep(STEP.summary, STOP_CLASSES.NONE, async (ctx, deps
 
 const CI_STATES = new Set(['red', 'inherited-red', 'pending', 'stale', 'green', 'no-ci', 'read-failed', 'no-pr', 'gh-absent']);
 
-// One pr-checks.js read in the worktree (it reads local HEAD from its cwd): the state word, or
-// `read-failed` for a non-zero exit, unparseable stdout or a word outside the vocabulary.
+// One pr-checks.js read in the worktree (it reads local HEAD from its cwd): `{ state, pending }`,
+// the state word (or `read-failed` for a non-zero exit, unparseable stdout or a word outside the
+// vocabulary) and the envelope's `pending` check names (strings only; anything else is empty).
 function readCiState(ctx, deps, args) {
   try {
     const r = deps.node(binScript('pr-checks.js'), args, { cwd: ctx.wt, timeout: CLI_TIMEOUT_MS, env: deps.env });
     const parsed = r.code === 0 ? JSON.parse(r.stdout) : null;
-    if (parsed && typeof parsed.state === 'string' && CI_STATES.has(parsed.state)) return parsed.state;
+    if (parsed && typeof parsed.state === 'string' && CI_STATES.has(parsed.state)) {
+      return {
+        state: parsed.state,
+        pending: Array.isArray(parsed.pending) ? parsed.pending.filter((n) => typeof n === 'string') : [],
+        runs: commitRuns(ctx, parsed),
+      };
+    }
   } catch { /* an unparseable read is read-failed */ }
-  return 'read-failed';
+  return { state: 'read-failed', pending: [], runs: 'unreadable' };
+}
+
+// The workflow runs on the pushed commit (ctx.check.head), from the pr-checks envelope's own
+// head-runs count (pr-checks.js already lists the head sha's runs on every read, so the step
+// makes no `gh run list` call of its own): `some` for at least one run, `none` for zero, and
+// `unreadable` when the count is absent or not a non-negative integer, or the envelope's
+// headRefOid is not the pushed sha (the PR head moved, or the read never reached the runs).
+function commitRuns(ctx, parsed) {
+  const count = parsed.headRunCount;
+  if (!Number.isInteger(count) || count < 0 || parsed.headRefOid !== ctx.check.head) return 'unreadable';
+  return count > 0 ? 'some' : 'none';
 }
 
 // Reads the PR's check rollup at the worktree's HEAD. Polls `pr-checks.js --pr {n}` (which
-// writes no decisions.md line) while the state is pending, then makes exactly one `--run` read
-// under the express-lane section: that read logs the gate's own line once, and its state is the
-// one recorded (`timeout` when it is still pending at the bound; only this read can say `stale`).
-// Never halts and always reports `ok`: the word it reads is data for the reviewer. The wait is
-// reported as extra.ciWaitMs, so the final line can exclude it without naming this step. A signal
-// during a sleep is delivered mid-step (run.js's handler writes the stop); polling then stops.
-// For that handler, ctx.ci holds the last polled state and ctx.ciWaitStartedAt the wait's start
-// while the step runs, so the interrupted line reports the state and the wait so far.
+// writes no decisions.md line) while the state is pending or stale, or until the settle window
+// (CI_SETTLE_WINDOW_MS, measured from ctx.pushedAt) has passed and the commit has a workflow run
+// (commitRuns, taken from each settled poll's envelope until one is seen), then makes exactly one `--run`
+// read under the express-lane section: that read logs the gate's own line once, and its state is
+// the one recorded (`timeout` when it is still pending or stale at the bound; only this read can
+// say `stale`; `no-ci` when the commit still has no run once the window has passed). The head-runs
+// count covers GitHub Actions runs only while pr-checks classifies the whole rollup, so with no Actions run
+// `red`/`inherited-red` stay as read (a failing non-Actions check is conclusive), a failed read
+// (`read-failed`, `gh-absent`, `no-pr`) stays as read (it never saw the non-Actions checks), and a
+// `pending` poll that names pending checks keeps polling (a non-Actions check is still running) until the bound.
+// The `--run` read writes its own decisions.md gate line (e.g. "checks pending — passed with
+// caveat"), which can therefore disagree with the recorded word when that is `no-ci` or `timeout`.
+// Never halts and always reports `ok`: the word it reads is data for the reviewer.
+// The wait is reported as extra.ciWaitMs, so the final line can exclude it without naming this
+// step. A signal during a sleep is delivered mid-step (run.js's handler writes the stop); polling
+// then stops. For that handler, ctx.ci holds the last polled state only once that read is final
+// (the loop is about to exit on it), else `pending` (finalEvent's word for a state never read as
+// final), and ctx.ciWaitStartedAt the wait's start while the step runs, so the interrupted line
+// reports the state and the wait so far.
 const ciStep = defineStep(STEP.ci, STOP_CLASSES.NONE, async (ctx, deps) => {
   const started = deps.now();
+  const settleFrom = ctx.pushedAt ?? started;
   ctx.ciWaitStartedAt = started;
-  let polled = 'read-failed';
   let timedOut = false;
+  let runs = null; // the commit-run read's last word, taken once the window has passed
+  ctx.ci = 'pending';
   for (;;) {
-    polled = readCiState(ctx, deps, ['--pr', String(ctx.pr.number)]);
-    ctx.ci = polled;
-    if (polled !== 'pending' || ctx.shared.interrupted) break;
-    if (deps.now() - started >= CI_WAIT_BOUND_MS) {
+    const read = readCiState(ctx, deps, ['--pr', String(ctx.pr.number)]);
+    const polled = read.state;
+    const now = deps.now();
+    const settled = now - settleFrom >= CI_SETTLE_WINDOW_MS;
+    if (settled && runs !== 'some') runs = read.runs;
+    const waiting = polled === 'pending' || polled === 'stale';
+    // With no Actions run, a pending poll that names pending checks is a non-Actions check still running.
+    const otherCheckRunning = polled === 'pending' && read.pending.length > 0;
+    const settledEnd = settled && (!waiting || (runs === 'none' && !otherCheckRunning));
+    const bound = !settledEnd && now - started >= CI_WAIT_BOUND_MS;
+    // Only a read the loop is about to exit on is final; any other is not what the run saw.
+    ctx.ci = (settledEnd || bound) && !ctx.shared.interrupted ? polled : 'pending';
+    if (settledEnd || ctx.shared.interrupted) break;
+    if (bound) {
       timedOut = true;
       break;
     }
     await deps.sleep(CI_POLL_INTERVAL_MS);
     if (ctx.shared.interrupted) break;
   }
-  let state = polled;
+  let state = ctx.ci;
   if (!ctx.shared.interrupted) {
-    state = readCiState(ctx, deps, ['--run', ctx.runDir, '--section', '/express-lane']);
-    if (timedOut && state === 'pending') state = 'timeout';
+    state = readCiState(ctx, deps, ['--run', ctx.runDir, '--section', '/express-lane']).state;
+    if (timedOut && (state === 'pending' || state === 'stale')) state = 'timeout';
+    if (runs === 'none' && (state === 'green' || state === 'pending' || state === 'stale')) state = 'no-ci';
   }
   ctx.ci = state;
   ctx.ciWaitStartedAt = null;
@@ -881,6 +933,6 @@ const STEPS = Object.freeze([
 ]);
 
 module.exports = {
-  STEPS, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, WIN32_CLAUDE_BIN,
+  STEPS, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN,
   VERIFY_TIMEOUT_MS,
 };
