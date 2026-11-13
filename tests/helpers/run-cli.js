@@ -8,20 +8,30 @@
 //
 // - `runCli` / `runCliSync` require the CLI, merge `{ ...realDeps, ...fakes, ...deps }`
 //   (fakes: stdout/stderr collectors, cwd, a frozen env, stdin, homeDir) and call
-//   `run`. A real `runner`, `gh` or `spawn` still left in the merge throws when
+//   `run`. A real value left in the merge under a FAIL_CLOSED_KEYS name throws when
 //   reached unless `allowRealRunner: true`, and the reach is also recorded, so a
 //   CLI that catches its runner's error (the per-call fail-safe posture) still
 //   fails the call.
+// - `cliPath` must be absolute: `require` resolves a relative path against this
+//   helper's own directory, not the test's.
+// - `fresh: true` deletes every `require.cache` entry under `plugin/bin` before the
+//   require, so the CLI and every module it loads start from a clean module state.
+//   Module-level state under `plugin/bin` (the forge probe's memos in repo-resolve.js,
+//   for example) otherwise survives from one in-process call to the next in the same
+//   test file; a case whose answer depends on that state passes `fresh: true`.
 // - Failure precedence after `run` returns: an error `run` threw or rejected with
 //   is rethrown first; then a recorded real-runner reach; then (runCliSync only)
 //   the refusal of a promise-returning `run`; then the leak report; then the
 //   integer exit-code check.
-// - A leak guard fails the call when `run` touches process state the contract
+// - A leak guard fails the call when the CLI touches process state the contract
 //   forbids: process.exitCode, process.cwd(), process.env, signal/exit listeners,
 //   a direct process.stdout/stderr write, or os.homedir() under an injected HOME.
-//   The state is put back first, so one leaky CLI cannot break later tests. Writes
-//   and homedir calls are attributed to the CLI through an AsyncLocalStorage, so
-//   the test runner's own output in the same window is not counted.
+//   Its snapshot is taken before the require, so what a module does while it loads
+//   is inside the guard too. The state is put back first (listeners through
+//   process.rawListeners, so a `once` listener comes back as one, in its place), so
+//   one leaky CLI cannot break later tests. Writes and homedir calls are attributed
+//   to the CLI through an AsyncLocalStorage, so the test runner's own output in the
+//   same window is not counted.
 // - When runCliSync refuses a promise-returning `run`, that `run` keeps going after
 //   the state was restored, so anything it changes after its first `await` is
 //   neither reported nor undone.
@@ -30,7 +40,8 @@
 //
 // `env` defaults to `{}` and is the complete environment the CLI sees. A CLI that
 // starts `git` or `gh` needs `PATH` (and `SystemRoot` on Windows) in the `env` a
-// test passes; a test that wants the ambient environment passes `{ ...process.env }`.
+// test passes, or the failure reads as "git not found" rather than as a CLI defect;
+// a test that wants the ambient environment passes `{ ...process.env }`.
 
 const os = require('os');
 const path = require('path');
@@ -40,13 +51,23 @@ const { AsyncLocalStorage } = require('async_hooks');
 
 const PLUGIN_BIN = path.resolve(__dirname, '..', '..', 'plugin', 'bin') + path.sep;
 const CONTRACT = '.claude/skills/gh-api-module-pattern/cli-wrapper-contract.md';
-const RUNNER_KEYS = ['runner', 'gh', 'spawn'];
+// The fail-closed rule: after merging `realDeps` with the test's fakes, a key named here that
+// still holds the CLI's real value is replaced with a function that throws, and the reach is
+// recorded so a CLI that catches the throw still fails the test; `allowRealRunner: true` lifts
+// it for one call. The list is by key name: a `realDeps` key that can start `gh` or an
+// arbitrary command carries one of these names, and a record converting a CLI whose `realDeps`
+// holds such a seam under another name (for example `execFileSync`, `runPremiseCheck`) adds that
+// name here in the same change. A git-only seam (`git`, `gitRunner`) is deliberately not on the
+// list: it runs real git against the injected `cwd` and `env`, which is the behaviour under test.
+const FAIL_CLOSED_KEYS = ['runner', 'gh', 'spawn'];
 const LISTENER_EVENTS = ['exit', 'SIGINT', 'SIGTERM', 'SIGHUP', 'uncaughtException'];
 
 const storage = new AsyncLocalStorage();
 let pending = false;
 
-// Requires the CLI and builds the merged deps. Shared by runCli and runCliSync.
+// Takes the leak-guard snapshot, requires the CLI inside it and builds the merged deps.
+// Shared by runCli and runCliSync. -> { call, snap }; on a throw the snapshot is already
+// restored and the call is no longer pending.
 function prepare(cliPath, opts) {
   if (pending) throw new Error('runCli: another runCli call is still pending');
   const { env = {}, cwd = process.cwd(), stdin = '', deps = {}, fresh = false, allowRealRunner = false } = opts;
@@ -54,10 +75,17 @@ function prepare(cliPath, opts) {
     for (const key of Object.keys(require.cache)) if (key.startsWith(PLUGIN_BIN)) delete require.cache[key];
   }
   const name = path.basename(cliPath);
-  const cli = require(cliPath);
-  for (const key of ['run', 'realDeps']) {
-    const ok = key === 'run' ? typeof cli.run === 'function' : cli.realDeps !== null && typeof cli.realDeps === 'object';
-    if (!ok) throw new Error(`runCli: ${name} exports no ${key} — see the entry contract in ${CONTRACT}`);
+  const snap = snapshot(env);
+  let cli;
+  try {
+    cli = storage.run(snap.token, () => require(cliPath));
+    for (const key of ['run', 'realDeps']) {
+      const ok = key === 'run' ? typeof cli.run === 'function' : cli.realDeps !== null && typeof cli.realDeps === 'object';
+      if (!ok) throw new Error(`runCli: ${name} exports no ${key} — see the entry contract in ${CONTRACT}`);
+    }
+  } catch (err) {
+    finish(snap, name);
+    throw err;
   }
   const out = { stdout: '', stderr: '' };
   const fakes = {
@@ -75,7 +103,7 @@ function prepare(cliPath, opts) {
   const merged = { ...cli.realDeps, ...fakes, ...deps };
   const reached = new Set();
   if (!allowRealRunner) {
-    for (const key of RUNNER_KEYS) {
+    for (const key of FAIL_CLOSED_KEYS) {
       if (merged[key] !== undefined && merged[key] === cli.realDeps[key]) {
         merged[key] = () => {
           reached.add(key);
@@ -84,7 +112,7 @@ function prepare(cliPath, opts) {
       }
     }
   }
-  return { cli, name, merged, out, env, reached };
+  return { call: { cli, name, merged, out, reached }, snap };
 }
 
 function realReached(key) {
@@ -97,11 +125,12 @@ function reachedError(call) {
   return key === undefined ? null : realReached(key);
 }
 
-// Records process state and installs the recorders; marks a call pending.
-function snapshot(call) {
+// Records process state and installs the recorders; marks a call pending. `env` is the
+// call's injected environment, read for whether HOME or USERPROFILE differs from the real one.
+function snapshot(env) {
   const token = {};
   const hits = { stdout: false, stderr: false, homedir: false };
-  const injected = ['HOME', 'USERPROFILE'].some((k) => call.env[k] !== undefined && call.env[k] !== process.env[k]);
+  const injected = ['HOME', 'USERPROFILE'].some((k) => env[k] !== undefined && env[k] !== process.env[k]);
   const streams = ['stdout', 'stderr'].map((name) => {
     const stream = process[name];
     const own = Object.prototype.hasOwnProperty.call(stream, 'write');
@@ -127,7 +156,7 @@ function snapshot(call) {
     exitCode: process.exitCode,
     cwd: process.cwd(),
     env: { ...process.env },
-    listeners: LISTENER_EVENTS.map((event) => [event, process.listeners(event)]),
+    listeners: LISTENER_EVENTS.map((event) => [event, process.rawListeners(event)]),
   };
 }
 
@@ -159,13 +188,14 @@ function finish(snap, name) {
         process.env[key] = before;
       }
     }
+    // Raw listeners: a `once` listener is its wrapper, which re-registered with `on` still
+    // removes itself when it fires, so the list comes back exactly, in its original order.
     for (const [event, before] of snap.listeners) {
-      const now = process.listeners(event);
-      const added = now.filter((fn) => !before.includes(fn));
-      const removed = before.filter((fn) => !now.includes(fn));
-      if (added.length || removed.length || now.length !== before.length) diffs.push(`${event} listeners ${before.length} -> ${now.length}`);
-      for (const fn of added) process.removeListener(event, fn);
-      for (const fn of removed) process.on(event, fn);
+      const now = process.rawListeners(event);
+      if (now.length === before.length && now.every((fn, i) => fn === before[i])) continue;
+      diffs.push(`${event} listeners ${before.length} -> ${now.length}`);
+      process.removeAllListeners(event);
+      for (const fn of before) process.on(event, fn);
     }
     if (snap.hits.stdout) diffs.push('wrote to process.stdout directly');
     if (snap.hits.stderr) diffs.push('wrote to process.stderr directly');
@@ -184,9 +214,9 @@ function result(call, code) {
 // Deliberately not `async`: the pending check throws to the caller synchronously.
 function runCli(cliPath, argv, opts = {}) {
   if (pending) throw new Error('runCli: another runCli call is still pending');
-  let call;
-  try { call = prepare(cliPath, opts); } catch (err) { return Promise.reject(err); }
-  const snap = snapshot(call);
+  let prepared;
+  try { prepared = prepare(cliPath, opts); } catch (err) { return Promise.reject(err); }
+  const { call, snap } = prepared;
   let ret;
   try { ret = storage.run(snap.token, () => call.cli.run(argv, call.merged)); } catch (err) { ret = Promise.reject(err); }
   return (async () => {
@@ -204,8 +234,7 @@ function runCli(cliPath, argv, opts = {}) {
 }
 
 function runCliSync(cliPath, argv, opts = {}) {
-  const call = prepare(cliPath, opts);
-  const snap = snapshot(call);
+  const { call, snap } = prepare(cliPath, opts);
   let ret;
   let error;
   let threw = false;

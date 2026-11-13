@@ -60,9 +60,14 @@ test('AC1.1 (c): runCli rejects when run adds a process.env key', async () => {
 });
 
 test('AC1.1 (c): runCli rejects when run changes a process.env key', async () => {
-  const before = process.env.PATH;
-  await assert.rejects(leak('env-change'), /process\.env\.PATH changed/);
-  assert.strictEqual(process.env.PATH, before);
+  // A test-owned key, not PATH: on Windows the runner's PATH can be cased `Path`.
+  process.env.CT_RUN_CLI_LEAK_PROBE = 'before';
+  try {
+    await assert.rejects(leak('env-change'), /process\.env\.CT_RUN_CLI_LEAK_PROBE changed/);
+    assert.strictEqual(process.env.CT_RUN_CLI_LEAK_PROBE, 'before');
+  } finally {
+    delete process.env.CT_RUN_CLI_LEAK_PROBE;
+  }
 });
 
 test('AC1.1 (d): runCli rejects when run leaves a SIGTERM listener registered', async () => {
@@ -88,14 +93,36 @@ test('AC1.1 (f): runCli rejects when run calls os.homedir() while env.HOME diffe
   assert.deepStrictEqual(await leak('homedir', { env: { ...process.env } }), { code: 0, stdout: '', stderr: '' });
 });
 
-test('a listener the CLI removed is reported and registered again', async () => {
+test('a listener the CLI removed is reported and registered again, as a once listener in its original place', async () => {
   const mine = () => {};
-  process.on('SIGHUP', mine);
+  mine.ctRunCliProbe = true;
+  const next = () => {};
+  process.once('SIGHUP', mine);
+  process.on('SIGHUP', next);
+  const before = process.rawListeners('SIGHUP');
+  const at = process.listeners('SIGHUP').indexOf(mine);
   try {
     await assert.rejects(leak('listener-remove'), /SIGHUP listeners \d+ -> \d+/);
-    assert.ok(process.listeners('SIGHUP').includes(mine));
+    const now = process.rawListeners('SIGHUP');
+    assert.deepStrictEqual(now, before);
+    assert.strictEqual(process.listeners('SIGHUP').indexOf(mine), at);
+    assert.notStrictEqual(now[at], mine, 'restored as a bare listener, not as the once wrapper');
+    assert.strictEqual(now[at].listener, mine);
   } finally {
     process.removeListener('SIGHUP', mine);
+    process.removeListener('SIGHUP', next);
+  }
+});
+
+test('state a CLI changes while its module loads is inside the leak guard', async () => {
+  const cli = path.join(FX, 'load-leak-cli.js');
+  delete require.cache[cli];
+  try {
+    await assert.rejects(runCli(cli, [], { fresh: true }), /load-leak-cli\.js leaked process state: process\.exitCode changed \(undefined -> 5\)/);
+    assert.strictEqual(process.exitCode, undefined);
+  } finally {
+    process.exitCode = undefined;
+    delete require.cache[cli];
   }
 });
 
@@ -168,6 +195,7 @@ test('fresh: true reloads the modules under plugin/bin', () => {
   require(cli).__marker = 1;
   runCliSync(cli, ['--values', 'autonomy'], opts);
   assert.strictEqual(require(cli).__marker, 1);
+  delete require(cli).__marker;
 });
 
 test('spawnCli returns the same shape from a real process', () => {
