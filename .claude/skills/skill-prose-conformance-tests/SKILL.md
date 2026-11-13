@@ -236,7 +236,7 @@ A varying failure count across runs on byte-identical code tracks machine load f
 
 ## Advanced proof patterns — lazy-loaded
 
-`advanced-proof-patterns.md` alongside this file holds seven specialized procedures. Read it when a go-red proof needs zero tree mutation, a change adds or removes an Anti-Patterns row, a detection signal needs corpus validation, a sweep ships with an exemption list (stale-checks) or with known offenders unmigrated (exempt/ratchet allowlists), a suite builds throwaway git repos, a resolver test must prove an excluded source never wins, or a new pin needs an existing suite to model on (its `## Reference instances`).
+`advanced-proof-patterns.md` alongside this file holds eight specialized procedures. Read it when a go-red proof needs zero tree mutation, a change adds or removes an Anti-Patterns row, a detection signal needs corpus validation, a sweep ships with an exemption list (stale-checks) or with known offenders unmigrated (exempt/ratchet allowlists), a suite builds throwaway git repos, a resolver test must prove an excluded source never wins, a negative claim needs a clause sweep, or a new pin needs an existing suite to model on (its `## Reference instances`).
 
 ## Reference
 
