@@ -1,6 +1,6 @@
 # The pipeline driver (`drive.js`)
 
-`plugin/bin/drive.js` takes each named record, one at a time and in order, from admission to a draft PR with CI read. A program owns every step; a headless worker only writes the change. Nothing merges. This page is documentation, not a contract: no test reads it, so update it by hand when the code below changes. The code is the source of truth.
+`plugin/bin/drive.js` takes each named record, one at a time and in order, from admission to a draft PR with CI read. A program owns every step; a headless worker only writes the change. A record merges only when a judgment supplier is configured (none is by default) — see "The merge step". This page is documentation, not a contract: no test reads it, so update it by hand when the code below changes. The code is the source of truth.
 
 ## Running it
 
@@ -26,7 +26,9 @@ Exit codes:
 
 | Outcome | Stop class that gives it |
 |---|---|
-| `pending-review` | `none`: green CI, a CI state other than green, or a failed summary entry. The draft PR stays for a human. |
+| `pending-review` | `none`: green CI, a CI state other than green, or a failed summary entry. The draft PR stays for a human. Also what the merge step reports for every stop it makes, with a `reason` (see "The merge step"). |
+| `merged` | The merge step merged the PR and confirmed it on a read (no stop class: `merge` reports it as a result). |
+| `armed` | The merge step armed auto-merge and the forge holds the merge; the reconciler completes cleanup. |
 | `express-escalated` | `pre-push`: any stop before the push, with no PR recorded and nothing pushed. |
 | `blocked` | `claim` (any claim failure), `blocked` (any stop after the push, or a non-zero exit of `check` or `escalate`), and a stop class outside the known set (also flagged `unclassified`). |
 | `refused` | `refused`: not eligible, not admitted, routing off, an unreadable record. Nothing is written. |
@@ -35,7 +37,7 @@ Exit codes:
 
 One JSON object per line on stdout and, once the run directory exists, in `{run-dir}/driver-events.jsonl`.
 
-A step line: `ts`, `run` (the run id, `null` before the run directory exists), `record`, `step`, `status` (`ok`, `fail`, `stop`), `ms`, any extra fields the step adds (the worker step adds `usage`, `turns`, `denials` and, when the last turn crossed the spend ceiling, `spendOverrun`), and `detail` when there is one. `step` is one of: `policy`, `fetch`, `eligibility`, `admission`, `claim`, `run-dir`, `worktree`, `worker`, `commit`, `test`, `check`, `push`, `pr`, `record-pr`, `set-config`, `summary`, `ci`; a settle call uses one of the `settle-*` names below.
+A step line: `ts`, `run` (the run id, `null` before the run directory exists), `record`, `step`, `status` (`ok`, `fail`, `stop`), `ms`, any extra fields the step adds (the worker step adds `usage`, `turns`, `denials` and, when the last turn crossed the spend ceiling, `spendOverrun`), and `detail` when there is one. `step` is one of: `policy`, `fetch`, `eligibility`, `admission`, `claim`, `run-dir`, `worktree`, `worker`, `commit`, `test`, `check`, `push`, `pr`, `record-pr`, `set-config`, `summary`, `ci`, `merge`; the merge step's own sub-step events are `merge-entry`, `merge-supplier`, `merge-closing-links`, `merge-compose`, `merge-ready`, `merge-gate`, `merge-watch`, `merge-park`, `merge-conflict`, `merge-call`, `merge-confirm`, `merge-post-merge`, `merge-release-status`, `merge-reconcile`, `merge-teardown` and `merge-delete-branch`; a settle call uses one of the `settle-*` names below.
 
 The final line (`step: "final"`) adds:
 
@@ -53,10 +55,38 @@ The final line (`step: "final"`) adds:
 | `settleNote` | A note from settle: the TTL note for a claim that may have been written, or the unreadable `run-state.json` note. |
 | `spendOverrun` | `true` when a worker returned normally but its cost crossed the spend ceiling. Reported, never settled; the run continues. |
 | `eventsFileError` | Present when appending to the jsonl failed. |
+| `merge` | Present when the merge step ran: `{ outcome, reason, mergeCommit, postMerge }`. `postMerge` is `{ verdict, failedSteps, failures }` for `merged` and `null` otherwise. |
+| `eventsFile` | `stdout-only` when neither the run directory nor its archive twin existed after the merge step's reconcile, so the events went to stdout alone. Absent otherwise. |
 
 The `stop` object: `step`, `class` (`refused`, `claim`, `pre-push`, `blocked`, `none`), `pushed`, `created` (`{ worktree, branch }`, what this run created), `reason`, `detail`, `checkLogged` (`check`'s `logged` value: whether `check` wrote its own decision line, proceed or escalate; `null` when `check` did not run). A pre-push `reason` is always one of `failing-test`, `out-of-bounds`, `gate-denial` or `express-error`, so a `--no-settle` caller need not re-derive it. A claim stop's reason is `claim-exit-{code}`, `claim-exit-none` when `claim-targets.js` was killed or timed out, or `fail` when it exited 0 without claiming the record, when the run directory could not be minted, or for an interrupt after the claim.
 
 Settle calls are step lines named `settle-escalate`, `settle-comment-pr`, `settle-comment-record`, `settle-label`, `settle-release`, `settle-remove-worktree`, `settle-delete-branch` and `settle-close`, emitted before the final line. A failed call has status `fail`, is never retried, and does not stop the calls after it (one exception, below).
+
+## The merge step
+
+`plugin/bin/lib/driver/merge.js` is the last step. It runs only after the CI wait ends `green` (any other CI word leaves the step line `not entered: ci {word}`), makes no model call, and takes its one judgment from `deps.judgments`, a supplier the driver does not configure by default. It never stops the run: every stop is a result, so the record's outcome comes from it, not from a stop class. The source of truth is the code; this section is copied by hand.
+
+Entry runs in this order, and each refusal is `pending-review` with the reason named: the supplier is present (`no-supplier`, with no other call made); `gh` is available (`gh-absent`); the record's live labels carry `auto:merge` (`labels-unreadable`, `not-authorized`); the run logged its summary entry (`summary-entry-missing`); `integration-model` resolves `pr-first` and the run records a PR (`not-pr-first`); one supplier call returned a well-formed answer (`supplier-failed`), whose verdict is `auto-merge` and whose line is confirmed in `decisions.md` (`verdict-not-confirmed`) and whose acceptance is completed (`acceptance-not-completed`). Then the closing-link check, the subject composition (`compose-refused`), mark-ready (`ready-failed`), the gate, the bounded watch (15 minutes, polled every 30 seconds, so a PR that turns conflicting mid-watch stops as `conflict` at that poll), the labels read again immediately before the merge call, and `gh pr merge ... --match-head-commit {head}` against the head `check` verified. The merge is confirmed by a read: only a `MERGED` state is `merged`, an open PR holding auto-merge is `armed`, anything else is `merge-refused`.
+
+The reason words are a closed list; anything else is `unclassified`, with the failing sub-step named in the event detail: `no-supplier`, `labels-unreadable`, `not-authorized`, `summary-entry-missing`, `not-pr-first`, `gh-absent`, `supplier-failed`, `verdict-not-confirmed`, `acceptance-not-completed`, `compose-refused`, `ready-failed`, `state-read-failed`, `pr-not-open`, `moving-target`, `checks-read-failed`, `check-failed:{names}`, `checks-pending-timeout`, `draft-skip-without-ready-trigger:{files}`, `conflict`, `merge-refused`.
+
+What each `pending-review` reason leaves behind:
+
+| Reasons | PR | Record labels | Comments |
+|---|---|---|---|
+| `no-supplier`, `gh-absent`, `labels-unreadable`, `not-authorized`, `summary-entry-missing`, `not-pr-first`, `supplier-failed`, `verdict-not-confirmed`, `acceptance-not-completed`, `compose-refused` | draft, untouched | none written | none written by `merge` |
+| `ready-failed`, `state-read-failed`, `pr-not-open`, `moving-target`, `checks-read-failed`, `merge-refused` | as the last call left it (ready once marked ready) | none written | none |
+| `check-failed:{names}`, `checks-pending-timeout`, `draft-skip-without-ready-trigger:{files}` | ready (re-drafted only by the label-failure fallback) | `bot:parked` | one on the record |
+| `conflict` | ready | none | one on the PR |
+| `unclassified` | as the last call left it | none | none |
+
+What each outcome leaves behind:
+
+- `merged`: the post-merge sequence ran. Reconcile archived the run (the later decision lines and the final event follow it into `archive/{run-id}/`), and released the claim; the worktree, the local branch and the remote branch were removed. A post-merge failure never changes the outcome from `merged`; it is named in `postMerge.failures`.
+- `armed`: the claim, the worktree and the run directory all stay. The reconciler completes cleanup on merged evidence once the forge has merged the PR, and the locked worktree is reaped after its owner pid dies (24h orphan grace).
+- `pending-review`: the PR is left as the table above says. The claim is left alone and lapses by its TTL.
+
+The final line carries a `merge` field (`{ outcome, reason, mergeCommit, postMerge }`) and, when the events could no longer be written to a run directory, `eventsFile: 'stdout-only'`. An interrupt (SIGINT, SIGTERM) during the merge step makes no further call. A signal that arrives after a merge landed still reports `pending-review` (stop class `none`), because the step has no interrupt rung of its own; the reconciler's merged-evidence checks complete such a run. The watch's wait is reported on each `merge-watch` event and added to `msTotal - msWithoutCi`.
 
 ## When a run stops
 

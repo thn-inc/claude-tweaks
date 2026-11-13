@@ -3443,8 +3443,9 @@ test('merge step, run level: a signal during the merge watch reports the wait so
   let fired = false;
   h.deps.sleep = async (ms) => {
     await tick(ms);
-    // The first sleep inside the merge step (the CI wait sleeps too, before the merge entry reads its lever).
-    const inMerge = h.calls.some((c) => c.kind === 'node' && path.basename(c.args[0]) === 'resolve-policy.js');
+    // The first sleep inside the merge step (the CI wait sleeps too): only the merge gate reads a PR's
+    // state with GATE_FIELDS, so a sleep after that read is the merge watch's own.
+    const inMerge = h.calls.some((c) => c.kind === 'gh' && c.args[0] === 'pr' && c.args[1] === 'view' && c.args.includes(GATE_FIELDS));
     if (inMerge && !fired) { fired = true; h.signals[0]('SIGTERM'); }
   };
   await run(['7'], h.deps);
@@ -3478,6 +3479,26 @@ test('merge step, run level: a signal after the events went stdout-only writes n
   assert.equal('eventsFileError' in final, false);
   assert.equal(final.eventsFile, 'stdout-only');
   assert.equal(final.stop.step, 'merge');
+});
+
+test('merge step, run level: the merge line for each outcome reads the outcome word once', async () => {
+  const isPrViewOf = (fields) => (c) => c.kind === 'gh' && c.args[0] === 'pr' && c.args[1] === 'view' && c.args.includes(fields);
+  // merge-when-green with a pending, BLOCKED PR arms auto-merge; the confirmation read shows it armed.
+  const armed = mergeHarness({
+    script: [
+      [(c) => c.kind === 'node' && path.basename(c.args[0]) === 'resolve-policy.js' && !c.args.includes('--values'),
+        { code: 0, stdout: JSON.stringify({ 'merge-verification': { value: 'merge-when-green', source: 'run-config' } }), stderr: '' }],
+      [isPrViewOf(GATE_FIELDS), JSON.stringify({ state: 'OPEN', mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', headRefOid: HEAD_SHA, statusCheckRollup: [PENDING_CHECK] })],
+      [isPrViewOf(CONFIRM_FIELDS), JSON.stringify({ state: 'OPEN', mergedAt: null, autoMergeRequest: { enabledAt: '2026-11-13T09:30:00Z', mergeMethod: 'SQUASH' }, statusCheckRollup: [PENDING_CHECK], mergeCommit: null })],
+    ],
+  });
+  const af = await driveRecord(7, newShared(), armed.deps, STEPS);
+  assert.equal(af.outcome, 'armed');
+  assert.equal(armed.lines().find((l) => l.step === 'merge').detail,
+    'armed — auto-merge armed, the forge holds the merge; the reconciler completes cleanup');
+  const merged = mergeHarness({ reconcile: archiveRunDir });
+  await driveRecord(7, newShared(), merged.deps, STEPS);
+  assert.equal(merged.lines().find((l) => l.step === 'merge').detail, 'merged, unit concluded SUCCESS');
 });
 
 test('merge step, run level: an unclassified stop names the failing sub-step on the merge line', async () => {

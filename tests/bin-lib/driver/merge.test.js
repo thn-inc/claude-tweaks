@@ -16,6 +16,9 @@ const { MERGE_STEP_NAMES } = require(path.join(LIB, 'driver', 'events'));
 const { VERDICT_STEPS, verdictMarker } = require(path.join(LIB, 'dispatch', 'merge-verdict'));
 const { formatEntry } = require(path.join(LIB, 'log-decision', 'append'));
 const { aggregateReproductionProblem } = require(path.join(LIB, 'log-decision', 'aggregate-reproduction'));
+const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('../../helpers/strip-comments');
+const { readText } = require('../../helpers/read-skill');
+const { gitRepo, fixtureGit } = require('../../helpers/git-fixtures');
 
 const MAIN_NOW = new Date(2026, 10, 13, 9, 0, 0);
 const CLOCK_START = 1000;
@@ -31,10 +34,11 @@ test.after(() => { for (const r of roots) fs.rmSync(r, { recursive: true, force:
 
 // A real temp main checkout (a `.git` dir) holding the run directory and its decisions.md, the one
 // file merge.js reads from disk itself (confirmFromFile).
-function fixture() {
-  const main = fs.mkdtempSync(path.join(os.tmpdir(), 'merge-test-'));
+// `realMain` (optional): an existing real git checkout to build the run dir inside, in place of a fake one.
+function fixture(realMain) {
+  const main = realMain || fs.mkdtempSync(path.join(os.tmpdir(), 'merge-test-'));
   roots.push(main);
-  fs.mkdirSync(path.join(main, '.git'));
+  if (!realMain) fs.mkdirSync(path.join(main, '.git'));
   const runDir = path.join(main, '.claude-tweaks', 'pipelines', '2026-11-13T000000-drive-7');
   fs.mkdirSync(runDir, { recursive: true });
   const worktree = path.join(main, '.claude', 'worktrees', 'drive-7');
@@ -2159,4 +2163,187 @@ test('a failed release-status comment post is also logged to decisions.md as a S
   const skip = h.logs.find((l) => l.status === 'SKIP' && l.step === 'pr-first-merge Step 4.1 (degraded)');
   assert.equal(skip.text, 'condition: release-status comment post failed (HTTP 502) → fallback: release line kept in decisions.md and the event');
   assert.ok(h.logs.some((l) => l.status === 'AUTO' && l.text.startsWith('release status — already carried by')));
+});
+
+// ---- Task 8: source scans (AC6, AC14), real-git conflict proof (AC6), verify fixtures (AC13) ----
+
+const MERGE = path.join(LIB, 'driver', 'merge.js');
+// merge.js code with comments blanked (literals kept, so a quoted argv word still reads). A file the
+// stripper mis-parsed is a failure, never a clean scan (bin-source-scan-conformance).
+function codeOf(file) {
+  const raw = readText(file);
+  const stripped = stripComments(raw);
+  const v = stripperVerdict(raw, stripped);
+  assert.equal(v, 'ok', `${path.basename(file)}: ${STRIPPER_VERDICT_MESSAGES[v]}`);
+  return stripped;
+}
+
+test('codeOf self-test: a comment never matches, code after a literal opener still does, a mis-parse is flagged', () => {
+  const planted = "// runGit(s, ['push'])\nconst s = '/*'; runGit(s, ['fetch']);\n";
+  const stripped = stripComments(planted);
+  assert.equal(stripped.split('\n')[0].trim(), '', 'the comment line is blanked');
+  assert.match(stripped, /runGit\(s, \['fetch'\]\)/, 'the live call after a /* string is still seen');
+  assert.equal(stripped.length, planted.length, 'offsets are preserved');
+  const misparse = "if (b) /'/.test(b); const c = 'x'; f(c);";
+  assert.equal(stripperVerdict(misparse, stripComments(misparse, { literals: 'blank' })), 'misparsed', 'a mis-parse is a verdict, never a clean scan');
+  assert.ok(codeOf(MERGE).length > 10000, 'merge.js is read whole');
+});
+
+function noModelCall(src) {
+  return !/require\([^)]*\b(worker|roles|judgments?)\b/.test(src) && !/\blaunchWorker\b/.test(src) && !/['"`]claude(\.cmd)?['"`]/.test(src);
+}
+const bareJudgments = (src) => /(?<!deps\.)\bjudgments\b/.test(src.replace(/['"`][^'"`\n]*['"`]/g, '""'));
+
+test('AC14.1–AC14.3: merge.js requires no worker, roles or judgments module, names no launchWorker and spawns no claude', () => {
+  const code = codeOf(MERGE);
+  assert.ok(noModelCall(code));
+  for (const bad of ["const w = require('./worker');", "const r = require('./roles');", "require('./judgments')", 'deps.launchWorker(x)', "spawn('claude', [])", 'spawn("claude.cmd", [])']) {
+    assert.ok(!noModelCall(bad), `go-red: ${bad}`);
+  }
+  assert.equal(bareJudgments(code), false, 'AC14.2: judgments only as deps.judgments');
+  assert.ok(code.includes('deps.judgments'), 'the supplier is reached as deps.judgments');
+  assert.ok(bareJudgments('const j = require("./x").judgments; j(ctx);'), 'go-red: bare judgments');
+  assert.equal(bareJudgments('const j = deps.judgments;'), false, 'deps.judgments is the sanctioned form');
+});
+
+test('AC14 twin pin: the rollup verdict comes from classify.js classifyRollup, never a local re-implementation', () => {
+  const twinImport = (src) => /\{[^}]*\bclassifyRollup\b[^}]*\}\s*=\s*require\(\s*['"]\.\.\/pr-checks\/classify['"]\s*\)/.test(src);
+  const twinCall = (src) => /\bclassifyRollup\(/.test(src);
+  const reimplements = (src) => /\bFAILING_CONCLUSIONS\b/.test(src) || /\bfunction\s+(?:normalizeEntry|classifyRollup)\b/.test(src)
+    || /\b(?:const|let|var)\s+(?:normalizeEntry|classifyRollup)\s*=/.test(src);
+  const code = codeOf(MERGE);
+  assert.ok(twinImport(code), 'classifyRollup is imported from ../pr-checks/classify');
+  assert.ok(twinCall(code), 'the gate calls classifyRollup');
+  assert.equal(reimplements(code), false, 'no local FAILING_CONCLUSIONS, normalizeEntry or classifyRollup');
+  // go-red controls: each broken shape must fail the matcher that guards it.
+  assert.equal(twinImport("const { classifyRollup } = require('./local-classify');"), false, 'go-red: wrong module');
+  assert.equal(twinImport('const classifyRollup = (r) => r;'), false, 'go-red: a local binding');
+  assert.equal(twinCall('const x = classifyRollup;'), false, 'go-red: imported, never called');
+  assert.ok(reimplements("const FAILING_CONCLUSIONS = ['FAILURE'];"), 'go-red: a copied conclusion list');
+  assert.ok(reimplements('function normalizeEntry(e) { return e; }'), 'go-red: a local normalizeEntry');
+  assert.ok(reimplements('const classifyRollup = () => ({ state: "green" });'), 'go-red: a local classifyRollup');
+  assert.equal(reimplements("const { classifyRollup, normalizeEntry } = require('../pr-checks/classify');"), false, 'the destructured import is not a re-implementation');
+});
+
+// AC6: every git argv is a literal array passed to runGit. Collect each runGit( call's balanced
+// argument text (string and template literals skipped, so a paren inside one never unbalances it).
+function gitArgTexts(src) {
+  const out = [];
+  const re = /(?<![.\w])runGit\(/g;
+  let m;
+  while ((m = re.exec(src))) {
+    if (/\bfunction\s+$/.test(src.slice(Math.max(0, m.index - 12), m.index))) continue;
+    let depth = 1;
+    let i = re.lastIndex;
+    let quote = null;
+    for (; i < src.length && depth > 0; i++) {
+      const ch = src[i];
+      if (quote) {
+        if (ch === '\\') i++;
+        else if (ch === quote) quote = null;
+      } else if (ch === "'" || ch === '"' || ch === '`') quote = ch;
+      else if (ch === '(') depth++;
+      else if (ch === ')') depth--;
+    }
+    out.push(src.slice(re.lastIndex, i - 1));
+  }
+  return out;
+}
+const gitWritesBranch = (texts) => texts.some((t) => /['"`](merge|push|rebase)['"`]/.test(t));
+const forbiddenText = (src) => /\brebase\b|--force-with-lease|--force\b/.test(src);
+const GIT_SUBCOMMANDS = ['fetch', 'describe', 'worktree', 'rev-parse', 'branch'];
+const subcommandOf = (t) => (/\[\s*['"`]([^'"`]+)['"`]/.exec(t) || [])[1];
+const literalArgv = (t) => /^\s*\w+\s*,\s*\[\s*['"`]/.test(t);
+// `.git(` as a call on any receiver: deps.git, d.git, this.git; the sanctioned site is runGit's own body.
+const gitCallSites = (src) => (src.match(/\.git\(/g) || []).length;
+
+test('AC6.2: merge.js names no rebase, no --force, and passes no merge or push to git', () => {
+  const src = codeOf(MERGE);
+  const texts = gitArgTexts(src);
+  // fetch, describe, worktree list, worktree unlock, worktree remove, rev-parse, branch -D: 7 sites today.
+  // Fewer means the call-site matcher stopped matching, not that the calls went away.
+  assert.ok(texts.length >= 7, `runGit call sites seen: ${texts.length}`);
+  assert.equal(gitWritesBranch(texts), false);
+  assert.equal(forbiddenText(src), false);
+  assert.ok(texts.every(literalArgv), `every runGit call passes a literal argv array: ${texts.filter((t) => !literalArgv(t)).join(' | ')}`);
+  assert.deepEqual([...new Set(texts.map(subcommandOf))].sort(), [...GIT_SUBCOMMANDS].sort(), 'the git subcommands used are exactly the reviewed set');
+  assert.equal(gitCallSites(src), 1, 'runGit is the only deps.git call site');
+  // go-red controls
+  assert.ok(gitWritesBranch(gitArgTexts("runGit(s, ['merge', 'origin/main'])")), 'go-red: merge');
+  assert.ok(gitWritesBranch(gitArgTexts("runGit(s, ['push', 'origin', b])")), 'go-red: push');
+  assert.ok(gitWritesBranch(gitArgTexts('runGit(s, [`rebase`, base])')), 'go-red: a backtick-quoted word');
+  assert.ok(forbiddenText("x = ['--force']"), 'go-red: --force');
+  assert.ok(forbiddenText("x = ['--force-with-lease']"), 'go-red: --force-with-lease');
+  assert.ok(forbiddenText("x = ['rebase']"), 'go-red: rebase');
+  assert.equal(gitArgTexts("function runGit(s, args) { return 1; }\nrunGit(s, ['fetch', f(a, 'b)')]);").length, 1, 'the definition is skipped, a paren in a string does not unbalance');
+  assert.equal(gitArgTexts("runGit(s, ['a']);\nrunGit(s, ['b']);\nrunGit(s, ['c']);").length, 3, 'every call is collected');
+  assert.equal(literalArgv('s, argv'), false, 'go-red: a non-literal argv');
+  assert.equal(literalArgv("s, ['fetch']"), true);
+  assert.equal(gitCallSites("deps.git(['status']); d.git(['push']);"), 2, 'go-red: a second call site');
+  assert.ok(!GIT_SUBCOMMANDS.includes(subcommandOf("s, ['gc']")), 'go-red: an unreviewed subcommand');
+});
+
+test('AC6.3: a conflict run leaves the branch tip and the integration branch tip unchanged (real git)', async () => {
+  const repo = gitRepo({ branch: 'main' });
+  const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.test', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.test' };
+  const git = (...args) => fixtureGit(['-C', repo, ...args], { env, encoding: 'utf8', windowsHide: true }).trim();
+  // Diverged tips: a branch commit and a later main commit, so a merge, rebase or reset would move one.
+  git('switch', '-q', '-c', 'drive-7');
+  git('commit', '-q', '--allow-empty', '-m', 'branch work');
+  git('switch', '-q', 'main');
+  git('commit', '-q', '--allow-empty', '-m', 'main moved on');
+  const tips = () => ({ branch: git('rev-parse', 'refs/heads/drive-7'), main: git('rev-parse', 'refs/heads/main'), head: git('rev-parse', 'HEAD') });
+  const before = tips();
+  assert.notEqual(before.branch, before.main);
+  const f = fixture(repo);
+  const real = [];
+  // A real deps.git, bounded and windowsHide'd, so any git call merge made would have really run.
+  const realGit = (args, opts = {}) => {
+    real.push(args);
+    return fixtureGit(args, { cwd: opts.cwd, env, encoding: 'utf8', windowsHide: true });
+  };
+  const h = mergeHarness({ fx: f, prState: { mergeStateStatus: 'DIRTY', mergeable: 'CONFLICTING' }, deps: { git: realGit } });
+  const r = await merge(f.ctx, h.deps);
+  assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'conflict', mergeCommit: null, postMerge: null });
+  assert.deepEqual(tips(), before, 'both branch tips and HEAD are unchanged');
+  assert.ok(!real.some((a) => a.some((w) => ['merge', 'push', 'rebase', 'reset', 'checkout', 'switch', 'commit'].includes(w))), JSON.stringify(real));
+  assert.ok(!h.calls.some(isMergeCall), 'no gh pr merge went out');
+});
+
+// ---- AC13: express-lane.js verify over runs the driver drove to each outcome ----
+
+const EXPRESS_LANE = path.join(LIB, '..', 'express-lane.js');
+// The run dir as Phase 1 leaves it, plus the verdict line merge.js reads.
+const verifyDecisions = () => [
+  '## /flow',
+  '- AUTO 09:00:00 — Step 2.8: claimed #7 (bin/claim-targets.js, transport: git). Reversibility: high.',
+  '## /express-lane',
+  `- AUTO 09:01:00 — Express lane check: #7 proceed — 1 changed file(s), 4 implementation line(s) within bounds; runner stamp verifies HEAD ${'a'.repeat(40)}. Reversibility: n/a.`,
+  verdictLine(),
+  '',
+].join('\n');
+
+function spawnVerify(f) {
+  const { spawnSync } = require('node:child_process');
+  return spawnSync(process.execPath, [EXPRESS_LANE, 'verify', '--run', f.runDir, '--issue', '7'], { cwd: f.main, encoding: 'utf8', windowsHide: true, timeout: 30000 });
+}
+
+test('AC13.1–AC13.3: express-lane.js verify exits 0 for fixture runs driven to merged, armed, and pending-review after a red check', async () => {
+  const outcomes = [
+    ['merged', {}, 'merged', null],
+    ['armed', { prState: BLOCKED_PENDING, confirm: ARMED }, 'armed', null],
+    ['pending-review after a red check', { prState: { statusCheckRollup: [FAILING_CHECK] } }, 'pending-review', 'check-failed:unit'],
+  ];
+  for (const [name, over, outcome, reason] of outcomes) {
+    const f = fixture();
+    fs.writeFileSync(path.join(f.runDir, 'run-state.json'), JSON.stringify({ worktree: f.worktree, pr: { number: 9, url: 'https://github.com/o/r/pull/9' } }));
+    const h = mergeHarness({ ...over, fx: f, decisions: verifyDecisions() });
+    const r = await merge(f.ctx, h.deps);
+    assert.equal(r.outcome, outcome, name);
+    assert.equal(r.reason, reason, name);
+    assert.equal(r.runDir, f.runDir, `${name}: the run dir stays where verify will look`);
+    const v = spawnVerify(f);
+    assert.equal(v.status, 0, `${name}: verify exit ${v.status}: ${v.stdout}${v.stderr}`);
+    assert.deepEqual(JSON.parse(v.stdout), { ok: true, missing: [] }, name);
+  }
 });

@@ -960,7 +960,9 @@ const mergeStep = defineStep(STEP.merge, STOP_CLASSES.NONE, async (ctx, deps) =>
   if (r.eventsStdoutOnly) ctx.eventsStdoutOnly = true;
   // The result's own detail rides along (the spec's closed rule: an unclassified stop names the
   // failing sub-step in the event detail, and that detail is carried only here).
-  const head = r.outcome + (r.reason ? `: ${r.reason}` : '');
+  // A reason-less result's detail (merged, armed) already opens with the outcome word, so the head is dropped then.
+  const opensWithOutcome = !r.reason && typeof r.detail === 'string' && r.detail.startsWith(r.outcome) && !/^[\w-]/.test(r.detail.slice(r.outcome.length));
+  const head = opensWithOutcome ? '' : r.outcome + (r.reason ? `: ${r.reason}` : '');
   return { status: 'ok', detail: neutralize([head, r.detail].filter(Boolean).join(' — ')), extra: {} };
 });
 

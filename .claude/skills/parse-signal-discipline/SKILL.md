@@ -322,7 +322,7 @@ When mechanizing a prose heuristic into a deterministic check:
     `plugin/bin/lib/strip-comments.js`, re-exported by `tests/helpers/strip-comments.js`)
     blanks comments to spaces before its callers' scans count tokens. Its
     callers, by test-file stem: `accept-label-reader`, `backfill-cli`, `below-floor-parent-close`, `cli`, `exit-code`, `gh-host-seam`, `git-status-optional-locks`,
-    `hooks-harness-refusal`, `hooks-pre-tool-use`, `markdown-blocks`, `owner-pid-probe`, `path-containment`, `path-guard`, `phase-exit`, `phase-exit-call-sites`, `porcelain-cwd-compare`, `post-merge`,
+    `hooks-harness-refusal`, `hooks-pre-tool-use`, `markdown-blocks`, `merge`, `owner-pid-probe`, `path-containment`, `path-guard`, `phase-exit`, `phase-exit-call-sites`, `porcelain-cwd-compare`, `post-merge`,
     `precondition`, `raw-markdown-read`, `recording-no-embed`, `release-notes`, `run`, `run-liveness-callers`, `settle`, `staged-id-producers`, `subprocess-timing`, `wall-clock-budget` and
     `windows-hide-spawn`.
     `tests/strip-comments-callers-twin.test.js` pins this list and the helper header's to the
