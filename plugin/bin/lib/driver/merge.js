@@ -9,15 +9,16 @@
 // No test reads that prose, and drift between it and this module is accepted by design (the
 // spec's Gotchas); each step function's comment names the section it ports, by symbol.
 //
-// Every external call goes through `deps` (gh, git, node, readFile, lstatType, ...), so this
-// module spawns nothing itself (except decisions.md, read in-process by `confirmFromFile`,
-// spec AC3). `merge` never throws: an unexpected throw in any step becomes
+// Every external call except the decisions.md read (`confirmFromFile`, in-process, spec AC3)
+// goes through `deps` (gh, git, node, readFile, lstatType, ...), so this module spawns nothing
+// itself. `merge` never throws: an unexpected throw in any step becomes
 // `pending-review` / `unclassified` naming the sub-step.
 
 const path = require('node:path');
 const {
-  neutralize, errorText, CLI_TIMEOUT_MS, MERGE_STEP_NAMES,
+  neutralize, errorText, firstLine, CLI_TIMEOUT_MS, MERGE_STEP_NAMES,
 } = require('./events');
+const { reduceDetail } = require('./settle');
 const { confirmFromFile } = require('../dispatch/merge-verdict');
 
 const BIN_DIR = path.join(__dirname, '..', '..');
@@ -47,14 +48,15 @@ function stop(s, step, reason, detail) {
 // Appends one decision line through log-decision.js, the text in a file in the run directory
 // first (--text-file), mirroring steps.js's logDecisionFile. A failed log never stops the
 // merge: it is recorded on s.logFailures and named in the sub-step's event.
-function logDecision(s, step, text, status = 'AUTO') {
+function logDecision(s, step, text, status = 'AUTO', reversibility = null) {
   const { ctx, deps } = s;
   s.logSeq += 1;
   const file = path.join(s.runDir, `merge-log-${s.logSeq}.txt`);
   try {
     deps.writeFile(file, `${text}\n`);
     const r = deps.node(bin('log-decision.js'),
-      ['--run', s.runDir, '--status', status, '--section', '/express-lane', '--step', step, '--text-file', file],
+      ['--run', s.runDir, '--status', status, '--section', '/express-lane', '--step', step, '--text-file', file,
+        ...(reversibility ? ['--reversibility', reversibility] : [])],
       { cwd: ctx.mainCheckout, timeout: CLI_TIMEOUT_MS, env: deps.env });
     if (r.code !== 0) s.logFailures.push(`log:${step}`);
   } catch {
@@ -199,6 +201,117 @@ async function entry(s) {
   return consultSupplier(s);
 }
 
+const CLOSING_LINKS_USED = ['clean', 'unlinked', 'still-linked'];
+
+// Ports pr-checklist-refresh.md "Then check the forge's closing links": unlink closing keywords
+// the PR's Fixes span does not name, and learn which records must stay open (`keepOpen`, handed
+// to the composer). Never a stop: any failure degrades to "not checked" with keepOpen [].
+// closing-links.js self-logs gh-absent, exit 4 and exit 5; exit 3 (run dir untrusted) cannot, and
+// an unexpected exit is no log at all, so those two get the driver's own SKIP line.
+function closingLinks(s) {
+  const { ctx, deps } = s;
+  s.stage = 'merge-closing-links';
+  s.keepOpen = [];
+  let r;
+  try {
+    r = deps.node(bin('closing-links.js'), ['--run', s.runDir, '--mode', 'pre-merge'],
+      { cwd: ctx.mainCheckout, timeout: CLI_TIMEOUT_MS, env: deps.env });
+  } catch (err) {
+    r = { code: null, stdout: '', stderr: errorText(err) };
+  }
+  const failuresBefore = s.logFailures.length;
+  let detail;
+  if (r.code === 0) {
+    let env = null;
+    try {
+      env = JSON.parse(r.stdout);
+    } catch {
+      env = null;
+    }
+    if (env && typeof env === 'object' && CLOSING_LINKS_USED.includes(env.action) && Array.isArray(env.keepOpen)) {
+      s.keepOpen = env.keepOpen.includes(ctx.record) ? [ctx.record] : [];
+      detail = `closing links ${env.action}; keep open ${s.keepOpen.length ? `#${ctx.record}` : 'none'}`;
+      if (env.action === 'still-linked') detail += ' (still-linked: left for post-merge Step 4.0)';
+    } else {
+      const action = env && typeof env === 'object' && typeof env.action === 'string' ? env.action : 'unparseable';
+      detail = `closing links not checked (action ${action}); proceeding with keep open none`;
+    }
+  } else {
+    detail = `closing links not checked (exit ${r.code}); proceeding with keep open none`;
+    if (r.code !== 4 && r.code !== 5) {
+      logDecision(s, 'Closing links (pre-merge) (degraded)',
+        `condition: closing-links.js exited ${r.code} → fallback: closing links not checked this merge`, 'SKIP', 'n/a');
+    }
+  }
+  const note = s.logFailures.length > failuresBefore ? ` (${s.logFailures.slice(failuresBefore).join(', ')})` : '';
+  emit(s, 'merge-closing-links', 'ok', `${detail}${note}`);
+  return { ok: true };
+}
+
+// Ports pr-first-merge.md Step 3's composer fence: the Conventional-Commits subject and body the
+// squash commit carries, written to files by compose-subject.js. The title is read from
+// title.txt; the composer's single-quoted stdout line is never parsed. Runs before mark ready on
+// purpose: a refusal leaves the PR in draft.
+function compose(s) {
+  const { ctx, deps } = s;
+  s.stage = 'merge-compose';
+  const outDir = path.join(s.runDir, 'merge-subject');
+  const keep = s.keepOpen.length ? ['--keep-open', String(ctx.record)] : [];
+  let r;
+  try {
+    r = deps.node(bin('compose-subject.js'),
+      [String(ctx.record), '--repo', ctx.repo, '--tag', 'auto-merge', ...keep, '--pr', String(ctx.pr), '--out-dir', outDir],
+      { cwd: ctx.mainCheckout, timeout: CLI_TIMEOUT_MS, env: deps.env });
+  } catch (err) {
+    return stop(s, 'merge-compose', 'unclassified', `compose: compose-subject.js failed: ${errorText(err)}`);
+  }
+  if (r.code === 1) return stop(s, 'merge-compose', 'compose-refused', reduceDetail(firstLine(r.stderr)));
+  if (r.code === 2) return stop(s, 'merge-compose', 'gh-absent', 'compose-subject.js could not use gh');
+  if (r.code !== 0) return stop(s, 'merge-compose', 'unclassified', `compose: compose-subject.js exited ${r.code}`);
+  let title = '';
+  try {
+    title = String(deps.readFile(path.join(outDir, 'title.txt'))).trim();
+  } catch (err) {
+    return stop(s, 'merge-compose', 'unclassified', `compose: title.txt unreadable: ${errorText(err)}`);
+  }
+  if (!title) return stop(s, 'merge-compose', 'unclassified', 'compose: title.txt is empty');
+  s.subject = { title, bodyFile: path.join(outDir, 'body.md') };
+  emit(s, 'merge-compose', 'ok', `composed subject (${title.length} chars)`);
+  return { ok: true, title, bodyFile: s.subject.bodyFile };
+}
+
+// Ports pr-first-merge.md Step 2's un-draft: a draft PR is marked ready, an already-ready one is
+// left alone and the skip is logged. The one place this module undrafts a PR.
+function markReady(s) {
+  const { ctx, deps } = s;
+  s.stage = 'merge-ready';
+  let isDraft;
+  try {
+    const parsed = JSON.parse(deps.gh(['pr', 'view', String(ctx.pr), '--repo', ctx.repo, '--json', 'isDraft']));
+    isDraft = parsed && typeof parsed === 'object' ? parsed.isDraft : undefined;
+  } catch (err) {
+    return stop(s, 'merge-ready', 'ready-failed', `isDraft read failed: ${errorText(err)}`);
+  }
+  if (typeof isDraft !== 'boolean') return stop(s, 'merge-ready', 'ready-failed', 'isDraft read returned no boolean');
+  const failuresBefore = s.logFailures.length;
+  let detail;
+  if (isDraft) {
+    try {
+      deps.gh(['pr', 'ready', String(ctx.pr), '--repo', ctx.repo]);
+    } catch (err) {
+      return stop(s, 'merge-ready', 'ready-failed', `gh pr ready failed: ${errorText(err)}`);
+    }
+    logDecision(s, 'Step 2 (mark ready)', `undrafted PR #${ctx.pr} (was draft).`, 'AUTO', `high (gh pr ready ${ctx.pr} --undo)`);
+    detail = 'PR undrafted';
+  } else {
+    logDecision(s, 'Step 2 (mark ready)', `PR #${ctx.pr} already ready — skipped gh pr ready.`, 'AUTO', 'n/a (no state change)');
+    detail = 'PR already ready; gh pr ready skipped';
+  }
+  const note = s.logFailures.length > failuresBefore ? ` (${s.logFailures.slice(failuresBefore).join(', ')})` : '';
+  emit(s, 'merge-ready', 'ok', `${detail}${note}`);
+  return { ok: true };
+}
+
 function result(s, outcome, reason, detail, extra = {}) {
   return {
     outcome, reason, detail: detail || '', mergeCommit: null, runDir: s.ctx.runDir, ciWaitMs: 0, postMerge: null,
@@ -208,16 +321,20 @@ function result(s, outcome, reason, detail, extra = {}) {
 
 async function merge(ctx, deps) {
   const s = {
-    ctx, deps, runDir: ctx.runDir, value: 'wait', source: 'unresolved', valueRaw: '', keepOpen: false,
+    ctx, deps, runDir: ctx.runDir, value: 'wait', source: 'unresolved', valueRaw: '', keepOpen: [],
     subject: null, reentries: 0, ciWaitMs: 0, lastRead: null, logFailures: [], logSeq: 0, stage: 'merge-entry',
     startedAt: typeof deps.now === 'function' ? deps.now() : 0,
   };
   try {
     const e = await entry(s);
     if (e.stop) return result(s, 'pending-review', e.stop, e.detail);
-    // Later tasks replace this tail with closing links, compose, ready, the gate, the watch and
-    // the merge call itself.
-    return result(s, 'pending-review', 'unclassified', 'not implemented past entry');
+    closingLinks(s);
+    const c = compose(s);
+    if (c.stop) return result(s, 'pending-review', c.stop, c.detail);
+    const ready = markReady(s);
+    if (ready.stop) return result(s, 'pending-review', ready.stop, ready.detail);
+    // Later tasks replace this tail with the gate, the watch and the merge call itself.
+    return result(s, 'pending-review', 'unclassified', 'not implemented past ready');
   } catch (err) {
     return result(s, 'pending-review', 'unclassified', `${s.stage}: ${neutralize(errorText(err))}`);
   }

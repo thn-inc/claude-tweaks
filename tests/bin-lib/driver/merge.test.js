@@ -83,6 +83,22 @@ function defaultMergeScript(over, files, logs) {
         if (rs instanceof Error) throw rs;
         return typeof rs === 'string' ? rs : JSON.stringify(rs);
       }],
+    [isNode('closing-links.js'), over.closingLinks || { code: 0, stdout: JSON.stringify({ action: 'clean', keepOpen: [] }), stderr: '' }],
+    [isNode('compose-subject.js'), over.compose || { code: 0, stdout: "SUBJECT_TITLE='x'\n", stderr: '' }],
+    [(c) => c.kind === 'readFile' && base(c.args[0]) === 'title.txt', () => {
+      const ti = over.title === undefined ? 'feat: composed title' : over.title;
+      if (ti instanceof Error) throw ti;
+      return ti;
+    }],
+    [(c) => isGh('pr', 'view')(c) && c.args.includes('isDraft'), () => {
+      const d = over.isDraft === undefined ? true : over.isDraft;
+      if (d instanceof Error) throw d;
+      return typeof d === 'string' ? d : JSON.stringify({ isDraft: d });
+    }],
+    [isGh('pr', 'ready'), () => {
+      if (over.ready instanceof Error) throw over.ready;
+      return '';
+    }],
     [(c) => c.kind === 'lstatType', (c) => (
       [fx.main, fx.runDir].includes(c.args[0]) ? { type: 'directory', code: null } : { type: 'missing', code: 'ENOENT' })],
   ];
@@ -90,7 +106,8 @@ function defaultMergeScript(over, files, logs) {
 
 // over: script (tried first), deps (replaces a dep, `undefined` removes it), labels, runState,
 // integrationModel, verification, logReply, ghAvailable, decisions (decisions.md text; null = absent),
-// supplier (the judgments reply).
+// supplier (the judgments reply), closingLinks / compose (CLI replies), title (title.txt text or
+// Error), isDraft (boolean, raw string or Error), ready (an Error makes gh pr ready throw).
 function mergeHarness(over = {}) {
   const calls = [];
   const events = [];
@@ -171,15 +188,15 @@ test('events: MERGE_STEP_NAMES is the frozen sub-step vocabulary', () => {
   assert.ok(MERGE_STEP_NAMES.every((n) => /^merge-[a-z-]+$/.test(n)));
 });
 
-test('entry passing: the tail stays pending-review/unclassified until later tasks, every call as specified', async () => {
+test('entry passing: the tail stays pending-review/unclassified until the gate lands, every call as specified', async () => {
   const h = mergeHarness();
   const r = await merge(CTX, h.deps);
   assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'unclassified', mergeCommit: null, postMerge: null });
-  assert.match(r.detail, /not implemented past entry/);
+  assert.match(r.detail, /not implemented past ready/);
   assert.equal(r.runDir, CTX.runDir);
   assert.equal(r.ciWaitMs, 0);
   assert.equal(r.eventsStdoutOnly, false);
-  assert.deepEqual(kindsOf(h), ['ghAvailable', 'gh', 'node', 'readFile', 'node', 'judgments']);
+  assert.deepEqual(kindsOf(h).slice(0, 6), ['ghAvailable', 'gh', 'node', 'readFile', 'node', 'judgments']);
   assert.deepEqual(h.calls[1].args, ['issue', 'view', '7', '--repo', 'o/r', '--json', 'labels']);
   const a = h.calls[2];
   const b = h.calls[4];
@@ -192,8 +209,7 @@ test('entry passing: the tail stays pending-review/unclassified until later task
     assert.deepEqual(c.env, { HARNESS: '1' });
   }
   assert.equal(h.calls[3].args[0], path.join(CTX.runDir, 'run-state.json'));
-  assert.deepEqual(h.logs, []);
-  assertNoReadyNoMerge(h);
+  assert.deepEqual(h.logs.filter((l) => l.step === 'Step 2.5'), []);
   assert.equal(h.events[0].step, 'merge-entry');
   assert.equal(h.events[0].status, 'ok');
   for (const e of h.events) assert.ok(MERGE_STEP_NAMES.includes(e.step));
@@ -333,6 +349,7 @@ test('AC8.1: merge-verification off, empty, unparseable and a resolver error all
     const r = await merge(CTX, h.deps);
     assert.equal(r.reason, 'unclassified', `${name}: entry passed (supplier reached, no stop)`);
     assert.ok(kindsOf(h).includes('judgments'), name);
+    h.logs = h.logs.filter((l) => l.step === 'Step 2.5');
     assert.equal(h.logs.length, 1, name);
     assert.equal(h.logs[0].status, 'AUTO');
     assert.equal(h.logs[0].step, 'Step 2.5');
@@ -348,7 +365,7 @@ test('AC8.1: merge-when-green and wait are taken as given, and no lever line is 
   for (const [value, expected] of [['merge-when-green', 'merge-when-green'], ['wait', 'wait']]) {
     const h = mergeHarness({ verification: leverReply({ value, source: 'run-config' }) });
     await merge(CTX, h.deps);
-    assert.deepEqual(h.logs, [], value);
+    assert.deepEqual(h.logs.filter((l) => l.step === 'Step 2.5'), [], value);
     assert.match(h.events[0].detail, new RegExp(`lever ${expected} \\(run-config\\)`));
   }
 });
@@ -374,12 +391,12 @@ test('AC8.1: a lever log that fails never stops entry; it is named in the entry 
 });
 
 test('a thrown error is classified on its stderr, never on the argv-bearing message', async () => {
-  const err = Object.assign(new Error('Command failed: gh issue view 7 --repo o/r --json labels'), { stderr: 'HTTP 502 bad gateway\n' });
+  const err = Object.assign(new Error('Command failed: node resolve-policy.js --run /x --values integration-model'), { stderr: 'HTTP 502 bad gateway\n' });
   const h = mergeHarness({ script: [[isNode('resolve-policy.js'), err]] });
   const r = await merge(CTX, h.deps);
   assert.equal(r.reason, 'unclassified');
   assert.equal(r.detail, 'merge-entry: HTTP 502 bad gateway');
-  assert.doesNotMatch(r.detail, /Command failed|--repo/);
+  assert.doesNotMatch(r.detail, /Command failed|--values/);
 });
 
 test('merge never throws: a throw inside a step is unclassified naming the sub-step; a throwing emit is swallowed', async () => {
@@ -390,6 +407,201 @@ test('merge never throws: a throw inside a step is unclassified naming the sub-s
   const h2 = mergeHarness({ deps: { emit: () => { throw new Error('emit broke'); } } });
   const r2 = await merge(CTX, h2.deps);
   assert.equal(r2.reason, 'unclassified');
-  assert.match(r2.detail, /not implemented past entry/);
+  assert.match(r2.detail, /not implemented past ready/);
   assert.equal(r2.runDir, CTX.runDir);
+});
+
+// ---- Task 2: closing links, subject composition, mark ready ----
+
+const isReadyCall = (c) => c.kind === 'gh' && c.args[0] === 'pr' && c.args[1] === 'ready';
+const nodeCalls = (h, name) => h.calls.filter((c) => isNode(name)(c));
+const closingReply = (obj) => ({ code: 0, stdout: JSON.stringify(obj), stderr: '' });
+const skipsOf = (h) => h.logs.filter((l) => l.status === 'SKIP');
+
+test('AC4.1: the tail runs closing links, compose, the isDraft read, gh pr ready in that order', async () => {
+  const h = mergeHarness();
+  const r = await merge(CTX, h.deps);
+  assert.equal(r.reason, 'unclassified');
+  assert.match(r.detail, /not implemented past ready/);
+  const seq = h.calls.slice(h.calls.findIndex((c) => c.kind === 'judgments') + 1).map((c) => (
+    c.kind === 'node' ? base(c.args[0]) : c.kind === 'gh' ? `gh ${c.args.slice(0, 2).join(' ')}` : c.kind));
+  assert.deepEqual(seq, ['closing-links.js', 'compose-subject.js', 'readFile', 'gh pr view', 'gh pr ready', 'log-decision.js']);
+  const cl = nodeCalls(h, 'closing-links.js')[0];
+  assert.deepEqual(cl.args.slice(1), ['--run', CTX.runDir, '--mode', 'pre-merge']);
+  assert.equal(cl.cwd, CTX.mainCheckout);
+  assert.equal(cl.timeout, 120000);
+  assert.deepEqual(cl.env, { HARNESS: '1' });
+  const view = h.calls.find((c) => isGh('pr', 'view')(c));
+  assert.deepEqual(view.args, ['pr', 'view', '9', '--repo', 'o/r', '--json', 'isDraft']);
+  assert.deepEqual(h.calls.find(isReadyCall).args, ['pr', 'ready', '9', '--repo', 'o/r']);
+  const ready = h.logs.find((l) => l.step === 'Step 2 (mark ready)');
+  assert.equal(ready.status, 'AUTO');
+  assert.equal(ready.text, 'undrafted PR #9 (was draft).');
+  assert.equal(ready.args[ready.args.indexOf('--reversibility') + 1], 'high (gh pr ready 9 --undo)');
+  for (const step of ['merge-closing-links', 'merge-compose', 'merge-ready']) {
+    assert.deepEqual(h.events.filter((e) => e.step === step).map((e) => e.status), ['ok'], step);
+  }
+});
+
+test('compose argv: --tag auto-merge, --pr, --out-dir under the run dir, --keep-open only when closing-links names the record', async () => {
+  const outDir = path.join(CTX.runDir, 'merge-subject');
+  const none = mergeHarness({ closingLinks: closingReply({ action: 'clean', keepOpen: [] }) });
+  await merge(CTX, none.deps);
+  const a = nodeCalls(none, 'compose-subject.js')[0];
+  assert.deepEqual(a.args.slice(1), ['7', '--repo', 'o/r', '--tag', 'auto-merge', '--pr', '9', '--out-dir', outDir]);
+  assert.equal(a.cwd, CTX.mainCheckout);
+  assert.equal(a.timeout, 120000);
+  const keep = mergeHarness({ closingLinks: closingReply({ action: 'unlinked', keepOpen: [7, 12] }) });
+  await merge(CTX, keep.deps);
+  assert.deepEqual(nodeCalls(keep, 'compose-subject.js')[0].args.slice(1),
+    ['7', '--repo', 'o/r', '--tag', 'auto-merge', '--keep-open', '7', '--pr', '9', '--out-dir', outDir]);
+  const other = mergeHarness({ closingLinks: closingReply({ action: 'unlinked', keepOpen: [12] }) });
+  await merge(CTX, other.deps);
+  assert.ok(!nodeCalls(other, 'compose-subject.js')[0].args.includes('--keep-open'));
+  assert.equal(keep.calls.find((c) => c.kind === 'readFile' && base(c.args[0]) === 'title.txt').args[0], path.join(outDir, 'title.txt'));
+});
+
+test('closing links: still-linked is left for post-merge Step 4.0 and named in the event; no SKIP', async () => {
+  const h = mergeHarness({ closingLinks: closingReply({ action: 'still-linked', keepOpen: [7] }) });
+  await merge(CTX, h.deps);
+  const e = h.events.find((x) => x.step === 'merge-closing-links');
+  assert.equal(e.status, 'ok');
+  assert.match(e.detail, /still-linked.*post-merge Step 4\.0/);
+  assert.ok(nodeCalls(h, 'compose-subject.js')[0].args.includes('--keep-open'));
+  assert.deepEqual(skipsOf(h), []);
+});
+
+test('closing-links exit 3 warns, logs a SKIP and proceeds; exit 5 proceeds without a second SKIP', async () => {
+  const skipText = (code) => `condition: closing-links.js exited ${code} → fallback: closing links not checked this merge`;
+  const three = mergeHarness({ closingLinks: { code: 3, stdout: '', stderr: 'run dir not anchored' } });
+  const r3 = await merge(CTX, three.deps);
+  assert.equal(r3.reason, 'unclassified');
+  assert.ok(!nodeCalls(three, 'compose-subject.js')[0].args.includes('--keep-open'));
+  assert.equal(skipsOf(three).length, 1);
+  assert.equal(skipsOf(three)[0].step, 'Closing links (pre-merge) (degraded)');
+  assert.equal(skipsOf(three)[0].text, skipText(3));
+  assert.ok(skipsOf(three)[0].args.includes('--reversibility'));
+  const ev3 = three.events.find((e) => e.step === 'merge-closing-links');
+  assert.equal(ev3.status, 'ok');
+  assert.match(ev3.detail, /exit 3/);
+  for (const code of [4, 5]) {
+    const h = mergeHarness({ closingLinks: { code, stdout: '', stderr: 'self-logged' } });
+    await merge(CTX, h.deps);
+    assert.deepEqual(skipsOf(h), [], `exit ${code} is self-logged by closing-links.js`);
+    const ev = h.events.find((e) => e.step === 'merge-closing-links');
+    assert.equal(ev.status, 'ok');
+    assert.match(ev.detail, new RegExp(`exit ${code}`));
+  }
+  const seven = mergeHarness({ closingLinks: { code: 7, stdout: '', stderr: 'x' } });
+  await merge(CTX, seven.deps);
+  assert.equal(skipsOf(seven)[0].text, skipText(7));
+  const nul = mergeHarness({ closingLinks: { code: null, stdout: '', stderr: 'timed out' } });
+  await merge(CTX, nul.deps);
+  assert.equal(skipsOf(nul).length, 1);
+});
+
+test('closing links: gh-absent, no-pr, no-fixes-span and unparseable output warn and proceed with keepOpen []', async () => {
+  const rows = [
+    closingReply({ action: 'gh-absent', keepOpen: [7] }),
+    closingReply({ action: 'no-pr', keepOpen: [7] }),
+    closingReply({ action: 'no-fixes-span', keepOpen: [7] }),
+    { code: 0, stdout: 'not json', stderr: '' },
+    { code: 0, stdout: JSON.stringify({ action: 'clean' }), stderr: '' },
+    { code: 0, stdout: 'null', stderr: '' },
+  ];
+  for (const closingLinks of rows) {
+    const h = mergeHarness({ closingLinks });
+    const r = await merge(CTX, h.deps);
+    assert.equal(r.reason, 'unclassified', JSON.stringify(closingLinks));
+    assert.ok(!nodeCalls(h, 'compose-subject.js')[0].args.includes('--keep-open'), JSON.stringify(closingLinks));
+    assert.equal(h.events.find((e) => e.step === 'merge-closing-links').status, 'ok');
+    assert.deepEqual(skipsOf(h), [], 'closing-links.js self-logs these; no driver SKIP');
+  }
+});
+
+test('AC7.1: compose-subject exit 1 is compose-refused with the reduced stderr line, PR still draft', async () => {
+  const h = mergeHarness({ compose: { code: 1, stdout: '', stderr: 'compose-subject.js: record(s) #7 carry no non-empty "## Release Note" section\nsecond line\n' } });
+  const r = await merge(CTX, h.deps);
+  assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'compose-refused', mergeCommit: null, postMerge: null });
+  assert.match(r.detail, /carry no non-empty/);
+  assert.doesNotMatch(r.detail, /second line|"|#7/);
+  assert.ok(!h.calls.some(isReadyCall), 'no gh pr ready recorded');
+  assert.ok(!h.calls.some((c) => isGh('pr', 'view')(c)), 'the isDraft read comes after compose');
+  assertNoReadyNoMerge(h);
+  assert.deepEqual(h.events.filter((e) => e.step === 'merge-compose').map((e) => e.status), ['stop']);
+});
+
+test('AC11.10: compose-subject exit 2 is gh-absent, no ready', async () => {
+  const h = mergeHarness({ compose: { code: 2, stdout: '', stderr: 'gh not found' } });
+  const r = await merge(CTX, h.deps);
+  assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'gh-absent', mergeCommit: null, postMerge: null });
+  assertNoReadyNoMerge(h);
+});
+
+test('compose: exit 3, another exit or a timeout is unclassified naming the exit; empty or unreadable title.txt is unclassified', async () => {
+  for (const code of [3, 9, null]) {
+    const h = mergeHarness({ compose: { code, stdout: '', stderr: 'read failed' } });
+    const r = await merge(CTX, h.deps);
+    assert.equal(r.reason, 'unclassified');
+    assert.equal(r.detail, `compose: compose-subject.js exited ${code}`);
+    assertNoReadyNoMerge(h);
+  }
+  for (const title of ['', '  \n', new Error('ENOENT')]) {
+    const h = mergeHarness({ title });
+    const r = await merge(CTX, h.deps);
+    assert.equal(r.reason, 'unclassified');
+    assert.match(r.detail, /^compose: .*title/);
+    assertNoReadyNoMerge(h);
+  }
+});
+
+test('compose: the composed event carries the title.txt text, never the single-quoted stdout line', async () => {
+  const h = mergeHarness({ title: 'feat: a title\n', compose: { code: 0, stdout: "SUBJECT_TITLE='from stdout'\n", stderr: '' } });
+  await merge(CTX, h.deps);
+  const ev = h.events.find((e) => e.step === 'merge-compose');
+  assert.equal(ev.status, 'ok');
+  assert.doesNotMatch(ev.detail, /from stdout/);
+});
+
+test('AC4.3: an already-ready PR skips gh pr ready and logs the skip', async () => {
+  const h = mergeHarness({ isDraft: false });
+  const r = await merge(CTX, h.deps);
+  assert.equal(r.reason, 'unclassified');
+  assert.ok(!h.calls.some(isReadyCall));
+  const l = h.logs.find((x) => x.step === 'Step 2 (mark ready)');
+  assert.equal(l.status, 'AUTO');
+  assert.equal(l.text, 'PR #9 already ready — skipped gh pr ready.');
+  assert.equal(l.args[l.args.indexOf('--reversibility') + 1], 'n/a (no state change)');
+});
+
+test('AC4.4: a failed isDraft read, a non-boolean isDraft or a failed gh pr ready is ready-failed and no merge call', async () => {
+  const readyErr = Object.assign(new Error('Command failed: gh pr ready 9 --repo o/r'), { stderr: 'GraphQL: Resource not accessible\n' });
+  const rows = [
+    [{ isDraft: new Error('HTTP 502') }, /isDraft/],
+    [{ isDraft: 'not json' }, /isDraft/],
+    [{ isDraft: '{"isDraft":"yes"}' }, /isDraft/],
+    [{ isDraft: '{}' }, /isDraft/],
+    [{ isDraft: 'null' }, /isDraft/],
+    [{ isDraft: true, ready: readyErr }, /Resource not accessible/],
+  ];
+  for (const [over, detail] of rows) {
+    const h = mergeHarness(over);
+    const r = await merge(CTX, h.deps);
+    assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'ready-failed', mergeCommit: null, postMerge: null }, JSON.stringify(over));
+    assert.match(r.detail, detail);
+    assert.doesNotMatch(r.detail, /Command failed|--repo/);
+    assert.ok(!h.calls.some((c) => isGh('pr', 'merge')(c)));
+    const last = h.events[h.events.length - 1];
+    assert.deepEqual([last.step, last.status], ['merge-ready', 'stop']);
+    assert.ok(!h.logs.some((l) => l.step === 'Step 2 (mark ready)'), 'no AUTO line for a failed ready');
+  }
+});
+
+test('mark ready: compose precedes ready, and a failed log write never stops the step', async () => {
+  const h = mergeHarness({ logReply: { code: 1, stdout: '', stderr: 'x' } });
+  const r = await merge(CTX, h.deps);
+  assert.equal(r.reason, 'unclassified');
+  const order = h.calls.map((c) => (c.kind === 'node' ? base(c.args[0]) : isReadyCall(c) ? 'ready' : null)).filter(Boolean);
+  assert.ok(order.indexOf('compose-subject.js') < order.indexOf('ready'));
+  assert.match(h.events.find((e) => e.step === 'merge-ready').detail, /log:Step 2 \(mark ready\)/);
 });
