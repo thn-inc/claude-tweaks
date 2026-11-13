@@ -1,0 +1,9 @@
+'use strict';
+const { describe, it } = require('node:test');
+const assert = require('node:assert');
+
+describe('widget', () => {
+  it('adds two numbers', () => {
+    assert.strictEqual(1 + 1, 3);
+  });
+});
