@@ -17,7 +17,7 @@ const ROOT = path.join(__dirname, '..');
 const {
   resolveConcurrency, resolveSlots, listTestFiles, buildTestArgs,
   isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, createRunRoot, sweepStaleRoots, readFileList, slotLane,
-  subsetFallbackReason,
+  subsetFallbackReason, gitFixtureConfigEnv,
 } = require(path.join(ROOT, 'tools', 'run-tests.js'));
 
 test('resolveConcurrency defaults to half the cores, at least 1', () => {
@@ -1189,4 +1189,46 @@ test('#4134 AC2.1: a win32 --files-from subset too long for the command line run
     assert.strictEqual(SLOT_LOCKS(sb.slotDir).length, 1, fs.readdirSync(sb.slotDir).join(', '));
     assert.ok(!fs.existsSync(path.join(sb.slotDir, 'subset')), 'a fallen-back run must not take the subset lane');
   });
+});
+
+// #5297: fixture git commits/pushes each started `git maintenance run --auto`; the suite's child
+// env now carries config that turns it off, appended after any GIT_CONFIG_* the caller inherited.
+test('gitFixtureConfigEnv appends the two entries at index 0 and 1 when none are inherited', () => {
+  const input = { PATH: '/x' };
+  const copy = { ...input };
+  assert.deepStrictEqual(gitFixtureConfigEnv(input), {
+    PATH: '/x',
+    GIT_CONFIG_COUNT: '2',
+    GIT_CONFIG_KEY_0: 'maintenance.auto', GIT_CONFIG_VALUE_0: 'false',
+    GIT_CONFIG_KEY_1: 'gc.auto', GIT_CONFIG_VALUE_1: '0',
+  });
+  assert.deepStrictEqual(input, copy, 'the input env must not be mutated');
+});
+
+test('gitFixtureConfigEnv appends after an inherited GIT_CONFIG_COUNT without clobbering it', () => {
+  const input = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.autocrlf', GIT_CONFIG_VALUE_0: 'true' };
+  const copy = { ...input };
+  assert.deepStrictEqual(gitFixtureConfigEnv(input), {
+    GIT_CONFIG_COUNT: '3',
+    GIT_CONFIG_KEY_0: 'core.autocrlf', GIT_CONFIG_VALUE_0: 'true',
+    GIT_CONFIG_KEY_1: 'maintenance.auto', GIT_CONFIG_VALUE_1: 'false',
+    GIT_CONFIG_KEY_2: 'gc.auto', GIT_CONFIG_VALUE_2: '0',
+  });
+  assert.deepStrictEqual(input, copy, 'the input env must not be mutated');
+});
+
+test('gitFixtureConfigEnv returns an unchanged copy when GIT_CONFIG_COUNT is not a non-negative integer', () => {
+  const input = { GIT_CONFIG_COUNT: 'abc', PATH: '/x' };
+  const copy = { ...input };
+  const out = gitFixtureConfigEnv(input);
+  assert.deepStrictEqual(out, { GIT_CONFIG_COUNT: 'abc', PATH: '/x' });
+  assert.notStrictEqual(out, input);
+  assert.deepStrictEqual(input, copy, 'the input env must not be mutated');
+});
+
+test('gitFixtureConfigEnv: real git reads maintenance.auto=false from the returned env', () => {
+  const out = require('child_process').execFileSync('git', ['config', '--get', 'maintenance.auto'], {
+    env: gitFixtureConfigEnv(process.env), encoding: 'utf8',
+  }).trim();
+  assert.strictEqual(out, 'false');
 });
