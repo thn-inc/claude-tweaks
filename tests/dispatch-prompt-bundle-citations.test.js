@@ -27,10 +27,9 @@ const CONTRACT = path.join(PLUGIN, 'skills', '_shared', 'subagent-output-contrac
 // still occur on a governed line with no fallback clause on it — a stale-exemption check
 // (parse-signal-discipline): if a gap's file is ever composed and its citation moves to a
 // bundle path (or gains a "read directly" fallback of its own), this list must shrink with it,
-// or a rotted exemption starts silently covering something new.
-// `_shared/rendered-ui-units.md` (#5280) is cited by the wait rule's exception sentence in all
-// three task-prompt.md copies; nothing composes it into a bundle.
-const GAPS = ['_shared/run-dir-resolution.md', '_shared/integration-model.md', '_shared/rendered-ui-units.md'];
+// or a rotted exemption starts silently covering something new. The list lives in
+// tests/helpers/dispatch-prompt-bundle-gaps.js so suites restating this rule share it.
+const { GAPS } = require('./helpers/dispatch-prompt-bundle-gaps');
 
 // The agent-side fallback shape: a `_shared/` mention is allowed only when it is the source
 // named by a "read `_shared/<file>` directly" fallback clause on the same physical line — every
