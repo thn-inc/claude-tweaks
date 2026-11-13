@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { pathToFileURL } = require('url');
-const { execSync, execFileSync } = require('child_process');
+const { execFileSync } = require('child_process');
 const color = require('./lib/color');
 const { splitLedgerRow } = require('./lib/wrap-up/ledger-cells');
 
@@ -279,11 +279,11 @@ const GITHUB_GLYPH = '\uf09b';
 // (pathToFileURL handles this host's path shape, Windows drive letters
 // included), the glyph — present only when origin is a GitHub remote — opens
 // the repo page. Both resolve against the main checkout, matching the name.
-function renderProject(input, fallbackCwd) {
+function renderProject(input, fallbackCwd, opts = {}) {
   const ws = input.workspace || {};
   const dir = ws.project_dir || ws.current_dir || input.cwd || fallbackCwd;
   if (!dir || typeof dir !== 'string') return null;
-  const mainDir = resolveMainProjectDir(dir);
+  const mainDir = resolveMainProjectDir(dir, opts);
   const name = path.basename(mainDir);
   if (!name) return null;
   let linked = name;
@@ -295,7 +295,7 @@ function renderProject(input, fallbackCwd) {
   } catch {
     /* unconvertible path — keep the plain name */
   }
-  const repoUrl = githubRepoUrl(readOriginRemote(mainDir));
+  const repoUrl = githubRepoUrl(readOriginRemote(mainDir, opts));
   return repoUrl ? `${linked} ${color.link(repoUrl, GITHUB_GLYPH)}` : linked;
 }
 
@@ -358,7 +358,7 @@ function parseStatusBranch(output) {
 
 function renderGit(cwd) {
   try {
-    const output = execSync('git --no-optional-locks status --porcelain -b', { // git-path-read: not a path list (branch and dirty flag only)
+    const output = execFileSync('git', ['--no-optional-locks', 'status', '--porcelain', '-b'], { // git-path-read: not a path list (branch and dirty flag only)
       stdio: ['ignore', 'pipe', 'ignore'],
       encoding: 'utf8',
       cwd,

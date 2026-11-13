@@ -1798,3 +1798,112 @@ test('renderPorts: no toplevel resolvable (no cwd, no ancestor .git) -> empty st
 // directly after renderGit(cwd)) rather than by an end-to-end subprocess
 // spawn: the ordering is a property of main()'s segments array, not of
 // anything a spawned child would add.
+
+// --- one child process per render (#5266) ---
+
+const STATUS_LAUNCH = { fn: 'execFileSync', file: 'git', args: ['--no-optional-locks', 'status', '--porcelain', '-b'] };
+
+test('render launches exactly one child process — git status, no shell — in a main checkout and a linked worktree', () => {
+  withRepo('git@github.com:owner/repo.git', (dir) => {
+    const wt = path.join(path.dirname(dir), 'one-spawn-wt');
+    execFileSync('git', ['worktree', 'add', '-q', wt, '-b', 'feature'], { cwd: dir });
+    for (const where of [dir, wt]) {
+      const { launches } = recordLaunches((fresh) => {
+        fresh.renderProject({ workspace: { project_dir: where } }, where);
+        return fresh.renderGit(where);
+      });
+      assert.deepStrictEqual(launches, [STATUS_LAUNCH], where);
+    }
+  });
+});
+
+test('renderGit: unborn branch renders its name', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-unborn-'));
+  try {
+    execFileSync('git', ['init', '-q', '-b', 'trunk'], { cwd: dir });
+    assert.strictEqual(renderGitPlain(dir), 'trunk');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('renderGit: detached HEAD renders nothing', () => {
+  withRepo(null, (dir) => {
+    execFileSync('git', ['checkout', '-q', '--detach'], { cwd: dir });
+    assert.strictEqual(renderGitPlain(dir), null);
+  });
+});
+
+test('renderGit: a directory that is not a repo renders nothing', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-norepo-'));
+  try {
+    assert.strictEqual(renderGitPlain(dir), null);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('rendered project and git segments are byte-identical with the fast paths on and off, and nothing runs through a shell', () => {
+  const GH = 'https://github.com/o/parity.git';
+  const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const inTmp = (prefix, setup) => (run) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+    try {
+      setup(dir);
+      return run(dir);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  };
+  const cases = [
+    ['main checkout', (run) => withRepo(GH, run)],
+    ['linked worktree', (run) => withWorktrees((f) => {
+      git(['remote', 'add', 'origin', GH], f.main);
+      return run(f.wt);
+    })],
+    ['submodule checkout', (run) => withWorktrees((f) => {
+      git(['remote', 'set-url', 'origin', GH], f.sub);
+      return run(f.sub);
+    })],
+    ['no origin', (run) => withRepo(null, run)],
+    ['non-GitHub origin', (run) => withRepo('git@gitlab.com:o/r.git', run)],
+    ['origin only in an included file', (run) => withRepo(null, (dir) => {
+      const extra = path.join(dir, '.git', 'extra');
+      fs.writeFileSync(extra, `[remote "origin"]\n\turl = ${GH}\n`);
+      appendCfg(dir, `[include]\n\tpath = ${extra}\n`);
+      return run(dir);
+    })],
+    ['origin with a quoted value', (run) => withRepo(null, (dir) => {
+      appendCfg(dir, '[remote "origin"]\n\turl = "https://github.com/o/q.git"\n');
+      return run(dir);
+    })],
+    ['detached HEAD', (run) => withRepo(GH, (dir) => {
+      git(['checkout', '-q', '--detach'], dir);
+      return run(dir);
+    })],
+    ['unborn branch', inTmp('ct-sl-parity-unborn-', (dir) => {
+      git(['init', '-q', '-b', 'trunk'], dir);
+      git(['remote', 'add', 'origin', GH], dir);
+    })],
+    ['dirty tree', (run) => withRepo(GH, (dir) => {
+      fs.writeFileSync(path.join(dir, 'untracked.txt'), 'x\n');
+      return run(dir);
+    })],
+    ['not a repo', inTmp('ct-sl-parity-norepo-', () => {})],
+  ];
+  const compared = [];
+  const { launches } = recordLaunches((m) => {
+    for (const [label, build] of cases) {
+      build((dir) => {
+        const input = { workspace: { project_dir: dir } };
+        const on = `${m.renderProject(input, dir)}|${m.renderGit(dir)}`;
+        const off = `${m.renderProject(input, dir, { fast: false })}|${m.renderGit(dir)}`;
+        assert.strictEqual(on, off, label);
+        compared.push(label);
+      });
+    }
+  });
+  assert.strictEqual(compared.length, 11);
+  assert.deepStrictEqual(launches.filter((l) => l.fn === 'exec' || l.fn === 'execSync'), []);
+  assert.ok(launches.length > 0, 'the off side must have launched git');
+});
