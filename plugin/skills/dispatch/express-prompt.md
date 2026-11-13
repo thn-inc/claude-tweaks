@@ -1,6 +1,6 @@
 # Dispatch — Express Lane Task() Prompt Templates (#4025)
 
-Referenced by `skills/dispatch/SKILL.md` Step 5 (the express call) and Step 3's loop termination (the post-merge sample review call). The same rules as `task-prompt.md` bind both templates: inline each fenced block verbatim into its own `Task()` call, never paraphrased and never both in one call, substituting its placeholders. `{context-pack}` is `task-prompt.md`'s Context pack section, resolved and substituted as that section directs. Neither of Templates A/B/C fits an agent that runs a procedure rather than returning findings, so these are their own minimal templates, as `task-prompt.md`'s are: minimal input, the literal output format inlined, and the four-value status line.
+Referenced by `skills/dispatch/SKILL.md` Step 5 (the express call) and Step 3's loop termination (the post-merge sample review call). `task-prompt.md`'s template rules bind both templates: inline each fenced block verbatim into its own `Task()` call, never paraphrased and never both in one call. Unlike `task-prompt.md`'s, its placeholders are substituted by hand, since `dispatch-prompt.js` renders only that file (#4735). `{context-pack}` is `task-prompt.md`'s Context pack section, each numbered item resolved as it states (item 3's `{policy-values}`: its command's five values as `key=value`, joined by `, `). Neither of Templates A/B/C fits an agent that runs a procedure rather than returning findings, so these are their own minimal templates, as `task-prompt.md`'s are: minimal input, the literal output format inlined, and the four-value status line.
 
 ## Express call
 
@@ -28,7 +28,7 @@ special case (a `DISPATCH_HEADLESS=1` first line on this prompt is the marker it
 otherwise its numbered steps 1-7, with `--reason "failed: express-{step}"`, where `{step}` is the
 bold name of the Procedure step that stopped, lowercased and hyphenated (e.g. `check`, `pr`).
 
-Foreground execution (required): run `npm test` and every other long-running command in the
+Foreground execution (required): run the project's test command and every other long-running command in the
 foreground of this turn, output redirected to a file if it's long -- never with `run_in_background`.
 Never end this turn waiting on a background test run or fix-round you started this way -- you cannot
 count on being re-woken by either, and the run stalls silently when you are not (#1965). A nested
@@ -61,7 +61,9 @@ passes with no change, or at a ceiling of 3 windows (60 minutes) per wave, namin
 progress for one window` or `ceiling reached while progressing`) and every unchanged child. Children
 sharing a worktree progress together; a child whose prompt names no worktree counts as unchanged. A
 failed wait call counts as no wait but ends its window, and the probe runs as at any bound; a failed probe command counts
-as no change, never retried in another form. Read-only units keep the first-bound self-judge. A wait
+as no change, never retried in another form. Read-only units keep the first-bound self-judge.
+Exception: a rendered-UI unit (review Step 6/6.5) gets more windows while its artifact directory
+changes; stage its late result (`_shared/rendered-ui-units.md`). A wait
 call that is blocked or fails is not a wait and never counts toward the bound; never retry it in
 another form (a longer, wrapped or backgrounded sleep): treat every child still outstanding as
 silent at the bound. A reply that ends without a tool call ends the turn.
@@ -128,7 +130,7 @@ last paragraph says.
 Of its last bullet, log the posted review's `AUTO` line but do not run `close-run`: the
 dispatching session closes the run dir after you report.
 
-Foreground execution (required): run `npm test` and every other long-running command in the
+Foreground execution (required): run the project's test command and every other long-running command in the
 foreground of this turn, output redirected to a file if it's long -- never with `run_in_background`.
 Never end this turn waiting on a background test run or fix-round you started this way -- you cannot
 count on being re-woken by either, and the run stalls silently when you are not (#1965). A nested
@@ -161,7 +163,9 @@ passes with no change, or at a ceiling of 3 windows (60 minutes) per wave, namin
 progress for one window` or `ceiling reached while progressing`) and every unchanged child. Children
 sharing a worktree progress together; a child whose prompt names no worktree counts as unchanged. A
 failed wait call counts as no wait but ends its window, and the probe runs as at any bound; a failed probe command counts
-as no change, never retried in another form. Read-only units keep the first-bound self-judge. A wait
+as no change, never retried in another form. Read-only units keep the first-bound self-judge.
+Exception: a rendered-UI unit (review Step 6/6.5) gets more windows while its artifact directory
+changes; stage its late result (`_shared/rendered-ui-units.md`). A wait
 call that is blocked or fails is not a wait and never counts toward the bound; never retry it in
 another form (a longer, wrapped or backgrounded sleep): treat every child still outstanding as
 silent at the bound. A reply that ends without a tool call ends the turn.

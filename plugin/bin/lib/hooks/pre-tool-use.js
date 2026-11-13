@@ -706,14 +706,12 @@ function checkTeardownGate(ctx, teardownWarnings = [], deps = {}) {
 // invariant every project gets, not something a project opts into.
 //
 // Flags only a NEW creation — the run-dir-level path (the first path segment
-// under `.claude-tweaks/pipelines/`) does not already exist on disk. A
-// pre-anchoring run directory already sitting in a worktree is left alone
-// (tolerated transitionally by wrap-up/cleanup-procedures.md Section C step
-// 3.5's copy-out guard, sunset 2026-11-07): that guard only ever READS from
-// the worktree and WRITES to the main checkout, so it never trips this guard
-// itself, and further writes into an already-existing worktree-trapped run
-// dir (e.g. a still-running pre-anchoring pipeline appending events.jsonl)
-// must not be newly denied by a guard shipped after that pipeline started.
+// under `.claude-tweaks/pipelines/`) does not already exist on disk. A run
+// directory that already exists in a worktree is left alone: the guard stops
+// the main-checkout/worktree split at the moment a shadow is created, and a
+// write into an existing directory creates nothing new. Such a directory is
+// normal — every run's tracked `work/{n}-spec.md` lives in one (the #959
+// exception below) — and one that predates anchoring is the historical case.
 //
 // #959: also lets the one documented worktree-local exception through even
 // when the run-id directory does NOT yet exist there — `work/{n}-spec.md`
@@ -2400,13 +2398,21 @@ function checkDispatchConfigGate(ctx, commandGitTargets, deps = {}) {
 // (checkTeardownGate's foreign-owned teardown, checkBookkeepingStampsGate's
 // foreign-owned run); run() attaches them all to whatever outcome is reached.
 // `deps` is run()'s own pass-through of its test-only override bag — see
-// run()'s header comment below — forwarded verbatim to checkTeardownGate,
-// checkPipelineShadowGuard, checkDispatchConfigGate and
-// checkBookkeepingStampsGate as their own `deps`
+// run()'s header comment below — forwarded verbatim to checkReviewConsoleAskGate,
+// checkDispatchPromptGate, checkTeardownGate, checkPipelineShadowGuard,
+// checkDispatchConfigGate and checkBookkeepingStampsGate as their own `deps`
 // parameter, and read directly by E1 at the tail of this function.
 function runInner(ctx, indeterminateTargets, warnings, deps) {
   // #3712: no other gate applies to AskUserQuestion.
   if (ctx.input && ctx.input.tool_name === 'AskUserQuestion') return checkReviewConsoleAskGate(ctx, deps);
+  // #4589: no other gate applies to Agent/Task. Required lazily inside the try, as withGuardRewrite
+  // requires guard-rewrite.js: a load-time fault in dispatch-prompt-gate.js (or the task-call.js it
+  // requires) must cost only this gate, never this module's load (every Bash/Edit/Write deny gate).
+  if (ctx.input && (ctx.input.tool_name === 'Agent' || ctx.input.tool_name === 'Task')) {
+    let promptGate;
+    try { promptGate = require('./dispatch-prompt-gate'); } catch { return {}; }
+    return promptGate.checkDispatchPromptGate(ctx, deps, denyResult);
+  }
 
   const teardown = checkTeardownGate(ctx, warnings, deps);
   if (teardown.json) return teardown;
@@ -2570,8 +2576,11 @@ function runInner(ctx, indeterminateTargets, warnings, deps) {
 // function's header comment), `fsImpl` (an fs-like object every
 // canonicalRealpath call resolves through, so a case-insensitive fake can stand
 // in for the volume, #3682; it also backs checkTeardownGate's existence probe
-// and its `findRunByWorktreePath` lookup, #3769), and `toplevel` (replaces the
-// `git rev-parse --show-toplevel` probe in E1 and checkDispatchConfigGate). The production
+// and its `findRunByWorktreePath` lookup, #3769, and checkDispatchPromptGate's
+// reads), `toplevel` (replaces the `git rev-parse --show-toplevel` probe in E1
+// and checkDispatchConfigGate), checkReviewConsoleAskGate's `readConsoleCeiling`,
+// and checkDispatchPromptGate's `mainCheckoutRoot`, `readRunState` and
+// `loadTaskPrompt` (#4589, that module's header comment). The production
 // call site (bin/hooks.js's `main()`) calls `mod.run({...})` with a single argument, so
 // `deps` is always `{}` there; only a test passes a second argument. Adding
 // this parameter is what lets a test exercise checkBookkeepingStampsGate's

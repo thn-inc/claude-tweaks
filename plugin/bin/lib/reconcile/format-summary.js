@@ -59,9 +59,11 @@ const failedRecordsSuffix = (taken) => {
   return numbers.length ? ` (records ${numbers.map((n) => `#${n}`).join(', ')})` : '';
 };
 // A skip's detail can be multi-line or long (a raw gh error): flattened and bounded exactly as post-merge.js does, so it cannot break the one-line-per-entry summary.
-const boundedDetail = (text) => {
+// An `unknown-host` detail is the gate's own refusal text (#4794): flattened but never bounded, because
+// a real SSH-remote refusal runs past the bound and the cut would drop its GitHub Enterprise advice.
+const boundedDetail = (text, reason) => {
   const { oneLine, boundDetail } = require('./post-merge');
-  return boundDetail(oneLine(text));
+  return reason === 'unknown-host' ? oneLine(text) : boundDetail(oneLine(text));
 };
 
 // Array-shaped result fields: unit noun (singular), the action value(s)
@@ -222,7 +224,7 @@ function formatItemSkippedLine(result) {
 function formatCheckSkipLines(result) {
   if (!Array.isArray(result.skipped)) return [];
   return result.skipped.map((e) => {
-    const detailSuffix = e.detail ? ` (${boundedDetail(e.detail)})` : '';
+    const detailSuffix = e.detail ? ` (${boundedDetail(e.detail, e.reason)})` : '';
     const countSuffix = e.count > 1 ? ` x${e.count}` : '';
     const namesSuffix = Array.isArray(e.names) && e.names.length ? `: ${e.names.join(', ')}` : '';
     return `skipped: ${e.check} — ${e.reason}${detailSuffix}${countSuffix}${namesSuffix}`;

@@ -265,7 +265,24 @@ Lazy-loaded from `SKILL.md`'s "The fix shape" section; the numbering continues t
     `hiddenByUnclosedFence` cases, `tests/bin-lib/issues/materialize-format.test.js`'s two #4350
     Original request cases).
 
-28. **A producer handing a file to another tool owes its parse verdict across that boundary, because the consumer reads the file, not the producer's envelope.** A
+28. **A parser that fails closed owes a cheap precondition that proves the signal absent, so its
+    gaps cost only on inputs that could hold the signal.** Failing closed is right when the
+    parser cannot read a shape, but each gap then costs whatever "closed" costs, on every input
+    that has that shape. #5153's workflow reader (`plugin/bin/lib/merge-verification.js`'s
+    `readPullRequestWorkflow`) reads any `on:` shape it cannot follow as an unparsed PR trigger,
+    and the merge gate then waits for a ready run that never comes: every pr-first merge in the
+    repo parks. Five reader fix rounds and a high review finding (an indentless `schedule:` list
+    in a workflow with no PR trigger at all) were that one class. `05aeb2ed6` bounds it: a file
+    whose text never contains `pull_request` cannot name a PR trigger, so the reader returns
+    "no PR trigger" before the `on:` walk. The precondition must prove absence, not guess it. A
+    YAML double-quoted escape can spell the name without the literal, so a backslash inside
+    double quotes keeps the full fail-closed read. Pin both halves, each going red alone: a file
+    with no literal and an unreadable shape reads as no trigger, and an escaped spelling stays
+    unparsed (`tests/merge-verification.test.js`'s "never spells pull_request" test). When a
+    later fixture depended on the old behavior, give it the literal rather than weaken the
+    guard (`tests/bin-lib/pr-checks/ready-run.test.js`'s `UNPARSED`).
+
+29. **A producer handing a file to another tool owes its parse verdict across that boundary, because the consumer reads the file, not the producer's envelope.** A
     producer whose output file another tool reads can carry a could-not-parse state in its own
     stdout envelope and still lose it: the consumer never sees that envelope, so an empty list
     written beside the failure reads as a clean, empty result. #4618's `risk-flags.js facts`

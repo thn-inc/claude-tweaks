@@ -23,7 +23,7 @@
 // current linked worktree is anchored-equivalent and accepted, since this
 // CLI only ever writes to that worktree's own work/{n}-spec.md), an
 // unresolved record, an origin host that is not a known GitHub host (refused before any
-// gh call, #4933; `GH_HOST={host}` opts in), or when `gh` is absent. #1210: when cwd is itself
+// gh call, #4933; an exported `GH_HOST` opts in), or when `gh` is absent. #1210: when cwd is itself
 // inside a linked worktree but --run-dir resolves somewhere else — the main
 // checkout (the standard $PIPELINE_RUN_DIR shape every other --run/--run-dir
 // consumer expects, passed unmodified from inside a worktree) or a DIFFERENT

@@ -621,6 +621,23 @@ test('facts-json path: the facts path is not refused for an unknown origin host'
   assert.notEqual(foreign.verdict.state, 'due'); // a foreign-repo token is still dropped
 });
 
+// #4794: the facts path reads origin the seam's way (hostPathOf, then parseRepo), so an ssh:// or
+// credentialed spelling judges a qualified token exactly as the scp spelling does.
+test('#4794: the facts path reads an ssh:// or credentialed origin like its scp spelling', (t) => {
+  const file = writeFacts(t, worldAsMcp({ issues: { 12: OPEN } }, 11));
+  const argv = ['--sub-issue', '11', '--closing', 'o/r#11,o/r#12', '--facts-json', file];
+  const scp = go(argv, {}, { ...NO_GH, remoteUrl: () => 'git@github.com:o/r.git' });
+  assert.equal(scp.code, 0, scp.stderr);
+  assert.equal(scp.verdict.state, 'due');
+  for (const remote of ['ssh://git@github.com/o/r.git', 'https://x:tok@github.com/o/r.git']) {
+    const r = go(argv, {}, { ...NO_GH, remoteUrl: () => remote });
+    assert.doesNotMatch(r.stderr, /could not resolve owner\/repo/, remote);
+    assert.equal(r.code, scp.code, `${remote}: ${r.stderr}`);
+    assert.equal(r.stdout, scp.stdout, remote);
+    assert.doesNotMatch(r.stdout + r.stderr, /tok/, remote);
+  }
+});
+
 test('a parent that reads closed needs no comments or me', (t) => {
   const facts = worldAsMcp({ parentLive: { 10: { state: 'CLOSED', stateReason: 'COMPLETED', comments: [] } } }, null);
   delete facts.parentComments;

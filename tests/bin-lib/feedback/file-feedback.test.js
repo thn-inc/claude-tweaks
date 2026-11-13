@@ -122,6 +122,24 @@ test('isTransientFailure: matches a 5xx status, a timeout, and a connection rese
   assert.equal(feedback.isTransientFailure({ stderr: 'read ECONNRESET' }), true);
 });
 
+// An execFileSync throw: message = `Command failed: {argv}` + "\n" + stderr, stderr also on the error.
+function execFailure(argv, stderr, extra = {}) {
+  return Object.assign(new Error(`Command failed: gh ${argv.join(' ')}\n${stderr}`), { stderr, ...extra });
+}
+
+test('isTransientFailure: a title naming a 5xx or a timeout never makes a deterministic refusal transient', () => {
+  for (const title of ['Retry on HTTP 503 from the API', 'Raise the gh timeout']) {
+    const err = execFailure(['issue', 'create', '--repo', 'o/r', '--title', title, '--body-file', '/tmp/b.md'], 'GraphQL: Could not resolve to a Repository with the name \'o/r\'.');
+    assert.equal(feedback.isTransientFailure(err), false, title);
+  }
+});
+
+test('isTransientFailure: a real transient failure is still transient when the argv also carries one', () => {
+  const argv = ['issue', 'create', '--repo', 'o/r', '--title', 'Fix the HTTP 503 page', '--body-file', '/tmp/b.md'];
+  assert.equal(feedback.isTransientFailure(execFailure(argv, 'HTTP 502: Bad Gateway')), true);
+  assert.equal(feedback.isTransientFailure(Object.assign(new Error('spawnSync gh ETIMEDOUT'), { code: 'ETIMEDOUT' })), true);
+});
+
 test('isTransientFailure: a plain 403/429 (rate-limit shape) is not transient here', () => {
   // _shared/github-rate-limit.md owns rate-limit classification (403/429);
   // this file's retry is deliberately narrower — a plain 403 must not retry.

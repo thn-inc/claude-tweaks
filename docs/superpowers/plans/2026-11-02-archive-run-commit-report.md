@@ -20,7 +20,7 @@
 - Plan Review Decisions, Reading A: AC2 stays as written, so no placeholder sha may reach the line. A failed sha or branch probe stores `null` in that field and prints a different line. `detached` is used only when `symbolic-ref` answers `exitCode === 1`; any other failure is an unanswered question, per `plugin/bin/lib/hooks/git-exec.js`'s `FAILURE` comment ("Only `git-error` is a real ANSWER from git").
 - Resolve every probe from `mainRoot`, not `process.cwd()`.
 - Out of scope (#3396): pushing, or skipping the commit on the integration branch.
-- `result.archived` stays an array of strings and `result.skipped` keeps its entry shape: `tests/bin-lib/reconcile/archive-merged.test.js:6062,6079,6101,6268` and `:5686,5706,5748,5764,5874,5891,6267` deep-equal them (return-shape widening check). The new data is a separate additive key.
+- `result.archived` stays an array of strings and `result.skipped` keeps its entry shape: `tests/bin-lib/reconcile/archive-merged-record-guards.test.js` (pre-split `archive-merged.test.js:6062,6079,6101,6268` and `:5686,5706,5748,5764,5874,5891,6267`) deep-equal them (return-shape widening check). The new data is a separate additive key.
 - From `.claude/skills/gh-api-module-pattern/SKILL.md`, verbatim: "**An argv array stops shell injection, not flag injection.** A caller-supplied value that begins with `-` is still read as an *option* by the command itself". The one interpolated value here is the full ref `symbolic-ref` printed (`refs/heads/...`), so no separator is owed.
 - From `.claude/skills/parse-signal-discipline/SKILL.md`, verbatim: "`grep` exits 1 for no match and 2 for an error; `git grep` exits 1 for no match and 128 when it cannot run. Reading empty output as \"no match\" collapses the two." Applied: `git for-each-ref` exit 0 with empty stdout is the only "no upstream" signal; a non-zero exit is `push state unknown`.
 - `.claude/skills/hooks-js-verb-registration`: no verb or flag changes here, so its registration sites do not apply. `.claude/skills/merge-shape-landed-proof` and the other skills naming `hooks.js`: no rule applies to a stdout line.
@@ -165,7 +165,7 @@ Expected: PASS, including every pre-existing `moved:` case unchanged (AC5.1).
 Run: `node --test --test-name-pattern="archiveRunDir|#3721" tests/reconcile.test.js`
 Expected: PASS.
 
-Run: `node --test tests/bin-lib/reconcile/archive-merged.test.js tests/path-guard-conformance.test.js tests/windows-hide-spawn-conformance.test.js`
+Run: `node --test tests/bin-lib/reconcile/archive-merged.test.js tests/bin-lib/reconcile/archive-merged-record-guards.test.js tests/path-guard-conformance.test.js tests/windows-hide-spawn-conformance.test.js`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -182,7 +182,7 @@ git commit -m "Report archive-run's commit and push state on stdout — refs #37
 **Files:**
 - Modify: `plugin/bin/lib/reconcile/archive-merged.js` (`archiveMergedRun`, `archiveMerged`)
 - Modify: `plugin/bin/lib/reconcile/index.js:575-584`
-- Test: `tests/reconcile.test.js` (`archiveAsyncMergedRun` fixture)
+- Test: `tests/reconcile-archive-residue.test.js` (`archiveAsyncMergedRun` fixture)
 
 **Interfaces:**
 - Consumes: `archiveRunDir`'s `commit` from Task 1.
@@ -223,7 +223,7 @@ Plus `#3721 a mixed pass names only the tracked run` over `archiveMerged` direct
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `node --test --test-name-pattern="#3721 AC4.1" tests/reconcile.test.js`
+Run: `node --test --test-name-pattern="#3721 AC4.1" tests/reconcile-archive-residue.test.js`
 Expected: FAIL after Step 1, `entry.commit` undefined.
 
 - [ ] **Step 3: Implement**
@@ -234,12 +234,12 @@ In `index.js:575`: `const commits = r.archiveCommits || {};` (stubbed `archiveMe
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `node --test tests/reconcile.test.js tests/bin-lib/reconcile/archive-merged.test.js`
+Run: `node --test tests/reconcile*.test.js tests/bin-lib/reconcile/archive-merged.test.js tests/bin-lib/reconcile/archive-merged-record-guards.test.js`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/bin/lib/reconcile/archive-merged.js plugin/bin/lib/reconcile/index.js tests/reconcile.test.js
+git add plugin/bin/lib/reconcile/archive-merged.js plugin/bin/lib/reconcile/index.js tests/reconcile-archive-residue.test.js
 git commit -m "Carry the archive commit into reconcile run entries — refs #3721"
 ```

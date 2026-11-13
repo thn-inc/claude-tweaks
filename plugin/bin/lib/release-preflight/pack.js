@@ -124,11 +124,16 @@ function isBotAuthor(a) {
   return /\[bot\]$/.test(String(a.login || '')) || /\[bot\]$/.test(String(a.name || '')) || /\[bot\]@users\.noreply\.github\.com$/.test(String(a.email || ''));
 }
 
-// Ruling 4: release-please's own branch prefix, or its PR title shape — a
-// version number after "release " distinguishes it from an unrelated
-// "chore: release notes"-style commit message.
-function isReleasePr(pr) {
-  return /^release-please--/.test(String(pr.headRefName || '')) || /^chore(\([^)]*\))?: release \d/.test(String(pr.title || ''));
+// Ruling 4 (#3931): release-please's own head branch for THIS integration
+// branch (`release-please--branches--{branch}`, or its per-component
+// `--components--…` form) selects. The title shape never does — a human PR
+// titled "chore: release 1.4.0 …" was picked by it — so RELEASE_TITLE_RE is
+// only a warning hint the releasePr probe names when nothing else matched.
+const RELEASE_TITLE_RE = /^chore(\([^)]*\))?: release \d/;
+function isReleasePr(pr, branch) {
+  const head = String(pr.headRefName || '');
+  const want = `release-please--branches--${branch}`;
+  return Boolean(branch) && (head === want || head.startsWith(`${want}--components--`));
 }
 
 function policyString(entry) {
@@ -307,11 +312,15 @@ function prepare({ deps, rootArg, runDir, cwd }) {
     if (needEngine() === 'local-merge') return 'none';
     const prListArgs = ['pr', 'list', '--state', 'open', '--limit', String(PR_LIST_LIMIT), '--json', 'number,state,mergeable,headRefName,title'];
     const prs = JSON.parse(await deps.execFileAsync('gh', prListArgs, ghOptions(prListArgs, { cwd })));
-    const pr = prs.find(isReleasePr);
+    const matches = prs.filter((p) => isReleasePr(p, branch));
+    if (matches.length > 1) throw new Error(`release PR search inconclusive: ${matches.length} open PRs on release-please--branches--${branch} heads (#${matches.map((p) => p.number).join(', #')})`);
+    const pr = matches[0];
     // A miss on a full page is not "there is no release PR" — the release PR
     // may simply be off the end of the page. Say so rather than reporting a
     // clean `none` the skill would act on.
     if (!pr && prs.length >= PR_LIST_LIMIT) throw new Error(`release PR search inconclusive: more than ${PR_LIST_LIMIT} open PRs`);
+    const titleOnly = prs.find((p) => RELEASE_TITLE_RE.test(String(p.title || '')));
+    if (!pr && titleOnly) throw new Error(`release PR not identified: #${titleOnly.number} has a release title but head ${titleOnly.headRefName}, not release-please--branches--${branch}`);
     return pr ? { number: pr.number, state: pr.state, mergeable: pr.mergeable, headRefName: pr.headRefName, title: pr.title } : 'none';
   });
 
@@ -351,13 +360,19 @@ function prepare({ deps, rootArg, runDir, cwd }) {
     ciTip: async () => {
       if (needEngine() === 'local-merge') return 'n/a';
       const localSha = deps.git(['rev-parse', tipRef]).trim();
-      const repoViewArgs = ['repo', 'view', '--json', 'nameWithOwner'];
-      const { nameWithOwner } = JSON.parse(await deps.execFileAsync('gh', repoViewArgs, ghOptions(repoViewArgs, { cwd })));
+      const repoViewArgs = ['repo', 'view', '--json', 'nameWithOwner,url'];
+      const { nameWithOwner, url } = JSON.parse(await deps.execFileAsync('gh', repoViewArgs, ghOptions(repoViewArgs, { cwd })));
+      // #3931: `gh repo view` reads origin's host, but a bare `gh api repos/…`
+      // goes to github.com — so an Enterprise origin's host rides along as
+      // --hostname, unless an exported GH_HOST already names one (it wins).
+      let host = null;
+      try { host = new URL(url).host; } catch { /* no url: gh's default host */ }
+      const hostArgs = host && host !== 'github.com' && !String((deps.env || process.env).GH_HOST || '').trim() ? ['--hostname', host] : [];
       // per_page belongs in the query string, not in `-f`: any -f/-F parameter
       // flips `gh api` to POST, and this endpoint answers a POST with 404 (seen
       // live against this repo before the switch). Every sibling call site in
       // the repo spells a GET parameter the same way.
-      const runsArgs = ['api', `repos/${nameWithOwner}/commits/${branch}/check-runs?per_page=100`];
+      const runsArgs = ['api', `repos/${nameWithOwner}/commits/${branch}/check-runs?per_page=100`, ...hostArgs];
       const runs = JSON.parse(await deps.execFileAsync('gh', runsArgs, ghOptions(runsArgs, { cwd })));
       const list = runs.check_runs || [];
       const counts = { total: runs.total_count || 0, success: 0, failure: 0, pending: 0 };
@@ -366,7 +381,7 @@ function prepare({ deps, rootArg, runDir, cwd }) {
         else if (r.conclusion === 'success' || r.conclusion === 'skipped' || r.conclusion === 'neutral') counts.success += 1;
         else counts.failure += 1;
       }
-      const shaArgs = ['api', `repos/${nameWithOwner}/commits/${branch}`, '--jq', '.sha'];
+      const shaArgs = ['api', `repos/${nameWithOwner}/commits/${branch}`, '--jq', '.sha', ...hostArgs];
       const headSha = list.length && list[0].head_sha
         ? String(list[0].head_sha)
         : (await deps.execFileAsync('gh', shaArgs, ghOptions(shaArgs, { cwd }))).trim();

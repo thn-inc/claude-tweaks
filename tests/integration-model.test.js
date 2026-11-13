@@ -10,31 +10,15 @@ const {
   detectIntegrationModel, resolveIntegrationModel, resolveForgeProbeTimeoutMs, formatForgeDegrade, resolvePolicyKeys, POLICY_KEYS,
 } = require('../plugin/bin/lib/policy-schema');
 const { readText } = require('./helpers/read-skill');
-const { pathWithOnly, STUB_SKIP } = require('./helpers/path-stub');
+const { STUB_SKIP } = require('./helpers/path-stub');
 const { fakeGh } = require('./helpers/fake-gh');
 const { toPosix } = require('../plugin/bin/lib/shared-primitives');
+const { gitRepo, ghAbsentPath, GH_REMOTE, withTimeoutEnv, writePolicy } = require('./helpers/integration-model');
+
+// The other half of the gh timeout ladder tests lives in tests/integration-model-gh-timeout.test.js.
 
 const RESOLVE_POLICY = path.join(__dirname, '..', 'plugin', 'bin', 'resolve-policy.js');
 const REPO_ROOT = path.join(__dirname, '..');
-
-function gitRepo({ remote } = {}) {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-intmodel-')));
-  execFileSync('git', ['-C', dir, 'init', '-q']);
-  if (remote) execFileSync('git', ['-C', dir, 'remote', 'add', 'origin', remote]);
-  return dir;
-}
-
-// Fakes "gh absent, git present" without an empty PATH — blanking PATH
-// entirely would also break the git remote-get-url probe that must keep
-// succeeding. pathWithOnly resolves git via the *current* PATH and returns
-// git's own directory as the override PATH; on some machines (this repo's dev
-// environment included) git and gh live in the SAME directory (e.g. both
-// under /opt/homebrew/bin via Homebrew), so when that directory also holds gh
-// it substitutes a scratch dir holding only a git symlink — git resolves, gh
-// does not.
-function ghAbsentPath() {
-  return pathWithOnly(['git'], { exclude: ['gh'] });
-}
 
 function runResolvePolicy(args, { cwd, env } = {}) {
   return execFileSync(process.execPath, [RESOLVE_POLICY, ...args], { cwd, env, encoding: 'utf8' });
@@ -114,47 +98,12 @@ test('detectIntegrationModel: mcpReachable:false is unchanged from no-override �
 
 // --- gh timeout ladder, retry-once, degrade callback (#4578) ---
 
-const GH_REMOTE = 'https://github.com/o/n.git';
-const TIMEOUT_ENV = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
-
-// Runs fn with CLAUDE_TWEAKS_GH_TIMEOUT_MS set to `value` (undefined -> deleted),
-// then restores the original — deleted when it was originally unset.
-function withTimeoutEnv(value, fn) {
-  const original = process.env[TIMEOUT_ENV];
-  if (value === undefined) delete process.env[TIMEOUT_ENV];
-  else process.env[TIMEOUT_ENV] = value;
-  try {
-    return fn();
-  } finally {
-    if (original === undefined) delete process.env[TIMEOUT_ENV];
-    else process.env[TIMEOUT_ENV] = original;
-  }
-}
-
-function writePolicy(dir, text) {
-  fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
-  fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), text);
-}
-
 test('detectIntegrationModel: gh-timeout-ms 20000 in policy.yml outlasts an 8 s gh -> pr-first (AC1.1, AC1.2)', { skip: STUB_SKIP }, () => {
   const dir = gitRepo({ remote: GH_REMOTE });
   writePolicy(dir, 'gh-timeout-ms: 20000\n');
   const gh = fakeGh({ first: { slow: 8 } });
   try {
     withTimeoutEnv(undefined, () => {
-      assert.strictEqual(detectIntegrationModel(dir), 'pr-first');
-    });
-    assert.strictEqual(gh.count(), 1);
-  } finally {
-    gh.restore();
-  }
-});
-
-test('detectIntegrationModel: CLAUDE_TWEAKS_GH_TIMEOUT_MS=20000 with no policy key outlasts an 8 s gh -> pr-first (AC2.1)', { skip: STUB_SKIP }, () => {
-  const dir = gitRepo({ remote: GH_REMOTE });
-  const gh = fakeGh({ first: { slow: 8 } });
-  try {
-    withTimeoutEnv('20000', () => {
       assert.strictEqual(detectIntegrationModel(dir), 'pr-first');
     });
     assert.strictEqual(gh.count(), 1);
@@ -193,21 +142,6 @@ test('detectIntegrationModel: timeout on the first call, success on the second -
   }
 });
 
-test('detectIntegrationModel: timeout then non-zero exit on retry -> degraded local-merge, two invocations, one degrade (AC14.1, AC14.2)', { skip: STUB_SKIP }, () => {
-  const dir = gitRepo({ remote: GH_REMOTE });
-  const gh = fakeGh({ first: 'hang', rest: 'fail' });
-  const seen = [];
-  try {
-    withTimeoutEnv(undefined, () => {
-      assert.strictEqual(detectIntegrationModel(dir, { timeoutMs: 1000, onDegrade: (d) => seen.push(d) }), 'local-merge');
-    });
-    assert.strictEqual(gh.count(), 2);
-    assert.deepStrictEqual(seen, [{ reason: 'timeout-then-exit', timeoutMs: 1000, attempts: 2 }]);
-  } finally {
-    gh.restore();
-  }
-});
-
 test('detectIntegrationModel: immediate non-zero gh exit -> local-merge, one invocation, no degrade (AC4.1)', { skip: STUB_SKIP }, () => {
   const dir = gitRepo({ remote: GH_REMOTE });
   const gh = fakeGh({ first: 'fail' });
@@ -218,20 +152,6 @@ test('detectIntegrationModel: immediate non-zero gh exit -> local-merge, one inv
     });
     assert.strictEqual(gh.count(), 1);
     assert.deepStrictEqual(seen, []);
-  } finally {
-    gh.restore();
-  }
-});
-
-test('detectIntegrationModel: a throwing onDegrade never escapes -> local-merge', { skip: STUB_SKIP }, () => {
-  const dir = gitRepo({ remote: GH_REMOTE });
-  const gh = fakeGh({ first: 'hang' });
-  try {
-    withTimeoutEnv(undefined, () => {
-      const result = detectIntegrationModel(dir, { timeoutMs: 1000, onDegrade: () => { throw new Error('boom'); } });
-      assert.strictEqual(result, 'local-merge');
-    });
-    assert.strictEqual(gh.count(), 2);
   } finally {
     gh.restore();
   }

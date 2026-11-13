@@ -15,7 +15,7 @@
 - Commit style: `{Verb} {what} — {detail}`, each commit ending with the line `Claude-Session: https://claude.ai/code/session_01JHXvgVY1gbatdE1MkN7JQw`.
 - Run every git/node command as one plain command per Bash call from the worktree root `/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude/worktrees/flow-spec-4692` (`git -C "<worktree>"` or the cwd; never `cd … &&`).
 - New CLI follows the `gh-api-module-pattern` project skill's CLI wrapper contract: `run(argv, deps)` seam, `require.main === module` guard assigning `process.exitCode` (never `process.exit`, `tests/bin-lib/exit-code-conformance.test.js`), `windowsHide: true` on every spawn.
-- `postMerge`'s observable behavior is unchanged: the existing `tests/bin-lib/reconcile/post-merge.test.js`, `tests/reconcile.test.js` and `tests/bin-lib/hooks/reconcile-background.test.js` stay green unmodified.
+- `postMerge`'s observable behavior is unchanged: the existing `tests/bin-lib/reconcile/post-merge.test.js`, `tests/reconcile-dispatch.test.js`, `tests/reconcile-archive-residue.test.js` and `tests/bin-lib/hooks/reconcile-background.test.js` stay green unmodified.
 - Archived is terminal for every resolver except merge mode's read-only `--archived` path: `cleanup-only` does not learn `--archived`.
 - Every new test is proven red by reverting the code/prose it pins, then restored.
 - Governing skill `gh-api-module-pattern` (`cli-wrapper-contract.md`), quoted verbatim for Task 2:
@@ -30,7 +30,7 @@
 - Verbatim command probed read-only (2026-11-01): `gh pr view 4742 --json mergeCommit,mergedAt,mergedBy,state` printed `{"mergeCommit":{"oid":"ba69ced9…"},"mergedAt":"2026-10-31T17:04:31Z","mergedBy":{…"login":"thomasholknielsen"…},"state":"MERGED"}`; `{mergedBy}` is `mergedBy.login`.
 - Waived AC8.1: npm test runs in full at /build Common Step 5 (verify.js), not as a plan task.
 - Waived plugin/bin/hooks.js: no verb is added — the single-run entry point is the standalone bin/post-merge-run.js per docs/hooks.md's standalone-vs-hooks.js rule (closing-links.js is the same-purpose precedent CLI).
-- Waived tests/reconcile.test.js: read-only — Task 1 Step 4 runs it unmodified to prove postMerge's behavior is unchanged.
+- Waived tests/reconcile-dispatch.test.js, tests/reconcile-archive-residue.test.js: read-only — Task 1 Step 4 runs them unmodified to prove postMerge's behavior is unchanged.
 
 ## Review Focus
 
@@ -83,7 +83,7 @@ Expected: FAIL — `postMergeOne is not a function` on the eight new tests; ever
 Run: `node --test tests/bin-lib/reconcile/post-merge.test.js`
 Expected: PASS (all, old and new)
 
-Run: `node --test tests/reconcile.test.js`
+Run: `node --test tests/reconcile-dispatch.test.js tests/reconcile-archive-residue.test.js`
 Expected: PASS
 
 Run: `node --test tests/bin-lib/hooks/reconcile-background.test.js`

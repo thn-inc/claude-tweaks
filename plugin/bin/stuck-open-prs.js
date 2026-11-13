@@ -29,7 +29,7 @@
 //   0  rows printed, possibly none
 //   2  malformed invocation, an unreadable or malformed --records file, `gh` absent, the repo or
 //      the main checkout unresolved, or an origin host that is not a known GitHub host (refused before
-//      any gh call, #4933; `GH_HOST={host}` opts in)
+//      any gh call, #4933; an exported `GH_HOST` opts in)
 //   4  the batched linked-PR read failed; no row is printed, since no failed read is taken as "no PR"
 'use strict';
 
@@ -50,7 +50,7 @@ const { stuckCandidates, stuckRow } = require('./lib/dispatch/stuck-open-pr');
 const USAGE = 'usage: stuck-open-prs.js --records <path> [--help]\n'
   + '  prints one JSON line: {rows:[{number, pr, remedy, title, createdAt, labels}]} (exit 0)\n'
   + '  exit 2 malformed invocation / unreadable --records / gh absent / repo or main checkout unresolved /\n'
-  + '    origin host not a known GitHub host (refused; GH_HOST={host} opts in);\n'
+  + '    origin host not a known GitHub host (refused; an exported GH_HOST opts in);\n'
   + '  exit 4 the linked-PR read failed; either prints {failed:{code, message}} once the invocation parsed\n';
 
 // ---- real deps ----

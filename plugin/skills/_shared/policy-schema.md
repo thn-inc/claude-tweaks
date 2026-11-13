@@ -12,32 +12,9 @@ Every project-config lever claude-tweaks skills read, in one place — the way `
 node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" [--values | --all] [--run "$PIPELINE_RUN_DIR"] <key> [<key>…]
 ```
 
-For shell-variable capture, `--values` prints one plain value per line in request order instead of the JSON envelope — coerced values render natively (`true`, `14`); an unset no-default key and an unknown key each print an empty line (the same empty string the retired grep pipeline produced); `model-profiles` and `risk-path-globs` have no scalar form and are invocation errors under `--values`. A present-but-invalid value prints its schema default on stdout with exit 0, and gets one stderr line naming the key, the rejected value and the default (#4141). JSON mode carries `invalid: true` instead. List-typed keys (e.g. `merge-sensitive-paths`) resolve to the raw comma-separated string in both modes when configured — callers split on `,`; only the unset default is a JSON `[]`, which `--values` renders as an empty line (same empty-means-none reading as the retired grep).
+Carve-outs (which keys skip the `--run` overlay, and the in-process `worktree-always` read): moved to `_shared/policy-schema-coverage.md`'s "Canonical read path carve-outs" section (#5119, rail headroom). Cite that file, not this stub.
 
-The `${CLAUDE_PLUGIN_ROOT}` spelling is a model-resolved placeholder, not a live env var — the substitution contract is `docs/skill-authoring.md`'s "Plugin-root references (`CLAUDE_PLUGIN_ROOT`)" section; follow it, it is not restated here.
-
-Output is a single JSON object keyed by requested key. Each key resolves to the envelope `{value, source}` with `source ∈ run-config | policy | default`; precedence is run `config.yml` (when `--run` is given) → `policy.yml` → schema default. Integers and booleans come back as native JSON types. Optional envelope fields:
-
-- `"renamed-from"` — the value arrived via a `RENAMED_KEYS` alias (deprecated key name in the source file)
-- `"invalid": true` — a present-but-rejected value degraded to the schema default; distinct from known-but-unset, which is `source: "default"` with no flag
-- `{"error": "unknown-key"}` — the requested key is not in the schema (no value/source)
-
-Carve-outs:
-
-- The PreToolUse hook's `worktree-always` read stays an in-process `bin/lib/policy.js` call — hot path, never shells out.
-- `model-profiles` is policy-only (the `--run` overlay never applies) and returns `{value: null, source: "default"}` when the block is absent. Any fragment-reader failure — a malformed block, or a malformed sibling model key such as `frontier-run-cap` (the reader parses all four model keys; its throws aren't sub-classified) — degrades to `{value: null, source: "default", invalid: true}`.
-- `risk-path-globs` is policy-only too (never reads `--run`) and returns `{value: {}, source: "default"}` when absent; a malformed block degrades to `{value: null, source: "default", invalid: true}`, never a partial map.
-- `deploy-command`, `owned-owners`, `trusted-authors` and `risk-categories` are `policyOnly`: the `--run` overlay never applies.
-
-**Derived-default keys** come in two shapes; both are live, so a new derived key picks one deliberately and states the choice in its row.
-
-*Shape A — resolve-time derivation, no static default* (`integration-model`, `merge-verification`): the `POLICY_KEYS` row carries no static `default`; the derivation's one prose statement lives here (`_shared/integration-model.md`'s forge-detection ladder; the `merge-verification` coverage block below) with a code twin in `bin/lib/` (`policy-schema.js`'s `detectIntegrationModel`; `merge-verification.js`'s `deriveMergeVerification`); `bin/resolve-policy.js` computes it only for an *absent* key (`source: "default"`, no `invalid` flag), never overwriting an `invalid: true` envelope; and `/claude-tweaks:help`'s policy mode renders the default as `computed (…)`.
-
-*Shape B — in-loop derivation over a static base default* (`housekeeping-auto-merge`, #580): the row keeps a static `default` as the base (`false`, the `supervised` base), so schema default and effective default differ; the derivation runs inside `bin/lib/policy-schema.js`'s `resolvePolicyKeys` (`deriveHousekeepingAutoMerge`); it fires for any entry that resolved `source: "default"` — unset **and** set-but-invalid (the `invalid: true` flag survives, the value is derived) — and keeps `source: "default"` because that field is the derived-vs-explicit attribution surface its consumers read. Pick B when an existing consumer must keep reading the value as a plain default; A otherwise. `/claude-tweaks:help`'s policy mode renders B's explicitly-set default as `computed (derived from autonomy)`, and surfaces an unset/still-derived divergence via a Notable-defaults finding, both per that skill's own render contract (#636).
-
-Consolidating the two is deferred until a further derived lever appears (#580's ledger). Adding a lever of either shape also walks `_shared/auto-mode-contract.md`'s "Adding a new policy lever" checklist when it is Manifesto-visible.
-
-`--all` emits the whole resolved config in one call: every schema key mapped to its `{value, source}` envelope plus its metadata fields and shape (`summary`, `category`, `tier`, `type`, `default` — `default` is JSON `null` when the row has none, which consumers read as "no default"). It composes with `--run`, takes no key arguments, and is mutually exclusive with `--values`. Renderers (the `/claude-tweaks:help` policy mode, init's policy review) consume this instead of enumerating key names by hand.
+The `--values` and JSON output formats, the `${CLAUDE_PLUGIN_ROOT}` spelling, the precedence statement, the **Derived-default keys** (Shape A, Shape B) and `--all`: moved to `_shared/policy-schema-read-path.md` (#5216, rail headroom). Cite that file, not this stub.
 
 ## `resolveValue` — canonical coercion contract
 
@@ -45,11 +22,7 @@ Moved to `_shared/policy-schema-coverage.md`'s section of the same name (#4847, 
 
 ## Metadata fields
 
-Every `POLICY_KEYS` row carries three human-facing fields alongside its shape: `summary`, `category`, and `tier`. `tests/policy-schema-metadata.test.js` pins completeness (a future lever cannot ship metadata-less), the category set against the mapping table below, the core-tier cap, and the no-duplication rule — the same prose↔constant pattern as `tests/hooks-gate-coverage.test.js`.
-
-- **`summary`** — one plain-language sentence stating *what changes when you move this lever* (style target ≤ ~120 chars; hard test ceiling 140). It never restates the key name or type, and carries no implementation citations. This is a different altitude from each key's Meaning column in the sections below: the summary is for a project owner scanning their config; the Meaning prose is the deep contract for skill authors. Neither replaces the other, and no summary text may be duplicated into this file (test-enforced).
-- **`category`** — one of the values in `POLICY_CATEGORIES` (exported beside `POLICY_KEYS`). The mapping below assigns every key-bearing section of this file to a category; it is many-sections-to-one-category, and a key may individually carry a different category than its section when its subject genuinely differs (the section mapping is orientation, the per-key field is truth).
-- **`tier`** — `core` or `advanced`. Decision rule: `core` = levers that change what the pipeline may *do without a human* — enforcement gates, autonomy/trust posture, merge/execution defaults, integration identity. Tuning caps, thresholds, retention, and cosmetic/reporting knobs are `advanced`. The core tier is capped at 12 keys (enforced, not advisory).
+The three human-facing fields every `POLICY_KEYS` row carries — `summary`, `category` and `tier`: moved to `_shared/policy-schema-read-path.md`'s Metadata fields section (#5216, rail headroom). Cite that file, not this stub. The mapping table below stays here.
 
 | Section | Category |
 |---------|----------|
@@ -124,6 +97,9 @@ Canonical defaults for the keys in this section also live in `_shared/work-recor
 | `dispatch-fastlane-bundle-cap` | `policy.yml` | `/claude-tweaks:dispatch` | `3` | Caps how many non-overlapping `ceremony:fast-lane` singleton groups `queue-pull-script.md` folds into one multi-spec group, sharing one preflight/wrap-up tail across the bundle instead of paying it per record — `0` turns bundling off, leaving every record its own group |
 | `express-lane` | `policy.yml` | `/claude-tweaks:dispatch`, `/claude-tweaks:flow` (`_shared/express-lane.md`) | `false` | Opts a project into the express lane: a small, low-risk singleton record builds, tests and merges-on-green in one agent instead of the full `/flow` frame |
 | `express-review-sample-every` | `policy.yml` | `/claude-tweaks:dispatch`, `/claude-tweaks:flow` (`_shared/express-lane.md`) | `5` | Every Nth express-lane merge is sent through the normal review lenses after it lands, and what they find is filed as records. `0` and negative values are schema-invalid (`min: 1`) |
+| `express-driver` | `policy.yml` | `bin/drive.js` (#5218) | `off` | Routes records to the pipeline driver: `off`, `split` (even record numbers only — a cheap split, not an unbiased one; numbers cluster by filing batch) or `on`. Unset or malformed (`invalid: true`) gives `off`. `policyOnly`: it routes records to autonomous machinery, so a `--run` config never switches it. `split` is temporary — dropped for `on` or `off` once each arm has 20 merged records (Phase 4 parent record) |
+| `express-driver-wall-clock-minutes` | `policy.yml` | `bin/drive.js` (#5218) | `30` | Minutes one record's driver run may take. Unset or malformed gives `30`; `0` is never unlimited (`min: 1`). `policyOnly`: ceilings bound autonomous spend, so a `--run` config never sets it |
+| `express-driver-spend-ceiling-dollars` | `policy.yml` | `bin/drive.js` (#5218) | `10` | Whole dollars one record's driver run may spend. Unset or malformed gives `10`; `0` is never unlimited (`min: 1`). `policyOnly`: it bounds autonomous spend, so a `--run` config never raises it |
 | `auto-merge-max-lines` | `policy.yml` | `/claude-tweaks:dispatch`, `/claude-tweaks:assess-agent-autonomy` | `40` | Auto-merge blast-radius guideline (lines) — a weighted input to the `merge-check` verdict, not a hard cutoff |
 | `auto-merge-max-files` | `policy.yml` | `/claude-tweaks:dispatch`, `/claude-tweaks:assess-agent-autonomy` | `2` | Auto-merge blast-radius guideline (files) — same weighted treatment |
 | `merge-sensitive-paths` | `policy.yml` | `/claude-tweaks:assess-agent-autonomy`, `/claude-tweaks:review` | `[]` (empty) | Comma-separated path globs forcing a hard needs-human floor in the `merge-check` verdict, and feeding `/review`'s diff-heuristic risk proxy |
@@ -220,7 +196,7 @@ Registered by #4029; read by `readEfficiencyCeilings` in `bin/lib/policy.js` for
 
 ## Control mode
 
-Inert unless a row names its owner (#4609, #4608). `control-mode: on` implies its levers at skill-default precedence: an explicitly set lever wins, and `autonomy` is unchanged. Every other key here is consulted only when it is `on`. `isControlModeOn` in `bin/lib/policy.js` is the one comparison site (exactly `on`). Built-in risk slugs: `migrations`, `auth`, `public-contract`, `irreversible-side-effect`. A list is written on one line as `a,b`: a quoted or bracketed list is rejected and a dash-style block is ignored. `owned-owners` and `trusted-authors` entries are logins, compared case-insensitively by consumers; `risk-categories` entries are slugs. An entry is never empty and holds no `@`, `/`, inner space or bracket other than a trailing `[bot]` (`a, b` is fine). On a flat key a `#` ends the value even inside quotes, so `deploy-command` stops there; `deploy-command`, `deploy-live-workflow` and `dev-test-account` reject a value left inside an unclosed quote (a `"` opens anywhere, a `'` at a word start) or a blank quoted one, and drop outer quotes only when they enclose the whole value. URL keys are written unquoted.
+Built-in risk slugs: `migrations`, `auth`, `public-contract`, `irreversible-side-effect`. The rest of this section's intro (flat-key list syntax, login and slug entries, quoting rules): moved to `_shared/policy-schema-read-path.md`'s Control mode section (#5216, rail headroom). Cite that file, not this stub.
 
 | Key | Canonical home | Owner skill(s) | Default | Meaning |
 |---|---|---|---|---|
@@ -260,3 +236,4 @@ These levers resolve from `.claude-tweaks/policy.yml`, like every other lever in
 | `release-tip-moves` | `policy.yml` | `/claude-tweaks:release` Step 5 (`execute.md`'s reviewed-tip comparison, #4041) | `2` | Each move of `origin/{branch}` past Step 3's reviewed tip runs one delta review; the move after the last allowed one holds the release `integration branch kept moving`. Floor `0`: it holds on the first move. Not a Manifesto lever |
 | `specify-budget` | `policy.yml` | `/claude-tweaks:specify` | `5` | Default attempt-count budget for a bare `/specify` drain invocation with no `--budget` flag — sibling of `dispatch-batch-size` above; `n`/`all` semantics are canonical in `_shared/record-batch-input.md`'s `--budget` section (#1491) |
 | `specify-decomposition-log` | `policy.yml` | `/claude-tweaks:specify` (decomposition mode, `record-creation-subissues.md`'s Ceremony tally) | `false` | When `true`, a decomposition batch carrying two or more `ceremony:standard` sub-issues appends one entry (batch size, those records' refs, session id/host/cwd) to `docs/specify-decomposition-log.md`, which Step 9's commit picks up — a watch-item record can then confirm the event happened without the session's transcript. At `false` the step is skipped outright: no tally, no file, no output (#3128) |
+| `verify-suite-slots` | `policy.yml` only (`policyOnly`: the `--run` overlay never applies; not a Manifesto lever) | `/claude-tweaks:test` — passed to `bin/verify.js` as `--default-suite-slots {n}`; verify.js never reads `policy.yml` | `1` | Positive integer: how many suites and baseline adjudications may run at once machine-wide. A `concurrency.suiteSlots` declared in `.claude-tweaks/verify-scope.json` wins over it. Unset resolves `1`; `3` resolves `3`; a malformed value (`0`, `two`) resolves `1` with `invalid: true` in the full form |

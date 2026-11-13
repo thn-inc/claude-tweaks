@@ -11,13 +11,13 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn, spawnSync } = require('child_process');
+const { execFileSync, spawn, spawnSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 const {
   resolveConcurrency, resolveSlots, listTestFiles, buildTestArgs,
   isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, createRunRoot, sweepStaleRoots, readFileList, slotLane,
-  subsetFallbackReason,
+  subsetFallbackReason, gitFixtureConfigEnv,
 } = require(path.join(ROOT, 'tools', 'run-tests.js'));
 
 test('resolveConcurrency defaults to half the cores, at least 1', () => {
@@ -140,8 +140,9 @@ function withTempDir(fn) {
   }
 }
 
+// `label` as tools/run-tests.js passes it: the shared module's own default is neutral (#5119).
 function slotArgs(dir, over) {
-  return { dir, slots: 1, pid: 111, cwd: '/work/a', isAlive: () => false, now: Date.now, log: () => {}, sleep: () => {}, ...over };
+  return { dir, slots: 1, pid: 111, cwd: '/work/a', isAlive: () => false, now: Date.now, log: () => {}, sleep: () => {}, label: 'run-tests.js', ...over };
 }
 
 const noSleep = () => { throw new Error('sleep must not be called'); };
@@ -743,6 +744,14 @@ async function withSandbox(fixture, testName, fn) {
 }
 
 const RUNNER = path.join(ROOT, 'tools', 'run-tests.js');
+// Places a copy of the runner at `<root>/tools/run-tests.js` beside the slot-lock module it requires
+// (`<root>/plugin/bin/lib/suite-slot.js`), so a copied runner starts the way the real one does.
+function copyRunner(root) {
+  const lib = path.join(root, 'plugin', 'bin', 'lib');
+  fs.mkdirSync(lib, { recursive: true });
+  fs.copyFileSync(path.join(ROOT, 'plugin', 'bin', 'lib', 'suite-slot.js'), path.join(lib, 'suite-slot.js'));
+  fs.copyFileSync(RUNNER, path.join(root, 'tools', 'run-tests.js'));
+}
 const PROBE = ['tmpdir-probe.fixture.js', 'probe.test.js'];
 const runRunner = (sb, { env = sb.env, timeout = 60000 } = {}) =>
   spawnSync(process.execPath, [RUNNER, sb.suiteRoot], { cwd: ROOT, env, encoding: 'utf8', timeout });
@@ -772,6 +781,27 @@ test('run-tests.js holds the suite slot for the runner pid while the suite runs,
     const recorded = JSON.parse(fs.readFileSync(sb.probeOut, 'utf8'));
     assert.strictEqual(recorded.lockPid, result.pid);
     assert.deepStrictEqual(SLOT_LOCKS(sb.slotDir), []);
+  });
+});
+
+// #5297: the maintenance-off entries must reach the spawned `node --test` tree, appended after the
+// caller's own GIT_CONFIG_* entry — the unit tests of gitFixtureConfigEnv cannot see the wiring.
+test('run-tests.js gives the suite maintenance-off git config after a caller-exported entry', async () => {
+  await withSandbox(...PROBE, (sb) => {
+    const env = { ...sb.env };
+    for (const k of Object.keys(env)) if (k.startsWith('GIT_CONFIG_')) delete env[k];
+    Object.assign(env, { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.autocrlf', GIT_CONFIG_VALUE_0: 'true' });
+    const result = runRunner(sb, { env, timeout: 120000 });
+    assert.strictEqual(result.status, 0, result.stdout + result.stderr);
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(sb.probeOut, 'utf8')).git, {
+      GIT_CONFIG_COUNT: '3',
+      GIT_CONFIG_KEY_0: 'core.autocrlf',
+      GIT_CONFIG_VALUE_0: 'true',
+      GIT_CONFIG_KEY_1: 'maintenance.auto',
+      GIT_CONFIG_VALUE_1: 'false',
+      GIT_CONFIG_KEY_2: 'gc.auto',
+      GIT_CONFIG_VALUE_2: '0',
+    });
   });
 });
 
@@ -830,7 +860,7 @@ test('run-tests.js --files-from runs exactly the listed files, resolved against 
     const root = path.join(sb.suiteRoot, 'repo root');
     fs.mkdirSync(path.join(root, 'tools'), { recursive: true });
     fs.mkdirSync(path.join(root, 'tests'));
-    fs.copyFileSync(RUNNER, path.join(root, 'tools', 'run-tests.js'));
+    copyRunner(root);
     const fixtures = path.join(ROOT, 'tests', 'fixtures', 'run-tests');
     fs.copyFileSync(path.join(fixtures, 'tmpdir-probe.fixture.js'), path.join(root, 'tests', 'one.test.js'));
     fs.copyFileSync(path.join(fixtures, 'tmpdir-probe.fixture.js'), path.join(root, 'tests', 'two.test.js'));
@@ -870,7 +900,7 @@ test('a --files-from subset does not wait behind a held full-suite slot', async 
     const root = path.join(sb.suiteRoot, 'repo');
     fs.mkdirSync(path.join(root, 'tools'), { recursive: true });
     fs.mkdirSync(path.join(root, 'tests'));
-    fs.copyFileSync(RUNNER, path.join(root, 'tools', 'run-tests.js'));
+    copyRunner(root);
     fs.copyFileSync(path.join(ROOT, 'tests', 'fixtures', 'run-tests', 'tmpdir-probe.fixture.js'), path.join(root, 'tests', 'one.test.js'));
     const list = path.join(sb.suiteRoot, 'list.txt');
     fs.writeFileSync(list, 'tests/one.test.js\n');
@@ -895,7 +925,7 @@ test('a --files-from subset refuses a slot base that is a symlink', {
     const root = path.join(sb.suiteRoot, 'repo');
     fs.mkdirSync(path.join(root, 'tools'), { recursive: true });
     fs.mkdirSync(path.join(root, 'tests'));
-    fs.copyFileSync(RUNNER, path.join(root, 'tools', 'run-tests.js'));
+    copyRunner(root);
     fs.copyFileSync(path.join(ROOT, 'tests', 'fixtures', 'run-tests', 'tmpdir-probe.fixture.js'), path.join(root, 'tests', 'one.test.js'));
     const list = path.join(sb.suiteRoot, 'list.txt');
     fs.writeFileSync(list, 'tests/one.test.js\n');
@@ -1156,7 +1186,7 @@ test('#4134 AC2.1: a win32 --files-from subset too long for the command line run
     const root = path.join(sb.suiteRoot, 'repo root');
     fs.mkdirSync(path.join(root, 'tools'), { recursive: true });
     fs.mkdirSync(path.join(root, 'tests'));
-    fs.copyFileSync(RUNNER, path.join(root, 'tools', 'run-tests.js'));
+    copyRunner(root);
     const names = Array.from({ length: 400 }, (_, i) => `tests/${'a'.repeat(90)}${i}.test.js`);
     for (const name of names) fs.writeFileSync(path.join(root, name), '');
     const list = path.join(sb.suiteRoot, 'list.txt');
@@ -1180,4 +1210,46 @@ test('#4134 AC2.1: a win32 --files-from subset too long for the command line run
     assert.strictEqual(SLOT_LOCKS(sb.slotDir).length, 1, fs.readdirSync(sb.slotDir).join(', '));
     assert.ok(!fs.existsSync(path.join(sb.slotDir, 'subset')), 'a fallen-back run must not take the subset lane');
   });
+});
+
+// #5297: fixture git commits/pushes each started `git maintenance run --auto`; the suite's child
+// env now carries config that turns it off, appended after any GIT_CONFIG_* the caller inherited.
+test('gitFixtureConfigEnv appends the two entries at index 0 and 1 when none are inherited', () => {
+  const input = { PATH: '/x' };
+  const copy = { ...input };
+  assert.deepStrictEqual(gitFixtureConfigEnv(input), {
+    PATH: '/x',
+    GIT_CONFIG_COUNT: '2',
+    GIT_CONFIG_KEY_0: 'maintenance.auto', GIT_CONFIG_VALUE_0: 'false',
+    GIT_CONFIG_KEY_1: 'gc.auto', GIT_CONFIG_VALUE_1: '0',
+  });
+  assert.deepStrictEqual(input, copy, 'the input env must not be mutated');
+});
+
+test('gitFixtureConfigEnv appends after an inherited GIT_CONFIG_COUNT without clobbering it', () => {
+  const input = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.autocrlf', GIT_CONFIG_VALUE_0: 'true' };
+  const copy = { ...input };
+  assert.deepStrictEqual(gitFixtureConfigEnv(input), {
+    GIT_CONFIG_COUNT: '3',
+    GIT_CONFIG_KEY_0: 'core.autocrlf', GIT_CONFIG_VALUE_0: 'true',
+    GIT_CONFIG_KEY_1: 'maintenance.auto', GIT_CONFIG_VALUE_1: 'false',
+    GIT_CONFIG_KEY_2: 'gc.auto', GIT_CONFIG_VALUE_2: '0',
+  });
+  assert.deepStrictEqual(input, copy, 'the input env must not be mutated');
+});
+
+test('gitFixtureConfigEnv returns an unchanged copy when GIT_CONFIG_COUNT is not a non-negative integer', () => {
+  const input = { GIT_CONFIG_COUNT: 'abc', PATH: '/x' };
+  const copy = { ...input };
+  const out = gitFixtureConfigEnv(input);
+  assert.deepStrictEqual(out, { GIT_CONFIG_COUNT: 'abc', PATH: '/x' });
+  assert.notStrictEqual(out, input);
+  assert.deepStrictEqual(input, copy, 'the input env must not be mutated');
+});
+
+test('gitFixtureConfigEnv: real git reads maintenance.auto=false from the returned env', () => {
+  const out = execFileSync('git', ['config', '--get', 'maintenance.auto'], {
+    env: gitFixtureConfigEnv(process.env), encoding: 'utf8',
+  }).trim();
+  assert.strictEqual(out, 'false');
 });

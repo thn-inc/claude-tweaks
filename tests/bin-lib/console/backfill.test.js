@@ -598,7 +598,7 @@ test('R17: a claim never starts with a bare line ref, a separator or `and`', () 
     for (const f of splitDecisionLine(line).findings) assert.ok(f.claim === '' || /^[A-Za-z(]/.test(f.claim), f.claim);
   }
   assert.ok(splitDecisionLine(R17_SLASH).findings[0].claim.startsWith('unrelated prose trims'));
-  assert.ok(splitDecisionLine(R17_SLASH_COLON).findings[0].claim.startsWith('share a location but not substance'));
+  assert.ok(splitDecisionLine(R17_SLASH_COLON).findings[0].claim.startsWith('closingIssuesReferences matched'));
   assert.ok(splitDecisionLine(R17_LIST).findings[0].claim.startsWith('citer list hard-coded'));
   assert.ok(splitDecisionLine(R17_AND).findings[0].claim.startsWith('findPrsForBranch'));
 });
@@ -703,7 +703,7 @@ test('minor 9: a bare number after prose punctuation is claim text, not a locati
   assert.strictEqual(splitDecisionLine(r3Line('not reproduced: -1 is returned when the guard finds no match')).findings[0].claim, '-1 is returned when the guard finds no match');
   assert.strictEqual(splitDecisionLine(r3Line('not reproduced. :3 is an index into the stale table')).findings[0].claim, ':3 is an index into the stale table');
   // Refs after a list separator are still a location list's tail.
-  assert.ok(splitDecisionLine(R17_SLASH_COLON).findings[0].claim.startsWith('share a location but not substance'));
+  assert.ok(splitDecisionLine(R17_SLASH_COLON).findings[0].claim.startsWith('closingIssuesReferences matched'));
 });
 
 test('minor 10: removing a ledger-row ref never leaves a fragment inside a parenthetical', () => {
@@ -796,4 +796,27 @@ test('summarize counts kinds', () => {
   assert.deepStrictEqual(summarize(buildWorkList({ pipelinesRoot: pipelines, mainSha: MAIN_SHA })), {
     runs: 1, consoles: 1, items: 4, byKind: { finding: 1, 'no-claim': 1, 'staged-kind': 2 }, findingsMaxFiled: 1,
   });
+});
+
+// #4198: the second backfill pass's three bad claims.
+const R4198_COORD = '- STAGED 09:12:04 — log-decision: Reproduction: lens "3f" findings plugin/skills/dispatch/close-out.md:63 / plugin/skills/dispatch/close-out.md:61 share a location but not substance; both staged.';
+const R4198_COORD_MIXED = '- STAGED 09:12:04 — log-decision: Reproduction: lens "3f" finding plugin/skills/dispatch/close-out.md:40 (the close-out step reads the ledger before the PR is marked ready). Reproduction: lens "3f" findings plugin/skills/dispatch/close-out.md:63 / plugin/skills/dispatch/close-out.md:61 share a location but not substance; both staged.';
+const R4198_LIVENESS = '- STAGED 14:03:51 — log-decision: Reproduction: lens "3a" finding plugin/bin/lib/run-liveness/index.js:70 not reproduced (a future-dated heartbeatAt reads fresh; fails safe toward live, makes a run unreapable until the clock passes it). Lens 3a findings plugin/bin/lib/run-liveness/resume-freshness.js:41 (lastCommitMs duplicates the inline read; the two can drift apart) and tests/bin-lib/run-liveness/stamp-site.test.js:88 (stamp-site tests assert only that a stamp is written; no case shows a stale stamp would fail) and plugin/bin/lib/run-liveness/index.js:112 not reproduced (the reaper reads and writes the run-state without a lock). Staged to Review Console as low-confidence. Reversibility: high.';
+
+test('#4198: a coordination note (`A / B share a location but not substance; both staged`) is never a claim', () => {
+  assert.deepStrictEqual(splitDecisionLine(R4198_COORD), { findings: [], noClaim: 'claim-empty' });
+  const { findings } = splitDecisionLine(R4198_COORD_MIXED);
+  assert.deepStrictEqual(findings.map((f) => [f.line, f.claim]), [
+    [40, 'the close-out step reads the ledger before the PR is marked ready'], [63, ''], [61, ''],
+  ]);
+});
+
+test('#4198: a claim never ends in a joining `and` or the next sentence\'s `Lens 3x findings` lead-in', () => {
+  assert.deepStrictEqual(splitDecisionLine(R4198_LIVENESS).findings.map((f) => f.claim), [
+    'a future-dated heartbeatAt reads fresh; fails safe toward live, makes a run unreapable until the clock passes it',
+    'lastCommitMs duplicates the inline read; the two can drift apart',
+    'stamp-site tests assert only that a stamp is written; no case shows a stale stamp would fail',
+    // A connective inside a kept claim stays.
+    'the reaper reads and writes the run-state without a lock',
+  ]);
 });

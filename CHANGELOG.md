@@ -53,6 +53,83 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.166.0](https://github.com/thn-inc/claude-tweaks/compare/v6.165.0...v6.166.0) (2026-11-12)
+
+
+### Features
+
+* Driver lane admission and the express-driver policy keys ([#5216](https://github.com/thn-inc/claude-tweaks/issues/5216)) ([59df73a](https://github.com/thn-inc/claude-tweaks/commit/59df73add2e02c90288b51d0d33d6804966398b8))
+* Headless worker launcher with per-role rights ([#5217](https://github.com/thn-inc/claude-tweaks/issues/5217)) ([d7409c5](https://github.com/thn-inc/claude-tweaks/commit/d7409c5eda8bd161ee70b2f43a454377cad21e7b))
+* Probe Grep and Glob for the implementer worker where it has no shell ([#5239](https://github.com/thn-inc/claude-tweaks/issues/5239)) ([e882af4](https://github.com/thn-inc/claude-tweaks/commit/e882af4a03507962a8d04bbca5f61a7d31849124))
+
+### Highlights
+* Added the admission rules and settings the upcoming pipeline driver uses to decide which records it may take on.
+* Records a Grep and Glob containment probe for the driver's headless implementer worker in its module header; the implementer's tool list is unchanged until Linux and Windows hosts are probed.
+* Settle 3 small deferred findings in policy.
+* Added the headless worker launcher the upcoming pipeline driver uses, with narrow per-role permissions.
+
+## [6.165.0](https://github.com/thn-inc/claude-tweaks/compare/v6.164.0...v6.165.0) (2026-11-11)
+
+
+### Features
+
+* Ship the machine-wide full-suite slot lock to consumer… ([#5119](https://github.com/thn-inc/claude-tweaks/issues/5119)) ([f0d68d5](https://github.com/thn-inc/claude-tweaks/commit/f0d68d551b651b434bee6dcc800bc04fb796d480))
+
+
+### Bug Fixes
+
+* A scoped verify at the integration tip runs zero suites… ([#4638](https://github.com/thn-inc/claude-tweaks/issues/4638)) ([fd77f3b](https://github.com/thn-inc/claude-tweaks/commit/fd77f3b1965a8297e3988238a103411cb89b1721))
+* issue-branch-tracking.js: the generated track-issue-fixes… ([#5152](https://github.com/thn-inc/claude-tweaks/issues/5152)) ([18c73c6](https://github.com/thn-inc/claude-tweaks/commit/18c73c625ba597b42ab7e9369715b0a857064db9))
+* pr-first-merge Step 2.5: checks are read right after gh… ([#5153](https://github.com/thn-inc/claude-tweaks/issues/5153)) ([8e1a10b](https://github.com/thn-inc/claude-tweaks/commit/8e1a10b79c6075a7f3df0c51b5ccbab642852734))
+* Test-impact selection never fires: .claude/skills/**… ([#4321](https://github.com/thn-inc/claude-tweaks/issues/4321)) ([828bb7e](https://github.com/thn-inc/claude-tweaks/commit/828bb7e175243b8786349c44f537d8f123b8d7e9))
+* verify.js baseline adjudication: concurrency=4 per-file… ([#5150](https://github.com/thn-inc/claude-tweaks/issues/5150)) ([73691c5](https://github.com/thn-inc/claude-tweaks/commit/73691c54ead049d851a6a471249edc850be51c7f))
+
+### Highlights
+* A verification run whose changed files map to tests can no longer report the tree as verified without running them.
+* Pipeline test runs pick only the affected tests far more often, cutting several minutes from most builds.
+* Baseline adjudication now reruns failing files one at a time unless the project declares otherwise, never fans out when failures look like timeouts, and reuses one scratch checkout per slot instead of creating a new one each run.
+* Make the pr-first merge gate wait for the CI run that marking a PR ready starts, and refuse to merge a PR whose CI skips drafts but never runs on ready. Document a supported "CI skips draft PRs" setup.
+* Parallel pipeline sessions on one machine now queue their test suites and baseline reruns behind a shared slot instead of running them all at once; a project sets how many may run together in verify-scope.json.
+* Stop the generated issue-tracking workflow from starting a billed runner on pushes that reference no issue, and from running at all on the plugin's bookkeeping branches. Re-run `/claude-tweaks:init` to pick up the new file.
+
+## [6.164.0](https://github.com/thn-inc/claude-tweaks/compare/v6.163.0...v6.164.0) (2026-11-09)
+
+
+### Features
+
+* Take the full-suite verification from the PR's CI run… ([#4347](https://github.com/thn-inc/claude-tweaks/issues/4347)) ([dc88ac4](https://github.com/thn-inc/claude-tweaks/commit/dc88ac4e1a489abf3cf66b1a489fb6f9da3332b3))
+
+### Highlights
+* Projects can point final test verification at their CI run, so a pipeline waits a few minutes for CI instead of running the whole suite on a busy local machine.
+
+## [6.163.0](https://github.com/thn-inc/claude-tweaks/compare/v6.162.1...v6.163.0) (2026-11-09)
+
+
+### Features
+
+* Cut redundant local full-suite runs in pipelines… ([#5117](https://github.com/thn-inc/claude-tweaks/issues/5117)) ([2dc5e6d](https://github.com/thn-inc/claude-tweaks/commit/2dc5e6dd62db89a002f2d70ff215b4c9362e0877))
+* Render a per-session segment file in the statusline ([#5126](https://github.com/thn-inc/claude-tweaks/issues/5126)) ([bf3ed43](https://github.com/thn-inc/claude-tweaks/commit/bf3ed434892b9f84eff444c04886cac91142b37b))
+
+
+### Bug Fixes
+
+* Refuse controls inside a session segment's OSC 8 link ([#5129](https://github.com/thn-inc/claude-tweaks/issues/5129)) ([dde61cb](https://github.com/thn-inc/claude-tweaks/commit/dde61cb9686e4be9161a0cb91d8e8c410fe0fe3c))
+
+### Highlights
+* Pipelines now run the full test suite once per branch instead of once per plan task plus a worktree baseline run, which cuts local CPU and memory load when several sessions run in parallel.
+
+## [6.162.1](https://github.com/thn-inc/claude-tweaks/compare/v6.162.0...v6.162.1) (2026-11-05)
+
+
+### Bug Fixes
+
+* Host-qualify the origin-derived repo slug so a GHE… ([#4794](https://github.com/thn-inc/claude-tweaks/issues/4794)) ([fb75da2](https://github.com/thn-inc/claude-tweaks/commit/fb75da2c63da7192bc5e8c94e366457728e24f69))
+* Replace post-merge.js hand-rolled takeClaim with a… ([#4797](https://github.com/thn-inc/claude-tweaks/issues/4797)) ([bf3ac1e](https://github.com/thn-inc/claude-tweaks/commit/bf3ac1ef8cddc4393537edf08c4db7d2f9738ffe))
+
+### Highlights
+* Reconcile and claim-store `gh` calls now reach the right host when your origin is a GitHub Enterprise server.
+* Two background post-merge passes can no longer run the same parent-close step at once when one of them stalls.
+
 ## [6.162.0](https://github.com/thn-inc/claude-tweaks/compare/v6.161.0...v6.162.0) (2026-11-04)
 
 

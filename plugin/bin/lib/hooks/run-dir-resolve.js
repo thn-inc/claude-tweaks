@@ -216,8 +216,8 @@ function resolve(opts = {}) {
 
   // --root-only: just the anchored main-checkout root, no run resolution at
   // all. For call sites that only ever needed $RUN_ROOT itself (a `find`
-  // backstop scoped to the whole pipelines/ tree, the wrap-up transitional
-  // copy-out guard's DEST computation), not a specific run's directory.
+  // backstop scoped to the whole pipelines/ tree), not a specific run's
+  // directory.
   if (opts.rootOnly) return ok(mainRoot, false);
 
   // #4677: `--archived` is read-only — it returns an existing run dir or fails, never mints one —

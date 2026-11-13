@@ -3,25 +3,42 @@
 // hand-assembled before this (close state, remove worktree, delete local branch, delete remote
 // ref). It never archives the run dir since #3490 — `archive-run` does.
 'use strict';
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { teardownRun, defaultGhApiDelete, findWorktreeEntry, branchOfWorktree } = require('../plugin/bin/lib/hooks/teardown-run');
 const { parseWorktreeList } = require('../plugin/bin/lib/hooks/worktree-reap');
+const { runGit } = require('../plugin/bin/lib/hooks/git-exec');
+const { ownerBlock } = require('../plugin/bin/lib/hooks/context');
+const { LIVE_WINDOW_MS } = require('../plugin/bin/lib/run-liveness/constants');
+const { gateOriginRepo } = require('../plugin/bin/lib/repo-resolve');
 const { readText } = require('./helpers/read-skill');
+const { fromTemplate } = require('./helpers/git-template');
 
 function git(root, ...args) {
   return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8' });
 }
 
+// Every fixture root (its linked worktree lives inside it) is removed once the file's tests finish.
+const fixtureRoots = [];
+after(() => {
+  for (const root of fixtureRoots) fs.rmSync(root, { recursive: true, force: true });
+});
+
 // Main checkout on `trunk` (the integration branch, via policy.yml — never "main"), a fake
 // `origin` remote (repoSpecOf only reads its URL from git config, no network hit), and one
 // linked worktree on `feat-branch` recorded as the run's own worktree.
 function fixtureRepo() {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-td-')));
+  const root = fromTemplate('teardown-run-fixture', buildFixtureRepo, { prefix: 'ct-td-', realpath: true });
+  fixtureRoots.push(root);
+  const wt = path.join(root, '.claude', 'worktrees', 'feat');
+  const runId = '2026-08-01T090000-spec-9';
+  return { root, wt, runDir: path.join(root, '.claude-tweaks', 'pipelines', runId), runId };
+}
+function buildFixtureRepo(root) {
   git(root, 'init', '-q', '-b', 'trunk');
   git(root, 'config', 'user.email', 't@example.com');
   git(root, 'config', 'user.name', 'T');
@@ -46,7 +63,6 @@ function fixtureRepo() {
   git(root, 'commit', '-q', '-m', 'materialize #9');
   fs.writeFileSync(path.join(runDir, 'config.yml'), 'mode: auto\n');
   fs.writeFileSync(path.join(runDir, 'decisions.md'), '# log\n');
-  return { root, wt, runDir, runId };
 }
 
 function writeRunState(runDir, state) {
@@ -402,11 +418,33 @@ test('AC8.1 teardown (#4933): an unknown origin host issues no gh DELETE and ski
   });
 
   assert.deepStrictEqual(calls, [], 'no gh DELETE is issued for an unknown host');
-  const refLines = result.lines.filter((l) => l.startsWith('remote ref: skipped —'));
+  const refLines = result.lines.filter((l) => l.startsWith('remote ref: skipped (unknown-host) —'));
   assert.strictEqual(refLines.length, 1, result.lines.join('\n'));
   assert.match(refLines[0], /git\.corp\.invalid/);
   assert.match(refLines[0], /GH_HOST=git\.corp\.invalid/);
   assert.ok(!result.lines.some((l) => l.startsWith('remote ref: deleted')));
+});
+
+test('#4794: teardown-run on an SSH-alias origin issues no gh DELETE and skips with the alias advice', (t) => {
+  const origin = 'git@github-work:acme/widgets.git';
+  const { root, wt, runDir } = fixtureRepo();
+  git(root, 'remote', 'set-url', 'origin', origin);
+  writeRunState(runDir, { status: 'active', worktree: wt, sessionId: 'me' });
+
+  const emptyGhConfig = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-td-ghcfg-')));
+  t.after(() => fs.rmSync(emptyGhConfig, { recursive: true, force: true }));
+  const refusal = gateOriginRepo(origin, { env: {}, readFile: () => { throw new Error('ENOENT'); } }).refusal;
+  assert.ok(refusal, 'the gate refuses an SSH-alias origin');
+  const calls = [];
+  const result = withEnv({ GH_HOST: undefined, GH_CONFIG_DIR: emptyGhConfig }, () => teardownRun(runDir, {
+    mode: 'merged', sessionId: 'me', deps: { ghApiDelete: fakeGhApiDelete(calls, { ok: true }) },
+  }));
+
+  assert.deepStrictEqual(calls, [], 'no gh DELETE is issued for an SSH-alias origin');
+  const refLines = result.lines.filter((l) => l.startsWith('remote ref:'));
+  assert.deepStrictEqual(refLines, [`remote ref: skipped (unknown-host) — ${refusal}`]);
+  assert.match(refLines[0], /GH_HOST=github\.com/);
+  assert.doesNotMatch(refLines[0], /GH_HOST=github-work/);
 });
 
 test('AC16 (#3088): own-worktree teardown — no worktree recorded, local branch already deleted (ExitWorktree), but run-state.json pr.branch is set -> remote ref delete is still attempted', () => {
@@ -532,4 +570,210 @@ test('#3695 AC3: no strict worktree-path compare remains at either call site', (
   const src = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'teardown-run.js'));
   assert.doesNotMatch(src, /\.path\s*[!=]==?/);
   assert.ok((src.match(/findWorktreeEntry\(/g) || []).length >= 2);
+});
+
+// #5293: a --merged teardown from a later session proceeds when run-liveness reads the recording
+// session's run `dead`; every other verdict/mode keeps the whole-teardown refusal. The owner block
+// is the real writer's shape (context.js ownerBlock); run-liveness's probes are injected (pidAlive,
+// pidStartedAt) so those verdicts do not depend on the platform. The locked-worktree test is the
+// exception: teardown's lockVerdict and run-liveness's lock probe read the real isPidAlive there,
+// against an exited child's pid (a reused pid would fail red, never falsely green). `now` is
+// pushed past LIVE_WINDOW_MS so the fixture's fresh heartbeat and fresh commit read stale.
+function deadPid() {
+  return spawnSync(process.execPath, ['-e', '']).pid;
+}
+
+function foreignOwnedRun(pid, deps = {}) {
+  const fx = fixtureRepo();
+  fs.writeFileSync(path.join(fx.runDir, 'events.jsonl'), '');
+  const owner = ownerBlock({ sessionId: 'someone-else', deps: { resolveOwnerPid: () => ({ pid, pidSource: 'env' }), ...deps } });
+  return { ...fx, state: { sessionId: 'someone-else', owner } };
+}
+
+function staleLiveness(probes) {
+  return { now: Date.now() + 2 * LIVE_WINDOW_MS, probes };
+}
+
+test('#5293: dead owner, merged — a later session tears the run down', () => {
+  const { root, wt, runDir, state } = foreignOwnedRun(deadPid());
+  writeRunState(runDir, { status: 'active', worktree: wt, ...state });
+  const calls = [];
+  const result = teardownRun(runDir, {
+    mode: 'merged', sessionId: 'me', liveness: staleLiveness({ pidAlive: () => false }),
+    deps: { ghApiDelete: fakeGhApiDelete(calls, { ok: true }) },
+  });
+
+  assert.match(result.lines[0], /^owner: session someone-else is not running \(run-liveness: dead\)/);
+  assert.ok(result.lines.some((l) => l.startsWith('state: closed')), result.lines.join('\n'));
+  assert.doesNotMatch(git(root, 'worktree', 'list'), /feat-branch/);
+  assert.strictEqual(git(root, 'branch', '--list', 'feat-branch').trim(), '');
+  assert.deepStrictEqual(calls, [['repos/acme/widgets/git/refs/heads/feat-branch']]);
+});
+
+test('#5293: dead owner, merged, worktree locked by the dead session — unlocks then removes', () => {
+  const pid = deadPid();
+  const { root, wt, runDir, state } = foreignOwnedRun(pid);
+  git(root, 'worktree', 'lock', '--reason', `claude session someone-else (pid ${pid})`, wt);
+  writeRunState(runDir, { status: 'active', worktree: wt, ...state });
+  const calls = [];
+  const result = teardownRun(runDir, {
+    mode: 'merged', sessionId: 'me', liveness: staleLiveness({ pidAlive: () => false }),
+    deps: { ghApiDelete: fakeGhApiDelete(calls, { ok: true }) },
+  });
+
+  assert.match(result.lines[0], /^owner: session someone-else is not running \(run-liveness: dead\)/);
+  assert.doesNotMatch(git(root, 'worktree', 'list'), /feat-branch/);
+  assert.strictEqual(git(root, 'branch', '--list', 'feat-branch').trim(), '');
+  assert.deepStrictEqual(calls, [['repos/acme/widgets/git/refs/heads/feat-branch']]);
+});
+
+test('#5293: dead owner, merged, the unlock of the dead session\'s lock fails — reported, worktree kept, no removal', () => {
+  const pid = deadPid();
+  const { root, wt, runDir, state } = foreignOwnedRun(pid);
+  git(root, 'worktree', 'lock', '--reason', `claude session someone-else (pid ${pid})`, wt);
+  writeRunState(runDir, { status: 'active', worktree: wt, ...state });
+  const gitCalls = [];
+  const failingUnlock = (args) => {
+    gitCalls.push(args);
+    return { failure: 'exit', exitCode: 1, stderr: 'unlock refused (test)' };
+  };
+  const result = teardownRun(runDir, {
+    mode: 'merged', sessionId: 'me', liveness: staleLiveness({ pidAlive: () => false }),
+    deps: { ghApiDelete: fakeGhApiDelete([], { ok: true }), runGit: failingUnlock },
+  });
+
+  assert.ok(result.lines.includes("worktree: skipped — unlock of the dead session's lock failed (unlock refused (test))"), result.lines.join('\n'));
+  assert.deepStrictEqual(gitCalls, [['worktree', 'unlock', wt]]);
+  assert.match(git(root, 'worktree', 'list'), /feat-branch/);
+  assert.ok(!result.lines.some((l) => l.startsWith('worktree: removed')), result.lines.join('\n'));
+});
+
+test('#5293: live owner, merged — still refused', () => {
+  const pidStartTime = () => 'Mon Jan  1 00:00:00 2026';
+  const { root, wt, runDir, state } = foreignOwnedRun(process.pid, { pidStartTime });
+  writeRunState(runDir, { status: 'active', worktree: wt, ...state });
+  const calls = [];
+  const result = teardownRun(runDir, {
+    mode: 'merged', sessionId: 'me', liveness: staleLiveness({ pidAlive: () => true, pidStartTime }),
+    deps: { ghApiDelete: fakeGhApiDelete(calls, { ok: true }) },
+  });
+
+  assert.strictEqual(result.lines.length, 1);
+  assert.match(result.lines[0], /refused .* another session \(run-liveness: live\)/);
+  assert.match(git(root, 'worktree', 'list'), /feat-branch/);
+  assert.notStrictEqual(git(root, 'branch', '--list', 'feat-branch').trim(), '');
+  assert.strictEqual(calls.length, 0);
+});
+
+test('#5293: dead owner, abandoned — still refused', () => {
+  const { root, wt, runDir, state } = foreignOwnedRun(deadPid());
+  writeRunState(runDir, { status: 'active', worktree: wt, ...state });
+  const calls = [];
+  const result = teardownRun(runDir, {
+    mode: 'abandoned', sessionId: 'me', deps: { ghApiDelete: fakeGhApiDelete(calls, { ok: true }) },
+  });
+
+  assert.strictEqual(result.lines.length, 1);
+  assert.match(result.lines[0], /refused .* another session \(run-liveness: not checked\)/);
+  assert.match(git(root, 'worktree', 'list'), /feat-branch/);
+  assert.notStrictEqual(git(root, 'branch', '--list', 'feat-branch').trim(), '');
+  assert.strictEqual(calls.length, 0);
+});
+
+test('#5293: unknown liveness, merged — still refused', () => {
+  const { root, wt, runDir, state } = foreignOwnedRun(deadPid());
+  state.owner.host = 'some-other-host';
+  writeRunState(runDir, { status: 'active', worktree: wt, ...state });
+  const calls = [];
+  const result = teardownRun(runDir, {
+    mode: 'merged', sessionId: 'me', liveness: staleLiveness({ pidAlive: () => false }),
+    deps: { ghApiDelete: fakeGhApiDelete(calls, { ok: true }) },
+  });
+
+  assert.strictEqual(result.lines.length, 1);
+  assert.match(result.lines[0], /refused .* another session \(run-liveness: unknown\)/);
+  assert.match(git(root, 'worktree', 'list'), /feat-branch/);
+  assert.notStrictEqual(git(root, 'branch', '--list', 'feat-branch').trim(), '');
+  assert.strictEqual(calls.length, 0);
+});
+
+test('#5293: dead owner, merged, run already closed by Section C step 3.6', () => {
+  const { root, wt, runDir, state } = foreignOwnedRun(deadPid());
+  writeRunState(runDir, {
+    status: 'clean', worktree: null, worktreeAtClose: wt,
+    pr: { number: 1, branch: 'feat-branch' }, ...state,
+  });
+  const calls = [];
+  const result = teardownRun(runDir, {
+    mode: 'merged', sessionId: 'me', liveness: staleLiveness({ pidAlive: () => false }),
+    deps: { ghApiDelete: fakeGhApiDelete(calls, { ok: true }) },
+  });
+
+  assert.match(result.lines[0], /^owner: session someone-else is not running \(run-liveness: dead\)/);
+  assert.doesNotMatch(git(root, 'worktree', 'list'), /feat-branch/);
+  assert.strictEqual(git(root, 'branch', '--list', 'feat-branch').trim(), '');
+  assert.deepStrictEqual(calls, [['repos/acme/widgets/git/refs/heads/feat-branch']]);
+});
+
+// The three tests below recover the worktree path through the branch (run-state `worktree: null`, as
+// in the step-3.6 test above), so Step 3 lists the lock via listedWorktreeEntry, not the Step-0 entry.
+// With no recorded worktree run-liveness's lock/commit probes return no-worktree, so the dead owner
+// pid alone reads `dead` and Step 3's lock handling is reachable.
+function branchRecoveredRun(pid, lockReason) {
+  const fx = foreignOwnedRun(pid);
+  git(fx.root, 'worktree', 'lock', '--reason', lockReason, fx.wt);
+  writeRunState(fx.runDir, {
+    status: 'active', worktree: null, pr: { number: 1, branch: 'feat-branch' }, ...fx.state,
+  });
+  return fx;
+}
+
+function teardownMergedRecordingGit(runDir) {
+  const gitCalls = [];
+  const recordingGit = (args, cwd) => { gitCalls.push(args); return runGit(args, cwd); };
+  const calls = [];
+  const result = teardownRun(runDir, {
+    mode: 'merged', sessionId: 'me', liveness: staleLiveness({ pidAlive: () => false }),
+    deps: { ghApiDelete: fakeGhApiDelete(calls, { ok: true }), runGit: recordingGit },
+  });
+  return { result, gitCalls, calls };
+}
+
+test('#5293: dead owner, merged, branch-recovered worktree with an orphaned lock — unlocks, removes, deletes the branch', () => {
+  const pid = deadPid();
+  const { root, wt, runDir } = branchRecoveredRun(pid, `claude session someone-else (pid ${pid})`);
+  const { result, gitCalls, calls } = teardownMergedRecordingGit(runDir);
+
+  assert.match(result.lines[0], /^owner: session someone-else is not running \(run-liveness: dead\)/);
+  assert.deepStrictEqual(gitCalls, [['worktree', 'unlock', wt]]);
+  assert.ok(result.lines.some((l) => l.startsWith('worktree: removed')), result.lines.join('\n'));
+  assert.doesNotMatch(git(root, 'worktree', 'list'), /feat-branch/);
+  assert.strictEqual(git(root, 'branch', '--list', 'feat-branch').trim(), '');
+  assert.deepStrictEqual(calls, [['repos/acme/widgets/git/refs/heads/feat-branch']]);
+});
+
+test('#5293: dead owner, merged, branch-recovered worktree whose lock names no pid — never unlocked, git refuses the removal', () => {
+  const { root, wt, runDir } = branchRecoveredRun(deadPid(), 'locked by an unknown session');
+  const { result, gitCalls } = teardownMergedRecordingGit(runDir);
+
+  assert.match(result.lines[0], /^owner: session someone-else is not running \(run-liveness: dead\)/);
+  assert.ok(!gitCalls.some((a) => a[0] === 'worktree' && a[1] === 'unlock'), JSON.stringify(gitCalls));
+  assert.ok(result.lines.some((l) => /^worktree: skipped — removal failed \(.*locked/i.test(l)), result.lines.join('\n'));
+  assert.ok(fs.existsSync(wt), 'worktree directory must remain');
+  assert.match(git(root, 'worktree', 'list', '--porcelain'), /locked/);
+  assert.match(git(root, 'worktree', 'list'), /feat-branch/);
+});
+
+test('#5293: dead owner, merged, branch-recovered worktree locked by a live pid — never unlocked, reported locked', () => {
+  // run-liveness reads only state.worktree for its lock probe, so with `worktree: null` the live
+  // lock is invisible to it and the owner still reads dead; teardown's own lockVerdict ('in-use')
+  // is the guard that keeps the live session's worktree.
+  const { root, wt, runDir } = branchRecoveredRun(deadPid(), `claude session test (pid ${process.pid} start now)`);
+  const { result, gitCalls } = teardownMergedRecordingGit(runDir);
+
+  assert.match(result.lines[0], /^owner: session someone-else is not running \(run-liveness: dead\)/);
+  assert.ok(!gitCalls.some((a) => a[0] === 'worktree' && a[1] === 'unlock'), JSON.stringify(gitCalls));
+  assert.ok(result.lines.includes('worktree: skipped — worktree locked'), result.lines.join('\n'));
+  assert.ok(fs.existsSync(wt), 'worktree directory must remain');
+  assert.match(git(root, 'worktree', 'list'), /feat-branch/);
 });

@@ -16,10 +16,11 @@ const fs = require('fs');
 const { closeRunState } = require('./close-run-state');
 // repoSpecOf keeps the host a GitHub Enterprise Server remote carries, so Step 5's `gh api` call targets it, not github.com.
 const { runGit, repoSpecOf } = require('./git-exec');
-const { parseWorktreeList, findWorktreeEntry, isWorktreeLocked, resolveIntegrationBranch, bareIntegrationName } = require('./worktree-reap');
+const { parseWorktreeList, findWorktreeEntry, isWorktreeLocked, lockVerdict, resolveIntegrationBranch, bareIntegrationName } = require('./worktree-reap');
 const { mainCheckoutRoot } = require('./worktree-detect');
 const { fallbackBranch, worktreePathForBranch } = require('./run-integrity');
 const { ghOptions } = require('../repo-resolve');
+const { runLiveness } = require('../run-liveness');
 
 const GH_TIMEOUT_MS = 15000;
 
@@ -66,19 +67,25 @@ function modeGateSkip(mode, branch, isIntegrationBranch, label) {
 // worktree isn't registered at all. Deliberately independent from run-integrity.js's own
 // deriveBranch — that one derives branch to build shipped-unclosed EVIDENCE and stays scoped to
 // that read-only advisory; this one is a plain lookup for a step about to actually mutate state.
-function branchOfWorktree(root, worktreePath) {
+function listedWorktreeEntry(root, worktreePath) {
   if (!worktreePath) return null;
   const list = runGit(['worktree', 'list', '--porcelain'], root);
   if (list.failure || list.stdout === null) return null;
-  const entry = findWorktreeEntry(parseWorktreeList(list.stdout), worktreePath);
+  return findWorktreeEntry(parseWorktreeList(list.stdout), worktreePath);
+}
+
+function branchOfWorktree(root, worktreePath) {
+  const entry = listedWorktreeEntry(root, worktreePath);
   return entry ? (entry.branch || null) : null;
 }
 
 // `runDir` — the run directory (already resolved/anchored by the caller, same contract as
 // close-run). `opts.mode` — 'merged' | 'abandoned' | null (neither flag given — treated the same
 // as 'abandoned' for steps 4-5: skip branch/ref deletion rather than guess intent). `opts.deps`
-// — test seam for the gh call only; every git call goes through the real runGit (fixture repos
-// are real git repos, matching this codebase's existing convention for reconcile/archive tests).
+// — test seam for the gh call and (`deps.runGit`) the dead-owner unlock call only; every other
+// git call goes through the real runGit (fixture repos are real git repos, matching this
+// codebase's existing convention for reconcile/archive tests). `opts.liveness` — passed through to
+// runLiveness as its `{ now, probes }` options (#5293), so a test can inject the owner verdict's probes.
 // #3023: a failed git call's best available cause — stderr when git wrote any,
 // else its exit status (plus stdout when present), else the failure category
 // (e.g. timeout, spawn), so "no error text" only appears when nothing at all
@@ -148,7 +155,10 @@ function teardownRun(runDir, opts = {}) {
   // fallbackBranch() itself is gated (never fires when a worktree WAS
   // recorded but is merely gone from disk — that case keeps its existing
   // "no branch recorded" behavior unchanged, per AC9 below).
-  const branch = (root ? branchOfWorktree(root, worktreePath) : null)
+  // The listed entry is kept: Step 3's dead-owner unlock reads its lock state from it (#5293) rather
+  // than listing worktrees a further time.
+  const recordedEntry = root ? listedWorktreeEntry(root, worktreePath) : null;
+  const branch = (recordedEntry ? (recordedEntry.branch || null) : null)
     || (prevState && prevState.branch)
     || (!worktreePath && root
       ? (fallbackBranch(root, runDir, prevState)
@@ -169,12 +179,17 @@ function teardownRun(runDir, opts = {}) {
   const integration = root ? bareIntegrationName(resolveIntegrationBranch(root)) : null;
   const isIntegrationBranch = !!(branch && integration && branch === integration);
 
-  // `explicit: false` here is deliberate, not a copy-paste of close-run's default: teardown-run
-  // has no "override the refusal" input of its own the way close-run's --run does (--run here
-  // just names which run to act on) — extending close-run's foreignOwner refusal means it applies
-  // unconditionally, the same shape as close-run's own implicit path. A foreign-owned run refuses
-  // the WHOLE teardown (no worktree removal, no branch/ref delete) rather than
-  // partially acting — tearing down another session's live run out from under it is the hazard.
+  // `explicit: false` on this first call is deliberate, not a copy-paste of close-run's default:
+  // teardown-run has no "override the refusal" input of its own the way close-run's --run does
+  // (--run here just names which run to act on). A foreign-owned run refuses the WHOLE teardown
+  // (no worktree removal, no branch/ref delete) rather than partially acting — tearing down another
+  // session's live run out from under it is the hazard. #5293 narrows that refusal by one case it
+  // was never meant to cover: a --merged teardown of a run whose recorded owner is provably dead.
+  // run-liveness's verdict (the shared owner-pid / heartbeat / worktree-lock / last-commit judgment)
+  // is asked only under --merged, and only `dead` overrides; `live`, `unknown`, and every non-merged
+  // mode keep the whole-teardown refusal. On `dead` the call is repeated with `explicit: true` (the
+  // override close-run's own --run takes) and Step 3 first unlocks a worktree lock whose recorded
+  // pid is no longer running.
   // `state.notYetArchived` (closeRunState's #1103 advisory field, surfaced as a warning by
   // hooks.js's standalone close-run verb) is deliberately left unread here — teardown-run never
   // archives (#3490), and Step 2's own line names `archive-run` as the archival step, so the
@@ -188,12 +203,19 @@ function teardownRun(runDir, opts = {}) {
   // (never a real signal) for any run whose sessionId was never recorded, permanently refusing
   // a legitimate self-teardown. The foreignOwner check just above is teardown-run's actual
   // protection and stays active.
-  const state = closeRunState(runDir, {
-    explicit: false, callerIdentity: { sessionId, cwd }, checkLiveWorktree: false,
-  });
+  const closeOpts = { explicit: false, callerIdentity: { sessionId, cwd }, checkLiveWorktree: false };
+  let state = closeRunState(runDir, closeOpts);
+  let deadOwnerOverride = false;
 
   if (state.status === 'refused-foreign') {
-    return { lines: ['state: refused — run recorded by another session; teardown-run does not override this'] };
+    const refusal = (verdict) => ({ lines: [`state: refused — run recorded by another session (run-liveness: ${verdict}); teardown-run overrides this only for a --merged teardown of a run whose owner is dead`] });
+    if (mode !== 'merged') return refusal('not checked');
+    const liveness = runLiveness(runDir, opts.liveness);
+    if (liveness.verdict !== 'dead') return refusal(liveness.verdict);
+    state = closeRunState(runDir, { ...closeOpts, explicit: true });
+    deadOwnerOverride = true;
+    const owner = typeof prevState.sessionId === 'string' && prevState.sessionId ? prevState.sessionId : 'unknown';
+    lines.push(`owner: session ${owner} is not running (run-liveness: dead) — merged teardown proceeds from this session`);
   }
   if (state.status === 'refused-live-worktree') {
     return { lines: ['state: refused — run has no recorded owner and its worktree still exists on disk; teardown-run does not override this'] };
@@ -226,8 +248,28 @@ function teardownRun(runDir, opts = {}) {
   // Step 3 (worktree removal) — never forced; a locked worktree means either a live session
   // (including this session's own ground, per [IL-58] — that removal path is ExitWorktree only)
   // or an unresolvable state, and worktree-reap.js's predicates fail CLOSED either way.
+  // #5293: on the dead-owner path only, a lock whose recorded pid is no longer running (lockVerdict
+  // 'orphaned') is the dead session's own leftover — unlock it so the removal below can proceed.
+  // The reaper's ORPHAN_GRACE_MS (24h, isStale) is not applied: it guards against a pid change while
+  // the session is alive, and run-liveness's `dead` verdict already covers that (a resumed session
+  // re-stamps the owner block at SessionStart). An 'in-use' lock stays locked and falls to the skip
+  // below; a pid-less ('unknown') lock is never unlocked either, so it reaches `git worktree remove`,
+  // which git refuses ("worktree: skipped — removal failed (…locked…)").
+  let unlockFailure = null;
+  if (deadOwnerOverride && effectiveWorktreePath) {
+    // Reuse the Step-0 listing when the recorded path is the effective one; only a
+    // branch-recovered path needs its own.
+    const lockedEntry = effectiveWorktreePath === worktreePath ? recordedEntry : listedWorktreeEntry(root, effectiveWorktreePath);
+    if (lockedEntry && lockVerdict(lockedEntry) === 'orphaned') {
+      const unlockGit = (opts.deps && opts.deps.runGit) || runGit;
+      const unlock = unlockGit(['worktree', 'unlock', effectiveWorktreePath], root);
+      if (unlock.failure) unlockFailure = unlock;
+    }
+  }
   if (!effectiveWorktreePath) {
     lines.push('worktree: skipped — no worktree recorded');
+  } else if (unlockFailure) {
+    lines.push(`worktree: skipped — unlock of the dead session's lock failed (${describeGitFailure(unlockFailure)})`);
   } else if (isWorktreeLocked(effectiveWorktreePath, { cwd: root })) {
     lines.push('worktree: skipped — worktree locked');
   } else {
@@ -288,8 +330,9 @@ function teardownRun(runDir, opts = {}) {
     if (!repoSpec) {
       lines.push('remote ref: skipped — could not resolve owner/repo');
     } else if (repoSpec.refusal) {
-      // #4933: an origin on a host that is not a known GitHub host never reaches gh.
-      lines.push(`remote ref: skipped — ${repoSpec.refusal}`);
+      // #4933: an origin on a host that is not a known GitHub host never reaches gh. The reason
+      // word is the one every other gated path reports (#4794).
+      lines.push(`remote ref: skipped (unknown-host) — ${repoSpec.refusal}`);
     } else {
       const result = ghApiDelete(
         [`repos/${repoSpec.owner}/${repoSpec.repo}/git/refs/heads/${branch}`],

@@ -4,7 +4,8 @@
 // sub-file) and backlog/refine-risk-flags.md (classify, the one batch question, the
 // reverified `risk-flags.js confirm` write, the Step 1 snapshot refresh), the record
 // contract's `## Risk flag lines` section in _shared/work-record.md, and the two risk
-// policy rows in _shared/policy-schema.md. Reads the live skill files — this pins prose
+// policy rows in _shared/policy-schema.md, with the Control mode intro in
+// _shared/policy-schema-read-path.md. Reads the live skill files — this pins prose
 // we just wrote (skill-prose-conformance-tests' live-vs-fixture distinction), the same
 // house style as tests/risk-flags-prose-conformance.test.js: one assertion function per
 // concern, and every literal pin has a go-red control that runs the same function
@@ -29,11 +30,13 @@ const SUBFILE = 'plugin/skills/backlog/refine-risk-flags.md';
 const REFINE_HEADLESS = 'plugin/skills/backlog/refine-headless.md';
 const WORK_RECORD = 'plugin/skills/_shared/work-record.md';
 const POLICY_SCHEMA = 'plugin/skills/_shared/policy-schema.md';
+// The Control mode intro moved here from policy-schema.md (#5216, rail headroom).
+const POLICY_READ_PATH = 'plugin/skills/_shared/policy-schema-read-path.md';
 const read = (rel) => readText(path.join(ROOT, rel));
 
 const LIVE = {
   refine: read(REFINE), sub: read(SUBFILE), headless: read(REFINE_HEADLESS),
-  workRecord: read(WORK_RECORD), policy: read(POLICY_SCHEMA),
+  workRecord: read(WORK_RECORD), policy: read(POLICY_SCHEMA), readPath: read(POLICY_READ_PATH),
 };
 
 const CONFIRM_CALL = '"${CLAUDE_PLUGIN_ROOT}/bin/risk-flags.js" confirm';
@@ -61,7 +64,13 @@ const refusedParagraph = (sub) => lineStarting(subSection(sub, 'Refused'), '**Wh
 const riskSection = (workRecord) => between(workRecord, '\n## Risk flag lines\n', '\n## ');
 const policyRow = (policy, key) => lineStarting(policy, `| \`${key}\` |`);
 const ownerCell = (row) => (row.split('|')[3] || '').trim();
-const controlIntro = (policy) => lineStarting(between(policy, '\n## Control mode\n', '\n| Key |'), 'Inert');
+// The intro is the first non-blank line under the heading; the section runs to the end of its file.
+const CONTROL_HEADING = '\n## Control mode — how the keys apply\n';
+const controlIntro = (readPath) => {
+  const start = readPath.indexOf(CONTROL_HEADING);
+  if (start === -1) return '';
+  return readPath.slice(start + CONTROL_HEADING.length).split('\n').find((l) => l.trim() !== '') || '';
+};
 
 function missing(pins, texts) {
   const out = [];
@@ -216,7 +225,7 @@ const POLICY_PINS = [
   ['risk-categories owner cell', 'policy', cats, '`risk-flags.js`'],
   ['risk-categories owner cell', 'policy', cats, '`plan-audit.js`'],
   ['risk-path-globs owner cell', 'policy', globs, '`risk-flags.js`'],
-  ['Control mode intro', 'policy', (t) => controlIntro(t.policy), 'Inert unless a row names its owner'],
+  ['Control mode intro', 'readPath', (t) => controlIntro(t.readPath), 'Inert unless a row names its owner'],
 ];
 function policyFailures(texts) {
   const out = missing(POLICY_PINS, texts);

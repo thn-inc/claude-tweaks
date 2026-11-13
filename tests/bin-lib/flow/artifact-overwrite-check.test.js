@@ -385,6 +385,47 @@ test('the top-level walk guards the interpolated {base}..{head} range with --end
   const rangeIdx = calls[0].indexOf('main..HEAD');
   assert.ok(rangeIdx > 0, 'range token should be present');
   assert.strictEqual(calls[0][rangeIdx - 1], '--end-of-options', 'the range token must be immediately preceded by --end-of-options');
+  assert.strictEqual(calls[0][rangeIdx + 1], '--', 'with no integrationRef the pathspec separator follows the range directly');
+});
+
+test('integrationRef appends ^{ref} right after the range, and an empty walk makes only the two guard count calls', () => {
+  const calls = [];
+  const fakeGit = (args) => {
+    calls.push(args);
+    return ''; // empty name-status log and empty counts — clean, no A/M events, no commits at all
+  };
+  const result = checkArtifactOverwrite({ base: 'main', head: 'HEAD', integrationRef: 'up', git: fakeGit, cwd: '/fake' });
+  assert.strictEqual(result.clean, true);
+  assert.strictEqual(calls.length, 3, 'the walk plus the two empty-walk guard counts; the --parents rev-list stays lazy');
+  assert.ok(calls.slice(1).every((c) => c[0] === 'rev-list' && c.includes('--count') && !c.includes('--parents')));
+  const rangeIdx = calls[0].indexOf('main..HEAD');
+  assert.ok(rangeIdx > 0, 'range token should be present');
+  assert.strictEqual(calls[0][rangeIdx + 1], '^up', 'the exclusion token follows the range');
+  assert.strictEqual(calls[0][rangeIdx + 2], '--', 'the pathspec separator follows the exclusion token');
+});
+
+test('an empty walk whose whole range is reachable from integrationRef fails closed instead of reading clean', () => {
+  const fakeGit = (args) => {
+    if (args[0] === 'log') return ''; // the exclusion swallowed every event
+    if (args[0] === 'rev-list' && args.includes('--count')) return args.includes('^up') ? '0\n' : '3\n';
+    throw new Error(`unexpected git call: ${args.join(' ')}`);
+  };
+  assert.throws(
+    () => checkArtifactOverwrite({ base: 'main', head: 'HEAD', integrationRef: 'up', git: fakeGit, cwd: '/fake' }),
+    (err) => err instanceof ArtifactOverwriteCheckError && /reachable from up/.test(err.message) && /omit --integration-ref/.test(err.message),
+  );
+});
+
+test('an empty walk with run commits outside integrationRef stays clean (no journey edits is not a mis-timed run)', () => {
+  const fakeGit = (args) => {
+    if (args[0] === 'log') return '';
+    if (args[0] === 'rev-list' && args.includes('--count')) return args.includes('^up') ? '2\n' : '5\n';
+    throw new Error(`unexpected git call: ${args.join(' ')}`);
+  };
+  assert.deepStrictEqual(
+    checkArtifactOverwrite({ base: 'main', head: 'HEAD', integrationRef: 'up', git: fakeGit, cwd: '/fake' }),
+    { clean: true, overwrites: [] },
+  );
 });
 
 test('a git-command failure (e.g. an unresolvable --base) throws ArtifactOverwriteCheckError, not a raw Error', () => {
@@ -1262,4 +1303,222 @@ test('computeSpecWindows: an empty-string startedAt is absent data, so phases[].
   let result;
   assert.doesNotThrow(() => { result = computeSpecWindows(manifest); });
   assert.deepStrictEqual(result, { windows: [{ id: 10, start: Date.parse(T0), end: Infinity }], off: null });
+});
+
+// --- Integration-ref exclusion and run-commit membership (refs #4845) ---
+//
+// A catch-up merge (the integration branch merged into the run's branch) brings
+// upstream commits into {base}..{head}. `integrationRef` excludes everything
+// reachable from the integration branch from the walk, so those commits are
+// never a run event; a deleted line blamed to a commit outside the run's own
+// rev-list is pre-run content; a line blamed to a merge commit inside the run
+// fails closed. The walk deliberately keeps merge-back (`--no-ff`) wave members
+// as run events, so it never uses --first-parent or --no-merges.
+
+// A repo with branch `up` (the integration branch) at base and the run on `run`.
+function upstreamRepo() {
+  const fx = repo();
+  fx.git('branch', 'up');
+  fx.git('checkout', '-q', '-b', 'run');
+  return fx;
+}
+function onUp(fx, fn) {
+  fx.git('checkout', '-q', 'up');
+  const value = fn();
+  fx.git('checkout', '-q', 'run');
+  return value;
+}
+function mergeIn(fx, branch) {
+  fx.git('merge', '-q', '--no-ff', '--no-edit', branch);
+  return fx.git('rev-parse', 'HEAD').trim();
+}
+function check(fx, extra) {
+  return checkArtifactOverwrite({ base: fx.base, paths: ['docs/journeys/'], cwd: fx.dir, ...extra });
+}
+
+test('AC1.1: an upstream journey a catch-up merge brought in, edited by a run spec, is clean with integrationRef', () => {
+  const fx = upstreamRepo();
+  write(fx.dir, 'docs/journeys/a.md', '# A\n\n## Step 1\nFirst content.\n');
+  commit(fx, 'Add journey a (refs #1)');
+  onUp(fx, () => {
+    write(fx.dir, 'docs/journeys/up.md', '# Up\nline 1\nline 2\n');
+    commit(fx, 'Upstream adds up.md (refs #999)');
+  });
+  mergeIn(fx, 'up');
+  write(fx.dir, 'docs/journeys/up.md', '# Up\nline 1 changed\nline 2\n');
+  commit(fx, 'Spec B edits the upstream journey (refs #2)');
+
+  assert.deepStrictEqual(check(fx, { integrationRef: 'up' }), { clean: true, overwrites: [] });
+  assert.strictEqual(check(fx).clean, false, 'without integrationRef the upstream add reads as a run event (today\'s false positive)');
+});
+
+test('AC4.1: variant — spec B deleting spec A\'s post-merge line in an upstream-added journey is clean with integrationRef', () => {
+  const fx = upstreamRepo();
+  onUp(fx, () => {
+    write(fx.dir, 'docs/journeys/up.md', '# Up\nline 1\n');
+    commit(fx, 'Upstream adds up.md (refs #999)');
+  });
+  mergeIn(fx, 'up');
+  write(fx.dir, 'docs/journeys/up.md', '# Up\nline 1\nspec A line\n');
+  commit(fx, 'Spec A appends a line (refs #1)');
+  write(fx.dir, 'docs/journeys/up.md', '# Up\nline 1\n');
+  commit(fx, 'Spec B deletes spec A\'s line (refs #2)');
+
+  assert.strictEqual(check(fx, { integrationRef: 'up' }).clean, true);
+  assert.strictEqual(check(fx).clean, false, 'without the exclusion the upstream add is in the set, so spec B\'s deletion blames spec A');
+});
+
+test('AC3.1: a genuine cross-spec overwrite after a catch-up merge is still reported, naming the overwriting commit', () => {
+  const fx = upstreamRepo();
+  write(fx.dir, 'docs/journeys/a.md', '# A\n\n## Step 1\nFirst content.\n');
+  commit(fx, 'Spec A adds a.md (refs #1)');
+  onUp(fx, () => {
+    write(fx.dir, 'docs/journeys/other.md', '# Other\nunrelated\n');
+    commit(fx, 'Upstream adds other.md (refs #999)');
+  });
+  mergeIn(fx, 'up');
+  write(fx.dir, 'docs/journeys/a.md', '# A\n\n## Step 1\nReplaced content.\n');
+  const specB = commit(fx, 'Spec B replaces spec A\'s line (refs #2)');
+
+  const result = check(fx, { integrationRef: 'up' });
+  assert.strictEqual(result.clean, false);
+  assert.strictEqual(result.overwrites.length, 1);
+  assert.strictEqual(result.overwrites[0].commit, specB);
+  assert.strictEqual(result.overwrites[0].path, 'docs/journeys/a.md');
+});
+
+test('Q1: a wave member overwriting another member, both merged back --no-ff, is still an overwrite', () => {
+  const fx = upstreamRepo();
+  fx.git('checkout', '-q', '-b', 'm1');
+  write(fx.dir, 'docs/journeys/w.md', '# W\nmember one line\n');
+  commit(fx, 'Member 1 adds w.md (refs #1)');
+  fx.git('checkout', '-q', 'run');
+  mergeIn(fx, 'm1');
+  fx.git('checkout', '-q', '-b', 'm2');
+  write(fx.dir, 'docs/journeys/w.md', '# W\nmember two line\n');
+  const member2 = commit(fx, 'Member 2 replaces the line (refs #2)');
+  fx.git('checkout', '-q', 'run');
+  mergeIn(fx, 'm2');
+
+  const result = check(fx, { integrationRef: 'up' });
+  assert.strictEqual(result.clean, false);
+  assert.strictEqual(result.overwrites[0].commit, member2);
+});
+
+test('Q1: a first-parent spec deleting a merged-back wave member\'s line is still an overwrite', () => {
+  const fx = upstreamRepo();
+  fx.git('checkout', '-q', '-b', 'm1');
+  write(fx.dir, 'docs/journeys/w.md', '# W\nmember one line\nmember one second line\n');
+  commit(fx, 'Member 1 adds w.md (refs #1)');
+  fx.git('checkout', '-q', 'run');
+  mergeIn(fx, 'm1');
+  write(fx.dir, 'docs/journeys/w.md', '# W\nmember one line\n');
+  const spec2 = commit(fx, 'Spec 2 deletes member 1\'s second line (refs #2)');
+
+  const result = check(fx, { integrationRef: 'up' });
+  assert.strictEqual(result.clean, false, 'the member\'s sha is in the rev-list set, so membership does not clear it');
+  assert.strictEqual(result.overwrites[0].commit, spec2);
+});
+
+test('Q3: a fast-forward catch-up\'s commits are excluded by integrationRef', () => {
+  const fx = upstreamRepo();
+  onUp(fx, () => {
+    write(fx.dir, 'docs/journeys/up.md', '# Up\nline 1\nline 2\n');
+    commit(fx, 'Upstream adds up.md (refs #999)');
+  });
+  fx.git('merge', '-q', '--ff-only', 'up');
+  write(fx.dir, 'docs/journeys/up.md', '# Up\nline 1 changed\nline 2\n');
+  commit(fx, 'Spec B edits the upstream journey (refs #2)');
+
+  assert.strictEqual(check(fx, { integrationRef: 'up' }).clean, true);
+  assert.strictEqual(check(fx).clean, false);
+});
+
+test('a run whose commits all reached the integration branch fails closed under integrationRef, not clean', () => {
+  const fx = upstreamRepo();
+  write(fx.dir, 'docs/journeys/a.md', '# A\n\n## Step 1\nFirst content.\n');
+  commit(fx, 'Spec A adds a.md (refs #1)');
+  fx.git('branch', '-f', 'up', 'run');
+
+  assert.throws(() => check(fx, { integrationRef: 'up' }), ArtifactOverwriteCheckError);
+  assert.strictEqual(check(fx).clean, true, 'without the flag the same range is walked and judged (nothing to overwrite here)');
+});
+
+test('AC2.1 (manifest): a line a catch-up merge\'s own resolution wrote fails closed even when a manifest window would attribute the merge', () => {
+  const fx = upstreamRepo();
+  write(fx.dir, 'docs/journeys/a.md', '# A\nkeep\n');
+  commitAt(fx, 'Spec 10 adds a.md', '2026-01-01T10:10:00Z');
+  onUp(fx, () => {
+    write(fx.dir, 'docs/journeys/other.md', '# Other\nunrelated\n');
+    commitAt(fx, 'Upstream adds other.md', '2026-01-01T10:20:00Z');
+  });
+  fx.git('merge', '-q', '--no-ff', '--no-commit', 'up');
+  write(fx.dir, 'docs/journeys/a.md', '# A\nkeep\nresolution line\n');
+  commitAt(fx, 'Merge up into run', '2026-01-01T10:30:00Z');
+  write(fx.dir, 'docs/journeys/a.md', '# A\nkeep\n');
+  commitAt(fx, 'Spec 10 deletes the resolution line', '2026-01-01T10:40:00Z');
+  const { manifest } = manifestRun(SPEC_10_DONE, [10]);
+
+  const result = check(fx, { integrationRef: 'up', manifest });
+  assert.strictEqual(result.clean, false);
+  assert.match(result.overwrites[0].reason, /merge commit/);
+});
+
+// fakeGit: no repo. Routes on argv; `blamedSha` is the commit blame attributes the deleted line to
+// (null: blame carries no entry for it).
+const C1 = '1'.repeat(40);
+const C2 = '2'.repeat(40);
+const MERGE = '3'.repeat(40);
+const OUTSIDE = '4'.repeat(40);
+const UPSHA = '5'.repeat(40);
+function membershipGit(blamedSha) {
+  const calls = [];
+  const git = (args) => {
+    calls.push(args);
+    const cmd = args[0];
+    if (cmd === 'log' && args.includes('--name-status')) return `${C1}\0\nA\0docs/journeys/x.md\0${C2}\0\nM\0docs/journeys/x.md\0`;
+    if (cmd === 'log' && args.includes('--numstat')) return '0\t1\tdocs/journeys/x.md\n';
+    if (cmd === 'diff') return '@@ -2 +1,0 @@\n-deleted line\n';
+    if (cmd === 'blame') return blamedSha === null ? `${C1} 1 1 1\n\tline one\n` : `${C1} 1 1 1\n\tline one\n${blamedSha} 2 2 1\n\tdeleted line\n`;
+    if (cmd === 'rev-list') return `${C2} ${C1}\n${MERGE} ${C1} ${UPSHA}\n${C1} ${'0'.repeat(40)}\n`;
+    if (cmd === 'log' && args.includes('-1')) return args[args.length - 1] === C2 ? '2026-01-01T10:00:00Z\nmsg (refs #2)\n' : '2026-01-01T10:00:00Z\nupstream (refs #999)\n';
+    throw new Error(`unexpected git call: ${args.join(' ')}`);
+  };
+  return { git, calls };
+}
+
+test('AC2.1: a deleted line blamed to a SHA outside the run\'s commits is clean', () => {
+  const { git, calls } = membershipGit(OUTSIDE);
+  const result = checkArtifactOverwrite({ base: 'b', head: 'h', integrationRef: 'up', git, cwd: '/f' });
+  assert.strictEqual(result.clean, true, JSON.stringify(result.overwrites));
+  const revList = calls.filter((c) => c[0] === 'rev-list');
+  assert.deepStrictEqual(revList, [['rev-list', '--parents', '--end-of-options', 'b..h', '^up']]);
+});
+
+test('AC2.1: the same deletion blamed to a run merge commit is an overwrite', () => {
+  const { git } = membershipGit(MERGE);
+  const result = checkArtifactOverwrite({ base: 'b', head: 'h', integrationRef: 'up', git, cwd: '/f' });
+  assert.strictEqual(result.clean, false);
+  assert.match(result.overwrites[0].reason, /merge commit/);
+});
+
+test('the same deletion blamed to a run merge commit is an overwrite without integrationRef too', () => {
+  const { git } = membershipGit(MERGE);
+  const result = checkArtifactOverwrite({ base: 'b', head: 'h', git, cwd: '/f' });
+  assert.strictEqual(result.clean, false);
+  assert.match(result.overwrites[0].reason, /merge commit/);
+});
+
+test('a deleted line with no blame attribution still fails closed ahead of the membership test', () => {
+  const { git } = membershipGit(null);
+  const result = checkArtifactOverwrite({ base: 'b', head: 'h', integrationRef: 'up', git, cwd: '/f' });
+  assert.strictEqual(result.clean, false);
+  assert.match(result.overwrites[0].reason, /no blame attribution/);
+});
+
+test('without integrationRef a line blamed outside the range is not cleared', () => {
+  const { git, calls } = membershipGit(OUTSIDE);
+  const result = checkArtifactOverwrite({ base: 'b', head: 'h', git, cwd: '/f' });
+  assert.strictEqual(result.clean, false);
+  assert.deepStrictEqual(calls.filter((c) => c[0] === 'rev-list'), [['rev-list', '--parents', '--end-of-options', 'b..h']]);
 });

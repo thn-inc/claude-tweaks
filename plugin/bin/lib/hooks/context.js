@@ -244,9 +244,7 @@ function* iterRunDirsWithState(cwd, opts = {}) {
   // reads the worktree's own pipelines dir. Deliberately not guarded further —
   // distinguishing the two would cost either a git spawn (this path runs on
   // every hook invocation) or a second walk, and the state it can reach is the
-  // one a worktree with a broken `.git` file actually has. The scenario it
-  // matters for is wrap-up's transitional copy-out guard, which does its own
-  // `pwd -P` resolution rather than trusting this one.
+  // one a worktree with a broken `.git` file actually has.
   const start = cwd || process.cwd();
   const root = wtDetect.mainCheckoutRoot(start) || start;
   const base = path.join(root, '.claude-tweaks', 'pipelines');

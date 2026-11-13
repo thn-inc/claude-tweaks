@@ -100,7 +100,10 @@ function readListKey(repoRoot, key) {
 // mode keys goes through, so "is it on" is decided in exactly one place. Takes the
 // resolved value (e.g. from resolve-policy.js --values), strictly the exact string
 // `on` — `ON`, `yes`, an absent value and a boolean are all off, so a typo can
-// never switch the mode on.
+// never switch the mode on. No production caller yet: #4609 shipped it ahead of
+// the #4608 control-mode leaves (#4615-#4624) so they share one
+// comparison. The first leaf to land becomes its first caller; the helper itself
+// needs no change then.
 function isControlModeOn(value) {
   return value === 'on';
 }

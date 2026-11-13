@@ -23,13 +23,198 @@ const {
 const {
   normalizeKey,
   checkLink,
+  entryPointHasBearerRoute,
   findCredentialInText,
+  hasBearerUrl,
+  isCredentialRefusal,
+  isImageUrl,
 } = require('../../../plugin/bin/lib/wrap-up/packet-links');
 
 const allowedHosts = ['http://localhost:3000', 'https://dev.example.com'];
 const check = (url) => checkLink(url, { allowedHosts });
 
-test('checkLink accepts an allowed host, and never checks the path', () => {
+test('hasBearerUrl reads a URL token with a bearer-shaped path segment, however it is spelled', () => {
+  const bearer = 'Xk3j9f8s7d6f5g4h3j2k1';
+  for (const text of [
+    `http://localhost:3000/reset/${bearer}`,
+    `curl "http://localhost:3000/reset/${bearer}/next"`,
+    `curl 'https://h.example/${bearer}' -s`,
+    `see (https://h.example/${bearer}).`,
+    `see https://h.example/${bearer}, then go on`,
+    `HTTPS://h.example/${bearer}`,
+    `https://h.example:99999/${bearer}`,
+    `https://h.example/a%2F${bearer}`,
+    `https://h.example/${bearer}?x=1`,
+    `https://h.example/${bearer}#x`,
+    `curl localhost:3000/${bearer}`,
+    `www.h.example/${bearer}`,
+    `first https://h.example/a then https://h.example/${bearer}`,
+  ]) {
+    assert.equal(hasBearerUrl(text), true, text);
+  }
+});
+
+test('hasBearerUrl leaves the placeholder, bare words, local paths and every other part of a URL', () => {
+  const bearer = 'Xk3j9f8s7d6f5g4h3j2k1';
+  for (const text of [
+    'http://localhost:3000/reset/{id}',
+    'curl http://localhost:3000/reset/{id}/next',
+    'npm run demo',
+    bearer,
+    `node seed.js ${bearer}`,
+    `.claude-tweaks/pipelines/2026-11-02T223727-record-4612/work/spec.md`,
+    '/tmp/2026-11-02-acceptance-recording/w.gif',
+    'http://localhost:3000/docs/token-guide',
+    `https://h.example/a?x=${bearer}`,
+    `https://h.example/a#${bearer}`,
+    `https://${bearer}.example/a`,
+    'https://h.example/2026-11-02-acceptance-recording.md',
+    'C:/runs/2026-11-02-acceptance-recording/w.gif',
+    '',
+  ]) {
+    assert.equal(hasBearerUrl(text), false, text);
+  }
+});
+
+test('hasBearerUrl judges the token\'s own path when a URL sits later in the token', () => {
+  const bearer = 'Xk3j9f8s7d6f5g4h3j2k1';
+  for (const text of [
+    `curl localhost:3000/reset/${bearer}?next=http://x/y`,
+    `www.h.example/${bearer}?u=https://x/y`,
+    `www.h.example/${bearer}#http://x/y`,
+  ]) {
+    assert.equal(hasBearerUrl(text), true, text);
+  }
+  for (const text of ['curl localhost:3000/reset/{id}?next=http://x/y', 'www.h.example/a?u=https://x/y', 'www.h.example/a#http://x/y']) {
+    assert.equal(hasBearerUrl(text), false, text);
+  }
+});
+
+test('hasBearerUrl reads bare localhost, a bracketed IPv6 host and a signed scheme as URL tokens', () => {
+  const bearer = 'Xk3j9f8s7d6f5g4h3j2k1';
+  for (const text of [
+    `curl localhost/reset/${bearer}`,
+    `LOCALHOST/${bearer}`,
+    `curl [::1]:3000/reset/${bearer}`,
+    `-https://h.example/${bearer}`,
+    `+https://h.example/${bearer}`,
+    `--https://h.example/${bearer}`,
+    `${'a-'.repeat(20)}https://h.example/${bearer}`,
+  ]) {
+    assert.equal(hasBearerUrl(text), true, text);
+  }
+  for (const text of [
+    'curl localhost/reset/{id}',
+    'curl [::1]:3000/reset/{id}',
+    '-https://h.example/a',
+    'localhost',
+    '/tmp/localhost/2026-11-02-acceptance-recording/w.gif',
+    'runs/localhost/2026-11-02-acceptance-recording/w.gif',
+    `my-localhost/${bearer}`,
+    `notlocalhost/${bearer}`,
+    `localhost.example/${bearer}`,
+  ]) {
+    assert.equal(hasBearerUrl(text), false, text);
+  }
+});
+
+test('a ; parameter does not defeat the bearer segment: each segment is judged up to its first ;', () => {
+  const bearer = 'Xk3j9f8s7d6f5g4h3j2k1';
+  const refused = { ok: false, reason: 'credential in path segment' };
+  for (const path of [
+    `/${bearer};x=1`,
+    `/a/${bearer};x=1/b`,
+    `/${bearer};`,
+    `/${bearer}%3Bx=1`,
+    `/${bearer};x=1;y=2`,
+  ]) {
+    const url = `http://localhost:3000${path}`;
+    assert.deepEqual(check(url), refused, url);
+    assert.equal(hasBearerUrl(`curl ${url}`), true, url);
+  }
+  assert.equal(hasBearerUrl(`see https://h.example/${bearer});x=1.`), true);
+  for (const path of ['/a;x=1', '/reset/{id};x=1', '/;jsessionid=abc', `/short;${'y'.repeat(25)}`]) {
+    const url = `http://localhost:3000${path}`;
+    assert.equal(hasBearerUrl(`curl ${url}`), false, url);
+  }
+  assert.deepEqual(check('http://localhost:3000/a;x=1'), { ok: true });
+  assert.deepEqual(check('http://localhost:3000/;jsessionid=abc'), { ok: true });
+});
+
+test('a ; parameter is screened as a query pair is: its credential key, and a bearer value in it', () => {
+  const bearer = 'Xk3j9f8s7d6f5g4h3j2k1';
+  for (const [path, reason] of [
+    ['/a;token=abc', 'credential key in path parameter: token'],
+    ['/a;x=1;sessionid=abc/b', 'credential key in path parameter: sessionid'],
+    ['/a%3Bapi_key=abc', 'credential key in path parameter: api_key'],
+    ['/a;TOKEN=abc', 'credential key in path parameter: token'],
+    [`/a;x=${bearer}`, 'credential in path segment'],
+    [`/a;${bearer}`, 'credential in path segment'],
+  ]) {
+    const url = `http://localhost:3000${path}`;
+    assert.deepEqual(check(url), { ok: false, reason }, url);
+    assert.equal(isCredentialRefusal(reason), true, reason);
+  }
+  for (const path of ['/a;x=1', '/a;tokens=1', '/docs;token-guide', '/a;x=short', `/a;v=${'y'.repeat(25)}`]) {
+    assert.deepEqual(check(`http://localhost:3000${path}`), { ok: true }, path);
+  }
+});
+
+test('a route held in the fragment or a query value meets the bearer rule too', () => {
+  const bearer = 'Xk3j9f8s7d6f5g4h3j2k1';
+  const refused = { ok: false, reason: 'credential in path segment' };
+  for (const suffix of [
+    `#/reset/${bearer}`,
+    `#!/reset/${bearer}`,
+    `#/reset/${bearer}?x=1`,
+    `#%2Freset%2F${bearer}`,
+    `?next=/reset/${bearer}`,
+    `?next=%2Freset%2F${bearer}&x=1`,
+  ]) {
+    const url = `http://localhost:3000/app${suffix}`;
+    assert.deepEqual(check(url), refused, url);
+  }
+  assert.deepEqual(check('http://localhost:3000/app#/reset;token=abc'), { ok: false, reason: 'credential key in fragment: token' });
+  // A plain anchor is no route, and a value that is not rooted is no path.
+  for (const suffix of [`#section-${bearer}`, `?ref=${bearer}`, '#/docs/token-guide', '?next=/docs/token-guide']) {
+    assert.deepEqual(check(`http://localhost:3000/app${suffix}`), { ok: true }, suffix);
+  }
+});
+
+test('an Entry point field names a route, so a bare path in its value meets the bearer rule', () => {
+  const bearer = 'Xk3j9f8s7d6f5g4h3j2k1';
+  for (const line of [
+    `- Entry point: /reset/${bearer}`,
+    `Entry point: /reset/${bearer}`,
+    `  * entry point: /reset/${bearer}`,
+    `1. Entry point: /reset/${bearer}`,
+    `- **Entry point:** /reset/${bearer}`,
+    `- Entry point: \`/reset/${bearer}\``,
+    `- Entry point: /${bearer};x=1`,
+    `- Entry point: /a%2F${bearer}?x=1`,
+    `- Entry point: /reset/${bearer} (the reset page)`,
+    `- Entry point: GET /reset/${bearer}`,
+    `- Entry point: [reset](/reset/${bearer})`,
+  ]) {
+    assert.equal(entryPointHasBearerRoute(line), true, line);
+  }
+  for (const line of [
+    '- Entry point: /reset/{id}',
+    '- Entry point: /orders/new',
+    '- Entry point: npm run demo',
+    '- Entry point: abc123^..def456',
+    `- Entry point: node seed.js ${bearer}`,
+    `- Entry point: specs/2026-11-02-acceptance-recording/w.gif`,
+    `- Entry point: /a?next=/reset/${bearer}`,
+    `- Inspect: /reset/${bearer}`,
+    `- See Entry point: /reset/${bearer}`,
+    '',
+  ]) {
+    assert.equal(entryPointHasBearerRoute(line), false, line);
+  }
+});
+
+test('checkLink accepts an allowed host, and a path that only names a key word', () => {
   assert.deepEqual(check('http://localhost:3000/settings?role=admin'), { ok: true });
   assert.deepEqual(check('https://dev.example.com/docs/token-guide'), { ok: true });
 });
@@ -50,6 +235,33 @@ test('checkLink refuses with the exact reason for each rule', () => {
   for (const [url, reason] of cases) {
     assert.deepEqual(check(url), { ok: false, reason }, url);
   }
+});
+
+// Characterization (#4612): the order checkLink applies its rules in, and what it has
+// always let through in a path, pinned before the bearer-segment rule joins them.
+test('checkLink reports the first rule that fails: url, scheme, host, userinfo, path, query, fragment', () => {
+  const cases = [
+    ['ftp://user:pass@evil.example/?token=1#sig=1', 'scheme not http(s)'],
+    ['http://user:pass@evil.example/?token=1#sig=1', 'host not allowed: evil.example'],
+    ['http://user:pass@localhost:3000/?token=1#sig=1', 'credential in userinfo'],
+    ['http://user:pass@localhost:3000/a/Xk3j9f8s7d6f5g4h3j2k1?token=1', 'credential in userinfo'],
+    ['http://localhost:3000/a/Xk3j9f8s7d6f5g4h3j2k1?token=1#sig=1', 'credential in path segment'],
+    ['http://localhost:3000/?token=1#sig=1', 'credential key in query: token'],
+    ['http://localhost:3000/#sig=1', 'credential key in fragment: sig'],
+  ];
+  for (const [url, reason] of cases) assert.deepEqual(check(url), { ok: false, reason }, url);
+});
+
+test('checkLink normalizes scheme case, a missing path and dot segments before the query screen', () => {
+  assert.deepEqual(check('HTTP://LOCALHOST:3000'), { ok: true });
+  assert.deepEqual(check('HTTP://LOCALHOST:3000/?token=1'), { ok: false, reason: 'credential key in query: token' });
+  assert.deepEqual(check('http://localhost:3000/a/../b?sig=1'), { ok: false, reason: 'credential key in query: sig' });
+  assert.deepEqual(check('http://localhost.:3000/'), { ok: false, reason: 'host not allowed: localhost.' });
+});
+
+test('checkLink accepts a path that merely looks odd: assignments, dots, stray percent, short ids', () => {
+  const paths = ['/cb/token=abc', '/a/access_token/b', '/%/x', '/a%2Fb/c', '/file.v2.final.report.name.png', '/@scope/pkg', '/;jsessionid=abc', '/id/1234567', '/a/Xk3j9f8s7d6f5g4h3j2/b'];
+  for (const p of paths) assert.deepEqual(check(`http://localhost:3000${p}`), { ok: true }, p);
 });
 
 test('checkLink userinfo: a username alone or a password alone is refused', () => {
@@ -219,6 +431,90 @@ test('every credential key refuses in query and in fragment', () => {
   for (const key of CREDENTIAL_KEYS) {
     assert.deepEqual(check(`http://localhost:3000/?${key}=1`), { ok: false, reason: `credential key in query: ${key}` });
     assert.deepEqual(check(`http://localhost:3000/#${key}=1`), { ok: false, reason: `credential key in fragment: ${key}` });
+  }
+});
+
+// ---- Exposure link rule (#4612): every Recording link keeps to it ----
+
+const okRaw = (url) => checkLink(url, { allowedHosts: ['host', 'raw.githubusercontent.com'] });
+
+test('AC4.2: credential query shapes are refused after normalizing', () => {
+  for (const url of ['https://host/?TOKEN=abc', 'https://host/?tok%65n=abc', 'https://host/?%74oken=abc', 'https://host/#token=abc',
+    'https://user:pass@host/', 'HTTPS://host/?token=abc', 'https://host/x/?token=abc', 'https://host/a/../b?token=abc',
+    'https://host/?access_token=a', 'https://host/?password=a', 'https://host/?session=a']) {
+    const r = okRaw(url);
+    assert.equal(r.ok, false, url);
+    assert.ok(isCredentialRefusal(r.reason), url);
+  }
+});
+
+test('AC4.3: a benign path naming the word is not withheld', () => {
+  assert.equal(okRaw('https://host/docs/token-guide').ok, true);
+});
+
+test('a bearer-shaped path segment is refused', () => {
+  assert.deepEqual(okRaw('https://host/a/Xk3j9f8s7d6f5g4h3j2k1/b'), { ok: false, reason: 'credential in path segment' });
+  assert.equal(isCredentialRefusal(okRaw('https://host/a/Xk3j9f8s7d6f5g4h3j2k1/b').reason), true);
+});
+
+test('a bearer-shaped segment is found when it is encoded, last, or the only segment', () => {
+  for (const path of ['/%58k3j9f8s7d6f5g4h3j2k1', '/a/Xk3j9f8s7d6f5g4h3j2k1', '/Xk3j9f8s7d6f5g4h3j2k1/', '/a/Xk3j9f8s7d6f5g4h3j2k1_-/b']) {
+    assert.equal(okRaw(`https://host${path}`).reason, 'credential in path segment', path);
+  }
+});
+
+test('an encoded slash is a segment boundary: the bearer value behind it is found', () => {
+  for (const path of ['/a%2FXk3j9f8s7d6f5g4h3j2k1', '/Xk3j9f8s7d6f5g4h3j2k1%2Fb', '/a%2fXk3j9f8s7d6f5g4h3j2k1%2fb', '/a%252FXk3j9f8s7d6f5g4h3j2k1']) {
+    assert.equal(okRaw(`https://host${path}`).reason, 'credential in path segment', path);
+  }
+});
+
+test('a 20-character segment with no digit, or no letter, is not bearer-shaped', () => {
+  assert.equal(okRaw('https://host/abcdefghijklmnopqrst').ok, true);
+  assert.equal(okRaw('https://host/12345678901234567890').ok, true);
+  assert.equal(okRaw('https://host/abcdefghij-klmnopqrs_t/x').ok, true);
+});
+
+test('a 19-character segment is not bearer-shaped, and a 20-character one is', () => {
+  assert.equal(okRaw(`https://host/${'a1'.repeat(9)}b`).ok, true);
+  assert.equal(okRaw(`https://host/${'a1'.repeat(10)}`).reason, 'credential in path segment');
+});
+
+test('a segment holding a character outside the alphabet is not bearer-shaped', () => {
+  assert.equal(okRaw('https://host/Xk3j9f8s7d6f5g4h3j2k1.png').ok, true);
+  assert.equal(okRaw('https://host/Xk3j9f8s7d6f5g4h3j2k1=').ok, true);
+});
+
+test('no exemption: a 40-hex commit sha segment on a raw host is refused', () => {
+  assert.equal(okRaw(`https://raw.githubusercontent.com/o/r/${'a1'.repeat(20)}/docs/x.png`).reason, 'credential in path segment');
+});
+
+test('the userinfo and path reasons both read as credential refusals; no other reason does', () => {
+  assert.equal(isCredentialRefusal('credential in userinfo'), true);
+  assert.equal(isCredentialRefusal('credential key in query: token'), true);
+  assert.equal(isCredentialRefusal('credential key in fragment: sig'), true);
+  for (const reason of ['unparseable url', 'scheme not http(s)', 'host not allowed: credential.example', '']) {
+    assert.equal(isCredentialRefusal(reason), false, reason);
+  }
+  assert.equal(isCredentialRefusal(undefined), false);
+});
+
+test('isImageUrl reads the pathname only', () => {
+  for (const url of ['https://h/r.gif', 'https://h/r.PNG?x=1', 'https://h/a/r.webp#f', 'https://h/r.jpg', 'https://h/r.jpeg', 'https://h/r.svg', 'https://h/r.avif', 'https://h/r.bmp', 'https://h/r%2Egif', 'https://h/r.p%6Eg']) {
+    assert.equal(isImageUrl(url), true, url);
+  }
+  for (const url of ['https://h/r.gif/landing', 'https://h/landing?f=r.png', 'https://h/landing#r.png', 'https://h/', 'not a url', undefined, null]) {
+    assert.equal(isImageUrl(url), false, String(url));
+  }
+});
+
+test('isImageUrl sees through a trailing slash, a ; parameter and trailing whitespace', () => {
+  for (const url of ['https://store.example/r.gif/', 'https://store.example/r.gif///', 'https://store.example/r.gif;x=1', 'https://store.example/r.gif;a=1;b=2',
+    'https://store.example/r.gif%20', 'https://store.example/r.gif%20%0A', 'https://store.example/r.gif;x=1/', 'https://store.example/r.gif%20/;x', 'https://store.example/r.gif%2F']) {
+    assert.equal(isImageUrl(url), true, url);
+  }
+  for (const url of ['https://h/r.gif/landing', 'https://h/r.gif;x=1/landing', 'https://h/r.gif%20/landing', 'https://h/landing;r.gif', 'https://h/;r.gif/', 'https://h/%20/']) {
+    assert.equal(isImageUrl(url), false, url);
   }
 });
 

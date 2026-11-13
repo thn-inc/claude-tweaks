@@ -90,3 +90,12 @@ validated. A `string` entry rejects whitespace by default (a mistyped branch nam
 (`trust-revert-window-days`); any future lever of the same shape — read a policy key, coerce with a
 typed fallback to a documented default — should call `resolveValue` rather than re-deriving its own
 parsing.
+
+## Canonical read path carve-outs — canonical
+
+Moved from `_shared/policy-schema.md`'s Canonical read path (#5119, rail headroom).
+
+- The PreToolUse hook's `worktree-always` read stays an in-process `bin/lib/policy.js` call — hot path, never shells out.
+- `model-profiles` is policy-only (the `--run` overlay never applies) and returns `{value: null, source: "default"}` when the block is absent. Any fragment-reader failure — a malformed block, or a malformed sibling model key such as `frontier-run-cap` (the reader parses all four model keys; its throws aren't sub-classified) — degrades to `{value: null, source: "default", invalid: true}`.
+- `risk-path-globs` is policy-only too (never reads `--run`) and returns `{value: {}, source: "default"}` when absent; a malformed block degrades to `{value: null, source: "default", invalid: true}`, never a partial map.
+- `deploy-command`, `owned-owners`, `trusted-authors`, `risk-categories`, `verify-suite-slots`, `express-driver`, `express-driver-wall-clock-minutes` and `express-driver-spend-ceiling-dollars` are `policyOnly`: the `--run` overlay never applies.

@@ -8,6 +8,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
+const { sectionOf } = require('./helpers/conformance-asserts');
 
 const SHARED = path.join(__dirname, '..', 'plugin', 'skills', '_shared');
 const read = (f) => readText(path.join(SHARED, f));
@@ -196,12 +197,16 @@ test('#4549 AC1.1: Step 3 no longer claims keywords close on any integration bra
   assert.throws(() => assertNoAnyBranchClaim(PRE_CHANGE_STEP3_CLAIM), /any integration branch/, 'go-red: the pre-change sentence fails the check');
 });
 
-test('#4549 AC1.2: Step 3 says keywords close only on the default branch and points at Step 4.0', () => {
+test('#4549 AC1.2: Step 3 points at the appendix rationale, which says keywords close only on the default branch and points at Step 4.0', () => {
+  // The Fixes-lines rationale moved to the appendix's Rationale notes (#5153, composed-bundle byte rail);
+  // Step 3 keeps a pointer to it.
   const step3 = step3Of(read('pr-first-merge.md'));
-  assertStep3DefaultOnly(step3);
+  assert.ok(step3.includes("`pr-first-merge-appendix.md`'s \"Rationale notes\""), 'Step 3 points at the appendix Rationale notes');
+  const rationale = collapse(sectionOf(read('pr-first-merge-appendix.md'), '## Rationale notes'));
+  assertStep3DefaultOnly(rationale);
   assert.throws(() => assertStep3DefaultOnly(PRE_CHANGE_STEP3_CLAIM), /scopes the keywords/, 'go-red: the pre-change sentence fails the check');
-  const noPointer = step3.replace("`pr-first-merge-post-merge.md`'s Step 4.0 closes those records itself", '');
-  assert.notEqual(noPointer, step3, 'go-red: the doctored text differs');
+  const noPointer = rationale.replace("`pr-first-merge-post-merge.md`'s Step 4.0 closes those records itself", '');
+  assert.notEqual(noPointer, rationale, 'go-red: the doctored text differs');
   assert.throws(() => assertStep3DefaultOnly(noPointer), /points at Step 4\.0/, 'go-red: dropping the Step 4.0 pointer fails the check');
 });
 

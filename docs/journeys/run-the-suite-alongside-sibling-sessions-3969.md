@@ -1,8 +1,10 @@
 ---
 files:
   - tools/run-tests.js
+  - plugin/bin/lib/suite-slot.js
   - tests/run-tests-isolation.test.js
   - plugin/bin/lib/deps.js
+  - tests/helpers/git-template.js
   - docs/plugin-structure.md
 ---
 
@@ -23,8 +25,12 @@ files:
   - The run holds a lock in `<tmpdir>/ct-test-suite-slots/` for its duration.
   - Its tests see `TMPDIR` pointing at `<tmpdir>/ct-test-runs/ct-testrun-<pid>-XXXXXX/`.
   - `node --test` runs with `--test-concurrency` set to half the cores, or cores minus 1 when `CI` is set.
+  - Its tests' git sees `maintenance.auto=false` and `gc.auto=0`, appended as `GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` after any `GIT_CONFIG_COUNT` entries the caller already exported.
+  - The common fixture repos are built once per test process and copied per test (`tests/helpers/git-template.js`), so a copy starts no git process.
+  - A push into a local bare origin is the one exception to the env config: git's local transport strips `GIT_CONFIG_*` from the receiving side, so `git-receive-pack` still starts `maintenance run --auto` unless the origin's own config sets `receive.autogc = false` (`disableReceiveAutoGc` in `tests/helpers/git-template.js`).
 - **Red flags:**
   - New `ct-wtd-*`, `verify-cli-test-*` and similar fixture dirs appearing directly in the real tmpdir after the run. They should exist only inside the run's own root.
+  - `git maintenance run --auto` processes showing up under the run in a process capture. Check first for a test that pushes into a bare origin it built without `disableReceiveAutoGc`.
 
 ### 2. Start a second run while one is already running
 - **URL:** the second session's output.
@@ -58,6 +64,7 @@ files:
 - **Should understand:**
   - An invalid `CT_TEST_SUITE_SLOTS` falls back to 1 and prints one line naming it.
   - Nested runs (a test that itself spawns `run-tests.js`) skip the slot via `CT_TEST_SUITE_SLOT_HELD=1`, so they never deadlock on the parent's lock.
+  - Under a pipeline, `verify.js` now takes the slot itself and runs `npm test` with `CT_TEST_SUITE_SLOT_HELD=1`, so that child skips the lock. An exported `CT_TEST_SUITE_SLOTS` then governs only direct `npm test` runs. verify.js's own count comes from `concurrency.suiteSlots` or the `verify-suite-slots` policy key (`queue-verify-runs-behind-a-machine-wide-slot-5119.md`).
   - The suite's own slot tests still pass with a raised knob. Their sandboxed runner children start without `CT_TEST_SUITE_SLOTS` or `CT_TEST_SUBSET_SLOTS`, so they always measure the default of one slot.
 - **Red flags:**
   - Raising `CT_TEST_SUITE_SLOTS` globally to make waits go away, when the waits were protecting the machine.
@@ -66,16 +73,20 @@ files:
 ### 5. Start a Claude session (plugin user)
 - **URL:** any project with claude-tweaks installed.
 - **Action:** Open a session; the SessionStart hook runs.
-- **Should feel:** Instant. Session start no longer pauses to launch `npx` to look for `playwright-cli`.
+- **Should feel:** Instant. Session start no longer pauses to launch `npx` to look for `playwright-cli`, or a shell to run `git --version`.
 - **Should understand:**
   - The check looks for `playwright-cli` in `<cwd>/node_modules/.bin` and on PATH, with PATHEXT on Windows.
   - When it is absent, the same optional install hint appears.
+  - The git check is a PATH scan too. On macOS, `/usr/bin/git` is the xcode-select shim, so it counts only when the active developer dir holds `usr/bin/git`. The check follows xcode-select's order without spawning: `DEVELOPER_DIR`, then the `/var/db/xcode_select_link` target, then `/Applications/Xcode.app`, then the Command Line Tools. A Mac with only the shim still gets the "git not found" hint.
 - **Red flags:**
   - The install hint appearing even though `playwright-cli` is on PATH.
-  - Session start still spawning `npm exec playwright-cli --version`.
+  - Session start still spawning `npm exec playwright-cli --version` or `sh -c git --version`.
+  - A Mac with working git (Xcode or the Command Line Tools) told git is missing.
 
 ## Origin
 - Created during build of #3969. The trigger was a Mac made unusable by stacked concurrent suites (load average 98–176 on 12 cores) and about 3.9 million leaked fixture entries in `$TMPDIR`.
 - Updated during build of #4336: step 4 now covers the slot tests passing under a raised slot knob.
 - Updated during build of #4333: step 2 now covers arrival-order waiting and the queued form of the wait line. A waiter stopped with Ctrl-C leaves only its ticket, and the next waiter removes it once the pid is gone. A `run-tests.js` checkout older than this change ignores tickets and can still jump the queue until it catches up.
+- Updated during build of #5119: the lock moved into `plugin/bin/lib/suite-slot.js`, shared with `verify.js`. Step 4 now covers a verify.js-driven `npm test` skipping the lock, with verify.js's own slot count governing instead of `CT_TEST_SUITE_SLOTS`.
+- Updated during build of #5297: step 1 now covers git auto-maintenance turned off for the suite and template-copied fixture repos. Step 5 covers the spawn-free git check and its macOS shim rule. The trigger was one run spawning 1,300–2,100 processes per second.
 - Related: `act-on-a-red-wall-clock-budget-scan-3491.md` (another constraint on tests that run under load).

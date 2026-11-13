@@ -76,6 +76,29 @@ function encodeFactKey(raw) {
   return encoded;
 }
 
+// How far a recording travels: `local-only` is the v1 default and the result for any
+// unreachable or unprobed store, `linked-private` a remote store that passed the
+// anonymous-fetch probe, `withheld` a link the credential rule refused.
+const EXPOSURE = Object.freeze({ LOCAL_ONLY: 'local-only', LINKED_PRIVATE: 'linked-private', WITHHELD: 'withheld' });
+const EXPOSURES = Object.freeze(Object.values(EXPOSURE));
+
+// Why a `recording` fact has status `not-run`. Only the first is no gap: the rest also
+// render under Couldn't test.
+const NOT_RUN_REASON = Object.freeze({
+  NO_STORY: 'no-story',
+  NO_LOCAL_BASE_URL: 'no-local-base-url',
+  NO_SCREENSHOTS: 'no-happy-path-screenshots',
+  ENCODER_FAILED: 'encoder-failed',
+});
+const RECORDING_NOT_RUN_REASONS = Object.freeze(Object.values(NOT_RUN_REASON));
+
+// What renders in place of free text the credential screen refuses.
+const WITHHELD_TEXT = '(text withheld: credential-shaped)';
+
+// A break-it story's id starts with this prefix. Gather and the recording planner both read it from
+// here; they combine it with the story index differently, on purpose (see `record.js`).
+const NEGATIVE_ID_PREFIX = 'neg-';
+
 // The `partial` note gather adds for a named input that will not read: written by
 // acceptance-packet.js, and read by the renderer, which tells a lost `--flags` input
 // from "no kept risk flags".
@@ -100,6 +123,12 @@ module.exports = Object.freeze({
   CREDENTIAL_KEYS,
   FACT_ID_RE,
   encodeFactKey,
+  EXPOSURE,
+  EXPOSURES,
+  NOT_RUN_REASON,
+  RECORDING_NOT_RUN_REASONS,
+  WITHHELD_TEXT,
+  NEGATIVE_ID_PREFIX,
   notReadNote,
   VERIFICATION_WORDS,
   VERIFICATION_CLAIM_RE,

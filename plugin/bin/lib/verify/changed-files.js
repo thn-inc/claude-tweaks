@@ -179,6 +179,13 @@ function parseNameOnlyZ(raw) {
 // there is no such merge, {ref} does not resolve, or any read above fails: the
 // fallback over-verifies, never under-verifies. resolveBase's anchor-first
 // contract is untouched — this filters its result, it never moves the base.
+// Narrowing declines (#4638) when HEAD has no commit ahead of {ref}, or when HEAD's
+// committed tree equals {ref}'s (an empty {ref}..HEAD diff, such as a branch whose
+// only commit merges {ref}). In either case {ref}'s tip would vouch for itself, and
+// the premise that it passed its own CI is exactly what the run is there to check.
+// At 844e0d7eb this excluded all 298 changed paths and stamped a zero-suite pass.
+// Both checks run before the working tree is read, so a dirty edit never rescues a
+// narrowing. verify.js also drops a narrowing whose result selects no suite.
 function mergeNarrowing({ anchor, integrationBranch, files, execImpl = execFileSync }) {
   if (!anchor || !integrationBranch) return null;
   const ref = preferOriginRef((args) => git(execImpl, args), integrationBranch);
@@ -189,9 +196,13 @@ function mergeNarrowing({ anchor, integrationBranch, files, execImpl = execFileS
     return otherParents.some((p) => tryGit(execImpl, ['merge-base', '--is-ancestor', '--end-of-options', p, ref]) !== null);
   });
   if (!hasMergedRef) return null;
+  const ahead = tryGit(execImpl, ['rev-list', '--count', '--end-of-options', `${ref}..HEAD`]);
+  if (ahead === null || !/^[1-9]\d*$/.test(ahead.trim())) return null;
   const differs = tryGit(execImpl, ['diff', '--name-only', '-z', '--no-renames', '--end-of-options', ref, 'HEAD']);
   if (differs === null) return null;
-  const own = new Set(parseNameOnlyZ(differs));
+  const differing = parseNameOnlyZ(differs);
+  if (differing.length === 0) return null;
+  const own = new Set(differing);
   const status = tryGit(execImpl, ['--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=all']);
   if (status === null) return null;
   for (const f of statusPorcelainPaths(status)) own.add(f);

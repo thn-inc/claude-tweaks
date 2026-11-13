@@ -423,15 +423,15 @@ test('a dispatched first call learns the exact gate value, and teardown skips th
 
 test('the other "move on" sites name the Claim permission stop (#4899)', () => {
   assert.match(read('plugin/skills/dispatch/sequential-execution.md'), /group N\+1 \(none after a Claim permission stop/);
-  assert.match(read('plugin/skills/dispatch/two-call-gate.md'), /next group's worktree \(none after a Claim permission stop: the firing ends, `SKILL\.md`\)\.\n\n## 8\./);
+  assert.match(read('plugin/skills/dispatch/two-call-gate.md'), /next group's worktree \(none after a Claim permission stop or a render-failure stop: the firing ends, `SKILL\.md`\)\.\n\n## 8\./);
   assert.match(read('plugin/skills/_shared/express-lane.md'), /on a Claim permission stop, exit 7, Settle skips steps 1-7/);
-  assert.match(read('plugin/skills/dispatch/SKILL.md'), /the ranking returns `null`, or a Claim permission stop\), close/);
+  assert.match(read('plugin/skills/dispatch/SKILL.md'), /the ranking returns `null`, or a Claim permission stop or Render-failure stop\), close/);
 });
 
 test('dispatch/SKILL.md loop, move-on and close-out sites carve out the Claim permission stop (#4899)', () => {
   const skill = read('plugin/skills/dispatch/SKILL.md');
-  assert.match(skill, /the ranking returns `null`, or a Claim permission stop ends the firing/);
-  assert.match(skill, /move straight to the next group \(none after a Claim permission stop\)/);
+  assert.match(skill, /the ranking returns `null`, or a Claim permission stop or Render-failure stop ends the firing/);
+  assert.match(skill, /move straight to the next group \(none after a Claim permission stop or a Render-failure stop\)/);
   assert.match(skill, /the repo-wide infra-outage stop, the Claim permission stop, a queue-pull/);
 });
 
@@ -465,6 +465,17 @@ test('headless-self-report.md files its diagnostic through --body-file, never a 
   assert.equal(template.match(/--body-file "\{body-file\}"/g)?.length, 2);
   assert.doesNotMatch(template, /--body "/);
   assert.doesNotMatch(read('plugin/skills/dispatch/settle-and-merge.md'), /template's `--body`/);
+});
+
+test('#4794: the exit-2 bullet names the unknown-host refusal and its transport limit', () => {
+  const content = read('plugin/skills/flow/claim-targets.md');
+  const start = content.indexOf('- **2** —');
+  assert.ok(start !== -1, 'exit-2 bullet should exist');
+  const end = content.indexOf('**On exit', start);
+  assert.ok(end !== -1, 'exit-2 bullet should end before the On-exit paragraph');
+  const bullet = content.slice(start, end).replace(/\s+/g, ' ');
+  assert.match(bullet, /unknown-host/);
+  assert.match(bullet, /does not reach that refusal/);
 });
 
 test('AC8.1: no prose says a claim read or write 401/403 exits 4 (#4899)', () => {
