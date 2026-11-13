@@ -62,7 +62,7 @@ const SETTLE_ANCHORS = [
 const RELAY_ANCHORS = [
   'failed:plan-review-needs-human',
   '<!-- plan-review-question -->',
-  "editing #{n}'s body",
+  "adding a `**Decision**` paragraph (or an Acceptance Criterion) to #{n}'s body",
   '/claude-tweaks:dispatch #{n}',
   '/claude-tweaks:backlog refine',
   'no `AskUserQuestion` in a subagent',

@@ -1,6 +1,6 @@
 # Advanced Proof Patterns — skill-prose-conformance-tests
 
-Lazy-loaded from `SKILL.md` (this skill's directory). Read this file when a go-red proof needs zero-mutation verification, a change adds or removes an Anti-Patterns row, a new detection signal needs corpus validation before it's trusted, a sweep ships with an exemption list, a negative claim needs a clause sweep, or a suite builds throwaway git repos.
+Lazy-loaded from `SKILL.md` (this skill's directory). Read this file when a go-red proof needs zero-mutation verification, a claim reworded across several copies needs a ban and a positive twin, a change adds or removes an Anti-Patterns row, a new detection signal needs corpus validation before it's trusted, a sweep ships with an exemption list, a negative claim needs a clause sweep, or a suite builds throwaway git repos.
 
 ## Proving discrimination without editing the tree
 
@@ -56,12 +56,16 @@ A sweep with an exemption list has a failure mode `SKILL.md`'s empty-extraction 
 cover: the exemptions rot. The condition that justified an entry goes away — the gap gets closed,
 the citation moves, the prose is reworded — and the entry silently starts covering something new,
 or covers nothing at all while reading as a live carve-out. `tests/dispatch-prompt-bundle-citations.test.js`
-(#1995) is the shape to copy. Its `GAPS` array names two `_shared/` citations with no compose step
+(#1995) is the shape to copy. Its `GAPS` list names the `_shared/` citations with no compose step
 behind them yet; alongside the offender sweep it ships a `gapStatus(text, gap)` returning
 `ok` | `fallback-shaped` | `missing`, one test asserting every gap is still `ok`, and — the part
 that makes it discriminate — a proof that doctors each gap **both** ways in memory and asserts the
-status flips: rewrite the citation line into a fallback clause and it must read `fallback-shaped`;
-replace the path with a composed-bundle path and it must read `missing`. Write the stale-check in
+status flips: rewrite the citation into a fallback clause and it must read `fallback-shaped`;
+replace the path with a composed-bundle path and it must read `missing`. Doctor every occurrence,
+in place: a gap cited on several lines has vanished only when all of them go, and replacing a
+whole line drops its indent and can move it out of the governed region. When a second suite
+restates the rule, keep the list in one helper both import (`tests/helpers/dispatch-prompt-bundle-gaps.js`),
+so the two can never disagree about what is exempt. Write the stale-check in
 the same change as the allowlist, and make its failure message say *shrink the list*, not *fix the
 sweep* — the entry going stale is the success case for the work the exemption was waiting on.
 
@@ -102,6 +106,10 @@ A claim of the form "X does not do Y" (a denied-twice call does not end the firi
 5. Build Y's matcher from the claim's grammar, not from the mutants you happen to try: every verb that can state it (end, stop) in every tense, in both word orders ("ends the firing", "the firing stops"), and add one mutant per verb and word order, each proved red against a matcher that lacks that form. #5255's sweep matched only the "ends" forms its mutants used; review lens 3f showed "After a denied-twice call the firing stops." passing every suite (fixed in `75fc0771a`, mutant M6).
 
 `assertNoDeniedTwiceEnd` and its M2-M6 mutants in `tests/dispatch-prompt-cli-prose.test.js` are the worked instance.
+
+## Retiring a claim's wording across several copies
+
+**Retiring a claim's wording across several copies needs a ban and a positive twin, each proved per copy.** When a change rewords one claim everywhere it is restated, a sweep that bans the old phrasing passes any third phrasing: a copy reworded to neither the old nor the new text can still say the old thing and stays green. Pair the ban with a positive pin that every site carries the replacement wording, over the same site map. `tests/foreground-execution-instruction.test.js` (#3722) does this twice: over its `claimSites()` map, `UNQUALIFIED` bans the "never re-woken" family while `QUALIFIED` requires "cannot count on being re-woken" at every site; and `STATUS_ONLY` bans the bare-`STATUS:` re-wake answer while `SHARED_RULE`, spread into each copy's own fact list, requires the whole-final-reply wording. Prove each half per site, not once: doctor exactly one site in memory (append the banned phrase, or strip the required one) and assert the predicate returns exactly `[name]`, with an `assert.notEqual` on the doctored text so a strip that matched nothing cannot pass. The ban's go-red proof appends the exact banned phrase, so it proves only that spelling; the positive twin is what catches a reworded copy — the ruling #3722's build review recorded for its `STATUS_ONLY` proof.
 
 ## Reference instances
 

@@ -67,8 +67,18 @@ files:
 - **URL:** the `ci` event line and the final line `{ outcome, msTotal, msWithoutCi, pr, ci, stop, … }`
 - **Action:** read `outcome` and `ci`. `pending-review` covers green CI and every other CI state; `ci` says which one (`green`, `red`, `pending`, `timeout` and so on).
 - **Should feel:** measurable. `msWithoutCi` is the wall clock the driver itself spent, with the CI wait taken out, so the cost comparison does not depend on how busy CI was.
-- **Should understand:** `ci` is `null` only when no PR exists. Whenever a PR exists, `ci` is the last word `pr-checks` reported, or `pending` if CI was never read. `stop` carries the structured reason (`step`, `class`, `pushed`, `created`, `reason`, `checkLogged`); for a stopped record the driver then settles it itself, and the final line's `settle` and `settleRow` say how (journey `find-a-stopped-driver-run-already-settled-5219`).
-- **Red flags:** `ci: null` beside a PR number; `msWithoutCi` that still includes the CI wait.
+- **Should understand:**
+  - `ci` is `null` only when no PR exists. Whenever a PR exists, `ci` is the last final word `pr-checks` reported, or `pending` if CI was never read as final.
+  - The CI wait lasts at least a 2-minute settle window, measured from the push: no read ends it sooner. This stops a fast workflow that has already finished, or been skipped, from passing for the tests (#5277). Every record's CI wait therefore takes about 2 minutes longer, all of it left out of `msWithoutCi`.
+  - Once the window has passed, the driver checks whether the pushed sha has a GitHub Actions run, using the run count each `pr-checks` read already carries, and checks again after each poll until it sees one. The first read other than `pending`/`stale` after the window ends the wait. It keeps its word when the sha has a run, and reads `no-ci` when it has none, even if the rollup says `green`. A `pending`/`stale` read on a sha with no run also ends as `no-ci`.
+  - A run count that cannot be read, or that belongs to a different head than the pushed sha, never makes the word `no-ci`: the read keeps its word.
+  - A `red`/`inherited-red` result keeps its word whatever produced it, and so does a failed read (`read-failed`, `gh-absent`, `no-pr`), which never saw the checks outside Actions.
+  - A `pending` read that names checks still running outside Actions keeps polling to the bound (`timeout`), and so does a `pending`/`stale` read on a sha that has a run.
+  - `stop` carries the structured reason (`step`, `class`, `pushed`, `created`, `reason`, `checkLogged`); for a stopped record the driver then settles it itself, and the final line's `settle` and `settleRow` say how (journey `find-a-stopped-driver-run-already-settled-5219`).
+- **Red flags:**
+  - `ci: null` beside a PR number, or `msWithoutCi` that still includes the CI wait.
+  - A `green` recorded seconds after the PR was created.
+  - A failing non-Actions check reported as `no-ci`.
 
 ### 6. Interrupt it safely — Ctrl-C in the terminal
 - **URL:** a `fail` event at the running step (or `interrupted by SIGINT before {step}` at a boundary), then a final line, then exit by the signal
@@ -82,11 +92,13 @@ files:
   - otherwise `refused`.
 
   A SIGTERM sent to drive.js alone waits for any running synchronous child: up to 30 minutes for the test run, 2 minutes for a CLI. An interrupted record is never settled: its final line reads `settle: interrupted`, and `docs/driver.md`'s "After an interrupt" lists the manual cleanup.
-- **Red flags:** a worker process still running after the driver exited; an interrupt during the CI wait reported `blocked`.
+  An interrupt inside the settle window reports `ci: pending`, never the unsettled read that came just before it.
+- **Red flags:** a worker process still running after the driver exited; an interrupt during the CI wait reported `blocked`, or reported with a `green` read taken before the window passed.
 
 ## Origin
 - Created during the build of #5218 (run `2026-11-12T104316-spec-5218`), the pipeline driver's second unit. It drives the express lane's steps 1–8 and 10 as code over the #5217 worker launcher; step 9 (merge) is deliberately absent.
 - Settling a stopped record belongs to the settle unit (#5219), documented in journey `find-a-stopped-driver-run-already-settled-5219`. It removes the locked worktree with `git worktree remove --force --force`, and it closes no PR.
 - Updated at wrap-up of #5218, after the review fixes. Step 1 says the origin-host gate runs before the policy read. Steps 3 and 4 now place a failed `check` call (`blocked` before any push) and a push that failed after reaching origin (`blocked`) where the code ends them.
 - Updated during the build of #5219: Steps 5 and 6 hand off to the driver's own settle and its `settle: interrupted` final line.
+- Updated during the build of #5277 (run `2026-11-13T000412-spec-5277`). Step 5 now covers the CI step's settle window, the GitHub Actions run requirement and the `no-ci` rule with its exemptions. Step 6 now covers what an interrupt inside the window reports.
 - Updated during the build of #5269 (run `2026-11-13T000404-record-5269`): step 3 now says the commit subject keeps its leading verb, and that a closing keyword goes only when an issue reference follows it.
