@@ -86,7 +86,7 @@ const WIN32_CLAUDE_BIN = 'claude.cmd';
 const POLICY_KEYS = Object.freeze([
   'express-driver', 'express-driver-wall-clock-minutes', 'express-driver-spend-ceiling-dollars',
   'merge-sensitive-paths', 'integration-model', 'integration-branch', 'verify-suite-slots',
-  'auto-merge-max-lines',
+  'auto-merge-max-lines', 'express-driver-review',
 ]);
 // The one record read: its JSON feeds eligibility, admission, the worker and check.
 const ISSUE_JSON_FIELDS = 'number,title,body,labels,state,comments';

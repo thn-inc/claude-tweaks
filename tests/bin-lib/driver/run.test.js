@@ -257,6 +257,7 @@ const POLICY = {
   'integration-branch': null,
   'verify-suite-slots': 1,
   'auto-merge-max-lines': 200,
+  'express-driver-review': 'beyond-express',
 };
 
 function issueFor(n) {
