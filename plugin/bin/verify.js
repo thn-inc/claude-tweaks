@@ -21,7 +21,7 @@ const os = require('os');
 const path = require('path');
 const { spawn, execFileSync } = require('child_process');
 
-const { parseArgs, UsageError, USAGE } = require('./lib/verify/args');
+const { parseArgs, UsageError, USAGE, EXIT_NO_VERDICT } = require('./lib/verify/args');
 const { runChecks, runOne, stopTrees } = require('./lib/verify/run');
 const {
   resolveSuiteSlots, chooseLane, holdSlot, SlotUnavailableError,
@@ -51,7 +51,7 @@ const {
 const { selectScope } = require('./lib/verify/scope');
 const { checkoutImpactContext } = require('./lib/verify/impact');
 const { substituteFile, describePath } = require('./lib/verify/file-template');
-const { fetchCiVerdict } = require('./lib/verify/ci-source');
+const { fetchCiVerdict, LOCAL_REQUESTED, NOT_CONSULTED } = require('./lib/verify/ci-source');
 const { resolveTarget, writeStagedItem } = require('./lib/stage-item/write');
 const { appendEvent } = require('./lib/hooks/context');
 const { formatEntry, appendEntry, resolveTarget: resolveDecisionTarget } = require('./lib/log-decision/append');
@@ -214,6 +214,24 @@ function slotReport(hold) {
 // The verify event's `ci` (#5369): one entry per CI-declared suite this run considered.
 function ciEventEntries(ciAttempts) {
   return ciAttempts.map((a) => ({ suite: a.suite, used: a.used, fallback: a.fallback }));
+}
+
+// The verify event's `impact` subset — absent unless the selection consulted an impact map.
+function impactEventFields(sel) {
+  return sel && sel.impact ? { impact: {
+    suite: sel.impact.suite, fallback: sel.impact.fallback, superseded: sel.impact.superseded,
+    selected: sel.impact.selected, supersedingPaths: sel.impact.supersedingPaths,
+  } } : {};
+}
+
+// The stderr text of a run that ended with no verdict (#5369): CI could not
+// answer a suite the declaration keeps off this machine, and --local was not passed.
+function noVerdictLines(attempt) {
+  return [
+    `verify.js: no verdict yet for suite "${attempt.suite}" — CI could not answer (${attempt.fallback}), and the declaration's localRuns "on-request" keeps it off this machine; no check ran and no pass stamp was written.`,
+    '  Either push the branch (commit first if the tree is dirty) so HEAD is the head of an open PR, then re-run this command,',
+    '  or re-run it with --local to run the suite on this machine.',
+  ];
 }
 
 // Verify event (#1928): resolves --run through the anchored-target guard and appends `fields`.
@@ -880,28 +898,76 @@ async function main() {
   // whole suite, so it also stands in for an impact subset — on a tree CI
   // actually saw (clean at start). Every other outcome is a named fallback in
   // report.json's `ci`, and the suite runs locally exactly as selected.
+  // #5369: under a declaration with localRuns "on-request" a CI-declared suite
+  // never falls back to a local run — the first one CI cannot answer stops the
+  // run with no verdict (exit 3, below), the later ones are not consulted, and
+  // --local skips CI for all of them. A red answer's flaky retry is deferred
+  // until every suite answered, so "no verdict yet" is decided before any retry.
+  const onRequest = Boolean(decl && decl.localRuns === 'on-request');
   const ciAttempts = [];
   const ciResults = [];
+  const deferredRetries = new Set();
+  const retryCtx = {
+    logDir, spawnImpl: spawn, now: Date.now, cwd: parsed.cwd, ownSlot: true,
+  };
   if (decl && decl.ci && sel && !parsed.stampSuite && sel.mode !== 'none') {
+    let stopped = false;
     for (const [suite, source] of Object.entries(decl.ci)) {
       if (!cmds.some((c) => c.name === suite)) continue;
       const skipCi = (reason) => ciAttempts.push({
         suite, workflow: source.workflow, job: source.job, used: false, fallback: reason,
         prNumber: null, runId: null, runUrl: null, jobId: null, conclusion: null, waitedMs: 0,
       });
-      if (startGit.dirty !== false) { skipCi(startGit.dirty === null ? 'tree-state-unreadable' : 'dirty-tree'); continue; }
+      if (parsed.local) { skipCi(LOCAL_REQUESTED); continue; }
+      if (stopped) { skipCi(NOT_CONSULTED); continue; }
+      if (startGit.dirty !== false) {
+        skipCi(startGit.dirty === null ? 'tree-state-unreadable' : 'dirty-tree');
+        stopped = onRequest;
+        continue;
+      }
       const verdict = await fetchCiVerdict({
-        suite, source, headSha: startSha, logDir, localRoot: logCwd, cwd: parsed.cwd || process.cwd(),
+        suite, source, headSha: startSha, logDir, localRoot: logCwd, cwd: parsed.cwd || process.cwd(), localRuns: decl.localRuns,
       });
       ciAttempts.push(verdict.ci);
-      if (!verdict.used) continue;
+      if (!verdict.used) { stopped = onRequest; continue; }
       const ciResult = { ...verdict.result, ci: { runId: verdict.ci.runId, runUrl: verdict.ci.runUrl, jobId: verdict.ci.jobId } };
-      ciResults.push(ciResult.exitCode === 0
-        ? ciResult
-        : await retryHook(ciResult, {
-          logDir, spawnImpl: spawn, now: Date.now, cwd: parsed.cwd, ownSlot: true,
-        }));
+      if (ciResult.exitCode === 0) ciResults.push(ciResult);
+      else if (verdict.ci.logUnavailable) ciResults.push({ ...ciResult, retryDecision: { retry: false, reason: 'ci-log-unavailable' } });
+      else if (onRequest) { ciResults.push(ciResult); deferredRetries.add(ciResult); }
+      else ciResults.push(await retryHook(ciResult, retryCtx));
     }
+  }
+  const noVerdict = onRequest
+    ? ciAttempts.find((a) => !a.used && a.fallback !== LOCAL_REQUESTED && a.fallback !== NOT_CONSULTED)
+    : undefined;
+  if (noVerdict) {
+    // No check ran, so no report, no stamp and no slot: a report left by an
+    // earlier run would read as this run's answer.
+    process.stderr.write(`${noVerdictLines(noVerdict).join('\n')}\n`);
+    fs.rmSync(jsonPath, { force: true });
+    if (parsed.run) {
+      writeVerifyEvent(parsed.run, {
+        mode: sel.mode,
+        suitesRun: [],
+        durationMs: Date.now() - startMs,
+        slotWaitedMs: 0,
+        pass: null,
+        noVerdict: true,
+        baselineAdjudicated: null,
+        preExistingAdjudicated: null,
+        sha: startSha,
+        flakyRetried: [],
+        reportPath: null,
+        ...impactEventFields(sel),
+        ci: ciEventEntries(ciAttempts),
+        local: false,
+      });
+    }
+    process.exitCode = EXIT_NO_VERDICT;
+    return;
+  }
+  for (let i = 0; i < ciResults.length; i += 1) {
+    if (deferredRetries.has(ciResults[i])) ciResults[i] = await retryHook(ciResults[i], retryCtx);
   }
   const ciSuites = new Set(ciResults.map((r) => r.name));
   const localCmds = cmds.filter((c) => !ciSuites.has(c.name));
@@ -1252,10 +1318,7 @@ async function main() {
       sha: git.sha,
       flakyRetried: retriedFiles,
       reportPath: jsonPath,
-      ...(sel && sel.impact ? { impact: {
-        suite: sel.impact.suite, fallback: sel.impact.fallback, superseded: sel.impact.superseded,
-        selected: sel.impact.selected, supersedingPaths: sel.impact.supersedingPaths,
-      } } : {}),
+      ...impactEventFields(sel),
       // #5369: what CI answered per declared suite, and whether --local asked to skip it.
       ...(ciAttempts.length ? { ci: ciEventEntries(ciAttempts) } : {}),
       local: parsed.local === true,
@@ -1464,6 +1527,10 @@ async function main() {
     lines.push('');
   }
   for (const a of ciAttempts) {
+    if (a.logUnavailable) {
+      lines.push(`CI: ${a.suite} — taken from ${a.workflow} / ${a.job} run ${a.runId} on HEAD (${a.conclusion}, ${a.runUrl}; its log could not be downloaded — pass --local to reproduce the failure here)`);
+      continue;
+    }
     lines.push(a.used
       ? `CI: ${a.suite} — taken from ${a.workflow} / ${a.job} run ${a.runId} on HEAD (${a.conclusion}${a.runUrl ? `, ${a.runUrl}` : ''})`
       : `CI: ${a.suite} — ran locally (${a.fallback})`);
