@@ -324,6 +324,23 @@ joined only by a comment, so a parser change turns the resolver test red and lea
 green. Keep each clause and its input on one table row, asserting both, so the red row names the
 clause to edit.
 
+**Template-with-placeholder-shapes instance (#4785):** `plugin/skills/build/stash-guard.md`
+documents the restore line `plugin/bin/stash-guard.js` writes to `decisions.md`: the template
+(`AUTO {time} — Stash guard: {who} removed stash entr{y,ies} {sha subject …}; …`) and, right
+after it, the `{who}` forms in a parenthetical comma-run. The placeholders carry shapes
+(`entr{y,ies}`, a variable subject list), so the composer row's whole-string `strictEqual` cannot
+apply, and the `{who}` list is a closed vocabulary with no table rows to walk.
+`tests/stash-guard.test.js`'s AC3.1 test pins both from the live CLI. It drives the real `run()`
+once per dispatch-id shape (`--label` alone, `--task` with `--label`, `--task` alone) and collects
+the `AUTO` lines from the `decisions.md` it wrote. It compiles the prose template into a regex,
+each placeholder swapped for its shape and every fixed span escaped, and requires every emitted
+line to match. It parses the `{who}` list out of the prose and compares it with the emitted `who`
+values in both directions, after expanding `{k}` and `{role}`. Its go-red controls run through the
+same helper: a reworded template span fails once per shape, and a dropped `{who}` form fails once.
+When a prose template has placeholder shapes, compile it to a regex and run it over the real
+writer's output for every input shape the writer takes; typed-in lines agree with the prose by
+construction.
+
 ## Existing coverage, checked
 
 `skill-prose-conformance-tests` is the closest sibling, but covers the other half of the problem.
@@ -344,6 +361,7 @@ dependency's code.
 | Flagging every markdown table as a candidate | Most tables are prose (comparisons, option matrices) with no code twin at all — check for an actual code-side enum/switch/lookup first |
 | Accepting a citation-sweep test (a plain string `includes()`) as equivalent to a vocabulary-equality pin | A citation sweep never fails when a new case is added to one side and not the other — only a full `assert.deepEqual` over both sides (imported, or parsed from prose) catches that |
 | Treating this skill's scope as "extract a shared contract" | That's `shared-contract-extraction`'s job; this skill only detects and names an existing prose/code drift risk, it doesn't prescribe extracting anything |
+| Pinning a multi-column code registry on the one column the spec names | Every column a consumer is told to rely on is its own twin, and a wrong value in an unpinned column turns nothing red. #5227's `PASSES` registry (`plugin/bin/lib/dispatch/queue-pull.js`) restates the queue-pull script's header bullets across several columns. Its build pinned `removes` to the bullets and `failOpen` to the oracle runs, but `bypass`, `runsOnCacheHit` and `mcp` shipped with only type and value-set checks, and `rankNext` hardcoded a reason set derived from the registry. Review lenses 3e and 3g found it, and the fix wave (566b73843) pinned `bypass` to the header bullets, `runsOnCacheHit` to the cache-hit write-back, `mcp` to the files-transport run's reasons, and `rankNext`'s set to the registry. Each pin was proven red by mutation. Pin each column against the prose or against observed behaviour, and cross-check any literal derived from the registry elsewhere |
 | Writing a pinning test that only checks one direction (code has every prose row, but not the reverse) when the two sides name the same closed vocabulary | Assert set equality both ways — a prose row with no code twin drifts as much as the reverse. **Exception: a code side routing a superset of producers** (`resolve.js`'s SECTION_MAP) — pin containment per producer, deriving the producers live (`tests/bin-lib/console/resolve.test.js` iterates `REGISTRY`, #2773) |
 | Guarding a self-filtering scan with a loose floor (`checked >= N`, N below the live match count) | A scan that skips inputs it finds nothing in can lose them silently when a regex or the prose drifts; a floor only catches total collapse. Pin the exact matched set (`assert.deepStrictEqual(checkedIds.sort(), [...])`, as `resolve.test.js`'s registry audit does, #2773) — `parse-signal-discipline`'s "couldn't parse" vs "doesn't apply" rule applied to a test's own scan |
 | Scoping the prose side of a twin to the one file whose table the code was modeled on, when the code keys on a shared prefix | A prefix-gated classifier sees every file's lines under that prefix. `plugin/bin/lib/closing-tally/closing-tally.js` (#2729) hardcodes two other files' `Backlog refine:` lines in `IGNORED_PATTERNS`, so rewording either falls back to `unclassified`. Grep the key repo-wide (`grep -rn 'Backlog refine: ' plugin/skills/`) and pin the live templates |
