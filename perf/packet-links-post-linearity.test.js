@@ -10,7 +10,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { findCredentialInText, checkLink } = require('../plugin/bin/lib/wrap-up/packet-links');
+const { findCredentialInText, checkLink, entryPointHasBearerRoute, hasBearerUrl } = require('../plugin/bin/lib/wrap-up/packet-links');
 const { upsertLocalPacket } = require('../plugin/bin/lib/wrap-up/packet-post');
 
 const BUDGET_MS = 2000;
@@ -37,6 +37,52 @@ test('credential screen stays linear on long adversarial input', () => {
     }
   });
   assert.ok(ms < 10000, `took ${ms.toFixed(0)} ms`);
+});
+
+test('the URL-token scan stays linear on long adversarial input (#4612), and keeps its verdict', () => {
+  for (const [input, expected] of [
+    ['a'.repeat(200000), false],
+    ['a.'.repeat(100000), false],
+    ['a:'.repeat(100000), false],
+    ['a:1 '.repeat(50000), false],
+    ['a '.repeat(100000), false],
+    [`https://${'/'.repeat(200000)}`, false],
+    [`https://h/${')'.repeat(100000)}a`, false],
+    ['https://h/a '.repeat(20000), false],
+    [`${'https://h/a '.repeat(20000)}https://h/Xk3j9f8s7d6f5g4h3j2k1`, true],
+    // A scheme may now start after `-` or `+`, so a dashed word restarts once per dash, each try bounded.
+    ['a-'.repeat(100000), false],
+    ['a+'.repeat(100000), false],
+    ['-'.repeat(200000), false],
+    ['+'.repeat(200000), false],
+    [`${'a-'.repeat(100000)}https://h/Xk3j9f8s7d6f5g4h3j2k1`, true],
+    ['localhost'.repeat(20000), false],
+    ['localhost '.repeat(20000), false],
+    ['[::1]:'.repeat(30000), false],
+    ['[::1]:3000 '.repeat(20000), false],
+    [`https://h/a;${';'.repeat(200000)}`, false],
+  ]) {
+    const { value, ms } = timed(() => hasBearerUrl(input));
+    assert.ok(ms < BUDGET_MS, `took ${ms.toFixed(0)} ms`);
+    assert.strictEqual(value, expected);
+  }
+});
+
+test('the Entry point route scan stays linear on long adversarial input (#4612), and keeps its verdict', () => {
+  const bearer = 'Xk3j9f8s7d6f5g4h3j2k1';
+  for (const [input, expected] of [
+    [`${' '.repeat(200000)}x`, false],
+    [`- ${' '.repeat(200000)}x`, false],
+    ['*'.repeat(200000), false],
+    [`- Entry point: ${' '.repeat(200000)}x`, false],
+    [`- Entry point: ${'/ '.repeat(100000)}`, false],
+    [`- Entry point: ${'/'.repeat(200000)}`, false],
+    [`- Entry point: ${'/a '.repeat(50000)}/reset/${bearer}`, true],
+  ]) {
+    const { value, ms } = timed(() => entryPointHasBearerRoute(input));
+    assert.ok(ms < BUDGET_MS, `took ${ms.toFixed(0)} ms`);
+    assert.strictEqual(value, expected);
+  }
 });
 
 test('local record upsert trims a long newline run in linear time', () => {

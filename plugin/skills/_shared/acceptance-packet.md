@@ -14,7 +14,7 @@ Nine sections, in this render order. The owner is the record whose work fills th
 it lands, the section's empty line stands in.
 
 1. **What changed** — claims citing `change` facts. Empty: `not applicable: no change facts were gathered`.
-2. **Recording** — owner: the recording record. One line per `recording` fact. Empty: `not recorded`.
+2. **Recording** — owner: the recording record. One item per `recording` fact, through `renderRecordingSection` (`## Recording`). Empty: `not recorded`.
 3. **Test guide** — numbered steps from the kept claims, each with its cited link or command, then the
    refused links and the `Checks that passed:` list. Empty: `not applicable: no tested stories or links were gathered`.
 4. **Couldn't test** — placed rows and moved claims. Empty: `not applicable: every expected check ran`.
@@ -41,7 +41,8 @@ first rule that matches: status `skipped` or `not-run` → Couldn't test; status
 break; status `passed` with `negative: true` → Tried to break; any other `passed` → the Test guide's
 `Checks that passed:` list. The row count therefore equals the fact count. **Decision Q8:** no
 edge-case signal exists yet: no check counts as an edge case until one does, so Tried to break holds
-negative stories and failures only, and a routine pass never renders there.
+negative stories and failures only, and a routine pass never renders there. A `recording` fact with status
+`not-run` and any reason but `no-story` also renders one row in Couldn't test, beside its own line in Recording.
 
 ## Canonical copy and lookup
 
@@ -88,7 +89,7 @@ negative stories and failures only, and a routine pass never renders there.
 
 **The facts document** is `{ schemaVersion, record, surface, allowedHosts, partial[], refused[], facts[] }`.
 A fact is `{ id, kind, status, reason?, source }` plus the optional render fields `text`, `url`,
-`command`, `label`, `negative`, `live` and `target`.
+`command`, `label`, `negative`, `live`, `target`, `url_or_path`, `archive_path`, `captions`, `failure`, `redactions` and `exposure`.
 
 **Fact kinds:** `change`, `check`, `story`, `finding`, `link`, `recording`, `flag`, `decision`, `deploy`.
 
@@ -197,7 +198,8 @@ copied from the facts file and inventing none.
 The snapshot exists because the verify and QA reports are not in the run dir, and Step 4 can run after
 the worktree holding them is gone. It copies them, the QA pass stamp, `head` and `mergeBase` to
 `{run-dir}/packet-inputs/` under a `manifest.json`; it is an input to gather, never a packet copy any
-reader consults. The working copy lives in session temp and is never read after the run: the facts,
+reader consults. `snapshot` also encodes the recording while the QA screenshots are on disk (`## Recording`).
+The working copy lives in session temp and is never read after the run: the facts,
 narrative, rendered markdown and dropped list are session-temp paths (`_shared/session-tmp-root.md`)
 passed to the CLI.
 
@@ -225,6 +227,10 @@ when no trusted packet exists.
 Below the floor a record carries no pending label, so a trusted packet comment on the record also counts
 as a landed signal (`_shared/acceptance-labeling-landed.md`).
 
+A Recording path is local to the machine that ran the pipeline: the reader checks the live location first
+and then the `once archived:` one, and a file in neither is gone, never a failed packet. Both paths are
+relative to the main checkout root.
+
 ## Untrusted content
 
 Narrative and fact free text are prose only: newlines collapsed, link brackets and `<` escaped, leading
@@ -234,16 +240,15 @@ heading, and so is a character reference's `&`, since `&#35;12` and `&commat;oct
 live reference and a live mention. A URL in free
 text renders as a code span, as does every other shape GitHub would link or notify: any `scheme://` URL,
 `mailto:`, a bare email, `@mention`, `#12` and `owner/repo#12`, and `GH-12`, tokens that touch sharing one span. A bare commit SHA and `owner/repo@sha` stay live. A `command` renders in a backtick-safe
-code span. Links render only from `link` facts and a `recording` fact's `url`. An evidence screenshot is
-therefore a plain link and not an embedded image: only a screened fact produces a live link, and media
+code span. Links render only from `link` facts and a `recording` fact's `url`, or its `url_or_path` or `archive_path` on a `linked-private` fact. A recording is therefore a path, or on a `linked-private` fact a plain link to a non-image page, and never an embedded image: only a screened fact produces a live link, and media
 belongs to the recording record.
 
 ## Links and credentials
 
 **Host rule.** A link fact's `url` is http(s) only, and its host must be the local base URL host or the
-`dev-base-url` host. Hosts compare by hostname, ignoring port. A `recording` fact's `url` gets the
-credential screen with no host rule, since a recording may live on any host; a refused one renders
-`(recording url refused)`.
+`dev-base-url` host. Hosts compare by hostname, ignoring port. A `recording` link gets the credential screen and the non-image rule with no host rule, since a recording may live on any host, and renders live only when `decideExposure` returned `linked-private`. A refused one renders `(recording url refused)`, and one refused for a credential, a bearer-shaped path segment included, renders `recording withheld: link contained a credential-shaped value`.
+
+**Bearer-shaped path segments.** The bearer-segment rule binds `link` facts as well as recording links: a path segment of 20 or more of `[A-Za-z0-9_-]`, with a digit and a letter in it, is refused on any host. A segment is judged up to its first `;`, and a `;` parameter is judged as a query pair is: a credential key in it, or a bearer-shaped value, is refused too. A route held in a hash-router fragment (`#/reset/{value}`) or in a rooted query value (`?next=/reset/{value}`) is judged the same way. A UUID-keyed or dated-slug path on an allowed host therefore renders `(link refused: credential in path segment)`, and the Try it block still names the route. A `command` or observation-plan line holding a URL with such a segment is refused or screened too, so a route carrying one reaches the Test guide as a command with that segment replaced by `{id}`. An observation plan's `Entry point:` field names a route, so a bare path in its value is screened the same way and the plan holds that route with `{id}`. A bare path in a `command` or on any other plan line stays bound by the writer's `{id}` rule alone, since code cannot tell it from a local path. A link the gather refused has no fact, so its refusal reads `{N} link(s) refused: {id} (credential in path segment)`.
 
 **Credential keys:** `token`, `access_token`, `password`, `passwd`, `secret`, `session`, `sessionid`, `jwt`, `auth`, `key`, `api_key`, `sig`, `signature`, `x-amz-signature`.
 
@@ -255,8 +260,8 @@ word of a compound (`authToken`, `clientSecret`, `v2token`, `CLIENTSECRET`), or 
 (`token[]=`, `token[sub]=`, `user[password]=`), as described under **In text**.
 
 **In text.** The same constant screens every `command` string, every claim's text in any section, each
-observation-plan line, and all other free text that renders: a `reason`, decision, recording and deploy
-text, a refused reason and a partial note. Decision Q2 sets a minimum, and a secret on this public
+observation-plan line, and all other free text that renders: a `reason`, decision and deploy
+text, a refused reason and a partial note. The Recording section redacts its text instead (`## Recording`). Decision Q2 sets a minimum, and a secret on this public
 surface is the spec's anti-goal. Matching is also
 case-insensitive after percent-decoding: `tok%65n=`, or `100% tok%65n=` with a stray `%` beside it. The shapes:
 
@@ -298,6 +303,24 @@ entry to use, never its value.
 **Unverified links (Decision Q7).** Each Test-guide link carries
 `(link unverified: deploy not confirmed live)` only when the deploy target is `dev` and the feature is not
 confirmed live; a `local` target's links carry none. The Deploy status section still states the target.
+
+## Recording
+
+**Source of frames.** The recording is an animated GIF built from the step screenshots the pipeline's own happy-path stories already wrote to their `SCREENSHOT_PATH` directories. No new browser run, and the recording step never starts a server. Negative stories are excluded, so error screens never enter it. A story id missing from a readable index, a `legacy-{slug}` id included, records nothing with no-happy-path-screenshots, since it could be a tag-only negative story; the no-story and no-local-base-url reasons are checked first, so either one wins over it. Video is out of scope.
+
+**Local base URL.** A recording needs the base URL the story run itself was given, whose host is `localhost`, `127.0.0.1` or `::1`. Nothing auto-detects a server.
+
+**Storage and exposure.** The GIF is stored in the run's local directory and never uploaded, in any repository visibility, and the Recording line names that path and, on a `once archived:` line, where it moves. The packet never embeds the recording or any screenshot in any repository visibility: no markdown image syntax and no `img` tag. A remote store is allowed later only if it enforces authenticated collaborator access, proven by an anonymous-fetch probe that fails; secret gists and Actions artifacts of a public repository do not qualify. Exposure values:
+
+- `local-only` — the v1 default, and the result for any unreachable or unprobed store.
+- `linked-private` — a remote store that passed the probe.
+- `withheld` — a link the credential rule refused.
+
+**Redaction.** Every string the section renders from a recording fact, its text, captions, link label and failure message, passes `renderRecordingSection`, applied at one choke point. Gather writes the same redacted form of `text`, `captions` and `failure` into the fact and the sum into `redactions`, so a narrator never reads a raw value in those fields, and `snapshot`'s stdout prints that form while the manifest on disk stays raw, as local input. `url_or_path` and `archive_path` are run-local paths the writer mints, and gather does not redact them. The section still redacts, so a hand-built fact cannot leak, and it counts an integer `redactions`, else what it computes. Redaction keeps the key name and replaces the whole value, so `api_key=sk_live_1` becomes `api_key=[redacted]`. The placeholder renders `[redacted]`, the raw comment holds the fixed token, and its escaped opener means a line can never become a link reference definition. Over what no rule removed the credential screen still runs, so a shape the redactor misses renders `(text withheld: credential-shaped)`. A non-zero count renders as `redacted values: {n}` and does not change the exposure, which is already the strictest that applies. Redaction is text only and cannot scan pixels: the stored GIF is unredacted and local-only, and stories must run against seed data and throwaway credentials. A local path the credential screen or the redactor would change renders the withheld line; the bearer-segment rule does not bind a plain local path, so a run id or a dated slug stays. A fact id the redactor would change renders `(id withheld: credential-shaped)` in the section and in its Couldn't test row. A blank value renders nothing, and a blank `label` falls to `text`.
+
+**The not-recorded fact.** `{ id, kind: 'recording', status: 'not-run', reason }`, with `reason` one of `no-story`, `no-local-base-url`, `no-happy-path-screenshots` or `encoder-failed`. The first renders plain `not recorded` only. The other three also appear under Couldn't test, since a recording was expected and impossible, and a failure message renders on its own line. The last also covers a destination git does not ignore: no GIF is written and the failure names the path, while a directory in no git repository proceeds, since nothing can commit it. `checkFact` refuses a `not-run` recording with any other reason.
+
+**The link rule.** A link is live only from a store that passed the probe, on the screens of `## Links and credentials`; a link to an image is refused, and a link with a credential-shaped value renders `recording withheld: link contained a credential-shaped value`. A `url_or_path` or `archive_path` that reads as a URL meets those link rules whatever its exposure, parsed or not: a scheme longer than one letter, any scheme before `//`, or a leading `//`, spelled as `new URL` would read it. A Windows `C:\` or `C:/` path and a relative run path stay local.
 
 ## Facts-poor and infra items
 
