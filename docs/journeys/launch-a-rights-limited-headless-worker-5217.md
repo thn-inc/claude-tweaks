@@ -14,17 +14,17 @@ files:
 ## Steps
 
 ### 1. Describe the launch — the run loop's own code
-- **URL:** `launchWorker({ role, cwd, prompt, settingsDir, ceilings: { wallClockMs, spendCeiling }, testCommand, claudeMdText })`
-- **Action:** pass the role and the directories. Leave the flags alone: the role decides the tool list and, for the implementer, the generated settings file.
+- **URL:** `launchWorker({ role, cwd, prompt, settingsDir, ceilings: { wallClockMs, spendCeiling }, testCommand, claudeMdText, readPaths })`
+- **Action:** pass the role and the directories. Leave the flags alone: the role decides the tool list and, for the implementer, the generated settings file. Leave `readPaths` out too, unless the test command needs a directory the launcher cannot work out.
 - **Should feel:** like filling in a short form. The caller names what it wants done and where, never how the CLI is told.
-- **Should understand:** the implementer may edit files in the working directory. Where the Bash sandbox was probed (macOS), it may also run the project's test command and read git, inside the sandbox. Everywhere else it has no Bash at all, so its prompt must name the files it is to work on. The reviewer and explorer only read.
-- **Red flags:** needing to pass a permission mode, a flag list or an environment to make a launch work. A caller that builds its own argument list has gone around the role table.
+- **Should understand:** the implementer may edit files in the working directory. Where the Bash sandbox was probed (macOS), it may also run the project's test command and read git, inside the sandbox. Code that command runs cannot read outside the working directory, the home directory included. Only the test command's own toolchain stays readable: the launcher derives it from the command's first word and the interpreter that word's script names, and never re-opens `/`, the home directory or a parent of it. Passing `readPaths` replaces that derived list; an empty list re-opens nothing. Everywhere else the implementer has no Bash at all, so its prompt must name the files it is to work on. The reviewer and explorer only read.
+- **Red flags:** needing to pass a permission mode, a flag list or an environment to make a launch work. A caller that builds its own argument list has gone around the role table. A caller passing its home directory in `readPaths` to make a test run has undone the read block.
 
 ### 2. Get refused early when the launch is unsafe — the same call
 - **URL:** the promise `launchWorker` returns, rejected
 - **Action:** read the error and fix the option it names.
 - **Should feel:** strict and immediate. A wrong option costs nothing, because no file was written and no process was started.
-- **Should understand:** the launcher refuses a working directory or settings directory that is not absolute, a settings directory inside the working directory (the worker could edit its own rights file there), including one that reaches it through a symbolic link, a case variant or a second spelling, a working or settings directory whose path cannot be resolved (a dangling link, an unreadable part), a prompt that is not text, a ceiling that is not a positive number, and a schema it cannot check.
+- **Should understand:** the launcher refuses a working directory or settings directory that is not absolute, a settings directory inside the working directory (the worker could edit its own rights file there), including one that reaches it through a symbolic link, a case variant or a second spelling, a working or settings directory whose path cannot be resolved (a dangling link, an unreadable part), a prompt that is not text, a ceiling that is not a positive number, a schema it cannot check, and, for the implementer, a `readPaths` that is not a list of absolute, already-normalized paths or that names the filesystem root (the error names the entry).
 - **Red flags:** a settings file left behind after a refused launch, or a refusal that arrives only after the worker has already run.
 
 ### 3. Read the envelope — the same call, resolved
@@ -45,9 +45,10 @@ files:
 - **URL:** `DRIVER_LIVE_SMOKE=1 node --test --test-name-pattern="AC7: live smoke test" tests/bin-lib/driver/worker.test.js`
 - **Action:** run it after a Claude Code upgrade, or before trusting the launcher on a new machine. It starts one small real worker in a temporary directory and spends a few tokens.
 - **Should feel:** like a seat-belt check: one command, well under a minute, a plain pass or fail.
-- **Should understand:** the test shows the write the worker is allowed, and that an `echo` redirect, a `curl`, a write into `.git` and two `git log --output` attempts leave nothing behind. Without the variable the test is skipped, so the ordinary suite never spends tokens.
+- **Should understand:** the test shows the write the worker is allowed, and that an `echo` redirect, a `curl`, a write into `.git` and two `git log --output` attempts leave nothing behind. On macOS it also runs `npm test` through the worker: the test file's read of a canary placed in the home directory must fail with a permission error, while `npm test` itself still runs on the same `node` as `PATH` names. Without the variable the test is skipped, so the ordinary suite never spends tokens.
 - **Red flags:** the smoke test failing after an upgrade. The CLI's permission or sandbox behaviour has changed, and the facts in the module headers need probing again before any worker is launched.
 
 ## Origin
 - Created during build of #5217 (run `2026-11-12T060404-spec-5217`), the first unit of the pipeline driver: the worker launcher with per-role rights.
+- Updated during build of #5268 (run `2026-11-13T000350-spec-5268`): the implementer's read block is on where the sandbox was probed, with the test command's toolchain re-opened (steps 1, 2 and 5).
 - The rights, the sandbox settings and what the sandbox was observed to contain are recorded, with the CLI version and date of each probe, in the header comments of `plugin/bin/lib/driver/roles.js` and `plugin/bin/lib/driver/worker.js`.
