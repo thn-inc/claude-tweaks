@@ -267,6 +267,7 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    (item 8, `cleanup-procedures.md`'s Ordering rule). `teardown-run` stopped archiving altogether in
    #3490; `--remote-ref-only` says so at the call site and stays, inert, for the transition (removal
    condition: `bin/hooks.js`'s `KNOWN_FLAGS` comment).
+   A run recorded by another session (a parked run under `merge-mode.md`) is torn down only under `--merged`, and only when run-liveness's verdict for it is `dead`; otherwise the whole call refuses, naming the verdict, and removes nothing (#5293).
    A `worktree: registration pruned but directory still present at {path}` line
    is not a completed removal: surface the path in the report and leave the directory for manual
    removal — never retry-delete it. **Own-worktree carve-out:** never call `teardown-run` against the worktree

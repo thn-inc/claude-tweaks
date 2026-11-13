@@ -603,12 +603,12 @@ const STATE_OVERRIDES = {
 };
 const RED_FAILING = [{ name: 'test', url: 'https://ci.example/test' }];
 const RUN_LINES = {
-  green: { failing: [], pending: [], headRefOid: HEAD, localHead: HEAD, pr: 7, state: 'green' },
-  pending: { failing: [], pending: ['test'], headRefOid: HEAD, localHead: HEAD, pr: 7, state: 'pending' },
+  green: { failing: [], pending: [], headRefOid: HEAD, localHead: HEAD, pr: 7, state: 'green', headRunCount: 0 },
+  pending: { failing: [], pending: ['test'], headRefOid: HEAD, localHead: HEAD, pr: 7, state: 'pending', headRunCount: 0 },
   stale: { failing: [], pending: [], headRefOid: 'd'.repeat(40), localHead: HEAD, pr: 7, state: 'stale' },
-  red: { failing: RED_FAILING, pending: [], headRefOid: HEAD, localHead: HEAD, pr: 7, state: 'red', baseSha: null, baseReason: 'integration branch unresolvable', baseBranch: null },
-  'inherited-red': { failing: [{ ...RED_FAILING[0], inherited: true }], pending: [], headRefOid: HEAD, localHead: HEAD, pr: 7, state: 'inherited-red', baseSha: BASE_SHA, baseBranch: 'main' },
-  'no-ci': { failing: [], pending: [], headRefOid: HEAD, localHead: HEAD, pr: 7, state: 'no-ci' },
+  red: { failing: RED_FAILING, pending: [], headRefOid: HEAD, localHead: HEAD, pr: 7, state: 'red', baseSha: null, baseReason: 'integration branch unresolvable', baseBranch: null, headRunCount: 0 },
+  'inherited-red': { failing: [{ ...RED_FAILING[0], inherited: true }], pending: [], headRefOid: HEAD, localHead: HEAD, pr: 7, state: 'inherited-red', baseSha: BASE_SHA, baseBranch: 'main', headRunCount: 0 },
+  'no-ci': { failing: [], pending: [], headRefOid: HEAD, localHead: HEAD, pr: 7, state: 'no-ci', headRunCount: 0 },
   'read-failed': { failing: [], pending: [], headRefOid: null, localHead: HEAD, pr: 7, state: 'read-failed', reason: 'gh pr view failed: HTTP 502' },
   'gh-absent': { failing: [], pending: [], headRefOid: null, localHead: null, pr: 7, state: 'gh-absent' },
   'no-pr': { failing: [], pending: [], headRefOid: null, localHead: null, pr: null, state: 'no-pr' },
@@ -976,4 +976,42 @@ test('the pending gate-line phrase "no run since ready" appears in _shared/pr-ch
   const { readText } = require('../../helpers/read-skill');
   const prose = readText(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', '_shared', 'pr-check-gate.md'));
   assert.match(prose, /'no run since ready: \{files\}' when only awaitingReadyRun holds it/);
+});
+
+// headRunCount (#5277): the head-runs read's row count rides the envelope whenever that read
+// succeeded, so drive.js's CI step can tell "no run on this sha" from "runs unreadable".
+const HEAD_RUN = { name: 'test', workflowName: 'test', status: 'completed', conclusion: 'success', url: 'https://ci.example/run' };
+
+test('headRunCount: a successful head-runs read puts its row count and the head sha on the envelope, in both modes', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const runs = JSON.stringify([HEAD_RUN, { ...HEAD_RUN, name: 'lint', workflowName: 'lint' }]);
+  const viaRun = makeDeps(main, { gh: viewGh({ headRefOid: HEAD, statusCheckRollup: [PASS] }, runs) });
+  assert.equal(run(['--run', runDir], viaRun.deps), 0);
+  assert.equal(viaRun.json().state, 'green');
+  assert.equal(viaRun.json().headRunCount, 2);
+  assert.equal(viaRun.json().headRefOid, HEAD);
+  const viaPr = makeDeps(main, { gh: viewGh({ headRefOid: HEAD, statusCheckRollup: [PASS] }) });
+  assert.equal(run(['--pr', '7'], viaPr.deps), 0);
+  assert.equal(viaPr.json().headRunCount, 0, 'an empty run list is a count of zero, not an absent count');
+});
+
+test('headRunCount: absent when the head-runs read failed or never ran', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const failed = makeDeps(main, { gh: (args) => { if (args[0] === 'pr') return JSON.stringify({ headRefOid: HEAD, statusCheckRollup: [PASS] }); throw new Error('HTTP 502'); } });
+  assert.equal(run(['--run', runDir], failed.deps), 0);
+  assert.equal(failed.json().state, 'read-failed');
+  assert.equal('headRunCount' in failed.json(), false);
+  const stale = makeDeps(main, STATE_OVERRIDES.stale());
+  assert.equal(run(['--run', runDir], stale.deps), 0);
+  assert.equal(stale.json().state, 'stale');
+  assert.equal('headRunCount' in stale.json(), false, 'a stale head skips the runs read');
+});
+
+test('headRunCount: a failed ready-run read after a good head-runs read still carries the count', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { gh: viewGh({ headRefOid: HEAD, statusCheckRollup: [PASS] }, JSON.stringify([HEAD_RUN])), readyRun: () => ({ reason: 'gh absent' }) });
+  assert.equal(run(['--run', runDir], h.deps), 0);
+  assert.equal(h.json().state, 'read-failed');
+  assert.equal(h.json().headRunCount, 1);
+  assert.equal(h.json().headRefOid, HEAD);
 });

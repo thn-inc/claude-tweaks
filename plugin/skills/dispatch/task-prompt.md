@@ -1,6 +1,6 @@
 # Dispatch Step 5 — Task() Prompt Template
 
-Referenced by `skills/dispatch/SKILL.md` Step 5. **Each of this file's two templates must be inlined verbatim into its own `Task()` tool call** when dispatching a group — they are the operative templates, not supplementary reading. Never inline both into one call. `bin/dispatch-prompt.js` renders each call's prompt (SKILL.md Step 5): these fenced blocks and the Context pack's numbered items are its only template source, so an edited sentence here reaches every rendered prompt with no code change. Nothing is substituted by hand; a render failure blocks the group (`two-call-gate.md` §2).
+Referenced by `skills/dispatch/SKILL.md` Step 5. **Each of this file's two templates must be inlined verbatim into its own `Task()` tool call** when dispatching a group — they are the operative templates, not supplementary reading. Never inline both into one call. `bin/dispatch-prompt.js` renders each call's prompt (SKILL.md Step 5): these fenced blocks and the Context pack's numbered items are its only template source, so an edited sentence here reaches every rendered prompt with no code change. Nothing is substituted by hand; a render failure blocks the group and ends the firing (`two-call-gate.md` §2).
 
 Each group is dispatched as **two sequential `Task()` calls**, not one (per `_shared/subagent-output-contract.md`'s input discipline — minimal input, literal output template inlined, no conversation history). The single-assistant-message rule (`_shared/subagent-dispatch-core.md`'s fan-out section) creates no batching decision here — these two calls are sequential by design, never emitted together.
 
@@ -50,7 +50,7 @@ calls — plus one standing instruction (item 7) that needs no resolution, only 
    expires, judge that unit yourself, log the downgrade, and mark its findings `unconfirmed`; that
    child is abandoned and no longer counts as outstanding, so your final reply still ends with
    `STATUS: {WORD}`. For a `/claude-tweaks:review` lens unit, log that downgrade as the single-read
-   coverage line, and carry its caveat, from `review/step3-lens-dispatch.md`'s partner-died
+   coverage line, and carry its caveat, from `review/step3-tier-variants.md`'s partner-died
    paragraph. Ignore a late result; if a late notification re-wakes you after your final
    reply, repeat your whole final reply unchanged — the dispatcher keeps only your latest reply, so
    a bare `STATUS:` line would replace the report. A child that reports a failure (a `failed`
@@ -71,7 +71,9 @@ calls — plus one standing instruction (item 7) that needs no resolution, only 
    every unchanged child. Children sharing a worktree progress together; a child whose prompt names
    no worktree counts as unchanged. A failed wait call counts as no wait but ends its window, and the probe runs as at any
    bound; a failed probe command counts as no change, never retried in another form. Read-only units
-   keep the first-bound self-judge. A wait call that is blocked or fails is not a wait and never
+   keep the first-bound self-judge.
+   Exception: a rendered-UI unit (review Step 6/6.5) gets more windows while its artifact directory
+   changes; stage its late result (`_shared/rendered-ui-units.md`). A wait call that is blocked or fails is not a wait and never
    counts toward the bound; never retry it in another form (a longer, wrapped or backgrounded
    sleep): treat every child still outstanding as silent at the bound. The full rule is in
    `subagent-dispatch-core.md`'s Foreground Execution Discipline section. Give any agent you
@@ -182,7 +184,9 @@ passes with no change, or at a ceiling of 3 windows (60 minutes) per wave, namin
 progress for one window` or `ceiling reached while progressing`) and every unchanged child. Children
 sharing a worktree progress together; a child whose prompt names no worktree counts as unchanged. A
 failed wait call counts as no wait but ends its window, and the probe runs as at any bound; a failed probe command counts
-as no change, never retried in another form. Read-only units keep the first-bound self-judge. A wait
+as no change, never retried in another form. Read-only units keep the first-bound self-judge.
+Exception: a rendered-UI unit (review Step 6/6.5) gets more windows while its artifact directory
+changes; stage its late result (`_shared/rendered-ui-units.md`). A wait
 call that is blocked or fails is not a wait and never counts toward the bound; never retry it in
 another form (a longer, wrapped or backgrounded sleep): treat every child still outstanding as
 silent at the bound. A reply that ends without a tool call ends the turn.
@@ -372,7 +376,9 @@ passes with no change, or at a ceiling of 3 windows (60 minutes) per wave, namin
 progress for one window` or `ceiling reached while progressing`) and every unchanged child. Children
 sharing a worktree progress together; a child whose prompt names no worktree counts as unchanged. A
 failed wait call counts as no wait but ends its window, and the probe runs as at any bound; a failed probe command counts
-as no change, never retried in another form. Read-only units keep the first-bound self-judge. A wait
+as no change, never retried in another form. Read-only units keep the first-bound self-judge.
+Exception: a rendered-UI unit (review Step 6/6.5) gets more windows while its artifact directory
+changes; stage its late result (`_shared/rendered-ui-units.md`). A wait
 call that is blocked or fails is not a wait and never counts toward the bound; never retry it in
 another form (a longer, wrapped or backgrounded sleep): treat every child still outstanding as
 silent at the bound. A reply that ends without a tool call ends the turn.

@@ -23,6 +23,10 @@ are stated once, here.
 
 ## Grammar rules
 
+- An Entry point with a credential-shaped path segment (the bearer-segment rule,
+  `_shared/acceptance-packet.md`'s `## Links and credentials`) holds the route with that segment
+  replaced by the placeholder `{id}`, since render screens the raw value out of the plan. The
+  bearer-shaped value itself is never written.
 - One Prepare command per `-` sub-bullet; `Prepare: none` when nothing needs running first.
 - One Inspect pointer per `-` sub-bullet.
 - `Regenerate:` attaches to its Inspect pointer as an indented continuation line, at most
