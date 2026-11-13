@@ -730,6 +730,12 @@ test('AC5.1–AC5.6: red, draft-skip and read failures never merge', async () =>
     }, 'check-failed:lint,e2e', { names: ['lint', 'e2e'] }],
     ['draft-skip', { readyRun: { state: 'draft-skip-without-ready-trigger', failing: [], draftSkipWithoutReadyTrigger: ['.github/workflows/test.yml'] } },
       'draft-skip-without-ready-trigger:.github/workflows/test.yml', { files: ['.github/workflows/test.yml'] }],
+    ['red beats draft-skip', {
+      prState: { statusCheckRollup: [FAILING_CHECK] },
+      readyRun: { state: 'draft-skip-without-ready-trigger', failing: [], draftSkipWithoutReadyTrigger: ['.github/workflows/test.yml'] },
+    }, 'check-failed:unit', { names: ['unit'] }],
+    ['ready-run red with no failing names', { readyRun: { state: 'red', failing: [], draftSkipWithoutReadyTrigger: [] } },
+      'check-failed:unnamed', { names: ['unnamed'] }],
   ];
   for (const [name, over, reason, info] of parks) {
     const h = mergeHarness(over);
@@ -798,7 +804,7 @@ test('AC5.1–AC5.6: red, draft-skip and read failures never merge', async () =>
 });
 
 test('AC5.7: label still missing after one retry re-drafts the PR and says so', async () => {
-  for (const addLabel of ['noop', new Error('HTTP 502')]) {
+  for (const [addLabel, error] of [['noop', 'label missing after retry'], [new Error('HTTP 502'), 'label add failed: HTTP 502']]) {
     const h = mergeHarness({ prState: { statusCheckRollup: [FAILING_CHECK] }, addLabel });
     const r = await merge(CTX, h.deps);
     assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'check-failed:unit', mergeCommit: null, postMerge: null });
@@ -812,7 +818,7 @@ test('AC5.7: label still missing after one retry re-drafts the PR and says so', 
     assert.match(ev.detail, /bot:parked NOT applied/);
     assert.match(ev.detail, /re-drafted/);
     assert.equal(h.logs.find((l) => l.step === 'Step 2.5 (merge-verification gate)').text,
-      'parked — check-failed:unit on PR #9; bot:parked NOT applied to #7; PR re-drafted as the fallback lock');
+      `parked — check-failed:unit on PR #9; bot:parked NOT applied to #7 (${error}); PR re-drafted as the fallback lock`);
     noMerge(h);
   }
   // Applied on the retry: no re-draft.
@@ -900,9 +906,10 @@ test('AC9.2: a head change between the first read and the re-read re-enters once
   assert.equal(r.reason, 'unclassified');
   assert.equal(modeOf(r), 'immediate');
   assert.equal(nodeCalls(h, 'compose-subject.js').length, 2, 'initial before ready, and the re-entry');
+  // The re-entry recomposes only after its own first read's guards pass, before the handoff.
   assert.deepEqual(after(h, (c) => isReadyCall(c)).map(shortOf), [
     'log-decision.js', 'gh pr view', 'gh run list', 'ready-run.js', 'gh pr view',
-    'compose-subject.js', 'readFile', 'gh pr view', 'gh run list', 'ready-run.js', 'gh pr view',
+    'gh pr view', 'gh run list', 'ready-run.js', 'compose-subject.js', 'readFile', 'gh pr view',
   ]);
   assert.equal(h.calls.filter(isGateRead).length, 2);
   assert.equal(h.calls.filter(isReread).length, 2);
@@ -911,12 +918,17 @@ test('AC9.2: a head change between the first read and the re-read re-enters once
   // A state no longer OPEN on the re-read re-enters too; the re-entry's first read decides.
   const m = mergeHarness({ verification: WAIT, reread: { state: 'MERGED' }, prState: seq({}, { state: 'MERGED' }) });
   assert.equal((await merge(CTX, m.deps)).reason, 'pr-not-open');
-  assert.equal(nodeCalls(m, 'compose-subject.js').length, 2);
+  assert.equal(nodeCalls(m, 'compose-subject.js').length, 1, 'a re-entry that stops composes nothing');
   assert.equal(m.calls.filter(isReread).length, 1);
   // The re-entry's first read must again equal ctx.head.
   const moved = mergeHarness({ verification: WAIT, reread: { headRefOid: B }, prState: seq({}, { headRefOid: B }) });
   assert.equal((await merge(CTX, moved.deps)).reason, 'moving-target');
   assert.equal(moved.calls.filter(isGateRead).length, 2);
+  assert.equal(nodeCalls(moved, 'compose-subject.js').length, 1, 'a re-entry that stops composes nothing');
+  // A re-entry that parks composes nothing either.
+  const parked = mergeHarness({ verification: WAIT, reread: { headRefOid: B }, prState: seq({}, { statusCheckRollup: [FAILING_CHECK] }) });
+  assert.equal((await merge(CTX, parked.deps)).reason, 'check-failed:unit');
+  assert.equal(nodeCalls(parked, 'compose-subject.js').length, 1);
   // A compose refusal on re-entry returns its reason with the PR ready, and the event says so.
   const refused = mergeHarness({
     verification: WAIT, reread: seq({ headRefOid: B }, {}),
@@ -925,7 +937,8 @@ test('AC9.2: a head change between the first read and the re-read re-enters once
   const rr = await merge(CTX, refused.deps);
   assert.equal(rr.reason, 'compose-refused');
   assert.ok(!refused.calls.some(isUndo));
-  assert.equal(refused.calls.filter(isGateRead).length, 1);
+  assert.equal(refused.calls.filter(isGateRead).length, 2, 'the recompose follows the re-entry read');
+  assert.equal(refused.calls.filter(isReread).length, 1, 'a refusal hands off nothing');
   const stops = refused.events.filter((e) => e.step === 'merge-compose');
   assert.deepEqual(stops.map((e) => e.status), ['ok', 'stop']);
   assert.match(stops[1].detail, /re-entry.*PR left ready/);

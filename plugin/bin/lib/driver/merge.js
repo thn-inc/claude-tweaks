@@ -20,7 +20,7 @@ const {
 } = require('./events');
 const { reduceDetail } = require('./settle');
 const { confirmFromFile } = require('../dispatch/merge-verdict');
-const { normalizeEntry, FAILING_CONCLUSIONS } = require('../pr-checks/classify');
+const { classifyRollup } = require('../pr-checks/classify');
 const { ensureLabelPayload } = require('../issues/labels');
 const { LABELS } = require('../issues/record-vocabulary');
 
@@ -357,6 +357,8 @@ function parseJson(raw) {
 // The two checks reads are skipped when the first read already decides the gate (not OPEN, not
 // the verified head, conflicting): `runs` and `ready` are then null. A read the gate cannot use
 // is a stop with `word` (the caller's: the gate's state-read-failed, the watch's own), never a guess.
+// It never writes `s.lastRead`: the caller does, once its own guards pass, so a caller comparing
+// a new read against the previous one still sees the previous one.
 function gateReads(s, word) {
   const { ctx, deps } = s;
   const fail = (detail) => ({ stop: word, detail });
@@ -369,7 +371,6 @@ function gateReads(s, word) {
   if (!hasStrings(read, ['state', 'mergeStateStatus', 'mergeable', 'headRefOid']) || !Array.isArray(read.statusCheckRollup)) {
     return fail('state read returned an unusable shape');
   }
-  s.lastRead = read;
   if (read.state !== 'OPEN' || read.headRefOid !== ctx.head || isConflicting(read)) return { read, runs: null, ready: null };
   let runs;
   try {
@@ -393,19 +394,19 @@ function gateReads(s, word) {
   return { read, runs, ready };
 }
 
-// Step 2.5's table, in its order: conflict, red (rollup, head runs, ready-run), draft-skip,
-// pending (ready-run awaiting, anything not completed, an empty rollup), else green.
-function classify(read, runs, ready) {
-  if (isConflicting(read)) return { kind: 'conflict' };
-  const failing = (c) => FAILING_CONCLUSIONS.includes(String(c || '').toUpperCase());
-  const completed = (status) => String(status || '').toUpperCase() === 'COMPLETED';
-  const entries = read.statusCheckRollup.map(normalizeEntry);
-  const redEntries = entries.filter((e) => failing(e.conclusion));
-  const redRuns = runs.filter((r) => completed(r.status) && failing(r.conclusion));
-  if (redEntries.length || redRuns.length || ready.state === 'red') {
+// Step 2.5's table over a read the caller's guards passed (OPEN, the verified head, not
+// conflicting, so `runs` and `ready` are the real reads). The rollup and head-run rules are
+// classify.js's classifyRollup — Step 2.5's one pinned code twin — never restated here; the
+// ready-run state is layered on top in the table's order: red adds its failing names,
+// then draft-skip, then awaiting makes the result pending.
+function classify(ctx, read, runs, ready) {
+  if (!Array.isArray(runs) || !ready) throw new Error('classify needs the checks reads');
+  const base = classifyRollup({ rollup: read.statusCheckRollup, headRefOid: read.headRefOid, localHead: ctx.head, hasPrCi: true, headRuns: runs });
+  // read-failed and stale are unreachable past gateReads' shape checks and the head guard.
+  if (!['red', 'pending', 'green'].includes(base.state)) throw new Error(`classifyRollup returned ${base.state}`);
+  if (base.state === 'red' || ready.state === 'red') {
     const names = [
-      ...redEntries.map((e) => e.name),
-      ...redRuns.map((r) => r.workflowName || r.name),
+      ...base.failing.map((f) => f.name),
       ...(ready.state === 'red' && Array.isArray(ready.failing) ? ready.failing.map((f) => f && f.name) : []),
     ].filter((n) => typeof n === 'string' && n !== '');
     const unique = [...new Set(names)];
@@ -416,9 +417,7 @@ function classify(read, runs, ready) {
       .filter((f) => typeof f === 'string' && f !== '');
     return { kind: 'draft-skip', files: files.length ? files : ['unnamed'] };
   }
-  if (ready.state === 'awaiting' || entries.length === 0 || entries.some((e) => !completed(e.status)) || runs.some((r) => !completed(r.status))) {
-    return { kind: 'pending' };
-  }
+  if (base.state === 'pending' || ready.state === 'awaiting') return { kind: 'pending' };
   return { kind: 'green' };
 }
 
@@ -432,12 +431,23 @@ async function gate(s) {
   const { read } = g;
   if (read.state !== 'OPEN') return stop(s, 'merge-gate', 'pr-not-open', `PR state ${reduceDetail(read.state)}`);
   if (read.headRefOid !== ctx.head) return stop(s, 'merge-gate', 'moving-target', 'the PR head is not the verified head');
-  const verdict = classify(read, g.runs, g.ready);
+  if (isConflicting(read)) {
+    emit(s, 'merge-gate', 'ok', `checks not read: conflicting; merge state ${reduceDetail(read.mergeStateStatus)}`);
+    return conflictStop(s);
+  }
+  s.lastRead = read;
+  const verdict = classify(ctx, read, g.runs, g.ready);
   emit(s, 'merge-gate', 'ok', `checks ${verdict.kind}; merge state ${reduceDetail(read.mergeStateStatus)}; lever ${s.value}`);
-  if (verdict.kind === 'conflict') return conflictStop(s);
   if (verdict.kind === 'red') return park(s, `check-failed:${verdict.names.join(',')}`, { names: verdict.names });
   if (verdict.kind === 'draft-skip') {
     return park(s, `draft-skip-without-ready-trigger:${verdict.files.join(',')}`, { files: verdict.files });
+  }
+  // The re-entry's recompose (the only one) runs here: past its guards, before any handoff
+  // toward a merge, so a re-entry that stops or parks composes nothing.
+  if (s.recomposeOnReentry) {
+    s.recomposeOnReentry = false;
+    const c = compose(s);
+    if (c.stop) return c;
   }
   if (s.value === 'merge-when-green') {
     // A pending read GitHub reports BLOCKED (required checks still running) arms auto-merge.
@@ -449,8 +459,8 @@ async function gate(s) {
 }
 
 // The `wait` row's fresh read right before the immediate merge. A head or state change since the
-// first read re-enters the gate once, recomposing first (the only recompose: the subject may
-// name the new head's records); a second change is moving-target.
+// first read re-enters the gate once, which recomposes once its guards pass (the only recompose:
+// the subject may name the new head's records); a second change is moving-target.
 async function rereadThenMerge(s, first) {
   const { ctx, deps } = s;
   let read;
@@ -465,9 +475,8 @@ async function rereadThenMerge(s, first) {
   if (read.headRefOid !== first.headRefOid || read.state !== 'OPEN') {
     if (s.reentries >= 1) return stop(s, 'merge-gate', 'moving-target', 'the PR changed between reads a second time');
     s.reentries += 1;
-    emit(s, 'merge-gate', 'ok', `${read.state !== 'OPEN' ? 'state' : 'head'} changed between reads; recomposing and re-entering the gate once`);
-    const c = compose(s);
-    if (c.stop) return c;
+    s.recomposeOnReentry = true;
+    emit(s, 'merge-gate', 'ok', `${read.state !== 'OPEN' ? 'state' : 'head'} changed between reads; re-entering the gate once`);
     return gate(s);
   }
   if (read.mergeStateStatus === 'DIRTY') return conflictStop(s);
@@ -500,27 +509,36 @@ function park(s, reason, { names = [], files = [] } = {}) {
     notes.push(`label bootstrap failed: ${errorText(err)}`);
   }
   let applied = false;
+  let labelError = null; // the first label-add or label-read error: the NOT-applied line's ({error})
   for (let attempt = 0; attempt < 2 && !applied; attempt += 1) {
     try {
       deps.gh(['issue', 'edit', '--repo', ctx.repo, '--add-label', LABELS.BOT_PARKED, '--', String(ctx.record)]);
     } catch (err) {
       notes.push(`label add failed: ${errorText(err)}`);
+      labelError = labelError || notes[notes.length - 1];
     }
     const labels = readLabels(s);
-    if (labels.unreadable) notes.push(labels.unreadable);
+    if (labels.unreadable) {
+      notes.push(labels.unreadable);
+      labelError = labelError || labels.unreadable;
+    }
     applied = !labels.unreadable && labels.names.includes(LABELS.BOT_PARKED);
   }
   // The log keeps the #refs; the event detail is neutralized, so it names the record in words.
   let lockLog = `bot:parked applied to #${ctx.record}`;
   let lockEvent = `bot:parked applied to record ${ctx.record}`;
   if (!applied) {
+    // pr-first-merge.md Step 2.5 Red path item 3: `bot:parked NOT applied to #{list} ({error}); ...`
+    const error = reduceDetail(labelError || 'label missing after retry');
+    const missing = `bot:parked NOT applied to #${ctx.record} (${error})`;
+    const missingEvent = `bot:parked NOT applied to record ${ctx.record} (${error})`;
     try {
       deps.gh(['pr', 'ready', String(ctx.pr), '--repo', ctx.repo, '--undo']);
-      lockLog = `bot:parked NOT applied to #${ctx.record}; PR re-drafted as the fallback lock`;
-      lockEvent = `bot:parked NOT applied to record ${ctx.record}; PR re-drafted as the fallback lock`;
+      lockLog = `${missing}; PR re-drafted as the fallback lock`;
+      lockEvent = `${missingEvent}; PR re-drafted as the fallback lock`;
     } catch (err) {
-      lockLog = `bot:parked NOT applied to #${ctx.record}; the re-draft fallback failed too`;
-      lockEvent = `bot:parked NOT applied to record ${ctx.record}; the re-draft fallback failed too`;
+      lockLog = `${missing}; the re-draft fallback failed too`;
+      lockEvent = `${missingEvent}; the re-draft fallback failed too`;
       notes.push(`re-draft failed: ${errorText(err)}`);
     }
   }
@@ -594,7 +612,7 @@ function result(s, outcome, reason, detail, extra = {}) {
 async function merge(ctx, deps) {
   const s = {
     ctx, deps, runDir: ctx.runDir, value: 'wait', source: 'unresolved', valueRaw: '', keepOpen: [],
-    subject: null, reentries: 0, ciWaitMs: 0, lastRead: null, logFailures: [], logSeq: 0, stage: 'merge-entry',
+    subject: null, reentries: 0, recomposeOnReentry: false, ciWaitMs: 0, lastRead: null, logFailures: [], logSeq: 0, stage: 'merge-entry',
     startedAt: typeof deps.now === 'function' ? deps.now() : 0,
   };
   try {
