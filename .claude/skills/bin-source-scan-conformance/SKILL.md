@@ -107,6 +107,10 @@ Include negative cases:
 
 Assert the exact flagged line numbers, not just a count, because the right count can come from the wrong lines. Run each new assertion against the code it guards with the guard removed, and watch it go red.
 
+### A shrink-only allowlist pins a ceiling
+
+A scan that lands with a list of files not yet converted (`NOT_YET` in `tests/bin-lib/cli-entry-conformance.test.js`, #5374) is shrunk by several records, often in parallel. Pin its size as a ceiling (`length <= N`, N the landing size), never an exact count: an exact count makes every converting record edit one shared line, and two of them conflict. Keep one entry per line, sorted, so each record deletes only its own lines. Fail a listed file that now conforms, so the list cannot hold a stale entry. Build the list's go-red self-tests from inline fixtures and match the failure message; never borrow a file that is on the list, because the record that converts it turns the self-test red. The first version of that scan pinned `length === 27` and borrowed `verify.js`, and review replaced both (c40ea0f13).
+
 ## Decision Framework
 
 | Situation | Do this |
