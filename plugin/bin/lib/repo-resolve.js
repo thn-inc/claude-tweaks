@@ -195,6 +195,8 @@ function originSpecOf(remote) {
   return parsed && { ...parsed, host: normalizeHost(parsed.host) };
 }
 
+// `deps.env` (optional) is the environment the origin read runs in and the one gh's config dir
+// is looked up from; absent, the inherited one.
 function resolveGhSpec(cwd, deps = {}) {
   const key = path.resolve(cwd);
   if (ghHostSpecs.has(key)) return ghHostSpecs.get(key);
@@ -292,6 +294,17 @@ function ghOptions(args, opts, deps = {}) {
   return { ...o, env: { ...base, GH_HOST: spec.host } };
 }
 
+// The ghOptions deps for a caller running gh against an injected environment (#5374):
+// `{ env, stderr, homeDir }` (each optional) -> a deps object holding `env` and `stderr` only
+// when given, and a `homedir` getter only when `homeDir` is a function, so `homeDir()` runs
+// only if ghConfigDir falls through to the home directory. With none given it is `{}`, which
+// ghOptions reads exactly as its own default.
+function injectedGhDeps({ env, stderr, homeDir } = {}) {
+  const deps = { ...(env ? { env } : {}), ...(stderr ? { stderr } : {}) };
+  if (typeof homeDir === 'function') Object.defineProperty(deps, 'homedir', { get() { return homeDir(); }, enumerable: true });
+  return deps;
+}
+
 // #4794: the exported GH_HOST as a normalized host, or null when it is unset or normalizes to
 // nothing (empty, whitespace-only, all dots). The one GH_HOST reader: gateOriginRepo, ghOptions,
 // explicitRepoGhHost, resolveRepoTarget and every caller comparing a host against it.
@@ -340,6 +353,6 @@ function pinExplicitRepoHost(repoSpec, deps = {}) {
 
 module.exports = {
   parseRepo, ghAvailable, remoteUrl, repoSlug, repoResolutionNote,
-  ghOptions, resolveGhHost, explicitRepoGhHost, pinExplicitRepoHost, _resetGhHostCache,
+  ghOptions, injectedGhDeps, resolveGhHost, explicitRepoGhHost, pinExplicitRepoHost, _resetGhHostCache,
   isKnownGhHost, gateOriginRepo, normalizeHost, originUrl, ghHostIn, resolveRepoTarget, hostPathOf, originSpecOf,
 };

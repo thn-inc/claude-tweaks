@@ -278,3 +278,26 @@ test('a GitHub Enterprise origin reads hosts.yml under the injected HOME, in-pro
   assert.match(res.stderr, /gh calls get GH_HOST=ghe\.example\.test/);
   assert.equal(fs.readFileSync(marker, 'utf8').trim(), GHE_HOST);
 });
+
+// A pinned integration-model skips the forge probe, so the merge-verification default-branch lookup
+// is the first gh call and prints the GitHub Enterprise note itself.
+test('a pinned integration-model with a GitHub Enterprise origin: the merge-verification note goes to deps.stderr, in-process', { skip: STUB_SKIP }, () => {
+  const { a, gitDir } = forgePair({ origin: GHE_ORIGIN });
+  fs.mkdirSync(path.join(a, '.github', 'workflows'), { recursive: true });
+  fs.writeFileSync(path.join(a, '.github', 'workflows', 'ci.yml'), 'on:\n  pull_request:\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n');
+  fs.mkdirSync(path.join(a, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(a, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');
+  const stubDir = ghStubDir('echo main');
+  const home = tmp('home');
+  fs.mkdirSync(path.join(home, '.config', 'gh'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.config', 'gh', 'hosts.yml'), `${GHE_HOST}:\n`);
+  const env = { ...ENV, GIT_DIR: gitDir, PATH: stubDir + path.delimiter + process.env.PATH, HOME: home, USERPROFILE: home };
+  delete env.GH_CONFIG_DIR;
+  delete env.XDG_CONFIG_HOME;
+  const args = ['--values', 'merge-verification'];
+  const res = runCliSync(CLI, args, { cwd: a, env, fresh: true });
+  assert.deepStrictEqual(res, spawnCli(CLI, args, { cwd: a, env }));
+  assert.equal(res.code, 0);
+  assert.equal(res.stdout, 'merge-when-green\n');
+  assert.match(res.stderr, /gh calls get GH_HOST=ghe\.example\.test/);
+});

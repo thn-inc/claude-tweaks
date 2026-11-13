@@ -21,7 +21,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { resolveIntegrationModel } = require('./policy-schema');
 const { resolveIntegrationBranch, bareIntegrationName } = require('./hooks/worktree-reap');
-const { ghOptions } = require('./repo-resolve');
+const { ghOptions, injectedGhDeps } = require('./repo-resolve');
 
 const PR_TRIGGERS = new Set(['pull_request', 'pull_request_target']);
 
@@ -442,15 +442,12 @@ function readyRequirement(workflows) {
 // therefore make the two disagree online vs. offline — the mismatch fails
 // toward `off`, never toward the stricter `merge-when-green`.
 //
-// `env` (optional) is the environment both children run in, and `homeDir` (optional, a
-// function) is read only if gh's hosts.yml lookup falls through to the home directory.
-function readDefaultBranch(repoRoot, env, homeDir) {
+// `env` (optional) is the environment both children run in, `stderr` (optional) receives
+// ghOptions' GitHub Enterprise note, and `homeDir` (optional, a function) is read only if gh's
+// hosts.yml lookup falls through to the home directory.
+function readDefaultBranch(repoRoot, env, homeDir, stderr) {
   const opts = { cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000, encoding: 'utf8', windowsHide: true, ...(env ? { env } : {}) };
-  let ghDeps;
-  if (env || typeof homeDir === 'function') {
-    ghDeps = env ? { env } : {};
-    if (typeof homeDir === 'function') Object.defineProperty(ghDeps, 'homedir', { get() { return homeDir(); }, enumerable: true });
-  }
+  const ghDeps = injectedGhDeps({ env, stderr, homeDir });
   try {
     // windowsHide restated in the call: the windows-hide scan reads a bare
     // opts, never one wrapped in ghOptions (#4505's GH_HOST seam).
@@ -476,15 +473,24 @@ function readDefaultBranch(repoRoot, env, homeDir) {
 // integration-model per skills/_shared/integration-model.md; the branch pair
 // per skills/_shared/integration-branch.md via the shared resolvers, never a
 // hand-rolled detection. Any lookup failure resolves toward off.
-// `deps.env` and `deps.homeDir` (optional) are handed to the two branch lookups this
-// function owns, i.e. the ones the caller did not inject.
+// `deps.env`, `deps.homeDir` and `deps.stderr` (optional) are handed to the lookups this
+// function owns, i.e. the ones the caller did not inject: all three to the integration-model
+// lookup and the default-branch lookup, `env` alone to the integration-branch lookup. A key
+// absent from deps is absent from what is handed on.
 function deriveMergeVerification(repoRoot, deps = {}) {
-  const integrationModel = deps.integrationModel || resolveIntegrationModel;
+  const injected = {
+    ...(deps.env ? { env: deps.env } : {}),
+    ...(deps.homeDir ? { homeDir: deps.homeDir } : {}),
+    ...(deps.stderr ? { stderr: deps.stderr } : {}),
+  };
+  const anyInjected = Object.keys(injected).length > 0;
+  const integrationModel = deps.integrationModel
+    || (anyInjected ? (r) => resolveIntegrationModel(r, injected) : resolveIntegrationModel);
   const readWorkflows = deps.readWorkflows || readWorkflowFiles;
   const integrationBranch = deps.integrationBranch
     || (deps.env ? (r) => resolveIntegrationBranch(r, undefined, { env: deps.env }) : resolveIntegrationBranch);
   const defaultBranch = deps.defaultBranch
-    || (deps.env || deps.homeDir ? (r) => readDefaultBranch(r, deps.env, deps.homeDir) : readDefaultBranch);
+    || (anyInjected ? (r) => readDefaultBranch(r, deps.env, deps.homeDir, deps.stderr) : readDefaultBranch);
 
   let model;
   try { model = integrationModel(repoRoot); } catch { return 'off'; }

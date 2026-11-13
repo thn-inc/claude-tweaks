@@ -853,12 +853,8 @@ function detectIntegrationModel(repoRoot, opts = {}) {
   const { mcpReachable, onDegrade, env, stderr, homeDir } = opts;
   // Required here, not at the top: repo-resolve -> shared-primitives lazily requires
   // policy-schema and policy back, so a load-time edge from this file would close a cycle.
-  const { ghOptions } = require('./repo-resolve');
-  let ghDeps;
-  if (env || stderr || typeof homeDir === 'function') {
-    ghDeps = { ...(env ? { env } : {}), ...(stderr ? { stderr } : {}) };
-    if (typeof homeDir === 'function') Object.defineProperty(ghDeps, 'homedir', { get() { return homeDir(); }, enumerable: true });
-  }
+  const { ghOptions, injectedGhDeps } = require('./repo-resolve');
+  const ghDeps = injectedGhDeps({ env, stderr, homeDir });
   try {
     execFileSync('git', ['remote', 'get-url', 'origin'], {
       cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'], timeout: GIT_REMOTE_PROBE_TIMEOUT_MS, encoding: 'utf8', windowsHide: true,

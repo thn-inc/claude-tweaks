@@ -51,15 +51,18 @@ function runPinnedIntegrationModel(runConfigRaw) {
 // `root` is the resolved repo root passed through to both lookups.
 //
 // deps.env, deps.stderr and deps.homeDir (all optional) are handed on to the lookups that
-// start a git or gh child: env, stderr and homeDir to both model lookups, env and homeDir to
-// deriveMergeVerification. A key absent from deps is absent from what is handed on.
+// start a git or gh child: to both model lookups and to deriveMergeVerification. A key absent
+// from deps is absent from what is handed on.
 function computeDerivedDefaults(result, keys, root, deps = {}) {
   const detectModel = deps.detectIntegrationModel || detectIntegrationModel;
   const resolveModel = deps.resolveIntegrationModel || resolveIntegrationModel;
   const deriveVerification = deps.deriveMergeVerification || deriveMergeVerification;
   const mcpReachable = deps.mcpReachable === true;
-  const envAndHome = { ...(deps.env ? { env: deps.env } : {}), ...(deps.homeDir ? { homeDir: deps.homeDir } : {}) };
-  const injected = { ...envAndHome, ...(deps.stderr ? { stderr: deps.stderr } : {}) };
+  const injected = {
+    ...(deps.env ? { env: deps.env } : {}),
+    ...(deps.homeDir ? { homeDir: deps.homeDir } : {}),
+    ...(deps.stderr ? { stderr: deps.stderr } : {}),
+  };
   const reportDegrade = (key, degrade) => {
     if (typeof deps.onDegrade !== 'function') return;
     try {
@@ -123,7 +126,7 @@ function computeDerivedDefaults(result, keys, root, deps = {}) {
           ? { integrationModel: () => pinned }
           : { integrationModel: (r) => resolveModel(r, { mcpReachable, onDegrade: (d) => { degrade = d; }, ...injected }) };
       }
-      Object.assign(mvDeps, envAndHome);
+      Object.assign(mvDeps, injected);
       result['merge-verification'] = { value: deriveVerification(root, mvDeps), source: 'default' };
       if (carried !== undefined) result['merge-verification'].degraded = carried;
       if (degrade) {
