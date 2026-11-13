@@ -54,7 +54,8 @@ function outcomeFor(stopClass) {
   return OUTCOME_BY_CLASS[stopClass];
 }
 
-const QUALIFIED_REF = /[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#\d+/g;
+// The lookbehind keeps a long identifier run from being rescanned from every start (quadratic).
+const QUALIFIED_REF = /(?<![A-Za-z0-9_.-])[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#\d+/g;
 const BARE_REF = /#\d+/g;
 // An issue or PR URL on any host, with any tail (`/files`, `#issuecomment-…`): it backlinks
 // like `#N`. The keyword pass runs first and removes a keyword only when a reference starts

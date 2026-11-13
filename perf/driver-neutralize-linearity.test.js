@@ -13,8 +13,10 @@
 //   - many fragments that each need a second removal pass (`h#7ttps://…` rebuilt into a URL): the
 //     fixed-point loop must stay linear in the number of fragments; pre-loop the verdict was wrong
 //     (a closing URL survived), so that case is guarded by its verdict as well as its time.
-// A long run of identifier characters with no `/` is quadratic in QUALIFIED_REF already on the base
-// code (50k `h` took ~4s); it is out of this record's scope and deliberately not pinned here.
+//   - a long run of identifier characters with no `/` (or with a `/x` tail and no `#`): QUALIFIED_REF
+//     rescanned the run from every start, quadratic already on the base code (50k `h` ~4s, 100k ~18s
+//     pre-fix); a left-boundary lookbehind of its own owner class now lets a match start only at the
+//     run's start.
 // Lives outside tests/ for the same reason the other perf/ files do: a wall-clock assertion flakes
 // under sibling-suite load.
 'use strict';
@@ -53,4 +55,18 @@ test('neutralize: a run of bare references that collapses to prose stays linear'
   const { value, elapsed } = timed('h#1'.repeat(5000));
   assert.ok(value === 'h'.repeat(5000), `verdict changed (length ${value.length})`);
   assert.ok(elapsed < 1000, `took ${elapsed.toFixed(0)}ms`);
+});
+
+test('neutralize: a long identifier run with no slash stays linear', () => {
+  const input = 'h'.repeat(200000);
+  const { value, elapsed } = timed(input);
+  assert.ok(value === input, `verdict changed (length ${value.length})`);
+  assert.ok(elapsed < 500, `took ${elapsed.toFixed(0)}ms — QUALIFIED_REF must not rescan the run from every start`);
+});
+
+test('neutralize: a long identifier run with a slash tail and no # stays linear', () => {
+  const input = `${'h'.repeat(200000)}/x`;
+  const { value, elapsed } = timed(input);
+  assert.ok(value === input, `verdict changed (length ${value.length})`);
+  assert.ok(elapsed < 500, `took ${elapsed.toFixed(0)}ms — QUALIFIED_REF must not rescan the run from every start`);
 });
