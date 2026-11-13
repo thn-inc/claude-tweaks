@@ -63,10 +63,11 @@ function commentFor(kind, fields) {
   }
 }
 
-// The escalate --detail-file content. `removes` is true when the settle row
+// The escalate --detail-file content. Callers pass the raw stop detail: it is
+// reduced here, exactly once (reduceDetail is not idempotent). `removes` is true when the settle row
 // removes the worktree or the branch.
 function escalateDetailText({ step, detail, removes }) {
-  const base = `drive.js stopped at step ${oneOf(STEP_NAMES, step)}: ${detail}`;
+  const base = `drive.js stopped at step ${oneOf(STEP_NAMES, step)}: ${reduceDetail(detail)}`;
   return removes ? `${base}. The driver removed the worktree and local branch this run created.` : base;
 }
 

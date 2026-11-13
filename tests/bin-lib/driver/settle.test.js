@@ -82,6 +82,12 @@ test('commentFor: fields outside the closed sets render as unknown and nothing t
   assert.ok(escalateDetailText({ step: '@bob closes #9', detail: 'd', removes: false }).startsWith('drive.js stopped at step unknown:'));
 });
 
+test('escalateDetailText reduces a raw detail once', () => {
+  const out = escalateDetailText({ step: 'test', detail: '@bob /Users/x/y ghp_' + 'a'.repeat(36), removes: false });
+  for (const want of ['at bob', '<path>', '<redacted>']) assert.ok(out.includes(want), out);
+  for (const bad of ['@', '/Users/', 'ghp_']) assert.ok(!out.includes(bad), out);
+});
+
 test('AC11.1: the escalated comment ends with the marker, no other kind contains it', () => {
   const f = { step: 'push', outcome: 'express-escalated', reason: 'r', detail: 'd' };
   assert.ok(commentFor('escalated', f).endsWith(MARKER));
