@@ -37,11 +37,11 @@ files:
 - **Red flags:** a run directory, claim or worktree left behind for a refused record; a second `gh issue view` for the same record.
 
 ### 3. Watch the build — claim through push
-- **URL:** the event lines `claim`, `run-dir`, `worktree`, `worker`, `commit`, `test`, `check` and `push` on stdout, and `{run-dir}/driver-events.jsonl`
+- **URL:** the event lines `claim`, `run-dir`, `worktree`, `worker`, `commit`, `test`, `check`, `review` (when policy runs it) and `push` on stdout, and `{run-dir}/driver-events.jsonl`
 - **Action:** watch the lines scroll by.
   - The driver claims the record, mints the run directory, and adds a locked worktree on `drive-record-{n}`.
   - A headless implementer writes the change. The driver commits it by explicit path, with message `{title} — refs #{n}`, and runs the scoped tests.
-  - `express-lane.js check` gives its verdict, and the driver pushes only when HEAD equals the `head` that `check` returned.
+  - `express-lane.js check` gives its verdict. When `express-driver-review` applies, one read-only reviewer follows, and a finding counts only when the driver's own `node --test` run of its evidence file fails (one fix round at most; see `docs/driver.md`). The driver pushes only when HEAD equals the `head` that `check` returned.
 - **Should feel:** watched-over. Every gate is a program decision with a named step, and the worker's text never appears raw in a command, a commit subject or an event line.
 - **Should understand:**
   - The worker event carries `usage`, `turns` and `denials`, plus `spendOverrun` when the spend ceiling was crossed. A denial is information, never a reason to relaunch.
