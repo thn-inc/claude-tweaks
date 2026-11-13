@@ -348,8 +348,8 @@ function extractRunFlags(argv) {
 // What a run does about impact selection (#5319), from the arguments and the environment alone:
 // 'listed' (a `--files-from` list names the files), 'whole' (`--full`, a shard, a recording, explicit
 // roots, CI set — any non-empty value, as resolveConcurrency reads it — or a held suite slot,
-// CT_TEST_SUITE_SLOT_HELD=1) or 'select' (consult the impact map). `--full` and `--files-from` together are contradictory and throw.
-// Pure: `env` is a parameter, never read from `process`.
+// CT_TEST_SUITE_SLOT_HELD=1) or 'select' (consult the impact map). `--full` and `--files-from` together
+// are contradictory and throw. Pure: `env` is a parameter, never read from `process`.
 function resolveRunMode({ rest, shard, recordDurations, full, env }) {
   if (rest.includes('--files-from')) {
     if (full) throw new Error('--full cannot be combined with --files-from');

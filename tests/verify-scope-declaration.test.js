@@ -129,10 +129,9 @@ function workflowSuiteLines() {
 test('AC6.1: every workflow that runs the suite asks for the whole suite (#5319)', () => {
   const found = workflowSuiteLines();
   assert.ok(found.length > 0, 'the scan matched no suite-running line');
-  const files = (kind) => new Set(found.filter((f) => f.kind === kind).map((f) => f.name));
   assert.ok(found.some((f) => f.name === 'test.yml' && f.kind === 'suite' && /--shard\b/.test(f.line)), 'test.yml shard line not found');
   assert.ok(found.some((f) => f.name === 'windows-regression.yml' && f.kind === 'suite'), 'windows-regression.yml npm test line not found');
-  assert.ok(files('tracer').has('test-impact-map.yml'), 'test-impact-map.yml tracer line not found');
+  assert.ok(found.some((f) => f.name === 'test-impact-map.yml' && f.kind === 'tracer'), 'test-impact-map.yml tracer line not found');
   for (const f of found.filter((x) => x.kind === 'suite')) {
     assert.match(f.line, WHOLE_SUITE_FLAG, `${f.name} runs the suite without --shard, --full or --record-durations: ${f.line.trim()}`);
   }
