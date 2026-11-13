@@ -14,6 +14,7 @@ Root cause, and Resume sections to reach the content they actually need at merge
 | Caller | Invokes from |
 |---|---|
 | Each phase's skill file (build, test, review, polish, wrap-up) | At its own phase exit — "Phase-checklist update" below |
+| `build/architecture-alignment.md` `## Claims about the PR body` | The **`gh` absent (MCP).** paragraph under "Phase-checklist update" below — its repair and run-id check only, at any build step that logs a PR-body claim |
 | `_shared/pr-first-merge.md` Step 2 | "Pre-merge title/description refresh" below, before Step 2 undrafts the PR |
 | `_shared/pr-first-merge.md` Step 2.5 | "Merge-time gh-absent degrade" below |
 
