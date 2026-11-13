@@ -17,8 +17,9 @@
 - PR body marker, exact: `<!-- wrap-up-skills-pr -->`. Branch: `learned-skills/{run-id}`, where `{run-id}` = `basename(run-dir)`.
 - The learned-skills PR is opened ready (never `--draft`) and is never armed: no `gh pr merge` call of any form exists in the module. `housekeeping-auto-merge` is never read.
 - The PR body names the source record only as `refs #{n}`. It never carries `<!-- claude-tweaks-run:` or a closing keyword. Route every summary string written into the body through `plugin/bin/lib/flow/closing-links.js`'s `neutralizeClosingPhrases`.
-- Applied log line (status AUTO, written by the CLI), exact shape: `AUTO {time} — Skills row: applied additive update to {target} ({summary}) on learned-skills PR #{pr}. Reversibility: high; commit: {hash}.`
-- Downgrade log line (status STAGED), exact shape: `STAGED {time} — Skills row: skill update for {target} ({summary}) could not ride a learned-skills PR ({reason}); staged instead. Reversibility: high (stage path: staged/wrap-up-skill-{N}.md).`
+- Applied log line (status AUTO, written by the CLI), exact shape: `AUTO {time} — Skills row: applied additive update to {skill}/SKILL.md ({section}) on learned-skills PR #{pr}. Reversibility: high; commit: {hash}.` — `{skill}/SKILL.md` is the target with its leading `.claude/skills/` stripped (the whole target path when it has no such prefix), and `{section}` is the finding's `summary` (the CLI's `--summary-file` text). `skill-curation.md`'s prose template states the same mapping.
+- Downgrade log line (status STAGED), exact shape: `STAGED {time} — Skills row: skill update for {skill}/SKILL.md ({section}) could not ride a learned-skills PR ({reason}); staged instead. Reversibility: high (stage path: staged/wrap-up-skill-{N}.md).` — same mapping.
+- Multi-spec consolidated wrap-up: `--run` is the **parent** run dir (manifest, `staged/`, branch `learned-skills/{basename(parent)}`), `--merge-base` is the batch merge-base from `flow/multispec-batch-curation.md` step 1, and `land --record` repeats once per member record (`--record 5290 --record 5291`); the body and commit message name every member (`refs #5290, refs #5291`; `from #5290, #5291's wrap-up`).
 - A staged file follows `plugin/skills/_shared/staged-patch.md`'s Artifact format: `Target:` / `Invariant:` / `Finding:` / `Staged-at:` preamble lines, a blank line, then the real `git diff` bytes. Never a hand-typed diff.
 - `merge-check.md`, `blast-radius.js`, and `scratch-worktree.md` are not changed.
 - Commit subjects: `{Verb} {what} — {detail}`, imperative, no conventional prefix. End every commit message with `Claude-Session: https://claude.ai/code/session_016yg3zrBQnDhYHfSCMdVv9V`.
@@ -61,7 +62,9 @@
 - Test: `tests/bin-lib/learned-skills/capture.test.js`
 
 **Interfaces:**
-- Produces: `capture({ runDir, worktree, mergeBase, target, summary }, deps) -> { route: 'run-branch', reason: 'record-owned' } | { route: 'captured', id: string, patch: string /*abs*/, shared: boolean }`.
+- Produces: `capture({ runDir, worktree, mergeBase, target, summary }, deps) -> { route: 'run-branch', reason: 'record-owned' } | { route: 'captured', id: string, patch: string /*abs*/, shared: boolean } | { route: 'clean' }`. `clean` means the target has no change and was never captured in this run (exit 0; the caller treats it as the audit's clean-path case). A target already captured in this run returns `captured` with `shared: true` whether or not it is still dirty. A later uncommitted edit to it (another row's) is re-diffed into the same patch file, so that patch always holds the file's whole working-tree change.
+- Failure contract: any failure **after** the diff was read (patch write, revert, residue check) restores the working-tree edit from the diff if the revert ran half-way, then stages it via Task 2's staging writer and returns `{ route: 'staged', stagePath, reason }` (exit 0). A failure **before** the diff was read (git unavailable, no HEAD) exits 1 with nothing changed — the one case the caller commits on the run branch, logged `FAILED` (merge-check's floor still holds that run, so this fails safe, never unreviewed).
+- Produces: `stageEntry({ runDir, worktree, entry, reason }, deps) -> { stagePath /*absolute, anchored under runDir/staged/*/, gate: 'ok'|'description-only'|'unvalidated' }` — the staging writer Task 2 also uses. N = 1 + the max existing `wrap-up-skill-(\d+)\.md` in `{runDir}/staged/`. Preamble: `Target: {target}`, `Invariant: {summary}`, `Finding: Skills row — {summary}`, `Staged-at: {short HEAD of worktree}`, a blank line, then the patch bytes. Then `staged-patch.md`'s **Staging-time gate** with the patch's own outcome table: `git -C {worktree} apply --check {stagePath}`, where the edit is already reverted, so the patch must apply. Exit 0 → `gate:'ok'`. An unreadable file → `gate:'unvalidated'`, kept. Otherwise recompose once from the patch file, and on a second failure write the description-only form → `gate:'description-only'`. After an `ok`, run the **Stacked check** by spawning `plugin/bin/check-staged-stack.js --worktree {worktree} --patch {stagePath} --rederive-out {runDir}/learned-skills/rederive-{N}.patch` and follow that section's outcome rules. It writes the STAGED line itself (Global Constraints shape; a description-only stage uses `staged-patch.md`'s description-only line).
 - Produces: the manifest `{runDir}/learned-skills/manifest.json`, an array of `{ id, target, summary, patch, status: 'captured'|'landed'|'staged', commit?, pr?, stagePath?, reason? }`. `id` is a decimal string sequence starting at `"1"`. Helpers: `readManifest(runDir)` and `writeManifest(runDir, entries)` (atomic, via `plugin/bin/lib/atomic-write.js`).
 - Produces: `realDeps` with `git(args, opts)` (throwing runner, `windowsHide: true`, `maxBuffer: LARGE_MAX_BUFFER_BYTES`) and `gh(args, input)` (via `ghOptions`, `timeout: GH_TIMEOUT_MS`), plus `run(argv, deps) -> exitCode` in the CLI, per `cli-wrapper-contract.md`. Exit 0 = ok, 1 = git or gh failure (stderr names it, nothing reverted), 2 = usage error or refused `--run`.
 - CLI: `learned-skills-pr.js capture --run <run-dir> --worktree <abs> --merge-base <sha> --target <repo-rel> --summary-file <path>` prints one JSON line.
@@ -71,7 +74,10 @@
   - `captures a tracked edit and reverts it`: a working-tree edit to `x/SKILL.md` → `route:'captured'`, `id:'1'`. The patch file begins `diff --git a/.claude/skills/x/SKILL.md b/.claude/skills/x/SKILL.md`, and `git apply --check` of it against HEAD succeeds. `git --no-optional-locks status --porcelain -- <target>` prints nothing.
   - `captures a new untracked skill file and deletes it`: a new `.claude/skills/y/SKILL.md` → the patch contains `new file mode`, the file no longer exists, and status is clean.
   - `second finding on the same target reuses the patch`: capture `x` twice → the second call returns `{ route:'captured', id:'1', shared:true }`, and the manifest has one entry.
-  - `refuses a clean target`: an unedited target → exit-code-1-class error `nothing to capture`, no manifest entry.
+  - `clean target`: an unedited, never-captured target → `{ route:'clean' }`, exit 0, no manifest entry.
+  - `a later row's edit to a captured target joins the same patch`: capture `x`, then edit `x` again in the working tree, then capture `x` → `shared:true`, and the patch file now re-applies both edits against HEAD. The tree is clean afterward.
+  - `failure after the diff stages instead of committing`: an injected `deps.git` whose `checkout` call throws → `route:'staged'`. `staged/wrap-up-skill-1.md` exists at an absolute path under `runDir`, and its diff block is byte-identical to the captured diff. The working tree is clean, no commit was made on the branch, and `decisions.md` has a `STAGED` line.
+  - `stageEntry gate`: a valid patch → `gate:'ok'`. A truncated patch (garbage) → `gate:'description-only'` and the file has no `diff --git` line. `stagePath` is always absolute and starts with `runDir`.
   - `non-ASCII and dash-leading paths`: targets `.claude/skills/café/SKILL.md` and `-evil/SKILL.md` (both created) capture and re-apply. The recorded `git` argv for the diff contains `-c`, `core.quotePath=false`, `--no-color`, `--no-ext-diff`, `--src-prefix=a/`, `--dst-prefix=b/`, and `--` before the path (pathspec). The `merge-base..HEAD` name-only read contains `-z` and `--end-of-options`.
   - CLI `run([...])` with a missing `--target` → exit 2.
 
@@ -136,7 +142,7 @@ git commit -m "Add learned-skills-pr capture — move a Skills-row edit off the 
   - Push `{sha}:refs/heads/{branch}` with `GIT_PUSH_TIMEOUT_MS`.
   - Reuse an open PR from `gh pr list --head {branch} --state open --json number,url`. Otherwise run `gh pr create … --body-file -`, then re-list and require the PR to read OPEN.
   - Delete the temp index in a `finally`.
-  - Staging writer: N = 1 + the max existing `wrap-up-skill-(\d+)\.md` in `{runDir}/staged/`. Preamble: `Target: {target}`, `Invariant: {summary}`, `Finding: Skills row — {summary}`, `Staged-at: {short HEAD of worktree}`.
+  - Every downgrade goes through Task 1's `stageEntry`. `--record` repeats (multi-spec, Global Constraints). Add a test `multi-record land refs every member` with `--record 5290 --record 5291`: the body carries `refs #5290` and `refs #5291`, and no closing keyword.
 
 - [ ] **Step 4: Run them to verify they pass.**
   Run: `node --test tests/bin-lib/learned-skills/ tests/windows-hide-spawn-conformance.test.js tests/gh-host-seam-conformance.test.js tests/path-guard-conformance.test.js tests/bin-lib/exit-code-conformance.test.js`
@@ -160,9 +166,9 @@ git commit -m "Add learned-skills-pr land and stage — plumbing commits on an u
 - Test: `tests/bin-lib/wrap-up/` — add the cases to the existing engine-render test file (find it with `grep -l dispositionFor\|renderConsoleSections tests/bin-lib/wrap-up/*.js`)
 
 **Interfaces:**
-- Produces: finding field `pr` (a PR URL string, optional). `dispositionFor` returns `applied ({commit}, learned-skills PR {pr})` when `action === 'applied'` and `pr` is a non-empty string. It is unchanged otherwise.
+- Produces: finding field `pr` (a PR URL string, optional). `dispositionFor` returns `applied ({commit}, learned-skills PR {pr})` when `action === 'applied'` and `pr` is a non-empty string. It is unchanged otherwise. `formatDetailCell` appends ` · learned-skills PR {url}` (each distinct `pr` once) to the row's `detail` when any finding carries one. This is how the PR URL reaches wrap-up's final summary: `summary-template.md`'s Phase 2 section renders `render --section trace`, so no template edit is needed. Task 5's test asserts the trace output.
 
-- [ ] **Step 1: Write the failing tests.** `renderConsoleSections` on a `skills` row whose finding carries `pr: 'https://github.com/o/r/pull/77'` contains `applied (abc1234, learned-skills PR https://github.com/o/r/pull/77)`. A finding without `pr` still renders `applied (abc1234)`. Also run the return-shape-widening grep: `grep -rn "applied (" tests/` — update no existing assertion unless it breaks.
+- [ ] **Step 1: Write the failing tests.** `renderConsoleSections` on a `skills` row whose finding carries `pr: 'https://github.com/o/r/pull/77'` contains `applied (abc1234, learned-skills PR https://github.com/o/r/pull/77)`. A finding without `pr` still renders `applied (abc1234)`. `renderTrace` on that row's entry with `detail: 'Read 2'` renders a Detail cell `Read 2 · learned-skills PR https://github.com/o/r/pull/77`. Two findings sharing one `pr` print it once. Also run the return-shape-widening grep: `grep -rn "applied (" tests/` — update no existing assertion unless it breaks.
 - [ ] **Step 2: Run it to verify it fails.** Run: `node --test {that file}` — Expected: FAIL on the `learned-skills PR` assertion.
 - [ ] **Step 3: Implement the branch in `dispositionFor`.**
 - [ ] **Step 4: Run it to verify it passes.** Run: `node --test tests/bin-lib/wrap-up/` — Expected: PASS
@@ -173,6 +179,7 @@ git commit -m "Add learned-skills-pr land and stage — plumbing commits on an u
 **Covers:** AC4.1, AC4.2, AC4.3. **Byte budget:** `github-pr-scan.md` has 1249 bytes of rail headroom and its composed `pr-scan` bundle 1102; keep this task's total addition under 400 bytes (the one filter line plus one sentence) and re-run `plan-audit.js {plan} --bytes` after the edit.
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/skills/_shared/github-pr-scan.md` (item 9 prose and its first `node -e` filter)
@@ -189,9 +196,10 @@ git commit -m "Add learned-skills-pr land and stage — plumbing commits on an u
 
 ### Task 5: Wrap-up procedure prose, docs, and conformance pins
 
-**Covers:** AC8.1 (FYI and final summary name the PR URL — the summary line goes in `plugin/skills/wrap-up/summary-template.md` if that is where the wrap-up summary is rendered, else the FYI paragraph alone), AC7.1/AC7.2 (merge-check.md untouched: assert `git diff --name-only {base}..HEAD` omits it at Common Step 5), AC9.1 (full suite at Common Step 5).
+**Covers:** AC8.1 (FYI and final summary name the PR URL — the FYI via the engine-rendered Skill updates section and the final summary via the Phase 2 trace Detail cell, both from Task 3; Step 1 asserts both outputs), AC7.1/AC7.2 (merge-check.md untouched: assert `git diff --name-only {base}..HEAD` omits it at Common Step 5), AC9.1 (full suite at Common Step 5).
 
 **Role:** judgment
+**Review risk:** high
 
 **Files:**
 - Create: `plugin/skills/wrap-up/learned-skills-pr.md`
@@ -215,10 +223,21 @@ git commit -m "Add learned-skills-pr land and stage — plumbing commits on an u
 - [ ] **Step 2: Run them to verify they fail.** Run: `node --test tests/wrap-up-learned-skills-pr.test.js` — Expected: FAIL (`ENOENT … learned-skills-pr.md`)
 - [ ] **Step 3: Write the prose.**
   - `learned-skills-pr.md`, which has three parts:
-    - When it applies: the `skills` row only, every applied finding, after the audit step.
-    - The call sequence. `capture` per finding, with `--merge-base` from `{run-dir}/wrap-up-pack.json`'s `blastRadius.mergeBase`, or else `git merge-base HEAD origin/{integration-branch}`. `run-branch` → commit as today. `captured` → do not commit. A `capture` exit 1 → commit on the run branch as today and log `SKIP` with the stderr. After the pass, before any `record`: `integration-model` `pr-first` → `land`; `local-merge` → `stage --reason "integration-model is local-merge"`.
+    - When it applies: every applied `skills`-row finding. It also applies to any other row's applied finding whose `targetPath` was already captured earlier in the same pass, which then rides the same patch.
+    - The call sequence. `capture` per finding, with `--merge-base` from `{run-dir}/wrap-up-pack.json`'s `blastRadius.mergeBase` (multi-spec: the batch merge-base, Global Constraints), or else `git merge-base HEAD origin/{integration-branch}`. Outcomes:
+      - `run-branch` → commit as today.
+      - `captured` (including `shared: true`) → do not commit.
+      - `staged` → the finding is staged (payload rewrite below).
+      - `clean` → the audit's clean-path case, unchanged.
+      - Exit 1 → nothing was touched: commit on the run branch as today and log `FAILED` naming the stderr. That is the one fail-safe exception, and merge-check's floor still holds that run.
+    - After the pass, before any `record`: `integration-model` `pr-first` → `land`; `local-merge` → `stage --reason "integration-model is local-merge"`.
     - Payload rewrite. A landed finding sets `commit` = its hash and `pr` = the PR URL. A staged finding becomes `action: "staged"` with `stagePath` = the absolute path and no `commit`.
-    - Also cover the FYI/summary line, the rule that it is never armed, and the item 9 exclusion.
-  - Keep `curation-engine.md` edits surgical: one clause in step (2) "commit", one sentence after the pass, and one table row.
+    - Also cover the FYI/summary line (Task 3's renderers carry the URL), the rule that it is never armed, and the item 9 exclusion.
+  - Keep `curation-engine.md` edits surgical:
+    - Step (1) "audit": an earlier same-pass `capture` of the same `targetPath` counts like an earlier same-pass commit, so call `capture`, which returns `shared: true`. Never treat that as a payload violation.
+    - Step (2) "commit": one clause routing to `learned-skills-pr.md`.
+    - One sentence after the pass.
+    - One table row.
+  - Add to Step 1's tests: `curation-engine.md` step (1)'s text names an earlier same-pass capture beside an earlier same-pass commit. Also assert on the real renderer output: `renderTrace` and `renderConsoleSections` fed a `skills` payload carrying `pr` both contain the URL (AC8.1 and AC8.2 end to end through `plugin/bin/wrap-up-engine.js render`, or the library functions when the CLI needs a full state file).
 - [ ] **Step 4: Run them to verify they pass.** Run: `node --test tests/wrap-up-learned-skills-pr.test.js tests/curation-git-mutation-carveout.test.js tests/curation-judge-stagepath.test.js tests/sweep-backstop.test.js` — Expected: PASS. Then prove each new assertion red by reverting its pinned prose line once (skill-prose-conformance-tests rule).
 - [ ] **Step 5: Commit** — `git add` the listed files, then `git commit -m "Route wrap-up's applied skill edits through learned-skills-pr — procedure, contract row, docs"`.
