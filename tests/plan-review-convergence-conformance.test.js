@@ -56,12 +56,15 @@ function problems(anchors, text) {
   return anchors.filter((anchor) => !normalized.includes(anchor));
 }
 
+// Guard-clause anchors end on the clause's own punctuation, so a suffix widening
+// ("…is trusted or CONTRIBUTOR.") goes red instead of still matching.
 const SIGNAL_ANCHORS = [
+  'A round is converged when either signal holds:',
   'trusted `<!-- plan-review-question -->` comment',
-  "the record's body was edited after the newest such comment",
+  "the record's body was edited after the newest such comment (",
   "`lastEditedAt` is later than that comment's `createdAt`",
   'lastEditedAt comments(last:100){nodes{body authorAssociation createdAt url}}',
-  'whose body starts with that marker and whose `authorAssociation` is trusted',
+  'whose body starts with that marker and whose `authorAssociation` is trusted.',
   "Trusted authors — `OWNER`, `MEMBER`, `COLLABORATOR`)",
   'Decided by the user at plan review:',
   'counts as **not converged**',
@@ -70,7 +73,8 @@ const SIGNAL_ANCHORS = [
   'Under `work-backend: local-files` only the spec-line signal applies',
 ];
 const RULE_ANCHORS = [
-  'stays needs-human only when settling it would alter or loosen an existing Acceptance Criterion, or contradict a recorded decision, under every available reading',
+  'stays needs-human only when settling it would alter or loosen an existing Acceptance Criterion, or contradict a recorded decision, under every available reading:',
+  "A promoted row's available readings are the two Reading the reply has you write for it.",
   'a `**Decision**` paragraph in the spec, or a Closed rule',
   'one the promotion rule in Reading the reply marked',
   'never asked',
@@ -134,22 +138,39 @@ test('AC4.1: the Converged round subsection sits after the plan-amendment subsec
   // the plan-amendment subsection.
   const block = subsection(REVIEW, CONVERGED);
   const without = REVIEW.replace(block, '');
-  const permuted = without.replace('\n### Undecided behaviour', '\n' + block + '### Undecided behaviour');
+  // A function replacement: the moved block carries `$` sequences a string replacement would expand.
+  const permuted = without.replace('\n### Undecided behaviour', () => '\n' + block + '### Undecided behaviour');
   assert.notStrictEqual(permuted, REVIEW);
   assert.ok(permuted.includes('\n' + CONVERGED + '\n'));
   assert.ok(!convergedBetween(permuted));
 });
 
+const promptMatches = (block) => block === FROZEN_PROMPT;
+
 test('AC5.1: the reviewer Dispatch prompt block is byte-identical to origin/main', () => {
   assert.ok(FROZEN_PROMPT.length > 1000);
-  assert.strictEqual(dispatchBlock(REVIEW), FROZEN_PROMPT);
+  assert.ok(promptMatches(dispatchBlock(REVIEW)), 'the Dispatch prompt block differs from tests/fixtures/plan-review-dispatch-prompt-4958.txt');
 });
 
 test('AC7.1 go-red: each anchor set fails on the pre-change boundary, and a one-byte prompt edit breaks AC5.1', () => {
   for (const set of [SIGNAL_ANCHORS, RULE_ANCHORS, TRAIL_ANCHORS]) {
     assert.deepStrictEqual(problems(set, FROZEN_BOUNDARY), set);
   }
-  assert.notStrictEqual(dispatchBlock(REVIEW).replace('spec gap', 'spec-gap'), FROZEN_PROMPT);
+  const live = dispatchBlock(REVIEW);
+  const mutated = live.replace('spec gap', 'spec-gap');
+  assert.notStrictEqual(mutated, live);
+  assert.ok(!promptMatches(mutated));
+});
+
+// The dispatched-call bullet's answer instruction; origin/main asked for any body edit.
+const ANSWER_INSTRUCTION = "the instruction to answer each question by adding a `**Decision**` paragraph (or an Acceptance Criterion) to the record's body";
+const FROZEN_ANSWER_INSTRUCTION = "then the instruction to answer by editing the record's body — the next build materializes the body, not comments.";
+const asksForRecordedDecision = (text) => norm(text).includes(ANSWER_INSTRUCTION);
+
+test('the dispatched question comment asks for the answer as a recorded decision', () => {
+  assert.ok(asksForRecordedDecision(subsection(REVIEW, NEEDS_HUMAN)));
+  // go-red: the same check fails on the pre-change instruction.
+  assert.ok(!asksForRecordedDecision(FROZEN_ANSWER_INSTRUCTION));
 });
 
 test('plan-review.md stays within the rail', () => {
