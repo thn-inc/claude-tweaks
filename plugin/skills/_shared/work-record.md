@@ -446,6 +446,16 @@ does with the stamp is `flow/materialize.md`'s Freshness-stamp drift section; a 
 bounds drift, it never establishes correctness, so `[IL-71]`'s re-verification instruction stays
 in force regardless.
 
+## Risk flag lines
+
+Two body-metadata lines (#4618, grammar in `specify/spec-template.md`): `Risk-flags: {slugs, or
+none}`, plus `Risk-flags-unconfirmed: true` when no human confirmed the set. `parseRiskFlags`
+(`bin/lib/issues/record.js`) is the one reader: an absent line reads unclassified, and a
+malformed line or an unknown slug reads all four built-in categories flagged, never "no flags".
+`bin/risk-flags.js` is the one writer path (`/claude-tweaks:specify` settles the set,
+`/claude-tweaks:backlog refine` confirms it); never hand-edit the lines. `local-files` carries
+them in the body, never in `facets`. They are not the `risk:*` scoring axis.
+
 ## Type
 
 The canonical Type enum is `bug | feature | task`. Two expressions, governed by the

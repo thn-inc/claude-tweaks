@@ -125,9 +125,31 @@ test('REASONS is frozen and EXPRESS_MAX_KEY_FILES is 3', () => {
     frontend: 'frontend surface',
     notShaped: 'not spec-shaped',
     escalated: 'already escalated in this run',
+    riskFlags: 'record carries a kept risk flag',
   });
   assert.strictEqual(protectedPath('a/b'), 'protected path: a/b');
   assert.strictEqual(sensitivePath('a/b'), 'merge-sensitive path: a/b');
+});
+
+// #4618: a record carrying a kept risk flag has no audited proof step on the lane, so it
+// takes the normal path. Only a `Risk-flags:` line that reads as flags excludes; `none` and
+// no line (an unclassified legacy record) stay eligible.
+test('#4618 risk flags: a flagged, unreadable or unknown-slug line is ineligible; none and no line stay eligible', async (t) => {
+  await t.test('Risk-flags: auth', () => onlyReason(record(ELIGIBLE_LABELS, ELIGIBLE_KEYS, 'Risk-flags: auth'), OPTS, REASONS.riskFlags));
+  await t.test('Risk-flags: migrations, public-contract', () => onlyReason(record(ELIGIBLE_LABELS, ELIGIBLE_KEYS, 'Risk-flags: migrations, public-contract'), OPTS, REASONS.riskFlags));
+  await t.test('a malformed line reads as all four categories flagged', () => onlyReason(record(ELIGIBLE_LABELS, ELIGIBLE_KEYS, 'Risk-flags: auth;;'), OPTS, REASONS.riskFlags));
+  await t.test('an unknown slug reads as all four categories flagged', () => onlyReason(record(ELIGIBLE_LABELS, ELIGIBLE_KEYS, 'Risk-flags: bogus'), OPTS, REASONS.riskFlags));
+  await t.test('Risk-flags: none stays eligible', () => {
+    const out = evaluateRecordEligibility(record(ELIGIBLE_LABELS, ELIGIBLE_KEYS, 'Risk-flags: none'), OPTS);
+    assert.deepStrictEqual(out, { number: 3968, eligible: true, reasons: [], keyFiles: ELIGIBLE_KEYS });
+  });
+  await t.test('no Risk-flags line stays eligible', () => {
+    assert.deepStrictEqual(evaluateRecordEligibility(record(), OPTS).reasons, []);
+  });
+  await t.test('the reason is collected beside the others, never short-circuiting', () => {
+    const out = evaluateRecordEligibility(record(['size:medium'], ELIGIBLE_KEYS, 'Risk-flags: auth'), { ...OPTS, enabled: false });
+    for (const r of [REASONS.disabled, REASONS.risk, REASONS.size, REASONS.riskFlags]) assert.ok(out.reasons.includes(r), r);
+  });
 });
 
 test('consumer-portability: protected paths are project-agnostic', () => {
