@@ -5,7 +5,9 @@ files:
   - plugin/skills/backlog/grant-lane-decision.md
   - plugin/skills/backlog/refine-closing-summary.md
   - plugin/skills/backlog/refine-record.md
+  - plugin/skills/backlog/trust-signal.md
   - plugin/skills/backlog/SKILL.md
+  - plugin/bin/lib/issues/trust.js
   - plugin/bin/lib/issues/backlog.js
   - plugin/bin/apply-refine-labels.js
   - plugin/bin/closing-tally.js
