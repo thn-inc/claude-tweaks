@@ -51,7 +51,10 @@ function subsection(text, heading) {
 
 const CONVERGED = '### Converged round (#4958)';
 const NEEDS_HUMAN = '### Spec gap — needs-human';
-const problems = (anchors, text) => anchors.filter((a) => !norm(text).includes(a));
+function problems(anchors, text) {
+  const normalized = norm(text);
+  return anchors.filter((anchor) => !normalized.includes(anchor));
+}
 
 const SIGNAL_ANCHORS = [
   'trusted `<!-- plan-review-question -->` comment',
