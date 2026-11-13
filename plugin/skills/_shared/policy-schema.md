@@ -200,20 +200,27 @@ Registered by #4029; read by `readEfficiencyCeilings` in `bin/lib/policy.js` for
 
 Built-in risk slugs: `migrations`, `auth`, `public-contract`, `irreversible-side-effect`. The rest of this section's intro (flat-key list syntax, login and slug entries, quoting rules): moved to `_shared/policy-schema-read-path.md`'s Control mode section (#5216, rail headroom). Cite that file, not this stub.
 
+The canonical-home/owner/default/meaning table for these twelve keys moved to `_shared/policy-schema-read-path.md`'s Control mode section (headroom-forced, #5291). Cite that file, not this stub.
+
+| Key |
+|---|
+| `control-mode` |
+| `acceptance-target` |
+| `deploy-reach` |
+| `deploy-command` |
+| `deploy-live-workflow` |
+| `deploy-version-url` |
+| `dev-base-url` |
+| `dev-test-account` |
+| `deploy-wait-seconds` |
+| `deploy-poll-seconds` |
+| `owned-owners` |
+| `trusted-authors` |
+
+The two risk keys keep their full rows here (`tests/risk-flags-refine-prose.test.js` pins their owner cells):
+
 | Key | Canonical home | Owner skill(s) | Default | Meaning |
 |---|---|---|---|---|
-| `control-mode` | `policy.yml` | none yet (#4608) | `off` | `off`/`on` |
-| `acceptance-target` | `policy.yml` | none yet (#4608) | `local` | `local`/`dev` |
-| `deploy-reach` | `policy.yml` | none yet (#4608) | `none` | `on-merge`/`command`/`none` |
-| `deploy-command` | `policy.yml`, base branch only | none yet (#4608) | unset | Executed command; spaces allowed |
-| `deploy-live-workflow` | `policy.yml` | none yet (#4608) | unset | CI workflow name; spaces allowed |
-| `deploy-version-url` | `policy.yml` | none yet (#4608) | unset | `http(s)` URL, no `user:pw@` |
-| `dev-base-url` | `policy.yml` | none yet (#4608) | unset | `http(s)` URL, no `user:pw@` |
-| `dev-test-account` | `policy.yml` | none yet (#4608) | unset | Vault entry name, never a credential |
-| `deploy-wait-seconds` | `policy.yml` | none yet (#4608) | `900` | Integer >= 0 |
-| `deploy-poll-seconds` | `policy.yml` | none yet (#4608) | `30` | Integer >= 1 |
-| `owned-owners` | `policy.yml`, base branch only | none yet (#4608) | `[]` | Logins, `[A-Za-z0-9_-]`, optional `[bot]` |
-| `trusted-authors` | `policy.yml`, base branch only | none yet (#4608) | `[]` | Logins, as `owned-owners` |
 | `risk-categories` | `policy.yml` | `risk-flags.js`, `plan-audit.js` | `[]` | Extra lowercase slugs |
 | `risk-path-globs` | `policy.yml`, block | `risk-flags.js` | `{}` | Slug to glob list, indented: `slug: [a, b,]` (one trailing comma; may span lines) or `slug:` then `- a` lines. A slug is built-in or from `risk-categories`; a glob is a string (quote `{a,b}`, `k: v`; a quoted one is literal, no escapes). Rejected whole: a respelled key line, a column-0 row, quoted keys, `slug : [a]`, doubled-quote escapes. Read it only through the resolver, never `resolveValue`: `null` with `invalid` means malformed, never unset |
 
