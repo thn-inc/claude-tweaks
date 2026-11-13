@@ -6,6 +6,7 @@ files:
   - plugin/bin/lib/hooks/pre-tool-use.js
   - plugin/hooks/hooks.json
   - plugin/skills/dispatch/SKILL.md
+  - plugin/skills/dispatch/reporting.md
   - plugin/skills/dispatch/task-prompt.md
   - plugin/skills/dispatch/two-call-gate.md
 ---
@@ -51,9 +52,18 @@ files:
 - **URL:** `{minted-run-dir}/decisions.md`
 - **Action:** When `dispatch-prompt.js` exits non-zero, or the resend is denied too, **dispatching session** does not dispatch the call and does not fill the template by hand. It logs `Prompt render failed: exit {code}: {stderr}` (or `Prompt denied twice: {reason}`) through `log-decision.js --status REFUSED --text-file`, then treats the call as one that returned no parseable report: a first call or its continuation goes to §5's cleanup-only call, a second call or its continuation to §6. A first call that never dispatched appends `(prompt-not-dispatched: skip the claim release)` to the §5 cleanup-only call.
 - **Should feel:** Safe: a refused group is visibly refused, never quietly half-run.
-- **Should understand:** The skip phrase exists because a first call that never ran never claimed the record, so a claim release would post a false release comment on an absent claim. It is appended only for a first call that never dispatched: a continuation, an escalated express run's first call (the express lane took its claim) and a second call all hold a claim and release it as usual. The firing then moves on to the next group.
-- **Red flags:** A `REFUSED` group that leaves its claim or worktree unreleased; the skip phrase appended for a continuation or second call, leaving a live claim; a hand-filled prompt dispatched after a render failure.
+- **Should understand:** The skip phrase exists because a first call that never ran never claimed the record, so a claim release would post a false release comment on an absent claim. It is appended only for a first call that never dispatched: a continuation, an escalated express run's first call (the express lane took its claim) and a second call all hold a claim and release it as usual. A render failure then ends the firing once that cleanup call returns (`dispatch/SKILL.md`'s Render-failure stop, #5255) — relayed with the exit code and stderr line, and notified when headless — while a second deny moves the firing on to the next group.
+- **Red flags:** A `REFUSED` group that leaves its claim or worktree unreleased; the skip phrase appended for a continuation or second call, leaving a live claim; a hand-filled prompt dispatched after a render failure; a render failure followed by another group's dispatch in the same firing; a denied-twice call that ends the firing.
+
+### 6. Read the render-failure stop in the firing's report — `dispatch/reporting.md`
+- **URL:** the stopped group's block in the firing's end-of-run report; on a headless firing, its one `PushNotification`
+- **Action:** **The maintainer** reads the block. It names the record and the call (first, second, or a continuation), quotes the exit code and the first stderr line from that call's `Prompt render failed:` `REFUSED` line, says the firing stopped, and lists any named records after it as not attempted. It closes with the remedy on its own line: fix the named cause (the template, a policy value or the environment), then re-run `/claude-tweaks:dispatch #{n}`. A headless firing (one that passes `--headless`) also sends one `PushNotification` naming the record and the stderr line.
+- **Should feel:** Diagnosed at once: the cause and the next command sit in one block, not only in `decisions.md`.
+- **Should understand:** The stop ends the whole firing because `dispatch-prompt.js`'s inputs (the template, the resolved policy values, the model profile, the `--run` guard, the session temp path) are nearly all shared by every group, so the next group would fail the same way (`dispatch/design-notes.md`). When #{n} still has an open draft PR, the re-run's open-PR line names the next step. A render failure that really is per-record (a malformed resume PR URL, say) stops every firing at that record until a human acts, because the ranking picks it first each time; this block is what makes that visible. A denied-twice call ends only its own group, so it gets neither this block nor a notification.
+- **Red flags:** A stop block missing the exit code, the stderr line or the remedy line; the remedy run together with other text instead of on its own line; a `PushNotification` from a firing that did not pass `--headless`, or for a denied-twice call; a named record after the stopped one missing from the report.
 
 ## Origin
 - Created during build of #4589 (render every dispatch Task prompt through a CLI and gate the resend). Steps 1-5 built in this session.
+- Updated during build of #5255: step 5. A render failure ends the firing; a second deny still moves on.
+- Updated during wrap-up of #5255: step 6 added. The maintainer reads the relayed render-failure stop and, on a headless firing, its one notification, which visits `dispatch/reporting.md` from `files:`.
 - Related: `resume-a-stalled-dispatched-build-4588.md` (the resume first call is rendered with `--resume-verdict`), `clear-the-two-call-gate-for-a-dispatched-group-2775.md` (the gate between the calls), `compose-a-per-run-context-bundle-1988.md` (the bundles composed before each render), `audit-dispatch-first-call-model-3224.md` (the model read from the envelope's `profile`)
