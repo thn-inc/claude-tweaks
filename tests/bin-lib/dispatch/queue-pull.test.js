@@ -2521,7 +2521,9 @@ test('AC9.3: the header comment and USAGE each state exit codes 0, 1, 2, 3 and 4
     assert.match(cli.USAGE, new RegExp(`^\\s+${n}\\s{2}\\S`, 'm'), `USAGE states exit ${n}`);
   }
   assert.deepEqual(cli.EXIT, { OK: 0, USAGE: 1, MISSING_DEPENDENCY: 2, REMOTE_FAILED: 3, STOPPED: 4 });
-  assert.match(header, /Reopen\s+\/\/ when the cutover has landed/, "R4's decision comment names its reopen condition");
+  // #5230 final review M5: the reopen condition was met, and the comment records the outcome.
+  assert.match(header, /Decision \(R4\), settled by #5230:[\s\S]*?4 stays\s+\/\/ distinct from 1\./, "R4's decision comment records that exit 4 stays distinct from 1");
+  assert.doesNotMatch(header, /Reopen\s+\/\/ when the cutover has landed/, "R4's decision comment no longer states a reopen condition");
   assert.match(header, /Departure \(R5\)/);
   assert.match(header, /omits `--priority`/, 'the header states the omit-on-empty caller rule');
   assert.match(cli.USAGE, /Omit --priority when no\s+filter is set/, 'USAGE states it too');
