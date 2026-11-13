@@ -523,10 +523,10 @@ async function main() {
   let bgit = null;
   let baseSha = null;
   const staleWarnings = [];
-  const flushStaleWarnings = () => {
+  function flushStaleWarnings() {
     // fs.writeSync, not process.stderr: this may run inside the 'exit' event.
     for (const line of staleWarnings.splice(0)) fs.writeSync(2, line);
-  };
+  }
   if (parsed.baseline) {
     bgit = realGit(parsed.cwd || process.cwd());
     baseSha = bgit.resolveCommit(parsed.baseline);
