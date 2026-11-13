@@ -896,3 +896,14 @@ test('AC1.1: review-followup-1.md routes to the proposal row, which the Routing 
   const routed = routingRowOf(text, 'proposal');
   assert.ok(routed && routed.includes('The same Defer path and Defer-reason'), 'the proposal routing row must carry "The same Defer path and Defer-reason"');
 });
+
+test('#5280: visual-review-late-1.md routes to its own proposal row, not the visual-review- note row', () => {
+  const row = classify('visual-review-late-1.md', parseRoster(readDisposition()));
+  assert.ok(row, 'visual-review-late-1.md must classify to a roster row (#5280)');
+  assert.equal(row.route, 'proposal');
+});
+
+test('#5280 go-red: deleting the visual-review-late- row falls back to the visual-review- note row', () => {
+  const row = classify('visual-review-late-1.md', parseRoster(withoutRosterRow(readDisposition(), 'visual-review-late-')));
+  assert.ok(row && row.route === 'note', 'without its own row a late finding must fall back to note');
+});

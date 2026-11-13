@@ -17,7 +17,9 @@
 //
 // Prints one JSON line: {state, failing:[{name,url,inherited?}], pending:[name],
 // awaitingReadyRun?:[workflow file], headRefOid, localHead, pr, reason?, baseBranch?, baseSha?, baseReason?,
-// logged? (--run only)}. state
+// headRunCount?, logged? (--run only)}. headRunCount is the number of workflow runs the
+// head-runs read listed for headRefOid (one page of 100), present only when that read
+// succeeded -- drive.js's CI step reads it rather than listing the runs itself. state
 // is red | inherited-red | pending | stale | green | no-ci | read-failed | no-pr
 // | gh-absent.
 //
@@ -69,7 +71,8 @@ const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('./lib/shared-primitives');
 
 const USAGE = 'usage: pr-checks.js --run <run-dir> [--section "/<skill>"] | --pr <n> [--help]\n'
   + '  --pr <n> classifies a PR by number with no run dir: local HEAD is not compared (the PR\'s own head stands in), localHead is null, never stale, never no-pr\n'
-  + '  prints {state, failing, pending, awaitingReadyRun?, headRefOid, localHead, pr, reason?, baseBranch?, baseSha?, baseReason?, logged? (--run only)};\n'
+  + '  prints {state, failing, pending, awaitingReadyRun?, headRefOid, localHead, pr, reason?, baseBranch?, baseSha?, baseReason?, headRunCount?, logged? (--run only)};\n'
+  + '  headRunCount: the head sha\'s workflow-run count, present only when the head-runs read succeeded;\n'
   + '  baseBranch: the branch compared on a red read -- the PR\'s own base, else the integration branch;\n'
   + '  state: red | inherited-red | pending | stale | green | no-ci | read-failed | no-pr | gh-absent\n'
   + '  --run appends the PR-check gate line to decisions.md under --section and adds logged: AUTO on inherited-red | pending | stale; SKIP on no-pr | gh-absent | no-ci | read-failed\n'
@@ -260,9 +263,12 @@ function classifyPr(deps, n, localHead, audit) {
   // A failed runs read cannot conclude a pass-class verdict (green/pending/inherited-red): a failing run
   // absent from the rollup would be invisible. Only a verdict still red is conclusive on its own.
   if (runsFailure && final.state !== 'red') return report(deps, { state: 'read-failed', pr: n, localHead, reason: runsFailure }, audit);
+  // The head-runs count rides every envelope whose runs read succeeded, so a caller can tell
+  // "no workflow run on this sha" from "the runs could not be read" without listing them again.
+  const runCount = Array.isArray(headRuns) ? { headRefOid, headRunCount: headRuns.length } : {};
   // Same for the ready-run read: a green or pending verdict could hide a ready-run failure.
-  if (readyFailure && final.state !== 'red') return report(deps, { state: 'read-failed', pr: n, localHead, reason: readyFailure }, audit);
-  return report(deps, { ...final, localHead, pr: n }, audit);
+  if (readyFailure && final.state !== 'red') return report(deps, { state: 'read-failed', pr: n, localHead, reason: readyFailure, ...runCount }, audit);
+  return report(deps, { ...final, localHead, pr: n, ...runCount }, audit);
 }
 
 function run(argv, overrides = {}) {

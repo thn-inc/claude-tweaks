@@ -53,6 +53,49 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.167.0](https://github.com/thn-inc/claude-tweaks/compare/v6.166.0...v6.167.0) (2026-11-13)
+
+
+### Features
+
+* drive.js — a named record from admission to a green draft PR ([#5218](https://github.com/thn-inc/claude-tweaks/issues/5218)) ([01a50fa](https://github.com/thn-inc/claude-tweaks/commit/01a50fabe0bcc2fd10b2b5e75d0df691f7354ed3))
+* Driver settle for standalone runs, ceilings, and the… ([#5219](https://github.com/thn-inc/claude-tweaks/issues/5219)) ([37c2b02](https://github.com/thn-inc/claude-tweaks/commit/37c2b02b56c1637cc3e2288369bdebfe1df1964f))
+* Queue pull as a module and CLI, alongside the embedded… ([#5227](https://github.com/thn-inc/claude-tweaks/issues/5227)) ([61ec592](https://github.com/thn-inc/claude-tweaks/commit/61ec59285c112cbd8c5953855af108d63a03883b))
+* Record the walkthrough automatically and keep secrets… ([#4612](https://github.com/thn-inc/claude-tweaks/issues/4612)) ([a8ad4e8](https://github.com/thn-inc/claude-tweaks/commit/a8ad4e81a90d535c7a9e1703353a59b588e0c8f8))
+* Risk flags at intent time ([#4618](https://github.com/thn-inc/claude-tweaks/issues/4618)) ([4e5330c](https://github.com/thn-inc/claude-tweaks/commit/4e5330c63c3e5578400b708db0654346ffe50c17))
+
+
+### Bug Fixes
+
+* Artifact-overwrite check: attribute only the run's own… ([#4845](https://github.com/thn-inc/claude-tweaks/issues/4845)) ([7a2152c](https://github.com/thn-inc/claude-tweaks/commit/7a2152c9caca54c297b3188d711429f109b1634e))
+* Console backfill keeps reproduction coordination notes… ([#4198](https://github.com/thn-inc/claude-tweaks/issues/4198)) ([94b5fcf](https://github.com/thn-inc/claude-tweaks/commit/94b5fcf521f7f344a7ca027e058c840785420ba6))
+* context-gauge.js writes a handoff for a top-level run… ([#5253](https://github.com/thn-inc/claude-tweaks/issues/5253)) ([afc4712](https://github.com/thn-inc/claude-tweaks/commit/afc4712b159883c0fb101003b08d46ec12e2df8d))
+* Decide how a dispatch first call whose prompt never… ([#5255](https://github.com/thn-inc/claude-tweaks/issues/5255)) ([eac4947](https://github.com/thn-inc/claude-tweaks/commit/eac4947701ffa762876dd4f9e37ef6a7da077f35))
+* drive.js reports CI before the pushed commit's tests have… ([#5277](https://github.com/thn-inc/claude-tweaks/issues/5277)) ([e735e23](https://github.com/thn-inc/claude-tweaks/commit/e735e235e452b56b282c6f2d0f8c0ff403118366))
+* Merge mode cannot tear down a dispatch-parked run… ([#5293](https://github.com/thn-inc/claude-tweaks/issues/5293)) ([8e2539a](https://github.com/thn-inc/claude-tweaks/commit/8e2539a594f99f84678f0f9e0be0775c05886241))
+* plan review: a record with no Closed rule can stop on… ([#4958](https://github.com/thn-inc/claude-tweaks/issues/4958)) ([f3b29df](https://github.com/thn-inc/claude-tweaks/commit/f3b29df0a602cfcb3a3100b72fcc2a3205522af8))
+* release-preflight: releasePr picks a human PR by title… ([#3931](https://github.com/thn-inc/claude-tweaks/issues/3931)) ([54a3c45](https://github.com/thn-inc/claude-tweaks/commit/54a3c459d8d9ea8ae3fb230773c21f17ffec6d77))
+* review: a visual-review or design-wrapper result that… ([#5280](https://github.com/thn-inc/claude-tweaks/issues/5280)) ([08943b4](https://github.com/thn-inc/claude-tweaks/commit/08943b4df43b7bcc2fb570e8144d9ffee6faf913))
+* Skip a fenced "## Original request" heading when… ([#4351](https://github.com/thn-inc/claude-tweaks/issues/4351)) ([20e09a1](https://github.com/thn-inc/claude-tweaks/commit/20e09a14f41942d6b00eb86d447d8a606a25fd7d))
+* Windows regression: 1 test file(s) newly failing after… ([#5338](https://github.com/thn-inc/claude-tweaks/issues/5338)) ([599dd39](https://github.com/thn-inc/claude-tweaks/commit/599dd390a3d4567e59b48054b0fddbcdbb72abc3))
+
+### Highlights
+* Added risk-flag classification when you shape work, so changes touching migrations, auth, public contracts or irreversible actions require a specific proof and a local check before merge.
+* Wait longer for visual and design review agents while they are still working, and route any findings they return after the wait to the Review Console instead of dropping them.
+* Plan review no longer stops a build round after round. Once a record's plan-review question has been answered, later reviews stop only for a gap that contradicts an acceptance criterion or a recorded decision, and settle the rest themselves, listed at the Review Console.
+* Session start checks that git is installed with a PATH lookup instead of starting a shell and git on every session.
+* Added standalone settle behavior to the pipeline driver: a stopped run now releases its claim and cleans up or labels the record by fixed rules, and a usage page explains how to run it.
+* Merging a parked pull request from a later session now also removes its worktree and branches.
+* A dispatch firing now stops and tells you why when it cannot render a Task prompt, instead of quietly retrying the same record on every later firing.
+* Added an automatic walkthrough recording to the acceptance packet. The GIF stays in the run's local directory and is linked, never embedded or uploaded, with secret-shaped text redacted. The public demo-evidence screenshot route and its CLI are retired.
+* Stop the multi-spec artifact-overwrite check from flagging a run's edit to a journey that a catch-up merge brought in from upstream.
+* Settle 7 small deferred findings in docs.
+* A record that quotes an "Original request" heading inside a code block can no longer hide an unresolved placeholder from the shape gate.
+* Release preflight now finds the real release-please PR by its branch rather than its title, and reads CI status correctly on GitHub Enterprise.
+* Console backfill no longer files a reproduction step's coordination note as a finding, and finding claims no longer end in a stray connective.
+* Added `drive.js`, a command that takes a named record from admission to a green draft pull request without a model carrying the steps.
+* The pipeline's context gauge no longer hands wrap-up to a fresh agent in a run a human started, where the wrap-up console needs that session.
+
 ## [6.166.0](https://github.com/thn-inc/claude-tweaks/compare/v6.165.0...v6.166.0) (2026-11-12)
 
 

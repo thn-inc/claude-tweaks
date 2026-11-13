@@ -3,6 +3,7 @@ files:
   - plugin/skills/review/step3-tiebreak.md
   - plugin/skills/review/code-mode-steps.md
   - plugin/skills/review/step3-lens-dispatch.md
+  - plugin/skills/review/step3-tier-variants.md
   - plugin/skills/review/step3-debate-and-refutation.md
   - plugin/skills/review/step3-routing.md
   - plugin/skills/review/review-summary-template.md

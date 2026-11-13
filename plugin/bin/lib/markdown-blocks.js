@@ -9,7 +9,9 @@
 // health-sweep issue-payload.js builders. Moved out of issues/record-payload.js
 // (#4645) so a consumer that needs only the fence rule no longer reaches through
 // the record-payload builder. It requires no module, so any lib module can import
-// it without a cycle. No I/O.
+// it without a cycle. No I/O. The one deliberate exception is plan-audit/parser.js's
+// Check G fence rule (#4618), which accepts any leading indentation where scanFences
+// allows 0-3 spaces, so a fence nested in a plan's list item still hides a Proof line.
 'use strict';
 
 // Returns a backtick fence at least one character longer than the longest run

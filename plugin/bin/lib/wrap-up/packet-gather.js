@@ -451,17 +451,22 @@ function deployFact(deploy) {
   return { id: 'deploy:status', kind: 'deploy', status: 'passed', source: 'deploy', text, target, live };
 }
 
-// A pass-through record may already spell its id with the kind.
-function passThroughFacts(kind, source, entries) {
+// A pass-through record may already spell its id with the kind. The status and reason come
+// from the call, never from the entry. Only a flag entry's `unconfirmed: true` is carried on.
+function passThroughFacts(kind, source, entries, { status = 'passed', reason } = {}) {
   const prefix = `${kind}:`;
-  return (entries ?? []).map(({ id, text }) => ({
+  return (entries ?? []).map(({ id, text, unconfirmed }) => ({
     id: `${prefix}${encodeFactKey(id.startsWith(prefix) ? id.slice(prefix.length) : id)}`,
     kind,
-    status: 'passed',
+    status,
+    ...(reason === undefined ? {} : { reason }),
     source,
     ...(text === undefined ? {} : { text }),
+    ...(kind === 'flag' && unconfirmed === true ? { unconfirmed: true } : {}),
   }));
 }
+
+const PROOF_NOT_RUN_REASON = 'planned in the plan, not yet run';
 
 // A recording's free strings as a narrator may read them, with the sum of what went from them.
 // A claim's text meets only the credential screen, which misses a bare token or an address.
@@ -537,6 +542,7 @@ function gatherPacketFacts(inputs) {
     deployFact(inputs.deploy),
     ...(inputs.recording ? [recordingFact(inputs.recording, inputs.recordingPath)] : []),
     ...passThroughFacts('flag', 'flags', inputs.flags),
+    ...passThroughFacts('proof', 'proofs', inputs.proofs, { status: 'not-run', reason: PROOF_NOT_RUN_REASON }),
     ...passThroughFacts('decision', 'decision-items', inputs.decisions),
   ];
 

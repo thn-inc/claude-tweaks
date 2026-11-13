@@ -16,6 +16,7 @@ const { ownerBlock } = require('../plugin/bin/lib/hooks/context');
 const { LIVE_WINDOW_MS } = require('../plugin/bin/lib/run-liveness/constants');
 const { gateOriginRepo } = require('../plugin/bin/lib/repo-resolve');
 const { readText } = require('./helpers/read-skill');
+const { fromTemplate } = require('./helpers/git-template');
 
 function git(root, ...args) {
   return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8' });
@@ -31,8 +32,13 @@ after(() => {
 // `origin` remote (repoSpecOf only reads its URL from git config, no network hit), and one
 // linked worktree on `feat-branch` recorded as the run's own worktree.
 function fixtureRepo() {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-td-')));
+  const root = fromTemplate('teardown-run-fixture', buildFixtureRepo, { prefix: 'ct-td-', realpath: true });
   fixtureRoots.push(root);
+  const wt = path.join(root, '.claude', 'worktrees', 'feat');
+  const runId = '2026-08-01T090000-spec-9';
+  return { root, wt, runDir: path.join(root, '.claude-tweaks', 'pipelines', runId), runId };
+}
+function buildFixtureRepo(root) {
   git(root, 'init', '-q', '-b', 'trunk');
   git(root, 'config', 'user.email', 't@example.com');
   git(root, 'config', 'user.name', 'T');
@@ -57,7 +63,6 @@ function fixtureRepo() {
   git(root, 'commit', '-q', '-m', 'materialize #9');
   fs.writeFileSync(path.join(runDir, 'config.yml'), 'mode: auto\n');
   fs.writeFileSync(path.join(runDir, 'decisions.md'), '# log\n');
-  return { root, wt, runDir, runId };
 }
 
 function writeRunState(runDir, state) {
@@ -723,6 +728,15 @@ function branchRecoveredRun(pid, lockReason) {
   return fx;
 }
 
+// A branch-recovered worktree is unlocked under git's own spelling of its path, as
+// `git worktree list --porcelain` prints it: D:/a/... on Git for Windows, where `wt` is D:\a\...
+// (#5338). Read it before teardown removes the entry.
+function listedWorktreePath(root, branch) {
+  const entry = parseWorktreeList(git(root, 'worktree', 'list', '--porcelain')).find((e) => e.branch === branch);
+  assert.ok(entry, `git worktree list --porcelain lists no worktree on ${branch}`);
+  return entry.path;
+}
+
 function teardownMergedRecordingGit(runDir) {
   const gitCalls = [];
   const recordingGit = (args, cwd) => { gitCalls.push(args); return runGit(args, cwd); };
@@ -736,11 +750,12 @@ function teardownMergedRecordingGit(runDir) {
 
 test('#5293: dead owner, merged, branch-recovered worktree with an orphaned lock — unlocks, removes, deletes the branch', () => {
   const pid = deadPid();
-  const { root, wt, runDir } = branchRecoveredRun(pid, `claude session someone-else (pid ${pid})`);
+  const { root, runDir } = branchRecoveredRun(pid, `claude session someone-else (pid ${pid})`);
+  const listedWt = listedWorktreePath(root, 'feat-branch');
   const { result, gitCalls, calls } = teardownMergedRecordingGit(runDir);
 
   assert.match(result.lines[0], /^owner: session someone-else is not running \(run-liveness: dead\)/);
-  assert.deepStrictEqual(gitCalls, [['worktree', 'unlock', wt]]);
+  assert.deepStrictEqual(gitCalls, [['worktree', 'unlock', listedWt]]);
   assert.ok(result.lines.some((l) => l.startsWith('worktree: removed')), result.lines.join('\n'));
   assert.doesNotMatch(git(root, 'worktree', 'list'), /feat-branch/);
   assert.strictEqual(git(root, 'branch', '--list', 'feat-branch').trim(), '');

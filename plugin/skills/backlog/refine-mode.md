@@ -320,6 +320,38 @@ label.
 At `supervised` — the default, and the state of any repo that has not opted in — no record is ever
 born-`ready` by this path and this step does nothing.
 
+## Step 3.7: Unconfirmed risk flags
+
+*(Narration allowance: no "running"/"passed" line for this step — only the run's one opening line and any failure/degradation line.)*
+
+Human-present only: when `SKILL.md`'s Input resolved the headless posture (`--source routine`/`sweep`, or the `grant` alias), skip this step and never read its sub-file. `refine-headless.md` never runs it: no human is reachable, and the fail direction is keep.
+
+**Population.** Every open record in Step 1's `allRows` snapshot (`session-scoped backlog-refine-faceted.json`), under both drivers and whatever its lane, `blocked` and `inProgress` included, narrowed by the `#N[,#M...]` filter when present. Only a body with a `Risk-flags-unconfirmed:` marker line, detected by `parseRiskFlags`'s own `MARKER_LINE_RE` (a bold, list or blockquoted spelling included), goes further: that pre-filter only narrows, and `classify`'s `entry` decides. This block writes each such body plus one newline to a session-tmp file and prints one JSON line per record (`key`, `number`, `path`, `snapshot`; a local record's `key` is `local-` plus its file stem, its `number` `null`):
+
+```bash
+ST_BACKLOG_REFINE_FACETED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-refine-faceted.json)"
+node -e "
+  const fs = require('fs');
+  const path = require('path');
+  const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
+  const { MARKER_LINE_RE } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record-risk-flags.js');
+  for (const r of require(process.argv[1])) {
+    if (typeof r.body === 'string' && r.body.split(/\r\n?|\n/).some((line) => MARKER_LINE_RE.test(line))) {
+      const local = r.number === undefined || r.number === null;
+      const key = (local ? 'local-' + path.basename(String(r.path), '.md') : String(r.number)).replace(/[^A-Za-z0-9_-]/g, '_');
+      const name = 'backlog-refine-risk-snapshot-' + key + '.md';
+      const file = sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, name) || path.join(require('os').tmpdir(), name);
+      fs.writeFileSync(file, r.body + '\n');
+      console.log(JSON.stringify({ key, number: local ? null : r.number, path: local ? r.path : null, snapshot: file.split(path.sep).join('/') }));
+    }
+  }
+" -- "$ST_BACKLOG_REFINE_FACETED"
+```
+
+A non-zero exit from the block is a failure, never an empty population: this step ends without the confirmation pass, reported with stderr verbatim in the run's closing summary.
+
+If the block printed no line, this step ends here. Otherwise read `refine-risk-flags.md` in this skill's directory and follow it.
+
 ## Step 4: Decision lanes
 
 *(Narration allowance: no "running"/"passed" line for this step — only the run's one opening line and any failure/degradation line.)*

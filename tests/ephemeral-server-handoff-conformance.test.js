@@ -10,6 +10,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { readText, crlfCheckoutRead } = require('./helpers/read-skill');
+const { withoutGaps } = require('./helpers/dispatch-prompt-bundle-gaps');
 
 const PLUGIN = path.join(__dirname, '..', 'plugin');
 const TASK_PROMPT = path.join(PLUGIN, 'skills', 'dispatch', 'task-prompt.md');
@@ -40,7 +41,7 @@ test("first call's template detaches the ephemeral server and forbids deleting e
   assert.match(firstCall, /setsid/);
   assert.match(firstCall, /Never delete `ephemeral-server\.txt`/);
   assert.match(firstCall, /the record belongs to the run, not to this call/);
-  assert.doesNotMatch(firstCall, /_shared\//, 'must not cite a raw _shared/ path (tests/dispatch-prompt-bundle-citations.test.js)');
+  assert.doesNotMatch(withoutGaps(firstCall), /_shared\//, 'must not cite a raw _shared/ path outside the documented gaps (tests/dispatch-prompt-bundle-citations.test.js)');
 });
 
 test("second call's template re-checks liveness before the first browser step and before trace stop, and restarts on a dead pid with the documented log line", () => {

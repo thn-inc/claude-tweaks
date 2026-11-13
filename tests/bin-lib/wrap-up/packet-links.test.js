@@ -556,7 +556,7 @@ test('contract constants hold their exact values', () => {
   assert.equal(LOCAL_START, '<!-- acceptance-packet:start -->');
   assert.equal(LOCAL_END, '<!-- acceptance-packet:end -->');
   assert.equal(MAX_PACKET_CHARS, 60000);
-  assert.deepEqual(FACT_KINDS, ['change', 'check', 'story', 'finding', 'link', 'recording', 'flag', 'decision', 'deploy']);
+  assert.deepEqual(FACT_KINDS, ['change', 'check', 'story', 'finding', 'link', 'recording', 'flag', 'decision', 'deploy', 'proof']);
   assert.deepEqual(FACT_STATUSES, ['passed', 'failed', 'skipped', 'not-run']);
   assert.deepEqual(CLAIM_SECTIONS, ['what-changed', 'test-guide', 'tried-to-break', 'least-confident', 'risk-proofs']);
   assert.deepEqual(SECTION_KINDS, {
@@ -564,7 +564,7 @@ test('contract constants hold their exact values', () => {
     'test-guide': ['story', 'link'],
     'tried-to-break': ['story', 'check'],
     'least-confident': ['finding'],
-    'risk-proofs': ['flag', 'check', 'story', 'recording', 'link'],
+    'risk-proofs': ['flag', 'check', 'story', 'recording', 'link', 'proof'],
   });
   assert.deepEqual(CREDENTIAL_KEYS, [
     'token', 'access_token', 'password', 'passwd', 'secret', 'session', 'sessionid',

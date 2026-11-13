@@ -229,6 +229,48 @@ test('digest hashes the exact bytes', () => {
   assert.strictEqual(promptDigest('é'), crypto.createHash('sha256').update('é', 'utf8').digest('hex'));
 });
 
+test('partPath names the 1-based read parts of a rendered prompt', () => {
+  assert.strictEqual(tp.partPath('/r/p.md', 1), '/r/p.md.part1');
+  assert.strictEqual(tp.partPath('/r/p.md', 12), '/r/p.md.part12');
+});
+
+test('registryLine writes one newline-terminated JSON line in a fixed field order', () => {
+  const line = tp.registryLine({ at: 'T', issues: [4589], chunks: 3, out: '/r/p.md', call: 'first', sha256: 'abc' });
+  assert.strictEqual(line, '{"sha256":"abc","call":"first","out":"/r/p.md","chunks":3,"issues":[4589],"at":"T"}\n');
+});
+
+test('latestRegistryEntry returns the last parseable entry for the call, or null', () => {
+  const a = tp.registryLine({ sha256: 'a', call: 'first', out: '/x', chunks: 1, issues: [1], at: 't1' });
+  const b = tp.registryLine({ sha256: 'b', call: 'second', out: '/y', chunks: 2, issues: [1], at: 't2' });
+  const c = tp.registryLine({ sha256: 'c', call: 'first', out: '/z', chunks: 3, issues: [1], at: 't3' });
+  const text = `${a}not json\n\n${b}${c}{"call":"first"`;
+  assert.strictEqual(tp.latestRegistryEntry(text, 'first').sha256, 'c');
+  assert.strictEqual(tp.latestRegistryEntry(text, 'second').sha256, 'b');
+  assert.strictEqual(tp.latestRegistryEntry(a, 'second'), null);
+  assert.strictEqual(tp.latestRegistryEntry('', 'first'), null);
+});
+
+test('profileForCall reads each call template\'s profile', () => {
+  assert.strictEqual(tp.profileForCall(text, 'first'), profileOf(tp.extractTemplates(text).first));
+  assert.strictEqual(tp.profileForCall(text, 'second'), profileOf(tp.extractTemplates(text).second));
+});
+
+test('renderDispatchPrompt returns the prompt with its bytes, chunks and digest', () => {
+  const r = tp.renderDispatchPrompt(text, OPTS);
+  assert.strictEqual(r.prompt, render());
+  assert.strictEqual(r.bytes, Buffer.byteLength(r.prompt, 'utf8'));
+  assert.deepStrictEqual(r.chunks, tp.chunkPrompt(r.prompt));
+  assert.strictEqual(r.chunks.join('\n'), r.prompt);
+  assert.strictEqual(r.sha256, promptDigest(r.prompt));
+});
+
+test('renderDispatchPrompt throws over the sanity bound', () => {
+  const padding = 'Padding line.\n'.repeat(Math.ceil(tp.MAX_PROMPT_BYTES / 14) + 1);
+  const big = text.replace(/(^## First call[\s\S]*?\n```[^\n]*\n)/m, (m) => `${m}${padding}`);
+  assert.notStrictEqual(big, text);
+  assert.throws(() => tp.renderDispatchPrompt(big, OPTS), /over the 131072-byte sanity bound \(#4589\)/);
+});
+
 test('the rendered prompt ends without whitespace', () => {
   for (const call of ['first', 'second']) {
     for (const effortLine of [EFFORT, null]) {

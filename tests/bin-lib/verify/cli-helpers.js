@@ -5,6 +5,7 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const { execFile, execFileSync } = require('child_process');
+const { fromTemplate } = require('../../helpers/git-template');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'verify.js');
 
@@ -32,15 +33,18 @@ function runCli(args, opts = {}) {
   });
 }
 
-// A throwaway git repo with one commit: git-dir === {repo}/.git.
+// A throwaway git repo with one commit: git-dir === {repo}/.git. Copied from a
+// once-per-process template (#5297); `git` is rebuilt for the copy.
 function tmpGitRepo() {
-  const repo = tmpDir();
-  const git = (...a) => execFileSync('git', a, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  git('init', '-q');
-  git('config', 'user.email', 'verify-test@example.invalid');
-  git('config', 'user.name', 'verify test');
-  git('commit', '-q', '--allow-empty', '-m', 'init');
-  return { repo, git, gitDir: path.join(repo, '.git') };
+  const gitIn = (cwd) => (...a) => execFileSync('git', a, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  const repo = fromTemplate('verify-cli:repo', (dir) => {
+    const tplGit = gitIn(dir);
+    tplGit('init', '-q');
+    tplGit('config', 'user.email', 'verify-test@example.invalid');
+    tplGit('config', 'user.name', 'verify test');
+    tplGit('commit', '-q', '--allow-empty', '-m', 'init');
+  }, { prefix: 'verify-cli-test-', realpath: true });
+  return { repo, git: gitIn(repo), gitDir: path.join(repo, '.git') };
 }
 
 // Builds a `node -e` fixture command that runs the same under /bin/sh and

@@ -10,6 +10,7 @@ const nodePath = require('path');
 const { extractKeyFiles } = require('../issues/grouping');
 const { normalizeLabelNames, parseRecordFacets, typeOf } = require('../issues/record');
 const { shapeGate, liftMetadata } = require('../issues/materialize-format');
+const { parseRiskFlags } = require('../issues/record-risk-flags');
 const { fileMatchesFrontendPredicate } = require('../design-detect/index');
 const { classifyDiffFiles, isSensitivePath } = require('../issues/blast-radius');
 
@@ -29,6 +30,7 @@ const REASONS = Object.freeze({
   frontend: 'frontend surface',
   notShaped: 'not spec-shaped',
   escalated: 'already escalated in this run',
+  riskFlags: 'record carries a kept risk flag',
   protectedPath: (p) => `protected path: ${p}`,
   sensitivePath: (p) => `merge-sensitive path: ${p}`,
 });
@@ -94,7 +96,9 @@ function isFrontend(body, keyFiles) {
 // Why the less obvious rules exist: the lane opens a PR and merges it, which only
 // `pr-first` supports; a `type:*` label is what `compose-subject.js` needs to
 // compose the merge subject; `auto:merge-pending` is a grant that matures only on
-// the normal path's wrap-up.
+// the normal path's wrap-up; a kept risk flag (#4618) needs a plan step proving it, and
+// the lane composes no plan — parseRiskFlags reads a malformed line as every category
+// flagged, so an unreadable line is ineligible too.
 function evaluateRecordEligibility(issue, opts) {
   const {
     enabled, integrationModel, sensitivePaths = [], escalated = false, allowAbsentCeremony = false,
@@ -128,6 +132,7 @@ function evaluateRecordEligibility(issue, opts) {
   }
   if (!shapeGate(body).ok) reasons.push(REASONS.notShaped);
   if (escalated === true) reasons.push(REASONS.escalated);
+  if (parseRiskFlags(body).flags.length > 0) reasons.push(REASONS.riskFlags);
 
   return { number: issue && issue.number, eligible: reasons.length === 0, reasons, keyFiles };
 }

@@ -7,7 +7,7 @@ that single task directly from the already-materialized spec instead.
 
 ## Applicability gate
 
-All three must hold, checked in this order (cheapest first):
+All four must hold, checked in this order (cheapest first, except condition 4, appended last so the numbers other files cite stay stable):
 
 1. The materialized header (`{run-dir}/work/{n}-spec.md`'s frontmatter, `skills/flow/materialize.md`)
    carries `ceremony: fast-lane`.
@@ -22,9 +22,15 @@ All three must hold, checked in this order (cheapest first):
    not counted either: the build reads it and changes nothing, so it adds no task structure. #3696's
    one-file fix went through the full `/superpowers:writing-plans` path because
    `check-staged-stack.js — CLI exit path (read only, no change)` was counted as a second file.
+4. The spec body does not carry a risk flag: `parseRiskFlags` (`bin/lib/issues/record-risk-flags.js`)
+   returns no flags. A `Risk-flags:` line naming any slug, or a line that cannot be read (it reads
+   as every category flagged), carries a risk flag; `Risk-flags: none` and no line do not. A
+   variant spelling of the key (any case; `-`, `_`, a space or no separator), such as
+   `risk-flags:` or `Risk_flags:`, counts as unreadable. A flagged record falls through, because this path's composed plan has no audited
+   `Proof(<slug>)` step.
 
 **Any other header shape** — `ceremony: standard`, `size: medium`/`high`/absent, or two or more
-implementation files in `### Key Files` — **falls through to today's path unchanged**: proceed to
+implementation files in `### Key Files`, or a spec body that carries a risk flag — **falls through to today's path unchanged**: proceed to
 Spec Step 3's `/superpowers:writing-plans` invocation exactly as before. A `### Key Files` section
 this step cannot parse (missing entirely, or not a plain list) also falls through — never guess a
 count from an absent or malformed section; per `parse-signal-discipline`, "could not parse" and
@@ -92,7 +98,7 @@ audit-skip rule, since every micro-plan is by definition composed under that sam
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status SKIP \
   --section "/build" --step "Spec Step 3 (skipped)" \
-  --text "condition: ceremony=fast-lane, size=low, <=1 implementation file in ### Key Files → fallback: micro-plan composed directly at {plan-path}" --reversibility n/a
+  --text "condition: ceremony=fast-lane, size=low, <=1 implementation file in ### Key Files, no risk flag → fallback: micro-plan composed directly at {plan-path}" --reversibility n/a
 ```
 
 Standalone `/build` (no run dir): list the skip in the Step 7 handoff instead

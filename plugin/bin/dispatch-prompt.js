@@ -30,7 +30,7 @@
 // --run guard is shape 4 of the cli-wrapper contract, as in compose-context.js: bin/lib/run-dir-guard.js's
 // anchored-or-outside rule — a path outside any checkout is accepted, a worktree-local shadow is refused.
 // A non-zero exit is never followed by hand substitution (two-call-gate.md section 2): the caller reports it.
-// The CLI makes no size comparison itself; promptSize and chunkPrompt in the lib own every bound.
+// The CLI makes no size comparison itself; renderDispatchPrompt in the lib owns every bound.
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -43,8 +43,7 @@ const { GIT_TIMEOUT_MS } = require('./lib/shared-primitives');
 // timeout the way phase-exit does, so a slow healthy detection is not killed mid-ladder.
 const { policyReadTimeoutMs } = require('./lib/phase-exit/phase-exit');
 const {
-  renderTaskPrompt, extractTemplates, profileOf, promptDigest, promptSize, MAX_PROMPT_BYTES,
-  chunkPrompt, REGISTRY_FILE,
+  renderDispatchPrompt, profileForCall, REGISTRY_FILE, partPath, registryLine,
 } = require('./lib/dispatch/task-prompt');
 
 const PLUGIN_ROOT = path.resolve(__dirname, '..');
@@ -198,45 +197,40 @@ function run(argv, deps = {}) {
 
   let text;
   try { text = d.readFile(TEMPLATE_PATH); } catch (err) { return fail(1, `template ${TEMPLATE_PATH} unreadable: ${err && err.message}`); }
-  let prompt;
+  let rendered;
   let profile;
   let profileName;
   let selectedAt;
   try {
-    profileName = profileOf(extractTemplates(text)[call]);
+    profileName = profileForCall(text, call);
     const policyValues = d.resolvePolicyValues(cwd);
     profile = d.resolveProfile(profileName, { unattended: o.headless, cwd });
     selectedAt = o.selectedAt !== null ? o.selectedAt : d.selectedAt(d.env);
-    prompt = renderTaskPrompt(text, {
+    rendered = renderDispatchPrompt(text, {
       call, issues, runDir, pluginRoot: PLUGIN_ROOT, policyValues, selectedAt,
       headless: o.headless, stepToken: stepToken || undefined, resume: resume || undefined,
       effortLine: profile.effortLine,
     });
   } catch (err) { return fail(1, err && err.message); }
-
-  const size = promptSize(prompt);
-  if (!size.ok) return fail(1, `rendered prompt is ${size.bytes} bytes, over the ${MAX_PROMPT_BYTES}-byte sanity bound (#4589)`);
-  let chunks;
-  try { chunks = chunkPrompt(prompt); } catch (err) { return fail(1, err && err.message); }
+  const { prompt, chunks, sha256 } = rendered;
 
   const registry = path.join(runDir, REGISTRY_FILE);
-  const sha256 = promptDigest(prompt);
-  const parts = chunks.map((c, i) => ({ path: `${out}.part${i + 1}`, text: c }));
+  const parts = chunks.map((c, i) => ({ path: partPath(out, i + 1), text: c }));
   let target = out;
   try {
     d.writeFile(out, prompt);
     parts.forEach((p) => { target = p.path; d.writeFile(p.path, p.text); });
   } catch (err) { return fail(1, `cannot write ${target}: ${err && err.message}`); }
   try {
-    for (let k = parts.length + 1; d.removeFile(`${out}.part${k}`); k++);
+    for (let k = parts.length + 1; d.removeFile(partPath(out, k)); k++);
   } catch (err) { return fail(1, `cannot remove a stale part of ${out}: ${err && err.message}`); }
   try {
-    d.appendFile(registry, `${JSON.stringify({ sha256, call, out, chunks: chunks.length, issues, at: d.now() })}\n`);
+    d.appendFile(registry, registryLine({ sha256, call, out, chunks: chunks.length, issues, at: d.now() }));
   } catch (err) { return fail(1, `cannot append to the registry ${registry}: ${err && err.message}`); }
 
   const envelopeLine = `${JSON.stringify({
     out,
-    bytes: size.bytes,
+    bytes: rendered.bytes,
     chunks: parts.map((p) => ({ path: p.path, bytes: Buffer.byteLength(p.text, 'utf8') })),
     join: '\n',
     call,

@@ -305,3 +305,12 @@ test('queue-pull-script.md: the shipped-close- stage-item line does not silence 
 test('queue-pull-script.md pin control: the original 2>&1 line is rejected (#3488)', () => {
   assert.throws(() => assertShippedCloseStderrVisible('... --id "shipped-close-$NUM" --file "$FILE" >/dev/null 2>&1 || true'));
 });
+
+test('AC4.1: cli: --run naming an archived (no longer present) run dir is refused (exit 3), nothing recreated (#5280)', () => {
+  const { main, runDir, sourceFile } = fixture();
+  fs.rmSync(runDir, { recursive: true });
+  const { deps } = fakeDeps(main);
+  const code = run(['--run', runDir, '--id', 'visual-review-late-1', '--allocate', '--file', sourceFile], deps);
+  assert.equal(code, 3);
+  assert.equal(fs.existsSync(runDir), false);
+});

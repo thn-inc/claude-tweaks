@@ -84,6 +84,167 @@ test('deps: has(\'node\') never shells out to `node --version` (no subprocess)',
   }
 });
 
+// #5297: has() answers by PATH scan — `execSync('git --version')` spawned /bin/sh plus git on every SessionStart.
+function withPathStub(mode, fn) {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const childProcess = require('node:child_process');
+  const modulePath = require.resolve('../plugin/bin/lib/deps');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-has-'));
+  if (mode !== 'empty') {
+    const name = process.platform === 'win32' ? 'git.cmd' : 'git';
+    fs.writeFileSync(path.join(dir, name), '@echo off\n', { mode });
+    fs.chmodSync(path.join(dir, name), mode); // root-safe: root does not change the mode bits findOnPath reads
+  }
+  const origPath = process.env.PATH;
+  const origWinPath = process.env.Path;
+  const originals = {};
+  const state = { called: false };
+  for (const k of ['execSync', 'execFileSync', 'spawnSync']) {
+    originals[k] = childProcess[k];
+    childProcess[k] = () => { state.called = true; throw new Error(`${k} must not be called`); };
+  }
+  process.env.PATH = dir;
+  if (process.platform === 'win32') process.env.Path = dir;
+  delete require.cache[modulePath];
+  try {
+    fn(require('../plugin/bin/lib/deps'), state);
+  } finally {
+    for (const k of Object.keys(originals)) childProcess[k] = originals[k];
+    process.env.PATH = origPath;
+    if (process.platform === 'win32') {
+      if (origWinPath === undefined) delete process.env.Path;
+      else process.env.Path = origWinPath;
+    }
+    delete require.cache[modulePath];
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test('deps: has() finds a command on PATH without spawning', () => {
+  withPathStub(0o755, (d, state) => {
+    assert.strictEqual(d.has('git'), true);
+    assert.strictEqual(state.called, false, 'has() must not spawn a process');
+  });
+});
+
+test('deps: has() is false for a non-executable file on PATH', { skip: process.platform === 'win32' }, () => {
+  withPathStub(0o644, (d) => {
+    assert.strictEqual(d.has('git'), false);
+  });
+});
+
+test('deps: has() is false when PATH holds no such command', () => {
+  withPathStub('empty', (d, state) => {
+    assert.strictEqual(d.has('git'), false);
+    assert.strictEqual(state.called, false);
+  });
+});
+
+// The user-chosen rule (#5297, Reading B): a PATH hit at /usr/bin/git on macOS is the xcode-select
+// shim, so it counts only when a real developer dir holds git.
+test('deps: has() applies the /usr/bin stub rule on darwin', { skip: process.platform !== 'darwin' }, () => {
+  const fs = require('node:fs');
+  const childProcess = require('node:child_process');
+  const modulePath = require.resolve('../plugin/bin/lib/deps');
+  const clt = '/Library/Developer/CommandLineTools/usr/bin/git';
+  const origPath = process.env.PATH;
+  const origDevDir = process.env.DEVELOPER_DIR; // an exported DEVELOPER_DIR would decide alone
+  delete process.env.DEVELOPER_DIR;
+  const origReadlink = fs.readlinkSync;
+  const origExists = fs.existsSync;
+  const originals = {};
+  let spawned = false;
+  for (const k of ['execSync', 'execFileSync', 'spawnSync']) {
+    originals[k] = childProcess[k];
+    childProcess[k] = () => { spawned = true; throw new Error(`${k} must not be called`); };
+  }
+  let cltPresent = false;
+  fs.readlinkSync = () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); };
+  fs.existsSync = (p) => (p === clt ? cltPresent : false);
+  process.env.PATH = '/usr/bin';
+  delete require.cache[modulePath];
+  try {
+    const d = require('../plugin/bin/lib/deps');
+    assert.strictEqual(d.has('git'), false, 'a stub-only /usr/bin/git must not count');
+    cltPresent = true;
+    assert.strictEqual(d.has('git'), true, '/usr/bin/git counts once the Command Line Tools hold git');
+    assert.strictEqual(spawned, false);
+  } finally {
+    fs.readlinkSync = origReadlink;
+    fs.existsSync = origExists;
+    for (const k of Object.keys(originals)) childProcess[k] = originals[k];
+    process.env.PATH = origPath;
+    if (origDevDir === undefined) delete process.env.DEVELOPER_DIR; else process.env.DEVELOPER_DIR = origDevDir;
+    delete require.cache[modulePath];
+  }
+});
+
+test('deps: hasAppleDeveloperTool follows the xcode-select link', () => {
+  const target = '/Applications/Xcode.app/Contents/Developer';
+  assert.strictEqual(deps.hasAppleDeveloperTool('git', {
+    env: {},
+    readlink: () => target,
+    exists: (p) => p === `${target}/usr/bin/git`,
+  }), true);
+});
+
+test('deps: hasAppleDeveloperTool falls back to the Command Line Tools dir', () => {
+  const enoent = () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); };
+  assert.strictEqual(deps.hasAppleDeveloperTool('git', {
+    env: {},
+    readlink: enoent,
+    exists: (p) => p === '/Library/Developer/CommandLineTools/usr/bin/git',
+  }), true);
+});
+
+test('deps: hasAppleDeveloperTool is false for the stub-only Mac', () => {
+  const enoent = () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); };
+  assert.strictEqual(deps.hasAppleDeveloperTool('git', { env: {}, readlink: enoent, exists: () => false }), false);
+});
+
+// xcode-select's own order: $DEVELOPER_DIR alone when set, else the link, else Xcode.app, then CLT.
+test('deps: hasAppleDeveloperTool honours DEVELOPER_DIR pointing at an Xcode.app', () => {
+  assert.strictEqual(deps.hasAppleDeveloperTool('git', {
+    env: { DEVELOPER_DIR: '/Volumes/X/Xcode.app' },
+    readlink: () => { throw new Error('link must not be consulted'); },
+    exists: (p) => p === '/Volumes/X/Xcode.app/Contents/Developer/usr/bin/git',
+  }), true);
+});
+
+test('deps: hasAppleDeveloperTool lets DEVELOPER_DIR win over the link', () => {
+  const target = '/Applications/Xcode.app/Contents/Developer';
+  assert.strictEqual(deps.hasAppleDeveloperTool('git', {
+    env: { DEVELOPER_DIR: '/opt/empty-dev' },
+    readlink: () => target,
+    exists: (p) => p === `${target}/usr/bin/git`,
+  }), false);
+});
+
+test('deps: hasAppleDeveloperTool with no link uses the default Xcode.app', () => {
+  const enoent = () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); };
+  assert.strictEqual(deps.hasAppleDeveloperTool('git', {
+    env: {},
+    readlink: enoent,
+    exists: (p) => p === '/Applications/Xcode.app/Contents/Developer/usr/bin/git',
+  }), true);
+});
+
+test('deps: hasAppleDeveloperTool with no link and no Xcode.app uses the Command Line Tools', () => {
+  const enoent = () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); };
+  assert.strictEqual(deps.hasAppleDeveloperTool('git', {
+    env: {},
+    readlink: enoent,
+    exists: (p) => p === '/Library/Developer/CommandLineTools/usr/bin/git',
+  }), true);
+});
+
+test('deps: hasAppleDeveloperTool is false when nothing has the tool', () => {
+  const enoent = () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); };
+  assert.strictEqual(deps.hasAppleDeveloperTool('git', { env: {}, readlink: enoent, exists: () => false }), false);
+});
+
 test('deps: installCommand returns expected mapping', () => {
   assert.strictEqual(deps.installCommand({ name: 'brew' }, 'node'), 'brew install node');
   assert.strictEqual(deps.installCommand({ name: 'winget' }, 'git'), 'winget install Git.Git');
@@ -178,6 +339,40 @@ test('deps: findOnPath tries PATHEXT on win32', () => {
       deps.findOnPath('playwright-cli', { env: { PATH: dir, PATHEXT: '.EXE;.CMD' }, platform: 'win32', cwd }),
       file,
     );
+  });
+});
+
+// winget is a zero-byte App Execution Alias; statSync can throw on it where lstatSync does not.
+test('deps: findOnPath accepts a win32 alias that statSync throws on', () => {
+  withTempDirs(({ fs, path, dir, cwd }) => {
+    const candidate = path.join(dir, 'winget.exe');
+    const realStat = fs.statSync;
+    const realLstat = fs.lstatSync;
+    fs.statSync = (p, ...a) => {
+      if (p === candidate) throw Object.assign(new Error(errCode), { code: errCode });
+      return realStat(p, ...a);
+    };
+    fs.lstatSync = (p, ...a) => (p === candidate ? { isFile: () => true, isSymbolicLink: () => false } : realLstat(p, ...a));
+    let errCode = 'UNKNOWN';
+    try {
+      assert.strictEqual(
+        deps.findOnPath('winget', { env: { PATH: dir, PATHEXT: '.EXE' }, platform: 'win32', cwd }),
+        candidate,
+      );
+      // An ENOENT miss (or a dangling link) is not rescued by lstat.
+      errCode = 'ENOENT';
+      assert.strictEqual(
+        deps.findOnPath('winget', { env: { PATH: dir, PATHEXT: '.EXE' }, platform: 'win32', cwd }),
+        null,
+      );
+      assert.strictEqual(
+        deps.findOnPath('winget', { env: { PATH: dir, PATHEXT: '.EXE' }, platform: 'darwin', cwd }),
+        null,
+      );
+    } finally {
+      fs.statSync = realStat;
+      fs.lstatSync = realLstat;
+    }
   });
 });
 

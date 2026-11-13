@@ -4,6 +4,7 @@ files:
   - plugin/skills/flow/SKILL.md
   - plugin/skills/build/SKILL.md
   - plugin/skills/review/step3-lens-dispatch.md
+  - plugin/skills/review/step3-tier-variants.md
   - plugin/skills/review/review-summary-template.md
   - plugin/skills/assess-agent-autonomy/merge-check.md
   - plugin/skills/dispatch/settle-and-merge.md
@@ -58,7 +59,7 @@ files:
 - **Red flags:** the resume landing in the same host shape and stopping again without saying so.
 
 ### 5. Review without independent agents — the agent running review
-- **URL:** `review/step3-lens-dispatch.md`'s run-level no-`Agent` note; `review-summary-template.md`'s **Independence: degraded** slot; the PR verdict comment
+- **URL:** `review/step3-lens-dispatch.md`'s no-`Agent` probe and `review/step3-tier-variants.md`'s run-level no-`Agent` note; `review-summary-template.md`'s **Independence: degraded** slot; the PR verdict comment
 - **Action:** when Step 3 starts with no `Agent` tool (a build-less resume flow did not probe), log `condition: no Agent tool in this host → fallback: every lens and tiebreak judged by the reviewer itself` once under `## /review`, and render `**Independence: degraded** — no Agent tool in this host; every lens and tiebreak was judged by the reviewer itself` in the summary, which the verdict comment copies.
 - **Should feel:** one plain statement a reader cannot miss, instead of N per-lens caveats to add up.
 - **Should understand:** the per-lens `single-read coverage` lines and the `Tiebreak caveat:` line still write, unchanged. The same-session-as-build clause appears only inside one `/claude-tweaks:flow` call that ran `build` too, which is effectively unreachable now that build stops first.

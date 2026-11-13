@@ -51,7 +51,7 @@ Phase schema, the full phase table, and the `reason-not-auto` qualifier rules fo
 
 ### Create
 
-Create a new ledger file. Called by `/claude-tweaks:flow` Step 1 (only when no worktree is ever created for this run — `current-branch` strategy) or `/claude-tweaks:build` on first item (`build/SKILL.md` Spec Step 2.5's "If the ledger doesn't exist, create it" still does), by `build/worktree-setup.md` Step 4.6 or `flow/multi-spec.md`'s "Shared worktree" step 1 (right after the run's worktree exists), or — for a run that will never have a worktree — by `wrap-up/residue-sweep.md`'s preamble on its first finding.
+Create a new ledger file. Called by `/claude-tweaks:flow` Step 1 (only when no worktree is ever created for this run — `current-branch` strategy) or `/claude-tweaks:build` on first item (`build/manual-steps.md`'s "If the ledger doesn't exist, create it" still does — Spec Step 2.5's triage), by `build/worktree-setup.md` Step 4.6 or `flow/multi-spec.md`'s "Shared worktree" step 1 (right after the run's worktree exists), or — for a run that will never have a worktree — by `wrap-up/residue-sweep.md`'s preamble on its first finding.
 
 File: `docs/plans/YYYY-MM-DD-{feature}-ledger.md` — or, for a run that will never have a worktree (#3036 — never keyed on `run-state.json`'s momentary lack of a `worktree` field), `{run-dir}/ledger.md`. See `_shared/ledger-format.md`'s Location section for the full condition; this file cites it rather than restating it.
 

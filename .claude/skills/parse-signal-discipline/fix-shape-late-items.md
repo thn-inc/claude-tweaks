@@ -1,4 +1,4 @@
-# Parse-Signal Discipline — fix shape, items 17-27
+# Parse-Signal Discipline — fix shape, items 17-28
 
 Lazy-loaded from `SKILL.md`'s "The fix shape" section; the numbering continues that list.
 
@@ -264,6 +264,7 @@ Lazy-loaded from `SKILL.md`'s "The fix shape" section; the numbering continues t
     on the editable region's last line (`tests/bin-lib/markdown-blocks.test.js`'s
     `hiddenByUnclosedFence` cases, `tests/bin-lib/issues/materialize-format.test.js`'s two #4350
     Original request cases).
+
 28. **A parser that fails closed owes a cheap precondition that proves the signal absent, so its
     gaps cost only on inputs that could hold the signal.** Failing closed is right when the
     parser cannot read a shape, but each gap then costs whatever "closed" costs, on every input
@@ -280,3 +281,16 @@ Lazy-loaded from `SKILL.md`'s "The fix shape" section; the numbering continues t
     unparsed (`tests/merge-verification.test.js`'s "never spells pull_request" test). When a
     later fixture depended on the old behavior, give it the literal rather than weaken the
     guard (`tests/bin-lib/pr-checks/ready-run.test.js`'s `UNPARSED`).
+
+29. **A producer handing a file to another tool owes its parse verdict across that boundary, because the consumer reads the file, not the producer's envelope.** A
+    producer whose output file another tool reads can carry a could-not-parse state in its own
+    stdout envelope and still lose it: the consumer never sees that envelope, so an empty list
+    written beside the failure reads as a clean, empty result. #4618's `risk-flags.js facts`
+    reported `planParse: could-not-parse` on stdout but still wrote `[]` to `--proofs-out`, and
+    the acceptance packet gather read that as "no proof written", so a kept flag whose plan was
+    never read showed `no proof shown`. Review caught it (`cfcaa3bbb`). Carry the verdict in the
+    channel the consumer reads: leave the output unwritten (removing an earlier one) when the
+    input was not read, so the consumer's own "input not read" path fires — the gather now
+    states `--proofs input not read` and Risk proofs says `proofs not read`. Pin it end to end,
+    producer to rendered line, for both the absent and the unparseable input
+    (`tests/risk-flags-packet-e2e.test.js`), not only at each side's unit seam.

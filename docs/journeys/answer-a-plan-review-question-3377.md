@@ -39,7 +39,7 @@ files:
 
 ### 3. Answer on the record after a dispatched stop — GitHub issue
 - **URL:** the record's `<!-- plan-review-question -->` comment, linked from the dispatch report block
-- **Action:** Read each question and its two readings, then edit the record's **body** to state the decision.
+- **Action:** Read each question and its two readings, then answer each one by adding a `**Decision**` paragraph (or an Acceptance Criterion) to the record's **body**.
 - **Should feel:** Self-contained — the comment carries the finding, its evidence and both readings, so the answer needs no access to the build's worktree.
 - **Should understand:**
   - A dispatched build runs in a subagent that cannot ask, so it posts the question, stops before Task 1, and the dispatching session relays it; Settle releases the claim without counting a retry and the draft PR stays open.
@@ -52,10 +52,14 @@ files:
 - **URL:** `/claude-tweaks:backlog refine` (only when the stop was headless), then `/claude-tweaks:dispatch #{n}`
 - **Action:** Re-grant `auto:build` if the headless stop removed it, then dispatch the record again.
 - **Should feel:** Like continuing, not starting over — the answered body is the new spec.
-- **Should understand:** The resumed build re-materializes from the answered body; the earlier run's local worktree was removed by dispatch's ordinary first-call-failure teardown, and nothing from it is needed.
-- **Red flags:** The resumed run asking the same question again after the body answered it; a `bot:blocked` record re-dispatched without the question being answered first.
+- **Should understand:**
+  - The resumed build re-materializes from the answered body; the earlier run's local worktree was removed by dispatch's ordinary first-call-failure teardown, and nothing from it is needed.
+  - Its plan review is a **converged round** (#4958): the record carries the trusted question comment and its body was edited after it. A fresh reviewer may still find new gaps, but each one that some reading settles without altering a criterion or contradicting a recorded decision is settled by the build itself — appended under `## Plan Review Clarifications` as `Settled by plan review after an answered round:` with the reading not taken, and listed at the Wrap-Up Review Console. Only a gap no reading can settle that way stops the build again.
+  - A record re-picked before anyone edited its body is not converged: it stops on the same question rather than having it settled for you.
+- **Red flags:** The resumed run asking a new question that a reading could have settled without touching a criterion or a recorded decision; a settled gap missing from the Review Console; a `bot:blocked` record re-dispatched without the question being answered first.
 
 ## Origin
 - Created during build of #3377, part of the "Build dispatch cost shape" decomposition (origin #3229) — in a measured 10-task build, 3 of the 5 Important final-review findings were spec or plan gaps found only after all the code was written.
-- Pinned by `tests/build-plan-review-conformance.test.js`, `tests/plan-review-hard-gate-conformance.test.js` and `tests/plan-review-dispatch-relay-conformance.test.js`.
+- Updated by #4958: a resumed build's plan review converges after one answered round instead of stopping round after round (10 plan-review attempts across 7 records in the 2026-10-31 dispatch firing produced no implementation), and dispatched questions ask for a `**Decision**` paragraph.
+- Pinned by `tests/build-plan-review-conformance.test.js`, `tests/plan-review-hard-gate-conformance.test.js`, `tests/plan-review-dispatch-relay-conformance.test.js` and `tests/plan-review-convergence-conformance.test.js`.
 - Related: `merge-small-adjacent-tasks-at-plan-time-3379.md` and `add-a-fast-lane-skip-to-the-roster-1926.md`, other plan-time steps of the same build.

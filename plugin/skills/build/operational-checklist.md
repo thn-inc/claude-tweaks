@@ -39,7 +39,7 @@ These tasks live outside source code, but most have a CLI. "Requires human actio
 | `*_STRIPE_*` env vars | Stripe | `which stripe && stripe config --list` | webhook subscription, key rotation |
 | `Dockerfile*` modified | Docker | `which docker` | build (auto), push (explicit confirmation) |
 
-Then, for each finding below, apply the Step 2.5 triage (auto-executable / auth-gap / truly manual):
+Then, for each finding below, read `manual-steps.md` in this skill's directory and apply its triage (auto-executable / auth-gap / truly manual):
 
 | Check | Detect | Default action if probe passes |
 |-------|--------|--------------------------------|

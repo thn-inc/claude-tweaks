@@ -12,7 +12,9 @@
 // writes it: a rendered prompt quoted inside another prompt carries no marker. MARKER_RE,
 // promptDigest and REGISTRY_FILE are shared with bin/lib/hooks/dispatch-prompt-gate.js, which
 // matches a dispatched prompt against the registry the CLI writes (digest = sha256 of the exact
-// UTF-8 bytes, no normalization).
+// UTF-8 bytes, no normalization). The registry's line format and the `{out}.partN` part names are
+// owned here too (registryLine, latestRegistryEntry, partPath): the CLI writes through them and the
+// gate reads through them, so the writer and the reader cannot drift apart.
 //
 // Values are checked before any substitution: the issues are positive integers, runDir is a
 // non-empty string, and no value carries a DISPATCHER_PLACEHOLDERS token — a later fill would
@@ -103,6 +105,28 @@ function markerLine(runId, call) {
 
 function promptDigest(text) {
   return crypto.createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+// The k-th (1-based) read part of the rendered prompt written at `out`.
+function partPath(out, k) {
+  return `${out}.part${k}`;
+}
+
+// One REGISTRY_FILE line, newline-terminated, fields in a fixed order.
+function registryLine({ sha256, call, out, chunks, issues, at }) {
+  return `${JSON.stringify({ sha256, call, out, chunks, issues, at })}\n`;
+}
+
+// The last parseable REGISTRY_FILE entry for `call`, or null; blank and unparseable lines are skipped.
+function latestRegistryEntry(text, call) {
+  let latest = null;
+  for (const line of String(text).split('\n')) {
+    if (!line.trim()) continue;
+    let o;
+    try { o = JSON.parse(line); } catch { continue; }
+    if (o && typeof o === 'object' && o.call === call) latest = o;
+  }
+  return latest;
 }
 
 function promptSize(prompt) {
@@ -230,8 +254,23 @@ function renderTaskPrompt(text, opts) {
   return out.replace(/\s+$/, '');
 }
 
+// The [Use: X] profile of `call`'s fenced template ('first' | 'second').
+function profileForCall(text, call) {
+  return profileOf(extractTemplates(text)[call]);
+}
+
+// The CLI's one render call: renderTaskPrompt, then the MAX_PROMPT_BYTES sanity bound (throws over
+// it), the read chunks and the registry digest. The narrow functions above stay exported as test seams.
+function renderDispatchPrompt(text, opts) {
+  const prompt = renderTaskPrompt(text, opts);
+  const size = promptSize(prompt);
+  if (!size.ok) throw new Error(`rendered prompt is ${size.bytes} bytes, over the ${MAX_PROMPT_BYTES}-byte sanity bound (#4589)`);
+  return { prompt, bytes: size.bytes, chunks: chunkPrompt(prompt), sha256: promptDigest(prompt) };
+}
+
 module.exports = {
   DISPATCHER_PLACEHOLDERS, extractTemplates, extractContextPack, profileOf, findUnsubstituted,
   renderResumeContext, MARKER_RE, markerLine, promptDigest, REGISTRY_FILE, MAX_PROMPT_BYTES,
   promptSize, CHUNK_BYTES, fitsChunk, chunkPrompt, renderTaskPrompt,
+  partPath, registryLine, latestRegistryEntry, profileForCall, renderDispatchPrompt,
 };
