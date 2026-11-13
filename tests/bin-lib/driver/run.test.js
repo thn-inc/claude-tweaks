@@ -2848,6 +2848,9 @@ test('AC8: one fix round, in order', async () => {
   const fixText = buildFixPrompt([{ ...evidenceFinding(0), content: EVIDENCE_CONTENT, evidencePath: 'tests/new/r0.test.js' }]);
   assert.equal(fixLaunch, firstLaunch + fixText);
   assert.ok(fixText.trimEnd().endsWith('These tests are kept as regression tests: do not edit or delete them. Make every one of them pass.'));
+  // The location and claim, then the evidence path, then its full content, each fenced but the path.
+  assert.ok(fixLaunch.includes('```\nsrc/a.js:1\nFinding 0 subtracts.\n```\nEvidence test: tests/new/r0.test.js\n'), fixText);
+  assert.ok(fixLaunch.includes(['', '```', EVIDENCE_CONTENT, '```', ''].join('\n')), fixText);
   const rewrite = h.calls.filter((c) => c.kind === 'writeFileExclusive').at(-1);
   assert.deepEqual(rewrite.args, [evidenceAbs(0), EVIDENCE_CONTENT]);
   assert.deepEqual(evidenceRuns(h)[1].args[0].args, evidenceArgs('npm test', 'tests/new/r0.test.js', fixDest(h, 0)));
@@ -2857,15 +2860,16 @@ test('AC8: one fix round, in order', async () => {
 
 test('AC8: the second round never launches a third implementer', async () => {
   const cases = [
-    ['done', {}],
-    ['cannot-complete', { result: { status: 'cannot-complete', title: 't', summary: 'no' } }],
-    ['fail', { status: 'fail', reason: 'exit', result: null, detail: 'x' }],
+    ['done', {}, 'ok'],
+    ['cannot-complete', { result: { status: 'cannot-complete', title: 't', summary: 'no' } }, 'stop'],
+    ['fail', { status: 'fail', reason: 'exit', result: null, detail: 'x' }, 'fail'],
   ];
-  for (const [name, fix] of cases) {
+  for (const [name, fix, status] of cases) {
     const h = fixRig({ fix });
     assert.equal(await run(['#7'], h.deps), 0, name);
     assert.equal(implementerCalls(h).length, 2, name);
     assert.equal(h.calls.filter((c) => c.kind === 'worker').length, 3, `${name}: implementer, reviewer, fix round`);
+    assert.equal(reviewLines(h)[0].status, status, name);
   }
 });
 
@@ -2935,6 +2939,10 @@ test('AC8: all confirmed findings share the one round', async () => {
   await run(['#7'], nothing.deps);
   const finding1 = `${normalizeEventText('src/a.js')}:2 ${normalizeEventText(evidenceFinding(1).claim)}`;
   assert.equal(lastLine(nothing).stop.detail, `the fix round changed nothing outside the evidence files: ${FINDING_0}; ${finding1}`);
+  // A stop on one kept file names that finding alone.
+  const second = fixRig({ findings: [evidenceFinding(0), evidenceFinding(1)], direct: (i) => (i === 1 ? RED : GREEN) });
+  await run(['#7'], second.deps);
+  assert.equal(lastLine(second).stop.detail, `the kept evidence test did not pass (reproduced): ${finding1}`);
 });
 
 test('Review Focus 5: a fix worker that deletes the evidence and fixes the code still passes', async () => {
