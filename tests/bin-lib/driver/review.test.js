@@ -8,6 +8,8 @@ const { spawnSync } = require('node:child_process');
 const { readText } = require('../../helpers/read-skill');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const { classifyEvidenceRun, evidenceArgs, EVIDENCE_COMMANDS } = require(path.join(LIB, 'driver', 'review.js'));
+const { REVIEW_RESULT_SCHEMA, ROLES, composeArgs } = require(path.join(LIB, 'driver', 'roles.js'));
+const { conformsTo, superviseChild } = require(path.join(LIB, 'driver', 'worker.js'));
 
 const FIXTURES = path.join(__dirname, 'fixtures', 'review-evidence');
 
@@ -131,9 +133,6 @@ test('Task0: evidenceArgs covers npm test only', () => {
   assert.deepStrictEqual(Object.keys(EVIDENCE_COMMANDS), ['npm test']);
   assert.ok(Object.isFrozen(EVIDENCE_COMMANDS));
 });
-
-const { REVIEW_RESULT_SCHEMA, ROLES, composeArgs } = require(path.join(LIB, 'driver', 'roles.js'));
-const { conformsTo, superviseChild } = require(path.join(LIB, 'driver', 'worker.js'));
 
 test('AC1: the reviewer launch has --restricted, no Bash, no bypass flag and no settings file', () => {
   for (const platform of ['darwin', 'linux', 'win32']) {

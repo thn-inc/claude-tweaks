@@ -18,8 +18,9 @@
 //
 // The schema. `schema` defaults to RESULT_SCHEMA (roles.js). The launcher checks the
 // structured output itself, and handles only the keywords `type` (`object`,
-// `string` or `array`; an array's `items` is not checked here), `properties`, `required` (an array of names), `enum` (an array) and a
-// boolean `additionalProperties`; a schema using anything else is refused before
+// `string` or `array`; an array's `items` is not checked here), `properties`,
+// `required` (an array of names), `enum` (an array) and a boolean
+// `additionalProperties`; a schema using anything else is refused before
 // anything is written, so it can never be half-checked.
 //
 // Untrusted text. `result` (every string in it), `detail` when it carries the worker's

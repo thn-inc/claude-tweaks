@@ -165,7 +165,7 @@ const REVIEW_RESULT_SCHEMA = deepFreeze({
   additionalProperties: false,
 });
 
-const SANDBOX_PROBED_PLATFORMS =deepFreeze(['darwin']);
+const SANDBOX_PROBED_PLATFORMS = deepFreeze(['darwin']);
 
 const ROLES = deepFreeze({
   implementer: { tools: ['Read', 'Write', 'Edit', 'Bash'], settings: true },
@@ -250,4 +250,4 @@ function composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeilin
   return args;
 }
 
-module.exports = { RESULT_SCHEMA, REVIEW_RESULT_SCHEMA,SANDBOX_PROBED_PLATFORMS, ROLES, implementerSettings, composeArgs, toolsFor, assertSpendCeiling };
+module.exports = { RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, ROLES, implementerSettings, composeArgs, toolsFor, assertSpendCeiling };
