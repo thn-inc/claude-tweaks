@@ -27,9 +27,10 @@ files:
   - `node --test` runs with `--test-concurrency` set to half the cores, or cores minus 1 when `CI` is set.
   - Its tests' git sees `maintenance.auto=false` and `gc.auto=0`, appended as `GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` after any `GIT_CONFIG_COUNT` entries the caller already exported.
   - The common fixture repos are built once per test process and copied per test (`tests/helpers/git-template.js`), so a copy starts no git process.
+  - A push into a local bare origin is the one exception to the env config: git's local transport strips `GIT_CONFIG_*` from the receiving side, so `git-receive-pack` still starts `maintenance run --auto` unless the origin's own config sets `receive.autogc = false` (`disableReceiveAutoGc` in `tests/helpers/git-template.js`).
 - **Red flags:**
   - New `ct-wtd-*`, `verify-cli-test-*` and similar fixture dirs appearing directly in the real tmpdir after the run. They should exist only inside the run's own root.
-  - `git maintenance run --auto` processes showing up under the run in a process capture.
+  - `git maintenance run --auto` processes showing up under the run in a process capture. Check first for a test that pushes into a bare origin it built without `disableReceiveAutoGc`.
 
 ### 2. Start a second run while one is already running
 - **URL:** the second session's output.
