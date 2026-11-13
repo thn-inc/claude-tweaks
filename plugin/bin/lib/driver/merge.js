@@ -652,10 +652,14 @@ const REFUSED_PHRASES = Object.freeze({
   unconfirmed: 'the merge call exited 0 but the PR read back neither merged nor holding auto-merge',
 });
 
+// The closing sentence claims a ready PR only for a refusal of the merge call itself; a confirmation
+// read that found the PR shut or in draft (`unconfirmed`) names that state in its detail instead.
 function refusedComment({ pr, cls, detail } = {}) {
   const c = Object.prototype.hasOwnProperty.call(REFUSED_PHRASES, cls) ? cls : 'unrecognized';
+  const close = c === 'unconfirmed' ? 'A human decides what happens next; nothing was parked.'
+    : 'The PR stays ready for a human to decide; nothing was parked.';
   return `Merge stopped: PR #${isPositiveInteger(pr) ? pr : 'unknown'} was not merged (${c}: ${REFUSED_PHRASES[c]}). `
-    + `Detail: ${reduceDetail(detail)}. The PR stays ready for a human to decide; nothing was parked.`;
+    + `Detail: ${reduceDetail(detail)}. ${close}`;
 }
 
 // Ports Step 2.5 "Bounded watch", deliberately not the prose loop's shape (#5179): every poll

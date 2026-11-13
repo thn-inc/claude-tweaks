@@ -412,8 +412,8 @@ test('AC2.1–AC2.6: entry refusals with their residue', async () => {
     ['run-state unparseable', { runState: '{nope' }, {}, 'not-pr-first'],
     ['run-state unreadable', { runState: new Error('ENOENT') }, {}, 'not-pr-first'],
     ['gh absent', { ghAvailable: false }, {}, 'gh-absent'],
-    ['judgments throws', { supplier: new Error('boom') }, {}, 'supplier-failed'],
-    ['judgments rejects', { supplier: () => Promise.reject(new Error('boom')) }, {}, 'supplier-failed'],
+    ['judgments throws', { supplier: new Error('boom') }, {}, 'supplier-failed', /^judgments threw: boom$/],
+    ['judgments rejects', { supplier: () => Promise.reject(new Error('boom')) }, {}, 'supplier-failed', /^judgments threw: boom$/],
     ['judgments returns null', { supplier: null }, {}, 'supplier-failed'],
     ['verdict not a string', { supplier: { mergeCheck: { verdict: 1 }, acceptance: { completed: true } } }, {}, 'supplier-failed'],
     ['completed not boolean', { supplier: { acceptance: { completed: 'yes' }, mergeCheck: { verdict: 'auto-merge' } } }, {}, 'supplier-failed'],
@@ -421,11 +421,13 @@ test('AC2.1–AC2.6: entry refusals with their residue', async () => {
     ['verdict needs-human', { supplier: { mergeCheck: { verdict: 'needs-human' }, acceptance: { completed: true } } }, {}, 'verdict-not-confirmed'],
     ['acceptance not completed', { supplier: { mergeCheck: { verdict: 'auto-merge' }, acceptance: { completed: false } } }, {}, 'acceptance-not-completed'],
   ];
-  for (const [name, over, ctxOver, reason] of rows) {
+  for (const [name, over, ctxOver, reason, detail] of rows) {
     const h = mergeHarness(over);
     const ctx = { ...CTX, ...ctxOver };
     const r = await merge(ctx, h.deps);
     assert.deepEqual(pick(r), { outcome: 'pending-review', reason, mergeCommit: null, postMerge: null }, name);
+    // A thrown or rejected supplier is named as such, never as the shape check's "unusable shape".
+    if (detail) assert.match(r.detail, detail, name);
     assert.equal(r.runDir, CTX.runDir, name);
     assertNoReadyNoMerge(h);
     assert.ok(h.events.length >= 1, name);
@@ -1734,6 +1736,12 @@ test('AC11.7: MERGED is merged with the merge commit; OPEN with autoMergeRequest
     assert.equal(cr.detail, `confirmation read state ${shown}`);
     assert.equal(lastEvent(c).detail, `merge-refused: confirmation read state ${shown}`);
     assert.deepEqual(afterAll(c, isConfirmRead).map((x) => [x.kind, x.args]), [refusedPost('unconfirmed', `confirmation read state ${shown}`)], state);
+    // The posted text, literally: it names the state the read found and claims no ready PR.
+    const post = afterAll(c, isConfirmRead)[0].args;
+    const body = post[post.indexOf('--body') + 1];
+    assert.equal(body, 'Merge stopped: PR #9 was not merged (unconfirmed: the merge call exited 0 but the PR read back neither merged '
+      + `nor holding auto-merge). Detail: confirmation read state ${shown}. A human decides what happens next; nothing was parked.`, state);
+    assert.doesNotMatch(body, /stays ready/, state);
   }
 });
 
@@ -1755,7 +1763,11 @@ test('refusedComment is a fixed template: closed-set class words, reduced free t
   assert.match(refusedComment({ pr: 9, cls: 'permission', detail: 'HTTP 403' }), /\(permission: a permission gap needs a human with the right access, not a retry\)/);
   assert.match(refusedComment({ pr: 9, cls: 'unrecognized', detail: 'x' }), /\(unrecognized: an error this procedure does not recognize/);
   assert.match(refusedComment({ pr: 9, cls: 'unconfirmed', detail: 'confirmation read state OPEN' }),
-    /\(unconfirmed: the merge call exited 0 but the PR read back neither merged nor holding auto-merge\)\. Detail: confirmation read state OPEN\./);
+    /\(unconfirmed: the merge call exited 0 but the PR read back neither merged nor holding auto-merge\)\. Detail: confirmation read state OPEN\. A human decides what happens next; nothing was parked\.$/);
+  // Only a refusal of the merge call itself claims the PR stays ready.
+  for (const cls of ['checks', 'permission', 'unrecognized']) {
+    assert.match(refusedComment({ pr: 9, cls, detail: 'x' }), /The PR stays ready for a human to decide; nothing was parked\.$/, cls);
+  }
   // Any class outside the set, and a non-integer PR, render as closed-set words.
   for (const cls of ['auto-not-allowed', 'closes #5', undefined, 'toString', '__proto__']) {
     assert.match(refusedComment({ pr: 9, cls, detail: 'x' }), /^Merge stopped: PR #9 was not merged \(unrecognized: /, String(cls));
@@ -2460,10 +2472,18 @@ const reasonOk = (site) => (site.literal === null
 
 test('REASONS: the frozen closed set is the spec\'s 20 reasons plus unclassified, and isReason reads both prefix forms', () => {
   assert.ok(Object.isFrozen(REASONS) && Object.isFrozen(PREFIXED_REASONS));
-  assert.equal(REASONS.length, 21);
-  assert.equal(new Set(REASONS).size, 21);
-  assert.equal(REASONS[REASONS.length - 1], 'unclassified');
-  assert.ok(PREFIXED_REASONS.every((p) => REASONS.includes(p)));
+  // The spec's closed list (Acceptance Criteria, "Closed rule"), word for word and in its order; a
+  // `:{…}` form is held in REASONS by its stem and listed in PREFIXED_REASONS.
+  const SPEC_REASONS = [
+    'no-supplier', 'labels-unreadable', 'not-authorized', 'summary-entry-missing', 'not-pr-first', 'gh-absent',
+    'supplier-failed', 'verdict-not-confirmed', 'acceptance-not-completed', 'compose-refused', 'ready-failed',
+    'state-read-failed', 'pr-not-open', 'moving-target', 'checks-read-failed', 'check-failed:{names}', 'checks-pending-timeout',
+    'draft-skip-without-ready-trigger:{files}', 'conflict', 'merge-refused',
+  ];
+  assert.equal(SPEC_REASONS.length, 20);
+  const stem = (w) => w.replace(/:\{[a-z]+\}$/, '');
+  assert.deepEqual([...REASONS], [...SPEC_REASONS.map(stem), 'unclassified']);
+  assert.deepEqual([...PREFIXED_REASONS], SPEC_REASONS.filter((w) => w.includes(':')).map(stem));
   for (const ok of ['conflict', 'merge-refused', 'unclassified', 'check-failed:unit,lint', 'draft-skip-without-ready-trigger:.github/workflows/t.yml']) {
     assert.equal(isReason(ok), true, ok);
   }
