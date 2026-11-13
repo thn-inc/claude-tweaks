@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-const { execSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -11,12 +10,24 @@ function has(cmd) {
   // already knows for free — the same principle detectVersionManager()
   // below already applies to the node *path* via process.execPath.
   if (cmd === 'node') return true;
+  // A PATH scan, not `execSync('git --version')`: that spawned /bin/sh -c plus git itself on
+  // every SessionStart — 2 processes each (#5297).
+  const hit = findOnPath(cmd, { env: process.env, platform: process.platform, cwd: null });
+  if (!hit) return false;
+  // /usr/bin/git on macOS is an xcode-select shim that exists even without the Command Line
+  // Tools (running it is what used to fail), so a hit there only counts with a real developer dir.
+  if (process.platform === 'darwin' && hit === path.join('/usr/bin', cmd)) return hasAppleDeveloperTool(cmd);
+  return true;
+}
+
+function hasAppleDeveloperTool(cmd, { readlink = fs.readlinkSync, exists = fs.existsSync } = {}) {
+  const dirs = ['/Library/Developer/CommandLineTools'];
   try {
-    execSync(`${cmd} --version`, { stdio: 'ignore', windowsHide: true });
-    return true;
+    dirs.unshift(readlink('/var/db/xcode_select_link'));
   } catch {
-    return false;
+    // no xcode-select link — only the Command Line Tools dir can satisfy this
   }
+  return dirs.some((dir) => exists(path.join(dir, 'usr', 'bin', cmd)));
 }
 
 function detectPackageManager() {
@@ -152,4 +163,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { has, detectPackageManager, detectVersionManager, installCommand, findOnPath, playwrightCliMessage, collect, main };
+module.exports = { has, hasAppleDeveloperTool,detectPackageManager, detectVersionManager, installCommand, findOnPath, playwrightCliMessage, collect, main };

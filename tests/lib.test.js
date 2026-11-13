@@ -84,6 +84,85 @@ test('deps: has(\'node\') never shells out to `node --version` (no subprocess)',
   }
 });
 
+// #5297: has() answers by PATH scan — `execSync('git --version')` spawned /bin/sh plus git on every SessionStart.
+function withPathStub(mode, fn) {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const childProcess = require('node:child_process');
+  const modulePath = require.resolve('../plugin/bin/lib/deps');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-has-'));
+  if (mode !== 'empty') {
+    const name = process.platform === 'win32' ? 'git.cmd' : 'git';
+    fs.writeFileSync(path.join(dir, name), '@echo off\n', { mode });
+    fs.chmodSync(path.join(dir, name), mode);
+  }
+  const origPath = process.env.PATH;
+  const origWinPath = process.env.Path;
+  const originals = {};
+  const state = { called: false };
+  for (const k of ['execSync', 'execFileSync', 'spawnSync']) {
+    originals[k] = childProcess[k];
+    childProcess[k] = () => { state.called = true; throw new Error(`${k} must not be called`); };
+  }
+  process.env.PATH = dir;
+  if (process.platform === 'win32') process.env.Path = dir;
+  delete require.cache[modulePath];
+  try {
+    fn(require('../plugin/bin/lib/deps'), state);
+  } finally {
+    for (const k of Object.keys(originals)) childProcess[k] = originals[k];
+    process.env.PATH = origPath;
+    if (process.platform === 'win32') {
+      if (origWinPath === undefined) delete process.env.Path;
+      else process.env.Path = origWinPath;
+    }
+    delete require.cache[modulePath];
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test('deps: has() finds a command on PATH without spawning', () => {
+  withPathStub(0o755, (d, state) => {
+    assert.strictEqual(d.has('git'), true);
+    assert.strictEqual(state.called, false, 'has() must not spawn a process');
+  });
+});
+
+test('deps: has() is false for a non-executable file on PATH', { skip: process.platform === 'win32' }, () => {
+  withPathStub(0o644, (d) => {
+    assert.strictEqual(d.has('git'), false);
+  });
+});
+
+test('deps: has() is false when PATH holds no such command', () => {
+  withPathStub('empty', (d, state) => {
+    assert.strictEqual(d.has('git'), false);
+    assert.strictEqual(state.called, false);
+  });
+});
+
+test('deps: hasAppleDeveloperTool follows the xcode-select link', () => {
+  const target = '/Applications/Xcode.app/Contents/Developer';
+  assert.strictEqual(deps.hasAppleDeveloperTool('git', {
+    readlink: () => target,
+    exists: (p) => p === `${target}/usr/bin/git`,
+  }), true);
+});
+
+test('deps: hasAppleDeveloperTool falls back to the Command Line Tools dir', () => {
+  const enoent = () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); };
+  assert.strictEqual(deps.hasAppleDeveloperTool('git', {
+    readlink: enoent,
+    exists: (p) => p === '/Library/Developer/CommandLineTools/usr/bin/git',
+  }), true);
+});
+
+test('deps: hasAppleDeveloperTool is false for the stub-only Mac', () => {
+  const enoent = () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); };
+  assert.strictEqual(deps.hasAppleDeveloperTool('git', { readlink: enoent, exists: () => false }), false);
+});
+
 test('deps: installCommand returns expected mapping', () => {
   assert.strictEqual(deps.installCommand({ name: 'brew' }, 'node'), 'brew install node');
   assert.strictEqual(deps.installCommand({ name: 'winget' }, 'git'), 'winget install Git.Git');
