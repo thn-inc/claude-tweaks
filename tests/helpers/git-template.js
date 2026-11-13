@@ -16,10 +16,10 @@
 // git-config-escaped `\\` forms). A spelling that survives throws, so a missed
 // one fails the test loudly instead of silently sharing the template's state.
 //
-// Timestamps are deliberately NOT preserved: copied files get fresh mtimes,
-// newer than the copied index, so git treats every entry as racily clean and
-// re-verifies content instead of trusting a stat cache that describes the
-// template's inodes.
+// Timestamps are deliberately NOT preserved: copies get fresh mtimes, as a
+// freshly built repo did, because some tests order worktrees by mtime. Git
+// rehashes copied files anyway, since their inode and ctime differ from the
+// ones recorded in the copied index.
 
 const fs = require('fs');
 const os = require('os');
@@ -81,6 +81,11 @@ function isGitDirLike(dir) {
 // The git path-bearing files under `dir`.
 function pathFiles(dir, out = []) {
   const gitDir = isGitDirLike(dir);
+  if (gitDir) {
+    // A --shared/--reference clone stores absolute paths here.
+    const alt = path.join(dir, 'objects', 'info', 'alternates');
+    try { if (fs.statSync(alt).isFile()) out.push(alt); } catch { /* none */ }
+  }
   for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, ent.name);
     if (ent.isSymbolicLink()) continue;
@@ -137,6 +142,11 @@ function fromTemplateSet(key, build, layout) {
     }
     tpl = { dirs };
     cache.set(key, tpl);
+  } else {
+    const have = Object.keys(tpl.dirs).sort().join('\0');
+    if (have !== [...names].sort().join('\0')) {
+      throw new Error(`git-template: key "${key}" was built with a different layout`);
+    }
   }
   const out = {};
   const mapping = [];

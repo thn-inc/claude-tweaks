@@ -96,7 +96,9 @@ test('a copy starts no git process', () => {
 });
 
 test('fromTemplateSet rewires a clone to its own copied origin', () => {
+  let templateOrigin;
   const build = (d) => {
+    templateOrigin = d.origin;
     git(d.origin, ['init', '-q', '--bare', '-b', 'main']);
     disableReceiveAutoGc(d.origin);
     git(d.work, ['init', '-q', '-b', 'main']);
@@ -115,6 +117,7 @@ test('fromTemplateSet rewires a clone to its own copied origin', () => {
   assert.strictEqual(git(a.origin, ['rev-parse', 'main']), git(a.work, ['rev-parse', 'HEAD']));
   assert.notStrictEqual(git(a.origin, ['rev-parse', 'main']), before);
   assert.strictEqual(git(b.origin, ['rev-parse', 'main']), before);
+  assert.strictEqual(git(templateOrigin, ['rev-parse', 'main']), before);
   assert.strictEqual(git(b.work, ['config', 'remote.origin.url']), b.origin);
 });
 
@@ -165,6 +168,7 @@ test('a throwing build is not cached', () => {
   };
   assert.throws(() => fromTemplate('k-throw', build, { prefix: 'ct-gt-' }), /boom from builder/);
   assert.ok(firstDir && !fs.existsSync(firstDir), 'partial template dir was removed');
+  assert.ok(!fs.existsSync(path.dirname(firstDir)), 'template base dir was removed');
   const d = fromTemplate('k-throw', build, { prefix: 'ct-gt-' });
   scratch.push(d);
   assert.strictEqual(builds, 2);
@@ -181,6 +185,40 @@ test('assertNoTemplatePaths catches a surviving template path', () => {
   assert.doesNotThrow(() => assertNoTemplatePaths(root, ['/T/tpl-1']));
 });
 
+test('rewriteTemplatePaths rewrites every Windows-shaped spelling', () => {
+  const root = mk('ct-gtwin-');
+  fs.mkdirSync(path.join(root, '.git', 'worktrees', 'w'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'wt'));
+  const cfg = path.join(root, '.git', 'config');
+  const gitdir = path.join(root, '.git', 'worktrees', 'w', 'gitdir');
+  const ptr = path.join(root, 'wt', '.git');
+  fs.writeFileSync(cfg, '[remote "a"]\n\turl = C:\\\\T\\\\tpl-1\\\\o\n[core]\n\tworktree = C:\\T\\tpl-1\\wt\n');
+  fs.writeFileSync(gitdir, 'C:/T/tpl-1/.git/worktrees/w\n');
+  fs.writeFileSync(ptr, 'gitdir: C:/T/tpl-1/.git/worktrees/w\n');
+  // The template path does not exist here: realpath-based spellings must be skipped, not thrown.
+  rewriteTemplatePaths(root, [['C:\\T\\tpl-1', 'C:\\T\\new']]);
+  assert.strictEqual(fs.readFileSync(cfg, 'utf8'),
+    '[remote "a"]\n\turl = C:\\\\T\\\\new\\\\o\n[core]\n\tworktree = C:\\T\\new\\wt\n');
+  assert.strictEqual(fs.readFileSync(gitdir, 'utf8'), 'C:/T/new/.git/worktrees/w\n');
+  assert.strictEqual(fs.readFileSync(ptr, 'utf8'), 'gitdir: C:/T/new/.git/worktrees/w\n');
+});
+
+test('reusing a key with a different layout throws a clear error', () => {
+  const layout = { a: { prefix: 'ct-gtl-a-' }, b: { prefix: 'ct-gtl-b-' } };
+  scratch.push(...Object.values(fromTemplateSet('k-layout', () => {}, layout)));
+  assert.throws(() => fromTemplate('k-layout', () => {}, { prefix: 'ct-gtl-' }),
+    /key "k-layout" was built with a different layout/);
+  assert.throws(() => fromTemplateSet('k-layout', () => {}, { a: { prefix: 'ct-gtl-a-' } }),
+    /different layout/);
+});
+
+test('assertNoTemplatePaths also scans objects/info/alternates', () => {
+  const root = mk('ct-gtalt-');
+  fs.mkdirSync(path.join(root, '.git', 'objects', 'info'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.git', 'objects', 'info', 'alternates'), '/T/tpl-1/.git/objects\n');
+  assert.throws(() => assertNoTemplatePaths(root, ['/T/tpl-1']), /survived rewrite/);
+});
+
 test('disableReceiveAutoGc stops receive-pack maintenance', () => {
   // Push into a fresh bare origin from a fresh clone, tracing only the push
   // (the clone's own commit would start maintenance on its side, which is not
@@ -190,6 +228,9 @@ test('disableReceiveAutoGc stops receive-pack maintenance', () => {
     const work = mk('ct-gtg-w-');
     git(origin, ['init', '-q', '--bare', '-b', 'main']);
     if (disable) disableReceiveAutoGc(origin);
+    // Keep receive-pack's maintenance in the foreground (git >= 2.47 detaches
+    // by default), so its trace file is complete before we read and remove it.
+    fs.appendFileSync(path.join(origin, 'config'), '[maintenance]\n\tautoDetach = false\n');
     git(work, ['init', '-q', '-b', 'main']);
     git(work, ['remote', 'add', 'origin', origin]);
     commit(work, 'base');
