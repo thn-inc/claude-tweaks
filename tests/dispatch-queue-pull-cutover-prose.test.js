@@ -14,6 +14,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
@@ -233,5 +234,200 @@ function assertNoScriptCitation(t) {
 test('AC2: the Step 3 sub-files no longer cite queue-pull-script.md', () => {
   for (const name of STEP3_FILES) {
     assertGoesRed(assertNoScriptCitation, readText(path.join(DISPATCH, name)), null, (t) => `${t}\nRe-run \`queue-pull-script.md\`'s line.\n`);
+  }
+});
+
+// ---- mcp-transport.md Step 2: the files transport (AC5) ----
+
+const MCP = readText(path.join(DISPATCH, 'mcp-transport.md'));
+const MCP_STEP2_FIRST = '## Step 2 — queue pull and per-dependency open-state check';
+// Step 2 runs from its first section to the end of the file (the #2523 section is the last one).
+const mcpStep2 = (t) => {
+  const start = t.indexOf(MCP_STEP2_FIRST);
+  assert.ok(start !== -1, `${MCP_STEP2_FIRST} not found`);
+  return t.slice(start);
+};
+
+// The structural anchor: a ```bash fence whose first line starts the files-transport call.
+const FILES_CALL_PREFIX = 'node "${CLAUDE_PLUGIN_ROOT}/bin/queue-pull.js" --transport files';
+function filesCallFences(text) {
+  const lines = text.split(/\r?\n/);
+  const fences = [];
+  for (let i = 0; i + 1 < lines.length; i += 1) {
+    if (lines[i] !== '```bash' || !lines[i + 1].startsWith(FILES_CALL_PREFIX)) continue;
+    const end = lines.indexOf('```', i + 1);
+    assert.ok(end !== -1, 'the files-call fence is never closed');
+    fences.push(lines.slice(i + 1, end).join('\n'));
+  }
+  return fences;
+}
+
+// One command -> argv. Backslash-newline continuations are joined; a token is a double-quoted
+// string (unquoted) or a bare word. Anything a plain argv cannot hold (a second line, a pipe, a
+// redirect, a command separator, an expansion other than the plugin root) fails.
+function tokenize(command) {
+  const joined = command.replace(/\\\n/g, ' ');
+  assert.ok(!joined.includes('\n'), `the fence holds more than one command: ${command}`);
+  const tokens = [];
+  for (const m of joined.matchAll(/"([^"]*)"|(\S+)/g)) {
+    const token = m[1] !== undefined ? m[1] : m[2];
+    assert.ok(m[1] !== undefined || !/[;&|<>`$'"\\]/.test(token), `not a plain argv word: ${token}`);
+    assert.ok(!token.replace('${CLAUDE_PLUGIN_ROOT}', '').includes('$'), `an expansion in ${token}`);
+    tokens.push(token);
+  }
+  return tokens;
+}
+
+// The flag, the session file name its `{name}` placeholder resolves to, and the shape the prose
+// names beside it (bin/queue-pull.js's INPUT_FLAGS; the shapes the module reads, lib/dispatch/
+// queue-pull.js: runFetch / agentQueueRaw / agentDepFreshness, the blocked pass, the neighbour pass's
+// claimReaderFromMap, and the foreignStates input).
+const FILES_INPUTS = [
+  ['--queue-raw', 'dispatch-queue-raw.json', '`[{number, title, body, labels, created_at, updated_at, state}]`'],
+  ['--dep-freshness', 'dispatch-dep-freshness.json', '`[{number, updated_at, state}]`'],
+  ['--open-numbers', 'dispatch-open-numbers.json', '`[{number}]`'],
+  ['--verified-open-deps', 'dispatch-verified-open-deps.txt', 'one number per line'],
+  ['--in-flight-raw', 'dispatch-in-flight-raw.json', '`[{number, title, body, labels}]`'],
+  ['--in-flight-claims', 'dispatch-in-flight-claims.json', '`{"<n>": <claim>}`'],
+  ['--foreign-states', 'dispatch-foreign-states.json', '`{"owner/name#N": "<state>"}`'],
+];
+
+// The call's argv after `node <script>`, and its `--flag {name}` pairs.
+function filesCallArgv(t) {
+  const fences = filesCallFences(t);
+  assert.equal(fences.length, 1, 'mcp-transport.md carries exactly one queue-pull.js --transport files call');
+  const tokens = tokenize(fences[0]);
+  assert.deepEqual(tokens.slice(0, 2), ['node', '${CLAUDE_PLUGIN_ROOT}/bin/queue-pull.js']);
+  return tokens.slice(2);
+}
+function assertFilesCall(t) {
+  const argv = filesCallArgv(t);
+  assert.deepEqual(argv.slice(0, 2), ['--transport', 'files']);
+  const pairs = [];
+  for (let i = 2; i < argv.length; i += 2) pairs.push([argv[i], argv[i + 1]]);
+  assert.deepEqual(pairs, FILES_INPUTS.map(([flag, name]) => [flag, `{${name}}`]), 'each input flag names its own {name} placeholder, once');
+}
+// Each flag is named in Step 2 with its placeholder and its file shape, on one bullet.
+function assertInputsNamed(t) {
+  const lines = mcpStep2(t).split('\n');
+  for (const [flag, name, shape] of FILES_INPUTS) {
+    const bullet = lines.find((l) => l.startsWith(`- \`${flag} "{${name}}"\``));
+    assert.ok(bullet, `no Step 2 bullet names ${flag} "{${name}}"`);
+    assert.ok(bullet.includes(shape), `the ${flag} bullet does not name its shape ${shape}`);
+  }
+}
+// The claim reads cover the whole pool (the CLI header's rule), never a claim-targets subset.
+const CLAIM_READS = '**2. Claim reads.**';
+function assertClaimsCoverThePool(t) {
+  const p = paragraph(t, CLAIM_READS);
+  assert.ok(p.includes('the claim of every record in the pool file'), 'the claim reads must cover every record in the pool file');
+  assert.ok(p.includes('a number left out of the map counts as a failed claim read'), 'the claims paragraph must say what a left-out number does');
+}
+// Step 2 sends the agent to no script, and never calls the MCP path one call (the fetch-and-Write calls remain).
+const MCP_RETIRED = ['run the script as written', 'alias_mcp_timestamps', 'NEIGHBOUR_RC', 'export DISPATCH_FOREIGN_STATES'];
+function assertNoScriptRunInMcpStep2(t) {
+  const s = mcpStep2(t);
+  for (const phrase of MCP_RETIRED) assert.ok(!s.includes(phrase), `mcp-transport.md Step 2 still says ${phrase}`);
+  // The queue-pull section only: the #1224 section's "one call for one already-known issue" is an issue_read cost.
+  const pull = section(s, MCP_STEP2_FIRST, '\n## ');
+  assert.doesNotMatch(pull.replace(/\s+/g, ' '), /\bone (?:`[^`]*` )?call\b/i, 'the MCP path is never described as one call');
+  assert.ok(pull.includes('with the Write tool'), 'the agent still writes each fetched file with the Write tool');
+}
+
+test('#5230 AC5: mcp-transport.md Step 2 names every files input with its flag, placeholder and shape, and ends in the one files-transport call', () => {
+  assertGoesRed(assertFilesCall, MCP, null, (t) => t.split('--in-flight-claims "{dispatch-in-flight-claims.json}" \\').join('--in-flight-claims "{dispatch-in-flight-raw.json}" \\'));
+  assertGoesRed(assertFilesCall, MCP, null, (t) => t.replace(' --foreign-states "{dispatch-foreign-states.json}"', ''));
+  // A second files call (the old split-script shape) is refused too.
+  assertGoesRed(assertFilesCall, MCP, null, (t) => `${t}\n\`\`\`bash\n${FILES_CALL_PREFIX}\n\`\`\`\n`);
+  for (const [flag, , shape] of FILES_INPUTS) {
+    assertGoesRed(assertInputsNamed, MCP, null, (t) => t.split('\n').map((l) => (l.startsWith(`- \`${flag} `) ? l.split(shape).join('') : l)).join('\n'));
+  }
+  assertGoesRed(assertClaimsCoverThePool, MCP, 'the claim of every record in the pool file');
+  assertGoesRed(assertClaimsCoverThePool, MCP, 'a number left out of the map counts as a failed claim read');
+  for (const phrase of MCP_RETIRED) assertGoesRed(assertNoScriptRunInMcpStep2, MCP, null, (t) => `${t}\n${phrase}\n`);
+  assertGoesRed(assertNoScriptRunInMcpStep2, MCP, null, (t) => t.replace(`${MCP_STEP2_FIRST}\n`, `${MCP_STEP2_FIRST}\n\nThe MCP path is one call.\n`));
+  assertGoesRed(assertNoScriptRunInMcpStep2, MCP, null, (t) => t.replace(`${MCP_STEP2_FIRST}\n`, `${MCP_STEP2_FIRST}\n\nRun it as one \`queue-pull.js\` call.\n`));
+  assertGoesRed(assertNoScriptRunInMcpStep2, MCP, null, (t) => t.split('with the Write tool').join('with a tool'));
+});
+
+// The AC5 run: the extracted call's argv through the real CLI in the S1-files-miss sandbox (the
+// parity matrix's `createSandbox(PARITY_S1(), { transport: 'files' })`: no gh anywhere on PATH, the
+// frozen clock, its own TMPDIR), never the real repo or wall clock. Each `{name}` resolves under
+// <root>/agent-in rather than the session dir, so no input sits at a CLI default path and a flag the
+// call drops reads nothing instead of the default. The reference is the S1-files-miss parity row's
+// module run (`--transport files`, the same agentInputs staged at the default session paths), which
+// that row holds equal to the oracle.
+const { createSandbox, runModuleCli, normalize, oracleSkip } = require('./bin-lib/dispatch/queue-pull-oracle');
+const { S1, agentInputs } = require('./bin-lib/dispatch/queue-pull-fixtures');
+
+const AC5_FILES = ['dispatch-groups.json', 'dispatch-exclusions.json', 'dispatch-fastlane-bundles.json', 'dispatch-near-dup-pairs.json',
+  'dispatch-crosspr-overlap.json', 'dispatch-next-pick.json'];
+const parsedOrRaw = (text) => {
+  if (text === null) return null;
+  try { return JSON.parse(text); } catch { return text; }
+};
+const viewOf = (r, sb) => normalize({
+  status: r.status,
+  files: Object.fromEntries(AC5_FILES.map((name) => [name, parsedOrRaw(r.files[name])])),
+  orderBlob: r.orderBlob,
+}, sb);
+
+// The pull, then `--rank` in the same session; argv's `{name}` placeholders resolve under agent-in.
+async function pullAndRank(sb, argv, content) {
+  const dir = path.join(sb.root, 'agent-in');
+  fs.mkdirSync(dir, { recursive: true });
+  const resolved = argv.map((a) => {
+    const m = /^\{([^{}]+)\}$/.exec(a);
+    if (!m) return a;
+    const file = path.join(dir, m[1]);
+    if (content[m[1]] !== undefined) fs.writeFileSync(file, content[m[1]]);
+    return file;
+  });
+  const pulled = await runModuleCli(sb, resolved, { tmp: 'pull' });
+  assert.equal(pulled.status, 0, pulled.stderr.slice(-3000));
+  const ranked = await runModuleCli(sb, ['--rank'], { tmp: 'pull' });
+  assert.equal(ranked.status, 0, ranked.stderr.slice(-3000));
+  return { pulled, ranked };
+}
+
+test('#5230 AC5: the mcp-transport.md files call, gh absent, reproduces the #5227 files fixture outputs', { skip: oracleSkip(), timeout: 300_000 }, async () => {
+  const argv = filesCallArgv(MCP);
+  // What the agent writes: S1's MCP-shaped inputs (the parity row's), and `{}` foreign states (S1
+  // declares no foreign ref). Keyed by the session file name each placeholder names.
+  const inputs = agentInputs(S1({ parity: true }));
+  const content = { ...inputs, 'dispatch-foreign-states.json': '{}' };
+  const sandboxes = [];
+  const make = () => {
+    const sb = createSandbox(S1({ parity: true }), { transport: 'files', name: 'S1-files-miss' });
+    sandboxes.push(sb);
+    return sb;
+  };
+  try {
+    const refSb = make();
+    const refPull = await runModuleCli(refSb, ['--transport', 'files'], { stage: inputs, tmp: 'pull' });
+    assert.equal(refPull.status, 0, refPull.stderr.slice(-3000));
+    const refRank = await runModuleCli(refSb, ['--rank'], { tmp: 'pull' });
+    const reference = viewOf(refRank, refSb);
+    // Control: the reference is the full S1 files run, not an empty pull.
+    assert.ok(reference.files['dispatch-groups.json'].length > 0, 'the reference groups something');
+    assert.ok(reference.files['dispatch-exclusions.json'].some((e) => e.reason === 'neighbour-in-flight' && e.records[0] === 9013), 'the reference excludes #9013 as a neighbour');
+    assert.deepEqual(reference.files['dispatch-crosspr-overlap.json'], []);
+    assert.ok(reference.files['dispatch-next-pick.json'], 'the reference picks a group');
+    assert.ok(reference.orderBlob, 'the reference persists its blob');
+
+    const docSb = make();
+    const { pulled, ranked } = await pullAndRank(docSb, argv, content);
+    assert.deepEqual(pulled.ghArgv, [], 'no gh call is made (there is no gh on PATH)');
+    assert.deepEqual(viewOf(ranked, docSb), reference);
+
+    // Review Focus 5: a claims map that leaves a pool record out reads it as a failed claim read,
+    // so its neighbour is missed -- why the claims file must cover every record in the pool file.
+    const shortSb = make();
+    const short = await pullAndRank(shortSb, argv, { ...content, 'dispatch-in-flight-claims.json': '{}' });
+    const shortExclusions = JSON.parse(short.ranked.files['dispatch-exclusions.json']);
+    assert.ok(!shortExclusions.some((e) => e.reason === 'neighbour-in-flight'), 'no neighbour-in-flight entry without #7001\'s claim');
+    assert.ok(short.pulled.stderr.includes('AUTO — dispatch: neighbour-in-flight claim read failed for #7001; treated as not in flight'), short.pulled.stderr);
+  } finally {
+    for (const sb of sandboxes) sb.cleanup();
   }
 });

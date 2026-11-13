@@ -1,6 +1,7 @@
 ---
 files:
   - plugin/bin/lib/issues/mcp-issue-shape.js
+  - plugin/bin/lib/dispatch/queue-pull.js
   - plugin/skills/dispatch/queue-pull-script.md
   - plugin/skills/dispatch/mcp-transport.md
   - plugin/skills/dispatch/next-ranking.md
@@ -18,18 +19,18 @@ files:
 ## Steps
 
 ### 1. Write the MCP-fetched queue to the raw file
-- **URL:** `plugin/skills/dispatch/queue-pull-script.md` (the `$DISPATCH_QUEUE_RAW` fetch); `plugin/skills/dispatch/mcp-transport.md` (`## Step 2 — queue pull …`)
-- **Action:** The agent replaces the `gh issue list --label auto:build …` line with a `list_issues` call. It writes the returned JSON, snake_case `created_at` / `updated_at` included, to `$DISPATCH_QUEUE_RAW`, and then runs the rest of the script as written.
+- **URL:** `plugin/skills/dispatch/mcp-transport.md` (`## Step 2 — queue pull …`: the `--queue-raw` input and the `queue-pull.js --transport files` call)
+- **Action:** The agent fetches the `auto:build` queue with `list_issues` and writes the returned JSON, snake_case `created_at` / `updated_at` included, to the `--queue-raw` file with the Write tool. It writes the other inputs the section lists the same way, then runs `bin/queue-pull.js --transport files` with each file named by its flag.
 - **Should feel:** Like the `gh` path. The agent hand-edits no field names and patches nothing into `dispatch-groups.json`.
-- **Should understand:** The raw MCP shape is fine to write as-is. The next line of the script normalizes it.
-- **Red flags:** An agent renaming fields by hand or editing `dispatch-groups.json` before ranking, which is the 2026-10-20 run `2026-10-20T022848-record-3630` workaround this record retires. An agent that skips the `alias_mcp_timestamps` line because it reads as `gh`-only.
+- **Should understand:** The raw MCP shape is fine to write as-is. The CLI normalizes it before any pass reads it.
+- **Red flags:** An agent renaming fields by hand or editing `dispatch-groups.json` before ranking, which is the 2026-10-20 run `2026-10-20T022848-record-3630` workaround this record retires. An agent that runs `--transport gh` on a `gh`-absent firing, or that converts the timestamps itself before writing the file.
 
-### 2. The script aliases the timestamps
-- **URL:** `plugin/skills/dispatch/queue-pull-script.md` (`alias_mcp_timestamps`, called after the `$DISPATCH_QUEUE_RAW` write and after each `$DISPATCH_DEP_FRESHNESS` write); `plugin/bin/lib/issues/mcp-issue-shape.js` (`aliasMcpTimestamps`)
-- **Action:** `alias_mcp_timestamps "$DISPATCH_QUEUE_RAW"` rewrites the file in place. Each issue gains `createdAt` / `updatedAt` copied from its string `created_at` / `updated_at`, and the dependency-freshness file gets the same treatment after it is written. Any camelCase value that is already present (the `gh` path) is kept, so the line is a no-op there.
-- **Should feel:** Invisible. One line that runs on both transports, with no output when it works.
-- **Should understand:** It must run before any node block reads the file, and the script places it there. A shell function lives only in the Bash call that defines it. If the agent splits the script across Bash calls around its Write steps, each call that runs `alias_mcp_timestamps` must define the function first.
-- **Red flags:** `alias_mcp_timestamps: command not found` on stderr, which means the function was defined in an earlier Bash call. The script carries on unaliased, and the step 3 and step 4 degradations return without any other error. A `null` `createdAt` replaced by the snake_case value (it must be kept).
+### 2. The CLI aliases the timestamps
+- **URL:** `plugin/bin/lib/dispatch/queue-pull.js` (the fetch pass: the `--queue-raw` file copied into the session queue file and aliased there, the `--dep-freshness` data aliased each time the pull reads it); `plugin/bin/lib/issues/mcp-issue-shape.js` (`aliasMcpTimestamps`)
+- **Action:** On `--transport files` the CLI copies the agent's queue file into its session queue file and aliases that copy, so each issue gains `createdAt` / `updatedAt` copied from its string `created_at` / `updated_at`. The dependency-freshness data gets the same treatment each time the pull reads it. Any camelCase value that is already present (the `gh` path) is kept, so the alias is a no-op there. The agent's own file is left as written.
+- **Should feel:** Invisible. The agent runs nothing for it, and it prints nothing when it works.
+- **Should understand:** The alias runs inside the CLI before any pass reads the file, so nothing about it depends on how the agent splits its Bash calls.
+- **Red flags:** A `dispatch-groups.json` from a `gh`-absent firing whose records carry `created_at` but no `createdAt`: the step 3 and step 4 degradations then return without any error. A `null` `createdAt` replaced by the snake_case value (it must be kept).
 
 ### 3. Rank oldest-first within the band
 - **URL:** `plugin/skills/dispatch/next-ranking.md`; `plugin/bin/lib/issues/grouping.js` (`bundleFastLaneSingletons`)

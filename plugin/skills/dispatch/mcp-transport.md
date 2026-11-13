@@ -76,7 +76,27 @@ mistake, since every call site was bridged and verified before this line changed
 
 ## Step 2 — queue pull and per-dependency open-state check
 
-The queue pull uses the confirmed "list issues by label" mapping; the per-dependency open-state check (the `gh issue view "$DEP" --json state` loop) uses the confirmed "get single issue by number" mapping, checking the returned state field for `OPEN`. Both replace their `gh`-CLI equivalent one-for-one — no change to the surrounding `node -e` eligibility/dependency logic, which only consumes the fetched JSON shape, not how it was fetched. `list_issues`/`issue_read` return snake_case timestamps; `queue-pull-script.md` aliases them unconditionally right after each fetch (`#3691`, section below), so write the raw MCP JSON to `$DISPATCH_QUEUE_RAW` and `$DISPATCH_DEP_FRESHNESS` and run the script as written. The Write calls split the script across several Bash calls and a shell function does not survive between calls, so re-run the `alias_mcp_timestamps() { … }` definition at the top of any Bash call that calls it.
+A Node subprocess cannot call MCP tools, so on this transport the agent fetches every input below with MCP tools and writes each one with the Write tool, and only then runs `bin/queue-pull.js` with `--transport files`, which reads those files and does the whole computation (SKILL.md Step 2 routes its exit codes). The CLI never falls back from `gh` to `files` on its own: Preflight's result above (`gh` absent or GraphQL-blocked) is what selects `files`. The queue pull uses the confirmed "List open issues by label" mapping and each dependency read the confirmed "Get a single issue by number" mapping (`_shared/github-write-transport.md`); a failed read degrades as that file and the sections below say. Resolve each `{name}` below to its literal path once, with `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value {name}` (`_shared/session-tmp-root.md`), and write every file on every pull, so an earlier pull's file is never read. Write the raw MCP JSON: `list_issues`/`issue_read` return snake_case timestamps, and the CLI aliases them itself on `--transport files` (`#3691`, section below). The inputs, each by its flag:
+
+- `--queue-raw "{dispatch-queue-raw.json}"`: the open `auto:build` records from `list_issues` (label `auto:build`, state open, body included; up to 500 records, paging 100 at a time; the CLI prints the 500-cap Warning itself). Shape `[{number, title, body, labels, created_at, updated_at, state}]`. The CLI reads every eligibility facet from these `labels`, so the `#3137` cross-check below applies to them.
+- `--open-numbers "{dispatch-open-numbers.json}"`: the open issues from `list_issues` (state open, up to 200 records). Shape `[{number}]`.
+- `--dep-freshness "{dispatch-dep-freshness.json}"`: one `issue_read` result, open or closed, per dependency: each `Blocked by #N` number in the body of a queue record that carries none of `bot:in-progress`, `bot:blocked` or `bot:parked`. Shape `[{number, updated_at, state}]`; a number `issue_read` cannot read is left out, and the file is `[]` when no such record declares a dependency.
+- `--verified-open-deps "{dispatch-verified-open-deps.txt}"`: each of those dependencies that is missing from the open-numbers file and whose `issue_read` state is open (any case); this replaces the `gh issue view "$DEP" --json state` loop. Plain text, one number per line; empty when there is none.
+- `--in-flight-raw "{dispatch-in-flight-raw.json}"`: the neighbour-in-flight pool (section below). Shape `[{number, title, body, labels}]`.
+- `--in-flight-claims "{dispatch-in-flight-claims.json}"`: the claim of every record in that pool (section below). Shape `{"<n>": <claim>}`, keyed by issue number.
+- `--foreign-states "{dispatch-foreign-states.json}"`: the states of the candidates' body-declared foreign refs (the #2523 section below). Shape `{"owner/name#N": "<state>"}`; `{}` when no candidate declares one.
+
+When every file is written, run this, each `{name}` replaced by its resolved path:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/queue-pull.js" --transport files \
+  --queue-raw "{dispatch-queue-raw.json}" --dep-freshness "{dispatch-dep-freshness.json}" \
+  --open-numbers "{dispatch-open-numbers.json}" --verified-open-deps "{dispatch-verified-open-deps.txt}" \
+  --in-flight-raw "{dispatch-in-flight-raw.json}" --in-flight-claims "{dispatch-in-flight-claims.json}" \
+  --foreign-states "{dispatch-foreign-states.json}"
+```
+
+It writes the same session-scoped outputs as `--transport gh` (`dispatch-groups.json`, `dispatch-exclusions.json` and the report files) and makes no `gh` call of its own. The passes whose spawned CLIs still need `gh` (open-linked-PR, shipped, native blocked-by, unlanded-blocker) fail open, as the sections below document.
 
 ## Step 2 — `list_issues` `fields` parameter silently truncates labels (#3137)
 
@@ -111,49 +131,23 @@ note accordingly.
 
 **Consequence.** Without the alias, nothing errors and the picks go wrong quietly. `next-ranking.md`'s oldest-first tie-break compares `new Date(undefined)` values, so every comparison is a tie and the pick falls back to array order. `bin/lib/issues/grouping.js`'s fast-lane bundling degrades the same way. The worst effect is a false queue-order cache hit: `queue-order.js`'s `buildFreshnessSignal` records `updatedAt: undefined`, `JSON.stringify` drops that key when the cache is persisted, and `signalsMatch` then compares `undefined !== undefined`, which is false. A record whose body or labels changed between two MCP firings therefore still matches the persisted signal, and the stale persisted groups are reused.
 
-**Required workaround.** Alias the timestamps once, at the queue-pull boundary, and `queue-pull-script.md` already does it: its `alias_mcp_timestamps` function runs unconditionally right after the `$DISPATCH_QUEUE_RAW` write and after each `$DISPATCH_DEP_FRESHNESS` write, before any node block reads either file. It is a no-op on gh-shaped input, so an MCP-path agent need only write the raw MCP JSON to those two paths and run the script as written, re-running the function definition at the top of any Bash call that calls it, since a shell function does not survive between Bash calls. `bin/lib/issues/mcp-issue-shape.js`'s `aliasMcpTimestamps` returns shallow copies with `createdAt` / `updatedAt` added from the string snake_case values. The snake_case originals stay, a camelCase value that is not `undefined` is kept, and a non-array input yields `[]`. Any other MCP-fetched issue array that a node block outside that script reads needs the same call.
+**Required workaround.** Alias the timestamps once, at the queue-pull boundary, and `bin/queue-pull.js` already does it on both transports. With `--transport files` it copies the `--queue-raw` file into its session queue file and aliases that copy (the agent's own file is left as written), and it aliases the `--dep-freshness` data each time the pull reads it, before any pass reads either. It is a no-op on gh-shaped input, so an MCP-path agent need only write the raw MCP JSON to those two files. `bin/lib/issues/mcp-issue-shape.js`'s `aliasMcpTimestamps` returns shallow copies with `createdAt` / `updatedAt` added from the string snake_case values. The snake_case originals stay, a camelCase value that is not `undefined` is kept, and a non-array input yields `[]`. Any other MCP-fetched issue array that a node block outside that CLI reads needs the same call.
 
 ## Step 2 — cross-PR overlap report (#1579)
 
-There is no confirmed MCP mapping for `gh pr list --json number,files,closingIssuesReferences` (a repo-wide open-PR listing with per-PR changed-file lists) yet. On the MCP transport, `queue-pull-script.md`'s cross-PR overlap fetch is skipped entirely and `dispatch-crosspr-overlap.json` is written as `[]` — the same fail-open posture as a `gh pr list` failure on the `gh` transport (SKILL.md Step 3's report renders nothing when its input is empty). This is a documented gap, not a silent one: the report is informational only (never a gate, per that section's AC2 fallback), so its absence on this transport costs a missed warning, not a missed exclusion.
+There is no confirmed MCP mapping for `gh pr list --json number,files,closingIssuesReferences` (a repo-wide open-PR listing with per-PR changed-file lists) yet. On `--transport files`, `bin/queue-pull.js` skips the cross-PR overlap fetch entirely and writes `dispatch-crosspr-overlap.json` as `[]` — the same fail-open posture as a `gh pr list` failure on the `gh` transport (SKILL.md Step 3's report renders nothing when its input is empty). This is a documented gap, not a silent one: the report is informational only (never a gate, per that section's AC2 fallback), so its absence on this transport costs a missed warning, not a missed exclusion.
 
 ## Step 2 — neighbour-in-flight pool (#3278, #3392)
 
-`queue-pull-script.md`'s neighbour-in-flight pass needs `gh` for its pool list, its `gh repo view` slug and its claim-blob reads, so on this transport skip the pass's whole `if ! gh issue list … fi` block, its 200-cap warning block, its `node-eval-file.js` block and the `NEIGHBOUR_RC` check, and run these four steps in their place (step 4 carries its own stop on a non-zero exit). A Node subprocess cannot call MCP tools, so the agent fetches and Node computes. Fail open exactly as the `gh` branch does: a failed list or read prints one AUTO line and excludes nothing. Shell variables do not survive across tool calls, so begin each Bash call by re-running `queue-pull-script.md`'s opening block of `DISPATCH_*="$(node … session-tmp-resolve.js --value …)"` lines (the session-tmp paths are deterministic), and `echo "$DISPATCH_IN_FLIGHT_RAW" "$DISPATCH_IN_FLIGHT_CLAIMS"` once to get the literal paths the Write tool needs.
+The CLI's neighbour-in-flight pass needs `gh` for its pool list, its `gh repo view` slug and its claim-blob reads, so on this transport the agent fetches the pool and the claims in the two steps below and writes them to the `--in-flight-raw` and `--in-flight-claims` files that Step 2's call above names. The CLI then works out which pool records neighbour a candidate and writes the exclusions, reading the claims through `claimReaderFromMap` (`bin/lib/dispatch/in-flight-neighbours.js`). A Node subprocess cannot call MCP tools, so the agent fetches and Node computes. Fail open exactly as the `gh` branch does: a failed list or read prints one AUTO line and excludes nothing. That fail-open runs through what the agent writes (`[]`, `{}`, a `{"failure": …}` entry): a missing or malformed pool or claims file stops the pull (exit 4), so write both on every pull.
 
-**1. Pool.** List the open `bot:in-progress` records through `list_issues` (`_shared/github-write-transport.md`'s "List open issues by label" row: label `bot:in-progress`, state open, body included, up to 200 records; `list_issues` returns at most 100 per page, so page until exhausted or 200 records are collected, and at exactly 200 print `Warning: the bot:in-progress pull for the neighbour-in-flight pass (#3278) returned exactly the --limit cap (200) — in-flight records beyond the cap are not checked as neighbours. Informational only; never blocks dispatch.`). Omit `fields`. The #3137 label truncation above reaches this pass only through `bin/lib/issues/grouping.js`'s `extractKeyFiles`: the `bot:in-progress` label filter runs server-side and liveness comes from the claim blob, but a record's origin label (`by:code-health`, `by:harness-health`, …) selects which extraction branch reads its Key Files, so a truncated `labels` array can drop a real neighbour edge. That fails open as a missed neighbour, settled at merge through `_shared/pr-first-merge.md`'s Conflict path; omitting `fields` is the mitigation (unverified live per #3137). Write `[{number, title, body, labels}]` to `$DISPATCH_IN_FLIGHT_RAW` with the Write tool. If the call fails, write `[]` there and print `AUTO — dispatch: neighbour-in-flight pool fetch failed; no neighbour-in-flight exclusions this pull`.
+**1. Pool.** List the open `bot:in-progress` records through `list_issues` (`_shared/github-write-transport.md`'s "List open issues by label" row: label `bot:in-progress`, state open, body included, up to 200 records; `list_issues` returns at most 100 per page, so page until exhausted or 200 records are collected, and at exactly 200 print `Warning: the bot:in-progress pull for the neighbour-in-flight pass (#3278) returned exactly the --limit cap (200) — in-flight records beyond the cap are not checked as neighbours. Informational only; never blocks dispatch.`). Omit `fields`. The #3137 label truncation above reaches this pass only through `bin/lib/issues/grouping.js`'s `extractKeyFiles`: the `bot:in-progress` label filter runs server-side and liveness comes from the claim blob, but a record's origin label (`by:code-health`, `by:harness-health`, …) selects which extraction branch reads its Key Files, so a truncated `labels` array can drop a real neighbour edge. That fails open as a missed neighbour, settled at merge through `_shared/pr-first-merge.md`'s Conflict path; omitting `fields` is the mitigation (unverified live per #3137). Write `[{number, title, body, labels}]` to the `--in-flight-raw` file with the Write tool. If the call fails, write `[]` there and print `AUTO — dispatch: neighbour-in-flight pool fetch failed; no neighbour-in-flight exclusions this pull`.
 
-**2. Claim targets.** Print the in-flight records that neighbour some candidate, the only ones whose claim needs reading:
-
-```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_IN_FLIGHT_RAW" <<NODE_EVAL_EOF
-  const { neighbourClaimTargets } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/in-flight-neighbours.js');
-  console.log(JSON.stringify(neighbourClaimTargets({ candidates: require(process.argv[1]).flat(), inFlight: require(process.argv[2]) })));
-NODE_EVAL_EOF
-```
-
-**3. Claim reads.** For each printed number, read `claims/issue-{n}.json` on `claims-registry` through `_shared/issue-claims.md`'s file-blob path ("The lock" step 1's MCP bullet). Record the blob's decoded content as a string (or the parsed claim object — `claimReaderFromMap` accepts either), never the tool's `{content, sha}` response wrapper; a not-found response as `null`; and any other error as `{"failure": "{error}"}`. An entry that is neither a claim (`claimedAt`) nor a tombstone (`released`) counts as a failed read. Write the object, keyed by number, to `$DISPATCH_IN_FLIGHT_CLAIMS` with the Write tool on every pull, `{}` when nothing was printed, so an earlier pull's map is never read. A number left out of the map counts as a failed read. If step 2 or this Write cannot complete, write `[]` to `$DISPATCH_IN_FLIGHT_RAW`, print step 1's pool-fetch AUTO line, and skip step 4: the agent-side steps fail open like the `gh` branch's `if !` block, and only a failure of step 4's own Node call stops the pull.
-
-**4. Exclusions.** Run the pass's computation over the map, through `claimReaderFromMap` (`bin/lib/dispatch/in-flight-neighbours.js`):
-
-```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_IN_FLIGHT_RAW" "$DISPATCH_EXCLUSIONS" "$DISPATCH_IN_FLIGHT_CLAIMS" <<NODE_EVAL_EOF
-  const { neighbourInFlightExclusions, claimReaderFromMap } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/in-flight-neighbours.js');
-  const { appendExclusion } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
-  const { exclusions, unreadable } = neighbourInFlightExclusions({
-    candidates: require(process.argv[1]).flat(), inFlight: require(process.argv[2]),
-    readClaimContent: claimReaderFromMap(require(process.argv[4])), now: Date.now(),
-  });
-  for (const e of exclusions) appendExclusion(process.argv[3], e);
-  if (unreadable.length) console.error('AUTO — dispatch: neighbour-in-flight claim read failed for #' + unreadable.join(', #') + '; treated as not in flight');
-NODE_EVAL_EOF
-```
-
-A non-zero exit stops the queue pull, the same as the `gh` branch's `NEIGHBOUR_RC` check.
+**2. Claim reads.** Read the claim of every record in the pool file, never a subset of it. The CLI prints no claim-targets list, and the claims are read before it has built the groups such a list would come from, so a number left out of the map counts as a failed claim read: one AUTO line, that record counts as not in flight, and its neighbour is missed. For each number, read `claims/issue-{n}.json` on `claims-registry` through `_shared/issue-claims.md`'s file-blob path ("The lock" step 1's MCP bullet). Record the blob's decoded content as a string (or the parsed claim object — `claimReaderFromMap` accepts either), never the tool's `{content, sha}` response wrapper; a not-found response as `null`; and any other error as `{"failure": "{error}"}`. An entry that is neither a claim (`claimedAt`) nor a tombstone (`released`) counts as a failed read. Write the object, keyed by number, to the `--in-flight-claims` file with the Write tool on every pull, `{}` when the pool is empty, so an earlier pull's map is never read. If the reads or this Write cannot complete, write `[]` to the pool file and `{}` to the claims file and print step 1's pool-fetch AUTO line: the agent-side steps fail open like a failed pool fetch on the `gh` transport.
 
 ## Step 2 — unlanded-blocker exclusion (#4792)
 
-`queue-pull-script.md`'s unlanded-blocker pass needs `gh` for its landing judgment: `bin/dispatch-unlanded-blockers.js` calls `preflight-records.js --blocker-landing`, whose landing check is a batched GraphQL query plus REST compare calls, and the GitHub MCP server has no generic GraphQL bridge (the #2523 section below). Run the pass's `if node … dispatch-unlanded-blockers.js … fi` block as written anyway: its `malformed-blocker` screen reads only the bodies already in `dispatch-groups.json`, so it still excludes, and the landing call fails open the same way the cross-PR overlap fetch above does — `preflight-records.js` exits non-zero at its first `gh` call, if it makes one, and the CLI prints one `Warning:` line and excludes no `unlanded-blocker` record. No MCP substitute exists for that judgment: `preflight-records.js`'s gh-free `--blocker-states-json` path reads every closed blocker `undetermined`, so it can never return the `unlanded` verdict this pass excludes on, and `/claude-tweaks:flow` Step 2.7b has the same blind spot on this transport (`flow/multispec-preflight-failure.md`'s Blocker landing paragraph) — the lost exclusion is one `/flow` would not enforce either.
+The CLI's unlanded-blocker pass needs `gh` for its landing judgment: `bin/dispatch-unlanded-blockers.js` calls `preflight-records.js --blocker-landing`, whose landing check is a batched GraphQL query plus REST compare calls, and the GitHub MCP server has no generic GraphQL bridge (the #2523 section below). `bin/queue-pull.js` still runs the pass on `--transport files`: its `malformed-blocker` screen reads only the bodies already in `dispatch-groups.json`, so it still excludes, and the landing call fails open the same way the cross-PR overlap fetch above does — `preflight-records.js` exits non-zero at its first `gh` call, if it makes one, and the CLI prints one `Warning:` line and excludes no `unlanded-blocker` record. No MCP substitute exists for that judgment: `preflight-records.js`'s gh-free `--blocker-states-json` path reads every closed blocker `undetermined`, so it can never return the `unlanded` verdict this pass excludes on, and `/claude-tweaks:flow` Step 2.7b has the same blind spot on this transport (`flow/multispec-preflight-failure.md`'s Blocker landing paragraph) — the lost exclusion is one `/flow` would not enforce either.
 
 ## Step 2 — open-linked-PR exclusion (#1224)
 
@@ -193,16 +187,17 @@ already had an open PR (#2450), and #2051, #2329, #1135, plus the #2267/#2268/#2
 (natively blocked by open #2265) were all falsely eligible until this manual check caught them.
 
 Supply those foreign states to the queue pull instead of leaving the body-text pass blind (#4793):
-before `queue-pull-script.md` runs it, collect each eligible candidate's body-declared foreign refs
-(`Blocked by owner/name#N` lines), read each with `issue_read` (`get` method; its `owner`, `repo`
-and `issue_number`), and write the states as one JSON object keyed by `owner/name#N`, each value
-copied from `issue_read`'s `state` (any case) or `null` for a ref `issue_read` cannot read, with the
-Write tool to a session-scoped temp file (`_shared/session-tmp-root.md`). Set its path with
-`export DISPATCH_FOREIGN_STATES={path}` at the top of the same Bash call that runs the pass (shell
-state does not persist between calls, and a `VAR=value` prefix reaches only the command it sits
-on): a closed ref no longer blocks, and an open one excludes the
-record as `owner/name#N`. A ref left out of the file, or `null`, still excludes the record as
-`owner/name#N (state unreadable)` (fail closed), and an unset or unreadable file changes nothing.
+before Step 2's `queue-pull.js --transport files` call above, collect each eligible candidate's
+body-declared foreign refs (`Blocked by owner/name#N` lines), read each with `issue_read` (`get`
+method; its `owner`, `repo` and `issue_number`), and write the states as one JSON object keyed by
+`owner/name#N`, each value copied from `issue_read`'s `state` (any case) or `null` for a ref
+`issue_read` cannot read, with the Write tool to the session-scoped `{dispatch-foreign-states.json}`
+file (`_shared/session-tmp-root.md`), `{}` when no candidate declares one. Pass its path as
+`--foreign-states {path}` on that call: the flag names the file for that one CLI run, so no shell
+variable has to survive between Bash calls. A closed ref no longer blocks, and an open one excludes
+the record as `owner/name#N`. A ref left out of the file, or `null`, still excludes the record as
+`owner/name#N (state unreadable)` (fail closed), and an omitted `--foreign-states` or an unreadable
+file changes nothing.
 
 Re-open this section if the GitHub MCP server ever adds a generic GraphQL passthrough tool or
 batched equivalents of `buildNativeDependencyQuery`/`buildLinkedPRQuery`.

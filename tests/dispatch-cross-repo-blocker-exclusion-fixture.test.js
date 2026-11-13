@@ -35,7 +35,8 @@ const MCP_FACTS = [
   [/suffixed ` \(state unreadable\)` when `issue_read` cannot read its state/, 'an unreadable foreign state is suffixed (state unreadable)'],
   [/read each with `issue_read` \(`get` method; its `owner`, `repo` and `issue_number`\)/, 'the MCP agent reads each body-declared foreign ref with issue_read'],
   [/write the states as one JSON object keyed by `owner\/name#N`, each value copied from `issue_read`'s `state` \(any case\) or `null`/, 'the MCP agent writes the states as a JSON object keyed by owner/name#N, copying issue_read\'s state in any case'],
-  [/Set its path with `export DISPATCH_FOREIGN_STATES=\{path\}` at the top of the same Bash call that runs the pass \(shell state does not persist between calls, and a `VAR=value` prefix reaches only the command it sits on\)/i, 'the MCP agent exports DISPATCH_FOREIGN_STATES={path} at the top of the Bash call that runs the pass, because a VAR=value prefix reaches only its own command'],
+  // #5230: the path rides on the queue-pull.js call as --foreign-states, so no shell variable has to survive between Bash calls.
+  [/Pass its path as `--foreign-states \{path\}` on that call: the flag names the file for that one CLI run, so no shell variable has to survive between Bash calls/i, 'the MCP agent passes the states file as --foreign-states {path} on the queue-pull.js call, so no shell variable has to survive between calls'],
   [/A ref left out of the file, or `null`, still excludes the record as `owner\/name#N \(state unreadable\)` \(fail closed\)/i, 'a ref left out or null still excludes the record (state unreadable)'],
 ];
 const NOTES_FACTS = [

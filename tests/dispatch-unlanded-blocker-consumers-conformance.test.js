@@ -113,7 +113,7 @@ test('#4793: queue-pull-notes.md says a foreign blocker (native or body-declared
 
 const MCP_HEADING = '## Step 2 — unlanded-blocker exclusion (#4792)';
 const MCP_FACTS = [
-  [/Run the pass's `if node … dispatch-unlanded-blockers\.js … fi` block as written anyway/, 'MCP path runs the block'],
+  [/`bin\/queue-pull\.js` still runs the pass on `--transport files`/, 'MCP path: the CLI still runs the pass (#5230)'],
   [/its `malformed-blocker` screen reads only the bodies already in `dispatch-groups\.json`, so it still excludes/, 'AC4.3: the screen needs no gh'],
   [/the GitHub MCP server has no generic GraphQL bridge \(the #2523 section below\)/, 'cites the #2523 convention'],
   [/reads every closed blocker `undetermined`, so it can never return the `unlanded` verdict/, 'why no MCP substitute'],
