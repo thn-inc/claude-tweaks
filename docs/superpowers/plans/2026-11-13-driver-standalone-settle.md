@@ -72,7 +72,7 @@ Waived `plugin/bin/lib/driver/worker.js`, `plugin/bin/lib/driver/roles.js`: read
   - `DRIVER_ESCALATION_MARKER = '<!-- express-driver: escalated -->'`
   - `reduceDetail(text: unknown) -> string`. Never longer than 200 characters; `'none'` when empty after reduction.
   - `commentFor(kind: 'escalated'|'blocked-record'|'blocked-pr'|'claim', fields: { step, outcome, reason?, exitCode?, detail, kept? }) -> string`. `detail` is passed through `reduceDetail` inside.
-  - `escalateDetailText({ step, detail }) -> string`. The escalate `--detail-file` content, a fixed template.
+  - `escalateDetailText({ step, detail, removes }) -> string`. The escalate `--detail-file` content, a fixed template. `removes` is true when the row will remove the worktree or the branch (spec Plan Review Clarifications, item 3).
   - `hasDriverEscalationMarker(comments: unknown) -> true|false|null`. `null` when `comments` is not an array.
 
 - [ ] **Step 1: Write the failing tests** in `tests/bin-lib/driver/settle.test.js`:
@@ -101,7 +101,7 @@ Waived `plugin/bin/lib/driver/worker.js`, `plugin/bin/lib/driver/roles.js`: read
   - `blocked-record`: ``The pipeline driver (drive.js) stopped this record at step {step}: outcome blocked. Detail: {detail}\n\nLabelled bot:blocked and the claim released. {kept}Clear bot:blocked to let the record be driven again.``, where `{kept}` is `'The draft PR, branch and worktree were kept for a human. '` when `kept` is true, else `''`.
   - `blocked-pr`: ``The pipeline driver (drive.js) stopped at step {step}: outcome blocked. Detail: {detail}\n\nThis draft PR, its branch and its worktree are kept for a human.``
   - `claim`: ``The pipeline driver (drive.js) could not claim this record: step {step} failed{ (claim-targets.js exit {exitCode})}. Detail: {detail}\n\nLabelled bot:blocked. Clear bot:blocked to let the record be driven again.``. The parenthetical appears only when `exitCode` is an integer.
-  - `escalateDetailText`: `drive.js stopped at step {step}: {detail}`.
+  - `escalateDetailText`: `drive.js stopped at step {step}: {detail}`, followed, when `removes` is true, by `. The driver removed the worktree and local branch this run created.` Add the test `escalate detail names the removal`: `escalateDetailText({ step: 'test', detail: 'red tests', removes: true })` ends with that sentence, and with `removes: false` it does not contain `removed`.
 
   Add `` `settle` `` to the `tests/helpers/strip-comments.js` roster.
 
@@ -113,6 +113,8 @@ Waived `plugin/bin/lib/driver/worker.js`, `plugin/bin/lib/driver/roles.js`: read
   `git add plugin/bin/lib/driver/settle.js tests/bin-lib/driver/settle.test.js tests/helpers/strip-comments.js`, then `git commit -m "Add settle.js helpers — detail reduction, comment templates, escalation marker (#5219)"`.
 
 ### Task 2: the settle table and runner (fake runner)
+
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/driver/settle.js`
@@ -141,7 +143,7 @@ Waived `plugin/bin/lib/driver/worker.js`, `plugin/bin/lib/driver/roles.js`: read
 
 - [ ] **Step 1: Write the failing tests** (fake `deps` recording every call in order, as `run.test.js`'s harness does; `gh`/`git`/`node` answer from a script; `readFile` throws ENOENT by default):
   - `AC1.1: a pre-push stop check did not log runs escalate, comment, release, worktree removal, branch deletion in order`. Use stop `{ step: 'test', class: 'pre-push', pushed: false, created: { worktree: true, branch: true }, reason: 'failing-test', detail: 'red tests', checkLogged: null }`; `lstatType(wt)` → directory; the branch rev-parse succeeds. The recorded calls, in order:
-    1. `node express-lane.js escalate --run {runDir} --issue 7 --reason failing-test --detail-file {runDir}/settle-escalate.txt`, with the file written beforehand and holding `escalateDetailText`.
+    1. `node express-lane.js escalate --run {runDir} --issue 7 --reason failing-test --detail-file {runDir}/settle-escalate.txt`, with the file written beforehand and holding `escalateDetailText({ step: 'test', detail: 'red tests', removes: true })`.
     2. `gh issue comment --repo {ghRepo} --body {commentFor('escalated')} -- 7`.
     3. `node release-claim.js 7 --run {runDir} --reason "drive.js settle: express-escalated at test"`, with no `--remove-grants`.
     4. `git -C {mainRoot} worktree remove --force --force {wt}`.
@@ -209,6 +211,8 @@ Waived `plugin/bin/lib/driver/worker.js`, `plugin/bin/lib/driver/roles.js`: read
 
 ### Task 4: admission refuses a record the driver escalated
 
+**Review risk:** high
+
 **Files:**
 - Modify: `plugin/bin/lib/driver/admission.js`
 - Modify: `plugin/bin/lib/driver/steps.js` (fetch step `ISSUE_JSON_FIELDS`, admission step input)
@@ -246,8 +250,11 @@ Waived `plugin/bin/lib/driver/worker.js`, `plugin/bin/lib/driver/roles.js`: read
 
 ### Task 5: steps carry the settle's classification on the stop
 
+**Review risk:** high
+
 **Files:**
 - Modify: `plugin/bin/lib/driver/steps.js`
+- Modify: `plugin/bin/lib/driver/run.js` (`finalEvent`'s `stop.reason` only)
 - Test: `tests/bin-lib/driver/run.test.js`
 
 **Interfaces:**
@@ -259,11 +266,13 @@ Waived `plugin/bin/lib/driver/worker.js`, `plugin/bin/lib/driver/roles.js`: read
   - claim step, non-zero exit → `reason: 'claim-exit-{code}'`.
   - `ctx.worker.spendOverrun = envelope.spendOverrun === true`.
   - check step, escalate with `logged: false`: no hand-logged escalation line any more (settle's `escalate` writes it). The proceed branch's hand-log is unchanged.
+  - run.js `finalEvent`: when the stop's class is `pre-push`, `stop.reason` is `toEscalationReason(result.reason)`, so every pre-push stop carries a closed-set reason (no changed files, commit failure, refused scope file, HEAD mismatch, failed push, worker `cannot-complete` → `express-error`). This is spec Plan Review Clarifications item 4. Other classes keep the step's own reason.
 
 - [ ] **Step 1: Update and add tests** in `run.test.js`:
   - `AC5.1: a wall-clock ceiling stop carries reason express-error and names the ceiling and value`: worker envelope `{ status: 'timeout', reason: 'wall-clock-ceiling' }` with policy minutes 30 → `stop.reason === 'express-error'`, `stop.detail` starts `timeout/wall-clock-ceiling: wall-clock ceiling of 30 minutes reached`, class `pre-push`.
   - `AC5.2: a spend ceiling stop names the spend ceiling`: `{ status: 'fail', reason: 'spend-ceiling', detail: 'Reached maximum budget ($5)' }` → detail starts `fail/spend-ceiling: spend ceiling of 5 dollars reached`.
   - Update the existing worker-envelope detail table (the `'timeout/wall-clock-ceiling'` and `'fail/spend-ceiling: …'` rows) to the new strings.
+  - `every pre-push stop carries a closed-set reason`: a HEAD mismatch at the push step (`rev-parse HEAD` → a sha other than check's head) → `stop.reason === 'express-error'`; a `no changed files` stop → `'express-error'`.
   - `red tests carry reason failing-test`, `check escalate carries its reason` (`out-of-bounds` → `out-of-bounds`; `diff-too-large` → `express-error`), `a claim failure carries claim-exit-{code}` (exit 3 → `claim-exit-3`, exit 4 → `claim-exit-4`).
   - Rewrite `check escalate with logged:false hand-logs the escalation, neutralized, and keeps the stop` to assert no `log-decision.js` call carries `'Express lane'` and that `stop.checkLogged === false`, `stop.reason === 'gate-denial'`. Delete `a throwing hand-log of an escalation keeps the stop and its reason, noting the lost line` (its subject no longer exists) and keep the proceed-branch tests as they are.
   - Update the existing `stop.reason` pins (around lines 700, 717 and 1445) only where the step now sets a reason; leave the `'fail'`/`'stop'` defaults that steps still produce.
@@ -283,6 +292,8 @@ Waived `plugin/bin/lib/driver/worker.js`, `plugin/bin/lib/driver/roles.js`: read
 
 ### Task 6: run.js calls settle, with the --no-settle flag
 
+**Review risk:** high
+
 **Files:**
 - Modify: `plugin/bin/lib/driver/run.js`
 - Modify: `plugin/bin/drive.js` (usage comment block only)
@@ -294,8 +305,12 @@ Waived `plugin/bin/lib/driver/worker.js`, `plugin/bin/lib/driver/roles.js`: read
   - `parseArgs(argv) -> { records, settle: boolean }`: `--no-settle` anywhere → `settle: false`; default `true`; any other `-`-prefixed token still errors.
   - `USAGE` keeps its first line byte-identical and gains, after the `--help` line: `'       drive.js --no-settle #N [#M…]   (the caller settles stops: the final line carries settle: left-to-caller and the stop object)'`.
   - `realDeps.readFile = (p) => fs.readFileSync(p, 'utf8')`.
-  - Final-event fields added (none renamed): `settle` (`'done'|'left-to-caller'|'none'`), `settleFailed` (string[]), `settleRow` (row name or null), plus `unclassified: true`, `settleNote: string` and `spendOverrun: true`, each only when it applies. When settle ran, `outcome` is `outcomeFor(result.settledClass)`, so a failed escalate or the safety net reads `blocked`.
-  - `driveRecord`: after the loop, a halted record with `shared.settle === true` calls `settle({ stop: <the stop object finalEvent builds>, record, runId, runDir, wt, branch, pr: ctx.pr && ctx.pr.number, claimed: ctx.claimed, mainRoot, ghRepo, emit }, deps)`, where `emit` writes `eventFor(ctx, step, { status, detail, extra: {} }, ms, deps)` to the sink. `settle` is `done` when the row had calls, `none` when it had none. A halted record with `--no-settle` makes no settle call and gets `settle: 'left-to-caller'`. A record with no stop gets `settle: 'none'`. An interrupted record (`reportInterrupt`) settles nothing and gets `settle: 'left-to-caller'`.
+  - Final-event fields added (none renamed): `settle` (`'done'|'left-to-caller'|'none'|'interrupted'`), `settleFailed` (string[]), `settleRow` (row name or null), plus `unclassified: true`, `settleNote: string` and `spendOverrun: true`, each only when it applies. When settle ran, `outcome` is `outcomeFor(result.settledClass)`, so a failed escalate or the safety net reads `blocked`. When it did not run, `outcome` is `OUTCOME_BY_CLASS[class]`, or `'blocked'` for a class outside it. `finalEvent` must never call `outcomeFor` on a raw class that may be unknown, because it throws.
+  - The stop object is built by a helper (`stopObject(ctx, stop)`) that both `settle`'s input and `finalEvent` use, so building it never depends on the outcome.
+  - `driveRecord`: after the loop, a halted record with `shared.settle === true` calls `settle({ stop: stopObject(ctx, stop), record, runId, runDir, wt, branch, pr: ctx.pr && ctx.pr.number, claimed: ctx.claimed, mainRoot, ghRepo, emit }, deps)`, where `emit` writes `eventFor(ctx, step, { status, detail, extra: {} }, ms, deps)` to the sink. `settle` is `done` when the row had calls, `none` when it had none.
+  - A halted record with `--no-settle` makes no settle call. It gets `settle: 'none'` when `SETTLE_ROWS[selectRow(stopObject, { prRecorded: Boolean(ctx.pr) }).row]` is empty, else `settle: 'left-to-caller'` (spec Plan Review Clarifications, item 2). `settleRow` names the row either way.
+  - A record with no stop gets `settle: 'none'`.
+  - An interrupted record (`reportInterrupt`) settles nothing and gets `settle: 'interrupted'`, `settleRow: null` (spec Plan Review Clarifications, item 1).
 
 - [ ] **Step 1: Write the failing tests** in `run.test.js`. First add `defaultScript` replies for every settle call (`gh issue comment`, `gh pr comment`, `gh issue edit`, `node release-claim.js` → `{ code: 0 }`, `node express-lane.js escalate` → `{ code: 0 }`, `git worktree remove`, `git branch -D`) and a harness `readFile` dep (`dispatch('readFile', [p])`, default reply: throw an `ENOENT` error):
   - `AC4.1: --no-settle makes no settle call and leaves the stop to the caller`: a red-test stop with `['--no-settle', '#7']` → no call whose argv names `issue comment`, `pr comment`, `issue edit`, `release-claim.js` or `escalate`, or a `git worktree remove`/`branch -D`; the final line has `settle: 'left-to-caller'`, `settleFailed: []`, and `stop` equal to `{ step: 'test', class: 'pre-push', pushed: false, created: { worktree: true, branch: true }, reason: 'failing-test', detail: 'red tests', checkLogged: null }`.
@@ -307,7 +322,9 @@ Waived `plugin/bin/lib/driver/worker.js`, `plugin/bin/lib/driver/roles.js`: read
   - `AC7.3: failed settle steps are listed on the final line`: script `gh issue comment` to throw → `settleFailed: ['settle-comment-record']`, plus a `settle-comment-record` event with status `fail`.
   - `AC1.6: a failed escalate makes the outcome blocked`: escalate `{ code: 1 }` → `outcome: 'blocked'`, `settleRow: 'blocked'`.
   - `AC3.5: a refusal before the claim makes no forge write`: admission refused → the only gh call is `issue view`. A claim exit 3 → no gh call other than `issue view`.
-  - `interrupted record settles nothing`: extend the existing interrupt test → `settle: 'left-to-caller'`, and no `settle-*` lines.
+  - `interrupted record settles nothing`: extend the existing interrupt test (one interrupted during the worker, one between steps after the claim) → `settle: 'interrupted'`, no `settle-*` lines, and no call to `release-claim.js`, `gh issue comment`, `gh issue edit` or `git worktree remove`.
+  - `AC4.5: --no-settle with a row that has no calls gives settle none`: an admission refusal under `['--no-settle', '#7']` → `settle: 'none'`, `settleRow: 'refused'`. A claim exit 3 under `--no-settle` → `settle: 'none'`, `settleRow: 'claim-contested'`.
+  - `AC8.3: an unclassified stop through the run loop is settled by the blocked row`: `driveRecord(7, shared, h.deps, steps)` with a test-seam `steps` array whose second entry returns `{ status: 'fail', halt: true, stopClass: 'bogus', reason: 'fail', extra: {} }` after a first entry that sets `ctx.runDir` → the final line has `settleRow: 'blocked'`, `unclassified: true`, `outcome: 'blocked'`, and nothing throws.
   - Then run the whole file. Fix any existing test that pinned an exact call list or line list a settle call now extends, keeping its intent (assert on the steps it was about). Name each changed test in the commit body.
 
 - [ ] **Step 2: Run to verify the new tests fail**
@@ -333,7 +350,8 @@ Waived `plugin/bin/lib/driver/worker.js`, `plugin/bin/lib/driver/roles.js`: read
 - [ ] **Step 1: Write `docs/driver.md`** with these sections:
   - **Running it**: `drive.js #N [#M…]`, `--no-settle`, `--help`, the exit codes copied from `USAGE`.
   - **Outcome words**: pending-review, express-escalated, blocked, refused, and which stop class gives each.
-  - **Event lines**: every field of a step line and of the final line, including `stop`, `settle`, `settleFailed`, `settleRow`, `unclassified`, `settleNote` and `spendOverrun`.
+  - **Event lines**: every field of a step line and of the final line, including `stop`, `settle` (its four values `done`, `left-to-caller`, `none`, `interrupted`), `settleFailed`, `settleRow`, `unclassified`, `settleNote` and `spendOverrun`.
+  - **After an interrupt**: an interrupted run settles nothing. Name the manual cleanup: release the claim (`node plugin/bin/release-claim.js {n} --run {run-dir} --reason …`), and remove the worktree (`git worktree remove --force --force {wt}`) and branch, or leave them for the standard path. The claim also lapses by its TTL.
   - **When a run stops**: the settle table from the spec, with the sentence "The source of truth is `SETTLE_ROWS` in `plugin/bin/lib/driver/settle.js`; this table is copied by hand."
   - **Taking an escalated record again** (`AC11.8`): delete the comment carrying `<!-- express-driver: escalated -->`.
   - **Worker rights**: a summary of `roles.js`'s per-role tools, `--restricted`, the sandbox.
@@ -361,11 +379,11 @@ Waived `plugin/bin/lib/driver/worker.js`, `plugin/bin/lib/driver/roles.js`: read
 | AC1 (order, check-logged skip, logged:false, escalate failure) | 2 (AC1.1–AC1.4), 3 (AC1.5), 6 (AC1.6) |
 | AC2 (blocked after push; failed pr create; record-pr failure) | 2 (AC2.1–AC2.5) |
 | AC3 (refusal, contested claim, other claim exits, nothing-created) | 2 (AC3.1–AC3.4), 6 (AC3.5) |
-| AC4 (--no-settle, settle none) | 6 (AC4.1–AC4.4) |
+| AC4 (--no-settle, settle none) | 6 (AC4.1–AC4.5) |
 | AC5 (wall clock, spend, overspend) | 5 (AC5.1, AC5.2), 6 (AC5.3, AC5.4) |
 | AC6 (no model) | 1 (AC6.1), 2 (AC6.2) |
 | AC7 (continue on failure, no retry, release 3/4) | 2 (AC7.1, AC7.2), 6 (AC7.3) |
-| AC8 (none, unclassified) | 2 (AC8.1, AC8.2) |
+| AC8 (none, unclassified) | 2 (AC8.1, AC8.2), 6 (AC8.3) |
 | AC9 (page, registry, design amended) | 7 |
 | AC10 (hygiene) | 1 (AC10.1) |
 | AC11 (marker, admission gate, trust, unreadable) | 1 (AC11.1), 4 (AC11.2–AC11.6) |
