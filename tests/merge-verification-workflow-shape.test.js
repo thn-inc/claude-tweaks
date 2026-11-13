@@ -179,6 +179,33 @@ test('push: absent, all, some, ignore and tags', () => {
     assert.equal(read(on).pushBranches, 'all', on);
     assert.deepEqual(read(on).unparsed, [], on);
   }
+  // a lone `-` is a sequence indicator, and a plain lead that YAML treats as an
+  // indicator (`?`, `:`, `|`, `>`, `%`, `@`, backtick) is never a pattern; `&x` is an anchor
+  for (const [on, reason] of [
+    ['on:\n  push:\n    branches: -\n', 'push branches not read'],
+    ['on:\n  push:\n    branches:\n      - -\n', 'push branches not read'],
+    ['on:\n  push:\n    branches: [main, -]\n', 'push branches not read'],
+    ['on:\n  push:\n    branches: [main, - x]\n', 'push branches not read'],
+    ['on:\n  push:\n    branches:\n      - ? x\n', 'push branches not read'],
+    ['on:\n  push:\n    branches: [main, ?x]\n', 'push branches not read'],
+    ['on:\n  push:\n    branches: [main, :x]\n', 'push branches not read'],
+    ['on:\n  push:\n    branches:\n      - :x\n', 'push branches not read'],
+    ['on:\n  push:\n    branches: |x\n', 'push branches not read'],
+    ['on:\n  push:\n    branches:\n      - >x\n', 'push branches not read'],
+    ['on:\n  push:\n    branches: [main, %x]\n', 'push branches not read'],
+    ['on:\n  push:\n    branches:\n      - @x\n', 'push branches not read'],
+    ['on:\n  push:\n    branches: `x\n', 'push branches not read'],
+    ['on:\n  push:\n    branches: [main, &x y]\n', 'anchor or alias in on:'],
+  ]) {
+    assert.deepEqual(read(on).unparsed, [reason], on);
+    assert.equal(read(on).pushBranches, 'absent', on);
+  }
+  // a `-` followed by a pattern character is a plain scalar and stays readable
+  for (const on of ['on:\n  push:\n    branches: -dev\n', 'on:\n  push:\n    branches:\n      - -dev\n      - v?.x\n',
+    'on:\n  push:\n    branches: [-dev, main]\n', 'on:\n  push:\n    branches: [--x]\n', 'on:\n  push:\n    branches: -*\n']) {
+    assert.equal(read(on).pushBranches, 'some', on);
+    assert.deepEqual(read(on).unparsed, [], on);
+  }
   assert.equal(read("on:\n  push:\n    branches: ['*-dev', main]\n").pushBranches, 'some');
   assert.equal(read('on:\n  push:\n    branches: [feature/*]\n').pushBranches, 'some');
   // the indentless top-level sequence stays inside the on: region

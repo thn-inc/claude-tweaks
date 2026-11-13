@@ -450,11 +450,12 @@ const PR_FILTER_KEYS = Object.freeze(['branches', 'branches-ignore', 'paths', 'p
 // `!` (a negation pattern); a bare `!x` is a YAML tag, not a pattern, so it
 // stays unread. A plain item starts with a name or path character (a leading
 // `*` is a YAML alias, `**` included, so only a quoted `'**'` means all; a
-// leading `?`, `+`, `[` or `]` is YAML syntax or no pattern), and inside a flow
-// sequence (BRANCH_FLOW_ITEM) a plain `[` or `]` is YAML syntax, so it stays
-// unread too.
-const BRANCH_ITEM = /^(?:(['"])!?[A-Za-z0-9_*/.?+[\]-]+\1|[A-Za-z0-9_/.-][A-Za-z0-9_*/.?+[\]-]*)$/;
-const BRANCH_FLOW_ITEM = /^(?:(['"])!?[A-Za-z0-9_*/.?+[\]-]+\1|[A-Za-z0-9_/.-][A-Za-z0-9_*/.?+-]*)$/;
+// leading `?`, `+`, `[` or `]` is YAML syntax or no pattern, and a `-` leads
+// only when a pattern character follows it, since a lone `-` is a sequence
+// entry), and inside a flow sequence (BRANCH_FLOW_ITEM) a plain `[` or `]` is
+// YAML syntax, so it stays unread too.
+const BRANCH_ITEM = /^(?:(['"])!?[A-Za-z0-9_*/.?+[\]-]+\1|(?:[A-Za-z0-9_/.]|-[A-Za-z0-9_*/.?+[\]-])[A-Za-z0-9_*/.?+[\]-]*)$/;
+const BRANCH_FLOW_ITEM = /^(?:(['"])!?[A-Za-z0-9_*/.?+[\]-]+\1|(?:[A-Za-z0-9_/.]|-[A-Za-z0-9_*/.?+-])[A-Za-z0-9_*/.?+-]*)$/;
 const BLOCK_SCALAR = /^[|>][-+0-9]*$/;
 const PLAIN_KEY = /^[^\s#'"[\]{},&*!|>%@`-]\S*$/;
 // Every `(.*)` below carries the `s` flag: a stray `\r` or U+2028 left in a
