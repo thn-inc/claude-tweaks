@@ -2753,7 +2753,7 @@ test('AC4.4: parseArgs accepts --no-settle in any position and still refuses oth
 });
 
 test('budget AC2.1: a bad --budget value is a usage error with no call at all', async () => {
-  for (const argv of [['--budget', '0'], ['--budget', '-1'], ['--budget', '1.5'], ['--budget', ''], ['--budget', 'abc'], ['--budget', 'ALL'], ['--budget', '01'], ['--budget']]) {
+  for (const argv of [['--budget', '0'], ['--budget', '-1'], ['--budget', '1.5'], ['--budget', ''], ['--budget', 'abc'], ['--budget', 'ALL'], ['--budget', '01'], ['--budget', '--no-settle'], ['--budget']]) {
     const h = harness();
     assert.equal(await run(argv, h.deps), 2, JSON.stringify(argv));
     assert.match(h.err.join(''), /Usage: drive\.js #N/);
@@ -2791,7 +2791,7 @@ test('budget usage: USAGE and the drive.js header state the --budget form and th
   }
 });
 
-test('AC4.1:--no-settle makes no settle call and leaves the stop to the caller', async () => {
+test('AC4.1: --no-settle makes no settle call and leaves the stop to the caller', async () => {
   const h = harness(REDTESTS);
   assert.equal(await run(['--no-settle', '#7'], h.deps), 0);
   assert.deepEqual(settleCalls(h), [], 'no comment, label, release, escalate, worktree removal or branch delete');
