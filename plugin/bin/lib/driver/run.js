@@ -12,16 +12,17 @@
 // result halts ends the record. Every record ends with a final line carrying the outcome
 // word for the stop's class (events.js's outcomeFor; `none` when nothing stopped), the
 // totals with and without the CI wait, the PR, the CI word, the worker's cost, turns and
-// denial count, and the structured stop. A halted record is then settled by settle.js (comment,
-// label, release the claim, remove what this run created), unless the run was started with
-// --no-settle, which leaves the stop to the caller; settle's events come before the final line,
-// and the final line's `settle` word says what happened (`done`, `left-to-caller`, `none` or
-// `interrupted`). An interrupted record settles nothing: a signal queued during the halting
-// step's synchronous child is delivered at the loop's yield before settle, and one that lands
-// during settle stops it before its next call (settle yields between calls and reads
-// shared.interrupted); either way the final line says `interrupted` and the loop
-// terminates. A record that sets ctx.shared.fatal (the policy, the run's repository or its integration branch cannot be
-// resolved) ends the run with exit 1.
+// denial count, and the structured stop. A halted record is then settled by settle.js
+// (comment, label, release the claim, remove what this run created), unless the run was
+// started with --no-settle, which leaves the stop to the caller; settle's events come before
+// the final line, and the final line's `settle` word says what happened (`done`,
+// `left-to-caller`, `none` or `interrupted`). An interrupted record settles nothing: a
+// signal queued during the halting step's synchronous child is delivered at the loop's yield
+// before settle, and one that lands during settle stops it before its next call (settle
+// yields between calls and reads shared.interrupted); either way the final line says
+// `interrupted` and the loop terminates. A record that sets ctx.shared.fatal (the policy,
+// the run's repository or its integration branch cannot be resolved) ends the run with
+// exit 1.
 //
 // Every side effect goes through `deps` (gh-api-module-pattern's CLI wrapper contract);
 // realDeps below is the real set. #5216's admission module and eligibility option are
@@ -206,7 +207,6 @@ function finalEvent(ctx, stop, sink, msTotal, deps, settled = SETTLE_NONE) {
   if (fileError !== null) event.eventsFileError = fileError;
   return event;
 }
-
 
 // An interrupted record's stop class, from the side effects it holds: `none` once the run's
 // config is written (the PR is created, recorded and configured: a complete pending-review),

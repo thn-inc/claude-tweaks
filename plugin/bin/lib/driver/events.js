@@ -4,12 +4,16 @@
 // The step-name list below IS the event vocabulary: event lines carry `step` drawn from it
 // (plus FINAL_STEP for the closing line). Fields may be added to an event, never renamed.
 //
-// This module holds three things and no step logic:
+// This module holds no step logic. It holds:
 //   - the step, outcome and stop-class constants,
 //   - the event sink (stdout line + {run-dir}/driver-events.jsonl),
 //   - the neutralizers for text the headless worker controls, so that text cannot close an
 //     issue (or backlink one), mention a user, open a code fence or an HTML comment, or break a
-//     line in a commit, PR body or event.
+//     line in a commit, PR body or event,
+//   - the small helpers steps.js and settle.js share, so neither requires the other:
+//     CLI_TIMEOUT_MS (the bound on one plugin/bin CLI call), firstLine and errorText (an
+//     execFileSync error's own words), and yieldToEventLoop (lets a pending signal be
+//     delivered between steps and between settle calls).
 
 const path = require('node:path');
 
