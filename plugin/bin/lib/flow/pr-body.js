@@ -205,10 +205,10 @@ function restoreHtmlForm(lines, htmlToken, plainToken, side, after = -1) {
   if (lines.some((l) => l.includes(htmlToken))) return false;
   const at = lines.findIndex((l, i) => i > after && l.trim() === plainToken);
   if (at === -1) return false;
-  const at2 = side === 'above' ? at - 1 : at + 1;
-  const neighbour = lines[at2];
-  if (neighbour !== undefined && neighbour.trim() === '' && at2 !== lines.length - 1) {
-    lines[at2] = htmlToken + (neighbour.endsWith('\r') ? '\r' : '');
+  const neighbourAt = side === 'above' ? at - 1 : at + 1;
+  const neighbour = lines[neighbourAt];
+  if (neighbour !== undefined && neighbour.trim() === '' && neighbourAt !== lines.length - 1) {
+    lines[neighbourAt] = htmlToken + (neighbour.endsWith('\r') ? '\r' : '');
   } else {
     lines.splice(side === 'above' ? at : at + 1, 0, htmlToken + (lines[at].endsWith('\r') ? '\r' : ''));
   }
@@ -248,8 +248,9 @@ function repairPrBody({ body, runId, fixesLines }) {
   }
 
   const lines = result.split('\n');
-  const plainRunAt = lines.findIndex((l) => /^claude-tweaks-run:\s*(\S+)$/.test(l.trim()));
-  const plainRun = plainRunAt === -1 ? null : /^claude-tweaks-run:\s*(\S+)$/.exec(lines[plainRunAt].trim());
+  const plainRunPattern = /^claude-tweaks-run:\s*(\S+)$/;
+  const plainRunAt = lines.findIndex((l) => plainRunPattern.test(l.trim()));
+  const plainRun = plainRunAt === -1 ? null : plainRunPattern.exec(lines[plainRunAt].trim());
   if (plainRun && !/<!--\s*claude-tweaks-run:\s*\S+\s*-->/.test(result)
     && restoreHtmlForm(lines, runMarkerHtml(plainRun[1]), lines[plainRunAt].trim(), 'above')) {
     restored.push('run marker HTML form');
