@@ -15,8 +15,8 @@
 //
 // A billing read that finds gh gone (ENOENT) adds no failure row only when the caller passes the
 // runs half's `ghAbsent: true` (gh absent from the start: the render's `billing unavailable (gh
-// absent)` line covers it). With gh vanishing after runs page 1, `ghAbsent` is false, so the read is
-// a failed query like any other and is named in `failures[]`.
+// absent)` line covers it). With gh vanishing after the first runs page, `ghAbsent` is false, so
+// the read is a failed query like any other and is named in `failures[]`.
 //
 // An Actions budget is a `budgets[]` entry whose `budget_product_sku` lower-cases to `actions` and
 // whose `budget_scope` is `organization`; SKU-level (`actions_linux`) and repository- or

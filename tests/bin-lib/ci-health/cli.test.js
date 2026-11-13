@@ -15,6 +15,7 @@ const { installStub, STUB_SKIP } = require('../../helpers/path-stub');
 const { run, realDeps, issueListArgs, issueCreateArgs, issueDeps } = require('../../../plugin/bin/ci-health');
 const { BREACH_TITLE } = require('../../../plugin/bin/lib/ci-health/thresholds');
 const { renderReport } = require('../../../plugin/bin/lib/ci-health/render');
+const { actionsRunsSim } = require('../../helpers/ci-health-actions-sim');
 
 const NOW = new Date('2026-11-12T10:00:00Z');
 const DAY = 24 * 60 * 60 * 1000;
@@ -57,13 +58,22 @@ function ghError(stderr) {
 }
 const http = (status) => ghError(`gh: request failed (HTTP ${status})`);
 
-// pages: one entry per runs page — an array of runs or an Error.
-const runsRoute = (pages) => (args) => {
-  const n = Number(args.find((a) => a.startsWith('page=')).slice('page='.length));
-  const entry = pages[n - 1];
-  if (entry === undefined) throw new Error('unexpected ' + args.join(' '));
-  return entry instanceof Error ? entry : { total_count: 0, workflow_runs: entry };
+// pages: one entry per runs page of the newest range (the first one read) — an array of runs or an
+// Error. Every older range answers one empty page, so `pages` alone is the window's runs.
+const createdArg = (args) => args.find((a) => a.startsWith('created=')).slice('created='.length);
+const runsRoute = (pages) => {
+  let newest = null;
+  return (args) => {
+    if (newest === null) newest = createdArg(args);
+    const n = Number(args.find((a) => a.startsWith('page=')).slice('page='.length));
+    if (createdArg(args) !== newest) return { total_count: 0, workflow_runs: [] };
+    const entry = pages[n - 1];
+    if (entry === undefined) throw new Error('unexpected ' + args.join(' '));
+    return entry instanceof Error ? entry : { total_count: 0, workflow_runs: entry };
+  };
 };
+// The 30-day window from 2026-10-13, as fetch.js reads it: five ranges, newest first.
+const RANGES30 = ['2026-11-10..2026-11-17', '2026-11-03..2026-11-10', '2026-10-27..2026-11-03', '2026-10-20..2026-10-27', '2026-10-13..2026-10-20'];
 
 function orgRoutes(slug, pages = [[]]) {
   return {
@@ -73,6 +83,9 @@ function orgRoutes(slug, pages = [[]]) {
     [ORG_SUMMARY]: fixture('org-usage-summary.json'),
   };
 }
+
+// Every runs call fails with `status`, every range's page 1 included: the half reads no page.
+const everyRangeFails = (status) => ({ ...orgRoutes(ORG), [`repos/${ORG}/actions/runs`]: http(status) });
 
 function userRoutes(pages = [[]]) {
   return {
@@ -181,7 +194,7 @@ test('--repo pins the github.com host, skips the origin read, and addresses ever
   assert.equal(envelope(out).repo, 'acme/widgets');
   assert.deepEqual(out.calls[0], ['api', '--method', 'GET', 'repos/acme/widgets']);
   assert.deepEqual(out.calls[1], ['api', '--method', 'GET', 'repos/acme/widgets/actions/runs',
-    '-f', 'created=>=2026-10-13', '-f', 'per_page=100', '-f', 'page=1']);
+    '-f', 'created=2026-11-10T00:00:00Z..2026-11-16T23:59:59Z', '-f', 'per_page=100', '-f', 'page=1']);
 });
 
 test('--root reads the repository from that checkout\'s origin and types the issue from its work-types', () => {
@@ -244,9 +257,10 @@ test('the origin path pins nothing and reads origin once; --days sets the window
   const env = envelope(out);
   assert.equal(env.repo, ORG);
   assert.deepEqual(env.window, { days: 7, from: '2026-11-05' });
-  assert.deepEqual(Object.keys(env), ['repo', 'window', 'runsAvailable', 'truncated', 'ghAbsent', 'workflows', 'watchSeconds',
+  assert.deepEqual(Object.keys(env), ['repo', 'window', 'runsAvailable', 'truncated', 'truncatedRanges', 'ghAbsent', 'workflows', 'watchSeconds',
     'minHeadroomPct', 'billing', 'failures', 'breaches', 'filed', 'filingSkipped']);
   assert.equal(env.runsAvailable, true);
+  assert.deepEqual(env.truncatedRanges, []);
   assert.equal(env.watchSeconds, 900);
   assert.equal(env.minHeadroomPct, 10);
   assert.equal(env.filed, null);
@@ -369,7 +383,7 @@ test('AC7.1: a failed page 2 is a partial report — exit 0, page 1 workflows, t
   assert.equal(run(['--json'], d), 0);
   const env = envelope(out);
   assert.equal(env.workflows.reduce((sum, w) => sum + w.runs, 0), 100);
-  assert.equal(env.failures[0].query, 'runs page 2');
+  assert.deepEqual(env.failures.map((f) => f.query), [`runs ${RANGES30[0]} page 2`]);
   assert.equal(env.truncated, false);
 });
 
@@ -388,8 +402,8 @@ test('a failed runs read never files: page 2 failing with a p90 breach under --f
   assert.deepEqual(text.out.created, []);
 });
 
-test('a failed page 1 never files: HTTP 500 with a headroom-only breach under --file exits 2 and creates nothing', () => {
-  const json = deps({ routes: orgRoutes(ORG, [http(500)]) });
+test('every range\'s page 1 failing never files: HTTP 500 with a headroom-only breach under --file exits 2 and creates nothing', () => {
+  const json = deps({ routes: everyRangeFails(500) });
   assert.equal(run(['--file', '--json'], json.d), 2);
   const env = envelope(json.out);
   assert.deepEqual(env.breaches, [{ kind: 'headroom-below-floor', headroomPct: 5, floor: 10 }]);
@@ -397,7 +411,7 @@ test('a failed page 1 never files: HTTP 500 with a headroom-only breach under --
   assert.equal(env.filingSkipped, 'runs read failed');
   assert.deepEqual(json.out.created, []);
   assert.deepEqual(json.out.titles, []);
-  const text = deps({ routes: orgRoutes(ORG, [http(500)]) });
+  const text = deps({ routes: everyRangeFails(500) });
   assert.equal(run(['--file'], text.d), 2);
   assert.ok(lines(text.out).includes('not filed: runs read failed'), lines(text.out).join('\n'));
   assert.deepEqual(text.out.created, []);
@@ -423,8 +437,11 @@ test('gh vanishing after page 1 is a failed runs read, never gh absent: --file w
   const env = envelope(json.out);
   assert.equal(env.ghAbsent, false);
   assert.ok(env.breaches.some((b) => b.kind === 'p90-over-watch'));
-  // The billing read gh vanished under is a query that did not complete, so failures[] names it.
-  assert.deepEqual(env.failures.map((f) => f.query), ['runs page 2', 'billing budgets']);
+  // Each older range's page 1, and the billing read gh vanished under, are queries that did not
+  // complete, so failures[] names each of them.
+  assert.deepEqual(env.failures.map((f) => f.query), [
+    `runs ${RANGES30[0]} page 2`, ...RANGES30.slice(1).map((range) => `runs ${range} page 1`), 'billing budgets',
+  ]);
   assert.equal(env.filed, null);
   assert.equal(env.filingSkipped, 'runs read failed');
   assert.deepEqual(json.out.created, []);
@@ -432,7 +449,7 @@ test('gh vanishing after page 1 is a failed runs read, never gh absent: --file w
   assert.equal(run(['--file'], text.d), 0);
   const all = lines(text.out);
   assert.ok(all.includes('not filed: runs read failed'), all.join('\n'));
-  assert.ok(all.includes('failed read: runs page 2: spawnSync gh ENOENT'), all.join('\n'));
+  assert.ok(all.includes(`failed read: runs ${RANGES30[0]} page 2: spawnSync gh ENOENT`), all.join('\n'));
   assert.ok(all.includes('failed read: billing budgets: spawnSync gh ENOENT'), all.join('\n'));
   assert.ok(!all.some((l) => l.includes('gh absent')), all.join('\n'));
   assert.deepEqual(text.out.created, []);
@@ -459,18 +476,42 @@ test('AC7.2: every call failing HTTP 500 exits 2', () => {
   assert.equal(run([], d), 2);
   const all = lines(out);
   assert.ok(all.includes('runs unavailable (HTTP 500)'), all.join('\n'));
-  assert.ok(all.includes('failed read: runs page 1: gh: request failed (HTTP 500)'), all.join('\n'));
+  for (const range of RANGES30) {
+    assert.ok(all.includes(`failed read: runs ${range} page 1: gh: request failed (HTTP 500)`), all.join('\n'));
+  }
 });
 
-test('AC7.2: every runs page failing exits 2 whatever billing returns, with the full report on stdout', () => {
-  const { d, out } = deps({ routes: orgRoutes(ORG, [http(500)]) });
+test('AC7.2: every range failing exits 2 whatever billing returns, with the full report on stdout', () => {
+  const { d, out } = deps({ routes: everyRangeFails(500) });
   assert.equal(run([], d), 2);
   const all = lines(out);
   assert.equal(all[0], 'ci health: example-org/widgets, last 30 days (from 2026-10-13)');
   assert.ok(all.includes('runs unavailable (HTTP 500)'), all.join('\n'));
   assert.ok(all.includes('billing: Actions budget headroom 5% (floor 10%)'), all.join('\n'));
   assert.ok(!all.includes('no workflow runs in the last 30 days'), all.join('\n'));
+  assert.deepEqual(all.filter((l) => l.startsWith('failed read: runs ')).length, RANGES30.length, all.join('\n'));
   assert.deepEqual(out.stderr, []);
+});
+
+test('one range failing is a partial report: exit 0, the other ranges\' workflows, the failed range named', () => {
+  const pool = busyPool(300);
+  const sim = actionsRunsSim(pool);
+  const routes = {
+    ...orgRoutes(ORG),
+    [`repos/${ORG}/actions/runs`]: (args) => (createdArg(args).startsWith('2026-10-27') ? http(502) : sim.answer(args)),
+  };
+  const json = deps({ routes });
+  assert.equal(run(['--file', '--json'], json.d), 0);
+  const env = envelope(json.out);
+  assert.equal(env.runsAvailable, true);
+  assert.equal(env.truncated, false);
+  assert.deepEqual(env.failures, [{ query: `runs ${RANGES30[2]} page 1`, status: 502, error: 'gh: request failed (HTTP 502)' }]);
+  assert.equal(env.workflows.find((w) => w.path === CI).runs, pool.length - 300);
+  assert.equal(env.filingSkipped, 'runs read failed');
+  assert.deepEqual(json.out.created, []);
+  const text = deps({ routes });
+  assert.equal(run([], text.d), 0);
+  assert.ok(lines(text.out).includes(`failed read: runs ${RANGES30[2]} page 1: gh: request failed (HTTP 502)`), lines(text.out).join('\n'));
 });
 
 test('partial: runs page 1 answers while the org budgets read fails HTTP 404 — exit 0, billing unavailable (404)', () => {
@@ -486,6 +527,7 @@ test('AC7.3: a truncated window renders the truncation line and never files, bre
   assert.equal(run(['--file', '--json'], json.d), 0);
   const env = envelope(json.out);
   assert.equal(env.truncated, true);
+  assert.deepEqual(env.truncatedRanges, [{ from: '2026-11-10', to: '2026-11-17', reason: 'cap' }]);
   assert.ok(env.breaches.some((b) => b.kind === 'p90-over-watch'));
   assert.equal(env.filed, null);
   assert.equal(env.filingSkipped, 'window truncated');
@@ -493,9 +535,73 @@ test('AC7.3: a truncated window renders the truncation line and never files, bre
   const text = deps({ routes: orgRoutes(ORG, pages) });
   assert.equal(run(['--file'], text.d), 0);
   const all = lines(text.out);
-  assert.ok(all.includes('window truncated at 1000 runs: statistics cover the newest runs only'), all.join('\n'));
+  assert.ok(all.includes('window truncated: 1 of 5 weeks hit the 1000-run cap or the read budget (2026-11-10..2026-11-17 cap); figures for those weeks are partial'), all.join('\n'));
   assert.ok(all.includes('not filed: window truncated'), all.join('\n'));
   assert.deepEqual(text.out.created, []);
+});
+
+// A busy 30-day window: `perWeek` pull_request runs of 1000 s on ci.yml in each of the five ranges
+// (the trailing one before NOW), one a minute, so p90 breaches the 900 s watch.
+function busyPool(perWeek, { capWeek = null, capCount = 0 } = {}) {
+  const starts = ['2026-10-13', '2026-10-20', '2026-10-27', '2026-11-03', '2026-11-10'];
+  return starts.flatMap((week) => Array.from({ length: week === capWeek ? capCount : perWeek }, (_, i) =>
+    wfRun({ created: Date.parse(`${week}T01:00:00Z`) + i * 60 * 1000, seconds: 1000 })));
+}
+
+test('--file on a fully read busy window past 1,000 runs files the p90 breach once, with a weekly p50 in every full bucket', () => {
+  const pool = busyPool(300);
+  const routes = { ...orgRoutes(ORG), [`repos/${ORG}/actions/runs`]: actionsRunsSim(pool).answer };
+  const json = deps({ routes });
+  assert.equal(run(['--file', '--json'], json.d), 0);
+  const env = envelope(json.out);
+  assert.equal(env.truncated, false);
+  assert.deepEqual(env.truncatedRanges, []);
+  assert.deepEqual(env.failures, []);
+  const ci = env.workflows.find((w) => w.path === CI);
+  assert.equal(ci.runs, 1500);
+  assert.deepEqual(ci.weeklyP50Seconds, [1000, 1000, 1000, 1000]);
+  assert.deepEqual(ci.trend, { ratio: 1, label: 'flat' });
+  assert.ok(env.breaches.some((b) => b.kind === 'p90-over-watch'));
+  assert.deepEqual(env.filed, { title: BREACH_TITLE, number: 42 });
+  assert.equal(json.out.created.length, 1);
+  const text = deps({ routes });
+  assert.equal(run(['--file'], text.d), 0);
+  assert.ok(!lines(text.out).some((l) => l.startsWith('window truncated')), lines(text.out).join('\n'));
+  assert.ok(lines(text.out).includes(`filed #42: ${BREACH_TITLE}`), lines(text.out).join('\n'));
+});
+
+test('--file on a busy window with one range over the cap files nothing and names that range', () => {
+  const pool = busyPool(200, { capWeek: '2026-10-27', capCount: 1200 });
+  const routes = { ...orgRoutes(ORG), [`repos/${ORG}/actions/runs`]: actionsRunsSim(pool).answer };
+  const json = deps({ routes });
+  assert.equal(run(['--file', '--json'], json.d), 0);
+  const env = envelope(json.out);
+  assert.equal(env.truncated, true);
+  assert.deepEqual(env.truncatedRanges, [{ from: '2026-10-27', to: '2026-11-03', reason: 'cap' }]);
+  assert.equal(env.workflows.find((w) => w.path === CI).runs, 4 * 200 + 1000);
+  assert.equal(env.filingSkipped, 'window truncated');
+  assert.deepEqual(json.out.created, []);
+  const text = deps({ routes });
+  assert.equal(run(['--file'], text.d), 0);
+  const all = lines(text.out);
+  assert.ok(all.includes('window truncated: 1 of 5 weeks hit the 1000-run cap or the read budget (2026-10-27..2026-11-03 cap); figures for those weeks are partial'), all.join('\n'));
+  assert.ok(all.includes('not filed: window truncated'), all.join('\n'));
+  assert.deepEqual(text.out.created, []);
+});
+
+test('render: budget-unread ranges are named with their reason, oldest first, on one line', () => {
+  const report = {
+    repo: ORG, window: { days: 400, from: '2025-10-08' }, runsAvailable: true, truncated: true,
+    truncatedRanges: [
+      { from: '2025-10-08', to: '2025-10-15', reason: 'budget' },
+      { from: '2025-10-15', to: '2025-10-22', reason: 'budget' },
+      { from: '2026-11-04', to: '2026-11-11', reason: 'cap' },
+    ],
+    ghAbsent: false, workflows: [], watchSeconds: 900, minHeadroomPct: 10, billing: { available: false, status: null, reason: 'owner type unreadable' },
+    failures: [], breaches: [], filed: null, filingSkipped: null,
+  };
+  assert.equal(renderReport(report)[1],
+    'window truncated: 3 of 58 weeks hit the 1000-run cap or the read budget (2025-10-08..2025-10-15 budget, 2025-10-15..2025-10-22 budget, 2026-11-04..2026-11-11 cap); figures for those weeks are partial');
 });
 
 test('AC7.7 render: a user-owned repo renders billing: no Actions budget to compare', () => {
@@ -642,7 +748,7 @@ test('render: a failed repo read beside a readable runs page 1 — the repo fail
 });
 
 test('--json: runsAvailable is false when no runs page was read, and the unavailable line comes from it', () => {
-  const failed = deps({ routes: orgRoutes(ORG, [http(500)]) });
+  const failed = deps({ routes: everyRangeFails(500) });
   assert.equal(run(['--json'], failed.d), 2);
   assert.equal(envelope(failed.out).runsAvailable, false);
   const absent = deps({ runner: () => { throw Object.assign(new Error('spawn gh ENOENT'), { code: 'ENOENT' }); } });

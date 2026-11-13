@@ -29,9 +29,9 @@ files:
 
 ### 2. The report shows per-workflow run statistics — `ci-health.js`, `fetch.js`, `stats.js`, `render.js`
 - **URL:** —
-- **Action:** The CLI reads up to 10 pages of the last 30 days of workflow runs and prints one line per workflow, its name and path in code spans, for example ``` `ci.yml` (`.github/workflows/ci.yml`): 5 runs, p50 800s, p90 1300s — over the 900s merge-gate watch, trend rising 1.5, superseded 2 (0.5), cancelled 1 ```.
+- **Action:** The CLI reads the last 30 days of workflow runs one 7-day range at a time (up to 10 pages per range, 50 pages in all) and prints one line per workflow, its name and path in code spans, for example ``` `ci.yml` (`.github/workflows/ci.yml`): 5 runs, p50 800s, p90 1300s — over the 900s merge-gate watch, trend rising 1.5, superseded 2 (0.5), cancelled 1 ```.
 - **Should feel:** Readable at a glance: the slow workflow stands out, and the trend says whether it is getting worse.
-- **Should understand:** p90 is run duration (`updated_at` minus `run_started_at`) and excludes queue wait, so it is advisory evidence for the watch. Skipped (`conclusion: skipped`) runs count in `runs` but not in the percentiles. A trend with too few runs reads `insufficient`. Hitting the 1,000-run cap prints `window truncated at 1000 runs: statistics cover the newest runs only`.
+- **Should understand:** p90 is run duration (`updated_at` minus `run_started_at`) and excludes queue wait, so it is advisory evidence for the watch. Skipped (`conclusion: skipped`) runs count in `runs` but not in the percentiles. A trend with too few runs reads `insufficient`. A busy repository past 1,000 runs in the window is still read whole; only a week that itself hits the 1,000-run cap, or that the 50-page read budget leaves unread, is named, on one line such as `window truncated: 1 of 5 weeks hit the 1000-run cap or the read budget (2026-11-03..2026-11-10 cap); figures for those weeks are partial`.
 - **Red flags:** A negative or zero-second duration in the figures; a push-only workflow carrying the watch suffix; a truncated window with no truncation line; a workflow name that renders as a link, a mention, or a line of its own.
 
 ### 3. The billing line shows headroom, never an amount — `billing.js`

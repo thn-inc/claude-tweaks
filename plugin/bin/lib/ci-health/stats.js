@@ -45,6 +45,24 @@ const {
 
 const BUCKET_MS = BUCKET_DAYS * 24 * 60 * 60 * 1000;
 
+// The window's buckets: floor(days / BUCKET_DAYS) full ones, then the trailing partial one, which
+// holds `now` (the window starts at the UTC date `days` days back, so it spans under days + 1 days).
+// fetch.js reads one `created` range per bucket from bucketRanges, so the range a run is read in
+// is always the bucket bucketIndex puts it in.
+function weekCount(days) {
+  return Math.floor(days / BUCKET_DAYS) + 1;
+}
+
+function bucketIndex(createdAtMs, fromMs) {
+  return Math.floor((createdAtMs - fromMs) / BUCKET_MS);
+}
+
+// Each bucket as [startMs, endMs): endMs is the next bucket's startMs.
+function bucketRanges(from, days) {
+  const fromMs = from.getTime();
+  return Array.from({ length: weekCount(days) }, (_, i) => ({ startMs: fromMs + i * BUCKET_MS, endMs: fromMs + (i + 1) * BUCKET_MS }));
+}
+
 function parseTime(value) {
   return typeof value === 'string' ? Date.parse(value) : NaN;
 }
@@ -152,7 +170,7 @@ function workflowStats(path, group, { fromMs, fullBuckets, defaultBranch, pushSa
     const seconds = durationSeconds(run);
     if (seconds === null) { skippedRuns += 1; continue; }
     durations.push(seconds);
-    const bucket = Math.floor((createdMs(run) - fromMs) / BUCKET_MS);
+    const bucket = bucketIndex(createdMs(run), fromMs);
     if (bucket >= 0 && bucket < fullBuckets) buckets[bucket].push(seconds);
   }
   const sorted = ascending(durations);
@@ -188,7 +206,7 @@ function computeStats(runs, { from, days, defaultBranch }) {
   }
   const context = {
     fromMs: from.getTime(),
-    fullBuckets: Math.floor(days / BUCKET_DAYS),
+    fullBuckets: weekCount(days) - 1,
     defaultBranch,
     pushSample: allPushShas.size >= PUSH_SAMPLE_FLOOR ? allPushShas.size : null,
   };
@@ -197,4 +215,4 @@ function computeStats(runs, { from, days, defaultBranch }) {
   return out.sort(byPath);
 }
 
-module.exports = { durationSeconds, nearestRank, computeStats, round2 };
+module.exports = { durationSeconds, nearestRank, computeStats, round2, weekCount, bucketIndex, bucketRanges };

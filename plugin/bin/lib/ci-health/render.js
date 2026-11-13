@@ -4,7 +4,8 @@
 //
 // The runs half is unavailable when gh is absent or no runs page was read (the envelope's
 // `runsAvailable`, fetch.js's `available`); only an available, empty runs half says there were no
-// runs. The unavailable line shows page 1's HTTP status, else its error. An unreadable billing
+// runs. The unavailable line shows the newest range's page 1 HTTP status, else its error. A
+// truncated window's one line names each range fetch.js marked truncated. An unreadable billing
 // endpoint never reads as "no budget".
 //
 // Every free-text value (a gh error, a reason) has its whitespace runs collapsed to one space, so
@@ -15,6 +16,7 @@
 
 const { RUNS_PER_PAGE, MAX_RUN_PAGES } = require('./constants');
 const { NO_BUDGET } = require('./billing');
+const { weekCount } = require('./stats');
 
 const oneLine = (value) => String(value).replace(/\s+/g, ' ').trim();
 const seconds = (value) => (value === null ? 'n/a' : `${value}s`);
@@ -62,8 +64,9 @@ function billingLine(report) {
   return `billing: ${NO_BUDGET}${firstPage}`;
 }
 
+// An unavailable half read no page, so its first runs failure is the newest range's page 1.
 function runsUnavailableLine(failures) {
-  const firstPage = failures.find((f) => f.query === 'runs page 1');
+  const firstPage = failures.find((f) => /^runs \S+ page 1$/.test(f.query));
   if (!firstPage) return 'runs unavailable';
   const why = firstPage.status != null ? `HTTP ${firstPage.status}` : oneLine(firstPage.error);
   return why ? `runs unavailable (${why})` : 'runs unavailable';
@@ -90,7 +93,9 @@ function renderReport(report) {
   const failures = report.failures || [];
   const out = [`ci health: ${report.repo}, last ${days} days (from ${from})`];
   if (report.truncated) {
-    out.push(`window truncated at ${RUNS_PER_PAGE * MAX_RUN_PAGES} runs: statistics cover the newest runs only`);
+    const ranges = report.truncatedRanges || [];
+    const named = ranges.map((r) => `${r.from}..${r.to} ${r.reason}`).join(', ');
+    out.push(`window truncated: ${ranges.length} of ${weekCount(days)} weeks hit the ${RUNS_PER_PAGE * MAX_RUN_PAGES}-run cap or the read budget (${named}); figures for those weeks are partial`);
   }
   if (report.ghAbsent) out.push('runs unavailable (gh absent)');
   else if (report.runsAvailable !== true) out.push(runsUnavailableLine(failures));

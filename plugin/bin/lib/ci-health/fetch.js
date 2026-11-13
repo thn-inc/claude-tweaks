@@ -9,7 +9,8 @@
 // reach this module (the `.`/`..` path-segment guard lives there).
 'use strict';
 
-const { CI_HEALTH_GH_TIMEOUT_MS, RUNS_PER_PAGE, MAX_RUN_PAGES } = require('./constants');
+const { CI_HEALTH_GH_TIMEOUT_MS, RUNS_PER_PAGE, MAX_RUN_PAGES, RUN_PAGE_BUDGET } = require('./constants');
+const { bucketRanges } = require('./stats');
 
 const ERROR_TEXT_MAX = 300;
 
@@ -54,42 +55,63 @@ function readRepo({ owner, repo }, { runner }) {
   }
 }
 
-// Reads pages 1..MAX_RUN_PAGES of the window, stopping after a short page or a failed page.
-// `available` = page 1 succeeded; `truncated` = the last allowed page was full. Runs are kept once
-// per `id` (first occurrence): a run created mid-read shifts the pages, so a run can repeat.
-function fetchRuns({ owner, repo, from }, { runner }) {
-  const result = { available: false, runs: [], pages: 0, truncated: false, ghAbsent: false, failures: [] };
+const isoSecond = (ms) => `${new Date(ms).toISOString().slice(0, 19)}Z`;
+const isoDay = (ms) => new Date(ms).toISOString().slice(0, 10);
+
+// Reads the window one stats.js bucket at a time (`from` is the window's UTC-midnight start Date,
+// the one computeStats gets), newest bucket first, so a read the budget cuts keeps the most recent
+// weeks, as the old single newest-first query did. GitHub's `created=a..b` is inclusive at both
+// ends (probed live), so each range ends one second before the next begins and a run created on a
+// boundary is read once, in the bucket stats.js puts it in. Each range pages 1..MAX_RUN_PAGES,
+// stopping after a short or failed page; RUN_PAGE_BUDGET bounds the calls across all ranges.
+// `available` = at least one page was read; `truncatedRanges` names, oldest first, each range whose
+// page MAX_RUN_PAGES came back full (`cap`) or that the budget left unread or cut mid-read
+// (`budget`), and `truncated` is true when there is one. Runs are kept once per `id` (first
+// occurrence): a run created mid-read shifts the pages, so a run can repeat.
+function fetchRuns({ owner, repo, from, days }, { runner }) {
+  const result = { available: false, runs: [], pages: 0, truncated: false, truncatedRanges: [], ghAbsent: false, failures: [] };
   const seen = new Set();
-  for (let n = 1; n <= MAX_RUN_PAGES; n += 1) {
-    const args = [
-      'api', '--method', 'GET', `repos/${owner}/${repo}/actions/runs`,
-      '-f', `created=>=${from}`, '-f', `per_page=${RUNS_PER_PAGE}`, '-f', `page=${n}`,
-    ];
-    let page;
-    try {
-      const body = parseBody(runner(args, { timeout: CI_HEALTH_GH_TIMEOUT_MS }));
-      page = body && body.workflow_runs;
-      if (!Array.isArray(page)) throw new Error(`runs page ${n}: response has no workflow_runs array`);
-    } catch (err) {
-      // gh absent on page 1 renders from `ghAbsent` alone, so it adds no failure row. gh vanishing
-      // after page 1 is a failed page like any other: the window is only partly read.
-      if (n === 1 && isGhAbsent(err)) result.ghAbsent = true;
-      else result.failures.push({ query: `runs page ${n}`, status: httpStatusOf(err), error: errorText(err) });
-      break;
-    }
-    for (const run of page) {
-      const id = run && run.id;
-      if (id != null) {
-        if (seen.has(id)) continue;
-        seen.add(id);
+  let calls = 0;
+  for (const { startMs, endMs } of bucketRanges(from, days).reverse()) {
+    if (result.ghAbsent) break;
+    const label = `${isoDay(startMs)}..${isoDay(endMs)}`;
+    let reason = null;
+    for (let n = 1; ; n += 1) {
+      if (n > MAX_RUN_PAGES) { reason = 'cap'; break; }
+      if (calls === RUN_PAGE_BUDGET) { reason = 'budget'; break; }
+      calls += 1;
+      const args = [
+        'api', '--method', 'GET', `repos/${owner}/${repo}/actions/runs`,
+        '-f', `created=${isoSecond(startMs)}..${isoSecond(endMs - 1000)}`, '-f', `per_page=${RUNS_PER_PAGE}`, '-f', `page=${n}`,
+      ];
+      let page;
+      try {
+        const body = parseBody(runner(args, { timeout: CI_HEALTH_GH_TIMEOUT_MS }));
+        page = body && body.workflow_runs;
+        if (!Array.isArray(page)) throw new Error(`runs ${label} page ${n}: response has no workflow_runs array`);
+      } catch (err) {
+        // gh absent on the first call renders from `ghAbsent` alone, so it adds no failure row and
+        // no range is tried after it. gh vanishing later is a failed page like any other: that
+        // range is only partly read, and the next range is still tried.
+        if (calls === 1 && isGhAbsent(err)) result.ghAbsent = true;
+        else result.failures.push({ query: `runs ${label} page ${n}`, status: httpStatusOf(err), error: errorText(err) });
+        break;
       }
-      result.runs.push(run);
+      for (const run of page) {
+        const id = run && run.id;
+        if (id != null) {
+          if (seen.has(id)) continue;
+          seen.add(id);
+        }
+        result.runs.push(run);
+      }
+      result.pages += 1;
+      result.available = true;
+      if (page.length < RUNS_PER_PAGE) break;
     }
-    result.pages = n;
-    result.available = true;
-    if (page.length < RUNS_PER_PAGE) break;
-    if (n === MAX_RUN_PAGES) result.truncated = true;
+    if (reason) result.truncatedRanges.unshift({ from: isoDay(startMs), to: isoDay(endMs), reason });
   }
+  result.truncated = result.truncatedRanges.length > 0;
   return result;
 }
 

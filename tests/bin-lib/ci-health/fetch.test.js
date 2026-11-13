@@ -8,11 +8,19 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { errorText, httpStatusOf, isGhAbsent, readRepo, fetchRuns } = require('../../../plugin/bin/lib/ci-health/fetch');
-const { CI_HEALTH_GH_TIMEOUT_MS } = require('../../../plugin/bin/lib/ci-health/constants');
+const {
+  CI_HEALTH_GH_TIMEOUT_MS, MAX_RUN_PAGES, RUN_PAGE_BUDGET, DEFAULT_DAYS, MIN_BUCKET_RUNS,
+} = require('../../../plugin/bin/lib/ci-health/constants');
+const { weekCount, bucketIndex, computeStats } = require('../../../plugin/bin/lib/ci-health/stats');
+const { actionsRunsSim } = require('../../helpers/ci-health-actions-sim');
 
 const REPO_ORG = fs.readFileSync(path.join(__dirname, '..', '..', 'fixtures', 'ci-health', 'repo-org.json'), 'utf8');
 const RUNS_PATH = 'repos/acme/widgets/actions/runs';
-const FROM = '2026-10-13';
+// Under 7 days the window is one range: 2026-10-13T00:00:00Z..2026-10-19T23:59:59Z.
+const FROM = new Date('2026-10-13T00:00:00Z');
+const DAYS = 6;
+const ONE_RANGE = '2026-10-13..2026-10-20';
+const WEEK = 7 * 24 * 60 * 60 * 1000;
 
 function ghError(stderr, extra = {}) {
   const err = new Error(`Command failed: gh api\n${stderr}`);
@@ -48,12 +56,12 @@ function runsRunner(pages) {
   return { runner, calls };
 }
 
-test('page 1 argv is the exact GET read with the created window, 100 per page, and the 15 s timeout', () => {
+test('page 1 argv is the exact GET read with the range\'s created timestamps, 100 per page, and the 15 s timeout', () => {
   const { runner, calls } = runsRunner([3]);
-  fetchRuns({ owner: 'acme', repo: 'widgets', from: FROM }, { runner });
+  fetchRuns({ owner: 'acme', repo: 'widgets', from: FROM, days: DAYS }, { runner });
   assert.deepStrictEqual(calls[0].args, [
     'api', '--method', 'GET', 'repos/acme/widgets/actions/runs',
-    '-f', 'created=>=2026-10-13', '-f', 'per_page=100', '-f', 'page=1',
+    '-f', 'created=2026-10-13T00:00:00Z..2026-10-19T23:59:59Z', '-f', 'per_page=100', '-f', 'page=1',
   ]);
   assert.deepStrictEqual(calls[0].opts, { timeout: 15000 });
   assert.strictEqual(CI_HEALTH_GH_TIMEOUT_MS, 15000);
@@ -61,38 +69,41 @@ test('page 1 argv is the exact GET read with the created window, 100 per page, a
 
 test('a short page 1 is the whole window: one call, runs returned, not truncated', () => {
   const { runner, calls } = runsRunner([3]);
-  const r = fetchRuns({ owner: 'acme', repo: 'widgets', from: FROM }, { runner });
+  const r = fetchRuns({ owner: 'acme', repo: 'widgets', from: FROM, days: DAYS }, { runner });
   assert.strictEqual(calls.length, 1);
-  assert.deepStrictEqual(r, { available: true, runs: [{ id: 1 }, { id: 2 }, { id: 3 }], pages: 1, truncated: false, ghAbsent: false, failures: [] });
+  assert.deepStrictEqual(r, {
+    available: true, runs: [{ id: 1 }, { id: 2 }, { id: 3 }], pages: 1, truncated: false, truncatedRanges: [], ghAbsent: false, failures: [],
+  });
 });
 
-test('AC7.1: page 2 throwing HTTP 503 keeps page 1, names the failed page, and stops', () => {
+test('AC7.1: page 2 throwing HTTP 503 keeps page 1, names the failed range and page, and stops that range', () => {
   const { runner, calls } = runsRunner([100, ghError('HTTP 503: Service Unavailable (https://api.github.com/...)'), 100]);
-  const r = fetchRuns({ owner: 'acme', repo: 'widgets', from: FROM }, { runner });
+  const r = fetchRuns({ owner: 'acme', repo: 'widgets', from: FROM, days: DAYS }, { runner });
   assert.strictEqual(r.runs.length, 100);
   assert.strictEqual(r.available, true);
   assert.strictEqual(r.pages, 1);
   assert.strictEqual(r.truncated, false);
   assert.strictEqual(r.failures.length, 1);
-  assert.strictEqual(r.failures[0].query, 'runs page 2');
+  assert.strictEqual(r.failures[0].query, `runs ${ONE_RANGE} page 2`);
   assert.strictEqual(r.failures[0].status, 503);
   assert.match(r.failures[0].error, /HTTP 503/);
   assert.strictEqual(calls.length, 2, 'no page 3 call');
 });
 
-test('AC7.3: ten full pages hit the cap — truncated, exactly 10 calls, 1,000 runs', () => {
+test('AC7.3: ten full pages hit the cap — that range truncated with reason cap, exactly 10 calls, 1,000 runs', () => {
   const { runner, calls } = runsRunner(Array(11).fill(100));
-  const r = fetchRuns({ owner: 'acme', repo: 'widgets', from: FROM }, { runner });
+  const r = fetchRuns({ owner: 'acme', repo: 'widgets', from: FROM, days: DAYS }, { runner });
   assert.strictEqual(r.truncated, true);
+  assert.deepStrictEqual(r.truncatedRanges, [{ from: '2026-10-13', to: '2026-10-20', reason: 'cap' }]);
   assert.strictEqual(calls.length, 10);
   assert.strictEqual(r.runs.length, 1000);
   assert.strictEqual(r.pages, 10);
   assert.deepStrictEqual(calls.map((c) => c.args[c.args.length - 1]), Array.from({ length: 10 }, (_, i) => `page=${i + 1}`));
 });
 
-test('AC7.3: a 40-run page 3 ends the window — 3 calls, not truncated', () => {
+test('AC7.3: a 40-run page 3 ends the range — 3 calls, not truncated', () => {
   const { runner, calls } = runsRunner([100, 100, 40, 100]);
-  const r = fetchRuns({ owner: 'acme', repo: 'widgets', from: FROM }, { runner });
+  const r = fetchRuns({ owner: 'acme', repo: 'widgets', from: FROM, days: DAYS }, { runner });
   assert.strictEqual(calls.length, 3);
   assert.strictEqual(r.truncated, false);
   assert.strictEqual(r.runs.length, 240);
@@ -101,10 +112,164 @@ test('AC7.3: a 40-run page 3 ends the window — 3 calls, not truncated', () => 
 
 test('a short page 10 is not truncated', () => {
   const { runner, calls } = runsRunner([...Array(9).fill(100), 99]);
-  const r = fetchRuns({ owner: 'acme', repo: 'widgets', from: FROM }, { runner });
+  const r = fetchRuns({ owner: 'acme', repo: 'widgets', from: FROM, days: DAYS }, { runner });
   assert.strictEqual(calls.length, 10);
   assert.strictEqual(r.truncated, false);
+  assert.deepStrictEqual(r.truncatedRanges, []);
   assert.strictEqual(r.runs.length, 999);
+});
+
+// ── One created range per stats bucket (#5161 review follow-up 1) ──────────────────────────────
+const FROM30 = new Date('2026-10-13T00:00:00Z');
+const RANGES30 = ['2026-10-13', '2026-10-20', '2026-10-27', '2026-11-03', '2026-11-10'];
+
+let poolSeq = 0;
+// `count` runs inside the week starting at `weekStart` (a YYYY-MM-DD), one a minute from 01:00Z.
+function weekRuns(weekStart, count) {
+  const base = Date.parse(`${weekStart}T01:00:00Z`);
+  return Array.from({ length: count }, (_, i) => {
+    poolSeq += 1;
+    return { id: poolSeq, created_at: new Date(base + i * 60 * 1000).toISOString().replace('.000Z', 'Z') };
+  });
+}
+
+function simRunner(pool) {
+  const sim = actionsRunsSim(pool);
+  const calls = [];
+  const runner = (args, opts) => {
+    calls.push({ args, opts });
+    if (args[3] !== RUNS_PATH) throw new Error('unexpected ' + args.join(' '));
+    return JSON.stringify(sim.answer(args));
+  };
+  return { runner, calls, served: sim.served };
+}
+
+const createdOf = (call) => call.args.find((a) => a.startsWith('created=')).slice('created='.length);
+
+test('a 30-day window reads five created ranges newest first, each ending one second before the next begins', () => {
+  const { runner, calls } = simRunner([]);
+  fetchRuns({ owner: 'acme', repo: 'widgets', from: FROM30, days: 30 }, { runner });
+  assert.deepStrictEqual(calls.map(createdOf), [
+    '2026-11-10T00:00:00Z..2026-11-16T23:59:59Z',
+    '2026-11-03T00:00:00Z..2026-11-09T23:59:59Z',
+    '2026-10-27T00:00:00Z..2026-11-02T23:59:59Z',
+    '2026-10-20T00:00:00Z..2026-10-26T23:59:59Z',
+    '2026-10-13T00:00:00Z..2026-10-19T23:59:59Z',
+  ]);
+  assert.strictEqual(weekCount(30), 5);
+});
+
+test('more than 1,000 runs in the window with no range at the cap: every run read, not truncated', () => {
+  const pool = RANGES30.flatMap((week) => weekRuns(week, 400));
+  const { runner, calls } = simRunner(pool);
+  const r = fetchRuns({ owner: 'acme', repo: 'widgets', from: FROM30, days: 30 }, { runner });
+  assert.strictEqual(r.runs.length, 2000);
+  assert.deepStrictEqual(new Set(r.runs.map((run) => run.id)), new Set(pool.map((run) => run.id)));
+  assert.strictEqual(r.truncated, false);
+  assert.deepStrictEqual(r.truncatedRanges, []);
+  assert.deepStrictEqual(r.failures, []);
+  // Four full pages and a short (empty) fifth per range.
+  assert.strictEqual(calls.length, 25);
+  assert.strictEqual(r.pages, 25);
+});
+
+test('one range over the cap: only that range is truncated (reason cap), every other range read whole', () => {
+  const capped = weekRuns('2026-11-03', 1200);
+  const others = ['2026-10-13', '2026-10-20', '2026-10-27', '2026-11-10'].flatMap((week) => weekRuns(week, 150));
+  const { runner } = simRunner([...capped, ...others]);
+  const r = fetchRuns({ owner: 'acme', repo: 'widgets', from: FROM30, days: 30 }, { runner });
+  assert.strictEqual(r.truncated, true);
+  assert.deepStrictEqual(r.truncatedRanges, [{ from: '2026-11-03', to: '2026-11-10', reason: 'cap' }]);
+  const ids = new Set(r.runs.map((run) => run.id));
+  for (const run of others) assert.ok(ids.has(run.id), `run ${run.id} of an uncapped range is missing`);
+  assert.strictEqual(capped.filter((run) => ids.has(run.id)).length, 1000, 'the capped range keeps its newest 1,000');
+  assert.strictEqual(r.runs.length, 1600);
+});
+
+test('the read budget: ranges it leaves unread are named budget, oldest first in read order', () => {
+  assert.strictEqual(RUN_PAGE_BUDGET, weekCount(DEFAULT_DAYS) * MAX_RUN_PAGES, 'the default window can never run out of budget');
+  assert.strictEqual(RUN_PAGE_BUDGET, 50);
+  // --days 400 is 58 ranges; an empty repo spends one call per range until the budget is gone.
+  const { runner, calls } = simRunner([]);
+  const from = new Date('2025-10-08T00:00:00Z');
+  const r = fetchRuns({ owner: 'acme', repo: 'widgets', from, days: 400 }, { runner });
+  assert.strictEqual(weekCount(400), 58);
+  assert.strictEqual(calls.length, RUN_PAGE_BUDGET);
+  assert.strictEqual(r.truncated, true);
+  assert.strictEqual(r.truncatedRanges.length, 58 - RUN_PAGE_BUDGET);
+  assert.ok(r.truncatedRanges.every((t) => t.reason === 'budget'), JSON.stringify(r.truncatedRanges));
+  assert.deepStrictEqual(r.truncatedRanges[0], { from: '2025-10-08', to: '2025-10-15', reason: 'budget' });
+  // Chronological: each entry starts where the previous one ends.
+  for (let i = 1; i < r.truncatedRanges.length; i += 1) assert.strictEqual(r.truncatedRanges[i].from, r.truncatedRanges[i - 1].to);
+});
+
+test('the read budget cut mid-range: that range is named budget and its pages read so far are kept', () => {
+  // Nine newest ranges of 450 runs spend 5 calls each (45); the tenth holds 900 runs, so its
+  // fifth full page spends the last call and its sixth is never read.
+  const from = new Date('2025-10-08T00:00:00Z');
+  const starts = Array.from({ length: 58 }, (_, i) => new Date(from.getTime() + i * WEEK).toISOString().slice(0, 10));
+  const newest = starts.slice().reverse();
+  const full = newest.slice(0, 9).flatMap((week) => weekRuns(week, 450));
+  const cut = weekRuns(newest[9], 900);
+  const { runner, calls } = simRunner([...full, ...cut]);
+  const r = fetchRuns({ owner: 'acme', repo: 'widgets', from, days: 400 }, { runner });
+  assert.strictEqual(calls.length, RUN_PAGE_BUDGET);
+  assert.strictEqual(r.runs.length, 9 * 450 + 500);
+  const cutEntry = r.truncatedRanges.find((t) => t.from === newest[9]);
+  assert.deepStrictEqual(cutEntry, { from: newest[9], to: newest[8], reason: 'budget' });
+  assert.strictEqual(r.truncatedRanges.length, 58 - 9);
+  assert.ok(r.truncatedRanges.every((t) => t.reason === 'budget'));
+});
+
+test('a run created exactly on a range boundary is served by one range only, and that range is its stats bucket', () => {
+  const at = (s) => ({ id: s.length + Date.parse(s), created_at: s });
+  const boundary = [
+    at('2026-10-19T23:59:59Z'), at('2026-10-20T00:00:00Z'),
+    at('2026-11-02T23:59:59Z'), at('2026-11-03T00:00:00Z'), at('2026-11-10T00:00:00Z'),
+  ];
+  const { runner, served } = simRunner(boundary);
+  const r = fetchRuns({ owner: 'acme', repo: 'widgets', from: FROM30, days: 30 }, { runner });
+  assert.strictEqual(r.runs.length, boundary.length);
+  for (const run of boundary) {
+    const servedBy = served.filter((s) => s.ids.includes(run.id));
+    assert.strictEqual(servedBy.length, 1, `${run.created_at} served by ${servedBy.length} ranges`);
+    const rangeIndex = (Date.parse(servedBy[0].created.split('..')[0]) - FROM30.getTime()) / WEEK;
+    assert.strictEqual(rangeIndex, bucketIndex(Date.parse(run.created_at), FROM30.getTime()), run.created_at);
+  }
+});
+
+test('one range failing is named and the other ranges still read; every range failing leaves the half unavailable', () => {
+  const pool = RANGES30.flatMap((week) => weekRuns(week, 30));
+  const sim = simRunner(pool);
+  const failing = (args, opts) => {
+    if (createdOf({ args }).startsWith('2026-10-27')) throw ghError('HTTP 502: Bad Gateway');
+    return sim.runner(args, opts);
+  };
+  const r = fetchRuns({ owner: 'acme', repo: 'widgets', from: FROM30, days: 30 }, { runner: failing });
+  assert.strictEqual(r.available, true);
+  assert.strictEqual(r.runs.length, 120);
+  assert.deepStrictEqual(r.failures, [{ query: 'runs 2026-10-27..2026-11-03 page 1', status: 502, error: 'HTTP 502: Bad Gateway' }]);
+  assert.strictEqual(r.truncated, false);
+  const all = fetchRuns({ owner: 'acme', repo: 'widgets', from: FROM30, days: 30 }, { runner: () => { throw ghError('HTTP 500'); } });
+  assert.strictEqual(all.available, false);
+  assert.strictEqual(all.pages, 0);
+  assert.deepStrictEqual(all.failures.map((f) => f.query), RANGES30.slice().reverse().map((start, i, a) =>
+    `runs ${start}..${i === 0 ? '2026-11-17' : a[i - 1]} page 1`));
+});
+
+test('a fully read busy window gives every full bucket a weekly p50 and a trend', () => {
+  // 300 working pull_request runs per week, 1,500 in all: past the old single-query cap.
+  const pool = RANGES30.flatMap((week, w) => weekRuns(week, 300).map((run) => ({
+    ...run, name: 'ci.yml', path: '.github/workflows/ci.yml', event: 'pull_request', status: 'completed', conclusion: 'success',
+    run_started_at: run.created_at, updated_at: new Date(Date.parse(run.created_at) + (100 + 10 * w) * 1000).toISOString(),
+  })));
+  const { runner } = simRunner(pool);
+  const r = fetchRuns({ owner: 'acme', repo: 'widgets', from: FROM30, days: 30 }, { runner });
+  assert.strictEqual(r.truncated, false);
+  const [ci] = computeStats(r.runs, { from: FROM30, days: 30, defaultBranch: 'main' });
+  assert.deepStrictEqual(ci.weeklyP50Seconds, [100, 110, 120, 130]);
+  assert.ok(300 >= MIN_BUCKET_RUNS);
+  assert.deepStrictEqual(ci.trend, { ratio: 1.3, label: 'rising' });
 });
 
 for (const [label, stderr, status] of [
@@ -114,35 +279,41 @@ for (const [label, stderr, status] of [
 ]) {
   test(`page 1 throwing HTTP ${label} leaves the runs half unavailable with status ${status}`, () => {
     const { runner, calls } = runsRunner([ghError(stderr)]);
-    const r = fetchRuns({ owner: 'acme', repo: 'widgets', from: FROM }, { runner });
+    const r = fetchRuns({ owner: 'acme', repo: 'widgets', from: FROM, days: DAYS }, { runner });
     assert.strictEqual(r.available, false);
     assert.strictEqual(r.ghAbsent, false);
     assert.strictEqual(r.pages, 0);
     assert.deepStrictEqual(r.runs, []);
-    assert.strictEqual(r.failures[0].query, 'runs page 1');
+    assert.strictEqual(r.failures[0].query, `runs ${ONE_RANGE} page 1`);
     assert.strictEqual(r.failures[0].status, status);
     assert.strictEqual(calls.length, 1);
   });
 }
 
-test('ENOENT on page 1 signals gh absent with no failure row, and stops', () => {
+test('ENOENT on the first call signals gh absent with no failure row, and stops every range', () => {
   const { runner, calls } = runsRunner([enoent(), 100]);
-  const r = fetchRuns({ owner: 'acme', repo: 'widgets', from: FROM }, { runner });
+  const r = fetchRuns({ owner: 'acme', repo: 'widgets', from: FROM, days: DAYS }, { runner });
   assert.strictEqual(r.ghAbsent, true);
   assert.strictEqual(r.available, false);
   assert.deepStrictEqual(r.failures, []);
   assert.deepStrictEqual(r.runs, []);
   assert.strictEqual(calls.length, 1);
+  const wide = [];
+  const absent = fetchRuns({ owner: 'acme', repo: 'widgets', from: FROM30, days: 30 }, { runner: (args) => { wide.push(args); throw enoent(); } });
+  assert.strictEqual(absent.ghAbsent, true);
+  assert.deepStrictEqual(absent.failures, []);
+  assert.deepStrictEqual(absent.truncatedRanges, [], 'gh absent reads as unavailable, never as a truncated window');
+  assert.strictEqual(wide.length, 1, 'no later range is tried once gh is absent');
 });
 
 test('ENOENT on page 2 is a failed page, never gh absent: page 1 kept, the page named, and stops', () => {
   const { runner, calls } = runsRunner([100, enoent(), 100]);
-  const r = fetchRuns({ owner: 'acme', repo: 'widgets', from: FROM }, { runner });
+  const r = fetchRuns({ owner: 'acme', repo: 'widgets', from: FROM, days: DAYS }, { runner });
   assert.strictEqual(r.available, true);
   assert.strictEqual(r.ghAbsent, false);
   assert.strictEqual(r.runs.length, 100);
   assert.strictEqual(r.pages, 1);
-  assert.deepStrictEqual(r.failures, [{ query: 'runs page 2', status: null, error: 'spawnSync gh ENOENT' }]);
+  assert.deepStrictEqual(r.failures, [{ query: `runs ${ONE_RANGE} page 2`, status: null, error: 'spawnSync gh ENOENT' }]);
   assert.strictEqual(calls.length, 2, 'no page 3 call');
 });
 
@@ -153,7 +324,7 @@ test('a run repeated across a page boundary (page drift) is counted once, first 
     JSON.stringify({ total_count: 102, workflow_runs: page1 }),
     JSON.stringify({ total_count: 102, workflow_runs: page2 }),
   ]);
-  const r = fetchRuns({ owner: 'acme', repo: 'widgets', from: FROM }, { runner });
+  const r = fetchRuns({ owner: 'acme', repo: 'widgets', from: FROM, days: DAYS }, { runner });
   assert.strictEqual(r.runs.length, 102);
   assert.deepStrictEqual(r.runs.filter((run) => run.id === 100), [{ id: 100, n: 1 }]);
   assert.deepStrictEqual(r.runs.map((run) => run.id), Array.from({ length: 102 }, (_, i) => i + 1));
@@ -167,11 +338,11 @@ for (const [label, body] of [
 ]) {
   test(`${label} on page 2 is a failed page with a null status, and stops`, () => {
     const { runner, calls } = runsRunner([100, body, 100]);
-    const r = fetchRuns({ owner: 'acme', repo: 'widgets', from: FROM }, { runner });
+    const r = fetchRuns({ owner: 'acme', repo: 'widgets', from: FROM, days: DAYS }, { runner });
     assert.strictEqual(r.available, true);
     assert.strictEqual(r.runs.length, 100);
     assert.strictEqual(r.failures.length, 1);
-    assert.strictEqual(r.failures[0].query, 'runs page 2');
+    assert.strictEqual(r.failures[0].query, `runs ${ONE_RANGE} page 2`);
     assert.strictEqual(r.failures[0].status, null);
     assert.ok(r.failures[0].error.length > 0);
     assert.strictEqual(calls.length, 2);

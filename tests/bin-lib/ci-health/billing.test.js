@@ -240,7 +240,7 @@ test('a billing read finding gh gone adds no failure row only when the runs half
   const billing = { available: false, status: null, reason: 'spawnSync gh ENOENT' };
   const absent = billingRunner({ [BUDGETS_PATH]: enoent });
   assert.deepStrictEqual(readBilling({ repoRead: ORG_REPO, ghAbsent: true }, { runner: absent.runner }), { billing, failures: [] });
-  // gh vanishing after runs page 1 leaves the runs half ghAbsent: false, so the read is named.
+  // gh vanishing after the first runs page leaves the runs half ghAbsent: false, so the read is named.
   for (const repoArg of [{ repoRead: ORG_REPO, ghAbsent: false }, { repoRead: ORG_REPO }]) {
     const { runner } = billingRunner({ [BUDGETS_PATH]: enoent });
     assert.deepStrictEqual(readBilling(repoArg, { runner }), {

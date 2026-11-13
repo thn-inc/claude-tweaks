@@ -12,7 +12,7 @@ Every firing, whichever branch Step 1 takes, nothing-due early exit included; th
 node "${CLAUDE_PLUGIN_ROOT}/bin/ci-health.js" --file
 ```
 
-Run it with a Bash `timeout` of `300000` (5 minutes): the worst case is 15 sequential `gh` calls at the CLI's 15 s bound (the repo read, 10 runs pages, two billing reads, the open-issue list and the create), 225 s in all, past the Bash tool's 120 s default, and the CLI writes stdout only once, at the end, so a killed call loses the whole report.
+Run it with a Bash `timeout` of `600000` (10 minutes), the Bash tool's foreground ceiling, because the worst case under the CLI's 50-page read budget (55 sequential `gh` calls at its 15 s bound: the repo read, 50 runs pages, two billing reads, the open-issue list and the create) is 825 s, past that ceiling; a live default-window read of a repository whose busiest week holds over 3,000 runs took 94 s. The CLI writes stdout only once, at the end, so a killed call loses the whole report.
 
 When `--root` names another checkout, add `--root {dir}` with that directory: the CLI then reads both the repository (that checkout's `origin` remote, refused unless it is on github.com) and the `work-types` value the issue is typed by from it. Never pass a `--repo` read from that origin instead; without `--root` the CLI reads the current directory. `--file` files only on a breach, and never on a truncated window or a failed runs read (any page): the CLI applies those rules itself, so never re-derive them here.
 

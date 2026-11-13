@@ -22,7 +22,10 @@
 //                          included: `not filed: runs read failed`)
 //   --json                 print the report envelope as one JSON line instead of the report lines;
 //                          its `runsAvailable` is false when no runs page was read (beside
-//                          `billing.available`), its `filed` is {title, number} or null,
+//                          `billing.available`), `truncatedRanges` lists each 7-day range
+//                          {from, to, reason} that hit the 1,000-run cap (`cap`) or that the
+//                          read budget left wholly or partly unread (`budget`), its `filed` is
+//                          {title, number} or null,
 //                          `filingSkipped` the skip reason or null (both null without --file),
 //                          and a failed filing a failures[]
 //                          entry (`file issue` or `open issue titles`)
@@ -197,9 +200,11 @@ function run(argv, deps = realDeps) {
 
   const now = deps.now || new Date();
   const from = new Date(now.getTime() - o.days * DAY_MS).toISOString().slice(0, 10);
+  // One window start for the read and the statistics, so a run's read range is its stats bucket.
+  const windowStart = new Date(`${from}T00:00:00Z`);
   const { runner } = deps;
   const repoRead = readRepo({ owner, repo }, { runner });
-  const runs = fetchRuns({ owner, repo, from }, { runner });
+  const runs = fetchRuns({ owner, repo, from: windowStart, days: o.days }, { runner });
   const { billing, failures: billingFailures } = readBilling({ repoRead, ghAbsent: runs.ghAbsent }, { runner });
 
   // gh absent from the start renders from `ghAbsent`, so it adds no failure row.
@@ -208,7 +213,7 @@ function run(argv, deps = realDeps) {
   failures.push(...runs.failures, ...billingFailures);
 
   const workflows = computeStats(runs.runs, {
-    from: new Date(`${from}T00:00:00Z`),
+    from: windowStart,
     days: o.days,
     defaultBranch: repoRead.ok ? repoRead.defaultBranch : null,
   });
@@ -229,9 +234,10 @@ function run(argv, deps = realDeps) {
   const report = {
     repo: slug,
     window: { days: o.days, from },
-    // The runs half's own flag (fetch.js: at least page 1 read), beside billing's `available`.
+    // The runs half's own flag (fetch.js: at least one runs page read), beside billing's `available`.
     runsAvailable: runs.available,
     truncated: runs.truncated,
+    truncatedRanges: runs.truncatedRanges,
     ghAbsent: runs.ghAbsent,
     workflows,
     watchSeconds: MERGE_GATE_WATCH_SECONDS,
