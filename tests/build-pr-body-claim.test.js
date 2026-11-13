@@ -54,3 +54,25 @@ test('build/SKILL.md points every step at the PR-body claim rule', () => {
 test('each pointer fact can go red', () => {
   assertEachPatternGoesRed(SKILL, POINTER_FACTS, missingFactsOf(POINTER_FACTS));
 });
+
+function assertPointerUnderCommonSteps(text) {
+  const at = text.indexOf('**PR-body claims, any step.**');
+  const after = text.indexOf('## Common Steps (both modes)');
+  const before = text.indexOf('### Common Step 1:');
+  assert.ok(at >= 0 && after >= 0 && before >= 0, 'pointer paragraph and both anchoring headings must exist');
+  assert.ok(at > after && at < before, 'the PR-body claims pointer must sit after "## Common Steps (both modes)" and before "### Common Step 1:"');
+}
+
+test('the PR-body pointer sits at the top of Common Steps', () => {
+  assertPointerUnderCommonSteps(SKILL);
+  const lines = SKILL.split('\n');
+  const idx = lines.findIndex((l) => l.startsWith('**PR-body claims, any step.**'));
+  assert.ok(idx >= 0, 'pointer paragraph must exist');
+  const [para] = lines.splice(idx, 1);
+  const gitIdx = lines.findIndex((l) => l === '## Git Strategy');
+  assert.ok(gitIdx > 0, '## Git Strategy heading must exist');
+  lines.splice(gitIdx, 0, para, '');
+  const moved = lines.join('\n');
+  assert.notEqual(moved, SKILL);
+  assert.throws(() => assertPointerUnderCommonSteps(moved), /must sit after "## Common Steps \(both modes\)" and before "### Common Step 1:"/);
+});

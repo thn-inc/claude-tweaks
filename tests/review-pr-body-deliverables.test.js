@@ -5,7 +5,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
-const { missingFactsOf, assertEachPatternGoesRed } = require('./helpers/conformance-asserts');
+const { missingFactsOf, assertEachPatternGoesRed, lineStartingWith } =require('./helpers/conformance-asserts');
 
 const STEPS = readText(path.join(__dirname, '..', 'plugin/skills/review/code-mode-steps.md'));
 const SUBFILE = readText(path.join(__dirname, '..', 'plugin/skills/review/pr-body-deliverables.md'));
@@ -23,7 +23,11 @@ const SUB_FACTS = [
   [/does not qualify, however often it says "PR body": items 1 and 2 judge it in the codebase/, 'code-deliverable exclusion'],
   [/`pr\.number` in `run-state\.json` \(a bundle's parent run dir\)/, 'PR source'],
   [/`gh pr view --json number` with no number/, 'no-number gh lookup'],
-  [/`mcp__github__list_pull_requests` \(open PRs\) filtered to the one whose head is the current branch/, 'gh-absent lookup'],
+  [/`mcp__github__list_pull_requests` \(open PRs\) filtered to the one whose head is the current branch, paging \(`perPage: 100`\) until the results run out/, 'gh-absent lookup pages'],
+  [/An item qualifies when what it requires is text in the PR body itself/, 'qualifying rule'],
+  [/the Gate treats it as a minor gap whatever the count/, 'gate count'],
+  [/Step 7's summary names each one so a human can check the body/, 'summary names each'],
+  [/Build's `architecture-alignment\.md` also cites its Find the PR section/, 'build is a second reader'],
   [/`gh pr view \{pr\} --json body -q \.body`, or, without `gh`, `mcp__github__pull_request_read` \(`get`\)/, 'body read'],
   [/- `done` — the body carries everything the item requires/, 'done verdict'],
   [/- `partial` — it carries part of it/, 'partial verdict'],
@@ -94,4 +98,33 @@ test('the pr-body-deliverables sub-file states every fact', () => {
 
 test('each sub-file fact can go red', () => {
   assertEachPatternGoesRed(SUBFILE, SUB_FACTS, missingFactsOf(SUB_FACTS));
+});
+
+const TEMPLATE = readText(path.join(__dirname, '..', 'plugin/skills/review/review-summary-template.md'));
+
+const TEMPLATE_FACTS = [
+  [/\{done\/partial\/missing\/unverifiable\}/, 'deliverable table allows unverifiable'],
+  [/\{met\/partially met\/not met\/unverifiable\}/, 'criterion table allows unverifiable'],
+  [/Every deliverable is `done` and every criterion `met` — a `partial`, `missing` or `unverifiable` item \(Step 1 item 6\) needs the full template's Spec Compliance tables/, 'compact form excludes unverifiable'],
+];
+
+test('the review summary template renders unverifiable items and keeps them out of the compact form', () => {
+  assert.deepEqual(missingFactsOf(TEMPLATE_FACTS)(TEMPLATE), []);
+});
+
+test('each template fact can go red', () => {
+  assertEachPatternGoesRed(TEMPLATE, TEMPLATE_FACTS, missingFactsOf(TEMPLATE_FACTS));
+});
+
+const PLUGIN_STRUCTURE = readText(path.join(__dirname, '..', 'docs/plugin-structure.md'));
+
+function assertReviewRowListsSubfile(text) {
+  assert.ok(lineStartingWith(text, '| review |').includes('pr-body-deliverables.md'), 'the | review | row must list pr-body-deliverables.md');
+}
+
+test('docs/plugin-structure.md lists pr-body-deliverables.md in the review row', () => {
+  assertReviewRowListsSubfile(PLUGIN_STRUCTURE);
+  const doctored = PLUGIN_STRUCTURE.split('\n').map((l) => (l.startsWith('| review |') ? l.split('pr-body-deliverables.md').join('') : l)).join('\n');
+  assert.notEqual(doctored, PLUGIN_STRUCTURE);
+  assert.throws(() => assertReviewRowListsSubfile(doctored), /the \| review \| row must list pr-body-deliverables\.md/);
 });

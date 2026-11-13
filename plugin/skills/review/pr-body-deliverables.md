@@ -1,6 +1,6 @@
 # Step 1 item 6 — PR-body deliverables
 
-Read by `code-mode-steps.md` Step 1 item 6, only when the spec has a deliverable or criterion whose content must appear in the PR body (or PR description). Items 1 and 2 skip such an item; this file judges it.
+Read by `code-mode-steps.md` Step 1 item 6, only when the spec has a deliverable or criterion whose content must appear in the PR body (or PR description). Items 1 and 2 skip such an item; this file judges it. Build's `architecture-alignment.md` also cites its Find the PR section.
 
 ## Which items
 
@@ -8,7 +8,7 @@ An item qualifies when what it requires is text in the PR body itself: "the PR b
 
 ## Find the PR
 
-`{pr}` is `pr.number` in `run-state.json` (a bundle's parent run dir). Otherwise it is the current branch's open PR: `gh pr view --json number` with no number, or, without `gh`, `mcp__github__list_pull_requests` (open PRs) filtered to the one whose head is the current branch.
+`{pr}` is `pr.number` in `run-state.json` (a bundle's parent run dir). Otherwise it is the current branch's open PR: `gh pr view --json number` with no number, or, without `gh`, `mcp__github__list_pull_requests` (open PRs) filtered to the one whose head is the current branch, paging (`perPage: 100`) until the results run out.
 
 ## Read the body
 
