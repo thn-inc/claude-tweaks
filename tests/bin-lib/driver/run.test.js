@@ -3095,7 +3095,8 @@ test('fix round: the HEAD check sets CRLF against LF aside, and nothing else', a
   // Any other difference still fails: a one-character edit, a lone CR, a trailing newline more or less.
   const others = [
     ['a one-character edit', EVIDENCE_CONTENT.replace('1 - 1', '1 + 1')],
-    ['a lone CR', EVIDENCE_CONTENT.replace('\n', '\r')],
+    ['a lone CR in place of a LF', EVIDENCE_CONTENT.replace('\n', '\r')],
+    ['a lone CR inserted mid-line', EVIDENCE_CONTENT.replace('1 - 1', '1 -\r 1')],
     ['a trailing newline more', `${EVIDENCE_CONTENT}\n`],
     ['a trailing newline less', EVIDENCE_CONTENT.slice(0, -1)],
   ];
