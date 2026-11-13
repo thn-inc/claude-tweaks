@@ -4,12 +4,19 @@
 // The step-name list below IS the event vocabulary: event lines carry `step` drawn from it
 // (plus FINAL_STEP for the closing line). Fields may be added to an event, never renamed.
 //
-// This module holds three things and no step logic:
+// This module holds no step logic. It holds:
 //   - the step, outcome and stop-class constants,
 //   - the event sink (stdout line + {run-dir}/driver-events.jsonl),
 //   - the neutralizers for text the headless worker controls, so that text cannot close an
 //     issue (or backlink one), mention a user, open a code fence or an HTML comment, or break a
-//     line in a commit, PR body or event.
+//     line in a commit, PR body or event,
+//   - the small helpers the run loop, steps and settle share (settle.js never requires
+//     steps.js or run.js; steps.js may require settle.js):
+//     CLI_TIMEOUT_MS (the bound on one plugin/bin CLI call) and firstLine and errorText
+//     (an execFileSync error's own words), shared by steps.js and settle.js;
+//     yieldToEventLoop (lets a pending signal be delivered between steps and between
+//     settle calls), shared by run.js and settle.js; and outcomeFor (stop class to outcome
+//     word), used by run.js and settle.js.
 
 const path = require('node:path');
 
@@ -18,6 +25,26 @@ const STEP_NAMES = Object.freeze([
   'commit', 'test', 'check', 'push', 'pr', 'record-pr', 'set-config', 'summary', 'ci',
 ]);
 const FINAL_STEP = 'final';
+
+// Bound on one plugin/bin CLI call (claim-targets.js talks to GitHub; the rest are local).
+// Shared by steps.js and settle.js (settle.js never requires steps.js).
+const CLI_TIMEOUT_MS = 120000;
+
+// An execFileSync error's own words: gh and git put the cause on stderr, while the
+// message leads with "Command failed: …". First non-empty line of whichever has text.
+function firstLine(s) {
+  return String(s || '').split(/\r?\n/).map((l) => l.trim()).find(Boolean) || '';
+}
+function errorText(err) {
+  return firstLine(err && err.stderr) || firstLine(err && err.message) || String(err);
+}
+
+// The calls the driver's own settle makes for a stopped run (settle.js). Kept apart from
+// STEP_NAMES: these are cleanup calls, not pipeline steps, and the step list is pinned.
+const SETTLE_STEP_NAMES = Object.freeze([
+  'settle-escalate', 'settle-comment-pr', 'settle-comment-record', 'settle-label',
+  'settle-release', 'settle-remove-worktree', 'settle-delete-branch', 'settle-close',
+]);
 
 const STEP = Object.freeze(Object.fromEntries(
   STEP_NAMES.map((name) => [name.replace(/-([a-z])/g, (_, c) => c.toUpperCase()), name]),
@@ -51,6 +78,14 @@ function outcomeFor(stopClass) {
     throw new Error(`unknown stop class: ${String(stopClass)}`);
   }
   return OUTCOME_BY_CLASS[stopClass];
+}
+
+// Lets the event loop deliver a pending signal: every step before the worker makes only
+// synchronous calls, and an await that settles on microtasks alone never turns the loop, so
+// without this a SIGINT during the claim would wait for the worker. Used by run.js between
+// steps and by settle.js between calls.
+function yieldToEventLoop() {
+  return new Promise((resolve) => { setImmediate(resolve); });
 }
 
 const CLOSING_KEYWORDS = /\b(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\b/gi;
@@ -127,6 +162,7 @@ function createEventSink({ stdout, appendFile }) {
 }
 
 module.exports = {
-  STEP_NAMES, FINAL_STEP, STEP, OUTCOMES, STOP_CLASSES,
-  outcomeFor, neutralize, normalizeTitle, createEventSink,
+  CLI_TIMEOUT_MS, firstLine, errorText,
+  STEP_NAMES, SETTLE_STEP_NAMES, FINAL_STEP, STEP, OUTCOMES, STOP_CLASSES,
+  outcomeFor, yieldToEventLoop, neutralize, normalizeTitle, createEventSink,
 };

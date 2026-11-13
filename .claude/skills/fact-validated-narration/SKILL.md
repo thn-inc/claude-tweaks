@@ -50,6 +50,11 @@ enumerated; you are patching.
 The rule this skill teaches is the enumeration discipline, not the list. The list is always longer
 than it looks.
 
+Test a neutralizer against each hostile shape glued to every allowed neighbouring character (`-`,
+`.`, `_`, `(`, a letter, the start of the string), not only after a space. The test must go red when
+the boundary is narrowed back. #5219's `reduceDetail` passed seven task reviews on space-separated
+inputs, while `-C/Users/me/x` and `foo./home/me/.ssh` reached a public comment untouched.
+
 ## A partial gather is never an empty period
 
 `failures.length === 0` belongs in the "nothing happened in this period" predicate. Without it, a
