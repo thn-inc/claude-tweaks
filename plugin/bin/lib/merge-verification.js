@@ -508,6 +508,9 @@ const NOT_QUOTED = Symbol('not quoted');
 // line after it, returns NOT_QUOTED and the caller reads the value as plain text.
 // Line breaks fold the YAML way: one break is a space, each empty line a newline,
 // and a double-quoted escaped line break (`\` at a line's end) joins with nothing.
+// A break drops the line's trailing whitespace, but never an escaped character's
+// (`\ ` or `\<TAB>` before the break keeps its whitespace), so `first` arrives
+// with its trailing whitespace intact.
 // Escapes are undone: `''` in single quotes, decodeDoubleQuoted's set in double.
 // A quote that never closes, or an escape that cannot be decoded, is unread.
 function readQuotedScalar(lines, k, end, keyIndent, first) {
@@ -517,10 +520,12 @@ function readQuotedScalar(lines, k, end, keyIndent, first) {
   for (;;) {
     let close = -1;
     let escapedBreak = false;
+    let kept = 0; // the end of the line's last escaped character
     for (let c = 0; c < cur.length; c++) {
       if (q === '"' && cur[c] === '\\') {
         if (c === cur.length - 1) { escapedBreak = true; break; }
         c++; // an escaped character never closes the quote
+        kept = c + 1;
         continue;
       }
       if (cur[c] !== q) continue;
@@ -542,7 +547,7 @@ function readQuotedScalar(lines, k, end, keyIndent, first) {
       const text = decodeDoubleQuoted(body);
       return text === null ? { text: '', next: k, unread: true } : { text, next: k, unread: false };
     }
-    body += escapedBreak ? cur.slice(0, -1) : cur.trimEnd();
+    body += escapedBreak ? cur.slice(0, -1) : cur.slice(0, Math.max(kept, cur.trimEnd().length));
     let blanks = 0;
     while (k < end && lines[k].trim() === '') { blanks++; k++; }
     if (k >= end || leadSpaces(lines[k]) <= keyIndent) return { text: '', next: k, unread: true };
@@ -685,13 +690,15 @@ function readJoinedScalar(lines, i, end, keyIndent, inline) {
     }
     return { text: parts.join(' ').trim(), next: i, unread: false };
   }
-  // The value starts on the key's line, or else on the first deeper line.
-  let first = v === '' ? '' : inline.trim();
+  // The value starts on the key's line, or else on the first deeper line. Its
+  // trailing whitespace stays for readQuotedScalar (an escaped `\ ` before a
+  // line break); the plain path's comment strip trims it.
+  let first = v === '' ? '' : inline.trimStart();
   if (first === '') {
     for (; i < end; i++) {
       const t = lines[i].trim();
       if (t === '' || t.startsWith('#')) continue;
-      if (leadSpaces(lines[i]) > keyIndent) { first = t; i++; }
+      if (leadSpaces(lines[i]) > keyIndent) { first = lines[i].trimStart(); i++; }
       break;
     }
     if (first === '') return { text: '', next: i, unread: false };
@@ -868,16 +875,19 @@ function walkSteps(lines, i, end, keyIndent) {
   let stepIndent = null;
   let stepKeyCol = null;
   let count = 0;
-  // Whether the last key read in this step has an empty value, so that a `- `
-  // line at the key column can be its indentless sequence value.
-  let keyOpen = false;
+  // The last key read in this step, so that a `- ` line at the key column can be
+  // its indentless sequence value: 'key' when its value is empty and nothing has
+  // been read under it yet, 'seq' once such a `- ` line has made its value a
+  // sequence, null when its value is inline, or a deeper line made it a nested
+  // node, or no key was read.
+  let open = null;
   // Reads one step key: counts an `if:`, records whether its value is empty, and
   // returns false when the content is no `key:` entry.
   const readKey = (content) => {
     const kv = splitKey(content);
     if (kv === null) return false;
     if (kv.key === 'if') count++;
-    keyOpen = stripCommentQuoteAware(kv.rest) === '';
+    open = stripCommentQuoteAware(kv.rest) === '' ? 'key' : null;
     return true;
   };
   for (; i < end; i++) {
@@ -900,7 +910,7 @@ function walkSteps(lines, i, end, keyIndent) {
       const content = after.slice(sp);
       if (content === '' || content.startsWith('#')) {
         stepKeyCol = null; // the item's keys start on the next line
-        keyOpen = false;
+        open = null;
       } else {
         stepKeyCol = ind + 1 + sp;
         if (!readKey(content)) return null;
@@ -911,13 +921,16 @@ function walkSteps(lines, i, end, keyIndent) {
     if (ind < stepKeyCol) return null;
     if (ind === stepKeyCol) {
       // A `- ` line at the key column is an indentless sequence value of the key
-      // above when that key's value is empty (valid YAML). Before any key, or
-      // after a key with a scalar value, it is unreadable.
+      // above when that key's value is empty (valid YAML). Before any key, after
+      // a key with a scalar value, or after a deeper value, it is unreadable.
       if (dash) {
-        if (!keyOpen) return null;
+        if (open === null) return null;
+        open = 'seq';
         continue;
       }
       if (!readKey(line.slice(ind))) return null;
+    } else if (open === 'key') {
+      open = null; // a deeper line: the empty key's value is a nested node
     }
   }
   return { count, next: i };
@@ -943,9 +956,9 @@ function readJobs(lines, jobsIdx, end, unparsed) {
     jobs.push(job);
     i++;
     let keyIndent = null;
-    // Whether the last job key read has an empty value, so that a `- ` line at
-    // the key column can be its indentless sequence value.
-    let keyOpen = false;
+    // The last job key read, as walkSteps' `open`: 'key' (empty value, nothing
+    // read under it yet), 'seq' (its value is an indentless sequence) or null.
+    let open = null;
     while (i < end) {
       const l = lines[i];
       if (isSkippable(l)) { i++; continue; }
@@ -953,21 +966,28 @@ function readJobs(lines, jobsIdx, end, unparsed) {
       if (kind <= jobIndent) break;
       if (keyIndent === null) keyIndent = kind;
       if (kind < keyIndent) { unparsed.push(NOT_READ); return []; }
-      if (kind > keyIndent) { i++; continue; } // a deeper line of a key not read here
+      if (kind > keyIndent) { // a deeper line of a key not read here
+        if (open === 'key') open = null; // the empty key's value is a nested node
+        i++;
+        continue;
+      }
       if (DASH.test(l)) {
         // An indentless sequence value of the key above when that key's value is
-        // empty; before any key, or after a key with a scalar value, unreadable.
-        if (!keyOpen) { unparsed.push(NOT_READ); return []; }
+        // empty; before any key, after a key with a scalar value, or after a
+        // deeper value, unreadable.
+        if (open === null) { unparsed.push(NOT_READ); return []; }
+        open = 'seq';
         i++;
         continue;
       }
       const kv = splitKey(l.slice(kind));
       if (!kv) { unparsed.push(NOT_READ); return []; }
-      keyOpen = stripCommentQuoteAware(kv.rest) === '';
+      open = stripCommentQuoteAware(kv.rest) === '' ? 'key' : null;
       i++;
       if (kv.key === 'if') {
         const r = readJoinedScalar(lines, i, end, keyIndent, kv.rest);
         i = r.next;
+        open = null; // its value, inline or on deeper lines, is read
         if (r.text === '') unparsed.push(`job ${job.id} if: not read`); // empty or unread
         else job.if = r.text;
       } else if (kv.key === 'concurrency') {
@@ -979,6 +999,7 @@ function readJobs(lines, jobsIdx, end, unparsed) {
           if (r === null) { unparsed.push(NOT_READ); return []; }
           job.stepIfCount = r.count;
           i = r.next;
+          open = null; // the step list, deeper or indentless, is read
         } else if (v !== '[]') {
           unparsed.push(NOT_READ);
           return [];

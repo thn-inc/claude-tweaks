@@ -147,6 +147,11 @@ test('jobs: job-level if in inline, quoted, wrapped, block and folded forms', ()
     ['    if: >-\n      a\n      && b\n', 'a && b'],
     ['    if: a\n      && b\n', 'a && b'],
     ['    if:\n      a && b\n', 'a && b'],
+    // a plain value's comment is stripped on its first line and on a continuation line
+    ['    if: a == b # c\n', 'a == b'],
+    ['    if: a\n      && b # c\n', 'a && b'],
+    // a block scalar's deeper `#` line is text, never a comment
+    ['    if: |\n      a\n      # b\n', 'a # b'],
     // the rest of YAML's double-quoted escape set decodes to the character it names
     ["    if: \"contains(x, '\\n')\"\n", "contains(x, '\n')"],
     ['    if: "a\\tb\\/c\\u00e9\\x41\\U0001F600\\ d\\_e\\0f\\\tg"\n', 'a\tb/c\u00e9A\u{1F600} d\u00a0e\0f\tg'],
@@ -159,6 +164,16 @@ test('jobs: job-level if in inline, quoted, wrapped, block and folded forms', ()
     ['    if: "a &&\n      b # c"\n', 'a && b # c'],
     ["    if: 'it''s &&\n      x'\n", "it's && x"],
     ['    if:\n      "a == b"\n', 'a == b'],
+    // a line break drops the line's trailing whitespace, on the first line and on a continuation
+    ['    if: "a   \n      b"\n', 'a b'],
+    ['    if: "a\n      b   \n      c"\n', 'a b c'],
+    // but an escaped space or tab before the break is text, never an escaped line break
+    ['    if: "a\\ \n      b"\n', 'a  b'],
+    ['    if: "a\\\t\n      b"\n', 'a\t b'],
+    ['    if: "a\\ \n\n      b"\n', 'a \nb'],
+    ['    if:\n      "a\\ \n      b"\n', 'a  b'],
+    ['    if: "a\n      b\\ \n      c"\n', 'a b  c'],
+    ['    if: "a\n      b\\\t\n      c"\n', 'a b\t c'],
     // two quoted scalars, or text after the closing quote, are plain text kept as written
     ["    if: 'a' != 'b'\n", "'a' != 'b'"],
     ['    if: "a" == "b"\n', '"a" == "b"'],
@@ -240,6 +255,17 @@ test('jobs: stepIfCount counts step keys only', () => {
     assert.deepEqual(s.jobs, [{ id: 'a', if: null, stepIfCount: 1, concurrency: false }]);
     assert.deepEqual(s.unparsed, []);
   });
+  // a key whose value is only a comment is empty, so the sequence is still its value; and a
+  // sequence item's own deeper lines leave the sequence open, at a step key and at a job key
+  for (const body of ['    steps:\n      - args: # c\n        - a\n        if: x\n', '    needs: # c\n    - b\n    if: x\n',
+    '    steps:\n      - args:\n        - a: 1\n          b: 2\n        - c\n        if: x\n', '    needs:\n    - name: b\n      x: y\n    - c\n    if: x\n']) {
+    bothEndings(`on: push\njobs:\n  a:\n${body}`, (t) => {
+      const s = shape(t);
+      const steps = body.startsWith('    steps:');
+      assert.deepEqual(s.jobs, [{ id: 'a', if: steps ? null : 'x', stepIfCount: steps ? 1 : 0, concurrency: false }], JSON.stringify(t));
+      assert.deepEqual(s.unparsed, [], JSON.stringify(t));
+    });
+  }
   bothEndings('on: push\njobs:\n  build-and-test:\n    uses: ./.github/workflows/r.yml\n', (t) => {
     assert.deepEqual(shape(t).jobs, [{ id: 'build-and-test', if: null, stepIfCount: 0, concurrency: false }]);
   });
@@ -333,9 +359,20 @@ test('unparsed: each reason fires on its own fixture', () => {
     // the same at a job's key column: a `- ` line after a job key with a scalar value
     ['on: push\njobs:\n  a:\n    runs-on: x\n    - y\n', 'jobs: not read'],
     ['on: push\njobs:\n  a:\n    steps:\n      - run: a\n        name: n\n        - b\n', 'jobs: not read'],
+    // nor after an empty key whose value turned out to be a deeper node, at a step or a job key
+    ['on: push\njobs:\n  a:\n    steps:\n      - name:\n          n\n        - a\n        if: x\n', 'jobs: not read'],
+    ['on: push\njobs:\n  a:\n    steps:\n      - with:\n          k: v\n        - a\n', 'jobs: not read'],
+    ['on: push\njobs:\n  a:\n    runs-on:\n      x\n    - y\n', 'jobs: not read'],
+    ['on: push\njobs:\n  a:\n    needs:\n      - b\n    - c\n', 'jobs: not read'],
+    ['on: push\njobs:\n  a:\n    steps:\n      - run: a\n    - y\n', 'jobs: not read'],
+    ['on: push\njobs:\n  a:\n    if:\n      x\n    - y\n', 'jobs: not read'],
+    // a job key-column line that is neither a key nor a `- ` line is unreadable
+    ['on: push\njobs:\n  a:\n    runs-on: x\n    junk\n', 'jobs: not read'],
     // a quote that never closes is unread, never a stray quote kept as text
     ['on: push\njobs:\n  a:\n    if: "a && b\n    runs-on: x\n', 'job a if: not read'],
     ["on: push\njobs:\n  a:\n    if: 'a\n", 'job a if: not read'],
+    // the quote stops at the next line that is not deeper, though a later line would close it
+    ['on: push\njobs:\n  a:\n    if: "a\n    runs-on: x"\n', 'job a if: not read'],
     // a `- ` line at a step's key column before any key is a nested sequence, not a value
     ['on: push\njobs:\n  a:\n    steps:\n      -\n        - if: x\n', 'jobs: not read'],
     ['on: push\njobs:\n  a:\n    if:\n    runs-on: x\n', 'job a if: not read'],
