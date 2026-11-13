@@ -15,7 +15,8 @@ Scope keywords: RUN_PINS, resolveRecords, configSet, closingRecords
 ## Global Constraints
 
 - The `config` rung is **not** a closing source. `CLOSING_RECORD_SOURCES` stays `['headers', 'worktree-headers']` (Ruling R1, `pack.js`): a `config.yml` `spec:` is the lowest of a run's records (`plugin/bin/lib/flow/manifesto-write.js` writes `Math.min(...)`), so it names only one record of a multi-record run, and only a materialized header carries closing intent. An express run is single-record by construction (its gate admits one record), and its PR body already carries `Fixes #{n}` (`compose-pr-body.js --express --fixes {n}`).
-- The `config` rung runs **last**, after both manifest rungs, so a header or manifest always wins over it.
+- The `config` rung runs **last**, after both manifest rungs, so a header or manifest always wins over it. It never runs for a multi-spec `spec-{N}/` subdirectory (basename matching `/^spec-/`): that directory's `config.yml` is a byte-for-byte copy of the parent's (`flow/multispec-run-dir-layout.md`), so its `spec:` names the parent's lowest record, not this spec's.
+- The Review Console's auto-merge short-circuit stays header-only (decided by the user at plan review, Reading A): its three gates — `wrap-up/auto-merge-short-circuit.md:9`, `wrap-up/review-console.md:26` and `wrap-up/SKILL.md:273` — test `inputs.closingRecords` being non-empty, never `inputs.records`, so a `config`-rung record never qualifies. Express runs keep merging through the lane's own step 9 or `/claude-tweaks:wrap-up #N merge`.
 - The error string `records unresolved — no materialized header or manifest found` (`pack.js:664`) stays byte-identical (AC3.1); a run with no header, no manifest, and no valid `config.yml` `spec:` still resolves `unavailable`.
 - Read `spec:` with `policy-schema.js`'s `parseFlatLines` (last occurrence wins, the same semantics `setConfigLever` documents), and accept only `/^[1-9][0-9]*$/`.
 - Commit messages: `{Verb} {what} — refs #5347`, ending with `Claude-Session: https://claude.ai/code/session_01Ngy9oYpgbF2YHU6WxVApTz`. Stage by explicit path, never `-A`.
@@ -36,15 +37,18 @@ Scope keywords: RUN_PINS, resolveRecords, configSet, closingRecords
 ### Task 1: `spec` is a run pin `set-config.js` accepts
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/set-config/write.js` (`RUN_PINS`, a positive-integer value rule for `spec`, header comments)
 - Modify: `plugin/bin/set-config.js` (header comment "Run pins (RUN_PINS, currently just integration-model)"; no logic change — `validateLever` already drives the refusal message)
 - Modify: `plugin/bin/lib/flow/manifesto-write.js:250-251` (comment only: `created:` is bookkeeping `set-config` refuses; `spec:` is a run pin since #5347 but is still appended here beside `created:`; behavior unchanged)
-- Modify: `plugin/skills/flow/manifesto.md:167` — the sentence "`spec:`/`created:` (the two bookkeeping keys below) are not levers — `--set`/`--key` both refuse them by design — so this step writes them itself, appending both lines to `config.yml` after the batch call. Known gap: a worktree-pinned session has no writer for these two keys and ends the run with both absent — bounded (nothing reads them today), but do not add a reader without closing it first." becomes: `spec:` is a run pin `set-config.js` accepts (#5347) and `created:` is bookkeeping it refuses; the step still appends both lines after the batch call. A worktree-pinned session can write `spec:` through `set-config.js --key spec --value {n}`; `created:` still has no writer there, and nothing reads it.
+- Modify: `plugin/skills/flow/manifesto.md:167` — the sentence "`spec:`/`created:` (the two bookkeeping keys below) are not levers — `--set`/`--key` both refuse them by design — so this step writes them itself, appending both lines to `config.yml` after the batch call. Known gap: a worktree-pinned session has no writer for these two keys and ends the run with both absent — bounded (nothing reads them today), but do not add a reader without closing it first." becomes: `spec:` is a run pin `set-config.js` accepts (#5347) — after the batch call, write it with one single-key call, `node "${CLAUDE_PLUGIN_ROOT}/bin/set-config.js" --run "$PIPELINE_RUN_DIR" --key spec --value {lowest record number}`, which works from a worktree-pinned session too, since merge mode's run binding and the wrap-up pack's `config` rung read it; `created:` is bookkeeping `set-config.js` refuses, so the step appends that line itself; a worktree-pinned session has no writer for it and ends the run without it, which is bounded because nothing reads `created:`. The single-key call keeps the 14-pair Manifesto batch unchanged (the cli-wrapper-contract lock rule in Global Constraints). Add a pin in `tests/flow-manifesto-integration-model-pin.test.js` (the file that already reads this paragraph via `writeMechanismParagraph`): `test('AC1.1: the Write mechanism writes spec: through a single-key set-config call', …)` asserting the paragraph matches `/--key spec --value \{lowest record number\}/` and still has no `spec=` pair inside its `--set "…"` argument.
 - Modify: `docs/plugin-structure.md:42` ("the RUN_PINS run pins — today `integration-model`" → name both pins, `integration-model` and `spec`)
 - Modify: `.claude/skills/gh-api-module-pattern/cli-wrapper-contract.md` ("(plus at most the `integration-model` run pin)" → "(plus at most the run pins, `RUN_PINS`)")
-- Test: `tests/bin-lib/set-config/write.test.js`, `tests/bin-lib/set-config/cli.test.js`
+- Test: `tests/bin-lib/set-config/write.test.js`
+- Test: `tests/bin-lib/set-config/cli.test.js`
+- Test: `tests/flow-manifesto-integration-model-pin.test.js`
 - No change (read and classified): `tests/flow-manifesto-integration-model-pin.test.js:80` and `tests/manifesto-lever-conformance.test.js:83` filter `RUN_PINS` and stay correct with `spec` in it; `write.test.js:90` already excludes `spec` by name; `plugin/skills/_shared/integration-model.md:29` describes only the `integration-model` pin.
 
 **Interfaces:**
@@ -103,8 +107,11 @@ Expected: FAIL after Step 1 — `configSet` has no `spec=7`; the prose clause is
 **Review risk:** high
 
 **Files:**
-- Modify: `plugin/bin/lib/wrap-up/pack.js` — a `configRecords(deps, dir)` helper (reads `{dir}/config.yml` through `readText`, `parseFlatLines`, returns `[n]` for a valid `spec:` else `[]`); `resolveRecords` adds rung (e) after the worktree-manifest rung, returning `{ records, source: 'config', parkedAtShaping: {} }`; update the ladder comment above `resolveRecords` and the Ruling R1 comment above `CLOSING_RECORD_SOURCES` to say why `config` is not closing.
-- Modify: `plugin/skills/wrap-up/review-console.md:26` ("(own `work/`, then the worktree's mirror)" → name the manifest rungs and the run's `config.yml` `spec:` as the later rungs)
+- Modify: `plugin/bin/lib/wrap-up/pack.js` — a `configRecords(deps, dir)` helper (reads `{dir}/config.yml` through `readText`, `parseFlatLines`, returns `[n]` for a valid `spec:` else `[]`); `resolveRecords` adds rung (e) after the worktree-manifest rung, returning `{ records, source: 'config', parkedAtShaping: {} }`, skipped when `path.basename(runDir)` matches `/^spec-/` (a multi-spec subdirectory — Global Constraints); update the ladder comment above `resolveRecords` and the Ruling R1 comment above `CLOSING_RECORD_SOURCES` to say why `config` is not closing.
+- Modify: `plugin/skills/wrap-up/review-console.md:26` — re-gate the Auto-merge short-circuit's header test on `{run-dir}/wrap-up-pack.json`'s `inputs.closingRecords` being non-empty (in place of `inputs.records`), naming it as the header rungs' result (own `work/`, then the worktree's mirror) — a `manifest` or `config` rung never qualifies (Reading A)
+- Modify: `plugin/skills/wrap-up/auto-merge-short-circuit.md` — its line 9 condition gets the same re-gate to `inputs.closingRecords`; line 135's "this short-circuit already requires a materialized header with a `record:` field" stays true and needs no edit
+- Modify: `plugin/skills/wrap-up/SKILL.md:273` — "This run resolves a materialized header (`inputs.records`)" → `inputs.closingRecords`
+- Test: `tests/wrap-up-record-resolution-conformance.test.js` — `test('Reading A: the auto-merge short-circuit gates on inputs.closingRecords at all three sites, never inputs.records', …)` asserting each of the three passages names `inputs.closingRecords` and none of them gates on `` `inputs.records` is non-empty ``
 - Modify: `plugin/skills/wrap-up/cleanup-procedures-execution.md:76` ("is empty on a `manifest`/`worktree-manifest` rung" → also on the `config` rung, which names only the run's lowest record)
 - Modify: `.claude/skills/run-directory-fact-packs/SKILL.md:155` ("reads own `work/`, then that mirror (#3365)" → add "then the manifest rungs, then `config.yml`'s `spec:` (#5347)")
 - Modify: `plugin/bin/lib/console/resolve.js:295-298` (comment only: the ladder list gains the `config.yml` `spec:` rung)
@@ -122,6 +129,7 @@ Expected: FAIL after Step 1 — `configSet` has no `spec=7`; the prose clause is
   - `test('the config rung is last: a header wins over config.yml spec:', …)`: header `work/1535-spec.md` plus `spec: 9999` → `records` `[1535]`, source `'headers'`.
   - `test('the config rung is last: a manifest wins and closingRecords stays empty', …)`: `manifest.yml` with ids 1930, 1931 plus `spec: 1930` → source `'manifest'`, `closingRecords` `[]`.
   - `test('the config rung reads a CRLF config.yml', …)`: `spec: 5338\r\nmode: auto\r\n` → `[5338]`.
+  - `test('the config rung never runs for a multi-spec spec-{N} subdirectory', …)`: a run dir whose basename is `spec-1931`, holding only `config.yml` `spec: 1930` (the parent copy) and a `run-state.json` with no `worktree` → `sources.records === 'unavailable'`, `records` `[]`.
   - Extend `closingRecords keeps records only for the two header rungs` so its empty-list loop includes `'config'`.
 
 - [ ] **Step 2: Run tests to verify they fail**
