@@ -71,7 +71,8 @@ const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('./lib/shared-primitives');
 
 const USAGE = 'usage: pr-checks.js --run <run-dir> [--section "/<skill>"] | --pr <n> [--help]\n'
   + '  --pr <n> classifies a PR by number with no run dir: local HEAD is not compared (the PR\'s own head stands in), localHead is null, never stale, never no-pr\n'
-  + '  prints {state, failing, pending, awaitingReadyRun?, headRefOid, localHead, pr, reason?, baseBranch?, baseSha?, baseReason?, logged? (--run only)};\n'
+  + '  prints {state, failing, pending, awaitingReadyRun?, headRefOid, localHead, pr, reason?, baseBranch?, baseSha?, baseReason?, headRunCount?, logged? (--run only)};\n'
+  + '  headRunCount: the head sha\'s workflow-run count, present only when the head-runs read succeeded;\n'
   + '  baseBranch: the branch compared on a red read -- the PR\'s own base, else the integration branch;\n'
   + '  state: red | inherited-red | pending | stale | green | no-ci | read-failed | no-pr | gh-absent\n'
   + '  --run appends the PR-check gate line to decisions.md under --section and adds logged: AUTO on inherited-red | pending | stale; SKIP on no-pr | gh-absent | no-ci | read-failed\n'
