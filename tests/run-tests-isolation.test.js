@@ -11,7 +11,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn, spawnSync } = require('child_process');
+const { execFileSync, spawn, spawnSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 const {
@@ -1248,7 +1248,7 @@ test('gitFixtureConfigEnv returns an unchanged copy when GIT_CONFIG_COUNT is not
 });
 
 test('gitFixtureConfigEnv: real git reads maintenance.auto=false from the returned env', () => {
-  const out = require('child_process').execFileSync('git', ['config', '--get', 'maintenance.auto'], {
+  const out = execFileSync('git', ['config', '--get', 'maintenance.auto'], {
     env: gitFixtureConfigEnv(process.env), encoding: 'utf8',
   }).trim();
   assert.strictEqual(out, 'false');
