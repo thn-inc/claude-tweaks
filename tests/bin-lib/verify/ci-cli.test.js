@@ -34,7 +34,7 @@ if ((m = ep.match(/commits\\/([0-9a-f]{40})\\/pulls$/))) {
 }
 else if (/pulls\\/7$/.test(ep)) out({ number: 7, mergeable_state: 'clean' });
 else if ((m = ep.match(/runs\\?head_sha=([0-9a-f]{40})/))) out({ workflow_runs: [{ id: 41, head_sha: m[1], status: 'completed', html_url: 'https://example.test/runs/41' }] });
-else if (/runs\\/41\\/jobs/.test(ep)) out({ jobs: (process.env.FAKE_GH_JOBS || 'test').split(',').map((name) => ({ id: name === 'test' ? 99 : 98, name, status: 'completed', conclusion: mode === 'red' ? 'failure' : 'success', started_at: '2026-10-25T17:27:00Z', completed_at: '2026-10-25T17:30:30Z', html_url: 'https://example.test/job/' + (name === 'test' ? 99 : 98) })) });
+else if (/runs\\/41\\/jobs/.test(ep)) out({ jobs: (process.env.FAKE_GH_JOBS || 'test').split(',').map((name) => ({ id: name === 'test' ? 99 : 98, name, status: 'completed', conclusion: mode === 'red' && !(process.env.FAKE_GH_GREEN || '').split(',').includes(name) ? 'failure' : 'success', started_at: '2026-10-25T17:27:00Z', completed_at: '2026-10-25T17:30:30Z', html_url: 'https://example.test/job/' + (name === 'test' ? 99 : 98) })) });
 else if (/jobs\\/(99|98)\\/logs$/.test(ep)) {
   const flagged = a.includes('--allow-escape-sequences');
   const logMode = process.env.FAKE_GH_LOG;
@@ -493,6 +493,37 @@ test('a red first suite and an unanswered second suite under the key exit 3 befo
   const plain = build({});
   await runCli([...SCOPE(plain.r), '--cmd', localMarkerCmd(plain.testsMarker)], { cwd: plain.r.repo, env: plain.env });
   assert.ok(fs.existsSync(plain.retryMarker), 'without the key the retry runs, so the fixture does reach it');
+});
+
+test('under the key a red CI suite\'s flaky retry runs after every suite answered, here, and is recorded (#5369)', { skip: SKIP }, async () => {
+  const retryMarker = path.join(tmpDir(), 'retry-m');
+  const otherMarker = path.join(tmpDir(), 'other-m');
+  const r = repoWith({
+    declExtra: {
+      ...TWO_SUITES(otherMarker),
+      flaky: { files: ['tests/env.test.js'], maxRetries: 1 },
+      retry: { tests: `${markerCommand(retryMarker)} {file}` },
+    },
+  });
+  const { env } = fakeGhEnv('red', ciLogOf(r, ['tests/env.test.js', 'tests/ok.test.js']), { FAKE_GH_JOBS: 'test,other', FAKE_GH_GREEN: 'other' });
+  const res = await runCli([...SCOPE(r), '--cmd', localMarkerCmd(path.join(tmpDir(), 'tests-m'))], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(fs.existsSync(retryMarker), 'the deferred retry ran');
+  assert.strictEqual(reportOf(r).checks.tests.retryDecision.retry, true);
+  assert.deepStrictEqual(reportOf(r).checks.tests.flakyRetried, ['tests/env.test.js']);
+  assert.ok(!fs.existsSync(otherMarker), 'CI answered the second suite');
+});
+
+test('under the key a stale baseline worktree warning is printed after the no-verdict lines, never before (#5369)', { skip: SKIP }, async () => {
+  const r = repoWith({ declExtra: KEY });
+  const { env } = fakeGhEnv('unpushed', '');
+  const staleParent = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-verify-base-')));
+  r.git('worktree', 'add', '--detach', path.join(staleParent, 'wt'), 'HEAD');
+  const res = await runCli([...SCOPE(r), '--baseline', 'HEAD', '--baseline-cmd', 'tests=node -e 0 {file}', '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 3, res.stdout + res.stderr);
+  const lines = res.stderr.split('\n');
+  assert.strictEqual(lines[0], NO_VERDICT_FIRST('tests', 'head-not-pushed'));
+  assert.match(lines[3], /^verify\.js: a stale baseline scratch worktree is registered at /);
 });
 
 test('a dirty tree under the key exits 3 with dirty-tree and calls no gh (#5369)', { skip: SKIP }, async () => {

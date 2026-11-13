@@ -496,6 +496,11 @@ async function main() {
   // #3043: an unresolvable --baseline is a usage error before any check runs.
   let bgit = null;
   let baseSha = null;
+  const staleWarnings = [];
+  const flushStaleWarnings = () => {
+    // fs.writeSync, not process.stderr: this may run inside the 'exit' event.
+    for (const line of staleWarnings.splice(0)) fs.writeSync(2, line);
+  };
   if (parsed.baseline) {
     bgit = realGit(parsed.cwd || process.cwd());
     baseSha = bgit.resolveCommit(parsed.baseline);
@@ -505,9 +510,12 @@ async function main() {
       return;
     }
     // Named, never swept — see findStaleBaselineWorktrees (#3064).
+    // #5369: held until the no-verdict decision so an exit-3 run's stderr line 1
+    // is the no-verdict line; a run that ends earlier flushes them at exit.
     for (const dir of findStaleBaselineWorktrees(bgit.listWorktrees)) {
-      process.stderr.write(`verify.js: a stale baseline scratch worktree is registered at ${dir} from an earlier interrupted run — remove it manually: git worktree remove --force ${dir}\n`);
+      staleWarnings.push(`verify.js: a stale baseline scratch worktree is registered at ${dir} from an earlier interrupted run — remove it manually: git worktree remove --force ${dir}\n`);
     }
+    if (staleWarnings.length) process.once('exit', flushStaleWarnings);
   }
   const jsonPath = parsed.json || path.join(logDir, 'report.json');
   const countStampPath = parsed.countStamp || (gitDir ? path.join(gitDir, 'claude-tweaks-test-count.json') : null);
@@ -944,6 +952,7 @@ async function main() {
     // No check ran, so no report, no stamp and no slot: a report left by an
     // earlier run would read as this run's answer.
     process.stderr.write(`${noVerdictLines(noVerdict).join('\n')}\n`);
+    flushStaleWarnings();
     fs.rmSync(jsonPath, { force: true });
     if (parsed.run) {
       writeVerifyEvent(parsed.run, {
@@ -966,6 +975,7 @@ async function main() {
     process.exitCode = EXIT_NO_VERDICT;
     return;
   }
+  flushStaleWarnings();
   for (let i = 0; i < ciResults.length; i += 1) {
     if (deferredRetries.has(ciResults[i])) ciResults[i] = await retryHook(ciResults[i], retryCtx);
   }
