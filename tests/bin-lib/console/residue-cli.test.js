@@ -349,6 +349,42 @@ test('--require-verify checks each spec-*/ dir of a multi-spec parent, never the
   assert.ok(h.out().includes(`--run-dir "${path.join(fs.realpathSync(parent), 'spec-2')}"`), h.out());
 });
 
+// #5290: a multi-spec consolidated wrap-up captures learned-skills patches in the PARENT run dir,
+// and each spec-*/ verify reads only its own dir, so the parent scan is what checks the manifest.
+function multispecParent(f, manifest) {
+  const parent = path.join(f.archive, '2026-11-13T000000-multispec-parent');
+  fs.mkdirSync(path.join(parent, 'spec-1'), { recursive: true });
+  writeVerifyResults({ runDir: path.join(parent, 'spec-1'), rows: [], base: 'origin/main' });
+  if (manifest) {
+    fs.mkdirSync(path.join(parent, 'learned-skills'), { recursive: true });
+    fs.writeFileSync(path.join(parent, 'learned-skills', 'manifest.json'), JSON.stringify(manifest));
+  }
+  return parent;
+}
+
+test('--require-verify on a multi-spec parent names a captured learned-skills patch it never delivered', () => {
+  const f = fixture();
+  const parent = multispecParent(f, [{ id: '1', status: 'captured', patch: '/before/archival/learned-skills/1.patch' }, { id: '2', status: 'landed', patch: '/x/2.patch' }]);
+  const h = harness(f.main);
+  assert.strictEqual(run(['--run', parent, '--require-verify', 'origin/main'], h.deps), 0);
+  const real = fs.realpathSync(parent);
+  const lines = h.out().split('\n').filter((l) => l.includes('learned-skills'));
+  assert.deepStrictEqual(lines, [
+    `- ${path.basename(parent)}: learned-skills-delivered failed — 1 captured learned-skills patch(es) never delivered: ${path.join(real, 'learned-skills', '1.patch')} — run learned-skills-pr.js land (pr-first) or stage (local-merge) with --run ${real}`,
+  ], h.out());
+});
+
+test('--require-verify on a multi-spec parent says nothing when its learned-skills patches were delivered, or there were none', () => {
+  const f = fixture();
+  const delivered = harness(f.main);
+  assert.strictEqual(run(['--run', multispecParent(f, [{ id: '1', status: 'landed', patch: '/x/1.patch' }]), '--require-verify', 'origin/main'], delivered.deps), 0);
+  assert.strictEqual(delivered.out(), '');
+  const g = fixture();
+  const none = harness(g.main);
+  assert.strictEqual(run(['--run', multispecParent(g, null), '--require-verify', 'origin/main'], none.deps), 0);
+  assert.strictEqual(none.out(), '');
+});
+
 // #4170: the ack and console-resolve.js --set-item both read-modify-write console.json, so the ack runs under
 // the console's own lock and an ack never hides an item a later rewrite re-opened.
 test('--ack reads and writes console.json while holding the console lock (#4170)', () => {

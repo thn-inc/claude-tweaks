@@ -75,12 +75,15 @@ function readLocalManifest(runDir) {
 // Splits the manifest's captured entries into those to deliver and those the run branch already
 // carries. An entry is superseded only when the run branch changed its target after the merge base AND
 // the entry's patch reverse-applies to HEAD's tree (the edit itself is on the run branch); a target the
-// run branch changed some other way is delivered as usual. Mutates `manifest` entries for the
-// superseded ones.
+// run branch changed some other way is delivered as usual. An entry a staged proposal already holds
+// (stagedCopyOf) is marked staged with that path, never staged again. Mutates `manifest` entries for
+// the superseded and already-staged ones.
 function triage({ runDir, worktree, mergeBase, manifest, deps }) {
   const captured = manifest.filter((e) => e.status === 'captured');
   const todo = [];
   const superseded = [];
+  const already = [];
+  const copies = stagedCopies(runDir, deps);
   let owned = [];
   if (captured.length) {
     owned = splitNul(deps.git(['-C', worktree, '-c', 'core.quotePath=false', 'diff', '--name-only', '-z', '--end-of-options', mergeBase, 'HEAD', '--']));
@@ -101,6 +104,14 @@ function triage({ runDir, worktree, mergeBase, manifest, deps }) {
         e.status = 'superseded';
         e.reason = 'the run branch already carries this edit, so it travels with the record';
         superseded.push({ id: e.id, target: e.target, reason: e.reason });
+        continue;
+      }
+      const copy = stagedCopyOf(e, copies, deps);
+      if (copy) {
+        e.status = 'staged';
+        e.stagePath = copy;
+        e.reason = 'already staged by an earlier call whose manifest write failed';
+        already.push({ id: e.id, target: e.target, stagePath: copy, reason: e.reason });
       } else {
         todo.push(e);
       }
@@ -119,7 +130,38 @@ function triage({ runDir, worktree, mergeBase, manifest, deps }) {
     }));
     try { deps.appendEntries({ runDir, items }); } catch { /* the manifest status is the record */ }
   }
-  return { todo, superseded };
+  return { todo, superseded, already };
+}
+
+// Every staged/wrap-up-skill-{N}.md as { path, target, diff }: its Target: line and the bytes after
+// the preamble's blank line. An unreadable staged/ is none.
+function stagedCopies(runDir, deps) {
+  const dir = path.join(runDir, 'staged');
+  let names = [];
+  try { names = deps.readdir(dir).filter((n) => /^wrap-up-skill-\d+\.md$/.test(n)).sort(); } catch { return []; }
+  const out = [];
+  for (const n of names) {
+    let bytes;
+    try { bytes = Buffer.from(deps.readFile(path.join(dir, n))); } catch { continue; }
+    const end = bytes.indexOf('\n\n');
+    if (end < 0) continue;
+    const m = /^Target: (.*)$/m.exec(bytes.subarray(0, end).toString('utf8'));
+    if (m) out.push({ path: path.join(dir, n), target: m[1], diff: bytes.subarray(end + 2), taken: false });
+  }
+  return out;
+}
+
+// The staged file that already holds this captured entry's edit: same target, and its diff block is
+// the patch's bytes exactly (a run whose manifest write failed after staging it). Each file is
+// claimed once. Returns its path, or null.
+function stagedCopyOf(entry, copies, deps) {
+  if (!copies.length) return null;
+  let patch;
+  try { patch = Buffer.from(deps.readFile(entry.patch)); } catch { return null; }
+  const hit = copies.find((c) => !c.taken && c.target === entry.target && c.diff.equals(patch));
+  if (!hit) return null;
+  hit.taken = true;
+  return hit.path;
 }
 
 // Stages one entry through the shared writer. Returns { ok: true, row } or { ok: false, error }.
@@ -127,7 +169,7 @@ function stageOne({ runDir, worktree, entry, reason, deps }) {
   try {
     const patch = deps.readFile(entry.patch);
     const res = stageEntry({
-      runDir, worktree, entry: { target: entry.target, summary: entry.summary, patch, patchFile: entry.patch }, reason,
+      runDir, worktree, entry: { target: entry.target, summary: entry.summary, patch, patchFile: entry.patch, findings: entryFindings(entry) }, reason,
     }, deps);
     entry.status = 'staged';
     entry.stagePath = res.stagePath;
@@ -148,6 +190,14 @@ function stageAll({ runDir, worktree, entries, reason, deps, out }) {
   }
 }
 
+// Writes the manifest. A failure is reported (manifestFailed), never thrown: the staged files and
+// the PR already exist, a throw reads as "nothing happened", and the caller's fallback would deliver
+// them again. A later land or stage re-records them (triage recognises a staged copy).
+function recordManifest(runDir, manifest, deps, out) {
+  try { writeManifest(runDir, manifest, deps); } catch { out.manifestFailed = true; }
+  return out;
+}
+
 // ---------------------------------------------------------------------------------------------
 // stage
 
@@ -159,10 +209,11 @@ function stage({ runDir, worktree, reason, mergeBase }, overrides = {}) {
   const base = checkMergeBase(mergeBase);
   const manifest = readLocalManifest(runDir);
   const out = { staged: [] };
-  const { todo, superseded } = triage({ runDir, worktree, mergeBase: base, manifest, deps });
+  const { todo, superseded, already } = triage({ runDir, worktree, mergeBase: base, manifest, deps });
   if (superseded.length) out.superseded = superseded;
+  out.staged.push(...already);
   stageAll({ runDir, worktree, entries: todo, reason: why, deps, out });
-  if (todo.length || superseded.length) writeManifest(runDir, manifest, deps);
+  if (todo.length || superseded.length || already.length) recordManifest(runDir, manifest, deps, out);
   return out;
 }
 
@@ -221,12 +272,10 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
   const out = { branch, pr: null, landed: [], staged: [] };
   const confirmed = (pr) => ({ number: Number(pr.number), url: pr.url });
 
-  const { todo, superseded } = triage({ runDir, worktree, mergeBase: base, manifest, deps });
+  const { todo, superseded, already } = triage({ runDir, worktree, mergeBase: base, manifest, deps });
   if (superseded.length) out.superseded = superseded;
-  const finish = () => {
-    if (todo.length || superseded.length) writeManifest(runDir, manifest, deps);
-    return out;
-  };
+  out.staged.push(...already);
+  const finish = () => (todo.length || superseded.length || already.length ? recordManifest(runDir, manifest, deps, out) : out);
   if (!todo.length) {
     if (prior) { try { const open = openOf(listPrs()); if (open) out.pr = confirmed(open); } catch { /* unconfirmed: reported as null */ } }
     return finish();
@@ -377,7 +426,11 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
         // Re-read before trusting the create, or before taking the branch down after it errored: gh
         // can error after GitHub opened the PR, and an OPEN PR on this run's branch is this call's.
         let open = null;
-        try { open = openOf(listPrs()); } catch (readErr) { if (!createErr) throw readErr; }
+        try { open = openOf(listPrs()); } catch (readErr) {
+          if (createErr) throw createErr;
+          // The create went through: the downgrade names the failed read, not a failed create.
+          throw Object.assign(new Error(`the created PR could not be read back (${firstLine(readErr)})`), { readBack: true });
+        }
         if (!open) throw createErr || new Error('the created PR does not read OPEN');
         pr = open;
       }
@@ -388,7 +441,7 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
       try { git(['push', '--end-of-options', 'origin', `:refs/heads/${branch}`], { timeout: GIT_PUSH_TIMEOUT_MS }); } catch (delErr) {
         note = `; the branch ${branch} could not be deleted and still holds these commits (${firstLine(delErr)})`;
       }
-      return downgradeAll(entries, `gh pr create failed (${firstLine(err)})${note}`);
+      return downgradeAll(entries, `${err && err.readBack ? err.message : `gh pr create failed (${firstLine(err)})`}${note}`);
     }
 
     // 5. Record and log.
@@ -421,11 +474,9 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
       const onPr = manifest.filter((e) => e.status === 'landed' && e.pr && e.pr.number === prRef.number);
       try { deps.gh(['pr', 'edit', String(prRef.number), '--body-file', '-'], prBody(records, onPr)); } catch { out.prBodyStale = true; }
     }
-    // The edits are on the PR by now, so a failed manifest write is reported, never thrown: a throw
-    // reads as "nothing landed" and the caller would stage edits the PR already carries. A later land
+    // The edits are on the PR by now: a failed manifest write is reported (finish), and a later land
     // reuses the verified commits and records them.
-    let result;
-    try { result = finish(); } catch { result = out; result.manifestFailed = true; }
+    const result = finish();
     // A re-land of the same commits (that recovery) writes no AUTO line an earlier call already wrote.
     const sansTime = (line) => String(line).replace(/^- AUTO \d\d:\d\d:\d\d /, '');
     let logged = new Set();

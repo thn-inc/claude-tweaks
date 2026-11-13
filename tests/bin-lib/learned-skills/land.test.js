@@ -225,6 +225,22 @@ test('every finding on a shared target gets its own AUTO line and PR body row', 
   for (const summary of ['first learning', 'second learning', 'repairs a link']) assert.ok(prBody.includes(`— ${summary}`), summary);
 });
 
+// Residual (5): a staged entry logs one STAGED line per finding it carries, all naming one stage path.
+test('every finding on a staged entry gets its own STAGED line naming the one stage path', (t) => {
+  const f = fixture(t, { capturedTargets: [] });
+  const body = fs.readFileSync(path.join(f.repo, X), 'utf8');
+  const cap = (summary, row) => capture({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, target: X, summary, row }, { now: () => NOW });
+  write(f.repo, X, body + 'first learning\n');
+  cap('first learning');
+  assert.equal(cap('repairs a link', 'references').shared, true);
+  const res = stage({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, reason: 'integration-model is local-merge' }, { now: () => NOW });
+  assert.equal(res.staged.length, 1);
+  const lines = decisions(f).split('\n').filter((l) => l.startsWith('- STAGED'));
+  assert.equal(lines.length, 2, lines.join('\n'));
+  assert.ok(lines.some((l) => l.includes('— Skills row: skill update for x/SKILL.md (first learning) could not ride a learned-skills PR (integration-model is local-merge); staged instead. Reversibility: high (stage path: staged/wrap-up-skill-1.md).')), lines.join('\n'));
+  assert.ok(lines.some((l) => l.includes('— Broken references row: skill update for x/SKILL.md (repairs a link) could not ride a learned-skills PR (integration-model is local-merge); staged instead. Reversibility: high (stage path: staged/wrap-up-skill-1.md).')), lines.join('\n'));
+});
+
 test('a manifest entry written before findings existed still lands with one AUTO line', (t) => {
   const f = fixture(t, { capturedTargets: [X] });
   const file = path.join(f.runDir, 'learned-skills', 'manifest.json');
@@ -515,6 +531,26 @@ test('a create that errors while the PR opened is treated as created', (t) => {
   assert.deepEqual(readManifest(f.runDir).map((m) => m.status), ['landed', 'landed']);
 });
 
+// Residual fix item 9: a create that succeeded but whose confirming re-read failed is downgraded with
+// a reason naming the read error, not as a failed create.
+test('a successful create whose re-read fails names the read error', (t) => {
+  const f = fixture(t);
+  const gh = fakeGh();
+  let created = false;
+  const readFails = (args, input) => {
+    if (created && args[1] === 'list') throw new Error('HTTP 502 on the re-read');
+    const r = gh.gh(args, input);
+    if (args[1] === 'create') created = true;
+    return r;
+  };
+  const res = land(landArgs(f), deps(readFails).deps);
+  assert.deepEqual(res.landed, []);
+  assert.equal(res.staged.length, 2);
+  for (const s of res.staged) assert.match(s.reason, /^the created PR could not be read back \(HTTP 502 on the re-read\)/);
+  assert.doesNotMatch(res.staged[0].reason, /gh pr create failed/);
+  assert.equal(remoteBranch(f), null, 'the branch is still taken down');
+});
+
 for (const [state, reason] of [
   ['CLOSED', (b) => new RegExp(`${b} already exists on origin and PR #77 was closed`)],
   ['MERGED', () => /the earlier learned-skills PR #77 was merged/],
@@ -759,6 +795,64 @@ test('a manifest write that fails after the PR opened still reports what landed,
   assert.equal(again.manifestFailed, undefined);
   assert.deepEqual(readManifest(f.runDir).map((m) => m.status), ['landed', 'landed']);
   assert.equal(autoLines().length, 2, 'no AUTO line is written twice');
+});
+
+// Residual fix item 1: a land or stage whose manifest write failed left staged files beside entries
+// still marked captured; the recovery re-run must recognise them, never stage a second copy.
+const stagedNames = (f) => (fs.existsSync(path.join(f.runDir, 'staged')) ? fs.readdirSync(path.join(f.runDir, 'staged')).sort() : []);
+const stagedLines = (f) => (fs.existsSync(path.join(f.runDir, 'decisions.md')) ? decisions(f).split('\n').filter((l) => l.startsWith('- STAGED')) : []);
+const failManifest = (d) => {
+  d.writeFile = (p, data) => {
+    if (p.endsWith('manifest.json')) throw new Error('disk full');
+    return realDeps.writeFile(p, data);
+  };
+  return d;
+};
+
+test('a re-land after a lost manifest write stages nothing twice', (t) => {
+  const f = fixture(t);
+  // X's patch no longer applies to origin/main, so it stages; Z lands.
+  const other = path.join(f.root, 'other');
+  sh(f.root, ['clone', '-q', f.origin, other]);
+  write(other, X, '# x\n\nline one\nline two\nline three\nline four\nCHANGED five\nCHANGED six\nCHANGED seven\n');
+  sh(other, ['commit', '-q', '-am', 'conflicting change']);
+  sh(other, ['push', '-q', 'origin', 'main']);
+  const gh = fakeGh();
+  const first = land(landArgs(f), failManifest(deps(gh.gh).deps));
+  assert.equal(first.manifestFailed, true);
+  assert.deepEqual([first.landed.length, first.staged.length], [1, 1]);
+  assert.deepEqual(stagedNames(f), ['wrap-up-skill-1.md']);
+  assert.equal(stagedLines(f).length, 1);
+
+  const again = land(landArgs(f), deps(gh.gh).deps);
+  assert.equal(again.manifestFailed, undefined);
+  assert.deepEqual(stagedNames(f), ['wrap-up-skill-1.md'], 'no second staged file');
+  assert.equal(stagedLines(f).length, 1, 'no second STAGED line');
+  assert.deepEqual(again.staged.map((s) => [s.target, path.basename(s.stagePath)]), [[X, 'wrap-up-skill-1.md']]);
+  const m = readManifest(f.runDir);
+  assert.deepEqual(m.map((e) => e.status), ['staged', 'landed']);
+  assert.equal(m[0].stagePath, path.join(f.runDir, 'staged', 'wrap-up-skill-1.md'));
+});
+
+test('a stage whose manifest write fails reports it, and a re-run stage stages nothing twice', (t) => {
+  const f = fixture(t);
+  const first = stage({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, reason: 'integration-model is local-merge' }, failManifest({ now: () => NOW }));
+  assert.equal(first.manifestFailed, true);
+  assert.equal(first.staged.length, 2);
+  assert.deepEqual(readManifest(f.runDir).map((e) => e.status), ['captured', 'captured']);
+  const again = stage({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, reason: 'integration-model is local-merge' }, { now: () => NOW });
+  assert.deepEqual(stagedNames(f), ['wrap-up-skill-1.md', 'wrap-up-skill-2.md'], 'no second copy of either');
+  assert.equal(stagedLines(f).length, 2, 'no second STAGED line');
+  assert.equal(again.staged.length, 2);
+  assert.deepEqual(readManifest(f.runDir).map((e) => e.status), ['staged', 'staged']);
+});
+
+test('a staged file of another edit to the same target is not taken for this entry', (t) => {
+  const f = fixture(t, { capturedTargets: [X] });
+  fs.mkdirSync(path.join(f.runDir, 'staged'), { recursive: true });
+  fs.writeFileSync(path.join(f.runDir, 'staged', 'wrap-up-skill-1.md'), `Target: ${X}\nInvariant: other\nFinding: Skills row — other\nStaged-at: abc\n\ndiff --git a/${X} b/${X}\nnot this patch\n`);
+  const res = stage({ runDir: f.runDir, worktree: f.repo, mergeBase: f.mergeBase, reason: 'r' }, { now: () => NOW });
+  assert.deepEqual(res.staged.map((s) => path.basename(s.stagePath)), ['wrap-up-skill-2.md']);
 });
 
 test('an entry is not superseded when the run branch never changed its target after the merge base', (t) => {

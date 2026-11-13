@@ -8,7 +8,9 @@
 //   console-residue.js --run <dir>             print the residue block (nothing when none)
 //   console-residue.js --run <dir> --require-verify <base>
 //                                              also name the wrap-up-engine.js verify command
-//                                              for each checked dir with no valid verify.json (#3783)
+//                                              for each checked dir with no valid verify.json (#3783),
+//                                              and, on a multi-spec parent, any captured learned-skills
+//                                              patch its manifest never delivered (#5290)
 //   console-residue.js --ack --run <dir>       mark that run's consoles reviewed
 //   console-residue.js --ack-all               mark every run with unacknowledged residue
 // Exit 0 done; 2 malformed (unknown flag, --run without a value, --require-verify
@@ -35,6 +37,7 @@ const { withLock } = require('./lib/file-lock');
 const { lstatType } = require('./lib/path-guard');
 const { CONSOLE_LOCK } = require('./lib/console/item-resolution');
 const { readVerifyResults } = require('./lib/wrap-up/verify-results');
+const { learnedSkillsDelivered } = require('./lib/learned-skills/delivered');
 
 const USAGE = 'usage: console-residue.js (--run <dir> [--require-verify <base>] | --ack --run <dir> | --ack-all)';
 
@@ -127,6 +130,12 @@ function missingVerifyLines(runDir, base, pluginRoot) {
     if (readVerifyResults(c.dir)) continue;
     lines.push(`- ${c.label}: verify.json missing — wrap-up's Verify execution never ran, or its write failed`);
     lines.push(`  run: node "${pluginRoot}/bin/wrap-up-engine.js" verify --run-dir "${c.dir}" --base ${base}`);
+  }
+  // #5290: a multi-spec consolidated wrap-up captures its learned-skills patches in the parent run
+  // dir, which no spec-*/ verify reads, so the parent's manifest is checked here.
+  if (specs.length) {
+    const delivered = learnedSkillsDelivered(runDir);
+    if (delivered.result === 'fail') lines.push(`- ${runLabel}: learned-skills-delivered failed — ${delivered.detail}`);
   }
   return lines;
 }

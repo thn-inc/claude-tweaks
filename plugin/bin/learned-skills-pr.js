@@ -38,11 +38,15 @@
 // run branch already carries (its patch reverse-applies to HEAD) as superseded, never delivered twice.
 // Stdout is one JSON line (pr is set only when confirmed open in this call):
 //   land:  {branch, pr: {number,url}|null, landed: [{id,target,commit}], staged: [{id,target,stagePath,reason}]
-//           [, superseded][, failed][, logFailed][, manifestFailed]}
-//   stage: {staged: [...][, superseded][, failed]}
+//           [, superseded][, failed][, logFailed][, manifestFailed][, prBodyStale]}
+//   stage: {staged: [...][, superseded][, failed][, manifestFailed]}
 //   failed — entries whose staged write failed too (they stay captured; the CLI exits 1)
-//   manifestFailed — the manifest write after the push and PR failed: landed[] and pr still hold (exit 0,
-//                    never stage them); a re-run of the same land records them, logging nothing twice
+//   manifestFailed — the manifest write failed after the work was done: landed[], pr and staged[] still
+//                    hold (exit 0, never stage them again); a re-run of the same call records them,
+//                    recognising each staged copy and logging nothing twice
+//   prBodyStale — commits were added to the open PR but its body could not be rewritten: the landed
+//                 entries stand; the caller names the PR in an open wrap-up ledger item
+//   staged[] rows an earlier call already staged carry that call's stagePath (no second file or line)
 //
 // Exit 0 ok (every route above, staged included)
 //      1 a git failure before the diff was read — nothing was changed; the caller commits on the run

@@ -40,6 +40,7 @@ const { readPacket } = require('./packet-gather');
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 const { splitNul, parseStatusPorcelainZ } = require('../git-z');
 const { CLOSING_KEYWORD_ALTERNATION } = require('../issue-branch-tracking');
+const { learnedSkillsDelivered } = require('../learned-skills/delivered');
 
 // Shared factory (not two hand-duplicated functions) so defaultGit and
 // defaultGh can never again drift on their execFileSync options the way
@@ -661,27 +662,9 @@ registerCheck('reference-repairs', ({ runDir, base, deps, cwd }) => {
 });
 
 // ---- learned-skills delivery (#5290) ----------------------------------------------
-// bin/learned-skills-pr.js capture leaves an applied Skills-row edit only as a patch beside
-// {run}/learned-skills/manifest.json until land or stage delivers it. An entry still `captured` here
-// was never delivered, and nothing else reads the manifest. Each patch is named where it now lives,
-// beside the manifest: the manifest's absolute paths predate the run dir's archival.
-registerCheck('learned-skills-delivered', ({ runDir }) => {
-  let manifest;
-  try {
-    manifest = JSON.parse(fs.readFileSync(path.join(runDir, 'learned-skills', 'manifest.json'), 'utf8'));
-  } catch (err) {
-    if (err && (err.code === 'ENOENT' || err.code === 'ENOTDIR')) return { result: 'skip', detail: 'no learned-skills captures this run' };
-    return { result: 'fail', detail: `learned-skills manifest unreadable: ${err.message}` };
-  }
-  if (!Array.isArray(manifest)) return { result: 'fail', detail: 'learned-skills manifest unreadable: not an array' };
-  const captured = manifest.filter((e) => e && e.status === 'captured');
-  if (!captured.length) return { result: 'pass', detail: '' };
-  const patches = captured.map((e) => path.join(runDir, 'learned-skills', path.basename(String(e.patch || `${e.id}.patch`))));
-  return {
-    result: 'fail',
-    detail: `${captured.length} captured learned-skills patch(es) never delivered: ${patches.join(', ')} — run learned-skills-pr.js land (pr-first) or stage (local-merge) with --run ${runDir}`,
-  };
-});
+// An entry still `captured` in {run}/learned-skills/manifest.json was never delivered; the verdict
+// lives in bin/lib/learned-skills/delivered.js, which console-residue.js runs on a multi-spec parent.
+registerCheck('learned-skills-delivered', ({ runDir }) => learnedSkillsDelivered(runDir));
 
 // ---- gh availability probe ------------------------------------------------
 // Delegates to the shared plugin/bin/lib/repo-resolve.js helper (the

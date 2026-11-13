@@ -197,7 +197,7 @@ function nextStageNumber(stagedDir, deps) {
 // The stacked check (bin/check-staged-stack.js) is NOT run: it accepts only staged/*.patch, while
 // the spec fixes this artifact's name as staged/wrap-up-skill-{N}.md, so it could never report a
 // verdict against it.
-// entry: { target, summary, patch: Buffer|string, patchFile?: string }.
+// entry: { target, summary, patch: Buffer|string, patchFile?: string, findings?: [{ row, summary }] }.
 function stageEntry({ runDir, worktree, entry, reason }, overrides = {}) {
   const deps = { ...realDeps, ...overrides };
   const st = writeStage({ runDir, worktree, entry }, deps);
@@ -210,7 +210,7 @@ function stageEntry({ runDir, worktree, entry, reason }, overrides = {}) {
     throw err;
   }
   const logFailed = logStaged({
-    runDir, deps, target: st.target, summary: st.summary, reason, gate: g.gate, note: g.note, stageName: st.name,
+    runDir, deps, target: st.target, summary: st.summary, findings: entry.findings, reason, gate: g.gate, note: g.note, stageName: st.name,
   });
   return { stagePath: st.stagePath, gate: g.gate, logFailed };
 }
@@ -285,14 +285,29 @@ function gateStage(st, entry, worktree, deps, { mayDegrade = true } = {}) {
 // the staged file is then the edit's only copy: 'check-failed-kept' (the check ran and failed — once,
 // as the only copy is never rewritten for a recompose — and the working tree could not take the edit
 // back) and 'not-checked' (the gate never ran: the working tree could not be reset to HEAD for it).
-function logStaged({ runDir, deps, target, summary, reason, gate, note, stageName }) {
-  const finding = `${skillLabel(target)} (${summary})`;
+// One line per finding the entry carries (`findings`, [{ row, summary }]; default the Skills row's
+// one), each under its own row, all naming the one stage path.
+function logStaged({ runDir, deps, target, summary, findings, reason, gate, note, stageName }) {
+  const list = Array.isArray(findings) && findings.length ? findings : [{ row: DEFAULT_ROW, summary }];
+  const items = list.map((f) => ({
+    section: LOG_SECTION,
+    entry: stagedLine({ deps, step: rowLabel(f.row), finding: `${skillLabel(target)} (${oneLine(f.summary)})`, reason, gate, note, stageName }),
+  }));
+  try {
+    deps.appendEntries({ runDir, items });
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+function stagedLine({ deps, step, finding, reason, gate, note, stageName }) {
   let line;
   if (gate === 'check-failed-kept' || gate === 'not-checked') {
     line = formatEntry({
       status: 'STAGED',
       now: deps.now(),
-      step: STEP,
+      step,
       text: gate === 'check-failed-kept'
         ? `${finding} — patch failed \`git apply --check\` at staging (${note}); kept the diff at staged/${stageName}, not description-only: it is the edit's only copy and the working tree could not take it back`
         : `${finding} — gate not run (${note}); kept the diff unchecked at staged/${stageName}: it is the edit's only copy`,
@@ -302,7 +317,7 @@ function logStaged({ runDir, deps, target, summary, reason, gate, note, stageNam
     line = formatEntry({
       status: 'STAGED',
       now: deps.now(),
-      step: STEP,
+      step,
       text: `${finding} — patch failed \`git apply --check\` at staging (${note}); staged description-only at staged/${stageName}`,
       reversibility: 'high',
     });
@@ -310,7 +325,7 @@ function logStaged({ runDir, deps, target, summary, reason, gate, note, stageNam
     line = formatEntry({
       status: 'STAGED',
       now: deps.now(),
-      step: STEP,
+      step,
       text: `${finding} — gate could not run: ${note} — path/anchoring problem, not a composition error`,
       reversibility: 'high',
     });
@@ -318,17 +333,12 @@ function logStaged({ runDir, deps, target, summary, reason, gate, note, stageNam
     line = formatEntry({
       status: 'STAGED',
       now: deps.now(),
-      step: STEP,
+      step,
       text: `skill update for ${finding} could not ride a learned-skills PR (${oneLine(reason)}); staged instead`,
       reversibility: `high (stage path: staged/${stageName})`,
     });
   }
-  try {
-    deps.appendEntries({ runDir, items: [{ section: LOG_SECTION, entry: line }] });
-    return false;
-  } catch {
-    return true;
-  }
+  return line;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -458,7 +468,7 @@ function capture({ runDir, worktree, mergeBase, target, summary, row = DEFAULT_R
   // From here the diff is in hand: no failure throws without naming where the edit is.
   const cx = {
     deps, git, worktree, runDir, rel, abs, tracked, statusOf, manifest, note, existing,
-    D: diff, start, patchDir: path.join(runDir, 'learned-skills'),
+    finding, D: diff, start, patchDir: path.join(runDir, 'learned-skills'),
   };
   // plan: { mode, C: the whole change as a patch, full: the tree bytes that hold it }.
   const plan = existing ? joinPlan(cx) : { mode: 'new', C: diff, full: start };
@@ -626,7 +636,7 @@ function fallback(cx, plan, L, failure) {
       patch = L;
     }
     const logFailed = logStaged({
-      runDir: cx.runDir, deps, target: st.target, summary: st.summary, reason, gate, note, stageName: st.name,
+      runDir: cx.runDir, deps, target: st.target, summary: st.summary, findings: [cx.finding], reason, gate, note, stageName: st.name,
     });
     const entries = [...cx.manifest, {
       id: stageId, target: cx.rel, summary: cx.note, patch, status: 'staged', stagePath: st.stagePath, reason,
