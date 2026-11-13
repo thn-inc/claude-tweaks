@@ -28,8 +28,9 @@
 // the PR were fast workflows already finished or skipped. "At least one run on the commit" alone
 // does not close that gap (#4198's commit had a finished skipped `label-fix-branch` run before the
 // test workflow existed), so the window does. A settled read also needs at least one workflow run
-// on the pushed sha (ctx.check.head, what express-lane.js check verified): a commit still without
-// one once the window has passed is recorded as `no-ci`, and an unreadable run read is never `no-ci`.
+// on the pushed sha (ctx.check.head, what express-lane.js check verified), read from the poll's
+// pr-checks envelope (headRunCount, trusted only when its headRefOid is that sha): a commit still
+// without one once the window has passed is recorded as `no-ci`, and an unreadable count is never `no-ci`.
 const path = require('node:path');
 const { STEP, STOP_CLASSES, neutralize, normalizeTitle } = require('./events');
 const { parseStatusPorcelainZ } = require('../git-z');
@@ -851,30 +852,35 @@ function readCiState(ctx, deps, args) {
     const r = deps.node(binScript('pr-checks.js'), args, { cwd: ctx.wt, timeout: CLI_TIMEOUT_MS, env: deps.env });
     const parsed = r.code === 0 ? JSON.parse(r.stdout) : null;
     if (parsed && typeof parsed.state === 'string' && CI_STATES.has(parsed.state)) {
-      return { state: parsed.state, pending: Array.isArray(parsed.pending) ? parsed.pending.filter((n) => typeof n === 'string') : [] };
+      return {
+        state: parsed.state,
+        pending: Array.isArray(parsed.pending) ? parsed.pending.filter((n) => typeof n === 'string') : [],
+        runs: commitRuns(ctx, parsed),
+      };
     }
   } catch { /* an unparseable read is read-failed */ }
-  return { state: 'read-failed', pending: [] };
+  return { state: 'read-failed', pending: [], runs: 'unreadable' };
 }
 
-// The workflow runs on the pushed commit (ctx.check.head): `some` for at least one run, `none`
-// for an empty list, `unreadable` for a gh failure, unparseable output or a non-array. Never throws.
-function readCommitRuns(ctx, deps) {
-  try {
-    const runs = JSON.parse(deps.gh(['run', 'list', '--repo', ctx.shared.ghRepo, '--commit', ctx.check.head, '--limit', '1', '--json', 'databaseId']));
-    if (!Array.isArray(runs)) return 'unreadable';
-    return runs.length > 0 ? 'some' : 'none';
-  } catch { return 'unreadable'; }
+// The workflow runs on the pushed commit (ctx.check.head), from the pr-checks envelope's own
+// head-runs count (pr-checks.js already lists the head sha's runs on every read, so the step
+// makes no `gh run list` call of its own): `some` for at least one run, `none` for zero, and
+// `unreadable` when the count is absent or not a non-negative integer, or the envelope's
+// headRefOid is not the pushed sha (the PR head moved, or the read never reached the runs).
+function commitRuns(ctx, parsed) {
+  const count = parsed.headRunCount;
+  if (!Number.isInteger(count) || count < 0 || parsed.headRefOid !== ctx.check.head) return 'unreadable';
+  return count > 0 ? 'some' : 'none';
 }
 
 // Reads the PR's check rollup at the worktree's HEAD. Polls `pr-checks.js --pr {n}` (which
 // writes no decisions.md line) while the state is pending or stale, or until the settle window
 // (CI_SETTLE_WINDOW_MS, measured from ctx.pushedAt) has passed and the commit has a workflow run
-// (readCommitRuns, read after each settled poll until one is seen), then makes exactly one `--run`
+// (commitRuns, taken from each settled poll's envelope until one is seen), then makes exactly one `--run`
 // read under the express-lane section: that read logs the gate's own line once, and its state is
 // the one recorded (`timeout` when it is still pending or stale at the bound; only this read can
-// say `stale`; `no-ci` when the commit still has no run once the window has passed). `gh run list`
-// sees GitHub Actions runs only while pr-checks classifies the whole rollup, so with no Actions run
+// say `stale`; `no-ci` when the commit still has no run once the window has passed). The head-runs
+// count covers GitHub Actions runs only while pr-checks classifies the whole rollup, so with no Actions run
 // `red`/`inherited-red` stay as read (a failing non-Actions check is conclusive), and a `pending`
 // poll that names pending checks keeps polling (a non-Actions check is still running) until the bound.
 // The `--run` read writes its own decisions.md gate line (e.g. "checks pending — passed with
@@ -898,7 +904,7 @@ const ciStep = defineStep(STEP.ci, STOP_CLASSES.NONE, async (ctx, deps) => {
     const polled = read.state;
     const now = deps.now();
     const settled = now - settleFrom >= CI_SETTLE_WINDOW_MS;
-    if (settled && runs !== 'some') runs = readCommitRuns(ctx, deps);
+    if (settled && runs !== 'some') runs = read.runs;
     const waiting = polled === 'pending' || polled === 'stale';
     // With no Actions run, a pending poll that names pending checks is a non-Actions check still running.
     const otherCheckRunning = polled === 'pending' && read.pending.length > 0;

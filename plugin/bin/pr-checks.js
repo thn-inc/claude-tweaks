@@ -17,7 +17,9 @@
 //
 // Prints one JSON line: {state, failing:[{name,url,inherited?}], pending:[name],
 // awaitingReadyRun?:[workflow file], headRefOid, localHead, pr, reason?, baseBranch?, baseSha?, baseReason?,
-// logged? (--run only)}. state
+// headRunCount?, logged? (--run only)}. headRunCount is the number of workflow runs the
+// head-runs read listed for headRefOid (one page of 100), present only when that read
+// succeeded -- drive.js's CI step reads it rather than listing the runs itself. state
 // is red | inherited-red | pending | stale | green | no-ci | read-failed | no-pr
 // | gh-absent.
 //
@@ -260,9 +262,12 @@ function classifyPr(deps, n, localHead, audit) {
   // A failed runs read cannot conclude a pass-class verdict (green/pending/inherited-red): a failing run
   // absent from the rollup would be invisible. Only a verdict still red is conclusive on its own.
   if (runsFailure && final.state !== 'red') return report(deps, { state: 'read-failed', pr: n, localHead, reason: runsFailure }, audit);
+  // The head-runs count rides every envelope whose runs read succeeded, so a caller can tell
+  // "no workflow run on this sha" from "the runs could not be read" without listing them again.
+  const runCount = Array.isArray(headRuns) ? { headRefOid, headRunCount: headRuns.length } : {};
   // Same for the ready-run read: a green or pending verdict could hide a ready-run failure.
-  if (readyFailure && final.state !== 'red') return report(deps, { state: 'read-failed', pr: n, localHead, reason: readyFailure }, audit);
-  return report(deps, { ...final, localHead, pr: n }, audit);
+  if (readyFailure && final.state !== 'red') return report(deps, { state: 'read-failed', pr: n, localHead, reason: readyFailure, ...runCount }, audit);
+  return report(deps, { ...final, localHead, pr: n, ...runCount }, audit);
 }
 
 function run(argv, overrides = {}) {
