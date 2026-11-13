@@ -216,9 +216,13 @@ const HUNG_AGENT = [
 const hungAgentMissing = missingFactsOf(HUNG_AGENT);
 const LENS_NOTE_SENTENCE = /When the reviewer is itself a dispatched agent,.*?\(findings `unconfirmed`, logged\)\./;
 
+// #4826: the low-tier dispatch rule the carve-out used to amend now lives in step3-tier-variants.md.
+const TIER_VARIANTS = path.join(PLUGIN, 'skills', 'review', 'step3-tier-variants.md');
+
 test('step3-lens-dispatch.md has no dispatched-reviewer carve-out (#3078)', () => {
   const step3 = readText(STEP3);
   assert.deepEqual(carveOutPhrases(step3), [], 'step3-lens-dispatch.md still carves out a dispatched reviewer from its lens dispatch (#3078)');
+  assert.deepEqual(carveOutPhrases(readText(TIER_VARIANTS)), [], 'step3-tier-variants.md carves out a dispatched reviewer from its low-tier dispatch (#3078)');
 });
 
 test("step3 Foreground note covers the reviewer's own lens dispatches (#3078)", () => {
