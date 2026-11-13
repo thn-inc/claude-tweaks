@@ -32,7 +32,7 @@ const { gitFixtureConfigEnv } = require('../../tools/run-tests');
 
 let templateRoot = null;
 let templateSeq = 0;
-const cache = new Map(); // key -> { dirs: {name: path}, froms: string[] }
+const cache = new Map(); // key -> { dirs: {name: path} }
 
 function root() {
   if (templateRoot) return templateRoot;
