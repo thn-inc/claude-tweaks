@@ -469,12 +469,43 @@ function emptyWorkflowShape() {
 const leadSpaces = (line) => /^ */.exec(line)[0].length;
 const isSkippable = (line) => { const t = line.trim(); return t === '' || t.startsWith('#'); };
 
+// YAML 1.2's double-quoted single-character escapes (spec 5.7), by the
+// character after the backslash; `\x`, `\u` and `\U` take 2, 4 and 8 hex digits.
+const DQ_ESCAPES = Object.freeze({
+  0: '\0', a: '\x07', b: '\b', t: '\t', '\t': '\t', n: '\n', v: '\v', f: '\f', r: '\r', e: '\x1b',
+  ' ': ' ', '"': '"', '/': '/', '\\': '\\', N: '\u0085', _: String.fromCharCode(0xa0), L: String.fromCharCode(0x2028), P: String.fromCharCode(0x2029),
+});
+const DQ_HEX = Object.freeze({ x: 2, u: 4, U: 8 });
+
+// A double-quoted scalar's inner text with every escape decoded, or null when an
+// escape cannot be decoded (an unknown `\q`, short or non-hex digits, a code
+// point past U+10FFFF, a trailing backslash). One linear pass.
+function decodeDoubleQuoted(inner) {
+  let out = '';
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (ch !== '\\') { out += ch; continue; }
+    const e = inner[++i];
+    if (e === undefined) return null;
+    if (Object.prototype.hasOwnProperty.call(DQ_ESCAPES, e)) { out += DQ_ESCAPES[e]; continue; }
+    const n = Object.prototype.hasOwnProperty.call(DQ_HEX, e) ? DQ_HEX[e] : 0;
+    const hex = inner.slice(i + 1, i + 1 + n);
+    if (n === 0 || !/^[0-9A-Fa-f]+$/.test(hex) || hex.length !== n) return null;
+    const cp = parseInt(hex, 16);
+    if (cp > 0x10ffff) return null;
+    out += String.fromCodePoint(cp);
+    i += n;
+  }
+  return out;
+}
+
 // One pair of surrounding quotes off, with that quote style's escapes undone
-// (`''` in single quotes; `\"` and `\\` in double quotes), else the text unchanged.
+// (`''` in single quotes; YAML's escape set in double quotes), else the text
+// unchanged. null when a double-quoted escape cannot be decoded.
 function stripQuotePair(s) {
   if (s.length < 2 || (s[0] !== "'" && s[0] !== '"') || s[s.length - 1] !== s[0]) return s;
   const inner = s.slice(1, -1);
-  return s[0] === "'" ? inner.replace(/''/g, "'") : inner.replace(/\\(["\\])/g, '$1');
+  return s[0] === "'" ? inner.replace(/''/g, "'") : decodeDoubleQuoted(inner);
 }
 
 // `{key, rest}` for a block-mapping entry's content (indentation and any `- `
@@ -606,7 +637,10 @@ function readJoinedScalar(lines, i, end, keyIndent, inline) {
     parts.push(block ? t : stripCommentQuoteAware(t));
   }
   const text = parts.join(' ').trim();
-  return { text: block ? text : stripQuotePair(text), next: i };
+  if (block) return { text, next: i };
+  // An undecodable escape reads like an empty value: unread, never literal text.
+  const unquoted = stripQuotePair(text);
+  return { text: unquoted === null ? '' : unquoted, next: i };
 }
 
 // Whether a one-line flow mapping `v` is one whole mapping: its outer `{` closes

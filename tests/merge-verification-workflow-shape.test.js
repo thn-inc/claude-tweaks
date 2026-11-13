@@ -51,6 +51,14 @@ test('name: top-level name in bare, quoted and commented forms', () => {
   bothEndings(`name:\n${MIN}`, (t) => assert.equal(shape(t).name, null));
   // an alias or a tab-indented line in the name: region is never read as a literal name:
   // the name stays null and the region reason is reported, like on:/jobs:/concurrency:
+  // a double-quoted name decodes its escapes; one it cannot decode leaves name null, with no
+  // reason, because neither name: reason (tab, anchor/alias) describes it
+  bothEndings(`name: "C\\u0049 \\"x\\""\n${MIN}`, (t) => assert.equal(shape(t).name, 'CI "x"'));
+  bothEndings(`name: "C\\qI"\n${MIN}`, (t) => {
+    const s = shape(t);
+    assert.equal(s.name, null);
+    assert.deepEqual(s.unparsed, []);
+  });
   for (const [c, reason] of [['name: *n\n', 'anchor or alias in name:'], ['name: CI\n\tmore\n', 'tab indentation in name:']]) {
     bothEndings(c + MIN, (t) => {
       const s = shape(t);
@@ -135,6 +143,10 @@ test('jobs: job-level if in inline, quoted, wrapped, block and folded forms', ()
     ['    if: >-\n      a\n      && b\n', 'a && b'],
     ['    if: a\n      && b\n', 'a && b'],
     ['    if:\n      a && b\n', 'a && b'],
+    // the rest of YAML's double-quoted escape set decodes to the character it names
+    ["    if: \"contains(x, '\\n')\"\n", "contains(x, '\n')"],
+    ['    if: "a\\tb\\/c\\u00e9\\x41\\U0001F600\\ d\\_e\\0f\\\tg"\n', 'a\tb/c\u00e9A\u{1F600} d\u00a0e\0f\tg'],
+    ['    if: "\\a\\b\\v\\f\\r\\e\\N\\L\\P"\n', '\x07\b\v\f\r\x1b\u0085\u2028\u2029'],
     // block and folded scalars carry no quoting: their text is never quote-stripped or unescaped
     ["    if: >-\n      'x''' == y'\n", "'x''' == y'"],
     ["    if: |\n      'a' != 'b'\n", "'a' != 'b'"],
@@ -281,6 +293,12 @@ test('unparsed: each reason fires on its own fixture', () => {
     // a `- ` line at a step's key column before any key is a nested sequence, not a value
     ['on: push\njobs:\n  a:\n    steps:\n      -\n        - if: x\n', 'jobs: not read'],
     ['on: push\njobs:\n  a:\n    if:\n    runs-on: x\n', 'job a if: not read'],
+    // a double-quoted escape that cannot be decoded is unread, never kept as literal text
+    ['on: push\njobs:\n  a:\n    if: "a \\q b"\n', 'job a if: not read'],
+    ['on: push\njobs:\n  a:\n    if: "\\x4"\n', 'job a if: not read'],
+    ['on: push\njobs:\n  a:\n    if: "\\u12G4 x"\n', 'job a if: not read'],
+    ['on: push\njobs:\n  a:\n    if: "\\U00110000"\n', 'job a if: not read'],
+    ['on: push\njobs:\n  a:\n    if: "a\\"\n', 'job a if: not read'],
     [`${MIN}concurrency: {group: x,\n`, 'concurrency not read'],
     [`${MIN}concurrency:\n`, 'concurrency not read'],
     // text after a flow map's closing brace, and a sub-key shallower than the first one
