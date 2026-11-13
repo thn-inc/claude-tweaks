@@ -15,7 +15,7 @@
 - Worktree: `/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude/worktrees/record-5255`. Run `pwd` and `git -C "{worktree}" rev-parse --show-toplevel` as plain commands before any git or test command; use `git -C "{worktree}" …`, never `cd … &&`.
 - Commit messages: `{Verb} {what} — {detail}, refs #5255` (never "closes"), ending with the line `Claude-Session: https://claude.ai/code/session_017vXcAfSWriPsfd3YRPzi9n`. Stage named files only.
 - Every prose edit below is exact copy: apply each "Replace" block with the Edit tool, old text matched exactly once. Do not reword, rewrap or "improve" adjacent text.
-- Size rail (`RAIL_BYTES` = 52,500 B, `plugin/bin/lib/skill-audit/budgets.js`). Measured on scratch copies with every edit applied: `SKILL.md` 52,469 → 52,328 B (172 B headroom; the cut is Task 2's infra-outage and Concurrency-note trims, with rationale moved to `design-notes.md`); `task-prompt.md` 51,966 → 51,986 B; `two-call-gate.md` 27,628 → 28,505 B; `reporting.md` 8,593 → 9,330 B; `design-notes.md` 6,004 → 7,883 B; `firing-exclusion.md` 4,660 → 4,788 B; `sequential-execution.md` 16,549 → 16,574 B; `next-ranking.md` 4,928 → 4,986 B. Do not add bytes to `SKILL.md` beyond Task 2's copy.
+- Size rail (`RAIL_BYTES` = 52,500 B, `plugin/bin/lib/skill-audit/budgets.js`). Measured on scratch copies with every edit applied: `SKILL.md` 52,469 → 52,377 B (123 B headroom; the cut is Task 2's infra-outage and Concurrency-note trims, with rationale moved to `design-notes.md`); `task-prompt.md` 51,966 → 51,986 B; `two-call-gate.md` 27,628 → 28,505 B; `reporting.md` 8,593 → 9,383 B; `design-notes.md` 6,004 → 7,883 B; `firing-exclusion.md` 4,660 → 4,788 B; `sequential-execution.md` 16,549 → 16,574 B; `next-ranking.md` 4,928 → 4,986 B. Do not add bytes to `SKILL.md` beyond Task 2's copy.
 - Governing project skill `skill-prose-conformance-tests` (`.claude/skills/skill-prose-conformance-tests/SKILL.md`), quoted verbatim:
   - "When the pinned prose is added in the same change, there is no frozen excerpt to use as a control. Prove each assertion on a mutated copy of the live text instead: delete or alter only the pinned clause, then assert the shared assertion helper throws **with that assertion's own message** — `assert.throws(() => assertBlock(mutated), { message }, …)` — preceded by `assert.notEqual(mutated, original)` so a replace that matched nothing cannot pass as a control."
   - "Read governed markdown through `tests/helpers/read-skill.js`'s `readText()`, never a private `fs.readFileSync(p, 'utf8')`."
@@ -49,6 +49,7 @@
 ### Task 1: `two-call-gate.md` ends the firing on a render failure
 
 **Role:** transcription
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/skills/dispatch/two-call-gate.md` (section 2 render paragraph; section 5 "Prompt not dispatched" paragraph and the "Only once that cleanup call returns" line; end of section 6; section 7's last line)
@@ -118,7 +119,12 @@ function assertRenderFailureStop(gate) {
 }
 
 function assertDeniedTwiceContinues(gate) {
-  assert.ok(section2Para(gate).includes(SEC2_DENIED), 'section 2: denied-twice continuation missing');
+  const para = section2Para(gate);
+  assert.ok(para.includes(SEC2_DENIED), 'section 2: denied-twice continuation missing');
+  const start = para.indexOf(SEC2_STOP_LEAD);
+  const end = para.indexOf(SEC2_DENIED);
+  assert.ok(start !== -1 && end > start, 'section 2: the stop sentence must precede the denied-twice sentence');
+  assert.ok(!/denied/i.test(para.slice(start, end)), 'section 2: the render-failure stop sentence must not cover a denied-twice call');
   assert.ok(section5Para(gate).includes(SEC5_DENIED), 'section 5: denied-twice continuation missing');
 }
 
@@ -160,6 +166,10 @@ test('AC6.1 go-red: making the denied-twice path end the firing fails the assert
   const sec5 = GATE.replace(SEC5_DENIED, 'on a denied-twice call it ends the firing too.');
   assert.notStrictEqual(sec5, GATE);
   assert.throws(() => assertDeniedTwiceContinues(sec5), { message: 'section 5: denied-twice continuation missing' });
+  // Widening the stop sentence to cover a denied-twice call, with both continuation sentences left in place.
+  const widened = GATE.replace('A `dispatch-prompt.js` non-zero exit, for any call', 'A `dispatch-prompt.js` non-zero exit or a denied-twice call, for any call');
+  assert.notStrictEqual(widened, GATE);
+  assert.throws(() => assertDeniedTwiceContinues(widened), { message: 'section 2: the render-failure stop sentence must not cover a denied-twice call' });
 });
 
 test('task-prompt.md says a render failure ends the firing (#5255)', () => {
@@ -241,8 +251,39 @@ Expected: PASS, 0 failures.
 
 - [ ] **Step 5: AC5.2 — prove the pin on the real tree**
 
-Write a scratch node script (in the session scratchpad, not the repo) that reads `plugin/skills/dispatch/two-call-gate.md`, removes the text from `**A render failure ends the firing (#5255).**` up to (not including) `A denied-twice call does not end the firing`, writes it back, runs `node --test tests/dispatch-prompt-cli-prose.test.js` via `spawnSync`, and restores the original bytes in a `finally` block in the same process. Run it.
-Expected: the spawned run exits non-zero with `section 2: render-failure stop sentence missing`; afterwards `git -C "{worktree}" status --porcelain -- plugin/skills/dispatch/two-call-gate.md` shows the file still modified only by this task's edit (diff identical to Step 3's). Quote the failing line in the task report.
+Write this script with the Write tool to the session scratchpad (not the repo), e.g. `{scratchpad}/ac52-revert-5255.js`, and run `node {scratchpad}/ac52-revert-5255.js "{worktree}"`. It reverts the sentence, runs the suite, and restores the original bytes and file mode in the same process:
+
+```js
+'use strict';
+// AC5.2 (#5255): revert the ends-the-firing sentence in two-call-gate.md on the real tree, run the
+// prose suite, and restore the original bytes and mode in the same process. Usage: node ac52.js <worktree>
+const fs = require('fs');
+const path = require('path');
+const { spawnSync } = require('child_process');
+const root = process.argv[2];
+const file = path.join(root, 'plugin/skills/dispatch/two-call-gate.md');
+const original = fs.readFileSync(file);
+const { mode } = fs.statSync(file);
+const text = original.toString('utf8');
+const start = text.indexOf('**A render failure ends the firing (#5255).**');
+const end = text.indexOf('A denied-twice call does not end the firing', start);
+if (start === -1 || end === -1) { console.error('ac52: sentence not found'); process.exit(2); }
+let result;
+try {
+  fs.writeFileSync(file, text.slice(0, start) + text.slice(end));
+  const r = spawnSync(process.execPath, ['--test', 'tests/dispatch-prompt-cli-prose.test.js'], { cwd: root, encoding: 'utf8', timeout: 120000 });
+  const failingLine = (r.stdout || '').split('\n').find((l) => l.includes('section 2: render-failure stop sentence missing')) || null;
+  result = { exit: r.status, signal: r.signal, failingLine: failingLine && failingLine.trim() };
+} finally {
+  fs.writeFileSync(file, original);
+  fs.chmodSync(file, mode);
+}
+const restored = fs.readFileSync(file).equals(original);
+console.log(JSON.stringify({ ...result, restored }));
+process.exit(result.exit !== 0 && result.failingLine && restored ? 0 : 1);
+```
+
+Expected: exit 0 and `{"exit":1,"signal":null,"failingLine":"error: 'section 2: render-failure stop sentence missing'","restored":true}`; afterwards `git -C "{worktree}" diff --stat -- plugin/skills/dispatch/two-call-gate.md` is unchanged from before the script ran. Quote the JSON line in the task report.
 
 - [ ] **Step 6: Commit**
 
@@ -257,6 +298,7 @@ Message: `End the dispatch firing on a render failure in two-call-gate.md — an
 ### Task 2: `SKILL.md` names the Render-failure stop
 
 **Role:** transcription
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/skills/dispatch/SKILL.md` (Input: infra-outage paragraph, new paragraph after `**Claim permission stop (#4899).**`; Step 1 close-out list; Step 3 Loop line and loop-termination paragraph; Concurrency note; Step 6)
@@ -280,7 +322,7 @@ const SKILL_STOP_FACTS = [
   'stops the firing in every selection form once that group\'s cleanup call returns',
   'attempt no further group',
   'any named records after it as not attempted',
-  'A headless firing also sends one `PushNotification` naming the record and the stderr line.',
+  'A headless firing (one that passes `--headless`, `task-prompt.md`) also sends one `PushNotification` naming the record and the stderr line.',
   'A denied-twice call is not this stop.',
 ];
 function assertSkillStop(skill) {
@@ -328,7 +370,7 @@ Expected: FAIL — `SKILL.md: Render-failure stop paragraph missing` and the thr
 
 (b) After the `**Claim permission stop (#4899).**` paragraph (ending `as not attempted and unclaimed.`), insert a blank line and:
 ```
-**Render-failure stop (#5255).** A `dispatch-prompt.js` non-zero exit for any call (`two-call-gate.md` §2) stops the firing in every selection form once that group's cleanup call returns: attempt no further group, and report the record, the stop, and any named records after it as not attempted (`reporting.md`). A headless firing also sends one `PushNotification` naming the record and the stderr line. A denied-twice call is not this stop. Why: `design-notes.md`.
+**Render-failure stop (#5255).** A `dispatch-prompt.js` non-zero exit for any call (`two-call-gate.md` §2) stops the firing in every selection form once that group's cleanup call returns: attempt no further group, and report the record, the stop, and any named records after it as not attempted (`reporting.md`). A headless firing (one that passes `--headless`, `task-prompt.md`) also sends one `PushNotification` naming the record and the stderr line. A denied-twice call is not this stop. Why: `design-notes.md`.
 ```
 
 (c) Replace `the Claim permission stop, a queue-pull `exit 1`,` with `the Claim permission stop, a queue-pull `exit 1`, the Render-failure stop,`
@@ -367,7 +409,7 @@ Accepted gap: a render failure that really is per-record (a malformed resume PR 
 Run: `node --test tests/dispatch-prompt-cli-prose.test.js tests/flow-claim-preflight.test.js`
 Expected: PASS, 0 failures.
 Run: `wc -c plugin/skills/dispatch/SKILL.md`
-Expected: `52328` (must be ≤ 52500).
+Expected: `52377` (must be ≤ 52500).
 
 - [ ] **Step 5: Commit**
 
@@ -434,7 +476,7 @@ const RELAY_FACTS = [
   'lists any named records after it as not attempted',
   'It closes with the remedy on its own line: fix the named cause (the template, a policy value or the environment), then re-run `/claude-tweaks:dispatch #{n}`.',
 ];
-const PUSH_CASE = 'for a headless render-failure stop (one notification naming the record and the stderr line';
+const PUSH_CASE = 'for a headless render-failure stop (a firing that passes `--headless`, `task-prompt.md`; one notification naming the record and the stderr line';
 function assertRelay(reporting) {
   const paras = reporting.split('\n\n');
   const para = paras.find((p) => p.startsWith(RELAY_LEAD));
@@ -498,7 +540,7 @@ and for a headless plan-review needs-human block (sent by the blocked build itse
 ```
 with
 ```
-for a headless plan-review needs-human block (sent by the blocked build itself, `build/plan-review.md`), and for a headless render-failure stop (one notification naming the record and the stderr line, sent by the dispatching session, `SKILL.md`'s Render-failure stop) — never per-firing
+for a headless plan-review needs-human block (sent by the blocked build itself, `build/plan-review.md`), and for a headless render-failure stop (a firing that passes `--headless`, `task-prompt.md`; one notification naming the record and the stderr line, sent by the dispatching session, `SKILL.md`'s Render-failure stop) — never per-firing
 ```
 (`headless plan-review needs-human block` must stay verbatim: `tests/plan-review-dispatch-relay-conformance.test.js` pins it.)
 
