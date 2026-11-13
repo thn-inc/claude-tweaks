@@ -55,6 +55,14 @@ Test a neutralizer against each hostile shape glued to every allowed neighbourin
 the boundary is narrowed back. #5219's `reduceDetail` passed seven task reviews on space-separated
 inputs, while `-C/Users/me/x` and `foo./home/me/.ssh` reached a public comment untouched.
 
+A neutralizer that removes text can splice what was around it into a new hostile shape: removing `#7`
+from `h#7ttps://github.com/o/r/issues/5` leaves a live issue URL, and removing `#1` from `<!#1--`
+leaves a comment opener. #5269's `neutralize` in `plugin/bin/lib/driver/events.js` repeats its
+removals until the text stops changing, and escapes `<!--` only after that loop. Test each removal
+against an input built so that removing it forms the next shape (the `#5269 AC2` rebuilt-reference
+and `#5269 AC4` comment-opener tests in `tests/bin-lib/driver/run.test.js`), and keep the loop
+linear (`regex-scan-linearity`).
+
 ## A partial gather is never an empty period
 
 `failures.length === 0` belongs in the "nothing happened in this period" predicate. Without it, a
