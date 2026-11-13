@@ -19,6 +19,13 @@ const STEP_NAMES = Object.freeze([
 ]);
 const FINAL_STEP = 'final';
 
+// The calls the driver's own settle makes for a stopped run (settle.js). Kept apart from
+// STEP_NAMES: these are cleanup calls, not pipeline steps, and the step list is pinned.
+const SETTLE_STEP_NAMES = Object.freeze([
+  'settle-escalate', 'settle-comment-pr', 'settle-comment-record', 'settle-label',
+  'settle-release', 'settle-remove-worktree', 'settle-delete-branch',
+]);
+
 const STEP = Object.freeze(Object.fromEntries(
   STEP_NAMES.map((name) => [name.replace(/-([a-z])/g, (_, c) => c.toUpperCase()), name]),
 ));
@@ -127,6 +134,6 @@ function createEventSink({ stdout, appendFile }) {
 }
 
 module.exports = {
-  STEP_NAMES, FINAL_STEP, STEP, OUTCOMES, STOP_CLASSES,
+  STEP_NAMES, SETTLE_STEP_NAMES, FINAL_STEP, STEP, OUTCOMES, STOP_CLASSES,
   outcomeFor, neutralize, normalizeTitle, createEventSink,
 };

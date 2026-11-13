@@ -32,6 +32,10 @@ test('AC10.2: reduceDetail redacts file URLs, paths after a closing paren, and p
   const paren = reduceDetail('see (x)/Users/alice/y');
   assert.ok(!paren.includes('/Users/'), paren);
   assert.equal(paren, 'see (x)<path>');
+  assert.equal(reduceDetail('(see /tmp/x)'), '(see <path>)');
+  assert.equal(reduceDetail('failed at /tmp/x, then /tmp/y.'), 'failed at <path>, then <path>.');
+  assert.equal(reduceDetail('at C:/Users/a/b).'), 'at <path>).');
+  assert.equal(reduceDetail('see /tmp/x.log now'), 'see <path> now');
   const tok = reduceDetail('my_ghp_' + 'a'.repeat(36) + ' end');
   assert.ok(!tok.includes('ghp_') && tok.includes('<redacted>'), tok);
 });
@@ -121,4 +125,329 @@ test('AC6.1: settle.js requires no model module', () => {
   const bad = (s) => /require\([^)]*\b(worker|roles)\b/.test(s) || /['"]\.\/(worker|roles)(\.js)?['"]/.test(s);
   assert.ok(!bad(stripped));
   assert.ok(bad("const w = require('./worker');"), 'go-red control');
+});
+
+// ---- settle(): the table and the runner (Task 2) --------------------------------------
+const fs = require('node:fs');
+const os = require('node:os');
+const { settle, selectRow, toEscalationReason, SETTLE_ROWS } = require(SETTLE);
+const { SETTLE_STEP_NAMES, STEP_NAMES } = require('../../../plugin/bin/lib/driver/events');
+
+const RD = path.join('/work', 'run');
+const MAIN = '/work/main';
+const WT = '/work/wt';
+const R = 'acme/w';
+
+function stopOf(over = {}) {
+  return { step: 'test', class: 'pre-push', pushed: false, created: { worktree: true, branch: true }, reason: 'failing-test', detail: 'red tests', checkLogged: null, ...over };
+}
+
+// Fake deps recording every call in order; `answers` scripts gh/git/node.
+function harness({ stop, input = {}, answers = {}, readFile, lstat } = {}) {
+  const calls = [];
+  const files = {};
+  const emitted = [];
+  let tick = 0;
+  const reply = (v) => { if (v instanceof Error) throw v; return v; };
+  const deps = {
+    gh: (args) => { calls.push(['gh', ...args]); return reply(answers.gh?.(args)) ?? ''; },
+    git: (args, opts) => {
+      calls.push(['git', ...args]);
+      assert.deepStrictEqual(opts, { cwd: MAIN }, 'git is called with cwd mainRoot');
+      return reply(answers.git?.(args)) ?? '';
+    },
+    node: (script, args) => {
+      calls.push(['node', path.basename(script), ...args]);
+      const a = answers.node?.(path.basename(script), args);
+      if (a instanceof Error) throw a;
+      return a ?? { code: 0, stdout: '', stderr: '' };
+    },
+    writeFile: (p, s) => { files[p] = s; },
+    readFile: readFile || (() => { const e = new Error('ENOENT'); e.code = 'ENOENT'; throw e; }),
+    lstatType: lstat || (() => ({ type: 'directory' })),
+    now: () => (tick += 5),
+    launchWorker: () => { throw new Error('launcher called'); },
+  };
+  const full = {
+    stop: stop || stopOf(), record: 7, runId: 'r1', runDir: RD, wt: WT, branch: 'drive-record-7', pr: null, claimed: false,
+    mainRoot: MAIN, ghRepo: R, emit: (...a) => emitted.push(a), ...input,
+  };
+  const res = settle(full, deps);
+  return { res, calls, files, emitted };
+}
+
+const ESC_DETAIL = path.join(RD, 'settle-escalate.txt');
+const ESCALATE = (reason = 'failing-test') => ['node', 'express-lane.js', 'escalate', '--run', RD, '--issue', '7', '--reason', reason, '--detail-file', ESC_DETAIL];
+const COMMENT = (body) => ['gh', 'issue', 'comment', '--repo', R, '--body', body, '--', '7'];
+const PR_COMMENT = (body, n = 9) => ['gh', 'pr', 'comment', '--repo', R, '--body', body, '--', String(n)];
+const LABEL = ['gh', 'issue', 'edit', '--repo', R, '--add-label', 'bot:blocked', '--', '7'];
+const RELEASE = (reason) => ['node', 'release-claim.js', '7', '--run', RD, '--reason', reason];
+const RM_WT = ['git', '-C', MAIN, 'worktree', 'remove', '--force', '--force', WT];
+const RM_BR = ['git', '-C', MAIN, 'branch', '-D', '--end-of-options', 'drive-record-7'];
+const BR_PROBE = ['git', '-C', MAIN, 'rev-parse', '--verify', '--quiet', '--end-of-options', 'refs/heads/drive-record-7'];
+const ESCALATED_BODY = commentFor('escalated', { step: 'test', outcome: 'express-escalated', reason: 'failing-test', detail: 'red tests' });
+const blockedRecord = (over) => commentFor('blocked-record', { step: 'test', outcome: 'blocked', detail: 'red tests', ...over });
+const noThrow = (fn) => assert.doesNotThrow(fn);
+
+test('SETTLE_STEP_NAMES is the seven settle calls and STEP_NAMES is unchanged', () => {
+  assert.deepStrictEqual([...SETTLE_STEP_NAMES], ['settle-escalate', 'settle-comment-pr', 'settle-comment-record', 'settle-label', 'settle-release', 'settle-remove-worktree', 'settle-delete-branch']);
+  assert.ok(Object.isFrozen(SETTLE_STEP_NAMES));
+  assert.equal(STEP_NAMES.length, 17);
+  for (const rows of Object.values(SETTLE_ROWS)) for (const s of rows) assert.ok(SETTLE_STEP_NAMES.includes(s), s);
+});
+
+test('toEscalationReason passes members through and maps the rest to express-error', () => {
+  for (const r of ['failing-test', 'out-of-bounds', 'gate-denial', 'express-error']) assert.equal(toEscalationReason(r), r);
+  for (const r of ['stop', '', undefined, null, 5, '@bob']) assert.equal(toEscalationReason(r), 'express-error');
+});
+
+test('selectRow maps every class and its pushed / prRecorded branches', () => {
+  const sel = (stop, prRecorded = false) => selectRow(stop, { prRecorded });
+  assert.deepStrictEqual(sel({ class: 'refused' }), { row: 'refused', unclassified: false });
+  assert.deepStrictEqual(sel({ class: 'claim', reason: 'claim-exit-3' }), { row: 'claim-contested', unclassified: false });
+  assert.deepStrictEqual(sel({ class: 'claim', reason: 'claim-exit-4' }), { row: 'claim', unclassified: false });
+  assert.deepStrictEqual(sel({ class: 'claim', reason: 'fail' }), { row: 'claim', unclassified: false });
+  assert.deepStrictEqual(sel({ class: 'pre-push', pushed: false }), { row: 'pre-push', unclassified: false });
+  assert.deepStrictEqual(sel({ class: 'pre-push', pushed: true }), { row: 'blocked', unclassified: false });
+  assert.deepStrictEqual(sel({ class: 'pre-push', pushed: false }, true), { row: 'blocked', unclassified: false });
+  assert.deepStrictEqual(sel({ class: 'blocked' }), { row: 'blocked', unclassified: false });
+  assert.deepStrictEqual(sel({ class: 'none' }), { row: 'none', unclassified: false });
+  assert.deepStrictEqual(sel({ class: 'bogus' }), { row: 'blocked', unclassified: true });
+  assert.deepStrictEqual(sel({}), { row: 'blocked', unclassified: true });
+});
+
+test('SETTLE_ROWS is frozen and holds the table', () => {
+  assert.ok(Object.isFrozen(SETTLE_ROWS));
+  assert.deepStrictEqual(SETTLE_ROWS, {
+    refused: [], 'claim-contested': [], none: [],
+    claim: ['settle-comment-record', 'settle-label'],
+    'pre-push': ['settle-escalate', 'settle-comment-record', 'settle-release', 'settle-remove-worktree', 'settle-delete-branch'],
+    blocked: ['settle-comment-pr', 'settle-comment-record', 'settle-label', 'settle-release'],
+  });
+});
+
+test('AC1.1, AC11.9: a pre-push stop check did not log runs escalate, comment, release, worktree removal, branch deletion in order', () => {
+  const h = harness();
+  assert.deepStrictEqual(h.calls, [
+    ESCALATE(), COMMENT(ESCALATED_BODY), RELEASE('drive.js settle: express-escalated at test'), RM_WT, BR_PROBE, RM_BR,
+  ]);
+  assert.equal(h.files[ESC_DETAIL], escalateDetailText({ step: 'test', detail: 'red tests', removes: true }));
+  assert.ok(!h.calls.some((c) => c.includes('--remove-grants')));
+  assert.ok(!h.calls.some((c) => c[0] === 'gh' && c[1] === 'issue' && c[2] === 'edit'), 'no label');
+  assert.equal(h.res.row, 'pre-push');
+  assert.equal(h.res.settledClass, 'pre-push');
+  assert.deepStrictEqual(h.res.failed, []);
+  assert.deepStrictEqual(h.res.calls.map((c) => c.step), SETTLE_ROWS['pre-push']);
+  assert.ok(h.res.calls.every((c) => c.status === 'ok'));
+});
+
+test('AC1.2: a check verdict that logged its own line skips escalate', () => {
+  const h = harness({ stop: stopOf({ step: 'check', checkLogged: true, reason: 'out-of-bounds' }) });
+  assert.ok(!h.calls.some((c) => c[1] === 'express-lane.js'));
+  const body = commentFor('escalated', { step: 'check', outcome: 'express-escalated', reason: 'out-of-bounds', detail: 'red tests' });
+  assert.deepStrictEqual(h.calls, [COMMENT(body), RELEASE('drive.js settle: express-escalated at check'), RM_WT, BR_PROBE, RM_BR]);
+  assert.deepStrictEqual(h.res.calls.map((c) => c.step), SETTLE_ROWS['pre-push'].slice(1));
+});
+
+test('AC1.3: check logged:false calls escalate with check\'s reason and detail', () => {
+  const h = harness({ stop: stopOf({ step: 'check', checkLogged: false, reason: 'gate-denial', detail: 'gate-denial: x' }) });
+  assert.deepStrictEqual(h.calls[0], ESCALATE('gate-denial'));
+  assert.equal(h.files[ESC_DETAIL], escalateDetailText({ step: 'check', detail: 'gate-denial: x', removes: true }));
+  assert.ok(h.files[ESC_DETAIL].includes(reduceDetail('gate-denial: x')));
+});
+
+test('Review focus 3: a pre-push stop after a proceeding check still escalates', () => {
+  const h = harness({ stop: stopOf({ step: 'push', checkLogged: true, reason: 'stop' }) });
+  assert.deepStrictEqual(h.calls[0], ESCALATE('express-error'));
+});
+
+test('escalate detail says removes:false when the row removes nothing', () => {
+  const h = harness({ stop: stopOf({ created: { worktree: false, branch: false } }) });
+  assert.equal(h.files[ESC_DETAIL], escalateDetailText({ step: 'test', detail: 'red tests', removes: false }));
+});
+
+test('AC1.4: a failed escalate keeps the worktree and branch and settles by the blocked row', () => {
+  for (const answer of [() => ({ code: 1, stdout: '', stderr: 'boom\nmore' }), () => new Error('spawn failed')]) {
+    const h = harness({ answers: { node: (s) => (s === 'express-lane.js' ? answer() : undefined) } });
+    assert.deepStrictEqual(h.calls, [
+      ESCALATE(), COMMENT(blockedRecord({ kept: false })), LABEL, RELEASE('drive.js settle: blocked at test'),
+    ]);
+    assert.ok(!h.calls.some((c) => c.some((a) => a.includes(MARKER))), 'no escalation marker');
+    assert.equal(h.res.row, 'blocked');
+    assert.equal(h.res.settledClass, 'blocked');
+    assert.deepStrictEqual(h.res.failed, ['settle-escalate']);
+    assert.equal(h.res.calls[0].status, 'fail');
+  }
+});
+
+test('AC2.1: a blocked stop after the push comments on PR and record, labels, releases, removes nothing', () => {
+  const stop = stopOf({ step: 'set-config', class: 'blocked', pushed: true });
+  const h = harness({ stop, input: { pr: 9 } });
+  const rec = commentFor('blocked-record', { step: 'set-config', outcome: 'blocked', detail: 'red tests', kept: true });
+  assert.deepStrictEqual(h.calls, [
+    PR_COMMENT(commentFor('blocked-pr', { step: 'set-config', outcome: 'blocked', detail: 'red tests' })),
+    COMMENT(rec), LABEL, RELEASE('drive.js settle: blocked at set-config'),
+  ]);
+  const flat = h.calls.map((c) => c.join(' '));
+  for (const bad of ['pr close', 'worktree remove', 'branch -D']) assert.ok(!flat.some((c) => c.includes(bad)), bad);
+  assert.equal(h.res.row, 'blocked');
+  assert.equal(h.res.settledClass, 'blocked');
+});
+
+test('AC2.2: a failed gh pr create (pushed, no PR) comments on the record only and keeps worktree and branch', () => {
+  const h = harness({ stop: stopOf({ step: 'pr', class: 'blocked', pushed: true }) });
+  assert.ok(!h.calls.some((c) => c[1] === 'pr'));
+  assert.deepStrictEqual(h.calls.map((c) => c[0] + ' ' + c[1]), ['gh issue', 'gh issue', 'node release-claim.js']);
+  assert.deepStrictEqual(h.res.calls.map((c) => c.step), ['settle-comment-record', 'settle-label', 'settle-release']);
+});
+
+test('AC2.3: a pre-push stop with pushed true is settled by the blocked row', () => {
+  const h = harness({ stop: stopOf({ pushed: true }) });
+  assert.equal(h.res.row, 'blocked');
+  assert.equal(h.res.settledClass, 'blocked');
+  assert.ok(!h.calls.some((c) => c[1] === 'express-lane.js' || c.includes('remove') || c.includes('-D')));
+});
+
+test('AC2.4: a record-pr failure after the PR was created comments on the PR, keeps the worktree and branch', () => {
+  const h = harness({ stop: stopOf({ step: 'record-pr', class: 'blocked', pushed: true }), input: { pr: 9 } });
+  assert.deepStrictEqual(h.calls[0], PR_COMMENT(commentFor('blocked-pr', { step: 'record-pr', outcome: 'blocked', detail: 'red tests' })));
+  assert.ok(!h.calls.some((c) => c.includes('remove') || c.includes('-D')));
+});
+
+test('AC2.5: run-state.json recording a PR makes a pre-push stop blocked', () => {
+  const { writeRunState } = require('../../../plugin/bin/lib/hooks/context');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'settle-ac25-'));
+  try {
+    writeRunState(dir, { pr: { number: 11, url: 'https://github.com/acme/w/pull/11' } });
+    const h = harness({ stop: stopOf(), input: { runDir: dir }, readFile: (p) => fs.readFileSync(p, 'utf8') });
+    assert.equal(h.res.row, 'blocked');
+    assert.deepStrictEqual(h.calls[0], PR_COMMENT(commentFor('blocked-pr', { step: 'test', outcome: 'blocked', detail: 'red tests' }), 11));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a run-state.json without a PR, or an unreadable one, leaves the pre-push row', () => {
+  assert.equal(harness({ readFile: () => '{"foo":1}' }).res.row, 'pre-push');
+  assert.equal(harness({ readFile: () => 'not json' }).res.row, 'pre-push');
+  assert.equal(harness({ readFile: () => JSON.stringify({ pr: { number: 'x' } }) }).res.row, 'pre-push');
+});
+
+test('AC3.1: a refusal makes no call', () => {
+  const h = harness({ stop: stopOf({ class: 'refused' }) });
+  assert.deepStrictEqual(h.calls, []);
+  assert.equal(h.res.row, 'refused');
+  assert.deepStrictEqual(h.emitted, []);
+  assert.deepStrictEqual(h.res.calls, []);
+});
+
+test('AC3.2: a claim held by another run makes no call', () => {
+  const h = harness({ stop: stopOf({ class: 'claim', reason: 'claim-exit-3' }) });
+  assert.deepStrictEqual(h.calls, []);
+  assert.equal(h.res.row, 'claim-contested');
+  assert.equal(h.res.settledClass, 'claim');
+});
+
+test('AC3.3: other claim failures write exactly the record comment and bot:blocked', () => {
+  for (const n of [4, 5, 6, 7]) {
+    const stop = stopOf({ step: 'claim', class: 'claim', reason: `claim-exit-${n}`, detail: 'why', created: { worktree: false, branch: false } });
+    const h = harness({ stop });
+    const body = commentFor('claim', { step: 'claim', outcome: 'blocked', exitCode: n, detail: 'why' });
+    assert.ok(body.includes(`exit ${n}`));
+    assert.deepStrictEqual(h.calls, [COMMENT(body), LABEL], `exit ${n}`);
+    assert.equal(h.res.row, 'claim');
+    assert.equal(h.res.settledClass, 'claim');
+    assert.equal(h.res.note === null, n !== 5, `note for exit ${n}`);
+    if (n === 5) assert.equal(h.res.note, 'a claim that may have been written lapses by its TTL');
+  }
+  const mint = harness({ stop: stopOf({ step: 'run-dir', class: 'claim', reason: 'fail', detail: 'no dir' }), input: { runDir: null, claimed: false } });
+  const body = commentFor('claim', { step: 'run-dir', outcome: 'blocked', detail: 'no dir' });
+  assert.ok(!body.includes('claim-targets.js exit'));
+  assert.deepStrictEqual(mint.calls, [COMMENT(body), LABEL]);
+  assert.equal(mint.res.note, null);
+  const claimed = harness({ stop: stopOf({ step: 'run-dir', class: 'claim', reason: 'fail', detail: 'no dir' }), input: { runDir: null, claimed: true } });
+  assert.equal(claimed.res.note, 'a claim that may have been written lapses by its TTL');
+  assert.ok(!claimed.calls.some((c) => c[1] === 'release-claim.js'));
+});
+
+test('AC3.4: a pre-push stop whose created says nothing was made removes nothing', () => {
+  const h = harness({ stop: stopOf({ created: { worktree: false, branch: false } }), lstat: () => { throw new Error('lstat called'); } });
+  assert.deepStrictEqual(h.calls, [ESCALATE(), COMMENT(ESCALATED_BODY), RELEASE('drive.js settle: express-escalated at test')]);
+  assert.ok(!h.calls.some((c) => c.includes('rev-parse')));
+  const onlyBranch = harness({ stop: stopOf({ created: { worktree: false, branch: true } }) });
+  assert.deepStrictEqual(onlyBranch.calls.slice(-2), [BR_PROBE, RM_BR]);
+  const onlyWt = harness({ stop: stopOf({ created: { worktree: true, branch: false } }) });
+  assert.deepStrictEqual(onlyWt.calls.slice(-1), [RM_WT]);
+  const noCreated = harness({ stop: stopOf({ created: undefined }) });
+  assert.ok(!noCreated.calls.some((c) => c[0] === 'git'));
+});
+
+test('Review focus 5: a worktree or branch already gone is not a failure', () => {
+  const h = harness({
+    lstat: () => ({ type: 'missing' }),
+    answers: { git: (args) => (args.includes('rev-parse') ? Object.assign(new Error('x'), { status: 1 }) : undefined) },
+  });
+  assert.deepStrictEqual(h.calls.filter((c) => c[0] === 'git'), [BR_PROBE]);
+  const wt = h.res.calls.find((c) => c.step === 'settle-remove-worktree');
+  const br = h.res.calls.find((c) => c.step === 'settle-delete-branch');
+  assert.deepStrictEqual([wt.status, wt.detail, br.status, br.detail], ['ok', 'already gone', 'ok', 'already gone']);
+  assert.deepStrictEqual(h.res.failed, []);
+  const other = harness({ answers: { git: (args) => (args.includes('rev-parse') ? Object.assign(new Error('x'), { status: 128 }) : undefined) } });
+  assert.deepStrictEqual(other.res.failed, ['settle-delete-branch']);
+});
+
+test('AC7.1: a failing call does not stop the rest and is never retried', () => {
+  const h = harness({ answers: { gh: (args) => (args[1] === 'comment' ? Object.assign(new Error('gh down'), { stderr: 'HTTP 502\nbody' }) : undefined) } });
+  assert.deepStrictEqual(h.calls, [ESCALATE(), COMMENT(ESCALATED_BODY), RELEASE('drive.js settle: express-escalated at test'), RM_WT, BR_PROBE, RM_BR]);
+  assert.deepStrictEqual(h.res.failed, ['settle-comment-record']);
+  assert.equal(h.emitted.length, h.res.calls.length);
+  assert.equal(h.emitted.length, 5);
+  const failed = h.emitted.filter((e) => e[1] === 'fail');
+  assert.equal(failed.length, 1);
+  assert.equal(failed[0][0], 'settle-comment-record');
+  assert.equal(failed[0][3], 'HTTP 502');
+  assert.equal(typeof failed[0][2], 'number');
+});
+
+test('AC7.2: release exit 3 and exit 4 are not failures', () => {
+  const rel = (code) => harness({ stop: stopOf({ class: 'blocked', pushed: true }), answers: { node: (s) => (s === 'release-claim.js' ? { code, stdout: '', stderr: 'e' } : undefined) } });
+  const get = (h) => h.res.calls.find((c) => c.step === 'settle-release');
+  assert.deepStrictEqual([get(rel(3)).status, get(rel(3)).detail], ['ok', 'already released']);
+  assert.deepStrictEqual([get(rel(4)).status, get(rel(4)).detail], ['ok', 'held by another run']);
+  for (const code of [1, 2, 5]) assert.equal(get(rel(code)).status, 'fail', String(code));
+  assert.deepStrictEqual(rel(3).res.failed, []);
+  assert.deepStrictEqual(rel(1).res.failed, ['settle-release']);
+  assert.equal(get(rel(0)).status, 'ok');
+});
+
+test('release with no run directory is a fail named no run directory and makes no call', () => {
+  const h = harness({ stop: stopOf({ class: 'blocked', pushed: true }), input: { runDir: null } });
+  const rel = h.res.calls.find((c) => c.step === 'settle-release');
+  assert.deepStrictEqual([rel.status, rel.detail], ['fail', 'no run directory']);
+  assert.ok(!h.calls.some((c) => c[1] === 'release-claim.js'));
+});
+
+test('AC8.1: a none stop makes no call', () => {
+  const h = harness({ stop: stopOf({ class: 'none' }) });
+  assert.deepStrictEqual(h.calls, []);
+  assert.equal(h.res.row, 'none');
+  assert.equal(h.res.unclassified, false);
+});
+
+test('AC8.2: an unknown class is settled by the blocked row and named unclassified', () => {
+  const h = harness({ stop: stopOf({ class: 'bogus', pushed: false }) });
+  assert.equal(h.res.row, 'blocked');
+  assert.equal(h.res.unclassified, true);
+  assert.deepStrictEqual(h.res.calls.map((c) => c.step), ['settle-comment-record', 'settle-label', 'settle-release']);
+});
+
+test('AC6.2: settle never calls a launcher (the harness launcher throws in every scenario above)', () => {
+  noThrow(() => harness());
+  noThrow(() => harness({ stop: stopOf({ class: 'bogus' }) }));
+});
+
+test('settle reports the shape on every row', () => {
+  const h = harness();
+  assert.deepStrictEqual(Object.keys(h.res).sort(), ['calls', 'failed', 'note', 'row', 'settledClass', 'unclassified']);
+  assert.deepStrictEqual(Object.keys(h.res.calls[0]).sort(), ['detail', 'status', 'step']);
 });
