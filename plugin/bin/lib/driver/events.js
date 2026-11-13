@@ -10,10 +10,12 @@
 //   - the neutralizers for text the headless worker controls, so that text cannot close an
 //     issue (or backlink one), mention a user, open a code fence or an HTML comment, or break a
 //     line in a commit, PR body or event,
-//   - the small helpers steps.js and settle.js share, so neither requires the other:
-//     CLI_TIMEOUT_MS (the bound on one plugin/bin CLI call), firstLine and errorText (an
-//     execFileSync error's own words), and yieldToEventLoop (lets a pending signal be
-//     delivered between steps and between settle calls).
+//   - the small helpers the run loop, steps and settle share, so none requires another:
+//     CLI_TIMEOUT_MS (the bound on one plugin/bin CLI call) and firstLine and errorText
+//     (an execFileSync error's own words), shared by steps.js and settle.js;
+//     yieldToEventLoop (lets a pending signal be delivered between steps and between
+//     settle calls), shared by run.js and settle.js; and outcomeFor (stop class to outcome
+//     word), used by run.js and settle.js.
 
 const path = require('node:path');
 
