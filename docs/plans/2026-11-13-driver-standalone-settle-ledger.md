@@ -44,3 +44,7 @@
 | 40 | review | tests/bin-lib/driver/settle.test.js:170 — fake git cwd assertion runs under step()'s catch-all | accepted | tiebreak could not confirm (cant-tell); below the materiality floor, digested at https://github.com/thn-inc/claude-tweaks/issues/5046#issuecomment-6844459355 |
 | 41 | review | plugin/bin/lib/driver/settle.js:294 — deps.realpath/pathImpl seam is test-only | accepted | info; the repo's standard deps-or-default injectable seam, tiebreak recommended drop |
 | 42 | review/hindsight | [skill: driver-step-addition] the skill has no settle-step section (settle handlers run under a catch-all, so fakes must record, not throw; a worktree-removing row must close the run) | deferred | staged at staged/reflect-1.md for the Review Console |
+| 43 | wrap-up | Reflect near-miss: neutralizer tests fed hostile shapes only after a space, so glued paths leaked past reduceDetail until the whole-branch review (staged/reflect-2.md, edit fact-validated-narration) | observation | — |
+| 44 | wrap-up | Reflect friction: single-line strip-comments caller rosters conflict whenever two branches add a stem (staged/reflect-3.md, backlog candidate) | observation | — |
+| 45 | wrap-up | pr — PR #5283 — this run's own pr-first PR; disposition is Phase 4's merge decision | observation | — |
+| 46 | wrap-up | suite — residue sweep suite probe — unknown: skipped via --no-suite; this run's suite state is the verify pass stamp (CI run on d8473efb1, scoped re-verify 8630/8632 pass at 539b7a1c6) | observation | — |
