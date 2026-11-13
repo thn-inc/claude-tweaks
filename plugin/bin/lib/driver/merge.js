@@ -202,6 +202,9 @@ async function entry(s) {
 }
 
 const CLOSING_LINKS_USED = ['clean', 'unlinked', 'still-linked'];
+// The closed set of pre-merge actions, named verbatim in a SKIP line; anything else is free text
+// and goes through reduceDetail (a literal like no-fixes-span would be mangled by neutralize).
+const CLOSING_LINKS_ACTIONS = [...CLOSING_LINKS_USED, 'no-pr', 'no-fixes-span', 'gh-absent'];
 
 // Ports pr-checklist-refresh.md "Then check the forge's closing links": unlink closing keywords
 // the PR's Fixes span does not name, and learn which records must stay open (`keepOpen`, handed
@@ -235,6 +238,12 @@ function closingLinks(s) {
     } else {
       const action = env && typeof env === 'object' && typeof env.action === 'string' ? env.action : 'unparseable';
       detail = `closing links not checked (action ${action}); proceeding with keep open none`;
+      // closing-links.js self-logs gh-absent only; every other exit-0 degraded result is ours to log.
+      if (action !== 'gh-absent') {
+        const what = action === 'unparseable' ? 'unparseable output' : `action ${CLOSING_LINKS_ACTIONS.includes(action) ? action : reduceDetail(action)}`;
+        logDecision(s, 'Closing links (pre-merge) (degraded)',
+          `condition: closing-links.js exited 0 with ${what} → fallback: closing links not checked this merge`, 'SKIP', 'n/a');
+      }
     }
   } else {
     detail = `closing links not checked (exit ${r.code}); proceeding with keep open none`;
@@ -266,7 +275,10 @@ function compose(s) {
     return stop(s, 'merge-compose', 'unclassified', `compose: compose-subject.js failed: ${errorText(err)}`);
   }
   if (r.code === 1) return stop(s, 'merge-compose', 'compose-refused', reduceDetail(firstLine(r.stderr)));
-  if (r.code === 2) return stop(s, 'merge-compose', 'gh-absent', 'compose-subject.js could not use gh');
+  if (r.code === 2) {
+    const line = firstLine(r.stderr);
+    return stop(s, 'merge-compose', 'gh-absent', line ? reduceDetail(line) : 'compose-subject.js could not use gh');
+  }
   if (r.code !== 0) return stop(s, 'merge-compose', 'unclassified', `compose: compose-subject.js exited ${r.code}`);
   let title = '';
   try {

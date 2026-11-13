@@ -480,7 +480,8 @@ test('closing-links exit 3 warns, logs a SKIP and proceeds; exit 5 proceeds with
   assert.equal(skipsOf(three).length, 1);
   assert.equal(skipsOf(three)[0].step, 'Closing links (pre-merge) (degraded)');
   assert.equal(skipsOf(three)[0].text, skipText(3));
-  assert.ok(skipsOf(three)[0].args.includes('--reversibility'));
+  const ri = skipsOf(three)[0].args.indexOf('--reversibility');
+  assert.equal(skipsOf(three)[0].args[ri + 1], 'n/a');
   const ev3 = three.events.find((e) => e.step === 'merge-closing-links');
   assert.equal(ev3.status, 'ok');
   assert.match(ev3.detail, /exit 3/);
@@ -500,22 +501,32 @@ test('closing-links exit 3 warns, logs a SKIP and proceeds; exit 5 proceeds with
   assert.equal(skipsOf(nul).length, 1);
 });
 
-test('closing links: gh-absent, no-pr, no-fixes-span and unparseable output warn and proceed with keepOpen []', async () => {
+test('closing links: exit-0 degraded results proceed with keepOpen [] and log one SKIP, except gh-absent (self-logged by the CLI)', async () => {
   const rows = [
-    closingReply({ action: 'gh-absent', keepOpen: [7] }),
-    closingReply({ action: 'no-pr', keepOpen: [7] }),
-    closingReply({ action: 'no-fixes-span', keepOpen: [7] }),
-    { code: 0, stdout: 'not json', stderr: '' },
-    { code: 0, stdout: JSON.stringify({ action: 'clean' }), stderr: '' },
-    { code: 0, stdout: 'null', stderr: '' },
+    [closingReply({ action: 'gh-absent', keepOpen: [7] }), null],
+    [closingReply({ action: 'no-pr', keepOpen: [7] }), /exited 0 with action no-pr →/],
+    [closingReply({ action: 'no-fixes-span', keepOpen: [7] }), /exited 0 with action no-fixes-span →/],
+    [closingReply({ action: 'mystery', keepOpen: [7] }), /exited 0 with action mystery →/],
+    [{ code: 0, stdout: 'not json', stderr: '' }, /exited 0 with unparseable output →/],
+    [{ code: 0, stdout: JSON.stringify({ action: 'clean' }), stderr: '' }, /exited 0 with action clean →/],
+    [{ code: 0, stdout: 'null', stderr: '' }, /exited 0 with unparseable output →/],
   ];
-  for (const closingLinks of rows) {
+  for (const [closingLinks, skip] of rows) {
     const h = mergeHarness({ closingLinks });
     const r = await merge(CTX, h.deps);
     assert.equal(r.reason, 'unclassified', JSON.stringify(closingLinks));
     assert.ok(!nodeCalls(h, 'compose-subject.js')[0].args.includes('--keep-open'), JSON.stringify(closingLinks));
     assert.equal(h.events.find((e) => e.step === 'merge-closing-links').status, 'ok');
-    assert.deepEqual(skipsOf(h), [], 'closing-links.js self-logs these; no driver SKIP');
+    const skips = skipsOf(h);
+    if (!skip) {
+      assert.deepEqual(skips, [], 'gh-absent is self-logged by closing-links.js');
+      continue;
+    }
+    assert.equal(skips.length, 1, JSON.stringify(closingLinks));
+    assert.equal(skips[0].step, 'Closing links (pre-merge) (degraded)');
+    assert.match(skips[0].text, skip);
+    assert.match(skips[0].text, /fallback: closing links not checked this merge$/);
+    assert.equal(skips[0].args[skips[0].args.indexOf('--reversibility') + 1], 'n/a');
   }
 });
 
@@ -532,9 +543,13 @@ test('AC7.1: compose-subject exit 1 is compose-refused with the reduced stderr l
 });
 
 test('AC11.10: compose-subject exit 2 is gh-absent, no ready', async () => {
-  const h = mergeHarness({ compose: { code: 2, stdout: '', stderr: 'gh not found' } });
+  const h = mergeHarness({ compose: { code: 2, stdout: '', stderr: 'compose-subject.js: origin host "git.example.com" has no GitHub signal\nmore\n' } });
   const r = await merge(CTX, h.deps);
   assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'gh-absent', mergeCommit: null, postMerge: null });
+  assert.match(r.detail, /origin host .*git\.example\.com.* has no GitHub signal/);
+  assert.doesNotMatch(r.detail, /more|"/);
+  const bare = mergeHarness({ compose: { code: 2, stdout: '', stderr: '' } });
+  assert.equal((await merge(CTX, bare.deps)).detail, 'compose-subject.js could not use gh');
   assertNoReadyNoMerge(h);
 });
 
