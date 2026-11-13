@@ -195,14 +195,34 @@ const PHASES_END_TOKENS = ['<!-- phases-end -->', '[claude-tweaks-phases-end]'];
 const FIXES_START_TOKENS = ['<!-- fixes-start -->', '[claude-tweaks-fixes-start]'];
 const FIXES_END_TOKENS = ['<!-- fixes-end -->', '[claude-tweaks-fixes-end]'];
 
+// Puts `htmlToken` back next to its plain companion on `side` ('above' |
+// 'below') of `lines` (mutated); true when it wrote. A blank neighbour (the
+// newline a stripped comment leaves behind) is filled; otherwise a new line is
+// spliced in, so no existing text is touched. A CRLF body keeps its endings.
+function restoreHtmlForm(lines, htmlToken, plainToken, side) {
+  if (lines.some((l) => l.includes(htmlToken))) return false;
+  const at = lines.findIndex((l) => l.trim() === plainToken);
+  if (at === -1) return false;
+  const at2 = side === 'above' ? at - 1 : at + 1;
+  const neighbour = lines[at2];
+  if (neighbour !== undefined && neighbour.trim() === '' && at2 !== lines.length - 1) {
+    lines[at2] = htmlToken + (neighbour.endsWith('\r') ? '\r' : '');
+  } else {
+    lines.splice(side === 'above' ? at : at + 1, 0, htmlToken + (lines[at].endsWith('\r') ? '\r' : ''));
+  }
+  return true;
+}
+
 // { body, runId, fixesLines } -> { body, restored }
 // Restores whichever of the run marker / phases pair / fixes pair are
 // missing from `body`, keeping every byte of its existing content
 // (freeform prose included) — never a find-and-replace against content
 // that already looks like one of these spans, only an append/prepend of
-// what's absent. `restored` names what was added, in restoration order,
-// for the caller's own AUTO log line (empty when the body already carried
-// everything — a no-op repair, safe to call unconditionally).
+// what's absent. A gh-absent MCP read strips every HTML-comment marker and
+// leaves the plain companions, so a last pass puts the HTML form back next to
+// a surviving plain one (#5358). `restored` names what was added, in
+// restoration order, for the caller's own AUTO log line (empty when the body
+// already carried everything — a no-op repair, safe to call unconditionally).
 function repairPrBody({ body, runId, fixesLines }) {
   if (!runId) throw new Error('repairPrBody: runId is required');
   let result = typeof body === 'string' ? body : '';
@@ -224,6 +244,24 @@ function repairPrBody({ body, runId, fixesLines }) {
     result = `${result}${sep}${composeFixesSpan(fixesLines)}\n`;
     restored.push('fixes block');
   }
+
+  const lines = result.split('\n');
+  const plainRun = lines.map((l) => /^claude-tweaks-run:\s*(\S+)$/.exec(l.trim())).find(Boolean);
+  if (plainRun && !/<!--\s*claude-tweaks-run:\s*\S+\s*-->/.test(result)
+    && restoreHtmlForm(lines, runMarkerHtml(plainRun[1]), runMarkerPlain(plainRun[1]), 'above')) {
+    restored.push('run marker HTML form');
+  }
+  const phases = [
+    restoreHtmlForm(lines, PHASES_START_TOKENS[0], PHASES_START_TOKENS[1], 'above'),
+    restoreHtmlForm(lines, PHASES_END_TOKENS[0], PHASES_END_TOKENS[1], 'below'),
+  ];
+  if (phases.some(Boolean)) restored.push('phases HTML markers');
+  const fixes = [
+    restoreHtmlForm(lines, FIXES_START_TOKENS[0], FIXES_START_TOKENS[1], 'above'),
+    restoreHtmlForm(lines, FIXES_END_TOKENS[0], FIXES_END_TOKENS[1], 'below'),
+  ];
+  if (fixes.some(Boolean)) restored.push('fixes HTML markers');
+  result = lines.join('\n');
 
   return { body: result, restored };
 }

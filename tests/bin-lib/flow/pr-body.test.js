@@ -202,6 +202,85 @@ test('hasRunMarker/hasPhasesPair/hasFixesPair recognize either the HTML-comment 
   assert.equal(hasFixesPair('nothing'), false);
 });
 
+// The bluemonday strip a gh-absent MCP read applies: the comment span goes, its newline stays.
+const mcpRead = (b) => b.replace(/<!--[\s\S]*?-->/g, '');
+const count = (s, token) => s.split(token).length - 1;
+const HTML_TOKENS = ['<!-- claude-tweaks-run: r1 -->', '<!-- phases-start -->', '<!-- phases-end -->', '<!-- fixes-start -->', '<!-- fixes-end -->'];
+const earlyR1 = () => composePrEarlyBody({ runId: 'r1', specSummary: 's', target: '#1', nextStep: 'test', fixesLines: ['Fixes #1'] });
+
+test('AC1.1 (#5358): repairPrBody restores every HTML-comment marker an MCP read stripped, byte-for-byte', () => {
+  const early = earlyR1();
+  const express = composeExpressBody({ runId: 'r1', specSummary: 's', fixesLines: ['Fixes #1'] });
+  const a = repairPrBody({ body: mcpRead(early), runId: 'r1', fixesLines: ['Fixes #1'] });
+  assert.equal(a.body, early);
+  assert.deepEqual(a.restored, ['run marker HTML form', 'phases HTML markers', 'fixes HTML markers']);
+  const b = repairPrBody({ body: mcpRead(express), runId: 'r1', fixesLines: ['Fixes #1'] });
+  // repairPrBody does not know the express lane has no Phases checklist, so it still appends one
+  // (pre-existing, #2997); the express body's own markers come back byte-for-byte ahead of it.
+  assert.ok(b.body.startsWith(express));
+  assert.deepEqual(b.restored, ['phases block', 'run marker HTML form', 'fixes HTML markers']);
+});
+
+test('#5358: repeated MCP read-repair-write cycles leave the body unchanged', () => {
+  const early = earlyR1();
+  let body = early;
+  for (let i = 0; i < 3; i++) body = repairPrBody({ body: mcpRead(body), runId: 'r1', fixesLines: ['Fixes #1'] }).body;
+  assert.equal(body, early);
+});
+
+test('#5358: a plain marker with no blank neighbour gets the HTML form on a new line', () => {
+  const input = earlyR1().split('\n').filter((l) => !/^<!--.*-->$/.test(l)).join('\n');
+  const out = repairPrBody({ body: input, runId: 'r1', fixesLines: ['Fixes #1'] }).body;
+  const lines = out.split('\n');
+  assert.equal(lines[0], '<!-- claude-tweaks-run: r1 -->');
+  assert.equal(lines[1], 'claude-tweaks-run: r1');
+  for (const [pair, start, end] of [['phases', 'phases-start', 'phases-end'], ['fixes', 'fixes-start', 'fixes-end']]) {
+    assert.equal(lines[lines.indexOf(`[claude-tweaks-${start}]`) - 1], `<!-- ${start} -->`, pair);
+    assert.equal(lines[lines.indexOf(`[claude-tweaks-${end}]`) + 1], `<!-- ${end} -->`, pair);
+  }
+  for (const token of HTML_TOKENS) assert.equal(count(out, token), 1, token);
+  assert.ok(out.endsWith('\n'));
+});
+
+test('#5358: a plain marker whose neighbour is text gets the HTML form spliced on a new line', () => {
+  const input = [
+    'claude-tweaks-run: r1', '### Phases', '[claude-tweaks-phases-start]', '- [ ] build', '[claude-tweaks-phases-end]',
+    'after phases', '[claude-tweaks-fixes-start]', 'Fixes #1', '[claude-tweaks-fixes-end]', 'after fixes',
+  ].join('\n');
+  const out = repairPrBody({ body: input, runId: 'r1', fixesLines: ['Fixes #1'] }).body;
+  assert.equal(out, [
+    '<!-- claude-tweaks-run: r1 -->', 'claude-tweaks-run: r1', '### Phases', '<!-- phases-start -->', '[claude-tweaks-phases-start]',
+    '- [ ] build', '[claude-tweaks-phases-end]', '<!-- phases-end -->', 'after phases', '<!-- fixes-start -->',
+    '[claude-tweaks-fixes-start]', 'Fixes #1', '[claude-tweaks-fixes-end]', '<!-- fixes-end -->', 'after fixes',
+  ].join('\n'));
+});
+
+test('#5358: the restored HTML run marker keeps the run id its plain companion names', () => {
+  const other = composePrEarlyBody({ runId: 'other-run', specSummary: 's', target: '#1', nextStep: 'test', fixesLines: ['Fixes #1'] });
+  const out = repairPrBody({ body: mcpRead(other), runId: 'r1', fixesLines: ['Fixes #1'] }).body;
+  assert.equal(out.split('\n')[0], '<!-- claude-tweaks-run: other-run -->');
+  assert.ok(!out.includes('claude-tweaks-run: r1'));
+});
+
+test('#5358: only the missing HTML token of a half-present pair is restored', () => {
+  const early = earlyR1();
+  const input = early.split('\n').map((l) => (l === '<!-- phases-end -->' ? '' : l)).join('\n');
+  const out = repairPrBody({ body: input, runId: 'r1', fixesLines: ['Fixes #1'] });
+  assert.deepEqual(out.restored, ['phases HTML markers']);
+  assert.equal(out.body, early);
+});
+
+test('#5358: a CRLF body gets its HTML markers back with its plain lines untouched', () => {
+  const input = mcpRead(earlyR1().replace(/\n/g, '\r\n'));
+  const out = repairPrBody({ body: input, runId: 'r1', fixesLines: ['Fixes #1'] }).body;
+  for (const token of HTML_TOKENS) assert.equal(count(out, token), 1, token);
+  const outLines = out.split('\n');
+  for (const l of input.split('\n').filter((x) => x.includes('claude-tweaks-') && !x.includes('<!--'))) {
+    assert.ok(outLines.includes(l), `kept: ${JSON.stringify(l)}`);
+  }
+  for (const l of outLines.slice(0, -1)) assert.ok(l.endsWith('\r'), `CRLF kept: ${JSON.stringify(l)}`);
+});
+
 test('#4025: composeExpressBody keeps the dual run markers, the express marker and the fixes span, with no Phases or Resume', () => {
   const body = composeExpressBody({ runId: 'r1', specSummary: 'One paragraph.', fixesLines: ['Fixes #7'] });
   assert.equal(body, [

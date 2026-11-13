@@ -89,7 +89,8 @@ after its push (`_shared/git-discipline.md`), as `checklist`. By `run-state.json
 
 <!-- when: transport=mcp -->
   `gh`-absent: `mcp__github__update_pull_request` with the same composed body — unsanitized
-  (`_shared/pr-early-run-lifecycle.md`'s Root cause section), so both delimiter pairs survive
+  (`_shared/pr-early-run-lifecycle.md`'s Root cause section), and `repairPrBody` has already
+  put back the HTML-comment forms the MCP read stripped, so both delimiter pairs survive
   regardless of which located the span.
 <!-- /when -->
 
