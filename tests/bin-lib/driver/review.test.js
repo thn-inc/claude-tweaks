@@ -474,12 +474,12 @@ test('AC5: named bounds', () => {
 // An evidence run over fakes. The runner records every call and answers with `outcome`; with
 // `hang` its child never exits until killed (by the handle's kill, or on win32 by a taskkill call
 // through the same runner). `tap` is what deps.readFile returns for the destination (undefined:
-// it throws). With `deaf` the hanging child survives every kill. `existing` lists the paths
-// deps.lstatType reports as files; every other path is missing. Every call lands in `calls` in order.
+// it throws). With `deaf` the hanging child survives every kill. `existing` maps a path to the type
+// deps.lstatType reports for it; every other path is missing. Every call lands in `calls` in order.
 const RUN_DIR = path.resolve('/run');
 const DEST = path.join(RUN_DIR, 'review', 'evidence-0.tap');
 const REL = 'tests/new/a.test.js';
-function evidenceRig({ outcome = { code: 0 }, tap, platform = 'darwin', hang = false, deaf = false, exited, existing = [], timers } = {}) {
+function evidenceRig({ outcome = { code: 0 }, tap, platform = 'darwin', hang = false, deaf = false, exited, existing = {}, timers } = {}) {
   const calls = [];
   const kills = [];
   let settle = null;
@@ -504,7 +504,7 @@ function evidenceRig({ outcome = { code: 0 }, tap, platform = 'darwin', hang = f
     env: { PATH: '/bin', HOME: '/h', GH_TOKEN: 'gho_secret', Path: 'C:\\bin', SystemRoot: 'C:\\Windows' },
     timers: timers || { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (timer) => clearTimeout(timer) },
     runner,
-    lstatType: (p) => { calls.push({ kind: 'lstatType', p }); return { type: existing.includes(p) ? 'file' : 'missing', code: null }; },
+    lstatType: (p) => { calls.push({ kind: 'lstatType', p }); return { type: Object.hasOwn(existing, p) ? existing[p] : 'missing', code: null }; },
     mkdirSync: (p, opts) => { calls.push({ kind: 'mkdirSync', args: [p, opts] }); },
     readFile: (p) => {
       calls.push({ kind: 'readFile', p });
@@ -634,11 +634,21 @@ test('AC5: runEvidence arms EVIDENCE_RUN_TIMEOUT_MS when no wallClockMs is passe
   assert.strictEqual(given.armed[0], 1234);
 });
 
-test('AC7: runEvidence refuses a TAP destination that already exists, before the spawn', async () => {
-  const rig = evidenceRig({ outcome: { code: 1 }, tap: tapOf('assert-fail'), existing: [DEST] });
-  await assert.rejects(runEvidence(rig.args), (err) => /TAP destination already exists/.test(err.message) && !err.message.includes(DEST));
-  assert.ok(!rig.calls.some((x) => x.kind === 'runner' || x.kind === 'readFile'));
-  assert.ok(rig.calls.some((x) => x.kind === 'lstatType' && x.p === DEST));
+test('AC7: runEvidence refuses a TAP destination that is not missing, before any mkdir or spawn', async () => {
+  // Every lstatType answer but `missing`; an unreadable one cannot be shown absent, so it fails closed.
+  const cases = [
+    ['file', "the evidence run's TAP destination already exists"],
+    ['symlink', "the evidence run's TAP destination already exists"],
+    ['directory', "the evidence run's TAP destination already exists"],
+    ['other', "the evidence run's TAP destination already exists"],
+    ['unreadable', "the evidence run's TAP destination is unreadable"],
+  ];
+  for (const [type, message] of cases) {
+    const rig = evidenceRig({ outcome: { code: 1 }, tap: tapOf('assert-fail'), existing: { [DEST]: type } });
+    await assert.rejects(runEvidence(rig.args), { message }, type);
+    assert.deepStrictEqual(rig.calls.map((x) => x.kind), ['lstatType'], type);
+    assert.strictEqual(rig.calls[0].p, DEST, type);
+  }
 });
 
 test('AC7: a child that survives its kill is reported as survived, not as a plain timeout', async () => {

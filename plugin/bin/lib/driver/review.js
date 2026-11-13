@@ -112,8 +112,9 @@
 //                  path in the worktree, with the launcher's allow-listed environment plus
 //                  GH_CONFIG_DIR at an empty directory, under the launcher's wall-clock kill
 //                  (superviseChild). The child is shared.activeWorker while it runs, so a signal to
-//                  the driver reaches its process group. A TAP destination that already exists, a
-//                  run that cannot start, and an uncovered test command throw. A signal, on entry
+//                  the driver reaches its process group. A TAP destination lstatType does not
+//                  report missing (it exists in any form, or is unreadable, each with its own
+//                  message), a run that cannot start, and an uncovered test command throw. A signal, on entry
 //                  or during the run, gives no verdict (`interrupted: true`). A child that did not
 //                  exit after its kill is `survived: true` with a fixed `detail`: it may still be
 //                  writing, so the caller stops rather than discarding the finding.
@@ -492,7 +493,10 @@ async function runEvidence({ wt, rel, dest, runDir, shared, testCommand, deps, w
   if (shared.interrupted) return { verdict: 'unplaceable', interrupted: true };
   const args = evidenceArgs(testCommand, rel, dest);
   if (args === null) throw new Error('the evidence rule does not cover the test command');
-  if (deps.lstatType(dest).type !== 'missing') throw new Error('the evidence run\'s TAP destination already exists');
+  // Anything but `missing` refuses: an unreadable destination cannot be shown absent.
+  const destType = deps.lstatType(dest).type;
+  if (destType === 'unreadable') throw new Error('the evidence run\'s TAP destination is unreadable');
+  if (destType !== 'missing') throw new Error('the evidence run\'s TAP destination already exists');
   deps.mkdirSync(path.dirname(dest), { recursive: true });
   // An empty gh config dir: an evidence test calling `gh` finds no config-file auth.
   const ghConfigDir = path.join(runDir, 'gh-config-empty');
