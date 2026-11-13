@@ -9,3 +9,4 @@
 | 5 | build | SDD ruling — final-review Minor 5 (whole-unit artifact dirs unused): ratify or reverse at the Review Console (staged/sdd-ruling-4.md) | open | — |
 | 6 | build | SDD ruling — residual #1995 breakage: ratify or reverse at the Review Console (staged/sdd-ruling-5.md) | open | — |
 | 7 | build | SDD ruling — residual re-wake wording: ratify or reverse at the Review Console (staged/sdd-ruling-6.md) | open | — |
+| 8 | build/skill | shared-contract-extraction extends: a new _shared citation inside dispatch/task-prompt.md's governed region (fenced templates, Context-pack items) fails tests/dispatch-prompt-bundle-citations.test.js (#1995) unless the file is composed or listed in its GAPS, and a gap cited on several lines needs the stale-check to doctor every occurrence in place | observation | — |
