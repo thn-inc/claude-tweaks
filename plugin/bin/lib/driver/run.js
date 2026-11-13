@@ -439,6 +439,10 @@ async function run(argv, deps) {
   shared.settle = parsed.settle;
   const unsubscribe = deps.onSignal((signal) => interrupt(shared, signal, deps));
   try {
+    if (parsed.budget !== undefined) {
+      const { runBudget } = require('./budget');
+      return await runBudget(parsed.budget, shared, deps, { driveOne: (n) => driveRecordFacts(n, shared, deps) });
+    }
     for (const record of parsed.records) {
       await driveRecord(record, shared, deps);
       // A signal queued during the record's last synchronous call is delivered only when the
@@ -489,6 +493,9 @@ const realDeps = {
   evaluateAdmission: (input) => require('./admission').evaluateAdmission(input),
   fetchNativeDependencies: (opts) => require('../issues/native-dependencies').fetchNativeDependencies(opts),
   fetchLinkedPRs: (opts) => require('../issues/linked-prs').fetchLinkedPRs(opts),
+  // The queue-pull module bounds its own gh calls (isBatchGhCall), so these take no timeout here.
+  queuePull: (options, d) => require('../dispatch/queue-pull').queuePull(options, d),
+  rankNext: (groups, entries, opts) => require('../dispatch/queue-pull').rankNext(groups, entries, opts),
   launchWorker: (opts, d) => require('./worker').launchWorker(opts, d),
   runner: (call) => require('./worker').defaultRunner(call),
   resolveRunDir: (opts) => require('../hooks/run-dir-resolve').resolve(opts),

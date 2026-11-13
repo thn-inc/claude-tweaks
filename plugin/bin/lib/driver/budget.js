@@ -158,7 +158,7 @@ async function runBudget(budget, shared, deps, { driveOne, steps = STEPS }) {
   const attempted = new Set();
   const verdicts = new Map();
   // Pre-screens each member not yet attempted, once per record per invocation, in the groups the
-  // ranking could select: a group the pull excluded as `oversized` or `neighbour-in-flight` is
+  // ranking could select: a group the pull excluded for a UNSELECTABLE_REASONS reason is
   // never screened, counted or added to `firing`. A screened group whose members are all `skip`
   // joins `firing` now, each new member counted `skipped`.
   const screenGroups = (groups, exclusions) => {
