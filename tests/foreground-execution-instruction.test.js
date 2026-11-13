@@ -605,3 +605,52 @@ test('AC1.3: a copy with an unrelated sentence between the stop sentence and the
     assert.deepEqual(misorderedCopies({ ...copies, [name]: doctored }), [name], `an unrelated sentence before the passage in only ${name} must turn exactly that copy red`);
   }
 });
+
+// #5280: a rendered-UI unit (review Step 6 / 6.5) outlives the wait bound more often than a lens: it
+// gets artifact-directory progress windows and its late result is staged. The rule lives in its own
+// _shared file (headroom-forced); the core section carries one exception sentence pointing at it.
+const RENDERED_UI = path.join(PLUGIN, 'skills', '_shared', 'rendered-ui-units.md');
+const RENDERED_UI_EXCEPTION = 'Exception: a rendered-UI unit (review Step 6/6.5) gets more windows while its artifact directory changes; stage its late result (`rendered-ui-units.md`).';
+const RENDERED_UI_CONTRACT = [
+  [/review\s+Step\s+6\s+\(visual-review\)\s+and\s+Step\s+6\.5\s+\(design-wrapper\s+review\)/, 'names review Step 6 and Step 6.5 as the rendered-UI units'],
+  [/Steps?\s+3\.7\s+and\s+3\.8[^.]*?no\s+artifact\s+directory/, 'the 3.7/3.8 children have no artifact directory'],
+  [/`\.claude-tweaks\/artifacts\/screenshots\/browse\/\{session\}\/`/, 'names the visual-review artifact directory'],
+  [/`\.impeccable\/review\/`/, 'names the design-wrapper review artifact directory'],
+  [/`ls\s+-lR\s+"\{artifact-dir\}"`\s+piped\s+to\s+`git\s+hash-object\s+--stdin`/, 'the read-only artifact-directory probe'],
+  [/ceiling\s+of\s+3\s+windows\s+\(60\s+minutes\)/, 'the 3-window ceiling'],
+  [/names\s+no\s+artifact\s+directory\s+counts\s+as\s+unchanged/, 'a unit naming no artifact directory counts as unchanged'],
+  [/missing\s+directory\s+or\s+a\s+failed\s+probe\s+counts\s+as\s+no\s+change/, 'a missing directory or failed probe counts as no change'],
+  [/Lenses,\s+single\s+reads\s+and\s+judges\s+are\s+not\s+rendered-UI\s+units/, 'lenses, single reads and judges are not rendered-UI units'],
+  [/never\s+satisfies\s+the\s+rendered-UI\s+check\s+before\s+merge/, 'a self-judged unit never satisfies the rendered-UI check'],
+  [/explicit\s+decline/, 'it surfaces as an explicit decline'],
+  [/session-tmp-resolve\.js[\s\S]*?never\s+under\s+the\s+run\s+dir/, 'the findings file is a session temp path, never under the run dir'],
+  [/stage-item\.js"\s+--run\s+"\{run-dir\}"\s+--id\s+visual-review-late-1\s+--allocate/, 'stages with the allocated visual-review-late- id'],
+  [/staged\/visual-review-late-\{n\}\.md/, 'names the staged file'],
+  [/--status\s+STAGED[\s\S]*?--reversibility\s+high\s+--text-file/, 'logs the staging decision'],
+  [/late\s+rendered-UI\s+result\s+from\s+\{unit\}\s+staged\s+to\s+staged\/\{written-file\}\./, 'the decision log text'],
+  [/`status`\s+is\s+anything\s+but\s+`active`[\s\S]{0,240}?`console\.json`\s+exists[\s\S]{0,240}?exits\s+3[\s\S]{0,240}?write\s+nothing\s+under\s+the\s+run\s+dir[\s\S]{0,240}?name\s+the\s+findings\s+in\s+your\s+reply\s+instead/, 'a closed run stages nothing and names the findings in the reply'],
+  [/never\s+changes\s+a\s+verdict\s+already\s+reached/, 'a late result never changes a verdict already reached'],
+];
+const renderedUiMissing = missingFactsOf(RENDERED_UI_CONTRACT);
+
+test('AC1.1 AC1.2 AC2.1 AC3.1 AC4.1 AC5.1 AC5.2: rendered-ui-units.md states the rendered-UI unit rule (#5280)', () => {
+  assert.deepEqual(renderedUiMissing(readText(RENDERED_UI)), []);
+});
+
+test('AC1.1: each rendered-UI contract assertion goes red on its own (discrimination proof)', () => {
+  assertEachPatternGoesRed(readText(RENDERED_UI), RENDERED_UI_CONTRACT, renderedUiMissing);
+});
+
+test('AC3.1: the contract stage-item id classifies to a mapped console section (#5280)', () => {
+  const id = readText(RENDERED_UI).match(/--id\s+(\S+)/)[1];
+  const { classifyStagedItem, SECTIONS } = require('../plugin/bin/lib/console/resolve');
+  const mapped = classifyStagedItem(`${id}.md`, '');
+  assert.equal(mapped.section, SECTIONS.PENDING);
+  assert.notEqual(mapped.reason, 'unmapped-prefix');
+  assert.equal(classifyStagedItem('rendered-late-1.md', '').reason, 'unmapped-prefix');
+});
+
+test('AC1.1: the core section carries the rendered-UI exception sentence once (#5280)', () => {
+  const section = coreForegroundSection(readText(CORE)).replace(/\s+/g, ' ');
+  assert.equal(section.split(RENDERED_UI_EXCEPTION).length - 1, 1);
+});

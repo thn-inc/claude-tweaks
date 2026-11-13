@@ -109,7 +109,9 @@ minutes) per wave, naming which fired (`no progress for one window` or `ceiling 
 progressing`) and every unchanged child. Children sharing a worktree progress together; a child
 whose prompt names no worktree counts as unchanged. A failed wait call counts as no wait but ends its window, and the
 probe runs as at any bound; a failed probe command counts as no change, never retried in another
-form. Read-only units keep the first-bound self-judge. A wait call that is blocked or fails (a
+form. Read-only units keep the first-bound self-judge. Exception: a rendered-UI unit (review Step
+6/6.5) gets more windows while its artifact directory changes; stage its late result
+(`rendered-ui-units.md`). A wait call that is blocked or fails (a
 harness or hook refusal) is not a wait and never counts toward the bound; never retry it in another
 form (a longer, wrapped or backgrounded sleep): treat every child still outstanding as silent at the
 bound and apply the fallback above.
