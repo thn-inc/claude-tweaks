@@ -355,8 +355,9 @@ const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
 const hasStrings = (o, keys) => isObject(o) && keys.every((k) => typeof o[k] === 'string');
 const isConflicting = (read) => read.mergeStateStatus === 'DIRTY' || read.mergeable === 'CONFLICTING';
 
-// A PR state for a detail. `closed` is a closing keyword neutralize strips from every detail, so
-// CLOSED is named in other words; any other state is reduced free text.
+// A PR state for a detail. CLOSED is named in other words, not as a closing keyword: neutralize
+// strips such a keyword only before a `#N` or issue/PR path, which a bare state word never has, so
+// this is wording for the reader, not a guard. Any other state is reduced free text.
 function prStateWords(state) {
   return state === 'CLOSED' ? 'shut, not merged' : reduceDetail(state);
 }

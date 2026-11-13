@@ -899,7 +899,7 @@ test('AC5.1–AC5.6: red, draft-skip and read failures never merge', async () =>
     const h = mergeHarness({ prState: { state, statusCheckRollup: [FAILING_CHECK] } });
     const r = await merge(CTX, h.deps);
     assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'pr-not-open', mergeCommit: null, postMerge: null }, state);
-    // neutralize strips the closing keyword `closed`, so CLOSED is named in other words.
+    // CLOSED is named in other words (prStateWords), though neutralize would now keep a bare `closed`.
     assert.equal(r.detail, state === 'CLOSED' ? 'PR state shut, not merged' : 'PR state MERGED', state);
     assert.deepEqual(afterAll(h, isGateRead), [], `${state}: no further call`);
     noMerge(h);
@@ -1640,7 +1640,15 @@ test('AC11.7: MERGED is merged with the merge commit; OPEN with autoMergeRequest
   const hostile = mergeHarness({ confirm: { statusCheckRollup: [{ ...GREEN_CHECK, name: '@octo `x` closes #5' }] } });
   const hr = await merge(CTX, hostile.deps);
   assert.match(hr.detail, /^merged, .* concluded SUCCESS$/);
-  assert.doesNotMatch(hr.detail, /@|`|#5|closes/i);
+  assert.doesNotMatch(hr.detail, /@|`|#/);
+  // reduceDetail has already removed the `#`, so `closes 5` links nothing and neutralize keeps the
+  // bare keyword (it strips one only before a `#N` or issue/PR path); the same keyword before an
+  // issue path is a link marker and goes.
+  assert.equal(hr.detail, 'merged, at octo x closes 5 concluded SUCCESS');
+  const linking = mergeHarness({ confirm: { statusCheckRollup: [{ ...GREEN_CHECK, name: 'closes o/r/issues/5' }] } });
+  const lr = await merge(CTX, linking.deps);
+  assert.equal(lr.detail, 'merged, o/r/issues/5 concluded SUCCESS');
+  assert.doesNotMatch(lr.detail, /closes/i);
   for (const mergeCommit of [null, {}, { oid: '' }, 'abc']) {
     const m = mergeHarness({ confirm: { mergeCommit } });
     // No merge commit to describe: the release status is unavailable, the merge is still merged.
@@ -1669,7 +1677,7 @@ test('AC11.7: MERGED is merged with the merge commit; OPEN with autoMergeRequest
   const lf = mergeHarness({ prState: BLOCKED_PENDING, confirm: ARMED, logReply: { code: 1, stdout: '', stderr: 'x' } });
   assert.equal((await merge(CTX, lf.deps)).outcome, 'armed');
   assert.match(lastEvent(lf).detail, /log:Step 2\.5 \(merge-verification gate\)/);
-  // neutralize strips the closing keyword `closed` from details, so CLOSED is named in other words.
+  // CLOSED is named in other words (prStateWords), though neutralize would now keep a bare `closed`.
   for (const [state, shown] of [['CLOSED', 'shut, not merged'], ['DRAFT', 'DRAFT']]) {
     const c = mergeHarness({ confirm: { state } });
     const cr = await merge(CTX, c.deps);
