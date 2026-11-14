@@ -1,0 +1,129 @@
+{
+  "runDir": "<RUN_DIR>",
+  "generatedAt": "<GENERATED_AT>",
+  "phases": [
+    {
+      "phase": "call-1",
+      "start": "2026-09-05T13:00:00.000Z",
+      "end": "2026-09-05T13:25:00.000Z",
+      "minutes": 25,
+      "ownMinutes": 1,
+      "source": "skill_invoked",
+      "verify": []
+    },
+    {
+      "phase": "call-2",
+      "start": "2026-09-05T13:25:00.000Z",
+      "end": "2026-09-05T14:13:00.000Z",
+      "minutes": 48,
+      "ownMinutes": 24,
+      "source": "skill_invoked",
+      "verify": []
+    },
+    {
+      "phase": "build",
+      "start": "2026-09-05T13:01:00.000Z",
+      "end": "2026-09-05T13:23:00.000Z",
+      "minutes": 22,
+      "ownMinutes": 2,
+      "source": "skill_invoked",
+      "verify": []
+    },
+    {
+      "phase": "plan",
+      "start": "2026-09-05T13:02:00.000Z",
+      "end": "2026-09-05T13:08:00.000Z",
+      "minutes": 6,
+      "ownMinutes": 6,
+      "source": "skill_invoked",
+      "verify": []
+    },
+    {
+      "phase": "tasks",
+      "start": "2026-09-05T13:08:00.000Z",
+      "end": "2026-09-05T13:22:00.000Z",
+      "minutes": 14,
+      "ownMinutes": 14,
+      "source": "verify",
+      "verify": [
+        {
+          "mode": "scoped",
+          "suitesRun": [
+            "tests"
+          ],
+          "durationMs": 95000,
+          "pass": true,
+          "baselineAdjudicated": null,
+          "at": "2026-09-05T13:22:00.000Z"
+        }
+      ]
+    },
+    {
+      "phase": "test",
+      "start": "2026-09-05T13:23:00.000Z",
+      "end": "2026-09-05T13:25:00.000Z",
+      "minutes": 2,
+      "ownMinutes": 2,
+      "source": "skill_invoked",
+      "verify": [
+        {
+          "mode": "full",
+          "suitesRun": [
+            "types",
+            "lint",
+            "tests"
+          ],
+          "durationMs": 210000,
+          "pass": true,
+          "baselineAdjudicated": null,
+          "at": "2026-09-05T13:23:30.000Z"
+        }
+      ]
+    },
+    {
+      "phase": "review",
+      "start": "2026-09-05T13:49:00.000Z",
+      "end": "2026-09-05T13:57:00.000Z",
+      "minutes": 8,
+      "ownMinutes": 8,
+      "source": "skill_invoked",
+      "verify": []
+    },
+    {
+      "phase": "polish",
+      "start": "2026-09-05T13:57:00.000Z",
+      "end": "2026-09-05T13:57:00.000Z",
+      "minutes": 0,
+      "ownMinutes": 0,
+      "source": "unattributed",
+      "verify": []
+    },
+    {
+      "phase": "wrap-up",
+      "start": "2026-09-05T13:57:00.000Z",
+      "end": "2026-09-05T14:12:00.000Z",
+      "minutes": 15,
+      "ownMinutes": 15,
+      "source": "skill_invoked",
+      "verify": []
+    },
+    {
+      "phase": "merge",
+      "start": "2026-09-05T14:12:00.000Z",
+      "end": "2026-09-05T14:13:00.000Z",
+      "minutes": 1,
+      "ownMinutes": 1,
+      "source": "commit",
+      "verify": []
+    }
+  ],
+  "totals": {
+    "minutes": 73,
+    "verifyRuns": 2,
+    "verifyMinutes": 5.1,
+    "verifyModes": [
+      "scoped",
+      "full"
+    ]
+  }
+}

@@ -205,8 +205,10 @@ function emptyWorkflowRead() {
 }
 
 // Entries {key, value} sitting directly inside the outer `{ }` of a one-line
-// flow mapping, plus whether the braces balanced on this line. Commas and
-// colons inside nested braces/brackets or quotes never split an entry.
+// flow mapping, plus whether the braces balanced on this line, and `keyless`:
+// how many non-empty entries had no colon (`{a, b}`, implicit null values),
+// which `entries` leaves out. Commas and colons inside nested braces/brackets
+// or quotes never split an entry.
 // Twin: flowMappingKeysAtDepth1 (above) — it feeds workflowHasPullRequestTrigger
 // and fails toward "no PR trigger"; this one's callers fail toward `unparsed`.
 function flowMappingEntries(s) {
@@ -216,8 +218,10 @@ function flowMappingEntries(s) {
   let quote = null;
   let cur = '';
   let key = null;
+  let keyless = 0;
   const flush = () => {
     if (key !== null) entries.push({ key, value: cur.trim() });
+    else if (cur.trim() !== '') keyless++;
     key = null;
     cur = '';
   };
@@ -247,7 +251,7 @@ function flowMappingEntries(s) {
     cur += ch;
   }
   flush();
-  return { entries, balanced: depth === 0 };
+  return { entries, balanced: depth === 0, keyless };
 }
 
 // Items of a one-line `[a, b]`; null when any item is not a plain identifier.
@@ -431,6 +435,750 @@ function readyRequirement(workflows) {
   return out;
 }
 
+// --- Workflow shape reader (#5162) ---
+//
+// init's CI workflow review (bin/lib/init/ci-workflow-review.js) reads a whole
+// workflow's shape from here, so every YAML-shape read stays in this one file:
+// the filters under the PR triggers, push's branch filter, each job's id, its
+// job-level `if:` text, its step-level `if:` count and job-level concurrency,
+// and the workflow-level concurrency. Line-based like the readers above, no
+// YAML library. It never guesses: a shape it cannot follow adds a reason string
+// to `unparsed`, and the review reports that workflow as unparsed rather than
+// judging it. The readers above are called, never changed.
+
+const PR_FILTER_KEYS = Object.freeze(['branches', 'branches-ignore', 'paths', 'paths-ignore']);
+
+// A push branch-filter item, optionally quoted with balanced quotes: BLOCK_ITEM
+// widened with digits, the path characters `/`, `.`, `-` and GitHub's filter
+// pattern characters `*`, `?`, `+`, `[`, `]`. A quoted item may lead with one
+// `!` (a negation pattern); a bare `!x` is a YAML tag, not a pattern, so it
+// stays unread. A plain item starts with a name or path character (a leading
+// `*` is a YAML alias, `**` included, so only a quoted `'**'` means all; a
+// leading `?`, `+`, `[` or `]` is YAML syntax or no pattern, and a `-` leads
+// only when a pattern character follows it, since a lone `-` is a sequence
+// entry), and inside a flow sequence (BRANCH_FLOW_ITEM) a plain `[` or `]` is
+// YAML syntax, so it stays unread too.
+const BRANCH_ITEM = /^(?:(['"])!?[A-Za-z0-9_*/.?+[\]-]+\1|(?:[A-Za-z0-9_/.]|-[A-Za-z0-9_*/.?+[\]-])[A-Za-z0-9_*/.?+[\]-]*)$/;
+const BRANCH_FLOW_ITEM = /^(?:(['"])!?[A-Za-z0-9_*/.?+[\]-]+\1|(?:[A-Za-z0-9_/.]|-[A-Za-z0-9_*/.?+-])[A-Za-z0-9_*/.?+-]*)$/;
+const BLOCK_SCALAR = /^[|>][-+0-9]*$/;
+const PLAIN_KEY = /^[^\s#'"[\]{},&*!|>%@`-]\S*$/;
+// Every `(.*)` below carries the `s` flag: a stray `\r` or U+2028 left in a
+// line by split(/\r?\n/) must never turn a match into a null and a throw.
+const JOB_ID = /^(?:([A-Za-z_][A-Za-z0-9_-]*)|'([A-Za-z_][A-Za-z0-9_-]*)'|"([A-Za-z_][A-Za-z0-9_-]*)")[ \t]*:(.*)$/s;
+const DASH = /^ *-(?:[ \t]|$)/;
+
+// The text after a top-level key line's colon (the key is a plain name, so the
+// first colon is its separator).
+const afterColon = (line) => line.slice(line.indexOf(':') + 1);
+
+function emptyWorkflowShape() {
+  return {
+    name: null, prTrigger: false, types: [], typesDeclared: false, draftReference: false, prFilters: [], prFiltersByTrigger: {},
+    pushTrigger: false, pushBranches: 'absent', pushBranchesIgnore: false, pushTags: false,
+    jobs: [], concurrency: 'absent', unparsed: [],
+  };
+}
+
+const leadSpaces = (line) => /^ */.exec(line)[0].length;
+const isSkippable = (line) => { const t = line.trim(); return t === '' || t.startsWith('#'); };
+
+// YAML 1.2's double-quoted single-character escapes (spec 5.7), by the
+// character after the backslash; `\x`, `\u` and `\U` take 2, 4 and 8 hex digits.
+const DQ_ESCAPES = Object.freeze({
+  0: '\0', a: '\x07', b: '\b', t: '\t', '\t': '\t', n: '\n', v: '\v', f: '\f', r: '\r', e: '\x1b',
+  ' ': ' ', '"': '"', '/': '/', '\\': '\\', N: '\u0085', _: String.fromCharCode(0xa0), L: String.fromCharCode(0x2028), P: String.fromCharCode(0x2029),
+});
+const DQ_HEX = Object.freeze({ x: 2, u: 4, U: 8 });
+
+// A double-quoted scalar's inner text with every escape decoded, or null when an
+// escape cannot be decoded (an unknown `\q`, short or non-hex digits, a code
+// point past U+10FFFF, a trailing backslash). One linear pass.
+function decodeDoubleQuoted(inner) {
+  let out = '';
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (ch !== '\\') { out += ch; continue; }
+    const e = inner[++i];
+    if (e === undefined) return null;
+    if (Object.prototype.hasOwnProperty.call(DQ_ESCAPES, e)) { out += DQ_ESCAPES[e]; continue; }
+    const n = Object.prototype.hasOwnProperty.call(DQ_HEX, e) ? DQ_HEX[e] : 0;
+    const hex = inner.slice(i + 1, i + 1 + n);
+    if (n === 0 || !/^[0-9A-Fa-f]+$/.test(hex) || hex.length !== n) return null;
+    const cp = parseInt(hex, 16);
+    if (cp > 0x10ffff) return null;
+    out += String.fromCodePoint(cp);
+    i += n;
+  }
+  return out;
+}
+
+// readQuotedScalar's answer when the value is not one quoted scalar.
+const NOT_QUOTED = Symbol('not quoted');
+
+// A quoted scalar whose text starts with `first` (its opening quote included),
+// continuing on deeper lines from `k`. Only one quoted scalar spanning the whole
+// value counts: text after the closing quote other than a comment, or a deeper
+// line after it, returns NOT_QUOTED and the caller reads the value as plain text.
+// Line breaks fold the YAML way: one break is a space, each empty line a newline,
+// and a double-quoted escaped line break (`\` at a line's end) joins with nothing.
+// A break drops the line's trailing whitespace, but never an escaped character's
+// (`\ ` or `\<TAB>` before the break keeps its whitespace), so `first` arrives
+// with its trailing whitespace intact.
+// Escapes are undone: `''` in single quotes, decodeDoubleQuoted's set in double.
+// A quote that never closes, or an escape that cannot be decoded, is unread.
+function readQuotedScalar(lines, k, end, keyIndent, first) {
+  const q = first[0];
+  let body = '';
+  let cur = first.slice(1);
+  for (;;) {
+    let close = -1;
+    let escapedBreak = false;
+    let kept = 0; // the end of the line's last escaped character
+    for (let c = 0; c < cur.length; c++) {
+      if (q === '"' && cur[c] === '\\') {
+        if (c === cur.length - 1) { escapedBreak = true; break; }
+        c++; // an escaped character never closes the quote
+        kept = c + 1;
+        continue;
+      }
+      if (cur[c] !== q) continue;
+      if (q === "'" && cur[c + 1] === "'") { c++; continue; } // `''` is a quote, not the close
+      close = c;
+      break;
+    }
+    if (close >= 0) {
+      body += cur.slice(0, close);
+      const after = cur.slice(close + 1);
+      if (after.trim() !== '' && !/^[ \t]+#/.test(after)) return NOT_QUOTED;
+      for (let n = k; n < end; n++) {
+        const t = lines[n].trim();
+        if (t === '' || t.startsWith('#')) continue;
+        if (leadSpaces(lines[n]) > keyIndent) return NOT_QUOTED;
+        break;
+      }
+      if (q === "'") return { text: body.replace(/''/g, "'"), next: k, unread: false };
+      const text = decodeDoubleQuoted(body);
+      return text === null ? { text: '', next: k, unread: true } : { text, next: k, unread: false };
+    }
+    body += escapedBreak ? cur.slice(0, -1) : cur.slice(0, Math.max(kept, cur.trimEnd().length));
+    let blanks = 0;
+    while (k < end && lines[k].trim() === '') { blanks++; k++; }
+    if (k >= end || leadSpaces(lines[k]) <= keyIndent) return { text: '', next: k, unread: true };
+    body += blanks > 0 ? '\n'.repeat(blanks) : escapedBreak ? '' : ' ';
+    cur = lines[k].trimStart();
+    k++;
+  }
+}
+
+// `{key, rest}` for a block-mapping entry's content (indentation and any `- `
+// already removed), or null when the content is no `key:` entry. Hand-written
+// and linear: a plain key ends at the first `:` followed by whitespace or the
+// end of the line, and holds no whitespace.
+function splitKey(content) {
+  const q = content[0];
+  let keyEnd;
+  let key;
+  if (q === "'" || q === '"') {
+    let k = 1;
+    while (k < content.length && content[k] !== q) k += q === '"' && content[k] === '\\' ? 2 : 1;
+    if (k >= content.length) return null;
+    key = content.slice(1, k);
+    keyEnd = k + 1;
+    while (keyEnd < content.length && (content[keyEnd] === ' ' || content[keyEnd] === '\t')) keyEnd++;
+    if (content[keyEnd] !== ':') return null;
+  } else {
+    keyEnd = -1;
+    for (let k = 0; k < content.length; k++) {
+      if (content[k] === ':' && (k + 1 === content.length || content[k + 1] === ' ' || content[k + 1] === '\t')) { keyEnd = k; break; }
+    }
+    if (keyEnd < 0) return null;
+    key = content.slice(0, keyEnd).trimEnd();
+    if (!PLAIN_KEY.test(key)) return null;
+  }
+  const rest = content.slice(keyEnd + 1);
+  if (rest !== '' && rest[0] !== ' ' && rest[0] !== '\t') return null;
+  return { key, rest };
+}
+
+// The line with every quoted span replaced by `~` (column-preserving), quotes
+// opening only after a non-word character as in stripCommentQuoteAware.
+function blankQuotedSpans(s) {
+  let out = '';
+  let quote = null;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (quote) {
+      if (quote === '"' && ch === '\\') { out += '~~'; i++; continue; }
+      if (ch === quote) { quote = null; out += ch; continue; }
+      out += '~';
+      continue;
+    }
+    if ((ch === "'" || ch === '"') && (i === 0 || !/[\p{L}\p{M}\p{N}_]/u.test(s[i - 1]))) quote = ch;
+    out += ch;
+  }
+  return out;
+}
+
+// Whether one region line (comment-stripped, quoted spans blanked) carries an
+// anchor or alias at a value start, or is a `<<:` merge key.
+function hasAnchorOrAlias(line) {
+  const s = blankQuotedSpans(stripCommentQuoteAware(line));
+  if (/^[ \t]*(?:-[ \t]+)?<<[ \t]*:/.test(s)) return true;
+  const values = [];
+  const item = /^[ \t]*-[ \t]+(.*)$/s.exec(s);
+  if (item) values.push(item[1]);
+  const sep = /:[ \t]/.exec(s);
+  if (sep) values.push(s.slice(sep.index + 1).trimStart());
+  for (const v of values) {
+    if (/^[&*][A-Za-z0-9_]/.test(v)) return true;
+    if ((v[0] === '[' || v[0] === '{') && /[[{,][ \t]*[&*][A-Za-z0-9_]/.test(v)) return true;
+  }
+  return false;
+}
+
+// The value of an entry line, when it is a block-scalar indicator: the column
+// its content must sit deeper than, else null.
+function blockScalarColumn(line) {
+  const ind = leadSpaces(line);
+  let col = ind;
+  let content = line.slice(ind);
+  const item = /^-[ \t]+/.exec(content);
+  if (item) {
+    col = ind + item[0].length;
+    content = content.slice(item[0].length);
+    if (BLOCK_SCALAR.test(stripCommentQuoteAware(content))) return ind;
+  }
+  const kv = splitKey(content);
+  return kv && BLOCK_SCALAR.test(stripCommentQuoteAware(kv.rest)) ? col : null;
+}
+
+// The region checks that run before any other read of a region (lines
+// [start, end)): a tab in a line's indentation, then an anchor or alias.
+// Block-scalar content is text, not YAML, so neither check reads it.
+function regionReasons(lines, start, end, region) {
+  let tab = false;
+  let alias = false;
+  let scalarCol = null;
+  for (let i = start; i < end; i++) {
+    const line = lines[i];
+    if (line.trim() === '') continue;
+    if (scalarCol !== null) {
+      if (leadSpaces(line) > scalarCol) continue;
+      scalarCol = null;
+    }
+    if (/^[ \t]*/.exec(line)[0].includes('\t')) { tab = true; continue; }
+    if (line.trim().startsWith('#')) continue;
+    if (hasAnchorOrAlias(line)) alias = true;
+    scalarCol = blockScalarColumn(line);
+  }
+  const out = [];
+  if (tab) out.push(`tab indentation in ${region}`);
+  if (alias) out.push(`anchor or alias in ${region}`);
+  return out;
+}
+
+// A scalar's text from its inline value plus every deeper line before `end`, as
+// {text, next, unread}; `next` is the first unread line, and `text` is always ''
+// when `unread` is set.
+//   - block (`|`) and folded (`>`) text: the trimmed lines joined by one space,
+//     kept as written (no quoting applies);
+//   - one quoted scalar spanning the whole value: readQuotedScalar, where a
+//     quote that never closes or an undecodable escape sets `unread`;
+//   - anything else, two quoted scalars or text after a closing quote included:
+//     plain text, its comment-stripped lines joined by one space, as written.
+//     A plain value whose first character is `!` is a YAML tag, not text (the
+//     BRANCH_ITEM rule): it also sets `tagged`, which a caller that must not
+//     read a tag as text checks.
+function readJoinedScalar(lines, i, end, keyIndent, inline) {
+  const v = stripCommentQuoteAware(inline);
+  if (BLOCK_SCALAR.test(v)) {
+    const parts = [];
+    for (; i < end; i++) {
+      const t = lines[i].trim();
+      if (t === '') continue;
+      const deeper = leadSpaces(lines[i]) > keyIndent;
+      if (t.startsWith('#')) {
+        if (deeper) parts.push(t);
+        continue;
+      }
+      if (!deeper) break;
+      parts.push(t);
+    }
+    return { text: parts.join(' ').trim(), next: i, unread: false };
+  }
+  // The value starts on the key's line, or else on the first deeper line. Its
+  // trailing whitespace stays for readQuotedScalar (an escaped `\ ` before a
+  // line break); the plain path's comment strip trims it.
+  let first = v === '' ? '' : inline.trimStart();
+  if (first === '') {
+    for (; i < end; i++) {
+      const t = lines[i].trim();
+      if (t === '' || t.startsWith('#')) continue;
+      if (leadSpaces(lines[i]) > keyIndent) { first = lines[i].trimStart(); i++; }
+      break;
+    }
+    if (first === '') return { text: '', next: i, unread: false };
+  }
+  if (first[0] === '"' || first[0] === "'") {
+    const quoted = readQuotedScalar(lines, i, end, keyIndent, first);
+    if (quoted !== NOT_QUOTED) return quoted;
+  }
+  const parts = [stripCommentQuoteAware(first)];
+  for (; i < end; i++) {
+    const t = lines[i].trim();
+    if (t === '' || t.startsWith('#')) continue;
+    if (leadSpaces(lines[i]) <= keyIndent) break;
+    parts.push(stripCommentQuoteAware(t));
+  }
+  return { text: parts.join(' ').trim(), next: i, unread: false, tagged: first[0] === '!' };
+}
+
+// Whether a one-line flow mapping `v` is one whole mapping: its outer `{` closes
+// at v's last character and at no earlier one. flowMappingEntries' `balanced`
+// alone also passes `{a} {b}` (depth returns to 0 and reopens) and ignores any
+// text after the close. Quotes are tracked the way flowMappingEntries tracks them.
+function flowMapSpansValue(v) {
+  if (v[0] !== '{') return false;
+  let depth = 0;
+  let quote = null;
+  for (let i = 0; i < v.length; i++) {
+    const ch = v[i];
+    if (quote) {
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"') quote = ch;
+    else if (ch === '{') depth++;
+    else if (ch === '}' && --depth === 0) return i === v.length - 1;
+  }
+  return false;
+}
+
+// A trigger value given inline: '' / null / ~ / {} read as no sub-keys, a
+// one-line flow mapping spanning the whole value as its entries; anything else
+// is unreadable.
+function readInlineTriggerKeys(value, line) {
+  const v = value.trim();
+  if (v === '' || v === 'null' || v === '~') return new Map();
+  if (!flowMapSpansValue(v)) return null;
+  const map = flowMappingEntries(v);
+  if (map.keyless > 0) return null; // a colon-less sub-key would be dropped, never read
+  return new Map(map.entries.map((e) => [e.key, { rest: e.value, line }]));
+}
+
+// The sub-keys of the push, pull_request and pull_request_target triggers, as
+// Map<trigger, Map<subKey, {rest, line}>> (`rest` is the raw text after the
+// sub-key's colon, `line` its line index), or the reason 'on: block not read'.
+// Twin: readPullRequestWorkflow's `on:` walk (above) reads the same scalar,
+// flow-list, flow-mapping and block forms for `types:` only. This one reads only
+// trigger sub-keys and fails toward `unparsed` on any shape it cannot follow.
+// `end` is the on: region's end (the indentless `- ` sequence rule included).
+function readTriggerKeys(lines, onIdx, end) {
+  const NOT_READ = 'on: block not read';
+  const WANTED = new Set(['push', 'pull_request', 'pull_request_target']);
+  const out = new Map();
+  const rest = stripCommentQuoteAware(afterColon(lines[onIdx]));
+  if (rest !== '') {
+    if (rest.startsWith('[')) {
+      if (!rest.endsWith(']')) return NOT_READ;
+      const names = readFlowItems(rest.slice(1, -1));
+      if (names === null) return NOT_READ;
+      for (const n of names) if (WANTED.has(n)) out.set(n, new Map());
+      return out;
+    }
+    if (rest.startsWith('{')) {
+      if (!flowMapSpansValue(rest)) return NOT_READ;
+      const map = flowMappingEntries(rest);
+      // A colon-less entry (`{push, pull_request}`, implicit null values) is in
+      // no `entries`, so it would read as no triggers: fail closed.
+      if (map.keyless > 0) return NOT_READ;
+      for (const e of map.entries) {
+        if (!WANTED.has(e.key)) continue;
+        const sub = readInlineTriggerKeys(e.value, onIdx);
+        if (sub === null) return NOT_READ;
+        out.set(e.key, sub);
+      }
+      return out;
+    }
+    const name = stripQuotes(rest);
+    if (!TYPE_ITEM.test(name)) return NOT_READ;
+    if (WANTED.has(name)) out.set(name, new Map());
+    return out;
+  }
+  let triggerIndent = null;
+  let sequence = false;
+  for (let j = onIdx + 1; j < end; j++) {
+    const line = lines[j];
+    if (isSkippable(line)) continue;
+    const indent = leadSpaces(line);
+    if (triggerIndent === null) {
+      triggerIndent = indent;
+      sequence = DASH.test(line);
+    }
+    if (indent > triggerIndent) continue; // a trigger's sub-block, read below from its key line
+    if (indent < triggerIndent) return NOT_READ;
+    if (sequence) {
+      const li = /^ *-[ \t]*(.*)$/s.exec(line);
+      if (!li) return NOT_READ;
+      const item = stripCommentQuoteAware(li[1]);
+      if (!BLOCK_ITEM.test(item)) return NOT_READ;
+      if (WANTED.has(stripQuotes(item))) out.set(stripQuotes(item), new Map());
+      continue;
+    }
+    if (DASH.test(line)) continue; // an indentless sequence value of the key above
+    const kv = splitKey(line.slice(indent));
+    if (!kv) return NOT_READ;
+    if (!WANTED.has(kv.key)) continue;
+    const inline = stripCommentQuoteAware(kv.rest);
+    if (inline !== '') {
+      const sub = readInlineTriggerKeys(inline, j);
+      if (sub === null) return NOT_READ;
+      out.set(kv.key, sub);
+      continue;
+    }
+    const sub = new Map();
+    let subIndent = null;
+    for (let k = j + 1; k < end; k++) {
+      const l = lines[k];
+      if (isSkippable(l)) continue;
+      const ind = leadSpaces(l);
+      if (ind <= triggerIndent) break;
+      if (subIndent === null) subIndent = ind;
+      if (ind > subIndent) continue;
+      if (ind < subIndent) return NOT_READ;
+      if (DASH.test(l)) continue; // an indentless sequence value of the sub-key above
+      const skv = splitKey(l.slice(ind));
+      if (!skv) return NOT_READ;
+      sub.set(skv.key, { rest: skv.rest, line: k });
+    }
+    out.set(kv.key, sub);
+  }
+  return out;
+}
+
+// push's `branches:` items, or null when they cannot be read: a one-line flow
+// list, a scalar, or a block list read like readBlockTrigger's.
+function readBranchItems(lines, entry, end) {
+  const v = stripCommentQuoteAware(entry.rest);
+  const items = [];
+  if (v.startsWith('[')) {
+    if (!v.endsWith(']')) return null;
+    for (const raw of v.slice(1, -1).split(',')) {
+      const it = raw.trim();
+      if (it === '') continue;
+      if (!BRANCH_FLOW_ITEM.test(it)) return null;
+      items.push(stripQuotes(it));
+    }
+    return items;
+  }
+  if (v !== '') return BRANCH_ITEM.test(v) ? [stripQuotes(v)] : null;
+  const ind = leadSpaces(lines[entry.line]);
+  // An empty value inside a one-line flow mapping has no block list beneath it.
+  const own = splitKey(lines[entry.line].slice(ind));
+  if (!own || own.key !== 'branches') return null;
+  for (let k = entry.line + 1; k < end; k++) {
+    const l = lines[k];
+    if (isSkippable(l)) continue;
+    const im = /^ *-[ \t]+(.*)$/s.exec(l);
+    if (leadSpaces(l) < ind || !im) break;
+    const it = stripCommentQuoteAware(im[1]);
+    if (!BRANCH_ITEM.test(it)) return null;
+    items.push(stripQuotes(it));
+  }
+  return items.length > 0 ? items : null;
+}
+
+// A step list under `steps:` (key at `keyIndent`, items deeper or an
+// indentless `- ` sequence at it): the number of `if:` keys at each step's key
+// column, or null when the list's shape cannot be followed. Deeper lines (a
+// `with:` child, a `run: |` script) are skipped. Step content at a key column
+// that is no `key:` entry (a flow-mapping step `- {if: x}`, a stray scalar) is
+// unreadable, never "a step with no if:".
+function walkSteps(lines, i, end, keyIndent) {
+  let stepIndent = null;
+  let stepKeyCol = null;
+  let count = 0;
+  // The last key read in this step, so that a `- ` line at the key column can be
+  // its indentless sequence value: 'key' when its value is empty and nothing has
+  // been read under it yet, 'seq' once such a `- ` line has made its value a
+  // sequence, null when its value is inline, or a deeper line made it a nested
+  // node, or no key was read.
+  let open = null;
+  // Reads one step key: counts an `if:`, records whether its value is empty, and
+  // returns false when the content is no `key:` entry.
+  const readKey = (content) => {
+    const kv = splitKey(content);
+    if (kv === null) return false;
+    if (kv.key === 'if') count++;
+    open = stripCommentQuoteAware(kv.rest) === '' ? 'key' : null;
+    return true;
+  };
+  for (; i < end; i++) {
+    const line = lines[i];
+    if (isSkippable(line)) continue;
+    const ind = leadSpaces(line);
+    const dash = DASH.test(line);
+    if (stepIndent === null) {
+      if (ind < keyIndent || (ind === keyIndent && !dash)) break;
+      if (!dash) return null;
+      stepIndent = ind;
+    }
+    if (ind < stepIndent || (ind === stepIndent && !dash)) {
+      if (ind <= keyIndent) break;
+      return null;
+    }
+    if (ind === stepIndent) {
+      const after = line.slice(ind + 1);
+      const sp = /^[ \t]*/.exec(after)[0].length;
+      const content = after.slice(sp);
+      if (content === '' || content.startsWith('#')) {
+        stepKeyCol = null; // the item's keys start on the next line
+        open = null;
+      } else {
+        stepKeyCol = ind + 1 + sp;
+        if (!readKey(content)) return null;
+      }
+      continue;
+    }
+    if (stepKeyCol === null) stepKeyCol = ind;
+    if (ind < stepKeyCol) return null;
+    if (ind === stepKeyCol) {
+      // A `- ` line at the key column is an indentless sequence value of the key
+      // above when that key's value is empty (valid YAML). Before any key, after
+      // a key with a scalar value, or after a deeper value, it is unreadable.
+      if (dash) {
+        if (open === null) return null;
+        open = 'seq';
+        continue;
+      }
+      if (!readKey(line.slice(ind))) return null;
+    } else if (open === 'key') {
+      open = null; // a deeper line: the empty key's value is a nested node
+    }
+  }
+  return { count, next: i };
+}
+
+// The jobs under `jobs:` (region lines (jobsIdx, end)), in one forward pass with
+// a persistent index: never a rescan from `jobs:` per job.
+function readJobs(lines, jobsIdx, end, unparsed) {
+  const NOT_READ = 'jobs: not read';
+  // Any shape this walk cannot follow drops every job read so far.
+  const notRead = () => { unparsed.push(NOT_READ); return []; };
+  const inline = stripCommentQuoteAware(afterColon(lines[jobsIdx]));
+  if (inline !== '') return notRead();
+  const jobs = [];
+  let jobIndent = null;
+  let i = jobsIdx + 1;
+  while (i < end) {
+    const line = lines[i];
+    if (isSkippable(line)) { i++; continue; }
+    const ind = leadSpaces(line);
+    if (jobIndent === null) jobIndent = ind;
+    const m = ind === jobIndent ? JOB_ID.exec(line.slice(ind)) : null;
+    if (!m || stripCommentQuoteAware(m[4]) !== '') return notRead();
+    const job = { id: m[1] || m[2] || m[3], if: null, stepIfCount: 0, concurrency: false };
+    jobs.push(job);
+    i++;
+    let keyIndent = null;
+    // The last job key read, as walkSteps' `open`: 'key' (empty value, nothing
+    // read under it yet), 'seq' (its value is an indentless sequence) or null.
+    let open = null;
+    while (i < end) {
+      const l = lines[i];
+      if (isSkippable(l)) { i++; continue; }
+      const kind = leadSpaces(l);
+      if (kind <= jobIndent) break;
+      if (keyIndent === null) keyIndent = kind;
+      if (kind < keyIndent) return notRead();
+      if (kind > keyIndent) { // a deeper line of a key not read here
+        if (open === 'key') open = null; // the empty key's value is a nested node
+        i++;
+        continue;
+      }
+      if (DASH.test(l)) {
+        // An indentless sequence value of the key above when that key's value is
+        // empty; before any key, after a key with a scalar value, or after a
+        // deeper value, unreadable.
+        if (open === null) return notRead();
+        open = 'seq';
+        i++;
+        continue;
+      }
+      const kv = splitKey(l.slice(kind));
+      if (!kv) return notRead();
+      const value = stripCommentQuoteAware(kv.rest);
+      open = value === '' ? 'key' : null;
+      i++;
+      if (kv.key === 'if') {
+        const r = readJoinedScalar(lines, i, end, keyIndent, kv.rest);
+        i = r.next;
+        open = null; // its value, inline or on deeper lines, is read
+        // empty, unread, or a bare `!` YAML tag (quoted '!x' and ${{ !x }} are text)
+        if (r.text === '' || r.tagged) unparsed.push(`job ${job.id} if: not read`);
+        else job.if = r.text;
+      } else if (kv.key === 'concurrency') {
+        job.concurrency = true;
+      } else if (kv.key === 'steps') {
+        if (value === '') {
+          const r = walkSteps(lines, i, end, keyIndent);
+          if (r === null) return notRead();
+          job.stepIfCount = r.count;
+          i = r.next;
+          open = null; // the step list, deeper or indentless, is read
+        } else if (value !== '[]') {
+          return notRead();
+        }
+      }
+    }
+  }
+  if (jobs.length === 0) unparsed.push(NOT_READ);
+  return jobs;
+}
+
+// The workflow-level `concurrency:` (region lines [idx, end)) as one of
+// 'no-cancel' | 'cancel-true' | 'cancel-false' | 'cancel-expression', or null
+// after pushing the reason it could not be read.
+function readConcurrency(lines, idx, end, unparsed) {
+  // YAML 1.2's core schema reads true/True/TRUE and false/False/FALSE as booleans.
+  const cancel = (raw) => {
+    const v = stripCommentQuoteAware(raw);
+    if (['true', 'True', 'TRUE'].includes(v)) return 'cancel-true';
+    if (['false', 'False', 'FALSE'].includes(v)) return 'cancel-false';
+    if (v.includes('${{')) return 'cancel-expression';
+    unparsed.push('cancel-in-progress value not read');
+    return null;
+  };
+  const inline = stripCommentQuoteAware(afterColon(lines[idx]));
+  if (inline.startsWith('{')) {
+    if (!flowMapSpansValue(inline)) { unparsed.push('concurrency not read'); return null; }
+    const map = flowMappingEntries(inline);
+    // A colon-less entry (`{group, cancel-in-progress}`) is in no `entries`: unread, never no-cancel.
+    if (map.keyless > 0) { unparsed.push('concurrency not read'); return null; }
+    const e = map.entries.find((x) => x.key === 'cancel-in-progress');
+    return e ? cancel(e.value) : 'no-cancel';
+  }
+  if (inline !== '') return 'no-cancel';
+  let subIndent = null;
+  for (let k = idx + 1; k < end; k++) {
+    const l = lines[k];
+    if (isSkippable(l)) continue;
+    const ind = leadSpaces(l);
+    if (subIndent === null) subIndent = ind;
+    if (ind < subIndent) { unparsed.push('concurrency not read'); return null; }
+    if (ind > subIndent) continue;
+    const kv = splitKey(l.slice(ind));
+    if (kv && kv.key === 'cancel-in-progress') return cancel(kv.rest);
+  }
+  if (subIndent === null) { unparsed.push('concurrency not read'); return null; }
+  return 'no-cancel';
+}
+
+// Never throws. Reasons in `unparsed` arrive in detection order, deduped.
+function readWorkflowShape(text) {
+  const out = emptyWorkflowShape();
+  if (typeof text !== 'string' || !text) return { ...out, unparsed: ['no on: block'] };
+  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+  const lines = text.split(/\r?\n/);
+  const unparsed = [];
+
+  // Top-level lines: col 0, not blank, not a comment. A region runs from its key
+  // line to the line before the next top-level line; on:'s region also keeps an
+  // indentless `- ` sequence (readPullRequestWorkflow's rule).
+  const tops = [];
+  for (let i = 0; i < lines.length; i++) {
+    const c = lines[i][0];
+    if (c !== undefined && c !== ' ' && c !== '\t' && c !== '#' && lines[i].trim() !== '') tops.push(i);
+  }
+  const region = (re, keepDash) => {
+    const t = tops.findIndex((i) => re.test(lines[i]));
+    if (t < 0) return null;
+    let n = t + 1;
+    while (keepDash && n < tops.length && /^-(?:[ \t]|$)/.test(lines[tops[n]])) n++;
+    return { start: tops[t], end: n < tops.length ? tops[n] : lines.length };
+  };
+  const onR = region(/^(?:on|'on'|"on")[ \t]*:/, true);
+  const jobsR = region(/^(?:jobs|'jobs'|"jobs")[ \t]*:/, false);
+  const concR = region(/^(?:concurrency|'concurrency'|"concurrency")[ \t]*:/, false);
+  const nameR = region(/^(?:name|'name'|"name")[ \t]*:/, false);
+  // Pushes a region's tab and anchor-or-alias reasons; true when there are none,
+  // so the region may be read.
+  const regionClear = (r, label) => {
+    const reasons = regionReasons(lines, r.start, r.end, label);
+    unparsed.push(...reasons);
+    return reasons.length === 0;
+  };
+
+  // A name: region with a tab or an anchor/alias leaves `name` null, never a
+  // literal like '*n', and reports the region reason like the other regions. A
+  // quoted name that never closes or holds an undecodable escape, or a plain
+  // value led by `!` (a YAML tag), is `name: not read`; an empty name is simply
+  // absent.
+  if (nameR && regionClear(nameR, 'name:')) {
+    const r = readJoinedScalar(lines, nameR.start + 1, nameR.end, 0, afterColon(lines[nameR.start]));
+    if (r.unread || r.tagged) unparsed.push('name: not read');
+    out.name = r.text === '' || r.tagged ? null : r.text;
+  }
+
+  if (!onR) {
+    unparsed.push('no on: block');
+  } else if (regionClear(onR, 'on:')) {
+    const triggers = readTriggerKeys(lines, onR.start, onR.end);
+    if (typeof triggers === 'string') {
+      unparsed.push(triggers);
+    } else {
+      // prFilters merges both PR triggers' filter keys; prFiltersByTrigger keeps
+      // each trigger's own, so a report can name the trigger carrying a filter.
+      const filters = new Set();
+      for (const t of ['pull_request', 'pull_request_target']) {
+        const own = [...(triggers.get(t) || new Map()).keys()].filter((k) => PR_FILTER_KEYS.includes(k)).sort();
+        for (const k of own) filters.add(k);
+        if (own.length > 0) out.prFiltersByTrigger[t] = own;
+      }
+      out.prFilters = [...filters].sort();
+      const push = triggers.get('push');
+      if (push) {
+        out.pushTrigger = true;
+        out.pushBranchesIgnore = push.has('branches-ignore');
+        out.pushTags = push.has('tags') || push.has('tags-ignore');
+        if (push.has('branches')) {
+          const items = readBranchItems(lines, push.get('branches'), onR.end);
+          if (items === null) unparsed.push('push branches not read');
+          else out.pushBranches = items.length === 1 && items[0] === '**' ? 'all' : 'some';
+        }
+      }
+    }
+  }
+
+  // readPullRequestWorkflow throws on a stray `\r` or U+2028 left on its `on:`
+  // line; that read is unparsed here, never a throw out of this reader.
+  let pr = null;
+  try { pr = readPullRequestWorkflow(text); } catch {}
+  if (pr === null) {
+    unparsed.push('pull_request trigger not read');
+  } else {
+    out.prTrigger = pr.prTrigger;
+    out.types = pr.types;
+    out.typesDeclared = pr.typesDeclared;
+    out.draftReference = pr.draftReference;
+    if (pr.unparsed) unparsed.push('pull_request trigger not read');
+  }
+
+  if (!jobsR) {
+    unparsed.push('no jobs: key');
+  } else if (regionClear(jobsR, 'jobs:')) {
+    out.jobs = readJobs(lines, jobsR.start, jobsR.end, unparsed);
+  }
+
+  if (concR && regionClear(concR, 'concurrency:')) {
+    const c = readConcurrency(lines, concR.start, concR.end, unparsed);
+    if (c !== null) out.concurrency = c;
+  }
+
+  out.unparsed = [...new Set(unparsed)];
+  return out;
+}
+
 // The repository's default branch — skills/_shared/integration-branch.md's
 // rank-5 GitHub-default half, in code: gh's defaultBranchRef, else the local
 // origin/HEAD symref (what a clone records), else null. Never throws.
@@ -527,4 +1275,5 @@ module.exports = {
   workflowHasPullRequestTrigger, readWorkflowFiles, hasPullRequestCi,
   DEFAULT_PR_TYPES, readPullRequestWorkflow, readyRequirement,
   deriveMergeVerification, PR_TRIGGERS,
+  readWorkflowShape, DRAFT_REF, PR_FILTER_KEYS,
 };
