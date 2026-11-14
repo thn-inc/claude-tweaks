@@ -85,7 +85,9 @@ function extractFence(mdText, firstLine) {
 
 // --- the files transport: mcp-transport.md's substitutions over the gh fence ---------------------
 
-const MCP_MD = path.join(REPO, 'plugin', 'skills', 'dispatch', 'mcp-transport.md');
+// #5230: the byte-frozen pre-cutover "neighbour-in-flight pool" section, not the live mcp-transport.md,
+// which #5230 rewrites. The oracle keeps simulating the pre-cutover MCP path from these two fences.
+const MCP_MD = path.join(REPO, 'tests', 'fixtures', 'dispatch', 'mcp-transport-step2-pre-cutover-5230.md');
 const MCP_TARGETS_FIRST_LINE = 'node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_IN_FLIGHT_RAW" <<NODE_EVAL_EOF';
 const MCP_EXCLUSIONS_FIRST_LINE = 'node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_IN_FLIGHT_RAW" "$DISPATCH_EXCLUSIONS" "$DISPATCH_IN_FLIGHT_CLAIMS" <<NODE_EVAL_EOF';
 
@@ -1189,7 +1191,7 @@ function shimMain(kind) {
 }
 
 module.exports = {
-  REPO, SCRIPT_MD, MCP_MD, FENCE_FIRST_LINE, RUN_DIR_NAME,
+  REPO, SCRIPT_MD, MCP_MD, MCP_TARGETS_FIRST_LINE, MCP_EXCLUSIONS_FIRST_LINE, FENCE_FIRST_LINE, RUN_DIR_NAME,
   findBash, oracleSkip, extractFence, fenceSessionFiles, sessionFileNames, filesOracleScript,
   createSandbox, writeShims, runOracle, runModuleCli, runPair, withEscapeGuard, normalize, reported, assertParity, runAll, failedJobs, shimMain, shQuote,
   STREAM_TRUNCATED, TAIL_LINES, SHIM_LOGS, appendShimRecord, readShimLog,
