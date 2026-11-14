@@ -40,7 +40,7 @@ function probeSuite({ scope, run } = {}) {
 // exit 0 would be no green suite. Pure: the caller reads the declaration, and an
 // unreadable one reads as no key (#5370).
 function localRunsSkip(decl) {
-  if (!(decl && decl.localRuns === 'on-request' && decl.ci)) return null;
+  if (!(decl && decl.localRuns === 'on-request' && decl.ci && Object.keys(decl.ci).length > 0)) return null;
   const jobs = Object.entries(decl.ci).map(([suite, c]) => `${suite} (${c.workflow} / ${c.job})`).join(', ');
   return {
     ran: false,

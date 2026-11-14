@@ -261,5 +261,5 @@ test('#5370: two ci suites are both named in the skip reason', () => {
   assert.match(r.reason, /takes tests \(test\.yml \/ test\), e2e \(e2e\.yml \/ browser\) from the PR's CI job/);
 });
 test('AC7.2: without the key, or with no declaration, the probe is not skipped (#5370)', () => {
-  for (const decl of [null, { localRuns: null, ci: CI1 }, { localRuns: null, ci: null }]) assert.strictEqual(localRunsSkip(decl), null, JSON.stringify(decl));
+  for (const decl of [null, { localRuns: null, ci: CI1 }, { localRuns: null, ci: null }, { localRuns: 'on-request', ci: {} }]) assert.strictEqual(localRunsSkip(decl), null, JSON.stringify(decl));
 });
