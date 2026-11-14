@@ -764,7 +764,7 @@ const GIT_REMOTE_PROBE_TIMEOUT_MS = 5000;
 // How many times detectIntegrationModel runs the `gh repo view` probe before giving up on a
 // timeout (the first attempt plus one retry, record #4578 Decision Q4). The single source for
 // the probe loop, the degrade object's `attempts`, and every worst-case budget derived from
-// it (the hook budget below, phase-exit's resolve-policy.js kill timeout).
+// it (the hook budget below, and the bound phase-exit's call-site comment cites).
 const FORGE_PROBE_ATTEMPTS = 2;
 // The per-attempt `gh` bound both lifecycle hooks (session-start, pre-tool-use)
 // pass as `timeoutMs`. Hook worst case: git 5 s + two 5 s gh attempts = 15 s

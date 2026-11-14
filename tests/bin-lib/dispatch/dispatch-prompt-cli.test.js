@@ -9,7 +9,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { readText } = require('../../helpers/read-skill');
-const { run, realDeps, parsePolicyValues } = require('../../../plugin/bin/dispatch-prompt');
+const { run, realDeps, formatPolicyValues } = require('../../../plugin/bin/dispatch-prompt');
+const { spawnCli } = require('../../helpers/run-cli');
+const { POLICY_KEYS: SCHEMA_KEYS } = require('../../../plugin/bin/lib/policy-schema');
 const {
   findUnsubstituted, promptDigest, promptSize, REGISTRY_FILE,
 } = require('../../../plugin/bin/lib/dispatch/task-prompt');
@@ -212,7 +214,7 @@ test('a refused --run exits 2 and writes nothing', () => {
   assertNothingWritten(h.log);
 });
 
-test('a failing resolver or unreadable template exits 1 and writes nothing', () => {
+test('AC5 dispatch-prompt: a failing resolver or unreadable template exits 1 and writes nothing', () => {
   const runDir = mkRun();
   const boom = () => { throw new Error('boom'); };
   for (const over of [
@@ -277,12 +279,75 @@ test('a stale part that cannot be removed exits 1 before the registry append', (
   assert.ok(log.err.startsWith('dispatch-prompt.js: cannot remove a stale part of'), log.err);
 });
 
-test('resolvePolicyValues parsing counts lines after the trailing newline', () => {
-  assert.strictEqual(parsePolicyValues('unattended\npr-first\nmerge-when-green\nhigh\nhigh\n'),
-    'autonomy=unattended, integration-model=pr-first, merge-verification=merge-when-green, risk-floor=high, size-floor=high');
-  assert.ok(parsePolicyValues('a\n\nc\nd\ne\n').includes('integration-model=(unset)'));
-  assert.throws(() => parsePolicyValues('a\nb\nc\nd\n'), /4 line/);
-  assert.throws(() => parsePolicyValues(''), /line/);
+test('formatPolicyValues: unset and error entries print (unset)', () => {
+  const text = formatPolicyValues({
+    autonomy: { value: 'unattended' },
+    'integration-model': { value: null },
+    'merge-verification': { error: 'unknown-key' },
+    'risk-floor': { value: 'high' },
+    'size-floor': { value: 'low' },
+  });
+  assert.strictEqual(text,
+    'autonomy=unattended, integration-model=(unset), merge-verification=(unset), risk-floor=high, size-floor=low');
+});
+
+const POLICY_KEYS = ['autonomy', 'integration-model', 'merge-verification', 'risk-floor', 'size-floor'];
+const RESOLVE_POLICY = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'resolve-policy.js');
+const POLICY_ENV = {
+  PATH: process.env.PATH, HOME: os.tmpdir(), USERPROFILE: os.tmpdir(), TMPDIR: os.tmpdir(),
+  ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+};
+
+function policyFixture(lines) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dp-policy-'));
+  tmpRoots.push(root);
+  fs.mkdirSync(path.join(root, '.claude-tweaks'));
+  fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), `${lines.join('\n')}\n`);
+  return root;
+}
+
+test('AC4/AC7 dispatch-prompt: real resolvePolicyValues reads the fixture policy.yml at the given cwd', () => {
+  const fixture = policyFixture([
+    'autonomy: trusted', 'integration-model: pr-first', 'merge-verification: wait', 'risk-floor: low', 'size-floor: medium',
+  ]);
+  const err = [];
+  const got = realDeps.resolvePolicyValues(fixture, { env: POLICY_ENV, stderr: (s) => err.push(s) });
+  // The subprocess is the oracle: the script entry still prints what the CLI used to parse.
+  const child = spawnCli(RESOLVE_POLICY, ['--values', POLICY_KEYS.join(',')], { env: POLICY_ENV, cwd: fixture });
+  assert.strictEqual(child.code, 0, child.stderr);
+  const expected = POLICY_KEYS.map((k, i) => `${k}=${child.stdout.split('\n')[i].trim() || '(unset)'}`).join(', ');
+  assert.strictEqual(got, expected);
+  assert.strictEqual(got, 'autonomy=trusted, integration-model=pr-first, merge-verification=wait, risk-floor=low, size-floor=medium');
+  assert.deepStrictEqual(err, []);
+});
+
+test('AC5/AC7 dispatch-prompt: an invalid autonomy value still writes the resolve-policy warning line to stderr', () => {
+  const fixture = policyFixture(['autonomy: bogus', 'integration-model: pr-first']);
+  const err = [];
+  const got = realDeps.resolvePolicyValues(fixture, { env: POLICY_ENV, stderr: (s) => err.push(s) });
+  const dflt = SCHEMA_KEYS.find((e) => e.key === 'autonomy').default;
+  assert.ok(got.startsWith(`autonomy=${dflt}, `), got);
+  assert.ok(err.join('').includes('resolve-policy: warning: autonomy has invalid value "bogus"'), err.join(''));
+});
+
+// POSIX-only: a gh stub is an sh script. Proves env (PATH, the gh timeout) reaches the forge probe and
+// that the degraded-forge line is written through stderr at this call site.
+test('AC7 dispatch-prompt: an unpinned integration-model sees the injected PATH gh stub and writes the degraded line', { skip: process.platform === 'win32' }, () => {
+  const fixture = policyFixture(['autonomy: trusted']);
+  const git = (args) => execFileSync('git', args, { cwd: fixture, stdio: 'ignore', windowsHide: true });
+  git(['init', '-q']);
+  git(['remote', 'add', 'origin', 'https://example.invalid/o/r.git']);
+  const gitDir = path.dirname(execFileSync('which', ['git'], { encoding: 'utf8', windowsHide: true }).split('\n')[0].trim());
+  const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dp-stub-'));
+  tmpRoots.push(stubDir);
+  const marker = path.join(stubDir, 'gh-calls.txt');
+  fs.writeFileSync(path.join(stubDir, 'gh'), `#!/bin/sh\necho call >> "${marker}"\nexec /bin/sleep 30\n`, { mode: 0o755 });
+  const env = { ...POLICY_ENV, PATH: `${stubDir}${path.delimiter}${gitDir}`, CLAUDE_TWEAKS_GH_TIMEOUT_MS: '1000' };
+  const err = [];
+  const got = realDeps.resolvePolicyValues(fixture, { env, stderr: (x) => err.push(x) });
+  assert.ok(got.includes('integration-model=local-merge'), got);
+  assert.ok(fs.existsSync(marker), 'the gh stub on the injected PATH never ran');
+  assert.match(err.join(''), /resolve-policy: degraded — integration-model: .* resolved local-merge /);
 });
 
 test('a throwing stdout after the append still exits 0 and says so on stderr', () => {
@@ -404,6 +469,16 @@ test('--help exits 0 before any probe; the real binary prints usage', () => {
   const { deps, log } = harness({ isDirectory: () => { throw new Error('probed'); }, cwd: () => { throw new Error('probed'); } });
   assert.strictEqual(run(['--help'], deps), 0);
   assert.ok(log.out.startsWith('usage: dispatch-prompt.js'));
-  const real = execFileSync(process.execPath, [CLI, '--help'], { encoding: 'utf8', windowsHide: true });
-  assert.ok(real.startsWith('usage: dispatch-prompt.js'));
+  // Real process: the script entry exits 0 and prints the usage on stdout for --help.
+  const real = spawnCli(CLI, ['--help'], { env: { PATH: process.env.PATH, HOME: os.homedir(), TMPDIR: os.tmpdir() } });
+  assert.strictEqual(real.code, 0);
+  assert.ok(real.stdout.startsWith('usage: dispatch-prompt.js'));
+});
+
+// Real process: the script entry turns run()'s return 2 into the child's exit status, with the refusal on stderr and nothing on stdout (#5384, AC6).
+test('script entry: a call with no arguments exits 2 with the refusal on stderr and nothing on stdout', () => {
+  const res = spawnCli(CLI, [], { env: { PATH: process.env.PATH, HOME: os.homedir(), TMPDIR: os.tmpdir() } });
+  assert.equal(res.code, 2);
+  assert.equal(res.stdout, '');
+  assert.match(res.stderr, /--call first\|second is required/);
 });

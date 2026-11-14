@@ -5,12 +5,12 @@
 // concurrency.suiteSlots in verify-scope.json wins over it).
 const { test, after } = require('node:test');
 const assert = require('node:assert');
-const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
 const { POLICY_KEYS } = require('../plugin/bin/lib/policy-schema');
+const { runCliSync } = require('./helpers/run-cli');
 
 const CLI = path.join(__dirname, '..', 'plugin', 'bin', 'resolve-policy.js');
 
@@ -26,9 +26,9 @@ function resolveWith(policyText) {
   tempDirs.push(tmp);
   fs.mkdirSync(path.join(tmp, '.claude-tweaks'));
   fs.writeFileSync(path.join(tmp, '.claude-tweaks', 'policy.yml'), policyText);
-  return spawnSync(process.execPath, [CLI, '--values', 'verify-suite-slots'], {
-    cwd: tmp, encoding: 'utf8', windowsHide: true,
-  });
+  // In-process (#5384): the throwaway project is the injected cwd. Mapped onto the status field the tests read.
+  const r = runCliSync(CLI, ['--values', 'verify-suite-slots'], { cwd: tmp, env: { ...process.env } });
+  return { status: r.code, stdout: r.stdout, stderr: r.stderr };
 }
 
 test('AC9.1: verify-suite-slots is an advanced integer key, min 1, default 1', () => {

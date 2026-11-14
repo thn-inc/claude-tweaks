@@ -156,7 +156,7 @@ test('AC6.1: requiring the CLI prints nothing and leaves process.exitCode undefi
   );
   assert.equal(res.status, 0);
   assert.equal(res.stderr, '');
-  assert.equal(res.stdout, '{"exitCodeUnset":true,"keys":["realDeps","resolvePolicy","run"]}');
+  assert.equal(res.stdout, '{"exitCodeUnset":true,"keys":["EXIT_INVOCATION","EXIT_OK","callerDeps","realDeps","resolvePolicy","run","scalarValue","warningLines"]}');
 });
 
 test('AC7.1: the core returns the entries run prints, and writes nothing to stdout', () => {
@@ -305,4 +305,61 @@ test('a pinned integration-model with a GitHub Enterprise origin: the merge-veri
   assert.equal(res.code, 0);
   assert.equal(res.stdout, 'merge-when-green\n');
   assert.match(res.stderr, /gh calls get GH_HOST=ghe\.example\.test/);
+});
+
+// ---- in-process caller surface (#5384) ----
+
+const { scalarValue, warningLines, callerDeps, resolvePolicy, EXIT_OK, EXIT_INVOCATION } = require(CLI);
+
+test('scalarValue: the --values rule', () => {
+  assert.equal(scalarValue(undefined), '');
+  assert.equal(scalarValue({ error: 'unknown-key' }), '');
+  assert.equal(scalarValue({ value: null }), '');
+  assert.equal(scalarValue({ value: 3 }), '3');
+  assert.equal(scalarValue({ value: 'pr-first' }), 'pr-first');
+});
+
+test('warningLines equals what run prints on stderr, in --values and JSON mode', () => {
+  const cwd = repo('autonomy: bogus\n');
+  for (const [argv, values] of [[['--values', 'autonomy'], true], [['autonomy'], false]]) {
+    const out = { keys: ['autonomy'], ...resolvePolicy({ keys: ['autonomy'] }, callerDeps({ cwd, env: ENV })) };
+    const expected = warningLines(out, { values }).join('');
+    const { stderr } = runCliSync(CLI, argv, { cwd, env: ENV });
+    assert.equal(stderr, expected);
+    if (values) assert.match(stderr, /resolve-policy: warning: autonomy has invalid value "bogus"/);
+    else assert.equal(stderr, '');
+  }
+});
+
+test('callerDeps: the core resolves the given cwd, not the process cwd (AC7)', () => {
+  const fixture = repo('autonomy: trusted\n');
+  const here = path.join(__dirname, '..');
+  const fromFixture = resolvePolicy({ keys: ['autonomy'] }, callerDeps({ cwd: fixture, env: ENV })).result.autonomy.value;
+  const fromRepo = resolvePolicy({ keys: ['autonomy'] }, callerDeps({ cwd: here, env: ENV })).result.autonomy.value;
+  assert.equal(fromFixture, 'trusted');
+  assert.notEqual(fromRepo, fromFixture, 'this repo resolves autonomy to the fixture value: pick another fixture value');
+});
+
+test('callerDeps: a git that never exits is killed at gitTimeoutMs and the root falls back to cwd', { skip: STUB_SKIP, timeout: 10000 }, () => {
+  const fixture = repo('autonomy: trusted\n');
+  const stubDir = tmp('git-stub');
+  const stub = path.join(stubDir, 'git');
+  // Not a timing check: the stub sleeps, then writes a marker. Killed at gitTimeoutMs it never writes;
+  // with no timeout it would, so the marker's absence is what proves the kill. /bin/sleep is absolute:
+  // the injected PATH holds only the stub, so a bare sleep would exit 127 and write nothing either way.
+  const marker = path.join(tmp('marker'), 'wrote');
+  fs.writeFileSync(stub, '#!/bin/sh\n/bin/sleep 3\necho wrote > "$MARKER"\n');
+  fs.chmodSync(stub, 0o755); // root-safe: exec-bit stub, not a denial simulation
+  const out = resolvePolicy({ keys: ['autonomy'] }, callerDeps({ cwd: fixture, env: { PATH: stubDir, MARKER: marker }, gitTimeoutMs: 300 }));
+  assert.equal(fs.existsSync(marker), false, 'the git stub ran to completion: it was not killed at gitTimeoutMs');
+  assert.equal(out.code, EXIT_OK);
+  assert.equal(out.result.autonomy.value, 'trusted');
+});
+
+test('EXIT_INVOCATION is what a refused --run returns', () => {
+  const fixture = repo();
+  const out = resolvePolicy({ keys: ['autonomy'], runDir: '/no/such/dir' }, callerDeps({ cwd: fixture, env: ENV }));
+  assert.equal(out.code, EXIT_INVOCATION);
+  assert.equal(EXIT_INVOCATION, 1);
+  assert.equal(EXIT_OK, 0);
 });

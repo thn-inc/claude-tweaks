@@ -260,7 +260,7 @@ test('gatherFacts claudeMdOverBudget is true when CLAUDE.md exceeds the always-l
   }
 });
 
-test('gatherFacts claudeMdOverBudget honors a policy.yml budget — proves the resolver round-trip, not the catch-all default', () => {
+test('AC7 facts: gatherFacts claudeMdOverBudget honors a policy.yml budget — proves the resolver round-trip, not the catch-all default', () => {
   // resolveBudgets() falls back to the schema defaults (30/150) on ANY
   // resolver failure — the same values an unconfigured repo resolves to — so
   // the default-boundary tests above cannot tell a working key name from a
@@ -281,6 +281,74 @@ test('gatherFacts claudeMdOverBudget honors a policy.yml budget — proves the r
     assert.strictEqual(f.claudeMdOverBudget, true, 'a 6-line CLAUDE.md is over a configured 5-line budget only if the renamed key actually resolved');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+function budgetFixture(prefix) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  git(['init', '-q'], dir);
+  git(['config', 'user.email', 'test@example.com'], dir);
+  git(['config', 'user.name', 'Test'], dir);
+  fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'harness-health-always-loaded-budget: 5\n');
+  fs.writeFileSync(path.join(dir, 'CLAUDE.md'), 'line\n'.repeat(6));
+  git(['add', '.'], dir);
+  git(['commit', '-q', '-m', 'fixture'], dir);
+  return { dir, sha: git(['rev-parse', 'HEAD'], dir) };
+}
+
+test('AC5 facts: a resolvePolicy that throws falls back to the 30/150 schema defaults', () => {
+  const { dir, sha } = budgetFixture('wrapup-facts-budget-throw-');
+  try {
+    const f = gatherFacts({ cwd: dir, base: sha, resolvePolicy: () => { throw new Error('boom'); } });
+    const target = f.claudeMdBudgetTargets.find((t) => t.path.endsWith('CLAUDE.md'));
+    assert.ok(target);
+    assert.strictEqual(target.budget, 150);
+    assert.strictEqual(f.claudeMdOverBudget, false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('AC2 facts (injected-resolver half; the no-child half is Task 7\'s count-node-procs measurement): gatherFacts resolves budgets through the injected resolvePolicy', () => {
+  const { dir, sha } = budgetFixture('wrapup-facts-budget-inject-');
+  try {
+    const calls = [];
+    const resolvePolicy = (req) => {
+      calls.push(req.keys);
+      return { code: 0, result: { 'harness-health-scoped-rule-budget': { value: 30 }, 'harness-health-always-loaded-budget': { value: 5 } } };
+    };
+    const f = gatherFacts({ cwd: dir, base: sha, resolvePolicy });
+    assert.strictEqual(calls.length, 1);
+    assert.deepStrictEqual([...calls[0]].sort(), ['harness-health-always-loaded-budget', 'harness-health-scoped-rule-budget']);
+    const target = f.claudeMdBudgetTargets.find((t) => t.path.endsWith('CLAUDE.md'));
+    assert.ok(target);
+    assert.strictEqual(target.budget, 5);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('AC7 facts: the injected env reaches the core — GIT_DIR/GIT_WORK_TREE only in env move the root lookup to another repo', () => {
+  // cwd is repo A (no policy.yml: budget 150). The env-only GIT_DIR/GIT_WORK_TREE
+  // point `git rev-parse --show-toplevel` at repo B, whose policy.yml sets 5.
+  // A 6-line CLAUDE.md in A is over budget only if env reached the core's git.
+  const gitEnv = { ...process.env };
+  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete gitEnv[k];
+  const b = budgetFixture('wrapup-facts-budget-env-b-');
+  const a = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-facts-budget-env-a-'));
+  try {
+    execFileSync('git', ['init', '-q'], { cwd: a, env: gitEnv });
+    fs.writeFileSync(path.join(a, 'CLAUDE.md'), 'line\n'.repeat(6));
+    const base = b.sha;
+    const env = { ...gitEnv, GIT_DIR: path.join(b.dir, '.git'), GIT_WORK_TREE: b.dir };
+    const f = gatherFacts({ cwd: a, base, env });
+    const target = f.claudeMdBudgetTargets.find((t) => t.path.endsWith('CLAUDE.md'));
+    assert.ok(target);
+    assert.strictEqual(target.budget, 5, "B's policy.yml budget is read only if the injected env reached the root lookup");
+  } finally {
+    fs.rmSync(a, { recursive: true, force: true });
+    fs.rmSync(b.dir, { recursive: true, force: true });
   }
 });
 

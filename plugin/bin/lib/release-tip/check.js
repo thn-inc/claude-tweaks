@@ -14,6 +14,7 @@
 const { escapeRegExp } = require('../shared-primitives.js');
 const { bumpPart } = require('../release-local/bump.js');
 const { readCommits } = require('../release-local/commits.js');
+const { EXIT_OK } = require('../../resolve-policy');
 
 const REVIEWED_TIP_RE = /at reviewed tip ([0-9a-f]{40})(?![0-9a-f])/;
 const DELTA_VERDICT_RE = /delta review base ([0-9a-f]{40})\.\.[^:\s]+: .*at reviewed tip ([0-9a-f]{40})(?![0-9a-f])/;
@@ -95,18 +96,10 @@ const MAX_ADVANCES = 20;
 const RUN_DIR_PATHSPEC = ':!.claude-tweaks/pipelines';
 
 // { value, source } for a readable lever, else { detail } naming the first reason it
-// was not — the resolver's own stderr when it printed one.
+// was not — the core's refusal message when it gave one.
 function readBound(r) {
-  if (!r) return { detail: 'resolve-policy.js produced no result' };
-  if (r.status !== 0) return { detail: String(r.stderr || '').trim() || `resolve-policy.js exited ${r.status}` };
-  let parsed;
-  try {
-    parsed = JSON.parse(r.stdout);
-  } catch {
-    return { detail: 'resolve-policy.js output is not JSON' };
-  }
-  const entry = parsed && typeof parsed === 'object' ? parsed['release-tip-moves'] : null;
-  if (!entry || typeof entry !== 'object') return { detail: 'release-tip-moves is missing from the resolver output' };
+  if (r.code !== EXIT_OK) return { detail: `resolve-policy: ${r.message}` };
+  const entry = r.result['release-tip-moves'];
   if (entry.invalid === true) return { detail: 'release-tip-moves holds an invalid value' };
   if (!Number.isInteger(entry.value) || entry.value < 0) return { detail: 'release-tip-moves is not a non-negative integer' };
   return { value: entry.value, source: typeof entry.source === 'string' ? entry.source : null };
@@ -121,9 +114,9 @@ function readBound(r) {
 // fetch so a git failure stops first; null under `asGiven` or with no delta
 // since Step 3. The skill gates a major on it once per delta. A run-dir-only
 // advance is logged through `appendLog` before the loop re-compares, so a
-// resume reads the advanced tip. `resolveBound()` is the raw spawn result of
-// `resolve-policy.js --run <run> release-tip-moves`; no default is ever
-// substituted for a bound that could not be read.
+// resume reads the advanced tip. `resolveBound()` is the resolve-policy.js core's object
+// ({ code, result, message }) for `release-tip-moves` under the run; a throw from it is a `failed`
+// verdict too. No default is ever substituted for a bound that could not be read.
 function checkReviewedTip({ decisionsText, branch, asGiven, preMajor, bumpMinorPreMajor, bumpPatchForMinorPreMajor }, { git, resolveBound, appendLog }) {
   const parsed = parseReleaseLog(decisionsText, branch);
   const state = {
@@ -176,7 +169,12 @@ function checkReviewedTip({ decisionsText, branch, asGiven, preMajor, bumpMinorP
   }
   if (!codeMove) return out('failed', 'run-dir-only advances did not converge');
 
-  const bound = readBound(resolveBound());
+  let bound;
+  try {
+    bound = readBound(resolveBound());
+  } catch (err) {
+    return out('failed', 'release-tip-moves unreadable', err && err.message ? err.message : String(err));
+  }
   if (bound.value === undefined) return out('failed', 'release-tip-moves unreadable', bound.detail);
   state.bound = bound.value;
   state.source = bound.source;
