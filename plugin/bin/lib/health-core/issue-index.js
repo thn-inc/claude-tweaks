@@ -1,7 +1,6 @@
 'use strict';
 const fs = require('fs');
-const path = require('path');
-const { DEFAULT_IO } = require('./io');
+const { DEFAULT_IO, resolveAgainst } = require('./io');
 
 // --issues <file> is an array of { number, state, labels, fingerprint }
 // objects (the shape gh issue list + fingerprint extraction produces).
@@ -16,7 +15,7 @@ function loadIssueIndex(file, toolName, { stderr = DEFAULT_IO.stderr, cwd } = {}
   if (!file) return {};
   let arr;
   try {
-    arr = JSON.parse(fs.readFileSync(cwd ? path.resolve(cwd(), file) : file, 'utf8'));
+    arr = JSON.parse(fs.readFileSync(cwd ? resolveAgainst(cwd(), file) : file, 'utf8'));
   } catch {
     stderr(`[${toolName}] validate-findings: could not read or parse --issues file: ${file} — dedup falls back to the local cache only\n`);
     return {};

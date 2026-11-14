@@ -37,7 +37,7 @@ function sweepCli(cliPath, argv, opts = {}) {
   } finally {
     process.chdir(prev);
     // After the chdir back: Windows cannot remove the current directory.
-    fs.rmSync(emptyCwd, { recursive: true, force: true });
+    fs.rmSync(emptyCwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   }
 }
 

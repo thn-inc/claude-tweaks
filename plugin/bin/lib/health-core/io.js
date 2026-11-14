@@ -1,4 +1,5 @@
 'use strict';
+const path = require('path');
 const { spawnSync } = require('child_process');
 
 // Injectable process seams for the health-core helpers (#5380). Every helper
@@ -11,6 +12,15 @@ const DEFAULT_IO = {
   stderr: (text) => process.stderr.write(text),
   cwd: () => process.cwd(),
 };
+
+// resolveAgainst(cwd, p) -> the path to hand to fs: an absolute p unchanged, a
+// relative p joined onto cwd WITHOUT textual normalization (no path.resolve), so
+// the kernel still sees a trailing slash or a `..` after a symlink exactly as
+// the caller wrote it — with cwd === process.cwd() that is what a bare relative
+// read does.
+function resolveAgainst(cwd, p) {
+  return path.isAbsolute(p) ? p : cwd + path.sep + p;
+}
 
 // makeExec({ env, stderr }) -> exec(cmd, args, opts = {}) -> string
 //
@@ -58,4 +68,4 @@ function makeExec({ env, stderr = DEFAULT_IO.stderr } = {}) {
   };
 }
 
-module.exports = { DEFAULT_IO, makeExec };
+module.exports = { DEFAULT_IO, makeExec, resolveAgainst };

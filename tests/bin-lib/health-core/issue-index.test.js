@@ -44,6 +44,21 @@ test('a relative file is read against an injected cwd and diagnostics print the 
   assert.ok(!err.includes(dir), 'must not print the cwd-resolved absolute path');
 });
 
+test('a relative file keeps a \`..\` after a symlink for the kernel (not collapsed as text)', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'issue-index-'));
+  fs.mkdirSync(path.join(root, 'other', 'deep'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'other', 'only-there.json'), JSON.stringify([{ number: 1, state: 'open', fingerprint: 'fp' }]));
+  try {
+    fs.symlinkSync(path.join(root, 'other', 'deep'), path.join(root, 'link'), 'dir');
+  } catch (e) {
+    if (process.platform === 'win32') return t.skip('symlink creation is not permitted here');
+    throw e;
+  }
+  assert.deepStrictEqual(loadIssueIndex('link/../only-there.json', 'code-health', { cwd: () => root }), {
+    fp: { number: 1, state: 'open', labels: [] },
+  });
+});
+
 test('returns {} when no file is given', () => {
   assert.deepStrictEqual(loadIssueIndex(undefined, 'code-health'), {});
   assert.deepStrictEqual(loadIssueIndex('', 'code-health'), {});

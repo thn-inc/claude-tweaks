@@ -273,3 +273,41 @@ test('update reads a relative results path against the injected cwd and prints t
   assert.strictEqual(cmds.update({ _: ['update', 'results.json'] }), 0);
   assert.deepStrictEqual(JSON.parse(out), []);
 });
+
+// Pre-#5380 outcomes for two malformed inputs, which a textual path.resolve would change:
+// the kernel, not the helper, must see the path exactly as written.
+function updateAgainst(cwd, resultsArg) {
+  let out = '';
+  let err = '';
+  const cmds = makeRetryQueueCommands({
+    readDurableState: () => ({ retryQueue: [] }),
+    writeDurableState: (r, mutator) => { mutator({ retryQueue: [] }); return { ok: true }; },
+    io: { stdout: (t) => { out += t; }, stderr: (t) => { err += t; }, cwd: () => cwd },
+  });
+  const code = cmds.update({ _: ['update', resultsArg] });
+  return { code, out, err };
+}
+
+test('update keeps a trailing slash on a file path for the kernel: still exit 1 (ENOTDIR), not a silent []', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'retry-cli-'));
+  fs.writeFileSync(path.join(root, 'results.json'), '[]');
+  const r = updateAgainst(root, 'results.json/');
+  assert.strictEqual(r.code, 1);
+  assert.match(r.err, /^retry-queue update: could not read or parse results\.json\/: /);
+  assert.strictEqual(r.out, '');
+});
+
+test('update leaves a `..` after a symlink to the kernel: link/../x resolves through the link target', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'retry-cli-'));
+  fs.mkdirSync(path.join(root, 'other', 'deep'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'other', 'only-there.json'), '[]');
+  try {
+    fs.symlinkSync(path.join(root, 'other', 'deep'), path.join(root, 'link'), 'dir');
+  } catch (e) {
+    if (process.platform === 'win32') return t.skip('symlink creation is not permitted here');
+    throw e;
+  }
+  const r = updateAgainst(root, 'link/../only-there.json');
+  assert.strictEqual(r.code, 0, r.err);
+  assert.deepStrictEqual(JSON.parse(r.out), []);
+});

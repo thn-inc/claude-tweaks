@@ -1,8 +1,7 @@
 'use strict';
 const fs = require('fs');
-const path = require('path');
 const { enqueueRetry, dequeueRetry, shouldEscalate, ESCALATE_AFTER_ATTEMPTS } = require('./durable-state');
-const { DEFAULT_IO } = require('./io');
+const { DEFAULT_IO, resolveAgainst } = require('./io');
 
 // Shared retry-queue CLI command bodies for code-health, harness-health,
 // journey-health, and docs-health — each CLI calls makeRetryQueueCommands
@@ -35,7 +34,7 @@ function makeRetryQueueCommands({ readDurableState, writeDurableState, io = DEFA
       return 2;
     }
     let results;
-    const resolvedPath = path.resolve(io.cwd(), resultsPath);
+    const resolvedPath = resolveAgainst(io.cwd(), resultsPath);
     try {
       results = JSON.parse(fs.readFileSync(resolvedPath, 'utf8'));
     } catch (err) {
