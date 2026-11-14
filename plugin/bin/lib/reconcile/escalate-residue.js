@@ -49,6 +49,28 @@ const { defaultRunner, errorText } = require('../feedback/file-feedback');
 // caller.
 const { findByMarker } = require('../issues/dedup-lookup');
 
+// #5393: the failure text a residue escalate/resolve records. errorText leads with
+// execFileSync's `Command failed: <full argv>` line, which buries gh's stderr and
+// carries a `--body` value. Here stderr leads, the command is cut to its first four
+// words before any flag, and an exec failure with no stderr keeps that short command.
+// Not capped here — boundedError (cache.js) does that.
+function residueErrorText(err) {
+  if (typeof err !== 'object' || err === null) return errorText(err);
+  const stderr = String(err.stderr ?? '').trim();
+  const firstLine = String(err.message).split('\n')[0];
+  const words = [];
+  if (firstLine.startsWith('Command failed: ')) {
+    for (const tok of firstLine.slice('Command failed: '.length).split(/\s+/).filter(Boolean)) {
+      if (tok.startsWith('-') || words.length === 4) break;
+      words.push(tok);
+    }
+  }
+  const short = words.length ? words.join(' ') : null;
+  if (stderr) return short ? `${stderr} (${short})` : stderr;
+  if (short) return `Command failed: ${short}`;
+  return errorText(err);
+}
+
 // #1811 Deliverable 4: `structurally-stuck` escalates as ONE shared record
 // per sweep pass covering every stuck path, not one per directory — the
 // symptom that produced seven near-identical records (#1811-#1817) for what
@@ -498,5 +520,5 @@ function resolveResidue({
 module.exports = {
   escalateResidue, resolveResidue, residueFingerprint, residueBody, findResidueDuplicate, defaultRunner, errorText,
   parseStuckPaths, renderStuckPathsBlock, withStuckPaths, structurallyStuckBody, structurallyStuckMarker,
-  capDirtyFiles, DIRTY_FILES_CAP, residueRepoOf,
+  capDirtyFiles, DIRTY_FILES_CAP, residueRepoOf, residueErrorText,
 };

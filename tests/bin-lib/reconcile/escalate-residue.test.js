@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
   escalateResidue, resolveResidue, residueFingerprint, residueBody, capDirtyFiles, findResidueDuplicate,
-  structurallyStuckMarker, structurallyStuckBody, parseStuckPaths, renderStuckPathsBlock, withStuckPaths,
+  structurallyStuckMarker, structurallyStuckBody, parseStuckPaths, renderStuckPathsBlock, withStuckPaths, residueErrorText,
 } = require('../../../plugin/bin/lib/reconcile/escalate-residue');
 const { STRUCTURALLY_STUCK_REASONS } = require('../../../plugin/bin/lib/reconcile/archive-merged');
 
@@ -634,4 +634,53 @@ test('#4202 escalate: an already-named path on an OPEN record stays a plain dedu
   const result = escalateResidue({ repo: 'o/r', reason: 'structurally-stuck', targetPath: '/x/run-a', count: 3, runner, pathExists });
   assert.deepEqual(result, { status: 'dedup-hit', number: 2724 });
   assert.equal(seen.edited, null);
+});
+
+// #5393: residueErrorText leads with gh's stderr and carries a short command, never the full argv.
+function execErr(stderr) {
+  return Object.assign(new Error('Command failed: gh issue comment 2724 --repo o/r --body ' + 'x'.repeat(300) + '\n' + stderr), { status: 1, stderr, stdout: '' });
+}
+
+test('residueErrorText: exec failure with stderr leads with stderr, then the short command', () => {
+  assert.equal(residueErrorText(execErr('HTTP 403: secondary rate limit\n')), 'HTTP 403: secondary rate limit (gh issue comment 2724)');
+});
+
+test('residueErrorText: exec failure with empty stderr is "Command failed:" plus the short command', () => {
+  assert.equal(residueErrorText(execErr('')), 'Command failed: gh issue comment 2724');
+  assert.equal(residueErrorText(execErr('  \n')), 'Command failed: gh issue comment 2724');
+});
+
+test('residueErrorText: never carries a flag value', () => {
+  for (const text of [residueErrorText(execErr('HTTP 403: secondary rate limit\n')), residueErrorText(execErr(''))]) {
+    assert.ok(!text.includes('xxxx'), `body value leaked: ${text}`);
+    assert.ok(!text.includes('--repo'), `flag leaked: ${text}`);
+  }
+});
+
+test('residueErrorText: Buffer stderr reads as text', () => {
+  assert.equal(residueErrorText(Object.assign(new Error('Command failed: gh api x'), { stderr: Buffer.from('HTTP 404: Not Found') })), 'HTTP 404: Not Found (gh api x)');
+});
+
+test('residueErrorText: stderr without a Command failed prefix is stderr alone', () => {
+  assert.equal(residueErrorText(Object.assign(new Error('boom'), { stderr: 'denied' })), 'denied');
+});
+
+test('residueErrorText: non-exec errors keep errorText', () => {
+  assert.equal(residueErrorText(new Error('HTTP 502')), 'HTTP 502');
+  assert.equal(residueErrorText('gh: not found'), 'gh: not found');
+  assert.equal(residueErrorText(Object.assign(new Error('spawnSync gh ETIMEDOUT'), { code: 'ETIMEDOUT' })), 'spawnSync gh ETIMEDOUT');
+  assert.equal(residueErrorText(undefined), 'undefined');
+});
+
+test('residueErrorText: caps the command at 4 tokens', () => {
+  assert.equal(residueErrorText(Object.assign(new Error('Command failed: gh api graphql repos o r'), { stderr: 'x' })), 'x (gh api graphql repos)');
+});
+
+test('residueErrorText: a multi-line --body leaks no body line', () => {
+  const withStderr = Object.assign(new Error('Command failed: gh issue comment 1 --body line-one\nSECRET-BODY-LINE\nHTTP 403: x'), { stderr: 'HTTP 403: x\n' });
+  assert.equal(residueErrorText(withStderr), 'HTTP 403: x (gh issue comment 1)');
+  const noStderr = Object.assign(new Error('Command failed: gh issue comment 1 --body line-one\nSECRET-BODY-LINE\nHTTP 403: x'), { stderr: '' });
+  assert.equal(residueErrorText(noStderr), 'Command failed: gh issue comment 1');
+  assert.ok(!residueErrorText(withStderr).includes('SECRET-BODY-LINE'));
+  assert.ok(!residueErrorText(noStderr).includes('SECRET-BODY-LINE'));
 });
