@@ -195,6 +195,7 @@ test('AC4.1, AC4.3: /claude-tweaks:test full runs the whole suite here, no argum
   pinned(bullet, [[/none of the skips below apply/, 'full ignores the pipeline skips']]);
   const pipeline = s.slice(s.indexOf('**Pipeline behavior:**'));
   assert.ok(pipeline.indexOf(bullet) !== -1 && pipeline.indexOf(bullet) < pipeline.indexOf('- `VERIFICATION_PASSED=true` + no stories'), 'the full bullet leads the Pipeline behavior list');
+  assert.ok(s.includes('| Whole suite here (`full`) | `## Standard mode result` |'), 'the Report table maps full to the Standard mode template');
   pinned(sectionOf(read(VERIFICATION), '### Skip-if-recent (for /flow pipelines)'), [
     [/`\/claude-tweaks:test full` never takes this skip, by signal or by stamp/, 'Skip-if-recent excludes full'],
   ]);

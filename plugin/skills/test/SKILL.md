@@ -69,7 +69,7 @@ A `VERIFICATION_PASSED=true` bullet below applies its skip only when `VERIFICATI
 
 **Pipeline behavior:**
 
-- `full` argument → none of the skips below apply: run `### Whole suite here (`full`)` whatever `VERIFICATION_PASSED`, `VERIFICATION_SHA` or the runner stamp says
+- `full` argument → none of the skips below apply: run the Whole suite here (`full`) subsection below whatever `VERIFICATION_PASSED`, `VERIFICATION_SHA` or the runner stamp says
 - `VERIFICATION_PASSED=true` + no stories → skip verification, report "passed in build, no QA stories", set `TEST_PASSED=true`
 - `VERIFICATION_PASSED=true` + stories exist → skip verification, then **select stories by `source_files` ∩ the changed-file set** (`node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --changed-files --ignore-stamp --integration-branch {ref}` — `--ignore-stamp` (#3048) reads the run's whole branch diff — why: `verification.md`; exit 1 means no base resolved: never treat it as an empty set, fall back to the full story set; exact repo-relative path match; a story with no `source_files` field is always included): one or more matches → run only those; zero matches → apply `design-wrapper/frontend-detection.md`'s Layer 3 sniff to the changed-file set, read once, regardless of the record's materialized `surface:` (#2745 — a `surface: web` header does not by itself mean this diff touched a UI file; a loader/route/config-only change on a web-surface record must not skip the sniff) — any UI trigger file → run the full story set (this is also what still covers #808's original concern: a brand-new UI feature whose stories don't carry `source_files` yet always touches at least one Layer-3-recognized file, so it still runs full); none → report `QA: skipped — no affected stories ({n} stories considered, {m} changed files)`, set `TEST_PASSED=true`, and log `AUTO {time} — QA scoped: 0/{n} stories affected by {m} changed file(s); skipped — no UI trigger file in diff. Reversibility: high.`. Every selection logs `AUTO {time} — QA scoped: {k}/{n} stories affected by {m} changed file(s). Reversibility: high.` The Design CLI gate (Step 1.5) still runs on a skip. **QA pass stamp (#3003):** every story run this bullet selects — the scoped match set, the Layer-3 full set, or the exit-1 full-set fallback — first passes this check, then goes through `qa-procedures.md` (Phases 1-5.5), the only path that writes `{RUN_DIR}/report.json`, which the stamp write reads. Before dispatching a selected set (scoped or full), run `node "${CLAUDE_PLUGIN_ROOT}/bin/qa-stamp.js" --check --stories <id=file,...> [--stories-dir <dir>]` with the selected stories' ids and source files (relative to `STORIES_DIR`). `skip: true` → do not dispatch: report `QA: skipped — stories already passed at {short-sha}`, set `TEST_PASSED=true`, log `AUTO {time} — QA skipped: {k} selected stories already passed at {short-sha} (QA pass stamp). Reversibility: high.`, and note the Design CLI gate (Step 1.5) still runs on this skip path too, same as the zero-match skip above. `skip: false` → run the selection unchanged; the `reason` (`no-stamp`, `sha-mismatch`, `dirty-tree`, `story-changed: {id}`, …) needs no log line.
 - `VERIFICATION_PASSED=true` + `skip-qa` argument → skip verification AND skip QA, set `TEST_PASSED=true` (used by `/flow`'s polish-phase re-verify gate)
@@ -202,7 +202,8 @@ Present results using the format from `verification.md` Step 3 for standard chec
 |------|----------------------------------|
 | Standard suite (no args) | `## Standard mode result` |
 | QA-only (`qa`) | `## QA mode result` (includes Actions Performed sub-table) |
-| Full suite + QA (`all`) | `## All mode result` |
+| Standard suite + QA (`all`) | `## All mode result` |
+| Whole suite here (`full`) | `## Standard mode result` |
 | Pipeline (`VERIFICATION_PASSED=true`, no stories) | `## Pipeline result (VERIFICATION_PASSED + no stories)` |
 | Pipeline (`VERIFICATION_PASSED=true`, stories exist) | `## Pipeline result (VERIFICATION_PASSED + stories)` |
 
@@ -222,7 +223,7 @@ Pick the row matching the mode just completed:
 
 | Mode + outcome | Next |
 |---|---|
-| Standard / All / QA passed (or PASS_WITH_CAVEATS) | Genuine choice — see below |
+| Standard / All / Full / QA passed (or PASS_WITH_CAVEATS) | Genuine choice — see below |
 | Verification failed (types/lint/tests) | Fix the failures, then re-run `/claude-tweaks:test` |
 | QA failed | Investigate failures (Fix Mode option 1), then `/claude-tweaks:test qa retry={RUN_DIR}` |
 
